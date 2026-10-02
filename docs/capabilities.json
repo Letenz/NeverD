@@ -3597,7 +3597,8 @@
         "docs/testing.md"
       ],
       "limitations": [
-        "Native Windows x64 CI with Unicorn disabled passes all 273 required checks: 45 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at 66dc8db6e5ab5532eb177761e2d035cb2f89c486 (GitHub Actions 36958215402), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
+        "`X64StringInstructions.def` owns ordinary-RAM `MOVS/STOS/LODS` at 8/16/32/64 bits; `CLD/STD` controls direction without changing other flags. Each REP element validates the entire operand before observations and commits at one restart boundary. Earlier completed elements survive a later fault; cancellation or observer failure leaves the current element untouched. FS/GS applies only to the source, after address-size truncation. AL/AX loads preserve upper bits and EAX loads zero-extend. Zero-count address-size-32 REP requires zero upper count bits and, for MOVS/STOS, zero upper participating address bits: real CPU implementations differ otherwise. REPNE and STOS/LODS device operands remain unsupported. `X64StringTransferTests.cpp` uses independent host instructions for widths, direction, overlap and zero counts, with separate checks for permissions, aliases, wraparound, faults and resumption. The original WDK resource driver executes all four STOS/LODS widths through `driver_resource_strings.def`.",
+        "Native Windows x64 CI with Unicorn disabled passes all 329 required checks: 101 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at b2ca3cff174280e8d0fa478cfa2b20d252e5e0f8 (GitHub Actions 36973625293), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
         "Native `FOP/FIP/FDP` follow the host\u2019s x87 save/restore rules. AMD may clear these fields without a pending unmasked exception; snapshots retain observed values. `X64MachineProbe.def` and exact NOP/context tests seed a coherent pending exception so every field remains valid and is compared without masking. The host-process FXRSTOR64/FXSAVE64 oracle checks both states; backends never substitute input metadata for host results.",
         "`X64FPState.def` declares compacted AVX, AVX-512, CET_U/CET_S and AMX transport layouts, including 64-byte component alignment. Present extension payloads must be architectural zero init state; absent payloads and alignment padding do not define state. Layout bits determine offsets, and unknown layouts, non-initial payloads or incorrect lengths fail before publication. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState` and `InitialWideComponentsDoNotHideFPState` cover 872-byte and 10752-byte WHP packets. This transport support does not admit those extension instructions.",
         "The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller\u2019s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.",
@@ -4660,6 +4661,314 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.MemoryResultsAndEffectiveAddressesMatchHost/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.RegisterResultsMatchHostAndPreserveUntouchedBits/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.NarrowIndicesIgnoreUpperRegisterBits/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.ReadAndResultStopsRetainOriginalRAMAndCPU/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.ResultObserverExceptionDiscardsNativeEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.ProtectionChecksUseTheAdjustedWordRatherThanTheBitBase/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.MissingNegativeOffsetWordRaisesAReadFault/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.ReadOnlyWordCanPrecedeAnUnmappedBase/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.CrossPageResultsAndStopsMatchHostWithIndependentBacking/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.CrossPageFaultPreservesBothAllocationsAndCPU/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.RejectedLockFormsHaveNoEffectsOrObservations/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.DeviceOperandsRejectBeforeCallbacks/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "filter": "*/X64BitString.AddressSizeWrappingPrecedesFSAndGSBases/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.TransfersMatchHostAcrossWidthsCountsAndDirection/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.DirectionInstructionsPreserveOtherFlagsAndRegisters/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.ZeroCountAddressSizeMatchesHostWithoutMemory/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.AmbiguousZeroCountUpperHalvesRejectBeforeEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.NarrowAddressesNormalizeOnlyParticipatingRegisters/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.SourceSegmentsFollowAddressTruncationAndNeverBiasDestination/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.NarrowRepeatedAddressesWrapAtEachElementBoundary/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.UnusedPointersAreNeverValidatedOrObserved/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.CrossPageElementsAndCancellationMatchHost/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.LaterPageFaultHasNoPartialElementAndCanResume/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.RepeatedStopsRetainEarlierElementsAndResumeExactlyOnce/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.RepeatedFaultRetainsCompletedElements/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.ObserverExceptionsLeaveTheCurrentElementUntouched/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.UnsupportedRepeatAndLockPrefixesFailBeforeEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDX64MemoryUpdateTests",
+          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "filter": "*/X64StringTransfer.UnmodeledDeviceLoadsAndStoresRejectBeforeCallbacks/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -4845,7 +5154,7 @@
         "docs/examples/driver-kmdf-usb-pofx-scenario.json"
       ],
       "limitations": [
-        "Native Windows x64 CI with Unicorn disabled passes all 273 required checks: 45 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at 66dc8db6e5ab5532eb177761e2d035cb2f89c486 (GitHub Actions 36958215402), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
+        "Native Windows x64 CI with Unicorn disabled passes all 329 required checks: 101 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at b2ca3cff174280e8d0fa478cfa2b20d252e5e0f8 (GitHub Actions 36973625293), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
         "`DriverImage.def` declares strict PE size/alignment limits and diagnostic text; pointer widths come from `DriverProfile.def`. `DriverImage.cpp` owns validation and relocation, with unchanged accepted images and error messages.",
         "Independent MDL pages support MmAllocatePagesForMdl/Ex, MmFreePagesFromMdl and MmProtectMdlSystemAddress over the bounded physical arena. Range/chunk constraints, cache identity, partial ownership, user/system aliases and release dependencies share existing physical-page authority. KernelMode pool locks make precisely pinned paged memory resident; backend page permissions remain authoritative for all mapping views.",
         "Message interrupt assignments preserve explicit per-message addresses/data/vectors/levels/affinity/polarity. PDO-wide message registration exposes real read-only interrupt tables and independent or unified synchronization. Passive ISR waits retain ownership, serialize repeated arrivals and allow independent frames and DPCs to progress; occurrence and delivery timestamps remain distinct.",
@@ -11121,7 +11430,9 @@
           "neverd_devirtualize_source_v2",
           "neverd_devirtualize_machine_source_v2",
           "neverd_devirtualize_source_v3",
-          "neverd_devirtualize_machine_source_v3"
+          "neverd_devirtualize_machine_source_v3",
+        "neverd_devirtualize_source_v4",
+        "neverd_devirtualize_machine_source_v4"
         ],
         "python": [],
         "cli": [
@@ -11135,7 +11446,10 @@
           "neverd decompile --vm-max-operations",
           "neverd decompile --vm-max-refinements",
           "neverd decompile --vm-max-fields",
-          "neverd decompile --vm-max-queries"
+          "neverd decompile --vm-max-queries",
+        "neverd decompile --vm-chain-transfers",
+        "neverd decompile --vm-entry-frame",
+        "neverd decompile --vm-no-control-discovery"
         ],
         "json": []
       }

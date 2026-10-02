@@ -2292,12 +2292,15 @@ swiftLocalImportedLockType(const BinaryImage &Image, va_t Address) {
 /// The runtime also finds stable internal type names in registered type
 /// records. A symbol that is not exported cannot be linked as a descriptor;
 /// reconstruct its textual identity only after the descriptor bytes and the
-/// image's __swift5_types registration agree with that name. Private anonymous
-/// contexts have no such stable lookup identity and remain unsupported.
+/// image's type or protocol registration agrees with that name. Private
+/// anonymous contexts have no such stable lookup identity and remain
+/// unsupported. Both record forms reserve the low bits; only direct records
+/// without additional flags are accepted here.
 /// swift/stdlib/public/runtime/MetadataLookup.cpp:
 /// _contextDescriptorMatchesMangling and _searchTypeMetadataRecordsInSections.
 inline std::optional<std::string>
-swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
+swiftLocalRegisteredTypeIdentity(const BinaryImage &Image, va_t Address,
+                                 bool Protocol) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
@@ -2336,15 +2339,19 @@ swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
   };
   if (!Parsed.Root || !Parsed.Error.empty() ||
       !Shape(*Parsed.Root, "Global", 1) ||
-      !Shape(Parsed.Root->Children[0], "NominalTypeDescriptor", 1) ||
+      !Shape(Parsed.Root->Children[0],
+             Protocol ? "ProtocolDescriptor" : "NominalTypeDescriptor", 1) ||
       !Shape(Parsed.Root->Children[0].Children[0], "Type", 1))
     return std::nullopt;
   const auto &Nominal = Parsed.Root->Children[0].Children[0].Children[0];
-  const auto NominalKind = [](const llvm::SwiftDemangleNode &Node) {
-    return Node.Kind == "Class"       ? 16U
-           : Node.Kind == "Structure" ? 17U
-           : Node.Kind == "Enum"      ? 18U
-                                      : 0U;
+  if (Protocol && Nominal.Kind != "Protocol")
+    return std::nullopt;
+  const auto NominalKind = [&](const llvm::SwiftDemangleNode &Node) {
+    return Node.Kind == "Class"                  ? 16U
+           : Node.Kind == "Structure"            ? 17U
+           : Node.Kind == "Enum"                 ? 18U
+           : Protocol && Node.Kind == "Protocol" ? 3U
+                                                 : 0U;
   };
   const auto Identifier = [](const llvm::SwiftDemangleNode &Node,
                              llvm::StringRef ExpectedKind) {
@@ -2367,7 +2374,8 @@ swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
   const auto &Module = *Context;
   if (Contexts.empty() || !Identifier(Module, "Module") ||
       *Module.Text == "__C" || *Module.Text == "__C_Synthesized" ||
-      !SymbolName.starts_with("$s") || !SymbolName.ends_with("Mn"))
+      !SymbolName.starts_with("$s") ||
+      !SymbolName.ends_with(Protocol ? "Mp" : "Mn"))
     return std::nullopt;
   const unsigned Kind = Contexts.front().first;
 
@@ -2445,7 +2453,7 @@ swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
 
   const Section *Records = nullptr;
   for (const auto &Candidate : Image.Sections)
-    if (Candidate.Name == "__swift5_types") {
+    if (Candidate.Name == (Protocol ? "__swift5_protos" : "__swift5_types")) {
       if (Records)
         return std::nullopt;
       Records = &Candidate;
@@ -2471,8 +2479,34 @@ swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
     Registered |= *Target == Address;
   }
   return Registered ? std::optional<std::string>(
-                          SymbolName.drop_front(2).drop_back(2).str())
+                          SymbolName.drop_front(2).drop_back(2).str() +
+                          (Protocol ? "_p" : ""))
                     : std::nullopt;
+}
+
+inline std::optional<std::string>
+swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
+  return swiftLocalRegisteredTypeIdentity(Image, Address, false);
+}
+
+inline std::optional<std::string>
+swiftLocalRegisteredProtocolType(const BinaryImage &Image, va_t Address) {
+  // A single ordinary Swift protocol has simple existential metadata with
+  // one witness table. Exclude requirement signatures, associated types,
+  // special protocols and unknown flags before using that representation.
+  const auto Header = readImmutableImageBytes(Image, Address, 24);
+  if (!Header ||
+      (llvm::support::endian::read32le(Header->data()) & ~uint32_t(0x10000)) !=
+          0x43 ||
+      llvm::support::endian::read32le(Header->data() + 12) ||
+      llvm::support::endian::read32le(Header->data() + 20))
+    return std::nullopt;
+  const uint32_t Requirements =
+      llvm::support::endian::read32le(Header->data() + 16);
+  if (Requirements > 512 ||
+      !readImmutableImageBytes(Image, Address, 24 + Requirements * 8))
+    return std::nullopt;
+  return swiftLocalRegisteredTypeIdentity(Image, Address, true);
 }
 
 inline std::optional<SourceCallTypeHint>
@@ -2500,6 +2534,9 @@ swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
 struct SwiftWitnessRuntimeIdentity {
   std::string ClassName;
   std::string ProtocolSymbol;
+  // A registered internal protocol has no linkable descriptor symbol. Its
+  // simple existential metadata retains the original runtime descriptor.
+  std::string ProtocolType;
 };
 
 inline std::optional<SwiftWitnessRuntimeIdentity>
@@ -5284,8 +5321,15 @@ swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
   const auto ProtocolAddress = ProtocolAt(*Descriptor);
   if (!Type || !Pattern || *Pattern != Address || !ProtocolAddress)
     return std::nullopt;
-  const auto ProtocolSymbol =
+  auto ProtocolSymbol =
       swiftDirectTypeMetadataDescriptor(Image, *ProtocolAddress);
+  std::optional<std::string> ProtocolType;
+  if (!ProtocolSymbol) {
+    ProtocolType = swiftLocalRegisteredProtocolType(Image, *ProtocolAddress);
+    if (ProtocolType)
+      ProtocolSymbol =
+          "_$s" + llvm::StringRef(*ProtocolType).drop_back(2).str() + "Mp";
+  }
   if (!ProtocolSymbol || !swiftProtocolDescriptor(*ProtocolSymbol))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
@@ -5354,7 +5398,8 @@ swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
         }))
       return std::nullopt;
     Metadata = Object;
-    Result = SwiftWitnessRuntimeIdentity{Identity.Name, *ProtocolSymbol};
+    Result = SwiftWitnessRuntimeIdentity{Identity.Name, *ProtocolSymbol,
+                                         ProtocolType.value_or("")};
   }
   if (!Result)
     return std::nullopt;
@@ -5909,11 +5954,22 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   // whole-image proof until such a use exists, but keep it local to this bind
   // so another call always validates the current image again.
   std::optional<std::map<va_t, ClassObjectIdentity>> ClassObjects;
-  auto ClassObjectAt = [&](va_t Address) -> const ClassObjectIdentity * {
+  auto ClassObjectHint =
+      [&](va_t Address) -> std::optional<SourceCallTypeHint> {
     if (!ClassObjects)
       ClassObjects.emplace(classObjectIdentities(Image));
     const auto Found = ClassObjects->find(Address);
-    return Found == ClassObjects->end() ? nullptr : &Found->second;
+    if (Found == ClassObjects->end())
+      return std::nullopt;
+    SourceCallTypeHint Hint;
+    Hint.CallKind = Found->second.Kind;
+    Hint.TargetAddress = Address;
+    Hint.TargetName = Found->second.Name;
+    Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+    std::string Error;
+    return assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Error)
+               ? std::optional<SourceCallTypeHint>(std::move(Hint))
+               : std::nullopt;
   };
   auto ScalarLoads = readOnlyScalarLoadPlans(Function, Image);
   const auto LoopBytes = readOnlyLoopBytePlans(Function, Image);
@@ -6361,6 +6417,26 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         !(Original->Kind == ExprKind::Const &&
           Original->ConstProvenance == ConstantAddressProvenance::Scalar)) {
       const auto Address = constantAddress(*Original);
+      // A complete materialized class-object address is also an identity when
+      // stored in memory (for example, objc_super.current_class). Resolve the
+      // original runtime object through the same metadata proof used by direct
+      // receivers. Numeric immediates, partial addresses and classref cells do
+      // not acquire a class-object binding.
+      if (Address && Original->Kind == ExprKind::Const && Original->Type &&
+          Original->Type->Size == 8 && Original->Operands.empty() &&
+          (Original->Type->Kind == NdTypeKind::Int ||
+           Original->Type->Kind == NdTypeKind::Ptr) &&
+          isExactAddressProvenance(Original->ConstProvenance) &&
+          !isCodeAddressProvenance(Original->ConstProvenance) &&
+          (Original->AddressOwnerVA == InvalidVA ||
+           Original->AddressOwnerVA == Original->ConstVal))
+        if (auto Hint = ClassObjectHint(*Address)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          return Expression;
+        }
       // An immutable self-pointer's value and storage address are the same
       // identity. Preserve its pointer-sized contents as well as that alias.
       // Mutable storage cannot acquire an address binding from its initializer.
@@ -7546,22 +7622,12 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             Signature.Parameters[Index].Type->Kind == NdTypeKind::Ptr &&
             validateSourceABI(Signature, Error)) {
           const auto Address = constantAddress(*Operand);
-          const auto *Object = Address ? ClassObjectAt(*Address) : nullptr;
-          if (Object) {
-            auto Binding = std::make_shared<SourceCallTypeHint>();
-            Binding->CallKind = Object->Kind;
-            Binding->TargetAddress = *Address;
-            Binding->TargetName = Object->Name;
-            auto &Hint = Binding->Signature;
-            Hint.Architecture = Image.Arch;
-            Hint.HasExplicitABI = true;
-            Hint.ReturnType = NdType::makePtr(NdType::makeVoid());
-            Hint.ReturnLocation = {SourceABICarrierKind::IntegerRegister,
-                                   getTargetRegInfo(Image.Arch).IntReturnReg, 0,
-                                   8};
+          auto Hint = Address ? ClassObjectHint(*Address) : std::nullopt;
+          if (Hint) {
             auto Value = HighExpr::makeCall({}, 0, {});
             Value->Type = Operand->Type;
-            Value->SourceCallHint = std::move(Binding);
+            Value->SourceCallHint =
+                std::make_shared<SourceCallTypeHint>(std::move(*Hint));
             Operand = std::move(Value);
             continue;
           }
@@ -9585,16 +9651,50 @@ renderObjCSwiftWitnessTableHelpers(const BinaryImage &Image,
     SharedFunctions.insert(Stem + "_address");
     if (Identity) {
       // Runtime/Casting.h declares this query with the ordinary C ABI.
-      Source += "\n#include <objc/runtime.h>\nextern unsigned char " + Stem +
-                "_protocol[] __asm__(\"" + Identity->ProtocolSymbol + "\");\n";
+      Source += "\n#include <objc/runtime.h>\n";
+      if (Identity->ProtocolType.empty()) {
+        Source += "extern unsigned char " + Stem + "_protocol[] __asm__(\"" +
+                  Identity->ProtocolSymbol + "\");\n";
+      } else {
+        // Swift ABI Metadata.h: a simple existential starts with the metadata
+        // kind, two 32-bit fields, then its original protocol reference. The
+        // image proof excludes superclass and extended existential layouts.
+        Source += "#include <stdint.h>\n#include <string.h>\n";
+        Source += "extern const void *" + Stem +
+                  "_lookup(const char *, uintptr_t, const void *, "
+                  "const void *) "
+                  "__asm__(\"_swift_getTypeByMangledNameInContext\");\n";
+      }
       Source += "extern const void *" + Stem +
                 "_query(const void *, const void *) "
                 "__asm__(\"_swift_conformsToProtocol\");\n";
-      Source += "uintptr_t " + Stem +
-                "_address(void) {\n"
-                "  const void *table = " +
-                Stem + "_query(objc_getClass(\"" + Identity->ClassName +
-                "\"), " + Stem +
+      Source += "uintptr_t " + Stem + "_address(void) {\n";
+      if (!Identity->ProtocolType.empty()) {
+        Source += "  const void *metadata = " + Stem + "_lookup(\"" +
+                  Identity->ProtocolType + "\", " +
+                  std::to_string(Identity->ProtocolType.size()) +
+                  ", 0, 0);\n"
+                  "  if (!metadata) __builtin_trap();\n"
+                  "  uintptr_t kind;\n"
+                  "  memcpy(&kind, metadata, sizeof(kind));\n"
+                  "  if (kind != 0x303) __builtin_trap();\n"
+                  "  uint32_t flags, count;\n"
+                  "  memcpy(&flags, (const char *)metadata + 8, 4);\n"
+                  "  memcpy(&count, (const char *)metadata + 12, 4);\n"
+                  "  if ((flags & 0x7fffffffU) != 1 || count != 1) "
+                  "__builtin_trap();\n"
+                  "  const void *" +
+                  Stem +
+                  "_protocol;\n"
+                  "  memcpy(&" +
+                  Stem +
+                  "_protocol, (const char *)metadata + 16, 8);\n"
+                  "  if (!" +
+                  Stem + "_protocol || ((uintptr_t)" + Stem +
+                  "_protocol & 3)) __builtin_trap();\n";
+      }
+      Source += "  const void *table = " + Stem + "_query(objc_getClass(\"" +
+                Identity->ClassName + "\"), " + Stem +
                 "_protocol);\n"
                 "  if (!table) __builtin_trap();\n"
                 "  return (uintptr_t)table;\n}\n";

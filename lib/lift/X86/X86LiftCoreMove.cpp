@@ -15,6 +15,7 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/lift/X86Lifter.h"
 
 #include <optional>
@@ -29,6 +30,28 @@ namespace {
 /// intrinsics __readcr8/__writecr8 and __readdr/__writedr.  Returns nullopt
 /// when neither operand is such a register, and false for a control register
 /// no intrinsic models, so the instruction stays unlifted.
+/// The segment register a register operand names, if any.
+std::optional<X86SegmentRegister> segmentRegister(const cs_x86_op &Op) {
+  if (Op.type != X86_OP_REG)
+    return std::nullopt;
+  switch (Op.reg) {
+  case X86_REG_ES:
+    return X86SegmentRegister::ES;
+  case X86_REG_CS:
+    return X86SegmentRegister::CS;
+  case X86_REG_SS:
+    return X86SegmentRegister::SS;
+  case X86_REG_DS:
+    return X86SegmentRegister::DS;
+  case X86_REG_FS:
+    return X86SegmentRegister::FS;
+  case X86_REG_GS:
+    return X86SegmentRegister::GS;
+  default:
+    return std::nullopt;
+  }
+}
+
 std::optional<bool> liftSystemRegisterMove(X86Lifter::LiftState &S,
                                            const cs_x86 &X86) {
   const cs_x86_op &Dst = X86.operands[0];
@@ -344,6 +367,40 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
           return false;
         break;
       }
+    // A segment selector moves through an r/m16 operand.  Read into a 32- or
+    // 64-bit register it is zero-extended; a memory destination receives its
+    // 16 bits.  A write takes the low 16 bits of its source.
+    if (InsnId == X86_INS_MOV) {
+      if (std::optional<X86SegmentRegister> Segment =
+              segmentRegister(X86.operands[1])) {
+        const NdVar Selector = S.makeTemp(2);
+        S.emitIntrinsic(Intrinsic::ReadSegment, Selector,
+                        {NdVar::scalar(static_cast<uint64_t>(*Segment), 1)});
+        if (X86.operands[0].type == X86_OP_MEM) {
+          S.storeToMem(X86.operands[0], Selector);
+          break;
+        }
+        const NdVar Dst = L.operandWrite(X86.operands[0]);
+        if (Dst.Size == 2)
+          S.emit(NdOp::COPY, Dst, {Selector});
+        else
+          S.emit(NdOp::INT_ZEXT, Dst, {Selector});
+        break;
+      }
+      if (std::optional<X86SegmentRegister> Segment =
+              segmentRegister(X86.operands[0])) {
+        NdVar Value = L.operandRead(S, X86.operands[1]);
+        if (Value.Size > 2) {
+          const NdVar Low = S.makeTemp(2);
+          S.emit(NdOp::SUBBYTES, Low, {Value, NdVar::cst(0, 4)});
+          Value = Low;
+        }
+        S.emitIntrinsic(
+            Intrinsic::WriteSegment, NdVar(),
+            {NdVar::scalar(static_cast<uint64_t>(*Segment), 1), Value});
+        break;
+      }
+    }
     NdVar Src = L.operandRead(S, X86.operands[1]);
     NdVar DstV = L.operandWrite(X86.operands[0]);
 

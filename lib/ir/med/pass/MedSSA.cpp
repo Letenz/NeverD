@@ -42,7 +42,8 @@ namespace {
 /// register leaves that SP unchanged: the unwinder restores it as a
 /// nonvolatile, and it is certified only as UWOP_SET_FPREG describes it.
 uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
-                                  va_t Handler, const TargetRegInfo &TRI) {
+                                  va_t Handler, const TargetRegInfo &TRI,
+                                  bool OrdinaryEntry) {
   auto Fail = [](const char *Why) -> void {
     throw LowToMedConversionError(
         std::string("Windows SEH establisher frame: ") + Why);
@@ -60,7 +61,7 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
       EH.PrimaryFunctionIndex || (EH.UnwindFlags & ~3u) ||
       (!HasFrameRegister && EH.FrameOffset) ||
       (HasFrameRegister && FrameRegister == TRI.StackPointer) ||
-      EH.CodeRange.Begin != Low.Entry || !EH.CodeRange.contains(Handler))
+      EH.CodeRange.Begin != Low.Entry || !EH.ownsCode(Handler))
     Fail("unsupported unwind or frame-register contract");
   if (Low.Blocks.empty() || Low.Blocks.front().StartAddr != Low.Entry ||
       EH.PrologueSize > EH.CodeRange.End - Low.Entry)
@@ -83,7 +84,7 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
   }
   if (!Preds[0].empty())
     Fail("ordinary control flow re-enters the prologue");
-  if (HandlerId <= 0 || !Preds[HandlerId].empty() ||
+  if (HandlerId <= 0 || (!OrdinaryEntry && !Preds[HandlerId].empty()) ||
       Low.OrdinaryModuleAnalysisRoots.count(Handler))
     Fail("handler also has an ordinary entry role");
 
@@ -100,9 +101,11 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
     for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
       if (Scope.HandlerVA != ScopeHandler)
         continue;
-      auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH.CodeRange);
+      // A cold fragment can sit below the entry; only the prologue itself
+      // is out of bounds.
+      auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH);
       if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range ||
-          Range->Begin < PrologueEnd)
+          (Range->Begin < PrologueEnd && Range->End > Low.Entry))
         Fail("protected scope overlaps an incomplete prologue");
       for (size_t B = 0; B < N; ++B)
         if (Low.Blocks[B].StartAddr < Range->End &&
@@ -121,6 +124,9 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
   };
   if (!AddProtectedBlocks(Handler))
     Fail("handler has no decoded protected scope");
+  // Ordinary flow into a shared handler must keep the same frame.
+  if (OrdinaryEntry)
+    Work.insert(Work.end(), Preds[HandlerId].begin(), Preds[HandlerId].end());
   std::vector<int> Sources{0};
   while (!Work.empty()) {
     const int B = Work.back();
@@ -803,12 +809,22 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           if (V == VarOfId.end() || V->second.Kind != MedVar::Reg ||
               V->second.RegOff != TRI.StackPointer)
             continue;
-          if (!IsRoot[B] || V->second.Size != TRI.PointerSize)
+          if (V->second.Size != TRI.PointerSize)
             throw LowToMedConversionError(
                 "Windows SEH establisher frame: handler is not an isolated "
                 "full-width SP root");
-          SEHFrameOffsets[B] = proveSEHEstablisherFrame(
-              Low, Func, Func.Blocks[B].StartAddr, TRI);
+          // A handler that ordinary flow also enters (an empty __except body
+          // resuming at the code after its __try) takes the SP that flow
+          // brings.  Certify every way in keeps the establisher frame the
+          // dispatcher enters with; that entry then needs no SP of its own.
+          if (!IsRoot[B]) {
+            proveSEHEstablisherFrame(Low, Func, Func.Blocks[B].StartAddr, TRI,
+                                     /*OrdinaryEntry=*/true);
+            continue;
+          }
+          SEHFrameOffsets[B] =
+              proveSEHEstablisherFrame(Low, Func, Func.Blocks[B].StartAddr, TRI,
+                                       /*OrdinaryEntry=*/false);
         }
       }
     }
@@ -824,8 +840,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
           if (Scope.HandlerVA != Func.Blocks[Root].StartAddr)
             continue;
-          auto Range =
-              getSemanticSEHGuardedRange(Scope, Arch::X64, EH.CodeRange);
+          auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH);
           if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range) {
             Complete = false;
             break;

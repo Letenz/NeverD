@@ -1146,8 +1146,7 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       if (Stmt.EHClauseBodies.front().empty()) {
         emitIndent(Indent + 1);
         if (CurrentFunc && CurrentFunc->ExceptionMetadata &&
-            CurrentFunc->ExceptionMetadata->CodeRange.contains(
-                Clause.HandlerVA))
+            CurrentFunc->ExceptionMetadata->ownsCode(Clause.HandlerVA))
           OS << "goto L_" << llvm::utohexstr(Clause.HandlerVA) << ";\n";
         else
           OS << "/* handler @ 0x" << llvm::utohexstr(Clause.HandlerVA)

@@ -124,7 +124,36 @@ struct ExceptionFunction {
   /// without re-walking already finished frames.
   bool LanguageTablesResolved = false;
 
+  /// Code ranges of the chained records whose unwind chain ends at this
+  /// primary record, in address order: the cold parts of the function.
+  /// Unwinding a fault in one follows the chain to this record, so its
+  /// handler and scope table govern that code too.
+  std::vector<ExceptionAddressRange> FragmentRanges;
+
   ExceptionModel model() const { return getExceptionEncodingModel(Encoding); }
+
+  /// The part of this function's code that holds \p Range: \ref CodeRange or
+  /// one of \ref FragmentRanges.
+  std::optional<ExceptionAddressRange>
+  codeChunkContaining(const ExceptionAddressRange &Range) const {
+    if (CodeRange.contains(Range))
+      return CodeRange;
+    for (const ExceptionAddressRange &Fragment : FragmentRanges)
+      if (Fragment.contains(Range))
+        return Fragment;
+    return std::nullopt;
+  }
+
+  /// True when \p Range lies in one part of this function's code.
+  bool ownsCode(const ExceptionAddressRange &Range) const {
+    return codeChunkContaining(Range).has_value();
+  }
+
+  /// True when \p Address is in this function's code.
+  bool ownsCode(va_t Address) const {
+    return Address != InvalidVA &&
+           ownsCode(ExceptionAddressRange{Address, Address + 1});
+  }
 
   /// Start tracking independently replaceable parse contributions.
   ///
@@ -175,6 +204,18 @@ struct ExceptionFunction {
            Encoding != ExceptionEncoding::X64UnwindV3;
   }
 };
+
+/// The instruction-domain range of \p Scope when it lies in one part of
+/// \p Owner's code, normalized against that part.
+inline std::optional<ExceptionAddressRange>
+getSemanticSEHGuardedRange(const SEHScopeRecord &Scope, Arch TargetArch,
+                           const ExceptionFunction &Owner) {
+  const std::optional<ExceptionAddressRange> Chunk =
+      Owner.codeChunkContaining(Scope.GuardedRange);
+  if (!Chunk)
+    return std::nullopt;
+  return getSemanticSEHGuardedRange(Scope, TargetArch, *Chunk);
+}
 
 } // namespace neverd
 

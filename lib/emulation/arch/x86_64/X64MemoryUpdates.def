@@ -6,7 +6,8 @@
 // The native instruction owns flags. These unsigned expressions predict only
 // the written bytes after read admission; the caller masks the operand width.
 // Naturally aligned LOCK forms share the same preflight and physical lease.
-// Bit-string memory operations and cross-page accesses stay rejected.
+// Bit-string updates instead observe the processor result through
+// RAMTransaction.
 NEVERD_X64_MEMORY_UPDATE(INC, 1, Original + 1)
 NEVERD_X64_MEMORY_UPDATE(DEC, 1, Original - 1)
 NEVERD_X64_MEMORY_UPDATE(NEG, 1, uint64_t(0) - Original)

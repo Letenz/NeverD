@@ -1,0 +1,27 @@
+//===- X86SegmentRegisters.def - x86 segment registers ----------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// X86_SEGMENT_REGISTER(ID, NUMBER, NAME)
+//
+//   ID      X86SegmentRegister enumerator.
+//   NUMBER  Encoding in the ModRM reg field of `mov Sreg, r/m16`; the
+//           ReadSegment and WriteSegment intrinsics name the register by it.
+//   NAME    AT&T register name without the `%` sigil.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef X86_SEGMENT_REGISTER
+#define X86_SEGMENT_REGISTER(ID, NUMBER, NAME)
+#endif
+
+X86_SEGMENT_REGISTER(ES, 0, "es")
+X86_SEGMENT_REGISTER(CS, 1, "cs")
+X86_SEGMENT_REGISTER(SS, 2, "ss")
+X86_SEGMENT_REGISTER(DS, 3, "ds")
+X86_SEGMENT_REGISTER(FS, 4, "fs")
+X86_SEGMENT_REGISTER(GS, 5, "gs")
+
+#undef X86_SEGMENT_REGISTER

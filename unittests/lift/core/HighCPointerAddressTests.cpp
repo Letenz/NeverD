@@ -41729,6 +41729,166 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
       << Definition;
 }
 
+TEST(HighCPointerAddresses, ColdFragmentScopeStructuresItsTry) {
+  // PsIumResumeAfterHibernate's shape: the guarded store and its __except
+  // body sit in a chained cold fragment away from the hot path.  The scope is
+  // live there, so the store is the __try body and the handler's result the
+  // __except body.  Without the chain the region stays unstructured.
+  constexpr va_t Entry = 0x140001000;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,             // sub rsp
+                               0x85, 0xc9,                         // test ecx
+                               0x0f, 0x85, 0x34, 0x00, 0x00, 0x00, // jne cold
+                               0x31, 0xc0,                         // xor eax
+                               0x48, 0x83, 0xc4, 0x28,             // add rsp
+                               0xc3};                              // ret
+  Code.resize(0x40, 0xcc);
+  Code.insert(Code.end(),
+              {0xc7, 0x02, 0x01, 0x00, 0x00, 0x00, // mov dword [rdx], 1
+               0xb8, 0x02, 0x00, 0x00, 0x00,       // mov eax, 2
+               0xe9, 0xbe, 0xff, 0xff, 0xff,       // jmp epilogue
+               0xb8, 0x03, 0x00, 0x00, 0x00,       // handler: mov eax, 3
+               0xe9, 0xb4, 0xff, 0xff, 0xff});     // jmp epilogue
+  auto Build = [&](bool Chained) {
+    BinaryImage Img = makeCodeFixture(Entry, Code);
+    ExceptionFunction EH;
+    EH.CodeRange = {Entry, Entry + 0x13};
+    EH.Encoding = ExceptionEncoding::X64UnwindV1;
+    EH.UnwindVersion = 1;
+    EH.UnwindFlags = 1;
+    EH.PrologueSize = 4;
+    EH.Personality = ExceptionPersonality::CSpecificHandler;
+    UnwindOperation Alloc;
+    Alloc.Kind = UnwindOperationKind::AllocateSmall;
+    Alloc.CodeOffset = 4;
+    Alloc.StackOffset = 0x28;
+    EH.UnwindOperations.push_back(Alloc);
+    EH.SEH.emplace();
+    SEHScopeRecord Scope;
+    Scope.GuardedRange = {Entry + 0x40, Entry + 0x46};
+    Scope.Kind = SEHScopeKind::CatchAll;
+    Scope.HandlerVA = Entry + 0x50;
+    EH.SEH->Scopes.push_back(Scope);
+    if (Chained)
+      EH.FragmentRanges = {{Entry + 0x40, Entry + 0x5a}};
+    Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+    Img.ExceptionMetadata.rebuildIndex();
+    return Img;
+  };
+  const std::string HighC = highcOnlyFunction(Build(true), Entry);
+  EXPECT_NE(HighC.find("structured_regions=1, fallback_regions=0"),
+            std::string::npos)
+      << HighC;
+  const size_t Try = HighC.find("__try {");
+  const size_t Except = HighC.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
+  ASSERT_NE(Try, std::string::npos) << HighC;
+  ASSERT_NE(Except, std::string::npos) << HighC;
+  EXPECT_NE(HighC.substr(Try, Except - Try).find("arg1"), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.substr(Try, Except - Try).find("return"), std::string::npos)
+      << HighC;
+  EXPECT_NE(
+      HighC.substr(Except, HighC.find('}', Except + 1) - Except).find(" = 3;"),
+      std::string::npos)
+      << HighC;
+
+  const std::string Unchained = highcOnlyFunction(Build(false), Entry);
+  EXPECT_NE(Unchained.find("unstructured SEH region"), std::string::npos)
+      << Unchained;
+}
+
+TEST(HighCPointerAddresses, SplitScopeRangesFormOneTry) {
+  // PspBuildCreateProcessContext's shape: one __try split into two scope
+  // ranges with one handler, the second a part of the protected body placed
+  // after the handler and entered only by a jump from the first.  Both
+  // stores belong to one __try; the second range must not print unguarded
+  // or as a separate try.
+  constexpr va_t Entry = 0x140001000;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,             // sub rsp
+                               0xc7, 0x01, 0x01, 0x00, 0x00, 0x00, // [rcx]=1
+                               0x85, 0xd2,                         // test edx
+                               0x0f, 0x85, 0x2e, 0x00, 0x00, 0x00, // jne part
+                               0x31, 0xc0,                         // xor eax
+                               0x48, 0x83, 0xc4, 0x28,             // add rsp
+                               0xc3};                              // ret
+  Code.resize(0x20, 0xcc);
+  Code.insert(Code.end(), {0xb8, 0x03, 0x00, 0x00, 0x00, // handler: eax = 3
+                           0xeb, 0xed});                 // jmp epilogue
+  Code.resize(0x40, 0xcc);
+  Code.insert(Code.end(),
+              {0x41, 0xc7, 0x00, 0x02, 0x00, 0x00, 0x00, // part: [r8] = 2
+               0xeb, 0xc9});                             // jmp after try
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  ExceptionFunction EH;
+  EH.CodeRange = {Entry, Entry + 0x49};
+  EH.Encoding = ExceptionEncoding::X64UnwindV1;
+  EH.UnwindVersion = 1;
+  EH.UnwindFlags = 1;
+  EH.PrologueSize = 4;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  UnwindOperation Alloc;
+  Alloc.Kind = UnwindOperationKind::AllocateSmall;
+  Alloc.CodeOffset = 4;
+  Alloc.StackOffset = 0x28;
+  EH.UnwindOperations.push_back(Alloc);
+  EH.SEH.emplace();
+  for (ExceptionAddressRange Range :
+       {ExceptionAddressRange{Entry + 0x04, Entry + 0x12},
+        ExceptionAddressRange{Entry + 0x40, Entry + 0x49}}) {
+    SEHScopeRecord Scope;
+    Scope.GuardedRange = Range;
+    Scope.Kind = SEHScopeKind::CatchAll;
+    Scope.HandlerVA = Entry + 0x20;
+    EH.SEH->Scopes.push_back(Scope);
+  }
+  Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  Img.ExceptionMetadata.rebuildIndex();
+
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_NE(HighC.find("structured_regions=2, fallback_regions=0"),
+            std::string::npos)
+      << HighC;
+  const size_t Try = HighC.find("__try {");
+  const size_t Except = HighC.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
+  ASSERT_NE(Try, std::string::npos) << HighC;
+  ASSERT_NE(Except, std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("__try {", Try + 1), std::string::npos) << HighC;
+  const std::string Protected = HighC.substr(Try, Except - Try);
+  EXPECT_NE(Protected.find("arg0"), std::string::npos) << HighC;
+  EXPECT_NE(Protected.find("2)"), std::string::npos) << HighC;
+  EXPECT_NE(
+      HighC.substr(Except, HighC.find('}', Except + 1) - Except).find(" = 3;"),
+      std::string::npos)
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, ContextCaptureTakesOnlyItsRecord) {
+  // RtlCaptureContext2(PCONTEXT) stores every register into the record.  Its
+  // body reads RDX, R8 and R9 to save them, not as arguments; the SDK
+  // prototype keeps the call at one argument.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Routine = 0x140001020;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x49, 0x08,       // mov rcx, [rcx+8]
+                               0xe8, 0x13, 0x00, 0x00, 0x00, // call routine
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Routine - Entry, 0xcc);
+  Code.insert(Code.end(),
+              {0x48, 0x89, 0x91, 0x88, 0x00, 0x00, 0x00, // mov [rcx+88h], rdx
+               0x4c, 0x89, 0x81, 0xb8, 0x00, 0x00, 0x00, // mov [rcx+0B8h], r8
+               0x4c, 0x89, 0x89, 0xc0, 0x00, 0x00, 0x00, // mov [rcx+0C0h], r9
+               0xc3});
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol RSym = Symbol::makeFunc(Routine);
+  RSym.Name = "RtlCaptureContext2";
+  Img.Symbols.push_back(RSym);
+  const std::string Caller = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_TRUE(
+      std::regex_search(Caller, std::regex(R"(RtlCaptureContext2\([^,()]+\))")))
+      << Caller;
+  EXPECT_EQ(Caller.find("unknown"), std::string::npos) << Caller;
+}
+
 TEST(HighCPointerAddresses, SegmentMxcsrTransferUsesSegmentAccessors) {
   // KiSaveProcessorControlState keeps MXCSR in the KPCR: `stmxcsr gs:[180h]`
   // and `ldmxcsr gs:[184h]` move one DWORD at a GS offset, which the
@@ -41834,6 +41994,88 @@ TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
                        "arg0);"),
             std::string::npos)
       << HighC;
+}
+
+TEST(HighCPointerAddresses, MaskedGlobalAddressIsAnIntegerOperand) {
+  // ObpStartRuntimeStackTrace selects a global's address or zero with
+  // `sbb rax, rax; and rax, rdx` after `lea rdx, [global]`.  C has no `&` on
+  // a pointer, so the address of the global's byte backing enters the AND as
+  // an integer.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Global = 0x140002000;
+  std::vector<uint8_t> Code = {
+      0x8b, 0x05, 0,    0,    0, 0,    // mov eax, [global]
+      0x41, 0x89, 0x01,                // mov [r9], eax
+      0x0f, 0xb7, 0x05, 0,    0, 0, 0, // movzx eax, word [global+2]
+      0x41, 0x89, 0x41, 0x04,          // mov [r9+4], eax
+      0x48, 0x8d, 0x15, 0,    0, 0, 0, // lea rdx, [global]
+      0xf7, 0xd9,                      // neg ecx
+      0x48, 0x19, 0xc0,                // sbb rax, rax
+      0x48, 0x21, 0xd0,                // and rax, rdx
+      0x49, 0x89, 0x00,                // mov [r8], rax
+      0xc3};
+  auto Patch = [&](size_t At, va_t Target, va_t Next) {
+    const uint32_t Disp = static_cast<uint32_t>(Target - Next);
+    for (unsigned I = 0; I < 4; ++I)
+      Code[At + I] = static_cast<uint8_t>(Disp >> (8 * I));
+  };
+  Patch(2, Global, Entry + 6);
+  Patch(12, Global + 2, Entry + 16);
+  Patch(23, Global, Entry + 27);
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Segment Data;
+  Data.Name = ".data";
+  Data.VA = Global;
+  Data.Size = 16;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.assign(16, 0);
+  Img.Segments.push_back(std::move(Data));
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("& &"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("& (uintptr_t)&"), std::string::npos) << HighC;
+}
+TEST(HighCPointerAddresses, SegmentSelectorsMoveThroughAsm) {
+  // RtlCaptureContext stores the segment selectors into the CONTEXT and
+  // SwapContext reloads them: `mov [rcx], cs`, `mov ax, ss`, `mov ds, dx`.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x8c, 0x09,             // mov [rcx], cs
+                                     0x66, 0x8c, 0xd0,       // mov ax, ss
+                                     0x66, 0x89, 0x41, 0x02, // mov [rcx+2], ax
+                                     0x8e, 0xda,             // mov ds, dx
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("mov %%cs, %0"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("mov %%ss, %0"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("mov %w0, %%ds"), std::string::npos) << HighC;
+}
+
+TEST(LLVMCPointerAddresses, SegmentSelectorsMoveThroughInlineAsm) {
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x8c, 0x09,             // mov [rcx], cs
+                                     0x66, 0x8c, 0xd0,       // mov ax, ss
+                                     0x66, 0x89, 0x41, 0x02, // mov [rcx+2], ax
+                                     0x8e, 0xda,             // mov ds, dx
+                                     0xc3};
+  const std::string Source =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(Source.find("mov %%cs, %0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("mov %%ss, %0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("mov %w0, %%ds"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, RegisterFormLldtLoadsItsOperand) {
+  // HalpLMStub: `lldt ax` with a selector loaded from memory.  An `__asm`
+  // block cannot name that value; the asm statement takes it in a register.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x0f, 0xb7, 0x01, // movzx eax, word [rcx]
+                                     0x0f, 0x00, 0xd0, // lldt ax
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__asm__ volatile(\"lldt %w0\""), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.find("__asm {"), std::string::npos) << HighC;
 }
 
 TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {

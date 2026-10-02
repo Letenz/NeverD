@@ -1180,3 +1180,57 @@ TEST(SwiftBooleanProjection,
   F.Image.DyldBindSlots[SuperSlot].Module = "/tmp/libobjc.A.dylib";
   EXPECT_FALSE(F.qualify());
 }
+
+TEST(SwiftBooleanProjection,
+     FixedSuperBooleanMessageKeepsArgumentsAndResultPadding) {
+  ProjectionFixture F;
+  const va_t SuperSlot = Slot + 16, SelectorSlot = 0x20c0;
+  F.Image.ImportPtrSlots[SuperSlot] = "_objc_msgSendSuper2";
+  ASSERT_TRUE(F.Image.recordDyldBindSlot(SuperSlot, "_objc_msgSendSuper2", 0,
+                                         "/usr/lib/libobjc.A.dylib", false));
+  F.Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+  F.Image.ObjCSourceReferences[SelectorSlot] = {
+      ObjCSourceReference::Kind::Selector, SelectorSlot, 8,
+      "needsDisplayForKey:"};
+  ObjCMethod Method;
+  Method.ClassName = "Base";
+  Method.Selector = "needsDisplayForKey:";
+  Method.TypeEncoding = "B24@0:8@16";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  Method.Status = "supported";
+  F.Image.ObjCMethods.push_back(Method);
+  F.word(0x1020, 0xb0000010);
+  F.word(0x1024, 0xf9404a10);
+  F.word(0x1028, 0xd61f0200);
+  auto &B = F.Low.Blocks.front();
+  auto Call = B.Ops.front();
+  Call.Addr = 0x300c;
+  Call.Inputs[0].Offset = 0x1020;
+  auto Load = B.Ops.front();
+  Load.Opcode = NdOp::LOAD;
+  Load.Addr = 0x3008;
+  Load.Output = NdVar::reg(8, 8);
+  Load.Inputs[0] = NdVar::cst(SelectorSlot, 8);
+  B.Ops.back().Addr = 0x3010;
+  B.Ops.insert(B.Ops.end() - 1, Load);
+  B.Ops.insert(B.Ops.end() - 1, Call);
+  B.EndAddr = 0x3014;
+  F.word(0x3008, 0x58ff85c1);
+  F.word(0x300c, 0x97fff805);
+  F.word(0x3010, 0xd65f03c0);
+  const auto Hints = buildObjCSourceCallHints(F.Image, F.Low);
+  ASSERT_EQ(Hints.count(0x300c), 1U);
+  ASSERT_EQ(Hints.at(0x300c).CallKind, SourceCallTypeHint::Kind::ObjCSuper2);
+  ASSERT_EQ(Hints.at(0x300c).Signature.Parameters.size(), 3U);
+  ASSERT_TRUE(F.qualify());
+
+  B.Ops[1].Inputs[1].Offset = 3;
+  EXPECT_FALSE(F.qualify()); // Undefined bits reach the objc_super pointer.
+  B.Ops[1].Inputs[1].Offset = 1;
+  F.Image.DyldBindSlots[SuperSlot].Module = "/tmp/libobjc.A.dylib";
+  EXPECT_FALSE(F.qualify());
+  F.Image.DyldBindSlots[SuperSlot].Module = "/usr/lib/libobjc.A.dylib";
+  F.Image.DyldBindSlots[SuperSlot].Addend = 8;
+  EXPECT_FALSE(F.qualify());
+}

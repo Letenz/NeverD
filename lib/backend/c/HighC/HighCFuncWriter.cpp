@@ -331,7 +331,7 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     for (const HighEHClause &Clause : Stmt.EHClauses) {
       auto Reachable = [&](va_t Address) {
         return Address && Func.ExceptionMetadata &&
-               Func.ExceptionMetadata->CodeRange.contains(Address);
+               Func.ExceptionMetadata->ownsCode(Address);
       };
       if (Clause.Kind == HighEHClauseKind::SEHExcept &&
           Reachable(Clause.HandlerVA)) {

@@ -54,6 +54,8 @@ SIDEEFFECT(Intrinsic::Mwaitx);
 SIDEEFFECT(Intrinsic::Xsetbv);
 SIDEEFFECT(Intrinsic::Rdrand);
 SIDEEFFECT(Intrinsic::Rdseed);
+SIDEEFFECT(Intrinsic::ReadSegment);
+SIDEEFFECT(Intrinsic::WriteSegment);
 SIDEEFFECT(Intrinsic::Wrmsr);
 SIDEEFFECT(Intrinsic::Wrpkru);
 SIDEEFFECT(Intrinsic::Fxsave);

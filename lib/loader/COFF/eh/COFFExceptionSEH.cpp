@@ -52,10 +52,13 @@ bool isAArch64ConstantTrueFilter(const BinaryImage &Img, va_t FilterVA) {
 /// the parent's table is the union over the parent and every funclet MSVC
 /// split out, and each funclet additionally carries its own copy of the
 /// entries that fall inside it.  An entry outside the referencing runtime
-/// function is therefore not corrupt — it simply cannot be selected from that
-/// frame, because dispatch compares the faulting PC against the range.  What
-/// must still hold is that the range names real code described by unwind
-/// information, which is what this proves.
+/// function is therefore not corrupt.  In a funclet, which has a handler of
+/// its own, it cannot be selected from that frame, because dispatch compares
+/// the faulting PC against the range.  In a chained fragment of the function
+/// it is selected: unwinding a fault there follows the chain to this record's
+/// handler (ExceptionFunction::FragmentRanges).  What must hold either way is
+/// that the range names real code described by unwind information, which is
+/// what this proves.
 bool isCoveredByRuntimeFunction(const BinaryImage &Img,
                                 const ExceptionAddressRange &Range) {
   const ExceptionInfo &Info = Img.ExceptionMetadata;

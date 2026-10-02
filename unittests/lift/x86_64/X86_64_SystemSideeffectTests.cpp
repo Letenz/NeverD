@@ -177,6 +177,26 @@ TEST(X86SystemSideeffect, SystemInstructionsKeepTheirRegisterOperands) {
   EXPECT_TRUE(writes(Rdrand.Ops, x86reg::CF));
 }
 
+TEST(X86SystemSideeffect, SegmentRegisterMovesReadAndWriteSelectors) {
+  const LiftedInstruction Read = liftX64({0x8c, 0x09}); // mov [rcx], cs
+  const LowOp *Selector = findIntrinsic(Read.Ops, Intrinsic::ReadSegment);
+  ASSERT_NE(Selector, nullptr);
+  EXPECT_EQ(Selector->Output.Size, 2u);
+  ASSERT_EQ(Selector->NumInputs, 2);
+  EXPECT_EQ(Selector->Inputs[1].Offset, 1u); // CS
+  EXPECT_TRUE(
+      std::any_of(Read.Ops.begin(), Read.Ops.end(),
+                  [](const LowOp &Op) { return Op.Opcode == NdOp::STORE; }));
+
+  const LiftedInstruction Write = liftX64({0x8e, 0xda}); // mov ds, dx
+  const LowOp *Load = findIntrinsic(Write.Ops, Intrinsic::WriteSegment);
+  ASSERT_NE(Load, nullptr);
+  EXPECT_EQ(Load->Output.Size, 0u);
+  ASSERT_EQ(Load->NumInputs, 3);
+  EXPECT_EQ(Load->Inputs[1].Offset, 3u); // DS
+  EXPECT_EQ(Load->Inputs[2].Size, 2u);   // the low word of the source
+}
+
 TEST(X86SystemSideeffect, UnmodeledSystemInstructionsStayUnlifted) {
   // CLTS, VMFUNC, ENCLS and RDGSBASE need state LowIR does not model; none
   // of them may become another instruction.

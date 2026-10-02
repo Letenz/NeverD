@@ -903,6 +903,28 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
         };
     return Pair(Left, Right, 0);
   };
+  // Predicated selects are few.  Index them once in address order rather
+  // than rescanning every operation of the function for each guard, which
+  // exhausts the alias budget on a large function's second switch.
+  struct SelectSite {
+    va_t Addr;
+    const InsnRecord *Insn;
+    size_t Index;
+  };
+  std::vector<SelectSite> SelectSites;
+  bool HasGuardCondition = false;
+  for (const std::optional<bool> &Condition : TableConditions)
+    HasGuardCondition |= Condition.has_value();
+  if (HasGuardCondition)
+    for (const auto &[Addr, Insn] : Insns) {
+      if (!consumeAliasSyntaxWork())
+        return failIncomplete();
+      if (Insn.IsInstructionGuard)
+        continue;
+      for (size_t Index = 0; Index < Insn.Ops.size(); ++Index)
+        if (Insn.Ops[Index].Opcode == NdOp::SELECT)
+          SelectSites.push_back({Addr, &Insn, Index});
+    }
   for (size_t GuardIndex = 0; GuardIndex < GuardBranchAddrs.size();
        ++GuardIndex) {
     if (!consumeAliasSyntaxWork())
@@ -962,13 +984,12 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     if (!BranchPredicate)
       continue;
 
-    for (const auto &[Addr, Insn] : Insns) {
-      if (!consumeAliasSyntaxWork())
-        return failIncomplete();
-      if (Insn.IsInstructionGuard || Addr > BranchAddr)
-        continue;
-      for (size_t SelectIndex = 0; SelectIndex < Insn.Ops.size();
-           ++SelectIndex) {
+    for (const SelectSite &Site : SelectSites) {
+      if (Site.Addr > BranchAddr)
+        break;
+      const InsnRecord &Insn = *Site.Insn;
+      {
+        const size_t SelectIndex = Site.Index;
         if (!consumeAliasSyntaxWork())
           return failIncomplete();
         const LowOp &Select = Insn.Ops[SelectIndex];
