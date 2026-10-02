@@ -1,5 +1,7 @@
 #include "ImmutableNativeFrame.h"
 
+#include "../SourceUnwind.h"
+
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
@@ -32,18 +34,38 @@ bool immutableNativeFrameMachineMatches(const BinaryImage &Image,
   // Re-lift with the canonical decoder, including all frame address arithmetic,
   // stores, loads and flags. A saved LowIR annotation is not machine evidence.
   // This deliberately excludes rewritten tails, opaque exits and jump tables.
-  if (Function.DecodedInstructionCount > 4096)
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Arch != Arch::AArch64 || Image.Bits != Bitness::Bits64 ||
+      !Function.Entry || Function.Entry % 4 ||
+      !Function.DecodedInstructionCount ||
+      Function.DecodedInstructionCount > 4096 ||
+      !Function.hasCompleteLiftCoverage() || !Function.JumpTables.empty() ||
+      (!Function.ModuleAnalysisRoots.empty() &&
+       Function.ModuleAnalysisRoots != std::set<va_t>{Function.Entry}) ||
+      (!Function.OrdinaryModuleAnalysisRoots.empty() &&
+       Function.OrdinaryModuleAnalysisRoots !=
+           std::set<va_t>{Function.Entry}) ||
+      (Function.ExceptionMetadata &&
+       !isPlainSourceUnwind(*Function.ExceptionMetadata)))
     return false;
+  if (auto Error = validateLowInstructionBoundaries(
+          Function, LowInstructionBoundaryRequirement::Required)) {
+    llvm::consumeError(std::move(Error));
+    return false;
+  }
   Decoder Dec;
   if (!Dec.init(Image))
     return false;
   std::map<int, va_t> Starts;
   std::set<va_t> Unique;
+  std::set<va_t> Instructions;
   for (const auto &Block : Function.Blocks)
     if (!Starts.emplace(Block.Id, Block.StartAddr).second ||
         !Unique.insert(Block.StartAddr).second)
       return false;
   for (const auto &Block : Function.Blocks) {
+    if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+      return false;
     va_t Next = Block.StartAddr;
     std::set<va_t> Successors;
     for (const auto &B : Block.InstructionBoundaries) {
@@ -53,7 +75,8 @@ bool immutableNativeFrameMachineMatches(const BinaryImage &Image,
       }
       if (B.FirstOp > Block.Ops.size() ||
           B.OpCount > Block.Ops.size() - B.FirstOp || B.Address != Next ||
-          B.Size != 4 || B.Address > UINT64_MAX - 4 ||
+          B.Size != 4 || B.Address % 4 || B.Address > UINT64_MAX - 4 ||
+          !Instructions.insert(B.Address).second ||
           B.Mode != InstructionMode::Default ||
           B.TargetMode != LowInstructionTargetMode::Preserve)
         return false;
@@ -133,7 +156,7 @@ bool immutableNativeFrameMachineMatches(const BinaryImage &Image,
     if (Successors != Actual)
       return false;
   }
-  return true;
+  return Instructions.size() == Function.DecodedInstructionCount;
 }
 
 std::optional<SourceFunctionTypeHint> immutableNativeDirectCallABI(

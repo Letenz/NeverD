@@ -142,6 +142,45 @@ struct Fixture {
 };
 } // namespace
 
+TEST(NativeBooleanResultProof, TypedIndirectCallObservesItsWholeDynamicTarget) {
+  for (unsigned Case = 0; Case < 8; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    const auto Dynamic = operation(NdOp::INDIR_CALL, NdVar::reg(a64reg::X0, 8),
+                                   {NdVar::reg(a64reg::X8, 8)});
+    F.linear({call(), copy(a64reg::X8, a64reg::X0),
+              mask(a64reg::X0, a64reg::X0), constant(a64reg::X8, 0x3000),
+              Dynamic, constant(a64reg::X0, 7),
+              operation(NdOp::LOAD, NdVar::reg(a64reg::X30, 8),
+                        {NdVar::reg(a64reg::SP, 8)}),
+              ret()});
+    auto &Ops = F.Low.Blocks[0].Ops;
+    const auto Site = sourceCallOccurrenceKey(Ops[4]);
+    ASSERT_TRUE(Site);
+    ASSERT_FALSE(Site->StaticTarget);
+    auto Contract = SourceBooleanOtherCallContract{&F.Release};
+    if (Case == 1)
+      Ops[3] = operation(NdOp::NOP, {}, {});
+    if (Case == 2)
+      Contract.Signature = nullptr;
+    if (Case == 3) {
+      Contract.Signature = nullptr;
+      Contract.RequiresIdenticalState = true;
+    }
+    if (Case == 4)
+      Contract.DoesNotReturn = true;
+    if (Case == 5)
+      Contract.OverwritesObjCCommand = true;
+    if (Case == 6)
+      Ops[4].Inputs[0].Size = 4;
+    if (Case == 7)
+      F.Release.Parameters[0].Location.ValueBytes = 4;
+    Ops[3].Addr = F.Low.Entry + 12;
+    F.Calls.emplace(*Site, Contract);
+    EXPECT_EQ(bool(F.prove()), Case == 0);
+  }
+}
+
 TEST(NativeBooleanResultProof, ExactOccurrenceIdentityComesFromLowIR) {
   auto Direct = call();
   Direct.Addr = 0x1234;
@@ -597,21 +636,19 @@ TEST(NativeBooleanResultProof, EveryPhysicalJoinAndLoopPathMustBeSafe) {
 
 TEST(NativeBooleanResultProof, TerminalBrkPathHasNoBooleanObservation) {
   Fixture F;
-  const auto Brk = operation(
-      NdOp::INTRINSIC, NdVar::reg(a64reg::X0, 8),
-      {NdVar::cst(static_cast<uint64_t>(Intrinsic::Brk), 2)});
-  F.Low.Blocks = {
-      block(0, 0x1000,
-            {call(), operation(NdOp::COND_BR, {},
-                               {NdVar::cst(0x1010, 8),
-                                NdVar::reg(a64reg::X2, 1)})},
-            {}, {1, 2}),
-      block(1, 0x1008,
-            {mask(a64reg::X0, a64reg::X0),
-             operation(NdOp::BRANCH, {}, {NdVar::cst(0x1018, 8)})},
-            {0}, {3}),
-      block(2, 0x1010, {Brk}, {0}),
-      block(3, 0x1018, {ret()}, {1})};
+  const auto Brk =
+      operation(NdOp::INTRINSIC, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(static_cast<uint64_t>(Intrinsic::Brk), 2)});
+  F.Low.Blocks = {block(0, 0x1000,
+                        {call(), operation(NdOp::COND_BR, {},
+                                           {NdVar::cst(0x1010, 8),
+                                            NdVar::reg(a64reg::X2, 1)})},
+                        {}, {1, 2}),
+                  block(1, 0x1008,
+                        {mask(a64reg::X0, a64reg::X0),
+                         operation(NdOp::BRANCH, {}, {NdVar::cst(0x1018, 8)})},
+                        {0}, {3}),
+                  block(2, 0x1010, {Brk}, {0}), block(3, 0x1018, {ret()}, {1})};
   F.bindCalls();
   ASSERT_TRUE(source_boolean_result_detail::terminalBrk(F.Low.Blocks[2]));
   EXPECT_TRUE(F.prove());
@@ -624,16 +661,15 @@ TEST(NativeBooleanResultProof, TerminalBrkPathHasNoBooleanObservation) {
 }
 
 TEST(NativeBooleanResultProof, NarrowPredicateImmediateBeforeBooleanCall) {
-  for (NdOp Opcode : {NdOp::INT_EQUAL, NdOp::INT_NOTEQUAL, NdOp::INT_LESS,
-                      NdOp::INT_SLESS, NdOp::INT_LESSEQUAL,
-                      NdOp::INT_SLESSEQUAL, NdOp::INT_CARRY,
-                      NdOp::INT_SOVF, NdOp::INT_SBOR}) {
+  for (NdOp Opcode :
+       {NdOp::INT_EQUAL, NdOp::INT_NOTEQUAL, NdOp::INT_LESS, NdOp::INT_SLESS,
+        NdOp::INT_LESSEQUAL, NdOp::INT_SLESSEQUAL, NdOp::INT_CARRY,
+        NdOp::INT_SOVF, NdOp::INT_SBOR}) {
     SCOPED_TRACE(int(Opcode));
     Fixture F;
     const auto Flag = operation(
         Opcode,
-        NdVar::reg(Opcode == NdOp::INT_SOVF ? a64reg::VFLAG : a64reg::CFLAG,
-                   1),
+        NdVar::reg(Opcode == NdOp::INT_SOVF ? a64reg::VFLAG : a64reg::CFLAG, 1),
         {NdVar::reg(a64reg::X19, 8), NdVar::cst(1, 4)});
     F.linear({Flag, call(), copy(a64reg::X8, a64reg::X0), mask(), ret()});
     EXPECT_TRUE(F.prove());
@@ -657,10 +693,10 @@ TEST(NativeBooleanResultProof,
   std::string Diagnostic;
   ASSERT_TRUE(assignDarwinScalarSourceABI(Message, Arch::AArch64, Diagnostic))
       << Diagnostic;
-  F.linear({call(), copy(a64reg::X8, a64reg::X0),
-            mask(a64reg::X0, a64reg::X0), constant(a64reg::X1, 0),
-            constant(a64reg::X2, 0), constant(a64reg::X3, 0),
-            constant(a64reg::X4, 0), call(0x3000), ret()});
+  F.linear({call(), copy(a64reg::X8, a64reg::X0), mask(a64reg::X0, a64reg::X0),
+            constant(a64reg::X1, 0), constant(a64reg::X2, 0),
+            constant(a64reg::X3, 0), constant(a64reg::X4, 0), call(0x3000),
+            ret()});
   ASSERT_EQ(F.Calls.size(), 1U);
   auto &Contract = F.Calls.begin()->second;
   Contract.Signature = &Message;
@@ -674,8 +710,7 @@ TEST(NativeBooleanResultProof,
   EXPECT_FALSE(F.prove());
 }
 
-TEST(NativeBooleanResultProof,
-     SelectorStubOverwritesOnlyItsCommandRegister) {
+TEST(NativeBooleanResultProof, SelectorStubOverwritesOnlyItsCommandRegister) {
   Fixture F;
   SourceFunctionTypeHint Message;
   Message.Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
@@ -686,10 +721,9 @@ TEST(NativeBooleanResultProof,
   std::string Diagnostic;
   ASSERT_TRUE(assignDarwinScalarSourceABI(Message, Arch::AArch64, Diagnostic))
       << Diagnostic;
-  F.linear({call(), copy(a64reg::X8, a64reg::X0),
-            mask(a64reg::X0, a64reg::X0), copy(a64reg::X1, a64reg::X8),
-            constant(a64reg::X0, 0), constant(a64reg::X2, 0),
-            call(0x3000), ret()});
+  F.linear({call(), copy(a64reg::X8, a64reg::X0), mask(a64reg::X0, a64reg::X0),
+            copy(a64reg::X1, a64reg::X8), constant(a64reg::X0, 0),
+            constant(a64reg::X2, 0), call(0x3000), ret()});
   auto &Contract = F.Calls.begin()->second;
   Contract.Signature = &Message;
   EXPECT_FALSE(F.prove());
@@ -713,9 +747,9 @@ TEST(NativeBooleanResultProof, OtherRawBooleanCallDefinesOnlyBitZero) {
   std::string Diagnostic;
   ASSERT_TRUE(assignDarwinSwiftSourceABI(Inputs, Arch::AArch64, Diagnostic))
       << Diagnostic;
-  F.linear({call(), copy(a64reg::X8, a64reg::X0),
-            constant(a64reg::X0, 0), constant(a64reg::X1, 0),
-            call(0x3000), mask(a64reg::X0, a64reg::X0), ret()});
+  F.linear({call(), copy(a64reg::X8, a64reg::X0), constant(a64reg::X0, 0),
+            constant(a64reg::X1, 0), call(0x3000), mask(a64reg::X0, a64reg::X0),
+            ret()});
   auto &Contract = F.Calls.begin()->second;
   Contract.Signature = &Inputs;
   EXPECT_FALSE(F.prove());

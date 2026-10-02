@@ -8715,6 +8715,7 @@ inline bool objcSourceCallBound(
            isSwiftValueWitnessSourceCallHint(Binding, Image.Arch);
   if (Binding.CallKind == SourceCallTypeHint::Kind::SwiftVirtual)
     return ContainingFunction && Binding.Virtual &&
+           !Binding.Virtual->NativeSelfClass &&
            ContainingFunction->Entry == Binding.Virtual->MethodEntry &&
            Expression.IsIndirectCall && Expression.CallAddr == 0 &&
            Expression.IndirectTarget &&

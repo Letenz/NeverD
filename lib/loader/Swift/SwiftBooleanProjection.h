@@ -2,13 +2,16 @@
 #define NEVERD_LOADER_SWIFT_SWIFTBOOLEANPROJECTION_H
 
 #include "../../ir/low/SourceBooleanResultProof.h"
+#include "../MachO/ImmutableNativeFrame.h"
 #include "../ObjC/ObjCClassAccessorMachine.h"
 #include "SwiftBooleanRuntimeCandidate.h"
+#include "SwiftMangledClassMethodABI.h"
 #include "SwiftMangledStringBundleABI.h"
 
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/loader/Swift/SwiftVirtualCalls.h"
 #include "neverd/support/BranchEncoding.h"
 
 #include "llvm/Support/Endian.h"
@@ -67,8 +70,14 @@ inline bool nativeEntry(const BinaryImage &Image, va_t Address,
               Image.Arch == Arch::AArch64
           ? swiftMangledStringBundleSourceABI(Image, Address, true)
           : std::nullopt;
-  if ((!NativeAnalysis && (!SwiftStringBundle ||
-                           !equalSourceABIs(*SwiftStringBundle, Signature))) ||
+  const auto SwiftClassMethod =
+      Signature.Origin == SourceFunctionTypeHint::OriginKind::SwiftMangled
+          ? swiftMangledObjCObjectPairVoidMethodSourceABI(Image, Address)
+          : std::nullopt;
+  if ((!NativeAnalysis &&
+       (!SwiftStringBundle ||
+        !equalSourceABIs(*SwiftStringBundle, Signature)) &&
+       (!SwiftClassMethod || !equalSourceABIs(*SwiftClassMethod, Signature))) ||
       !Image.isCodeAddress(Address))
     return false;
   for (const auto &Method : Image.ObjCMethods)
@@ -117,9 +126,10 @@ inline bool ordinaryRuntime(const SourceCallTypeHint &Hint) {
          Hint.CallKind == Kind::DarwinRuntimeCall;
 }
 
-// This identifies a current fixed object-returning SDK message occurrence.
-// Its authenticated pointer ABI may be supplied to the Boolean proof; source
-// publication still revalidates the message and receiver independently.
+// This identifies a current message with only object/pointer parameters and a
+// pointer or void result. Reuse selector-wide declaration agreement (embedded
+// metadata and loaded SDKs); a saved signature or selector spelling supplies
+// no ABI. Publication still validates the message and receiver independently.
 inline bool fixedObjectMessage(const BinaryImage &Image,
                                const SourceCallOccurrenceKey &Site,
                                const SourceCallTypeHint &Hint) {
@@ -148,23 +158,30 @@ inline bool fixedObjectMessage(const BinaryImage &Image,
   const auto Bind = Image.DyldBindSlots.find(*Slot);
   const auto &Signature = Hint.Signature;
   const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  const auto Expected = objcSelectorSourceTypeHint(Image, Hint.Selector);
+  const bool PointerReturn =
+      Signature.ReturnType && Signature.ReturnType->Kind == NdTypeKind::Ptr &&
+      Signature.ReturnType->Size == 8 &&
+      Signature.ReturnLocation.Kind == SourceABICarrierKind::IntegerRegister &&
+      Signature.ReturnLocation.RegisterOffset == TRI.IntReturnReg &&
+      Signature.ReturnLocation.ValueBytes == 8 &&
+      !Signature.ReturnLocation.ExtendTo32Bits;
+  const bool VoidReturn =
+      Signature.ReturnType && Signature.ReturnType->Kind == NdTypeKind::Void &&
+      Signature.ReturnLocation.Kind == SourceABICarrierKind::None;
   std::string Error;
   return Import && *Import == "_objc_msgSend" &&
          Bind != Image.DyldBindSlots.end() &&
          Bind->second.Module == "/usr/lib/libobjc.A.dylib" &&
          std::count(Image.DynInfo.NeededLibs.begin(),
                     Image.DynInfo.NeededLibs.end(), Bind->second.Module) == 1 &&
-         Signature.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK &&
+         (Signature.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+          Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::ObjCRuntime) &&
+         Expected && equalSourceABIs(*Expected, Signature) &&
          Signature.Architecture == Arch::AArch64 && Signature.HasExplicitABI &&
          Signature.Convention == SourceFunctionTypeHint::ConventionKind::C &&
-         validateSourceABI(Signature, Error) && Signature.ReturnType &&
-         Signature.ReturnType->Kind == NdTypeKind::Ptr &&
-         Signature.ReturnType->Size == 8 &&
-         Signature.ReturnLocation.Kind ==
-             SourceABICarrierKind::IntegerRegister &&
-         Signature.ReturnLocation.RegisterOffset == TRI.IntReturnReg &&
-         Signature.ReturnLocation.ValueBytes == 8 &&
-         !Signature.ReturnLocation.ExtendTo32Bits &&
+         validateSourceABI(Signature, Error) && (PointerReturn || VoidReturn) &&
          Signature.ReturnComponents.empty() &&
          Signature.Parameters.size() >= 2 &&
          Signature.Parameters.size() <= TRI.IntParamRegs.size() &&
@@ -244,7 +261,8 @@ inline bool fixedSuperMessage(const BinaryImage &Image,
 /// runtime ABIs, fixed scalar super dispatch or complete eight-instruction
 /// class-accessor machine proofs, or current native source ABIs. Other direct
 /// calls require identical physical state and supply no ABI or binding facts.
-/// Indirect calls remain unsupported.
+/// A native class virtual call must independently authenticate its declaration,
+/// every reaching swiftself definition and current immutable machine body.
 inline std::vector<SwiftBooleanProjection> qualifySwiftBooleanProjections(
     const BinaryImage &Image, const LowFunc &Low,
     const SourceFunctionTypeHint &EntrySignature,
@@ -262,6 +280,14 @@ inline std::vector<SwiftBooleanProjection> qualifySwiftBooleanProjections(
     if (Method.Implementation == Low.Entry && Method.Status != "supported")
       return {};
   const auto Hints = buildObjCSourceCallHints(Image, Low);
+  const auto Virtuals = buildSwiftVirtualCallHints(Image, Low);
+  if (EntrySignature.Origin ==
+          SourceFunctionTypeHint::OriginKind::SwiftMangled &&
+      swiftMangledObjCObjectPairVoidMethodSourceABI(Image, Low.Entry)) {
+    size_t Budget = 1U << 18;
+    if (!immutableNativeFrameMachineMatches(Image, Low, Budget))
+      return {};
+  }
   std::vector<SwiftBooleanProjection> Selected;
   std::map<SourceCallOccurrenceKey, SourceFunctionTypeHint> RawInputs;
   std::map<SourceCallOccurrenceKey, SourceBooleanOtherCallContract> Calls;
@@ -280,8 +306,19 @@ inline std::vector<SwiftBooleanProjection> qualifySwiftBooleanProjections(
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
       const auto Site = sourceCallOccurrenceKey(Op);
-      if (!Site || !CallInstructions.insert(Op.Addr).second ||
-          !swift_boolean_projection_detail::directCall(Image, *Site))
+      if (!Site || !CallInstructions.insert(Op.Addr).second)
+        return {};
+      if (Op.Opcode == NdOp::INDIR_CALL) {
+        const auto Virtual = Virtuals.find(Op.Addr);
+        if (Virtual == Virtuals.end() || !Virtual->second.Virtual ||
+            !Virtual->second.Virtual->NativeSelfClass ||
+            !isSwiftVirtualSourceCallHint(Image, Virtual->second))
+          return {};
+        Calls.emplace(
+            *Site, SourceBooleanOtherCallContract{&Virtual->second.Signature});
+        continue;
+      }
+      if (!swift_boolean_projection_detail::directCall(Image, *Site))
         return {};
       const auto Candidate =
           swiftBooleanRuntimeVeneerCandidate(Image, *Site->StaticTarget);

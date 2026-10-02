@@ -673,6 +673,55 @@ TEST(SwiftBooleanProjection, FixedObjectMessageRequiresExactPointerABI) {
 }
 
 TEST(SwiftBooleanProjection,
+     LocalObjectMessagesRequireCurrentDeclarationAgreement) {
+  for (bool Setter : {false, true}) {
+    SCOPED_TRACE(Setter);
+    ProjectionFixture F;
+    const std::string Selector = Setter ? "setLocalColor:" : "localColor";
+    ObjCMethod Declaration;
+    Declaration.Selector = Selector;
+    Declaration.TypeHint =
+        parseObjCMethodEncoding(Selector, Setter ? "v24@0:8@16" : "@16@0:8");
+    ASSERT_TRUE(Declaration.TypeHint);
+    F.Image.ObjCMethods.push_back(Declaration);
+    const auto Hint = addOpaqueObjectMessage(F, Selector);
+    ASSERT_TRUE(Hint.Signature.ReturnType);
+    auto &Block = F.Low.Blocks.front();
+    auto Message = Block.Ops.front();
+    Message.Inputs[0].Offset = 0x1040;
+    for (auto &Op : Block.Ops)
+      Op.Addr += 4;
+    Block.Ops.insert(Block.Ops.begin(), Message);
+    Block.EndAddr += 4;
+    F.word(0x3000, 0x97fff810);
+    F.word(0x3004, 0x97fff7ff);
+    F.word(0x3008, 0x92400000);
+    F.word(0x300c, 0xd65f03c0);
+    EXPECT_TRUE(F.qualify());
+    const SourceCallOccurrenceKey Site{0x3000, 0, NdOp::CALL, 0x1040};
+    ASSERT_TRUE(swift_boolean_projection_detail::fixedObjectMessage(
+        F.Image, Site, Hint));
+    auto Changed = Hint;
+    Changed.Signature.Parameters.back().Location.ValueBytes = 4;
+    EXPECT_FALSE(swift_boolean_projection_detail::fixedObjectMessage(
+        F.Image, Site, Changed));
+    F.Image.ObjCMethods.back().TypeHint =
+        parseObjCMethodEncoding(Selector, Setter ? "v24@0:8d16" : "d16@0:8");
+    EXPECT_FALSE(swift_boolean_projection_detail::fixedObjectMessage(
+        F.Image, Site, Hint));
+    F.Image.ObjCMethods.push_back(Declaration);
+    EXPECT_FALSE(swift_boolean_projection_detail::fixedObjectMessage(
+        F.Image, Site, Hint));
+    F.Image.ObjCMethods.erase(F.Image.ObjCMethods.end() - 2);
+    EXPECT_TRUE(swift_boolean_projection_detail::fixedObjectMessage(
+        F.Image, Site, Hint));
+    F.Image.ObjCMethods.back().TypeHint.reset();
+    EXPECT_FALSE(swift_boolean_projection_detail::fixedObjectMessage(
+        F.Image, Site, Hint));
+  }
+}
+
+TEST(SwiftBooleanProjection,
      FixedObjectGetterBeforeSelectedCallKeepsFailedStubsClosed) {
   ProjectionFixture F;
   addOpaqueObjectMessage(F);
