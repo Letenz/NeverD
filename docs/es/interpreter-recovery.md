@@ -86,6 +86,8 @@ Una prueba completa de dependencias puede omitir la enumeración de un valor de 
 
 Al alcanzar la capacidad, la caché de pruebas finitas sustituye los registros usados menos recientemente por pruebas admisibles que caben por separado. Los aciertos actualizan el orden de uso; los almacenamientos duplicados, fallos de caché y candidatos rechazados no lo alteran. Las pruebas expulsadas pueden necesitar demostrarse de nuevo. Solo se conservan dominios completos o excesos de su límite demostrados, y cada nueva llamada al solucionador sigue consumiendo el presupuesto compartido de consultas.
 
+La recuperación también conserva los dominios finitos completamente demostrados de cada campo de control con máscara. Si una relación conjunta supera `MaxControlTuples`, estos dominios independientes aún pueden restringir un destino sin afirmar correlaciones entre campos. Las uniones combinan los valores proyectados con la máscara común; los dominios ausentes o excesivos se descartan por completo. Un cambio de dominio vuelve a programar el nodo aunque la relación conjunta ya se haya ampliado. Una enumeración parcial no aporta hechos, y se mantienen los límites existentes de campos, tuplas, nodos simbólicos y solucionador.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrato de ejecución
