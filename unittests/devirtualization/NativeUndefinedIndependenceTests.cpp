@@ -92,6 +92,24 @@ public:
     Trap.UndefinedEffects.Coverage = LowUndefinedCoverage::Missing;
   }
 
+  void untakenUnaudited() {
+    untakenTrap();
+    auto &Insn = Instructions.at(0x200);
+    LowOp Op;
+    Op.Opcode = NdOp::COPY;
+    Op.Addr = 0x200;
+    Op.Output = NdVar::reg(0, 8);
+    Op.addInput(NdVar::reg(8, 8));
+    Insn.Ops = {Op};
+    Insn.Origin.Size = 2;
+    Insn.Origin.Control = LowInstructionControl::None;
+    Insn.Origin.ControlFlags = LowInstructionControlFlag::None;
+    Insn.Fallthrough.Address = 0x202;
+    Insn.NativeBytes = {0xd1, 0xd0};
+    certify(Insn);
+    Insn.UndefinedEffects.Coverage = LowUndefinedCoverage::Missing;
+  }
+
   void flags(bool Pop) {
     auto &Insn = Instructions[0x100];
     LowOp Op;
@@ -172,6 +190,136 @@ LowIRIndependenceContract contract() {
   Result.PreservedRegisters.push_back({32, 8});
   Result.PreservedFrameRanges.push_back({0, 8});
   return Result;
+}
+
+TEST(NativeUndefinedIndependence,
+     UnauditedReceiptsBindInnerDigestAndStopFetching) {
+  NativeProvider Provider;
+  Provider.untakenUnaudited();
+  auto C = contract();
+  C.RetainUnauditedNativeBoundaries = true;
+  const auto Check = [&] {
+    return detail::checkNativeUndefinedIndependence(Provider, {0x100}, C, {});
+  };
+  const auto First = Check();
+  ASSERT_TRUE(First.Proof.proved()) << First.Proof.Diagnostic;
+  EXPECT_FALSE(Provider.Fetches.count(0x202));
+  ASSERT_EQ(First.Proof.Certificate->NativeAuditBoundaries.size(), 1u);
+  auto &Boundary = Provider.Instructions.at(0x200);
+  Boundary.NativeBytes.back() ^= 8;
+  const auto ChangedBytes = Check();
+  ASSERT_TRUE(ChangedBytes.Proof.proved()) << ChangedBytes.Proof.Diagnostic;
+  EXPECT_NE(First.Proof.Certificate->InputDigest,
+            ChangedBytes.Proof.Certificate->InputDigest);
+  Boundary.Ops[0].Inputs[0] = NdVar::reg(16, 8);
+  Boundary.UndefinedEffects.OperationDigest =
+      lowUndefinedOperationDigest(Boundary.Ops);
+  const auto ChangedOps = Check();
+  ASSERT_TRUE(ChangedOps.Proof.proved()) << ChangedOps.Proof.Diagnostic;
+  EXPECT_NE(ChangedBytes.Proof.Certificate->InputDigest,
+            ChangedOps.Proof.Certificate->InputDigest);
+  C.RetainUnauditedNativeBoundaries = false;
+  const auto Strict = Check();
+  EXPECT_EQ(Strict.Proof.Status, LowIRIndependenceStatus::Unsupported);
+  EXPECT_FALSE(Strict.Proof.Certificate);
+  EXPECT_TRUE(Strict.Instructions.empty());
+}
+
+TEST(NativeUndefinedIndependence,
+     UnauditedBoundaryRejectsMalformedOrPartialEvidence) {
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    NativeProvider Provider;
+    Provider.untakenUnaudited();
+    auto &I = Provider.Instructions.at(0x200);
+    switch (Mutation) {
+    case 0:
+      I.UndefinedEffects.OperationDigest.clear();
+      break;
+    case 1:
+      I.UndefinedEffects.OperationDigest = "stale";
+      break;
+    case 2:
+      I.Ops[0].Inputs[0] = NdVar::reg(16, 8);
+      break;
+    case 3:
+      I.UndefinedEffects.Effects.push_back({1, NdVar::reg(0, 8), 0, 1, {}});
+      break;
+    case 4:
+      I.UndefinedEffects.Coverage = LowUndefinedCoverage::Unsupported;
+      break;
+    case 5:
+      I.UndefinedEffects.Coverage = static_cast<LowUndefinedCoverage>(99);
+      break;
+    case 6:
+      ++I.UndefinedEffects.OpCount;
+      break;
+    case 7:
+      I.NativeBytes.clear();
+      break;
+    case 8:
+      ++I.Origin.OpCount;
+      break;
+    case 9:
+      I.Ops[0].Opcode = NdOp::CALL;
+      I.Ops[0].Output = {};
+      I.Ops[0].Inputs[0] = NdVar::scalar(0x300, 8);
+      I.Origin.Control = LowInstructionControl::Call;
+      I.Origin.ControlFlags = LowInstructionControlFlag::Call;
+      I.Origin.Immediate = 0x300;
+      I.UndefinedEffects.OperationDigest = lowUndefinedOperationDigest(I.Ops);
+      break; // Missing physical CALL evidence must still be checked.
+    }
+    auto C = contract();
+    C.RetainUnauditedNativeBoundaries = true;
+    const auto R =
+        detail::checkNativeUndefinedIndependence(Provider, {0x100}, C, {});
+    EXPECT_FALSE(R.Proof.proved());
+    EXPECT_FALSE(R.Proof.Certificate);
+    EXPECT_TRUE(R.Instructions.empty());
+    EXPECT_EQ(R.Proof.Status, Mutation == 4 || Mutation == 5 || Mutation == 9
+                                  ? LowIRIndependenceStatus::Unsupported
+                                  : LowIRIndependenceStatus::Invalid)
+        << R.Proof.Diagnostic;
+  }
+}
+
+TEST(NativeUndefinedIndependence, NativeBoundaryAddressDoesNotSkipCandidate) {
+  NativeProvider Provider;
+  Provider.untakenUnaudited();
+  auto C = contract();
+  C.ReturnRegisters = {{0, 8}};
+  C.RetainUnauditedNativeBoundaries = true;
+  LowFunc Candidate;
+  Candidate.Entry = 0x200;
+  LowBlock B;
+  B.Id = 0;
+  B.StartAddr = 0x200;
+  B.EndAddr = 0x203;
+  B.Ops = Provider.Instructions.at(0x200).Ops;
+  B.Ops.front().Inputs[0] = NdVar::reg(0, 8);
+  B.InstructionBoundaries = {Provider.Instructions.at(0x200).Origin};
+  auto Return = Provider.Instructions.at(0x102).Ops.front();
+  Return.Addr = 0x202;
+  auto ReturnBoundary = Provider.Instructions.at(0x102).Origin;
+  ReturnBoundary.Address = 0x202;
+  ReturnBoundary.FirstOp = 1;
+  B.Ops.push_back(Return);
+  B.InstructionBoundaries.push_back(ReturnBoundary);
+  Candidate.Blocks.push_back(std::move(B));
+  const auto Check = [&] {
+    return detail::checkNativeLowIRRefinement(
+        Provider, {0x100}, Candidate, C, LowIRRefinementWitness::LiftedBits,
+        {});
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+  Candidate.Blocks.front().Ops.front().Inputs[0] = NdVar::scalar(7, 8);
+  const auto Bad = Check();
+  EXPECT_EQ(Bad.Proof.Status, LowIRRefinementStatus::Different)
+      << Bad.Proof.Diagnostic;
+  EXPECT_FALSE(Bad.Proof.Certificate);
+  EXPECT_TRUE(Bad.Instructions.empty());
 }
 
 TEST(NativeUndefinedIndependence, NarrowControlTargetIsInvalidBeforePartition) {

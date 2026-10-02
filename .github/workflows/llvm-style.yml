@@ -35,6 +35,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Keep documentation validation on this short workflow when Markdown-only
+      # changes skip the full LLVM and mobile builds.
+      - name: Check documentation translations
+        run: |
+          python -m unittest scripts.tests.test_check_docs_i18n -q
+          python scripts/check_docs_i18n.py
+
       - name: Install the pinned formatter
         run: >-
           python -m pip install --disable-pip-version-check --no-deps

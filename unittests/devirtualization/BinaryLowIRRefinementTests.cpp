@@ -10,6 +10,7 @@
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
 #include "neverd/lift/X86Regs.h"
 
+#include <algorithm>
 #include <set>
 
 using namespace neverd;
@@ -120,6 +121,83 @@ TEST(BinaryLowIRRefinement, GuardedShiftSupportsAllSymbolicCounts) {
   ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
   ASSERT_GE(Good.Certificate->Relation.Producers.size(), 2U);
   refused(P.check(Recovery.Residual, Witness::ZeroBits), Status::Different);
+}
+
+TEST(BinaryLowIRRefinement, UnreachableBoundaryDoesNotHideReachableSuffix) {
+  // CMP EAX,EAX; JE suffix; RCL EDX,1; suffix: MOV EAX,7; RET.
+  // Collection sees the dead fallthrough boundary before the taken suffix.
+  Program P({0x39, 0xc0, 0x74, 2, 0xd1, 0xd2, 0xb8, 7, 0, 0, 0, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  refused(P.check(Recovery.Residual), Status::Unsupported);
+  P.Contract.RetainUnauditedNativeBoundaries = true;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Certificate->Relation.NativeAuditBoundaries.size(), 1u);
+  EXPECT_EQ(
+      Good.Certificate->Relation.NativeAuditBoundaries.front().Boundary.Address,
+      Entry + 4);
+  EXPECT_TRUE(
+      std::any_of(Good.Certificate->Instructions.begin(),
+                  Good.Certificate->Instructions.end(),
+                  [](const auto &I) { return I.Origin.Address == Entry + 6; }));
+  // RCR EDX,1 is another valid, equally sized instruction with Missing
+  // coverage. Its unreachable bytes still bind all three proof digests.
+  P.Image.Segments.front().Data[5] = 0xda;
+  const auto ChangedBoundary = P.check(Recovery.Residual);
+  ASSERT_TRUE(ChangedBoundary.proved()) << ChangedBoundary.Proof.Diagnostic;
+  EXPECT_NE(Good.Certificate->Relation.OriginalDigest,
+            ChangedBoundary.Certificate->Relation.OriginalDigest);
+  EXPECT_NE(Good.Certificate->Relation.InputDigest,
+            ChangedBoundary.Certificate->Relation.InputDigest);
+  EXPECT_NE(Good.Certificate->InputDigest,
+            ChangedBoundary.Certificate->InputDigest);
+  P.Image.Segments.front().Data[7] = 8;
+  refused(P.check(Recovery.Residual), Status::Different);
+}
+
+TEST(BinaryLowIRRefinement, BoundaryUnreachabilityIsRelativeToSelectedWitness) {
+  // ADD establishes OF=1; BT makes it arbitrary while its ordinary lift keeps
+  // the old bit. LiftedBits cannot take JNO, but ZeroBits does take it.
+  Program P({0xb8, 0xff, 0xff, 0xff, 0x7f, 0x83, 0xc0, 1,    0x0f, 0xa3, 0xc8,
+             0x71, 6,    0xb8, 7,    0,    0,    0,    0xc3, 0xd1, 0xd2, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  P.Contract.RetainUnauditedNativeBoundaries = true;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Certificate->Relation.NativeAuditBoundaries.size(), 1u);
+  refused(P.check(Recovery.Residual, Witness::ZeroBits), Status::Unsupported);
+  const auto Independent =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  EXPECT_EQ(Independent.Proof.Status, LowIRIndependenceStatus::Dependent);
+  EXPECT_FALSE(Independent.Certificate);
+}
+
+TEST(BinaryLowIRRefinement, UnauditedBoundaryOptionIsRejectedByLoopAPIs) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Strict = P.check(Recovery.Residual);
+  ASSERT_TRUE(Strict.proved()) << Strict.Proof.Diagnostic;
+  P.Contract.RetainUnauditedNativeBoundaries = true;
+  const auto Finite = P.check(Recovery.Residual);
+  ASSERT_TRUE(Finite.proved()) << Finite.Proof.Diagnostic;
+  EXPECT_TRUE(Finite.Certificate->Relation.NativeAuditBoundaries.empty());
+  EXPECT_NE(Strict.Certificate->Relation.OriginalDigest,
+            Finite.Certificate->Relation.OriginalDigest);
+  EXPECT_NE(Strict.Certificate->Relation.InputDigest,
+            Finite.Certificate->Relation.InputDigest);
+  EXPECT_NE(Strict.Certificate->InputDigest, Finite.Certificate->InputDigest);
+  LowIRLoopRefinementPlan Plan;
+  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                         Recovery.Residual, P.Contract, Plan),
+          Status::Unsupported);
+  const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  EXPECT_EQ(Inferred.Inference.Status, LowIRLoopInferenceStatus::Unsupported);
+  EXPECT_FALSE(Inferred.Inference.Plan);
+  refused(Inferred.Refinement, Status::Unsupported);
 }
 
 TEST(BinaryLowIRRefinement, XaddHasNoFreshBitsAndRejectsAlteredDefinedOutputs) {

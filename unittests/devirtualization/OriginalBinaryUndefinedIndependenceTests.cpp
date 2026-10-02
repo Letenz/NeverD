@@ -124,6 +124,96 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     UnreachableUnauditedBoundariesRequireOptInAndRetainExactReceipts) {
+  for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
+           {0xd1, 0xd0}, {0x0f, 0xc1, 0x08}, {0xf3, 0xa4}}) {
+    // CMP EAX,EAX; JNE boundary; MOV EAX,7; RET; boundary: body; RET.
+    Program P({0x39, 0xc0, 0x75, 6, 0xb8, 7, 0, 0, 0, 0xc3});
+    P.Image.Segments.front().Data.insert(P.Image.Segments.front().Data.end(),
+                                         Bytes.begin(), Bytes.end());
+    P.append({0xc3});
+    // Compact explicit preservation ranges isolate the instruction budget
+    // from the native wrapper's eight individual default byte obligations.
+    P.Contract.PreservedRegisters = {{x86reg::RSP, 8}};
+    P.Contract.PreservedFrameRanges = {{0, 8}};
+    expectRefusal(P, Status::Unsupported);
+    P.Contract.RetainUnauditedNativeBoundaries = true;
+    const auto Good = P.check();
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    const auto &Inner = Good.Certificate->LowIR;
+    ASSERT_EQ(Inner.NativeAuditBoundaries.size(), 1u);
+    const auto &Receipt = Inner.NativeAuditBoundaries.front();
+    EXPECT_EQ(Receipt.Kind,
+              LowIRNativeAuditBoundaryKind::MissingUndefinedOutputs);
+    EXPECT_EQ(Receipt.SemanticsVersion, 1u);
+    EXPECT_EQ(Receipt.Boundary.Address, Entry + 10);
+    EXPECT_EQ(Receipt.Boundary.Size, Bytes.size());
+    EXPECT_EQ(Receipt.NativeBytesDigest.size(), 64u);
+    EXPECT_EQ(Receipt.OperationDigest.size(), 64u);
+    ASSERT_EQ(Good.Certificate->Instructions.size(), 5u);
+    for (const auto &Insn : Good.Certificate->Instructions)
+      if (Insn.Origin.Address == Entry + 10) {
+        EXPECT_EQ(Insn.NativeBytes, Bytes);
+        EXPECT_EQ(Insn.UndefinedEffects.Coverage,
+                  LowUndefinedCoverage::Missing);
+        EXPECT_EQ(Receipt.OperationDigest,
+                  lowUndefinedOperationDigest(Insn.Ops));
+      }
+    LowIRIndependenceLimits Limits;
+    Limits.MaxInstructions = 5;
+    const auto Limited = P.check(Limits);
+    ASSERT_TRUE(Limited.proved()) << Limited.Proof.Diagnostic;
+    Limits.MaxInstructions = 4;
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+    Limits = {};
+    ASSERT_GT(Good.Proof.SolverQueries, 0u);
+    Limits.MaxSolverQueries = Good.Proof.SolverQueries - 1;
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+    // Making the branch feasible cannot turn the boundary into an empty body.
+    P.Image.Segments.front().Data[2] = 0x74;
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     BoundaryRequiresProofForSymbolicAndArbitraryControl) {
+  // ECX > 7 returns; only ECX <= 7 reaches the second ECX > 9 test.
+  Program Dead({0x83, 0xf9, 7, 0x77, 5, 0x83, 0xf9, 9, 0x77, 6, 0xb8, 7, 0, 0,
+                0, 0xc3, 0xd1, 0xd0, 0xc3});
+  Dead.Contract.RetainUnauditedNativeBoundaries = true;
+  const auto Good = Dead.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  // The second guard becomes feasible for ECX in [4,7].
+  Dead.Image.Segments.front().Data[7] = 3;
+  expectRefusal(Dead, Status::Unsupported);
+  Program Arbitrary({0x0f, 0xa3, 0xc8, 0x70, 1, 0xc3, 0xd1, 0xd0, 0xc3});
+  Arbitrary.flagsProfile();
+  Arbitrary.Contract.RetainUnauditedNativeBoundaries = true;
+  expectRefusal(Arbitrary, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     EntryIndirectCallAndReturnArrivalsCannotCrossAnUnauditedBoundary) {
+  const std::vector<std::vector<uint8_t>> Programs = {
+      {0xd1, 0xd0, 0xc3},
+      {0x48, 0x8d, 0x05, 2, 0, 0, 0, 0xff, 0xe0, 0xd1, 0xd0, 0xc3},
+      {0xe8, 1, 0, 0, 0, 0xc3, 0xd1, 0xd0, 0xc3},
+      {0x68, 6, 0x10, 0, 0, 0xc3, 0xd1, 0xd0, 0xc3}};
+  const uint64_t BoundaryOffsets[] = {0, 9, 6, 6};
+  for (size_t I = 0; I != Programs.size(); ++I) {
+    Program P({});
+    P.Image.Segments.front().Data = Programs[I];
+    P.append({});
+    P.Contract.RetainUnauditedNativeBoundaries = true;
+    expectRefusal(P, Status::Unsupported);
+    const auto Result = P.check();
+    EXPECT_EQ(Result.Proof.InstructionAddress, Entry + BoundaryOffsets[I]);
+    EXPECT_EQ(Result.Proof.Diagnostic,
+              "feasible path reaches an unaudited native boundary");
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      RegisterXaddDefinesFlagsWithoutClearingExistingDependencies) {
   for (const auto &Bytes :
        std::vector<std::vector<uint8_t>>{{0x0f, 0xc0, 0xc4},

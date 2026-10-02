@@ -467,6 +467,20 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
   if (Image.Arch == Arch::AArch64)
     MatchFrameworkData("UIAccessibilityAnnouncementNotification",
                        "/System/Library/Frameworks/UIKit.framework/UIKit");
+  // Complete Xcode 26.5 ARM64 device/simulator ASTs declare these UIKit
+  // attributed-string keys as external, non-TLS NSString *const storage.
+  // Both UIKit TBD reexport maps authenticate the exact linker identities.
+  // Bind only their addresses; retain native loads and object identities.
+  if (Image.Arch == Arch::AArch64)
+    for (llvm::StringRef Name :
+         {"NSBackgroundColorAttributeName", "NSBaselineOffsetAttributeName",
+          "NSFontAttributeName", "NSForegroundColorAttributeName",
+          "NSKernAttributeName", "NSLigatureAttributeName",
+          "NSLinkAttributeName", "NSParagraphStyleAttributeName",
+          "NSStrikethroughStyleAttributeName", "NSStrokeColorAttributeName",
+          "NSStrokeWidthAttributeName", "NSUnderlineStyleAttributeName"})
+      MatchFrameworkData(Name,
+                         "/System/Library/Frameworks/UIKit.framework/UIKit");
   // CIContext.h imports OpenGLES on iOS, unavailable in the CLT SDK used by
   // the generated catalog. Complete Xcode 26.5 iPhoneOS and arm64 simulator
   // ASTs agree that these are external, non-TLS NSString pointer objects.
