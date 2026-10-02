@@ -22,7 +22,7 @@ constexpr auto Result = CPURegister::AArch64X0;
 #else
 constexpr auto ISA = GuestArchitecture::X64;
 constexpr auto Contract = ExecutionContract::CheckedX64;
-constexpr auto Result = CPURegister::X64RAX;
+constexpr auto Result = CPURegister::X64AX;
 #endif
 constexpr uint64_t Code = 0x10000, Page = 4096, Limit = 16 * Page;
 class Hvf : public testing::Test {

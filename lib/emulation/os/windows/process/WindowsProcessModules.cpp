@@ -26,34 +26,7 @@ llvm::Expected<std::string> moduleName(llvm::StringRef Name) {
     return failure(text::ModuleName + Name);
   return Name.lower();
 }
-llvm::Error relocate(Image &Loaded, uint64_t Base) {
-  const uint64_t Bias = Base - Loaded.Base;
-  if (!Bias)
-    return llvm::Error::success();
-  for (uint64_t RVA : Loaded.Relocations) {
-    bool Found = false;
-    for (auto &R : Loaded.Regions) {
-      const uint64_t Start = R.Address - Loaded.Base;
-      if (RVA < Start || RVA - Start >= R.Bytes.size() ||
-          PointerSize > R.Bytes.size() - (RVA - Start))
-        continue;
-      auto *Slot = R.Bytes.data() + RVA - Start;
-      llvm::support::endian::write64le(
-          Slot, llvm::support::endian::read64le(Slot) + Bias);
-      Found = true;
-      break;
-    }
-    if (!Found)
-      return failure(text::Metadata);
-  }
-  for (auto &R : Loaded.Regions)
-    R.Address += Bias;
-  for (auto &I : Loaded.Imports)
-    I.Slot += Bias;
-  // Only no-entry, no-TLS DLLs are movable in this startup contract.
-  Loaded.Base = Base;
-  return llvm::Error::success();
-}
+
 } // namespace
 llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
                                     const ProcessOptions &Options,
@@ -111,7 +84,7 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
                                     DLL && Image->Relocatable);
     if (!Base)
       return Base.takeError();
-    if (auto E = relocate(*Image, *Base))
+    if (auto E = relocateImage(*Image, *Base, Reads))
       return E;
     const size_t Index = Out.Modules.size();
     LoadedNames.emplace(Name, Index);

@@ -3,6 +3,10 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_CPU_OUTPUT_LIMIT
+// Preserve bounded, repeated native observations in successful JUnit cases.
+NEVERD_NATIVE_CPU_OUTPUT_LIMIT(65536)
+#endif
 #ifdef NEVERD_NATIVE_CPU_OWNER
 NEVERD_NATIVE_CPU_OWNER(NeverDRunControlTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDWindowsProcessTests)
@@ -542,6 +546,18 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsModuleImage.NativeWindowsLoaderRunsTheSameDLLGraph")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsModuleLifetime.NativeWindowsObservesStartupAndTermination")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsLifetimes.ExecutesStartupAndTerminationNotifications/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsLifetimes.SharesInstructionAndEventBudgetsAcrossInitialization/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsLifetimes.CallbackFaultDoesNotInventDetachNotifications/WhpX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
     "WindowsModules.LinksRelocatedDLLCodeDataOrdinalAPIsAndExecutableTLS/"

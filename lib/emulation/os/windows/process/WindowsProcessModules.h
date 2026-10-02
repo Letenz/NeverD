@@ -20,6 +20,9 @@ struct Program {
   /// One exact provider/name gate per process, independent of the caller image.
   std::vector<Import> Gates;
 };
+llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
+                                               const Program &Program,
+                                               const ProcessOptions &Options);
 llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
                                     const ProcessOptions &Options,
                                     const ExecutionBudget &Budget,

@@ -22,6 +22,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.evidence = self.root / "evidence"
         (self.root / "scripts").mkdir()
         (self.root / "scripts" / "NativeCPUTests.def").write_text(
+            'NEVERD_NATIVE_CPU_OUTPUT_LIMIT(65536)\n'
             'NEVERD_NATIVE_CPU_OWNER(Owner)\n'
             'NEVERD_NATIVE_CPU_REQUIRED_CASES("Native/Case/", "cases.def", "CASE")\n'
         )
@@ -125,6 +126,13 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_evidence(), 0)
         self.assertEqual(self.summary()["owners"], ["Owner"])
         self.assertFalse(self.summary()["with_drivers"])
+
+    def test_bounded_native_observations_are_retained_for_both_outcomes(self):
+        self.assertEqual(self.run_evidence(), 0)
+        command = self.executions[1]
+        for outcome in ("passed", "failed"):
+            index = command.index("--test-output-size-" + outcome)
+            self.assertEqual(command[index + 1], "65536")
 
     def test_hvf_profile_rejects_native_skips_and_preserves_optional_skips(self):
         definition = (self.root / "scripts/NativeCPUTests.def").read_text()
