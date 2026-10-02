@@ -85,7 +85,9 @@ class Client:
         return request_id
 
     def response(self, request_id):
-        return self.next(lambda message: message.get("type") == "response" and message.get("request_id") == request_id)
+        return self.next(lambda message: message.get("type") == "response"
+                         and message.get("request_id") == request_id
+                         and message.get("status") != "progress")
 
     def call(self, operation, payload=None, **kwargs):
         request_id = self.send(operation, payload, **kwargs)
@@ -125,8 +127,17 @@ def run(executable):
         binary.write_bytes(b"mock input")
         client = clients.enter_context(Client(executable))
         assert client.call("metadata")["error"]["code"] == "not_loaded"
-        opened = client.call("open", {"path": str(binary)}, fragmented=True)
+        open_id = client.send("open", {"path": str(binary)}, fragmented=True)
+        opened = client.response(open_id)
         assert opened["status"] == "ok", opened
+        for phase, done in (("image", 0), ("ready", 1)):
+            progress = client.next(lambda message: message.get("type") == "response"
+                                   and message.get("request_id") == open_id
+                                   and message.get("status") == "progress")
+            assert progress["operation"] == "open", progress
+            payload = progress["payload"]
+            assert (payload["phase"], payload["done"], payload["total"]) == (phase, done, 1), progress
+            assert Path(payload["detail"]).resolve() == binary.resolve(), progress
         revision = opened["revision"]
         assert opened["payload"]["entry_address"] == BASE
         assert opened["payload"]["function_count"] == 600
