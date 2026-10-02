@@ -57,4 +57,14 @@ TEST_F(PluginManagerTest, RejectsDuplicateCanonicalPluginPath) {
   EXPECT_EQ(neverd_plugins_count(Session), 1);
 }
 
+TEST_F(PluginManagerTest, ExternalBytecodeRulesUseSharedRecovery) {
+  ASSERT_EQ(neverd_plugins_load_file(Session, NEVERD_BYTECODE_PLUGIN_FIXTURE),
+            1)
+      << takeString(neverd_last_error(Session));
+  neverd_plugins_init(Session);
+  EXPECT_EQ(neverd_plugins_run(Session, "External Bytecode C", 0), 0)
+      << takeString(neverd_last_error(Session));
+  neverd_plugins_term(Session);
+}
+
 } // namespace

@@ -1808,6 +1808,10 @@ std::string LLVMCWriter::indexExprStr(const llvm::Value *V) {
         return "(" + signedIntegerOperand(BO->getOperand(0), LHS) + " % " +
                signedIntegerOperand(BO->getOperand(1), RHS) + ")";
       }
+      // A composed remainder must contain both operands. Returning its own
+      // local name here would turn its defining statement into x = x and
+      // incorrectly classify it as a reprintable expression.
+      return {};
     }
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {

@@ -20,7 +20,8 @@
 
 namespace {
 
-void compileAndRun(const std::string &Source) {
+void compileAndRun(const std::string &Source,
+                   llvm::StringRef Optimization = "-O2") {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -49,7 +50,7 @@ void compileAndRun(const std::string &Source) {
   const llvm::SmallVector<llvm::StringRef, 12> Arguments{
       Compiler,
       "-std=c11",
-      "-O2",
+      Optimization,
       "-Werror=uninitialized",
       "-Werror=return-type",
       SourcePath,
@@ -65,6 +66,58 @@ void compileAndRun(const std::string &Source) {
   Result = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
                                      Redirects, 30, 0, &Error);
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
+}
+
+TEST(LLVMCValues, FoldedStoreArmsPublishTheirOutgoingPhiValues) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("store-arm-phi", Context);
+  llvm::IRBuilder<> B(Context);
+  auto *I64 = B.getInt64Ty();
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy(), B.getPtrTy(), I64},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "choose_and_store", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  auto *Left = llvm::BasicBlock::Create(Context, "left", Function);
+  auto *Right = llvm::BasicBlock::Create(Context, "right", Function);
+  auto *Join = llvm::BasicBlock::Create(Context, "join", Function);
+  B.SetInsertPoint(Entry);
+  B.CreateCondBr(B.CreateICmpNE(Function->getArg(2), B.getInt64(0)), Left,
+                 Right);
+  B.SetInsertPoint(Left);
+  auto *A = B.CreateAdd(B.CreateLoad(I64, Function->getArg(0)), B.getInt64(7));
+  B.CreateStore(A, Function->getArg(0));
+  auto *LeftValue = B.CreateXor(A, B.getInt64(0x55));
+  B.CreateBr(Join);
+  B.SetInsertPoint(Right);
+  auto *C = B.CreateMul(B.CreateLoad(I64, Function->getArg(0)), B.getInt64(3));
+  B.CreateStore(C, Function->getArg(0));
+  auto *RightValue = B.CreateAdd(C, B.getInt64(0x33));
+  B.CreateBr(Join);
+  B.SetInsertPoint(Join);
+  auto *Merged = B.CreatePHI(I64, 2, "merged");
+  Merged->addIncoming(LeftValue, Left);
+  Merged->addIncoming(RightValue, Right);
+  B.CreateStore(Merged, Function->getArg(1));
+  B.CreateRetVoid();
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Output, {}));
+  Source += R"(
+int main(void) {
+  for (uint64_t seed = 0; seed < 256; ++seed)
+    for (uint64_t flag = 0; flag < 2; ++flag) {
+      uint64_t input = seed, output = 0;
+      choose_and_store(&input, &output, flag);
+      if (input != (flag ? seed + 7 : seed * 3)) return 1;
+      if (output != (flag ? ((seed + 7) ^ 0x55) : seed * 3 + 0x33)) return 2;
+    }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
 }
 
 TEST(LLVMCValues, LoopPhiCopiesUseTheTakenEdgeAndPreserveParallelAssignments) {

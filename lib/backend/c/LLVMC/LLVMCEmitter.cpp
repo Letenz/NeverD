@@ -15,7 +15,10 @@
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
+#include "../FloatConversion.h"
+#include "../UnalignedMemory.h"
 #include "LLVMCIntegerMinMax.h"
+#include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -73,6 +76,17 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
       if (const auto *Integer =
               llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
         IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      Name = IntrinsicHelper;
+    }
+    if (const char *Kind = scalarUnarySpelling(Fn.getIntrinsicID())) {
+      IntrinsicHelper = std::string("neverd_llvm_") + Kind;
+      if (const auto *Integer =
+              llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
+        IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      if (Fn.arg_size() == 1 && Fn.getArg(0)->getType()->isFloatingPointTy())
+        IntrinsicHelper +=
+            "_f" +
+            std::to_string(Fn.getArg(0)->getType()->getPrimitiveSizeInBits());
       Name = IntrinsicHelper;
     }
     std::string DebugName;
@@ -146,6 +160,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   Headers.insert("stdint.h");
   std::set<std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
+  std::map<std::string, ScalarUnary> ScalarUnaries;
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -155,10 +170,14 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       continue;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
-        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst))
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
           if (auto Shape = scalarIntegerMinMax(*Call))
             IntegerMinMax.emplace(
                 functionIdentifier(*Call->getCalledFunction()), *Shape);
+          if (auto Shape = scalarUnary(*Call))
+            ScalarUnaries.emplace(
+                functionIdentifier(*Call->getCalledFunction()), *Shape);
+        }
         if (llvm::isa<llvm::FenceInst>(&Inst))
           HasCIntrinsics = true;
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
@@ -187,7 +206,16 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           auto Name = Callee->getName().str();
 
           if (const char *Mapped = llvmIntrinsicToCName(Name.c_str())) {
-            HasCIntrinsics = true;
+            // Generic arithmetic and control builtins use host C facilities.
+            // Only mappings that actually name ISA intrinsics need the
+            // recovered image's architecture headers.
+            const llvm::StringRef RawName(Name);
+            if (RawName.starts_with("llvm.x86.") ||
+                RawName.starts_with("llvm.aarch64.") ||
+                RawName.starts_with("llvm.arm.") ||
+                IID == llvm::Intrinsic::readcyclecounter ||
+                IID == llvm::Intrinsic::debugtrap)
+              HasCIntrinsics = true;
             IntrinsicMappedNames.insert(Name);
             if (const char *Header = libc::headerFor(Mapped))
               Headers.insert(Header);
@@ -212,6 +240,29 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     for (auto &H : Headers)
       OS << "#include <" << H << ">\n";
     OS << "\n";
+  }
+  if (Opts.UseUnalignedPointers)
+    c_memory::writeTypes(OS);
+  for (const auto &[Name, Shape] : ScalarUnaries) {
+    const unsigned CarrierBits = Shape.carrierBits();
+    const std::string Type = CarrierBits == 128
+                                 ? "unsigned __int128"
+                                 : "uint" + std::to_string(CarrierBits) + "_t";
+    if (Shape.Kind == llvm::Intrinsic::bitreverse) {
+      OS << "static inline " << Type << " " << Name << "(" << Type
+         << " value) {\n"
+         << "    " << Type << " result = 0;\n"
+         << "    for (unsigned int bit = 0; bit < " << Shape.Bits
+         << "; ++bit) {\n"
+         << "        result = (" << Type << ")((result << 1) | (value & 1));\n"
+         << "        value >>= 1;\n"
+         << "    }\n    return result;\n}\n\n";
+      continue;
+    }
+    c_float::writeConversion(OS, Name,
+                             {Shape.Bits, Shape.FloatBits,
+                              Shape.Kind == llvm::Intrinsic::fptosi_sat,
+                              FPToIntegerPolicy::Saturate});
   }
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
@@ -751,6 +802,13 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     HasVectors |= containsVectorType(Function.getFunctionType());
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
+        // Validate explicitly supported scalar shapes before normalization can
+        // discard an unused malformed call, retaining the source error
+        // contract.
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
+          (void)scalarIntegerMinMax(*Call);
+          (void)scalarUnary(*Call);
+        }
         if (const auto *Allocation =
                 llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
           HasVectors |= containsVectorType(Allocation->getAllocatedType());
@@ -759,53 +817,60 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
           HasVectors |= Operand->getType()->isVectorTy();
       }
   }
-  std::unique_ptr<llvm::Module> Projection;
-  const llvm::Function *ProjectionOnly = Only;
+  if (llvm::verifyModule(Mod, &llvm::errs()))
+    return false;
+  // Source normalization must not mutate the caller's IR. Remove dead
+  // computations left by recovered control flow even when semantic
+  // optimization is disabled; they can otherwise reference unneeded image
+  // tables. LLVM DCE retains volatile/atomic accesses and side-effecting calls.
+  llvm::ValueToValueMapTy ValueMap;
+  auto Projection = llvm::CloneModule(Mod, ValueMap);
+  const llvm::Function *ProjectionOnly = nullptr;
+  if (Only) {
+    ProjectionOnly =
+        llvm::dyn_cast_or_null<llvm::Function>(ValueMap.lookup(Only));
+    if (!ProjectionOnly)
+      throw std::runtime_error(
+          "C projection could not map the selected function into its clone");
+  }
   if (HasVectors) {
-    if (llvm::verifyModule(Mod, &llvm::errs()))
-      return false;
-    // Normalize vector operations on a clone so C emission preserves the
-    // caller's IR while the scalar writer receives explicit lane semantics.
-    llvm::ValueToValueMapTy ValueMap;
-    Projection = llvm::CloneModule(Mod, ValueMap);
-    if (Only) {
-      ProjectionOnly =
-          llvm::dyn_cast_or_null<llvm::Function>(ValueMap.lookup(Only));
-      if (!ProjectionOnly)
-        throw std::runtime_error(
-            "C projection could not map the selected function into its clone");
-    }
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
-    llvm::LoopAnalysisManager Loops;
-    llvm::FunctionAnalysisManager Functions;
-    llvm::CGSCCAnalysisManager CallGraph;
-    llvm::ModuleAnalysisManager Modules;
-    llvm::PassBuilder Passes;
-    Passes.registerModuleAnalyses(Modules);
-    Passes.registerCGSCCAnalyses(CallGraph);
-    Passes.registerFunctionAnalyses(Functions);
-    Passes.registerLoopAnalyses(Loops);
-    Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
-    llvm::FunctionPassManager Normalize;
+  }
+  llvm::LoopAnalysisManager Loops;
+  llvm::FunctionAnalysisManager Functions;
+  llvm::CGSCCAnalysisManager CallGraph;
+  llvm::ModuleAnalysisManager Modules;
+  llvm::PassBuilder Passes;
+  Passes.registerModuleAnalyses(Modules);
+  Passes.registerCGSCCAnalyses(CallGraph);
+  Passes.registerFunctionAnalyses(Functions);
+  Passes.registerLoopAnalyses(Loops);
+  Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
+  llvm::FunctionPassManager Normalize;
+  if (HasVectors) {
     llvm::ScalarizerPassOptions ScalarOptions;
     // LLVM only splits simple accesses: volatile and atomic vectors still
     // reach the unsupported-instruction guard below.
     ScalarOptions.ScalarizeLoadStore = true;
     Normalize.addPass(llvm::ScalarizerPass(ScalarOptions));
-    Normalize.addPass(llvm::DCEPass());
-    llvm::ModulePassManager Pipeline;
-    Pipeline.addPass(
-        llvm::createModuleToFunctionPassAdaptor(std::move(Normalize)));
-    Pipeline.run(*Projection, Modules);
+  }
+  Normalize.addPass(llvm::DCEPass());
+  llvm::ModulePassManager Pipeline;
+  Pipeline.addPass(
+      llvm::createModuleToFunctionPassAdaptor(std::move(Normalize)));
+  Pipeline.run(*Projection, Modules);
+  if (HasVectors) {
     // Lane-width-changing vector casts create new scalar/vector bitcasts in
     // Scalarizer. Lower those with the source layout before scalarizing their
     // explicit lane gathers, too. The second pass introduces no new casts.
     lowerPackedVectorBitcasts(*Projection);
     Modules.invalidate(*Projection, llvm::PreservedAnalyses::none());
     Pipeline.run(*Projection, Modules);
-    if (llvm::verifyModule(*Projection, &llvm::errs()))
-      return false;
+  }
+  if (llvm::verifyModule(*Projection, &llvm::errs()))
+    return false;
+  if (HasVectors) {
     if (!ProjectionOnly)
       for (const auto &Global : Projection->globals())
         if (containsVectorType(Global.getValueType()))
@@ -837,8 +902,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     }
   }
   LLVMCWriter W(Out, Opts, Dbg, Img);
-  W.writeModule(Projection ? *Projection : Mod,
-                Projection ? ProjectionOnly : Only);
+  W.writeModule(*Projection, ProjectionOnly);
   return true;
 }
 

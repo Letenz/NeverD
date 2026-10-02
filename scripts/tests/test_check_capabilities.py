@@ -3193,6 +3193,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
             {row["id"]: row["status"] for row in document["capabilities"]},
             {
                 "analysis.ir-view.instruction-anchors": "experimental",
+                "analysis.external-bytecode-recovery": "experimental",
                 "analysis.interpreter-source-recovery": "experimental",
                 "debug.hardware": "unsupported",
                 "debug.local": "unsupported",
@@ -3241,6 +3242,12 @@ class RepositoryCapabilityTests(unittest.TestCase):
                     "neverd cpu-capabilities --probe-host",
                 ],
                 "json": ["neverd_cpu_capabilities_json"],
+            },
+            "analysis.external-bytecode-recovery": {
+                "c": ["neverd_bytecode_recover_json_v1"],
+                "python": ["recover_bytecode"],
+                "cli": [],
+                "json": ["neverd_bytecode_recover_json_v1"],
             },
             "analysis.interpreter-source-recovery": {
                 "c": ["neverd_devirtualize_source_v1",

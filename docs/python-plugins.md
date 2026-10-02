@@ -9,6 +9,12 @@ same metadata, lifecycle, ordering, duplicate-name rules, event stream, and
 session C ABI as native plugins. The supported authoring package is
 `neverd-plugin`; do not import the private `_neverd_plugin` bridge directly.
 
+`recover_bytecode(code, profile, functions, ...)` exposes the same external-rule
+recovery API as C plugins and the CLI. Its `BytecodeRecoveryResult` contains
+reachable coverage and optional state-ABI C. See the
+[bytecode API contract](bytecode-profiles.md#c-and-python-plugin-api) and the
+`examples/external_bytecode.py` plugin staged with the SDK.
+
 ## Build and runtime requirements
 
 `Session.cpu_capabilities(configuration=None, probe_host=False)` exposes the

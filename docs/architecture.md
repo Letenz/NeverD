@@ -40,13 +40,36 @@ call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
 
-The standalone `neverd-bytecode` tool accepts externally specified instruction
-languages through `lib/analysis/bytecode`. Encoding and CFG validation produce
+The `neverd-bytecode` tool and C/Python plugins accept externally specified
+instruction languages through the shared `neverd_bytecode_recover_json_v1` API.
+`lib/pipeline/BytecodeRecovery.cpp` owns request validation and source orchestration;
+`lib/analysis/bytecode` owns encoding and CFG validation. They produce
 LowIR; explicit byte-addressed state lowering then feeds the existing source
 routes. Image-independent source ABI binding uses caller-supplied contracts,
 while runtime signature discovery from native images retains its format gates.
 This source-only path does not authenticate native instruction boundaries or
 authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
+
+Native jump-table selector domains are proved in the shared LowIR resolver.
+A loader-normalized absolute table may use the same exact, point-sensitive
+finite-domain proof as a relative table. The physical pointer run supplies a
+read ceiling, not a selector bound. A long physical run may use the bounded
+finite query only after proving every feasible index fits its query ceiling;
+values beyond that ceiling cannot be silently discarded. After adding
+destinations, the resolver must replay the proof on the expanded graph; a
+newly reached backedge cannot reuse an entry-only domain. A complete
+single-consumer finite proof is not
+widened or vetoed by a weaker mask search. Module-wide storage mutation checks
+still run before source publication.
+For a single absolute consumer, a relocation-backed physical run may contain
+unused pointers to other functions. Validate target ownership for every
+admitted selector coordinate before graph growth; an excluded prefix slot
+neither truncates the selector proof nor becomes a local successor.
+The LLVM backend accepts a sparse table's logical address origin separately
+from its owned runtime slots. Eliding its target load still requires the exact
+operation witness, complete mapped slot and relocation ownership, and exclusive
+consumption by the recovered branch. The unused prefix gains no suppression
+authority from sharing that origin.
 
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
@@ -86,6 +109,12 @@ optimization. The SDK rebuilds a cached native LLVM module when this policy
 changes and publishes the replacement only after verification succeeds.
 Both LLVM C routes retain verified output with only temporary-alloca
 promotion when an incomplete native exception contract excludes optimization.
+The C emitter clones verified LLVM IR and removes dead computations before
+rendering, including in `--no-opt` mode. This source normalization preserves
+observable calls and ordered memory accesses without modifying the cached IR.
+Generic LLVM arithmetic and control builtins do not request target ISA headers.
+Both C routes reject string-literal replacement when loader fixup provenance
+overlaps any candidate byte, including its terminator.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
@@ -147,6 +176,9 @@ value is dead in every feasible context. Calls, loads, and stores keep their
 observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
+Med-to-High lowering preserves CFG successors after branch threading, including
+sole successors with no remaining branch operation. When source order differs,
+it emits an explicit transfer after that edge's PHI copies.
 
 HighIR supports narrowing a 64-bit source local to 32 bits under the same proof used for 128-bit carriers: every definition must agree on the carrier and prefix widths, and every read must explicitly select the low prefix. A full-width integer AND also selects that prefix when its constant mask fits the low word without sign-extending from a narrower type; the narrowed local is zero-extended at that use before applying the unchanged mask. Full-width stores, escapes, upper-byte reads, or effectful upper expressions prevent narrowing. Source-parameter padding remains unknown.
 Exact whole-variable copies can share this proof through a bounded graph when a constructing definition establishes the prefix width. Every copied destination must itself qualify for narrowing; a full-width consumer invalidates all upstream exemptions. Unseeded cycles, conflicting widths and exhausted budgets preserve the original values.
@@ -816,6 +848,13 @@ The loader validates bounded, acyclic graphs of Darwin constant strings, integer
 
 ## IR representations and routes
 
+`ir/FloatConversion.h` owns the result policy for scalar float-to-integer
+operations: saturation for the non-x86 path and x86 indefinite results for
+invalid conversions. HighC and the LLVM lowering select that same policy;
+both C routes share the guarded conversion renderer. The cast executes only
+after range and NaN checks. Architecture-specific floating control/status
+effects remain in their existing intrinsic contracts.
+
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,
@@ -1224,6 +1263,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
 | `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
 | `NeverDEmulationAndroid` | Android API 28 AArch64 native linking, TLS and Bionic call models |
+| `NeverDEmulationWindowsProcess` | Windows PE64 console process loading, PEB/TEB, TLS and named user APIs |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
@@ -1245,6 +1285,7 @@ lib/emulation/
   abi/                   Guest calling conventions independent of OS and CPU transport
   runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
+  os/windows/process/    Windows PE64 user process startup and user API models
   os/linux/              Linux ELF process startup and system-call ABI/services
   os/linux/android/      Android native library linking, TLS and Bionic models
 ```
@@ -1291,11 +1332,10 @@ generic scheduler or a hard native cancellation deadline.
 The `os` directory describes the **guest** environment. Linux-host KVM can
 execute a Windows guest workload; the host never chooses its OS model.
 `DriverSession`, driver scenario parsing and reports belong to `os/windows`,
-because their lifecycle and objects are Windows-specific. The current Windows
-implementation remains one driver environment; moving it does not imply a
-completed Windows user-mode environment.
-When a process environment is added, keep its entry point, loader policy and
-user ABI separate from the kernel workload. Move shared OS primitives into a
+because their lifecycle and objects are Windows-specific. Windows PE64 user processes have their own `NeverDEmulationWindowsProcess`
+component under `os/windows/process`, built with CPU emulation even when the
+driver environment is disabled. Process entry, PE admission, PEB/TEB, TLS and
+named user APIs stay separate from kernel objects and driver policy. Move shared OS primitives into a
 common layer only when both environments use the same documented semantics;
 driver objects, IRQL and callbacks must not become requirements of a generic
 CPU or process session.
@@ -2742,3 +2782,9 @@ Concrete type recipes reuse this registered internal-protocol identity proof for
 The super-call proof retains narrow result padding and checks every argument; aggregate, variadic, stale and ambiguous declarations remain unsupported. Exact whole class or metaclass addresses materialized into pointer-sized values use the same runtime object-identity proof as direct receivers, including stores into `objc_super`. Class-reference cells, scalar immediates, partial addresses and conflicting metadata cannot acquire this binding. Publication rechecks the original class identity.
 
 UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters and setters retain the 32-byte `UIEdgeInsets` record: top, left, bottom and right are doubles in d0–d3 on arm64. Complete device and simulator SDK declarations agree, and Apple Clang independently reproduces all six encodings. Receiver lookup retains the anonymous UIButton category and the UIButton → UIControl → UIView hierarchy. Conflicting runtime declarations, other receivers, class methods, wrong providers and architectures without matching evidence remain unsupported.
+
+`windows-pe64-v1` adds bounded Windows x64/ARM64 console processes: PE loading, PEB/TEB, static and dynamic TLS, startup/exit callbacks and named Win32 API models. It uses the CPU layer independently of driver emulation; DLL/CRT loading, GUI, user SEH, threads and general Windows compatibility remain unfinished.
+
+`NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+Native dependency discovery can follow an ARM64 indirect call only when the current complete LowIR and immutable instructions prove an exact resolved chained code-pointer slot. A separate code-pointer reader checks unique read-only storage, competing fixups and the current function entry; ordinary data-pointer readers retain their existing boundary. The bounded trace stays within one block and requires a current runtime or native ABI before preserving a register across a call, including register-specific ARC imports. Frame reloads, unknown calls and incomplete evidence remain unresolved. The inventory retains the original indirect occurrence and does not itself bind its ABI or authorize source publication.

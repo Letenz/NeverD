@@ -6,7 +6,7 @@
 
 `neverd emulate` esegue un’immagine con un profilo esplicito del sistema operativo guest. Trasporto CPU, parsing dell’immagine, ingresso del processo e servizi OS hanno responsabilità separate. Attivare `NEVERD_ENABLE_CPU_EMULATION=ON`; è incluso anche dall’emulazione dei driver.
 
-Il primo profilo, `linux-elf64-v1`, esegue ELF `ET_EXEC` x64/AArch64 e PIE statici `ET_DYN` autorilocanti a CPL3 o EL0. Carica veri segmenti ELF, crea lo stack iniziale, riprende a quanti e gestisce richieste esplicite di system call Linux. È un modello di processo autonomo, non una distribuzione Linux completa né una promessa di eseguire binari libc arbitrari. Linking dinamico, segnali, thread, filesystem e servizi non supportati falliscono esplicitamente. Il profilo x64 ammette alcune forme SSE/SSE2 limitate; AArch64 resta integer-only. Windows, Android, Darwin e altri workload kernel sono separati.
+Il primo profilo, `linux-elf64-v1`, esegue ELF `ET_EXEC` x64/AArch64 e PIE statici `ET_DYN` autorilocanti a CPL3 o EL0. Carica veri segmenti ELF, crea lo stack iniziale, riprende a quanti e gestisce richieste esplicite di system call Linux. È un modello di processo autonomo, non una distribuzione Linux completa né una promessa di eseguire binari libc arbitrari. Linking dinamico, segnali, thread, filesystem e servizi non supportati falliscono esplicitamente.
 
 <!-- i18n-section: cli-sdk -->
 
@@ -73,6 +73,29 @@ I servizi di memoria anonima condividono spazio del processo e budget fisico con
 Le lunghezze sono arrotondate a pagine. `munmap` tollera buchi e rimozioni ripetute; `mprotect` modifica il prefisso mappato prima di restituire `ENOMEM` al primo buco. `PROT_NONE` conserva allocazione e byte, negando l'accesso guest. Il `brk` grezzo restituisce il limite richiesto in caso di successo e quello precedente in caso di errore, non lo zero/meno uno del wrapper libc. Il limite iniziale è la fine immagine allineata a pagina. La crescita rispetta altre mappature e budget; la riduzione conserva i byte della pagina parziale restante. Regole e priorità degli errori seguono i servizi Linux di [mappatura](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) e [protezione](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Mappature di file, condivise o fisse, crescita verso il basso, pagine enormi, blocco memoria, chiavi di protezione, permessi di sola esecuzione/scrittura e altri flag restano esplicitamente non supportati: arresto prima di pubblicare effetti o inventare un ritorno. Errori ordinari di intervallo, lunghezza e allineamento nel sottoinsieme ammesso restituiscono errori guest e consentono di proseguire. Nessun puntatore o richiesta di mappatura guest viene inoltrato all'OS host.
+
+<a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: windows-pe64 -->
+
+## Profilo Windows PE64
+
+`windows-pe64-v1` aggiunge processi console Windows x64/ARM64 limitati: caricamento PE, PEB/TEB, TLS statico e dinamico, callback di avvio/uscita e modelli Win32 nominativi. Usa il livello CPU indipendentemente dai driver; caricamento DLL/CRT, GUI, SEH utente, thread e compatibilità Windows generale restano incompleti.
+
+```bash
+neverd emulate guest.exe --profile=windows-pe64-v1 \
+  --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
+```
+
+Il modello versionato a thread singolo carica EXE console PE32+ AMD64/ARM64 alla base preferita. Verifica byte originali e dati del loader, conserva permessi utente e intervalli di guardia non mappati dello stack. Rifiuta import sconosciuti, ordinali, associati o ritardati, load configuration/CFG, immagini managed, GUI e ingressi DLL. Verifica le rilocazioni senza cambiare base. I modelli API non sono DLL installate: gli elenchi del loader contengono solo l’EXE e `GetModuleHandleW` accetta soltanto NULL.
+
+GS su x64 e x18 su ARM64 puntano a TEB con limiti dello stack, puntatore a sé, PID/TID, PEB, parametri, LastError e TLS. UTF-8 rigoroso diventa UTF-16; argv segue le regole di quoting Microsoft CRT. I nomi ambiente sono ASCII, i duplicati senza distinzione tra maiuscole sono rifiutati, i valori possono essere Unicode e il blocco ordinato termina con due NUL. Non eredita ambiente o filesystem host. TLS statico copia template, azzera BSS e scrive un indice a 32 bit; TLS dinamico usa slot TEB separati. Attach/detach legge l’array corrente in ordine con budget e scadenza condivisi. Ritorno dall’ingresso e uscita normale eseguono detach; l’uscita ricorsiva durante detach si arresta esplicitamente.
+
+`WindowsProcessServices.def` definisce `ExitProcess`, `RtlExitUserProcess`, handle di output e `WriteFile` sincrono, LastError, ID e pseudo-handle processo/thread, `GetCommandLineW`, allocazione/liberazione/dimensione heap, TLS dinamico e NULL `GetModuleHandleW`. Risolve nomi esatti in `kernel32.dll`, `kernelbase.dll`, `ntdll.dll`. Syscall dirette e gate falsi non selezionano modelli. L’heap appartiene al processo e viene recuperato; l’output mantiene i byte binari. Gli errori Win32 sono distinti da I/O asincrono ed eccezioni utente non implementati. Gli alias rispettano l’azzeramento iniziale del contatore e il vero slot di ritorno.
+
+`windows.native_calls` conserva modulo/funzione, argomenti scalari dichiarati e risultati nullable senza inventare numeri NT. `NeverDWindowsProcessTests` verifica PE reali, TLS del compilatore, modifiche dei callback, heap, alias, metadati non validi, privilegi e budget; `NeverDProcessPublicTests` verifica CLI/C ABI. La CI Windows esegue direttamente lo stesso EXE come riferimento indipendente e richiede i test WHP. La prova runtime ARM64 nativa richiede ancora una macchina adatta.
+
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
 
 <!-- i18n-section: verification -->
 

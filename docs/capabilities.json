@@ -5173,11 +5173,45 @@
         "write, exit, exit_group, getpid, gettid, bounded mmap/mprotect/munmap/brk and x64 arch_prctl FS/GS operations are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
         "Sessions own CPU hooks and exactly-once service/fault consumption; cooperative instruction quanta share an absolute deadline and instruction/event budget without resetting credit. This does not implement parallel SMP or a hard native cancellation bound.",
         "Linux matching ISA uses KVM, Windows matching ISA uses WHP and other combinations use Unicorn. Runtime capability and availability remain distinct from workload compatibility; no silent fallback occurs. Native Windows/Linux ARM64 execution evidence remains unavailable.",
-        "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Dynamic linking, dynamic TLS, signals, threads, file systems and other guest OS user/kernel profiles remain implementation work.",
+        "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Linux dynamic linking/TLS, signals, threads and file systems remain implementation work. Windows uses the separate windows-pe64-v1 profile.",
         "Anonymous mappings admit private anonymous pages and NONE/R/RW/RX/RWX permissions. Linux owns placement and raw brk policy; AddressSpace provides authoritative non-owning mapping snapshots. Partial unmap retires per-page owners after projection/view pins are released; mprotect preserves changed prefixes before a hole error. File/shared/fixed mappings, execute-only/write-only policy and additional flags remain unsupported. Original x64/ARM64 fixtures exercise real memory services; rewritten executable memory is additionally checked on x64.",
-        "Validated PT_TLS templates permit freestanding static local-exec TLS programs. Guest startup allocates and initializes each TLS block and installs the thread pointer, as on Linux. The model does not guess a libc-specific TCB or DTV. arch_prctl rejects kernel-range bases with guest EPERM and bad get destinations with EFAULT; unimplemented operations stop explicitly. Compiler-emitted initialized and zero TLS is checked across block switches and process quanta."
+        "Validated PT_TLS templates permit freestanding static local-exec TLS programs. Guest startup allocates and initializes each TLS block and installs the thread pointer, as on Linux. The model does not guess a libc-specific TCB or DTV. arch_prctl rejects kernel-range bases with guest EPERM and bad get destinations with EFAULT; unimplemented operations stop explicitly. Compiler-emitted initialized and zero TLS is checked across block switches and process quanta.",
+        "`windows-pe64-v1` adds bounded Windows x64/ARM64 console processes: PE loading, PEB/TEB, static and dynamic TLS, startup/exit callbacks and named Win32 API models. It uses the CPU layer independently of driver emulation; DLL/CRT loading, GUI, user SEH, threads and general Windows compatibility remain unfinished."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDWindowsProcessTests",
+          "source": "unittests/emulation/WindowsProcessTests.cpp",
+          "filter": "*/WindowsProcess.RunsPEWithStaticAndDynamicTLSHeapAndProcessEnvironment/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDWindowsProcessTests",
+          "source": "unittests/emulation/WindowsProcessTests.cpp",
+          "filter": "*/WindowsProcess.LiveTLSCallbackMutationsAffectAttachAndDetach/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDWindowsProcessTests",
+          "source": "unittests/emulation/WindowsProcessTests.cpp",
+          "filter": "*/WindowsProcess.APIWritesToTheReturnSlotChangeTheActualReturn/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDLinuxProcessTests",
@@ -11263,6 +11297,95 @@
           "neverd_emulate_driver_json",
           "neverd_emulate_driver_scenario_json",
           "neverd_emulate_driver_backend_json"
+        ]
+      }
+    },
+    {
+      "id": "analysis.external-bytecode-recovery",
+      "kind": "analysis",
+      "status": "experimental",
+      "owner": "analysis",
+      "targets": [
+        "externally described bytecode"
+      ],
+      "docs": [
+        "docs/bytecode-profiles.md",
+        "docs/plugins.md",
+        "docs/python-plugins.md"
+      ],
+      "limitations": [
+        "Requires a complete caller-supplied version-1 declarative profile, bounded function ranges and explicit external bindings. It does not infer an instruction set or certify that the supplied rules match an engine.",
+        "Returns reachable CFG coverage or C over an explicit little-endian register-state buffer. Source ABI, object types and original source text are not recovered by this API.",
+        "State lowering currently uses the AArch64 carrier and scalar floating-conversion policy. Stateful decoder callbacks, unresolved indirect targets and arbitrary environment contracts remain unsupported.",
+        "Unknown instructions, malformed profiles, invalid ranges and exhausted decoding limits fail without partial source. Optional unaligned pointer spelling requires supported compiler extensions; portable memory helpers remain the default."
+      ],
+      "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.BothSourceRoutesExecuteNarrowWritesWithCanaries",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.CheckReportsReachableCoverageWithoutPartialSource",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.InvalidRulesAndUnknownInstructionsFailWithoutSource",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.RejectsBufferLengthsBeforeAccess",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.MalformedJSONReturnsAnOwnedUTF8Error",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        }
+      ],
+      "public_surfaces": {
+        "c": [
+          "neverd_bytecode_recover_json_v1"
+        ],
+        "python": [
+          "recover_bytecode"
+        ],
+        "cli": [],
+        "json": [
+          "neverd_bytecode_recover_json_v1"
         ]
       }
     },

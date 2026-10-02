@@ -1023,10 +1023,20 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     Physical.TargetBase = Info.TargetBase;
     Physical.HasTargetBase = Info.HasTargetBase;
     Physical.EntryScale = Info.EntryScale;
+    // A relocation-backed absolute run can contain unused callback slots
+    // before a sparse local dispatch domain. Read its physical identities
+    // first; the already-budgeted ownership checks below gate every target
+    // admitted to graph growth. Composite and multi-consumer group proofs
+    // keep their complete local-target inventory contract.
+    const bool DeferPhysicalTargetOwnership =
+        Info.RelocAbsolute && !Info.IsRelative && !Info.PreScaledIndex &&
+        !Info.TwoTableSelect && !Info.TwoLevelIndex &&
+        (!ExactConsumerGroup || ExactConsumerGroup->BranchAddrs.size() == 1) &&
+        IndexOccurrences.size() == 1;
     // ReadableCapacity is a readable/storage ceiling, not necessarily the
-    // exact table length: an adjacent object or the first non-code entry may
-    // terminate the candidate earlier.  Find the largest completely decodable
-    // prefix without ever treating that prefix as selector authority.  Exact
+    // exact table length: owner, encoding or publication checks may terminate
+    // the candidate earlier. Find the largest completely decodable prefix
+    // without ever treating that prefix as selector authority. Exact
     // bounded reads are monotone, and the logarithmic search prepays every
     // decoded target/slot/result against the candidate's aggregate balance.
     std::vector<va_t> PhysicalTargets;
@@ -1088,8 +1098,11 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
       const uint32_t Count = Lower + (Upper - Lower) / 2;
       Physical.MaxEntries = Count;
       std::vector<uint32_t> Slots;
-      std::vector<va_t> Targets =
-          readTableEntries(*CurrentImg, Physical, &Slots);
+      std::vector<va_t> Targets = readTableEntries(
+          *CurrentImg, Physical, &Slots,
+          DeferPhysicalTargetOwnership
+              ? JumpTableTargetReadPolicy::PhysicalBranchIdentity
+              : JumpTableTargetReadPolicy::SwitchPublication);
       if (Targets.size() == Count) {
         PhysicalTargets = std::move(Targets);
         PhysicalSlots = std::move(Slots);
@@ -1103,6 +1116,22 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     if (PhysicalTargets.size() >= limits::kMinJumpTableEntries) {
       const uint32_t CandidateCapacity =
           static_cast<uint32_t>(PhysicalTargets.size());
+      std::vector<bool> LocallyOwnedTargets;
+      bool AllPhysicalTargetsOwned = true;
+      if (DeferPhysicalTargetOwnership) {
+        if (!consumeBudgetProducts({{CandidateCapacity, 2}}))
+          return 0;
+        LocallyOwnedTargets.reserve(CandidateCapacity);
+        // PhysicalBranchIdentity omitted the publication checks that were
+        // prepaid for every bounded read above. Perform each one once here
+        // and retain its result without letting excluded slots cut the run.
+        for (va_t Target : PhysicalTargets) {
+          const bool Owned =
+              isValidTarget(*CurrentImg, Target, CurrentFuncEntry);
+          LocallyOwnedTargets.push_back(Owned);
+          AllPhysicalTargetsOwned &= Owned;
+        }
+      }
       if (PhysicalSlots.empty()) {
         // Direct sized-vector construction owns its buffer, element lifetime
         // and eventual destruction; the subsequent initialization loop is a
@@ -1222,14 +1251,18 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           // so map each coordinate through the authenticated address scale
           // instead of treating it as a physical slot number.  Pay source
           // traversal, retained results, and future cleanup first.
-          const size_t WorkPerCoordinate = Info.PreScaledIndex ? 4 : 3;
+          const size_t WorkPerCoordinate =
+              (Info.PreScaledIndex ? 4 : 3) +
+              (DeferPhysicalTargetOwnership ? 1 : 0);
           if (!consumeBudgetProducts({{Coordinates.size(), WorkPerCoordinate}}))
             return std::nullopt;
           std::vector<va_t> Targets;
           Targets.reserve(Coordinates.size());
           for (uint32_t Coordinate : Coordinates) {
             if (!Info.PreScaledIndex) {
-              if (Coordinate >= PhysicalTargets.size())
+              if (Coordinate >= PhysicalTargets.size() ||
+                  (DeferPhysicalTargetOwnership &&
+                   !LocallyOwnedTargets[Coordinate]))
                 return std::nullopt;
               Targets.push_back(PhysicalTargets[Coordinate]);
               continue;
@@ -1675,8 +1708,10 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
             -> std::optional<std::vector<uint32_t>> {
           if (AnalysisIncomplete)
             *AnalysisIncomplete = false;
-          if (CandidateCapacity > 64)
-            return std::vector<uint32_t>{};
+          // A long physical run may still use only a small exact selector
+          // domain. The query must prove this ceiling before enumerating it;
+          // a feasible value outside the ceiling rejects the entire proof.
+          const uint32_t QueryCapacity = std::min(CandidateCapacity, 64u);
           if (OccurrenceBranches &&
               OccurrenceBranches->size() != Occurrences.size()) {
             if (IncompleteIndexDomain)
@@ -1725,7 +1760,7 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
             Feasible.UseAddr = Index.Addr;
             Feasible.UseSeq = Index.Seq;
             Feasible.Relation = JumpTableValueRelation::UnsignedFeasibleSet;
-            Feasible.UnsignedUpperBound = CandidateCapacity;
+            Feasible.UnsignedUpperBound = QueryCapacity;
             Queries.push_back(std::move(Feasible));
           }
           std::vector<bool> QueryComplete;
@@ -1751,15 +1786,15 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
             return std::nullopt;
           }
           if (!consumeBudgetProducts(
-                  {{CandidateCapacity, 3},
+                  {{QueryCapacity, 3},
                    {Occurrences.size(), 2},
                    {Occurrences.size(),
                     orderedEvidenceLookupWork(Occurrences.size()) + 4}}) ||
               !consumeBudgetFactorProduct(
-                  {Occurrences.size(), CandidateCapacity}) ||
+                  {Occurrences.size(), QueryCapacity}) ||
               !consumeBudget(*EvidenceBudget, 4))
             return std::nullopt;
-          std::vector<bool> Seen(CandidateCapacity, false);
+          std::vector<bool> Seen(QueryCapacity, false);
           std::set<va_t> PresentBranches;
           for (size_t Occurrence = 0; Occurrence < Occurrences.size();
                ++Occurrence) {
@@ -1771,7 +1806,7 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
                                        : Rec.Addr);
             if (!Matches[Begin + 1] || FeasibleMasks[Begin + 1] == 0)
               return std::nullopt;
-            for (uint32_t Coordinate = 0; Coordinate < CandidateCapacity;
+            for (uint32_t Coordinate = 0; Coordinate < QueryCapacity;
                  ++Coordinate) {
               if ((FeasibleMasks[Begin + 1] & (uint64_t{1} << Coordinate)) == 0)
                 continue;
@@ -1780,12 +1815,12 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           }
           if (PresentBranches.size() < MinimumPresentBranches)
             return std::vector<uint32_t>{};
-          if (!consumeBudgetProducts({{CandidateCapacity, 4}}) ||
+          if (!consumeBudgetProducts({{QueryCapacity, 4}}) ||
               !consumeBudget(*EvidenceBudget, 2))
             return std::nullopt;
           std::vector<uint32_t> Coordinates;
-          Coordinates.reserve(CandidateCapacity);
-          for (uint32_t Coordinate = 0; Coordinate < CandidateCapacity;
+          Coordinates.reserve(QueryCapacity);
+          for (uint32_t Coordinate = 0; Coordinate < QueryCapacity;
                ++Coordinate)
             if (Seen[Coordinate])
               Coordinates.push_back(Coordinate);
@@ -1919,10 +1954,16 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
                                    &ExactFiniteGroupBranches,
                                    ExactConsumerGroup->MinimumPresentBranches))
           return 0;
+        // A single absolute-table consumer may also have an exact finite
+        // selector without an AND/modulo producer (for example CSET/CMOV
+        // followed by OR). The physical run is only a read ceiling: the same
+        // point-sensitive query must prove the entire domain, and publication
+        // still requires replay after every admitted destination is decoded.
         if (!Info.PreScaledIndex &&
             Authorized.size() < limits::kMinJumpTableEntries &&
-            !ExactFiniteReplayOccurrences && Info.IsRelative &&
-            !Info.RelocAbsolute) {
+            !ExactFiniteReplayOccurrences &&
+            ((Info.IsRelative && !Info.RelocAbsolute) ||
+             (Info.RelocAbsolute && !Info.IsRelative))) {
           if (!seedExactFiniteDomain(IndexOccurrences,
                                      /*OccurrenceBranches=*/nullptr,
                                      /*SharedTargetBranches=*/nullptr,
@@ -1960,11 +2001,16 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
         // (for example `arg & 7`).  Run the ordinary proof once in the empty-
         // edge graph so that dynamic, but independently authenticated, entry
         // domains can seed the same monotone iteration.  A non-empty exact
-        // finite seed is extended only for loader-normalized absolute
-        // relocation tables: a relative sparse selector is already a precise
-        // coordinate set and must not be widened by a less precise dense mask.
-        if (Authorized.empty() || (Authorized.size() < CandidateCapacity &&
-                                   Info.RelocAbsolute && !Info.IsRelative)) {
+        // finite seed is extended only for loader-normalized absolute groups.
+        // A complete single-consumer finite proof owns its exact coordinates;
+        // a second, weaker mask search must neither widen that set nor reject
+        // it because the selector contains an unrecognized mask transform.
+        // If replay finds a recurrent subset, the ordinary cyclic proof below
+        // still takes over and must establish its complete domain.
+        if (Authorized.empty() ||
+            (Authorized.size() < CandidateCapacity && Info.RelocAbsolute &&
+             !Info.IsRelative &&
+             ExactFiniteReplayOccurrences != &IndexOccurrences)) {
           bool EntryReachabilityComplete = false;
           const std::set<va_t> EntryReachable = candidateReachableInstructions(
               Rec, NoTargets, Roots, Info.StorageRanges, EvidenceBudget,
@@ -2124,11 +2170,12 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           }
           return false;
         };
-        if (CandidateProposalStageActive && CurrentImg &&
-            CurrentImg->Arch == Arch::X86 && CurrentImg->isELF() &&
-            CurrentImg->getPointerSize() == 4 && Info.RelocAbsolute &&
-            !Info.IsRelative && !Info.PreScaledIndex && !Info.TwoTableSelect &&
-            !Info.TwoLevelIndex && Info.PhysicalCapacity == CandidateCapacity &&
+        if (AllPhysicalTargetsOwned && CandidateProposalStageActive &&
+            CurrentImg && CurrentImg->Arch == Arch::X86 &&
+            CurrentImg->isELF() && CurrentImg->getPointerSize() == 4 &&
+            Info.RelocAbsolute && !Info.IsRelative && !Info.PreScaledIndex &&
+            !Info.TwoTableSelect && !Info.TwoLevelIndex &&
+            Info.PhysicalCapacity == CandidateCapacity &&
             CandidateCapacity <= 64 && IndexOccurrences.size() == 1 &&
             Authorized.size() < CandidateCapacity &&
             hasTwoSameObjectIndirectConsumers()) {

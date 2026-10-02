@@ -5485,8 +5485,45 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   const size_t AuthenticatedRuntimeTargetCount =
       Info.RuntimeSlotIndices.empty() ? static_cast<size_t>(Info.MaxEntries)
                                       : Info.RuntimeSlotIndices.size();
+  // A null image-relative entry names the image header, never code.  MSVC
+  // writes one for a case its value range proves cannot reach the dispatch
+  // (a value an earlier comparison or switch already sent elsewhere).  Like a
+  // dead case pointing past the function it is a don't-care slot, and unlike
+  // an entry whose target is not decoded yet no later round can make it one.
+  size_t NullImageRelativeSlots = 0;
+  if (ProvisionalRelativeEdgeTemplate && Info.IsPEImageRelativeRVA &&
+      Info.RuntimeSlotIndices.empty() && Info.EntrySize == sizeof(uint32_t) &&
+      !KeptIdx.empty() && KeptIdx.size() == Targets.size() &&
+      Targets.size() < AuthenticatedRuntimeTargetCount) {
+    if (!consumeCandidateProducts({{AuthenticatedRuntimeTargetCount, 3}}))
+      return {};
+    const uint64_t Stride =
+        Info.EntryStride ? Info.EntryStride : uint64_t{Info.EntrySize};
+    size_t Kept = 0;
+    bool OnlyNullGaps = true;
+    for (uint32_t Slot = 0; Slot < AuthenticatedRuntimeTargetCount; ++Slot) {
+      if (Kept < KeptIdx.size() && KeptIdx[Kept] == Slot) {
+        ++Kept;
+        continue;
+      }
+      const uint64_t Offset = uint64_t{Slot} * Stride;
+      const uint8_t *Entry =
+          Offset <= InvalidVA - Info.BaseAddr
+              ? Img.readVA(Info.BaseAddr + Offset, sizeof(uint32_t))
+              : nullptr;
+      if (!Entry || Entry[0] != 0 || Entry[1] != 0 || Entry[2] != 0 ||
+          Entry[3] != 0) {
+        OnlyNullGaps = false;
+        break;
+      }
+      ++NullImageRelativeSlots;
+    }
+    if (!OnlyNullGaps || Kept != KeptIdx.size())
+      NullImageRelativeSlots = 0;
+  }
   if (ProvisionalRelativeEdgeTemplate && AuthenticatedRuntimeTargetCount != 0 &&
-      Targets.size() != AuthenticatedRuntimeTargetCount) {
+      Targets.size() + NullImageRelativeSlots !=
+          AuthenticatedRuntimeTargetCount) {
     if (CandidateProposalStageActive && Rec.JumpTableTargets.empty() &&
         !Targets.empty()) {
       if (!consumeCandidateProducts(

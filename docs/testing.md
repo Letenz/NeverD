@@ -191,6 +191,39 @@ cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
 build-release/bin/NeverDARM32InterworkingTests
 ```
 
+## Finite native dispatch
+
+`NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
+regressions with independent AArch64 and x64 finite-selector fixtures. The new
+fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
+tables in both read-only and writable storage. Separate controls retain an
+unknown large selector and ensure a feasible slot above the finite query
+ceiling cannot be dropped. HighC, optimized LLVMC and `--no-opt` LLVMC
+must compile and execute the same selection at `-O0` and `-O2` with undefined
+behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
+reached backedges, mutated table storage and exhausted evidence must prevent
+unsupported source publication. Clang and the existing lift fixture tools
+are required; unavailable fixtures remain skips.
+An unselected prefix pointer to a separate function must not prevent recovery
+of local cases. A foreign target selected immediately or after a reached
+backedge must remain outside the local switch. The prefix case also runs
+through all three C routes at both optimization levels.
+
+```sh
+cmake --build build-release --target NeverDJumpTableTests --parallel 4
+build-release/bin/NeverDJumpTableTests
+```
+
+`NeverDMachOPointerRelocationBoundaryTests` checks sparse dispatch origins
+before the owned runtime slots. Missing maps, fixups or ownership, added filler
+slots, unindexed reads, malformed strides, address overflow and exhausted
+evidence must retain the ordinary load path.
+
+`NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
+strings, generic builtins compiled for a different source ISA, and dead image
+address calculations. The latter must retain volatile/atomic loads and
+observable calls while leaving the input LLVM module unchanged.
+
 ## Interpreter recovery checks
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
@@ -200,15 +233,42 @@ and x64 state carriers through HighC and LLVMC, recompile at `-O0` and `-O2`
 with undefined-behavior traps, and verify loops, narrow writes, memory canaries,
 signed arithmetic and nested status-propagating calls. The state-forwarding
 checks include unaligned banks, overlapping register views, guest aliases and
-overwritten writes that a memory access can observe. CLI checks also exercise
+overwritten writes that a memory access can observe, using both portable byte
+copies and the optional Clang/GCC unaligned pointer spelling. CLI checks also exercise
 the optional LLVM optimization route and block-sensitive bounded graphs whose
 branch arms produce distinct values, including merged conditional targets.
 No external dialect or binary sample is needed.
+
+`FloatingConversionsKeepArchitectureResultPolicies` checks float/double to
+signed/unsigned 32/64-bit results for AArch64 saturation and x86 indefinite
+values through both C routes, both memory spellings and O0/O2 with undefined
+behavior traps. It also checks narrow-write canaries on an unaligned bank.
 
 ```sh
 cmake --build build-release --target NeverDBytecodeAnalysisTests
 build-release/bin/NeverDBytecodeAnalysisTests
 ```
+
+`NeverDBytecodeCAPITests` exercises the pure C ABI with explicit buffer lengths,
+unknown rules, truncated code, rejected options and reachable coverage. Both
+C routes, including LLVM optimization, execute independently specified narrow
+writes on an unaligned state with canaries at O0/O2 under undefined-behavior
+traps. `NeverDPluginTests` and `NeverDPythonPluginTests` load the example C and
+Python bytecode plugins and invoke the same public recovery entry point.
+
+```sh
+cmake --build build-release --target NeverDBytecodeCAPITests
+build-release/bin/NeverDBytecodeCAPITests
+PYTHONPATH=pluginsdk/python python3 -m unittest discover -s pluginsdk/python/tests -v
+PYTHONPATH=pluginsdk/python python3 scripts/check_python_plugin_sdk.py
+NEVERD_TEST_LIBNEVERD=/absolute/path/to/libneverd.so PYTHONPATH=pluginsdk/python \
+  python3 -m unittest discover -s pluginsdk/python/tests -p 'test_bytecode*.py' -v
+```
+
+The last command uses the current platform's shared-library filename. Missing
+native libraries skip the integration check explicitly; pure Python ownership
+and request tests still run. Embedded Python plugin tests require
+`NEVERD_ENABLE_PYTHON_PLUGINS=ON`.
 
 `NeverDAArch64DivisionSemanticTests` checks both instruction decoders against
 the architectural results for signed and unsigned division, including zero
@@ -417,7 +477,23 @@ integer min/max for i1/8/16/32/64/128 at O0/O2, checking assigned and inline
 results, producer ordering, and single evaluation. Unsupported scalar widths
 and malformed operands must fail explicitly.
 
+The same target executes scalar float/double saturating conversions at
+O0/O2 with undefined-behavior traps, covering NaNs, infinities, fractional
+values and exact signed/unsigned bounds through 128 bits. Bit-reversal checks
+include non-byte widths and every one-hot input bit. Unsupported shapes fail
+before source emission.
+
 ## Structured C control and call checks
+
+`FoldedStoreArmsPublishTheirOutgoingPhiValues` executes a conditional with
+side-effecting store arms and a shared PHI at O0/O2. Folding the two arms into
+C `if/else` must retain each outgoing SSA assignment.
+`RemaindersWithInlineOperandsPublishTheirResult` executes signed and unsigned
+remainders with an inline divisor at both optimization levels; an unavailable
+composed expression must not become a self-assignment.
+`ThreadedSoleSuccessorKeepsItsTransferAndPhi` checks both AArch64 and x64
+HighIR when CFG threading leaves a sole successor without a branch operation.
+Its edge copies and transfer must run before any unrelated source-order block.
 
 `HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
 
@@ -1945,7 +2021,7 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 
 XSAVE validation diagnostics distinguish size queries, local packet preparation and captured-packet decoding. They retain the API name, returned byte count, capacity and bounded header/control metadata from `WhpHostFailureCases.def` expectations; guest register payloads are not printed. `InvalidInputReportsPreparationWithoutHostMutation` also checks that rejected input never calls the host or changes its packet. The shared ISA codec remains the sole validation authority.
 
-WHP host failures during capability queries, partition/virtual-CPU setup, register/XSAVE transfer and execution preserve the HRESULT and failing API name declared in `WhpProtocol.def`; capability-query failures retain the typed unavailable result. `WhpHostFailureCases.def` provides independent expectations for host failure concurrent with cancellation and modern/legacy XSAVE query, install and capture failures. The focused Windows dispatch requires 131 native passes: 16 mapping cases, two startup cases, ten FP/context cases, seven shared-CPU cases, eight integer cases and both `NativeInstallRetainsFPStateBeforeAnyGuestExecution` API variants. The latter compare complete FP/SSE and independently queried metadata before running guest code. Missing registrations, skips, disabled tests and not-run outcomes fail the native evidence audit. The additional 26 checks cover all `X64BitStringTests.cpp` cases at both privilege levels.
+WHP host failures during capability queries, partition/virtual-CPU setup, register/XSAVE transfer and execution preserve the HRESULT and failing API name declared in `WhpProtocol.def`; capability-query failures retain the typed unavailable result. `WhpHostFailureCases.def` provides independent expectations for host failure concurrent with cancellation and modern/legacy XSAVE query, install and capture failures. The focused Windows dispatch requires 150 native passes: 16 mapping cases, two startup cases, ten FP/context cases, seven shared-CPU cases, eight integer cases and both `NativeInstallRetainsFPStateBeforeAnyGuestExecution` API variants. The latter compare complete FP/SSE and independently queried metadata before running guest code. Missing registrations, skips, disabled tests and not-run outcomes fail the native evidence audit. The additional 26 checks cover all `X64BitStringTests.cpp` cases at both privilege levels. Windows PE64 adds 18 WHP process cases and one direct native Windows oracle.
 
 `NeverDMemoryLifecycleTests` is built independently of Unicorn, including native-only configurations. Its software-specific projection/device cases skip explicitly when Unicorn is disabled; matching-host shared-CPU tests remain registered. `WhpMemoryTests.cpp` isolates the native memory API with 16 cases in `WhpMemoryCases.def`: page/projection-sized backing, shared/independent allocations, untouched/resident bytes and a first virtual processor present/absent. Each case keeps two logical owners alive, switches their mapped partition repeatedly, retires the inactive owner and verifies that the surviving mapping stays usable without recreation. Genuine mapping failures retain HRESULT and fail the test; this is memory-API evidence, not instruction-execution proof.
 
@@ -1961,7 +2037,7 @@ The existing `ci.yml` provides an opt-in `native_cpu_only` manual mode on its Wi
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 46 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 131 CPU checks and four shared SEH continuation regressions, 359 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `131 CPU + 224 WHP + 4 SEH = 359`.
+`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 150 CPU checks and four shared SEH continuation regressions, 378 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `150 CPU + 224 WHP + 4 SEH = 378`.
 
 C SEH ranges remain half-open. A valid `__C_specific_handler` landing pad may lie inside its protected range: [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) emits `EndLabel + 1` as the scope end. The Windows OS model preserves the raw endpoints and independently validates executable targets, function ownership and continuation identity, including after rebasing. `KernelSEHContinuationCases.def` retains the original fixture layout; `ScopeEndLabelMayOverlapTheHandlerLandingPad` checks constant handlers and filters. Companion tests preserve the exclusive end and reject invalid targets without consuming the dispatch state. These pure checks run in `NeverDNativeDriverTests` with Unicorn disabled.
 
@@ -1982,7 +2058,7 @@ cmake -S . -B build-native -G Ninja \
 
 `NeverDAArch64StateTests` checks corruption of every scalar field, both words of every vector, privilege changes, missing floating-point execution and preserved transport diagnostics. `NeverDAArch64FPTests` runs `OriginalProgramChecksCompleteStateAndOneDeadline` using independently assembled `AArch64ProbeCases.def` instructions at both privileges on real transports. The test relocates these PC-independent words to guest code without granting user access to monitor pages. Unicorn execution and explicit native skips do not replace native ARM64 startup evidence.
 
-`CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+`CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 
@@ -2014,3 +2090,7 @@ error returns, output and execution limits, unsupported imports, and SDK/CLI
 report parity. No Android device, NDK sysroot, or proprietary fixture is used.
 Linux regression tests guard the shared kernel-service boundary. Native KVM
 and WHP cells may be unavailable on the host; report their skips separately.
+
+`windows-pe64-v1` adds bounded Windows x64/ARM64 console processes: PE loading, PEB/TEB, static and dynamic TLS, startup/exit callbacks and named Win32 API models. It uses the CPU layer independently of driver emulation; DLL/CRT loading, GUI, user SEH, threads and general Windows compatibility remain unfinished.
+
+`NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

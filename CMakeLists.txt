@@ -183,6 +183,7 @@ add_subdirectory(tools)
 # --- Example plugins ---
 option(NEVERD_BUILD_PLUGINS "Build NeverD example plugins" OFF)
 if(NEVERD_BUILD_PLUGINS)
+  add_subdirectory(plugins/bytecode)
   add_subdirectory(plugins/example)
   add_subdirectory(plugins/semantic)
 endif()

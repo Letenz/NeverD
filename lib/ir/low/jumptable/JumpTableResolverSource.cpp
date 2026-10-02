@@ -450,6 +450,8 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
   //   * Pre-scaled computed goto: detectUnscaledRelocTableLoad already resolved
   //     the table VA (folded base, or GOTOFF disp) and confirmed its reloc run.
   uint64_t TableAddr;
+  // The base register's value when its fold located the table.
+  std::optional<uint64_t> FoldedTableBase;
   // A frame-register base (SP/FP) with a load displacement that is a *frame
   // offset* (not a data-segment VA) marks a stack-materialised local table: the
   // x86-64/i386 -O0 frame offset rides in the load displacement (`mov
@@ -674,6 +676,7 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
                           Disp != 0 && Img.isCOFF());
       if (!RelBaseOpt)
         return false;
+      FoldedTableBase = RelBaseOpt;
       TableAddr = *RelBaseOpt;
       if (Disp != 0) {
         const unsigned PointerBits =
@@ -1156,6 +1159,15 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
       auto traceConstAnchor = [&](NdVar V,
                                   int From) -> std::optional<uint64_t> {
         const std::optional<bool> LoadFree = isLoadFreeAnchor(V, From);
+        // A Win64 switch can keep the image base it located the table with in
+        // a register set before an earlier dispatch, so the anchor has no
+        // definition in this block.  That register's fold already gave the
+        // table address; the point-sensitive anchor proof in
+        // branchTargetDependsOnTableLoad must still establish it on every
+        // path before publication.
+        if (!LoadFree && Img.isCOFF() && Img.Arch == Arch::X64 &&
+            FoldedTableBase && V.isReg() && V.Offset == BaseReg)
+          return *FoldedTableBase;
         if (!LoadFree || !*LoadFree)
           return std::nullopt;
         for (int G = 0; G < limits::kMaxSliceDepth; ++G) {

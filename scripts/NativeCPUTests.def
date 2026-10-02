@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_NATIVE_CPU_OWNER
 NEVERD_NATIVE_CPU_OWNER(NeverDRunControlTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDWindowsProcessTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64FPTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64IntegerTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDMemoryLifecycleTests)
@@ -433,4 +434,62 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64StringComparison."
     "DeviceOperandsRejectBeforeCallbacksOrObservations/whpUser")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsProcessImage.NativeWindowsOracleRunsTheSameExecutable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.RunsPEWithStaticAndDynamicTLSHeapAndProcessEnvironment/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.EntryReturnRunsDetachAndPreservesExitStatus/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.APIErrorsDoNotPoisonTheNextValidCall/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.SharedInstructionBudgetIncludesTLSInitialization/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.EventLimitStopsBeforeAPIOutput/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.OutputLimitDoesNotPublishPartialBytes/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.DirectSyscallsDoNotSelectWindowsServices/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.PrivilegedInstructionsCannotExecuteAsKernel/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.InvalidGuestStoresRemainCPUFaults/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.UnsupportedOverlappedWritesDoNotSucceed/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.LiveTLSCallbackMutationsAffectAttachAndDetach/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.WriteFileClearsAliasedCompletionBeforeReadingBytes/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.NonreturningTailCallDoesNotReadADeadReturnAddress/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.InvalidAPIOutputNeedsExplicitExceptionSupport/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.ForgedCallbackGateCannotTerminateAnEntryCall/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.ReentrantExitDoesNotPublishACompletedStatus/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsProcess.APIWritesToTheReturnSlotChangeTheActualReturn/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsProcess.NTDLLNamedExitHasExplicitProviderEvidence/"
+    "WhpX64")
 #endif

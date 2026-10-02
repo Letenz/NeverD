@@ -555,7 +555,7 @@ CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프
 
 CPU factory와 기능 질의는 같은 `ExecutionConfiguration`을 사용하며 할당 전에 아키텍처, 권한, 주소 폭, 기능을 검증합니다. `ExecutionBudget`은 워크로드별 공유 명령/이벤트 계정과 절대 monotonic deadline을 소유하며 재개해도 예산이 초기화되지 않습니다. `ExecutionSession`은 CPU, hook, 대기 중 서비스/fault continuation을 소유합니다. 세션은 메모리와 예산을 공유할 수 있지만 실행은 협력식이며 병렬 SMP가 아닙니다. 대기 중 요청은 재개 전 정확히 한 번 소비해야 합니다. CPU 오류는 자원 정지보다 우선하며 설명되지 않은 엔진 정지는 성공이 아닙니다.
 
-`ImageMappingPlan`은 기존 로더 세그먼트를 사용하고 header 재분석이나 import 해결을 하지 않습니다. 주소 공간을 게시하기 전에 전체 범위와 겹침을 검사합니다. 명시적 `linux-elf64-v1` 프로필은 초기 스택, 명시적 서비스 요청, 제한된 바이트 출력을 갖춘 x64/AArch64 freestanding ELF `ET_EXEC`와 static PIE `ET_DYN`을 시작합니다. 동적 링크, dynamic TLS, 시그널, OS 스레드, 미지원 서비스는 실패합니다. static TLS와 제한된 x64 SSE/SSE2는 지원합니다. KVM만으로 Linux를, WHP만으로 Windows를 추론하지 않습니다. [CPU 실행](cpu-execution.md) 및 [게스트 프로세스 에뮬레이션](process-emulation.md)을 참조하세요. 이는 Windows user-mode나 Android/Darwin 앱 지원을 뜻하지 않습니다.
+`ImageMappingPlan`은 기존 로더 세그먼트를 사용하고 header 재분석이나 import 해결을 하지 않습니다. 주소 공간을 게시하기 전에 전체 범위와 겹침을 검사합니다. 명시적 `linux-elf64-v1` 프로필은 초기 스택, 명시적 서비스 요청, 제한된 바이트 출력을 갖춘 x64/AArch64 freestanding ELF `ET_EXEC`와 static PIE `ET_DYN`을 시작합니다. 동적 링크, dynamic TLS, 시그널, OS 스레드, 미지원 서비스는 실패합니다. static TLS와 제한된 x64 SSE/SSE2는 지원합니다. KVM만으로 Linux를, WHP만으로 Windows를 추론하지 않습니다. [CPU 실행](cpu-execution.md) 및 [게스트 프로세스 에뮬레이션](process-emulation.md)을 참조하세요.
 
 `driver-strict`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. Windows x64 네이티브 CI는 Unicorn을 비활성화하고 필수 검사 359개를 모두 통과합니다. CPU 검사 131개, 내장 이미지 26개·WDK 이미지 46개·시나리오 사례 40개를 기본 및 재배치 주소에서 실행한 드라이버 결과 224개, SEH 경계 검사 4개를 포함합니다 ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). native ARM64 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
 
@@ -922,3 +922,9 @@ ARM64 소스 바인딩은 완전한 기기 및 시뮬레이터 SDK 선언이 외
 super 호출 증명은 좁은 반환값의 정의되지 않은 패딩을 유지하고 모든 인수를 검사합니다. 집계형, 가변 인수, 오래되거나 모호한 선언은 계속 거부합니다. 포인터 크기 값으로 구체화된 정확하고 완전한 클래스 또는 메타클래스 주소는 `objc_super`에 저장하는 경우에도 직접 수신자와 동일한 런타임 객체 식별 증명을 사용합니다. 클래스 참조 셀, 스칼라 즉시값, 불완전한 주소, 충돌하는 메타데이터는 이 바인딩을 얻지 못합니다. 공개 시 원래 클래스 식별을 다시 확인합니다.
 
 UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/setter는 32바이트 `UIEdgeInsets` 레코드를 보존합니다. 위, 왼쪽, 아래, 오른쪽의 double 값은 arm64에서 d0–d3로 전달됩니다. 전체 기기 및 시뮬레이터 SDK 선언이 일치하며 Apple Clang으로 여섯 인코딩을 독립적으로 재현합니다. 수신자 조회는 UIButton의 익명 카테고리와 UIButton → UIControl → UIView 상속 관계를 유지합니다. 런타임 선언 충돌, 다른 수신자, 클래스 메서드, 잘못된 제공 라이브러리, 일치하는 근거가 없는 아키텍처는 계속 지원하지 않습니다.
+
+`windows-pe64-v1`은 제한된 Windows x64/ARM64 콘솔 프로세스를 추가합니다. PE 로딩, PEB/TEB, 정적·동적 TLS, 시작·종료 콜백과 이름 기반 Win32 API 모델을 제공합니다. 드라이버 에뮬레이션 없이 CPU 계층을 사용합니다. DLL/CRT 로딩, GUI, 사용자 모드 SEH, 스레드와 일반 Windows 호환성은 아직 미완성입니다.
+
+`NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+네이티브 의존성 탐색은 현재의 완전한 LowIR과 불변 명령이 정확히 해석된 체인 코드 포인터 슬롯을 증명할 때만 ARM64 간접 호출을 따라갑니다. 별도 코드 포인터 판독기는 유일한 읽기 전용 저장소, 충돌하는 수정 정보, 현재 함수 진입점을 확인하며 일반 데이터 포인터 판독기의 기존 경계를 유지합니다. 제한된 추적은 하나의 기본 블록 안에서만 수행되고 호출을 넘어 레지스터 값을 유지하려면 특정 레지스터를 사용하는 ARC 임포트를 포함한 현재 런타임 또는 네이티브 ABI가 필요합니다. 프레임 재로드, 알 수 없는 호출, 불완전한 증거는 미해결 상태로 남습니다. 의존성 목록은 원래 간접 호출 위치를 보존하며 그 자체로 ABI를 바인딩하거나 소스 공개를 허용하지 않습니다.
