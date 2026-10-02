@@ -21,6 +21,11 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、ARM64 原生死循环中断及重试。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
 
+手动工作流默认使用带 `hvf` 标签的自托管宿主，也可选择 `hosted-intel` 尝试
+GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `scripts/probe_hvf_host.c`，
+实际创建和销毁 VM/vCPU，成功后才准备 LLVM。宿主拒绝 HVF 就在此处失败，不能用 runner
+名称推断硬件可用。CPU 门禁通过后，还必须执行本机架构的全部 Darwin 工作负载。
+
 硬件虚拟化不保证在逐指令 checked 执行中更快；初始化、完整状态传输和缓存维护都有成本，应与相同 checked 契约的 Unicorn 比较。该后端不增加新的跨架构模拟方案或来宾 OS 模型。
 
 ## 本次验证记录（2026-10-02 至 2026-10-03）

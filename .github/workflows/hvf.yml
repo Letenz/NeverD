@@ -1,33 +1,49 @@
 name: Native macOS HVF
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Native host to validate (hosted Intel must pass the HVF probe)
+        type: choice
+        default: self-hosted
+        options: [self-hosted, hosted-intel]
 permissions:
   contents: read
 jobs:
   native-hvf:
-    # Dedicated native hosts must expose Hypervisor.framework. Hosted/nested
-    # macOS runners are not assumed to supply native virtualization.
+    # Both choices must create a real VM/vCPU before the LLVM build starts.
     strategy:
       fail-fast: false
       matrix:
-        arch: [ARM64, X64]
-    runs-on: [self-hosted, macOS, '${{ matrix.arch }}', hvf]
+        arch: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["X64"]' || '["ARM64","X64"]') }}
+    runs-on: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["macos-15-intel"]' || format('["self-hosted","macOS","{0}","hvf"]', matrix.arch)) }}
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Verify native host and fixture tools
+      - name: Require actual native VM and vCPU creation
         shell: bash
         env:
           EXPECTED_HVF_HOST: '${{ matrix.arch }}'
         run: |
-          for tool in cmake ninja python3 clang ld.lld lld-link ld64.lld codesign; do
-            command -v "$tool"
-          done
           case "$EXPECTED_HVF_HOST:$(uname -m)" in
             ARM64:arm64|X64:x86_64) ;;
             *) echo "Runner architecture does not match the HVF matrix" >&2; exit 1 ;;
           esac
-          test "$(sysctl -n kern.hv_support)" = 1
+          sysctl kern.hv_support
+          mkdir -p build-hvf-probe
+          clang scripts/probe_hvf_host.c -framework Hypervisor -o build-hvf-probe/probe
+          codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
+          build-hvf-probe/probe
+      - name: Install hosted fixture tools
+        if: inputs.runner == 'hosted-intel'
+        run: |
+          brew install ninja llvm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+      - name: Verify fixture tools
+        run: |
+          for tool in cmake ninja python3 clang ld.lld lld-link ld64.lld codesign; do
+            command -v "$tool"
+          done
       - name: Prepare native dependencies
         shell: bash
         run: |
@@ -54,10 +70,16 @@ jobs:
         run: >-
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/native-evidence --parallel 4 --require-hvf
+      - name: Require every native Darwin workload
+        run: >-
+          python3 scripts/run_native_cpu_ci.py --build build-hvf
+          --evidence build-hvf/darwin-evidence --parallel 4 --require-darwin-backend hvf
       - name: Preserve hardware evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hvf-${{ matrix.arch }}
-          path: build-hvf/native-evidence/
+          path: |
+            build-hvf/native-evidence/
+            build-hvf/darwin-evidence/
           if-no-files-found: warn

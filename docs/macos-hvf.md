@@ -103,8 +103,13 @@ ARM64 (macOS, iOS device and Simulator), or two on Intel (macOS and Simulator).
 Missing registrations and skips fail the gate. Darwin CTest names retain their
 exact GoogleTest identities instead of address-bearing parameter dumps.
 `.github/workflows/hvf.yml` exposes the same manual gate for dedicated native
-`self-hosted, macOS, ARM64/X64, hvf` runners. It does not assert those machines
-are already provisioned or assume nested hosted runners support HVF.
+`self-hosted, macOS, ARM64/X64, hvf` runners. Its `hosted-intel` selection tries
+GitHub's `macos-15-intel` runner. Both choices first compile and sign
+`scripts/probe_hvf_host.c` and require actual VM/vCPU creation and teardown
+before preparing LLVM. A hosted runner that denies HVF fails at that boundary;
+its label does not establish virtualization support. After the CPU gate, the
+workflow also requires every matching Darwin workload. Dedicated runners are
+not assumed to be provisioned.
 
 Coverage includes complete register/FP state, both guest privilege levels,
 page permissions and cross-page memory, aliases and saved contexts, live probes
