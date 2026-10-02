@@ -82,6 +82,14 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 
 `windows-pe64-v1` 新增有界 Windows x64/ARM64 主控台程序：PE 載入、PEB/TEB、靜態與動態 TLS、啟動／結束回呼及具名 Win32 API 模型。它獨立使用 CPU 層，不需啟用驅動程式模擬；DLL/CRT 載入、GUI、使用者態 SEH、執行緒及通用 Windows 相容性仍待完成。
 
+Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
+
+私有配置支援 `MEM_RESERVE`、`MEM_COMMIT`、`MEM_DECOMMIT`、`MEM_RELEASE` 和 `MEM_TOP_DOWN`，保留區域以 64 KiB 對齊，頁面大小為 4 KiB。僅保留不消耗客體 RAM。重複認可保留資料並更新權限，取消認可歸還個別頁面的儲存。完整範圍檢查和分階段配置避免一般配置或權限失敗留下部分修改。查詢傳回 48 位元組的 x64/ARM64 記憶體資訊結構，僅在同一次配置內向後合併。初始映像、環境、堆積區域、API 入口和堆疊邊界都參與位址配置；堆疊的配置識別與 TEB 一致。如果成功的 `VirtualProtect` 將舊權限的輸出位址改成唯讀，新權限仍生效、輸出內容保持不變，呼叫仍傳回成功。 對未完整認可範圍的權限修改失敗時，傳回 `ERROR_INVALID_ADDRESS`，將舊權限輸出設為 `PAGE_NOACCESS`，各頁權限保持不變。
+
+支援的權限為 `PAGE_NOACCESS`、`PAGE_READONLY`、`PAGE_READWRITE`、`PAGE_EXECUTE_READ` 和 `PAGE_EXECUTE_READWRITE`。防護頁、僅執行與寫入時複製策略、快取修飾符、大頁面、reset/write-watch/預留位置及修改模型擁有的執行階段映射仍明確拒絕。僅私有虛擬配置可取消認可或釋放。本項不增加使用者態例外派送能力，也不構成 ARM64 硬體原生執行證據。
+
+[VirtualAlloc](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc), [VirtualFree](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualfree), [VirtualProtect](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect), [VirtualQuery](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualquery), [MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/windows/win32/api/winnt/ns-winnt-memory_basic_information).
+
 ```bash
 neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'

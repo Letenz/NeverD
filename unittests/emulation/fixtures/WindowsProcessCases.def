@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "WindowsMemoryCases.def"
 #ifdef NEVERD_WINDOWS_FIXTURE_VALUE
 NEVERD_WINDOWS_FIXTURE_VALUE(TLSSeed, 0x19283746)
 NEVERD_WINDOWS_FIXTURE_VALUE(LastErrorSeed, 0x12345678)

@@ -82,6 +82,14 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 `windows-pe64-v1` は限定された Windows x64/ARM64 コンソールプロセスを追加します。PE ロード、PEB/TEB、静的・動的 TLS、起動・終了コールバック、名前付き Win32 API モデルを備えます。CPU 層を独立して使用し、ドライバーエミュレーションは不要です。DLL/CRT ロード、GUI、ユーザーモード SEH、スレッド、汎用 Windows 互換性は未完成です。
 
+Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
+
+プライベート割り当ては `MEM_RESERVE`、`MEM_COMMIT`、`MEM_DECOMMIT`、`MEM_RELEASE`、`MEM_TOP_DOWN` に対応し、予約は 64 KiB 境界、ページは 4 KiB です。予約だけではゲスト RAM を消費しません。再コミットは内容を保持して権限を更新し、デコミットは各ページの記憶域を返します。範囲全体の検証と割り当ての準備により、通常の失敗で部分変更を残しません。クエリは 48 バイトの x64/ARM64 メモリ情報を返し、同一割り当て内で前方に結合します。初期イメージ、環境、ヒープ領域、API 入口、スタック境界も配置に含め、スタックの識別を TEB と一致させます。成功した `VirtualProtect` が旧権限の出力先を読み取り専用にした場合、新しい権限は適用されたまま、出力内容は変わらず、呼び出しは成功を返します。 未コミットページを含む範囲の保護変更は `ERROR_INVALID_ADDRESS` を返し、旧権限の出力に `PAGE_NOACCESS` を書き込みますが、ページ権限は変更しません。
+
+対応する保護は `PAGE_NOACCESS`、`PAGE_READONLY`、`PAGE_READWRITE`、`PAGE_EXECUTE_READ`、`PAGE_EXECUTE_READWRITE` です。ガードページ、実行専用、コピーオンライト、キャッシュ修飾子、大きなページ、reset/write-watch/プレースホルダー、モデル所有の実行時マッピングの変更は明示的に未対応です。デコミットと解放はプライベート仮想割り当てだけが対象です。ユーザー例外の配送や ARM64 実機検証は含みません。
+
+[VirtualAlloc](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc), [VirtualFree](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualfree), [VirtualProtect](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect), [VirtualQuery](https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualquery), [MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/windows/win32/api/winnt/ns-winnt-memory_basic_information).
+
 ```bash
 neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'

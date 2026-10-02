@@ -876,6 +876,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `windows-pe64-v1` 新增有界 Windows x64/ARM64 主控台程序：PE 載入、PEB/TEB、靜態與動態 TLS、啟動／結束回呼及具名 Win32 API 模型。它獨立使用 CPU 層，不需啟用驅動程式模擬；DLL/CRT 載入、GUI、使用者態 SEH、執行緒及通用 Windows 相容性仍待完成。
 
+Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 原生相依性探索僅在目前完整 LowIR 與不可變指令共同證明精確、已解析的鏈式程式碼指標槽時，才跟隨 ARM64 間接呼叫。獨立的程式碼指標讀取器檢查唯一唯讀儲存、衝突修正及目前函式入口；一般資料指標讀取器維持原有邊界。有界追蹤限定在一個基本區塊內，跨呼叫保留暫存器前必須取得目前執行階段或原生 ABI，包括使用特定暫存器傳參的 ARC 匯入。堆疊框架重載、未知呼叫與不完整證據仍未解析。相依性清單保留原始間接呼叫位置，本身不綁定其 ABI，也不授權發布原始碼。
