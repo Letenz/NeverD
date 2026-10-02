@@ -297,8 +297,6 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
                                 [&](const auto &M) { return M.Base == A[0]; });
     if (Module == Modules.Identities.end())
       return unsupported(S);
-    if (!A[1])
-      return WinError(ErrorInvalidParameter);
     std::optional<uint16_t> Ordinal;
     std::string Name;
     if (A[1] <= ImportOrdinalMask)

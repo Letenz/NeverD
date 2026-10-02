@@ -8,6 +8,7 @@ __declspec(dllimport) DWORD TopProbe(void);
 __declspec(dllimport) DWORD TopOrdinal(void);
 __declspec(dllimport) DWORD TopData;
 __declspec(dllimport) DWORD TopPID(void);
+__declspec(dllimport) unsigned short TopHole;
 #ifndef EXPORT_NO_EXE_EXPORTS
 __declspec(dllexport)
 #endif
@@ -25,19 +26,15 @@ static const DWORD ExpectedErrors[] = {
 #undef NEVERD_EXPORT_MISSING
 };
 static DWORD Observations[sizeof(ExpectedErrors) / sizeof(DWORD)], MissingIndex;
-static ULONG_PTR Addresses[sizeof(ExpectedErrors) / sizeof(DWORD)];
 static int Observe;
 static void missing(void *Module, const char *Name) {
   SetLastError(LastErrorSeed);
   void *Address = GetProcAddress(Module, Name);
   const DWORD Error = GetLastError();
+  CHECK(!Address);
   CHECK(MissingIndex < sizeof(ExpectedErrors) / sizeof(DWORD));
   Observations[MissingIndex] = Error;
-  Addresses[MissingIndex] = (ULONG_PTR)Address;
-  if (!Observe) {
-    CHECK(!Address);
-    CHECK(Error == ExpectedErrors[MissingIndex]);
-  }
+  CHECK(Error == ExpectedErrors[MissingIndex]);
   ++MissingIndex;
 }
 static void observeOrder(void *Leaf, void *Bridge, void *Top) {
@@ -81,6 +78,9 @@ DWORD entry(void) {
     observeOrder(Leaf, Bridge, Top);
   CHECK(TopProbe() == Seed && TopOrdinal() == Seed + 1 && TopData == Seed);
   CHECK(TopPID() == GetCurrentProcessId());
+  CHECK(&TopHole == Leaf);
+  CHECK(lookup(Bridge, HoleForwardName) == Leaf);
+  CHECK(lookup(Bridge, NamedHoleForwardName) == Leaf);
   void *Code = lookup(Leaf, ProbeName);
   CHECK(lookup(Leaf, AliasName) == Code);
   CHECK(lookup(Top, TopName) == Code && lookup(Bridge, DotName) == Code);
@@ -104,9 +104,6 @@ DWORD entry(void) {
 #undef NEVERD_EXPORT_MISSING
   if (Observe) {
     output((const char *)Observations, MissingIndex * sizeof(DWORD));
-    output((const char *)Addresses, MissingIndex * sizeof(ULONG_PTR));
-    const void *Bases[] = {Leaf, Bridge, Top};
-    output((const char *)Bases, sizeof(Bases));
     observeOrder(Leaf, Bridge, Top);
     output(Message, sizeof(Message) - 1);
     ExitProcess(ExitStatus);

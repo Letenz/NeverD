@@ -72,6 +72,8 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
     --Program.Reads.Records;
     if (Index >= Program.Modules.size())
       return failure(text::ModuleExport);
+    if (Ordinal && !*Ordinal)
+      return ExportResolution{std::nullopt, ErrorInvalidParameter};
     if (CPU && Validated.insert(Index).second)
       if (auto E = validateMetadata(Program, Index, Budget, *CPU))
         return std::move(E);
@@ -93,9 +95,12 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
     if (!Visited.emplace(Index, *Entry).second)
       return failure(text::ForwarderCycle);
     const auto &Export = Module.Loaded.Exports.Entries[*Entry];
-    if (Export.Kind == PEExportKind::Hole)
+    if (Export.Kind == PEExportKind::Hole && !Depth)
       return ExportResolution{std::nullopt, MissingError};
-    if (Export.Kind == PEExportKind::Address)
+    // A forwarded zero RVA yields the image base on native Windows. Preserve
+    // that pointer without treating the header as executable code.
+    if (Export.Kind == PEExportKind::Address ||
+        Export.Kind == PEExportKind::Hole)
       return ExportResolution{Module.Loaded.Base + Export.RVA, 0};
 
     // Own these strings before Load can append and relocate the module vector.
@@ -115,7 +120,7 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       const auto Digits = llvm::StringRef(Symbol).drop_front();
       uint16_t Number;
       if (Digits.empty() || !llvm::all_of(Digits, llvm::isDigit) ||
-          Digits.getAsInteger(10, Number))
+          Digits.getAsInteger(ForwarderOrdinalRadix, Number))
         return failure(text::ModuleForwarder);
       Ordinal = Number;
     }

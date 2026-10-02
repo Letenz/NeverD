@@ -70,6 +70,8 @@ NEVERD_EXPORT_TEXT(BadOrdinalName, "BadOrdinal")
 NEVERD_EXPORT_TEXT(MissingForwardName, "MissingForward")
 NEVERD_EXPORT_TEXT(OrdinalForwardName, "OrdinalForward")
 NEVERD_EXPORT_TEXT(HoleForwardName, "HoleForward")
+NEVERD_EXPORT_TEXT(NamedHoleForwardName, "NamedHoleForward")
+NEVERD_EXPORT_TEXT(HoleName, "HoleAlias")
 NEVERD_EXPORT_TEXT(ZeroForwardName, "ZeroForward")
 NEVERD_EXPORT_TEXT(NormalArgument, "N")
 NEVERD_EXPORT_TEXT(UnusedArgument, "U")
@@ -113,6 +115,7 @@ NEVERD_EXPORT_WIDE(TopModuleName, L"lookup-top.dll")
 NEVERD_EXPORT_LEAF(Probe, "@1")
 NEVERD_EXPORT_LEAF(Alias, "=Probe @2")
 NEVERD_EXPORT_LEAF(Value, "@3 DATA")
+NEVERD_EXPORT_LEAF(HoleAlias, "=__ImageBase @6 DATA")
 NEVERD_EXPORT_LEAF(OrdinalProbe, "@7 NONAME")
 #endif
 #ifdef NEVERD_EXPORT_BRIDGE
@@ -130,24 +133,26 @@ NEVERD_EXPORT_BRIDGE(MissingForward, "=lookup-leaf.Missing @11")
 NEVERD_EXPORT_BRIDGE(OrdinalForward, "=lookup-leaf.#65535 @12")
 NEVERD_EXPORT_BRIDGE(HoleForward, "=lookup-leaf.#6 @13")
 NEVERD_EXPORT_BRIDGE(ZeroForward, "=lookup-leaf.#0 @14")
+NEVERD_EXPORT_BRIDGE(NamedHoleForward, "=lookup-leaf.HoleAlias @15")
 #endif
 #ifdef NEVERD_EXPORT_TOP
 NEVERD_EXPORT_TOP(TopProbe, "=lookup-bridge.Self @1")
 NEVERD_EXPORT_TOP(TopOrdinal, "=lookup-bridge.ForwardOrdinal @2")
 NEVERD_EXPORT_TOP(TopData, "=lookup-bridge.ForwardData @3 DATA")
 NEVERD_EXPORT_TOP(TopPID, "=lookup-bridge.ForwardPID @4")
+NEVERD_EXPORT_TOP(TopHole, "=lookup-bridge.HoleForward @5 DATA")
 #endif
 #ifdef NEVERD_EXPORT_MISSING
 NEVERD_EXPORT_MISSING(Leaf, MissingName, ProcedureMissing)
 NEVERD_EXPORT_MISSING(Leaf, WrongCaseName, ProcedureMissing)
 NEVERD_EXPORT_MISSING(Leaf, EmptyName, ProcedureMissing)
+NEVERD_EXPORT_MISSING(Leaf, HoleName, ProcedureMissing)
 NEVERD_EXPORT_MISSING(Leaf, (const char *)OrdinalHole, OrdinalMissing)
 NEVERD_EXPORT_MISSING(Leaf, (const char *)OrdinalAbsent, OrdinalMissing)
 NEVERD_EXPORT_MISSING(Leaf, 0, InvalidParameter)
 NEVERD_EXPORT_MISSING(Bridge, MissingForwardName, ProcedureMissing)
 NEVERD_EXPORT_MISSING(Bridge, OrdinalForwardName, OrdinalMissing)
-NEVERD_EXPORT_MISSING(Bridge, HoleForwardName, OrdinalMissing)
-NEVERD_EXPORT_MISSING(Bridge, ZeroForwardName, OrdinalMissing)
+NEVERD_EXPORT_MISSING(Bridge, ZeroForwardName, InvalidParameter)
 #endif
 #ifdef NEVERD_EXPORT_NO_DIRECTORY_MISSING
 NEVERD_EXPORT_NO_DIRECTORY_MISSING(GetModuleHandleW(0), OwnName,
