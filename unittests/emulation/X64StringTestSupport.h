@@ -21,12 +21,13 @@
 #include <vector>
 
 namespace neverd::emulation::string_test {
-#define NEVERD_USER_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_USER_VALUE(Name, Value) inline constexpr uint64_t Name = Value;
 #include "UserExecutionCases.def"
 #undef NEVERD_USER_VALUE
-#define NEVERD_STRING_VALUE(Name, Value) constexpr uint64_t Name = Value;
-#define NEVERD_STRING_TEXT(Name, Value) constexpr char Name[] = Value;
-#define NEVERD_STRING_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
+#define NEVERD_STRING_VALUE(Name, Value) inline constexpr uint64_t Name = Value;
+#define NEVERD_STRING_TEXT(Name, Value) inline constexpr char Name[] = Value;
+#define NEVERD_STRING_BYTES(Name, ...)                                         \
+  inline constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64StringTransferCases.def"
 #undef NEVERD_STRING_BYTES
 #undef NEVERD_STRING_TEXT
@@ -38,7 +39,7 @@ struct Parameter {
   bool User;
 };
 inline void PrintTo(const Parameter &P, std::ostream *OS) { *OS << P.Name; }
-constexpr Parameter Parameters[] = {
+inline constexpr Parameter Parameters[] = {
 #define NEVERD_STRING_BACKEND(Name, Backend, User)                             \
   {#Name, ExecutionBackendKind::Backend, User},
 #include "X64StringTransferCases.def"
