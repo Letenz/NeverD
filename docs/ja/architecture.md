@@ -697,6 +697,8 @@ Darwin ARM64 の固定 C 呼び出しは、自然配置されたちょうど 6 �
 
 同じソース ABI の管理層は、自然配置された 16 個の double からなる `CATransform3D` の arm64 x8 経由の戻り値にも対応します。コンパイラから抽出した宣言と正確な QuartzCore エクスポートにより、`CATransform3DMakeTranslation`、`CATransform3DMakeScale`、`CATransform3DMakeRotation` を結び付け、変換時に結果の全 128 バイトを保持します。一般的な間接構造体引数、Swift や x86_64 の行列戻り値、nil 時の記憶域の証明がない Objective-C 間接戻り値は対象外です。生成された C を O0/O2 で実行し、全 16 フィールド、浮動小数点のビット列、正確なスカラー引数、結果バッファー両端の保護バイトを検証します。
 
+正確な arm64 QuartzCore の強いインポート `CATransform3DScale` は、同じ範囲限定の変換ブリッジを使います。128 バイトの入力ポインターは x0、3 個の double は d0–d2 に置かれ、x8 が結果を指します。HighC は SDK の呼び出し前に入力全体を値渡しの構造体へコピーし、呼び出し後に全 16 フィールドを書き込みます。O0/O2 の実行で入力と結果のバッファーが別の場合と重なる場合、各フィールドのビット列、境界保護を検証します。誤った提供元、弱いインポート、古い幅情報、他の ABI は拒否します。
+
 ランタイム呼び出しカタログは、正確に識別されたインポートが元の引数ポインターを返す場合にのみ `ReturnedArgument` を宣言します。レシーバー解析は通常の ABI によるレジスター無効化の前に宣言済みの物理引数を読み、結果には証明済みのレシーバー型だけを復元します。SDK はこの効果を再検証し、呼び出し、所有権への効果、メモリーアクセスは削除しません。
 
 コンパイラー由来のフレームワークとレシーバーのカタログは、Foundation、CoreData、CoreLocation、CoreSpotlight、QuartzCore、UniformTypeIdentifiers、UserNotifications を共通の提供元とします。QuartzCore は公開ヘッダー `CoreAnimation.h` を使い、他のフレームワークへの互換インポートから所属宣言を取得しません。両生成器は四つのプリプロセス設定、正確な提供元識別、否定的な宣言証拠を維持します。

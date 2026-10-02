@@ -674,6 +674,8 @@ Darwin ARM64의 고정 C 호출은 자연 배치된 double 여섯 개의 구조�
 
 동일한 소스 ABI 관리 계층은 자연 배치된 double 16개로 구성된 `CATransform3D` 결과를 arm64 x8을 통해 반환하는 경우도 지원합니다. 컴파일러에서 추출한 선언과 정확한 QuartzCore 내보내기로 `CATransform3DMakeTranslation`, `CATransform3DMakeScale`, `CATransform3DMakeRotation`을 바인딩하며, 변환 과정은 결과의 128바이트를 모두 보존합니다. 일반 간접 구조체 매개변수, Swift 또는 x86_64 행렬 반환, nil 저장 공간 증명이 없는 Objective-C 간접 결과는 지원하지 않습니다. 생성된 C를 O0/O2에서 실행하여 16개 필드 전체, 부동소수점 비트 패턴, 정확한 스칼라 인수, 결과 버퍼 양쪽의 보호 바이트를 검증합니다.
 
+정확한 arm64 QuartzCore 강한 가져오기 `CATransform3DScale`은 같은 제한된 변환 브리지를 사용합니다. 128바이트 입력 포인터는 x0, double 세 개는 d0–d2에 배치되며 x8은 결과를 가리킵니다. HighC는 SDK 호출 전에 전체 입력을 실제 값 전달 구조체로 복사하고 호출 후 16개 결과 필드를 모두 기록합니다. O0/O2 실행은 입력과 결과 버퍼가 분리되거나 겹치는 경우, 모든 필드의 비트 패턴, 경계 보호를 검증합니다. 잘못된 제공자, 약한 가져오기, 유효하지 않은 너비 및 다른 ABI는 거부합니다.
+
 런타임 호출 목록은 정확히 확인된 가져오기 함수가 원래 인수 포인터를 반환할 때만 `ReturnedArgument`를 선언합니다. 수신자 분석은 일반 ABI 레지스터 무효화 전에 선언된 물리 인수를 읽고, 결과에 입증된 수신자 타입만 복원합니다. SDK는 이 효과를 다시 검증하며 호출, 소유권 효과, 메모리 접근을 제거하지 않습니다.
 
 컴파일러에서 생성한 프레임워크 및 수신자 목록은 Foundation, CoreData, CoreLocation, CoreSpotlight, QuartzCore, UniformTypeIdentifiers, UserNotifications를 공통 제공자로 사용합니다. QuartzCore는 공개 헤더 `CoreAnimation.h`를 사용하며 다른 프레임워크의 호환성 가져오기는 소속 선언을 제공하지 않습니다. 두 생성기는 네 가지 전처리 설정, 정확한 제공자 식별, 부정적인 선언 증거를 유지합니다.

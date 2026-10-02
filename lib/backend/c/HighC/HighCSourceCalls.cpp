@@ -204,13 +204,18 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        Hint.TargetName == "CGAffineTransformTranslate" ||
        Hint.TargetName == "CGAffineTransformScale" ||
        Hint.TargetName == "CGAffineTransformRotate" ||
-       Hint.TargetName == "CGAffineTransformConcat")) {
+       Hint.TargetName == "CGAffineTransformConcat" ||
+       Hint.TargetName == "CATransform3DScale")) {
     const auto Expected =
         darwinIndirectAffineTransformSignature(Opts.TheArch, Hint.TargetName);
-    if (Opts.TheArch != Arch::AArch64 || Hint.ByteCount != 48 || !Expected ||
+    const auto Bytes =
+        Expected && Expected->ReturnType->Kind == NdTypeKind::Struct
+            ? Expected->ReturnType->Size
+            : 48;
+    if (Opts.TheArch != Arch::AArch64 || Hint.ByteCount != Bytes || !Expected ||
         Hint.WeakImport || Hint.DoesNotReturn || Hint.Format ||
         !equalSourceABIs(Signature, *Expected))
-      return bad("invalid indirect CGAffineTransform source binding");
+      return bad("invalid indirect transform source binding");
   }
   if (Hint.NilTerminated &&
       (Hint.CallKind != Kind::ObjCMessage || Hint.Format || !Hint.Receiver ||

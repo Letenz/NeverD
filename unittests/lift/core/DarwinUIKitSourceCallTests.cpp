@@ -1128,4 +1128,178 @@ TEST(DarwinIndirectRecordCalls,
     executeSource(Source);
   }
 }
+
+TEST(DarwinIndirectRecordCalls,
+     MatrixScaleSnapshotsAllFieldsBeforeWritingAnAliasedResult) {
+  constexpr auto QuartzCore =
+      "/System/Library/Frameworks/QuartzCore.framework/QuartzCore";
+  auto I = image("_CATransform3DScale");
+  I.DynInfo.NeededLibs = {QuartzCore};
+  I.DyldBindSlots.at(0x2180).Module = QuartzCore;
+  const auto Hint = darwinRuntimeSourceCallHint(I, 0x2180);
+  ASSERT_TRUE(Hint);
+  const auto &Signature = Hint->Signature;
+  EXPECT_EQ(Hint->ByteCount, 128U);
+  ASSERT_EQ(Signature.ReturnType->Kind, NdTypeKind::Struct);
+  EXPECT_EQ(Signature.ReturnType->Size, 128U);
+  EXPECT_EQ(Signature.ReturnLocation.Kind,
+            SourceABICarrierKind::IndirectResultPointer);
+  EXPECT_EQ(Signature.ReturnLocation.RegisterOffset, a64reg::X8);
+  ASSERT_EQ(Signature.Parameters.size(), 4U);
+  EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset, a64reg::X0);
+  for (size_t J = 1; J != 4; ++J) {
+    EXPECT_EQ(Signature.Parameters[J].Type->Kind, NdTypeKind::Float);
+    EXPECT_EQ(Signature.Parameters[J].Location.RegisterOffset,
+              getTargetRegInfo(Arch::AArch64).FPParamRegs[J - 1]);
+  }
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    auto Changed = I;
+    if (Mutation == 0)
+      Changed.Arch = Arch::X64;
+    else if (Mutation == 1)
+      Changed.DyldBindSlots.at(0x2180).Module =
+          "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+    else if (Mutation == 2)
+      Changed.DyldBindSlots.at(0x2180).WeakImport = true;
+    else if (Mutation == 3)
+      Changed.DyldBindSlots.at(0x2180).Addend = 8;
+    else if (Mutation == 4)
+      Changed.IsRelocatable = true;
+    else if (Mutation == 5)
+      Changed.Bits = Bitness::Bits32;
+    else
+      Changed.ImportPtrSlots[0x2180] = "_CGAffineTransformScale";
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+  }
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Double = NdType::makeFloat(8);
+  SourceFunctionTypeHint Entry;
+  Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Entry.ReturnType = NdType::makeInt(8, false);
+  Entry.Parameters = {{"input", Pointer},
+                      {"output", Pointer},
+                      {"sx", Double},
+                      {"sy", Double},
+                      {"sz", Double}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Arch::AArch64, Error));
+  LowFunc F;
+  F.Entry = 0x1200;
+  F.Name = "scale_matrix";
+  LowBlock B;
+  B.Id = 0;
+  B.StartAddr = F.Entry;
+  B.EndAddr = 0x1214;
+  B.Ops = {operation(NdOp::COPY, NdVar::reg(a64reg::X8, 8),
+                     {NdVar::reg(a64reg::X1, 8)}, 0x1200),
+           operation(NdOp::CALL, {}, {NdVar::cst(0x1100, 8)}, 0x1204),
+           operation(NdOp::COPY, NdVar::reg(a64reg::X8, 8), {NdVar::cst(0, 8)},
+                     0x1208),
+           operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0, 8)},
+                     0x120c),
+           operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, 0x1210)};
+  F.Blocks = {B};
+  const std::map<va_t, SourceFunctionTypeHint> Entries{{F.Entry, Entry}};
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&I);
+  Converter.setSourceCallHintsEnabled(true);
+  Converter.setSourceCalleeTypeHints(&Entries);
+  auto Med = Converter.convert(F, Arch::AArch64, BinaryFormat::MachO);
+  Med.SourceTypeHint = Entry;
+  recoverCallAbi(Med, Arch::AArch64, {}, &I);
+  inferMedTypes(Med, Arch::AArch64);
+  unsigned Stores = 0;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      Stores += Op.Opcode == NdOp::STORE && Op.Addr == 0x1204;
+  EXPECT_EQ(Stores, 16U);
+  auto High = MedToHighConverter().convert(Med, Arch::AArch64);
+  unsigned Calls = 0;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      ASSERT_FALSE(E && E->Kind == ExprKind::Undef);
+      if (!E || E->Kind != ExprKind::Call)
+        return;
+      ++Calls;
+      ASSERT_TRUE(E->SourceCallHint);
+      EXPECT_EQ(E->Operands.size(), 4U);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*E, I, {}));
+      for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+        auto Wrong = std::make_shared<SourceCallTypeHint>(*Hint);
+        if (Mutation == 0)
+          Wrong->ByteCount = 48;
+        else if (Mutation == 1)
+          Wrong->Signature.Parameters[0].Location.RegisterOffset = a64reg::X1;
+        else if (Mutation == 2)
+          Wrong->Signature.Parameters[3].Location.RegisterOffset =
+              getTargetRegInfo(Arch::AArch64).FPParamRegs[3];
+        else if (Mutation == 3)
+          Wrong->Signature.ReturnLocation.RegisterOffset = a64reg::X0;
+        else if (Mutation == 4)
+          Wrong->WeakImport = true;
+        else if (Mutation == 5)
+          Wrong->ByteCount = 0;
+        else
+          Wrong->Signature.Parameters[3].Type = NdType::makeFloat(4);
+        auto Changed = *E;
+        Changed.SourceCallHint = Wrong;
+        EXPECT_FALSE(sdk::objcSourceCallBound(Changed, I, {})) << Mutation;
+      }
+    });
+  });
+  ASSERT_EQ(Calls, 1U);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+  ASSERT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  ASSERT_NE(Source.find("memcpy(&value, transform, sizeof(value))"),
+            std::string::npos)
+      << Source;
+  const auto Record = typeToC(Signature.ReturnType);
+  Source += "\nstatic unsigned calls; static int mismatch;\n"
+            "static uint64_t expected[16];\n" +
+            Record + " scale_probe(" + Record +
+            ", double, double, double) __asm__(\"_CATransform3DScale\");\n" +
+            Record + " scale_probe(" + Record +
+            " input, double sx, double sy, double sz) {\n"
+            "  ++calls; uint64_t values[16], transformed[16];\n"
+            "  memcpy(values, &input, sizeof(values));\n"
+            "  mismatch |= memcmp(values, expected, sizeof(values)) != 0 || "
+            "sx != 1.25 || sy != -2.5 || sz != 3.75;\n"
+            "  for (unsigned j = 0; j != 16; ++j)\n"
+            "    transformed[j] = values[(j + 7) % 16] ^ (0x100ULL + j);\n  " +
+            Record +
+            " result; memcpy(&result, transformed, sizeof(result)); "
+            "return result;\n}\n"
+            "int main(void) {\n"
+            "  static const uint64_t cases[] = {0, 0x8000000000000000ULL, "
+            "0x3ff0000000000000ULL, 0x7ff0000000000000ULL, "
+            "0xfff0000000000000ULL, 0x7ff8000000001234ULL, 1, "
+            "0x8000000000000001ULL};\n"
+            "  for (unsigned i = 0; i != 512; ++i) {\n"
+            "    for (unsigned j = 0; j != 16; ++j)\n"
+            "      expected[j] = cases[(i + j) % 8] ^ "
+            "((uint64_t)(i / 8) << 8) ^ j;\n"
+            "    uint64_t input[18], output[18];\n"
+            "    memset(input, 0xa5, sizeof(input));\n"
+            "    memset(output, 0xa5, sizeof(output));\n"
+            "    memcpy(input + 1, expected, sizeof(expected));\n"
+            "    if (scale_matrix(input + 1, output + 1, 1.25, -2.5, 3.75)) "
+            "return 1;\n"
+            "    if (memcmp(input + 1, expected, sizeof(expected))) return 2;\n"
+            "    if (scale_matrix(input + 1, input + 1, 1.25, -2.5, 3.75)) "
+            "return 3;\n"
+            "    for (unsigned j = 0; j != 16; ++j)\n"
+            "      if (input[j + 1] != "
+            "(expected[(j + 7) % 16] ^ (0x100ULL + j)) || "
+            "output[j + 1] != input[j + 1]) return 4;\n"
+            "    if (calls != (i + 1) * 2 || "
+            "input[0] != 0xa5a5a5a5a5a5a5a5ULL || input[17] != input[0] || "
+            "output[0] != input[0] || output[17] != input[0]) return 5;\n"
+            "  }\n  return mismatch;\n}\n";
+  executeSource(Source);
+}
 } // namespace

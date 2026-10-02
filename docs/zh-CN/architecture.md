@@ -706,6 +706,8 @@ Darwin ARM64 的固定 C 调用也可通过隐藏的 x8 指针返回由恰好六
 
 同一源码 ABI 权威层也支持自然布局的十六 double `CATransform3D` 通过 arm64 x8 返回。编译器提取的声明与精确 QuartzCore 导出共同绑定 `CATransform3DMakeTranslation`、`CATransform3DMakeScale` 和 `CATransform3DMakeRotation`，降低过程保留结果的全部 128 字节。此契约不支持通用间接记录参数、Swift 或 x86_64 矩阵返回，也不支持缺少 nil 存储证明的 Objective-C 间接结果。生成的 C 在 O0/O2 下验证全部十六个字段、浮点位模式、精确标量参数及结果缓冲区两侧的保护字节。
 
+精确的 arm64 QuartzCore 强导入 `CATransform3DScale` 使用同一有界变换桥接。128 字节输入指针位于 x0，三个 double 使用 d0–d2，x8 指向结果。HighC 在调用 SDK 前将完整输入复制为真正按值传递的记录，调用后写入全部十六个结果字段。O0/O2 执行覆盖输入与结果缓冲区分离及重叠两种情况、全部字段的位模式和边界保护。错误提供者、弱导入、失效宽度及其他 ABI 均被拒绝。
+
 运行时调用目录仅在准确导入的函数明确返回原参数指针时声明 `ReturnedArgument`。接收者分析先读取已声明的物理参数，再执行正常 ABI 寄存器清除，最后仅在返回值上恢复已有的接收者类型事实。SDK 会重新验证此效果；它不允许删除调用、所有权效果或内存访问。
 
 编译器生成的框架目录与接收者目录共享提供方列表：Foundation、CoreData、CoreLocation、CoreSpotlight、QuartzCore、UniformTypeIdentifiers 和 UserNotifications。QuartzCore 使用公共入口 `CoreAnimation.h`，其他框架的兼容性导入不提供所属声明。两个生成器均保留四种预处理配置、准确框架身份及声明的否定证据。
