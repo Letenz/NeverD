@@ -218,7 +218,9 @@ private:
         // The function already indexes its names. Scanning its entire body
         // for each anonymous leaf makes large symbolic rewrites quadratic.
         // Block labels share the table but are not symbolic value inputs.
-        const llvm::Value *Named = F->getValueSymbolTable()->lookup(Candidate);
+        const auto *Symbols = F->getValueSymbolTable();
+        const llvm::Value *Named =
+            Symbols ? Symbols->lookup(Candidate) : nullptr;
         return llvm::isa_and_nonnull<llvm::Argument, llvm::Instruction>(Named);
       };
 

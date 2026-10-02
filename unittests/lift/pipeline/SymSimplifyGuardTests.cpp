@@ -1497,6 +1497,24 @@ TEST(SymSimplifyGuard, AnonymousNamesRespectCurrentValueSymbolsButNotLabels) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
+TEST(SymSimplifyGuard, AnonymousNamesWorkWhenLLVMDiscardsValueNames) {
+  llvm::LLVMContext C;
+  C.setDiscardValueNames(true);
+  llvm::Module M("discarded_names", C);
+  auto *F = buildSparseEqualityIndicator(M, 0x13579bdfu);
+  ASSERT_EQ(F->getValueSymbolTable(), nullptr);
+  const auto Before = printFunction(*F);
+  const auto Result =
+      SymSimplifyPass::simplifyWithResult(*F, synthesisOptions());
+  ASSERT_EQ(Result.Outcome, SymSimplifyOutcome::Counterexample);
+  ASSERT_TRUE(Result.Counterexample);
+  ASSERT_EQ(Result.Counterexample->Variables.size(), 1u);
+  EXPECT_EQ(Result.Counterexample->Variables[0].Name, "nd$0");
+  EXPECT_EQ(Result.Counterexample->Variables[0].HexValue, "0x13579bdf");
+  EXPECT_EQ(printFunction(*F), Before);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
 TEST(SymSimplifyGuard,
      SynthesisMultipleRootsLaterEquivalentHasCoherentDisposition) {
   llvm::LLVMContext C;

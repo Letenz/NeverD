@@ -2058,11 +2058,19 @@ bool LLVMCWriter::usersAreDeadCopies(const llvm::Value *V) const {
   if (!V)
     return true;
   std::set<const llvm::Value *> Seen;
-  std::function<bool(const llvm::Value *)> Dead =
-      [&](const llvm::Value *Cur) -> bool {
+  llvm::SmallVector<const llvm::Value *, 16> Pending{V};
+  unsigned Work = 64;
+  // Materialized casts can still have long chains of cast users. Bound both
+  // stack use and repeated liveness queries; exhaustion keeps extra source
+  // temporaries rather than justifying the omission of an unvisited use.
+  while (!Pending.empty()) {
+    const llvm::Value *Cur = Pending.pop_back_val();
     if (!Cur || !Seen.insert(Cur).second)
-      return true;
+      continue;
     for (const llvm::User *U : Cur->users()) {
+      if (Work == 0)
+        return false;
+      --Work;
       const auto *UI = llvm::dyn_cast<llvm::Instruction>(U);
       if (!UI)
         return false;
@@ -2072,15 +2080,13 @@ bool LLVMCWriter::usersAreDeadCopies(const llvm::Value *V) const {
       // load or store is printed. Follow the expression to its actual use.
       if (Analysis.Inlinable.count(UI) ||
           llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::PHINode>(UI)) {
-        if (!Dead(UI))
-          return false;
+        Pending.push_back(UI);
         continue;
       }
       return false;
     }
-    return true;
-  };
-  return Dead(V);
+  }
+  return true;
 }
 
 bool LLVMCWriter::usersOnlySeeImmediate(const llvm::Value *V) const {

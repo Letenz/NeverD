@@ -1492,14 +1492,14 @@ TEST(LLVMCValues, LongPointerCastChainsKeepNamedBoundaries) {
   llvm::IRBuilder<llvm::NoFolder> B(
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Value = Function->getArg(0);
-  for (unsigned I = 0; I != 2048; ++I)
+  for (unsigned I = 0; I != 16384; ++I)
     Value = B.CreateIntToPtr(B.CreatePtrToInt(Value, Word), Pointer);
   B.CreateRet(B.CreatePtrToInt(Value, Word));
   ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
   std::string Source;
   llvm::raw_string_ostream Out(Source);
   ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
-  ASSERT_LT(Source.size(), 500000u);
+  ASSERT_LT(Source.size(), 4000000u);
   const char *Main = R"(
 int main(void) {
   uint64_t cell = 17;
