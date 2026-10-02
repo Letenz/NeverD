@@ -122,6 +122,58 @@ TEST(BinaryLowIRRefinement, GuardedShiftSupportsAllSymbolicCounts) {
   refused(P.check(Recovery.Residual, Witness::ZeroBits), Status::Different);
 }
 
+TEST(BinaryLowIRRefinement, XaddHasNoFreshBitsAndRejectsAlteredDefinedOutputs) {
+  for (const auto &Bytes :
+       std::vector<std::vector<uint8_t>>{{0x0f, 0xc0, 0xc4},
+                                         {0x0f, 0xc0, 0xe0},
+                                         {0x0f, 0xc1, 0xc8},
+                                         {0x48, 0x0f, 0xc1, 0xc0},
+                                         {0x4d, 0x0f, 0xc1, 0xc8}}) {
+    Program P({});
+    auto &Code = P.Image.Segments.front();
+    Code.Data = Bytes;
+    Code.Data.push_back(0xc3);
+    Code.Size = Code.FileSz = Code.Data.size();
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    for (auto W : {Witness::LiftedBits, Witness::ZeroBits}) {
+      const auto Good = P.check(Recovery.Residual, W);
+      ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+      EXPECT_TRUE(Good.Certificate->Relation.Producers.empty());
+    }
+  }
+  Program P({0x0f, 0xc1, 0xc8, 0xc3}); // XADD EAX,ECX; RET.
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  for (unsigned Field = 0; Field != 3; ++Field) {
+    auto Changed = Recovery.Residual;
+    bool Found = false;
+    for (auto &Block : Changed.Blocks)
+      for (auto &Op : Block.Ops)
+        if (!Found && (Field == 0   ? Op.Opcode == NdOp::INT_ADD
+                       : Field == 1 ? Op.Output == NdVar::reg(x86reg::RCX, 4)
+                                    : Op.Output == NdVar::reg(x86reg::CF, 1))) {
+          Op.Opcode = NdOp::COPY;
+          Op.NumInputs = 1;
+          Op.Inputs[0] = NdVar::scalar(0, Op.Output.Size);
+          Found = true;
+        }
+    ASSERT_TRUE(Found);
+    refused(P.check(Changed), Status::Different);
+  }
+}
+
+TEST(BinaryLowIRRefinement, CompatibilityShiftUsesTheSameSelectedValueWitness) {
+  Program P(
+      {0xd3, 0xf0, 0x9c, 0x5a, 0xc3}); // SAL /6 EAX,CL; PUSHFQ; POP RDX; RET.
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_GE(Good.Certificate->Relation.Producers.size(), 2U);
+  refused(P.check(Recovery.Residual, Witness::ZeroBits), Status::Different);
+}
+
 TEST(BinaryLowIRRefinement,
      BitTestsAndOverlappingRotatesKeepFullStateWitnesses) {
   const std::vector<std::vector<uint8_t>> Instructions = {

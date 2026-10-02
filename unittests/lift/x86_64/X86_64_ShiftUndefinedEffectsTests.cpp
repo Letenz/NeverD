@@ -151,13 +151,13 @@ void checkShiftOrRotate(Arch Target, unsigned Width, unsigned Group,
         uint64_t Expected = Value;
         unsigned Carry = Old & 1;
         for (unsigned I = 0; I < Count; ++I) {
-          Carry =
-              Group == 0 || Group == 4 ? (Expected >= Sign) : (Expected & 1);
+          Carry = Group == 0 || Group == 4 || Group == 6 ? (Expected >= Sign)
+                                                         : (Expected & 1);
           if (Group == 0)
             Expected = (Expected * 2 + Carry) & Mask;
           else if (Group == 1)
             Expected = Expected / 2 + (Carry ? Sign : 0);
-          else if (Group == 4)
+          else if (Group == 4 || Group == 6)
             Expected = (Expected * 2) & Mask;
           else
             Expected = Expected / 2 + (Group == 7 ? Expected & Sign : 0);
@@ -217,7 +217,7 @@ TEST(X86ShiftUndefinedEffects,
     for (unsigned Width : {1u, 2u, 4u, 8u}) {
       if (Target == Arch::X86 && Width == 8)
         continue;
-      for (unsigned Group : {4u, 5u, 7u})
+      for (unsigned Group : {4u, 5u, 6u, 7u})
         for (unsigned Form = 0; Form < 10; ++Form) {
           if (((Form == 2 || Form >= 7) && Width != 1) ||
               (Form == 6 && Target == Arch::X86))

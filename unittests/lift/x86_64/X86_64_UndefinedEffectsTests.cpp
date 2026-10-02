@@ -200,6 +200,9 @@ TEST_F(X86UndefinedEffects, LegacyShiftCountsPublishCompleteEvidence) {
       {"shl eax, 0", {0xc1, 0xe0, 0}},
       {"shr ax, 16", {0x66, 0xc1, 0xe8, 16}},
       {"sar rax, 1", {0x48, 0xd1, 0xf8}},
+      {"sal /6 eax, cl", {0xd3, 0xf0}},
+      {"sal /6 r9, 3", {0x49, 0xc1, 0xf1, 3}},
+      {"sal /6 byte [rbx], 1", {0xd0, 0x33}},
   };
   for (const auto &Case : Cases) {
     SCOPED_TRACE(Case.Name);
@@ -224,7 +227,6 @@ TEST_F(X86UndefinedEffects, ShiftUnauditedPrefixesClearAllPartialEvidence) {
       {"REP shift", {0xf3, 0xd3, 0xe0}},
       {"REPNZ shift", {0xf2, 0xd3, 0xe0}},
       {"unused REX.R opcode extension", {0x44, 0xd3, 0xe0}},
-      {"undocumented /6 alias", {0xd3, 0xf0}},
       {"BMI2 SHLX", {0xc4, 0xe2, 0x71, 0xf7, 0xc0}},
   };
   for (const auto &Case : Cases) {
@@ -238,6 +240,119 @@ TEST_F(X86UndefinedEffects, ShiftUnauditedPrefixesClearAllPartialEvidence) {
     EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
     expectCleared(Effects);
     EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Ops));
+  }
+}
+
+TEST_F(X86UndefinedEffects, CompatibilityShiftAliasDoesNotRelabelOtherGroups) {
+  for (const auto [ModRM, Id] : {std::pair{0xf0, X86_INS_SHR},
+                                 {0xf0, X86_INS_ROL},
+                                 {0xf8, X86_INS_SHL}}) {
+    DecodedInsn Insn{};
+    ASSERT_TRUE(decode({0xd3, uint8_t(ModRM)}, Insn));
+    Insn.Raw->id = Id;
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+    expectCleared(Effects);
+  }
+}
+
+TEST_F(X86UndefinedEffects, XaddUnauditedFormsClearAllPartialEvidence) {
+  const InstructionCase Cases[] = {
+      {"memory XADD", {0x0f, 0xc1, 0x08}},
+      {"LOCK memory XADD", {0xf0, 0x0f, 0xc1, 0x08}},
+      {"LOCK register XADD", {0xf0, 0x0f, 0xc1, 0xc8}},
+      {"REP XADD", {0xf3, 0x0f, 0xc1, 0xc8}},
+      {"REPNZ XADD", {0xf2, 0x0f, 0xc1, 0xc8}},
+      {"duplicate operand prefix", {0x66, 0x66, 0x0f, 0xc1, 0xc8}},
+      {"duplicate REX", {0x48, 0x48, 0x0f, 0xc1, 0xc8}},
+      {"unused REX.X", {0x42, 0x0f, 0xc1, 0xc8}},
+      {"address prefix", {0x67, 0x0f, 0xc1, 0xc8}},
+      {"segment prefix", {0x64, 0x0f, 0xc1, 0xc8}},
+      {"REX2 XADD", {0xd5, 0x08, 0x0f, 0xc1, 0xc8}},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    DecodedInsn Insn{};
+    if (!decode(Case.Bytes, Insn))
+      continue;
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    try {
+      Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+    } catch (const UnliftedInstruction &) {
+      expectCleared(Effects);
+      continue;
+    }
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+    expectCleared(Effects);
+  }
+}
+
+TEST_F(X86UndefinedEffects, XaddChangedEncodingAndOperandsRemainUnaudited) {
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    DecodedInsn Insn{};
+    ASSERT_TRUE(decode({0x0f, 0xc1, 0xc8}, Insn));
+    auto &X = Insn.Raw->detail->x86;
+    switch (Mutation) {
+    case 0:
+      X.operands[0].reg = X86_REG_EDX;
+      break;
+    case 1:
+      X.operands[1].reg = X86_REG_EDX;
+      break;
+    case 2:
+      X.operands[0].reg = X86_REG_AX;
+      X.operands[0].size = 2;
+      break;
+    case 3:
+      X.operands[1].reg = X86_REG_RCX;
+      X.operands[1].size = 8;
+      break;
+    case 4:
+      X.opcode[1] = 0xc0;
+      break;
+    case 5:
+      Insn.Raw->bytes[1] = 0xc0;
+      break;
+    case 6:
+      X.encoding.modrm_offset = 1;
+      break;
+    case 7:
+      X.modrm ^= 1;
+      break;
+    case 8:
+      X.prefix[2] = 0x66;
+      break;
+    case 9:
+      X.rex = 0x48;
+      break;
+    case 10:
+      X.encoding.imm_size = 1;
+      break;
+    case 11:
+      X.op_count = 1;
+      break;
+    }
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+    expectCleared(Effects);
+  }
+  // Any REX selects the low-byte bank. REX.W still cannot widen 0F C0.
+  for (unsigned Operand : {0u, 1u}) {
+    DecodedInsn Insn{};
+    ASSERT_TRUE(
+        decode({0x48, 0x0f, 0xc0, uint8_t(Operand ? 0xe0 : 0xc4)}, Insn));
+    Insn.Raw->detail->x86.operands[Operand].reg = X86_REG_AH;
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+    expectCleared(Effects);
   }
 }
 
