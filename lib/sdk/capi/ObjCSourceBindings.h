@@ -3271,6 +3271,15 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       auto Inline = swiftLocalImportedLockType(Image, *LocalDescriptor);
       if (!Inline)
         Inline = swiftLocalRegisteredNominalType(Image, *LocalDescriptor);
+      if (!Inline) {
+        // The shared protocol proof returns a simple existential spelling.
+        // Keep the recipe's own composition operator and insert only the
+        // authenticated declaration, avoiding a second "_p" suffix.
+        const auto Protocol =
+            swiftLocalRegisteredProtocolType(Image, *LocalDescriptor);
+        if (Protocol && llvm::StringRef(*Protocol).ends_with("_p"))
+          Inline = Protocol->substr(0, Protocol->size() - 2);
+      }
       if (Inline) {
         Expanded += *Inline;
         Rebuilt += *Inline;

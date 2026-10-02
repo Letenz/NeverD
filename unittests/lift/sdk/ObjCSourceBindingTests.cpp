@@ -4158,6 +4158,143 @@ swiftRegisteredInternalTypeFixture(Arch Architecture, char TypeKind = 'C',
 
 namespace {
 SwiftTypeMetadataFixture
+swiftRegisteredProtocolRecipeFixture(Arch Architecture, bool Indirect,
+                                     llvm::StringRef Container = "optional") {
+  auto F =
+      swiftRegisteredInternalTypeFixture(Architecture, 'C', false, Indirect);
+  const std::string Type = "13WMFComponents10ArticleTab";
+  const std::string Prefix = Container == "array" ? "Say" : "";
+  const std::string Suffix = Container == "array"      ? "_pG"
+                             : Container == "optional" ? "_pSg"
+                                                       : "_p";
+  const std::string Base = "_$s" + Prefix + Type + Suffix;
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  F.Image.Symbols[2].Name = "_$s" + Type + "Mp";
+  auto &Descriptor = F.Image.Segments[3].Data;
+  llvm::support::endian::write32le(
+      Descriptor.data() + F.LocalDescriptor - 0x4000, 0x10043);
+  F.Image.Sections.back().Name = "__swift5_protos";
+  auto &Reference = F.Image.Segments[0].Data;
+  auto *Bytes = Reference.data() + F.TypeReference - 0x1000;
+  std::memcpy(Bytes, Prefix.data(), Prefix.size());
+  Bytes[Prefix.size()] = Indirect ? 2 : 1;
+  llvm::support::endian::write32le(
+      Bytes + Prefix.size() + 1,
+      uint32_t((Indirect ? F.DescriptorSlot : F.LocalDescriptor) -
+               (F.TypeReference + Prefix.size() + 1)));
+  std::memcpy(Bytes + Prefix.size() + 5, Suffix.c_str(), Suffix.size() + 1);
+  llvm::support::endian::write32le(Reference.data() + F.Reference + 4 - 0x1000,
+                                   Prefix.size() + 5 + Suffix.size());
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, RegisteredProtocolRecipesKeepTheirExactRuntimeType) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const bool Indirect : {false, true})
+      for (const auto Container : {"optional", "plain", "array"}) {
+        SCOPED_TRACE(Container);
+        auto F = swiftRegisteredProtocolRecipeFixture(Architecture, Indirect,
+                                                      Container);
+        const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+            F.Image, F.Cache, F.Reference);
+        ASSERT_TRUE(Proof);
+        EXPECT_TRUE(Proof->Descriptors.empty());
+        EXPECT_EQ("_$s" + Proof->TypeReference + "MR", F.Image.Symbols[0].Name);
+        const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+        for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+          EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+        std::set<std::string> Names;
+        const auto Source = renderObjCSwiftTypeMetadataHelpers(
+            F.Image, Bound.SwiftTypeMetadataPairs, Names);
+        EXPECT_EQ(Source.find("__asm__("), std::string::npos);
+      }
+}
+
+TEST(ObjCSourceBindings,
+     RegisteredProtocolRecipesRejectStaleOrIncompleteProof) {
+  for (unsigned Mutation = 0; Mutation != 17; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftRegisteredProtocolRecipeFixture(Arch::AArch64, true);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    auto &Data = F.Image.Segments[3].Data;
+    const auto Word = [&](unsigned Offset, uint32_t Value) {
+      llvm::support::endian::write32le(Data.data() + Offset, Value);
+    };
+    switch (Mutation) {
+    case 0:
+      F.Image.Sections.back().Name = "__swift5_types";
+      break;
+    case 1:
+      Word(0x2c, 1); // Requirement signature.
+      break;
+    case 2:
+      Word(0x34, 0x4080 - 0x4034); // Associated type names.
+      break;
+    case 3:
+      Word(0x30, 513);
+      break;
+    case 4:
+      Word(0x20, 0x50043); // Unsupported special protocol.
+      break;
+    case 5:
+      Word(0x20, 0x10143); // Unknown descriptor version.
+      break;
+    case 6:
+      Data[0x80] = 'X';
+      break;
+    case 7:
+      Data[0xa0] = 'X';
+      break;
+    case 8:
+      F.Image.MachOResolvedChainedPointerSlots.erase(F.DescriptorSlot);
+      break;
+    case 9:
+      F.Image.DataPtrRelocTargetOwners[F.DescriptorSlot] = 0x5000;
+      break;
+    case 10:
+      F.Image.Exports.push_back({F.Image.Symbols[2].Name, 0, 0x4080});
+      break;
+    case 11:
+      F.Image.Symbols.push_back({F.Image.Symbols[2].Name, 0x4080, 0, false});
+      break;
+    case 12:
+      F.Image.Symbols[0].Name = "_$s13WMFComponents10ArticleTab_pMR";
+      F.Image.Symbols[1].Name = "_$s13WMFComponents10ArticleTab_pMd";
+      break;
+    case 13:
+      F.Image.Segments[0].Data[0x89] = 'X';
+      break;
+    case 14:
+      Word(0x30, 32); // Incomplete requirement records.
+      break;
+    case 15:
+      F.Image.Symbols[2].IsFunc = true;
+      break;
+    case 16:
+      F.Image.Segments[3].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    }
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                    .SwiftTypeMetadataPairs.empty());
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                 std::runtime_error);
+  }
+}
+
+namespace {
+SwiftTypeMetadataFixture
 swiftPrivateFieldTypeFixture(Arch Architecture, bool Indirect = false,
                              bool ImportedTypedef = false) {
   SwiftTypeMetadataFixture F(Architecture, false, false, false, true);
