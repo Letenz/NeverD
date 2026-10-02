@@ -56,6 +56,9 @@ struct ProcessServiceEvent {
   std::array<uint64_t, process_defaults::ServiceArguments> Arguments;
   /// Raw guest return bits; a nonreturning service has no result.
   std::optional<uint64_t> Result;
+  /// Darwin BSD carry/error outcome. Absent when no return was modeled or
+  /// when the selected OS uses a different error convention.
+  std::optional<bool> Error;
 };
 
 struct ProcessResult {

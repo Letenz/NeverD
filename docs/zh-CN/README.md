@@ -1,6 +1,6 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: d615d9f900a3fb234918f3725d77c7385215434f8d6c98da6284f831d1adf8d8 -->
+<!-- i18n-source: 4ad5761d6370d9ae8a26c9cf015210842c3c7817d1426b5df704408d1f0d1b7a -->
 
 [← NeverD 项目](project.md)
 
@@ -31,6 +31,8 @@ CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`
 | [CPU 执行](cpu-execution.md) | 配置、能力查询、后端可用性与类型化结果 |
 | [Bitvector 证明后端](solver.md) | 可选 Z3 证明、门控合成、独立检查与查询导出 |
 | [来宾进程模拟](process-emulation.md) | Linux ELF 配置、进程启动、服务、限制与测试 |
+| [macOS/iOS 进程环境](darwin-emulation.md) | Mach-O 启动、设备与模拟器平台、Darwin 服务与页规则 |
+| [macOS HVF](macos-hvf.md) | 宿主同架构硬件执行、签名权限、打包与验证 |
 | [Windows 驱动模拟](driver-emulation.md) | 有界 x64 WDM/KMDF 生命周期、请求、硬件场景、SEH、PnP 子集、后端选择及限制 |
 | [内存安全审计与猎取](memory-safety.md) | 堆对象生命周期与拷贝越界分析：各格式身份契约、汇/源目录、判定、预算与 JSON 模式 |
 | [原生插件](plugins.md) | 纯 C 描述符 ABI、回调与事件、构建/链接流程、发现顺序及兼容性规则 |

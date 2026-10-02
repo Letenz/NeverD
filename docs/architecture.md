@@ -1270,6 +1270,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
 | `NeverDEmulationAndroid` | Android API 28 AArch64 native linking, TLS and Bionic call models |
 | `NeverDEmulationWindowsProcess` | Windows PE64 console process loading, PEB/TEB, TLS and named user APIs |
+| `NeverDEmulationDarwin` | Shared Darwin Mach-O startup, BSD services and memory; distinct macOS/iOS/simulator profiles |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
@@ -1294,6 +1295,9 @@ lib/emulation/
   os/windows/process/    Windows PE64 user process startup and user API models
   os/linux/              Linux ELF process startup and system-call ABI/services
   os/linux/android/      Android native library linking, TLS and Bionic models
+  os/darwin/             Shared Darwin startup, service ABI and memory policy
+  os/darwin/macos/       macOS platform contract
+  os/darwin/ios/         iOS device and simulator platform contracts
 ```
 
 The architecture library depends only on core memory/register ownership and
@@ -1349,12 +1353,14 @@ CPU or process session.
 The Linux process environment lives beside Windows. The Android native
 environment builds on the applicable Linux kernel contracts under
 `os/linux/android/`; the [Android architecture](https://source.android.com/docs/core/architecture)
-separates its runtime and framework from the kernel. macOS and iOS models should
-share applicable Darwin primitives while keeping platform APIs and ABI/version
-profiles distinct under `os/darwin/macos/` and `os/darwin/ios/`; Apple's
+separates its runtime and framework from the kernel. macOS and iOS models
+share Darwin process startup, BSD services and anonymous memory while keeping
+platform profiles distinct under `os/darwin/macos/` and `os/darwin/ios/`; Apple's
 [XNU overview](https://github.com/apple-oss-distributions/xnu#what-is-xnu)
-identifies their shared kernel foundation. Darwin directories remain proposed
-extension locations. Calling conventions, syscall ABIs and user/kernel privilege contracts
+identifies their shared kernel foundation. The loader-owned original Mach-O
+execution view supplies finite image facts; the OS layer admits explicit macOS,
+iOS device or simulator contracts. See [Darwin environments](darwin-emulation.md).
+Calling conventions, syscall ABIs and user/kernel privilege contracts
 remain explicit OS/workload requirements, independent of the CPU transport.
 
 [`ExecutionSession`](../include/neverd/emulation/ExecutionSession.h) owns one CPU,
@@ -2820,3 +2826,11 @@ Swift value-witness binding distinguishes literal metadata addresses from metada
 Native Swift class virtual calls reuse the loader’s complete class-method ABI classifier. Bounded register provenance across every reaching CFG path and canonical re-lifting authenticate entry `swiftself`, masked isa, the original indirect occurrence and the matching void slot declaration. Relevant cycles, partial values, clobbers, conflicting metadata and stale instructions fail. Publication repeats the current caller LowIR/MedIR/HighIR and audit checks, retains the exact dynamic SSA target and entry-self argument, and requires one evaluation per occurrence. The live vtable still chooses the implementation. Boolean normalization reuses these entry/call ABIs and current selector-wide Objective-C declaration agreement, including pointer-argument void messages. Its shared IR proof observes the entire dynamic target as well as the arguments and retains the genuine Swift `i1` contract. No frame-borrow or noescape authority is added.
 
 CoreText `CTFontGetSize` and `CTFramesetterCreateWithAttributedString` use the existing compiler-derived C declaration catalog. All four macOS/iOS preprocessing profiles must agree, and the exact CoreText provider must export the symbol. Both take one opaque pointer; the former returns an eight-byte floating value and the latter an opaque pointer. Binding and publication recheck the complete architecture-specific ABI and import identity; these declarations add no memory, lifetime or noescape effects.
+
+## macOS HVF backend
+
+Hypervisor.framework supplies the `hvf` native transport. `auto` selects it for
+a matching macOS host ISA; x64 driver execution on Apple Silicon continues to
+use Unicorn. The existing ISA and OS contracts remain authoritative. See
+[HVF ownership, signing and hardware tests](macos-hvf.md). ARM64 hardware
+evidence and Intel runtime coverage are reported separately.

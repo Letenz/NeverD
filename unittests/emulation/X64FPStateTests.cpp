@@ -4,6 +4,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "arch/x86_64/X64Machine.h"
 #include "backends/MachineFactories.h"
 #include "core/MemoryProjection.h"
@@ -223,6 +224,8 @@ protected:
                ? createKvmMachine(Storage)
            : GetParam().Backend == ExecutionBackendKind::WHP
                ? createWhpMachine(Storage)
+           : GetParam().Backend == ExecutionBackendKind::HVF
+               ? createHvfX64Machine(Storage)
                : createUnicornX64Machine(Storage, GetParam().UserMode);
   }
   void SetUp() override {
@@ -232,7 +235,8 @@ protected:
       auto E = M.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Text = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable &&
+          !requireHvf(GetParam().Backend, GuestArchitecture::X64))
         GTEST_SKIP() << Text;
       FAIL() << Text;
     }
@@ -382,7 +386,8 @@ protected:
       auto E = B.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Text = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable &&
+          !requireHvf(GetParam().Backend, GuestArchitecture::X64))
         GTEST_SKIP() << Text;
       FAIL() << Text;
     }

@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "arch/aarch64/AArch64Machine.h"
 #include "arch/x86_64/X64Machine.h"
 #include "backends/MachineFactories.h"
@@ -47,6 +48,8 @@ protected:
                    ? createKvmMachine(*Memory)
                : GetParam().Backend == ExecutionBackendKind::WHP
                    ? createWhpMachine(*Memory)
+               : GetParam().Backend == ExecutionBackendKind::HVF
+                   ? createHvfX64Machine(*Memory)
                    : createUnicornX64Machine(*Memory, true);
       if (!M)
         return M.takeError();
@@ -56,6 +59,8 @@ protected:
                    ? createKvmAArch64Machine(*Memory)
                : GetParam().Backend == ExecutionBackendKind::WHP
                    ? createWhpAArch64Machine(*Memory)
+               : GetParam().Backend == ExecutionBackendKind::HVF
+                   ? createHvfAArch64Machine(*Memory)
                    : createUnicornAArch64Machine(*Memory, true);
       if (!M)
         return M.takeError();
@@ -69,7 +74,7 @@ protected:
     if (E) {
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable && !requireHvf(GetParam().Backend, GetParam().ISA))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }

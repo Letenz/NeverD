@@ -1,3 +1,14 @@
+add_neverd_unittest(NeverDHvfTests
+  HvfTests.cpp
+  HvfExecutorTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationCPU)
+
+target_include_directories(NeverDHvfTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
+if(APPLE AND NEVERD_EMULATION_BACKEND_HVF)
+  target_compile_definitions(NeverDHvfTests PRIVATE NEVERD_EMULATION_HVF=1)
+endif()
+
 add_neverd_unittest(NeverDAArch64StateTests
   AArch64StateTests.cpp
   AArch64MachineProbeTests.cpp
@@ -110,6 +121,15 @@ if(TARGET neverd_shared AND TARGET neverd)
   add_dependencies(NeverDProcessPublicTests neverd)
 endif()
 include(ProcessFixtures.cmake)
+add_neverd_unittest(NeverDDarwinProcessTests
+  DarwinProcessTests.cpp
+  DarwinImageTests.cpp
+  DarwinMemoryTests.cpp
+  TIMEOUT 30
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationProcess)
+target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
+include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
   TIMEOUT 30

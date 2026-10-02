@@ -141,7 +141,7 @@ neverd_emulate_driver_scenario_json(neverd_session_t Sess, const char *Path,
 
 /// Execute with an explicit backend and execution contract. Existing v1 entry
 /// points retain their original options layout and complete observation
-/// contract. Backend: auto, unicorn, kvm, whp. Contract: driver-strict,
+/// contract. Backend: auto, unicorn, kvm, whp, hvf. Contract: driver-strict,
 /// checked-x64-v1. The checked hardware profile currently admits a bounded
 /// integer ISA with single-page RAM accesses. Unsupported instructions and MMIO
 /// fail explicitly. ScenarioJSON may be NULL for initialization only. Backend

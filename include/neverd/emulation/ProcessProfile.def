@@ -7,6 +7,9 @@
 NEVERD_PROCESS_PROFILE(LinuxELF64, "linux-elf64-v1")
 NEVERD_PROCESS_PROFILE(AndroidNativeAArch64, "android-aarch64-api28-v1")
 NEVERD_PROCESS_PROFILE(WindowsPE64, "windows-pe64-v1")
+NEVERD_PROCESS_PROFILE(MacOSMachO64, "macos-macho64-v1")
+NEVERD_PROCESS_PROFILE(IOSMachO64, "ios-macho64-v1")
+NEVERD_PROCESS_PROFILE(IOSSimulatorMachO64, "ios-simulator-macho64-v1")
 #endif
 #ifdef NEVERD_PROCESS_LIMIT
 NEVERD_PROCESS_LIMIT(Instructions, 100000)

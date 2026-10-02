@@ -6,6 +6,10 @@
 
 `neverd emulate` 在明确指定的来宾 OS 配置下执行映像。CPU 传输、映像解析、进程入口和 OS 服务分别由不同层负责。启用 `NEVERD_ENABLE_CPU_EMULATION=ON`；驱动模拟也会启用它。
 
+macOS 和 iOS 也提供明确的 Mach-O profile，覆盖 macOS、iOS 设备与 iOS Simulator。
+启动、Darwin ABI、匿名内存和支持范围见 [macOS/iOS 进程环境](darwin-emulation.md)。
+macOS 宿主的同架构硬件加速使用 [HVF](macos-hvf.md)。
+
 首个配置 `linux-elf64-v1` 在 CPL3 或 EL0 运行 x64/AArch64 ELF `ET_EXEC` 与可自重定位的静态 PIE `ET_DYN`。它加载真实 ELF 分段，构造初始栈，按指令量恢复执行，并处理显式 Linux 系统调用请求。这是独立进程模型，不是完整 Linux 发行版，也不承诺运行任意 libc 二进制。动态链接、信号、线程、文件系统和不支持的服务都会明确失败。
 
 <!-- i18n-section: cli-sdk -->

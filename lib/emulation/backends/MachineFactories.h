@@ -27,5 +27,9 @@ llvm::Expected<std::unique_ptr<AArch64Machine>>
 createWhpAArch64Machine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<AArch64Machine>>
 createUnicornAArch64Machine(MemoryProjection &Memory, bool UserMode = false);
+llvm::Expected<std::unique_ptr<X64Machine>>
+createHvfX64Machine(MemoryProjection &Memory);
+llvm::Expected<std::unique_ptr<AArch64Machine>>
+createHvfAArch64Machine(MemoryProjection &Memory);
 } // namespace neverd::emulation
 #endif

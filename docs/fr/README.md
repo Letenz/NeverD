@@ -1,6 +1,6 @@
 **Langues**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: d615d9f900a3fb234918f3725d77c7385215434f8d6c98da6284f831d1adf8d8 -->
+<!-- i18n-source: 4ad5761d6370d9ae8a26c9cf015210842c3c7817d1426b5df704408d1f0d1b7a -->
 
 [← Projet NeverD](project.md)
 
@@ -31,6 +31,8 @@ L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur
 | [Exécution CPU](cpu-execution.md) | Configuration, capacités, disponibilité des backends et résultats typés |
 | [Preuves bitvector](solver.md) | Preuves Z3 facultatives, synthèse vérifiée, tests indépendants et export |
 | [Émulation de processus invités](process-emulation.md) | Profil Linux ELF, démarrage, services, limites et tests |
+| [Environnements de processus macOS/iOS](../darwin-emulation.md) | Démarrage Mach-O, plateformes appareil et simulateur, services Darwin et règles de pages |
+| [macOS HVF](../macos-hvf.md) | Exécution matérielle avec l’ISA de l’hôte, droits de signature, packaging et validation |
 | [Émulation des pilotes Windows](driver-emulation.md) | Cycle WDM/KMDF x64 borné, requêtes, scénarios matériels, SEH, sous-ensembles PnP, choix du moteur et limites |
 | [Audit et chasse de sûreté mémoire](memory-safety.md) | Analyse de durée de vie du tas et de débordement de copie : contrat d’identité par format, catalogue puits/sources, verdicts, budgets et schéma JSON |
 | [Plugins natifs](plugins.md) | ABI de descripteur en C pur, callbacks et événements, procédure de compilation/liaison, découverte et règles de compatibilité |

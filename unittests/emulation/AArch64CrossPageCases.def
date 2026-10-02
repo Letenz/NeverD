@@ -25,7 +25,9 @@ NEVERD_ARM_CROSS_PROFILE(UnicornEL1, Unicorn, CheckedAArch64)
 NEVERD_ARM_CROSS_PROFILE(KvmEL0, KVM, CheckedUserAArch64)
 NEVERD_ARM_CROSS_PROFILE(KvmEL1, KVM, CheckedAArch64)
 NEVERD_ARM_CROSS_PROFILE(WhpEL0, WHP, CheckedUserAArch64)
+NEVERD_ARM_CROSS_PROFILE(HvfEL0, HVF, CheckedUserAArch64)
 NEVERD_ARM_CROSS_PROFILE(WhpEL1, WHP, CheckedAArch64)
+NEVERD_ARM_CROSS_PROFILE(HvfEL1, HVF, CheckedAArch64)
 #endif
 #ifdef NEVERD_ARM_CROSS_INSTRUCTION
 // Name, load, operand bytes/count, effective-address bias, writeback,

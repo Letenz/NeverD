@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import json
+import os
 from pathlib import Path
+import platform
 import re
 import subprocess
 import sys
@@ -24,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def read_inventory(
-    root: Path, filename: str, prefix: str
+    root: Path, filename: str, prefix: str, host_architecture: str | None = None,
 ) -> tuple[list[str], set[str]]:
     definitions = (root / "scripts" / filename).read_text(encoding="utf-8")
     owners = re.findall(rf"^{prefix}_OWNER\((\w+)\)$", definitions, re.M)
@@ -43,10 +45,27 @@ def read_inventory(
             definitions, re.M
         )
     ]
+    host_tests = [
+        (architecture, "".join(re.findall(r'"([^"]*)"', value)))
+        for architecture, value in re.findall(
+            rf'^{prefix}_REQUIRED_HOST_TEST\(\s*(\w+),\s*{literal}\)',
+            definitions, re.M,
+        )
+    ]
     if (not owners or len(set(owners)) != len(owners)
-            or not (families or explicit) or len(set(explicit)) != len(explicit)):
+            or not (families or explicit or host_tests)
+            or len(set(explicit)) != len(explicit)
+            or len(set(host_tests)) != len(host_tests)
+            or any(architecture not in {"ARM64", "X64"} for architecture, _ in host_tests)):
         raise ValueError(f"invalid native test inventory: {filename}")
     required = set(explicit)
+    if host_tests:
+        architecture = {"arm64": "ARM64", "aarch64": "ARM64", "x86_64": "X64", "amd64": "X64"}.get(
+            (host_architecture or "").lower()
+        )
+        if architecture is None:
+            raise ValueError("host-specific native tests require an ARM64 or x64 host architecture")
+        required.update(name for host, name in host_tests if host == architecture)
     for prefix, source, macro in families:
         cases = re.findall(
             rf"^{re.escape(macro)}\(\s*(\w+)\s*,",
@@ -55,6 +74,8 @@ def read_inventory(
         if not cases or len(set(cases)) != len(cases):
             raise ValueError(f"invalid required native case inventory: {source}")
         required.update(prefix + case for case in cases)
+    if not required:
+        raise ValueError(f"native test inventory has no required cases for this host: {filename}")
     return owners, required
 
 
@@ -75,9 +96,16 @@ def declared_inventory(
 
 def run(
     build: Path, evidence: Path, parallel: int, require_whp: bool,
-    with_drivers: bool = False,
+    with_drivers: bool = False, require_hvf: bool = False,
 ) -> int:
-    owners, required = declared_inventory(ROOT, with_drivers)
+    if require_hvf and (require_whp or with_drivers):
+        raise ValueError("HVF coverage is a separate native CPU profile")
+    host_architecture = platform.machine()
+    owners, required = (read_inventory(ROOT, "NativeHVFTests.def", "NEVERD_NATIVE_HVF",
+                                      host_architecture=host_architecture)
+                        if require_hvf else declared_inventory(ROOT, with_drivers))
+    required_hardware = require_whp or require_hvf
+    native_name = "HVF" if require_hvf else "WHP"
     configured = {
         Path(line.replace("\\", "/")).name.removesuffix(".dir")
         for line in (build / "CMakeFiles" / "TargetDirectories.txt")
@@ -109,16 +137,16 @@ def run(
     if missing_owners:
         raise ValueError(f"owners have no registered tests: {sorted(missing_owners)}")
     required_missing = required - {test.name for test in tests}
-    if require_whp and required_missing:
+    if required_hardware and required_missing:
         raise ValueError(
-            f"missing required native WHP tests: {sorted(required_missing)}"
+            f"missing required native {native_name} tests: {sorted(required_missing)}"
         )
     junit = evidence / "results.xml"
     result = subprocess.run([
         *base, "--no-tests=error", "--parallel", str(parallel),
         "--output-on-failure", "--output-junit", str(junit),
         "--output-log", str(evidence / "ctest.log"),
-    ])
+    ], env={**os.environ, **({"NEVERD_REQUIRE_HVF": "1"} if require_hvf else {})})
     cases = parse_junit(ET.parse(junit).getroot())
     counts = Counter(case.outcome for case in cases)
     expected, actual = set(tests), {case.test for case in cases}
@@ -133,6 +161,7 @@ def run(
         "source_dirty": bool(subprocess.check_output(
             ["git", "status", "--porcelain"], cwd=ROOT, text=True
         ).strip()),
+        "host_architecture": host_architecture,
         "owners": owners,
         "registered": len(tests),
         "total": len(cases),
@@ -140,8 +169,10 @@ def run(
         "missing": sorted(test.name for test in expected - actual),
         "unexpected": sorted(test.name for test in actual - expected),
         "require_whp": require_whp,
+        "require_hvf": require_hvf,
         "with_drivers": with_drivers,
         "required_native_tests": len(required),
+        "required_native_names": sorted(required),
         "required_native_missing": sorted(required_missing),
         "required_native_unexecuted": required_unexecuted,
         "ctest_status": result.returncode,
@@ -153,7 +184,7 @@ def run(
     return int(bool(
         result.returncode or counts["failed"] or counts["disabled"]
         or counts["not_run"] or expected != actual or len(cases) != len(tests)
-        or (require_whp and required_unexecuted)
+        or (required_hardware and required_unexecuted)
     ))
 
 
@@ -163,13 +194,14 @@ def main() -> int:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--require-whp", action="store_true")
+    parser.add_argument("--require-hvf", action="store_true")
     parser.add_argument("--with-drivers", action="store_true")
     args = parser.parse_args()
     if args.parallel < 1:
         parser.error("parallel jobs must be positive")
     return run(
         args.build.resolve(), args.evidence.resolve(), args.parallel,
-        args.require_whp, args.with_drivers,
+        args.require_whp, args.with_drivers, args.require_hvf,
     )
 
 

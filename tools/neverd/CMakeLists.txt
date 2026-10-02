@@ -142,3 +142,7 @@ add_custom_command(TARGET neverd POST_BUILD
 if(NOT APPLE)
   target_link_libraries(neverd PRIVATE NeverDSupport)
 endif()
+
+if(COMMAND neverd_sign_hypervisor)
+  neverd_sign_hypervisor(neverd)
+endif()
