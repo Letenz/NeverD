@@ -104,7 +104,7 @@ class WDKDriverFixtureTests(unittest.TestCase):
     def test_cmake_paths_preserve_spaces_and_reject_list_or_code_expansion(self):
         image = self.root / "directory with spaces" / "driver.sys"
         text = fixtures.cache_entry("NEVERD_TEST_FIXTURE", image)
-        self.assertIn('"' + image.as_posix() + '"', text)
+        self.assertIn('"' + image.resolve().as_posix() + '"', text)
         for name in ('x;y.sys', '${VAR}.sys', 'x"y.sys'):
             with self.subTest(name=name):
                 with mock.patch.object(Path, "resolve", side_effect=AssertionError):
