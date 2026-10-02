@@ -1,6 +1,6 @@
 **اللغات**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](README.md)
 
-<!-- i18n-source: 9264f9f91247663fc3d2c0eba74b24a6456cc33611a90a0c8a112e581828b4fd -->
+<!-- i18n-source: 98aad1e53ca3dd45b5bb9f4249cd3b7f0c9c4dfc363aadbb27ea7bc2d0260ac4 -->
 
 [← مشروع NeverD](project.md)
 
@@ -14,7 +14,7 @@
 
 يفصل تنفيذ المعالج بين قبول ISA وذاكرة الضيف ونقل المحرك وسياسة نظام الضيف. يتيح `NEVERD_ENABLE_CPU_EMULATION` طبقة x64/ARM64، ويضيف `NEVERD_ENABLE_DRIVER_EMULATION` بيئة Windows WDM/KMDF x64 المحدودة. يشغّل `linux-elf64-v1` عمليات Linux ELF المدعومة. انظر [تنفيذ المعالج](cpu-execution.md) و[محاكاة عمليات الضيف](process-emulation.md) و[محاكاة برامج تشغيل Windows](driver-emulation.md).
 
-يدعم `driver-strict` / `checked-x64-v1` كلاً من KVM على مضيف Linux x64 المطابق وWHP على Windows x64 المطابق؛ يختار `auto` هذا النقل الأصلي، وتستخدم ISA المختلفة Unicorn. يحتفظ Unicorn الصريح وAPI V1 السابق بالملف البرمجي المحمول. يتحقق التنفيذ الأصلي من العناوين القانونية والآثار قبل الدخول؛ ويفشل العتاد غير المتاح دون تراجع. التعليمات وسلوك OS غير المدعومين أخطاء صريحة. تجتاز CI الأصلية على Windows x64 مع تعطيل Unicorn جميع الفحوص الإلزامية البالغ عددها 299:‏ 71 فحص CPU و224 نتيجة لبرامج التشغيل من 26 صورة مدمجة و46 صورة WDK و40 حالة سيناريو عند العناوين المفضلة والمعاد تموضعها، إضافة إلى أربعة فحوص لحدود SEH ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). لا تزال أدلة التشغيل الأصلي ARM64 ناقصة، ولا تثبت هذه القدرة توافق أي برنامج تشغيل أو Android/Darwin.
+يدعم `driver-strict` / `checked-x64-v1` كلاً من KVM على مضيف Linux x64 المطابق وWHP على Windows x64 المطابق؛ يختار `auto` هذا النقل الأصلي، وتستخدم ISA المختلفة Unicorn. يحتفظ Unicorn الصريح وAPI V1 السابق بالملف البرمجي المحمول. يتحقق التنفيذ الأصلي من العناوين القانونية والآثار قبل الدخول؛ ويفشل العتاد غير المتاح دون تراجع. التعليمات وسلوك OS غير المدعومين أخطاء صريحة. تجتاز CI الأصلية على Windows x64 مع تعطيل Unicorn جميع الفحوص الإلزامية البالغ عددها 329:‏ 101 فحص CPU و224 نتيجة لبرامج التشغيل من 26 صورة مدمجة و46 صورة WDK و40 حالة سيناريو عند العناوين المفضلة والمعاد تموضعها، إضافة إلى أربعة فحوص لحدود SEH ([`b2ca3cff`](https://github.com/NeverSight/NeverD/actions/runs/36973625293)). لا تزال أدلة التشغيل الأصلي ARM64 ناقصة، ولا تثبت هذه القدرة توافق أي برنامج تشغيل أو Android/Darwin.
 
 يوفر `checked-aarch64-v1` و`checked-user-aarch64-v1` مجموعة محدودة من ARM64 FP32/FP64 وSIMD ثابت العرض وحالة FPCR/FPSR والمتجهات الكاملة. يستخدم Linux ARM64 المطابق KVM، ويستخدم Windows ARM64 المطابق WHP، وتستخدم ISA المختلفة Unicorn. ما زال التحقق الأصلي ARM64 مطلوباً؛ ويظل تحميل برامج تشغيل Windows مقتصراً على x64.
 

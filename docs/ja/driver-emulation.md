@@ -8,7 +8,7 @@ NeverD のオプションのドライバーエミュレーターは、対応す�
 
 ## 実行バックエンド
 
-`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 299 検査すべてに合格します。内訳は CPU 検査 71 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
+`driver-strict` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 329 検査すべてに合格します。内訳は CPU 検査 101 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`b2ca3cff`](https://github.com/NeverSight/NeverD/actions/runs/36973625293)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
 
 上記のネイティブ検証は、宣言済みのドライバーエントリーポイントと公開シナリオを対象とします。以下の機能別回帰テストと C API／CLI／Python の検証は、Windows での実行が明記されない限り、証拠の範囲が Linux に限られます。ネイティブのサンプル群が合格しても、すべてのテスト変種を Windows で検証したことにはなりません。
 
