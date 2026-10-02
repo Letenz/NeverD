@@ -59,6 +59,26 @@ CLI 選項 `--vm-max-refinements=N` 要求正整數，預設值為 16。C 呼叫
 
 C 呼叫端使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_machine_source_v3()`：將 `neverd_devirtualize_options_v3` 清零，設定 `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`，再設定 `max_control_fields`、`max_solver_queries`，並可設定 `base.max_control_refinements`；零表示採用對應的既有預設值。三個 reserved 欄位必須全部為零。v1/v2 入口忽略 v3 尾部（包含 reserved），v3 忽略未來擴充尾部。報告同時記錄實際工作量與生效的 `maxControlFields`、`maxControlRefinements`、`maxSolverQueries`。
 
+恢復也提供 `--vm-chain-transfers=N`（預設 0）和 `--vm-no-control-discovery`。串接在已證明唯一目標的控制轉移之間保留符號關聯；達到上限後回到普通 CFG 邊界。機器狀態恢復可透過 `--vm-entry-frame=begin:end` 宣告未經執行時檢查、不會回繞的入口 RSP 偏移範圍。精確數值前提會寫入產生的 C 和報告；它不授予記憶體存取權限，也不構成等價證明。
+
+相容的 v4 介面為 `neverd_devirtualize_source_v4()` 與 `neverd_devirtualize_machine_source_v4()`。將 `neverd_devirtualize_options_v4` 清零，並將 `base.base.base.struct_size` 設為完整大小。CLI 串接數量接受非負 32 位元十進位整數，零表示關閉。範圍端點接受有號 64 位元十進位整數，要求 `begin < end` 及 `--vm-machine-state`，約束實體入口 RSP 而非調整後的值。在 C API 中，範圍旗標要求機器狀態介面；未設定時兩個端點必須為零。未知旗標與舊版本保留欄位的非零值會遭拒。v1/v2/v3 忽略整個 v4 擴充，v4 忽略未來擴充。空選項指標保留舊預設值。報告增加 `maxChainedTransfers` 與 `entryFrameBounds`，`discoverControlState` 記錄實際開關。所有 CLI 選項皆要求 `--devirtualize`。數值前提不在執行時檢查，也不保證可存取性、初始化或無別名。這些選項不啟用原生證明策略。
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 與 `discoveryVisits`，記錄啟用行為、上限與分析工作量。探索到欄位本身不代表還原成功。
 
 如果條件將位址相依縮窄為位元組片段，細化還會把包含該片段、已追蹤的完整八位元組直接位址欄位列為上下文候選。原有窄欄位及其產生者位元遮罩保持不變，不提升無關的寬欄位。常數和相對入口的偏移仍須證明，所有上下文共用現有上限。

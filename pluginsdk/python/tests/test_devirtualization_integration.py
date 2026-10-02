@@ -28,15 +28,25 @@ class DevirtualizationIntegrationTests(unittest.TestCase):
         for version, options in (
             (1, abi.NeverDDevirtualizeOptionsV1()),
             (2, abi.NeverDDevirtualizeOptionsV2()),
+            (3, abi.NeverDDevirtualizeOptionsV3()),
+            (4, abi.NeverDDevirtualizeOptionsV4()),
         ):
             if version == 1:
                 options.struct_size = ctypes.sizeof(options)
                 options.reserved = 1
                 expected_error = "invalid devirtualize flags"
-            else:
+            elif version == 2:
                 options.base.struct_size = ctypes.sizeof(options)
                 options.reserved = 1
                 expected_error = "invalid devirtualize v2 flags"
+            elif version == 3:
+                options.base.base.struct_size = ctypes.sizeof(options)
+                options.reserved = 1
+                expected_error = "invalid devirtualize v3 flags"
+            else:
+                options.base.base.base.struct_size = ctypes.sizeof(options)
+                options.flags = 4
+                expected_error = "invalid devirtualize v4 flags"
             for prefix, source_abi in (
                 ("source", "ordinary-source"),
                 ("machine_source", "x64-machine-state-v1"),

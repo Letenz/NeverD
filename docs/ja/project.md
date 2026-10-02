@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 4ce947288c7a66f79f75d1ad1e87f4f9f92f0802a5bc7b403db8d21d5c53d16e -->
+<!-- i18n-source: dcc304022efe9c4440a8f175a32f402c2cb360d1443a77f1e4b31f86af69fdd5 -->
 
 <div align="center">
 
@@ -47,6 +47,8 @@ input format、host contract、制限は [EVM ガイド](evm.md)と [Solana SBF 
 実験的な[インタープリターのソース復元](interpreter-recovery.md)は `neverd decompile --devirtualize --func ENTRY` を使用し、対応するリンク済み x64 ELF/PE インタープリターを共通の LowIR/MedIR パイプライン経由で HighC または LLVMC に特化します。制御ヒントはデコーダーのコンテキストを分離し、実行時入力を固定しません。未解決の制御、未対応の意味論、予算超過は明示的に失敗します。バイナリ置換や例外の等価性を証明するモードではありません。
 
 復元予算は `--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` で明示できます。既定値は 16、16、4096 のままです。互換性のある v3 C API と失敗時の規則は復元ガイドを参照してください。
+
+復元では `--vm-chain-transfers=N`（既定値 0）と `--vm-no-control-discovery` も指定できます。連鎖は単一ターゲットが証明された制御転送間で記号的な相関を保持し、上限で通常の CFG 境界に戻ります。マシン状態復元では `--vm-entry-frame=begin:end` で、実行時には検査しない非ラップの入口 RSP オフセット範囲を宣言できます。正確な数値前提は生成 C とレポートに残り、メモリアクセスや等価性の証明を与えません。
 
 独立した C++ ループ証明 API は予算内で入れ子ループの不変条件と辞書式順位を推論し、ネイティブから LowIR への精緻化を再検査します。[復元ガイド](interpreter-recovery.md)を参照してください。出力 C の等価性は証明しません。
 

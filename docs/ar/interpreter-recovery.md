@@ -72,6 +72,26 @@ neverd decompile program --func vm_entry --devirtualize \
 
 يستخدم مستدعو C الدالة `neverd_devirtualize_source_v3()` أو `neverd_devirtualize_machine_source_v3()`. صفّر `neverd_devirtualize_options_v3` واضبط `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`، ثم `max_control_fields` و`max_solver_queries` واختياريًا `base.max_control_refinements`؛ تختار القيمة صفر الافتراضي الحالي. يجب أن تكون حقول reserved الثلاثة صفرًا. تتجاهل v1/v2 ذيل v3 بما فيه reserved، وتتجاهل v3 الذيول المستقبلية. يسجل التقرير العمل الفعلي وحدود `maxControlFields` و`maxControlRefinements` و`maxSolverQueries` النافذة.
 
+تتيح الاستعادة أيضًا `--vm-chain-transfers=N` (الافتراضي 0) و`--vm-no-control-discovery`. يحفظ التسلسل الارتباطات الرمزية عبر الانتقالات المثبت أن لها هدفًا واحدًا؛ وعند الحد يعود إلى حدود CFG العادية. يمكن لاستعادة حالة الآلة إعلان إزاحات RSP عند الدخول دون التفاف، غير مفحوصة أثناء التشغيل، عبر `--vm-entry-frame=begin:end`. ترافق الفرضية العددية الدقيقة شيفرة C والتقرير؛ ولا تمنح صلاحية ذاكرة أو برهان تكافؤ.
+
+واجهتا v4 المتوافقتان هما `neverd_devirtualize_source_v4()` و`neverd_devirtualize_machine_source_v4()`. صفّر `neverd_devirtualize_options_v4` واضبط `base.base.base.struct_size` على الحجم الكامل. يقبل عداد CLI عددًا عشريًا غير سالب من 32 بت؛ ويعطّل الصفر التسلسل. الأطراف أعداد عشرية موقّعة من 64 بت مع `begin < end`، وتتطلب `--vm-machine-state` وتقيّد RSP الفعلي عند الدخول لا قيمته المعدّلة. يتطلب علم الحدود في C واجهة حالة الآلة؛ وبدونه يجب أن يكون الطرفان صفرًا. تُرفض الأعلام المجهولة والحقول المحجوزة القديمة غير الصفرية. تتجاهل v1/v2/v3 امتداد v4 كله، وتتجاهل v4 الامتدادات المستقبلية. يحفظ مؤشر الخيارات الفارغ الإعدادات الافتراضية. يضيف التقرير `maxChainedTransfers` و`entryFrameBounds` وحالة `discoverControlState` الفعلية. تتطلب جميع خيارات CLI وجود `--devirtualize`. لا تُفحص الفرضية أثناء التشغيل ولا تضمن قابلية الوصول أو التهيئة أو انعدام التداخل الاسمي. لا تفعّل هذه الخيارات سياسة إثبات أصلية.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 يضيف تقرير JSON الحقول `discoverControlState` و`maxControlRefinements` و`maxDiscoveryVisits` و`discoveredControlFields` و`discoveredContextFields` و`controlRefinements` و`discoveryVisits` لتسجيل التفعيل والحدود والعمل التحليلي. اكتشاف الحقول وحده لا يثبت نجاح الاستعادة.
 
 عندما يضيّق شرط اعتماد العنوان إلى جزء من البايتات، يحتفظ التنقيح أيضاً بحقول العنوان المباشر الكاملة ذات الثمانية بايتات، المتتبعة مسبقاً والمحيطة بذلك الجزء، كمرشحات للسياق. يظل الحقل الضيق الأصلي وقناع بتات منتجه دون تغيير، ولا تُرقّى الحقول الأوسع غير ذات الصلة. تبقى الثوابت والإزاحات النسبية إلى نقطة الدخول بحاجة إلى إثبات، وتشترك جميع السياقات في الحدود الحالية.

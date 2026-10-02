@@ -263,7 +263,8 @@ static const char *devirtualizeSource(
     const neverd_devirtualize_options_v1 *Options, const char **Report,
     bool MachineState,
     const neverd_devirtualize_options_v2 *ExtendedOptions = nullptr,
-    const neverd_devirtualize_options_v3 *BudgetOptions = nullptr) {
+    const neverd_devirtualize_options_v3 *BudgetOptions = nullptr,
+    const neverd_devirtualize_options_v4 *EntryOptions = nullptr) {
   if (Report)
     *Report = nullptr;
   auto *S = toSession(Session);
@@ -313,12 +314,15 @@ static const char *devirtualizeSource(
           "disjoint from "
           "guest memory; fixed original mappings; little-endian 64-bit host";
     if (Options) {
-      const size_t RequiredSize = BudgetOptions     ? sizeof(*BudgetOptions)
+      const size_t RequiredSize = EntryOptions      ? sizeof(*EntryOptions)
+                                  : BudgetOptions   ? sizeof(*BudgetOptions)
                                   : ExtendedOptions ? sizeof(*ExtendedOptions)
                                                     : sizeof(*Options);
       if (Options->struct_size < RequiredSize)
         return Fail(
-            BudgetOptions
+            EntryOptions
+                ? "devirtualize options do not cover the complete v4 structure"
+            : BudgetOptions
                 ? "devirtualize options do not cover the complete v3 structure"
             : ExtendedOptions
                 ? "devirtualize options do not cover the complete v2 structure"
@@ -326,6 +330,27 @@ static const char *devirtualizeSource(
                   "structure");
       // Older entry points may receive arbitrary future tails. Inspect each
       // extension only through its matching API, after checking its full size.
+      if (EntryOptions) {
+        constexpr uint32_t KnownFlags =
+            NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+            NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+        if (EntryOptions->flags & ~KnownFlags)
+          return Fail("invalid devirtualize v4 flags");
+        const bool HasBounds =
+            EntryOptions->flags & NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+        if (HasBounds && !MachineState)
+          return Fail("entry frame bounds require the machine-state API");
+        if (!HasBounds &&
+            (EntryOptions->entry_frame_begin || EntryOptions->entry_frame_end))
+          return Fail("entry frame endpoints require the bounds flag");
+        Config.MaxChainedTransfers = EntryOptions->max_chained_transfers;
+        Config.DiscoverControlState =
+            !(EntryOptions->flags &
+              NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY);
+        if (HasBounds)
+          Config.EntryFrameBounds = analysis::SpecializationEntryFrameBounds{
+              EntryOptions->entry_frame_begin, EntryOptions->entry_frame_end};
+      }
       if (BudgetOptions && BudgetOptions->reserved)
         return Fail("invalid devirtualize v3 flags");
       if (ExtendedOptions && ExtendedOptions->reserved)
@@ -419,6 +444,17 @@ static const char *devirtualizeSource(
     Evidence["maxImmutableReadAddresses"] = Config.MaxImmutableReadAddresses;
     Evidence["maxControlTuples"] = Config.MaxControlTuples;
     Evidence["maxControlFields"] = Config.MaxControlFields;
+    Evidence["maxChainedTransfers"] = Config.MaxChainedTransfers;
+    if (Config.EntryFrameBounds)
+      Evidence["entryFrameBounds"] = llvm::json::Object{
+          {"begin", Config.EntryFrameBounds->Begin},
+          {"end", Config.EntryFrameBounds->End},
+          {"contract", "entry RSP plus every signed offset in [begin,end) "
+                       "fits in [0,UINT64_MAX] without wrapping; unchecked "
+                       "caller precondition; no memory accessibility, "
+                       "initialization or nonalias guarantee"}};
+    else
+      Evidence["entryFrameBounds"] = nullptr;
     Evidence["discoverControlState"] = Config.DiscoverControlState;
     Evidence["maxControlRefinements"] = Config.MaxControlRefinements;
     Evidence["maxDiscoveryVisits"] =
@@ -514,6 +550,16 @@ static const char *devirtualizeSource(
             " * be disjoint from the native invocation-private frame and its\n"
             " * reconstructed source storage.\n"
             " */\n";
+    if (Config.EntryFrameBounds)
+      OS << "/* Numeric entry-RSP precondition: for every signed offset in ["
+         << Config.EntryFrameBounds->Begin << ","
+         << Config.EntryFrameBounds->End
+         << "),\n"
+            " * entry RSP + offset must fit in [0,UINT64_MAX] without "
+            "wrapping.\n"
+            " * This premise is not checked at runtime and grants no memory\n"
+            " * accessibility, initialization or nonalias guarantees.\n"
+            " */\n";
     CEmitterOptions EmitOptions;
     EmitOptions.TheArch = S->Img.Arch;
     EmitOptions.Format = S->Img.Format;
@@ -594,4 +640,23 @@ extern "C" const char *neverd_devirtualize_machine_source_v3(
   return devirtualizeSource(Session, Entry,
                             Options ? &Options->base.base : nullptr, Report,
                             true, Options ? &Options->base : nullptr, Options);
+}
+
+extern "C" const char *
+neverd_devirtualize_source_v4(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v4 *Options,
+                              const char **Report) {
+  return devirtualizeSource(
+      Session, Entry, Options ? &Options->base.base.base : nullptr, Report,
+      false, Options ? &Options->base.base : nullptr,
+      Options ? &Options->base : nullptr, Options);
+}
+
+extern "C" const char *neverd_devirtualize_machine_source_v4(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v4 *Options, const char **Report) {
+  return devirtualizeSource(
+      Session, Entry, Options ? &Options->base.base.base : nullptr, Report,
+      true, Options ? &Options->base.base : nullptr,
+      Options ? &Options->base : nullptr, Options);
 }

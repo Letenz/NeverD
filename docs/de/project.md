@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 4ce947288c7a66f79f75d1ad1e87f4f9f92f0802a5bc7b403db8d21d5c53d16e -->
+<!-- i18n-source: dcc304022efe9c4440a8f175a32f402c2cb360d1443a77f1e4b31f86af69fdd5 -->
 
 <div align="center">
 
@@ -47,6 +47,8 @@ Der experimentelle iOS-Ablauf `neverd mobile App.ipa -o recovered-ios` exportier
 Die experimentelle [Quelltextrekonstruktion aus Interpretern](interpreter-recovery.md) verwendet `neverd decompile --devirtualize --func ENTRY`, um unterstützte gelinkte x64-ELF/PE-Interpreter über die gemeinsame LowIR/MedIR-Pipeline nach HighC oder LLVMC zu spezialisieren. Steuerhinweise trennen Decoder-Kontexte, ohne Laufzeiteingaben festzulegen. Nicht aufgelöste Steuerung, nicht unterstützte Semantik und erschöpfte Budgets führen ausdrücklich zum Fehler; der Modus zertifiziert weder Binärersatz noch Ausnahmeäquivalenz.
 
 Wiederherstellungsbudgets sind explizit: `--vm-max-fields`, `--vm-max-refinements` und `--vm-max-queries` behalten die Standardwerte 16, 16 und 4096. Der Leitfaden beschreibt die kompatible C-API v3 und Fehlerregeln.
+
+Die Wiederherstellung bietet auch `--vm-chain-transfers=N` (Standard 0) und `--vm-no-control-discovery`. Verkettung erhält symbolische Korrelationen über Transfers mit bewiesenem Einzelziel; am Limit gelten wieder normale CFG-Grenzen. Maschinenzustandswiederherstellung kann mit `--vm-entry-frame=begin:end` ungeprüfte, nicht umlaufende Offsets zum Eintritts-RSP angeben. Die genaue numerische Vorbedingung bleibt im erzeugten C und Bericht; sie erlaubt keine Speicherzugriffe und beweist keine Äquivalenz.
 
 Die separate C++-API für Schleifenbeweise leitet begrenzte Invarianten und lexikografische Ränge für verschachtelte Schleifen ab und prüft anschließend die Verfeinerung von nativem Code zu LowIR erneut. Siehe [Wiederherstellungsleitfaden](interpreter-recovery.md); ausgegebenes C wird nicht zertifiziert.
 
