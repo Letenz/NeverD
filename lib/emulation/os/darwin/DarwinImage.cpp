@@ -14,7 +14,7 @@ using namespace value;
 llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
                                        ProfileSpec Profile,
                                        const ProcessOptions &Options) {
-  auto Loaded = loadMachOExecutionImage(Path);
+  auto Loaded = loadMachOExecutionImage(Path, Options.MemoryLimit);
   if (!Loaded)
     return Loaded.takeError();
   auto &Image = Loaded->Image;

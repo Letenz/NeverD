@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinTestImage.h"
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/darwin/DarwinProcess.h"
@@ -91,6 +92,23 @@ TEST_P(DarwinProcess, StartupDataBSSCarryAndBinaryOutput) {
   EXPECT_EQ(Result->Services[3].Error, false);
   EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
   EXPECT_EQ(Result->Profile, GetParam().OS);
+}
+TEST_P(DarwinProcess, UnixThreadReceivesArgcAtTheInitialStackPointer) {
+  using namespace llvm::MachO;
+  const auto &P = GetParam();
+  const auto Platform = P.OS == ProcessProfile::MacOSMachO64 ? PLATFORM_MACOS
+                        : P.OS == ProcessProfile::IOSMachO64
+                            ? PLATFORM_IOS
+                            : PLATFORM_IOSSIMULATOR;
+  darwin_test::Image I(P.ISA == GuestArchitecture::X64, Platform);
+  darwin_test::TemporaryImage File(I);
+  auto Result = emulateProcess(File.path(), P.OS, Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, Options.Arguments.size());
+  EXPECT_EQ(Result->Services.size(), 1u);
+  EXPECT_EQ(Result->SelectedBackend, P.Backend);
+  EXPECT_EQ(Result->Profile, P.OS);
 }
 TEST_P(DarwinProcess, MainReturnAndBSDExitHaveRealStatus) {
   for (auto Mode : {"return", "exit", "identity"}) {

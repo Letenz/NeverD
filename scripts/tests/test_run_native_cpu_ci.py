@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -254,10 +255,15 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 11 * len(platforms))
+                    self.assertEqual(len(required), 12 * len(platforms))
                     self.assertEqual({name.rsplit("/", 1)[1] for name in required},
                                      {f"{platform}_{backend}" for platform in platforms})
                     for platform in platforms:
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "UnixThreadReceivesArgcAtTheInitialStackPointer/"
+                            f"{platform}_{backend}", required,
+                        )
                         self.assertIn(
                             "Transports/DarwinProcess."
                             "InitialStackAndDataPartialUnmapReleasesPhysicalBudget/"
@@ -271,6 +277,18 @@ class NativeCPUEvidenceTests(unittest.TestCase):
             native.darwin_inventory(native.ROOT, "kvm", "riscv64")
         with self.assertRaisesRegex(ValueError, "separate native profile"):
             native.run(self.build, self.evidence, 2, True, darwin_backend="whp")
+
+    def test_every_darwin_process_case_is_required_on_native_hosts(self):
+        source = (native.ROOT / "unittests/emulation/DarwinProcessTests.cpp").read_text()
+        cases = set(re.findall(r"TEST_P\(\s*DarwinProcess,\s*(\w+)\s*\)", source))
+        self.assertTrue(cases)
+        for host in ("arm64", "x86_64"):
+            with self.subTest(host=host):
+                _, required = native.darwin_inventory(native.ROOT, "hvf", host)
+                declared = {name.split(".", 1)[1].split("/", 1)[0]
+                            for name in required}
+                self.assertEqual(declared, cases,
+                                 "every new workload must join the native evidence gate")
 
     def test_darwin_rejects_missing_or_duplicate_workload_requirements(self):
         self.add_darwin_requirements("hvf")

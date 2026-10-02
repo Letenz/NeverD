@@ -20,6 +20,9 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 向量、退出、标准输出与错误输出、固定身份、匿名内存映射、保护和释放。
 ARM64 使用 16 KiB OS 页，x64 使用 4 KiB；CPU 页表仍以 4 KiB 为基础。
 `__PAGEZERO` 只保留地址，不消耗数 GiB 内存。
+完整输入文件（包括未映射的元数据和尾部字节）在解析和复制前必须符合 `memory_limit`。
+加载器只对普通文件做有界读取，拒绝含 NUL 的路径、短读和文件大小变化，解析独立快照，
+不保留宿主文件映射。输入文件和来宾映射各有一个同值预算；宿主文件 I/O 没有硬实时保证。
 Mach-O 文件尾页保留同页原始字节，后续完整虚拟页清零。初始数据、栈和匿名页都按
 OS 页独立持有物理内存，因此部分解除映射能释放预算，重新分配的页面保持清零。
 
@@ -39,7 +42,9 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 HVF 必需门禁也包含这些用例。完整支持边界、来源和命令见[英文说明](../darwin-emulation.md)。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 33 项，x64 的 macOS 和 Simulator 共 22 项。
+ARM64 三个平台共 36 项，x64 的 macOS 和 Simulator 共 24 项。
+每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
+以后新增的 Darwin 进程用例也进入必需集合。
 `scripts/run_native_cpu_ci.py --require-darwin-backend hvf` 可以在本机验收；
 Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--evidence` 路径。
 缺少用例注册、跳过必需用例或缺少 `ld64.lld` 均不能通过。

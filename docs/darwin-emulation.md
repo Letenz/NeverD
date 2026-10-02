@@ -36,6 +36,13 @@ Only thin little-endian `MH_EXECUTE` images with one unambiguous platform and
 entry are admitted. Universal images require an explicitly extracted slice;
 the execution loader does not choose one from the host.
 
+The complete input file, including unmapped metadata and trailing bytes, must
+fit `memory_limit` before parsing or copying. The loader reads a bounded private
+snapshot from a regular file and rejects embedded-NUL paths, short reads and
+size changes. It does not parse through a live file mapping. This input limit
+and the mapped guest-memory limit are separate ceilings with the same value;
+host filesystem I/O has no hard wall-clock guarantee.
+
 Segments retain their permissions, zero-fill and maximum protection.
 `__PAGEZERO` reserves addresses without allocating its often multi-gigabyte
 extent. File and virtual ranges, OS-page alignment, rounded overlap, header
@@ -130,7 +137,10 @@ transport must be verified on its own host; the results below distinguish
 Apple Silicon HVF, Linux KVM and Windows WHP. Intel HVF remains unverified.
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 33 cases on ARM64, or 22 on x64.
+on each platform supported by the host ISA: 36 cases on ARM64, or 24 on x64.
+Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
+every supported platform. A source-inventory regression ensures each new
+Darwin process test joins this required set.
 It preserves the full inventory and JUnit results, and fails on missing or
 skipped native workloads even when loader-only tests pass:
 
