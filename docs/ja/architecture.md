@@ -954,11 +954,13 @@ super 呼び出しの証明は狭い戻り値の未定義パディングを維�
 
 UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の getter/setter は、32 バイトの `UIEdgeInsets` を保持します。上・左・下・右の double は arm64 の d0–d3 で渡されます。デバイスとシミュレータの完全な SDK 宣言が一致し、Apple Clang でも六つのエンコーディングを独立に再現しています。レシーバーの検索では UIButton の無名カテゴリと UIButton → UIControl → UIView の継承関係を保持します。実行時宣言の競合、別のレシーバー、クラスメソッド、不正な提供ライブラリ、対応する証拠のないアーキテクチャは引き続き未対応です。
 
-`windows-pe64-v1` は PEB/TEB、モジュール TLS と起動時の `DllMain`、名前付き Win32 API、明示的で非循環の起動 DLL グラフを備えた有界 Windows x64/ARM64 コンソールプロセスに対応します。DLL は名前／序数によるコード・データのインポート、DIR64 再配置、実際のローダーリストに対応します。動的ロード、転送エクスポート、CRT/GUI、ユーザー SEH、スレッドは未完成です。ARM64 KVM/WHP のネイティブ実行証拠も未取得です。
+`windows-pe64-v1` は PEB/TEB、モジュール TLS と起動時の `DllMain`、名前付き Win32 API、明示的で非循環の起動 DLL グラフを備えた有界 Windows x64/ARM64 コンソールプロセスに対応します。DLL は名前／序数によるコード・データのインポート、DIR64 再配置、実際のローダーリストに対応します。動的ロード、CRT/GUI、ユーザー SEH、スレッドは未完成です。ARM64 KVM/WHP のネイティブ実行証拠も未取得です。 有界の転送エクスポートと、常駐ゲストイメージの `GetProcAddress` に対応します。
 
 `readPEProgramExports` が元のエクスポートと読み取り範囲、`WindowsProcessModules` が依存グラフとプロセス共通の提供元／名前 API ゲートを所有します。`VirtualMemory` は全イメージを事前予約し、`AddressSpace` がページと権限を管理します。PEB/LDR は実イメージのみを示し、初期化リストは DLL の依存順です。`GetModuleHandleW` は NULL または ASCII 基本名に対応し、大文字小文字を無視し、拡張子なしでは `.dll` を追加します。パス、非 ASCII、末尾の点は未対応です。未検出はエラー 126、成功時は LastError を保持します。API モデルはインストール済み DLL ではありません。
 
 `WindowsProcessLifetime` は同じ CPU と実行予算で依存順に DLL TLS コールバック、`DllMain`、続いて EXE TLS と入口を実行します。各モジュールに独立した TLS インデックスと整列済み領域を割り当て、再配置・リンク済みイメージから共有 64 KiB 領域へコピーします。TLS の予約引数はゼロ、起動／プロセス終了時の `DllMain` は不透明な非 NULL 値です。明示的なプロセス終了は初期化完了 DLL を逆順に切り離し、その後 EXE TLS を呼びます。EXE 初期化前でも同様です。起動時の `DllMain(FALSE)` は detach 通知なしで `0xc0000142` 終了します。障害や予算切れは後処理を捏造しません。ゲスト DLL がある PE 入口の return は未対応のスレッド終了を必要とするため明示停止します。非ゼロの `SizeOfZeroFill` は未対応ですが、実際の TLS テンプレート内のゼロ初期化バイトは対応します。 入口なし DLL は TLS attach を受けますが、プロセス detach 通知は受けません。
+
+`WindowsProcessExports` は静的インポートと `GetProcAddress` で名前／序数の解決を共有し、コード、データ、別名、連鎖転送を扱います。実際に参照する起動時の転送だけがカタログのモジュールと初期化依存関係を追加し、未使用の転送はファイルを読みません。実行時は `DllMain` 内も含め常駐イメージを照会できますが、別モジュールのロードが必要なら明示停止します。名前は大小文字を区別し、名前／序数がなければ NULL とエラー 127、成功時は LastError を保持します。未知のモジュールハンドルは未対応です。有界 API 登録から提供元／名前ごとの入口を一度だけ確保します。各イメージの現在の PE ヘッダーとエクスポートメタデータを検査し、変更や読み取り不能を拒否します。連鎖は最大 64 項で、準備段階の残りのメタデータ予算と実行期限を共有します。`LoadLibrary`／`FreeLibrary` や動的なエクスポート表書き換えには対応しません。
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 

@@ -80,7 +80,7 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 ## Windows PE64 프로필
 
-`windows-pe64-v1`은 PEB/TEB, 모듈 TLS와 시작 `DllMain`, 명명된 Win32 API, 명시적인 비순환 시작 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. DLL의 이름/서수 코드·데이터 가져오기, DIR64 재배치, 실제 로더 목록을 지원합니다. 동적 로딩, 전달된 내보내기, CRT/GUI, 사용자 SEH와 스레드는 미완성입니다. 네이티브 ARM64 KVM/WHP 실행 증거도 아직 없습니다.
+`windows-pe64-v1`은 PEB/TEB, 모듈 TLS와 시작 `DllMain`, 명명된 Win32 API, 명시적인 비순환 시작 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. DLL의 이름/서수 코드·데이터 가져오기, DIR64 재배치, 실제 로더 목록을 지원합니다. 동적 로딩, CRT/GUI, 사용자 SEH와 스레드는 미완성입니다. 네이티브 ARM64 KVM/WHP 실행 증거도 아직 없습니다. 제한된 전달 내보내기와 상주 게스트 이미지의 `GetProcAddress`를 지원합니다.
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 
@@ -95,13 +95,17 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
 ```
 
-단일 스레드 PE32+ EXE는 선호 기준 주소를 유지하며 선택적 진입점과 정적 TLS를 가진 명시적 DLL을 허용합니다. `WindowsProcessOptions::Modules` 또는 JSON `windows.modules`의 `name`, `path`로 최대 64개 게스트 기본 이름과 호스트 입력 경로를 지정합니다. 호스트 DLL을 검색하거나 실행하지 않습니다. ASCII 이름은 대소문자를 구분하지 않으며 중복과 시스템 API 제공자 재정의를 거부하고 도달 가능한 파일만 읽습니다. 이름/서수 함수·데이터 가져오기는 실제 내보내기에 연결됩니다. 빈 서수, 없는 심볼, 순환, 전달, bound/delay import와 미지원 load configuration/CFG는 실패합니다. 이동 가능한 DLL 충돌에는 DIR64를 적용하며 고정 주소 충돌과 링크 메타데이터를 덮는 재배치는 CPU 생성 전에 거부합니다.
+단일 스레드 PE32+ EXE는 선호 기준 주소를 유지하며 선택적 진입점과 정적 TLS를 가진 명시적 DLL을 허용합니다. `WindowsProcessOptions::Modules` 또는 JSON `windows.modules`의 `name`, `path`로 최대 64개 게스트 기본 이름과 호스트 입력 경로를 지정합니다. 호스트 DLL을 검색하거나 실행하지 않습니다. ASCII 이름은 대소문자를 구분하지 않으며 중복과 시스템 API 제공자 재정의를 거부하고 도달 가능한 파일만 읽습니다. 이름/서수 함수·데이터 가져오기는 실제 내보내기에 연결됩니다. 빈 서수, 없는 심볼, 순환, bound/delay import와 미지원 load configuration/CFG는 실패합니다. 이동 가능한 DLL 충돌에는 DIR64를 적용하며 고정 주소 충돌과 링크 메타데이터를 덮는 재배치는 CPU 생성 전에 거부합니다.
 
 `readPEProgramExports`는 원본 내보내기와 읽기 범위를, `WindowsProcessModules`는 그래프와 프로세스 공통 제공자/이름 API 게이트를 소유합니다. `VirtualMemory`가 모든 이미지를 먼저 예약하고 `AddressSpace`가 페이지와 권한을 관리합니다. PEB/LDR에는 실제 이미지만 있으며 초기화 목록은 DLL 의존 순서입니다. `GetModuleHandleW`는 NULL 또는 ASCII 기본 이름을 받으며 대소문자를 무시하고 확장자가 없으면 `.dll`을 붙입니다. 경로, 비 ASCII 조회, 끝의 점 규칙은 미지원입니다. 없는 이름은 오류 126, 성공은 LastError를 유지합니다. API 모델은 설치된 DLL이 아닙니다.
 
 입력 총 바이트와 이미지 전체 범위는 각각 `memory_limit`로 제한하고 런타임 매핑도 이미지 예산에 포함합니다. 준비 단계는 65,536개 레코드, 64 MiB 메타데이터 읽기, 이름 길이와 전체 작업 기한을 공유합니다. 호스트 I/O의 강제 시간 보장은 없습니다. 독자 EXE→DLL→DLL은 재배치, 서수, 공유 데이터, API 포인터, `MEM_IMAGE`, 목록, EXE TLS attach/detach를 확인합니다. `NeverDWindowsProcessTests`는 원본 네이티브 Windows 대조, `NeverDPEProgramExportsTests`는 잘못된 메타데이터와 예산, `NeverDProcessPublicTests`는 C ABI/CLI 일치를 검증합니다. 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
 
 `WindowsProcessLifetime`은 같은 CPU와 실행 예산에서 의존 순서대로 DLL TLS 콜백과 `DllMain`, 이어서 EXE TLS와 진입점을 실행합니다. 모듈마다 독립 TLS 인덱스와 정렬된 블록을 할당하고 재배치·연결된 이미지에서 공용 64 KiB 영역으로 복사합니다. TLS 예약 인수는 0이며 시작/프로세스 종료 `DllMain`은 불투명한 비 NULL 값을 받습니다. 명시적 프로세스 종료는 초기화를 완료한 DLL을 역순으로 분리한 뒤 EXE TLS를 호출하며 EXE 초기화 전에도 같습니다. 시작 `DllMain(FALSE)`는 분리 통지 없이 `0xc0000142`로 종료합니다. 오류와 예산 소진은 가짜 정리를 수행하지 않습니다. 게스트 DLL이 있는 PE 진입점 반환은 미지원 스레드 종료가 필요하므로 명시적으로 중단합니다. 0이 아닌 `SizeOfZeroFill`은 미지원이며 실제 TLS 템플릿의 0으로 초기화된 바이트는 지원합니다. 진입점 없는 DLL은 TLS attach를 받지만 프로세스 detach 통지는 받지 않습니다.
+
+`WindowsProcessExports`는 정적 가져오기와 `GetProcAddress`에 같은 이름/서수 해석을 사용하여 코드, 데이터, 별칭, 연쇄 전달을 처리합니다. 실제로 참조하는 시작 전달만 카탈로그 모듈과 초기화 의존성을 추가하며 사용하지 않는 전달은 파일을 읽지 않습니다. 실행 중에는 `DllMain` 안에서도 상주 이미지를 조회하지만 다른 모듈을 로드해야 하면 명시적으로 중단합니다. 이름은 대소문자를 구분하며 없는 이름/서수는 NULL과 오류 127을 반환하고 성공은 LastError를 보존합니다. 알 수 없는 모듈 핸들은 미지원입니다. 제한된 API 목록에서 정확한 제공자/이름별 진입점을 한 번 예약합니다. 각 이미지의 현재 PE 헤더와 내보내기 메타데이터를 검사하고 변경 또는 읽을 수 없는 바이트를 거부합니다. 체인은 최대 64개이며 준비 단계의 남은 메타데이터 예산과 실행 기한을 공유합니다. `LoadLibrary`/`FreeLibrary` 또는 실행 중 내보내기 표 재작성은 포함하지 않습니다.
+
+`WindowsExportTests.cpp`는 원본 x64/ARM64 DLL과 EXE로 전달 코드/데이터/서수 호출, 별칭, 초기화 중 조회, 재배치, 대소문자별 누락, LastError, 순환 및 비상주 대상, 잘못된 포인터와 성공한 조회 이후 메타데이터 변경을 확인합니다. 같은 EXE를 독립 네이티브 Windows 기준으로 실행하며 네이티브 CI는 WHP 사례를 필수로 요구합니다. C ABI/CLI 테스트는 전체 보고서를 비교합니다. 네이티브 ARM64 하드웨어 증거는 아직 없습니다.
 
 `WindowsLifetimeTests.cpp`는 고정된 추적을 독립 네이티브 Windows 프로세스 및 KVM/WHP/Unicorn 실행과 비교합니다. 정상 종료, 진입점 반환, 두 DLL의 초기화 실패, 네 곳의 조기 종료와 진입점 없는 DLL을 포함합니다. 콜백 오류, 공용 예산, 재배치 TLS 필드와 TLS 총용량도 확인합니다. 네이티브 진입점 반환 프로브는 초기 스레드 핸들을 보존하고 종료 코드와 정확한 스레드/프로세스 통지 순서를 64회 검증합니다. 남은 자식 스레드는 관찰 후 종료하며 프로세스 종료 코드를 진입점 반환값으로 취급하지 않습니다.
 
@@ -111,13 +115,13 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 
 x64 GS와 ARM64 x18은 TEB를 가리키며 스택 경계, self, PID/TID, PEB, 프로세스 매개변수, LastError와 TLS를 제공합니다. UTF-8을 엄격히 UTF-16으로 변환하고 argv는 Microsoft CRT 규칙으로 인용합니다. 환경 이름은 ASCII이며 대소문자 무시 중복을 거부합니다. 값은 Unicode가 가능하며 정렬된 환경은 이중 NUL로 끝납니다. 호스트 환경과 파일 시스템은 상속하지 않습니다. 정적 TLS는 템플릿/BSS/32비트 인덱스를 초기화하고 동적 TLS는 별도 TEB 슬롯을 사용합니다. 시작·종료는 변경된 콜백 배열을 순서대로 읽으며 기한과 예산을 공유합니다. 정상 프로세스 종료는 종료 콜백을 실행합니다. 진입점 반환은 게스트 DLL이 없을 때만 지원하며 종료 중 재귀 종료는 명시적으로 중단합니다.
 
-정확한 API는 `WindowsProcessServices.def`에 있습니다. `ExitProcess`, `RtlExitUserProcess`, 표준 출력 핸들과 동기 `WriteFile`, LastError, 프로세스/스레드 ID와 의사 핸들, `GetCommandLineW`, 힙 할당/해제/크기, 동적 TLS, `GetModuleHandleW`를 지원합니다. `kernel32.dll`, `kernelbase.dll`, `ntdll.dll`의 정확한 이름만 해석합니다. 직접 syscall과 위조 콜백 게이트는 API를 선택하지 못합니다. 힙 소유권과 회수, 이진 출력, API 오류와 미지원 비동기 I/O·사용자 예외를 구분합니다. 포인터 별칭도 완료 수 초기 0과 실제 반환 주소 변경을 반영합니다.
+정확한 API는 `WindowsProcessServices.def`에 있습니다. `ExitProcess`, `RtlExitUserProcess`, 표준 출력 핸들과 동기 `WriteFile`, LastError, 프로세스/스레드 ID와 의사 핸들, `GetCommandLineW`, 힙 할당/해제/크기, 동적 TLS, `GetModuleHandleW` / `GetProcAddress`를 지원합니다. `kernel32.dll`, `kernelbase.dll`, `ntdll.dll`의 정확한 이름만 해석합니다. 직접 syscall과 위조 콜백 게이트는 API를 선택하지 못합니다. 힙 소유권과 회수, 이진 출력, API 오류와 미지원 비동기 I/O·사용자 예외를 구분합니다. 포인터 별칭도 완료 수 초기 0과 실제 반환 주소 변경을 반영합니다.
 
 `windows.native_calls`는 모듈/함수명, 선언된 스칼라 인수, nullable 결과를 기록하며 NT syscall 번호를 만들지 않습니다. `NeverDWindowsProcessTests`는 실제 PE, 컴파일러 TLS, 콜백 변경, 힙, 별칭, 잘못된 메타데이터, 권한과 예산을 검증합니다. `NeverDProcessPublicTests`는 CLI/C ABI를 검증합니다. Windows CI는 같은 EXE를 직접 실행해 독립 비교하고 WHP 검사도 필수입니다. 네이티브 ARM64 실행 증거에는 해당 머신이 필요합니다.
 
 비어 있지 않은 입력 버퍼를 읽을 수 없으면 `WriteFile`은 `ERROR_INVALID_USER_BUFFER`(1784)를 반환하고, 기록한 바이트 수를 0으로 설정하며 아무 바이트도 출력하지 않습니다.
 
-[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->
 

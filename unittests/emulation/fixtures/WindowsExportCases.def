@@ -22,6 +22,7 @@ NEVERD_EXPORT_VALUE(PEExportDirectory, 0x88)
 NEVERD_EXPORT_VALUE(ExportFunctions, 28)
 NEVERD_EXPORT_VALUE(PageSize, 0x1000)
 NEVERD_EXPORT_VALUE(MaxLookupName, 256)
+NEVERD_EXPORT_VALUE(ForwarderLimit, 64)
 #endif
 #ifdef NEVERD_EXPORT_TEXT
 NEVERD_EXPORT_TEXT(LeafFile, "lookup-leaf.dll")
@@ -72,6 +73,7 @@ NEVERD_EXPORT_TEXT(TopAttach, "T")
 NEVERD_EXPORT_TEXT(TopDetach, "t")
 NEVERD_EXPORT_TEXT(ExeExtension, ".exe")
 NEVERD_EXPORT_TEXT(CommandQuote, "\"")
+NEVERD_EXPORT_TEXT(ChainForwarder, "lookup-leaf.#")
 #endif
 #ifdef NEVERD_EXPORT_WIDE
 NEVERD_EXPORT_WIDE(LeafName, L"LOOKUP-LEAF.DLL")

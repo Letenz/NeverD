@@ -178,6 +178,21 @@ TEST_P(WindowsExports, ChecksHeadersEvenWhenTheImageHasNoExports) {
     EXPECT_NE(
         llvm::toString(Changed.takeError()).find(win::text::ExportChanged),
         std::string::npos);
+  llvm::cantFail(Space->writeInteger(Address, Original, sizeof(uint32_t)));
+  const uint64_t HeaderBytes =
+      Program->Modules.front().ExportMetadata.front().Size;
+  Program->Reads.MetadataBytes = HeaderBytes * 2;
+  for (unsigned I = 0; I < 2; ++I) {
+    auto R = Lookup();
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_FALSE(*R);
+  }
+  auto Exhausted = Lookup();
+  EXPECT_FALSE(bool(Exhausted));
+  if (!Exhausted)
+    EXPECT_NE(
+        llvm::toString(Exhausted.takeError()).find(win::text::ExportBudget),
+        std::string::npos);
 #endif
 }
 TEST(WindowsExportResolution, QueriesConsumeTheSharedBudgetAndDeadline) {
@@ -221,6 +236,39 @@ TEST(WindowsExportResolution, QueriesConsumeTheSharedBudgetAndDeadline) {
         llvm::toString(TimedOut.takeError()).find(win::text::ModuleTimeout),
         std::string::npos);
 #endif
+}
+TEST(WindowsExportResolution,
+     BoundsAcyclicChainsWithoutConfusingSelfForwarding) {
+  win::Program P;
+  P.Identities.push_back({LeafFile, 0, 0, 0});
+  win::Module M;
+  M.Loaded.Base = PageSize;
+  for (uint32_t I = 1; I <= ForwarderLimit + 1; ++I) {
+    M.Ordinals.emplace(I, M.Loaded.Exports.Entries.size());
+    M.Loaded.Exports.Entries.push_back(
+        {I,
+         uint32_t(PageSize),
+         PEExportKind::Forwarder,
+         {},
+         std::string(ChainForwarder) + std::to_string(I + 1)});
+  }
+  P.Modules.push_back(std::move(M));
+  auto &Entries = P.Modules.front().Loaded.Exports.Entries;
+  auto Budget =
+      llvm::cantFail(ExecutionBudget::create(ProcessOptions{}.Limits));
+  Entries[ForwarderLimit - 1].Kind = PEExportKind::Address;
+  auto Exact = win::resolveExport(P, 0, {}, 1, *Budget);
+  ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+  ASSERT_TRUE(*Exact);
+  EXPECT_EQ(**Exact, PageSize * 2);
+  Entries[ForwarderLimit - 1].Kind = PEExportKind::Forwarder;
+  Entries[ForwarderLimit].Kind = PEExportKind::Address;
+  auto TooLong = win::resolveExport(P, 0, {}, 1, *Budget);
+  EXPECT_FALSE(bool(TooLong));
+  if (!TooLong)
+    EXPECT_NE(
+        llvm::toString(TooLong.takeError()).find(win::text::ForwarderDepth),
+        std::string::npos);
 }
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, WindowsExports,
                          testing::ValuesIn(Profiles),
