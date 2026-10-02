@@ -109,6 +109,8 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDX86UndefinedEffectsTests` 检查未定义位元数据、已定义／保留标志及过期证书拒绝。`NeverDX86CarryArithmeticFlagTests` 用算术参考实现检查寄存器和内存形式 ADC/SBB 的辅助进位。`NeverDX86LogicIdentityTests` 检查相同操作数的 AND 在 64 位模式下写入 32 位目标时，仍清零其所属 64 位寄存器的位 63:32，同时保留窄位宽写入未覆盖的位。
 
+`X86RotateUndefinedEffects.*` 用标量算术基准覆盖全部原始计数、操作数宽度、CL 重叠、高字节别名及内存目的操作数。`X86BitTestUndefinedEffects.*` 覆盖寄存器/立即数索引、源与目的重叠、扩展寄存器、已定义标志和寄存器高位写入。元数据反例拒绝被修改的操作数、编码及不支持的形式。原生证明区分同一任意位的关联读取与不同任意位，检查恰好及不足的生产者预算，并拒绝可观察的未定义溢出位。完整状态细化检查接受选定见证，拒绝零位见证或被篡改的候选。
+
 `NeverDPEFixedImageTests` 使用独立构造的 PE 文件，检查带重定位的指令与不可变数据、导入写入范围、畸形头部／表、别名和来源信息篡改。原生到 LowIR 及精确 LLVM 证明接受匹配候选，拒绝结果、状态或原始字节被修改的候选。准备预算耗尽保持独立分类，允许显式提高限额后重试；普通加载也接受含 40000 条有效重定位记录、超过默认分析预算的文件。
 
 `FrameOffsets.*`、`NativeStackSpecialization.*` 和 `OriginalBinaryUndefinedIndependence.*` 检查 2/4/8/16/32 字节对齐的全部余数、自由高位、跨调用保存、倒计数循环、别名破坏、错误分派、无关大掩码、必要分区升级及恰好／少一次预算。独立原生控制检查带分支约束的对齐、内部无符号返回清理、错误清理量和带前缀返回。这些测试不代表分区循环已具备自动原生到 LLVM 的完整证明。

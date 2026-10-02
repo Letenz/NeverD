@@ -173,7 +173,7 @@ TEST_F(X86UndefinedEffects,
 
 TEST_F(X86UndefinedEffects, UnauditedInstructionsDoNotClaimCompleteCoverage) {
   const InstructionCase Cases[] = {
-      {"rol eax, cl", {0xd3, 0xc0}},
+      {"rcl eax, cl", {0xd3, 0xd0}},
       {"bsf eax, ecx", {0x0f, 0xbc, 0xc1}},
       {"apx inc ndd nf", {0x62, 0xec, 0xf5, 0x14, 0xff, 0xc3}},
   };
@@ -241,47 +241,133 @@ TEST_F(X86UndefinedEffects, ShiftUnauditedPrefixesClearAllPartialEvidence) {
   }
 }
 
-TEST_F(X86UndefinedEffects, ShiftMutatedCountWidthAndOpcodeRemainUnaudited) {
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
-    SCOPED_TRACE(Mutation);
+TEST_F(X86UndefinedEffects, BitAndRotateAuditBoundariesClearPartialEvidence) {
+  const InstructionCase Cases[] = {
+      {"memory bit base", {0x0f, 0xb3, 0x08}},
+      {"locked memory bit base", {0xf0, 0x0f, 0xb3, 0x08}},
+      {"REP bit test", {0xf3, 0x0f, 0xa3, 0xc8}},
+      {"duplicate bit-test operand prefix", {0x66, 0x66, 0x0f, 0xb3, 0xc8}},
+      {"unused bit-test REX.X", {0x42, 0x0f, 0xb3, 0xc8}},
+      {"unused immediate REX.R", {0x44, 0x0f, 0xba, 0xf0, 3}},
+      {"duplicate rotate operand prefix", {0x66, 0x66, 0xd3, 0xc0}},
+      {"REP rotate", {0xf3, 0xd3, 0xc8}},
+      {"unused rotate REX.R", {0x44, 0xd3, 0xc0}},
+      {"rotate through carry", {0xd3, 0xd0}},
+      {"reverse rotate through carry", {0xd3, 0xd8}},
+      {"APX rotate", {0x62, 0xf4, 0x7c, 0x08, 0xd3, 0xc0}},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
     DecodedInsn Insn{};
-    ASSERT_TRUE(decode({0xd3, 0xe0}, Insn)); // shl eax,cl.
-    auto &X = Insn.Raw->detail->x86;
-    switch (Mutation) {
-    case 0:
-      X.operands[1].reg = X86_REG_DL;
-      break;
-    case 1:
-      X.operands[1].reg = X86_REG_ECX;
-      X.operands[1].size = 4;
-      break;
-    case 2:
-      X.operands[0].reg = X86_REG_AX;
-      X.operands[0].size = 2;
-      break;
-    case 3:
-      X.operands[0].reg = X86_REG_ECX;
-      break;
-    case 4:
-      Insn.Raw->bytes[1] = 0xe8;
-      break; // Actual group is SHR.
-    case 5:
-      X.encoding.modrm_offset = 0;
-      break;
-    case 6:
-      X.op_count = 1;
-      break;
-    case 7:
-      X.operands[1].type = X86_OP_IMM;
-      X.operands[1].imm = 1;
-      break;
-    }
+    if (!decode(Case.Bytes, Insn))
+      continue;
     std::vector<LowOp> Ops;
     auto Effects = staleEffects();
-    ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
-    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+    try {
+      Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+    } catch (const UnliftedInstruction &) {
+      expectCleared(Effects);
+      continue;
+    }
+    EXPECT_NE(Effects.Coverage, LowUndefinedCoverage::Complete);
     expectCleared(Effects);
   }
+}
+
+TEST_F(X86UndefinedEffects, BitTestMutatedEncodingAndOperandsRemainUnaudited) {
+  for (bool Immediate : {false, true})
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << Immediate << '/' << Mutation);
+      DecodedInsn Insn{};
+      ASSERT_TRUE(decode(Immediate ? std::vector<uint8_t>{0x0f, 0xba, 0xf0, 129}
+                                   : std::vector<uint8_t>{0x0f, 0xb3, 0xc8},
+                         Insn));
+      auto &X = Insn.Raw->detail->x86;
+      switch (Mutation) {
+      case 0:
+        X.operands[0].reg = X86_REG_EDX;
+        break;
+      case 1:
+        X.operands[0].reg = X86_REG_AX;
+        X.operands[0].size = 2;
+        break;
+      case 2:
+        if (Immediate)
+          X.operands[1].imm = 128;
+        else
+          X.operands[1].reg = X86_REG_EDX;
+        break;
+      case 3:
+        X.operands[1].size = 8;
+        if (!Immediate)
+          X.operands[1].reg = X86_REG_RCX;
+        break;
+      case 4:
+        X.encoding.modrm_offset = 1;
+        break;
+      case 5:
+        X.prefix[2] = 0x66;
+        break;
+      case 6:
+        X.opcode[1] = 0xa3;
+        break;
+      case 7:
+        X.op_count = 1;
+        break;
+      case 8:
+        Insn.Raw->bytes[2] ^= 8;
+        break;
+      }
+      std::vector<LowOp> Ops;
+      auto Effects = staleEffects();
+      ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
+      EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+      expectCleared(Effects);
+    }
+}
+
+TEST_F(X86UndefinedEffects, ScalarCountMutatedWidthAndOpcodeRemainUnaudited) {
+  for (uint8_t ModRM : {0xe0, 0xc0, 0xc8})
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      DecodedInsn Insn{};
+      ASSERT_TRUE(decode({0xd3, ModRM}, Insn)); // SHL/ROL/ROR EAX,CL.
+      auto &X = Insn.Raw->detail->x86;
+      switch (Mutation) {
+      case 0:
+        X.operands[1].reg = X86_REG_DL;
+        break;
+      case 1:
+        X.operands[1].reg = X86_REG_ECX;
+        X.operands[1].size = 4;
+        break;
+      case 2:
+        X.operands[0].reg = X86_REG_AX;
+        X.operands[0].size = 2;
+        break;
+      case 3:
+        X.operands[0].reg = X86_REG_ECX;
+        break;
+      case 4:
+        Insn.Raw->bytes[1] = 0xe8;
+        break; // Actual group is SHR.
+      case 5:
+        X.encoding.modrm_offset = 0;
+        break;
+      case 6:
+        X.op_count = 1;
+        break;
+      case 7:
+        X.operands[1].type = X86_OP_IMM;
+        X.operands[1].imm = 1;
+        break;
+      }
+      std::vector<LowOp> Ops;
+      auto Effects = staleEffects();
+      ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
+      EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+      expectCleared(Effects);
+    }
   DecodedInsn Immediate{};
   ASSERT_TRUE(decode({0xc1, 0xe0, 2}, Immediate));
   Immediate.Raw->detail->x86.operands[1].imm = 1;

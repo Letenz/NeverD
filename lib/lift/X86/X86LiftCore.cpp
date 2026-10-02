@@ -13,6 +13,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86BitTestUndefined.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -42,8 +43,7 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
                                           X86DivKind Kind) {
     S.emitIntrinsic(
         Intrinsic::X86RequireDivPrecondition, {},
-        {Dividend, Divisor,
-         NdVar::scalar(static_cast<uint64_t>(Kind), 1)});
+        {Dividend, Divisor, NdVar::scalar(static_cast<uint64_t>(Kind), 1)});
   };
   switch (InsnId) {
 
@@ -201,10 +201,10 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     uint16_t Bits = Sz * 8;
     uint64_t LogSz = (Sz == 8) ? 3 : (Sz == 4) ? 2 : (Sz == 2) ? 1 : 0;
     uint16_t PtrSz = (TargetArch == Arch::X64) ? 8 : 4;
-    uint16_t AddrSz = S.AddressSize == 2 || S.AddressSize == 4 ||
-                              S.AddressSize == 8
-                          ? S.AddressSize
-                          : PtrSz;
+    uint16_t AddrSz =
+        S.AddressSize == 2 || S.AddressSize == 4 || S.AddressSize == 8
+            ? S.AddressSize
+            : PtrSz;
     bool MemBase = (X86.operands[0].type == X86_OP_MEM);
     bool RegOffset = (X86.operands[1].type == X86_OP_REG);
 
@@ -219,8 +219,7 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
       if (RegOffset) {
         if (ByteAddr.Size != AddrSz) {
           NdVar Wrapped = S.makeTemp(AddrSz);
-          S.emit(NdOp::SUBBYTES, Wrapped,
-                 {ByteAddr, NdVar::scalar(0, AddrSz)});
+          S.emit(NdOp::SUBBYTES, Wrapped, {ByteAddr, NdVar::scalar(0, AddrSz)});
           ByteAddr = Wrapped;
         }
         const uint16_t IndexArithmeticSize =
@@ -289,6 +288,7 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
         S.emit(NdOp::STORE, {}, {ByteAddr, Result}, NdMemoryOrdering::None,
                LiftState::memoryAddressSpace(X86.operands[0]));
     }
+    bitundefined::record(S);
     break;
   }
 
