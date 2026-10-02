@@ -2833,15 +2833,97 @@ swiftPrivateNominalMetadataAccessorHint(const BinaryImage &Image,
              : std::nullopt;
 }
 
-// A private nominal descriptor has no textual runtime lookup identity. Follow
+inline std::optional<va_t>
+swiftLocalSymbolicTypeDescriptor(const BinaryImage &Image, va_t Address,
+                                 uint8_t ReferenceKind) {
+  if (ReferenceKind == 1)
+    return Address;
+  if (ReferenceKind == 2 && Address % 8 == 0 &&
+      Image.MachOResolvedChainedPointerSlots.count(Address))
+    return readImmutableImagePointer(Image, Address);
+  return std::nullopt;
+}
+
+// Imported typedef wrappers have a TypeAlias mangling and a nominal descriptor.
+// Match the complete, bounded import identity instead of treating every alias
+// as a struct. swift/ABI/TypeIdentity.h and MetadataLookup.cpp define the N ABI
+// name override and St typedef namespace. Keep using the original descriptor.
+inline bool
+swiftImportedTypedefDescriptorMatches(const BinaryImage &Image, va_t Descriptor,
+                                      const llvm::SwiftDemangleNode &Nominal) {
+  const auto Leaf = [](const llvm::SwiftDemangleNode &Node,
+                       llvm::StringRef Kind) {
+    return Node.Kind == Kind && Node.Text && !Node.Text->empty() &&
+           !Node.Index && Node.Children.empty();
+  };
+  if (Nominal.Kind != "TypeAlias" || Nominal.Text || Nominal.Index ||
+      Nominal.Children.size() != 2 || !Leaf(Nominal.Children[0], "Module") ||
+      *Nominal.Children[0].Text != "__C" ||
+      !Leaf(Nominal.Children[1], "Identifier"))
+    return false;
+  const auto Header = readImmutableImageBytes(Image, Descriptor, 20);
+  // Version zero, non-generic struct, foreign initialization, import info.
+  if (!Header || llvm::support::endian::read32le(Header->data()) != 0x60011)
+    return false;
+  const auto Parent = swiftRelativeAddress(Image, Descriptor + 4);
+  const auto Name = swiftRelativeAddress(Image, Descriptor + 8);
+  const auto Module =
+      Parent ? readImmutableImageBytes(Image, *Parent, 12) : std::nullopt;
+  if (!Parent || *Parent % 4 || !Name || !Module ||
+      llvm::support::endian::read32le(Module->data()) != 0 ||
+      llvm::support::endian::read32le(Module->data() + 4) != 0)
+    return false;
+  const auto ModuleName = swiftRelativeAddress(Image, *Parent + 8);
+  const auto ModuleText = ModuleName
+                              ? readImmutableImageBytes(Image, *ModuleName, 4)
+                              : std::nullopt;
+  if (!ModuleText || std::memcmp(ModuleText->data(), "__C", 4) != 0)
+    return false;
+  va_t Cursor = *Name;
+  const auto Component = [&]() -> std::optional<std::string> {
+    std::string Text;
+    for (unsigned I = 0; I <= 256; ++I) {
+      if (Cursor == InvalidVA)
+        return std::nullopt;
+      const auto Byte = readImmutableImageBytes(Image, Cursor++, 1);
+      if (!Byte)
+        return std::nullopt;
+      if (!Byte->front())
+        return Text;
+      if (Byte->front() < 0x21 || Byte->front() > 0x7e)
+        return std::nullopt;
+      Text.push_back(static_cast<char>(Byte->front()));
+    }
+    return std::nullopt;
+  };
+  auto ABIName = Component();
+  auto Namespace = Component();
+  if (!ABIName || ABIName->empty() || !Namespace)
+    return false;
+  if (Namespace->starts_with("N")) {
+    const std::string Override = Namespace->substr(1);
+    if (Override.empty() || Override == *ABIName)
+      return false;
+    ABIName = Override;
+    Namespace = Component();
+  }
+  if (!Namespace || *Namespace != "St" || *ABIName != *Nominal.Children[1].Text)
+    return false;
+  const auto End = Component();
+  return End && End->empty();
+}
+
+// A private nominal descriptor need not have a stable textual lookup identity.
+// Follow
 // only the original relative references from an exported nominal descriptor's
 // field metadata. This preserves its runtime identity without exporting or
 // copying the private descriptor. Layout: swift/ABI/Metadata.h and
 // swift/RemoteInspection/Records.h (TypeContextDescriptor, FieldDescriptor,
-// FieldRecord). The final edge is a direct symbolic type reference.
+// FieldRecord). The final edge may use an authenticated local GOT rebase.
 struct SwiftPrivateDescriptorFieldPath {
   std::string ExportSymbol;
   std::array<uint32_t, 3> RelativeOffsets;
+  bool IndirectDescriptor = false;
 };
 
 inline std::optional<SwiftPrivateDescriptorFieldPath>
@@ -2852,8 +2934,10 @@ swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
     return std::nullopt;
   const auto Reference =
       readImmutableImageBytes(Image, TypeReference + SymbolicOffset, 5);
-  if (!Reference || Reference->front() != 1 ||
-      swiftRelativeAddress(Image, TypeReference + SymbolicOffset + 1) !=
+  const auto Target =
+      swiftRelativeAddress(Image, TypeReference + SymbolicOffset + 1);
+  if (!Reference || !Target ||
+      swiftLocalSymbolicTypeDescriptor(Image, *Target, Reference->front()) !=
           Descriptor)
     return std::nullopt;
   const auto Header = readImmutableImageBytes(Image, Descriptor, 20);
@@ -2862,6 +2946,40 @@ swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
   const uint32_t Kind = llvm::support::endian::read32le(Header->data()) & 0x1f;
   if (Kind < 16 || Kind > 18)
     return std::nullopt;
+  const auto FindDescriptor =
+      [&](va_t FieldType) -> std::optional<std::pair<uint32_t, bool>> {
+    std::optional<std::pair<uint32_t, bool>> Found;
+    // A field can wrap the same descriptor in a different generic type. Only
+    // its exact original reference edge supplies identity; no recipe is copied
+    // from that field. Validate the complete bounded reference before use.
+    for (uint32_t I = 0; I <= 128;) {
+      if (FieldType > InvalidVA - I)
+        return std::nullopt;
+      const auto Byte = readImmutableImageBytes(Image, FieldType + I, 1);
+      if (!Byte)
+        return std::nullopt;
+      if (!Byte->front())
+        return Found;
+      if (I == 128)
+        return std::nullopt;
+      if (Byte->front() == 1 || Byte->front() == 2) {
+        if (I > 123 || !readImmutableImageBytes(Image, FieldType + I, 5))
+          return std::nullopt;
+        const auto Edge = swiftRelativeAddress(Image, FieldType + I + 1);
+        if (!Edge)
+          return std::nullopt;
+        if (!Found && swiftLocalSymbolicTypeDescriptor(
+                          Image, *Edge, Byte->front()) == Descriptor)
+          Found = std::make_pair(I + 1, Byte->front() == 2);
+        I += 5;
+      } else {
+        if (Byte->front() < 0x21 || Byte->front() > 0x7e)
+          return std::nullopt;
+        ++I;
+      }
+    }
+    return std::nullopt;
+  };
   // The caller authenticates the private symbol and complete type mangling.
   // A bounded scan supplies a path, never an address derived from image slide.
   constexpr size_t MaxExports = 262144;
@@ -2897,13 +3015,16 @@ swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
       continue;
     for (uint32_t I = 0; I < Count; ++I) {
       const uint32_t Offset = 20 + I * 12;
-      if (swiftRelativeAddress(Image, *Fields + Offset) != TypeReference ||
-          (llvm::support::endian::read32le(Records->data() + Offset - 4) & ~3u))
+      if (llvm::support::endian::read32le(Records->data() + Offset - 4) & ~3u)
+        continue;
+      const auto FieldType = swiftRelativeAddress(Image, *Fields + Offset);
+      const auto Edge = FieldType ? FindDescriptor(*FieldType) : std::nullopt;
+      if (!Edge)
         continue;
       const auto Public = swiftDirectTypeMetadataDescriptor(Image, Export.Addr);
       if (Public && *Public == Export.Name)
         return SwiftPrivateDescriptorFieldPath{
-            *Public, {16, Offset, SymbolicOffset + 1}};
+            *Public, {16, Offset, Edge->first}, Edge->second};
     }
   }
   return std::nullopt;
@@ -3091,12 +3212,8 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     // descriptor. Normalize that edge before applying its existing identity
     // proof; an imported, writable, overlapping or unresolved slot supplies
     // no local identity. Never copy a private descriptor or infer its layout.
-    std::optional<va_t> LocalDescriptor;
-    if (TypeBytes[I] == 1)
-      LocalDescriptor = DescriptorAddress;
-    else if (!DescriptorSymbol && *DescriptorAddress % 8 == 0 &&
-             Image.MachOResolvedChainedPointerSlots.count(*DescriptorAddress))
-      LocalDescriptor = readImmutableImagePointer(Image, *DescriptorAddress);
+    const auto LocalDescriptor = swiftLocalSymbolicTypeDescriptor(
+        Image, *DescriptorAddress, TypeBytes[I]);
     if (!DescriptorSymbol && LocalDescriptor) {
       auto Inline = swiftLocalImportedLockType(Image, *LocalDescriptor);
       if (!Inline)
@@ -3109,21 +3226,18 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       }
     }
     std::optional<SwiftPrivateDescriptorFieldPath> FieldPath;
-    if (!DescriptorSymbol && TypeBytes[I] == 1) {
+    if (!DescriptorSymbol && LocalDescriptor) {
       const Symbol *Private = nullptr;
       for (const auto &Candidate : Image.Symbols)
-        if (Candidate.Addr == *DescriptorAddress) {
+        if (Candidate.Addr == *LocalDescriptor) {
           if (Private || Candidate.IsFunc || Candidate.Name.empty())
             return std::nullopt;
           Private = &Candidate;
         }
       if (!Private || (Private->Size && Private->Size < 20))
         return std::nullopt;
-      for (const auto &Candidate : Image.Symbols)
-        if (&Candidate != Private && Candidate.Name == Private->Name)
-          return std::nullopt;
       for (const auto &Export : Image.Exports)
-        if (Export.Addr == *DescriptorAddress || Export.Name == Private->Name)
+        if (Export.Addr == *LocalDescriptor || Export.Name == Private->Name)
           return std::nullopt;
       // Require a real nominal descriptor mangling, including the private
       // discriminator. It must also expand to the exact cache/reference type.
@@ -3148,16 +3262,27 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
           !Shape(Parsed.Root->Children[0].Children[0], "Type"))
         return std::nullopt;
       const auto &Nominal = Parsed.Root->Children[0].Children[0].Children[0];
-      const uint32_t Kind = Nominal.Kind == "Class"       ? 16
-                            : Nominal.Kind == "Structure" ? 17
-                            : Nominal.Kind == "Enum"      ? 18
-                                                          : 0;
-      const auto Header =
-          readImmutableImageBytes(Image, *DescriptorAddress, 20);
+      uint32_t Kind = Nominal.Kind == "Class"       ? 16
+                      : Nominal.Kind == "Structure" ? 17
+                      : Nominal.Kind == "Enum"      ? 18
+                                                    : 0;
+      const bool ImportedTypedef =
+          !Kind && swiftImportedTypedefDescriptorMatches(
+                       Image, *LocalDescriptor, Nominal);
+      if (ImportedTypedef)
+        Kind = 17;
+      // The compiler may emit several non-unique imported typedef descriptors
+      // with the same symbol spelling. The field path must reach this exact
+      // descriptor address; an unrelated copy never supplies its identity.
+      if (!ImportedTypedef)
+        for (const auto &Candidate : Image.Symbols)
+          if (&Candidate != Private && Candidate.Name == Private->Name)
+            return std::nullopt;
+      const auto Header = readImmutableImageBytes(Image, *LocalDescriptor, 20);
       if (!Kind || !Header ||
           (llvm::support::endian::read32le(Header->data()) & 0xff1f) != Kind)
         return std::nullopt;
-      FieldPath = swiftPrivateDescriptorFieldPath(Image, *DescriptorAddress,
+      FieldPath = swiftPrivateDescriptorFieldPath(Image, *LocalDescriptor,
                                                   *TypeReference, I);
       if (!FieldPath)
         return std::nullopt;
@@ -9254,7 +9379,16 @@ inline std::string renderObjCSwiftTypeMetadataHelpers(
               " = field + (uint32_t)relative;\n"
               "        }\n"
               "      }\n";
-        Value = "(const void *)" + Value;
+        if (Path->IndirectDescriptor) {
+          const std::string Pointer = IndexedName("descriptor_pointer", I);
+          Source += "      const void *" + Pointer +
+                    ";\n"
+                    "      __builtin_memcpy(&" +
+                    Pointer + ", (const void *)" + Value + ", sizeof(" +
+                    Pointer + "));\n";
+          Value = Pointer;
+        } else
+          Value = "(const void *)" + Value;
       }
       Source += "      " + StorageName + "." + IndexedName("descriptor", I) +
                 " = " + Value + ";\n";
