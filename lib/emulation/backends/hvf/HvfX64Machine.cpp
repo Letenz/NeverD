@@ -11,6 +11,8 @@
 #if defined(__APPLE__) && defined(__x86_64__) && defined(NEVERD_EMULATION_HVF)
 #include "HvfExecutor.h"
 
+#include "llvm/Support/FormatVariadic.h"
+
 #include <Hypervisor/hv_vmx.h>
 #include <cpuid.h>
 
@@ -36,7 +38,14 @@ public:
   }
   llvm::Error vmcs(uint32_t Field, uint64_t V) {
     const auto S = hv_vmx_vcpu_write_vmcs(CPU, Field, V);
-    return S ? hvf::error("hv_vmx_vcpu_write_vmcs", S) : llvm::Error::success();
+    if (S) {
+      const auto Operation =
+          llvm::formatv("hv_vmx_vcpu_write_vmcs(field={0:x}, value={1:x})",
+                        Field, V)
+              .str();
+      return hvf::error(Operation.c_str(), S);
+    }
+    return llvm::Error::success();
   }
   llvm::Expected<uint64_t> vmcs(uint32_t Field) {
     uint64_t V = 0;
