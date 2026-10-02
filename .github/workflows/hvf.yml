@@ -56,7 +56,7 @@ jobs:
           try:
               with log.open("w") as output:
                   diagnose = os.environ["HVF_VALIDATION"] == "probe" and platform.machine() == "x86_64"
-                  variants = ["baseline", "cr0-mask", "tpr", "msrs", "tables", "exception-bitmap", "order", "combined"] if diagnose else ["create-only"]
+                  variants = ["baseline", "msrs"] + [f"msr-{i}" for i in range(12)] if diagnose else ["create-only"]
                   for variant in variants:
                       mode = "until" if diagnose else "create-only"
                       output.write(f"Fresh process probe: {mode} / {variant}\n")
@@ -66,6 +66,8 @@ jobs:
                           if diagnose:
                               environment["DYLD_INSERT_LIBRARIES"] = str(pathlib.Path("build-hvf-probe/trace.dylib").resolve())
                               environment["NEVERD_HVF_PROBE_VARIANT"] = variant
+                              if variant.startswith("msr-"):
+                                  environment["NEVERD_HVF_PROBE_MSRS"] = str(1 << int(variant[4:]))
                           result = subprocess.run(["build-hvf-probe/probe", mode], timeout=10,
                                                   env=environment,
                                                   stdout=output, stderr=subprocess.STDOUT)

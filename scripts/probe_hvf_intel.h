@@ -39,12 +39,17 @@ static int probe_control(hv_vcpuid_t CPU, uint32_t Field, uint64_t Required) {
 // packet or guest OS dependency. Backing lives until the caller destroys VM.
 static int probe_intel_execution(hv_vcpuid_t CPU, void **Backing, int Legacy) {
   printf("Intel entry API: %s\n", Legacy ? "hv_vcpu_run" : "hv_vcpu_run_until");
-  if (probe_variant("msrs")) {
+  const char *MSRMaskText = getenv("NEVERD_HVF_PROBE_MSRS");
+  const unsigned MSRMask = MSRMaskText ? (unsigned)strtoul(MSRMaskText, NULL, 0)
+                           : probe_variant("msrs") ? 0xfff
+                                                   : 0;
+  if (MSRMask) {
     const uint32_t MSRs[] = {0xc0000081, 0xc0000082, 0xc0000083, 0xc0000084,
                              0xc0000100, 0xc0000101, 0xc0000102, 0xc0000103,
                              0x174,      0x175,      0x176,      0x10};
     for (unsigned I = 0; I < sizeof(MSRs) / sizeof(MSRs[0]); ++I)
-      if (report("probe native MSR",
+      if ((MSRMask & (1u << I)) &&
+          report("probe native MSR",
                  hv_vcpu_enable_native_msr(CPU, MSRs[I], 1)))
         return 1;
   }
