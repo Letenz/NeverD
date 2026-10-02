@@ -141,9 +141,10 @@ and budgets. Removing a process test executable's entitlement verified that
 ordinary runs skip but required native runs fail.
 
 The subsequent [Darwin process environment](darwin-emulation.md) extension
-expands that no-Unicorn gate to 20 owners: 811 passed, zero failed, 5,842 skipped,
-with all 12 required ARM64 cases executed (nine HVF checks and three Darwin
-platform fixtures). This includes 57 Darwin checks for
+expands that no-Unicorn gate to 20 owners. At `36e11ca8a`, 834 passed, zero
+failed and 5,903 skipped, with all 13 required ARM64 cases executed (nine HVF
+checks, three Darwin platform fixtures and one original host-kernel reference).
+This includes 65 Darwin checks and all 39 required ARM64 process workloads for
 macOS, iOS device and iOS Simulator guest contracts. Darwin's ARM64 OS pages
 are 16 KiB even though the shared CPU mapping granule remains 4 KiB.
 
@@ -182,7 +183,7 @@ stop. See the [detailed measurements](zh-CN/macos-hvf.md). Quiet-host performanc
 measurement and the Intel Mac HVF gate remain outstanding; no self-hosted runner
 is currently configured for the repository. The focused Darwin gate has since
 passed on both Linux KVM and Windows WHP with Unicorn disabled: each passed all
-22 required x64 process cases, with 45 checks passed and zero failures overall.
+26 required x64 process cases, with 51 checks passed and zero failures overall.
 See the [hosted execution evidence](darwin-emulation.md#hosted-native-verification-2026-10-03)
 for the exact commits and scope.
 

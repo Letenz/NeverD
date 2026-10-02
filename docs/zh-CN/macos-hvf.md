@@ -49,10 +49,11 @@ GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `script
 硬件门禁还覆盖 Linux/Windows 进程、ABI、会话和预算。指定 `NEVERD_REQUIRE_HVF=1` 时，本机匹配架构的这些用例遇到不可用后端或缺失 fixture 会失败。实际移除测试进程 entitlement 后，普通运行跳过而硬件门禁失败，已验证两种行为。原生验收机需要 Clang、`ld.lld`、`lld-link` 和 `ld64.lld` 来构建原始 ELF/PE/Mach-O fixtures。
 
 添加 [macOS/iOS 进程环境](darwin-emulation.md) 后，无 Unicorn 门禁扩大到 20 个目标：
-811 项通过、0 失败，5,842 项因后端或架构不适用而跳过；ARM64 门禁的 12 个必需用例均执行
-（9 个 HVF 检查和 3 个 Darwin 平台启动用例）。Intel 门禁要求 macOS 与 Simulator 两种平台。
+提交 `36e11ca8a` 已达到 834 项通过、0 失败，5,903 项因后端或架构不适用而跳过；
+ARM64 门禁的 13 个必需用例均执行（9 个 HVF 检查、3 个 Darwin 平台启动用例及
+1 个原始程序的宿主内核对照）。Intel 门禁要求 macOS 与 Simulator 两种平台。
 这些用例缺失或跳过均不能通过；CTest 使用稳定名称，不把参数中的进程地址纳入测试身份。
-其中包含 57 项 Darwin 检查，支持 macOS、iOS 设备和 Simulator 的独立平台契约。
+其中包含 65 项 Darwin 检查，三个 ARM64 平台共 39 项必需进程用例全部执行成功。
 
 Darwin 扩展后的新桌面包再次通过 186 个 Mach-O 的依赖、签名及 Cocoa 启动检查。
 已签名探针加载包内引擎，并与 `BUILD_TESTING=OFF` / Unicorn OFF 的 CLI 比较三种
@@ -85,7 +86,7 @@ ARM64 平台下的正常、部分输出、匿名内存、故障、未知服务�
 普通 ARM64 指令需要 5 次维护入口加 1 次来宾入口，与上述实测计数一致。所有 CPU 场景校验寄存器、PC、访存和执行次数；Linux 示例对照完整报告，仅排除后端名称和选择说明，其正常结果以及故障、未知服务、预算停止均一致。空闲主机上的稳定性能复测仍待完成；本轮未加入批量执行或修改观测语义。
 
 Linux KVM 和 Windows WHP 已分别在关闭 Unicorn 后通过 Darwin 专项门禁：每个后端
-45 项通过、0 失败，其中 22 项 x64 必需进程用例全部执行成功。源码提交、产物和
+51 项通过、0 失败，其中 26 项 x64 必需进程用例全部执行成功。源码提交、产物和
 验证范围见 [Darwin 宿主验证记录](darwin-emulation.md)。这证明了有限 Darwin 环境
 及其共享 CPU 路径，不能替代各后端更广泛的 CPU 回归。
 
