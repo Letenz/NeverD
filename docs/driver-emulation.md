@@ -1015,6 +1015,8 @@ helper-frame unwinding restores saved nonvolatile general registers and stays
 within the original execution's stack. `GetExceptionCode()` observes the raised
 code, and handlers can raise into an enclosing supported scope.
 
+C SEH ranges remain half-open. A valid `__C_specific_handler` landing pad may lie inside its protected range: [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) emits `EndLabel + 1` as the scope end. The Windows OS model preserves the raw endpoints and independently validates executable targets, function ownership and continuation identity, including after rebasing. `KernelSEHContinuationCases.def` retains the original fixture layout; `ScopeEndLabelMayOverlapTheHandlerLandingPad` checks constant handlers and filters. Companion tests preserve the exclusive end and reject invalid targets without consuming the dispatch state. These pure checks run in `NeverDNativeDriverTests` with Unicorn disabled.
+
 Filter callbacks receive stable `EXCEPTION_POINTERS`, exception-record and
 `CONTEXT` storage on a separate bounded stack. Callback execution preserves the
 original full CPU state, including floating-point/SIMD registers and flags.

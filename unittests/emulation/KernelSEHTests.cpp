@@ -16,6 +16,16 @@ using namespace neverd;
 using namespace neverd::emulation;
 
 namespace {
+namespace continuation {
+#define NEVERD_SEH_CONTINUATION_VALUE(Name, Value)                             \
+  constexpr uint64_t Name = Value;
+#define NEVERD_SEH_CONTINUATION_TEXT(Name, Value)                              \
+  constexpr llvm::StringLiteral Name = Value;
+#include "KernelSEHContinuationCases.def"
+#undef NEVERD_SEH_CONTINUATION_TEXT
+#undef NEVERD_SEH_CONTINUATION_VALUE
+} // namespace continuation
+
 class DriverKernelSEH : public ::testing::Test {
 protected:
   static constexpr uint64_t Base = 0x180000000;
@@ -63,6 +73,15 @@ protected:
     F.UnwindFlags = seh::ExceptionHandlerFlag | seh::UnwindHandlerFlag;
     F.SEH.emplace();
     F.SEH->Scopes.push_back(scope(RVA + 0x30, RVA + 0x60, RVA + 0x80));
+    return F;
+  }
+  ExceptionFunction &overlappingHandler() {
+    auto &F = handler(continuation::FunctionBeginRVA);
+    F.CodeRange.End = Base + continuation::FunctionEndRVA;
+    F.SEH->Scopes.front() =
+        scope(continuation::GuardBeginRVA, continuation::GuardEndRVA,
+              continuation::LandingPadRVA);
+    Caller.PC = ActualBase + continuation::LandingPadRVA;
     return F;
   }
   ExceptionFunction &gsHandler(uint64_t RVA = 0x1000) {
@@ -592,6 +611,84 @@ TEST_F(DriverKernelSEH, ProtectedRangeEndRemainsExclusive) {
   ASSERT_TRUE(bool(Result));
   EXPECT_FALSE(*Result);
   EXPECT_EQ(Reads.size(), 1u);
+}
+
+TEST_F(DriverKernelSEH, ScopeEndLabelMayOverlapTheHandlerLandingPad) {
+  for (uint64_t Load : {Base, continuation::RebasedImageBase}) {
+    SCOPED_TRACE(Load);
+    ActualBase = Load;
+    for (auto Kind : {SEHScopeKind::CatchAll, SEHScopeKind::Filter}) {
+      SCOPED_TRACE(static_cast<unsigned>(Kind));
+      Metadata.Functions.clear();
+      auto &F = overlappingHandler();
+      auto &Scope = F.SEH->Scopes.front();
+      Scope.Kind = Kind;
+      if (Kind == SEHScopeKind::Filter)
+        Scope.FilterOrFinallyVA = Base + continuation::FilterRVA;
+      ASSERT_TRUE(Scope.GuardedRange.contains(Scope.HandlerVA));
+      const auto Before = Caller;
+      auto Planner = planner();
+      auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
+      auto Next = Planner.advance(State);
+      ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
+      if (Kind == SEHScopeKind::Filter) {
+        ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Filter);
+        EXPECT_EQ(Next->State.HandlerPC, Load + continuation::FilterRVA);
+        Next = Planner.advance(State, 1);
+        ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
+      }
+      ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Handler);
+      EXPECT_EQ(Next->State.HandlerPC, Load + continuation::LandingPadRVA);
+      EXPECT_EQ(Next->State.Registers.PC, Next->State.HandlerPC);
+      EXPECT_EQ(Next->State.Registers.GPR[seh::StackRegister],
+                Caller.GPR[seh::StackRegister]);
+      EXPECT_EQ(Next->State.Registers.GPR[seh::ReturnRegister], Code);
+      EXPECT_EQ(Caller.GPR, Before.GPR);
+      EXPECT_EQ(Caller.PC, Before.PC);
+      EXPECT_EQ(Scope.HandlerVA, Base + continuation::LandingPadRVA);
+      EXPECT_EQ(Scope.GuardedRange.End, Base + continuation::GuardEndRVA);
+      EXPECT_TRUE(Reads.empty());
+    }
+  }
+}
+
+TEST_F(DriverKernelSEH, OverlappingScopeStillHasAnExclusiveEnd) {
+  overlappingHandler();
+  Caller.PC = ActualBase + continuation::GuardEndRVA;
+  Words[Caller.GPR[seh::StackRegister]] = Base + ImageSize + 1;
+  auto Result = plan();
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_FALSE(*Result);
+  EXPECT_EQ(Reads, (std::vector<uint64_t>{Caller.GPR[seh::StackRegister]}));
+}
+
+TEST_F(DriverKernelSEH, OverlappingHandlerRetainsTargetValidationAndCanRetry) {
+  overlappingHandler();
+  function(continuation::FilterRVA);
+  auto &Scope = Metadata.Functions.front().SEH->Scopes.front();
+  const auto Valid = Scope;
+  Scope.HandlerVA = Scope.ContinuationVA = Base + continuation::FilterRVA;
+  rejected(continuation::InvalidContinuation);
+  Scope = Valid;
+  Scope.ContinuationVA = Scope.GuardedRange.End;
+  rejected(continuation::InvalidContinuation);
+  Scope = Valid;
+
+  Caller.PC = ActualBase + continuation::GuardBeginRVA;
+  auto Planner = planner();
+  auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
+  DeniedPC = Scope.HandlerVA;
+  auto Invalid = Planner.advance(State);
+  ASSERT_FALSE(bool(Invalid));
+  EXPECT_NE(llvm::toString(Invalid.takeError())
+                .find(continuation::NotExecutable.str()),
+            std::string::npos);
+  DeniedPC = 0;
+  auto Retried = Planner.advance(State);
+  ASSERT_TRUE(bool(Retried)) << llvm::toString(Retried.takeError());
+  EXPECT_EQ(Retried->Kind, KernelSEH::ActionKind::Handler);
+  EXPECT_EQ(Retried->State.HandlerPC, Valid.HandlerVA);
+  EXPECT_TRUE(Reads.empty());
 }
 
 TEST_F(DriverKernelSEH, RebasingDoesNotRewritePreferredMetadata) {

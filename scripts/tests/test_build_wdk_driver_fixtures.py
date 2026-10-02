@@ -139,7 +139,14 @@ class WDKDriverFixtureTests(unittest.TestCase):
                 self.assertTrue(any(test.endswith(f"/whp_{suffix}_{name}")
                                     for test in required))
         _, cpu_required = native.declared_inventory(fixtures.ROOT)
-        self.assertEqual(len(required), len(cpu_required) + 2 * len(names))
+        seh_required = {
+            "DriverKernelSEH.ScopeEndLabelMayOverlapTheHandlerLandingPad",
+            "DriverKernelSEH.OverlappingScopeStillHasAnExclusiveEnd",
+            "DriverKernelSEH.OverlappingHandlerRetainsTargetValidationAndCanRetry",
+        }
+        self.assertTrue(seh_required <= required)
+        self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
+                         + len(seh_required))
         for _, filename, *_ in inventory["FIXTURE"]:
             self.assertTrue((fixtures.ROOT / "unittests/emulation/fixtures"
                              / filename).is_file())
