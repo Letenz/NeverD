@@ -191,6 +191,39 @@ cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
 build-release/bin/NeverDARM32InterworkingTests
 ```
 
+## Finite native dispatch
+
+`NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
+regressions with independent AArch64 and x64 finite-selector fixtures. The new
+fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
+tables in both read-only and writable storage. Separate controls retain an
+unknown large selector and ensure a feasible slot above the finite query
+ceiling cannot be dropped. HighC, optimized LLVMC and `--no-opt` LLVMC
+must compile and execute the same selection at `-O0` and `-O2` with undefined
+behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
+reached backedges, mutated table storage and exhausted evidence must prevent
+unsupported source publication. Clang and the existing lift fixture tools
+are required; unavailable fixtures remain skips.
+An unselected prefix pointer to a separate function must not prevent recovery
+of local cases. A foreign target selected immediately or after a reached
+backedge must remain outside the local switch. The prefix case also runs
+through all three C routes at both optimization levels.
+
+```sh
+cmake --build build-release --target NeverDJumpTableTests --parallel 4
+build-release/bin/NeverDJumpTableTests
+```
+
+`NeverDMachOPointerRelocationBoundaryTests` checks sparse dispatch origins
+before the owned runtime slots. Missing maps, fixups or ownership, added filler
+slots, unindexed reads, malformed strides, address overflow and exhausted
+evidence must retain the ordinary load path.
+
+`NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
+strings, generic builtins compiled for a different source ISA, and dead image
+address calculations. The latter must retain volatile/atomic loads and
+observable calls while leaving the input LLVM module unchanged.
+
 ## Interpreter recovery checks
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction

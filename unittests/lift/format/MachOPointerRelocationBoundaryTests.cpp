@@ -485,6 +485,50 @@ struct AuthenticatedTargetLoadFixture {
 
   MedOp &load() { return Func.Blocks.front().Ops.front(); }
 
+  MedOp &makeSparse() {
+    JumpTable &JT = Func.JumpTables.front();
+    JT.SlotIndices = {2, 3};
+    JT.StorageRanges = {{0x2010, 8, 8, 1}, {0x2018, 8, 8, 1}};
+    JT.SuppressibleRelocationSlots = {0x2010, 0x2018};
+    Image.CodePtrRelocSlots = {0x2000, 0x2008, 0x2010, 0x2018};
+    const uint64_t StoredTargets[] = {0x300, 0x310};
+    std::memcpy(Image.Segments[1].Data.data() + 16, StoredTargets,
+                sizeof(StoredTargets));
+
+    auto temp = [&](int Id, uint16_t Size = 8) {
+      MedVar Value = load().Output;
+      Value.Id = Id;
+      Value.Size = Size;
+      return Value;
+    };
+    MedOp Equal;
+    Equal.Opcode = NdOp::INT_EQUAL;
+    Equal.Output = temp(2, 1);
+    Equal.addInput(Func.Params.front());
+    Equal.addInput(MedVar::makeConst(0, 8));
+    MedOp Select;
+    Select.Opcode = NdOp::SELECT;
+    Select.Output = temp(3);
+    Select.addInput(Equal.Output);
+    Select.addInput(MedVar::makeConst(3, 8));
+    Select.addInput(MedVar::makeConst(2, 8));
+    Func.SwitchSelectorPlans.at(JT.InsnAddr).Selector = Select.Output;
+    MedOp Scale;
+    Scale.Opcode = NdOp::INT_LEFT;
+    Scale.Output = temp(4);
+    Scale.addInput(Select.Output);
+    Scale.addInput(MedVar::makeConst(3, 8));
+    MedOp Address;
+    Address.Opcode = NdOp::INT_ADD;
+    Address.Output = temp(5);
+    Address.addInput(load().Inputs[0]);
+    Address.addInput(Scale.Output);
+    load().Inputs[0] = Address.Output;
+    auto &Ops = Func.Blocks.front().Ops;
+    Ops.insert(Ops.begin(), {Equal, Select, Scale, Address});
+    return Ops[4];
+  }
+
   void makeTwoTable() {
     JumpTable &JT = Func.JumpTables.front();
     JT.TwoTableSelect = true;
@@ -584,6 +628,70 @@ TEST(MedLLVMFrameReloadInitialization, NarrowStoresCoverAPointerWidthReload) {
                   Emitter, Func, Image, Load),
               Stored == 4)
         << Stored << " of 4 bytes stored";
+  }
+}
+
+TEST(MedLLVMRecoveredTargetLoadBoundary,
+     SparseLogicalOriginRequiresCompleteRuntimeSlotOwnership) {
+  const char *Cases[] = {
+      "complete",       "missing map",     "incomplete map",
+      "unowned slot",   "missing fixup",   "wrong suppressed slot",
+      "extra prefix",   "unindexed base",  "different origin",
+      "interior byte",  "short stride",    "address overflow",
+      "duplicate slot", "budget exhausted"};
+  for (unsigned Case = 0; Case < std::size(Cases); ++Case) {
+    SCOPED_TRACE(Cases[Case]);
+    AuthenticatedTargetLoadFixture Fixture;
+    MedOp &Load = Fixture.makeSparse();
+    JumpTable &JT = Fixture.Func.JumpTables.front();
+    MedLLVMEmitter Emitter;
+    switch (Case) {
+    case 0:
+      break;
+    case 1:
+      JT.HasDispatchSlotMap = false;
+      break;
+    case 2:
+      JT.SlotIndices.pop_back();
+      break;
+    case 3:
+      JT.StorageRanges.pop_back();
+      break;
+    case 4:
+      Fixture.Image.CodePtrRelocSlots.erase(0x2018);
+      break;
+    case 5:
+      JT.SuppressibleRelocationSlots = {0x2000, 0x2010};
+      break;
+    case 6:
+      JT.SuppressibleRelocationSlots = {0x2000, 0x2010, 0x2018};
+      break;
+    case 7:
+      Load.Inputs[0] = MedVar::makeConst(
+          0x2000, 8, ConstantAddressProvenance::DataAddress, 0x2000);
+      break;
+    case 8:
+      JT.BaseAddr += 8;
+      break;
+    case 9:
+      --JT.StorageRanges.front().BaseAddr;
+      break;
+    case 10:
+      JT.EntryStride = 4;
+      break;
+    case 11:
+      JT.EntryStride = InvalidVA;
+      break;
+    case 12:
+      JT.SlotIndices = {2, 2};
+      break;
+    case 13:
+      MedLLVMProvenanceTestPeer::setTerminalUseEvidenceBudget(Emitter, 1);
+      break;
+    }
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::recoveredTargetLoadIsFullyConsumed(
+                  Emitter, Fixture.Func, Fixture.Image, Load),
+              Case == 0);
   }
 }
 
