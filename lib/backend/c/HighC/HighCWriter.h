@@ -15,6 +15,7 @@
 #define NEVERD_LIB_BACKEND_C_HIGHC_HIGHCWRITER_H
 
 #include "../CIdentifier.h"
+#include "../FloatConversion.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
@@ -91,6 +92,8 @@ public:
   std::string functionIdentifier(const HighFunc &Func) const;
   std::string functionIdentifier(llvm::StringRef SourceName) const;
   void collectMemoryTypes(const std::vector<HighFunc> &Funcs);
+  std::optional<c_float::Conversion>
+  floatToIntegerConversion(const HighExpr &E) const;
   void collectImageObjects(const std::vector<HighFunc> &Funcs);
   void writeImageObjects();
   std::optional<va_t> constAddress(const HighExpr &E) const;
@@ -500,6 +503,8 @@ public:
   /// Pointer-to-class TPI callees whose call sites pass a real hidden result.
   std::set<std::string> DebugExternHiddenSret;
   std::map<std::string, unsigned> MemoryTypes;
+  std::map<std::tuple<unsigned, unsigned, bool>, std::string>
+      FloatToIntegerHelpers;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>

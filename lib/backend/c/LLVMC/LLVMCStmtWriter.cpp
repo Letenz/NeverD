@@ -11,7 +11,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../UnalignedMemory.h"
 #include "LLVMCIntegerMinMax.h"
+#include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -2083,7 +2085,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
           (foldImmediate(ThenStore->getValueOperand()).has_value() !=
            foldImmediate(ElseStore->getValueOperand()).has_value());
       if (ThenSlot && ThenSlot == ElseSlot && !allocaAddressTaken(ThenSlot) &&
-          OneImm) {
+          OneImm && !edgePrintsPhiCopy(Then, ThenJoin) &&
+          !edgePrintsPhiCopy(Else, ElseJoin)) {
         auto LastStore =
             [&](const llvm::BasicBlock *BB) -> const llvm::StoreInst * {
           const llvm::StoreInst *Last = nullptr;
@@ -2208,6 +2211,9 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             break;
           writeInstruction(ArmInst, Indent + 1);
         }
+        // Folding the jump into an if/else does not remove its SSA edge.
+        // Publish each arm's incoming values before the shared join runs.
+        writePhiCopies(Arm, ThenJoin, Indent + 1);
       };
       emitIndent(Indent);
       OS << "if (" << condStr(Br->getCondition()) << ") {\n";
@@ -3148,6 +3154,19 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   if (std::string Image = imageDataCName(Address); !Image.empty())
     Pointer = "&" + Image;
   emitIndent(Indent);
+  if (Opts.UseUnalignedPointers) {
+    if (auto Alias = c_memory::alias(typeToCLLVM(Type)); !Alias.empty()) {
+      if (Load)
+        OS << getName(Load) << " = " << c_memory::access(Alias, Pointer, true)
+           << ";\n";
+      else
+        OS << c_memory::access(Alias, Pointer, false) << " = "
+           << (Integer ? integerPointerOperandStr(Store->getValueOperand())
+                       : valueStr(Store->getValueOperand()))
+           << ";\n";
+      return true;
+    }
+  }
   if (Load) {
     OS << "__builtin_memcpy(&" << getName(Load) << ", (const void*)(" << Pointer
        << "), " << Size.getFixedValue() << ");\n";
@@ -3713,6 +3732,14 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
     if (Pending == &Call)
       return getName(&Call);
   RenderingCalls.push_back(&Call);
+
+  if (scalarUnary(Call)) {
+    const std::string Expr = functionIdentifier(*Call.getCalledFunction()) +
+                             "(" + callArgStr(Call.getArgOperand(0), Call, 0) +
+                             ")";
+    RenderingCalls.pop_back();
+    return Expr;
+  }
 
   if (scalarIntegerMinMax(Call)) {
     // An actual function captures each argument once, including when the

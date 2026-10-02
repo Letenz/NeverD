@@ -146,6 +146,16 @@ runtime pointer values and must designate accessible host memory. Generated C
 is an offline source projection, not an emulator with mapped guest addresses.
 The input is never executed by the recovery tool.
 
+`--unaligned-pointers` requests direct scalar pointer accesses from either C
+route. The emitted typedefs use Clang/GCC `aligned(1)` and `may_alias`
+attributes, so an unaligned state buffer and overlapping integer/float views
+retain their byte access semantics. These are host addresses under the same
+contract above; the option does not translate guest virtual addresses or infer
+original source types. The default keeps portable byte-copy accesses. Atomic,
+segmented, partial-width and other unsupported carrier shapes retain their
+existing exact access paths. The shared C emitter option is
+`CEmitterOptions::UseUnalignedPointers`.
+
 Every bound callee has the same contract:
 
 ```c

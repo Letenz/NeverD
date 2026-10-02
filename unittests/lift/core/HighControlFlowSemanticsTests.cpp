@@ -1983,6 +1983,63 @@ MedOp operation(NdOp Opcode, va_t Address, MedVar Output,
   return O;
 }
 
+TEST(HighControlFlowSemantics, ThreadedSoleSuccessorKeepsItsTransferAndPhi) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64}) {
+    MedFunc M;
+    M.Entry = 0x1000;
+    M.Name = "threaded_single_successor";
+    M.ReturnType = NdType::makeInt(8, false);
+    auto Input = machineValue(0, Architecture);
+    Input.Kind = MedVar::Param;
+    Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+    M.Params = {Input};
+    auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+    M.Blocks.resize(4);
+    for (int I = 0; I < 4; ++I) {
+      M.Blocks[I].Id = I;
+      M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+      M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+    }
+    M.Blocks[0].Succs = {1, 2, 3};
+    M.Blocks[0].Ops = {operation(NdOp::INDIR_BR, 0x1000, {}, {Input})};
+    M.SwitchSelectorPlans[0x1000] = {};
+    M.SwitchSelectorPlans[0x1000].Selector = Input;
+    M.SwitchSelectorPlans[0x1000].ResultSize = 8;
+    auto Joined = machineValue(1, Architecture);
+    auto Return = machineValue(2, Architecture);
+    Return.Kind = MedVar::Reg;
+    Return.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+    Return.SSAVer = 1;
+    M.Blocks[1].Preds = {0, 2};
+    M.Blocks[1].Phis = {{Joined, {{0, C(7)}, {2, C(37)}}}};
+    M.Blocks[1].Ops = {operation(NdOp::COPY, 0x1100, Return, {Joined}),
+                       operation(NdOp::RETURN, 0x1104, {}, {Return})};
+    M.Blocks[2].Preds = {0};
+    M.Blocks[2].Succs = {1};
+    // Threading an empty jump block leaves the edge in the CFG without a
+    // BRANCH operation. Its successor is not the next block in source order.
+    M.Blocks[2].Ops = {operation(NdOp::STORE, 0x1200, {}, {C(0x8000), C(19)})};
+    M.Blocks[3].Preds = {0};
+    auto OtherReturn = Return;
+    OtherReturn.SSAVer = 2;
+    M.Blocks[3].Ops = {operation(NdOp::COPY, 0x1300, OtherReturn, {C(93)}),
+                       operation(NdOp::RETURN, 0x1304, {}, {OtherReturn})};
+    JumpTable Table;
+    Table.InsnAddr = 0x1000;
+    Table.Targets = {0x1100, 0x1200, 0x1300};
+    Table.CaseLabels = {0, 1, 2};
+    MedToHighConverter Converter;
+    Converter.setJumpTables({Table});
+    const auto F = Converter.convert(M, Architecture);
+    const uint64_t Expected[] = {7, 37, 93};
+    for (uint64_t Condition : {0u, 1u, 2u}) {
+      SCOPED_TRACE(Condition);
+      EXPECT_NO_THROW(
+          EXPECT_EQ(execute(F, Condition, true), Expected[Condition]));
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, GotoToReturnBlockKeepsItsStoreAndLoad) {
   // Both arms jump to `sink = v; r = sink; return r;`.  Folding the jump into
   // `return r` would skip the store and read an undefined value.

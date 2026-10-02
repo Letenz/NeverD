@@ -496,6 +496,23 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
       lowerCompareTreeSwitch(Func, Med, *Tree, PhiCopies, PhiArgVars);
     else
       insertPhiCopies(Func, CurBlock, BlkIdx, BlkBodyStart, PhiCopies);
+    // Threading a jump-only block can leave a sole CFG successor without a
+    // BRANCH operation. Source order is not that edge: transfer after its
+    // PHI copies when the successor is elsewhere in the block list.
+    if (!Tree && CurBlock.Succs.size() == 1) {
+      const int Successor = CurBlock.Succs.front();
+      const NdOp Last =
+          CurBlock.Ops.empty() ? NdOp::NOP : CurBlock.Ops.back().Opcode;
+      if (Successor != BlkIdx + 1 && Successor >= 0 &&
+          Successor < static_cast<int>(Med.Blocks.size()) &&
+          Med.Blocks[Successor].Id == Successor && Last != NdOp::BRANCH &&
+          Last != NdOp::INDIR_BR && Last != NdOp::RETURN) {
+        HighStmt Transfer;
+        Transfer.Kind = StmtKind::Goto;
+        Transfer.GotoTarget = EntryOf(Med.Blocks[Successor]);
+        Func.Body.push_back(std::move(Transfer));
+      }
+    }
     // The MedIR CFG may thread an empty branch block out of the false edge.
     // Its successor then need not be the next block in source order. Preserve
     // that transfer after the false-edge PHI copies, using the explicit taken

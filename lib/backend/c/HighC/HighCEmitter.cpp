@@ -15,6 +15,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../UnalignedMemory.h"
 #include "HighCWriter.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
@@ -335,8 +336,26 @@ std::string HighCWriter::memoryTypeName(const TypeRef &Ty) const {
   return Name == "void" ? "uint32_t" : Name;
 }
 
+std::optional<c_float::Conversion>
+HighCWriter::floatToIntegerConversion(const HighExpr &E) const {
+  if (E.Kind != ExprKind::UnaryOp ||
+      (E.Op != NdOp::FLOAT_FLOAT2INT && E.Op != NdOp::FLOAT_FLOAT2UINT &&
+       E.Op != NdOp::FLOAT_TRUNC))
+    return std::nullopt;
+  if (E.Operands.size() != 1 || !E.Operands[0] || !E.Operands[0]->Type ||
+      E.Operands[0]->Type->Kind != NdTypeKind::Float || !E.Type ||
+      E.Type->Kind != NdTypeKind::Int)
+    throw std::runtime_error("unsupported HighC float conversion shape");
+  c_float::Conversion Shape{
+      unsigned(E.Type->Size * 8), unsigned(E.Operands[0]->Type->Size * 8),
+      E.Op != NdOp::FLOAT_FLOAT2UINT, fpToIntegerPolicy(Opts.TheArch)};
+  Shape.validate();
+  return Shape;
+}
+
 void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   std::set<std::string> Names;
+  FloatToIntegerHelpers.clear();
   PartialIntegerBytes.clear();
   SegmentedMemoryTypes.clear();
   AtomicLoadTypes.clear();
@@ -366,6 +385,16 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
+    if (auto Shape = floatToIntegerConversion(E)) {
+      auto [It, Inserted] = FloatToIntegerHelpers.try_emplace(Shape->key());
+      if (Inserted) {
+        const std::string Name = "neverd_fp_to_" +
+                                 std::string(Shape->Signed ? "i" : "u") +
+                                 std::to_string(Shape->Bits) + "_f" +
+                                 std::to_string(Shape->FloatBits);
+        It->second = GlobalIdentifierAllocator.allocate(Name, "nd_fp_convert");
+      }
+    }
     const bool MsvcSegmentedScalar =
         E.MemoryOrdering == NdMemoryOrdering::None &&
         E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
@@ -483,6 +512,13 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
 }
 
 void HighCWriter::writeMemoryHelpers() {
+  for (const auto &[Key, Name] : FloatToIntegerHelpers) {
+    auto [Bits, FloatBits, Signed] = Key;
+    c_float::writeConversion(
+        OS, Name, {Bits, FloatBits, Signed, fpToIntegerPolicy(Opts.TheArch)});
+  }
+  if (Opts.UseUnalignedPointers)
+    c_memory::writeTypes(OS);
   if (HasSegmentedMemory)
     OS << "#if !defined(__clang__)\n"
           "#error \"segmented-memory output requires Clang target address "
@@ -491,6 +527,10 @@ void HighCWriter::writeMemoryHelpers() {
 
   auto WriteHelpers = [&](const std::string &Type, unsigned Index,
                           NdMemoryAddressSpace AddressSpace) {
+    if (Opts.UseUnalignedPointers &&
+        AddressSpace == NdMemoryAddressSpace::Default &&
+        !c_memory::alias(Type).empty())
+      return;
     const auto ReadPtr =
         AddressSpace == NdMemoryAddressSpace::Default
             ? "(const void *)address"
@@ -614,6 +654,10 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
         !Seg.empty())
       return Seg;
   }
+  if (Opts.UseUnalignedPointers && Ordering == NdMemoryOrdering::None &&
+      AddressSpace == NdMemoryAddressSpace::Default)
+    if (auto Alias = c_memory::alias(Type); !Alias.empty())
+      return c_memory::access(Alias, Addr, true);
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory load type was not collected");
@@ -642,6 +686,10 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
   // A machine address does not establish C alignment or effective type.
   // The byte-copy helper also returns the stored value, so expression stores
   // preserve their assignment result while evaluating address/value once.
+  if (Opts.UseUnalignedPointers && Ordering == NdMemoryOrdering::None &&
+      AddressSpace == NdMemoryAddressSpace::Default)
+    if (auto Alias = c_memory::alias(Type); !Alias.empty())
+      return "(" + c_memory::access(Alias, Addr, false) + " = " + Value + ")";
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory store type was not collected");

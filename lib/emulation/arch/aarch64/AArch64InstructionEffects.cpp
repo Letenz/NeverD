@@ -56,7 +56,14 @@ getAArch64InstructionEffects(const cs_insn &I,
   using namespace encoding;
   if (I.size != aarch64::InstructionBytes || !I.detail)
     return llvm::make_error<UnsupportedExecutionError>();
-  enum InstructionKind { Integer, Memory, System, Floating, Vector } Kind;
+  enum InstructionKind {
+    Integer,
+    Memory,
+    System,
+    Floating,
+    Vector,
+    ScalarConversion
+  } Kind;
   switch (I.id) {
 #define NEVERD_AARCH64_INSTRUCTION(Name, Type)                                 \
   case AARCH64_INS_##Name:                                                     \
@@ -77,7 +84,8 @@ getAArch64InstructionEffects(const cs_insn &I,
          (isWriteFPControl(Word) || isWriteFPStatus(Word)))))
     return llvm::make_error<UnsupportedExecutionError>();
   const auto Source = Word & RegisterMask;
-  if (Kind == Floating &&
+  const bool UsesFloatingState = Kind == Floating || Kind == ScalarConversion;
+  if (UsesFloatingState &&
       (State.reg(AArch64Register::FPCR) & ~aarch64::AllowedFPCR))
     return llvm::make_error<UnsupportedExecutionError>();
   if (Kind == System && I.id == AARCH64_INS_MSR &&
@@ -90,7 +98,30 @@ getAArch64InstructionEffects(const cs_insn &I,
   if (I.id == AARCH64_INS_HINT && !isNOP(Word))
     return llvm::make_error<UnsupportedExecutionError>();
   const auto &A = I.detail->aarch64;
-  bool HasVector = Kind == Floating || Kind == Vector;
+  if (Kind == ScalarConversion) {
+    const bool Resize = I.id == AARCH64_INS_FCVT;
+    const unsigned FloatIndex =
+        I.id == AARCH64_INS_SCVTF || I.id == AARCH64_INS_UCVTF ? 0 : 1;
+    // Only scalar GPR <-> binary32/binary64 forms are admitted. Fixed-point
+    // immediates, packed vectors and optional half precision remain outside
+    // this contract even though Capstone uses the same instruction IDs.
+    if (A.op_count != 2 || A.operands[0].type != AARCH64_OP_REG ||
+        A.operands[1].type != AARCH64_OP_REG ||
+        (!Resize && !scalarRegister(A.operands[1 - FloatIndex].reg)) ||
+        A.operands[FloatIndex].vas != AARCH64LAYOUT_INVALID)
+      return llvm::make_error<UnsupportedExecutionError>();
+    const unsigned Width = vectorRegisterWidth(A.operands[FloatIndex].reg);
+    if (Width != 32 && Width != 64)
+      return llvm::make_error<UnsupportedExecutionError>();
+    if (Resize) {
+      const auto &Other = A.operands[1 - FloatIndex];
+      const unsigned OtherWidth = vectorRegisterWidth(Other.reg);
+      if ((OtherWidth != 32 && OtherWidth != 64) || OtherWidth == Width ||
+          Other.vas != AARCH64LAYOUT_INVALID)
+        return llvm::make_error<UnsupportedExecutionError>();
+    }
+  }
+  bool HasVector = UsesFloatingState || Kind == Vector;
   for (unsigned N = 0; N < A.op_count; ++N) {
     const auto &O = A.operands[N];
     if (O.type == AARCH64_OP_REG && !scalarRegister(O.reg)) {
@@ -98,13 +129,13 @@ getAArch64InstructionEffects(const cs_insn &I,
       if (!Width)
         return llvm::make_error<UnsupportedExecutionError>();
       HasVector = true;
-      if (Kind == Floating &&
+      if (UsesFloatingState &&
           (Width < FP32Bits ||
            (O.vas != AARCH64LAYOUT_INVALID &&
             (unsigned(O.vas) & LayoutElementMask) < FP32Bits)))
         return llvm::make_error<UnsupportedExecutionError>();
     }
-    if ((Kind == Integer || Kind == Vector || Kind == Floating) &&
+    if ((Kind == Integer || Kind == Vector || UsesFloatingState) &&
         O.type != AARCH64_OP_REG && O.type != AARCH64_OP_IMM &&
         !(Kind == Floating && O.type == AARCH64_OP_FP))
       return llvm::make_error<UnsupportedExecutionError>();

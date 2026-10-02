@@ -2,6 +2,8 @@
 
 #include "neverd/backend/llvm/MedLLVMFloatConvertLowering.h"
 
+#include "neverd/ir/FloatConversion.h"
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
@@ -19,7 +21,7 @@ llvm::Value *emitFPToInt(llvm::IRBuilderBase &Builder, llvm::Module &Module,
   auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
       &Module, SatID, {DestType, Source->getType()});
   llvm::Value *Sat = Builder.CreateCall(Fn, {Source}, "fptoint_sat");
-  if (TargetArch != Arch::X86 && TargetArch != Arch::X64)
+  if (fpToIntegerPolicy(TargetArch) == FPToIntegerPolicy::Saturate)
     return Sat;
 
   const unsigned Bits = DestType->getIntegerBitWidth();

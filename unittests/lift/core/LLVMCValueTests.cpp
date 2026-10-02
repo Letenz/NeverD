@@ -95,6 +95,48 @@ TEST(LLVMCValues, EscapedByteStringsPreserveAdjacentDigitsWhenExecuted) {
   compileAndRun(Source);
 }
 
+TEST(LLVMCValues, RemaindersWithInlineOperandsPublishTheirResult) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("remainder-inline-operands", Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  std::string Main = "int main(void) { uint64_t first, second;\n";
+  for (bool Signed : {false, true}) {
+    const std::string Name = Signed ? "signed_rem" : "unsigned_rem";
+    auto *Signature = llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                              {llvm::Type::getInt64Ty(Context),
+                                               llvm::Type::getInt64Ty(Context),
+                                               Pointer, Pointer},
+                                              false);
+    auto *Function = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Divisor = Builder.CreateOr(Function->getArg(1), Builder.getInt64(1));
+    auto *Remainder = Signed ? Builder.CreateSRem(Function->getArg(0), Divisor)
+                             : Builder.CreateURem(Function->getArg(0), Divisor);
+    Builder.CreateStore(Remainder, Function->getArg(2));
+    Builder.CreateStore(Builder.CreateAdd(Remainder, Builder.getInt64(17)),
+                        Function->getArg(3));
+    Builder.CreateRetVoid();
+    for (int64_t Input : {int64_t(0), int64_t(71), int64_t(-71)}) {
+      const uint64_t Expected =
+          Signed ? uint64_t(Input % 9) : uint64_t(Input) % 9;
+      Main += Name + "(" + std::to_string(uint64_t(Input)) +
+              "ULL, 8, &first, &second);\n";
+      Main += "if (first != " + std::to_string(Expected) +
+              "ULL || second != " + std::to_string(Expected + 17) +
+              "ULL) return 1;\n";
+    }
+  }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization);
+}
+
 TEST(LLVMCValues, WideIntegerConstantsRetainBothHalvesWhenExecuted) {
   llvm::LLVMContext Context;
   llvm::Module Module("wide-constants", Context);

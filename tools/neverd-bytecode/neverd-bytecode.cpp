@@ -51,6 +51,9 @@ llvm::cl::opt<bool> LLVMRoute("llvm",
 llvm::cl::opt<bool> Optimize(
     "optimize",
     llvm::cl::desc("Optimize LLVM IR before C emission (requires --llvm)"));
+llvm::cl::opt<bool> UnalignedPointers(
+    "unaligned-pointers",
+    llvm::cl::desc("Use Clang/GCC unaligned aliasing scalar pointers in C"));
 llvm::cl::opt<bool>
     Check("check", llvm::cl::desc("Check CFG decoding without emitting C"));
 
@@ -248,6 +251,7 @@ llvm::Error run() {
   Options.TheArch = Arch::AArch64;
   Options.Format = BinaryFormat::ELF;
   Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = UnalignedPointers;
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   if (LLVMRoute) {

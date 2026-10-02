@@ -196,10 +196,16 @@ and x64 state carriers through HighC and LLVMC, recompile at `-O0` and `-O2`
 with undefined-behavior traps, and verify loops, narrow writes, memory canaries,
 signed arithmetic and nested status-propagating calls. The state-forwarding
 checks include unaligned banks, overlapping register views, guest aliases and
-overwritten writes that a memory access can observe. CLI checks also exercise
+overwritten writes that a memory access can observe, using both portable byte
+copies and the optional Clang/GCC unaligned pointer spelling. CLI checks also exercise
 the optional LLVM optimization route and block-sensitive bounded graphs whose
 branch arms produce distinct values, including merged conditional targets.
 No external dialect or binary sample is needed.
+
+`FloatingConversionsKeepArchitectureResultPolicies` checks float/double to
+signed/unsigned 32/64-bit results for AArch64 saturation and x86 indefinite
+values through both C routes, both memory spellings and O0/O2 with undefined
+behavior traps. It also checks narrow-write canaries on an unaligned bank.
 
 ```sh
 cmake --build build-release --target NeverDBytecodeAnalysisTests
@@ -377,7 +383,23 @@ integer min/max for i1/8/16/32/64/128 at O0/O2, checking assigned and inline
 results, producer ordering, and single evaluation. Unsupported scalar widths
 and malformed operands must fail explicitly.
 
+The same target executes scalar float/double saturating conversions at
+O0/O2 with undefined-behavior traps, covering NaNs, infinities, fractional
+values and exact signed/unsigned bounds through 128 bits. Bit-reversal checks
+include non-byte widths and every one-hot input bit. Unsupported shapes fail
+before source emission.
+
 ## Structured C control and call checks
+
+`FoldedStoreArmsPublishTheirOutgoingPhiValues` executes a conditional with
+side-effecting store arms and a shared PHI at O0/O2. Folding the two arms into
+C `if/else` must retain each outgoing SSA assignment.
+`RemaindersWithInlineOperandsPublishTheirResult` executes signed and unsigned
+remainders with an inline divisor at both optimization levels; an unavailable
+composed expression must not become a self-assignment.
+`ThreadedSoleSuccessorKeepsItsTransferAndPhi` checks both AArch64 and x64
+HighIR when CFG threading leaves a sole successor without a branch operation.
+Its edge copies and transfer must run before any unrelated source-order block.
 
 `HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
 
@@ -1847,7 +1869,7 @@ cmake -S . -B build-native -G Ninja \
 
 `NeverDAArch64StateTests` checks corruption of every scalar field, both words of every vector, privilege changes, missing floating-point execution and preserved transport diagnostics. `NeverDAArch64FPTests` runs `OriginalProgramChecksCompleteStateAndOneDeadline` using independently assembled `AArch64ProbeCases.def` instructions at both privileges on real transports. The test relocates these PC-independent words to guest code without granting user access to monitor pages. Unicorn execution and explicit native skips do not replace native ARM64 startup evidence.
 
-`CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+`CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 

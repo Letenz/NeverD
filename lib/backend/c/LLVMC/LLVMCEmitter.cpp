@@ -15,7 +15,10 @@
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
+#include "../FloatConversion.h"
+#include "../UnalignedMemory.h"
 #include "LLVMCIntegerMinMax.h"
+#include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -73,6 +76,17 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
       if (const auto *Integer =
               llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
         IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      Name = IntrinsicHelper;
+    }
+    if (const char *Kind = scalarUnarySpelling(Fn.getIntrinsicID())) {
+      IntrinsicHelper = std::string("neverd_llvm_") + Kind;
+      if (const auto *Integer =
+              llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
+        IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      if (Fn.arg_size() == 1 && Fn.getArg(0)->getType()->isFloatingPointTy())
+        IntrinsicHelper +=
+            "_f" +
+            std::to_string(Fn.getArg(0)->getType()->getPrimitiveSizeInBits());
       Name = IntrinsicHelper;
     }
     std::string DebugName;
@@ -146,6 +160,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   Headers.insert("stdint.h");
   std::set<std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
+  std::map<std::string, ScalarUnary> ScalarUnaries;
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -155,10 +170,14 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       continue;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
-        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst))
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
           if (auto Shape = scalarIntegerMinMax(*Call))
             IntegerMinMax.emplace(
                 functionIdentifier(*Call->getCalledFunction()), *Shape);
+          if (auto Shape = scalarUnary(*Call))
+            ScalarUnaries.emplace(
+                functionIdentifier(*Call->getCalledFunction()), *Shape);
+        }
         if (llvm::isa<llvm::FenceInst>(&Inst))
           HasCIntrinsics = true;
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
@@ -212,6 +231,29 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     for (auto &H : Headers)
       OS << "#include <" << H << ">\n";
     OS << "\n";
+  }
+  if (Opts.UseUnalignedPointers)
+    c_memory::writeTypes(OS);
+  for (const auto &[Name, Shape] : ScalarUnaries) {
+    const unsigned CarrierBits = Shape.carrierBits();
+    const std::string Type = CarrierBits == 128
+                                 ? "unsigned __int128"
+                                 : "uint" + std::to_string(CarrierBits) + "_t";
+    if (Shape.Kind == llvm::Intrinsic::bitreverse) {
+      OS << "static inline " << Type << " " << Name << "(" << Type
+         << " value) {\n"
+         << "    " << Type << " result = 0;\n"
+         << "    for (unsigned int bit = 0; bit < " << Shape.Bits
+         << "; ++bit) {\n"
+         << "        result = (" << Type << ")((result << 1) | (value & 1));\n"
+         << "        value >>= 1;\n"
+         << "    }\n    return result;\n}\n\n";
+      continue;
+    }
+    c_float::writeConversion(OS, Name,
+                             {Shape.Bits, Shape.FloatBits,
+                              Shape.Kind == llvm::Intrinsic::fptosi_sat,
+                              FPToIntegerPolicy::Saturate});
   }
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
