@@ -96,6 +96,7 @@ add_neverd_component_library(NeverDLoader
   Swift/SwiftABI.cpp
   Swift/SwiftRuntimeSource.cpp
   Swift/SwiftRuntimeCalls.cpp
+  Swift/SwiftValueBufferEffects.cpp
   Swift/SwiftStringCalls.cpp
   Swift/SwiftValueWitnessCalls.cpp
   Swift/SwiftVirtualCalls.cpp
