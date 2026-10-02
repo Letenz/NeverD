@@ -313,7 +313,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "71 CPU + 224 WHP + 4 SEH = 299")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "101 CPU + 224 WHP + 4 SEH = 329")
 NEVERD_EMULATION_DOC_TOKEN(Project, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -359,4 +359,22 @@ NEVERD_EMULATION_DOC_TOKEN(X64BitString, "X64BitInstructions.def")
 NEVERD_EMULATION_DOC_TOKEN(X64BitString, "X64BitStringTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(X64BitString, "BT/BTS/BTR/BTC")
 NEVERD_EMULATION_DOC_TOKEN(X64BitString, "RAMTransaction")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(X64StringTransfer, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(X64StringTransfer, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(X64StringTransfer, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(X64StringTransfer, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(X64StringTransfer, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(X64StringTransfer, "docs/{locale}/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(X64StringTransfer, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(X64StringTransfer, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(X64StringTransfer, "X64StringInstructions.def")
+NEVERD_EMULATION_DOC_TOKEN(X64StringTransfer, "X64StringTransferTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(X64StringTransfer, "MOVS/STOS/LODS")
+NEVERD_EMULATION_DOC_TOKEN(X64StringTransfer, "CLD/STD")
+NEVERD_EMULATION_DOC_TOKEN(X64StringTransfer, "driver_resource_strings.def")
 #endif

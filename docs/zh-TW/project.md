@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 7924ef5cc873c38b4bcf52dca151225961153a485cf5287320f650ad0edf30fc -->
+<!-- i18n-source: b29382f95357f356c543fac05dd037176f4344c125610c045930a6f40f18af07 -->
 
 <div align="center">
 
@@ -110,6 +110,8 @@ Low/Med/High IR、已驗證 LLVM、可攜式 C11 與安全 stable Rust。詳見
 CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 啟用 x64/ARM64 CPU 層；`NEVERD_ENABLE_DRIVER_EMULATION` 加入有界 x64 Windows WDM/KMDF 環境。`linux-elf64-v1` 設定檔執行受支援的 Linux ELF 程序。參見[CPU 執行](cpu-execution.md)、[客體程序模擬](process-emulation.md)及[Windows 驅動程式模擬](driver-emulation.md)。
 
 `driver-strict` / `checked-x64-v1` 支援匹配 Linux x64 主機的 KVM 與 Windows x64 主機的 WHP；`auto` 選取對應原生傳輸，跨 ISA 執行選取 Unicorn。明確指定 Unicorn 及原有 V1 API 保留可移植軟體設定。原生執行在進入 CPU 前檢查規範位址和指令效果；硬體不可用時明確失敗且不回退。不支援的指令與 OS 行為仍明確報錯。Windows x64 原生 CI 在停用 Unicorn 的設定下通過全部 299 項必測檢查：71 項 CPU 檢查、26 個內建映像與 46 個 WDK 映像及 40 個情境組合在首選和重定位位址產生的 224 項驅動程式結果，以及 4 項 SEH 邊界檢查 ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). 原生 ARM64 實機證據仍待補充，這不表示相容任意驅動程式或 Android/Darwin 環境。
+
+受檢 x64 現支援一般 RAM 上的 `MOVS/STOS/LODS` 與 `CLD/STD`，並逐元素驗證恢復、取消及跨頁存取。依賴 CPU 型號的零次數高位元行為與 STOS/LODS 裝置運算元仍不在契約內。
 
 `checked-aarch64-v1` 與 `checked-user-aarch64-v1` 提供有界 ARM64 FP32/FP64、定寬 SIMD 及完整 FPCR/FPSR/向量狀態。匹配 Linux ARM64 主機使用 KVM，Windows ARM64 主機使用 WHP，跨 ISA 使用 Unicorn。ARM64 原生執行仍待實機驗證；Windows 驅動程式載入仍限 x64。
 

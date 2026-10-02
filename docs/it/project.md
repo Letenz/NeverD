@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 7924ef5cc873c38b4bcf52dca151225961153a485cf5287320f650ad0edf30fc -->
+<!-- i18n-source: b29382f95357f356c543fac05dd037176f4344c125610c045930a6f40f18af07 -->
 
 <div align="center">
 
@@ -111,6 +111,8 @@ Il recupero dipende dai modelli di codice supportati; per copertura e limiti con
 L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e politiche OS. `NEVERD_ENABLE_CPU_EMULATION` attiva il livello CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` aggiunge l’ambiente Windows WDM/KMDF x64 limitato. `linux-elf64-v1` esegue processi Linux ELF supportati. Vedere [Esecuzione CPU](cpu-execution.md), [Emulazione dei processi guest](process-emulation.md) e [Emulazione dei driver Windows](driver-emulation.md).
 
 `driver-strict` / `checked-x64-v1` supporta KVM su host Linux x64 compatibili e WHP su host Windows x64 compatibili; `auto` sceglie quel trasporto nativo, mentre ISA diverse usano Unicorn. Unicorn esplicito e la precedente API V1 mantengono il profilo software portabile. L’esecuzione nativa verifica indirizzi canonici ed effetti prima dell’ingresso; hardware assente produce un errore senza ripiego. Istruzioni e comportamento OS non supportati falliscono esplicitamente. La CI nativa Windows x64 con Unicorn disattivato supera tutti i 299 controlli obbligatori: 71 controlli CPU, 224 risultati di driver da 26 immagini integrate, 46 immagini WDK e 40 casi di scenario alle basi preferite e rilocate, più quattro controlli dei limiti SEH ([`b7d02863`](https://github.com/NeverSight/NeverD/actions/runs/36968730185)). Mancano prove native ARM64; non è stabilita la compatibilità universale dei driver o Android/Darwin.
+
+Il profilo x64 verificato include `MOVS/STOS/LODS` sulla RAM ordinaria e `CLD/STD`, con ripresa, annullamento e verifica delle pagine per elemento. I bit alti a conteggio nullo specifici della CPU e gli operandi di dispositivo STOS/LODS restano fuori dal contratto.
 
 `checked-aarch64-v1` e `checked-user-aarch64-v1` offrono ARM64 FP32/FP64 e SIMD fissi limitati, con stato FPCR/FPSR/vettoriale completo. Linux ARM64 corrispondente usa KVM, Windows ARM64 usa WHP e ISA diverse usano Unicorn. Le prove native ARM64 restano pendenti; il caricamento di driver Windows resta x64.
 

@@ -1,0 +1,72 @@
+//===- X64StringTransferCases.def - Independent string transfer cases ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_STRING_VALUE
+NEVERD_STRING_VALUE(WordBytes, 8)
+NEVERD_STRING_VALUE(BufferBytes, 256)
+NEVERD_STRING_VALUE(SourceOffset, 128)
+NEVERD_STRING_VALUE(DestinationOffset, 64)
+NEVERD_STRING_VALUE(RepeatCount, 3)
+NEVERD_STRING_VALUE(InitialAX, 0x123456789abcdef0ULL)
+NEVERD_STRING_VALUE(UpperBits, 0x1234567800000000ULL)
+NEVERD_STRING_VALUE(Flags, 0x246)
+NEVERD_STRING_VALUE(Direction, 0x400)
+NEVERD_STRING_VALUE(Seed, 0x5a)
+NEVERD_STRING_VALUE(PatternStep, 37)
+NEVERD_STRING_VALUE(Nop, 0x90)
+NEVERD_STRING_VALUE(Rep, 0xf3)
+NEVERD_STRING_VALUE(Repne, 0xf2)
+NEVERD_STRING_VALUE(Lock, 0xf0)
+NEVERD_STRING_VALUE(AddressPrefix, 0x67)
+NEVERD_STRING_VALUE(FSPrefix, 0x64)
+NEVERD_STRING_VALUE(GSPrefix, 0x65)
+NEVERD_STRING_VALUE(SegmentBase, 0x100000000ULL)
+NEVERD_STRING_VALUE(LastNarrowPage, 0xfffff000ULL)
+NEVERD_STRING_VALUE(InvalidPointer, 0x800000000000ULL)
+#endif
+#ifdef NEVERD_STRING_TEXT
+NEVERD_STRING_TEXT(OracleUnavailable,
+                   "the string transfer host oracle requires x64")
+NEVERD_STRING_TEXT(ObserverException, "string transfer observer failure")
+#endif
+#ifdef NEVERD_STRING_BYTES
+NEVERD_STRING_BYTES(ClearDirection, 0xfc)
+NEVERD_STRING_BYTES(SetDirection, 0xfd)
+// Save R12, RSI, RDI and host flags, including DF. The argument points to
+// {accumulator, count, source, destination, flags}; offsets are checked in C++.
+NEVERD_STRING_BYTES(OraclePrefix, 0x41, 0x54, 0x56, 0x57, 0x9c)
+NEVERD_STRING_BYTES(SysVArgument, 0x49, 0x89, 0xfc)
+NEVERD_STRING_BYTES(Win64Argument, 0x49, 0x89, 0xcc)
+NEVERD_STRING_BYTES(OracleLoad, 0x49, 0x8b, 0x04, 0x24, 0x49, 0x8b, 0x4c, 0x24,
+                    0x08, 0x49, 0x8b, 0x74, 0x24, 0x10, 0x49, 0x8b, 0x7c, 0x24,
+                    0x18, 0x41, 0xff, 0x74, 0x24, 0x20, 0x9d)
+NEVERD_STRING_BYTES(OracleSave, 0x49, 0x89, 0x04, 0x24, 0x49, 0x89, 0x4c, 0x24,
+                    0x08, 0x49, 0x89, 0x74, 0x24, 0x10, 0x49, 0x89, 0x7c, 0x24,
+                    0x18, 0x9c, 0x58, 0x49, 0x89, 0x44, 0x24, 0x20, 0x9d, 0x5f,
+                    0x5e, 0x41, 0x5c, 0xc3)
+#endif
+#ifdef NEVERD_STRING_CASE
+// Literal instruction encodings, independent of production admission tables.
+NEVERD_STRING_CASE(Move8, 1, Move, 0xa4)
+NEVERD_STRING_CASE(Move16, 2, Move, 0x66, 0xa5)
+NEVERD_STRING_CASE(Move32, 4, Move, 0xa5)
+NEVERD_STRING_CASE(Move64, 8, Move, 0x48, 0xa5)
+NEVERD_STRING_CASE(Store8, 1, Store, 0xaa)
+NEVERD_STRING_CASE(Store16, 2, Store, 0x66, 0xab)
+NEVERD_STRING_CASE(Store32, 4, Store, 0xab)
+NEVERD_STRING_CASE(Store64, 8, Store, 0x48, 0xab)
+NEVERD_STRING_CASE(Load8, 1, Load, 0xac)
+NEVERD_STRING_CASE(Load16, 2, Load, 0x66, 0xad)
+NEVERD_STRING_CASE(Load32, 4, Load, 0xad)
+NEVERD_STRING_CASE(Load64, 8, Load, 0x48, 0xad)
+#endif
+#ifdef NEVERD_STRING_BACKEND
+NEVERD_STRING_BACKEND(kvmSupervisor, KVM, false)
+NEVERD_STRING_BACKEND(kvmUser, KVM, true)
+NEVERD_STRING_BACKEND(whpSupervisor, WHP, false)
+NEVERD_STRING_BACKEND(whpUser, WHP, true)
+NEVERD_STRING_BACKEND(unicornSupervisor, Unicorn, false)
+NEVERD_STRING_BACKEND(unicornUser, Unicorn, true)
+#endif
