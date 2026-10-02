@@ -96,10 +96,11 @@ bool decodeV1V2Operations(ExceptionFunction &F, const uint8_t *Codes,
       Kind = UnwindOperationKind::AllocateSmall;
       break;
     case UOP_SetFPReg:
+      // The operation info is reserved: the frame register and its offset
+      // come from the UNWIND_INFO header, which is all the unwinder reads.
+      // MSVC fills the field anyway, with the frame register or the scaled
+      // offset, on every frame-pointer function in ntoskrnl.
       Kind = UnwindOperationKind::SetFramePointer;
-      if (OpInfo != 0)
-        diagnose(F, ExceptionParseStatus::Partial,
-                 "non-zero UWOP_SET_FPREG operation info");
       break;
     case UOP_SaveNonVol:
       Kind = UnwindOperationKind::SaveNonVolatile;

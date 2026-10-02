@@ -470,6 +470,30 @@ TEST(COFFExceptionParser, AcceptsX64V1OperationsAtTheSameCodeOffset) {
   EXPECT_EQ(F.UnwindOperations[1].Kind, UnwindOperationKind::AllocateSmall);
 }
 
+TEST(COFFExceptionParser, IgnoresTheReservedSetFramePointerInfo) {
+  // MSVC writes the frame register or the scaled offset into the reserved
+  // operation info of UWOP_SET_FPREG; the header alone defines the frame.
+  for (uint8_t Info : {uint8_t{5}, uint8_t{2}}) {
+    SCOPED_TRACE(static_cast<int>(Info));
+    BinaryImage Img = makeX64ExceptionImage();
+    uint8_t *X = Img.Segments[1].Data.data();
+    X[0] = 1;
+    X[1] = 4;
+    X[2] = 2;
+    X[3] = 5 | (2 << 4); // rbp = rsp + 32
+    X[4] = 4;
+    X[5] = static_cast<uint8_t>(3 | (Info << 4)); // set frame pointer
+    X[6] = 4;
+    X[7] = (3 << 4) | 2; // allocate 32 bytes
+
+    ExceptionFunction F = coff_loader::decodeX64ExceptionFunction(
+        Img, Img.Base, 0x2000, 0x1000, 0x1040, 0x3000);
+    EXPECT_EQ(F.ParseStatus, ExceptionParseStatus::Complete);
+    EXPECT_EQ(F.FrameRegister, 5u);
+    EXPECT_EQ(F.FrameOffset, 32u);
+  }
+}
+
 TEST(COFFExceptionParser, DecodesX64V3PayloadAndWODPool) {
   BinaryImage Img = makeX64ExceptionImage();
   uint8_t *X = Img.Segments[1].Data.data();
