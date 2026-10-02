@@ -76,6 +76,26 @@ L’option CLI `--vm-max-refinements=N` exige un entier strictement positif et v
 
 En C, utiliser `neverd_devirtualize_source_v3()` ou `neverd_devirtualize_machine_source_v3()`. Initialiser `neverd_devirtualize_options_v3` à zéro et définir `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)`. Renseigner `max_control_fields`, `max_solver_queries` et éventuellement `base.max_control_refinements` ; zéro sélectionne la valeur par défaut inchangée. Les trois champs reserved doivent être nuls. v1/v2 ignorent la fin v3, y compris reserved ; v3 ignore les extensions futures. Le rapport consigne le travail réel et les limites effectives `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`.
 
+La récupération expose aussi `--vm-chain-transfers=N` (0 par défaut) et `--vm-no-control-discovery`. Le chaînage conserve les corrélations symboliques entre transferts dont la cible unique est prouvée ; sa limite revient aux frontières CFG ordinaires. Le mode état machine accepte des offsets d’entrée RSP sans bouclage, non vérifiés à l’exécution, via `--vm-entry-frame=begin:end`. La prémisse numérique exacte accompagne le C et le rapport, sans autoriser d’accès mémoire ni prouver l’équivalence.
+
+Les API v4 compatibles sont `neverd_devirtualize_source_v4()` et `neverd_devirtualize_machine_source_v4()`. Initialiser `neverd_devirtualize_options_v4` à zéro et régler `base.base.base.struct_size` sur sa taille complète. Le compteur CLI est un entier décimal non négatif de 32 bits ; zéro désactive le chaînage. Les bornes sont des entiers décimaux signés de 64 bits avec `begin < end`, exigent `--vm-machine-state` et portent sur RSP physique à l’entrée, pas sa valeur ajustée. En C, le drapeau de bornes exige l’API état machine ; sans lui, les deux bornes sont nulles. Les drapeaux inconnus et anciens champs réservés non nuls sont refusés. v1/v2/v3 ignorent toute l’extension v4 ; v4 ignore les extensions futures. Les options nulles préservent les valeurs par défaut. Le rapport ajoute `maxChainedTransfers`, `entryFrameBounds` et l’état effectif de `discoverControlState`. Toutes les options CLI exigent `--devirtualize`. La prémisse n’est pas contrôlée à l’exécution et ne garantit ni accessibilité, ni initialisation, ni absence d’alias. Aucune politique de preuve native n’est activée.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 Le rapport JSON ajoute `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` et `discoveryVisits` pour décrire l’activation, les limites et le travail effectué. Découvrir des champs ne prouve pas la réussite de la récupération.
 
 Lorsqu’une condition réduit une dépendance d’adresse à une tranche d’octets, le raffinement conserve aussi comme candidats de contexte les champs d’adresse directe de huit octets déjà suivis qui la contiennent. Le champ étroit et le masque de son producteur restent inchangés ; aucun champ large sans rapport n’est promu. Les constantes et les déplacements relatifs à l’entrée exigent toujours une preuve, et tous les contextes partagent les limites existantes.

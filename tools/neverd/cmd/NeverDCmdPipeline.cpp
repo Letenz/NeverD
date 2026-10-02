@@ -437,7 +437,10 @@ int runDecompile(neverd_session_t Sess) {
        VMMaxNodes.getNumOccurrences() || VMMaxContexts.getNumOccurrences() ||
        VMMaxOperations.getNumOccurrences() ||
        VMMaxRefinements.getNumOccurrences() ||
-       VMMaxFields.getNumOccurrences() || VMMaxQueries.getNumOccurrences())) {
+       VMMaxFields.getNumOccurrences() || VMMaxQueries.getNumOccurrences() ||
+       VMChainTransfers.getNumOccurrences() ||
+       VMEntryFrame.getNumOccurrences() ||
+       VMNoControlDiscovery.getNumOccurrences())) {
     WithColor::error() << "VM recovery options require --devirtualize\n";
     return 1;
   }
@@ -445,14 +448,17 @@ int runDecompile(neverd_session_t Sess) {
     WithColor::error() << "VM recovery budgets must be positive\n";
     return 1;
   }
-  uint32_t MaxRefinements = 0, MaxFields = 0, MaxQueries = 0;
-  const auto ParseCount = [](StringRef Text, StringRef Option,
-                             uint32_t &Value) {
+  uint32_t MaxRefinements = 0, MaxFields = 0, MaxQueries = 0,
+           ChainTransfers = 0;
+  const auto ParseCount = [](StringRef Text, StringRef Option, uint32_t &Value,
+                             bool AllowZero = false) {
     if (Text.empty() ||
         Text.find_first_not_of("0123456789") != StringRef::npos ||
-        Text.getAsInteger(10, Value) || !Value) {
+        Text.getAsInteger(10, Value) || (!AllowZero && !Value)) {
       WithColor::error() << Option
-                         << " expects a positive 32-bit decimal integer\n";
+                         << (AllowZero ? " expects a nonnegative"
+                                       : " expects a positive")
+                         << " 32-bit decimal integer\n";
       return false;
     }
     return true;
@@ -461,8 +467,32 @@ int runDecompile(neverd_session_t Sess) {
       (!ParseCount(VMMaxRefinements.getValue(), "--vm-max-refinements",
                    MaxRefinements) ||
        !ParseCount(VMMaxFields.getValue(), "--vm-max-fields", MaxFields) ||
-       !ParseCount(VMMaxQueries.getValue(), "--vm-max-queries", MaxQueries))) {
+       !ParseCount(VMMaxQueries.getValue(), "--vm-max-queries", MaxQueries) ||
+       !ParseCount(VMChainTransfers.getValue(), "--vm-chain-transfers",
+                   ChainTransfers, true))) {
     return 1;
+  }
+  int64_t EntryFrameBegin = 0, EntryFrameEnd = 0;
+  if (VMEntryFrame.getNumOccurrences()) {
+    if (!VMMachineState) {
+      WithColor::error() << "--vm-entry-frame requires --vm-machine-state\n";
+      return 1;
+    }
+    const auto Parts = StringRef(VMEntryFrame.getValue()).split(':');
+    const auto SignedDecimal = [](StringRef Text, int64_t &Value) {
+      auto Digits = Text;
+      Digits.consume_front("-");
+      return !Digits.empty() &&
+             Digits.find_first_not_of("0123456789") == StringRef::npos &&
+             !Text.getAsInteger(10, Value);
+    };
+    if (!SignedDecimal(Parts.first, EntryFrameBegin) ||
+        !SignedDecimal(Parts.second, EntryFrameEnd)) {
+      WithColor::error()
+          << "--vm-entry-frame expects signed 64-bit decimal begin:end\n";
+      return 1;
+    }
+    // The engine owns range validity and the nonwrapping entry predicate.
   }
   const char *Source = nullptr;
   if (!ExportFunc.empty()) {
@@ -508,26 +538,35 @@ int runDecompile(neverd_session_t Sess) {
         }
         FrameSlots.push_back({Offset, static_cast<uint16_t>(Bytes), 0});
       }
-      neverd_devirtualize_options_v3 Recovery{};
-      Recovery.base.base.struct_size = sizeof(Recovery);
-      Recovery.base.max_control_refinements = MaxRefinements;
-      Recovery.max_control_fields = MaxFields;
-      Recovery.max_solver_queries = MaxQueries;
-      Recovery.base.base.control_registers = Controls.data();
-      Recovery.base.base.control_register_count = Controls.size();
-      Recovery.base.base.control_frame_slots = FrameSlots.data();
-      Recovery.base.base.control_frame_slot_count = FrameSlots.size();
-      Recovery.base.base.max_nodes = VMMaxNodes;
-      Recovery.base.base.max_contexts_per_address = VMMaxContexts;
-      Recovery.base.base.max_operations = VMMaxOperations;
-      Recovery.base.base.use_llvm = LlvmRoute;
-      Recovery.base.base.no_opt = NoOpt;
+      neverd_devirtualize_options_v4 Recovery{};
+      auto &Base = Recovery.base.base.base;
+      Base.struct_size = sizeof(Recovery);
+      Recovery.base.base.max_control_refinements = MaxRefinements;
+      Recovery.base.max_control_fields = MaxFields;
+      Recovery.base.max_solver_queries = MaxQueries;
+      Recovery.max_chained_transfers = ChainTransfers;
+      if (VMNoControlDiscovery)
+        Recovery.flags |= NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY;
+      if (VMEntryFrame.getNumOccurrences()) {
+        Recovery.flags |= NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+        Recovery.entry_frame_begin = EntryFrameBegin;
+        Recovery.entry_frame_end = EntryFrameEnd;
+      }
+      Base.control_registers = Controls.data();
+      Base.control_register_count = Controls.size();
+      Base.control_frame_slots = FrameSlots.data();
+      Base.control_frame_slot_count = FrameSlots.size();
+      Base.max_nodes = VMMaxNodes;
+      Base.max_contexts_per_address = VMMaxContexts;
+      Base.max_operations = VMMaxOperations;
+      Base.use_llvm = LlvmRoute;
+      Base.no_opt = NoOpt;
       const char *Report = nullptr;
       Source =
           VMMachineState
-              ? neverd_devirtualize_machine_source_v3(Sess, Entry, &Recovery,
+              ? neverd_devirtualize_machine_source_v4(Sess, Entry, &Recovery,
                                                       &Report)
-              : neverd_devirtualize_source_v3(Sess, Entry, &Recovery, &Report);
+              : neverd_devirtualize_source_v4(Sess, Entry, &Recovery, &Report);
       if (!VMRecoveryReport.empty() && Report) {
         std::error_code EC;
         raw_fd_ostream OS(VMRecoveryReport, EC);

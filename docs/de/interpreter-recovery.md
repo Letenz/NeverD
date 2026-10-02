@@ -77,6 +77,26 @@ Die CLI-Option `--vm-max-refinements=N` verlangt eine positive ganze Zahl und ha
 
 C-Aufrufer verwenden `neverd_devirtualize_source_v3()` oder `neverd_devirtualize_machine_source_v3()`. `neverd_devirtualize_options_v3` vollständig mit null initialisieren und `base.base.struct_size = sizeof(neverd_devirtualize_options_v3)` setzen. `max_control_fields`, `max_solver_queries` und optional `base.max_control_refinements` angeben; null wählt den unveränderten Standardwert. Alle drei reserved-Felder müssen null bleiben. v1/v2 ignorieren den v3-Anhang einschließlich reserved, v3 ignoriert künftige Anhänge. Der Bericht enthält tatsächliche Arbeit und wirksame Grenzen `maxControlFields`, `maxControlRefinements`, `maxSolverQueries`.
 
+Die Wiederherstellung bietet auch `--vm-chain-transfers=N` (Standard 0) und `--vm-no-control-discovery`. Verkettung erhält symbolische Korrelationen über Transfers mit bewiesenem Einzelziel; am Limit gelten wieder normale CFG-Grenzen. Maschinenzustandswiederherstellung kann mit `--vm-entry-frame=begin:end` ungeprüfte, nicht umlaufende Offsets zum Eintritts-RSP angeben. Die genaue numerische Vorbedingung bleibt im erzeugten C und Bericht; sie erlaubt keine Speicherzugriffe und beweist keine Äquivalenz.
+
+Die kompatiblen v4-APIs heißen `neverd_devirtualize_source_v4()` und `neverd_devirtualize_machine_source_v4()`. `neverd_devirtualize_options_v4` mit Null initialisieren und `base.base.base.struct_size` auf die vollständige Größe setzen. Die CLI-Verkettungszahl ist eine nichtnegative 32-Bit-Dezimalzahl; Null deaktiviert die Verkettung. Grenzen sind vorzeichenbehaftete 64-Bit-Dezimalzahlen mit `begin < end`, benötigen `--vm-machine-state` und beziehen sich auf den physischen Eintritts-RSP statt dessen angepassten Wert. Das C-Grenzflag erfordert die Maschinenzustands-API; ohne Flag müssen beide Grenzen Null sein. Unbekannte Flags und alte reservierte Felder ungleich Null werden abgelehnt. v1/v2/v3 ignorieren den gesamten v4-Anhang; v4 ignoriert zukünftige Anhänge. Nulloptionen erhalten die bisherigen Standardwerte. Der Bericht ergänzt `maxChainedTransfers`, `entryFrameBounds` und den wirksamen Schalter `discoverControlState`. Alle CLI-Optionen erfordern `--devirtualize`. Die Vorbedingung wird zur Laufzeit nicht geprüft und garantiert weder Zugänglichkeit, Initialisierung noch Aliasfreiheit. Sie aktiviert keine native Beweisrichtlinie.
+
+```c
+neverd_devirtualize_options_v4 options = {0};
+options.base.base.base.struct_size = sizeof(options);
+options.base.base.base.use_llvm = 1;
+options.max_chained_transfers = 64;
+options.flags = NEVERD_DEVIRTUALIZE_V4_DISABLE_CONTROL_DISCOVERY |
+                NEVERD_DEVIRTUALIZE_V4_HAS_ENTRY_FRAME_BOUNDS;
+options.entry_frame_begin = -256;
+options.entry_frame_end = 8;
+const char *report = NULL;
+const char *source = neverd_devirtualize_machine_source_v4(
+    session, entry, &options, &report);
+neverd_free_string(source);
+neverd_free_string(report);
+```
+
 Der JSON-Bericht ergänzt `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` und `discoveryVisits` für Aktivierung, Grenzen und Analyseaufwand. Die Erkennung von Feldern allein beweist keine erfolgreiche Wiederherstellung.
 
 Verengt eine Bedingung eine Adressabhängigkeit auf einen Byteausschnitt, behält die Verfeinerung auch bereits verfolgte, umschließende direkte Adressfelder von acht Byte als Kontextkandidaten bei. Das schmale Feld und die Bitmaske seines Erzeugers bleiben unverändert; unbeteiligte breite Felder werden nicht hochgestuft. Konstanten und Offsets relativ zum Eintritt erfordern weiterhin einen Beweis; alle Kontexte teilen sich die bestehenden Grenzen.
