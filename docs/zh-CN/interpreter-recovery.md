@@ -182,6 +182,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 有限读取地址集合、联合控制元组和控制字段数量也有显式上限。全局求解查询次数，以及每次查询的门、冲突、传播和监视文字访问次数限制，约束证明工作量；符号节点上限约束表达式增长。JSON 报告包含这些预算，以及 `solverQueries` 和 `relationalWidenings` 计数。
 
+`AllowOverlappingNativeInstructions` 是默认关闭的独立选项，用于有限原生独立性证明及原生到 LowIR 的精化证明。每个入口都独立解码和验证；交叠指令字节必须与此前所有指令及不可变读取证据一致，包括候选程序的读取。候选 LowIR 地址只是标签，不是字节证据。`MaxNativeInstructionBytes` 默认为 1048576，每次取得新入口时，在比较前按完整指令长度扣账，包括重复的交叠字节。预算耗尽或字节冲突均拒绝证书。选项及额度绑定到证明摘要。静态 LowIR、归纳循环证明和推断拒绝此选项，空循环计划也不例外；精确 LLVM 接口和 CLI 保持原有默认行为。
+
 <!-- i18n-section: evidence -->
 
 ## 证据与测试

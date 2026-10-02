@@ -25,6 +25,40 @@ class NativeProvider : public SpecializationProvider {
 public:
   std::map<va_t, SpecializationInstruction> Instructions;
   std::map<va_t, unsigned> Fetches;
+  std::map<va_t, uint8_t> ReadBytes;
+
+  void prependLoad(va_t Address, va_t ReadAddress) {
+    auto &Insn = Instructions.at(Address);
+    LowOp Load;
+    Load.Opcode = NdOp::LOAD;
+    Load.Addr = Address;
+    Load.Output = NdVar::reg(0, 1);
+    Load.addInput(NdVar::scalar(ReadAddress, 8));
+    Insn.Ops.insert(Insn.Ops.begin(), Load);
+    for (size_t I = 0; I != Insn.Ops.size(); ++I)
+      Insn.Ops[I].Seq = I;
+    Insn.Origin.OpCount = Insn.Ops.size();
+    certify(Insn);
+  }
+
+  void conditional(va_t Address, va_t Target, bool Taken) {
+    indirect(Address, Target);
+    auto &Insn = Instructions.at(Address);
+    Insn.Ops[0].Opcode = NdOp::COND_BR;
+    Insn.Ops[0].addInput(NdVar::scalar(Taken, 1));
+    Insn.Origin.ControlFlags = LowInstructionControlFlag::Branch |
+                               LowInstructionControlFlag::Conditional;
+    Insn.Origin.Immediate = Target;
+    certify(Insn);
+  }
+
+  std::optional<SpecializationImmutableRead>
+  immutableRead(va_t Address, uint16_t Bytes) override {
+    if (Bytes != 1 || !ReadBytes.count(Address))
+      return std::nullopt;
+    return SpecializationImmutableRead{{ReadBytes.at(Address)},
+                                       "synthetic immutable byte"};
+  }
 
   void indirect(va_t Address, va_t Target, uint16_t TargetBytes = 8) {
     auto &Insn = Instructions[Address];
@@ -190,6 +224,152 @@ LowIRIndependenceContract contract() {
   Result.PreservedRegisters.push_back({32, 8});
   Result.PreservedFrameRanges.push_back({0, 8});
   return Result;
+}
+
+TEST(NativeUndefinedIndependence, OverlappingIndirectEntriesChargeEveryByte) {
+  NativeProvider Provider;
+  Provider.indirect(0x100, 0x101);
+  Provider.Instructions.at(0x100).NativeBytes[1] = 0xc3;
+  Provider.ret(0x101);
+  auto C = contract();
+  LowIRIndependenceLimits Limits;
+  const auto Check = [&] {
+    return detail::checkNativeUndefinedIndependence(Provider, {0x100}, C,
+                                                    Limits);
+  };
+  const auto Strict = Check();
+  EXPECT_EQ(Strict.Proof.Status, LowIRIndependenceStatus::Unsupported);
+  EXPECT_FALSE(Strict.Proof.Certificate);
+  EXPECT_TRUE(Strict.Instructions.empty());
+  C.AllowOverlappingNativeInstructions = true;
+  const auto Good = Check();
+  ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Instructions.size(), 2u);
+  Limits.MaxNativeInstructionBytes = 3;
+  const auto Exact = Check();
+  ASSERT_TRUE(Exact.Proof.proved()) << Exact.Proof.Diagnostic;
+  EXPECT_NE(Good.Proof.Certificate->InputDigest,
+            Exact.Proof.Certificate->InputDigest);
+  for (unsigned Budget : {0, 1, 2}) {
+    Limits.MaxNativeInstructionBytes = Budget;
+    const auto Limited = Check();
+    EXPECT_EQ(Limited.Proof.Status, LowIRIndependenceStatus::BudgetExceeded)
+        << Limited.Proof.Diagnostic;
+    EXPECT_FALSE(Limited.Proof.Certificate);
+    EXPECT_TRUE(Limited.Instructions.empty());
+  }
+  Limits.MaxNativeInstructionBytes = 3;
+  Provider.Instructions.at(0x101).NativeBytes[0] ^= 1;
+  const auto Conflict = Check();
+  EXPECT_EQ(Conflict.Proof.Status, LowIRIndependenceStatus::Invalid)
+      << Conflict.Proof.Diagnostic;
+  EXPECT_FALSE(Conflict.Proof.Certificate);
+  EXPECT_TRUE(Conflict.Instructions.empty());
+}
+
+TEST(NativeUndefinedIndependence,
+     ContainedInstructionBytesAgreeInBothCollectionOrders) {
+  for (bool InnerFirst : {false, true}) {
+    SCOPED_TRACE(InnerFirst);
+    NativeProvider Provider;
+    Provider.indirect(0x100, InnerFirst ? 0x201 : 0x200);
+    Provider.indirect(0x200, 0x300);
+    Provider.indirect(0x201, InnerFirst ? 0x200 : 0x300);
+    Provider.ret(0x300);
+    auto &Outer = Provider.Instructions.at(0x200);
+    Outer.Origin.Size = 4;
+    Outer.Fallthrough.Address = 0x204;
+    Outer.NativeBytes = {0x90, 0xff, 0xe0, 0x90};
+    // In this order a direct edge collects the contained entry even though
+    // the execution follows the other arm. Its bytes still must agree.
+    if (!InnerFirst) {
+      Provider.conditional(0x300, 0x201, false);
+      Provider.ret(0x302);
+    }
+    auto C = contract();
+    C.AllowOverlappingNativeInstructions = true;
+    const auto Check = [&] {
+      return detail::checkNativeUndefinedIndependence(Provider, {0x100}, C, {});
+    };
+    const auto Good = Check();
+    ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+    ASSERT_EQ(Provider.Fetches.at(0x201), 1u);
+    Provider.Instructions.at(0x201).NativeBytes[1] ^= 1;
+    const auto Conflict = Check();
+    EXPECT_EQ(Conflict.Proof.Status, LowIRIndependenceStatus::Invalid)
+        << Conflict.Proof.Diagnostic;
+    EXPECT_FALSE(Conflict.Proof.Certificate);
+    EXPECT_TRUE(Conflict.Instructions.empty());
+  }
+}
+
+TEST(NativeUndefinedIndependence,
+     CodeAndImmutableReadsShareEvidenceInBothOrders) {
+  for (bool ReadFirst : {false, true}) {
+    SCOPED_TRACE(ReadFirst);
+    NativeProvider Provider;
+    Provider.indirect(0x100, 0x200);
+    Provider.indirect(0x200, 0x300);
+    Provider.ret(0x300);
+    const va_t ReadAddress = ReadFirst ? 0x200 : 0x100;
+    Provider.prependLoad(ReadFirst ? 0x100 : 0x200, ReadAddress);
+    Provider.ReadBytes[ReadAddress] = 0xff;
+    auto C = contract();
+    C.AllowOverlappingNativeInstructions = true;
+    const auto Check = [&] {
+      return detail::checkNativeUndefinedIndependence(Provider, {0x100}, C, {});
+    };
+    const auto Good = Check();
+    ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+    ASSERT_EQ(Good.Reads.size(), 1u);
+    Provider.ReadBytes[ReadAddress] ^= 1;
+    const auto Conflict = Check();
+    EXPECT_EQ(Conflict.Proof.Status, LowIRIndependenceStatus::Invalid)
+        << Conflict.Proof.Diagnostic;
+    EXPECT_FALSE(Conflict.Proof.Certificate);
+    EXPECT_TRUE(Conflict.Instructions.empty());
+  }
+}
+
+TEST(NativeUndefinedIndependence,
+     CandidateReadChecksNativeBytesButLabelsAreNotByteEvidence) {
+  NativeProvider Provider;
+  Provider.ret(0x100);
+  Provider.ret(0x200);
+  Provider.prependLoad(0x200, 0x100);
+  LowFunc Candidate;
+  Candidate.Entry = 0x100;
+  LowBlock B;
+  B.Id = 0;
+  B.StartAddr = 0x100;
+  B.EndAddr = 0x101;
+  B.Ops = Provider.Instructions.at(0x200).Ops;
+  // The label matches the native RET address, but this is a different LowIR
+  // body. It is checked by execution, not reinterpreted as native bytes.
+  for (auto &Op : B.Ops)
+    Op.Addr = 0x100;
+  B.InstructionBoundaries = {Provider.Instructions.at(0x200).Origin};
+  B.InstructionBoundaries.front().Address = 0x100;
+  Candidate.Blocks.push_back(std::move(B));
+  Provider.Instructions.erase(0x200);
+  Provider.ReadBytes[0x100] = 0xc3;
+  auto C = contract();
+  C.AllowOverlappingNativeInstructions = true;
+  const auto Check = [&] {
+    return detail::checkNativeLowIRRefinement(
+        Provider, {0x100}, Candidate, C, LowIRRefinementWitness::LiftedBits,
+        {});
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Instructions.size(), 1u);
+  ASSERT_EQ(Good.Reads.size(), 1u);
+  Provider.ReadBytes[0x100] ^= 1;
+  const auto Conflict = Check();
+  EXPECT_EQ(Conflict.Proof.Status, LowIRRefinementStatus::Invalid)
+      << Conflict.Proof.Diagnostic;
+  EXPECT_FALSE(Conflict.Proof.Certificate);
+  EXPECT_TRUE(Conflict.Instructions.empty());
 }
 
 TEST(NativeUndefinedIndependence,

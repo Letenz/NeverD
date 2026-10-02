@@ -244,6 +244,8 @@ la API pública comprueba ambos resultados e informa de la diferencia.
 
 Los conjuntos finitos de direcciones de lectura, las tuplas conjuntas de control y el número de campos de control también tienen límites explícitos. Un límite global de consultas al solver y límites por consulta de puertas, conflictos, propagaciones y visitas a literales vigilados acotan el trabajo de prueba; el límite de nodos simbólicos acota el crecimiento de las expresiones. El informe JSON incluye esos presupuestos junto con `solverQueries` y `relationalWidenings`.
 
+`AllowOverlappingNativeInstructions` es una opción independiente, desactivada por defecto, para pruebas nativas finitas de independencia y refinamiento a LowIR. Cada entrada se decodifica y verifica por separado; los bytes compartidos deben coincidir con toda la evidencia previa de instrucciones y lecturas inmutables, incluidas las del candidato. Las direcciones LowIR del candidato siguen siendo etiquetas, no evidencia de bytes. `MaxNativeInstructionBytes` vale 1048576 por defecto y contabiliza, antes de comparar, el tamaño completo de cada nueva entrada, incluidos los bytes repetidos. Agotar el presupuesto o encontrar bytes contradictorios impide emitir un certificado. La opción y el límite quedan vinculados al resumen de la prueba. LowIR estático, las pruebas inductivas de bucles y la inferencia rechazan la opción incluso con un plan vacío; la API LLVM exacta y la CLI conservan sus valores predeterminados.
+
 <!-- i18n-section: evidence -->
 
 ## Evidencias y pruebas

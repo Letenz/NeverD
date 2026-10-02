@@ -631,7 +631,7 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
   if (Result.Proof.proved()) {
     BinaryUndefinedIndependenceCertificate Certificate;
     Certificate.InputDigest = binaryExecutionDigest(
-        Image, Options, "neverd-original-native-control-independence-v9",
+        Image, Options, "neverd-original-native-control-independence-v10",
         Provider.fixedImageDigest(),
         static_cast<unsigned>(Result.Proof.Certificate->Scope),
         Result.Proof.Certificate->InputDigest, Checked.Instructions,
@@ -654,6 +654,12 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
     Result.Proof.Status = LowIRRefinementStatus::Unsupported;
     Result.Proof.Diagnostic =
         "unaudited boundaries are unsupported by native loop proofs";
+    return Result;
+  }
+  if (LoopPlan && Contract.AllowOverlappingNativeInstructions) {
+    Result.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Proof.Diagnostic =
+        "overlapping instructions are unsupported by native loop proofs";
     return Result;
   }
   if (!Options.X64FlagsProfile) {
@@ -689,7 +695,7 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
   if (Result.Proof.proved()) {
     BinaryLowIRRefinementCertificate Certificate;
     Certificate.InputDigest = binaryExecutionDigest(
-        Image, Options, "neverd-original-native-lowir-refinement-v4",
+        Image, Options, "neverd-original-native-lowir-refinement-v5",
         Provider.fixedImageDigest(),
         static_cast<unsigned>(Result.Proof.Certificate->Scope),
         Result.Proof.Certificate->InputDigest, Checked.Instructions,
@@ -741,6 +747,11 @@ BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
   if (Contract.RetainUnauditedNativeBoundaries) {
     Refuse(LowIRLoopInferenceStatus::Unsupported,
            "unaudited boundaries are unsupported by native loop inference");
+    return Result;
+  }
+  if (Contract.AllowOverlappingNativeInstructions) {
+    Refuse(LowIRLoopInferenceStatus::Unsupported,
+           "overlapping instructions are unsupported by native loop inference");
     return Result;
   }
   if (!Recovery.complete()) {

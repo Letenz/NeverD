@@ -124,6 +124,56 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     OverlappingImmediateEntriesRetainBothInstructionInterpretations) {
+  // TEST ECX,ECX; JZ second_mov; first_mov: MOV EAX,0x7b8; RET; RET.
+  // second_mov starts one byte into first_mov and consumes its RET byte:
+  // MOV EAX,0xc3000007; RET. Both paths are feasible for shared inputs.
+  Program P({0x85, 0xc9, 0x74, 1, 0xb8, 0xb8, 7, 0, 0, 0xc3, 0xc3});
+  expectRefusal(P, Status::Unsupported);
+  P.Contract.AllowOverlappingNativeInstructions = true;
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_TRUE(Good.Certificate);
+  ASSERT_EQ(Good.Certificate->Instructions.size(), 6u);
+  const auto &Instructions = Good.Certificate->Instructions;
+  const auto First =
+      std::find_if(Instructions.begin(), Instructions.end(),
+                   [](const auto &I) { return I.Origin.Address == Entry + 4; });
+  const auto Second =
+      std::find_if(Instructions.begin(), Instructions.end(),
+                   [](const auto &I) { return I.Origin.Address == Entry + 5; });
+  ASSERT_NE(First, Instructions.end());
+  ASSERT_NE(Second, Instructions.end());
+  EXPECT_EQ(First->NativeBytes, (std::vector<uint8_t>{0xb8, 0xb8, 7, 0, 0}));
+  EXPECT_EQ(Second->NativeBytes, (std::vector<uint8_t>{0xb8, 7, 0, 0, 0xc3}));
+  EXPECT_EQ(First->UndefinedEffects.OperationDigest,
+            lowUndefinedOperationDigest(First->Ops));
+  EXPECT_EQ(Second->UndefinedEffects.OperationDigest,
+            lowUndefinedOperationDigest(Second->Ops));
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     IndirectReturnInsideEarlierImmediateRequiresCompleteEvidence) {
+  // MOV EAX,0xc3909090; JMP RDX, with shared RDX pointing at the C3 byte
+  // inside the MOV immediate. The separately decoded RET returns normally.
+  Program P({0xb8, 0x90, 0x90, 0x90, 0xc3, 0xff, 0xe2});
+  P.Contract.EntryConstants.push_back({NdVar::reg(x86reg::RDX, 8), Entry + 4});
+  P.Options.EntryConstants.push_back({NdVar::reg(x86reg::RDX, 8), Entry + 4});
+  const auto Strict = P.check();
+  EXPECT_EQ(Strict.Proof.Status, Status::Unsupported);
+  EXPECT_FALSE(Strict.Certificate);
+  P.Contract.AllowOverlappingNativeInstructions = true;
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Certificate->Instructions.size(), 3u);
+  LowIRIndependenceLimits Limits;
+  Limits.MaxNativeInstructionBytes = 7; // Eight bytes of entry evidence.
+  const auto Limited = P.check(Limits);
+  EXPECT_EQ(Limited.Proof.Status, Status::BudgetExceeded);
+  EXPECT_FALSE(Limited.Certificate);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      UnreachableUnauditedBoundariesRequireOptInAndRetainExactReceipts) {
   for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
            {0xd1, 0xd0}, {0x0f, 0xc1, 0x08}, {0xf3, 0xa4}}) {

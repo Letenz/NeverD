@@ -451,6 +451,8 @@ conflicts, propagations and watched-literal visits bound proof work;
 symbolic-node limits bound expression growth. The JSON report includes these
 budgets together with `solverQueries` and `relationalWidenings`.
 
+`AllowOverlappingNativeInstructions` is a separate, default-off option for finite native independence and native-to-LowIR refinement. Each entry is decoded and checked independently; intersecting instruction bytes must agree with all earlier instruction and immutable-read evidence, including candidate reads. Candidate LowIR addresses remain labels, not byte evidence. `MaxNativeInstructionBytes` defaults to 1048576 and charges the full size of every newly fetched entry, including repeated overlapping bytes, before comparison. Exhaustion or conflicting bytes refuses a certificate. The option and limit bind the proof digest. Static LowIR, inductive loop proofs and inference reject the option, even with an empty loop plan; the exact LLVM API and CLI retain their existing defaults.
+
 <!-- i18n-section: evidence -->
 
 ## Evidence and tests
