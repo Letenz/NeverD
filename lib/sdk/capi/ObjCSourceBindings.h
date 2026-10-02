@@ -2050,9 +2050,9 @@ inline bool swiftSystemFrameworkNominalDescriptor(llvm::StringRef Symbol,
          Provider == Prefix + "Versions/A/" + *Module;
 }
 
-inline bool swiftImportedNominalDescriptor(const BinaryImage &Image, va_t Slot,
-                                           llvm::StringRef Symbol,
-                                           llvm::StringRef Provider) {
+inline bool swiftImportedTypeDescriptor(const BinaryImage &Image, va_t Slot,
+                                        llvm::StringRef Symbol,
+                                        llvm::StringRef Provider) {
   if (swiftSystemFrameworkNominalDescriptor(Symbol, Provider))
     return true;
   // The bundled macOS SDK's libswiftDispatch TBD exports these descriptors for
@@ -2067,24 +2067,17 @@ inline bool swiftImportedNominalDescriptor(const BinaryImage &Image, va_t Slot,
       (Symbol == "_$s8Dispatch0A13WorkItemFlagsVMn" ||
        Symbol == "_$sSo18OS_dispatch_sourceC8DispatchE10TimerFlagsVMn"))
     return true;
-  // Actions 35683213827, consumer bfe0f17b3d7140d468f53a6f7a07375d3b7d898a:
-  // retained Xcode 26.5 libswiftCore TBDs export this exact descriptor for
-  // arm64e-ios and arm64-ios-simulator. Manifest SHA-256:
-  // 95e268bb837009a8881ecb210aa6cc3a970602b6277799dc68f048fbd13c6e40.
-  // Bind only its identity in a proven type-reference recipe; no descriptor
-  // bytes, runtime class layout, or callable ABI are inferred from the name.
+  // A strong immutable loader bind to the canonical Swift runtime supplies
+  // the identity of a top-level Swift nominal or protocol descriptor. Parse
+  // its complete declaration shape, not a spelling prefix or a list of types.
+  // This proves neither a callable ABI nor a metadata/instance byte layout.
   if (Image.Arch != Arch::AArch64 ||
       Provider != "/usr/lib/swift/libswiftCore.dylib" ||
       !isImmutableImageImportSlot(Image, Slot))
     return false;
-  if (Symbol == "_$ss23_ContiguousArrayStorageCMn")
-    return true;
-  // The linked image's exact strong dyld bind proves this descriptor's
-  // provider on its target runtime. Only its identity is reconstructed;
-  // the storage class layout and metadata contents remain opaque.
-  return Symbol == "_$ss18_DictionaryStorageCMn" ||
-         Symbol == "_$ss17_NativeDictionaryVMn" ||
-         Symbol == "_$ss13ManagedBufferCMn";
+  return swiftNominalDescriptor(Symbol, "Swift") ||
+         swiftSimpleDescriptor(Symbol, "ProtocolDescriptor", "Protocol",
+                               "Swift");
 }
 
 inline std::optional<va_t> swiftRelativeAddress(const BinaryImage &Image,
@@ -2170,8 +2163,8 @@ swiftTypeMetadataDescriptor(const BinaryImage &Image, va_t DescriptorSlot) {
       !Import->second.Addend && Bind != Image.DyldBindSlots.end() &&
       Bind->second.Name == Import->second.Name && !Bind->second.Addend &&
       !Bind->second.WeakImport &&
-      swiftImportedNominalDescriptor(Image, DescriptorSlot, Import->second.Name,
-                                     Bind->second.Module))
+      swiftImportedTypeDescriptor(Image, DescriptorSlot, Import->second.Name,
+                                  Bind->second.Module))
     DescriptorSymbol = Import->second.Name;
   else
     DescriptorSymbol = swiftLocalExportedDescriptor(Image, DescriptorSlot);
@@ -2185,8 +2178,8 @@ swiftTypeMetadataDescriptor(const BinaryImage &Image, va_t DescriptorSlot) {
   const bool ValidNominal =
       Nominal &&
       (Bind != Image.DyldBindSlots.end()
-           ? swiftImportedNominalDescriptor(
-                 Image, DescriptorSlot, *DescriptorSymbol, Bind->second.Module)
+           ? swiftImportedTypeDescriptor(Image, DescriptorSlot,
+                                         *DescriptorSymbol, Bind->second.Module)
            : swiftExportedNominalDescriptor(*DescriptorSymbol));
   if ((!Nominal && !Protocol) || (Nominal && !ValidNominal) ||
       (Protocol != swiftProtocolDescriptor(*DescriptorSymbol)))

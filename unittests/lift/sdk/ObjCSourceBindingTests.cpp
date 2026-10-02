@@ -3014,6 +3014,179 @@ TEST(ObjCSourceBindings, SwiftStdlibDescriptorRejectsUnprovenImports) {
   }
 }
 
+namespace {
+SwiftTypeMetadataFixture swiftCoreDescriptorFixture(llvm::StringRef Descriptor,
+                                                    llvm::StringRef Suffix) {
+  auto F = swiftStdlibTypeMetadataFixture();
+  F.Image.ImportPtrSlots.clear();
+  F.Image.ImportStorageSlots.clear();
+  F.Image.DyldBindSlots.clear();
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(F.DescriptorSlot, Descriptor.str(), 0,
+                                         "/usr/lib/swift/libswiftCore.dylib",
+                                         false));
+  const std::string Base = Descriptor.drop_back(2).str() + Suffix.str();
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  auto &Data = F.Image.Segments[0].Data;
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000,
+                                   5 + Suffix.size());
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  std::memcpy(Type + 5, Suffix.data(), Suffix.size());
+  Type[5 + Suffix.size()] = 0;
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings,
+     SwiftCoreDescriptorIdentitySupportsStructEnumClassAndProtocolRecipes) {
+  for (const auto &[Descriptor, Suffix] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"_$ss5UInt8VMn", "Sg"},
+           {"_$ss5Int32VMn", "Sg"},
+           {"_$ss6ResultOMn", "ys5UInt8Vs5NeverOG"},
+           {"_$ss23_ContiguousArrayStorageCMn", "yypG"},
+           {"_$ss5ErrorMp", "_pSg"},
+           {"_$ss7CVarArgMp", "_pSg"}}) {
+    SCOPED_TRACE(Descriptor);
+    auto F = swiftCoreDescriptorFixture(Descriptor, Suffix);
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference);
+    ASSERT_TRUE(Proof);
+    ASSERT_EQ(Proof->Descriptors.size(), 1U);
+    EXPECT_EQ(Proof->Descriptors[0].Symbol, Descriptor);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    const auto Source = renderObjCSwiftTypeMetadataHelpers(
+        F.Image, Bound.SwiftTypeMetadataPairs, Names);
+    EXPECT_NE(Source.find("__asm__(\"" + Descriptor + "\")"),
+              std::string::npos);
+    EXPECT_EQ(Proof->Address.Suffix, Suffix);
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftCoreDescriptorIdentityRejectsWrongDeclarationOrStorage) {
+  for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftCoreDescriptorFixture("_$ss5UInt8VMn", "Sg");
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    switch (Mutation) {
+    case 0:
+      F.Image.DyldBindSlots[F.DescriptorSlot].WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots[F.DescriptorSlot].Addend = 8;
+      break;
+    case 2:
+      F.Image.DyldBindSlots[F.DescriptorSlot].Module =
+          "/tmp/libswiftCore.dylib";
+      break;
+    case 3:
+      F.Image.Segments[2].ReadOnlyAfterRelocations = false;
+      break;
+    case 4:
+      F.Image.Sections.push_back(F.Image.Sections[2]);
+      break;
+    case 5:
+      F.Image.DataPtrRelocSlots.insert(F.DescriptorSlot);
+      break;
+    case 6:
+      F.Image.RelCodeRelocSlots.insert(F.DescriptorSlot + 1);
+      break;
+    case 7:
+      F.Image.ImportPtrSlots[F.DescriptorSlot] = "_$ss5Int32VMn";
+      break;
+    case 8:
+      F.Image.ImportStorageSlots[F.DescriptorSlot].Addend = 8;
+      break;
+    case 9:
+      F.Image.MachOTwoLevelNamespace = false;
+      break;
+    case 10:
+      F.Image.Arch = Arch::X64;
+      break;
+    case 11:
+      F.Image.Segments[1].Data[0x20] = 1;
+      break;
+    case 12:
+      F.Image.Symbols[0].Name = "_$ss5Int32VSgMR";
+      break;
+    case 13:
+      F.Image.Segments[0].Data[0x85] = 'x';
+      break;
+    case 14:
+      F.Image.DyldBindSlots.erase(F.DescriptorSlot);
+      break;
+    case 15:
+      F.Image.ConflictingImportStorageSlots.insert(F.DescriptorSlot);
+      break;
+    case 16:
+      F.Image.Sections[2].FileSz = 0x27;
+      break;
+    case 17:
+      F.Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    }
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                    .SwiftTypeMetadataPairs.empty());
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                 std::runtime_error);
+  }
+  for (const auto &Symbol :
+       {"_$ss5UInt8VMa", "_$ss5UInt8VN", "_$ss5UInt8VMnX", "_$s4Demo5UInt8VMn",
+        "_$sSo7CGPointVMn", "_$ss5UInt8V5InnerVMn"}) {
+    auto F = swiftCoreDescriptorFixture(Symbol, "Sg");
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataDescriptor(
+        F.Image, F.DescriptorSlot))
+        << Symbol;
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference))
+        << Symbol;
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftCoreArrayRecipePreservesBothDescriptorIdentities) {
+  auto F = swiftStdlibTypeMetadataFixture();
+  EXPECT_TRUE(
+      F.Image.recordDyldBindSlot(F.NestedDescriptorSlot, "_$ss5UInt8VMn", 0,
+                                 "/usr/lib/swift/libswiftCore.dylib", false));
+  F.Image.Symbols[0].Name = "_$ss23_ContiguousArrayStorageCys5UInt8VGMR";
+  F.Image.Symbols[1].Name = "_$ss23_ContiguousArrayStorageCys5UInt8VGMd";
+  auto &Data = F.Image.Segments[0].Data;
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000, 12);
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  Type[5] = 'y';
+  Type[6] = 2;
+  llvm::support::endian::write32le(
+      Type + 7, uint32_t(F.NestedDescriptorSlot - (F.TypeReference + 7)));
+  Type[11] = 'G';
+  Type[12] = 0;
+  const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+      F.Image, F.Cache, F.Reference);
+  ASSERT_TRUE(Proof);
+  ASSERT_EQ(Proof->Descriptors.size(), 2U);
+  EXPECT_EQ(Proof->Descriptors[0].Symbol, "_$ss23_ContiguousArrayStorageCMn");
+  EXPECT_EQ(Proof->Descriptors[1].Symbol, "_$ss5UInt8VMn");
+  EXPECT_EQ(Proof->Descriptors[0].Offset, 0U);
+  EXPECT_EQ(Proof->Descriptors[1].Offset, 6U);
+  F.Image.DyldBindSlots[F.NestedDescriptorSlot].Module =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(F.Image, F.Cache,
+                                                               F.Reference));
+}
+
 TEST(ObjCSourceBindings,
      SwiftConcreteTypeInstantiatorAcceptsIntegerReferenceCarrier) {
   SwiftTypeMetadataFixture F(Arch::AArch64);
