@@ -24,6 +24,7 @@
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedMutableSource.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/Constants.h"
@@ -37,6 +38,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -116,6 +118,15 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     return nullptr;
 
   CurMedFunc = &Func;
+  MutableReturnValue.reset();
+  const MedMutableSourcePlan *MutablePlan = nullptr;
+  if (Func.SkippedSSA) {
+    auto It = MutableSourcePlans.find(&Func);
+    if (It == MutableSourcePlans.end())
+      throw std::runtime_error("mutable LLVM source lacks its validated plan");
+    MutablePlan = &It->second;
+    MutableReturnValue = MutablePlan->ReturnValue;
+  }
   PendingX87FpremStatus = nullptr;
   PendingX87FpremBlock = nullptr;
 
@@ -533,6 +544,30 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   }
 
   SubRegPropMap.clear();
+
+  if (MutablePlan) {
+    // Allocate all mutable identities before emitting any block. Seed only
+    // validated upward-exposed register reads from their actual arguments;
+    // other slots are definitely assigned before every reachable read.
+    // This setup also precedes the synthetic entry branch for entry loops.
+    for (const auto &V : MutablePlan->Variables) {
+      if (V.Kind == MedVar::Param)
+        continue;
+      auto &Entry = CurFunc->getEntryBlock();
+      llvm::IRBuilder<> Setup(&Entry, Entry.begin());
+      llvm::Value *Initial = nullptr;
+      if (MutablePlan->EntryValues.count(V.Id)) {
+        if (!ParamRegoffMap.count(V.RegOff))
+          throw std::runtime_error(
+              "mutable LLVM source reads an unbound entry register");
+        Initial = getVar(V, Setup);
+      }
+      auto *Slot = Setup.CreateAlloca(sizeToType(V.Size), nullptr, V.display());
+      if (Initial)
+        Setup.CreateStore(Initial, Slot);
+      VarAllocs[{V.Id, V.SSAVer}] = Slot;
+    }
+  }
 
   // Pre-pass: create allocas for ALL phi outputs *and* all op outputs across
   // ALL blocks *before* emitting any ops.  A block that appears earlier in

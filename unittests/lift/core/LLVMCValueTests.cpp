@@ -11,6 +11,7 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/NoFolder.h"
 #include "llvm/IR/Verifier.h"
@@ -93,6 +94,172 @@ TEST(LLVMCValues, EscapedByteStringsPreserveAdjacentDigitsWhenExecuted) {
             "  if (actual[i] != expected[i]) return 2;\n"
             "return actual[sizeof(expected)] != 0;\n}\n";
   compileAndRun(Source);
+}
+
+TEST(LLVMCValues, MutableHomesKeepBranchValuesAndEarlierReads) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("mutable-home-joins", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Signature = llvm::FunctionType::get(Word, {Word, Word}, false);
+  for (bool Reverse : {false, true}) {
+    const auto Name = Reverse ? "join_reverse" : "join_forward";
+    auto *Function = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+    auto *Left = llvm::BasicBlock::Create(Context, "left", Function);
+    auto *Join = llvm::BasicBlock::Create(Context, "join", Function);
+    auto *Right = llvm::BasicBlock::Create(Context, "right", Function);
+    if (Reverse)
+      Right->moveBefore(Left);
+    llvm::IRBuilder<llvm::NoFolder> B(Entry);
+    auto *Slot = B.CreateAlloca(Word, nullptr, "home");
+    B.CreateStore(Function->getArg(0), Slot);
+    auto *Saved = B.CreateLoad(Word, Slot, "before_branch");
+    B.CreateCondBr(B.CreateICmpNE(Function->getArg(1), B.getInt64(0)), Left,
+                   Right);
+    B.SetInsertPoint(Left);
+    B.CreateStore(B.getInt64(9), Slot);
+    B.CreateBr(Join);
+    B.SetInsertPoint(Right);
+    B.CreateStore(B.CreateAdd(Saved, B.getInt64(1)), Slot);
+    B.CreateBr(Join);
+    B.SetInsertPoint(Join);
+    auto *Selected = B.CreateLoad(Word, Slot, "selected");
+    B.CreateStore(B.getInt64(99), Slot);
+    B.CreateRet(B.CreateAdd(Selected, Saved));
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  Source += R"(
+int main(void) {
+  const uint64_t values[] = {0, 1, 7, 99, UINT64_MAX, UINT64_MAX - 8};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    for (unsigned branch = 0; branch < 2; ++branch) {
+      uint64_t value = values[i];
+      uint64_t expected = value + (branch ? 9 : value + 1);
+      if (join_forward(value, branch) != expected) return 1;
+      if (join_reverse(value, branch) != expected) return 2;
+    }
+  return 0;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
+TEST(LLVMCValues, PartialAliasStoresCannotForwardAWholeSlotLoad) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("mutable-home-partial-alias", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "partial_alias", Module);
+  llvm::IRBuilder<llvm::NoFolder> B(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Slot = B.CreateAlloca(Word, nullptr, "home");
+  B.CreateStore(Function->getArg(0), Slot);
+  auto *Before = B.CreateLoad(Word, Slot, "before");
+  auto *Byte = B.CreateGEP(B.getInt8Ty(), Slot, B.getInt64(1));
+  B.CreateStore(B.getInt8(0x5a), Byte)->setAlignment(llvm::Align(1));
+  auto *After = B.CreateLoad(Word, Slot, "after");
+  B.CreateRet(B.CreateXor(Before, After));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  Source += R"(
+int main(void) {
+  for (unsigned byte = 0; byte < 256; ++byte) {
+    uint64_t input = UINT64_C(0x123456789abc00ef) | ((uint64_t)byte << 8);
+    uint64_t changed = input;
+    ((unsigned char *)&changed)[1] = 0x5a;
+    if (partial_alias(input) != (input ^ changed)) return 1;
+  }
+  return 0;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
+TEST(LLVMCValues, SelfStoredAddressPreventsLocalLoadForwarding) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("self-stored-address", Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Pointer, {}, false),
+      llvm::GlobalValue::ExternalLinkage, "self_alias", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Slot = B.CreateAlloca(Pointer, nullptr, "home");
+  B.CreateStore(Slot, Slot);
+  auto *Alias = B.CreateLoad(Pointer, Slot);
+  B.CreateStore(llvm::ConstantPointerNull::get(Pointer), Alias);
+  B.CreateRet(B.CreateLoad(Pointer, Slot));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + "\nint main(void) { return self_alias() != 0; }\n",
+                  Optimization);
+}
+
+TEST(LLVMCValues, ScalarBitCountsNormalizeConstantsAndDynamicInputs) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("bit-count-widths", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Signature = llvm::FunctionType::get(Word, {Word}, false);
+  std::string Main = "int main(void) {\n";
+  for (unsigned Width : {1u, 8u, 16u, 24u, 32u, 40u, 48u, 56u, 64u}) {
+    auto *Type = llvm::Type::getIntNTy(Context, Width);
+    for (auto ID : {llvm::Intrinsic::ctpop, llvm::Intrinsic::ctlz,
+                    llvm::Intrinsic::cttz}) {
+      for (bool Constant : {false, true}) {
+        const std::string Name = "count_" + std::to_string(ID) + "_" +
+                                 std::to_string(Width) +
+                                 (Constant ? "_c" : "_v");
+        auto *Function = llvm::Function::Create(
+            Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+        llvm::IRBuilder<> B(
+            llvm::BasicBlock::Create(Context, "entry", Function));
+        llvm::Value *Input =
+            Constant ? llvm::ConstantInt::getAllOnesValue(Type)
+                     : B.CreateTruncOrBitCast(Function->getArg(0), Type);
+        auto *Intrinsic =
+            llvm::Intrinsic::getOrInsertDeclaration(&Module, ID, {Type});
+        llvm::SmallVector<llvm::Value *, 2> Args{Input};
+        if (ID != llvm::Intrinsic::ctpop)
+          Args.push_back(B.getFalse());
+        B.CreateRet(B.CreateZExtOrTrunc(B.CreateCall(Intrinsic, Args), Word));
+        Main += "{ const unsigned bits = " + std::to_string(Width) + ";\n";
+        Main += "uint64_t mask = UINT64_MAX >> (64 - bits);\n";
+        Main += "for (unsigned i = 0; i <= bits + 1; ++i) {\n";
+        Main += "uint64_t input = i == bits + 1 ? UINT64_MAX : i == bits ? 0 : "
+                "UINT64_C(1) << i;\n";
+        Main += Constant ? "uint64_t value = mask;\n"
+                         : "uint64_t value = input & mask;\n";
+        Main += "unsigned expected = 0;\n";
+        if (ID == llvm::Intrinsic::ctpop)
+          Main += "for (; value; value >>= 1) expected += value & 1;\n";
+        else if (ID == llvm::Intrinsic::ctlz)
+          Main += "while (expected < bits && !(value & (UINT64_C(1) << (bits - "
+                  "expected - 1)))) ++expected;\n";
+        else
+          Main += "while (expected < bits && !(value & (UINT64_C(1) << "
+                  "expected))) ++expected;\n";
+        Main += "if (" + Name + "(input) != expected) return 1;\n} }\n";
+      }
+    }
+  }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization);
 }
 
 TEST(LLVMCValues, WideIntegerConstantsRetainBothHalvesWhenExecuted) {

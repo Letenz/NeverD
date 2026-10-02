@@ -61,6 +61,10 @@ C 호출자는 `neverd_devirtualize_source_v3()` 또는 `neverd_devirtualize_mac
 
 복원은 `--vm-chain-transfers=N`(기본값 0)과 `--vm-no-control-discovery`도 제공합니다. 연결은 단일 대상이 증명된 제어 전송 사이의 기호 상관관계를 보존하며 한도에 도달하면 일반 CFG 경계로 돌아갑니다. 기계 상태 복원은 `--vm-entry-frame=begin:end`로 실행 시 검사하지 않는 비래핑 진입 RSP 오프셋 범위를 선언할 수 있습니다. 정확한 숫자 전제는 생성 C와 보고서에 남으며 메모리 접근 권한이나 동등성 증명을 제공하지 않습니다.
 
+SSA 구성 한도를 넘는 큰 복원 함수는 `--llvm`을 통해 제한된 스칼라 가변 저장소 계약을 사용할 수 있습니다. 진입 입력, 루프에서 전달되는 값, 앞선 읽기의 의미를 보존합니다. 지원하지 않는 암시적 상태, 벡터 레지스터 매개변수, 이미지 재배치, 모호한 저장소와 잘못된 제어 흐름은 명시적으로 실패하며 HighC는 이 대체 경로를 거부합니다. 소스 출력은 기존 기계 상태 계약을 따르며 동등성 인증서를 추가하지 않습니다.
+
+가변 부분 집합은 8/16/32/64/128비트 스칼라 저장소를 허용하며 비트 개수 입력은 최대 64비트입니다. 비표준 너비와 더 넓은 저장소에는 별도 소스 계약이 필요합니다.
+
 호환 v4 API는 `neverd_devirtualize_source_v4()`와 `neverd_devirtualize_machine_source_v4()`입니다. `neverd_devirtualize_options_v4`를 0으로 초기화하고 `base.base.base.struct_size`를 전체 크기로 설정합니다. CLI 연결 횟수는 음이 아닌 32비트 십진 정수이며 0은 비활성화입니다. 범위 끝점은 부호 있는 64비트 십진 정수이고 `begin < end` 및 `--vm-machine-state`가 필요하며 조정된 값이 아닌 물리적 진입 RSP를 제한합니다. C의 범위 플래그는 기계 상태 API를 요구하며 플래그가 없으면 두 끝점은 0이어야 합니다. 알 수 없는 플래그와 기존 예약 필드의 0이 아닌 값은 거부합니다. v1/v2/v3은 v4 확장 전체를 무시하고 v4는 미래 확장을 무시합니다. null 옵션은 기존 기본값을 유지합니다. 보고서는 `maxChainedTransfers`, `entryFrameBounds`, 실제 `discoverControlState`를 기록합니다. 모든 CLI 옵션은 `--devirtualize`가 필요합니다. 숫자 전제는 실행 시 검사되지 않으며 접근 가능성, 초기화, 비별칭을 보장하지 않습니다. 네이티브 증명 정책도 활성화하지 않습니다.
 
 ```c

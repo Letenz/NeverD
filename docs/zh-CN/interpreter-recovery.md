@@ -61,6 +61,10 @@ C 调用方使用 `neverd_devirtualize_source_v3()` 或 `neverd_devirtualize_mac
 
 恢复还提供 `--vm-chain-transfers=N`（默认 0）和 `--vm-no-control-discovery`。串接在已证明唯一目标的控制转移之间保留符号关联；达到上限后回到普通 CFG 边界。机器状态恢复可通过 `--vm-entry-frame=begin:end` 声明未经运行时检查、不会回绕的入口 RSP 偏移范围。精确数值前提会写入生成的 C 和报告；它不授予内存访问权限，也不构成等价证明。
 
+超过 SSA 构建限制的大型恢复函数可通过 `--llvm` 使用有界的标量可变存储契约。入口输入、循环携带值和较早读取的语义得到保留。不支持的隐式状态、向量寄存器参数、映像重定位、歧义存储和畸形控制流会明确失败；HighC 拒绝此回退路径。源码输出仍遵循现有机器状态契约，不新增等价证明证书。
+
+该可变子集接受 8/16/32/64/128 位标量存储，位计数输入最多为 64 位。非标准位宽和更宽存储需要单独的源码契约。
+
 兼容的 v4 接口为 `neverd_devirtualize_source_v4()` 和 `neverd_devirtualize_machine_source_v4()`。将 `neverd_devirtualize_options_v4` 清零，并将 `base.base.base.struct_size` 设为完整大小。CLI 串接数量接受非负 32 位十进制整数，零表示关闭。范围端点接受有符号 64 位十进制整数，要求 `begin < end` 及 `--vm-machine-state`，约束物理入口 RSP 而非调整后的值。在 C API 中，范围标志要求机器状态接口；未设置时两个端点必须为零。未知标志和旧版本保留字段的非零值会被拒绝。v1/v2/v3 忽略整个 v4 扩展，v4 忽略未来扩展。空选项指针保留旧默认值。报告增加 `maxChainedTransfers` 和 `entryFrameBounds`，`discoverControlState` 记录实际开关。所有 CLI 选项均要求 `--devirtualize`。数值前提不在运行时检查，也不保证可访问性、初始化或无别名。这些选项不启用原生证明策略。
 
 ```c
