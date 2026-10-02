@@ -593,6 +593,8 @@ Padding, packed fields, mixed floating/integer classes and incomplete components
 remain explicitly unsupported. Source record carriers never authorize binary
 rewriting.
 
+The same source ABI owner admits naturally laid-out sixteen-double `CATransform3D` results through arm64 x8. Compiler-derived declarations and exact QuartzCore exports bind `CATransform3DMakeTranslation`, `CATransform3DMakeScale`, and `CATransform3DMakeRotation`; lowering preserves all 128 result bytes. This contract does not admit general indirect record parameters, Swift or x86_64 matrix returns, or Objective-C indirect results without nil-storage proof. Generated C is checked at O0/O2 with all sixteen fields, floating bit patterns, exact scalar arguments, and guard bytes around the result buffer.
+
 The generated Darwin C catalog takes declarations only from its explicit public
 header set and intersects all four macOS/iOS architecture profiles with SDK
 export evidence. Public `notify.h` functions use this path, including exact

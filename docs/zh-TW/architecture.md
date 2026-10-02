@@ -623,6 +623,8 @@ KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備�
 Darwin ARM64 的固定 C 呼叫也支援透過隱藏的 x8 指標回傳由三個有號 64 位元整數構成的自然配置記錄。共用來源 ABI 層負責分類；Low→Med 在呼叫前保存該指標，將單一邏輯記錄結果逐欄位寫回呼叫者儲存區，一般參數暫存器保持原位，x0 不被視為回傳值。呼叫提示分析會使結果儲存區中的舊事實失效。入口投影與原生狀態保存證明尚無對應儲存證明，仍拒絕此類回傳；含無號或指標欄位的三字記錄、三字參數與 x86_64 間接記錄回傳仍不支援。 Objective-C 間接回傳在全域 selector 查詢與一般 receiver 查詢中仍會拒絕，因為 nil 訊息分派會保留原結果緩衝區。只有 receiver 精確等於目前方法的非 nil self，且 x8 指向完整、未逸出的私有 frame 範圍時，依 receiver 限定的 ARM64 呼叫才可使用固定記錄 ABI。發佈來源碼時會重新驗證方法入口、self 運算元、receiver 宣告、記錄大小與 frame 邊界；證據缺失或變更時，訊息仍保持未解析。
 Darwin ARM64 的固定 C 呼叫也可透過隱藏的 x8 指標傳回由恰好六個 double 組成、自然配置的記錄。它超過浮點同類聚合以暫存器傳遞的四成員上限。六個 double 記錄的值傳遞參數通常仍不支援。精確匯入的 arm64 CoreGraphics `CGContextConcatCTM` 是受限例外：第二個實體參數指向 48 位元組儲存區，產生的輔助函式先複製成以值傳遞的 C `CGAffineTransform`，再呼叫原函式。綁定要求精確的強提供者並在發佈時重新驗證；不據此推斷其他間接記錄參數。
 
+同一原始碼 ABI 權威層也支援自然配置的十六 double `CATransform3D` 透過 arm64 x8 回傳。編譯器擷取的宣告與精確 QuartzCore 匯出共同綁定 `CATransform3DMakeTranslation`、`CATransform3DMakeScale` 和 `CATransform3DMakeRotation`，降低過程保留結果的全部 128 位元組。此契約不支援一般間接記錄參數、Swift 或 x86_64 矩陣回傳，也不支援缺少 nil 儲存證明的 Objective-C 間接結果。產生的 C 在 O0/O2 下驗證全部十六個欄位、浮點位元模式、精確純量參數及結果緩衝區兩側的保護位元組。
+
 執行階段呼叫目錄僅在精確匯入的函式明確回傳原參數指標時宣告 `ReturnedArgument`。接收者分析先讀取已宣告的實體參數，再套用正常 ABI 暫存器清除，最後僅在回傳值上恢復既有的接收者型別事實。SDK 會重新驗證此效果；它不允許刪除呼叫、所有權效果或記憶體存取。
 
 編譯器產生的框架目錄與接收者目錄共用提供者清單：Foundation、CoreData、CoreLocation、CoreSpotlight、QuartzCore、UniformTypeIdentifiers 和 UserNotifications。QuartzCore 使用公開入口 `CoreAnimation.h`，其他框架的相容性匯入不提供所屬宣告。兩個產生器均保留四種前置處理設定、精確框架身分及宣告的否定證據。

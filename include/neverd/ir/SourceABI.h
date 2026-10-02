@@ -30,7 +30,8 @@ struct SourceAggregateMember {
 
 /// Flatten a validated record: one to four homogeneous floating leaves, or
 /// one to two 64-bit integer/pointer leaves, or three signed 64-bit integer
-/// leaves. Nested records retain their
+/// leaves, or six/sixteen doubles for indirect Darwin arm64 results.
+/// Nested records retain their
 /// declared layout; padding, packed fields and mixed register classes fail.
 std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type);
 
@@ -60,8 +61,9 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
 /// and supported record values. Only explicit parameters consume carriers;
 /// callers supply any language-specific hidden parameters. This describes a
 /// signature without authenticating its declaration or authorizing rewriting.
-/// ARM64 calls support three-signed-word results through the hidden x8 pointer;
-/// entry projection and three-word parameters remain unsupported.
+/// ARM64 calls support three-signed-word and six/sixteen-double results through
+/// the hidden x8 pointer; entry projection and indirect record parameters
+/// remain unsupported.
 bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic);
 
