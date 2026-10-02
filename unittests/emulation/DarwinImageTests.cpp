@@ -4,11 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinTestImage.h"
-#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/darwin/DarwinProcess.h"
 
-#include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/loader/MachO/MachOExecutionImage.h"
 
 namespace neverd::emulation {
@@ -37,6 +35,44 @@ TEST(DarwinImage, OriginalBytesAndPageZeroHaveSeparateMappingOwnership) {
     EXPECT_EQ(Loaded->Plan.Entry, 0x100001000ULL);
     EXPECT_EQ(Loaded->Plan.Regions.front().Bytes, I.Bytes);
   }
+}
+TEST(DarwinImage, FileBudgetIncludesBytesOutsideMappedSegments) {
+  for (bool X64 : {false, true}) {
+    SCOPED_TRACE(X64);
+    ProcessOptions Options;
+    Options.StackSize = 16384;
+    Options.MemoryLimit = 65536;
+    Image I(X64);
+    I.Bytes.resize(Options.MemoryLimit, 0);
+    {
+      TemporaryImage File(I);
+      auto Loaded = darwin_model::loadImage(
+          File.path(), darwin_model::macOSProfile(), Options);
+      ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+      EXPECT_EQ(Loaded->Plan.MappedBytes, 16384u);
+    }
+    I.Bytes.push_back(0);
+    TemporaryImage File(I);
+    auto Loaded = darwin_model::loadImage(
+        File.path(), darwin_model::macOSProfile(), Options);
+    ASSERT_FALSE(bool(Loaded));
+    EXPECT_NE(llvm::toString(Loaded.takeError()).find("file byte limit"),
+              std::string::npos);
+  }
+}
+TEST(DarwinImage, FileReaderRejectsNonfilesAndEmbeddedNULPaths) {
+  TemporaryImage File(Image{});
+  auto Directory = loadMachOExecutionImage(File.path().parent_path());
+  ASSERT_FALSE(bool(Directory));
+  EXPECT_NE(llvm::toString(Directory.takeError()).find("regular file"),
+            std::string::npos);
+  auto NulPath = File.path().native();
+  NulPath.push_back(0);
+  NulPath += File.path().filename().native();
+  auto Truncated = loadMachOExecutionImage(std::filesystem::path(NulPath));
+  ASSERT_FALSE(bool(Truncated));
+  EXPECT_NE(llvm::toString(Truncated.takeError()).find("invalid input path"),
+            std::string::npos);
 }
 TEST(DarwinImage, RejectsAmbiguousPlatformsEntriesAndNoncanonicalThreadState) {
   Image Wrong;
@@ -190,45 +226,5 @@ TEST(DarwinImage, StackAlignmentBudgetAndStartupStringsAreValidated) {
   }
 }
 
-struct ThreadProfile {
-  GuestArchitecture ISA;
-  ExecutionBackendKind Backend;
-};
-class DarwinThread : public testing::TestWithParam<ThreadProfile> {};
-TEST_P(DarwinThread, UnixThreadReceivesArgcAtTheInitialStackPointer) {
-  const auto P = GetParam();
-  ExecutionConfiguration C;
-  C.Backend = P.Backend;
-  C.Architecture = P.ISA;
-  C.Contract = P.ISA == GuestArchitecture::X64
-                   ? ExecutionContract::CheckedUserX64
-                   : ExecutionContract::CheckedUserAArch64;
-  auto Probe = probeExecutionBackend(C);
-  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
-  if (Probe->Availability != BackendAvailability::Available) {
-    if (requireHvf(P.Backend, P.ISA))
-      FAIL() << Probe->Reason;
-    GTEST_SKIP() << Probe->Reason;
-  }
-  Image I(P.ISA == GuestArchitecture::X64);
-  TemporaryImage File(I);
-  ProcessOptions Options;
-  Options.Backend = P.Backend;
-  Options.Arguments = {"guest", "one", "two"};
-  auto Result =
-      emulateProcess(File.path(), ProcessProfile::MacOSMachO64, Options);
-  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
-  EXPECT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
-  EXPECT_EQ(Result->ExitStatus, 3);
-  EXPECT_EQ(Result->Services.size(), 1u);
-}
-INSTANTIATE_TEST_SUITE_P(
-    Transports, DarwinThread,
-    testing::Values(
-        ThreadProfile{GuestArchitecture::AArch64,
-                      ExecutionBackendKind::Unicorn},
-        ThreadProfile{GuestArchitecture::X64, ExecutionBackendKind::Unicorn},
-        ThreadProfile{GuestArchitecture::AArch64, ExecutionBackendKind::HVF},
-        ThreadProfile{GuestArchitecture::X64, ExecutionBackendKind::HVF}));
 } // namespace
 } // namespace neverd::emulation

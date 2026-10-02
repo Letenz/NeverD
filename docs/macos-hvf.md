@@ -103,8 +103,13 @@ ARM64 (macOS, iOS device and Simulator), or two on Intel (macOS and Simulator).
 Missing registrations and skips fail the gate. Darwin CTest names retain their
 exact GoogleTest identities instead of address-bearing parameter dumps.
 `.github/workflows/hvf.yml` exposes the same manual gate for dedicated native
-`self-hosted, macOS, ARM64/X64, hvf` runners. It does not assert those machines
-are already provisioned or assume nested hosted runners support HVF.
+`self-hosted, macOS, ARM64/X64, hvf` runners. Its `hosted-intel` selection tries
+GitHub's `macos-15-intel` runner. Both choices first compile and sign
+`scripts/probe_hvf_host.c` and require actual VM/vCPU creation and teardown
+before preparing LLVM. A hosted runner that denies HVF fails at that boundary;
+its label does not establish virtualization support. After the CPU gate, the
+workflow also requires every matching Darwin workload. Dedicated runners are
+not assumed to be provisioned.
 
 Coverage includes complete register/FP state, both guest privilege levels,
 page permissions and cross-page memory, aliases and saved contexts, live probes
@@ -174,12 +179,18 @@ steps and one guest step). Registers, PC, RAM and instruction counts matched
 the independent fixtures; the Linux process's normalized reports matched
 Unicorn for normal exit, memory fault, unknown service and instruction-budget
 stop. See the [detailed measurements](zh-CN/macos-hvf.md). Quiet-host performance
-measurement and current-change Linux KVM/Windows WHP runtime regression remain
-outstanding alongside the Intel gate; no self-hosted runner is currently
-configured for the repository.
+measurement and the Intel Mac HVF gate remain outstanding; no self-hosted runner
+is currently configured for the repository. The focused Darwin gate has since
+passed on both Linux KVM and Windows WHP with Unicorn disabled: each passed all
+22 required x64 process cases, with 45 checks passed and zero failures overall.
+See the [hosted execution evidence](darwin-emulation.md#hosted-native-verification-2026-10-03)
+for the exact commits and scope.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
 for terminal responses while retaining progress for assertions. All eight
 standalone worker checks passed, including three real-engine integrations.
 The complete fixture-backed Qt/IPC/MCP suite passed all 19 checks on macOS.
+The [desktop GUI workflow](https://github.com/NeverSight/NeverD/actions/runs/37053518872)
+also passed on macOS, Windows and Ubuntu at commit `e078b129c`. This verifies
+the test fixture and worker transport repair across all three desktop hosts.

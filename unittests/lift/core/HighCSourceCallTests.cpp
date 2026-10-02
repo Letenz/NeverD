@@ -216,6 +216,46 @@ HighFunc lowerSavedFloatingRecord(const MedFunc &Med) {
   return Converter.convert(Med, Arch::AArch64);
 }
 
+TEST(HighCSourceCalls, UnnamedFixedParametersShareDeclarationAndBodyNames) {
+  const auto Word = NdType::makeInt(8, false);
+  for (bool Collision : {false, true}) {
+    SCOPED_TRACE(Collision);
+    SourceFunctionTypeHint Hint;
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Hint.ReturnType = Word;
+    Hint.Parameters = {{"", Word}, {Collision ? "arg0" : "", Word}, {"", Word}};
+    std::string Error;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Arch::AArch64, Error));
+    auto Xor = HighExpr::makeBinop(NdOp::INT_XOR, parameter(0, Word),
+                                   parameter(1, Word));
+    Xor->Type = Word;
+    auto Value = HighExpr::makeBinop(NdOp::INT_ADD, Xor, parameter(2, Word));
+    Value->Type = Word;
+    auto Function = returning("unnamed_fixed", Value, {Word, Word, Word});
+    Function.SourceTypeHint = Hint;
+    for (size_t I = 0; I < Function.Params.size(); ++I)
+      Function.Params[I].Name = Hint.Parameters[I].Name;
+    const auto Source = emit({Function}, true, Arch::AArch64);
+    EXPECT_EQ(Function.Params[0].Name, "");
+    EXPECT_EQ(Function.SourceTypeHint->Parameters[0].Name, "");
+    for (const auto Level : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Level);
+      compileAndRun(Source + R"(
+int main(void) {
+  uint64_t state=UINT64_C(0x91b623);
+  for(unsigned i=0;i<512;++i) {
+    state=state*UINT64_C(6364136223846793005)+1;
+    uint64_t a=state,b=~(state>>7),c=state^(state<<17);
+    if (unnamed_fixed(a,b,c)!=((a^b)+c)) return 1;
+  }
+  return 0;
+}
+)",
+                    {Level, "-Werror=uninitialized"});
+    }
+  }
+}
+
 TEST(HighCSourceCalls, SavedFloatingRecordSurvivesLongCallChains) {
   for (unsigned Calls : {1U, 20U, 64U})
     for (bool ReplaceFirst : {false, true}) {

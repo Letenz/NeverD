@@ -8,9 +8,11 @@
 #include "neverd/loader/BinaryImageFlags.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Support/Endian.h"
-#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBufferRef.h"
 
 #include <cstring>
 
@@ -19,6 +21,48 @@ namespace {
 using namespace llvm::MachO;
 llvm::Error failure(llvm::StringRef Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
+}
+llvm::Expected<std::vector<uint8_t>> readFile(const std::filesystem::path &Path,
+                                              uint64_t FileByteLimit) {
+  const auto Filename = Path.string();
+  if (Filename.empty() || Filename.find('\0') != std::string::npos)
+    return failure("macho execution: invalid input path");
+  // Reject ordinary non-file inputs before opening, then validate the opened
+  // handle again so path replacement cannot bypass the size/type checks.
+  llvm::sys::fs::file_status Status;
+  if (auto EC = llvm::sys::fs::status(Filename, Status))
+    return llvm::errorCodeToError(EC);
+  if (!llvm::sys::fs::is_regular_file(Status))
+    return failure("macho execution: input must be a regular file");
+  auto Opened = llvm::sys::fs::openNativeFileForRead(Filename);
+  if (!Opened)
+    return Opened.takeError();
+  auto FD = *Opened;
+  auto Close = llvm::scope_exit([&] { llvm::sys::fs::closeFile(FD); });
+  if (auto EC = llvm::sys::fs::status(FD, Status))
+    return llvm::errorCodeToError(EC);
+  if (!llvm::sys::fs::is_regular_file(Status))
+    return failure("macho execution: input must be a regular file");
+  const uint64_t Size = Status.getSize();
+  if (Size > FileByteLimit || Size > SIZE_MAX)
+    return failure("macho execution: input exceeds the file byte limit");
+  std::vector<uint8_t> Bytes(Size);
+  size_t Read = 0;
+  while (Read < Bytes.size()) {
+    auto Count = llvm::sys::fs::readNativeFile(
+        FD,
+        {reinterpret_cast<char *>(Bytes.data() + Read), Bytes.size() - Read});
+    if (!Count)
+      return Count.takeError();
+    if (!*Count)
+      return failure("macho execution: input changed while reading");
+    Read += *Count;
+  }
+  if (auto EC = llvm::sys::fs::status(FD, Status))
+    return llvm::errorCodeToError(EC);
+  if (Status.getSize() != Size)
+    return failure("macho execution: input changed while reading");
+  return Bytes;
 }
 std::string name(const char (&Bytes)[16]) {
   return llvm::StringRef(Bytes, 16).split('\0').first.str();
@@ -54,19 +98,29 @@ bool entryOnlyThread(const llvm::object::MachOObjectFile::LoadCommandInfo &LC,
 
 llvm::Expected<MachOExecutionImage>
 loadMachOExecutionImage(const std::filesystem::path &Path) {
-  auto Buffer = llvm::MemoryBuffer::getFile(Path.string());
-  if (!Buffer)
-    return llvm::errorCodeToError(Buffer.getError());
+  return loadMachOExecutionImage(Path, 64 * 1024 * 1024);
+}
+
+llvm::Expected<MachOExecutionImage>
+loadMachOExecutionImage(const std::filesystem::path &Path,
+                        uint64_t FileByteLimit) {
+  auto Bytes = readFile(Path, FileByteLimit);
+  if (!Bytes)
+    return Bytes.takeError();
+  MachOExecutionImage Result;
+  auto &Image = Result.Image;
+  Image.Raw = std::move(*Bytes);
+  const llvm::StringRef Input(reinterpret_cast<const char *>(Image.Raw.data()),
+                              Image.Raw.size());
+  const auto Filename = Path.string();
   auto Object = llvm::object::ObjectFile::createMachOObjectFile(
-      (*Buffer)->getMemBufferRef());
+      llvm::MemoryBufferRef(Input, Filename));
   if (!Object)
     return Object.takeError();
   const auto &Obj = **Object;
   if (!Obj.is64Bit() || !Obj.isLittleEndian())
     return failure(
         "macho execution: a thin little-endian 64-bit image is required");
-  MachOExecutionImage Result;
-  auto &Image = Result.Image;
   const auto Header = Obj.getHeader64();
   Result.CPUType = Header.cputype;
   Result.CPUSubtype = Header.cpusubtype;
@@ -77,8 +131,6 @@ loadMachOExecutionImage(const std::filesystem::path &Path) {
                                                   : Arch::Unknown;
   Image.Format = BinaryFormat::MachO;
   Image.Bits = Bitness::Bits64;
-  const llvm::StringRef Bytes = Obj.getData();
-  Image.Raw.assign(Bytes.bytes_begin(), Bytes.bytes_end());
   uint64_t HeaderAddress = 0;
   unsigned HeaderSegments = 0;
   for (const auto &LC : Obj.load_commands()) {

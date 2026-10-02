@@ -20,6 +20,9 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 向量、退出、标准输出与错误输出、固定身份、匿名内存映射、保护和释放。
 ARM64 使用 16 KiB OS 页，x64 使用 4 KiB；CPU 页表仍以 4 KiB 为基础。
 `__PAGEZERO` 只保留地址，不消耗数 GiB 内存。
+完整输入文件（包括未映射的元数据和尾部字节）在解析和复制前必须符合 `memory_limit`。
+加载器只对普通文件做有界读取，拒绝含 NUL 的路径、短读和文件大小变化，解析独立快照，
+不保留宿主文件映射。输入文件和来宾映射各有一个同值预算；宿主文件 I/O 没有硬实时保证。
 Mach-O 文件尾页保留同页原始字节，后续完整虚拟页清零。初始数据、栈和匿名页都按
 OS 页独立持有物理内存，因此部分解除映射能释放预算，重新分配的页面保持清零。
 
@@ -39,7 +42,9 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 HVF 必需门禁也包含这些用例。完整支持边界、来源和命令见[英文说明](../darwin-emulation.md)。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 33 项，x64 的 macOS 和 Simulator 共 22 项。
+ARM64 三个平台共 36 项，x64 的 macOS 和 Simulator 共 24 项。
+每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
+以后新增的 Darwin 进程用例也进入必需集合。
 `scripts/run_native_cpu_ci.py --require-darwin-backend hvf` 可以在本机验收；
 Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--evidence` 路径。
 缺少用例注册、跳过必需用例或缺少 `ld64.lld` 均不能通过。
@@ -54,8 +59,8 @@ Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--eviden
 Linux/Windows 进程及公开 API/CLI 回归 168 项通过。关闭 Unicorn 的原生 HVF 门禁
 扩大到 20 个测试目标，811 项通过、0 失败，其中包含 57 项 Darwin 检查。
 五种 Mach-O 组合的 Python SDK 集成、能力清单、SDK 审计、文档和格式检查也通过。
-这些统计存在重叠，不能相加。Intel HVF、Linux KVM、Windows WHP 的本次硬件运行验证
-仍需对应宿主；软件跨架构结果不替代这些验证。
+这些统计存在重叠，不能相加。本机统计只证明 Apple Silicon HVF 的执行结果；
+Linux KVM、Windows WHP 的独立宿主验证见下表。Intel HVF 仍需 Intel Mac 真机验证。
 
 最终桌面包已重新纳入本轮引擎，并通过 186 个 Mach-O 的依赖、签名和 Cocoa 启动检查。
 包内引擎与关闭测试、关闭 Unicorn 的 CLI，在三种 ARM64 平台的 18 个场景中报告完全一致，
@@ -66,3 +71,21 @@ Linux/Windows 进程及公开 API/CLI 回归 168 项通过。关闭 Unicorn 的�
 同时关闭 HVF 和 Unicorn 后，Darwin、HVF 和配置测试目标也构建成功：38 项通过、
 0 失败，231 项后端用例按预期跳过；产物没有 Hypervisor.framework 链接依赖。
 这项验证证明构建开关与诊断隔离，不算作来宾实际执行证据。
+
+## 托管宿主原生验证（2026-10-03）
+
+两个 x64 后端都在关闭 Unicorn 后通过完整 Darwin 工作负载门禁。每个后端的
+macOS 和 iOS Simulator 共 22 项必需进程用例全部执行成功，没有缺失注册或跳过：
+
+| 宿主 / 后端 | 源码提交 | 通过 | 失败 | 跳过 | 必需原生用例 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| [Windows / WHP](https://github.com/NeverSight/NeverD/actions/runs/37052787958/job/110990029252) | `7594323f771467e3299a81db8a9cc3790391153a` | 45 | 0 | 202 | 22 / 22 |
+| [Ubuntu 24.04 / KVM](https://github.com/NeverSight/NeverD/actions/runs/37054174027/job/110994662033) | `7bfd4223b4a2560ee8cc5f9caad12bbf86c4ce6e` | 45 | 0 | 202 | 22 / 22 |
+
+产物 `darwin-native-whp-x64` 和 `darwin-native-kvm-x64` 保留完整测试清单、JUnit、
+CTest 日志及源码/宿主摘要，两个源码工作区均为干净状态。跳过项属于不匹配架构或
+不可用后端，不包含本次选择的必需原生用例。第一次 Linux 任务在 `ld64.lld` 工具检查
+阶段停止；加入已安装的 LLVM 工具目录到 `PATH` 后，上表中的 KVM 重跑成功。
+
+这些结果验证有限 Darwin 环境及其经过的共享 CPU 路径；Intel Mac HVF 以及更广泛的
+各后端 CPU 回归仍需各自门禁，不能由这两个专项结果替代。

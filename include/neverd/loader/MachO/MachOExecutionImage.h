@@ -30,7 +30,14 @@ struct MachOExecutionImage {
 };
 
 /// Bounded thin 64-bit parsing, without selecting a universal slice from the
-/// host ISA or resolving imports through host libraries.
+/// host ISA or resolving imports through host libraries. The complete regular
+/// file, including unmapped metadata and trailing bytes, must fit
+/// FileByteLimit. Reads are bounded before parsing and do not retain a live
+/// file mapping.
+llvm::Expected<MachOExecutionImage>
+loadMachOExecutionImage(const std::filesystem::path &Path,
+                        uint64_t FileByteLimit);
+/// Compatibility entry point with a 64 MiB input-file limit.
 llvm::Expected<MachOExecutionImage>
 loadMachOExecutionImage(const std::filesystem::path &Path);
 } // namespace neverd
