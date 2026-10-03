@@ -72,6 +72,17 @@ ControlDiscovery gatherControlDependencies(const symbolic::SymState &State,
                                            symbolic::SymRef FrameRoot,
                                            uint64_t MaxVisited);
 
+/// On a reachable path, prove that the fresh 64-bit frame root has more than
+/// Limit values. Exact declared nonwrapping bounds may restrict its high bits;
+/// every other predicate conjunct must depend on at most its low 32 bits.
+/// This read-only, cumulatively bounded refusal of optional enumeration proves
+/// neither reachability nor a finite value. Unknown or exhausted work is false.
+bool frameRootDomainExceedsLimit(
+    const symbolic::SymState &State, symbolic::SymRef Predicate,
+    symbolic::SymRef FrameRoot,
+    const std::optional<SpecializationEntryFrameBounds> &Bounds, uint32_t Limit,
+    uint64_t MaxVisited);
+
 } // namespace neverd::analysis::detail
 
 #endif // NEVERD_ANALYSIS_INTERPRETER_CONTROLDISCOVERY_H

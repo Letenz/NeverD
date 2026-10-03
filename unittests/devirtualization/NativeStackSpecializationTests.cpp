@@ -2135,4 +2135,48 @@ TEST(NativeStackSpecialization, LowRootGuardLeavesCopiedAddressesUnbounded) {
     }
 }
 
+TEST(NativeStackSpecialization,
+     NonwrappingBoundsKeepGuardedFrameReadsUnbounded) {
+  class CountingProvider : public StackProvider {
+  public:
+    unsigned ReadCalls = 0;
+    std::optional<SpecializationImmutableRead>
+    immutableRead(va_t, uint16_t) override {
+      ++ReadCalls;
+      return std::nullopt;
+    }
+  } P;
+  P.add(0x100, {operation(NdOp::INT_EQUAL, r(96, 1), {r(32, 1), c(5, 1)}),
+                operation(NdOp::COND_BR, {}, {c(0x120), r(96, 1)})});
+  P.add(0x101, {operation(NdOp::COPY, r(0), {c(7)}), ret()});
+  P.add(0x120, {operation(NdOp::INT_SUB, r(40), {r(32), c(64)}),
+                operation(NdOp::STORE, {}, {r(40), r(8)}),
+                operation(NdOp::INT_SUB, r(48), {r(32), c(32)}),
+                repeatedBytes(r(40), r(48), c(23), c(0, 1)),
+                operation(NdOp::LOAD, r(0), {r(48)}), ret()});
+  auto Options = stackOptions();
+  Options.ExplicitMachineState = true;
+  Options.EntryFrameBounds = SpecializationEntryFrameBounds{-64, 8};
+  Options.ControlRegisters = {{32, 1}};
+  Options.MaxSolverQueries = 512;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(P.ReadCalls, 0U);
+  EXPECT_TRUE(Result.Reads.empty());
+  unsigned Loads = 0;
+  for (const auto &B : Result.Residual.Blocks)
+    for (const auto &Op : B.Ops)
+      Loads += Op.Opcode == NdOp::LOAD;
+  EXPECT_GT(Loads, 0U);
+  for (uint64_t High : {uint64_t{0x10000}, uint64_t{0x123400010000}})
+    for (uint64_t Low : {5U, 9U})
+      for (uint64_t Value : {uint64_t{0}, uint64_t{0x123456789abcdef0}}) {
+        auto Run = execute(Result.Residual, Value, 0, llvm::endianness::little,
+                           High + Low);
+        ASSERT_TRUE(Run);
+        EXPECT_EQ(Run->Value, Low == 5 ? Value : 7U);
+        EXPECT_EQ(Run->Stack, High + Low);
+      }
+}
+
 } // namespace
