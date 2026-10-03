@@ -306,6 +306,8 @@ U32 entry(void) {
                                               : 0,
                    Mode == ArgumentsMode ? MaxParameters + 1 : MaxParameters,
                    Arguments);
+    if (Mode == NoncontinuableMode)
+      require(Calls == 1, 49);
     if (Mode == SoftwareMode) {
       require(GetLastError() == LastErrorSeed, 44);
       RaiseException(SoftwareCode, 0, (U32)-1, 0);

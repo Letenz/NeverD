@@ -151,6 +151,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsHeapTests.cpp
   WindowsSystemTests.cpp
   WindowsExceptionTests.cpp
+  WindowsContinuationTests.cpp
   WindowsNativeTestSupport.cpp
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDWindowsProcessTests PRIVATE
