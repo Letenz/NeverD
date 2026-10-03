@@ -11577,6 +11577,112 @@
           "runner": "gtest",
           "target": "NeverDInterpreterMachineStateTests",
           "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnStateWritesStayBounded",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnUsesFreshIdentityAndMetadata",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnReservesAlignmentLayoutSpace",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnDoesNotBindDanglingReferences",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnModelHonorsBothWorkBounds",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.DefaultReturnLayoutRemainsInline",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.RejectsUnsupportedReturnLayouts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineSourceTest.SharedReturnPreservesEveryPathAndAlignmentRejection",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "DevirtualizationSourceTest.MultipleReturnsUseBackendSpecificWritebackLayouts",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLowIRRefinementTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateModelTests.cpp",
+          "filter": "InterpreterMachineStateModel.BothBranchArmsCommitTheirOwnState",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
           "filter": "InterpreterMachineSourceTest.EntryFlagsAndGuestStackRemainExplicitAcrossBothSourceBackends",
           "platforms": [
             "linux"

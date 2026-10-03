@@ -50,6 +50,13 @@ struct InterpreterMachineSource {
   SourceFunctionTypeHint SourceABI;
 };
 
+/// Layout of generated return writeback; all choices preserve the same state
+/// and status contract. Existing overloads retain inline returns. SharedGPRExit
+/// keeps packed-flags stores at the original exits and shares the GPR stores
+/// when a fresh, complete ordinary join can be formed. Otherwise it falls back
+/// to inline returns. The LLVM source route retains its own tail merging.
+enum class InterpreterMachineStateLayout { InlineReturns, SharedGPRExit };
+
 /// Wrap a complete, call-free residual into an explicit machine-state source
 /// function. Loads and stores bind every supported native input/output. Guest
 /// register identities are relocated, so a guest RSP never becomes a compiler
@@ -78,6 +85,11 @@ llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineStateX64(
     const LowFunc &Residual, BinaryFormat SourceFormat,
     InterpreterMachineStateProfile Profile,
     std::optional<InterpreterEntryAlignment> EntryAlignment);
+llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineStateX64(
+    const LowFunc &Residual, BinaryFormat SourceFormat,
+    InterpreterMachineStateProfile Profile,
+    std::optional<InterpreterEntryAlignment> EntryAlignment,
+    InterpreterMachineStateLayout Layout);
 
 /// Analysis model of the same source wrapper. Register bytes [0, 136) hold the
 /// state object's input and output bytes in InterpreterMachineStateX64V1 order.
@@ -110,6 +122,11 @@ llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
     const LowFunc &Residual, InterpreterMachineStateProfile Profile,
     uint64_t MaxOperations,
     std::optional<InterpreterEntryAlignment> EntryAlignment);
+llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
+    const LowFunc &Residual, InterpreterMachineStateProfile Profile,
+    uint64_t MaxOperations,
+    std::optional<InterpreterEntryAlignment> EntryAlignment,
+    InterpreterMachineStateLayout Layout);
 
 } // namespace neverd::analysis
 

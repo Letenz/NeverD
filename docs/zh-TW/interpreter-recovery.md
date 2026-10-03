@@ -186,6 +186,8 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 
 `MaxIRBytes` 在複製或解析前限制文字與函式名稱大小；`MaxMachineStateOperations` 與 `MaxPreparationItems` 限制建模及準備工作。原生與 LLVM 證明預算獨立，絕不自動提高。受信任的 LLVM 解析器／驗證器在此沒有硬性的 CPU、堆疊或配置上限。共用堆疊框架必須以原始 RSP 狀態字為根並包含入口返回位址槽。仍須確保框架儲存已初始化且存活、狀態儲存可存取且對齊並與客體存取分離，以及客體指標來源有效。此 C++ API 證明受支援的原生到 LLVM 關係，不證明 C 編譯、產生的機器碼、故障行為或實體 CPU 未定義位元選擇。
 
+結構化機器狀態 C 可讓多個一般返回區塊共用十六個 GPR 寫回操作。打包旗標仍在各自返回路徑寫入；對齊檢查拒絕時仍不執行任何寫入。狀態在原生 RET 彈出返回位址前擷取，設定檔無效的狀態碼保持黏滯。LLVM 輸出保留內聯返回尾部，由其自身最佳化。現有 C++ 封裝器和模型多載保留 `InlineReturns`；明確的 `InterpreterMachineStateLayout::SharedGPRExit` 配置透過同一語義產生器產生兩者。無效配置值會遭拒絕。若無法建立完整的一般匯合區塊或分配新位址空間，壓縮保留原有內聯形式。獨立模型檢查及兩個 C 後端的 O0/O2 測試涵蓋分支專屬旗標、部分暫存器寫入、迴圈、記憶體哨兵和對齊拒絕。原始碼壓縮不提供一般 ABI 或原生等價證書。
+
 <!-- i18n-section: limits -->
 
 ## 目前限制

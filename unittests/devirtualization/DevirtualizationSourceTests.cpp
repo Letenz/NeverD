@@ -120,6 +120,56 @@ class DevirtualizationRoundTripTest
     : public DevirtualizationSourceTest,
       public ::testing::WithParamInterface<SourceCase> {};
 
+TEST_F(DevirtualizationSourceTest,
+       MultipleReturnsUseBackendSpecificWritebackLayouts) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "machine-state source layout checks require clang";
+  const auto Assembly = tmpFile("return-layout.S");
+  const auto Binary = tmpFile("return-layout.elf");
+  std::ofstream(Assembly) << R"(
+.text
+.globl return_layout
+.type return_layout,@function
+return_layout:
+  cmpq $0, %rdi
+  je .Lzero
+  movl $17, %eax
+  ret
+.Lzero:
+  movb $9, %ah
+  ret
+.size return_layout,.-return_layout
+)";
+  const auto Built =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-fuse-ld=lld",
+                               "-nostdlib", "-static", "-Wl,-e,return_layout",
+                               Assembly.string(), "-o", Binary.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+  auto Image = loadBinary(Binary);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  const auto Entry = functionEntry(*Image, "return_layout");
+  ASSERT_NE(Entry, InvalidVA);
+  for (unsigned Route = 0; Route != 3; ++Route) {
+    SCOPED_TRACE(Route);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.InterpreterSpecialization.emplace();
+    Options.InterpreterSpecialization->ExplicitMachineState = true;
+    Options.OnlyFunctionEntries.insert(Entry);
+    Options.LiftMode = Route == 1;
+    Options.DumpLlvm = Route == 2;
+    Options.EmitDumpOutput = false;
+    auto Result = Pipeline().run(*Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_TRUE(Result.InterpreterRecovery.has_value());
+    ASSERT_TRUE(Result.InterpreterRecovery->complete());
+    EXPECT_EQ(count(Result.InterpreterRecovery->Residual, NdOp::RETURN), 2U);
+    ASSERT_EQ(Result.LowFuncs.size(), 1U);
+    EXPECT_EQ(count(Result.LowFuncs.front(), NdOp::RETURN), Route ? 2U : 1U);
+    EXPECT_EQ(count(Result.LowFuncs.front(), NdOp::STORE), Route ? 34U : 18U);
+  }
+}
+
 TEST_P(DevirtualizationRoundTripTest, RecoversMachineAndPreservesExecution) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public VM source recovery requires clang";
