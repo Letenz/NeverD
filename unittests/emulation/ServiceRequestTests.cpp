@@ -265,7 +265,7 @@ TEST_P(ServiceBoundary, LegacyRunReportsPendingServiceAsAnError) {
 
 TEST_P(ServiceBoundary, ExplicitReturnRunsFollowingStoreOnRealCPU) {
   if (!GetParam().Backend)
-    GTEST_SKIP();
+    GTEST_SKIP() << "the admission-only fixture has no instruction executor";
   auto Exit = request();
   ASSERT_TRUE(Exit.Service);
   ASSERT_EQ(CPU->takeServiceRequest(), Exit.Service);
