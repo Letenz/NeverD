@@ -252,6 +252,11 @@ ExceptionDispatcher::continueExecution() {
   // noncontinuable check. Preserve the flag without inventing a second raise.
   if (*Flags & ~(ExceptionNoncontinuable | ExceptionSoftwareOriginate))
     return failure(text::ExceptionContext);
+  // Native dispatcher-generated noncontinuable exceptions remain terminal
+  // after VEH/VCH accept continuation, including edits to the saved CONTEXT.
+  // Keep that origin independently of guest-mutable record flags and code.
+  if (F.Rejected)
+    return failure(text::ExceptionUnhandled);
   std::vector<uint8_t> Changed(F.Context.size());
   if (auto E = CPU.read(F.Payload + ExceptionContextOffset, Changed))
     return std::move(E);
@@ -263,8 +268,6 @@ ExceptionDispatcher::continueExecution() {
                                  : CPURegister::AArch64PC);
   if (!PC)
     return PC.takeError();
-  if (F.Rejected)
-    return continueSecondary((*PC)[0]);
   Transfer T{(*PC)[0], F.Event};
   Frames.pop_back();
   collect();

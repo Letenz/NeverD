@@ -82,7 +82,6 @@ private:
   llvm::Error validateUnwind();
   llvm::Error writeUnwindRecord();
   llvm::Expected<Transfer> raiseNoncontinuable();
-  llvm::Expected<Transfer> continueSecondary(uint64_t PC);
   void collect();
   ExecutionBackend &CPU;
   IntegerABI ABI;

@@ -59,7 +59,7 @@ static void require(int Valid, U32 Site) {
 }
 static void trace(U32 ID) {
   Trace = (Trace << TraceShift) | ID;
-  if (Mode == SecondaryVectoredMode) {
+  if (Mode == SecondaryVectoredMode || Mode == SecondaryRedirectMode) {
     const U64 Value = ID;
     U32 Written;
     require(WriteFile(GetStdHandle(StdoutSelector), &Value, sizeof(Value),
@@ -90,12 +90,8 @@ static void observe(Pointers *P, U32 Site) {
             OriginalContextSite);
   } else {
     require(P->Record->Code == NoncontinuableCode, SecondaryCodeSite);
-    if ((Mode == SecondaryRedirectMode || Mode == SecondaryContextMode) &&
-        Site == ContinueTrace)
-      require(PC == OriginalPC &&
-                  SP == OriginalSP -
-                            (Mode == SecondaryContextMode ? PointerBytes : 0),
-              RestoredContextSite);
+    if (Mode == SecondaryRedirectMode && Site == ContinueTrace)
+      require(PC == OriginalPC && SP == OriginalSP, RestoredContextSite);
     else
       require(PC == (U64)P->Record->Address && PC != OriginalPC &&
                   SP < OriginalSP,
@@ -105,12 +101,9 @@ static void observe(Pointers *P, U32 Site) {
 static U32 secondaryVectored(Pointers *P) {
   observe(P, VectoredTrace);
   trace(VectoredTrace);
-  if ((Mode == SecondaryRedirectMode || Mode == SecondaryContextMode) &&
-      P->Record->Code == NoncontinuableCode) {
+  if (Mode == SecondaryRedirectMode && P->Record->Code == NoncontinuableCode) {
     for (U32 I = 0; I < ContextSize; ++I)
       P->Context[I] = OriginalContext[I];
-    if (Mode == SecondaryContextMode)
-      *(U64 *)(P->Context + ContextSP) -= PointerBytes;
     return -1;
   }
   if (Mode == SecondaryVectoredMode && P->Record->Code == NoncontinuableCode &&
@@ -272,7 +265,7 @@ void entry(void) {
       Mode == SecondaryFinallyMode || Mode == SecondaryVectoredMode ||
       Mode == SecondaryRepeatMode || Mode == SecondaryRedirectMode ||
       Mode == SecondaryUnwindMode || Mode == SecondaryDLLMode ||
-      Mode == SecondaryDLLHandlerMode || Mode == SecondaryContextMode) {
+      Mode == SecondaryDLLHandlerMode) {
     secondary();
     const U64 Output[] = {Mode, Trace};
     U32 Written;

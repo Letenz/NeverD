@@ -36,35 +36,6 @@ ExceptionDispatcher::raiseNoncontinuable() {
       SP, LoaderDepth, std::nullopt, Origin);
 }
 
-llvm::Expected<ExceptionDispatcher::Transfer>
-ExceptionDispatcher::continueSecondary(uint64_t PC) {
-  // Returning to the internal rejection context does not return to the guest
-  // raising call. Native Windows terminates this unhandled secondary status.
-  if (PC == ExceptionDispatchGate)
-    return failure(text::ExceptionUnhandled);
-  auto SP = CPU.readRegister(CPURegister::X64SP);
-  if (!SP)
-    return SP.takeError();
-  auto Index = Frames.back().Rejected;
-  while (Index) {
-    if (*Index >= Frames.size() - 1)
-      return failure(text::ExceptionFrame);
-    const auto &F = Frames[*Index];
-    auto Original = readUnwindContext(F.Context);
-    if (!Original)
-      return Original.takeError();
-    if (!F.Rejected && Original->PC == PC &&
-        Original->GPR[seh::StackRegister] == (*SP)[0]) {
-      Transfer T{PC, F.Event};
-      Frames.erase(Frames.begin() + *Index, Frames.end());
-      collect();
-      return T;
-    }
-    Index = F.Rejected;
-  }
-  return failure(text::ExceptionSecondaryContext);
-}
-
 bool ExceptionDispatcher::hasFrameHandlers() const {
   return Modules && CPU.architecture() == GuestArchitecture::X64 &&
          llvm::any_of(Modules->Modules, [](const auto &M) {

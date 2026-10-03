@@ -59,9 +59,6 @@ NEVERD_WINDOWS_PROCESS_TEXT(
     ExceptionLoaderBoundary,
     "exception unwind crossed a loader callback boundary")
 NEVERD_WINDOWS_PROCESS_TEXT(
-    ExceptionSecondaryContext,
-    "secondary exception continuation does not restore a retained guest context")
-NEVERD_WINDOWS_PROCESS_TEXT(
     ExceptionPersonalityCall,
     "direct calls to the modeled C exception personality are unsupported")
 NEVERD_WINDOWS_PROCESS_TEXT(ExceptionDisposition,
