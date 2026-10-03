@@ -23,10 +23,12 @@
 namespace neverd::emulation {
 namespace {
 #define NEVERD_CAPTURE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_CAPTURE_WIDE NEVERD_CAPTURE_VALUE
 #define NEVERD_CAPTURE_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "fixtures/WindowsContextCases.def"
 #undef NEVERD_CAPTURE_TEXT
 #undef NEVERD_CAPTURE_VALUE
+#undef NEVERD_CAPTURE_WIDE
 struct Case {
   const char *Name, *Argument;
 };

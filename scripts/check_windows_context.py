@@ -62,6 +62,7 @@ def main() -> None:
         obj = output / ("context-" + suffix + ".obj")
         flags = ["-std=c11", "-ffreestanding", "-fno-builtin", "-fno-stack-protector",
                  "-fno-vectorize", "-fno-slp-vectorize", "-O1"] if suffix == "c" else []
+        flags += ["-DNEVERD_CAPTURE_FP_PROBE"] if args.probe and args.arch == "X64" else []
         run([clang, "--target=" + settings[args.arch + "Target"], *flags, "-c",
              str(FIXTURES / ("windows_context." + suffix)), "-o", str(obj)])
         objects.append(str(obj))

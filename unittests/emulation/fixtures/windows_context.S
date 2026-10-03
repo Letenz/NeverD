@@ -26,8 +26,20 @@ CaptureFixture:
   movq %rsp, ObservationSP(%r8)
   leaq CaptureResume(%rip), %rax
   movq %rax, ObservationPC(%r8)
+#ifdef NEVERD_CAPTURE_FP_PROBE
   fxsave64 X64FXSlot(%rsp)
+#else
+  stmxcsr X64MXCSRSaveSlot(%rsp)
+#define NEVERD_CAPTURE_VECTOR(Index, Low, High) \
+  .if Index < X64VectorCount; movdqu %xmm##Index, X64FXSlot + Index * VectorBytes(%rsp); .endif
+#include "WindowsContextCases.def"
+#undef NEVERD_CAPTURE_VECTOR
+#endif
+#ifdef NEVERD_CAPTURE_FP_PROBE
   fxrstor64 FPSeed(%rip)
+#else
+  ldmxcsr ControlSeed(%rip)
+#endif
 #define NEVERD_CAPTURE_VECTOR(Index, Low, High) \
   .if Index < X64VectorCount; movdqu VectorSeeds + Index * VectorBytes(%rip), %xmm##Index; .endif
 #include "WindowsContextCases.def"
@@ -43,7 +55,15 @@ CaptureFixture:
   callq *X64TargetSlot(%rsp)
 .globl CaptureResume
 CaptureResume:
+#ifdef NEVERD_CAPTURE_FP_PROBE
   fxrstor64 X64FXSlot(%rsp)
+#else
+  ldmxcsr X64MXCSRSaveSlot(%rsp)
+#define NEVERD_CAPTURE_VECTOR(Index, Low, High) \
+  .if Index < X64VectorCount; movdqu X64FXSlot + Index * VectorBytes(%rsp), %xmm##Index; .endif
+#include "WindowsContextCases.def"
+#undef NEVERD_CAPTURE_VECTOR
+#endif
   addq $X64SaveSize, %rsp
   popq %r15
   popq %r14
@@ -70,9 +90,9 @@ CaptureResume:
   stp d12, d13, [sp, #ARM64VectorSave + 2 * VectorBytes]
   stp d14, d15, [sp, #ARM64VectorSave + 3 * VectorBytes]
   mrs x16, fpcr
-  str w16, [sp, #ARM64OutputSlot + 8]
+  str w16, [sp, #ARM64FPCRSaveSlot]
   mrs x16, fpsr
-  str w16, [sp, #ARM64OutputSlot + 12]
+  str w16, [sp, #ARM64FPSRSaveSlot]
   mov x16, sp
   str x16, [x2, #ObservationSP]
   adr x16, CaptureResume
@@ -89,7 +109,7 @@ CaptureResume:
   movk w16, #(ARM64Status >> 16), lsl #16
   msr fpsr, x16
   mov x16, #ARM64FlagSeed
-  msr nzcv, x16
+  cmp x16, x16
   str x16, [x2, #ObservationFlags]
 #define NEVERD_CAPTURE_ARM64_GPR(Name, Index, Value) mov Name, (Value)
 #include "WindowsContextCases.def"
@@ -99,9 +119,9 @@ CaptureResume:
   blr x16
 .globl CaptureResume
 CaptureResume:
-  ldr w16, [sp, #ARM64OutputSlot + 8]
+  ldr w16, [sp, #ARM64FPCRSaveSlot]
   msr fpcr, x16
-  ldr w16, [sp, #ARM64OutputSlot + 12]
+  ldr w16, [sp, #ARM64FPSRSaveSlot]
   msr fpsr, x16
   ldp d8, d9, [sp, #ARM64VectorSave]
   ldp d10, d11, [sp, #ARM64VectorSave + VectorBytes]
