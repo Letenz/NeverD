@@ -1,0 +1,102 @@
+//===- WindowsDynamicCases.def - Independent runtime loader cases --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_DYNAMIC_VALUE
+NEVERD_DYNAMIC_VALUE(Seed, 31)
+NEVERD_DYNAMIC_VALUE(ExitStatus, 37)
+NEVERD_DYNAMIC_VALUE(FailureStatus, 89)
+NEVERD_DYNAMIC_VALUE(LastErrorSeed, 0x345)
+NEVERD_DYNAMIC_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_DYNAMIC_VALUE(StderrSelector, 0xfffffff4)
+NEVERD_DYNAMIC_VALUE(AttachReason, 1)
+NEVERD_DYNAMIC_VALUE(DetachReason, 0)
+NEVERD_DYNAMIC_VALUE(ZeroDigit, '0')
+NEVERD_DYNAMIC_VALUE(LineEnd, '\n')
+NEVERD_DYNAMIC_VALUE(ModePrefix, '!')
+NEVERD_DYNAMIC_VALUE(NativeTimeoutSeconds, 10)
+NEVERD_DYNAMIC_VALUE(ZeroTail, 13)
+NEVERD_DYNAMIC_VALUE(ModuleMissing, 126)
+NEVERD_DYNAMIC_VALUE(InitFailed, 1114)
+#endif
+#ifdef NEVERD_DYNAMIC_TEXT
+NEVERD_DYNAMIC_TEXT(ProgramFile, "dynamic.exe")
+NEVERD_DYNAMIC_TEXT(StaticProgramFile, "dynamic-static.exe")
+NEVERD_DYNAMIC_TEXT(LeafFile, "dynamic-leaf.dll")
+NEVERD_DYNAMIC_TEXT(MiddleFile, "dynamic-middle.dll")
+NEVERD_DYNAMIC_TEXT(TopFile, "dynamic-top.dll")
+NEVERD_DYNAMIC_TEXT(MissingFile, "dynamic-absent.dll")
+NEVERD_DYNAMIC_TEXT(ProbeName, "Probe")
+NEVERD_DYNAMIC_TEXT(ForwardName, "Forward")
+NEVERD_DYNAMIC_TEXT(MissingForwardName, "Missing")
+NEVERD_DYNAMIC_TEXT(X64Dir, "X64")
+NEVERD_DYNAMIC_TEXT(AArch64Dir, "AArch64")
+NEVERD_DYNAMIC_TEXT(TempPrefix, "neverd-dynamic-loader")
+NEVERD_DYNAMIC_TEXT(StdoutFile, "stdout.bin")
+NEVERD_DYNAMIC_TEXT(StderrFile, "stderr.bin")
+NEVERD_DYNAMIC_TEXT(NoEntryDirectory, "noentry")
+NEVERD_DYNAMIC_TEXT(NativeOnly, "requires native Windows x64")
+NEVERD_DYNAMIC_TEXT(MissingTools, "requires Clang and lld-link dynamic fixtures")
+NEVERD_DYNAMIC_TEXT(ObservationLabel, "Dynamic observations: ")
+#endif
+#ifdef NEVERD_DYNAMIC_WIDE
+NEVERD_DYNAMIC_WIDE(LeafName, L"DYNAMIC-LEAF.DLL")
+NEVERD_DYNAMIC_WIDE(MiddleName, L"dynamic-middle")
+NEVERD_DYNAMIC_WIDE(TopName, L"dynamic-top.dll")
+#endif
+#ifdef NEVERD_DYNAMIC_CASE
+NEVERD_DYNAMIC_CASE(References, "!N")
+NEVERD_DYNAMIC_CASE(FailedMiddle, "!F")
+NEVERD_DYNAMIC_CASE(FailedLeaf, "!L")
+NEVERD_DYNAMIC_CASE(Nested, "!R")
+NEVERD_DYNAMIC_CASE(NestedFailure, "!Z")
+NEVERD_DYNAMIC_CASE(ExitAttach, "!E")
+NEVERD_DYNAMIC_CASE(ExitDetach, "!X")
+NEVERD_DYNAMIC_CASE(ProcessExit, "!P")
+NEVERD_DYNAMIC_CASE(Borrowed, "!B")
+NEVERD_DYNAMIC_CASE(Forwarded, "!Y")
+NEVERD_DYNAMIC_CASE(RepeatedForward, "!Q")
+NEVERD_DYNAMIC_CASE(MissingForward, "!K")
+NEVERD_DYNAMIC_CASE(Shared, "!H")
+NEVERD_DYNAMIC_CASE(Errors, "!I")
+#endif
+#ifdef NEVERD_DYNAMIC_TOP_EXPORT
+NEVERD_DYNAMIC_TOP_EXPORT(Forward, "=dynamic-middle.Probe")
+NEVERD_DYNAMIC_TOP_EXPORT(Missing, "=dynamic-middle.Absent")
+#endif
+#ifdef NEVERD_DYNAMIC_API
+NEVERD_DYNAMIC_API(LoadLibraryA)
+NEVERD_DYNAMIC_API(LoadLibraryW)
+NEVERD_DYNAMIC_API(FreeLibrary)
+#endif
+
+#ifdef NEVERD_DYNAMIC_VALUE
+NEVERD_DYNAMIC_VALUE(ReferencesMode, 'N')
+NEVERD_DYNAMIC_VALUE(FailedMiddleMode, 'F')
+NEVERD_DYNAMIC_VALUE(LeafRole, 'L')
+NEVERD_DYNAMIC_VALUE(NestedMode, 'R')
+NEVERD_DYNAMIC_VALUE(NestedFailureMode, 'Z')
+NEVERD_DYNAMIC_VALUE(ExitAttachMode, 'E')
+NEVERD_DYNAMIC_VALUE(ExitDetachMode, 'X')
+NEVERD_DYNAMIC_VALUE(ProcessExitMode, 'P')
+NEVERD_DYNAMIC_VALUE(BorrowedMode, 'B')
+NEVERD_DYNAMIC_VALUE(ForwardedMode, 'Y')
+NEVERD_DYNAMIC_VALUE(RepeatedForwardMode, 'Q')
+NEVERD_DYNAMIC_VALUE(MissingForwardMode, 'K')
+NEVERD_DYNAMIC_VALUE(SharedMode, 'H')
+NEVERD_DYNAMIC_VALUE(ErrorsMode, 'I')
+NEVERD_DYNAMIC_VALUE(TLSKind, 'T')
+NEVERD_DYNAMIC_VALUE(DLLKind, 'D')
+NEVERD_DYNAMIC_VALUE(MiddleRole, 'M')
+NEVERD_DYNAMIC_VALUE(LoadedTag, 'a')
+NEVERD_DYNAMIC_VALUE(ErrorTag, 'e')
+NEVERD_DYNAMIC_VALUE(FreeTag, 'f')
+NEVERD_DYNAMIC_VALUE(MiddleTag, 'm')
+NEVERD_DYNAMIC_VALUE(LeafTag, 'l')
+NEVERD_DYNAMIC_VALUE(TopTag, 't')
+NEVERD_DYNAMIC_VALUE(NestedTag, 'r')
+NEVERD_DYNAMIC_VALUE(StaticTag, 's')
+NEVERD_DYNAMIC_VALUE(InvalidTag, 'i')
+NEVERD_DYNAMIC_VALUE(MissingTag, 'k')
+#endif
