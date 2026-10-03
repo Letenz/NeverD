@@ -59,6 +59,7 @@ struct ImageRegion {
   uint64_t Address;
   unsigned Permissions;
   std::vector<uint8_t> Bytes;
+  uint64_t ContentSize = 0, FileSize = 0;
 };
 struct Import {
   uint64_t Slot;
@@ -74,8 +75,8 @@ struct Image {
   std::vector<ImageRegion> Regions;
   std::vector<Import> Imports;
   uint64_t TLSIndex = 0, TLSSize = 0, TLSCallbackPointer = 0;
-  std::vector<uint8_t> TLSBytes;
-  std::vector<uint64_t> TLSCallbacks;
+  uint64_t TLSDirectory = 0, TLSTemplate = 0, TLSTemplateSize = 0;
+  uint64_t TLSAlignment = value::PointerSize;
   std::vector<std::string> Dependencies;
   std::vector<uint64_t> Relocations;
   PEProgramExports Exports;
@@ -98,22 +99,20 @@ llvm::Expected<Image> loadImage(const std::filesystem::path &Path,
                                 uint64_t MemoryLimit);
 llvm::Expected<Image> loadProgramImage(const std::filesystem::path &Path,
                                        ImageReadBudget &Budget, bool DLL);
-llvm::Expected<Environment>
-prepareEnvironment(AddressSpace &Memory, const Image &Image,
-                   const ProcessOptions &Options, llvm::StringRef ImageName,
-                   llvm::ArrayRef<ModuleIdentity> Modules = {},
-                   llvm::ArrayRef<size_t> InitOrder = {});
+llvm::Error relocateImage(Image &Image, uint64_t Base, ImageReadBudget &Budget);
 llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                                          const ProcessOptions &Options);
 
+struct Program;
 class Services final {
 public:
   Services(ExecutionBackend &CPU, AddressSpace &Memory, const Image &Image,
            const Environment &Environment, const ProcessOptions &Options,
-           ProcessResult &Result, VirtualMemory &Virtual,
-           llvm::ArrayRef<ModuleIdentity> Modules)
+           ProcessResult &Result, VirtualMemory &Virtual, Program &Program,
+           const ExecutionBudget &Budget)
       : CPU(CPU), Memory(Memory), Loaded(Image), Env(Environment),
-        Options(Options), Result(Result), Virtual(Virtual), Modules(Modules) {}
+        Options(Options), Result(Result), Virtual(Virtual), Modules(Program),
+        Budget(Budget) {}
   llvm::Expected<std::optional<uint64_t>> invoke(const Service &Service,
                                                  const NativeCallEvent &Event);
 
@@ -132,7 +131,8 @@ private:
   const ProcessOptions &Options;
   ProcessResult &Result;
   VirtualMemory &Virtual;
-  llvm::ArrayRef<ModuleIdentity> Modules;
+  Program &Modules;
+  const ExecutionBudget &Budget;
   std::bitset<value::DynamicTLSCount> TLSSlots;
   struct Allocation {
     uint64_t Size, MappedSize;

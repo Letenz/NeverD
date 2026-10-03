@@ -114,6 +114,9 @@ std::optional<size_t> predicatedEffectEnd(const MedBlock &Block,
 } // anonymous namespace
 
 llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
+  EmittingMutableBody = false;
+  MutableValueBlock = nullptr;
+  MutableBlockValues.clear();
   if (Func.Blocks.empty())
     return nullptr;
 
@@ -628,6 +631,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   for (const MedCallClobber &Clobber : Func.CallClobbers)
     preCreatePhiAlloca(Clobber.Value);
 
+  EmittingMutableBody = MutablePlan != nullptr;
   for (auto &Blk : Func.Blocks) {
     auto *BB = BBMap[Blk.Id];
     llvm::IRBuilder<> Builder(BB);
@@ -826,6 +830,9 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     if (llvm::BasicBlock *ExitBB = Builder.GetInsertBlock(); ExitBB != BB)
       ConceptualExits[Blk.Id].push_back(ExitBB);
   }
+  EmittingMutableBody = false;
+  MutableValueBlock = nullptr;
+  MutableBlockValues.clear();
 
   // Emit the deferred per-predecessor index stores for shared -O0 computed-goto
   // dispatches recovered as switches (synthesizeSharedDispatchIndex): each

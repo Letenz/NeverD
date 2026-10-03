@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "arch/aarch64/CheckedAArch64Backend.h"
 #include "arch/x86_64/CheckedX64Backend.h"
 #include "core/ExecutionDiagnostics.h"
@@ -117,7 +118,9 @@ protected:
       auto E = B.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable && !requireHvf(GetParam().Backend.value_or(
+                                         ExecutionBackendKind::Unicorn),
+                                     GetParam().ISA))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }

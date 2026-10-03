@@ -1937,6 +1937,18 @@ private:
   std::map<const MedFunc *, MedMutableSourcePlan> MutableSourcePlans;
   std::map<std::pair<int, int>, llvm::AllocaInst *> VarAllocs;
 
+  // Validated mutable slots never escape. Within one append-only LLVM block,
+  // forward their exact values and retain only the last private store. Entry
+  // setup and deferred emission must not consult this cache.
+  struct MutableBlockValue {
+    llvm::Value *Value = nullptr;
+    llvm::StoreInst *LastWrite = nullptr;
+  };
+  bool EmittingMutableBody = false;
+  llvm::BasicBlock *MutableValueBlock = nullptr;
+  std::map<std::pair<int, int>, MutableBlockValue> MutableBlockValues;
+  bool prepareMutableBlockValues(llvm::IRBuilder<> &Builder);
+
   /// Deferred stores for a shared -O0 computed-goto dispatch recovered as a
   /// switch (see med_llvm::PendingDispatchStore).
   std::vector<med_llvm::PendingDispatchStore> PendingDispatchStores;

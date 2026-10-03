@@ -2011,6 +2011,199 @@ TEST(ObjCCallHints, FoundationUUIDPreservesIndirectResultAndStringPairABI) {
   }
 }
 
+TEST(ObjCCallHints, SwiftPathAndCountKeepTheirCompletePhysicalABI) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Path : {true, false}) {
+      const std::string Name =
+          Path ? "$s10Foundation3URLV4pathSSvg" : "$sSS5countSivg";
+      const std::string Provider =
+          Path ? "/System/Library/Frameworks/Foundation.framework/Foundation"
+               : "/usr/lib/swift/libswiftCore.dylib";
+      auto Image = runtimeImage("_" + Name, Architecture);
+      Image.DyldBindSlots[0x2180] = {"_" + Name, 0, Provider, false};
+      auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint) << Name;
+      const auto &S = Hint->Signature;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      EXPECT_EQ(S.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(S.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(S.ReturnType);
+      EXPECT_EQ(S.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(S.ReturnType->Size, Path ? 16U : 8U);
+      ASSERT_EQ(S.Parameters.size(), Path ? 1U : 2U);
+      for (size_t I = 0; I < S.Parameters.size(); ++I) {
+        const auto &P = S.Parameters[I];
+        EXPECT_EQ(P.Type->Kind, Path || I ? NdTypeKind::Ptr : NdTypeKind::Int);
+        EXPECT_EQ(P.Type->Size, 8U);
+        EXPECT_EQ(P.TheRole, Path ? SourceParameterTypeHint::Role::SwiftContext
+                                  : SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(
+            P.Location.RegisterOffset,
+            Path ? (Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13)
+                 : TRI.IntParamRegs[I]);
+        EXPECT_EQ(P.Location.ValueBytes, 8U);
+      }
+      if (Path) {
+        ASSERT_EQ(S.ReturnComponents.size(), 2U);
+        for (unsigned I = 0; I < 2; ++I) {
+          EXPECT_EQ(S.ReturnComponents[I].RegisterOffset, TRI.IntReturnRegs[I]);
+          EXPECT_EQ(S.ReturnComponents[I].ValueBytes, 8U);
+        }
+      } else {
+        EXPECT_EQ(S.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+        EXPECT_EQ(S.ReturnLocation.ValueBytes, 8U);
+      }
+      EXPECT_FALSE(Hint->DoesNotReturn);
+      EXPECT_FALSE(Hint->ReturnedArgument);
+      EXPECT_TRUE(Hint->BorrowedByteInputs.empty());
+      EXPECT_TRUE(Hint->SwiftStaticStringInputs.empty());
+      std::string Error;
+      EXPECT_TRUE(validateSourceABI(S, Error)) << Error;
+      std::vector<ExprPtr> Arguments;
+      for (size_t I = 0; I < S.Parameters.size(); ++I)
+        Arguments.push_back(HighExpr::makeConst(0, 8));
+      auto Call = HighExpr::makeCall("untrusted_name", 0x2180, Arguments);
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      Call->Type = S.ReturnType;
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      if (Path) {
+        Image.DyldBindSlots[0x2180].Module =
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/"
+            "Foundation";
+        EXPECT_TRUE(swiftRuntimeSourceCallHint(Image, 0x2180));
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftPathAndCountRejectStaleImportsAndPartialABI) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Path : {true, false}) {
+      const std::string Name =
+          Path ? "$s10Foundation3URLV4pathSSvg" : "$sSS5countSivg";
+      const std::string Provider =
+          Path ? "/System/Library/Frameworks/Foundation.framework/Foundation"
+               : "/usr/lib/swift/libswiftCore.dylib";
+      auto Image = runtimeImage("_" + Name, Architecture);
+      Image.DyldBindSlots[0x2180] = {"_" + Name, 0, Provider, false};
+      auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      const auto MakeCall = [&] {
+        std::vector<ExprPtr> Arguments;
+        for (const auto &P : Hint->Signature.Parameters)
+          Arguments.push_back(HighExpr::makeConst(0, P.Type->Size));
+        auto Call = HighExpr::makeCall("untrusted_name", 0x2180, Arguments);
+        Call->Type = Hint->Signature.ReturnType;
+        Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+        return Call;
+      };
+      for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+        SCOPED_TRACE(Name + " import " + std::to_string(Mutation));
+        auto Bad = Image;
+        switch (Mutation) {
+        case 0:
+          Bad.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+          break;
+        case 1:
+          Bad.DyldBindSlots[0x2180].Addend = 1;
+          break;
+        case 2:
+          Bad.DyldBindSlots[0x2180].WeakImport = true;
+          break;
+        case 3:
+          Bad.DyldBindSlots.erase(0x2180);
+          break;
+        case 4:
+          Bad.DyldBindSlots[0x2180].Name += "X";
+          break;
+        case 5:
+          Bad.ImportPtrSlots[0x2180] += "X";
+          break;
+        case 6:
+          Bad.ConflictingImportStorageSlots.insert(0x2180);
+          break;
+        case 7:
+          Bad.Format = BinaryFormat::ELF;
+          break;
+        case 8:
+          Bad.Bits = Bitness::Bits32;
+          break;
+        case 9:
+          Bad.Arch = Arch::ARM;
+          break;
+        case 10:
+          Bad.DyldBindSlots[0x2180].Module =
+              Path ? "/usr/lib/swift/libswiftCore.dylib"
+                   : "/System/Library/Frameworks/Foundation.framework/"
+                     "Foundation";
+          break;
+        case 11:
+          Bad.DyldBindSlots[0x2180].Name = "_" + Name + "Tm";
+          Bad.ImportPtrSlots[0x2180] = "_" + Name + "Tm";
+          break;
+        }
+        EXPECT_FALSE(swiftRuntimeSourceCallHint(Bad, 0x2180));
+        EXPECT_FALSE(sdk::objcSourceCallBound(*MakeCall(), Bad, {}));
+      }
+      for (unsigned Mutation = 0; Mutation < 14; ++Mutation) {
+        SCOPED_TRACE(Name + " binding " + std::to_string(Mutation));
+        auto Call = MakeCall();
+        auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+        Call->SourceCallHint = Changed;
+        auto &S = Changed->Signature;
+        switch (Mutation) {
+        case 0:
+          S.Parameters.pop_back();
+          break;
+        case 1:
+          S.Parameters.push_back(S.Parameters.front());
+          break;
+        case 2:
+          S.Parameters[0].TheRole =
+              Path ? SourceParameterTypeHint::Role::Ordinary
+                   : SourceParameterTypeHint::Role::SwiftContext;
+          break;
+        case 3:
+          S.Parameters[0].Location.RegisterOffset += 8;
+          break;
+        case 4:
+          S.Parameters[0].Location.ValueBytes = 4;
+          break;
+        case 5:
+          S.Parameters[0].Type = NdType::makeFloat(8);
+          break;
+        case 6:
+          S.ReturnType = NdType::makeInt(4);
+          break;
+        case 7:
+          S.ReturnLocation.RegisterOffset += 8;
+          break;
+        case 8:
+          S.Convention = SourceFunctionTypeHint::ConventionKind::C;
+          break;
+        case 9:
+          Changed->TargetAddress += 8;
+          break;
+        case 10:
+          Changed->DoesNotReturn = true;
+          break;
+        case 11:
+          Changed->TargetName += "X";
+          break;
+        case 12:
+          Call->Operands.pop_back();
+          break;
+        case 13:
+          S.ReturnLocation.ValueBytes = 4;
+          break;
+        }
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftCocoaArrayEndIndexKeepsItsWordABI) {
   constexpr llvm::StringLiteral Name = "$ss18_CocoaArrayWrapperV8endIndexSivg";
   constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
@@ -7907,6 +8100,134 @@ TEST(ObjCCallHints, GraphicsDeclarationsPreserveOpaquePointersAndExactExports) {
   }
 }
 
+TEST(ObjCCallHints,
+     CoreTextDeclarationsKeepPointerArgumentsAndSeparateResults) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (const auto &[Name, Kind] :
+         {std::pair{"CTFontGetSize", NdTypeKind::Float},
+          std::pair{"CTFramesetterCreateWithAttributedString",
+                    NdTypeKind::Ptr}}) {
+      SCOPED_TRACE(Name);
+      for (const char *Version : {"", "Versions/A/"}) {
+        auto Image = runtimeImage("_" + std::string(Name), Architecture);
+        Image.DyldBindSlots[0x2180] = {
+            "_" + std::string(Name), 0,
+            std::string("/System/Library/Frameworks/CoreText.framework/") +
+                Version + "CoreText",
+            false};
+        const auto Declared = darwinRuntimeSourceCallHint(Image, 0x2180);
+        ASSERT_TRUE(Declared);
+        const auto &ABI = Declared->Signature;
+        EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::DarwinSDK);
+        EXPECT_EQ(ABI.ReturnType->Kind, Kind);
+        EXPECT_EQ(ABI.ReturnType->Size, 8U);
+        EXPECT_EQ(ABI.ReturnLocation.Kind,
+                  Kind == NdTypeKind::Float
+                      ? SourceABICarrierKind::FloatingRegister
+                      : SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(ABI.ReturnLocation.RegisterOffset, Kind == NdTypeKind::Float
+                                                         ? TRI.FPParamRegs[0]
+                                                         : TRI.IntReturnReg);
+        EXPECT_EQ(ABI.ReturnLocation.ValueBytes, 8U);
+        ASSERT_EQ(ABI.Parameters.size(), 1U);
+        EXPECT_EQ(ABI.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(ABI.Parameters[0].Location.Kind,
+                  SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(ABI.Parameters[0].Location.RegisterOffset,
+                  TRI.IntParamRegs[0]);
+        EXPECT_EQ(ABI.Parameters[0].Location.ValueBytes, 8U);
+        std::string Error;
+        EXPECT_TRUE(validateSourceABI(ABI, Error)) << Error;
+
+        auto Low = caller(Architecture);
+        Low.Blocks[0].Ops.back().Inputs[0] =
+            NdVar::reg(ABI.ReturnLocation.RegisterOffset, 8);
+        const auto Med = convert(Image, Low);
+        ASSERT_EQ(Med.CallInfos.size(), 1U);
+        ASSERT_TRUE(Med.CallInfos[0].SourceCallHint);
+        MedToHighConverter Converter;
+        Converter.setBinaryImage(&Image);
+        const auto High = Converter.convert(Med, Architecture);
+        const auto *Call = sourceCall(High);
+        ASSERT_NE(Call, nullptr);
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        CEmitterOptions Options;
+        Options.TheArch = Architecture;
+        ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+        EXPECT_NE(Source.find("neverd_darwin_" + std::string(Name)),
+                  std::string::npos);
+        EXPECT_NE(Source.find("__asm__(\"_" + std::string(Name) + "\")"),
+                  std::string::npos);
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, CoreTextBindingsRevalidateProviderAndCompleteABI) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name :
+         {"CTFontGetSize", "CTFramesetterCreateWithAttributedString"}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          "_" + std::string(Name), 0,
+          "/System/Library/Frameworks/CoreText.framework/CoreText", false};
+      const auto Med = convert(Image, caller(Architecture));
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Call = sourceCall(High);
+      ASSERT_NE(Call, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      for (const char *Module :
+           {"/tmp/CoreText.framework/CoreText",
+            "/System/Library/Frameworks/CoreText.framework/Versions/B/CoreText",
+            "/System/Library/Frameworks/CoreText.framework/Other",
+            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+            "/System/Library/Frameworks/Foundation.framework/Foundation",
+            "/usr/lib/libSystem.B.dylib"}) {
+        auto Changed = Image;
+        Changed.DyldBindSlots.at(0x2180).Module = Module;
+        EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180));
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}));
+      }
+      auto Changed = Image;
+      Changed.DyldBindSlots.at(0x2180).Addend = 1;
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}));
+      Changed = Image;
+      Changed.DyldBindSlots.at(0x2180).Name = "_CTUnknownFunction";
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}));
+      Changed = Image;
+      Changed.DyldBindSlots.at(0x2180).WeakImport = true;
+      const auto Weak = darwinRuntimeSourceCallHint(Changed, 0x2180);
+      ASSERT_TRUE(Weak);
+      EXPECT_TRUE(Weak->WeakImport);
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}));
+      for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+        auto Stale = *Call;
+        auto Hint = *Call->SourceCallHint;
+        auto &ABI = Hint.Signature;
+        if (Mutation == 0)
+          ABI.Parameters[0].Location.ValueBytes = 4;
+        else if (Mutation == 1)
+          ABI.Parameters[0].Location.RegisterOffset =
+              getTargetRegInfo(Architecture).IntParamRegs[1];
+        else if (Mutation == 2)
+          ABI.ReturnLocation.ValueBytes = 4;
+        else
+          ABI.ReturnType = NdType::makeInt(8);
+        Stale.SourceCallHint = std::make_shared<SourceCallTypeHint>(Hint);
+        EXPECT_FALSE(sdk::objcSourceCallBound(Stale, Image, {})) << Mutation;
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &[Name, Module] :
@@ -8354,6 +8675,99 @@ TEST(ObjCCallHints, SwiftFoundationCVarArgDescriptorKeepsExternalIdentity) {
           break;
         case 9:
           Bind.Name = Changed.ImportPtrSlots[0x2180] = Import + "suffix";
+          break;
+        }
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+            << Provider << " " << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
+            << Provider << " " << Mutation;
+      }
+    }
+}
+
+TEST(ObjCCallHints, SwiftCombinePublisherDescriptorKeepsExternalIdentity) {
+  const std::string Import =
+      "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Provider :
+         {"/System/Library/Frameworks/Combine.framework/Combine",
+          "/System/Library/Frameworks/Combine.framework/Versions/A/"
+          "Combine"}) {
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider, false};
+      const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      ASSERT_TRUE(Binding) << Provider;
+      EXPECT_EQ(Binding->TargetName, llvm::StringRef(Import).drop_front());
+      EXPECT_EQ(Binding->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+
+      HighFunc Function;
+      Function.Name = "publisher_conformance";
+      Function.ReturnType = NdType::makeInt(8);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                         NdType::makeInt(8));
+      Function.Body = {Return};
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      const auto *Address = sourceCall(Bound.Function);
+      ASSERT_NE(Address, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+      EXPECT_NE(Source.find("[] __asm__(\"" + Import + "\");"),
+                std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+
+      for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+        auto Changed = Image;
+        auto &Bind = Changed.DyldBindSlots[0x2180];
+        switch (Mutation) {
+        case 0:
+          Bind.Module += ".impostor";
+          break;
+        case 1:
+          Bind.Module = "/usr/lib/swift/libswiftCore.dylib";
+          break;
+        case 2:
+          Bind.WeakImport = true;
+          break;
+        case 3:
+          Bind.Addend = 8;
+          break;
+        case 4:
+          Changed.DyldBindSlots.clear();
+          break;
+        case 5:
+          Changed.ImportPtrSlots[0x2180] = "_different";
+          break;
+        case 6:
+          Changed.ConflictingImportStorageSlots.insert(0x2180);
+          break;
+        case 7:
+          Changed.IsRelocatable = true;
+          break;
+        case 8:
+          Bind.Module.clear();
+          break;
+        case 9:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] = Import + "suffix";
+          break;
+        case 10:
+          Bind.Module =
+              "/System/Library/Frameworks/Combine.framework/Versions/B/Combine";
+          break;
+        case 11:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] =
+              "_$s7Combine19CurrentValueSubjectCMa";
+          break;
+        case 12:
+          Changed.Format = BinaryFormat::ELF;
           break;
         }
         EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))

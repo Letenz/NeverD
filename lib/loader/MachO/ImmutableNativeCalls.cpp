@@ -1,6 +1,7 @@
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 
 #include "../SourceUnwind.h"
+#include "ImmutableNativeFrame.h"
 #include "SourceLocalCall.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -8,9 +9,6 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
-#include "neverd/loader/MachO/DarwinImportVeneer.h"
-#include "neverd/loader/MachO/RuntimeFunctionAddress.h"
-#include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/Support/Endian.h"
@@ -42,6 +40,7 @@ class Trace {
   const SourceLocalCalls &DirectCalls;
   const std::map<va_t, SourceFunctionTypeHint> *NativeCallees;
   size_t &Budget;
+  AuthenticatedSourceFrameLoads &Frame;
   std::map<va_t, const LowInstructionBoundary *> Boundaries;
 
   const LowInstructionBoundary *boundary(const LowOp &Op) const {
@@ -64,39 +63,24 @@ class Trace {
                  : std::nullopt;
   }
 
-  bool preserves(const LowOp &Call, const NdVar &Value) const {
+  bool preserves(const LowOp &Call, const NdVar &Value) {
     const auto Site = sourceCallOccurrenceKey(Call);
     if (!ordinary(Call) || !generalRegister(Value) || !Site ||
-        !Site->StaticTarget || !DirectCalls.count(*Site) ||
         !getTargetRegInfo(Image.Arch)
              .isCallPreserved(Value.Offset, 8, BinaryFormat::MachO))
       return false;
     std::optional<SourceFunctionTypeHint> Signature;
-    const auto Slot = darwinImportVeneerSlot(Image, *Site->StaticTarget);
-    if (Slot) {
-      const auto Runtime = runtimeCFunctionAddressHint(Image, *Slot);
-      if (Runtime)
-        Signature = Runtime->AddressedFunctionABI;
-      else if (isImmutableImageImportSlot(Image, *Slot)) {
-        // Register-specific ARC imports have a catalogued physical input
-        // carrier, but cannot be addressed as their canonical C function.
-        // A preservation query uses that exact call declaration instead.
-        const auto ARC = objcRuntimeSourceCallHint(Image, *Slot);
-        const auto Bind = Image.DyldBindSlots.find(*Slot);
-        if (ARC && ARC->CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall &&
-            ARC->TargetAddress == *Slot && !ARC->DoesNotReturn &&
-            !ARC->WeakImport && Bind != Image.DyldBindSlots.end() &&
-            Bind->second.Module == "/usr/lib/libobjc.A.dylib" &&
-            ARC->Signature.Origin ==
-                SourceFunctionTypeHint::OriginKind::ObjCRuntime)
-          Signature = ARC->Signature;
-      }
-    } else if (NativeCallees) {
-      const auto Found = NativeCallees->find(*Site->StaticTarget);
-      if (Found != NativeCallees->end() &&
-          Found->second.Origin ==
+    if (Site->StaticTarget && DirectCalls.count(*Site)) {
+      Signature = immutableNativeDirectCallABI(Image, *Site->StaticTarget,
+                                               NativeCallees);
+    } else if (const auto Found = Frame.KnownTargets->find(Call.Addr);
+               Found != Frame.KnownTargets->end() &&
+               Found->second.Site == *Site && NativeCallees) {
+      const auto ABI = NativeCallees->find(Found->second.Target);
+      if (ABI != NativeCallees->end() &&
+          ABI->second.Origin ==
               SourceFunctionTypeHint::OriginKind::NativeAnalysis)
-        Signature = Found->second;
+        Signature = ABI->second;
     }
     std::string Error;
     if (!Signature || !Signature->HasExplicitABI ||
@@ -159,6 +143,37 @@ class Trace {
     if (copy(Op))
       return address(Op.Inputs[0], *Index, Depth + 1);
     const auto *B = boundary(Op);
+    // Canonical LDR/LDP copies a loaded word to its architectural register.
+    // The shared proof follows every reaching frame store and call; the
+    // original producer still goes through the existing ADRP/ADD owner below.
+    if (B && Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+        Op.Inputs[0].isTemp() && Op.Inputs[0].Size == 8) {
+      for (size_t I = *Index; I-- > B->FirstOp;) {
+        const auto &Load = Block.Ops[I];
+        if (!overlaps(Load.Output, Op.Inputs[0]))
+          continue;
+        if (Load.Opcode != NdOp::LOAD || Load.Output != Op.Inputs[0])
+          break;
+        const auto Origin = Frame.load(Block, I);
+        if (!Origin)
+          break;
+        const auto &Def = Origin->Definition;
+        for (const auto &Source : Frame.Function.Blocks)
+          if (Source.Id == Def.BlockId &&
+              Def.OperationIndex < Source.Ops.size()) {
+            const auto &Producer = Source.Ops[Def.OperationIndex];
+            if (Producer.Addr != Def.Instruction ||
+                Producer.Seq != Def.Sequence || Producer.Output != Def.Output)
+              return std::nullopt;
+            Trace Previous(Image, Source, DirectCalls, NativeCallees, Budget,
+                           Frame);
+            return Previous.address(Def.Output, Def.OperationIndex + 1,
+                                    Depth + 1);
+          }
+        break;
+      }
+      return std::nullopt;
+    }
     const auto Word = B ? word(Op, B->OpCount) : std::nullopt;
     if (!Word)
       return std::nullopt;
@@ -203,9 +218,9 @@ public:
   Trace(const BinaryImage &Image, const LowBlock &Block,
         const SourceLocalCalls &DirectCalls,
         const std::map<va_t, SourceFunctionTypeHint> *NativeCallees,
-        size_t &Budget)
+        size_t &Budget, AuthenticatedSourceFrameLoads &Frame)
       : Image(Image), Block(Block), DirectCalls(DirectCalls),
-        NativeCallees(NativeCallees), Budget(Budget) {
+        NativeCallees(NativeCallees), Budget(Budget), Frame(Frame) {
     for (const auto &B : Block.InstructionBoundaries)
       Boundaries.emplace(B.Address, &B);
   }
@@ -323,26 +338,37 @@ std::map<va_t, ImmutableNativeCallTarget> immutableNativeCallTargets(
     return {};
   const auto DirectCalls = sourceLocalCalls(Image, Function);
   std::map<va_t, ImmutableNativeCallTarget> Result;
-  for (const auto &Block : Function.Blocks) {
-    Trace Proof(Image, Block, DirectCalls, NativeCallees, Remaining);
-    for (size_t I = 0; I < Block.Ops.size(); ++I) {
-      const auto &Call = Block.Ops[I];
-      if (!Proof.indirectCall(Call))
-        continue;
-      const auto Slot = Proof.slot(Call.Inputs[0], I);
-      const auto Target =
-          Slot ? readImmutableImageCodePointer(Image, *Slot) : std::nullopt;
-      const auto Site = sourceCallOccurrenceKey(Call);
-      if (Target && Site && *Target != Function.Entry &&
-          !Result
-               .emplace(Call.Addr,
-                        ImmutableNativeCallTarget{Function.Entry, *Site, *Slot,
-                                                  *Target})
-               .second)
-        return {};
+  AuthenticatedSourceFrameLoads Frame{Image, Function, DirectCalls,
+                                      NativeCallees, Remaining};
+  for (unsigned Round = 0; Round < 64 && Remaining; ++Round) {
+    Frame.beginRound(Result);
+    std::map<va_t, ImmutableNativeCallTarget> Added;
+    for (const auto &Block : Function.Blocks) {
+      Trace Proof(Image, Block, DirectCalls, NativeCallees, Remaining, Frame);
+      for (size_t I = 0; I < Block.Ops.size(); ++I) {
+        const auto &Call = Block.Ops[I];
+        if (Result.count(Call.Addr) || !Proof.indirectCall(Call))
+          continue;
+        const auto Slot = Proof.slot(Call.Inputs[0], I);
+        const auto Target =
+            Slot ? readImmutableImageCodePointer(Image, *Slot) : std::nullopt;
+        const auto Site = sourceCallOccurrenceKey(Call);
+        if (Target && Site && *Target != Function.Entry &&
+            !Added
+                 .emplace(Call.Addr,
+                          ImmutableNativeCallTarget{Function.Entry, *Site,
+                                                    *Slot, *Target})
+                 .second)
+          return {};
+      }
     }
+    if (Added.empty())
+      break;
+    Result.insert(Added.begin(), Added.end());
   }
-  return Remaining ? Result : std::map<va_t, ImmutableNativeCallTarget>{};
+  return Remaining && !Frame.Exhausted
+             ? Result
+             : std::map<va_t, ImmutableNativeCallTarget>{};
 }
 namespace {
 bool scalarCarrier(const TypeRef &Type, bool AllowVoid = false) {

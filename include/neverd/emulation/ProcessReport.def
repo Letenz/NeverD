@@ -57,6 +57,7 @@ NEVERD_PROCESS_REPORT_FIELD(Stderr, "stderr_hex")
 NEVERD_PROCESS_REPORT_FIELD(Services, "services")
 NEVERD_PROCESS_REPORT_FIELD(Number, "number")
 NEVERD_PROCESS_REPORT_FIELD(Result, "result")
+NEVERD_PROCESS_REPORT_FIELD(Error, "error")
 NEVERD_PROCESS_REPORT_FIELD(CPUExit, "cpu_exit")
 NEVERD_PROCESS_REPORT_FIELD(Kind, "kind")
 NEVERD_PROCESS_REPORT_FIELD(StopRequested, "stop_requested")
@@ -105,8 +106,9 @@ NEVERD_PROCESS_CLI_STRING(Input, "input executable")
 NEVERD_PROCESS_CLI_STRING(ProfileOption, "profile")
 NEVERD_PROCESS_CLI_STRING(
     ProfileHelp,
-    "Guest profile (required): linux-elf64-v1, android-aarch64-api28-v1 or "
-    "windows-pe64-v1")
+    "Guest profile (required): linux-elf64-v1, android-aarch64-api28-v1, "
+    "windows-pe64-v1, macos-macho64-v1, ios-macho64-v1 or "
+    "ios-simulator-macho64-v1")
 NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
 NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
 NEVERD_PROCESS_CLI_STRING(

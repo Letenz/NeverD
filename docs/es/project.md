@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: d157cf302643e879be2748919ad949d2979c1d36798e295ee566f247834396f4 -->
+<!-- i18n-source: b7a4aaf4bcd1796186c3567b9a45c65b994477daaf193d6f8502333fca4d305b -->
 
 <div align="center">
 
@@ -115,7 +115,7 @@ La recuperación depende de los patrones de código compatibles; consulte la [in
 
 La ejecución CPU separa admisión ISA, memoria invitada, transporte del motor y política del SO. `NEVERD_ENABLE_CPU_EMULATION` activa la capa CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` añade el entorno Windows WDM/KMDF x64 acotado. `linux-elf64-v1` ejecuta procesos Linux ELF admitidos. Véase [Ejecución CPU](cpu-execution.md), [Emulación de procesos invitados](process-emulation.md) y [Emulación de controladores Windows](driver-emulation.md).
 
-`windows-pe64-v1` admite procesos de consola Windows x64/ARM64 acotados con PEB/TEB, TLS del EXE, API Win32 con nombre y grafos acíclicos de DLL iniciales explícitas. Las DLL admiten código/datos por nombre u ordinal, reubicación DIR64 e identidades reales en listas del cargador. Entradas/TLS de DLL, carga dinámica, exportaciones reenviadas, CRT/GUI, SEH de usuario e hilos siguen pendientes; falta evidencia nativa ARM64 KVM/WHP.
+`windows-pe64-v1` admite procesos de consola Windows x64/ARM64 acotados con PEB/TEB, TLS de módulos y `DllMain` de inicio, API Win32 con nombre y grafos acíclicos de DLL iniciales explícitas. Las DLL admiten código/datos por nombre u ordinal, reubicación DIR64 e identidades reales en listas del cargador. Carga dinámica, CRT/GUI, SEH de usuario e hilos siguen pendientes; falta evidencia nativa ARM64 KVM/WHP. Se admiten reenvíos acotados de exportaciones y `GetProcAddress` para imágenes invitadas residentes.
 
 La memoria virtual de Windows incorpora `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` y `FlushInstructionCache` para el proceso actual. La capa OS administra las reservas; `AddressSpace` mantiene la autoridad sobre páginas confirmadas, permisos y almacenamiento. Las pruebas cubren cambios de código, fallos de acceso y reutilización del presupuesto de memoria.
 

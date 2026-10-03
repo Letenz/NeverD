@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "arch/x86_64/CheckedX64Backend.h"
 #include "arch/x86_64/X64ExceptionMonitor.h"
 #include "backends/MachineFactories.h"
@@ -55,12 +56,15 @@ protected:
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
     auto M = std::get<0>(GetParam()) == ExecutionBackendKind::KVM
                  ? createKvmMachine(*Memory)
+             : std::get<0>(GetParam()) == ExecutionBackendKind::HVF
+                 ? createHvfX64Machine(*Memory)
                  : createWhpMachine(*Memory);
     if (!M) {
       auto E = M.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable &&
+          !requireHvf(std::get<0>(GetParam()), GuestArchitecture::X64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }
@@ -254,7 +258,8 @@ TEST_P(X64ExceptionTransport, GuestHaltCannotForgeAPrivateExceptionFrame) {
 INSTANTIATE_TEST_SUITE_P(
     NativeTransports, X64ExceptionTransport,
     testing::Combine(testing::Values(ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::Bool(), testing::ValuesIn(Cases)));
 
 class InjectedProcessorFault final : public X64Machine {

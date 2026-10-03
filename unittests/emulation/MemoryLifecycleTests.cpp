@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/AddressSpace.h"
@@ -356,6 +357,8 @@ void PrintTo(const CPUProfile &Profile, std::ostream *OS) {
 }
 #if defined(_WIN32)
 constexpr auto Native = ExecutionBackendKind::WHP;
+#elif defined(__APPLE__)
+constexpr auto Native = ExecutionBackendKind::HVF;
 #else
 constexpr auto Native = ExecutionBackendKind::KVM;
 #endif
@@ -374,7 +377,7 @@ protected:
       auto E = Result.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       const auto Reason = llvm::toString(std::move(E));
-      if (Unavailable &&
+      if (Unavailable && !requireHvf(P.Backend, P.ISA) &&
           !(P.ISA == GuestArchitecture::AArch64 && std::getenv(RequireNative)))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;

@@ -110,7 +110,31 @@ class ABIInventoryTests(unittest.TestCase):
         self.assertEqual(
             int(abi.DevirtualizeFlagsV6.EXTERNAL_STORES_DISJOINT_ENTRY_FRAME), 1
         )
-        for version in (1, 2, 3, 4, 5, 6):
+        self.assertEqual(abi.NeverDDevirtualizeOptionsV7.base.offset, 0)
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV7.max_node_evaluations.offset,
+            ctypes.sizeof(abi.NeverDDevirtualizeOptionsV6),
+        )
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV7.max_discovery_visits.offset,
+            ctypes.sizeof(abi.NeverDDevirtualizeOptionsV6) + 4,
+        )
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(abi.NeverDDevirtualizeOptionsV7), 160)
+        self.assertEqual(
+            abi.NeverDDevirtualizeOptionsV7.flags.offset,
+            ctypes.sizeof(abi.NeverDDevirtualizeOptionsV6) + 8,
+        )
+        self.assertEqual(int(abi.DevirtualizeFlagsV7.STOP_CHAIN_AT_REPEAT), 1)
+        options_v7 = abi.NeverDDevirtualizeOptionsV7()
+        self.assertEqual(options_v7.flags, 0)
+        self.assertEqual(options_v7.max_node_evaluations, 0)
+        self.assertEqual(options_v7.max_discovery_visits, 0)
+        options_v7.max_node_evaluations = (1 << 32) - 1
+        options_v7.max_discovery_visits = (1 << 32) - 1
+        self.assertEqual(options_v7.max_node_evaluations, (1 << 32) - 1)
+        self.assertEqual(options_v7.max_discovery_visits, (1 << 32) - 1)
+        for version in (1, 2, 3, 4, 5, 6, 7):
             for prefix in ("source", "machine_source"):
                 spec = abi.FUNCTION_SPECS[f"neverd_devirtualize_{prefix}_v{version}"]
                 self.assertEqual(

@@ -3,8 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
-#include "os/windows/process/WindowsProcess.h"
+#include "os/windows/process/WindowsProcessModules.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessReport.h"
@@ -60,6 +61,8 @@ protected:
   std::filesystem::path Path;
   void SetUp() override {
 #ifndef NEVERD_WINDOWS_PROCESS_FIXTURE_DIR
+    if (requireHvf(GetParam().Backend, GetParam().ISA))
+      FAIL() << MissingTools;
     GTEST_SKIP() << MissingTools;
 #else
     Path = std::filesystem::path(NEVERD_WINDOWS_PROCESS_FIXTURE_DIR) /
@@ -72,8 +75,11 @@ protected:
                                  : ExecutionContract::CheckedUserAArch64;
     auto Probe = probeExecutionBackend(Configuration);
     ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
-    if (Probe->Availability != BackendAvailability::Available)
+    if (Probe->Availability != BackendAvailability::Available) {
+      if (requireHvf(GetParam().Backend, GetParam().ISA))
+        FAIL() << Probe->Reason;
       GTEST_SKIP() << Probe->Reason;
+    }
     Options.Backend = GetParam().Backend;
     Options.Arguments = {Executable, Normal};
     Options.Environment = {Environment};
@@ -517,8 +523,11 @@ TEST_F(WindowsProcessImage, BuildsUTF16CommandLineEnvironmentAndLoaderLists) {
   O.Arguments = {Executable, Empty, SpacedArgument, QuotedArgument,
                  UnicodeArgument};
   O.Environment = {UnicodeEnvironment, SortedEnvironment};
-  auto Env =
-      llvm::cantFail(win::prepareEnvironment(*Space, Image, O, Executable));
+  win::Program Program;
+  Program.Modules.push_back({Image, {}, {}});
+  Program.Identities.push_back(
+      {Executable, Image.Base, Image.Size, Image.Entry});
+  auto Env = llvm::cantFail(win::prepareEnvironment(*Space, Program, O));
   auto String = [&](uint64_t Address, uint64_t Count) {
     std::u16string Text;
     for (uint64_t I = 0; I < Count; ++I)

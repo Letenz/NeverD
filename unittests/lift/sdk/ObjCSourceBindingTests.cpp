@@ -1,11 +1,15 @@
+#include "../../../lib/ir/high/pass/HighDCEDetail.h"
+#include "../../../lib/loader/MachO/ImmutableNativeFrame.h"
 #include "../../../lib/sdk/capi/ObjCCFunctionParameterSources.h"
 #include "../../../lib/sdk/capi/ObjCImmutableNativeSources.h"
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceInputs.h"
+#include "../../../lib/sdk/capi/SourceSwiftWitnessFrameProjection.h"
 #include "../core/CFunctionParameterCallFixture.h"
 #include "../core/ImmutableNativeCallFixture.h"
 #include "../core/RuntimeFunctionAddressFixture.h"
+#include "../core/SwiftWitnessFrameFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -25,6 +29,10 @@
 
 using namespace neverd;
 using namespace neverd::sdk;
+
+namespace {
+void frameTableFixture(immutable_native_call_test::Fixture &F);
+}
 
 TEST(ImmutableNativeCalls,
      ProvesOneOriginalIndirectOccurrenceAcrossRuntimeCall) {
@@ -337,50 +345,56 @@ TEST(ImmutableNativeCalls, NativeInferenceRechecksTheMachineOccurrence) {
 
 TEST(ImmutableNativeCalls, GeneratedSourceMatchesOriginalARM64CallsAtO0AndO2) {
 #if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
-  using namespace immutable_native_call_test;
-  Fixture F;
-  F.bindCaller();
-  ASSERT_TRUE(F.high());
-  std::map<va_t, const HighFunc *> Functions;
-  for (const auto &Function : F.Result.HighFuncs)
-    Functions.emplace(Function.Entry, &Function);
-  auto Bound =
-      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
-  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
-  const auto Audit = std::find_if(
-      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
-      [](const auto &A) { return A.Entry == Entry; });
-  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
-  const auto Allowed = [&](const HighExpr &Expression) {
-    return objcSourceCallBound(Expression, F.Image, Functions, nullptr, nullptr,
-                               &Bound.Function) ||
-           objCImmutableNativeSourceCallBound(Expression, F.Image, F.Result,
-                                              Bound.Function);
-  };
-  ASSERT_TRUE(sourceBodyLimitation(Bound.Function,
-                                   *Bound.Function.SourceTypeHint, &*Audit,
-                                   Allowed)
-                  .empty());
-  CEmitterOptions Options;
-  Options.TheArch = Arch::AArch64;
-  std::string Source;
-  llvm::raw_string_ostream OS(Source);
-  ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
-                                  Options));
-  EXPECT_EQ(Source.find("0x3028"), std::string::npos);
-  llvm::SmallString<128> Directory;
-  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-immutable-native",
-                                                    Directory));
-  const std::filesystem::path Work(Directory.str().str());
-  struct Cleanup {
-    std::filesystem::path Work;
-    ~Cleanup() {
-      std::error_code Error;
-      std::filesystem::remove_all(Work, Error);
-    }
-  } Cleanup{Work};
-  const auto Path = (Work / "calls.c").string();
-  std::ofstream(Path) << Source << R"(
+  for (bool FrameReload : {false, true}) {
+    SCOPED_TRACE(FrameReload);
+    using namespace immutable_native_call_test;
+    Fixture F;
+    if (FrameReload)
+      frameTableFixture(F);
+    F.bindCaller();
+    ASSERT_TRUE(F.high());
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &Function : F.Result.HighFuncs)
+      Functions.emplace(Function.Entry, &Function);
+    auto Bound =
+        bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+    const auto Audit = std::find_if(
+        F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+        [](const auto &A) { return A.Entry == Entry; });
+    ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+    const auto Allowed = [&](const HighExpr &Expression) {
+      return objcSourceCallBound(Expression, F.Image, Functions, nullptr,
+                                 nullptr, &Bound.Function) ||
+             objCImmutableNativeSourceCallBound(Expression, F.Image, F.Result,
+                                                Bound.Function);
+    };
+    ASSERT_TRUE(sourceBodyLimitation(Bound.Function,
+                                     *Bound.Function.SourceTypeHint, &*Audit,
+                                     Allowed)
+                    .empty());
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
+                                    Options));
+    EXPECT_EQ(Source.find("0x3028"), std::string::npos);
+    llvm::SmallString<128> Directory;
+    ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-immutable-native",
+                                                      Directory));
+    const std::filesystem::path Work(Directory.str().str());
+    struct Cleanup {
+      std::filesystem::path Work;
+      ~Cleanup() {
+        std::error_code Error;
+        std::filesystem::remove_all(Work, Error);
+      }
+    } Cleanup{Work};
+    const auto Path = (Work / "calls.c").string();
+    std::ofstream(Path) << (FrameReload ? "#define FRAME_RELOAD 1\n" : "")
+                        << Source << R"(
 #include <stddef.h>
 static unsigned calls;
 static uintptr_t observed;
@@ -388,11 +402,19 @@ void swift_release(void *object) { ++calls; observed = (uintptr_t)object; }
 extern uint64_t original_indirect_native(void *);
 __asm__(".text\n.p2align 2\n.globl _original_indirect_native\n"
         "_original_indirect_native:\n"
+#ifdef FRAME_RELOAD
+        "sub sp,sp,#64\nstp x19,x30,[sp,#48]\n"
+        "adrp x19,_original_target_table@PAGE\n"
+        "add x19,x19,_original_target_table@PAGEOFF\nstr x19,[sp,#16]\n"
+        "bl _swift_release\nldr x19,[sp,#16]\nldr x8,[x19,#8]\nblr x8\n"
+        "ldp x19,x30,[sp,#48]\nadd sp,sp,#64\nret\n"
+#else
         "stp x19,x20,[sp,#-32]!\nstp x29,x30,[sp,#16]\nadd x29,sp,#16\n"
         "adrp x19,_original_target_table@PAGE\n"
         "add x19,x19,_original_target_table@PAGEOFF\nldr x20,[x19,#8]\n"
         "bl _swift_release\nblr x20\n"
         "ldp x29,x30,[sp,#16]\nldp x19,x20,[sp],#32\nret\n"
+#endif
         "_original_constant_result:\nmov x0,#42\nret\n"
         ".section __DATA_CONST,__const\n.p2align 3\n_original_target_table:\n"
         ".quad 0\n.quad _original_constant_result\n.text\n");
@@ -410,13 +432,14 @@ int main(void) {
   return 0;
 }
 )";
-  for (const auto *Level : {"-O0", "-O2"}) {
-    SCOPED_TRACE(Level);
-    const auto Output = (Work / (std::string("calls") + Level)).string();
-    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
-                                            "-o", Output};
-    EXPECT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
-    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0);
+    for (const auto *Level : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Level);
+      const auto Output = (Work / (std::string("calls") + Level)).string();
+      const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
+                                              "-o", Output};
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0);
+    }
   }
 #else
   GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
@@ -770,6 +793,673 @@ TEST(ImmutableNativeCalls, BoundsFullWidthCopyChainsAndRejectsMixedRoots) {
   Low.ModuleAnalysisRoots.clear();
   Low.OrdinaryModuleAnalysisRoots = {Entry, Target};
   EXPECT_TRUE(immutableNativeCallTargets(F.Image, Low).empty());
+}
+
+namespace {
+void frameTableFixture(immutable_native_call_test::Fixture &F) {
+  // A complete table base survives swift_release in a private frame slot.
+  const uint32_t Words[] = {0xd10103ff, 0xa9037bf3, 0xd0000013, 0x91008273,
+                            0xf9000bf3, 0x9400003b, 0xf9400bf3, 0xf9400668,
+                            0xd63f0100, 0xa9437bf3, 0x910103ff, 0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols[0].Size = sizeof(Words);
+  F.run();
+}
+} // namespace
+
+TEST(ImmutableNativeCalls, RecoversAnAuthenticatedFrameTableDefinition) {
+  using namespace immutable_native_call_test;
+  Fixture F;
+  frameTableFixture(F);
+  ASSERT_TRUE(F.low());
+  const auto Targets = immutableNativeCallTargets(F.Image, *F.low());
+  ASSERT_EQ(Targets.size(), 1U);
+  EXPECT_EQ(Targets.at(Entry + 32).Slot, Slot);
+  EXPECT_EQ(Targets.at(Entry + 32).Target, Target);
+  EXPECT_FALSE(readImmutableImagePointer(F.Image, Slot));
+}
+
+TEST(ImmutableNativeCalls, RevalidatesLoopInvariantFrameOriginsAtPublication) {
+  using namespace immutable_native_call_test;
+  Fixture F;
+  loopFrameTableFixture(F);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  ASSERT_TRUE(F.high());
+  const auto Targets = immutableNativeCallTargets(F.Image, *F.low());
+  ASSERT_EQ(Targets.size(), 1U);
+  EXPECT_EQ(Targets.at(Entry + 52).Slot, Slot);
+  EXPECT_EQ(Targets.at(Entry + 52).Target, Target);
+  auto Low = *F.low();
+  std::reverse(Low.Blocks.begin(), Low.Blocks.end());
+  const auto Reordered = immutableNativeCallTargets(F.Image, Low);
+  ASSERT_EQ(Reordered.size(), 1U);
+  EXPECT_EQ(Reordered.at(Entry + 52).Target, Target);
+  ExprPtr Call;
+  walkStmts(F.high()->Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E && E->Kind == ExprKind::Call && E->SourceCallHint &&
+          E->SourceCallHint->ImmutableNativeCall)
+        Call = E;
+    });
+  });
+  ASSERT_TRUE(Call);
+  ASSERT_TRUE(
+      objCImmutableNativeSourceCallBound(*Call, F.Image, F.Result, *F.high()));
+  // The hint cannot authorize publication after changing any part of the
+  // loop, stored bytes, allocation, reload, or original CFG.
+  const auto Original = F.Image.Segments[0].Data;
+  for (const auto [Index, Word] :
+       {std::pair{0U, 0xa9bd53f3U}, std::pair{7U, 0xb90013f3U},
+        std::pair{8U, 0xf9000bffU}, std::pair{10U, 0xb5ffffb4U},
+        std::pair{11U, 0xf9400ff3U}}) {
+    SCOPED_TRACE(Index);
+    F.Image.Segments[0].Data = Original;
+    F.word(Index, Word);
+    EXPECT_TRUE(immutableNativeCallTargets(F.Image, *F.low()).empty());
+    EXPECT_FALSE(objCImmutableNativeSourceCallBound(*Call, F.Image, F.Result,
+                                                    *F.high()));
+  }
+  F.Image.Segments[0].Data = Original;
+  F.word(8, 0xf9000bff); // Every reached loop iteration overwrites the slot.
+  F.run();
+  ASSERT_TRUE(F.low());
+  EXPECT_TRUE(immutableNativeCallTargets(F.Image, *F.low()).empty());
+}
+
+TEST(ImmutableNativeCalls, GeneratedLoopFrameSourceMatchesOriginalARM64) {
+#if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
+  using namespace immutable_native_call_test;
+  Fixture F;
+  loopFrameTableFixture(F);
+  ASSERT_TRUE(F.high());
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+  const auto Audit = std::find_if(
+      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+      [](const auto &A) { return A.Entry == Entry; });
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  const auto Allowed = [&](const HighExpr &E) {
+    return objcSourceCallBound(E, F.Image, Functions, nullptr, nullptr,
+                               &Bound.Function) ||
+           objCImmutableNativeSourceCallBound(E, F.Image, F.Result,
+                                              Bound.Function);
+  };
+  const auto Limitation = sourceBodyLimitation(
+      Bound.Function, *Bound.Function.SourceTypeHint, &*Audit, Allowed);
+  ASSERT_TRUE(Limitation.empty()) << Limitation;
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
+                                  Options));
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-frame-loop", Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code E;
+      std::filesystem::remove_all(Work, E);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "loop.c").string();
+  std::ofstream(Path) << Source << R"(
+#include <stdio.h>
+extern uint64_t original_loop(uint64_t, uint64_t);
+__asm__(".text\n.p2align 2\n.globl _original_loop\n_original_loop:\n"
+        ".long 0xa9bc53f3, 0xa9037bf5, 0x92401414, 0xaa0103f5, 0x91000694\n"
+        "adrp x19, Lloop_table@PAGE\nadd x19, x19, Lloop_table@PAGEOFF\n"
+        ".long 0xf9000bf3, 0x8b1402b5, 0xd1000694\n"
+        ".long 0xb5ffffd4, 0xf9400bf3, 0xf9400668, 0xd63f0100\n"
+        ".long 0x8b150000, 0xa9437bf5, 0xa8c453f3, 0xd65f03c0\n"
+        "Lloop_callee:\n.long 0xd2800540, 0xd65f03c0\n"
+        ".section __DATA_CONST,__const\n.p2align 3\n"
+        "Lloop_table:\n.quad 0\n.quad Lloop_callee\n.text\n");
+int main(void) {
+  const uint32_t *machine = (const uint32_t *)(uintptr_t)original_loop;
+  const uint32_t words[] = {
+    0xa9bc53f3,0xa9037bf5,0x92401414,0xaa0103f5,0x91000694,0xd0000013,
+    0x91008273,0xf9000bf3,0x8b1402b5,0xd1000694,0xb5ffffd4,0xf9400bf3,
+    0xf9400668,0xd63f0100,0x8b150000,0xa9437bf5,0xa8c453f3,0xd65f03c0,
+    0xd2800540,0xd65f03c0};
+  for (unsigned i=0;i<20;++i) {
+    uint32_t mask=i==5 ? 0x9f00001fU : i==6 ? 0xffc003ffU : UINT32_MAX;
+    if ((machine[i]&mask)!=(words[i]&mask)) return 1;
+  }
+  uint64_t random=UINT64_C(0xfedcba9876543210);
+  for (unsigned i=0;i<2048;++i) {
+    random=random*UINT64_C(6364136223846793005)+1;
+    uint64_t count=i<65 ? i : random, seed=i<4 ? (uint64_t[]){0,1,UINT64_MAX,
+      UINT64_C(0x8000000000000000)}[i] : random;
+    uint64_t iterations=(count&63)+1;
+    uint64_t expected=seed+iterations*(iterations+1)/2+42;
+    uint64_t native=original_loop(count,seed), generated=indirect_native(count,seed);
+    if (native!=expected || generated!=expected) {
+      fprintf(stderr,"loop case %u: native=%llx generated=%llx expected=%llx\n",
+        i,(unsigned long long)native,(unsigned long long)generated,
+        (unsigned long long)expected); return 2;
+    }
+  }
+  return 0;
+}
+)";
+  for (const auto *Level : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Level);
+    const auto Output = (Work / (std::string("loop") + Level)).string();
+    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
+                                            "-o", Output};
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0) << Source;
+  }
+#else
+  GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
+#endif
+}
+
+TEST(ImmutableNativeCalls, FrameMachineReplaysDirectTailWrapper) {
+  using namespace immutable_native_call_test;
+  Fixture F;
+  // Two independently forwarded address arguments and a real B, which the
+  // CFG owner represents as CALL + RETURN without writing the link register.
+  const uint32_t Words[] = {0xd0000003, 0x9100a063, 0xd0000004, 0x9100c084,
+                            0x1400007c};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols.front().Size = sizeof(Words);
+  F.run();
+  ASSERT_TRUE(F.Result.Success);
+  ASSERT_TRUE(F.low());
+  ASSERT_EQ(F.low()->Blocks.size(), 1U);
+  ASSERT_EQ(F.low()->Blocks[0].InstructionBoundaries.back().Control,
+            LowInstructionControl::TailCall);
+  size_t Budget = 4096;
+  EXPECT_TRUE(immutableNativeFrameMachineMatches(F.Image, *F.low(), Budget));
+  // Machine equivalence alone grants neither a code-pointer identity nor a
+  // current source declaration for the additional forwarded parameters.
+  EXPECT_TRUE(immutableNativeCallTargets(F.Image, *F.low()).empty());
+}
+
+TEST(ImmutableNativeCalls, TailReplayRejectsChangedMachineAndControlFacts) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 31; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    const uint32_t Words[] = {0xd0000003, 0x9100a063, 0xd0000004, 0x9100c084,
+                              0x1400007c};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      F.word(I, Words[I]);
+    F.Image.Symbols.front().Size = sizeof(Words);
+    F.run();
+    ASSERT_TRUE(F.low());
+    auto Low = *F.low();
+    auto &Block = Low.Blocks.front();
+    auto &Boundary = Block.InstructionBoundaries.back();
+    auto &Call = Block.Ops.at(Boundary.FirstOp);
+    auto &Return = Block.Ops.at(Boundary.FirstOp + 1);
+    size_t Budget = 4096;
+    switch (Case) {
+    case 0:
+      F.word(4, 0x9400007c);
+      break; // BL writes x30, unlike B.
+    case 1:
+      F.word(4, 0x54000f80);
+      break; // Conditional transfer.
+    case 2:
+      F.word(4, 0xd65f03c0);
+      break; // RET is not a direct tail.
+    case 3:
+      F.word(4, 0xd61f0100);
+      break; // Unproven indirect branch.
+    case 4:
+      F.word(4, 0x1400003c);
+      break; // Different destination.
+    case 5:
+      F.word(0, 0xd0000004);
+      break; // Changed forwarded argument.
+    case 6:
+      Call.Inputs[0].Offset = Veneer;
+      break;
+    case 7:
+      Call.addInput(NdVar::reg(a64reg::X3, 8));
+      break;
+    case 8:
+      Call.Output.Size = 4;
+      break;
+    case 9:
+      Return.Inputs[0] = NdVar::reg(a64reg::X1, 8);
+      break;
+    case 10:
+      ++Call.Seq;
+      break;
+    case 11:
+      Return.Addr += 4;
+      break;
+    case 12:
+      Call.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 13:
+      Call.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 14:
+      Boundary.Immediate = Veneer;
+      break;
+    case 15:
+      Boundary.ControlFlags |= LowInstructionControlFlag::NoReturn;
+      break;
+    case 16:
+      Boundary.Control = LowInstructionControl::Call;
+      break;
+    case 17:
+      Boundary.ControlFlags |= LowInstructionControlFlag::Indirect;
+      break;
+    case 18:
+      Block.Succs.push_back(Block.Id);
+      break;
+    case 19:
+      F.Image.Symbols.back().IsFunc = false;
+      break;
+    case 20:
+      // Machine and LowIR agree, but this is an interior instruction rather
+      // than an independently authenticated callable entry.
+      F.word(4, 0x1400007d);
+      Boundary.Immediate = Target + 4;
+      Call.Inputs[0].Offset = Target + 4;
+      break;
+    case 21:
+      Block.EndAddr += 4;
+      break;
+    case 22:
+      --Low.LiftedInstructionCount;
+      break;
+    case 23:
+      Low.TruncatedPathAddresses.push_back(Entry);
+      break;
+    case 24:
+      Low.JumpTables.emplace_back();
+      break;
+    case 25:
+      Budget = 5;
+      break;
+    case 26:
+      F.Image.Segments.front().Flags = SegmentFlags::Readable |
+                                       SegmentFlags::Writable |
+                                       SegmentFlags::Executable;
+      break;
+    case 27:
+      F.word(4, 0x17fffffc);
+      Boundary.Immediate = Entry;
+      Call.Inputs[0].Offset = Entry;
+      break;
+    case 28:
+      F.word(4, 0x17fffffd);
+      Boundary.Immediate = Entry + 4;
+      Call.Inputs[0].Offset = Entry + 4;
+      F.Image.Symbols.push_back({"internal_label", Entry + 4, 4, true});
+      break;
+    case 29:
+      Return.Output = NdVar::reg(a64reg::X0, 8);
+      break;
+    case 30:
+      Call.Inputs[0].Provenance = ConstantAddressProvenance::DataAddress;
+      break;
+    }
+    EXPECT_FALSE(immutableNativeFrameMachineMatches(F.Image, Low, Budget));
+  }
+}
+
+TEST(ImmutableNativeCalls, TailSourceMatchesOriginalARM64ForwardedArguments) {
+#if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
+  using namespace immutable_native_call_test;
+  Fixture F;
+  const uint32_t Wrapper[] = {0xaa0103e3, 0xaa0203e4, 0xca020002, 0x91000400,
+                              0x1400007c};
+  const uint32_t Body[] = {0xca010000, 0x8b020000, 0xca030000, 0x8b040000,
+                           0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Wrapper); ++I)
+    F.word(I, Wrapper[I]);
+  for (unsigned I = 0; I < std::size(Body); ++I)
+    F.word((Target - Entry) / 4 + I, Body[I]);
+  F.Image.Symbols.front().Size = sizeof(Wrapper);
+  F.Image.Symbols.back().Size = sizeof(Body);
+  F.Signature.Parameters.resize(5);
+  for (auto &P : F.Signature.Parameters)
+    P.Type = NdType::makeInt(8, false);
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(F.Signature, Arch::AArch64, Error));
+  F.EntrySignature = F.Signature;
+  F.EntrySignature.Parameters.resize(3);
+  ASSERT_TRUE(
+      assignDarwinScalarSourceABI(F.EntrySignature, Arch::AArch64, Error));
+  F.run();
+  ASSERT_TRUE(F.Result.Success);
+  ASSERT_TRUE(F.low());
+  ASSERT_TRUE(F.high());
+  size_t Budget = 4096;
+  ASSERT_TRUE(immutableNativeFrameMachineMatches(F.Image, *F.low(), Budget));
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  const auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  const auto Audit = std::find_if(
+      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+      [](const auto &A) { return A.Entry == Entry; });
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  const auto Allowed = [&](const HighExpr &E) {
+    return objcSourceCallBound(E, F.Image, Functions);
+  };
+  EXPECT_TRUE(sourceBodyLimitation(Bound.Function,
+                                   *Bound.Function.SourceTypeHint, &*Audit,
+                                   Allowed)
+                  .empty());
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
+                                  Options));
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-tail-replay", Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code E;
+      std::filesystem::remove_all(Work, E);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "tail.c").string();
+  std::ofstream(Path) << Source << R"(
+#include <stdio.h>
+extern uint64_t original_tail_wrapper(uint64_t, uint64_t, uint64_t);
+__asm__(".text\n.p2align 2\n.globl _original_tail_wrapper\n"
+        "_original_tail_wrapper:\n"
+        ".long 0xaa0103e3, 0xaa0203e4, 0xca020002, 0x91000400, 0x1400007c\n"
+        ".space 0x1ec\n"
+        ".long 0xca010000, 0x8b020000, 0xca030000, 0x8b040000, 0xd65f03c0\n");
+int main(void) {
+  const uint32_t *machine = (const uint32_t *)(uintptr_t)original_tail_wrapper;
+  const uint32_t wrapper[] = {0xaa0103e3,0xaa0203e4,0xca020002,0x91000400,0x1400007c};
+  const uint32_t body[] = {0xca010000,0x8b020000,0xca030000,0x8b040000,0xd65f03c0};
+  for (unsigned i=0;i<5;++i)
+    if (machine[i]!=wrapper[i] || machine[128+i]!=body[i]) return 1;
+  uint64_t state=UINT64_C(0xfedcba9876543210);
+  for (unsigned i=0;i<2048;++i) {
+    state=state*UINT64_C(6364136223846793005)+1;
+    uint64_t a=i<4 ? (uint64_t[]){0,1,UINT64_MAX,UINT64_C(0x8000000000000000)}[i] : state;
+    uint64_t b=~(state>>1), c=(state<<7)^(state>>11);
+    uint64_t expected=((((a+1)^b)+(a^c))^b)+c;
+    uint64_t native=original_tail_wrapper(a,b,c), generated=indirect_native(a,b,c);
+    if (native!=expected || generated!=expected) {
+      fprintf(stderr,"case=%u a=%llx b=%llx c=%llx expected=%llx native=%llx generated=%llx\n",
+              i,(unsigned long long)a,(unsigned long long)b,(unsigned long long)c,
+              (unsigned long long)expected,(unsigned long long)native,(unsigned long long)generated);
+      return native!=expected ? 2 : 3;
+    }
+  }
+  return 0;
+}
+)";
+  for (const auto *Level : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Level);
+    const auto Output = (Work / (std::string("tail") + Level)).string();
+    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
+                                            "-o", Output};
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0) << Source;
+  }
+#else
+  GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
+#endif
+}
+
+TEST(ImmutableNativeCalls, FrameTargetsRejectStaleMachineAndLowIRFacts) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 14; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    frameTableFixture(F);
+    auto Low = *F.low();
+    for (auto &Block : Low.Blocks)
+      for (auto &Op : Block.Ops) {
+        if (Case == 1 && Op.Addr == Entry + 16 && Op.Opcode == NdOp::STORE)
+          Op.Inputs[1] = NdVar::reg(a64reg::X0, 8);
+        if (Case == 2 && Op.Addr == Entry + 16 && Op.Opcode == NdOp::INT_ADD)
+          Op.Inputs[1] = NdVar::scalar(24, 8);
+        if (Op.Addr == Entry + 24 && Op.Opcode == NdOp::LOAD) {
+          if (Case == 3)
+            Op.Output.Size = 4;
+          if (Case == 4)
+            Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+          if (Case == 5)
+            Op.Opcode = NdOp::COPY;
+        }
+      }
+    switch (Case) {
+    case 0:
+      F.word(4, 0xf9000be0); // Machine stores x0, saved LowIR claims x19.
+      break;
+    case 6:
+      F.word(0, 0xd10083ff); // Changed frame allocation, stale LowIR.
+      break;
+    case 7:
+      F.word(4, 0xb90013f3); // Fresh partial store cannot identify eight bytes.
+      break;
+    case 8:
+      F.word(4, 0xf9000ff3); // Store a different frame slot.
+      break;
+    case 9:
+      F.word(6, 0xf9400ff3); // Load a different frame slot.
+      break;
+    case 10:
+      F.word(5, 0xd63f0140); // Unknown intervening call.
+      break;
+    case 11:
+      F.word(5, 0x910043ff); // Expired frame slot / changed stack base.
+      break;
+    case 12:
+      F.word(4, 0xf9000013); // Table stored externally, not to the frame.
+      break;
+    case 13:
+      F.Image.CodePtrRelocSlots.erase(Slot);
+      break;
+    default:
+      break;
+    }
+    if (Case >= 7 && Case <= 12) {
+      F.run();
+      Low = *F.low();
+    }
+    EXPECT_TRUE(immutableNativeCallTargets(F.Image, Low).empty());
+  }
+}
+
+TEST(ImmutableNativeCalls, FrameTargetsCheckEveryMachineCFGPath) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 5; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    const uint32_t Words[] = {0xd10103ff, 0xa9037bf3, 0xd0000013, 0x91008273,
+                              0xf9000bf3, 0xb4000060, 0x9400003a, 0x14000002,
+                              0xd503201f, 0xf9400bf3, 0xf9400668, 0xd63f0100,
+                              0xa9437bf3, 0x910103ff, 0xd65f03c0};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      F.word(I, Words[I]);
+    F.Image.Symbols[0].Size = sizeof(Words);
+    if (Case == 1)
+      F.word(8, 0xb90013e0); // One reaching arm replaces bytes with w0.
+    if (Case == 2)
+      F.word(7, 0x17fffffe); // Backedge preserves the original private bytes.
+    F.run();
+    auto Low = *F.low();
+    if (Case == 3) {
+      // Keep reciprocal edges but hide the encoded taken arm.
+      auto &EntryBlock = Low.Blocks.front();
+      ASSERT_EQ(EntryBlock.Succs.size(), 2U);
+      const int Removed = EntryBlock.Succs.back();
+      EntryBlock.Succs.pop_back();
+      for (auto &Block : Low.Blocks)
+        if (Block.Id == Removed)
+          std::erase(Block.Preds, EntryBlock.Id);
+    }
+    if (Case == 4)
+      std::reverse(Low.Blocks.begin(), Low.Blocks.end());
+    const auto Targets = immutableNativeCallTargets(F.Image, Low);
+    EXPECT_EQ(Targets.size(), Case == 0 || Case == 2 || Case == 4 ? 1U : 0U);
+    if (!Targets.empty())
+      EXPECT_EQ(Targets.at(Entry + 44).Target, Target);
+  }
+}
+
+TEST(ImmutableNativeCalls, FrameCallDependenciesUseCompletedProofRounds) {
+  using namespace immutable_native_call_test;
+  Fixture F;
+  const uint32_t Words[] = {0xd10103ff, 0xa9037bf3, 0xd0000013, 0x91008273,
+                            0xf9000bf3, 0xf9400668, 0xd63f0100, 0xf9400bf3,
+                            0xf9400668, 0xd63f0100, 0xf9400bf3, 0xf9400668,
+                            0xd63f0100, 0xa9437bf3, 0x910103ff, 0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols[0].Size = sizeof(Words);
+  F.run();
+  std::map<va_t, SourceFunctionTypeHint> Callees{{Target, F.Signature}};
+  ASSERT_EQ(immutableNativeCallTargets(F.Image, *F.low()).size(), 1U);
+  const auto Targets = immutableNativeCallTargets(F.Image, *F.low(), &Callees);
+  ASSERT_EQ(Targets.size(), 3U);
+  for (unsigned Offset : {24U, 36U, 48U})
+    EXPECT_EQ(Targets.at(Entry + Offset).Target, Target);
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Bad = Callees;
+    if (Case == 0)
+      Bad.at(Target).HasExplicitABI = false;
+    if (Case == 1)
+      Bad.at(Target).Parameters.push_back({"unbound", NdType::makeInt(8)});
+    if (Case == 2)
+      Bad.at(Target).Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+    EXPECT_EQ(immutableNativeCallTargets(F.Image, *F.low(), &Bad).size(), 1U);
+  }
+}
+
+TEST(ImmutableNativeCalls, FrameLoadsKeepBothPairLanesAndRejectEarlierEscape) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    frameTableFixture(F);
+    if (Case < 2) {
+      F.word(4, 0xa9014ff3); // stp x19,x19,[sp,#16]
+      F.word(6, 0xa94123f3); // ldp x19,x8,[sp,#16]
+      if (Case == 1)
+        F.word(7, 0xf9400508); // Read the code slot through the second word.
+    } else if (Case == 2) {
+      // Both possible machine paths still initialize the table, but release
+      // would receive a private frame address before the query.
+      F.word(5, 0x910003e0); // mov x0,sp
+      F.word(6, 0x9400003a); // bl release
+      F.word(7, 0xf9400bf3);
+      F.word(8, 0xf9400668);
+      F.word(9, 0xd63f0100);
+    } else {
+      F.word(9, 0xd63f0120); // An unknown suffix grants no publication proof.
+    }
+    F.run();
+    const auto Targets = immutableNativeCallTargets(F.Image, *F.low());
+    EXPECT_EQ(Targets.size(), Case == 2 ? 0U : 1U);
+    if (!Targets.empty())
+      EXPECT_EQ(Targets.at(Entry + 32).Target, Target);
+  }
+}
+
+TEST(ImmutableNativeCalls, FrameQueriesRetainAuthenticatedAccessConditions) {
+  using namespace immutable_native_call_test;
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    F.Image.ImportPtrSlots[0x2000] = "_swift_beginAccess";
+    F.Image.DyldBindSlots[0x2000].Name = "_swift_beginAccess";
+    F.Image.ImportPtrSlots[0x2008] = "_swift_endAccess";
+    F.Image.DyldBindSlots[0x2008] = {
+        "_swift_endAccess", 0, "/usr/lib/swift/libswiftCore.dylib", false};
+    F.Image.Segments[1].Size = F.Image.Segments[1].FileSz = 16;
+    F.Image.Segments[1].Data.resize(16);
+    F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = 16;
+    F.Image.Symbols.push_back({"_end_access_veneer", Veneer + 12, 12, true});
+    F.word((Veneer - Entry) / 4 + 3, 0xb0000010);
+    F.word((Veneer - Entry) / 4 + 4, 0xf9400610);
+    F.word((Veneer - Entry) / 4 + 5, 0xd61f0200);
+    const unsigned Flags[] = {0, 1, 32, 33, 32, 33, 2, 34, 64, 0, 0, 0};
+    const uint32_t Words[] = {0xd10103ff,
+                              0xa9037bf3,
+                              0xd0000013,
+                              0x91008273,
+                              0xf90013f3,
+                              0x910003e1,
+                              0xd2800002u | (Flags[Case] << 5),
+                              0xd2800003,
+                              0x94000038,
+                              0x910003e0,
+                              0x94000039,
+                              0xf94013f3,
+                              0xf9400668,
+                              0xd63f0100,
+                              0xa9437bf3,
+                              0x910103ff,
+                              0xd65f03c0};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      F.word(I, Words[I]);
+    F.Image.Symbols[0].Size = sizeof(Words);
+    if (Case == 4 || Case == 5)
+      F.word(10, 0xd503201f); // Tracked lifetime still open at the query.
+    if (Case == 9)
+      F.word(8, 0xd503201f); // End without initialized scratch.
+    if (Case == 10)
+      F.word(5, 0x910043e1); // Scratch overlaps the table's first eight bytes.
+    if (Case == 11)
+      F.Image.DyldBindSlots.at(0x2000).WeakImport = true;
+    F.run();
+    const auto Targets = immutableNativeCallTargets(F.Image, *F.low());
+    EXPECT_EQ(Targets.size(), Case < 4 ? 1U : 0U);
+    if (!Targets.empty())
+      EXPECT_EQ(Targets.at(Entry + 52).Target, Target);
+  }
+}
+
+TEST(ImmutableNativeCalls, PublicationRepeatsTheFrameMachineProof) {
+  using namespace immutable_native_call_test;
+  for (bool ChangeMachine : {false, true}) {
+    SCOPED_TRACE(ChangeMachine);
+    Fixture F;
+    frameTableFixture(F);
+    F.bindCaller();
+    ASSERT_TRUE(F.high());
+    const auto Expression = immutableNativeExpression(*F.high());
+    ASSERT_TRUE(Expression);
+    ASSERT_TRUE(objCImmutableNativeSourceCallBound(*Expression, F.Image,
+                                                   F.Result, *F.high()));
+    if (ChangeMachine) {
+      F.word(4, 0xf9000be0);
+    } else {
+      auto &Low = *const_cast<LowFunc *>(F.low());
+      for (auto &Block : Low.Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.Addr == Entry + 16 && Op.Opcode == NdOp::STORE)
+            Op.Inputs[1] = NdVar::reg(a64reg::X0, 8);
+    }
+    EXPECT_FALSE(objCImmutableNativeSourceCallBound(*Expression, F.Image,
+                                                    F.Result, *F.high()));
+  }
 }
 
 TEST(ObjCSourceBindings, CFunctionParameterCallRepeatsTheCurrentMachineProof) {
@@ -2318,6 +3008,305 @@ struct SwiftWitnessAccessorFixture {
   }
 };
 } // namespace
+
+TEST(ObjCSourceBindings, SwiftWitnessUndefRequiresGenericDescriptorContract) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftWitnessAccessorFixture F(Architecture);
+    constexpr auto Descriptor =
+        "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+    constexpr auto Module =
+        "/System/Library/Frameworks/Combine.framework/Combine";
+    F.Image.ImportStorageSlots.erase(F.ConformanceSlot);
+    F.Image.ImportPtrSlots[F.ConformanceSlot] = Descriptor;
+    F.Image.DyldBindSlots[F.ConformanceSlot] = {Descriptor, 0, Module, false};
+    F.WitnessCall->Operands[2] = HighExpr::makeUndef(8);
+    // This test isolates the runtime contract; a real generic metadata value
+    // remains unchanged and requires its ordinary independent source binding.
+    F.Accessor.Body = {F.Accessor.Body[2], F.Accessor.Body[4]};
+    ASSERT_TRUE(
+        swiftWitnessInstantiationArgumentUnused(F.Image, F.ConformanceSlot));
+    auto Flow = analyzeHighSourceFlow(F.Accessor, true);
+    for (auto &Issue : Flow.Items)
+      ADD_FAILURE() << Issue.Reason;
+    ASSERT_TRUE(sdk::objc_binding_detail::swiftWitnessUndefDescriptor(
+        F.Accessor, *F.WitnessCall, F.Image));
+    const auto Result = bindObjCSourceReferences(F.Accessor, F.Image);
+    const auto Call = Result.Function.Body[0].Val;
+    ASSERT_TRUE(Call && Call->SourceCallHint);
+    EXPECT_EQ(Call->Operands[2]->Kind, ExprKind::Const);
+    EXPECT_EQ(Call->Operands[2]->ConstVal, 0U);
+    EXPECT_EQ(Call->SourceCallHint->SwiftWitnessUndefDescriptor,
+              F.ConformanceSlot);
+    EXPECT_EQ(F.WitnessCall->Operands[2]->Kind, ExprKind::Undef);
+    EXPECT_EQ(Call->SourceCallHint->Signature.Parameters.size(), 3U);
+    EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
+                                    &Result.Function));
+  }
+}
+
+namespace {
+struct GenericWitnessFixture : SwiftWitnessAccessorFixture {
+  explicit GenericWitnessFixture(Arch Architecture, bool Alias = false)
+      : SwiftWitnessAccessorFixture(Architecture) {
+    constexpr auto Descriptor =
+        "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+    Image.ImportStorageSlots.erase(ConformanceSlot);
+    Image.ImportPtrSlots[ConformanceSlot] = Descriptor;
+    Image.DyldBindSlots[ConformanceSlot] = {
+        Descriptor, 0, "/System/Library/Frameworks/Combine.framework/Combine",
+        false};
+    WitnessCall->Operands[2] = HighExpr::makeUndef(8);
+    Accessor.Body = {Accessor.Body[2], Accessor.Body[4]};
+    if (Alias) {
+      MedVar Variable;
+      Variable.Kind = MedVar::Temp;
+      Variable.Id = 3;
+      Variable.Size = 8;
+      HighStmt Load;
+      Load.Kind = StmtKind::Assign;
+      Load.Dst = HighExpr::makeVar(Variable, WitnessCall->Operands[0]->Type);
+      Load.Val = WitnessCall->Operands[0];
+      WitnessCall->Operands[0] = HighExpr::makeVar(Variable, Load.Dst->Type);
+      Accessor.Body.insert(Accessor.Body.begin(), Load);
+    }
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftWitnessUndefRejectsUnprovedInputAndABI) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 33; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      GenericWitnessFixture F(Architecture);
+      auto Hint =
+          std::make_shared<SourceCallTypeHint>(*F.WitnessCall->SourceCallHint);
+      F.WitnessCall->SourceCallHint = Hint;
+      auto &Descriptor = F.Image.DyldBindSlots[F.ConformanceSlot];
+      auto &Runtime = F.Image.DyldBindSlots[F.RuntimeSlot];
+      switch (Mutation) {
+      case 0:
+        Descriptor.WeakImport = true;
+        break;
+      case 1:
+        Descriptor.Addend = 8;
+        break;
+      case 2:
+        Descriptor.Module = "/tmp/Combine";
+        break;
+      case 3:
+        Descriptor.Name += "other";
+        break;
+      case 4:
+        F.Image.ImportPtrSlots[F.ConformanceSlot] += "other";
+        break;
+      case 5:
+        Runtime.WeakImport = true;
+        break;
+      case 6:
+        Runtime.Module = "/tmp/libswiftCore.dylib";
+        break;
+      case 7:
+        Runtime.Name = "_swift_getWitnessTableRelative";
+        break;
+      case 8:
+        Hint->Signature.Parameters[2].Location.ValueBytes = 4;
+        break;
+      case 9:
+        F.WitnessCall->Operands[1]->Type = NdType::makeFloat(8);
+        break;
+      case 10:
+        F.WitnessCall->Operands[0]->Type = NdType::makeInt(4, false);
+        break;
+      case 11:
+        F.WitnessCall->Operands[0]->Operands[0]->ConstProvenance =
+            ConstantAddressProvenance::Scalar;
+        break;
+      case 12:
+        F.WitnessCall->IsIndirectCall = true;
+        break;
+      case 13:
+        F.WitnessCall->CallAddr += 4;
+        break;
+      case 14: {
+        auto Cast = std::make_shared<HighExpr>();
+        Cast->Kind = ExprKind::Cast;
+        Cast->Type = NdType::makeInt(8, false);
+        Cast->Operands = {F.WitnessCall->Operands[2]};
+        F.WitnessCall->Operands[2] = Cast;
+        break;
+      }
+      case 15:
+        F.WitnessCall->Operands[2] = HighExpr::makeConst(123, 8);
+        break;
+      case 16:
+        F.WitnessCall->Operands[2] = HighExpr::makeCall("effect", 0x7770, {});
+        F.WitnessCall->Operands[2]->Type = NdType::makePtr(NdType::makeVoid());
+        break;
+      case 17:
+        F.WitnessCall->Operands[2]->Type = NdType::makeInt(4, false);
+        break;
+      case 18:
+        F.WitnessCall->Operands[0] = HighExpr::makeConst(
+            F.ConformanceSlot, 8, ConstantAddressProvenance::DataAddress);
+        break;
+      case 19:
+        F.WitnessCall->Operands[0]->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 20:
+        F.WitnessCall->Operands[0]->Type = NdType::makeFloat(8);
+        break;
+      case 21:
+        F.WitnessCall->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 22:
+        Hint->SwiftWitnessUndefDescriptor = F.ConformanceSlot;
+        break;
+      case 23:
+        F.Image.IsRelocatable = true;
+        break;
+      case 24:
+        F.Image.Bits = Bitness::Bits32;
+        break;
+      case 25:
+        F.Image.Format = BinaryFormat::ELF;
+        break;
+      case 26:
+        F.Image.ConflictingImportStorageSlots.insert(F.ConformanceSlot);
+        break;
+      case 27:
+        Descriptor.Name = "_$sSSSysMc";
+        F.Image.ImportPtrSlots[F.ConformanceSlot] = Descriptor.Name;
+        Descriptor.Module = "/usr/lib/swift/libswiftCore.dylib";
+        break;
+      case 28:
+        Hint->Signature.ReturnLocation.ValueBytes = 4;
+        break;
+      case 29:
+        Hint->DoesNotReturn = true;
+        break;
+      case 30:
+        Hint->BorrowedByteInputs = {{0, 1}};
+        break;
+      case 31:
+        Hint->TargetName += "Relative";
+        break;
+      case 32:
+        F.WitnessCall->Type = NdType::makeFloat(8);
+        break;
+      }
+      const auto Before = F.WitnessCall->Operands[2];
+      const auto Result = bindObjCSourceReferences(F.Accessor, F.Image);
+      const auto &Call = Result.Function.Body[0].Val;
+      ASSERT_TRUE(Call && Call->SourceCallHint);
+      EXPECT_EQ(Call->Operands[2]->Kind, Before->Kind);
+      if (Mutation != 22)
+        EXPECT_FALSE(Call->SourceCallHint->SwiftWitnessUndefDescriptor);
+    }
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftWitnessUndefRevalidatesCurrentAliasesAndPublication) {
+  for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    GenericWitnessFixture F(Arch::AArch64, true);
+    auto Result = bindObjCSourceReferences(F.Accessor, F.Image);
+    auto Call = Result.Function.Body[1].Val;
+    ASSERT_TRUE(Call->SourceCallHint->SwiftWitnessUndefDescriptor);
+    ASSERT_TRUE(objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
+                                    &Result.Function));
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+    Call->SourceCallHint = Hint;
+    switch (Mutation) {
+    case 0:
+      Hint->SwiftWitnessUndefDescriptor = F.MetadataSlot;
+      break;
+    case 1:
+      Call->Operands[2]->ConstVal = 1;
+      break;
+    case 2:
+      Call->Operands[2] = HighExpr::makeUndef(8);
+      break;
+    case 3:
+      Result.Function.Body[0].Val = HighExpr::makeConst(0, 8);
+      break;
+    case 4:
+      F.Image.DyldBindSlots[F.ConformanceSlot].WeakImport = true;
+      break;
+    case 5:
+      F.Image.DyldBindSlots[F.RuntimeSlot].Module = "/tmp/runtime";
+      break;
+    case 6:
+      Hint->Signature.Parameters[0].Location.ValueBytes = 4;
+      break;
+    case 7:
+      Call->CallAddr += 4;
+      break;
+    case 8:
+      Result.Function.Body.push_back(Result.Function.Body[1]);
+      break;
+    case 9:
+      Result.Function.Body[0].Val->SourceCallHint.reset();
+      break;
+    case 10:
+      Hint->CallKind = SourceCallTypeHint::Kind::Native;
+      break;
+    }
+    EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
+                                     &Result.Function));
+  }
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    GenericWitnessFixture F(Arch::AArch64, true);
+    auto Load = F.Accessor.Body[0];
+    switch (Mutation) {
+    case 0:
+      F.Accessor.Body.insert(F.Accessor.Body.begin(), Load);
+      break;
+    case 1:
+      std::swap(F.Accessor.Body[0], F.Accessor.Body[1]);
+      break;
+    case 2:
+      F.Accessor.Body[0].Val = F.WitnessCall->Operands[0];
+      break;
+    case 3: {
+      HighStmt Branch;
+      Branch.Kind = StmtKind::If;
+      Branch.Cond = HighExpr::makeUndef(1);
+      Branch.Body = {Load};
+      F.Accessor.Body[0] = Branch;
+      break;
+    }
+    case 4: {
+      auto Escape = std::make_shared<HighExpr>();
+      Escape->Kind = ExprKind::Addr;
+      Escape->Type = NdType::makePtr(NdType::makeVoid());
+      Escape->Operands = {Load.Dst};
+      HighStmt Effect;
+      Effect.Kind = StmtKind::Call;
+      Effect.CallExpr = HighExpr::makeCall("escape", 0x7770, {Escape});
+      F.Accessor.Body.insert(F.Accessor.Body.begin() + 1, Effect);
+      break;
+    }
+    case 5:
+      F.Accessor.Body[0].Dst->Var.Size = 4;
+      break;
+    case 6:
+      F.Accessor.Body[0].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    }
+    const auto Result = bindObjCSourceReferences(F.Accessor, F.Image);
+    size_t Normalized = 0;
+    walkStmts(Result.Function.Body, [&](const HighStmt &Statement) {
+      forEachExpr(Statement, [&](const ExprPtr &Value) {
+        if (Value && Value->SourceCallHint &&
+            Value->SourceCallHint->SwiftWitnessUndefDescriptor)
+          ++Normalized;
+      });
+    });
+    EXPECT_EQ(Normalized, 0U);
+  }
+}
 
 TEST(ObjCSourceBindings, SwiftWitnessAccessorRebuildsZeroArgumentCacheHelper) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
@@ -11134,6 +12123,290 @@ TEST(ObjCSourceBindings, NamedWritableAggregateFieldsShareOneRebuiltStorage) {
             (std::map<va_t, uint64_t>{{Base, 8}}));
 }
 
+TEST(ObjCSourceBindings, SwiftImmutableScalarStoragePreservesCompleteIdentity) {
+  constexpr va_t Address = 0x1040;
+  constexpr const char *Name =
+      "_$sSo7CALayerC12StorageProofE13sourcePadding12CoreGraphics7CGFloatVvpZ";
+  Fixture F;
+  F.Image.ObjCSourceReferences.clear();
+  F.Image.MachOTwoLevelNamespace = true;
+  F.Image.Symbols.push_back({Name, Address, 0, false});
+  llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
+                                   UINT64_C(0x40ad4c4000000000));
+  auto AddressValue =
+      HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
+  F.Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  F.Function.Body[0].RetVal = AddressValue;
+  const auto Storage = swiftImmutableScalarStorage(F.Image, Address);
+  ASSERT_TRUE(Storage);
+  EXPECT_EQ(Storage->SymbolName, Name);
+  EXPECT_EQ(Storage->ByteCount, 8U);
+  const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  ASSERT_TRUE(Result.Function.Body[0].RetVal->SourceCallHint);
+  EXPECT_EQ(Result.BorrowedBytes, (std::set<BorrowedByteRange>{{Address, 8}}));
+  EXPECT_TRUE(
+      objcSourceCallBound(*Result.Function.Body[0].RetVal, F.Image, {}));
+  EXPECT_EQ(F.Function.Body[0].RetVal, AddressValue);
+  EXPECT_EQ(AddressValue->Kind, ExprKind::Const);
+}
+
+namespace {
+Fixture swiftScalarStorageFixture() {
+  Fixture F;
+  F.Image.ObjCSourceReferences.clear();
+  F.Image.MachOTwoLevelNamespace = true;
+  F.Image.Symbols.push_back(
+      {"_$sSo7CALayerC12StorageProofE13sourcePadding12CoreGraphics7CGFloatVvpZ",
+       0x1040, 0, false});
+  llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
+                                   UINT64_C(0x40ad4c4000000000));
+  F.Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  F.Function.Body[0].RetVal =
+      HighExpr::makeConst(0x1040, 8, ConstantAddressProvenance::DataAddress);
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftScalarStorageNeedsCompleteStructuredDeclaration) {
+  const std::vector<std::pair<std::string, unsigned>> Cases = {
+      {"_$sSo7CALayerC12StorageProofE13sourcePadding12CoreGraphics7CGFloatVvpZ",
+       8},
+      {"_$s4Test3BoxC7enabledSbvpZ", 1},
+      {"_$s4Test3BoxV5valueSfvpZ", 4},
+      {"_$s4Test3BoxO5values6UInt16VvpZ", 2},
+      {"_$sSo7CALayerC12StorageProofE5valueSivpZ", 8},
+      {"_$s4Test3BoxC5valueSdvpZ", 8},
+      {"_$s4Test3BoxC5valueSdvp", 0},
+      {"_$s4Test3BoxC5valueSdvgZ", 0},
+      {"_$s4Test3BoxC5valueSdvau", 0},
+      {"_$s4Test3BoxC5valueSdvMZ", 0},
+      {"_$s4Test3BoxC5valueSSvpZ", 0},
+      {"_$s4Test3BoxC5valueSdSgvpZ", 0},
+      {"_$s4Test3BoxC5value12CoreGraphics7CGFloatCvpZ", 0},
+      {"_$s4Test3BoxC5value12CoreGraphics7CGPointVvpZ", 0},
+      {"_$s4Test3BoxC5value4Fake7CGFloatVvpZ", 0},
+      {"_$s4Test3BoxC5value14CoreFoundation7CGFloatVvpZ", 0},
+      {"_$s4Test3BoxC5valueSdvpZsuffix", 0},
+      {std::string(8001, 's'), 0}};
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto &[Name, Width] : Cases) {
+      SCOPED_TRACE(Name);
+      auto F = swiftScalarStorageFixture();
+      F.Image.Arch = Architecture;
+      F.Image.Symbols[0].Name = Name;
+      const auto Storage = swiftImmutableScalarStorage(F.Image, 0x1040);
+      EXPECT_EQ(Storage ? Storage->ByteCount : 0, Width);
+    }
+}
+
+TEST(ObjCSourceBindings, SwiftScalarStorageRejectsAmbiguousOrMutableImage) {
+  for (unsigned Mutation = 0; Mutation < 32; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftScalarStorageFixture();
+    auto &I = F.Image;
+    va_t Address = 0x1040;
+    switch (Mutation) {
+    case 0:
+      I.Format = BinaryFormat::ELF;
+      break;
+    case 1:
+      I.Format = BinaryFormat::COFF;
+      break;
+    case 2:
+      I.Bits = Bitness::Bits32;
+      break;
+    case 3:
+      I.Arch = Arch::ARM;
+      break;
+    case 4:
+      I.IsRelocatable = true;
+      break;
+    case 5:
+      I.MachOTwoLevelNamespace = false;
+      break;
+    case 6:
+      I.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 7:
+      I.Symbols.clear();
+      break;
+    case 8:
+      I.Symbols[0].IsFunc = true;
+      break;
+    case 9:
+      I.Symbols[0].Size = 4;
+      break;
+    case 10:
+      I.Symbols[0].Size = 16;
+      break;
+    case 11:
+      I.Symbols.push_back(I.Symbols[0]);
+      break;
+    case 12:
+      I.Symbols.push_back({"other", 0x1044, 0, false});
+      break;
+    case 13:
+      I.Symbols.push_back({"other", 0x1044, 0, true});
+      break;
+    case 14:
+      I.Symbols.push_back({"other", 0x1038, 16, false});
+      break;
+    case 15:
+      I.Symbols.push_back({I.Symbols[0].Name, 0x1050, 0, false});
+      break;
+    case 16:
+      I.Sections[0].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 17:
+      I.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 18:
+      I.Sections[0].FileSz = 0x44;
+      break;
+    case 19:
+      I.Segments[0].FileSz = 0x44;
+      break;
+    case 20:
+      I.Sections.push_back(I.Sections[0]);
+      break;
+    case 21:
+      I.Segments.push_back(I.Segments[0]);
+      break;
+    case 22:
+      I.Sections[0].Type = llvm::MachO::S_THREAD_LOCAL_REGULAR;
+      break;
+    case 23:
+      I.DataPtrRelocSlots.insert(0x1040);
+      break;
+    case 24:
+      I.CodePtrRelocSlots.insert(0x1040);
+      break;
+    case 25:
+      I.ImportPtrSlots[0x1040] = "external";
+      break;
+    case 26:
+      I.DataPtrRelocSlots.insert(0x103c);
+      break;
+    case 27:
+      I.DataPtrRelocSlots.insert(0x1044);
+      break;
+    case 28:
+      llvm::support::endian::write64le(I.Segments[0].Data.data() + 0x40,
+                                       0x1020);
+      break;
+    case 29:
+      Address = I.Symbols[0].Addr = 0x1041;
+      break;
+    case 30:
+      I.Sections[0].FileOff = 1;
+      break;
+    case 31:
+      I.RuntimeFunctionAddrs.insert(0x1044);
+      break;
+    }
+    EXPECT_FALSE(swiftImmutableScalarStorage(I, Address));
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftScalarStoragePublicationRevalidatesCurrentProof) {
+  auto F = swiftScalarStorageFixture();
+  auto Result = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  const auto &Original = *Result.Function.Body[0].RetVal;
+  ASSERT_TRUE(Original.SourceCallHint);
+  for (unsigned Mutation = 0; Mutation < 23; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto I = F.Image;
+    auto E = Original;
+    auto Mutable = std::make_shared<SourceCallTypeHint>(*E.SourceCallHint);
+    E.SourceCallHint = Mutable;
+    auto &H = *Mutable;
+    switch (Mutation) {
+    case 0:
+      I.Symbols[0].Name = "unknown";
+      break;
+    case 1:
+      I.Symbols[0].Size = 4;
+      break;
+    case 2:
+      I.DataPtrRelocSlots.insert(0x1040);
+      break;
+    case 3:
+      I.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 4:
+      H.TargetAddress += 8;
+      break;
+    case 5:
+      H.TargetName += "stale";
+      break;
+    case 6:
+      H.ByteCount = 4;
+      break;
+    case 7:
+      H.ByteCount = 16;
+      break;
+    case 8:
+      H.Signature.ReturnLocation.ValueBytes = 4;
+      break;
+    case 9:
+      H.Signature.ReturnLocation.RegisterOffset += 8;
+      break;
+    case 10:
+      H.Signature.ReturnType = NdType::makeInt(8);
+      break;
+    case 11:
+      H.OwnerClass = "CALayer";
+      break;
+    case 12:
+      H.Selector = "sourcePadding";
+      break;
+    case 13:
+      H.SelectorReferenceAddress = 0x1080;
+      break;
+    case 14:
+      H.WeakImport = true;
+      break;
+    case 15:
+      E.Operands.push_back(HighExpr::makeConst(0, 8));
+      break;
+    case 16:
+      E.CallAddr = 0x2000;
+      break;
+    case 17:
+      E.CallTarget = "forged";
+      break;
+    case 18:
+      E.IsIndirectCall = true;
+      break;
+    case 19:
+      E.MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 20:
+      E.Type = NdType::makeFloat(8);
+      break;
+    case 21:
+      E.Type = NdType::makeInt(4);
+      break;
+    case 22:
+      H.CallKind = SourceCallTypeHint::Kind::RuntimeReadOnlyBytes;
+      H.TargetName.clear();
+      break;
+    }
+    EXPECT_FALSE(objcSourceCallBound(E, I, {}));
+  }
+  std::set<std::string> Helpers;
+  const auto Text =
+      renderBorrowedByteHelpers(F.Image, Result.BorrowedBytes, Helpers);
+  EXPECT_NE(Text.find("_Alignas(16)"), std::string::npos);
+  EXPECT_EQ(Helpers.size(), 1U);
+  auto Stale = F.Image;
+  Stale.DataPtrRelocSlots.insert(0x1040);
+  EXPECT_THROW(renderBorrowedByteHelpers(Stale, Result.BorrowedBytes, Helpers),
+               std::runtime_error);
+}
+
 TEST(ObjCSourceBindings,
      SwiftBeginAccessUsesTypedOrMemoryAccessProvedLocalStorage) {
   Fixture F;
@@ -13843,5 +15116,369 @@ TEST(ObjCSourceBindings,
     WrongName.ImportPtrSlots[0x3000] = "_sprintf";
     WrongName.DyldBindSlots[0x3000].Name = "_sprintf";
     EXPECT_FALSE(darwinRuntimeFormatDeclaration(WrongName, 0x3000));
+  }
+}
+
+TEST(SwiftValueWitnessCalls, NonreturningRegisterWitnessNeedsNoFrameReceipt) {
+  immutable_native_call_test::Fixture F;
+  // A direct register-derived witness precedes a terminal trap. No value is
+  // reloaded from this frame, so the frame-specific returning-body proof does
+  // not apply. The ordinary witness and no-return gates remain independent.
+  const uint32_t Words[] = {0xa9bf7bfd, 0xf85f8048, 0xf9400908, 0xd63f0100,
+                            0xd4200020};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols[0].Size = sizeof(Words);
+  F.EntrySignature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  F.EntrySignature.ReturnType = NdType::makeVoid();
+  for (unsigned I = 0; I < 3; ++I)
+    F.EntrySignature.Parameters.push_back(
+        {"arg" + std::to_string(I), NdType::makePtr(NdType::makeVoid())});
+  std::string Error;
+  ASSERT_TRUE(
+      assignDarwinScalarSourceABI(F.EntrySignature, Arch::AArch64, Error))
+      << Error;
+  F.run();
+  ASSERT_TRUE(F.low());
+  ASSERT_TRUE(F.med());
+  ASSERT_TRUE(F.high());
+  ASSERT_TRUE(F.med()->DoesNotReturn);
+  ASSERT_TRUE(F.high()->DoesNotReturn);
+  unsigned Witnesses = 0;
+  for (const auto &B : F.med()->Blocks)
+    for (const auto &O : B.Ops)
+      if (O.SourceCallHint && O.SourceCallHint->ValueWitness) {
+        ++Witnesses;
+        EXPECT_FALSE(O.SourceCallHint->SwiftWitnessFrame);
+      }
+  ASSERT_EQ(Witnesses, 1U);
+  EXPECT_TRUE(validateSwiftWitnessFrameBindings(F.Image, F.low(), *F.med()));
+  EXPECT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(*F.high()));
+}
+
+TEST(SwiftValueWitnessCalls, PublicationReplaysCurrentFrameOccurrence) {
+  immutable_native_call_test::Fixture F;
+  swift_witness_frame_test::frameWitnessFixture(F);
+  ASSERT_TRUE(F.high());
+  ASSERT_TRUE(F.med());
+  EXPECT_TRUE(validateSwiftWitnessFrameBindings(F.Image, F.low(), *F.med()));
+  EXPECT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(*F.high()));
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+  EXPECT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(Bound.Function));
+}
+
+TEST(SwiftValueWitnessCalls,
+     FramePublicationRejectsStaleAndRepeatedOccurrences) {
+  for (unsigned Case = 0; Case < 32; ++Case) {
+    SCOPED_TRACE(Case);
+    immutable_native_call_test::Fixture F;
+    swift_witness_frame_test::frameWitnessFixture(F);
+    ASSERT_TRUE(F.high());
+    ASSERT_TRUE(F.med());
+    ExprPtr Call;
+    walkStmts(F.high()->Body, [&](HighStmt &S) {
+      forEachExpr(S, [&](ExprPtr &Root) {
+        std::vector<ExprPtr> Pending{Root};
+        while (!Pending.empty()) {
+          auto E = Pending.back();
+          Pending.pop_back();
+          if (!E)
+            continue;
+          if (E->SourceCallHint && E->SourceCallHint->SwiftWitnessFrame)
+            Call = E;
+          E->forEachChildExpr([&](const ExprPtr &C) { Pending.push_back(C); });
+        }
+      });
+    });
+    ASSERT_TRUE(Call);
+    auto Hint = *Call->SourceCallHint;
+    MedOp *MedCall = nullptr;
+    for (auto &B : F.med()->Blocks)
+      for (auto &O : B.Ops)
+        if (O.Opcode == NdOp::INDIR_CALL)
+          MedCall = &O;
+    ASSERT_TRUE(MedCall);
+    switch (Case) {
+    case 0:
+      F.word(9, 0xb90023e8);
+      break;
+    case 1:
+      F.Image.DyldBindSlots.at(0x2000).WeakImport = true;
+      break;
+    case 2:
+      Hint.SwiftWitnessFrame->FunctionEntry += 4;
+      break;
+    case 3:
+      ++Hint.SwiftWitnessFrame->Site.Sequence;
+      break;
+    case 4:
+      Hint.SwiftWitnessFrame->Site.Instruction += 4;
+      break;
+    case 5:
+      Hint.SwiftWitnessFrame->Site.Opcode = NdOp::CALL;
+      break;
+    case 6:
+      Hint.SwiftWitnessFrame->Site.StaticTarget = 0x1100;
+      break;
+    case 7:
+      Hint.SwiftWitnessFrame.reset();
+      break;
+    case 8:
+      Hint.Signature.Parameters.back().Location.RegisterOffset += 8;
+      break;
+    case 9:
+      Hint.Signature.Parameters.back().Type = NdType::makeInt(4);
+      break;
+    case 10:
+      Hint.WeakImport = true;
+      break;
+    case 11:
+      Hint.ReturnedArgument = 0;
+      break;
+    case 12:
+      Hint.ValueWitness =
+          SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy;
+      break;
+    case 13:
+      Call->Operands.back() = HighExpr::makeConst(0, 8);
+      break;
+    case 14:
+      std::swap(Call->Operands[0], Call->Operands[1]);
+      break;
+    case 15:
+      Call->IndirectTarget = HighExpr::makeConst(0x1200, 8);
+      break;
+    case 16:
+      Call->IsIndirectCall = false;
+      break;
+    case 17:
+      Call->Operands.pop_back();
+      break;
+    case 18:
+      Call->Type = NdType::makeInt(4);
+      break;
+    case 19: {
+      HighStmt S;
+      S.Kind = StmtKind::Call;
+      S.CallExpr = Call;
+      F.high()->Body.push_back(S);
+      break;
+    }
+    case 20: {
+      auto H = *MedCall->SourceCallHint;
+      H.SwiftWitnessFrame.reset();
+      MedCall->SourceCallHint = std::make_shared<const SourceCallTypeHint>(H);
+      break;
+    }
+    case 21:
+      --MedCall->NumInputs;
+      break;
+    case 22:
+      ++MedCall->OriginSeq;
+      break;
+    case 23:
+      MedCall->PreservesCallerSaved = true;
+      break;
+    case 24:
+      F.Result.LowFuncs.push_back(*F.low());
+      break;
+    case 25:
+      for (auto &A : F.Result.FunctionAudits)
+        if (A.Entry == 0x1000)
+          A.MedIRVerified = false;
+      break;
+    case 26:
+      F.med()->SourceParametersBound = false;
+      break;
+    case 27:
+      F.med()->DoesNotReturn = true;
+      F.high()->DoesNotReturn = true;
+      break;
+    case 28:
+      F.med()->DoesNotReturn = true;
+      break;
+    case 29:
+      F.high()->DoesNotReturn = true;
+      break;
+    case 30:
+    case 31: {
+      F.med()->DoesNotReturn = true;
+      F.high()->DoesNotReturn = true;
+      auto H = *MedCall->SourceCallHint;
+      H.SwiftWitnessFrame.reset();
+      MedCall->SourceCallHint = std::make_shared<const SourceCallTypeHint>(H);
+      if (Case == 31)
+        Hint.SwiftWitnessFrame.reset();
+      break;
+    }
+    }
+    Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(Hint);
+    EXPECT_FALSE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                     .valid(*F.high()));
+  }
+}
+
+TEST(SwiftValueWitnessCalls, GeneratedFrameWitnessSourceMatchesOriginalARM64) {
+#if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
+  using namespace immutable_native_call_test;
+  immutable_native_call_test::Fixture F;
+  swift_witness_frame_test::frameWitnessFixture(F);
+  ASSERT_TRUE(F.high());
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+  ASSERT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(Bound.Function));
+  const auto Audit =
+      std::find_if(F.Result.FunctionAudits.begin(),
+                   F.Result.FunctionAudits.end(), [](const auto &A) {
+                     return A.Entry == immutable_native_call_test::Entry;
+                   });
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  const auto Allowed = [&](const HighExpr &E) {
+    return objcSourceCallBound(E, F.Image, Functions, nullptr, nullptr,
+                               &Bound.Function);
+  };
+  const auto Limitation = sourceBodyLimitation(
+      Bound.Function, *Bound.Function.SourceTypeHint, &*Audit, Allowed);
+  ASSERT_TRUE(Limitation.empty()) << Limitation;
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-witness-frame", Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code E;
+      std::filesystem::remove_all(Work, E);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "witness.c").string();
+  std::ofstream(Path) << Source << R"(
+#include <stdio.h>
+extern void *original_witness(void *,void *,void *,uint64_t,void *);
+__asm__(".text\n.p2align 2\n.globl _original_witness\n_original_witness:\n"
+        ".long 0xa9bb53f3,0xa9015bf5,0xa9047bfd,0xaa0003f3,0xaa0103f4\n"
+        ".long 0xaa0203f5,0x92401476,0x910006d6,0xf85f82a8,0xf90013e8,0xaa0403e0\n"
+        "bl _objc_release\n"
+        ".long 0xf10006d6,0x54ffffe1,0xf94013e8,0xf9400908\n"
+        ".long 0xaa1303e0,0xaa1403e1,0xaa1503e2,0xd63f0100\n"
+        ".long 0xa9447bfd,0xa9415bf5,0xa8c553f3,0xd65f03c0\n");
+static uint64_t table[8], metadata[3], calls, selected;
+static void *expected_dst, *expected_src;
+static void * __attribute__((swiftcall)) copy_a(void *d,void *s,void *m) {
+  if(d!=expected_dst || s!=expected_src || m!=metadata+1) __builtin_trap();
+  ++calls; selected=1;
+  ((uint64_t*)d)[0]=((uint64_t*)s)[0]^metadata[1];
+  ((uint64_t*)d)[1]=((uint64_t*)s)[1]+metadata[2];
+  return d;
+}
+static void * __attribute__((swiftcall)) copy_b(void *d,void *s,void *m) {
+  void *r=copy_a(d,s,m); selected=2; return r;
+}
+int main(void) {
+  const uint32_t words[]={0xa9bb53f3,0xa9015bf5,0xa9047bfd,0xaa0003f3,0xaa0103f4,
+    0xaa0203f5,0x92401476,0x910006d6,0xf85f82a8,0xf90013e8,0xaa0403e0,0x94000035,
+    0xf10006d6,0x54ffffe1,0xf94013e8,0xf9400908,0xaa1303e0,0xaa1403e1,
+    0xaa1503e2,0xd63f0100,0xa9447bfd,0xa9415bf5,0xa8c553f3,0xd65f03c0};
+  const uint32_t *machine=(const uint32_t*)(uintptr_t)original_witness;
+  for(unsigned i=0;i<24;++i){uint32_t mask=i==11?0xfc000000U:UINT32_MAX;
+    if((machine[i]&mask)!=(words[i]&mask))return 1;}
+  uint64_t state=UINT64_C(0xb123456789abcdef);
+  for(unsigned i=0;i<2048;++i){
+    state=state*UINT64_C(6364136223846793005)+1;
+    uint64_t s[]={state,state^UINT64_C(0x71823456abcdef98)};
+    uint64_t a[]={17,0,0,31},b[]={17,0,0,31};
+    metadata[0]=(uintptr_t)table;metadata[1]=state;metadata[2]=~state;
+    unsigned choice=i%2+1;
+    table[2]=(uintptr_t)(choice==1?copy_a:copy_b);
+    expected_src=s;expected_dst=a+1;calls=0;selected=0;
+    void *ra=original_witness(a+1,s,metadata+1,state,0);
+    if(ra!=a+1||calls!=1||selected!=choice)return 2;
+    expected_dst=b+1;calls=0;selected=0;
+    void *rb=indirect_native(b+1,s,metadata+1,state,0);
+    if(rb!=b+1||calls!=1||selected!=choice||memcmp(a,b,sizeof(a)))return 3;
+    if(a[0]!=17||a[3]!=31||a[1]!=(s[0]^state)||a[2]!=s[1]+~state)return 4;
+    if(s[0]!=state||s[1]!=(state^UINT64_C(0x71823456abcdef98)))return 5;
+  }
+  return 0;
+}
+)";
+  for (const auto *Level : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Level);
+    const auto Output = (Work / (std::string("witness") + Level)).string();
+    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
+                                            "-lobjc",          "-o",  Output};
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0) << Source;
+  }
+#else
+  GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
+#endif
+}
+
+TEST(SwiftValueWitnessCalls, ScalarInferenceRechecksFrameBinding) {
+  for (unsigned Case = 0; Case < 10; ++Case) {
+    SCOPED_TRACE(Case);
+    immutable_native_call_test::Fixture F;
+    swift_witness_frame_test::frameWitnessFixture(F);
+    F.EntrySignature = {};
+    F.run();
+    ASSERT_TRUE(F.high());
+    ASSERT_TRUE(F.med());
+    ASSERT_TRUE(F.low());
+    if (Case == 1)
+      F.word(9, 0xb90023e8);
+    if (Case == 2)
+      F.Image.DyldBindSlots.at(0x2000).WeakImport = true;
+    for (auto &B : F.med()->Blocks)
+      for (auto &O : B.Ops) {
+        if (O.Opcode != NdOp::INDIR_CALL)
+          continue;
+        ASSERT_TRUE(O.SourceCallHint);
+        auto H = *O.SourceCallHint;
+        if (Case == 3)
+          H.SwiftWitnessFrame.reset();
+        if (Case == 4)
+          ++H.SwiftWitnessFrame->Site.Sequence;
+        if (Case == 5)
+          H.ValueWitness =
+              SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy;
+        if (Case == 6)
+          --O.NumInputs;
+        if (Case == 7)
+          O.DoesNotReturn = true;
+        if (Case == 8)
+          O.Inputs[3].Size = 4;
+        if (Case == 9)
+          H.Signature.Parameters.back().Location.RegisterOffset += 8;
+        O.SourceCallHint = std::make_shared<const SourceCallTypeHint>(H);
+      }
+    auto A = std::find_if(F.Result.FunctionAudits.begin(),
+                          F.Result.FunctionAudits.end(),
+                          [](const auto &A) { return A.Entry == 0x1000; });
+    ASSERT_NE(A, F.Result.FunctionAudits.end());
+    std::string Reason;
+    const auto Hint = inferNativeSourceTypeHint(F.Image, *F.med(), *F.high(),
+                                                *A, Reason, F.low());
+    EXPECT_EQ(bool(Hint), Case == 0) << Reason;
   }
 }

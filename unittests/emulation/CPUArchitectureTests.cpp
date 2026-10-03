@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/CPU.h"
@@ -43,6 +44,8 @@ llvm::Error steps(ExecutionBackend &CPU, unsigned Count) {
 }
 #if defined(_WIN32)
 constexpr auto Native = ExecutionBackendKind::WHP;
+#elif defined(__APPLE__)
+constexpr auto Native = ExecutionBackendKind::HVF;
 #else
 constexpr auto Native = ExecutionBackendKind::KVM;
 #endif
@@ -57,7 +60,8 @@ protected:
       auto E = B.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       const auto Reason = llvm::toString(std::move(E));
-      if (Unavailable && !std::getenv(RequireNative))
+      if (Unavailable && !std::getenv(RequireNative) &&
+          !requireHvf(GetParam(), GuestArchitecture::AArch64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }
@@ -209,11 +213,11 @@ TEST(CPUSelection, MatchingGuestUsesTheNativeHostBackend) {
     auto E = B.takeError();
     const bool Unavailable = E.isA<BackendUnavailableError>();
     const auto Reason = llvm::toString(std::move(E));
-    if (Unavailable && !std::getenv(RequireNative))
+    if (Unavailable && !std::getenv(RequireNative) && !requireHvf(Native, ISA))
       GTEST_SKIP() << Reason;
     FAIL() << Reason;
   }
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
   EXPECT_EQ(B->Kind, Native);
 #else
   EXPECT_EQ(B->Kind, ExecutionBackendKind::Unicorn);

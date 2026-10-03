@@ -45,17 +45,19 @@ public:
     std::memcpy(&Out, Raw.data() + Offset, sizeof(T));
     return true;
   }
-  llvm::Expected<llvm::ArrayRef<uint8_t>> bytes(uint64_t RVA,
-                                                uint64_t Size) const {
+  llvm::Expected<llvm::ArrayRef<uint8_t>>
+  bytes(uint64_t RVA, uint64_t Size, bool LinkerMetadata = true) const {
     if (Size > Budget.MetadataBytes)
       return failure(text::ModuleBudget);
     Budget.MetadataBytes -= Size;
-    if (!Metadata.empty() && RVA >= Metadata.back().RVA &&
-        RVA <= Metadata.back().RVA + Metadata.back().Size)
-      Metadata.back().Size =
-          std::max(Metadata.back().Size, RVA + Size - Metadata.back().RVA);
-    else
-      Metadata.push_back({RVA, Size});
+    if (LinkerMetadata) {
+      if (!Metadata.empty() && RVA >= Metadata.back().RVA &&
+          RVA <= Metadata.back().RVA + Metadata.back().Size)
+        Metadata.back().Size =
+            std::max(Metadata.back().Size, RVA + Size - Metadata.back().RVA);
+      else
+        Metadata.push_back({RVA, Size});
+    }
     for (const auto &S : Sections) {
       const uint64_t Start = S.Header.VirtualAddress;
       if (RVA < Start || RVA - Start >= S.Header.VirtualSize)
@@ -183,12 +185,50 @@ llvm::Error readImports(const Reader &R, const data_directory &D, Image &Out,
   }
   return Terminated ? llvm::Error::success() : failure(text::Imports);
 }
-llvm::Error readTLS(const Reader &R, const data_directory &D, Image &Out) {
-  if (!D.Size)
+// VA-valued TLS fields must be decoded again from relocated staging. Both
+// views use this validation; no cached pointer is implicitly biased.
+class StagedReader {
+public:
+  const Image &Loaded;
+  ImageReadBudget &Budget;
+  const ImageRegion *region(uint64_t RVA, uint64_t Size) const {
+    for (const auto &R : Loaded.Regions) {
+      const uint64_t Start = R.Address - Loaded.Base;
+      if (R.ContentSize && RVA >= Start && RVA - Start < R.ContentSize &&
+          Size <= R.ContentSize - (RVA - Start))
+        return &R;
+    }
+    return nullptr;
+  }
+  llvm::Expected<llvm::ArrayRef<uint8_t>> bytes(uint64_t RVA, uint64_t Size,
+                                                bool) const {
+    if (Size > Budget.MetadataBytes)
+      return failure(text::ModuleBudget);
+    Budget.MetadataBytes -= Size;
+    const auto *R = region(RVA, Size);
+    if (!R)
+      return failure(text::TLS);
+    const uint64_t Offset = RVA - (R->Address - Loaded.Base);
+    if (Offset > R->FileSize || Size > R->FileSize - Offset)
+      return failure(text::TLS);
+    return llvm::ArrayRef(R->Bytes).slice(Offset, Size);
+  }
+  bool accessible(uint64_t RVA, uint64_t Size, uint32_t Rights) const {
+    const auto *R = region(RVA, Size);
+    unsigned Required = 0;
+    if (Rights & llvm::COFF::IMAGE_SCN_MEM_READ)
+      Required |= Read;
+    if (Rights & llvm::COFF::IMAGE_SCN_MEM_WRITE)
+      Required |= Write;
+    if (Rights & llvm::COFF::IMAGE_SCN_MEM_EXECUTE)
+      Required |= Execute;
+    return R && (R->Permissions & Required) == Required;
+  }
+};
+template <class View> llvm::Error readTLS(const View &R, Image &Out) {
+  if (!Out.TLSDirectory)
     return llvm::Error::success();
-  if (D.Size != sizeof(coff_tls_directory64))
-    return failure(text::TLS);
-  auto Data = R.bytes(D.RelativeVirtualAddress, D.Size);
+  auto Data = R.bytes(Out.TLSDirectory, sizeof(coff_tls_directory64), false);
   if (!Data)
     return Data.takeError();
   coff_tls_directory64 TLS;
@@ -200,8 +240,12 @@ llvm::Error readTLS(const Reader &R, const data_directory &D, Image &Out) {
   const uint64_t End = TLS.EndAddressOfRawData;
   const uint64_t Alignment =
       (TLS.Characteristics & TLSAlignmentMask) >> TLSAlignmentShift;
+  // Nonzero SizeOfZeroFill does not establish a zeroed extension in the
+  // native Windows oracle. Compiler-emitted zero-initialized TLS remains
+  // part of the bounded template; avoid inventing extra accessible storage.
+  if (TLS.SizeOfZeroFill)
+    return failure(text::TLSZeroFill);
   if (End < Begin || End - Begin > TLSCapacity ||
-      TLS.SizeOfZeroFill > TLSCapacity - (End - Begin) ||
       (TLS.Characteristics & ~TLSAlignmentMask) ||
       (Alignment && (uint64_t(1) << (Alignment - 1)) > PageSize) ||
       !RVA(TLS.AddressOfIndex, DWordSize, llvm::COFF::IMAGE_SCN_MEM_WRITE) ||
@@ -212,15 +256,18 @@ llvm::Error readTLS(const Reader &R, const data_directory &D, Image &Out) {
   if (End != Begin) {
     if (!RVA(Begin, End - Begin, llvm::COFF::IMAGE_SCN_MEM_READ))
       return failure(text::TLS);
-    auto Bytes = R.bytes(Begin - Out.Base, End - Begin);
+    auto Bytes = R.bytes(Begin - Out.Base, End - Begin, false);
     if (!Bytes)
       return Bytes.takeError();
-    Out.TLSBytes.assign(Bytes->begin(), Bytes->end());
   }
-  Out.TLSCallbackPointer = Out.Base + D.RelativeVirtualAddress +
+  Out.TLSCallbackPointer = Out.Base + Out.TLSDirectory +
                            offsetof(coff_tls_directory64, AddressOfCallBacks);
   Out.TLSIndex = TLS.AddressOfIndex;
-  Out.TLSSize = End - Begin + TLS.SizeOfZeroFill;
+  Out.TLSSize = End - Begin;
+  Out.TLSTemplate = Begin;
+  Out.TLSTemplateSize = End - Begin;
+  Out.TLSAlignment =
+      std::max(PointerSize, Alignment ? uint64_t(1) << (Alignment - 1) : 1);
   for (const auto &I : Out.Imports)
     if (Out.TLSIndex < I.Slot + PointerSize &&
         I.Slot < Out.TLSIndex + DWordSize)
@@ -233,7 +280,7 @@ llvm::Error readTLS(const Reader &R, const data_directory &D, Image &Out) {
     const uint64_t Offset = TLS.AddressOfCallBacks - Out.Base;
     if (Offset > Out.Size || I * PointerSize > Out.Size - Offset)
       return failure(text::TLS);
-    auto Pointer = R.bytes(Offset + I * PointerSize, PointerSize);
+    auto Pointer = R.bytes(Offset + I * PointerSize, PointerSize, false);
     if (!Pointer)
       return Pointer.takeError();
     const uint64_t Target = llvm::support::endian::read64le(Pointer->data());
@@ -244,10 +291,9 @@ llvm::Error readTLS(const Reader &R, const data_directory &D, Image &Out) {
          Target % DWordSize) ||
         !RVA(Target, 1, llvm::COFF::IMAGE_SCN_MEM_EXECUTE))
       return failure(text::TLS);
-    auto Code = R.bytes(Target - Out.Base, 1);
+    auto Code = R.bytes(Target - Out.Base, 1, false);
     if (!Code)
       return Code.takeError();
-    Out.TLSCallbacks.push_back(Target);
   }
   return failure(text::TLS);
 }
@@ -319,8 +365,6 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
             Base, Size,
             PE.AddressOfEntryPoint ? Base + PE.AddressOfEntryPoint : 0};
   Budget.MappedBytes -= Size;
-  if (DLL && PE.AddressOfEntryPoint)
-    return failure(text::ModuleInit);
   uint64_t Table = OptionalOffset + COFF.SizeOfOptionalHeader;
   if (Table > PE.SizeOfHeaders ||
       uint64_t(COFF.NumberOfSections) * sizeof(coff_section) >
@@ -364,12 +408,12 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
         RawSize ? R.Raw.slice(FileOffset, RawSize) : llvm::ArrayRef<uint8_t>{};
     R.Sections.push_back({S, Raw});
     ImageRegion Region{Base + S.VirtualAddress, Permissions,
-                       std::vector<uint8_t>(Span)};
+                       std::vector<uint8_t>(Span), S.VirtualSize, RawSize};
     std::copy(Raw.begin(), Raw.end(), Region.Bytes.begin());
     Out.Regions.push_back(std::move(Region));
     Previous = S.VirtualAddress + Span;
   }
-  if (!DLL) {
+  if (!DLL || PE.AddressOfEntryPoint) {
     if ((Out.Architecture == GuestArchitecture::AArch64 &&
          PE.AddressOfEntryPoint % DWordSize) ||
         !R.accessible(PE.AddressOfEntryPoint, 1,
@@ -399,9 +443,13 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
         return failure(text::Metadata);
       continue;
     }
-    if (DLL && I == llvm::COFF::TLS_TABLE)
-      return failure(text::ModuleInit);
-    auto Data = R.bytes(D.RelativeVirtualAddress, D.Size);
+    if (I == llvm::COFF::TLS_TABLE) {
+      if (D.Size != sizeof(coff_tls_directory64))
+        return failure(text::TLS);
+      Out.TLSDirectory = D.RelativeVirtualAddress;
+    }
+    auto Data =
+        R.bytes(D.RelativeVirtualAddress, D.Size, I != llvm::COFF::TLS_TABLE);
     if (!Data)
       return Data.takeError();
     if (I == llvm::COFF::DEBUG_DIRECTORY) {
@@ -471,7 +519,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
   if (auto E = readImports(R, Directories[llvm::COFF::IMPORT_TABLE], Out,
                            GuestImports))
     return std::move(E);
-  if (auto E = readTLS(R, Directories[llvm::COFF::TLS_TABLE], Out))
+  if (auto E = readTLS(R, Out))
     return std::move(E);
   auto Exports = readPEProgramExports(
       R.Raw, {Budget.MetadataBytes, Budget.Records, MaxName});
@@ -481,8 +529,6 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
   Budget.Records -= Exports->RecordsRead;
   Out.Exports = std::move(*Exports);
   for (const auto &Export : Out.Exports.Entries) {
-    if (Export.Kind == PEExportKind::Forwarder)
-      return failure(text::ModuleForwarder);
     if (Export.Kind == PEExportKind::Address && !R.accessible(Export.RVA, 1, 0))
       return failure(text::ModuleExport);
   }
@@ -533,7 +579,8 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
                      }))
       return failure(text::LoaderDisagreement);
   ImageRegion Headers{Base, Read | UserAccessible,
-                      std::vector<uint8_t>(pages(PE.SizeOfHeaders))};
+                      std::vector<uint8_t>(pages(PE.SizeOfHeaders)),
+                      PE.SizeOfHeaders, PE.SizeOfHeaders};
   std::copy_n(R.Raw.begin(), PE.SizeOfHeaders, Headers.Bytes.begin());
   Out.Regions.insert(Out.Regions.begin(), std::move(Headers));
   return Out;
@@ -547,5 +594,35 @@ llvm::Expected<Image> loadImage(const std::filesystem::path &Path,
 llvm::Expected<Image> loadProgramImage(const std::filesystem::path &Path,
                                        ImageReadBudget &Budget, bool DLL) {
   return readImage(Path, Budget, DLL, true);
+}
+llvm::Error relocateImage(Image &Loaded, uint64_t Base,
+                          ImageReadBudget &Budget) {
+  const uint64_t Bias = Base - Loaded.Base;
+  if (!Bias)
+    return llvm::Error::success();
+  for (uint64_t RVA : Loaded.Relocations) {
+    bool Found = false;
+    for (auto &R : Loaded.Regions) {
+      const uint64_t Start = R.Address - Loaded.Base;
+      if (RVA < Start || RVA - Start >= R.Bytes.size() ||
+          PointerSize > R.Bytes.size() - (RVA - Start))
+        continue;
+      auto *Slot = R.Bytes.data() + RVA - Start;
+      llvm::support::endian::write64le(
+          Slot, llvm::support::endian::read64le(Slot) + Bias);
+      Found = true;
+      break;
+    }
+    if (!Found)
+      return failure(text::Metadata);
+  }
+  for (auto &R : Loaded.Regions)
+    R.Address += Bias;
+  for (auto &I : Loaded.Imports)
+    I.Slot += Bias;
+  if (Loaded.Entry)
+    Loaded.Entry += Bias;
+  Loaded.Base = Base;
+  return readTLS(StagedReader{Loaded, Budget}, Loaded);
 }
 } // namespace neverd::emulation::windows_process

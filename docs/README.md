@@ -33,6 +33,8 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 | [CPU execution](cpu-execution.md) | Validated configuration, capability queries, backend availability and typed CPU outcomes, independent of guest OS |
 | [Bitvector proof backends](solver.md) | Optional Z3 proofs, fail-closed synthesis, independent solver tests and query export |
 | [Guest process emulation](process-emulation.md) | Explicit Linux ELF64 process profile, startup stack, system calls, bounded output, CLI/C/Python and current limits |
+| [macOS/iOS process environments](darwin-emulation.md) | Mach-O startup, explicit device/simulator platforms, Darwin BSD services and page rules |
+| [macOS HVF](macos-hvf.md) | Host-native hardware execution, entitlements, packaging and validation |
 | [Windows driver emulation](driver-emulation.md) | Bounded x64 WDM/KMDF lifecycle, requests, hardware scenarios, SEH, PnP subsets, backend selection and limits |
 | [Memory-safety audit & hunt](memory-safety.md) | Heap-lifetime and copy-overflow analysis: identity contract per format, sink/source catalog, verdicts, budgets, and JSON schema |
 | [Native plugins](plugins.md) | Pure-C descriptor ABI, callbacks and events, build/link workflow, discovery, and compatibility rules |

@@ -59,6 +59,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDMedMutableSourceTests` 和 `NeverDLLVMCValueTests` 在 O0/O2 下執行獨立撰寫的迴圈、區塊重排、入口回邊、執行期堆疊運算、較早讀取、分支匯合、部分別名、布林真值和包含零輸入的位元計數。反例要求在發射前拒絕畸形輸入、截斷目標、歧義承載和預算耗盡。超過 SSA 限制的 CLI 案例要求 LLVMC 輸出可執行，並要求 HighC 明確拒絕。 連續更新和跨區塊儲存運算式鏈也會檢查產生 C 的大小與執行結果。
 
+新增迴歸限制 LLVM 提升前的私有讀寫數量和 C 輸出大小，執行長混合運算鏈、重新排序的 SSA 區塊、重疊的客戶記憶體寫入及零回傳值的 O0/O2 檢查；關鍵案例還經過實際 LLVM 最佳化管線，並驗證模組產生遭拒後可以安全重用發射器。
+
 複合條件回歸在 O0/O2 下執行包含非零常數相等、無符號比較、兩種運算元順序的有符號比較、擴寬布林輸入及全部布林否定組合的合取和析取。C 發射必須保留完整真值表，且不得解引用不存在的零比較運算元。整數位址儲存涵蓋對齊與未對齊的 32/64/128 位元承載；位元組儲存陣列保留明確對齊及精確的首位址與部分存取，不得產生純量對陣列賦值或不相容型別的別名存取。
 
 `NeverDLowIRRefinementTests` 涵蓋實際恢復的殘餘圖、不同結構的有限迴圈、零次迭代、獨立動態產生者、條件見證、重疊輸入視圖、複製與溢出關聯、兩邊不可變讀取證據、強制系統旗標及返回槽保留。錯誤候選、額外寫入、不完整或無限路徑、過期證據、暫存區衝突與共享預算耗盡必須拒絕證書；既有獨立性測試仍拒絕可觀察的任意值。
@@ -129,11 +131,23 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `FrameOffsets.*`、`NativeStackSpecialization.*` 與 `OriginalBinaryUndefinedIndependence.*` 檢查 2/4/8/16/32 位元組對齊的全部餘數、自由高位、跨呼叫儲存、倒數迴圈、別名破壞、錯誤分派、無關大遮罩、必要分區升級及恰好／少一次預算。獨立原生控制檢查帶分支約束的對齊、內部無符號返回清理、錯誤清理量與帶前綴返回。這些測試不表示分區迴圈已具備自動原生至 LLVM 的完整證明。
 
+暫存器分區回歸涵蓋大小端、高位框架根、覆寫與重疊欄位、後續邊、擴大的前驅、原生 CALL/RET，以及剛好足夠或少一步的預算。兩種 C 路徑在 O0/O2 執行全部四種記憶體情況。原生細化檢查分別綁定兩個選擇器值，並非無約束輸入證明。獨立 LLVM 案例驗證：將假分支移至共享匯合點之前，不可使它在真分支後繼續執行，並檢查 PHI 複製與儲存。
+
 入口對齊回歸涵蓋更細分區、全部允許餘數、不同高位根位址、最後案例失敗，以及精確與少一預算。兩個 C 後端均在 O0/O2 下以不可存取的被拒客體位址及無效旗標驗證：狀態 2 必須保留全部狀態位元組。模型細化檢查相同拒絕語義；C/Python 測試涵蓋 v5 配置、所有權及舊版與未來尾部。原生證明控制明確拒絕未綁定的對齊域。
 
 `StringTransfer.*` 與重複搬移迴歸檢查重疊、零次數、暫存變數隔離、容量／預算限制及指標失效。`MachineStringSourceTests.cpp` 針對四種寬度與兩個方向，將原生執行及兩條 C 路徑的 O0/O2 結果與獨立的全部暫存器、旗標及堆疊參考結果比較。
 
 `ControlDiscovery.*` 與 `NativeStackSpecialization.*` 涵蓋根位址低位元條件、高位元和完整根相依、不完整遍歷、恰好足夠及不足的遍歷預算，以及有限不可變位址證據的保留。
+
+未解析目標的守衛測試涵蓋不可達的非法階段、入口或回邊之後確實可達的未知目標、精確細化次數上限，以及相鄰的成功與耗盡探索預算。拒絕時不得發布殘餘程式碼、來源記錄或讀取見證。完整恢復之後的可選探索開銷不是必要預算的下界。
+
+依需求投影框架關係的迴歸涵蓋自動及既有暫存器載體、高位根位址與模回繞、只約束低位元組的條件、兄弟邊事實衝突或缺失、相鄰查詢預算結果及求解器 unknown。窄位需求不能把部分指標證明當作全寬證明；拒絕恢復時不發布殘留程式碼或見證。
+
+有限子欄位回歸涵蓋高半部與低半部選擇值、可觀察的任意負載、暫存器與框架槽、兩種位元組順序、窄載體、後續取值域擴大、不相交遮罩及缺失事實。缺失的可達目標、無界選擇值、共用查詢預算耗盡及求解器 unknown 均不得發布殘餘程式碼或證明憑據。 測試也涵蓋整字需求下的自動探索、未使用的手動提示、根衍生酬載和前段常數視窗。
+
+公開工作預算測試涵蓋預設值和 32 位元最大值、求值與相依性探索各自耗盡、兩種原始碼 ABI 和 C 後端，以及無效 CLI 參數。C/Python 配置檢查涵蓋 v7、繼承欄位驗證和 v1–v6 對未來尾部的忽略。預算拒絕時不得發布原始碼和復原見證；節點求值計數達到最大值時不得回繞。
+
+可選的重複目的地切鏈測試在同一固定操作預算下比較一般迴圈與巢狀迴圈，執行殘餘迴圈，區分解碼模式，並確認零鏈長行為不變。關聯反例必須在預設策略下成功、啟用選項後拒絕發布。重複原生呼叫／返回槽、相依重播及後到前驅以兩種設定執行。公開旗標測試涵蓋兩種原始碼 ABI／後端、預設與未知旗標、舊 API 忽略擴充及報告布林值。
 
 `NativeStackSpecialization.NarrowAddressDemandRetainsCompletePointer` 檢查條件約束下暫存器和框架槽指標的合流、兩種位元組順序、模回繞及高根位址、堆疊還原和 120 個框架位元組。配套反例拒絕損壞的指標，並檢查查詢、操作、求值和細化預算恰好足夠或少一次的情況，以及相依發現和上下文耗盡。
 
@@ -987,7 +1001,7 @@ x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.de
 
 XSAVE 驗證診斷區分長度查詢、本機資料準備和擷取資料解碼，並保留 API 名稱、傳回位元組數、容量及有限的標頭/控制欄位；獨立預期位於 `WhpHostFailureCases.def`，不輸出客體暫存器內容。`InvalidInputReportsPreparationWithoutHostMutation` 也驗證無效輸入不會呼叫主機或修改其資料。共用 ISA 編解碼器仍是唯一驗證入口。
 
-WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及執行中的主機呼叫失敗，均保留 HRESULT 和 `WhpProtocol.def` 中宣告的 API 名稱；能力查詢失敗仍傳回具型別的不可用結果。 `WhpHostFailureCases.def` 提供獨立錯誤預期，涵蓋與取消同時發生的主機失敗，以及新版/舊版 XSAVE 查詢、安裝和擷取失敗。 Windows 專項 CI 要求 166 項原生案例通過：16 項映射、2 項啟動、10 項 FP/上下文、7 項共用 CPU、8 項整數案例，以及 `NativeInstallRetainsFPStateBeforeAnyGuestExecution` 的兩種 API 變體。後兩項在執行客體程式碼前比對完整 FP/SSE 與獨立讀取的中繼資料。 缺少註冊、略過、停用或未執行都會使原生證據稽核失敗。 新增的 26 項檢查涵蓋 `X64BitStringTests.cpp` 在兩種特權層級下的全部案例。 Windows PE64 要求 33 項 WHP 程序案例與兩項獨立原生 Windows 對照案例。
+WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及執行中的主機呼叫失敗，均保留 HRESULT 和 `WhpProtocol.def` 中宣告的 API 名稱；能力查詢失敗仍傳回具型別的不可用結果。 `WhpHostFailureCases.def` 提供獨立錯誤預期，涵蓋與取消同時發生的主機失敗，以及新版/舊版 XSAVE 查詢、安裝和擷取失敗。 Windows 專項 CI 要求 176 項原生案例通過：16 項映射、2 項啟動、10 項 FP/上下文、7 項共用 CPU、8 項整數案例，以及 `NativeInstallRetainsFPStateBeforeAnyGuestExecution` 的兩種 API 變體。後兩項在執行客體程式碼前比對完整 FP/SSE 與獨立讀取的中繼資料。 缺少註冊、略過、停用或未執行都會使原生證據稽核失敗。 新增的 26 項檢查涵蓋 `X64BitStringTests.cpp` 在兩種特權層級下的全部案例。 Windows PE64 要求 41 項 WHP 程序案例與四項獨立原生 Windows 對照案例。
 
 `NeverDMemoryLifecycleTests` 獨立於 Unicorn 建置，也涵蓋僅啟用原生後端的組態。停用 Unicorn 時，專用的軟體投影/裝置案例明確略過；符合主機的共用 CPU 案例仍會註冊。`WhpMemoryTests.cpp` 使用 `WhpMemoryCases.def` 中的 16 個案例隔離原生記憶體 API：單頁/投影大小的後備記憶體、共用/獨立配置、未觸頁/已駐留位元組，以及存在/不存在第一個虛擬處理器。每個案例保留兩個存活的邏輯擁有者，反覆切換其映射分割區，銷毀非作用中擁有者，並驗證剩餘映射無需重建即可繼續使用。實際映射錯誤保留 HRESULT 並使測試失敗；這是記憶體 API 證據，不是指令執行證明。
 
@@ -1003,7 +1017,7 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 166 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 394 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `166 CPU + 224 WHP + 4 SEH = 394`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 176 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 404 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `176 CPU + 224 WHP + 4 SEH = 404`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 
@@ -1044,9 +1058,17 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 `NeverDRunControlTests` 包含可攜式 `NativeEntryTests.cpp` 和 Windows 啟用 WHP 時的 `WhpEntryControlTests.cpp`。記憶體主機回呼驗證拒絕入口、重試、晚到取消、真實錯誤保留、完成結果優先順序和已確認的回呼生命週期，無需 Hyper-V。`NeverDKvmRunTests` 檢查呼叫執行緒完成、錯誤優先順序及重入拒絕。真實 `NeverDKvmStateTransferTests` 執行 `KvmStateTransferCases.def` 原始指令；`ActualCPUExceptionOutranksStopDuringCapture` 和 `PublicCPUExceptionOutranksStopDuringCapture` 在真實暫存器/XSAVE 讀取後停止，並保留除零例外、原始上下文、RAM 和明確恢復。Wine 上採用 Windows ABI 執行的可攜式測試僅提供執行緒及控制協定證據，不證明原生 WHP 執行。不可用的原生後端仍明確略過。
 
-`windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、EXE TLS、具名 Win32 API 與明確無環啟動 DLL 圖。客體 DLL 支援名稱／序號程式碼及資料匯入、DIR64 重定位及真實載入器串列身分。DLL 進入點／TLS、動態載入、轉送匯出、CRT／GUI、使用者 SEH 與執行緒仍待完成；原生 ARM64 KVM/WHP 證據仍缺。
+`windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、模組 TLS 與啟動 `DllMain`、具名 Win32 API 與明確無環啟動 DLL 圖。客體 DLL 支援名稱／序號程式碼及資料匯入、DIR64 重定位及真實載入器串列身分。動態載入、CRT／GUI、使用者 SEH 與執行緒仍待完成；原生 ARM64 KVM/WHP 證據仍缺。 支援有界轉送匯出，以及針對已駐留客體映像的 `GetProcAddress`。
 
 輸入總位元組與映像總範圍各受 `memory_limit` 限制，執行期映射也計入映像預算。準備階段共用 65,536 筆紀錄、64 MiB 中繼資料讀取、名稱長度及整體截止時間；阻塞主機 I/O 無硬即時保證。原創 EXE→DLL→DLL 樣例驗證重定位指標、序號呼叫、共享資料、API 指標身分、`MEM_IMAGE`、載入器串列及 EXE TLS 掛接／分離。`NeverDWindowsProcessTests` 包含直接原生 Windows 對照，`NeverDPEProgramExportsTests` 驗證畸形資料與預算，`NeverDProcessPublicTests` 驗證 C ABI/CLI 目錄一致性。不可用後端明確略過。
+
+`WindowsProcessLifetime` 在相同 CPU 與執行預算下，依相依順序執行 DLL TLS 回呼及 `DllMain`，再執行 EXE TLS 與進入點。各模組具有獨立 TLS 索引與對齊區塊，從完成重定位和匯入繫結的映像複製，共用 64 KiB 空間。TLS 保留參數為零，啟動／程序結束的 `DllMain` 接收不透明非空值。明確程序結束依載入器串列的反向順序分離已完成初始化的 DLL，再執行 EXE TLS 結束回呼，即使 EXE 初始化尚未執行。啟動 `DllMain(FALSE)` 以 `0xc0000142` 結束，不發送分離通知。故障和預算耗盡不捏造清理。含客體 DLL 的 PE 進入點返回需要尚未支援的執行緒終止，因此明確停止。非零 `SizeOfZeroFill` 仍不支援；實際 TLS 範本中的零初始化位元組受支援。 無進入點 DLL 接收 TLS 掛接通知，但不接收程序分離通知。
+
+`WindowsProcessExports` 為靜態匯入和 `GetProcAddress` 共用名稱／序號解析，涵蓋程式碼、資料、別名與鏈式轉送。只有實際引用的啟動轉送會引入目錄模組及初始化相依；未使用的轉送不載入檔案。執行期間可查詢已駐留映像，包括在 `DllMain` 內；需要載入其他模組時明確停止。匯出名稱區分大小寫；名稱缺失回傳 NULL／錯誤 127，直接查詢缺失序號（含空洞）回傳 NULL／錯誤 182，查詢參數為空指標回傳錯誤 87，成功保留 LastError。未知模組控制代碼仍不支援。有界 API 清單依精確提供者／名稱一次保留呼叫入口。解析檢查每個映像的即時 PE 標頭與匯出中繼資料，拒絕修改或不可讀位元組，轉送鏈最多 64 項，並共用準備階段剩餘中繼資料額度及執行期限。這不包含 `LoadLibrary`／`FreeLibrary` 或即時改寫匯出表。 轉送到空洞時回傳目標映像基址並保留 LastError；轉送到零序號回傳錯誤 87。回傳基址是資料位址，不授予映像標頭執行權限。
+
+`WindowsExportTests.cpp` 使用原始 x64/ARM64 DLL 與 EXE，驗證轉送的程式碼／資料／序號呼叫、別名、初始化查詢、重定位、大小寫敏感的缺失項、LastError、循環與非駐留目標、無效指標，以及成功查詢後的中繼資料修改。同一 EXE 有獨立原生 Windows 對照；原生 CI 強制執行 WHP 案例。C ABI／CLI 測試比對完整報告。原生 ARM64 硬體證據仍待補齊。 具有及不具有匯出表的 EXE 變體涵蓋兩種相依圖、PEB 串列順序、結束通知順序，以及名稱／序號／空指標的錯誤碼。
+
+`WindowsLifetimeTests.cpp` 將固定通知序列與獨立原生 Windows 程序及 KVM/WHP/Unicorn 執行比對，涵蓋正常結束、進入點返回、兩個 DLL 初始化失敗、四處提早結束及無進入點 DLL。另驗證回呼故障、共用預算、重定位 TLS 欄位及 TLS 總容量。原生進入點返回探針保留初始執行緒控制代碼，重複64 次核對執行緒結束碼及精確執行緒／程序通知序列。觀察後終止其餘子程序執行緒，不將程序結束碼視為進入點返回值。
 
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 

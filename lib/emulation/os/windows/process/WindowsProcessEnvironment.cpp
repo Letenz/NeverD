@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "WindowsProcess.h"
+#include "WindowsProcessModules.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -45,15 +45,16 @@ std::u16string quote(const std::u16string &Input) {
 }
 } // namespace
 
-llvm::Expected<Environment>
-prepareEnvironment(AddressSpace &Memory, const Image &Image,
-                   const ProcessOptions &Options, llvm::StringRef ImageName,
-                   llvm::ArrayRef<ModuleIdentity> Modules,
-                   llvm::ArrayRef<size_t> InitOrder) {
-  const ModuleIdentity Main{ImageName.str(), Image.Base, Image.Size,
-                            Image.Entry};
-  if (Modules.empty())
-    Modules = llvm::ArrayRef(Main);
+llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
+                                               const Program &Program,
+                                               const ProcessOptions &Options) {
+  if (Program.Modules.empty() ||
+      Program.Modules.size() != Program.Identities.size())
+    return failure(text::Layout);
+  const auto &Image = Program.Modules.front().Loaded;
+  const auto &Modules = Program.Identities;
+  const auto &InitOrder = Program.LoaderInitializationOrder;
+  const llvm::StringRef ImageName = Modules.front().Name;
   if (Modules.size() > windows_process_limits::Modules + 1)
     return failure(text::ModuleBudget);
   auto Name = utf16(ImageName);
@@ -226,14 +227,34 @@ prepareEnvironment(AddressSpace &Memory, const Image &Image,
   if (auto E = Unicode(Parameters + ParamsCommandLine, *CommandAddress,
                        Command.size()))
     return std::move(E);
-  if (Image.TLSIndex) {
-    if (auto E = Memory.writeInteger(Image.TLSIndex, 0, DWordSize))
-      return std::move(E);
-    if (auto E = Memory.writeInteger(TLSVector, TLSData, PointerSize))
-      return std::move(E);
-    if (!Image.TLSBytes.empty())
-      if (auto E = Memory.write(TLSData, Image.TLSBytes))
+  uint64_t TLSCursor = TLSData, TLSCount = 0;
+  for (const auto &Module : Program.Modules) {
+    const auto &M = Module.Loaded;
+    if (!M.TLSIndex)
+      continue;
+    TLSCursor = (TLSCursor + M.TLSAlignment - 1) & ~(M.TLSAlignment - 1);
+    const uint64_t Size = std::max(M.TLSSize, PointerSize);
+    if (TLSCursor > TLSData + TLSCapacity ||
+        Size > TLSData + TLSCapacity - TLSCursor ||
+        (TLSCount + 1) * PointerSize > TLSData - TLSVector)
+      return failure(text::ModuleTLSBudget);
+    // Snapshot the relocated and linked image before publishing its index.
+    // TLS templates can contain pointers fixed by the image linker.
+    std::vector<uint8_t> Bytes(Size);
+    if (M.TLSTemplateSize)
+      if (auto E = Memory.read(
+              M.TLSTemplate,
+              llvm::MutableArrayRef(Bytes).take_front(M.TLSTemplateSize)))
         return std::move(E);
+    if (auto E = Memory.writeInteger(M.TLSIndex, TLSCount, DWordSize))
+      return std::move(E);
+    if (auto E = Memory.writeInteger(TLSVector + TLSCount * PointerSize,
+                                     TLSCursor, PointerSize))
+      return std::move(E);
+    if (auto E = Memory.write(TLSCursor, Bytes))
+      return std::move(E);
+    ++TLSCount;
+    TLSCursor += Size;
   }
   return Environment{*CommandAddress, std::move(*Name)};
 }

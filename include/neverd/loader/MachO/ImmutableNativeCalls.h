@@ -14,10 +14,12 @@ using ImmutableNativeCallTarget =
     SourceCallTypeHint::ImmutableNativeCallEvidence;
 
 /// Prove original ARM64 BLR targets loaded from exact immutable chained code
-/// pointer slots. The bounded same-block trace validates the instructions that
-/// construct the address and the full-width load. Crossing a direct call needs
-/// an authenticated runtime declaration or an explicit native callee ABI and
-/// a preserved register. Frame reloads and unknown calls remain unsupported.
+/// pointer slots. The bounded trace validates the instructions that construct
+/// the address and the full-width load. Complete frame reloads use the shared
+/// byte/escape proof after canonical machine/LowIR and CFG revalidation. Calls
+/// need current complete ABIs and independently authenticated frame effects;
+/// bounded monotone rounds may use only targets proven in earlier rounds.
+/// Unknown calls, relevant cycles and escaped or inexact frame bytes fail.
 /// This is target identity only; it supplies no ABI or source publication gate.
 std::map<va_t, ImmutableNativeCallTarget> immutableNativeCallTargets(
     const BinaryImage &Image, const LowFunc &Function,

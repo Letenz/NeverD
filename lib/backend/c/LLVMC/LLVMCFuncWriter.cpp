@@ -445,12 +445,48 @@ void LLVMCWriter::scanReferencedBlocks(llvm::Function &Fn) {
   }
 }
 
+void LLVMCWriter::planExpressionMaterialization(llvm::Function &Fn) {
+  MaterializedExpressions.clear();
+  auto Expandable = [](const llvm::Value *V) {
+    const auto *I = llvm::dyn_cast<llvm::Instruction>(V);
+    return I && (I->getType()->isIntegerTy() || I->getType()->isPointerTy()) &&
+           llvm::isa<llvm::BinaryOperator, llvm::CastInst, llvm::ICmpInst,
+                     llvm::SelectInst, llvm::GetElementPtrInst>(I);
+  };
+  // Price all potentially printed operands, including repeated operands and
+  // definitions in later blocks. Choosing more boundaries only shrinks trees
+  // already checked, so this does not require dominance-ordered block storage.
+  // The bounded walk also keeps this planning linear in the instruction count.
+  for (const auto &BB : Fn) {
+    for (const auto &I : BB) {
+      if (!Expandable(&I))
+        continue;
+      unsigned Work = 64;
+      auto Fits = [&](auto &&Self, const llvm::Value *V,
+                      unsigned Depth) -> bool {
+        if (Depth > 16 || Work == 0)
+          return false;
+        --Work;
+        if (!Expandable(V) || MaterializedExpressions.count(V))
+          return true;
+        for (const auto &Operand : llvm::cast<llvm::Instruction>(V)->operands())
+          if (!Self(Self, Operand.get(), Depth + 1))
+            return false;
+        return true;
+      };
+      if (!Fits(Fits, &I, 0))
+        MaterializedExpressions.insert(&I);
+    }
+  }
+}
+
 void LLVMCWriter::markInlinable(llvm::Function &Fn) {
   Analysis.Inlinable.clear();
   InlineCache.clear();
+  planExpressionMaterialization(Fn);
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (Inst.getType()->isVoidTy())
+      if (Inst.getType()->isVoidTy() || MaterializedExpressions.count(&Inst))
         continue;
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
@@ -2022,11 +2058,19 @@ bool LLVMCWriter::usersAreDeadCopies(const llvm::Value *V) const {
   if (!V)
     return true;
   std::set<const llvm::Value *> Seen;
-  std::function<bool(const llvm::Value *)> Dead =
-      [&](const llvm::Value *Cur) -> bool {
+  llvm::SmallVector<const llvm::Value *, 16> Pending{V};
+  unsigned Work = 64;
+  // Materialized casts can still have long chains of cast users. Bound both
+  // stack use and repeated liveness queries; exhaustion keeps extra source
+  // temporaries rather than justifying the omission of an unvisited use.
+  while (!Pending.empty()) {
+    const llvm::Value *Cur = Pending.pop_back_val();
     if (!Cur || !Seen.insert(Cur).second)
-      return true;
+      continue;
     for (const llvm::User *U : Cur->users()) {
+      if (Work == 0)
+        return false;
+      --Work;
       const auto *UI = llvm::dyn_cast<llvm::Instruction>(U);
       if (!UI)
         return false;
@@ -2036,15 +2080,13 @@ bool LLVMCWriter::usersAreDeadCopies(const llvm::Value *V) const {
       // load or store is printed. Follow the expression to its actual use.
       if (Analysis.Inlinable.count(UI) ||
           llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::PHINode>(UI)) {
-        if (!Dead(UI))
-          return false;
+        Pending.push_back(UI);
         continue;
       }
       return false;
     }
-    return true;
-  };
-  return Dead(V);
+  }
+  return true;
 }
 
 bool LLVMCWriter::usersOnlySeeImmediate(const llvm::Value *V) const {
@@ -3302,7 +3344,8 @@ bool LLVMCWriter::usersOnlyFeedInlinable(const llvm::Value *V) const {
 
 void LLVMCWriter::markComposedPrints(llvm::Function &Fn) {
   auto Mark = [&](const llvm::Instruction &Inst) {
-    return Analysis.Inlinable.insert(&Inst).second;
+    return !MaterializedExpressions.count(&Inst) &&
+           Analysis.Inlinable.insert(&Inst).second;
   };
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
@@ -3363,6 +3406,8 @@ std::string LLVMCWriter::composedReprintText(const llvm::Value *V) {
       [&](const llvm::Value *Cur) -> std::string {
     if (!Cur || !Seen.insert(Cur).second)
       return {};
+    if (MaterializedExpressions.count(Cur))
+      return getName(Cur);
     if (auto Text = ValueTexts.find(Cur);
         Text != ValueTexts.end() && !Text->second.empty())
       return Text->second;

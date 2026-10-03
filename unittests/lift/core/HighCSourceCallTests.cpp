@@ -216,6 +216,46 @@ HighFunc lowerSavedFloatingRecord(const MedFunc &Med) {
   return Converter.convert(Med, Arch::AArch64);
 }
 
+TEST(HighCSourceCalls, UnnamedFixedParametersShareDeclarationAndBodyNames) {
+  const auto Word = NdType::makeInt(8, false);
+  for (bool Collision : {false, true}) {
+    SCOPED_TRACE(Collision);
+    SourceFunctionTypeHint Hint;
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Hint.ReturnType = Word;
+    Hint.Parameters = {{"", Word}, {Collision ? "arg0" : "", Word}, {"", Word}};
+    std::string Error;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Arch::AArch64, Error));
+    auto Xor = HighExpr::makeBinop(NdOp::INT_XOR, parameter(0, Word),
+                                   parameter(1, Word));
+    Xor->Type = Word;
+    auto Value = HighExpr::makeBinop(NdOp::INT_ADD, Xor, parameter(2, Word));
+    Value->Type = Word;
+    auto Function = returning("unnamed_fixed", Value, {Word, Word, Word});
+    Function.SourceTypeHint = Hint;
+    for (size_t I = 0; I < Function.Params.size(); ++I)
+      Function.Params[I].Name = Hint.Parameters[I].Name;
+    const auto Source = emit({Function}, true, Arch::AArch64);
+    EXPECT_EQ(Function.Params[0].Name, "");
+    EXPECT_EQ(Function.SourceTypeHint->Parameters[0].Name, "");
+    for (const auto Level : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Level);
+      compileAndRun(Source + R"(
+int main(void) {
+  uint64_t state=UINT64_C(0x91b623);
+  for(unsigned i=0;i<512;++i) {
+    state=state*UINT64_C(6364136223846793005)+1;
+    uint64_t a=state,b=~(state>>7),c=state^(state<<17);
+    if (unnamed_fixed(a,b,c)!=((a^b)+c)) return 1;
+  }
+  return 0;
+}
+)",
+                    {Level, "-Werror=uninitialized"});
+    }
+  }
+}
+
 TEST(HighCSourceCalls, SavedFloatingRecordSurvivesLongCallChains) {
   for (unsigned Calls : {1U, 20U, 64U})
     for (bool ReplaceFirst : {false, true}) {
@@ -571,6 +611,76 @@ int main(void) {
     SCOPED_TRACE(Optimization);
     compileAndRun(Program, {Optimization});
   }
+}
+
+TEST(HighCSourceCalls, SwiftSubjectInitializerTransportsValueContextAndResult) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  auto Image = runtime_function_address_test::image(Architecture);
+  const va_t Slot = runtime_function_address_test::Slot;
+  const std::string Name = "_$s7Combine19CurrentValueSubjectCyACyxq_Gxcfc";
+  Image.ImportPtrSlots[Slot] = Name;
+  Image.DyldBindSlots[Slot] = {
+      Name, 0, "/System/Library/Frameworks/Combine.framework/Combine", false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Call =
+      call(*Hint, Pointer, {parameter(0, Pointer), parameter(1, Pointer)});
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+  const auto Function =
+      returning("recovered_subject", Call, {Pointer, Pointer});
+  const auto Source = emit({Function}, true, Architecture);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  ASSERT_NE(Source.find("swiftcall"), std::string::npos);
+  // This is a carrier oracle, not a replacement Combine implementation. The
+  // result deliberately differs from the context, and the input stays opaque.
+  const auto Program = Source + R"(
+#include <string.h>
+struct Context { unsigned size, calls; uint64_t result; unsigned char data[80]; };
+void *__attribute__((swiftcall)) subject_oracle(
+    void *, struct Context * __attribute__((swift_context)))
+    __asm__("_$s7Combine19CurrentValueSubjectCyACyxq_Gxcfc");
+void *__attribute__((swiftcall)) subject_oracle(
+    void *value, struct Context *context __attribute__((swift_context))) {
+  unsigned char *input = value;
+  for (unsigned i = 0; i < context->size; ++i) {
+    context->data[i] = input[i];
+    input[i] ^= 0x5a;
+  }
+  ++context->calls;
+  context->result = (uint64_t)(uintptr_t)value ^ context->size;
+  return &context->result;
+}
+int main(void) {
+  for (unsigned n = 0; n <= 80; ++n) {
+    struct { uint64_t before; struct Context value; uint64_t after; } box;
+    unsigned char input[82];
+    memset(&box, 0xa5, sizeof(box));
+    memset(input, 0x6b, sizeof(input));
+    box.before = 0x0123456789abcdefULL; box.after = 0xfedcba9876543210ULL;
+    box.value.size = n; box.value.calls = 0;
+    for (unsigned i = 0; i < n; ++i) input[i + 1] = (unsigned char)(i * 13 + n);
+    void *result = recovered_subject(input + 1, &box.value);
+    if (result != &box.value.result || box.value.calls != 1 ||
+        box.value.result != ((uint64_t)(uintptr_t)(input + 1) ^ n)) return 1;
+    if (input[0] != 0x6b || input[n + 1] != 0x6b ||
+        box.before != 0x0123456789abcdefULL || box.after != 0xfedcba9876543210ULL)
+      return 2;
+    for (unsigned i = 0; i < n; ++i)
+      if (box.value.data[i] != (unsigned char)(i * 13 + n) ||
+          input[i + 1] != (unsigned char)((i * 13 + n) ^ 0x5a)) return 3;
+    for (unsigned i = n; i < 80; ++i)
+      if (box.value.data[i] != 0xa5) return 4;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
 }
 
 TEST(HighCSourceCalls, SwiftPublishedInitializerTransportsOpaqueStorage) {
@@ -3941,4 +4051,87 @@ TEST(HighCSourceCalls, SwiftBooleanRejectsForeignBindingsAndBytePrototypes) {
   EXPECT_NE(emit({Function}, false, Arch::AArch64)
                 .find("conflicting Swift Boolean runtime declaration"),
             std::string::npos);
+}
+
+TEST(HighCSourceCalls, SwiftCancellableCallsPreserveEveryCarrierAndOccurrence) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  std::vector<HighFunc> Functions;
+  for (const bool Sink : {false, true}) {
+    auto Image = runtime_function_address_test::image(Architecture);
+    const va_t Slot = runtime_function_address_test::Slot;
+    const std::string Name =
+        Sink ? "_$"
+               "s7Combine9PublisherPAAs5NeverO7FailureRtzrlE4sink12receiveValue"
+               "AA14AnyCancellableCy6OutputQzc_tF"
+             : "_$s7Combine14AnyCancellableC5store2inyShyACGz_tF";
+    Image.ImportPtrSlots[Slot] = Name;
+    Image.DyldBindSlots[Slot] = {
+        Name, 0, "/System/Library/Frameworks/Combine.framework/Combine", false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    HighFunc F;
+    F.Name = Sink ? "recovered_sink" : "recovered_store";
+    F.ReturnType = Hint->Signature.ReturnType;
+    std::vector<ExprPtr> Args;
+    for (unsigned I = 0; I < (Sink ? 5U : 2U); ++I) {
+      F.Params.push_back({"arg" + std::to_string(I), Pointer});
+      Args.push_back(parameter(I, Pointer));
+    }
+    auto Call = call(*Hint, F.ReturnType, Args);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    HighStmt Statement;
+    Statement.Kind = Sink ? StmtKind::Return : StmtKind::ExprStmt;
+    if (Sink)
+      Statement.RetVal = Call;
+    else
+      Statement.Val = Call;
+    F.Body = {Statement};
+    Functions.push_back(std::move(F));
+  }
+  const auto Source = emit(Functions, true, Architecture);
+  ASSERT_NE(Source.find("swiftcall"), std::string::npos);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  // Independent carrier oracles. Real SDK ownership/callback behavior is
+  // exercised separately with the original machine fixture and Combine.
+  const auto Program = Source + R"(
+struct State { unsigned calls; void *words[4]; uintptr_t result; };
+void *__attribute__((swiftcall)) sink_oracle(void *,void *,void *,void *,
+    struct State *__attribute__((swift_context)))
+    __asm__("_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE4sink12receiveValueAA14AnyCancellableCy6OutputQzc_tF");
+void *__attribute__((swiftcall)) sink_oracle(void *a,void *b,void *c,void *d,
+    struct State *s __attribute__((swift_context))) {
+  ++s->calls; s->words[0]=a; s->words[1]=b; s->words[2]=c; s->words[3]=d;
+  s->result=(uintptr_t)a ^ (uintptr_t)b ^ (uintptr_t)c ^ (uintptr_t)d;
+  return &s->result;
+}
+void __attribute__((swiftcall)) store_oracle(void *,void *__attribute__((swift_context)))
+    __asm__("_$s7Combine14AnyCancellableC5store2inyShyACGz_tF");
+void __attribute__((swiftcall)) store_oracle(void *out,void *object __attribute__((swift_context))) {
+  __builtin_memcpy(out,&object,sizeof(object));
+}
+int main(void) {
+  for (unsigned i=0;i<1024;++i) {
+    struct { uintptr_t guard; struct State s; uintptr_t tail; } box={0};
+    uintptr_t words[4]={i,~(uintptr_t)i,(uintptr_t)i*17,(uintptr_t)i*53};
+    void *args[4]={words,words+1,words+2,words+3};
+    box.guard=0xabcdef12;box.tail=0x12345678;
+    void *result=recovered_sink(args[0],args[1],args[2],args[3],&box.s);
+    if(result!=&box.s.result||box.s.calls!=1||box.guard!=0xabcdef12||box.tail!=0x12345678)return 1;
+    uintptr_t expected=0;
+    for(unsigned j=0;j<4;++j){if(box.s.words[j]!=args[j])return 2;expected^=(uintptr_t)args[j];}
+    if(box.s.result!=expected)return 3;
+    struct { uintptr_t guard; void *value; uintptr_t tail; } out={0x76543210,0,0xfedcba98};
+    recovered_store(&out.value,result);
+    if(out.value!=result||out.guard!=0x76543210||out.tail!=0xfedcba98)return 4;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
 }

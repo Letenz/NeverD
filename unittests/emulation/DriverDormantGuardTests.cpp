@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/windows/DriverImage.h"
 
@@ -185,7 +186,7 @@ TEST_P(DriverDormantGuardExecution, ZeroFlagsExecuteOriginalWin64Fallbacks) {
     auto E = Probe.takeError();
     const bool Unavailable = E.isA<BackendUnavailableError>();
     const auto Reason = llvm::toString(std::move(E));
-    if (Unavailable)
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
       GTEST_SKIP() << Reason;
     FAIL() << Reason;
   }
@@ -207,7 +208,8 @@ INSTANTIATE_TEST_SUITE_P(
     Backends, DriverDormantGuardExecution,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::Values(ExecutionContract::Legacy,
                                      ExecutionContract::CheckedX64)));
 } // namespace

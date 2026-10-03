@@ -16,7 +16,9 @@ signals, threads, file systems and unsupported services fail
 explicitly. The [Android native profile](android-native-emulation.md),
 `android-aarch64-api28-v1`, separately supports bounded API 28 ARM64 shared-library
 function calls and Bionic models. The Windows PE64 process profile is described
-below. Android managed runtimes, Darwin and other kernel workloads remain separate work.
+below. The [Darwin profiles](darwin-emulation.md) add bounded macOS, iOS device
+and iOS Simulator Mach-O processes. Android managed runtimes and guest kernel
+workloads remain separate work.
 
 <!-- i18n-section: cli-sdk -->
 
@@ -27,7 +29,8 @@ neverd emulate guest.elf --profile=linux-elf64-v1 \
   --options='{"backend":"auto","arguments":["guest","argument"],"environment":["MODE=test"],"instruction_limit":100000}'
 ```
 
-Matching Linux hosts select KVM and matching Windows hosts select WHP. Other
+Matching Linux hosts select KVM, matching Windows hosts select WHP, and
+matching macOS hosts select HVF. Other
 host/guest ISA combinations use Unicorn. An unavailable selected backend is an
 error, with no silent fallback. An ELF guest still uses the Linux process model
 when executed on Windows. See [CPU execution](cpu-execution.md) for the checked
@@ -66,7 +69,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 
 | Option | Default | Contract |
 |--------|---------|----------|
-| `backend` | `auto` | `auto`, `unicorn`, `kvm` or `whp` |
+| `backend` | `auto` | `auto`, `unicorn`, `kvm`, `whp` or `hvf` |
 | `arguments` | Input filename | Complete argv, including argv[0]; empty selects the default |
 | `environment` | `[]` | Explicit guest strings; never inherits the host environment |
 | `instruction_limit` | 100000 | Shared admitted instruction attempts |
@@ -192,7 +195,7 @@ guest pointer or mapping request to the host OS.
 
 ## Windows PE64 profile
 
-`windows-pe64-v1` supports bounded Windows x64/ARM64 console processes with PEB/TEB, executable TLS, named Win32 APIs and explicit acyclic startup DLL graphs. Guest DLLs support named/ordinal code and data imports, DIR64 rebasing and actual loader-list identities. DLL entry points/TLS, dynamic loading, forwarded exports, CRT/GUI, user SEH and threads remain unfinished; native ARM64 KVM/WHP evidence is still pending.
+`windows-pe64-v1` supports bounded Windows x64/ARM64 console processes with PEB/TEB, module TLS and startup `DllMain`, named Win32 APIs and explicit acyclic startup DLL graphs. Guest DLLs support named/ordinal code and data imports, DIR64 rebasing and actual loader-list identities. Dynamic loading, CRT/GUI, user SEH and threads remain unfinished; native ARM64 KVM/WHP evidence is still pending. Bounded forwarded exports and `GetProcAddress` for resident guest images are supported.
 
 Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` and current-process `FlushInstructionCache`. The OS layer owns reservations; `AddressSpace` remains the authority for committed pages, permissions and backing. Tests cover dynamic code rewriting, access faults and memory-budget reuse.
 
@@ -207,25 +210,33 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
 ```
 
-The single-thread profile keeps the PE32+ EXE at its preferred base and admits explicitly supplied DLLs with zero entry point and no TLS directory. `WindowsProcessOptions::Modules`, or JSON `windows.modules`, supplies up to 64 guest basenames and host input paths through `name` and `path`; there is no host DLL search or execution. ASCII names compare without case; duplicate names and overrides of modeled system providers fail. Only reachable files are read. Named/ordinal function and data imports bind to actual mapped exports; holes, missing symbols, cycles, forwarding, bound/delay imports and unsupported load configuration/CFG fail explicitly. DIR64 records rebase colliding movable DLLs; fixed collisions and relocation writes into linker metadata fail before CPU creation.
+The single-thread profile keeps the PE32+ EXE at its preferred base and admits explicitly supplied DLLs with optional entry points and static TLS. `WindowsProcessOptions::Modules`, or JSON `windows.modules`, supplies up to 64 guest basenames and host input paths through `name` and `path`; there is no host DLL search or execution. ASCII names compare without case; duplicate names and overrides of modeled system providers fail. Only reachable files are read. Named/ordinal function and data imports bind to actual mapped exports; holes, missing symbols, cycles, bound/delay imports and unsupported load configuration/CFG fail explicitly. DIR64 records rebase colliding movable DLLs; fixed collisions and relocation writes into linker metadata fail before CPU creation.
 
-`readPEProgramExports` owns original export identities and bounded metadata footprints. `WindowsProcessModules` owns the guest graph and one exact provider/name API gate per process. `VirtualMemory` reserves every image before mapping; `AddressSpace` owns pages and permissions. PEB/LDR lists contain real images, with DLLs in dependency order in the initialization list. `GetModuleHandleW` accepts NULL or ASCII basenames, compares without case, and appends `.dll` when no extension is supplied; paths, non-ASCII lookup and trailing-dot rules remain unsupported. Missing names return error 126; success preserves LastError. API models are not installed system DLLs.
+`readPEProgramExports` owns original export identities and bounded metadata footprints. `WindowsProcessModules` owns the guest graph and one exact provider/name API gate per process. `VirtualMemory` reserves every image before mapping; `AddressSpace` owns pages and permissions. PEB/LDR lists contain real images, with loader registration order in the initialization list. Registration and dependency-based attach order are tracked separately. `GetModuleHandleW` accepts NULL or ASCII basenames, compares without case, and appends `.dll` when no extension is supplied; paths, non-ASCII lookup and trailing-dot rules remain unsupported. Missing names return error 126; success preserves LastError. API models are not installed system DLLs.
 
 Input-file bytes and aggregate image extents each share `memory_limit`; runtime mappings also consume the image budget. Preparation shares a 65,536-record and 64 MiB metadata-read allowance, bounded names and the workload deadline. Blocking host I/O has no hard time guarantee. The original EXE→DLL→DLL fixture checks rebased pointers, ordinal calls, shared data, API pointer identity, `MEM_IMAGE`, loader lists and executable TLS attach/detach. `NeverDWindowsProcessTests` owns these checks and the direct native Windows oracle; `NeverDPEProgramExportsTests` checks malformed metadata and work accounting, and `NeverDProcessPublicTests` checks C ABI/CLI catalogue parity. Unavailable transports are explicit skips.
+
+`WindowsProcessLifetime` runs dependency DLL TLS callbacks then `DllMain`, followed by EXE TLS and entry, on one CPU under the same execution budget. Each module gets an independent TLS index and aligned block copied from the relocated, linked image within a shared 64 KiB arena. TLS reserved arguments are zero; startup/process-detach `DllMain` receives an opaque non-null value. Explicit process exit detaches successfully initialized DLLs in reverse loader-list order, then EXE TLS, even if EXE initialization had not run. Startup `DllMain(FALSE)` exits with `0xc0000142` without detach notifications. Faults and exhausted budgets do not invent cleanup. Returning from the PE entry with guest DLLs requires unsupported thread termination and stops explicitly. Nonzero `SizeOfZeroFill` remains unsupported; zero-initialized bytes in the actual TLS template are supported. DLLs without entry points receive TLS attach but no process-detach notifications.
+
+`WindowsProcessExports` resolves static imports and `GetProcAddress` through the same named/ordinal identities, including code, data, aliases and chained forwarders. Only demanded startup forwarders add catalogue modules and initialization dependencies; unused forwarders do not load files. Runtime queries admit resident images, including during `DllMain`, but explicitly stop when another module must be loaded. Export names are case sensitive; a missing name returns NULL/error 127, a direct missing ordinal (including a hole) returns NULL/error 182, and a null query argument returns error 87, while success preserves LastError. Unknown module handles remain unsupported. Exact provider/name API gates are reserved once from the bounded registry. Resolution checks every queried image’s live PE headers and export metadata, rejects changes or unreadable bytes, limits chains to 64 entries, and shares remaining preparation metadata credits and the workload deadline. This does not implement `LoadLibrary`/`FreeLibrary` or live export-table rewriting. A forwarder targeting a hole returns the target image base and preserves LastError; forwarding to ordinal zero returns error 87. The returned base is a data address, not permission to execute image headers.
+
+`WindowsExportTests.cpp` uses original x64/ARM64 DLLs and an EXE to check forwarded code/data/ordinal calls, aliases, initializer queries, rebasing, case-sensitive misses, LastError, cyclic and nonresident targets, invalid pointers and metadata changes after successful queries. The same EXE has an independent native Windows oracle; WHP cases are mandatory in native CI. C ABI/CLI tests compare complete reports. Native ARM64 hardware evidence remains pending. Variants with and without EXE exports cover both dependency graphs, PEB-list order, detach order and name/ordinal/null error codes.
+
+`WindowsLifetimeTests.cpp` compares frozen traces with independent native Windows processes and KVM/WHP/Unicorn execution: normal exit, entry return, both DLL initialization failures, four early exits and DLLs without entry points. It separately checks callback faults, shared budgets, relocated TLS fields and aggregate TLS capacity. The native entry-return probe retains the initial thread handle and checks its exit code and exact thread/process notification sequence in 64 repetitions. Remaining child threads are terminated after observation; their process exit is not treated as the entry return value.
 
 ```json
 {"windows":{"modules":[{"name":"middle.dll","path":"inputs/middle.dll"},{"name":"leaf.dll","path":"inputs/leaf.dll"}]}}
 ```
 
-GS on x64 and x18 on ARM64 point to TEB. Supported state includes stack bounds, self pointer, PID/TID, PEB, process parameters, LastError and TLS. Inputs are strict UTF-8 converted to UTF-16; argv is quoted for Microsoft CRT parsing. Environment names are ASCII, case-insensitive duplicates are rejected, values may be Unicode, and the sorted environment is double-NUL terminated. No host environment or filesystem is inherited. Static TLS copies its template, zeroes BSS and writes a 32-bit index; dynamic TLS uses separate TEB slots. Attach and detach read live callback arrays in order, with all instructions and named calls sharing one deadline and resource account. Entry return and normal process exit both run detach callbacks; reentrant exit during detach stops explicitly.
+GS on x64 and x18 on ARM64 point to TEB. Supported state includes stack bounds, self pointer, PID/TID, PEB, process parameters, LastError and TLS. Inputs are strict UTF-8 converted to UTF-16; argv is quoted for Microsoft CRT parsing. Environment names are ASCII, case-insensitive duplicates are rejected, values may be Unicode, and the sorted environment is double-NUL terminated. No host environment or filesystem is inherited. Static TLS copies its template, zeroes BSS and writes a 32-bit index; dynamic TLS uses separate TEB slots. Attach and detach read live callback arrays in order, with all instructions and named calls sharing one deadline and resource account. Normal process exit runs detach callbacks. Entry return is supported only without guest DLLs; reentrant exit during detach stops explicitly.
 
-The exact API inventory is `WindowsProcessServices.def`: `ExitProcess`, `RtlExitUserProcess`, standard-output handles and synchronous `WriteFile`, LastError, process/thread identifiers and pseudo-handles, `GetCommandLineW`, process heap allocation/free/size, dynamic TLS and `GetModuleHandleW`. Provider names are restricted to `kernel32.dll`, `kernelbase.dll` and `ntdll.dll` with exact export identity. Direct syscalls and forged callback gates cannot select API models. Heap backing is owned by the process and reclaimed on free. Writes capture binary bytes; Win32 argument errors remain distinct from unsupported asynchronous I/O or user exception dispatch. Pointer aliasing observes the initial completion-count write and the live call-return slot.
+The exact API inventory is `WindowsProcessServices.def`: `ExitProcess`, `RtlExitUserProcess`, standard-output handles and synchronous `WriteFile`, LastError, process/thread identifiers and pseudo-handles, `GetCommandLineW`, process heap allocation/free/size, dynamic TLS and `GetModuleHandleW` / `GetProcAddress`. Provider names are restricted to `kernel32.dll`, `kernelbase.dll` and `ntdll.dll` with exact export identity. Direct syscalls and forged callback gates cannot select API models. Heap backing is owned by the process and reclaimed on free. Writes capture binary bytes; Win32 argument errors remain distinct from unsupported asynchronous I/O or user exception dispatch. Pointer aliasing observes the initial completion-count write and the live call-return slot.
 
 The `windows.native_calls` report preserves module/function names, declared scalar arguments and nullable result bits. It does not invent native NT syscall numbers. `NeverDWindowsProcessTests` covers real x64/ARM64 PE startup, compiler TLS, live callback changes, heap/LastError, aliasing, invalid metadata, privilege faults and limits across available backends. `NeverDProcessPublicTests` checks the same PE through CLI/C ABI. Native Windows CI runs the original EXE as an independent behavioral oracle and requires WHP cases; native ARM64 runtime evidence still requires a suitable machine.
 
 `WriteFile` with a nonempty unreadable input buffer returns `ERROR_INVALID_USER_BUFFER` (1784), zeros the completion count and publishes no bytes.
 
-[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c).
+[PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->
 

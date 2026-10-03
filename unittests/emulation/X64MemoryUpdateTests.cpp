@@ -4,6 +4,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/CPU.h"
@@ -53,7 +54,8 @@ protected:
       auto E = B.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable &&
+          !requireHvf(std::get<0>(GetParam()), GuestArchitecture::X64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }
@@ -162,7 +164,8 @@ INSTANTIATE_TEST_SUITE_P(
     Backends, X64MemoryUpdate,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::ValuesIn(Cases)),
     [](const testing::TestParamInfo<Parameter> &P) {
       return std::string(executionBackendName(std::get<0>(P.param))) + "_" +

@@ -3593,10 +3593,12 @@
       ],
       "docs": [
         "docs/cpu-execution.md",
+        "docs/macos-hvf.md",
         "docs/architecture.md",
         "docs/testing.md"
       ],
       "limitations": [
+        "macOS adds the experimental hvf transport through Hypervisor.framework, selecting ARM64 on Apple Silicon and x64 on Intel hosts for matching native-capable contracts. A dedicated owner thread serializes the process VM; guest pages remain 4 KiB. Signed host executables need com.apple.security.hypervisor. ARM64 execution, privilege, FP/SIMD state, isolation and cancellation have native evidence; Intel has SDK compilation evidence only and still requires its native gate. Cross-ISA auto and software-cpu-v1 use Unicorn. Hardware selection does not promise a speedup; see docs/macos-hvf.md.",
         "`X64StringInstructions.def` also owns ordinary-RAM `CMPS/SCAS` at 8/16/32/64 bits with `REPE/REPNE`. Every element validates both complete read operands before observers, updates all six arithmetic flags, and stops on the first matching termination condition. A data fault restores the flags from entry to this uninterrupted REP while retaining completed pointer/count changes; a public resume starts from the published CPU state. Stops and observer exceptions leave the current element untouched. Early termination never reads the next element. FS/GS affects only the CMPS source; SCAS leaves the accumulator and unused source register unchanged. Device operands and ambiguous inactive 32-bit upper halves remain excluded. `X64StringComparisonTests.cpp` compares independent host instructions, flags, direction, aliases, wrapping, permissions and recovery; its Linux x64 signal oracle checks actual fault-time registers. The original WDK resource driver executes both conditional-repeat forms at all four widths through `driver_resource_strings.def`. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).",
         "`X64StringInstructions.def` owns ordinary-RAM `MOVS/STOS/LODS` at 8/16/32/64 bits; `CLD/STD` controls direction without changing other flags. Each REP element validates the entire operand before observations and commits at one restart boundary. Earlier completed elements survive a later fault; cancellation or observer failure leaves the current element untouched. FS/GS applies only to the source, after address-size truncation. AL/AX loads preserve upper bits and EAX loads zero-extend. Zero-count address-size-32 REP requires zero upper count bits and, for MOVS/STOS, zero upper participating address bits: real CPU implementations differ otherwise. REPNE on MOVS/STOS/LODS and STOS/LODS device operands remain unsupported. `X64StringTransferTests.cpp` uses independent host instructions for widths, direction, overlap and zero counts, with separate checks for permissions, aliases, wraparound, faults and resumption. The original WDK resource driver executes all four STOS/LODS widths through `driver_resource_strings.def`.",
         "Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks. Verified at 9d4c130c2f11d95a2f80f1055dfdbb34de07715c (GitHub Actions 36981864458), with complete inventory/JUnit reconciliation; this does not establish arbitrary-driver or native ARM64 compatibility. Detailed per-feature and public-API tests marked Linux-only retain that narrower evidence scope.",
@@ -3622,6 +3624,33 @@
         "`WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP."
       ],
       "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDHvfTests",
+          "source": "unittests/emulation/HvfTests.cpp",
+          "filter": "Hvf.ExecutesAnInstructionAndCanBeCalledFromAnotherThread",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDHvfTests",
+          "source": "unittests/emulation/HvfTests.cpp",
+          "filter": "HvfConfiguration.NativeSelectionAndBuildAvailabilityAreExplicit",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDHvfTests",
+          "source": "unittests/emulation/HvfExecutorTests.cpp",
+          "filter": "HvfExecutor.OneOwnerThreadAndCancelledQueueAdmissionAllowsRetry",
+          "platforms": [
+            "darwin"
+          ]
+        },
         {
           "runner": "gtest",
           "target": "NeverDRunControlTests",
@@ -5172,7 +5201,7 @@
         "Explicit linux-elf64-v1 executes freestanding little-endian x64/AArch64 ET_EXEC and self-relocating static ET_DYN images at CPL3/EL0 with real segment mapping, argc/argv/envp/auxv startup and bounded system-call continuations. PT_INTERP, external dynamic dependencies, page-overlapping loads and unsupported CPU instructions fail clearly. Static PIE uses one aligned deterministic load bias and original file bytes; guest startup owns relocation and initialization.",
         "write, exit, exit_group, getpid, gettid, bounded mmap/mprotect/munmap/brk and x64 arch_prctl FS/GS operations are modeled. Output descriptors are virtual byte sinks with readable-prefix writes, not Linux pipe atomicity or real file objects. No host system calls or environment are forwarded; AT_RANDOM is deterministically derived from the input SHA-256.",
         "Sessions own CPU hooks and exactly-once service/fault consumption; cooperative instruction quanta share an absolute deadline and instruction/event budget without resetting credit. This does not implement parallel SMP or a hard native cancellation bound.",
-        "Linux matching ISA uses KVM, Windows matching ISA uses WHP and other combinations use Unicorn. Runtime capability and availability remain distinct from workload compatibility; no silent fallback occurs. Native Windows/Linux ARM64 execution evidence remains unavailable.",
+        "For matching native-capable contracts, Linux uses KVM, Windows uses WHP and macOS uses HVF with the native host ISA. Cross-ISA execution uses Unicorn. Runtime capability and availability remain distinct from workload compatibility; no silent fallback occurs. macOS ARM64 has native workload evidence; macOS Intel and native Windows/Linux ARM64 still require separate hardware validation.",
         "CLI, C ABI and Python return lossless byte output and typed guest termination independently of a loaded analysis image. Linux dynamic linking/TLS, signals, threads and file systems remain implementation work. Windows uses the separate windows-pe64-v1 profile.",
         "Anonymous mappings admit private anonymous pages and NONE/R/RW/RX/RWX permissions. Linux owns placement and raw brk policy; AddressSpace provides authoritative non-owning mapping snapshots. Partial unmap retires per-page owners after projection/view pins are released; mprotect preserves changed prefixes before a hole error. File/shared/fixed mappings, execute-only/write-only policy and additional flags remain unsupported. Original x64/ARM64 fixtures exercise real memory services; rewritten executable memory is additionally checked on x64.",
         "Validated PT_TLS templates permit freestanding static local-exec TLS programs. Guest startup allocates and initializes each TLS block and installs the thread pointer, as on Linux. The model does not guess a libc-specific TCB or DTV. arch_prctl rejects kernel-range bases with guest EPERM and bad get destinations with EFAULT; unimplemented operations stop explicitly. Compiler-emitted initialized and zero TLS is checked across block switches and process quanta.",
@@ -11410,7 +11439,9 @@
         "Explicit CLI and v3 C API field, refinement and solver-query budgets retain defaults of 16, 16 and 4096. Larger limits permit additional work without changing semantic assumptions; exhaustion publishes no source.",
         "Ordinary source-frame relocation requires external LOAD/STORE ranges disjoint from native and reconstructed private frame storage. Machine-state source preserves numeric guest addresses and requires their original runtime mappings. Undefined flags influencing control, addresses, or defined outputs need an independent noninterference proof, which the recovery report does not provide.",
         "PE recovery requires a full image-wide relocation and exception metadata load. Structurally incomplete directories refuse recovery; reached exception handlers require the explicit normal-execution profile. Source recovery does not certify binary replacement.",
-        "External-store frame separation is an explicit unchecked caller precondition for machine-state recovery with entry-frame bounds; native proof APIs reject this domain."
+        "External-store frame separation is an explicit unchecked caller precondition for machine-state recovery with entry-frame bounds; native proof APIs reject this domain.",
+        "Register-case partitioning uses one existing context field per non-entry native cursor and mode, with complete fresh edge proofs and shared budgets. Unknown domains remain conservative; no guest read or caller assumption is added.",
+        "After ordinary producer, guard, register and frame refinements stall on unresolved control, a bounded lazy walk of observed predecessors can nominate one existing demanded register/frame carrier as a context field. Fresh graphs must prove every complete constant or exact frame displacement; partial carriers, later unknown predecessors and missing immutable-read evidence remain unresolved. Successful attempts add no scan; discovery, refinement, node and context budgets remain shared."
       ],
       "tests": [
         {
@@ -11547,6 +11578,112 @@
           "runner": "gtest",
           "target": "NeverDInterpreterMachineStateTests",
           "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnStateWritesStayBounded",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnUsesFreshIdentityAndMetadata",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnReservesAlignmentLayoutSpace",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnDoesNotBindDanglingReferences",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.SharedReturnModelHonorsBothWorkBounds",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.DefaultReturnLayoutRemainsInline",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineStateTest.RejectsUnsupportedReturnLayouts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineSourceTest.SharedReturnPreservesEveryPathAndAlignmentRejection",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "DevirtualizationSourceTest.MultipleReturnsUseBackendSpecificWritebackLayouts",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLowIRRefinementTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateModelTests.cpp",
+          "filter": "InterpreterMachineStateModel.BothBranchArmsCommitTheirOwnState",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
           "filter": "InterpreterMachineSourceTest.EntryFlagsAndGuestStackRemainExplicitAcrossBothSourceBackends",
           "platforms": [
             "linux"
@@ -11575,6 +11712,15 @@
           "target": "NeverDDevirtualizationSourceTests",
           "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
           "filter": "DevirtualizationSourceTest.CLIFieldAndQueryBudgetsAreEnforced",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "DevirtualizationSourceTest.CLIWorkBudgetsAreEnforced",
           "platforms": [
             "linux"
           ]
@@ -11817,6 +11963,655 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDSessionCAPITests",
+          "source": "unittests/SessionCAPITests.cpp",
+          "filter": "SessionCAPITest.InterpreterRecoveryV7ChecksWorkBudgetsAndPreservesLayouts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.RegisterCasesSeparateFiniteFrameOffsets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.RegisterCasesRebuildWidenedPredecessorDispatch",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.RegisterCasesDispatchAfterInternalReturnPop",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.RegisterCasesKeepUnboundedOverlappingHighBytes",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.RegisterCasesShareRecoveryBudgets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "DevirtualizationSourceTest.CLIRegisterCasesCoverEveryMemoryEffect",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLowIRRefinementTests",
+          "source": "unittests/devirtualization/BinaryLowIRRefinementTests.cpp",
+          "filter": "BinaryLowIRRefinement.RegisterCaseDispatchChecksBothNativeControlCases",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLLVMCPhiTests",
+          "source": "unittests/lift/core/LLVMCPhiTests.cpp",
+          "filter": "LLVMCValues.MovedFalseArmCannotRunAfterAnInlinedTrueArm",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMedMutableSourceTests",
+          "source": "unittests/lift/core/MedMutableSourceTests.cpp",
+          "filter": "MedMutableSource.RepeatedBlockWritesKeepPrivateTrafficBounded",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMedMutableSourceTests",
+          "source": "unittests/lift/core/MedMutableSourceTests.cpp",
+          "filter": "MedMutableSource.ForwardedGuestSnapshotsSurviveOverlappingWrites",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDMedMutableSourceTests",
+          "source": "unittests/lift/core/MedMutableSourceTests.cpp",
+          "filter": "MedMutableSource.DeclaredZeroReturnSurvivesFoldingAndPromotion",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLLVMCValueTests",
+          "source": "unittests/lift/core/LLVMCValueTests.cpp",
+          "filter": "LLVMCValues.LongExpressionBoundariesSurviveReorderedBlocks",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.RefinesGuardsBeforeRejectingAnUnresolvedTarget",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.ReachableUnresolvedGuardIsNeverAssumedAway",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.GuardCannotHideAnUnresolvedTargetAfterABackedge",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.UnresolvedGuardRefinementHonorsBudgets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.UnresolvedGuardRefinementHasExactBudgetBounds",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.GuardedFrameRelationSurvivesProjection",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.PartialGuardCannotEstablishAWholeFrameOffset",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.GuardedFrameOffsetsDoNotLeakAcrossSiblingJoins",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.DemandedFrameProofSharesQueryLimits",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.MixedCarrierKeepsFiniteSubwordAndRuntimePayload",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.NarrowGuardDoesNotEnumerateWideRuntimePayload",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsRetainFiniteImagePointerCarriers",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsRequireEveryImmutableRead",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsRetainLateUnknownPredecessors",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsDoNotCompletePartialCarriers",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsShareRecoveryBudgets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.PureVariableDemandDoesNotNominateUnknownLocations",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.PureVariableDemandBoundsRepeatedOperandScans",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartiallyConstrainedInputRetainsIndependentPayloadBits",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartialInputProofKeepsCarriesAndEveryRelatedRoot",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartialInputLowerBoundMatchesIndependentFibers",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartialInputProofSharesBudgetAndPreservesWideFallback",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartialInputProofChargesRepeatedRelatedOperandScans",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalityRetainsRuntimeInputs",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalityUsesExactStrictLimits",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalityKeepsNonconjunctiveRestrictions",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalityRejectsInvalidContracts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalitySharesOneWalkBudget",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.NonwrappingBoundsKeepGuardedFrameReadsUnbounded",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.BoundedFrameReadsUseTheirOwnEnumerationLimit",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.BoundedFrameDomainDoesNotProveReachability",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.DisjointSumsDoNotInventCarryDependencies",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.DisjointMaskedSumsRetainConstantsAndUnknownCarries",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.SumMasksBoundWideShiftAmountsAndKeepWideFallback",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.AdditiveCarrierRetainsReachableCarryTargets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.FiniteSubwordCannotHideAMissingTargetOrFreeSelector",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.LaterPredecessorInvalidatesFiniteSubwordFacts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.FiniteSubwordHandlesNarrowCarriersInBothByteOrders",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.FiniteSubwordSharesQueryBudgetsAndRejectsUnknown",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.AutomaticDiscoveryRetainsFiniteSubword",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.UndemandedManualFieldsDoNotSearchSubwords",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.ConstantLeadingWindowDoesNotHideFiniteSelector",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterTransferChainTests.cpp",
+          "filter": "InterpreterTransferChain.RepeatedDestinationPreservesRuntimeLoops",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterTransferChainTests.cpp",
+          "filter": "InterpreterTransferChain.RepeatedDestinationOptInCanLoseCorrelation",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterTransferChainTests.cpp",
+          "filter": "InterpreterTransferChain.RepeatedDestinationIncludesDecodeMode",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterTransferChainTests.cpp",
+          "filter": "InterpreterTransferChain.RepeatOptionHasNoEffectWithoutChaining",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -11832,7 +12627,9 @@
           "neverd_devirtualize_source_v5",
           "neverd_devirtualize_machine_source_v5",
           "neverd_devirtualize_source_v6",
-          "neverd_devirtualize_machine_source_v6"
+          "neverd_devirtualize_machine_source_v6",
+          "neverd_devirtualize_source_v7",
+          "neverd_devirtualize_machine_source_v7"
         ],
         "python": [],
         "cli": [
@@ -11847,7 +12644,10 @@
           "neverd decompile --vm-max-refinements",
           "neverd decompile --vm-max-fields",
           "neverd decompile --vm-max-queries",
+          "neverd decompile --vm-max-evaluations",
+          "neverd decompile --vm-max-discovery-visits",
           "neverd decompile --vm-chain-transfers",
+          "neverd decompile --vm-chain-stop-at-repeat",
           "neverd decompile --vm-entry-frame",
           "neverd decompile --vm-entry-alignment",
           "neverd decompile --vm-external-stores-disjoint-frame",
@@ -11855,6 +12655,112 @@
           "neverd decompile --vm-no-control-discovery"
         ],
         "json": []
+      }
+    },
+    {
+      "id": "emulation.darwin-process",
+      "kind": "execution",
+      "status": "experimental",
+      "owner": "emulation",
+      "targets": [
+        "x86_64",
+        "aarch64"
+      ],
+      "docs": [
+        "docs/darwin-emulation.md",
+        "docs/process-emulation.md",
+        "docs/architecture.md",
+        "docs/testing.md"
+      ],
+      "limitations": [
+        "Explicit macos-macho64-v1, ios-macho64-v1 and ios-simulator-macho64-v1 execute bounded thin freestanding Mach-O processes. macOS and Simulator admit baseline x64/ARM64; devices require ARM64. Platform metadata is validated independently of the host backend.",
+        "Original segments, zero fill, pagezero reservation and maximum protection feed one private address space. LC_MAIN receives argc/argv/envp/apple and a bounded return gate; LC_UNIXTHREAD accepts only a complete PC-only native state. ARM64 OS pages are 16 KiB over 4 KiB CPU mappings; x64 pages are 4 KiB.",
+        "Darwin BSD carry and positive errno, secondary result registers, byte output, exit, deterministic identity and private anonymous data mmap/mprotect/munmap are modeled. Raw write lengths above INT_MAX return EINVAL before descriptor, pointer and output-budget checks, with an original native macOS oracle. Executable anonymous/JIT/shared/file/fixed mappings, Mach IPC, indirect calls, threads, signals and filesystem/network services remain unsupported.",
+        "External libraries, fixups, initialization/TLS, encrypted payloads, arm64e/PAC and unmodeled image contracts fail explicitly. No dyld linking, Objective-C/Swift runtime, Foundation/UIKit, AMFI, full application compatibility or native iOS-host HVF support is claimed.",
+        "The complete regular input file, including unmapped metadata and trailing bytes, must fit memory_limit before parsing or copying. Reads use a bounded private snapshot; embedded-NUL paths, short reads and file-size changes are rejected. Host filesystem I/O has no hard wall-clock guarantee.",
+        "Each available matching native backend is tested separately. Cross-ISA software execution and compilation cannot establish Intel HVF, Linux KVM or Windows WHP runtime coverage."
+      ],
+      "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.OversizedWritePrecedesDescriptorPointerAndOutputChecks/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinNativeTests.cpp",
+          "filter": "DarwinNative.OriginalMemoryAndWriteContractsMatchHostKernel",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.StartupDataBSSCarryAndBinaryOutput/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinImageTests.cpp",
+          "filter": "DarwinImage.RejectsAmbiguousPlatformsEntriesAndNoncanonicalThreadState",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinMemoryTests.cpp",
+          "filter": "*/DarwinMemoryTest.ProtectionAcrossHoleCannotChangeEarlierPages/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "ProcessPublic.DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        }
+      ],
+      "public_surfaces": {
+        "c": [
+          "neverd_emulate_process_json"
+        ],
+        "python": [
+          "Session.emulate_process"
+        ],
+        "cli": [
+          "neverd emulate",
+          "neverd emulate --profile",
+          "neverd emulate --options"
+        ],
+        "json": [
+          "neverd_emulate_process_json"
+        ]
       }
     }
   ]

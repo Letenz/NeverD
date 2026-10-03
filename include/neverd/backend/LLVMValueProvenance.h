@@ -26,6 +26,8 @@ inline constexpr llvm::StringLiteral
     SemanticProducerAttachment("neverd.value.semantic-producer");
 inline constexpr llvm::StringLiteral
     ExplicitMemoryReturnAttachment("neverd.return.explicit-memory-value");
+inline constexpr llvm::StringLiteral
+    ExplicitSourceReturnAttachment("neverd.return.explicit-source-value");
 
 inline void markSemanticProducer(llvm::Instruction &Instruction) {
   Instruction.setMetadata(SemanticProducerAttachment,
@@ -46,6 +48,17 @@ inline void markExplicitMemoryReturn(llvm::ReturnInst &Return) {
 
 inline bool isExplicitMemoryReturn(const llvm::ReturnInst &Return) {
   return Return.getMetadata(ExplicitMemoryReturnAttachment) != nullptr;
+}
+
+/// A validated source contract designates this return value, including a
+/// constant zero. C display inference must not turn it into a void return.
+inline void markExplicitSourceReturn(llvm::ReturnInst &Return) {
+  Return.setMetadata(ExplicitSourceReturnAttachment,
+                     llvm::MDNode::get(Return.getContext(), {}));
+}
+
+inline bool isExplicitSourceReturn(const llvm::ReturnInst &Return) {
+  return Return.getMetadata(ExplicitSourceReturnAttachment) != nullptr;
 }
 
 } // namespace neverd::llvm_value_provenance

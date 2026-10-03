@@ -265,6 +265,21 @@ def copy_notices(bundle: Path, source: Path, origins: set[Path], qt_version: str
         "Before distribution, provide matching complete corresponding source and dependency source as required.\n")
 
 
+def sign_bundle(bundle: Path, entitlements: Path) -> None:
+    """Sign leaves, retain the worker's HVF entitlement, then audit it."""
+    worker = bundle / "Contents/MacOS/neverd-worker"
+    for image in sorted((path for path in bundle.rglob("*") if macho(path)),
+                        key=lambda path: len(path.parts), reverse=True):
+        flags = ["--entitlements", entitlements] if image == worker else []
+        run("codesign", "--force", "--sign", "-", *flags, image)
+    run("codesign", "--force", "--deep", "--sign", "-",
+        "--preserve-metadata=entitlements", bundle)
+    run("codesign", "--verify", "--deep", "--strict", bundle)
+    actual = plistlib.loads(output("codesign", "--display", "--entitlements", ":-", worker).encode())
+    if actual.get("com.apple.security.hypervisor") is not True:
+        raise RuntimeError("Packaged neverd-worker lost its Hypervisor entitlement")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, required=True)
@@ -336,12 +351,9 @@ def main() -> None:
     copy_notices(bundle, source, origins, version, args.qt_licenses or source / "licenses" / ("Qt-" + version),
                  kddw_source, json_license)
     (resources / "dependency-audit.json").write_text(json.dumps(report, indent=2) + "\n")
-    # Python extension modules and executables in framework bin/ directories
-    # are not all discovered by codesign --deep. Sign every Mach-O leaf first.
-    for image in sorted((path for path in bundle.rglob("*") if macho(path)), key=lambda path: len(path.parts), reverse=True):
-        run("codesign", "--force", "--sign", "-", image)
-    run("codesign", "--force", "--deep", "--sign", "-", bundle)
-    run("codesign", "--verify", "--deep", "--strict", bundle)
+    # Dependency repair invalidates Mach-O signatures. Preserve entitlements
+    # when the final recursive bundle signing revisits the worker executable.
+    sign_bundle(bundle, source.parents[1] / "resources/macos/neverd-hypervisor.entitlements")
     print(json.dumps({"bundle": str(bundle), "minimum_macos": report["minimum_macos"], "macho_images": len(report["images"])}))
 
 

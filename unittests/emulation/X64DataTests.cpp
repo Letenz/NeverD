@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "arch/x86_64/X64Machine.h"
 #include "gtest/gtest.h"
 
@@ -42,7 +43,8 @@ protected:
       auto E = B.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable &&
+          !requireHvf(std::get<0>(GetParam()), GuestArchitecture::X64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }
@@ -776,7 +778,8 @@ INSTANTIATE_TEST_SUITE_P(
     Backends, X64Device,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::Values(ExecutionContract::CheckedX64)));
 
 TEST_P(X64Data, UnmodeledFormsRemainExplicitlyUnsupported) {
@@ -797,7 +800,8 @@ INSTANTIATE_TEST_SUITE_P(
     Backends, X64Data,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::Values(ExecutionContract::CheckedX64,
                                      ExecutionContract::CheckedUserX64)));
 } // namespace

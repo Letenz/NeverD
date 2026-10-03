@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: d157cf302643e879be2748919ad949d2979c1d36798e295ee566f247834396f4 -->
+<!-- i18n-source: b7a4aaf4bcd1796186c3567b9a45c65b994477daaf193d6f8502333fca4d305b -->
 
 <div align="center">
 
@@ -115,7 +115,7 @@ metadata、Low/Med/High IR、検証済み LLVM、portable C11、安全な stable
 
 CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、ゲスト OS 方針を分離します。`NEVERD_ENABLE_CPU_EMULATION` は x64/ARM64 CPU 層を有効にし、`NEVERD_ENABLE_DRIVER_EMULATION` は範囲を限定した x64 Windows WDM/KMDF 環境を追加します。`linux-elf64-v1` は対応する Linux ELF プロセスを実行します。[CPU 実行](cpu-execution.md)、[ゲストプロセスのエミュレーション](process-emulation.md)、[Windows ドライバーエミュレーション](driver-emulation.md)を参照してください。
 
-`windows-pe64-v1` は PEB/TEB、EXE TLS、名前付き Win32 API、明示的で非循環の起動 DLL グラフを備えた有界 Windows x64/ARM64 コンソールプロセスに対応します。DLL は名前／序数によるコード・データのインポート、DIR64 再配置、実際のローダーリストに対応します。DLL 入口／TLS、動的ロード、転送エクスポート、CRT/GUI、ユーザー SEH、スレッドは未完成です。ARM64 KVM/WHP のネイティブ実行証拠も未取得です。
+`windows-pe64-v1` は PEB/TEB、モジュール TLS と起動時の `DllMain`、名前付き Win32 API、明示的で非循環の起動 DLL グラフを備えた有界 Windows x64/ARM64 コンソールプロセスに対応します。DLL は名前／序数によるコード・データのインポート、DIR64 再配置、実際のローダーリストに対応します。動的ロード、CRT/GUI、ユーザー SEH、スレッドは未完成です。ARM64 KVM/WHP のネイティブ実行証拠も未取得です。 有界の転送エクスポートと、常駐ゲストイメージの `GetProcAddress` に対応します。
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 

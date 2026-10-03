@@ -12,6 +12,7 @@
 #include "ObjCForwardedInitializerSources.h"
 #include "ObjCImmutableNativeSources.h"
 #include "ObjCImmutableStringCallbackSources.h"
+#include "ObjCMergedSetterSources.h"
 #include "ObjCMetadataFactorySources.h"
 #include "ObjCNativeDependencies.h"
 #include "ObjCResumeSource.h"
@@ -21,10 +22,12 @@
 #include "ObjCSuperGetterSources.h"
 #include "ObjCSwiftBooleanSources.h"
 #include "ObjCSwiftOnceSources.h"
+#include "ObjCSwiftVirtualSources.h"
 #include "ObjCSynchronizedSource.h"
 #include "SessionImpl.h"
 #include "SourceProjectionEvidenceJSON.h"
 #include "SourceRegisterCopyProjection.h"
+#include "SourceSwiftWitnessFrameProjection.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -76,6 +79,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     Options.MaxFunctions = MaxFunctions;
     Options.EmitDumpOutput = false;
     seedObjCForwardedInitializerAccessorHints(S->Img, Options);
+    seedObjCMergedSetterAccessorHints(S->Img, Options);
     Pipeline Engine;
     auto RunPipeline = [&](unsigned Iteration) {
       NativePhaseTrace PipelineTrace(NativePhaseTrace::Phase::Pipeline,
@@ -248,6 +252,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     std::map<va_t, ObjCSourceBindingResult> Projections;
     const ObjCProfileStorage ProfileStorage(S->Img);
     const SourceRegisterCopyProjectionValidator RegisterCopies(S->Img, Result);
+    const SourceSwiftWitnessFrameProjectionValidator WitnessFrames(S->Img,
+                                                                   Result);
     std::map<va_t, ObjCBlockSourceBindingResult> BlockProjections;
     std::map<va_t, ObjCSynchronizedSourceProof> SynchronizedProjections;
     std::set<va_t> ResumeOnlyProjections;
@@ -256,6 +262,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     const auto MetadataFactoryPlan =
         discoverObjCMetadataFactorySources(S->Img, Result, ProfileStorage);
     std::set<va_t> MetadataFactoryProjections;
+    const auto MergedSetterPlan =
+        discoverObjCMergedSetterSources(S->Img, Result, ProfileStorage);
+    std::set<va_t> MergedSetterProjections;
     const auto ForwardedInitializerPlan =
         discoverObjCForwardedInitializerSources(S->Img, Result);
     std::set<va_t> ForwardedInitializerProjections;
@@ -307,6 +316,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           MetadataFactoryBinding.Function, S->Img, ForwardedInitializerPlan);
       if (ForwardedInitializerBinding.Projected)
         ForwardedInitializerProjections.insert(Entry);
+      auto MergedSetterBinding =
+          projectObjCMergedSetter(ForwardedInitializerBinding.Function, S->Img,
+                                  MergedSetterPlan, ProfileStorage);
+      if (MergedSetterBinding.Projected)
+        MergedSetterProjections.insert(Entry);
       // The immutable callback already carries all current source bindings.
       // Its proved scalar pool offsets may numerically overlap image code;
       // reinterpreting those generated offsets as raw machine addresses would
@@ -314,16 +328,21 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       auto Binding =
           ImmutableStringInputs.count(Entry)
               ? ImmutableStringInputs.at(Entry)
-              : bindObjCSourceReferences(ForwardedInitializerBinding.Function,
-                                         S->Img, &ProfileStorage, &Functions);
+              : bindObjCSourceReferences(MergedSetterBinding.Function, S->Img,
+                                         &ProfileStorage, &Functions);
       if (const auto Immutable = ImmutableStringInputs.find(Entry);
           Immutable != ImmutableStringInputs.end()) {
-        Binding.Function = ForwardedInitializerBinding.Function;
+        Binding.Function = MergedSetterBinding.Function;
         if (!objCImmutableStringCallbackValid(Binding.Function, S->Img, Result,
                                               OncePlan))
           Binding.Limitation =
               "immutable string callback proof is no longer valid";
       }
+      Binding.Dependencies.insert(MergedSetterBinding.Dependencies.begin(),
+                                  MergedSetterBinding.Dependencies.end());
+      Binding.ProfileCounterSections.insert(
+          MergedSetterBinding.ProfileSections.begin(),
+          MergedSetterBinding.ProfileSections.end());
       Binding.Dependencies.insert(MetadataFactoryBinding.Dependencies.begin(),
                                   MetadataFactoryBinding.Dependencies.end());
       Binding.Dependencies.insert(
@@ -377,6 +396,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Reason = "synchronized cleanup proof is no longer valid";
       if (!RegisterCopies.valid(Binding.Function))
         Reason = "source register-copy proof is no longer valid";
+      if (!WitnessFrames.valid(Binding.Function))
+        Reason = "Swift witness frame proof is no longer valid";
       if (Reason.empty()) {
         auto ReadOnlyHelpers =
             readOnlyScalarSourceHelpers(Binding.Function, S->Img);
@@ -397,8 +418,13 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                      Expression, S->Img, Result, Binding.Function) ||
                  objCImmutableNativeSourceCallBound(Expression, S->Img, Result,
                                                     Binding.Function) ||
+                 objCSwiftVirtualSourceCallBound(Expression, S->Img, Result,
+                                                 Binding.Function) ||
                  objCMetadataFactorySourceCallBound(
                      Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
+                     Binding.Function, Functions) ||
+                 objCMergedSetterSourceCallBound(
+                     Expression, S->Img, MergedSetterPlan, ProfileStorage,
                      Binding.Function, Functions) ||
                  objCSuperGetterSourceCallBound(Expression, S->Img,
                                                 SuperGetterPlan,
@@ -523,9 +549,14 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                          Expression, S->Img, Result, Binding.Function) ||
                      objCImmutableNativeSourceCallBound(
                          Expression, S->Img, Result, Binding.Function) ||
+                     objCSwiftVirtualSourceCallBound(Expression, S->Img, Result,
+                                                     Binding.Function) ||
                      objCMetadataFactorySourceCallBound(
                          Expression, S->Img, MetadataFactoryPlan,
                          ProfileStorage, Binding.Function, Functions) ||
+                     objCMergedSetterSourceCallBound(
+                         Expression, S->Img, MergedSetterPlan, ProfileStorage,
+                         Binding.Function, Functions) ||
                      objCSuperGetterSourceCallBound(
                          Expression, S->Img, SuperGetterPlan, Binding.Function,
                          Functions) ||
@@ -631,8 +662,13 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                      Expression, S->Img, Result, Projection.Function) ||
                  objCImmutableNativeSourceCallBound(Expression, S->Img, Result,
                                                     Projection.Function) ||
+                 objCSwiftVirtualSourceCallBound(Expression, S->Img, Result,
+                                                 Projection.Function) ||
                  objCMetadataFactorySourceCallBound(
                      Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
+                     Projection.Function, Functions) ||
+                 objCMergedSetterSourceCallBound(
+                     Expression, S->Img, MergedSetterPlan, ProfileStorage,
                      Projection.Function, Functions) ||
                  objCSuperGetterSourceCallBound(
                      Expression, S->Img, SuperGetterPlan, Projection.Function,
@@ -676,6 +712,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Evidence.append(Projection.Diagnostics);
         if (!RegisterCopies.valid(Projection.Function)) {
           Reason = "source register-copy proof is no longer valid";
+          Evidence.Complete = false;
+          Evidence.add(SourceProjectionIssue::Body, Reason);
+        }
+        if (!WitnessFrames.valid(Projection.Function)) {
+          Reason = "Swift witness frame proof is no longer valid";
           Evidence.Complete = false;
           Evidence.add(SourceProjectionIssue::Body, Reason);
         }
@@ -900,6 +941,13 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           MetadataFactories.insert(Entry);
       IdentityHelpers += renderObjCMetadataFactoryHelpers(
           S->Img, MetadataFactoryPlan, ProfileStorage, MetadataFactories,
+          SharedIdentityFunctions);
+      std::set<va_t> MergedSetters;
+      for (const auto Entry : Included)
+        if (MergedSetterProjections.count(Entry))
+          MergedSetters.insert(Entry);
+      IdentityHelpers += renderObjCMergedSetterHelpers(
+          S->Img, MergedSetterPlan, ProfileStorage, MergedSetters,
           SharedIdentityFunctions);
       std::set<va_t> ForwardedInitializers;
       for (const auto Entry : Included)

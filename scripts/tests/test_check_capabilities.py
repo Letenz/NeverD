@@ -3199,6 +3199,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "debug.local": "unsupported",
                 "debug.remote": "unsupported",
                 "emulation.cpu-configuration": "experimental",
+                "emulation.darwin-process": "experimental",
                 "emulation.linux-process": "experimental",
                 "emulation.windows-driver-initialization": "experimental",
                 "exception.itanium.ada-d": "experimental",
@@ -3217,6 +3218,12 @@ class RepositoryCapabilityTests(unittest.TestCase):
         )
         no_surfaces = {"c": [], "python": [], "cli": [], "json": []}
         expected_surfaces = {
+            "emulation.darwin-process": {
+                "c": ["neverd_emulate_process_json"],
+                "python": ["Session.emulate_process"],
+                "cli": ["neverd emulate", "neverd emulate --profile", "neverd emulate --options"],
+                "json": ["neverd_emulate_process_json"],
+            },
             "emulation.linux-process": {
                 "c": [
                     "neverd_emulate_process_json"
@@ -3261,7 +3268,9 @@ class RepositoryCapabilityTests(unittest.TestCase):
                       "neverd_devirtualize_source_v5",
                       "neverd_devirtualize_machine_source_v5",
                       "neverd_devirtualize_source_v6",
-                      "neverd_devirtualize_machine_source_v6"],
+                      "neverd_devirtualize_machine_source_v6",
+                      "neverd_devirtualize_source_v7",
+                      "neverd_devirtualize_machine_source_v7"],
                 "python": [],
                 "cli": [
                     "neverd decompile --devirtualize",
@@ -3275,7 +3284,10 @@ class RepositoryCapabilityTests(unittest.TestCase):
                     "neverd decompile --vm-max-refinements",
                     "neverd decompile --vm-max-fields",
                     "neverd decompile --vm-max-queries",
+                    "neverd decompile --vm-max-evaluations",
+                    "neverd decompile --vm-max-discovery-visits",
                     "neverd decompile --vm-chain-transfers",
+                    "neverd decompile --vm-chain-stop-at-repeat",
                     "neverd decompile --vm-entry-frame",
                     "neverd decompile --vm-entry-alignment",
                     "neverd decompile --vm-external-stores-disjoint-frame",

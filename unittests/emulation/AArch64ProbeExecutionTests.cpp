@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "arch/aarch64/AArch64Machine.h"
 #include "backends/MachineFactories.h"
 #include "core/ExecutionDiagnostics.h"
@@ -73,16 +74,17 @@ TEST_P(AArch64ProbeExecution,
   auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
   const auto Backend = std::get<0>(GetParam());
   const bool UserMode = std::get<1>(GetParam());
-  auto Created = Backend == ExecutionBackendKind::KVM
-                     ? createKvmAArch64Machine(*Memory)
-                 : Backend == ExecutionBackendKind::WHP
-                     ? createWhpAArch64Machine(*Memory)
-                     : createUnicornAArch64Machine(*Memory, UserMode);
+  auto Created =
+      Backend == ExecutionBackendKind::KVM   ? createKvmAArch64Machine(*Memory)
+      : Backend == ExecutionBackendKind::WHP ? createWhpAArch64Machine(*Memory)
+      : Backend == ExecutionBackendKind::HVF
+          ? createHvfAArch64Machine(*Memory)
+          : createUnicornAArch64Machine(*Memory, UserMode);
   if (!Created) {
     auto E = Created.takeError();
     const bool Unavailable = E.isA<BackendUnavailableError>();
     const auto Text = llvm::toString(std::move(E));
-    if (Unavailable)
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::AArch64))
       GTEST_SKIP() << Text;
     FAIL() << Text;
   }
@@ -106,7 +108,8 @@ INSTANTIATE_TEST_SUITE_P(
     Transports, AArch64ProbeExecution,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
-                                     ExecutionBackendKind::WHP),
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
                      testing::Bool()));
 } // namespace
 } // namespace neverd::emulation

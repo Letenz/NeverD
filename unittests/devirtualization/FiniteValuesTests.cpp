@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
+#include <set>
 
 using namespace neverd::analysis;
 using namespace neverd::analysis::detail;
@@ -111,14 +113,31 @@ TEST(FiniteValues, UnrelatedPredicateLeavesWideProjectionInputUnconstrained) {
   EXPECT_EQ(Ctx.numNodes(), Nodes);
 }
 
-TEST(FiniteValues, ExactSymbolAndItsExtractsRemainConstrained) {
+TEST(FiniteValues, PartiallyConstrainedInputRetainsIndependentPayloadBits) {
+  SymContext Ctx;
+  for (uint32_t Width : {8U, 48U, 56U, 64U}) {
+    const auto Word = Ctx.mkVar("input" + std::to_string(Width), Width);
+    const auto Guard = Ctx.mkEq(Ctx.mkExtract(Word, 0, 2), Ctx.mkConst(2, 1));
+    const auto Payload = Ctx.mkAnd(Word, Ctx.mkConst(Width, 0xfc));
+    const auto Nodes = Ctx.numNodes();
+    EXPECT_TRUE(hasUnconstrainedProjectionInput(Ctx, Guard, Payload, 63, 1000));
+    EXPECT_FALSE(
+        hasUnconstrainedProjectionInput(Ctx, Guard, Payload, 64, 1000));
+    EXPECT_EQ(Ctx.numNodes(), Nodes);
+  }
+}
+
+TEST(FiniteValues, PredicatesConstrainOnlyTheirDemandedInputBits) {
   SymContext Ctx;
   const SymRef Value = Ctx.mkVar("projection", 64);
   EXPECT_FALSE(hasUnconstrainedProjectionInput(
       Ctx, Ctx.mkEq(Value, Ctx.mkConst(64, 7)), Value, 32, 100));
-  EXPECT_FALSE(hasUnconstrainedProjectionInput(
+  EXPECT_TRUE(hasUnconstrainedProjectionInput(
       Ctx, Ctx.mkEq(Ctx.mkExtract(Value, 8, 8), Ctx.mkConst(8, 7)), Value, 32,
       100));
+  EXPECT_FALSE(hasUnconstrainedProjectionInput(
+      Ctx, Ctx.mkEq(Ctx.mkExtract(Value, 8, 8), Ctx.mkConst(8, 7)),
+      Ctx.mkExtract(Value, 8, 8), 32, 100));
   const SymRef Boolean = Ctx.mkVar("condition", 1);
   EXPECT_FALSE(hasUnconstrainedProjectionInput(Ctx, Boolean, Boolean, 1, 1));
 }
@@ -134,8 +153,11 @@ TEST(FiniteValues, SymbolIdentityDoesNotDependOnDiagnosticNames) {
       Ctx, Ctx.mkEq(Other, Ctx.mkConst(64, 7)), Value, 32, 100));
   const SymRef Overlapping =
       Ctx.mkInputVar("byte_lane", 8, {SymInputKind::Register, 1, 1, 0});
-  EXPECT_FALSE(hasUnconstrainedProjectionInput(
+  EXPECT_TRUE(hasUnconstrainedProjectionInput(
       Ctx, Ctx.mkEq(Overlapping, Ctx.mkConst(8, 7)), Value, 32, 100));
+  EXPECT_FALSE(hasUnconstrainedProjectionInput(
+      Ctx, Ctx.mkEq(Overlapping, Ctx.mkConst(8, 7)), Ctx.mkExtract(Value, 8, 8),
+      32, 100));
 }
 
 TEST(FiniteValues, ProjectionTypeMustExceedTheRequestedLimit) {
@@ -264,13 +286,13 @@ TEST(FiniteValues, SignExtensionDoesNotMultiplyTheSignBitDomain) {
   }
 }
 
-TEST(FiniteValues, PredicateUseOfAnySourceBitExcludesTheWholeVariable) {
+TEST(FiniteValues, PredicateBitUsePreservesDisjointViews) {
   SymContext Ctx;
   const SymRef Word = Ctx.mkVar("word", 64);
   const SymRef Low = Ctx.mkExtract(Word, 0, 8);
   const SymRef Predicate =
       Ctx.mkEq(Ctx.mkExtract(Word, 63, 1), Ctx.mkConst(1, 0));
-  EXPECT_FALSE(hasUnconstrainedProjectionInput(Ctx, Predicate, Low, 32, 100));
+  EXPECT_TRUE(hasUnconstrainedProjectionInput(Ctx, Predicate, Low, 32, 100));
   const SymRef Independent = Ctx.mkVar("independent", 6);
   // A constrained or unsupported part does not invalidate distinct, proven
   // independent bits elsewhere in the same output.
@@ -332,7 +354,7 @@ TEST(FiniteValues, BitProjectionLowerBoundAgreesWithExhaustiveEnumeration) {
     }
 }
 
-TEST(FiniteValues, RelatedColumnsExcludeEveryReachableSourceVariable) {
+TEST(FiniteValues, RelatedColumnsExcludeEveryDemandedSourceBit) {
   SymContext Ctx;
   const SymRef Word = Ctx.mkVar("word", 64);
   const SymRef Other = Ctx.mkVar("other", 64);
@@ -351,12 +373,143 @@ TEST(FiniteValues, RelatedColumnsExcludeEveryReachableSourceVariable) {
                                                  {Related}));
     EXPECT_EQ(Ctx.numNodes(), Nodes);
   }
-  // This intentionally excludes the whole variable even for disjoint views.
-  EXPECT_FALSE(hasUnconstrainedProjectionInput(Ctx, Predicate, Value, 3, 100,
-                                               {Ctx.mkExtract(Word, 63, 1)}));
-  EXPECT_FALSE(hasUnconstrainedProjectionInput(
+  EXPECT_TRUE(hasUnconstrainedProjectionInput(Ctx, Predicate, Value, 3, 100,
+                                              {Ctx.mkExtract(Word, 63, 1)}));
+  EXPECT_TRUE(hasUnconstrainedProjectionInput(
       Ctx, Ctx.mkEq(Ctx.mkExtract(Word, 63, 1), Ctx.mkConst(1, 0)), Value, 3,
       100, {Independent}));
+}
+
+TEST(FiniteValues, PartialInputProofKeepsCarriesAndEveryRelatedRoot) {
+  SymContext Ctx;
+  const auto Word = Ctx.mkVar("word", 4);
+  const auto Predicate =
+      Ctx.mkEq(Ctx.mkAnd(Word, Ctx.mkConst(4, 12)), Ctx.mkConst(4, 0));
+  const auto Value = Ctx.mkAnd(Word, Ctx.mkConst(4, 3));
+  const auto Carry = Ctx.mkExtract(Ctx.mkAdd(Word, Ctx.mkConst(4, 1)), 2, 1);
+  EXPECT_FALSE(
+      hasUnconstrainedProjectionInput(Ctx, Predicate, Value, 3, 1000, {Carry}));
+  // In the fixed Related=1 fiber only word=3 remains; a carry cannot be
+  // discarded merely because the related expression extracts an upper bit.
+  std::set<unsigned> CarryFiber;
+  for (unsigned X = 0; X < 16; ++X)
+    if (!(X & 12) && (((X + 1) >> 2) & 1))
+      CarryFiber.insert(X & 3);
+  EXPECT_EQ(CarryFiber, (std::set<unsigned>{3}));
+  EXPECT_FALSE(hasUnconstrainedProjectionInput(
+      Ctx, Predicate, Value, 1, 1000,
+      {Ctx.mkExtract(Word, 0, 1), Ctx.mkExtract(Word, 1, 1)}));
+  const auto Zero = Ctx.mkEq(Word, Ctx.mkConst(4, 0));
+  const auto One = Ctx.mkNot(Zero);
+  ASSERT_TRUE(Ctx.isConstZero(Ctx.mkAnd(Zero, One)));
+  EXPECT_FALSE(hasUnconstrainedProjectionInput(Ctx, Predicate, Value, 3, 1000,
+                                               {Zero, One}));
+}
+
+TEST(FiniteValues, PartialInputLowerBoundMatchesIndependentFibers) {
+  SymContext Ctx;
+  const auto A = Ctx.mkVar("a", 6);
+  const auto B = Ctx.mkVar("b", 3);
+  const auto LowA = Ctx.mkExtract(A, 0, 2);
+  const auto LowB = Ctx.mkExtract(B, 0, 1);
+  for (unsigned Mode = 0; Mode < 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto Predicate = Ctx.mkEq(LowA, Ctx.mkConst(2, 1));
+    auto Value = Ctx.mkConcat(Ctx.mkExtract(A, 2, 4), B);
+    llvm::SmallVector<SymRef, 4> Related{LowA, LowB};
+    if (Mode == 1)
+      Related.push_back(Ctx.mkExtract(A, 5, 1));
+    if (Mode == 2) {
+      Related.push_back(Ctx.mkEq(A, Ctx.mkConst(6, 1)));
+      Related.push_back(Ctx.mkEq(A, Ctx.mkConst(6, 5)));
+    }
+    const auto Carry = Ctx.mkExtract(Ctx.mkAdd(A, Ctx.mkConst(6, 1)), 2, 1);
+    if (Mode == 3)
+      Related.push_back(Carry);
+    if (Mode == 4)
+      Predicate = Ctx.mkAnd(Predicate, Ctx.mkEq(Carry, Ctx.mkConst(1, 0)));
+    if (Mode == 5)
+      Value = Ctx.mkSExt(B, 64);
+
+    // Independent host arithmetic enumerates every concrete input, grouped
+    // by the exact related outputs that must remain fixed during variation.
+    std::map<std::vector<uint64_t>, std::set<uint64_t>> Fibers;
+    for (unsigned X = 0; X < 64; ++X)
+      for (unsigned Y = 0; Y < 8; ++Y) {
+        if ((X & 3) != 1 || (Mode == 4 && (((X + 1) >> 2) & 1)))
+          continue;
+        std::vector<uint64_t> Key{X & 3U, Y & 1U};
+        if (Mode == 1)
+          Key.push_back(X >> 5);
+        if (Mode == 2) {
+          Key.push_back(X == 1);
+          Key.push_back(X == 5);
+        }
+        if (Mode == 3)
+          Key.push_back(((X + 1) >> 2) & 1);
+        const uint64_t Output = Mode == 5
+                                    ? uint64_t((Y & 4) ? int64_t(Y) - 8 : Y)
+                                    : ((X >> 2) << 3) | Y;
+        Fibers[Key].insert(Output);
+      }
+    ASSERT_FALSE(Fibers.empty());
+    size_t Smallest = std::numeric_limits<size_t>::max();
+    for (const auto &[Key, Values] : Fibers)
+      Smallest = std::min(Smallest, Values.size());
+    const auto Nodes = Ctx.numNodes();
+    for (uint32_t Limit : {1U, 3U, 7U, 15U, 31U, 63U, 127U})
+      EXPECT_EQ(hasUnconstrainedProjectionInput(Ctx, Predicate, Value, Limit,
+                                                5000, Related),
+                Smallest > Limit)
+          << "limit=" << Limit << " smallest fiber=" << Smallest;
+    EXPECT_EQ(Ctx.numNodes(), Nodes);
+  }
+}
+
+TEST(FiniteValues, PartialInputProofSharesBudgetAndPreservesWideFallback) {
+  SymContext Ctx;
+  const auto Word = Ctx.mkVar("word", 64);
+  const auto Predicate = Ctx.mkEq(Ctx.mkExtract(Word, 0, 1), Ctx.mkConst(1, 1));
+  const auto Value = Ctx.mkExtract(Word, 8, 8);
+  const auto Related = Ctx.mkExtract(Word, 1, 1);
+  uint64_t Minimum = 0;
+  for (uint64_t Budget = 1; Budget < 1000; ++Budget)
+    if (hasUnconstrainedProjectionInput(Ctx, Predicate, Value, 255, Budget,
+                                        {Related})) {
+      Minimum = Budget;
+      break;
+    }
+  ASSERT_GT(Minimum, 1U);
+  EXPECT_FALSE(hasUnconstrainedProjectionInput(Ctx, Predicate, Value, 255,
+                                               Minimum - 1, {Related}));
+  EXPECT_FALSE(hasUnconstrainedProjectionInput(Ctx, Predicate, Value, 255,
+                                               Minimum, {Related, Related}));
+  EXPECT_TRUE(hasUnconstrainedProjectionInput(Ctx, Predicate, Value, 255, 1000,
+                                              {Related, Related}));
+  const auto Wide = Ctx.mkVar("wide", 4096);
+  const auto WideView = Ctx.mkExtract(Wide, 2048, 8);
+  EXPECT_TRUE(
+      hasUnconstrainedProjectionInput(Ctx, Ctx.mkTrue(), WideView, 255, 1000));
+  EXPECT_FALSE(hasUnconstrainedProjectionInput(
+      Ctx, Ctx.mkEq(Ctx.mkExtract(Wide, 0, 1), Ctx.mkConst(1, 1)), WideView,
+      255, 1000));
+}
+
+TEST(FiniteValues, PartialInputProofChargesRepeatedRelatedOperandScans) {
+  SymContext Ctx;
+  const auto Word = Ctx.mkVar("word", 64);
+  const auto Payload = Ctx.mkExtract(Word, 8, 8);
+  const auto Predicate = Ctx.mkEq(Ctx.mkExtract(Word, 1, 1), Ctx.mkConst(1, 1));
+  llvm::SmallVector<SymRef, 8> Parts(2048, Ctx.mkExtract(Word, 0, 1));
+  const auto WideRelated = Ctx.mkConcat(Parts);
+  llvm::SmallVector<SymRef, 8> Related(8, WideRelated);
+  // The initial whole-DAG scan sees the wide node once. Fine-grained walks
+  // must charge its operand edges again for each related root, even though
+  // all 2048 pieces denote the very same source bit.
+  EXPECT_FALSE(hasUnconstrainedProjectionInput(Ctx, Predicate, Payload, 255,
+                                               6000, Related));
+  EXPECT_TRUE(hasUnconstrainedProjectionInput(Ctx, Predicate, Payload, 255,
+                                              50000, Related));
 }
 
 TEST(FiniteValues, RelatedRootsShareTheTraversalBudgetAndMustBeValid) {

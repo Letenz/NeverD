@@ -169,6 +169,7 @@ add_neverd_unittest(NeverDLiftTests
   sdk/ObjCSwiftOnceSourceTests.cpp
   sdk/ObjCSuperGetterSourceTests.cpp
   sdk/ObjCMetadataFactorySourceTests.cpp
+  sdk/ObjCMergedSetterSourceTests.cpp
   sdk/ObjCImmutableStringCallbackSourceTests.cpp
   sdk/ObjCSwiftBooleanSourceTests.cpp
   sdk/ObjCBlockSourceTests.cpp
@@ -1052,6 +1053,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   sdk/ObjCSwiftOnceSourceTests.cpp
   sdk/ObjCSuperGetterSourceTests.cpp
   sdk/ObjCMetadataFactorySourceTests.cpp
+  sdk/ObjCMergedSetterSourceTests.cpp
   sdk/ObjCImmutableStringCallbackSourceTests.cpp
   sdk/ObjCSwiftBooleanSourceTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
@@ -1208,7 +1210,7 @@ target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
 
 add_neverd_unittest(NeverDMedMutableSourceTests
   core/MedMutableSourceTests.cpp
-  LINK_COMPONENTS BackendLLVM BackendC IRMed
+  LINK_COMPONENTS Pipeline BackendLLVM BackendC IRMed
 )
 if(NEVERD_TEST_CLANG_EXECUTABLE)
   target_compile_definitions(NeverDMedMutableSourceTests PRIVATE

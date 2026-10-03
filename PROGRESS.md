@@ -1,5 +1,173 @@
 # NeverD Daily Progress
 
+Last verified: **2026-10-03 09:12 Asia/Shanghai (UTC+08:00)** / **2026-10-03 01:12 UTC**
+
+This is a point-in-time daily issue/PR and static-review tracker. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md) and [contribution guidance](CONTRIBUTING.md) remain authoritative. Priorities below are proposed acceptance work, not assigned deadlines or an overall completion percentage.
+
+## Current snapshot
+
+Source review is pinned to the observed dev commit. Issue/PR counts precede this documentation proposal.
+
+| Measure | Verified state |
+| --- | --- |
+| Open issues | 17; unchanged |
+| Open pull requests | 0; unchanged before this proposal |
+| PRs merged since 2026-10-02 01:11 UTC | 35: #328–362 |
+| PRs closed without merge in that window | 0 |
+| Ordinary issues updated/closed in the window | 0 / 0 |
+| Observed dev commit | [99340b58](https://github.com/NeverSight/NeverD/commit/99340b58657e3907588a33b363435f79b74b86fe) |
+| Previous observed dev commit | [d87f27d2](https://github.com/NeverSight/NeverD/commit/d87f27d29ecb097d1fa8483006797dc4765c3972) |
+| Change inventory | 262 commits; 567 changed file/submodule paths, including 175 added and zero deleted |
+| New statically confirmed defects | 0 in the bounded scope below |
+| Proposed code fixes today | None; documentation-only update |
+
+The [comparison](https://github.com/NeverSight/NeverD/compare/d87f27d29ecb097d1fa8483006797dc4765c3972...99340b58657e3907588a33b363435f79b74b86fe) was read across 100 + 100 + 62 commit records and an empty fourth page. GitHub's comparison limits its file list to 300 paths; the 567-path inventory instead compares the complete recursive Git trees (5,313 and 5,496 entries, neither truncated), excluding directories. Enumeration is not a claim that every changed path was audited.
+
+### Changes since the previous snapshot
+
+- Yesterday's [PR #328](https://github.com/NeverSight/NeverD/pull/328) merged at 2026-10-02 01:29:42 UTC as [3c1f637f](https://github.com/NeverSight/NeverD/commit/3c1f637f514a9e6902a3ccc02690565d08408efb). The canonical WDK path assertion is present on the inspected dev tree. Its merged PROGRESS.md exactly matches the previous tracker preserved below.
+- [#329](https://github.com/NeverSight/NeverD/pull/329) expanded complete WDK corpus/SEH acceptance. Later x64 bit-string, string transfer and string comparison changes landed in [#336](https://github.com/NeverSight/NeverD/pull/336), [#338](https://github.com/NeverSight/NeverD/pull/338) and [#342](https://github.com/NeverSight/NeverD/pull/342).
+- Windows process memory, module graphs, lifetimes and exports landed through [#346](https://github.com/NeverSight/NeverD/pull/346), [#350](https://github.com/NeverSight/NeverD/pull/350), [#352](https://github.com/NeverSight/NeverD/pull/352), [#355](https://github.com/NeverSight/NeverD/pull/355) and [#357](https://github.com/NeverSight/NeverD/pull/357). These changes enlarge the current Windows native requirement to 404 outcomes.
+- Native macOS HVF and Darwin environments were integrated. The latest [99340b58](https://github.com/NeverSight/NeverD/commit/99340b58657e3907588a33b363435f79b74b86fe) writes and captures Intel RIP/RFLAGS directly through VMCS after cancellation recovery. Its actual Intel full gate is still running.
+- Interpreter recovery domains, bounded source generation, exported bytecode recovery, Swift/Objective-C binding and additional lifting changes were inventoried, not comprehensively source-reviewed today.
+
+## Static review
+
+**Mode:** Read-only source, diffs, caller/test contracts, configuration and existing GitHub CI evidence. No repository program, build, test, script, linter or formatter was executed. No workflow was manually dispatched or rerun. No new defect was established strongly enough to justify an automatic code change.
+
+### HVF cancellation, register transfer and callers
+
+HVF source coverage and findings are recorded below. Source invariants are not runtime acceptance.
+
+The source/test audit covers **38 distinct artifacts** in total, including the native-evidence and historical-failure sections below; four workflow files were additionally inspected.
+
+**Full HVF/adjacent source and test reads:**
+- `lib/emulation/backends/hvf/{HvfExecutor.cpp,HvfExecutor.h,HvfX64Machine.cpp,HvfX64Registers.def}`
+- `lib/emulation/backends/RunDeadline.h` and `lib/emulation/core/MachineRunControl.h`
+- `lib/emulation/arch/x86_64/{X64Machine.cpp,X64Machine.h,X64MachineProbe.cpp,X64MachineProbe.def,X64OperandRegisters.def,CheckedX64Instructions.def}`
+- `lib/emulation/os/windows/WindowsX64ExecutionPolicy.cpp` and `include/neverd/emulation/X64Registers.def`
+- `unittests/emulation/{HvfExecutorTests.cpp,HvfTests.cpp,HvfTestPolicy.h,X64StateTransitionTests.cpp,MachineRunControlTests.cpp,RunControlTests.cpp,NativeEntryTests.cpp}`
+- `scripts/NativeHVFTests.def`, also included in the evidence inventory review below
+
+**Focused adjacent sections:** `CheckedX64Backend.cpp` register validation, checked admission, native step/error handling and RAM/CPU publication (principally lines 191–204 and 265–590); `unittests/emulation/CMakeLists.txt` registrations for `NeverDHvfTests`, `NeverDX64ExceptionTests` and `NeverDRunControlTests`. The native-evidence script was also read in full below.
+
+- Intel RIP/RFLAGS prepare and capture use the VMCS boundary on each step; their register-API entries are removed. Capture writes a staged next packet, so a failed field read does not publish partially captured caller state.
+- Unsolicited Intel IRQ exits retry within one deadline invocation, preserving native state and the cancellation generation. Native errors return immediately. The watchdog is disarmed and acknowledged before cancelled vCPU teardown/recreation.
+- Every Intel vCPU creation, including recovery, binds managed `IA32_KERNEL_GS_BASE`, denies guest MSR access and initializes the private value. CR8 completion accepts only authenticated MOV-from-CR8 qualifications and validates privilege, GPR, instruction length and value before modifying state.
+- The checked caller discards speculative RAM on machine failure. Ordinary cancellation/capture failure does not publish staged CPU state; authenticated exceptions retain their precedence.
+- The cancellation regression covers deadlines, stop tokens, unsolicited interrupt followed by stop, a real native return, retry at another RIP and completion-error precedence. After recreation it asserts RIP/RFLAGS/AX, not the complete state packet.
+- The separate CR8 regression covers all 16 destination GPRs, priorities 0–15, supervisor success, user #GP(0), RF and complete unchanged-state comparisons. It belongs to `NeverDX64ExceptionTests`, outside the 10-case Intel transport-only target. Startup full-state probing occurs at machine creation, not after every cancelled vCPU recreation.
+
+**Remaining uncertainty:** Only matching-host execution can establish that Apple's framework preserves the intended native state after recreation. A green transport subset cannot replace the full CPU/Darwin gate or establish complete post-cancellation state coverage.
+
+### Native-evidence enforcement and current inventories
+
+Read in full: [run_native_cpu_ci.py](scripts/run_native_cpu_ci.py), [test_run_native_cpu_ci.py](scripts/tests/test_run_native_cpu_ci.py), [NativeCPUTests.def](scripts/NativeCPUTests.def), [NativeDriverTests.def](scripts/NativeDriverTests.def), [NativeHVFTests.def](scripts/NativeHVFTests.def), [NativeDarwinTests.def](scripts/NativeDarwinTests.def), [WhpMemoryCases.def](unittests/emulation/WhpMemoryCases.def), [DriverBuiltinImages.def](unittests/emulation/DriverBuiltinImages.def), [DriverBackendParityCases.def](unittests/emulation/DriverBackendParityCases.def), and [test_build_wdk_driver_fixtures.py](scripts/tests/test_build_wdk_driver_fixtures.py).
+
+Also reviewed the shared `TestRecord` / `parse_inventory` boundary in [audit_ci_test_inventory.py](scripts/audit_ci_test_inventory.py), and JUnit label, status, identity and count parsing in [audit_ci_test_results.py](scripts/audit_ci_test_results.py).
+
+- Required host-specific test names are selected by explicit ARM64/x64 identity; an unknown architecture is rejected.
+- Native profiles reject missing registrations and non-passing required outcomes. JUnit infrastructure not-run, explicit skips, failures and disabled cases remain distinct. Outcome reconciliation retains test name and owner-label identity.
+- The transport-only HVF profile is an explicit subset of the full inventory; the Darwin profile expands every declared workload across each matching guest platform.
+- Static text inventory counts reconcile: 160 explicit CPU names + 16 WHP mapping cases = 176 CPU outcomes; 26 built-in images + 46 WDK images + 40 scenarios at two bases = 224 driver outcomes; four SEH cases bring the current Windows total to **404**.
+- These are declaration counts, not newly executed results. Existing regression source covers missing owners, missing results, skipped mandatory hardware cases, wrong owner identity, malformed host selections and deleted Darwin workload requirements.
+
+### Historical failure reconciliation
+
+Read both complete current shared-event headers: [AndroidNative.h](include/neverd/emulation/AndroidNative.h) and [ProcessCall.h](include/neverd/emulation/ProcessCall.h), the recovery-surface expectations in [test_check_capabilities.py](scripts/tests/test_check_capabilities.py), and the corresponding corrective commit patches.
+
+- The two older main-CI failures in the “Verify Debug and Release target flags” step actually failed `test_repository_manifest_is_honest_and_executable`, owing to missing recovery-v4 expectations. [c4010c33](https://github.com/NeverSight/NeverD/commit/c4010c33e96851fc2ff170a0c06d6483ab9fad51) supplies those expectations; the inspected file retains them and later APIs. This was not evidence of incorrect Debug flags.
+- The third older main-CI failure was a duplicate `NativeCallEvent` definition while compiling Linux services. [c3493d72](https://github.com/NeverSight/NeverD/commit/c3493d723135b0e4e7bfdbf3a810bfd562bb86c2) removes the Android duplicate and retains Library/Symbol in the shared header. The inspected source contains that correction.
+- These already-delivered fixes were not duplicated. No claim is made that current full integration has passed.
+
+Relevant architecture/testing/HVF guidance, the complete HVF workflow, and CI/mobile/style trigger and concurrency sections were also inspected. The rest of the 567 changed paths, broader Windows loader/export semantics, Darwin syscall semantics, Objective-C/Swift source recovery and interpreter/refinement work remain outside this bounded audit.
+
+## Existing CI evidence
+
+**Exact-head snapshot: 2026-10-03 01:12 UTC**, for `99340b58657e3907588a33b363435f79b74b86fe`.
+
+| Workflow | Observed state | Evidence |
+| --- | --- | --- |
+| CI | In progress; all three platform jobs at their configuration/script-verification step; optional WHP job skipped | [37084475387](https://github.com/NeverSight/NeverD/actions/runs/37084475387) |
+| HVF hosted-intel / full | In progress at the required transport step; full CPU and Darwin stages not reached | [37084520059](https://github.com/NeverSight/NeverD/actions/runs/37084520059) |
+| Mobile Decompilation | Workflow API reports queued; Ubuntu job succeeded, macOS in progress, Windows queued | [37084475394](https://github.com/NeverSight/NeverD/actions/runs/37084475394) |
+| Mobile Real Applications | Skipped | [37084500511](https://github.com/NeverSight/NeverD/actions/runs/37084500511) |
+| LLVM Style | Success | [37084475343](https://github.com/NeverSight/NeverD/actions/runs/37084475343) |
+
+Exact-head check runs: **18 total: 2 successful, 10 skipped, 5 in progress and 1 queued; zero failed at this snapshot**. Legacy statuses are empty; their combined `pending` state does not establish failure or success. The existing manually initiated Intel workflow was observed only; this review did not initiate it.
+
+The dev Actions collection created from **2026-10-02 01:11 UTC through 2026-10-03 01:05 UTC** contains **597 runs**, across six non-empty pages (100 + 100 + 100 + 100 + 100 + 97) and an empty seventh page. Its **113 main CI runs comprise 109 cancelled, three failed and one in progress**, with no completed green main CI run in that query. The three failures above were diagnosed from their Linux logs and corresponding source corrections. Yesterday's tracked main CI and Mobile Real Applications later cancelled; yesterday's mobile-fixture success stays scoped to yesterday's commit.
+
+### Native progress since yesterday
+
+**Windows WDK/CPU:** The [native WHP job](https://github.com/NeverSight/NeverD/actions/runs/36981864458/job/110758081823) at `9d4c130c2f11d95a2f80f1055dfdbb34de07715c` reports **1,121 passed, 1,667 skipped, zero failed/disabled/not-run**, no missing/unexpected identities, and **all 359 required outcomes executed**. This confirms substantial progress beyond yesterday's 197-outcome blocked gate. It does not validate the newer 404-outcome inventory or today's head.
+
+**Darwin on x64 KVM/WHP:** The [existing run](https://github.com/NeverSight/NeverD/actions/runs/37062839703) at `36e11ca8a3d80aecf585d3328018839ce7fdb989` succeeded on both hosts. Both inspected job logs record **51 passed, 235 skipped, zero failed**, with **all 26 required Darwin workloads executed**. This is Darwin guest-contract evidence on Linux/Windows native transports, not Intel macOS HVF acceptance. The separate [native macOS kernel reference](https://github.com/NeverSight/NeverD/actions/runs/37064795867) succeeded on both x86_64 and arm64 at `e727d3eab7086063bb392444bd55014ac48d43c3`; only its job/step metadata was checked here.
+
+**Intel HVF:** The older [transport job](https://github.com/NeverSight/NeverD/actions/runs/37083061831/job/111087568902) at `48042a5e90e0977585114de092e423cd64b7f95f` had **9 passed / 1 failed / no skips**. The exact failure was the first `Prepare(RetryPC)` after cancellation in `NativeIntelCancellationAndCompletionFailureAllowRetry`, reporting an unexpected VM exit. Full CPU and Darwin stages were skipped. The new VMCS correction is on today's head; its existing full workflow remains incomplete.
+
+**Apple Silicon HVF:** [macos-hvf.md](docs/macos-hvf.md) reports a clean-source full gate at `48042a5e` with 841 passed, 5,942 inapplicable skips and all 16 required outcomes, plus the 12-case transport subset. Those local results are maintainer-reported documentation, not logs independently accessed in this review. They must not be described as absent native ARM64 evidence, but also must not be transferred to Intel HVF or ARM64 KVM/WHP.
+
+## Today's top priorities
+
+### 1. Establish complete Intel HVF acceptance after recovery correction
+
+**Status:** The previous gate failed after cancellation; the exact-head full workflow is still at transport validation.
+
+**Next action:** Review its eventual transport, full CPU and Darwin outcomes against the same source identity. Include the all-GPR CR8/CPL3 regression and distinguish the retry test's limited RIP/RFLAGS/AX assertions from complete state coverage.
+
+**Acceptance:** The identified commit passes every required transport case, the complete full-profile CPU gate and all matching Darwin workloads, with no missing/skipped required tests. Probe-only or transport-only success is insufficient. No manual execution is part of this static review.
+
+### 2. Obtain uninterrupted three-platform integration and real-application evidence
+
+**Status:** Current main CI is incomplete; the bounded dev window has 109 cancellations and no green main CI. Current mobile fixtures are incomplete and real-application qualification is skipped.
+
+**Next action:** Reconcile existing terminal outcomes after the source fixes already present. Keep any superseding commit separate. Record real-application producer/consumer identity and actual execution instead of carrying forward a historical green fixture result.
+
+**Acceptance:** Linux, macOS and Windows complete the intended integration profile for one identified commit, with audited test execution. Real-application qualification supplies actual evidence; a skipped consumer does not satisfy acceptance.
+
+### 3. Reconcile expanded native gates and open issue criteria
+
+**Status:** Historical Windows evidence passes 359 required outcomes; the current inventory requires 404. Seventeen issues remain open, including 14 epics; none has a milestone, and only [#12](https://github.com/NeverSight/NeverD/issues/12) is assigned.
+
+**Next action:** Evaluate authorized existing/native evidence for the expanded Windows process/module/export requirements. Map delivered work to [#104](https://github.com/NeverSight/NeverD/issues/104), [#101](https://github.com/NeverSight/NeverD/issues/101) and [#4](https://github.com/NeverSight/NeverD/issues/4), separating implementation, verified platform scope and remaining gaps. The historical #12 report was not re-audited today.
+
+**Acceptance:** Each selected criterion has an implementation/evidence link or an explicit gap; current Windows acceptance executes all 404 mandatory outcomes at an identified commit. Matching-host results remain distinct, and no issue is closed solely because related PRs merged.
+
+## Daily log
+
+### 2026-10-03 — HVF static audit and native-evidence reconciliation
+
+- Inventoried 262 commits and 567 changed file/submodule paths since the previous source snapshot; reviewed the bounded HVF, native-evidence and historical-failure scope above.
+- Found no new statically proven defect requiring a code change. Yesterday's WDK correction is merged.
+- Reconciled 35 merged PRs, no unmerged closures, 17 open issues and no open PR before this proposal.
+- Verified historical Windows 359-outcome success and x64 KVM/WHP Darwin 26-workload success, retaining the current 404-outcome and Intel HVF acceptance gaps.
+- Diagnosed three older main-CI failures and verified their source corrections already exist. Current integration remains incomplete.
+- Preserved the complete October 2 tracker, including October 1 and September 30 history, below.
+- This English documentation-only proposal uses a topic branch and draft PR. No build, test, repository script, manual workflow trigger, merge, deployment, dependency revision or security-setting change was performed. The commit uses `[skip ci]`; independently managed automatic checks may still occur.
+
+## Tracking conventions and limits
+
+- Open issue/PR collection returned 17 ordinary issues and no PRs, followed by an empty second page; a separate open-PR collection was empty. Updated issue/PR records returned 35 PRs and an empty second page, with no ordinary issue.
+- The first 100 most recently updated PRs extend past the tracking boundary and include all 35 in-window records. Older complete PR history was not enumerated.
+- Exact-head workflow/check collections returned five/18 records and empty second pages. Main CI and current HVF job collections returned four/one records with empty second pages. Selected historical job collections were small; not every historic log was inspected.
+- The separate dev manual-event collection returned 34 records and an empty second page. The historical WHP success was followed directly from repository evidence and is separate from the dev-bound Actions count.
+- PRs #328, #329, #357 and #362 returned no submitted reviews, inline review threads or conversation comments. This is not independent approval.
+- GitHub reports dev unprotected and an empty repository ruleset collection. The topic-branch/PR contribution workflow is still followed; no protection was changed.
+- PROGRESS.md was compared with yesterday's merged version and re-read before writing; preserve this full history and future human edits.
+- Pending, skipped, cancelled, failed, maintainer-reported and independently inspected results remain distinct. Static review does not establish compilation, runtime behavior, race freedom, complete ISA coverage or release readiness.
+
+## Publication-time observation
+
+At 2026-10-03 01:16 UTC, dev had advanced to [eee92640](https://github.com/NeverSight/NeverD/commit/eee926404c3a7ee91d46e9e84fa04d47f9543107), which separates and time-bounds Intel transport compilation/execution in the HVF workflow. Its one-file patch was read, and PROGRESS.md was unchanged. This later commit is outside the pinned 262-commit/567-path inventory and source snapshot above. The existing Intel run for `99340b58` was still in progress; no terminal acceptance is inferred.
+
+## Previous snapshots (preserved)
+
+<details>
+<summary>2026-10-02 tracker, priorities, evidence and earlier history</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-02 09:11 Asia/Shanghai (UTC+08:00)** / **2026-10-02 01:11 UTC**
 
 This is a point-in-time daily issue/PR and static-review tracker. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md), and [contribution guidance](CONTRIBUTING.md) remain authoritative. Priorities are proposals, not assigned deadlines or a completion percentage.
@@ -500,6 +668,8 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>
 

@@ -4,6 +4,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -134,6 +135,12 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 macOS and Mac Catalyst clients on arm64 and x86_64
+    // read the opaque URL through swiftself and return both String words.
+    {"$s10Foundation3URLV4pathSSvg",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+     "(zz)C"},
     // Swift 6.1.2 arm64 client IR passes URL.init(string:) an indirect
     // Optional<URL> result followed by the two physical String words.
     {"$s10Foundation3URLV6stringACSgSSh_tcfC",
@@ -213,6 +220,20 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 macOS/Mac Catalyst clients on arm64 and x86_64 pass
+    // the inout Set address first and AnyCancellable through swiftself.
+    {"$s7Combine14AnyCancellableC5store2inyShyACGz_tF",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "vpC"},
+    // Swift 6.1.2 macOS and Mac Catalyst client IR on arm64 and x86_64
+    // declares the initializing constructor as swiftcc ptr (ptr value,
+    // ptr swiftself). The opaque consumed value is not a by-value word;
+    // the context is the allocated instance, not an extra metadata argument.
+    {"$s7Combine19CurrentValueSubjectCyACyxq_Gxcfc",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "ppC"},
     // Swift 6.1.2 arm64 and x86_64 client IR declares Published.init as
     // swiftcc void (ptr sret, ptr value, ptr genericMetadata). The result and
     // consumed input stay opaque; neither carrier uses swiftself.
@@ -220,6 +241,16 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Combine.framework/Combine|"
      "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
      "vIpp"},
+    // The Never-failing Publisher sink overload receives closure code and
+    // context, Publisher metadata and its witness table, then the opaque
+    // borrowed Publisher address in swiftself. The result is AnyCancellable.
+    // All five pointer carriers are compiler-observed on the same four SDK
+    // targets; this declaration grants no callback or frame escape effects.
+    {"$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE4sink12receiveValueAA14"
+     "AnyCancellableCy6OutputQzc_tF",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "pppppC"},
     // Binding.wrappedValue's generic setter receives the value address,
     // Binding metadata, and the mutable Binding in swiftself.
     {"$s7SwiftUI7BindingV12wrappedValuexvs",
@@ -274,6 +305,9 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // by the two String words to String.hash(into:).
     {"$sSS4hash4intoys6HasherVz_tF", "/usr/lib/swift/libswiftCore.dylib",
      "vpzp"},
+    // The same four SDK profiles lower String.count to swiftcc i64(i64, ptr).
+    // Both borrowed String words remain ordinary arguments, not swiftself.
+    {"$sSS5countSivg", "/usr/lib/swift/libswiftCore.dylib", "zzp"},
     {"$sSS5index5afterSS5IndexVAD_tF", "/usr/lib/swift/libswiftCore.dylib",
      "zzzp"},
     // Swift String is passed as its two scalar carriers; the mutable
@@ -699,6 +733,33 @@ bool declaredFixedABI(const BinaryImage &Image, va_t Slot, llvm::StringRef Name,
   return !Hint.DoesNotReturn || Signature.ReturnType->Kind == NdTypeKind::Void;
 }
 } // namespace
+
+bool swiftWitnessInstantiationArgumentUnused(const BinaryImage &Image,
+                                             va_t DescriptorSlot) {
+  // The data owner proves a strong, exact, non-TLS external address. This
+  // separate compiler catalog proves argument irrelevance for every legal
+  // generic instantiation; the ordinary runtime ABI still has three pointers.
+  const auto Data = darwinRuntimeGlobalAddressHint(Image, DescriptorSlot);
+  const auto Bind = Image.DyldBindSlots.find(DescriptorSlot);
+  if (!Data ||
+      Data->Signature.Origin !=
+          SourceFunctionTypeHint::OriginKind::SwiftRuntime ||
+      Data->WeakImport || Bind == Image.DyldBindSlots.end() ||
+      Bind->second.WeakImport || Bind->second.Addend ||
+      Bind->second.Name != "_" + Data->TargetName)
+    return false;
+  constexpr SwiftMetadataDeclaration Contracts[] = {
+#include "SwiftWitnessContracts.inc"
+  };
+  for (const auto &Contract : Contracts)
+    if (Data->TargetName == Contract.Name &&
+        darwinExportModuleMatches(Image.Arch == Arch::AArch64
+                                      ? Contract.AArch64Modules
+                                      : Contract.X64Modules,
+                                  Bind->second.Module))
+      return true;
+  return false;
+}
 
 std::optional<SourceCallTypeHint>
 swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {

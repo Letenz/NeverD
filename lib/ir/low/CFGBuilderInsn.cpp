@@ -17,6 +17,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/DirectTailCall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -376,10 +377,7 @@ void CFGBuilder::restoreAdjacentNoReturnCall(InsnRecord &Rec,
 void CFGBuilder::rewriteAsTailCall(InsnRecord &Rec) {
   if (!CurrentImg)
     return;
-  const auto &TRI = getTargetRegInfo(CurrentImg->Arch);
-  NdVar RetReg = NdVar::reg(TRI.IntReturnReg, TRI.PointerSize);
   va_t Target = Rec.BranchTarget;
-  va_t At = Rec.Addr;
 
   // The instruction's only effect is the control transfer, so drop every op it
   // lifted to (e.g. x86 emits a lone BRANCH; ARM also emits a `COPY PC, target`
@@ -387,20 +385,7 @@ void CFGBuilder::rewriteAsTailCall(InsnRecord &Rec) {
   // call-argument recovery) and replace them with CALL(retReg, target) +
   // RETURN(retReg), mirroring a real `call target; ret`.  Downstream ABI
   // recovery then recovers the call arguments set up before the branch.
-  Rec.Ops.clear();
-
-  LowOp Call;
-  Call.Opcode = NdOp::CALL;
-  Call.Output = RetReg;
-  Call.addInput(NdVar::cst(Target, TRI.PointerSize));
-  Call.Addr = At;
-  Rec.Ops.push_back(Call);
-
-  LowOp Ret;
-  Ret.Opcode = NdOp::RETURN;
-  Ret.addInput(RetReg);
-  Ret.Addr = At;
-  Rec.Ops.push_back(Ret);
+  Rec.Ops = directTailCallOperations(CurrentImg->Arch, Rec.Addr, Target);
 
   Rec.IsBranch = false;
   Rec.IsCond = false;

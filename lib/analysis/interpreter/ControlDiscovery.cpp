@@ -47,14 +47,18 @@ struct Demand {
 class Discoverer {
 public:
   Discoverer(const SymState &State, SymRef Root, uint64_t MaxVisited)
-      : State(State), Ctx(State.context()), Root(Root), MaxVisited(MaxVisited) {
-  }
+      : State(&State), Ctx(State.context()), Root(Root),
+        MaxVisited(MaxVisited) {}
+
+  Discoverer(const SymContext &Ctx, SymRef Variable, uint64_t MaxVisited)
+      : Ctx(Ctx), Root(Variable), MaxVisited(MaxVisited) {}
 
   ControlDiscovery run(SymRef Value) {
     if (!valid(Value) ||
-        (State.byteOrder() != llvm::endianness::little &&
-         State.byteOrder() != llvm::endianness::big) ||
-        (Root && (!valid(Root) || Ctx.width(Root) != 64))) {
+        (State && State->byteOrder() != llvm::endianness::little &&
+         State->byteOrder() != llvm::endianness::big) ||
+        (Root && (!valid(Root) || Ctx.width(Root) > 64 ||
+                  (State && Ctx.width(Root) != 64)))) {
       unsupported();
       return std::move(Result);
     }
@@ -131,7 +135,7 @@ private:
       return std::nullopt;
     }
     return std::pair<uint16_t, uint16_t>{
-        State.byteOrder() == llvm::endianness::little ? First : Bytes - End,
+        State->byteOrder() == llvm::endianness::little ? First : Bytes - End,
         End - First};
   }
 
@@ -145,7 +149,7 @@ private:
   }
 
   void inspectMemoryInput(const Demand &Current) {
-    const auto Inputs = State.memoryInputOrigins(Current.Value);
+    const auto Inputs = State->memoryInputOrigins(Current.Value);
     for (const auto &Origin : Inputs) {
       if (!charge())
         return;
@@ -171,7 +175,7 @@ private:
     // may still explain its address, but never nominate their storage as an
     // input. In particular, spilling a value does not change its birthplace.
     unsupported();
-    for (const auto &Origin : State.loadOrigins(Current.Value)) {
+    for (const auto &Origin : State->loadOrigins(Current.Value)) {
       if (!charge())
         return;
       if (valid(Origin.Address))
@@ -180,6 +184,8 @@ private:
   }
 
   bool sameWidth(const Demand &Current, llvm::ArrayRef<SymRef> Operands) {
+    if (!chargeOperandPass(Operands))
+      return false;
     for (SymRef Operand : Operands)
       if (!valid(Operand) || Ctx.width(Operand) != Ctx.width(Current.Value)) {
         unsupported();
@@ -189,6 +195,8 @@ private:
   }
 
   void fullOperands(llvm::ArrayRef<SymRef> Operands) {
+    if (!chargeOperandPass(Operands))
+      return;
     for (SymRef Operand : Operands) {
       enqueue(Operand, 0, Ctx.width(Operand));
       if (exhausted())
@@ -196,11 +204,83 @@ private:
     }
   }
 
+  bool chargeOperandPass(llvm::ArrayRef<SymRef> Operands) {
+    // Pure expression proofs may revisit shared operands under many slice
+    // demands or related roots. Charge the scan even when enqueue() has
+    // already seen every child. Preserve state-discovery's existing counters.
+    return State || charge(Operands.size());
+  }
+
   void leftShift(SymRef Operand, const Demand &Current, uint32_t Shift) {
     const uint64_t End = uint64_t(Current.Low) + Current.Bits;
     const uint64_t Low = std::max(uint64_t(Current.Low), uint64_t(Shift));
     if (Low < End)
       enqueue(Operand, Low - Shift, End - Low);
+  }
+
+  /// A shallow overapproximation for a word-sized operand. Bits omitted from
+  /// the mask are structurally zero for every input; unknown syntax keeps all
+  /// bits possible. Each inspected node/operand costs discovery work.
+  uint64_t possibleOneBits(SymRef Value) {
+    const uint32_t Width = Ctx.width(Value);
+    const uint64_t All = UINT64_MAX >> (64 - Width);
+    if (!charge())
+      return All;
+    if (Ctx.isConst(Value))
+      return Ctx.constValue(Value).getZExtValue();
+    const auto Operands = Ctx.operands(Value);
+    switch (Ctx.op(Value)) {
+    case SymOp::And: {
+      uint64_t Mask = All;
+      for (auto Operand : Operands) {
+        if (!charge() || !valid(Operand) || Ctx.width(Operand) != Width)
+          return All;
+        if (Ctx.isConst(Operand))
+          Mask &= Ctx.constValue(Operand).getZExtValue();
+      }
+      return Mask;
+    }
+    case SymOp::Mul: {
+      uint32_t Shift = 0;
+      for (auto Operand : Operands) {
+        if (!charge() || !valid(Operand) || Ctx.width(Operand) != Width)
+          return All;
+        if (Ctx.isConst(Operand))
+          Shift =
+              std::min(Width, Shift + Ctx.constValue(Operand).countr_zero());
+      }
+      return Shift >= Width ? 0 : (All << Shift) & All;
+    }
+    case SymOp::ZExt:
+      if (Operands.size() == 1 && charge() && valid(Operands.front()) &&
+          Ctx.width(Operands.front()) < Width)
+        return UINT64_MAX >> (64 - Ctx.width(Operands.front()));
+      return All;
+    case SymOp::Shl:
+    case SymOp::LShr:
+      if (Operands.size() != 2 || !charge(2) || !valid(Operands[0]) ||
+          !valid(Operands[1]) || Ctx.width(Operands[0]) != Width ||
+          Ctx.width(Operands[1]) > 64 || !Ctx.isConst(Operands[1]))
+        return All;
+      if (const uint64_t Shift = Ctx.constValue(Operands[1]).getZExtValue();
+          Shift < Width)
+        return Ctx.op(Value) == SymOp::Shl ? (All << Shift) & All
+                                           : All >> Shift;
+      return 0;
+    default:
+      return All;
+    }
+  }
+
+  bool carryFreeSum(llvm::ArrayRef<SymRef> Operands) {
+    uint64_t Occupied = 0;
+    for (auto Operand : Operands) {
+      const uint64_t Bits = possibleOneBits(Operand);
+      if (exhausted() || (Occupied & Bits))
+        return false;
+      Occupied |= Bits;
+    }
+    return true;
   }
 
   void visit(const Demand &Current) {
@@ -216,7 +296,19 @@ private:
     const auto Operands = Ctx.operands(Current.Value);
     switch (Ctx.op(Current.Value)) {
     case SymOp::Var: {
+      if (Ctx.node(Current.Value).Aux >= Ctx.numVars()) {
+        unsupported();
+        return;
+      }
       const auto &Info = Ctx.varInfo(Ctx.varId(Current.Value));
+      if (Info.Width != Ctx.width(Current.Value)) {
+        unsupported();
+        return;
+      }
+      // Pure expression dependence holds every other symbolic variable fixed.
+      // State-aware discovery still requires a replayable machine origin.
+      if (!State)
+        return;
       if (!Info.Fresh && Info.InputOrigin &&
           Info.InputOrigin->Kind == SymInputKind::Register &&
           Info.InputOrigin->Epoch == 0) {
@@ -236,8 +328,12 @@ private:
     case SymOp::Or: {
       if (!sameWidth(Current, Operands))
         return;
+      if (!chargeOperandPass(Operands))
+        return;
       if (std::none_of(Operands.begin(), Operands.end(),
                        [&](SymRef V) { return Ctx.isConst(V); })) {
+        if (!chargeOperandPass(Operands))
+          return;
         for (SymRef Operand : Operands) {
           enqueue(Operand, Current.Low, Current.Bits);
           if (exhausted())
@@ -253,6 +349,8 @@ private:
       if (!charge(Words))
         return;
       llvm::APInt Live = llvm::APInt::getAllOnes(Current.Bits);
+      if (!chargeOperandPass(Operands))
+        return;
       for (SymRef Operand : Operands)
         if (Ctx.isConst(Operand)) {
           // constValue copies the entire payload, even for a one-bit slice.
@@ -263,7 +361,7 @@ private:
           Live &= Ctx.op(Current.Value) == SymOp::And ? Slice : ~Slice;
         }
       while (!Live.isZero()) {
-        if (!charge(Words))
+        if (!charge(Words) || !chargeOperandPass(Operands))
           return;
         const uint32_t Low = Live.countr_zero();
         const uint32_t Bits = Live.lshr(Low).countr_one();
@@ -284,6 +382,8 @@ private:
         unsupported();
         return;
       }
+      if (!chargeOperandPass(Operands))
+        return;
       for (SymRef Operand : Operands) {
         if (!Ctx.isConst(Operand))
           enqueue(Operand, Current.Low, Current.Bits);
@@ -295,6 +395,22 @@ private:
     case SymOp::Mul: {
       if (!sameWidth(Current, Operands))
         return;
+      // Pairwise-disjoint possible-one bits prove that this sum cannot carry
+      // at any position. Its selected upper slice then depends only on those
+      // same operand bits, as with OR. Otherwise retain the full low prefix.
+      // No solver premise or sampled value is used to omit dependencies.
+      if (Ctx.op(Current.Value) == SymOp::Add && Current.Low &&
+          Ctx.width(Current.Value) <= 64 && carryFreeSum(Operands)) {
+        if (!chargeOperandPass(Operands))
+          return;
+        for (auto Operand : Operands) {
+          if (!Ctx.isConst(Operand))
+            enqueue(Operand, Current.Low, Current.Bits);
+          if (exhausted())
+            return;
+        }
+        return;
+      }
       // Modulo 2^N arithmetic cannot carry from a higher bit into a lower
       // one. Subtraction and negation are canonical Add/Mul nodes as well.
       uint32_t End = Current.Low + Current.Bits;
@@ -303,6 +419,8 @@ private:
         uint32_t Shift = 0;
         bool PowerOfTwo = true;
         llvm::SmallVector<SymRef, 4> Inputs;
+        if (!chargeOperandPass(Operands))
+          return;
         for (SymRef Operand : Operands)
           if (Ctx.isConst(Operand)) {
             if (!charge((uint64_t(Ctx.width(Operand)) + 63) / 64))
@@ -323,6 +441,8 @@ private:
         }
         End -= Shift;
       }
+      if (!chargeOperandPass(Operands))
+        return;
       for (SymRef Operand : Operands) {
         if (!Ctx.isConst(Operand))
           enqueue(Operand, 0, End);
@@ -377,6 +497,8 @@ private:
               Current.Bits);
       return;
     case SymOp::Concat: {
+      if (!chargeOperandPass(Operands))
+        return;
       uint64_t PartLow = 0;
       for (auto It = Operands.rbegin(); It != Operands.rend(); ++It) {
         const uint64_t PartHigh = PartLow + Ctx.width(*It);
@@ -428,7 +550,7 @@ private:
     }
   }
 
-  const SymState &State;
+  const SymState *State = nullptr;
   const SymContext &Ctx;
   SymRef Root;
   uint64_t MaxVisited;
@@ -446,6 +568,103 @@ ControlDiscovery gatherControlDependencies(const SymState &State, SymRef Value,
                                            SymRef FrameRoot,
                                            uint64_t MaxVisited) {
   return Discoverer(State, FrameRoot, MaxVisited).run(Value);
+}
+
+VariableBitDemand gatherVariableBitDemand(const SymContext &Ctx, SymRef Value,
+                                          SymRef Variable,
+                                          uint64_t MaxVisited) {
+  if (!MaxVisited)
+    return {};
+  if (!Variable || Variable.index() >= Ctx.numNodes() || !Ctx.isVar(Variable) ||
+      !Ctx.width(Variable) || Ctx.width(Variable) > 64 ||
+      Ctx.node(Variable).Aux >= Ctx.numVars() ||
+      Ctx.varInfo(Ctx.varId(Variable)).Width != Ctx.width(Variable))
+    return {std::nullopt, 1};
+  const auto Result = Discoverer(Ctx, Variable, MaxVisited - 1).run(Value);
+  return {Result.FrameRootBits, Result.Visited + 1};
+}
+
+bool frameRootDomainExceedsLimit(
+    const SymState &State, SymRef Predicate, SymRef FrameRoot,
+    const std::optional<SpecializationEntryFrameBounds> &Bounds, uint32_t Limit,
+    uint64_t MaxVisited) {
+  const SymContext &Ctx = State.context();
+  uint64_t Remaining = MaxVisited;
+  const auto Charge = [&](uint64_t Count = 1) {
+    if (Count > Remaining)
+      return false;
+    Remaining -= Count;
+    return true;
+  };
+  const auto Valid = [&](SymRef Value, uint32_t Width) {
+    return Value && Value.index() < Ctx.numNodes() && Ctx.width(Value) == Width;
+  };
+  if (!Limit || !Charge() || !Valid(FrameRoot, 64) || !Ctx.isVar(FrameRoot) ||
+      Ctx.node(FrameRoot).Aux >= Ctx.numVars() ||
+      !Ctx.varInfo(Ctx.varId(FrameRoot)).Fresh ||
+      Ctx.varInfo(Ctx.varId(FrameRoot)).Width != 64 || !Valid(Predicate, 1) ||
+      (Bounds && Bounds->Begin >= Bounds->End))
+    return false;
+
+  const uint64_t Lower =
+      Bounds && Bounds->Begin < 0 ? uint64_t{0} - uint64_t(Bounds->Begin) : 0;
+  const uint64_t Upper = Bounds && Bounds->End > 0
+                             ? UINT64_MAX - uint64_t(Bounds->End - 1)
+                             : UINT64_MAX;
+  const uint64_t Span = Upper - Lower;
+  // Every fixed low32 residue occurs at least floor((Span + 1) / 2^32)
+  // times in [Lower, Upper]. Do not overflow at the full 64-bit domain or
+  // narrow its 2^32-value lower bound to the uint32_t enumeration limit.
+  const uint64_t Guaranteed =
+      (Span >> 32) + ((Span & UINT32_MAX) == UINT32_MAX);
+  if (Guaranteed <= Limit)
+    return false;
+
+  llvm::SmallVector<SymRef, 8> Pending{Predicate};
+  while (!Pending.empty()) {
+    const SymRef Clause = Pending.pop_back_val();
+    if (!Charge() || !Valid(Clause, 1))
+      return false;
+    const auto Operands = Ctx.operands(Clause);
+    if (Ctx.op(Clause) == SymOp::And) {
+      if (Operands.empty())
+        return false;
+      for (SymRef Operand : Operands) {
+        if (!Charge() || !Valid(Operand, 1))
+          return false;
+        Pending.push_back(Operand);
+      }
+      continue;
+    }
+    // Remove only exact top-level conjuncts of the declared interval. In
+    // particular, stricter bounds and bounds beneath OR/NOT stay in the
+    // dependency walk; omitting them could turn a singleton into a large set.
+    if (Bounds && Ctx.op(Clause) == SymOp::Ule) {
+      if (Operands.size() != 2 || !Charge(2))
+        return false;
+      const bool LowerBound =
+          Operands[1] == FrameRoot && Valid(Operands[0], 64);
+      const bool UpperBound =
+          Operands[0] == FrameRoot && Valid(Operands[1], 64);
+      if (LowerBound || UpperBound) {
+        const auto Constant = Operands[LowerBound ? 0 : 1];
+        if (Ctx.isConst(Constant)) {
+          if (!Charge())
+            return false;
+          if (Ctx.constValue(Constant).getZExtValue() ==
+              (LowerBound ? Lower : Upper))
+            continue;
+        }
+      }
+    }
+    const auto Dependencies =
+        gatherControlDependencies(State, Clause, FrameRoot, Remaining);
+    if (!Charge(Dependencies.Visited) ||
+        Dependencies.Status != ControlDiscoveryStatus::Complete ||
+        !Dependencies.FrameRootBits || (*Dependencies.FrameRootBits >> 32))
+      return false;
+  }
+  return true;
 }
 
 } // namespace neverd::analysis::detail

@@ -113,11 +113,14 @@ struct SourceFrameLoadDefinition {
 /// Query one complete eight-byte private-frame LOAD. All reaching CFG paths
 /// must retain the same ordered bytes and must not have exposed a frame
 /// address. Reuses the preservation proof's call ABI, conditional scratch,
-/// bounded borrow and frame-or-external rules. Relevant cycles, partial or
-/// expired definitions, still-retained scratch and uncertain aliases fail
-/// closed. A later end cannot discharge a prefix's lifetime obligation. Calls
-/// outside the acyclic prefix need no contract; this grants no source gate.
-/// Calls must be freshly authenticated against the current image and LowIR.
+/// bounded borrow and frame-or-external rules. Cycles require convergence of
+/// every reaching state and a producer in the acyclic entry prefix; effects
+/// after a cyclic query still affect its next iteration. Partial or expired
+/// definitions, repeated producers, retained scratch and uncertain aliases
+/// fail closed. A later end cannot discharge a prefix's lifetime obligation.
+/// Calls unable to reach the query need no contract; this grants no source
+/// gate. Calls must be freshly authenticated against the current image and
+/// LowIR.
 std::optional<SourceFrameLoadDefinition>
 sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
                             const NativeSourceCalls &Calls, int BlockId,

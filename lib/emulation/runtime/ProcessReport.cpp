@@ -110,12 +110,15 @@ std::string processResultJSON(const ProcessResult &Result) {
     llvm::json::Array Arguments;
     for (uint64_t Value : Event.Arguments)
       Arguments.push_back(bits(Value));
-    Services.push_back(llvm::json::Object{
+    llvm::json::Object Service{
         {field::PC, bits(Event.PC)},
         {field::Number, bits(Event.Number)},
         {field::Arguments, std::move(Arguments)},
         {field::Result,
-         Event.Result ? llvm::json::Value(bits(*Event.Result)) : nullptr}});
+         Event.Result ? llvm::json::Value(bits(*Event.Result)) : nullptr}};
+    if (Event.Error)
+      Service[field::Error] = *Event.Error;
+    Services.push_back(std::move(Service));
   }
   llvm::json::Object Object{
       {field::Version, field::SchemaVersion},

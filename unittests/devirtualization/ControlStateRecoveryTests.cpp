@@ -624,6 +624,9 @@ run(const LowFunc &Function, uint64_t Input, uint64_t Limit,
       case NdOp::INT_AND:
         Write(Op.Output, A() & B());
         break;
+      case NdOp::INT_OR:
+        Write(Op.Output, A() | B());
+        break;
       case NdOp::INT_XOR:
         Write(Op.Output, A() ^ B());
         break;
@@ -768,7 +771,345 @@ SpecializationOptions marginalDispatchOptions() {
   return Options;
 }
 
+BankProvider makeMixedCarrierProgram(bool Frame, bool Bounded = true,
+                                     bool HighSelector = true) {
+  BankProvider Provider;
+  std::vector<LowOp> Producer{
+      operation(NdOp::INT_AND, r(ValueRegister),
+                {r(InputRegister), c(Bounded ? 1 : UINT32_MAX)}),
+      operation(NdOp::INT_MULT, r(ValueRegister),
+                {r(ValueRegister), c(HighSelector ? uint64_t{1} << 32 : 1)}),
+      operation(NdOp::INT_AND, r(AddressRegister),
+                {r(LimitRegister), c(UINT32_MAX)}),
+      operation(NdOp::INT_MULT, r(AddressRegister),
+                {r(AddressRegister), c(HighSelector ? 1 : uint64_t{1} << 32)}),
+      operation(NdOp::INT_XOR, r(ValueRegister),
+                {r(ValueRegister), r(AddressRegister)})};
+  if (Frame) {
+    Producer.push_back(operation(NdOp::INT_ADD, r(SelectorAddressRegister),
+                                 {r(FrameRegister), c(-40)}));
+    Producer.push_back(operation(
+        NdOp::STORE, {}, {r(SelectorAddressRegister), r(ValueRegister)}));
+  }
+  Producer.push_back(jump(Route));
+  Provider.add(Entry, Producer);
+  std::vector<LowOp> Consumer;
+  if (Frame)
+    Consumer.push_back(
+        operation(NdOp::LOAD, r(ValueRegister), {r(SelectorAddressRegister)}));
+  Consumer.push_back(operation(
+      HighSelector ? NdOp::INT_RIGHT : NdOp::INT_AND, r(AddressRegister),
+      {r(ValueRegister), c(HighSelector ? 32 : UINT32_MAX)}));
+  Consumer.push_back(operation(NdOp::INT_MULT, r(AddressRegister),
+                               {r(AddressRegister), c(32)}));
+  Consumer.push_back(operation(NdOp::INT_ADD, r(AddressRegister),
+                               {r(AddressRegister), c(HandlerBase)}));
+  Consumer.push_back(operation(NdOp::INDIR_BR, {}, {r(AddressRegister)}));
+  Provider.add(Route, Consumer);
+  for (unsigned Selector = 0; Selector < 2; ++Selector)
+    Provider.add(HandlerBase + 32 * Selector,
+                 {operation(NdOp::INT_XOR, r(ResultRegister),
+                            {r(ValueRegister), c(91 + Selector)}),
+                  ret()});
+  return Provider;
+}
+
+SpecializationOptions mixedCarrierOptions(bool Frame, llvm::endianness Order) {
+  SpecializationOptions Options;
+  Options.ByteOrder = Order;
+  if (Frame) {
+    Options.FrameBaseRegister = symbolic::SymRegisterRange{FrameRegister, 8};
+    Options.ControlFrameSlots = {{-40, 8}};
+  } else {
+    Options.ControlRegisters = {{ValueRegister, 8}};
+  }
+  return Options;
+}
+
 } // namespace
+
+TEST(ControlStateRecovery, MixedCarrierKeepsFiniteSubwordAndRuntimePayload) {
+  for (auto Packing : {NdOp::INT_XOR, NdOp::INT_ADD})
+    for (bool Frame : {false, true})
+      for (bool High : {false, true})
+        for (bool RootPayload : {false, true})
+          for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+            SCOPED_TRACE(static_cast<unsigned>(Packing));
+            SCOPED_TRACE(Frame);
+            SCOPED_TRACE(High);
+            SCOPED_TRACE(RootPayload);
+            auto Provider = makeMixedCarrierProgram(Frame, true, High);
+            Provider.Code.at(Entry).Ops[4].Opcode = Packing;
+            auto Options = mixedCarrierOptions(Frame, Order);
+            if (RootPayload) {
+              auto Producer = Provider.Code.at(Entry).Ops;
+              Producer[2].Inputs[0] = r(FrameRegister);
+              Provider.Code.erase(Entry);
+              Provider.add(Entry, Producer);
+              Options.FrameBaseRegister =
+                  symbolic::SymRegisterRange{FrameRegister, 8};
+            }
+            const auto Result =
+                specializeInterpreter(Provider, {Entry}, Options);
+            ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+            for (uint64_t Input : {0ULL, 1ULL, 18ULL, ~0ULL})
+              for (uint64_t Payload :
+                   {0ULL, 1ULL, 0x123456789abcdef0ULL, ~0ULL}) {
+                const auto Mixed =
+                    High ? ((Input & 1) << 32) | (Payload & UINT32_MAX)
+                         : (Input & 1) | ((Payload & UINT32_MAX) << 32);
+                EXPECT_EQ(run(Result.Residual, Input, Payload,
+                              {{FrameRegister, Payload}}, Order),
+                          Mixed ^ (91 + (Input & 1)));
+              }
+          }
+}
+
+TEST(ControlStateRecovery,
+     FiniteSubwordCannotHideAMissingTargetOrFreeSelector) {
+  for (bool Frame : {false, true})
+    for (bool Missing : {false, true}) {
+      auto Provider = makeMixedCarrierProgram(Frame, Missing);
+      if (Missing)
+        Provider.Code.erase(HandlerBase + 32);
+      const auto Result = specializeInterpreter(
+          Provider, {Entry},
+          mixedCarrierOptions(Frame, llvm::endianness::little));
+      EXPECT_EQ(Result.Status, Missing
+                                   ? SpecializationStatus::Unsupported
+                                   : SpecializationStatus::UnresolvedControl)
+          << Result.Diagnostic;
+      EXPECT_TRUE(Result.Residual.Blocks.empty());
+      EXPECT_TRUE(Result.Origins.empty());
+      EXPECT_TRUE(Result.Reads.empty());
+    }
+}
+
+TEST(ControlStateRecovery, AdditiveCarrierRetainsReachableCarryTargets) {
+  for (bool Frame : {false, true}) {
+    auto Provider = makeMixedCarrierProgram(Frame);
+    auto Producer = Provider.Code.at(Entry).Ops;
+    Producer[2].Inputs[0] = r(FrameRegister);
+    Producer[4].Opcode = NdOp::INT_ADD;
+    Producer.insert(
+        Producer.begin() + 5,
+        operation(NdOp::INT_ADD, r(ValueRegister), {r(ValueRegister), c(1)}));
+    Provider.Code.erase(Entry);
+    Provider.add(Entry, Producer);
+    auto Options = mixedCarrierOptions(Frame, llvm::endianness::little);
+    Options.FrameBaseRegister = symbolic::SymRegisterRange{FrameRegister, 8};
+    // Low root bits all one and selector one carry into the missing third
+    // target. The upper selector cannot be reused as a two-value domain.
+    const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+    EXPECT_FALSE(Result.complete());
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Origins.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+  }
+}
+
+TEST(ControlStateRecovery, LaterPredecessorInvalidatesFiniteSubwordFacts) {
+  for (unsigned Change : {0U, 1U, 2U}) {
+    auto Provider = makeMixedCarrierProgram(false);
+    auto Producer = Provider.Code.at(Entry).Ops;
+    Provider.Code.erase(Entry);
+    Provider.add(
+        Entry,
+        {operation(NdOp::INT_AND, r(ConditionRegister),
+                   {r(UnknownPointerRegister), c(1)}),
+         operation(NdOp::COND_BR, {}, {c(Entry + 1), r(ConditionRegister, 1)})},
+        Entry + 2);
+    Provider.add(Entry + 1, Producer);
+    if (Change == 1) {
+      Producer = {operation(NdOp::COPY, r(ValueRegister), {r(LimitRegister)}),
+                  jump(Entry + 3)};
+    } else if (Change == 2) {
+      Producer = makeMixedCarrierProgram(false, true, false).Code.at(Entry).Ops;
+      Producer.back() = jump(Entry + 3);
+    } else {
+      Producer.insert(Producer.end() - 1,
+                      operation(NdOp::INT_ADD, r(ValueRegister),
+                                {r(ValueRegister), c(uint64_t{2} << 32)}));
+      Producer.back() = jump(Entry + 3);
+    }
+    Provider.add(Entry + 2, Producer);
+    Provider.add(Entry + 3, {jump(Entry + 4)});
+    Provider.add(Entry + 4, {jump(Route)});
+    auto Options = mixedCarrierOptions(false, llvm::endianness::little);
+    Options.MaxContextsPerAddress = 1;
+    const auto Incomplete = specializeInterpreter(Provider, {Entry}, Options);
+    EXPECT_EQ(Incomplete.Status, Change
+                                     ? SpecializationStatus::UnresolvedControl
+                                     : SpecializationStatus::Unsupported)
+        << Incomplete.Diagnostic;
+    EXPECT_TRUE(Incomplete.Residual.Blocks.empty());
+    EXPECT_TRUE(Incomplete.Origins.empty());
+    EXPECT_TRUE(Incomplete.Reads.empty());
+    if (!Change) {
+      for (unsigned Selector : {2U, 3U})
+        Provider.add(HandlerBase + 32 * Selector,
+                     {operation(NdOp::INT_XOR, r(ResultRegister),
+                                {r(ValueRegister), c(91 + Selector)}),
+                      ret()});
+      const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+      ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+      for (uint64_t Later : {0ULL, 1ULL})
+        for (uint64_t Input : {0ULL, 1ULL, ~0ULL}) {
+          const auto Selector = (Input & 1) + (Later ? 0 : 2);
+          EXPECT_EQ(run(Result.Residual, Input, 0xdeadbeef,
+                        {{UnknownPointerRegister, Later}}),
+                    ((Selector << 32) | 0xdeadbeef) ^ (91 + Selector));
+        }
+    }
+  }
+}
+
+TEST(ControlStateRecovery, FiniteSubwordHandlesNarrowCarriersInBothByteOrders) {
+  for (uint16_t Bytes : {uint16_t{2}, uint16_t{4}})
+    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+      const uint64_t Half = Bytes * 4;
+      const uint64_t Scale = uint64_t{1} << Half;
+      const uint64_t InputByte =
+          Order == llvm::endianness::little ? 0 : 8 - Bytes;
+      BankProvider Provider;
+      Provider.add(
+          Entry,
+          {operation(NdOp::INT_AND, r(ValueRegister, Bytes),
+                     {r(InputRegister + InputByte, Bytes), c(1, Bytes)}),
+           operation(NdOp::INT_MULT, r(ValueRegister, Bytes),
+                     {r(ValueRegister, Bytes), c(Scale, Bytes)}),
+           operation(
+               NdOp::INT_AND, r(AddressRegister, Bytes),
+               {r(LimitRegister + InputByte, Bytes), c(Scale - 1, Bytes)}),
+           operation(NdOp::INT_XOR, r(ValueRegister, Bytes),
+                     {r(ValueRegister, Bytes), r(AddressRegister, Bytes)}),
+           jump(Route)});
+      Provider.add(Route,
+                   {operation(NdOp::INT_ZEXT, r(AddressRegister),
+                              {r(ValueRegister, Bytes)}),
+                    operation(NdOp::INT_RIGHT, r(AddressRegister),
+                              {r(AddressRegister), c(Half)}),
+                    operation(NdOp::INT_MULT, r(AddressRegister),
+                              {r(AddressRegister), c(32)}),
+                    operation(NdOp::INT_ADD, r(AddressRegister),
+                              {r(AddressRegister), c(HandlerBase)}),
+                    operation(NdOp::INDIR_BR, {}, {r(AddressRegister)})});
+      for (unsigned Selector : {0U, 1U})
+        Provider.add(HandlerBase + 32 * Selector,
+                     {operation(NdOp::INT_ZEXT, r(ResultRegister),
+                                {r(ValueRegister, Bytes)}),
+                      ret()});
+      SpecializationOptions Options;
+      Options.ByteOrder = Order;
+      Options.ControlRegisters = {{ValueRegister, Bytes}};
+      const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+      ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+      for (uint64_t Input : {0ULL, 1ULL, 18ULL, ~0ULL})
+        for (uint64_t Payload : {0ULL, 1ULL, ~0ULL})
+          EXPECT_EQ(run(Result.Residual, Input, Payload, {}, Order),
+                    (Input & 1) * Scale + (Payload & (Scale - 1)));
+    }
+}
+
+TEST(ControlStateRecovery, FiniteSubwordSharesQueryBudgetsAndRejectsUnknown) {
+  auto Provider = makeMixedCarrierProgram(false);
+  auto Options = mixedCarrierOptions(false, llvm::endianness::little);
+  const auto Complete = specializeInterpreter(Provider, {Entry}, Options);
+  ASSERT_TRUE(Complete.complete()) << Complete.Diagnostic;
+  ASSERT_GT(Complete.SolverQueries, 0U);
+  Options.MaxSolverQueries = Complete.SolverQueries;
+  EXPECT_TRUE(specializeInterpreter(Provider, {Entry}, Options).complete());
+  --Options.MaxSolverQueries;
+  const auto Short = specializeInterpreter(Provider, {Entry}, Options);
+  expectBudgetRefusal(Short);
+  EXPECT_LE(Short.SolverQueries, Options.MaxSolverQueries);
+  Options.MaxSolverQueries = 4096;
+  Options.MaxSolverGates = 1;
+  expectBudgetRefusal(specializeInterpreter(Provider, {Entry}, Options));
+}
+
+TEST(ControlStateRecovery, AutomaticDiscoveryRetainsFiniteSubword) {
+  for (bool Frame : {false, true}) {
+    auto Provider = makeMixedCarrierProgram(Frame);
+    auto Consumer = Provider.Code.at(Route).Ops;
+    const auto Index = Frame ? 1U : 0U;
+    // The range comparison demands the complete carrier. Its arbitrary low
+    // payload must not hide the finite upper half across the block edge.
+    Consumer.insert(
+        Consumer.begin() + Index + 1,
+        {operation(NdOp::INT_LESS, r(ConditionRegister, 1),
+                   {r(ValueRegister), c(uint64_t{1} << 32)}),
+         operation(NdOp::SELECT, r(AddressRegister),
+                   {r(ConditionRegister, 1), c(0), r(AddressRegister)})});
+    Provider.Code.erase(Route);
+    Provider.add(Route, Consumer);
+    SpecializationOptions Options;
+    Options.DiscoverControlState = true;
+    Options.FrameBaseRegister = symbolic::SymRegisterRange{FrameRegister, 8};
+    const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    EXPECT_GT(Result.DiscoveredControlFields, 0U);
+    for (uint64_t Input : {0ULL, 1ULL, 18ULL, ~0ULL})
+      for (uint64_t Payload : {0ULL, 1ULL, 0x123456789abcdef0ULL, ~0ULL})
+        EXPECT_EQ(run(Result.Residual, Input, Payload),
+                  (((Input & 1) << 32) | (Payload & UINT32_MAX)) ^
+                      (91 + (Input & 1)));
+  }
+}
+
+TEST(ControlStateRecovery, UndemandedManualFieldsDoNotSearchSubwords) {
+  auto Provider = makeMixedCarrierProgram(false);
+  Provider.Code.erase(Route);
+  Provider.add(
+      Route,
+      {operation(NdOp::COPY, r(ResultRegister), {r(ValueRegister)}), ret()});
+  SpecializationOptions Options;
+  Options.DiscoverControlState = true;
+  const auto Baseline = specializeInterpreter(Provider, {Entry}, Options);
+  ASSERT_TRUE(Baseline.complete()) << Baseline.Diagnostic;
+  Options.ControlRegisters = {{ValueRegister, 8}};
+  // The existing whole-field attempt can consume one complete enumeration.
+  // An extra subword search would exceed this shared budget.
+  Options.MaxSolverQueries = Options.MaxControlTuples + 1;
+  const auto WithHint = specializeInterpreter(Provider, {Entry}, Options);
+  ASSERT_TRUE(WithHint.complete()) << WithHint.Diagnostic;
+  EXPECT_LE(WithHint.SolverQueries, Options.MaxSolverQueries);
+  EXPECT_EQ(WithHint.ControlRefinements, 0U);
+  for (uint64_t Input : {0ULL, 1ULL, ~0ULL})
+    for (uint64_t Payload : {0ULL, 1ULL, 0x123456789abcdef0ULL, ~0ULL})
+      EXPECT_EQ(run(WithHint.Residual, Input, Payload),
+                ((Input & 1) << 32) | (Payload & UINT32_MAX));
+}
+
+TEST(ControlStateRecovery, ConstantLeadingWindowDoesNotHideFiniteSelector) {
+  auto Provider = makeMixedCarrierProgram(false);
+  auto Producer = Provider.Code.at(Entry).Ops;
+  Producer[1].Inputs[1] = c(uint64_t{1} << 16);
+  Producer[2].Inputs[1] = c(UINT16_MAX);
+  Producer.insert(Producer.end() - 1,
+                  operation(NdOp::INT_OR, r(ValueRegister),
+                            {r(ValueRegister), c(0x8765432100000000)}));
+  Provider.Code.erase(Entry);
+  Provider.add(Entry, Producer);
+  auto Consumer = Provider.Code.at(Route).Ops;
+  Consumer[0].Inputs[1] = c(16);
+  Consumer.insert(Consumer.begin() + 1,
+                  operation(NdOp::INT_AND, r(AddressRegister),
+                            {r(AddressRegister), c(UINT16_MAX)}));
+  Provider.Code.erase(Route);
+  Provider.add(Route, Consumer);
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    const auto Result = specializeInterpreter(
+        Provider, {Entry}, mixedCarrierOptions(false, Order));
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    for (uint64_t Input : {0ULL, 1ULL, 18ULL, ~0ULL})
+      for (uint64_t Payload : {0ULL, 1ULL, 0x123456789abcdef0ULL, ~0ULL})
+        EXPECT_EQ(run(Result.Residual, Input, Payload, {}, Order),
+                  (0x8765432100000000 | ((Input & 1) << 16) |
+                   (Payload & UINT16_MAX)) ^
+                      (91 + (Input & 1)));
+  }
+}
 
 TEST(ControlStateRecovery, JointOverflowKeepsCompleteControlMarginals) {
   auto Provider = makeMarginalDispatchProgram();
@@ -1015,23 +1356,26 @@ TEST(ControlStateRecovery, LongTransparentLoopCannotBoundUnknownSelectors) {
 }
 
 TEST(ControlStateRecovery, ProducerClosureReplaysCommittedTransferChains) {
-  auto Provider = makeLongControlLoop();
-  auto Options = automaticBankOptions();
-  Options.MaxChainedTransfers = 3;
-  Options.MaxContextsPerAddress = 1;
-  const auto Result = specializeInterpreter(Provider, {Entry}, Options);
-  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
-  EXPECT_GT(Result.ControlRefinements, 0U);
-  EXPECT_GT(Result.DiscoveryVisits, 0U);
-  for (uint64_t Input : {0ULL, 1ULL, 17ULL, ~0ULL})
-    for (uint64_t Limit : {1ULL, 5ULL, 13ULL}) {
-      uint64_t Expected = 0;
-      for (uint64_t I = 0; I != Limit; ++I)
-        Expected += (Input ^ 45) + 3 + 11 * ((Input + I) & 3);
-      EXPECT_EQ(run(Result.Residual, Input, Limit), Expected);
-    }
-  Options.MaxDiscoveryVisits = 1;
-  expectBudgetRefusal(specializeInterpreter(Provider, {Entry}, Options));
+  for (bool Stop : {false, true}) {
+    auto Provider = makeLongControlLoop();
+    auto Options = automaticBankOptions();
+    Options.StopChainingAtRepeatedDestination = Stop;
+    Options.MaxChainedTransfers = 3;
+    Options.MaxContextsPerAddress = 1;
+    const auto Result = specializeInterpreter(Provider, {Entry}, Options);
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    EXPECT_GT(Result.ControlRefinements, 0U);
+    EXPECT_GT(Result.DiscoveryVisits, 0U);
+    for (uint64_t Input : {0ULL, 1ULL, 17ULL, ~0ULL})
+      for (uint64_t Limit : {1ULL, 5ULL, 13ULL}) {
+        uint64_t Expected = 0;
+        for (uint64_t I = 0; I != Limit; ++I)
+          Expected += (Input ^ 45) + 3 + 11 * ((Input + I) & 3);
+        EXPECT_EQ(run(Result.Residual, Input, Limit), Expected);
+      }
+    Options.MaxDiscoveryVisits = 1;
+    expectBudgetRefusal(specializeInterpreter(Provider, {Entry}, Options));
+  }
 }
 
 TEST(ControlStateRecovery, LongTransparentLoopKeepsRefinementAndWorkBudgets) {

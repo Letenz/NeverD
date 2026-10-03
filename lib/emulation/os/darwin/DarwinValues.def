@@ -1,0 +1,48 @@
+//===- DarwinValues.def - Bounded Darwin execution vocabulary ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// ABI facts: Apple XNU bsd/kern/syscalls.master, bsd/sys/mman.h and the
+// architecture-specific bsd/dev/*/systemcalls.c. See docs/darwin-emulation.md.
+#ifdef NEVERD_DARWIN_VALUE
+NEVERD_DARWIN_VALUE(StackTop, 0x00007fffffe00000ULL)
+NEVERD_DARWIN_VALUE(ReturnGate, 0x00007fffffc00000ULL)
+NEVERD_DARWIN_VALUE(MaxStackSize, 1024 * 1024)
+NEVERD_DARWIN_VALUE(UserLimit, 0x0000800000000000ULL)
+NEVERD_DARWIN_VALUE(MinimumAddress, 0x10000)
+NEVERD_DARWIN_VALUE(MmapBase, 0x1000000000ULL)
+NEVERD_DARWIN_VALUE(PageSizeX64, 4096)
+NEVERD_DARWIN_VALUE(PageSizeARM64, 16384)
+NEVERD_DARWIN_VALUE(BSDClass, 0x02000000)
+NEVERD_DARWIN_VALUE(SVCImmediate, 0x80)
+NEVERD_DARWIN_VALUE(CarryARM64, 0x20000000)
+NEVERD_DARWIN_VALUE(ProcessID, 1000)
+NEVERD_DARWIN_VALUE(ParentID, 1)
+NEVERD_DARWIN_VALUE(UserID, 1000)
+NEVERD_DARWIN_VALUE(GroupID, 1000)
+NEVERD_DARWIN_VALUE(BadDescriptor, 9)
+NEVERD_DARWIN_VALUE(MaxWriteBytes, 0x7fffffff)
+NEVERD_DARWIN_VALUE(BadAddress, 14)
+NEVERD_DARWIN_VALUE(InvalidArgument, 22)
+NEVERD_DARWIN_VALUE(NoMemory, 12)
+NEVERD_DARWIN_VALUE(PermissionDenied, 13)
+NEVERD_DARWIN_VALUE(MapPrivate, 0x2)
+NEVERD_DARWIN_VALUE(MapAnonymous, 0x1000)
+NEVERD_DARWIN_VALUE(ProtRead, 1)
+NEVERD_DARWIN_VALUE(ProtWrite, 2)
+NEVERD_DARWIN_VALUE(ProtExecute, 4)
+#endif
+#ifdef NEVERD_DARWIN_SERVICE
+NEVERD_DARWIN_SERVICE(Exit, 1, None)
+NEVERD_DARWIN_SERVICE(Write, 4, Wide)
+NEVERD_DARWIN_SERVICE(GetPID, 20, Int)
+NEVERD_DARWIN_SERVICE(GetUID, 24, UInt)
+NEVERD_DARWIN_SERVICE(GetEUID, 25, UInt)
+NEVERD_DARWIN_SERVICE(GetPPID, 39, Int)
+NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
+NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
+NEVERD_DARWIN_SERVICE(Munmap, 73, Int)
+NEVERD_DARWIN_SERVICE(Mprotect, 74, Int)
+NEVERD_DARWIN_SERVICE(Mmap, 197, Wide)
+#endif

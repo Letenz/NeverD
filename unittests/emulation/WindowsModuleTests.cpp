@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcessModules.h"
 
@@ -51,6 +52,8 @@ ProcessOptions options(const std::filesystem::path &Directory) {
 class WindowsModules : public testing::TestWithParam<Profile> {};
 TEST_P(WindowsModules, LinksRelocatedDLLCodeDataOrdinalAPIsAndExecutableTLS) {
 #ifndef NEVERD_WINDOWS_MODULE_FIXTURE_DIR
+  if (requireHvf(GetParam().Backend, GetParam().ISA))
+    FAIL() << MissingTools;
   GTEST_SKIP() << MissingTools;
 #else
   const auto &P = GetParam();
@@ -62,8 +65,11 @@ TEST_P(WindowsModules, LinksRelocatedDLLCodeDataOrdinalAPIsAndExecutableTLS) {
                         : ExecutionContract::CheckedUserAArch64;
   auto Probe = probeExecutionBackend(Config);
   ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
-  if (Probe->Availability != BackendAvailability::Available)
+  if (Probe->Availability != BackendAvailability::Available) {
+    if (requireHvf(P.Backend, P.ISA))
+      FAIL() << Probe->Reason;
     GTEST_SKIP() << Probe->Reason;
+  }
   const auto Directory =
       std::filesystem::path(NEVERD_WINDOWS_MODULE_FIXTURE_DIR) / P.Directory;
   auto O = options(Directory);
@@ -185,9 +191,10 @@ TEST_F(WindowsModuleImage,
   EXPECT_EQ(Moved, 1u);
   for (const auto &G : P->Gates)
     EXPECT_TRUE(Gates.insert(G.Gate).second);
-  ASSERT_EQ(P->InitializationOrder.size(), 2u);
-  EXPECT_EQ(P->Identities[P->InitializationOrder.front()].Name, LeafFile);
-  EXPECT_EQ(P->Identities[P->InitializationOrder.back()].Name, MiddleFile);
+  ASSERT_EQ(P->AttachOrder.size(), 2u);
+  EXPECT_EQ(P->Identities[P->AttachOrder.front()].Name, LeafFile);
+  EXPECT_EQ(P->Identities[P->AttachOrder.back()].Name, MiddleFile);
+  EXPECT_EQ(P->AttachOrder, P->LoaderInitializationOrder);
 }
 TEST_F(WindowsModuleImage, RequiresExplicitCatalogueAndRejectsAmbiguousNames) {
   const auto Valid = Options;
@@ -206,15 +213,17 @@ TEST_F(WindowsModuleImage, RequiresExplicitCatalogueAndRejectsAmbiguousNames) {
   auto Unused = load();
   ASSERT_TRUE(bool(Unused)) << llvm::toString(Unused.takeError());
 }
-TEST_F(WindowsModuleImage, RejectsDLLInitializersTLSAndMixedArchitectures) {
+TEST_F(WindowsModuleImage,
+       RejectsInvalidDLLInitializersTLSAndMixedArchitectures) {
   auto Bytes = bytes(LeafFile);
   {
     PE P(Bytes);
     P.mutableRecord(P.Object->getPE32PlusHeader())->AddressOfEntryPoint =
-        P.Object->getPE32PlusHeader()->BaseOfCode;
+        P.Object->getDataDirectory(llvm::COFF::EXPORT_TABLE)
+            ->RelativeVirtualAddress;
   }
   supply(LeafFile, Bytes);
-  rejects(win::text::ModuleInit);
+  rejects(win::text::Image);
   Bytes = bytes(LeafFile);
   {
     PE P(Bytes);
@@ -222,12 +231,13 @@ TEST_F(WindowsModuleImage, RejectsDLLInitializersTLSAndMixedArchitectures) {
         *P.Object->getDataDirectory(llvm::COFF::BASE_RELOCATION_TABLE);
   }
   supply(LeafFile, Bytes);
-  rejects(win::text::ModuleInit);
+  rejects(win::text::TLS);
   Options.Windows->Modules.front().Path =
       Directory.parent_path() / AArch64Dir / LeafFile;
   rejects(win::text::ModuleISA);
 }
-TEST_F(WindowsModuleImage, RejectsMissingSymbolsOrdinalHolesAndForwarders) {
+TEST_F(WindowsModuleImage,
+       RejectsMissingSymbolsOrdinalHolesAndInvalidForwarders) {
   auto Bytes = bytes(MiddleFile);
   auto Position = Bytes.find(ProbeSymbol);
   ASSERT_NE(Position, std::string::npos);
@@ -257,7 +267,7 @@ TEST_F(WindowsModuleImage, RejectsMissingSymbolsOrdinalHolesAndForwarders) {
     llvm::support::endian::write32le(Slot, D->NameRVA);
   }
   supply(LeafFile, Bytes);
-  rejects(win::text::ModuleForwarder);
+  rejects(win::text::ModuleExport);
 }
 TEST_F(WindowsModuleImage, RejectsCyclesFixedCollisionsAndMetadataFixups) {
   auto Bytes = bytes(LeafFile);

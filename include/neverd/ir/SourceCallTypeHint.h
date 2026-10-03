@@ -229,6 +229,10 @@ struct SourceCallTypeHint {
     /// Immutable scalar table bytes, confined to proven indexed source loads.
     /// Bounds and every helper occurrence must be revalidated in the caller.
     RuntimeReadOnlyBytes,
+    /// A complete immutable Swift static scalar object. Its structured storage
+    /// declaration proves the extent; all uses share one address identity.
+    /// This is independent of bounded borrowed/table byte consumers.
+    RuntimeSwiftScalarStorageAddress,
     /// Complete immutable C-string literal section, rebuilt once per image.
     /// Interior offsets, embedded NULs and retained pointers share its
     /// identity.
@@ -250,6 +254,10 @@ struct SourceCallTypeHint {
     /// A verified ObjC initializer wrapper whose shared body calls the
     /// caller-selected class accessor before objc_msgSendSuper2.
     RuntimeObjCForwardedInitializer,
+    /// A complete merged BOOL setter, projected only for a verified ObjC
+    /// caller. Super dispatch, profiling storage and live Swift dispatch stay
+    /// observable; the merged helper receives no global inferred ABI.
+    RuntimeObjCMergedSetter,
     /// Caller-proven normalization of a raw Swift i1 result. The logical
     /// byte signature describes the source expression, never the runtime ABI.
     SwiftBooleanProjection,
@@ -268,6 +276,10 @@ struct SourceCallTypeHint {
   };
   /// Identity only; publication must repeat the current caller proof.
   std::optional<BooleanResultProjection> BooleanResult;
+  /// Descriptor slot for a source-only choice of zero for an unused, bare
+  /// undef witness-instantiation argument. The runtime retains its full ABI;
+  /// publication repeats the descriptor-specific contract and operand proof.
+  std::optional<va_t> SwiftWitnessUndefDescriptor;
   struct FunctionParameterCallEvidence {
     va_t FunctionEntry = 0;
     unsigned Parameter = 0;
@@ -299,6 +311,15 @@ struct SourceCallTypeHint {
   };
   /// Present only for a dynamically loaded required Swift value witness.
   std::optional<SwiftValueWitnessKind> ValueWitness;
+  struct SwiftWitnessFrameOccurrence {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+    bool operator==(const SwiftWitnessFrameOccurrence &) const = default;
+  };
+  /// A frame-derived witness binding must be re-proved from current LowIR
+  /// and image bytes, including its full reaching byte and call-effect states.
+  std::optional<SwiftWitnessFrameOccurrence> SwiftWitnessFrame;
+
   struct SwiftVirtualEvidence {
     va_t MethodEntry = 0;
     va_t CallSite = 0;
@@ -308,6 +329,10 @@ struct SourceCallTypeHint {
     /// The virtual receiver is the retained Objective-C method self, rather
     /// than an object loaded from one of its ivars.
     bool DirectSelf = false;
+    /// A native Swift class caller has independently declared entry self in
+    /// swiftself. Its class metadata authenticates this slot's declaration;
+    /// the receiver's live table still supplies the target at execution time.
+    va_t NativeSelfClass = 0;
     bool operator==(const SwiftVirtualEvidence &) const = default;
   };
   std::optional<SwiftVirtualEvidence> Virtual;

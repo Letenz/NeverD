@@ -34,7 +34,8 @@ ExecutionConfiguration checked(GuestArchitecture ISA) {
   return Config;
 }
 TEST(ExecutionConfiguration, NativeDriverProfilesAreBackendQualified) {
-  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP}) {
+  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,
+                       ExecutionBackendKind::HVF}) {
     const auto C = llvm::cantFail(executionCapabilities(
         ExecutionContract::Legacy, GuestArchitecture::X64, Backend));
     EXPECT_EQ(C.Contract, ExecutionContract::Legacy);
@@ -70,8 +71,9 @@ TEST(ExecutionConfiguration, NativeDriverProfilesAreBackendQualified) {
 }
 
 TEST(ExecutionConfiguration, StringFamiliesArePublishedOnceForCheckedProfiles) {
-  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,
-                       ExecutionBackendKind::Unicorn})
+  for (auto Backend :
+       {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,
+        ExecutionBackendKind::HVF, ExecutionBackendKind::Unicorn})
     for (auto Contract :
          {ExecutionContract::CheckedX64, ExecutionContract::CheckedUserX64,
           ExecutionContract::Legacy}) {
@@ -97,7 +99,8 @@ TEST(ExecutionConfiguration, NativeDriverRequirementsFailBeforeRAMMutation) {
   auto Space = llvm::cantFail(AddressSpace::create(RAM, MemoryLimit));
   llvm::cantFail(Space->map(Code, PageSize, Read | Write));
   const auto Generation = Space->mappingGeneration();
-  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP}) {
+  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,
+                       ExecutionBackendKind::HVF}) {
     for (bool Address : {false, true}) {
       ExecutionConfiguration Config;
       Config.Backend = Backend;
@@ -231,7 +234,9 @@ TEST(ExecutionConfiguration, InvalidBudgetsDoNotStartNativeCPU) {
 #else
   auto Config = checked(GuestArchitecture::X64);
 #endif
-#if defined(__linux__)
+#if defined(__APPLE__)
+  Config.Backend = ExecutionBackendKind::HVF;
+#elif defined(__linux__)
   Config.Backend = ExecutionBackendKind::KVM;
 #else
   Config.Backend = ExecutionBackendKind::WHP;

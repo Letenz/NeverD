@@ -12,6 +12,7 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -1565,6 +1566,99 @@ TEST(InterpreterSpecialization,
   EXPECT_EQ(execute(Result.Residual, {{32, 0x1800}}, P.Image), 91u);
   EXPECT_EQ(execute(Result.Residual, {{32, 0x1900}}, P.Image), 37u);
   EXPECT_EQ(execute(Result.Residual, {{32, 0x1a00}}, P.Image), 7u);
+}
+
+TEST(InterpreterSpecialization, BoundedFrameReadsUseTheirOwnEnumerationLimit) {
+  constexpr uint64_t Lower = uint64_t{1} << 63;
+  constexpr uint64_t Upper = Lower + (uint64_t{2} << 32) - 1;
+  constexpr uint64_t First = Lower + UINT32_MAX;
+  constexpr uint64_t Second = First + (uint64_t{1} << 32);
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_EQUAL, reg(64, 1), {reg(32, 4), constant(UINT32_MAX, 4)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(64, 1)})},
+        0x140);
+  P.add(0x120, {op(NdOp::INT_SUB, reg(48), {reg(32), constant(16)}),
+                op(NdOp::LOAD, reg(0), {reg(48)}), ret()});
+  P.add(0x140, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+  for (unsigned I = 0; I < 8; ++I) {
+    P.Image[First - 16 + I] = I ? 0 : 91;
+    P.Image[Second - 16 + I] = I ? 0 : 37;
+  }
+  for (uint32_t Tuples : {1, 2})
+    for (uint32_t Reads : {1, 2})
+      for (uint32_t Chain : {0, 8}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Tuples << '/' << Reads << '/' << Chain);
+        SpecializationOptions Options;
+        Options.ExplicitMachineState = true;
+        Options.FrameBaseRegister = SymRegisterRange{32, 8};
+        Options.EntryFrameBounds = SpecializationEntryFrameBounds{
+            std::numeric_limits<int64_t>::min(),
+            static_cast<int64_t>(UINT64_MAX - Upper + 1)};
+        // Keep the low-word guard independently when the full-word tuple
+        // limit is one; the read has its own separate two-address budget.
+        Options.ControlRegisters = {{32, 4}, {32, 8}};
+        Options.MaxControlTuples = Tuples;
+        Options.MaxImmutableReadAddresses = Reads;
+        Options.MaxChainedTransfers = Chain;
+        const auto Result = specializeInterpreter(P, {0x100}, Options);
+        ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+        EXPECT_EQ(Result.Reads.size(), Reads == 2 ? 2U : 0U);
+        EXPECT_EQ(count(Result.Residual, NdOp::LOAD), Reads == 2 ? 0U : 1U);
+        EXPECT_EQ(execute(Result.Residual, {{32, First}}, P.Image), 91U);
+        EXPECT_EQ(execute(Result.Residual, {{32, Second}}, P.Image), 37U);
+        EXPECT_EQ(execute(Result.Residual, {{32, Lower}}, P.Image), 7U);
+      }
+}
+
+TEST(InterpreterSpecialization, BoundedFrameDomainDoesNotProveReachability) {
+  Provider P;
+  // A low-word increment cannot equal its original value. Keep this as
+  // arithmetic rather than a structurally constant false predicate, so the
+  // large frame-domain refusal still needs the final joint feasibility query.
+  P.add(0x100,
+        {op(NdOp::INT_ADD, reg(48, 4), {reg(32, 4), constant(1, 4)}),
+         op(NdOp::INT_EQUAL, reg(64, 1), {reg(48, 4), reg(32, 4)}),
+         op(NdOp::COND_BR, {}, {constant(0xdead), reg(64, 1)})},
+        0x140);
+  P.add(0x140, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+  SpecializationOptions Options;
+  Options.ExplicitMachineState = true;
+  Options.FrameBaseRegister = SymRegisterRange{32, 8};
+  Options.EntryFrameBounds = SpecializationEntryFrameBounds{-64, 8};
+  Options.ControlRegisters = {{32, 8}};
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(count(Result.Residual, NdOp::COND_BR), 0U);
+  EXPECT_TRUE(Result.Reads.empty());
+  for (uint64_t Root : {uint64_t{0x10000}, uint64_t{0x1234ffffffff}})
+    EXPECT_EQ(execute(Result.Residual, {{32, Root}}), 7U);
+}
+
+TEST(InterpreterSpecialization, NarrowGuardDoesNotEnumerateWideRuntimePayload) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::COPY, reg(72), {reg(8)}),
+         op(NdOp::INT_AND, reg(64), {reg(72), constant(1)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(64, 1)})},
+        0x140);
+  P.add(0x120, {op(NdOp::INT_ADD, reg(0), {reg(72), constant(7)}), ret()});
+  P.add(0x140, {op(NdOp::INT_XOR, reg(0), {reg(72), constant(17)}), ret()});
+  SpecializationOptions Options;
+  Options.ControlRegisters = {{72, 8}};
+  Options.MaxSolverQueries = 8;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_LE(Result.SolverQueries, 8U);
+  EXPECT_TRUE(Result.Reads.empty());
+  for (uint64_t High :
+       {uint64_t{0}, uint64_t{0x123456789abcde00}, UINT64_MAX - 255})
+    for (uint64_t Low : {0U, 5U, 17U, 255U}) {
+      const auto Input = High | Low;
+      EXPECT_EQ(execute(Result.Residual, {{8, Input}}),
+                (Low & 1) ? Input + 7 : Input ^ 17);
+    }
 }
 
 } // namespace

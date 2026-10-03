@@ -276,17 +276,27 @@ TEST(InterpreterMachineStateModel, BothBranchArmsCommitTheirOwnState) {
                     op(NdOp::COND_BR, {}, {n(0x300), t(0, 1)})});
     P->block(1, 0x200);
     P->instruction({op(NdOp::INT_ADD, r(0), {r(0), r(16)})});
+    P->instruction({op(NdOp::COPY, P == &Residual ? r(x86reg::CF, 1) : r(128),
+                       {P == &Residual ? n(1, 1) : n(3)})});
     P->finish();
     P->block(2, 0x300);
     P->instruction({op(NdOp::INT_XOR, r(0), {r(0), r(24)})});
+    P->instruction({op(NdOp::COPY, P == &Residual ? r(x86reg::CF, 1) : r(128),
+                       {P == &Residual ? n(0, 1) : n(2)})});
     P->finish();
     P->edges();
   }
-  auto Model = modelInterpreterMachineStateX64(Residual.Function);
-  ASSERT_TRUE(static_cast<bool>(Model)) << llvm::toString(Model.takeError());
-  expect(*Model, Reference.Function, contract());
-  Reference.Function.Blocks[2].Ops[0].Opcode = NdOp::INT_OR;
-  expect(*Model, Reference.Function, contract(), Status::Different);
+  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                      InterpreterMachineStateLayout::SharedGPRExit}) {
+    auto Model = modelInterpreterMachineStateX64(
+        Residual.Function, InterpreterMachineStateProfile::UserX64NoFaultV1,
+        65536, std::nullopt, Layout);
+    ASSERT_TRUE(bool(Model)) << llvm::toString(Model.takeError());
+    expect(*Model, Reference.Function, contract());
+    Reference.Function.Blocks[2].Ops[0].Opcode = NdOp::INT_OR;
+    expect(*Model, Reference.Function, contract(), Status::Different);
+    Reference.Function.Blocks[2].Ops[0].Opcode = NdOp::INT_XOR;
+  }
 }
 
 TEST(InterpreterMachineStateModel, CyclicModelRequiresAFreshInductiveProof) {

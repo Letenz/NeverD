@@ -932,6 +932,123 @@ TEST_F(SessionCAPITest, InterpreterRecoveryV4PreservesOldAndFutureLayouts) {
 }
 
 TEST_F(SessionCAPITest,
+       InterpreterRecoveryV7ChecksWorkBudgetsAndPreservesLayouts) {
+  const auto Input = write("recovery-work-budgets.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  EXPECT_EQ(offsetof(neverd_devirtualize_options_v7, max_node_evaluations),
+            sizeof(neverd_devirtualize_options_v6));
+  EXPECT_EQ(offsetof(neverd_devirtualize_options_v7, max_discovery_visits),
+            sizeof(neverd_devirtualize_options_v6) + sizeof(uint32_t));
+  EXPECT_EQ(offsetof(neverd_devirtualize_options_v7, flags),
+            sizeof(neverd_devirtualize_options_v6) + 2 * sizeof(uint32_t));
+  for (auto Recover :
+       {neverd_devirtualize_source_v7, neverd_devirtualize_machine_source_v7}) {
+    size_t SizeOnly = sizeof(size_t);
+    neverd_devirtualize_options_v7 Partial{};
+    Partial.base.base.base.base.base.base.struct_size = sizeof(Partial) - 1;
+    for (const auto *O :
+         {reinterpret_cast<const neverd_devirtualize_options_v7 *>(&SizeOnly),
+          static_cast<const neverd_devirtualize_options_v7 *>(&Partial)}) {
+      const char *Report = nullptr;
+      EXPECT_EQ(Recover(Session, Entry, O, &Report), nullptr);
+      EXPECT_NE(takeString(Report).find("complete v7 structure"),
+                std::string::npos);
+    }
+    const char *NullReport = "previous";
+    EXPECT_EQ(Recover(nullptr, Entry, nullptr, &NullReport), nullptr);
+    EXPECT_EQ(NullReport, nullptr);
+    const char *DefaultReport = nullptr;
+    EXPECT_FALSE(
+        takeString(Recover(Session, Entry, nullptr, &DefaultReport)).empty());
+    auto Default = llvm::json::parse(takeString(DefaultReport));
+    ASSERT_TRUE(bool(Default));
+    EXPECT_EQ(Default->getAsObject()->getInteger("maxNodeEvaluations"), 16384);
+    EXPECT_EQ(Default->getAsObject()->getInteger("maxDiscoveryVisits"), 65536);
+    EXPECT_EQ(
+        Default->getAsObject()->getBoolean("stopChainingAtRepeatedDestination"),
+        false);
+    for (bool LLVM : {false, true})
+      for (unsigned Case = 0; Case < 3; ++Case) {
+        struct Future {
+          neverd_devirtualize_options_v7 Options;
+          uint64_t Opaque;
+        } F{};
+        auto &O = F.Options;
+        auto &Base = O.base.base.base.base.base.base;
+        Base.struct_size = sizeof(F);
+        Base.use_llvm = LLVM;
+        F.Opaque = UINT64_MAX;
+        O.max_node_evaluations = Case == 0 ? 0 : Case == 1 ? 19 : UINT32_MAX;
+        O.max_discovery_visits = Case == 0 ? 0 : Case == 1 ? 37 : UINT32_MAX;
+        O.flags = Case == 0 ? 0 : NEVERD_DEVIRTUALIZE_V7_STOP_CHAIN_AT_REPEAT;
+        O.base.base.base.max_chained_transfers = Case == 2 ? 8 : 0;
+        const char *Report = nullptr;
+        ASSERT_FALSE(takeString(Recover(Session, Entry, &O, &Report)).empty())
+            << takeString(neverd_last_error(Session));
+        auto Parsed = llvm::json::parse(takeString(Report));
+        ASSERT_TRUE(bool(Parsed));
+        EXPECT_EQ(
+            Parsed->getAsObject()->getInteger("maxNodeEvaluations"),
+            int64_t(O.max_node_evaluations ? O.max_node_evaluations : 16384));
+        EXPECT_EQ(
+            Parsed->getAsObject()->getInteger("maxDiscoveryVisits"),
+            int64_t(O.max_discovery_visits ? O.max_discovery_visits : 65536));
+        EXPECT_EQ(Parsed->getAsObject()->getBoolean(
+                      "stopChainingAtRepeatedDestination"),
+                  Case != 0);
+      }
+    for (unsigned Bad = 0; Bad < 6; ++Bad) {
+      neverd_devirtualize_options_v7 O{};
+      O.base.base.base.base.base.base.struct_size = sizeof(O);
+      if (Bad == 0)
+        O.base.base.base.base.base.base.reserved = 1;
+      else if (Bad == 1)
+        O.base.base.base.base.base.reserved = 1;
+      else if (Bad == 2)
+        O.base.base.base.base.reserved = 1;
+      else if (Bad == 3)
+        O.base.base.base.flags = UINT32_MAX;
+      else if (Bad == 4)
+        O.base.flags = UINT32_MAX;
+      else
+        O.flags = UINT32_MAX;
+      EXPECT_EQ(Recover(Session, Entry, &O, nullptr), nullptr);
+    }
+  }
+  neverd_devirtualize_options_v7 Future{};
+  Future.base.base.base.base.base.base.struct_size = sizeof(Future);
+  Future.max_node_evaluations = Future.max_discovery_visits = 1;
+  Future.flags = UINT32_MAX;
+  const auto CheckOld = [&](auto Recover, const auto *Options) {
+    const char *Report = nullptr;
+    ASSERT_FALSE(takeString(Recover(Session, Entry, Options, &Report)).empty());
+    auto Parsed = llvm::json::parse(takeString(Report));
+    ASSERT_TRUE(bool(Parsed));
+    EXPECT_EQ(Parsed->getAsObject()->getInteger("maxNodeEvaluations"), 16384);
+    EXPECT_EQ(Parsed->getAsObject()->getInteger("maxDiscoveryVisits"), 65536);
+    EXPECT_EQ(
+        Parsed->getAsObject()->getBoolean("stopChainingAtRepeatedDestination"),
+        false);
+  };
+  CheckOld(neverd_devirtualize_source_v1,
+           &Future.base.base.base.base.base.base);
+  CheckOld(neverd_devirtualize_machine_source_v1,
+           &Future.base.base.base.base.base.base);
+  CheckOld(neverd_devirtualize_source_v2, &Future.base.base.base.base.base);
+  CheckOld(neverd_devirtualize_machine_source_v2,
+           &Future.base.base.base.base.base);
+  CheckOld(neverd_devirtualize_source_v3, &Future.base.base.base.base);
+  CheckOld(neverd_devirtualize_machine_source_v3, &Future.base.base.base.base);
+  CheckOld(neverd_devirtualize_source_v4, &Future.base.base.base);
+  CheckOld(neverd_devirtualize_machine_source_v4, &Future.base.base.base);
+  CheckOld(neverd_devirtualize_source_v5, &Future.base.base);
+  CheckOld(neverd_devirtualize_machine_source_v5, &Future.base.base);
+  CheckOld(neverd_devirtualize_source_v6, &Future.base);
+  CheckOld(neverd_devirtualize_machine_source_v6, &Future.base);
+}
+
+TEST_F(SessionCAPITest,
        InterpreterRecoveryV6ChecksSeparationAndPreservesLayouts) {
   const auto Input = write("recovery-separation.elf", makeNativeELF(false));
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);

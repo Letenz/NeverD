@@ -24,6 +24,8 @@ constexpr std::uint64_t Base = 0xffff800012340000ULL;
 struct MockSession {
   std::string path, error;
   std::map<std::uint64_t, std::string> annotations, names;
+  neverd_load_progress_fn progress = nullptr;
+  void *progressUser = nullptr;
 };
 MockSession *session(neverd_session_t s) {
   return static_cast<MockSession *>(s);
@@ -47,12 +49,26 @@ neverd_session_t neverd_session_create() {
   return new MockSession;
 }
 void neverd_session_destroy(neverd_session_t s) { delete session(s); }
+void neverd_session_set_load_progress(neverd_session_t s,
+                                      neverd_load_progress_fn callback,
+                                      void *userData) {
+  if (s) {
+    session(s)->progress = callback;
+    session(s)->progressUser = userData;
+  }
+}
 int neverd_session_load(neverd_session_t s, const char *path) {
+  const auto notify = [&](const char *phase, unsigned long long done) {
+    if (session(s)->progress)
+      session(s)->progress(session(s)->progressUser, phase, done, 1, path);
+  };
+  notify("image", 0);
   if (std::string(path).find("bad-input") != std::string::npos) {
     session(s)->error = "mock load failure";
     return 0;
   }
   session(s)->path = path;
+  notify("ready", 1);
   return 1;
 }
 int neverd_session_is_loaded(neverd_session_t s) {

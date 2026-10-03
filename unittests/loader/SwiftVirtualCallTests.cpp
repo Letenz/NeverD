@@ -1,13 +1,27 @@
+#include "../../lib/loader/MachO/ImmutableNativeFrame.h"
+#include "../../lib/loader/Swift/SwiftBooleanProjection.h"
+#include "../../lib/loader/Swift/SwiftVirtualSlot.h"
+#include "../../lib/sdk/capi/ObjCSourceBindings.h"
+#include "../../lib/sdk/capi/ObjCSwiftBooleanSources.h"
+#include "../../lib/sdk/capi/ObjCSwiftVirtualSources.h"
+#include "../../lib/sdk/capi/SwiftMangledSourceABI.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
+#include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Program.h"
+
+#include <filesystem>
+#include <fstream>
 
 using namespace neverd;
 
@@ -183,7 +197,508 @@ void addVoidVirtualMetadata(Fixture &F) {
   F.Image.Symbols.push_back(
       {"_$s6Lottie17AnimationViewBaseC6layoutyyF", 0x1400, 4, true});
 }
+
+struct NativeSelfFixture : Fixture {
+  static constexpr va_t NativeCall = Entry + 60;
+  llvm::LLVMContext Context;
+  PipelineResult Result;
+  SourceFunctionTypeHint EntryABI;
+
+  void word(unsigned Index, uint32_t Value) {
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + Entry - 0x1000 + Index * 4, Value);
+  }
+
+  explicit NativeSelfFixture(bool Comparison = false) {
+    Section Text;
+    Text.Name = "__text";
+    Text.VA = 0x1000;
+    Text.Size = Text.FileSz = 0x1000;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+    Image.Sections.push_back(Text);
+    Image.ObjCMethods[0].ClassName = "_TtC6Lottie17AnimationViewBase";
+    Image.ObjCMethods[0].Implementation = 0x1500;
+    addVoidVirtualMetadata(*this);
+    Image.Symbols[0].Name =
+        "_$s6Lottie17AnimationViewBaseC7setPair_6secondySo8NSObjectC_AGtF";
+    Image.Symbols[0].Size = 76;
+    // Both paths preserve entry swiftself in x21. Dispatch reads the live
+    // object's masked isa and its own no-argument void vtable slot.
+    const uint32_t Words[] = {0xa9be53f5, 0xa9017bfd, 0x910043fd, 0xaa1403f5,
+                              0xb4000060, 0xaa0003e9, 0x14000002, 0xaa0103e9,
+                              0xf94002a8, 0xb0000009, 0xf940c129, 0xf9400129,
+                              0x8a080128, 0xf9403108, 0xaa1503f4, 0xd63f0100,
+                              0xa9417bfd, 0xa8c253f5, 0xd65f03c0};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      word(I, Words[I]);
+    if (Comparison) {
+      word(4, 0x9400007c); // BL 0x1300, exact NSObject equality veneer.
+      word(5, 0x36000040); // TBZ w0,#0,0x111c observes only bit zero.
+      const uint32_t Veneer[] = {0xb0000010, 0xf9410210, 0xd61f0200};
+      for (unsigned I = 0; I < 3; ++I)
+        llvm::support::endian::write32le(
+            Image.Segments[0].Data.data() + 0x300 + I * 4, Veneer[I]);
+      constexpr va_t EqualitySlot = 0x2200;
+      Image.ImportPtrSlots[EqualitySlot] =
+          SwiftBooleanObjectEqualityImport.str();
+      Image.DyldBindSlots[EqualitySlot] = {
+          SwiftBooleanObjectEqualityImport.str(), 0,
+          SwiftBooleanObjectEqualityProvider.str(), false};
+      Image.DynInfo.NeededLibs.push_back(
+          SwiftBooleanObjectEqualityProvider.str());
+    }
+    const auto ABI =
+        sdk::swiftMangledObjCObjectPairVoidMethodSourceABI(Image, Entry);
+    EXPECT_TRUE(ABI);
+    if (ABI)
+      EntryABI = *ABI;
+    run();
+  }
+
+  void run() {
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Entry};
+    Options.SourceTypeHints.emplace(Entry, EntryABI);
+    Result = Pipeline().run(Image, Context, Options);
+    EXPECT_TRUE(Result.Success) << Result.Error;
+    const auto Found =
+        std::find_if(Result.LowFuncs.begin(), Result.LowFuncs.end(),
+                     [](const auto &F) { return F.Entry == Entry; });
+    EXPECT_NE(Found, Result.LowFuncs.end());
+    if (Found != Result.LowFuncs.end())
+      Function = *Found;
+  }
+
+  HighFunc *high() {
+    for (auto &F : Result.HighFuncs)
+      if (F.Entry == Entry)
+        return &F;
+    return nullptr;
+  }
+  MedFunc *med() {
+    for (auto &F : Result.MedFuncs)
+      if (F.Entry == Entry)
+        return &F;
+    return nullptr;
+  }
+};
+
+ExprPtr nativeVirtualExpression(const HighFunc &Function) {
+  ExprPtr Found;
+  walkStmts(Function.Body, [&](const HighStmt &Statement) {
+    forEachExpr(Statement, [&](const ExprPtr &Root) {
+      std::vector<ExprPtr> Pending{Root};
+      while (!Pending.empty()) {
+        auto Expression = Pending.back();
+        Pending.pop_back();
+        if (!Expression)
+          continue;
+        if (Expression->SourceCallHint && Expression->SourceCallHint->Virtual &&
+            Expression->SourceCallHint->Virtual->NativeSelfClass)
+          Found = Expression;
+        Expression->forEachChildExpr(
+            [&](const ExprPtr &Child) { Pending.push_back(Child); });
+      }
+    });
+  });
+  return Found;
+}
 } // namespace
+
+TEST(SwiftVirtualCalls, NativeClassSelfSurvivesEveryIncomingPath) {
+  NativeSelfFixture F;
+  ASSERT_GT(F.Function.Blocks.size(), 1U);
+  ASSERT_TRUE(swift_virtual_detail::isVoidClassVirtualSlot(
+      F.Image, F.Image.ObjCMethods[0], 96, "Lottie", "AnimationViewBase"));
+  size_t Budget = 1U << 18;
+  ASSERT_TRUE(immutableNativeFrameMachineMatches(F.Image, F.Function, Budget));
+  const auto Hints = buildSwiftVirtualCallHints(F.Image, F.Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(NativeSelfFixture::NativeCall);
+  EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Hint.Signature.Parameters.size(), 1U);
+  EXPECT_EQ(Hint.Signature.Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  std::reverse(F.Function.Blocks.begin(), F.Function.Blocks.end());
+  EXPECT_EQ(buildSwiftVirtualCallHints(F.Image, F.Function).size(), 1U);
+  unsigned Bound = 0;
+  for (const auto &Function : F.Result.MedFuncs)
+    if (Function.Entry == Fixture::Entry)
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::INDIR_CALL &&
+              Op.Addr == NativeSelfFixture::NativeCall) {
+            ASSERT_TRUE(Op.SourceCallHint);
+            EXPECT_EQ(Op.SourceCallHint->CallKind,
+                      SourceCallTypeHint::Kind::SwiftVirtual);
+            EXPECT_EQ(Op.NumInputs, 2U);
+            ++Bound;
+          }
+  EXPECT_EQ(Bound, 1U);
+}
+
+TEST(SwiftVirtualCalls, NativeClassSelfRejectsChangedPathOrMachine) {
+  for (unsigned Case = 0; Case < 22; ++Case) {
+    SCOPED_TRACE(Case);
+    NativeSelfFixture F;
+    if (Case == 0 || Case == 1) {
+      // One predecessor substitutes an argument; or entry self is truncated.
+      F.word(Case == 0 ? 7 : 3, Case == 0 ? 0xaa0003f5 : 0x2a1403f5);
+      F.run();
+    } else if (Case == 2) {
+      F.Function.Blocks.front().Preds.push_back(999);
+    } else if (Case == 3) {
+      F.Function.Blocks.push_back(F.Function.Blocks.front());
+    } else if (Case == 4) {
+      F.Function.Blocks.front().InstructionBoundaries.clear();
+    } else if (Case == 5) {
+      // The stale LowIR still claims x20 = x21, unlike the current image.
+      F.word(14, 0xaa0003f4);
+    } else if (Case == 6) {
+      F.Image.Symbols.push_back(F.Image.Symbols.front());
+    } else if (Case == 7) {
+      F.Image.ObjCMethods.front().ClassName = "DifferentClass";
+    } else if (Case == 8) {
+      F.word(5, 0xb5000001); // A reaching predecessor has a self-loop.
+      F.run();
+    } else if (Case == 9) {
+      F.word(5, 0xaa0003f4);  // Change swiftself on only one path.
+      F.word(14, 0xd503201f); // No restoring copy at the call.
+      F.run();
+    } else if (Case == 10) {
+      F.word(3, 0xaa0003e9); // Self saved in volatile x9 instead of x21.
+      F.word(5, 0x9400007b); // BL 0x1300 clobbers that saved self.
+      F.word(7, 0xaa0103ea);
+      F.word(8, 0xf9400128);
+      F.word(14, 0xaa0903f4);
+      F.run();
+    } else if (Case == 11) {
+      F.Function.ModuleAnalysisRoots.insert(0x1400);
+    } else if (Case == 12) {
+      ++F.Function.DecodedInstructionCount;
+    } else if (Case == 13) {
+      F.Function.Blocks.back().ExceptionalPreds.emplace_back();
+    } else if (Case == 14) {
+      F.Image.Symbols[0].Name =
+          "_$s6Lottie17AnimationViewBaseC7setPair_6secondySo8NSObjectC_AGtYaF";
+    } else if (Case == 15) {
+      F.Image.Symbols[0].Name =
+          "_$s6Lottie17AnimationViewBaseC7setPair_6secondSiSo8NSObjectC_AGtF";
+    } else if (Case == 16) {
+      F.Image.DyldBindSlots[Fixture::MaskSlot].WeakImport = true;
+    } else if (Case == 17) {
+      F.Image.DyldBindSlots[Fixture::MaskSlot].Module =
+          "/tmp/libswiftCore.dylib";
+    } else if (Case == 18) {
+      F.Image.ObjCMethods[0].Implementation = Fixture::Entry;
+    } else if (Case == 19) {
+      F.Image.Sections[0].Flags = SegmentFlags::Readable |
+                                  SegmentFlags::Writable |
+                                  SegmentFlags::Executable;
+    } else if (Case == 20) {
+      F.Image.Symbols.back().Name =
+          "_$s6Lottie17AnimationViewBaseC6layoutyySbF";
+    } else {
+      F.Image.ObjCMethods.push_back(F.Image.ObjCMethods[0]);
+      F.Image.ObjCMethods.back().ClassName = "ConflictingClass";
+    }
+    EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+  }
+}
+
+TEST(SwiftVirtualCalls, NativePublicationRechecksTheOriginalDynamicCall) {
+  NativeSelfFixture F;
+  ASSERT_TRUE(F.high());
+  auto Expression = nativeVirtualExpression(*F.high());
+  ASSERT_TRUE(Expression);
+  EXPECT_TRUE(Expression->IsIndirectCall);
+  EXPECT_EQ(Expression->CallAddr, 0U);
+  EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, F.Image, {}));
+  EXPECT_TRUE(sdk::objCSwiftVirtualSourceCallBound(*Expression, F.Image,
+                                                   F.Result, *F.high()));
+}
+
+TEST(SwiftVirtualCalls,
+     DeclaredVoidEntryNormalizesBooleanBeforeVirtualDispatch) {
+  NativeSelfFixture F(true);
+  ASSERT_TRUE(F.high());
+  ASSERT_TRUE(F.med());
+  const auto Qualified =
+      qualifySwiftBooleanProjections(F.Image, F.Function, F.EntryABI);
+  ASSERT_EQ(Qualified.size(), 1U);
+  EXPECT_EQ(Qualified[0].Normalization.Site.Instruction, Fixture::Entry + 16);
+  EXPECT_EQ(Qualified[0].Runtime.RawContract.DefinedResultBits, 1U);
+  unsigned Comparisons = 0;
+  for (const auto &Block : F.med()->Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Addr == Fixture::Entry + 16 && Op.Opcode == NdOp::CALL) {
+        ASSERT_TRUE(Op.SourceCallHint);
+        EXPECT_TRUE(Op.SourceCallHint->BooleanResult);
+        EXPECT_EQ(Op.NumInputs, 4U); // target, lhs, rhs, metadata in swiftself
+        ++Comparisons;
+      }
+  EXPECT_EQ(Comparisons, 1U);
+  auto Signature = F.EntryABI;
+  Signature.Parameters.pop_back();
+  EXPECT_TRUE(
+      qualifySwiftBooleanProjections(F.Image, F.Function, Signature).empty());
+  F.word(5, 0x34000040); // CBZ w0 would observe undefined bits 31:1.
+  F.run();
+  EXPECT_TRUE(
+      qualifySwiftBooleanProjections(F.Image, F.Function, F.EntryABI).empty());
+}
+
+TEST(SwiftVirtualCalls, NativePublicationRejectsStaleAndDuplicatedEvidence) {
+  for (unsigned Case = 0; Case < 27; ++Case) {
+    SCOPED_TRACE(Case);
+    NativeSelfFixture F;
+    ASSERT_TRUE(F.high());
+    ASSERT_TRUE(F.med());
+    auto Expression = nativeVirtualExpression(*F.high());
+    ASSERT_TRUE(Expression);
+    auto Hint = *Expression->SourceCallHint;
+    MedVar WrongParameter;
+    WrongParameter.Kind = MedVar::Param;
+    WrongParameter.TheArch = Arch::AArch64;
+    WrongParameter.Size = 8;
+    switch (Case) {
+    case 0:
+      F.Result.SourceImage = nullptr;
+      break;
+    case 1:
+      F.Result.Success = false;
+      break;
+    case 2:
+      F.Result.LowFuncs.push_back(F.Function);
+      break;
+    case 3:
+      F.med()->SourceParametersBound = false;
+      break;
+    case 4:
+      for (auto &Audit : F.Result.FunctionAudits)
+        if (Audit.Entry == Fixture::Entry)
+          Audit.MedIRVerified = false;
+      break;
+    case 5:
+      F.high()->SourceTypeHint->Parameters.pop_back();
+      break;
+    case 6:
+      F.word(7, 0xaa0003f5);
+      break;
+    case 7:
+      F.Image.CodePtrRelocSlots.clear();
+      break;
+    case 8:
+      Hint.Virtual->CallSite += 4;
+      break;
+    case 9:
+      Hint.Virtual->MethodEntry += 4;
+      break;
+    case 10:
+      Hint.Virtual->NativeSelfClass += 8;
+      break;
+    case 11:
+      Hint.Virtual->VtableByteOffset += 8;
+      break;
+    case 12:
+      Hint.Virtual->DirectSelf = true;
+      break;
+    case 13:
+      Hint.Signature.Parameters[0].Location.ValueBytes = 4;
+      break;
+    case 14:
+      Expression->IsIndirectCall = false;
+      break;
+    case 15:
+      Expression->CallAddr = 0x1400;
+      break;
+    case 16:
+      Expression->IndirectTarget = HighExpr::makeConst(0x1400, 8);
+      break;
+    case 17:
+      Expression->Operands.clear();
+      break;
+    case 18:
+      Expression->Type = NdType::makeInt(8);
+      break;
+    case 19: {
+      HighStmt Statement;
+      Statement.Kind = StmtKind::Call;
+      Statement.CallExpr = Expression;
+      F.high()->Body.push_back(Statement);
+      break;
+    }
+    case 20:
+    case 21:
+    case 22:
+      for (auto &Block : F.med()->Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::INDIR_CALL) {
+            if (Case == 20)
+              ++Op.OriginSeq;
+            if (Case == 21)
+              Op.SourceCallHint.reset();
+            if (Case == 22)
+              Op.PreservesCallerSaved = true;
+          }
+      break;
+    case 23:
+      for (auto &Low : F.Result.LowFuncs)
+        if (Low.Entry == Fixture::Entry)
+          for (auto &Block : Low.Blocks)
+            for (auto &Op : Block.Ops)
+              if (Op.Opcode == NdOp::INDIR_CALL)
+                Op.Inputs[0] = NdVar::reg(a64reg::X9, 8);
+      break;
+    case 24:
+      Expression->Operands[0] = HighExpr::makeVar(
+          WrongParameter, NdType::makePtr(NdType::makeVoid()));
+      break;
+    case 25:
+      Expression->IndirectTarget =
+          HighExpr::makeVar(WrongParameter, NdType::makeInt(8));
+      break;
+    case 26:
+      F.high()->Params.pop_back();
+      break;
+    }
+    Expression->SourceCallHint =
+        std::make_shared<const SourceCallTypeHint>(Hint);
+    EXPECT_FALSE(sdk::objCSwiftVirtualSourceCallBound(*Expression, F.Image,
+                                                      F.Result, *F.high()));
+  }
+}
+
+TEST(SwiftVirtualCalls, NativeDynamicDispatchMatchesOriginalARM64AtO0AndO2) {
+#if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
+  for (bool Comparison : {false, true}) {
+    SCOPED_TRACE(Comparison);
+    NativeSelfFixture F(Comparison);
+    ASSERT_TRUE(F.high());
+    const std::map<va_t, const HighFunc *> Functions{
+        {Fixture::Entry, F.high()}};
+    auto Bound =
+        sdk::bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    const auto Expression = nativeVirtualExpression(Bound.Function);
+    ASSERT_TRUE(Expression);
+    ASSERT_TRUE(sdk::objCSwiftVirtualSourceCallBound(*Expression, F.Image,
+                                                     F.Result, Bound.Function));
+    Bound.Function.Name = "native_class_virtual";
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+    llvm::SmallString<128> Directory;
+    ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-class-virtual",
+                                                      Directory));
+    const std::filesystem::path Work(Directory.str().str());
+    struct Cleanup {
+      std::filesystem::path Work;
+      ~Cleanup() {
+        std::error_code Error;
+        std::filesystem::remove_all(Work, Error);
+      }
+    } Cleanup{Work};
+    const auto Path = (Work / "virtual.c").string();
+    std::ofstream Out(Path);
+    Out << (Comparison ? "#define HAVE_COMPARISON 1\n"
+                       : "#define HAVE_COMPARISON 0\n")
+        << Source << R"(
+#include <stddef.h>
+uint64_t runtime_isa_mask __asm__("_swift_isaMask") = ~(uint64_t)7;
+uint64_t raw_bool_bits;
+uintptr_t raw_bool_inputs[3];
+unsigned raw_bool_calls;
+static unsigned calls, target;
+static void *observed;
+typedef void __attribute__((swiftcall)) (*method)(void * __attribute__((swift_context)));
+static void __attribute__((swiftcall)) first(void * __attribute__((swift_context)) self) {
+  ++calls; target = 1; observed = self;
+}
+static void __attribute__((swiftcall)) second(void * __attribute__((swift_context)) self) {
+  ++calls; target = 2; observed = self;
+}
+extern void __attribute__((swiftcall)) original_class_virtual(
+    void *, void *, void * __attribute__((swift_context)));
+__asm__(".text\n.p2align 2\n.globl _original_class_virtual\n_original_class_virtual:\n"
+)";
+    // Every non-relocated instruction is copied byte-for-byte from the same
+    // fixture that the current LowIR and virtual-call proof authenticate.
+    for (unsigned I = 0; I < 19; ++I) {
+      if (I == 4 && Comparison)
+        Out << "\"bl _$sSo8NSObjectC10ObjectiveCE2eeoiySbAB_ABtFZ\\n\"\n";
+      else if (I == 9)
+        Out << "\"adrp x9,Lnative_mask_got@PAGE\\n\"\n";
+      else if (I == 10)
+        Out << "\"ldr x9,[x9,Lnative_mask_got@PAGEOFF]\\n\"\n";
+      else
+        Out << "\".long "
+            << llvm::support::endian::read32le(F.Image.Segments[0].Data.data() +
+                                               0x100 + I * 4)
+            << "\\n\"\n";
+    }
+    Out << R"(
+".p2align 2\n.globl _$sSo8NSObjectC10ObjectiveCE2eeoiySbAB_ABtFZ\n"
+"_$sSo8NSObjectC10ObjectiveCE2eeoiySbAB_ABtFZ:\n"
+"adrp x8,_raw_bool_inputs@PAGE\nadd x8,x8,_raw_bool_inputs@PAGEOFF\n"
+"stp x0,x1,[x8]\nstr x20,[x8,#16]\n"
+"adrp x8,_raw_bool_calls@PAGE\nldr w9,[x8,_raw_bool_calls@PAGEOFF]\n"
+"add w9,w9,#1\nstr w9,[x8,_raw_bool_calls@PAGEOFF]\n"
+"adrp x8,_raw_bool_bits@PAGE\nldr x0,[x8,_raw_bool_bits@PAGEOFF]\nret\n"
+".section __DATA_CONST,__const\n.p2align 3\nLnative_mask_got:\n"
+".quad _swift_isaMask\n.text\n");
+int main(void) {
+  struct { uint64_t before; uintptr_t isa; uint64_t after; } object;
+  uintptr_t table[16] __attribute__((aligned(16))) = {0};
+  object.before = 0xfeed1234; object.after = 0xcafe5678;
+  for (unsigned i = 0; i != 1024; ++i) {
+    method current = i & 1 ? first : second;
+    table[12] = (uintptr_t)current;
+    object.isa = (uintptr_t)table | (i & 7);
+    void *a = i & 2 ? &object.before : NULL;
+    void *b = i & 4 ? &object.after : NULL;
+    raw_bool_bits = (0xfeeddeaddead0000ULL ^ ((uint64_t)i << 24)) | (i & 1);
+    raw_bool_calls = 0;
+    calls = target = 0; observed = NULL;
+    original_class_virtual(a, b, &object.isa);
+    if (calls != 1 || target != (i & 1 ? 1 : 2) || observed != &object.isa) return 1;
+    if (raw_bool_calls != HAVE_COMPARISON || (HAVE_COMPARISON &&
+        (raw_bool_inputs[0] != (uintptr_t)a || raw_bool_inputs[1] != (uintptr_t)b ||
+         raw_bool_inputs[2] != (uintptr_t)&object.isa))) return 4;
+    raw_bool_calls = 0;
+    calls = target = 0; observed = NULL;
+    native_class_virtual(a, b, &object.isa);
+    if (calls != 1 || target != (i & 1 ? 1 : 2) || observed != &object.isa) return 2;
+    if (raw_bool_calls != HAVE_COMPARISON || (HAVE_COMPARISON &&
+        (raw_bool_inputs[0] != (uintptr_t)a || raw_bool_inputs[1] != (uintptr_t)b ||
+         raw_bool_inputs[2] != (uintptr_t)&object.isa))) return 5;
+    if (object.before != 0xfeed1234 || object.after != 0xcafe5678 ||
+        object.isa != ((uintptr_t)table | (i & 7)) || table[12] != (uintptr_t)current) return 3;
+  }
+  return 0;
+}
+)";
+    Out.close();
+    for (const auto *Level : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Level);
+      const auto Output = (Work / (std::string("virtual") + Level)).string();
+      ASSERT_EQ(llvm::sys::ExecuteAndWait(
+                    NEVERD_TEST_CLANG,
+                    {NEVERD_TEST_CLANG, Level, Path, "-o", Output}),
+                0)
+          << Source;
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0);
+    }
+  }
+#else
+  GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
+#endif
+}
 
 TEST(SwiftVirtualCalls, ExactMaskedIsaGetterBindsSwiftContext) {
   Fixture F;

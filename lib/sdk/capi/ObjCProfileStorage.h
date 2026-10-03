@@ -111,6 +111,12 @@ public:
 
   bool contains(va_t Base) const { return Sections.count(Base); }
 
+  bool matchesSection(const ObjCProfileStorage &Other, va_t Base) const {
+    const auto Left = Sections.find(Base), Right = Other.Sections.find(Base);
+    return Left != Sections.end() && Right != Other.Sections.end() &&
+           Left->second == Right->second;
+  }
+
   static std::string helperName(va_t Base) {
     return "neverd_profile_counters_" + llvm::utohexstr(Base, true) +
            "_address";

@@ -5,6 +5,7 @@
 #include "../ObjC/ObjCRuntimeData.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/Demangle/SwiftDemangle.h"
 #include "llvm/Support/Endian.h"
@@ -18,20 +19,28 @@
 
 namespace neverd {
 namespace {
-std::optional<uint64_t>
-scalarStorageWidth(const llvm::SwiftDemangleNode &Type) {
+std::optional<uint64_t> scalarStorageWidth(const llvm::SwiftDemangleNode &Type,
+                                           bool Darwin64 = false) {
   if (Type.Kind != "Type" || Type.Text || Type.Index ||
       Type.Children.size() != 1)
     return std::nullopt;
   const auto &Nominal = Type.Children[0];
   if (Nominal.Kind != "Structure" || Nominal.Text || Nominal.Index ||
       Nominal.Children.size() != 2 || Nominal.Children[0].Kind != "Module" ||
-      !Nominal.Children[0].Text || *Nominal.Children[0].Text != "Swift" ||
-      Nominal.Children[0].Index || !Nominal.Children[0].Children.empty() ||
+      !Nominal.Children[0].Text || Nominal.Children[0].Index ||
+      !Nominal.Children[0].Children.empty() ||
       Nominal.Children[1].Kind != "Identifier" || !Nominal.Children[1].Text ||
       Nominal.Children[1].Index || !Nominal.Children[1].Children.empty())
     return std::nullopt;
+  const llvm::StringRef Module(*Nominal.Children[0].Text);
   const llvm::StringRef Name(*Nominal.Children[1].Text);
+  // The frozen Darwin CGFloat stores one Double on both supported 64-bit
+  // targets. Its stable mangling retains CoreGraphics even in SDKs that
+  // expose the source declaration from CoreFoundation.
+  if (Darwin64 && Module == "CoreGraphics" && Name == "CGFloat")
+    return 8;
+  if (Module != "Swift")
+    return std::nullopt;
   if (Name == "Bool" || Name == "Int8" || Name == "UInt8")
     return 1;
   if (Name == "Int16" || Name == "UInt16")
@@ -43,10 +52,8 @@ scalarStorageWidth(const llvm::SwiftDemangleNode &Type) {
     return 8;
   return std::nullopt;
 }
-} // namespace
-
-std::optional<uint64_t>
-swiftStaticScalarStorageWidth(llvm::StringRef MangledSymbol) {
+std::optional<uint64_t> staticScalarStorageWidth(llvm::StringRef MangledSymbol,
+                                                 bool Darwin64) {
   MangledSymbol.consume_front("_");
   if (!MangledSymbol.starts_with("$s"))
     return std::nullopt;
@@ -71,22 +78,87 @@ swiftStaticScalarStorageWidth(llvm::StringRef MangledSymbol) {
   const auto &Variable = Static.Children[0];
   if (!Shape(Variable, "Variable", 3))
     return std::nullopt;
+  const auto Named = [](const llvm::SwiftDemangleNode &Node,
+                        llvm::StringRef Kind) {
+    return Node.Kind == Kind && Node.Text && !Node.Text->empty() &&
+           !Node.Index && Node.Children.empty();
+  };
+  const auto Nominal = [&](const llvm::SwiftDemangleNode &Node) {
+    return (Node.Kind == "Class" || Node.Kind == "Structure" ||
+            Node.Kind == "Enum") &&
+           !Node.Text && !Node.Index && Node.Children.size() == 2 &&
+           Named(Node.Children[0], "Module") &&
+           Named(Node.Children[1], "Identifier");
+  };
   const auto &Context = Variable.Children[0];
-  if ((Context.Kind != "Class" && Context.Kind != "Structure" &&
-       Context.Kind != "Enum") ||
-      Context.Text || Context.Index || Context.Children.size() != 2 ||
-      Context.Children[0].Kind != "Module" ||
-      !Context.Children[0].Text || Context.Children[0].Index ||
-      !Context.Children[0].Children.empty() ||
-      Context.Children[1].Kind != "Identifier" ||
-      !Context.Children[1].Text || Context.Children[1].Index ||
-      !Context.Children[1].Children.empty())
+  if (!Nominal(Context) &&
+      !(Shape(Context, "Extension", 2) &&
+        Named(Context.Children[0], "Module") && Nominal(Context.Children[1])))
     return std::nullopt;
   const auto &Property = Variable.Children[1];
-  if (Property.Kind != "Identifier" || !Property.Text || Property.Index ||
-      !Property.Children.empty())
+  if (!Named(Property, "Identifier"))
     return std::nullopt;
-  return scalarStorageWidth(Variable.Children[2]);
+  return scalarStorageWidth(Variable.Children[2], Darwin64);
+}
+} // namespace
+
+std::optional<uint64_t>
+swiftStaticScalarStorageWidth(llvm::StringRef MangledSymbol) {
+  return staticScalarStorageWidth(MangledSymbol, false);
+}
+
+std::optional<SwiftImmutableScalarStorage>
+swiftImmutableScalarStorage(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || !Image.MachOTwoLevelNamespace ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) || !Address)
+    return std::nullopt;
+  const Symbol *Storage = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Address) {
+      if (Storage || Symbol.IsFunc)
+        return std::nullopt;
+      Storage = &Symbol;
+    }
+  const auto Width =
+      Storage ? staticScalarStorageWidth(Storage->Name, true) : std::nullopt;
+  if (!Width || Address % *Width || Address > InvalidVA - *Width ||
+      (Storage->Size && Storage->Size != *Width))
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  if (!Section ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_REGULAR)
+    return std::nullopt;
+  // A declaration proves the complete object extent, never the distance to
+  // the next symbol. Reject other owners and aliases rather than splitting
+  // one object into multiple copied identities.
+  for (const auto &Symbol : Image.Symbols) {
+    if (&Symbol == Storage)
+      continue;
+    if (Symbol.Name == Storage->Name ||
+        (Symbol.Addr >= Address && Symbol.Addr < Address + *Width) ||
+        (Symbol.Size && Symbol.Addr < Address &&
+         Address - Symbol.Addr < Symbol.Size))
+      return std::nullopt;
+  }
+  for (const auto &Export : Image.Exports)
+    if ((Export.Addr >= Address && Export.Addr < Address + *Width) ||
+        Export.Name == Storage->Name)
+      if (Export.Addr != Address || Export.Name != Storage->Name)
+        return std::nullopt;
+  for (uint64_t I = 0; I < *Width; ++I)
+    if (Image.hasExecutableCodeOwnerAt(Address + I) ||
+        Image.isRuntimeFunctionAt(Address + I))
+      return std::nullopt;
+  const auto Bytes = readImmutableImageBytes(Image, Address, *Width);
+  if (!Bytes)
+    return std::nullopt;
+  uint64_t Bits = 0;
+  for (uint64_t I = 0; I < *Width; ++I)
+    Bits |= uint64_t((*Bytes)[I]) << (8 * I);
+  if (isImagePointerBitPattern(Image, Bits, *Width))
+    return std::nullopt;
+  return SwiftImmutableScalarStorage{Storage->Name, uint32_t(*Width)};
 }
 
 std::optional<uint64_t>

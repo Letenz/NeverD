@@ -171,11 +171,11 @@ inline bool samePhysicalSourceCall(const SourceFunctionTypeHint &Observed,
 
 inline bool plainNativeBinding(const SourceCallTypeHint &Binding) {
   return Binding.CallKind == SourceCallTypeHint::Kind::Native &&
-         !Binding.BooleanResult && !Binding.ValueWitness &&
-         !Binding.DoesNotReturn && !Binding.WeakImport &&
-         !Binding.ReturnedArgument && !Binding.RuntimeObjCResultType &&
-         Binding.Selector.empty() && Binding.OwnerClass.empty() &&
-         !Binding.SelectorReferenceAddress &&
+         !Binding.BooleanResult && !Binding.SwiftWitnessUndefDescriptor &&
+         !Binding.ValueWitness && !Binding.DoesNotReturn &&
+         !Binding.WeakImport && !Binding.ReturnedArgument &&
+         !Binding.RuntimeObjCResultType && Binding.Selector.empty() &&
+         Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
          Binding.BorrowedByteInputs.empty() &&
          Binding.SwiftStaticStringInputs.empty() &&
          Binding.CanonicalBooleanInputs.empty() &&
@@ -222,6 +222,8 @@ runtimeSourceCallHint(const BinaryImage &Image,
 inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
                                   const SourceCallTypeHint &Expected) {
   return Binding.CallKind == Expected.CallKind &&
+         Binding.SwiftWitnessUndefDescriptor ==
+             Expected.SwiftWitnessUndefDescriptor &&
          Binding.FunctionParameterCall == Expected.FunctionParameterCall &&
          Binding.ImmutableNativeCall == Expected.ImmutableNativeCall &&
          Binding.DoesNotReturn == Expected.DoesNotReturn &&
@@ -4617,6 +4619,19 @@ swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
 }
 
 inline std::optional<SourceCallTypeHint>
+swiftImmutableScalarStorageHint(const BinaryImage &Image, va_t Address) {
+  const auto Storage = swiftImmutableScalarStorage(Image, Address);
+  auto Hint = Storage
+                  ? borrowedByteSourceHint(Image, {Address, Storage->ByteCount})
+                  : std::nullopt;
+  if (Hint) {
+    Hint->CallKind = SourceCallTypeHint::Kind::RuntimeSwiftScalarStorageAddress;
+    Hint->TargetName = Storage->SymbolName;
+  }
+  return Hint;
+}
+
+inline std::optional<SourceCallTypeHint>
 swiftPrivateScalarStorageHint(const BinaryImage &Image, va_t Address) {
   const auto *Symbol = uniqueWritableDataSymbol(Image, Address, 1);
   const auto Width =
@@ -6153,6 +6168,171 @@ taggedCStringAddressOperand(const HighExpr &Expression,
   return std::nullopt;
 }
 
+/// An independent generic compiler contract permits a concrete source choice
+/// for this one undef operand. Neither arbitrary unknown inputs nor evaluation
+/// of a third-argument expression may disappear. The original runtime ABI and
+/// metadata expression are retained verbatim.
+inline std::optional<va_t> swiftWitnessUndefDescriptor(const HighFunc &Function,
+                                                       const HighExpr &Call,
+                                                       const BinaryImage &Image,
+                                                       bool Projected = false) {
+  if (Call.Kind != ExprKind::Call || !Call.Type || Call.Type->Size != 8 ||
+      (Call.Type->Kind != NdTypeKind::Int &&
+       Call.Type->Kind != NdTypeKind::Ptr) ||
+      !Call.SourceCallHint ||
+      Call.SourceCallHint->CallKind !=
+          SourceCallTypeHint::Kind::SwiftRuntimeCall ||
+      Call.SourceCallHint->TargetName != "swift_getWitnessTable" ||
+      Call.IsIndirectCall || Call.IndirectTarget ||
+      Call.IndirectParamIdx >= 0 || Call.IntrinsicId != Intrinsic::None ||
+      !Call.IntrinsicOutputs.empty() ||
+      Call.MemoryOrdering != NdMemoryOrdering::None ||
+      Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Call.Operands.size() != 3)
+    return std::nullopt;
+  auto Binding = *Call.SourceCallHint;
+  if (Projected != bool(Binding.SwiftWitnessUndefDescriptor))
+    return std::nullopt;
+  Binding.SwiftWitnessUndefDescriptor.reset();
+  const auto Expected =
+      swiftRuntimeSourceCallHint(Image, Binding.TargetAddress);
+  const auto Runtime = Image.DyldBindSlots.find(Binding.TargetAddress);
+  const auto Slot = darwinImportVeneerSlot(Image, Call.CallAddr);
+  if (!Expected || !runtimeBindingMatches(Binding, *Expected) ||
+      (Call.CallAddr != Binding.TargetAddress &&
+       (!Slot || *Slot != Binding.TargetAddress)) ||
+      Runtime == Image.DyldBindSlots.end() || Runtime->second.WeakImport ||
+      Runtime->second.Addend ||
+      Runtime->second.Name != "_swift_getWitnessTable" ||
+      Runtime->second.Module != "/usr/lib/swift/libswiftCore.dylib")
+    return std::nullopt;
+  const auto Word = [](const ExprPtr &Value) {
+    return Value && Value->Type && Value->Type->Size == 8 &&
+           (Value->Type->Kind == NdTypeKind::Ptr ||
+            Value->Type->Kind == NdTypeKind::Int) &&
+           Value->IntrinsicId == Intrinsic::None &&
+           Value->IntrinsicOutputs.empty() && !Value->IndirectTarget &&
+           Value->MemoryOrdering == NdMemoryOrdering::None &&
+           Value->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  };
+  const auto &Unused = Call.Operands[2];
+  if (!Word(Call.Operands[0]) || !Word(Call.Operands[1]) || !Word(Unused) ||
+      !Unused->Operands.empty() || Unused->SourceCallHint ||
+      Unused->Kind != (Projected ? ExprKind::Const : ExprKind::Undef) ||
+      (Projected &&
+       (Unused->ConstVal ||
+        Unused->ConstProvenance != ConstantAddressProvenance::Scalar ||
+        Unused->AddressOwnerVA != InvalidVA)))
+    return std::nullopt;
+  const auto Flow = analyzeHighSourceFlow(
+      Function,
+      Function.ReturnType && Function.ReturnType->Kind != NdTypeKind::Void);
+  if (!Flow.Complete || !Flow.Items.empty())
+    return std::nullopt;
+  const auto Graph = buildHighSourceFlowGraph(Function);
+  if (!Graph.Diagnostics.Complete || Graph.Nodes.size() > 4096)
+    return std::nullopt;
+  std::map<HighSourceLocalIdentity, std::vector<ExprPtr>> Definitions;
+  std::set<HighSourceLocalIdentity> AddressTaken;
+  std::set<const HighStmt *> Statements;
+  size_t Budget = 16384, Occurrences = 0;
+  bool Complete = true;
+  const auto Scan = [&](auto &&Self, const ExprPtr &Value,
+                        unsigned Depth) -> void {
+    if (!Value || !Complete)
+      return;
+    if (!Budget || Depth > 64) {
+      Complete = false;
+      return;
+    }
+    --Budget;
+    Occurrences += Value.get() == &Call;
+    for (const auto &Output : Value->IntrinsicOutputs)
+      AddressTaken.insert(highSourceLocalIdentity(Output));
+    if (Value->Kind == ExprKind::Addr)
+      for (const auto &Operand : Value->Operands)
+        if (Operand &&
+            (Operand->Kind == ExprKind::Var || Operand->Kind == ExprKind::Phi))
+          AddressTaken.insert(highSourceLocalIdentity(Operand->Var));
+    Value->forEachChildExpr(
+        [&](const ExprPtr &Child) { Self(Self, Child, Depth + 1); });
+  };
+  for (const auto &Node : Graph.Nodes) {
+    if (!Node.Statement) {
+      Scan(Scan, Node.Test, 0);
+      continue;
+    }
+    if (!Statements.insert(Node.Statement).second)
+      continue;
+    const auto &Statement = *Node.Statement;
+    if (Statement.Kind == StmtKind::Assign && Statement.Dst &&
+        (Statement.Dst->Kind == ExprKind::Var ||
+         Statement.Dst->Kind == ExprKind::Phi))
+      Definitions[highSourceLocalIdentity(Statement.Dst->Var)].push_back(
+          Word(Statement.Dst) && Statement.Dst->Var.Size == 8 ? Statement.Val
+                                                              : nullptr);
+    forEachExpr(Statement, [&](const ExprPtr &Value) { Scan(Scan, Value, 0); });
+  }
+  if (!Complete || Occurrences != 1)
+    return std::nullopt;
+  std::set<HighSourceLocalIdentity> Active;
+  const auto Resolve = [&](auto &&Self, const ExprPtr &Value,
+                           unsigned Depth) -> std::optional<va_t> {
+    if (!Word(Value) || !Budget || Depth > 64)
+      return std::nullopt;
+    --Budget;
+    if (Value->Kind == ExprKind::Load && !Value->SourceCallHint &&
+        Value->Operands.size() == 1) {
+      const auto &Address = Value->Operands[0];
+      if (!Word(Address) || Address->Kind != ExprKind::Const ||
+          !Address->Operands.empty() || Address->SourceCallHint ||
+          !isExactAddressProvenance(Address->ConstProvenance) ||
+          isCodeAddressProvenance(Address->ConstProvenance) ||
+          (Address->AddressOwnerVA != InvalidVA &&
+           Address->AddressOwnerVA != Address->ConstVal))
+        return std::nullopt;
+      return swiftWitnessInstantiationArgumentUnused(Image, Address->ConstVal)
+                 ? std::optional<va_t>(Address->ConstVal)
+                 : std::nullopt;
+    }
+    if (Value->Kind == ExprKind::Call && Value->SourceCallHint &&
+        Value->SourceCallHint->CallKind ==
+            SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress &&
+        Value->Operands.empty() && !Value->IsIndirectCall && !Value->CallAddr &&
+        Value->CallTarget.empty()) {
+      const auto &Data = *Value->SourceCallHint;
+      const auto Current =
+          darwinRuntimeGlobalAddressHint(Image, Data.TargetAddress);
+      if (Current && runtimeBindingMatches(Data, *Current) &&
+          swiftWitnessInstantiationArgumentUnused(Image, Data.TargetAddress))
+        return Data.TargetAddress;
+      return std::nullopt;
+    }
+    if ((Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
+        !Value->SourceCallHint && Value->Operands.size() == 1 &&
+        (!Value->CastTo || equalSourceTypes(Value->Type, Value->CastTo)))
+      return Self(Self, Value->Operands[0], Depth + 1);
+    if (Value->Kind != ExprKind::Var || Value->SourceCallHint ||
+        !Value->Operands.empty() || Value->Var.Size != 8 ||
+        (Value->Var.Kind != MedVar::Temp && Value->Var.Kind != MedVar::Reg))
+      return std::nullopt;
+    const auto Key = highSourceLocalIdentity(Value->Var);
+    const auto Found = Definitions.find(Key);
+    if (AddressTaken.count(Key) || Found == Definitions.end() ||
+        Found->second.size() != 1 || !Active.insert(Key).second)
+      return std::nullopt;
+    const auto Result = Self(Self, Found->second.front(), Depth + 1);
+    Active.erase(Key);
+    return Result;
+  };
+  const auto Descriptor = Resolve(Resolve, Call.Operands[0], 0);
+  return Descriptor && (!Projected ||
+                        Descriptor ==
+                            Call.SourceCallHint->SwiftWitnessUndefDescriptor)
+             ? Descriptor
+             : std::nullopt;
+}
+
 } // namespace objc_binding_detail
 
 /// Clone before attaching relocation bindings: other native exports keep the
@@ -6585,6 +6765,26 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         (Original->ConstProvenance == ConstantAddressProvenance::DataAddress ||
          Original->ConstProvenance == ConstantAddressProvenance::Address) &&
         !NumericOperand && !MemoryAddress) {
+      if (Original->Operands.empty() &&
+          Original->IntrinsicId == Intrinsic::None &&
+          Original->IntrinsicOutputs.empty() &&
+          Original->MemoryOrdering == NdMemoryOrdering::None &&
+          Original->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          (Original->Type->Kind == NdTypeKind::Int ||
+           Original->Type->Kind == NdTypeKind::Ptr) &&
+          (Original->AddressOwnerVA == InvalidVA ||
+           Original->AddressOwnerVA == Original->ConstVal)) {
+        if (auto Storage =
+                swiftImmutableScalarStorageHint(Image, Original->ConstVal)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Result.BorrowedBytes.insert(
+              {Storage->TargetAddress, Storage->ByteCount});
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Storage));
+          return Expression;
+        }
+      }
       if (auto Storage =
               swiftPrivateScalarStorageHint(Image, Original->ConstVal)) {
         *Expression = *HighExpr::makeCall({}, 0, {});
@@ -7270,8 +7470,18 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         !NumericOperand && !MemoryAddress
             ? taggedCStringAddressOperand(*Original, Image)
             : std::nullopt;
+    const auto UnusedWitnessDescriptor =
+        swiftWitnessUndefDescriptor(Function, *Original, Image);
     for (size_t Index = 0; Index < Expression->Operands.size(); ++Index) {
       auto &Operand = Expression->Operands[Index];
+      if (Index == 2 && UnusedWitnessDescriptor) {
+        Operand = HighExpr::makeConst(0, 8, ConstantAddressProvenance::Scalar);
+        auto Hint =
+            std::make_shared<SourceCallTypeHint>(*Expression->SourceCallHint);
+        Hint->SwiftWitnessUndefDescriptor = *UnusedWitnessDescriptor;
+        Expression->SourceCallHint = std::move(Hint);
+        continue;
+      }
       if (Operand && WitnessMetadata &&
           Index + 1 == Expression->Operands.size()) {
         auto Hint = swiftNominalMetadataAddressHint(Image, *WitnessMetadata);
@@ -8124,6 +8334,19 @@ inline bool objcSourceCallBound(
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const auto &Binding = *Expression.SourceCallHint;
+  if (Binding.SwiftWitnessUndefDescriptor) {
+    if (!ContainingFunction ||
+        !swiftWitnessUndefDescriptor(*ContainingFunction, Expression, Image,
+                                     true))
+      return false;
+    auto Hint = std::make_shared<SourceCallTypeHint>(Binding);
+    Hint->SwiftWitnessUndefDescriptor.reset();
+    auto OriginalABI = Expression;
+    OriginalABI.SourceCallHint = std::move(Hint);
+    return objcSourceCallBound(OriginalABI, Image, Functions, ProfileStorage,
+                               ReadOnlyHelpers, ContainingFunction,
+                               BlockParameterReceivers, BlockCaptureReceivers);
+  }
   if (Binding.ImmutableNativeCall)
     return false; // Requires the current pipeline and caller/callee proof.
   // A proved two-instruction argument bridge has the same dynamic message
@@ -8257,7 +8480,7 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
     return false;
-  if (Binding.ValueWitness &&
+  if ((Binding.ValueWitness || Binding.SwiftWitnessFrame) &&
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftValueWitness)
     return false;
   if (Binding.Virtual &&
@@ -8413,6 +8636,25 @@ inline bool objcSourceCallBound(
            Binding.SwiftStringInputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
+  if (Binding.CallKind ==
+      SourceCallTypeHint::Kind::RuntimeSwiftScalarStorageAddress) {
+    const auto Expected =
+        swiftImmutableScalarStorageHint(Image, Binding.TargetAddress);
+    auto Plain = Binding;
+    Plain.CallKind = SourceCallTypeHint::Kind::Native;
+    Plain.ByteCount = 0;
+    return Expected && plainNativeBinding(Plain) &&
+           Binding.TargetName == Expected->TargetName &&
+           Binding.ByteCount == Expected->ByteCount && Expression.Type &&
+           Expression.Type->Size == 8 &&
+           (Expression.Type->Kind == NdTypeKind::Int ||
+            Expression.Type->Kind == NdTypeKind::Ptr) &&
+           !Expression.IsIndirectCall && !Expression.CallAddr &&
+           Expression.CallTarget.empty() && Expression.Operands.empty() &&
+           Expression.IntrinsicOutputs.empty() &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
+
   if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeReadOnlyBytes &&
       (!ReadOnlyHelpers || !ReadOnlyHelpers->count(&Expression) ||
        Expression.IsIndirectCall || Expression.CallAddr ||
@@ -8715,6 +8957,7 @@ inline bool objcSourceCallBound(
            isSwiftValueWitnessSourceCallHint(Binding, Image.Arch);
   if (Binding.CallKind == SourceCallTypeHint::Kind::SwiftVirtual)
     return ContainingFunction && Binding.Virtual &&
+           !Binding.Virtual->NativeSelfClass &&
            ContainingFunction->Entry == Binding.Virtual->MethodEntry &&
            Expression.IsIndirectCall && Expression.CallAddr == 0 &&
            Expression.IndirectTarget &&

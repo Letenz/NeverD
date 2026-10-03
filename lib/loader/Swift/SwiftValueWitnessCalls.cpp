@@ -1,5 +1,7 @@
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
 
+#include "../MachO/ImmutableNativeFrame.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
@@ -132,6 +134,11 @@ class Tracer {
   size_t RemainingBudget = 1U << 20;
   bool Exhausted = false;
   bool UsedCycle = false;
+  bool UsedFrame = false;
+  SourceLocalCalls DirectCalls;
+  const std::map<va_t, ImmutableNativeCallTarget> NoTargets;
+  AuthenticatedSourceFrameLoads Frame;
+
   // Kahn's remaining nodes include every cycle and its descendants. Seeds
   // defined there cannot certify a value carried from an earlier iteration.
   std::set<size_t> AfterCycle;
@@ -358,16 +365,33 @@ class Tracer {
         const auto Memory = lowMemoryOperands(Operation);
         if (!Memory.Complete || !Memory.Address || Memory.AccessSize != 8)
           return std::nullopt;
+        // The shared owner proves the address as well as its live bytes.
+        // A register-only trace cannot certify SP across a call or a loop.
+        if (Image.Arch == Arch::AArch64)
+          if (const auto Origin = Frame.load(Block, Index)) {
+            const auto &Definition = Origin->Definition;
+            const auto Owner = Blocks.find(Definition.BlockId);
+            if (Owner == Blocks.end())
+              return std::nullopt;
+            UsedFrame = true;
+            return trace(Owner->second, Definition.OperationIndex + 1,
+                         Definition.Output, Definition.Instruction);
+          }
         auto Result = trace(BlockIndex, Index, *Memory.Address, Operation.Addr);
         if (Result)
           if (const auto Slot = privateFrameOffset(*Result)) {
-            const auto Stack =
-                trace(BlockIndex, Index, NdVar::reg(TRI.StackPointer, 8),
-                      Operation.Addr);
-            const auto StackAtLoad = Stack ? stackOffset(*Stack) : std::nullopt;
-            if (StackAtLoad && *StackAtLoad <= *Slot)
-              if (auto Spill = traceSpill(BlockIndex, Index, *Slot))
-                return Spill;
+            if (Image.Arch == Arch::X64) {
+              // Keep the existing x64-only conservative spill proof until its
+              // canonical frame machine reader supports the shared query.
+              const auto Stack =
+                  trace(BlockIndex, Index, NdVar::reg(TRI.StackPointer, 8),
+                        Operation.Addr);
+              const auto StackAtLoad =
+                  Stack ? stackOffset(*Stack) : std::nullopt;
+              if (StackAtLoad && *StackAtLoad <= *Slot)
+                if (auto Spill = traceSpill(BlockIndex, Index, *Slot))
+                  return Spill;
+            }
             // An unproved cell does not identify an earlier spill or another
             // load. This particular full-word load still defines one value:
             // its register copies can supply both metadata and the table
@@ -428,7 +452,10 @@ class Tracer {
 public:
   Tracer(const BinaryImage &Image, const LowFunc &Function,
          const TargetRegInfo &TRI)
-      : Image(Image), Function(Function), TRI(TRI) {
+      : Image(Image), Function(Function), TRI(TRI),
+        DirectCalls(sourceLocalCalls(Image, Function)),
+        Frame{Image, Function, DirectCalls, nullptr, RemainingBudget} {
+    Frame.beginRound(NoTargets);
     size_t EntryBlocks = 0;
     size_t Edges = 0;
     std::map<int, std::set<int>> Predecessors, Successors;
@@ -482,13 +509,17 @@ public:
   }
 
   bool valid() const { return Valid; }
-  bool exhausted() const { return Exhausted || !RemainingBudget; }
+  bool exhausted() const {
+    return Exhausted || Frame.Exhausted || !RemainingBudget;
+  }
+  bool usedFrame() const { return UsedFrame; }
 
   std::optional<Path> at(size_t Block, size_t Operation, const NdVar &Value) {
     Budget = 4096;
     Active.clear();
     ActiveSpills.clear();
     UsedCycle = false;
+    UsedFrame = false;
     auto Result = trace(Block, Operation, Value,
                         Operation < Function.Blocks[Block].Ops.size()
                             ? Function.Blocks[Block].Ops[Operation].Addr
@@ -499,6 +530,36 @@ public:
           Result->Base.TheKind == Root::Kind::CallResult) &&
          AfterCycle.count(Result->Base.Block)))
       return std::nullopt;
+    return Result;
+  }
+
+  std::optional<Path> metadataAt(size_t Block, size_t Operation,
+                                 const NdVar &Value) {
+    auto Result = at(Block, Operation, Value);
+    if (!Result)
+      return std::nullopt;
+    bool Loaded = false;
+    for (const auto &Step : Result->Steps) {
+      if (Step.TheKind != Step::Kind::Load)
+        continue;
+      Loaded = true;
+      // A static load site inside a cycle is not a value identity shared
+      // between different iterations. Check only the metadata's own loads;
+      // the two required witness loads are derived from that runtime value.
+      if (UsedCycle &&
+          (!Step.Definition || AfterCycle.count(Step.Definition->first)))
+        return std::nullopt;
+    }
+    if (Result->Base.TheKind == Root::Kind::Constant && !Loaded) {
+      // Only a literal metadata address owns an image-backed VWT prefix.
+      // A loaded pointer instead identifies this load's runtime result; the
+      // global's address and initial contents are not the metadata object.
+      const auto Address = literalMetadataAddress(*Result);
+      if (!Address || *Address < 8 || *Address % 8 ||
+          !Image.isDataAddress(*Address) ||
+          !Image.isDataAddress(*Address - 8) || !Image.readVA(*Address - 8, 8))
+        return std::nullopt;
+    }
     return Result;
   }
 };
@@ -571,23 +632,15 @@ buildSwiftValueWitnessCallHints(const BinaryImage &Image,
       const auto Target = Trace.at(BlockIndex, Index, Operation.Inputs[0]);
       if (!Target)
         continue;
+      const bool TargetUsesFrame = Trace.usedFrame();
+      bool MatchUsesFrame = false;
       const SourceCallTypeHint *Match = nullptr;
       for (const auto &Witness : Witnesses) {
-        const auto Type =
-            Trace.at(BlockIndex, Index,
-                     NdVar::reg(Witness.Metadata.RegisterOffset, uint16_t(8)));
+        const auto Type = Trace.metadataAt(
+            BlockIndex, Index,
+            NdVar::reg(Witness.Metadata.RegisterOffset, uint16_t(8)));
         if (!Type)
           continue;
-        if (Type->Base.TheKind == Root::Kind::Constant) {
-          // The witness table pointer lives immediately before metadata.
-          // Verify that exact image-backed slot, not merely the page base.
-          const auto Address = literalMetadataAddress(*Type);
-          if (!Address || *Address < 8 || *Address % 8 ||
-              !Image.isDataAddress(*Address) ||
-              !Image.isDataAddress(*Address - 8) ||
-              !Image.readVA(*Address - 8, 8))
-            continue;
-        }
         Path Expected = *Type;
         if (!Expected.add(-8) || !Expected.load(8) ||
             !Expected.add(int64_t(Witness.Slot) * 8) || !Expected.load(8) ||
@@ -598,9 +651,18 @@ buildSwiftValueWitnessCallHints(const BinaryImage &Image,
           break;
         }
         Match = &Witness.Hint;
+        MatchUsesFrame = TargetUsesFrame || Trace.usedFrame();
       }
-      if (Match)
-        Result.emplace(Operation.Addr, *Match);
+      if (Match) {
+        auto Hint = *Match;
+        if (MatchUsesFrame) {
+          const auto Site = sourceCallOccurrenceKey(Operation);
+          if (!Site)
+            continue;
+          Hint.SwiftWitnessFrame = {Function.Entry, *Site};
+        }
+        Result.emplace(Operation.Addr, std::move(Hint));
+      }
     }
   }
   if (Trace.exhausted())

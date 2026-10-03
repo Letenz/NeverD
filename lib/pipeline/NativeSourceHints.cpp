@@ -22,6 +22,7 @@
 #include "neverd/loader/Swift/SwiftAccessEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
+#include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -32,6 +33,58 @@
 #include <tuple>
 
 namespace neverd {
+
+bool validateSwiftWitnessFrameBindings(const BinaryImage &Image,
+                                       const LowFunc *Low, const MedFunc &Med) {
+  bool Relevant = false;
+  size_t Budget = 262144;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return false;
+      Relevant |= Op.SourceCallHint && (Op.SourceCallHint->SwiftWitnessFrame ||
+                                        Op.SourceCallHint->ValueWitness);
+    }
+  if (!Relevant)
+    return true;
+  if (!Low || Low->Entry != Med.Entry)
+    return false;
+  const auto Current = buildSwiftValueWitnessCallHints(Image, *Low);
+  std::set<va_t> Required, Seen;
+  for (const auto &[Site, Binding] : Current)
+    if (Binding.SwiftWitnessFrame)
+      Required.insert(Site);
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      const auto Found = Current.find(Op.Addr);
+      const bool Marked =
+          Op.SourceCallHint && Op.SourceCallHint->SwiftWitnessFrame.has_value();
+      if (!Marked &&
+          (!Required.count(Op.Addr) ||
+           (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)))
+        continue;
+      if (!Marked || Found == Current.end() ||
+          !Found->second.SwiftWitnessFrame ||
+          !isSwiftValueWitnessSourceCallHint(*Op.SourceCallHint, Image.Arch) ||
+          Op.SourceCallHint->SwiftWitnessFrame !=
+              Found->second.SwiftWitnessFrame ||
+          Op.SourceCallHint->ValueWitness != Found->second.ValueWitness ||
+          !equalSourceABIs(Op.SourceCallHint->Signature,
+                           Found->second.Signature) ||
+          Op.Opcode != NdOp::INDIR_CALL ||
+          Op.OriginSeq != Found->second.SwiftWitnessFrame->Site.Sequence ||
+          Op.NumInputs != Found->second.Signature.Parameters.size() + 1 ||
+          Op.Inputs[0].isConst() || Op.Inputs[0].Size != 8 ||
+          Op.DoesNotReturn || Op.PreservesCallerSaved ||
+          !Seen.insert(Op.Addr).second)
+        return false;
+      for (unsigned I = 1; I < Op.NumInputs; ++I)
+        if (Op.Inputs[I].Size !=
+            Found->second.Signature.Parameters[I - 1].Location.ValueBytes)
+          return false;
+    }
+  return Seen == Required;
+}
 
 std::map<va_t, SourceFunctionTypeHint>
 boundNativeBooleanCallees(const MedFunc &Caller) {
@@ -405,6 +458,8 @@ bool hasNativeSourceStateContract(
       Low->Blocks.size() > 16384)
     return false;
   NativeSourceCalls Calls;
+  if (!validateSwiftWitnessFrameBindings(Image, Low, Med))
+    return false;
   if (!validateSourceRegisterCopies(Image, *Low, Med.RegisterCopyProjections) ||
       (TerminalContext && !Med.RegisterCopyProjections.empty()))
     return false;
@@ -1254,6 +1309,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
        (!Low || !validateSourceRegisterCopies(Image, *Low,
                                               Med.RegisterCopyProjections))))
     return Reject("source register-copy proof is no longer valid");
+  if (!validateSwiftWitnessFrameBindings(Image, Low, Med))
+    return Reject("Swift witness frame proof is no longer valid");
   if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
       Image.IsRelocatable ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||

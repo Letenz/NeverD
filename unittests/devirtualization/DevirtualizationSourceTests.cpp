@@ -120,6 +120,56 @@ class DevirtualizationRoundTripTest
     : public DevirtualizationSourceTest,
       public ::testing::WithParamInterface<SourceCase> {};
 
+TEST_F(DevirtualizationSourceTest,
+       MultipleReturnsUseBackendSpecificWritebackLayouts) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "machine-state source layout checks require clang";
+  const auto Assembly = tmpFile("return-layout.S");
+  const auto Binary = tmpFile("return-layout.elf");
+  std::ofstream(Assembly) << R"(
+.text
+.globl return_layout
+.type return_layout,@function
+return_layout:
+  cmpq $0, %rdi
+  je .Lzero
+  movl $17, %eax
+  ret
+.Lzero:
+  movb $9, %ah
+  ret
+.size return_layout,.-return_layout
+)";
+  const auto Built =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-fuse-ld=lld",
+                               "-nostdlib", "-static", "-Wl,-e,return_layout",
+                               Assembly.string(), "-o", Binary.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+  auto Image = loadBinary(Binary);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  const auto Entry = functionEntry(*Image, "return_layout");
+  ASSERT_NE(Entry, InvalidVA);
+  for (unsigned Route = 0; Route != 3; ++Route) {
+    SCOPED_TRACE(Route);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.InterpreterSpecialization.emplace();
+    Options.InterpreterSpecialization->ExplicitMachineState = true;
+    Options.OnlyFunctionEntries.insert(Entry);
+    Options.LiftMode = Route == 1;
+    Options.DumpLlvm = Route == 2;
+    Options.EmitDumpOutput = false;
+    auto Result = Pipeline().run(*Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_TRUE(Result.InterpreterRecovery.has_value());
+    ASSERT_TRUE(Result.InterpreterRecovery->complete());
+    EXPECT_EQ(count(Result.InterpreterRecovery->Residual, NdOp::RETURN), 2U);
+    ASSERT_EQ(Result.LowFuncs.size(), 1U);
+    EXPECT_EQ(count(Result.LowFuncs.front(), NdOp::RETURN), Route ? 2U : 1U);
+    EXPECT_EQ(count(Result.LowFuncs.front(), NdOp::STORE), Route ? 34U : 18U);
+  }
+}
+
 TEST_P(DevirtualizationRoundTripTest, RecoversMachineAndPreservesExecution) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public VM source recovery requires clang";
@@ -683,6 +733,79 @@ TEST_F(DevirtualizationSourceTest, CLIFieldAndQueryBudgetsAreEnforced) {
       }
 }
 
+TEST_F(DevirtualizationSourceTest, CLIWorkBudgetsAreEnforced) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public recovery budget checks require clang";
+  const auto Binary = tmpFile("generic-work-budgets.elf");
+  const auto Compiled = buildFixture(Binary, "generic_control_state.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  for (bool Machine : {false, true})
+    for (bool LLVM : {false, true})
+      for (unsigned Case = 0; Case < 5; ++Case) {
+        SCOPED_TRACE(Machine);
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(Case);
+        const uint32_t Evaluations = Case == 1   ? 1
+                                     : Case == 3 ? UINT32_MAX
+                                                 : 16384;
+        const uint32_t Visits = Case == 2 ? 1 : Case == 3 ? UINT32_MAX : 65536;
+        const auto Stem = std::to_string(Machine) + "-" + std::to_string(LLVM) +
+                          "-" + std::to_string(Case);
+        const auto Source = tmpFile("work-" + Stem + ".c");
+        const auto Report = tmpFile("work-" + Stem + ".json");
+        std::vector<std::string> Args{"decompile",
+                                      Binary.string(),
+                                      "--func",
+                                      "generic_control_state",
+                                      "--devirtualize",
+                                      "--recovery-report=" + Report.string(),
+                                      "-o",
+                                      Source.string()};
+        if (Case) {
+          Args.push_back("--vm-max-evaluations=" + std::to_string(Evaluations));
+          Args.push_back("--vm-max-discovery-visits=" + std::to_string(Visits));
+        }
+        if (Case >= 3)
+          Args.push_back("--vm-chain-stop-at-repeat");
+        if (Case == 3)
+          Args.push_back("--vm-chain-transfers=8");
+        if (Machine)
+          Args.push_back("--vm-machine-state");
+        if (LLVM)
+          Args.push_back("--llvm");
+        const auto Recovered = exec(ndBin(), Args);
+        const bool Complete = Case == 0 || Case >= 3;
+        EXPECT_EQ(Recovered.ok(), Complete) << Recovered.err;
+        EXPECT_EQ(fs::exists(Source), Complete);
+        auto JSON = llvm::json::parse(readSource(Report));
+        ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+        const auto *Object = JSON->getAsObject();
+        ASSERT_NE(Object, nullptr);
+        EXPECT_EQ(Object->getBoolean("complete"), Complete);
+        EXPECT_EQ(Object->getInteger("maxNodeEvaluations"),
+                  int64_t(Evaluations));
+        EXPECT_EQ(Object->getInteger("maxDiscoveryVisits"), int64_t(Visits));
+        EXPECT_EQ(Object->getBoolean("stopChainingAtRepeatedDestination"),
+                  Case >= 3);
+        if (!Complete) {
+          EXPECT_EQ(Object->getString("status"), "budget-exceeded");
+          EXPECT_EQ(Object->getInteger("residualBlocks"), 0);
+          for (const char *Key : {"origins", "immutableReads"}) {
+            const auto *Evidence = Object->getArray(Key);
+            ASSERT_NE(Evidence, nullptr);
+            EXPECT_TRUE(Evidence->empty());
+          }
+        }
+      }
+  const auto Source = tmpFile("repeat-without-recovery.c");
+  const auto Refused = exec(
+      ndBin(), {"decompile", Binary.string(), "--func", "generic_control_state",
+                "--vm-chain-stop-at-repeat", "-o", Source.string()});
+  EXPECT_FALSE(Refused.ok());
+  EXPECT_NE(Refused.err.find("require --devirtualize"), std::string::npos);
+  EXPECT_FALSE(fs::exists(Source));
+}
+
 TEST_F(DevirtualizationSourceTest, CLIRejectsInvalidDiscoveryBudgets) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public recovery budget checks require clang";
@@ -691,7 +814,8 @@ TEST_F(DevirtualizationSourceTest, CLIRejectsInvalidDiscoveryBudgets) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
   const auto Source = tmpFile("invalid-refinement-options.c");
   for (const char *Option :
-       {"--vm-max-refinements", "--vm-max-fields", "--vm-max-queries"}) {
+       {"--vm-max-refinements", "--vm-max-fields", "--vm-max-queries",
+        "--vm-max-evaluations", "--vm-max-discovery-visits"}) {
     SCOPED_TRACE(Option);
     for (const char *Value : {"0", "-1", "4294967296", "1junk", "+1", "0x10"}) {
       SCOPED_TRACE(Value);
@@ -1011,6 +1135,79 @@ int main(void) {
     std::ofstream(tmpFile("immintrin.h")).close();
     for (const char *Optimization : {"-O0", "-O2"}) {
       const auto Program = tmpFile("separation-runtime");
+      const auto Built =
+          exec(NEVERD_TEST_CLANG, {"-std=c11", Optimization, Harness.string(),
+                                   "-o", Program.string()});
+      ASSERT_TRUE(Built.ok()) << Built.err;
+      const auto Ran = exec(Program.string(), {});
+      EXPECT_TRUE(Ran.ok()) << Ran.err << " exit " << Ran.exitCode;
+    }
+  }
+}
+
+TEST_F(DevirtualizationSourceTest, CLIRegisterCasesCoverEveryMemoryEffect) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public recovery execution requires clang";
+  const auto Binary = tmpFile("generic-register-cases.elf");
+  ASSERT_TRUE(buildFixture(Binary, "generic_recovery_contract.S").ok());
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+    const auto Source = tmpFile(LLVM ? "cases-llvm.c" : "cases-high.c");
+    std::vector<std::string> Args{"decompile",
+                                  Binary.string(),
+                                  "--func",
+                                  "generic_recovery_register_cases",
+                                  "--devirtualize",
+                                  "--vm-machine-state",
+                                  "--vm-control=rax",
+                                  "--vm-chain-transfers=64",
+                                  "--vm-entry-frame=-64:8",
+                                  "-o",
+                                  Source.string()};
+    if (LLVM)
+      Args.push_back("--llvm");
+    const auto Recovered = exec(ndBin(), Args);
+    ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+    const auto Harness = tmpFile("cases-runtime.c");
+    std::ofstream(Harness) << readSource(Source) << R"C(
+#include <stdint.h>
+#include <string.h>
+#include <stdio.h>
+int main(void) {
+  _Alignas(32) uint8_t frames[2][256];
+  uint64_t state[17], before[17];
+  for (unsigned f = 0; f < 2; ++f) {
+    for (unsigned test = 0; test < 64; ++test) {
+      memset(frames, 0x65, sizeof frames);
+      for (unsigned i = 0; i < 17; ++i)
+        state[i] = UINT64_MAX - (test + i) * UINT64_C(0x102030405);
+      state[1] = (test & 7) | ((uint64_t)test << 32);
+      state[4] = (uint64_t)(uintptr_t)(frames[f] + 128);
+      state[16] = 2;
+      memcpy(before, state, sizeof state);
+      unsigned offset = (test & 4 ? 0 : 32) + (test & 1 ? 16 : 32);
+      if (generic_recovery_register_cases((uint8_t *)state)) return 1;
+      if (state[0] != offset || state[2] != (test & 4 ? 32 : 64) ||
+          state[8] != before[4] - offset) {
+        fprintf(stderr, "case %u: result %llu, scratch %llu, offset %llu; expected %u\n",
+                test, (unsigned long long)state[0], (unsigned long long)state[2],
+                (unsigned long long)(before[4] - state[8]), offset);
+        return 2;
+      }
+      for (unsigned i = 1; i < 16; ++i)
+        if (i != 2 && i != 8 && state[i] != before[i]) return 3;
+      for (unsigned frame = 0; frame < 2; ++frame)
+        for (unsigned i = 0; i < 256; ++i)
+          if (frames[frame][i] !=
+              (frame == f && i == 128 - offset ? 90 : 0x65)) return 4;
+    }
+  }
+  return 0;
+}
+)C";
+    std::ofstream(tmpFile("immintrin.h")).close();
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      const auto Program = tmpFile("cases-runtime");
       const auto Built =
           exec(NEVERD_TEST_CLANG, {"-std=c11", Optimization, Harness.string(),
                                    "-o", Program.string()});

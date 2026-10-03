@@ -27,7 +27,8 @@ ImageMappingPlan::create(const BinaryImage &Image, uint64_t Bias,
   if (!PageSize || (PageSize & (PageSize - 1)) || !MemoryLimit)
     return failure(Configuration);
   if (Padding != ImagePagePadding::Zero &&
-      Padding != ImagePagePadding::FilePages)
+      Padding != ImagePagePadding::FilePages &&
+      Padding != ImagePagePadding::FilePagesPreserveTail)
     return failure(Configuration);
   if (Source != ImageByteSource::LoaderSegments &&
       Source != ImageByteSource::OriginalFile)
@@ -70,7 +71,7 @@ ImageMappingPlan::create(const BinaryImage &Image, uint64_t Bias,
         Size > std::numeric_limits<size_t>::max())
       return failure(Budget);
     uint64_t FileOffset = 0, FileBytes = 0;
-    if (Padding == ImagePagePadding::FilePages) {
+    if (Padding != ImagePagePadding::Zero) {
       const uint64_t Prefix = VA - Base;
       if (Segment.FileOff < Prefix || Segment.FileOff > Image.Raw.size() ||
           Segment.FileSz > Image.Raw.size() - Segment.FileOff)
@@ -105,7 +106,8 @@ ImageMappingPlan::create(const BinaryImage &Image, uint64_t Bias,
     if (Region.FileBytes)
       std::copy_n(Image.Raw.begin() + Region.FileOffset, Region.FileBytes,
                   Mapping.Bytes.begin());
-    if (Segment.Size > Segment.FileSz)
+    if (Padding != ImagePagePadding::FilePagesPreserveTail &&
+        Segment.Size > Segment.FileSz)
       std::fill(Mapping.Bytes.begin() + (Segment.VA + Bias - Region.Address) +
                     Segment.FileSz,
                 Mapping.Bytes.end(), 0);

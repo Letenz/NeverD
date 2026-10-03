@@ -12,6 +12,7 @@ add_neverd_component_library(NeverDEmulationCore
   LLVM_COMPONENTS Support)
 
 add_neverd_component_library(NeverDEmulationArch
+  arch/x86_64/X64Machine.cpp
   arch/x86_64/X64FPState.cpp
   arch/x86_64/X64PageTables.cpp
   arch/x86_64/X64ExceptionMonitor.cpp
@@ -27,6 +28,9 @@ add_neverd_component_library(NeverDEmulationArch
   LLVM_COMPONENTS Support)
 
 add_neverd_component_library(NeverDEmulationNative
+  backends/hvf/HvfExecutor.cpp
+  backends/hvf/HvfAArch64Machine.cpp
+  backends/hvf/HvfX64Machine.cpp
   backends/kvm/KvmMachine.cpp
   backends/kvm/KvmAArch64Machine.cpp
   backends/kvm/KvmRunControl.cpp
@@ -76,12 +80,13 @@ add_neverd_component_library(NeverDEmulationImage
 add_subdirectory(os/linux)
 add_subdirectory(os/linux/android)
 add_subdirectory(os/windows/process)
+add_subdirectory(os/darwin)
 add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
   runtime/ProcessAndroidJSON.cpp
   runtime/ProcessWindowsJSON.cpp
-  LINK_COMPONENTS EmulationLinux EmulationAndroid EmulationWindowsProcess
+  LINK_COMPONENTS EmulationLinux EmulationAndroid EmulationWindowsProcess EmulationDarwin
   LLVM_COMPONENTS Support)
 
 if(NEVERD_EMULATION_BACKEND_UNICORN)
@@ -100,6 +105,12 @@ endif()
 if(WIN32 AND NEVERD_EMULATION_BACKEND_WHP)
   target_compile_definitions(NeverDEmulationNative PRIVATE NEVERD_EMULATION_WHP=1)
   target_compile_definitions(NeverDEmulationCPU PRIVATE NEVERD_EMULATION_WHP=1)
+endif()
+if(APPLE AND NEVERD_EMULATION_BACKEND_HVF)
+  find_library(NEVERD_HYPERVISOR_FRAMEWORK Hypervisor REQUIRED)
+  target_link_libraries(NeverDEmulationNative PRIVATE ${NEVERD_HYPERVISOR_FRAMEWORK})
+  target_compile_definitions(NeverDEmulationNative PRIVATE NEVERD_EMULATION_HVF=1)
+  target_compile_definitions(NeverDEmulationCPU PRIVATE NEVERD_EMULATION_HVF=1)
 endif()
 if(NEVERD_ENABLE_DRIVER_EMULATION)
   add_subdirectory(os/windows)

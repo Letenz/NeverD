@@ -416,6 +416,18 @@ cl::opt<std::string> VMChainTransfers(
     "vm-chain-transfers",
     cl::desc("Proved singleton transfers per recovery node (0 disables)"),
     cl::value_desc("count"), cl::init("0"), cl::sub(DecompileCmd));
+cl::opt<std::string> VMMaxEvaluations(
+    "vm-max-evaluations",
+    cl::desc("Cumulative recovery node evaluations (positive; default: 16384)"),
+    cl::value_desc("count"), cl::init("16384"), cl::sub(DecompileCmd));
+cl::opt<bool> VMChainStopAtRepeat(
+    "vm-chain-stop-at-repeat",
+    cl::desc("End chains at repeated destinations (may lose correlations)"),
+    cl::sub(DecompileCmd));
+cl::opt<std::string> VMMaxDiscoveryVisits(
+    "vm-max-discovery-visits",
+    cl::desc("Cumulative control dependency visits (positive; default: 65536)"),
+    cl::value_desc("count"), cl::init("65536"), cl::sub(DecompileCmd));
 cl::opt<std::string> VMEntryFrame(
     "vm-entry-frame",
     cl::desc(

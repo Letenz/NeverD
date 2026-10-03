@@ -14,5 +14,11 @@ struct BinaryImage;
 std::optional<SourceCallTypeHint>
 swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
+/// Independent generic compiler evidence that this exact imported conformance
+/// never consumes swift_getWitnessTable's instantiation-arguments pointer.
+/// The metadata remains the caller's value; no layout or memory effects follow.
+bool swiftWitnessInstantiationArgumentUnused(const BinaryImage &Image,
+                                             va_t DescriptorSlot);
+
 } // namespace neverd
 #endif
