@@ -574,6 +574,8 @@ arbitrary mangled symbols.
 
 The same compiler-derived storage catalog includes `ObjectIdentifier` metadata and its `Hashable` witness. Independent `.self` and constrained generic-call probes must agree with all four SDK export profiles. These are opaque external data identities, not a value layout or a consumed-input contract. A current thread-local import slot cannot supply an ordinary Swift data address.
 
+ObjectIdentifier consumed input has its own four-target compiler proof of a pointer-valued temporary, complete eight-byte store and lifetime end. The shared owner requires the exact metadata/witness pair and ordinary strong GOT identities, permitting one extra full-width ADD of the indirect-result address before the input address. Effects are selected by both type identities, never just the generic runtime name or equal extent. Canonical publication revalidates the same independently authenticated nominal metadata and witness-table addresses. Current machine, frame lifetime, every operand and unique occurrence remain mandatory; no result layout or generic input noescape is granted.
+
 Objective-C property metadata supplies accessor declarations independently of
 method implementations, including dynamic, readonly and custom accessors.
 When class and category records declare the same selector, each validated IMP

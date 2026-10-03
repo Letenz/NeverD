@@ -15,7 +15,8 @@ struct LowFunc;
 bool isSwiftConsumedInputCallTarget(const BinaryImage &Image, va_t Target);
 
 /// Current machine/LowIR call and exact strong type/witness identities. Only
-/// the compiler-proved UInt temporary contract qualifies, never an arbitrary
+/// the independently compiler-proved UInt or ObjectIdentifier temporary
+/// contract qualifies, never an arbitrary
 /// instantiation of the same generic initializer. No frame or source gate.
 std::map<va_t, SourceCallTypeHint>
 buildSwiftConsumedInputCallHints(const BinaryImage &Image,
