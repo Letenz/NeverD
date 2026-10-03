@@ -5,12 +5,18 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_WINDOWS_PROCESS_CONTEXT_H
 #define NEVERD_EMULATION_WINDOWS_PROCESS_CONTEXT_H
+#include "../exception/X64SEH.h"
+
 #include "neverd/emulation/CPU.h"
 
 #include <vector>
 
 namespace neverd::emulation::windows_process {
 llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU);
+llvm::Expected<X64SEH::Context>
+readUnwindContext(llvm::ArrayRef<uint8_t> Context);
+llvm::Error writeUnwindContext(const X64SEH::Context &State,
+                               llvm::MutableArrayRef<uint8_t> Context);
 /// Validate the complete guest record before restoring any state. CPU state
 /// outside the Windows CONTEXT remains owned by the original backend snapshot.
 llvm::Error restoreUserContext(ExecutionBackend &CPU,

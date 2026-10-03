@@ -1,4 +1,4 @@
-//===- KernelSEH.cpp - Checked x64 C exception dispatch ------------------===//
+//===- X64SEH.cpp - Checked x64 C exception dispatch ------------------===//
 //
 // NeverD Decompiler
 //
@@ -9,7 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "KernelSEH.h"
+#include "X64SEH.h"
 
 #include "llvm/ADT/Twine.h"
 
@@ -21,7 +21,7 @@ namespace neverd::emulation {
 namespace {
 llvm::Error invalid(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 "x64 SEH: " + Message);
+                                 seh::text::Prefix + Message);
 }
 
 bool nonvolatile(uint64_t Register) {
@@ -38,20 +38,20 @@ bool hasLanguageHandler(const ExceptionFunction &Frame, bool Unwinding) {
 
 llvm::Error validateFrame(const ExceptionFunction &F) {
   if (F.ParseStatus != ExceptionParseStatus::Complete)
-    return invalid("encountered incomplete exception metadata");
+    return invalid(seh::text::EncounteredIncompleteExceptionMetadata);
   if (F.Encoding != ExceptionEncoding::X64UnwindV1 || F.UnwindVersion != 1)
-    return invalid("only x64 V1 unwind records are supported");
+    return invalid(seh::text::OnlyX64V1UnwindRecordsAreSupported);
   const bool Chained = F.Kind == RuntimeFunctionKind::Chained;
   if (Chained != bool(F.UnwindFlags & seh::ChainFlag) ||
       Chained != F.ChainedPrimaryRange.has_value() ||
       (Chained && (!F.ChainedUnwindInfoRVA || !F.PrimaryFunctionIndex)) ||
       (!Chained && (F.ChainedUnwindInfoRVA || F.PrimaryFunctionIndex)) ||
       (F.Kind != RuntimeFunctionKind::Primary && !Chained))
-    return invalid("inconsistent chained unwind record");
+    return invalid(seh::text::InconsistentChainedUnwindRecord);
   if (F.UnwindFlags & ~(seh::ExceptionHandlerFlag | seh::UnwindHandlerFlag |
                         seh::ChainFlag) ||
       (Chained && F.UnwindFlags != seh::ChainFlag))
-    return invalid("unsupported unwind flags");
+    return invalid(seh::text::UnsupportedUnwindFlags);
   const bool StandaloneGS =
       F.Personality == ExceptionPersonality::GSHandlerCheck;
   const bool GS =
@@ -60,12 +60,12 @@ llvm::Error validateFrame(const ExceptionFunction &F) {
       F.Personality == ExceptionPersonality::GSHandlerCheckSEH ||
       F.Personality == ExceptionPersonality::CSpecificHandler;
   if (!CHandler && !StandaloneGS && F.Personality != ExceptionPersonality::None)
-    return invalid("encountered unsupported language personality");
+    return invalid(seh::text::EncounteredUnsupportedLanguagePersonality);
   if (F.Cxx || GS != F.GSCookie.has_value() ||
       (((F.UnwindFlags & ~seh::ChainFlag) != 0) !=
        (CHandler || StandaloneGS)) ||
       (CHandler != F.SEH.has_value()))
-    return invalid("inconsistent C exception-handler metadata");
+    return invalid(seh::text::InconsistentCExceptionHandlerMetadata);
   if (GS) {
     const auto &Cookie = *F.GSCookie;
     if (Cookie.ParseStatus != ExceptionParseStatus::Complete ||
@@ -78,21 +78,21 @@ llvm::Error validateFrame(const ExceptionFunction &F) {
          (!Cookie.Alignment || (Cookie.Alignment & (Cookie.Alignment - 1)))) ||
         (!Cookie.HasAlignment &&
          (Cookie.Alignment || Cookie.AlignmentBaseOffset)))
-      return invalid("inconsistent GS cookie metadata");
+      return invalid(seh::text::InconsistentGsCookieMetadata);
   }
   if (F.FrameRegister && !nonvolatile(F.FrameRegister))
-    return invalid("invalid frame register");
+    return invalid(seh::text::InvalidFrameRegister);
   if (F.FrameOffset > seh::MaxFrameOffset ||
       F.FrameOffset % seh::FrameOffsetScale ||
       (!F.FrameRegister && F.FrameOffset))
-    return invalid("invalid frame-register offset");
+    return invalid(seh::text::InvalidFrameRegisterOffset);
   if (F.UnwindOperations.size() > seh::MaxUnwindOperations)
-    return invalid("unwind operation limit exceeded");
+    return invalid(seh::text::UnwindOperationLimitExceeded);
   uint32_t PreviousOffset = F.PrologueSize;
   unsigned FrameSetCount = 0;
   for (const auto &Op : F.UnwindOperations) {
     if (!Op.CodeOffset || Op.CodeOffset > PreviousOffset)
-      return invalid("invalid unwind operation order");
+      return invalid(seh::text::InvalidUnwindOperationOrder);
     PreviousOffset = Op.CodeOffset;
     // Secondary prologues can add saves in the primary fixed allocation.
     // They cannot push registers or create another fixed allocation.
@@ -100,58 +100,86 @@ llvm::Error validateFrame(const ExceptionFunction &F) {
         Op.Kind != UnwindOperationKind::SaveNonVolatileFar &&
         Op.Kind != UnwindOperationKind::SaveXMM128 &&
         Op.Kind != UnwindOperationKind::SaveXMM128Far)
-      return invalid("chained unwind changes the primary stack allocation");
+      return invalid(seh::text::ChainedUnwindChangesThePrimaryStackAllocation);
     switch (Op.Kind) {
     case UnwindOperationKind::PushNonVolatile:
     case UnwindOperationKind::SaveNonVolatile:
     case UnwindOperationKind::SaveNonVolatileFar:
       if (!nonvolatile(Op.Register))
-        return invalid("invalid saved nonvolatile register");
+        return invalid(seh::text::InvalidSavedNonvolatileRegister);
       if (Op.StackOffset % seh::PointerSize)
-        return invalid("unaligned nonvolatile save offset");
+        return invalid(seh::text::UnalignedNonvolatileSaveOffset);
       break;
     case UnwindOperationKind::AllocateSmall:
       if (Op.StackOffset > seh::MaxSmallAllocation)
-        return invalid("invalid small stack allocation");
+        return invalid(seh::text::InvalidSmallStackAllocation);
       [[fallthrough]];
     case UnwindOperationKind::AllocateLarge:
       if (!Op.StackOffset || Op.StackOffset % seh::PointerSize)
-        return invalid("invalid stack allocation");
+        return invalid(seh::text::InvalidStackAllocation);
       break;
     case UnwindOperationKind::SetFramePointer:
       if (!F.FrameRegister || ++FrameSetCount != 1)
-        return invalid("invalid frame-pointer operation");
+        return invalid(seh::text::InvalidFramePointerOperation);
       break;
     case UnwindOperationKind::SaveXMM128:
     case UnwindOperationKind::SaveXMM128Far:
       if (Op.Register < seh::FirstNonvolatileXmm ||
           Op.Register >= seh::FirstNonvolatileXmm + seh::NonvolatileXmmCount)
-        return invalid("invalid saved nonvolatile XMM register");
+        return invalid(seh::text::InvalidSavedNonvolatileXmmRegister);
       if (Op.StackOffset % seh::XmmSize)
-        return invalid("unaligned XMM save offset");
+        return invalid(seh::text::UnalignedXmmSaveOffset);
       break;
     default:
-      return invalid("encountered unsupported unwind operation");
+      return invalid(seh::text::EncounteredUnsupportedUnwindOperation);
     }
   }
   if (F.FrameRegister && !Chained && FrameSetCount != 1)
-    return invalid("frame register has no establishing operation");
+    return invalid(seh::text::FrameRegisterHasNoEstablishingOperation);
   return llvm::Error::success();
 }
 } // namespace
 
-KernelSEH::KernelSEH(const ExceptionInfo &Metadata, uint64_t PreferredBase,
-                     uint64_t ActualBase, uint64_t ImageSize,
-                     ReadStack64 ReadStack, IsExecutable Executable,
-                     ReadCode Code, ReadSecurityCookie Cookie)
-    : Metadata(Metadata), PreferredBase(PreferredBase), ActualBase(ActualBase),
-      ImageSize(ImageSize), ReadStack(std::move(ReadStack)),
-      Executable(std::move(Executable)), Code(std::move(Code)),
-      Cookie(std::move(Cookie)) {}
+X64SEH::X64SEH(const ExceptionInfo &Metadata, uint64_t PreferredBase,
+               uint64_t ActualBase, uint64_t ImageSize, ReadStack64 ReadStack,
+               IsExecutable Executable, ReadCode Code,
+               ReadSecurityCookie Cookie)
+    : X64SEH({Image{&Metadata, PreferredBase, ActualBase, ImageSize,
+                    std::move(Cookie)}},
+             std::move(ReadStack), std::move(Executable), std::move(Code)) {}
 
-KernelSEH::Dispatch KernelSEH::begin(uint32_t ExceptionCode,
-                                     const Context &Caller,
-                                     Stack Bounds) const {
+X64SEH::X64SEH(std::vector<Image> Images, ReadStack64 ReadStack,
+               IsExecutable Executable, ReadCode Code)
+    : Images(std::move(Images)), ReadStack(std::move(ReadStack)),
+      Executable(std::move(Executable)), Code(std::move(Code)) {}
+
+llvm::Error X64SEH::validateImages() const {
+  if (Images.empty() || Images.size() > seh::MaxImages)
+    return invalid(seh::text::InvalidExceptionImageCount);
+  for (size_t I = 0; I < Images.size(); ++I) {
+    const auto &A = Images[I];
+    if (!A.Metadata || !A.Size || A.Size > UINT64_MAX - A.PreferredBase ||
+        A.Size > UINT64_MAX - A.ActualBase)
+      return invalid(seh::text::InvalidExceptionImageBounds);
+    for (size_t J = 0; J < I; ++J) {
+      const auto &B = Images[J];
+      if (A.ActualBase < B.ActualBase + B.Size &&
+          B.ActualBase < A.ActualBase + A.Size)
+        return invalid(seh::text::OverlappingExceptionImages);
+    }
+  }
+  return llvm::Error::success();
+}
+std::optional<size_t> X64SEH::imageFor(uint64_t PC) const {
+  for (size_t I = 0; I < Images.size(); ++I)
+    if (PC >= Images[I].ActualBase &&
+        PC - Images[I].ActualBase < Images[I].Size)
+      return I;
+  return std::nullopt;
+}
+
+X64SEH::Dispatch X64SEH::begin(uint32_t ExceptionCode, const Context &Caller,
+                               Stack Bounds) const {
   Dispatch State;
   State.Original = State.Current = Caller;
   State.Bounds = Bounds;
@@ -160,15 +188,14 @@ KernelSEH::Dispatch KernelSEH::begin(uint32_t ExceptionCode,
   return State;
 }
 
-llvm::Expected<KernelSEH::Dispatch>
-KernelSEH::beginNested(uint32_t ExceptionCode, const Context &Caller,
-                       Stack Bounds, const Dispatch &Suspended,
-                       const Action &Callback) const {
+llvm::Expected<X64SEH::Dispatch>
+X64SEH::beginNested(uint32_t ExceptionCode, const Context &Caller, Stack Bounds,
+                    const Dispatch &Suspended, const Action &Callback) const {
   if (Suspended.Complete || Suspended.Path.empty() ||
       Callback.SegmentIndex >= Suspended.Path.size() ||
       (Callback.Kind != ActionKind::Filter &&
        Callback.Kind != ActionKind::Finally))
-    return invalid("nested dispatch requires an active SEH callback");
+    return invalid(seh::text::NestedDispatchRequiresAnActiveSehCallback);
   auto State = begin(ExceptionCode, Caller, Bounds);
   if (Callback.Kind == ActionKind::Filter) {
     State.Path.insert(State.Path.end(), Suspended.Path.begin(),
@@ -191,12 +218,14 @@ KernelSEH::beginNested(uint32_t ExceptionCode, const Context &Caller,
                       Suspended.Path.end());
   }
   if (State.Path.size() > seh::MaxNestedExceptions + 1)
-    return invalid("nested exception path limit exceeded");
+    return invalid(seh::text::NestedExceptionPathLimitExceeded);
   return State;
 }
 
-llvm::Expected<KernelSEH::Action>
-KernelSEH::advance(Dispatch &State, std::optional<int32_t> FilterResult) const {
+llvm::Expected<X64SEH::Action>
+X64SEH::advance(Dispatch &State, std::optional<int32_t> FilterResult) const {
+  if (auto E = validateImages())
+    return std::move(E);
   Dispatch Candidate = State;
   auto Result = advanceImpl(Candidate, FilterResult);
   if (Result)
@@ -204,9 +233,9 @@ KernelSEH::advance(Dispatch &State, std::optional<int32_t> FilterResult) const {
   return Result;
 }
 
-llvm::Expected<std::optional<KernelSEH::Transfer>>
-KernelSEH::plan(uint32_t ExceptionCode, const Context &Caller,
-                Stack Bounds) const {
+llvm::Expected<std::optional<X64SEH::Transfer>>
+X64SEH::plan(uint32_t ExceptionCode, const Context &Caller,
+             Stack Bounds) const {
   auto State = begin(ExceptionCode, Caller, Bounds);
   auto Next = advance(State);
   if (!Next)
@@ -215,24 +244,46 @@ KernelSEH::plan(uint32_t ExceptionCode, const Context &Caller,
     return std::optional<Transfer>{Next->State};
   if (Next->Kind == ActionKind::Unhandled)
     return std::optional<Transfer>{};
-  return invalid("filter or finally requires a guest callback continuation");
+  return invalid(seh::text::FilterOrFinallyRequiresAGuestCallbackContinuation);
 }
 
-llvm::Expected<KernelSEH::Action>
-KernelSEH::advanceImpl(Dispatch &State,
-                       std::optional<int32_t> FilterResult) const {
+llvm::Expected<X64SEH::Action>
+X64SEH::advanceImpl(Dispatch &State,
+                    std::optional<int32_t> FilterResult) const {
   const auto Bounds = State.Bounds;
   if (State.Complete)
-    return invalid("exception dispatch already completed");
-  if (!ImageSize || ImageSize > UINT64_MAX - PreferredBase ||
-      ImageSize > UINT64_MAX - ActualBase || !Bounds.Size ||
-      Bounds.Size > UINT64_MAX - Bounds.Base || !ReadStack || !Executable)
-    return invalid("invalid image, stack or memory contract");
+    return invalid(seh::text::ExceptionDispatchAlreadyCompleted);
+  if (!Bounds.Size || Bounds.Size > UINT64_MAX - Bounds.Base || !ReadStack ||
+      !Executable)
+    return invalid(seh::text::InvalidImageStackOrMemoryContract);
+  if (!State.FrameActive && !State.Selected) {
+    const uint64_t SP = State.Current.GPR[seh::StackRegister];
+    if (SP % seh::PointerSize || SP < Bounds.Base ||
+        SP - Bounds.Base >= Bounds.Size ||
+        Bounds.Size - (SP - Bounds.Base) < seh::PointerSize)
+      return invalid(seh::text::InvalidExceptionFrameStackPointer);
+    auto Owner = imageFor(State.Current.PC);
+    if (!Owner) {
+      if (++State.SegmentIndex < State.Path.size()) {
+        const auto &Segment = State.Path[State.SegmentIndex];
+        State.Current = Segment.Registers;
+        State.Bounds = Segment.Bounds;
+        return advanceImpl(State, {});
+      }
+      State.Complete = true;
+      return Action{};
+    }
+    State.ImageIndex = *Owner;
+  }
+  const auto &Owner = Images[State.ImageIndex];
+  const auto &Metadata = *Owner.Metadata;
+  const auto PreferredBase = Owner.PreferredBase, ActualBase = Owner.ActualBase;
+  const auto ImageSize = Owner.Size;
   if (Metadata.Functions.size() > seh::MaxFunctions)
-    return invalid("runtime-function limit exceeded");
+    return invalid(seh::text::RuntimeFunctionLimitExceeded);
   if (Metadata.StructuralDecode &&
       Metadata.StructuralDecode->ParseStatus != ExceptionParseStatus::Complete)
-    return invalid("incomplete exception directory metadata");
+    return invalid(seh::text::IncompleteExceptionDirectoryMetadata);
   const uint64_t StackEnd = Bounds.Base + Bounds.Size;
   const auto InStack = [&](uint64_t Address, uint64_t Size) {
     return Address >= Bounds.Base && Address <= StackEnd &&
@@ -240,15 +291,15 @@ KernelSEH::advanceImpl(Dispatch &State,
   };
   const auto Read = [&](uint64_t Address) -> llvm::Expected<uint64_t> {
     if (Address % seh::PointerSize || !InStack(Address, seh::PointerSize))
-      return invalid("unwind read exceeds the current execution stack");
+      return invalid(seh::text::UnwindReadExceedsTheCurrentExecutionStack);
     return ReadStack(Address);
   };
   const auto ToActual = [&](uint64_t Address) -> llvm::Expected<uint64_t> {
     if (Address < PreferredBase || Address - PreferredBase >= ImageSize)
-      return invalid("exception target lies outside its image");
+      return invalid(seh::text::ExceptionTargetLiesOutsideItsImage);
     const uint64_t Actual = ActualBase + (Address - PreferredBase);
     if (!Executable(Actual))
-      return invalid("exception target is not executable");
+      return invalid(seh::text::ExceptionTargetIsNotExecutable);
     return Actual;
   };
   const auto ResolveChain = [&](const ExceptionFunction &First)
@@ -257,29 +308,29 @@ KernelSEH::advanceImpl(Dispatch &State,
     const ExceptionFunction *Frame = &First;
     while (true) {
       if (Frames.size() >= seh::MaxFrames)
-        return invalid("chained unwind record limit exceeded");
+        return invalid(seh::text::ChainedUnwindRecordLimitExceeded);
       if (std::find(Frames.begin(), Frames.end(), Frame) != Frames.end())
-        return invalid("cyclic chained unwind records");
+        return invalid(seh::text::CyclicChainedUnwindRecords);
       if (auto E = validateFrame(*Frame))
         return std::move(E);
       if (Frame->CodeRange.Begin < PreferredBase ||
           Frame->CodeRange.End > PreferredBase + ImageSize ||
           !Frame->CodeRange.isValid() ||
           Frame->PrologueSize > Frame->CodeRange.size())
-        return invalid("runtime function lies outside its image");
+        return invalid(seh::text::RuntimeFunctionLiesOutsideItsImage);
       Frames.push_back(Frame);
       if (Frame->Kind != RuntimeFunctionKind::Chained)
         return Frames;
       if (*Frame->PrimaryFunctionIndex >= Metadata.Functions.size())
-        return invalid("chained primary index is out of range");
+        return invalid(seh::text::ChainedPrimaryIndexIsOutOfRange);
       const auto &Parent = Metadata.Functions[*Frame->PrimaryFunctionIndex];
       if (Frame->ChainedPrimaryRange->Begin != Parent.CodeRange.Begin ||
           Frame->ChainedPrimaryRange->End != Parent.CodeRange.End ||
           Frame->ChainedUnwindInfoRVA != Parent.UnwindInfoRVA)
-        return invalid("chained primary does not match its directory record");
+        return invalid(seh::text::ChainedPrimaryDoesNotMatchItsDirectoryRecord);
       if (Frame->FrameRegister != Parent.FrameRegister ||
           Frame->FrameOffset != Parent.FrameOffset)
-        return invalid("chained unwind has a different frame register");
+        return invalid(seh::text::ChainedUnwindHasADifferentFrameRegister);
       Frame = &Parent;
     }
   };
@@ -304,12 +355,13 @@ KernelSEH::advanceImpl(Dispatch &State,
     if (State.Frame->GSCookie &&
         (State.Frame->UnwindFlags & seh::UnwindHandlerFlag)) {
       if (State.Cleanups.size() >= seh::MaxUnwindSteps)
-        return invalid("exception cleanup limit exceeded");
+        return invalid(seh::text::ExceptionCleanupLimitExceeded);
       State.Cleanups.push_back(
           {{ActionKind::Unhandled,
             {State.Current, State.Establisher, 0, State.Code},
             State.Bounds},
-           State.Frame});
+           State.Frame,
+           State.ImageIndex});
     }
     if (!State.Frame->SEH || !hasLanguageHandler(*State.Frame, true))
       return llvm::Error::success();
@@ -330,12 +382,12 @@ KernelSEH::advanceImpl(Dispatch &State,
           !(State.Frame->UnwindFlags & seh::UnwindHandlerFlag) ||
           !Scope.FilterOrFinallyVA || Scope.ContinuationVA ||
           Scope.HandlerVA != Scope.FilterOrFinallyVA)
-        return invalid("invalid finally scope");
+        return invalid(seh::text::InvalidFinallyScope);
       auto Target = ToActual(Scope.FilterOrFinallyVA);
       if (!Target)
         return Target.takeError();
       if (State.Cleanups.size() >= seh::MaxUnwindSteps)
-        return invalid("exception cleanup limit exceeded");
+        return invalid(seh::text::ExceptionCleanupLimitExceeded);
       State.Cleanups.push_back(
           {{ActionKind::Finally,
             {State.Current, State.Establisher, *Target, State.Code},
@@ -347,7 +399,7 @@ KernelSEH::advanceImpl(Dispatch &State,
   };
   if (State.FilterCandidate) {
     if (!FilterResult)
-      return invalid("pending filter requires its guest return value");
+      return invalid(seh::text::PendingFilterRequiresItsGuestReturnValue);
     if (*FilterResult < 0) {
       State.Complete = true;
       return Action{ActionKind::ContinueExecution,
@@ -360,7 +412,7 @@ KernelSEH::advanceImpl(Dispatch &State,
     }
     State.FilterCandidate.reset();
   } else if (FilterResult) {
-    return invalid("filter result has no pending filter");
+    return invalid(seh::text::FilterResultHasNoPendingFilter);
   }
 
   while (true) {
@@ -370,7 +422,7 @@ KernelSEH::advanceImpl(Dispatch &State,
         if (Step.CookieFrame) {
           if (auto E = checkGSCookie(*Step.CookieFrame,
                                      Step.Call.State.EstablisherFrame,
-                                     Step.Call.Bounds))
+                                     Step.Call.Bounds, Images[Step.ImageIndex]))
             return std::move(E);
           continue;
         }
@@ -389,26 +441,13 @@ KernelSEH::advanceImpl(Dispatch &State,
     const uint64_t SP = Current.GPR[seh::StackRegister];
     if (!State.FrameActive) {
       if (State.Depth++ >= seh::MaxFrames)
-        return invalid("exception frame limit exceeded");
+        return invalid(seh::text::ExceptionFrameLimitExceeded);
       if (SP % seh::PointerSize || !InStack(SP, seh::PointerSize))
-        return invalid("invalid exception frame stack pointer");
+        return invalid(seh::text::InvalidExceptionFrameStackPointer);
       if (!State.Seen.emplace(Current.PC, SP).second)
-        return invalid("cyclic exception frame chain");
-      // Only an explicit SEH continuation joins private callback stacks.
-      // Ordinary model callbacks remain independent exception boundaries.
-      if (Current.PC < ActualBase || Current.PC - ActualBase >= ImageSize) {
-        if (++State.SegmentIndex < State.Path.size()) {
-          const auto &Segment = State.Path[State.SegmentIndex];
-          State.Current = Segment.Registers;
-          State.Bounds = Segment.Bounds;
-          State.FrameActive = false;
-          return advanceImpl(State, {});
-        }
-        State.Complete = true;
-        return Action{};
-      }
+        return invalid(seh::text::CyclicExceptionFrameChain);
       if (!Executable(Current.PC))
-        return invalid("exception control address is not executable");
+        return invalid(seh::text::ExceptionControlAddressIsNotExecutable);
       State.OriginalPC = PreferredBase + (Current.PC - ActualBase);
       State.Frame = nullptr;
       State.UnwindFrames.clear();
@@ -424,7 +463,7 @@ KernelSEH::advanceImpl(Dispatch &State,
             continue;
           if (std::find(Chain->begin(), Chain->end(),
                         State.UnwindFrames.front()) == Chain->end())
-            return invalid("ambiguous overlapping runtime functions");
+            return invalid(seh::text::AmbiguousOverlappingRuntimeFunctions);
         }
         State.UnwindFrames = std::move(*Chain);
         State.Frame = State.UnwindFrames.back();
@@ -432,7 +471,7 @@ KernelSEH::advanceImpl(Dispatch &State,
       if (!State.Frame && !Metadata.StructuralDecode &&
           Metadata.ParseStatus != ExceptionParseStatus::Complete)
         return invalid(
-            "incomplete exception directory cannot establish a leaf");
+            seh::text::IncompleteExceptionDirectoryCannotEstablishALeaf);
       State.Establisher = SP;
       State.InPrologue = false;
       if (State.Frame) {
@@ -440,12 +479,12 @@ KernelSEH::advanceImpl(Dispatch &State,
         State.ControlOffset = State.OriginalPC - Frame.CodeRange.Begin;
         State.InPrologue = State.ControlOffset < Frame.PrologueSize;
         if (!State.InPrologue) {
-          auto Epilogue = unwindEpilogue(Frame, Current, State.Bounds);
+          auto Epilogue = unwindEpilogue(Frame, Current, State.Bounds, Owner);
           if (!Epilogue)
             return Epilogue.takeError();
           if (*Epilogue) {
             Current = **Epilogue;
-            continue;
+            return advanceImpl(State, {});
           }
         }
         const bool FrameEstablished =
@@ -459,19 +498,19 @@ KernelSEH::advanceImpl(Dispatch &State,
         if (Frame.FrameRegister && FrameEstablished) {
           const uint64_t FP = Current.GPR[Frame.FrameRegister];
           if (FP < Frame.FrameOffset)
-            return invalid("frame-register offset underflows");
+            return invalid(seh::text::FrameRegisterOffsetUnderflows);
           State.Establisher = FP - Frame.FrameOffset;
         }
         if (State.Establisher < SP || State.Establisher % seh::PointerSize ||
             !InStack(State.Establisher, seh::PointerSize))
-          return invalid("establisher frame exceeds the current stack");
+          return invalid(seh::text::EstablisherFrameExceedsTheCurrentStack);
         if (State.Frame->SEH &&
             State.Frame->SEH->Scopes.size() > seh::MaxScopes)
-          return invalid("SEH scope limit exceeded");
+          return invalid(seh::text::SehScopeLimitExceeded);
         if (!State.InPrologue && State.Frame->GSCookie &&
             (State.Frame->UnwindFlags & seh::ExceptionHandlerFlag))
-          if (auto E =
-                  checkGSCookie(*State.Frame, State.Establisher, State.Bounds))
+          if (auto E = checkGSCookie(*State.Frame, State.Establisher,
+                                     State.Bounds, Owner))
             return std::move(E);
       }
       const auto &Segment = State.Path[State.SegmentIndex];
@@ -482,7 +521,7 @@ KernelSEH::advanceImpl(Dispatch &State,
       if (State.ScopeFloor &&
           (!State.Frame || !State.Frame->SEH ||
            State.ScopeFloor > State.Frame->SEH->Scopes.size()))
-        return invalid("collided unwind has an invalid scope cursor");
+        return invalid(seh::text::CollidedUnwindHasAnInvalidScopeCursor);
       State.ScopeIndex = State.ScopeFloor;
       State.FrameActive = true;
     }
@@ -495,12 +534,12 @@ KernelSEH::advanceImpl(Dispatch &State,
           continue;
         if (Scope.ParseStatus != ExceptionParseStatus::Complete ||
             !Scope.GuardedRange.isValid())
-          return invalid("encountered incomplete SEH scope");
+          return invalid(seh::text::EncounteredIncompleteSehScope);
         if (Scope.Kind == SEHScopeKind::Finally)
           continue;
         if (Scope.Kind != SEHScopeKind::CatchAll &&
             Scope.Kind != SEHScopeKind::Filter)
-          return invalid("encountered unsupported SEH scope");
+          return invalid(seh::text::EncounteredUnsupportedSehScope);
         auto InFunction = ContainsContinuation(Scope.HandlerVA);
         if (!InFunction)
           return InFunction.takeError();
@@ -509,7 +548,7 @@ KernelSEH::advanceImpl(Dispatch &State,
         if (!(Frame.UnwindFlags & seh::ExceptionHandlerFlag) ||
             Scope.NormalizedFilterVA ||
             Scope.HandlerVA != Scope.ContinuationVA || !*InFunction)
-          return invalid("invalid exception handler continuation");
+          return invalid(seh::text::InvalidExceptionHandlerContinuation);
         auto Target = ToActual(Scope.HandlerVA);
         if (!Target)
           return Target.takeError();
@@ -537,7 +576,7 @@ KernelSEH::advanceImpl(Dispatch &State,
                             : 0};
         }
         if (Scope.FilterOrFinallyVA)
-          return invalid("catch-all scope has an unexpected filter");
+          return invalid(seh::text::CatchAllScopeHasAnUnexpectedFilter);
         State.Selected = Candidate;
         if (auto E = CollectCleanups())
           return std::move(E);
@@ -566,7 +605,7 @@ KernelSEH::advanceImpl(Dispatch &State,
         case UnwindOperationKind::AllocateSmall:
         case UnwindOperationKind::AllocateLarge:
           if (!InStack(Cursor, Op.StackOffset))
-            return invalid("unwind allocation exceeds the current stack");
+            return invalid(seh::text::UnwindAllocationExceedsTheCurrentStack);
           Cursor += Op.StackOffset;
           break;
         case UnwindOperationKind::SetFramePointer:
@@ -575,7 +614,7 @@ KernelSEH::advanceImpl(Dispatch &State,
         case UnwindOperationKind::SaveNonVolatile:
         case UnwindOperationKind::SaveNonVolatileFar: {
           if (Op.StackOffset > UINT64_MAX - State.Establisher)
-            return invalid("saved-register address overflows");
+            return invalid(seh::text::SavedRegisterAddressOverflows);
           auto Value = Read(State.Establisher + Op.StackOffset);
           if (!Value)
             return Value.takeError();
@@ -585,11 +624,11 @@ KernelSEH::advanceImpl(Dispatch &State,
         case UnwindOperationKind::SaveXMM128:
         case UnwindOperationKind::SaveXMM128Far: {
           if (Op.StackOffset > UINT64_MAX - State.Establisher)
-            return invalid("saved XMM address overflows");
+            return invalid(seh::text::SavedXmmAddressOverflows);
           const uint64_t Address = State.Establisher + Op.StackOffset;
           if (!InStack(Address, seh::XmmSize))
             return invalid(
-                "XMM unwind read exceeds the current execution stack");
+                seh::text::XmmUnwindReadExceedsTheCurrentExecutionStack);
           auto &Xmm = Current.Xmm[Op.Register - seh::FirstNonvolatileXmm];
           for (size_t I = 0; I < Xmm.size(); ++I) {
             auto Value = Read(Address + I * seh::PointerSize);
@@ -600,7 +639,7 @@ KernelSEH::advanceImpl(Dispatch &State,
           break;
         }
         default:
-          llvm_unreachable("unwind operation was validated");
+          llvm_unreachable(seh::text::ValidatedOperation);
         }
       }
     }
@@ -608,22 +647,23 @@ KernelSEH::advanceImpl(Dispatch &State,
     if (!Return)
       return Return.takeError();
     if (!*Return)
-      return invalid("null unwind return address");
+      return invalid(seh::text::NullUnwindReturnAddress);
     Current.GPR[seh::StackRegister] = Cursor + seh::PointerSize;
     if (Current.GPR[seh::StackRegister] <= SP)
-      return invalid("unwind did not advance the stack");
+      return invalid(seh::text::UnwindDidNotAdvanceTheStack);
     Current.PC = *Return - 1;
     Current.FromReturnAddress = true;
     State.FrameActive = false;
+    return advanceImpl(State, {});
   }
 }
 
 llvm::Expected<std::vector<uint8_t>>
-KernelSEH::encodeRecords(const Exception &Raised, uint64_t Storage) {
+X64SEH::encodeRecords(const Exception &Raised, uint64_t Storage) {
   if (Storage % seh::RecordAlignment ||
       Storage > UINT64_MAX - seh::RecordsSize ||
       Raised.Parameters.size() > seh::MaxExceptionParameters)
-    return invalid("invalid exception record storage or parameter count");
+    return invalid(seh::text::InvalidExceptionRecordStorageOrParameterCount);
   std::vector<uint8_t> Bytes(seh::RecordsSize);
   const auto Write = [&](uint64_t Offset, uint64_t Value, unsigned Size) {
     for (unsigned I = 0; I < Size; ++I)
@@ -655,24 +695,24 @@ KernelSEH::encodeRecords(const Exception &Raised, uint64_t Storage) {
   return Bytes;
 }
 
-llvm::Expected<KernelSEH::Action>
-KernelSEH::finishFilter(Dispatch &State, int32_t FilterResult,
-                        llvm::ArrayRef<uint8_t> Records,
-                        const Exception &Raised, uint64_t Storage) const {
+llvm::Expected<X64SEH::Action>
+X64SEH::finishFilter(Dispatch &State, int32_t FilterResult,
+                     llvm::ArrayRef<uint8_t> Records, const Exception &Raised,
+                     uint64_t Storage) const {
   auto Context = validateRecords(Records, Raised, Storage);
   if (!Context)
     return Context.takeError();
   return advance(State, FilterResult);
 }
 
-llvm::Expected<KernelSEH::Context>
-KernelSEH::validateRecords(llvm::ArrayRef<uint8_t> Records,
-                           const Exception &Raised, uint64_t Storage) const {
+llvm::Expected<X64SEH::Context>
+X64SEH::validateRecords(llvm::ArrayRef<uint8_t> Records,
+                        const Exception &Raised, uint64_t Storage) const {
   auto Expected = encodeRecords(Raised, Storage);
   if (!Expected)
     return Expected.takeError();
   if (Records.size() != Expected->size())
-    return invalid("invalid exception record size");
+    return invalid(seh::text::InvalidExceptionRecordSize);
   const auto Read = [&](uint64_t Offset, unsigned Size) {
     uint64_t Value = 0;
     for (unsigned I = 0; I < Size; ++I)
@@ -687,21 +727,21 @@ KernelSEH::validateRecords(llvm::ArrayRef<uint8_t> Records,
   Result.PC = Read(seh::ContextOffset + seh::ContextPCOffset, seh::PointerSize);
   Result.Flags = Read(seh::ContextOffset + seh::ContextEFlagsOffset, 4);
   if ((Result.Flags ^ Raised.Registers.Flags) & ~seh::MutableEFlags)
-    return invalid("continuation changes unsupported control flags");
+    return invalid(seh::text::ContinuationChangesUnsupportedControlFlags);
   Exception Updated = Raised;
   Updated.Registers = Result;
   auto Allowed = encodeRecords(Updated, Storage);
   if (!Allowed)
     return Allowed.takeError();
   if (!std::equal(Records.begin(), Records.end(), Allowed->begin()))
-    return invalid("continuation changes unsupported exception context fields");
+    return invalid(
+        seh::text::ContinuationChangesUnsupportedExceptionContextFields);
   return Result;
 }
 
-llvm::Expected<KernelSEH::Context>
-KernelSEH::continuation(llvm::ArrayRef<uint8_t> Records,
-                        const Exception &Raised, uint64_t Storage,
-                        Stack Bounds) const {
+llvm::Expected<X64SEH::Context>
+X64SEH::continuation(llvm::ArrayRef<uint8_t> Records, const Exception &Raised,
+                     uint64_t Storage, Stack Bounds) const {
   auto Result = validateRecords(Records, Raised, Storage);
   if (!Result)
     return Result.takeError();
@@ -709,10 +749,11 @@ KernelSEH::continuation(llvm::ArrayRef<uint8_t> Records,
   if (!Bounds.Size || Bounds.Size > UINT64_MAX - Bounds.Base ||
       SP < Bounds.Base || SP >= Bounds.Base + Bounds.Size ||
       SP % seh::PointerSize)
-    return invalid("continuation stack pointer exceeds its execution stack");
-  if (Result->PC < ActualBase || Result->PC - ActualBase >= ImageSize ||
-      !Executable || !Executable(Result->PC))
-    return invalid("continuation does not name executable image code");
+    return invalid(seh::text::ContinuationStackPointerExceedsItsExecutionStack);
+  if (auto E = validateImages())
+    return std::move(E);
+  if (!imageFor(Result->PC) || !Executable || !Executable(Result->PC))
+    return invalid(seh::text::ContinuationDoesNotNameExecutableImageCode);
   return Result;
 }
 

@@ -1,4 +1,4 @@
-//===- KernelSEHGS.cpp - Checked x64 stack cookies ------------------------===//
+//===- X64SEHGS.cpp - Checked x64 stack cookies ------------------------===//
 //
 // NeverD Decompiler
 //
@@ -11,32 +11,34 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "KernelSEH.h"
+#include "X64SEH.h"
 
 namespace neverd::emulation {
 namespace {
 llvm::Error invalid(llvm::StringRef Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 "x64 SEH: " + Message);
+                                 seh::text::Prefix + Message);
 }
 
 llvm::Expected<uint64_t> addOffset(uint64_t Base, int32_t Offset) {
   if (Offset < 0) {
     const uint64_t Magnitude = -int64_t(Offset);
     if (Base < Magnitude)
-      return invalid("GS frame offset underflows");
+      return invalid(seh::text::GsFrameOffsetUnderflows);
     return Base - Magnitude;
   }
   if (uint64_t(Offset) > UINT64_MAX - Base)
-    return invalid("GS frame offset overflows");
+    return invalid(seh::text::GsFrameOffsetOverflows);
   return Base + Offset;
 }
 } // namespace
 
-llvm::Error KernelSEH::checkGSCookie(const ExceptionFunction &Frame,
-                                     uint64_t Establisher, Stack Bounds) const {
+llvm::Error X64SEH::checkGSCookie(const ExceptionFunction &Frame,
+                                  uint64_t Establisher, Stack Bounds,
+                                  const Image &Owner) const {
+  const auto &Cookie = Owner.Cookie;
   if (!Frame.GSCookie || !Cookie)
-    return invalid("GS check requires the image security cookie");
+    return invalid(seh::text::GsCheckRequiresTheImageSecurityCookie);
   const auto &GS = *Frame.GSCookie;
   uint64_t SlotBase = Establisher;
   if (GS.HasAlignment) {
@@ -51,7 +53,7 @@ llvm::Error KernelSEH::checkGSCookie(const ExceptionFunction &Frame,
   if (*Slot % seh::PointerSize || *Slot < Bounds.Base ||
       *Slot - Bounds.Base > Bounds.Size ||
       seh::PointerSize > Bounds.Size - (*Slot - Bounds.Base))
-    return invalid("GS cookie exceeds the current execution stack");
+    return invalid(seh::text::GsCookieExceedsTheCurrentExecutionStack);
   auto FramePointer = addOffset(Establisher, Frame.FrameOffset);
   if (!FramePointer)
     return FramePointer.takeError();
@@ -63,7 +65,7 @@ llvm::Error KernelSEH::checkGSCookie(const ExceptionFunction &Frame,
     return Expected.takeError();
   const uint64_t Decoded = *Stored ^ *FramePointer;
   if (Decoded != *Expected || (Decoded >> seh::SecurityCookieBits))
-    return invalid("GS security cookie check failed");
+    return invalid(seh::text::GsSecurityCookieCheckFailed);
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

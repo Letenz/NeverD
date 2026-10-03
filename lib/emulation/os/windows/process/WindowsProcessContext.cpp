@@ -45,6 +45,52 @@ uint64_t read(llvm::ArrayRef<uint8_t> Bytes, const Field &F) {
 }
 } // namespace
 
+llvm::Expected<X64SEH::Context>
+readUnwindContext(llvm::ArrayRef<uint8_t> Bytes) {
+  if (Bytes.size() != X64ContextSize)
+    return failure(text::ExceptionContext);
+  X64SEH::Context State;
+  for (size_t I = 0; I < State.GPR.size(); ++I)
+    State.GPR[I] = llvm::support::endian::read64le(
+        Bytes.data() + seh::ContextGPROffset + I * PointerSize);
+  State.PC =
+      llvm::support::endian::read64le(Bytes.data() + seh::ContextPCOffset);
+  State.Flags =
+      llvm::support::endian::read32le(Bytes.data() + seh::ContextEFlagsOffset);
+  State.CS =
+      llvm::support::endian::read16le(Bytes.data() + seh::ContextCSOffset);
+  State.SS =
+      llvm::support::endian::read16le(Bytes.data() + seh::ContextSSOffset);
+  for (size_t I = 0; I < State.Xmm.size(); ++I)
+    for (size_t J = 0; J < State.Xmm[I].size(); ++J)
+      State.Xmm[I][J] = llvm::support::endian::read64le(
+          Bytes.data() + X64ContextXmmOffset +
+          (seh::FirstNonvolatileXmm + I) * ContextVectorBytes +
+          J * PointerSize);
+  return State;
+}
+
+llvm::Error writeUnwindContext(const X64SEH::Context &State,
+                               llvm::MutableArrayRef<uint8_t> Bytes) {
+  if (Bytes.size() != X64ContextSize)
+    return failure(text::ExceptionContext);
+  for (size_t I = 0; I < State.GPR.size(); ++I)
+    llvm::support::endian::write64le(
+        Bytes.data() + seh::ContextGPROffset + I * PointerSize, State.GPR[I]);
+  llvm::support::endian::write64le(Bytes.data() + seh::ContextPCOffset,
+                                   State.PC);
+  llvm::support::endian::write32le(Bytes.data() + seh::ContextEFlagsOffset,
+                                   State.Flags);
+  for (size_t I = 0; I < State.Xmm.size(); ++I)
+    for (size_t J = 0; J < State.Xmm[I].size(); ++J)
+      llvm::support::endian::write64le(Bytes.data() + X64ContextXmmOffset +
+                                           (seh::FirstNonvolatileXmm + I) *
+                                               ContextVectorBytes +
+                                           J * PointerSize,
+                                       State.Xmm[I][J]);
+  return llvm::Error::success();
+}
+
 llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU) {
   const bool X64 = CPU.architecture() == GuestArchitecture::X64;
   std::vector<uint8_t> Bytes(X64 ? X64ContextSize : AArch64ContextSize);
