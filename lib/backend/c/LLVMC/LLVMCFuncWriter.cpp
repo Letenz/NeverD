@@ -499,7 +499,7 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
                  II->getIntrinsicID() == llvm::Intrinsic::cttz))
         continue;
       // Updating one vector lane requires a copy followed by an assignment.
-      if (llvm::isa<llvm::InsertElementInst>(&Inst))
+      if (llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(&Inst))
         continue;
       // Floating-point bitcasts copy the representation, rather than
       // performing the numeric conversion used by ordinary C casts.
