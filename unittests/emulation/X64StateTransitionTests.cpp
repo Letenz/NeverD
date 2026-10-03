@@ -305,6 +305,9 @@ TEST_P(X64StateTransition,
 INSTANTIATE_TEST_SUITE_P(NativeTransports, X64StateTransition,
                          testing::Values(ExecutionBackendKind::KVM,
                                          ExecutionBackendKind::WHP,
-                                         ExecutionBackendKind::HVF));
+                                         ExecutionBackendKind::HVF),
+                         [](const auto &Info) {
+                           return executionBackendName(Info.param);
+                         });
 } // namespace
 } // namespace neverd::emulation
