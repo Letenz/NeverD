@@ -45,11 +45,24 @@ struct SourceFrameScratchEffect {
 struct SourceFrameEffects {
   std::map<size_t, size_t> ReadOnlyFrameParameters;
   std::map<size_t, size_t> WritableFrameParameters;
+  // These scalar-pointer borrows must read completely initialized bytes.
+  // Their existing bounds and write permissions still own the effect.
+  std::set<size_t> InitializedFrameParameters;
+  // Logical indirect records consume an initialized private by-value copy.
+  // The callee may modify it: subsequent reads need a new definite write.
+  // This certificate never converts an arbitrary source pointer to a record.
+  std::set<size_t> ByValueFrameParameters;
+  // An independently authenticated producer completely initializes the
+  // logical indirect result, with no private-frame pointers in its contents.
+  // A return ABI alone does not establish this effect.
+  bool InitializesIndirectResult = false;
   std::optional<SourceFrameReturnAlias> ReturnFrameOrExternal;
   std::optional<SourceFrameScratchEffect> Scratch;
 
   bool empty() const {
     return ReadOnlyFrameParameters.empty() && WritableFrameParameters.empty() &&
+           InitializedFrameParameters.empty() &&
+           ByValueFrameParameters.empty() && !InitializesIndirectResult &&
            !ReturnFrameOrExternal && !Scratch;
   }
   bool operator==(const SourceFrameEffects &) const = default;
@@ -84,6 +97,25 @@ sourceFrameEffectsMatchABI(const SourceFrameEffects &Effects,
   for (const auto &[Index, Bytes] : Effects.WritableFrameParameters)
     if (!Parameter(Index, Bytes))
       return false;
+  for (size_t Index : Effects.InitializedFrameParameters)
+    if (!Effects.ReadOnlyFrameParameters.count(Index) &&
+        !Effects.WritableFrameParameters.count(Index))
+      return false;
+  for (size_t Index : Effects.ByValueFrameParameters)
+    if (Index >= Signature.Parameters.size() ||
+        !Signature.Parameters[Index].IndirectByValue ||
+        Signature.Parameters[Index].Location.Kind !=
+            SourceABICarrierKind::IntegerRegister ||
+        Effects.ReadOnlyFrameParameters.count(Index) ||
+        Effects.WritableFrameParameters.count(Index))
+      return false;
+  if (Effects.InitializesIndirectResult &&
+      (Signature.Architecture != Arch::AArch64 ||
+       Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+       Signature.ReturnLocation.Kind !=
+           SourceABICarrierKind::IndirectResultPointer ||
+       Effects.Scratch || Effects.ReturnFrameOrExternal))
+    return false;
   if (const auto &Scratch = Effects.Scratch) {
     using Action = SourceFrameScratchEffect::Action;
     if (Scratch->TheDomain != SourceFrameScratchEffect::Domain::SwiftAccess ||

@@ -11,6 +11,7 @@
 #include <optional>
 #include <set>
 #include <utility>
+#include <vector>
 
 namespace neverd {
 
@@ -125,6 +126,27 @@ std::optional<SourceFrameLoadDefinition>
 sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
                             const NativeSourceCalls &Calls, int BlockId,
                             size_t OperationIndex);
+
+struct SourceFrameByValueCopy {
+  size_t Parameter;
+  int64_t FrameOffset;
+  size_t Bytes;
+  bool operator==(const SourceFrameByValueCopy &) const = default;
+};
+
+/// Prove complete initialized private copies at one original call occurrence.
+/// All reaching paths, later uses, frame restoration and retained scratch
+/// obligations must pass the shared byte analysis. A consumed copy loses
+/// initialization and saved-byte identities; it cannot be read again until
+/// overwritten. Copy ranges may not alias another borrowed argument or a
+/// hidden result. Effects and the complete entry/call ABIs must be
+/// independently authenticated by the caller; this proves no machine identity
+/// or source gate.
+std::optional<std::vector<SourceFrameByValueCopy>>
+sourceFrameByValueCopies(const LowFunc &Function, Arch Architecture,
+                         const NativeSourceCalls &Calls,
+                         const NativeSourceCallKey &Site,
+                         const SourceFunctionTypeHint &EntrySignature);
 
 } // namespace neverd
 #endif
