@@ -4863,9 +4863,12 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             size_t JoinIdx = findTargetIndexOrBlock(AM, Join, Body, Med);
             // AddrMap keeps the first top-level owner. A later join label
             // after elseWork must win over an earlier copy of the same VA.
+            // A statement sharing its predecessor's address continues that
+            // instruction rather than starting a label.
             if (JoinIdx == SIZE_MAX || JoinIdx <= NextI) {
               for (size_t K = NextI + 1; K < Body.size(); ++K) {
-                if (AddrMap::entryAddress(Body[K]) == Join) {
+                if (AddrMap::entryAddress(Body[K]) == Join &&
+                    AddrMap::entryAddress(Body[K - 1]) != Join) {
                   JoinIdx = K;
                   break;
                 }
