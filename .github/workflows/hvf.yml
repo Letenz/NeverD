@@ -135,7 +135,7 @@ jobs:
           cmake --build build-hvf --target NeverDX64ExceptionTests --parallel 4 2>&1 | tee build-hvf/state-evidence/build.log
           ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --show-only=json-v1 > build-hvf/state-evidence/inventory.json
       - name: Preserve transport and compilation before architectural execution
-        if: always() && inputs.validation != 'probe'
+        if: always() && inputs.validation != 'probe' && inputs.validation != 'state-isolation'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hvf-transport-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
@@ -153,7 +153,7 @@ jobs:
         run: |
           ctest --test-dir build-hvf/unittests/emulation -R '^NativeTransports/X64StateTransition[.]CR8ReadsEveryGPRAndPreservesUserPrivilegeFaults/hvf$' --no-tests=error --output-on-failure --output-junit "$PWD/build-hvf/state-evidence/cr8.xml" --output-log "$PWD/build-hvf/state-evidence/cr8.log"
       - name: Preserve isolated Intel state result
-        if: always() && matrix.arch == 'X64' && inputs.validation != 'probe'
+        if: always() && matrix.arch == 'X64' && inputs.validation != 'probe' && inputs.validation != 'state-isolation'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hvf-cr8-X64-attempt-${{ github.run_attempt }}
@@ -168,7 +168,8 @@ jobs:
         run: |
           ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --no-tests=error --parallel 4 --output-on-failure --output-junit "$PWD/build-hvf/state-evidence/results.xml" --output-log "$PWD/build-hvf/state-evidence/ctest.log"
       # Temporary diagnostic profile: distinguish native state, raw faults and
-      # public CPU division from simultaneous CTest process creation.
+      # public CPU division from simultaneous CTest process creation. Finish all
+      # groups before the final upload; earlier checkpoints already exist.
       - name: Isolate Intel state transitions in one process
         if: matrix.arch == 'X64' && inputs.validation == 'state-isolation'
         timeout-minutes: 3
@@ -177,12 +178,6 @@ jobs:
           NEVERD_REQUIRE_HVF: '1'
         run: |
           build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64StateTransition.*' --gtest_output=xml:build-hvf/state-evidence/state.xml 2>&1 | tee build-hvf/state-evidence/state.log
-      - name: Preserve isolated state transitions
-        if: always() && inputs.validation == 'state-isolation'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-state-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
-          path: build-hvf/state-evidence/state.*
       - name: Isolate Intel raw faults in one process
         if: matrix.arch == 'X64' && inputs.validation == 'state-isolation'
         timeout-minutes: 3
@@ -191,12 +186,6 @@ jobs:
           NEVERD_REQUIRE_HVF: '1'
         run: |
           build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64ExceptionTransport.*' --gtest_output=xml:build-hvf/state-evidence/faults.xml 2>&1 | tee build-hvf/state-evidence/faults.log
-      - name: Preserve isolated raw faults
-        if: always() && inputs.validation == 'state-isolation'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-faults-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
-          path: build-hvf/state-evidence/faults.*
       - name: Isolate Intel public division in one process
         if: matrix.arch == 'X64' && inputs.validation == 'state-isolation'
         timeout-minutes: 3
@@ -205,12 +194,6 @@ jobs:
           NEVERD_REQUIRE_HVF: '1'
         run: |
           build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='*X64Division.*' --gtest_output=xml:build-hvf/state-evidence/division.xml 2>&1 | tee build-hvf/state-evidence/division.log
-      - name: Preserve isolated division
-        if: always() && inputs.validation == 'state-isolation'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-division-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
-          path: build-hvf/state-evidence/division.*
       - name: Require actual host execution and record every result
         if: inputs.validation == 'full'
         run: >-
