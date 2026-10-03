@@ -110,6 +110,28 @@ jobs:
         shell: bash
         run: |
           cmake --build build-hvf --target NeverDHvfTests --parallel 4 2>&1 | tee build-hvf/transport-build.log
+      - name: Diagnose Intel execution before cancellation in one process
+        if: matrix.arch == 'X64' && inputs.validation != 'probe'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDHvfTests --gtest_filter=-HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry 2>&1 | tee build-hvf/transport-isolated.log
+      - name: Preserve Intel execution checkpoint
+        if: matrix.arch == 'X64' && inputs.validation != 'probe'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-intel-before-cancellation
+          path: build-hvf/transport-isolated.log
+      - name: Diagnose Intel cancellation without competing test processes
+        if: matrix.arch == 'X64' && inputs.validation != 'probe'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDHvfTests --gtest_filter=HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry 2>&1 | tee build-hvf/transport-cancellation.log
       - name: Require native instruction execution before the full dependency build
         if: inputs.validation != 'probe'
         timeout-minutes: 3

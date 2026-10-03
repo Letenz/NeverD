@@ -17,6 +17,7 @@
 #include <future>
 #if defined(__x86_64__)
 #include <Hypervisor/hv_vmx.h>
+#include <cstdio>
 #endif
 
 namespace neverd::emulation {
@@ -237,8 +238,10 @@ TEST_F(HvfExecutor, CompletionFailureOutranksConcurrentStop) {
 #endif
 #if defined(__x86_64__)
 TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
+  std::fprintf(stderr, "Intel cancellation: creating machine\n");
   auto Created = createHvfX64Machine(*Memory);
   ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  std::fprintf(stderr, "Intel cancellation: startup probe passed\n");
   auto Machine = std::move(*Created);
   constexpr uint64_t PC = 0x10000, RetryPC = PC + 2;
   // Keep the loop and retry code immutable. The normal adapter prepares one
@@ -261,7 +264,10 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
   enum Mode { Deadline, StopToken, HostInterrupt };
   for (auto Kind : {Deadline, StopToken, HostInterrupt}) {
     SCOPED_TRACE(Kind);
+    std::fprintf(stderr, "Intel cancellation: preparing mode %d\n", int(Kind));
     ASSERT_EQ(llvm::toString(Prepare(PC)), "");
+    std::fprintf(stderr, "Intel cancellation: prepared flags %llx\n",
+                 (unsigned long long)State.reg(X64Register::FLAGS));
     ASSERT_EQ(State.reg(X64Register::PC), PC);
     ASSERT_EQ(State.reg(X64Register::FLAGS), x64::InitialFlags);
     std::atomic<bool> Stop{false};
@@ -297,7 +303,11 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
       InterruptCPU = Native.cpu();
       Signal.release();
       Entered.set_value();
+      std::fprintf(stderr, "Intel cancellation: entering busy guest mode %d\n",
+                   int(Kind));
       return Native.run(Control, [&](bool Cancelled) -> llvm::Error {
+        std::fprintf(stderr, "Intel cancellation: native exit cancelled=%d\n",
+                     int(Cancelled));
         NativeReturned = true;
         EXPECT_TRUE(Cancelled);
         uint64_t Reason = 0;
@@ -318,7 +328,11 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
     EXPECT_TRUE(E.isA<MachineInterruptedError>())
         << llvm::toString(std::move(E));
     llvm::consumeError(std::move(E));
+    std::fprintf(stderr, "Intel cancellation: retry mode %d flags %llx\n",
+                 int(Kind), (unsigned long long)State.reg(X64Register::FLAGS));
     ASSERT_EQ(llvm::toString(Prepare(RetryPC)), "");
+    std::fprintf(stderr, "Intel cancellation: retry passed mode %d\n",
+                 int(Kind));
     EXPECT_EQ(State.reg(X64Register::PC), RetryPC + 1);
     EXPECT_EQ(State.reg(X64Register::FLAGS), x64::InitialFlags);
     EXPECT_EQ(State.reg(X64Register::AX), 0x12345678u);
