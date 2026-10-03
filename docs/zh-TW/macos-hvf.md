@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
+<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
 
 [← 文件索引](README.md)
 
@@ -70,7 +70,7 @@ ARM64 核對 6,842 個註冊項，Intel 同一組 20 個目標為 6,840 項。In
 
 ## Intel 完整清單分片驗收
 
-先前完整執行 `37106679688` 於 2026-10-03 08:35 UTC 結束，GitHub 記錄執行器失聯。執行 `37116327329` 的作業 0、1 也失聯，未產生 CPU XML。這些現象不能定位某條客體指令。託管 Intel 的 `full` 使用四個作業，最多兩個並行；每個作業連續執行四批，共十六片，編號為 `job + 4 × batch`，保留原本每個作業的測試集合。每批仍先建置並檢查完整二十個目標的 CTest 清單。`--hvf-shard INDEX/COUNT` 保留整個方法及全部參數，即使執行屬性不同也不拆散。
+先前完整執行 `37106679688` 於 2026-10-03 08:35 UTC 結束，GitHub 記錄執行器失聯。執行 `37116327329` 的四個作業皆失聯，未產生 CPU XML。這些現象不能定位某條客體指令。託管 Intel 的 `full` 使用四個作業，最多兩個並行；每個作業連續執行四批，共十六片，編號為 `job + 4 × batch`，保留原本每個作業的測試集合。每批仍先建置並檢查完整二十個目標的 CTest 清單。`--hvf-shard INDEX/COUNT` 保留整個方法及全部參數，即使執行屬性不同也不拆散。
 
 CPU 執行前，`scripts/prepare_hvf_batches.py` 保存完整清單、各片所選清單與方法計畫，由工作流程獨立上傳這些診斷。一個本機 composite action 連續執行四批，每批結束立即上傳原始 XML、身分對應、行程狀態及必要環境變數白名單。外層統一的 30 分鐘期限涵蓋四批執行與上傳；某批失敗後不再執行後續批次。失敗或逾時後，只要執行器仍可通訊，另有獨立的兩分鐘診斷上傳；宿主失聯時只能依靠先前已上傳的證據。計畫及未完成的診斷包不能算作通過的分片。
 

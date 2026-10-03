@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
+<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -70,7 +70,7 @@ Der vergleichbare kurze ARM64-Test benötigte 73.9 ms mit Unicorn und 95.1 ms mi
 
 ## Vollständiges Intel-Inventar in Teilmengen
 
-Der vollständige Lauf `37106679688` endete am 2026-10-03 um 08:35 UTC; GitHub meldete den Verlust der Runner-Kommunikation. Auch Jobs 0 und 1 von `37116327329` verloren die Verbindung und lieferten kein CPU-XML. Daraus lässt sich kein fehlerhafter Gastbefehl bestimmen. Hosted Intel `full` verwendet vier Jobs, höchstens zwei gleichzeitig. Jeder führt vier aufeinanderfolgende Batches aus: insgesamt sechzehn Shards mit der Nummer `job + 4 × batch`. Die ursprüngliche Testmenge jedes Jobs bleibt erhalten. Jeder Batch baut und prüft zuerst das vollständige CTest-Inventar der zwanzig Ziele. `--hvf-shard INDEX/COUNT` hält ganze Methoden und sämtliche Parameter zusammen, auch bei unterschiedlichen Ausführungseigenschaften.
+Der vollständige Lauf `37106679688` endete am 2026-10-03 um 08:35 UTC; GitHub meldete den Verlust der Runner-Kommunikation. Auch alle vier Jobs von `37116327329` verloren die Verbindung und lieferten kein CPU-XML. Daraus lässt sich kein fehlerhafter Gastbefehl bestimmen. Hosted Intel `full` verwendet vier Jobs, höchstens zwei gleichzeitig. Jeder führt vier aufeinanderfolgende Batches aus: insgesamt sechzehn Shards mit der Nummer `job + 4 × batch`. Die ursprüngliche Testmenge jedes Jobs bleibt erhalten. Jeder Batch baut und prüft zuerst das vollständige CTest-Inventar der zwanzig Ziele. `--hvf-shard INDEX/COUNT` hält ganze Methoden und sämtliche Parameter zusammen, auch bei unterschiedlichen Ausführungseigenschaften.
 
 Vor der CPU-Ausführung speichert `scripts/prepare_hvf_batches.py` das vollständige Inventar, die ausgewählten Inventare und Methodenpläne; der Workflow lädt diese Diagnosen separat hoch. Eine lokale Composite Action führt vier Batches aus und lädt nach jedem sofort Original-XML, Identitätszuordnungen, Prozessstatus und die Positivliste notwendiger Umgebungsvariablen hoch. Eine gemeinsame äußere Frist von 30 Minuten umfasst alle vier Batches samt Uploads. Nach einem fehlgeschlagenen Batch werden weitere Batches nicht ausgeführt. Nach Fehler oder Zeitüberschreitung folgt ein separater Diagnose-Upload mit zwei Minuten Frist, solange der Runner erreichbar bleibt. Bei Verbindungsverlust sind nur bereits hochgeladene Nachweise verfügbar. Pläne und unvollständige Diagnosepakete gelten nicht als bestandene Shards.
 

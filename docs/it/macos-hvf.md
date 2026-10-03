@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
+<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
 
 [← Indice della documentazione](README.md)
 
@@ -70,7 +70,7 @@ Il piccolo benchmark ARM64 equivalente ha misurato 73.9 ms con Unicorn e 95.1 ms
 
 ## Inventario Intel completo suddiviso in gruppi
 
-L’esecuzione completa `37106679688` è terminata il 2026-10-03 alle 08:35 UTC; GitHub segnala la perdita di comunicazione con il runner. Anche i job 0 e 1 di `37116327329` hanno perso la connessione senza produrre XML CPU. Questi fatti non identificano un’istruzione guest difettosa. Intel ospitato in modalità `full` utilizza quattro job, con al massimo due contemporanei. Ciascuno esegue quattro batch consecutivi: sedici partizioni complessive, numerate `job + 4 × batch`, mantenendo l’insieme originale di test di ogni job. Ogni batch compila e controlla prima l’intero inventario CTest dei venti target. `--hvf-shard INDEX/COUNT` mantiene insieme metodi interi e tutti i parametri, anche quando le proprietà di esecuzione differiscono.
+L’esecuzione completa `37106679688` è terminata il 2026-10-03 alle 08:35 UTC; GitHub segnala la perdita di comunicazione con il runner. Tutti i quattro job di `37116327329` hanno perso la connessione senza produrre XML CPU. Questi fatti non identificano un’istruzione guest difettosa. Intel ospitato in modalità `full` utilizza quattro job, con al massimo due contemporanei. Ciascuno esegue quattro batch consecutivi: sedici partizioni complessive, numerate `job + 4 × batch`, mantenendo l’insieme originale di test di ogni job. Ogni batch compila e controlla prima l’intero inventario CTest dei venti target. `--hvf-shard INDEX/COUNT` mantiene insieme metodi interi e tutti i parametri, anche quando le proprietà di esecuzione differiscono.
 
 Prima dell’esecuzione CPU, `scripts/prepare_hvf_batches.py` salva inventario completo, selezioni e piani dei metodi; il workflow carica separatamente questa diagnostica. Un’azione composita locale esegue quattro batch e carica subito dopo ciascuno XML originale, corrispondenze, stati dei processi e lista consentita delle variabili necessarie. Un unico limite esterno di 30 minuti comprende tutti i batch e i caricamenti. Il fallimento di un batch impedisce l’esecuzione dei successivi. Dopo errore o timeout, un caricamento diagnostico separato dispone di due minuti se il runner rimane raggiungibile; con la perdita della connessione restano soltanto le prove già caricate. Piani e pacchetti incompleti non valgono come partizioni superate.
 

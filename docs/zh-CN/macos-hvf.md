@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
+<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
 
 [← 文档索引](README.md)
 
@@ -174,7 +174,7 @@ Linux 进程在正常退出、内存故障、未知服务和预算停止时的�
 
 ## Intel 完整清单分片验收
 
-早前完整运行 `37106679688` 于 2026-10-03 08:35 UTC 结束，GitHub 记录运行器失联。运行 `37116327329` 的作业 0、1 也失联，未产生 CPU XML。这些现象不能定位某条来宾指令。托管 Intel 的 `full` 使用四个作业，最多两个并发；每个作业连续执行四批，共十六片，编号为 `job + 4 × batch`，保留原来每个作业的测试集合。每批仍先构建并检查完整二十个目标的 CTest 清单。`--hvf-shard INDEX/COUNT` 保留整个方法及全部参数，执行属性不同也不拆散。
+早前完整运行 `37106679688` 于 2026-10-03 08:35 UTC 结束，GitHub 记录运行器失联。运行 `37116327329` 的四个作业均失联，未产生 CPU XML。这些现象不能定位某条来宾指令。托管 Intel 的 `full` 使用四个作业，最多两个并发；每个作业连续执行四批，共十六片，编号为 `job + 4 × batch`，保留原来每个作业的测试集合。每批仍先构建并检查完整二十个目标的 CTest 清单。`--hvf-shard INDEX/COUNT` 保留整个方法及全部参数，执行属性不同也不拆散。
 
 CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所选清单和方法计划，由工作流独立上传这些诊断。一个本地 composite action 连续执行四批，每批结束立即上传原始 XML、身份映射、进程状态和必要环境变量白名单。外层统一的 30 分钟期限覆盖四批执行与上传；某批失败后不再执行后续批次。失败或超时后，只要运行器仍可通信，另有独立的两分钟诊断上传；宿主失联时只能依靠此前已上传的证据。计划及未完成的诊断包不能算作通过的分片。
 
