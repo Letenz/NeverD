@@ -42,7 +42,7 @@ Objective-C/Swift 运行时、Foundation/UIKit，或 arm64e/PAC 的输入会明�
 线程入口和畸形文件测试、4 KiB/16 KiB 内存测试，以及 C API/CLI 报告一致性测试。
 Python SDK 也通过真实共享库执行五种平台/架构组合。
 HVF 必需门禁也包含这些用例。完整支持边界、来源和命令见[英文说明](../darwin-emulation.md)。
-Intel HVF 已进入原生验收，但仍有初始化/入口失败；当前状态见
+Intel HVF 的 10 项原生 transport 检查已全部通过，完整 CPU/Darwin 验收仍待完成；当前状态见
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
@@ -78,7 +78,7 @@ Apple M4 Max / macOS 15.6.1，Release 构建，源码为
 统计有重叠，不能相加。原生摘要记录干净源码，没有缺失注册或未执行的必需用例。
 跳过项属于异架构、其他后端或关闭的软件后端。65 项 Darwin 检查包含加载器、内存、
 每个 ARM64 工作负载，以及真实宿主内核对照。加入原生中断清单后，完整 HVF 门禁
-现要求 ARM64 的 16 项或 Intel 的 13 项检查；Darwin 专项门禁另要求全部 39 / 26 项进程工作负载。
+现要求 ARM64 的 16 项或 Intel 的 14 项检查；Darwin 专项门禁另要求全部 39 / 26 项进程工作负载。
 后续干净源码 `561ebf37b9eaaec08043ac5816b2e083ecccaf68` 的 ARM64 完整门禁达到
 841 项通过、0 失败、5,939 项跳过，16 个必需用例全部执行；完整证据位于
 `build-hvf-native/hvf-cancellation-full-evidence/`。
