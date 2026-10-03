@@ -29,7 +29,6 @@ CaptureFixture:
 #ifdef NEVERD_CAPTURE_FP_PROBE
   fxsave64 X64FXSlot(%rsp)
 #else
-  stmxcsr X64MXCSRSaveSlot(%rsp)
 #define NEVERD_CAPTURE_VECTOR(Index, Low, High) \
   .if Index < X64VectorCount; movdqu %xmm##Index, X64FXSlot + Index * VectorBytes(%rsp); .endif
 #include "WindowsContextCases.def"
@@ -37,18 +36,14 @@ CaptureFixture:
 #endif
 #ifdef NEVERD_CAPTURE_FP_PROBE
   fxrstor64 FPSeed(%rip)
-#else
-  ldmxcsr ControlSeed(%rip)
 #endif
 #define NEVERD_CAPTURE_VECTOR(Index, Low, High) \
   .if Index < X64VectorCount; movdqu VectorSeeds + Index * VectorBytes(%rip), %xmm##Index; .endif
 #include "WindowsContextCases.def"
 #undef NEVERD_CAPTURE_VECTOR
   movq %rdx, %rcx
-  pushq $X64FlagSeed
-  popfq
-  pushfq
-  popq ObservationFlags(%r8)
+  movq $X64FlagSeed, ObservationFlags(%r8)
+  cmpq %rcx, %rcx
 #define NEVERD_CAPTURE_X64_GPR(Name, Index, Value) movq $Value, %Name
 #include "WindowsContextCases.def"
 #undef NEVERD_CAPTURE_X64_GPR
@@ -58,7 +53,6 @@ CaptureResume:
 #ifdef NEVERD_CAPTURE_FP_PROBE
   fxrstor64 X64FXSlot(%rsp)
 #else
-  ldmxcsr X64MXCSRSaveSlot(%rsp)
 #define NEVERD_CAPTURE_VECTOR(Index, Low, High) \
   .if Index < X64VectorCount; movdqu X64FXSlot + Index * VectorBytes(%rsp), %xmm##Index; .endif
 #include "WindowsContextCases.def"

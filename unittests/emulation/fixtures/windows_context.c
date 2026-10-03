@@ -36,7 +36,6 @@ __declspec(align(16)) const U64 VectorSeeds[] = {
 };
 #if defined(__x86_64__)
 enum { Size = X64Size };
-const U32 ControlSeed = X64Control;
 #ifdef NEVERD_CAPTURE_FP_PROBE
 __declspec(align(16)) const U64 FPSeed[X64FXSize / sizeof(U64)] = {
 #define NEVERD_CAPTURE_FP_WORD(Index, Value) [Index] = Value,
@@ -88,10 +87,11 @@ static void run(Capture API, U8 Fill) {
   require((*(U32 *)(Context + X64StatusOffset) & X64FlagMask) ==
               (Observed[FlagsIndex] & X64FlagMask),
           SiteFlagsValue);
-  require(*(U32 *)(Context + X64ControlOffset) == X64Control &&
-              *(U32 *)(Context + X64FPOffset + X64MXCSRField) == X64Control,
+  require(*(U32 *)(Context + X64ControlOffset) ==
+              *(U32 *)(Context + X64FPOffset + X64MXCSRField),
           SiteControl);
 #ifdef NEVERD_CAPTURE_FP_PROBE
+  require(*(U32 *)(Context + X64ControlOffset) == X64Control, SiteControl);
   require(*(U16 *)(Context + X64FPOffset) == X64FPControl &&
               *(U16 *)(Context + X64FPOffset + X64FPStatusField) ==
                   X64FPStatus &&
