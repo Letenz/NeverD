@@ -1921,3 +1921,237 @@ TEST(SourceFrameAnalysis,
     EXPECT_EQ(F.valid(), Case == 0);
   }
 }
+
+namespace {
+struct SwiftErrorStateFixture {
+  Arch Architecture;
+  SourceFunctionTypeHint Signature;
+  LowFunc Function;
+  NativeSourceCalls Calls;
+  NdVar Error, Stack;
+  SwiftErrorStateFixture(Arch Architecture) : Architecture(Architecture) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    Error = NdVar::reg(
+        Architecture == Arch::AArch64 ? a64reg::X21 : x86reg::R12, 8);
+    Stack = NdVar::reg(TRI.StackPointer, 8);
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"context", Pointer},
+                            {"error", NdType::makePtr(Pointer)}};
+    Signature.Parameters[0].TheRole =
+        SourceParameterTypeHint::Role::SwiftContext;
+    Signature.Parameters[1].TheRole =
+        SourceParameterTypeHint::Role::SwiftErrorResult;
+    std::string Diagnostic;
+    EXPECT_TRUE(
+        assignDarwinSwiftSourceABI(Signature, Architecture, Diagnostic));
+    Function.Entry = 0x1000;
+    LowBlock B;
+    B.Id = 0;
+    B.StartAddr = Function.Entry;
+    const auto Frame =
+        NdVar::scalar(Architecture == Arch::AArch64 ? 32 : 24, 8);
+    B.Ops = {op(NdOp::INT_SUB, Stack, {Stack, Frame}, 0x1000),
+             op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)}, 0x1010),
+             op(NdOp::INT_ADD, Stack, {Stack, Frame}, 0x1020),
+             op(NdOp::RETURN, {}, {}, 0x1024)};
+    if (TRI.LinkRegister) {
+      const auto Link = NdVar::reg(TRI.LinkRegister, 8);
+      B.Ops.insert(B.Ops.begin() + 1,
+                   op(NdOp::STORE, {}, {Stack, Link}, 0x1004));
+      B.Ops.insert(B.Ops.end() - 2, op(NdOp::LOAD, Link, {Stack}, 0x101c));
+      B.Ops.back().addInput(Link);
+    }
+    NativeSourceCallContract Call;
+    Call.Signature = &Signature;
+    Calls.emplace(*nativeSourceCallKey(*std::find_if(
+                      B.Ops.begin(), B.Ops.end(),
+                      [](const LowOp &O) { return O.Opcode == NdOp::CALL; })),
+                  Call);
+    Function.Blocks.push_back(std::move(B));
+  }
+  bool restores() const {
+    return restoresNativeSourceState(Function, Architecture, Calls);
+  }
+};
+} // namespace
+
+TEST(SourceFrameAnalysis, SwiftErrorOutputDoesNotInheritCalleeSaveIdentity) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftErrorStateFixture F(Architecture);
+    EXPECT_FALSE(F.restores());
+    // A real private save and complete restoration still closes the state.
+    auto &Ops = F.Function.Blocks.front().Ops;
+    const auto Address = NdVar::tmp(80, 8);
+    auto Call = std::find_if(Ops.begin(), Ops.end(), [](const LowOp &O) {
+      return O.Opcode == NdOp::CALL;
+    });
+    Ops.insert(Call, {op(NdOp::INT_ADD, Address, {F.Stack, NdVar::scalar(8, 8)},
+                         0x1008),
+                      op(NdOp::STORE, {}, {Address, F.Error}, 0x1008)});
+    Ops.insert(Ops.end() - 2, {op(NdOp::INT_ADD, Address,
+                                  {F.Stack, NdVar::scalar(8, 8)}, 0x101e),
+                               op(NdOp::LOAD, F.Error, {Address}, 0x101e)});
+    EXPECT_TRUE(F.restores());
+    (Ops.end() - 3)->Output.Size = 4;
+    EXPECT_FALSE(F.restores());
+  }
+}
+
+TEST(SourceFrameAnalysis, SwiftErrorTailOutputIsNotAnUnchangedLeaf) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftErrorStateFixture F(Architecture);
+    auto &Ops = F.Function.Blocks.front().Ops;
+    const auto Call = *std::find_if(Ops.begin(), Ops.end(), [](const LowOp &O) {
+      return O.Opcode == NdOp::CALL;
+    });
+    Ops = {Call, op(NdOp::RETURN, {}, {}, Call.Addr)};
+    if (getTargetRegInfo(Architecture).LinkRegister)
+      Ops.back().addInput(NdVar::reg(a64reg::X30, 8));
+    EXPECT_FALSE(
+        preservesNativeSourceLeafState(F.Function, Architecture, F.Calls));
+    EXPECT_FALSE(F.restores());
+  }
+}
+
+TEST(SourceFrameAnalysis, SwiftLogicalErrorSlotIsNotPhysicalBorrowedMemory) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftErrorStateFixture F(Architecture);
+    for (bool Writable : {false, true}) {
+      SourceFrameEffects Effects;
+      auto &Borrow = Writable ? Effects.WritableFrameParameters
+                              : Effects.ReadOnlyFrameParameters;
+      Borrow.emplace(1, 8);
+      EXPECT_FALSE(sourceFrameEffectsMatchABI(Effects, F.Signature));
+      // The ordinary pointer role retains the established independent
+      // memory-effect contract; the logical error-slot address is special.
+      F.Signature.Parameters[1].TheRole =
+          SourceParameterTypeHint::Role::Ordinary;
+      std::string Diagnostic;
+      ASSERT_TRUE(
+          assignDarwinSwiftSourceABI(F.Signature, Architecture, Diagnostic));
+      EXPECT_TRUE(sourceFrameEffectsMatchABI(Effects, F.Signature));
+      F.Signature.Parameters[1].TheRole =
+          SourceParameterTypeHint::Role::SwiftErrorResult;
+      ASSERT_TRUE(
+          assignDarwinSwiftSourceABI(F.Signature, Architecture, Diagnostic));
+    }
+  }
+}
+
+TEST(SourceFrameAnalysis, UnchangedErrorResultRequiresAnExplicitContract) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftErrorStateFixture F(Architecture);
+    F.Calls.begin()->second.PreservesSwiftErrorResult = true;
+    EXPECT_TRUE(F.restores());
+    auto &Ops = F.Function.Blocks.front().Ops;
+    const auto Call = *std::find_if(Ops.begin(), Ops.end(), [](const LowOp &O) {
+      return O.Opcode == NdOp::CALL;
+    });
+    Ops = {Call, op(NdOp::RETURN, {}, {}, Call.Addr)};
+    if (getTargetRegInfo(Architecture).LinkRegister)
+      Ops.back().addInput(NdVar::reg(a64reg::X30, 8));
+    EXPECT_TRUE(
+        preservesNativeSourceLeafState(F.Function, Architecture, F.Calls));
+    EXPECT_TRUE(F.restores());
+    // An unchanged-output certificate is not meaningful without that exact
+    // logical in/out role. It must not become a general preserve-register flag.
+    F.Signature.Parameters[1].TheRole = SourceParameterTypeHint::Role::Ordinary;
+    std::string Diagnostic;
+    ASSERT_TRUE(
+        assignDarwinSwiftSourceABI(F.Signature, Architecture, Diagnostic));
+    EXPECT_FALSE(F.restores());
+    EXPECT_FALSE(
+        preservesNativeSourceLeafState(F.Function, Architecture, F.Calls));
+    F.Calls.begin()->second.PreservesSwiftErrorResult = false;
+    EXPECT_TRUE(F.restores());
+    EXPECT_TRUE(
+        preservesNativeSourceLeafState(F.Function, Architecture, F.Calls));
+  }
+}
+
+TEST(SourceFrameAnalysis, ErrorResultEffectsMeetAllPathsAndLoopBackedges) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mutation);
+      SwiftErrorStateFixture F(Architecture);
+      const auto Original = F.Function.Blocks.front();
+      const auto Call =
+          std::find_if(Original.Ops.begin(), Original.Ops.end(),
+                       [](const LowOp &O) { return O.Opcode == NdOp::CALL; });
+      F.Function.Blocks.resize(4);
+      auto &Blocks = F.Function.Blocks;
+      for (unsigned I = 0; I < 4; ++I) {
+        Blocks[I] = {};
+        Blocks[I].Id = I;
+        Blocks[I].StartAddr = 0x1000 + I * 0x100;
+      }
+      Blocks[0].Ops.assign(Original.Ops.begin(), Call);
+      Blocks[0].Succs = {1, 2};
+      F.Calls.clear();
+      for (unsigned I : {1, 2}) {
+        auto Current = *Call;
+        Current.Addr = Blocks[I].StartAddr;
+        Blocks[I].Ops = {Current};
+        Blocks[I].Preds = {0};
+        Blocks[I].Succs = {3};
+        NativeSourceCallContract Contract;
+        Contract.Signature = &F.Signature;
+        Contract.PreservesSwiftErrorResult = Mutation != I;
+        F.Calls.emplace(*nativeSourceCallKey(Current), Contract);
+      }
+      Blocks[3].Ops.assign(Call + 1, Original.Ops.end());
+      Blocks[3].Preds = {1, 2};
+      if (Mutation >= 3) {
+        Blocks[1].Preds.push_back(1);
+        Blocks[1].Succs.push_back(1);
+      }
+      if (Mutation == 4)
+        F.Calls.begin()->second.PreservesSwiftErrorResult = false;
+      if (Mutation == 5)
+        std::reverse(Blocks.begin(), Blocks.end());
+      EXPECT_EQ(F.restores(), Mutation == 0 || Mutation == 3 || Mutation == 5);
+    }
+}
+
+TEST(SourceFrameAnalysis, ErrorOutputCannotRestoreAnotherPreservedRegister) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftErrorStateFixture F(Architecture);
+    const auto Saved = NdVar::reg(
+        Architecture == Arch::AArch64 ? a64reg::X19 : x86reg::RBX, 8);
+    const auto Address = NdVar::tmp(80, 8);
+    auto &Ops = F.Function.Blocks.front().Ops;
+    const auto Call = std::find_if(Ops.begin(), Ops.end(), [](const LowOp &O) {
+      return O.Opcode == NdOp::CALL;
+    });
+    Ops.insert(Call, {op(NdOp::INT_ADD, Address, {F.Stack, NdVar::scalar(8, 8)},
+                         0x1008),
+                      op(NdOp::STORE, {}, {Address, F.Error}, 0x1008),
+                      op(NdOp::COPY, F.Error, {Saved}, 0x100c)});
+    Ops.insert(Ops.end() - 2, {op(NdOp::COPY, Saved, {F.Error}, 0x1018),
+                               op(NdOp::INT_ADD, Address,
+                                  {F.Stack, NdVar::scalar(8, 8)}, 0x101e),
+                               op(NdOp::LOAD, F.Error, {Address}, 0x101e)});
+    EXPECT_FALSE(F.restores());
+    F.Calls.begin()->second.PreservesSwiftErrorResult = true;
+    EXPECT_TRUE(F.restores());
+  }
+}
+
+TEST(SourceFrameAnalysis, ErrorOutputCannotSupplyAnEarlierFrameDefinition) {
+  FrameFixture F;
+  SwiftErrorStateFixture Error(Arch::AArch64);
+  auto &Ops = F.Low.Blocks.front().Ops;
+  Ops[4] = op(NdOp::CALL, {}, {NdVar::cst(0x4000, 8)}, 0x1010);
+  Ops[5] = op(NdOp::STORE, {}, {Slot, Value}, 0x1014);
+  NativeSourceCallContract Contract;
+  Contract.Signature = &Error.Signature;
+  NativeSourceCalls Calls{{*nativeSourceCallKey(Ops[4]), Contract}};
+  EXPECT_FALSE(F.query(Calls));
+  Calls.begin()->second.PreservesSwiftErrorResult = true;
+  const auto Definition = F.query(Calls);
+  ASSERT_TRUE(Definition);
+  EXPECT_EQ(Definition->Definition.Instruction, 0x1008U);
+  EXPECT_EQ(Definition->FrameOffset, -32);
+}

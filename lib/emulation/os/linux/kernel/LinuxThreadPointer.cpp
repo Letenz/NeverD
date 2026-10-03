@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "LinuxProcess.h"
+#include "LinuxKernel.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -12,7 +12,7 @@
 namespace neverd::emulation::linux_model {
 llvm::Expected<std::optional<uint64_t>>
 archPrctl(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
-          const ProcessLayout &Layout, ProcessResult &Result) {
+          const MemoryLayout &Layout, ProcessResult &Result) {
   CPURegister Register;
   bool Set;
   switch (Event.Arguments[0]) {
@@ -21,7 +21,7 @@ archPrctl(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
     Register = CPURegister::Identity;                                          \
     Set = Write;                                                               \
     break;
-#include "LinuxValues.def"
+#include "../LinuxValues.def"
 #undef NEVERD_LINUX_THREAD_POINTER
   default:
     Result.Stop = ProcessStopReason::UnsupportedService;
@@ -38,7 +38,7 @@ archPrctl(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
     if (auto E = CPU.writeRegister(Register, {Address, 0}))
       return std::move(E);
   } else {
-    const auto Width = Layout.Calls.info().WordSize;
+    const auto Width = PointerSize64;
     if (Address >= Layout.UserLimit || Width > Layout.UserLimit - Address)
       return std::optional<uint64_t>(uint64_t(0) - BadAddress);
     auto Writable = CPU.canAccess(Address, Width, Write | UserAccessible);

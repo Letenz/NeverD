@@ -2920,6 +2920,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
       if (Found != Candidates.end()) {
         const auto &Binding = Found->second;
         Contract.Signature = &Binding.Signature;
+        Contract.PreservesSwiftErrorResult = swiftRuntimePreservesErrorResult(
+            Image, *Site->StaticTarget, Binding);
         if (Binding.DoesNotReturn || Binding.WeakImport)
           return Result;
         if (hasIndirectSourceParameters(Binding.Signature)) {

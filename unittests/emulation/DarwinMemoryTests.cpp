@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
-#include "os/darwin/DarwinMemory.h"
+#include "os/darwin/kernel/DarwinMemory.h"
 
 namespace neverd::emulation::darwin_model {
 namespace {
@@ -25,9 +25,8 @@ protected:
     ProcessOptions Options;
     Options.MemoryLimit = Page * 4;
     Options.StackSize = Page;
-    ProcessImage Image{
-        GuestArchitecture::AArch64, Page, 0x100000000ULL, true, {}, {}};
-    Memory = std::make_unique<DarwinMemory>(*Space, Image, Options);
+    MemoryLayout Layout{Page, 0x100000000ULL, {}};
+    Memory = std::make_unique<DarwinMemory>(*Space, Layout, Options);
   }
   ServiceResult call(ServiceKind Kind, std::array<uint64_t, 6> Args) {
     ProcessServiceEvent E{0, 0, Args, std::nullopt};
@@ -95,13 +94,9 @@ TEST_P(DarwinMemoryTest, MaximumProtectionFailureIsAtomicAcrossSegments) {
   ProcessOptions Options;
   Options.MemoryLimit = Page * 4;
   Options.StackSize = Page;
-  ProcessImage Image{GuestArchitecture::AArch64,
-                     Page,
-                     Address,
-                     true,
-                     {},
-                     {{Address, Page, 3}, {Address + Page, Page, 1}}};
-  Memory = std::make_unique<DarwinMemory>(*Space, Image, Options);
+  MemoryLayout Layout{
+      Page, Address, {{Address, Page, 3}, {Address + Page, Page, 1}}};
+  Memory = std::make_unique<DarwinMemory>(*Space, Layout, Options);
   auto Denied = call(ServiceKind::Mprotect, {Address, Page * 2, 3, 0, 0, 0});
   EXPECT_TRUE(Denied.Error);
   EXPECT_EQ(Denied.Value, 13u);

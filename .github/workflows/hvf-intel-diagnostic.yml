@@ -31,7 +31,7 @@ on:
         default: '-1'
         type: string
       sample-active-child:
-        description: Capture one native stack and log snapshot after five seconds per method
+        description: Capture one stack and log snapshot five seconds after native child registration
         default: false
         type: boolean
 permissions:

@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "LinuxProcess.h"
+#include "LinuxKernel.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -13,7 +13,7 @@ using enum CPURegister;
 #define NEVERD_LINUX_ABI(ISA, Trap, Number, Result, SP, PC, ...)               \
   constexpr ServiceABI ISA##ABI{                                               \
       ServiceRequestKind::Trap, Number, Result, SP, PC, {__VA_ARGS__}};
-#include "LinuxValues.def"
+#include "../LinuxValues.def"
 #undef NEVERD_LINUX_ABI
 } // namespace
 const ServiceABI &serviceABI(GuestArchitecture Architecture) {

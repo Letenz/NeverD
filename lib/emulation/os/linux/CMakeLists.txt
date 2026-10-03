@@ -1,12 +1,3 @@
-add_neverd_component_library(NeverDEmulationLinux
-  LinuxProcess.cpp
-  LinuxServices.cpp
-  LinuxProcessLayout.cpp
-  LinuxProcessStack.cpp
-  LinuxServiceABI.cpp
-  LinuxThreadPointer.cpp
-  LinuxMemory.cpp
-  LINK_COMPONENTS Loader EmulationRuntime EmulationImage EmulationABI)
-if(WIN32)
-  target_compile_definitions(NeverDEmulationLinux PRIVATE NOMINMAX)
-endif()
+add_subdirectory(kernel)
+add_subdirectory(process)
+add_subdirectory(android)

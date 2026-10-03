@@ -54,6 +54,8 @@ options は最大 64 KiB の JSON object です。未知/null field、不正な�
 
 ## Linux profile の意味
 
+`writev` は x64/ARM64 と Android Bionic で同じ出力先を共有します。出力前に最大 1024 個のゲスト `iovec` を読み込み、負の長さを `EINVAL` で拒否し、ユーザーアドレス範囲を検査して Linux のページ境界に合わせた転送上限を適用します。不正な記述子はベクトル参照前に `EBADF`、読めないメタデータは出力なしで `EFAULT` を返します。後続データの障害ではコピー済みの接頭部を保持します。出力予算は公開前に両ストリームとベクトル全体に適用します。`write` と `writev` は記述子の下位 32 ビットを使い、ベクトル数も Linux の 32 ビット取り込みに従います。Bionic のみが負の生エラーを `-1` と `errno` に変換します。`LinuxOutputNativeTests` は独自の十例をホスト Linux で通常ファイルに出力し、モデルの x64/ARM64 テストは予算も検査します。[Linux ベクトル取り込み契約](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)を参照してください。
+
 OS policy は既存 ELF loader のデコード済み program header を使用します。ABI tag、segment alignment、map 済み PHDR table、user address 範囲を検証します。mapping plan は allocation 前に範囲、権限、重なり、budget を確認し、完全に準備できた private address space だけを公開します。file page の prefix/tail を保持し、BSS を zero 化し、segment 権限を守り、stack guard gap を予約します。ページが重なる layout や矛盾 header は推測せず拒否します。
 
 Static PIE は少なくとも `0x40000000` の決定的 load bias を使い、大きな `PT_LOAD` alignment に応じて増加します。各 segment、entry PC、`AT_PHDR`/`AT_ENTRY` に同じ bias を使い、元の program header 値は変更せず、interpreter がないため `AT_BASE` は0です。mapping source は元の file bytes であり、analysis pointer fixup は混入しません。guest startup が relocation と初期化を実行します。loader は section header に依存せず、元ファイルの範囲検証済み record から `PT_DYNAMIC` を decode します。存在する場合、table は readable/terminated で最大4096 entries。`PT_INTERP`、外部 dependency/filter/audit tag は拒否し、dynamic linker、symbol resolver、constructor runner は提供しません。
@@ -66,7 +68,7 @@ Static TLS template `PT_TLS` は loader fact として検証されます。templ
 
 x64 の `arch_prctl` は `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARCH_GET_GS` をサポートします。Set は未mapの user-range base も受け入れますが、後の dereference では権限を検査します。kernel-range base は guest `EPERM`、無効な Get destination は CPU fault なしで guest `EFAULT`。その他の操作は明示的に失敗します。ARM64 startup は `MSR` で `TPIDR_EL0` を設定します。`MRS`、FS/GS memory access、context restore は quantum/backend entry 間で thread pointer を維持します。thread scheduler は実装しません。
 
-descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user page を検証し、後続 page にアクセスできなければ読取済み prefix を返し、1 byte も読めなければ guest `EFAULT` を返します。不正 descriptor は `EBADF`。有効 descriptor への length 0 write は pointer を参照しません。Linux pipe atomicity や file object はモデル化しません。出力上限を超える write は公開前に停止します。
+descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user page を検証し、後続 page にアクセスできなければ読取済み prefix を返し、1 byte も読めなければ guest `EFAULT` を返します。不正 descriptor は `EBADF`。長さ 0 の書き込みでもユーザーアドレス範囲を検査しますが、ページのマッピングやデータ読み取りは不要です。Linux pipe atomicity や file object はモデル化しません。出力上限を超える write は公開前に停止します。
 
 匿名メモリサービスは、イメージやスタックと同じプロセスアドレス空間と物理メモリ予算を使います。`mmap` が受け付けるのは `MAP_PRIVATE | MAP_ANONYMOUS` と、通常の `PROT_NONE`、`PROT_READ`、`PROT_READ | PROT_WRITE`、`PROT_READ | PROT_EXEC`、読み取り可能な RWX です。空いているページ境界のヒントを優先し、それ以外は `0x100000000`、次いで最小ユーザーアドレスから空きを探し、スタックガードを確保します。これは決定的配置であり Linux ASLR ではありません。新しいページは独立所有されゼロ初期化されるため、部分的な解除でも固定されていないページを回収できます。CPU 投影や保持中の backing view は、退役した割り当てを自身の寿命まで保持する場合があります。
 

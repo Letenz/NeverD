@@ -36,38 +36,7 @@ Strict mode is **on by default**. An instruction with no lifter throws `Unlifted
 
 CLI tools, integrators, and AI agents use one engine — **`libneverd`** — through a **pure C API**. They do not link Capstone, LLVM, or internal C++ directly.
 
-Input formats, host contracts, and limitations are documented in the [EVM guide](docs/evm.md) and [Solana SBF guide](docs/sbf.md).
-
-Android Java recovery is available through the experimental `neverd mobile app.apk -o recovered-app` CLI for APK, multidex, DEX, and smali inputs. Android recovery uses only NeverD’s built-in C++20 engine and needs no Python or Java runtime. Quote paths containing spaces. See the [Android guide](docs/android.md) for supported inputs, reports, and recovery limits.
-
-The experimental iOS workflow `neverd mobile App.ipa -o recovered-ios` exports native C and supported Objective-C/Swift sources from IPA, `.app`, or Mach-O. Runtime layouts, source units, and per-method omissions remain explicit; generated source does not use a bridge to the original binary. See the [iOS guide](docs/ios.md) for setup, coverage semantics, and independent compilation checks.
-
-Experimental [interpreter source recovery](docs/interpreter-recovery.md) uses
-`neverd decompile --devirtualize --func ENTRY` to specialize supported linked
-x64 ELF/PE interpreters into HighC or LLVMC through the shared LowIR/MedIR
-pipeline. Control hints separate decoder contexts without fixing runtime inputs.
-Unresolved control, unsupported semantics, and exhausted budgets fail explicitly;
-this mode does not certify binary replacement or exception equivalence.
-
-Recovery budgets are explicit: `--vm-max-fields`, `--vm-max-refinements` and `--vm-max-queries` keep defaults of 16, 16 and 4096. See the recovery guide for the compatible v3 C API and failure rules.
-
-Recovery also exposes `--vm-chain-transfers=N` (default 0) and `--vm-no-control-discovery`. Chaining retains symbolic correlations across proved singleton transfers; its limit returns to ordinary CFG boundaries. Machine-state recovery can declare unchecked, nonwrapping entry-RSP offsets with `--vm-entry-frame=begin:end`. The exact numeric premise accompanies generated C and the report; it grants no memory access or equivalence proof.
-
-Machine-state recovery accepts `--vm-entry-alignment=A:R` as an explicit, checked entry-RSP domain. `A` must be a positive power of two and `R < A`. Other roots return status 2 before guest accesses or state writes. High root bits remain free; defaults assume no alignment. This option does not provide native equivalence certification.
-
-`--vm-external-stores-disjoint-frame` adds an explicit, unchecked precondition for machine-state recovery: every external STORE extent must avoid `--vm-entry-frame`. Only existing facts inside that range survive such writes. It does not constrain LOADs or aliasing between external pointers; the default remains conservative. Native proof APIs reject this domain.
-
-Large recovered functions that exceed the SSA construction limit can use `--llvm` through a bounded scalar mutable-storage contract. Entry inputs, loop-carried values and earlier reads retain their meaning. Unsupported implicit state, vector-register parameters, image relocation, ambiguous storage and malformed control fail explicitly; HighC rejects this fallback. Source output still uses the existing machine-state contract and adds no equivalence certificate.
-
-The separate C++ loop-proof API infers bounded invariants and lexicographic ranks for nested loops, then rechecks native-to-LowIR refinement. See the [recovery guide](docs/interpreter-recovery.md); it does not certify emitted C.
-
-The separate C++ `checkBinaryLLVMRefinement` API composes fresh native and LLVM checks against an exact LLVM artifact; C compilation remains outside its proof scope.
-
-PE recovery also authenticates preferred-base DIR64 bytes and excludes import writes; its fixed-image contract does not certify ASLR or initialization.
-
-Interpreter recovery covers bounded entry-stack alignment partitions and internal `RET imm16` cleanup under the explicit machine-state contract. Automatic native-to-LLVM proof composition for these partitions remains pending.
-
-Bounded `REP MOVS/STOS` recovery preserves element order and overlap; original-instruction proof coverage remains pending.
+See the guides for [EVM](docs/evm.md), [Solana SBF](docs/sbf.md), [mobile source recovery](docs/mobile.md) and experimental [interpreter source recovery](docs/interpreter-recovery.md) for usage, supported contracts and limitations.
 
 <!-- i18n-section: why-neverd -->
 
@@ -114,7 +83,7 @@ Recovery depends on supported code patterns; see the [mobile overview](docs/mobi
 
 ### CPU execution and guest workloads
 
-NeverD runs bounded Windows/Linux processes and x64 Windows drivers with shared guest OS models. Unicorn supports x64/ARM64 software execution; matching hosts can use KVM or WHP where the workload supports them. See [CPU execution and guest workloads](docs/emulation.md) for backend selection, supported environments, native validation and current limits.
+NeverD separates CPU backends from guest OS models for bounded processes, Android native libraries and x64 Windows drivers. Unicorn provides x64/ARM64 software execution; matching hosts can use KVM (Linux), WHP (Windows) or HVF (macOS). See [CPU execution and guest workloads](docs/emulation.md) for supported environments, validation and limits.
 
 <!-- i18n-section: how-it-works -->
 

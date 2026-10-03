@@ -134,7 +134,7 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
       return false;
     }
   }
-  unsigned IndirectResults = 0, Contexts = 0;
+  unsigned IndirectResults = 0, Contexts = 0, ErrorResults = 0;
   for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
     const auto &Parameter = Hint.Parameters[I];
     switch (Parameter.TheRole) {
@@ -147,6 +147,14 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
       break;
     case SourceParameterTypeHint::Role::SwiftContext:
       if (Parameter.Type->Kind != NdTypeKind::Ptr || ++Contexts != 1)
+        return false;
+      break;
+    case SourceParameterTypeHint::Role::SwiftErrorResult:
+      if (++ErrorResults != 1 || I + 1 != Hint.Parameters.size() || !I ||
+          Hint.Parameters[I - 1].TheRole !=
+              SourceParameterTypeHint::Role::SwiftContext ||
+          !equalSourceTypes(Parameter.Type, NdType::makePtr(NdType::makePtr(
+                                                NdType::makeVoid()))))
         return false;
       break;
     default:
@@ -292,6 +300,13 @@ bool hasIndirectSourceParameters(const SourceFunctionTypeHint &Hint) {
                      [](const auto &P) { return P.IndirectByValue; });
 }
 
+bool hasSwiftErrorResult(const SourceFunctionTypeHint &Hint) {
+  return std::any_of(
+      Hint.Parameters.begin(), Hint.Parameters.end(), [](const auto &P) {
+        return P.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult;
+      });
+}
+
 std::vector<SourceABIParameter>
 sourceABIParameters(const SourceFunctionTypeHint &Hint) {
   std::string Error;
@@ -301,9 +316,13 @@ sourceABIParameters(const SourceFunctionTypeHint &Hint) {
   for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
     const auto &P = Hint.Parameters[I];
     if (P.Components.empty())
-      Result.push_back({I, 0, P.Name,
-                        P.IndirectByValue ? NdType::makePtr(P.Type) : P.Type,
-                        P.Location});
+      Result.push_back(
+          {I, 0, P.Name,
+           P.IndirectByValue ? NdType::makePtr(P.Type)
+           : P.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult
+               ? P.Type->Pointee
+               : P.Type,
+           P.Location});
     else {
       const auto Members = sourceAggregateMembers(P.Type);
       for (size_t J = 0; J < Members.size(); ++J)
@@ -312,6 +331,17 @@ sourceABIParameters(const SourceFunctionTypeHint &Hint) {
     }
   }
   return Result;
+}
+
+std::optional<SourceABIParameter>
+sourceABIErrorResult(const SourceFunctionTypeHint &Hint) {
+  if (!hasSwiftErrorResult(Hint))
+    return std::nullopt;
+  for (const auto &Parameter : sourceABIParameters(Hint))
+    if (Hint.Parameters[Parameter.ParameterIndex].TheRole ==
+        SourceParameterTypeHint::Role::SwiftErrorResult)
+      return Parameter;
+  return std::nullopt;
 }
 
 bool validateSourceABI(const SourceFunctionTypeHint &Hint,
@@ -349,6 +379,10 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
         Expected.Kind = SourceABICarrierKind::IntegerRegister;
         Expected.RegisterOffset =
             Hint.Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13;
+      } else if (P.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult) {
+        Expected.Kind = SourceABICarrierKind::IntegerRegister;
+        Expected.RegisterOffset =
+            Hint.Architecture == Arch::AArch64 ? a64reg::X21 : x86reg::R12;
       } else if (P.Type->Kind == NdTypeKind::Float) {
         Expected.Kind = SourceABICarrierKind::FloatingRegister;
         Expected.RegisterOffset = TRI.FPParamRegs[FloatingIndex++];
@@ -646,6 +680,10 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
       case SourceParameterTypeHint::Role::SwiftContext:
         Parameter.Location.RegisterOffset =
             Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13;
+        break;
+      case SourceParameterTypeHint::Role::SwiftErrorResult:
+        Parameter.Location.RegisterOffset =
+            Architecture == Arch::AArch64 ? a64reg::X21 : x86reg::R12;
         break;
       default:
         return fail(Diagnostic, "Unsupported Darwin special parameter ABI");

@@ -20,6 +20,13 @@
 
 namespace neverd::emulation {
 namespace {
+namespace output_fixture {
+#define NEVERD_LINUX_OUTPUT_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_LINUX_OUTPUT_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxOutputCases.def"
+#undef NEVERD_LINUX_OUTPUT_TEXT
+#undef NEVERD_LINUX_OUTPUT_VALUE
+} // namespace output_fixture
 constexpr uint64_t Buffer = 0x20000000;
 class AndroidNative : public testing::TestWithParam<const char *> {
 protected:
@@ -117,6 +124,28 @@ TEST_P(AndroidNative, KernelErrorsAndLibcErrnoHaveDifferentContracts) {
   returned(R, 0);
   ASSERT_EQ(R.Services.size(), 1);
   EXPECT_EQ(R.Services[0].Result, uint64_t(0) - 9);
+}
+TEST_P(AndroidNative,
+       VectoredOutputSharesKernelSemanticsAndPreservesLibcErrno) {
+  auto R = run(output_fixture::AndroidEntry);
+  returned(R, 0);
+  EXPECT_EQ(R.StandardOutput, std::string(output_fixture::Message,
+                                          sizeof(output_fixture::Message) - 1));
+  EXPECT_TRUE(R.StandardError.empty());
+  ASSERT_EQ(R.Services.size(), 1u);
+  EXPECT_EQ(R.Services.front().Number, output_fixture::NativeARMWriteV);
+  EXPECT_EQ(R.Services.front().Result,
+            uint64_t(0) - output_fixture::ErrorDescriptor);
+}
+TEST_P(AndroidNative, VectoredOutputBudgetPublishesNothing) {
+  Options.OutputLimit = output_fixture::MessageSplit;
+  Options.Android->TraceLimit = 0;
+  Options.Android->ReadMemory.clear();
+  auto R = run(output_fixture::AndroidEntry);
+  EXPECT_EQ(R.Stop, ProcessStopReason::OutputLimit) << R.Diagnostic;
+  EXPECT_TRUE(R.StandardOutput.empty());
+  EXPECT_TRUE(R.StandardError.empty());
+  EXPECT_FALSE(R.ReturnValue);
 }
 TEST_P(AndroidNative, IdentityImportsAndRawServicesAgreeWithoutChangingErrno) {
   auto R = run("identity_queries", {Buffer});

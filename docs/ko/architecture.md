@@ -560,6 +560,8 @@ CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프
 
 `os/windows/driver/`는 드라이버 이미지 로드, 실행 세션, 시나리오, 보고서와 실행 정책을 담당합니다. `os/windows/kernel/`은 WDM/KMDF, 장치 수명 주기, 전원 정책, 메모리와 스케줄링을 포함한 커널 API 및 객체 모델을 담당하며 `KernelModelPowerPolicy.cpp`는 여기에 속합니다. `os/windows/process/`는 사용자 프로세스 시작과 서비스를, `os/windows/exception/`은 공통 예외 검색과 언와인딩을 담당합니다. 드라이버와 커널 소스는 계속 `NeverDEmulation`을 구성하며 기존 호출과 공유 형식은 아직 독립된 라이브러리 경계로 분리되지 않았습니다. 각 디렉터리의 `CMakeLists.txt`가 소스 목록을 관리하고 공개 헤더의 호환성을 유지합니다.
 
+`os/linux/process/`와 `os/darwin/process/`는 이미지 로딩, 초기 스택과 실행 연속 처리를 담당합니다. `os/linux/kernel/`과 `os/darwin/kernel/`은 시스템 호출 ABI, 서비스와 메모리 정책을 담당하며 `NeverDEmulationLinuxKernel`과 `NeverDEmulationDarwinKernel`로 빌드되어 코어 메모리/CPU 경계와 LLVM Support에만 의존합니다. `MemoryLayout`은 주소 정책만 담으며 실행 이미지나 시작 ABI를 포함하지 않습니다. Android는 Linux 커널 모델에 직접 의존하고 macOS와 iOS는 별도 플랫폼 프로필을 유지합니다. 의존 방향은 프로세스/플랫폼에서 커널 서비스로 향합니다. 이 디렉터리가 Linux/Darwin 커널 이미지나 드라이버 로딩 지원을 의미하지는 않습니다. 공통 OS 어휘는 OS 계층의 `.def` 파일에 유지됩니다.
+
 | 구성 요소 | 책임 |
 |---|---|
 | `NeverDEmulationCore` | 메모리, fault, 레지스터, 공통 실행 루프 |
@@ -568,7 +570,6 @@ CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프
 | `NeverDEmulationCPU` | CPU 구성과 백엔드 조합 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 정수 ABI, CPU 세션, 워크로드 예산 |
 | `NeverDEmulationImage` | 로더 세그먼트 매핑 계획 |
-| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 시작, Linux 서비스 정책, 프로세스 보고서 |
 | `NeverDEmulation` | Windows 모델 및 드라이버 수명 주기 |
 
 macOS의 네이티브 전송 [HVF](macos-hvf.md)는 `NeverDEmulationNative`가 담당합니다. Apple Silicon은 ARM64, Intel은 x86-64를 사용합니다. 호스트 ISA는 전송을 선택하지만 게스트 OS를 결정하지 않습니다. [Darwin 프로필](darwin-emulation.md)은 macOS, iOS 기기 및 iOS Simulator의 시작과 서비스를 별도로 정의합니다. 아직 남은 Linux ARM64 KVM 및 Windows ARM64 WHP 검증은 이미 확보한 macOS ARM64 HVF 증거와 구분합니다. 가용성과 전체 검증 상태는 HVF 가이드에서 명시합니다.
@@ -1048,3 +1049,7 @@ Swift 메타데이터 바인딩은 두 개 또는 세 개의 기호 명목 타�
 `SymSimplifyPass`는 하나의 SSA 값에 상수를 더하거나 부호를 반전한 비교 및 부호 비트 AND/OR에서 정확한 모듈러 참값 집합을 유도합니다. 정확한 구간 교집합과 합집합만 재작성을 허용하며, 불연속 집합이나 poison을 만드는 주석은 근사하지 않습니다. 원래 값의 의존성과 독립적인 읽기/freeze의 구별을 유지하고, 합류점에 숨은 undef/poison은 재작성을 막습니다. 상수 결과로 poison 의존성을 지우지 않습니다. 공유 사용을 고려하여 실제로 제거되는 명령 수가 엄격하게 감소해야 합니다. `MaxPredicateWork`(기본 262144, 0은 비활성화)는 비트 폭에 따른 대수 연산, 순회, 사용 횟수 계산과 변경을 제한하며, 512비트 초과 또는 재귀 깊이 128 초과에서는 보수적으로 멈춥니다. 예산은 변환 캐시 식별에 포함되고 파이프라인 스키마 6이 갱신된 절차를 식별합니다. 경로 실행 가능성, 루프 불변식, 비공개 메모리나 일반 ABI를 증명하지 않습니다.
 
 LLVMC는 PHI 간선의 동시 갱신 의미를 유지하면서 불필요한 스냅샷 지역 변수를 줄입니다. 우변 평가 순서를 유지하고, 뒤에 출력되는 식이 변수의 이전 값을 읽을 때만 대상 쓰기를 지연합니다. 인라이닝과 경로별 치환 뒤에 식별자 토큰을 확인하며, 인식할 수 없는 대상 표기는 보수적으로 임시 변수를 유지합니다. 순환 의존성과 값 교환에는 필요한 스냅샷을 남기고 독립 갱신은 직접 대입합니다. 이는 C 출력만 바꾸며 LLVM 의미나 ABI 추론은 바꾸지 않습니다.
+
+공유 `SourceABI`는 Swift 오류 인자의 논리적 오류 슬롯 포인터와 물리적 입출력 값 전달 위치를 구분합니다. Swift context 인자 다음에 ARM64에서는 x21, x86-64에서는 R12를 사용합니다. 첫 호출 투영은 현재의 완전한 ABI와 일치하는 `swift_willThrow`의 정확한 강한 일반 불변 GOT 가져오기만 허용합니다. Swift 6.1.2 컴파일러와 런타임 근거는 오류 슬롯이 변하지 않음을 입증하며, 원자적 핸들러 조회와 선택적 콜백은 관찰 가능한 효과로 유지합니다. HighC는 별도 보조 함수 이름과 실제 `swift_error_result` 특성으로 논리 슬롯을 구성하여 런타임 심볼과의 이름 충돌을 방지합니다. 현재 바인딩과 게시 검증은 부분 전달 값, 오래된 선언, 미지원 오류 출력 및 임의의 진입점 투영을 거부하며, 꼬리 변환은 소스 평가를 한 번으로 유지합니다. 일반 frame, noescape 또는 순수 함수 권한은 부여하지 않습니다. 네 macOS/Mac Catalyst 대상의 컴파일러 탐침과 수정하지 않은 생성 C 및 전체 ARM64 호출의 O0/O2 비교는 실제 Swift 런타임, 없거나 변경되는 핸들러, 오류 동일성 및 스택 보호를 검증합니다.
+
+공유 프레임 분석은 Swift 오류 운반자를 호출의 출력으로 취급합니다. 해당 레지스터가 플랫폼의 callee-save 집합에 속해도 일반 호출은 진입 값의 동일성을 무효화하며, 완전한 전용 저장과 복원은 계속 유효합니다. 값이 바뀌지 않는 예외는 현재 `swift_willThrow` 가져오기, 불변 veneer 및 완전한 ABI를 확인하는 단일 소유자만 인증하고 pipeline과 loader가 공유합니다. 일반 호출, 꼬리 호출, 합류 및 루프 역방향 간선에 같은 규칙을 적용합니다. 논리 오류 슬롯 포인터는 물리 오류 값을 통한 메모리 차용을 허가하지 않습니다. 일반 throwing 진입과 결과 게시에는 독립적인 지원이 필요하며, 이 상태 증명이나 출력 매개변수 선언으로 대신할 수 없습니다.

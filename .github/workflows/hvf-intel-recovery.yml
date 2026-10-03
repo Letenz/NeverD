@@ -1,0 +1,115 @@
+name: Intel HVF recovery diagnosis
+run-name: Intel HVF recovery / ${{ inputs.intel-image }} / ${{ inputs.repetitions }} repetitions / ${{ inputs.source-ref }}
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: Exact forty-character source commit to reproduce
+        default: bd284894c60427cf4e6a60e661a1fa0df8a070f5
+        required: true
+        type: string
+      intel-image:
+        description: Hosted native Intel image
+        default: macos-26-intel
+        type: choice
+        options: [macos-15-intel, macos-26-intel]
+      repetitions:
+        description: Original single-process recovery repetitions
+        default: '1000'
+        type: choice
+        options: ['100', '1000']
+permissions:
+  contents: read
+jobs:
+  native-recovery:
+    runs-on: ${{ inputs.intel-image == 'macos-26-intel' && 'macos-26-intel' || 'macos-15-intel' }}
+    timeout-minutes: 60
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - name: Check out diagnostic controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: diagnostics
+          persist-credentials: false
+      - name: Check out exact tested source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source-ref }}
+          path: source
+          persist-credentials: false
+      - name: Check out unchanged official artifact uploader
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: actions/upload-artifact
+          ref: 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          path: artifact-uploader
+          persist-credentials: false
+      - name: Require exact source and native Intel VM and vCPU
+        working-directory: source
+        env:
+          EXPECTED_SOURCE: ${{ inputs.source-ref }}
+          HVF_INTEL_IMAGE: ${{ inputs.intel-image }}
+        run: |
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          case "$HVF_INTEL_IMAGE" in
+            macos-15-intel|macos-26-intel) ;;
+            *) echo "Unsupported hosted Intel image" >&2; exit 1 ;;
+          esac
+          test "$(uname -m)" = x86_64
+          sysctl kern.hv_support
+          mkdir build-hvf-probe
+          clang scripts/probe_hvf_host.c -framework Hypervisor -o build-hvf-probe/probe
+          codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
+          python3 -c 'import subprocess; subprocess.run(["build-hvf-probe/probe"], check=True, timeout=10)'
+      - name: Check diagnostic contracts before compilation
+        working-directory: diagnostics
+        run: |
+          python3 -m unittest scripts.tests.test_diagnose_hvf_methods scripts.tests.test_diagnose_hvf_recovery -q
+          node --test .github/actions/hvf-intel-diagnostic/*.test.cjs .github/actions/hvf-intel-recovery/*.test.cjs
+      - name: Install build tools
+        run: brew install ninja
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+        with:
+          version: v0.16.0
+      - name: Prepare pinned native dependencies
+        working-directory: source
+        run: git submodule update --init --depth 1 third_party/capstone third_party/llvm-project
+      - name: Configure native Release transport
+        working-directory: source
+        run: |
+          cmake -S . -B build-hvf -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DNEVERD_LLVM_PREBUILT=OFF \
+            -DNEVERD_BUILD_SHARED=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+            -DNEVERD_ENABLE_CPU_EMULATION=ON \
+            -DNEVERD_ENABLE_DRIVER_EMULATION=OFF \
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+            -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
+            -DNEVERD_EMULATION_BACKEND_HVF=ON
+      - name: Build only the original recovery owner
+        working-directory: source
+        timeout-minutes: 30
+        run: cmake --build build-hvf --config Release --target NeverDHvfTests --parallel 4
+      - name: Preserve live recovery progress without pausing native iterations
+        uses: ./diagnostics/.github/actions/hvf-intel-recovery
+        timeout-minutes: 20
+        with:
+          source: source
+          build: source/build-hvf
+          evidence: source/build-hvf/recovery-diagnostic
+          upload-action: artifact-uploader
+          repetitions: ${{ inputs.repetitions }}
+      - name: Preserve final or incomplete evidence while the host remains reachable
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-intel-recovery-attempt-${{ github.run_attempt }}-final
+          path: |
+            source/build-hvf/recovery-diagnostic/
+            source/build-hvf/CMakeCache.txt
+          if-no-files-found: warn

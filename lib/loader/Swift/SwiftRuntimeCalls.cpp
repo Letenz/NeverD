@@ -1,12 +1,16 @@
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 
 #include "../MachO/DarwinRuntimeImport.h"
+#include "SwiftErrorRuntime.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/BinaryFormat/MachO.h"
 
 #include <algorithm>
 #include <iterator>
@@ -784,6 +788,22 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   Result.CallKind = SourceCallTypeHint::Kind::SwiftRuntimeCall;
   Result.TargetAddress = ImportSlot;
   Result.TargetName = Name.str();
+  if (Name == "swift_willThrow") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    const auto *Section = Image.getSectionFor(ImportSlot);
+    const auto Expected = swiftWillThrowSourceSignature(Image.Arch);
+    if (!Expected || !Section ||
+        (Section->Type & llvm::MachO::SECTION_TYPE) !=
+            llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS ||
+        !isImmutableImageImportSlot(Image, ImportSlot) ||
+        Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module != "/usr/lib/swift/libswiftCore.dylib" ||
+        Bind->second.Name != "_swift_willThrow" || Bind->second.Addend ||
+        Bind->second.WeakImport)
+      return std::nullopt;
+    Result.Signature = *Expected;
+    return Result;
+  }
   if (declaredMetadataABI(Image, ImportSlot, Result))
     return Result;
   auto &Signature = Result.Signature;
@@ -944,6 +964,20 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (!Assigned)
     return std::nullopt;
   return Result;
+}
+
+bool swiftRuntimePreservesErrorResult(const BinaryImage &Image, va_t Target,
+                                      const SourceCallTypeHint &Hint) {
+  if (!hasSwiftErrorResult(Hint.Signature) ||
+      !isSwiftWillThrowSourceCall(Hint, Image.Arch))
+    return false;
+  const auto Slot = darwinImportVeneerSlot(Image, Target);
+  if (!Slot || *Slot != Hint.TargetAddress)
+    return false;
+  const auto Current = swiftRuntimeSourceCallHint(Image, Hint.TargetAddress);
+  return Current && isSwiftWillThrowSourceCall(*Current, Image.Arch) &&
+         Current->TargetAddress == Hint.TargetAddress &&
+         equalSourceABIs(Current->Signature, Hint.Signature);
 }
 
 } // namespace neverd

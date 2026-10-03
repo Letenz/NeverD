@@ -47,6 +47,16 @@ struct SourceABIParameter {
 /// checks the representation, not its validity or any storage/effect proof.
 bool hasIndirectSourceParameters(const SourceFunctionTypeHint &Hint);
 
+/// Whether a signature has Swift's logical error-slot parameter. Consumers
+/// must model its in/out register or independently prove an unchanged output.
+bool hasSwiftErrorResult(const SourceFunctionTypeHint &Hint);
+
+/// The validated physical in/out value of a logical Swift error-slot
+/// parameter. The location is an output even though the platform ordinarily
+/// preserves that register. An absent or invalid slot returns no result.
+std::optional<SourceABIParameter>
+sourceABIErrorResult(const SourceFunctionTypeHint &Hint);
+
 /// Physical parameters of a validated signature, in source member order.
 /// An indirect record contributes one pointer-to-record carrier; the logical
 /// record stays in Hint.Parameters and is not a source pointer parameter.
@@ -78,8 +88,10 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
 /// arguments and a scalar or one/two-word result. Arguments use the declared
 /// narrow width and may continue on the stack after the integer register bank.
 /// One declared swift_indirect_result and one swift_context pointer may use
-/// their dedicated registers without consuming that bank. Error results,
-/// asynchronous contexts and floating values are unsupported.
+/// their dedicated registers without consuming that bank. A final error-slot
+/// pointer after swift_context transports its opaque pointee through x21/R12;
+/// the descriptor alone does not authorize call or entry source projection.
+/// Asynchronous contexts remain unsupported.
 bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic);
 

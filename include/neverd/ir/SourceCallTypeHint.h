@@ -560,6 +560,11 @@ struct SourceCallTypeHint {
   /// receipt, even onto mutually exclusive paths. Publication still repeats
   /// each owner's current proof; this predicate grants no source permission.
   bool requiresUniqueSourceOccurrence() const {
+    // The first error-register projection preserves one runtime notification.
+    // Keep it shared even before the emitter materializes its logical slot.
+    for (const auto &P : Signature.Parameters)
+      if (P.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult)
+        return true;
     return BooleanResult || FunctionParameterCall || ImmutableNativeCall ||
            SwiftWitnessFrame || SwiftConsumedInput || SwiftOpaqueValue ||
            Virtual || NativeSwiftReceiver || ByValueCopy;

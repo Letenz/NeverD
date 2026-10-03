@@ -3,7 +3,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {spawn, spawnSync, execFile} = require('node:child_process');
-const {captureActive, observeExecution, preserveActive, validateSampling} = require('./active-sample.cjs');
+const {captureActive, observeExecution, preserveActive, waitForNativeSample,
+  validateSampling} = require('./active-sample.cjs');
 const UPLOAD_REVISION = '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a';
 
 function testEnvironment(environment) {
@@ -106,7 +107,7 @@ async function main() {
     active.add(operation);
     try {
       return await (observer ? observeExecution(operation,
-        isRunning => observer(operation.child.pid, isRunning)) : operation.completion);
+        isRunning => observer(operation.child.pid, isRunning), 0) : operation.completion);
     } finally {
       active.delete(operation);
       if (statusPath) fs.writeFileSync(statusPath, JSON.stringify(operation.result, null, 2) + '\n', {flag: 'wx'});
@@ -144,6 +145,7 @@ async function main() {
   fs.writeFileSync(path.join(evidence, 'controller-options.json'), JSON.stringify({
     kind: 'partial-hvf-diagnostic-options', complete_inventory: false,
     sample_active_child: sampling, sample_after_ms: sampling ? 5000 : null,
+    sample_clock: sampling ? 'observed-native-registration' : null,
   }, null, 2) + '\n', {flag: 'wx'});
   const prefix = `hvf-intel-diagnostic-shard-${shard.split('/')[0]}-attempt-${attempt}`;
   const upload = async (phase, index) => {
@@ -173,9 +175,11 @@ async function main() {
     if (interrupted) throw new Error('diagnostic interrupted before guest execution');
     const directory = path.join(evidence, `method-${String(index).padStart(4, '0')}`);
     const observer = sampling ? async (pythonPid, isRunning) => {
+      const registration = await waitForNativeSample(directory, isRunning, samplingAbort.signal);
+      if (!registration) return;
       const marker = JSON.parse(fs.readFileSync(path.join(directory, 'prepared.json'), 'utf8'));
       await preserveActive(() => captureActive({directory, pythonPid, binary: marker.method[0].binary,
-        environment, signal: samplingAbort.signal, isRunning, captureHostState}),
+        environment, signal: samplingAbort.signal, isRunning, captureHostState, registration}),
       () => upload('active', index), samplingAbort.signal);
     } : undefined;
     return command('python3', [helper, 'execute', ...common,
@@ -184,7 +188,7 @@ async function main() {
   });
 }
 
-module.exports = {runSequence, startCommand, testEnvironment, captureHostState};
+module.exports = {runSequence, startCommand, testEnvironment, captureHostState, UPLOAD_REVISION};
 if (require.main === module) {
   main().catch(error => {
     console.error(error.message);

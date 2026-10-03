@@ -1269,6 +1269,8 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 
 `os/windows/driver/` owns driver image loading, execution sessions, scenarios, reports and execution policy. `os/windows/kernel/` owns kernel API and object models, including WDM/KMDF, device lifecycle, power policy, memory and scheduling; `KernelModelPowerPolicy.cpp` belongs there. `os/windows/process/` owns user-process startup and services, while `os/windows/exception/` owns shared exception search and unwind. Driver and kernel sources still form `NeverDEmulation`: their existing calls and shared types are not independent library boundaries. Each directory maintains its own `CMakeLists.txt` source list, and public headers remain compatible.
 
+`os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
@@ -1279,10 +1281,10 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationABI` | Explicit scalar calling conventions, argument locations and call frames |
 | `NeverDEmulationRuntime` | Typed CPU sessions and workload budgets shared across continuations and CPUs |
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
-| `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
+| `NeverDEmulationLinuxKernel` / `NeverDEmulationDarwinKernel` | Shared system-call ABI, services and memory policy |
+| `NeverDEmulationLinux` / `NeverDEmulationDarwin` | ELF/Mach-O process loading, initial stacks and continuations |
 | `NeverDEmulationAndroid` | Android API 28 AArch64 native linking, TLS and Bionic call models |
 | `NeverDEmulationWindowsProcess` | Windows PE64 console process loading, PEB/TEB, TLS and named user APIs |
-| `NeverDEmulationDarwin` | Shared Darwin Mach-O startup, BSD services and memory; distinct macOS/iOS/simulator profiles |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
@@ -1310,9 +1312,11 @@ lib/emulation/
   os/windows/kernel/     Kernel APIs, WDM/KMDF and device/power/memory models
   os/windows/exception/  Shared Windows x64 exception search and unwind
   os/windows/process/    Windows PE64 user process startup and user API models
-  os/linux/              Linux ELF process startup and system-call ABI/services
+  os/linux/process/      Linux ELF process startup and continuations
+  os/linux/kernel/       Linux system-call ABI, services and memory policy
   os/linux/android/      Android native library linking, TLS and Bionic models
-  os/darwin/             Shared Darwin startup, service ABI and memory policy
+  os/darwin/process/     Shared Darwin Mach-O startup and continuations
+  os/darwin/kernel/      Darwin system-call ABI, services and memory policy
   os/darwin/macos/       macOS platform contract
   os/darwin/ios/         iOS device and simulator platform contracts
 ```
@@ -1405,7 +1409,7 @@ and AArch64 freestanding executables with stack/auxv initialization, typed
 system-call continuations and bounded byte output. It supports static TLS and
 self-relocating static PIE, while rejecting an interpreter, external dynamic
 dependencies, signals and thread creation. Those OS semantics remain in
-`os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
+`os/linux/process/` and `os/linux/kernel/`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 
 Android native function workloads use `android-aarch64-api28-v1`; see
@@ -2933,3 +2937,7 @@ The shared frame analysis distinguishes a live opaque value from completely init
 `SymSimplifyPass` derives exact modular truth sets for comparisons and sign-bit AND/OR over constant-shifted or negated forms of one SSA value. Only exact interval intersections and unions permit a rewrite; disconnected sets and poison-generating annotations are not approximated. The original value remains a dependency, independent reads/freezes stay distinct, and hidden undef/poison across joins prevents rewriting. Constant results cannot erase poison dependence. Every replacement must strictly reduce the instructions actually made dead, accounting for shared uses. `MaxPredicateWork` (default 262144, zero disables) bounds width-weighted algebra, traversal, use counting and mutation; integer widths above 512 and recursion beyond 128 stop conservatively. The budget participates in translation cache identity; pipeline schema 6 identifies the updated recipe. This phase does not establish path feasibility, loop invariants, private memory or an ordinary ABI.
 
 LLVMC preserves simultaneous PHI edge updates while avoiding unnecessary snapshot locals. It keeps right-hand-side evaluation order and delays a destination write only when a later rendered expression reads the old variable. Identifier tokens are checked after inlining and path-local substitution; unsupported destination spelling conservatively retains a temporary. Cycles and exchanges keep the required snapshots, while independent updates use direct assignments. This changes C rendering only, not LLVM semantics or ABI inference.
+
+Swift error parameters retain their logical error-slot pointer and physical in/out value carrier in the shared `SourceABI`: x21 on ARM64 and R12 on x86-64, after the Swift context parameter. The first call projection accepts only the exact strong, ordinary immutable GOT import of `swift_willThrow` with the complete current ABI. Swift 6.1.2 compiler and runtime evidence proves that this operation leaves the error slot unchanged, while its atomic handler lookup and optional callback remain observable effects. HighC uses a distinct helper name and the real `swift_error_result` attribute to materialize the logical slot without aliasing the runtime symbol. Current binding and publication reject partial carriers, stale declarations, unsupported error outputs and arbitrary entry projections; tail rewrites retain one source occurrence. This grants no generic frame, noescape or purity permission. Compiler probes cover four macOS/Mac Catalyst targets; unchanged generated C and the complete ARM64 call fixture are compared at O0/O2 against the real Swift runtime, including nil and changing handlers, error identity and stack guards.
+
+The shared frame analysis treats a Swift error carrier as a call output, even when its register belongs to the platform's callee-save bank. General calls invalidate that incoming identity; complete private saves and restores remain valid. The unchanged-result exception comes only from the current `swift_willThrow` import, immutable veneer and full ABI owner, shared by pipeline and loader consumers. Ordinary calls, tails, joins and loop backedges follow the same rule. A logical error-slot pointer does not authorize borrowing memory through the physical error value. General throwing entry and result publication still require independent support; neither this state proof nor an out-parameter declaration supplies it.

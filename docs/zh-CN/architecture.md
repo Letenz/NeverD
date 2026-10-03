@@ -598,6 +598,8 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 
 `os/windows/driver/` 负责驱动映像加载、执行会话、场景、报告及执行策略；`os/windows/kernel/` 负责内核 API 与对象模型，包括 WDM/KMDF、设备生命周期、电源策略、内存和调度，`KernelModelPowerPolicy.cpp` 归属此处。`os/windows/process/` 负责用户进程启动与服务，`os/windows/exception/` 负责共享的异常搜索与展开。驱动与内核源码仍组成 `NeverDEmulation`，现有调用和共享类型尚未形成独立库边界。各目录用自己的 `CMakeLists.txt` 维护源码清单，公共头文件保持兼容。
 
+`os/linux/process/` 和 `os/darwin/process/` 负责映像装载、初始栈及执行续接。`os/linux/kernel/` 和 `os/darwin/kernel/` 负责系统调用 ABI、服务及内存策略，分别构建为 `NeverDEmulationLinuxKernel` 和 `NeverDEmulationDarwinKernel`，仅依赖核心内存/CPU 边界与 LLVM Support。其 `MemoryLayout` 契约只含地址策略，不包含可执行映像或启动 ABI。Android 直接依赖 Linux 内核模型；macOS 和 iOS 保留独立平台配置。依赖方向从进程/平台指向内核服务。这些内核目录不代表已支持 Linux/Darwin 内核映像或驱动加载。共享 OS 词汇保留在 OS 层 `.def` 文件中。
+
 | 组件 | 职责 |
 |---|---|
 | `NeverDEmulationCore` | 内存、故障、寄存器与共享执行循环 |
@@ -606,7 +608,6 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 | `NeverDEmulationCPU` | CPU 配置及后端组合 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整数 ABI、CPU 会话与工作负载预算 |
 | `NeverDEmulationImage` | 加载器分段映射计划 |
-| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 启动、Linux 服务策略与进程报告 |
 | `NeverDEmulation` | Windows 模型与驱动生命周期 |
 
 macOS 的原生传输 [HVF](macos-hvf.md) 归 `NeverDEmulationNative` 所有：Apple Silicon 使用 ARM64，Intel 使用 x86-64。宿主 ISA 决定该传输的选择，不决定来宾 OS；[Darwin profile](darwin-emulation.md) 独立定义 macOS、iOS 设备和 iOS Simulator 的启动与服务。仍待完成的 Linux ARM64 KVM、Windows ARM64 WHP 验证不能与已有的 macOS ARM64 HVF 证据混为一谈。原生可用性和完整验收状态以 HVF 指南为准。
@@ -1059,3 +1060,7 @@ Swift 元数据绑定可从两个或三个符号名义类型描述符验证嵌�
 `SymSimplifyPass` 从同一 SSA 值的常量平移或取负形式，推导比较及符号位 AND/OR 的精确模整数真值集合。只允许精确区间交集、并集授权重写；不对不连续集合或产生 poison 的注解作近似。保留原值依赖，独立读取和 freeze 保持不同身份；合流点隐藏的 undef/poison 会阻止重写，不用常量结果抹除 poison 依赖。替换必须严格减少实际成为死代码的指令，并计入共享用途。`MaxPredicateWork`（默认 262144，零禁用）限制按位宽计费的代数、遍历、用途计数和修改；位宽超过 512 或递归超过 128 时保守停止。预算纳入翻译缓存身份，管线模式版本 6 标识更新的优化流程。这一阶段不证明路径可行性、循环不变量、内存私有性或普通 ABI。
 
 LLVMC 在保持 PHI 边上同时更新语义的同时，省去不必要的快照局部变量。右侧表达式保持原求值顺序；只有后面的已渲染表达式读取某个变量的旧值时，才延迟写入该目标。在内联和路径局部替换之后检查完整标识符；无法识别的目标拼写保守保留临时变量。循环依赖和交换保留必要快照，独立更新直接赋值。这只改变 C 渲染，不改变 LLVM 语义或 ABI 推断。
+
+共享 `SourceABI` 保留 Swift 错误参数的逻辑错误槽指针与物理输入/输出值载体：ARM64 使用 x21，x86-64 使用 R12，位于 Swift context 参数之后。首个调用投影仅接受 `swift_willThrow` 的精确强、普通不可变 GOT 导入及当前完整 ABI。Swift 6.1.2 编译器与运行时证据证明该操作不改变错误槽；原子处理器查询及可选回调仍是可观察作用。HighC 使用独立辅助函数名及真实 `swift_error_result` 属性构造逻辑槽，避免与运行时符号重名。当前绑定和发布拒绝部分载体、陈旧声明、未支持的错误输出及任意入口投影；尾部改写保留一次源码求值。不授予通用 frame、noescape 或纯函数权限。编译探针覆盖四个 macOS/Mac Catalyst 目标；原样生成 C 与完整 ARM64 调用夹具在 O0/O2 对照真实 Swift 运行时，覆盖空或变化的处理器、错误身份及栈保护。
+
+共享帧分析把 Swift 错误载体视为调用输出，即使该寄存器属于平台的 callee-save 集合。一般调用会使其入口身份失效；完整私有保存与恢复仍有效。只有当前 `swift_willThrow` 导入、不可变跳板和完整 ABI 的统一所有者可签发错误值不变例外，pipeline 与 loader 消费者共用该认证。普通调用、尾调用、合流和循环回边遵守同一规则。逻辑错误槽指针不授权经物理错误值借用内存。一般 throwing 入口与结果发布仍需独立支持；状态证明或输出参数声明均不能替代它。

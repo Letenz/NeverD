@@ -74,8 +74,7 @@ def select_methods(document, runner, first, count, case_index):
     return selected
 
 
-def prepare(source, build, evidence, shard, first, count, case_index):
-    commit = source_identity(source)
+def build_configuration(source, build):
     cache = dict(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):[^=\r\n]*=(.*)$",
                            (build / "CMakeCache.txt").read_text(), re.M))
     expected = {"CMAKE_HOME_DIRECTORY": str(source), "CMAKE_BUILD_TYPE": "Release",
@@ -83,6 +82,12 @@ def prepare(source, build, evidence, shard, first, count, case_index):
                 "NEVERD_EMULATION_BACKEND_UNICORN": "OFF"}
     if any(cache.get(key) != value for key, value in expected.items()):
         raise ValueError("diagnostic build is not the selected source's native Release configuration")
+    return cache
+
+
+def prepare(source, build, evidence, shard, first, count, case_index):
+    commit = source_identity(source)
+    cache = build_configuration(source, build)
     ci, runner = source_modules(source)
     owners, required = ci.hvf_inventory(source, platform.machine())
     labels = "^(" + "|".join(re.escape(owner) for owner in owners) + ")$"

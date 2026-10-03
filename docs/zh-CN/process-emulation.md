@@ -58,6 +58,8 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Linux 配置语义
 
+`writev` 在 x64/ARM64 及 Android Bionic 中共用上述输出对象。它先导入最多 1024 个来宾 `iovec`，负长度返回 `EINVAL`，校验用户地址范围，再应用 Linux 按页对齐的传输上限。无效描述符先于向量访问返回 `EBADF`；不可读的描述符表返回 `EFAULT`，不产生输出。后续数据页故障保留已复制的前缀。输出预算在发布前覆盖整个向量及两个输出流。`write` 和 `writev` 使用描述符的低 32 位；向量数量也遵循 Linux 的 32 位导入规则。仅 Bionic 将原始负错误码转换成 `-1` 和 `errno`。`LinuxOutputNativeTests` 在本机 Linux 上以普通文件重定向运行十个原创用例；模拟的 x64/ARM64 用例还验证预算。参见 [Linux 向量导入契约](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)。
+
 OS 策略复用现有 ELF 加载器解析出的 program headers。它验证 ABI 标签、segment 对齐、已映射的 program-header 表及用户地址边界。通用映射计划会在分配前检查范围、权限、重叠和预算，只发布完全准备好的私有地址空间。保留文件页前缀／尾部字节，将 BSS 清零，遵循 segment 权限并为栈保留 guard gaps。页重叠布局和矛盾 header 会被拒绝，不会猜测。
 
 静态 PIE 使用不低于 `0x40000000` 的确定性 load bias，并按较大的 `PT_LOAD` 对齐要求递增。所有映射段、入口 PC、`AT_PHDR`/`AT_ENTRY` 共用该 bias；原始 program header 值不变，没有 interpreter 时 `AT_BASE` 为零。映射来源明确为原始文件字节，不使用分析阶段的 pointer fixup；来宾启动代码必须自行完成 relocation 和初始化。Loader 从有界的原始文件记录中解码 `PT_DYNAMIC`，不依赖 section header。若存在，该表必须可读、正确终止且最多 4096 项。拒绝 `PT_INTERP` 和外部 dependency/filter/audit 标签；不会提供 dynamic linker、符号解析器或 constructor runner。
@@ -70,7 +72,7 @@ OS 策略复用现有 ELF 加载器解析出的 program headers。它验证 ABI 
 
 x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `ARCH_GET_GS`。Set 可接受尚未映射的 user-range 基址，后续解引用仍检查权限。kernel-range 基址返回来宾 `EPERM`；无效 Get 目标返回来宾 `EFAULT`，不会触发 CPU fault。其他操作明确失败。ARM64 启动用 `MSR` 安装 `TPIDR_EL0`；`MRS`、FS/GS 内存访问和上下文恢复会跨执行量与后端入口保留 thread pointer。这本身不实现线程调度器。
 
-文件描述符 1 和 2 是虚拟字节 sink。`write` 验证可读 user pages；后续页不可读时返回已读前缀，没有任何字节可读时返回来宾 `EFAULT`。无效描述符返回 `EBADF`；对有效描述符写入零字节不会访问指针。这不模拟 Linux pipe 原子性或文件对象。若输出超过限制，会在发布写入前停止。
+文件描述符 1 和 2 是虚拟字节 sink。`write` 验证可读 user pages；后续页不可读时返回已读前缀，没有任何字节可读时返回来宾 `EFAULT`。无效描述符返回 `EBADF`；零字节写入仍检查用户地址范围，但不要求页面已映射，也不读取数据。这不模拟 Linux pipe 原子性或文件对象。若输出超过限制，会在发布写入前停止。
 
 匿名内存服务与映像、栈共用进程地址空间和物理内存预算。`mmap` 仅接受 `MAP_PRIVATE | MAP_ANONYMOUS`，权限为普通 `PROT_NONE`、`PROT_READ`、`PROT_READ | PROT_WRITE`、`PROT_READ | PROT_EXEC` 或可读的 RWX。空闲且页对齐的提示地址会被采用；否则从 `0x100000000` 起、再从最低用户地址起查找空隙，并保留栈保护区。这是确定性布局，不模拟 Linux ASLR。新页独立分配并清零；部分解除映射能回收未被固定的页。CPU 投影或仍持有的 backing view 可以将已退役分配的生命周期延长到自身释放时。
 

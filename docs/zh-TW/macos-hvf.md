@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3d2e1d7ba9709cac62c969fd06f4cfe7d5312c872f9339afb0161bc9643c4e33 -->
+<!-- i18n-source: 13c30cb15cacba497163d2d7027684dbbfed986b61111754b7f61993bcbaccbe -->
 
 [← 文件索引](README.md)
 
@@ -103,4 +103,12 @@ CPU 執行前，`scripts/prepare_hvf_batches.py` 保存完整清單、各片所�
 
 選擇 `hosted-intel` 時，完整工作流程支援 `intel-image=macos-15-intel`（預設）或 `macos-26-intel`，兩者均列於[官方 runner 映像清單](https://github.com/actions/runner-images)。可保持相同的 `source-ref`，明確比較宿主環境；映像也會改變系統、SDK 與工具鏈。VM/vCPU、原生傳輸、CR8、完整 CPU 與 Darwin 的要求不變。選擇映像本身不能證明穩定性或執行階段修正。
 
-`sample-active-child=true` 可在方法執行五秒後保存一次封存的執行中快照：對已核驗身分的原生子程序取樣一秒呼叫堆疊、擷取最多 1 MiB 的目前日誌尾端，並記錄主機狀態。預設值為 `false`。為遵守 artifact 數量限制，啟用取樣的每個作業最多選取 166 個方法；取樣命令限時五秒，報告上限 1 MiB。身分核驗與蒐集失敗都會記錄。執行中快照從獨立的不可變目錄上傳；上傳失敗會取消原生子程序並使 action 失敗。取樣會改變排程，因此標記為帶取樣的部分證據，不重設原始方法計時，也不能取代完整驗收。
+`sample-active-child=true` 可在觀測到原生子程序登記五秒後保存一次封存的執行中快照：對已核驗身分的原生子程序取樣一秒呼叫堆疊、擷取最多 1 MiB 的目前日誌尾端，並記錄主機狀態。預設值為 `false`。為遵守 artifact 數量限制，啟用取樣的每個作業最多選取 166 個方法；取樣命令限時二十秒，報告上限 1 MiB。身分核驗與蒐集失敗都會記錄，包括命令回傳 0 卻沒有呼叫堆疊報告的情況。執行中快照從獨立的不可變目錄上傳；上傳失敗會取消原生子程序並使 action 失敗。取樣會改變排程，因此標記為帶取樣的部分證據，不重設原始方法計時，也不能取代完整驗收。
+
+完整工作流也支援 `recovery-repetitions=1000`，用於集中調查中斷與恢復問題；預設仍為 `100`。選擇 1000 次時，重複測試步驟的總預算從三分鐘變為十分鐘。每次原生測試保留原始期限、斷言與遇錯停止行為，執行標題會標明加長的重複設定。這些重複測試不能取代完整 CPU 或 Darwin 驗收。
+
+獨立的 [Intel 復原診斷工作流程](../../.github/workflows/hvf-intel-recovery.yml) 只建置 `NeverDHvfTests`，在同一處理程序中使用原始 `HvfExecutor.Native*` 篩選器，選擇 `repetitions=100` 或 `1000`。它要求精確的 `source-ref`、原生 Intel VM/vCPU 探測、Release、啟用 HVF 並停用 Unicorn。控制器、受測原始碼與官方 artifact 上傳器分別簽出。
+
+Action 在執行前上傳計畫。執行期間保存初始處理程序標記，每增加至少 25 個完整回合保存進度；若仍有尚未保存的新日誌且進度停滯，額外保存至多一次現場。上傳期間合併進度，進度 artifact 最多 42 份，每份日誌副本最多 1 MiB，只上傳封存目錄。上傳不會暫停各回合或重設計時器，但仍影響主機排程，因此屬於附帶觀測的部分證據。
+
+成功要求從第 1 回合到指定次數連續，每回合準確配對原生測試的 RUN/OK/PASSED，沒有失敗或略過、結束碼為零且確認處理程序已回收。重複執行時遭覆寫的 XML 無法證明這些條件。原生執行總預算為三分鐘或十分鐘，控制器另外保留 30 秒清理，Action 上限為 20 分鐘。上傳失敗會取消執行，取消作業會回收原生處理程序群組與上傳器。主機仍可連線時上傳最終證據。不完整或截斷的快照不能滿足完整 CPU 或 Darwin 驗收。

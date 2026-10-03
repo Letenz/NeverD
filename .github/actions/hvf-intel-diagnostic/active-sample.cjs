@@ -2,6 +2,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {execFile} = require('node:child_process');
+const {setTimeout: delay} = require('node:timers/promises');
+const {performance} = require('node:perf_hooks');
 
 const LIMIT = 1024 * 1024;
 
@@ -41,12 +43,12 @@ function verifyIdentity(text, pid, pythonPid, binary) {
 }
 
 async function captureActive({directory, pythonPid, binary, environment, signal,
-  isRunning, captureHostState, collect = boundedCommand}) {
+  isRunning, captureHostState, registration, collect = boundedCommand}) {
   const destination = path.join(directory, 'active-sample');
   fs.mkdirSync(destination);
   const metadata = {kind: 'instrumented-partial-hvf-active-sample',
     complete_inventory: false, started_at: new Date().toISOString(),
-    python_pid: pythonPid, expected_binary: binary, errors: []};
+    python_pid: pythonPid, expected_binary: binary, registration, errors: []};
   const allowed = () => isRunning() && !signal.aborted;
   const save = (name, value) => fs.writeFileSync(path.join(destination, name),
     JSON.stringify(value, null, 2) + '\n', {flag: 'wx'});
@@ -72,11 +74,16 @@ async function captureActive({directory, pythonPid, binary, environment, signal,
     metadata.output = readTail(path.join(directory, 'execution/methods/0000/output.log'),
       path.join(destination, 'output-tail.log'));
     // /dev/stdout avoids sample's otherwise unbounded report file in /tmp.
-    // execFile caps the actual report stream and kills collection after 5s.
+    // Native LLVM-linked test binaries exceeded the initial 5s collection
+    // budget on Intel. Bound symbol collection too, without resetting the
+    // independent native method or controller deadlines.
     const sample = await collect('/usr/bin/sample', [String(metadata.native_pid),
-      '1', '10', '-mayDie', '-file', '/dev/stdout'], environment, signal, 5000);
+      '1', '10', '-mayDie', '-file', '/dev/stdout'], environment, signal, 20000);
     save('sample.json', sample);
     if (sample.status !== 0) metadata.errors.push('stack sampling failed; inspect sample.json');
+    else if (!sample.stdout.includes('Call graph:')) {
+      metadata.errors.push('sample returned no call graph; inspect sample.json');
+    }
     if (allowed()) save('host.json', await captureHostState(destination, environment, signal));
   } catch (error) {
     metadata.errors.push(error.message);
@@ -86,6 +93,27 @@ async function captureActive({directory, pythonPid, binary, environment, signal,
   metadata.cancelled = signal.aborted;
   save('metadata.json', metadata);
   return destination;
+}
+
+async function waitForNativeSample(directory, isRunning, signal, delayMs = 5000, pollMs = 50) {
+  const allowed = () => isRunning() && !signal.aborted;
+  // Source validation can take several seconds before Python starts a native
+  // child. Do not spend the sole sample during that pre-execution work.
+  while (allowed()) {
+    try {
+      if (fs.lstatSync(path.join(directory, 'children.json')).size > 0) break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') return {error: error.message};
+    }
+    await delay(pollMs, undefined, {signal});
+  }
+  if (!allowed()) return null;
+  const registration = {observed_at: new Date().toISOString(), delay_ms: delayMs};
+  const sampleAt = performance.now() + delayMs;
+  while (allowed() && performance.now() < sampleAt) {
+    await delay(Math.max(1, Math.min(pollMs, sampleAt - performance.now())), undefined, {signal});
+  }
+  return allowed() ? registration : null;
 }
 
 async function observeExecution(operation, sample, delayMs = 5000) {
@@ -131,4 +159,4 @@ function validateSampling(value, methodCount) {
 }
 
 module.exports = {captureActive, observeExecution, preserveActive,
-  validateSampling, verifyIdentity, readTail};
+  waitForNativeSample, validateSampling, verifyIdentity, readTail};

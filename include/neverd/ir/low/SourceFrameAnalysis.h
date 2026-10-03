@@ -19,6 +19,10 @@ using NativeSourceCallKey = SourceCallOccurrenceKey;
 
 struct NativeSourceCallContract : SourceFrameEffects {
   const SourceFunctionTypeHint *Signature = nullptr;
+  // Separately authenticated for this operation, never implied by its ABI or
+  // the platform's callee-save bank. This preserves only the in/out error
+  // value; it grants no memory or frame borrowing permission.
+  bool PreservesSwiftErrorResult = false;
   // Mutually exclusive with Signature. The caller must freshly authenticate
   // this exact occurrence against the original image and LowIR.
   const SourceRegisterCopy *RegisterCopy = nullptr;

@@ -30,12 +30,12 @@ unsigned guestPermissions(unsigned Prot) {
 }
 } // namespace
 
-DarwinMemory::DarwinMemory(AddressSpace &Space, const ProcessImage &Image,
+DarwinMemory::DarwinMemory(AddressSpace &Space, const MemoryLayout &Layout,
                            const ProcessOptions &Options)
-    : Space(Space), PageSize(Image.PageSize), Minimum(Image.MinimumAddress),
+    : Space(Space), PageSize(Layout.PageSize), Minimum(Layout.MinimumAddress),
       Limit(Options.MemoryLimit),
       GuardBase(StackTop - Options.StackSize - PageSize),
-      Maximum(Image.Maximum) {
+      Maximum(Layout.Maximum) {
   Maximum.push_back({StackTop - Options.StackSize, Options.StackSize, 3});
   Maximum.push_back({ReturnGate, PageSize, 5});
 }

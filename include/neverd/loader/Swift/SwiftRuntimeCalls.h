@@ -14,6 +14,12 @@ struct BinaryImage;
 std::optional<SourceCallTypeHint>
 swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
+/// Authenticate the exact runtime operation whose error-register output equals
+/// its input. Rechecks the current import and full ABI; this grants no memory
+/// effects and is false for general throwing calls.
+bool swiftRuntimePreservesErrorResult(const BinaryImage &Image, va_t Target,
+                                      const SourceCallTypeHint &Hint);
+
 /// Independent generic compiler evidence that this exact imported conformance
 /// never consumes swift_getWitnessTable's instantiation-arguments pointer.
 /// The metadata remains the caller's value; no layout or memory effects follow.
