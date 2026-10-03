@@ -114,10 +114,10 @@ def shard_inventory(document, index, count):
 
 def inventory_contract(document):
     """Normalize runner locations while retaining every execution property."""
-    return {record: (Path(binary).name, family, os.path.relpath(directory, Path(binary).parent),
+    return {record: (Path(binary).name, name, os.path.relpath(directory, Path(binary).parent),
                      variables, timeout)
             for (binary, family, directory, variables, timeout), expected
-            in method_inventory(document).items() for record in expected.values()}
+            in method_inventory(document).items() for name, record in expected.items()}
 
 
 def read_results(path, expected):

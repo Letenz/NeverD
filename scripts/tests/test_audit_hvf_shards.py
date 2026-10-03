@@ -126,6 +126,15 @@ class HVFShardEvidenceTests(unittest.TestCase):
         self.mutate(path, lambda data: data["tests"].pop())
         self.mutate(path, lambda data: data["tests"][0]["properties"][-1].__setitem__("value", 99))
 
+    def test_coherent_shard_cannot_relabel_a_different_parameter_as_the_original(self):
+        for test in self.document["tests"]:
+            if test["name"] == "Native.Execute/1":
+                test["command"][1] = "--gtest_filter=Native.Execute/9"
+        changed = self.root / "relabelled-shard"
+        self.assertEqual(self.collect(changed, 0), 0)
+        with self.assertRaisesRegex(ValueError, "full inventory execution contracts"):
+            self.check([changed, self.paths[1]])
+
     def test_selected_inventory_cannot_drop_or_duplicate_optional_parameters(self):
         path = self.paths[0] / "inventory.json"
         self.mutate(path, lambda data: data["tests"].pop())
