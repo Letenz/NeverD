@@ -98,8 +98,7 @@ NEVERD_USER_SEH_CASE(NoncontinuableCatch, 'Q', "!Q", 0x24)
 #ifdef NEVERD_USER_SEH_NEGATIVE
 NEVERD_USER_SEH_NEGATIVE(Metadata, 'M', "!M", ExceptionMetadataChanged)
 NEVERD_USER_SEH_NEGATIVE(Retired, 'T', "!T", ExceptionModuleRetired)
-NEVERD_USER_SEH_NEGATIVE(Noncontinuable, 'B', "!B",
-                         ExceptionLimit)
+NEVERD_USER_SEH_NEGATIVE(Noncontinuable, 'B', "!B", ExceptionLimit)
 #endif
 #ifdef NEVERD_USER_SEH_API
 NEVERD_USER_SEH_API(ExitProcess)
