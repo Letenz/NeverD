@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
+<!-- i18n-source: 340ac2d4daababf1ede69d21ea0d2a80e38e6fd6ae307434171e27dfcf40d8ad -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -88,3 +88,9 @@ Unveränderter Quellstand `353dcd75f`, 2026-10-03. Alle sechzehn ARM64-Shards be
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
 `build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+
+## Eigenständige Intel-Diagnose
+
+Der manuelle [Intel-Diagnoseworkflow](../../.github/workflows/hvf-intel-diagnostic.yml) checkt Steuerung und getestete Quellen getrennt aus. `source-ref` verlangt einen vollständigen Commit-SHA; `shards` wählt aus den ursprünglichen sechzehn Teilen. `first-method` beginnt bei null, `method-count=0` wählt alle verbleibenden Methoden. `case-index` darf nur bei `method-count=1` einen ursprünglichen Parameter auswählen. Vor der Auswahl wird das vollständige Inventar der zwanzig Ziele ermittelt. Ursprünglicher Release-Build, Befehle, Parameter und verpflichtende native Prüfungen bleiben erhalten.
+
+Vor jeder Methode lädt die Action den unveränderlichen Ausführungsplan und einen Host-Schnappschuss hoch. Danach sichert sie ursprüngliches XML, Prozessbeendigung, Steuerungsstatus und einen zweiten Schnappschuss. Erfasst werden Speicher, Swap, Last, Datenträger sowie Prozesskennungen, Status, CPU, RSS und Programmdateinamen, ohne Prozessargumente oder Umgebungsvariablen. Erfassungsfehler bleiben sichtbar. Ein Ausführungs- oder Uploadfehler stoppt weitere Methoden. Jede Methode behält ihr Limit von 120 Sekunden; ein unerreichbarer Host kann Aufräumen und abschließenden Upload verhindern. Dann bleiben nur bereits hochgeladene Belege. Diese Teildiagnosen ersetzen weder die vollständige CPU-Abnahme noch die unabhängige Darwin-Prüfung. Der letzte Startmarker bezeichnet eine Ausführungsgrenze, nicht die fehlerhafte Gastinstruktion oder die Ursache.

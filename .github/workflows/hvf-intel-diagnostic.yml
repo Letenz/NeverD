@@ -1,5 +1,5 @@
 name: Intel HVF method diagnosis
-run-name: Intel HVF diagnostic ${{ inputs.shards }} / ${{ inputs.source-ref }}
+run-name: Intel HVF ${{ inputs.shards }} / methods ${{ inputs.first-method }}+${{ inputs.method-count }} / case ${{ inputs.case-index }} / ${{ inputs.source-ref }}
 on:
   workflow_dispatch:
     inputs:

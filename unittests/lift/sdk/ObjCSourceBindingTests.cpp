@@ -15722,3 +15722,186 @@ TEST(ObjCSourceBindings, SwiftNestedTupleRejectsStaleLabelsAndSubstitutions) {
         EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
     }
 }
+
+namespace {
+SwiftTypeMetadataFixture
+swiftKeyedTupleRecipeFixture(llvm::StringRef FirstLabel = "from",
+                             llvm::StringRef SecondLabel = "to") {
+  auto F = swiftLabeledNestedTupleFixture(true);
+  const auto Label = [](llvm::StringRef Name) {
+    return Name.empty() ? std::string{}
+                        : std::to_string(Name.size()) + Name.str();
+  };
+  const std::string Base =
+      "_$ss18_DictionaryStorageCys11AnyHashableV12CoreGraphics7CGFloatV" +
+      Label(FirstLabel) + "_AG" + Label(SecondLabel) + "tG";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  F.Image.ImportPtrSlots[F.DescriptorSlot] = "_$ss18_DictionaryStorageCMn";
+  F.Image.DyldBindSlots[F.DescriptorSlot].Name = "_$ss18_DictionaryStorageCMn";
+  F.Image.ImportStorageSlots[F.DescriptorSlot].Name =
+      "_$ss18_DictionaryStorageCMn";
+  auto &Data = F.Image.Segments[0].Data;
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  Type[11] = 2;
+  llvm::support::endian::write32le(
+      Type + 12, uint32_t(F.DescriptorSlot + 16 - (F.TypeReference + 12)));
+  const std::string Suffix =
+      Label(FirstLabel) + "_AC" + Label(SecondLabel) + "tG";
+  std::memcpy(Type + 16, Suffix.data(), Suffix.size());
+  Type[16 + Suffix.size()] = 0;
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000,
+                                   16 + Suffix.size());
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftKeyedTupleKeepsBothGenericArguments) {
+  for (const auto &[First, Second] : {std::pair{"from", "to"},
+                                      {"columnA", "last"},
+                                      {"", ""},
+                                      {"", "last"},
+                                      {"columnA", ""}}) {
+    SCOPED_TRACE(First);
+    SCOPED_TRACE(Second);
+    auto F = swiftKeyedTupleRecipeFixture(First, Second);
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference);
+    ASSERT_TRUE(Proof);
+    ASSERT_EQ(Proof->Descriptors.size(), 3U);
+    EXPECT_EQ(Proof->Descriptors[0].Offset, 0U);
+    EXPECT_EQ(Proof->Descriptors[1].Offset, 6U);
+    EXPECT_EQ(Proof->Descriptors[2].Offset, 11U);
+    if (llvm::StringRef(First) == "from")
+      EXPECT_EQ(Proof->TypeReference.size(), 29U);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_FALSE(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names)
+                     .empty());
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftKeyedTupleRejectsDifferentTreesAndReceipts) {
+  for (unsigned Mutation = 0; Mutation < 29; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftKeyedTupleRecipeFixture();
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    auto &Data = F.Image.Segments[0].Data;
+    auto *Type = Data.data() + F.TypeReference - 0x1000;
+    std::string Base =
+        F.Image.Symbols[0].Name.substr(0, F.Image.Symbols[0].Name.size() - 2);
+    switch (Mutation) {
+    case 0:
+      Type[17] = 'g'; // First label.
+      break;
+    case 1:
+      Type[26] = 'x'; // Second label.
+      break;
+    case 2:
+      Type[23] = 'A'; // Different raw substitution.
+      break;
+    case 3:
+      Type[23] = 'B';
+      break;
+    case 4:
+      Type[23] = 'G'; // Expanded-name index is not a symbolic index.
+      break;
+    case 5:
+      Type[16] = '9';
+      break;
+    case 6:
+      Type[16] = '0';
+      break;
+    case 7:
+      Type[21] = 't';
+      break;
+    case 8:
+      Type[28] = 't';
+      break;
+    case 9:
+      Type[28] = 0;
+      break;
+    case 10:
+      Type[29] = 'G';
+      break;
+    case 11:
+      F.Image.DyldBindSlots.at(F.DescriptorSlot + 16).WeakImport = true;
+      break;
+    case 12:
+      F.Image.DyldBindSlots.at(F.DescriptorSlot + 8).Addend = 8;
+      break;
+    case 13:
+      F.Image.DyldBindSlots.at(F.DescriptorSlot).Module = "/untrusted.dylib";
+      break;
+    case 14:
+      F.Image.Segments[2].ReadOnlyAfterRelocations = false;
+      break;
+    case 15:
+      Base.replace(Base.find("4from"), 5, "4name");
+      break;
+    case 16:
+      Base.replace(Base.find("2to"), 3, "2as");
+      break;
+    case 17:
+      Base.replace(Base.find("7CGFloat"), 8, "7CGPoint");
+      break;
+    case 18:
+      Base.replace(Base.find("11AnyHashable"), 13, "6Double");
+      break;
+    case 19:
+      Type[0] = 9;
+      break;
+    case 20:
+      Type[6] = 9;
+      break;
+    case 21:
+      Type[11] = 9;
+      break;
+    case 22:
+      llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000,
+                                       28);
+      break;
+    case 23:
+      F.Image.Segments[1].Data[F.Cache - 0x2000] = 1;
+      break;
+    case 24:
+      Base += "Sg";
+      break;
+    case 25:
+      // Even when forged names equal descriptor-text expansion, the original
+      // symbolic AC must mean the third descriptor, not a different type.
+      Base.replace(Base.find("_AG"), 3, "_AC");
+      break;
+    case 26:
+      Base.insert(Base.find("12CoreGraphics"), "_");
+      Base.insert(Base.size() - 1, "t"); // One tuple argument is not two.
+      break;
+    case 27:
+      llvm::support::endian::write32le(
+          Type + 12, uint32_t(F.DescriptorSlot + 8 - (F.TypeReference + 12)));
+      break;
+    case 28:
+      F.Image.Symbols[1].Name += "stale";
+      break;
+    }
+    F.Image.Symbols[0].Name = Base + "MR";
+    if (Mutation != 28)
+      F.Image.Symbols[1].Name = Base + "Md";
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                    .SwiftTypeMetadataPairs.empty());
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                     F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                 std::runtime_error);
+  }
+}

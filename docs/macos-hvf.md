@@ -250,8 +250,9 @@ Missing, duplicate, unexecuted or skipped required-native results fail the gate.
 The summary records `execution=gtest-methods` and serial execution rather than
 claiming a CTest execution result. Self-hosted validation continues to use
 CTest's per-case processes and timeouts. The collector, gate, CI configuration,
-inventory and result-audit suites passed 124 checks. Temporary diagnostic
-workflows and instruction probes have been removed.
+inventory and result-audit suites passed 124 checks. Earlier instruction probes
+have been removed; the standalone method diagnostic below remains available
+while Intel runner loss is investigated.
 
 #### Correctness and integration
 
@@ -334,3 +335,9 @@ Clean source `353dcd75f`, 2026-10-03. All sixteen ARM64 shards reconciled succes
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
 `build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+
+## Standalone Intel diagnosis
+
+The manual [Intel diagnostic workflow](../.github/workflows/hvf-intel-diagnostic.yml) checks out its controller and the tested source separately. `source-ref` requires a full commit SHA; `shards` selects original sixteen-way shards. `first-method` is zero-based, `method-count=0` selects the remaining methods, and `case-index` selects one original parameter only when `method-count=1`. The complete twenty-owner inventory is discovered before selection. The original Release build, commands, parameters and required native checks are retained.
+
+Before each method, the action uploads its immutable execution plan and a host snapshot. After execution it preserves original XML, process retirement, controller status and a second snapshot. Snapshots include memory, swap, load, disk and process IDs/state/CPU/RSS/executable names, without process arguments or environments; collection errors remain visible. An execution or upload failure stops later methods. Each method retains its 120-second execution cap; an unreachable host may prevent cleanup and final upload. Only already uploaded artifacts survive that loss. These are partial diagnostic results and cannot satisfy the complete CPU or independent Darwin gate. A last start marker identifies an execution boundary, not the failing guest instruction or root cause.

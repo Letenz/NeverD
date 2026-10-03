@@ -1,6 +1,6 @@
 **Langues**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
+<!-- i18n-source: 340ac2d4daababf1ede69d21ea0d2a80e38e6fd6ae307434171e27dfcf40d8ad -->
 
 [← Index de la documentation](README.md)
 
@@ -88,3 +88,9 @@ Sources sans modification locale `353dcd75f`, le 2026-10-03. Les seize lots ARM6
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
 `build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+
+## Diagnostic Intel indépendant
+
+Le [workflow de diagnostic Intel](../../.github/workflows/hvf-intel-diagnostic.yml), déclenché manuellement, extrait séparément le contrôleur et les sources testées. `source-ref` exige un SHA complet ; `shards` choisit parmi les seize partitions d’origine. `first-method` commence à zéro, `method-count=0` sélectionne les méthodes restantes et `case-index` ne peut sélectionner un paramètre d’origine que si `method-count=1`. L’inventaire complet des vingt cibles est découvert avant la sélection. Le build Release, les commandes, les paramètres et les exigences natives d’origine sont conservés.
+
+Avant chaque méthode, l’action téléverse son plan immuable et un instantané de l’hôte. Après l’exécution, elle conserve le XML original, la terminaison des processus, l’état du contrôleur et un second instantané. Ceux-ci indiquent mémoire, swap, charge, disque et identifiants, état, CPU, RSS et noms d’exécutables des processus, sans arguments ni environnement. Les erreurs de collecte restent visibles. Un échec d’exécution ou de téléversement arrête les méthodes suivantes. Chaque méthode conserve sa limite de 120 secondes ; un hôte injoignable peut empêcher nettoyage et téléversement final. Seules les preuves déjà téléversées subsistent alors. Ces diagnostics partiels ne satisfont ni la validation CPU complète ni la validation Darwin indépendante. Le dernier marqueur de départ situe une limite d’exécution, sans identifier l’instruction fautive ou la cause.

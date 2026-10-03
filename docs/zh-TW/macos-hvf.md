@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
+<!-- i18n-source: 340ac2d4daababf1ede69d21ea0d2a80e38e6fd6ae307434171e27dfcf40d8ad -->
 
 [← 文件索引](README.md)
 
@@ -88,3 +88,9 @@ CPU 執行前，`scripts/prepare_hvf_batches.py` 保存完整清單、各片所�
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
 `build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+
+## 獨立 Intel 診斷
+
+手動觸發的 [Intel 診斷工作流程](../../.github/workflows/hvf-intel-diagnostic.yml) 分別檢出控制器與受測原始碼。`source-ref` 必須是完整提交 SHA；`shards` 選取原十六分片中的片號。`first-method` 從零計數，`method-count=0` 選取剩餘方法；只有 `method-count=1` 時，`case-index` 才能選取一個原始參數。先探索全部二十個目標的完整清單，再進行選取；保留原 Release 建置、命令、參數與原生必要檢查。
+
+每個方法開始前，Action 上傳不可變執行計畫與主機快照；結束後保存原始 XML、行程回收、控制器狀態與第二份快照。快照記錄記憶體、交換空間、負載、磁碟，以及行程編號、狀態、CPU、RSS 與執行檔名稱，不包含行程參數或環境；蒐集錯誤也會保留。執行或上傳失敗即停止後續方法。每個方法仍有 120 秒執行上限；主機失聯可能阻止清理及最終上傳，此時只能使用已上傳的證據。這些局部診斷不能取代完整 CPU 或獨立 Darwin 驗收。最後一個開始標記只能定位執行邊界，不能直接確定故障指令或根因。
