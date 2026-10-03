@@ -97,6 +97,12 @@ static void query(void) {
   record(SetEnvironmentVariableW(Invalid, First));
   SetLastError(LastErrorSeed);
   record(GetEnvironmentVariableW(Empty, Buffer, BufferUnits));
+  SetLastError(LastErrorSeed);
+  record(GetEnvironmentVariableW(0, Buffer, BufferUnits));
+  SetLastError(LastErrorSeed);
+  record(SetEnvironmentVariableW(0, First));
+  SetLastError(LastErrorSeed);
+  record(GetEnvironmentVariableW(Invalid, Buffer, BufferUnits));
 }
 static void mutation(void) {
   require(SetEnvironmentVariableW(Primary, First), 1);
