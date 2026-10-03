@@ -16,5 +16,6 @@ int dllEntry(void *Base, DWORD Reason, void *Reserved) {
     LoadLibraryW(MiddleName);
   trace(LeafRole, DLLKind, Reason, Reserved);
   visibility(LeafRole, Base);
-  return !(Reason == AttachReason && mode() == LeafRole);
+  return !(Reason == AttachReason &&
+           (mode() == LeafRole || mode() == ForwardFailedLeafMode));
 }

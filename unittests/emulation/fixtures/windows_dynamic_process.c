@@ -6,6 +6,14 @@
 #include "WindowsDynamicFixture.h"
 #ifdef NEVERD_DYNAMIC_STATIC
 __declspec(dllimport) DWORD Probe(void);
+#else
+static volatile ULONG_PTR *CallerFrame;
+__declspec(dllexport) DWORD FrameIntact(void) {
+  for (DWORD I = 0; I < StackWords; ++I)
+    if (CallerFrame[I] != Seed + I)
+      return 0;
+  return 1;
+}
 #endif
 DWORD entry(void) {
 #ifdef NEVERD_DYNAMIC_STATIC
@@ -21,6 +29,7 @@ DWORD entry(void) {
   volatile ULONG_PTR Frame[StackWords];
   for (DWORD I = 0; I < StackWords; ++I)
     Frame[I] = Seed + I;
+  CallerFrame = Frame;
   if (Mode == ChangedLoaderMode) {
     ULONG_PTR Peb = loadPointer(teb(), TebPEB);
     ULONG_PTR Ldr = loadPointer((void *)Peb, PebLdr);
@@ -56,7 +65,8 @@ DWORD entry(void) {
   void *Top = 0, *Leaf = 0;
   if (Mode == ForwardedMode || Mode == RepeatedForwardMode ||
       Mode == MissingForwardMode || Mode == ForwardExitMode ||
-      Mode == DeepMissingMode || Mode == ImmediateMissingMode) {
+      Mode == DeepMissingMode || Mode == ImmediateMissingMode ||
+      Mode == ForwardFailedMiddleMode || Mode == ForwardFailedLeafMode) {
     Top = LoadLibraryW(TopName);
     CHECK(Top && !GetModuleHandleW(MiddleName));
     ProbeFunction F = (ProbeFunction)GetProcAddress(
@@ -65,7 +75,8 @@ DWORD entry(void) {
              : Mode == ImmediateMissingMode ? MissingModuleName
                                             : ForwardName);
     if (Mode == MissingForwardMode || Mode == DeepMissingMode ||
-        Mode == ImmediateMissingMode) {
+        Mode == ImmediateMissingMode || Mode == ForwardFailedMiddleMode ||
+        Mode == ForwardFailedLeafMode) {
       observation(MissingTag, F != 0);
       observation(ErrorTag, GetLastError());
       observation(MiddleTag, GetModuleHandleW(MiddleName) != 0);

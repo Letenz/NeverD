@@ -18,6 +18,11 @@ static void tls(void *Base, DWORD Reason, void *Reserved) {
 int dllEntry(void *Base, DWORD Reason, void *Reserved) {
   trace(MiddleRole, DLLKind, Reason, Reserved);
   visibility(MiddleRole, Base);
+  if (Reason == DetachReason && mode() == ProcessExitMode) {
+    ProbeFunction Intact =
+        (ProbeFunction)GetProcAddress(GetModuleHandleW(0), FrameIntactName);
+    CHECK(Intact && Intact());
+  }
   if ((Reason == AttachReason && mode() == ExitAttachMode) ||
       (Reason == DetachReason && mode() == ExitDetachMode))
     ExitProcess(ExitStatus);
@@ -29,5 +34,6 @@ int dllEntry(void *Base, DWORD Reason, void *Reserved) {
       observation(NestedTag, FreeLibrary(Top));
   }
   return !(Reason == AttachReason &&
-           (mode() == FailedMiddleMode || mode() == NestedFailureMode));
+           (mode() == FailedMiddleMode || mode() == NestedFailureMode ||
+            mode() == ForwardFailedMiddleMode));
 }

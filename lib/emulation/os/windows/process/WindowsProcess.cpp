@@ -115,6 +115,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   Loader Modules(*Program, Virtual, **Space, *Env, CPU, *Resources);
   std::optional<Lifetime::Call> Active;
   uint64_t ExpectedSP = 0, ExpectedGate = 0;
+  uint64_t RootStackPointer = StackTop;
   struct Continuation {
     Loader::Operation Operation;
     std::unique_ptr<BackendContext> Context;
@@ -164,7 +165,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Active = std::move(*Next);
       if (Active) {
         const uint64_t Top =
-            (Pending.empty() ? StackTop : Pending.back().StackPointer) &
+            (Pending.empty() ? RootStackPointer : Pending.back().StackPointer) &
             ~(ABI->info().StackAlignment - 1);
         if (Top <= StackBase || Top > StackTop)
           return failure(text::Return);
@@ -387,6 +388,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       const uint32_t Status = *Result.ExitStatus;
       Result.ExitStatus.reset();
       Pending.clear();
+      // Process-detach callbacks may still observe the exiting caller's
+      // frame. Abandon its continuation without overwriting that storage.
+      RootStackPointer = StackPointer;
       if (auto E = Life.exit(Status)) {
         Failed(std::move(E));
         break;

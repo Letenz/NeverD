@@ -30,10 +30,13 @@ namespace {
 #undef NEVERD_DYNAMIC_VALUE
 struct Case {
   const char *Name, *Argument;
+  bool Probe = false;
 };
 constexpr Case Cases[] = {
 #define NEVERD_DYNAMIC_CASE(Name, Argument) {#Name, Argument},
+#define NEVERD_DYNAMIC_PROBE(Name, Argument) {#Name, Argument, true},
 #include "fixtures/WindowsDynamicCases.def"
+#undef NEVERD_DYNAMIC_PROBE
 #undef NEVERD_DYNAMIC_CASE
 };
 struct Profile {
@@ -90,8 +93,10 @@ llvm::StringRef expected(bool NoEntry, llvm::StringRef File, char Mode) {
 bool selected(bool NoEntry, llvm::StringRef File, const Case &C) {
   const char Mode = C.Argument[1];
   return (File != StaticProgramFile || Mode == ReferencesMode) &&
-         (!NoEntry || (Mode != FailedMiddleMode && Mode != LeafRole &&
-                       Mode != NestedFailureMode));
+         (!NoEntry ||
+          (Mode != FailedMiddleMode && Mode != LeafRole &&
+           Mode != NestedFailureMode && Mode != ForwardFailedMiddleMode &&
+           Mode != ForwardFailedLeafMode));
 }
 TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
   uint64_t Scenarios = 0;
@@ -102,7 +107,7 @@ TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
                                              {TopFile, Directory / TopFile}}};
     for (const char *File : {ProgramFile, StaticProgramFile})
       for (const auto &C : Cases) {
-        if (!selected(NoEntry, File, C))
+        if (!selected(NoEntry, File, C) || C.Probe)
           continue;
         const auto Expected = expected(NoEntry, File, C.Argument[1]);
         ASSERT_FALSE(Expected.empty()) << C.Name;
@@ -308,7 +313,7 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
         ++Scenarios;
         SCOPED_TRACE(C.Name);
         const auto Expected = expected(NoEntry, File, C.Argument[1]);
-        ASSERT_FALSE(Expected.empty());
+        ASSERT_TRUE(C.Probe || !Expected.empty());
         const unsigned Repetitions =
             C.Argument[1] == ReturnMode ? NativeReturnRepetitions : 1;
         for (unsigned I = 0; I < Repetitions; ++I) {
@@ -335,14 +340,15 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
             llvm::outs() << ObservationLabel << NoEntry << ' ' << File << ' '
                          << C.Argument << ' ' << Status << ' '
                          << llvm::toHex((*Out)->getBuffer()) << '\n';
-          EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), Expected);
+          if (!C.Probe)
+            EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), Expected);
           EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
           EXPECT_TRUE((*Err)->getBuffer().empty());
         }
       }
     }
   }
-  EXPECT_EQ(Scenarios, ExpectedScenarios);
+  EXPECT_EQ(Scenarios, ExpectedScenarios + NativeProbeScenarios);
 #endif
 }
 } // namespace
