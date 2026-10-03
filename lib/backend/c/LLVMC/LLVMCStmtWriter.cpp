@@ -3917,9 +3917,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
       if (Call.arg_size() != 3 || (Width != 8 && Width != 16 && Width != 32 &&
                                    Width != 64 && Width != 128))
         throw std::runtime_error("unsupported LLVM funnel shift width");
-      std::string Expr = "neverd_llvm_fsh";
-      Expr += IID == llvm::Intrinsic::fshl ? 'l' : 'r';
-      Expr += "_i" + std::to_string(Width) + "(";
+      std::string Expr = functionIdentifier(*Callee) + "(";
       for (unsigned I = 0; I < 3; ++I) {
         if (I)
           Expr += ", ";
