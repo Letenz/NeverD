@@ -7,7 +7,7 @@ const path = require('node:path');
 const {setTimeout: delay} = require('node:timers/promises');
 const {once} = require('node:events');
 const {captureActive, observeExecution, preserveActive, validateSampling,
-  verifyIdentity, readTail} = require('./active-sample.cjs');
+  waitForNativeSample, verifyIdentity, readTail} = require('./active-sample.cjs');
 const {startCommand, runSequence, testEnvironment} = require('./run.cjs');
 
 test('sampling is opt-in and fits the 500 artifact allowance', () => {
@@ -44,6 +44,58 @@ test('short execution clears its observation timer without sampling', async () =
   assert.equal(await observeExecution({completion: Promise.resolve(0)}, async () => ++samples, 5), 0);
   await delay(15);
   assert.equal(samples, 0);
+});
+
+test('slow source validation cannot consume the native sampling delay', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hvf-sample-'));
+  let started = false;
+  try {
+    const ready = waitForNativeSample(root, () => true, new AbortController().signal, 15, 2)
+      .then(value => { started = true; return value; });
+    await delay(25);
+    assert.equal(started, false);
+    const registered = Date.now();
+    fs.writeFileSync(path.join(root, 'children.json'), '{"process_groups":[42]}');
+    const result = await ready;
+    assert.ok(Date.parse(result.observed_at) >= registered);
+    assert.ok(Date.now() - registered >= 15);
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
+});
+
+test('completion before native registration ends observation without a sample', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hvf-sample-'));
+  let running = true;
+  try {
+    const ready = waitForNativeSample(root, () => running, new AbortController().signal, 15, 2);
+    running = false;
+    assert.equal(await ready, null);
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
+});
+
+test('cancellation during the native sampling delay ends the timer', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hvf-sample-'));
+  const abort = new AbortController();
+  try {
+    fs.writeFileSync(path.join(root, 'children.json'), '{"process_groups":[42]}');
+    const ready = waitForNativeSample(root, () => true, abort.signal, 5000, 2);
+    const rejected = assert.rejects(ready, /aborted/);
+    abort.abort();
+    await rejected;
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
+});
+
+test('waiting for registration preserves the original command deadline', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hvf-sample-'));
+  const operation = startCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
+    testEnvironment(process.env), {stdio: 'ignore', timeoutMs: 30, graceMs: 10});
+  try {
+    await assert.rejects(observeExecution(operation, running =>
+      waitForNativeSample(root, running, new AbortController().signal, 5000, 2), 0),
+    /deadline/);
+    assert.equal(operation.result.termination_reason, 'deadline');
+    assert.ok(operation.result.completed_at);
+    assert.notEqual(operation.child.signalCode, null);
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
 });
 
 test('execution finishing during sampling waits for its one sealed upload', async () => {
@@ -115,5 +167,21 @@ test('cancellation during identity collection cannot begin stack sampling', asyn
     const result = JSON.parse(fs.readFileSync(path.join(destination, 'metadata.json')));
     assert.equal(result.cancelled, true);
     assert.deepEqual(calls, ['/bin/ps']);
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
+});
+
+test('a zero sample status without a call graph remains a collection failure', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hvf-sample-'));
+  try {
+    fs.writeFileSync(path.join(root, 'children.json'), '{"process_groups":[42]}');
+    fs.mkdirSync(path.join(root, 'execution/methods/0000'), {recursive: true});
+    fs.writeFileSync(path.join(root, 'execution/methods/0000/output.log'), 'original log');
+    const destination = await captureActive({directory: root, pythonPid: 41, binary: '/test/NeverD',
+      environment: {}, signal: new AbortController().signal, isRunning: () => true,
+      captureHostState: async () => ({}), collect: async binary => ({status: 0,
+        stdout: binary === '/bin/ps' ? '42 41 42 /test/NeverD' : '', stderr: 'target exited'})});
+    const result = JSON.parse(fs.readFileSync(path.join(destination, 'metadata.json')));
+    assert.match(result.errors[0], /no call graph/);
+    assert.equal(result.identity_verified, true);
   } finally { fs.rmSync(root, {recursive: true, force: true}); }
 });
