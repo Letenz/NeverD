@@ -136,3 +136,15 @@ NEVERD_ENV_MODE(DoubleFreeMode, 'D')
 NEVERD_ENV_MODE(NonASCIIMode, 'U')
 NEVERD_ENV_MODE(OverlapMode, 'A')
 #endif
+
+#ifdef NEVERD_ENV_VALUE
+NEVERD_ENV_VALUE(DirectValueUnits, 32000)
+NEVERD_ENV_VALUE(DirectTailUnits, 1000)
+NEVERD_ENV_VALUE(ScratchSize, 0x20000)
+NEVERD_ENV_VALUE(DirectGrowthUnits, 6000)
+NEVERD_ENV_VALUE(DirectOversizeUnits, 32766)
+#endif
+#ifdef NEVERD_ENV_WIDE
+NEVERD_ENV_WIDE(DirectName, u"NEVERD_ENV_GROWTH")
+NEVERD_ENV_WIDE(DirectExpansion, u"%NEVERD_ENV_GROWTH%")
+#endif
