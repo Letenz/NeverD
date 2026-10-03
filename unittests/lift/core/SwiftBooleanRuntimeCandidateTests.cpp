@@ -235,6 +235,83 @@ TEST(SwiftBooleanRuntimeCandidate,
   EXPECT_TRUE(buildObjCSourceCallHints(WrongSelector, veneerCaller()).empty());
 }
 
+TEST(SwiftBooleanRuntimeCandidate, AnyHashableEqualityHasTwoOpaqueInputsOnly) {
+  auto Image = candidateImage(SwiftBooleanAnyHashableEqualityImport);
+  addVeneer(Image);
+  const auto Candidate = swiftBooleanRuntimeVeneerCandidate(Image, 0x1000);
+  ASSERT_TRUE(Candidate);
+  const auto Inputs = sourceBooleanInputParameters(Candidate->RawContract);
+  ASSERT_TRUE(Inputs);
+  ASSERT_EQ(Inputs->size(), 2U);
+  for (unsigned I = 0; I < 2; ++I) {
+    EXPECT_EQ((*Inputs)[I].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ((*Inputs)[I].Type->Size, 8U);
+    EXPECT_EQ((*Inputs)[I].Location.RegisterOffset, I * 8U);
+    EXPECT_EQ(Candidate->RawContract.Parameters[I].TheRole,
+              SourceParameterTypeHint::Role::Ordinary);
+  }
+  EXPECT_EQ(Candidate->RawContract.DefinedResultBits, 1U);
+  EXPECT_EQ(Candidate->RawContract.ResultCarrierBytes, 8U);
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, Slot));
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, veneerCaller()).empty());
+  for (unsigned Mutation = 0; Mutation < 16; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Wrong = Image;
+    switch (Mutation) {
+    case 0:
+      Wrong.DyldBindSlots[Slot].Module = "/tmp/libswiftCore.dylib";
+      break;
+    case 1:
+      Wrong.DyldBindSlots[Slot].Module =
+          SwiftBooleanObjectEqualityProvider.str();
+      break;
+    case 2:
+      Wrong.DyldBindSlots[Slot].WeakImport = true;
+      break;
+    case 3:
+      Wrong.DyldBindSlots[Slot].Addend = 8;
+      break;
+    case 4:
+      Wrong.DyldBindSlots[Slot].Name += "invalid";
+      break;
+    case 5:
+      Wrong.DyldBindSlots.erase(Slot);
+      break;
+    case 6:
+      Wrong.DynInfo.NeededLibs.clear();
+      break;
+    case 7:
+      Wrong.DynInfo.NeededLibs.push_back(SwiftBooleanComparisonProvider.str());
+      break;
+    case 8:
+      Wrong.Format = BinaryFormat::ELF;
+      break;
+    case 9:
+      Wrong.Arch = Arch::X64;
+      break;
+    case 10:
+      Wrong.Bits = Bitness::Bits32;
+      break;
+    case 11:
+      Wrong.IsRelocatable = true;
+      break;
+    case 12:
+      Wrong.ConflictingImportStorageSlots.insert(Slot);
+      break;
+    case 13:
+      Wrong.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 14:
+      Wrong.Segments[1].Data[8] ^= 1;
+      break;
+    case 15:
+      Wrong.ImportPtrSlots[Slot] = "_other";
+      break;
+    }
+    EXPECT_FALSE(swiftBooleanRuntimeVeneerCandidate(Wrong, 0x1000));
+  }
+}
+
 TEST(SwiftBooleanRuntimeCandidate, RawI1IsNotAByteReturnDeclaration) {
   static_assert(
       !std::is_convertible_v<SwiftBooleanRuntimeCandidate, SourceCallTypeHint>);

@@ -2798,6 +2798,131 @@ TEST(ObjCCallHints, FoundationURLPathAndStringComparisonKeepSwiftABI) {
   }
 }
 
+TEST(ObjCCallHints, SwiftAnyHashableHashKeepsSeedAndOpaqueSwiftSelf) {
+  const std::string Import = "_$ss11AnyHashableV13_rawHashValue4seedS2i_tF";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0,
+                                   "/usr/lib/swift/libswiftCore.dylib", false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    const auto &S = Hint->Signature;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    ASSERT_EQ(S.Parameters.size(), 2U);
+    EXPECT_EQ(S.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(S.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+    EXPECT_EQ(S.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(S.ReturnType->Size, 8U);
+    EXPECT_EQ(S.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+    EXPECT_EQ(S.Parameters[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(S.Parameters[0].TheRole, SourceParameterTypeHint::Role::Ordinary);
+    EXPECT_EQ(S.Parameters[0].Location.RegisterOffset, TRI.IntParamRegs[0]);
+    EXPECT_EQ(S.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(S.Parameters[1].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(S.Parameters[1].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    for (const auto &P : S.Parameters)
+      EXPECT_EQ(P.Location.ValueBytes, 8U);
+    EXPECT_TRUE(Hint->BorrowedByteInputs.empty());
+    EXPECT_FALSE(Hint->ReturnedArgument);
+    EXPECT_FALSE(runtimeCFunctionAddressHint(Image, 0x2180));
+    auto Call = HighExpr::makeCall(
+        "untrusted", 0x2180,
+        {HighExpr::makeConst(17, 8), HighExpr::makeConst(0, 8)});
+    Call->Type = S.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+      auto &A = Changed->Signature;
+      switch (Mutation) {
+      case 0:
+        A.ReturnType = NdType::makeInt(4);
+        break;
+      case 1:
+        A.Parameters[0].Type = NdType::makePtr(NdType::makeVoid());
+        break;
+      case 2:
+        A.Parameters[1].Type = NdType::makeInt(8);
+        break;
+      case 3:
+        A.Parameters[1].TheRole = SourceParameterTypeHint::Role::Ordinary;
+        break;
+      case 4:
+        A.Parameters[1].Location.RegisterOffset = TRI.IntParamRegs[1];
+        break;
+      case 5:
+        A.Parameters[0].Location.RegisterOffset =
+            A.Parameters[1].Location.RegisterOffset;
+        break;
+      case 6:
+        A.Parameters[1].Location.ValueBytes = 4;
+        break;
+      case 7:
+        A.Convention = SourceFunctionTypeHint::ConventionKind::C;
+        break;
+      case 8:
+        A.ReturnLocation.ValueBytes = 4;
+        break;
+      case 9:
+        A.Parameters.pop_back();
+        break;
+      case 10:
+        A.Parameters.push_back(A.Parameters.back());
+        break;
+      case 11:
+        Changed->DoesNotReturn = true;
+        break;
+      }
+      Call->SourceCallHint = Changed;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    }
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Wrong = Image;
+      switch (Mutation) {
+      case 0:
+        Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+        break;
+      case 1:
+        Wrong.DyldBindSlots[0x2180].Module =
+            "/usr/lib/swift/libswiftFoundation.dylib";
+        break;
+      case 2:
+        Wrong.DyldBindSlots[0x2180].WeakImport = true;
+        break;
+      case 3:
+        Wrong.DyldBindSlots[0x2180].Addend = 8;
+        break;
+      case 4:
+        Wrong.DyldBindSlots[0x2180].Name += "invalid";
+        break;
+      case 5:
+        Wrong.DyldBindSlots.erase(0x2180);
+        break;
+      case 6:
+        Wrong.ConflictingImportStorageSlots.insert(0x2180);
+        break;
+      case 7:
+        Wrong.Format = BinaryFormat::ELF;
+        break;
+      case 8:
+        Wrong.Arch = Arch::ARM;
+        break;
+      case 9:
+        Wrong.Bits = Bitness::Bits32;
+        break;
+      }
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftAnyHashableInitializerKeepsResultValueAndConformance) {
   const std::string Import = "_$ss11AnyHashableVyABxcSHRzlufC";
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {

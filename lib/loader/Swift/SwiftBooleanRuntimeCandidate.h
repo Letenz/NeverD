@@ -28,6 +28,8 @@ inline constexpr llvm::StringLiteral SwiftBooleanPrefixImport =
     "_$sSS9hasPrefixySbSSF";
 inline constexpr llvm::StringLiteral SwiftBooleanSuffixImport =
     "_$sSS9hasSuffixySbSSF";
+inline constexpr llvm::StringLiteral SwiftBooleanAnyHashableEqualityImport =
+    "_$ss11AnyHashableV2eeoiySbAB_ABtFZ";
 inline constexpr llvm::StringLiteral SwiftBooleanObjectEqualityImport =
     "_$sSo8NSObjectC10ObjectiveCE2eeoiySbAB_ABtFZ";
 inline constexpr llvm::StringLiteral SwiftBooleanObjectEqualityProvider =
@@ -35,7 +37,9 @@ inline constexpr llvm::StringLiteral SwiftBooleanObjectEqualityProvider =
 
 inline llvm::StringRef swiftBooleanRuntimeProvider(llvm::StringRef Import) {
   if (Import == SwiftBooleanComparisonImport ||
-      Import == SwiftBooleanPrefixImport || Import == SwiftBooleanSuffixImport)
+      Import == SwiftBooleanPrefixImport ||
+      Import == SwiftBooleanSuffixImport ||
+      Import == SwiftBooleanAnyHashableEqualityImport)
     return SwiftBooleanComparisonProvider;
   if (Import == SwiftBooleanObjectEqualityImport)
     return SwiftBooleanObjectEqualityProvider;
@@ -56,7 +60,9 @@ inline std::optional<SourceFunctionTypeHint> swiftBooleanRuntimeInputs(
         {"lhs", Pointer}, {"rhs", Pointer}, {"metadata", Pointer}};
     Inputs.Parameters.back().TheRole =
         SourceParameterTypeHint::Role::SwiftContext;
-  } else
+  } else if (Import == SwiftBooleanAnyHashableEqualityImport)
+    Inputs.Parameters = {{"lhs", Pointer}, {"rhs", Pointer}};
+  else
     Inputs.Parameters = {
         {"lhs0", Word}, {"lhs1", Pointer}, {"rhs0", Word}, {"rhs1", Pointer}};
   if (Import == SwiftBooleanComparisonImport)
@@ -93,6 +99,11 @@ inline std::optional<SourceFunctionTypeHint> swiftBooleanComparisonInputs() {
 /// an x20 input, not a third ordinary argument. Both libswiftObjectiveC TBDs
 /// export the exact symbol for their ARM64 target. The C result is normalized
 /// with zext i1 to i8, retaining the raw one-bit contract here.
+/// AnyHashable equality: Swift 6.1.2 macOS and Mac Catalyst clients for arm64
+/// and x86_64 independently declare swiftcc i1(ptr, ptr), with two borrowed
+/// opaque values and no swiftself. All four SDK profiles export the exact
+/// libswiftCore symbol. The AArch64 consumer still needs the same current
+/// one-bit use proof; this supplies no layout or private-frame permission.
 inline std::optional<SwiftBooleanRuntimeCandidate>
 swiftBooleanRuntimeCandidate(const BinaryImage &Image, va_t ImportSlot) {
   if (Image.Arch != Arch::AArch64 || Image.MachOChainedFixupsAmbiguous)

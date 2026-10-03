@@ -4,8 +4,11 @@
 #include "../../loader/Swift/SwiftBooleanProjection.h"
 #include "../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "ObjCNativeSourceCallCallees.h"
+#include "ObjCSourceBindings.h"
 #include "ObjCSourceProjection.h"
+#include "SourceExpressionIdentity.h"
 
+#include "neverd/ir/high/MedToHigh.h"
 #include "neverd/pipeline/NativeSourceHints.h"
 
 namespace neverd::sdk {
@@ -125,6 +128,70 @@ inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
       Selected->second !=
           std::pair{Binding.TargetAddress, "_" + Binding.TargetName})
     return false;
+  // A LowIR result-bit proof does not authorize replacing a source argument.
+  // Replay the current MedIR through the canonical owner, before and after
+  // source address binding. Comparing the complete argument expression also
+  // retains any nested dynamic target and ABI-bound input.
+  if (!Med)
+    return false;
+  MedToHighConverter Converter;
+  Converter.setBinaryImage(&Image);
+  std::map<va_t, std::string> Names;
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &F : Result.MedFuncs)
+    Names.emplace(F.Entry, F.Name);
+  for (const auto &F : Result.HighFuncs)
+    Functions.emplace(F.Entry, &F);
+  Converter.setFuncNames(&Names);
+  Converter.setJumpTables(Low->JumpTables);
+  const auto Replay = Converter.convert(*Med, Image.Arch);
+  const auto BoundReplay =
+      bindObjCSourceReferences(Replay, Image, nullptr, &Functions);
+  std::map<SourceCallOccurrenceKey, const HighExpr *> RawCalls, BoundCalls;
+  const auto Collect = [](const HighFunc &F, auto &Calls) {
+    size_t Budget = 100000;
+    bool Valid = true;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &Root) {
+        std::vector<ExprPtr> Pending{Root};
+        while (!Pending.empty() && Budget) {
+          --Budget;
+          const auto E = Pending.back();
+          Pending.pop_back();
+          if (!E)
+            continue;
+          if (E->SourceCallHint && E->SourceCallHint->BooleanResult)
+            Valid &=
+                Calls.emplace(E->SourceCallHint->BooleanResult->Site, E.get())
+                    .second;
+          E->forEachChildExpr([&](const ExprPtr &Child) {
+            if (Pending.size() < Budget)
+              Pending.push_back(Child);
+            else
+              Budget = 0;
+          });
+        }
+      });
+    });
+    return Budget && Valid;
+  };
+  if (!Collect(Replay, RawCalls) ||
+      !Collect(BoundReplay.Function, BoundCalls) ||
+      RawCalls.size() != Sites.size() || BoundCalls.size() != Sites.size())
+    return false;
+  const auto SameArguments = [&](const HighExpr &Actual, const auto &Calls) {
+    const auto Found = Calls.find(Actual.SourceCallHint->BooleanResult->Site);
+    if (Found == Calls.end() ||
+        Found->second->Operands.size() != Actual.Operands.size())
+      return false;
+    size_t Budget = 100000;
+    for (size_t I = 0; I < Actual.Operands.size(); ++I)
+      if (!Found->second->Operands[I] || !Actual.Operands[I] ||
+          !sameSourceExpressionIdentity(*Found->second->Operands[I],
+                                        *Actual.Operands[I], Budget))
+        return false;
+    return true;
+  };
   // Count evaluations, not unique expression pointers: sharing one node in
   // two statements cannot reuse this one machine occurrence's evidence.
   size_t Budget = 100000, Matches = 0;
@@ -156,20 +223,22 @@ inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
           Matches += E.get() == &Expression;
           const auto &Other = *E->SourceCallHint;
           const auto Site = Sites.find(Other.BooleanResult->Site);
-          Foreign |= !isSwiftBooleanSourceBinding(Other) ||
-                     E->Kind != ExprKind::Call || E->IsIndirectCall ||
-                     E->CallAddr != Other.BooleanResult->Site.StaticTarget ||
-                     E->IntrinsicId != Intrinsic::None ||
-                     E->MemoryOrdering != NdMemoryOrdering::None ||
-                     E->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-                     E->Operands.size() != Other.Signature.Parameters.size() ||
-                     !equalSourceTypes(E->Type, Other.Signature.ReturnType) ||
-                     Other.BooleanResult->FunctionEntry != Function.Entry ||
-                     Site == Sites.end() ||
-                     (Site != Sites.end() &&
-                      Site->second != std::pair{Other.TargetAddress,
-                                                "_" + Other.TargetName}) ||
-                     !Evaluated.insert(Other.BooleanResult->Site).second;
+          Foreign |=
+              !isSwiftBooleanSourceBinding(Other) ||
+              E->Kind != ExprKind::Call || E->IsIndirectCall ||
+              E->CallAddr != Other.BooleanResult->Site.StaticTarget ||
+              E->IntrinsicId != Intrinsic::None ||
+              E->MemoryOrdering != NdMemoryOrdering::None ||
+              E->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              E->Operands.size() != Other.Signature.Parameters.size() ||
+              !equalSourceTypes(E->Type, Other.Signature.ReturnType) ||
+              Other.BooleanResult->FunctionEntry != Function.Entry ||
+              Site == Sites.end() ||
+              (Site != Sites.end() &&
+               Site->second !=
+                   std::pair{Other.TargetAddress, "_" + Other.TargetName}) ||
+              !Evaluated.insert(Other.BooleanResult->Site).second ||
+              (!SameArguments(*E, RawCalls) && !SameArguments(*E, BoundCalls));
           if (!Foreign)
             for (size_t I = 0; I < E->Operands.size(); ++I) {
               const auto &A = E->Operands[I];
