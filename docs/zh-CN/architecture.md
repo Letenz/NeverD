@@ -987,3 +987,5 @@ CoreText 的 `CTFontGetSize` 和 `CTFramesetterCreateWithAttributedString` 使�
 Combine 的精确强导入 `CurrentValueSubject` 初始化构造器使用 Swift 6.1.2 在 ARM64 和 x86-64 macOS、Mac Catalyst 上观测到的 ABI。被消费的不透明值地址使用普通参数寄存器，已分配的实例使用 `swiftself`，指针结果使用整数返回寄存器。发布时重新核验提供方与完整 ABI。该声明不推断泛型值布局，也不授予私有帧借用效果。
 
 Combine 的精确强导入 `Publisher.sink(receiveValue:)` 重载在 `Failure == Never` 时传递五个指针载体：闭包代码和上下文、Publisher 元数据和见证表，以及通过 `swiftself` 传递的不透明 Publisher 地址；返回 `AnyCancellable` 指针。`AnyCancellable.store(in: Set<AnyCancellable>)` 接收可变 Set 地址和通过 `swiftself` 传递的对象，返回 void。两项声明均依据 Swift 6.1.2 在 ARM64 和 x86-64 macOS、Mac Catalyst 上的编译器证据，发布时重新核验当前提供方和完整 ABI。这些声明不推断泛型布局、闭包生命周期或私有帧借用效果。
+
+不可变 Swift 静态标量对象只有在有界结构化存储声明与当前完整对象范围一致时，才能保留一个重建后的地址身份。支持名义类型及非泛型扩展上下文；Darwin arm64/x86_64 上，冻结的 `CoreGraphics.CGFloat` 声明确认对象为 8 字节（[Apple ABI 说明](https://developer.apple.com/documentation/corefoundation/cgfloat-swift.struct/nativetype)），另由四个 macOS/Mac Catalyst 编译目标独立核验。`SwiftMetadata` 统一负责声明和唯一不可变存储证明，源码绑定及发布复用该证明。可变、重叠、带重定位、部分、TLS、泛型或有歧义的对象仍不恢复。对齐的字节辅助存储保留完整位型和共享地址，不据此推导访问器 ABI、帧借用或 noescape 权限。

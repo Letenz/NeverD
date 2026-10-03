@@ -229,6 +229,10 @@ struct SourceCallTypeHint {
     /// Immutable scalar table bytes, confined to proven indexed source loads.
     /// Bounds and every helper occurrence must be revalidated in the caller.
     RuntimeReadOnlyBytes,
+    /// A complete immutable Swift static scalar object. Its structured storage
+    /// declaration proves the extent; all uses share one address identity.
+    /// This is independent of bounded borrowed/table byte consumers.
+    RuntimeSwiftScalarStorageAddress,
     /// Complete immutable C-string literal section, rebuilt once per image.
     /// Interior offsets, embedded NULs and retained pointers share its
     /// identity.

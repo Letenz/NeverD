@@ -38,5 +38,15 @@ swiftStaticScalarStorageWidth(llvm::StringRef MangledSymbol);
 /// the structured mangling; unrelated globals are not inferred from a suffix.
 std::optional<uint64_t>
 swiftPrivateScalarStorageWidth(llvm::StringRef MangledSymbol);
+
+/// A complete immutable scalar object, identified by a bounded Swift static
+/// storage declaration. This is a byte extent and address identity, not an
+/// accessor ABI or permission to borrow arbitrary caller memory.
+struct SwiftImmutableScalarStorage {
+  std::string SymbolName;
+  uint32_t ByteCount = 0;
+};
+std::optional<SwiftImmutableScalarStorage>
+swiftImmutableScalarStorage(const BinaryImage &Image, va_t Address);
 } // namespace neverd
 #endif

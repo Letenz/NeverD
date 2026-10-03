@@ -4619,6 +4619,19 @@ swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
 }
 
 inline std::optional<SourceCallTypeHint>
+swiftImmutableScalarStorageHint(const BinaryImage &Image, va_t Address) {
+  const auto Storage = swiftImmutableScalarStorage(Image, Address);
+  auto Hint = Storage
+                  ? borrowedByteSourceHint(Image, {Address, Storage->ByteCount})
+                  : std::nullopt;
+  if (Hint) {
+    Hint->CallKind = SourceCallTypeHint::Kind::RuntimeSwiftScalarStorageAddress;
+    Hint->TargetName = Storage->SymbolName;
+  }
+  return Hint;
+}
+
+inline std::optional<SourceCallTypeHint>
 swiftPrivateScalarStorageHint(const BinaryImage &Image, va_t Address) {
   const auto *Symbol = uniqueWritableDataSymbol(Image, Address, 1);
   const auto Width =
@@ -6752,6 +6765,26 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         (Original->ConstProvenance == ConstantAddressProvenance::DataAddress ||
          Original->ConstProvenance == ConstantAddressProvenance::Address) &&
         !NumericOperand && !MemoryAddress) {
+      if (Original->Operands.empty() &&
+          Original->IntrinsicId == Intrinsic::None &&
+          Original->IntrinsicOutputs.empty() &&
+          Original->MemoryOrdering == NdMemoryOrdering::None &&
+          Original->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          (Original->Type->Kind == NdTypeKind::Int ||
+           Original->Type->Kind == NdTypeKind::Ptr) &&
+          (Original->AddressOwnerVA == InvalidVA ||
+           Original->AddressOwnerVA == Original->ConstVal)) {
+        if (auto Storage =
+                swiftImmutableScalarStorageHint(Image, Original->ConstVal)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Result.BorrowedBytes.insert(
+              {Storage->TargetAddress, Storage->ByteCount});
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Storage));
+          return Expression;
+        }
+      }
       if (auto Storage =
               swiftPrivateScalarStorageHint(Image, Original->ConstVal)) {
         *Expression = *HighExpr::makeCall({}, 0, {});
@@ -8603,6 +8636,25 @@ inline bool objcSourceCallBound(
            Binding.SwiftStringInputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
+  if (Binding.CallKind ==
+      SourceCallTypeHint::Kind::RuntimeSwiftScalarStorageAddress) {
+    const auto Expected =
+        swiftImmutableScalarStorageHint(Image, Binding.TargetAddress);
+    auto Plain = Binding;
+    Plain.CallKind = SourceCallTypeHint::Kind::Native;
+    Plain.ByteCount = 0;
+    return Expected && plainNativeBinding(Plain) &&
+           Binding.TargetName == Expected->TargetName &&
+           Binding.ByteCount == Expected->ByteCount && Expression.Type &&
+           Expression.Type->Size == 8 &&
+           (Expression.Type->Kind == NdTypeKind::Int ||
+            Expression.Type->Kind == NdTypeKind::Ptr) &&
+           !Expression.IsIndirectCall && !Expression.CallAddr &&
+           Expression.CallTarget.empty() && Expression.Operands.empty() &&
+           Expression.IntrinsicOutputs.empty() &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
+
   if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeReadOnlyBytes &&
       (!ReadOnlyHelpers || !ReadOnlyHelpers->count(&Expression) ||
        Expression.IsIndirectCall || Expression.CallAddr ||
