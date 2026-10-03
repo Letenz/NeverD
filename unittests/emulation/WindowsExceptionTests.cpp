@@ -263,7 +263,12 @@ TEST(WindowsExceptionsNative, RunsOriginalExceptionExecutable) {
   const auto Error = (Root / StderrFile).string();
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                       Error};
-  for (const auto &C : Cases) {
+  std::vector<Case> NativeCases(std::begin(Cases), std::end(Cases));
+#define NEVERD_VEH_NATIVE_CASE(Name, Argument, Expected, X64Only)              \
+  NativeCases.push_back({#Name, Argument, Expected, X64Only});
+#include "fixtures/WindowsExceptionCases.def"
+#undef NEVERD_VEH_NATIVE_CASE
+  for (const auto &C : NativeCases) {
     SCOPED_TRACE(C.Name);
     std::string Diagnostic;
     bool Failed = false;

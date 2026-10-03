@@ -68,6 +68,9 @@ NEVERD_VEH_CASE(Loader, "!L", "010000004C000000", false)
 NEVERD_VEH_CASE(Exit, "!E", "0100000045000000", false)
 NEVERD_VEH_CASE(Divide, "!D", "0100000044000000", true)
 #endif
+#ifdef NEVERD_VEH_NATIVE_CASE
+NEVERD_VEH_NATIVE_CASE(Noncontinuable, "!Q", "0100000051000000", false)
+#endif
 #ifdef NEVERD_VEH_NEGATIVE
 NEVERD_VEH_NEGATIVE("!U", ExceptionUnhandled)
 NEVERD_VEH_NEGATIVE("!I", ExceptionDisposition)
