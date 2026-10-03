@@ -48,4 +48,3 @@ declare extern_weak void @"_swift_FORCE_LOAD_$_swift_Builtin_float"()
 attributes #0 = { "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-a12" "target-features"="+aes,+ccidx,+complxnum,+crc,+fp-armv8,+fullfp16,+jsconv,+lse,+neon,+pauth,+perfmon,+ras,+rcpc,+rdm,+sha2,+v8.1a,+v8.2a,+v8.3a,+v8a,+zcm,+zcz" }
 attributes #1 = { nofree nounwind memory(read) }
 attributes #2 = { nounwind memory(read) }
-
