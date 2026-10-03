@@ -108,7 +108,7 @@ private:
     const bool DLL = Main == nullptr;
     const auto Input = P.Catalogue.find(Name.str());
     if (DLL && Input == P.Catalogue.end())
-      return llvm::make_error<ModuleLoadError>(ErrorModuleNotFound);
+      return llvm::make_error<ModuleLoadError>(uint32_t(ErrorModuleNotFound));
     const auto &File = DLL ? Input->second : *Main;
     auto Image = loadProgramImage(File, P.Reads, DLL);
     if (!Image)

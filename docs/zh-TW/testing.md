@@ -1070,7 +1070,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 `WindowsDynamicTests.cpp` 使用原始 x64/ARM64 DLL 與 EXE，比對獨立原生 Windows 觀測，涵蓋參考計數、共用相依、巢狀載入、附加失敗清理、轉送查詢、程序退出、無入口 DLL 及重新載入時的 TLS 初始化。額外回歸拒絕遭修改的載入器中繼資料與失效程式碼指標，保持累計準備額度，並確保中斷 API 的結果仍未完成。Windows CI 強制執行原生對照與 WHP 案例；交叉編譯及 Unicorn ARM64 不代表原生 ARM64 執行驗證。
 
-`GetProcAddress` 轉發鏈任一位置缺少程式庫皆傳回錯誤 127；顯式 `LoadLibrary` 載入目錄中缺少的模組傳回 126。原生對照與各可用後端均斷言全部 39 個已宣告載入情境；Windows 上每種 DLL 變體都重複 16 次驗證全部卸載後從入口返回。
+`GetProcAddress` 轉發鏈任一位置缺少程式庫皆傳回錯誤 127；顯式 `LoadLibrary` 載入目錄中缺少的模組傳回 126。原生對照與各可用後端均斷言全部 41 個已宣告載入情境；Windows 上每種 DLL 變體都重複 16 次驗證全部卸載後從入口返回。 `GetProcAddress` 轉發目標初始化失敗也在清理後回傳 127。行程分離回呼保留退出呼叫端的堆疊內容。
 
 `WindowsExportTests.cpp` 使用原始 x64/ARM64 DLL 與 EXE，驗證轉送的程式碼／資料／序號呼叫、別名、初始化查詢、重定位、大小寫敏感的缺失項、LastError、循環與非駐留目標、無效指標，以及成功查詢後的中繼資料修改。同一 EXE 有獨立原生 Windows 對照；原生 CI 強制執行 WHP 案例。C ABI／CLI 測試比對完整報告。原生 ARM64 硬體證據仍待補齊。 具有及不具有匯出表的 EXE 變體涵蓋兩種相依圖、PEB 串列順序、結束通知順序，以及名稱／序號／空指標的錯誤碼。
 

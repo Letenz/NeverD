@@ -30,13 +30,10 @@ namespace {
 #undef NEVERD_DYNAMIC_VALUE
 struct Case {
   const char *Name, *Argument;
-  bool Probe = false;
 };
 constexpr Case Cases[] = {
 #define NEVERD_DYNAMIC_CASE(Name, Argument) {#Name, Argument},
-#define NEVERD_DYNAMIC_PROBE(Name, Argument) {#Name, Argument, true},
 #include "fixtures/WindowsDynamicCases.def"
-#undef NEVERD_DYNAMIC_PROBE
 #undef NEVERD_DYNAMIC_CASE
 };
 struct Profile {
@@ -107,7 +104,7 @@ TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
                                              {TopFile, Directory / TopFile}}};
     for (const char *File : {ProgramFile, StaticProgramFile})
       for (const auto &C : Cases) {
-        if (!selected(NoEntry, File, C) || C.Probe)
+        if (!selected(NoEntry, File, C))
           continue;
         const auto Expected = expected(NoEntry, File, C.Argument[1]);
         ASSERT_FALSE(Expected.empty()) << C.Name;
@@ -313,7 +310,7 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
         ++Scenarios;
         SCOPED_TRACE(C.Name);
         const auto Expected = expected(NoEntry, File, C.Argument[1]);
-        ASSERT_TRUE(C.Probe || !Expected.empty());
+        ASSERT_FALSE(Expected.empty());
         const unsigned Repetitions =
             C.Argument[1] == ReturnMode ? NativeReturnRepetitions : 1;
         for (unsigned I = 0; I < Repetitions; ++I) {
@@ -340,15 +337,14 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
             llvm::outs() << ObservationLabel << NoEntry << ' ' << File << ' '
                          << C.Argument << ' ' << Status << ' '
                          << llvm::toHex((*Out)->getBuffer()) << '\n';
-          if (!C.Probe)
-            EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), Expected);
+          EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), Expected);
           EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
           EXPECT_TRUE((*Err)->getBuffer().empty());
         }
       }
     }
   }
-  EXPECT_EQ(Scenarios, ExpectedScenarios + NativeProbeScenarios);
+  EXPECT_EQ(Scenarios, ExpectedScenarios);
 #endif
 }
 } // namespace

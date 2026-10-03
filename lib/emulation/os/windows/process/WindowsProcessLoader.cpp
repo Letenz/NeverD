@@ -237,7 +237,9 @@ llvm::Error Loader::complete(Operation &Op) {
     if (!Retired)
       return Retired.takeError();
     Op.Value = 0;
-    Op.Error = ErrorDLLInitFailed;
+    Op.Error = uint32_t(Op.Request.Operation == LoaderRequest::Kind::Export
+                            ? ErrorProcedureNotFound
+                            : ErrorDLLInitFailed);
     Op.Unload = std::move(*Retired);
     Op.Notifications = std::make_unique<Lifetime>(P, Lifetime::Mode::Rollback,
                                                   Op.Unload, Failed);
@@ -250,7 +252,7 @@ llvm::Error Loader::complete(Operation &Op) {
                         llvm::StringRef Name) -> llvm::Expected<size_t> {
       auto I = findModule(P, Name);
       if (!I)
-        return llvm::make_error<ModuleLoadError>(ErrorModuleNotFound);
+        return llvm::make_error<ModuleLoadError>(uint32_t(ErrorModuleNotFound));
       return *I;
     };
     auto Resolved = resolveExport(P, Op.Root->Index, Op.Request.Name,
