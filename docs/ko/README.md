@@ -1,6 +1,6 @@
 **언어**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 4ad5761d6370d9ae8a26c9cf015210842c3c7817d1426b5df704408d1f0d1b7a -->
+<!-- i18n-source: 2266006a7b377ad4fcf7286e06f099b4964f598b0a7bb518c4da1e0cb68aad8e -->
 
 [← NeverD 프로젝트](project.md)
 
@@ -12,12 +12,6 @@
 
 영어 가이드는 `docs/` 바로 아래에 있습니다. 번역은 `ar/`, `de/`, `es/`, `fr/`, `it/`, `ja/`, `ko/`, `ru/`, `zh-CN/`, `zh-TW/`로 나뉩니다. 각 언어 디렉터리는 문서 색인 `README.md`, 프로젝트 개요 `project.md`, 주제별 가이드, `CONTRIBUTING.md`, `ATTRIBUTION.md`, `roadmap.md`를 포함합니다. 공용 이미지는 `assets/`에 있습니다.
 
-CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 정책을 분리합니다. `NEVERD_ENABLE_CPU_EMULATION`은 x64/ARM64 CPU 계층을 켜고 `NEVERD_ENABLE_DRIVER_EMULATION`은 제한된 x64 Windows WDM/KMDF 환경을 추가합니다. `linux-elf64-v1`은 지원되는 Linux ELF 프로세스를 실행합니다. [CPU 실행](cpu-execution.md), [게스트 프로세스 에뮬레이션](process-emulation.md), [Windows 드라이버 에뮬레이션](driver-emulation.md)를 참조하세요.
-
-`driver-strict` / `checked-x64-v1`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. Windows x64 네이티브 CI는 Unicorn을 비활성화하고 필수 검사 359개를 모두 통과합니다. CPU 검사 131개, 내장 이미지 26개·WDK 이미지 46개·시나리오 사례 40개를 기본 및 재배치 주소에서 실행한 드라이버 결과 224개, SEH 경계 검사 4개를 포함합니다 ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). native ARM64 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
-
-`checked-aarch64-v1`와 `checked-user-aarch64-v1`는 제한된 ARM64 FP32/FP64, 고정 폭 SIMD와 전체 FPCR/FPSR/벡터 상태를 제공합니다. ISA가 일치하는 Linux ARM64는 KVM, Windows ARM64는 WHP, 다른 ISA는 Unicorn을 사용합니다. 네이티브 ARM64 실기 검증은 남아 있으며 Windows 드라이버 로딩은 x64로 제한됩니다.
-
 | 문서 | 설명 |
 |------|------|
 | [프로젝트 설명（한국어）](project.md) | 개요, 빠른 시작, 빌드, SDK, CLI |
@@ -28,6 +22,7 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 | [데스크톱 검증 기록 (영문)](../gui-qualification.md) | 측정된 GUI 증거, 패키징 범위와 남은 플랫폼 검증 |
 | [인터프리터 소스 복원](interpreter-recovery.md) | 실험적 x64 인터프리터 특수화, HighC/LLVMC 출력, 실행 전제, 근거와 제한; 중첩 루프 증명 후보; 명시적 탐색 예산과 버전별 C API; 정확한 네이티브에서 LLVM으로의 증명 API |
 | [Windows 예외 재구성](windows-exception-reconstruction.md) | SEH/C++ 지원 표, IR 계약, 네이티브 patch 규칙 및 PE 검증 |
+| [CPU 실행과 게스트 환경](emulation.md) | 백엔드 선택, 게스트 환경, 네이티브 검증과 현재 제한 |
 | [CPU 실행](cpu-execution.md) | 구성, 기능 조회, 백엔드 가용성, 형식화된 결과 |
 | [비트벡터 증명 백엔드](solver.md) | 선택적 Z3 증명, 증명 게이트 합성, 독립 검사, query 내보내기 |
 | [게스트 프로세스 에뮬레이션](process-emulation.md) | Linux ELF 프로필, 시작, 서비스, 제한, 테스트 |
@@ -44,7 +39,3 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 | [Solana SBF 디컴파일](sbf.md) | SBF v0-v4, LLVM IR, C/Rust 출력, 검증 및 알려진 제한 사항 |
 | [로드맵](roadmap.md) | 상태: native format, EVM, Solana SBF 구현 완료 |
 | 다국어 문서 | 위의 언어 링크에서 각 언어의 색인과 프로젝트 개요를 열 수 있습니다 |
-
-x64와 ARM64 네이티브 시작 검사는 독점 메모리 임대하에서 제한된 전체 상태 실행을 검증합니다. XSAVE 패킷과 ISA를 식별하는 페이지 테이블 캐시는 하나의 권한 계층이 관리하며 네이티브 ARM64 작업 증거는 아직 불완전합니다.
-
-네이티브 x64 `FOP/FIP/FDP`는 호스트 저장·복원 규칙을 따르며 AMD는 비활성 x87 예외 메타데이터를 0으로 만들 수 있습니다. 시작 검사는 마스크되지 않은 대기 예외로 이 필드를 검증합니다.

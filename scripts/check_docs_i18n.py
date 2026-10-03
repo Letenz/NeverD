@@ -719,6 +719,7 @@ ENGLISH_DOCS = (
     Path("docs/python-plugins.md"),
     Path("docs/roadmap.md"),
     Path("docs/testing.md"),
+    Path("docs/emulation.md"),
     Path("docs/cpu-execution.md"),
     Path("docs/process-emulation.md"),
     Path("docs/solver.md"),
@@ -750,6 +751,7 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
         Path(f"docs/{locale}/ios.md"),
         Path(f"docs/{locale}/driver-emulation.md"),
         Path(f"docs/{locale}/interpreter-recovery.md"),
+        Path(f"docs/{locale}/emulation.md"),
         Path(f"docs/{locale}/cpu-execution.md"),
         Path(f"docs/{locale}/process-emulation.md"),
         Path(f"docs/{locale}/solver.md"),
@@ -2938,6 +2940,55 @@ def validate_macos_guides(errors: list[str], view: RepositoryView) -> None:
                 report(errors, f"{index}: missing local Mac guide link: {stem}.md")
 
 
+def validate_emulation_overview(errors: list[str], view: RepositoryView) -> None:
+    """Keep relocated contracts reviewed and reachable in every language."""
+    stem = "emulation"
+    source = Path(f"docs/{stem}.md")
+    original = view.read_text(source)
+    revision = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    sections = readme_sections(original, source, errors, "emulation guide")
+    validate_language_selector(source, stem, None, errors, view)
+    for locale in LOCALES:
+        path = Path(f"docs/{locale}/{stem}.md")
+        text = view.read_text(path)
+        validate_language_selector(path, stem, locale, errors, view)
+        if README_SOURCE_REVISION.findall(text) != [revision]:
+            report(errors, f"{path}: emulation guide source revision differs from {source}; "
+                   "review the translation before updating its i18n-source SHA-256")
+        translated = readme_sections(text, path, errors, "emulation guide")
+        if [key for key, _ in translated] != [key for key, _ in sections]:
+            report(errors, f"{path}: emulation guide section order differs from {source}")
+            continue
+        for (key, expected), (_, actual) in zip(sections, translated):
+            if readme_example_signature(expected) != readme_example_signature(actual):
+                report(errors, f"{path}: emulation guide examples differ in {key}")
+            expected, actual = readme_visible_text(expected), readme_visible_text(actual)
+            missing = (Counter(re.findall(r"`([^`\n]+)`", expected))
+                       - Counter(re.findall(r"`([^`\n]+)`", actual)))
+            if missing:
+                report(errors, f"{path}: emulation guide API/options missing in {key}: "
+                       + ", ".join(sorted(missing)))
+            if key == "banner":
+                expected, actual = expected.split("\n", 1)[1], actual.split("\n", 1)[1]
+            expected_links = [canonical_readme_url(url, source, {}) for url in readme_urls(expected)]
+            actual_links = [canonical_readme_url(url, path, {}) for url in readme_urls(actual)]
+            if actual_links != expected_links:
+                report(errors, f"{path}: emulation guide link destinations differ in {key}")
+            for url in readme_urls(actual):
+                target = url.partition("#")[0]
+                if not target or re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+                    continue
+                resolved = Path(posixpath.normpath((path.parent / unquote(target)).as_posix()))
+                if (resolved.parts[:1] == ("docs",) and resolved.suffix == ".md"
+                        and resolved.parent != path.parent
+                        and view.exists(path.parent / resolved.name)):
+                    report(errors, f"{path}: emulation guide body link must use the current locale: {url}")
+        for filename in ("README.md", "project.md"):
+            overview = path.parent / filename
+            if f"{stem}.md" not in readme_urls(view.read_text(overview)):
+                report(errors, f"{overview}: missing local emulation guide link")
+
+
 def validate_matrix(errors: list[str], view: RepositoryView) -> None:
     for path in MARKDOWN_DOCS:
         if not view.exists(path):
@@ -2967,6 +3018,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
         return
 
     validate_readme_parity(errors, view)
+    validate_emulation_overview(errors, view)
     validate_synced_guide_examples(errors, view)
     validate_macos_guides(errors, view)
     validate_driver_documents(errors, view)

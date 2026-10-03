@@ -14,12 +14,6 @@ and `zh-TW/`. Each language directory contains a `README.md` documentation index
 a `project.md` project overview, topic guides, `CONTRIBUTING.md`, `ATTRIBUTION.md`,
 and `roadmap.md`. Shared images remain in `assets/`.
 
-CPU execution separates ISA admission, guest memory, backend transport and guest OS policy. `NEVERD_ENABLE_CPU_EMULATION` enables the x64/ARM64 CPU layer; `NEVERD_ENABLE_DRIVER_EMULATION` adds the bounded x64 Windows WDM/KMDF environment. The `linux-elf64-v1` profile runs supported Linux ELF processes. See [CPU execution](cpu-execution.md), [Guest process emulation](process-emulation.md) and [Windows driver emulation](driver-emulation.md).
-
-`driver-strict` / `checked-x64-v1` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Native ARM64 runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
-
-`checked-aarch64-v1` and `checked-user-aarch64-v1` provide bounded ARM64 FP32/FP64, fixed-width SIMD and complete FPCR/FPSR/vector state. Matching Linux ARM64 hosts use KVM, matching Windows ARM64 hosts use WHP, and cross-ISA execution uses Unicorn. Native ARM64 runtime evidence remains pending; Windows driver loading remains x64.
-
 | Document | Description |
 |----------|-------------|
 | [README (English)](../README.md) | Overview, quick start, build, SDK, CLI |
@@ -30,6 +24,7 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 | [Desktop qualification](gui-qualification.md) | Supported workflows, verification evidence and platform release requirements |
 | [Interpreter source recovery](interpreter-recovery.md) | Experimental x64 interpreter specialization, control contexts, source routes, local evidence, and explicit refusal boundaries; nested loop proof proposals; explicit discovery budgets and versioned C API; exact native-to-LLVM proof API |
 | [Windows exception reconstruction](windows-exception-reconstruction.md) | SEH/C++ unwind support matrix, IR contract, native patch rules, and PE validation |
+| [CPU execution and guest workloads](emulation.md) | Backend selection, guest environments, native validation and current limits |
 | [CPU execution](cpu-execution.md) | Validated configuration, capability queries, backend availability and typed CPU outcomes, independent of guest OS |
 | [Bitvector proof backends](solver.md) | Optional Z3 proofs, fail-closed synthesis, independent solver tests and query export |
 | [Guest process emulation](process-emulation.md) | Explicit Linux ELF64 process profile, startup stack, system calls, bounded output, CLI/C/Python and current limits |
@@ -46,7 +41,3 @@ CPU execution separates ISA admission, guest memory, backend transport and guest
 | [Solana SBF decompilation](sbf.md) | SBF v0-v4 ELF rules, staged IR, syscalls, C/Rust/LLVM backends, and host contracts |
 | [Roadmap](roadmap.md) | Status: native formats, EVM, and Solana SBF implemented |
 | Localized documentation | Use the language links above to open each language's index and project overview |
-
-Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner; native ARM64 workload evidence remains incomplete.
-
-Native x64 `FOP/FIP/FDP` follow host save/restore rules: AMD may clear inactive x87 exception metadata. Startup probes validate these fields with a pending unmasked exception.

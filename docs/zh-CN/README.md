@@ -1,6 +1,6 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 4ad5761d6370d9ae8a26c9cf015210842c3c7817d1426b5df704408d1f0d1b7a -->
+<!-- i18n-source: 2266006a7b377ad4fcf7286e06f099b4964f598b0a7bb518c4da1e0cb68aad8e -->
 
 [← NeverD 项目](project.md)
 
@@ -12,12 +12,6 @@
 
 英文指南直接位于 `docs/`。译文按语言分布在 `ar/`、`de/`、`es/`、`fr/`、`it/`、`ja/`、`ko/`、`ru/`、`zh-CN/` 和 `zh-TW/` 目录中。各语言目录包含文档索引 `README.md`、项目概览 `project.md`、专题指南、`CONTRIBUTING.md`、`ATTRIBUTION.md` 和 `roadmap.md`。共享图片保存在 `assets/`。
 
-CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 启用 x64/ARM64 CPU 层；`NEVERD_ENABLE_DRIVER_EMULATION` 添加有界 x64 Windows WDM/KMDF 环境。`linux-elf64-v1` 配置运行受支持的 Linux ELF 进程。参见[CPU 执行](cpu-execution.md)、[来宾进程模拟](process-emulation.md)及[Windows 驱动模拟](driver-emulation.md)。
-
-`driver-strict` / `checked-x64-v1` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。Windows x64 原生 CI 在关闭 Unicorn 的配置下通过全部 359 项必跑检查：131 项 CPU 检查、26 个内置映像与 46 个 WDK 映像及 40 个场景组合在首选和重定位地址产生的 224 项驱动结果，以及 4 项 SEH 边界检查 ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). 原生 ARM64 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
-
-`checked-aarch64-v1` 和 `checked-user-aarch64-v1` 提供有界 ARM64 FP32/FP64、定宽 SIMD，以及完整 FPCR/FPSR/向量状态。匹配的 Linux ARM64 主机使用 KVM，Windows ARM64 主机使用 WHP，跨 ISA 使用 Unicorn。ARM64 原生运行仍待实机验证；Windows 驱动加载仍限 x64。
-
 | 文档 | 说明 |
 |------|------|
 | [项目说明（简体中文）](project.md) | 概览、快速开始、构建、SDK、CLI |
@@ -28,6 +22,7 @@ CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`
 | [桌面验收记录 (英文)](../gui-qualification.md) | 已测量的 GUI 证据、打包边界及尚未完成的平台验收 |
 | [解释器源码恢复](interpreter-recovery.md) | 实验性 x64 解释器特化、HighC/LLVMC 输出、执行前提、证据与限制; 嵌套循环证明候选; 显式发现预算和版本化 C API; 精确的原生到 LLVM 证明 API |
 | [Windows 异常重建](windows-exception-reconstruction.md) | SEH/C++ 展开支持矩阵、IR 契约、原生 patch 规则与 PE 验证 |
+| [CPU 执行与来宾环境](emulation.md) | 后端选择、来宾环境、原生验证与当前限制 |
 | [CPU 执行](cpu-execution.md) | 配置、能力查询、后端可用性与类型化结果 |
 | [Bitvector 证明后端](solver.md) | 可选 Z3 证明、门控合成、独立检查与查询导出 |
 | [来宾进程模拟](process-emulation.md) | Linux ELF 配置、进程启动、服务、限制与测试 |
@@ -44,7 +39,3 @@ CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`
 | [Solana SBF 反编译](sbf.md) | SBF v0-v4、LLVM IR、C/Rust 输出、验证与已知限制 |
 | [路线图](roadmap.md) | 状态：原生格式、EVM 与 Solana SBF 均已实现 |
 | 本地化文档 | 使用上方语言链接打开各语言的文档索引和项目概览 |
-
-x64 与 ARM64 原生启动自检在独占内存租约下验证有界的完整状态执行。XSAVE 数据包和包含 ISA 身份的页表缓存由唯一权威层管理；ARM64 原生工作负载证据仍未完整。
-
-原生 x64 的 `FOP/FIP/FDP` 遵循宿主保存、恢复规则：AMD 可能清零未生效的 x87 异常元数据。启动自检通过未屏蔽的待处理异常验证这些字段。
