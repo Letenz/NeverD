@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
-#include "os/linux/LinuxMemory.h"
+#include "os/linux/kernel/LinuxMemory.h"
 
 namespace neverd::emulation {
 namespace {
@@ -28,14 +28,7 @@ protected:
     ProcessOptions Options;
     Options.MemoryLimit = UnitLimit;
     Options.StackSize = PageSize;
-    const linux_model::ProcessLayout Layout{
-        GuestArchitecture::X64,
-        llvm::cantFail(IntegerABI::get(IntegerCallingConvention::SysVAMD64)),
-        UserLimit,
-        0,
-        PageSize,
-        0,
-        false};
+    const linux_model::MemoryLayout Layout{UserLimit, PageSize};
     Memory = std::make_unique<linux_model::LinuxMemory>(*Space, Layout,
                                                         UnitHeap, Options);
   }

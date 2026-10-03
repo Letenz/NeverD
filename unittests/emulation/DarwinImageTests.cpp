@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "DarwinTestImage.h"
 #include "gtest/gtest.h"
-#include "os/darwin/DarwinProcess.h"
+#include "os/darwin/process/DarwinProcess.h"
 
 #include "neverd/loader/MachO/MachOExecutionImage.h"
 
@@ -28,8 +28,8 @@ TEST(DarwinImage, OriginalBytesAndPageZeroHaveSeparateMappingOwnership) {
     auto Loaded =
         darwin_model::loadImage(File.path(), darwin_model::macOSProfile(), {});
     ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
-    EXPECT_EQ(Loaded->MinimumAddress, 0x100000000ULL);
-    EXPECT_EQ(Loaded->PageSize, X64 ? 4096u : 16384u);
+    EXPECT_EQ(Loaded->Memory.MinimumAddress, 0x100000000ULL);
+    EXPECT_EQ(Loaded->Memory.PageSize, X64 ? 4096u : 16384u);
     ASSERT_EQ(Loaded->Plan.Regions.size(), 1u);
     EXPECT_EQ(Loaded->Plan.MappedBytes, 16384u);
     EXPECT_EQ(Loaded->Plan.Entry, 0x100001000ULL);
@@ -181,7 +181,7 @@ TEST(DarwinImage, AllowsRoundedLinkeditTailWithoutRelaxingPageAlignment) {
       darwin_model::loadImage(File.path(), darwin_model::macOSProfile(), {});
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
   EXPECT_EQ(Loaded->Plan.MappedBytes, 16384u);
-  EXPECT_EQ(Loaded->Maximum.front().Size, 16384u);
+  EXPECT_EQ(Loaded->Memory.Maximum.front().Size, 16384u);
   EXPECT_EQ(Loaded->Plan.Regions.front().Bytes, I.Bytes);
 }
 TEST(DarwinImage, HeaderRequiresExecuteEvenWhenAnotherSegmentOwnsTheEntry) {

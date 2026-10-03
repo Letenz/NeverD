@@ -6,7 +6,7 @@
 #ifndef NEVERD_EMULATION_OS_LINUX_LINUXMEMORY_H
 #define NEVERD_EMULATION_OS_LINUX_LINUXMEMORY_H
 
-#include "LinuxProcess.h"
+#include "LinuxKernel.h"
 
 #include "neverd/emulation/AddressSpace.h"
 
@@ -16,7 +16,7 @@ namespace neverd::emulation::linux_model {
 /// require exclusive OS ownership of mutations across the whole operation.
 class LinuxMemory {
 public:
-  LinuxMemory(AddressSpace &Space, const ProcessLayout &Layout,
+  LinuxMemory(AddressSpace &Space, const MemoryLayout &Layout,
               uint64_t InitialBreak, const ProcessOptions &Options);
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,

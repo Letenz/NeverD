@@ -57,7 +57,7 @@ llvm::Expected<uint64_t> prepareStack(GuestMemory &Memory,
 #define NEVERD_LINUX_AUX(Name, Tag, Value)                                     \
   Words.push_back(Tag);                                                        \
   Words.push_back(Value);
-#include "LinuxValues.def"
+#include "../LinuxValues.def"
 #undef NEVERD_LINUX_AUX
   if (Words.size() > Cursor / Layout.Calls.info().WordSize)
     return failure(Stack);

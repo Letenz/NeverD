@@ -33,7 +33,7 @@ bool supportedProtection(uint64_t Protection) {
 }
 } // namespace
 
-LinuxMemory::LinuxMemory(AddressSpace &Space, const ProcessLayout &Layout,
+LinuxMemory::LinuxMemory(AddressSpace &Space, const MemoryLayout &Layout,
                          uint64_t InitialBreak, const ProcessOptions &Options)
     : Space(Space), PageSize(Layout.PageSize), UserLimit(Layout.UserLimit),
       Limit(Options.MemoryLimit), MinimumBreak(InitialBreak),

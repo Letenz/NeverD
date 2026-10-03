@@ -683,6 +683,8 @@ L’esecuzione CPU è indipendente dal sistema operativo guest e dall’immagine
 
 `os/windows/driver/` gestisce caricamento dei driver, sessioni, scenari, rapporti e criteri di esecuzione. `os/windows/kernel/` contiene i modelli di API e oggetti del kernel, inclusi WDM/KMDF, ciclo di vita dei dispositivi, alimentazione, memoria e pianificazione; `KernelModelPowerPolicy.cpp` appartiene a questa directory. `os/windows/process/` gestisce avvio e servizi dei processi utente, mentre `os/windows/exception/` condivide ricerca delle eccezioni e unwinding. Driver e kernel costituiscono ancora `NeverDEmulation`: chiamate e tipi condivisi non sono ancora separati in librerie indipendenti. Ogni directory mantiene il proprio elenco di sorgenti in `CMakeLists.txt`, preservando la compatibilità degli header pubblici.
 
+`os/linux/process/` e `os/darwin/process/` gestiscono caricamento immagini, stack iniziali e continuazioni. `os/linux/kernel/` e `os/darwin/kernel/` gestiscono ABI delle chiamate di sistema, servizi e politica di memoria, come `NeverDEmulationLinuxKernel` e `NeverDEmulationDarwinKernel`, dipendenti solo dal confine memoria/CPU di base e da LLVM Support. `MemoryLayout` contiene la politica degli indirizzi, non immagini eseguibili o ABI di avvio. Android dipende direttamente dal modello kernel Linux; macOS e iOS mantengono profili distinti. Le dipendenze vanno da processi/piattaforme ai servizi kernel. Queste directory non implicano supporto al caricamento di kernel o driver Linux/Darwin. Il vocabolario OS condiviso resta nei file `.def` del livello OS.
+
 | Componente | Responsabilità |
 |---|---|
 | `NeverDEmulationCore` | Memoria, fault, registri e ciclo di esecuzione condiviso |
@@ -691,7 +693,6 @@ L’esecuzione CPU è indipendente dal sistema operativo guest e dall’immagine
 | `NeverDEmulationCPU` | Configurazione CPU e composizione dei backend |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | ABI intere, sessioni CPU e budget dei workload |
 | `NeverDEmulationImage` | Piani di mapping per segmenti del loader |
-| `NeverDEmulationLinux` / `NeverDEmulationProcess` | Avvio ELF, policy dei servizi Linux e report del processo |
 | `NeverDEmulation` | Modello Windows e ciclo di vita dei driver |
 
 Su macOS il trasporto nativo [HVF](macos-hvf.md) appartiene a `NeverDEmulationNative`: ARM64 su Apple Silicon, x86-64 su Intel. La ISA host seleziona il trasporto, non il sistema guest. I [profili Darwin](darwin-emulation.md) definiscono separatamente avvio e servizi di macOS, dispositivi iOS e iOS Simulator. Le verifiche ancora mancanti per Linux ARM64 KVM e Windows ARM64 WHP sono distinte dalle prove macOS ARM64 HVF già registrate. Disponibilità e stato completo della verifica sono espliciti nella guida HVF.

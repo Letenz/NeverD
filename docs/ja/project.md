@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: dc2e183e5b0272875f3a219e97dcae8f4499d3cedfcd8866114cec94e1d07c28 -->
+<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
 
 <div align="center">
 
@@ -38,33 +38,7 @@ NeverD は **1:1 の命令レベルリフト** を中核とするネイティブ
 
 CLI・統合側・AI エージェントは **純粋 C API** 経由で同じエンジン **`libneverd`** を使い、Capstone・LLVM・内部 C++ には直接リンクしません。
 
-input format、host contract、制限は [EVM ガイド](evm.md)と [Solana SBF ガイド](sbf.md)を参照してください。
-
-実験的な CLI `neverd mobile app.apk -o recovered-app` は APK、DEX、smali から Java と `report.json` を生成します。Android の復元には NeverD の C++20 内蔵エンジンのみを使用し、Python や Java のランタイムは不要です。空白を含むパスは引用符で囲んでください。対応入力、レポート、復元の制限は [Android ガイド](android.md)を参照してください。
-
-実験的な iOS フロー `neverd mobile App.ipa -o recovered-ios` は IPA、`.app`、Mach-O からネイティブ C と対応する Objective-C/Swift ソースを出力します。ランタイム配置、ソース単位、省略理由を保持し、生成コードは元バイナリへのブリッジを使いません。設定、カバレッジ、独立した再コンパイル検証は [iOS ガイド](ios.md)を参照してください。
-
-実験的な[インタープリターのソース復元](interpreter-recovery.md)は `neverd decompile --devirtualize --func ENTRY` を使用し、対応するリンク済み x64 ELF/PE インタープリターを共通の LowIR/MedIR パイプライン経由で HighC または LLVMC に特化します。制御ヒントはデコーダーのコンテキストを分離し、実行時入力を固定しません。未解決の制御、未対応の意味論、予算超過は明示的に失敗します。バイナリ置換や例外の等価性を証明するモードではありません。
-
-復元予算は `--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` で明示できます。既定値は 16、16、4096 のままです。互換性のある v3 C API と失敗時の規則は復元ガイドを参照してください。
-
-復元では `--vm-chain-transfers=N`（既定値 0）と `--vm-no-control-discovery` も指定できます。連鎖は単一ターゲットが証明された制御転送間で記号的な相関を保持し、上限で通常の CFG 境界に戻ります。マシン状態復元では `--vm-entry-frame=begin:end` で、実行時には検査しない非ラップの入口 RSP オフセット範囲を宣言できます。正確な数値前提は生成 C とレポートに残り、メモリアクセスや等価性の証明を与えません。
-
-マシン状態の復元では `--vm-entry-alignment=A:R` により入口 RSP の合同条件を明示し、実行時に検査できます。`A` は正の 2 の累乗、`R < A` が必要です。他の入口はゲストメモリアクセスや状態書き込みの前にステータス 2 を返します。アドレス上位ビットは自由で、既定では整列を仮定しません。これはネイティブ等価性の認証ではありません。
-
-`--vm-external-stores-disjoint-frame` は機械状態の復元に、実行時に検査しない明示的前提を追加します。外部 STORE の全範囲は `--vm-entry-frame` と重なってはなりません。その範囲内の既存の事実だけを保持します。LOAD や外部ポインタ間の別名関係には制約を加えず、既定の処理は保守的です。ネイティブ証明 API はこのドメインを拒否します。
-
-SSA 構築の上限を超える大規模な復元関数は、`--llvm` で有界なスカラー可変ストレージ契約を使用できます。入口の入力、ループで引き継ぐ値、過去の読み取りの意味を保持します。未対応の暗黙状態、ベクトルレジスター引数、イメージ再配置、曖昧なストレージ、不正な制御フローは明示的に失敗し、HighC はこの代替経路を拒否します。ソース出力は既存のマシン状態契約に従い、等価性証明書は追加しません。
-
-独立した C++ ループ証明 API は予算内で入れ子ループの不変条件と辞書式順位を推論し、ネイティブから LowIR への精緻化を再検査します。[復元ガイド](interpreter-recovery.md)を参照してください。出力 C の等価性は証明しません。
-
-独立した C++ `checkBinaryLLVMRefinement` API は正確な LLVM 成果物に対し新規のネイティブ・LLVM 検証を合成します。C コンパイルは証明範囲外です。
-
-PE 回復は優先ベースの DIR64 バイトも認証し、インポート書き込みを除外します。固定イメージ契約は ASLR や初期化の等価性を証明しません。
-
-明示的なマシン状態契約では、有界な入口スタック整列分割と内部 `RET imm16` のスタック解放を回復できます。これらの分割に対する自動 native-to-LLVM 証明合成は未実装です。
-
-有界な `REP MOVS/STOS` の復元は要素順序と重なりを保持します。元命令の証明対応は未完了です。
+使用方法、対応する契約と制限は [EVM](evm.md)、[Solana SBF](sbf.md)、[モバイルソース復元](mobile.md)、実験的な[インタープリターソース復元](interpreter-recovery.md)のガイドを参照してください。
 
 <!-- i18n-section: why-neverd -->
 
@@ -113,7 +87,7 @@ metadata、Low/Med/High IR、検証済み LLVM、portable C11、安全な stable
 
 ### CPU 実行とゲスト環境
 
-NeverD は共通のゲスト OS モデルで、範囲を限定した Windows/Linux プロセスと x64 Windows ドライバーを実行します。Unicorn は x64/ARM64 のソフトウェア実行を提供し、対応するホストではワークロードに応じて KVM または WHP を利用できます。バックエンドの選択、対応環境、ネイティブ検証、現在の制限は [CPU 実行とゲストワークロード](emulation.md) を参照してください。
+NeverD は CPU バックエンドとゲスト OS モデルを分離し、範囲を限定したプロセス、Android ネイティブライブラリ、x64 Windows ドライバーを実行します。Unicorn は x64/ARM64 のソフトウェア実行を提供し、同じ ISA のホストでは KVM（Linux）、WHP（Windows）、HVF（macOS）を使用できます。対応環境、検証結果、制限は [CPU 実行とゲストワークロード](emulation.md)を参照してください。
 
 <!-- i18n-section: how-it-works -->
 

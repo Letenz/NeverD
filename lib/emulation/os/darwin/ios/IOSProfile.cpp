@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../DarwinProcess.h"
+#include "../process/DarwinProcess.h"
 
 #include "llvm/BinaryFormat/MachO.h"
 namespace neverd::emulation::darwin_model {

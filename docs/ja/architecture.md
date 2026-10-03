@@ -579,6 +579,8 @@ CPU 実行はゲスト OS と image から独立しています。OS policy と 
 
 `os/windows/driver/` はドライバーイメージの読み込み、実行セッション、シナリオ、レポート、実行ポリシーを担当します。`os/windows/kernel/` は WDM/KMDF、デバイスのライフサイクル、電源ポリシー、メモリ、スケジューリングを含むカーネル API とオブジェクトモデルを担当し、`KernelModelPowerPolicy.cpp` はここに属します。`os/windows/process/` はユーザープロセスの起動とサービス、`os/windows/exception/` は共有の例外検索とアンワインドを担当します。ドライバーとカーネルのソースは引き続き `NeverDEmulation` を構成し、既存の呼び出しと共有型は独立したライブラリ境界には分離されていません。各ディレクトリの `CMakeLists.txt` がソース一覧を管理し、公開ヘッダーの互換性を維持します。
 
+`os/linux/process/` と `os/darwin/process/` はイメージのロード、初期スタック、実行の継続を担当します。`os/linux/kernel/` と `os/darwin/kernel/` はシステムコール ABI、サービス、メモリ方針を担当し、`NeverDEmulationLinuxKernel` と `NeverDEmulationDarwinKernel` としてコアのメモリ/CPU 境界と LLVM Support のみに依存します。`MemoryLayout` はアドレス方針だけを持ち、実行イメージや起動 ABI を含みません。Android は Linux カーネルモデルに直接依存し、macOS と iOS は別々のプラットフォームプロファイルを維持します。依存方向はプロセス/プラットフォームからカーネルサービスです。このディレクトリ分割は Linux/Darwin のカーネルイメージやドライバーロード対応を意味しません。共有 OS 語彙は OS 層の `.def` ファイルに残ります。
+
 | コンポーネント | 責務 |
 |---|---|
 | `NeverDEmulationCore` | memory、fault、register、共有実行ループ |
@@ -587,7 +589,6 @@ CPU 実行はゲスト OS と image から独立しています。OS policy と 
 | `NeverDEmulationCPU` | CPU 設定とバックエンド構成 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | integer ABI、CPU session、workload budget |
 | `NeverDEmulationImage` | loader segment の mapping plan |
-| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 起動、Linux service policy、process report |
 | `NeverDEmulation` | Windows model と driver lifecycle |
 
 macOS のネイティブ転送 [HVF](macos-hvf.md) は `NeverDEmulationNative` が所有し、Apple Silicon では ARM64、Intel では x86-64 を使います。ホスト ISA は転送層を選択しますが、ゲスト OS は決めません。[Darwin プロファイル](darwin-emulation.md) が macOS、iOS デバイス、iOS Simulator の起動とサービスを別に定義します。未完了の Linux ARM64 KVM、Windows ARM64 WHP 検証は、記録済みの macOS ARM64 HVF の証拠とは区別します。可用性と完全な検証状態は HVF ガイドに記載します。

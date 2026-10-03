@@ -10,9 +10,9 @@
 
 CPU execution separates ISA admission, guest memory, backend transport and guest OS policy. `NEVERD_ENABLE_CPU_EMULATION` enables the x64/ARM64 CPU layer; `NEVERD_ENABLE_DRIVER_EMULATION` adds the bounded x64 Windows WDM/KMDF environment. The `linux-elf64-v1` profile runs supported Linux ELF processes. See [CPU execution](cpu-execution.md), [Guest process emulation](process-emulation.md) and [Windows driver emulation](driver-emulation.md).
 
-`driver-strict` / `checked-x64-v1` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Native ARM64 runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
+For supported native contracts, `auto` selects KVM on Linux, WHP on Windows or [HVF on macOS](macos-hvf.md), matching the guest ISA to the host. Cross-ISA execution uses Unicorn; `software-cpu-v1` and the original V1 API retain software execution. An unavailable explicitly selected backend fails without fallback. Native execution checks admitted instructions, addresses and effects before entry. Host virtualization does not determine the guest OS: [Darwin profiles](darwin-emulation.md) separately model macOS, iOS and iOS Simulator. HVF needs the `com.apple.security.hypervisor` entitlement.
 
-`checked-aarch64-v1` and `checked-user-aarch64-v1` provide bounded ARM64 FP32/FP64, fixed-width SIMD and complete FPCR/FPSR/vector state. Matching Linux ARM64 hosts use KVM, matching Windows ARM64 hosts use WHP, and cross-ISA execution uses Unicorn. Native ARM64 runtime evidence remains pending; Windows driver loading remains x64.
+`driver-strict` / `checked-x64-v1` covers bounded x64 execution; Windows driver loading remains x64. `checked-aarch64-v1` and `checked-user-aarch64-v1` include bounded ARM64 FP32/FP64, fixed-width SIMD and complete FPCR/FPSR/vector state. Native ARM64 HVF acceptance is recorded in the Mac guide; ARM64 KVM/WHP workload validation and complete Intel HVF acceptance remain pending. Supported CPU execution does not imply arbitrary driver or application compatibility.
 
 <!-- i18n-section: windows-processes -->
 
@@ -62,6 +62,6 @@ Checked x64 now includes ordinary-RAM `MOVS/STOS/LODS` and `CLD/STD`, with per-e
 
 Checked x64 also supports ordinary-RAM `CMPS/SCAS` with `REPE/REPNE`, including arithmetic flags, early termination, per-element stops and fault recovery. Device comparisons remain unsupported.
 
-Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner; native ARM64 workload evidence remains incomplete.
+Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner.
 
 Native x64 `FOP/FIP/FDP` follow host save/restore rules: AMD may clear inactive x87 exception metadata. Startup probes validate these fields with a pending unmasked exception.

@@ -78,7 +78,6 @@ add_neverd_component_library(NeverDEmulationImage
   LLVM_COMPONENTS Support)
 
 add_subdirectory(os/linux)
-add_subdirectory(os/linux/android)
 add_subdirectory(os/windows/exception)
 add_subdirectory(os/windows/process)
 add_subdirectory(os/darwin)

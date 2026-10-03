@@ -3,9 +3,11 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../core/ExecutionDeadline.h"
-#include "../../runtime/RuntimeValues.h"
-#include "DarwinMemory.h"
+#include "DarwinProcess.h"
+
+#include "../../../core/ExecutionDeadline.h"
+#include "../../../runtime/RuntimeValues.h"
+#include "../kernel/DarwinMemory.h"
 
 #include "neverd/emulation/ExecutionSession.h"
 
@@ -41,9 +43,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   // partial munmap. Image, stack and anonymous mappings share this invariant.
   auto MapPages = [&](uint64_t Address, uint64_t Size,
                       unsigned Permissions) -> llvm::Error {
-    for (uint64_t Offset = 0; Offset < Size; Offset += Image->PageSize)
-      if (auto E =
-              (*Space)->map(Address + Offset, Image->PageSize, Permissions))
+    for (uint64_t Offset = 0; Offset < Size; Offset += Image->Memory.PageSize)
+      if (auto E = (*Space)->map(Address + Offset, Image->Memory.PageSize,
+                                 Permissions))
         return E;
     return llvm::Error::success();
   };
@@ -69,7 +71,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto Stack = prepareStack(**Space, Options, Path.filename().string());
   if (!Stack)
     return Stack.takeError();
-  if (auto E = (*Space)->map(ReturnGate, Image->PageSize, Read | Write))
+  if (auto E = (*Space)->map(ReturnGate, Image->Memory.PageSize, Read | Write))
     return std::move(E);
   const bool X64 = Image->Architecture == GuestArchitecture::X64;
   const uint8_t TrapX64[] = {0x0f, 0x05};
@@ -79,7 +81,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
           (*Space)->write(ReturnGate, X64 ? llvm::ArrayRef<uint8_t>(TrapX64)
                                           : llvm::ArrayRef<uint8_t>(TrapARM64)))
     return std::move(E);
-  if (auto E = (*Space)->protect(ReturnGate, Image->PageSize,
+  if (auto E = (*Space)->protect(ReturnGate, Image->Memory.PageSize,
                                  Read | Execute | UserAccessible))
     return std::move(E);
   auto Backend =
@@ -115,7 +117,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (!Session)
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
-  DarwinMemory Memory(**Space, *Image, Options);
+  DarwinMemory Memory(**Space, Image->Memory, Options);
   ProcessResult Result{Profile.Profile, Image->Architecture, Backend->Kind,
                        Backend->Reason};
   Result.Entry = Result.PC = Image->Plan.Entry;
@@ -192,7 +194,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       break;
     }
     Result.Services.push_back(*Event);
-    auto Returned = handleService(CPU, Memory, *Event, *Image, Options, Result);
+    auto Returned = handleService(CPU, Memory, *Event, Options, Result);
     if (!Returned) {
       RuntimeFailure(Returned.takeError());
       break;

@@ -6,9 +6,9 @@
 #include "neverd/emulation/ProcessSession.h"
 
 #include "../core/ExecutionDiagnostics.h"
-#include "../os/darwin/DarwinProcess.h"
-#include "../os/linux/LinuxProcess.h"
+#include "../os/darwin/process/DarwinProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
+#include "../os/linux/process/LinuxProcess.h"
 #include "../os/windows/process/WindowsProcess.h"
 #include "RuntimeValues.h"
 

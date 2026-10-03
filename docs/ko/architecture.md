@@ -560,6 +560,8 @@ CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프
 
 `os/windows/driver/`는 드라이버 이미지 로드, 실행 세션, 시나리오, 보고서와 실행 정책을 담당합니다. `os/windows/kernel/`은 WDM/KMDF, 장치 수명 주기, 전원 정책, 메모리와 스케줄링을 포함한 커널 API 및 객체 모델을 담당하며 `KernelModelPowerPolicy.cpp`는 여기에 속합니다. `os/windows/process/`는 사용자 프로세스 시작과 서비스를, `os/windows/exception/`은 공통 예외 검색과 언와인딩을 담당합니다. 드라이버와 커널 소스는 계속 `NeverDEmulation`을 구성하며 기존 호출과 공유 형식은 아직 독립된 라이브러리 경계로 분리되지 않았습니다. 각 디렉터리의 `CMakeLists.txt`가 소스 목록을 관리하고 공개 헤더의 호환성을 유지합니다.
 
+`os/linux/process/`와 `os/darwin/process/`는 이미지 로딩, 초기 스택과 실행 연속 처리를 담당합니다. `os/linux/kernel/`과 `os/darwin/kernel/`은 시스템 호출 ABI, 서비스와 메모리 정책을 담당하며 `NeverDEmulationLinuxKernel`과 `NeverDEmulationDarwinKernel`로 빌드되어 코어 메모리/CPU 경계와 LLVM Support에만 의존합니다. `MemoryLayout`은 주소 정책만 담으며 실행 이미지나 시작 ABI를 포함하지 않습니다. Android는 Linux 커널 모델에 직접 의존하고 macOS와 iOS는 별도 플랫폼 프로필을 유지합니다. 의존 방향은 프로세스/플랫폼에서 커널 서비스로 향합니다. 이 디렉터리가 Linux/Darwin 커널 이미지나 드라이버 로딩 지원을 의미하지는 않습니다. 공통 OS 어휘는 OS 계층의 `.def` 파일에 유지됩니다.
+
 | 구성 요소 | 책임 |
 |---|---|
 | `NeverDEmulationCore` | 메모리, fault, 레지스터, 공통 실행 루프 |
@@ -568,7 +570,6 @@ CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프
 | `NeverDEmulationCPU` | CPU 구성과 백엔드 조합 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 정수 ABI, CPU 세션, 워크로드 예산 |
 | `NeverDEmulationImage` | 로더 세그먼트 매핑 계획 |
-| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 시작, Linux 서비스 정책, 프로세스 보고서 |
 | `NeverDEmulation` | Windows 모델 및 드라이버 수명 주기 |
 
 macOS의 네이티브 전송 [HVF](macos-hvf.md)는 `NeverDEmulationNative`가 담당합니다. Apple Silicon은 ARM64, Intel은 x86-64를 사용합니다. 호스트 ISA는 전송을 선택하지만 게스트 OS를 결정하지 않습니다. [Darwin 프로필](darwin-emulation.md)은 macOS, iOS 기기 및 iOS Simulator의 시작과 서비스를 별도로 정의합니다. 아직 남은 Linux ARM64 KVM 및 Windows ARM64 WHP 검증은 이미 확보한 macOS ARM64 HVF 증거와 구분합니다. 가용성과 전체 검증 상태는 HVF 가이드에서 명시합니다.

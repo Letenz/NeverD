@@ -42,7 +42,7 @@ llvm::Error validateDynamicDependencies(const BinaryImage &Image) {
   for (const auto &Entry : *Entries) {
     switch (Entry.Tag) {
 #define NEVERD_LINUX_DYNAMIC_DEPENDENCY(Name, Tag) case Tag:
-#include "LinuxValues.def"
+#include "../LinuxValues.def"
 #undef NEVERD_LINUX_DYNAMIC_DEPENDENCY
       return failure(Dynamic);
     default:
@@ -165,12 +165,8 @@ llvm::Expected<ProcessLayout> processLayout(const BinaryImage &Image) {
                                    : IntegerCallingConvention::AAPCS64);
   if (!Calls)
     return Calls.takeError();
-  return ProcessLayout{Architecture,
-                       *Calls,
-                       UserLimit,
-                       *TableAddress,
-                       PageSize,
-                       LoadBias,
-                       ExecutableStack.value_or(false)};
+  return ProcessLayout{
+      Architecture,  *Calls,   {UserLimit, PageSize},
+      *TableAddress, LoadBias, ExecutableStack.value_or(false)};
 }
 } // namespace neverd::emulation::linux_model

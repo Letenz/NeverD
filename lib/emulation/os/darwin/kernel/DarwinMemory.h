@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_OS_DARWIN_DARWINMEMORY_H
 #define NEVERD_EMULATION_OS_DARWIN_DARWINMEMORY_H
-#include "DarwinProcess.h"
+#include "DarwinKernel.h"
 
 #include "neverd/emulation/AddressSpace.h"
 
@@ -14,7 +14,7 @@ namespace neverd::emulation::darwin_model {
 /// and maximum protection, which cannot be inferred from current permissions.
 class DarwinMemory {
 public:
-  DarwinMemory(AddressSpace &Space, const ProcessImage &Image,
+  DarwinMemory(AddressSpace &Space, const MemoryLayout &Layout,
                const ProcessOptions &Options);
   llvm::Expected<std::optional<ServiceResult>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,

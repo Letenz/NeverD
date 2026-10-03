@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
-#include "os/linux/LinuxProcess.h"
+#include "os/linux/process/LinuxProcess.h"
 
 #include "neverd/loader/BinaryImageModel.h"
 #include "neverd/loader/ELF/ELFLoader.h"

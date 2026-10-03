@@ -5,9 +5,9 @@
 //===----------------------------------------------------------------------===//
 #include "LinuxProcess.h"
 
-#include "../../core/ExecutionDeadline.h"
-#include "../../runtime/RuntimeValues.h"
-#include "LinuxMemory.h"
+#include "../../../core/ExecutionDeadline.h"
+#include "../../../runtime/RuntimeValues.h"
+#include "../kernel/LinuxMemory.h"
 
 #include "neverd/emulation/AddressSpace.h"
 #include "neverd/emulation/ExecutionSession.h"
@@ -36,7 +36,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto Layout = processLayout(*Image);
   if (!Layout)
     return Layout.takeError();
-  if (Options.StackSize % Layout->PageSize ||
+  if (Options.StackSize % Layout->Memory.PageSize ||
       Options.Arguments.size() >
           Options.StackSize / Layout->Calls.info().WordSize ||
       Options.Environment.size() >
@@ -49,7 +49,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (!Space)
     return Space.takeError();
   auto Plan = ImageMappingPlan::create(
-      *Image, Layout->LoadBias, Layout->PageSize,
+      *Image, Layout->LoadBias, Layout->Memory.PageSize,
       Options.MemoryLimit - Options.StackSize, true,
       ImagePagePadding::FilePages, ImageByteSource::OriginalFile);
   if (!Plan)
@@ -61,9 +61,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   for (const auto &Region : Plan->Regions) {
     const uint64_t End = Region.Address + Region.Bytes.size();
     InitialBreak = std::max(InitialBreak, End);
-    if (Region.Address < MinimumAddress || End > Layout->UserLimit ||
-        (Region.Address < StackTop + Layout->PageSize &&
-         End > StackBase - Layout->PageSize))
+    if (Region.Address < MinimumAddress || End > Layout->Memory.UserLimit ||
+        (Region.Address < StackTop + Layout->Memory.PageSize &&
+         End > StackBase - Layout->Memory.PageSize))
       return failure(AddressRange);
     if (auto E =
             (*Space)->map(Region.Address, Region.Bytes.size(), Read | Write))
@@ -107,7 +107,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (!Session)
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
-  LinuxMemory Memory(**Space, *Layout, InitialBreak, Options);
+  LinuxMemory Memory(**Space, Layout->Memory, InitialBreak, Options);
   ProcessResult Result{ProcessProfile::LinuxELF64, Layout->Architecture,
                        Backend->Kind, Backend->Reason};
   Result.Entry = Result.PC = Plan->Entry;
@@ -167,7 +167,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     }
     Result.Services.push_back(*Event);
     auto Returned =
-        handleService(CPU, Memory, *Event, *Layout, Options, Result);
+        handleService(CPU, Memory, *Event, Layout->Memory, Options, Result);
     if (!Returned) {
       RuntimeFailure(Returned.takeError());
       break;

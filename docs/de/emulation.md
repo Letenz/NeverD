@@ -1,6 +1,6 @@
 **Sprachen**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 34da53b2e3f2e8a3a9ce3e0b978b8fa6a2dc457b47b1f6c32806edc236eae2f7 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← Dokumentationsindex](README.md)
 
@@ -12,9 +12,9 @@
 
 Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Gast-OS-Richtlinien. `NEVERD_ENABLE_CPU_EMULATION` aktiviert die x64/ARM64-CPU-Schicht; `NEVERD_ENABLE_DRIVER_EMULATION` ergänzt die begrenzte x64-Windows-WDM/KMDF-Umgebung. `linux-elf64-v1` führt unterstützte Linux-ELF-Prozesse aus. Siehe [CPU-Ausführung](cpu-execution.md), [Gastprozess-Emulation](process-emulation.md) und [Emulation von Windows-Treibern](driver-emulation.md).
 
-`driver-strict` / `checked-x64-v1` unterstützt KVM auf passenden Linux-x64-Hosts und WHP auf passenden Windows-x64-Hosts; `auto` wählt diesen nativen Transport, unterschiedliche ISAs verwenden Unicorn. Explizites Unicorn und die bisherige V1-API behalten das portable Softwareprofil. Native Ausführung prüft kanonische Adressen und Effekte vor dem Eintritt; fehlende Hardware führt ohne Rückfall zum Fehler. Nicht unterstützte Instruktionen und OS-Verhalten bleiben explizite Fehler. Die native Windows-x64-CI besteht bei deaktiviertem Unicorn alle 359 Pflichtprüfungen: 131 CPU-Prüfungen, 224 Treiberergebnisse aus 26 eingebauten Images, 46 WDK-Images und 40 Szenariofällen an bevorzugten und verschobenen Adressen sowie vier SEH-Grenzprüfungen ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Native ARM64-Nachweise fehlen weiterhin; allgemeine Treiber- oder Android/Darwin-Kompatibilität ist damit nicht belegt.
+Bei unterstützten nativen Verträgen wählt `auto` KVM unter Linux, WHP unter Windows oder [HVF unter macOS](macos-hvf.md), wenn Gast und Host dieselbe ISA haben. Unterschiedliche ISAs nutzen Unicorn; `software-cpu-v1` und die ursprüngliche V1-API bleiben softwarebasiert. Ein ausdrücklich gewähltes, nicht verfügbares Backend scheitert ohne Rückfall. Native Ausführung prüft zugelassene Instruktionen, Adressen und Effekte vor dem Eintritt. Host-Virtualisierung bestimmt kein Gast-OS: Die [Darwin-Profile](darwin-emulation.md) modellieren macOS, iOS und iOS Simulator separat. HVF benötigt die Berechtigung `com.apple.security.hypervisor`.
 
-`checked-aarch64-v1` und `checked-user-aarch64-v1` bieten begrenztes ARM64 FP32/FP64, SIMD fester Breite und vollständigen FPCR/FPSR/Vektorzustand. Passende Linux-ARM64-Hosts verwenden KVM, Windows ARM64 WHP und andere ISAs Unicorn. Native ARM64-Laufzeitnachweise fehlen weiterhin; Windows-Treiberladen bleibt auf x64 begrenzt.
+`driver-strict` / `checked-x64-v1` umfasst begrenzte x64-Ausführung; Windows-Treiber bleiben auf x64 beschränkt. `checked-aarch64-v1` und `checked-user-aarch64-v1` enthalten begrenztes ARM64 FP32/FP64, SIMD fester Breite und vollständigen FPCR/FPSR/Vektorzustand. Die native ARM64-HVF-Abnahme ist im Mac-Leitfaden dokumentiert; ARM64-KVM/WHP-Workload-Prüfungen und die vollständige Intel-HVF-Abnahme stehen noch aus. CPU-Unterstützung belegt keine allgemeine Treiber- oder Anwendungskompatibilität.
 
 <!-- i18n-section: windows-processes -->
 
@@ -64,6 +64,6 @@ Geprüftes x64 unterstützt `MOVS/STOS/LODS` auf normalem RAM und `CLD/STD` mit 
 
 Geprüftes x64 unterstützt auch `CMPS/SCAS` auf normalem RAM mit `REPE/REPNE`, arithmetischen Flags, vorzeitigem Ende, Stopps je Element und Fehlerwiederaufnahme. Gerätevergleiche bleiben ausgeschlossen.
 
-Native x64- und ARM64-Startproben prüfen begrenzte vollständige Zustandsausführung mit exklusivem Speicherrecht. XSAVE-Pakete und ISA-abhängige Seitentabellen-Caches haben einen eindeutigen Besitzer; native ARM64-Lastnachweise bleiben unvollständig.
+Native x64- und ARM64-Startproben prüfen begrenzte vollständige Zustandsausführung mit exklusivem Speicherrecht. XSAVE-Pakete und ISA-abhängige Seitentabellen-Caches haben einen eindeutigen Besitzer.
 
 Native x64-Felder `FOP/FIP/FDP` folgen den Sicherungsregeln des Hosts: AMD darf inaktive x87-Ausnahmemetadaten löschen. Startprüfungen validieren sie mit einer ausstehenden unmaskierten Ausnahme.

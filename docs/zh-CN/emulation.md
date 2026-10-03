@@ -1,6 +1,6 @@
 **语言**：[English](../emulation.md) | [简体中文](emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 34da53b2e3f2e8a3a9ce3e0b978b8fa6a2dc457b47b1f6c32806edc236eae2f7 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← 文档索引](README.md)
 
@@ -12,9 +12,9 @@
 
 CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`NEVERD_ENABLE_CPU_EMULATION` 启用 x64/ARM64 CPU 层；`NEVERD_ENABLE_DRIVER_EMULATION` 添加有界 x64 Windows WDM/KMDF 环境。`linux-elf64-v1` 配置运行受支持的 Linux ELF 进程。参见[CPU 执行](cpu-execution.md)、[来宾进程模拟](process-emulation.md)及[Windows 驱动模拟](driver-emulation.md)。
 
-`driver-strict` / `checked-x64-v1` 支持匹配的 Linux x64 主机上的 KVM 和 Windows x64 主机上的 WHP；`auto` 选择对应原生传输，跨 ISA 执行选择 Unicorn。显式 Unicorn 和原有 V1 API 保留可移植软件配置。原生执行在进入 CPU 前检查规范地址和指令效果；硬件不可用时明确失败且不回退。未支持的指令及 OS 行为仍明确报错。Windows x64 原生 CI 在关闭 Unicorn 的配置下通过全部 359 项必跑检查：131 项 CPU 检查、26 个内置映像与 46 个 WDK 映像及 40 个场景组合在首选和重定位地址产生的 224 项驱动结果，以及 4 项 SEH 边界检查 ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). 原生 ARM64 的实机证据仍待补充，这不表示兼容任意驱动或 Android/Darwin 环境。
+对于受支持的原生契约，`auto` 在来宾 ISA 与宿主一致时选择 Linux 的 KVM、Windows 的 WHP 或 [macOS 的 HVF](macos-hvf.md)。跨 ISA 使用 Unicorn；`software-cpu-v1` 和原有 V1 API 保留软件执行。显式选择的后端不可用时直接失败，不自动回退。原生执行在进入 CPU 前检查指令准入、地址和效果。宿主虚拟化不决定来宾 OS：[Darwin 配置](darwin-emulation.md) 单独建模 macOS、iOS 和 iOS Simulator。HVF 需要 `com.apple.security.hypervisor` 权限。
 
-`checked-aarch64-v1` 和 `checked-user-aarch64-v1` 提供有界 ARM64 FP32/FP64、定宽 SIMD，以及完整 FPCR/FPSR/向量状态。匹配的 Linux ARM64 主机使用 KVM，Windows ARM64 主机使用 WHP，跨 ISA 使用 Unicorn。ARM64 原生运行仍待实机验证；Windows 驱动加载仍限 x64。
+`driver-strict` / `checked-x64-v1` 覆盖有界 x64 执行；Windows 驱动加载仍限 x64。`checked-aarch64-v1` 和 `checked-user-aarch64-v1` 包含有界 ARM64 FP32/FP64、定宽 SIMD 及完整 FPCR/FPSR/向量状态。Mac 指南已记录 ARM64 HVF 原生验收；ARM64 KVM/WHP 工作负载验证与 Intel HVF 完整验收仍待完成。CPU 执行受支持不代表兼容任意驱动或应用。
 
 <!-- i18n-section: windows-processes -->
 
@@ -64,6 +64,6 @@ Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 
 受检 x64 还支持普通 RAM 上的 `CMPS/SCAS` 与 `REPE/REPNE`，涵盖算术标志、提前终止、逐元素停止和故障恢复；设备比较仍不支持。
 
-x64 与 ARM64 原生启动自检在独占内存租约下验证有界的完整状态执行。XSAVE 数据包和包含 ISA 身份的页表缓存由唯一权威层管理；ARM64 原生工作负载证据仍未完整。
+x64 与 ARM64 原生启动自检在独占内存租约下验证有界的完整状态执行。XSAVE 数据包和包含 ISA 身份的页表缓存由唯一权威层管理。
 
 原生 x64 的 `FOP/FIP/FDP` 遵循宿主保存、恢复规则：AMD 可能清零未生效的 x87 异常元数据。启动自检通过未屏蔽的待处理异常验证这些字段。

@@ -1,6 +1,6 @@
 **언어**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 34da53b2e3f2e8a3a9ce3e0b978b8fa6a2dc457b47b1f6c32806edc236eae2f7 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← 문서 색인](README.md)
 
@@ -12,9 +12,9 @@
 
 CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 정책을 분리합니다. `NEVERD_ENABLE_CPU_EMULATION`은 x64/ARM64 CPU 계층을 켜고 `NEVERD_ENABLE_DRIVER_EMULATION`은 제한된 x64 Windows WDM/KMDF 환경을 추가합니다. `linux-elf64-v1`은 지원되는 Linux ELF 프로세스를 실행합니다. [CPU 실행](cpu-execution.md), [게스트 프로세스 에뮬레이션](process-emulation.md), [Windows 드라이버 에뮬레이션](driver-emulation.md)를 참조하세요.
 
-`driver-strict` / `checked-x64-v1`는 일치하는 Linux x64 host의 KVM과 Windows x64 host의 WHP를 지원합니다. `auto`는 해당 native transport를, cross-ISA는 Unicorn을 선택합니다. 명시적 Unicorn과 기존 V1 API는 portable software profile을 유지합니다. native 실행은 진입 전에 canonical address와 instruction effect를 검증하고, hardware가 없으면 fallback 없이 실패합니다. 지원되지 않는 instruction/OS behavior는 명시적 오류입니다. Windows x64 네이티브 CI는 Unicorn을 비활성화하고 필수 검사 359개를 모두 통과합니다. CPU 검사 131개, 내장 이미지 26개·WDK 이미지 46개·시나리오 사례 40개를 기본 및 재배치 주소에서 실행한 드라이버 결과 224개, SEH 경계 검사 4개를 포함합니다 ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). native ARM64 실기 증거는 아직 없으며, 임의 driver나 Android/Darwin 호환성을 의미하지 않습니다.
+지원되는 네이티브 계약에서 게스트와 호스트 ISA가 같으면 `auto`는 Linux의 KVM, Windows의 WHP 또는 [macOS의 HVF](macos-hvf.md)를 선택합니다. 다른 ISA는 Unicorn을 사용하며 `software-cpu-v1`과 기존 V1 API는 소프트웨어 실행을 유지합니다. 명시한 백엔드를 사용할 수 없으면 대체 없이 실패합니다. 네이티브 실행은 진입 전에 허용 명령어, 주소와 효과를 검사합니다. 호스트 가상화는 게스트 OS를 결정하지 않으며 [Darwin 프로필](darwin-emulation.md)이 macOS, iOS와 iOS Simulator를 별도로 모델링합니다. HVF에는 `com.apple.security.hypervisor` 권한이 필요합니다.
 
-`checked-aarch64-v1`와 `checked-user-aarch64-v1`는 제한된 ARM64 FP32/FP64, 고정 폭 SIMD와 전체 FPCR/FPSR/벡터 상태를 제공합니다. ISA가 일치하는 Linux ARM64는 KVM, Windows ARM64는 WHP, 다른 ISA는 Unicorn을 사용합니다. 네이티브 ARM64 실기 검증은 남아 있으며 Windows 드라이버 로딩은 x64로 제한됩니다.
+`driver-strict` / `checked-x64-v1`은 제한된 x64 실행을 지원하며 Windows 드라이버 로딩도 x64로 제한됩니다. `checked-aarch64-v1`과 `checked-user-aarch64-v1`은 제한된 ARM64 FP32/FP64, 고정 폭 SIMD와 완전한 FPCR/FPSR/벡터 상태를 포함합니다. ARM64 HVF 네이티브 검증 결과는 Mac 가이드에 기록되어 있습니다. ARM64 KVM/WHP 워크로드 검증과 Intel HVF 전체 검증은 미완료입니다. CPU 실행 지원이 모든 드라이버나 앱과의 호환성을 뜻하지는 않습니다.
 
 <!-- i18n-section: windows-processes -->
 
@@ -64,6 +64,6 @@ Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 
 검사형 x64는 일반 RAM의 `CMPS/SCAS`와 `REPE/REPNE`도 지원하며 산술 플래그, 조기 종료, 요소별 중지와 오류 복구를 처리합니다. 장치 비교는 아직 지원하지 않습니다.
 
-x64와 ARM64 네이티브 시작 검사는 독점 메모리 임대하에서 제한된 전체 상태 실행을 검증합니다. XSAVE 패킷과 ISA를 식별하는 페이지 테이블 캐시는 하나의 권한 계층이 관리하며 네이티브 ARM64 작업 증거는 아직 불완전합니다.
+x64와 ARM64 네이티브 시작 검사는 독점 메모리 임대하에서 제한된 전체 상태 실행을 검증합니다. XSAVE 패킷과 ISA를 식별하는 페이지 테이블 캐시는 하나의 권한 계층이 관리합니다.
 
 네이티브 x64 `FOP/FIP/FDP`는 호스트 저장·복원 규칙을 따르며 AMD는 비활성 x87 예외 메타데이터를 0으로 만들 수 있습니다. 시작 검사는 마스크되지 않은 대기 예외로 이 필드를 검증합니다.

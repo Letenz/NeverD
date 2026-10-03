@@ -1269,6 +1269,8 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 
 `os/windows/driver/` owns driver image loading, execution sessions, scenarios, reports and execution policy. `os/windows/kernel/` owns kernel API and object models, including WDM/KMDF, device lifecycle, power policy, memory and scheduling; `KernelModelPowerPolicy.cpp` belongs there. `os/windows/process/` owns user-process startup and services, while `os/windows/exception/` owns shared exception search and unwind. Driver and kernel sources still form `NeverDEmulation`: their existing calls and shared types are not independent library boundaries. Each directory maintains its own `CMakeLists.txt` source list, and public headers remain compatible.
 
+`os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
@@ -1279,10 +1281,10 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationABI` | Explicit scalar calling conventions, argument locations and call frames |
 | `NeverDEmulationRuntime` | Typed CPU sessions and workload budgets shared across continuations and CPUs |
 | `NeverDEmulationImage` | Finite image mapping plans from loader-owned segments |
-| `NeverDEmulationLinux` | Explicit ELF process startup and Linux system-call policy |
+| `NeverDEmulationLinuxKernel` / `NeverDEmulationDarwinKernel` | Shared system-call ABI, services and memory policy |
+| `NeverDEmulationLinux` / `NeverDEmulationDarwin` | ELF/Mach-O process loading, initial stacks and continuations |
 | `NeverDEmulationAndroid` | Android API 28 AArch64 native linking, TLS and Bionic call models |
 | `NeverDEmulationWindowsProcess` | Windows PE64 console process loading, PEB/TEB, TLS and named user APIs |
-| `NeverDEmulationDarwin` | Shared Darwin Mach-O startup, BSD services and memory; distinct macOS/iOS/simulator profiles |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
@@ -1310,9 +1312,11 @@ lib/emulation/
   os/windows/kernel/     Kernel APIs, WDM/KMDF and device/power/memory models
   os/windows/exception/  Shared Windows x64 exception search and unwind
   os/windows/process/    Windows PE64 user process startup and user API models
-  os/linux/              Linux ELF process startup and system-call ABI/services
+  os/linux/process/      Linux ELF process startup and continuations
+  os/linux/kernel/       Linux system-call ABI, services and memory policy
   os/linux/android/      Android native library linking, TLS and Bionic models
-  os/darwin/             Shared Darwin startup, service ABI and memory policy
+  os/darwin/process/     Shared Darwin Mach-O startup and continuations
+  os/darwin/kernel/      Darwin system-call ABI, services and memory policy
   os/darwin/macos/       macOS platform contract
   os/darwin/ios/         iOS device and simulator platform contracts
 ```
@@ -1405,7 +1409,7 @@ and AArch64 freestanding executables with stack/auxv initialization, typed
 system-call continuations and bounded byte output. It supports static TLS and
 self-relocating static PIE, while rejecting an interpreter, external dynamic
 dependencies, signals and thread creation. Those OS semantics remain in
-`os/linux`; the generic CPU/runtime does not infer Linux from KVM or Windows
+`os/linux/process/` and `os/linux/kernel/`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 
 Android native function workloads use `android-aarch64-api28-v1`; see

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 34da53b2e3f2e8a3a9ce3e0b978b8fa6a2dc457b47b1f6c32806edc236eae2f7 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← Índice de documentación](README.md)
 
@@ -12,9 +12,9 @@
 
 La ejecución CPU separa admisión ISA, memoria invitada, transporte del motor y política del SO. `NEVERD_ENABLE_CPU_EMULATION` activa la capa CPU x64/ARM64; `NEVERD_ENABLE_DRIVER_EMULATION` añade el entorno Windows WDM/KMDF x64 acotado. `linux-elf64-v1` ejecuta procesos Linux ELF admitidos. Véase [Ejecución CPU](cpu-execution.md), [Emulación de procesos invitados](process-emulation.md) y [Emulación de controladores Windows](driver-emulation.md).
 
-`driver-strict` / `checked-x64-v1` admite KVM en anfitriones Linux x64 compatibles y WHP en Windows x64 compatibles; `auto` elige ese transporte nativo, y las ISA diferentes usan Unicorn. Unicorn explícito y la API V1 conservan el perfil portátil. La ejecución nativa comprueba direcciones canónicas y efectos antes de entrar; hardware no disponible falla sin alternativa. Instrucciones y comportamiento OS no admitidos fallan explícitamente. La CI nativa de Windows x64 con Unicorn desactivado supera las 359 comprobaciones obligatorias: 131 de CPU, 224 resultados de controladores de 26 imágenes integradas, 46 imágenes WDK y 40 casos de escenarios en las direcciones preferidas y reubicadas, más cuatro comprobaciones de límites SEH ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Faltan pruebas nativas ARM64; esto no establece compatibilidad universal de controladores ni de Android/Darwin.
+Para los contratos nativos admitidos, `auto` elige KVM en Linux, WHP en Windows o [HVF en macOS](macos-hvf.md), con la misma ISA en huésped y host. Las ISA diferentes usan Unicorn; `software-cpu-v1` y la API V1 original conservan la ejecución por software. Si el backend elegido explícitamente no está disponible, falla sin alternativa automática. La ejecución nativa comprueba instrucciones admitidas, direcciones y efectos antes de entrar. La virtualización del host no determina el SO invitado: los [perfiles Darwin](darwin-emulation.md) modelan por separado macOS, iOS e iOS Simulator. HVF requiere el permiso `com.apple.security.hypervisor`.
 
-`checked-aarch64-v1` y `checked-user-aarch64-v1` ofrecen ARM64 FP32/FP64 y SIMD fijos acotados, con estado FPCR/FPSR/vectorial completo. Linux ARM64 coincidente usa KVM, Windows ARM64 usa WHP y otra ISA usa Unicorn. Siguen pendientes las pruebas nativas ARM64; la carga de controladores Windows sigue limitada a x64.
+`driver-strict` / `checked-x64-v1` cubre ejecución x64 acotada; la carga de controladores Windows sigue limitada a x64. `checked-aarch64-v1` y `checked-user-aarch64-v1` incluyen ARM64 FP32/FP64 acotado, SIMD fijo y estado FPCR/FPSR/vectorial completo. La guía Mac registra la aceptación nativa ARM64 HVF; quedan pendientes la validación de cargas ARM64 KVM/WHP y la aceptación completa Intel HVF. El soporte de CPU no implica compatibilidad con cualquier controlador o aplicación.
 
 <!-- i18n-section: windows-processes -->
 
@@ -64,6 +64,6 @@ El perfil x64 verificado incluye `MOVS/STOS/LODS` sobre RAM ordinaria y `CLD/STD
 
 El perfil x64 verificado admite también `CMPS/SCAS` sobre RAM ordinaria con `REPE/REPNE`, indicadores aritméticos, salida anticipada, paradas por elemento y recuperación de fallos. Se excluyen las comparaciones de dispositivos.
 
-Las sondas nativas x64 y ARM64 validan ejecución completa acotada con permiso exclusivo de memoria. Los paquetes XSAVE y cachés de tablas identificados por ISA tienen una autoridad única; la evidencia de cargas nativas ARM64 sigue incompleta.
+Las sondas nativas x64 y ARM64 validan ejecución completa acotada con permiso exclusivo de memoria. Los paquetes XSAVE y cachés de tablas identificados por ISA tienen una autoridad única.
 
 Los campos x64 nativos `FOP/FIP/FDP` siguen las reglas de guardado/restauración del host: AMD puede borrar metadatos x87 inactivos. Las pruebas de inicio los validan con una excepción pendiente sin máscara.
