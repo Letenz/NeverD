@@ -53,6 +53,29 @@ public:
       return hvf::error("hv_vmx_vcpu_read_vmcs", S);
     return V;
   }
+  llvm::Error unexpectedExit(uint64_t Reason) {
+    auto Text =
+        llvm::formatv("HVF Intel unexpected VM exit ({0:x})", Reason).str();
+    const std::pair<const char *, uint32_t> Fields[] = {
+        {"qualification", VMCS_RO_EXIT_QUALIFIC},
+        {"rip", VMCS_GUEST_RIP},
+        {"rflags", VMCS_GUEST_RFLAGS},
+        {"cr0", VMCS_GUEST_CR0},
+        {"cr3", VMCS_GUEST_CR3},
+        {"cr4", VMCS_GUEST_CR4},
+        {"efer", VMCS_GUEST_IA32_EFER},
+        {"cs_access", VMCS_GUEST_CS_AR},
+        {"ss_access", VMCS_GUEST_SS_AR},
+        {"entry_controls", VMCS_CTRL_VMENTRY_CONTROLS},
+        {"cpu_controls", VMCS_CTRL_CPU_BASED}};
+    for (auto [Name, Field] : Fields) {
+      auto Value = vmcs(Field);
+      if (!Value)
+        return Value.takeError();
+      Text += llvm::formatv("; {0}={1:x}", Name, *Value).str();
+    }
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
+  }
   llvm::Error control(uint32_t Field, uint64_t Required,
                       uint64_t Forbidden = 0) {
     uint64_t Must = 0, May = 0;
@@ -231,7 +254,7 @@ public:
           return llvm::Error::success();
         if (*Reason != ExitMTF && *Reason != ExitException &&
             *Reason != ExitControlRegister)
-          return diagnostic::error("HVF Intel unexpected VM exit");
+          return Native.unexpectedExit(*Reason);
         if (auto E = Native.capture(Next, Bytes))
           return E;
         if (*Reason == ExitControlRegister) {
