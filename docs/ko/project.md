@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b02c2886731530b478f4e37ca2bf72727bafd22ffd63b1153b697991b9463bf0 -->
+<!-- i18n-source: 23c1f349f49ccee5a963e34665f188119be5e4701d66a8beabcf9479bbefd42f -->
 
 <div align="center">
 
@@ -129,7 +129,7 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 
 `WindowsProcessSEH`는 `os/windows/exception/`의 공통 `X64SEH`(드라이버 환경 없이도 사용하는 `NeverDEmulationWindowsException`)로 x64 `__C_specific_handler`와 UNWIND_INFO V1을 처리합니다. VEH 검색 후 필터, finally, 비지역 처리기 이동, 중첩/충돌 언와인딩과 재배치한 EXE/DLL 프레임을 지원하고 비휘발성 GPR/XMM을 보존합니다. 필터가 실행 재개를 선택하면 같은 `CONTEXT`로 VCH를 실행합니다. `WindowsSEHTests.cpp`는 독자적인 23개 시나리오를 네이티브 Windows와 비교하며 KVM/WHP/Unicorn은 같은 의미론을 사용합니다. 프로세스 예산 안에서 이미지 세대, 헤더, 언와인드/범위 바이트, 언어 처리기 코드 영역과 IAT 바인딩을 다시 검증합니다. 메타데이터 변경이나 보존된 이미지 언로드는 명시적으로 실패합니다. ARM64 프레임 SEH, C++ EH, 동적 함수 테이블, 일반 RtlUnwind/NtContinue 및 로더/VEH/VCH 콜백 경계를 넘는 언와인딩은 미지원입니다.
 
-`EXCEPTION_NONCONTINUABLE`에 대해 x64 필터가 `EXCEPTION_CONTINUE_EXECUTION`을 반환하면 새 컨텍스트로 `STATUS_NONCONTINUABLE_EXCEPTION`(`0xc0000025`, 플래그 `0x81`, 연결 레코드 null)을 전달합니다. VEH를 다시 실행한 뒤 보존된 논리 스택을 다시 검색하며, 동일한 깊이 및 실행 예산 안에서 finally 순서와 EXE/DLL 프레임의 정체성을 유지합니다. 23개 네이티브 시나리오는 성공 실행 21개와 종료 2개를 포함합니다. 원래 `CONTEXT`를 복원해도 VEH/VCH가 이 2차 예외의 계속 실행을 수락하면 처리되지 않은 채 종료되며, 모델은 런타임 실패를 보고합니다. 소프트웨어 예외 주소는 저장된 PC와 같고 내부 디스패처 주소 및 레지스터 배치는 모델 정책입니다.
+`EXCEPTION_NONCONTINUABLE`에 대해 x64 필터가 `EXCEPTION_CONTINUE_EXECUTION`을 반환하면 새 컨텍스트로 `STATUS_NONCONTINUABLE_EXCEPTION`(`0xc0000025`, 플래그 `0x81`, 연결 레코드 null)을 전달합니다. VEH를 다시 실행한 뒤 보존된 논리 스택을 다시 검색하며, 동일한 깊이 및 실행 예산 안에서 finally 순서와 EXE/DLL 프레임의 정체성을 유지합니다. 23개 네이티브 시나리오는 성공 실행 21개와 종료 2개를 포함합니다. 원래 `CONTEXT`를 복원해도 VEH/VCH가 이 2차 예외의 계속 실행을 수락하면 처리되지 않은 채 종료되며, 모델은 런타임 실패를 보고합니다. 소프트웨어 예외 주소는 저장된 PC와 같고 내부 디스패처 주소 및 레지스터 배치는 모델 정책입니다. [Windows x64 CI](https://github.com/NeverSight/NeverD/actions/runs/37141166235).
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 

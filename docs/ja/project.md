@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b02c2886731530b478f4e37ca2bf72727bafd22ffd63b1153b697991b9463bf0 -->
+<!-- i18n-source: 23c1f349f49ccee5a963e34665f188119be5e4701d66a8beabcf9479bbefd42f -->
 
 <div align="center">
 
@@ -129,7 +129,7 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 
 `WindowsProcessSEH` は `os/windows/exception/` の共有 `X64SEH`（ドライバー環境なしでも利用可能な `NeverDEmulationWindowsException`）で x64 `__C_specific_handler` と UNWIND_INFO V1 を処理します。VEH 検索後のフィルター、finally、非局所的なハンドラーへの転送、入れ子／衝突アンワインド、再配置された EXE/DLL フレームに対応し、非揮発 GPR/XMM を保持します。フィルターによる継続では同じ `CONTEXT` で VCH を実行します。`WindowsSEHTests.cpp` は独自の 23 シナリオをネイティブ Windows と比較し、KVM/WHP/Unicorn は同じ意味論を使います。プロセス予算内でイメージ世代、ヘッダー、アンワインド／スコープのバイト列、言語ハンドラーのコード領域、IAT を再検証します。メタデータ変更や保持中のイメージのアンロードは明示的なエラーです。ARM64 のフレーム SEH、C++ EH、動的関数テーブル、汎用 RtlUnwind/NtContinue、ローダー／VEH／VCH コールバック境界を越えるアンワインドは未対応です。
 
-`EXCEPTION_NONCONTINUABLE` に対して x64 フィルターが `EXCEPTION_CONTINUE_EXECUTION` を返すと、新しいコンテキストで `STATUS_NONCONTINUABLE_EXCEPTION`（`0xc0000025`、フラグ `0x81`、関連レコードは null）を配信します。VEH を再実行してから保持した論理スタックを再検索し、同じ深度・実行予算で finally の順序と EXE/DLL フレームの同一性を保ちます。23 のネイティブシナリオは 21 の正常実行と二つの終了を含みます。元の `CONTEXT` を復元しても、VEH/VCH がこの二次例外の継続を受け入れると未処理のまま終了し、モデルは実行時失敗を報告します。ソフトウェア例外のアドレスは保存 PC と一致し、内部ディスパッチャーのアドレスとレジスター配置はモデルの方針です。
+`EXCEPTION_NONCONTINUABLE` に対して x64 フィルターが `EXCEPTION_CONTINUE_EXECUTION` を返すと、新しいコンテキストで `STATUS_NONCONTINUABLE_EXCEPTION`（`0xc0000025`、フラグ `0x81`、関連レコードは null）を配信します。VEH を再実行してから保持した論理スタックを再検索し、同じ深度・実行予算で finally の順序と EXE/DLL フレームの同一性を保ちます。23 のネイティブシナリオは 21 の正常実行と二つの終了を含みます。元の `CONTEXT` を復元しても、VEH/VCH がこの二次例外の継続を受け入れると未処理のまま終了し、モデルは実行時失敗を報告します。ソフトウェア例外のアドレスは保存 PC と一致し、内部ディスパッチャーのアドレスとレジスター配置はモデルの方針です。 [Windows x64 CI](https://github.com/NeverSight/NeverD/actions/runs/37141166235).
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 
