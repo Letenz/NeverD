@@ -232,9 +232,12 @@ U32 entry(void) {
     require(SelfHandle && NextHandle && AddVectoredContinueHandler(0, three),
             18);
     RaiseException(SoftwareCode, 0, 0, 0);
-    require(!RemoveVectoredContinueHandler(SelfHandle) &&
-                !RemoveVectoredContinueHandler(NextHandle),
-            19);
+    // Native registrations may reuse removed tokens. Do not remove a new
+    // live registration through an aliased retired token.
+    if (SelfHandle != AddedFirst && SelfHandle != AddedLast)
+      require(!RemoveVectoredContinueHandler(SelfHandle), 19);
+    if (NextHandle != AddedFirst && NextHandle != AddedLast)
+      require(!RemoveVectoredContinueHandler(NextHandle), 28);
     RaiseException(SoftwareCode, 0, 0, 0);
     complete();
   }

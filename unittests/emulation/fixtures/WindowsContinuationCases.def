@@ -9,6 +9,7 @@ NEVERD_VCH_VALUE(AlternateData, 0x0f1e2d3c4b5a6978ULL)
 NEVERD_VCH_VALUE(ExceptionTrace, 0xe)
 NEVERD_VCH_VALUE(TraceShift, 4)
 NEVERD_VCH_VALUE(ObservationWords, 4)
+NEVERD_VCH_VALUE(NativeMutationRepetitions, 32)
 #endif
 #ifdef NEVERD_VCH_TEXT
 NEVERD_VCH_TEXT(ContinuationTempPrefix, "neverd-vectored-continuations")

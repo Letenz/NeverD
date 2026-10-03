@@ -31,7 +31,9 @@ namespace win = windows_process;
 #undef NEVERD_VEH_VALUE
 #define NEVERD_VCH_VALUE(Name, Value) constexpr uint64_t Name = Value;
 #define NEVERD_VCH_TEXT(Name, Text) constexpr char Name[] = Text;
+#define NEVERD_VCH_MODE(Name, Value) constexpr uint8_t Name = Value;
 #include "fixtures/WindowsContinuationCases.def"
+#undef NEVERD_VCH_MODE
 #undef NEVERD_VCH_TEXT
 #undef NEVERD_VCH_VALUE
 
@@ -210,22 +212,27 @@ TEST(WindowsContinuationsNative, RunsOriginalContinuationExecutable) {
                                                       Error};
   for (const auto &C : Cases) {
     SCOPED_TRACE(C.Name);
-    std::string Diagnostic;
-    bool Failed = false;
-    int Status = llvm::sys::ExecuteAndWait(
-        Program, {Program, C.Argument}, std::nullopt, Redirects,
-        NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
-    ASSERT_FALSE(Failed) << Diagnostic;
-    auto Out = llvm::MemoryBuffer::getFile(Output);
-    auto Err = llvm::MemoryBuffer::getFile(Error);
-    ASSERT_TRUE(bool(Out));
-    ASSERT_TRUE(bool(Err));
-    llvm::outs() << ContinuationLabel << C.Argument << ' ' << Status << ' '
-                 << llvm::toHex((*Out)->getBuffer()) << '\n';
-    EXPECT_EQ(Status, CompletionStatus) << llvm::toHex((*Err)->getBuffer());
-    EXPECT_TRUE((*Err)->getBuffer().empty())
-        << llvm::toHex((*Err)->getBuffer());
-    EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), expected(C));
+    const unsigned Repetitions =
+        C.Argument[1] == MutationMode ? NativeMutationRepetitions : 1;
+    for (unsigned I = 0; I < Repetitions; ++I) {
+      SCOPED_TRACE(I);
+      std::string Diagnostic;
+      bool Failed = false;
+      int Status = llvm::sys::ExecuteAndWait(
+          Program, {Program, C.Argument}, std::nullopt, Redirects,
+          NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
+      ASSERT_FALSE(Failed) << Diagnostic;
+      auto Out = llvm::MemoryBuffer::getFile(Output);
+      auto Err = llvm::MemoryBuffer::getFile(Error);
+      ASSERT_TRUE(bool(Out));
+      ASSERT_TRUE(bool(Err));
+      llvm::outs() << ContinuationLabel << C.Argument << ' ' << Status << ' '
+                   << llvm::toHex((*Out)->getBuffer()) << '\n';
+      EXPECT_EQ(Status, CompletionStatus) << llvm::toHex((*Err)->getBuffer());
+      EXPECT_TRUE((*Err)->getBuffer().empty())
+          << llvm::toHex((*Err)->getBuffer());
+      EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), expected(C));
+    }
   }
 #endif
 }
