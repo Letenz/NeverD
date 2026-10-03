@@ -1,6 +1,6 @@
 **Langues**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 26699fc7c6123371ff1bdf772f3c7091876e02768c97f805a3b9d0d19ca3a5db -->
+<!-- i18n-source: ff6f78bcd5a46c6e393db7da09a7b0eacd53c1553602c1f9226947d2d02c86d6 -->
 
 [← Index de la documentation](README.md)
 
@@ -65,3 +65,9 @@ ARM64 a réconcilié 6,842 inscriptions ; Intel en compte 6,840 dans les mêmes 
 La [validation CPU Intel complète](https://github.com/NeverSight/NeverD/actions/runs/37106679688) reste non vérifiée : à 08:24 UTC le 2026-10-03, elle n’avait renvoyé ni résultat final ni artefact CPU après son délai configuré. La compilation et les précontrôles ne remplacent pas ce résultat. La référence du noyau macOS n’est pas une preuve sur appareil iOS.
 
 Le petit benchmark ARM64 comparable a donné 73.9 ms pour Unicorn contre 95.1 ms pour HVF, soit environ 29 % de temps supplémentaire ; aucun gain de vitesse n’est établi. Chaque instruction ordinaire nécessite six entrées natives. Les mesures sous forte charge ne prouvent pas un débit stable. Voir le [détail des preuves](../macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03) et le [contrat Darwin](darwin-emulation.md), qui n’inclut pas l’ensemble des frameworks Apple.
+
+## Inventaire Intel complet réparti en lots
+
+L’exécution complète précédente `37106679688` s’est terminée le 2026-10-03 à 08:35 UTC avec une annotation GitHub signalant la perte de communication du runner. Aucun résultat CPU n’a été produit ; cela ne désigne pas une instruction invitée fautive. Le mode Intel hébergé `full` utilise désormais quatre lots, avec au plus deux jobs simultanés. Chaque job compile et vérifie d’abord l’inventaire CTest complet des vingt cibles. `--hvf-shard INDEX/COUNT` répartit les méthodes entières par cible et identité, en gardant tous leurs paramètres ensemble même si leurs propriétés d’exécution diffèrent. Chaque lot conserve inventaires complet et sélectionné, plan, XML original, correspondances, états des processus et liste autorisée des variables nécessaires. Un lot ne constitue qu’une preuve partielle.
+
+Un job Linux distinct exécute `scripts/audit_hvf_shards.py` et redérive cibles et obligations natives depuis les sources extraites. Il exige la même tentative, la même révision sans modification locale, la bonne ISA macOS et des contrats d’exécution normalisés identiques. Les quatre lots doivent être disjoints et leur union égale à l’inventaire complet ; tous les processus doivent terminer correctement et chaque obligation native réussir. Lot absent, filtre modifié, résumé incohérent, XML incomplet ou obligation native ignorée font échouer le contrôle. Chaque job natif conserve aussi transport, reprise, CR8 et validation Darwin indépendante. Les runners dédiés gardent CTest sans répartition. Répartir les tests ne prouve pas à lui seul l’acceptation Intel.

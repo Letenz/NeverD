@@ -98,6 +98,28 @@ def method_inventory(document):
     return methods
 
 
+def shard_inventory(document, index, count):
+    """Partition whole methods by stable CTest identities, never by host paths."""
+    methods = method_inventory(document)
+    families = {}
+    for (binary, family, *_), expected in methods.items():
+        families.setdefault((Path(binary).name, family), set()).update(expected.values())
+    if (type(index) is not int or type(count) is not int
+            or count < 2 or not 0 <= index < count or count > len(families)):
+        raise ValueError("method shard requires 0 <= index < count <= methods and count >= 2")
+    selected = {record for family in sorted(families)[index::count] for record in families[family]}
+    return {**document, "tests": [test for test, record in
+            zip(document["tests"], parse_inventory(document), strict=True) if record in selected]}
+
+
+def inventory_contract(document):
+    """Normalize runner locations while retaining every execution property."""
+    return {record: (Path(binary).name, family, os.path.relpath(directory, Path(binary).parent),
+                     variables, timeout)
+            for (binary, family, directory, variables, timeout), expected
+            in method_inventory(document).items() for record in expected.values()}
+
+
 def read_results(path, expected):
     root = ET.parse(path).getroot()
     if root.tag != "testsuites":
@@ -152,7 +174,12 @@ def execute(command, directory, environment, timeout, evidence):
                 retired = False
     result = {"command": command, "working_directory": directory,
               "timeout_seconds": timeout, "status": status,
-              "timed_out": timed_out, "child_retired": retired}
+              "timed_out": timed_out, "child_retired": retired,
+              "test_environment": {name: environment[name] for name in
+                                   ("NEVERD_SIGNATURE_CACHE",) if name in environment},
+              "native_requirements": {name: environment[name] for name in
+                                      ("NEVERD_REQUIRE_HVF", "NEVERD_REQUIRE_NATIVE_WHP")
+                                      if name in environment}}
     (evidence / "status.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 
@@ -164,6 +191,11 @@ def run_methods(document, evidence, environment):
     outcomes, errors = [], []
     destination = evidence / "methods"
     destination.mkdir(parents=True, exist_ok=False)
+    (evidence / "method-plan.json").write_text(json.dumps([
+        {"index": index, "binary": key[0], "family": key[1], "identities": {
+            name: {"name": record.name, "labels": sorted(record.labels)}
+            for name, record in expected.items()}}
+        for index, (key, expected) in enumerate(methods.items())], indent=2) + "\n")
     for index, (key, expected) in enumerate(methods.items()):
         binary, family, directory, variables, case_timeout = key
         child_environment = dict(environment)

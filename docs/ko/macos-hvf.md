@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 26699fc7c6123371ff1bdf772f3c7091876e02768c97f805a3b9d0d19ca3a5db -->
+<!-- i18n-source: ff6f78bcd5a46c6e393db7da09a7b0eacd53c1553602c1f9226947d2d02c86d6 -->
 
 [← 문서 목록](README.md)
 
@@ -65,3 +65,9 @@ ARM64는 등록 항목 6,842개를 대조했고 Intel은 같은 20개 대상에 
 [Intel 전체 CPU 검증](https://github.com/NeverSight/NeverD/actions/runs/37106679688)은 미완료입니다. 2026-10-03 08:24 UTC 기준으로 설정한 기한이 지나도 최종 결과나 CPU 산출물이 없었습니다. 빌드와 사전 검사는 전체 결과를 대신하지 않습니다. macOS 커널 대조는 iOS 실기기 커널의 증거가 아닙니다.
 
 동일 계약의 작은 ARM64 벤치마크는 Unicorn 73.9 ms, HVF 95.1 ms로 약 29 % 더 오래 걸렸습니다. 속도 향상은 입증되지 않았습니다. 일반 명령당 네이티브 진입 여섯 번이 필요하며 호스트 고부하 측정은 안정적 성능의 근거가 아닙니다. [자세한 증거](../macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03)와 [제한된 Darwin 계약](darwin-emulation.md)을 참고하세요.
+
+## Intel 전체 목록의 분할 검증
+
+이전 전체 실행 `37106679688`은 2026-10-03 08:35 UTC에 끝났고 GitHub는 실행기 통신 단절을 기록했습니다. CPU 결과가 없으므로 특정 게스트 명령의 실패로 해석할 수 없습니다. 호스팅 Intel의 `full`은 네 샤드를 사용하며 최대 두 작업을 동시에 실행합니다. 각 작업은 먼저 대상 스무 개의 전체 CTest 목록을 빌드하고 검사합니다. `--hvf-shard INDEX/COUNT`는 대상과 메서드 식별자로 전체 메서드를 배정하며 실행 속성이 달라도 모든 매개변수를 같은 샤드에 유지합니다. 전체·선택 목록, 실행 계획, 원본 XML, 식별자 매핑, 프로세스 상태와 필요한 환경 변수 허용 목록을 보존합니다. 한 샤드는 부분 증거입니다.
+
+별도 Linux 작업의 `scripts/audit_hvf_shards.py`는 체크아웃한 소스에서 대상과 필수 네이티브 항목을 다시 도출합니다. 같은 시도와 깨끗한 커밋, 올바른 macOS 호스트 ISA, 일치하는 정규화 실행 계약이 필요합니다. 네 샤드는 겹치지 않고 합집합이 전체 목록과 정확히 같아야 하며, 모든 자식 프로세스가 정상 종료하고 필수 항목이 통과해야 합니다. 샤드 누락, 필터 변경, 요약 불일치, 불완전한 XML, 필수 네이티브 항목 건너뜀은 실패합니다. 각 네이티브 작업은 전송, 복구, CR8 및 독립 Darwin 검사도 유지합니다. 자체 호스팅은 분할하지 않은 CTest를 사용합니다. 분할 자체가 Intel 검증 완료를 의미하지는 않습니다.

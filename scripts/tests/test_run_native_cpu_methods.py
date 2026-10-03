@@ -95,6 +95,44 @@ class NativeMethodEvidenceTests(unittest.TestCase):
         self.document["tests"][1]["properties"][1]["value"] = ["NEVERD_SIGNATURE_CACHE=on"]
         self.assertEqual(len(methods.method_inventory(self.document)), 2)
 
+    def test_shards_keep_whole_methods_and_are_stable_across_runner_paths_and_order(self):
+        self.document["tests"][1]["properties"][1]["value"] = ["NEVERD_SIGNATURE_CACHE=on"]
+        other = copy.deepcopy(self.document["tests"][0])
+        other["name"] = "Other.Run"
+        other["command"][1] = "--gtest_filter=Other.Run"
+        self.document["tests"].append(other)
+        expected = [{test["name"] for test in methods.shard_inventory(self.document, i, 2)["tests"]}
+                    for i in range(2)]
+        self.assertFalse(expected[0] & expected[1])
+        self.assertEqual(set.union(*expected), {test["name"] for test in self.document["tests"]})
+        self.assertTrue(any({test["name"] for test in self.document["tests"][:2]} <= names
+                            for names in expected))
+        moved = copy.deepcopy(self.document)
+        moved["tests"].reverse()
+        for test in moved["tests"]:
+            test["command"][0] = "/different/runner/Owner"
+            test["properties"][-1]["value"] = "/different/runner"
+        self.assertEqual(expected, [{test["name"] for test in
+                                   methods.shard_inventory(moved, i, 2)["tests"]}
+                                   for i in range(2)])
+        self.assertEqual(methods.inventory_contract(self.document), methods.inventory_contract(moved))
+
+    def test_invalid_or_empty_method_shards_fail(self):
+        for index, count in ((0, 1), (-1, 2), (2, 2), (0, 3), (True, 2), (0, 2.0)):
+            with self.subTest(index=index, count=count), self.assertRaisesRegex(ValueError, "shard"):
+                methods.shard_inventory(self.document, index, count)
+
+    def test_equal_case_names_in_distinct_owners_do_not_overlap_shards(self):
+        duplicate_names = copy.deepcopy(self.document["tests"])
+        for test in duplicate_names:
+            test["command"][0] = str(self.root / "AnotherOwner")
+            test["properties"][0]["value"] = ["AnotherOwner"]
+        self.document["tests"] += duplicate_names
+        shards = [set(methods.parse_inventory(methods.shard_inventory(self.document, i, 2)))
+                  for i in range(2)]
+        self.assertFalse(shards[0] & shards[1])
+        self.assertEqual(set.union(*shards), set(methods.parse_inventory(self.document)))
+
     def wrapped_document(self):
         document = copy.deepcopy(self.document)
         for test in document["tests"]:

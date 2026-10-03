@@ -311,3 +311,9 @@ retains these measurements. Quiet-host performance tests and complete Intel
 CPU acceptance remain outstanding. No dedicated self-hosted runner is currently
 configured. The bounded Darwin profiles do not implement dyld, Mach IPC or
 Apple application frameworks; see their [explicit contract](darwin-emulation.md).
+
+#### Complete hosted Intel inventory in shards
+
+The earlier full run `37106679688` ended on 2026-10-03 at 08:35 UTC with a GitHub annotation reporting lost runner communication. It produced no CPU results; this does not identify a failing guest instruction. Hosted Intel `full` now uses four independent method shards, with at most two jobs running concurrently. Each job first builds and checks the complete twenty-owner CTest inventory. `--hvf-shard INDEX/COUNT` assigns whole methods by owner and method identity, retaining every parameter even when execution properties differ. Each shard preserves the full inventory, selected inventory, execution plan, original XML, identity mappings, process status and the required environment-variable whitelist. A single shard is partial evidence.
+
+`scripts/audit_hvf_shards.py` runs in a separate Linux job and rederives owners and native requirements from the checked-out source. It requires all four shards from the same attempt and clean commit, the correct native macOS ISA, matching normalized full execution contracts, disjoint results whose union equals the full inventory, successful child retirement, and every required native result. Missing shards, changed filters, mismatched summaries, incomplete XML and required-native skips fail. Every native job also retains transport, recovery, CR8 and the independent Darwin gate. Self-hosted execution keeps the unsharded CTest path. Sharding changes evidence collection; it does not itself establish Intel acceptance.

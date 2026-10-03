@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 26699fc7c6123371ff1bdf772f3c7091876e02768c97f805a3b9d0d19ca3a5db -->
+<!-- i18n-source: ff6f78bcd5a46c6e393db7da09a7b0eacd53c1553602c1f9226947d2d02c86d6 -->
 
 [← 文档索引](README.md)
 
@@ -169,3 +169,9 @@ ARM64 裸中断测试原先交替覆盖同一地址，可能执行缓存中的�
 Linux 进程在正常退出、内存故障、未知服务和预算停止时的完整报告均一致。
 空闲宿主性能测试及 Intel 完整 CPU 验收仍未完成；仓库尚未配置专用自托管 runner。
 有限 Darwin 环境未实现 dyld、Mach IPC 或 Apple 应用框架，具体见[契约说明](darwin-emulation.md)。
+
+## Intel 完整清单分片验收
+
+早前完整运行 `37106679688` 于 2026-10-03 08:35 UTC 结束，GitHub 明确记录运行器失联，未产生 CPU 结果；这不能定位某条来宾指令。托管 Intel 的 `full` 现分为四片，最多两个作业并发。每片先构建并检查完整的二十个目标和 CTest 清单，再由 `--hvf-shard INDEX/COUNT` 按目标和方法身份分配整个方法；执行属性不同也不拆散该方法的参数。各片保留完整及所选清单、执行计划、原始 XML、身份映射、退出状态和必要环境变量白名单。单片只是部分证据。
+
+独立 Linux 作业运行 `scripts/audit_hvf_shards.py`，从检出的源码重新推导目标和必需原生项，要求同一次尝试、同一干净提交、正确 macOS 宿主 ISA、规范化执行契约一致，且四片互斥、并集恰好等于完整清单。所有子进程必须成功退出，全部必需原生项必须通过；漏片、过滤器变更、摘要与原始结果不符、XML 不完整或原生必需项跳过均失败。每个原生作业仍执行 transport、恢复、CR8 和独立 Darwin 门禁；自托管保持未分片 CTest。分片本身不代表 Intel 已验收。
