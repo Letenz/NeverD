@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 340ac2d4daababf1ede69d21ea0d2a80e38e6fd6ae307434171e27dfcf40d8ad -->
+<!-- i18n-source: 19345d53aaa0d1c5155884ab948be02795fe5e3065629ff28d380b2c08ad404a -->
 
 [← Indice della documentazione](README.md)
 
@@ -94,3 +94,5 @@ Sorgenti senza modifiche locali `353dcd75f`, 2026-10-03. Tutti i sedici gruppi A
 Il [workflow diagnostico Intel](../../.github/workflows/hvf-intel-diagnostic.yml), avviato manualmente, estrae separatamente il controller e i sorgenti verificati. `source-ref` richiede uno SHA completo; `shards` seleziona fra le sedici partizioni originali. `first-method` parte da zero, `method-count=0` seleziona i metodi rimanenti e `case-index` può scegliere un parametro originale solo con `method-count=1`. Prima della selezione viene rilevato l’inventario completo dei venti target. Build Release, comandi, parametri e verifiche native obbligatorie originali restano invariati.
 
 Prima di ogni metodo, l’azione carica il piano immutabile e un’istantanea dell’host. Dopo l’esecuzione conserva XML originale, terminazione dei processi, stato del controller e una seconda istantanea. Registra memoria, swap, carico, disco e identificatori, stato, CPU, RSS e nomi degli eseguibili dei processi, senza argomenti o ambiente. Anche gli errori di raccolta restano visibili. Un errore di esecuzione o caricamento ferma i metodi successivi. Ogni metodo mantiene il limite di 120 secondi; un host irraggiungibile può impedire pulizia e caricamento finale. In tal caso rimangono solo le prove già caricate. Queste diagnosi parziali non soddisfano la verifica CPU completa né quella Darwin indipendente. L’ultimo marcatore iniziale individua un confine di esecuzione, non l’istruzione guest difettosa o la causa.
+
+Anche il workflow completo `Native macOS HVF` accetta un `source-ref` facoltativo. Il valore predefinito è il commit del workflow; un valore esplicito deve essere uno SHA completo. I job nativi e l’audit aggregato estraggono e verificano gli stessi sorgenti. L’audit confronta le prove con il commit testato, anche se il controller usa una revisione diversa.

@@ -1,8 +1,12 @@
 name: Native macOS HVF
-run-name: HVF ${{ inputs.runner }} / ${{ inputs.validation || 'full' }}
+run-name: HVF ${{ inputs.runner }} / ${{ inputs.validation || 'full' }} / ${{ inputs.source-ref || github.sha }}
 on:
   workflow_dispatch:
     inputs:
+      source-ref:
+        description: Exact forty-character source commit; empty uses this workflow's commit
+        type: string
+        default: ''
       runner:
         description: Native host to validate (hosted Intel must pass the HVF probe)
         type: choice
@@ -20,6 +24,8 @@ on:
         options: ['4', '1']
 permissions:
   contents: read
+env:
+  HVF_SOURCE: ${{ inputs.source-ref || github.sha }}
 jobs:
   native-hvf:
     # Both choices must create a real VM/vCPU before the LLVM build starts.
@@ -35,10 +41,28 @@ jobs:
       SCCACHE_GHA_ENABLED: 'true'
       HVF_TEST_PARALLEL: ${{ inputs.test_parallel || '4' }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Verify native evidence collection contracts
+      - name: Validate immutable source identity
+        shell: bash
+        run: '[[ "$HVF_SOURCE" =~ ^[0-9a-f]{40}$ ]]'
+      - name: Check out the workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify workflow evidence collection contracts
         if: inputs.validation != 'probe'
         run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards scripts.tests.test_prepare_hvf_batches scripts.tests.test_hvf_build_platform -q
+      - name: Check out the immutable native source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.HVF_SOURCE }}
+          persist-credentials: false
+      - name: Verify checked-out source
+        shell: bash
+        run: 'test "$(git rev-parse HEAD)" = "$HVF_SOURCE"'
+      - name: Verify tested source evidence collection contracts
+        if: inputs.validation != 'probe'
+        run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards scripts.tests.test_prepare_hvf_batches -q
       - name: Require native VM and vCPU availability before the transport gate
         shell: bash
         env:
@@ -252,12 +276,17 @@ jobs:
       - name: Require every native Darwin workload
         timeout-minutes: 15
         if: inputs.validation == 'full' || inputs.validation == 'darwin'
+        shell: bash
         env:
           HVF_EXECUTION_METHODS: ${{ inputs.runner == 'hosted-intel' && '--execution-methods' || '' }}
-        run: >-
-          python3 scripts/run_native_cpu_ci.py --build build-hvf
-          --evidence build-hvf/darwin-evidence --parallel "$HVF_TEST_PARALLEL" --require-darwin-backend hvf
-          $HVF_EXECUTION_METHODS
+        run: |
+          hvf_method_args=()
+          if [[ -n "$HVF_EXECUTION_METHODS" ]]; then
+            hvf_method_args+=("$HVF_EXECUTION_METHODS")
+          fi
+          python3 scripts/run_native_cpu_ci.py --build build-hvf \
+            --evidence build-hvf/darwin-evidence --parallel "$HVF_TEST_PARALLEL" --require-darwin-backend hvf \
+            "${hvf_method_args[@]}"
       - name: Preserve hardware evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -281,19 +310,26 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Validate immutable source identity
+        shell: bash
+        run: '[[ "$HVF_SOURCE" =~ ^[0-9a-f]{40}$ ]]'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.HVF_SOURCE }}
+          persist-credentials: false
+      - name: Verify checked-out source
+        shell: bash
+        run: 'test "$(git rev-parse HEAD)" = "$HVF_SOURCE"'
       - name: Download this attempt's separate CPU evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: hvf-cpu-X64-shard-*-attempt-${{ github.run_attempt }}
           path: hvf-shards
       - name: Reconcile every original CPU result and native requirement
-        env:
-          EXPECTED_COMMIT: ${{ github.sha }}
         run: |
           shard_count="$(python3 -c 'from scripts.prepare_hvf_batches import SHARD_COUNT; print(SHARD_COUNT)')"
           python3 scripts/audit_hvf_shards.py --evidence-root hvf-shards \
-            --commit "$EXPECTED_COMMIT" --host x86_64 --shards "$shard_count" \
+            --commit "$HVF_SOURCE" --host x86_64 --shards "$shard_count" \
             --output hvf-aggregate/summary.json
       - name: Require transport and independent Darwin gates in every native job
         env:

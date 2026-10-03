@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 340ac2d4daababf1ede69d21ea0d2a80e38e6fd6ae307434171e27dfcf40d8ad -->
+<!-- i18n-source: 19345d53aaa0d1c5155884ab948be02795fe5e3065629ff28d380b2c08ad404a -->
 
 [← Índice de documentación](README.md)
 
@@ -94,3 +94,5 @@ Fuentes sin cambios locales `353dcd75f`, 2026-10-03. Los dieciséis grupos ARM64
 El [workflow de diagnóstico Intel](../../.github/workflows/hvf-intel-diagnostic.yml), de ejecución manual, descarga por separado el controlador y el código probado. `source-ref` exige un SHA de commit completo; `shards` elige entre las dieciséis particiones originales. `first-method` empieza en cero, `method-count=0` selecciona los métodos restantes y `case-index` solo permite elegir un parámetro original si `method-count=1`. Antes de seleccionar se descubre el inventario completo de los veinte objetivos. Se conservan la compilación Release, los comandos, los parámetros y las comprobaciones nativas obligatorias originales.
 
 Antes de cada método, la acción sube su plan inmutable y una instantánea del host. Después conserva el XML original, la finalización de procesos, el estado del controlador y otra instantánea. Se registran memoria, swap, carga, disco e identificadores, estado, CPU, RSS y nombres de ejecutables de los procesos, sin argumentos ni entorno. Los errores de recopilación también quedan registrados. Un fallo de ejecución o subida detiene los métodos posteriores. Cada método mantiene el límite de 120 segundos; un host inaccesible puede impedir la limpieza y la subida final. Entonces solo quedan las pruebas ya subidas. Estos diagnósticos parciales no cumplen la validación CPU completa ni la validación Darwin independiente. El último marcador de inicio identifica un límite de ejecución, no la instrucción guest defectuosa ni la causa raíz.
+
+El workflow completo `Native macOS HVF` también acepta `source-ref` opcional. Por defecto usa el commit del workflow; cualquier valor explícito debe ser un SHA completo. Los trabajos nativos y el auditor agregado descargan y verifican el mismo código. La auditoría coteja las pruebas con el commit probado, aunque el controlador tenga otra revisión.
