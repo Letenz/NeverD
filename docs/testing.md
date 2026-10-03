@@ -680,6 +680,15 @@ loader or scheduler. `KernelMDLChainTests.cpp` checks that partial-descriptor
 retirement and IRP completion revoke only their own aliases while an independent
 root MDL remains locked and readable.
 
+For hosted macOS HVF diagnosis, `run_native_cpu_ci.py --execution-methods`
+executes the same complete CTest inventory in serial GoogleTest method
+processes. It retains every parameter and validates the original XML against
+CTest identities; unsupported properties fail explicitly. Method deadlines
+are capped at 120 seconds with bounded process-group retirement. This mode
+uses aggregate method timeouts instead of separate parameter timeouts, and
+records that execution policy in its summary. Normal self-hosted validation
+keeps CTest's per-case isolation. See [macOS HVF](macos-hvf.md) for evidence.
+
 The same checked ARM64 cases run against the native adapter on an ARM64 host.
 They skip with a typed reason on other hosts or when the hypervisor is
 unavailable. Set `NEVERD_REQUIRE_AARCH64_HARDWARE=1` on an ARM64 validation host
