@@ -134,6 +134,9 @@ large dependency build, including the CR8 state regression and processor faults.
 It uploads transport results and the state inventory before execution, then
 preserves the isolated CR8 result before running the complete state suite.
 Artifacts include the run attempt so reruns retain their own evidence.
+Full-inventory compilation has its own step and log. `test_parallel` selects
+four CTest processes by default or one for a serialized comparison, while
+compilation remains parallel. The result summary records the selected value.
 It can also run locally with `--require-hvf --hvf-transport-only` on
 `scripts/run_native_cpu_ci.py`. `validation=probe` runs only the VM/vCPU
 availability check without LLVM; it cannot establish instruction execution
@@ -251,9 +254,12 @@ required cases with zero skips. Separate one-process and cancellation checks
 also passed; all three interruption modes retained RFLAGS `0x202` through retry.
 The artifact SHA-256 was verified against GitHub metadata. This establishes
 transport recovery, not yet the complete Intel CPU and Darwin profiles.
-The full gate at `9319c880d` is running with all fourteen Intel requirements
-and 100 interruption/recovery repetitions. Stalled and cancelled runs are not
-acceptance evidence. Temporary instruction probes, API interposers and phase
+The full gate at `9319c880d` passed 100 interruption/recovery repetitions and
+transport, but did not return complete CPU/Darwin results; cancellation was
+requested after more than 100 minutes in its combined build/test step. The
+complete gate still needs all fourteen Intel requirements and broader CPU
+coverage to finish successfully. Stalled and
+cancelled runs are not acceptance evidence. Temporary instruction probes, API interposers and phase
 tracing are removed; actual NeverD tests own ongoing acceptance.
 
 At clean source `9319c880d78e93f5cb8a7a9360778084934de258`, the ARM64 transport
@@ -268,6 +274,17 @@ CPL3 protection faults, resume-flag behavior and complete state preservation.
 Its separate JUnit result and the transport artifact were downloaded and their
 SHA-256 digests verified. The state owner compiled and registered 952 cases;
 these checkpoints do not establish completion of that larger suite.
+
+At clean source `5251cc68591dc343c954c8b7a9b57fa5cb9190e8`, the
+[state-transition family](https://github.com/NeverSight/NeverD/actions/runs/37091386132)
+passed all five HVF cases in one process, with ten foreign-transport cases
+skipped. Its verified artifact covers TLS/privilege, CR8, cancellation and
+complete x87/SSE state across host changes, faults and stops. The job later
+stopped reporting during artifact upload. A subsequent serialized transport
+and state run reached the raw exception group without returning its result.
+These observations do not identify a particular instruction failure or prove
+a test-process concurrency defect. Raw faults, division and complete CPU/Darwin
+acceptance are tracked independently until their native results are available.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
