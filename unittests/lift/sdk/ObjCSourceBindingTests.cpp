@@ -5,6 +5,7 @@
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceInputs.h"
+#include "../../../lib/sdk/capi/SourceSwiftConsumedInputProjection.h"
 #include "../../../lib/sdk/capi/SourceSwiftWitnessFrameProjection.h"
 #include "../core/CFunctionParameterCallFixture.h"
 #include "../core/ImmutableNativeCallFixture.h"
@@ -32,7 +33,54 @@ using namespace neverd::sdk;
 
 namespace {
 void frameTableFixture(immutable_native_call_test::Fixture &F);
+
+void checkConsumedInputAddressReplay(const ExprPtr &Address,
+                                     const BinaryImage &Image) {
+  ASSERT_TRUE(Address && Address->SourceCallHint);
+  for (unsigned Case = 0; Case < 10; ++Case) {
+    SCOPED_TRACE(Case);
+    auto CurrentImage = Image;
+    auto Copy = std::make_shared<HighExpr>(*Address);
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Address->SourceCallHint);
+    Copy->SourceCallHint = Hint;
+    switch (Case) {
+    case 0:
+      break; // Independently rebuilt annotation for the same identity.
+    case 1:
+      Hint->TargetAddress += 8;
+      break;
+    case 2:
+      Hint->TargetName += "wrong";
+      break;
+    case 3:
+      Hint->ByteCount = 8;
+      break;
+    case 4:
+      Hint->Signature.ReturnLocation.ValueBytes = 4;
+      break;
+    case 5:
+      Copy->Operands.push_back(HighExpr::makeConst(0, 8));
+      break;
+    case 6:
+      Copy->CallAddr = 1;
+      break;
+    case 7:
+      Hint->Selector = "unrelated:";
+      break;
+    case 8:
+      CurrentImage.Exports.clear();
+      break;
+    case 9:
+      CurrentImage.Exports.push_back({"_conflict", 0, Hint->TargetAddress});
+      break;
+    }
+    size_t Budget = 1000;
+    EXPECT_EQ(swift_consumed_input_detail::sameExpression(Address, Copy,
+                                                          CurrentImage, Budget),
+              Case == 0);
+  }
 }
+} // namespace
 
 TEST(ImmutableNativeCalls,
      ProvesOneOriginalIndirectOccurrenceAcrossRuntimeCall) {
@@ -3740,6 +3788,7 @@ TEST(ObjCSourceBindings,
   EXPECT_EQ(Identity->SourceCallHint->CallKind,
             SourceCallTypeHint::Kind::RuntimeSwiftNominalMetadataAddress);
   EXPECT_TRUE(objcSourceCallBound(*Identity, F.Image, {}));
+  checkConsumedInputAddressReplay(Identity, F.Image);
   std::set<std::string> Helpers;
   const auto Source = renderObjCSwiftNominalMetadataHelpers(
       F.Image, Bound.SwiftNominalMetadata, Helpers);
@@ -4097,6 +4146,7 @@ TEST(ObjCSourceBindings, SwiftWitnessTableNeedsOneExactReadOnlyExport) {
   EXPECT_EQ(Bound->SourceCallHint->CallKind,
             SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress);
   EXPECT_TRUE(objcSourceCallBound(*Bound, Image, {}));
+  checkConsumedInputAddressReplay(Bound, Image);
   std::set<std::string> Helpers;
   const auto Source = renderObjCSwiftWitnessTableHelpers(
       Image, Result.SwiftWitnessTables, Helpers);

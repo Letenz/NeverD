@@ -9408,3 +9408,261 @@ TEST(NativeSourceHints, ScalarResultCannotSkipConsumedUIntStateProof) {
     EXPECT_EQ(bool(Hint), Case == 0) << Error;
   }
 }
+
+TEST(NativeSourceHints, ConsumedObjectIdentifierRequiresItsOwnTypeContract) {
+  using namespace swift_consumed_input_test;
+  IdentifierFixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  const auto Hints = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(IdentifierCall);
+  const auto Effect = swiftConsumedInputCallEffects(F.Image, *F.low(), Hint);
+  ASSERT_TRUE(Effect);
+  EXPECT_EQ(Effect->WritableFrameParameters,
+            (std::map<size_t, size_t>{{1, 8}}));
+  EXPECT_EQ(Effect->InitializedFrameParameters, (std::set<size_t>{1}));
+  EXPECT_TRUE(Effect->ReadOnlyFrameParameters.empty());
+  EXPECT_FALSE(Effect->InitializesIndirectResult);
+  std::string Error;
+  const auto EntryHint = F.infer(Error);
+  ASSERT_TRUE(EntryHint) << Error;
+  ASSERT_EQ(EntryHint->Parameters.size(), 2U);
+  EXPECT_EQ(EntryHint->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(EntryHint->Parameters[1].Location.RegisterOffset, a64reg::X8);
+  F.EntrySignature = *EntryHint;
+  F.runUInt();
+  const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_TRUE(
+      sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
+          .valid(Bound.Function));
+}
+
+TEST(NativeSourceHints, ConsumedIdentifierRechecksTypeWindowAndCarrier) {
+  using namespace swift_consumed_input_test;
+  IdentifierFixture F;
+  ASSERT_TRUE(F.low());
+  const auto Hints = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  for (unsigned Case = 0; Case < 25; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Image = F.Image;
+    auto Low = *F.low();
+    auto Hint = Hints.at(IdentifierCall);
+    auto Change = [&](unsigned I, uint32_t Word) {
+      llvm::support::endian::write32le(Image.Segments[0].Data.data() + I * 4,
+                                       Word);
+    };
+    switch (Case) {
+    case 0:
+      Image.DyldBindSlots[MetadataSlot].Name = "_$sSuN";
+      break;
+    case 1:
+      Image.DyldBindSlots[WitnessSlot].Name = "_$sSuSHsWP";
+      break;
+    case 2:
+      Image.DyldBindSlots[MetadataSlot].WeakImport = true;
+      break;
+    case 3:
+      Image.DyldBindSlots[WitnessSlot].Module = "other";
+      break;
+    case 4:
+      Image.DyldBindSlots[WitnessSlot].Addend = 8;
+      break;
+    case 5:
+      Image.ImportPtrSlots[MetadataSlot] = "_$sSuN";
+      break;
+    case 6:
+      Change(8, 0x1100a108);
+      break; // partial result computation
+    case 7:
+      Change(8, 0x9100a101);
+      break; // destroys metadata identity
+    case 8:
+      Change(8, 0x9100a102);
+      break; // destroys witness identity
+    case 9:
+      Change(8, 0x94000038);
+      break; // intervening call
+    case 10:
+      Change(8, 0xf9400108);
+      break; // memory observation, not ADD
+    case 11:
+      Change(8, 0xd503201f);
+      break; // unsupported extra instruction
+    case 12:
+      Change(9, 0xd2800001);
+      break; // final instruction clobber
+    case 13:
+      Change(7, 0xb9400842);
+      break; // narrow witness
+    case 14:
+      Low.Blocks.front().InstructionBoundaries.clear();
+      break;
+    case 15:
+      Low.Blocks.front().Succs.push_back(0x2000);
+      break;
+    case 16:
+      for (auto &Block : Low.Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.Addr == IdentifierCall - 8 && Op.Output.Size)
+            Op.Output.Size = 4;
+      break;
+    case 17:
+      Hint.Signature.Parameters[1].Location.ValueBytes = 4;
+      break;
+    case 18:
+      Hint.Signature.Parameters[0].Location.RegisterOffset = a64reg::X9;
+      break;
+    case 19:
+      Hint.SwiftConsumedInput->MetadataSlot = WitnessSlot;
+      break;
+    case 20:
+      Hint.SwiftConsumedInput->Site.Instruction -= 4;
+      break;
+    case 21:
+      Hint.SwiftConsumedInput.reset();
+      break;
+    case 22:
+      for (auto &Section : Image.Sections)
+        if (Section.VA == RuntimeSlot)
+          Section.Type = llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS;
+      break;
+    }
+    if (Case == 23 || Case == 24) {
+      // Only the runtime slot is TLS/lazy: metadata and witness remain
+      // ordinary GOT identities and cannot mask a bad callee import.
+      auto *Got = const_cast<Section *>(Image.getSectionFor(RuntimeSlot));
+      ASSERT_TRUE(Got);
+      Section RuntimeSection = *Got;
+      Got->VA = MetadataSlot;
+      Got->Size = Got->FileSz = 16;
+      RuntimeSection.Size = RuntimeSection.FileSz = 8;
+      RuntimeSection.Type = Case == 23
+                                ? llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS
+                                : llvm::MachO::S_LAZY_SYMBOL_POINTERS;
+      Image.Sections.push_back(RuntimeSection);
+    }
+    EXPECT_FALSE(swiftConsumedInputCallEffects(Image, Low, Hint));
+  }
+  // The result-address window does not choose a type by its extent. A
+  // complete current UInt pair is independently valid; a mixed pair is not.
+  for (const auto &[Slot, Name] : std::map<va_t, std::string>{
+           {MetadataSlot, "_$sSuN"}, {WitnessSlot, "_$sSuSHsWP"}}) {
+    F.Image.ImportPtrSlots[Slot] = Name;
+    F.Image.DyldBindSlots[Slot].Name = Name;
+  }
+  F.runUInt();
+  const auto UInt = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(UInt.size(), 1U);
+  EXPECT_TRUE(swiftConsumedInputCallEffects(F.Image, *F.low(),
+                                            UInt.at(IdentifierCall)));
+}
+
+TEST(NativeSourceHints, ConsumedIdentifierCannotSkipInputLifetime) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 9; ++Case) {
+    SCOPED_TRACE(Case);
+    IdentifierFixture F;
+    F.word(11,
+           0xd28000e0); // Defined scalar result must not bypass state proof.
+    F.word(12, 0xa9417bfd);
+    F.word(13, 0x910083ff);
+    F.word(14, 0xd65f03c0);
+    F.Image.Symbols[0].Size = 60;
+    if (Case == 1)
+      F.word(3, 0xb9000be0); // partial initial value
+    if (Case == 2)
+      F.word(3, 0xd503201f); // no initial value
+    if (Case == 3)
+      F.word(11, 0xf94007e0); // consumed bytes as the result
+    if (Case == 4)
+      F.word(9, 0x910003e0); // unwritten adjacent word
+    if (Case == 5)
+      F.word(9, 0x910043e0); // saved frame word
+    if (Case == 6)
+      F.word(9, 0x910073e0); // partial active-frame range
+    F.runUInt();
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    if (Case >= 7) {
+      for (auto &Block : F.med()->Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput) {
+            auto Hint =
+                std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+            if (Case == 7)
+              Hint->SwiftConsumedInput.reset();
+            else
+              Hint->Signature.Parameters[1].Location.ValueBytes = 4;
+            Op.SourceCallHint = std::move(Hint);
+          }
+    }
+    std::string Error;
+    EXPECT_EQ(bool(F.infer(Error)), Case == 0) << Error;
+  }
+}
+
+TEST(NativeSourceHints, ConsumedIdentifierPublicationReplaysCurrentOperands) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SCOPED_TRACE(Case);
+    IdentifierFixture F;
+    std::string Error;
+    const auto EntryHint = F.infer(Error);
+    ASSERT_TRUE(EntryHint) << Error;
+    F.EntrySignature = *EntryHint;
+    F.runUInt();
+    auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    HighExpr *CallExpr = nullptr;
+    walkStmts(Bound.Function.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (E && E->SourceCallHint && E->SourceCallHint->SwiftConsumedInput)
+          CallExpr = E.get();
+      });
+    });
+    ASSERT_TRUE(CallExpr);
+    MedOp *CallOp = nullptr;
+    for (auto &Block : F.med()->Blocks)
+      for (auto &Op : Block.Ops)
+        if (Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput)
+          CallOp = &Op;
+    ASSERT_TRUE(CallOp);
+    if (Case < 4)
+      CallExpr->Operands[Case] = HighExpr::makeConst(0, 8);
+    if (Case == 4 || Case == 6) {
+      auto Hint = std::make_shared<SourceCallTypeHint>(*CallOp->SourceCallHint);
+      Hint->SwiftConsumedInput.reset();
+      CallOp->SourceCallHint = Hint;
+    }
+    if (Case == 5 || Case == 6) {
+      auto Hint =
+          std::make_shared<SourceCallTypeHint>(*CallExpr->SourceCallHint);
+      Hint->SwiftConsumedInput.reset();
+      CallExpr->SourceCallHint = Hint;
+    }
+    if (Case == 7)
+      CallOp->Inputs[2] = CallOp->Inputs[3];
+    if (Case == 8)
+      F.word(3, 0xb9000be0);
+    if (Case == 9)
+      F.Result.FunctionAudits.front().MedIRVerified = false;
+    if (Case == 10)
+      for (size_t I = 0; I < Bound.Function.Body.size(); ++I)
+        if (Bound.Function.Body[I].Kind == StmtKind::Call) {
+          Bound.Function.Body.insert(Bound.Function.Body.begin() + I,
+                                     Bound.Function.Body[I]);
+          break;
+        }
+    if (Case == 11)
+      for (size_t I = 0; I < Bound.Function.Body.size(); ++I)
+        if (Bound.Function.Body[I].Kind == StmtKind::Store) {
+          Bound.Function.Body.erase(Bound.Function.Body.begin() + I);
+          break;
+        }
+    EXPECT_FALSE(
+        sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
+            .valid(Bound.Function));
+  }
+}
