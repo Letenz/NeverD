@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Verify native evidence collection contracts
         if: inputs.validation != 'probe'
-        run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards -q
+        run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards scripts.tests.test_prepare_hvf_batches -q
       - name: Require native VM and vCPU availability before the transport gate
         shell: bash
         env:
@@ -199,18 +199,50 @@ jobs:
           name: hvf-build-${{ matrix.arch }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: build-hvf/native-build.log
           if-no-files-found: warn
-      - name: Require actual host execution and record every result
-        timeout-minutes: 30
-        if: inputs.validation == 'full'
+      - name: Plan every hosted Intel batch before native CPU execution
+        id: cpu-batches
+        if: inputs.validation == 'full' && inputs.runner == 'hosted-intel'
         env:
-          HVF_EXECUTION_METHODS: ${{ inputs.runner == 'hosted-intel' && '--execution-methods' || '' }}
-          HVF_SHARD_ARGS: ${{ inputs.runner == 'hosted-intel' && format('--hvf-shard {0}/4', matrix.shard) || '' }}
+          HVF_JOB: ${{ matrix.shard }}
+        run: >-
+          python3 scripts/prepare_hvf_batches.py --build build-hvf
+          --evidence build-hvf/batch-plans --job "$HVF_JOB"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Preserve the unexecuted batch plans
+        if: always() && inputs.validation == 'full' && inputs.runner == 'hosted-intel'
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hvf-plan-X64-job-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: build-hvf/batch-plans/
+          if-no-files-found: warn
+      - name: Require hosted Intel execution and preserve each CPU batch
+        if: inputs.validation == 'full' && inputs.runner == 'hosted-intel'
+        timeout-minutes: 30
+        uses: ./.github/actions/hvf-cpu-batches
+        with:
+          shard-count: ${{ steps.cpu-batches.outputs.shard_count }}
+          batch-0: ${{ steps.cpu-batches.outputs.batch_0 }}
+          batch-1: ${{ steps.cpu-batches.outputs.batch_1 }}
+          batch-2: ${{ steps.cpu-batches.outputs.batch_2 }}
+          batch-3: ${{ steps.cpu-batches.outputs.batch_3 }}
+      - name: Preserve unfinished hosted Intel diagnostics after CPU failure or timeout
+        if: always() && inputs.validation == 'full' && inputs.runner == 'hosted-intel'
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Diagnostic bundles never match the complete-inventory download glob.
+          name: hvf-cpu-diagnostic-X64-job-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: build-hvf/native-evidence/
+          if-no-files-found: warn
+      - name: Require self-hosted execution and record every result
+        timeout-minutes: 30
+        if: inputs.validation == 'full' && inputs.runner == 'self-hosted'
         run: >-
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/native-evidence --parallel "$HVF_TEST_PARALLEL" --require-hvf
-          $HVF_EXECUTION_METHODS $HVF_SHARD_ARGS
       - name: Preserve CPU evidence before the Darwin workload gate
-        if: always() && inputs.validation == 'full'
+        if: always() && inputs.validation == 'full' && inputs.runner == 'self-hosted'
         timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -237,6 +269,7 @@ jobs:
             build-hvf/transport-evidence/
             build-hvf/state-evidence/
             build-hvf/native-build.log
+            build-hvf/batch-plans/
             build-hvf/native-evidence/
             build-hvf/darwin-evidence/
             build-hvf/unittests/emulation/Testing/Temporary/LastTest*.log*
@@ -257,10 +290,11 @@ jobs:
       - name: Reconcile every original CPU result and native requirement
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
-        run: >-
-          python3 scripts/audit_hvf_shards.py --evidence-root hvf-shards
-          --commit "$EXPECTED_COMMIT" --host x86_64 --shards 4
-          --output hvf-aggregate/summary.json
+        run: |
+          shard_count="$(python3 -c 'from scripts.prepare_hvf_batches import SHARD_COUNT; print(SHARD_COUNT)')"
+          python3 scripts/audit_hvf_shards.py --evidence-root hvf-shards \
+            --commit "$EXPECTED_COMMIT" --host x86_64 --shards "$shard_count" \
+            --output hvf-aggregate/summary.json
       - name: Require transport and independent Darwin gates in every native job
         env:
           NATIVE_RESULT: ${{ needs.native-hvf.result }}

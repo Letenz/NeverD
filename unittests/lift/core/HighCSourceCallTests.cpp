@@ -751,6 +751,79 @@ int main(void) {
     compileAndRun(Program, {Optimization});
 }
 
+TEST(HighCSourceCalls, SwiftAnyHashableInitializerKeepsAllOpaqueCarriers) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  auto Image = runtime_function_address_test::image(Architecture);
+  const va_t Slot = runtime_function_address_test::Slot;
+  const std::string Name = "_$ss11AnyHashableVyABxcSHRzlufC";
+  Image.ImportPtrSlots[Slot] = Name;
+  Image.DyldBindSlots[Slot] = {Name, 0, "/usr/lib/swift/libswiftCore.dylib",
+                               false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  HighFunc Function;
+  Function.Name = "recovered_anyhashable";
+  Function.ReturnType = NdType::makeVoid();
+  std::vector<ExprPtr> Args;
+  for (unsigned I = 0; I < 4; ++I) {
+    Function.Params.push_back({"arg" + std::to_string(I), Pointer});
+    Args.push_back(parameter(I, Pointer));
+  }
+  HighStmt Statement;
+  Statement.Kind = StmtKind::ExprStmt;
+  Statement.Val = call(*Hint, Function.ReturnType, Args);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Statement.Val, Image, {}));
+  Function.Body = {Statement};
+  const auto Source = emit({Function}, true, Architecture);
+  ASSERT_NE(Source.find("swift_indirect_result"), std::string::npos);
+  ASSERT_NE(Source.find("swiftcall"), std::string::npos);
+  ASSERT_EQ(Source.find("swift_context"), std::string::npos);
+  // Only a carrier oracle: its variable-size output and input mutation must
+  // not imply a Swift value layout or a borrowed private-frame permission.
+  const auto Program = Source + R"(
+#include <string.h>
+struct Metadata { unsigned size, calls; };
+struct Witness { unsigned salt, calls; };
+void __attribute__((swiftcall)) anyhashable_oracle(
+    void * __attribute__((swift_indirect_result)), void *,
+    struct Metadata *, struct Witness *)
+    __asm__("_$ss11AnyHashableVyABxcSHRzlufC");
+void __attribute__((swiftcall)) anyhashable_oracle(
+    void *result __attribute__((swift_indirect_result)), void *value,
+    struct Metadata *metadata, struct Witness *witness) {
+  unsigned char *out=result, *in=value;
+  for (unsigned i=0;i<metadata->size;++i) {
+    out[i]=in[i]^(unsigned char)(witness->salt+i);
+    in[i]=0;
+  }
+  ++metadata->calls; ++witness->calls;
+}
+int main(void) {
+  for (unsigned n=0;n<=80;++n) {
+    struct Metadata metadata={n,0};struct Witness witness={n*17+3,0};
+    unsigned char input[82],output[82];
+    memset(input,0x6b,sizeof(input));memset(output,0xa5,sizeof(output));
+    for(unsigned i=0;i<n;++i)input[i+1]=(unsigned char)(i*7+n);
+    recovered_anyhashable(output+1,input+1,&metadata,&witness);
+    if(metadata.calls!=1||witness.calls!=1||metadata.size!=n||witness.salt!=n*17+3)return 1;
+    if(input[0]!=0x6b||output[0]!=0xa5)return 2;
+    for(unsigned i=0;i<n;++i)
+      if(input[i+1]||output[i+1]!=((unsigned char)(i*7+n)^(unsigned char)(witness.salt+i)))return 3;
+    for(unsigned i=n+1;i<82;++i)
+      if(input[i]!=0x6b||output[i]!=0xa5)return 4;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
+}
+
 TEST(HighCSourceCalls, SwiftStaticArrayKeepsTokenHeaderPayloadAndAliases) {
   constexpr va_t Base = 0x1008;
   constexpr va_t Slot = 0x2000;

@@ -1065,6 +1065,8 @@ Il workflow manuale `Mobile Swift String ABI Evidence` compila sonde Swift fisse
 
 ## Semplificazione MBA modulare
 
+`SymExpr.*` verifica finestre costanti sopra il bit inferiore con tutte le combinazioni di ingressi e maschere a quattro bit, valori ampi, strutture annidate, ricomposizione di byte noti e ignoti e controesempi di riporto. Le regressioni di budget collocano un nodo ampio al limite di ricorsione e rifiutano copie di costanti troppo grandi. Le finestre ignote devono restare simboliche senza espandere il DAG. `SymState.*` distingue inoltre le costanti scalari dedotte dai fatti letterali delle regioni in entrambi gli ordini dei byte, senza ampliare il DAG né modificare le parole memorizzate complete.
+
 `SymReadability.*` copre la forma di sottrazione e complemento, il costo degli operatori associativi, letterali a un bit e larghi, saturazione degli alberi condivisi, scelta dei candidati con budget ed equivalenza esaustiva a tre bit senza campionamento. `SymMBASample.*` confronta la verifica stretta e a precisione arbitraria con il valutatore AP per tutti gli operatori, assegnazioni deterministiche e input larghi inutilizzati. Per confrontare la qualità tra versioni del punteggio occorre ricontare entrambe le uscite con la stessa metrica; i contatori di dimensione dell’SDK servono solo alla diagnostica.
 
 ## Matrice di test ARM32 e propagazione del frame

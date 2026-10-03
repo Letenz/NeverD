@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 43701db74dfe3fb59f552a78b88ace1c40c70eef0b1d4d461047864429293865 -->
+<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -68,17 +68,19 @@ Der vergleichbare kurze ARM64-Test benötigte 73.9 ms mit Unicorn und 95.1 ms mi
 
 ## Vollständiges Intel-Inventar in Teilmengen
 
-Der frühere vollständige Lauf `37106679688` endete am 2026-10-03 um 08:35 UTC; GitHub meldete den Verlust der Runner-Kommunikation. Es liegen keine CPU-Ergebnisse vor, also kein Nachweis für einen bestimmten fehlerhaften Gastbefehl. Hosted Intel `full` nutzt jetzt vier Shards mit höchstens zwei gleichzeitigen Jobs. Jeder Job baut und prüft zuerst das vollständige CTest-Inventar der zwanzig Ziele. `--hvf-shard INDEX/COUNT` verteilt ganze Methoden anhand von Ziel und Identität; sämtliche Parameter bleiben zusammen, auch bei unterschiedlichen Ausführungseigenschaften. Jeder Shard bewahrt vollständiges und ausgewähltes Inventar, Ablaufplan, Original-XML, Identitätszuordnungen, Prozessstatus und die Positivliste notwendiger Umgebungsvariablen. Ein Shard ist nur ein Teilnachweis.
+Der vollständige Lauf `37106679688` endete am 2026-10-03 um 08:35 UTC; GitHub meldete den Verlust der Runner-Kommunikation. Auch Jobs 0 und 1 von `37116327329` verloren die Verbindung und lieferten kein CPU-XML. Daraus lässt sich kein fehlerhafter Gastbefehl bestimmen. Hosted Intel `full` verwendet vier Jobs, höchstens zwei gleichzeitig. Jeder führt vier aufeinanderfolgende Batches aus: insgesamt sechzehn Shards mit der Nummer `job + 4 × batch`. Die ursprüngliche Testmenge jedes Jobs bleibt erhalten. Jeder Batch baut und prüft zuerst das vollständige CTest-Inventar der zwanzig Ziele. `--hvf-shard INDEX/COUNT` hält ganze Methoden und sämtliche Parameter zusammen, auch bei unterschiedlichen Ausführungseigenschaften.
 
-Ein separater Linux-Job führt `scripts/audit_hvf_shards.py` aus und leitet Ziele und native Pflichtfälle erneut aus dem ausgecheckten Quellstand ab. Er verlangt denselben Versuch, denselben unveränderten Commit, die richtige macOS-Host-ISA und übereinstimmende normalisierte Ausführungsverträge. Die vier Shards müssen disjunkt sein und gemeinsam exakt das vollständige Inventar ergeben; alle Kindprozesse müssen erfolgreich enden und alle nativen Pflichtfälle bestehen. Fehlende Shards, geänderte Filter, widersprüchliche Zusammenfassungen, unvollständiges XML oder übersprungene Pflichtfälle scheitern. Jeder native Job behält Transport, Wiederaufnahme, CR8 und die unabhängige Darwin-Prüfung. Eigene Runner nutzen weiterhin ungeteiltes CTest. Die Aufteilung allein belegt keine Intel-Abnahme. Bei einem erneuten Versuch müssen alle nativen Jobs erneut laufen, damit die vier CPU-Artefakte zum selben Versuch gehören; Artefakte früherer Versuche werden nicht kombiniert.
+Vor der CPU-Ausführung speichert `scripts/prepare_hvf_batches.py` das vollständige Inventar, die ausgewählten Inventare und Methodenpläne; der Workflow lädt diese Diagnosen separat hoch. Eine lokale Composite Action führt vier Batches aus und lädt nach jedem sofort Original-XML, Identitätszuordnungen, Prozessstatus und die Positivliste notwendiger Umgebungsvariablen hoch. Eine gemeinsame äußere Frist von 30 Minuten umfasst alle vier Batches samt Uploads. Nach einem fehlgeschlagenen Batch werden weitere Batches nicht ausgeführt. Nach Fehler oder Zeitüberschreitung folgt ein separater Diagnose-Upload mit zwei Minuten Frist, solange der Runner erreichbar bleibt. Bei Verbindungsverlust sind nur bereits hochgeladene Nachweise verfügbar. Pläne und unvollständige Diagnosepakete gelten nicht als bestandene Shards.
+
+Ein separater Linux-Job führt `scripts/audit_hvf_shards.py` aus und leitet Ziele und native Pflichtfälle erneut aus dem ausgecheckten Quellstand ab. Der Workflow lädt nur CPU-Artefakte des aktuellen Versuchs herunter; die Prüfung verlangt alle sechzehn Shards desselben unveränderten Commits, die richtige macOS-Host-ISA und gleiche normalisierte Ausführungsverträge. Die Ergebnisse müssen disjunkt sein und exakt das vollständige Inventar abdecken; alle Kindprozesse müssen erfolgreich enden und alle Pflichtfälle bestehen. Fehlende Shards, geänderte Filter, widersprüchliche Zusammenfassungen, unvollständiges XML oder übersprungene Pflichtfälle scheitern. Jeder native Job behält Transport, Wiederaufnahme, CR8 und die unabhängige Darwin-Prüfung. Eigene Runner nutzen weiterhin ungeteiltes CTest. Batches allein belegen keine Intel-Abnahme. Bei einer Wiederholung müssen alle nativen Jobs erneut laufen; Artefakte früherer Versuche werden nicht kombiniert.
 
 ## Neueste lokale native Validierung
 
-Unveränderter Quellstand `26f8fa88b`, 2026-10-03. Alle vier ARM64-Shards bestanden die Gesamtprüfung; auch die separate Darwin-Prüfung bestand. Die Zeilen überlappen und dürfen nicht addiert werden.
+Unveränderter Quellstand `353dcd75f`, 2026-10-03. Alle sechzehn ARM64-Shards bestanden die Gesamtprüfung; auch die separate Darwin-Prüfung bestand. Die Zeilen überlappen und dürfen nicht addiert werden.
 
 | Umfang | Registriert | Bestanden | Fehler | Übersprungen | Native Pflichtfälle |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, vier Shards | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| CPU, sechzehn Shards | 6,908 | 857 | 0 | 6,051 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`
+`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`

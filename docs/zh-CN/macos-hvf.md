@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 43701db74dfe3fb59f552a78b88ace1c40c70eef0b1d4d461047864429293865 -->
+<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
 
 [← 文档索引](README.md)
 
@@ -172,17 +172,19 @@ Linux 进程在正常退出、内存故障、未知服务和预算停止时的�
 
 ## Intel 完整清单分片验收
 
-早前完整运行 `37106679688` 于 2026-10-03 08:35 UTC 结束，GitHub 明确记录运行器失联，未产生 CPU 结果；这不能定位某条来宾指令。托管 Intel 的 `full` 现分为四片，最多两个作业并发。每片先构建并检查完整的二十个目标和 CTest 清单，再由 `--hvf-shard INDEX/COUNT` 按目标和方法身份分配整个方法；执行属性不同也不拆散该方法的参数。各片保留完整及所选清单、执行计划、原始 XML、身份映射、退出状态和必要环境变量白名单。单片只是部分证据。
+早前完整运行 `37106679688` 于 2026-10-03 08:35 UTC 结束，GitHub 记录运行器失联。运行 `37116327329` 的作业 0、1 也失联，未产生 CPU XML。这些现象不能定位某条来宾指令。托管 Intel 的 `full` 使用四个作业，最多两个并发；每个作业连续执行四批，共十六片，编号为 `job + 4 × batch`，保留原来每个作业的测试集合。每批仍先构建并检查完整二十个目标的 CTest 清单。`--hvf-shard INDEX/COUNT` 保留整个方法及全部参数，执行属性不同也不拆散。
 
-独立 Linux 作业运行 `scripts/audit_hvf_shards.py`，从检出的源码重新推导目标和必需原生项，要求同一次尝试、同一干净提交、正确 macOS 宿主 ISA、规范化执行契约一致，且四片互斥、并集恰好等于完整清单。所有子进程必须成功退出，全部必需原生项必须通过；漏片、过滤器变更、摘要与原始结果不符、XML 不完整或原生必需项跳过均失败。每个原生作业仍执行 transport、恢复、CR8 和独立 Darwin 门禁；自托管保持未分片 CTest。分片本身不代表 Intel 已验收。 重试时须重新运行全部原生作业，确保四份 CPU 产物属于同一次运行尝试；不会混用之前尝试的产物。
+CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所选清单和方法计划，由工作流独立上传这些诊断。一个本地 composite action 连续执行四批，每批结束立即上传原始 XML、身份映射、进程状态和必要环境变量白名单。外层统一的 30 分钟期限覆盖四批执行与上传；某批失败后不再执行后续批次。失败或超时后，只要运行器仍可通信，另有独立的两分钟诊断上传；宿主失联时只能依靠此前已上传的证据。计划及未完成的诊断包不能算作通过的分片。
+
+独立 Linux 作业运行 `scripts/audit_hvf_shards.py`，从检出的源码重新推导目标和必需原生项。工作流仅下载本次尝试的 CPU 产物；审计要求同一干净提交的全部十六片、正确 macOS 宿主 ISA、规范化执行契约一致，且分片互斥、并集恰好等于完整清单。所有子进程必须成功退出，全部必需原生项必须通过；漏片、过滤器变更、摘要不符、XML 不完整或必需原生项跳过均失败。每个原生作业仍执行 transport、恢复、CR8 和独立 Darwin 门禁；自托管保持未分片 CTest。分批保存本身不代表 Intel 已验收。重试须重新运行全部原生作业，不混用之前尝试的产物。
 
 ## 最新本机原生验证
 
-干净源码 `26f8fa88b`，2026-10-03：ARM64 四片全部通过汇总审计，独立 Darwin 门禁也通过。两行覆盖重叠，不可相加。
+干净源码 `353dcd75f`，2026-10-03：ARM64 十六片全部通过汇总审计，独立 Darwin 门禁也通过。两行覆盖重叠，不可相加。
 
 | 范围 | 注册 | 通过 | 失败 | 跳过 | 必需原生项 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU，四片 | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| CPU，十六片 | 6,908 | 857 | 0 | 6,051 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`
+`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`

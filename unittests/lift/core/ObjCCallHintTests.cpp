@@ -2798,6 +2798,110 @@ TEST(ObjCCallHints, FoundationURLPathAndStringComparisonKeepSwiftABI) {
   }
 }
 
+TEST(ObjCCallHints, SwiftAnyHashableInitializerKeepsResultValueAndConformance) {
+  const std::string Import = "_$ss11AnyHashableVyABxcSHRzlufC";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0,
+                                   "/usr/lib/swift/libswiftCore.dylib", false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    const auto &S = Hint->Signature;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(S.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(S.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+    EXPECT_EQ(S.ReturnType->Kind, NdTypeKind::Void);
+    EXPECT_FALSE(Hint->DoesNotReturn);
+    ASSERT_EQ(S.Parameters.size(), 4U);
+    std::vector<ExprPtr> Args;
+    for (unsigned I = 0; I < 4; ++I) {
+      const auto &P = S.Parameters[I];
+      EXPECT_EQ(P.Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(P.Type->Size, 8U);
+      EXPECT_EQ(P.Location.ValueBytes, 8U);
+      EXPECT_EQ(P.TheRole,
+                I == 0 ? SourceParameterTypeHint::Role::SwiftIndirectResult
+                       : SourceParameterTypeHint::Role::Ordinary);
+      EXPECT_EQ(P.Location.RegisterOffset,
+                I == 0 ? TRI.indirectResultReg() : TRI.IntParamRegs[I - 1]);
+      Args.push_back(HighExpr::makeConst(0, 8));
+    }
+    std::string Error;
+    EXPECT_TRUE(validateSourceABI(S, Error)) << Error;
+    auto Call = HighExpr::makeCall("untrusted", 0x2180, Args);
+    Call->Type = S.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    EXPECT_FALSE(runtimeCFunctionAddressHint(Image, 0x2180));
+    for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+      auto &ABI = Changed->Signature;
+      if (Mutation == 0)
+        ABI.Parameters[0].TheRole = SourceParameterTypeHint::Role::Ordinary;
+      if (Mutation == 1)
+        ABI.Parameters[0].Location.RegisterOffset = TRI.IntParamRegs[0];
+      if (Mutation == 2)
+        ABI.Parameters[3].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+      if (Mutation == 3)
+        ABI.Parameters.pop_back();
+      if (Mutation == 4)
+        ABI.Parameters.push_back(ABI.Parameters.back());
+      if (Mutation == 5)
+        ABI.Parameters[1].Type = NdType::makeInt(8);
+      if (Mutation == 6)
+        ABI.ReturnType = NdType::makePtr(NdType::makeVoid());
+      if (Mutation == 7)
+        ABI.Convention = SourceFunctionTypeHint::ConventionKind::C;
+      if (Mutation == 8)
+        ABI.Parameters[1].Location.ValueBytes = 4;
+      if (Mutation == 9)
+        ABI.Parameters[2].Location.RegisterOffset = TRI.IntParamRegs[2];
+      if (Mutation == 10)
+        ABI.Parameters[3].Location.RegisterOffset = TRI.IntParamRegs[1];
+      if (Mutation == 11)
+        Changed->DoesNotReturn = true;
+      Call->SourceCallHint = Changed;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    }
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+      if (Mutation == 1)
+        Wrong.DyldBindSlots[0x2180].Module =
+            "/usr/lib/swift/libswiftCoreFoundation.dylib";
+      if (Mutation == 2)
+        Wrong.DyldBindSlots[0x2180].WeakImport = true;
+      if (Mutation == 3)
+        Wrong.DyldBindSlots[0x2180].Addend = 8;
+      if (Mutation == 4)
+        Wrong.DyldBindSlots[0x2180].Name += "invalid";
+      if (Mutation == 5)
+        Wrong.DyldBindSlots.erase(0x2180);
+      if (Mutation == 6)
+        Wrong.ConflictingImportStorageSlots.insert(0x2180);
+      if (Mutation == 7)
+        Wrong.Format = BinaryFormat::ELF;
+      if (Mutation == 8)
+        Wrong.Arch = Arch::ARM;
+      if (Mutation == 9)
+        Wrong.Bits = Bitness::Bits32;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+    }
+    for (unsigned Parameter = 0; Parameter < 4; ++Parameter) {
+      auto Partial = std::make_shared<SourceCallTypeHint>(*Hint);
+      Partial->Signature.Parameters[Parameter].Location.ValueBytes = 4;
+      Call->SourceCallHint = Partial;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {})) << Parameter;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftStringHashIntoKeepsInoutAndStringCarriers) {
   constexpr llvm::StringLiteral Name = "$sSS4hash4intoys6HasherVz_tF";
   constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";

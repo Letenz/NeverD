@@ -37,7 +37,7 @@ llvm::SmallVector<SymConstantByte, 32> SymState::constantScalarBytes() const {
   llvm::SmallVector<SymConstantByte, 32> Result;
   const auto Collect = [&](SymSpace Space, const Bank &Storage) {
     for (const auto &[Offset, Value] : Storage.Bytes)
-      if (const auto Constant = Ctx->asConst(Value))
+      if (const auto Constant = Ctx->constantWindow(Value, 0, 8))
         Result.push_back(
             {Space, Offset, static_cast<uint8_t>(Constant->getZExtValue())});
   };

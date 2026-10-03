@@ -1,0 +1,88 @@
+name: Preserve hosted Intel CPU batches
+description: Execute four complete method subshards and save each original result immediately
+inputs:
+  shard-count:
+    description: Total subshards from prepare_hvf_batches.py
+    required: true
+  batch-0:
+    description: First global subshard index
+    required: true
+  batch-1:
+    description: Second global subshard index
+    required: true
+  batch-2:
+    description: Third global subshard index
+    required: true
+  batch-3:
+    description: Fourth global subshard index
+    required: true
+runs:
+  using: composite
+  # The calling step's 30-minute deadline covers all execution and uploads.
+  # A failed batch remains a failure after its always() upload; later batches
+  # use the default success() condition. No continue-on-error is permitted.
+  steps:
+    - name: Execute first native CPU batch
+      shell: bash
+      env:
+        HVF_BATCH: ${{ inputs.batch-0 }}
+        HVF_SHARDS: ${{ inputs.shard-count }}
+      run: >-
+        python3 scripts/run_native_cpu_ci.py --build build-hvf
+        --evidence "build-hvf/native-evidence/shard-$HVF_BATCH" --parallel 4
+        --require-hvf --execution-methods --hvf-shard "$HVF_BATCH/$HVF_SHARDS"
+    - name: Preserve first native CPU batch
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: hvf-cpu-X64-shard-${{ inputs.batch-0 }}-attempt-${{ github.run_attempt }}
+        path: build-hvf/native-evidence/shard-${{ inputs.batch-0 }}/
+        if-no-files-found: warn
+    - name: Execute second native CPU batch
+      shell: bash
+      env:
+        HVF_BATCH: ${{ inputs.batch-1 }}
+        HVF_SHARDS: ${{ inputs.shard-count }}
+      run: >-
+        python3 scripts/run_native_cpu_ci.py --build build-hvf
+        --evidence "build-hvf/native-evidence/shard-$HVF_BATCH" --parallel 4
+        --require-hvf --execution-methods --hvf-shard "$HVF_BATCH/$HVF_SHARDS"
+    - name: Preserve second native CPU batch
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: hvf-cpu-X64-shard-${{ inputs.batch-1 }}-attempt-${{ github.run_attempt }}
+        path: build-hvf/native-evidence/shard-${{ inputs.batch-1 }}/
+        if-no-files-found: warn
+    - name: Execute third native CPU batch
+      shell: bash
+      env:
+        HVF_BATCH: ${{ inputs.batch-2 }}
+        HVF_SHARDS: ${{ inputs.shard-count }}
+      run: >-
+        python3 scripts/run_native_cpu_ci.py --build build-hvf
+        --evidence "build-hvf/native-evidence/shard-$HVF_BATCH" --parallel 4
+        --require-hvf --execution-methods --hvf-shard "$HVF_BATCH/$HVF_SHARDS"
+    - name: Preserve third native CPU batch
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: hvf-cpu-X64-shard-${{ inputs.batch-2 }}-attempt-${{ github.run_attempt }}
+        path: build-hvf/native-evidence/shard-${{ inputs.batch-2 }}/
+        if-no-files-found: warn
+    - name: Execute fourth native CPU batch
+      shell: bash
+      env:
+        HVF_BATCH: ${{ inputs.batch-3 }}
+        HVF_SHARDS: ${{ inputs.shard-count }}
+      run: >-
+        python3 scripts/run_native_cpu_ci.py --build build-hvf
+        --evidence "build-hvf/native-evidence/shard-$HVF_BATCH" --parallel 4
+        --require-hvf --execution-methods --hvf-shard "$HVF_BATCH/$HVF_SHARDS"
+    - name: Preserve fourth native CPU batch
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: hvf-cpu-X64-shard-${{ inputs.batch-3 }}-attempt-${{ github.run_attempt }}
+        path: build-hvf/native-evidence/shard-${{ inputs.batch-3 }}/
+        if-no-files-found: warn
