@@ -58,34 +58,6 @@ jobs:
               print(log.read_text(), end="")
           raise SystemExit(status)
           PYPROBE
-      - name: Diagnose native Intel CR8 state with isolated API variants
-        if: inputs.validation == 'probe' && matrix.arch == 'X64'
-        shell: bash
-        run: |
-          clang -Wall -Wextra -Werror scripts/probe_hvf_cr8.c -framework Hypervisor -o build-hvf-probe/cr8
-          codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/cr8
-          python3 - <<'PYCR8'
-          import pathlib
-          import subprocess
-          failed = False
-          for variant in ("baseline", "unshifted", "apic-address", "apic-access",
-                          "cr8-exits", "accelerated-apic", "accelerated-register",
-                          "xsave", "legacy", "guest-write"):
-              log = pathlib.Path(f"build-hvf-probe/cr8-{variant}.log")
-              with log.open("w") as output:
-                  try:
-                      result = subprocess.run(["build-hvf-probe/cr8", variant],
-                                              timeout=10, stdout=output,
-                                              stderr=subprocess.STDOUT)
-                      status = result.returncode
-                  except subprocess.TimeoutExpired:
-                      output.write("CR8 experiment exceeded 10 seconds\n")
-                      status = 124
-              print(log.read_text(), end="")
-              print(f"CR8 experiment {variant}: status={status}", flush=True)
-              failed |= status != 0
-          raise SystemExit(int(failed))
-          PYCR8
       - name: Install hosted build tools
         if: inputs.runner == 'hosted-intel' && inputs.validation != 'probe'
         run: brew install ninja

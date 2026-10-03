@@ -258,22 +258,31 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
     return Machine->step(State, *Root, control());
   };
   hvf::Binding Binding(Host, *Memory);
-  for (bool Deadline : {true, false}) {
-    SCOPED_TRACE(Deadline ? "deadline" : "stop token");
+  enum Mode { Deadline, StopToken, HostInterrupt };
+  for (auto Kind : {Deadline, StopToken, HostInterrupt}) {
+    SCOPED_TRACE(Kind);
     ASSERT_EQ(llvm::toString(Prepare(PC)), "");
     ASSERT_EQ(State.reg(X64Register::PC), PC);
     std::atomic<bool> Stop{false};
     std::promise<void> Entered;
     auto Ready = Entered.get_future();
+    std::optional<hvf::Cpu> InterruptCPU;
     std::thread Stopper;
-    if (!Deadline)
+    if (Kind != Deadline)
       Stopper = std::thread([&] {
         Ready.wait();
+        if (Kind == HostInterrupt && InterruptCPU) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+          // An unsolicited host kick cannot complete or fail the busy guest.
+          // The same entry must continue until the later requested stop.
+          EXPECT_EQ(hv_vcpu_interrupt(&*InterruptCPU, 1), HV_SUCCESS);
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         Stop = true;
       });
     auto Control = MachineRunControl{
-        Clock::now() + std::chrono::milliseconds(Deadline ? 50 : 2000), &Stop};
+        Clock::now() + std::chrono::milliseconds(Kind == Deadline ? 50 : 2000),
+        &Stop};
     bool NativeReturned = false;
     auto E = Binding.execute(Control, [&](auto &Native) -> llvm::Error {
       auto Signal = llvm::scope_exit([&] { Entered.set_value(); });
@@ -284,6 +293,7 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
       if (auto S = hv_vmx_vcpu_write_vmcs(Native.cpu(), VMCS_CTRL_CPU_BASED,
                                           Controls & ~uint64_t(CPU_BASED_MTF)))
         return hvf::error("test disable MTF", S);
+      InterruptCPU = Native.cpu();
       Signal.release();
       Entered.set_value();
       return Native.run(Control, [&](bool Cancelled) -> llvm::Error {

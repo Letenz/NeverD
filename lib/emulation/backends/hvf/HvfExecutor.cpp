@@ -326,17 +326,35 @@ llvm::Error Executor::run(MachineRunControl Control, Completion Complete) {
     if (auto E = createCPU())
       return E;
   Deadline->Cancel.Status.store(HV_SUCCESS);
+  bool ExitReadFailed = false;
   auto Entry = Deadline->Timer.invoke(Control, [&]() noexcept {
 #if defined(__arm64__)
     return hv_vcpu_run(CPU);
 #else
-    return hv_vcpu_run_until(CPU, HV_DEADLINE_FOREVER);
+    // Host interrupts may exit before the admitted instruction completes.
+    // Keep the same native state and cancellation generation until an actual
+    // guest exit, host error, or requested stop/deadline is observed.
+    while (true) {
+      auto Status = hv_vcpu_run_until(CPU, HV_DEADLINE_FOREVER);
+      if (Status != HV_SUCCESS)
+        return Status;
+      uint64_t Reason = 0;
+      Status = hv_vmx_vcpu_read_vmcs(CPU, VMCS_RO_EXIT_REASON, &Reason);
+      if (Status != HV_SUCCESS) {
+        ExitReadFailed = true;
+        return Status;
+      }
+      if (Reason != VMX_REASON_IRQ || Control.interrupted())
+        return Status;
+    }
 #endif
   });
   llvm::Error Result = llvm::Error::success();
   if (Entry.Value) {
     if (*Entry.Value != HV_SUCCESS)
-      Result = runError(CPU, *Entry.Value);
+      Result = ExitReadFailed
+                   ? error("hv_vmx_vcpu_read_vmcs(exit reason)", *Entry.Value)
+                   : runError(CPU, *Entry.Value);
     else
       Result = Complete(Entry.Cancelled);
   }
