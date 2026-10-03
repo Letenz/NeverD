@@ -306,6 +306,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 Path("docs/python-plugins.md"),
                 Path("docs/roadmap.md"),
                 Path("docs/testing.md"),
+                Path("docs/emulation.md"),
                 Path("docs/cpu-execution.md"),
                 Path("docs/process-emulation.md"),
                 Path("docs/solver.md"),
@@ -323,7 +324,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
         )
 
     def test_cpu_process_and_solver_guides_are_in_every_localized_matrix(self) -> None:
-        for stem in ("cpu-execution", "process-emulation", "solver"):
+        for stem in ("emulation", "cpu-execution", "process-emulation", "solver"):
             self.assertIn(Path(f"docs/{stem}.md"), i18n.ENGLISH_DOCS)
             for locale in i18n.LOCALES:
                 self.assertIn(Path(f"docs/{locale}/{stem}.md"), i18n.localized_paths(locale))

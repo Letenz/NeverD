@@ -3128,6 +3128,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
             ios_guide,
             _driver_guide,
             _interpreter_guide,
+            _emulation_overview,
             cpu_guide,
             process_guide,
             solver_guide,
