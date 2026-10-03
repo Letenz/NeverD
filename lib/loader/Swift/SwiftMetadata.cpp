@@ -161,6 +161,305 @@ swiftImmutableScalarStorage(const BinaryImage &Image, va_t Address) {
   return SwiftImmutableScalarStorage{Storage->Name, uint32_t(*Width)};
 }
 
+namespace {
+using ReflectionNode = llvm::SwiftDemangleNode;
+bool reflectionShape(const ReflectionNode &N, llvm::StringRef Kind,
+                     size_t Children) {
+  return N.Kind == Kind && !N.Text && !N.Index && N.Children.size() == Children;
+}
+bool reflectionText(const ReflectionNode &N, llvm::StringRef Kind,
+                    llvm::StringRef Text) {
+  return N.Kind == Kind && N.Text && *N.Text == Text && !N.Index &&
+         N.Children.empty();
+}
+std::optional<ReflectionNode> reflectionTree(llvm::StringRef Name) {
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  auto Parsed = llvm::swiftDemangle(Name, Options);
+  return Parsed.Root && Parsed.Error.empty()
+             ? std::optional<ReflectionNode>(*Parsed.Root)
+             : std::nullopt;
+}
+std::optional<va_t> reflectionRelative(const BinaryImage &Image, va_t Address) {
+  const auto Bytes = readImmutableImageBytes(Image, Address, 4);
+  if (!Bytes)
+    return std::nullopt;
+  const int64_t Delta = int32_t(llvm::support::endian::read32le(Bytes->data()));
+  if (!Delta || (Delta < 0 ? Address < uint64_t(-Delta)
+                           : Address > InvalidVA - uint64_t(Delta)))
+    return std::nullopt;
+  return Delta < 0 ? Address - uint64_t(-Delta) : Address + uint64_t(Delta);
+}
+std::optional<std::string> reflectionString(const BinaryImage &Image,
+                                            va_t Address) {
+  const auto Text = objc::RuntimeData(Image).string(Address);
+  return Text && Text->size() <= 1024 &&
+                 readImmutableImageBytes(Image, Address, Text->size() + 1)
+             ? Text
+             : std::nullopt;
+}
+bool reflectionClass(const ReflectionNode &N, llvm::StringRef Module,
+                     llvm::StringRef Name) {
+  return reflectionShape(N, "Class", 2) &&
+         reflectionText(N.Children[0], "Module", Module) &&
+         reflectionText(N.Children[1], "Identifier", Name);
+}
+std::optional<std::string> reflectionObjCClass(const BinaryImage &Image,
+                                               va_t Address) {
+  const auto Encoding = reflectionString(Image, Address);
+  if (!Encoding || !llvm::StringRef(*Encoding).starts_with("So"))
+    return std::nullopt;
+  const auto Tree = reflectionTree("$s" + *Encoding);
+  if (!Tree || !reflectionShape(*Tree, "Global", 1) ||
+      !reflectionShape(Tree->Children[0], "Class", 2))
+    return std::nullopt;
+  const auto &N = Tree->Children[0];
+  if (!reflectionText(N.Children[0], "Module", "__C") ||
+      N.Children[1].Kind != "Identifier" || !N.Children[1].Text ||
+      N.Children[1].Text->empty() || N.Children[1].Index ||
+      !N.Children[1].Children.empty())
+    return std::nullopt;
+  return *N.Children[1].Text;
+}
+std::optional<va_t> reflectionContext(const BinaryImage &Image, va_t Address) {
+  const auto Bytes = readImmutableImageBytes(Image, Address, 6);
+  if (!Bytes || ((*Bytes)[0] != 1 && (*Bytes)[0] != 2) || (*Bytes)[5])
+    return std::nullopt;
+  const auto Target = reflectionRelative(Image, Address + 1);
+  if (!Target)
+    return std::nullopt;
+  return (*Bytes)[0] == 1 ? Target : readImmutableImagePointer(Image, *Target);
+}
+const ObjCClass *reflectionClassRecord(const BinaryImage &Image, va_t Address) {
+  const ObjCClass *Result = nullptr;
+  for (const auto &C : Image.ObjCClasses)
+    if (C.Address == Address) {
+      if (Result)
+        return nullptr;
+      Result = &C;
+    }
+  if (!Result || llvm::count_if(Image.ObjCClasses, [&](const auto &C) {
+                   return C.Name == Result->Name;
+                 }) != 1)
+    return nullptr;
+  return Result;
+}
+} // namespace
+
+std::optional<SwiftObjCClassIdentity>
+swiftObjCClassIdentity(const BinaryImage &Image, va_t Metadata) {
+  objc::RuntimeData Data(Image);
+  const auto *Class = reflectionClassRecord(Image, Metadata);
+  if (!Class || !Metadata || Metadata % 8 || Metadata > InvalidVA - 4096 ||
+      !Data.supportsPlainObjectPointers() || !Data.bytes(Metadata, 80) ||
+      Data.className(Metadata) != Class->Name ||
+      (readInitialImagePointer(Image, Metadata + 32).value_or(0) & 3) != 2)
+    return std::nullopt;
+  const auto Descriptor = readInitialImagePointer(Image, Metadata + 64);
+  const auto Header = Descriptor
+                          ? readImmutableImageBytes(Image, *Descriptor, 44)
+                          : std::nullopt;
+  if (!Header)
+    return std::nullopt;
+  const auto Word = [&](unsigned Offset) {
+    return llvm::support::endian::read32le(Header->data() + Offset);
+  };
+  // Version-zero unique non-generic class, no resilient superclass, actor,
+  // or dynamic metadata initialization. Vtable/override trailers add no
+  // authority to this declaration-only proof.
+  if ((Word(0) & ~0xc0000050u) || (Word(0) & 0xffffu) != 0x50u ||
+      Word(24) > 512 || Word(28) > 512 || Word(36) > 64 ||
+      Word(40) > Word(28) || Word(36) > Word(28) - Word(40) ||
+      Data.u32(Metadata + 60) != uint64_t(Word(24)) * 8 ||
+      Data.u32(Metadata + 56) != uint64_t(Word(24) + Word(28)) * 8 ||
+      (Word(4) & 1))
+    return std::nullopt;
+  const auto Parent = reflectionRelative(Image, *Descriptor + 4);
+  const auto NameAddress = reflectionRelative(Image, *Descriptor + 8);
+  const auto ParentBytes =
+      Parent ? readImmutableImageBytes(Image, *Parent, 12) : std::nullopt;
+  if (!ParentBytes ||
+      (llvm::support::endian::read32le(ParentBytes->data()) & ~0x40u) ||
+      llvm::support::endian::read32le(ParentBytes->data() + 4))
+    return std::nullopt;
+  const auto ModuleAddress = reflectionRelative(Image, *Parent + 8);
+  const auto Module =
+      ModuleAddress ? reflectionString(Image, *ModuleAddress) : std::nullopt;
+  const auto Name =
+      NameAddress ? reflectionString(Image, *NameAddress) : std::nullopt;
+  const auto Tree = reflectionTree(Class->Name);
+  if (!Module || !Name || !Tree || !reflectionShape(*Tree, "Global", 1) ||
+      !reflectionShape(Tree->Children[0], "TypeMangling", 1) ||
+      !reflectionShape(Tree->Children[0].Children[0], "Type", 1) ||
+      !reflectionClass(Tree->Children[0].Children[0].Children[0], *Module,
+                       *Name))
+    return std::nullopt;
+  const auto Super = Class->RootClass
+                         ? Data.localPointer(Metadata + 8)
+                         : readInitialImagePointer(Image, Metadata + 8);
+  if (!Super || *Super != Class->SuperclassAddress)
+    return std::nullopt;
+  if (Class->RootClass) {
+    if (*Super || Class->InheritanceStatus != "root" ||
+        !Class->SuperclassName.empty() || Word(20))
+      return std::nullopt;
+  } else {
+    if (!*Super || Class->InheritanceStatus != "resolved" ||
+        Class->SuperclassName.empty() ||
+        Data.className(*Super) != Class->SuperclassName)
+      return std::nullopt;
+    const auto SuperType = reflectionRelative(Image, *Descriptor + 20);
+    const auto SuperDescriptor = readInitialImagePointer(Image, *Super + 64);
+    if (!SuperType || !SuperDescriptor ||
+        reflectionContext(Image, *SuperType) != SuperDescriptor)
+      return std::nullopt;
+  }
+  return SwiftObjCClassIdentity{*Module, *Name, Class->Name, Metadata,
+                                *Descriptor};
+}
+
+std::optional<std::string> swiftObjCStoredFieldClass(const BinaryImage &Image,
+                                                     llvm::StringRef ClassName,
+                                                     va_t OffsetSlot) {
+  const ObjCClass *Class = nullptr;
+  for (const auto &C : Image.ObjCClasses)
+    if (C.Name == ClassName) {
+      if (Class)
+        return std::nullopt;
+      Class = &C;
+    }
+  const auto Identity =
+      Class ? swiftObjCClassIdentity(Image, Class->Address) : std::nullopt;
+  if (!Identity || Class->IvarStatus != "recovered" || !OffsetSlot ||
+      OffsetSlot % 8)
+    return std::nullopt;
+  objc::RuntimeData Data(Image);
+  const auto D = Identity->Descriptor;
+  const auto Count = Data.u32(D + 36), Vector = Data.u32(D + 40);
+  const auto Fields = reflectionRelative(Image, D + 16);
+  const auto RO = Data.classRO(Class->Address);
+  const auto Ivars =
+      RO ? readInitialImagePointer(Image, *RO + 48) : std::nullopt;
+  if (!Count || !*Count || !Vector || !*Vector || !Fields || !Ivars || !RO ||
+      !readInitialImageBytes(Image, *RO, 12) ||
+      !readInitialImageBytes(Image, *Ivars, 8) ||
+      Data.u32(*RO + 4) != Class->InstanceStart ||
+      Data.u32(*RO + 8) != Class->InstanceSize ||
+      Class->Ivars.size() != *Count ||
+      !readImmutableImageBytes(Image, *Fields, 16 + uint64_t(*Count) * 12) ||
+      Data.u32(*Fields + 8) != ((12u << 16) | 7u) ||
+      Data.u32(*Fields + 12) != *Count || Data.u32(*Ivars) != 32 ||
+      Data.u32(*Ivars + 4) != *Count ||
+      !Data.bytes(*Ivars, 8 + uint64_t(*Count) * 32))
+    return std::nullopt;
+  const auto SelfType = reflectionRelative(Image, *Fields);
+  if (!SelfType || reflectionContext(Image, *SelfType) != D ||
+      reflectionRelative(Image, *Fields + 4) !=
+          reflectionRelative(Image, D + 20))
+    return std::nullopt;
+  const ObjCIvar *Selected = nullptr;
+  std::string Result;
+  std::set<std::string> Names;
+  std::set<va_t> Slots;
+  for (uint32_t I = 0; I < *Count; ++I) {
+    const auto &Ivar = Class->Ivars[I];
+    const va_t Record = *Fields + 16 + uint64_t(I) * 12;
+    const auto NameAddress = reflectionRelative(Image, Record + 8);
+    const auto Name =
+        NameAddress ? reflectionString(Image, *NameAddress) : std::nullopt;
+    const auto TypeAddress = reflectionRelative(Image, Record + 4);
+    const auto Type =
+        TypeAddress ? reflectionObjCClass(Image, *TypeAddress) : std::nullopt;
+    const auto Flags = Data.u32(Record);
+    const auto RawName =
+        readInitialImagePointer(Image, Ivar.MetadataAddress + 8);
+    const auto RawType =
+        readInitialImagePointer(Image, Ivar.MetadataAddress + 16);
+    const auto Offset = Data.bytes(Ivar.OffsetAddress, 8);
+    const auto VectorBytes =
+        Data.bytes(Class->Address + uint64_t(*Vector + I) * 8, 8);
+    const auto Reference = Image.ObjCSourceReferences.find(Ivar.OffsetAddress);
+    if (!Name || *Name != Ivar.Name || !Names.insert(*Name).second ||
+        !Slots.insert(Ivar.OffsetAddress).second || !Type || !Flags ||
+        (*Flags & ~2u) || !Ivar.TypeEncoding.empty() || Ivar.Size != 8 ||
+        Ivar.Alignment != 8 ||
+        Ivar.MetadataAddress != *Ivars + 8 + uint64_t(I) * 32 ||
+        readInitialImagePointer(Image, Ivar.MetadataAddress) !=
+            Ivar.OffsetAddress ||
+        !RawName || reflectionString(Image, *RawName) != Ivar.Name ||
+        !RawType || !readImmutableImageBytes(Image, *RawType, 1) ||
+        !readInitialImageBytes(Image, Ivar.MetadataAddress + 24, 8) ||
+        !isFileBackedWritableImageRange(Image, Ivar.OffsetAddress, 8) ||
+        Data.string(*RawType, true) != std::optional<std::string>("") ||
+        Data.u32(Ivar.MetadataAddress + 24) != 3 ||
+        Data.u32(Ivar.MetadataAddress + 28) != 8 || !Offset || !VectorBytes ||
+        !Ivar.Offset || *Ivar.Offset < Class->InstanceStart ||
+        !rangeInBounds(*Ivar.Offset, 8, Class->InstanceSize) ||
+        llvm::support::endian::read64le(Offset) != *Ivar.Offset ||
+        llvm::support::endian::read64le(VectorBytes) != *Ivar.Offset ||
+        Reference == Image.ObjCSourceReferences.end() ||
+        Reference->second.TheKind != ObjCSourceReference::Kind::IvarOffset ||
+        Reference->second.Address != Ivar.OffsetAddress ||
+        Reference->second.Size != 8 || Reference->second.Name != Ivar.Name ||
+        Reference->second.ClassName != Class->Name)
+      return std::nullopt;
+    const Symbol *Symbol = nullptr;
+    for (const auto &S : Image.Symbols)
+      if (S.Addr == Ivar.OffsetAddress) {
+        if (Symbol || S.IsFunc || (S.Size && S.Size != 8))
+          return std::nullopt;
+        Symbol = &S;
+      }
+    if (!Symbol)
+      return std::nullopt;
+    for (const auto &S : Image.Symbols)
+      if (&S != Symbol && (S.Name == Symbol->Name ||
+                           (S.Addr <= Ivar.OffsetAddress
+                                ? S.Size && Ivar.OffsetAddress - S.Addr < S.Size
+                                : S.Addr - Ivar.OffsetAddress < 8)))
+        return std::nullopt;
+    for (const auto &Export : Image.Exports)
+      if (Export.Addr >= Ivar.OffsetAddress &&
+          Export.Addr - Ivar.OffsetAddress < 8 &&
+          (Export.Addr != Ivar.OffsetAddress || Export.Name != Symbol->Name))
+        return std::nullopt;
+    auto Mangled = llvm::StringRef(Symbol->Name);
+    Mangled.consume_front("_");
+    const auto Tree = reflectionTree(Mangled);
+    if (!Tree || !reflectionShape(*Tree, "Global", 1) ||
+        !reflectionShape(Tree->Children[0], "FieldOffset", 2))
+      return std::nullopt;
+    const auto &F = Tree->Children[0];
+    if (F.Children[0].Kind != "Directness" || F.Children[0].Text ||
+        F.Children[0].Index != 0 || !F.Children[0].Children.empty() ||
+        !reflectionShape(F.Children[1], "Variable", 3))
+      return std::nullopt;
+    const auto &V = F.Children[1];
+    const auto &Member = V.Children[1];
+    const bool Named =
+        reflectionText(Member, "Identifier", Ivar.Name) ||
+        (reflectionShape(Member, "PrivateDeclName", 2) &&
+         Member.Children[0].Kind == "Identifier" && Member.Children[0].Text &&
+         !Member.Children[0].Text->empty() && !Member.Children[0].Index &&
+         Member.Children[0].Children.empty() &&
+         reflectionText(Member.Children[1], "Identifier", Ivar.Name));
+    if (!Named ||
+        !reflectionClass(V.Children[0], Identity->Module, Identity->Name) ||
+        !reflectionShape(V.Children[2], "Type", 1) ||
+        !reflectionClass(V.Children[2].Children[0], "__C", *Type))
+      return std::nullopt;
+    if (Ivar.OffsetAddress == OffsetSlot) {
+      Selected = &Ivar;
+      Result = *Type;
+    }
+  }
+  return Selected ? std::optional<std::string>(Result) : std::nullopt;
+}
+
 std::optional<uint64_t>
 swiftPrivateScalarStorageWidth(llvm::StringRef MangledSymbol) {
   MangledSymbol.consume_front("_");

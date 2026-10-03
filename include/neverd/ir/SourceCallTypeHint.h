@@ -17,6 +17,7 @@ namespace neverd {
 struct ObjCReceiverTypeHint {
   enum class OriginKind {
     MethodEntry,
+    NativeSwiftSelf,
     MethodParameter,
     BlockParameter,
     ClassReference,
@@ -448,6 +449,10 @@ struct SourceCallTypeHint {
   /// For ObjCSuper2 this is the exact current-class reference stored in the
   /// objc_super record, not the dynamic receiver pointer.
   std::optional<ObjCReceiverTypeHint> Receiver;
+  /// Exact ordinary message occurrence whose receiver originates in a
+  /// separately declared native Swift entry. Publication redoes the entry,
+  /// machine/dataflow and emitted receiver proof; this is only a receipt.
+  std::optional<SourceCallOccurrenceKey> NativeSwiftReceiver;
   /// An exact post-call integer-register read that uniquely selected one
   /// otherwise conflicting Objective-C selector declaration. This is machine
   /// dataflow evidence, not a source type guess; publication revalidates the

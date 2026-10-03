@@ -49,7 +49,8 @@ inline bool objcSourceCallBound(
     const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
         *BlockParameterReceivers = nullptr,
     const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
-        *BlockCaptureReceivers = nullptr);
+        *BlockCaptureReceivers = nullptr,
+    bool NativeSwiftReceiverProved = false);
 
 struct ObjCSourceBindingResult {
   HighFunc Function;
@@ -181,9 +182,9 @@ inline bool plainNativeBinding(const SourceCallTypeHint &Binding) {
          Binding.CanonicalBooleanInputs.empty() &&
          Binding.SwiftStringInputs.empty() && !Binding.Format &&
          !Binding.NilTerminated && !Binding.SwiftTypeMetadata &&
-         !Binding.Receiver && !Binding.SelectorResultUse &&
-         !Binding.SelectorResultTypeUse && !Binding.SelectorArgumentTypeUse &&
-         !Binding.SelectorForwardingUse &&
+         !Binding.Receiver && !Binding.NativeSwiftReceiver &&
+         !Binding.SelectorResultUse && !Binding.SelectorResultTypeUse &&
+         !Binding.SelectorArgumentTypeUse && !Binding.SelectorForwardingUse &&
          !Binding.SelectorArgumentStorageUse &&
          !Binding.ObjCIndirectResultStorage && !Binding.ByteCount &&
          !Binding.ImmutablePointerSlot && !Binding.AddressedFunctionABI &&
@@ -8326,7 +8327,8 @@ inline bool objcSourceCallBound(
     const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
         *BlockParameterReceivers,
     const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
-        *BlockCaptureReceivers) {
+        *BlockCaptureReceivers,
+    bool NativeSwiftReceiverProved) {
   using namespace objc_binding_detail;
   if (Expression.Kind != ExprKind::Call || !Expression.SourceCallHint ||
       Expression.IntrinsicId != Intrinsic::None ||
@@ -8334,6 +8336,14 @@ inline bool objcSourceCallBound(
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const auto &Binding = *Expression.SourceCallHint;
+  const bool NativeReceiver =
+      Binding.Receiver && Binding.Receiver->Origin ==
+                              ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf;
+  if ((Binding.NativeSwiftReceiver || NativeReceiver) &&
+      (!NativeSwiftReceiverProved || !Binding.NativeSwiftReceiver ||
+       !NativeReceiver ||
+       Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage))
+    return false;
   if (Binding.SwiftWitnessUndefDescriptor) {
     if (!ContainingFunction ||
         !swiftWitnessUndefDescriptor(*ContainingFunction, Expression, Image,
