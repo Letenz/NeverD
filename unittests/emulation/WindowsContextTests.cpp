@@ -91,7 +91,7 @@ TEST_P(WindowsContext, CapturesTheCallerAcrossProvidersAndCallbacks) {
     Options.Arguments = {ProgramFile, C.Argument};
     auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-    EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic << R->PC;
     EXPECT_EQ(R->ExitStatus, CompletionStatus) << llvm::toHex(R->StandardError);
     EXPECT_TRUE(R->StandardError.empty()) << llvm::toHex(R->StandardError);
     EXPECT_EQ(llvm::toHex(R->StandardOutput), expected(C));
