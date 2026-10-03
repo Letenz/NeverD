@@ -1636,4 +1636,29 @@ TEST(InterpreterSpecialization, BoundedFrameDomainDoesNotProveReachability) {
     EXPECT_EQ(execute(Result.Residual, {{32, Root}}), 7U);
 }
 
+TEST(InterpreterSpecialization, NarrowGuardDoesNotEnumerateWideRuntimePayload) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::COPY, reg(72), {reg(8)}),
+         op(NdOp::INT_AND, reg(64), {reg(72), constant(1)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(64, 1)})},
+        0x140);
+  P.add(0x120, {op(NdOp::INT_ADD, reg(0), {reg(72), constant(7)}), ret()});
+  P.add(0x140, {op(NdOp::INT_XOR, reg(0), {reg(72), constant(17)}), ret()});
+  SpecializationOptions Options;
+  Options.ControlRegisters = {{72, 8}};
+  Options.MaxSolverQueries = 8;
+  const auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_LE(Result.SolverQueries, 8U);
+  EXPECT_TRUE(Result.Reads.empty());
+  for (uint64_t High :
+       {uint64_t{0}, uint64_t{0x123456789abcde00}, UINT64_MAX - 255})
+    for (uint64_t Low : {0U, 5U, 17U, 255U}) {
+      const auto Input = High | Low;
+      EXPECT_EQ(execute(Result.Residual, {{8, Input}}),
+                (Low & 1) ? Input + 7 : Input ^ 17);
+    }
+}
+
 } // namespace
