@@ -8,7 +8,7 @@ NeverD 使用 Apple 的 Hypervisor.framework，后端名为 `hvf`，对应 Linux
 
 独立构建 worker 或桌面程序时，导入的引擎库不提供其构建选项，因此 worker 默认仍会附加该 entitlement。若明确不需要 HVF，可设 `NEVERD_WORKER_SIGN_HVF=OFF`。
 
-实现复用现有 checked 契约、页表、寄存器模型和 RAM 事务。一个专用线程拥有进程内的 VM/vCPU，各逻辑 CPU 串行使用它；切换前退休旧映射，销毁时先解绑再释放 backing。Apple Silicon 的宿主映射按 16 KiB 对齐，来宾的权限和内存预算仍以 4 KiB 为单位。ARM64 在每条来宾指令前单步执行 TLB/I-cache 维护，并完整传输标量、TLS 和 FP/SIMD。Intel 使用 VMCS、MTF、XSAVE 和处理器异常退出。Intel 的 CR0/CR4 同时遵守框架可写掩码和硬件必置位，用读取影子保持来宾可见状态。每次创建或取消后重建 Intel vCPU 都初始化独立的托管 `IA32_KERNEL_GS_BASE` 上下文，来宾 MSR 访问仍陷出；未支持的 MSR/SWAPGS 指令不会进入硬件。两种架构都必须通过现有完整状态启动探针。
+实现复用现有 checked 契约、页表、寄存器模型和 RAM 事务。一个专用线程拥有进程内的 VM/vCPU，各逻辑 CPU 串行使用它；切换前退休旧映射，销毁时先解绑再释放 backing。Apple Silicon 的宿主映射按 16 KiB 对齐，来宾的权限和内存预算仍以 4 KiB 为单位。ARM64 在每条来宾指令前单步执行 TLB/I-cache 维护，并完整传输标量、TLS 和 FP/SIMD。Intel 使用 VMCS、MTF、XSAVE 和处理器异常退出。RIP/RFLAGS 每次均直接通过 VMCS 传输，也覆盖取消后重建 vCPU 的入口。Intel 的 CR0/CR4 同时遵守框架可写掩码和硬件必置位，用读取影子保持来宾可见状态。CR8 使用 VMX 访问退出及架构层的读取完成逻辑，因为宿主 TPR 接口可能与来宾实际状态不一致；只处理经过硬件认证的 CR8 读取，其他控制寄存器访问明确失败，checked 指令准入范围不变。每次创建或取消后重建 Intel vCPU 都初始化独立的托管 `IA32_KERNEL_GS_BASE` 上下文，来宾 MSR 访问仍陷出；未支持的 MSR/SWAPGS 指令不会进入硬件。两种架构都必须通过现有完整状态启动探针。
 
 取消会确认原生中断已结束，再允许下一个任务进入；被取消的原生入口会重建 vCPU，防止旧中断影响后续任务。排队期间也检查停止令牌和期限。真正的宿主或状态读取错误优先保留，取消的普通 CPU/RAM 状态不提交。
 
@@ -99,10 +99,10 @@ Linux KVM 和 Windows WHP 已分别在关闭 Unicorn 后通过 Darwin 专项门�
 验证范围见 [Darwin 宿主验证记录](darwin-emulation.md)。这证明了有限 Darwin 环境
 及其共享 CPU 路径，不能替代各后端更广泛的 CPU 回归。
 
-干净源码 `561ebf37b9eaaec08043ac5816b2e083ecccaf68` 的 ARM64 完整门禁达到
-841 项通过、0 失败、5,939 项跳过，包含加强后的中断清单，16 个必需用例全部执行。
+干净源码 `48042a5e90e0977585114de092e423cd64b7f95f` 的 ARM64 完整门禁达到
+841 项通过、0 失败、5,942 项跳过，包含加强后的中断清单，16 个必需用例全部执行。
 其中 12 项 transport 子集也已在本机全部通过，无跳过。完整证据保存在
-`build-hvf-native/hvf-cancellation-full-evidence/`。
+`build-hvf-native/hvf-cr8-full-arm-evidence/`。
 
 Intel 诊断已移除框架拥有的 VMCS link pointer 写入、保留框架 VM-exit 控制，
 并补全硬件 CR0/CR4 必置位。[独立 64 位程序](https://github.com/NeverSight/NeverD/actions/runs/37076076219)
@@ -110,7 +110,17 @@ Intel 诊断已移除框架拥有的 VMCS link pointer 写入、保留框架 VM-
 [原生对照](https://github.com/NeverSight/NeverD/actions/runs/37078094659)
 确认只有启用 `IA32_KERNEL_GS_BASE` 上下文能恢复执行和 MTF 单步。
 VM 指令错误 12 在成功执行前后同样存在，不能将这个残留值视为当前入口的失败原因。
-生产后端已在每次创建 vCPU 时初始化托管 kernel-GS 上下文；提交 `56353de29` 的
-[完整原生门禁](https://github.com/NeverSight/NeverD/actions/runs/37078537517)正在验证修复，
-Intel 验收须等完整结果。临时指令探针与 API 拦截器已移除，持续验收由实际 NeverD
-传输和进程测试负责。
+生产后端已在每次创建 vCPU 时初始化托管 kernel-GS 上下文。
+
+随后，[独立 CR8 对照](https://github.com/NeverSight/NeverD/actions/runs/37082402190)
+在 `e61928b8c` 上定位到另一处 TPR 同步差异：来宾自行写入后能读回优先级
+0、1、3、15，宿主 TPR 读回仍是零；宿主 TPR/APIC 写入也未正确改变来宾读值。
+生产提交 `48042a5e9` 使用经过硬件认证的 CR8 读取退出；普通宿主中断在同一
+取消周期内重试，不当作指令完成。新增原生用例覆盖全部 16 个目标寄存器、
+用户态 #GP，以及主动取消前的普通宿主中断。
+[完整 Intel 门禁](https://github.com/NeverSight/NeverD/actions/runs/37083061831)
+在该提交上达到 9/10 项 transport 通过，余下失败发生在取消并重建 vCPU 后的
+首次重试；完整 CPU 和 Darwin 阶段尚未运行，仍须修复恢复路径并完成验收。
+此前的 `37078537517` 因 runner 停滞
+已取消，不作为验收证据。临时指令探针与 API 拦截器均已移除，持续验收由实际
+NeverD 传输和进程测试负责。

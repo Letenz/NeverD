@@ -12,6 +12,7 @@ add_neverd_component_library(NeverDEmulationCore
   LLVM_COMPONENTS Support)
 
 add_neverd_component_library(NeverDEmulationArch
+  arch/x86_64/X64Machine.cpp
   arch/x86_64/X64FPState.cpp
   arch/x86_64/X64PageTables.cpp
   arch/x86_64/X64ExceptionMonitor.cpp

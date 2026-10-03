@@ -272,6 +272,10 @@ struct SourceCallTypeHint {
   };
   /// Identity only; publication must repeat the current caller proof.
   std::optional<BooleanResultProjection> BooleanResult;
+  /// Descriptor slot for a source-only choice of zero for an unused, bare
+  /// undef witness-instantiation argument. The runtime retains its full ABI;
+  /// publication repeats the descriptor-specific contract and operand proof.
+  std::optional<va_t> SwiftWitnessUndefDescriptor;
   struct FunctionParameterCallEvidence {
     va_t FunctionEntry = 0;
     unsigned Parameter = 0;

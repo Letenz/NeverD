@@ -139,6 +139,49 @@ TEST_P(X64StateTransition, RefreshesCR8AcrossSuccessAndExceptions) {
   }
 }
 
+TEST_P(X64StateTransition, CR8ReadsEveryGPRAndPreservesUserPrivilegeFaults) {
+  const X64Register Destinations[] = {
+      X64Register::AX,  X64Register::CX,  X64Register::DX,  X64Register::BX,
+      X64Register::SP,  X64Register::BP,  X64Register::SI,  X64Register::DI,
+      X64Register::R8,  X64Register::R9,  X64Register::R10, X64Register::R11,
+      X64Register::R12, X64Register::R13, X64Register::R14, X64Register::R15};
+  for (unsigned GPR = 0; GPR < std::size(Destinations); ++GPR) {
+    SCOPED_TRACE(GPR);
+    // Independent MOV r64,CR8 encodings, including REX.B and RSP.
+    const uint8_t Program[] = {uint8_t(GPR < 8 ? 0x44 : 0x45), 0x0f, 0x20,
+                               uint8_t(0xc0 | (GPR & 7))};
+    llvm::cantFail(Memory->write(Code, Program));
+    for (bool User : {false, true}) {
+      State.UserMode = User;
+      State.reg(X64Register::CR8) = GPR;
+      State.reg(X64Register::PC) = Code;
+      State.reg(Destinations[GPR]) = First;
+      State.reg(X64Register::FLAGS) = InitialFlags | x64::ResumeFlag;
+      const auto Before = State;
+      auto E = step();
+      if (User) {
+        bool Caught = false;
+        auto Remaining = llvm::handleErrors(
+            std::move(E), [&](const X64ExceptionError &Fault) {
+              Caught = true;
+              EXPECT_EQ(Fault.exception().Vector, 13u);
+              EXPECT_EQ(Fault.exception().ErrorCode, 0u);
+            });
+        ASSERT_EQ(llvm::toString(std::move(Remaining)), "");
+        ASSERT_TRUE(Caught);
+        expectUnchanged(Before);
+      } else {
+        ASSERT_EQ(llvm::toString(std::move(E)), "");
+        auto Expected = Before;
+        Expected.reg(Destinations[GPR]) = GPR;
+        Expected.reg(X64Register::PC) += sizeof(Program);
+        Expected.reg(X64Register::FLAGS) = InitialFlags;
+        expectUnchanged(Expected);
+      }
+    }
+  }
+}
+
 TEST_P(X64StateTransition,
        CancelledEntryPreservesStateAndAllowsNewTLSProjection) {
   for (unsigned Round = 0; Round < Rounds; ++Round) {

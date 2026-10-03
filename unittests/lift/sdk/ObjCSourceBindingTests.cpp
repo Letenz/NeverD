@@ -2862,6 +2862,305 @@ struct SwiftWitnessAccessorFixture {
 };
 } // namespace
 
+TEST(ObjCSourceBindings, SwiftWitnessUndefRequiresGenericDescriptorContract) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftWitnessAccessorFixture F(Architecture);
+    constexpr auto Descriptor =
+        "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+    constexpr auto Module =
+        "/System/Library/Frameworks/Combine.framework/Combine";
+    F.Image.ImportStorageSlots.erase(F.ConformanceSlot);
+    F.Image.ImportPtrSlots[F.ConformanceSlot] = Descriptor;
+    F.Image.DyldBindSlots[F.ConformanceSlot] = {Descriptor, 0, Module, false};
+    F.WitnessCall->Operands[2] = HighExpr::makeUndef(8);
+    // This test isolates the runtime contract; a real generic metadata value
+    // remains unchanged and requires its ordinary independent source binding.
+    F.Accessor.Body = {F.Accessor.Body[2], F.Accessor.Body[4]};
+    ASSERT_TRUE(
+        swiftWitnessInstantiationArgumentUnused(F.Image, F.ConformanceSlot));
+    auto Flow = analyzeHighSourceFlow(F.Accessor, true);
+    for (auto &Issue : Flow.Items)
+      ADD_FAILURE() << Issue.Reason;
+    ASSERT_TRUE(sdk::objc_binding_detail::swiftWitnessUndefDescriptor(
+        F.Accessor, *F.WitnessCall, F.Image));
+    const auto Result = bindObjCSourceReferences(F.Accessor, F.Image);
+    const auto Call = Result.Function.Body[0].Val;
+    ASSERT_TRUE(Call && Call->SourceCallHint);
+    EXPECT_EQ(Call->Operands[2]->Kind, ExprKind::Const);
+    EXPECT_EQ(Call->Operands[2]->ConstVal, 0U);
+    EXPECT_EQ(Call->SourceCallHint->SwiftWitnessUndefDescriptor,
+              F.ConformanceSlot);
+    EXPECT_EQ(F.WitnessCall->Operands[2]->Kind, ExprKind::Undef);
+    EXPECT_EQ(Call->SourceCallHint->Signature.Parameters.size(), 3U);
+    EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
+                                    &Result.Function));
+  }
+}
+
+namespace {
+struct GenericWitnessFixture : SwiftWitnessAccessorFixture {
+  explicit GenericWitnessFixture(Arch Architecture, bool Alias = false)
+      : SwiftWitnessAccessorFixture(Architecture) {
+    constexpr auto Descriptor =
+        "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+    Image.ImportStorageSlots.erase(ConformanceSlot);
+    Image.ImportPtrSlots[ConformanceSlot] = Descriptor;
+    Image.DyldBindSlots[ConformanceSlot] = {
+        Descriptor, 0, "/System/Library/Frameworks/Combine.framework/Combine",
+        false};
+    WitnessCall->Operands[2] = HighExpr::makeUndef(8);
+    Accessor.Body = {Accessor.Body[2], Accessor.Body[4]};
+    if (Alias) {
+      MedVar Variable;
+      Variable.Kind = MedVar::Temp;
+      Variable.Id = 3;
+      Variable.Size = 8;
+      HighStmt Load;
+      Load.Kind = StmtKind::Assign;
+      Load.Dst = HighExpr::makeVar(Variable, WitnessCall->Operands[0]->Type);
+      Load.Val = WitnessCall->Operands[0];
+      WitnessCall->Operands[0] = HighExpr::makeVar(Variable, Load.Dst->Type);
+      Accessor.Body.insert(Accessor.Body.begin(), Load);
+    }
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftWitnessUndefRejectsUnprovedInputAndABI) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 33; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      GenericWitnessFixture F(Architecture);
+      auto Hint =
+          std::make_shared<SourceCallTypeHint>(*F.WitnessCall->SourceCallHint);
+      F.WitnessCall->SourceCallHint = Hint;
+      auto &Descriptor = F.Image.DyldBindSlots[F.ConformanceSlot];
+      auto &Runtime = F.Image.DyldBindSlots[F.RuntimeSlot];
+      switch (Mutation) {
+      case 0:
+        Descriptor.WeakImport = true;
+        break;
+      case 1:
+        Descriptor.Addend = 8;
+        break;
+      case 2:
+        Descriptor.Module = "/tmp/Combine";
+        break;
+      case 3:
+        Descriptor.Name += "other";
+        break;
+      case 4:
+        F.Image.ImportPtrSlots[F.ConformanceSlot] += "other";
+        break;
+      case 5:
+        Runtime.WeakImport = true;
+        break;
+      case 6:
+        Runtime.Module = "/tmp/libswiftCore.dylib";
+        break;
+      case 7:
+        Runtime.Name = "_swift_getWitnessTableRelative";
+        break;
+      case 8:
+        Hint->Signature.Parameters[2].Location.ValueBytes = 4;
+        break;
+      case 9:
+        F.WitnessCall->Operands[1]->Type = NdType::makeFloat(8);
+        break;
+      case 10:
+        F.WitnessCall->Operands[0]->Type = NdType::makeInt(4, false);
+        break;
+      case 11:
+        F.WitnessCall->Operands[0]->Operands[0]->ConstProvenance =
+            ConstantAddressProvenance::Scalar;
+        break;
+      case 12:
+        F.WitnessCall->IsIndirectCall = true;
+        break;
+      case 13:
+        F.WitnessCall->CallAddr += 4;
+        break;
+      case 14: {
+        auto Cast = std::make_shared<HighExpr>();
+        Cast->Kind = ExprKind::Cast;
+        Cast->Type = NdType::makeInt(8, false);
+        Cast->Operands = {F.WitnessCall->Operands[2]};
+        F.WitnessCall->Operands[2] = Cast;
+        break;
+      }
+      case 15:
+        F.WitnessCall->Operands[2] = HighExpr::makeConst(123, 8);
+        break;
+      case 16:
+        F.WitnessCall->Operands[2] = HighExpr::makeCall("effect", 0x7770, {});
+        F.WitnessCall->Operands[2]->Type = NdType::makePtr(NdType::makeVoid());
+        break;
+      case 17:
+        F.WitnessCall->Operands[2]->Type = NdType::makeInt(4, false);
+        break;
+      case 18:
+        F.WitnessCall->Operands[0] = HighExpr::makeConst(
+            F.ConformanceSlot, 8, ConstantAddressProvenance::DataAddress);
+        break;
+      case 19:
+        F.WitnessCall->Operands[0]->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 20:
+        F.WitnessCall->Operands[0]->Type = NdType::makeFloat(8);
+        break;
+      case 21:
+        F.WitnessCall->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 22:
+        Hint->SwiftWitnessUndefDescriptor = F.ConformanceSlot;
+        break;
+      case 23:
+        F.Image.IsRelocatable = true;
+        break;
+      case 24:
+        F.Image.Bits = Bitness::Bits32;
+        break;
+      case 25:
+        F.Image.Format = BinaryFormat::ELF;
+        break;
+      case 26:
+        F.Image.ConflictingImportStorageSlots.insert(F.ConformanceSlot);
+        break;
+      case 27:
+        Descriptor.Name = "_$sSSSysMc";
+        F.Image.ImportPtrSlots[F.ConformanceSlot] = Descriptor.Name;
+        Descriptor.Module = "/usr/lib/swift/libswiftCore.dylib";
+        break;
+      case 28:
+        Hint->Signature.ReturnLocation.ValueBytes = 4;
+        break;
+      case 29:
+        Hint->DoesNotReturn = true;
+        break;
+      case 30:
+        Hint->BorrowedByteInputs = {{0, 1}};
+        break;
+      case 31:
+        Hint->TargetName += "Relative";
+        break;
+      case 32:
+        F.WitnessCall->Type = NdType::makeFloat(8);
+        break;
+      }
+      const auto Before = F.WitnessCall->Operands[2];
+      const auto Result = bindObjCSourceReferences(F.Accessor, F.Image);
+      const auto &Call = Result.Function.Body[0].Val;
+      ASSERT_TRUE(Call && Call->SourceCallHint);
+      EXPECT_EQ(Call->Operands[2]->Kind, Before->Kind);
+      if (Mutation != 22)
+        EXPECT_FALSE(Call->SourceCallHint->SwiftWitnessUndefDescriptor);
+    }
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftWitnessUndefRevalidatesCurrentAliasesAndPublication) {
+  for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    GenericWitnessFixture F(Arch::AArch64, true);
+    auto Result = bindObjCSourceReferences(F.Accessor, F.Image);
+    auto Call = Result.Function.Body[1].Val;
+    ASSERT_TRUE(Call->SourceCallHint->SwiftWitnessUndefDescriptor);
+    ASSERT_TRUE(objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
+                                    &Result.Function));
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+    Call->SourceCallHint = Hint;
+    switch (Mutation) {
+    case 0:
+      Hint->SwiftWitnessUndefDescriptor = F.MetadataSlot;
+      break;
+    case 1:
+      Call->Operands[2]->ConstVal = 1;
+      break;
+    case 2:
+      Call->Operands[2] = HighExpr::makeUndef(8);
+      break;
+    case 3:
+      Result.Function.Body[0].Val = HighExpr::makeConst(0, 8);
+      break;
+    case 4:
+      F.Image.DyldBindSlots[F.ConformanceSlot].WeakImport = true;
+      break;
+    case 5:
+      F.Image.DyldBindSlots[F.RuntimeSlot].Module = "/tmp/runtime";
+      break;
+    case 6:
+      Hint->Signature.Parameters[0].Location.ValueBytes = 4;
+      break;
+    case 7:
+      Call->CallAddr += 4;
+      break;
+    case 8:
+      Result.Function.Body.push_back(Result.Function.Body[1]);
+      break;
+    case 9:
+      Result.Function.Body[0].Val->SourceCallHint.reset();
+      break;
+    case 10:
+      Hint->CallKind = SourceCallTypeHint::Kind::Native;
+      break;
+    }
+    EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
+                                     &Result.Function));
+  }
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    GenericWitnessFixture F(Arch::AArch64, true);
+    auto Load = F.Accessor.Body[0];
+    switch (Mutation) {
+    case 0:
+      F.Accessor.Body.insert(F.Accessor.Body.begin(), Load);
+      break;
+    case 1:
+      std::swap(F.Accessor.Body[0], F.Accessor.Body[1]);
+      break;
+    case 2:
+      F.Accessor.Body[0].Val = F.WitnessCall->Operands[0];
+      break;
+    case 3: {
+      HighStmt Branch;
+      Branch.Kind = StmtKind::If;
+      Branch.Cond = HighExpr::makeUndef(1);
+      Branch.Body = {Load};
+      F.Accessor.Body[0] = Branch;
+      break;
+    }
+    case 4: {
+      auto Escape = std::make_shared<HighExpr>();
+      Escape->Kind = ExprKind::Addr;
+      Escape->Type = NdType::makePtr(NdType::makeVoid());
+      Escape->Operands = {Load.Dst};
+      HighStmt Effect;
+      Effect.Kind = StmtKind::Call;
+      Effect.CallExpr = HighExpr::makeCall("escape", 0x7770, {Escape});
+      F.Accessor.Body.insert(F.Accessor.Body.begin() + 1, Effect);
+      break;
+    }
+    case 5:
+      F.Accessor.Body[0].Dst->Var.Size = 4;
+      break;
+    case 6:
+      F.Accessor.Body[0].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    }
+    const auto Result = bindObjCSourceReferences(F.Accessor, F.Image);
+    size_t Normalized = 0;
+    walkStmts(Result.Function.Body, [&](const HighStmt &Statement) {
+      forEachExpr(Statement, [&](const ExprPtr &Value) {
+        if (Value && Value->SourceCallHint &&
+            Value->SourceCallHint->SwiftWitnessUndefDescriptor)
+          ++Normalized;
+      });
+    });
+    EXPECT_EQ(Normalized, 0U);
+  }
+}
+
 TEST(ObjCSourceBindings, SwiftWitnessAccessorRebuildsZeroArgumentCacheHelper) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     SwiftWitnessAccessorFixture F(Architecture);

@@ -19,7 +19,7 @@
 namespace neverd::emulation {
 namespace {
 // Intel SDM volume 3, VM-exit reasons and interruption-information format.
-constexpr uint64_t ExitException = 0, ExitMTF = 37;
+constexpr uint64_t ExitException = 0, ExitControlRegister = 28, ExitMTF = 37;
 constexpr uint64_t ValidInterruption = 1ull << 31, ErrorCodeValid = 1 << 11;
 constexpr uint64_t HardwareException = 3, SoftwareException = 6;
 
@@ -52,6 +52,31 @@ public:
     if (auto S = hv_vmx_vcpu_read_vmcs(CPU, Field, &V))
       return hvf::error("hv_vmx_vcpu_read_vmcs", S);
     return V;
+  }
+  llvm::Error unexpectedExit(uint64_t Reason, const X64MachineState &Input) {
+    auto Text = llvm::formatv(
+                    "HVF Intel unexpected VM exit ({0:x}); input_rflags={1:x}",
+                    Reason, Input.reg(X64Register::FLAGS))
+                    .str();
+    const std::pair<const char *, uint32_t> Fields[] = {
+        {"qualification", VMCS_RO_EXIT_QUALIFIC},
+        {"rip", VMCS_GUEST_RIP},
+        {"rflags", VMCS_GUEST_RFLAGS},
+        {"cr0", VMCS_GUEST_CR0},
+        {"cr3", VMCS_GUEST_CR3},
+        {"cr4", VMCS_GUEST_CR4},
+        {"efer", VMCS_GUEST_IA32_EFER},
+        {"cs_access", VMCS_GUEST_CS_AR},
+        {"ss_access", VMCS_GUEST_SS_AR},
+        {"entry_controls", VMCS_CTRL_VMENTRY_CONTROLS},
+        {"cpu_controls", VMCS_CTRL_CPU_BASED}};
+    for (auto [Name, Field] : Fields) {
+      auto Value = vmcs(Field);
+      if (!Value)
+        return Value.takeError();
+      Text += llvm::formatv("; {0}={1:x}", Name, *Value).str();
+    }
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
   }
   llvm::Error control(uint32_t Field, uint64_t Required,
                       uint64_t Forbidden = 0) {
@@ -96,10 +121,11 @@ public:
     // its host VMCS fields; negotiate the fields it permits clients to write.
     if (auto E = control(VMCS_CTRL_PIN_BASED, PIN_BASED_INTR | PIN_BASED_NMI))
       return E;
-    if (auto E = control(VMCS_CTRL_CPU_BASED,
-                         CPU_BASED_MTF | CPU_BASED_TPR_SHADOW |
-                             CPU_BASED_SECONDARY_CTLS | CPU_BASED_HLT,
-                         CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE))
+    if (auto E =
+            control(VMCS_CTRL_CPU_BASED,
+                    CPU_BASED_MTF | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE |
+                        CPU_BASED_SECONDARY_CTLS | CPU_BASED_HLT,
+                    CPU_BASED_TPR_SHADOW))
       return E;
     if (auto E = control(VMCS_CTRL_CPU_BASED2, CPU_BASED2_EPT))
       return E;
@@ -166,7 +192,11 @@ public:
     return E;
 #include "HvfX64Registers.def"
 #undef NEVERD_HVF_X64_REGISTER
-    if (auto E = set(HV_X86_TPR, State.reg(X64Register::CR8) << 4))
+    // RIP/RFLAGS are VMCS fields. Install them directly on every entry,
+    // including after cancellation replaces the native vCPU.
+    if (auto E = vmcs(VMCS_GUEST_RIP, State.reg(X64Register::PC)))
+      return E;
+    if (auto E = vmcs(VMCS_GUEST_RFLAGS, State.reg(X64Register::FLAGS)))
       return E;
     if (auto E = set(HV_X86_XCR0, x64::fp::FPAndSSE))
       return E;
@@ -189,10 +219,17 @@ public:
   }
 #include "HvfX64Registers.def"
 #undef NEVERD_HVF_X64_REGISTER
-    auto TPR = get(HV_X86_TPR);
-    if (!TPR)
-      return TPR.takeError();
-    State.reg(X64Register::CR8) = *TPR >> 4;
+    auto PC = vmcs(VMCS_GUEST_RIP);
+    if (!PC)
+      return PC.takeError();
+    auto Flags = vmcs(VMCS_GUEST_RFLAGS);
+    if (!Flags)
+      return Flags.takeError();
+    State.reg(X64Register::PC) = *PC;
+    State.reg(X64Register::FLAGS) = *Flags;
+    // CR8 is an architectural shadow. HV_X86_TPR readback can disagree with
+    // guest MOV CR8 on Intel hosts, so all CR8 accesses must exit. Checked
+    // code cannot write CR8; an authenticated read is completed below.
     auto FS = vmcs(VMCS_GUEST_FS_BASE);
     if (!FS)
       return FS.takeError();
@@ -231,10 +268,27 @@ public:
         // External-interrupt exits can carry an acknowledged host kick.
         if (Cancelled && *Reason == 1)
           return llvm::Error::success();
-        if (*Reason != ExitMTF && *Reason != ExitException)
-          return diagnostic::error("HVF Intel unexpected VM exit");
+        if (*Reason != ExitMTF && *Reason != ExitException &&
+            *Reason != ExitControlRegister)
+          return Native.unexpectedExit(*Reason, State);
         if (auto E = Native.capture(Next, Bytes))
           return E;
+        if (*Reason == ExitControlRegister) {
+          auto Qualification = Native.vmcs(VMCS_RO_EXIT_QUALIFIC);
+          if (!Qualification)
+            return Qualification.takeError();
+          // Intel SDM: bits 3:0 select CR8, 5:4 select MOV from CR, and
+          // 11:8 select the GPR. Reject every other control-register exit.
+          if ((*Qualification & ~uint64_t(0xf00)) != 0x18)
+            return diagnostic::error(
+                "HVF Intel unsupported control-register exit");
+          auto Length = Native.vmcs(VMCS_RO_VMEXIT_INSTR_LEN);
+          if (!Length)
+            return Length.takeError();
+          if (auto E = completeX64CR8Read(Next, (*Qualification >> 8) & 0xf,
+                                          *Length))
+            return E;
+        }
         if (*Reason == ExitException) {
           auto Info = Native.vmcs(VMCS_RO_VMEXIT_IRQ_INFO);
           if (!Info)

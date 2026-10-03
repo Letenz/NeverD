@@ -44,6 +44,11 @@ struct X64MachineState {
   uint64_t &reg(X64Register R) { return Registers[unsigned(R)]; }
   uint64_t reg(X64Register R) const { return Registers[unsigned(R)]; }
 };
+/// Complete a hardware-authenticated MOV from CR8 virtualization exit. The
+/// transport supplies the architectural GPR number and hardware instruction
+/// length. This does not admit control-register instructions to checked code.
+llvm::Error completeX64CR8Read(X64MachineState &State, unsigned GPR,
+                               uint64_t InstructionBytes);
 /// Native execution of one already admitted instruction. No OS models,
 /// instruction decoding, memory ownership or lifecycle decisions belong here.
 /// The v1 contract admits scalar integer and bounded SSE/SSE2 data operations.
