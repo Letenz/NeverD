@@ -129,6 +129,10 @@ full process/LLVM dependency build. `validation=transport` stops after this
 diagnostic profile; `full` remains the default and also requires both complete
 gates. The transport profile reuses the full inventory's HVF requirements and
 records `hvf_transport_only=true`; it is not full CPU/process acceptance.
+On Intel, the workflow additionally runs `NeverDX64ExceptionTests` before the
+large dependency build, including the CR8 state regression and processor faults.
+It uploads these inventories and results with the transport checkpoint so a
+later build failure cannot erase completed native evidence.
 It can also run locally with `--require-hvf --hvf-transport-only` on
 `scripts/run_native_cpu_ci.py`. `validation=probe` runs only the VM/vCPU
 availability check without LLVM; it cannot establish instruction execution
