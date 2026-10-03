@@ -226,10 +226,10 @@ TEST_P(WindowsContext, CapturesAcrossPagesWithoutChangingTheCPU) {
               X64FPOpcode);
     EXPECT_EQ(
         llvm::support::endian::read64le(Record + X64FPOffset + X64FPIPField),
-        X64FPIP);
+        uint32_t(X64FPIP));
     EXPECT_EQ(
         llvm::support::endian::read64le(Record + X64FPOffset + X64FPDPField),
-        X64FPDP);
+        uint32_t(X64FPDP));
     EXPECT_EQ(llvm::support::endian::read32le(Record + X64ControlOffset),
               X64Control);
     EXPECT_EQ(
