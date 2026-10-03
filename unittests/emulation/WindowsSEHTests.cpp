@@ -176,7 +176,9 @@ TEST(WindowsSEHNative, RunsOriginalSEHExecutable) {
     ASSERT_TRUE(bool(Err));
     llvm::outs() << ObservationLabel << C.Argument << ' ' << Status << ' '
                  << llvm::toHex((*Out)->getBuffer()) << '\n';
-    EXPECT_EQ(Status, CompletionStatus) << llvm::toHex((*Err)->getBuffer());
+    EXPECT_EQ(uint32_t(Status),
+              Probe && C.Mode == 'v' ? NoncontinuableCode : CompletionStatus)
+        << llvm::toHex((*Err)->getBuffer());
     if (Probe) {
       llvm::outs() << RecordLabel << C.Argument << ' '
                    << llvm::toHex((*Err)->getBuffer()) << '\n';

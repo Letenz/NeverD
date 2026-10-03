@@ -59,6 +59,7 @@ static U64 Observations[MaxObservations][10];
 static U32 ObservationCount, SecondaryCount;
 static U64 OriginalPC, OriginalSP;
 static Record *OriginalRecord;
+static U8 OriginalContext[ContextSize];
 static void observe(Pointers *P, U32 Site) {
   require(ObservationCount < MaxObservations, 21);
   U64 PC = *(U64 *)(P->Context + ContextPC);
@@ -67,6 +68,8 @@ static void observe(Pointers *P, U32 Site) {
     OriginalPC = PC;
     OriginalSP = SP;
     OriginalRecord = P->Record;
+    for (U32 I = 0; I < ContextSize; ++I)
+      OriginalContext[I] = P->Context[I];
   }
   U64 *O = Observations[ObservationCount++];
   O[0] = Site;
@@ -79,10 +82,19 @@ static void observe(Pointers *P, U32 Site) {
   O[7] = PC == OriginalPC;
   O[8] = SP == OriginalSP;
   O[9] = SP < OriginalSP;
+  U32 Written;
+  require(WriteFile(GetStdHandle(StderrSelector), O, sizeof(Observations[0]),
+                    &Written, 0),
+          28);
 }
 static U32 secondaryVectored(Pointers *P) {
   observe(P, VectoredTrace);
   trace(VectoredTrace);
+  if (Mode == SecondaryRedirectMode && P->Record->Code == NoncontinuableCode) {
+    for (U32 I = 0; I < ContextSize; ++I)
+      P->Context[I] = OriginalContext[I];
+    return -1;
+  }
   if (Mode == SecondaryVectoredMode && P->Record->Code == NoncontinuableCode &&
       !SecondaryCount++)
     return -1;
@@ -103,10 +115,27 @@ static int secondaryFilter(Pointers *P) {
     return -1;
   return Mode != SecondarySearchMode;
 }
-__declspec(noinline) static void secondaryInner(void) {
+__declspec(noinline) static void secondaryUnwind(void) {
   __try {
     RaiseException(SoftwareCode, 1, 0, 0);
-    require(0, 23);
+  } __finally {
+    trace(_abnormal_termination() ? FinallyTrace : LocalHandlerTrace);
+  }
+}
+__declspec(noinline) static void secondaryInner(void) {
+  __try {
+    if (Mode == SecondaryUnwindMode)
+      secondaryUnwind();
+    else if (Mode == SecondaryDLLMode || Mode == SecondaryDLLHandlerMode) {
+      void (*Call)(TraceCall, int (*)(Pointers *), U32) = GetProcAddress(
+          Library, Mode == SecondaryDLLMode ? DLLRaiseName : DLLCatchName);
+      require(Call != 0, 30);
+      Call(trace, secondaryFilter, 1);
+    } else
+      RaiseException(SoftwareCode, 1, 0, 0);
+    require(Mode == SecondaryRedirectMode || Mode == SecondaryDLLHandlerMode,
+            23);
+    trace(ResumeTrace);
   } __except (secondaryFilter(_exception_info())) {
     require(_exception_code() == NoncontinuableCode, 24);
     trace(HandlerTrace);
@@ -122,6 +151,10 @@ __declspec(noinline) static void secondaryCleanup(void) {
 static void secondary(void) {
   require(AddVectoredExceptionHandler(1, secondaryVectored) != 0, 25);
   require(AddVectoredContinueHandler(1, secondaryContinued) != 0, 26);
+  if (Mode == SecondaryDLLMode || Mode == SecondaryDLLHandlerMode) {
+    Library = LoadLibraryA(LibraryFile);
+    require(Library != 0, 31);
+  }
   __try {
     if (Mode == SecondaryFinallyMode)
       secondaryCleanup();
@@ -132,10 +165,8 @@ static void secondary(void) {
     require(_exception_code() == NoncontinuableCode, 27);
     trace(LocalHandlerTrace);
   }
-  U32 Written;
-  require(WriteFile(GetStdHandle(StderrSelector), Observations,
-                    ObservationCount * sizeof(Observations[0]), &Written, 0),
-          28);
+  if (Library)
+    require(FreeLibrary(Library), 32);
 }
 static U32 vectored(Pointers *P) {
   trace(VectoredTrace);
@@ -217,7 +248,9 @@ void entry(void) {
   require(Mode != 0, 10);
   if (Mode == SecondarySameMode || Mode == SecondarySearchMode ||
       Mode == SecondaryFinallyMode || Mode == SecondaryVectoredMode ||
-      Mode == SecondaryRepeatMode) {
+      Mode == SecondaryRepeatMode || Mode == SecondaryRedirectMode ||
+      Mode == SecondaryUnwindMode || Mode == SecondaryDLLMode ||
+      Mode == SecondaryDLLHandlerMode) {
     secondary();
     const U64 Output[] = {Mode, Trace};
     U32 Written;
@@ -247,12 +280,12 @@ void entry(void) {
       trace(HandlerTrace);
     }
   } else {
-    void (*DLLCall)(TraceCall, int (*)(Pointers *)) = 0;
+    void (*DLLCall)(TraceCall, int (*)(Pointers *), U32) = 0;
     if (Mode == CrossImageMode || Mode == DLLHandlerMode ||
         Mode == RetiredMode) {
       Library = LoadLibraryA(LibraryFile);
       require(Library != 0, 15);
-      DLLCall = (void (*)(TraceCall, int (*)(Pointers *)))GetProcAddress(
+      DLLCall = (void (*)(TraceCall, int (*)(Pointers *), U32))GetProcAddress(
           Library, Mode == DLLHandlerMode ? DLLCatchName : DLLRaiseName);
       require(DLLCall != 0, 16);
     }
@@ -262,7 +295,7 @@ void entry(void) {
       else if (Mode == ReadFaultMode || Mode == RepairFaultMode)
         require(ReadFault((void *)FaultAddress) == DataValue, 17);
       else if (DLLCall)
-        DLLCall(trace, filter);
+        DLLCall(trace, filter, 0);
       else
         raise();
       trace(ResumeTrace);
