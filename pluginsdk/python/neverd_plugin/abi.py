@@ -18,6 +18,13 @@ LoadProgressCallback = ctypes.CFUNCTYPE(
     None, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_ulonglong,
     ctypes.c_ulonglong, ctypes.c_char_p,
 )
+BytecodeInstructionSinkV1 = ctypes.CFUNCTYPE(
+    ctypes.c_int, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,
+)
+BytecodeDecoderV1 = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t,
+    ctypes.c_uint64, BytecodeInstructionSinkV1, ctypes.c_void_p,
+)
 
 
 class OutputLanguage(IntEnum):
@@ -830,6 +837,7 @@ _C_TYPES: dict[str, object] = {
     "const void *": ctypes.c_void_p,
     "void *": ctypes.c_void_p,
     "neverd_load_progress_fn": LoadProgressCallback,
+    "ND_BytecodeDecoderV1": BytecodeDecoderV1,
     "const neverd_simplify_options *": ctypes.POINTER(NeverDSimplifyOptions),
     "neverd_simplify_result *": ctypes.POINTER(NeverDSimplifyResult),
     "const neverd_synthesize_options *": ctypes.POINTER(NeverDSynthesizeOptions),
@@ -1533,6 +1541,13 @@ _declare(
     "neverd_bytecode_recover_json_v1",
     "const char *",
     ["const unsigned char *", "size_t", "const char *", "size_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_bytecode_recover_decoder_json_v1",
+    "const char *",
+    ["const unsigned char *", "size_t", "const char *", "size_t",
+     "ND_BytecodeDecoderV1", "void *"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(

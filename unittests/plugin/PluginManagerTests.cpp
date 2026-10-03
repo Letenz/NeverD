@@ -62,8 +62,9 @@ TEST_F(PluginManagerTest, ExternalBytecodeRulesUseSharedRecovery) {
             1)
       << takeString(neverd_last_error(Session));
   neverd_plugins_init(Session);
-  EXPECT_EQ(neverd_plugins_run(Session, "External Bytecode C", 0), 0)
-      << takeString(neverd_last_error(Session));
+  for (int Decoder : {0, 1})
+    EXPECT_EQ(neverd_plugins_run(Session, "External Bytecode C", Decoder), 0)
+        << takeString(neverd_last_error(Session));
   neverd_plugins_term(Session);
 }
 

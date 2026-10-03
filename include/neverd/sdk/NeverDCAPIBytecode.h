@@ -8,6 +8,8 @@
 
 #include "neverd/sdk/NeverDCAPITypes.h"
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -21,6 +23,26 @@ extern "C" {
 #else
 #define NEVERD_API __attribute__((visibility("default")))
 #endif
+
+/// Reply exactly once, synchronously, on the decoding thread. The JSON bytes
+/// are copied before this function returns and need not be NUL-terminated.
+/// Return 1 means accepted, 0 means invalid/repeated/oversized reply. The sink
+/// and its context must not escape the decoder callback.
+typedef int (*ND_BytecodeInstructionSinkV1)(void *SinkContext, const char *JSON,
+                                            size_t Size);
+
+/// A trusted plugin selects an instruction at Address from up to 4096 borrowed
+/// bytes, truncated at the function end. Reply with {size,operations} using
+/// the existing profile operation/operand grammar, or {error:"diagnostic"}.
+/// Match patterns are forbidden for a selected instruction. Bytes, sink and
+/// sink context are borrowed only for this invocation. No callback is retained
+/// after recovery returns; callbacks are synchronous on the calling thread.
+/// The result must depend only on bytes, PC and stable UserData, not CFG visit
+/// order. No exception may cross this C boundary.
+typedef void (*ND_BytecodeDecoderV1)(void *UserData, const unsigned char *Bytes,
+                                     size_t Size, uint64_t Address,
+                                     ND_BytecodeInstructionSinkV1 Reply,
+                                     void *SinkContext);
 
 /// Recover caller-specified bytecode without loading or executing an image.
 /// Code and RequestJSON are borrowed byte buffers for this synchronous call;
@@ -45,6 +67,20 @@ extern "C" {
 NEVERD_API const char *
 neverd_bytecode_recover_json_v1(const unsigned char *Code, size_t CodeSize,
                                 const char *RequestJSON, size_t RequestSize);
+
+/// Dynamic-decoder variant of the same recovery pipeline. Decoder is required;
+/// UserData is borrowed until this call returns. The request has layout instead
+/// of profile: version, register_bytes, byte_order, optional temporary_bytes.
+/// Encodings are forbidden in layout. All other request, response, ownership,
+/// budget and source-ABI rules are identical to the static-profile API.
+/// Callback replies have the same 64 MiB bound as other JSON inputs.
+/// Unsupported instructions, malformed replies and missing/repeated replies
+/// fail the whole recovery without partial source. A callback is trusted host
+/// code, not a sandbox or a guest instruction; the engine never executes the
+/// input.
+NEVERD_API const char *neverd_bytecode_recover_decoder_json_v1(
+    const unsigned char *Code, size_t CodeSize, const char *RequestJSON,
+    size_t RequestSize, ND_BytecodeDecoderV1 Decoder, void *UserData);
 
 #ifdef __cplusplus
 }

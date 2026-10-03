@@ -257,49 +257,93 @@ BytecodeDecoder::BytecodeDecoder(BytecodeProfile P) : Profile(std::move(P)) {
     }
 }
 
-llvm::Expected<std::unique_ptr<BytecodeDecoder>>
-BytecodeDecoder::create(BytecodeProfile P) {
+namespace {
+llvm::Error validateLayout(const BytecodeProfile &P) {
   if (!P.RegisterBytes || P.RegisterBytes > 65536 || !P.TemporaryBytes ||
-      P.TemporaryBytes > 65536 || P.Encodings.empty() ||
-      P.Encodings.size() > 65536 ||
+      P.TemporaryBytes > 65536 ||
       (P.ByteOrder != llvm::endianness::little &&
        P.ByteOrder != llvm::endianness::big))
+    return invalid("invalid profile dimensions");
+  return llvm::Error::success();
+}
+
+llvm::Error validateEncoding(const BytecodeEncoding &E, bool Selected) {
+  if (!E.Size || E.Size > BytecodeInstructionByteLimit ||
+      (Selected ? !E.Match.empty() : E.Match.empty()) ||
+      E.Match.size() > E.Size || E.Operations.empty() ||
+      E.Operations.size() > 4096)
+    return invalid("invalid encoding dimensions");
+  std::set<uint16_t> Offsets;
+  for (auto M : E.Match)
+    if (M.Offset >= E.Size || !M.Mask || (M.Value & ~M.Mask) ||
+        !Offsets.insert(M.Offset).second)
+      return invalid("invalid encoding match");
+  for (size_t I = 0; I != E.Operations.size(); ++I) {
+    const auto &Op = E.Operations[I];
+    if (Op.Inputs.size() > 6 ||
+        static_cast<unsigned>(Op.Opcode) >= static_cast<unsigned>(NdOp::_COUNT))
+      return invalid("invalid operation");
+    if ((terminator(Op.Opcode) || Op.Opcode == NdOp::CALL ||
+         Op.Opcode == NdOp::INDIR_CALL) &&
+        I + 1 != E.Operations.size())
+      return invalid("control operation must end its instruction");
+    if (auto Err = validateOperand(Op.Output, E, true))
+      return Err;
+    for (const auto &Input : Op.Inputs)
+      if (auto Err = validateOperand(Input, E, false))
+        return Err;
+  }
+  return llvm::Error::success();
+}
+} // namespace
+
+llvm::Expected<std::unique_ptr<BytecodeDecoder>>
+BytecodeDecoder::create(BytecodeProfile P) {
+  if (auto Error = validateLayout(P))
+    return std::move(Error);
+  if (P.Encodings.empty() || P.Encodings.size() > 65536)
     return invalid("invalid profile dimensions");
   uint64_t OperationCount = 0;
   for (const auto &E : P.Encodings) {
     OperationCount += E.Operations.size();
-    if (!E.Size || E.Size > 4096 || E.Match.empty() ||
-        E.Match.size() > E.Size || E.Operations.empty() ||
-        E.Operations.size() > 4096 || OperationCount > 1000000)
+    if (OperationCount > 1000000)
       return invalid("invalid encoding dimensions");
-    std::set<uint16_t> Offsets;
-    for (auto M : E.Match)
-      if (M.Offset >= E.Size || !M.Mask || (M.Value & ~M.Mask) ||
-          !Offsets.insert(M.Offset).second)
-        return invalid("invalid encoding match");
-    for (size_t I = 0; I != E.Operations.size(); ++I) {
-      const auto &Op = E.Operations[I];
-      if (Op.Inputs.size() > 6 || static_cast<unsigned>(Op.Opcode) >=
-                                      static_cast<unsigned>(NdOp::_COUNT))
-        return invalid("invalid operation");
-      if ((terminator(Op.Opcode) || Op.Opcode == NdOp::CALL ||
-           Op.Opcode == NdOp::INDIR_CALL) &&
-          I + 1 != E.Operations.size())
-        return invalid("control operation must end its instruction");
-      if (auto Err = validateOperand(Op.Output, E, true))
-        return std::move(Err);
-      for (const auto &Input : Op.Inputs)
-        if (auto Err = validateOperand(Input, E, false))
-          return std::move(Err);
-    }
+    if (auto Error = validateEncoding(E, false))
+      return std::move(Error);
   }
   return std::unique_ptr<BytecodeDecoder>(new BytecodeDecoder(std::move(P)));
+}
+
+llvm::Expected<std::unique_ptr<BytecodeDecoder>>
+BytecodeDecoder::createExternal(BytecodeProfile P,
+                                BytecodeDecodeCallback Decode) {
+  if (auto Error = validateLayout(P))
+    return std::move(Error);
+  if (!Decode || !P.Encodings.empty())
+    return invalid(
+        "external decoding requires a callback and no static encodings");
+  auto Result =
+      std::unique_ptr<BytecodeDecoder>(new BytecodeDecoder(std::move(P)));
+  Result->External = std::move(Decode);
+  return Result;
 }
 
 llvm::Expected<BytecodeInstruction>
 BytecodeDecoder::decode(llvm::ArrayRef<uint8_t> Bytes, va_t Address) const {
   if (Bytes.empty())
     return invalid("empty instruction at 0x" + llvm::utohexstr(Address));
+  if (External) {
+    // Bound Python's copy cost per callback instead of copying the remaining
+    // function at each PC. A valid instruction cannot exceed this window.
+    auto Window =
+        Bytes.take_front(std::min(Bytes.size(), BytecodeInstructionByteLimit));
+    auto Encoding = External(Window, Address);
+    if (!Encoding)
+      return Encoding.takeError();
+    if (auto Error = validateEncoding(*Encoding, true))
+      return std::move(Error);
+    return materialize(*Encoding, Window, Address, UINT32_MAX);
+  }
   std::optional<uint32_t> Match;
   bool Truncated = false;
   for (uint32_t Index : FirstByte[Bytes[0]]) {
@@ -328,12 +372,20 @@ BytecodeDecoder::decode(llvm::ArrayRef<uint8_t> Bytes, va_t Address) const {
   if (Truncated || !Match)
     return invalid(llvm::Twine(Truncated ? "truncated" : "unknown") +
                    " instruction at 0x" + llvm::utohexstr(Address));
-  const auto &E = Profile.Encodings[*Match];
+  return materialize(Profile.Encodings[*Match], Bytes, Address, *Match);
+}
+
+llvm::Expected<BytecodeInstruction>
+BytecodeDecoder::materialize(const BytecodeEncoding &E,
+                             llvm::ArrayRef<uint8_t> Bytes, va_t Address,
+                             uint32_t Index) const {
+  if (E.Size > Bytes.size())
+    return invalid("truncated instruction at 0x" + llvm::utohexstr(Address));
   if (Address > UINT64_MAX - E.Size)
     return invalid("instruction address overflow");
   BytecodeInstruction Result;
   Result.Size = E.Size;
-  Result.Encoding = *Match;
+  Result.Encoding = Index;
   // LowIR temporaries are typed values, not an aliasing register bank. A
   // partially overwritten or differently sized view must be reconstructed
   // explicitly with SUBBYTES/CONCAT instead of reading an unrelated SSA id.

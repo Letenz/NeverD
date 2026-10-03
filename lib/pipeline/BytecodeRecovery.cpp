@@ -59,6 +59,12 @@ bool identifier(llvm::StringRef Name) {
 
 llvm::Expected<BytecodeRecoveryResult>
 recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON) {
+  return recoverBytecode(Code, RequestJSON, {});
+}
+
+llvm::Expected<BytecodeRecoveryResult>
+recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
+                BytecodeDecodeCallback Decode) {
   if (Code.size() > BytecodeRecoveryInputLimit ||
       RequestJSON.size() > BytecodeRecoveryInputLimit)
     return invalid("input exceeds the 64 MiB limit");
@@ -69,15 +75,20 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON) {
   if (!Root || Root->getInteger("schemaVersion") != 1)
     return invalid("bytecode recovery requires schemaVersion 1");
   for (const auto &[Key, Value] : *Root)
-    if (Key != "schemaVersion" && Key != "profile" && Key != "functions" &&
-        Key != "bindings" && Key != "base" && Key != "output" &&
-        Key != "optimize" && Key != "unaligned_pointers")
+    if (Key != "schemaVersion" && Key != "profile" && Key != "layout" &&
+        Key != "functions" && Key != "bindings" && Key != "base" &&
+        Key != "output" && Key != "optimize" && Key != "unaligned_pointers")
       return invalid(llvm::Twine("unknown bytecode recovery key: ") +
                      llvm::StringRef(Key));
-  const auto *Profile = Root->getObject("profile");
+  if (Root->get(Decode ? "profile" : "layout"))
+    return invalid(
+        "static profile and external decoder layout are mutually exclusive");
+  const auto *Profile = Root->getObject(Decode ? "layout" : "profile");
   const auto *Ranges = Root->getArray("functions");
   if (!Profile)
-    return invalid("profile must be an external decoder profile object");
+    return invalid(Decode
+                       ? "layout must be an external decoder layout object"
+                       : "profile must be an external decoder profile object");
   if (!Ranges || Ranges->empty() || Ranges->size() > 100000)
     return invalid("functions must be a nonempty bounded JSON array");
   if (Root->get("bindings") && !Root->getArray("bindings"))
@@ -108,11 +119,15 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON) {
   if (Optimize && !LLVMRoute)
     return invalid("optimize requires llvmc source emission");
   std::string ProfileJSON;
-  llvm::raw_string_ostream(ProfileJSON) << *Root->get("profile");
-  auto P = readBytecodeProfile(ProfileJSON);
+  llvm::raw_string_ostream(ProfileJSON)
+      << *Root->get(Decode ? "layout" : "profile");
+  auto P = Decode ? readBytecodeLayout(ProfileJSON)
+                  : readBytecodeProfile(ProfileJSON);
   if (!P)
     return P.takeError();
-  auto Decoder = BytecodeDecoder::create(std::move(*P));
+  auto Decoder =
+      Decode ? BytecodeDecoder::createExternal(std::move(*P), std::move(Decode))
+             : BytecodeDecoder::create(std::move(*P));
   if (!Decoder)
     return Decoder.takeError();
   std::vector<LowFunc> Functions;

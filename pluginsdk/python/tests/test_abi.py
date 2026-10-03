@@ -5,6 +5,7 @@ import unittest
 
 from scripts.check_python_plugin_sdk import (
     C_API_HEADER,
+    check_bytecode_decoder_abi,
     check_concolic_abi,
     check_devirtualization_abi,
     check_sanitizer_abi,
@@ -13,6 +14,11 @@ from scripts.check_python_plugin_sdk import (
 
 
 class ABIInventoryTests(unittest.TestCase):
+    def test_bytecode_decoder_callbacks_have_exact_c_signatures(self) -> None:
+        errors: list[str] = []
+        check_bytecode_decoder_abi(errors)
+        self.assertEqual(errors, [])
+
     def test_sanitizer_header_and_python_contract_do_not_drift(self) -> None:
         errors: list[str] = []
         check_sanitizer_abi(errors)
