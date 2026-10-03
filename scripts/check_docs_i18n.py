@@ -2629,7 +2629,7 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
              "KernelDMAEvents", "KernelModelPhysicalMemory", "KernelModelDMA",
              "KernelModelDMATransfers", "DmaWritable",
              "KernelDMAChannels", "KernelModelDMAChannels", "DMAAdapterControl",
-             "KernelGuestException", "KernelSEH",
+             "KernelGuestException", "X64SEH",
              "KernelModelInterruptEvents", "KernelModelInterrupts",
              "DriverPower.def", "DriverPowerOperation", "KernelModelPowerRequests",
              "KernelModelPowerCompletion"),

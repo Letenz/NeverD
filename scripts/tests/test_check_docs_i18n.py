@@ -633,7 +633,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                                      "EXCEPTION_EXECUTE_HANDLER", "GetExceptionCode",
                                      "ProbeForRead", "ProbeForWrite",
                                      "driver-seh-scenario.json")),
-            ("architecture.md", ("KernelGuestException", "KernelSEH")),
+            ("architecture.md", ("KernelGuestException", "X64SEH")),
             ("testing.md", ("KernelSEHTests.cpp", "KernelExceptionTests.cpp",
                              "DriverWDMSEHTests.cpp", "NEVERD_WDM_SEH_CFG_FIXTURE",
                              "test_driver_seh_integration.py")),
