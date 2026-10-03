@@ -83,6 +83,13 @@ ExceptionDispatcher::exception(const BackendFault &Fault) {
 llvm::Expected<ExceptionDispatcher::Transfer>
 ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
                            size_t LoaderDepth, std::optional<size_t> Event) {
+  return beginDispatch(std::move(Raised), StackPointer, LoaderDepth, Event, {});
+}
+llvm::Expected<ExceptionDispatcher::Transfer>
+ExceptionDispatcher::beginDispatch(Exception Raised, uint64_t StackPointer,
+                                   size_t LoaderDepth,
+                                   std::optional<size_t> Event,
+                                   std::optional<size_t> Rejected) {
   if (Frames.size() >= MaxExceptionDepth)
     return failure(text::ExceptionLimit);
   if (Raised.Arguments.size() > MaxExceptionArguments ||
@@ -129,6 +136,7 @@ ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
   Frames.push_back({std::move(*Snapshot), std::move(*Context), Handlers.begin(),
                     Top, Layout->PayloadAddress, Layout->ReturnStackPointer,
                     LoaderDepth, Event});
+  Frames.back().Rejected = Rejected;
   return callNext();
 }
 llvm::Expected<ExceptionDispatcher::Transfer> ExceptionDispatcher::callNext() {
@@ -255,6 +263,8 @@ ExceptionDispatcher::continueExecution() {
                                  : CPURegister::AArch64PC);
   if (!PC)
     return PC.takeError();
+  if (F.Rejected)
+    return continueSecondary((*PC)[0]);
   Transfer T{(*PC)[0], F.Event};
   Frames.pop_back();
   collect();

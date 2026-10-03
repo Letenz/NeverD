@@ -68,7 +68,11 @@ private:
     std::optional<size_t> Event;
     HandlerKind Kind = HandlerKind::Exception;
     std::unique_ptr<Unwind> SEH;
+    std::optional<size_t> Rejected;
   };
+  llvm::Expected<Transfer>
+  beginDispatch(Exception Raised, uint64_t StackPointer, size_t LoaderDepth,
+                std::optional<size_t> Event, std::optional<size_t> Rejected);
   std::list<Handler> &handlers(HandlerKind Kind);
   llvm::Expected<Transfer> callNext();
   llvm::Expected<Transfer> continueExecution();
@@ -77,6 +81,8 @@ private:
   llvm::Expected<Transfer> advanceUnwind(std::optional<int32_t> Filter = {});
   llvm::Error validateUnwind();
   llvm::Error writeUnwindRecord();
+  llvm::Expected<Transfer> raiseNoncontinuable();
+  llvm::Expected<Transfer> continueSecondary(uint64_t PC);
   void collect();
   ExecutionBackend &CPU;
   IntegerABI ABI;

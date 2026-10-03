@@ -34,8 +34,25 @@ NEVERD_USER_SEH_VALUE(SmallEventLimit, 3)
 NEVERD_USER_SEH_VALUE(NoncontinuableCode, 0xc0000025)
 NEVERD_USER_SEH_VALUE(ContextSP, 152)
 NEVERD_USER_SEH_VALUE(ContextPC, 248)
-NEVERD_USER_SEH_VALUE(MaxObservations, 16)
 NEVERD_USER_SEH_VALUE(ContextSize, 1232)
+NEVERD_USER_SEH_VALUE(NoncontinuableFlags, 0x81)
+NEVERD_USER_SEH_VALUE(RaiseNoncontinuable, 1)
+NEVERD_USER_SEH_VALUE(PointerBytes, 8)
+NEVERD_USER_SEH_VALUE(StreamOutputSite, 21)
+NEVERD_USER_SEH_VALUE(RecordPointersSite, 22)
+NEVERD_USER_SEH_VALUE(RecordFieldsSite, 23)
+NEVERD_USER_SEH_VALUE(OriginalContextSite, 24)
+NEVERD_USER_SEH_VALUE(SecondaryCodeSite, 25)
+NEVERD_USER_SEH_VALUE(RestoredContextSite, 26)
+NEVERD_USER_SEH_VALUE(SecondaryContextSite, 27)
+NEVERD_USER_SEH_VALUE(SecondaryReturnSite, 28)
+NEVERD_USER_SEH_VALUE(SecondaryCatchSite, 29)
+NEVERD_USER_SEH_VALUE(SecondaryExportSite, 30)
+NEVERD_USER_SEH_VALUE(SecondaryLoadSite, 31)
+NEVERD_USER_SEH_VALUE(SecondaryFreeSite, 32)
+NEVERD_USER_SEH_VALUE(SecondaryHandlerSite, 33)
+NEVERD_USER_SEH_VALUE(SecondaryContinueSite, 34)
+NEVERD_USER_SEH_VALUE(SecondaryOutputSite, 35)
 #endif
 #ifdef NEVERD_USER_SEH_TEXT
 NEVERD_USER_SEH_TEXT(ProgramFile, "user-seh.exe")
@@ -49,18 +66,19 @@ NEVERD_USER_SEH_TEXT(TempPrefix, "neverd-user-seh")
 NEVERD_USER_SEH_TEXT(StdoutFile, "stdout.bin")
 NEVERD_USER_SEH_TEXT(StderrFile, "stderr.bin")
 NEVERD_USER_SEH_TEXT(ObservationLabel, "User SEH observations: ")
-NEVERD_USER_SEH_TEXT(RecordLabel, "User SEH records: ")
 #endif
-#ifdef NEVERD_USER_SEH_PROBE
-NEVERD_USER_SEH_PROBE(SecondarySame, 'b', "!b")
-NEVERD_USER_SEH_PROBE(SecondarySearch, 'i', "!i")
-NEVERD_USER_SEH_PROBE(SecondaryFinally, 'j', "!j")
-NEVERD_USER_SEH_PROBE(SecondaryVectored, 'v', "!v")
-NEVERD_USER_SEH_PROBE(SecondaryRepeat, 'r', "!r")
-NEVERD_USER_SEH_PROBE(SecondaryRedirect, 'd', "!d")
-NEVERD_USER_SEH_PROBE(SecondaryUnwind, 'w', "!w")
-NEVERD_USER_SEH_PROBE(SecondaryDLL, 'k', "!k")
-NEVERD_USER_SEH_PROBE(SecondaryDLLHandler, 'h', "!h")
+#ifdef NEVERD_USER_SEH_SECONDARY
+NEVERD_USER_SEH_SECONDARY(SecondarySame, 'b', "!b", 0xa2a245)
+NEVERD_USER_SEH_SECONDARY(SecondarySearch, 'i', "!i", 0xa2a26)
+NEVERD_USER_SEH_SECONDARY(SecondaryFinally, 'j', "!j", 0xa2a2465)
+NEVERD_USER_SEH_SECONDARY(SecondaryRepeat, 'r', "!r", 0xa2a2a245)
+NEVERD_USER_SEH_SECONDARY(SecondaryRedirect, 'd', "!d", 0xa2a955)
+NEVERD_USER_SEH_SECONDARY(SecondaryUnwind, 'w', "!w", 0xa2a2345)
+NEVERD_USER_SEH_SECONDARY(SecondaryDLL, 'k', "!k", 0xa2a2345)
+NEVERD_USER_SEH_SECONDARY(SecondaryDLLHandler, 'h', "!h", 0xa2a2455)
+#endif
+#ifdef NEVERD_USER_SEH_TERMINAL
+NEVERD_USER_SEH_TERMINAL(SecondaryVectored, 'v', "!v", 0xc0000025, 0xa2a9)
 #endif
 #ifdef NEVERD_USER_SEH_CASE
 NEVERD_USER_SEH_CASE(Catch, 'C', "!C", 0x4)
@@ -82,7 +100,9 @@ NEVERD_USER_SEH_CASE(NoncontinuableCatch, 'Q', "!Q", 0x24)
 NEVERD_USER_SEH_NEGATIVE(Metadata, 'M', "!M", ExceptionMetadataChanged)
 NEVERD_USER_SEH_NEGATIVE(Retired, 'T', "!T", ExceptionModuleRetired)
 NEVERD_USER_SEH_NEGATIVE(Noncontinuable, 'B', "!B",
-                         ExceptionNoncontinuableFilter)
+                         ExceptionLimit)
+NEVERD_USER_SEH_NEGATIVE(SecondaryContext, 'c', "!c",
+                         ExceptionSecondaryContext)
 #endif
 #ifdef NEVERD_USER_SEH_API
 NEVERD_USER_SEH_API(ExitProcess)

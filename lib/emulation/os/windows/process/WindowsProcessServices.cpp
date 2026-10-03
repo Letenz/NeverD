@@ -117,7 +117,7 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     ServiceOutcome::Exception Raised{
         uint32_t(A[0]),
         uint32_t(Flags | ExceptionSoftwareOriginate),
-        Event.PC,
+        0, // The process dispatcher binds the executable continuation address.
         {}};
     for (uint32_t I = 0; I < Count; ++I) {
       auto Argument = CPU.readInteger(A[3] + I * PointerSize, PointerSize);
