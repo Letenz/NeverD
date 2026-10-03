@@ -31,17 +31,35 @@ struct Case {
   uint64_t Mode;
   const char *Argument;
   uint64_t Trace;
+  uint32_t NativeStatus = CompletionStatus;
+  bool Terminal = false;
 };
 constexpr Case Cases[] = {
 #define NEVERD_USER_SEH_CASE(Name, Mode, Argument, Trace)                      \
   {#Name, Mode, Argument, Trace},
+#define NEVERD_USER_SEH_SECONDARY NEVERD_USER_SEH_CASE
+#define NEVERD_USER_SEH_TERMINAL(Name, Mode, Argument, Status, Trace)          \
+  {#Name, Mode, Argument, Trace, Status, true},
 #include "fixtures/WindowsSEHCases.def"
+#undef NEVERD_USER_SEH_TERMINAL
+#undef NEVERD_USER_SEH_SECONDARY
 #undef NEVERD_USER_SEH_CASE
 };
 std::string expected(const Case &C) {
-  std::array<uint8_t, 2 * sizeof(uint64_t)> Bytes;
-  llvm::support::endian::write64le(Bytes.data(), C.Mode);
-  llvm::support::endian::write64le(Bytes.data() + sizeof(uint64_t), C.Trace);
+  std::vector<uint8_t> Bytes;
+  if (C.Terminal) {
+    std::vector<uint64_t> Calls;
+    for (auto Trace = C.Trace; Trace; Trace >>= TraceShift)
+      Calls.push_back(Trace & ((uint64_t(1) << TraceShift) - 1));
+    Bytes.resize(Calls.size() * sizeof(uint64_t));
+    for (size_t I = 0; I < Calls.size(); ++I)
+      llvm::support::endian::write64le(Bytes.data() + I * sizeof(uint64_t),
+                                       Calls[Calls.size() - I - 1]);
+  } else {
+    Bytes.resize(2 * sizeof(uint64_t));
+    llvm::support::endian::write64le(Bytes.data(), C.Mode);
+    llvm::support::endian::write64le(Bytes.data() + sizeof(uint64_t), C.Trace);
+  }
   return llvm::toHex(Bytes);
 }
 struct Profile {
@@ -98,8 +116,17 @@ TEST_P(WindowsSEH, ExecutesOriginalSearchUnwindAndCrossImageScenarios) {
     Options.Arguments = {ProgramFile, C.Argument};
     auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-    EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
-    EXPECT_EQ(R->ExitStatus, CompletionStatus) << llvm::toHex(R->StandardError);
+    if (C.Terminal) {
+      EXPECT_EQ(R->Stop, ProcessStopReason::RuntimeFailure) << R->Diagnostic;
+      EXPECT_NE(R->Diagnostic.find(windows_process::text::ExceptionUnhandled),
+                std::string::npos)
+          << R->Diagnostic;
+      EXPECT_FALSE(R->ExitStatus);
+    } else {
+      EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, CompletionStatus)
+          << llvm::toHex(R->StandardError);
+    }
     EXPECT_TRUE(R->StandardError.empty()) << llvm::toHex(R->StandardError);
     EXPECT_EQ(llvm::toHex(R->StandardOutput), expected(C));
   }
@@ -128,7 +155,10 @@ TEST_P(WindowsSEH, RejectsChangedMetadataAndInvalidContinuation) {
   }
 }
 TEST_P(WindowsSEH, CallbacksShareTheProcessBudget) {
-  Options.Arguments = {ProgramFile, Cases[0].Argument};
+  const auto Simple = llvm::find_if(
+      Cases, [](const Case &C) { return C.Trace == HandlerTrace; });
+  ASSERT_NE(Simple, std::end(Cases));
+  Options.Arguments = {ProgramFile, Simple->Argument};
   Options.Limits.Events = SmallEventLimit;
   auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
   ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
@@ -171,7 +201,8 @@ TEST(WindowsSEHNative, RunsOriginalSEHExecutable) {
     ASSERT_TRUE(bool(Err));
     llvm::outs() << ObservationLabel << C.Argument << ' ' << Status << ' '
                  << llvm::toHex((*Out)->getBuffer()) << '\n';
-    EXPECT_EQ(Status, CompletionStatus) << llvm::toHex((*Err)->getBuffer());
+    EXPECT_EQ(uint32_t(Status), C.NativeStatus)
+        << llvm::toHex((*Err)->getBuffer());
     EXPECT_TRUE((*Err)->getBuffer().empty())
         << llvm::toHex((*Err)->getBuffer());
     EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), expected(C));

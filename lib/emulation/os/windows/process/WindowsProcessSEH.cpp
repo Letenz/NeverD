@@ -11,6 +11,31 @@
 namespace neverd::emulation::windows_process {
 using namespace value;
 
+llvm::Expected<ExceptionDispatcher::Transfer>
+ExceptionDispatcher::raiseNoncontinuable() {
+  if (Frames.size() >= MaxExceptionDepth)
+    return failure(text::ExceptionLimit);
+  const auto &F = Frames.back();
+  if (!F.SEH)
+    return failure(text::ExceptionFrame);
+  // The filter has returned. The secondary raise owns a fresh context below
+  // its persistent records; its search retains the original logical stack.
+  const size_t Origin = Frames.size() - 1;
+  const uint64_t SP = F.ExpectedSP;
+  const size_t LoaderDepth = F.LoaderDepth;
+  if (auto E = CPU.writeRegister(CPURegister::X64SP, {SP, 0}))
+    return std::move(E);
+  if (auto E =
+          CPU.writeRegister(CPURegister::X64PC, {ExceptionDispatchGate, 0}))
+    return std::move(E);
+  return beginDispatch(
+      {uint32_t(StatusNoncontinuableException),
+       uint32_t(ExceptionNoncontinuable | ExceptionSoftwareOriginate),
+       ExceptionDispatchGate,
+       {}},
+      SP, LoaderDepth, std::nullopt, Origin);
+}
+
 bool ExceptionDispatcher::hasFrameHandlers() const {
   return Modules && CPU.architecture() == GuestArchitecture::X64 &&
          llvm::any_of(Modules->Modules, [](const auto &M) {
@@ -81,11 +106,12 @@ ExceptionDispatcher::startUnwind() {
   const size_t Origin = Frames.size() - 1;
   F.SEH = std::make_unique<Unwind>();
   auto &S = *F.SEH;
-  const Frame *Parent = Origin ? &Frames[Origin - 1] : nullptr;
+  const Frame *Parent = F.Rejected ? &Frames[*F.Rejected]
+                                   : (Origin ? &Frames[Origin - 1] : nullptr);
   if (Parent && Parent->LoaderDepth != F.LoaderDepth)
     Parent = nullptr;
   const bool Nested = Parent && Parent->SEH && Parent->SEH->Callback;
-  if (Nested)
+  if (Nested || F.Rejected)
     S.Images = Parent->SEH->Images;
   for (size_t I = 0; I < Modules->Modules.size(); ++I) {
     const auto &M = Modules->Modules[I];
@@ -159,7 +185,16 @@ ExceptionDispatcher::startUnwind() {
   const auto Code = llvm::support::endian::read32le(S.Record.data());
   const X64SEH::Stack Bounds{StackBase, StackTop - StackBase};
   S.Origins.push_back(Origin);
-  if (Nested) {
+  if (F.Rejected) {
+    const auto &Rejected = *Parent->SEH;
+    auto Cursor = S.Planner->beginAfterRejectedContinuation(
+        Code, *Caller, Bounds, Rejected.Cursor);
+    if (!Cursor)
+      return Cursor.takeError();
+    S.Cursor = std::move(*Cursor);
+    S.Origins.insert(S.Origins.end(), Rejected.Origins.begin(),
+                     Rejected.Origins.end());
+  } else if (Nested) {
     const auto &Suspended = *Parent->SEH;
     auto Cursor = S.Planner->beginNested(Code, *Caller, Bounds,
                                          Suspended.Cursor, *Suspended.Callback);
@@ -188,7 +223,7 @@ ExceptionDispatcher::advanceUnwind(std::optional<int32_t> Filter) {
     return failure(text::ExceptionUnhandled);
   if (Next->Kind == Kind::ContinueExecution) {
     if (S.Flags & ExceptionNoncontinuable)
-      return failure(text::ExceptionNoncontinuableFilter);
+      return raiseNoncontinuable();
     llvm::support::endian::write32le(S.Record.data() + ExceptionFlagsOffset,
                                      S.Flags);
     if (auto E = writeUnwindRecord())

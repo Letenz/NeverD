@@ -23,6 +23,11 @@ using namespace neverd;
 using namespace neverd::emulation;
 
 namespace {
+namespace secondary {
+#define NEVERD_SEH_SECONDARY_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#include "X64SEHSecondaryCases.def"
+#undef NEVERD_SEH_SECONDARY_VALUE
+} // namespace secondary
 namespace image_case {
 #define NEVERD_SEH_IMAGE_VALUE(Name, Value) constexpr uint64_t Name = Value;
 #include "X64SEHImageCases.def"
@@ -1019,6 +1024,99 @@ TEST_F(DriverKernelSEH,
   EXPECT_EQ(Handled->Kind, X64SEH::ActionKind::Handler);
   EXPECT_EQ(Handled->State.HandlerPC, Base + 0x1080);
   EXPECT_EQ(Handled->State.ExceptionCode, Code + 1);
+}
+
+TEST_F(DriverKernelSEH,
+       RejectedContinuationRestartsSearchWithoutAnActiveFilterBoundary) {
+  auto &F = handler();
+  auto &FilterScope = F.SEH->Scopes.front();
+  FilterScope.Kind = SEHScopeKind::Filter;
+  FilterScope.FilterOrFinallyVA = Base + secondary::FilterRVA;
+  auto Cleanup = scope(secondary::GuardBeginRVA, secondary::GuardEndRVA,
+                       secondary::CleanupRVA);
+  Cleanup.Kind = SEHScopeKind::Finally;
+  Cleanup.FilterOrFinallyVA = Cleanup.HandlerVA;
+  Cleanup.ContinuationVA = 0;
+  F.SEH->Scopes.insert(F.SEH->Scopes.begin(), Cleanup);
+  auto Planner = planner();
+  const X64SEH::Stack Bounds{StackBase, StackSize};
+  auto Parent = Planner.begin(Code, Caller, Bounds);
+  auto Filter = Planner.advance(Parent);
+  ASSERT_TRUE(bool(Filter)) << llvm::toString(Filter.takeError());
+  ASSERT_EQ(Filter->Kind, X64SEH::ActionKind::Filter);
+  auto Rejected = Planner.advance(Parent, -1);
+  ASSERT_TRUE(bool(Rejected)) << llvm::toString(Rejected.takeError());
+  ASSERT_EQ(Rejected->Kind, X64SEH::ActionKind::ContinueExecution);
+  auto Dispatcher = Caller;
+  Dispatcher.PC = Base + secondary::DispatcherDelta;
+  Dispatcher.GPR[seh::StackRegister] -= secondary::DispatcherStackOffset;
+  auto Child = Planner.beginAfterRejectedContinuation(
+      secondary::Code, Dispatcher, Bounds, Parent);
+  ASSERT_TRUE(bool(Child)) << llvm::toString(Child.takeError());
+  auto Next = Planner.advance(*Child);
+  ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
+  ASSERT_EQ(Next->Kind, X64SEH::ActionKind::Filter);
+  EXPECT_EQ(Next->ExceptionFlags, 0u);
+  EXPECT_EQ(Next->SegmentIndex, 1u);
+  EXPECT_EQ(Next->State.Registers.GPR, Caller.GPR);
+  auto Finally = Planner.advance(*Child, 1);
+  ASSERT_TRUE(bool(Finally)) << llvm::toString(Finally.takeError());
+  ASSERT_EQ(Finally->Kind, X64SEH::ActionKind::Finally);
+  EXPECT_EQ(Finally->State.HandlerPC, Base + secondary::CleanupRVA);
+  EXPECT_EQ(Finally->State.ExceptionCode, secondary::Code);
+  auto Handled = Planner.advance(*Child);
+  ASSERT_TRUE(bool(Handled)) << llvm::toString(Handled.takeError());
+  EXPECT_EQ(Handled->Kind, X64SEH::ActionKind::Handler);
+  EXPECT_EQ(Handled->SegmentIndex, 1u);
+  EXPECT_EQ(Handled->State.ExceptionCode, secondary::Code);
+  EXPECT_EQ(Handled->State.Registers.GPR[seh::StackRegister],
+            Caller.GPR[seh::StackRegister]);
+  auto Retry = Planner.advance(Parent, 1);
+  ASSERT_FALSE(bool(Retry));
+  llvm::consumeError(Retry.takeError());
+}
+
+TEST_F(DriverKernelSEH,
+       SecondaryDispatchRequiresARejectedFilterAndBoundsHistory) {
+  auto &F = handler();
+  F.SEH->Scopes.front().Kind = SEHScopeKind::Filter;
+  F.SEH->Scopes.front().FilterOrFinallyVA = Base + secondary::FilterRVA;
+  auto Planner = planner();
+  const X64SEH::Stack Bounds{StackBase, StackSize};
+  auto Parent = Planner.begin(Code, Caller, Bounds);
+  auto Dispatcher = Caller;
+  Dispatcher.PC = Base + secondary::DispatcherDelta;
+  Dispatcher.GPR[seh::StackRegister] -= secondary::DispatcherStackOffset;
+  auto Begin = [&] {
+    return Planner.beginAfterRejectedContinuation(secondary::Code, Dispatcher,
+                                                  Bounds, Parent);
+  };
+  auto Premature = Begin();
+  ASSERT_FALSE(bool(Premature));
+  EXPECT_NE(llvm::toString(Premature.takeError())
+                .find(seh::text::SecondaryDispatchRequiresRejectedContinuation),
+            std::string::npos);
+  for (size_t I = 0; I <= seh::MaxNestedExceptions; ++I) {
+    SCOPED_TRACE(I);
+    auto Filter = Planner.advance(Parent);
+    ASSERT_TRUE(bool(Filter)) << llvm::toString(Filter.takeError());
+    ASSERT_EQ(Filter->Kind, X64SEH::ActionKind::Filter);
+    auto Pending = Begin();
+    ASSERT_FALSE(bool(Pending));
+    llvm::consumeError(Pending.takeError());
+    auto Rejected = Planner.advance(Parent, -1);
+    ASSERT_TRUE(bool(Rejected)) << llvm::toString(Rejected.takeError());
+    auto Child = Begin();
+    if (I == seh::MaxNestedExceptions) {
+      ASSERT_FALSE(bool(Child));
+      EXPECT_NE(llvm::toString(Child.takeError())
+                    .find(seh::text::NestedExceptionPathLimitExceeded),
+                std::string::npos);
+    } else {
+      ASSERT_TRUE(bool(Child)) << llvm::toString(Child.takeError());
+      Parent = std::move(*Child);
+    }
+  }
 }
 
 TEST_F(DriverKernelSEH, ContextRecordsAllowOnlyBoundedIntegerControlChanges) {

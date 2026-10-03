@@ -13,17 +13,21 @@ __declspec(dllimport) void RaiseException(U32, U32, U32, const U64 *);
 unsigned long _exception_code(void);
 void *_exception_info(void);
 int _abnormal_termination(void);
-__declspec(dllexport) void RaiseFromDLL(TraceCall Trace, FilterCall Filter) {
+__declspec(dllexport) void RaiseFromDLL(TraceCall Trace, FilterCall Filter,
+                                        U32 Flags) {
   __try {
-    RaiseException(SoftwareCode, 0, 0, 0);
+    RaiseException(SoftwareCode, Flags, 0, 0);
   } __finally {
     Trace(_abnormal_termination() ? FinallyTrace : 0);
   }
 }
-__declspec(dllexport) void CatchInDLL(TraceCall Trace, FilterCall Filter) {
+__declspec(dllexport) void CatchInDLL(TraceCall Trace, FilterCall Filter,
+                                      U32 Flags) {
   __try {
-    RaiseException(SoftwareCode, 0, 0, 0);
+    RaiseException(SoftwareCode, Flags, 0, 0);
   } __except (Filter(_exception_info())) {
-    Trace(_exception_code() == SoftwareCode ? HandlerTrace : 0);
+    Trace(_exception_code() == (Flags ? NoncontinuableCode : SoftwareCode)
+              ? HandlerTrace
+              : 0);
   }
 }

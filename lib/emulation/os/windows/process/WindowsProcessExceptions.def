@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_WINDOWS_PROCESS_VALUE
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionReturnGate, 0x71000030)
+NEVERD_WINDOWS_PROCESS_VALUE(ExceptionDispatchGate, 0x71000040)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionScopeRecordSize, 16)
 NEVERD_WINDOWS_PROCESS_VALUE(X64ContextXmmOffset, 416)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionHandleBase, 0x73000000)
@@ -16,6 +17,7 @@ NEVERD_WINDOWS_PROCESS_VALUE(ExceptionContinueExecution, 0xffffffff)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionContinueSearch, 0)
 NEVERD_WINDOWS_PROCESS_VALUE(StatusAccessViolation, 0xc0000005)
 NEVERD_WINDOWS_PROCESS_VALUE(StatusIntegerDivideByZero, 0xc0000094)
+NEVERD_WINDOWS_PROCESS_VALUE(StatusNoncontinuableException, 0xc0000025)
 NEVERD_WINDOWS_PROCESS_VALUE(X64DivideVector, 0)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionRead, 0)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionWrite, 1)
@@ -56,9 +58,6 @@ NEVERD_WINDOWS_PROCESS_TEXT(ExceptionModuleRetired,
 NEVERD_WINDOWS_PROCESS_TEXT(
     ExceptionLoaderBoundary,
     "exception unwind crossed a loader callback boundary")
-NEVERD_WINDOWS_PROCESS_TEXT(
-    ExceptionNoncontinuableFilter,
-    "noncontinuable frame-based exception continuation is unsupported")
 NEVERD_WINDOWS_PROCESS_TEXT(
     ExceptionPersonalityCall,
     "direct calls to the modeled C exception personality are unsupported")

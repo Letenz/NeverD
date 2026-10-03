@@ -153,6 +153,12 @@ public:
                                        const Context &Caller, Stack Bounds,
                                        const Dispatch &Suspended,
                                        const Action &Callback) const;
+  /// A dispatcher may reject a filter's continuation and raise a secondary
+  /// exception after that callback has returned. Retain the original logical
+  /// stack without introducing a new active-filter boundary.
+  llvm::Expected<Dispatch>
+  beginAfterRejectedContinuation(uint32_t ExceptionCode, const Context &Caller,
+                                 Stack Bounds, const Dispatch &Rejected) const;
   /// Filter actions require the actual low-32-bit signed guest result on the
   /// next advance. Finally actions advance after their guest call returns.
   /// Errors leave the dispatch cursor unchanged; no guest state is written.

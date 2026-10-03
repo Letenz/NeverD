@@ -60,8 +60,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     Trap.resize(DWordSize);
     llvm::support::endian::write32le(Trap.data(), ArmServiceInstruction);
   }
-  for (uint64_t Gate :
-       {ReturnGate, AttachReturnGate, DetachReturnGate, ExceptionReturnGate})
+  for (uint64_t Gate : {ReturnGate, AttachReturnGate, DetachReturnGate,
+                        ExceptionReturnGate, ExceptionDispatchGate})
     if (auto E = (*Space)->write(Gate, Trap))
       return std::move(E);
   for (const auto &Module : Program->Modules)
@@ -400,6 +400,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Failed(std::move(E));
         break;
       }
+      V->Raised->Address = Request->NextPC;
       auto Transfer = Exceptions.begin(std::move(*V->Raised), StackPointer,
                                        Pending.size(), EventIndex);
       if (!Transfer) {

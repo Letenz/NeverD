@@ -83,6 +83,13 @@ ExceptionDispatcher::exception(const BackendFault &Fault) {
 llvm::Expected<ExceptionDispatcher::Transfer>
 ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
                            size_t LoaderDepth, std::optional<size_t> Event) {
+  return beginDispatch(std::move(Raised), StackPointer, LoaderDepth, Event, {});
+}
+llvm::Expected<ExceptionDispatcher::Transfer>
+ExceptionDispatcher::beginDispatch(Exception Raised, uint64_t StackPointer,
+                                   size_t LoaderDepth,
+                                   std::optional<size_t> Event,
+                                   std::optional<size_t> Rejected) {
   if (Frames.size() >= MaxExceptionDepth)
     return failure(text::ExceptionLimit);
   if (Raised.Arguments.size() > MaxExceptionArguments ||
@@ -129,6 +136,7 @@ ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
   Frames.push_back({std::move(*Snapshot), std::move(*Context), Handlers.begin(),
                     Top, Layout->PayloadAddress, Layout->ReturnStackPointer,
                     LoaderDepth, Event});
+  Frames.back().Rejected = Rejected;
   return callNext();
 }
 llvm::Expected<ExceptionDispatcher::Transfer> ExceptionDispatcher::callNext() {
@@ -244,6 +252,11 @@ ExceptionDispatcher::continueExecution() {
   // noncontinuable check. Preserve the flag without inventing a second raise.
   if (*Flags & ~(ExceptionNoncontinuable | ExceptionSoftwareOriginate))
     return failure(text::ExceptionContext);
+  // Native dispatcher-generated noncontinuable exceptions remain terminal
+  // after VEH/VCH accept continuation, including edits to the saved CONTEXT.
+  // Keep that origin independently of guest-mutable record flags and code.
+  if (F.Rejected)
+    return failure(text::ExceptionUnhandled);
   std::vector<uint8_t> Changed(F.Context.size());
   if (auto E = CPU.read(F.Payload + ExceptionContextOffset, Changed))
     return std::move(E);

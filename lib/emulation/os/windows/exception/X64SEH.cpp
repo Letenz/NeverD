@@ -233,6 +233,21 @@ X64SEH::advance(Dispatch &State, std::optional<int32_t> FilterResult) const {
   return Result;
 }
 
+llvm::Expected<X64SEH::Dispatch>
+X64SEH::beginAfterRejectedContinuation(uint32_t ExceptionCode,
+                                       const Context &Caller, Stack Bounds,
+                                       const Dispatch &Rejected) const {
+  if (!Rejected.Complete || !Rejected.FilterCandidate || Rejected.Selected ||
+      Rejected.Path.empty())
+    return invalid(seh::text::SecondaryDispatchRequiresRejectedContinuation);
+  if (Rejected.Path.size() >= seh::MaxNestedExceptions + 1)
+    return invalid(seh::text::NestedExceptionPathLimitExceeded);
+  auto State = begin(ExceptionCode, Caller, Bounds);
+  State.Path.insert(State.Path.end(), Rejected.Path.begin(),
+                    Rejected.Path.end());
+  return State;
+}
+
 llvm::Expected<std::optional<X64SEH::Transfer>>
 X64SEH::plan(uint32_t ExceptionCode, const Context &Caller,
              Stack Bounds) const {

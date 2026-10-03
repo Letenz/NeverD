@@ -1,0 +1,12 @@
+//===- X64SEHSecondaryCases.def - Secondary exception search cases -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_SEH_SECONDARY_VALUE(FilterRVA, 0x3000)
+NEVERD_SEH_SECONDARY_VALUE(CleanupRVA, 0x3100)
+NEVERD_SEH_SECONDARY_VALUE(GuardBeginRVA, 0x1030)
+NEVERD_SEH_SECONDARY_VALUE(GuardEndRVA, 0x1060)
+NEVERD_SEH_SECONDARY_VALUE(DispatcherDelta, 0x20000)
+NEVERD_SEH_SECONDARY_VALUE(DispatcherStackOffset, 0x80)
+NEVERD_SEH_SECONDARY_VALUE(Code, 0xc0000025)
