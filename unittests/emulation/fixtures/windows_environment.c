@@ -100,8 +100,6 @@ static void query(void) {
   SetLastError(LastErrorSeed);
   record(GetEnvironmentVariableW(0, Buffer, BufferUnits));
   SetLastError(LastErrorSeed);
-  record(SetEnvironmentVariableW(0, First));
-  SetLastError(LastErrorSeed);
   record(GetEnvironmentVariableW(Invalid, Buffer, BufferUnits));
 }
 static void mutation(void) {
@@ -184,6 +182,9 @@ U32 entry(void) {
     SetLastError(LastErrorSeed);
     record(GetEnvironmentVariableW(Initial, Buffer, BufferUnits));
     wide(Buffer);
+    break;
+  case NullSetMode:
+    SetEnvironmentVariableW(0, First);
     break;
   case BadPointerMode:
     *environment() = Buffer;

@@ -108,8 +108,8 @@ TEST_P(WindowsEnvironment, ExecutesOriginalEnvironmentScenarios) {
   }
 }
 TEST_P(WindowsEnvironment, RejectsInvalidStatePointersAndUnsupportedSemantics) {
-  for (const char *Argument :
-       {BadPointer, BadBlock, BadOutput, DoubleFree, NonASCII, Overlap}) {
+  for (const char *Argument : {BadPointer, BadBlock, BadOutput, DoubleFree,
+                               NonASCII, Overlap, NullSet}) {
     SCOPED_TRACE(Argument);
     Options.Arguments = {ProgramFile, Argument};
     auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
@@ -259,25 +259,31 @@ TEST(WindowsEnvironmentNative, RunsOriginalEnvironmentExecutable) {
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                       Error};
   const llvm::StringRef Environment[] = {InitialVariable};
-  for (const auto &C : Cases) {
-    SCOPED_TRACE(C.Name);
-    ASSERT_FALSE(expected(C.Argument).empty());
+  auto Run = [&](const char *Argument, uint32_t ExpectedStatus,
+                 llvm::StringRef ExpectedOutput, const char *Label) {
+    SCOPED_TRACE(Argument);
     std::string Diagnostic;
     bool Failed = false;
     const int Status = llvm::sys::ExecuteAndWait(
-        Program, {Program, C.Argument}, llvm::ArrayRef(Environment), Redirects,
+        Program, {Program, Argument}, llvm::ArrayRef(Environment), Redirects,
         NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
     ASSERT_FALSE(Failed) << Diagnostic;
     auto Out = llvm::MemoryBuffer::getFile(Output);
     auto Err = llvm::MemoryBuffer::getFile(Error);
     ASSERT_TRUE(bool(Out));
     ASSERT_TRUE(bool(Err));
-    llvm::outs() << ObservationLabel << C.Argument << ' ' << Status << ' '
+    llvm::outs() << Label << Argument << ' ' << uint32_t(Status) << ' '
                  << llvm::toHex((*Out)->getBuffer()) << '\n';
-    EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
+    EXPECT_EQ(uint32_t(Status), ExpectedStatus)
+        << llvm::toHex((*Err)->getBuffer());
     EXPECT_TRUE((*Err)->getBuffer().empty());
-    EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), expected(C.Argument));
+    EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), ExpectedOutput);
+  };
+  for (const auto &C : Cases) {
+    ASSERT_FALSE(expected(C.Argument).empty());
+    Run(C.Argument, ExitStatus, expected(C.Argument), ObservationLabel);
   }
+  Run(NullSet, AccessViolationStatus, {}, ExceptionLabel);
 #endif
 }
 } // namespace

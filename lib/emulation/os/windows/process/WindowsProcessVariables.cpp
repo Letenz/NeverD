@@ -184,10 +184,11 @@ Services::environment(const Service &S, const NativeCallEvent &Event) {
     return std::optional<uint64_t>(Needed);
   }
 
-  if (!A[0])
-    return WinError(S.Kind == API::SetEnvironmentVariableW
-                        ? ErrorInvalidParameter
-                        : ErrorEnvironmentNotFound);
+  if (!A[0]) {
+    if (S.Kind == API::SetEnvironmentVariableW)
+      return failure(text::UserException);
+    return WinError(ErrorEnvironmentNotFound);
+  }
   auto Name = readWide(A[0], MaxStringUnits);
   if (!Name)
     return Name.takeError();
