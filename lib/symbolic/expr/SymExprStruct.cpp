@@ -24,8 +24,101 @@
 
 #include <algorithm>
 #include <cassert>
+#include <optional>
 
 namespace neverd::symbolic {
+
+namespace {
+
+// Prove only a constant window, without constructing projected expressions.
+// Windows are at most one APInt word. Copying a source constant costs its
+// complete word count; repeated DAG visits (including depth-limited ones) and
+// inspected concatenation operands also consume the shared work limit.
+std::optional<llvm::APInt> constantBitSlice(const SymContext &Ctx, SymRef A,
+                                            uint32_t Low, uint32_t Width,
+                                            unsigned &Remaining,
+                                            unsigned Depth = 0) {
+  if (!Remaining)
+    return std::nullopt;
+  --Remaining;
+  if (Depth >= 32)
+    return std::nullopt;
+  if (Ctx.isConst(A)) {
+    const uint32_t Words = (Ctx.width(A) - 1) / 64 + 1;
+    if (Words > Remaining)
+      return std::nullopt;
+    Remaining -= Words;
+    return Ctx.constValue(A).extractBits(Width, Low);
+  }
+  const auto Op = Ctx.op(A);
+  if (Op == SymOp::Extract)
+    return constantBitSlice(Ctx, Ctx.operand(A, 0), Low + Ctx.node(A).Aux,
+                            Width, Remaining, Depth + 1);
+  if (Op == SymOp::Concat) {
+    uint32_t End = Ctx.width(A);
+    for (SymRef Child : Ctx.operands(A)) {
+      if (!Remaining)
+        return std::nullopt;
+      --Remaining;
+      const uint32_t Start = End - Ctx.width(Child);
+      if (Low >= Start && Low < End && Width <= End - Low)
+        return constantBitSlice(Ctx, Child, Low - Start, Width, Remaining,
+                                Depth + 1);
+      End = Start;
+    }
+    return std::nullopt;
+  }
+  if (Op == SymOp::ZExt) {
+    const SymRef Inner = Ctx.operand(A, 0);
+    if (Low >= Ctx.width(Inner))
+      return llvm::APInt(Width, 0);
+    if (Width <= Ctx.width(Inner) - Low)
+      return constantBitSlice(Ctx, Inner, Low, Width, Remaining, Depth + 1);
+    return std::nullopt;
+  }
+  if (Op == SymOp::Not) {
+    auto Value = constantBitSlice(Ctx, Ctx.operand(A, 0), Low, Width, Remaining,
+                                  Depth + 1);
+    return Value ? std::optional<llvm::APInt>(~*Value) : std::nullopt;
+  }
+  if (Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor)
+    return std::nullopt;
+  llvm::APInt Value =
+      Op == SymOp::And ? llvm::APInt::getAllOnes(Width) : llvm::APInt(Width, 0);
+  bool Unknown = false;
+  for (SymRef Child : Ctx.operands(A)) {
+    if (!Remaining)
+      return std::nullopt;
+    auto Part = constantBitSlice(Ctx, Child, Low, Width, Remaining, Depth + 1);
+    if (!Part) {
+      Unknown = true;
+      continue;
+    }
+    if (Op == SymOp::And)
+      Value &= *Part;
+    else if (Op == SymOp::Or)
+      Value |= *Part;
+    else
+      Value ^= *Part;
+    // Absorbing values prove the whole window independently of unknown
+    // operands. XOR has no such rule: every operand must be established.
+    if ((Op == SymOp::And && Value.isZero()) ||
+        (Op == SymOp::Or && Value.isAllOnes()))
+      return Value;
+  }
+  return Unknown ? std::nullopt : std::optional<llvm::APInt>(Value);
+}
+
+} // namespace
+
+std::optional<llvm::APInt> SymContext::constantWindow(SymRef A, uint32_t Low,
+                                                      uint32_t Width) const {
+  if (!A || A.index() >= Nodes.size() || !Width || Width > 64 ||
+      Low > width(A) || Width > width(A) - Low)
+    return std::nullopt;
+  unsigned Remaining = 256;
+  return constantBitSlice(*this, A, Low, Width, Remaining);
+}
 
 //===----------------------------------------------------------------------===//
 // Structural

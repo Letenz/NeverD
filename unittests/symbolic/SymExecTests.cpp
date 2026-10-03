@@ -107,6 +107,46 @@ TEST(SymState, AWholeUntouchedRegisterStartsAsOneInput) {
             Ctx.mkExtract(Whole, 0, 32));
 }
 
+TEST(SymState, ConstantByteProjectionRetainsCompleteStoredExpressions) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SymContext Ctx;
+    SymState State(Ctx, Order);
+    SymRef Input = State.read(SymSpace::Register, 64, 8);
+    SymRef Word = Ctx.mkAnd(Input, Ctx.mkConst(64, 0x00ff00ff00ff00ff));
+    SymRef Complement = Ctx.mkNot(Word);
+    SymRef Root = Ctx.mkFreshVar(64, "frame");
+    State.write(SymSpace::Register, 0, Word);
+    State.write(SymSpace::Temporary, 16, Complement);
+    State.store(Root, Word);
+    const size_t Before = Ctx.numNodes();
+    const auto Scalars = State.constantScalarBytes();
+    const auto Memory = State.constantRegionBytes(Root);
+    EXPECT_EQ(Ctx.numNodes(), Before);
+    ASSERT_EQ(Scalars.size(), 8u);
+    ASSERT_EQ(Memory.size(), 4u);
+    const unsigned First = Order == llvm::endianness::little ? 1 : 0;
+    for (unsigned I = 0; I != 4; ++I) {
+      EXPECT_EQ(Scalars[I].Space, SymSpace::Register);
+      EXPECT_EQ(Scalars[I].Offset, First + 2 * I);
+      EXPECT_EQ(Scalars[I].Value, 0);
+      EXPECT_EQ(Scalars[I + 4].Space, SymSpace::Temporary);
+      EXPECT_EQ(Scalars[I + 4].Offset, 16 + First + 2 * I);
+      EXPECT_EQ(Scalars[I + 4].Value, 0xff);
+      EXPECT_EQ(Memory[I].Offset, First + 2 * I);
+      EXPECT_EQ(Memory[I].Value, 0);
+    }
+    EXPECT_EQ(State.read(SymSpace::Register, 0, 8), Word);
+    EXPECT_EQ(State.read(SymSpace::Temporary, 16, 8), Complement);
+    EXPECT_EQ(State.load(Root, 8), Word);
+
+    State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, First)),
+                Ctx.mkFreshVar(8, "replacement"));
+    EXPECT_EQ(State.constantRegionBytes(Root).size(), 3u);
+    State.store(Ctx.mkFreshVar(64, "possibly_aliasing"), Ctx.mkOne(8));
+    EXPECT_TRUE(State.constantRegionBytes(Root).empty());
+  }
+}
+
 TEST(SymState, SiblingStatesShareWideThenNarrowInitialRegisterBytes) {
   SymContext Ctx;
   SymState WideState(Ctx);
