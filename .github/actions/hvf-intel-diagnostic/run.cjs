@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {spawn, spawnSync, execFile} = require('node:child_process');
+const {captureActive, observeExecution, preserveActive, validateSampling} = require('./active-sample.cjs');
 const UPLOAD_REVISION = '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a';
 
 function testEnvironment(environment) {
@@ -11,7 +12,7 @@ function testEnvironment(environment) {
     !['GITHUB_TOKEN', 'GH_TOKEN', 'SSH_AUTH_SOCK'].includes(name)));
 }
 
-async function captureHostState(destination, environment) {
+async function captureHostState(destination, environment, signal) {
   // These read-only commands contain no arguments or environment of other
   // processes. Record collection failures too; absence is not a healthy host.
   const commands = [
@@ -23,7 +24,7 @@ async function captureHostState(destination, environment) {
   const started = new Date().toISOString();
   const samples = await Promise.all(commands.map(([binary, args]) =>
     new Promise(resolve => {
-      execFile(binary, args, {env: environment, encoding: 'utf8', timeout: 2000,
+      execFile(binary, args, {env: environment, signal, encoding: 'utf8', timeout: 2000,
         killSignal: 'SIGKILL', maxBuffer: 1024 * 1024}, (error, stdout, stderr) => {
         resolve({command: [binary, ...args], stdout, stderr,
           status: error ? (error.code ?? null) : 0,
@@ -59,7 +60,7 @@ function startCommand(binary, args, environment, options = {}) {
   let terminated = false;
   let forced;
   const cancel = (reason = 'external-cancellation') => {
-    if (terminated) return;
+    if (terminated || result.completed_at) return;
     terminated = true;
     result.termination_reason = reason;
     child.kill('SIGTERM');
@@ -88,21 +89,26 @@ function startCommand(binary, args, environment, options = {}) {
 }
 
 async function main() {
-  let active;
+  const active = new Set();
+  const samplingAbort = new AbortController();
   let interrupted = false;
   const interrupt = () => {
     interrupted = true;
-    if (active) active.cancel();
+    samplingAbort.abort();
+    for (const operation of active) operation.cancel();
   };
   process.on('SIGINT', interrupt);
   process.on('SIGTERM', interrupt);
-  const command = async (binary, args, environment, timeout = 180000, statusPath) => {
+  const command = async (binary, args, environment, timeout = 180000, statusPath,
+    observer, preserveAfterInterrupt = false) => {
+    if (interrupted && !preserveAfterInterrupt) throw new Error('diagnostic interrupted');
     const operation = startCommand(binary, args, environment, {timeoutMs: timeout});
-    active = operation;
+    active.add(operation);
     try {
-      return await operation.completion;
+      return await (observer ? observeExecution(operation,
+        isRunning => observer(operation.child.pid, isRunning)) : operation.completion);
     } finally {
-      if (active === operation) active = undefined;
+      active.delete(operation);
       if (statusPath) fs.writeFileSync(statusPath, JSON.stringify(operation.result, null, 2) + '\n', {flag: 'wx'});
     }
   };
@@ -134,12 +140,18 @@ async function main() {
     '--case-index', input('case-index')], environment);
   if (status !== 0) throw new Error(`diagnostic preparation failed: ${status}`);
   const plan = JSON.parse(fs.readFileSync(path.join(evidence, 'plan.json'), 'utf8'));
+  const sampling = validateSampling(input('sample-active-child'), plan.methods.length);
+  fs.writeFileSync(path.join(evidence, 'controller-options.json'), JSON.stringify({
+    kind: 'partial-hvf-diagnostic-options', complete_inventory: false,
+    sample_active_child: sampling, sample_after_ms: sampling ? 5000 : null,
+  }, null, 2) + '\n', {flag: 'wx'});
   const prefix = `hvf-intel-diagnostic-shard-${shard.split('/')[0]}-attempt-${attempt}`;
-  await runSequence(plan, async (phase, index) => {
+  const upload = async (phase, index) => {
     if (interrupted && phase !== 'finish') throw new Error('diagnostic interrupted');
     const suffix = index === undefined ? 'plan' : `method-${String(index).padStart(4, '0')}-${phase}`;
-    const artifactPath = index === undefined ? evidence : path.join(evidence, `method-${String(index).padStart(4, '0')}`);
-    if (index !== undefined) {
+    const methodPath = index === undefined ? evidence : path.join(evidence, `method-${String(index).padStart(4, '0')}`);
+    const artifactPath = phase === 'active' ? path.join(methodPath, 'active-sample') : methodPath;
+    if (index !== undefined && phase !== 'active') {
       const snapshot = await captureHostState(artifactPath, environment);
       fs.writeFileSync(path.join(artifactPath, `host-${phase}.json`),
         JSON.stringify(snapshot, null, 2) + '\n', {flag: 'wx'});
@@ -153,14 +165,22 @@ async function main() {
       'INPUT_INCLUDE-HIDDEN-FILES': 'false', INPUT_ARCHIVE: 'true',
     };
     if (await command(process.execPath, [path.join(uploader, 'dist/upload/index.js')],
-                uploadEnvironment, 120000) !== 0) {
+                uploadEnvironment, 120000, undefined, undefined, phase === 'finish') !== 0) {
       throw new Error(`diagnostic ${suffix} upload failed`);
     }
-  }, index => {
+  };
+  await runSequence(plan, upload, index => {
     if (interrupted) throw new Error('diagnostic interrupted before guest execution');
+    const directory = path.join(evidence, `method-${String(index).padStart(4, '0')}`);
+    const observer = sampling ? async (pythonPid, isRunning) => {
+      const marker = JSON.parse(fs.readFileSync(path.join(directory, 'prepared.json'), 'utf8'));
+      await preserveActive(() => captureActive({directory, pythonPid, binary: marker.method[0].binary,
+        environment, signal: samplingAbort.signal, isRunning, captureHostState}),
+      () => upload('active', index), samplingAbort.signal);
+    } : undefined;
     return command('python3', [helper, 'execute', ...common,
       '--index', String(index)], environment, 180000,
-    path.join(evidence, `method-${String(index).padStart(4, '0')}`, 'controller-status.json'));
+    path.join(directory, 'controller-status.json'), observer);
   });
 }
 

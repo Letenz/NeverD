@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3cb657d51407ff98150288cf4af4240ae72b519fe469a26f1103ca1733af1e93 -->
+<!-- i18n-source: 3d2e1d7ba9709cac62c969fd06f4cfe7d5312c872f9339afb0161bc9643c4e33 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -102,3 +102,5 @@ CPU 実行前に `scripts/prepare_hvf_batches.py` が完全・選択済みイン
 完全検証用の `Native macOS HVF` ワークフローも任意の `source-ref` を受け付けます。省略時はワークフローのコミットを使い、指定時は完全な SHA が必要です。ネイティブジョブと集約監査は同じソースをチェックアウトして確認します。制御側のリビジョンが異なっても、監査は検証対象のソースコミットに対して証拠を照合します。
 
 `hosted-intel` では、完全検証ワークフローの `intel-image` に `macos-15-intel`（既定）または `macos-26-intel` を指定できます。どちらも[公式 runner イメージ一覧](https://github.com/actions/runner-images)に掲載されています。同じ `source-ref` でホスト環境を比較できますが、イメージ変更には OS、SDK、ツールの変更も含まれます。VM/vCPU、ネイティブ転送、CR8、完全な CPU 検証、Darwin の要件は変わりません。イメージの選択だけでは、安定性や実行時の修正を証明できません。
+
+`sample-active-child=true` を指定すると、メソッドの実行開始から5秒後に、実行中のスナップショットを一度だけ封存します。対象は身元を確認したネイティブ子プロセスの1秒間のスタックサンプル、最大1 MiBの現在のログ末尾、ホスト状態です。既定値は `false` です。artifact数の上限を守るため、採取を有効にしたジョブは最大166メソッドに制限します。採取コマンドの期限は5秒、レポートの上限は1 MiBです。プロセス確認や採取の失敗も記録します。独立した変更不能のディレクトリからアップロードし、失敗時はネイティブ子プロセスをキャンセルしてactionを失敗させます。採取はスケジューリングに影響するため、計測を伴う部分的な証拠として扱います。元のメソッドのタイマーをリセットせず、完全な受け入れ検証を代替しません。

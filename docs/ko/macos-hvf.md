@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3cb657d51407ff98150288cf4af4240ae72b519fe469a26f1103ca1733af1e93 -->
+<!-- i18n-source: 3d2e1d7ba9709cac62c969fd06f4cfe7d5312c872f9339afb0161bc9643c4e33 -->
 
 [← 문서 목록](README.md)
 
@@ -102,3 +102,5 @@ CPU 실행 전에 `scripts/prepare_hvf_batches.py`가 전체·선택 목록과 �
 전체 검증용 `Native macOS HVF` 워크플로도 선택 항목인 `source-ref`를 지원합니다. 기본값은 워크플로 커밋이며, 지정할 때는 전체 SHA가 필요합니다. 네이티브 작업과 집계 감사는 같은 소스를 체크아웃하고 확인합니다. 제어기 버전이 달라도 검사 대상 소스 커밋을 기준으로 증거를 대조합니다.
 
 `hosted-intel`의 전체 검증 워크플로는 `intel-image=macos-15-intel`(기본값) 또는 `macos-26-intel`을 지원합니다. 두 이미지 모두 [공식 runner 이미지 목록](https://github.com/actions/runner-images)에 있습니다. 같은 `source-ref`로 호스트 환경을 비교할 수 있지만 이미지 변경에는 OS, SDK와 도구 변경도 포함됩니다. VM/vCPU, 네이티브 전송, CR8, 전체 CPU 및 Darwin 요구 사항은 유지됩니다. 이미지 선택만으로 안정성이나 런타임 수정이 입증되지는 않습니다.
+
+`sample-active-child=true`는 메서드가 5초 동안 실행된 뒤 실행 중 스냅샷을 한 번 보존합니다. 신원이 확인된 네이티브 자식 프로세스의 1초 스택 샘플, 현재 로그 끝부분 최대 1 MiB, 호스트 상태를 포함합니다. 기본값은 `false`입니다. artifact 개수 제한을 지키기 위해 샘플링 작업당 메서드는 최대 166개이며, 샘플링 명령의 제한 시간은 5초, 보고서 크기는 최대 1 MiB입니다. 프로세스 확인과 수집 실패도 기록합니다. 별도의 변경 불가능한 디렉터리에서 업로드하며, 업로드 실패 시 네이티브 자식 프로세스를 취소하고 action을 실패 처리합니다. 샘플링은 스케줄링에 영향을 주므로 계측된 부분 증거로 표시합니다. 원래 메서드 타이머를 재설정하거나 전체 검증을 대체하지 않습니다.

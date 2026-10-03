@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3cb657d51407ff98150288cf4af4240ae72b519fe469a26f1103ca1733af1e93 -->
+<!-- i18n-source: 3d2e1d7ba9709cac62c969fd06f4cfe7d5312c872f9339afb0161bc9643c4e33 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -102,3 +102,5 @@ Vor jeder Methode lädt die Action den unveränderlichen Ausführungsplan und ei
 Der vollständige Workflow `Native macOS HVF` akzeptiert ebenfalls ein optionales `source-ref`. Standard ist der Workflow-Commit; eine explizite Angabe muss ein vollständiger SHA sein. Native Jobs und aggregierender Auditor checken dieselben Quellen aus und prüfen sie. Der Audit gleicht die Belege mit dem getesteten Commit ab, auch wenn die Steuerung eine andere Revision verwendet.
 
 Für `hosted-intel` akzeptiert der vollständige Workflow `intel-image=macos-15-intel` (Standard) oder `macos-26-intel`. Beide stehen in der [offiziellen Liste der Runner-Images](https://github.com/actions/runner-images). Damit lassen sich Hostumgebungen mit demselben `source-ref` gezielt vergleichen; das Image ändert auch Betriebssystem, SDK und Werkzeuge. Die Anforderungen an VM/vCPU, nativen Transport, CR8, vollständige CPU-Prüfung und Darwin bleiben gleich. Die Image-Auswahl allein belegt weder Stabilität noch eine Laufzeitkorrektur.
+
+`sample-active-child=true` sichert optional nach fünf Sekunden Methodenausführung einen abgeschlossenen Zwischenstand: eine einsekündige Stack-Aufzeichnung des eindeutig geprüften nativen Kindprozesses, höchstens 1 MiB vom Ende seines aktuellen Protokolls und den Hostzustand. Der Standardwert ist `false`. Damit die Artifact-Grenze eingehalten wird, sind bei aktivierter Aufzeichnung höchstens 166 Methoden pro Job zulässig. Der Aufzeichnungsbefehl ist auf fünf Sekunden und sein Bericht auf 1 MiB begrenzt. Fehler bei Identitätsprüfung und Erfassung werden dokumentiert. Der Upload erfolgt aus einem separaten unveränderlichen Verzeichnis; ein Uploadfehler bricht den nativen Kindprozess ab und lässt die Action fehlschlagen. Die Aufzeichnung beeinflusst die Ablaufplanung und wird als instrumentierter Teilnachweis gekennzeichnet. Sie startet den ursprünglichen Methodentimer nicht neu und ersetzt keine vollständige Abnahme.

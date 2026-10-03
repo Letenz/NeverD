@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3cb657d51407ff98150288cf4af4240ae72b519fe469a26f1103ca1733af1e93 -->
+<!-- i18n-source: 3d2e1d7ba9709cac62c969fd06f4cfe7d5312c872f9339afb0161bc9643c4e33 -->
 
 [← Indice della documentazione](README.md)
 
@@ -102,3 +102,5 @@ Prima di ogni metodo, l’azione carica il piano immutabile e un’istantanea de
 Anche il workflow completo `Native macOS HVF` accetta un `source-ref` facoltativo. Il valore predefinito è il commit del workflow; un valore esplicito deve essere uno SHA completo. I job nativi e l’audit aggregato estraggono e verificano gli stessi sorgenti. L’audit confronta le prove con il commit testato, anche se il controller usa una revisione diversa.
 
 Per `hosted-intel`, il workflow completo accetta `intel-image=macos-15-intel` (predefinito) oppure `macos-26-intel`, presenti nelle [immagini ufficiali dei runner](https://github.com/actions/runner-images). È così possibile confrontare esplicitamente gli ambienti host con lo stesso `source-ref`; l’immagine cambia anche sistema operativo, SDK e strumenti. I requisiti per VM/vCPU, trasporto nativo, CR8, CPU completo e Darwin restano invariati. La sola scelta dell’immagine non dimostra stabilità né una correzione in esecuzione.
+
+`sample-active-child=true` conserva facoltativamente un’istantanea sigillata dopo cinque secondi di esecuzione di un metodo: un secondo di campionamento degli stack del processo figlio nativo di cui è stata verificata l’identità, fino a 1 MiB della coda del log corrente e lo stato dell’host. Il valore predefinito è `false`. Il campionamento accetta al massimo 166 metodi per job per rispettare il limite degli artifact; il comando ha una scadenza di cinque secondi e il rapporto un limite di 1 MiB. Gli errori di identificazione e raccolta vengono registrati. Il caricamento usa una directory immutabile separata; se fallisce, annulla il processo figlio nativo e fa fallire l’action. Il campionamento modifica la pianificazione ed è indicato come evidenza parziale strumentata. Non riavvia il timer originale del metodo e non sostituisce la convalida completa.

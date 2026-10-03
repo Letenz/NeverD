@@ -25,6 +25,9 @@ inputs:
   case-index:
     description: One original parameter index, or -1 for all; requires method-count=1
     default: '-1'
+  sample-active-child:
+    description: Once per long method, preserve a bounded native stack and log snapshot
+    default: 'false'
 runs:
   using: node24
   main: run.cjs
