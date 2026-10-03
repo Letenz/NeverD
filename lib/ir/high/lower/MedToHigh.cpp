@@ -21,6 +21,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
@@ -1103,6 +1104,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
 
   LLVM_DEBUG(llvm::dbgs() << "MedIR -> HighIR: " << Func.Body.size()
                           << " statements for " << Func.Name << "\n");
+  reportHighFlowOracle(Func, Med, "final");
   return Func;
 }
 
