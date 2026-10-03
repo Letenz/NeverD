@@ -121,5 +121,26 @@ struct Fixture {
     return nullptr;
   }
 };
+
+// Keep the original table definition in a private slot across a bounded
+// one-or-more iteration loop, then dispatch through it. The arithmetic result
+// observes every iteration independently of the later constant-returning
+// callee.
+inline void loopFrameTableFixture(Fixture &F) {
+  const uint32_t Words[] = {
+      0xa9bc53f3, 0xa9037bf5, 0x92401414, 0xaa0103f5, 0x91000694, 0xd0000013,
+      0x91008273, 0xf9000bf3, 0x8b1402b5, 0xd1000694, 0xb5ffffd4, 0xf9400bf3,
+      0xf9400668, 0xd63f0100, 0x8b150000, 0xa9437bf5, 0xa8c453f3, 0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols[0].Size = sizeof(Words);
+  F.EntrySignature = F.Signature;
+  F.EntrySignature.Parameters = {{"count", NdType::makeInt(8, false)},
+                                 {"seed", NdType::makeInt(8, false)}};
+  std::string Error;
+  if (!assignDarwinScalarSourceABI(F.EntrySignature, Arch::AArch64, Error))
+    throw std::runtime_error(Error);
+  F.run();
+}
 } // namespace immutable_native_call_test
 #endif

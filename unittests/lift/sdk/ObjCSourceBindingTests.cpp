@@ -818,6 +818,151 @@ TEST(ImmutableNativeCalls, RecoversAnAuthenticatedFrameTableDefinition) {
   EXPECT_FALSE(readImmutableImagePointer(F.Image, Slot));
 }
 
+TEST(ImmutableNativeCalls, RevalidatesLoopInvariantFrameOriginsAtPublication) {
+  using namespace immutable_native_call_test;
+  Fixture F;
+  loopFrameTableFixture(F);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  ASSERT_TRUE(F.high());
+  const auto Targets = immutableNativeCallTargets(F.Image, *F.low());
+  ASSERT_EQ(Targets.size(), 1U);
+  EXPECT_EQ(Targets.at(Entry + 52).Slot, Slot);
+  EXPECT_EQ(Targets.at(Entry + 52).Target, Target);
+  auto Low = *F.low();
+  std::reverse(Low.Blocks.begin(), Low.Blocks.end());
+  const auto Reordered = immutableNativeCallTargets(F.Image, Low);
+  ASSERT_EQ(Reordered.size(), 1U);
+  EXPECT_EQ(Reordered.at(Entry + 52).Target, Target);
+  ExprPtr Call;
+  walkStmts(F.high()->Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E && E->Kind == ExprKind::Call && E->SourceCallHint &&
+          E->SourceCallHint->ImmutableNativeCall)
+        Call = E;
+    });
+  });
+  ASSERT_TRUE(Call);
+  ASSERT_TRUE(
+      objCImmutableNativeSourceCallBound(*Call, F.Image, F.Result, *F.high()));
+  // The hint cannot authorize publication after changing any part of the
+  // loop, stored bytes, allocation, reload, or original CFG.
+  const auto Original = F.Image.Segments[0].Data;
+  for (const auto [Index, Word] :
+       {std::pair{0U, 0xa9bd53f3U}, std::pair{7U, 0xb90013f3U},
+        std::pair{8U, 0xf9000bffU}, std::pair{10U, 0xb5ffffb4U},
+        std::pair{11U, 0xf9400ff3U}}) {
+    SCOPED_TRACE(Index);
+    F.Image.Segments[0].Data = Original;
+    F.word(Index, Word);
+    EXPECT_TRUE(immutableNativeCallTargets(F.Image, *F.low()).empty());
+    EXPECT_FALSE(objCImmutableNativeSourceCallBound(*Call, F.Image, F.Result,
+                                                    *F.high()));
+  }
+  F.Image.Segments[0].Data = Original;
+  F.word(8, 0xf9000bff); // Every reached loop iteration overwrites the slot.
+  F.run();
+  ASSERT_TRUE(F.low());
+  EXPECT_TRUE(immutableNativeCallTargets(F.Image, *F.low()).empty());
+}
+
+TEST(ImmutableNativeCalls, GeneratedLoopFrameSourceMatchesOriginalARM64) {
+#if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
+  using namespace immutable_native_call_test;
+  Fixture F;
+  loopFrameTableFixture(F);
+  ASSERT_TRUE(F.high());
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+  const auto Audit = std::find_if(
+      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+      [](const auto &A) { return A.Entry == Entry; });
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  const auto Allowed = [&](const HighExpr &E) {
+    return objcSourceCallBound(E, F.Image, Functions, nullptr, nullptr,
+                               &Bound.Function) ||
+           objCImmutableNativeSourceCallBound(E, F.Image, F.Result,
+                                              Bound.Function);
+  };
+  const auto Limitation = sourceBodyLimitation(
+      Bound.Function, *Bound.Function.SourceTypeHint, &*Audit, Allowed);
+  ASSERT_TRUE(Limitation.empty()) << Limitation;
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function, *Functions.at(Target)}, OS,
+                                  Options));
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-frame-loop", Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code E;
+      std::filesystem::remove_all(Work, E);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "loop.c").string();
+  std::ofstream(Path) << Source << R"(
+#include <stdio.h>
+extern uint64_t original_loop(uint64_t, uint64_t);
+__asm__(".text\n.p2align 2\n.globl _original_loop\n_original_loop:\n"
+        ".long 0xa9bc53f3, 0xa9037bf5, 0x92401414, 0xaa0103f5, 0x91000694\n"
+        "adrp x19, Lloop_table@PAGE\nadd x19, x19, Lloop_table@PAGEOFF\n"
+        ".long 0xf9000bf3, 0x8b1402b5, 0xd1000694\n"
+        ".long 0xb5ffffd4, 0xf9400bf3, 0xf9400668, 0xd63f0100\n"
+        ".long 0x8b150000, 0xa9437bf5, 0xa8c453f3, 0xd65f03c0\n"
+        "Lloop_callee:\n.long 0xd2800540, 0xd65f03c0\n"
+        ".section __DATA_CONST,__const\n.p2align 3\n"
+        "Lloop_table:\n.quad 0\n.quad Lloop_callee\n.text\n");
+int main(void) {
+  const uint32_t *machine = (const uint32_t *)(uintptr_t)original_loop;
+  const uint32_t words[] = {
+    0xa9bc53f3,0xa9037bf5,0x92401414,0xaa0103f5,0x91000694,0xd0000013,
+    0x91008273,0xf9000bf3,0x8b1402b5,0xd1000694,0xb5ffffd4,0xf9400bf3,
+    0xf9400668,0xd63f0100,0x8b150000,0xa9437bf5,0xa8c453f3,0xd65f03c0,
+    0xd2800540,0xd65f03c0};
+  for (unsigned i=0;i<20;++i) {
+    uint32_t mask=i==5 ? 0x9f00001fU : i==6 ? 0xffc003ffU : UINT32_MAX;
+    if ((machine[i]&mask)!=(words[i]&mask)) return 1;
+  }
+  uint64_t random=UINT64_C(0xfedcba9876543210);
+  for (unsigned i=0;i<2048;++i) {
+    random=random*UINT64_C(6364136223846793005)+1;
+    uint64_t count=i<65 ? i : random, seed=i<4 ? (uint64_t[]){0,1,UINT64_MAX,
+      UINT64_C(0x8000000000000000)}[i] : random;
+    uint64_t iterations=(count&63)+1;
+    uint64_t expected=seed+iterations*(iterations+1)/2+42;
+    uint64_t native=original_loop(count,seed), generated=indirect_native(count,seed);
+    if (native!=expected || generated!=expected) {
+      fprintf(stderr,"loop case %u: native=%llx generated=%llx expected=%llx\n",
+        i,(unsigned long long)native,(unsigned long long)generated,
+        (unsigned long long)expected); return 2;
+    }
+  }
+  return 0;
+}
+)";
+  for (const auto *Level : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Level);
+    const auto Output = (Work / (std::string("loop") + Level)).string();
+    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
+                                            "-o", Output};
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0) << Source;
+  }
+#else
+  GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
+#endif
+}
+
 TEST(ImmutableNativeCalls, FrameMachineReplaysDirectTailWrapper) {
   using namespace immutable_native_call_test;
   Fixture F;
@@ -1153,7 +1298,7 @@ TEST(ImmutableNativeCalls, FrameTargetsCheckEveryMachineCFGPath) {
     if (Case == 1)
       F.word(8, 0xb90013e0); // One reaching arm replaces bytes with w0.
     if (Case == 2)
-      F.word(7, 0x17fffffe); // Relevant backedge.
+      F.word(7, 0x17fffffe); // Backedge preserves the original private bytes.
     F.run();
     auto Low = *F.low();
     if (Case == 3) {
@@ -1169,7 +1314,7 @@ TEST(ImmutableNativeCalls, FrameTargetsCheckEveryMachineCFGPath) {
     if (Case == 4)
       std::reverse(Low.Blocks.begin(), Low.Blocks.end());
     const auto Targets = immutableNativeCallTargets(F.Image, Low);
-    EXPECT_EQ(Targets.size(), Case == 0 || Case == 4 ? 1U : 0U);
+    EXPECT_EQ(Targets.size(), Case == 0 || Case == 2 || Case == 4 ? 1U : 0U);
     if (!Targets.empty())
       EXPECT_EQ(Targets.at(Entry + 44).Target, Target);
   }
