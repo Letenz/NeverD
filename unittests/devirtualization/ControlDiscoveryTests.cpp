@@ -13,6 +13,57 @@ using namespace neverd::analysis;
 using namespace neverd::analysis::detail;
 using namespace neverd::symbolic;
 
+TEST(ControlDiscovery, PureVariableDemandDoesNotNominateUnknownLocations) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Variable = Ctx.mkVar("unlocated", 48);
+  const auto Other = Ctx.mkFreshVar(8, "other");
+  const auto Value = Ctx.mkConcat(Ctx.mkExtract(Variable, 17, 4), Other);
+  const auto Nodes = Ctx.numNodes();
+  const auto Pure = gatherVariableBitDemand(Ctx, Value, Variable, 100);
+  ASSERT_TRUE(Pure.Bits);
+  EXPECT_EQ(*Pure.Bits, uint64_t{15} << 17);
+  EXPECT_GT(Pure.Visited, 0U);
+  const auto StateResult = gatherControlDependencies(State, Value, {}, 100);
+  EXPECT_EQ(StateResult.Status, ControlDiscoveryStatus::UnsupportedOrigin);
+  EXPECT_FALSE(StateResult.FrameRootBits);
+  EXPECT_TRUE(StateResult.RegisterRanges.empty());
+  EXPECT_TRUE(StateResult.FrameSlots.empty());
+  EXPECT_EQ(Ctx.numNodes(), Nodes);
+  const auto Exact =
+      gatherVariableBitDemand(Ctx, Value, Variable, Pure.Visited);
+  EXPECT_EQ(Exact.Bits, Pure.Bits);
+  const auto Short =
+      gatherVariableBitDemand(Ctx, Value, Variable, Pure.Visited - 1);
+  EXPECT_FALSE(Short.Bits);
+  EXPECT_EQ(Short.Visited, Pure.Visited - 1);
+}
+
+TEST(ControlDiscovery, PureVariableDemandBoundsRepeatedOperandScans) {
+  SymContext Ctx;
+  const auto Variable = Ctx.mkVar("word", 64);
+  const auto Bit = Ctx.mkExtract(Variable, 0, 1);
+  constexpr unsigned Count = 2048;
+  llvm::SmallVector<SymRef, 8> Parts(Count, Bit);
+  const auto Repeated = Ctx.mkConcat(Parts);
+  ASSERT_EQ(Ctx.op(Repeated), SymOp::Concat);
+  EXPECT_FALSE(
+      gatherVariableBitDemand(Ctx, Repeated, Variable, Count / 2).Bits);
+  const auto Full = gatherVariableBitDemand(Ctx, Repeated, Variable, Count * 4);
+  ASSERT_TRUE(Full.Bits);
+  EXPECT_EQ(*Full.Bits, 1U);
+  EXPECT_GE(Full.Visited, Count);
+  EXPECT_TRUE(
+      gatherVariableBitDemand(Ctx, Repeated, Variable, Full.Visited).Bits);
+  EXPECT_FALSE(
+      gatherVariableBitDemand(Ctx, Repeated, Variable, Full.Visited - 1).Bits);
+  for (auto Invalid : {SymRef(), SymRef(0x7fffffff), Ctx.mkConst(64, 0),
+                       Ctx.mkVar("wide", 4096)})
+    EXPECT_FALSE(gatherVariableBitDemand(Ctx, Repeated, Invalid, 100).Bits);
+  EXPECT_FALSE(gatherVariableBitDemand(Ctx, {}, Variable, 100).Bits);
+  EXPECT_FALSE(gatherVariableBitDemand(Ctx, Repeated, Variable, 0).Bits);
+}
+
 TEST(ControlDiscovery, BoundedFrameCardinalityRetainsRuntimeInputs) {
   SymContext Ctx;
   SymState State(Ctx);

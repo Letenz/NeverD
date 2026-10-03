@@ -38,8 +38,10 @@ struct FiniteValues {
 using FiniteValueObserver = llvm::function_ref<bool(llvm::ArrayRef<uint64_t>)>;
 
 /// True only when Value preserves enough independent variable bits to exceed
-/// Limit on every reachable path, and none of those variables occurs anywhere
-/// in Predicate or any RelatedValues expression. Related roots are inspected
+/// Limit on every reachable path, and none of those bits influences Predicate
+/// or any RelatedValues expression. Whole-variable absence is the cheap path;
+/// variables of at most 64 bits can also use a complete bit-dependency proof.
+/// Related roots are inspected
 /// directly; constructing a Boolean surrogate could simplify away dependencies.
 /// Recognized bit mappings include extracts, concatenations,
 /// extensions, complements, and bitwise operations with constant masks. This

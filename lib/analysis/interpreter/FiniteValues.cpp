@@ -6,6 +6,8 @@
 
 #include "FiniteValues.h"
 
+#include "ControlDiscovery.h"
+
 #include "neverd/solver/BitVectorSolver.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -75,6 +77,35 @@ bool hasUnconstrainedProjectionInput(const SymContext &Ctx, SymRef Predicate,
     }
   }
 
+  llvm::DenseMap<uint32_t, std::optional<uint64_t>> DemandedBits;
+  const auto Independent = [&](SymRef Variable, uint32_t Bit) {
+    // Preserve the cheap proof for completely absent variables, including a
+    // narrow view of a source wider than 64 bits. Fine-grained analysis is
+    // needed only when some part of this variable actually occurs elsewhere.
+    if (!ExcludedNodes.contains(Variable.index()))
+      return true;
+    if (Ctx.width(Variable) > 64)
+      return false;
+    auto [At, Inserted] =
+        DemandedBits.try_emplace(Variable.index(), std::nullopt);
+    if (Inserted) {
+      uint64_t Bits = 0;
+      const auto Accumulate = [&](SymRef Root) {
+        if (!Charge())
+          return false;
+        const auto Demand =
+            gatherVariableBitDemand(Ctx, Root, Variable, Remaining);
+        if (!Charge(Demand.Visited) || !Demand.Bits)
+          return false;
+        Bits |= *Demand.Bits;
+        return true;
+      };
+      if (Accumulate(Predicate) && llvm::all_of(RelatedValues, Accumulate))
+        At->second = Bits;
+    }
+    return At->second && ((*At->second >> Bit) & 1) == 0;
+  };
+
   using BitKey = uint64_t;
   const auto Key = [](SymRef Ref, uint32_t Bit) -> BitKey {
     return (uint64_t{Ref.index()} << 32) | Bit;
@@ -115,7 +146,7 @@ bool hasUnconstrainedProjectionInput(const SymContext &Ctx, SymRef Predicate,
       case SymOp::Var:
         if (!Operands.empty())
           Malformed = true;
-        else if (!ExcludedNodes.contains(Current.index()))
+        else if (Independent(Current, Bit))
           Result = At;
         break;
       case SymOp::Extract:

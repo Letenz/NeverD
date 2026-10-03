@@ -12219,6 +12219,94 @@
         {
           "runner": "gtest",
           "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.NarrowGuardDoesNotEnumerateWideRuntimePayload",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.PureVariableDemandDoesNotNominateUnknownLocations",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.PureVariableDemandBoundsRepeatedOperandScans",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartiallyConstrainedInputRetainsIndependentPayloadBits",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartialInputProofKeepsCarriesAndEveryRelatedRoot",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartialInputLowerBoundMatchesIndependentFibers",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartialInputProofSharesBudgetAndPreservesWideFallback",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/FiniteValuesTests.cpp",
+          "filter": "FiniteValues.PartialInputProofChargesRepeatedRelatedOperandScans",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
           "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
           "filter": "ControlDiscovery.BoundedFrameCardinalityRetainsRuntimeInputs",
           "platforms": [

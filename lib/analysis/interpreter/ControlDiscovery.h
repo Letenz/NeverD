@@ -72,6 +72,22 @@ ControlDiscovery gatherControlDependencies(const symbolic::SymState &State,
                                            symbolic::SymRef FrameRoot,
                                            uint64_t MaxVisited);
 
+struct VariableBitDemand {
+  /// Conservative dependencies on one exact Var of at most 64 bits. Missing
+  /// means unsupported or exhausted, never absence of dependence.
+  std::optional<uint64_t> Bits;
+  uint64_t Visited = 0;
+};
+
+/// Read-only expression dependence, using the same bit transfers as control
+/// location discovery. Other symbolic variables are independent leaves; no
+/// machine location, memory origin, value or reachability is established.
+/// Variable validation and the complete walk share MaxVisited.
+VariableBitDemand gatherVariableBitDemand(const symbolic::SymContext &Ctx,
+                                          symbolic::SymRef Value,
+                                          symbolic::SymRef Variable,
+                                          uint64_t MaxVisited);
+
 /// On a reachable path, prove that the fresh 64-bit frame root has more than
 /// Limit values. Exact declared nonwrapping bounds may restrict its high bits;
 /// every other predicate conjunct must depend on at most its low 32 bits.
