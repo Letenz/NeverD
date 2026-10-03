@@ -42,4 +42,7 @@ NEVERD_WINDOWS_PROCESS_API(VirtualFree, Kernel, 3, true)
 NEVERD_WINDOWS_PROCESS_API(VirtualProtect, Kernel, 4, true)
 NEVERD_WINDOWS_PROCESS_API(VirtualQuery, Kernel, 3, true)
 NEVERD_WINDOWS_PROCESS_API(FlushInstructionCache, Kernel, 3, true)
+NEVERD_WINDOWS_PROCESS_API(AddVectoredExceptionHandler, Kernel, 2, true)
+NEVERD_WINDOWS_PROCESS_API(RemoveVectoredExceptionHandler, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(RaiseException, Kernel, 4, true)
 #endif

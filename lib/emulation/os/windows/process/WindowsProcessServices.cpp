@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "WindowsProcessExceptions.h"
 #include "WindowsProcessModules.h"
 
 #include "neverd/emulation/CPU.h"
@@ -81,6 +82,37 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     return ServiceOutcome(*V);
   };
   switch (S.Kind) {
+  case API::AddVectoredExceptionHandler: {
+    auto Handle = Exceptions.add(uint32_t(A[0]) != 0, A[1]);
+    if (!Handle)
+      return Handle.takeError();
+    return Value(*Handle);
+  }
+  case API::RemoveVectoredExceptionHandler:
+    return Value(Exceptions.remove(A[0]));
+  case API::RaiseException: {
+    const uint32_t Flags = A[1];
+    const uint32_t Count = A[3] ? uint32_t(A[2]) : 0;
+    if ((Flags & ~ExceptionNoncontinuable) || Count > MaxExceptionArguments)
+      return failure(text::ExceptionArguments);
+    auto Access = access(A[3], Count * PointerSize, Read);
+    if (!Access)
+      return Access.takeError();
+    if (!*Access)
+      return failure(text::Access);
+    ServiceOutcome::Exception Raised{
+        uint32_t(A[0]),
+        uint32_t(Flags | ExceptionSoftwareOriginate),
+        Event.PC,
+        {}};
+    for (uint32_t I = 0; I < Count; ++I) {
+      auto Argument = CPU.readInteger(A[3] + I * PointerSize, PointerSize);
+      if (!Argument)
+        return Argument.takeError();
+      Raised.Arguments.push_back(*Argument);
+    }
+    return ServiceOutcome(std::move(Raised));
+  }
   case API::ExitProcess:
   case API::RtlExitUserProcess:
     Result.ExitStatus = uint32_t(A[0]);

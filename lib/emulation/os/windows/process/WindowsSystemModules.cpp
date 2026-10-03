@@ -79,12 +79,19 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
         File.data() + Directory.NamePointerRVA + I * DWordSize, *Name);
     llvm::support::endian::write16le(
         File.data() + Directory.OrdinalTableRVA + I * WideSize, I);
-    if (Architecture == GuestArchitecture::X64)
+    if (Architecture == GuestArchitecture::X64) {
       std::copy(std::begin(X64Service), std::end(X64Service),
                 File.begin() + RVA);
-    else
+      if (Exports[I]->Kind == API::RaiseException)
+        std::copy(std::begin(X64Return), std::end(X64Return),
+                  File.begin() + RVA + sizeof(X64Service));
+    } else {
       llvm::support::endian::write32le(File.data() + RVA,
                                        ArmServiceInstruction);
+      if (Exports[I]->Kind == API::RaiseException)
+        llvm::support::endian::write32le(File.data() + RVA + DWordSize,
+                                         ArmReturnInstruction);
+    }
   }
   Store(SystemExportRVA, Directory);
   dos_header DOS{};

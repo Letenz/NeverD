@@ -150,6 +150,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsEnvironmentTests.cpp
   WindowsHeapTests.cpp
   WindowsSystemTests.cpp
+  WindowsExceptionTests.cpp
   WindowsNativeTestSupport.cpp
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDWindowsProcessTests PRIVATE
@@ -162,6 +163,7 @@ include(WindowsDynamicFixtures.cmake)
 include(WindowsEnvironmentFixtures.cmake)
 include(WindowsHeapFixtures.cmake)
 include(WindowsSystemFixtures.cmake)
+include(WindowsExceptionFixtures.cmake)
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp

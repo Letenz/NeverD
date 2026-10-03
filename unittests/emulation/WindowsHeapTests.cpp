@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
+#include "os/windows/process/WindowsProcessExceptions.h"
 #include "os/windows/process/WindowsProcessModules.h"
 
 #include "neverd/emulation/CPU.h"
@@ -100,6 +101,7 @@ struct Heap {
   win::Program Program;
   std::unique_ptr<win::VirtualMemory> Virtual;
   std::unique_ptr<win::Services> OS;
+  std::unique_ptr<win::VectoredExceptions> Exceptions;
 
   explicit Heap(const ExecutionConfiguration &Config) {
     Options.MemoryLimit = DirectLimit;
@@ -110,9 +112,16 @@ struct Heap {
     Backend = llvm::cantFail(createExecutionBackend(Config, Space));
     Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
     Virtual = std::make_unique<win::VirtualMemory>(*Space, Options);
+    Exceptions = std::make_unique<win::VectoredExceptions>(
+        *Backend.CPU,
+        llvm::cantFail(
+            IntegerABI::get(Config.Architecture == GuestArchitecture::X64
+                                ? IntegerCallingConvention::Win64
+                                : IntegerCallingConvention::AAPCS64)),
+        win::value::StackTop - Options.StackSize);
     OS = std::make_unique<win::Services>(*Backend.CPU, *Space, Image, Env,
                                          Options, Result, *Virtual, Program,
-                                         *Budget);
+                                         *Budget, *Exceptions);
     llvm::cantFail(
         Backend.CPU->writeInteger(win::value::TEB + win::value::TebLastError,
                                   LastErrorSeed, win::value::DWordSize));

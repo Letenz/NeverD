@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
+#include "os/windows/process/WindowsProcessExceptions.h"
 #include "os/windows/process/WindowsProcessModules.h"
 
 #include "neverd/emulation/CPU.h"
@@ -154,8 +155,14 @@ TEST_P(WindowsEnvironment, ValidatesUpdatesBeforePublishingGuestBytes) {
                         : ExecutionContract::CheckedUserAArch64;
   auto Backend = llvm::cantFail(createExecutionBackend(Config, Space));
   ProcessResult Result{};
+  win::VectoredExceptions Exceptions(
+      *Backend.CPU,
+      llvm::cantFail(IntegerABI::get(P.ISA == GuestArchitecture::X64
+                                         ? IntegerCallingConvention::Win64
+                                         : IntegerCallingConvention::AAPCS64)),
+      win::value::StackTop - Options.StackSize);
   win::Services OS(*Backend.CPU, *Space, Program.Modules.front().Loaded, Env,
-                   Options, Result, Virtual, Program, *Budget);
+                   Options, Result, Virtual, Program, *Budget, Exceptions);
   auto Store = [&](uint64_t Address, const std::u16string &Text) {
     std::vector<uint8_t> Bytes((Text.size() + 1) * sizeof(char16_t));
     for (size_t I = 0; I < Text.size(); ++I)
