@@ -4,6 +4,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -723,6 +724,33 @@ bool declaredFixedABI(const BinaryImage &Image, va_t Slot, llvm::StringRef Name,
   return !Hint.DoesNotReturn || Signature.ReturnType->Kind == NdTypeKind::Void;
 }
 } // namespace
+
+bool swiftWitnessInstantiationArgumentUnused(const BinaryImage &Image,
+                                             va_t DescriptorSlot) {
+  // The data owner proves a strong, exact, non-TLS external address. This
+  // separate compiler catalog proves argument irrelevance for every legal
+  // generic instantiation; the ordinary runtime ABI still has three pointers.
+  const auto Data = darwinRuntimeGlobalAddressHint(Image, DescriptorSlot);
+  const auto Bind = Image.DyldBindSlots.find(DescriptorSlot);
+  if (!Data ||
+      Data->Signature.Origin !=
+          SourceFunctionTypeHint::OriginKind::SwiftRuntime ||
+      Data->WeakImport || Bind == Image.DyldBindSlots.end() ||
+      Bind->second.WeakImport || Bind->second.Addend ||
+      Bind->second.Name != "_" + Data->TargetName)
+    return false;
+  constexpr SwiftMetadataDeclaration Contracts[] = {
+#include "SwiftWitnessContracts.inc"
+  };
+  for (const auto &Contract : Contracts)
+    if (Data->TargetName == Contract.Name &&
+        darwinExportModuleMatches(Image.Arch == Arch::AArch64
+                                      ? Contract.AArch64Modules
+                                      : Contract.X64Modules,
+                                  Bind->second.Module))
+      return true;
+  return false;
+}
 
 std::optional<SourceCallTypeHint>
 swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
