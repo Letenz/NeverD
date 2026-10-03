@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
+<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
 
 [← 文件索引](README.md)
 
@@ -13,6 +13,8 @@ NeverD 使用 Apple 的 [Hypervisor.framework](https://developer.apple.com/docum
 ## 建置與簽章
 
 啟用 `NEVERD_ENABLE_CPU_EMULATION=ON` 或驅動程式模擬。`NEVERD_EMULATION_BACKEND_HVF` 預設為 `ON`，僅在 macOS 連結框架；設為 `OFF` 後仍能解析 `hvf` 名稱，但能力 API 回報 `build_disabled`。
+
+框架連結及 hypervisor 簽署僅適用於 macOS 建置目標（`CMAKE_SYSTEM_NAME=Darwin`）。iOS 等 Apple 行動平台目標不會附加此框架相依或權限。NeverD 本身在架構相符的 Mac 上執行時，iOS 客體設定仍可使用 HVF。
 
 **行程的執行檔**必須帶有 [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor)。只簽署 `libneverd.dylib` 不足。CMake 使用 `resources/macos/neverd-hypervisor.entitlements` 簽署 CLI、worker 與測試；`NEVERD_HVF_SIGN_IDENTITY` 預設為 ad hoc 的 `-`，也可指定現有簽章身分。封裝會在修復 Mach-O 相依關係後重新套用並驗證權限。
 

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
+<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
 
 [← Índice de documentación](README.md)
 
@@ -13,6 +13,8 @@ Se requiere macOS 11 o posterior y virtualización por hardware; otras dependenc
 ## Compilación y firma
 
 Active `NEVERD_ENABLE_CPU_EMULATION=ON` o la emulación de controladores. `NEVERD_EMULATION_BACKEND_HVF` está en `ON` por defecto y solo enlaza el framework en macOS. Con `OFF`, se conserva el nombre `hvf` y la API de capacidades devuelve `build_disabled`.
+
+El enlace del framework y la firma hypervisor se limitan al destino de compilación macOS (`CMAKE_SYSTEM_NAME=Darwin`). Los destinos móviles de Apple, incluido iOS, no reciben esta dependencia ni este permiso. Un perfil invitado iOS puede seguir usando HVF cuando NeverD se ejecuta en un Mac con la ISA correspondiente.
 
 El **ejecutable del proceso** necesita [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor); firmar solo `libneverd.dylib` no basta. CMake firma CLI, worker y pruebas con `resources/macos/neverd-hypervisor.entitlements`. `NEVERD_HVF_SIGN_IDENTITY` usa `-` como firma ad hoc por defecto o una identidad existente. El empaquetado reaplica y comprueba el permiso después de reparar las dependencias Mach-O.
 

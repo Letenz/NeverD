@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Verify native evidence collection contracts
         if: inputs.validation != 'probe'
-        run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards scripts.tests.test_prepare_hvf_batches -q
+        run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards scripts.tests.test_prepare_hvf_batches scripts.tests.test_hvf_build_platform -q
       - name: Require native VM and vCPU availability before the transport gate
         shell: bash
         env:

@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
+<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
 
 [← 문서 목록](README.md)
 
@@ -13,6 +13,8 @@ macOS 11 이상과 하드웨어 가상화가 필요합니다. 다른 의존성�
 ## 빌드와 서명
 
 `NEVERD_ENABLE_CPU_EMULATION=ON` 또는 드라이버 에뮬레이션을 활성화합니다. `NEVERD_EMULATION_BACKEND_HVF`는 기본값이 `ON`이며 macOS에서만 프레임워크를 링크합니다. `OFF`에서도 `hvf` 이름을 인식하지만 기능 API는 `build_disabled`를 반환합니다.
+
+프레임워크 연결과 hypervisor 서명은 macOS 빌드 대상(`CMAKE_SYSTEM_NAME=Darwin`)으로 제한합니다. iOS 등 Apple 모바일 대상에는 이 프레임워크 의존성이나 권한을 추가하지 않습니다. NeverD 자체가 ISA가 일치하는 Mac에서 실행되면 iOS 게스트 프로필도 HVF를 사용할 수 있습니다.
 
 **프로세스 실행 파일**에 [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor)가 필요합니다. `libneverd.dylib`만 서명해서는 충분하지 않습니다. CMake는 `resources/macos/neverd-hypervisor.entitlements`로 CLI, worker, 테스트를 서명합니다. `NEVERD_HVF_SIGN_IDENTITY`의 기본값은 임시 서명용 `-`이며 기존 서명 ID도 지정할 수 있습니다. 패키징은 Mach-O 의존성 수정 후 권한을 다시 적용하고 검증합니다.
 

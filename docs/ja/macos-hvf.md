@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
+<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -13,6 +13,8 @@ macOS 11 以降とハードウェア仮想化が必要です。他の依存関�
 ## ビルドと署名
 
 `NEVERD_ENABLE_CPU_EMULATION=ON` またはドライバエミュレーションを有効にします。`NEVERD_EMULATION_BACKEND_HVF` は既定で `ON` で、macOS のみでフレームワークをリンクします。`OFF` でも `hvf` という名前は認識されますが、機能 API は `build_disabled` を返します。
+
+フレームワークのリンクと hypervisor 署名は macOS ビルドターゲット（`CMAKE_SYSTEM_NAME=Darwin`）に限定します。iOS などの Apple モバイルターゲットには、このフレームワーク依存関係や権限を追加しません。NeverD 自体を ISA が一致する Mac で実行する場合、iOS ゲストプロファイルも HVF を利用できます。
 
 **プロセスの実行ファイル**に [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor) が必要です。`libneverd.dylib` だけの署名では足りません。CMake は `resources/macos/neverd-hypervisor.entitlements` で CLI、worker、テストを署名します。`NEVERD_HVF_SIGN_IDENTITY` の既定値はアドホック署名の `-` で、既存の署名 ID も指定できます。パッケージ処理は Mach-O 依存関係の修復後に権限を再適用し、検証します。
 

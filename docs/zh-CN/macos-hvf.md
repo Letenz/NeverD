@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
+<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
 
 [← 文档索引](README.md)
 
@@ -9,6 +9,8 @@
 NeverD 使用 Apple 的 Hypervisor.framework，后端名为 `hvf`，对应 Linux 的 KVM 和 Windows 的 WHP。按本机架构执行：Apple Silicon 使用 ARM64，Intel Mac 使用 x86-64。对支持原生执行的契约，`auto` 在主客体架构匹配时选择 HVF；跨架构以及 `software-cpu-v1` 契约继续使用 Unicorn。Rosetta 下的翻译进程会明确拒绝初始化，应改用原生 arm64 构建。
 
 启用 `NEVERD_ENABLE_CPU_EMULATION=ON` 或驱动模拟后，`NEVERD_EMULATION_BACKEND_HVF` 默认开启。关闭该选项仍保留 `hvf` 配置名称，但能力查询报告构建未启用。原生后端初始化失败时不会静默回退。传输层要求 macOS 11 及硬件虚拟化支持；其他依赖仍可能要求更新的系统。
+
+框架链接及 hypervisor 签名仅适用于 macOS 构建目标（`CMAKE_SYSTEM_NAME=Darwin`）。iOS 等 Apple 移动平台目标不会被附加该框架依赖或权限。NeverD 本身在架构匹配的 Mac 上运行时，iOS 来宾配置仍可使用 HVF。
 
 真正调用框架的**进程可执行文件**必须具有 `com.apple.security.hypervisor` entitlement。CMake 在链接后为 CLI、worker 和模拟测试签名；默认使用 ad-hoc，可通过 `NEVERD_HVF_SIGN_IDENTITY` 指定已有签名身份。打包脚本在修改 Mach-O 依赖后重新签名 worker，并检查最终权限没有丢失。嵌入式 SDK 使用方应签署自己的宿主程序；NeverD 不会改签已安装的 Python 解释器。
 

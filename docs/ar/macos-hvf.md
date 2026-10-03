@@ -1,6 +1,6 @@
 **اللغات**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](macos-hvf.md)
 
-<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
+<!-- i18n-source: eb492492da3d96eca2f14f62c7316176bcf5856727f06b490083591710c5ff20 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -13,6 +13,8 @@
 ## البناء والتوقيع
 
 فعّل `NEVERD_ENABLE_CPU_EMULATION=ON` أو محاكاة برامج التشغيل. القيمة الافتراضية لـ `NEVERD_EMULATION_BACKEND_HVF` هي `ON`، ولا يُربط الإطار إلا على macOS. عند اختيار `OFF` يبقى الاسم `hvf` معروفاً، لكن واجهة القدرات تُرجع `build_disabled`.
+
+يقتصر ربط إطار العمل وتوقيع hypervisor على هدف بناء macOS (`CMAKE_SYSTEM_NAME=Darwin`). لا تُضاف هذه التبعية أو الصلاحية إلى أهداف Apple المحمولة، ومنها iOS. يظل بإمكان ملف ضيف iOS استخدام HVF عندما يعمل NeverD نفسه على Mac ذي ISA مطابقة.
 
 يجب أن يحمل **الملف التنفيذي للعملية** الاستحقاق [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor). توقيع `libneverd.dylib` وحده غير كافٍ. يوقّع CMake واجهة CLI وworker والاختبارات باستخدام `resources/macos/neverd-hypervisor.entitlements`. القيمة الافتراضية لـ `NEVERD_HVF_SIGN_IDENTITY` هي `-` للتوقيع المخصص، ويمكن اختيار هوية توقيع موجودة. يعيد التغليف تطبيق الاستحقاق والتحقق منه بعد إصلاح تبعيات Mach-O.
 
