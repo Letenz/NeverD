@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 13c30cb15cacba497163d2d7027684dbbfed986b61111754b7f61993bcbaccbe -->
+<!-- i18n-source: 77e637f400fa5f741338d1fc1bca20712b92e6323ef23d9fdb5b06dc7d3c0d9f -->
 
 [← 文件索引](README.md)
 
@@ -112,3 +112,9 @@ CPU 執行前，`scripts/prepare_hvf_batches.py` 保存完整清單、各片所�
 Action 在執行前上傳計畫。執行期間保存初始處理程序標記，每增加至少 25 個完整回合保存進度；若仍有尚未保存的新日誌且進度停滯，額外保存至多一次現場。上傳期間合併進度，進度 artifact 最多 42 份，每份日誌副本最多 1 MiB，只上傳封存目錄。上傳不會暫停各回合或重設計時器，但仍影響主機排程，因此屬於附帶觀測的部分證據。
 
 成功要求從第 1 回合到指定次數連續，每回合準確配對原生測試的 RUN/OK/PASSED，沒有失敗或略過、結束碼為零且確認處理程序已回收。重複執行時遭覆寫的 XML 無法證明這些條件。原生執行總預算為三分鐘或十分鐘，控制器另外保留 30 秒清理，Action 上限為 20 分鐘。上傳失敗會取消執行，取消作業會回收原生處理程序群組與上傳器。主機仍可連線時上傳最終證據。不完整或截斷的快照不能滿足完整 CPU 或 Darwin 驗收。
+
+復原工作流程仍預設使用 `runner=hosted-intel`。`runner=self-hosted` 沿用 `[self-hosted, macOS, X64, hvf]` 標籤，可用於 Intel 主機對照。兩種方式都要求原生 x86-64 與 VM/vCPU 探測通過。託管映像會安裝 Ninja；自架主機須預先提供 `cmake`、`ninja`、`python3`、`clang` 和 `codesign`。原始碼隔離、重複次數限制、證據核驗與失敗處理維持一致。此入口需要已有可用的相符 runner，不會建立硬體。
+
+2026-10-03，乾淨原始碼 `e4a8169e69eb668ed3795efe4bd5f42cf4f287c2` 在本機原生 ARM64 Release 組態下通過驗證：啟用 HVF、停用 Unicorn，使用 `NEVERD_LLVM_PREBUILT=ON`。完整 CPU 組態核對了 20 個目標、520 個方法與 7,125 個結果：882 項通過、6,243 項略過、零失敗，16 項必要原生案例全數通過。獨立 Darwin 組態核對了 32 個方法與 286 個結果：65 項通過、221 項略過、零失敗，39 項必要原生案例全數通過。原始單一處理程序復原迴圈也連續完成 1,000 次重複，接著 12 項原生傳輸測試全部通過。原始日誌、XML、處理程序狀態與相應原始碼定義均已獨立核驗。CPU 與 Darwin 的總數有重疊，不能相加。這些結果不代表 Intel 完整驗收通過，也不代表已完成 iOS SDK 建置。
+
+使用原始碼 `bd284894c60427cf4e6a60e661a1fa0df8a070f5` 的[獨立 Intel 復原診斷執行](https://github.com/NeverSight/NeverD/actions/runs/37159724276)於 2026-10-03 23:41:30 UTC 結束，GitHub 註記明確回報託管主機失聯。計畫與十一份進度 artifact 得以保留，下載後皆核對服務端 SHA-256。最後保存的快照證明完整完成 252 回合並開始第 253 回合，不能據此定位最終故障。沒有最終結果或處理程序回收記錄，完整作業日誌介面傳回 404，因此要求的 1,000 回合仍未驗證。儲存庫當時仍無自架 runner。這些是保存下來的失敗證據，不代表穩定性已修復或 Intel 已通過完整驗收。

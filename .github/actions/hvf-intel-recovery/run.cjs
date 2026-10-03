@@ -201,6 +201,7 @@ async function main() {
     save(path.join(evidence, 'controller-status.json'), operation.result);
     save(path.join(evidence, 'host-finish.json'), await captureHostState(evidence, environment));
   }
+  if (group.signal.aborted) throw new Error('recovery diagnosis interrupted during final collection');
 }
 
 module.exports = {progress, readProgress, observeRecovery, commandGroup, LIMIT, MAX_PROGRESS};

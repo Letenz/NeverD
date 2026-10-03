@@ -1,5 +1,5 @@
 name: Intel HVF recovery diagnosis
-run-name: Intel HVF recovery / ${{ inputs.intel-image }} / ${{ inputs.repetitions }} repetitions / ${{ inputs.source-ref }}
+run-name: Intel HVF recovery / ${{ inputs.runner == 'self-hosted' && 'self-hosted' || inputs.intel-image }} / ${{ inputs.repetitions }} repetitions / ${{ inputs.source-ref }}
 on:
   workflow_dispatch:
     inputs:
@@ -8,6 +8,11 @@ on:
         default: bd284894c60427cf4e6a60e661a1fa0df8a070f5
         required: true
         type: string
+      runner:
+        description: Hosted Intel or an existing Intel runner with the project's hvf label
+        default: hosted-intel
+        type: choice
+        options: [hosted-intel, self-hosted]
       intel-image:
         description: Hosted native Intel image
         default: macos-26-intel
@@ -22,7 +27,7 @@ permissions:
   contents: read
 jobs:
   native-recovery:
-    runs-on: ${{ inputs.intel-image == 'macos-26-intel' && 'macos-26-intel' || 'macos-15-intel' }}
+    runs-on: ${{ fromJSON(inputs.runner == 'self-hosted' && '["self-hosted","macOS","X64","hvf"]' || (inputs.intel-image == 'macos-26-intel' && '["macos-26-intel"]' || '["macos-15-intel"]')) }}
     timeout-minutes: 60
     env:
       SCCACHE_GHA_ENABLED: 'true'
@@ -49,10 +54,15 @@ jobs:
         working-directory: source
         env:
           EXPECTED_SOURCE: ${{ inputs.source-ref }}
+          HVF_RUNNER: ${{ inputs.runner || 'hosted-intel' }}
           HVF_INTEL_IMAGE: ${{ inputs.intel-image }}
         run: |
           [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          case "$HVF_RUNNER" in
+            hosted-intel|self-hosted) ;;
+            *) echo "Unsupported Intel runner selection" >&2; exit 1 ;;
+          esac
           case "$HVF_INTEL_IMAGE" in
             macos-15-intel|macos-26-intel) ;;
             *) echo "Unsupported hosted Intel image" >&2; exit 1 ;;
@@ -69,7 +79,13 @@ jobs:
           python3 -m unittest scripts.tests.test_diagnose_hvf_methods scripts.tests.test_diagnose_hvf_recovery -q
           node --test .github/actions/hvf-intel-diagnostic/*.test.cjs .github/actions/hvf-intel-recovery/*.test.cjs
       - name: Install build tools
+        if: inputs.runner != 'self-hosted'
         run: brew install ninja
+      - name: Verify required build tools
+        run: |
+          for tool in cmake ninja python3 clang codesign; do
+            command -v "$tool"
+          done
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
         with:
           version: v0.16.0

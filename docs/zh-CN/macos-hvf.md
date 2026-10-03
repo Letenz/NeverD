@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 13c30cb15cacba497163d2d7027684dbbfed986b61111754b7f61993bcbaccbe -->
+<!-- i18n-source: 77e637f400fa5f741338d1fc1bca20712b92e6323ef23d9fdb5b06dc7d3c0d9f -->
 
 [← 文档索引](README.md)
 
@@ -216,3 +216,9 @@ CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所�
 Action 在执行前上传计划。执行期间保存初始进程标记，每增加至少 25 个完整轮次保存进度；存在尚未保存的新日志且进度停滞时，额外保存至多一次现场。上传期间合并进度，进度 artifact 最多 42 份，每份日志副本最多 1 MiB，只上传封存目录。上传不会暂停各轮执行或重置计时器，但仍会影响宿主调度，因此属于带观测的部分证据。
 
 成功要求从第 1 轮到指定次数连续，每轮准确匹配原生测试的 RUN/OK/PASSED，无失败或跳过、退出码为零且确认进程已回收。重复执行时被覆盖的 XML 不能证明这些条件。原生执行总预算为三分钟或十分钟，控制器额外留出 30 秒清理，Action 上限为 20 分钟。上传失败会取消执行，取消操作会回收原生进程组和上传器。宿主仍可达时上传最终证据。不完整或截断的快照不能满足完整 CPU 或 Darwin 验收。
+
+恢复工作流仍默认使用 `runner=hosted-intel`。`runner=self-hosted` 沿用 `[self-hosted, macOS, X64, hvf]` 标签，可用于 Intel 宿主对照。两种方式都要求原生 x86-64 和 VM/vCPU 探测通过。托管镜像安装 Ninja；自托管宿主须预先提供 `cmake`、`ninja`、`python3`、`clang` 和 `codesign`。源码隔离、重复次数限制、证据核验和失败处理保持一致。此入口需要已有可用的匹配 runner，不会创建硬件。
+
+2026-10-03，干净源码 `e4a8169e69eb668ed3795efe4bd5f42cf4f287c2` 在本机原生 ARM64 Release 配置下通过验证：启用 HVF、禁用 Unicorn，使用 `NEVERD_LLVM_PREBUILT=ON`。完整 CPU 配置核对了 20 个目标、520 个方法和 7,125 个结果：882 项通过、6,243 项跳过、零失败，16 项必需原生用例全部通过。独立 Darwin 配置核对了 32 个方法和 286 个结果：65 项通过、221 项跳过、零失败，39 项必需原生用例全部通过。原始单进程恢复循环还连续完成 1,000 次重复，随后 12 项原生传输测试全部通过。原始日志、XML、进程状态和对应源码定义均已独立核验。CPU 与 Darwin 的总数有重叠，不能相加。这些结果不代表 Intel 完整验收通过，也不代表已经完成 iOS SDK 构建。
+
+使用源码 `bd284894c60427cf4e6a60e661a1fa0df8a070f5` 的[独立 Intel 恢复诊断运行](https://github.com/NeverSight/NeverD/actions/runs/37159724276)于 2026-10-03 23:41:30 UTC 结束，GitHub 注释明确报告托管宿主失联。计划和十一份进度 artifact 得以保留，下载后均核对了服务端 SHA-256。最后保存的快照证明完整完成 252 轮并开始第 253 轮，不能据此定位最终故障。没有最终结果或进程回收记录，完整作业日志接口返回 404，因此请求的 1,000 轮仍未验证。仓库当时仍无自托管 runner。这些是保存下来的失败证据，不代表稳定性已经修复或 Intel 已通过完整验收。
