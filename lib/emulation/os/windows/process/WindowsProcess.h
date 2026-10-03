@@ -25,6 +25,7 @@ namespace value {
   inline constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "WindowsProcess.def"
 #include "WindowsProcessModules.def"
+#include "WindowsSystemModules.def"
 #undef NEVERD_WINDOWS_PROCESS_BYTES
 #undef NEVERD_WINDOWS_PROCESS_VALUE
 } // namespace value
@@ -33,6 +34,7 @@ namespace text {
   inline constexpr char Name[] = Text;
 #include "WindowsProcess.def"
 #include "WindowsProcessModules.def"
+#include "WindowsSystemModules.def"
 #undef NEVERD_WINDOWS_PROCESS_TEXT
 } // namespace text
 inline llvm::Error failure(const llvm::Twine &Message) {
@@ -45,6 +47,12 @@ enum class API {
 #undef NEVERD_WINDOWS_PROCESS_API
 };
 enum class APIProvider { Kernel, Native };
+struct SystemProvider {
+  const char *Name;
+  APIProvider Family;
+  uint64_t Base;
+};
+llvm::ArrayRef<SystemProvider> systemProviders();
 struct Service {
   API Kind;
   const char *Name;

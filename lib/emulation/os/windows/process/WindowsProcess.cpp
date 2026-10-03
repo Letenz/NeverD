@@ -62,9 +62,6 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   for (uint64_t Gate : {ReturnGate, AttachReturnGate, DetachReturnGate})
     if (auto E = (*Space)->write(Gate, Trap))
       return std::move(E);
-  for (const auto &Gate : Program->Gates)
-    if (auto E = (*Space)->write(Gate.Gate, Trap))
-      return std::move(E);
   for (const auto &Module : Program->Modules)
     for (const auto &Import : Module.Loaded.Imports)
       if (auto E =

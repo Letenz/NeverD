@@ -1,0 +1,219 @@
+//===- WindowsSystemModules.cpp - Resident modeled system PE images ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#include "WindowsProcessModules.h"
+
+#include "llvm/BinaryFormat/COFF.h"
+#include "llvm/Object/COFF.h"
+#include "llvm/Support/Endian.h"
+
+#include <algorithm>
+#include <array>
+#include <cstring>
+
+namespace neverd::emulation::windows_process {
+namespace {
+using namespace value;
+using namespace llvm::object;
+constexpr SystemProvider Providers[] = {
+#define NEVERD_WINDOWS_SYSTEM_MODULE(Name, Family, Base)                       \
+  {text::Name, APIProvider::Family, Base},
+#include "WindowsSystemModules.def"
+#undef NEVERD_WINDOWS_SYSTEM_MODULE
+};
+static_assert(std::size(Providers) == SystemModuleCount);
+
+llvm::Expected<Image> makeImage(const SystemProvider &Provider,
+                                GuestArchitecture Architecture,
+                                ImageReadBudget &Budget) {
+  std::vector<const Service *> Exports;
+  for (const auto &S : services())
+    if (S.Provider == Provider.Family)
+      Exports.push_back(&S);
+  llvm::sort(Exports, [](const auto *A, const auto *B) {
+    return llvm::StringRef(A->Name) < B->Name;
+  });
+  const uint64_t Count = Exports.size();
+  if (!Count || Count * GateStride > PageSize ||
+      SystemImageSize > Budget.MappedBytes)
+    return failure(text::SystemImage);
+  // Raw offsets equal RVAs. Decode the completed bytes with the same loader
+  // that owns original PE export identities; do not build a second name map.
+  std::vector<uint8_t> File(SystemImageSize);
+  auto Store = [&](uint64_t Offset, const auto &Record) {
+    std::memcpy(File.data() + Offset, &Record, sizeof(Record));
+  };
+  export_directory_table_entry Directory{};
+  Directory.OrdinalBase = SystemOrdinalBase;
+  Directory.AddressTableEntries = Count;
+  Directory.NumberOfNamePointers = Count;
+  uint64_t Cursor = SystemExportRVA + sizeof(Directory);
+  Directory.ExportAddressTableRVA = Cursor;
+  Cursor += Count * DWordSize;
+  Directory.NamePointerRVA = Cursor;
+  Cursor += Count * DWordSize;
+  Directory.OrdinalTableRVA = Cursor;
+  Cursor += Count * WideSize;
+  auto String = [&](llvm::StringRef Text) -> llvm::Expected<uint32_t> {
+    if (Cursor >= SystemCodeRVA || Text.size() + 1 > SystemCodeRVA - Cursor)
+      return failure(text::SystemImage);
+    const uint32_t RVA = Cursor;
+    std::copy(Text.begin(), Text.end(), File.begin() + Cursor);
+    Cursor += Text.size() + 1;
+    return RVA;
+  };
+  auto Name = String(Provider.Name);
+  if (!Name)
+    return Name.takeError();
+  Directory.NameRVA = *Name;
+  for (size_t I = 0; I < Count; ++I) {
+    auto Name = String(Exports[I]->Name);
+    if (!Name)
+      return Name.takeError();
+    const uint32_t RVA = SystemCodeRVA + I * GateStride;
+    llvm::support::endian::write32le(
+        File.data() + Directory.ExportAddressTableRVA + I * DWordSize, RVA);
+    llvm::support::endian::write32le(
+        File.data() + Directory.NamePointerRVA + I * DWordSize, *Name);
+    llvm::support::endian::write16le(
+        File.data() + Directory.OrdinalTableRVA + I * WideSize, I);
+    if (Architecture == GuestArchitecture::X64)
+      std::copy(std::begin(X64Service), std::end(X64Service),
+                File.begin() + RVA);
+    else
+      llvm::support::endian::write32le(File.data() + RVA,
+                                       ArmServiceInstruction);
+  }
+  Store(SystemExportRVA, Directory);
+  dos_header DOS{};
+  std::copy_n(text::DOSMagic, sizeof(DOS.Magic), DOS.Magic);
+  DOS.AddressOfNewExeHeader = sizeof(DOS);
+  Store(0, DOS);
+  uint64_t Header = sizeof(DOS);
+  std::copy_n(llvm::COFF::PEMagic, sizeof(llvm::COFF::PEMagic),
+              File.begin() + Header);
+  Header += sizeof(llvm::COFF::PEMagic);
+  coff_file_header COFF{};
+  COFF.Machine = Architecture == GuestArchitecture::X64
+                     ? llvm::COFF::IMAGE_FILE_MACHINE_AMD64
+                     : llvm::COFF::IMAGE_FILE_MACHINE_ARM64;
+  std::array<coff_section, 2> Sections{};
+  COFF.NumberOfSections = Sections.size();
+  COFF.SizeOfOptionalHeader =
+      sizeof(pe32plus_header) + MaxDirectories * sizeof(data_directory);
+  COFF.Characteristics = llvm::COFF::IMAGE_FILE_EXECUTABLE_IMAGE |
+                         llvm::COFF::IMAGE_FILE_DLL |
+                         llvm::COFF::IMAGE_FILE_LARGE_ADDRESS_AWARE;
+  Store(Header, COFF);
+  Header += sizeof(COFF);
+  pe32plus_header PE{};
+  PE.Magic = llvm::COFF::PE32Header::PE32_PLUS;
+  PE.SizeOfCode = PageSize;
+  PE.SizeOfInitializedData = PageSize;
+  PE.BaseOfCode = SystemCodeRVA;
+  PE.ImageBase = Provider.Base;
+  PE.SectionAlignment = PageSize;
+  PE.FileAlignment = PageSize;
+  PE.MajorOperatingSystemVersion = SystemPEVersion;
+  PE.MajorSubsystemVersion = SystemPEVersion;
+  PE.SizeOfImage = SystemImageSize;
+  PE.SizeOfHeaders = PageSize;
+  PE.Subsystem = llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_CUI;
+  PE.NumberOfRvaAndSize = MaxDirectories;
+  Store(Header, PE);
+  Header += sizeof(PE);
+  data_directory Export{};
+  Export.RelativeVirtualAddress = SystemExportRVA;
+  Export.Size = Cursor - SystemExportRVA;
+  Store(Header + llvm::COFF::EXPORT_TABLE * sizeof(Export), Export);
+  Header += MaxDirectories * sizeof(data_directory);
+  for (size_t I = 0; I < Sections.size(); ++I) {
+    auto &Section = Sections[I];
+    const llvm::StringRef Name =
+        I ? text::SystemCodeSection : text::SystemExportSection;
+    std::copy(Name.begin(), Name.end(), Section.Name);
+    Section.VirtualSize = PageSize;
+    Section.SizeOfRawData = PageSize;
+    Section.VirtualAddress = I ? SystemCodeRVA : SystemExportRVA;
+    Section.PointerToRawData = I ? SystemCodeRVA : SystemExportRVA;
+    Section.Characteristics =
+        llvm::COFF::IMAGE_SCN_MEM_READ |
+        (I ? llvm::COFF::IMAGE_SCN_CNT_CODE | llvm::COFF::IMAGE_SCN_MEM_EXECUTE
+           : llvm::COFF::IMAGE_SCN_CNT_INITIALIZED_DATA);
+    Store(Header, Section);
+    Header += sizeof(Section);
+  }
+  if (Header > PageSize)
+    return failure(text::SystemImage);
+  auto Decoded = readPEProgramExports(
+      File, {Budget.MetadataBytes, Budget.Records, MaxName});
+  if (!Decoded)
+    return Decoded.takeError();
+  Budget.MetadataBytes -= Decoded->BytesRead;
+  Budget.Records -= Decoded->RecordsRead;
+  Budget.MappedBytes -= SystemImageSize;
+  Image Out{};
+  Out.Architecture = Architecture;
+  Out.Base = Provider.Base;
+  Out.Size = SystemImageSize;
+  Out.Exports = std::move(*Decoded);
+  for (uint64_t Offset = 0; Offset < SystemImageSize; Offset += PageSize) {
+    const unsigned Rights =
+        Read | UserAccessible | (Offset == SystemCodeRVA ? Execute : 0);
+    Out.Regions.push_back(
+        {Provider.Base + Offset,
+         Rights,
+         {File.begin() + Offset, File.begin() + Offset + PageSize},
+         PageSize,
+         PageSize});
+  }
+  return Out;
+}
+} // namespace
+
+llvm::ArrayRef<SystemProvider> systemProviders() { return Providers; }
+
+llvm::Error prepareSystemModules(Program &P, VirtualMemory &Memory,
+                                 const ExecutionBudget &Budget) {
+  if (P.Modules.size() != 1)
+    return failure(text::Lifetime);
+  for (const auto &Provider : Providers) {
+    if (!Budget.remainingMicroseconds())
+      return failure(text::ModuleTimeout);
+    auto Image =
+        makeImage(Provider, P.Modules.front().Loaded.Architecture, P.Reads);
+    if (!Image)
+      return Image.takeError();
+    auto Base = Memory.reserveImage(Image->Base, Image->Size, false);
+    if (!Base)
+      return Base.takeError();
+    const size_t Index = P.Modules.size();
+    Module M;
+    M.Loaded = std::move(*Image);
+    M.Generation = P.NextGeneration++;
+    M.State = ModuleState::Ready;
+    M.Pinned = M.System = true;
+    M.ExportMetadata = {{0, PageSize}, {SystemExportRVA, PageSize}};
+    for (size_t I = 0; I < M.Loaded.Exports.Entries.size(); ++I) {
+      const auto &Export = M.Loaded.Exports.Entries[I];
+      M.Ordinals.emplace(Export.Ordinal, I);
+      for (const auto &Name : Export.Names) {
+        M.Names.emplace(Name, I);
+        const auto *Service = findService(Provider.Name, Name);
+        if (!Service || P.Gates.size() == MaxImports)
+          return failure(text::Service);
+        const uint64_t Gate = M.Loaded.Base + Export.RVA;
+        P.Gates.push_back(
+            {0, Service, Provider.Name, Gate, Name, std::nullopt});
+      }
+    }
+    P.Slots.emplace(Provider.Name, Index);
+    P.Identities.push_back({Provider.Name, M.Loaded.Base, M.Loaded.Size, 0});
+    P.Modules.push_back(std::move(M));
+    P.LoaderInitializationOrder.push_back(Index);
+  }
+  return llvm::Error::success();
+}
+} // namespace neverd::emulation::windows_process

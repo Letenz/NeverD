@@ -136,7 +136,8 @@ llvm::Error Lifetime::returned(uint64_t Value) {
     return llvm::Error::success();
   advance();
   if (N.Kind == CallKind::Entry) {
-    if (llvm::any_of(llvm::drop_begin(Program.Modules), resident))
+    if (llvm::any_of(llvm::drop_begin(Program.Modules),
+                     [](const auto &M) { return resident(M) && !M.System; }))
       return failure(text::EntryThreadExit);
     return beginExit(uint32_t(Value), false);
   }

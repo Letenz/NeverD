@@ -254,11 +254,15 @@ TEST(WindowsExportResolution, QueriesConsumeTheSharedBudgetAndDeadline) {
   auto Budget = llvm::cantFail(ExecutionBudget::create(O.Limits));
   auto P = win::loadProgram(Directory / ProgramFile, O, *Budget, Memory);
   ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
-  ASSERT_EQ(P->Modules.size(), 4u);
+  ASSERT_EQ(P->Modules.size(), 4u + win::value::SystemModuleCount);
   ASSERT_EQ(P->AttachOrder.size(), 3u);
   EXPECT_EQ(P->Identities[P->AttachOrder.front()].Name, LeafFile);
-  ASSERT_EQ(P->LoaderInitializationOrder.size(), 3u);
-  EXPECT_EQ(P->Identities[P->LoaderInitializationOrder.front()].Name, TopFile);
+  ASSERT_EQ(P->LoaderInitializationOrder.size(),
+            3u + win::value::SystemModuleCount);
+  EXPECT_EQ(
+      P->Identities[P->LoaderInitializationOrder[win::value::SystemModuleCount]]
+          .Name,
+      TopFile);
   // Misses also consume work; a later call cannot create a fresh allowance.
   P->Reads.Records = 2;
   for (unsigned I = 0; I < 2; ++I) {

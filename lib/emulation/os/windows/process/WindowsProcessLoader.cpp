@@ -104,8 +104,6 @@ llvm::Expected<Loader::Operation> Loader::begin(const LoaderRequest &Request) {
 llvm::Expected<Loader::Operation> Loader::start(const LoaderRequest &Request) {
   Operation Out{Request};
   if (Request.Operation == LoaderRequest::Kind::Load) {
-    if (findProvider(Request.Name))
-      return failure(text::LoaderProvider);
     if (auto I = findModule(P, Request.Name)) {
       auto &M = P.Modules[*I];
       if (M.State != ModuleState::Ready)
