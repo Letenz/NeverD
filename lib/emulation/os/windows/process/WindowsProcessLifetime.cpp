@@ -51,6 +51,10 @@ Lifetime::next(ExecutionBackend &CPU) {
       return failure(text::Lifetime);
     auto &Module = Program.Modules[N.Module.Index];
     const auto &M = Module.Loaded;
+    // Once detach begins, ExitProcess from this callback must not notify the
+    // same DLL again. Later DLLs remain attached until their own turn.
+    if (detaching())
+      Module.Attached = false;
     uint64_t Target = M.Entry;
     if (N.Kind == CallKind::TLS) {
       if (!CallbackArray) {

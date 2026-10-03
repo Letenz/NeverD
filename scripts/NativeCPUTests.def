@@ -551,7 +551,7 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsExports.QueriesCodeDataOrdinalsAliasesAndForwarders/WhpX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
-    "WindowsExports.RefusesRuntimeLoadsCyclesAndInvalidOrdinalForwarders/"
+    "WindowsExports.RejectsMissingModulesCyclesAndInvalidOrdinalForwarders/"
     "WhpX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"

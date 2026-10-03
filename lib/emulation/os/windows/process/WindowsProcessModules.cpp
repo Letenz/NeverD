@@ -304,6 +304,8 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
     return Linked.takeError();
   for (auto Ref : Linked->Attach)
     Out.AttachOrder.push_back(Ref.Index);
+  for (auto &M : Out.Modules)
+    M.Pinned = true;
   Out.Modules.front().References = 1;
   return Out;
 }

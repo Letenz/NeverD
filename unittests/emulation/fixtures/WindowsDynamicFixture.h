@@ -25,7 +25,7 @@ __declspec(dllimport) void SetLastError(DWORD);
 __declspec(dllimport) void *GetStdHandle(DWORD);
 __declspec(dllimport) int WriteFile(void *, const void *, DWORD, DWORD *,
                                     void *);
-__declspec(dllimport) void ExitProcess(DWORD);
+__declspec(dllimport) __declspec(noreturn) void ExitProcess(DWORD);
 __declspec(dllimport) const WCHAR *GetCommandLineW(void);
 static void check(int OK, DWORD Line) {
   if (!OK) {

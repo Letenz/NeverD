@@ -164,7 +164,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Active = std::move(*Next);
       if (Active) {
         const uint64_t Top =
-            Pending.empty() ? StackTop : Pending.back().StackPointer;
+            (Pending.empty() ? StackTop : Pending.back().StackPointer) &
+            ~(ABI->info().StackAlignment - 1);
         if (Top <= StackBase || Top > StackTop)
           return failure(text::Return);
         Result.PC = Active->PC;

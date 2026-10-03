@@ -7,6 +7,7 @@
 
 #include "neverd/emulation/CPU.h"
 
+#include <functional>
 #include <set>
 
 namespace neverd::emulation::windows_process {
@@ -58,11 +59,32 @@ llvm::Expected<std::vector<ModuleRef>> Loader::unreferenced() const {
       Work.push_back(Ref.Index);
     }
   }
+  // Unload owners before their now-unreferenced dependencies. Loader-list
+  // order alone is insufficient when a runtime forwarder acquired a target.
+  std::set<size_t> Ordered, Visiting;
   std::vector<ModuleRef> Result;
-  for (auto I = P.LoaderInitializationOrder.rbegin();
-       I != P.LoaderInitializationOrder.rend(); ++I)
-    if (!Retained.contains(*I))
-      Result.push_back(moduleRef(P, *I));
+  std::function<llvm::Error(size_t)> Visit = [&](size_t Index) -> llvm::Error {
+    if (Retained.contains(Index))
+      return llvm::Error::success();
+    if (Visiting.contains(Index))
+      return failure(text::ModuleCycle + P.Identities[Index].Name);
+    if (!Ordered.insert(Index).second)
+      return llvm::Error::success();
+    Visiting.insert(Index);
+    for (auto Ref : P.Modules[Index].Dependencies) {
+      if (!current(P, Ref))
+        return failure(text::Lifetime);
+      if (auto E = Visit(Ref.Index))
+        return E;
+    }
+    Visiting.erase(Index);
+    Result.push_back(moduleRef(P, Index));
+    return llvm::Error::success();
+  };
+  for (size_t I : P.LoaderInitializationOrder)
+    if (auto E = Visit(I))
+      return std::move(E);
+  std::reverse(Result.begin(), Result.end());
   return Result;
 }
 llvm::Expected<Loader::Operation> Loader::begin(const LoaderRequest &Request) {
@@ -90,7 +112,8 @@ llvm::Expected<Loader::Operation> Loader::start(const LoaderRequest &Request) {
         return failure(text::LoaderReentrant);
       if (M.References == UINT64_MAX)
         return failure(text::ModuleBudget);
-      ++M.References;
+      if (!M.Pinned)
+        ++M.References;
       Out.Value = M.Loaded.Base;
       return Out;
     }

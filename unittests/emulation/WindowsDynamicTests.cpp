@@ -77,29 +77,37 @@ protected:
 #endif
   }
 };
+llvm::StringRef expected(bool NoEntry, llvm::StringRef File, char Mode) {
+#define NEVERD_DYNAMIC_EXPECTED(Variant, Program, Selector, Hex)               \
+  if (NoEntry == bool(Variant) && File == Program && Mode == Selector)         \
+    return Hex;
+#include "fixtures/WindowsDynamicCases.def"
+#undef NEVERD_DYNAMIC_EXPECTED
+  return {};
+}
 TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
   for (bool NoEntry : {false, true}) {
     const auto Inputs = NoEntry ? Directory / NoEntryDirectory : Directory;
     Options.Windows = WindowsProcessOptions{{{LeafFile, Inputs / LeafFile},
                                              {MiddleFile, Inputs / MiddleFile},
                                              {TopFile, Directory / TopFile}}};
-    for (const auto &C : Cases) {
-      if (NoEntry &&
-          (C.Argument[1] == FailedMiddleMode || C.Argument[1] == LeafRole ||
-           C.Argument[1] == NestedFailureMode))
-        continue;
-      SCOPED_TRACE(C.Name);
-      Options.Arguments = {ProgramFile, C.Argument};
-      auto R = emulateProcess(Directory / ProgramFile,
-                              ProcessProfile::WindowsPE64, Options);
-      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-      llvm::outs() << ObservationLabel << NoEntry << ' ' << ProgramFile << ' '
-                   << C.Argument << ' ' << R->ExitStatus.value_or(0) << ' '
-                   << llvm::toHex(R->StandardOutput) << '\n';
-      EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
-      EXPECT_EQ(R->ExitStatus, ExitStatus) << llvm::toHex(R->StandardError);
-      EXPECT_TRUE(R->StandardError.empty());
-    }
+    for (const char *File : {ProgramFile, StaticProgramFile})
+      for (const auto &C : Cases) {
+        const auto Expected = expected(NoEntry, File, C.Argument[1]);
+        if (Expected.empty())
+          continue;
+        SCOPED_TRACE(C.Name);
+        SCOPED_TRACE(NoEntry);
+        SCOPED_TRACE(File);
+        Options.Arguments = {File, C.Argument};
+        auto R = emulateProcess(Directory / File, ProcessProfile::WindowsPE64,
+                                Options);
+        ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+        EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+        EXPECT_EQ(R->ExitStatus, ExitStatus) << llvm::toHex(R->StandardError);
+        EXPECT_TRUE(R->StandardError.empty());
+        EXPECT_EQ(llvm::toHex(R->StandardOutput), Expected);
+      }
   }
 }
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, WindowsDynamic,
@@ -155,6 +163,8 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
         llvm::outs() << ObservationLabel << NoEntry << ' ' << File << ' '
                      << C.Argument << ' ' << Status << ' '
                      << llvm::toHex((*Out)->getBuffer()) << '\n';
+        EXPECT_EQ(llvm::toHex((*Out)->getBuffer()),
+                  expected(NoEntry, File, C.Argument[1]));
         EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
         EXPECT_TRUE((*Err)->getBuffer().empty());
       }
