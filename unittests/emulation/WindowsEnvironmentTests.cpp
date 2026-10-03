@@ -20,7 +20,9 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <filesystem>
+#include <initializer_list>
 
 namespace neverd::emulation {
 namespace {

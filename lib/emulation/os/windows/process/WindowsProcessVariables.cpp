@@ -219,8 +219,10 @@ Services::environment(const Service &S, const NativeCallEvent &Event) {
     else
       Variables.emplace(*Key, Variable{*Name, std::move(*Value)});
   } else {
+    // Deleting an absent variable succeeds without changing LastError or the
+    // environment block, as observed by the independent native fixture.
     if (Found == Variables.end())
-      return WinError(ErrorEnvironmentNotFound);
+      return std::optional<uint64_t>(1);
     Variables.erase(Found);
   }
   Block.clear();
