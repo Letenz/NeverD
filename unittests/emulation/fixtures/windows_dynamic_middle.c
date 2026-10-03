@@ -13,9 +13,11 @@ __declspec(dllexport) DWORD Probe(void) {
 static void tls(void *Base, DWORD Reason, void *Reserved) {
   checkTLS(Reason);
   trace(MiddleRole, TLSKind, Reason, Reserved);
+  visibility(MiddleRole, Base);
 }
 int dllEntry(void *Base, DWORD Reason, void *Reserved) {
   trace(MiddleRole, DLLKind, Reason, Reserved);
+  visibility(MiddleRole, Base);
   if ((Reason == AttachReason && mode() == ExitAttachMode) ||
       (Reason == DetachReason && mode() == ExitDetachMode))
     ExitProcess(ExitStatus);

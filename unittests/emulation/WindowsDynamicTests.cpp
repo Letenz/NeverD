@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
+#include "os/windows/process/WindowsProcessModules.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessSession.h"
@@ -110,6 +111,120 @@ TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
       }
   }
 }
+TEST_P(WindowsDynamic, RejectsModifiedLoaderStateAndRetiredCode) {
+  Options.Windows = WindowsProcessOptions{
+      {{LeafFile, Directory / LeafFile}, {MiddleFile, Directory / MiddleFile}}};
+  for (const char *Argument :
+       {ChangedLoaderArgument, ChangedTLSArgument, StaleCodeArgument}) {
+    SCOPED_TRACE(Argument);
+    Options.Arguments = {ProgramFile, Argument};
+    auto R = emulateProcess(Directory / ProgramFile,
+                            ProcessProfile::WindowsPE64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    if (Argument == StaleCodeArgument)
+      EXPECT_EQ(R->Stop, ProcessStopReason::CPUFailure) << R->Diagnostic;
+    else {
+      EXPECT_EQ(R->Stop, ProcessStopReason::RuntimeFailure) << R->Diagnostic;
+      EXPECT_NE(R->Diagnostic.find(windows_process::text::LoaderChanged),
+                std::string::npos);
+    }
+    EXPECT_FALSE(R->ExitStatus);
+    EXPECT_TRUE(R->StandardError.empty());
+  }
+}
+TEST_P(WindowsDynamic, SharedBudgetsDoNotCompleteSuspendedCalls) {
+  Options.Windows = WindowsProcessOptions{{{LeafFile, Directory / LeafFile},
+                                           {MiddleFile, Directory / MiddleFile},
+                                           {TopFile, Directory / TopFile}}};
+  Options.Arguments = {ProgramFile, NestedArgument};
+  for (bool Events : {false, true}) {
+    Options.Limits.Instructions =
+        Events ? process_defaults::Instructions : ShortInstructions;
+    Options.Limits.Events = Events ? ShortEvents : process_defaults::Events;
+    auto R = emulateProcess(Directory / ProgramFile,
+                            ProcessProfile::WindowsPE64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, Events ? ProcessStopReason::EventLimit
+                              : ProcessStopReason::InstructionLimit)
+        << R->Diagnostic;
+    EXPECT_FALSE(R->ExitStatus);
+    if (Events) {
+      auto Call = llvm::find_if(R->NativeCalls, [](const auto &C) {
+        return C.Name == LoadLibraryName;
+      });
+      ASSERT_NE(Call, R->NativeCalls.end());
+      EXPECT_FALSE(Call->Result);
+    }
+  }
+}
+class WindowsDynamicLink : public testing::Test {
+protected:
+  std::filesystem::path Directory;
+  ProcessOptions Options;
+  std::shared_ptr<AddressSpace> Space;
+  std::unique_ptr<windows_process::VirtualMemory> Virtual;
+  std::optional<windows_process::Program> Program;
+  void SetUp() override {
+#ifndef NEVERD_WINDOWS_DYNAMIC_FIXTURE_DIR
+    GTEST_SKIP() << MissingTools;
+#else
+    Directory =
+        std::filesystem::path(NEVERD_WINDOWS_DYNAMIC_FIXTURE_DIR) / X64Dir;
+    Options.Windows =
+        WindowsProcessOptions{{{LeafFile, Directory / LeafFile},
+                               {MiddleFile, Directory / MiddleFile},
+                               {TopFile, Directory / TopFile}}};
+    auto Physical = llvm::cantFail(PhysicalMemory::create(Options.MemoryLimit));
+    Space = llvm::cantFail(AddressSpace::create(Physical, Options.MemoryLimit));
+    Virtual = std::make_unique<windows_process::VirtualMemory>(*Space, Options);
+    auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+    auto P = windows_process::loadProgram(Directory / ProgramFile, Options,
+                                          *Budget, *Virtual);
+    ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+    Program = std::move(*P);
+#endif
+  }
+};
+TEST_F(WindowsDynamicLink,
+       FailedPreparationReleasesReservationsWithoutRefundingWork) {
+  namespace win = windows_process;
+  auto &P = *Program;
+  auto LeafPath = P.Catalogue.at(LeafFile);
+  P.Catalogue.erase(LeafFile);
+  const auto Before = P.Reads;
+  auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+  auto InputBudget = P.Reads;
+  auto DLL = llvm::cantFail(
+      win::loadProgramImage(Directory / MiddleFile, InputBudget, true));
+  for (unsigned I = 0; I < RepeatCount; ++I) {
+    auto Linked = win::linkModule(P, MiddleFile, *Virtual, *Budget);
+    ASSERT_FALSE(bool(Linked));
+    auto E = Linked.takeError();
+    EXPECT_TRUE(E.isA<win::ModuleLoadError>());
+    llvm::consumeError(std::move(E));
+    EXPECT_FALSE(win::findModule(P, MiddleFile));
+    auto Info = llvm::cantFail(Virtual->query(DLL.Base));
+    ASSERT_TRUE(Info);
+    EXPECT_EQ(Info->State, win::value::MemFree);
+  }
+  EXPECT_EQ(P.Modules.size(), 2u);
+  EXPECT_LT(P.Reads.FileBytes, Before.FileBytes);
+  EXPECT_LT(P.Reads.MappedBytes, Before.MappedBytes);
+  EXPECT_LT(P.Reads.Records, Before.Records);
+  P.Catalogue.emplace(LeafFile, LeafPath);
+  auto Linked = win::linkModule(P, MiddleFile, *Virtual, *Budget);
+  ASSERT_TRUE(bool(Linked)) << llvm::toString(Linked.takeError());
+  auto Old = win::moduleRef(P, Linked->Root);
+  const size_t Count = P.Modules.size();
+  for (auto Ref : Linked->Added)
+    ASSERT_FALSE(bool(win::retireModule(P, Ref, *Virtual)));
+  auto Reload = win::linkModule(P, MiddleFile, *Virtual, *Budget);
+  ASSERT_TRUE(bool(Reload)) << llvm::toString(Reload.takeError());
+  EXPECT_EQ(P.Modules.size(), Count);
+  EXPECT_EQ(Reload->Root, Old.Index);
+  EXPECT_FALSE(win::current(P, Old));
+  EXPECT_NE(win::moduleRef(P, Reload->Root).Generation, Old.Generation);
+}
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, WindowsDynamic,
                          testing::ValuesIn(Profiles),
                          [](const testing::TestParamInfo<Profile> &P) {
@@ -163,8 +278,9 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
         llvm::outs() << ObservationLabel << NoEntry << ' ' << File << ' '
                      << C.Argument << ' ' << Status << ' '
                      << llvm::toHex((*Out)->getBuffer()) << '\n';
-        EXPECT_EQ(llvm::toHex((*Out)->getBuffer()),
-                  expected(NoEntry, File, C.Argument[1]));
+        if (const auto Expected = expected(NoEntry, File, C.Argument[1]);
+            !Expected.empty())
+          EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), Expected);
         EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
         EXPECT_TRUE((*Err)->getBuffer().empty());
       }

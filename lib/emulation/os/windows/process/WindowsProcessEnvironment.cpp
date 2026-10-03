@@ -47,7 +47,7 @@ std::u16string quote(const std::u16string &Input) {
 } // namespace
 
 llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
-                                               const Program &Program,
+                                               Program &Program,
                                                const ProcessOptions &Options) {
   if (Program.Modules.empty() ||
       Program.Modules.size() != Program.Identities.size())
@@ -273,15 +273,27 @@ llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
     if (auto E = Memory.read(Address, Bytes))
       return std::move(E);
   }
+  for (const auto &[Index, Address] : Out.ModuleNames) {
+    auto Name = utf16(Program.Identities[Index].Name);
+    if (!Name)
+      return Name.takeError();
+    auto &Bytes = Out.LoaderMetadata[Address];
+    Bytes.resize((Name->size() + 1) * WideSize);
+    if (auto E = Memory.read(Address, Bytes))
+      return std::move(E);
+  }
   return Out;
 }
 namespace {
-llvm::Error validateEnvironment(AddressSpace &Memory, const Program &Program,
+llvm::Error validateEnvironment(AddressSpace &Memory, Program &Program,
                                 const Environment &Env,
                                 const ExecutionBudget &Budget) {
   for (const auto &[Address, Expected] : Env.LoaderMetadata) {
     if (!Budget.remainingMicroseconds())
       return failure(text::ModuleTimeout);
+    if (Expected.size() > Program.Reads.MetadataBytes)
+      return failure(text::ExportBudget);
+    Program.Reads.MetadataBytes -= Expected.size();
     std::vector<uint8_t> Actual(Expected.size());
     if (auto E = Memory.read(Address, Actual))
       return E;
@@ -316,8 +328,8 @@ llvm::Error snapshotEnvironment(AddressSpace &Memory, Environment &Env) {
   return llvm::Error::success();
 }
 } // namespace
-llvm::Error releaseModuleEnvironment(AddressSpace &Memory,
-                                     const Program &Program, Environment &Env,
+llvm::Error releaseModuleEnvironment(AddressSpace &Memory, Program &Program,
+                                     Environment &Env,
                                      llvm::ArrayRef<ModuleRef> Modules,
                                      const ExecutionBudget &Budget) {
   if (auto E = validateEnvironment(Memory, Program, Env, Budget))
@@ -338,7 +350,7 @@ llvm::Error releaseModuleEnvironment(AddressSpace &Memory,
   }
   return llvm::Error::success();
 }
-llvm::Error updateEnvironment(AddressSpace &Memory, const Program &Program,
+llvm::Error updateEnvironment(AddressSpace &Memory, Program &Program,
                               Environment &Env, const ExecutionBudget &Budget) {
   if (auto E = validateEnvironment(Memory, Program, Env, Budget))
     return E;
@@ -366,6 +378,7 @@ llvm::Error updateEnvironment(AddressSpace &Memory, const Program &Program,
       if (auto E = Memory.write(Env.StringCursor, Bytes))
         return E;
       Env.ModuleNames.emplace(I, Env.StringCursor);
+      Env.LoaderMetadata.emplace(Env.StringCursor, Bytes);
       Env.StringCursor += Size;
     }
     for (const auto &[Offset, Value] :

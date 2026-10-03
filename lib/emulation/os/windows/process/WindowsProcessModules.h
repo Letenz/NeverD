@@ -94,13 +94,12 @@ resolveExport(Program &Program, size_t Module, llvm::StringRef Name,
               std::optional<uint16_t> Ordinal, const ExecutionBudget &Budget,
               ExecutionBackend *CPU = nullptr, ForwardModule Load = {});
 llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
-                                               const Program &Program,
+                                               Program &Program,
                                                const ProcessOptions &Options);
-llvm::Error updateEnvironment(AddressSpace &Memory, const Program &Program,
+llvm::Error updateEnvironment(AddressSpace &Memory, Program &Program,
                               Environment &Environment,
                               const ExecutionBudget &Budget);
-llvm::Error releaseModuleEnvironment(AddressSpace &Memory,
-                                     const Program &Program,
+llvm::Error releaseModuleEnvironment(AddressSpace &Memory, Program &Program,
                                      Environment &Environment,
                                      llvm::ArrayRef<ModuleRef> Modules,
                                      const ExecutionBudget &Budget);

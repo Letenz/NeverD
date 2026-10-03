@@ -18,6 +18,26 @@ DWORD entry(void) {
   ExitProcess(ExitStatus);
 #else
   const DWORD Mode = mode();
+  volatile ULONG_PTR Frame[StackWords];
+  for (DWORD I = 0; I < StackWords; ++I)
+    Frame[I] = Seed + I;
+  if (Mode == ChangedLoaderMode) {
+    ULONG_PTR Peb = loadPointer(teb(), TebPEB);
+    ULONG_PTR Ldr = loadPointer((void *)Peb, PebLdr);
+    *(ULONG_PTR *)(Ldr + LdrLoadList) = 0;
+  }
+  if (Mode == ChangedTLSMode)
+    *(ULONG_PTR *)(teb() + TebTLS) = 0;
+  if (Mode == RepeatMode) {
+    for (DWORD I = 0; I < RepeatCount; ++I) {
+      void *M = LoadLibraryA(MiddleFile);
+      CHECK(M);
+      probe(M, Seed + 1);
+      CHECK(FreeLibrary(M));
+      CHECK(!GetModuleHandleW(MiddleName) && !GetModuleHandleW(LeafName));
+    }
+    ExitProcess(ExitStatus);
+  }
   CHECK(!GetModuleHandleW(MiddleName));
   if (Mode == ErrorsMode) {
     SetLastError(LastErrorSeed);
@@ -29,12 +49,15 @@ DWORD entry(void) {
   }
   void *Top = 0, *Leaf = 0;
   if (Mode == ForwardedMode || Mode == RepeatedForwardMode ||
-      Mode == MissingForwardMode) {
+      Mode == MissingForwardMode || Mode == ForwardExitMode ||
+      Mode == DeepMissingMode) {
     Top = LoadLibraryW(TopName);
     CHECK(Top && !GetModuleHandleW(MiddleName));
     ProbeFunction F = (ProbeFunction)GetProcAddress(
-        Top, Mode == MissingForwardMode ? MissingForwardName : ForwardName);
-    if (Mode == MissingForwardMode) {
+        Top, Mode == MissingForwardMode ? MissingForwardName
+             : Mode == DeepMissingMode  ? DeepMissingName
+                                        : ForwardName);
+    if (Mode == MissingForwardMode || Mode == DeepMissingMode) {
       observation(MissingTag, F != 0);
       observation(ErrorTag, GetLastError());
       observation(MiddleTag, GetModuleHandleW(MiddleName) != 0);
@@ -45,6 +68,8 @@ DWORD entry(void) {
     if (Mode == RepeatedForwardMode)
       CHECK(GetProcAddress(Top, ForwardName) == (void *)F);
     CHECK(F && F() == Seed + 1);
+    if (Mode == ForwardExitMode)
+      ExitProcess(ExitStatus);
   }
   if (Mode == SharedMode) {
     Leaf = LoadLibraryW(LeafName);
@@ -66,6 +91,11 @@ DWORD entry(void) {
   }
   CHECK(Middle);
   probe(Middle, Seed + 1);
+  if (Mode == StaleCodeMode) {
+    ProbeFunction F = (ProbeFunction)GetProcAddress(Middle, ProbeName);
+    CHECK(F && FreeLibrary(Middle));
+    F();
+  }
   if (Mode == ProcessExitMode)
     ExitProcess(ExitStatus);
   if (Mode == ReferencesMode) {
@@ -97,6 +127,10 @@ DWORD entry(void) {
     CHECK(FreeLibrary(Middle));
     CHECK(!GetModuleHandleW(MiddleName) && !GetModuleHandleW(LeafName));
   }
+  for (DWORD I = 0; I < StackWords; ++I)
+    CHECK(Frame[I] == Seed + I);
+  if (Mode == ReturnMode)
+    return ExitStatus;
   ExitProcess(ExitStatus);
 #endif
 }

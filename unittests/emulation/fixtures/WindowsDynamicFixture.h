@@ -51,6 +51,40 @@ static DWORD mode(void) {
       return P[1];
   return 0;
 }
+static unsigned char *teb(void) {
+  unsigned char *P;
+#define NEVERD_DYNAMIC_ASM(Name, Text) __asm__(Text : "=r"(P));
+#include "WindowsDynamicCases.def"
+#undef NEVERD_DYNAMIC_ASM
+  return P;
+}
+static ULONG_PTR loadPointer(const void *Base, DWORD Offset) {
+  return *(const ULONG_PTR *)((const unsigned char *)Base + Offset);
+}
+static DWORD inList(ULONG_PTR Head, DWORD LinkOffset, void *Base) {
+  ULONG_PTR Node = loadPointer((void *)Head, 0);
+  for (DWORD I = 0; Node != Head; ++I) {
+    CHECK(Node && I < MaxModules);
+    if (loadPointer((void *)(Node - LinkOffset), ModuleBase) == (ULONG_PTR)Base)
+      return 1;
+    Node = loadPointer((void *)Node, 0);
+  }
+  return 0;
+}
+static void visibility(char Role, void *Base) {
+  if (mode() != VisibilityMode)
+    return;
+  const WCHAR *Name = Role == LeafRole     ? LeafName
+                      : Role == MiddleRole ? MiddleName
+                                           : TopName;
+  const ULONG_PTR Peb = loadPointer(teb(), TebPEB);
+  const ULONG_PTR Ldr = loadPointer((void *)Peb, PebLdr);
+  DWORD Mask = GetModuleHandleW(Name) == Base;
+  Mask |= inList(Ldr + LdrLoadList, 0, Base) << 1;
+  Mask |= inList(Ldr + LdrMemoryList, MemoryLink, Base) << 2;
+  Mask |= inList(Ldr + LdrInitList, InitLink, Base) << 3;
+  observation(VisibilityTag, Mask);
+}
 static void trace(char Role, char Kind, DWORD Reason, void *Reserved) {
   const char Bytes[] = {Role, Kind, ZeroDigit + (char)Reason,
                         ZeroDigit + (Reserved != 0), LineEnd};

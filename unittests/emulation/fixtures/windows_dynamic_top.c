@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "WindowsDynamicFixture.h"
 int dllEntry(void *Base, DWORD Reason, void *Reserved) {
-  trace(TLSKind, DLLKind, Reason, Reserved);
+  trace(TopRole, DLLKind, Reason, Reserved);
+  visibility(TopRole, Base);
   return 1;
 }

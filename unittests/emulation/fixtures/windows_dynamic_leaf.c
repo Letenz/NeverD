@@ -9,8 +9,10 @@ __declspec(dllexport) DWORD Leaf(void) { return ThreadValue; }
 static void tls(void *Base, DWORD Reason, void *Reserved) {
   checkTLS(Reason);
   trace(LeafRole, TLSKind, Reason, Reserved);
+  visibility(LeafRole, Base);
 }
 int dllEntry(void *Base, DWORD Reason, void *Reserved) {
   trace(LeafRole, DLLKind, Reason, Reserved);
+  visibility(LeafRole, Base);
   return !(Reason == AttachReason && mode() == LeafRole);
 }

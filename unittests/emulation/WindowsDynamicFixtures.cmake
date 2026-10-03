@@ -12,6 +12,14 @@ foreach(_export IN LISTS _exports)
 endforeach()
 file(CONFIGURE OUTPUT "${_dynamic_dir}/top.def" CONTENT "${_definition}" @ONLY)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/WindowsDynamicCases.def"
+  _exports REGEX "^NEVERD_DYNAMIC_MIDDLE_EXPORT")
+set(_definition "LIBRARY dynamic-middle.dll\nEXPORTS\n")
+foreach(_export IN LISTS _exports)
+  string(REGEX REPLACE "^NEVERD_DYNAMIC_MIDDLE_EXPORT\\(([A-Za-z0-9_]+), \"([^\"]*)\"\\)" "  \\1 \\2\n" _line "${_export}")
+  string(APPEND _definition "${_line}")
+endforeach()
+file(CONFIGURE OUTPUT "${_dynamic_dir}/middle.def" CONTENT "${_definition}" @ONLY)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/WindowsDynamicCases.def"
   _apis REGEX "^NEVERD_DYNAMIC_API")
 set(_definition "LIBRARY kernel32.dll\nEXPORTS\n")
 foreach(_api IN LISTS _apis)
@@ -45,6 +53,7 @@ foreach(_arch X64 AArch64)
     set(_imports "${_kernel}" "${_dynamic_kernel}")
     set(_link /include:_tls_used)
     if(_module STREQUAL "middle")
+      list(APPEND _link "/def:${_dynamic_dir}/middle.def")
       list(APPEND _imports "${_dir}/dynamic-leaf.lib")
     elseif(_module STREQUAL "top")
       set(_link "/def:${_dynamic_dir}/top.def")
@@ -57,12 +66,12 @@ foreach(_arch X64 AArch64)
         "${_dir}/${_module}.obj" ${_imports}
         "/out:${_dir}/dynamic-${_module}.dll" "/implib:${_dir}/dynamic-${_module}.lib"
       DEPENDS "fixtures/windows_dynamic_${_module}.c" fixtures/WindowsDynamicFixture.h
-        fixtures/WindowsDynamicCases.def "${_dynamic_dir}/top.def" ${_imports}
+        fixtures/WindowsDynamicCases.def "${_dynamic_dir}/top.def" "${_dynamic_dir}/middle.def" ${_imports}
       VERBATIM)
     if(NOT _module STREQUAL "top")
       add_custom_command(OUTPUT "${_dir}/noentry/dynamic-${_module}.dll"
         COMMAND "${NEVERD_PROCESS_LLD_LINK}" /dll /noentry /nodefaultlib /subsystem:console
-          "/machine:${_machine}" /base:0x180000000 /timestamp:0 /include:_tls_used
+          "/machine:${_machine}" /base:0x180000000 /timestamp:0 ${_link}
           "${_dir}/${_module}.obj" ${_imports}
           "/out:${_dir}/noentry/dynamic-${_module}.dll"
         DEPENDS "${_dir}/${_module}.obj" ${_imports} VERBATIM)

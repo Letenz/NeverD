@@ -111,6 +111,7 @@ DWORD entry(void) {
   if (Mode == UnusedArgument[0]) {
     CHECK(!GetProcAddress(Bridge, UnusedName));
     CHECK(GetLastError() == ModuleMissing);
+    ExitProcess(ExitStatus);
   } else if (Mode == CycleArgument[0])
     GetProcAddress(Bridge, CycleName);
   else if (Mode == BadOrdinalArgument[0])

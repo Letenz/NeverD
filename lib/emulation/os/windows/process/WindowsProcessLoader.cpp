@@ -189,10 +189,17 @@ llvm::Expected<Loader::Operation> Loader::start(const LoaderRequest &Request) {
   };
   auto Resolved = resolveExport(P, Index, Request.Name, Request.Ordinal, Budget,
                                 &CPU, Forward);
-  if (!Resolved)
-    return Resolved.takeError();
-  Out.Value = Resolved->Address.value_or(0);
-  Out.Error = Resolved->Error;
+  if (!Resolved) {
+    auto E =
+        llvm::handleErrors(Resolved.takeError(), [&](const ModuleLoadError &F) {
+          Out.Error = F.Code;
+        });
+    if (E)
+      return std::move(E);
+  } else {
+    Out.Value = Resolved->Address.value_or(0);
+    Out.Error = Resolved->Error;
+  }
   if (!Attach.empty()) {
     Out.Initializing = true;
     Out.Notifications =
@@ -233,12 +240,26 @@ llvm::Error Loader::complete(Operation &Op) {
   if (Op.Request.Operation == LoaderRequest::Kind::Export) {
     if (!Op.Root || !current(P, *Op.Root))
       return failure(text::Lifetime);
+    auto Resident = [&](size_t,
+                        llvm::StringRef Name) -> llvm::Expected<size_t> {
+      auto I = findModule(P, Name);
+      if (!I)
+        return llvm::make_error<ModuleLoadError>(ErrorModuleNotFound);
+      return *I;
+    };
     auto Resolved = resolveExport(P, Op.Root->Index, Op.Request.Name,
-                                  Op.Request.Ordinal, Budget, &CPU);
-    if (!Resolved)
-      return Resolved.takeError();
-    Op.Value = Resolved->Address.value_or(0);
-    Op.Error = Resolved->Error;
+                                  Op.Request.Ordinal, Budget, &CPU, Resident);
+    if (!Resolved) {
+      auto E = llvm::handleErrors(
+          Resolved.takeError(),
+          [&](const ModuleLoadError &F) { Op.Error = F.Code; });
+      if (E)
+        return E;
+      Op.Value = 0;
+    } else {
+      Op.Value = Resolved->Address.value_or(0);
+      Op.Error = Resolved->Error;
+    }
   }
   return llvm::Error::success();
 }
