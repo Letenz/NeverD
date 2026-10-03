@@ -15530,3 +15530,195 @@ TEST(SwiftValueWitnessCalls, ScalarInferenceRechecksFrameBinding) {
     EXPECT_EQ(bool(Hint), Case == 0) << Reason;
   }
 }
+
+namespace {
+SwiftTypeMetadataFixture swiftLabeledNestedTupleFixture(bool Generic) {
+  auto F = Generic ? swiftTupleContainerRecipeFixture(Arch::AArch64)
+                   : swiftNominalTupleTypeFixture(Arch::AArch64);
+  const std::string Base =
+      Generic ? "_$ss23_ContiguousArrayStorageCys11AnyHashableV_"
+                "12CoreGraphics7CGFloatV4from_AG2tottG"
+              : "_$ss11AnyHashableV_12CoreGraphics7CGFloatV4from_AE2tott";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  F.Image.ImportPtrSlots.clear();
+  F.Image.ImportStorageSlots.clear();
+  F.Image.DyldBindSlots.clear();
+  const unsigned Shift = Generic ? 8 : 0;
+  if (Generic)
+    EXPECT_TRUE(F.Image.recordDyldBindSlot(
+        F.DescriptorSlot, "_$ss23_ContiguousArrayStorageCMn", 0,
+        "/usr/lib/swift/libswiftCore.dylib", false));
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.DescriptorSlot + Shift, "_$ss11AnyHashableVMn", 0,
+      "/usr/lib/swift/libswiftCore.dylib", false));
+  EXPECT_TRUE(F.Image.recordDyldBindSlot(
+      F.DescriptorSlot + Shift + 8, "_$s12CoreGraphics7CGFloatVMn", 0,
+      "/usr/lib/swift/libswiftCoreFoundation.dylib", false));
+  auto &Data = F.Image.Segments[0].Data;
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  const unsigned Prefix = Generic ? 17 : 11;
+  const llvm::StringRef Suffix = Generic ? "4from_AC2tottG" : "4from_AB2tott";
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000,
+                                   Prefix + Suffix.size());
+  std::memcpy(Type + Prefix, Suffix.data(), Suffix.size());
+  Type[Prefix + Suffix.size()] = 0;
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftNestedTupleKeepsLabelsAndRepeatedDescriptor) {
+  for (bool Generic : {false, true}) {
+    SCOPED_TRACE(Generic);
+    auto F = swiftLabeledNestedTupleFixture(Generic);
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference);
+    ASSERT_TRUE(Proof);
+    EXPECT_EQ(Proof->Descriptors.size(), Generic ? 3U : 2U);
+    EXPECT_EQ(Proof->TypeReference.size(), Generic ? 31U : 24U);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    const auto Source = renderObjCSwiftTypeMetadataHelpers(
+        F.Image, Bound.SwiftTypeMetadataPairs, Names);
+    EXPECT_NE(Source.find("__asm__(\"_$s12CoreGraphics7CGFloatVMn\")"),
+              std::string::npos);
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftFlatTupleLabelDoesNotBecomeASubstitution) {
+  for (bool Generic : {false, true}) {
+    for (const std::string Label : {"columnA", "last"}) {
+      SCOPED_TRACE(Generic);
+      SCOPED_TRACE(Label);
+      auto F = swiftLabeledNestedTupleFixture(Generic);
+      const std::string Suffix =
+          std::to_string(Label.size()) + Label + (Generic ? "tG" : "t");
+      const std::string Base =
+          std::string(Generic
+                          ? "_$ss23_ContiguousArrayStorageCys11AnyHashableV_"
+                            "12CoreGraphics7CGFloatV"
+                          : "_$ss11AnyHashableV_12CoreGraphics7CGFloatV") +
+          Suffix;
+      F.Image.Symbols[0].Name = Base + "MR";
+      F.Image.Symbols[1].Name = Base + "Md";
+      const unsigned Prefix = Generic ? 17 : 11;
+      auto &Data = F.Image.Segments[0].Data;
+      auto *Type = Data.data() + F.TypeReference - 0x1000;
+      std::memcpy(Type + Prefix, Suffix.data(), Suffix.size());
+      Type[Prefix + Suffix.size()] = 0;
+      llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000,
+                                       Prefix + Suffix.size());
+      EXPECT_TRUE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+    }
+  }
+}
+
+TEST(ObjCSourceBindings, SwiftNestedTupleRejectsStaleLabelsAndSubstitutions) {
+  for (bool Generic : {false, true})
+    for (unsigned Mutation = 0; Mutation < 24; ++Mutation) {
+      SCOPED_TRACE(Generic);
+      SCOPED_TRACE(Mutation);
+      auto F = swiftLabeledNestedTupleFixture(Generic);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      auto *Type = F.Image.Segments[0].Data.data() + F.TypeReference - 0x1000;
+      const unsigned Prefix = Generic ? 17 : 11;
+      const unsigned Length = Generic ? 31 : 24;
+      const va_t CGFloatSlot = F.DescriptorSlot + (Generic ? 16 : 8);
+      std::string Base =
+          F.Image.Symbols[0].Name.substr(0, F.Image.Symbols[0].Name.size() - 2);
+      switch (Mutation) {
+      case 0:
+        Type[Prefix + 1] = 'g';
+        break;
+      case 1:
+        Type[Prefix + 10] = 'x';
+        break;
+      case 2:
+        Type[Prefix + 7] = 'A';
+        break;
+      case 3:
+        Type[Prefix + 7] = Generic ? 'B' : 'C';
+        break;
+      case 4:
+        Type[Prefix] = '9';
+        break;
+      case 5:
+        Type[Prefix] = '0';
+        break;
+      case 6:
+        Type[Prefix + 5] = 't';
+        break;
+      case 7:
+        Type[Length - 1] = 'S';
+        break;
+      case 8:
+        Type[Length - 1] = 0;
+        break;
+      case 9:
+        Type[Length] = 't';
+        break;
+      case 10:
+        F.Image.DyldBindSlots.at(CGFloatSlot).WeakImport = true;
+        break;
+      case 11:
+        F.Image.DyldBindSlots.at(CGFloatSlot).Addend = 8;
+        break;
+      case 12:
+        F.Image.DyldBindSlots.at(CGFloatSlot).Module =
+            "/usr/lib/swift/libswiftCoreGraphics.dylib";
+        break;
+      case 13:
+        F.Image.Segments[2].ReadOnlyAfterRelocations = false;
+        break;
+      case 14:
+        Base.replace(Base.find("4from"), 5, "4name");
+        break;
+      case 15:
+        Base.replace(Base.find("2to"), 3, "2as");
+        break;
+      case 16:
+        Base.replace(Base.find("7CGFloat"), 8, "7CGPoint");
+        break;
+      case 17:
+        Base.replace(Base.find("11AnyHashable"), 13, "6Double");
+        break;
+      case 18:
+        Type[0] = 9;
+        break;
+      case 19:
+        Type[6] = 9;
+        break;
+      case 20:
+        llvm::support::endian::write32le(F.Image.Segments[0].Data.data() +
+                                             F.Reference + 4 - 0x1000,
+                                         Length - 1);
+        break;
+      case 21:
+        F.Image.Segments[1].Data[F.Cache - 0x2000] = 1;
+        break;
+      case 22:
+        Base += "Sg";
+        break;
+      case 23:
+        // Concatenating descriptor spellings changes the substitution index.
+        // A matching but wrong expanded spelling must not bypass tree proof.
+        Base = Generic
+                   ? "_$ss23_ContiguousArrayStorageCys11AnyHashableV_"
+                     "12CoreGraphics7CGFloatV4from_AC2tottG"
+                   : "_$ss11AnyHashableV_12CoreGraphics7CGFloatV4from_AB2tott";
+        break;
+      }
+      F.Image.Symbols[0].Name = Base + "MR";
+      F.Image.Symbols[1].Name = Base + "Md";
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+        EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+    }
+}
