@@ -39,7 +39,8 @@ NEVERD_LINUX_FIXTURE_TEXT(Message, "linux process ok\n")
 NEVERD_LINUX_FIXTURE_TEXT(Environment, "NEVERD_GUEST=explicit")
 NEVERD_LINUX_FIXTURE_TEXT(ExecutableName, "fixture")
 NEVERD_LINUX_FIXTURE_TEXT(Tail, "tail")
-NEVERD_LINUX_FIXTURE_TEXT(MissingTools, "Clang and ld.lld are required for ELF process fixtures")
+NEVERD_LINUX_FIXTURE_TEXT(
+    MissingTools, "Clang and ld.lld are required for ELF process fixtures")
 #endif
 #ifdef NEVERD_LINUX_FIXTURE_BYTES
 NEVERD_LINUX_FIXTURE_BYTES(BinaryOutput, 0, 0xff, 0x7f)
