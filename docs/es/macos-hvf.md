@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3cb657d51407ff98150288cf4af4240ae72b519fe469a26f1103ca1733af1e93 -->
+<!-- i18n-source: 3d2e1d7ba9709cac62c969fd06f4cfe7d5312c872f9339afb0161bc9643c4e33 -->
 
 [← Índice de documentación](README.md)
 
@@ -102,3 +102,5 @@ Antes de cada método, la acción sube su plan inmutable y una instantánea del 
 El workflow completo `Native macOS HVF` también acepta `source-ref` opcional. Por defecto usa el commit del workflow; cualquier valor explícito debe ser un SHA completo. Los trabajos nativos y el auditor agregado descargan y verifican el mismo código. La auditoría coteja las pruebas con el commit probado, aunque el controlador tenga otra revisión.
 
 Para `hosted-intel`, el workflow completo acepta `intel-image=macos-15-intel` (predeterminado) o `macos-26-intel`, incluidos en las [imágenes oficiales de runners](https://github.com/actions/runner-images). Esto permite comparar explícitamente los entornos anfitriones con el mismo `source-ref`; la imagen también cambia el sistema, el SDK y las herramientas. Los requisitos de VM/vCPU, transporte nativo, CR8, CPU completo y Darwin se mantienen. Elegir una imagen no demuestra por sí solo estabilidad ni una corrección de ejecución.
+
+`sample-active-child=true` conserva opcionalmente una instantánea sellada tras cinco segundos de ejecución de un método: un segundo de muestreo de pilas del proceso hijo nativo cuya identidad se ha verificado, hasta 1 MiB del final de su registro actual y el estado del anfitrión. El valor predeterminado es `false`. El muestreo admite como máximo 166 métodos por job para respetar el límite de artifacts; el comando tiene un plazo de cinco segundos y el informe un límite de 1 MiB. Los fallos de identificación y captura quedan registrados. La carga usa un directorio inmutable separado; si falla, cancela el proceso hijo nativo y hace fallar la acción. El muestreo altera la planificación y se etiqueta como evidencia parcial instrumentada. No reinicia el temporizador original del método ni sustituye la validación completa.

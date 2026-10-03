@@ -30,6 +30,10 @@ on:
         description: One original parameter index, or -1 for all; requires method-count=1
         default: '-1'
         type: string
+      sample-active-child:
+        description: Capture one native stack and log snapshot after five seconds per method
+        default: false
+        type: boolean
 permissions:
   contents: read
 jobs:
@@ -84,7 +88,7 @@ jobs:
         working-directory: diagnostics
         run: |
           python3 -m unittest scripts.tests.test_diagnose_hvf_methods -q
-          node --test .github/actions/hvf-intel-diagnostic/run.test.cjs
+          node --test .github/actions/hvf-intel-diagnostic/*.test.cjs
       - name: Install matching hosted build and fixture tools
         run: |
           brew install ninja llvm lld
@@ -137,6 +141,7 @@ jobs:
           first-method: ${{ inputs.first-method }}
           method-count: ${{ inputs.method-count }}
           case-index: ${{ inputs.case-index }}
+          sample-active-child: ${{ inputs.sample-active-child && 'true' || 'false' }}
       - name: Preserve incomplete diagnostics when the host remains reachable
         if: always()
         timeout-minutes: 2

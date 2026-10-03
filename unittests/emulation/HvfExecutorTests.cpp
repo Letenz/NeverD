@@ -285,7 +285,10 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
         Clock::now() + std::chrono::milliseconds(Kind == Deadline ? 50 : 2000),
         &Stop};
     bool NativeReturned = false;
+    const char *Phase = "admission";
+    int64_t EntryBudgetMicroseconds = 0;
     auto E = Binding.execute(Control, [&](auto &Native) -> llvm::Error {
+      Phase = "VMCS preparation";
       auto Signal = llvm::scope_exit([&] { Entered.set_value(); });
       uint64_t Controls = 0;
       if (auto S = hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_CTRL_CPU_BASED,
@@ -297,6 +300,11 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
       InterruptCPU = Native.cpu();
       Signal.release();
       Entered.set_value();
+      Phase = "native entry";
+      EntryBudgetMicroseconds =
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              Control.Deadline - Clock::now())
+              .count();
       return Native.run(Control, [&](bool Cancelled) -> llvm::Error {
         NativeReturned = true;
         EXPECT_TRUE(Cancelled);
@@ -314,10 +322,12 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
       Entered.set_value();
     if (Stopper.joinable())
       Stopper.join();
-    EXPECT_TRUE(NativeReturned);
-    EXPECT_TRUE(E.isA<MachineInterruptedError>())
-        << llvm::toString(std::move(E));
-    llvm::consumeError(std::move(E));
+    const bool Interrupted = E.isA<MachineInterruptedError>();
+    const auto Failure = llvm::toString(std::move(E));
+    EXPECT_TRUE(NativeReturned)
+        << "phase=" << Phase << "; entry_budget_us=" << EntryBudgetMicroseconds
+        << "; interrupted=" << Interrupted << "; error=" << Failure;
+    EXPECT_TRUE(Interrupted) << Failure;
     ASSERT_EQ(llvm::toString(Prepare(RetryPC)), "");
     EXPECT_EQ(State.reg(X64Register::PC), RetryPC + 1);
     EXPECT_EQ(State.reg(X64Register::FLAGS), x64::InitialFlags);

@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3cb657d51407ff98150288cf4af4240ae72b519fe469a26f1103ca1733af1e93 -->
+<!-- i18n-source: 3d2e1d7ba9709cac62c969fd06f4cfe7d5312c872f9339afb0161bc9643c4e33 -->
 
 [← 文件索引](README.md)
 
@@ -102,3 +102,5 @@ CPU 執行前，`scripts/prepare_hvf_batches.py` 保存完整清單、各片所�
 完整的 `Native macOS HVF` 工作流程也接受選用的 `source-ref`，預設使用工作流程所在提交，指定時必須提供完整 SHA。原生工作與彙總稽核皆會檢出並驗證同一份原始碼；即使控制器版本不同，稽核仍依受測原始碼提交核對證據。
 
 選擇 `hosted-intel` 時，完整工作流程支援 `intel-image=macos-15-intel`（預設）或 `macos-26-intel`，兩者均列於[官方 runner 映像清單](https://github.com/actions/runner-images)。可保持相同的 `source-ref`，明確比較宿主環境；映像也會改變系統、SDK 與工具鏈。VM/vCPU、原生傳輸、CR8、完整 CPU 與 Darwin 的要求不變。選擇映像本身不能證明穩定性或執行階段修正。
+
+`sample-active-child=true` 可在方法執行五秒後保存一次封存的執行中快照：對已核驗身分的原生子程序取樣一秒呼叫堆疊、擷取最多 1 MiB 的目前日誌尾端，並記錄主機狀態。預設值為 `false`。為遵守 artifact 數量限制，啟用取樣的每個作業最多選取 166 個方法；取樣命令限時五秒，報告上限 1 MiB。身分核驗與蒐集失敗都會記錄。執行中快照從獨立的不可變目錄上傳；上傳失敗會取消原生子程序並使 action 失敗。取樣會改變排程，因此標記為帶取樣的部分證據，不重設原始方法計時，也不能取代完整驗收。
