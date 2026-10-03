@@ -252,6 +252,29 @@ public:
             ByteFact::Entry, static_cast<int64_t>(TRI.LinkRegister + I)};
     for (unsigned I = 0; I < 8; ++I)
       Initial.Registers[TRI.StackPointer + I] = {ByteFact::Frame, 0, I, true};
+    RequiredExitRegisters = Initial.Registers;
+    // Entry identity and call preservation are different facts. A volatile
+    // word can be forwarded directly through an ABI argument (not listed in
+    // LowIR CALL inputs), or saved privately and reloaded after a call.
+    // Track its original bytes without requiring the callee to preserve them.
+    // This does not declare an entry parameter: consumers still need an
+    // independent, complete source-visible use of the same incoming word.
+    const auto EntryWord = [&](uint64_t Register) {
+      if (!TRI.isFrameOrLinkReg(Register))
+        for (unsigned I = 0; I < 8; ++I)
+          Initial.Registers.try_emplace(
+              Register + I,
+              ByteFact{ByteFact::Entry, static_cast<int64_t>(Register + I)});
+    };
+    for (uint64_t Register : TRI.GeneralRegs)
+      EntryWord(Register);
+    // AArch64 describes its scalar bank in the authoritative subregister
+    // table; GeneralRegs is populated only on x86. Vector subregisters do
+    // not supply integer entry identities.
+    if (Architecture == Arch::AArch64)
+      for (const auto &Register : TRI.SubRegs)
+        if (Register.WideSize == 8 && !TRI.isVectorReg(Register.WideRegOff))
+          EntryWord(Register.WideRegOff);
   }
 
   State Initial;
@@ -329,8 +352,8 @@ public:
       return First.Value;
     };
     auto IsRestored = [&] {
-      return std::all_of(Initial.Registers.begin(), Initial.Registers.end(),
-                         [&](const auto &Item) {
+      return std::all_of(RequiredExitRegisters.begin(),
+                         RequiredExitRegisters.end(), [&](const auto &Item) {
                            return lookup(Current.Registers, Item.first) ==
                                   Item.second;
                          });
@@ -1119,6 +1142,7 @@ private:
   const NativeSourceCalls &Calls;
   const TargetRegInfo &TRI;
   std::set<uint64_t> Preserved;
+  RegisterFacts RequiredExitRegisters;
   bool TerminalOnly;
   bool TrackStackArguments;
   std::set<int64_t> IncomingStackSlots;

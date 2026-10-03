@@ -1,7 +1,10 @@
 #include "gtest/gtest.h"
 
+#include "neverd/ir/SourceABI.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/SourceFrameAnalysis.h"
 #include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
 
@@ -98,6 +101,180 @@ NativeSourceCalls callsAt(va_t Address, const SourceFunctionTypeHint &Signature,
   return {{*nativeSourceCallKey(Call), Contract}};
 }
 } // namespace
+
+TEST(SourceFrameAnalysis, VolatileEntryIdentitySurvivesOnlyCompleteSpills) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mutation);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Carrier =
+          Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::R10;
+      const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+      const auto FrameBytes = Architecture == Arch::AArch64 ? 32 : 24;
+      const auto Input = NdVar::reg(Carrier, 8);
+      SourceFunctionTypeHint Empty;
+      Empty.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Empty.ReturnType = NdType::makeVoid();
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Empty, Architecture, Error));
+      auto Forward = Empty;
+      Forward.Parameters.push_back(
+          {"input",
+           NdType::makeInt(8),
+           {SourceABICarrierKind::IntegerRegister, Carrier, 0, 8}});
+      LowFunc F;
+      F.Entry = 0x1000;
+      LowBlock B;
+      B.Id = 0;
+      B.StartAddr = F.Entry;
+      B.Ops = {op(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(FrameBytes, 8)},
+                  0x1000),
+               op(NdOp::STORE, {}, {Stack, Input}, 0x1004),
+               op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)}, 0x1008),
+               op(NdOp::LOAD, Input, {Stack}, 0x100c),
+               op(NdOp::CALL, {}, {NdVar::cst(0x3000, 8)}, 0x1010),
+               op(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(FrameBytes, 8)},
+                  0x1014),
+               op(NdOp::RETURN, {}, {}, 0x1018)};
+      NativeSourceCallContract First, Second;
+      First.Signature = &Empty;
+      Second.Signature = &Forward;
+      NativeSourceCalls Calls{{*nativeSourceCallKey(B.Ops[2]), First},
+                              {*nativeSourceCallKey(B.Ops[4]), Second}};
+      if (Mutation == 1)
+        B.Ops[3] = op(NdOp::COPY, Input, {NdVar::scalar(0, 8)}, 0x100c);
+      if (Mutation == 2)
+        B.Ops[3].Output.Size = 4;
+      if (Mutation == 3)
+        B.Ops[1].Inputs[1].Size = 4;
+      if (Mutation == 4) {
+        B.Ops[3] = op(NdOp::COPY, Input, {Input}, 0x100c);
+      }
+      if (Mutation == 5) {
+        Forward.Parameters[0].Type = NdType::makeInt(4);
+        Forward.Parameters[0].Location.ValueBytes = 4;
+      }
+      if (Mutation == 6)
+        B.Ops.insert(B.Ops.begin() + 3,
+                     op(NdOp::STORE, {}, {Stack, NdVar::scalar(0, 1)}, 0x100a));
+      if (Mutation == 7)
+        B.Ops.insert(B.Ops.begin() + 1,
+                     op(NdOp::COPY, Input, {NdVar::scalar(0, 4)}, 0x1002));
+      if (Mutation == 8) {
+        // An unrelated callee-save write must still invalidate restoration.
+        const auto Preserved =
+            Architecture == Arch::AArch64 ? a64reg::X19 : x86reg::RBX;
+        B.Ops.insert(B.Ops.begin(), op(NdOp::COPY, NdVar::reg(Preserved, 8),
+                                       {NdVar::scalar(0, 8)}, 0x1000));
+      }
+      if (TRI.LinkRegister) {
+        const auto Address = NdVar::tmp(300, 8);
+        const auto Link = NdVar::reg(TRI.LinkRegister, 8);
+        const auto Save =
+            std::find_if(B.Ops.begin(), B.Ops.end(),
+                         [](const LowOp &O) { return O.Opcode == NdOp::CALL; });
+        B.Ops.insert(Save, {op(NdOp::INT_ADD, Address,
+                               {Stack, NdVar::scalar(16, 8)}, 0x1006),
+                            op(NdOp::STORE, {}, {Address, Link}, 0x1006)});
+        B.Ops.insert(
+            B.Ops.end() - 2,
+            {op(NdOp::INT_ADD, Address, {Stack, NdVar::scalar(16, 8)}, 0x1012),
+             op(NdOp::LOAD, Link, {Address}, 0x1012)});
+        B.Ops.back().addInput(Link);
+      }
+      F.Blocks.push_back(std::move(B));
+      std::set<uint64_t> Used;
+      const bool Valid =
+          restoresNativeSourceState(F, Architecture, Calls, &Used);
+      if (Mutation == 8) {
+        EXPECT_FALSE(Valid);
+      } else {
+        ASSERT_TRUE(Valid);
+        EXPECT_EQ(Used.count(Carrier), Mutation == 0 ? 1U : 0U);
+      }
+    }
+}
+
+TEST(SourceFrameAnalysis, VolatileEntryUsesMeetEveryPathAndLoopBackedge) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mutation);
+      const auto Carrier =
+          Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::R10;
+      const auto Input = NdVar::reg(Carrier, 8);
+      SourceFunctionTypeHint ABI;
+      ABI.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      ABI.ReturnType = NdType::makeVoid();
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(ABI, Architecture, Error));
+      ABI.Parameters.push_back(
+          {"input",
+           NdType::makeInt(8),
+           {SourceABICarrierKind::IntegerRegister, Carrier, 0, 8}});
+      LowFunc F;
+      F.Entry = 0x1000;
+      F.Blocks.resize(5);
+      for (unsigned I = 0; I < 5; ++I) {
+        F.Blocks[I].Id = I;
+        F.Blocks[I].StartAddr = 0x1000 + 0x100 * I;
+      }
+      F.Blocks[0].Succs = {1, 2};
+      F.Blocks[0].Ops = {
+          op(NdOp::COPY, NdVar::tmp(300, 8), {NdVar::scalar(0, 8)}, 0x1000)};
+      for (unsigned I : {1, 2}) {
+        F.Blocks[I].Preds = {0};
+        F.Blocks[I].Succs = {3};
+        F.Blocks[I].Ops = {
+            op(NdOp::COPY, Input, {Input}, F.Blocks[I].StartAddr)};
+      }
+      F.Blocks[3].Preds = {1, 2};
+      F.Blocks[3].Succs = {4};
+      F.Blocks[3].Ops = {op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)}, 0x1300)};
+      F.Blocks[4].Preds = {3};
+      F.Blocks[4].Ops = {op(NdOp::RETURN, {}, {}, 0x1400)};
+      const auto &TRI = getTargetRegInfo(Architecture);
+      if (TRI.LinkRegister) {
+        const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+        const auto Link = NdVar::reg(TRI.LinkRegister, 8);
+        F.Blocks[0].Ops = {
+            op(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(32, 8)}, 0x1000),
+            op(NdOp::STORE, {}, {Stack, Link}, 0x1004)};
+        F.Blocks[4].Ops = {
+            op(NdOp::LOAD, Link, {Stack}, 0x1400),
+            op(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(32, 8)}, 0x1404),
+            op(NdOp::RETURN, {}, {Link}, 0x1408)};
+      } else {
+        const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+        F.Blocks[0].Ops = {
+            op(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(24, 8)}, 0x1000)};
+        F.Blocks[4].Ops.insert(
+            F.Blocks[4].Ops.begin(),
+            op(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(24, 8)}, 0x1400));
+      }
+      NativeSourceCallContract Call;
+      Call.Signature = &ABI;
+      NativeSourceCalls Calls{{*nativeSourceCallKey(F.Blocks[3].Ops[0]), Call}};
+      if (Mutation == 1 || Mutation == 2)
+        F.Blocks[1].Ops[0] =
+            op(NdOp::COPY, NdVar::reg(Carrier, Mutation == 1 ? 8 : 4),
+               {NdVar::scalar(0, Mutation == 1 ? 8 : 4)}, 0x1100);
+      if (Mutation == 3) {
+        F.Blocks[1].Ops[0].Inputs[0] =
+            NdVar::reg(getTargetRegInfo(Architecture).IntParamRegs[0], 8);
+      }
+      if (Mutation == 4) {
+        F.Blocks[3].Preds.push_back(3);
+        F.Blocks[3].Succs.push_back(3);
+      }
+      if (Mutation == 5)
+        std::reverse(F.Blocks.begin(), F.Blocks.end());
+      std::set<uint64_t> Used;
+      ASSERT_TRUE(restoresNativeSourceState(F, Architecture, Calls, &Used));
+      EXPECT_EQ(Used.count(Carrier), Mutation == 0 || Mutation == 5 ? 1U : 0U);
+    }
+}
 
 TEST(SourceFrameAnalysis,
      ReturnsTheOriginalDefinitionWithoutPublishingAnAddress) {

@@ -1,6 +1,7 @@
 #include "../../../lib/loader/Swift/SwiftBooleanProjection.h"
 #include "../../../lib/pipeline/NativeSourcePreservation.h"
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
+#include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceProjection.h"
 #include "../../../lib/sdk/capi/SwiftMangledSourceABI.h"
 #include "CFunctionParameterCallFixture.h"
@@ -3311,14 +3312,18 @@ TEST(NativeSourceHints, VoidContractsPropagateAcrossExactNativeCallees) {
 }
 
 TEST(NativeSourceHints, ImplicitCallInputsRequireCompleteEntryByteEvidence) {
-  for (auto Architecture : {Arch::AArch64, Arch::X64})
+  for (const auto [Architecture, Volatile] :
+       {std::pair{Arch::AArch64, false}, std::pair{Arch::AArch64, true},
+        std::pair{Arch::X64, false}, std::pair{Arch::X64, true}})
     for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
       SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Volatile);
       SCOPED_TRACE(Mutation);
       NativeVoidFixture F(Architecture);
       F.useNativeVoidCallee();
-      const auto Context =
-          Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::RBX;
+      const auto Context = Architecture == Arch::AArch64
+                               ? (Volatile ? a64reg::X8 : a64reg::X20)
+                               : (Volatile ? x86reg::R10 : x86reg::RBX);
       auto &Call = F.Med.Blocks[0].Ops[0];
       auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
       Hint->Signature.Parameters.push_back(
@@ -3376,21 +3381,27 @@ TEST(NativeSourceHints, ImplicitCallInputsRequireCompleteEntryByteEvidence) {
 }
 
 TEST(NativeSourceHints, TailContextSurvivesNativeInferenceAndRelifting) {
-  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+  for (const auto [Architecture, Volatile] :
+       {std::pair{Arch::AArch64, false}, std::pair{Arch::AArch64, true},
+        std::pair{Arch::X64, false}, std::pair{Arch::X64, true}}) {
     SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    SCOPED_TRACE(Volatile);
     NativeFixture F(Architecture);
-    const auto ContextRegister =
-        Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::RBX;
+    const auto ContextRegister = Architecture == Arch::AArch64
+                                     ? (Volatile ? a64reg::X8 : a64reg::X20)
+                                     : (Volatile ? x86reg::R10 : x86reg::RBX);
     auto &Bytes = F.Image.Segments[0].Data;
     if (Architecture == Arch::AArch64) {
       // b helper; helper: add x0, x0, x20; ret
       llvm::support::endian::write32le(Bytes.data(), 0x14000010);
-      llvm::support::endian::write32le(Bytes.data() + 0x40, 0x8b140000);
+      llvm::support::endian::write32le(Bytes.data() + 0x40,
+                                       Volatile ? 0x8b080000 : 0x8b140000);
       llvm::support::endian::write32le(Bytes.data() + 0x44, 0xd65f03c0);
     } else {
       // jmp helper; helper: lea rax, [rdi + rbx]; ret
       const uint8_t Jump[] = {0xe9, 0x3b, 0, 0, 0};
-      const uint8_t Body[] = {0x48, 0x8d, 0x04, 0x1f, 0xc3};
+      const uint8_t Body[] = {uint8_t(Volatile ? 0x4a : 0x48), 0x8d, 0x04,
+                              uint8_t(Volatile ? 0x17 : 0x1f), 0xc3};
       std::copy(std::begin(Jump), std::end(Jump), Bytes.begin());
       std::copy(std::begin(Body), std::end(Body), Bytes.begin() + 0x40);
     }
@@ -3463,6 +3474,76 @@ TEST(NativeSourceHints, TailContextSurvivesNativeInferenceAndRelifting) {
     }
     EXPECT_EQ(Verified, 2U);
   }
+}
+
+TEST(NativeSourceHints, ForwardedSwiftResultAddressIsAnObservedEntryInput) {
+  using namespace immutable_native_call_test;
+  constexpr va_t ImportSlot = runtime_function_address_test::Slot;
+  Fixture F;
+  const std::string Name = "_$ss11AnyHashableVyABxcSHRzlufC";
+  F.Image.ImportPtrSlots[ImportSlot] = Name;
+  F.Image.DyldBindSlots[ImportSlot] = {
+      Name, 0, "/usr/lib/swift/libswiftCore.dylib", false};
+  F.Image.Symbols[0] = {"forward_result", Entry, 20, true};
+  // Only a normal prologue, the original BL, and the epilogue. The incoming
+  // x8 result address is observed by the complete Swift call ABI, never by
+  // an explicit LowIR input or an assumed entry signature.
+  const uint32_t Words[] = {0xa9bf7bfd, 0x910003fd, 0x9400003e, 0xa8c17bfd,
+                            0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {Entry};
+  F.Result = Pipeline().run(F.Image, F.Context, Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low() && F.med() && F.high());
+  const auto Audit = std::find_if(
+      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+      [&](const auto &A) { return A.Entry == Entry; });
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  std::string Error;
+  const auto Hint = inferNativeSourceTypeHint(F.Image, *F.med(), *F.high(),
+                                              *Audit, Error, F.low());
+  ASSERT_TRUE(Hint) << Error;
+  ASSERT_EQ(Hint->Parameters.size(), 4U);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_EQ(Hint->Parameters[3].Location.RegisterOffset, a64reg::X8);
+  EXPECT_EQ(Hint->Parameters[3].Location.ValueBytes, 8U);
+  // This is an internal source summary, not a guessed external Swift entry.
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::NativeAnalysis);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::C);
+  Options.SourceTypeHints.emplace(Entry, *Hint);
+  F.Result = Pipeline().run(F.Image, F.Context, Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.high() && F.high()->SourceTypeHint);
+  ASSERT_EQ(F.high()->Params.size(), 4U);
+  const auto CurrentAudit = std::find_if(
+      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+      [&](const auto &A) { return A.Entry == Entry; });
+  ASSERT_NE(CurrentAudit, F.Result.FunctionAudits.end());
+  const auto Allowed = [&](const HighExpr &E) {
+    return sdk::objcSourceCallBound(E, F.Image, {}, nullptr, nullptr, F.high());
+  };
+  EXPECT_TRUE(sdk::sourceBodyLimitation(*F.high(), *F.high()->SourceTypeHint,
+                                        &*CurrentAudit, Allowed)
+                  .empty());
+  unsigned Calls = 0;
+  walkStmts(F.high()->Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (!E || E->Kind != ExprKind::Call)
+        return;
+      ++Calls;
+      ASSERT_TRUE(E->SourceCallHint);
+      ASSERT_EQ(E->Operands.size(), 4U);
+      const auto &Result = E->SourceCallHint->Signature.Parameters[0];
+      EXPECT_EQ(Result.TheRole,
+                SourceParameterTypeHint::Role::SwiftIndirectResult);
+      EXPECT_EQ(Result.Location.RegisterOffset, a64reg::X8);
+      EXPECT_TRUE(Allowed(*E));
+    });
+  });
+  EXPECT_EQ(Calls, 1U);
 }
 
 TEST(NativeSourceHints, VoidContractsAcceptExactSwiftStringBridgeCallBindings) {

@@ -61,6 +61,10 @@ bool hasNativeScalarIntrinsicEvidence(const LowOp &Operation,
 /// Separately authenticated ARM64 exceptional calls may end a successorless
 /// block after the same transfer checks. At least one reachable normal return
 /// is required, and every normal return still restores all incoming state.
+/// UsedEntryRegisters reports complete observed general-register entry words,
+/// including volatile inputs forwarded through a call's physical ABI. Calls
+/// invalidate volatile identities; exact private spills can preserve them.
+/// These use facts neither add restoration obligations nor declare parameters.
 /// This does not prove a result type or authorize machine-code rewriting.
 bool restoresNativeSourceState(
     const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
