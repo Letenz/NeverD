@@ -153,6 +153,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsExceptionTests.cpp
   WindowsContinuationTests.cpp
   WindowsSEHTests.cpp
+  WindowsContextTests.cpp
   WindowsNativeTestSupport.cpp
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDWindowsProcessTests PRIVATE
@@ -167,6 +168,7 @@ include(WindowsHeapFixtures.cmake)
 include(WindowsSystemFixtures.cmake)
 include(WindowsExceptionFixtures.cmake)
 include(WindowsSEHFixtures.cmake)
+include(WindowsContextFixtures.cmake)
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp
@@ -476,22 +478,22 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
   if(_driver_name STREQUAL "driver_async")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverAsyncCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/WindowsKernelLayout.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/WindowsKernelLayout.def")
   endif()
   if(_driver_name STREQUAL "driver_dispatcher")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverDispatcherCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelDispatcherValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def")
   endif()
   if(_driver_name STREQUAL "driver_context_limits")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverContextLimitCases.def
-      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelValues.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelPoolFlags.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/WindowsKernelLayout.def"
-      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/KernelDispatcherValues.def")
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelPoolFlags.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def")
   endif()
   add_custom_command(OUTPUT "${_driver_image}" "${_driver_object}"
     COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"

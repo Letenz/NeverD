@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/KernelPoFx.h"
+#include "os/windows/kernel/KernelPoFx.h"
 
 #include <string>
 #include <utility>

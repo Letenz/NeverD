@@ -9,10 +9,10 @@
 
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "os/windows/DriverImage.h"
-#include "os/windows/KernelException.h"
-#include "os/windows/KernelModel.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelException.h"
+#include "os/windows/kernel/KernelModel.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverProfile.h"
 
@@ -26,7 +26,7 @@ namespace {
 using namespace windows;
 namespace pool {
 #define NEVERD_KERNEL_POOL_FLAG(Name, Value) constexpr uint64_t Name = Value;
-#include "os/windows/KernelPoolFlags.def"
+#include "os/windows/kernel/KernelPoolFlags.def"
 #undef NEVERD_KERNEL_POOL_FLAG
 } // namespace pool
 namespace pinned {

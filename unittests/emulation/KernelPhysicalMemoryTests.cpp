@@ -12,7 +12,7 @@
 
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "os/windows/KernelPhysicalMemory.h"
+#include "os/windows/kernel/KernelPhysicalMemory.h"
 
 #include "neverd/emulation/AddressSpace.h"
 

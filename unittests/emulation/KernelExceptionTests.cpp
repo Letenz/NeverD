@@ -12,10 +12,10 @@
 
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "os/windows/DriverImage.h"
-#include "os/windows/KernelAPIIRQL.h"
-#include "os/windows/KernelException.h"
-#include "os/windows/KernelModel.h"
+#include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelAPIIRQL.h"
+#include "os/windows/kernel/KernelException.h"
+#include "os/windows/kernel/KernelModel.h"
 
 #include <array>
 

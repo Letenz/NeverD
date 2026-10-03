@@ -12,9 +12,9 @@
 
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "os/windows/DriverImage.h"
-#include "os/windows/KernelExportRegistry.h"
-#include "os/windows/KernelModel.h"
+#include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelExportRegistry.h"
+#include "os/windows/kernel/KernelModel.h"
 
 #include <initializer_list>
 #include <string_view>

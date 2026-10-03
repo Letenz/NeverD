@@ -512,6 +512,8 @@ CPU 執行獨立於客體 OS 與映像。OS 政策及程序入口與傳輸層、
 
 `NEVERD_ENABLE_SEMANTIC_TESTS` 預設為 `ON`，控制 `unittests/semantic` 中的測試組及其彙總執行目標。建置不依賴 Unicorn 的原生 CPU 測試時，保留 `BUILD_TESTING=ON`，同時設定 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 和 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`。原生 KVM/WHP 測試仍可建置，包括具備對應 SDK 標頭的 Windows ARM64/MSVC 組態。在 Windows ARM64 上啟用 Unicorn 仍需 ARM64 LLVM-MinGW 工具鏈。這項建置解耦不等於 ARM64 原生執行驗證。
 
+`os/windows/driver/` 負責驅動映像載入、執行工作階段、情境、報告與執行策略；`os/windows/kernel/` 負責核心 API 與物件模型，包括 WDM/KMDF、裝置生命週期、電源策略、記憶體及排程，`KernelModelPowerPolicy.cpp` 歸屬此處。`os/windows/process/` 負責使用者程序啟動與服務，`os/windows/exception/` 負責共用的例外搜尋與展開。驅動與核心原始碼仍組成 `NeverDEmulation`，現有呼叫與共用型別尚未形成獨立程式庫邊界。各目錄以自己的 `CMakeLists.txt` 維護原始碼清單，公開標頭檔維持相容。
+
 | 元件 | 職責 |
 |---|---|
 | `NeverDEmulationCore` | 記憶體、錯誤、暫存器與共用執行迴圈 |
@@ -927,6 +929,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
 
 `AddVectoredContinueHandler` 與 `RemoveVectoredContinueHandler` 管理獨立的有序串列，與例外處理器共用最多保留 128 個註冊項的限制。向量例外處理器接受繼續執行後，繼續處理器讀取同一份可修改的例外記錄與 `CONTEXT`；最終內容驗證在這些回呼完成後進行，包含巢狀例外與 DLL 通知。兩類處理器的控制代碼不可交叉移除。`WindowsContinuationTests.cpp` 將順序、提早結束派送、增刪、內容修復、巢狀派送、載入器回呼及程序結束的原創 EXE 案例與原生 Windows 比較。已測 Windows x64 向量處理路徑允許在設定 `EXCEPTION_NONCONTINUABLE` 時繼續執行；這不代表以堆疊框架為基礎的 SEH 行為。原生 ARM64 執行仍未驗證。
+
+`RtlCaptureContext` 已透過 `kernel32.dll` 和 `ntdll.dll` 支援 x64、ARM64。共用的 `WindowsProcessContext` 與 `IntegerABI` 保存呼叫者 PC/SP，不修改 CPU 狀態或 LastError。原生 Windows 觀察確認 x64 旗標為 `0x10000f`，未涉及的 home／除錯／向量儲存保持原樣，x87 位址欄位保留傳統的低 32 位元；ARM64 從 LR 保存 PC，並清零記錄中的 X0/LR。暫存器、SIMD 與浮點控制來自客體；x64 選擇子和 MXCSR 能力遮罩遵循設定的客體 CPU。無效、未對齊或部分無法存取的目標記錄在寫入前明確失敗。`WindowsContextTests.cpp` 涵蓋靜態匯入、提供者查詢、VEH 回呼、跨頁輸出及失敗原子性。`scripts/check_windows_context.py` 在原生 Windows x64、ARM64 上執行原創程式，並另外驗證非空 x87 狀態。這些 ARM64 API 觀察不代表原生 KVM/WHP 執行驗證。內容還原、堆疊回溯和動態函式表仍待實作。 `WindowsProcessServices.def` 宣告精確的模組限制：模型在 `kernelbase.dll` 中查詢此符號時傳回 `ERROR_PROC_NOT_FOUND`（127），與原生觀察一致，不憑空新增匯出。 [RtlCaptureContext](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-rtlcapturecontext).
 
 `WindowsProcessSEH` 使用 `os/windows/exception/` 中共用的 `X64SEH`（`NeverDEmulationWindowsException`，無需啟用驅動環境），處理 x64 `__C_specific_handler` 和 UNWIND_INFO V1。VEH 搜尋結束後支援篩選器、finally 回呼、非區域處理器跳轉、巢狀／衝突展開與重定位 EXE/DLL 堆疊框架，保留非揮發 GPR/XMM 狀態。篩選器選擇繼續執行時，VCH 使用同一份 `CONTEXT`。`WindowsSEHTests.cpp` 將 23 個原創情境與原生 Windows 比較；KVM/WHP/Unicorn 共用這些語意。派送在程序預算內重新驗證映像世代、標頭、展開／範圍位元組、語言處理器程式碼區域及 IAT 繫結。中繼資料遭修改或保留的映像被卸載時明確失敗。ARM64 框架式 SEH、C++ EH、動態函式表、通用 RtlUnwind/NtContinue、跨載入器／VEH／VCH 回呼邊界展開仍不支援。
 

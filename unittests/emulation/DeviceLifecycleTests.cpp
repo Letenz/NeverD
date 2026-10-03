@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/DeviceLifecycle.h"
+#include "os/windows/kernel/DeviceLifecycle.h"
 
 #include <array>
 

@@ -17,8 +17,8 @@
 #include "DriverAsyncCases.def"
 #undef NEVERD_ASYNC_CASE
 #define NEVERD_WDM_VALUE(Name, Value) enum { Name = Value };
-#include "../../../lib/emulation/os/windows/KernelValues.def"
-#include "../../../lib/emulation/os/windows/WindowsKernelLayout.def"
+#include "../../../lib/emulation/os/windows/kernel/KernelValues.def"
+#include "../../../lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
 #undef NEVERD_WDM_VALUE
 
 __declspec(dllimport) void *IoAllocateWorkItem(void *);

@@ -1,0 +1,35 @@
+//===- WindowsContextCapture.def - Caller-context capture policy ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WINDOWS_PROCESS_VALUE
+NEVERD_WINDOWS_PROCESS_VALUE(X64CapturedContextFlags, 0x10000f)
+#endif
+// RtlCaptureContext publishes the legacy FXSAVE pointer fields, even for
+// a 64-bit caller. Exception snapshots retain their complete internal state.
+#ifdef NEVERD_WINDOWS_CAPTURE_FP_POINTER
+NEVERD_WINDOWS_CAPTURE_FP_POINTER(264)
+NEVERD_WINDOWS_CAPTURE_FP_POINTER(272)
+#endif
+#ifdef NEVERD_WINDOWS_PROCESS_TEXT
+NEVERD_WINDOWS_PROCESS_TEXT(CaptureContextBuffer,
+                            "invalid or inaccessible caller context buffer")
+NEVERD_WINDOWS_PROCESS_TEXT(CaptureContextReturn,
+                            "inaccessible caller context return address")
+#endif
+// Native Windows leaves home slots, debug registers and extended vector/debug
+// storage untouched. The legacy FP save writes its first 416 bytes only.
+#ifdef NEVERD_WINDOWS_CAPTURE_RANGE
+NEVERD_WINDOWS_CAPTURE_RANGE(X64, 48, 24)
+NEVERD_WINDOWS_CAPTURE_RANGE(X64, 120, 552)
+NEVERD_WINDOWS_CAPTURE_RANGE(AArch64, 0, 792)
+#endif
+// The checked x64 machine's flat data segments all use its SS descriptor.
+// Selector numbers describe the guest descriptor policy, never the host OS.
+#ifdef NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT
+NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT(58)
+NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT(60)
+NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT(62)
+NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT(64)
+#endif

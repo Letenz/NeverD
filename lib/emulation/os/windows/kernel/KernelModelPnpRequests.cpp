@@ -10,7 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "DriverScenario.h"
+#include "../driver/DriverScenario.h"
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 

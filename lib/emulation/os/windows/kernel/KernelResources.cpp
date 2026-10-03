@@ -12,7 +12,7 @@
 
 #include "KernelResources.h"
 
-#include "DriverScenario.h"
+#include "../driver/DriverScenario.h"
 
 #include "neverd/emulation/DriverProfile.h"
 

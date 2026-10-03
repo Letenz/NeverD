@@ -1884,3 +1884,37 @@ jobs:
             build-ci-native/driver-fixtures/*.log
           if-no-files-found: warn
           retention-days: 14
+
+  windows-context-oracle:
+    name: Windows caller context (${{ matrix.arch }})
+    if: ${{ github.event.action != 'closed' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: X64
+            runner: windows-latest
+          - arch: AArch64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Compile and observe the original Windows caller context
+        run: python scripts/check_windows_context.py --arch ${{ matrix.arch }} --output build-context-oracle
+      - name: Verify original nonempty x87 capture
+        if: ${{ matrix.arch == 'X64' }}
+        run: python scripts/check_windows_context.py --arch X64 --floating-point --output build-context-fp
+      - name: Preserve caller context observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-context-${{ matrix.arch }}
+          path: |
+            build-context-oracle/
+            build-context-fp/
+          if-no-files-found: error
+          retention-days: 14

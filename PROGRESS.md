@@ -45,7 +45,7 @@ The source/test audit covers **38 distinct artifacts** in total, including the n
 - `lib/emulation/backends/hvf/{HvfExecutor.cpp,HvfExecutor.h,HvfX64Machine.cpp,HvfX64Registers.def}`
 - `lib/emulation/backends/RunDeadline.h` and `lib/emulation/core/MachineRunControl.h`
 - `lib/emulation/arch/x86_64/{X64Machine.cpp,X64Machine.h,X64MachineProbe.cpp,X64MachineProbe.def,X64OperandRegisters.def,CheckedX64Instructions.def}`
-- `lib/emulation/os/windows/WindowsX64ExecutionPolicy.cpp` and `include/neverd/emulation/X64Registers.def`
+- `lib/emulation/os/windows/driver/WindowsX64ExecutionPolicy.cpp` and `include/neverd/emulation/X64Registers.def`
 - `unittests/emulation/{HvfExecutorTests.cpp,HvfTests.cpp,HvfTestPolicy.h,X64StateTransitionTests.cpp,MachineRunControlTests.cpp,RunControlTests.cpp,NativeEntryTests.cpp}`
 - `scripts/NativeHVFTests.def`, also included in the evidence inventory review below
 

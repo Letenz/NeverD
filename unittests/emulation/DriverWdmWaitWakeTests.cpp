@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "fixtures/driver_wdm_wait_wake_test.h"
 #include "gtest/gtest.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

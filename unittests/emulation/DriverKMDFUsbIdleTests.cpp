@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "fixtures/driver_kmdf_usb_idle_test.h"
 #include "gtest/gtest.h"
-#include "os/windows/KernelUsbIdle.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/kernel/KernelUsbIdle.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

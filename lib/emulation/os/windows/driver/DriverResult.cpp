@@ -51,14 +51,14 @@ namespace dmaField {
 
 namespace requestStatus {
 #define NEVERD_FRAMEWORK_VALUE(Name, Value) constexpr uint32_t Name = Value;
-#include "KernelFrameworkRequestValues.def"
+#include "../kernel/KernelFrameworkRequestValues.def"
 #undef NEVERD_FRAMEWORK_VALUE
 } // namespace requestStatus
 
 namespace usbValue {
 #define NEVERD_KERNEL_USB_IDLE_VALUE(Name, Value)                              \
   constexpr uint64_t Name = Value;
-#include "KernelUsbIdleValues.def"
+#include "../kernel/KernelUsbIdleValues.def"
 #undef NEVERD_KERNEL_USB_IDLE_VALUE
 } // namespace usbValue
 

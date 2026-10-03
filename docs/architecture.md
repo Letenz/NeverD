@@ -1263,6 +1263,8 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 
 `NEVERD_ENABLE_SEMANTIC_TESTS` defaults to `ON` and controls the test group in `unittests/semantic`, including its aggregate runners. To build native CPU tests without Unicorn, keep `BUILD_TESTING=ON` and set both `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` and `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. The native KVM/WHP tests remain available, including Windows ARM64/MSVC builds with suitable SDK headers. Enabling Unicorn on Windows ARM64 still requires an ARM64 LLVM-MinGW toolchain. This build separation does not establish native ARM64 runtime coverage.
 
+`os/windows/driver/` owns driver image loading, execution sessions, scenarios, reports and execution policy. `os/windows/kernel/` owns kernel API and object models, including WDM/KMDF, device lifecycle, power policy, memory and scheduling; `KernelModelPowerPolicy.cpp` belongs there. `os/windows/process/` owns user-process startup and services, while `os/windows/exception/` owns shared exception search and unwind. Driver and kernel sources still form `NeverDEmulation`: their existing calls and shared types are not independent library boundaries. Each directory maintains its own `CMakeLists.txt` source list, and public headers remain compatible.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
@@ -1300,7 +1302,8 @@ lib/emulation/
   backends/hvf/          macOS host virtualization on the matching ISA
   abi/                   Guest calling conventions independent of OS and CPU transport
   runtime/               CPU composition and shared workload accounting
-  os/windows/            Windows driver workload, ABI policy and kernel model
+  os/windows/driver/     Driver loading, sessions, scenarios and execution policy
+  os/windows/kernel/     Kernel APIs, WDM/KMDF and device/power/memory models
   os/windows/exception/  Shared Windows x64 exception search and unwind
   os/windows/process/    Windows PE64 user process startup and user API models
   os/linux/              Linux ELF process startup and system-call ABI/services
@@ -1325,8 +1328,8 @@ OS. Architecture code accepts an already-created machine and authoritative
 memory; it neither chooses nor constructs a concrete backend. Backend code
 implements the architecture's machine boundary. `runtime` owns that
 composition and the host/guest selection rules. Windows code uses the public
-CPU and memory interfaces, and its CMake source inventory stays in
-`os/windows/CMakeLists.txt`. The existing public headers remain compatible.
+CPU and memory interfaces. `os/windows/CMakeLists.txt` composes the
+driver and kernel source inventories into the existing component.
 
 [`IntegerABI`](../include/neverd/emulation/IntegerABI.h) owns Win64, SysV
 AMD64 and AAPCS64 call-frame operations for non-variadic 64-bit integer/pointer
@@ -1747,7 +1750,7 @@ KVM x64/ARM64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture
 
 ## Windows driver emulation
 
-Windows CR8/GS admission belongs to `os/windows/WindowsX64ExecutionPolicy`, not
+Windows CR8/GS admission belongs to `os/windows/driver/WindowsX64ExecutionPolicy`, not
 the CPU transports. Native `driver-strict` uses the architecture's validated
 instruction/effect boundary; the Windows environment continues to own driver
 objects, API semantics and lifecycle. Unsupported accesses stop before native
@@ -2852,6 +2855,8 @@ UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters 
 `WindowsProcessExceptions` implements `AddVectoredExceptionHandler`, `RemoveVectoredExceptionHandler` and `RaiseException` on one CPU with the process budget. Ordered handlers may register or remove handlers, raise nested exceptions, call modeled APIs, load DLLs and exit the process. x64/ARM64 data-access violations and x64 integer divide faults can resume after validated guest edits to `CONTEXT`; general registers, SIMD and supported FP state are preserved. Software exceptions resume through a real return instruction in the modeled provider. The model bounds registrations to 128 retained entries and nesting to 16 frames. Invalid dispositions, changed exception pointers, unsupported context fields and exhausted bounds fail explicitly. ARM64 frame-based SEH/unwinding, debugger delivery and execute/guard faults remain unsupported. `WindowsExceptionTests.cpp` compares original EXE/DLL scenarios against native Windows; native ARM64 KVM/WHP evidence remains pending. Software exception records carry `EXCEPTION_SOFTWARE_ORIGINATE` (`0x80`), independently of the caller’s noncontinuable flag; the original Windows executable checks the exact software and hardware flag values.
 
 `AddVectoredContinueHandler` and `RemoveVectoredContinueHandler` maintain a separate ordered list, sharing the 128 retained registration limit with exception handlers. Continue callbacks run after a vectored exception handler accepts continuation; they see the same mutable exception record and `CONTEXT`. Final context validation happens after these callbacks, including nested exceptions and DLL notifications. Handles cannot be removed through the other handler family. `WindowsContinuationTests.cpp` compares original executables for ordering, short-circuiting, mutation, context repair, nested dispatch, loader callbacks and process exit against native Windows. The tested Windows x64 vectored path permits continuation with `EXCEPTION_NONCONTINUABLE` set; this does not establish frame-based SEH behavior. Native ARM64 execution remains unverified.
+
+`RtlCaptureContext` is available through `kernel32.dll` and `ntdll.dll` for x64 and ARM64. Shared `WindowsProcessContext` and `IntegerABI` record the caller’s PC/SP without changing CPU state or LastError. Native Windows observations establish x64 flags `0x10000f`, preservation of untouched home/debug/vector storage, and the legacy 32-bit x87 address fields; ARM64 records PC from LR and clears the saved X0/LR. Register values, SIMD and FP controls come from the guest; x64 selectors and the MXCSR capability mask follow the configured guest CPU. Invalid, unaligned or partly inaccessible destination records fail before publication. `WindowsContextTests.cpp` covers direct imports, provider lookup, VEH callbacks, cross-page output and failure atomicity. `scripts/check_windows_context.py` runs the original executable on Windows x64 and ARM64, with a separate native nonempty-x87 oracle. These ARM64 API observations do not establish native KVM/WHP execution. Context restore, stack walking and dynamic function tables remain separate work. `WindowsProcessServices.def` declares exact module restrictions: the modeled `kernelbase.dll` lookup returns `ERROR_PROC_NOT_FOUND` (127), matching native observations rather than creating an extra export. [RtlCaptureContext](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-rtlcapturecontext).
 
 `WindowsProcessSEH` uses shared `X64SEH` in `os/windows/exception/` (`NeverDEmulationWindowsException`, available without drivers) for x64 `__C_specific_handler` and UNWIND_INFO V1. After VEH search it supports filters, finally callbacks, nonlocal handler transfer, nested/collided dispatch and rebased EXE/DLL frames, preserving nonvolatile GPR/XMM state. Filter continuation runs VCH with the same `CONTEXT`. `WindowsSEHTests.cpp` compares 23 original scenarios with native Windows; KVM/WHP/Unicorn share these semantics. Dispatch rechecks image generations, headers, unwind/scope bytes, personality code regions and IAT bindings under the process budget. Changed metadata or unloaded retained images fail explicitly. ARM64 frame SEH, C++ EH, dynamic function tables, general RtlUnwind/NtContinue, and unwinding across loader/VEH/VCH callback boundaries remain unsupported.
 

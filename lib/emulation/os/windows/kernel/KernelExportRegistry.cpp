@@ -11,7 +11,7 @@
 
 #include "KernelExportRegistry.h"
 
-#include "DriverImage.h"
+#include "../driver/DriverImage.h"
 
 #include "neverd/emulation/DriverSession.h"
 

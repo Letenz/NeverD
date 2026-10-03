@@ -1,6 +1,6 @@
 **语言**: [English](../../README.md) | [简体中文](project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 23c1f349f49ccee5a963e34665f188119be5e4701d66a8beabcf9479bbefd42f -->
+<!-- i18n-source: fbc19dc5a1d168ecfb4cfb84c98d705b3cb71ab785c1e81103a967a04f4611ca -->
 
 <div align="center">
 
@@ -126,6 +126,8 @@ CPU 执行分离 ISA 准入、来宾内存、后端传输与来宾 OS 策略。`
 `WindowsProcessExceptions` 在同一 CPU 和进程预算内实现 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序处理器可注册或移除处理器、触发嵌套异常、调用已建模 API、加载 DLL 以及退出进程。x64/ARM64 数据访问异常和 x64 整数除法异常可在校验客户对 `CONTEXT` 的修改后恢复；通用寄存器、SIMD 和受支持的浮点状态会保留。软件异常经模型提供方中的真实返回指令继续执行。模型限制为最多保留 128 个注册项、嵌套 16 层。非法处置值、被修改的异常指针、不支持的上下文字段和超限均明确失败。ARM64 基于栈帧的 SEH／展开、调试器派发及执行／保护页异常仍不支持。`WindowsExceptionTests.cpp` 将原创 EXE／DLL 场景与原生 Windows 对照；原生 ARM64 KVM/WHP 证据仍待补齐。 软件异常记录带有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），与调用者传入的不可继续标志分别处理；原始 Windows 可执行文件精确核对软件异常和硬件异常的标志值。
 
 `AddVectoredContinueHandler` 和 `RemoveVectoredContinueHandler` 管理独立的有序列表，与异常处理器共用最多保留 128 个注册项的限制。向量异常处理器接受继续执行后，继续处理器读取同一份可修改的异常记录和 `CONTEXT`；最终上下文校验在这些回调完成后进行，包含嵌套异常与 DLL 通知。两类处理器的句柄不可交叉移除。`WindowsContinuationTests.cpp` 将顺序、提前结束派发、增删、上下文修复、嵌套派发、加载器回调及进程退出的原创 EXE 场景与原生 Windows 对照。已测 Windows x64 向量处理路径允许在设置 `EXCEPTION_NONCONTINUABLE` 时继续执行；这不代表基于栈帧的 SEH 行为。原生 ARM64 执行仍未验证。
+
+`RtlCaptureContext` 已通过 `kernel32.dll` 和 `ntdll.dll` 支持 x64、ARM64。共享的 `WindowsProcessContext` 与 `IntegerABI` 保存调用者 PC/SP，不修改 CPU 状态或 LastError。原生 Windows 观察确认 x64 标志为 `0x10000f`，未涉及的 home／调试／向量存储保持原样，x87 地址字段保留传统的低 32 位；ARM64 从 LR 保存 PC，并清零记录中的 X0/LR。寄存器、SIMD 与浮点控制来自客体；x64 选择子和 MXCSR 能力掩码遵循配置的客体 CPU。无效、未对齐或部分不可访问的目标记录在写入前明确失败。`WindowsContextTests.cpp` 覆盖静态导入、提供者查询、VEH 回调、跨页输出及失败原子性。`scripts/check_windows_context.py` 在原生 Windows x64、ARM64 上运行原创程序，并单独验证非空 x87 状态。这些 ARM64 API 观察不代表原生 KVM/WHP 执行验证。上下文恢复、栈回溯和动态函数表仍需继续实现。 `WindowsProcessServices.def` 声明精确的模块限制：模型在 `kernelbase.dll` 中查询此符号时返回 `ERROR_PROC_NOT_FOUND`（127），与原生观察一致，不凭空增加导出。 [RtlCaptureContext](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-rtlcapturecontext).
 
 `WindowsProcessSEH` 使用 `os/windows/exception/` 中共享的 `X64SEH`（`NeverDEmulationWindowsException`，无需启用驱动环境），处理 x64 `__C_specific_handler` 和 UNWIND_INFO V1。VEH 搜索结束后支持过滤器、finally 回调、非局部处理器跳转、嵌套／冲突展开以及重定位 EXE/DLL 栈帧，保留非易失 GPR/XMM 状态。过滤器选择继续执行时，VCH 使用同一份 `CONTEXT`。`WindowsSEHTests.cpp` 将 23 个原创场景与原生 Windows 对照；KVM/WHP/Unicorn 共用这些语义。派发在进程预算内重新校验映像代次、头部、展开／作用域字节、语言处理器代码区域及 IAT 绑定。元数据被修改或保留的映像被卸载时明确失败。ARM64 栈式 SEH、C++ EH、动态函数表、通用 RtlUnwind/NtContinue、跨加载器／VEH／VCH 回调边界展开仍不支持。
 

@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 #include "fixtures/driver_kmdf_pofx_test.h"
 #include "gtest/gtest.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 
