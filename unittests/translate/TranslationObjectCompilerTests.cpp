@@ -426,7 +426,7 @@ TEST(TranslationObjectCompiler, ProducesDeterministicBytesAndVersionedKeys) {
   EXPECT_TRUE(First->artifactCacheKey().starts_with(
       "neverd.translation-object-artifact.v1.sha256:"));
   static_assert(TranslationObjectArtifactV1::CacheIdentityVersion == 1);
-  static_assert(TranslationObjectArtifactV1::PipelineSchemaVersion == 5);
+  static_assert(TranslationObjectArtifactV1::PipelineSchemaVersion == 6);
 }
 
 TEST(TranslationObjectCompiler, FiniteValueBudgetParticipatesInCacheIdentity) {
@@ -448,6 +448,29 @@ TEST(TranslationObjectCompiler, FiniteValueBudgetParticipatesInCacheIdentity) {
     FAIL() << llvm::toString(Enabled.takeError());
   EXPECT_NE(Disabled->requestCacheKey(), Enabled->requestCacheKey());
   EXPECT_NE(Disabled->artifactCacheKey(), Enabled->artifactCacheKey());
+}
+
+TEST(TranslationObjectCompiler, PredicateBudgetParticipatesInCacheIdentity) {
+  llvm::LLVMContext Context;
+  constexpr llvm::StringLiteral BlockName("translated_block");
+  const llvm::StringRef Names[] = {BlockName};
+  TranslationOptions Options =
+      explicitOptions(GuestArchitecture::X86_64, "x86_64-pc-linux-gnu");
+  auto Module = makeCanonicalModule(Context, Options, {BlockName});
+  ASSERT_NE(Module, nullptr);
+  auto Policy = objectPolicy(Names);
+  Policy.Semantic.Simplify.MaxPredicateWork = 0;
+  auto Disabled = compileTranslationObjectV1(*Module, Options, Policy);
+  if (!Disabled)
+    FAIL() << llvm::toString(Disabled.takeError());
+  Policy.Semantic.Simplify.MaxPredicateWork = 4096;
+  auto Enabled = compileTranslationObjectV1(*Module, Options, Policy);
+  if (!Enabled)
+    FAIL() << llvm::toString(Enabled.takeError());
+  EXPECT_NE(Disabled->requestCacheKey(), Enabled->requestCacheKey());
+  EXPECT_NE(Disabled->artifactCacheKey(), Enabled->artifactCacheKey());
+  EXPECT_EQ(TranslationSemanticPolicyV1::unlimited().Simplify.MaxPredicateWork,
+            std::numeric_limits<size_t>::max());
 }
 
 TEST(TranslationObjectCompiler, EmitsEveryContractHostArchitecture) {

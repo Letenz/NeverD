@@ -16,6 +16,7 @@ add_neverd_component_library(NeverDPassIR
   simplify/ControlFlowRecoveryPass.cpp
   simplify/SymSimplifyPass.cpp
   simplify/SymSimplifyFinite.cpp
+  simplify/SymSimplifyPredicates.cpp
   simplify/SymSimplifyTranslator.cpp
   safety/RuntimeBoundsSanitizer.cpp
 

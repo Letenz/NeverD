@@ -93,6 +93,7 @@ void hashSemanticPolicy(StableHashWriter &Hash,
   Hash.addU64(stableSize(Options.MinMeasuredNodes));
   Hash.addU64(stableSize(Options.MinInstructionsSaved));
   Hash.addU64(stableSize(Options.MaxFiniteValueWork));
+  Hash.addU64(stableSize(Options.MaxPredicateWork));
   Hash.addU32(Options.MBA.MaxAtoms);
   Hash.addU32(Options.MBA.MaxSynthesisAtoms);
   Hash.addU32(Options.MBA.MaxOptimalSynthesisAtoms);

@@ -762,6 +762,7 @@ TranslationSemanticPolicyV1 TranslationSemanticPolicyV1::unlimited() {
   TranslationSemanticPolicyV1 Policy;
   Policy.Simplify = SymSimplifyOptions::aggressive();
   Policy.Simplify.MaxFiniteValueWork = std::numeric_limits<size_t>::max();
+  Policy.Simplify.MaxPredicateWork = std::numeric_limits<size_t>::max();
   Policy.Simplify.MBA = symbolic::MBAOptions::unlimited();
   Policy.Simplify.Provider = ProofProvider::BuiltInSolver;
   // Candidate synthesis remains an explicit opt-in.  If enabled by a caller,

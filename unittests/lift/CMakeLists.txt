@@ -1523,6 +1523,7 @@ endif()
 add_neverd_unittest(NeverDSymSimplifyGuardTests
   pipeline/SymSimplifyGuardTests.cpp
   pipeline/SymSimplifyFiniteTests.cpp
+  pipeline/SymSimplifyPredicateTests.cpp
   LINK_COMPONENTS
   Pipeline
 )
