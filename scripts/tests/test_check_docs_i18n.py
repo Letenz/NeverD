@@ -69,7 +69,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 patch.object(view, "read_text", side_effect=read_existing):
             i18n.validate_matrix(errors, view)
         self.assertTrue(any("missing localized documentation file" in error
-                            and str(path) in error for error in errors), errors)
+                            and path.as_posix() in error for error in errors), errors)
 
     def test_macos_source_change_requires_translation_review(self) -> None:
         path = Path("docs/macos-hvf.md")
