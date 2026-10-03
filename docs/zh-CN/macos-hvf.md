@@ -70,8 +70,11 @@ SHA-256 为 `cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`�
 宿主为四个逻辑 CPU 的 macOS x86-64、Darwin 24.6.0。
 这些结果证明有限 macOS 和 iOS Simulator 契约通过，不代表 iOS device 内核实测。
 
-完整 Intel CPU 清单仍等待[当前任务](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
-在 `76a922088ceccb1e5fdaccbde7f0b3a680a4e3b8` 上的成功结果。
+完整 Intel CPU 清单仍未验收。[最新任务](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
+在 `76a922088ceccb1e5fdaccbde7f0b3a680a4e3b8` 上完成了 20 个目标构建、10 项 transport、
+100 次恢复和 CR8 检查，前置产物已下载并核对 SHA-256。截至 2026-10-03 08:24 UTC，
+CPU 步骤超过设定的 30 分钟仍未返回终态或 CPU 产物，作业日志接口返回 404；仓库没有
+self-hosted runner。需要完整运行结果或可接入的原生 Intel Mac 才能关闭这项验收缺口。
 早前停滞或取消且缺少完整证据的任务不计为通过，也不能据此推断来宾故障。
 一轮[早前任务](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
 明确报告 runner 失联，其根因未确定。CPU/Darwin 工作流步骤分别有 30/15 分钟上限。

@@ -159,7 +159,7 @@ for both runners. Wrong host architectures, Rosetta, timeouts and any result
 mismatch fail the reference gate; its JSON records the source, OS and compiler.
 Run it locally with `python3 scripts/run_darwin_kernel_reference.py
 --architecture arm64 --evidence build-kernel-reference` (use `x86_64` on Intel).
-The focused workload gate preserves the full inventory and JUnit results, and fails on missing or
+The focused workload gate preserves the full inventory and original test XML, and fails on missing or
 skipped native workloads even when loader-only tests pass:
 
 ```sh
@@ -239,8 +239,9 @@ at clean source `8dcc74c59da303176801b99747a60339161b824b` passed every required
 x64 workload: **26/26**, across macOS and iOS Simulator. All 286 CTest
 registrations were reconciled against original GoogleTest XML: **52 passed,
 0 failed, 234 skipped**, with no missing, duplicate or unexecuted required
-results. All 32 method processes exited successfully. The native macOS kernel
-reference also passed; these results do not establish iOS device-kernel or
+results. The 234 skips are 65 disabled-Unicorn cases, 39 foreign ARM64
+guests and 130 foreign-host backends. All 32 method processes exited
+successfully. The native macOS kernel reference also passed; these results do not establish iOS device-kernel or
 broader Intel CPU acceptance.
 
 Artifact `11267489438` was downloaded and verified against SHA-256

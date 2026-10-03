@@ -200,9 +200,15 @@ repetitions and isolated CR8 state/privilege checks. It used macOS x86-64 with
 four logical CPUs and Darwin 24.6.0. This establishes the bounded macOS and
 iOS Simulator profiles; it does not establish iOS device-kernel behavior.
 
-The complete Intel CPU inventory is awaiting a successful result from the
-[current full run](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
-at `76a922088ceccb1e5fdaccbde7f0b3a680a4e3b8`. Earlier stalled or cancelled
+The complete Intel CPU inventory remains unverified. The
+[latest full run](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
+at `76a922088ceccb1e5fdaccbde7f0b3a680a4e3b8` built all twenty owners and passed
+ten transport cases, 100 recovery repetitions and CR8. Those checkpoint
+artifacts were downloaded and SHA-256 verified. As of 2026-10-03 08:24 UTC,
+the CPU step had exceeded its configured thirty-minute limit without a final
+status or CPU artifact; the job-log endpoint returned 404 and the repository
+had no self-hosted runners. A completed full result or an accessible native
+Intel Mac is needed to close this acceptance gap. Earlier stalled or cancelled
 runs without complete evidence do not count as passes and do not identify a
 guest fault. One earlier [hosted run](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
 explicitly lost runner communication; its underlying cause was not established.
