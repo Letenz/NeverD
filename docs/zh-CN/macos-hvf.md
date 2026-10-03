@@ -176,3 +176,10 @@ TLS/权限、CR8、取消，以及宿主修改、故障和停止前后的完整 
 [逐目标诊断](https://github.com/NeverSight/NeverD/actions/runs/37098336208)，
 每个完整 CPU 目标结束后立即保存清单、CTest 退出码和 XML，再继续下一组。
 两轮均为串行测试，模拟实现和测试与上述专项一致；目前尚未回传完整验收结果。
+
+同步后续 `dev` 改动后，干净源码 `f4bf8dde5cbc33d18ce053cb0722a54047e5a2d0`
+再次通过 ARM64 transport 全部 12 项，无跳过；独立 Darwin 门禁 65 项通过、0 失败、
+221 项不适用用例跳过，39 个必需原生工作负载全部执行。
+新增宿主和并发元数据已在 Apple Silicon 与 Intel 的真实 transport 产物中核对。
+本机证据位于 `build-hvf-native/hvf-final-dev-transport-evidence/` 和
+`build-hvf-native/hvf-final-dev-darwin-evidence/`。

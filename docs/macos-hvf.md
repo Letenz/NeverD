@@ -321,6 +321,15 @@ continuing. Both ongoing runs use serialized tests; the emulation implementation
 and tests match the successful focused runs. Neither has yet returned complete
 acceptance evidence.
 
+After integrating the subsequent `dev` changes, clean source
+`f4bf8dde5cbc33d18ce053cb0722a54047e5a2d0` again passed all twelve ARM64
+transport cases with no skips. The independent Darwin gate passed 65 checks,
+failed none and skipped 221 inapplicable cases; all 39 required native workloads
+executed. The new host/parallel summary fields were also verified in actual
+Apple Silicon and Intel transport artifacts. Local evidence is in
+`build-hvf-native/hvf-final-dev-transport-evidence/` and
+`build-hvf-native/hvf-final-dev-darwin-evidence/`.
+
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
 for terminal responses while retaining progress for assertions. All eight

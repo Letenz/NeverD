@@ -1,16 +1,24 @@
-name: Intel HVF owner diagnosis
-run-name: Intel HVF per-owner checkpoints
+name: Intel HVF method diagnosis
+run-name: Intel HVF ${{ inputs.owner }} method checkpoints
 on:
   workflow_dispatch:
+    inputs:
+      owner:
+        description: Native target to isolate by test method
+        required: true
+        type: choice
+        default: fp
+        options: [fp, darwin]
 permissions:
   contents: read
 jobs:
   native-hvf:
     runs-on: macos-15-intel
-    timeout-minutes: 180
+    timeout-minutes: 90
     env:
       SCCACHE_GHA_ENABLED: 'true'
       HVF_TEST_PARALLEL: '1'
+      NEVERD_REQUIRE_HVF: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Require native VM and vCPU availability before the transport gate
@@ -103,571 +111,803 @@ jobs:
           --evidence build-hvf/transport-evidence
           --parallel "$HVF_TEST_PARALLEL"
           --require-hvf --hvf-transport-only 2>&1 | tee build-hvf/transport-run.log
-      - name: Build and inventory Intel state and exception tests
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          mkdir -p build-hvf/state-evidence
-          cmake --build build-hvf --target NeverDX64ExceptionTests --parallel 4 2>&1 | tee build-hvf/state-evidence/build.log
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --show-only=json-v1 > build-hvf/state-evidence/inventory.json
-      - name: Preserve transport and compilation before architectural execution
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-transport-X64-attempt-${{ github.run_attempt }}
-          path: |
-            build-hvf/transport-*.log
-            build-hvf/transport-evidence/
-            build-hvf/state-evidence/
-          if-no-files-found: warn
-      - name: Require Intel CR8 registers and privilege faults in isolation
-        timeout-minutes: 2
+      - name: Build only the selected target
+        id: selected_build
         shell: bash
         env:
-          NEVERD_REQUIRE_HVF: '1'
+          DIAGNOSE_OWNER: ${{ inputs.owner }}
         run: |
-          ctest --test-dir build-hvf/unittests/emulation -R '^NativeTransports/X64StateTransition[.]CR8ReadsEveryGPRAndPreservesUserPrivilegeFaults/hvf$' --no-tests=error --output-on-failure --output-junit "$PWD/build-hvf/state-evidence/cr8.xml" --output-log "$PWD/build-hvf/state-evidence/cr8.log"
-      - name: Preserve isolated Intel state result
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-cr8-X64-attempt-${{ github.run_attempt }}
-          path: build-hvf/state-evidence/cr8.*
-          if-no-files-found: warn
-      - name: Build the requested native inventory
-        id: native_build
-        shell: bash
-        env:
-          NATIVE_VALIDATION: full
-        run: |
-          python3 - <<'PYBUILD' 2>&1 | tee build-hvf/native-build.log
-          from pathlib import Path
+          python3 - <<'PYBUILD' 2>&1 | tee build-hvf/family-build.log
           import os
-          import platform
           import subprocess
-          from scripts.run_native_cpu_ci import darwin_inventory, hvf_inventory
-          if os.environ["NATIVE_VALIDATION"] == "darwin":
-              owners, _ = darwin_inventory(Path.cwd(), "hvf", platform.machine())
-          else:
-              owners, _ = hvf_inventory(Path.cwd(), platform.machine())
-          subprocess.run(["cmake", "--build", "build-hvf", "--config", "Release",
-                          "--target", *owners, "--parallel", "4"], check=True)
+          owners = {"fp": "NeverDX64FPTests", "darwin": "NeverDDarwinProcessTests"}
+          subprocess.run(["cmake", "--build", "build-hvf", "--target",
+                          owners[os.environ["DIAGNOSE_OWNER"]], "--parallel", "4"], check=True)
           PYBUILD
-      - name: Preserve the full build before native execution
+      - name: Record exact GoogleTest identities
+        id: inventory
+        timeout-minutes: 2
+        env:
+          DIAGNOSE_OWNER: ${{ inputs.owner }}
+        run: python3 scripts/diagnose_hvf_families.py inventory "$DIAGNOSE_OWNER"
+      - name: Preserve the build and inventory before execution
         if: always()
         timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-build-X64-attempt-${{ github.run_attempt }}
-          path: build-hvf/native-build.log
-          if-no-files-found: warn
-      - name: Execute NeverDHvfTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDHvfTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDHvfTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDHvfTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDHvfTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDHvfTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDHvfTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDHvfTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDHvfTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: NeverDHvfTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDHvfTests/
-          if-no-files-found: error
-      - name: Execute NeverDAArch64FPTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDAArch64FPTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDAArch64FPTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDAArch64FPTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDAArch64FPTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDAArch64FPTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDAArch64FPTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDAArch64FPTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDAArch64FPTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDAArch64FPTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDAArch64FPTests/
-          if-no-files-found: error
-      - name: Execute NeverDAArch64MemoryTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDAArch64MemoryTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDAArch64MemoryTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDAArch64MemoryTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDAArch64MemoryTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDAArch64MemoryTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDAArch64MemoryTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDAArch64MemoryTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDAArch64MemoryTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDAArch64MemoryTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDAArch64MemoryTests/
-          if-no-files-found: error
-      - name: Execute NeverDX64FPTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDX64FPTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64FPTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDX64FPTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64FPTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDX64FPTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDX64FPTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDX64FPTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDX64FPTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDX64FPTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDX64FPTests/
-          if-no-files-found: error
-      - name: Execute NeverDX64IntegerTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDX64IntegerTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64IntegerTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDX64IntegerTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64IntegerTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDX64IntegerTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDX64IntegerTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDX64IntegerTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDX64IntegerTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDX64IntegerTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDX64IntegerTests/
-          if-no-files-found: error
-      - name: Execute NeverDX64ExceptionTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDX64ExceptionTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDX64ExceptionTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDX64ExceptionTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDX64ExceptionTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDX64ExceptionTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDX64ExceptionTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDX64ExceptionTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDX64ExceptionTests/
-          if-no-files-found: error
-      - name: Execute NeverDX64MemoryUpdateTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDX64MemoryUpdateTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64MemoryUpdateTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDX64MemoryUpdateTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64MemoryUpdateTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDX64MemoryUpdateTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDX64MemoryUpdateTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDX64MemoryUpdateTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDX64MemoryUpdateTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDX64MemoryUpdateTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDX64MemoryUpdateTests/
-          if-no-files-found: error
-      - name: Execute NeverDRAMTransactionTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDRAMTransactionTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDRAMTransactionTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDRAMTransactionTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDRAMTransactionTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDRAMTransactionTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDRAMTransactionTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDRAMTransactionTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDRAMTransactionTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDRAMTransactionTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDRAMTransactionTests/
-          if-no-files-found: error
-      - name: Execute NeverDMemoryLifecycleTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDMemoryLifecycleTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDMemoryLifecycleTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDMemoryLifecycleTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDMemoryLifecycleTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDMemoryLifecycleTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDMemoryLifecycleTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDMemoryLifecycleTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDMemoryLifecycleTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDMemoryLifecycleTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDMemoryLifecycleTests/
-          if-no-files-found: error
-      - name: Execute NeverDThreadPointerTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDThreadPointerTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDThreadPointerTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDThreadPointerTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDThreadPointerTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDThreadPointerTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDThreadPointerTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDThreadPointerTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDThreadPointerTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDThreadPointerTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDThreadPointerTests/
-          if-no-files-found: error
-      - name: Execute NeverDUserExecutionTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDUserExecutionTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDUserExecutionTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDUserExecutionTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDUserExecutionTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDUserExecutionTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDUserExecutionTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDUserExecutionTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDUserExecutionTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDUserExecutionTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDUserExecutionTests/
-          if-no-files-found: error
-      - name: Execute NeverDServiceRequestTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDServiceRequestTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDServiceRequestTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDServiceRequestTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDServiceRequestTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDServiceRequestTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDServiceRequestTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDServiceRequestTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDServiceRequestTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDServiceRequestTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDServiceRequestTests/
-          if-no-files-found: error
-      - name: Execute NeverDExecutionConfigurationTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDExecutionConfigurationTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDExecutionConfigurationTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDExecutionConfigurationTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDExecutionConfigurationTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDExecutionConfigurationTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDExecutionConfigurationTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDExecutionConfigurationTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDExecutionConfigurationTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDExecutionConfigurationTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDExecutionConfigurationTests/
-          if-no-files-found: error
-      - name: Execute NeverDExecutionBudgetTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDExecutionBudgetTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDExecutionBudgetTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDExecutionBudgetTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDExecutionBudgetTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDExecutionBudgetTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDExecutionBudgetTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDExecutionBudgetTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDExecutionBudgetTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDExecutionBudgetTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDExecutionBudgetTests/
-          if-no-files-found: error
-      - name: Execute NeverDExecutionSessionTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDExecutionSessionTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDExecutionSessionTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDExecutionSessionTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDExecutionSessionTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDExecutionSessionTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDExecutionSessionTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDExecutionSessionTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDExecutionSessionTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDExecutionSessionTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDExecutionSessionTests/
-          if-no-files-found: error
-      - name: Execute NeverDIntegerABITests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDIntegerABITests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDIntegerABITests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDIntegerABITests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDIntegerABITests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDIntegerABITests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDIntegerABITests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDIntegerABITests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDIntegerABITests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDIntegerABITests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDIntegerABITests/
-          if-no-files-found: error
-      - name: Execute NeverDLinuxProcessTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDLinuxProcessTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDLinuxProcessTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDLinuxProcessTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDLinuxProcessTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDLinuxProcessTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDLinuxProcessTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDLinuxProcessTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDLinuxProcessTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDLinuxProcessTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDLinuxProcessTests/
-          if-no-files-found: error
-      - name: Execute NeverDWindowsProcessTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDWindowsProcessTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDWindowsProcessTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDWindowsProcessTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDWindowsProcessTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDWindowsProcessTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDWindowsProcessTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDWindowsProcessTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDWindowsProcessTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDWindowsProcessTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDWindowsProcessTests/
-          if-no-files-found: error
-      - name: Execute NeverDDarwinProcessTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDDarwinProcessTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDDarwinProcessTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDDarwinProcessTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDDarwinProcessTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDDarwinProcessTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDDarwinProcessTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDDarwinProcessTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDDarwinProcessTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDDarwinProcessTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDDarwinProcessTests/
-          if-no-files-found: error
-      - name: Execute NeverDRunControlTests
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          mkdir -p build-hvf/owner-evidence/NeverDRunControlTests
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDRunControlTests$' --show-only=json-v1 > build-hvf/owner-evidence/NeverDRunControlTests/inventory.json
-          set +e
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDRunControlTests$' --no-tests=error --parallel 1 --output-on-failure --test-output-size-passed 65536 --test-output-size-failed 65536 --output-junit "$PWD/build-hvf/owner-evidence/NeverDRunControlTests/results.xml" --output-log "$PWD/build-hvf/owner-evidence/NeverDRunControlTests/ctest.log"
-          native_ctest_status=$?
-          echo "$native_ctest_status" > build-hvf/owner-evidence/NeverDRunControlTests/ctest-status.txt
-          exit "$native_ctest_status"
-      - name: Preserve NeverDRunControlTests
-        if: ${{ always() && steps.native_build.outcome == 'success' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: NeverDRunControlTests-attempt-${{ github.run_attempt }}
-          path: build-hvf/owner-evidence/NeverDRunControlTests/
-          if-no-files-found: error
-      - name: Audit the complete owner inventory and required native outcomes
-        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
-        shell: bash
-        run: |
-          python3 - <<'PYAUDIT'
-          from collections import Counter
-          import json
-          from pathlib import Path
-          import platform
-          import subprocess
-          import xml.etree.ElementTree as ET
-          from scripts.run_native_cpu_ci import hvf_inventory
-          from scripts.audit_ci_test_inventory import parse_inventory
-          from scripts.audit_ci_test_results import OUTCOME_NAMES, parse_junit
-          root = Path("build-hvf/owner-evidence")
-          owners, required = hvf_inventory(Path.cwd(), platform.machine())
-          expected, actual, cases, errors = set(), set(), [], []
-          if {p.name for p in root.iterdir() if p.is_dir()} != set(owners):
-              errors.append("owner directories do not match the full native inventory")
-          for owner in owners:
-              directory = root / owner
-              try:
-                  if int((directory / "ctest-status.txt").read_text()) != 0:
-                      errors.append(owner + ": CTest returned failure")
-                  inventory = parse_inventory(json.loads((directory / "inventory.json").read_text()))
-                  results = parse_junit(ET.parse(directory / "results.xml").getroot())
-                  if not inventory or any(owner not in test.labels for test in inventory):
-                      errors.append(owner + ": invalid owner inventory")
-                  if len(results) != len(inventory) or set(inventory) != {case.test for case in results}:
-                      errors.append(owner + ": test identities do not match")
-                  expected.update(inventory)
-                  actual.update(case.test for case in results)
-                  cases.extend(results)
-              except (OSError, ValueError, ET.ParseError) as error:
-                  errors.append(owner + ": " + str(error))
-          counts = Counter(case.outcome for case in cases)
-          passed = {case.test.name for case in cases if case.outcome == "passed"}
-          missing = sorted(required - passed)
-          summary = {
-              "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-              "source_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
-              "host_architecture": platform.machine(),
-              "parallel": 1,
-              "execution": "separate CTest invocation for each complete owner",
-              "owners": owners,
-              "registered": len(expected),
-              "total": len(cases),
-              "counts": {name: counts[name] for name in OUTCOME_NAMES},
-              "required_native_tests": len(required),
-              "required_native_unexecuted": missing,
-              "errors": errors,
-          }
-          (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-          print(json.dumps(summary, indent=2), flush=True)
-          raise SystemExit(int(bool(errors or missing or expected != actual or
-              len(cases) != len(expected) or counts["failed"] or counts["disabled"] or counts["not_run"])))
-          PYAUDIT
-      - name: Preserve complete diagnostic evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: hvf-owner-diagnosis-attempt-${{ github.run_attempt }}
+          name: hvf-${{ inputs.owner }}-inventory-attempt-${{ github.run_attempt }}
           path: |
             build-hvf-probe/result.log
             build-hvf/transport-evidence/
-            build-hvf/owner-evidence/
-            build-hvf/native-build.log
-            build-hvf/unittests/emulation/Testing/Temporary/LastTest*.log*
+            build-hvf/family-build.log
+            build-hvf/family-evidence/
+          if-no-files-found: error
+      - name: ExplicitBackends/X64FPContext.CapturesFullPhysicalStateAndRestoresAfterExecution
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'ExplicitBackends/X64FPContext.CapturesFullPhysicalStateAndRestoresAfterExecution'
+      - name: Preserve fp method 00
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-00-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-00/
+          if-no-files-found: error
+      - name: ExplicitBackends/X64FPContext.RejectsInvalidWidthsAndEncodingsWithoutTruncation
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'ExplicitBackends/X64FPContext.RejectsInvalidWidthsAndEncodingsWithoutTruncation'
+      - name: Preserve fp method 01
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-01-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-01/
+          if-no-files-found: error
+      - name: ExplicitBackends/X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'ExplicitBackends/X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS'
+      - name: Preserve fp method 02
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-02-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-02/
+          if-no-files-found: error
+      - name: ExplicitBackends/X64FPTransport.PreservesAllPhysicalLanesAndControlAcrossEveryTOP
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'ExplicitBackends/X64FPTransport.PreservesAllPhysicalLanesAndControlAcrossEveryTOP'
+      - name: Preserve fp method 03
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-03-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-03/
+          if-no-files-found: error
+      - name: ExplicitBackends/X64FPTransport.StackChangesMatchIndependentHostFXSaveAndRestore
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'ExplicitBackends/X64FPTransport.StackChangesMatchIndependentHostFXSaveAndRestore'
+      - name: Preserve fp method 04
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-04-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-04/
+          if-no-files-found: error
+      - name: Formats/X64XsaveHost.ActualRestoreDistinguishesStandardAndCompactedMXCSR
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'Formats/X64XsaveHost.ActualRestoreDistinguishesStandardAndCompactedMXCSR'
+      - name: Preserve fp method 05
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-05-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-05/
+          if-no-files-found: error
+      - name: Native/X64ProbeExecution.ExistingGuestMappingAndRAMSurviveInitialization
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'Native/X64ProbeExecution.ExistingGuestMappingAndRAMSurviveInitialization'
+      - name: Preserve fp method 06
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-06-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-06/
+          if-no-files-found: error
+      - name: Native/X64ProbeExecution.OriginalProgramChecksFullStateAndOneDeadline
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'Native/X64ProbeExecution.OriginalProgramChecksFullStateAndOneDeadline'
+      - name: Preserve fp method 07
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-07-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-07/
+          if-no-files-found: error
+      - name: X64FPState.AbsentXsaveComponentsIgnoreStalePayloadAndUseInitState
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64FPState.AbsentXsaveComponentsIgnoreStalePayloadAndUseInitState'
+      - name: Preserve fp method 08
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-08-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-08/
+          if-no-files-found: error
+      - name: X64FPState.InvalidStateCannotTruncateLanesOrPublishAStateBuffer
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64FPState.InvalidStateCannotTruncateLanesOrPublishAStateBuffer'
+      - name: Preserve fp method 09
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-09-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-09/
+          if-no-files-found: error
+      - name: X64FPState.MalformedXsaveHeadersCannotPublishPartialState
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64FPState.MalformedXsaveHeadersCannotPublishPartialState'
+      - name: Preserve fp method 10
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-10-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-10/
+          if-no-files-found: error
+      - name: X64FPState.PhysicalTagClassificationAndLogicalFXSaveSlots
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64FPState.PhysicalTagClassificationAndLogicalFXSaveSlots'
+      - name: Preserve fp method 11
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-11-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-11/
+          if-no-files-found: error
+      - name: X64FPState.SoftwareResetAndContextsRetainExtendedRegisters
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64FPState.SoftwareResetAndContextsRetainExtendedRegisters'
+      - name: Preserve fp method 12
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-12-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-12/
+          if-no-files-found: error
+      - name: X64FPState.StandardAndCompactedXsavePreserveEveryPhysicalTOP
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64FPState.StandardAndCompactedXsavePreserveEveryPhysicalTOP'
+      - name: Preserve fp method 13
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-13-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-13/
+          if-no-files-found: error
+      - name: X64MachineProbe.ActiveExecutionLeaseRejectsInitializationBeforeEntry
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.ActiveExecutionLeaseRejectsInitializationBeforeEntry'
+      - name: Preserve fp method 14
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-14-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-14/
+          if-no-files-found: error
+      - name: X64MachineProbe.ControlTLSAndPrivilegeCorruptionRejectInitialization
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.ControlTLSAndPrivilegeCorruptionRejectInitialization'
+      - name: Preserve fp method 15
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-15-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-15/
+          if-no-files-found: error
+      - name: X64MachineProbe.DiagnosticIdentifiesStepFieldAndBothValues
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.DiagnosticIdentifiesStepFieldAndBothValues'
+      - name: Preserve fp method 16
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-16-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-16/
+          if-no-files-found: error
+      - name: X64MachineProbe.EveryPhysicalFPWordCorruptionRejectsInitialization
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.EveryPhysicalFPWordCorruptionRejectsInitialization'
+      - name: Preserve fp method 17
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-17-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-17/
+          if-no-files-found: error
+      - name: X64MachineProbe.EveryScalarCorruptionRejectsNativeInitialization
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.EveryScalarCorruptionRejectsNativeInitialization'
+      - name: Preserve fp method 18
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-18-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-18/
+          if-no-files-found: error
+      - name: X64MachineProbe.EveryXmmWordCorruptionRejectsNativeInitialization
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.EveryXmmWordCorruptionRejectsNativeInitialization'
+      - name: Preserve fp method 19
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-19-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-19/
+          if-no-files-found: error
+      - name: X64MachineProbe.GenuineTransferFailureRetainsDiagnosticAndReleasesLease
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.GenuineTransferFailureRetainsDiagnosticAndReleasesLease'
+      - name: Preserve fp method 20
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-20-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-20/
+          if-no-files-found: error
+      - name: X64MachineProbe.NopSupportDoesNotProveFloatingPointExecution
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.NopSupportDoesNotProveFloatingPointExecution'
+      - name: Preserve fp method 21
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-21-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-21/
+          if-no-files-found: error
+      - name: X64MachineProbe.PendingExceptionMakesExactMetadataChecksMeaningful
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64MachineProbe.PendingExceptionMakesExactMetadataChecksMeaningful'
+      - name: Preserve fp method 22
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-22-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-22/
+          if-no-files-found: error
+      - name: X64Xsave.AbsentExtensionsIgnoreStaleBytes
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64Xsave.AbsentExtensionsIgnoreStaleBytes'
+      - name: Preserve fp method 23
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-23-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-23/
+          if-no-files-found: error
+      - name: X64Xsave.CompactedInitialExtensionsPreserveTheCompleteFPState
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64Xsave.CompactedInitialExtensionsPreserveTheCompleteFPState'
+      - name: Preserve fp method 24
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-24-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-24/
+          if-no-files-found: error
+      - name: X64Xsave.CompactedOffsetsFollowLayoutRatherThanPresentBits
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64Xsave.CompactedOffsetsFollowLayoutRatherThanPresentBits'
+      - name: Preserve fp method 25
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-25-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-25/
+          if-no-files-found: error
+      - name: X64Xsave.EveryNonInitialExtensionByteRejectsWithoutPublication
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64Xsave.EveryNonInitialExtensionByteRejectsWithoutPublication'
+      - name: Preserve fp method 26
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-26-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-26/
+          if-no-files-found: error
+      - name: X64Xsave.StandardInitSSERejectsReservedMXCSRWithoutPublication
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64Xsave.StandardInitSSERejectsReservedMXCSRWithoutPublication'
+      - name: Preserve fp method 27
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-27-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-27/
+          if-no-files-found: error
+      - name: X64Xsave.StandardInitSSEStillLoadsMXCSR
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64Xsave.StandardInitSSEStillLoadsMXCSR'
+      - name: Preserve fp method 28
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-28-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-28/
+          if-no-files-found: error
+      - name: X64Xsave.TruncatedAndUnknownExtensionsCannotPublishState
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64Xsave.TruncatedAndUnknownExtensionsCannotPublishState'
+      - name: Preserve fp method 29
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-29-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-29/
+          if-no-files-found: error
+      - name: X64Xsave.WideLayoutIgnoresAbsentComponentsAndAlignmentPadding
+        if: ${{ !cancelled() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run fp --family 'X64Xsave.WideLayoutIgnoresAbsentComponentsAndAlignmentPadding'
+      - name: Preserve fp method 30
+        if: ${{ always() && inputs.owner == 'fp' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-fp-30-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/fp/family-30/
+          if-no-files-found: error
+      - name: DarwinImage.AllowsRoundedLinkeditTailWithoutRelaxingPageAlignment
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.AllowsRoundedLinkeditTailWithoutRelaxingPageAlignment'
+      - name: Preserve darwin method 00
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-00-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-00/
+          if-no-files-found: error
+      - name: DarwinImage.DynamicDependenciesAndThreadLocalSectionsRequireAnExplicitModel
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.DynamicDependenciesAndThreadLocalSectionsRequireAnExplicitModel'
+      - name: Preserve darwin method 01
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-01-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-01/
+          if-no-files-found: error
+      - name: DarwinImage.FileBudgetIncludesBytesOutsideMappedSegments
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.FileBudgetIncludesBytesOutsideMappedSegments'
+      - name: Preserve darwin method 02
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-02-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-02/
+          if-no-files-found: error
+      - name: DarwinImage.FileReaderRejectsNonfilesAndEmbeddedNULPaths
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.FileReaderRejectsNonfilesAndEmbeddedNULPaths'
+      - name: Preserve darwin method 03
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-03-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-03/
+          if-no-files-found: error
+      - name: DarwinImage.HeaderRequiresExecuteEvenWhenAnotherSegmentOwnsTheEntry
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.HeaderRequiresExecuteEvenWhenAnotherSegmentOwnsTheEntry'
+      - name: Preserve darwin method 04
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-04-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-04/
+          if-no-files-found: error
+      - name: DarwinImage.IntelLibraryCapabilityBitDoesNotChangeTheGuestISA
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.IntelLibraryCapabilityBitDoesNotChangeTheGuestISA'
+      - name: Preserve darwin method 05
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-05-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-05/
+          if-no-files-found: error
+      - name: DarwinImage.OriginalBytesAndPageZeroHaveSeparateMappingOwnership
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.OriginalBytesAndPageZeroHaveSeparateMappingOwnership'
+      - name: Preserve darwin method 06
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-06-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-06/
+          if-no-files-found: error
+      - name: DarwinImage.RejectsAmbiguousPlatformsEntriesAndNoncanonicalThreadState
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.RejectsAmbiguousPlatformsEntriesAndNoncanonicalThreadState'
+      - name: Preserve darwin method 07
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-07-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-07/
+          if-no-files-found: error
+      - name: DarwinImage.RejectsEncryptionFixupsSubtypesAndRequiredCommands
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.RejectsEncryptionFixupsSubtypesAndRequiredCommands'
+      - name: Preserve darwin method 08
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-08-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-08/
+          if-no-files-found: error
+      - name: DarwinImage.RejectsRangeOverflowsOverlapAndInvalidPageZero
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.RejectsRangeOverflowsOverlapAndInvalidPageZero'
+      - name: Preserve darwin method 09
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-09-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-09/
+          if-no-files-found: error
+      - name: DarwinImage.StackAlignmentBudgetAndStartupStringsAreValidated
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinImage.StackAlignmentBudgetAndStartupStringsAreValidated'
+      - name: Preserve darwin method 10
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-10-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-10/
+          if-no-files-found: error
+      - name: DarwinNative.OriginalMemoryAndWriteContractsMatchHostKernel
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'DarwinNative.OriginalMemoryAndWriteContractsMatchHostKernel'
+      - name: Preserve darwin method 11
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-11-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-11/
+          if-no-files-found: error
+      - name: Pages/DarwinMemoryTest.AlignmentNoneAndWriteOnlyUseDarwinPageRules
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Pages/DarwinMemoryTest.AlignmentNoneAndWriteOnlyUseDarwinPageRules'
+      - name: Preserve darwin method 12
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-12-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-12/
+          if-no-files-found: error
+      - name: Pages/DarwinMemoryTest.MaximumProtectionFailureIsAtomicAcrossSegments
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Pages/DarwinMemoryTest.MaximumProtectionFailureIsAtomicAcrossSegments'
+      - name: Preserve darwin method 13
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-13-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-13/
+          if-no-files-found: error
+      - name: Pages/DarwinMemoryTest.NonfixedHintRoundsUpAndSearchesAboveOccupiedHint
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Pages/DarwinMemoryTest.NonfixedHintRoundsUpAndSearchesAboveOccupiedHint'
+      - name: Preserve darwin method 14
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-14-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-14/
+          if-no-files-found: error
+      - name: Pages/DarwinMemoryTest.PartialUnmapRetiresBudgetAndFreshMappingIsZero
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Pages/DarwinMemoryTest.PartialUnmapRetiresBudgetAndFreshMappingIsZero'
+      - name: Preserve darwin method 15
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-15-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-15/
+          if-no-files-found: error
+      - name: Pages/DarwinMemoryTest.ProtectionAcrossHoleCannotChangeEarlierPages
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Pages/DarwinMemoryTest.ProtectionAcrossHoleCannotChangeEarlierPages'
+      - name: Preserve darwin method 16
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-16-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-16/
+          if-no-files-found: error
+      - name: Pages/DarwinMemoryTest.RawMmapZeroLengthAndInvalidUnmapRemainDistinct
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Pages/DarwinMemoryTest.RawMmapZeroLengthAndInvalidUnmapRemainDistinct'
+      - name: Preserve darwin method 17
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-17-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-17/
+          if-no-files-found: error
+      - name: Pages/DarwinMemoryTest.UnsupportedModesHaveNoMappingEffects
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Pages/DarwinMemoryTest.UnsupportedModesHaveNoMappingEffects'
+      - name: Preserve darwin method 18
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-18-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-18/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.AnonymousMemoryAlignmentAtomicProtectionAndReuse
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.AnonymousMemoryAlignmentAtomicProtectionAndReuse'
+      - name: Preserve darwin method 19
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-19-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-19/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.DeadlineTerminatesANonreturningGuestAcrossQuanta
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.DeadlineTerminatesANonreturningGuestAcrossQuanta'
+      - name: Preserve darwin method 20
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-20-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-20/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.EventAndOutputLimitsStopBeforeServiceEffects
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.EventAndOutputLimitsStopBeforeServiceEffects'
+      - name: Preserve darwin method 21
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-21-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-21/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.ExplicitProfileCannotBeReplacedByHostPlatform
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.ExplicitProfileCannotBeReplacedByHostPlatform'
+      - name: Preserve darwin method 22
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-22-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-22/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.FaultAndReadOnlyStoreRemainCPUFailures
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.FaultAndReadOnlyStoreRemainCPUFailures'
+      - name: Preserve darwin method 23
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-23-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-23/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.InitialStackAndDataPartialUnmapReleasesPhysicalBudget
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.InitialStackAndDataPartialUnmapReleasesPhysicalBudget'
+      - name: Preserve darwin method 24
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-24-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-24/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.InstructionBudgetSurvivesQuanta
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.InstructionBudgetSurvivesQuanta'
+      - name: Preserve darwin method 25
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-25-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-25/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.MainReturnAndBSDExitHaveRealStatus
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.MainReturnAndBSDExitHaveRealStatus'
+      - name: Preserve darwin method 26
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-26-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-26/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.OversizedWritePrecedesDescriptorPointerAndOutputChecks
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.OversizedWritePrecedesDescriptorPointerAndOutputChecks'
+      - name: Preserve darwin method 27
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-27-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-27/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.PartialCopyRetainsEFAULTAndSubsequentWriteRecovers
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.PartialCopyRetainsEFAULTAndSubsequentWriteRecovers'
+      - name: Preserve darwin method 28
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-28-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-28/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.StartupDataBSSCarryAndBinaryOutput
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.StartupDataBSSCarryAndBinaryOutput'
+      - name: Preserve darwin method 29
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-29-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-29/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.UnixThreadReceivesArgcAtTheInitialStackPointer
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.UnixThreadReceivesArgcAtTheInitialStackPointer'
+      - name: Preserve darwin method 30
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-30-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-30/
+          if-no-files-found: error
+      - name: Transports/DarwinProcess.UnknownBSDMachAndForeignTrapFailExplicitly
+        if: ${{ !cancelled() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 scripts/diagnose_hvf_families.py run darwin --family 'Transports/DarwinProcess.UnknownBSDMachAndForeignTrapFailExplicitly'
+      - name: Preserve darwin method 31
+        if: ${{ always() && inputs.owner == 'darwin' && steps.inventory.outcome == 'success' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-darwin-31-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/darwin/family-31/
+          if-no-files-found: error
+      - name: Require complete method identities and actual native outcomes
+        if: ${{ !cancelled() && steps.inventory.outcome == 'success' }}
+        env:
+          DIAGNOSE_OWNER: ${{ inputs.owner }}
+        run: python3 scripts/diagnose_hvf_families.py audit "$DIAGNOSE_OWNER"
+      - name: Preserve complete method evidence
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-${{ inputs.owner }}-methods-attempt-${{ github.run_attempt }}
+          path: build-hvf/family-evidence/
           if-no-files-found: warn
