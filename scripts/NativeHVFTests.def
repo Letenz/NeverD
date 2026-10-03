@@ -35,6 +35,9 @@ NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
     "HvfExecutor.GuestFaultDoesNotPublishAtEitherARMPrivilegeAndAllowsRetry")
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
     X64, "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    X64, "NativeTransports/X64StateTransition."
+         "CR8ReadsEveryGPRAndPreservesUserPrivilegeFaults/hvf")
 // Each supported guest platform must execute its real startup/service fixture
 // on the host's ISA. Loader-only registrations cannot satisfy this gate.
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(

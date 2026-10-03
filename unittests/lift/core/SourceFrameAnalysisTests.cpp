@@ -238,7 +238,8 @@ TEST(SourceFrameAnalysis, RequiresAllReachingPathsIndependentOfBlockOrder) {
       B[2].Preds.clear();
       break;
     }
-    EXPECT_FALSE(Bad.query());
+    // A loop which writes only an unrelated register preserves the slot.
+    EXPECT_EQ(bool(Bad.query()), Case == 5);
   }
   // A loop reached only after the query is irrelevant to this prefix.
   F = FrameFixture{};
@@ -373,6 +374,220 @@ TEST(SourceFrameAnalysis, RetainsConditionalScratchAndLiveRecordRequirements) {
     }
     EXPECT_EQ(bool(F.query(Contract)), Case == 0 || Case == 1);
   }
+}
+
+namespace {
+FrameFixture loopFrame(bool QueryInLoop) {
+  FrameFixture F;
+  const auto Original = F.Low.Blocks[0];
+  F.Low.Blocks.resize(4);
+  for (size_t I = 0; I < 4; ++I) {
+    F.Low.Blocks[I] = {};
+    F.Low.Blocks[I].Id = 7 + I;
+    F.Low.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+  }
+  auto &Entry = F.Low.Blocks[0];
+  Entry.Ops.assign(Original.Ops.begin(), Original.Ops.begin() + 6);
+  Entry.Succs = {8};
+  auto &Header = F.Low.Blocks[1];
+  Header.Preds = {7, 9};
+  Header.Succs = {9, 10};
+  Header.Ops = {
+      op(NdOp::COPY, NdVar::reg(a64reg::X9, 8), {NdVar::scalar(0, 8)}, 0x1100)};
+  auto &Body = F.Low.Blocks[2];
+  Body.Preds = {8};
+  Body.Succs = {8};
+  Body.Ops = {op(NdOp::COPY, NdVar::reg(a64reg::X10, 8), {NdVar::scalar(1, 8)},
+                 0x1200)};
+  auto &Exit = F.Low.Blocks[3];
+  Exit.Preds = {8};
+  Exit.Ops.assign(Original.Ops.begin() + 7, Original.Ops.end());
+  auto &QueryOps = QueryInLoop ? Header.Ops : Exit.Ops;
+  QueryOps.insert(QueryOps.begin(), Original.Ops[6]);
+  return F;
+}
+} // namespace
+
+TEST(SourceFrameAnalysis, PreservesOnePreloopDefinitionAcrossAllIterations) {
+  for (bool Inside : {false, true}) {
+    SCOPED_TRACE(Inside);
+    auto F = loopFrame(Inside);
+    const auto Expected = F.query();
+    ASSERT_TRUE(Expected);
+    EXPECT_EQ(Expected->Definition,
+              (SourceFrameDefinition{7, 2, 0x1008, 0, Value}));
+    EXPECT_EQ(Expected->FrameOffset, -32);
+    std::reverse(F.Low.Blocks.begin(), F.Low.Blocks.end());
+    EXPECT_EQ(F.query(), Expected);
+  }
+}
+
+TEST(SourceFrameAnalysis, LoopQueryRequiresTheCompleteBackedgeEffects) {
+  const auto Signature = signature();
+  SourceFrameEffects ReadOnly;
+  ReadOnly.ReadOnlyFrameParameters[0] = 8;
+  SourceFrameEffects Written;
+  Written.WritableFrameParameters[0] = 8;
+  for (bool Inside : {false, true}) {
+    SCOPED_TRACE(Inside);
+    auto F = loopFrame(Inside);
+    F.Low.Blocks[2].Ops = {op(NdOp::COPY, X0, {Slot}, 0x1200),
+                           op(NdOp::CALL, {}, {NdVar::cst(0x4000, 8)}, 0x1204)};
+    EXPECT_TRUE(F.query(callsAt(0x1204, Signature, ReadOnly)));
+    EXPECT_FALSE(F.query());
+    EXPECT_FALSE(F.query(callsAt(0x1204, Signature, {})));
+    EXPECT_FALSE(F.query(callsAt(0x1204, Signature, Written)));
+    // Calls after the queried LOAD still affect the next iteration.
+    if (Inside) {
+      F.Low.Blocks[1].Ops.insert(F.Low.Blocks[1].Ops.end(),
+                                 F.Low.Blocks[2].Ops.begin(),
+                                 F.Low.Blocks[2].Ops.end());
+      F.Low.Blocks[2].Ops = {op(NdOp::COPY, X0, {NdVar::scalar(0, 8)}, 0x1300)};
+      EXPECT_TRUE(F.query(callsAt(0x1204, Signature, ReadOnly)));
+      EXPECT_FALSE(F.query());
+      EXPECT_FALSE(F.query(callsAt(0x1204, Signature, Written)));
+    }
+  }
+}
+
+TEST(SourceFrameAnalysis,
+     LoopReloadRejectsChangedExpiredEscapedOrPartialBytes) {
+  for (bool Inside : {false, true})
+    for (unsigned Case = 0; Case < 13; ++Case) {
+      SCOPED_TRACE(Inside);
+      SCOPED_TRACE(Case);
+      auto F = loopFrame(Inside);
+      auto &Body = F.Low.Blocks[2].Ops;
+      switch (Case) {
+      case 0:
+        Body.push_back(
+            op(NdOp::STORE, {}, {Slot, NdVar::scalar(0, 8)}, 0x1204));
+        break;
+      case 1:
+        Body.push_back(
+            op(NdOp::STORE, {}, {Slot, NdVar::scalar(0, 1)}, 0x1204));
+        break;
+      case 2:
+        Body.push_back(op(NdOp::STORE, {}, {Slot, SP}, 0x1204));
+        break;
+      case 3:
+        Body.push_back(
+            op(NdOp::STORE, {}, {NdVar::reg(a64reg::X20, 8), Slot}, 0x1204));
+        break;
+      case 4:
+        Body.push_back(
+            op(NdOp::INT_ADD, SP, {SP, NdVar::scalar(64, 8)}, 0x1204));
+        Body.push_back(
+            op(NdOp::INT_SUB, SP, {SP, NdVar::scalar(64, 8)}, 0x1208));
+        break;
+      case 5:
+        Body.push_back(
+            op(NdOp::COPY, Slot, {NdVar::reg(a64reg::X20, 8)}, 0x1204));
+        break;
+      case 6:
+        Body.push_back(op(NdOp::COPY, NdVar::reg(a64reg::X19, 4),
+                          {NdVar::scalar(0, 4)}, 0x1204));
+        break;
+      case 7:
+        Body.push_back(op(NdOp::CALL, {}, {NdVar::cst(0x5000, 8)}, 0x1204));
+        break;
+      case 8:
+        F.Low.Blocks[0].Ops.erase(F.Low.Blocks[0].Ops.begin() + 4);
+        Body.push_back(op(NdOp::STORE, {}, {Slot, Value}, 0x1204));
+        break;
+      case 9:
+        Body.push_back(
+            op(NdOp::COPY, Value, {NdVar::addressFragment(0x6080, 8)}, 0x1204));
+        Body.push_back(op(NdOp::STORE, {}, {Slot, Value}, 0x1208));
+        break;
+      case 10:
+        Body.push_back(
+            op(NdOp::INT_SUB, SP, {SP, NdVar::reg(a64reg::X20, 8)}, 0x1204));
+        break;
+      case 11:
+        F.Low.Blocks[1].Preds.pop_back();
+        break;
+      case 12:
+        Body.push_back(op(
+            NdOp::STORE, {},
+            {NdVar::reg(a64reg::X20, 8), NdVar::reg(a64reg::X19, 4)}, 0x1204));
+        break;
+      }
+      EXPECT_FALSE(F.query());
+      std::reverse(F.Low.Blocks.begin(), F.Low.Blocks.end());
+      EXPECT_FALSE(F.query());
+    }
+}
+
+TEST(SourceFrameAnalysis, DoesNotEquateDifferentExecutionsOfALoopProducer) {
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    SCOPED_TRACE(Case);
+    auto F = loopFrame(true);
+    auto &Header = F.Low.Blocks[1].Ops;
+    std::vector<LowOp> Producer = {
+        op(NdOp::LOAD, Value, {NdVar::reg(a64reg::X20, 8)}, 0x1100),
+        op(NdOp::STORE, {}, {Slot, Value}, 0x1104)};
+    if (Case == 1)
+      Producer[0] =
+          op(NdOp::COPY, Value, {NdVar::addressFragment(0x6080, 8)}, 0x1100);
+    Header.insert(Header.begin(), Producer.begin(), Producer.end());
+    if (Case == 2) {
+      // The same static load may also execute in an earlier iteration before
+      // a later query block. A definition site alone proves no value identity.
+      Header.erase(Header.begin() + 2);
+      F.Low.Blocks[3].Ops.insert(
+          F.Low.Blocks[3].Ops.begin(),
+          op(NdOp::LOAD, NdVar::tmp(16, 8), {Slot}, 0x1018));
+    }
+    EXPECT_FALSE(F.query());
+  }
+}
+
+TEST(SourceFrameAnalysis, LoopQueryRetainsScratchConditionsAndObligations) {
+  using Scratch = SourceFrameScratchEffect;
+  const auto Begin = signature(4), End = signature();
+  SourceFrameEffects Initialize, Finish;
+  Initialize.WritableFrameParameters[1] = 24;
+  Initialize.Scratch = {Scratch::Domain::SwiftAccess,
+                        Scratch::Action::Initialize,
+                        1,
+                        24,
+                        SourceFrameScalarCondition{2, {0, 1, 32, 33}},
+                        {32, 33}};
+  Finish.ReadOnlyFrameParameters[0] = 24;
+  Finish.Scratch = {Scratch::Domain::SwiftAccess,
+                    Scratch::Action::Finish,
+                    0,
+                    24,
+                    std::nullopt,
+                    {}};
+  auto Calls = callsAt(0x1210, Begin, Initialize);
+  Calls.merge(callsAt(0x1218, End, Finish));
+  for (bool Inside : {false, true})
+    for (unsigned Case = 0; Case < 6; ++Case) {
+      SCOPED_TRACE(Inside);
+      SCOPED_TRACE(Case);
+      auto F = loopFrame(Inside);
+      const uint64_t Flags = Case == 2 ? 0 : Case == 3 ? 4 : 32;
+      auto &Body = F.Low.Blocks[2].Ops;
+      Body = {op(NdOp::COPY, X0, {NdVar::reg(a64reg::X20, 8)}, 0x1200),
+              op(NdOp::COPY, NdVar::reg(a64reg::X1, 8), {SP}, 0x1204),
+              op(NdOp::COPY, NdVar::reg(a64reg::X2, 8),
+                 {NdVar::scalar(Flags, 8)}, 0x1208),
+              op(NdOp::COPY, NdVar::reg(a64reg::X3, 8), {NdVar::scalar(0, 8)},
+                 0x120c),
+              op(NdOp::CALL, {}, {NdVar::cst(0x4000, 8)}, 0x1210),
+              op(NdOp::COPY, X0, {SP}, 0x1214),
+              op(NdOp::CALL, {}, {NdVar::cst(0x4000, 8)}, 0x1218)};
+      if (Case == 1 || Case == 2)
+        Body.resize(5);
+      if (Case == 4)
+        Body.insert(Body.begin() + 5,
+                    op(NdOp::STORE, {}, {SP, NdVar::scalar(0, 1)}, 0x1212));
+      if (Case == 5)
+        Body[5] = op(NdOp::INT_ADD, X0, {SP, NdVar::scalar(8, 8)}, 0x1214);
+      EXPECT_EQ(bool(F.query(Calls)), Case == 0 || Case == 2);
+    }
 }
 
 TEST(SourceFrameAnalysis, BoundsDefinitionAndTransferWork) {

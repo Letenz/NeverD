@@ -1356,23 +1356,23 @@ sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
   }
   if (!Relevant[Graph->Entry])
     return std::nullopt;
+  // A static producer in a cycle can denote a different value on each
+  // iteration. Kahn's unremoved nodes include cycles and their descendants;
+  // only a definition in the removed prefix can identify one observation.
+  // This is deliberately stricter than proving a particular load invariant.
   std::vector<size_t> Indegree(Count);
-  size_t RelevantCount = 0;
   for (size_t I = 0; I < Count; ++I) {
     if (!Relevant[I])
       continue;
-    ++RelevantCount;
-    // Ancestor closure includes every predecessor, including a cycle that
-    // returns after the query. A bounded topological pass rejects such cycles.
     Indegree[I] = Graph->Preds[I].size();
     if (!Indegree[I])
       Pending.push_back(I);
   }
-  std::vector<size_t> Order;
+  std::vector<bool> SingleObservation(Count);
   while (!Pending.empty()) {
     const size_t I = Pending.front();
     Pending.pop_front();
-    Order.push_back(I);
+    SingleObservation[I] = true;
     for (size_t Next : Graph->Succs[I]) {
       if (!Proof.Remaining--)
         return std::nullopt;
@@ -1380,49 +1380,74 @@ sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
         Pending.push_back(Next);
     }
   }
-  if (Order.size() != RelevantCount || Order.front() != Graph->Entry ||
-      Order.back() != Query)
+  if (!SingleObservation[Graph->Entry])
     return std::nullopt;
 
-  std::vector<std::optional<State>> Outgoing(Count);
-  for (size_t I : Order) {
+  // If the query can reach itself, its suffix participates in the next
+  // observation. Otherwise only incoming states and the final prefix matter;
+  // an unrelated later cleanup needs no call contract for this query.
+  const bool Repeats =
+      std::any_of(Graph->Succs[Query].begin(), Graph->Succs[Query].end(),
+                  [&](size_t Next) { return Relevant[Next]; });
+  std::vector<std::optional<State>> Incoming(Count);
+  Incoming[Graph->Entry] = Proof.Initial;
+  std::vector<bool> Queued(Count);
+  Pending.push_back(Graph->Entry);
+  Queued[Graph->Entry] = true;
+  while (!Pending.empty()) {
+    const size_t I = Pending.front();
+    Pending.pop_front();
+    Queued[I] = false;
+    if (I == Query && !Repeats)
+      continue;
     const auto &CurrentBlock = Function.Blocks[I];
-    State Current = Proof.Initial;
-    bool HasIncoming = I == Graph->Entry;
-    for (size_t Previous : Graph->Preds[I]) {
-      if (!Outgoing[Previous])
+    if (Proof.Remaining < CurrentBlock.Ops.size())
+      return std::nullopt;
+    Proof.Remaining -= CurrentBlock.Ops.size();
+    for (const auto &Op : CurrentBlock.Ops)
+      if (Op.Opcode == NdOp::RETURN)
         return std::nullopt;
-      if (!HasIncoming)
-        Current = *Outgoing[Previous];
-      else if (!meetFrameState(Current, *Outgoing[Previous], Proof.Remaining,
-                               false))
+    State Out = *Incoming[I];
+    if (!Proof.transfer(CurrentBlock, Out, false) || Proof.DidTerminate)
+      return std::nullopt;
+    for (size_t Next : Graph->Succs[I]) {
+      if (!Relevant[Next])
+        continue;
+      State Current = Out;
+      if (Incoming[Next]) {
+        Current = *Incoming[Next];
+        if (!meetFrameState(Current, Out, Proof.Remaining, false))
+          return std::nullopt;
+      }
+      if (Incoming[Next] && Current == *Incoming[Next])
+        continue;
+      // Charge retained maps on every update as well as transfer/meet work.
+      // Unvisited predecessors are bottom; their later backedges can only
+      // remove byte identities or add possible-frame taint before publication.
+      const size_t StateCost = Current.Registers.size() + Current.Stack.size() +
+                               Current.Scratch.size() +
+                               Current.InitializedStack.size();
+      if (Proof.Remaining < StateCost)
         return std::nullopt;
-      HasIncoming = true;
+      Proof.Remaining -= StateCost;
+      Incoming[Next] = std::move(Current);
+      if (!Queued[Next]) {
+        Pending.push_back(Next);
+        Queued[Next] = true;
+      }
     }
-    const size_t End =
-        I == Query ? OperationIndex + 1 : CurrentBlock.Ops.size();
-    if (Proof.Remaining < End)
-      return std::nullopt;
-    Proof.Remaining -= End;
-    for (size_t J = 0; J < End; ++J)
-      if (CurrentBlock.Ops[J].Opcode == NdOp::RETURN)
-        return std::nullopt;
-    if (!HasIncoming ||
-        !Proof.transfer(CurrentBlock, Current, false, nullptr,
-                        I == Query ? std::optional(OperationIndex)
-                                   : std::nullopt) ||
-        Proof.DidTerminate)
-      return std::nullopt;
-    // Charge retained state, not only executed operations. A long chain of
-    // tiny blocks must not multiply a large frame map without a bound.
-    const size_t StateCost = Current.Registers.size() + Current.Stack.size() +
-                             Current.Scratch.size() +
-                             Current.InitializedStack.size();
-    if (Proof.Remaining < StateCost)
-      return std::nullopt;
-    Proof.Remaining -= StateCost;
-    Outgoing[I] = std::move(Current);
   }
+  // Never return a provisional first-iteration identity. The complete
+  // relevant graph has converged, including writes/calls after a cyclic query.
+  if (!Incoming[Query] ||
+      !Proof.transfer(Block, *Incoming[Query], false, nullptr,
+                      OperationIndex) ||
+      Proof.DidTerminate || !Proof.LoadedDefinition)
+    return std::nullopt;
+  const auto Producer =
+      Graph->Blocks.find(Proof.LoadedDefinition->Definition.BlockId);
+  if (Producer == Graph->Blocks.end() || !SingleObservation[Producer->second])
+    return std::nullopt;
   return Proof.LoadedDefinition;
 }
 
