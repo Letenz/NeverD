@@ -327,14 +327,14 @@ The first verified CPU batch from [run `37123148209`](https://github.com/NeverSi
 
 ## Latest local native verification
 
-Clean source `353dcd75f`, 2026-10-03. All sixteen ARM64 shards reconciled successfully; the separate Darwin gate also passed. The rows overlap and must not be added.
+Clean source `4ce0b8247`, 2026-10-03 UTC. The complete ARM64 inventory passed in 503 method processes, and every original XML result, execution contract and child retirement was independently reconciled. The separate Darwin gate also passed. The rows overlap and must not be added.
 
 | Scope | Registered | Passed | Failed | Skipped | Required native |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, sixteen shards | 6,908 | 857 | 0 | 6,051 | 16/16 |
+| CPU, complete inventory | 7,003 | 867 | 0 | 6,136 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+`build-hvf-native/hvf-current-4ce0-full-evidence/summary.json` · `build-hvf-native/hvf-current-4ce0-darwin-evidence/summary.json`
 
 ## Standalone Intel diagnosis
 
@@ -343,3 +343,5 @@ The manual [Intel diagnostic workflow](../.github/workflows/hvf-intel-diagnostic
 Before each method, the action uploads its immutable execution plan and a host snapshot. After execution it preserves original XML, process retirement, controller status and a second snapshot. Snapshots include memory, swap, load, disk and process IDs/state/CPU/RSS/executable names, without process arguments or environments; collection errors remain visible. An execution or upload failure stops later methods. Each method retains its 120-second execution cap; an unreachable host may prevent cleanup and final upload. Only already uploaded artifacts survive that loss. These are partial diagnostic results and cannot satisfy the complete CPU or independent Darwin gate. A last start marker identifies an execution boundary, not the failing guest instruction or root cause.
 
 The complete `Native macOS HVF` workflow also accepts optional `source-ref`. It defaults to the workflow commit and otherwise requires a full SHA. Native jobs and the aggregate auditor check out and verify that same source; the audit compares evidence against the tested source, even when the workflow controller has a different revision.
+
+For `hosted-intel`, the full workflow accepts `intel-image=macos-15-intel` (default) or `macos-26-intel`, both listed in the [official runner images](https://github.com/actions/runner-images). This permits an explicit host-environment comparison with the same `source-ref`; the image also changes the OS, SDK and tools. VM/vCPU, native transport, CR8, full CPU and Darwin requirements are unchanged. An image choice alone is not evidence of stability or a runtime fix.

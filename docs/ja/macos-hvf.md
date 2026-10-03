@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 19345d53aaa0d1c5155884ab948be02795fe5e3065629ff28d380b2c08ad404a -->
+<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
 
 [← ドキュメント一覧](README.md)
 
@@ -80,14 +80,14 @@ CPU 実行前に `scripts/prepare_hvf_batches.py` が完全・選択済みイン
 
 ## 最新のローカルネイティブ検証
 
-2026-10-03、クリーンなソース `353dcd75f`。ARM64 の十六シャードは統合監査に合格し、独立 Darwin 検証も合格しました。行は重複するため合算しません。
+2026-10-03 UTC、クリーンなソース `4ce0b8247`。ARM64 の完全な一覧を 503 個のメソッドプロセスで実行し、すべての元の XML、実行契約、子プロセスの終了を独立に照合しました。独立した Darwin 検証も合格しました。行は重複するため合算しません。
 
 | 範囲 | 登録 | 合格 | 失敗 | スキップ | 必須ネイティブ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU、十六シャード | 6,908 | 857 | 0 | 6,051 | 16/16 |
+| CPU、完全な一覧 | 7,003 | 867 | 0 | 6,136 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+`build-hvf-native/hvf-current-4ce0-full-evidence/summary.json` · `build-hvf-native/hvf-current-4ce0-darwin-evidence/summary.json`
 
 ## 独立した Intel 診断
 
@@ -96,3 +96,5 @@ CPU 実行前に `scripts/prepare_hvf_batches.py` が完全・選択済みイン
 各メソッドの実行前に、不変の実行計画とホストのスナップショットをアップロードします。実行後は元の XML、プロセス回収、制御側の状態、二つ目のスナップショットを保存します。メモリ、スワップ、負荷、ディスク、プロセス ID・状態・CPU・RSS・実行ファイル名を記録し、引数や環境変数は含めません。収集エラーも残します。実行またはアップロードの失敗で後続メソッドを停止します。各メソッドの実行上限は引き続き 120 秒ですが、ホストとの通信が失われると回収や最終アップロードはできない場合があります。その場合、既にアップロードした証拠だけが残ります。部分診断は完全な CPU 検証や独立した Darwin 検証を満たしません。最後の開始マーカーは実行の境界を示すだけで、障害命令や根本原因を特定するものではありません。
 
 完全検証用の `Native macOS HVF` ワークフローも任意の `source-ref` を受け付けます。省略時はワークフローのコミットを使い、指定時は完全な SHA が必要です。ネイティブジョブと集約監査は同じソースをチェックアウトして確認します。制御側のリビジョンが異なっても、監査は検証対象のソースコミットに対して証拠を照合します。
+
+`hosted-intel` では、完全検証ワークフローの `intel-image` に `macos-15-intel`（既定）または `macos-26-intel` を指定できます。どちらも[公式 runner イメージ一覧](https://github.com/actions/runner-images)に掲載されています。同じ `source-ref` でホスト環境を比較できますが、イメージ変更には OS、SDK、ツールの変更も含まれます。VM/vCPU、ネイティブ転送、CR8、完全な CPU 検証、Darwin の要件は変わりません。イメージの選択だけでは、安定性や実行時の修正を証明できません。

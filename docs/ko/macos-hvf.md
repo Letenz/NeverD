@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 19345d53aaa0d1c5155884ab948be02795fe5e3065629ff28d380b2c08ad404a -->
+<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
 
 [← 문서 목록](README.md)
 
@@ -80,14 +80,14 @@ CPU 실행 전에 `scripts/prepare_hvf_batches.py`가 전체·선택 목록과 �
 
 ## 최신 로컬 네이티브 검증
 
-2026-10-03의 깨끗한 소스 `353dcd75f`에서 ARM64 열여섯 샤드가 통합 감사를 통과했고 독립 Darwin 검사도 통과했습니다. 두 행은 중복되므로 합산하지 않습니다.
+2026-10-03 UTC의 깨끗한 소스 `4ce0b8247`에서 ARM64 전체 목록이 503개 메서드 프로세스로 실행되어 통과했습니다. 원본 XML, 실행 계약, 자식 프로세스 종료 상태를 모두 독립적으로 대조했고 별도의 Darwin 검사도 통과했습니다. 두 행은 중복되므로 합산하지 않습니다.
 
 | 범위 | 등록 | 통과 | 실패 | 건너뜀 | 필수 네이티브 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, 열여섯 샤드 | 6,908 | 857 | 0 | 6,051 | 16/16 |
+| CPU, 전체 목록 | 7,003 | 867 | 0 | 6,136 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+`build-hvf-native/hvf-current-4ce0-full-evidence/summary.json` · `build-hvf-native/hvf-current-4ce0-darwin-evidence/summary.json`
 
 ## 독립 Intel 진단
 
@@ -96,3 +96,5 @@ CPU 실행 전에 `scripts/prepare_hvf_batches.py`가 전체·선택 목록과 �
 각 메서드 실행 전에 변경 불가능한 실행 계획과 호스트 스냅샷을 업로드합니다. 실행 후에는 원본 XML, 프로세스 회수, 제어기 상태와 두 번째 스냅샷을 보존합니다. 메모리, 스왑, 부하, 디스크, 프로세스 ID·상태·CPU·RSS·실행 파일 이름을 기록하며 프로세스 인수나 환경 변수는 포함하지 않습니다. 수집 오류도 남깁니다. 실행이나 업로드에 실패하면 후속 메서드를 중단합니다. 각 메서드의 실행 제한은 계속 120초지만 호스트 연결이 끊기면 정리와 마지막 업로드가 불가능할 수 있습니다. 이때 이미 업로드한 증거만 남습니다. 부분 진단은 전체 CPU 검사나 독립 Darwin 검증을 대신하지 않습니다. 마지막 시작 표시는 실행 경계만 나타내며 실패한 게스트 명령이나 근본 원인을 특정하지 않습니다.
 
 전체 검증용 `Native macOS HVF` 워크플로도 선택 항목인 `source-ref`를 지원합니다. 기본값은 워크플로 커밋이며, 지정할 때는 전체 SHA가 필요합니다. 네이티브 작업과 집계 감사는 같은 소스를 체크아웃하고 확인합니다. 제어기 버전이 달라도 검사 대상 소스 커밋을 기준으로 증거를 대조합니다.
+
+`hosted-intel`의 전체 검증 워크플로는 `intel-image=macos-15-intel`(기본값) 또는 `macos-26-intel`을 지원합니다. 두 이미지 모두 [공식 runner 이미지 목록](https://github.com/actions/runner-images)에 있습니다. 같은 `source-ref`로 호스트 환경을 비교할 수 있지만 이미지 변경에는 OS, SDK와 도구 변경도 포함됩니다. VM/vCPU, 네이티브 전송, CR8, 전체 CPU 및 Darwin 요구 사항은 유지됩니다. 이미지 선택만으로 안정성이나 런타임 수정이 입증되지는 않습니다.

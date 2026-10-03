@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 19345d53aaa0d1c5155884ab948be02795fe5e3065629ff28d380b2c08ad404a -->
+<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
 
 [← Indice della documentazione](README.md)
 
@@ -80,14 +80,14 @@ Il primo batch CPU verificato dell’[esecuzione `37123148209`](https://github.c
 
 ## Ultima verifica nativa locale
 
-Sorgenti senza modifiche locali `353dcd75f`, 2026-10-03. Tutti i sedici gruppi ARM64 hanno superato l’audit complessivo, così come la verifica Darwin indipendente. Le righe si sovrappongono e non vanno sommate.
+Sorgenti senza modifiche locali `4ce0b8247`, 2026-10-03 UTC. L’inventario ARM64 completo è passato in 503 processi di metodo; ogni risultato XML originale, contratto di esecuzione e terminazione del processo figlio è stato verificato indipendentemente. Anche la verifica Darwin separata è passata. Le righe si sovrappongono e non vanno sommate.
 
 | Ambito | Registrati | Superati | Falliti | Saltati | Obbligatori nativi |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, sedici gruppi | 6,908 | 857 | 0 | 6,051 | 16/16 |
+| CPU, inventario completo | 7,003 | 867 | 0 | 6,136 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+`build-hvf-native/hvf-current-4ce0-full-evidence/summary.json` · `build-hvf-native/hvf-current-4ce0-darwin-evidence/summary.json`
 
 ## Diagnostica Intel indipendente
 
@@ -96,3 +96,5 @@ Il [workflow diagnostico Intel](../../.github/workflows/hvf-intel-diagnostic.yml
 Prima di ogni metodo, l’azione carica il piano immutabile e un’istantanea dell’host. Dopo l’esecuzione conserva XML originale, terminazione dei processi, stato del controller e una seconda istantanea. Registra memoria, swap, carico, disco e identificatori, stato, CPU, RSS e nomi degli eseguibili dei processi, senza argomenti o ambiente. Anche gli errori di raccolta restano visibili. Un errore di esecuzione o caricamento ferma i metodi successivi. Ogni metodo mantiene il limite di 120 secondi; un host irraggiungibile può impedire pulizia e caricamento finale. In tal caso rimangono solo le prove già caricate. Queste diagnosi parziali non soddisfano la verifica CPU completa né quella Darwin indipendente. L’ultimo marcatore iniziale individua un confine di esecuzione, non l’istruzione guest difettosa o la causa.
 
 Anche il workflow completo `Native macOS HVF` accetta un `source-ref` facoltativo. Il valore predefinito è il commit del workflow; un valore esplicito deve essere uno SHA completo. I job nativi e l’audit aggregato estraggono e verificano gli stessi sorgenti. L’audit confronta le prove con il commit testato, anche se il controller usa una revisione diversa.
+
+Per `hosted-intel`, il workflow completo accetta `intel-image=macos-15-intel` (predefinito) oppure `macos-26-intel`, presenti nelle [immagini ufficiali dei runner](https://github.com/actions/runner-images). È così possibile confrontare esplicitamente gli ambienti host con lo stesso `source-ref`; l’immagine cambia anche sistema operativo, SDK e strumenti. I requisiti per VM/vCPU, trasporto nativo, CR8, CPU completo e Darwin restano invariati. La sola scelta dell’immagine non dimostra stabilità né una correzione in esecuzione.

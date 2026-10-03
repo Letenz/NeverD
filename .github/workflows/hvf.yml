@@ -1,5 +1,5 @@
 name: Native macOS HVF
-run-name: HVF ${{ inputs.runner }} / ${{ inputs.validation || 'full' }} / ${{ inputs.source-ref || github.sha }}
+run-name: HVF ${{ inputs.runner == 'hosted-intel' && (inputs.intel-image || 'macos-15-intel') || inputs.runner }} / ${{ inputs.validation || 'full' }} / ${{ inputs.source-ref || github.sha }}
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +12,11 @@ on:
         type: choice
         default: self-hosted
         options: [self-hosted, hosted-intel]
+      intel-image:
+        description: Hosted Intel image for a controlled host-environment comparison
+        type: choice
+        default: macos-15-intel
+        options: [macos-15-intel, macos-26-intel]
       validation:
         description: Full validation, Darwin workloads, transport tests, or availability only
         type: choice
@@ -26,6 +31,7 @@ permissions:
   contents: read
 env:
   HVF_SOURCE: ${{ inputs.source-ref || github.sha }}
+  HVF_INTEL_IMAGE: ${{ inputs.intel-image || 'macos-15-intel' }}
 jobs:
   native-hvf:
     # Both choices must create a real VM/vCPU before the LLVM build starts.
@@ -35,15 +41,20 @@ jobs:
       matrix:
         arch: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["X64"]' || '["ARM64","X64"]') }}
         shard: ${{ fromJSON(inputs.runner == 'hosted-intel' && inputs.validation == 'full' && '[0,1,2,3]' || '[0]') }}
-    runs-on: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["macos-15-intel"]' || format('["self-hosted","macOS","{0}","hvf"]', matrix.arch)) }}
+    runs-on: ${{ fromJSON(inputs.runner == 'hosted-intel' && (inputs.intel-image == 'macos-26-intel' && '["macos-26-intel"]' || '["macos-15-intel"]') || format('["self-hosted","macOS","{0}","hvf"]', matrix.arch)) }}
     timeout-minutes: 180
     env:
       SCCACHE_GHA_ENABLED: 'true'
       HVF_TEST_PARALLEL: ${{ inputs.test_parallel || '4' }}
     steps:
-      - name: Validate immutable source identity
+      - name: Validate immutable source and host image
         shell: bash
-        run: '[[ "$HVF_SOURCE" =~ ^[0-9a-f]{40}$ ]]'
+        run: |
+          [[ "$HVF_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          case "$HVF_INTEL_IMAGE" in
+            macos-15-intel|macos-26-intel) ;;
+            *) echo "Unsupported hosted Intel image" >&2; exit 1 ;;
+          esac
       - name: Check out the workflow implementation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

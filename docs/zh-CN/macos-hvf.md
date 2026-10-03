@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 19345d53aaa0d1c5155884ab948be02795fe5e3065629ff28d380b2c08ad404a -->
+<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
 
 [← 文档索引](README.md)
 
@@ -184,14 +184,14 @@ CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所�
 
 ## 最新本机原生验证
 
-干净源码 `353dcd75f`，2026-10-03：ARM64 十六片全部通过汇总审计，独立 Darwin 门禁也通过。两行覆盖重叠，不可相加。
+干净源码 `4ce0b8247`，2026-10-03 UTC：ARM64 完整清单以 503 个方法进程执行通过，原始 XML、执行契约和子进程回收状态均已独立核对，独立 Darwin 验证也通过。两行覆盖重叠，不可相加。
 
 | 范围 | 注册 | 通过 | 失败 | 跳过 | 必需原生项 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU，十六片 | 6,908 | 857 | 0 | 6,051 | 16/16 |
+| CPU，完整清单 | 7,003 | 867 | 0 | 6,136 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+`build-hvf-native/hvf-current-4ce0-full-evidence/summary.json` · `build-hvf-native/hvf-current-4ce0-darwin-evidence/summary.json`
 
 ## 独立 Intel 诊断
 
@@ -200,3 +200,5 @@ CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所�
 每个方法开始前，Action 上传不可变执行计划及主机快照；结束后保存原始 XML、进程回收、控制器状态及第二份快照。快照记录内存、交换空间、负载、磁盘，以及进程编号、状态、CPU、RSS 和可执行文件名，不包含进程参数或环境；采集错误也会保留。执行或上传失败即停止后续方法。每个方法仍有 120 秒执行上限；主机失联可能阻止清理和最终上传，此时只能使用已上传的证据。这些局部诊断不能替代完整 CPU 或独立 Darwin 验收。最后一个开始标记只能定位执行边界，不能直接确定故障指令或根因。
 
 完整的 `Native macOS HVF` 工作流也接受可选的 `source-ref`，默认使用工作流所在提交，指定时必须提供完整 SHA。原生作业和汇总审计都会检出并核验同一份源码；即使控制器版本不同，审计也按被测源码提交核对证据。
+
+选择 `hosted-intel` 时，完整工作流支持 `intel-image=macos-15-intel`（默认）或 `macos-26-intel`，两者均在[官方 runner 镜像列表](https://github.com/actions/runner-images)中。可保持同一 `source-ref`，明确比较宿主环境；镜像同时改变系统、SDK 和工具链。VM/vCPU、原生传输、CR8、完整 CPU 和 Darwin 的要求不变。选择镜像本身不能证明稳定性或运行时修复。

@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 19345d53aaa0d1c5155884ab948be02795fe5e3065629ff28d380b2c08ad404a -->
+<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -80,14 +80,14 @@ Der erste geprüfte CPU-Batch aus [Lauf `37123148209`](https://github.com/NeverS
 
 ## Neueste lokale native Validierung
 
-Unveränderter Quellstand `353dcd75f`, 2026-10-03. Alle sechzehn ARM64-Shards bestanden die Gesamtprüfung; auch die separate Darwin-Prüfung bestand. Die Zeilen überlappen und dürfen nicht addiert werden.
+Unveränderter Quellstand `4ce0b8247`, 2026-10-03 UTC. Das vollständige ARM64-Inventar bestand in 503 Methodenprozessen; alle ursprünglichen XML-Ergebnisse, Ausführungsverträge und Beendigungen der Kindprozesse wurden unabhängig abgeglichen. Auch die separate Darwin-Prüfung bestand. Die Zeilen überlappen und dürfen nicht addiert werden.
 
 | Umfang | Registriert | Bestanden | Fehler | Übersprungen | Native Pflichtfälle |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, sechzehn Shards | 6,908 | 857 | 0 | 6,051 | 16/16 |
+| CPU, vollständiges Inventar | 7,003 | 867 | 0 | 6,136 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+`build-hvf-native/hvf-current-4ce0-full-evidence/summary.json` · `build-hvf-native/hvf-current-4ce0-darwin-evidence/summary.json`
 
 ## Eigenständige Intel-Diagnose
 
@@ -96,3 +96,5 @@ Der manuelle [Intel-Diagnoseworkflow](../../.github/workflows/hvf-intel-diagnost
 Vor jeder Methode lädt die Action den unveränderlichen Ausführungsplan und einen Host-Schnappschuss hoch. Danach sichert sie ursprüngliches XML, Prozessbeendigung, Steuerungsstatus und einen zweiten Schnappschuss. Erfasst werden Speicher, Swap, Last, Datenträger sowie Prozesskennungen, Status, CPU, RSS und Programmdateinamen, ohne Prozessargumente oder Umgebungsvariablen. Erfassungsfehler bleiben sichtbar. Ein Ausführungs- oder Uploadfehler stoppt weitere Methoden. Jede Methode behält ihr Limit von 120 Sekunden; ein unerreichbarer Host kann Aufräumen und abschließenden Upload verhindern. Dann bleiben nur bereits hochgeladene Belege. Diese Teildiagnosen ersetzen weder die vollständige CPU-Abnahme noch die unabhängige Darwin-Prüfung. Der letzte Startmarker bezeichnet eine Ausführungsgrenze, nicht die fehlerhafte Gastinstruktion oder die Ursache.
 
 Der vollständige Workflow `Native macOS HVF` akzeptiert ebenfalls ein optionales `source-ref`. Standard ist der Workflow-Commit; eine explizite Angabe muss ein vollständiger SHA sein. Native Jobs und aggregierender Auditor checken dieselben Quellen aus und prüfen sie. Der Audit gleicht die Belege mit dem getesteten Commit ab, auch wenn die Steuerung eine andere Revision verwendet.
+
+Für `hosted-intel` akzeptiert der vollständige Workflow `intel-image=macos-15-intel` (Standard) oder `macos-26-intel`. Beide stehen in der [offiziellen Liste der Runner-Images](https://github.com/actions/runner-images). Damit lassen sich Hostumgebungen mit demselben `source-ref` gezielt vergleichen; das Image ändert auch Betriebssystem, SDK und Werkzeuge. Die Anforderungen an VM/vCPU, nativen Transport, CR8, vollständige CPU-Prüfung und Darwin bleiben gleich. Die Image-Auswahl allein belegt weder Stabilität noch eine Laufzeitkorrektur.
