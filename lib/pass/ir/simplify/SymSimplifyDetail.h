@@ -38,7 +38,7 @@ namespace sym = symbolic;
 
 struct SymSimplifyOptions;
 unsigned simplifyFiniteValueSlices(llvm::Function &F,
-                                    const SymSimplifyOptions &Opts);
+                                   const SymSimplifyOptions &Opts);
 
 /// The integer operators this pass carries into the engine.  Everything else
 /// -- loads and calls -- becomes an opaque input.
