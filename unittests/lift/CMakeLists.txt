@@ -160,6 +160,7 @@ add_neverd_unittest(NeverDLiftTests
   core/LowZeroIdiomTests.cpp
   ../backend/HighSwiftEmitterTests.cpp
   ../loader/SwiftMetadataTests.cpp
+  ../loader/SwiftOpaqueValueEffectTests.cpp
   ../loader/SwiftValueWitnessCallTests.cpp
   ../loader/SwiftVirtualCallTests.cpp
   ../loader/SwiftRuntimeSourceTests.cpp
@@ -1016,6 +1017,7 @@ if(MSVC)
     COMPILE_OPTIONS /bigobj)
 endif()
 add_neverd_unittest(NeverDObjCSourceCallTests
+  ../loader/SwiftOpaqueValueEffectTests.cpp
   ../loader/SwiftValueWitnessCallTests.cpp
   ../loader/SwiftVirtualCallTests.cpp
   core/ObjCCategoryTests.cpp
