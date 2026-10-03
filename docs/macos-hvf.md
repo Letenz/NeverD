@@ -301,8 +301,14 @@ state-transition cases, ten transport cases and 100 interruption/recovery
 repetitions. Shared checks overlap and must not be added as independent cases.
 Both artifacts were downloaded, SHA-256 verified and their individual XML
 results inspected. Temporary isolation workflow inputs and steps are removed.
-The full gate is rerunning at `99c09f94e` with serialized tests and separate
-build evidence; its emulation implementation and tests match these focused runs.
+The [complete Intel gate](https://github.com/NeverSight/NeverD/actions/runs/37095689345)
+at `4c6a12b913123d0555f067035527fe29f856f3b9` compiled all twenty owners and
+entered the CPU test phase; its complete execution result remains pending.
+The build artifact's SHA-256 was verified. The
+[independent Darwin gate](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
+at `4cbb729389df9485c9a9699c63c0be3a48862794` separately requires all 26 native
+Intel workloads. Both use serialized tests, and their emulation implementation
+and tests match the successful focused runs.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
