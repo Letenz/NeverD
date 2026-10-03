@@ -144,8 +144,9 @@ It uploads transport results and the state inventory before execution, then
 preserves the isolated CR8 result before the complete CPU gate.
 Artifacts include the run attempt so reruns retain their own evidence.
 Full-inventory compilation has its own step and log. `test_parallel` selects
-four CTest processes by default or one for a serialized comparison, while
-compilation remains parallel. The result summary records the selected value,
+four CTest processes by default or one for a serialized comparison. Hosted
+Intel full/Darwin method execution is always serial; compilation remains
+parallel. The result summary records actual execution concurrency,
 host OS/kernel description and logical CPU count.
 It can also run locally with `--require-hvf --hvf-transport-only` on
 `scripts/run_native_cpu_ci.py`. `validation=probe` runs only the VM/vCPU
@@ -342,6 +343,16 @@ The summary identifies `execution=gtest-methods` and serial execution, and
 never labels it a CTest execution result. Self-hosted validation continues to
 use CTest's per-case processes and timeouts. Temporary diagnostic workflows
 and helpers have been removed.
+
+At clean source `d5864c055116a687546320e4acf0788ef4a4e735`, the updated
+ARM64 full inventory (including the latest Windows process environment work)
+completed 6,842 registrations across twenty owners: 849 passed, none failed
+and 5,993 skipped; all sixteen required native tests passed. The independent
+Darwin inventory passed all 39 native workloads (65 passed, 221 skipped).
+Evidence is in `build-hvf-native/hvf-method-clean-full-evidence/` and
+`build-hvf-native/hvf-method-clean-darwin-evidence/`. The
+[Intel full run](https://github.com/NeverSight/NeverD/actions/runs/37103182936)
+uses this same source and remains pending.
 
 Before committing this runner change, its 67 infrastructure checks passed.
 The current ARM64 inventory executed all 6,809 registrations across twenty

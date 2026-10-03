@@ -141,8 +141,8 @@ Intel 工作流还会在完整依赖构建前构建 `NeverDX64ExceptionTests`，
 完整异常/状态套件由最终 CPU 门禁执行，前置不再重复整组检查。
 transport 结果与状态测试清单在执行前上传，CR8 独立结果在完整 CPU 门禁前另行保存；
 产物名称包含运行次数，重跑会保留各次证据。
-完整目标构建有独立步骤和日志；`test_parallel` 默认使用 4 个测试进程，也可选择 1
-做串行对照，编译仍并行进行。结果摘要记录实际选择的并发数、宿主 OS/内核描述和逻辑 CPU 数。
+完整目标构建有独立步骤和日志；`test_parallel` 为 CTest 默认选择 4 个进程，也可选择 1。
+托管 Intel 的完整 CPU/Darwin 方法级执行固定串行，编译仍并行进行。结果摘要记录实际选择的并发数、宿主 OS/内核描述和逻辑 CPU 数。
 
 干净源码 `e2a91ff057df563eb19183a045a3ad6446cb9af1` 的
 [Intel 检查点任务](https://github.com/NeverSight/NeverD/actions/runs/37090528761)
@@ -189,6 +189,14 @@ TLS/权限、CR8、取消，以及宿主修改、故障和停止前后的完整 
 保留原始 XML、日志、进程状态及 CTest 名称映射，继续强制检查原生必需项、漏跑和重复结果。
 摘要明确记录 `execution=gtest-methods` 和串行执行，不冒充 CTest 执行结果。
 自托管验收继续使用 CTest 的逐用例进程及时限；临时诊断工作流和脚本已移除。
+
+干净源码 `d5864c055116a687546320e4acf0788ef4a4e735` 已进一步通过当前 ARM64
+完整清单：包含最新 Windows 进程环境改动，20 个目标共 6,842 项，849 通过、
+0 失败、5,993 跳过，16 个必需项全部通过。Darwin 独立清单为 65 通过、221 跳过，
+39 个原生工作负载全通过。证据保留于 `build-hvf-native/hvf-method-clean-full-evidence/`
+及 `build-hvf-native/hvf-method-clean-darwin-evidence/`。
+[当前 Intel 完整任务](https://github.com/NeverSight/NeverD/actions/runs/37103182936)
+使用相同源码，仍待结果。
 
 该验收工具的 67 项检查通过。提交前 ARM64 已跑完当前 20 个目标、6,809 个注册用例：
 845 通过、0 失败、5,964 跳过，16 个原生必需项全部通过；独立 Darwin 验收 65 通过、221 跳过，

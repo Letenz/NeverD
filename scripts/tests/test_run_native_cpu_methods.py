@@ -105,6 +105,7 @@ class NativeMethodEvidenceTests(unittest.TestCase):
         self.assertEqual(result["status"], -signal.SIGKILL)
         self.assertEqual(json.loads((evidence / "status.json").read_text()), result)
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX process groups")
     def test_unretired_child_is_bounded_and_cannot_look_successful(self):
         child = mock.Mock(pid=12345)
         child.wait.side_effect = subprocess.TimeoutExpired("test", 1)
@@ -121,6 +122,7 @@ class NativeMethodEvidenceTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             methods.execute(["test"], str(self.root), {}, 1, self.root / "stale")
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX process groups")
     def test_method_run_retains_environment_exact_filters_and_exit_failure(self):
         self.write_xml(skipped=True)
         def execute(command, directory, environment, timeout, evidence):
@@ -139,6 +141,7 @@ class NativeMethodEvidenceTests(unittest.TestCase):
         self.assertEqual(len(cases), 2)
         self.assertTrue((self.root / "evidence/method-results.json").exists())
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX process groups")
     def test_environment_cannot_disable_native_enforcement(self):
         for test in self.document["tests"]:
             test["properties"][1]["value"] = ["NEVERD_REQUIRE_HVF=0"]
