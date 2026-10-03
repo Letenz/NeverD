@@ -11440,7 +11440,8 @@
         "Ordinary source-frame relocation requires external LOAD/STORE ranges disjoint from native and reconstructed private frame storage. Machine-state source preserves numeric guest addresses and requires their original runtime mappings. Undefined flags influencing control, addresses, or defined outputs need an independent noninterference proof, which the recovery report does not provide.",
         "PE recovery requires a full image-wide relocation and exception metadata load. Structurally incomplete directories refuse recovery; reached exception handlers require the explicit normal-execution profile. Source recovery does not certify binary replacement.",
         "External-store frame separation is an explicit unchecked caller precondition for machine-state recovery with entry-frame bounds; native proof APIs reject this domain.",
-        "Register-case partitioning uses one existing context field per non-entry native cursor and mode, with complete fresh edge proofs and shared budgets. Unknown domains remain conservative; no guest read or caller assumption is added."
+        "Register-case partitioning uses one existing context field per non-entry native cursor and mode, with complete fresh edge proofs and shared budgets. Unknown domains remain conservative; no guest read or caller assumption is added.",
+        "After ordinary producer, guard, register and frame refinements stall on unresolved control, a bounded lazy walk of observed predecessors can nominate one existing demanded register/frame carrier as a context field. Fresh graphs must prove every complete constant or exact frame displacement; partial carriers, later unknown predecessors and missing immutable-read evidence remain unresolved. Successful attempts add no scan; discovery, refinement, node and context budgets remain shared."
       ],
       "tests": [
         {
@@ -12221,6 +12222,61 @@
           "target": "NeverDInterpreterSpecializationTests",
           "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
           "filter": "InterpreterSpecialization.NarrowGuardDoesNotEnumerateWideRuntimePayload",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsRetainFiniteImagePointerCarriers",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsRequireEveryImmutableRead",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsRetainLateUnknownPredecessors",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsDoNotCompletePartialCarriers",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.TargetContextsShareRecoveryBudgets",
           "platforms": [
             "darwin",
             "linux",

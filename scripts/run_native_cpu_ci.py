@@ -225,6 +225,7 @@ def run(
             ["git", "status", "--porcelain"], cwd=ROOT, text=True
         ).strip()),
         "host_architecture": host_architecture,
+        "parallel": parallel,
         "owners": owners,
         "registered": len(tests),
         "total": len(cases),

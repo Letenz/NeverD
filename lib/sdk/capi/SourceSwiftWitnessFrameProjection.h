@@ -159,7 +159,7 @@ inline bool sameCalls(const Calls &Expected, const Calls &Actual) {
 class SourceSwiftWitnessFrameProjectionValidator {
   const BinaryImage &Image;
   const PipelineResult &Result;
-  std::set<va_t> Candidates;
+  std::map<va_t, bool> Candidates;
 
 public:
   SourceSwiftWitnessFrameProjectionValidator(const BinaryImage &Image,
@@ -170,7 +170,7 @@ public:
         for (const auto &Op : B.Ops)
           if (Op.SourceCallHint && (Op.SourceCallHint->ValueWitness ||
                                     Op.SourceCallHint->SwiftWitnessFrame))
-            Candidates.insert(F.Entry);
+            Candidates[F.Entry] |= bool(Op.SourceCallHint->SwiftWitnessFrame);
   }
 
   bool valid(const HighFunc &Function) const {
@@ -178,10 +178,15 @@ public:
     const auto Published = calls(Function);
     if (!Published || Result.SourceImage != &Image || !Result.Success)
       return false;
-    if (!Candidates.count(Function.Entry))
+    const auto Candidate = Candidates.find(Function.Entry);
+    if (Candidate == Candidates.end())
       return Published->empty();
-    const auto Current =
-        native_source_detail::currentFunction(Result, Function.Entry);
+    // An ordinary register-derived witness may precede a terminal call or
+    // trap. Only a frame-dependent occurrence requires a returning body here.
+    // Still rebuild the LowIR bindings below: deleting a frame receipt must
+    // not turn its call into an unrelated register-only witness.
+    const auto Current = native_source_detail::currentFunction(
+        Result, Function.Entry, /*RequireReturningBody=*/Candidate->second);
     if (!Current ||
         !validateSwiftWitnessFrameBindings(Image, Current->Low, *Current->Med))
       return false;

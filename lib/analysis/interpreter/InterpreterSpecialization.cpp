@@ -659,6 +659,8 @@ public:
   SpecializationResult refineRegisterPartition(SpecializationResult Previous,
                                                bool &Changed);
   void refineFailureGuards();
+  SpecializationResult refineTargetContexts(SpecializationResult Previous,
+                                            bool &Changed);
 
 private:
   bool fail(SpecializationStatus Status, std::string Message) {
@@ -681,6 +683,7 @@ private:
   int enqueue(SpecializationCursor Cursor, const Projection &Incoming);
   bool evaluate(int Id);
   bool visitDiscovery();
+  bool preparePredecessors();
   void schedulePredecessors(SpecializationCursor Cursor);
   bool emitTargets(Node &Draft, const SpecializationInstruction &Instruction,
                    const LowOp &Original, LowOp Residual, SymExec &Exec,
@@ -1611,8 +1614,8 @@ int Specializer::enqueue(SpecializationCursor Cursor,
                                              Slot.Bytes));
   };
   // Ordinary automatically demanded fields refine joins only. Context
-  // separation additionally requires a repeated unresolved memory dependency;
-  // it stays subject to the same cumulative node and per-address bounds.
+  // separation additionally requires selective memory refinement or the
+  // stalled-target fallback; both share cumulative node and per-address bounds.
   for (size_t I = 0; I < ManualRegisters; ++I)
     RegisterControl(Options.ControlRegisters[I]);
   for (size_t I = 0; I < ManualSlots; ++I)
@@ -2850,6 +2853,149 @@ Specializer::refineRegisterPartition(SpecializationResult Previous,
   return std::move(Result);
 }
 
+bool Specializer::preparePredecessors() {
+  Predecessors.clear();
+  // Old synthetic dispatch chains can be unreachable after reprocessing.
+  // Follow only the currently observed graph; native address zero is valid,
+  // so identify native nodes by Indices rather than a sentinel cursor.
+  std::set<int> Native;
+  for (const auto &[Key, Id] : Indices) {
+    if (!visitDiscovery())
+      return false;
+    Native.insert(Id);
+  }
+  std::set<int> Seen;
+  std::deque<int> Queue{EntryNode};
+  while (!Queue.empty()) {
+    const int Id = Queue.front();
+    Queue.pop_front();
+    if (!Seen.insert(Id).second)
+      continue;
+    if (!visitDiscovery())
+      return false;
+    const auto &Current = Nodes[Id];
+    if (Native.count(Id))
+      for (const auto &Transfer : Current.Transfers) {
+        if (!visitDiscovery())
+          return false;
+        Predecessors[{Transfer.Address, Transfer.Mode}].insert(Id);
+      }
+    for (int Next : Current.Block.Succs) {
+      if (!visitDiscovery())
+        return false;
+      Queue.push_back(Next);
+    }
+  }
+  return true;
+}
+
+SpecializationResult
+Specializer::refineTargetContexts(SpecializationResult Previous,
+                                  bool &Changed) {
+  Result = std::move(Previous);
+  Changed = false;
+  if (Result.Status != SpecializationStatus::UnresolvedControl ||
+      FailureNode < 0)
+    return std::move(Result);
+  // Ordinary dependency, guard and partition refinements have already
+  // stalled. Inspect only this failed graph's observed predecessor cone;
+  // eagerly separating every discovered field would unroll business loops.
+  // This walk nominates one physical carrier, never a value or an edge fact.
+  if (!preparePredecessors())
+    return std::move(Result);
+  std::set<int> Seen;
+  std::deque<int> Queue{FailureNode};
+  while (!Queue.empty()) {
+    const int Id = Queue.front();
+    Queue.pop_front();
+    if (!Seen.insert(Id).second)
+      continue;
+    if (!visitDiscovery())
+      return std::move(Result);
+    const auto Cursor = Nodes[Id].Key.Cursor;
+    // Entry inputs have no incoming edge at which to establish a context.
+    if (Cursor != Entry) {
+      auto Demand = Refinement.ProducerDemands.lower_bound(
+          {Cursor.Address, Cursor.Mode, false, 0, 0});
+      for (; Demand != Refinement.ProducerDemands.end(); ++Demand) {
+        const auto &[Address, Mode, Register, Offset, Bytes] = Demand->first;
+        if (Address != Cursor.Address || Mode != Cursor.Mode)
+          break;
+        if (!visitDiscovery())
+          return std::move(Result);
+        if (!Demand->second)
+          continue;
+        const auto Nominate = [&](const auto &Fields, size_t Manual,
+                                  const auto &Contexts, auto &Into) {
+          for (size_t I = Manual; I < Fields.size(); ++I) {
+            if (!visitDiscovery())
+              return false;
+            const auto &Field = Fields[I];
+            bool Already = false;
+            for (const auto &Other : Contexts) {
+              if (!visitDiscovery())
+                return false;
+              Already |=
+                  Field.Offset == Other.Offset && Field.Bytes == Other.Bytes;
+            }
+            if (Already)
+              continue;
+            bool Overlap = false;
+            for (uint32_t Bit = 0; Bit < uint32_t(Bytes) * 8; ++Bit) {
+              if (!visitDiscovery())
+                return false;
+              if (!(Demand->second & (uint64_t{1} << Bit)))
+                continue;
+              const uint64_t Byte =
+                  Offset + (Options.ByteOrder == llvm::endianness::little
+                                ? Bit / 8
+                                : Bytes - 1 - Bit / 8);
+              Overlap |=
+                  Byte - static_cast<uint64_t>(Field.Offset) < Field.Bytes;
+            }
+            if (!Overlap)
+              continue;
+            if (Result.ControlRefinements >= Options.MaxControlRefinements) {
+              fail(SpecializationStatus::BudgetExceeded,
+                   "target-context refinement budget exhausted");
+              return false;
+            }
+            // A fresh attempt must prove complete constants or exact frame
+            // offsets for every context key. Partial demanded bits do not
+            // authorize filling the rest of a carrier or dropping unknown
+            // later predecessors. Existing ranges keep their own identity.
+            Into.push_back(Field);
+            ++Result.ControlRefinements;
+            ++Result.DiscoveredContextFields;
+            Refinement.PrecisionFailure = false;
+            Changed = true;
+            return true;
+          }
+          return true;
+        };
+        if (Register) {
+          if (!Nominate(Options.ControlRegisters, ManualRegisters,
+                        Refinement.ContextRegisters,
+                        Refinement.ContextRegisters))
+            return std::move(Result);
+        } else if (!Nominate(Options.ControlFrameSlots, ManualSlots,
+                             Refinement.ContextSlots, Refinement.ContextSlots))
+          return std::move(Result);
+        if (Changed)
+          return std::move(Result);
+      }
+    }
+    const auto Parents = Predecessors.find({Cursor.Address, Cursor.Mode});
+    if (Parents != Predecessors.end())
+      for (int Parent : Parents->second) {
+        if (!visitDiscovery())
+          return std::move(Result);
+        Queue.push_back(Parent);
+      }
+  }
+  return std::move(Result);
+}
+
 SpecializationResult
 Specializer::closeProducerDemands(SpecializationResult Previous) {
   Result = std::move(Previous);
@@ -2878,37 +3024,8 @@ Specializer::closeProducerDemands(SpecializationResult Previous) {
   const auto OriginalStatus = Result.Status;
   const auto OriginalDiagnostic = Result.Diagnostic;
   const bool OriginalPrecisionFailure = Refinement.PrecisionFailure;
-  // Old synthetic dispatch chains can be unreachable after reprocessing.
-  // Follow only the currently observed graph; native address zero is valid,
-  // so identify native nodes by Indices rather than a sentinel cursor.
-  std::set<int> Native;
-  for (const auto &[Key, Id] : Indices) {
-    if (!visitDiscovery())
-      return std::move(Result);
-    Native.insert(Id);
-  }
-  std::set<int> Seen;
-  std::deque<int> Queue{EntryNode};
-  while (!Queue.empty()) {
-    const int Id = Queue.front();
-    Queue.pop_front();
-    if (!Seen.insert(Id).second)
-      continue;
-    if (!visitDiscovery())
-      return std::move(Result);
-    const auto &Current = Nodes[Id];
-    if (Native.count(Id))
-      for (const auto &Transfer : Current.Transfers) {
-        if (!visitDiscovery())
-          return std::move(Result);
-        Predecessors[{Transfer.Address, Transfer.Mode}].insert(Id);
-      }
-    for (int Next : Current.Block.Succs) {
-      if (!visitDiscovery())
-        return std::move(Result);
-      Queue.push_back(Next);
-    }
-  }
+  if (!preparePredecessors())
+    return std::move(Result);
   for (const auto &[Address, Mode] : Seeds) {
     schedulePredecessors({Address, Mode});
     if (Refinement.BudgetExceeded)
@@ -3483,6 +3600,11 @@ specializeInterpreter(SpecializationProvider &Provider,
       // Retain the nominations: an aligned pointer may have lost its root
       // relation at an earlier projection before the required use fails.
       if (TryFramePartition())
+        continue;
+      if (Result.Status == SpecializationStatus::BudgetExceeded)
+        return Result;
+      Result = Attempt.refineTargetContexts(std::move(Result), Partitioned);
+      if (Partitioned)
         continue;
       return Result;
     }
