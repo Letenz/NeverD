@@ -3251,10 +3251,12 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "json": ["neverd_cpu_capabilities_json"],
             },
             "analysis.external-bytecode-recovery": {
-                "c": ["neverd_bytecode_recover_json_v1"],
-                "python": ["recover_bytecode"],
+                "c": ["neverd_bytecode_recover_json_v1",
+                      "neverd_bytecode_recover_decoder_json_v1"],
+                "python": ["recover_bytecode", "recover_bytecode_with_decoder"],
                 "cli": [],
-                "json": ["neverd_bytecode_recover_json_v1"],
+                "json": ["neverd_bytecode_recover_json_v1",
+                      "neverd_bytecode_recover_decoder_json_v1"],
             },
             "analysis.interpreter-source-recovery": {
                 "c": ["neverd_devirtualize_source_v1",
