@@ -2076,7 +2076,10 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
               SelectorArgumentStorageUse = Evidence;
             }
           }
-          if (Signature) {
+          // A complete indirect record declaration does not authenticate the
+          // address of its by-value copy. Do not issue an occurrence receipt
+          // that call lowering cannot yet prove or consume.
+          if (Signature && !hasIndirectSourceParameters(*Signature)) {
             SourceCallTypeHint Hint;
             Hint.CallKind = Target->Name == "objc_msgSendSuper2"
                                 ? SourceCallTypeHint::Kind::ObjCSuper2

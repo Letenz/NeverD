@@ -189,6 +189,7 @@ bool equalSourceABIs(const SourceFunctionTypeHint &Left,
     const auto &L = Left.Parameters[I];
     const auto &R = Right.Parameters[I];
     if (L.Name != R.Name || L.TheRole != R.TheRole ||
+        L.IndirectByValue != R.IndirectByValue ||
         !equalSourceTypes(L.Type, R.Type) ||
         (Left.HasExplicitABI && !sameLocation(L.Location, R.Location)) ||
         L.Components.size() != R.Components.size())
@@ -229,8 +230,8 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
   const bool Floating = Result.front().Type->Kind == NdTypeKind::Float;
   if (Floating) {
     // CGAffineTransform and CATransform3D contain six and sixteen doubles.
-    // Darwin arm64 returns these non-HFAs through x8; their general by-value
-    // parameter ABI is not modeled yet.
+    // Darwin arm64 returns these non-HFAs through x8 and passes a
+    // by-value parameter through an independent integer/stack pointer carrier.
     if ((Result.size() > 4 && ((Result.size() != 6 && Result.size() != 16) ||
                                Result.front().Type->Size != 8)) ||
         !std::all_of(Result.begin(), Result.end(),
@@ -276,6 +277,21 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
   return Result;
 }
 
+namespace {
+bool indirectTransformRecord(const TypeRef &Type) {
+  const auto Members = sourceAggregateMembers(Type);
+  return (Members.size() == 6 || Members.size() == 16) &&
+         std::all_of(Members.begin(), Members.end(), [](const auto &M) {
+           return M.Type->Kind == NdTypeKind::Float && M.Type->Size == 8;
+         });
+}
+} // namespace
+
+bool hasIndirectSourceParameters(const SourceFunctionTypeHint &Hint) {
+  return std::any_of(Hint.Parameters.begin(), Hint.Parameters.end(),
+                     [](const auto &P) { return P.IndirectByValue; });
+}
+
 std::vector<SourceABIParameter>
 sourceABIParameters(const SourceFunctionTypeHint &Hint) {
   std::string Error;
@@ -285,7 +301,9 @@ sourceABIParameters(const SourceFunctionTypeHint &Hint) {
   for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
     const auto &P = Hint.Parameters[I];
     if (P.Components.empty())
-      Result.push_back({I, 0, P.Name, P.Type, P.Location});
+      Result.push_back({I, 0, P.Name,
+                        P.IndirectByValue ? NdType::makePtr(P.Type) : P.Type,
+                        P.Location});
     else {
       const auto Members = sourceAggregateMembers(P.Type);
       for (size_t J = 0; J < Members.size(); ++J)
@@ -512,7 +530,19 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
         Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
       return fail(Diagnostic,
                   "Swift parameter role requires the Swift convention");
-    if (!Parameter.Components.empty()) {
+    if (Parameter.IndirectByValue) {
+      const auto &L = Parameter.Location;
+      if (Hint.Architecture != Arch::AArch64 ||
+          Hint.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+          Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary ||
+          !Parameter.Components.empty() ||
+          !indirectTransformRecord(Parameter.Type) ||
+          !ValidLocation(NdType::makePtr(Parameter.Type), L, false) ||
+          (L.Kind == SourceABICarrierKind::IntegerRegister &&
+           std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
+                     L.RegisterOffset) == TRI.IntParamRegs.end()))
+        return fail(Diagnostic, "Unsupported source indirect record parameter");
+    } else if (!Parameter.Components.empty()) {
       if (!EmptyLocation(Parameter.Location) ||
           !AggregateLocations(Parameter.Type, Parameter.Components, false))
         return fail(Diagnostic, "Unsupported source record parameter carriers");
@@ -573,8 +603,33 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
   size_t IntegerIndex = 0;
   size_t FloatIndex = 0;
   int64_t StackOffset = Architecture == Arch::X64 ? 8 : 0;
+  const auto AssignScalarLocation = [&](const TypeRef &Type,
+                                        SourceABIValueLocation &Location) {
+    Location = {};
+    Location.ValueBytes = Type->Size;
+    const bool Floating = Type->Kind == NdTypeKind::Float;
+    auto &Index = Floating ? FloatIndex : IntegerIndex;
+    const auto Bank = Floating ? TRI.FPParamRegs : TRI.IntParamRegs;
+    if (Index < Bank.size()) {
+      Location.Kind = Floating ? SourceABICarrierKind::FloatingRegister
+                               : SourceABICarrierKind::IntegerRegister;
+      Location.RegisterOffset = Bank[Index++];
+      // Both Darwin ABIs require callers to extend narrow integer register
+      // arguments to 32 bits. Stack arguments retain their own storage width.
+      Location.ExtendTo32Bits = Type->Kind == NdTypeKind::Int && Type->Size < 4;
+    } else {
+      // Apple arm64 packs fixed stack scalars at natural alignment. x86_64
+      // Darwin uses eight-byte argument slots, above the pushed return address.
+      const int64_t Alignment = Architecture == Arch::AArch64 ? Type->Size : 8;
+      StackOffset = (StackOffset + Alignment - 1) & -Alignment;
+      Location.Kind = SourceABICarrierKind::Stack;
+      Location.EntryStackOffset = StackOffset;
+      StackOffset += Architecture == Arch::AArch64 ? Type->Size : 8;
+    }
+  };
   for (auto &Parameter : Hint.Parameters) {
     Parameter.Components.clear();
+    Parameter.IndirectByValue = false;
     if (Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary) {
       if (Convention != SourceFunctionTypeHint::ConventionKind::Swift ||
           !Parameter.Type || Parameter.Type->Kind != NdTypeKind::Ptr)
@@ -603,8 +658,17 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
       if (Members.empty())
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
       const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
-      if (Floating && Members.size() > 4)
-        return fail(Diagnostic, "Unsupported Darwin indirect record parameter");
+      if (Floating && Members.size() > 4) {
+        if (Architecture != Arch::AArch64 ||
+            Convention != SourceFunctionTypeHint::ConventionKind::C ||
+            !indirectTransformRecord(Parameter.Type))
+          return fail(Diagnostic,
+                      "Unsupported Darwin indirect record parameter");
+        Parameter.IndirectByValue = true;
+        AssignScalarLocation(NdType::makePtr(Parameter.Type),
+                             Parameter.Location);
+        continue;
+      }
       if ((Floating && Architecture != Arch::AArch64) ||
           (!Floating && Members.size() > 2))
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
@@ -638,30 +702,7 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     if (!scalarType(Parameter.Type))
       return fail(Diagnostic,
                   "Darwin source ABI currently supports scalar values");
-    auto &Location = Parameter.Location;
-    Location = {};
-    Location.ValueBytes = Parameter.Type->Size;
-    const bool Floating = Parameter.Type->Kind == NdTypeKind::Float;
-    auto &Index = Floating ? FloatIndex : IntegerIndex;
-    const auto Bank = Floating ? TRI.FPParamRegs : TRI.IntParamRegs;
-    if (Index < Bank.size()) {
-      Location.Kind = Floating ? SourceABICarrierKind::FloatingRegister
-                               : SourceABICarrierKind::IntegerRegister;
-      Location.RegisterOffset = Bank[Index++];
-      // Both Darwin ABIs require callers to extend narrow integer register
-      // arguments to 32 bits. Stack arguments retain their own storage width.
-      Location.ExtendTo32Bits =
-          Parameter.Type->Kind == NdTypeKind::Int && Parameter.Type->Size < 4;
-    } else {
-      // Apple arm64 packs fixed stack scalars at natural alignment. x86_64
-      // Darwin uses eight-byte argument slots, above the pushed return address.
-      const int64_t Alignment =
-          Architecture == Arch::AArch64 ? Parameter.Type->Size : 8;
-      StackOffset = (StackOffset + Alignment - 1) & -Alignment;
-      Location.Kind = SourceABICarrierKind::Stack;
-      Location.EntryStackOffset = StackOffset;
-      StackOffset += Architecture == Arch::AArch64 ? Parameter.Type->Size : 8;
-    }
+    AssignScalarLocation(Parameter.Type, Parameter.Location);
   }
   Hint.ReturnLocation = {};
   Hint.ReturnComponents.clear();

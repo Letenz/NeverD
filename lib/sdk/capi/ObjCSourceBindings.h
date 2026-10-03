@@ -159,6 +159,7 @@ inline bool samePhysicalSourceCall(const SourceFunctionTypeHint &Observed,
     const auto &Right = Declared.Parameters[I];
     if (Left.TheRole != SourceParameterTypeHint::Role::Ordinary ||
         Right.TheRole != SourceParameterTypeHint::Role::Ordinary ||
+        Left.IndirectByValue != Right.IndirectByValue ||
         !sameScalarCarrier(Left.Type, Right.Type) ||
         !sameSourceLocation(Left.Location, Right.Location) ||
         Left.Components.size() != Right.Components.size())
@@ -8520,7 +8521,8 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress)
     return false;
-  if (!validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
+  if (hasIndirectSourceParameters(Hint) || !validateSourceABI(Hint, Reason) ||
+      Hint.Architecture != Image.Arch ||
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
   if (Binding.SelectorArgumentStorageUse) {

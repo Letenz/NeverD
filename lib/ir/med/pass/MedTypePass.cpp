@@ -886,6 +886,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
       // Call lowering owns the hidden result-buffer writes. Entry projection
       // has no proof relating writes through incoming x8 to a logical return.
       Hint.ReturnLocation.Kind == SourceABICarrierKind::IndirectResultPointer ||
+      hasIndirectSourceParameters(Hint) ||
       !Func.MutableStackParamHomes.empty()) {
     Func.SourceTypeHint.reset();
     return;

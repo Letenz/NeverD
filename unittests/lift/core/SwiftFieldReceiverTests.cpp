@@ -5,6 +5,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -210,16 +211,34 @@ TEST(SwiftFieldReceiver, ReflectionAndIvarIdentityRemainSeparateFromLayout) {
   EXPECT_EQ(swiftObjCStoredFieldClass(F.Image, C->RuntimeName, F.Slot),
             "CALayer");
   EXPECT_TRUE(F.Image.ObjCClasses[0].Ivars[0].TypeEncoding.empty());
-  EXPECT_FALSE(objcSelectorSourceTypeHint(F.Image, "setTransform:"));
+  const auto Unambiguous = objcSelectorSourceTypeHint(F.Image, "setTransform:");
+  ASSERT_TRUE(Unambiguous);
+  EXPECT_EQ(Unambiguous->Parameters[2].Type->Size, 128U);
+  auto Conflict = F.Image;
+  ObjCMethod Affine;
+  Affine.ClassName = "OtherView";
+  Affine.Selector = "setTransform:";
+  Affine.TypeEncoding = "v64@0:8{CGAffineTransform=dddddd}16";
+  Affine.TypeHint =
+      parseObjCMethodEncoding(Affine.Selector, Affine.TypeEncoding);
+  ASSERT_TRUE(Affine.TypeHint);
+  Conflict.ObjCMethods.push_back(Affine);
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Conflict, "setTransform:"));
   const auto Root = objcNativeSwiftSelfTypeHint(F.Image, F.Entry);
   ASSERT_TRUE(Root);
   const auto Field = objcReceiverIvarTypeHint(F.Image, *Root, F.Slot);
   ASSERT_TRUE(Field);
   const auto Decl =
       objcReceiverSourceTypeHint(F.Image, "setTransform:", *Field);
-  // Reflection establishes the class, not a missing indirect-record ABI.
+  // The complete class declaration now has a logical record and a physical
+  // copy pointer. Neither reflection nor the ABI proves the call's storage.
   EXPECT_TRUE(Decl.HasDeclaration);
-  EXPECT_FALSE(Decl.Signature);
+  ASSERT_TRUE(Decl.Signature);
+  ASSERT_EQ(Decl.Signature->Parameters.size(), 3U);
+  EXPECT_EQ(Decl.Signature->Parameters[2].Type->Kind, NdTypeKind::Struct);
+  EXPECT_EQ(Decl.Signature->Parameters[2].Type->Size, 128U);
+  EXPECT_TRUE(Decl.Signature->Parameters[2].IndirectByValue);
+  EXPECT_EQ(Decl.Signature->Parameters[2].Location.ValueBytes, 8U);
   const auto Void =
       objcReceiverSourceTypeHint(F.Image, "removeAllAnimations", *Field);
   ASSERT_TRUE(Void.Signature);
@@ -250,6 +269,32 @@ TEST(SwiftFieldReceiver, ReflectionAndIvarIdentityRemainSeparateFromLayout) {
   F.u32(0x3308, 32);
   EXPECT_EQ(swiftObjCStoredFieldClass(F.Image, C->RuntimeName, F.Slot),
             "CALayer");
+}
+
+TEST(SwiftFieldReceiver, IndirectRecordDeclarationDoesNotIssueCopyReceipt) {
+  FieldFixture F;
+  F.text(0x3660, "setTransform:");
+  F.Image.ObjCSourceReferences[0x3600].Name = "setTransform:";
+  const auto Root = objcNativeSwiftSelfTypeHint(F.Image, F.Entry);
+  ASSERT_TRUE(Root);
+  const auto Field = objcReceiverIvarTypeHint(F.Image, *Root, F.Slot);
+  ASSERT_TRUE(Field);
+  const auto Declaration =
+      objcReceiverSourceTypeHint(F.Image, "setTransform:", *Field);
+  ASSERT_TRUE(Declaration.Signature);
+  ASSERT_TRUE(Declaration.Signature->Parameters[2].IndirectByValue);
+  F.run();
+  ASSERT_TRUE(F.low());
+  EXPECT_FALSE(buildObjCSourceCallHints(F.Image, *F.low()).count(F.Call));
+  size_t Calls = 0;
+  for (const auto &M : F.Result.MedFuncs)
+    for (const auto &B : M.Blocks)
+      for (const auto &Op : B.Ops)
+        if (Op.Addr == F.Call && Op.Opcode == NdOp::CALL) {
+          ++Calls;
+          EXPECT_FALSE(Op.SourceCallHint);
+        }
+  EXPECT_EQ(Calls, 1U);
 }
 
 TEST(SwiftFieldReceiver, MutableObjCInitializersDoNotMakeReflectionMutable) {

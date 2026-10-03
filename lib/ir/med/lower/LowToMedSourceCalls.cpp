@@ -239,7 +239,11 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       }
       std::string Diagnostic;
       if (!Hint || Hint->Signature.Architecture != TargetArch ||
-          !validateSourceABI(Hint->Signature, Diagnostic)) {
+          !validateSourceABI(Hint->Signature, Diagnostic) ||
+          // The ABI describes an address of a by-value copy. Until a call
+          // owns a separate copy-storage proof, leave the original operation
+          // unbound; a physical pointer is not its logical record argument.
+          hasIndirectSourceParameters(Hint->Signature)) {
         Ops.push_back(std::move(Op));
         continue;
       }

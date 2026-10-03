@@ -3008,6 +3008,7 @@ TEST(SourceABI, SixteenDoubleResultsRequireTheCompleteDarwinArm64Contract) {
   EXPECT_NE(Error.find("nil storage"), std::string::npos);
   Hint.ReturnType = NdType::makeVoid();
   Hint.Parameters.push_back({"value", Matrix});
-  EXPECT_FALSE(assignDarwinFixedSourceABI(Hint, Arch::AArch64, Error));
-  EXPECT_FALSE(assignDarwinObjCSourceABI(Hint, Arch::AArch64, Error));
+  EXPECT_TRUE(assignDarwinFixedSourceABI(Hint, Arch::AArch64, Error));
+  EXPECT_TRUE(assignDarwinObjCSourceABI(Hint, Arch::AArch64, Error));
+  EXPECT_TRUE(Hint.Parameters.back().IndirectByValue);
 }

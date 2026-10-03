@@ -98,6 +98,9 @@ llvm::StringRef HighCWriter::sourceConventionAttribute(
 
 std::string
 HighCWriter::sourceParameterType(const SourceParameterTypeHint &Parameter) {
+  if (Parameter.IndirectByValue)
+    throw std::invalid_argument(
+        "Indirect by-value source parameters require a copy storage proof");
   std::string Result = typeToC(Parameter.Type);
   switch (Parameter.TheRole) {
   case SourceParameterTypeHint::Role::Ordinary:
@@ -127,6 +130,9 @@ HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
 
 std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   const auto &Hint = *E.SourceCallHint;
+  if (hasIndirectSourceParameters(Hint.Signature))
+    throw std::invalid_argument(
+        "Indirect by-value source calls require a copy storage proof");
   using Kind = SourceCallTypeHint::Kind;
   if (E.IntrinsicId != Intrinsic::None ||
       E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
