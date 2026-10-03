@@ -82,14 +82,22 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     return ServiceOutcome(*V);
   };
   switch (S.Kind) {
-  case API::AddVectoredExceptionHandler: {
-    auto Handle = Exceptions.add(uint32_t(A[0]) != 0, A[1]);
+  case API::AddVectoredExceptionHandler:
+  case API::AddVectoredContinueHandler: {
+    const auto Kind = S.Kind == API::AddVectoredContinueHandler
+                          ? VectoredExceptions::HandlerKind::Continue
+                          : VectoredExceptions::HandlerKind::Exception;
+    auto Handle = Exceptions.add(Kind, uint32_t(A[0]) != 0, A[1]);
     if (!Handle)
       return Handle.takeError();
     return Value(*Handle);
   }
   case API::RemoveVectoredExceptionHandler:
-    return Value(Exceptions.remove(A[0]));
+    return Value(
+        Exceptions.remove(VectoredExceptions::HandlerKind::Exception, A[0]));
+  case API::RemoveVectoredContinueHandler:
+    return Value(
+        Exceptions.remove(VectoredExceptions::HandlerKind::Continue, A[0]));
   case API::RaiseException: {
     const uint32_t Flags = A[1];
     const uint32_t Count = A[3] ? uint32_t(A[2]) : 0;

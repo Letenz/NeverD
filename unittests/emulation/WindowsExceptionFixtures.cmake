@@ -28,10 +28,14 @@ foreach(_arch X64 AArch64)
     COMMAND "${NEVERD_PROCESS_LLD_LINK}" /lib "/machine:${_veh_${_arch}Machine}"
       "/def:${_veh_dir}/provider.def" "/out:${_dir}/provider.lib"
     DEPENDS "${_veh_dir}/provider.def" VERBATIM)
-  foreach(_kind program library)
+  foreach(_kind program library continuation)
     if(_kind STREQUAL "program")
       set(_source windows_exceptions.c)
       set(_output "${_veh_ProgramFile}")
+      set(_link "/entry:${_veh_ProgramEntry}" "/base:${_veh_ProgramBase}")
+    elseif(_kind STREQUAL "continuation")
+      set(_source windows_continuations.c)
+      set(_output "${_veh_ContinueProgramFile}")
       set(_link "/entry:${_veh_ProgramEntry}" "/base:${_veh_ProgramBase}")
     else()
       set(_source windows_exception_dll.c)
@@ -47,6 +51,7 @@ foreach(_arch X64 AArch64)
         "/machine:${_veh_${_arch}Machine}" /timestamp:0 ${_link}
         "${_dir}/${_kind}.obj" "${_dir}/provider.lib" "/out:${_dir}/${_output}"
       DEPENDS "fixtures/${_source}" fixtures/WindowsExceptionCases.def
+        fixtures/WindowsContinuationCases.def
         "${_dir}/provider.lib" VERBATIM)
     list(APPEND _veh_outputs "${_dir}/${_output}")
   endforeach()

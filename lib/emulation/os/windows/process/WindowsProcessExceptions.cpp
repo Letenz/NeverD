@@ -16,23 +16,31 @@ using namespace value;
 static_assert(ExceptionArgumentsOffset + MaxExceptionArguments * PointerSize ==
               ExceptionRecordSize);
 void VectoredExceptions::collect() {
-  if (Frames.empty())
+  if (Frames.empty()) {
     Handlers.remove_if([](const auto &H) { return !H.Live; });
+    ContinueHandlers.remove_if([](const auto &H) { return !H.Live; });
+  }
 }
-llvm::Expected<uint64_t> VectoredExceptions::add(bool First, uint64_t PC) {
+std::list<VectoredExceptions::Handler> &
+VectoredExceptions::handlers(HandlerKind Kind) {
+  return Kind == HandlerKind::Exception ? Handlers : ContinueHandlers;
+}
+llvm::Expected<uint64_t> VectoredExceptions::add(HandlerKind Kind, bool First,
+                                                 uint64_t PC) {
   collect();
-  if (Handlers.size() >= MaxExceptionHandlers || NextHandle >= UserLimit)
+  if (Handlers.size() + ContinueHandlers.size() >= MaxExceptionHandlers ||
+      NextHandle >= UserLimit)
     return failure(text::ExceptionLimit);
   Handler H{NextHandle, PC};
   NextHandle += PointerSize;
   if (First)
-    Handlers.push_front(H);
+    handlers(Kind).push_front(H);
   else
-    Handlers.push_back(H);
+    handlers(Kind).push_back(H);
   return H.Handle;
 }
-uint64_t VectoredExceptions::remove(uint64_t Handle) {
-  for (auto &H : Handlers)
+uint64_t VectoredExceptions::remove(HandlerKind Kind, uint64_t Handle) {
+  for (auto &H : handlers(Kind))
     if (H.Handle == Handle && H.Live) {
       H.Live = false;
       // Retain tombstones until all dispatch cursors have finished. Removing
@@ -119,15 +127,19 @@ VectoredExceptions::begin(Exception Raised, uint64_t StackPointer,
     return std::move(E);
   Frames.push_back({std::move(*Snapshot), std::move(*Context), Handlers.begin(),
                     Top, Layout->PayloadAddress, Layout->ReturnStackPointer,
-                    LoaderDepth, Raised.Flags, Event});
+                    LoaderDepth, Event});
   return callNext();
 }
 llvm::Expected<VectoredExceptions::Transfer> VectoredExceptions::callNext() {
   auto &F = Frames.back();
-  while (F.Current != Handlers.end() && !F.Current->Live)
+  auto &List = handlers(F.Kind);
+  while (F.Current != List.end() && !F.Current->Live)
     ++F.Current;
-  if (F.Current == Handlers.end())
-    return failure(text::ExceptionUnhandled);
+  if (F.Current == List.end()) {
+    if (F.Kind == HandlerKind::Exception)
+      return failure(text::ExceptionUnhandled);
+    return continueExecution();
+  }
   const uint64_t PC = F.Current->PC;
   const bool X64 = CPU.architecture() == GuestArchitecture::X64;
   if (PC < ImageAlignment || PC >= UserLimit || (!X64 && PC % DWordSize))
@@ -185,6 +197,18 @@ VectoredExceptions::returned(uint32_t Disposition) {
   }
   if (Disposition != ExceptionContinueExecution)
     return failure(text::ExceptionDisposition);
+  if (F.Kind == HandlerKind::Exception) {
+    // Continue callbacks observe the same live records, including edits made
+    // by exception handlers. Validate the final context only after they finish.
+    F.Kind = HandlerKind::Continue;
+    F.Current = ContinueHandlers.begin();
+    return callNext();
+  }
+  return continueExecution();
+}
+llvm::Expected<VectoredExceptions::Transfer>
+VectoredExceptions::continueExecution() {
+  auto &F = Frames.back();
   auto Access =
       CPU.canAccess(F.Payload, ExceptionContextOffset + F.Context.size(),
                     Read | UserAccessible);
@@ -195,9 +219,9 @@ VectoredExceptions::returned(uint32_t Disposition) {
   auto Flags = CPU.readInteger(F.Payload + ExceptionFlagsOffset, DWordSize);
   if (!Flags)
     return Flags.takeError();
-  if ((F.Flags | *Flags) & ExceptionNoncontinuable)
-    return failure(text::ExceptionContinuation);
-  if (*Flags & ~ExceptionSoftwareOriginate)
+  // Native vectored continuation does not apply the frame-based SEH
+  // noncontinuable check. Preserve the flag without inventing a second raise.
+  if (*Flags & ~(ExceptionNoncontinuable | ExceptionSoftwareOriginate))
     return failure(text::ExceptionContext);
   std::vector<uint8_t> Changed(F.Context.size());
   if (auto E = CPU.read(F.Payload + ExceptionContextOffset, Changed))

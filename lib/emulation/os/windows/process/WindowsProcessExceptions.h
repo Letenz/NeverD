@@ -14,6 +14,7 @@
 namespace neverd::emulation::windows_process {
 class VectoredExceptions final {
 public:
+  enum class HandlerKind { Exception, Continue };
   using Exception = ServiceOutcome::Exception;
   struct Transfer {
     uint64_t PC;
@@ -22,8 +23,8 @@ public:
   VectoredExceptions(ExecutionBackend &CPU, const IntegerABI &ABI,
                      uint64_t StackBase)
       : CPU(CPU), ABI(ABI), StackBase(StackBase) {}
-  llvm::Expected<uint64_t> add(bool First, uint64_t Handler);
-  uint64_t remove(uint64_t Handle);
+  llvm::Expected<uint64_t> add(HandlerKind Kind, bool First, uint64_t Handler);
+  uint64_t remove(HandlerKind Kind, uint64_t Handle);
   static bool recoverable(GuestArchitecture Architecture,
                           const BackendFault &Fault);
   bool accepts(const BackendFault &Fault) const;
@@ -47,15 +48,17 @@ private:
     std::list<Handler>::iterator Current;
     uint64_t Top, Payload, ExpectedSP;
     size_t LoaderDepth;
-    uint32_t Flags;
     std::optional<size_t> Event;
+    HandlerKind Kind = HandlerKind::Exception;
   };
+  std::list<Handler> &handlers(HandlerKind Kind);
   llvm::Expected<Transfer> callNext();
+  llvm::Expected<Transfer> continueExecution();
   void collect();
   ExecutionBackend &CPU;
   IntegerABI ABI;
   uint64_t StackBase, NextHandle = value::ExceptionHandleBase;
-  std::list<Handler> Handlers;
+  std::list<Handler> Handlers, ContinueHandlers;
   std::vector<Frame> Frames;
 };
 } // namespace neverd::emulation::windows_process

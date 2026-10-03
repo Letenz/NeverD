@@ -48,9 +48,6 @@ NEVERD_WINDOWS_PROCESS_TEXT(ExceptionArguments,
 NEVERD_WINDOWS_PROCESS_TEXT(
     ExceptionUnhandled,
     "user exception was not handled; frame-based dispatch is unsupported")
-NEVERD_WINDOWS_PROCESS_TEXT(
-    ExceptionContinuation,
-    "continuation of a noncontinuable user exception is unsupported")
 NEVERD_WINDOWS_PROCESS_TEXT(ExceptionDisposition,
                             "invalid vectored exception handler disposition")
 NEVERD_WINDOWS_PROCESS_TEXT(

@@ -668,3 +668,20 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsExceptions.ContextValidationPreservesStoppedCPUAndMemory/"
     "WhpX64")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsContinuationsNative.RunsOriginalContinuationExecutable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsContinuations.ExecutesOriginalContinuationScenarios/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsContinuations.RejectsInvalidCallbacksAndContinuationState/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsContinuations.NestedCallbacksShareTheProcessEventBudget/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsContinuations.HandlerNamespacesShareAndReclaimCapacity/"
+    "WhpX64")
+#endif
