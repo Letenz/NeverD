@@ -5,6 +5,8 @@
 // Target profiles: arm64-apple-macos15.0, arm64-apple-ios18.0-macabi, x86_64-apple-macos15.0, x86_64-apple-ios18.0-macabi
 // Direct non-TLS global addresses; no runtime layout or implementation.
 {"$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc", "/System/Library/Frameworks/Combine.framework/Combine|/System/Library/Frameworks/Combine.framework/Versions/A/Combine", "/System/Library/Frameworks/Combine.framework/Combine|/System/Library/Frameworks/Combine.framework/Versions/A/Combine"},
+{"$sSON", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
+{"$sSOSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSSN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSSSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSSSysMc", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},

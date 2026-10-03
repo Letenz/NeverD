@@ -572,6 +572,8 @@ symbol and provider before binding its runtime address; this supplies neither
 a metadata/witness layout nor a call ABI for accessors, witness members or
 arbitrary mangled symbols.
 
+The same compiler-derived storage catalog includes `ObjectIdentifier` metadata and its `Hashable` witness. Independent `.self` and constrained generic-call probes must agree with all four SDK export profiles. These are opaque external data identities, not a value layout or a consumed-input contract. A current thread-local import slot cannot supply an ordinary Swift data address.
+
 Objective-C property metadata supplies accessor declarations independently of
 method implementations, including dynamic, readonly and custom accessors.
 When class and category records declare the same selector, each validated IMP

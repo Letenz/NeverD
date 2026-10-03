@@ -8832,6 +8832,131 @@ TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactExternalStorageIdentity) {
   }
 }
 
+TEST(ObjCCallHints, SwiftStorageRejectsThreadLocalImportSlots) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Import : {"_$sSuN", "_$sSSSHsWP"})
+      for (const auto Kind :
+           {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+            llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+            llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+            llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+            llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+        auto Image = runtimeImage(Import, Architecture);
+        Image.DyldBindSlots[0x2180] = {
+            Import, 0, "/usr/lib/swift/libswiftCore.dylib", false};
+        Image.Sections[1].Type = Kind;
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Image, 0x2180))
+            << Import << " " << Kind;
+      }
+}
+
+TEST(ObjCCallHints, SwiftObjectIdentifierStorageRequiresCurrentDataIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Import : {"_$sSON", "_$sSOSHsWP"}) {
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          Import, 0, "/usr/lib/swift/libswiftCore.dylib", false};
+      const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      ASSERT_TRUE(Binding) << Import;
+      EXPECT_EQ(Binding->TargetName, llvm::StringRef(Import).drop_front());
+      EXPECT_EQ(Binding->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+      EXPECT_TRUE(Binding->Signature.Parameters.empty());
+      EXPECT_EQ(Binding->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+      EXPECT_FALSE(Binding->DoesNotReturn);
+
+      HighFunc Function;
+      Function.Name = "identifier_storage";
+      Function.ReturnType = NdType::makeInt(8);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                         NdType::makeInt(8));
+      Function.Body = {Return};
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      const auto *Address = sourceCall(Bound.Function);
+      ASSERT_NE(Address, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+      EXPECT_NE(Source.find("[] __asm__(\"" + std::string(Import) + "\");"),
+                std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+      for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+        auto Changed = Image;
+        auto &Bind = Changed.DyldBindSlots[0x2180];
+        switch (Mutation) {
+        case 0:
+          Bind.Module += ".impostor";
+          break;
+        case 1:
+          Bind.WeakImport = true;
+          break;
+        case 2:
+          Bind.Addend = 8;
+          break;
+        case 3:
+          Changed.DyldBindSlots.clear();
+          break;
+        case 4:
+          Changed.ImportPtrSlots[0x2180] = "_different";
+          break;
+        case 5:
+          Changed.ConflictingImportStorageSlots.insert(0x2180);
+          break;
+        case 6:
+          Changed.IsRelocatable = true;
+          break;
+        case 7:
+          Bind.Module.clear();
+          break;
+        case 8:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] =
+              std::string(Import) + "suffix";
+          break;
+        case 9:
+          Bind.Module = "/usr/lib/swift/libswiftFoundation.dylib";
+          break;
+        case 10:
+          Changed.Format = BinaryFormat::ELF;
+          break;
+        case 11:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] = "_$sSOMa";
+          break;
+        case 12:
+          Changed.Sections[1].Type =
+              llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS;
+          break;
+        case 13:
+          Changed.Sections[1].Type = llvm::MachO::S_THREAD_LOCAL_VARIABLES;
+          break;
+        }
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+            << Import << " " << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
+            << Import << " " << Mutation;
+      }
+      for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+        auto Changed = *Address;
+        auto ChangedHint =
+            std::make_shared<SourceCallTypeHint>(*Address->SourceCallHint);
+        if (Mutation == 0)
+          ChangedHint->TargetAddress += 8;
+        if (Mutation == 1)
+          ChangedHint->Signature.ReturnLocation.ValueBytes = 4;
+        if (Mutation == 2)
+          Changed.Operands.push_back(HighExpr::makeConst(0, 8));
+        Changed.SourceCallHint = std::move(ChangedHint);
+        EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {})) << Mutation;
+      }
+    }
+}
+
 TEST(ObjCCallHints, SwiftFoundationCVarArgDescriptorKeepsExternalIdentity) {
   const std::string Import = "_$sSSs7CVarArg10FoundationMc";
   for (const auto Architecture : {Arch::AArch64, Arch::X64})

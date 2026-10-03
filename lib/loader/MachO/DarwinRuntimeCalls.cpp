@@ -582,6 +582,20 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
               Image.Arch == Arch::AArch64 ? D.AArch64Modules : D.X64Modules,
               Bind->second.Module))
         SwiftMetadata = D.Name;
+  // Compiler evidence names ordinary external storage. A current TLS slot
+  // supplies a different runtime access contract, even with the same spelling.
+  if (!SwiftMetadata.empty())
+    if (const auto *Section = Image.getSectionFor(ImportSlot))
+      switch (Section->Type & llvm::MachO::SECTION_TYPE) {
+      case llvm::MachO::S_THREAD_LOCAL_REGULAR:
+      case llvm::MachO::S_THREAD_LOCAL_ZEROFILL:
+      case llvm::MachO::S_THREAD_LOCAL_VARIABLES:
+      case llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS:
+      case llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS:
+        return std::nullopt;
+      default:
+        break;
+      }
   if (FrameworkData.empty() && !SwiftEmptyStorage && !SwiftIsaMask &&
       SwiftMetadata.empty() && *Import != "___stack_chk_guard")
     return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
