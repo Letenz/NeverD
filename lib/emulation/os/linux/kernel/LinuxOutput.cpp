@@ -7,6 +7,9 @@
 
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
+#include <cassert>
+
 namespace neverd::emulation::linux_model {
 namespace {
 struct OutputBuffer {
@@ -97,7 +100,7 @@ writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
   // Import every descriptor before touching payloads. Check entries in order:
   // an earlier negative length precedes a later unreadable descriptor, while
   // any descriptor error precedes all output effects and payload faults.
-  llvm::SmallVector<OutputBuffer, 8> Buffers;
+  llvm::SmallVector<OutputBuffer> Buffers;
   Buffers.reserve(Entries);
   for (uint32_t I = 0; I < Entries; ++I) {
     const uint64_t Slot = Address + I * IOVectorSize;

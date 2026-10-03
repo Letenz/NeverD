@@ -59,8 +59,9 @@ TEST(LinuxOutputNative, OriginalVectoredCallsMatchTheHostKernel) {
   for (const auto &Test : Cases) {
     SCOPED_TRACE(Test.Mode);
     const std::string Mode(1, Test.Mode);
-    const auto Out = (Root / OutputFile).string();
-    const auto Err = (Root / ErrorFile).string();
+    // ExecuteAndWait does not truncate existing redirects on every host.
+    const auto Out = (Root / (Mode + OutputFile)).string();
+    const auto Err = (Root / (Mode + ErrorFile)).string();
     const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Out, Err};
     std::string LaunchError;
     bool ExecutionFailed = false;
