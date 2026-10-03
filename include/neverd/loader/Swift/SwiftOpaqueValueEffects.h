@@ -23,5 +23,13 @@ swiftOpaqueValueCallEffects(const BinaryImage &Image, const LowFunc &Caller,
                             const SourceCallOccurrenceKey &Site,
                             const SourceCallTypeHint &Binding,
                             const LowFunc *Callee = nullptr);
+
+/// Rebuild occurrence receipts using current, complete callee bodies. Only
+/// callers with an authenticated native value operation receive typed read
+/// receipts for their equality calls. Ordinary Boolean consumers are unchanged.
+std::map<va_t, SourceCallTypeHint> buildSwiftOpaqueValueCallHints(
+    const BinaryImage &Image, const LowFunc &Caller,
+    const std::map<va_t, SourceFunctionTypeHint> &CalleeABIs,
+    const std::map<va_t, const LowFunc *> &Callees);
 } // namespace neverd
 #endif

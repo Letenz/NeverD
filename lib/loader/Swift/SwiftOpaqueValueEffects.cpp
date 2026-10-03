@@ -180,4 +180,70 @@ swiftOpaqueValueCallEffects(const BinaryImage &Image, const LowFunc &Caller,
   }
   return std::nullopt;
 }
+
+std::map<va_t, SourceCallTypeHint> buildSwiftOpaqueValueCallHints(
+    const BinaryImage &Image, const LowFunc &Caller,
+    const std::map<va_t, SourceFunctionTypeHint> &CalleeABIs,
+    const std::map<va_t, const LowFunc *> &Callees) {
+  std::map<va_t, SourceCallTypeHint> Result;
+  if (Image.Arch != Arch::AArch64 || Image.Format != BinaryFormat::MachO ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable)
+    return Result;
+  const auto Sites = sourceLocalCalls(Image, Caller);
+  size_t Budget = 262144;
+  for (const auto &[Site, Word] : Sites) {
+    if (!Site.StaticTarget)
+      continue;
+    const auto ABI = CalleeABIs.find(*Site.StaticTarget);
+    const auto Body = Callees.find(*Site.StaticTarget);
+    if (ABI == CalleeABIs.end() || Body == Callees.end() || !Body->second ||
+        Body->second->Entry != *Site.StaticTarget ||
+        !nativeEffects(Image, *Body->second, ABI->second, Budget))
+      continue;
+    SourceCallTypeHint Hint;
+    Hint.TargetAddress = *Site.StaticTarget;
+    Hint.Signature = ABI->second;
+    Hint.SwiftOpaqueValue =
+        SourceCallTypeHint::SwiftOpaqueValueEvidence{Caller.Entry, Site};
+    if (!swiftOpaqueValueCallEffects(Image, Caller, Site, Hint, Body->second) ||
+        !Result.emplace(Site.Instruction, std::move(Hint)).second)
+      return {};
+  }
+  if (Result.empty())
+    return Result;
+  for (const auto &[Site, Word] : Sites) {
+    if (!Site.StaticTarget)
+      continue;
+    const auto Runtime =
+        swiftBooleanRuntimeVeneerCandidate(Image, *Site.StaticTarget);
+    if (!Runtime)
+      continue;
+    const auto ABI = swiftBooleanNormalizedSignature(Runtime->ImportName);
+    if (!ABI)
+      continue;
+    SourceCallTypeHint Hint;
+    Hint.CallKind = SourceCallTypeHint::Kind::SwiftBooleanProjection;
+    Hint.BooleanResult =
+        SourceCallTypeHint::BooleanResultProjection{Caller.Entry, Site};
+    Hint.Signature = *ABI;
+    Hint.TargetAddress = Runtime->ImportSlot;
+    Hint.TargetName = llvm::StringRef(Runtime->ImportName).drop_front().str();
+    Hint.SwiftOpaqueValue =
+        SourceCallTypeHint::SwiftOpaqueValueEvidence{Caller.Entry, Site};
+    if (swiftOpaqueValueCallEffects(Image, Caller, Site, Hint) &&
+        !Result.emplace(Site.Instruction, std::move(Hint)).second)
+      return {};
+  }
+  // The first pipeline consumer replays the complete lifetime, including all
+  // of its calls. Do not attach a partial group around unrelated operations;
+  // those consumers need their own complete call-effect integration.
+  size_t Calls = 0;
+  for (const auto &Block : Caller.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        ++Calls;
+  return Budget && Calls == Result.size()
+             ? Result
+             : std::map<va_t, SourceCallTypeHint>{};
+}
 } // namespace neverd

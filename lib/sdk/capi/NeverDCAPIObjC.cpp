@@ -29,6 +29,7 @@
 #include "SourceProjectionEvidenceJSON.h"
 #include "SourceRegisterCopyProjection.h"
 #include "SourceSwiftConsumedInputProjection.h"
+#include "SourceSwiftOpaqueValueProjection.h"
 #include "SourceSwiftWitnessFrameProjection.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -254,6 +255,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     std::map<va_t, ObjCSourceBindingResult> Projections;
     const ObjCProfileStorage ProfileStorage(S->Img);
     const SourceRegisterCopyProjectionValidator RegisterCopies(S->Img, Result);
+    const SourceSwiftOpaqueValueProjectionValidator OpaqueValues(S->Img,
+                                                                 Result);
     const SourceSwiftConsumedInputProjectionValidator ConsumedInputs(S->Img,
                                                                      Result);
     const SourceSwiftWitnessFrameProjectionValidator WitnessFrames(S->Img,
@@ -400,6 +403,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Reason = "synchronized cleanup proof is no longer valid";
       if (!RegisterCopies.valid(Binding.Function))
         Reason = "source register-copy proof is no longer valid";
+      if (!OpaqueValues.valid(Binding.Function))
+        Reason = "Swift opaque-value proof is no longer valid";
       if (!ConsumedInputs.valid(Binding.Function))
         Reason = "Swift consumed-input proof is no longer valid";
       if (!WitnessFrames.valid(Binding.Function))
@@ -726,6 +731,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Evidence.append(Projection.Diagnostics);
         if (!RegisterCopies.valid(Projection.Function)) {
           Reason = "source register-copy proof is no longer valid";
+          Evidence.Complete = false;
+          Evidence.add(SourceProjectionIssue::Body, Reason);
+        }
+        if (!OpaqueValues.valid(Projection.Function)) {
+          Reason = "Swift opaque-value proof is no longer valid";
           Evidence.Complete = false;
           Evidence.add(SourceProjectionIssue::Body, Reason);
         }

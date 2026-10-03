@@ -66,6 +66,10 @@ public:
       const std::map<va_t, SourceFunctionTypeHint> *Hints) {
     SourceCalleeTypeHints = Hints;
   }
+  void
+  setSourceCalleeFunctions(const std::map<va_t, const LowFunc *> *Functions) {
+    SourceCalleeFunctions = Functions;
+  }
   void setObjCBlockCaptureCallFields(
       const std::map<va_t, ObjCBlockCaptureCallFields> *Fields) {
     ObjCBlockCaptureFields = Fields;
@@ -272,6 +276,7 @@ private:
   bool SourceCallHintsEnabled = false;
   const std::map<va_t, SourceFunctionTypeHint> *SourceEntryTypeHints = nullptr;
   const std::map<va_t, SourceFunctionTypeHint> *SourceCalleeTypeHints = nullptr;
+  const std::map<va_t, const LowFunc *> *SourceCalleeFunctions = nullptr;
   const std::map<va_t, ObjCBlockCaptureCallFields> *ObjCBlockCaptureFields =
       nullptr;
   const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>

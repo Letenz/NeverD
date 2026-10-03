@@ -166,6 +166,10 @@ inline size_t inferObjCNativeDependencies(
   const auto Targets =
       walkObjCNativeDependencies(Image, Result, nullptr, CallbackRoots);
   const SwiftFunctionSymbolIndex FunctionSymbols(Image);
+  auto CurrentCallees = nativeSourceCalleeContracts(Image, Result);
+  if (CalleeContracts && CalleeContracts->SourceImage == &Image)
+    CurrentCallees.ZeroArgumentPointerCallees =
+        CalleeContracts->ZeroArgumentPointerCallees;
   std::map<va_t, const LowFunc *> Low;
   std::map<va_t, const MedFunc *> Med;
   std::map<va_t, const HighFunc *> High;
@@ -441,7 +445,7 @@ inline size_t inferObjCNativeDependencies(
     }
     auto Hint = inferNativeSourceTypeHint(
         Image, *M->second, *H->second, *A->second, Diagnostics[Target],
-        L->second, IntegerPairReturns.count(Target), CalleeContracts);
+        L->second, IntegerPairReturns.count(Target), &CurrentCallees);
     if (Hint) {
       Options.SourceTypeHints.emplace(Target, std::move(*Hint));
       ++Added;
