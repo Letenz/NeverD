@@ -3,9 +3,11 @@
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceProjection.h"
+#include "../../../lib/sdk/capi/SourceSwiftConsumedInputProjection.h"
 #include "../../../lib/sdk/capi/SwiftMangledSourceABI.h"
 #include "CFunctionParameterCallFixture.h"
 #include "ImmutableNativeCallFixture.h"
+#include "SwiftConsumedInputFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -9012,5 +9014,320 @@ TEST(NativeSourceHints, SwiftAccessEffectsRecheckScalarInferenceAndScratchABI) {
           Op.SourceCallHint = std::move(Binding);
         }
     EXPECT_FALSE(F.infer(Error)) << Case << ": " << Error;
+  }
+}
+
+TEST(NativeSourceHints, ConsumedUIntRequiresCurrentTypeAndLifetimeEvidence) {
+  using namespace swift_consumed_input_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  auto Hints = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(Call);
+  ASSERT_TRUE(Hint.SwiftConsumedInput);
+  EXPECT_EQ(Hint.SwiftConsumedInput->MetadataSlot, MetadataSlot);
+  EXPECT_EQ(Hint.SwiftConsumedInput->WitnessSlot, WitnessSlot);
+  EXPECT_TRUE(Hint.requiresUniqueSourceOccurrence());
+  const auto Effects = swiftConsumedInputCallEffects(F.Image, *F.low(), Hint);
+  ASSERT_TRUE(Effects);
+  EXPECT_EQ(Effects->WritableFrameParameters,
+            (std::map<size_t, size_t>{{1, 8}}));
+  EXPECT_EQ(Effects->InitializedFrameParameters, (std::set<size_t>{1}));
+  EXPECT_TRUE(Effects->ReadOnlyFrameParameters.empty());
+  EXPECT_FALSE(Effects->InitializesIndirectResult);
+  std::string Error;
+  const auto Entry = F.infer(Error);
+  ASSERT_TRUE(Entry) << Error;
+  ASSERT_EQ(Entry->Parameters.size(), 2U);
+  EXPECT_EQ(Entry->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Entry->Parameters[1].Location.RegisterOffset, a64reg::X8);
+  EXPECT_EQ(Entry->ReturnType->Kind, NdTypeKind::Void);
+  F.EntrySignature = *Entry;
+  F.runUInt();
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  EXPECT_TRUE(validateSwiftConsumedInputBindings(F.Image, F.low(), *F.med()));
+  auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+  EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_TRUE(
+      sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
+          .valid(Bound.Function));
+}
+
+TEST(NativeSourceHints, ConsumedUIntRejectsStaleTypesInstructionsAndABI) {
+  using namespace swift_consumed_input_test;
+  Fixture F;
+  ASSERT_TRUE(F.low());
+  const auto Hints = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  for (unsigned Case = 0; Case < 34; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Image = F.Image;
+    auto Low = *F.low();
+    auto Hint = Hints.at(Call);
+    auto Change = [&](unsigned I, uint32_t W) {
+      llvm::support::endian::write32le(Image.Segments[0].Data.data() + I * 4,
+                                       W);
+    };
+    switch (Case) {
+    case 0:
+      Image.DyldBindSlots[MetadataSlot].Name = "_$sSiN";
+      break;
+    case 1:
+      Image.DyldBindSlots[WitnessSlot].Name = "_$sSiSHsWP";
+      break;
+    case 2:
+      Image.DyldBindSlots[RuntimeSlot].Name += "wrong";
+      break;
+    case 3:
+      Image.DyldBindSlots[MetadataSlot].WeakImport = true;
+      break;
+    case 4:
+      Image.DyldBindSlots[WitnessSlot].WeakImport = true;
+      break;
+    case 5:
+      Image.DyldBindSlots[RuntimeSlot].WeakImport = true;
+      break;
+    case 6:
+      Image.DyldBindSlots[MetadataSlot].Addend = 8;
+      break;
+    case 7:
+      Image.DyldBindSlots[WitnessSlot].Addend = 8;
+      break;
+    case 8:
+      Image.DyldBindSlots[RuntimeSlot].Addend = 8;
+      break;
+    case 9:
+      Image.DyldBindSlots[MetadataSlot].Module = "other";
+      break;
+    case 10:
+      Image.DyldBindSlots[WitnessSlot].Module = "other";
+      break;
+    case 11:
+      Image.DyldBindSlots[RuntimeSlot].Module = "other";
+      break;
+    case 12:
+      Image.ImportPtrSlots[MetadataSlot] = "_$sSiN";
+      break;
+    case 13:
+      Change(5, 0xb9400421);
+      break;
+    case 14:
+      Change(7, 0xb9400842);
+      break;
+    case 15:
+      Change(8, 0xd2800001);
+      break;
+    case 16:
+      Low.Blocks[0].InstructionBoundaries.clear();
+      break;
+    case 17:
+      Low.Blocks[0].Succs.push_back(123);
+      break;
+    case 18:
+      for (auto &B : Low.Blocks)
+        for (auto &O : B.Ops)
+          if (O.Addr == Call - 16 && O.Output.Size)
+            O.Output.Size = 4;
+      break;
+    case 19:
+      Hint.Signature.Parameters[1].Location.ValueBytes = 4;
+      break;
+    case 20:
+      Hint.Signature.Parameters[0].Location.RegisterOffset = a64reg::X9;
+      break;
+    case 21:
+      Hint.Signature.Parameters[2].TheRole =
+          SourceParameterTypeHint::Role::SwiftContext;
+      break;
+    case 22:
+      Hint.Signature.Parameters.pop_back();
+      break;
+    case 23:
+      Hint.SwiftConsumedInput->MetadataSlot += 8;
+      break;
+    case 24:
+      Hint.SwiftConsumedInput->WitnessSlot -= 8;
+      break;
+    case 25:
+      Hint.SwiftConsumedInput->Site.Instruction += 4;
+      break;
+    case 26:
+      Hint.SwiftConsumedInput->FunctionEntry += 4;
+      break;
+    case 27:
+      Hint.SwiftConsumedInput.reset();
+      break;
+    case 28:
+      Hint.WeakImport = true;
+      break;
+    case 29:
+      Hint.DoesNotReturn = true;
+      break;
+    case 30:
+      Image.Segments[1].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 31:
+      Image.Arch = Arch::X64;
+      break;
+    case 32:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 33:
+      Image.IsRelocatable = true;
+      break;
+    }
+    EXPECT_FALSE(swiftConsumedInputCallEffects(Image, Low, Hint));
+  }
+}
+
+TEST(NativeSourceHints,
+     ConsumedUIntCannotReadUninitializedOrConsumedFrameBytes) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    switch (Case) {
+    case 0:
+      F.word(3, 0xb9000be0);
+      break; // four-byte initialization
+    case 1:
+      F.word(3, 0xd503201f);
+      break; // missing initialization
+    case 2:
+      F.word(8, 0x910043e0);
+      break; // overlaps saved frame/link words
+    case 3:
+      F.word(10, 0xf94007e9);
+      F.word(11, 0xa9417bfd);
+      F.word(12, 0x910083ff);
+      F.word(13, 0xd65f03c0);
+      F.Image.Symbols[0].Size = 56;
+      break;
+    case 4:
+      F.word(3, 0xf90007ff);
+      F.word(8, 0x910073e0);
+      break; // range extends past active frame
+    case 5:
+      F.word(3, 0xf90007ff);
+      F.word(8, 0x910003e0);
+      break; // unwritten neighboring word
+    }
+    F.runUInt();
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    std::string Error;
+    EXPECT_FALSE(F.infer(Error)) << Error;
+  }
+}
+
+TEST(NativeSourceHints,
+     ConsumedUIntPublicationReplaysEveryCurrentRepresentation) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 18; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    std::string Error;
+    auto EntryHint = F.infer(Error);
+    ASSERT_TRUE(EntryHint) << Error;
+    F.EntrySignature = *EntryHint;
+    F.runUInt();
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    auto &Published = Bound.Function;
+    HighExpr *CallExpr = nullptr;
+    walkStmts(Published.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (E && E->SourceCallHint && E->SourceCallHint->SwiftConsumedInput)
+          CallExpr = E.get();
+      });
+    });
+    ASSERT_TRUE(CallExpr);
+    MedOp *CallOp = nullptr;
+    for (auto &B : F.med()->Blocks)
+      for (auto &O : B.Ops)
+        if (O.SourceCallHint && O.SourceCallHint->SwiftConsumedInput)
+          CallOp = &O;
+    ASSERT_TRUE(CallOp);
+    auto ClearMed = [&] {
+      auto H = std::make_shared<SourceCallTypeHint>(*CallOp->SourceCallHint);
+      H->SwiftConsumedInput.reset();
+      CallOp->SourceCallHint = H;
+    };
+    auto ClearHigh = [&] {
+      auto H = std::make_shared<SourceCallTypeHint>(*CallExpr->SourceCallHint);
+      H->SwiftConsumedInput.reset();
+      CallExpr->SourceCallHint = H;
+    };
+    switch (Case) {
+    case 0:
+      CallExpr->Operands[0] = HighExpr::makeConst(0, 8);
+      break;
+    case 1:
+      CallExpr->Operands[1] = HighExpr::makeConst(0, 8);
+      break;
+    case 2:
+      CallExpr->Operands[2] = CallExpr->Operands[3];
+      break;
+    case 3:
+      CallExpr->Operands[3] = CallExpr->Operands[2];
+      break;
+    case 4:
+      ClearMed();
+      break;
+    case 5:
+      ClearHigh();
+      break;
+    case 6:
+      ClearMed();
+      ClearHigh();
+      break;
+    case 7:
+      CallOp->Inputs[1] = CallOp->Inputs[2];
+      break;
+    case 8:
+      CallOp->Inputs[2] = CallOp->Inputs[3];
+      break;
+    case 9:
+      CallOp->Inputs[3] = CallOp->Inputs[4];
+      break;
+    case 10:
+      for (size_t I = 0; I < Published.Body.size(); ++I)
+        if (Published.Body[I].Kind == StmtKind::Store) {
+          Published.Body.erase(Published.Body.begin() + I);
+          break;
+        }
+      break;
+    case 11:
+      for (size_t I = 0; I < Published.Body.size(); ++I)
+        if (Published.Body[I].Kind == StmtKind::Call) {
+          Published.Body.insert(Published.Body.begin() + I, Published.Body[I]);
+          break;
+        }
+      break;
+    case 12:
+      Published.FrameSize += 16;
+      break;
+    case 13:
+      CallOp->OriginSeq += 1;
+      break;
+    case 14:
+      F.Image.DyldBindSlots[MetadataSlot].Name = "_$sSiN";
+      break;
+    case 15: {
+      auto H = std::make_shared<SourceCallTypeHint>(*CallExpr->SourceCallHint);
+      H->Signature.Parameters.pop_back();
+      CallExpr->SourceCallHint = H;
+    } break;
+    case 16:
+      F.word(3, 0xb9000be0);
+      break;
+    case 17:
+      F.Result.FunctionAudits.front().MedIRVerified = false;
+      break;
+    }
+    EXPECT_FALSE(
+        sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
+            .valid(Published));
   }
 }

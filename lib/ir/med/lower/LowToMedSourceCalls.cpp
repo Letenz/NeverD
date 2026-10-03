@@ -9,6 +9,7 @@
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
 
@@ -80,6 +81,18 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       auto [It, Inserted] = Hints.emplace(Address, std::move(Hint));
       if (!Inserted)
         Hints.erase(It);
+    }
+  }
+  if (Image) {
+    for (auto &[Address, Hint] :
+         buildSwiftConsumedInputCallHints(*Image, Low)) {
+      const auto Existing = Hints.find(Address);
+      if (Existing != Hints.end() &&
+          Existing->second.CallKind == Hint.CallKind &&
+          Existing->second.TargetAddress == Hint.TargetAddress &&
+          Existing->second.TargetName == Hint.TargetName &&
+          equalSourceABIs(Existing->second.Signature, Hint.Signature))
+        Existing->second.SwiftConsumedInput = Hint.SwiftConsumedInput;
     }
   }
   const SourceFunctionTypeHint *EntrySignature = nullptr;

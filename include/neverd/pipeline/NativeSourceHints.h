@@ -57,6 +57,11 @@ boundNativeBooleanCallees(const MedFunc &Caller);
 bool validateSwiftWitnessFrameBindings(const BinaryImage &Image,
                                        const LowFunc *Low, const MedFunc &Med);
 
+/// Rebuild type-specific consumed-input receipts from the current machine and
+/// LowIR. Frame byte/lifetime proof remains in the shared IR analysis.
+bool validateSwiftConsumedInputBindings(const BinaryImage &Image,
+                                        const LowFunc *Low, const MedFunc &Med);
+
 /// Revalidate native Swift receiver occurrences against the current complete
 /// entry declaration and loader-owned machine/CFG provenance.
 bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,

@@ -28,6 +28,7 @@
 #include "SessionImpl.h"
 #include "SourceProjectionEvidenceJSON.h"
 #include "SourceRegisterCopyProjection.h"
+#include "SourceSwiftConsumedInputProjection.h"
 #include "SourceSwiftWitnessFrameProjection.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -253,6 +254,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     std::map<va_t, ObjCSourceBindingResult> Projections;
     const ObjCProfileStorage ProfileStorage(S->Img);
     const SourceRegisterCopyProjectionValidator RegisterCopies(S->Img, Result);
+    const SourceSwiftConsumedInputProjectionValidator ConsumedInputs(S->Img,
+                                                                     Result);
     const SourceSwiftWitnessFrameProjectionValidator WitnessFrames(S->Img,
                                                                    Result);
     std::map<va_t, ObjCBlockSourceBindingResult> BlockProjections;
@@ -397,6 +400,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Reason = "synchronized cleanup proof is no longer valid";
       if (!RegisterCopies.valid(Binding.Function))
         Reason = "source register-copy proof is no longer valid";
+      if (!ConsumedInputs.valid(Binding.Function))
+        Reason = "Swift consumed-input proof is no longer valid";
       if (!WitnessFrames.valid(Binding.Function))
         Reason = "Swift witness frame proof is no longer valid";
       if (Reason.empty()) {
@@ -721,6 +726,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Evidence.append(Projection.Diagnostics);
         if (!RegisterCopies.valid(Projection.Function)) {
           Reason = "source register-copy proof is no longer valid";
+          Evidence.Complete = false;
+          Evidence.add(SourceProjectionIssue::Body, Reason);
+        }
+        if (!ConsumedInputs.valid(Projection.Function)) {
+          Reason = "Swift consumed-input proof is no longer valid";
           Evidence.Complete = false;
           Evidence.add(SourceProjectionIssue::Body, Reason);
         }

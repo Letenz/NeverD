@@ -6958,7 +6958,7 @@ TEST(HighControlFlowSemantics, PlainBlocksSpliceIntoTheirList) {
 TEST(HighControlFlowSemantics, MachineCallReceiptsKeepOneSharedTailOccurrence) {
   // Source evidence authenticates one native occurrence. Mutually exclusive
   // source copies still need a new proof; a tail pass cannot clone a receipt.
-  for (unsigned Receipt = 0; Receipt < 7; ++Receipt)
+  for (unsigned Receipt = 0; Receipt < 8; ++Receipt)
     for (bool Assigned : {false, true})
       for (bool Nested : {false, true})
         for (bool JumpTail : {false, true}) {
@@ -6987,6 +6987,9 @@ TEST(HighControlFlowSemantics, MachineCallReceiptsKeepOneSharedTailOccurrence) {
             Hint->NativeSwiftReceiver.emplace();
             break;
           case 6:
+            Hint->SwiftConsumedInput.emplace();
+            break;
+          case 7:
             break; // A declaration alone may be copied.
           }
           auto Call = HighExpr::makeCall("callback", 0x2000, {local(0)});
@@ -7033,7 +7036,7 @@ TEST(HighControlFlowSemantics, MachineCallReceiptsKeepOneSharedTailOccurrence) {
                 ++Evaluations;
             });
           });
-          if (Receipt == 6)
+          if (Receipt == 7)
             EXPECT_GT(Evaluations, 1U);
           else {
             EXPECT_EQ(Evaluations, 1U);
