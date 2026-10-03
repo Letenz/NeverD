@@ -188,8 +188,8 @@ the complete Qt 6.11.1 bundle passed signature checks across 186 Mach-O images.
 The packaged Cocoa GUI smoke and worker EVM load/disassembly passed. A signed
 probe loaded the bundle's engine and executed HVF initialization and the ARM64
 ELF fixture. This bundle's dependencies require macOS 15.0. Three backend translation units also
-compiled against the macOS x86-64 SDK, but Intel hardware execution remains
-unaccepted pending the native gate above.
+compiled against the macOS x86-64 SDK at that stage. Native Intel transport
+results are recorded below; complete CPU/process acceptance is separate.
 
 An alternating seven-sample microbenchmark, after warmup and excluding CPU
 creation, executed the same checked ARM64 loop on both backends: two setup
@@ -238,14 +238,22 @@ remained zero; host TPR/APIC writes did not produce the requested nonzero guest 
 Production `48042a5e9` uses authenticated CR8 read exits and retries unrelated
 host IRQ exits. Added native cases exercise all sixteen destination registers,
 CPL3 general-protection faults and unsolicited interrupts before cancellation.
-The [full native gate](https://github.com/NeverSight/NeverD/actions/runs/37083061831)
-passed nine of ten transport cases. The remaining failure is the first
-retry after cancelling and recreating the vCPU; the full CPU and Darwin
-stages did not run. Intel acceptance remains pending that recovery fix and
-the complete gate. The earlier run `37078537517` was cancelled after a stalled runner and
-is not acceptance evidence. Temporary instruction probes and API interposers
-are removed; the actual NeverD transport and process tests own ongoing
-acceptance.
+The initial native gate exposed zero VMCS RFLAGS on the first retry after
+cancellation recreated the vCPU. `99340b586` moved RIP/RFLAGS installation and
+capture to VMCS. The [native transport gate](https://github.com/NeverSight/NeverD/actions/runs/37086427775)
+at clean source `19a5f63a239bf1afac892f6907a72f62e8e998c1` then passed all ten
+required cases with zero skips. Separate one-process and cancellation checks
+also passed; all three interruption modes retained RFLAGS `0x202` through retry.
+The artifact SHA-256 was verified against GitHub metadata. This establishes
+transport recovery, not yet the complete Intel CPU and Darwin profiles.
+The full gate at `9319c880d` is running with all fourteen Intel requirements
+and 100 interruption/recovery repetitions. Stalled and cancelled runs are not
+acceptance evidence. Temporary instruction probes, API interposers and phase
+tracing are removed; actual NeverD tests own ongoing acceptance.
+
+At clean source `9319c880d78e93f5cb8a7a9360778084934de258`, the ARM64 transport
+subset again passed all twelve cases without skips, and the native loop
+interruption/retry test passed 100 repetitions without failures or skips.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
