@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
+<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
 
 [← 문서 목록](README.md)
 
@@ -92,6 +92,8 @@ CPU 실행 전에 `scripts/prepare_hvf_batches.py`가 전체·선택 목록과 �
 ## 독립 Intel 진단
 
 수동 [Intel 진단 워크플로](../../.github/workflows/hvf-intel-diagnostic.yml)는 제어기와 검사 대상 소스를 별도로 체크아웃합니다. `source-ref`에는 전체 커밋 SHA가 필요하고, `shards`는 원래의 16개 분할 중 번호를 선택합니다. `first-method`는 0부터 시작하며 `method-count=0`은 남은 메서드를 모두 선택합니다. 원래 매개변수 하나를 고르는 `case-index`는 `method-count=1`일 때만 사용합니다. 먼저 20개 대상의 전체 목록을 수집한 뒤 선택하며, 원래 Release 빌드, 명령, 매개변수와 필수 네이티브 검사를 유지합니다.
+
+`intel-image`는 전체 워크플로와 마찬가지로 기본값인 `macos-15-intel` 또는 대조 실험용 `macos-26-intel`을 선택합니다. 실행 제목에 선택한 이미지가 표시되며, 가용성 검사는 계속 네이티브 x86-64 호스트를 요구합니다. 이미지 변경에는 OS, SDK와 도구 체인이 함께 포함되므로 커널 변경만 분리해서 비교할 수는 없습니다.
 
 각 메서드 실행 전에 변경 불가능한 실행 계획과 호스트 스냅샷을 업로드합니다. 실행 후에는 원본 XML, 프로세스 회수, 제어기 상태와 두 번째 스냅샷을 보존합니다. 메모리, 스왑, 부하, 디스크, 프로세스 ID·상태·CPU·RSS·실행 파일 이름을 기록하며 프로세스 인수나 환경 변수는 포함하지 않습니다. 수집 오류도 남깁니다. 실행이나 업로드에 실패하면 후속 메서드를 중단합니다. 각 메서드의 실행 제한은 계속 120초지만 호스트 연결이 끊기면 정리와 마지막 업로드가 불가능할 수 있습니다. 이때 이미 업로드한 증거만 남습니다. 부분 진단은 전체 CPU 검사나 독립 Darwin 검증을 대신하지 않습니다. 마지막 시작 표시는 실행 경계만 나타내며 실패한 게스트 명령이나 근본 원인을 특정하지 않습니다.
 

@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
+<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
 
 [← 文档索引](README.md)
 
@@ -196,6 +196,8 @@ CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所�
 ## 独立 Intel 诊断
 
 手动触发的 [Intel 诊断工作流](../../.github/workflows/hvf-intel-diagnostic.yml) 分别检出控制器与被测源码。`source-ref` 必须是完整提交 SHA；`shards` 选择原十六分片中的片号。`first-method` 从零计数，`method-count=0` 选择剩余方法；只有 `method-count=1` 时，`case-index` 才能选取一个原始参数。先发现全部二十个目标的完整清单，再进行选择；保留原 Release 构建、命令、参数与原生必需检查。
+
+`intel-image` 与完整工作流一致，默认选择 `macos-15-intel`，也可选择 `macos-26-intel` 做受控对照。运行标题标明所选镜像，可用性检查仍要求原生 x86-64 宿主。镜像切换同时涉及操作系统、SDK 和工具链，不能据此单独归因于内核变化。
 
 每个方法开始前，Action 上传不可变执行计划及主机快照；结束后保存原始 XML、进程回收、控制器状态及第二份快照。快照记录内存、交换空间、负载、磁盘，以及进程编号、状态、CPU、RSS 和可执行文件名，不包含进程参数或环境；采集错误也会保留。执行或上传失败即停止后续方法。每个方法仍有 120 秒执行上限；主机失联可能阻止清理和最终上传，此时只能使用已上传的证据。这些局部诊断不能替代完整 CPU 或独立 Darwin 验收。最后一个开始标记只能定位执行边界，不能直接确定故障指令或根因。
 
