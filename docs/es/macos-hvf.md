@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
+<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
 
 [← Índice de documentación](README.md)
 
@@ -92,6 +92,8 @@ Fuentes sin cambios locales `4ce0b8247`, 2026-10-03 UTC. El inventario ARM64 com
 ## Diagnóstico Intel independiente
 
 El [workflow de diagnóstico Intel](../../.github/workflows/hvf-intel-diagnostic.yml), de ejecución manual, descarga por separado el controlador y el código probado. `source-ref` exige un SHA de commit completo; `shards` elige entre las dieciséis particiones originales. `first-method` empieza en cero, `method-count=0` selecciona los métodos restantes y `case-index` solo permite elegir un parámetro original si `method-count=1`. Antes de seleccionar se descubre el inventario completo de los veinte objetivos. Se conservan la compilación Release, los comandos, los parámetros y las comprobaciones nativas obligatorias originales.
+
+`intel-image` selecciona `macos-15-intel` de forma predeterminada o `macos-26-intel` para una comparación controlada, igual que en el workflow completo. El título de la ejecución identifica la imagen elegida y la comprobación de disponibilidad sigue exigiendo un host x86-64 nativo. Cambiar de imagen incluye el sistema operativo, el SDK y las herramientas de compilación; no aísla un cambio del kernel.
 
 Antes de cada método, la acción sube su plan inmutable y una instantánea del host. Después conserva el XML original, la finalización de procesos, el estado del controlador y otra instantánea. Se registran memoria, swap, carga, disco e identificadores, estado, CPU, RSS y nombres de ejecutables de los procesos, sin argumentos ni entorno. Los errores de recopilación también quedan registrados. Un fallo de ejecución o subida detiene los métodos posteriores. Cada método mantiene el límite de 120 segundos; un host inaccesible puede impedir la limpieza y la subida final. Entonces solo quedan las pruebas ya subidas. Estos diagnósticos parciales no cumplen la validación CPU completa ni la validación Darwin independiente. El último marcador de inicio identifica un límite de ejecución, no la instrucción guest defectuosa ni la causa raíz.
 

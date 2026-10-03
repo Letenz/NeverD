@@ -332,6 +332,16 @@ struct SourceCallTypeHint {
   /// must revalidate this original call, all operands and their unique use.
   std::optional<SwiftConsumedInputEvidence> SwiftConsumedInput;
 
+  struct SwiftOpaqueValueEvidence {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+    bool operator==(const SwiftOpaqueValueEvidence &) const = default;
+  };
+  /// A typed value lifetime at one original call. This is not initialized
+  /// padding or a frame permission; current callee, frame and source proofs
+  /// must independently authenticate the occurrence and its whole lifetime.
+  std::optional<SwiftOpaqueValueEvidence> SwiftOpaqueValue;
+
   struct SwiftVirtualEvidence {
     va_t MethodEntry = 0;
     va_t CallSite = 0;
@@ -551,8 +561,8 @@ struct SourceCallTypeHint {
   /// each owner's current proof; this predicate grants no source permission.
   bool requiresUniqueSourceOccurrence() const {
     return BooleanResult || FunctionParameterCall || ImmutableNativeCall ||
-           SwiftWitnessFrame || SwiftConsumedInput || Virtual ||
-           NativeSwiftReceiver || ByValueCopy;
+           SwiftWitnessFrame || SwiftConsumedInput || SwiftOpaqueValue ||
+           Virtual || NativeSwiftReceiver || ByValueCopy;
   }
 };
 

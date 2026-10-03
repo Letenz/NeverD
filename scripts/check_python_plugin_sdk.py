@@ -253,6 +253,36 @@ def check_abi(errors: list[str]) -> None:
             )
 
 
+def check_bytecode_decoder_abi(errors: list[str]) -> None:
+    import ctypes
+
+    from neverd_plugin import abi
+
+    source = _without_comments(
+        (C_API_HEADER.parent / "NeverDCAPIBytecode.h").read_text(encoding="utf-8"))
+    contracts = (
+        ("ND_BytecodeInstructionSinkV1", abi.BytecodeInstructionSinkV1, "int",
+         ("void *", "const char *", "size_t"), ctypes.c_int,
+         (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t)),
+        ("ND_BytecodeDecoderV1", abi.BytecodeDecoderV1, "void",
+         ("void *", "const unsigned char *", "size_t", "uint64_t",
+          "ND_BytecodeInstructionSinkV1", "void *"), None,
+         (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t,
+          ctypes.c_uint64, abi.BytecodeInstructionSinkV1, ctypes.c_void_p)),
+    )
+    for name, callback, result, arguments, restype, argtypes in contracts:
+        match = re.search(
+            r"\btypedef\s+(\w+)\s*\(\s*\*\s*" + name + r"\s*\)\s*\((.*?)\)\s*;",
+            source, re.DOTALL,
+        )
+        declaration = {} if match is None else parse_c_api(
+            f"NEVERD_API {match.group(1)} neverd_callback({match.group(2)});")
+        if declaration.get("neverd_callback") != (result, arguments):
+            errors.append(f"{name} C callback signature changed")
+        if callback._restype_ is not restype or callback._argtypes_ != argtypes:
+            errors.append(f"{name} Python callback signature changed")
+
+
 def check_driver_emulation_abi(errors: list[str]) -> None:
     import ctypes
 
@@ -861,6 +891,7 @@ def check_workflows(errors: list[str]) -> None:
 def audit_repository(*, include_workflows: bool = True) -> list[str]:
     errors: list[str] = []
     check_abi(errors)
+    check_bytecode_decoder_abi(errors)
     check_plugin_enums(errors)
     check_output_languages(errors)
     check_translation_abi(errors)

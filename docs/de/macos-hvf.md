@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
+<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -92,6 +92,8 @@ Unveränderter Quellstand `4ce0b8247`, 2026-10-03 UTC. Das vollständige ARM64-I
 ## Eigenständige Intel-Diagnose
 
 Der manuelle [Intel-Diagnoseworkflow](../../.github/workflows/hvf-intel-diagnostic.yml) checkt Steuerung und getestete Quellen getrennt aus. `source-ref` verlangt einen vollständigen Commit-SHA; `shards` wählt aus den ursprünglichen sechzehn Teilen. `first-method` beginnt bei null, `method-count=0` wählt alle verbleibenden Methoden. `case-index` darf nur bei `method-count=1` einen ursprünglichen Parameter auswählen. Vor der Auswahl wird das vollständige Inventar der zwanzig Ziele ermittelt. Ursprünglicher Release-Build, Befehle, Parameter und verpflichtende native Prüfungen bleiben erhalten.
+
+`intel-image` wählt wie im vollständigen Workflow standardmäßig `macos-15-intel` oder für einen kontrollierten Vergleich `macos-26-intel`. Der Titel des Laufs nennt das gewählte Image; die Verfügbarkeitsprüfung verlangt weiterhin einen nativen x86-64-Host. Ein Image-Wechsel umfasst Betriebssystem, SDK und Toolchain und isoliert daher keine Kerneländerung.
 
 Vor jeder Methode lädt die Action den unveränderlichen Ausführungsplan und einen Host-Schnappschuss hoch. Danach sichert sie ursprüngliches XML, Prozessbeendigung, Steuerungsstatus und einen zweiten Schnappschuss. Erfasst werden Speicher, Swap, Last, Datenträger sowie Prozesskennungen, Status, CPU, RSS und Programmdateinamen, ohne Prozessargumente oder Umgebungsvariablen. Erfassungsfehler bleiben sichtbar. Ein Ausführungs- oder Uploadfehler stoppt weitere Methoden. Jede Methode behält ihr Limit von 120 Sekunden; ein unerreichbarer Host kann Aufräumen und abschließenden Upload verhindern. Dann bleiben nur bereits hochgeladene Belege. Diese Teildiagnosen ersetzen weder die vollständige CPU-Abnahme noch die unabhängige Darwin-Prüfung. Der letzte Startmarker bezeichnet eine Ausführungsgrenze, nicht die fehlerhafte Gastinstruktion oder die Ursache.
 

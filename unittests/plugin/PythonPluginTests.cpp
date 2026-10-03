@@ -118,7 +118,7 @@ TEST_F(PythonPluginTest, ExternalBytecodeRulesUseSharedRecovery) {
             1)
       << takeString(neverd_last_error(Session));
   neverd_plugins_init(Session);
-  for (int Route : {0, 1})
+  for (int Route : {0, 1, 2, 3})
     EXPECT_EQ(neverd_plugins_run(Session, "External Bytecode Python", Route), 0)
         << takeString(neverd_last_error(Session));
   neverd_plugins_term(Session);

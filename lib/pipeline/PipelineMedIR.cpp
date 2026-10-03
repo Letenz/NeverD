@@ -71,6 +71,9 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   for (const auto &[Entry, Hint] : SourceHints)
     SourceEntryHints.emplace(Entry, *Hint);
   auto SourceCalleeHints = SourceEntryHints;
+  std::map<va_t, const LowFunc *> SourceCalleeFunctions;
+  for (const auto &F : Result.LowFuncs)
+    SourceCalleeFunctions.emplace(F.Entry, &F);
   if (!Opts.PatchMode && !Opts.LiftMode)
     for (const auto &[Entry, Hint] : Opts.SourceCalleeTypeHints)
       SourceCalleeHints.insert_or_assign(Entry, Hint);
@@ -113,6 +116,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setSourceCallHintsEnabled(!Opts.PatchMode && !Opts.LiftMode);
     Local.setSourceEntryTypeHints(&SourceEntryHints);
     Local.setSourceCalleeTypeHints(&SourceCalleeHints);
+    Local.setSourceCalleeFunctions(&SourceCalleeFunctions);
     Local.setObjCBlockCaptureCallFields(&Opts.ObjCBlockCaptureFields);
     Local.setObjCBlockParameterReceivers(&Opts.ObjCBlockParameterReceivers);
     Local.setObjCBlockCaptureReceivers(&Opts.ObjCBlockCaptureReceivers);

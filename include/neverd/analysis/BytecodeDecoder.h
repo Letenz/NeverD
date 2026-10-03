@@ -13,9 +13,12 @@
 #include "llvm/Support/Endian.h"
 
 #include <array>
+#include <functional>
 #include <memory>
 
 namespace neverd::analysis {
+
+inline constexpr size_t BytecodeInstructionByteLimit = 4096;
 
 /// An unsigned instruction field followed by an optional exact lookup. The
 /// value is (lookup((read >> Shift) & Mask) * Scale + Addend + optional PC),
@@ -73,8 +76,16 @@ struct BytecodeProfile {
   std::vector<BytecodeEncoding> Encodings;
 };
 
+/// The callback supplies one selected encoding. Match must be empty. Decode
+/// results must depend only on the bytes, PC and stable caller-owned context,
+/// not on CFG visitation order. Calls are synchronous; input bytes are borrowed
+/// and limited to BytecodeInstructionByteLimit or the remaining input, if less.
+using BytecodeDecodeCallback = std::function<llvm::Expected<BytecodeEncoding>(
+    llvm::ArrayRef<uint8_t> Bytes, va_t Address)>;
+
 struct BytecodeInstruction {
   uint16_t Size = 0;
+  /// UINT32_MAX identifies a callback-selected instruction.
   uint32_t Encoding = 0;
   std::vector<LowOp> Operations;
 };
@@ -94,10 +105,25 @@ struct BytecodeDecodeLimits {
 /// private opcode table is consulted. Unknown keys and malformed fields fail.
 llvm::Expected<BytecodeProfile> readBytecodeProfile(llvm::StringRef JSON);
 
+/// Read only version/register_bytes/temporary_bytes/byte_order; encodings are
+/// forbidden. Semantic validation happens when creating the decoder.
+llvm::Expected<BytecodeProfile> readBytecodeLayout(llvm::StringRef JSON);
+
+/// Parse {size, operations}, without match patterns, or return the diagnostic
+/// in {error: "message"}. Decode validates instruction semantics.
+llvm::Expected<BytecodeEncoding> readBytecodeEncoding(llvm::StringRef JSON);
+
 class BytecodeDecoder {
 public:
   static llvm::Expected<std::unique_ptr<BytecodeDecoder>>
   create(BytecodeProfile Profile);
+
+  /// External decoding uses the same operand, operation, temporary and CFG
+  /// validation as static profiles. Layout.Encodings must be empty. The
+  /// callback is owned by this decoder and is trusted host code. Recovery never
+  /// executes input bytes. Unsupported instructions return errors.
+  static llvm::Expected<std::unique_ptr<BytecodeDecoder>>
+  createExternal(BytecodeProfile Layout, BytecodeDecodeCallback Decode);
 
   /// Address is the logical bytecode PC; Bytes begins at that instruction.
   /// Unknown, ambiguous, truncated and malformed instructions return errors.
@@ -119,6 +145,10 @@ public:
 
 private:
   BytecodeProfile Profile;
+  BytecodeDecodeCallback External;
+  llvm::Expected<BytecodeInstruction>
+  materialize(const BytecodeEncoding &Encoding, llvm::ArrayRef<uint8_t> Bytes,
+              va_t Address, uint32_t Index) const;
   std::array<std::vector<uint32_t>, 256> FirstByte;
   explicit BytecodeDecoder(BytecodeProfile Profile);
 };

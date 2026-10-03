@@ -5,8 +5,9 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 import json
-from typing import Any, Literal, Mapping, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
+from . import abi
 from .api import NeverDError
 from .ffi import HostAPI
 
@@ -43,24 +44,114 @@ def recover_bytecode(
     Dynamic decoder contexts and original source ABIs are not inferred by this
     profile API. ``api`` can name an explicitly loaded library outside the host.
     """
+    return _recover(
+        code, profile, functions, bindings=bindings, base=base, output=output,
+        optimize=optimize, unaligned_pointers=unaligned_pointers, api=api,
+    )
+
+
+def recover_bytecode_with_decoder(
+    code: bytes,
+    layout: Mapping[str, Any],
+    functions: Sequence[Mapping[str, Any]],
+    decoder: Callable[[bytes, int], Mapping[str, Any]],
+    *,
+    bindings: Sequence[Mapping[str, Any]] = (),
+    base: int = 0,
+    output: Literal["check", "highc", "llvmc"] = "highc",
+    optimize: bool = False,
+    unaligned_pointers: bool = False,
+    api: HostAPI | None = None,
+) -> BytecodeRecoveryResult:
+    """Recover with a synchronous, trusted Python instruction decoder.
+
+    ``decoder(byte_window, pc)`` receives up to 4096 bytes starting at PC,
+    truncated at the function end, and returns a mapping with
+    ``size`` and ``operations`` using the profile operand grammar, without
+    ``match``. It may instead return ``{"error": "diagnostic"}`` or raise.
+    ``layout`` contains the profile's bank sizes and byte order, no encodings.
+    Results must depend only on bytes, PC and stable closure context, never on
+    CFG visit order. The decoder is not retained after this call. Exceptions
+    are re-raised after the native response has been released; none crosses
+    the C callback boundary. This does not execute input or infer source ABI.
+    """
+    if not callable(decoder):
+        raise TypeError("decoder must be callable")
+    return _recover(
+        code, layout, functions, decoder=decoder, bindings=bindings, base=base,
+        output=output, optimize=optimize,
+        unaligned_pointers=unaligned_pointers, api=api,
+    )
+
+
+def _json_bytes(value: Any, label: str) -> bytes:
+    text = json.dumps(value, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    if len(text) > 64 * 1024 * 1024:
+        raise ValueError(f"{label} exceeds the 64 MiB limit")
+    return text
+
+
+def _recover(
+    code: bytes,
+    rules: Mapping[str, Any],
+    functions: Sequence[Mapping[str, Any]],
+    *,
+    bindings: Sequence[Mapping[str, Any]],
+    base: int,
+    output: Literal["check", "highc", "llvmc"],
+    optimize: bool,
+    unaligned_pointers: bool,
+    api: HostAPI | None,
+    decoder: Callable[[bytes, int], Mapping[str, Any]] | None = None,
+) -> BytecodeRecoveryResult:
     if not isinstance(code, bytes):
         raise TypeError("code must be bytes")
     if len(code) > 64 * 1024 * 1024:
         raise ValueError("code exceeds the 64 MiB limit")
-    request = json.dumps(
-        {"schemaVersion": 1, "profile": dict(profile),
+    request = _json_bytes(
+        {"schemaVersion": 1, "layout" if decoder is not None else "profile": dict(rules),
          "functions": [dict(item) for item in functions],
          "bindings": [dict(item) for item in bindings], "base": base, "output": output,
          "optimize": optimize, "unaligned_pointers": unaligned_pointers},
-        allow_nan=False, separators=(",", ":"),
-    ).encode("utf-8")
-    if len(request) > 64 * 1024 * 1024:
-        raise ValueError("request exceeds the 64 MiB limit")
+        "request",
+    )
     buffer = (ctypes.c_ubyte * len(code)).from_buffer_copy(code)
     host = api if api is not None else HostAPI()
-    text = host.owned_string(
-        "neverd_bytecode_recover_json_v1", buffer, len(code), request, len(request)
-    )
+    if decoder is None:
+        text = host.owned_string(
+            "neverd_bytecode_recover_json_v1", buffer, len(code), request, len(request)
+        )
+    else:
+        errors: list[BaseException] = []
+
+        def select(context: Any, data: Any, size: int, address: int,
+                   reply: Any, reply_context: Any) -> None:
+            payload = b'{"error":"Python instruction decoder failed"}'
+            try:
+                if not errors:
+                    assert decoder is not None
+                    instruction = decoder(ctypes.string_at(data, size), address)
+                    if not isinstance(instruction, Mapping):
+                        raise TypeError("decoder must return an instruction mapping")
+                    payload = _json_bytes(dict(instruction), "decoder reply")
+            except BaseException as error:
+                errors.append(error)
+            try:
+                if reply(reply_context, payload, len(payload)) != 1 and not errors:
+                    errors.append(NeverDError("native decoder rejected the reply"))
+            except BaseException as error:
+                errors.append(error)
+
+        # Keep the trampoline and its closure alive until native recovery ends.
+        callback = abi.BytecodeDecoderV1(select)
+        try:
+            text = host.owned_string(
+                "neverd_bytecode_recover_decoder_json_v1", buffer, len(code),
+                request, len(request), callback, None,
+            )
+        finally:
+            if errors:
+                raise errors[0]
     if text is None:
         raise NeverDError("bytecode recovery could not allocate its result")
     try:
@@ -91,4 +182,4 @@ def recover_bytecode(
     )
 
 
-__all__ = ["BytecodeRecoveryResult", "recover_bytecode"]
+__all__ = ["BytecodeRecoveryResult", "recover_bytecode", "recover_bytecode_with_decoder"]
