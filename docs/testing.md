@@ -241,6 +241,11 @@ the optional LLVM optimization route and block-sensitive bounded graphs whose
 branch arms produce distinct values, including merged conditional targets.
 No external dialect or binary sample is needed.
 
+The profile/callback source matrix also exercises loops, guest stores and nested
+status-propagating calls through a synchronous external decoder. Malformed
+callback recipes share the profile's bank, width, temporary, overlap and budget
+checks. Layout and instruction-reply JSON reject ambiguous or unknown fields.
+
 `FloatingConversionsKeepArchitectureResultPolicies` checks float/double to
 signed/unsigned 32/64-bit results for AArch64 saturation and x86 indefinite
 values through both C routes, both memory spellings and O0/O2 with undefined
@@ -257,6 +262,12 @@ C routes, including LLVM optimization, execute independently specified narrow
 writes on an unaligned state with canaries at O0/O2 under undefined-behavior
 traps. `NeverDPluginTests` and `NeverDPythonPluginTests` load the example C and
 Python bytecode plugins and invoke the same public recovery entry point.
+Their callback modes exercise actual C and embedded Python trampolines.
+The C API callback tests cover PC/context-dependent opcodes, variable sizes,
+function-bounded input windows, reply-copy lifetime, missing/repeated replies,
+and early rejection of invalid buffers and requests. Python tests cover native
+reentrancy/concurrency, 64-bit PCs and exceptions (including `BaseException`)
+re-raised only after the owned native response is released.
 
 ```sh
 cmake --build build-release --target NeverDBytecodeCAPITests

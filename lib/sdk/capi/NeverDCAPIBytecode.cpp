@@ -9,6 +9,7 @@
 
 #include "neverd/pipeline/BytecodeRecovery.h"
 
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -32,19 +33,56 @@ const char *failure(llvm::StringRef Message) {
                          {"ok", false},
                          {"error", neverd::sdk::jsonSafeText(Message)}});
 }
-} // namespace
+struct InstructionReply {
+  std::string Text;
+  bool Called = false;
+  bool Invalid = false;
+};
 
-extern "C" const char *
-neverd_bytecode_recover_json_v1(const unsigned char *Code, size_t CodeSize,
-                                const char *RequestJSON, size_t RequestSize) {
+int instructionReply(void *Context, const char *JSON, size_t Size) noexcept {
+  auto &Reply = *static_cast<InstructionReply *>(Context);
+  const bool Repeated = Reply.Called;
+  Reply.Called = true;
+  if (Repeated || !JSON || !Size || Size > neverd::BytecodeRecoveryInputLimit) {
+    Reply.Invalid = true;
+    return 0;
+  }
   try {
+    Reply.Text.assign(JSON, Size);
+    return 1;
+  } catch (...) {
+    Reply.Invalid = true;
+    return 0;
+  }
+}
+
+const char *recover(const unsigned char *Code, size_t CodeSize,
+                    const char *RequestJSON, size_t RequestSize,
+                    ND_BytecodeDecoderV1 Decoder, void *UserData,
+                    bool RequireDecoder) {
+  try {
+    if (RequireDecoder && !Decoder)
+      return failure("external bytecode decoder callback is required");
     if ((!Code && CodeSize) || !RequestJSON || !RequestSize)
       return failure("invalid bytecode recovery input buffer");
     if (CodeSize > neverd::BytecodeRecoveryInputLimit ||
         RequestSize > neverd::BytecodeRecoveryInputLimit)
       return failure("input exceeds the 64 MiB limit");
+    neverd::analysis::BytecodeDecodeCallback Decode;
+    if (Decoder)
+      Decode = [Decoder, UserData](llvm::ArrayRef<uint8_t> Bytes, uint64_t PC)
+          -> llvm::Expected<neverd::analysis::BytecodeEncoding> {
+        InstructionReply Reply;
+        Decoder(UserData, Bytes.data(), Bytes.size(), PC, instructionReply,
+                &Reply);
+        if (!Reply.Called || Reply.Invalid)
+          return llvm::createStringError(llvm::errc::invalid_argument,
+                                         "invalid or missing decoder reply");
+        return neverd::analysis::readBytecodeEncoding(Reply.Text);
+      };
     auto Result = neverd::recoverBytecode(
-        {Code, CodeSize}, llvm::StringRef(RequestJSON, RequestSize));
+        {Code, CodeSize}, llvm::StringRef(RequestJSON, RequestSize),
+        std::move(Decode));
     if (!Result)
       return failure(llvm::toString(Result.takeError()));
     return ownedJSON(llvm::json::Object{
@@ -68,4 +106,20 @@ neverd_bytecode_recover_json_v1(const unsigned char *Code, size_t CodeSize,
   } catch (...) {
     return nullptr;
   }
+}
+
+} // namespace
+
+extern "C" const char *
+neverd_bytecode_recover_json_v1(const unsigned char *Code, size_t CodeSize,
+                                const char *RequestJSON, size_t RequestSize) {
+  return recover(Code, CodeSize, RequestJSON, RequestSize, nullptr, nullptr,
+                 false);
+}
+
+extern "C" const char *neverd_bytecode_recover_decoder_json_v1(
+    const unsigned char *Code, size_t CodeSize, const char *RequestJSON,
+    size_t RequestSize, ND_BytecodeDecoderV1 Decoder, void *UserData) {
+  return recover(Code, CodeSize, RequestJSON, RequestSize, Decoder, UserData,
+                 true);
 }

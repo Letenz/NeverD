@@ -41,9 +41,11 @@ uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
 
 The `neverd-bytecode` tool and C/Python plugins accept externally specified
-instruction languages through the shared `neverd_bytecode_recover_json_v1` API.
+instruction languages through the shared recovery pipeline. C/Python callers
+can supply a static profile or a synchronous per-instruction decoder callback.
 `lib/pipeline/BytecodeRecovery.cpp` owns request validation and source orchestration;
-`lib/analysis/bytecode` owns encoding and CFG validation. They produce
+`lib/analysis/bytecode` owns encoding and CFG validation: both producers feed
+the same operand, temporary-definedness and operation validation. They produce
 LowIR; explicit byte-addressed state lowering then feeds the existing source
 routes. Image-independent source ABI binding uses caller-supplied contracts,
 while runtime signature discovery from native images retains its format gates.
