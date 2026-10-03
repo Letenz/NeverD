@@ -1,0 +1,138 @@
+//===- LinuxOutput.cpp - Captured scalar and vectored Linux output --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#include "LinuxKernel.h"
+
+#include "llvm/ADT/SmallVector.h"
+
+#include <algorithm>
+#include <cassert>
+
+namespace neverd::emulation::linux_model {
+namespace {
+struct OutputBuffer {
+  uint64_t Address, Size;
+};
+
+bool userRange(const MemoryLayout &Layout, uint64_t Address, uint64_t Size) {
+  return Address < Layout.UserLimit && Size <= Layout.UserLimit - Address;
+}
+
+llvm::Expected<std::optional<uint64_t>>
+publishOutput(ExecutionBackend &CPU, uint64_t FD,
+              llvm::ArrayRef<OutputBuffer> Buffers, const MemoryLayout &Layout,
+              const ProcessOptions &Options, ProcessResult &Result) {
+  uint64_t Used = Result.StandardOutput.size() + Result.StandardError.size();
+  // The workload budget applies to the whole call, before any captured byte
+  // is published, including when later buffers would fault or be empty.
+  for (const auto &Buffer : Buffers) {
+    if (Used > Options.OutputLimit ||
+        Buffer.Size > Options.OutputLimit - Used) {
+      Result.Stop = ProcessStopReason::OutputLimit;
+      Result.Diagnostic = Output;
+      return std::optional<uint64_t>();
+    }
+    Used += Buffer.Size;
+  }
+  uint64_t Written = 0;
+  for (const auto &Buffer : Buffers) {
+    uint64_t Readable = 0;
+    while (Readable < Buffer.Size) {
+      const uint64_t Start = Buffer.Address + Readable;
+      const uint64_t Size = std::min(Buffer.Size - Readable,
+                                     Layout.PageSize - Start % Layout.PageSize);
+      auto Access = CPU.canAccess(Start, Size, Read | UserAccessible);
+      if (!Access)
+        return Access.takeError();
+      if (!*Access)
+        break;
+      Readable += Size;
+    }
+    if (Readable) {
+      std::string Bytes(Readable, '\0');
+      if (auto E = CPU.read(
+              Buffer.Address,
+              llvm::MutableArrayRef<uint8_t>(
+                  reinterpret_cast<uint8_t *>(Bytes.data()), Bytes.size())))
+        return std::move(E);
+      (FD == StandardOutput ? Result.StandardOutput : Result.StandardError)
+          .append(Bytes);
+      Written += Readable;
+    }
+    // These descriptors are virtual byte sinks. A later data fault retains
+    // the copied prefix without poisoning the stopped CPU or reading ahead.
+    if (Readable != Buffer.Size)
+      return std::optional<uint64_t>(Written ? Written
+                                             : uint64_t(0) - BadAddress);
+  }
+  return std::optional<uint64_t>(Written);
+}
+} // namespace
+
+llvm::Expected<std::optional<uint64_t>>
+writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
+            const ProcessServiceEvent &Event, const MemoryLayout &Layout,
+            const ProcessOptions &Options, ProcessResult &Result) {
+  const auto [Descriptor, Address, Count, A3, A4, A5] = Event.Arguments;
+  // Linux descriptor lookup consumes the low unsigned 32 bits for both calls.
+  const uint32_t FD = Descriptor;
+  if (FD != StandardOutput && FD != StandardError)
+    return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
+  if (Kind == ServiceKind::Write) {
+    if (!userRange(Layout, Address, Count))
+      return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+    if (!Count)
+      return std::optional<uint64_t>(0);
+    const OutputBuffer Buffer{Address, Count};
+    return publishOutput(CPU, FD, Buffer, Layout, Options, Result);
+  }
+  assert(Kind == ServiceKind::WriteV);
+  const uint32_t Entries = Count;
+  if (Entries > MaxIOVectors)
+    return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
+  if (!Entries)
+    return std::optional<uint64_t>(0);
+  if (!userRange(Layout, Address, Entries * IOVectorSize))
+    return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+
+  // Import every descriptor before touching payloads. Check entries in order:
+  // an earlier negative length precedes a later unreadable descriptor, while
+  // any descriptor error precedes all output effects and payload faults.
+  llvm::SmallVector<OutputBuffer> Buffers;
+  Buffers.reserve(Entries);
+  for (uint32_t I = 0; I < Entries; ++I) {
+    const uint64_t Slot = Address + I * IOVectorSize;
+    auto Access = CPU.canAccess(Slot, IOVectorSize, Read | UserAccessible);
+    if (!Access)
+      return Access.takeError();
+    if (!*Access)
+      return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+    auto Size = CPU.readInteger(Slot + IOVectorLengthOffset, PointerSize64);
+    if (!Size)
+      return Size.takeError();
+    auto Base = CPU.readInteger(Slot, PointerSize64);
+    if (!Base)
+      return Base.takeError();
+    if (*Size > MaxSignedIOSize)
+      return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
+    Buffers.push_back({*Base, *Size});
+  }
+
+  const uint64_t Maximum = MaxReadWriteSize & ~(Layout.PageSize - 1);
+  uint64_t Total = 0;
+  for (auto &Buffer : Buffers) {
+    // Linux's single-vector path applies the transfer cap before access_ok;
+    // its multi-vector path validates each original extent, even after the
+    // cumulative cap is exhausted. Neither path probes payload mappings yet.
+    if (Entries == 1)
+      Buffer.Size = std::min(Buffer.Size, Maximum);
+    if (!userRange(Layout, Buffer.Address, Buffer.Size))
+      return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+    Buffer.Size = std::min(Buffer.Size, Maximum - Total);
+    Total += Buffer.Size;
+  }
+  return publishOutput(CPU, FD, Buffers, Layout, Options, Result);
+}
+} // namespace neverd::emulation::linux_model
