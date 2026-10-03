@@ -143,6 +143,85 @@ llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU) {
   return Bytes;
 }
 
+llvm::Error captureCallerContext(ExecutionBackend &CPU, uint64_t Destination) {
+  const bool X64 = CPU.architecture() == GuestArchitecture::X64;
+  const uint64_t Size = X64 ? X64ContextSize : AArch64ContextSize;
+  if (Destination < ImageAlignment || Destination >= UserLimit ||
+      Size > UserLimit - Destination || Destination % ContextVectorBytes)
+    return failure(text::CaptureContextBuffer);
+  auto Writable = CPU.canAccess(Destination, Size, Write | UserAccessible);
+  if (!Writable)
+    return Writable.takeError();
+  if (!*Writable)
+    return failure(text::CaptureContextBuffer);
+  auto ABI = IntegerABI::get(X64 ? IntegerCallingConvention::Win64
+                                 : IntegerCallingConvention::AAPCS64);
+  if (!ABI)
+    return ABI.takeError();
+  auto SP = CPU.readRegister(ABI->info().StackPointer);
+  if (!SP)
+    return SP.takeError();
+  auto CallerSP = ABI->returnStackPointer((*SP)[0]);
+  if (!CallerSP)
+    return CallerSP.takeError();
+  if (X64) {
+    auto Readable = CPU.canAccess((*SP)[0], PointerSize, Read | UserAccessible);
+    if (!Readable)
+      return Readable.takeError();
+    if (!*Readable)
+      return failure(text::CaptureContextReturn);
+  }
+  auto CallerPC = ABI->readReturnAddress(CPU, (*SP)[0]);
+  if (!CallerPC)
+    return CallerPC.takeError();
+  auto Bytes = captureUserContext(CPU);
+  if (!Bytes)
+    return Bytes.takeError();
+  // Capture uses the ABI's caller frame, not the provider gate. ARM64's
+  // native routine clears X0 and LR in the record while retaining PC = LR.
+  for (const auto &F : fields(X64)) {
+    std::optional<uint64_t> Value;
+    if (F.Register == ABI->info().StackPointer)
+      Value = *CallerSP;
+    if (F.Register == CPURegister::X64PC ||
+        F.Register == CPURegister::AArch64PC)
+      Value = *CallerPC;
+    if (F.Register == CPURegister::AArch64X0 ||
+        F.Register == CPURegister::AArch64X30)
+      Value = 0;
+    if (Value)
+      for (unsigned I = 0; I < F.Size; ++I)
+        (*Bytes)[F.Offset + I] = *Value >> (I * CHAR_BIT);
+  }
+  if (X64) {
+    llvm::support::endian::write32le(Bytes->data() + X64ContextFlagsOffset,
+                                     X64CapturedContextFlags);
+    auto SS = CPU.readRegister(CPURegister::X64SS);
+    if (!SS)
+      return SS.takeError();
+#define NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT(Offset)                            \
+  llvm::support::endian::write16le(Bytes->data() + Offset, (*SS)[0]);
+#include "WindowsContextCapture.def"
+#undef NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT
+  }
+  struct Range {
+    GuestArchitecture ISA;
+    unsigned Offset, Size;
+  };
+  constexpr Range Ranges[] = {
+#define NEVERD_WINDOWS_CAPTURE_RANGE(ISA, Offset, Size)                        \
+  {GuestArchitecture::ISA, Offset, Size},
+#include "WindowsContextCapture.def"
+#undef NEVERD_WINDOWS_CAPTURE_RANGE
+  };
+  for (const auto &R : Ranges)
+    if (R.ISA == CPU.architecture())
+      if (auto E = CPU.write(Destination + R.Offset,
+                             llvm::ArrayRef(*Bytes).slice(R.Offset, R.Size)))
+        return E;
+  return llvm::Error::success();
+}
+
 llvm::Error restoreUserContext(ExecutionBackend &CPU,
                                const BackendContext &Snapshot,
                                llvm::ArrayRef<uint8_t> Original,

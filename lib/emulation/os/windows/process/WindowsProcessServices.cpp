@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "WindowsProcessContext.h"
 #include "WindowsProcessExceptions.h"
 #include "WindowsProcessModules.h"
 
@@ -86,6 +87,11 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     return ServiceOutcome(*V);
   };
   switch (S.Kind) {
+  case API::RtlCaptureContext:
+  case API::NativeCaptureContext:
+    if (auto E = captureCallerContext(CPU, A[0]))
+      return std::move(E);
+    return Value(0);
   case API::CSpecificHandler:
     return failure(text::ExceptionPersonalityCall);
   case API::AddVectoredExceptionHandler:

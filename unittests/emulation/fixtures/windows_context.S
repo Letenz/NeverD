@@ -27,11 +27,11 @@ CaptureFixture:
   leaq CaptureResume(%rip), %rax
   movq %rax, ObservationPC(%r8)
   fxsave64 X64FXSlot(%rsp)
+  fxrstor64 FPSeed(%rip)
 #define NEVERD_CAPTURE_VECTOR(Index, Low, High) \
   .if Index < X64VectorCount; movdqu VectorSeeds + Index * VectorBytes(%rip), %xmm##Index; .endif
 #include "WindowsContextCases.def"
 #undef NEVERD_CAPTURE_VECTOR
-  ldmxcsr ControlSeed(%rip)
   movq %rdx, %rcx
   pushq $X64FlagSeed
   popfq

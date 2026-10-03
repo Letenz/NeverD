@@ -24,6 +24,7 @@ namespace value {
   inline constexpr uint64_t Name = Value;
 #define NEVERD_WINDOWS_PROCESS_BYTES(Name, ...)                                \
   inline constexpr uint8_t Name[] = {__VA_ARGS__};
+#include "WindowsContextCapture.def"
 #include "WindowsProcess.def"
 #include "WindowsProcessExceptions.def"
 #include "WindowsProcessModules.def"
@@ -34,6 +35,7 @@ namespace value {
 namespace text {
 #define NEVERD_WINDOWS_PROCESS_TEXT(Name, Text)                                \
   inline constexpr char Name[] = Text;
+#include "WindowsContextCapture.def"
 #include "WindowsProcess.def"
 #include "WindowsProcessExceptions.def"
 #include "WindowsProcessModules.def"

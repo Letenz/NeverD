@@ -21,6 +21,9 @@ __declspec(dllimport) U32 GetLastError(void);
 __declspec(dllimport) void *GetModuleHandleA(const char *);
 __declspec(dllimport) void *GetProcAddress(void *, const char *);
 __declspec(dllimport) void RtlCaptureContext(void *);
+__declspec(dllimport) void *AddVectoredExceptionHandler(U32, U32 (*)(void *));
+__declspec(dllimport) U32 RemoveVectoredExceptionHandler(void *);
+__declspec(dllimport) void RaiseException(U32, U32, U32, const U64 *);
 typedef void (*Capture)(void *);
 extern void CaptureFixture(Capture, void *, U64 *);
 extern void CaptureResume(void);
@@ -31,13 +34,35 @@ __declspec(align(16)) const U64 VectorSeeds[] = {
 };
 #if defined(__x86_64__)
 enum { Size = X64Size };
-const U32 ControlSeed = X64Control;
+__declspec(align(16)) const U64 FPSeed[X64FXSize / sizeof(U64)] = {
+    [0] = X64FPWord,
+    [1] = X64FPIP,
+    [2] = X64FPDP,
+    [3] = ((U64)X64FPMask << 32) | X64Control,
+    [4] = (U64)X64FPMantissa + 0,
+    [5] = X64FPExponent,
+    [6] = (U64)X64FPMantissa + 1,
+    [7] = X64FPExponent,
+    [8] = (U64)X64FPMantissa + 2,
+    [9] = X64FPExponent,
+    [10] = (U64)X64FPMantissa + 3,
+    [11] = X64FPExponent,
+    [12] = (U64)X64FPMantissa + 4,
+    [13] = X64FPExponent,
+    [14] = (U64)X64FPMantissa + 5,
+    [15] = X64FPExponent,
+    [16] = (U64)X64FPMantissa + 6,
+    [17] = X64FPExponent,
+    [18] = (U64)X64FPMantissa + 7,
+    [19] = X64FPExponent,
+
+};
 #else
 enum { Size = ARM64Size };
 #endif
 __declspec(align(16)) static U8 Context[Size];
 static U64 Observed[ObservationWords];
-static U32 Mode;
+static U32 Mode, CallbackCount;
 static void require(int Valid, U32 Site) {
   if (Valid)
     return;
@@ -73,22 +98,63 @@ static void run(Capture API, U8 Fill) {
 #include "WindowsContextCases.def"
 #undef NEVERD_CAPTURE_X64_GPR
   require(*(U64 *)(Context + X64GPR + sizeof(U64)) == (U64)Context, SiteGPR);
+  require((*(U32 *)(Context + X64StatusOffset) & X64FlagMask) ==
+              (Observed[FlagsIndex] & X64FlagMask),
+          SiteFlagsValue);
+  require(*(U32 *)(Context + X64ControlOffset) == X64Control &&
+              *(U32 *)(Context + X64FPOffset + 24) == X64Control,
+          SiteControl);
+  require(*(U16 *)(Context + X64FPOffset) == X64FPControl &&
+              *(U16 *)(Context + X64FPOffset + 2) == X64FPStatus &&
+              Context[X64FPOffset + 4] == X64FPTag &&
+              *(U16 *)(Context + X64FPOffset + 6) == X64FPOpcode,
+          SiteControl);
+  require(*(U64 *)(Context + X64FPOffset + 8) == X64FPIP &&
+              *(U64 *)(Context + X64FPOffset + 16) == X64FPDP,
+          SiteControl);
+  for (U32 I = 0; I < X64FPRegisterCount; ++I) {
+    const U8 *Register = Context + X64FPRegistersOffset + I * VectorBytes;
+    require(*(U64 *)Register == (U64)X64FPMantissa + I &&
+                *(U16 *)(Register + sizeof(U64)) == X64FPExponent,
+            SiteVector);
+  }
+  for (U32 I = 0; I < X64FlagsOffset; ++I)
+    require(Context[I] == Fill, SitePreserve);
+  for (U32 I = X64StatusOffset + sizeof(U32); I < X64GPR; ++I)
+    require(Context[I] == Fill, SitePreserve);
+  for (U32 I = X64TailOffset; I < Size; ++I)
+    require(Context[I] == Fill, SitePreserve);
   for (U32 I = 0; I < X64VectorCount * VectorBytes; ++I)
     require(Context[X64Vector + I] == ((const U8 *)VectorSeeds)[I], SiteVector);
 #else
   require(*(U32 *)Context == ARM64Flags, SiteFlags);
   require(*(U64 *)(Context + ARM64SP) == Observed[StackIndex], SiteSP);
   require(*(U64 *)(Context + ARM64PC) == Observed[PCIndex], SitePC);
-  require(*(U64 *)(Context + ARM64LR) == Observed[PCIndex], SitePC);
+  require(*(U64 *)(Context + ARM64LR) == 0, SitePC);
+  require(*(U64 *)(Context + ARM64X0Offset) == 0, SiteGPR);
+  require(*(U64 *)(Context + ARM64X18Offset) == Observed[TEBIndex], SiteGPR);
 #define NEVERD_CAPTURE_ARM64_GPR(Name, Index, Value)                           \
   require(*(U64 *)(Context + ARM64GPR + Index * sizeof(U64)) == (Value),       \
           SiteGPR);
 #include "WindowsContextCases.def"
 #undef NEVERD_CAPTURE_ARM64_GPR
+  require(*(U32 *)(Context + ARM64StatusOffset) == ARM64FlagSeed,
+          SiteFlagsValue);
+  require(*(U32 *)(Context + ARM64ControlOffset) == ARM64Control &&
+              *(U32 *)(Context + ARM64FPSROffset) == ARM64Status,
+          SiteControl);
+  for (U32 I = ARM64TailOffset; I < Size; ++I)
+    require(Context[I] == Fill, SitePreserve);
   for (U32 I = 0; I < ARM64VectorCount * VectorBytes; ++I)
     require(Context[ARM64Vector + I] == ((const U8 *)VectorSeeds)[I],
             SiteVector);
 #endif
+}
+static U32 handler(void *Exception) {
+  ++CallbackCount;
+  run(RtlCaptureContext, Sentinel);
+  run(RtlCaptureContext, (U8)~Sentinel);
+  return ContinueExecution;
 }
 void entry(void) {
   const U16 *Line = GetCommandLineW();
@@ -102,8 +168,16 @@ void entry(void) {
         GetModuleHandleA(Mode == NativeMode ? Native : Base), Symbol);
     require(API != 0, SiteProvider);
   }
-  run(API, Sentinel);
-  run(API, (U8)~Sentinel);
+  if (Mode == CallbackMode) {
+    void *Handle = AddVectoredExceptionHandler(1, handler);
+    require(Handle != 0, SiteHandler);
+    RaiseException(SoftwareCode, 0, 0, 0);
+    require(CallbackCount == 1 && RemoveVectoredExceptionHandler(Handle),
+            SiteHandler);
+  } else {
+    run(API, Sentinel);
+    run(API, (U8)~Sentinel);
+  }
   if (Mode != ProbeMode)
     emit(&Mode, sizeof(Mode));
   ExitProcess(CompletionStatus);
