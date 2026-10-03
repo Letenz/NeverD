@@ -5,6 +5,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
@@ -963,6 +964,20 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (!Assigned)
     return std::nullopt;
   return Result;
+}
+
+bool swiftRuntimePreservesErrorResult(const BinaryImage &Image, va_t Target,
+                                      const SourceCallTypeHint &Hint) {
+  if (!hasSwiftErrorResult(Hint.Signature) ||
+      !isSwiftWillThrowSourceCall(Hint, Image.Arch))
+    return false;
+  const auto Slot = darwinImportVeneerSlot(Image, Target);
+  if (!Slot || *Slot != Hint.TargetAddress)
+    return false;
+  const auto Current = swiftRuntimeSourceCallHint(Image, Hint.TargetAddress);
+  return Current && isSwiftWillThrowSourceCall(*Current, Image.Arch) &&
+         Current->TargetAddress == Hint.TargetAddress &&
+         equalSourceABIs(Current->Signature, Hint.Signature);
 }
 
 } // namespace neverd

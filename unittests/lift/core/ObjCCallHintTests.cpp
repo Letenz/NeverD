@@ -4658,6 +4658,16 @@ TEST(ObjCCallHints, SwiftWillThrowRevalidatesErrorABIAndImport) {
     auto Image = errorRuntimeImage(Architecture);
     const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
     ASSERT_TRUE(Hint);
+    EXPECT_TRUE(swiftRuntimePreservesErrorResult(Image, 0x1100, *Hint));
+    EXPECT_FALSE(swiftRuntimePreservesErrorResult(Image, 0x1104, *Hint));
+    EXPECT_FALSE(swiftRuntimePreservesErrorResult(Image, 0x2180, *Hint));
+    auto ChangedVeneer = Image;
+    ChangedVeneer.Segments[0].Data[0x100] = 0;
+    EXPECT_FALSE(
+        swiftRuntimePreservesErrorResult(ChangedVeneer, 0x1100, *Hint));
+    auto WrongSlot = *Hint;
+    WrongSlot.TargetAddress += 8;
+    EXPECT_FALSE(swiftRuntimePreservesErrorResult(Image, 0x1100, WrongSlot));
     const auto Med = convert(Image, caller(Architecture));
     ASSERT_EQ(Med.CallInfos.size(), 1U);
     const auto &Call = Med.CallInfos[0];
@@ -4711,6 +4721,8 @@ TEST(ObjCCallHints, SwiftWillThrowRevalidatesErrorABIAndImport) {
       if (Mutation == 13)
         Bad.Format = BinaryFormat::ELF;
       EXPECT_FALSE(swiftRuntimeSourceCallHint(Bad, 0x2180)) << Mutation;
+      EXPECT_FALSE(swiftRuntimePreservesErrorResult(Bad, 0x1100, *Hint))
+          << Mutation;
       EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Bad, {})) << Mutation;
     }
     for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
@@ -4743,6 +4755,9 @@ TEST(ObjCCallHints, SwiftWillThrowRevalidatesErrorABIAndImport) {
       if (Mutation == 10)
         Binding->BorrowedByteInputs = {{1, 0}};
       EXPECT_FALSE(sdk::objcSourceCallBound(Bad, Image, {})) << Mutation;
+      if (Mutation != 8 && Mutation != 9)
+        EXPECT_FALSE(swiftRuntimePreservesErrorResult(Image, 0x1100, *Binding))
+            << Mutation;
     }
     HighFunc Function;
     Function.Entry = 0x1200;

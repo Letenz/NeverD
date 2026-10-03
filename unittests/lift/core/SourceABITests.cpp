@@ -823,6 +823,12 @@ TEST(SourceABI, SwiftErrorSlotIsAnInOutValueCarrierNotAnOrdinaryPointer) {
     EXPECT_TRUE(hasSwiftErrorResult(Hint));
     const auto Physical = sourceABIParameters(Hint);
     ASSERT_EQ(Physical.size(), 3U);
+    const auto Output = sourceABIErrorResult(Hint);
+    ASSERT_TRUE(Output);
+    EXPECT_EQ(Output->ParameterIndex, 2U);
+    EXPECT_EQ(Output->Location.RegisterOffset,
+              Physical[2].Location.RegisterOffset);
+    EXPECT_TRUE(equalSourceTypes(Output->Type, P));
     EXPECT_TRUE(equalSourceTypes(Physical[2].Type, P));
     EXPECT_FALSE(equalSourceTypes(Physical[2].Type, Hint.Parameters[2].Type));
     EXPECT_EQ(Physical[2].Location.RegisterOffset,
@@ -856,6 +862,7 @@ TEST(SourceABI, SwiftErrorSlotIsAnInOutValueCarrierNotAnOrdinaryPointer) {
         Bad.Parameters[2].Components = {Bad.Parameters[2].Location};
       EXPECT_FALSE(validateSourceABI(Bad, Error)) << Mutation;
       EXPECT_TRUE(sourceABIParameters(Bad).empty()) << Mutation;
+      EXPECT_FALSE(sourceABIErrorResult(Bad)) << Mutation;
       EXPECT_FALSE(equalSourceABIs(Hint, Bad)) << Mutation;
     }
     // A description of a general in/out slot cannot be treated as a normal
@@ -880,6 +887,55 @@ TEST(SourceABI, SwiftErrorSlotIsAnInOutValueCarrierNotAnOrdinaryPointer) {
       for (const auto &Op : Block.Ops)
         EXPECT_FALSE(Op.SourceCallHint);
   }
+}
+
+TEST(SourceABI, NativeSwiftErrorOutputChangesThePreservedRegister) {
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))
+  executeC(R"(
+#include <stdint.h>
+#define CTX __attribute__((swift_context))
+#define ERR __attribute__((swift_error_result))
+#define SWIFT __attribute__((swiftcall))
+extern void changed(void * CTX, void ** ERR) SWIFT __asm__("_error_changes");
+extern void restored(void * CTX, void ** ERR) SWIFT __asm__("_error_restores");
+__attribute__((noinline)) void SWIFT compiler_oracle(void * CTX context,
+                                                   void ** ERR error) {
+  *error = context;
+}
+#if defined(__aarch64__)
+__asm__(".text\n.p2align 2\n"
+        "_replace_error:\n mov x21, x20\n ret\n"
+        "_error_changes:\n stp x29, x30, [sp, #-16]!\n"
+        " mov x29, sp\n bl _replace_error\n"
+        " ldp x29, x30, [sp], #16\n ret\n"
+        "_error_restores:\n stp x21, x30, [sp, #-16]!\n"
+        " bl _replace_error\n ldp x21, x30, [sp], #16\n ret\n");
+#else
+__asm__(".text\n"
+        "_replace_error:\n movq %r13, %r12\n retq\n"
+        "_error_changes:\n pushq %rbp\n movq %rsp, %rbp\n"
+        " callq _replace_error\n popq %rbp\n retq\n"
+        "_error_restores:\n pushq %r12\n callq _replace_error\n"
+        " popq %r12\n retq\n");
+#endif
+int main(void) {
+  for (uintptr_t i = 0; i < 4096; ++i) {
+    void *context = (void *)(i * UINT64_C(0x9e3779b97f4a7c15));
+    void *incoming = (void *)(~i * UINT64_C(0xd1b54a32d192ed03));
+    void *actual = incoming, *expected = incoming, *saved = incoming;
+    changed(context, &actual);
+    compiler_oracle(context, &expected);
+    restored(context, &saved);
+    if (actual != expected || actual != context || saved != incoming)
+      return 1;
+  }
+  return 0;
+}
+)",
+           false);
+#else
+  GTEST_SKIP() << "Native Darwin Swift error-register execution required";
+#endif
 }
 
 TEST(SourceABI, SwiftErrorValueAdapterDoesNotShadowItsRuntimeSymbol) {

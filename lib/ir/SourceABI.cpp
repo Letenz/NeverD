@@ -333,6 +333,17 @@ sourceABIParameters(const SourceFunctionTypeHint &Hint) {
   return Result;
 }
 
+std::optional<SourceABIParameter>
+sourceABIErrorResult(const SourceFunctionTypeHint &Hint) {
+  if (!hasSwiftErrorResult(Hint))
+    return std::nullopt;
+  for (const auto &Parameter : sourceABIParameters(Hint))
+    if (Hint.Parameters[Parameter.ParameterIndex].TheRole ==
+        SourceParameterTypeHint::Role::SwiftErrorResult)
+      return Parameter;
+  return std::nullopt;
+}
+
 bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                        std::string &Diagnostic) {
   Diagnostic.clear();

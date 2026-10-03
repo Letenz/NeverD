@@ -819,6 +819,9 @@ bool hasNativeSourceStateContract(
       }();
       NativeSourceCallContract Contract;
       Contract.Signature = &Binding.Signature;
+      Contract.PreservesSwiftErrorResult =
+          StaticRuntime && swiftRuntimePreservesErrorResult(
+                               Image, Op.Inputs[0].ConstVal, Binding);
       if (Binding.SwiftOpaqueValue) {
         const LowFunc *Body = nullptr;
         if (StaticNative && Callees)

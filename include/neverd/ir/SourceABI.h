@@ -51,6 +51,12 @@ bool hasIndirectSourceParameters(const SourceFunctionTypeHint &Hint);
 /// must model its in/out register or independently prove an unchanged output.
 bool hasSwiftErrorResult(const SourceFunctionTypeHint &Hint);
 
+/// The validated physical in/out value of a logical Swift error-slot
+/// parameter. The location is an output even though the platform ordinarily
+/// preserves that register. An absent or invalid slot returns no result.
+std::optional<SourceABIParameter>
+sourceABIErrorResult(const SourceFunctionTypeHint &Hint);
+
 /// Physical parameters of a validated signature, in source member order.
 /// An indirect record contributes one pointer-to-record carrier; the logical
 /// record stays in Hint.Parameters and is not a source pointer parameter.
