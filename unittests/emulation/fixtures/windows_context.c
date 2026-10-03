@@ -57,14 +57,6 @@ static void require(int Valid, U32 Site) {
   U32 Written;
   WriteFile(GetStdHandle(StderrSelector), Failure, sizeof(Failure), &Written,
             0);
-#if defined(__x86_64__) && defined(NEVERD_CAPTURE_FP_PROBE)
-  WriteFile(GetStdHandle(StderrSelector), SeededFPState, FPDiagnosticSize,
-            &Written, 0);
-  WriteFile(GetStdHandle(StderrSelector), Context + X64FPOffset,
-            FPDiagnosticSize, &Written, 0);
-  WriteFile(GetStdHandle(StderrSelector), Context + X64FlagsOffset,
-            X64StatusOffset + sizeof(U32) - X64FlagsOffset, &Written, 0);
-#endif
   ExitProcess(FailureStatus);
 }
 static void emit(const void *Data, U32 Count) {
