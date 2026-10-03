@@ -162,7 +162,8 @@ struct TranslationSemanticPolicyV1 {
   /// Safe finite defaults for latency-sensitive callers.
   static TranslationSemanticPolicyV1 bounded();
 
-  /// Remove MBA arity/work, synthesis-work, bit-blast, SAT, and convergence
+  /// Remove finite-value work, MBA arity/work, synthesis-work, bit-blast, SAT,
+  /// and convergence
   /// ceilings.  Memory-safety limits and synthesis grammar choices remain
   /// explicit in Simplify and may be changed by the caller.  Stochastic search
   /// remains disabled so an artifact is derived reproducibly.
@@ -199,7 +200,7 @@ public:
   static constexpr uint32_t CacheIdentityVersion = 1;
   /// Manual schema for the exact IR optimization and object-emission recipe.
   /// Bump whenever pass ordering, sealing, or target-machine policy changes.
-  static constexpr uint32_t PipelineSchemaVersion = 4;
+  static constexpr uint32_t PipelineSchemaVersion = 5;
 
   llvm::ArrayRef<uint8_t> bytes() const { return Bytes; }
   const ResolvedHostTarget &hostTarget() const { return HostTarget; }

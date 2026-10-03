@@ -15,12 +15,10 @@
 /// cannot read exactly, so it composes with the ordinary optimization pipeline
 /// instead of standing apart from it.
 ///
-/// A branch condition is worth measuring for one reason: an opaque predicate is
-/// a branch built so that one side is unreachable, with the condition dressed
-/// up as arithmetic so that nothing reading its shape can tell.  Measuring the
-/// condition turns it into the constant it always was.  Removing the side that
-/// constant makes unreachable is left to the SimplifyCFG that follows in the
-/// pipeline, which already does exactly that and does it better.
+/// Before general MBA measurement, exact two-valued integer slices can reduce
+/// encoded conditions to a comparison and encoded values to a select. Opaque
+/// predicates whose conditions are constant can also be folded. Removing the
+/// unreachable side remains the following SimplifyCFG pass's responsibility.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -166,6 +164,13 @@ struct SymSimplifyOptions {
   std::function<symbolic::SynthVerification(symbolic::SymContext &,
                                             symbolic::SymRef, symbolic::SymRef)>
       ProofCallback;
+
+  /// Cumulative work for exact two-valued integer slices, including dependency
+  /// edges and profitability checks. Zero disables this derivational phase.
+  /// Exhaustion keeps any unfinished slice unchanged; it never supplies facts.
+  /// This phase requires a strict instruction-count improvement even when
+  /// MinInstructionsSaved is zero.
+  size_t MaxFiniteValueWork = 262144;
 
   /// Take every rewrite the engine can derive, however small the expression
   /// and however little the result saves.
