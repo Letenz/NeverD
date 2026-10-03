@@ -37,6 +37,10 @@ struct ServiceABI {
   std::array<CPURegister, process_defaults::ServiceArguments> Arguments;
 };
 const ServiceABI &serviceABI(GuestArchitecture Architecture);
+llvm::Expected<std::optional<uint64_t>>
+writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
+            const ProcessServiceEvent &Event, const MemoryLayout &Layout,
+            const ProcessOptions &Options, ProcessResult &Result);
 llvm::Expected<ProcessServiceEvent> readService(ExecutionBackend &CPU,
                                                 const ServiceRequest &Request);
 llvm::Error returnService(ExecutionBackend &CPU, const ServiceRequest &Request,

@@ -99,7 +99,7 @@ The supported Bionic subset is:
 - `dlopen`, `dlsym`, `dlclose`, `dlerror`, using an explicit local catalogue
   described below. Function availability and implementation are separate:
   an available symbol whose call is unmodeled still stops explicitly.
-- `write`, `mmap`/`mmap64`, `mprotect`, `munmap`, delegated to the shared Linux
+- `write`, `writev`, `mmap`/`mmap64`, `mprotect`, `munmap`, delegated to the shared Linux
   service implementation. Bionic wrappers translate negative kernel error
   values to -1 and thread-local errno; raw `svc #0` preserves negative errno
   bits and does not update TLS errno.

@@ -44,6 +44,16 @@ namespace memory_fixture {
 #undef NEVERD_LINUX_MEMORY_VALUE
 #undef NEVERD_LINUX_MEMORY_TEXT
 } // namespace memory_fixture
+namespace output_fixture {
+#define NEVERD_LINUX_OUTPUT_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_LINUX_OUTPUT_TEXT(Name, Text) constexpr char Name[] = Text;
+#define NEVERD_LINUX_OUTPUT_CASE(Name, Mode, Out, Err)                         \
+  constexpr char Name = Mode;
+#include "fixtures/LinuxOutputCases.def"
+#undef NEVERD_LINUX_OUTPUT_CASE
+#undef NEVERD_LINUX_OUTPUT_TEXT
+#undef NEVERD_LINUX_OUTPUT_VALUE
+} // namespace output_fixture
 struct Profile {
   const char *Name;
   ExecutionBackendKind Backend;
@@ -90,6 +100,11 @@ protected:
   ProcessResult run() {
     return llvm::cantFail(
         emulateProcess(Path, ProcessProfile::LinuxELF64, Options));
+  }
+  ProcessResult runOutput(char Mode) {
+    Path.replace_filename(Path.stem().string() + output_fixture::Suffix);
+    Options.Arguments = {output_fixture::ExecutableName, std::string(1, Mode)};
+    return run();
   }
 };
 
@@ -282,6 +297,42 @@ TEST_P(LinuxProcess, InvalidRequestAndStackStringsFailBeforeExecution) {
   Result = emulateProcess(Path, ProcessProfile::LinuxELF64, Options);
   EXPECT_FALSE(bool(Result));
   llvm::consumeError(Result.takeError());
+}
+
+#define NEVERD_LINUX_OUTPUT_CASE(Name, Mode, Out, Err)                         \
+  TEST_P(LinuxProcess, Vectored##Name) {                                       \
+    auto Result = runOutput(Mode);                                             \
+    EXPECT_EQ(Result.Stop, ProcessStopReason::Exited) << Result.Diagnostic;    \
+    EXPECT_EQ(Result.ExitStatus, output_fixture::ExitStatus);                  \
+    EXPECT_EQ(Result.StandardOutput, std::string(Out, sizeof(Out) - 1));       \
+    EXPECT_EQ(Result.StandardError, std::string(Err, sizeof(Err) - 1));        \
+  }
+#include "fixtures/LinuxOutputCases.def"
+#undef NEVERD_LINUX_OUTPUT_CASE
+
+TEST_P(LinuxProcess, VectoredBudgetChecksAllBuffersBeforePublishing) {
+  Options.OutputLimit = output_fixture::MessageSplit;
+  auto Result = runOutput(output_fixture::Gather);
+  EXPECT_EQ(Result.Stop, ProcessStopReason::OutputLimit) << Result.Diagnostic;
+  EXPECT_FALSE(Result.ExitStatus);
+  EXPECT_TRUE(Result.StandardOutput.empty());
+  EXPECT_TRUE(Result.StandardError.empty());
+  ASSERT_EQ(Result.Services.size(), 1u);
+  EXPECT_FALSE(Result.Services.front().Result);
+}
+TEST_P(LinuxProcess, VectoredBudgetRetainsOnlyEarlierCompletedCalls) {
+  Options.OutputLimit = sizeof(output_fixture::Message) - 1;
+  auto Result = runOutput(output_fixture::Gather);
+  EXPECT_EQ(Result.Stop, ProcessStopReason::OutputLimit) << Result.Diagnostic;
+  EXPECT_FALSE(Result.ExitStatus);
+  EXPECT_EQ(Result.StandardOutput,
+            std::string(output_fixture::Message,
+                        sizeof(output_fixture::Message) - 1));
+  EXPECT_TRUE(Result.StandardError.empty());
+  ASSERT_EQ(Result.Services.size(), 2u);
+  EXPECT_EQ(Result.Services.front().Result,
+            sizeof(output_fixture::Message) - 1);
+  EXPECT_FALSE(Result.Services.back().Result);
 }
 
 INSTANTIATE_TEST_SUITE_P(Backends, LinuxProcess, testing::ValuesIn(Profiles),

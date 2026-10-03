@@ -94,6 +94,8 @@ request; it is distinct from a successful zero return.
 
 ## Linux profile semantics
 
+`writev` shares those sinks on x64/ARM64 and through Android Bionic. It imports up to 1024 guest `iovec` entries before output, rejects negative lengths with `EINVAL`, validates all original user ranges, and applies Linux’s page-aligned transfer cap. An invalid descriptor returns `EBADF` before vector access; inaccessible metadata returns `EFAULT` without output. A later payload fault preserves the copied prefix. The output budget covers the whole vector before publication, across both streams. `write` and `writev` use the low 32 descriptor bits; vector count also follows Linux’s 32-bit import. Bionic alone converts raw negative errors to `-1` and `errno`. `LinuxOutputNativeTests` runs ten original cases on host Linux with regular-file redirects; modeled x64/ARM64 cases also check budgets. See the [Linux vector import contract](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c).
+
 The existing ELF loader supplies decoded program headers. OS policy validates
 ABI tags, segment alignment, mapped program-header tables and user-address
 bounds before execution. A generic mapping plan checks extents, permissions,
@@ -124,7 +126,7 @@ execution; this is explicitly a deterministic model policy, not cryptographic
 entropy. HWCAP/HWCAP2 are zero; there is no vDSO. Startup conventions follow the
 [Linux ELF loader](https://github.com/torvalds/linux/blob/master/fs/binfmt_elf.c).
 
-Implemented calls are `write`, `exit`, `exit_group`, `getpid`, `gettid`,
+Implemented calls are `write`, `writev`, `exit`, `exit_group`, `getpid`, `gettid`,
 `getuid`, `geteuid`, `getgid`, `getegid`,
 `mmap`, `mprotect`, `munmap` and `brk`, with
 separate [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)

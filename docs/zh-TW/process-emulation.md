@@ -54,6 +54,8 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Linux 設定檔語意
 
+`writev` 在 x64/ARM64 與 Android Bionic 中共用上述輸出物件。它先匯入最多 1024 個來賓 `iovec`，負長度回傳 `EINVAL`，驗證全部原始使用者位址範圍，再套用 Linux 按頁對齊的傳輸上限。無效描述符先於向量存取回傳 `EBADF`；不可讀的描述符表回傳 `EFAULT`，不產生輸出。後續資料頁故障保留已複製的前綴。輸出預算在發布前涵蓋整個向量與兩個輸出串流。`write` 和 `writev` 使用描述符的低 32 位；向量數量也遵循 Linux 的 32 位匯入規則。僅 Bionic 將原始負錯誤碼轉換成 `-1` 與 `errno`。`LinuxOutputNativeTests` 在本機 Linux 上以一般檔案重新導向執行十個原創案例；模擬的 x64/ARM64 案例另驗證預算。請見 [Linux 向量匯入契約](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)。
+
 OS 政策重用既有 ELF 載入器解碼的 program headers。它驗證 ABI 標籤、區段對齊、已對映的 program-header tables 和使用者位址範圍。通用對映計畫會在配置前檢查範圍、權限、重疊和預算，且只公開完全準備好的私有位址空間。保留檔案頁面前／尾位元組、將 BSS 清零、遵循區段權限並為堆疊保留 guard gaps。頁面重疊版面與矛盾 header 會被拒絕，不會猜測。
 
 靜態 PIE 使用至少 `0x40000000` 的確定性 load bias，並依較大的 `PT_LOAD` 對齊需求提高。所有對映區段、入口 PC、`AT_PHDR`/`AT_ENTRY` 使用相同 bias；原始 program header 值不變，且無 interpreter 時 `AT_BASE` 為 0。對映來源明確採用原始檔案位元組，不包含分析階段 pointer fixup；客體啟動必須自行執行 relocation 與初始化。Loader 從有界的原始檔案記錄解碼 `PT_DYNAMIC`，不依賴 section header。若存在，table 必須可讀、正確終止且最多 4096 筆。拒絕 `PT_INTERP` 與外部 dependency/filter/audit 標籤；不提供 dynamic linker、symbol resolver 或 constructor runner。

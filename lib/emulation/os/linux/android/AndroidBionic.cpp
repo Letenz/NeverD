@@ -358,26 +358,11 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
     return Value(0); // The ABI leaves x0 unspecified for void calls.
   }
   std::optional<linux_model::ServiceKind> Kind;
-  if (Name == "getpid")
-    Kind = linux_model::ServiceKind::GetPID;
-  if (Name == "gettid")
-    Kind = linux_model::ServiceKind::GetTID;
-  if (Name == "getuid")
-    Kind = linux_model::ServiceKind::GetUID;
-  if (Name == "geteuid")
-    Kind = linux_model::ServiceKind::GetEUID;
-  if (Name == "getgid")
-    Kind = linux_model::ServiceKind::GetGID;
-  if (Name == "getegid")
-    Kind = linux_model::ServiceKind::GetEGID;
-  if (Name == "mmap" || Name == "mmap64")
-    Kind = linux_model::ServiceKind::Mmap;
-  if (Name == "mprotect")
-    Kind = linux_model::ServiceKind::Mprotect;
-  if (Name == "munmap")
-    Kind = linux_model::ServiceKind::Munmap;
-  if (Name == "write")
-    Kind = linux_model::ServiceKind::Write;
+#define NEVERD_ANDROID_KERNEL_SERVICE(Symbol, Service)                         \
+  if (Name == Symbol)                                                          \
+    Kind = linux_model::ServiceKind::Service;
+#include "AndroidKernelServices.def"
+#undef NEVERD_ANDROID_KERNEL_SERVICE
   if (Kind) {
     ProcessServiceEvent Event{Call.PC, 0, {}, std::nullopt};
     std::copy_n(A.begin(), Event.Arguments.size(), Event.Arguments.begin());

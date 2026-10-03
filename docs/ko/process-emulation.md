@@ -54,13 +54,15 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Linux 프로필 의미론
 
+`writev`는 x64/ARM64와 Android Bionic에서 같은 출력 대상을 공유합니다. 출력 전에 게스트 `iovec`를 최대 1024개 가져오고, 음수 길이를 `EINVAL`로 거부하며, 모든 원래 사용자 주소 범위를 검증한 뒤 Linux의 페이지 정렬 전송 상한을 적용합니다. 잘못된 설명자는 벡터 접근 전에 `EBADF`, 읽을 수 없는 메타데이터는 출력 없이 `EFAULT`를 반환합니다. 이후 데이터 오류는 복사된 접두부를 유지합니다. 출력 예산은 게시 전에 두 스트림과 전체 벡터에 적용됩니다. `write`와 `writev`는 설명자의 하위 32비트를 사용하고 벡터 수도 Linux의 32비트 가져오기 규칙을 따릅니다. Bionic만 원시 음수 오류를 `-1`과 `errno`로 변환합니다. `LinuxOutputNativeTests`는 직접 작성한 열 사례를 호스트 Linux에서 일반 파일로 출력하여 검증하고, 모델의 x64/ARM64 사례는 예산도 검사합니다. [Linux 벡터 가져오기 계약](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)을 참고하세요.
+
 OS 정책은 기존 ELF 로더가 디코딩한 프로그램 헤더를 사용합니다. ABI 태그, 세그먼트 정렬, 매핑된 프로그램 헤더 테이블, user 주소 범위를 검증합니다. 매핑 계획은 할당 전에 범위, 권한, 겹침, 예산을 확인하고 완전히 준비한 전용 주소 공간만 공개합니다. 파일 페이지 앞/뒤 바이트를 보존하고 BSS를 0으로 채우며 세그먼트 권한을 지키고 스택 guard gap을 예약합니다. 페이지가 겹치는 레이아웃과 모순 헤더는 추측하지 않고 거부합니다.
 
 Static PIE는 최소 `0x40000000`의 결정적 load bias를 사용하고 더 큰 `PT_LOAD` 정렬 요구에 따라 높입니다. 모든 매핑 세그먼트, entry PC, `AT_PHDR`/`AT_ENTRY`가 같은 bias를 사용하며 원래 program-header 값은 유지되고 interpreter가 없으므로 `AT_BASE`는 0입니다. 매핑 원본은 분석 fixup이 적용되지 않은 파일 바이트입니다. guest 시작 코드가 직접 relocation과 초기화를 수행해야 합니다. loader는 section header 없이 원본 파일의 제한된 record에서 `PT_DYNAMIC`을 decode합니다. 존재 시 readable/terminated 상태이며 최대 4096개 항목이어야 합니다. `PT_INTERP`와 외부 dependency/filter/audit tag는 거부합니다. dynamic linker, symbol resolver, constructor runner는 제공하지 않습니다.
 
 초기 스택은 정렬된 argc/argv/envp/auxv, PHDR/PHENT/PHNUM, entry, 페이지 크기 및 identity 값을 포함합니다. 모델 PID/TID/UID/GID는 1000입니다. 재현성을 위해 `AT_RANDOM`은 입력 SHA-256의 첫 16바이트입니다. 이는 암호학적 엔트로피가 아닌 결정적 모델 정책입니다. HWCAP/HWCAP2는 0이며 vDSO는 없습니다.
 
-`write`, `exit`, `exit_group`, `getpid`, `gettid`, `mmap`, `mprotect`, `munmap`, `brk`를 구현하며 번호는 [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)와 [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)에서 다릅니다. 반환하는 x64 SYSCALL은 RCX/R11 clobber, RAX, 다음 PC를 반영합니다. ARM64는 번호에 x8, 결과에 x0을 사용합니다. 나머지는 `unsupported_service`로 중단하며 호스트 syscall을 실행하지 않습니다.
+`write`, `writev`, `exit`, `exit_group`, `getpid`, `gettid`, `mmap`, `mprotect`, `munmap`, `brk`를 구현하며 번호는 [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)와 [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)에서 다릅니다. 반환하는 x64 SYSCALL은 RCX/R11 clobber, RAX, 다음 PC를 반영합니다. ARM64는 번호에 x8, 결과에 x0을 사용합니다. 나머지는 `unsupported_service`로 중단하며 호스트 syscall을 실행하지 않습니다.
 
 Static TLS template `PT_TLS`는 loader 소유 사실로 검증합니다. template 하나, 제한된 file/memory 범위, 일치하는 정렬, 읽을 수 있는 초기화 바이트가 필요합니다. guest startup이 TLS block을 할당·초기화하고 thread pointer를 설치합니다. Linux 모델은 libc별 TCB/DTV를 만들지 않습니다. 이에 따라 freestanding 프로그램의 컴파일러 생성 local-exec TLS를 지원합니다. dynamic TLS와 OS 스레드는 별도 작업입니다.
 

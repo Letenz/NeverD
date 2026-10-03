@@ -621,3 +621,11 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsExceptions, "STATUS_NONCONTINUABLE_EXCEPTION")
 NEVERD_EMULATION_DOC_TOKEN(WindowsExceptions, "0xc0000025")
 NEVERD_EMULATION_DOC_TOKEN(WindowsExceptions, "0x81")
 #endif
+
+NEVERD_EMULATION_DOC_PATH(LinuxOutput, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(LinuxOutput, "docs/{locale}/process-emulation.md")
+NEVERD_EMULATION_DOC_TOKEN(LinuxOutput, "writev")
+NEVERD_EMULATION_DOC_TOKEN(LinuxOutput, "iovec")
+NEVERD_EMULATION_DOC_TOKEN(LinuxOutput, "1024")
+NEVERD_EMULATION_DOC_TOKEN(LinuxOutput, "LinuxOutputNativeTests")
+NEVERD_EMULATION_DOC_TOKEN(LinuxOutput, "errno")

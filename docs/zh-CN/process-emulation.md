@@ -58,6 +58,8 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Linux 配置语义
 
+`writev` 在 x64/ARM64 及 Android Bionic 中共用上述输出对象。它先导入最多 1024 个来宾 `iovec`，负长度返回 `EINVAL`，校验全部原始用户地址范围，再应用 Linux 按页对齐的传输上限。无效描述符先于向量访问返回 `EBADF`；不可读的描述符表返回 `EFAULT`，不产生输出。后续数据页故障保留已复制的前缀。输出预算在发布前覆盖整个向量及两个输出流。`write` 和 `writev` 使用描述符的低 32 位；向量数量也遵循 Linux 的 32 位导入规则。仅 Bionic 将原始负错误码转换成 `-1` 和 `errno`。`LinuxOutputNativeTests` 在本机 Linux 上以普通文件重定向运行十个原创用例；模拟的 x64/ARM64 用例还验证预算。参见 [Linux 向量导入契约](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)。
+
 OS 策略复用现有 ELF 加载器解析出的 program headers。它验证 ABI 标签、segment 对齐、已映射的 program-header 表及用户地址边界。通用映射计划会在分配前检查范围、权限、重叠和预算，只发布完全准备好的私有地址空间。保留文件页前缀／尾部字节，将 BSS 清零，遵循 segment 权限并为栈保留 guard gaps。页重叠布局和矛盾 header 会被拒绝，不会猜测。
 
 静态 PIE 使用不低于 `0x40000000` 的确定性 load bias，并按较大的 `PT_LOAD` 对齐要求递增。所有映射段、入口 PC、`AT_PHDR`/`AT_ENTRY` 共用该 bias；原始 program header 值不变，没有 interpreter 时 `AT_BASE` 为零。映射来源明确为原始文件字节，不使用分析阶段的 pointer fixup；来宾启动代码必须自行完成 relocation 和初始化。Loader 从有界的原始文件记录中解码 `PT_DYNAMIC`，不依赖 section header。若存在，该表必须可读、正确终止且最多 4096 项。拒绝 `PT_INTERP` 和外部 dependency/filter/audit 标签；不会提供 dynamic linker、符号解析器或 constructor runner。
