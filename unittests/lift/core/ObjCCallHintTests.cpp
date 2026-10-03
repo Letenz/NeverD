@@ -2011,6 +2011,199 @@ TEST(ObjCCallHints, FoundationUUIDPreservesIndirectResultAndStringPairABI) {
   }
 }
 
+TEST(ObjCCallHints, SwiftPathAndCountKeepTheirCompletePhysicalABI) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Path : {true, false}) {
+      const std::string Name =
+          Path ? "$s10Foundation3URLV4pathSSvg" : "$sSS5countSivg";
+      const std::string Provider =
+          Path ? "/System/Library/Frameworks/Foundation.framework/Foundation"
+               : "/usr/lib/swift/libswiftCore.dylib";
+      auto Image = runtimeImage("_" + Name, Architecture);
+      Image.DyldBindSlots[0x2180] = {"_" + Name, 0, Provider, false};
+      auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint) << Name;
+      const auto &S = Hint->Signature;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      EXPECT_EQ(S.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(S.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(S.ReturnType);
+      EXPECT_EQ(S.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(S.ReturnType->Size, Path ? 16U : 8U);
+      ASSERT_EQ(S.Parameters.size(), Path ? 1U : 2U);
+      for (size_t I = 0; I < S.Parameters.size(); ++I) {
+        const auto &P = S.Parameters[I];
+        EXPECT_EQ(P.Type->Kind, Path || I ? NdTypeKind::Ptr : NdTypeKind::Int);
+        EXPECT_EQ(P.Type->Size, 8U);
+        EXPECT_EQ(P.TheRole, Path ? SourceParameterTypeHint::Role::SwiftContext
+                                  : SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(
+            P.Location.RegisterOffset,
+            Path ? (Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13)
+                 : TRI.IntParamRegs[I]);
+        EXPECT_EQ(P.Location.ValueBytes, 8U);
+      }
+      if (Path) {
+        ASSERT_EQ(S.ReturnComponents.size(), 2U);
+        for (unsigned I = 0; I < 2; ++I) {
+          EXPECT_EQ(S.ReturnComponents[I].RegisterOffset, TRI.IntReturnRegs[I]);
+          EXPECT_EQ(S.ReturnComponents[I].ValueBytes, 8U);
+        }
+      } else {
+        EXPECT_EQ(S.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+        EXPECT_EQ(S.ReturnLocation.ValueBytes, 8U);
+      }
+      EXPECT_FALSE(Hint->DoesNotReturn);
+      EXPECT_FALSE(Hint->ReturnedArgument);
+      EXPECT_TRUE(Hint->BorrowedByteInputs.empty());
+      EXPECT_TRUE(Hint->SwiftStaticStringInputs.empty());
+      std::string Error;
+      EXPECT_TRUE(validateSourceABI(S, Error)) << Error;
+      std::vector<ExprPtr> Arguments;
+      for (size_t I = 0; I < S.Parameters.size(); ++I)
+        Arguments.push_back(HighExpr::makeConst(0, 8));
+      auto Call = HighExpr::makeCall("untrusted_name", 0x2180, Arguments);
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      Call->Type = S.ReturnType;
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      if (Path) {
+        Image.DyldBindSlots[0x2180].Module =
+            "/System/Library/Frameworks/Foundation.framework/Versions/C/"
+            "Foundation";
+        EXPECT_TRUE(swiftRuntimeSourceCallHint(Image, 0x2180));
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftPathAndCountRejectStaleImportsAndPartialABI) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Path : {true, false}) {
+      const std::string Name =
+          Path ? "$s10Foundation3URLV4pathSSvg" : "$sSS5countSivg";
+      const std::string Provider =
+          Path ? "/System/Library/Frameworks/Foundation.framework/Foundation"
+               : "/usr/lib/swift/libswiftCore.dylib";
+      auto Image = runtimeImage("_" + Name, Architecture);
+      Image.DyldBindSlots[0x2180] = {"_" + Name, 0, Provider, false};
+      auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      const auto MakeCall = [&] {
+        std::vector<ExprPtr> Arguments;
+        for (const auto &P : Hint->Signature.Parameters)
+          Arguments.push_back(HighExpr::makeConst(0, P.Type->Size));
+        auto Call = HighExpr::makeCall("untrusted_name", 0x2180, Arguments);
+        Call->Type = Hint->Signature.ReturnType;
+        Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+        return Call;
+      };
+      for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+        SCOPED_TRACE(Name + " import " + std::to_string(Mutation));
+        auto Bad = Image;
+        switch (Mutation) {
+        case 0:
+          Bad.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+          break;
+        case 1:
+          Bad.DyldBindSlots[0x2180].Addend = 1;
+          break;
+        case 2:
+          Bad.DyldBindSlots[0x2180].WeakImport = true;
+          break;
+        case 3:
+          Bad.DyldBindSlots.erase(0x2180);
+          break;
+        case 4:
+          Bad.DyldBindSlots[0x2180].Name += "X";
+          break;
+        case 5:
+          Bad.ImportPtrSlots[0x2180] += "X";
+          break;
+        case 6:
+          Bad.ConflictingImportStorageSlots.insert(0x2180);
+          break;
+        case 7:
+          Bad.Format = BinaryFormat::ELF;
+          break;
+        case 8:
+          Bad.Bits = Bitness::Bits32;
+          break;
+        case 9:
+          Bad.Arch = Arch::ARM;
+          break;
+        case 10:
+          Bad.DyldBindSlots[0x2180].Module =
+              Path ? "/usr/lib/swift/libswiftCore.dylib"
+                   : "/System/Library/Frameworks/Foundation.framework/"
+                     "Foundation";
+          break;
+        case 11:
+          Bad.DyldBindSlots[0x2180].Name = "_" + Name + "Tm";
+          Bad.ImportPtrSlots[0x2180] = "_" + Name + "Tm";
+          break;
+        }
+        EXPECT_FALSE(swiftRuntimeSourceCallHint(Bad, 0x2180));
+        EXPECT_FALSE(sdk::objcSourceCallBound(*MakeCall(), Bad, {}));
+      }
+      for (unsigned Mutation = 0; Mutation < 14; ++Mutation) {
+        SCOPED_TRACE(Name + " binding " + std::to_string(Mutation));
+        auto Call = MakeCall();
+        auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+        Call->SourceCallHint = Changed;
+        auto &S = Changed->Signature;
+        switch (Mutation) {
+        case 0:
+          S.Parameters.pop_back();
+          break;
+        case 1:
+          S.Parameters.push_back(S.Parameters.front());
+          break;
+        case 2:
+          S.Parameters[0].TheRole =
+              Path ? SourceParameterTypeHint::Role::Ordinary
+                   : SourceParameterTypeHint::Role::SwiftContext;
+          break;
+        case 3:
+          S.Parameters[0].Location.RegisterOffset += 8;
+          break;
+        case 4:
+          S.Parameters[0].Location.ValueBytes = 4;
+          break;
+        case 5:
+          S.Parameters[0].Type = NdType::makeFloat(8);
+          break;
+        case 6:
+          S.ReturnType = NdType::makeInt(4);
+          break;
+        case 7:
+          S.ReturnLocation.RegisterOffset += 8;
+          break;
+        case 8:
+          S.Convention = SourceFunctionTypeHint::ConventionKind::C;
+          break;
+        case 9:
+          Changed->TargetAddress += 8;
+          break;
+        case 10:
+          Changed->DoesNotReturn = true;
+          break;
+        case 11:
+          Changed->TargetName += "X";
+          break;
+        case 12:
+          Call->Operands.pop_back();
+          break;
+        case 13:
+          S.ReturnLocation.ValueBytes = 4;
+          break;
+        }
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftCocoaArrayEndIndexKeepsItsWordABI) {
   constexpr llvm::StringLiteral Name = "$ss18_CocoaArrayWrapperV8endIndexSivg";
   constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";

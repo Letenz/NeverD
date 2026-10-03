@@ -135,6 +135,12 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Swift 6.1.2 macOS and Mac Catalyst clients on arm64 and x86_64
+    // read the opaque URL through swiftself and return both String words.
+    {"$s10Foundation3URLV4pathSSvg",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+     "(zz)C"},
     // Swift 6.1.2 arm64 client IR passes URL.init(string:) an indirect
     // Optional<URL> result followed by the two physical String words.
     {"$s10Foundation3URLV6stringACSgSSh_tcfC",
@@ -299,6 +305,9 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // by the two String words to String.hash(into:).
     {"$sSS4hash4intoys6HasherVz_tF", "/usr/lib/swift/libswiftCore.dylib",
      "vpzp"},
+    // The same four SDK profiles lower String.count to swiftcc i64(i64, ptr).
+    // Both borrowed String words remain ordinary arguments, not swiftself.
+    {"$sSS5countSivg", "/usr/lib/swift/libswiftCore.dylib", "zzp"},
     {"$sSS5index5afterSS5IndexVAD_tF", "/usr/lib/swift/libswiftCore.dylib",
      "zzzp"},
     // Swift String is passed as its two scalar carriers; the mutable
