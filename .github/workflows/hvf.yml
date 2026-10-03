@@ -126,27 +126,47 @@ jobs:
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/transport-evidence --parallel 4
           --require-hvf --hvf-transport-only 2>&1 | tee build-hvf/transport-run.log
-      - name: Require Intel state and exception behavior before the full dependency build
+      - name: Build and inventory Intel state and exception tests
+        if: matrix.arch == 'X64' && inputs.validation != 'probe'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          mkdir -p build-hvf/state-evidence
+          cmake --build build-hvf --target NeverDX64ExceptionTests --parallel 4 2>&1 | tee build-hvf/state-evidence/build.log
+          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --show-only=json-v1 > build-hvf/state-evidence/inventory.json
+      - name: Preserve transport and compilation before architectural execution
+        if: always() && inputs.validation != 'probe'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hvf-transport-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
+          path: |
+            build-hvf/transport-*.log
+            build-hvf/transport-evidence/
+            build-hvf/state-evidence/
+          if-no-files-found: warn
+      - name: Require Intel CR8 registers and privilege faults in isolation
+        if: matrix.arch == 'X64' && inputs.validation != 'probe'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          ctest --test-dir build-hvf/unittests/emulation -R '^NativeTransports/X64StateTransition[.]CR8ReadsEveryGPRAndPreservesUserPrivilegeFaults/hvf$' --no-tests=error --output-on-failure --output-junit "$PWD/build-hvf/state-evidence/cr8.xml" --output-log "$PWD/build-hvf/state-evidence/cr8.log"
+      - name: Preserve isolated Intel state result
+        if: always() && matrix.arch == 'X64' && inputs.validation != 'probe'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hvf-cr8-X64-attempt-${{ github.run_attempt }}
+          path: build-hvf/state-evidence/cr8.*
+          if-no-files-found: warn
+      - name: Require the complete Intel state and exception suite
         if: matrix.arch == 'X64' && inputs.validation != 'probe'
         timeout-minutes: 10
         shell: bash
         env:
           NEVERD_REQUIRE_HVF: '1'
         run: |
-          mkdir -p build-hvf/state-evidence
-          cmake --build build-hvf --target NeverDX64ExceptionTests --parallel 4 2>&1 | tee build-hvf/state-evidence/build.log
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --show-only=json-v1 > build-hvf/state-evidence/inventory.json
           ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --no-tests=error --parallel 4 --output-on-failure --output-junit "$PWD/build-hvf/state-evidence/results.xml" --output-log "$PWD/build-hvf/state-evidence/ctest.log"
-      - name: Preserve native execution checkpoint before the full dependency build
-        if: always() && inputs.validation != 'probe'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-transport-${{ matrix.arch }}
-          path: |
-            build-hvf/transport-*.log
-            build-hvf/transport-evidence/
-            build-hvf/state-evidence/
-          if-no-files-found: warn
       - name: Require actual host execution and record every result
         if: inputs.validation != 'transport' && inputs.validation != 'probe'
         run: >-
@@ -161,7 +181,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hvf-${{ matrix.arch }}
+          name: hvf-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
           path: |
             build-hvf-probe/
             build-hvf/transport-*.log
