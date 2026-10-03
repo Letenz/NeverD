@@ -123,6 +123,12 @@ establish virtualization support. After the CPU gate, the workflow also
 requires every matching Darwin workload. Dedicated runners are not assumed
 to be provisioned.
 
+GitHub describes nested virtualization on hosted runners as experimental and
+does not guarantee its stability, performance or compatibility. See its
+[hosted-runner policy](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners).
+Keep a dedicated native Mac path for repeatable acceptance. This platform
+limitation does not identify the cause of an individual stalled run.
+
 The workflow first builds `NeverDHvfTests`, whose dependency boundary is LLVM
 Support and the decoder, and requires native instruction execution before the
 full process/LLVM dependency build. `validation=transport` stops after this
@@ -302,13 +308,18 @@ repetitions. Shared checks overlap and must not be added as independent cases.
 Both artifacts were downloaded, SHA-256 verified and their individual XML
 results inspected. Temporary isolation workflow inputs and steps are removed.
 The [complete Intel gate](https://github.com/NeverSight/NeverD/actions/runs/37095689345)
-at `4c6a12b913123d0555f067035527fe29f856f3b9` compiled all twenty owners and
-entered the CPU test phase; its complete execution result remains pending.
-The build artifact's SHA-256 was verified. The
+at `4c6a12b913123d0555f067035527fe29f856f3b9` compiled all twenty owners, but
+returned no CPU result after more than thirty minutes and was cancelled.
+Its completed job still provided no downloadable execution log. The build
+artifact's SHA-256 was verified; this is not full CPU acceptance. The
 [independent Darwin gate](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
 at `4cbb729389df9485c9a9699c63c0be3a48862794` separately requires all 26 native
-Intel workloads. Both use serialized tests, and their emulation implementation
-and tests match the successful focused runs.
+Intel workloads. A temporary
+[per-owner diagnosis](https://github.com/NeverSight/NeverD/actions/runs/37098336208)
+records each complete CPU owner's inventory, CTest exit code and XML before
+continuing. Both ongoing runs use serialized tests; the emulation implementation
+and tests match the successful focused runs. Neither has yet returned complete
+acceptance evidence.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait

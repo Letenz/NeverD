@@ -27,6 +27,10 @@ GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `script
 宿主拒绝 HVF 就在此处失败，不能用 runner 名称推断硬件可用。
 CPU 门禁通过后，还必须执行本机架构的全部 Darwin 工作负载。
 
+GitHub 的[宿主策略](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)
+把 runner 内的嵌套虚拟化列为实验性用途，不保证稳定性、性能或兼容性。
+因此需保留专用原生 Mac 的持续验收路径；这条平台限制不能直接说明某次停滞的根因。
+
 工作流会先构建只依赖 LLVM Support 和解码器的 `NeverDHvfTests`，验证原生指令执行，
 再构建完整进程测试的依赖。`validation=transport` 可单独运行这一诊断；默认 `full`
 仍要求完整 CPU 和 Darwin 两道门禁。`validation=darwin` 只构建进程测试所需目标，
@@ -164,7 +168,11 @@ TLS/权限、CR8、取消，以及宿主修改、故障和停止前后的完整 
 两个产物均已下载、核对 SHA-256 并检查逐项 XML。临时隔离工作流入口与步骤已清理。
 [完整 Intel 门禁](https://github.com/NeverSight/NeverD/actions/runs/37095689345)
 使用 `4c6a12b913123d0555f067035527fe29f856f3b9`，20 个目标均已编译成功，
-构建产物 SHA-256 已核对；当前进入 CPU 测试阶段，完整执行结果仍待返回。
+构建产物 SHA-256 已核对；CPU 阶段超过 30 分钟没有结果后已取消，结束后仍无可下载日志。
+这只能证明编译成功，不能作为完整 CPU 验收。
 另由 `4cbb729389df9485c9a9699c63c0be3a48862794` 的
 [独立 Darwin 门禁](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
-要求 Intel 的全部 26 个原生工作负载通过。两轮均为串行测试，模拟实现和测试与上述专项一致。
+要求 Intel 的全部 26 个原生工作负载通过。另有临时
+[逐目标诊断](https://github.com/NeverSight/NeverD/actions/runs/37098336208)，
+每个完整 CPU 目标结束后立即保存清单、CTest 退出码和 XML，再继续下一组。
+两轮均为串行测试，模拟实现和测试与上述专项一致；目前尚未回传完整验收结果。
