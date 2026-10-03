@@ -145,6 +145,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsLifetimeTests.cpp
   WindowsExportTests.cpp
   WindowsDynamicTests.cpp
+  WindowsNativeTestSupport.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDWindowsProcessTests PRIVATE

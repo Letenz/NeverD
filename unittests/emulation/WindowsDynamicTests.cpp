@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
+#include "WindowsNativeTestSupport.h"
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcessModules.h"
 
@@ -267,9 +268,20 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
         SCOPED_TRACE(C.Name);
         std::string Diagnostic;
         bool Failed = false;
-        const int Status = llvm::sys::ExecuteAndWait(
-            Program, {Program, C.Argument}, std::nullopt, Redirects,
-            NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
+        int Status = 0;
+        if (C.Argument[1] == ReturnMode) {
+          for (unsigned I = 0; I < NativeReturnRepetitions; ++I) {
+            auto Thread = native_test::observeNativeThread(
+                Program, C.Argument, Output, Error, NativeTimeoutSeconds);
+            ASSERT_TRUE(bool(Thread)) << llvm::toString(Thread.takeError());
+            EXPECT_EQ(*Thread, ExitStatus);
+            Status = int(*Thread);
+          }
+        } else {
+          Status = llvm::sys::ExecuteAndWait(
+              Program, {Program, C.Argument}, std::nullopt, Redirects,
+              NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
+        }
         ASSERT_FALSE(Failed) << Diagnostic;
         auto Out = llvm::MemoryBuffer::getFile(Output),
              Err = llvm::MemoryBuffer::getFile(Error);

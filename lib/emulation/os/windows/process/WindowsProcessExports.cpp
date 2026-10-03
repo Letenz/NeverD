@@ -136,8 +136,19 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
     }
     if (Load) {
       auto Next = Load(Index, *Key);
-      if (!Next)
-        return Next.takeError();
+      if (!Next) {
+        auto E = Next.takeError();
+        if (!Depth)
+          return std::move(E);
+        uint32_t Code = 0;
+        E = llvm::handleErrors(std::move(E), [&](const ModuleLoadError &F) {
+          Code =
+              F.Code == ErrorModuleNotFound ? ErrorProcedureNotFound : F.Code;
+        });
+        if (E)
+          return std::move(E);
+        return ExportResolution{std::nullopt, Code};
+      }
       Index = *Next;
     } else {
       auto Next = findModule(Program, *Key);

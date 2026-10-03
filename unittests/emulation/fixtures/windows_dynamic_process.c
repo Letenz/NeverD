@@ -50,14 +50,16 @@ DWORD entry(void) {
   void *Top = 0, *Leaf = 0;
   if (Mode == ForwardedMode || Mode == RepeatedForwardMode ||
       Mode == MissingForwardMode || Mode == ForwardExitMode ||
-      Mode == DeepMissingMode) {
+      Mode == DeepMissingMode || Mode == ImmediateMissingMode) {
     Top = LoadLibraryW(TopName);
     CHECK(Top && !GetModuleHandleW(MiddleName));
     ProbeFunction F = (ProbeFunction)GetProcAddress(
-        Top, Mode == MissingForwardMode ? MissingForwardName
-             : Mode == DeepMissingMode  ? DeepMissingName
-                                        : ForwardName);
-    if (Mode == MissingForwardMode || Mode == DeepMissingMode) {
+        Top, Mode == MissingForwardMode     ? MissingForwardName
+             : Mode == DeepMissingMode      ? DeepMissingName
+             : Mode == ImmediateMissingMode ? MissingModuleName
+                                            : ForwardName);
+    if (Mode == MissingForwardMode || Mode == DeepMissingMode ||
+        Mode == ImmediateMissingMode) {
       observation(MissingTag, F != 0);
       observation(ErrorTag, GetLastError());
       observation(MiddleTag, GetModuleHandleW(MiddleName) != 0);

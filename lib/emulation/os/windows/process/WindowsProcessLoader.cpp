@@ -157,9 +157,12 @@ llvm::Expected<Loader::Operation> Loader::start(const LoaderRequest &Request) {
         return failure(text::LoaderReentrant);
     Out.Value = 1;
     Out.Unload = std::move(*Retired);
-    if (!Out.Unload.empty())
+    if (!Out.Unload.empty()) {
       Out.Notifications =
           std::make_unique<Lifetime>(P, Lifetime::Mode::Unload, Out.Unload);
+      if (auto E = updateEnvironment(Memory, P, Env, Budget))
+        return std::move(E);
+    }
     return Out;
   }
   std::vector<ModuleRef> Attach;
@@ -235,7 +238,7 @@ llvm::Error Loader::complete(Operation &Op) {
     Op.Unload = std::move(*Retired);
     Op.Notifications = std::make_unique<Lifetime>(P, Lifetime::Mode::Rollback,
                                                   Op.Unload, Failed);
-    return llvm::Error::success();
+    return updateEnvironment(Memory, P, Env, Budget);
   }
   if (Op.Request.Operation == LoaderRequest::Kind::Export) {
     if (!Op.Root || !current(P, *Op.Root))

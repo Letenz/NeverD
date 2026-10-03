@@ -288,24 +288,33 @@ namespace {
 llvm::Error validateEnvironment(AddressSpace &Memory, Program &Program,
                                 const Environment &Env,
                                 const ExecutionBudget &Budget) {
-  for (const auto &[Address, Expected] : Env.LoaderMetadata) {
+  auto Charge = [&](uint64_t Size) -> llvm::Error {
     if (!Budget.remainingMicroseconds())
       return failure(text::ModuleTimeout);
-    if (Expected.size() > Program.Reads.MetadataBytes)
+    if (Size > Program.Reads.MetadataBytes)
       return failure(text::ExportBudget);
-    Program.Reads.MetadataBytes -= Expected.size();
+    Program.Reads.MetadataBytes -= Size;
+    return llvm::Error::success();
+  };
+  for (const auto &[Address, Expected] : Env.LoaderMetadata) {
+    if (auto E = Charge(Expected.size()))
+      return E;
     std::vector<uint8_t> Actual(Expected.size());
     if (auto E = Memory.read(Address, Actual))
       return E;
     if (Actual != Expected)
       return failure(text::LoaderChanged);
   }
+  if (auto E = Charge(PointerSize))
+    return E;
   auto Vector = Memory.readInteger(TEB + TebTLSVector, PointerSize);
   if (!Vector)
     return Vector.takeError();
   if (*Vector != TLSVector)
     return failure(text::LoaderChanged);
   for (const auto &[Index, Block] : Env.TLS) {
+    if (auto E = Charge(PointerSize + DWordSize))
+      return E;
     auto Value =
         Memory.readInteger(TLSVector + Block.Index * PointerSize, PointerSize);
     if (!Value)
@@ -472,8 +481,13 @@ llvm::Error updateEnvironment(AddressSpace &Memory, Program &Program,
     return E;
   if (auto E = Link(Ldr + LdrMemoryList, ModuleMemoryLink, Order))
     return E;
-  if (auto E = Link(Ldr + LdrInitList, ModuleInitLink,
-                    Program.LoaderInitializationOrder))
+  // Native FreeLibrary removes this membership before detach callbacks, while
+  // the image remains mapped and visible through the other lists and lookup.
+  std::vector<size_t> InitOrder;
+  for (size_t I : Program.LoaderInitializationOrder)
+    if (Program.Modules[I].State != ModuleState::Detaching)
+      InitOrder.push_back(I);
+  if (auto E = Link(Ldr + LdrInitList, ModuleInitLink, InitOrder))
     return E;
   return snapshotEnvironment(Memory, Env);
 }
