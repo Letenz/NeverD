@@ -213,6 +213,25 @@ TEST_P(WindowsEnvironment, ValidatesUpdatesBeforePublishingGuestBytes) {
   EXPECT_EQ(llvm::cantFail(Space->readInteger(
                 win::value::TEB + win::value::TebLastError, sizeof(uint32_t))),
             win::value::ErrorNotEnoughMemory);
+  Options.MemoryLimit = process_defaults::Memory;
+  Store(Name, DirectName);
+  EXPECT_EQ(
+      llvm::cantFail(Call(win::API::SetEnvironmentVariableW, {Name, 0})).Value,
+      1u);
+  Store(Name, Initial);
+  EXPECT_EQ(
+      llvm::cantFail(Call(win::API::SetEnvironmentVariableW, {Name, 0})).Value,
+      1u);
+  Snapshot = llvm::cantFail(Call(win::API::GetEnvironmentStringsW, {}));
+  ASSERT_TRUE(Snapshot.Value && *Snapshot.Value);
+  EXPECT_EQ(
+      llvm::cantFail(Space->readInteger(*Snapshot.Value, sizeof(uint32_t))),
+      0u);
+  EXPECT_EQ(
+      llvm::cantFail(Call(win::API::FreeEnvironmentStringsW, {*Snapshot.Value}))
+          .Value,
+      1u);
+  EXPECT_EQ(Space->mappedBytes(), Mapped);
 }
 INSTANTIATE_TEST_SUITE_P(Backends, WindowsEnvironment,
                          testing::ValuesIn(Profiles),

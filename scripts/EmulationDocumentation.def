@@ -459,3 +459,23 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsModules, "GetProcAddress")
 NEVERD_EMULATION_DOC_TOKEN(WindowsModules, "DllMain")
 NEVERD_EMULATION_DOC_TOKEN(WindowsModules, "SizeOfZeroFill")
 #endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsEnvironment, "README.md")
+NEVERD_EMULATION_DOC_PATH(WindowsEnvironment, "docs/{locale}/project.md")
+NEVERD_EMULATION_DOC_PATH(WindowsEnvironment, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsEnvironment, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsEnvironment, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsEnvironment, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsEnvironment, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsEnvironment,
+                          "docs/{locale}/process-emulation.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsEnvironment, "GetEnvironmentVariableW")
+NEVERD_EMULATION_DOC_TOKEN(WindowsEnvironment, "SetEnvironmentVariableW")
+NEVERD_EMULATION_DOC_TOKEN(WindowsEnvironment, "GetEnvironmentStringsW")
+NEVERD_EMULATION_DOC_TOKEN(WindowsEnvironment, "FreeEnvironmentStringsW")
+NEVERD_EMULATION_DOC_TOKEN(WindowsEnvironment, "ExpandEnvironmentStringsW")
+NEVERD_EMULATION_DOC_TOKEN(WindowsEnvironment, "WindowsEnvironmentTests.cpp")
+#endif
