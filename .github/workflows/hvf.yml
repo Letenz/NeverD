@@ -70,7 +70,7 @@ jobs:
           failed = False
           for variant in ("baseline", "unshifted", "apic-address", "apic-access",
                           "cr8-exits", "accelerated-apic", "accelerated-register",
-                          "xsave", "legacy"):
+                          "xsave", "legacy", "guest-write"):
               log = pathlib.Path(f"build-hvf-probe/cr8-{variant}.log")
               with log.open("w") as output:
                   try:

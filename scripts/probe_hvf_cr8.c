@@ -29,8 +29,15 @@ static int control(hv_vcpuid_t CPU, uint32_t Field, uint64_t Required) {
          (unsigned long long)Required);
   if (Required & ~May)
     return 1;
-  return report("VMCS control",
-                hv_vmx_vcpu_write_vmcs(CPU, Field, Must | Required));
+  if (report("VMCS control",
+             hv_vmx_vcpu_write_vmcs(CPU, Field, Must | Required)))
+    return 1;
+  uint64_t Actual = 0;
+  if (report("VMCS control readback",
+             hv_vmx_vcpu_read_vmcs(CPU, Field, &Actual)))
+    return 1;
+  printf("VMCS readback 0x%x=0x%llx\n", Field, (unsigned long long)Actual);
+  return 0;
 }
 static int execute(hv_vcpuid_t CPU, void **Backing) {
   if (report("bind kernel GS",
@@ -49,6 +56,8 @@ static int execute(hv_vcpuid_t CPU, void **Backing) {
   // Original MOV RAX,CR8; HLT. Both exits must preserve the real read result.
   const unsigned char Program[] = {0x44, 0x0f, 0x20, 0xc0, 0xf4};
   memcpy(RAM + 0x4000, Program, sizeof(Program));
+  const unsigned char WriteCR8[] = {0x44, 0x0f, 0x22, 0xc3};
+  memcpy(RAM + 0x4100, WriteCR8, sizeof(WriteCR8));
   if (report("map",
              hv_vm_map(RAM, 0, Bytes,
                        HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC)))
@@ -123,9 +132,37 @@ static int execute(hv_vcpuid_t CPU, void **Backing) {
       return 1;
   }
   const unsigned Levels[] = {0, 1, 3, 15};
+  int Mismatch = 0;
   for (unsigned L = 0; L < sizeof(Levels) / sizeof(Levels[0]); ++L) {
     for (unsigned Step = 0; Step < 2; ++Step) {
       printf("variant=%s CR8=%u step=%u\n", Variant, Levels[L], Step);
+      if (variant("guest-write")) {
+        if (control(CPU, VMCS_CTRL_CPU_BASED, Primary | CPU_BASED_MTF) ||
+            report("write CR8 RIP",
+                   hv_vcpu_write_register(CPU, HV_X86_RIP, 0x4100)) ||
+            report("write CR8 RBX",
+                   hv_vcpu_write_register(CPU, HV_X86_RBX, Levels[L])) ||
+            report("write CR8 flags",
+                   hv_vcpu_write_register(CPU, HV_X86_RFLAGS, 2)))
+          return 1;
+        for (unsigned Attempt = 0; Attempt < 32; ++Attempt) {
+          uint64_t Reason = 0, TPR = 0;
+          if (report("guest write CR8 run",
+                     hv_vcpu_run_until(CPU, HV_DEADLINE_FOREVER)) ||
+              report(
+                  "guest write CR8 reason",
+                  hv_vmx_vcpu_read_vmcs(CPU, VMCS_RO_EXIT_REASON, &Reason)) ||
+              report("guest write CR8 TPR",
+                     hv_vcpu_read_register(CPU, HV_X86_TPR, &TPR)))
+            return 1;
+          printf("guest write CR8 level=%u reason=%llu tpr=0x%llx\n", Levels[L],
+                 (unsigned long long)Reason, (unsigned long long)TPR);
+          if (Reason == VMX_REASON_MTF)
+            break;
+          if (Reason != VMX_REASON_IRQ || Attempt == 31)
+            return 1;
+        }
+      }
       if (control(CPU, VMCS_CTRL_CPU_BASED,
                   Primary | (Step ? CPU_BASED_MTF : 0)) ||
           report("RIP", hv_vcpu_write_register(CPU, HV_X86_RIP, 0x4000)) ||
@@ -142,7 +179,8 @@ static int execute(hv_vcpuid_t CPU, void **Backing) {
           printf("APIC no_side_effect=%u\n", NoSideEffect);
         } else
           return 1;
-      } else if (report("TPR write",
+      } else if (!variant("guest-write") &&
+                 report("TPR write",
                         hv_vcpu_write_register(
                             CPU, HV_X86_TPR,
                             variant("unshifted") ? Levels[L] : Levels[L] << 4)))
@@ -168,16 +206,17 @@ static int execute(hv_vcpuid_t CPU, void **Backing) {
           return 1;
         if (Reason == (Step ? VMX_REASON_MTF : VMX_REASON_HLT)) {
           if (RAX != Levels[L])
-            return 1;
+            Mismatch = 1;
           break;
         }
-        if (!variant("legacy") || Attempt == 31 ||
-            (Reason != VMX_REASON_EPT_VIOLATION && Reason != VMX_REASON_IRQ))
+        if (Attempt == 31 ||
+            (Reason != VMX_REASON_IRQ &&
+             !(variant("legacy") && Reason == VMX_REASON_EPT_VIOLATION)))
           return 1;
       }
     }
   }
-  return 0;
+  return Mismatch;
 }
 int main(int Argc, char **Argv) {
   if (Argc != 2)
