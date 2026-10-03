@@ -129,10 +129,11 @@ full process/LLVM dependency build. `validation=transport` stops after this
 diagnostic profile; `full` remains the default and also requires both complete
 gates. The transport profile reuses the full inventory's HVF requirements and
 records `hvf_transport_only=true`; it is not full CPU/process acceptance.
-On Intel, the workflow additionally runs `NeverDX64ExceptionTests` before the
-large dependency build, including the CR8 state regression and processor faults.
+On Intel, the workflow additionally builds `NeverDX64ExceptionTests` and runs
+its CR8 state/privilege regression before the large dependency build. The full
+CPU gate owns the complete state/exception suite, without a duplicate preflight.
 It uploads transport results and the state inventory before execution, then
-preserves the isolated CR8 result before running the complete state suite.
+preserves the isolated CR8 result before the complete CPU gate.
 Artifacts include the run attempt so reruns retain their own evidence.
 Full-inventory compilation has its own step and log. `test_parallel` selects
 four CTest processes by default or one for a serialized comparison, while

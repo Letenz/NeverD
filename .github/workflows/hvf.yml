@@ -166,14 +166,6 @@ jobs:
           name: hvf-cr8-X64-attempt-${{ github.run_attempt }}
           path: build-hvf/state-evidence/cr8.*
           if-no-files-found: warn
-      - name: Require the complete Intel state and exception suite
-        if: matrix.arch == 'X64' && inputs.validation != 'probe'
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --no-tests=error --parallel "$HVF_TEST_PARALLEL" --output-on-failure --output-junit "$PWD/build-hvf/state-evidence/results.xml" --output-log "$PWD/build-hvf/state-evidence/ctest.log"
       - name: Build the complete native CPU inventory
         if: inputs.validation == 'full'
         shell: bash
