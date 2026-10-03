@@ -166,8 +166,6 @@ public:
     return E;
 #include "HvfX64Registers.def"
 #undef NEVERD_HVF_X64_REGISTER
-    if (auto E = set(HV_X86_TPR, State.reg(X64Register::CR8) << 4))
-      return E;
     if (auto E = set(HV_X86_XCR0, x64::fp::FPAndSSE))
       return E;
     if (auto E = encodeX64XsaveState(State, FP))
@@ -176,7 +174,7 @@ public:
       return hvf::error("hv_vcpu_write_fpstate", S);
     if (auto S = hv_vcpu_invalidate_tlb(CPU))
       return hvf::error("hv_vcpu_invalidate_tlb", S);
-    return llvm::Error::success();
+    return set(HV_X86_TPR, State.reg(X64Register::CR8) << 4);
   }
   llvm::Error capture(X64MachineState &State,
                       llvm::MutableArrayRef<uint8_t> FP) {
