@@ -4,6 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_X64_SEH_TEXT
+NEVERD_X64_SEH_TEXT(SecondaryDispatchRequiresRejectedContinuation,
+                    "secondary dispatch requires a rejected filter continuation")
 NEVERD_X64_SEH_TEXT(Prefix, "x64 SEH: ")
 NEVERD_X64_SEH_TEXT(EpiloguePrefix, "x64 SEH epilogue: ")
 NEVERD_X64_SEH_TEXT(ValidatedOperation, "unwind operation was validated")
