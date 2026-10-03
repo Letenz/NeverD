@@ -102,6 +102,9 @@ TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
         SCOPED_TRACE(NoEntry);
         SCOPED_TRACE(File);
         Options.Arguments = {File, C.Argument};
+        Options.Limits.TimeoutMicroseconds =
+            C.Argument[1] == RepeatMode ? ReloadTimeoutMicroseconds
+                                        : process_defaults::TimeoutMicroseconds;
         auto R = emulateProcess(Directory / File, ProcessProfile::WindowsPE64,
                                 Options);
         ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
@@ -225,6 +228,23 @@ TEST_F(WindowsDynamicLink,
   EXPECT_EQ(Reload->Root, Old.Index);
   EXPECT_FALSE(win::current(P, Old));
   EXPECT_NE(win::moduleRef(P, Reload->Root).Generation, Old.Generation);
+  for (auto Ref : Reload->Added)
+    ASSERT_FALSE(bool(win::retireModule(P, Ref, *Virtual)));
+  auto Leaf = win::linkModule(P, LeafFile, *Virtual, *Budget);
+  ASSERT_TRUE(bool(Leaf)) << llvm::toString(Leaf.takeError());
+  const auto LeafRef = win::moduleRef(P, Leaf->Root);
+  for (auto State :
+       {win::ModuleState::Initializing, win::ModuleState::Detaching}) {
+    P.Modules[LeafRef.Index].State = State;
+    auto Reentrant = win::linkModule(P, MiddleFile, *Virtual, *Budget);
+    ASSERT_FALSE(bool(Reentrant));
+    EXPECT_NE(
+        llvm::toString(Reentrant.takeError()).find(win::text::LoaderReentrant),
+        std::string::npos);
+    EXPECT_TRUE(win::current(P, LeafRef));
+    EXPECT_EQ(P.Modules[LeafRef.Index].State, State);
+    EXPECT_FALSE(win::findModule(P, MiddleFile));
+  }
 }
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, WindowsDynamic,
                          testing::ValuesIn(Profiles),

@@ -183,6 +183,9 @@ llvm::Expected<Loader::Operation> Loader::start(const LoaderRequest &Request) {
       Target = Linked->Root;
     }
     auto Ref = moduleRef(P, *Target);
+    if (P.Modules[*Target].State != ModuleState::Ready &&
+        !llvm::is_contained(Out.Created, Ref))
+      return failure(text::LoaderReentrant);
     if (Owner != *Target &&
         !llvm::is_contained(P.Modules[Owner].Dependencies, Ref)) {
       P.Modules[Owner].Dependencies.push_back(Ref);

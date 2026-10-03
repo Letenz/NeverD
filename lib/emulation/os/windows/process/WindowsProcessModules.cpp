@@ -100,6 +100,9 @@ private:
     if (auto I = findModule(P, Name)) {
       if (Loading.contains(*I))
         return failure(text::ModuleCycle + Name);
+      if (P.Modules[*I].State != ModuleState::Ready &&
+          !llvm::is_contained(Change.Added, moduleRef(P, *I)))
+        return failure(text::LoaderReentrant);
       return *I;
     }
     const bool DLL = Main == nullptr;

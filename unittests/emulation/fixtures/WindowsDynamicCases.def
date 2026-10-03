@@ -308,6 +308,7 @@ NEVERD_DYNAMIC_EXPECTED(
 #ifdef NEVERD_DYNAMIC_VALUE
 NEVERD_DYNAMIC_VALUE(ImmediateMissingMode, 'S')
 NEVERD_DYNAMIC_VALUE(NativeReturnRepetitions, 16)
+NEVERD_DYNAMIC_VALUE(ReloadTimeoutMicroseconds, 20000000)
 #endif
 #ifdef NEVERD_DYNAMIC_TEXT
 NEVERD_DYNAMIC_TEXT(MissingModuleName, "MissingModule")
