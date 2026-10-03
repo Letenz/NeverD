@@ -1,0 +1,156 @@
+//===- X64SEHDiagnostics.def - Shared exception diagnostics ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_X64_SEH_TEXT
+NEVERD_X64_SEH_TEXT(Prefix, "x64 SEH: ")
+NEVERD_X64_SEH_TEXT(EpiloguePrefix, "x64 SEH epilogue: ")
+NEVERD_X64_SEH_TEXT(ValidatedOperation, "unwind operation was validated")
+NEVERD_X64_SEH_TEXT(CannotInitializeInstructionDecoder,
+                    "cannot initialize instruction decoder")
+NEVERD_X64_SEH_TEXT(CannotEnableInstructionDetails,
+                    "cannot enable instruction details")
+NEVERD_X64_SEH_TEXT(CannotAllocateInstructionDetails,
+                    "cannot allocate instruction details")
+NEVERD_X64_SEH_TEXT(RestoreExceedsTheCurrentExecutionStack,
+                    "restore exceeds the current execution stack")
+NEVERD_X64_SEH_TEXT(StackAdjustmentOverflows, "stack adjustment overflows")
+NEVERD_X64_SEH_TEXT(StackAdjustmentExceedsTheCurrentExecutionStack,
+                    "stack adjustment exceeds the current execution stack")
+NEVERD_X64_SEH_TEXT(NullReturnAddress, "null return address")
+NEVERD_X64_SEH_TEXT(EncounteredIncompleteExceptionMetadata,
+                    "encountered incomplete exception metadata")
+NEVERD_X64_SEH_TEXT(OnlyX64V1UnwindRecordsAreSupported,
+                    "only x64 V1 unwind records are supported")
+NEVERD_X64_SEH_TEXT(InconsistentChainedUnwindRecord,
+                    "inconsistent chained unwind record")
+NEVERD_X64_SEH_TEXT(UnsupportedUnwindFlags, "unsupported unwind flags")
+NEVERD_X64_SEH_TEXT(EncounteredUnsupportedLanguagePersonality,
+                    "encountered unsupported language personality")
+NEVERD_X64_SEH_TEXT(InconsistentCExceptionHandlerMetadata,
+                    "inconsistent C exception-handler metadata")
+NEVERD_X64_SEH_TEXT(InconsistentGsCookieMetadata,
+                    "inconsistent GS cookie metadata")
+NEVERD_X64_SEH_TEXT(InvalidFrameRegister, "invalid frame register")
+NEVERD_X64_SEH_TEXT(InvalidFrameRegisterOffset, "invalid frame-register offset")
+NEVERD_X64_SEH_TEXT(UnwindOperationLimitExceeded,
+                    "unwind operation limit exceeded")
+NEVERD_X64_SEH_TEXT(InvalidUnwindOperationOrder,
+                    "invalid unwind operation order")
+NEVERD_X64_SEH_TEXT(ChainedUnwindChangesThePrimaryStackAllocation,
+                    "chained unwind changes the primary stack allocation")
+NEVERD_X64_SEH_TEXT(InvalidSavedNonvolatileRegister,
+                    "invalid saved nonvolatile register")
+NEVERD_X64_SEH_TEXT(UnalignedNonvolatileSaveOffset,
+                    "unaligned nonvolatile save offset")
+NEVERD_X64_SEH_TEXT(InvalidSmallStackAllocation,
+                    "invalid small stack allocation")
+NEVERD_X64_SEH_TEXT(InvalidStackAllocation, "invalid stack allocation")
+NEVERD_X64_SEH_TEXT(InvalidFramePointerOperation,
+                    "invalid frame-pointer operation")
+NEVERD_X64_SEH_TEXT(InvalidSavedNonvolatileXmmRegister,
+                    "invalid saved nonvolatile XMM register")
+NEVERD_X64_SEH_TEXT(UnalignedXmmSaveOffset, "unaligned XMM save offset")
+NEVERD_X64_SEH_TEXT(EncounteredUnsupportedUnwindOperation,
+                    "encountered unsupported unwind operation")
+NEVERD_X64_SEH_TEXT(FrameRegisterHasNoEstablishingOperation,
+                    "frame register has no establishing operation")
+NEVERD_X64_SEH_TEXT(InvalidExceptionImageCount, "invalid exception image count")
+NEVERD_X64_SEH_TEXT(InvalidExceptionImageBounds,
+                    "invalid exception image bounds")
+NEVERD_X64_SEH_TEXT(OverlappingExceptionImages, "overlapping exception images")
+NEVERD_X64_SEH_TEXT(NestedDispatchRequiresAnActiveSehCallback,
+                    "nested dispatch requires an active SEH callback")
+NEVERD_X64_SEH_TEXT(NestedExceptionPathLimitExceeded,
+                    "nested exception path limit exceeded")
+NEVERD_X64_SEH_TEXT(FilterOrFinallyRequiresAGuestCallbackContinuation,
+                    "filter or finally requires a guest callback continuation")
+NEVERD_X64_SEH_TEXT(ExceptionDispatchAlreadyCompleted,
+                    "exception dispatch already completed")
+NEVERD_X64_SEH_TEXT(InvalidImageStackOrMemoryContract,
+                    "invalid image, stack or memory contract")
+NEVERD_X64_SEH_TEXT(InvalidExceptionFrameStackPointer,
+                    "invalid exception frame stack pointer")
+NEVERD_X64_SEH_TEXT(RuntimeFunctionLimitExceeded,
+                    "runtime-function limit exceeded")
+NEVERD_X64_SEH_TEXT(IncompleteExceptionDirectoryMetadata,
+                    "incomplete exception directory metadata")
+NEVERD_X64_SEH_TEXT(UnwindReadExceedsTheCurrentExecutionStack,
+                    "unwind read exceeds the current execution stack")
+NEVERD_X64_SEH_TEXT(ExceptionTargetLiesOutsideItsImage,
+                    "exception target lies outside its image")
+NEVERD_X64_SEH_TEXT(ExceptionTargetIsNotExecutable,
+                    "exception target is not executable")
+NEVERD_X64_SEH_TEXT(ChainedUnwindRecordLimitExceeded,
+                    "chained unwind record limit exceeded")
+NEVERD_X64_SEH_TEXT(CyclicChainedUnwindRecords, "cyclic chained unwind records")
+NEVERD_X64_SEH_TEXT(RuntimeFunctionLiesOutsideItsImage,
+                    "runtime function lies outside its image")
+NEVERD_X64_SEH_TEXT(ChainedPrimaryIndexIsOutOfRange,
+                    "chained primary index is out of range")
+NEVERD_X64_SEH_TEXT(ChainedPrimaryDoesNotMatchItsDirectoryRecord,
+                    "chained primary does not match its directory record")
+NEVERD_X64_SEH_TEXT(ChainedUnwindHasADifferentFrameRegister,
+                    "chained unwind has a different frame register")
+NEVERD_X64_SEH_TEXT(ExceptionCleanupLimitExceeded,
+                    "exception cleanup limit exceeded")
+NEVERD_X64_SEH_TEXT(InvalidFinallyScope, "invalid finally scope")
+NEVERD_X64_SEH_TEXT(PendingFilterRequiresItsGuestReturnValue,
+                    "pending filter requires its guest return value")
+NEVERD_X64_SEH_TEXT(FilterResultHasNoPendingFilter,
+                    "filter result has no pending filter")
+NEVERD_X64_SEH_TEXT(ExceptionFrameLimitExceeded,
+                    "exception frame limit exceeded")
+NEVERD_X64_SEH_TEXT(CyclicExceptionFrameChain, "cyclic exception frame chain")
+NEVERD_X64_SEH_TEXT(ExceptionControlAddressIsNotExecutable,
+                    "exception control address is not executable")
+NEVERD_X64_SEH_TEXT(AmbiguousOverlappingRuntimeFunctions,
+                    "ambiguous overlapping runtime functions")
+NEVERD_X64_SEH_TEXT(IncompleteExceptionDirectoryCannotEstablishALeaf,
+                    "incomplete exception directory cannot establish a leaf")
+NEVERD_X64_SEH_TEXT(FrameRegisterOffsetUnderflows,
+                    "frame-register offset underflows")
+NEVERD_X64_SEH_TEXT(EstablisherFrameExceedsTheCurrentStack,
+                    "establisher frame exceeds the current stack")
+NEVERD_X64_SEH_TEXT(SehScopeLimitExceeded, "SEH scope limit exceeded")
+NEVERD_X64_SEH_TEXT(CollidedUnwindHasAnInvalidScopeCursor,
+                    "collided unwind has an invalid scope cursor")
+NEVERD_X64_SEH_TEXT(EncounteredIncompleteSehScope,
+                    "encountered incomplete SEH scope")
+NEVERD_X64_SEH_TEXT(EncounteredUnsupportedSehScope,
+                    "encountered unsupported SEH scope")
+NEVERD_X64_SEH_TEXT(InvalidExceptionHandlerContinuation,
+                    "invalid exception handler continuation")
+NEVERD_X64_SEH_TEXT(CatchAllScopeHasAnUnexpectedFilter,
+                    "catch-all scope has an unexpected filter")
+NEVERD_X64_SEH_TEXT(UnwindAllocationExceedsTheCurrentStack,
+                    "unwind allocation exceeds the current stack")
+NEVERD_X64_SEH_TEXT(SavedRegisterAddressOverflows,
+                    "saved-register address overflows")
+NEVERD_X64_SEH_TEXT(SavedXmmAddressOverflows, "saved XMM address overflows")
+NEVERD_X64_SEH_TEXT(XmmUnwindReadExceedsTheCurrentExecutionStack,
+                    "XMM unwind read exceeds the current execution stack")
+NEVERD_X64_SEH_TEXT(NullUnwindReturnAddress, "null unwind return address")
+NEVERD_X64_SEH_TEXT(UnwindDidNotAdvanceTheStack,
+                    "unwind did not advance the stack")
+NEVERD_X64_SEH_TEXT(InvalidExceptionRecordStorageOrParameterCount,
+                    "invalid exception record storage or parameter count")
+NEVERD_X64_SEH_TEXT(InvalidExceptionRecordSize, "invalid exception record size")
+NEVERD_X64_SEH_TEXT(ContinuationChangesUnsupportedControlFlags,
+                    "continuation changes unsupported control flags")
+NEVERD_X64_SEH_TEXT(ContinuationChangesUnsupportedExceptionContextFields,
+                    "continuation changes unsupported exception context fields")
+NEVERD_X64_SEH_TEXT(ContinuationStackPointerExceedsItsExecutionStack,
+                    "continuation stack pointer exceeds its execution stack")
+NEVERD_X64_SEH_TEXT(ContinuationDoesNotNameExecutableImageCode,
+                    "continuation does not name executable image code")
+NEVERD_X64_SEH_TEXT(GsFrameOffsetUnderflows, "GS frame offset underflows")
+NEVERD_X64_SEH_TEXT(GsFrameOffsetOverflows, "GS frame offset overflows")
+NEVERD_X64_SEH_TEXT(GsCheckRequiresTheImageSecurityCookie,
+                    "GS check requires the image security cookie")
+NEVERD_X64_SEH_TEXT(GsCookieExceedsTheCurrentExecutionStack,
+                    "GS cookie exceeds the current execution stack")
+NEVERD_X64_SEH_TEXT(GsSecurityCookieCheckFailed,
+                    "GS security cookie check failed")
+#endif

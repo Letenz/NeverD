@@ -98,7 +98,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (auto E = Backend->CPU->writeRegister(
           X64 ? CPURegister::X64GSBase : CPURegister::AArch64X18, {TEB, 0}))
     return std::move(E);
-  VectoredExceptions Exceptions(*Backend->CPU, *ABI, StackBase);
+  ExceptionDispatcher Exceptions(*Backend->CPU, *ABI, StackBase, &*Program,
+                                 Resources.get());
   auto Session = ExecutionSession::create(
       std::move(Backend->CPU), Resources,
       [&](const BackendFault &Fault) { return Exceptions.accepts(Fault); });
@@ -268,7 +269,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Failed(SP.takeError());
         break;
       }
-      auto Transfer = Exceptions.begin(VectoredExceptions::exception(*Raised),
+      auto Transfer = Exceptions.begin(ExceptionDispatcher::exception(*Raised),
                                        (*SP)[0], Pending.size());
       if (!Transfer) {
         Failed(Transfer.takeError());

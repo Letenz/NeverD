@@ -236,7 +236,7 @@ TEST_P(WindowsExceptions, ContextValidationPreservesStoppedCPUAndMemory) {
   }
   EXPECT_EQ(llvm::cantFail(CPU.readInteger(StackBase, sizeof(uint64_t))),
             VectorHigh);
-  EXPECT_FALSE(win::VectoredExceptions::recoverable(
+  EXPECT_FALSE(win::ExceptionDispatcher::recoverable(
       GetParam().ISA,
       {BackendFaultKind::InvalidInstruction, win::value::GateBase}));
 }

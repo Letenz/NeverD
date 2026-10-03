@@ -19,9 +19,9 @@
 #include "KernelException.h"
 #include "KernelExportRegistry.h"
 #include "KernelModel.h"
-#include "KernelSEH.h"
 #include "WindowsKernelLayout.h"
 #include "WindowsX64ExecutionPolicy.h"
+#include "exception/X64SEH.h"
 
 #include "neverd/emulation/CPU.h"
 #include "neverd/emulation/ExecutionBudget.h"
@@ -157,7 +157,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   KernelModel Kernel(CPU, Result, &Exports);
   if (auto E = Kernel.initialize(*Image, Options))
     return std::move(E);
-  KernelSEH Exceptions(
+  X64SEH Exceptions(
       Image->Exceptions, Image->PreferredBase, Image->Base, Image->Size,
       [&](uint64_t Address) -> llvm::Expected<uint64_t> {
         if (auto E = Kernel.validateGuestAccess(Address, PointerSize, false))
@@ -441,9 +441,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
          llvm::toString(std::move(E)));
   };
   struct ExceptionExecution {
-    KernelSEH::Dispatch Dispatch;
-    KernelSEH::Exception Raised;
-    KernelSEH::Action Next;
+    X64SEH::Dispatch Dispatch;
+    X64SEH::Exception Raised;
+    X64SEH::Action Next;
     std::unique_ptr<BackendContext> Original;
     bool CanContinue = false;
   };
@@ -471,7 +471,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     std::optional<KernelGuestCall> ChildCall;
     bool ThreadTerminated = false;
     std::unique_ptr<ExceptionExecution> Exception;
-    std::optional<KernelSEH::ActionKind> ExceptionCallback;
+    std::optional<X64SEH::ActionKind> ExceptionCallback;
     std::unique_ptr<Execution> Parent;
   };
   std::vector<std::unique_ptr<Execution>> Waiting;
@@ -526,9 +526,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       return std::move(E);
     return Frame;
   };
-  auto CaptureRegisters =
-      [&](uint64_t PC) -> llvm::Expected<KernelSEH::Context> {
-    KernelSEH::Context Registers;
+  auto CaptureRegisters = [&](uint64_t PC) -> llvm::Expected<X64SEH::Context> {
+    X64SEH::Context Registers;
     static_assert(unsigned(X64Register::AX) == 0 &&
                   unsigned(X64Register::SP) == 4 &&
                   unsigned(X64Register::R15) + 1 == seh::RegisterCount);
@@ -559,8 +558,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     Registers.PC = PC;
     return Registers;
   };
-  auto ApplyRegisters =
-      [&](const KernelSEH::Context &Registers) -> llvm::Error {
+  auto ApplyRegisters = [&](const X64SEH::Context &Registers) -> llvm::Error {
     for (size_t I = 0; I < Registers.GPR.size(); ++I)
       if (auto E = CPU.setReg(static_cast<X64Register>(I), Registers.GPR[I]))
         return E;
@@ -570,7 +568,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     return CPU.setReg(X64Register::FLAGS, Registers.Flags);
   };
   auto BeginException =
-      [&](Execution &Frame, KernelSEH::Exception Raised, uint64_t ControlPC,
+      [&](Execution &Frame, X64SEH::Exception Raised, uint64_t ControlPC,
           bool CanContinue) -> llvm::Expected<std::optional<uint64_t>> {
     size_t NestedDepth = 0;
     for (const Execution *Ancestor = &Frame; Ancestor;
@@ -604,10 +602,10 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     auto Next = Exceptions.advance(State->Dispatch);
     if (!Next)
       return Next.takeError();
-    if (Next->Kind == KernelSEH::ActionKind::Unhandled)
+    if (Next->Kind == X64SEH::ActionKind::Unhandled)
       return failure("unhandled guest exception 0x" +
                      llvm::utohexstr(Raised.Code));
-    if (Next->Kind == KernelSEH::ActionKind::Handler &&
+    if (Next->Kind == X64SEH::ActionKind::Handler &&
         Next->Bounds.Base == Frame.Base) {
       if (auto E = ApplyRegisters(Next->State.Registers))
         return std::move(E);
@@ -752,7 +750,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         auto Registers = CaptureRegisters(Fault->PC);
         if (!Registers)
           return Registers.takeError();
-        KernelSEH::Exception Raised{
+        X64SEH::Exception Raised{
             *Registers,
             Status.value_or(exceptions::StatusAccessViolation),
             0,
@@ -931,8 +929,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           if (!Registers)
             return Registers.takeError();
           Registers->GPR[seh::StackRegister] = *SP + PointerSize;
-          KernelSEH::Exception Raised{
-              *Registers, *RaisedCode, 0, *ReturnPC, {}};
+          X64SEH::Exception Raised{*Registers, *RaisedCode, 0, *ReturnPC, {}};
           auto Resume =
               BeginException(Frame, std::move(Raised), *ReturnPC - 1, false);
           if (!Resume)
@@ -1042,7 +1039,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       }
       return llvm::Error::success();
     };
-    auto CommitException = [&](KernelSEH::Context Registers,
+    auto CommitException = [&](X64SEH::Context Registers,
                                const BackendContext &Original,
                                uint64_t DestinationBase) -> llvm::Error {
       const Execution *Destination = Current.get();
@@ -1099,7 +1096,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       if (auto E = CPU.setReg(X64Register::SP, Child.InitialSP))
         return E;
       if (auto E = CPU.setReg(X64Register::CX,
-                              State.Next.Kind == KernelSEH::ActionKind::Filter
+                              State.Next.Kind == X64SEH::ActionKind::Filter
                                   ? Storage + seh::ExceptionPointersOffset
                                   : 1))
         return E;
@@ -1128,7 +1125,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           }
         if (Current->Exception) {
           auto &State = *Current->Exception;
-          if (State.Next.Kind == KernelSEH::ActionKind::Handler) {
+          if (State.Next.Kind == X64SEH::ActionKind::Handler) {
             if (auto E =
                     CommitException(State.Next.State.Registers, *State.Original,
                                     State.Next.Bounds.Base)) {
@@ -1149,7 +1146,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             ModelFailure(std::move(E));
             return llvm::Error::success();
           }
-          auto Records = KernelSEH::encodeRecords(
+          auto Records = X64SEH::encodeRecords(
               State.Raised, (*Child)->Base + (*Child)->Size - seh::RecordsSize);
           if (!Records) {
             ModelFailure(Records.takeError());
@@ -1231,8 +1228,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             const uint64_t Storage =
                 Current->Base + Current->Size - seh::RecordsSize;
             std::vector<uint8_t> Records;
-            auto Advance = [&]() -> llvm::Expected<KernelSEH::Action> {
-              if (*Current->ExceptionCallback != KernelSEH::ActionKind::Filter)
+            auto Advance = [&]() -> llvm::Expected<X64SEH::Action> {
+              if (*Current->ExceptionCallback != X64SEH::ActionKind::Filter)
                 return Exceptions.advance(State.Dispatch);
               Records.resize(seh::RecordsSize);
               if (auto E = CPU.read(Storage, Records))
@@ -1247,21 +1244,21 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
               return llvm::Error::success();
             }
             State.Next = *Next;
-            if (Next->Kind == KernelSEH::ActionKind::Filter ||
-                Next->Kind == KernelSEH::ActionKind::Finally) {
+            if (Next->Kind == X64SEH::ActionKind::Filter ||
+                Next->Kind == X64SEH::ActionKind::Finally) {
               if (auto E = PrepareExceptionCallback(*Current, Parent)) {
                 ModelFailure(std::move(E));
                 return llvm::Error::success();
               }
               continue;
             }
-            if (Next->Kind == KernelSEH::ActionKind::Unhandled) {
+            if (Next->Kind == X64SEH::ActionKind::Unhandled) {
               ModelFailure(failure("unhandled guest exception 0x" +
                                    llvm::utohexstr(State.Raised.Code)));
               return llvm::Error::success();
             }
             auto Registers = Next->State.Registers;
-            if (Next->Kind == KernelSEH::ActionKind::ContinueExecution) {
+            if (Next->Kind == X64SEH::ActionKind::ContinueExecution) {
               if (!State.CanContinue) {
                 ModelFailure(failure("continuing a modeled API exception is "
                                      "unsupported"));
@@ -1276,7 +1273,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
               Registers = *Restored;
             }
             const uint64_t DestinationBase =
-                Next->Kind == KernelSEH::ActionKind::ContinueExecution
+                Next->Kind == X64SEH::ActionKind::ContinueExecution
                     ? Parent.Base
                     : Next->Bounds.Base;
             if (auto E = CommitException(Registers, *State.Original,

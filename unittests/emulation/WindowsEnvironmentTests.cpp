@@ -155,7 +155,7 @@ TEST_P(WindowsEnvironment, ValidatesUpdatesBeforePublishingGuestBytes) {
                         : ExecutionContract::CheckedUserAArch64;
   auto Backend = llvm::cantFail(createExecutionBackend(Config, Space));
   ProcessResult Result{};
-  win::VectoredExceptions Exceptions(
+  win::ExceptionDispatcher Exceptions(
       *Backend.CPU,
       llvm::cantFail(IntegerABI::get(P.ISA == GuestArchitecture::X64
                                          ? IntegerCallingConvention::Win64

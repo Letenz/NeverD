@@ -1,4 +1,4 @@
-//===- KernelSEHValues.def - Bounded x64 SEH execution values -------------===//
+//===- X64SEHValues.def - Bounded x64 SEH execution values -------------===//
 //
 // NeverD Decompiler
 //
@@ -58,3 +58,7 @@ NEVERD_SEH_VALUE(XmmSize, 16)
 
 NEVERD_SEH_VALUE(MaxEpilogueBytes, 64)
 NEVERD_SEH_VALUE(ModRMModeMask, 0xC0)
+
+#ifdef NEVERD_SEH_VALUE
+NEVERD_SEH_VALUE(MaxImages, 256)
+#endif

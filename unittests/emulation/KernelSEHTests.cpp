@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/KernelSEH.h"
+#include "os/windows/exception/X64SEH.h"
 
 #include <algorithm>
 #include <map>
@@ -23,6 +23,11 @@ using namespace neverd;
 using namespace neverd::emulation;
 
 namespace {
+namespace image_case {
+#define NEVERD_SEH_IMAGE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#include "X64SEHImageCases.def"
+#undef NEVERD_SEH_IMAGE_VALUE
+} // namespace image_case
 namespace continuation {
 #define NEVERD_SEH_CONTINUATION_VALUE(Name, Value)                             \
   constexpr uint64_t Name = Value;
@@ -88,7 +93,7 @@ protected:
   static constexpr uint64_t StackSize = 4096;
   static constexpr uint32_t Code = 0xC000009A;
   ExceptionInfo Metadata;
-  KernelSEH::Context Caller;
+  X64SEH::Context Caller;
   std::map<uint64_t, uint64_t> Words;
   std::vector<uint64_t> Reads;
   std::map<uint64_t, std::vector<uint8_t>> Instructions;
@@ -162,8 +167,8 @@ protected:
     S.HandlerVA = S.ContinuationVA = Base + Handler;
     return S;
   }
-  KernelSEH planner() {
-    return KernelSEH(
+  X64SEH planner() {
+    return X64SEH(
         Metadata, Base, ActualBase, ImageSize,
         [&](uint64_t Address) -> llvm::Expected<uint64_t> {
           Reads.push_back(Address);
@@ -190,10 +195,10 @@ protected:
           return SecurityCookie;
         });
   }
-  llvm::Expected<std::optional<KernelSEH::Transfer>> plan() {
+  llvm::Expected<std::optional<X64SEH::Transfer>> plan() {
     return planner().plan(Code, Caller, {StackBase, StackSize});
   }
-  KernelSEH::Transfer selected() {
+  X64SEH::Transfer selected() {
     auto P = plan();
     EXPECT_TRUE(bool(P)) << (P ? "" : llvm::toString(P.takeError()));
     if (!P || !*P) {
@@ -255,7 +260,7 @@ TEST_F(DriverKernelSEH, StandaloneGSUnwindOnlyChecksAfterOuterFilterSelection) {
   auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
   auto Filter = Planner.advance(State);
   ASSERT_TRUE(bool(Filter)) << llvm::toString(Filter.takeError());
-  EXPECT_EQ(Filter->Kind, KernelSEH::ActionKind::Filter);
+  EXPECT_EQ(Filter->Kind, X64SEH::ActionKind::Filter);
   EXPECT_EQ(CookieReads, 0u);
   Words[SP + 32] ^= 1;
   auto Corrupt = Planner.advance(State, 1);
@@ -265,7 +270,7 @@ TEST_F(DriverKernelSEH, StandaloneGSUnwindOnlyChecksAfterOuterFilterSelection) {
   Words[SP + 32] ^= 1;
   auto Handler = Planner.advance(State, 1);
   ASSERT_TRUE(bool(Handler)) << llvm::toString(Handler.takeError());
-  EXPECT_EQ(Handler->Kind, KernelSEH::ActionKind::Handler);
+  EXPECT_EQ(Handler->Kind, X64SEH::ActionKind::Handler);
 }
 
 TEST_F(DriverKernelSEH,
@@ -358,7 +363,7 @@ TEST_F(DriverKernelSEH, GSSignedSlotArithmeticCannotWrapIntoTheStack) {
 
 TEST_F(DriverKernelSEH, GSRequiresAnExplicitImageCookieReader) {
   gsHandler();
-  KernelSEH Planner(
+  X64SEH Planner(
       Metadata, Base, Base, ImageSize,
       [&](uint64_t) -> llvm::Expected<uint64_t> {
         ADD_FAILURE() << "missing cookie authority must fail before reads";
@@ -382,7 +387,7 @@ TEST_F(DriverKernelSEH, GSRechecksMutationByFilterBeforeTransferringControl) {
     auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
     auto Filter = Planner.advance(State);
     ASSERT_TRUE(bool(Filter)) << llvm::toString(Filter.takeError());
-    ASSERT_EQ(Filter->Kind, KernelSEH::ActionKind::Filter);
+    ASSERT_EQ(Filter->Kind, X64SEH::ActionKind::Filter);
     auto &Changed = ChangeImageCookie ? SecurityCookie : Words[Slot];
     Changed ^= 1;
     auto Invalid = Planner.advance(State, 1);
@@ -392,7 +397,7 @@ TEST_F(DriverKernelSEH, GSRechecksMutationByFilterBeforeTransferringControl) {
     Changed ^= 1;
     auto Retried = Planner.advance(State, 1);
     ASSERT_TRUE(bool(Retried)) << llvm::toString(Retried.takeError());
-    EXPECT_EQ(Retried->Kind, KernelSEH::ActionKind::Handler);
+    EXPECT_EQ(Retried->Kind, X64SEH::ActionKind::Handler);
   }
 }
 
@@ -414,7 +419,7 @@ TEST_F(DriverKernelSEH, GSChecksBeforeFinallyAndAgainInEachOuterFrame) {
   auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
   auto Finally = Planner.advance(State);
   ASSERT_TRUE(bool(Finally)) << llvm::toString(Finally.takeError());
-  EXPECT_EQ(Finally->Kind, KernelSEH::ActionKind::Finally);
+  EXPECT_EQ(Finally->Kind, X64SEH::ActionKind::Finally);
   EXPECT_EQ(CookieReads, 3u); // Both search frames, then inner unwind.
   Words[OuterSP + 32] ^= 1;
   auto Invalid = Planner.advance(State);
@@ -424,7 +429,7 @@ TEST_F(DriverKernelSEH, GSChecksBeforeFinallyAndAgainInEachOuterFrame) {
   Words[OuterSP + 32] ^= 1;
   auto Handler = Planner.advance(State);
   ASSERT_TRUE(bool(Handler)) << llvm::toString(Handler.takeError());
-  EXPECT_EQ(Handler->Kind, KernelSEH::ActionKind::Handler);
+  EXPECT_EQ(Handler->Kind, X64SEH::ActionKind::Handler);
 }
 
 TEST_F(DriverKernelSEH, GSLanguageFlagsDoNotDisableTheCookieCheck) {
@@ -686,12 +691,12 @@ TEST_F(DriverKernelSEH, ScopeEndLabelMayOverlapTheHandlerLandingPad) {
       auto Next = Planner.advance(State);
       ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
       if (Kind == SEHScopeKind::Filter) {
-        ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Filter);
+        ASSERT_EQ(Next->Kind, X64SEH::ActionKind::Filter);
         EXPECT_EQ(Next->State.HandlerPC, Load + continuation::FilterRVA);
         Next = Planner.advance(State, 1);
         ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
       }
-      ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Handler);
+      ASSERT_EQ(Next->Kind, X64SEH::ActionKind::Handler);
       EXPECT_EQ(Next->State.HandlerPC, Load + continuation::LandingPadRVA);
       EXPECT_EQ(Next->State.Registers.PC, Next->State.HandlerPC);
       EXPECT_EQ(Next->State.Registers.GPR[seh::StackRegister],
@@ -740,7 +745,7 @@ TEST_F(DriverKernelSEH, OverlappingHandlerRetainsTargetValidationAndCanRetry) {
   DeniedPC = 0;
   auto Retried = Planner.advance(State);
   ASSERT_TRUE(bool(Retried)) << llvm::toString(Retried.takeError());
-  EXPECT_EQ(Retried->Kind, KernelSEH::ActionKind::Handler);
+  EXPECT_EQ(Retried->Kind, X64SEH::ActionKind::Handler);
   EXPECT_EQ(Retried->State.HandlerPC, Valid.HandlerVA);
   EXPECT_TRUE(Reads.empty());
 }
@@ -764,12 +769,12 @@ TEST_F(DriverKernelSEH, FinallyRespectsRawScopeEndAtHandlerTarget) {
     auto Next = Planner.advance(State);
     ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
     if (ShouldRun) {
-      ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Finally);
+      ASSERT_EQ(Next->Kind, X64SEH::ActionKind::Finally);
       EXPECT_EQ(Next->State.HandlerPC, Cleanup.HandlerVA);
       Next = Planner.advance(State);
       ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
     }
-    ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Handler);
+    ASSERT_EQ(Next->Kind, X64SEH::ActionKind::Handler);
     EXPECT_EQ(Next->State.HandlerPC, ActualBase + continuation::LandingPadRVA);
     EXPECT_TRUE(Reads.empty());
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
@@ -822,21 +827,21 @@ TEST_F(DriverKernelSEH, FiltersSearchBeforeAnyFinallyAndRetainNativeOrder) {
   auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
   auto First = Planner.advance(State);
   ASSERT_TRUE(bool(First)) << llvm::toString(First.takeError());
-  EXPECT_EQ(First->Kind, KernelSEH::ActionKind::Filter);
+  EXPECT_EQ(First->Kind, X64SEH::ActionKind::Filter);
   EXPECT_EQ(First->State.HandlerPC, Filter.FilterOrFinallyVA);
   auto MissingResult = Planner.advance(State);
   ASSERT_FALSE(bool(MissingResult));
   llvm::consumeError(MissingResult.takeError());
   auto Second = Planner.advance(State, 0);
   ASSERT_TRUE(bool(Second)) << llvm::toString(Second.takeError());
-  EXPECT_EQ(Second->Kind, KernelSEH::ActionKind::Filter);
+  EXPECT_EQ(Second->Kind, X64SEH::ActionKind::Filter);
   auto Finally = Planner.advance(State, 9);
   ASSERT_TRUE(bool(Finally)) << llvm::toString(Finally.takeError());
-  EXPECT_EQ(Finally->Kind, KernelSEH::ActionKind::Finally);
+  EXPECT_EQ(Finally->Kind, X64SEH::ActionKind::Finally);
   EXPECT_EQ(Finally->State.HandlerPC, Cleanup.HandlerVA);
   auto Handler = Planner.advance(State);
   ASSERT_TRUE(bool(Handler)) << llvm::toString(Handler.takeError());
-  EXPECT_EQ(Handler->Kind, KernelSEH::ActionKind::Handler);
+  EXPECT_EQ(Handler->Kind, X64SEH::ActionKind::Handler);
   EXPECT_EQ(Handler->State.HandlerPC, Filter.ContinuationVA);
   EXPECT_TRUE(Reads.empty());
 }
@@ -851,7 +856,7 @@ TEST_F(DriverKernelSEH, NegativeFilterRestoresOriginalContextWithoutFinally) {
   ASSERT_TRUE(bool(First)) << llvm::toString(First.takeError());
   auto Continued = Planner.advance(State, -9);
   ASSERT_TRUE(bool(Continued)) << llvm::toString(Continued.takeError());
-  EXPECT_EQ(Continued->Kind, KernelSEH::ActionKind::ContinueExecution);
+  EXPECT_EQ(Continued->Kind, X64SEH::ActionKind::ContinueExecution);
   EXPECT_EQ(Continued->State.Registers.GPR, Caller.GPR);
   EXPECT_EQ(Continued->State.Registers.PC, Caller.PC);
 }
@@ -863,7 +868,7 @@ TEST_F(DriverKernelSEH,
   F.SEH->Scopes.front().FilterOrFinallyVA = Base + 0x2000;
   F.SEH->Scopes.push_back(F.SEH->Scopes.front());
   constexpr uint64_t Storage = 0x80000000;
-  KernelSEH::Exception Raised{Caller, Code, 0, Caller.PC, {}};
+  X64SEH::Exception Raised{Caller, Code, 0, Caller.PC, {}};
   auto Planner = planner();
   for (int32_t Disposition : {0, 1}) {
     for (uint64_t Offset :
@@ -873,8 +878,8 @@ TEST_F(DriverKernelSEH,
       auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
       auto First = Planner.advance(State);
       ASSERT_TRUE(bool(First)) << llvm::toString(First.takeError());
-      ASSERT_EQ(First->Kind, KernelSEH::ActionKind::Filter);
-      auto Bytes = KernelSEH::encodeRecords(Raised, Storage);
+      ASSERT_EQ(First->Kind, X64SEH::ActionKind::Filter);
+      auto Bytes = X64SEH::encodeRecords(Raised, Storage);
       ASSERT_TRUE(bool(Bytes)) << llvm::toString(Bytes.takeError());
       (*Bytes)[Offset] ^= 1;
       const auto Before = *Bytes;
@@ -889,8 +894,8 @@ TEST_F(DriverKernelSEH,
       auto Retried =
           Planner.finishFilter(State, Disposition, *Bytes, Raised, Storage);
       ASSERT_TRUE(bool(Retried)) << llvm::toString(Retried.takeError());
-      EXPECT_EQ(Retried->Kind, Disposition ? KernelSEH::ActionKind::Handler
-                                           : KernelSEH::ActionKind::Filter);
+      EXPECT_EQ(Retried->Kind, Disposition ? X64SEH::ActionKind::Handler
+                                           : X64SEH::ActionKind::Filter);
       EXPECT_EQ(Retried->State.ExceptionCode, Code);
     }
   }
@@ -903,33 +908,33 @@ TEST_F(DriverKernelSEH,
   F.SEH->Scopes.front().FilterOrFinallyVA = Base + 0x2000;
   F.SEH->Scopes.push_back(F.SEH->Scopes.front());
   constexpr uint64_t Storage = 0x80000000;
-  KernelSEH::Exception Raised{Caller, Code, 0, Caller.PC, {}};
+  X64SEH::Exception Raised{Caller, Code, 0, Caller.PC, {}};
   auto Planner = planner();
   for (int32_t Disposition : {-1, 1}) {
     auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
     auto First = Planner.advance(State);
     ASSERT_TRUE(bool(First)) << llvm::toString(First.takeError());
-    auto Bytes = KernelSEH::encodeRecords(Raised, Storage);
+    auto Bytes = X64SEH::encodeRecords(Raised, Storage);
     ASSERT_TRUE(bool(Bytes)) << llvm::toString(Bytes.takeError());
     (*Bytes)[seh::ContextOffset + seh::ContextGPROffset] ^= 1;
     const auto Before = *Bytes;
     auto Second = Planner.finishFilter(State, 0, *Bytes, Raised, Storage);
     ASSERT_TRUE(bool(Second)) << llvm::toString(Second.takeError());
-    EXPECT_EQ(Second->Kind, KernelSEH::ActionKind::Filter);
+    EXPECT_EQ(Second->Kind, X64SEH::ActionKind::Filter);
     EXPECT_EQ(Second->State.Registers.GPR, Caller.GPR);
     EXPECT_EQ(*Bytes, Before);
     auto Final =
         Planner.finishFilter(State, Disposition, *Bytes, Raised, Storage);
     ASSERT_TRUE(bool(Final)) << llvm::toString(Final.takeError());
     if (Disposition < 0) {
-      EXPECT_EQ(Final->Kind, KernelSEH::ActionKind::ContinueExecution);
+      EXPECT_EQ(Final->Kind, X64SEH::ActionKind::ContinueExecution);
       auto Restored =
           Planner.continuation(*Bytes, Raised, Storage, {StackBase, StackSize});
       ASSERT_TRUE(bool(Restored)) << llvm::toString(Restored.takeError());
       EXPECT_EQ(Restored->GPR[seh::ReturnRegister],
                 Caller.GPR[seh::ReturnRegister] ^ 1);
     } else {
-      EXPECT_EQ(Final->Kind, KernelSEH::ActionKind::Handler);
+      EXPECT_EQ(Final->Kind, X64SEH::ActionKind::Handler);
       EXPECT_EQ(Final->State.Registers.GPR[seh::ReturnRegister], Code);
     }
     EXPECT_EQ(*Bytes, Before);
@@ -950,7 +955,7 @@ TEST_F(DriverKernelSEH,
   auto Parent = Planner.begin(Code, Caller, {StackBase, StackSize});
   auto Filter = Planner.advance(Parent);
   ASSERT_TRUE(bool(Filter)) << llvm::toString(Filter.takeError());
-  ASSERT_EQ(Filter->Kind, KernelSEH::ActionKind::Filter);
+  ASSERT_EQ(Filter->Kind, X64SEH::ActionKind::Filter);
   auto Child = Caller;
   constexpr uint64_t ChildStack = StackBase + StackSize;
   Child.GPR[4] = ChildStack + 0x100;
@@ -970,7 +975,7 @@ TEST_F(DriverKernelSEH,
   EXPECT_EQ(Second->ExceptionFlags, 0u);
   auto Handled = Planner.advance(*Nested, 1);
   ASSERT_TRUE(bool(Handled)) << llvm::toString(Handled.takeError());
-  EXPECT_EQ(Handled->Kind, KernelSEH::ActionKind::Handler);
+  EXPECT_EQ(Handled->Kind, X64SEH::ActionKind::Handler);
   EXPECT_EQ(Handled->State.ExceptionCode, Code + 1);
   // Building a nested path never consumes the suspended filter disposition.
   auto Original = Planner.advance(Parent, 1);
@@ -993,7 +998,7 @@ TEST_F(DriverKernelSEH,
   auto Parent = Planner.begin(Code, Caller, {StackBase, StackSize});
   auto Finally = Planner.advance(Parent);
   ASSERT_TRUE(bool(Finally)) << llvm::toString(Finally.takeError());
-  ASSERT_EQ(Finally->Kind, KernelSEH::ActionKind::Finally);
+  ASSERT_EQ(Finally->Kind, X64SEH::ActionKind::Finally);
   EXPECT_EQ(Finally->ScopeIndex, 1u);
   auto Child = Caller;
   constexpr uint64_t ChildStack = StackBase + StackSize;
@@ -1005,22 +1010,21 @@ TEST_F(DriverKernelSEH,
   ASSERT_TRUE(bool(Nested)) << llvm::toString(Nested.takeError());
   auto Next = Planner.advance(*Nested);
   ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
-  ASSERT_EQ(Next->Kind, KernelSEH::ActionKind::Finally);
+  ASSERT_EQ(Next->Kind, X64SEH::ActionKind::Finally);
   EXPECT_EQ(Next->State.HandlerPC, Base + 0x2100);
   EXPECT_EQ(Next->Bounds.Base, StackBase);
   EXPECT_EQ(Next->State.ExceptionCode, Code + 1);
   auto Handled = Planner.advance(*Nested);
   ASSERT_TRUE(bool(Handled)) << llvm::toString(Handled.takeError());
-  EXPECT_EQ(Handled->Kind, KernelSEH::ActionKind::Handler);
+  EXPECT_EQ(Handled->Kind, X64SEH::ActionKind::Handler);
   EXPECT_EQ(Handled->State.HandlerPC, Base + 0x1080);
   EXPECT_EQ(Handled->State.ExceptionCode, Code + 1);
 }
 
 TEST_F(DriverKernelSEH, ContextRecordsAllowOnlyBoundedIntegerControlChanges) {
-  KernelSEH::Exception Raised{Caller,    Code,        0,
-                              Caller.PC, {0, 0x1234}, 0x81000000};
+  X64SEH::Exception Raised{Caller, Code, 0, Caller.PC, {0, 0x1234}, 0x81000000};
   constexpr uint64_t Storage = 0x80000000;
-  auto Bytes = KernelSEH::encodeRecords(Raised, Storage);
+  auto Bytes = X64SEH::encodeRecords(Raised, Storage);
   ASSERT_TRUE(bool(Bytes)) << llvm::toString(Bytes.takeError());
   ASSERT_EQ(Bytes->size(), seh::RecordsSize);
   auto Planner = planner();
@@ -1134,7 +1138,7 @@ TEST_F(DriverKernelSEH, CxxRuntimeCannotBeSkippedToReachAnOuterCHandler) {
     Inner.GSCookie.reset();
     Next = Engine.advance(State);
     ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
-    EXPECT_EQ(Next->Kind, KernelSEH::ActionKind::Handler);
+    EXPECT_EQ(Next->Kind, X64SEH::ActionKind::Handler);
     EXPECT_EQ(Next->State.HandlerPC, Base + 0x1080);
   }
 }
@@ -1400,6 +1404,87 @@ TEST_F(DriverKernelSEH, UnrelatedLanguageSummaryDoesNotRejectKnownFrame) {
   handler();
   Metadata.ParseStatus = ExceptionParseStatus::Partial;
   EXPECT_EQ(selected().HandlerPC, Base + 0x1080);
+}
+
+TEST_F(DriverKernelSEH, LeafUnwindResolvesEachImageAtItsActualBase) {
+  handler();
+  ExceptionInfo Leaf;
+  const auto SP = Caller.GPR[seh::StackRegister];
+  Words[SP] = Base + image_case::ReturnRVA;
+  Caller.PC = Base + image_case::ImageDelta + image_case::LeafRVA;
+  X64SEH Planner(
+      {{&Metadata, Base, Base, ImageSize, {}},
+       {&Leaf, Base, Base + image_case::ImageDelta, ImageSize, {}}},
+      [&](uint64_t Address) -> llvm::Expected<uint64_t> {
+        Reads.push_back(Address);
+        return Words.at(Address);
+      },
+      [](uint64_t) { return true; });
+  auto Selected = Planner.plan(Code, Caller, {StackBase, StackSize});
+  ASSERT_TRUE(bool(Selected)) << llvm::toString(Selected.takeError());
+  ASSERT_TRUE(Selected->has_value());
+  EXPECT_EQ((*Selected)->HandlerPC, Base + image_case::HandlerRVA);
+  EXPECT_EQ((*Selected)->Registers.GPR[seh::StackRegister],
+            SP + seh::PointerSize);
+  EXPECT_EQ(Reads, std::vector<uint64_t>{SP});
+}
+
+TEST_F(DriverKernelSEH, OverlappingImagesFailBeforeReadingGuestStack) {
+  handler();
+  X64SEH Planner(
+      {{&Metadata, Base, Base, ImageSize, {}},
+       {&Metadata, Base, Base, ImageSize, {}}},
+      [&](uint64_t Address) -> llvm::Expected<uint64_t> {
+        Reads.push_back(Address);
+        return 0;
+      },
+      [](uint64_t) { return true; });
+  auto Selected = Planner.plan(Code, Caller, {StackBase, StackSize});
+  ASSERT_FALSE(bool(Selected));
+  EXPECT_NE(llvm::toString(Selected.takeError())
+                .find(seh::text::OverlappingExceptionImages),
+            std::string::npos);
+  EXPECT_TRUE(Reads.empty());
+}
+
+TEST_F(DriverKernelSEH, CrossImageUnwindRechecksEachOwnersSecurityCookie) {
+  using namespace image_case;
+  auto &Outer = gsHandler();
+  Outer.GSCookie->CookieOffset = CookieOffset;
+  ExceptionInfo OuterInfo = std::move(Metadata);
+  Metadata = {};
+  auto &Inner = standaloneGS();
+  Inner.GSCookie->CookieOffset = CookieOffset;
+  Inner.UnwindOperations = {op(UnwindOperationKind::AllocateSmall,
+                               AllocationCodeOffset, StackAllocation)};
+  const auto SP = Caller.GPR[seh::StackRegister];
+  const auto OuterSP = SP + StackAllocation + seh::PointerSize;
+  Words = {{SP + CookieOffset, SP ^ InnerCookie},
+           {SP + StackAllocation, Base + ReturnRVA},
+           {OuterSP + CookieOffset, OuterSP ^ OuterCookie}};
+  Caller.PC = Base + ImageDelta + LeafRVA;
+  unsigned InnerReads = 0, OuterReads = 0;
+  X64SEH Planner(
+      {{&OuterInfo, Base, Base, ImageSize,
+        [&]() -> llvm::Expected<uint64_t> {
+          ++OuterReads;
+          return OuterCookie;
+        }},
+       {&Metadata, Base, Base + ImageDelta, ImageSize,
+        [&]() -> llvm::Expected<uint64_t> {
+          ++InnerReads;
+          return InnerCookie;
+        }}},
+      [&](uint64_t Address) -> llvm::Expected<uint64_t> {
+        return Words.at(Address);
+      },
+      [](uint64_t) { return true; });
+  auto Selected = Planner.plan(Code, Caller, {StackBase, StackSize});
+  ASSERT_TRUE(bool(Selected)) << llvm::toString(Selected.takeError());
+  ASSERT_TRUE(Selected->has_value());
+  EXPECT_EQ((*Selected)->HandlerPC, Base + HandlerRVA);
+  EXPECT_EQ(InnerReads, 2u);
+  EXPECT_EQ(OuterReads, 2u);
 }
 
 } // namespace

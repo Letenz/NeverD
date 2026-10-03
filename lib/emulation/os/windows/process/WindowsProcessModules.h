@@ -74,6 +74,11 @@ struct ModuleLink {
   std::vector<std::pair<ModuleRef, ModuleRef>> Edges;
 };
 bool resident(const Module &M);
+llvm::Error validateImageMetadata(Program &Program, size_t Index,
+                                  llvm::ArrayRef<PEMetadataRange> Ranges,
+                                  const ExecutionBudget &Budget,
+                                  ExecutionBackend &CPU,
+                                  llvm::StringRef ChangedDiagnostic);
 bool current(const Program &P, ModuleRef Ref);
 ModuleRef moduleRef(const Program &P, size_t Index);
 std::optional<size_t> findModule(const Program &P, llvm::StringRef Name);

@@ -1,4 +1,4 @@
-//===- KernelSEHEpilogue.cpp - x64 V1 epilogue unwind ---------------------===//
+//===- X64SEHEpilogue.cpp - x64 V1 epilogue unwind ---------------------===//
 //
 // NeverD Decompiler
 //
@@ -11,7 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "KernelSEH.h"
+#include "X64SEH.h"
 
 #include "neverd/emulation/Registers.h"
 
@@ -26,7 +26,8 @@ namespace neverd::emulation {
 namespace {
 llvm::Error invalid(const char *Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 "x64 SEH epilogue: %s", Message);
+                                 seh::text::EpiloguePrefix +
+                                     llvm::Twine(Message));
 }
 
 std::optional<unsigned> registerIndex(x86_reg Register) {
@@ -48,14 +49,15 @@ struct Restore {
 };
 } // namespace
 
-llvm::Expected<std::optional<KernelSEH::Context>>
-KernelSEH::unwindEpilogue(const ExceptionFunction &Frame,
-                          const Context &Current, Stack Bounds) const {
+llvm::Expected<std::optional<X64SEH::Context>>
+X64SEH::unwindEpilogue(const ExceptionFunction &Frame, const Context &Current,
+                       Stack Bounds, const Image &Owner) const {
   const std::optional<Context> NotEpilogue;
   if (!Code)
     return NotEpilogue;
   const uint64_t PC = Current.PC + unsigned(Current.FromReturnAddress);
-  const uint64_t End = ActualBase + (Frame.CodeRange.End - PreferredBase);
+  const uint64_t End =
+      Owner.ActualBase + (Frame.CodeRange.End - Owner.PreferredBase);
   if (PC >= End)
     return NotEpilogue;
   std::array<uint8_t, seh::MaxEpilogueBytes> Bytes;
@@ -65,13 +67,13 @@ KernelSEH::unwindEpilogue(const ExceptionFunction &Frame,
 
   csh Decoder = 0;
   if (cs_open(CS_ARCH_X86, CS_MODE_64, &Decoder) != CS_ERR_OK)
-    return invalid("cannot initialize instruction decoder");
+    return invalid(seh::text::CannotInitializeInstructionDecoder);
   const llvm::scope_exit Close([&] { cs_close(&Decoder); });
   if (cs_option(Decoder, CS_OPT_DETAIL, CS_OPT_ON) != CS_ERR_OK)
-    return invalid("cannot enable instruction details");
+    return invalid(seh::text::CannotEnableInstructionDetails);
   cs_insn *Instruction = cs_malloc(Decoder);
   if (!Instruction)
-    return invalid("cannot allocate instruction details");
+    return invalid(seh::text::CannotAllocateInstructionDetails);
   const llvm::scope_exit Free([&] { cs_free(Instruction, 1); });
   const uint8_t *Cursor = Bytes.data();
   size_t Remaining = Length;
@@ -134,7 +136,7 @@ KernelSEH::unwindEpilogue(const ExceptionFunction &Frame,
   const auto Read = [&](uint64_t Location) -> llvm::Expected<uint64_t> {
     if (Location % seh::PointerSize || Location < Bounds.Base ||
         Location >= StackEnd || StackEnd - Location < seh::PointerSize)
-      return invalid("restore exceeds the current execution stack");
+      return invalid(seh::text::RestoreExceedsTheCurrentExecutionStack);
     return ReadStack(Location);
   };
   for (const auto &Restore : Restores) {
@@ -153,10 +155,10 @@ KernelSEH::unwindEpilogue(const ExceptionFunction &Frame,
     const uint64_t Magnitude = Negative ? uint64_t(0) - uint64_t(Restore.Offset)
                                         : uint64_t(Restore.Offset);
     if (Negative ? Base < Magnitude : Base > UINT64_MAX - Magnitude)
-      return invalid("stack adjustment overflows");
+      return invalid(seh::text::StackAdjustmentOverflows);
     const uint64_t Adjusted = Negative ? Base - Magnitude : Base + Magnitude;
     if (Adjusted < SP || Adjusted % seh::PointerSize || Adjusted > StackEnd)
-      return invalid("stack adjustment exceeds the current execution stack");
+      return invalid(seh::text::StackAdjustmentExceedsTheCurrentExecutionStack);
     SP = Adjusted;
   }
   // Tail jumps retain the same caller return slot. The target need not be
@@ -165,7 +167,7 @@ KernelSEH::unwindEpilogue(const ExceptionFunction &Frame,
   if (!Return)
     return Return.takeError();
   if (!*Return)
-    return invalid("null return address");
+    return invalid(seh::text::NullReturnAddress);
   SP += seh::PointerSize;
   Caller.PC = *Return - 1;
   Caller.FromReturnAddress = true;
