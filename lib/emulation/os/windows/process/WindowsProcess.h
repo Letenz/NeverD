@@ -165,6 +165,9 @@ private:
     bool EnvironmentSnapshot = false;
   };
   llvm::Expected<uint64_t> allocateHeap(uint64_t Size, bool Snapshot = false);
+  llvm::Expected<bool> mapHeapPages(uint64_t Address, uint64_t Size);
+  llvm::Expected<uint64_t> reallocateHeap(uint64_t Address, uint64_t Size,
+                                          uint32_t Flags);
   std::map<uint64_t, Allocation> Allocations;
 };
 } // namespace neverd::emulation::windows_process

@@ -63,66 +63,6 @@ llvm::Expected<uint64_t> Services::error(uint32_t Code, uint64_t ReturnValue) {
     return std::move(E);
   return ReturnValue;
 }
-llvm::Expected<std::optional<uint64_t>>
-Services::heap(const Service &S, const NativeCallEvent &Event) {
-  const auto &A = Event.Arguments;
-  if (A[0] != HeapHandle)
-    return unsupported(S);
-  const uint32_t Flags = A[1];
-  const uint32_t Allowed =
-      HeapNoSerialize | (S.Kind == API::HeapAlloc ? HeapZeroMemory : 0);
-  if (Flags & ~Allowed)
-    return unsupported(S);
-  auto Found = Allocations.find(A[2]);
-  if (S.Kind != API::HeapAlloc && Found != Allocations.end() &&
-      Found->second.EnvironmentSnapshot)
-    return unsupported(S);
-  if (S.Kind == API::HeapSize)
-    return std::optional<uint64_t>(
-        Found == Allocations.end() ? UINT64_MAX : Found->second.Size);
-  if (S.Kind == API::HeapFree) {
-    if (!A[2])
-      return std::optional<uint64_t>(1);
-    if (Found == Allocations.end())
-      return std::optional<uint64_t>(0);
-    if (auto E = Memory.unmap(Found->first, Found->second.MappedSize))
-      return std::move(E);
-    Allocations.erase(Found);
-    return std::optional<uint64_t>(1);
-  }
-  auto Address = allocateHeap(A[2]);
-  if (!Address)
-    return Address.takeError();
-  return std::optional<uint64_t>(*Address);
-}
-llvm::Expected<uint64_t> Services::allocateHeap(uint64_t Size, bool Snapshot) {
-  if (Size > Options.MemoryLimit || Size > UINT64_MAX - PageSize)
-    return 0;
-  const uint64_t Mapped =
-      (std::max<uint64_t>(Size, 1) + PageSize - 1) & ~(PageSize - 1);
-  uint64_t Address = HeapBase;
-  for (const auto &[Start, Allocation] : Allocations) {
-    if (Mapped <= Start - Address)
-      break;
-    Address = Start + Allocation.MappedSize;
-  }
-  if (Address >= HeapLimit || Mapped > HeapLimit - Address ||
-      Mapped > Options.MemoryLimit - Memory.mappedBytes())
-    return 0;
-  if (auto E = Memory.map(Address, Mapped, Read | Write | UserAccessible)) {
-    bool Exhausted = false;
-    E = llvm::handleErrors(
-        std::move(E), [&](const GuestMemoryLimitError &) { Exhausted = true; });
-    if (E)
-      return std::move(E);
-    if (Exhausted)
-      return 0;
-  }
-  Allocations.emplace(Address, Allocation{Size, Mapped, Snapshot});
-  // Fresh guest backing is zero-filled. With no HEAP_ZERO_MEMORY flag its
-  // contents are unspecified; the model's deterministic zeroes are permitted.
-  return Address;
-}
 llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
                                                 const NativeCallEvent &Event) {
   const auto &A = Event.Arguments;
@@ -184,6 +124,7 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   case API::FlushInstructionCache:
     return Wrap(memory(S, Event));
   case API::HeapAlloc:
+  case API::HeapReAlloc:
   case API::HeapFree:
   case API::HeapSize:
     return Wrap(heap(S, Event));

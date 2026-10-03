@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: 7d465e53d8b02df92cfd1d84c9817ee79377e7094f58b046232e3ea5523fe1e5 -->
+<!-- i18n-source: e5c097bb241cd34c26ffd9f6cfd94332c67a266b810f4007a0500087fc89a619 -->
 
 <div align="center" dir="rtl">
 
@@ -118,6 +118,8 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 يدعم `windows-pe64-v1` عمليات طرفية محدودة لـWindows x64/ARM64 مع PEB/TEB وTLS ثابت وديناميكي و`DllMain` وواجهات Win32 مسماة ورسوم DLL صريحة بلا دورات. تدعم الوحدات استيراد الشيفرة والبيانات بالاسم أو الرقم وDIR64 والتصدير المحال وهويات قوائم المحمّل الفعلية. تستخدم `LoadLibraryA` / `LoadLibraryW` و`FreeLibrary` و`GetProcAddress` دليل الوحدات المضبوط. ما زالت CRT/GUI وSEH للمستخدم والخيوط والتوافق العام مع Windows غير مكتملة، وكذلك أدلة ARM64 الأصلية لـKVM/WHP.
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` تستخدم كتلة بيئة الضيف الحالية نفسها ضمن معاملات العملية في PEB. الأسماء ASCII دون تمييز حالة الأحرف، والقيم UTF-16. تتحقق التعديلات من المدخلات والسعة وصلاحية الكتابة قبل النشر. تبقى النسخ مستقلة عن التعديلات اللاحقة وتحرر ذاكرة الضيف عند إعتاقها. يحدد النموذج حجم الكتلة بـ 64 KiB؛ تخضع السلاسل والتوسعة لحدود وفحص مهلة التنفيذ. لا تدعم ملكية المؤشرات المجهولة أو الكتل المشوهة أو صفحات ترميز ANSI أو تداخل مخازن التوسعة. يقارن `WindowsEnvironmentTests.cpp` عينات x64/ARM64 أصلية عبر الخلفيات المتاحة، وتشترط CI مرجعاً مستقلاً يعمل على Windows أصلي.
+
+يجمع `WindowsProcessHeap` تخصيص كومة العملية و`HeapReAlloc` والتحرير والاستعلام عن الحجم. يحفظ تغيير الحجم البايتات المحتفظ بها؛ يصفّر `HEAP_ZERO_MEMORY` البايتات المضافة ويمنع `HEAP_REALLOC_IN_PLACE_ONLY` نقل الكتلة. يحفظ فشل إعادة التخصيص الكتلة القديمة ويعيد NULL مع ضبط `ERROR_NOT_ENOUGH_MEMORY` (8)، وفقاً للمشاهدات الأصلية. تعيد الصفحات المستقلة السعة عند التقليص والتحرير، ويفحص التوسيع المرحلي والنسخ المحدود مهلة التنفيذ. تتوقف صراحةً الأكوام المخصصة وأعلام توليد الاستثناءات والملكية المجهولة ونطاقات النسخ أو التصفير غير القابلة للوصول. يغطي `WindowsHeapTests.cpp` المعماريتين والنقل الإجباري وإعادة استخدام الميزانية وذرية الفشل؛ وتشغّل CI ملف EXE الأصلي نفسه على Windows أصلي.
 
 تضيف الذاكرة الافتراضية في Windows دعم `VirtualAlloc` و`VirtualFree` و`VirtualProtect` و`VirtualQuery` و`FlushInstructionCache` للعملية الحالية. تدير طبقة OS الحجوزات، وتبقى `AddressSpace` المرجع للصفحات الملتزم بها والصلاحيات والتخزين الفعلي. تشمل الاختبارات تعديل الشيفرة وأخطاء الوصول وإعادة استخدام ميزانية الذاكرة.
 

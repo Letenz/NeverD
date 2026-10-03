@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 7d465e53d8b02df92cfd1d84c9817ee79377e7094f58b046232e3ea5523fe1e5 -->
+<!-- i18n-source: e5c097bb241cd34c26ffd9f6cfd94332c67a266b810f4007a0500087fc89a619 -->
 
 <div align="center">
 
@@ -119,6 +119,8 @@ L’esecuzione CPU separa ammissione ISA, memoria guest, trasporto del backend e
 `windows-pe64-v1` supporta processi console Windows x64/ARM64 limitati con PEB/TEB, TLS statico e dinamico, `DllMain`, API Win32 nominate e grafi DLL espliciti aciclici. I moduli supportano import di codice/dati per nome o ordinale, DIR64, export inoltrati e identità reali del loader. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary` e `GetProcAddress` usano il catalogo configurato. CRT/GUI, SEH utente, thread e compatibilità Windows generale restano incompleti; mancano prove native ARM64 KVM/WHP.
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` condividono il blocco ambiente corrente del guest nei parametri di processo del PEB. I nomi ASCII ignorano maiuscole e minuscole; i valori sono UTF-16. Le modifiche verificano input, capacità e permessi di scrittura prima della pubblicazione. Le istantanee restano indipendenti dalle modifiche successive e rilasciano la memoria guest. Il modello limita il blocco a 64 KiB; stringhe ed espansioni hanno limiti e controllano la scadenza. Puntatori di proprietà sconosciuta, blocchi malformati, pagine di codice ANSI e buffer di espansione sovrapposti restano non supportati. `WindowsEnvironmentTests.cpp` confronta fixture originali x64/ARM64 sui backend disponibili; la CI richiede un oracolo Windows nativo indipendente.
+
+`WindowsProcessHeap` unifica allocazione, `HeapReAlloc`, rilascio e interrogazione delle dimensioni dello heap del processo. Il ridimensionamento conserva i byte mantenuti; `HEAP_ZERO_MEMORY` azzera quelli aggiunti e `HEAP_REALLOC_IN_PLACE_ONLY` impedisce lo spostamento. Il ridimensionamento fallito conserva il vecchio blocco e restituisce NULL con `ERROR_NOT_ENOUGH_MEMORY` (8), come nelle osservazioni native. Le pagine indipendenti restituiscono capacità durante riduzione e rilascio; crescita preparata e copie limitate verificano la scadenza. Heap personalizzati, flag di eccezione, proprietà sconosciuta e intervalli inaccessibili arrestano esplicitamente l’esecuzione. `WindowsHeapTests.cpp` copre entrambe le ISA, spostamento forzato, riuso del budget e atomicità degli errori; CI esegue lo stesso EXE originale su Windows nativo.
 
 La memoria virtuale Windows aggiunge `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` e `FlushInstructionCache` per il processo corrente. Il livello OS gestisce le prenotazioni; `AddressSpace` resta responsabile delle pagine impegnate, dei permessi e della memoria sottostante. I test verificano modifiche al codice, errori di accesso e riutilizzo del budget di memoria.
 

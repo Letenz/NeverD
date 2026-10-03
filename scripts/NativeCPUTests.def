@@ -619,3 +619,22 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsEnvironment.ValidatesUpdatesBeforePublishingGuestBytes/"
     "WhpX64")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST("WindowsHeapNative.RunsOriginalHeapExecutable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsHeap.ExecutesOriginalHeapScenarios/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsHeap.MoveAndInPlaceResizePreserveDataAndOwnership/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/"
+    "WindowsHeap.AllocationFailurePreservesBlocksAndShrinkReturnsCapacity/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/"
+    "WindowsHeap.InvalidOwnershipFlagsAndPermissionsDoNotPublishChanges/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/"
+    "WindowsHeap.RepeatedResizeReclaimsBudgetAndRejectsEnvironmentOwnership/"
+    "WhpX64")
+#endif
