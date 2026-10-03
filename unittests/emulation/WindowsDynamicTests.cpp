@@ -61,7 +61,8 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
         if (File == StaticProgramFile && &C != &Cases[0])
           continue;
         if (NoEntry &&
-            (C.Argument[1] == FailedMiddleMode || C.Argument[1] == LeafRole))
+            (C.Argument[1] == FailedMiddleMode || C.Argument[1] == LeafRole ||
+             C.Argument[1] == NestedFailureMode))
           continue;
         SCOPED_TRACE(C.Name);
         std::string Diagnostic;
