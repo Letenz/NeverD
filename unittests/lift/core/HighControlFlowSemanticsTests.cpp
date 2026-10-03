@@ -7016,25 +7016,30 @@ TEST(HighControlFlowSemantics, MachineCallReceiptsKeepOneSharedTailOccurrence) {
           auto Hint = std::make_shared<SourceCallTypeHint>();
           switch (Receipt) {
           case 0:
-            Hint->BooleanResult.emplace();
+            Hint->BooleanResult = SourceCallTypeHint::BooleanResultProjection{};
             break;
           case 1:
-            Hint->FunctionParameterCall.emplace();
+            Hint->FunctionParameterCall =
+                SourceCallTypeHint::FunctionParameterCallEvidence{};
             break;
           case 2:
-            Hint->ImmutableNativeCall.emplace();
+            Hint->ImmutableNativeCall =
+                decltype(Hint->ImmutableNativeCall)::value_type{};
             break;
           case 3:
-            Hint->SwiftWitnessFrame.emplace();
+            Hint->SwiftWitnessFrame =
+                decltype(Hint->SwiftWitnessFrame)::value_type{};
             break;
           case 4:
-            Hint->Virtual.emplace();
+            Hint->Virtual = decltype(Hint->Virtual)::value_type{};
             break;
           case 5:
-            Hint->NativeSwiftReceiver.emplace();
+            Hint->NativeSwiftReceiver =
+                decltype(Hint->NativeSwiftReceiver)::value_type{};
             break;
           case 6:
-            Hint->SwiftConsumedInput.emplace();
+            Hint->SwiftConsumedInput =
+                decltype(Hint->SwiftConsumedInput)::value_type{};
             break;
           case 7:
             break; // A declaration alone may be copied.
@@ -7099,7 +7104,8 @@ TEST(HighControlFlowSemantics, NestedExitKeepsOneCallReceiptInSkippedTail) {
       SCOPED_TRACE(NestedExpression);
       auto Hint = std::make_shared<SourceCallTypeHint>();
       if (Bound)
-        Hint->FunctionParameterCall.emplace();
+        Hint->FunctionParameterCall =
+            SourceCallTypeHint::FunctionParameterCallEvidence{};
       auto Call = HighExpr::makeCall("callback", 0x2000, {local(0)});
       Call->SourceCallHint = Hint;
       HighStmt Invoke = assign(0x1020, 1, 0);
