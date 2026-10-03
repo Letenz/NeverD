@@ -13,16 +13,19 @@
 #include <set>
 
 namespace neverd::emulation::windows_process {
-namespace {
 using namespace value;
 
-llvm::Error validateMetadata(Program &Program, size_t Index,
-                             const ExecutionBudget &Budget,
-                             ExecutionBackend &CPU) {
+llvm::Error validateImageMetadata(Program &Program, size_t Index,
+                                  llvm::ArrayRef<PEMetadataRange> Ranges,
+                                  const ExecutionBudget &Budget,
+                                  ExecutionBackend &CPU,
+                                  llvm::StringRef ChangedDiagnostic) {
   const auto &Module = Program.Modules[Index];
   const auto &Image = Module.Loaded;
   std::array<uint8_t, PageSize> Bytes;
-  for (const auto &Range : Module.ExportMetadata) {
+  for (const auto &Range : Ranges) {
+    if (Range.RVA > Image.Size || Range.Size > Image.Size - Range.RVA)
+      return failure(text::Metadata);
     uint64_t Address = Image.Base + Range.RVA, Remaining = Range.Size;
     while (Remaining) {
       if (!Budget.remainingMicroseconds())
@@ -48,14 +51,13 @@ llvm::Error validateMetadata(Program &Program, size_t Index,
         return E;
       if (!std::equal(Bytes.begin(), Bytes.begin() + Size,
                       Region->Bytes.begin() + Offset))
-        return failure(text::ExportChanged);
+        return failure(ChangedDiagnostic);
       Address += Size;
       Remaining -= Size;
     }
   }
   return llvm::Error::success();
 }
-} // namespace
 
 llvm::Expected<ExportResolution>
 resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
@@ -77,7 +79,9 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
     if (CPU &&
         (!Load || Program.Modules[Index].State != ModuleState::Prepared) &&
         Validated.insert(Index).second)
-      if (auto E = validateMetadata(Program, Index, Budget, *CPU))
+      if (auto E = validateImageMetadata(Program, Index,
+                                         Program.Modules[Index].ExportMetadata,
+                                         Budget, *CPU, text::ExportChanged))
         return std::move(E);
     const auto &Module = Program.Modules[Index];
     // The model declares names, not a Windows build's ordinal assignment or

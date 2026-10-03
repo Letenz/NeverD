@@ -18,6 +18,7 @@
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/Errc.h"
 
 using namespace neverd;
 using namespace neverd::analysis;
@@ -73,6 +74,176 @@ BytecodeProfile toyProfile() {
 const std::vector<uint8_t> ToyProgram{0xb4, 0,    0x34, 0x12, 0x91, 0,    1,
                                       0x7c, 1,    0xa7, 1,    0x80, 0xf9, 0xff,
                                       0xff, 0xff, 0xd2, 2,    0,    0xe7};
+
+llvm::Expected<std::unique_ptr<BytecodeDecoder>>
+sourceDecoder(BytecodeProfile P, bool External) {
+  if (!External)
+    return BytecodeDecoder::create(std::move(P));
+  auto Encodings = std::move(P.Encodings);
+  P.Encodings.clear();
+  return BytecodeDecoder::createExternal(
+      std::move(P),
+      [Encodings = std::move(Encodings)](llvm::ArrayRef<uint8_t> Bytes, va_t)
+          -> llvm::Expected<BytecodeEncoding> {
+        for (auto E : Encodings)
+          if (Bytes.front() == E.Match.front().Value) {
+            E.Match.clear();
+            return E;
+          }
+        return llvm::createStringError(llvm::errc::invalid_argument,
+                                       "unrecognized synthetic opcode");
+      });
+}
+
+TEST(BytecodeDecoder, ExternalLayoutsAndRepliesRejectAmbiguousContracts) {
+  auto Layout = readBytecodeLayout(
+      R"({"version":1,"register_bytes":8,"byte_order":"big"})");
+  ASSERT_TRUE(bool(Layout));
+  auto Recipe = readBytecodeEncoding(R"({"size":3,"operations":[
+    {"op":"COPY","output":{"space":"reg","size":2,"value":{}},
+     "inputs":[{"space":"const","size":2,"value":{"offset":1,"bytes":2}}]}]})");
+  ASSERT_TRUE(bool(Recipe));
+  auto D = BytecodeDecoder::createExternal(
+      *Layout,
+      [Recipe = *Recipe](llvm::ArrayRef<uint8_t>, va_t) { return Recipe; });
+  ASSERT_TRUE(bool(D));
+  auto I = (*D)->decode(std::vector<uint8_t>{0x99, 0x12, 0x34}, 16);
+  ASSERT_TRUE(bool(I));
+  EXPECT_EQ(I->Encoding, UINT32_MAX);
+  EXPECT_EQ(I->Operations[0].Inputs[0], NdVar::scalar(0x1234, 2));
+  EXPECT_EQ(I->Operations[0].Output, NdVar::reg(0, 2));
+  EXPECT_EQ(I->Operations[0].Addr, 16u);
+  for (llvm::StringRef Bad :
+       {R"({"size":1,"match":[],"operations":[]})", R"({"error":""})",
+        R"({"error":1})", R"({"error":"failed","size":1})",
+        R"({"size":1,"operations":[{"op":"UNKNOWN","inputs":[]}]})"}) {
+    auto Result = readBytecodeEncoding(Bad);
+    EXPECT_FALSE(bool(Result));
+    llvm::consumeError(Result.takeError());
+  }
+  auto Failed = readBytecodeEncoding(R"({"error":"missing decoding context"})");
+  ASSERT_FALSE(bool(Failed));
+  EXPECT_NE(llvm::toString(Failed.takeError()).find("missing decoding context"),
+            std::string::npos);
+  auto BadLayout = readBytecodeLayout(
+      R"({"version":1,"register_bytes":8,"byte_order":"little","encodings":[]})");
+  EXPECT_FALSE(bool(BadLayout));
+  llvm::consumeError(BadLayout.takeError());
+  auto NoCallback = BytecodeDecoder::createExternal(*Layout, {});
+  EXPECT_FALSE(bool(NoCallback));
+  llvm::consumeError(NoCallback.takeError());
+  Layout->Encodings.push_back(*Recipe);
+  auto Mixed = BytecodeDecoder::createExternal(
+      *Layout,
+      [Recipe = *Recipe](llvm::ArrayRef<uint8_t>, va_t) { return Recipe; });
+  EXPECT_FALSE(bool(Mixed));
+  llvm::consumeError(Mixed.takeError());
+}
+
+TEST(BytecodeDecoder, ExternalRecipesShareOperandAndTemporaryValidation) {
+  BytecodeProfile Layout;
+  Layout.RegisterBytes = 8;
+  auto Temp = constant(0);
+  Temp.Space = VnodeSpace::TEMP;
+  for (unsigned Case = 0; Case != 12; ++Case) {
+    SCOPED_TRACE(Case);
+    BytecodeEncoding E{1, {}, {{NdOp::COPY, fixedReg(0), {constant(7)}}}};
+    switch (Case) {
+    case 0:
+      E.Size = 0;
+      break;
+    case 1:
+      E.Size = 2;
+      break; // A reply cannot read past the input window.
+    case 2:
+      E.Match = {{0, 255, 0x42}};
+      break;
+    case 3:
+      E.Operations[0].Output = fixedReg(1);
+      break;
+    case 4:
+      E.Operations[0].Inputs[0] = Temp;
+      break;
+    case 5:
+      E.Operations = {{NdOp::COPY, Temp, {constant(1)}},
+                      {NdOp::COPY, fixedReg(0, 4), {Temp}}};
+      E.Operations.back().Inputs[0].Size = 4;
+      break;
+    case 6:
+      E.Operations = {{NdOp::COPY, Temp, {constant(1)}},
+                      {NdOp::COPY, Temp, {constant(2, 4)}},
+                      {NdOp::COPY, fixedReg(0), {Temp}}};
+      E.Operations[1].Output.Size = 4;
+      break;
+    case 7:
+      E.Operations[0].Inputs[0].Value.Bytes = 8;
+      break;
+    case 8:
+      E.Operations[0].Inputs[0].Size = 4;
+      break;
+    case 9:
+      E.Operations[0].Opcode = NdOp::_COUNT;
+      break;
+    case 10:
+      E.Operations.insert(E.Operations.begin(), {NdOp::RETURN, {}, {}});
+      break;
+    case 11:
+      E.Operations.clear();
+      break;
+    }
+    auto D = BytecodeDecoder::createExternal(
+        Layout, [E](llvm::ArrayRef<uint8_t>, va_t) { return E; });
+    ASSERT_TRUE(bool(D));
+    auto I = (*D)->decode(std::vector<uint8_t>{0x42}, 0);
+    ASSERT_FALSE(bool(I));
+    llvm::consumeError(I.takeError());
+  }
+}
+
+TEST(BytecodeDecoder, ExternalDecodingRetainsCFGBudgetsAndBoundaries) {
+  auto D = sourceDecoder(toyProfile(), true);
+  ASSERT_TRUE(bool(D));
+  auto Good = (*D)->function(ToyProgram, 0, 0, ToyProgram.size(), "external");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DecodedBytes, ToyProgram.size());
+  EXPECT_EQ(Good->Function.Blocks.size(), 3u);
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    auto Code = ToyProgram;
+    BytecodeDecodeLimits Limits;
+    if (Case == 0)
+      Code[12] = 0xfa; // Overlap an operand.
+    if (Case == 1)
+      Code[12] = 0x10; // Branch outside the declared function.
+    if (Case == 2)
+      Code[0] = 0;
+    if (Case == 3)
+      Limits.MaxInstructions = 2;
+    if (Case == 4)
+      Limits.MaxOperations = 2;
+    auto F = (*D)->function(Code, 0, 0, Code.size(), "bad", Limits);
+    EXPECT_FALSE(bool(F)) << Case;
+    llvm::consumeError(F.takeError());
+  }
+}
+
+TEST(BytecodeDecoder, ExternalWindowsAreBoundedEvenForLargeFunctions) {
+  BytecodeProfile Layout;
+  Layout.RegisterBytes = 8;
+  std::vector<size_t> Windows;
+  auto D = BytecodeDecoder::createExternal(
+      Layout, [&](llvm::ArrayRef<uint8_t> Bytes, va_t PC) {
+        Windows.push_back(Bytes.size());
+        return BytecodeEncoding{uint16_t(PC ? 1 : 4096),
+                                {},
+                                {{PC ? NdOp::RETURN : NdOp::NOP, {}, {}}}};
+      });
+  ASSERT_TRUE(bool(D));
+  std::vector<uint8_t> Code(4097, 0);
+  auto F = (*D)->function(Code, 0, 0, Code.size(), "window");
+  ASSERT_TRUE(bool(F)) << llvm::toString(F.takeError());
+  EXPECT_EQ(Windows, (std::vector<size_t>{4096, 1}));
+  EXPECT_EQ(F->DecodedBytes, 4097u);
+}
 
 TEST(BytecodeDecoder, ExactWidthsFieldsAndControlFlow) {
   auto D = BytecodeDecoder::create(toyProfile());
@@ -251,6 +422,11 @@ TEST(BytecodeDecoder, FullUnsignedConstantsAndMalformedFields) {
 }
 
 class BytecodeSourceTest : public NeverDLiftTest {};
+
+class BytecodeDecoderSourceTest : public BytecodeSourceTest,
+                                  public ::testing::WithParamInterface<bool> {};
+INSTANTIATE_TEST_SUITE_P(ProfileAndCallback, BytecodeDecoderSourceTest,
+                         ::testing::Bool());
 
 TEST_F(BytecodeSourceTest,
        ForwardedStateViewsRespectGuestAliasesAndPartialWrites) {
@@ -604,7 +780,7 @@ int main(void) {
   }
 }
 
-TEST_F(BytecodeSourceTest, BoundCallsRetainStateAndPropagateFailure) {
+TEST_P(BytecodeDecoderSourceTest, BoundCallsRetainStateAndPropagateFailure) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "source runtime checks require clang";
   auto P = toyProfile();
@@ -617,7 +793,7 @@ TEST_F(BytecodeSourceTest, BoundCallsRetainStateAndPropagateFailure) {
       {1,
        {{0, 255, 0x55}},
        {{NdOp::INT_ADD, fixedReg(0), {fixedReg(0), constant(1)}}}});
-  auto D = BytecodeDecoder::create(std::move(P));
+  auto D = sourceDecoder(std::move(P), GetParam());
   ASSERT_TRUE(bool(D));
   // A language-level call inside a countdown loop; the child has a second
   // call and an observable store after it. A failed callback must skip both
@@ -744,10 +920,11 @@ int main(void) {
   }
 }
 
-TEST_F(BytecodeSourceTest, BothCRoutesPreserveLoopsNarrowWritesAndMemory) {
+TEST_P(BytecodeDecoderSourceTest,
+       BothCRoutesPreserveLoopsNarrowWritesAndMemory) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "source runtime checks require clang";
-  auto D = BytecodeDecoder::create(toyProfile());
+  auto D = sourceDecoder(toyProfile(), GetParam());
   ASSERT_TRUE(bool(D));
   auto F = (*D)->function(ToyProgram, 0, 0, ToyProgram.size(), "toy_execute");
   ASSERT_TRUE(bool(F)) << llvm::toString(F.takeError());

@@ -159,9 +159,9 @@ TEST_P(WindowsContinuations, HandlerNamespacesShareAndReclaimCapacity) {
       llvm::cantFail(IntegerABI::get(GetParam().ISA == GuestArchitecture::X64
                                          ? IntegerCallingConvention::Win64
                                          : IntegerCallingConvention::AAPCS64));
-  win::VectoredExceptions Handlers(*Backend.CPU, ABI,
-                                   win::value::StackTop - Options.StackSize);
-  using Kind = win::VectoredExceptions::HandlerKind;
+  win::ExceptionDispatcher Handlers(*Backend.CPU, ABI,
+                                    win::value::StackTop - Options.StackSize);
+  using Kind = win::ExceptionDispatcher::HandlerKind;
   uint64_t Last = 0;
   for (unsigned Round = 0; Round < 2; ++Round) {
     std::vector<std::pair<Kind, uint64_t>> Handles;

@@ -3134,8 +3134,13 @@ inline bool swiftDescriptorTypeRecipeMatches(
       Descriptors.size() == 3 && Descriptors[1].Offset == 6 &&
       Descriptors[2].Offset == 12 && ReferenceAt(0) && ReferenceAt(6) &&
       ReferenceAt(12) && Recipe[5] == 'y' && Recipe[11] == '_';
+  const bool KeyedTuplePrefix =
+      Descriptors.size() == 3 && Descriptors[1].Offset == 6 &&
+      Descriptors[2].Offset == 11 && ReferenceAt(0) && ReferenceAt(6) &&
+      ReferenceAt(11) && Recipe[5] == 'y';
   llvm::StringRef Tail = NestedPairPrefix      ? Recipe.drop_front(11)
                          : NestedGenericPrefix ? Recipe.drop_front(17)
+                         : KeyedTuplePrefix    ? Recipe.drop_front(16)
                                                : llvm::StringRef{};
   // Symbolic nominal references each occupy one substitution slot. Expanding
   // their descriptor spellings introduces additional module/name slots: the
@@ -3165,13 +3170,17 @@ inline bool swiftDescriptorTypeRecipeMatches(
     Tail = Tail.drop_front(Length);
     return true;
   };
-  const bool RepeatedPrefix = (NestedPairPrefix || NestedGenericPrefix) &&
-                              ReadLabel(FirstLabel) && Tail.consume_front("_");
+  const bool RepeatedPrefix =
+      (NestedPairPrefix || NestedGenericPrefix || KeyedTuplePrefix) &&
+      ReadLabel(FirstLabel) && Tail.consume_front("_");
   if (RequiresStructuredProof && RepeatedPrefix && Tail.starts_with("A"))
     *RequiresStructuredProof = true;
   const bool RepeatedTuple =
-      RepeatedPrefix && Tail.consume_front(NestedGenericPrefix ? "AC" : "AB") &&
-      ReadLabel(SecondLabel) && Tail == (NestedGenericPrefix ? "ttG" : "tt");
+      RepeatedPrefix && Tail.consume_front(NestedPairPrefix ? "AB" : "AC") &&
+      ReadLabel(SecondLabel) &&
+      Tail == (KeyedTuplePrefix      ? "tG"
+               : NestedGenericPrefix ? "ttG"
+                                     : "tt");
   if (!StringKeyedGeneric && !NominalTuple && !TupleGeneric && !RepeatedTuple)
     return false;
   llvm::SwiftDemangleOptions Options;
@@ -3223,21 +3232,13 @@ inline bool swiftDescriptorTypeRecipeMatches(
            Same(Same, Tuple.Children[0].Children[0], First, 0) &&
            Same(Same, Tuple.Children[1].Children[0], Second, 0);
   };
-  const auto NestedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
-                                 const llvm::SwiftDemangleNode &First,
-                                 const llvm::SwiftDemangleNode &Repeated) {
-    if (!Shape(Tuple, "Tuple", 2) ||
-        !Shape(Tuple.Children[0], "TupleElement", 1) ||
-        !Shape(Tuple.Children[1], "TupleElement", 1) ||
-        !Same(Same, Tuple.Children[0].Children[0], First, 0) ||
-        !Shape(Tuple.Children[1].Children[0], "Type", 1))
-      return false;
-    const auto &Nested = Tuple.Children[1].Children[0].Children[0];
-    if (!Shape(Nested, "Tuple", 2))
+  const auto RepeatedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                   const llvm::SwiftDemangleNode &Repeated) {
+    if (!Shape(Tuple, "Tuple", 2))
       return false;
     const std::string *Labels[] = {&FirstLabel, &SecondLabel};
     for (size_t I = 0; I < 2; ++I) {
-      const auto &Element = Nested.Children[I];
+      const auto &Element = Tuple.Children[I];
       const auto &Label = *Labels[I];
       if (!Shape(Element, "TupleElement", Label.empty() ? 1 : 2) ||
           !Same(Same, Element.Children.back(), Repeated, 0))
@@ -3250,6 +3251,16 @@ inline bool swiftDescriptorTypeRecipeMatches(
       }
     }
     return true;
+  };
+  const auto NestedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                 const llvm::SwiftDemangleNode &First,
+                                 const llvm::SwiftDemangleNode &Repeated) {
+    return Shape(Tuple, "Tuple", 2) &&
+           Shape(Tuple.Children[0], "TupleElement", 1) &&
+           Shape(Tuple.Children[1], "TupleElement", 1) &&
+           Same(Same, Tuple.Children[0].Children[0], First, 0) &&
+           Shape(Tuple.Children[1].Children[0], "Type", 1) &&
+           RepeatedMatches(Tuple.Children[1].Children[0].Children[0], Repeated);
   };
   if (NominalTuple)
     return TupleMatches(Type.Root->Children[0], OuterType, ValueType);
@@ -3265,7 +3276,7 @@ inline bool swiftDescriptorTypeRecipeMatches(
   if (GenericKind.empty() || !Shape(Generic, GenericKind, 2) ||
       !Shape(Generic.Children[0], "Type", 1) ||
       !Shape(Generic.Children[1], "TypeList",
-             TupleGeneric || RepeatedTuple ? 1 : 2))
+             TupleGeneric || (RepeatedTuple && !KeyedTuplePrefix) ? 1 : 2))
     return false;
   const auto &Arguments = Generic.Children[1].Children;
   if (TupleGeneric || RepeatedTuple) {
@@ -3279,6 +3290,12 @@ inline bool swiftDescriptorTypeRecipeMatches(
     if (!Same(Same, Generic.Children[0], OuterType, 0))
       return false;
     const auto &SecondType = Second.Root->Children[0].Children[0];
+    // Two generic arguments (key and labeled value tuple) must not be
+    // confused with one generic argument containing a nested tuple.
+    if (KeyedTuplePrefix)
+      return Shape(Arguments[1], "Type", 1) &&
+             Same(Same, Arguments[0], ValueType, 0) &&
+             RepeatedMatches(Arguments[1].Children[0], SecondType);
     return RepeatedTuple
                ? NestedMatches(Arguments[0].Children[0], ValueType, SecondType)
                : TupleMatches(Arguments[0].Children[0], ValueType, SecondType);

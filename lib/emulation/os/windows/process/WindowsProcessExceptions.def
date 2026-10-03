@@ -5,6 +5,9 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_WINDOWS_PROCESS_VALUE
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionReturnGate, 0x71000030)
+NEVERD_WINDOWS_PROCESS_VALUE(ExceptionDispatchGate, 0x71000040)
+NEVERD_WINDOWS_PROCESS_VALUE(ExceptionScopeRecordSize, 16)
+NEVERD_WINDOWS_PROCESS_VALUE(X64ContextXmmOffset, 416)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionHandleBase, 0x73000000)
 NEVERD_WINDOWS_PROCESS_VALUE(MaxExceptionHandlers, 128)
 NEVERD_WINDOWS_PROCESS_VALUE(MaxExceptionDepth, 16)
@@ -14,6 +17,7 @@ NEVERD_WINDOWS_PROCESS_VALUE(ExceptionContinueExecution, 0xffffffff)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionContinueSearch, 0)
 NEVERD_WINDOWS_PROCESS_VALUE(StatusAccessViolation, 0xc0000005)
 NEVERD_WINDOWS_PROCESS_VALUE(StatusIntegerDivideByZero, 0xc0000094)
+NEVERD_WINDOWS_PROCESS_VALUE(StatusNoncontinuableException, 0xc0000025)
 NEVERD_WINDOWS_PROCESS_VALUE(X64DivideVector, 0)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionRead, 0)
 NEVERD_WINDOWS_PROCESS_VALUE(ExceptionWrite, 1)
@@ -45,9 +49,18 @@ NEVERD_WINDOWS_PROCESS_TEXT(ExceptionLimit,
                             "user exception handler or nesting limit exceeded")
 NEVERD_WINDOWS_PROCESS_TEXT(ExceptionArguments,
                             "unsupported RaiseException flags or parameters")
+NEVERD_WINDOWS_PROCESS_TEXT(ExceptionUnhandled,
+                            "user exception was not handled")
+NEVERD_WINDOWS_PROCESS_TEXT(ExceptionMetadataChanged,
+                            "live user exception metadata changed")
+NEVERD_WINDOWS_PROCESS_TEXT(ExceptionModuleRetired,
+                            "exception dispatch image was unloaded or replaced")
 NEVERD_WINDOWS_PROCESS_TEXT(
-    ExceptionUnhandled,
-    "user exception was not handled; frame-based dispatch is unsupported")
+    ExceptionLoaderBoundary,
+    "exception unwind crossed a loader callback boundary")
+NEVERD_WINDOWS_PROCESS_TEXT(
+    ExceptionPersonalityCall,
+    "direct calls to the modeled C exception personality are unsupported")
 NEVERD_WINDOWS_PROCESS_TEXT(ExceptionDisposition,
                             "invalid vectored exception handler disposition")
 NEVERD_WINDOWS_PROCESS_TEXT(

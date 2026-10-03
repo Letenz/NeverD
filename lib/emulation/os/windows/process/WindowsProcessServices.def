@@ -48,3 +48,7 @@ NEVERD_WINDOWS_PROCESS_API(AddVectoredContinueHandler, Kernel, 2, true)
 NEVERD_WINDOWS_PROCESS_API(RemoveVectoredContinueHandler, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(RaiseException, Kernel, 4, true)
 #endif
+#ifdef NEVERD_WINDOWS_PROCESS_NAMED_API
+NEVERD_WINDOWS_PROCESS_NAMED_API(CSpecificHandler, "__C_specific_handler",
+                                 Native, 4, true)
+#endif

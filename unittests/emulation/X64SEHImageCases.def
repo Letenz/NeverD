@@ -1,0 +1,14 @@
+//===- X64SEHImageCases.def - Independent image unwind fixtures ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_SEH_IMAGE_VALUE(ImageDelta, 0x10000)
+NEVERD_SEH_IMAGE_VALUE(LeafRVA, 0x2040)
+NEVERD_SEH_IMAGE_VALUE(ReturnRVA, 0x1041)
+NEVERD_SEH_IMAGE_VALUE(HandlerRVA, 0x1080)
+NEVERD_SEH_IMAGE_VALUE(CookieOffset, 32)
+NEVERD_SEH_IMAGE_VALUE(StackAllocation, 64)
+NEVERD_SEH_IMAGE_VALUE(AllocationCodeOffset, 8)
+NEVERD_SEH_IMAGE_VALUE(InnerCookie, 0x123456789)
+NEVERD_SEH_IMAGE_VALUE(OuterCookie, 0x987654321)

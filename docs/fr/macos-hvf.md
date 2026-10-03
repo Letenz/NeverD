@@ -1,6 +1,6 @@
 **Langues**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
+<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
 
 [← Index de la documentation](README.md)
 
@@ -80,11 +80,23 @@ Le premier lot CPU vérifié de l’[exécution `37123148209`](https://github.co
 
 ## Dernière validation native locale
 
-Sources sans modification locale `353dcd75f`, le 2026-10-03. Les seize lots ARM64 ont réussi l’audit global, ainsi que la validation Darwin indépendante. Les lignes se recouvrent et ne s’additionnent pas.
+Sources sans modification locale `4ce0b8247`, le 2026-10-03 UTC. L’inventaire ARM64 complet a réussi dans 503 processus de méthode ; chaque résultat XML original, contrat d’exécution et arrêt de processus enfant a été vérifié indépendamment. La validation Darwin indépendante a également réussi. Les lignes se recouvrent et ne s’additionnent pas.
 
 | Périmètre | Inscrits | Réussis | Échecs | Ignorés | Obligatoires natifs |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, seize lots | 6,908 | 857 | 0 | 6,051 | 16/16 |
+| CPU, inventaire complet | 7,003 | 867 | 0 | 6,136 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+`build-hvf-native/hvf-current-4ce0-full-evidence/summary.json` · `build-hvf-native/hvf-current-4ce0-darwin-evidence/summary.json`
+
+## Diagnostic Intel indépendant
+
+Le [workflow de diagnostic Intel](../../.github/workflows/hvf-intel-diagnostic.yml), déclenché manuellement, extrait séparément le contrôleur et les sources testées. `source-ref` exige un SHA complet ; `shards` choisit parmi les seize partitions d’origine. `first-method` commence à zéro, `method-count=0` sélectionne les méthodes restantes et `case-index` ne peut sélectionner un paramètre d’origine que si `method-count=1`. L’inventaire complet des vingt cibles est découvert avant la sélection. Le build Release, les commandes, les paramètres et les exigences natives d’origine sont conservés.
+
+`intel-image` choisit `macos-15-intel` par défaut ou `macos-26-intel` pour une comparaison contrôlée, comme dans le workflow complet. Le titre de l’exécution indique l’image choisie et le contrôle de disponibilité exige toujours un hôte x86-64 natif. Changer d’image modifie le système, le SDK et la chaîne d’outils ; cela n’isole pas un changement du noyau.
+
+Avant chaque méthode, l’action téléverse son plan immuable et un instantané de l’hôte. Après l’exécution, elle conserve le XML original, la terminaison des processus, l’état du contrôleur et un second instantané. Ceux-ci indiquent mémoire, swap, charge, disque et identifiants, état, CPU, RSS et noms d’exécutables des processus, sans arguments ni environnement. Les erreurs de collecte restent visibles. Un échec d’exécution ou de téléversement arrête les méthodes suivantes. Chaque méthode conserve sa limite de 120 secondes ; un hôte injoignable peut empêcher nettoyage et téléversement final. Seules les preuves déjà téléversées subsistent alors. Ces diagnostics partiels ne satisfont ni la validation CPU complète ni la validation Darwin indépendante. Le dernier marqueur de départ situe une limite d’exécution, sans identifier l’instruction fautive ou la cause.
+
+Le workflow complet `Native macOS HVF` accepte aussi un `source-ref` facultatif. Par défaut, il utilise le commit du workflow ; une valeur explicite doit être un SHA complet. Les jobs natifs et l’audit agrégé extraient et vérifient les mêmes sources. L’audit confronte les preuves au commit testé, même si le contrôleur utilise une autre révision.
+
+Pour `hosted-intel`, le workflow complet accepte `intel-image=macos-15-intel` (par défaut) ou `macos-26-intel`, tous deux répertoriés dans les [images officielles des runners](https://github.com/actions/runner-images). Cela permet de comparer explicitement les environnements hôtes avec le même `source-ref` ; l’image modifie aussi le système, le SDK et les outils. Les exigences VM/vCPU, transport natif, CR8, CPU complet et Darwin restent identiques. Le choix d’une image ne prouve à lui seul ni la stabilité ni une correction à l’exécution.

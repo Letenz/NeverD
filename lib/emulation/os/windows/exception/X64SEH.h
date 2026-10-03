@@ -1,4 +1,4 @@
-//===- KernelSEH.h - Checked x64 C exception dispatch ---------*- C++ -*-===//
+//===- X64SEH.h - Checked x64 C exception dispatch ---------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -10,8 +10,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#ifndef NEVERD_EMULATION_WINDOWS_KERNELSEH_H
-#define NEVERD_EMULATION_WINDOWS_KERNELSEH_H
+#ifndef NEVERD_EMULATION_WINDOWS_X64SEH_H
+#define NEVERD_EMULATION_WINDOWS_X64SEH_H
 
 #include "neverd/loader/ExceptionTable.h"
 
@@ -28,11 +28,16 @@
 namespace neverd::emulation {
 namespace seh {
 #define NEVERD_SEH_VALUE(Name, Value) inline constexpr uint64_t Name = Value;
-#include "KernelSEHValues.def"
+#include "X64SEHValues.def"
 #undef NEVERD_SEH_VALUE
+namespace text {
+#define NEVERD_X64_SEH_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "X64SEHDiagnostics.def"
+#undef NEVERD_X64_SEH_TEXT
+} // namespace text
 } // namespace seh
 
-class KernelSEH final {
+class X64SEH final {
 public:
   struct Context {
     /// Architectural register encoding: RAX, RCX, RDX, RBX, RSP, RBP, RSI,
@@ -81,7 +86,7 @@ public:
   /// A suspended search retains the original exception context independently
   /// of the virtual unwind state and of registers clobbered by guest callbacks.
   class Dispatch {
-    friend class KernelSEH;
+    friend class X64SEH;
     struct Segment {
       Context Registers;
       Stack Bounds;
@@ -91,7 +96,7 @@ public:
     Context Original, Current;
     Stack Bounds;
     std::vector<Segment> Path;
-    size_t SegmentIndex = 0, ScopeFloor = 0;
+    size_t SegmentIndex = 0, ScopeFloor = 0, ImageIndex = 0;
     uint32_t Code = 0;
     uint64_t Depth = 0, OriginalPC = 0, Establisher = 0;
     size_t ScopeIndex = 0, CleanupIndex = 0;
@@ -106,6 +111,7 @@ public:
       /// A GS check precedes this frame's language handler, even when it has
       /// no finally scopes. It must run again after the search pass.
       const ExceptionFunction *CookieFrame = nullptr;
+      size_t ImageIndex = 0;
     };
     std::vector<UnwindStep> Cleanups;
   };
@@ -114,13 +120,22 @@ public:
   using ReadCode =
       std::function<llvm::Error(uint64_t, llvm::MutableArrayRef<uint8_t>)>;
   using ReadSecurityCookie = std::function<llvm::Expected<uint64_t>()>;
+  struct Image {
+    const ExceptionInfo *Metadata;
+    uint64_t PreferredBase, ActualBase, Size;
+    ReadSecurityCookie Cookie;
+  };
+  /// Image views and metadata remain immutable for a suspended dispatch.
+  /// The owner validates live module identity and metadata before resumption.
+  X64SEH(std::vector<Image> Images, ReadStack64 ReadStack,
+         IsExecutable Executable, ReadCode Code = {});
 
   /// Metadata retains preferred-base VAs. It must outlive the planner and
   /// remain immutable. Stack reads must be side-effect-free checked reads.
-  KernelSEH(const ExceptionInfo &Metadata, uint64_t PreferredBase,
-            uint64_t ActualBase, uint64_t ImageSize, ReadStack64 ReadStack,
-            IsExecutable Executable, ReadCode Code = {},
-            ReadSecurityCookie Cookie = {});
+  X64SEH(const ExceptionInfo &Metadata, uint64_t PreferredBase,
+         uint64_t ActualBase, uint64_t ImageSize, ReadStack64 ReadStack,
+         IsExecutable Executable, ReadCode Code = {},
+         ReadSecurityCookie Cookie = {});
 
   /// Caller is a local copy after the modeled raising API's return-address
   /// pop. Its control PC is the checked saved return address minus one.
@@ -138,6 +153,12 @@ public:
                                        const Context &Caller, Stack Bounds,
                                        const Dispatch &Suspended,
                                        const Action &Callback) const;
+  /// A dispatcher may reject a filter's continuation and raise a secondary
+  /// exception after that callback has returned. Retain the original logical
+  /// stack without introducing a new active-filter boundary.
+  llvm::Expected<Dispatch>
+  beginAfterRejectedContinuation(uint32_t ExceptionCode, const Context &Caller,
+                                 Stack Bounds, const Dispatch &Rejected) const;
   /// Filter actions require the actual low-32-bit signed guest result on the
   /// next advance. Finally actions advance after their guest call returns.
   /// Errors leave the dispatch cursor unchanged; no guest state is written.
@@ -157,19 +178,18 @@ public:
                                        uint64_t Storage, Stack Bounds) const;
 
 private:
-  const ExceptionInfo &Metadata;
-  uint64_t PreferredBase;
-  uint64_t ActualBase;
-  uint64_t ImageSize;
+  std::vector<Image> Images;
   ReadStack64 ReadStack;
   IsExecutable Executable;
   ReadCode Code;
-  ReadSecurityCookie Cookie;
+  llvm::Error validateImages() const;
+  std::optional<size_t> imageFor(uint64_t PC) const;
   llvm::Error checkGSCookie(const ExceptionFunction &Frame,
-                            uint64_t Establisher, Stack Bounds) const;
+                            uint64_t Establisher, Stack Bounds,
+                            const Image &Owner) const;
   llvm::Expected<std::optional<Context>>
   unwindEpilogue(const ExceptionFunction &Frame, const Context &Current,
-                 Stack Bounds) const;
+                 Stack Bounds, const Image &Owner) const;
   llvm::Expected<Action> advanceImpl(Dispatch &State,
                                      std::optional<int32_t> FilterResult) const;
   llvm::Expected<Context> validateRecords(llvm::ArrayRef<uint8_t> Records,
@@ -178,4 +198,4 @@ private:
 };
 
 } // namespace neverd::emulation
-#endif // NEVERD_EMULATION_WINDOWS_KERNELSEH_H
+#endif // NEVERD_EMULATION_WINDOWS_X64SEH_H

@@ -7,9 +7,6 @@ add_neverd_component_library(NeverDEmulation
   DriverImage.cpp
   KernelExportRegistry.cpp
   KernelException.cpp
-  KernelSEH.cpp
-  KernelSEHGS.cpp
-  KernelSEHEpilogue.cpp
   GuardControlFlow.cpp
   KernelFramework.cpp
   KernelFrameworkInterrupts.cpp
@@ -78,7 +75,7 @@ add_neverd_component_library(NeverDEmulation
   KernelAPIIRQL.cpp
   DeviceLifecycle.cpp
   KernelRegistry.cpp
-  LINK_COMPONENTS Loader EmulationCPU EmulationABI EmulationRuntime)
+  LINK_COMPONENTS Loader EmulationCPU EmulationABI EmulationRuntime EmulationWindowsException)
 if(WIN32)
   target_compile_definitions(NeverDEmulation PRIVATE NOMINMAX)
 endif()

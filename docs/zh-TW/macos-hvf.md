@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
+<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
 
 [← 文件索引](README.md)
 
@@ -80,11 +80,23 @@ CPU 執行前，`scripts/prepare_hvf_batches.py` 保存完整清單、各片所�
 
 ## 最新本機原生驗證
 
-乾淨原始碼 `353dcd75f`，2026-10-03：ARM64 十六片皆通過彙總稽核，獨立 Darwin 驗證亦通過。兩列覆蓋重疊，不可相加。
+乾淨原始碼 `4ce0b8247`，2026-10-03 UTC：ARM64 完整清單以 503 個方法行程執行通過，原始 XML、執行契約與子行程回收狀態均已獨立核對，獨立 Darwin 驗證亦通過。兩列覆蓋重疊，不可相加。
 
 | 範圍 | 註冊 | 通過 | 失敗 | 跳過 | 必需原生項 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU，十六片 | 6,908 | 857 | 0 | 6,051 | 16/16 |
+| CPU，完整清單 | 7,003 | 867 | 0 | 6,136 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+`build-hvf-native/hvf-current-4ce0-full-evidence/summary.json` · `build-hvf-native/hvf-current-4ce0-darwin-evidence/summary.json`
+
+## 獨立 Intel 診斷
+
+手動觸發的 [Intel 診斷工作流程](../../.github/workflows/hvf-intel-diagnostic.yml) 分別檢出控制器與受測原始碼。`source-ref` 必須是完整提交 SHA；`shards` 選取原十六分片中的片號。`first-method` 從零計數，`method-count=0` 選取剩餘方法；只有 `method-count=1` 時，`case-index` 才能選取一個原始參數。先探索全部二十個目標的完整清單，再進行選取；保留原 Release 建置、命令、參數與原生必要檢查。
+
+`intel-image` 與完整工作流程一致，預設選擇 `macos-15-intel`，也可選擇 `macos-26-intel` 做受控對照。執行標題標明所選映像檔，可用性檢查仍要求原生 x86-64 主機。切換映像檔同時涉及作業系統、SDK 與工具鏈，不能據此單獨歸因於核心變更。
+
+每個方法開始前，Action 上傳不可變執行計畫與主機快照；結束後保存原始 XML、行程回收、控制器狀態與第二份快照。快照記錄記憶體、交換空間、負載、磁碟，以及行程編號、狀態、CPU、RSS 與執行檔名稱，不包含行程參數或環境；蒐集錯誤也會保留。執行或上傳失敗即停止後續方法。每個方法仍有 120 秒執行上限；主機失聯可能阻止清理及最終上傳，此時只能使用已上傳的證據。這些局部診斷不能取代完整 CPU 或獨立 Darwin 驗收。最後一個開始標記只能定位執行邊界，不能直接確定故障指令或根因。
+
+完整的 `Native macOS HVF` 工作流程也接受選用的 `source-ref`，預設使用工作流程所在提交，指定時必須提供完整 SHA。原生工作與彙總稽核皆會檢出並驗證同一份原始碼；即使控制器版本不同，稽核仍依受測原始碼提交核對證據。
+
+選擇 `hosted-intel` 時，完整工作流程支援 `intel-image=macos-15-intel`（預設）或 `macos-26-intel`，兩者均列於[官方 runner 映像清單](https://github.com/actions/runner-images)。可保持相同的 `source-ref`，明確比較宿主環境；映像也會改變系統、SDK 與工具鏈。VM/vCPU、原生傳輸、CR8、完整 CPU 與 Darwin 的要求不變。選擇映像本身不能證明穩定性或執行階段修正。

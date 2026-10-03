@@ -1453,3 +1453,471 @@ TEST(SourceFrameAnalysis,
     EXPECT_EQ(bool(F.query()), ScratchOffset == 288);
   }
 }
+
+namespace {
+struct OpaqueValueFixture {
+  Arch Architecture;
+  LowFunc Low;
+  SourceFunctionTypeHint Producer, Consumer;
+  NativeSourceCalls Calls;
+  NativeSourceCallKey Produce, Read, Destroy;
+  NdVar Stack, A0, A1, Address, Link;
+  unsigned FrameBytes;
+  size_t StartProducer, StartRead, StartDestroy, StartExit;
+  va_t Next = 0x4000;
+
+  explicit OpaqueValueFixture(Arch Architecture = Arch::AArch64)
+      : Architecture(Architecture) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    Stack = NdVar::reg(TRI.StackPointer, 8);
+    Address =
+        NdVar::reg(Architecture == Arch::AArch64 ? a64reg::X9 : x86reg::R10, 8);
+    Link = NdVar::reg(TRI.LinkRegister, 8);
+    FrameBytes = Architecture == Arch::AArch64 ? 96 : 88;
+    Producer.Origin = SourceFunctionTypeHint::OriginKind::DarwinRuntime;
+    Producer.ReturnType = NdType::makeVoid();
+    Producer.Parameters = {{"source", NdType::makePtr(NdType::makeVoid())},
+                           {"output", NdType::makePtr(NdType::makeVoid())}};
+    std::string Error;
+    EXPECT_TRUE(assignDarwinScalarSourceABI(Producer, Architecture, Error));
+    Consumer = Producer;
+    Consumer.Parameters.resize(1);
+    EXPECT_TRUE(assignDarwinScalarSourceABI(Consumer, Architecture, Error));
+    A0 = NdVar::reg(Producer.Parameters[0].Location.RegisterOffset, 8);
+    A1 = NdVar::reg(Producer.Parameters[1].Location.RegisterOffset, 8);
+    Low.Entry = Next;
+    LowBlock B;
+    B.Id = 0;
+    B.StartAddr = Next;
+    Low.Blocks.push_back(B);
+    add(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(FrameBytes, 8)});
+    if (TRI.LinkRegister) {
+      address(Address, 80);
+      add(NdOp::STORE, {}, {Address, Link});
+    }
+    StartProducer = Low.Blocks[0].Ops.size();
+    add(NdOp::COPY, A0, {NdVar::scalar(0x9000, 8)});
+    address(A1, 8);
+    SourceFrameEffects Output;
+    Output.WritableFrameParameters[1] = 40;
+    Output.OpaqueValueParameters[1] = {
+        SourceFrameValueEffect::Action::Initialize, "opaque-test-value", 40};
+    Produce = call(Producer, Output);
+    StartRead = Low.Blocks[0].Ops.size();
+    address(A0, 8);
+    SourceFrameEffects Input;
+    Input.ReadOnlyFrameParameters[0] = 40;
+    Input.OpaqueValueParameters[0] = {SourceFrameValueEffect::Action::Read,
+                                      "opaque-test-value", 40};
+    Read = call(Consumer, Input);
+    StartDestroy = Low.Blocks[0].Ops.size();
+    address(A0, 8);
+    Input.ReadOnlyFrameParameters.clear();
+    Input.WritableFrameParameters[0] = 40;
+    Input.OpaqueValueParameters[0].TheAction =
+        SourceFrameValueEffect::Action::Destroy;
+    Destroy = call(Consumer, Input);
+    StartExit = Low.Blocks[0].Ops.size();
+    if (TRI.LinkRegister) {
+      address(Address, 80);
+      add(NdOp::LOAD, Link, {Address});
+    }
+    add(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(FrameBytes, 8)});
+    add(NdOp::RETURN, {}, {});
+    if (TRI.LinkRegister)
+      Low.Blocks[0].Ops.back().addInput(Link);
+  }
+  void add(NdOp Code, NdVar Out, std::initializer_list<NdVar> Inputs) {
+    Low.Blocks[0].Ops.push_back(op(Code, Out, Inputs, Next));
+    Next += 4;
+  }
+  void address(NdVar Out, unsigned Offset) {
+    add(NdOp::INT_ADD, Out, {Stack, NdVar::scalar(Offset, 8)});
+  }
+  NativeSourceCallKey call(const SourceFunctionTypeHint &ABI,
+                           const SourceFrameEffects &Effects) {
+    add(NdOp::CALL, {}, {NdVar::cst(0x5000, 8)});
+    const auto Key = *nativeSourceCallKey(Low.Blocks[0].Ops.back());
+    NativeSourceCallContract Contract;
+    Contract.Signature = &ABI;
+    static_cast<SourceFrameEffects &>(Contract) = Effects;
+    Calls.emplace(Key, Contract);
+    return Key;
+  }
+  bool valid() const {
+    return restoresNativeSourceState(Low, Architecture, Calls);
+  }
+};
+} // namespace
+
+TEST(SourceFrameAnalysis, OpaqueValueLifecycleDoesNotInitializePadding) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    OpaqueValueFixture F(Architecture);
+    ASSERT_TRUE(F.valid());
+    auto &Output = F.Calls.at(F.Produce);
+    Output.OpaqueValueParameters.clear();
+    EXPECT_FALSE(F.valid());
+    Output.OpaqueValueParameters[1] = {
+        SourceFrameValueEffect::Action::Initialize, "opaque-test-value", 40};
+    // A value read is valid while an arbitrary raw byte read is not.
+    F.Calls.at(F.Read).OpaqueValueParameters.clear();
+    F.Calls.at(F.Read).InitializedFrameParameters.insert(0);
+    EXPECT_FALSE(F.valid());
+  }
+}
+
+TEST(SourceFrameAnalysis,
+     OpaqueValueEffectsValidateIdentityAndWholePointerABI) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 14; ++Case) {
+      SCOPED_TRACE(Case);
+      OpaqueValueFixture F(Architecture);
+      auto ABI = F.Producer;
+      auto Effect = static_cast<SourceFrameEffects &>(F.Calls.at(F.Produce));
+      ASSERT_TRUE(sourceFrameEffectsMatchABI(Effect, ABI));
+      if (Case == 0)
+        Effect.WritableFrameParameters.clear();
+      if (Case == 1) {
+        Effect.WritableFrameParameters.clear();
+        Effect.ReadOnlyFrameParameters[1] = 40;
+      }
+      if (Case == 2)
+        Effect.OpaqueValueParameters[2] = Effect.OpaqueValueParameters.at(1);
+      if (Case == 3)
+        Effect.WritableFrameParameters[1] = 0;
+      if (Case == 4)
+        Effect.WritableFrameParameters[1] = (1U << 20) + 1;
+      if (Case == 5)
+        ABI.Parameters[1].Location.ValueBytes = 4;
+      if (Case == 6)
+        ABI.Parameters[1].Type = NdType::makeInt(4);
+      if (Case == 7)
+        ABI.Parameters[1].Type = NdType::makeFloat(8);
+      if (Case == 8)
+        ABI.Parameters[1].Location.Kind =
+            SourceABICarrierKind::FloatingRegister;
+      if (Case == 9)
+        Effect.OpaqueValueParameters.at(1).Identity.clear();
+      if (Case == 10)
+        Effect.Scratch = {SourceFrameScratchEffect::Domain::SwiftAccess,
+                          SourceFrameScratchEffect::Action::Initialize,
+                          1,
+                          40,
+                          std::nullopt,
+                          {}};
+      if (Case == 11)
+        ABI.Parameters[1].Location.RegisterOffset =
+            ABI.Parameters[0].Location.RegisterOffset;
+      if (Case == 12)
+        Effect.OpaqueValueParameters.at(1).TheAction =
+            SourceFrameValueEffect{}.TheAction;
+      if (Case == 13)
+        Effect.OpaqueValueParameters.at(1).Identity = std::string(257, 'x');
+      EXPECT_FALSE(sourceFrameEffectsMatchABI(Effect, ABI));
+    }
+}
+
+TEST(SourceFrameAnalysis, OpaqueValuesKeepExtentAliasAndRestorationChecks) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 13; ++Case) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Case);
+      OpaqueValueFixture F(Architecture);
+      auto &Ops = F.Low.Blocks[0].Ops;
+      auto &Effect = F.Calls.at(F.Produce);
+      std::vector<LowOp> Before, After;
+      if (Case == 0 || Case == 1)
+        Ops[F.StartProducer + 1].Inputs[1] =
+            NdVar::scalar(Case == 0 ? F.FrameBytes - 8 : F.FrameBytes, 8);
+      if (Case == 2)
+        Ops[F.StartProducer + 1].Output.Size = 4;
+      if (Case == 3)
+        Ops[F.StartProducer + 1] =
+            op(NdOp::COPY, F.A1, {NdVar::scalar(0x9000, 8)}, 0x5000);
+      if (Case == 4 || Case == 5) {
+        Effect.ReadOnlyFrameParameters[0] = 40;
+        Ops[F.StartProducer] =
+            op(NdOp::INT_ADD, F.A0,
+               {F.Stack, NdVar::scalar(Case == 4 ? 8 : 40, 8)}, 0x5000);
+      }
+      if (Case == 6)
+        Before.push_back(op(NdOp::STORE, {}, {F.A0, F.A1}, 0x5000));
+      if (Case == 7) {
+        const auto Saved = NdVar::reg(
+            Architecture == Arch::AArch64 ? a64reg::X19 : x86reg::RBX, 8);
+        Before = {op(NdOp::STORE, {}, {F.A1, Saved}, 0x5000),
+                  op(NdOp::COPY, Saved, {NdVar::scalar(0, 8)}, 0x5004)};
+        After = {op(NdOp::INT_ADD, F.Address, {F.Stack, NdVar::scalar(8, 8)},
+                    0x5010),
+                 op(NdOp::LOAD, Saved, {F.Address}, 0x5014)};
+      }
+      if (Case == 8)
+        After = {
+            op(NdOp::INT_ADD, F.Stack, {F.Stack, NdVar::scalar(48, 8)}, 0x5010),
+            op(NdOp::INT_SUB, F.Stack, {F.Stack, NdVar::scalar(48, 8)},
+               0x5014)};
+      if (Case == 9) {
+        After = {
+            op(NdOp::INT_ADD, F.A0, {F.Stack, NdVar::scalar(8, 8)}, 0x5010),
+            op(NdOp::CALL, {}, {NdVar::cst(0x5000, 8)}, 0x5014)};
+        auto MayWrite = F.Calls.at(F.Destroy);
+        MayWrite.InitializedFrameParameters.clear();
+        MayWrite.OpaqueValueParameters.clear();
+        F.Calls.emplace(*nativeSourceCallKey(After.back()), MayWrite);
+      }
+      if (Case == 10) {
+        F.Producer.ReturnType = NdType::makePtr(NdType::makeVoid());
+        std::string Error;
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(F.Producer, Architecture, Error));
+        Effect.ReturnFrameOrExternal = {1, 40};
+        After = {op(NdOp::COPY, F.A1,
+                    {NdVar::reg(F.Producer.ReturnLocation.RegisterOffset, 8)},
+                    0x5010),
+                 op(NdOp::COPY, F.A0, {NdVar::scalar(0x9000, 8)}, 0x5014),
+                 op(NdOp::CALL, {}, {NdVar::cst(0x5000, 8)}, 0x5018)};
+        F.Calls.emplace(*nativeSourceCallKey(After.back()), Effect);
+      }
+      if (Case == 11) {
+        Before.push_back(op(
+            NdOp::COPY, F.Stack,
+            {NdVar::reg(
+                Architecture == Arch::AArch64 ? a64reg::X12 : x86reg::R11, 8)},
+            0x5000));
+      }
+      if (Case == 12) {
+        // A missing producer on the first path cannot be repaired by a read.
+        Effect.OpaqueValueParameters.clear();
+        Before.push_back(
+            op(NdOp::STORE, {}, {F.A1, NdVar::scalar(0, 8)}, 0x5000));
+      }
+      Ops.insert(Ops.begin() + F.StartRead, After.begin(), After.end());
+      Ops.insert(Ops.begin() + F.StartRead - 1, Before.begin(), Before.end());
+      EXPECT_FALSE(F.valid());
+    }
+}
+
+TEST(SourceFrameAnalysis, OpaqueValueDestructionDoesNotInitializeBytes) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Bytes : {0, 39, 40}) {
+      OpaqueValueFixture F(Architecture);
+      auto &Ops = F.Low.Blocks[0].Ops;
+      std::vector<LowOp> After;
+      for (unsigned I = 0; I < Bytes; ++I) {
+        After.push_back(op(NdOp::INT_ADD, F.Address,
+                           {F.Stack, NdVar::scalar(8 + I, 8)}, 0x5000 + I * 8));
+        After.push_back(op(NdOp::STORE, {}, {F.Address, NdVar::scalar(I, 1)},
+                           0x5004 + I * 8));
+      }
+      After.push_back(
+          op(NdOp::INT_ADD, F.A0, {F.Stack, NdVar::scalar(8, 8)}, 0x6000));
+      After.push_back(op(NdOp::CALL, {}, {NdVar::cst(0x5000, 8)}, 0x6004));
+      auto RawRead = F.Calls.at(F.Read);
+      RawRead.OpaqueValueParameters.clear();
+      RawRead.InitializedFrameParameters.insert(0);
+      F.Calls.emplace(*nativeSourceCallKey(After.back()), RawRead);
+      Ops.insert(Ops.begin() + F.StartExit, After.begin(), After.end());
+      EXPECT_EQ(F.valid(), Bytes == 40);
+    }
+}
+
+TEST(SourceFrameAnalysis, OpaqueValueLifetimesMeetAllPathsAndLoopIterations) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 5; ++Case)
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(Case);
+        SCOPED_TRACE(Reverse);
+        OpaqueValueFixture F(Architecture);
+        const auto Original = F.Low.Blocks[0].Ops;
+        F.Low.Blocks.resize(4);
+        for (unsigned I = 0; I < 4; ++I) {
+          F.Low.Blocks[I] = {};
+          F.Low.Blocks[I].Id = I;
+          F.Low.Blocks[I].StartAddr = 0x4000 + I * 0x100;
+        }
+        auto &Root = F.Low.Blocks[0], &Left = F.Low.Blocks[1],
+             &Right = F.Low.Blocks[2], &Join = F.Low.Blocks[3];
+        Root.Ops.assign(Original.begin(), Original.begin() + F.StartProducer);
+        Left.Ops.assign(Original.begin() + F.StartProducer,
+                        Original.begin() + F.StartRead);
+        if (Case < 2) {
+          Root.Succs = {1, 2};
+          Left.Preds = Right.Preds = {0};
+          Left.Succs = Right.Succs = {3};
+          Join.Preds = {1, 2};
+          Join.Ops.assign(Original.begin() + F.StartRead, Original.end());
+          Right.Ops = Left.Ops;
+          for (auto &Op : Right.Ops) {
+            const auto Key = nativeSourceCallKey(Op);
+            Op.Addr += 0x1000;
+            if (Key) {
+              F.Calls.emplace(*nativeSourceCallKey(Op), F.Calls.at(*Key));
+              if (Case == 1)
+                F.Calls.at(*nativeSourceCallKey(Op))
+                    .OpaqueValueParameters.clear();
+            }
+          }
+        } else {
+          Root.Succs = {1,
+                        3}; // The zero-iteration exit never reads the buffer.
+          Left.Preds = {0};
+          Left.Succs = {2};
+          Right.Preds = {1, 2};
+          Right.Succs = {2, 3};
+          Right.Ops.assign(Original.begin() +
+                               (Case == 2 ? F.StartRead : F.StartProducer),
+                           Original.begin() + F.StartExit);
+          // Loop producers need their own occurrence, not the preloop key.
+          for (auto &Op : Right.Ops) {
+            const auto Key = nativeSourceCallKey(Op);
+            Op.Addr += 0x1000;
+            if (Key)
+              F.Calls.emplace(*nativeSourceCallKey(Op), F.Calls.at(*Key));
+          }
+          if (Case == 3)
+            Left.Ops.clear();
+          if (Case == 4) {
+            // A late write after a read cannot initialize the first iteration.
+            Left.Ops.clear();
+            auto Producer =
+                std::vector<LowOp>(Right.Ops.begin(), Right.Ops.begin() + 3);
+            Right.Ops.erase(Right.Ops.begin(), Right.Ops.begin() + 3);
+            Right.Ops.insert(Right.Ops.end(), Producer.begin(), Producer.end());
+          }
+          if (Left.Ops.empty())
+            Left.Ops.push_back(
+                op(NdOp::COPY, F.Address, {NdVar::scalar(0, 8)}, 0x7000));
+          Join.Preds = {0, 2};
+          Join.Ops.assign(Original.begin() + F.StartExit, Original.end());
+        }
+        if (Reverse)
+          std::reverse(F.Low.Blocks.begin(), F.Low.Blocks.end());
+        EXPECT_EQ(F.valid(), Case == 0 || Case == 3);
+      }
+}
+
+TEST(SourceFrameAnalysis,
+     OpaqueLifetimesRejectMissingStaleAndDuplicateOperations) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 12; ++Case) {
+      SCOPED_TRACE(Case);
+      OpaqueValueFixture F(Architecture);
+      auto &Ops = F.Low.Blocks[0].Ops;
+      if (Case == 0)
+        F.Calls.at(F.Read).OpaqueValueParameters.at(0).Identity = "other-value";
+      if (Case == 1)
+        F.Calls.at(F.Destroy).OpaqueValueParameters.at(0).Identity =
+            "other-value";
+      if (Case == 2)
+        F.Calls.at(F.Read).OpaqueValueParameters.clear();
+      if (Case == 3)
+        F.Calls.at(F.Destroy).OpaqueValueParameters.clear();
+      if (Case == 4)
+        Ops.erase(Ops.begin() + F.StartDestroy, Ops.begin() + F.StartExit);
+      if (Case == 5)
+        Ops.erase(Ops.begin() + F.StartProducer, Ops.begin() + F.StartRead);
+      if (Case == 6 || Case == 7 || Case == 8) {
+        std::vector<LowOp> Extra;
+        if (Case == 6)
+          Extra.assign(Ops.begin() + F.StartProducer,
+                       Ops.begin() + F.StartRead);
+        else
+          Extra.assign(Ops.begin() + (Case == 7 ? F.StartRead : F.StartDestroy),
+                       Ops.begin() +
+                           (Case == 7 ? F.StartDestroy : F.StartExit));
+        for (auto &Op : Extra) {
+          const auto Key = nativeSourceCallKey(Op);
+          Op.Addr += 0x1000;
+          if (Key)
+            F.Calls.emplace(*nativeSourceCallKey(Op), F.Calls.at(*Key));
+        }
+        Ops.insert(Ops.begin() + (Case == 6 ? F.StartRead : F.StartExit),
+                   Extra.begin(), Extra.end());
+      }
+      if (Case == 9 || Case == 10) {
+        const std::vector<LowOp> Raw = {
+            op(NdOp::INT_ADD, F.Address, {F.Stack, NdVar::scalar(8, 8)},
+               0x6000),
+            Case == 9 ? op(NdOp::LOAD, F.A0, {F.Address}, 0x6004)
+                      : op(NdOp::STORE, {}, {F.Address, NdVar::scalar(0, 1)},
+                           0x6004)};
+        Ops.insert(Ops.begin() + F.StartRead, Raw.begin(), Raw.end());
+      }
+      if (Case == 11) {
+        // A result that may alias the destroyed frame must not hide the read.
+        F.Consumer.ReturnType = NdType::makePtr(NdType::makeVoid());
+        std::string Error;
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(F.Consumer, Architecture, Error));
+        F.Calls.at(F.Destroy).ReturnFrameOrExternal = {0, 40};
+        Ops.insert(Ops.begin() + F.StartExit,
+                   op(NdOp::LOAD, F.Address,
+                      {NdVar::reg(F.Consumer.ReturnLocation.RegisterOffset, 8)},
+                      0x6000));
+      }
+      EXPECT_FALSE(F.valid());
+    }
+}
+
+TEST(SourceFrameAnalysis, OpaqueValuesRetainScratchAndPaddingTaintRules) {
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    SCOPED_TRACE(Case);
+    OpaqueValueFixture F;
+    AccessLifetimeFixture Protocol;
+    auto &Ops = F.Low.Blocks[0].Ops;
+    const unsigned Offset = Case == 0 ? 48 : 8;
+    std::vector<LowOp> Prefix = {
+        op(NdOp::COPY, X0, {NdVar::scalar(0x9000, 8)}, 0x6000),
+        op(NdOp::INT_ADD, F.A1, {F.Stack, NdVar::scalar(Offset, 8)}, 0x6004),
+        op(NdOp::COPY, Protocol.X2, {NdVar::scalar(32, 8)}, 0x6008),
+        op(NdOp::COPY, Protocol.X3, {NdVar::scalar(0, 8)}, 0x600c),
+        op(NdOp::CALL, {}, {NdVar::cst(0x4000, 8)}, 0x6010)};
+    F.Calls.merge(callsAt(0x6010, Protocol.Begin, Protocol.Initialize));
+    std::vector<LowOp> Finish = {
+        op(NdOp::INT_ADD, X0, {F.Stack, NdVar::scalar(Offset, 8)}, 0x6020),
+        op(NdOp::CALL, {}, {NdVar::cst(0x4000, 8)}, 0x6024)};
+    F.Calls.merge(callsAt(0x6024, Protocol.End, Protocol.Finish));
+    if (Case >= 2) {
+      Prefix.insert(Prefix.end(), Finish.begin(), Finish.end());
+      if (Case == 3)
+        for (unsigned I = 0; I < 24; I += 8) {
+          Prefix.push_back(op(NdOp::INT_ADD, F.Address,
+                              {F.Stack, NdVar::scalar(Offset + I, 8)},
+                              0x6100 + I));
+          Prefix.push_back(op(NdOp::STORE, {}, {F.Address, NdVar::scalar(0, 8)},
+                              0x6200 + I));
+        }
+    } else {
+      Ops.insert(Ops.begin() + F.StartExit, Finish.begin(), Finish.end());
+    }
+    Ops.insert(Ops.begin() + F.StartProducer, Prefix.begin(), Prefix.end());
+    // Ending a linked scratch lifetime does not erase pointers in padding.
+    EXPECT_EQ(F.valid(), Case == 0 || Case == 3);
+  }
+}
+
+TEST(SourceFrameAnalysis,
+     OpaqueReadAllowsSameValueButWritesRequireDisjointness) {
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    OpaqueValueFixture F;
+    auto &Ops = F.Low.Blocks[0].Ops;
+    auto Effect = F.Calls.at(F.Read);
+    Effect.Signature = &F.Producer;
+    Effect.ReadOnlyFrameParameters[1] = 40;
+    Effect.OpaqueValueParameters[1] = Effect.OpaqueValueParameters.at(0);
+    std::vector<LowOp> Extra = {
+        op(NdOp::INT_ADD, F.A0, {F.Stack, NdVar::scalar(8, 8)}, 0x6000),
+        op(NdOp::COPY, F.A1, {F.A0}, 0x6004),
+        op(NdOp::CALL, {}, {NdVar::cst(0x5000, 8)}, 0x6008)};
+    if (Case) {
+      Effect.ReadOnlyFrameParameters.erase(1);
+      Effect.WritableFrameParameters[1] = 40;
+      Effect.OpaqueValueParameters[1].TheAction =
+          Case == 1 ? SourceFrameValueEffect::Action::Initialize
+                    : SourceFrameValueEffect::Action::Destroy;
+    }
+    F.Calls.emplace(*nativeSourceCallKey(Extra.back()), Effect);
+    Ops.insert(Ops.begin() + F.StartRead, Extra.begin(), Extra.end());
+    EXPECT_EQ(F.valid(), Case == 0);
+  }
+}

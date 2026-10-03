@@ -25,8 +25,10 @@ struct ByteMemoryForwardingOptions {
   /// also feeds C emission, which cannot express arbitrary undefined choices.
   bool AllowStoreSnapshots = false;
   uint64_t MaxMemorySteps = 1048576;
-  /// Also simplify exact full-width integer addresses. This does not assert
-  /// that their memory is private or disjoint from other pointers.
+  /// Also simplify exact full-width integer addresses, including entry-rooted
+  /// PHI/select relations proved at a fixed point and bitwise displacements
+  /// certified by dominating masked equalities. This does not assert that
+  /// their memory is private or disjoint from other pointers.
   bool SimplifyNumericMemory = false;
 };
 
@@ -34,6 +36,7 @@ struct ByteMemoryForwardingResult {
   uint64_t ForwardedLoads = 0;
   uint64_t FrozenStores = 0;
   uint64_t RemovedStores = 0;
+  uint64_t CanonicalizedAddresses = 0;
   uint64_t Instructions = 0;
   uint64_t AddressSteps = 0;
   uint64_t PeakTrackedBytes = 0;
@@ -55,6 +58,11 @@ struct ByteMemoryForwardingResult {
 /// With SimplifyNumericMemory, integral AS0 inttoptr addresses with the same
 /// SSA root and full-width constant offsets also permit single-writer scalar
 /// forwarding and removal of completely overwritten, unobserved stores.
+/// Backward byte liveness combines later writes and preserves overlapping
+/// observations; a disjoint read with the same root does not kill the proof.
+/// Address equality may cross a loop only when every incoming value retains
+/// the same modular offset from one function-entry value. Memory contents
+/// remain block-local; this is not a private-frame or definedness proof.
 struct ByteMemoryForwardingPass
     : public llvm::PassInfoMixin<ByteMemoryForwardingPass> {
   explicit ByteMemoryForwardingPass(ByteMemoryForwardingOptions Options = {})

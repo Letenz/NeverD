@@ -18,7 +18,11 @@ using namespace value;
 constexpr Service Registry[] = {
 #define NEVERD_WINDOWS_PROCESS_API(Name, Provider, Count, Returns)             \
   {API::Name, #Name, Count, APIProvider::Provider, Returns},
+#define NEVERD_WINDOWS_PROCESS_NAMED_API(Name, Symbol, Provider, Count,        \
+                                         Returns)                              \
+  {API::Name, Symbol, Count, APIProvider::Provider, Returns},
 #include "WindowsProcessServices.def"
+#undef NEVERD_WINDOWS_PROCESS_NAMED_API
 #undef NEVERD_WINDOWS_PROCESS_API
 };
 static_assert([] {
@@ -82,11 +86,13 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     return ServiceOutcome(*V);
   };
   switch (S.Kind) {
+  case API::CSpecificHandler:
+    return failure(text::ExceptionPersonalityCall);
   case API::AddVectoredExceptionHandler:
   case API::AddVectoredContinueHandler: {
     const auto Kind = S.Kind == API::AddVectoredContinueHandler
-                          ? VectoredExceptions::HandlerKind::Continue
-                          : VectoredExceptions::HandlerKind::Exception;
+                          ? ExceptionDispatcher::HandlerKind::Continue
+                          : ExceptionDispatcher::HandlerKind::Exception;
     auto Handle = Exceptions.add(Kind, uint32_t(A[0]) != 0, A[1]);
     if (!Handle)
       return Handle.takeError();
@@ -94,10 +100,10 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   }
   case API::RemoveVectoredExceptionHandler:
     return Value(
-        Exceptions.remove(VectoredExceptions::HandlerKind::Exception, A[0]));
+        Exceptions.remove(ExceptionDispatcher::HandlerKind::Exception, A[0]));
   case API::RemoveVectoredContinueHandler:
     return Value(
-        Exceptions.remove(VectoredExceptions::HandlerKind::Continue, A[0]));
+        Exceptions.remove(ExceptionDispatcher::HandlerKind::Continue, A[0]));
   case API::RaiseException: {
     const uint32_t Flags = A[1];
     const uint32_t Count = A[3] ? uint32_t(A[2]) : 0;
@@ -111,7 +117,7 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
     ServiceOutcome::Exception Raised{
         uint32_t(A[0]),
         uint32_t(Flags | ExceptionSoftwareOriginate),
-        Event.PC,
+        0, // The process dispatcher binds the executable continuation address.
         {}};
     for (uint32_t I = 0; I < Count; ++I) {
       auto Argument = CPU.readInteger(A[3] + I * PointerSize, PointerSize);

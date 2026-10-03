@@ -10,6 +10,7 @@
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
+#include "neverd/loader/Swift/SwiftOpaqueValueEffects.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
 
@@ -178,6 +179,11 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       Hints.emplace(Boolean.Normalization.Site.Instruction, std::move(Hint));
     }
   }
+  const auto OpaqueHints =
+      Image && SourceCalleeFunctions && SourceCalleeTypeHints
+          ? buildSwiftOpaqueValueCallHints(*Image, Low, *SourceCalleeTypeHints,
+                                           *SourceCalleeFunctions)
+          : std::map<va_t, SourceCallTypeHint>{};
   const auto &TRI = getTargetRegInfo(TargetArch);
   auto Temporary = [&](uint16_t Size) {
     MedVar V;
@@ -250,6 +256,14 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
           Hint->TargetAddress = It->first;
           // The real native name is resolved by the ordinary call ABI pass.
         }
+      }
+      if (Hint) {
+        const auto Found = OpaqueHints.find(Op.Addr);
+        if (Found != OpaqueHints.end() &&
+            Hint->CallKind == Found->second.CallKind &&
+            Hint->TargetAddress == Found->second.TargetAddress &&
+            equalSourceABIs(Hint->Signature, Found->second.Signature))
+          Hint->SwiftOpaqueValue = Found->second.SwiftOpaqueValue;
       }
       std::string Diagnostic;
       if (!Hint || Hint->Signature.Architecture != TargetArch ||

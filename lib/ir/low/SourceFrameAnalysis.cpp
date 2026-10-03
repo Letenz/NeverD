@@ -112,6 +112,14 @@ struct State {
     bool operator==(const ScratchIdentity &) const = default;
   };
   std::map<int64_t, ScratchIdentity> Scratch;
+  struct ValueIdentity {
+    std::string Identity;
+    size_t Bytes;
+    bool operator==(const ValueIdentity &) const = default;
+  };
+  // These are live typed values, never facts about their padding or contents.
+  // Each lifetime must be destroyed on every path before its frame is freed.
+  std::map<int64_t, ValueIdentity> Values;
   bool hasRetainedScratch() const {
     return std::any_of(Scratch.begin(), Scratch.end(),
                        [](const auto &Item) { return Item.second.Retained; });
@@ -232,6 +240,7 @@ public:
     TrackInitializedFrame = RequirePrivateFrame;
     for (const auto &[Site, Contract] : Calls)
       TrackInitializedFrame |= !Contract.InitializedFrameParameters.empty() ||
+                               !Contract.OpaqueValueParameters.empty() ||
                                !Contract.ByValueFrameParameters.empty() ||
                                Contract.InitializesIndirectResult;
     if (Architecture == Arch::AArch64)
@@ -310,7 +319,19 @@ public:
             static_cast<int64_t>((Value.Offset >> (Byte * 8)) & 255)};
       return ByteFact{};
     };
+    auto NoValueOverlap = [&](int64_t Address, size_t Bytes) {
+      if (Remaining < Current.Values.size())
+        return false;
+      Remaining -= Current.Values.size();
+      for (const auto &[Start, Value] : Current.Values)
+        if (Address < Start + int64_t(Value.Bytes) &&
+            Start < Address + int64_t(Bytes))
+          return false;
+      return true;
+    };
     auto InvalidateScratch = [&](int64_t Address, size_t Bytes) {
+      if (!NoValueOverlap(Address, Bytes))
+        return false;
       if (Remaining < Current.Scratch.size())
         return false;
       Remaining -= Current.Scratch.size();
@@ -365,7 +386,8 @@ public:
         Instruction = Op.Addr;
       }
       if (isArchitecturalNoReturn(Op, Architecture)) {
-        if (QueryIndex || Current.hasRetainedScratch())
+        if (QueryIndex || Current.hasRetainedScratch() ||
+            !Current.Values.empty())
           return false;
         const unsigned ExpectedInputs = Architecture == Arch::AArch64 ? 1 : 2;
         if (Op.NumInputs != ExpectedInputs ||
@@ -508,6 +530,9 @@ public:
         std::vector<std::pair<int64_t, size_t>> BorrowedRanges;
         std::vector<SourceFrameByValueCopy> CallCopies;
         std::optional<std::pair<int64_t, size_t>> InitializedResult;
+        std::map<int64_t, State::ValueIdentity> InitializedValues;
+        std::set<int64_t> DestroyedValues;
+        std::vector<std::pair<int64_t, size_t>> ValueWrites;
         const auto Initialized = [&](int64_t Address, size_t Bytes) {
           if (Remaining < Bytes)
             return false;
@@ -631,6 +656,33 @@ public:
                  !Initialized(*Address, BorrowedBytes)))
               return false;
             BorrowedRanges.emplace_back(*Address, BorrowedBytes);
+            if (const auto Value =
+                    Found->second.OpaqueValueParameters.find(ParameterIndex);
+                Value != Found->second.OpaqueValueParameters.end()) {
+              if (Tail || !FrameOffset(NdVar::reg(Location.RegisterOffset, 8)))
+                return false;
+              const auto &Effect = Value->second;
+              const State::ValueIdentity Identity{Effect.Identity,
+                                                  Effect.Bytes};
+              using Action = SourceFrameValueEffect::Action;
+              if (Effect.TheAction == Action::Initialize) {
+                if (!NoValueOverlap(*Address, BorrowedBytes) ||
+                    !InitializedValues.emplace(*Address, Identity).second)
+                  return false;
+              } else {
+                const auto Live = Current.Values.find(*Address);
+                if (Live == Current.Values.end() || Live->second != Identity)
+                  return false;
+                if (Effect.TheAction == Action::Destroy &&
+                    !DestroyedValues.insert(*Address).second)
+                  return false;
+              }
+              if (Effect.TheAction != Action::Read)
+                ValueWrites.emplace_back(*Address, BorrowedBytes);
+            } else if (!NoValueOverlap(*Address, BorrowedBytes)) {
+              // An ordinary borrow cannot interpret a live opaque value.
+              return false;
+            }
             const auto &Scratch = Found->second.Scratch;
             if (Scratch && Scratch->Parameter == ParameterIndex) {
               // Possible frame-or-external provenance cannot identify an
@@ -715,6 +767,19 @@ public:
               return false;
           BorrowedRanges.emplace_back(Copy.FrameOffset, Copy.Bytes);
         }
+        for (const auto &[Start, Size] : ValueWrites) {
+          // The producer/destroyer certificate does not authorize aliases
+          // through other parameters, including other opaque values.
+          size_t Overlaps = 0;
+          if (Remaining < BorrowedRanges.size())
+            return false;
+          Remaining -= BorrowedRanges.size();
+          for (const auto &[Address, Bytes] : BorrowedRanges)
+            Overlaps += Start < Address + int64_t(Bytes) &&
+                        Address < Start + int64_t(Size);
+          if (Overlaps != 1)
+            return false;
+        }
         if (CheckExits && CopyQuery && *CopyQuery == *Key) {
           if (CallCopies.empty() || Copies)
             return false;
@@ -725,6 +790,8 @@ public:
         if (Found->second.Scratch && !ScratchAddress &&
             Current.hasRetainedScratch())
           return false;
+        for (int64_t Address : DestroyedValues)
+          Current.Values.erase(Address);
         for (const auto &[Address, Bytes] : WritableFrameRanges) {
           if (!InvalidateScratch(Address, Bytes))
             return false;
@@ -760,6 +827,11 @@ public:
             Current.InitializedStack.insert(Address + int64_t(I));
           }
         }
+        // May-written padding retains possible frame taint. In particular,
+        // constructing an opaque value does not initialize raw byte facts.
+        Current.Values.merge(InitializedValues);
+        if (Current.Values.size() > MaxFacts)
+          return false;
         if (ScratchAddress) {
           const auto &Scratch = *Found->second.Scratch;
           if (Scratch.TheAction ==
@@ -786,7 +858,7 @@ public:
         if (Current.Scratch.size() > MaxFacts)
           return false;
         if ((Tail || Found->second.terminates()) &&
-            Current.hasRetainedScratch())
+            (Current.hasRetainedScratch() || !Current.Values.empty()))
           return false;
         if (Found->second.terminates()) {
           if (QueryIndex)
@@ -823,7 +895,8 @@ public:
         continue;
       }
       if (Op.Opcode == NdOp::RETURN) {
-        if (QueryIndex || Current.hasRetainedScratch())
+        if (QueryIndex || Current.hasRetainedScratch() ||
+            !Current.Values.empty())
           return false;
         if (Index + 1 != Block.Ops.size() || !Block.Succs.empty() ||
             (CheckExits && !IsRestored()))
@@ -998,6 +1071,8 @@ public:
                 return false;
           }
         } else {
+          if (Address && !NoValueOverlap(*Address, Memory.AccessSize))
+            return false;
           if (TrackInitializedFrame && Address)
             for (unsigned I = 0; I < Memory.AccessSize; ++I)
               if (!Current.InitializedStack.count(*Address + I))
@@ -1018,7 +1093,7 @@ public:
                 // An unresolved read still grants no saved-byte identity.
                 // Once opaque records can contain private pointers, however,
                 // reading an unknown frame alias must not erase their taint.
-                if (Remaining < Current.Stack.size())
+                if (!Current.Values.empty() || Remaining < Current.Stack.size())
                   return false;
                 Remaining -= Current.Stack.size();
                 if (std::any_of(Current.Stack.begin(), Current.Stack.end(),
@@ -1028,6 +1103,14 @@ public:
                   return false;
               }
             }
+          }
+          if (PossibleAddress) {
+            if (!NoValueOverlap(*PossibleAddress, Memory.AccessSize))
+              return false;
+            if (TrackInitializedFrame)
+              for (unsigned I = 0; I < Memory.AccessSize; ++I)
+                if (!Current.InitializedStack.count(*PossibleAddress + I))
+                  return false;
           }
           for (unsigned I = 0; I < Value.size(); ++I)
             // Incoming arguments are external values. Even if a slot happens
@@ -1050,7 +1133,7 @@ public:
         if (QueryIndex && Index == *QueryIndex) {
           if (!TrackDefinitions || Op.Opcode != NdOp::LOAD || !Address ||
               IncomingRead || Memory.AccessSize != 8 || Value.size() != 8 ||
-              Current.hasRetainedScratch())
+              Current.hasRetainedScratch() || !Current.Values.empty())
             return false;
           const auto First = Value.front();
           if (First.TheKind != ByteFact::Definition || First.Value < 0 ||
@@ -1100,6 +1183,12 @@ public:
             return false;
           Remaining -= Current.Scratch.size();
           const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
+          if (Remaining < Current.Values.size())
+            return false;
+          Remaining -= Current.Values.size();
+          for (const auto &[Address, Value] : Current.Values)
+            if (!SP || Address < *SP)
+              return false;
           for (const auto &[Address, Record] : Current.Scratch)
             if (Record.Retained && (!SP || Address < *SP))
               return false;
@@ -1131,7 +1220,7 @@ public:
           Current.Stack.size() > MaxFacts || Temps.size() > MaxFacts ||
           WrittenStack.size() > MaxFacts ||
           Current.InitializedStack.size() > MaxFacts ||
-          Current.Scratch.size() > MaxFacts)
+          Current.Scratch.size() > MaxFacts || Current.Values.size() > MaxFacts)
         return false;
     }
     return true;
@@ -1290,6 +1379,17 @@ frameGraph(const LowFunc &Function, Arch Architecture,
 
 static bool meetFrameState(State &Next, const State &Other, size_t &Remaining,
                            bool RequirePrivateFrame) {
+  const State &Left = Next;
+  for (const auto *Values : {&Left.Values, &Other.Values})
+    for (const auto &[Address, Value] : *Values) {
+      if (Remaining < 1 + Value.Identity.size())
+        return false;
+      Remaining -= 1 + Value.Identity.size();
+    }
+  // A live opaque value is a lifetime obligation as well as a type fact.
+  // Intersecting it away would accept a missing initialize/destroy path.
+  if (Next.Values != Other.Values)
+    return false;
   if (!meet(Next.Registers, Other.Registers, Remaining) ||
       !meet(Next.Stack, Other.Stack, Remaining))
     return false;

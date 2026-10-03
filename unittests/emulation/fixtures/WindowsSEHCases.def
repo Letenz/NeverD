@@ -1,0 +1,130 @@
+//===- WindowsSEHCases.def - Original user C SEH observations ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_USER_SEH_VALUE
+NEVERD_USER_SEH_VALUE(ModeMarker, '!')
+NEVERD_USER_SEH_VALUE(MaxParameters, 15)
+NEVERD_USER_SEH_VALUE(SoftwareCode, 0xe1234567)
+NEVERD_USER_SEH_VALUE(NestedCode, 0xe1234568)
+NEVERD_USER_SEH_VALUE(AccessViolation, 0xc0000005)
+NEVERD_USER_SEH_VALUE(DataValue, 0x123456789abcdef0ULL)
+NEVERD_USER_SEH_VALUE(FaultAddress, 0x4400000000ULL)
+NEVERD_USER_SEH_VALUE(CompletionStatus, 61)
+NEVERD_USER_SEH_VALUE(FailureStatus, 99)
+NEVERD_USER_SEH_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_USER_SEH_VALUE(StderrSelector, 0xfffffff4)
+NEVERD_USER_SEH_VALUE(TraceShift, 4)
+NEVERD_USER_SEH_VALUE(FilterTrace, 2)
+NEVERD_USER_SEH_VALUE(FinallyTrace, 3)
+NEVERD_USER_SEH_VALUE(HandlerTrace, 4)
+NEVERD_USER_SEH_VALUE(ResumeTrace, 5)
+NEVERD_USER_SEH_VALUE(LocalHandlerTrace, 6)
+NEVERD_USER_SEH_VALUE(ContinueTrace, 9)
+NEVERD_USER_SEH_VALUE(VectoredTrace, 10)
+NEVERD_USER_SEH_VALUE(ContextRCX, 128)
+NEVERD_USER_SEH_VALUE(PageReadWrite, 4)
+NEVERD_USER_SEH_VALUE(DOSNTOffset, 60)
+NEVERD_USER_SEH_VALUE(ExceptionDirectoryOffset, 160)
+NEVERD_USER_SEH_VALUE(InstructionLimit, 200000)
+NEVERD_USER_SEH_VALUE(TimeoutMicroseconds, 20000000)
+NEVERD_USER_SEH_VALUE(NativeTimeoutSeconds, 20)
+NEVERD_USER_SEH_VALUE(SmallEventLimit, 3)
+NEVERD_USER_SEH_VALUE(NoncontinuableCode, 0xc0000025)
+NEVERD_USER_SEH_VALUE(ContextSP, 152)
+NEVERD_USER_SEH_VALUE(ContextPC, 248)
+NEVERD_USER_SEH_VALUE(ContextSize, 1232)
+NEVERD_USER_SEH_VALUE(NoncontinuableFlags, 0x81)
+NEVERD_USER_SEH_VALUE(RaiseNoncontinuable, 1)
+NEVERD_USER_SEH_VALUE(StreamOutputSite, 21)
+NEVERD_USER_SEH_VALUE(RecordPointersSite, 22)
+NEVERD_USER_SEH_VALUE(RecordFieldsSite, 23)
+NEVERD_USER_SEH_VALUE(OriginalContextSite, 24)
+NEVERD_USER_SEH_VALUE(SecondaryCodeSite, 25)
+NEVERD_USER_SEH_VALUE(RestoredContextSite, 26)
+NEVERD_USER_SEH_VALUE(SecondaryContextSite, 27)
+NEVERD_USER_SEH_VALUE(SecondaryReturnSite, 28)
+NEVERD_USER_SEH_VALUE(SecondaryCatchSite, 29)
+NEVERD_USER_SEH_VALUE(SecondaryExportSite, 30)
+NEVERD_USER_SEH_VALUE(SecondaryLoadSite, 31)
+NEVERD_USER_SEH_VALUE(SecondaryFreeSite, 32)
+NEVERD_USER_SEH_VALUE(SecondaryHandlerSite, 33)
+NEVERD_USER_SEH_VALUE(SecondaryContinueSite, 34)
+NEVERD_USER_SEH_VALUE(SecondaryOutputSite, 35)
+#endif
+#ifdef NEVERD_USER_SEH_TEXT
+NEVERD_USER_SEH_TEXT(ProgramFile, "user-seh.exe")
+NEVERD_USER_SEH_TEXT(LibraryFile, "user-seh.dll")
+NEVERD_USER_SEH_TEXT(DLLRaiseName, "RaiseFromDLL")
+NEVERD_USER_SEH_TEXT(DLLCatchName, "CatchInDLL")
+NEVERD_USER_SEH_TEXT(NativeOnly, "native Windows x64 required")
+NEVERD_USER_SEH_TEXT(MissingTools,
+                     "user SEH fixtures require Clang and lld-link")
+NEVERD_USER_SEH_TEXT(TempPrefix, "neverd-user-seh")
+NEVERD_USER_SEH_TEXT(StdoutFile, "stdout.bin")
+NEVERD_USER_SEH_TEXT(StderrFile, "stderr.bin")
+NEVERD_USER_SEH_TEXT(ObservationLabel, "User SEH observations: ")
+#endif
+#ifdef NEVERD_USER_SEH_SECONDARY
+NEVERD_USER_SEH_SECONDARY(SecondarySame, 'b', "!b", 0xa2a245)
+NEVERD_USER_SEH_SECONDARY(SecondarySearch, 'i', "!i", 0xa2a26)
+NEVERD_USER_SEH_SECONDARY(SecondaryFinally, 'j', "!j", 0xa2a2465)
+NEVERD_USER_SEH_SECONDARY(SecondaryRepeat, 'r', "!r", 0xa2a2a245)
+NEVERD_USER_SEH_SECONDARY(SecondaryUnwind, 'w', "!w", 0xa2a2345)
+NEVERD_USER_SEH_SECONDARY(SecondaryDLL, 'k', "!k", 0xa2a2345)
+NEVERD_USER_SEH_SECONDARY(SecondaryDLLHandler, 'h', "!h", 0xa2a2455)
+#endif
+#ifdef NEVERD_USER_SEH_TERMINAL
+NEVERD_USER_SEH_TERMINAL(SecondaryVectored, 'v', "!v", 0xc0000025, 0xa2a9)
+NEVERD_USER_SEH_TERMINAL(SecondaryRedirect, 'd', "!d", 0xc0000025, 0xa2a9)
+#endif
+#ifdef NEVERD_USER_SEH_CASE
+NEVERD_USER_SEH_CASE(Catch, 'C', "!C", 0x4)
+NEVERD_USER_SEH_CASE(Helper, 'H', "!H", 0x24)
+NEVERD_USER_SEH_CASE(Search, 'S', "!S", 0x124)
+NEVERD_USER_SEH_CASE(Finally, 'F', "!F", 0x234)
+NEVERD_USER_SEH_CASE(VectoredFirst, 'V', "!V", 0xa24)
+NEVERD_USER_SEH_CASE(Continue, 'R', "!R", 0x295)
+NEVERD_USER_SEH_CASE(ReadFault, 'D', "!D", 0x24)
+NEVERD_USER_SEH_CASE(RepairFault, 'P', "!P", 0x295)
+NEVERD_USER_SEH_CASE(CrossImage, 'X', "!X", 0x234)
+NEVERD_USER_SEH_CASE(DLLHandler, 'Y', "!Y", 0x245)
+NEVERD_USER_SEH_CASE(NestedFilter, 'N', "!N", 0x124)
+NEVERD_USER_SEH_CASE(LocalNested, 'L', "!L", 0x264)
+NEVERD_USER_SEH_CASE(CollidedFinally, 'U', "!U", 0x2324)
+NEVERD_USER_SEH_CASE(NoncontinuableCatch, 'Q', "!Q", 0x24)
+#endif
+#ifdef NEVERD_USER_SEH_NEGATIVE
+NEVERD_USER_SEH_NEGATIVE(Metadata, 'M', "!M", ExceptionMetadataChanged)
+NEVERD_USER_SEH_NEGATIVE(Retired, 'T', "!T", ExceptionModuleRetired)
+NEVERD_USER_SEH_NEGATIVE(Noncontinuable, 'B', "!B", ExceptionLimit)
+#endif
+#ifdef NEVERD_USER_SEH_API
+NEVERD_USER_SEH_API(ExitProcess)
+NEVERD_USER_SEH_API(GetCommandLineW)
+NEVERD_USER_SEH_API(GetStdHandle)
+NEVERD_USER_SEH_API(WriteFile)
+NEVERD_USER_SEH_API(RaiseException)
+NEVERD_USER_SEH_API(AddVectoredExceptionHandler)
+NEVERD_USER_SEH_API(AddVectoredContinueHandler)
+NEVERD_USER_SEH_API(LoadLibraryA)
+NEVERD_USER_SEH_API(FreeLibrary)
+NEVERD_USER_SEH_API(GetProcAddress)
+NEVERD_USER_SEH_API(GetModuleHandleW)
+NEVERD_USER_SEH_API(VirtualProtect)
+#endif
+#ifdef NEVERD_USER_SEH_BUILD
+NEVERD_USER_SEH_BUILD(OutputDirectory, "windows-seh-fixtures")
+NEVERD_USER_SEH_BUILD(Target, "x86_64-pc-windows-msvc")
+NEVERD_USER_SEH_BUILD(Machine, "x64")
+NEVERD_USER_SEH_BUILD(Entry, "entry")
+NEVERD_USER_SEH_BUILD(Base, "0x140000000")
+NEVERD_USER_SEH_BUILD(Kernel, "kernel32.dll")
+NEVERD_USER_SEH_BUILD(Native, "ntdll.dll")
+NEVERD_USER_SEH_BUILD(Personality, "__C_specific_handler")
+#endif
+#ifdef NEVERD_USER_SEH_ASM
+NEVERD_USER_SEH_ASM(
+    ".text\n.globl ReadFault\nReadFault:\nmovq (%rcx), %rax\nretq\n")
+#endif

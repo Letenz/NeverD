@@ -5,6 +5,56 @@
 #include "llvm/Support/JSON.h"
 
 namespace {
+struct DecoderContext {
+  unsigned Key = 0;
+  unsigned Mode = 0;
+  std::string Scratch;
+  std::vector<std::pair<uint64_t, size_t>> Windows;
+  std::vector<int> Replies;
+
+  static void decode(void *Opaque, const unsigned char *Bytes, size_t Size,
+                     uint64_t PC, ND_BytecodeInstructionSinkV1 Reply,
+                     void *ReplyContext) {
+    auto &Context = *static_cast<DecoderContext *>(Opaque);
+    Context.Windows.emplace_back(PC, Size);
+    if (Context.Mode == 1)
+      return;
+    auto &JSON = Context.Scratch;
+    JSON.clear();
+    const unsigned Opcode = Bytes[0] ^ uint8_t(PC + Context.Key);
+    if (Opcode == 0x41)
+      JSON = R"({"size":3,"operations":[{"op":"INT_ADD",
+        "output":{"space":"reg","size":4,"value":{}},
+        "inputs":[{"space":"reg","size":4,"value":{}},
+                  {"space":"const","size":4,"value":{"offset":2,"bytes":1}}]}]})";
+    else if (Opcode == 0xfe)
+      JSON = R"({"size":1,"operations":[{"op":"RETURN","inputs":[]}]})";
+    else
+      JSON = R"({"error":"unknown contextual opcode"})";
+    if (Context.Mode == 3)
+      JSON = "{";
+    if (Context.Mode == 4)
+      JSON = R"({"error":"missing context"})";
+    if (Context.Mode == 8)
+      JSON =
+          R"({"size":1,"match":[],"operations":[{"op":"RETURN","inputs":[]}]})";
+    const size_t Length = Context.Mode == 6   ? 0
+                          : Context.Mode == 7 ? 67108865
+                                              : JSON.size();
+    // Explicit length, no dependency on a trailing NUL. The sink must copy
+    // before the callback overwrites it. Storage stays alive in the context,
+    // so a missing copy fails deterministically without a dangling read.
+    JSON += 'x';
+    const char *Data = Context.Mode == 5 ? nullptr : JSON.data();
+    if (Context.Mode == 9)
+      Context.Replies.push_back(Reply(ReplyContext, nullptr, Length));
+    Context.Replies.push_back(Reply(ReplyContext, Data, Length));
+    if (Context.Mode == 2)
+      Context.Replies.push_back(Reply(ReplyContext, Data, Length));
+    std::fill(JSON.begin(), JSON.end(), 'x');
+  }
+};
+
 class BytecodeCAPI : public NeverDLiftTest {
 protected:
   const std::vector<unsigned char> Code{0x41, 0, 9, 0xfe};
@@ -24,14 +74,19 @@ protected:
   }
 
   llvm::json::Value run(const llvm::json::Value &Request,
-                        llvm::ArrayRef<unsigned char> Bytes) {
+                        llvm::ArrayRef<unsigned char> Bytes,
+                        DecoderContext *Context = nullptr) {
     std::string Text;
     llvm::raw_string_ostream(Text) << Request;
     // The input length is authoritative, including a non-JSON trailing byte.
     const auto Size = Text.size();
     Text += 'x';
-    const char *Owned = neverd_bytecode_recover_json_v1(
-        Bytes.data(), Bytes.size(), Text.data(), Size);
+    const char *Owned =
+        Context ? neverd_bytecode_recover_decoder_json_v1(
+                      Bytes.data(), Bytes.size(), Text.data(), Size,
+                      DecoderContext::decode, Context)
+                : neverd_bytecode_recover_json_v1(Bytes.data(), Bytes.size(),
+                                                  Text.data(), Size);
     EXPECT_NE(Owned, nullptr);
     if (!Owned)
       return nullptr;
@@ -44,15 +99,39 @@ protected:
     }
     return std::move(*Parsed);
   }
+
+  llvm::json::Value externalRequest() {
+    auto R = request();
+    auto &O = *R.getAsObject();
+    O.erase("profile");
+    O["layout"] = llvm::json::Object{
+        {"version", 1}, {"register_bytes", 12}, {"byte_order", "little"}};
+    return R;
+  }
+
+  std::vector<unsigned char> encoded(unsigned Key) {
+    auto Bytes = Code;
+    Bytes[0] ^= uint8_t(16 + Key);
+    Bytes[3] ^= uint8_t(19 + Key);
+    return Bytes;
+  }
 };
 
-TEST_F(BytecodeCAPI, BothSourceRoutesExecuteNarrowWritesWithCanaries) {
+class BytecodeDecoderCAPI : public BytecodeCAPI,
+                            public ::testing::WithParamInterface<bool> {};
+INSTANTIATE_TEST_SUITE_P(ProfileAndCallback, BytecodeDecoderCAPI,
+                         ::testing::Bool());
+
+TEST_P(BytecodeDecoderCAPI, BothSourceRoutesExecuteNarrowWritesWithCanaries) {
   for (unsigned Route : {0u, 1u, 2u}) {
     SCOPED_TRACE(Route);
-    auto Request = request();
+    DecoderContext Context;
+    Context.Key = 73;
+    auto Request = GetParam() ? externalRequest() : request();
     (*Request.getAsObject())["output"] = Route ? "llvmc" : "highc";
     (*Request.getAsObject())["optimize"] = Route == 2;
-    auto Result = run(Request, Code);
+    auto Result = run(Request, GetParam() ? encoded(Context.Key) : Code,
+                      GetParam() ? &Context : nullptr);
     const auto *Object = Result.getAsObject();
     ASSERT_NE(Object, nullptr);
     ASSERT_EQ(Object->getBoolean("ok"), true);
@@ -61,6 +140,12 @@ TEST_F(BytecodeCAPI, BothSourceRoutesExecuteNarrowWritesWithCanaries) {
     EXPECT_EQ(Object->getInteger("decoded_instructions"), 2);
     EXPECT_EQ(Object->getInteger("decoded_bytes"), 4);
     EXPECT_EQ(Object->getString("scope"), "state-c");
+    if (GetParam()) {
+      EXPECT_EQ(Context.Windows,
+                (std::vector<std::pair<uint64_t, size_t>>{{16, 4}, {19, 1}}));
+      EXPECT_EQ(Context.Replies, (std::vector<int>{1, 1}));
+      EXPECT_EQ(Context.Scratch.find_first_not_of('x'), std::string::npos);
+    }
     auto Source = Object->getString("source");
     ASSERT_TRUE(Source);
     if (!hasCrossTargetClang())
@@ -92,6 +177,82 @@ int main(void) {
       ASSERT_TRUE(Built.ok()) << Built.err;
       EXPECT_TRUE(exec(Exe.string(), {}).ok());
     }
+  }
+}
+
+TEST_F(BytecodeCAPI, ContextualDecodersAreIndependentAndBoundedByFunctionEnd) {
+  for (unsigned Key : {7u, 199u}) {
+    DecoderContext Context;
+    Context.Key = Key;
+    auto Request = externalRequest();
+    (*Request.getAsObject())["output"] = "check";
+    auto Bytes = encoded(Key);
+    Bytes.push_back(
+        0x41); // Unreachable input must not enter the callback window.
+    auto Result = run(Request, Bytes, &Context);
+    ASSERT_EQ(Result.getAsObject()->getBoolean("ok"), true);
+    EXPECT_EQ(Result.getAsObject()->getInteger("decoded_bytes"), 4);
+    EXPECT_EQ(Context.Windows,
+              (std::vector<std::pair<uint64_t, size_t>>{{16, 4}, {19, 1}}));
+    Context.Windows.clear();
+    Context.Key ^= 1;
+    Result = run(Request, Bytes, &Context);
+    EXPECT_EQ(Result.getAsObject()->getBoolean("ok"), false);
+    EXPECT_EQ(Result.getAsObject()->get("source"), nullptr);
+    EXPECT_EQ(Context.Windows.size(), 1u);
+  }
+}
+
+TEST_F(BytecodeCAPI, DecoderReplyFailuresStopBeforeFurtherInstructions) {
+  for (unsigned Mode = 1; Mode != 10; ++Mode) {
+    SCOPED_TRACE(Mode);
+    DecoderContext Context;
+    Context.Mode = Mode;
+    auto Result = run(externalRequest(), encoded(0), &Context);
+    ASSERT_NE(Result.getAsObject(), nullptr);
+    EXPECT_EQ(Result.getAsObject()->getBoolean("ok"), false);
+    EXPECT_TRUE(Result.getAsObject()->getString("error"));
+    EXPECT_EQ(Result.getAsObject()->get("source"), nullptr);
+    EXPECT_EQ(Context.Windows.size(), 1u);
+    if (Mode == 2)
+      EXPECT_EQ(Context.Replies, (std::vector<int>{1, 0}));
+    if (Mode >= 5 && Mode <= 7)
+      EXPECT_EQ(Context.Replies, (std::vector<int>{0}));
+    if (Mode == 9)
+      EXPECT_EQ(Context.Replies, (std::vector<int>{0, 0}));
+  }
+}
+
+TEST_F(BytecodeCAPI, DecoderRequestFailuresDoNotInvokePluginCode) {
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    DecoderContext Context;
+    auto Request = externalRequest();
+    auto &Object = *Request.getAsObject();
+    if (Case == 0)
+      Object["profile"] = llvm::json::Object{};
+    if (Case == 1)
+      Object.erase("layout");
+    if (Case == 2)
+      (*Object.getObject("layout"))["encodings"] = llvm::json::Array{};
+    if (Case == 3)
+      (*Object.getObject("layout"))["register_bytes"] = 0;
+    auto Result = run(Request, encoded(0), &Context);
+    EXPECT_EQ(Result.getAsObject()->getBoolean("ok"), false);
+    EXPECT_TRUE(Context.Windows.empty());
+  }
+  DecoderContext Context;
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    auto Callback = Case ? DecoderContext::decode : nullptr;
+    const char *Owned = neverd_bytecode_recover_decoder_json_v1(
+        Case == 1 ? nullptr : Code.data(), Case == 2 ? 67108865 : Code.size(),
+        Case == 3 ? nullptr : "{}", Case == 4 ? 67108865 : 2, Callback,
+        &Context);
+    ASSERT_NE(Owned, nullptr);
+    auto Result = llvm::json::parse(Owned);
+    neverd_free_string(Owned);
+    ASSERT_TRUE(bool(Result));
+    EXPECT_EQ(Result->getAsObject()->getBoolean("ok"), false);
+    EXPECT_TRUE(Context.Windows.empty());
   }
 }
 

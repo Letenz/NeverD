@@ -11,6 +11,7 @@
 #include "neverd/emulation/IntegerABI.h"
 #include "neverd/emulation/ProcessSession.h"
 #include "neverd/loader/COFF/PEProgramExports.h"
+#include "neverd/loader/ExceptionTable.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -45,7 +46,11 @@ inline llvm::Error failure(const llvm::Twine &Message) {
 }
 enum class API {
 #define NEVERD_WINDOWS_PROCESS_API(Name, Provider, Count, Returns) Name,
+#define NEVERD_WINDOWS_PROCESS_NAMED_API(Name, Symbol, Provider, Count,        \
+                                         Returns)                              \
+  Name,
 #include "WindowsProcessServices.def"
+#undef NEVERD_WINDOWS_PROCESS_NAMED_API
 #undef NEVERD_WINDOWS_PROCESS_API
 };
 enum class APIProvider { Kernel, Native };
@@ -91,6 +96,9 @@ struct Image {
   std::vector<uint64_t> Relocations;
   PEProgramExports Exports;
   bool Relocatable = false;
+  uint64_t PreferredBase = 0;
+  std::shared_ptr<const ExceptionInfo> Exceptions;
+  std::vector<PEMetadataRange> ExceptionMetadata;
 };
 struct ModuleIdentity {
   std::string Name;
@@ -143,13 +151,13 @@ struct ServiceOutcome {
       : Request(std::move(Request)) {}
   explicit ServiceOutcome(Exception Raised) : Raised(std::move(Raised)) {}
 };
-class VectoredExceptions;
+class ExceptionDispatcher;
 class Services final {
 public:
   Services(ExecutionBackend &CPU, AddressSpace &Memory, const Image &Image,
            const Environment &Environment, const ProcessOptions &Options,
            ProcessResult &Result, VirtualMemory &Virtual, Program &Program,
-           const ExecutionBudget &Budget, VectoredExceptions &Exceptions)
+           const ExecutionBudget &Budget, ExceptionDispatcher &Exceptions)
       : CPU(CPU), Memory(Memory), Loaded(Image), Env(Environment),
         Options(Options), Result(Result), Virtual(Virtual), Modules(Program),
         Budget(Budget), Exceptions(Exceptions) {}
@@ -177,7 +185,7 @@ private:
   VirtualMemory &Virtual;
   Program &Modules;
   const ExecutionBudget &Budget;
-  VectoredExceptions &Exceptions;
+  ExceptionDispatcher &Exceptions;
   std::bitset<value::DynamicTLSCount> TLSSlots;
   struct Allocation {
     uint64_t Size, MappedSize;

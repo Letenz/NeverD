@@ -6,6 +6,8 @@
 #ifndef NEVERD_PIPELINE_BYTECODERECOVERY_H
 #define NEVERD_PIPELINE_BYTECODERECOVERY_H
 
+#include "neverd/analysis/BytecodeDecoder.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -32,5 +34,11 @@ struct BytecodeRecoveryResult {
 /// run the input, or establish equivalence to an interpreter.
 llvm::Expected<BytecodeRecoveryResult>
 recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON);
+
+/// Dynamic decoder variant: request uses layout instead of profile. The
+/// supplied callback selects instructions; all CFG/state/C rules remain shared.
+llvm::Expected<BytecodeRecoveryResult>
+recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
+                analysis::BytecodeDecodeCallback Decode);
 } // namespace neverd
 #endif

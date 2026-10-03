@@ -104,8 +104,10 @@ inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
       UnboundHigh.ReturnType = Type->Fields[0];
     }
     std::string Diagnostic;
+    const auto CalleeContracts = nativeSourceCalleeContracts(Image, Result);
     const auto Inferred = inferNativeSourceTypeHint(
-        Image, UnboundMed, UnboundHigh, *Audit, Diagnostic, Low, PairReturn);
+        Image, UnboundMed, UnboundHigh, *Audit, Diagnostic, Low, PairReturn,
+        &CalleeContracts);
     if (!Inferred || !equalSourceABIs(*Inferred, *Function.SourceTypeHint))
       return false;
   }

@@ -101,7 +101,7 @@ struct Heap {
   win::Program Program;
   std::unique_ptr<win::VirtualMemory> Virtual;
   std::unique_ptr<win::Services> OS;
-  std::unique_ptr<win::VectoredExceptions> Exceptions;
+  std::unique_ptr<win::ExceptionDispatcher> Exceptions;
 
   explicit Heap(const ExecutionConfiguration &Config) {
     Options.MemoryLimit = DirectLimit;
@@ -112,7 +112,7 @@ struct Heap {
     Backend = llvm::cantFail(createExecutionBackend(Config, Space));
     Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
     Virtual = std::make_unique<win::VirtualMemory>(*Space, Options);
-    Exceptions = std::make_unique<win::VectoredExceptions>(
+    Exceptions = std::make_unique<win::ExceptionDispatcher>(
         *Backend.CPU,
         llvm::cantFail(
             IntegerABI::get(Config.Architecture == GuestArchitecture::X64

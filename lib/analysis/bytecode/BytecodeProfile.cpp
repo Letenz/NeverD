@@ -161,10 +161,49 @@ llvm::Expected<BytecodeOperation> operation(const llvm::json::Value &V) {
   return Result;
 }
 
-} // namespace
+llvm::Expected<BytecodeEncoding> encoding(const llvm::json::Value &Item,
+                                          bool Selected) {
+  const auto *EO = Item.getAsObject();
+  if (!EO)
+    return invalid("encoding must be an object");
+  if (auto E = Selected ? keys(*EO, {"size", "operations"})
+                        : keys(*EO, {"size", "match", "operations"}))
+    return std::move(E);
+  BytecodeEncoding Encoding;
+  if (auto E = readNumber(*EO, "size", Encoding.Size, true))
+    return std::move(E);
+  const auto *Matches = EO->getArray("match");
+  const auto *Operations = EO->getArray("operations");
+  if ((!Selected && (!Matches || Matches->size() > 4096)) || !Operations ||
+      Operations->size() > 4096)
+    return invalid("invalid match or operation array");
+  if (Matches)
+    for (const auto &M : *Matches) {
+      const auto *MO = M.getAsObject();
+      if (!MO)
+        return invalid("match must be an object");
+      if (auto E = keys(*MO, {"offset", "mask", "value"}))
+        return std::move(E);
+      BytecodeMatch Match;
+      if (auto E = readNumber(*MO, "offset", Match.Offset, true))
+        return std::move(E);
+      if (auto E = readNumber(*MO, "mask", Match.Mask))
+        return std::move(E);
+      if (auto E = readNumber(*MO, "value", Match.Value, true))
+        return std::move(E);
+      Encoding.Match.push_back(Match);
+    }
+  for (const auto &Op : *Operations) {
+    auto R = operation(Op);
+    if (!R)
+      return R.takeError();
+    Encoding.Operations.push_back(std::move(*R));
+  }
+  return Encoding;
+}
 
-llvm::Expected<BytecodeProfile>
-neverd::analysis::readBytecodeProfile(llvm::StringRef Text) {
+llvm::Expected<BytecodeProfile> readProfile(llvm::StringRef Text,
+                                            bool LayoutOnly) {
   if (Text.size() > 64 * 1024 * 1024)
     return invalid("JSON size limit exceeded");
   auto Parsed = llvm::json::parse(Text);
@@ -173,8 +212,11 @@ neverd::analysis::readBytecodeProfile(llvm::StringRef Text) {
   const auto *O = Parsed->getAsObject();
   if (!O)
     return invalid("root must be an object");
-  if (auto E = keys(*O, {"version", "register_bytes", "temporary_bytes",
-                         "byte_order", "encodings"}))
+  if (auto E = LayoutOnly
+                   ? keys(*O, {"version", "register_bytes", "temporary_bytes",
+                               "byte_order"})
+                   : keys(*O, {"version", "register_bytes", "temporary_bytes",
+                               "byte_order", "encodings"}))
     return std::move(E);
   unsigned Version = 0;
   if (auto E = readNumber(*O, "version", Version, true))
@@ -191,46 +233,49 @@ neverd::analysis::readBytecodeProfile(llvm::StringRef Text) {
     return invalid("byte_order must be little or big");
   P.ByteOrder =
       *Order == "little" ? llvm::endianness::little : llvm::endianness::big;
+  if (LayoutOnly)
+    return P;
   const auto *Encodings = O->getArray("encodings");
   if (!Encodings || Encodings->empty() || Encodings->size() > 65536)
     return invalid("missing or oversized encodings");
   uint64_t Ops = 0;
   for (const auto &Item : *Encodings) {
-    const auto *EO = Item.getAsObject();
-    if (!EO)
-      return invalid("encoding must be an object");
-    if (auto E = keys(*EO, {"size", "match", "operations"}))
-      return std::move(E);
-    BytecodeEncoding Encoding;
-    if (auto E = readNumber(*EO, "size", Encoding.Size, true))
-      return std::move(E);
-    const auto *Matches = EO->getArray("match");
-    const auto *Operations = EO->getArray("operations");
-    if (!Matches || Matches->size() > 4096 || !Operations ||
-        Operations->size() > 4096 || (Ops += Operations->size()) > 1000000)
+    auto Encoding = encoding(Item, false);
+    if (!Encoding)
+      return Encoding.takeError();
+    if ((Ops += Encoding->Operations.size()) > 1000000)
       return invalid("invalid match or operation array");
-    for (const auto &M : *Matches) {
-      const auto *MO = M.getAsObject();
-      if (!MO)
-        return invalid("match must be an object");
-      if (auto E = keys(*MO, {"offset", "mask", "value"}))
-        return std::move(E);
-      BytecodeMatch Match;
-      if (auto E = readNumber(*MO, "offset", Match.Offset, true))
-        return std::move(E);
-      if (auto E = readNumber(*MO, "mask", Match.Mask))
-        return std::move(E);
-      if (auto E = readNumber(*MO, "value", Match.Value, true))
-        return std::move(E);
-      Encoding.Match.push_back(Match);
-    }
-    for (const auto &Op : *Operations) {
-      auto R = operation(Op);
-      if (!R)
-        return R.takeError();
-      Encoding.Operations.push_back(std::move(*R));
-    }
-    P.Encodings.push_back(std::move(Encoding));
+    P.Encodings.push_back(std::move(*Encoding));
   }
   return P;
+}
+
+} // namespace
+
+llvm::Expected<BytecodeProfile>
+neverd::analysis::readBytecodeProfile(llvm::StringRef Text) {
+  return readProfile(Text, false);
+}
+
+llvm::Expected<BytecodeProfile>
+neverd::analysis::readBytecodeLayout(llvm::StringRef Text) {
+  return readProfile(Text, true);
+}
+
+llvm::Expected<BytecodeEncoding>
+neverd::analysis::readBytecodeEncoding(llvm::StringRef Text) {
+  if (Text.size() > 64 * 1024 * 1024)
+    return invalid("JSON size limit exceeded");
+  auto Parsed = llvm::json::parse(Text);
+  if (!Parsed)
+    return Parsed.takeError();
+  if (const auto *Object = Parsed->getAsObject()) {
+    if (const auto *Error = Object->get("error")) {
+      auto Message = Error->getAsString();
+      if (Object->size() != 1 || !Message || Message->empty())
+        return invalid("invalid external decoder diagnostic");
+      return invalid("external decoder: " + *Message);
+    }
+  }
+  return encoding(*Parsed, true);
 }

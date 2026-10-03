@@ -15,18 +15,18 @@ namespace neverd::emulation::windows_process {
 using namespace value;
 static_assert(ExceptionArgumentsOffset + MaxExceptionArguments * PointerSize ==
               ExceptionRecordSize);
-void VectoredExceptions::collect() {
+void ExceptionDispatcher::collect() {
   if (Frames.empty()) {
     Handlers.remove_if([](const auto &H) { return !H.Live; });
     ContinueHandlers.remove_if([](const auto &H) { return !H.Live; });
   }
 }
-std::list<VectoredExceptions::Handler> &
-VectoredExceptions::handlers(HandlerKind Kind) {
+std::list<ExceptionDispatcher::Handler> &
+ExceptionDispatcher::handlers(HandlerKind Kind) {
   return Kind == HandlerKind::Exception ? Handlers : ContinueHandlers;
 }
-llvm::Expected<uint64_t> VectoredExceptions::add(HandlerKind Kind, bool First,
-                                                 uint64_t PC) {
+llvm::Expected<uint64_t> ExceptionDispatcher::add(HandlerKind Kind, bool First,
+                                                  uint64_t PC) {
   collect();
   if (Handlers.size() + ContinueHandlers.size() >= MaxExceptionHandlers ||
       NextHandle >= UserLimit)
@@ -39,7 +39,7 @@ llvm::Expected<uint64_t> VectoredExceptions::add(HandlerKind Kind, bool First,
     handlers(Kind).push_back(H);
   return H.Handle;
 }
-uint64_t VectoredExceptions::remove(HandlerKind Kind, uint64_t Handle) {
+uint64_t ExceptionDispatcher::remove(HandlerKind Kind, uint64_t Handle) {
   for (auto &H : handlers(Kind))
     if (H.Handle == Handle && H.Live) {
       H.Live = false;
@@ -50,8 +50,8 @@ uint64_t VectoredExceptions::remove(HandlerKind Kind, uint64_t Handle) {
     }
   return 0;
 }
-bool VectoredExceptions::recoverable(GuestArchitecture Architecture,
-                                     const BackendFault &Fault) {
+bool ExceptionDispatcher::recoverable(GuestArchitecture Architecture,
+                                      const BackendFault &Fault) {
   if (Architecture == GuestArchitecture::X64 &&
       Fault.Kind == BackendFaultKind::Interrupt &&
       Fault.Interrupt == X64DivideVector)
@@ -62,12 +62,13 @@ bool VectoredExceptions::recoverable(GuestArchitecture Architecture,
          (*Fault.Access == BackendAccessKind::Read ||
           *Fault.Access == BackendAccessKind::Write);
 }
-bool VectoredExceptions::accepts(const BackendFault &Fault) const {
+bool ExceptionDispatcher::accepts(const BackendFault &Fault) const {
   return recoverable(CPU.architecture(), Fault) &&
-         llvm::any_of(Handlers, [](const auto &H) { return H.Live; });
+         (llvm::any_of(Handlers, [](const auto &H) { return H.Live; }) ||
+          hasFrameHandlers());
 }
-VectoredExceptions::Exception
-VectoredExceptions::exception(const BackendFault &Fault) {
+ExceptionDispatcher::Exception
+ExceptionDispatcher::exception(const BackendFault &Fault) {
   Exception E{uint32_t(Fault.Access ? StatusAccessViolation
                                     : StatusIntegerDivideByZero),
               0,
@@ -79,9 +80,16 @@ VectoredExceptions::exception(const BackendFault &Fault) {
                    *Fault.Address};
   return E;
 }
-llvm::Expected<VectoredExceptions::Transfer>
-VectoredExceptions::begin(Exception Raised, uint64_t StackPointer,
-                          size_t LoaderDepth, std::optional<size_t> Event) {
+llvm::Expected<ExceptionDispatcher::Transfer>
+ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
+                           size_t LoaderDepth, std::optional<size_t> Event) {
+  return beginDispatch(std::move(Raised), StackPointer, LoaderDepth, Event, {});
+}
+llvm::Expected<ExceptionDispatcher::Transfer>
+ExceptionDispatcher::beginDispatch(Exception Raised, uint64_t StackPointer,
+                                   size_t LoaderDepth,
+                                   std::optional<size_t> Event,
+                                   std::optional<size_t> Rejected) {
   if (Frames.size() >= MaxExceptionDepth)
     return failure(text::ExceptionLimit);
   if (Raised.Arguments.size() > MaxExceptionArguments ||
@@ -128,16 +136,17 @@ VectoredExceptions::begin(Exception Raised, uint64_t StackPointer,
   Frames.push_back({std::move(*Snapshot), std::move(*Context), Handlers.begin(),
                     Top, Layout->PayloadAddress, Layout->ReturnStackPointer,
                     LoaderDepth, Event});
+  Frames.back().Rejected = Rejected;
   return callNext();
 }
-llvm::Expected<VectoredExceptions::Transfer> VectoredExceptions::callNext() {
+llvm::Expected<ExceptionDispatcher::Transfer> ExceptionDispatcher::callNext() {
   auto &F = Frames.back();
   auto &List = handlers(F.Kind);
   while (F.Current != List.end() && !F.Current->Live)
     ++F.Current;
   if (F.Current == List.end()) {
     if (F.Kind == HandlerKind::Exception)
-      return failure(text::ExceptionUnhandled);
+      return startUnwind();
     return continueExecution();
   }
   const uint64_t PC = F.Current->PC;
@@ -164,16 +173,16 @@ llvm::Expected<VectoredExceptions::Transfer> VectoredExceptions::callNext() {
     return std::move(E);
   return Transfer{PC, std::nullopt};
 }
-bool VectoredExceptions::activeAt(size_t LoaderDepth) const {
+bool ExceptionDispatcher::activeAt(size_t LoaderDepth) const {
   return !Frames.empty() && Frames.back().LoaderDepth == LoaderDepth;
 }
-bool VectoredExceptions::returning(uint64_t PC, uint64_t SP,
-                                   size_t LoaderDepth) const {
+bool ExceptionDispatcher::returning(uint64_t PC, uint64_t SP,
+                                    size_t LoaderDepth) const {
   return activeAt(LoaderDepth) && PC == ExceptionReturnGate &&
          SP == Frames.back().ExpectedSP;
 }
-llvm::Expected<VectoredExceptions::Transfer>
-VectoredExceptions::returned(uint32_t Disposition) {
+llvm::Expected<ExceptionDispatcher::Transfer>
+ExceptionDispatcher::returned(uint32_t Disposition) {
   auto &F = Frames.back();
   auto Pointers = CPU.canAccess(F.Payload + ExceptionPointersOffset,
                                 2 * PointerSize, Read | UserAccessible);
@@ -191,6 +200,26 @@ VectoredExceptions::returned(uint32_t Disposition) {
     return Context.takeError();
   if (*Record != F.Payload || *Context != F.Payload + ExceptionContextOffset)
     return failure(text::ExceptionFrame);
+  if (F.SEH && F.SEH->Callback) {
+    if (auto E = validateUnwind())
+      return std::move(E);
+    auto Accessible =
+        CPU.canAccess(F.Payload, ExceptionRecordSize, Read | UserAccessible);
+    if (!Accessible)
+      return Accessible.takeError();
+    if (!*Accessible)
+      return failure(text::ExceptionFrame);
+    std::vector<uint8_t> RecordBytes(ExceptionRecordSize);
+    if (auto E = CPU.read(F.Payload, RecordBytes))
+      return std::move(E);
+    if (RecordBytes != F.SEH->Record)
+      return failure(text::ExceptionContext);
+    const auto Kind = F.SEH->Callback->Kind;
+    F.SEH->Callback.reset();
+    return advanceUnwind(Kind == X64SEH::ActionKind::Filter
+                             ? std::optional<int32_t>(Disposition)
+                             : std::nullopt);
+  }
   if (Disposition == ExceptionContinueSearch) {
     ++F.Current;
     return callNext();
@@ -206,8 +235,8 @@ VectoredExceptions::returned(uint32_t Disposition) {
   }
   return continueExecution();
 }
-llvm::Expected<VectoredExceptions::Transfer>
-VectoredExceptions::continueExecution() {
+llvm::Expected<ExceptionDispatcher::Transfer>
+ExceptionDispatcher::continueExecution() {
   auto &F = Frames.back();
   auto Access =
       CPU.canAccess(F.Payload, ExceptionContextOffset + F.Context.size(),
@@ -223,6 +252,11 @@ VectoredExceptions::continueExecution() {
   // noncontinuable check. Preserve the flag without inventing a second raise.
   if (*Flags & ~(ExceptionNoncontinuable | ExceptionSoftwareOriginate))
     return failure(text::ExceptionContext);
+  // Native dispatcher-generated noncontinuable exceptions remain terminal
+  // after VEH/VCH accept continuation, including edits to the saved CONTEXT.
+  // Keep that origin independently of guest-mutable record flags and code.
+  if (F.Rejected)
+    return failure(text::ExceptionUnhandled);
   std::vector<uint8_t> Changed(F.Context.size());
   if (auto E = CPU.read(F.Payload + ExceptionContextOffset, Changed))
     return std::move(E);

@@ -17,6 +17,22 @@ struct SourceFrameReturnAlias {
   bool operator==(const SourceFrameReturnAlias &) const = default;
 };
 
+/// An independently authenticated operation on one opaque value. Identity is
+/// an uninterpreted token shared by its effect owner, not a type-name parser or
+/// a layout claim. Initialization establishes a live value, not initialized
+/// padding or scalar byte identities; Read and Destroy require that same value.
+struct SourceFrameValueEffect {
+  enum class Action {
+    None,
+    Initialize,
+    Read,
+    Destroy
+  } TheAction = Action::None;
+  std::string Identity;
+  size_t Bytes = 0;
+  bool operator==(const SourceFrameValueEffect &) const = default;
+};
+
 struct SourceFrameScalarCondition {
   size_t Parameter = 0;
   std::set<uint64_t> Values;
@@ -48,6 +64,8 @@ struct SourceFrameEffects {
   // These scalar-pointer borrows must read completely initialized bytes.
   // Their existing bounds and write permissions still own the effect.
   std::set<size_t> InitializedFrameParameters;
+  // Typed opaque value lifetimes are distinct from initialized raw bytes.
+  std::map<size_t, SourceFrameValueEffect> OpaqueValueParameters;
   // Logical indirect records consume an initialized private by-value copy.
   // The callee may modify it: subsequent reads need a new definite write.
   // This certificate never converts an arbitrary source pointer to a record.
@@ -62,8 +80,8 @@ struct SourceFrameEffects {
   bool empty() const {
     return ReadOnlyFrameParameters.empty() && WritableFrameParameters.empty() &&
            InitializedFrameParameters.empty() &&
-           ByValueFrameParameters.empty() && !InitializesIndirectResult &&
-           !ReturnFrameOrExternal && !Scratch;
+           OpaqueValueParameters.empty() && ByValueFrameParameters.empty() &&
+           !InitializesIndirectResult && !ReturnFrameOrExternal && !Scratch;
   }
   bool operator==(const SourceFrameEffects &) const = default;
 };
@@ -101,6 +119,21 @@ sourceFrameEffectsMatchABI(const SourceFrameEffects &Effects,
     if (!Effects.ReadOnlyFrameParameters.count(Index) &&
         !Effects.WritableFrameParameters.count(Index))
       return false;
+  for (const auto &[Index, Value] : Effects.OpaqueValueParameters) {
+    using Action = SourceFrameValueEffect::Action;
+    if (Value.Identity.empty() || Value.Identity.size() > 256 ||
+        !Parameter(Index, Value.Bytes) || Effects.Scratch ||
+        Effects.InitializedFrameParameters.count(Index) ||
+        (Value.TheAction != Action::Initialize &&
+         Value.TheAction != Action::Read && Value.TheAction != Action::Destroy))
+      return false;
+    const auto &Borrows = Value.TheAction == Action::Read
+                              ? Effects.ReadOnlyFrameParameters
+                              : Effects.WritableFrameParameters;
+    const auto Borrow = Borrows.find(Index);
+    if (Borrow == Borrows.end() || Borrow->second != Value.Bytes)
+      return false;
+  }
   for (size_t Index : Effects.ByValueFrameParameters)
     if (Index >= Signature.Parameters.size() ||
         !Signature.Parameters[Index].IndirectByValue ||

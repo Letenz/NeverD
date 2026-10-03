@@ -400,7 +400,7 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 舊版 `WdfRequestMarkCancelable` 遇到已取消的 IRP 時，在目前 API 接續中使用巢狀 `GuestCall`。取消、清理與最終銷毀回呼均可等待，整個接續結束後才還原呼叫端；註冊之後發生的取消仍使用排程器。`KernelFramework` 管理 WDF 控制代碼識別以及完成中／完成後 getter 的中性傳回值。其請求存取主控介面將原 IRP、64 位元 Information 和 MDL 識別交由 `KernelModel` 管理，後者同時拒絕客體透過 WDM 完成框架擁有的 IRP。每個請求視需要建立唯一的 SystemBuffer MDL；直接緩衝區保留原描述元，擷取本身不建立對映。完成操作使兩種描述元與 IRP／緩衝區一起失效，不受 WDF 內容參考保留的影響。
 
-`KernelGuestException` 是攜帶 32 位元狀態的具型別 API 結果，與模型錯誤及後端故障分開。`DriverImage` 保留載入器既有、以慣用基底表示的例外中繼資料。`KernelSEH` 以這些資料建立有界且不修改狀態的 x64 第一版 C 全捕捉處理常式轉移計畫，檢查位址轉換與堆疊讀取。它在一般輔助函式框架間展開時，還原支援的已儲存非揮發性通用暫存器，並選取真正的客體處理常式；遇到篩選函式/finally、GS/C++ 處理機制、鏈結、不完整記錄、前置程式碼或 XMM 還原時明確拒絕。`DriverSession` 僅在沒有故障的 API 停止點套用已驗證的暫存器計畫，維持 API 追蹤結果為 null，並在同一執行中恢復處理常式。它不會清除後端保留的故障，也不會展開至另一回呼的堆疊。此範圍支援 ExRaiseStatus/ExRaiseAccessViolation/ExRaiseDatatypeMisalignment；使用者位址探測、鎖定使用者緩衝區與 CPU 故障復原仍屬獨立工作。
+`KernelGuestException` 是攜帶 32 位元狀態的具型別 API 結果，與模型錯誤及後端故障分開。`DriverImage` 保留載入器既有、以慣用基底表示的例外中繼資料。`X64SEH` 以這些資料建立有界且不修改狀態的 x64 第一版 C 全捕捉處理常式轉移計畫，檢查位址轉換與堆疊讀取。它在一般輔助函式框架間展開時，還原支援的已儲存非揮發性通用暫存器，並選取真正的客體處理常式；遇到篩選函式/finally、GS/C++ 處理機制、鏈結、不完整記錄、前置程式碼或 XMM 還原時明確拒絕。`DriverSession` 僅在沒有故障的 API 停止點套用已驗證的暫存器計畫，維持 API 追蹤結果為 null，並在同一執行中恢復處理常式。它不會清除後端保留的故障，也不會展開至另一回呼的堆疊。此範圍支援 ExRaiseStatus/ExRaiseAccessViolation/ExRaiseDatatypeMisalignment；使用者位址探測、鎖定使用者緩衝區與 CPU 故障復原仍屬獨立工作。
 
 
 ## 例外重寫邊界
@@ -496,7 +496,11 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 
 `lib/pass/ir/simplify` 的 `ByteMemoryForwardingPass` 在單一基本區塊內，依固定位元組 alloca 各位元組的最後寫入重建完整整數讀取。它依目標位元組順序處理 8 至 128 位元、寬度為整個位元組的存取，只接受物件內精確的常數 GEP。呼叫、未知寫入及有序記憶體會清除記錄。管線在既有私有位址復原之後、兩次 SROA 之間執行此 pass，並保留原始 store。指令掃描、位址走訪、追蹤位元組、替換用途及新增 IR 均有有限預算。預設不引入快照；明確啟用 `AllowStoreSnapshots` 後，在原 store 前僅 freeze 一次，並讓寫入及所有片段共用該值。這種可選的 LLVM 精化不證明原生值已定義，也不復原函式簽章。
 
-語義不動點管線亦啟用 `SimplifyNumericMemory`。它在區塊內辨識 integral AS0 的整數轉指標位址，要求指標、索引及運算元同為 32 或 64 位元，具有相同的精確 SSA 根與模運算常數位移。單一最後寫入者可直接提供完整整數讀取，或透過一次位移與截斷提供包含的子字，無須新增快照。第二次掃描僅在後續寫入完整覆蓋舊寫入，且中間沒有保留的讀取、呼叫、可能擲出例外或有序操作時刪除舊寫入。不同根仍可能互為別名，最終寫入仍可觀察。位元組快取操作共用有限的 `MaxMemorySteps` 預算。這不證明記憶體私有、跨區塊關係或一般 ABI。
+語義不動點管線亦啟用 `SimplifyNumericMemory`。它在區塊內辨識 integral AS0 的整數轉指標位址，要求指標、索引及運算元同為 32 或 64 位元，具有相同的精確 SSA 根與模運算常數位移。單一最後寫入者可直接提供完整整數讀取，或透過一次位移與截斷提供包含的子字，無須新增快照。反向掃描僅在後續寫入於觀察前覆蓋全部位元組時刪除舊寫入，多個較小寫入可共同構成覆蓋。同一精確根的保留讀取只使重疊位元組失效；未知讀取、不同根、呼叫、可能擲出例外及有序操作仍是屏障。不同根仍可能互為別名，最終寫入仍可觀察。位元組快取操作共用有限的 `MaxMemorySteps` 預算。這不證明記憶體私有、跨區塊記憶體內容或一般 ABI。
+
+當具有支配關係的遮罩等式證明所有變化位元時，位元運算位址亦可保持仿射關係。選定分支邊必須支配運算本身；其他值的條件或繞過檢查的路徑不提供證明。AND、OR、XOR 隨後把精確模位移交給同一不動點。圖探索、前驅遍歷及條件查詢計入 `MaxAddressSteps`。這僅證明位址算術，不硬編碼對齊量，也不假設記憶體私有。
+
+區塊內掃描之前，有界不動點可將完整位元寬度的整數與指標 PHI/select 正規化為同一函式入口值加模運算常數位移。包括回邊在內的所有輸入邊都必須一致；後續衝突會在改寫前撤銷相關候選。位移來自目前 IR，不是二進位簽章。分析不穿透丟失位元的轉換或 freeze；undef/poison 輸入邊及沒有入口錨點的環不能證明相等。記憶體內容不跨區塊傳播。證明工作計入 `MaxAddressSteps`，每次位址改寫預留完整的 `MaxNewInstructions` 成本；不動點未完成時不發布部分事實。僅位址變更也透過 `CanonicalizedAddresses` 使舊分析失效。
 
 公開標頭在 `include/neverd` 下對應這些區域。不要意外讓內部 C++ 類別成為 SDK
 的一部分：穩定的外部操作應放在純 C 標頭及職責明確的
@@ -904,7 +908,7 @@ super 呼叫證明保留窄回傳值的未定義填補位元並檢查每個參�
 
 UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀寫方法保留完整的 32 位元組 `UIEdgeInsets`：上、左、下、右四個 double 在 arm64 上由 d0–d3 傳遞。完整的裝置與模擬器 SDK 宣告一致，Apple Clang 獨立重現全部六種編碼。接收者查找保留 UIButton 匿名分類及 UIButton → UIControl → UIView 繼承關係。執行階段宣告衝突、其他接收者、類別方法、錯誤提供程式庫及缺少相符證據的架構仍不受支援。
 
-`windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、靜態與動態 TLS、`DllMain`、具名 Win32 API 和明確的無環 DLL 圖。客體模組支援依名稱／序號匯入程式碼與資料、DIR64 重定位、轉送匯出及真實載入器串列身分。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用設定的模組目錄。CRT／GUI、以堆疊框架為基礎的使用者態 SEH、執行緒及通用 Windows 應用程式相容性仍待完成；原生 ARM64 KVM/WHP 證據仍缺失。
+`windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、靜態與動態 TLS、`DllMain`、具名 Win32 API 和明確的無環 DLL 圖。客體模組支援依名稱／序號匯入程式碼與資料、DIR64 重定位、轉送匯出及真實載入器串列身分。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用設定的模組目錄。CRT／GUI、ARM64 以堆疊框架為基礎的使用者態 SEH、執行緒及通用 Windows 應用程式相容性仍待完成；原生 ARM64 KVM/WHP 證據仍缺失。
 
 `readPEProgramExports` 擁有原始匯出身分與有界中繼資料讀取範圍；`WindowsProcessModules` 擁有模組圖和全程序精確提供者／名稱 API 跳板。`VirtualMemory` 在映射前登記全部映像，`AddressSpace` 管理頁面及權限。PEB/LDR 僅列真實映像，初始化串列保留載入器登記順序，並與依相依關係計算的掛接呼叫順序分別維護。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名稱，不分大小寫，無副檔名時補 `.dll`；路徑、非 ASCII 查詢及結尾點規則仍不支援。找不到名稱回傳錯誤 126，成功保留 LastError。API 模型不是已安裝系統 DLL。
 
@@ -920,9 +924,13 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
-`WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
+`WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
 
 `AddVectoredContinueHandler` 與 `RemoveVectoredContinueHandler` 管理獨立的有序串列，與例外處理器共用最多保留 128 個註冊項的限制。向量例外處理器接受繼續執行後，繼續處理器讀取同一份可修改的例外記錄與 `CONTEXT`；最終內容驗證在這些回呼完成後進行，包含巢狀例外與 DLL 通知。兩類處理器的控制代碼不可交叉移除。`WindowsContinuationTests.cpp` 將順序、提早結束派送、增刪、內容修復、巢狀派送、載入器回呼及程序結束的原創 EXE 案例與原生 Windows 比較。已測 Windows x64 向量處理路徑允許在設定 `EXCEPTION_NONCONTINUABLE` 時繼續執行；這不代表以堆疊框架為基礎的 SEH 行為。原生 ARM64 執行仍未驗證。
+
+`WindowsProcessSEH` 使用 `os/windows/exception/` 中共用的 `X64SEH`（`NeverDEmulationWindowsException`，無需啟用驅動環境），處理 x64 `__C_specific_handler` 和 UNWIND_INFO V1。VEH 搜尋結束後支援篩選器、finally 回呼、非區域處理器跳轉、巢狀／衝突展開與重定位 EXE/DLL 堆疊框架，保留非揮發 GPR/XMM 狀態。篩選器選擇繼續執行時，VCH 使用同一份 `CONTEXT`。`WindowsSEHTests.cpp` 將 23 個原創情境與原生 Windows 比較；KVM/WHP/Unicorn 共用這些語意。派送在程序預算內重新驗證映像世代、標頭、展開／範圍位元組、語言處理器程式碼區域及 IAT 繫結。中繼資料遭修改或保留的映像被卸載時明確失敗。ARM64 框架式 SEH、C++ EH、動態函式表、通用 RtlUnwind/NtContinue、跨載入器／VEH／VCH 回呼邊界展開仍不支援。
+
+當記錄包含 `EXCEPTION_NONCONTINUABLE` 而 x64 篩選器傳回 `EXCEPTION_CONTINUE_EXECUTION` 時，系統使用新上下文派送 `STATUS_NONCONTINUABLE_EXCEPTION`（`0xc0000025`，旗標 `0x81`，關聯記錄指標為空）。先重新執行 VEH，再從保留的邏輯堆疊重新搜尋，在相同深度與執行預算內保留 finally 順序及 EXE/DLL 框架身分。23 個原生情境包含 21 個成功執行及兩個終止情境：即使還原原始 `CONTEXT`，VEH/VCH 接受繼續這個二次例外後，它仍未處理。模型將此結果回報為執行期失敗。軟體例外位址等於儲存的 PC；內部派送器位址及暫存器配置由模型定義。 [Windows x64 CI](https://github.com/NeverSight/NeverD/actions/runs/37141166235).
 
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
@@ -971,3 +979,9 @@ HighIR 在複製尾部呼叫前查詢 `SourceCallTypeHint::requiresUniqueSourceO
 Objective-C 消費者僅在共用框架證明認證原始呼叫處整個一次性副本生命週期後，繫結間接按值結構體，分別保留邏輯結構體宣告與實體指標。證明要求目前的規範機器碼/LowIR、獨立宣告的 Swift 入口與欄位接收者、全部中間呼叫 ABI，以及獨立所有者提供的 `objc_msgSendSuper2` 和完整矩陣返回效果，不引入遞迴或重複框架規則。發布時重新檢查，並將完整直線 HighIR 函式體與規範重播比較，涵蓋初始化及後續使用；過時或缺失憑據、重複求值皆拒絕。HighC 透過一次 memcpy 快照建立邏輯結構體。首個消費者僅支援 ARM64 固定私有副本，不授權任意指標、動態堆疊或通用 noescape。原生測試在 O0/O2 將原樣生成 C 與原始 ARM64 呼叫方及真實 ObjC/CALayer 對照，涵蓋 nil、浮點位元模式、執行期欄位偏移及 callee 合法改寫一次性副本。
 
 Swift 中繼資料綁定可從兩個或三個符號名義型別描述符驗證巢狀帶標籤元組及其單參數儲存型別。有界配方剖析器比較完整型別樹、精確標籤和重複型別的替換身分；展開描述符拼寫不能改變替換索引。標籤中的 `A` 仍是一般字元。來自 `libswiftCoreFoundation` 的精確強 `CoreGraphics.CGFloat` 描述符匯入由四個 Swift 6.1.2 macOS/Mac Catalyst 編譯目標和 SDK 匯出認證。發布時重新檢查目前描述符、快取、參照和位元組。產生的輔助函式保留原始配方及共享儲存身分；O0/O2 下的實際 Swift 中繼資料查詢區分不同標籤和儲存型別。這不授予泛型配置、值見證實作、回呼 ABI、框架作用或 noescape 權限。
+
+同一 Swift 中繼資料配方所有者也認證具有兩個泛型引數的儲存：鍵型別和帶標籤元組值。它分別將兩個引數與完整宣告型別樹、精確標籤及三個原始符號描述符身分比較。原始 `AC` 替換仍須指向第三個描述符；與文字展開所得名稱一致不能代替此證明。這與單一巢狀元組引數保持區別。目前綁定和發布重新核驗未改寫的配方、快取和參照。四個編譯目標及完整原始 ARM64 實例化 helper 與產生 C 的 O0/O2 對照確認真正 Swift 字典儲存身分、快取命中和未命中。不推斷配置、回呼 ABI 或框架作用。
+
+共用框架分析區分存活的不透明值與每個位元組皆已初始化的儲存。獨立認證的初始化、讀取及銷毀效果攜帶有界型別身分與範圍；所有到達路徑與迴圈回邊必須具有一致的存活值，釋放框架前必須銷毀。原始位元組讀取、無型別借用、重疊寫入、重複初始化、缺少銷毀及不確定別名不能使用此事實。可能被寫入的填補位元組保留原有的潛在框架指標汙點，只有確定寫入才能清除。既有的位元組初始化、傳值副本及暫存器保存證明仍然獨立。真實 Swift AnyHashable 複製見證會保留部分目標填補位元組，原始 ARM64 helper 與原樣產生的 C 在 O0/O2 的對照已確認此點。此 IR 協定不識別這些 helper，也不授予框架效果或原始碼發布權限；loader 使用端仍須獨立認證目前的機器、型別、ABI 與生命週期。
+
+`SwiftOpaqueValueEffects` 獨立認證 AnyHashable 複製、相等比較與銷毀的有界作用。四個編譯器/SDK 設定證明 40 位元組型別化暫存值的複製、借用、銷毀及生命週期結束，填補位元組仍未指定。loader 重播目前完整 ARM64 呼叫端與被呼叫端的機器碼、LowIR 和 CFG，驗證 helper 每條指令及實體 ABI，並要求不可變一般 GOT 槽中的精確強連結中繼資料與執行階段匯入。複製建立型別化值，相等比較讀取值，銷毀結束其生命週期；回傳位址只保留可能的堆疊框架別名。動態值見證分派與真正的 `swiftcc i1` 相等結果保持不變。既有 IR 擁有者檢查實際框架初始化、逸出、別名、每條路徑和迴圈回邊。原生推導現在使用同一擁有者，並提供目前 callee LowIR 與完整稽核。LowToMed 記錄原始呼叫位置，轉換保留唯一求值。發布從目前映像獨立重建 callee 和入口 ABI，再比對完整 canonical MedIR/HighIR 與繫結後的原始碼，包括分支、碰撞迴圈回邊、所有參數與每個記憶體作用。刪除憑據或提供已定義的純量結果都不能略過生命週期證明。首個有界消費端僅接受完整的複製/比較/銷毀呼叫群組；其他呼叫需要獨立整合。迴圈不會被攤平成直線，填補位元組也不視為已初始化。

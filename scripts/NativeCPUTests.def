@@ -685,3 +685,14 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsContinuations.HandlerNamespacesShareAndReclaimCapacity/"
     "WhpX64")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST("WindowsSEHNative.RunsOriginalSEHExecutable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSEH.ExecutesOriginalSearchUnwindAndCrossImageScenarios/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSEH.RejectsChangedMetadataAndInvalidContinuation/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSEH.CallbacksShareTheProcessBudget/WhpX64")
+#endif

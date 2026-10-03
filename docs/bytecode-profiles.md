@@ -250,16 +250,110 @@ an explicitly loaded library outside the plugin host, pass `api=HostAPI(library)
 See the runnable [C plugin](../plugins/bytecode/bytecode_plugin.c) and
 [Python plugin](../pluginsdk/python/examples/external_bytecode.py).
 
-These APIs accept declarative encoding profiles. They do not yet accept a
-stateful instruction-decoder callback, infer indirect targets, recover an
-original source ABI, or implement unknown host services. A profile is a supplied
-semantic specification, not proof that it matches an arbitrary interpreter.
+### Per-instruction decoder callbacks
+
+When selecting an encoding needs computation or external context, C and Python
+plugins can supply a synchronous decoder instead of a static encoding table.
+The request uses `layout` in place of `profile`:
+
+```json
+{"schemaVersion":1,
+ "layout":{"version":1,"register_bytes":8,"byte_order":"little"},
+ "functions":[{"entry":0,"end":1,"name":"example"}],
+ "output":"highc"}
+```
+
+Layout accepts `version`, `register_bytes`, `byte_order` and optional
+`temporary_bytes`; `encodings` is forbidden. All other request, result, call
+binding and state-ABI contracts remain the same. The CLI continues to accept
+static profiles; dynamic callbacks are available through the library APIs.
+
+```c
+static void decode(void *context, const unsigned char *bytes, size_t size,
+                   uint64_t pc, ND_BytecodeInstructionSinkV1 reply,
+                   void *reply_context) {
+  const unsigned key = *(const unsigned *)context;
+  const char *json = size && (bytes[0] ^ (unsigned char)(pc + key)) == 0xe7
+      ? "{\"size\":1,\"operations\":[{\"op\":\"RETURN\",\"inputs\":[]}]}"
+      : "{\"error\":\"unknown instruction\"}";
+  reply(reply_context, json, strlen(json));
+}
+
+/* code and request must describe this example language and its function range. */
+const char *report = neverd_bytecode_recover_decoder_json_v1(
+    code, code_size, request_json, request_size, decode, &key);
+/* Inspect report's ok/error fields before using its source. */
+neverd_free_string(report);
+```
+
+Include `<string.h>` for `strlen`. The callback receives the logical PC and
+up to 4,096 borrowed bytes from that PC, truncated at the declared function end.
+The window bound avoids copying a whole function for each instruction in Python.
+It replies exactly
+once, before returning, with `{size, operations}` using the existing operand
+grammar and **no `match` field**, or with `{error: "diagnostic"}`. The sink
+copies the explicit-length JSON before returning; NUL termination is unnecessary.
+It returns 1 for accepted bytes and 0 for invalid, repeated or oversized replies.
+Acceptance means copied, not semantically validated. A callback reply is limited
+to 64 MiB, an instruction to 4,096 bytes and 4,096 operations. Missing replies,
+any rejected reply, invalid JSON and unsupported semantics fail the recovery
+without partial source. The sink, its context and the input pointer must not
+escape the invocation. No exception may cross the C callback boundary.
+
+The decoder and its context are borrowed for the recovery call, invoked on the
+calling thread and never retained afterward. Separate calls have independent
+reply state and can be nested. A caller sharing its own mutable plugin context
+across threads is responsible for synchronizing that context. Results must
+depend only on bytes, PC and stable caller context. CFG discovery order is not
+execution order: rolling keys or other path-dependent decoding state must first
+be resolved by the producer. The callback does not add a path-state interpreter.
+Instruction/operation budgets bound recovered graphs; they cannot preempt
+trusted plugin code inside a callback.
+
+The Python wrapper copies the byte window and handles reply/result ownership:
+
+```python
+from neverd_plugin import recover_bytecode_with_decoder
+
+key = 37
+
+def decode(data: bytes, pc: int) -> dict:
+    opcode = data[0] ^ ((pc + key) & 255)
+    if opcode == 0xb4 and len(data) >= 3:
+        return {"size": 3, "operations": [{
+            "op": "COPY", "output": {"space": "reg", "size": 2, "value": {}},
+            "inputs": [{"space": "const", "size": 2,
+                        "value": {"addend": int.from_bytes(data[1:3], "little")}}]
+        }]}
+    if opcode == 0xe7:
+        return {"size": 1, "operations": [{"op": "RETURN", "inputs": []}]}
+    raise ValueError(f"unknown or truncated instruction at {pc:#x}")
+
+result = recover_bytecode_with_decoder(
+    bytes([0xb4 ^ key, 0x34, 0x12, 0xe7 ^ (3 + key)]),
+    {"version": 1, "register_bytes": 8, "byte_order": "little"},
+    [{"entry": 0, "end": 4, "name": "example"}], decode,
+    output="llvmc", optimize=True,
+)
+```
+
+The wrapper catches Python exceptions inside the trampoline, reports a decode
+failure, releases the native response, then re-raises the original exception.
+It never invokes that decoder again after an exception. Returning an explicit
+error mapping instead produces `NeverDError`. Non-mappings, nonfinite JSON and
+oversized replies fail. A closure may carry stable private context; neither the
+callable nor the closure is registered globally or retained by recovery.
+
+These APIs do not infer indirect targets, recover an original source ABI, or
+implement unknown host services. A profile or callback is a supplied semantic
+specification, not proof that it matches an arbitrary interpreter.
 The current source route retains the CLI's AArch64 state carrier and floating
 conversion policy. Engine-specific policies must be modeled explicitly in the
 supplied operations. Input execution and host-service modeling are separate
 from source recovery; native and Python plugins remain trusted host code.
 
 The C++ entry points are `readBytecodeProfile`, `BytecodeDecoder::create`,
+`readBytecodeLayout`, `readBytecodeEncoding`, `BytecodeDecoder::createExternal`,
 `BytecodeDecoder::decode`, `BytecodeDecoder::function` and
 `lowerBytecodeState`. The tool demonstrates source ABI binding, call recovery,
 external LLVM declarations and both C routes. Default resource bounds include

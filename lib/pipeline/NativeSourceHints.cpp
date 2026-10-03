@@ -22,6 +22,7 @@
 #include "neverd/loader/ObjC/ObjCContextCallEffects.h"
 #include "neverd/loader/Swift/SwiftAccessEffects.h"
 #include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
+#include "neverd/loader/Swift/SwiftOpaqueValueEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
@@ -35,6 +36,87 @@
 #include <tuple>
 
 namespace neverd {
+namespace {
+bool completeNativeAudit(va_t Entry, const PipelineFunctionAudit &Audit);
+}
+
+NativeSourceCalleeContracts
+nativeSourceCalleeContracts(const BinaryImage &Image,
+                            const PipelineResult &Result) {
+  NativeSourceCalleeContracts Contracts;
+  if (!Result.Success || Result.SourceImage != &Image)
+    return Contracts;
+  Contracts.SourceImage = &Image;
+  for (const auto &Low : Result.LowFuncs)
+    Contracts.CurrentCallees.emplace(
+        Low.Entry, NativeSourceCalleeContracts::CurrentCallee{&Low});
+  for (const auto &Med : Result.MedFuncs)
+    if (auto It = Contracts.CurrentCallees.find(Med.Entry);
+        It != Contracts.CurrentCallees.end() && Med.SourceTypeHint &&
+        Med.SourceParametersBound)
+      It->second.Signature = &*Med.SourceTypeHint;
+  for (const auto &Audit : Result.FunctionAudits)
+    if (auto It = Contracts.CurrentCallees.find(Audit.Entry);
+        It != Contracts.CurrentCallees.end())
+      It->second.Audit = &Audit;
+  return Contracts;
+}
+
+bool validateSwiftOpaqueValueBindings(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    const NativeSourceCalleeContracts *Callees) {
+  std::map<va_t, const LowFunc *> Bodies;
+  std::map<va_t, SourceFunctionTypeHint> ABIs;
+  if (Callees && Callees->SourceImage == &Image)
+    for (const auto &[Entry, Callee] : Callees->CurrentCallees)
+      if (Callee.Low && Callee.Signature) {
+        Bodies.emplace(Entry, Callee.Low);
+        ABIs.emplace(Entry, *Callee.Signature);
+      }
+  const auto Current =
+      Low && Low->Entry == Med.Entry
+          ? buildSwiftOpaqueValueCallHints(Image, *Low, ABIs, Bodies)
+          : std::map<va_t, SourceCallTypeHint>{};
+  std::set<va_t> Seen;
+  size_t Budget = 262144;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return false;
+      const auto Found = Current.find(Op.Addr);
+      const bool Marked =
+          Op.SourceCallHint && Op.SourceCallHint->SwiftOpaqueValue;
+      if (!Marked && (Found == Current.end() || Op.Opcode != NdOp::CALL))
+        continue;
+      if (!Marked || Found == Current.end())
+        return false;
+      const auto &Expected = Found->second, &Binding = *Op.SourceCallHint;
+      const auto &Site = Expected.SwiftOpaqueValue->Site;
+      if (Binding.SwiftOpaqueValue != Expected.SwiftOpaqueValue ||
+          Binding.CallKind != Expected.CallKind ||
+          Binding.TargetAddress != Expected.TargetAddress ||
+          Binding.WeakImport || Binding.DoesNotReturn ||
+          !equalSourceABIs(Binding.Signature, Expected.Signature) ||
+          Op.Opcode != Site.Opcode || Op.OriginSeq != Site.Sequence ||
+          Op.NumInputs != sourceABIParameters(Expected.Signature).size() + 1 ||
+          !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 8 ||
+          Op.Inputs[0].ConstVal != Site.StaticTarget || Op.DoesNotReturn ||
+          Op.PreservesCallerSaved || !Seen.insert(Op.Addr).second)
+        return false;
+      for (unsigned I = 1; I < Op.NumInputs; ++I)
+        if (Op.Inputs[I].Size != 8)
+          return false;
+      if (Binding.CallKind == SourceCallTypeHint::Kind::Native) {
+        const auto &C = Callees->CurrentCallees.at(Binding.TargetAddress);
+        const auto *A = C.Audit;
+        if (!A || !C.Low->hasCompleteLiftCoverage() ||
+            !completeNativeAudit(C.Low->Entry, *A) ||
+            A->DecodedInstructions != C.Low->DecodedInstructionCount)
+          return false;
+      }
+    }
+  return Seen.size() == Current.size();
+}
 
 bool validateSwiftConsumedInputBindings(const BinaryImage &Image,
                                         const LowFunc *Low,
@@ -590,7 +672,8 @@ bool hasNativeSourceStateContract(
       Low->Blocks.size() > 16384)
     return false;
   NativeSourceCalls Calls;
-  if (!validateSwiftConsumedInputBindings(Image, Low, Med) ||
+  if (!validateSwiftOpaqueValueBindings(Image, Low, Med, Callees) ||
+      !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med) ||
       !validateNativeSwiftReceiverBindings(Image, Low, Med))
     return false;
@@ -736,6 +819,19 @@ bool hasNativeSourceStateContract(
       }();
       NativeSourceCallContract Contract;
       Contract.Signature = &Binding.Signature;
+      if (Binding.SwiftOpaqueValue) {
+        const LowFunc *Body = nullptr;
+        if (StaticNative && Callees)
+          if (auto It = Callees->CurrentCallees.find(Binding.TargetAddress);
+              It != Callees->CurrentCallees.end())
+            Body = It->second.Low;
+        const auto Effects = swiftOpaqueValueCallEffects(
+            Image, *Low, Binding.SwiftOpaqueValue->Site, Binding, Body);
+        if ((!StaticNative && !StaticBoolean) || !Effects || Op.DoesNotReturn ||
+            Op.PreservesCallerSaved)
+          return false;
+        static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
       if (StaticNative &&
           isSwiftValueBufferProjection(Image, Binding.TargetAddress)) {
         const SourceCallOccurrenceKey Site{Op.Addr, Op.OriginSeq, Op.Opcode,
@@ -1463,7 +1559,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
        (!Low || !validateSourceRegisterCopies(Image, *Low,
                                               Med.RegisterCopyProjections))))
     return Reject("source register-copy proof is no longer valid");
-  if (!validateSwiftConsumedInputBindings(Image, Low, Med) ||
+  if (!validateSwiftOpaqueValueBindings(Image, Low, Med, CalleeContracts) ||
+      !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med))
     return Reject("Swift witness frame proof is no longer valid");
   if (!validateNativeSwiftReceiverBindings(Image, Low, Med))
@@ -1647,7 +1744,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
         // private-frame permission from having the same runtime target.
         RequiresFrameEffectProof |=
             Op.SourceCallHint &&
-            (Op.SourceCallHint->SwiftConsumedInput ||
+            (Op.SourceCallHint->SwiftOpaqueValue ||
+             Op.SourceCallHint->SwiftConsumedInput ||
              Op.SourceCallHint->TargetName == "swift_beginAccess" ||
              Op.SourceCallHint->TargetName == "swift_endAccess");
         RequiresImmutableCallProof |=
