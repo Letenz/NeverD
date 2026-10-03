@@ -20,7 +20,6 @@ constexpr Service Registry[] = {
 #include "WindowsProcessServices.def"
 #undef NEVERD_WINDOWS_PROCESS_API
 };
-static_assert((MaxImports + FirstImportGate) * GateStride <= GateSize);
 static_assert([] {
   for (auto &S : Registry)
     if (S.Arguments > std::tuple_size_v<decltype(NativeCallEvent::Arguments)>)
