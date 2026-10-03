@@ -13,6 +13,7 @@ struct LowFunc;
 struct MedFunc;
 struct HighFunc;
 struct PipelineFunctionAudit;
+struct PipelineResult;
 
 /// Prove that a call-free x64 function uses its restored entry stack pointer
 /// only to address initialized, private frame storage. Frame-derived scalar
@@ -40,7 +41,24 @@ bool certifiesPrivateNativeSourceFrame(const LowFunc &Function,
 struct NativeSourceCalleeContracts {
   const BinaryImage *SourceImage = nullptr;
   std::map<va_t, SourceFunctionTypeHint> ZeroArgumentPointerCallees;
+  struct CurrentCallee {
+    const LowFunc *Low = nullptr;
+    const SourceFunctionTypeHint *Signature = nullptr;
+    const PipelineFunctionAudit *Audit = nullptr;
+  };
+  /// Current complete pipeline evidence, never persisted call-only options.
+  /// The effect owner replays the machine body and full physical ABI again.
+  std::map<va_t, CurrentCallee> CurrentCallees;
 };
+
+/// Capture current callee evidence without granting an effect or source right.
+NativeSourceCalleeContracts
+nativeSourceCalleeContracts(const BinaryImage &Image,
+                            const PipelineResult &Result);
+
+bool validateSwiftOpaqueValueBindings(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    const NativeSourceCalleeContracts *Callees);
 
 /// Collect exact native call ABIs already bound in one MedIR caller. This is
 /// physical input evidence for the Boolean difference and immutable-target

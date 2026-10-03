@@ -1,6 +1,6 @@
 **Langues**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
+<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
 
 [← Index de la documentation](README.md)
 
@@ -92,6 +92,8 @@ Sources sans modification locale `4ce0b8247`, le 2026-10-03 UTC. L’inventaire 
 ## Diagnostic Intel indépendant
 
 Le [workflow de diagnostic Intel](../../.github/workflows/hvf-intel-diagnostic.yml), déclenché manuellement, extrait séparément le contrôleur et les sources testées. `source-ref` exige un SHA complet ; `shards` choisit parmi les seize partitions d’origine. `first-method` commence à zéro, `method-count=0` sélectionne les méthodes restantes et `case-index` ne peut sélectionner un paramètre d’origine que si `method-count=1`. L’inventaire complet des vingt cibles est découvert avant la sélection. Le build Release, les commandes, les paramètres et les exigences natives d’origine sont conservés.
+
+`intel-image` choisit `macos-15-intel` par défaut ou `macos-26-intel` pour une comparaison contrôlée, comme dans le workflow complet. Le titre de l’exécution indique l’image choisie et le contrôle de disponibilité exige toujours un hôte x86-64 natif. Changer d’image modifie le système, le SDK et la chaîne d’outils ; cela n’isole pas un changement du noyau.
 
 Avant chaque méthode, l’action téléverse son plan immuable et un instantané de l’hôte. Après l’exécution, elle conserve le XML original, la terminaison des processus, l’état du contrôleur et un second instantané. Ceux-ci indiquent mémoire, swap, charge, disque et identifiants, état, CPU, RSS et noms d’exécutables des processus, sans arguments ni environnement. Les erreurs de collecte restent visibles. Un échec d’exécution ou de téléversement arrête les méthodes suivantes. Chaque méthode conserve sa limite de 120 secondes ; un hôte injoignable peut empêcher nettoyage et téléversement final. Seules les preuves déjà téléversées subsistent alors. Ces diagnostics partiels ne satisfont ni la validation CPU complète ni la validation Darwin indépendante. Le dernier marqueur de départ situe une limite d’exécution, sans identifier l’instruction fautive ou la cause.
 

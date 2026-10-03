@@ -80,6 +80,7 @@ SIDEEFFECT(Intrinsic::X87Wait);
 SIDEEFFECT(Intrinsic::X87Ffree);
 SIDEEFFECT(Intrinsic::X87Fincstp);
 SIDEEFFECT(Intrinsic::X64Syscall);
+SIDEEFFECT(Intrinsic::X64WindowsSyscall);
 // string ops (side-effect)
 SIDEEFFECT(Intrinsic::Movsb);
 SIDEEFFECT(Intrinsic::Movsw);

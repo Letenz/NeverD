@@ -111,6 +111,7 @@ public:
   void writeMemoryHelpers();
   void writeX87FpremHelpers();
   void writeX64SyscallHelper();
+  void writeX64WindowsSyscallHelper();
   std::string memoryLoadExpr(
       const TypeRef &Ty, llvm::StringRef Addr,
       NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None,
@@ -469,6 +470,7 @@ public:
   void writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent);
   bool NeedsX87FpremHelpers = false;
   bool NeedsX64SyscallHelper = false;
+  bool NeedsX64WindowsSyscallHelper = false;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
   bool NeedsMsvcIntrinsics = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.

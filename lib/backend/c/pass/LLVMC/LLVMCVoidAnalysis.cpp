@@ -74,7 +74,8 @@ bool analyzeVoidReturn(const LLVMCAnalysisState &State, llvm::Function &Fn) {
                 Intrinsic->getIntrinsicID() == llvm::Intrinsic::smax)
               AllRetResidual = false;
           if (llvm_value_provenance::isSemanticProducer(*CallProducer) ||
-              isLinuxX64SyscallInlineAsm(*CallProducer))
+              isLinuxX64SyscallInlineAsm(*CallProducer) ||
+              isWindowsX64SyscallInlineAsm(*CallProducer))
             AllRetResidual = false;
           continue;
         }

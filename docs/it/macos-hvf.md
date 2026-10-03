@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 3df8bdf1b9b4f63bdea5f0e49205fe5835269f2abae6b7aa3cb361961ed2dfcb -->
+<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
 
 [← Indice della documentazione](README.md)
 
@@ -92,6 +92,8 @@ Sorgenti senza modifiche locali `4ce0b8247`, 2026-10-03 UTC. L’inventario ARM6
 ## Diagnostica Intel indipendente
 
 Il [workflow diagnostico Intel](../../.github/workflows/hvf-intel-diagnostic.yml), avviato manualmente, estrae separatamente il controller e i sorgenti verificati. `source-ref` richiede uno SHA completo; `shards` seleziona fra le sedici partizioni originali. `first-method` parte da zero, `method-count=0` seleziona i metodi rimanenti e `case-index` può scegliere un parametro originale solo con `method-count=1`. Prima della selezione viene rilevato l’inventario completo dei venti target. Build Release, comandi, parametri e verifiche native obbligatorie originali restano invariati.
+
+`intel-image` seleziona per impostazione predefinita `macos-15-intel`, oppure `macos-26-intel` per un confronto controllato, come nel workflow completo. Il titolo dell’esecuzione indica l’immagine scelta e il controllo di disponibilità richiede sempre un host x86-64 nativo. Cambiare immagine coinvolge sistema operativo, SDK e strumenti di compilazione; non isola una modifica del kernel.
 
 Prima di ogni metodo, l’azione carica il piano immutabile e un’istantanea dell’host. Dopo l’esecuzione conserva XML originale, terminazione dei processi, stato del controller e una seconda istantanea. Registra memoria, swap, carico, disco e identificatori, stato, CPU, RSS e nomi degli eseguibili dei processi, senza argomenti o ambiente. Anche gli errori di raccolta restano visibili. Un errore di esecuzione o caricamento ferma i metodi successivi. Ogni metodo mantiene il limite di 120 secondi; un host irraggiungibile può impedire pulizia e caricamento finale. In tal caso rimangono solo le prove già caricate. Queste diagnosi parziali non soddisfano la verifica CPU completa né quella Darwin indipendente. L’ultimo marcatore iniziale individua un confine di esecuzione, non l’istruzione guest difettosa o la causa.
 
