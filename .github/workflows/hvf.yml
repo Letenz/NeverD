@@ -190,14 +190,42 @@ jobs:
           NEVERD_REQUIRE_HVF: '1'
         run: |
           build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64StateTransition.*' --gtest_output=xml:build-hvf/state-evidence/state.xml 2>&1 | tee build-hvf/state-evidence/state.log
-      - name: Isolate Intel public division in one process
+      - name: Isolate Intel ComputesQuotientRemainderAndPartialRegisterWrites
         if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'faults'
-        timeout-minutes: 3
+        timeout-minutes: 2
         shell: bash
         env:
           NEVERD_REQUIRE_HVF: '1'
         run: |
-          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='*X64Division.*' --gtest_output=xml:build-hvf/state-evidence/division.xml 2>&1 | tee build-hvf/state-evidence/division.log
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='*X64Division.ComputesQuotientRemainderAndPartialRegisterWrites/*' --gtest_output=xml:build-hvf/state-evidence/ComputesQuotientRemainderAndPartialRegisterWrites.xml 2>&1 | tee build-hvf/state-evidence/ComputesQuotientRemainderAndPartialRegisterWrites.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/ComputesQuotientRemainderAndPartialRegisterWrites.xml").getroot().attrib["tests"]) == 144'
+      - name: Isolate Intel UnhandledDivideRemainsATerminalGuestTrap
+        if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'faults'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='*X64Division.UnhandledDivideRemainsATerminalGuestTrap/*' --gtest_output=xml:build-hvf/state-evidence/UnhandledDivideRemainsATerminalGuestTrap.xml 2>&1 | tee build-hvf/state-evidence/UnhandledDivideRemainsATerminalGuestTrap.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/UnhandledDivideRemainsATerminalGuestTrap.xml").getroot().attrib["tests"]) == 144'
+      - name: Isolate Intel RecoverableDivideRequiresConsumptionAndExplicitContinuation
+        if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'faults'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='*X64Division.RecoverableDivideRequiresConsumptionAndExplicitContinuation/*' --gtest_output=xml:build-hvf/state-evidence/RecoverableDivideRequiresConsumptionAndExplicitContinuation.xml 2>&1 | tee build-hvf/state-evidence/RecoverableDivideRequiresConsumptionAndExplicitContinuation.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/RecoverableDivideRequiresConsumptionAndExplicitContinuation.xml").getroot().attrib["tests"]) == 144'
+      - name: Isolate Intel ObserverCanStopBeforeDivisionAndExceptionDelivery
+        if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'faults'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='*X64Division.ObserverCanStopBeforeDivisionAndExceptionDelivery/*' --gtest_output=xml:build-hvf/state-evidence/ObserverCanStopBeforeDivisionAndExceptionDelivery.xml 2>&1 | tee build-hvf/state-evidence/ObserverCanStopBeforeDivisionAndExceptionDelivery.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/ObserverCanStopBeforeDivisionAndExceptionDelivery.xml").getroot().attrib["tests"]) == 144'
       # Native parameter indices: HVF supervisor 40-49, user 50-59.
       - name: Isolate Intel DivideByZero at both privilege levels
         if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'division'
@@ -289,14 +317,51 @@ jobs:
         run: |
           build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64ExceptionTransport.ReportsExactNativeFaultAndOriginalContext/49:NativeTransports/X64ExceptionTransport.ReportsExactNativeFaultAndOriginalContext/59' --gtest_output=xml:build-hvf/state-evidence/fault-ExecuteDenied.xml 2>&1 | tee build-hvf/state-evidence/fault-ExecuteDenied.log
           python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/fault-ExecuteDenied.xml").getroot().attrib["tests"]) == 2'
-      - name: Isolate repeated faults and mapping transitions
+      - name: Isolate Intel ResumesAfterRepeatedExceptionsWithoutGuestStackEffects
         if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'division'
-        timeout-minutes: 3
+        timeout-minutes: 2
         shell: bash
         env:
           NEVERD_REQUIRE_HVF: '1'
         run: |
-          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64ExceptionTransport.*-NativeTransports/X64ExceptionTransport.ReportsExactNativeFaultAndOriginalContext/*' --gtest_output=xml:build-hvf/state-evidence/faults.xml 2>&1 | tee build-hvf/state-evidence/faults.log
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64ExceptionTransport.ResumesAfterRepeatedExceptionsWithoutGuestStackEffects/*' --gtest_output=xml:build-hvf/state-evidence/ResumesAfterRepeatedExceptionsWithoutGuestStackEffects.xml 2>&1 | tee build-hvf/state-evidence/ResumesAfterRepeatedExceptionsWithoutGuestStackEffects.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/ResumesAfterRepeatedExceptionsWithoutGuestStackEffects.xml").getroot().attrib["tests"]) == 60'
+      - name: Isolate Intel PrivateGatewayCannotShadowAnExistingGuestMapping
+        if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'division'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64ExceptionTransport.PrivateGatewayCannotShadowAnExistingGuestMapping/*' --gtest_output=xml:build-hvf/state-evidence/PrivateGatewayCannotShadowAnExistingGuestMapping.xml 2>&1 | tee build-hvf/state-evidence/PrivateGatewayCannotShadowAnExistingGuestMapping.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/PrivateGatewayCannotShadowAnExistingGuestMapping.xml").getroot().attrib["tests"]) == 60'
+      - name: Isolate Intel MappingGenerationCanMoveThePrivateExceptionGateway
+        if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'division'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64ExceptionTransport.MappingGenerationCanMoveThePrivateExceptionGateway/*' --gtest_output=xml:build-hvf/state-evidence/MappingGenerationCanMoveThePrivateExceptionGateway.xml 2>&1 | tee build-hvf/state-evidence/MappingGenerationCanMoveThePrivateExceptionGateway.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/MappingGenerationCanMoveThePrivateExceptionGateway.xml").getroot().attrib["tests"]) == 60'
+      - name: Isolate Intel ProjectionCacheCannotReuseUnmonitoredTables
+        if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'division'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64ExceptionTransport.ProjectionCacheCannotReuseUnmonitoredTables/*' --gtest_output=xml:build-hvf/state-evidence/ProjectionCacheCannotReuseUnmonitoredTables.xml 2>&1 | tee build-hvf/state-evidence/ProjectionCacheCannotReuseUnmonitoredTables.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/ProjectionCacheCannotReuseUnmonitoredTables.xml").getroot().attrib["tests"]) == 60'
+      - name: Isolate Intel GuestHaltCannotForgeAPrivateExceptionFrame
+        if: matrix.arch == 'X64' && inputs.validation == 'state-isolation' && inputs.isolation_group != 'division'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NEVERD_REQUIRE_HVF: '1'
+        run: |
+          build-hvf/bin/NeverDX64ExceptionTests --gtest_filter='NativeTransports/X64ExceptionTransport.GuestHaltCannotForgeAPrivateExceptionFrame/*' --gtest_output=xml:build-hvf/state-evidence/GuestHaltCannotForgeAPrivateExceptionFrame.xml 2>&1 | tee build-hvf/state-evidence/GuestHaltCannotForgeAPrivateExceptionFrame.log
+          python3 -c 'import xml.etree.ElementTree as E; assert int(E.parse("build-hvf/state-evidence/GuestHaltCannotForgeAPrivateExceptionFrame.xml").getroot().attrib["tests"]) == 60'
       - name: Build the complete native CPU inventory
         if: inputs.validation == 'full'
         shell: bash
