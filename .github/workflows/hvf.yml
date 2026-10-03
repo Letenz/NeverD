@@ -104,12 +104,20 @@ jobs:
             -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
             -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
             -DNEVERD_EMULATION_BACKEND_HVF=ON
+      - name: Build minimal native transport tests
+        if: inputs.validation != 'probe'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          cmake --build build-hvf --target NeverDHvfTests --parallel 4 2>&1 | tee build-hvf/transport-build.log
       - name: Require native instruction execution before the full dependency build
         if: inputs.validation != 'probe'
+        timeout-minutes: 3
+        shell: bash
         run: >-
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/transport-evidence --parallel 4
-          --require-hvf --hvf-transport-only
+          --require-hvf --hvf-transport-only 2>&1 | tee build-hvf/transport-run.log
       - name: Require actual host execution and record every result
         if: inputs.validation != 'transport' && inputs.validation != 'probe'
         run: >-
@@ -127,6 +135,7 @@ jobs:
           name: hvf-${{ matrix.arch }}
           path: |
             build-hvf-probe/
+            build-hvf/transport-*.log
             build-hvf/transport-evidence/
             build-hvf/native-evidence/
             build-hvf/darwin-evidence/
