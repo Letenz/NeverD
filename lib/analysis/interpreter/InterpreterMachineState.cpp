@@ -15,9 +15,11 @@
 
 #include "llvm/Support/Errc.h"
 
+#include <algorithm>
 #include <initializer_list>
 #include <limits>
 #include <map>
+#include <set>
 #include <utility>
 
 namespace neverd::analysis {
@@ -145,10 +147,11 @@ struct InstructionWriter {
     }
   }
 
-  void leave() {
+  void leave(bool IncludeFlags = true) {
     for (uint64_t Index = 0; Index != 16; ++Index)
       store(Index * 8, NdVar::reg(GuestBase + Index * 8, 8));
-    store(offsetof(InterpreterMachineStateX64V1, RFlags), packedFlags());
+    if (IncludeFlags)
+      store(offsetof(InterpreterMachineStateX64V1, RFlags), packedFlags());
     if (StateRegisters) {
       emit(NdOp::RETURN, {}, {NdVar::reg(ProfileStatus, 8)});
       return;
@@ -201,6 +204,80 @@ struct InstructionWriter {
     return llvm::Error::success();
   }
 };
+
+// Optional source compaction only. Reserve the complete layout before changing
+// any return, and keep the existing inline form when it cannot fit or the CFG
+// is unsuitable. In particular a new block must never bind a dangling target.
+std::optional<LowBlock> sharedReturnBlock(const LowFunc &Function,
+                                          bool HasAlignmentGuard) {
+  std::map<int, const LowBlock *> Blocks;
+  std::map<va_t, int> Addresses;
+  std::set<std::pair<int, int>> Successors, Predecessors;
+  va_t End = 0;
+  size_t Returns = 0;
+  for (const auto &B : Function.Blocks) {
+    if (B.Id < 0 || !Blocks.emplace(B.Id, &B).second ||
+        !Addresses.emplace(B.StartAddr, B.Id).second)
+      return std::nullopt;
+    End = std::max(End, B.EndAddr);
+    for (int Id : B.Succs)
+      Successors.emplace(B.Id, Id);
+    for (int Id : B.Preds)
+      Predecessors.emplace(Id, B.Id);
+    for (size_t I = 0; I != B.Ops.size(); ++I)
+      if (B.Ops[I].Opcode == NdOp::RETURN) {
+        if (I + 1 != B.Ops.size() || !B.Succs.empty() ||
+            B.InstructionBoundaries.empty())
+          return std::nullopt;
+        const auto &Last = B.InstructionBoundaries.back();
+        if (Last.Control != LowInstructionControl::Return ||
+            Last.FirstOp + Last.OpCount != B.Ops.size())
+          return std::nullopt;
+        ++Returns;
+      }
+  }
+  if (Returns < 2 || End >= InvalidVA - 2 || Successors != Predecessors)
+    return std::nullopt;
+  for (const auto &B : Function.Blocks) {
+    for (int Id : B.Succs)
+      if (!Blocks.count(Id))
+        return std::nullopt;
+    for (int Id : B.Preds)
+      if (!Blocks.count(Id))
+        return std::nullopt;
+    for (const auto &Op : B.Ops)
+      if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
+        if (!Op.NumInputs || !Op.Inputs[0].isConst())
+          return std::nullopt;
+        const auto Target = Addresses.find(Op.Inputs[0].Offset);
+        if (Target == Addresses.end() ||
+            !Successors.count({B.Id, Target->second}))
+          return std::nullopt;
+      }
+  }
+  if (HasAlignmentGuard) {
+    const auto &Entry = Function.Blocks.front();
+    const uint64_t Span = Entry.EndAddr - Entry.StartAddr;
+    // addEntryAlignmentGuard relocates the entry beyond the new maximum end
+    // and reserves its reject block. Do not consume space that it needs.
+    if (!Span || Span > InvalidVA - (End + 2) ||
+        InvalidVA - (End + 2) - Span < 3 ||
+        Function.Blocks.size() >
+            static_cast<size_t>(std::numeric_limits<int>::max() - 3))
+      return std::nullopt;
+  }
+  int Id = 0;
+  while (Blocks.count(Id)) {
+    if (Id == std::numeric_limits<int>::max())
+      return std::nullopt;
+    ++Id;
+  }
+  LowBlock Exit;
+  Exit.Id = Id;
+  Exit.StartAddr = End + 1;
+  Exit.EndAddr = End + 2;
+  return Exit;
+}
 
 llvm::Error addEntryAlignmentGuard(LowFunc &Function, uint64_t Parameter,
                                    bool StateRegisters,
@@ -305,7 +382,11 @@ llvm::Error validateInterpreterMachineStateX64V1(
 static llvm::Expected<InterpreterMachineSource>
 buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
                    InterpreterMachineStateProfile Profile, bool StateRegisters,
-                   std::optional<InterpreterEntryAlignment> EntryAlignment) {
+                   std::optional<InterpreterEntryAlignment> EntryAlignment,
+                   InterpreterMachineStateLayout Layout) {
+  if (Layout != InterpreterMachineStateLayout::InlineReturns &&
+      Layout != InterpreterMachineStateLayout::SharedGPRExit)
+    return invalid("unsupported interpreter machine-state layout");
   if (EntryAlignment && !EntryAlignment->valid())
     return invalid("invalid machine source entry alignment");
   if (Profile != InterpreterMachineStateProfile::UserX64NoFaultV1)
@@ -347,6 +428,10 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
         Residual.OrdinaryModuleAnalysisRoots;
   } else
     Result.Function = Residual;
+  auto SharedReturn =
+      Layout == InterpreterMachineStateLayout::SharedGPRExit
+          ? sharedReturnBlock(Residual, EntryAlignment.has_value())
+          : std::nullopt;
   bool HasReturn = false;
   bool Seeded = false;
   for (LowBlock &Block : Result.Function.Blocks) {
@@ -439,7 +524,23 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
           if (Op.Output.Size || Op.NumInputs > 1 ||
               Index + 1 != Boundary.FirstOp + Boundary.OpCount)
             return invalid("machine source has a malformed return boundary");
-          Writer.leave();
+          if (SharedReturn) {
+            // Preserve flag packing at each original return. Only the GPR
+            // writeback is shared, so source cleanup need not expand a packed
+            // flags expression across the newly introduced join.
+            Writer.store(offsetof(InterpreterMachineStateX64V1, RFlags),
+                         Writer.packedFlags());
+            Writer.emit(NdOp::BRANCH, {},
+                        {NdVar::cst(SharedReturn->StartAddr, 8)});
+            Boundary.Control = LowInstructionControl::Branch;
+            Boundary.ControlFlags = LowInstructionControlFlag::Branch;
+            Boundary.TargetMode = LowInstructionTargetMode::Preserve;
+            Boundary.Immediate = SharedReturn->StartAddr;
+            Block.Succs = {SharedReturn->Id};
+            SharedReturn->Preds.push_back(Block.Id);
+          } else {
+            Writer.leave();
+          }
           HasReturn = true;
           break;
         case NdOp::INTRINSIC: {
@@ -485,6 +586,21 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   }
   if (!HasReturn)
     return invalid("machine source has no ordinary return boundary");
+  if (SharedReturn) {
+    InstructionWriter Writer{SharedReturn->Ops, SharedReturn->StartAddr,
+                             StateRegisters};
+    Writer.leave(false);
+    LowInstructionBoundary Boundary;
+    Boundary.Address = SharedReturn->StartAddr;
+    Boundary.Size = 1;
+    Boundary.OpCount = SharedReturn->Ops.size();
+    Boundary.Control = LowInstructionControl::Return;
+    Boundary.ControlFlags = LowInstructionControlFlag::Return;
+    SharedReturn->InstructionBoundaries.push_back(Boundary);
+    for (size_t I = 0; I != SharedReturn->Ops.size(); ++I)
+      SharedReturn->Ops[I].Seq = static_cast<int>(I);
+    Result.Function.Blocks.push_back(std::move(*SharedReturn));
+  }
   if (EntryAlignment)
     if (auto Error = addEntryAlignmentGuard(Result.Function, ParameterRegister,
                                             StateRegisters, *EntryAlignment))
@@ -532,14 +648,34 @@ llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineStateX64(
     const LowFunc &Residual, BinaryFormat SourceFormat,
     InterpreterMachineStateProfile Profile,
     std::optional<InterpreterEntryAlignment> EntryAlignment) {
+  return wrapInterpreterMachineStateX64(
+      Residual, SourceFormat, Profile, EntryAlignment,
+      InterpreterMachineStateLayout::InlineReturns);
+}
+
+llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineStateX64(
+    const LowFunc &Residual, BinaryFormat SourceFormat,
+    InterpreterMachineStateProfile Profile,
+    std::optional<InterpreterEntryAlignment> EntryAlignment,
+    InterpreterMachineStateLayout Layout) {
   return buildMachineSource(Residual, SourceFormat, Profile, false,
-                            EntryAlignment);
+                            EntryAlignment, Layout);
 }
 
 llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
     const LowFunc &Residual, InterpreterMachineStateProfile Profile,
     uint64_t MaxOperations,
     std::optional<InterpreterEntryAlignment> EntryAlignment) {
+  return modelInterpreterMachineStateX64(
+      Residual, Profile, MaxOperations, EntryAlignment,
+      InterpreterMachineStateLayout::InlineReturns);
+}
+
+llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
+    const LowFunc &Residual, InterpreterMachineStateProfile Profile,
+    uint64_t MaxOperations,
+    std::optional<InterpreterEntryAlignment> EntryAlignment,
+    InterpreterMachineStateLayout Layout) {
   uint64_t Remaining = MaxOperations;
   const auto Charge = [&](uint64_t Count) {
     if (Count > Remaining)
@@ -558,7 +694,7 @@ llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
         !Charge(B.ExceptionalSuccs.size()))
       return invalid("machine-state model input budget exhausted");
   auto Generated = buildMachineSource(Residual, BinaryFormat::ELF, Profile,
-                                      true, EntryAlignment);
+                                      true, EntryAlignment, Layout);
   if (!Generated)
     return Generated.takeError();
   InterpreterMachineStateModel Result;

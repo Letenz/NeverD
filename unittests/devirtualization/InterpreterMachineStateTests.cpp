@@ -22,6 +22,8 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Error.h"
 
+#include <algorithm>
+#include <limits>
 #include <map>
 
 namespace {
@@ -73,10 +75,12 @@ protected:
   roundTrip(const LowFunc &Function, llvm::StringRef Harness,
             llvm::StringRef Preamble = {},
             const BinaryImage *ConversionImage = nullptr,
-            std::optional<InterpreterEntryAlignment> Alignment = std::nullopt) {
+            std::optional<InterpreterEntryAlignment> Alignment = std::nullopt,
+            InterpreterMachineStateLayout Layout =
+                InterpreterMachineStateLayout::InlineReturns) {
     auto Wrapped = wrapInterpreterMachineStateX64(
         Function, BinaryFormat::ELF,
-        InterpreterMachineStateProfile::UserX64NoFaultV1, Alignment);
+        InterpreterMachineStateProfile::UserX64NoFaultV1, Alignment, Layout);
     ASSERT_TRUE(static_cast<bool>(Wrapped))
         << llvm::toString(Wrapped.takeError());
     for (bool LLVM : {false, true}) {
@@ -140,6 +144,357 @@ protected:
     }
   }
 };
+
+LowFunc multipleReturns(bool Loop = false) {
+  LowFunc F;
+  F.Name = "generic_machine_source";
+  F.Entry = 0x1000;
+  const auto Add = [&](int Id, va_t Address, std::vector<int> Successors,
+                       std::vector<LowOp> Ops) {
+    auto Fragment = function({Ops});
+    auto B = std::move(Fragment.Blocks.front());
+    const va_t Delta = Address - B.StartAddr;
+    B.Id = Id;
+    B.StartAddr += Delta;
+    B.EndAddr += Delta;
+    B.Succs = std::move(Successors);
+    for (auto &Op : B.Ops)
+      Op.Addr += Delta;
+    for (auto &Boundary : B.InstructionBoundaries) {
+      Boundary.Address += Delta;
+      const auto &Last = B.Ops[Boundary.FirstOp + Boundary.OpCount - 1];
+      if (Last.Opcode == NdOp::COND_BR || Last.Opcode == NdOp::BRANCH) {
+        Boundary.Control = LowInstructionControl::Branch;
+        Boundary.ControlFlags = LowInstructionControlFlag::Branch;
+        if (Last.Opcode == NdOp::COND_BR)
+          Boundary.ControlFlags |= LowInstructionControlFlag::Conditional;
+        Boundary.Immediate = Last.Inputs[0].Offset;
+      }
+    }
+    F.Blocks.push_back(std::move(B));
+  };
+  const auto Selector = NdVar::reg(x86reg::RDX, 8);
+  const auto Bit = NdVar::tmp(0x200, 8);
+  const auto Condition = NdVar::tmp(0x208, 1);
+  for (unsigned I = 0; I != 3; ++I) {
+    const bool Entry = I == 0;
+    const va_t Target = Entry ? 0x1200 : I == 1 ? 0x1400 : 0x1600;
+    Add(I, 0x1000 + I * 0x100,
+        Entry ? std::vector<int>{2, 1}
+              : std::vector<int>{static_cast<int>(2 * I + 2),
+                                 static_cast<int>(2 * I + 1)},
+        {operation(NdOp::INT_AND, Bit,
+                   {Selector, NdVar::scalar(Entry ? 2 : 1, 8)}),
+         operation(NdOp::INT_NOTEQUAL, Condition, {Bit, NdVar::scalar(0, 8)}),
+         operation(NdOp::COND_BR, {}, {NdVar::cst(Target, 8), Condition})});
+  }
+  for (unsigned I = 0; I != 4; ++I) {
+    std::vector<LowOp> Ops;
+    if (I == 3)
+      Ops.push_back(
+          operation(NdOp::INTRINSIC, {},
+                    {NdVar::scalar(static_cast<uint64_t>(Intrinsic::Popf), 2),
+                     NdVar::reg(x86reg::RCX, 8)}));
+    const uint16_t Width = I & 1 ? 1 : 4;
+    const uint64_t Register = x86reg::RAX + (I & 1);
+    const std::vector<LowOp> Tail{
+        operation(NdOp::COPY, NdVar::reg(Register, Width),
+                  {NdVar::scalar(0x30 + I, Width)}),
+        operation(NdOp::INT_ADD, NdVar::reg(x86reg::R8, 8),
+                  {NdVar::reg(x86reg::R8, 8), NdVar::scalar(7 * I + 1, 8)}),
+        operation(NdOp::COPY, NdVar::reg(x86reg::CF, 1),
+                  {NdVar::scalar(I & 1, 1)}),
+        operation(NdOp::COPY, NdVar::reg(x86reg::ZF, 1),
+                  {NdVar::scalar(I >> 1, 1)}),
+        operation(NdOp::STORE, {},
+                  {NdVar::reg(x86reg::RBX, 8), NdVar::reg(x86reg::R8, 8)}),
+        operation(NdOp::RETURN, {}, {NdVar::reg(x86reg::RAX, 8)})};
+    Ops.insert(Ops.end(), Tail.begin(), Tail.end());
+    Add(I + 3, 0x1300 + I * 0x100, {}, std::move(Ops));
+  }
+  if (Loop) {
+    Add(7, 0x800, {8},
+        {operation(NdOp::COPY, NdVar::reg(x86reg::R10, 8),
+                   {NdVar::scalar(0, 8)}),
+         operation(NdOp::BRANCH, {}, {NdVar::cst(0x900, 8)})});
+    Add(8, 0x900, {8, 0},
+        {operation(NdOp::INT_ADD, NdVar::reg(x86reg::R10, 8),
+                   {NdVar::reg(x86reg::R10, 8), NdVar::scalar(1, 8)}),
+         operation(NdOp::INT_AND, Bit,
+                   {NdVar::reg(x86reg::R11, 8), NdVar::scalar(7, 8)}),
+         operation(NdOp::INT_LESS, Condition,
+                   {NdVar::reg(x86reg::R10, 8), Bit}),
+         operation(NdOp::COND_BR, {}, {NdVar::cst(0x900, 8), Condition})});
+    F.Entry = 0x800;
+  }
+  for (const auto &B : F.Blocks)
+    for (int Next : B.Succs)
+      F.Blocks[Next].Preds.push_back(B.Id);
+  if (Loop)
+    std::rotate(F.Blocks.begin(), F.Blocks.end() - 2, F.Blocks.end());
+  return F;
+}
+
+TEST(InterpreterMachineStateTest, SharedReturnStateWritesStayBounded) {
+  const auto F = multipleReturns();
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    auto Wrapped = wrapInterpreterMachineStateX64(
+        F, Format, InterpreterMachineStateProfile::UserX64NoFaultV1,
+        std::nullopt, InterpreterMachineStateLayout::SharedGPRExit);
+    ASSERT_TRUE(static_cast<bool>(Wrapped))
+        << llvm::toString(Wrapped.takeError());
+    unsigned Stores = 0, Returns = 0;
+    for (const auto &B : Wrapped->Function.Blocks)
+      for (const auto &Op : B.Ops) {
+        Stores += Op.Opcode == NdOp::STORE;
+        Returns += Op.Opcode == NdOp::RETURN;
+      }
+    // Four guest writes and four packed flag writes stay on their original
+    // paths. The sixteen GPR words have one common commit.
+    EXPECT_EQ(Stores, 4U + 4U + 16U);
+    EXPECT_EQ(Returns, 1U);
+  }
+  auto Model = modelInterpreterMachineStateX64(
+      F, InterpreterMachineStateProfile::UserX64NoFaultV1, 65536, std::nullopt,
+      InterpreterMachineStateLayout::SharedGPRExit);
+  ASSERT_TRUE(static_cast<bool>(Model)) << llvm::toString(Model.takeError());
+  unsigned Returns = 0;
+  for (const auto &B : Model->Function.Blocks)
+    for (const auto &Op : B.Ops)
+      Returns += Op.Opcode == NdOp::RETURN;
+  EXPECT_EQ(Returns, 1U);
+}
+
+TEST(InterpreterMachineStateTest, SharedReturnUsesFreshIdentityAndMetadata) {
+  auto F = multipleReturns();
+  const auto NewID = [](int Id) {
+    return Id ? Id * 17 : std::numeric_limits<int>::max();
+  };
+  for (auto &B : F.Blocks) {
+    B.Id = NewID(B.Id);
+    for (auto *Edges : {&B.Preds, &B.Succs})
+      for (auto &Id : *Edges)
+        Id = NewID(Id);
+    if (B.Ops.back().Opcode == NdOp::RETURN)
+      B.InstructionBoundaries.back().Immediate = 8;
+  }
+  auto Wrapped = wrapInterpreterMachineStateX64(
+      F, BinaryFormat::ELF, InterpreterMachineStateProfile::UserX64NoFaultV1,
+      std::nullopt, InterpreterMachineStateLayout::SharedGPRExit);
+  ASSERT_TRUE(static_cast<bool>(Wrapped))
+      << llvm::toString(Wrapped.takeError());
+  const auto &Exit = Wrapped->Function.Blocks.back();
+  EXPECT_EQ(Exit.Id, 0);
+  EXPECT_EQ(Exit.Preds.size(), 4U);
+  EXPECT_EQ(Exit.InstructionBoundaries.back().Control,
+            LowInstructionControl::Return);
+  EXPECT_FALSE(Exit.InstructionBoundaries.back().Immediate);
+  for (size_t I = 3; I != 7; ++I) {
+    const auto &B = Wrapped->Function.Blocks[I];
+    EXPECT_EQ(B.Succs, std::vector<int>{Exit.Id});
+    EXPECT_EQ(B.Ops.back().Opcode, NdOp::BRANCH);
+    EXPECT_EQ(B.Ops.back().Inputs[0].Offset, Exit.StartAddr);
+    EXPECT_EQ(B.InstructionBoundaries.back().Immediate, Exit.StartAddr);
+    EXPECT_EQ(B.InstructionBoundaries.back().ControlFlags,
+              LowInstructionControlFlag::Branch);
+  }
+}
+
+TEST(InterpreterMachineStateTest, DefaultReturnLayoutRemainsInline) {
+  const auto F = multipleReturns();
+  auto Default = wrapInterpreterMachineStateX64(F);
+  auto Inline = wrapInterpreterMachineStateX64(
+      F, BinaryFormat::ELF, InterpreterMachineStateProfile::UserX64NoFaultV1,
+      std::nullopt, InterpreterMachineStateLayout::InlineReturns);
+  ASSERT_TRUE(bool(Default)) << llvm::toString(Default.takeError());
+  ASSERT_TRUE(bool(Inline)) << llvm::toString(Inline.takeError());
+  ASSERT_EQ(Default->Function.Blocks.size(), F.Blocks.size());
+  ASSERT_EQ(Inline->Function.Blocks.size(), F.Blocks.size());
+  unsigned Stores = 0, Returns = 0;
+  for (size_t I = 0; I != F.Blocks.size(); ++I) {
+    const auto &B = Default->Function.Blocks[I];
+    EXPECT_EQ(lowUndefinedOperationDigest(B.Ops),
+              lowUndefinedOperationDigest(Inline->Function.Blocks[I].Ops));
+    for (const auto &Op : B.Ops) {
+      Stores += Op.Opcode == NdOp::STORE;
+      Returns += Op.Opcode == NdOp::RETURN;
+    }
+  }
+  EXPECT_EQ(Stores, 4U + 4U * 17U);
+  EXPECT_EQ(Returns, 4U);
+}
+
+TEST(InterpreterMachineStateTest, RejectsUnsupportedReturnLayouts) {
+  const auto F = multipleReturns();
+  const auto InvalidLayout = static_cast<InterpreterMachineStateLayout>(255);
+  auto Wrapped = wrapInterpreterMachineStateX64(
+      F, BinaryFormat::ELF, InterpreterMachineStateProfile::UserX64NoFaultV1,
+      std::nullopt, InvalidLayout);
+  EXPECT_FALSE(bool(Wrapped));
+  llvm::consumeError(Wrapped.takeError());
+  auto Model = modelInterpreterMachineStateX64(
+      F, InterpreterMachineStateProfile::UserX64NoFaultV1, 65536, std::nullopt,
+      InvalidLayout);
+  EXPECT_FALSE(bool(Model));
+  llvm::consumeError(Model.takeError());
+}
+
+TEST(InterpreterMachineStateTest, SharedReturnReservesAlignmentLayoutSpace) {
+  for (bool Align : {false, true}) {
+    auto F = multipleReturns();
+    const va_t End = InvalidVA - (Align ? 4 : 2);
+    const va_t Delta = End - F.Blocks.back().EndAddr;
+    F.Entry += Delta;
+    for (auto &B : F.Blocks) {
+      B.StartAddr += Delta;
+      B.EndAddr += Delta;
+      for (auto &Boundary : B.InstructionBoundaries) {
+        Boundary.Address += Delta;
+        if (Boundary.Control == LowInstructionControl::Branch)
+          *Boundary.Immediate += Delta;
+      }
+      for (auto &Op : B.Ops) {
+        Op.Addr += Delta;
+        if (Op.Opcode == NdOp::COND_BR)
+          Op.Inputs[0].Offset += Delta;
+      }
+    }
+    auto Wrapped = wrapInterpreterMachineStateX64(
+        F, BinaryFormat::ELF, InterpreterMachineStateProfile::UserX64NoFaultV1,
+        Align ? std::optional{InterpreterEntryAlignment{16, 8}} : std::nullopt,
+        InterpreterMachineStateLayout::SharedGPRExit);
+    ASSERT_TRUE(static_cast<bool>(Wrapped))
+        << llvm::toString(Wrapped.takeError());
+    unsigned Returns = 0;
+    for (const auto &B : Wrapped->Function.Blocks)
+      for (const auto &Op : B.Ops)
+        Returns += Op.Opcode == NdOp::RETURN;
+    EXPECT_EQ(Returns, 4U + Align);
+  }
+}
+
+TEST(InterpreterMachineStateTest, SharedReturnDoesNotBindDanglingReferences) {
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    auto F = multipleReturns();
+    if (Case == 0) {
+      const va_t Missing = F.Blocks.back().EndAddr + 1;
+      F.Blocks.front().Ops.back().Inputs[0].Offset = Missing;
+      F.Blocks.front().InstructionBoundaries.back().Immediate = Missing;
+    } else if (Case == 1) {
+      F.Blocks.front().Succs.push_back(7);
+    } else if (Case == 2) {
+      F.Blocks.back().Succs.push_back(2);
+    } else {
+      auto &B = F.Blocks.back();
+      LowInstructionBoundary Boundary;
+      Boundary.Address = B.EndAddr++;
+      Boundary.Size = 1;
+      Boundary.FirstOp = B.Ops.size();
+      Boundary.OpCount = 1;
+      auto Op = operation(NdOp::COPY, NdVar::reg(x86reg::RAX, 8),
+                          {NdVar::scalar(9, 8)});
+      Op.Addr = Boundary.Address;
+      B.Ops.push_back(Op);
+      B.InstructionBoundaries.push_back(Boundary);
+    }
+    auto Wrapped = wrapInterpreterMachineStateX64(
+        F, BinaryFormat::ELF, InterpreterMachineStateProfile::UserX64NoFaultV1,
+        std::nullopt, InterpreterMachineStateLayout::SharedGPRExit);
+    ASSERT_TRUE(static_cast<bool>(Wrapped))
+        << llvm::toString(Wrapped.takeError());
+    // Compaction must not bind missing targets/IDs or erase a malformed
+    // return edge. Their original validation belongs to the CFG consumer.
+    EXPECT_EQ(Wrapped->Function.Blocks.size(), F.Blocks.size());
+    EXPECT_EQ(Wrapped->Function.Blocks.front().Succs, F.Blocks.front().Succs);
+    EXPECT_EQ(Wrapped->Function.Blocks.back().Succs, F.Blocks.back().Succs);
+    EXPECT_EQ(Wrapped->Function.Blocks.front().Ops.back().Inputs[0].Offset,
+              F.Blocks.front().Ops.back().Inputs[0].Offset);
+  }
+}
+
+TEST(InterpreterMachineStateTest, SharedReturnModelHonorsBothWorkBounds) {
+  const auto F = multipleReturns();
+  auto Model = modelInterpreterMachineStateX64(
+      F, InterpreterMachineStateProfile::UserX64NoFaultV1, 65536, std::nullopt,
+      InterpreterMachineStateLayout::SharedGPRExit);
+  ASSERT_TRUE(static_cast<bool>(Model)) << llvm::toString(Model.takeError());
+  uint64_t Input = F.Blocks.size() + F.ModuleAnalysisRoots.size() +
+                   F.OrdinaryModuleAnalysisRoots.size();
+  for (const auto &B : F.Blocks)
+    Input += B.Ops.size() + B.InstructionBoundaries.size() + B.Preds.size() +
+             B.Succs.size() + B.ExceptionalPreds.size() +
+             B.ExceptionalSuccs.size();
+  uint64_t Output = 0;
+  for (const auto &B : Model->Function.Blocks)
+    Output += B.Ops.size();
+  for (uint64_t Limit : {Input - 1, Output - 1}) {
+    auto Short = modelInterpreterMachineStateX64(
+        F, InterpreterMachineStateProfile::UserX64NoFaultV1, Limit,
+        std::nullopt, InterpreterMachineStateLayout::SharedGPRExit);
+    EXPECT_FALSE(static_cast<bool>(Short));
+    llvm::consumeError(Short.takeError());
+  }
+  auto Exact = modelInterpreterMachineStateX64(
+      F, InterpreterMachineStateProfile::UserX64NoFaultV1,
+      std::max(Input, Output), std::nullopt,
+      InterpreterMachineStateLayout::SharedGPRExit);
+  ASSERT_TRUE(static_cast<bool>(Exact)) << llvm::toString(Exact.takeError());
+}
+
+TEST_F(InterpreterMachineSourceTest,
+       SharedReturnPreservesEveryPathAndAlignmentRejection) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "machine source execution requires clang";
+  const auto Harness = R"C(
+#include <string.h>
+int main(void) {
+  for (unsigned seed = 0; seed != 32; ++seed)
+    for (unsigned lane = 0; lane != 4; ++lane)
+      for (unsigned mode = 0; mode != 3; ++mode) {
+        uint64_t state[17], before[17], expected[17];
+        uint64_t memory[3] = {0x12345678, 0, 0xabcdef01};
+        for (unsigned i = 0; i != 16; ++i)
+          state[i] = UINT64_C(0xfedcba9876543210) ^ (91 * seed + 17 * i);
+        state[1] = seed & 1 ? 0x204102 : 2;
+        state[2] = (UINT64_C(0x1234000000000000) | (seed << 2)) | lane;
+        state[3] = (uint64_t)(uintptr_t)&memory[1];
+        state[4] = 0x8008 + (mode == 2);
+        state[16] = mode == 1 ? 0 : (seed & 1) ? 0xcd7 : 2;
+        memcpy(before, state, sizeof state);
+        memcpy(expected, state, sizeof state);
+        const uint64_t status = generic_machine_source(MACHINE_ARG(state));
+        if (mode == 2) {
+          if (status != 2 || memcmp(state, before, sizeof state) || memory[1])
+            return 1;
+        } else {
+          expected[0] = lane & 1
+              ? (before[0] & ~UINT64_C(0xff00)) | ((0x30 + lane) << 8)
+              : 0x30 + lane;
+          expected[8] += 7 * lane + 1;
+          if (LOOP_PREFIX)
+            expected[10] = (before[11] & 7) ? before[11] & 7 : 1;
+          expected[16] = (before[16] & ~UINT64_C(0x41)) |
+                         (lane & 1) | ((lane >> 1) << 6);
+          if (lane == 3)
+            expected[16] = (expected[16] & ~UINT64_C(0x204000)) |
+                           (before[1] & UINT64_C(0x204000));
+          const unsigned failed = mode == 1 || (lane == 3 && (seed & 1));
+          if (status != failed || memcmp(state, expected, sizeof state) ||
+              memory[1] != expected[8]) return 2;
+        }
+        if (memory[0] != 0x12345678 || memory[2] != 0xabcdef01) return 3;
+      }
+  return 0;
+}
+)C";
+  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                      InterpreterMachineStateLayout::SharedGPRExit})
+    for (bool Loop : {false, true})
+      roundTrip(multipleReturns(Loop), Harness,
+                Loop ? "#define LOOP_PREFIX 1\n" : "#define LOOP_PREFIX 0\n",
+                nullptr, InterpreterEntryAlignment{16, 8}, Layout);
+}
 
 TEST_F(InterpreterMachineSourceTest, AlignmentRejectsBeforeGuestOrStateWrites) {
   if (!hasCrossTargetClang())

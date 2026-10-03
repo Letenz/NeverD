@@ -402,6 +402,8 @@ pipeline. It does not introduce a second instruction evaluator.
 
 `MaxIRBytes` bounds text and function-name sizes before copying or parsing; `MaxMachineStateOperations` and `MaxPreparationItems` bound model/preparation work. Native and LLVM proof budgets are independent and never raised automatically. The trusted LLVM parser/verifier has no hard CPU, stack or allocation limit here. The shared frame must contain the entry return slot and use the raw RSP word as its root. Initialized live frame storage, accessible aligned disjoint state storage and valid guest-pointer provenance remain required. This C++ API proves the admitted native-to-LLVM relation, not C compilation, generated machine code, faults or physical CPU undefined-bit choices.
 
+Structured machine-state C can share the sixteen GPR writeback stores across ordinary return blocks. Packed flags stay on each return path; alignment rejection still performs no writes. State is captured before the native RET pop, and invalid-profile status remains sticky. LLVM output keeps inline return tails for its own optimization. Existing C++ wrapper/model overloads retain `InlineReturns`; the explicit `InterpreterMachineStateLayout::SharedGPRExit` layout uses the same semantic generator for both. Invalid layout values are rejected. If a complete ordinary join or fresh address space is unavailable, compaction keeps the original inline form. Independent model checks and both C backends at O0/O2 cover branch-specific flags, partial register writes, loops, memory canaries and alignment rejection. Source compaction adds no ordinary-ABI or native-equivalence certificate.
+
 <!-- i18n-section: limits -->
 
 ## Current limits
