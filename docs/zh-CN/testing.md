@@ -1044,7 +1044,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `AddVectoredContinueHandler` 和 `RemoveVectoredContinueHandler` 管理独立的有序列表，与异常处理器共用最多保留 128 个注册项的限制。向量异常处理器接受继续执行后，继续处理器读取同一份可修改的异常记录和 `CONTEXT`；最终上下文校验在这些回调完成后进行，包含嵌套异常与 DLL 通知。两类处理器的句柄不可交叉移除。`WindowsContinuationTests.cpp` 将顺序、提前结束派发、增删、上下文修复、嵌套派发、加载器回调及进程退出的原创 EXE 场景与原生 Windows 对照。已测 Windows x64 向量处理路径允许在设置 `EXCEPTION_NONCONTINUABLE` 时继续执行；这不代表基于栈帧的 SEH 行为。原生 ARM64 执行仍未验证。
 
-`WindowsProcessSEH` 使用 `os/windows/exception/` 中共享的 `X64SEH`（`NeverDEmulationWindowsException`，无需启用驱动环境），处理 x64 `__C_specific_handler` 和 UNWIND_INFO V1。VEH 搜索结束后支持过滤器、finally 回调、非局部处理器跳转、嵌套／冲突展开以及重定位 EXE/DLL 栈帧，保留非易失 GPR/XMM 状态。过滤器选择继续执行时，VCH 使用同一份 `CONTEXT`。`WindowsSEHTests.cpp` 将 14 个原创场景与原生 Windows 对照；KVM/WHP/Unicorn 共用这些语义。派发在进程预算内重新校验映像代次、头部、展开／作用域字节、语言处理器代码区域及 IAT 绑定。元数据被修改或保留的映像被卸载时明确失败。ARM64 栈式 SEH、C++ EH、动态函数表、通用 RtlUnwind/NtContinue、不可继续的栈式异常恢复，以及跨加载器／VEH／VCH 回调边界展开仍不支持。
+`WindowsProcessSEH` 使用 `os/windows/exception/` 中共享的 `X64SEH`（`NeverDEmulationWindowsException`，无需启用驱动环境），处理 x64 `__C_specific_handler` 和 UNWIND_INFO V1。VEH 搜索结束后支持过滤器、finally 回调、非局部处理器跳转、嵌套／冲突展开以及重定位 EXE/DLL 栈帧，保留非易失 GPR/XMM 状态。过滤器选择继续执行时，VCH 使用同一份 `CONTEXT`。`WindowsSEHTests.cpp` 将 14 个原创场景与原生 Windows 对照；KVM/WHP/Unicorn 共用这些语义。派发在进程预算内重新校验映像代次、头部、展开／作用域字节、语言处理器代码区域及 IAT 绑定。元数据被修改或保留的映像被卸载时明确失败。ARM64 栈式 SEH、C++ EH、动态函数表、通用 RtlUnwind/NtContinue、不可继续的栈式异常恢复，以及跨加载器／VEH／VCH 回调边界展开仍不支持。 [Windows x64 CI](https://github.com/NeverSight/NeverD/actions/runs/37135388077).
 
 `WindowsDynamicTests.cpp` 使用原始 x64/ARM64 DLL 和 EXE，对照独立原生 Windows 观测，覆盖引用计数、共享依赖、嵌套加载、附加失败清理、转发查询、进程退出、无入口 DLL 以及重载时重新初始化 TLS。额外回归拒绝被修改的加载器元数据和失效代码指针，保持累计准备额度，并确保被中断 API 的结果仍未完成。Windows CI 强制执行原生对照和 WHP 用例；交叉编译与 Unicorn ARM64 不代表原生 ARM64 已执行验证。
 
