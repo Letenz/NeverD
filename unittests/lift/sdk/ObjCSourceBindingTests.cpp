@@ -14835,6 +14835,44 @@ TEST(ObjCSourceBindings,
   }
 }
 
+TEST(SwiftValueWitnessCalls, NonreturningRegisterWitnessNeedsNoFrameReceipt) {
+  immutable_native_call_test::Fixture F;
+  // A direct register-derived witness precedes a terminal trap. No value is
+  // reloaded from this frame, so the frame-specific returning-body proof does
+  // not apply. The ordinary witness and no-return gates remain independent.
+  const uint32_t Words[] = {0xa9bf7bfd, 0xf85f8048, 0xf9400908, 0xd63f0100,
+                            0xd4200020};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  F.Image.Symbols[0].Size = sizeof(Words);
+  F.EntrySignature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  F.EntrySignature.ReturnType = NdType::makeVoid();
+  for (unsigned I = 0; I < 3; ++I)
+    F.EntrySignature.Parameters.push_back(
+        {"arg" + std::to_string(I), NdType::makePtr(NdType::makeVoid())});
+  std::string Error;
+  ASSERT_TRUE(
+      assignDarwinScalarSourceABI(F.EntrySignature, Arch::AArch64, Error))
+      << Error;
+  F.run();
+  ASSERT_TRUE(F.low());
+  ASSERT_TRUE(F.med());
+  ASSERT_TRUE(F.high());
+  ASSERT_TRUE(F.med()->DoesNotReturn);
+  ASSERT_TRUE(F.high()->DoesNotReturn);
+  unsigned Witnesses = 0;
+  for (const auto &B : F.med()->Blocks)
+    for (const auto &O : B.Ops)
+      if (O.SourceCallHint && O.SourceCallHint->ValueWitness) {
+        ++Witnesses;
+        EXPECT_FALSE(O.SourceCallHint->SwiftWitnessFrame);
+      }
+  ASSERT_EQ(Witnesses, 1U);
+  EXPECT_TRUE(validateSwiftWitnessFrameBindings(F.Image, F.low(), *F.med()));
+  EXPECT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(*F.high()));
+}
+
 TEST(SwiftValueWitnessCalls, PublicationReplaysCurrentFrameOccurrence) {
   immutable_native_call_test::Fixture F;
   swift_witness_frame_test::frameWitnessFixture(F);
@@ -14856,7 +14894,7 @@ TEST(SwiftValueWitnessCalls, PublicationReplaysCurrentFrameOccurrence) {
 
 TEST(SwiftValueWitnessCalls,
      FramePublicationRejectsStaleAndRepeatedOccurrences) {
-  for (unsigned Case = 0; Case < 27; ++Case) {
+  for (unsigned Case = 0; Case < 32; ++Case) {
     SCOPED_TRACE(Case);
     immutable_native_call_test::Fixture F;
     swift_witness_frame_test::frameWitnessFixture(F);
@@ -14977,6 +15015,27 @@ TEST(SwiftValueWitnessCalls,
     case 26:
       F.med()->SourceParametersBound = false;
       break;
+    case 27:
+      F.med()->DoesNotReturn = true;
+      F.high()->DoesNotReturn = true;
+      break;
+    case 28:
+      F.med()->DoesNotReturn = true;
+      break;
+    case 29:
+      F.high()->DoesNotReturn = true;
+      break;
+    case 30:
+    case 31: {
+      F.med()->DoesNotReturn = true;
+      F.high()->DoesNotReturn = true;
+      auto H = *MedCall->SourceCallHint;
+      H.SwiftWitnessFrame.reset();
+      MedCall->SourceCallHint = std::make_shared<const SourceCallTypeHint>(H);
+      if (Case == 31)
+        Hint.SwiftWitnessFrame.reset();
+      break;
+    }
     }
     Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(Hint);
     EXPECT_FALSE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
