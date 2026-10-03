@@ -44,16 +44,25 @@ jobs:
       - name: Validate immutable source identity
         shell: bash
         run: '[[ "$HVF_SOURCE" =~ ^[0-9a-f]{40}$ ]]'
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check out the workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify workflow evidence collection contracts
+        if: inputs.validation != 'probe'
+        run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards scripts.tests.test_prepare_hvf_batches scripts.tests.test_hvf_build_platform -q
+      - name: Check out the immutable native source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ env.HVF_SOURCE }}
           persist-credentials: false
       - name: Verify checked-out source
         shell: bash
         run: 'test "$(git rev-parse HEAD)" = "$HVF_SOURCE"'
-      - name: Verify native evidence collection contracts
+      - name: Verify tested source evidence collection contracts
         if: inputs.validation != 'probe'
-        run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards scripts.tests.test_prepare_hvf_batches scripts.tests.test_hvf_build_platform -q
+        run: python3 -m unittest scripts.tests.test_run_native_cpu_ci scripts.tests.test_run_native_cpu_methods scripts.tests.test_audit_hvf_shards scripts.tests.test_prepare_hvf_batches -q
       - name: Require native VM and vCPU availability before the transport gate
         shell: bash
         env:
