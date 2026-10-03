@@ -137,7 +137,8 @@ preserves the isolated CR8 result before the complete CPU gate.
 Artifacts include the run attempt so reruns retain their own evidence.
 Full-inventory compilation has its own step and log. `test_parallel` selects
 four CTest processes by default or one for a serialized comparison, while
-compilation remains parallel. The result summary records the selected value.
+compilation remains parallel. The result summary records the selected value,
+host OS/kernel description and logical CPU count.
 It can also run locally with `--require-hvf --hvf-transport-only` on
 `scripts/run_native_cpu_ci.py`. `validation=probe` runs only the VM/vCPU
 availability check without LLVM; it cannot establish instruction execution

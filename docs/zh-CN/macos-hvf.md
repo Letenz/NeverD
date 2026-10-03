@@ -137,7 +137,7 @@ Intel 工作流还会在完整依赖构建前构建 `NeverDX64ExceptionTests`，
 transport 结果与状态测试清单在执行前上传，CR8 独立结果在完整 CPU 门禁前另行保存；
 产物名称包含运行次数，重跑会保留各次证据。
 完整目标构建有独立步骤和日志；`test_parallel` 默认使用 4 个测试进程，也可选择 1
-做串行对照，编译仍并行进行。结果摘要记录实际选择的并发数。
+做串行对照，编译仍并行进行。结果摘要记录实际选择的并发数、宿主 OS/内核描述和逻辑 CPU 数。
 
 干净源码 `e2a91ff057df563eb19183a045a3ad6446cb9af1` 的
 [Intel 检查点任务](https://github.com/NeverSight/NeverD/actions/runs/37090528761)

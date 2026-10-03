@@ -225,6 +225,12 @@ def run(
             ["git", "status", "--porcelain"], cwd=ROOT, text=True
         ).strip()),
         "host_architecture": host_architecture,
+        "host_platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+        },
+        "logical_cpus": os.cpu_count(),
         "parallel": parallel,
         "owners": owners,
         "registered": len(tests),
