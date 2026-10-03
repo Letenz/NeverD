@@ -926,7 +926,9 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `AddVectoredContinueHandler` 與 `RemoveVectoredContinueHandler` 管理獨立的有序串列，與例外處理器共用最多保留 128 個註冊項的限制。向量例外處理器接受繼續執行後，繼續處理器讀取同一份可修改的例外記錄與 `CONTEXT`；最終內容驗證在這些回呼完成後進行，包含巢狀例外與 DLL 通知。兩類處理器的控制代碼不可交叉移除。`WindowsContinuationTests.cpp` 將順序、提早結束派送、增刪、內容修復、巢狀派送、載入器回呼及程序結束的原創 EXE 案例與原生 Windows 比較。已測 Windows x64 向量處理路徑允許在設定 `EXCEPTION_NONCONTINUABLE` 時繼續執行；這不代表以堆疊框架為基礎的 SEH 行為。原生 ARM64 執行仍未驗證。
 
-`WindowsProcessSEH` 使用 `os/windows/exception/` 中共用的 `X64SEH`（`NeverDEmulationWindowsException`，無需啟用驅動環境），處理 x64 `__C_specific_handler` 和 UNWIND_INFO V1。VEH 搜尋結束後支援篩選器、finally 回呼、非區域處理器跳轉、巢狀／衝突展開與重定位 EXE/DLL 堆疊框架，保留非揮發 GPR/XMM 狀態。篩選器選擇繼續執行時，VCH 使用同一份 `CONTEXT`。`WindowsSEHTests.cpp` 將 14 個原創情境與原生 Windows 比較；KVM/WHP/Unicorn 共用這些語意。派送在程序預算內重新驗證映像世代、標頭、展開／範圍位元組、語言處理器程式碼區域及 IAT 繫結。中繼資料遭修改或保留的映像被卸載時明確失敗。ARM64 框架式 SEH、C++ EH、動態函式表、通用 RtlUnwind/NtContinue、不可繼續的框架式例外恢復，以及跨載入器／VEH／VCH 回呼邊界展開仍不支援。 [Windows x64 CI](https://github.com/NeverSight/NeverD/actions/runs/37135388077).
+`WindowsProcessSEH` 使用 `os/windows/exception/` 中共用的 `X64SEH`（`NeverDEmulationWindowsException`，無需啟用驅動環境），處理 x64 `__C_specific_handler` 和 UNWIND_INFO V1。VEH 搜尋結束後支援篩選器、finally 回呼、非區域處理器跳轉、巢狀／衝突展開與重定位 EXE/DLL 堆疊框架，保留非揮發 GPR/XMM 狀態。篩選器選擇繼續執行時，VCH 使用同一份 `CONTEXT`。`WindowsSEHTests.cpp` 將 23 個原創情境與原生 Windows 比較；KVM/WHP/Unicorn 共用這些語意。派送在程序預算內重新驗證映像世代、標頭、展開／範圍位元組、語言處理器程式碼區域及 IAT 繫結。中繼資料遭修改或保留的映像被卸載時明確失敗。ARM64 框架式 SEH、C++ EH、動態函式表、通用 RtlUnwind/NtContinue、跨載入器／VEH／VCH 回呼邊界展開仍不支援。
+
+當記錄包含 `EXCEPTION_NONCONTINUABLE` 而 x64 篩選器傳回 `EXCEPTION_CONTINUE_EXECUTION` 時，系統使用新上下文派送 `STATUS_NONCONTINUABLE_EXCEPTION`（`0xc0000025`，旗標 `0x81`，關聯記錄指標為空）。先重新執行 VEH，再從保留的邏輯堆疊重新搜尋，在相同深度與執行預算內保留 finally 順序及 EXE/DLL 框架身分。23 個原生情境包含 21 個成功執行及兩個終止情境：即使還原原始 `CONTEXT`，VEH/VCH 接受繼續這個二次例外後，它仍未處理。模型將此結果回報為執行期失敗。軟體例外位址等於儲存的 PC；內部派送器位址及暫存器配置由模型定義。
 
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
