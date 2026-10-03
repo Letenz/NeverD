@@ -77,12 +77,19 @@ static void runFailure(void *Heap) {
   U8 *P = HeapAlloc(Heap, 0, SmallSize);
   require(P != 0, 10);
   fill(P, SmallSize);
-  for (U32 Flags = 0; Flags <= HeapInPlace; Flags += HeapInPlace) {
-    SetLastError(LastErrorSeed);
-    require(HeapReAlloc(Heap, Flags, P, ~(U64)0) == 0, 11);
-    require(GetLastError() == LastErrorSeed, 12);
-    require(HeapSize(Heap, 0, P) == SmallSize, 13);
-    prefix(P, SmallSize);
+  const U64 Sizes[] = {~(U64)0, ~(U64)0 >> 1};
+  for (U32 Flags = 0; Flags <= (HeapInPlace | HeapZero); Flags += HeapZero) {
+    for (U32 I = 0; I < sizeof(Sizes) / sizeof(Sizes[0]); ++I) {
+      SetLastError(LastErrorSeed);
+      U8 *Next = HeapReAlloc(Heap, Flags, P, Sizes[I]);
+      U32 Values[] = {Next != 0, GetLastError()};
+      U32 Written;
+      WriteFile(GetStdHandle(StdoutSelector), Values, sizeof(Values), &Written,
+                0);
+      require(Next == 0, 11);
+      require(HeapSize(Heap, 0, P) == SmallSize, 13);
+      prefix(P, SmallSize);
+    }
   }
   require(HeapFree(Heap, 0, P), 14);
 }

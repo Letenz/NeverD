@@ -81,6 +81,7 @@ protected:
            P.Directory / ProgramFile;
     Options.Backend = P.Backend;
     Options.Limits.Instructions = InstructionLimit;
+    Options.Limits.TimeoutMicroseconds = TimeoutMicroseconds;
 #endif
   }
 };
