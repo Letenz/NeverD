@@ -9,10 +9,10 @@ on:
         default: self-hosted
         options: [self-hosted, hosted-intel]
       validation:
-        description: Full validation, transport tests, or VM/vCPU availability only
+        description: Full validation, Darwin workloads, transport tests, or availability only
         type: choice
         default: full
-        options: [full, transport, probe]
+        options: [full, darwin, transport, probe]
       test_parallel:
         description: Concurrent test processes (compilation remains parallel)
         type: choice
@@ -73,13 +73,13 @@ jobs:
         with:
           version: 'v0.16.0'
       - name: Install hosted fixture tools
-        if: inputs.runner == 'hosted-intel' && inputs.validation == 'full'
+        if: inputs.runner == 'hosted-intel' && (inputs.validation == 'full' || inputs.validation == 'darwin')
         run: |
           brew install llvm lld
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
       - name: Verify fixture tools
-        if: inputs.validation == 'full'
+        if: inputs.validation == 'full' || inputs.validation == 'darwin'
         run: |
           for tool in cmake ninja python3 clang ld.lld lld-link ld64.lld codesign; do
             command -v "$tool"
@@ -166,21 +166,27 @@ jobs:
           name: hvf-cr8-X64-attempt-${{ github.run_attempt }}
           path: build-hvf/state-evidence/cr8.*
           if-no-files-found: warn
-      - name: Build the complete native CPU inventory
-        if: inputs.validation == 'full'
+      - name: Build the requested native inventory
+        if: inputs.validation == 'full' || inputs.validation == 'darwin'
         shell: bash
+        env:
+          NATIVE_VALIDATION: ${{ inputs.validation }}
         run: |
           python3 - <<'PYBUILD' 2>&1 | tee build-hvf/native-build.log
           from pathlib import Path
+          import os
           import platform
           import subprocess
-          from scripts.run_native_cpu_ci import hvf_inventory
-          owners, _ = hvf_inventory(Path.cwd(), platform.machine())
+          from scripts.run_native_cpu_ci import darwin_inventory, hvf_inventory
+          if os.environ["NATIVE_VALIDATION"] == "darwin":
+              owners, _ = darwin_inventory(Path.cwd(), "hvf", platform.machine())
+          else:
+              owners, _ = hvf_inventory(Path.cwd(), platform.machine())
           subprocess.run(["cmake", "--build", "build-hvf", "--config", "Release",
                           "--target", *owners, "--parallel", "4"], check=True)
           PYBUILD
       - name: Preserve the full build before native execution
-        if: always() && inputs.validation == 'full'
+        if: always() && (inputs.validation == 'full' || inputs.validation == 'darwin')
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -194,7 +200,7 @@ jobs:
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/native-evidence --parallel "$HVF_TEST_PARALLEL" --require-hvf
       - name: Require every native Darwin workload
-        if: inputs.validation == 'full'
+        if: inputs.validation == 'full' || inputs.validation == 'darwin'
         run: >-
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/darwin-evidence --parallel "$HVF_TEST_PARALLEL" --require-darwin-backend hvf
@@ -211,4 +217,5 @@ jobs:
             build-hvf/native-build.log
             build-hvf/native-evidence/
             build-hvf/darwin-evidence/
+            build-hvf/unittests/emulation/Testing/Temporary/LastTest*.log*
           if-no-files-found: warn

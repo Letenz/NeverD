@@ -127,7 +127,9 @@ The workflow first builds `NeverDHvfTests`, whose dependency boundary is LLVM
 Support and the decoder, and requires native instruction execution before the
 full process/LLVM dependency build. `validation=transport` stops after this
 diagnostic profile; `full` remains the default and also requires both complete
-gates. The transport profile reuses the full inventory's HVF requirements and
+gates. `validation=darwin` builds the Darwin owner and requires every matching
+native workload independently of the complete CPU gate. The transport profile
+reuses the full inventory's HVF requirements and
 records `hvf_transport_only=true`; it is not full CPU/process acceptance.
 On Intel, the workflow additionally builds `NeverDX64ExceptionTests` and runs
 its CR8 state/privilege regression before the large dependency build. The full

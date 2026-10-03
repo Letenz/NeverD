@@ -29,7 +29,8 @@ CPU 门禁通过后，还必须执行本机架构的全部 Darwin 工作负载�
 
 工作流会先构建只依赖 LLVM Support 和解码器的 `NeverDHvfTests`，验证原生指令执行，
 再构建完整进程测试的依赖。`validation=transport` 可单独运行这一诊断；默认 `full`
-仍要求完整 CPU 和 Darwin 两道门禁。小范围检查复用完整清单中的 HVF 必需项，并在
+仍要求完整 CPU 和 Darwin 两道门禁。`validation=darwin` 只构建进程测试所需目标，
+可独立要求本机架构的全部 Darwin 工作负载通过。小范围检查复用完整清单中的 HVF 必需项，并在
 摘要中标记 `hvf_transport_only=true`，不能当作完整 CPU/进程验收。
 本地脚本对应参数为 `--require-hvf --hvf-transport-only`。
 `validation=probe` 只检查 VM/vCPU 可用性，无需 LLVM，不能作为指令执行或
