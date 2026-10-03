@@ -74,7 +74,9 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       return failure(text::ModuleExport);
     if (Ordinal && !*Ordinal)
       return ExportResolution{std::nullopt, ErrorInvalidParameter};
-    if (CPU && Validated.insert(Index).second)
+    if (CPU &&
+        (!Load || Program.Modules[Index].State != ModuleState::Prepared) &&
+        Validated.insert(Index).second)
       if (auto E = validateMetadata(Program, Index, Budget, *CPU))
         return std::move(E);
     const auto &Module = Program.Modules[Index];
@@ -138,12 +140,10 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
         return Next.takeError();
       Index = *Next;
     } else {
-      auto Next = llvm::find_if(Program.Identities, [&](const auto &M) {
-        return llvm::StringRef(M.Name).equals_insensitive(*Key);
-      });
-      if (Next == Program.Identities.end())
+      auto Next = findModule(Program, *Key);
+      if (!Next)
         return failure(text::ForwarderLoad + *Key);
-      Index = size_t(Next - Program.Identities.begin());
+      Index = *Next;
     }
   }
   return failure(text::ForwarderDepth);

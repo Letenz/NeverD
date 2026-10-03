@@ -53,3 +53,17 @@ NEVERD_WINDOWS_PROCESS_TEXT(ModuleFixup,
                             "base relocation overlaps linker metadata")
 NEVERD_WINDOWS_PROCESS_TEXT(DLLExtension, ".dll")
 #endif
+
+#ifdef NEVERD_WINDOWS_PROCESS_TEXT
+NEVERD_WINDOWS_PROCESS_TEXT(ModuleLoadFailed, "guest module load failed: ")
+NEVERD_WINDOWS_PROCESS_TEXT(LoaderChanged, "guest loader metadata was modified or inaccessible")
+NEVERD_WINDOWS_PROCESS_TEXT(LoaderReentrant, "unsupported reentrant module state transition")
+#endif
+#ifdef NEVERD_WINDOWS_PROCESS_VALUE
+NEVERD_WINDOWS_PROCESS_VALUE(ErrorDLLInitFailed, 1114)
+NEVERD_WINDOWS_PROCESS_VALUE(MaxLoaderDepth, 64)
+#endif
+
+#ifdef NEVERD_WINDOWS_PROCESS_TEXT
+NEVERD_WINDOWS_PROCESS_TEXT(LoaderProvider, "API model provider has no loadable guest image")
+#endif
