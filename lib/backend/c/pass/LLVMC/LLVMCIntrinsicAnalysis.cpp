@@ -35,6 +35,26 @@ bool isLinuxX64SyscallInlineAsm(const llvm::CallInst &Call) {
   return true;
 }
 
+bool isWindowsX64SyscallInlineAsm(const llvm::CallInst &Call) {
+  const auto *IA = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (!IA || IA->getAsmString() != "syscall" ||
+      IA->getConstraintString() !=
+          "={ax},={r11},={dx},={r8},={r9},={r10},0,2,3,4,5,~{rcx},~{memory},"
+          "~{dirflag},~{fpsr},~{flags}")
+    return false;
+  const auto *Regs = llvm::dyn_cast<llvm::StructType>(Call.getType());
+  if (!Regs || Regs->isOpaque() || Regs->getNumElements() != 6 ||
+      Call.arg_size() != 5)
+    return false;
+  for (llvm::Type *Field : Regs->elements())
+    if (!Field->isIntegerTy(64))
+      return false;
+  for (const llvm::Use &Arg : Call.args())
+    if (!Arg->getType()->isIntegerTy(64))
+      return false;
+  return true;
+}
+
 void analyzeIntrinsicStructs(LLVMCAnalysisState &State, llvm::Function &Fn) {
   State.IntrinsicStructVals.clear();
   State.IntrinsicStructNames.clear();

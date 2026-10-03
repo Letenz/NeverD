@@ -33,6 +33,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cctype>
+#include <iterator>
 #include <set>
 #include <stdexcept>
 
@@ -3540,6 +3541,63 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       OS << Name << ".field_0 = " << Rax << ";\n";
       emitIndent(Indent + 1);
       OS << Name << ".field_1 = " << R11 << ";\n";
+    }
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
+
+  // The Windows NT x64 SYSCALL contract takes the service number in RAX and
+  // the first four arguments in R10, RDX, R8 and R9, and hands back RAX, R11
+  // and the volatile RDX, R8, R9 and R10.
+  if (Opts.TheArch == Arch::X64 && AsmStr == "syscall" &&
+      IA->getConstraintString() ==
+          "={ax},={r11},={dx},={r8},={r9},={r10},0,2,3,4,5,~{rcx},~{memory},"
+          "~{dirflag},~{fpsr},~{flags}") {
+    if (!isWindowsX64SyscallInlineAsm(Call))
+      llvm::report_fatal_error("invalid Windows x64 syscall C projection");
+    if (Opts.Format != BinaryFormat::Unknown &&
+        Opts.Format != BinaryFormat::COFF)
+      llvm::report_fatal_error(
+          "Windows x64 syscall requires a COFF C projection");
+    const std::string Rax = freshVar("syscall_rax");
+    const std::string Rdx = freshVar("syscall_rdx");
+    const std::string R8 = freshVar("syscall_r8");
+    const std::string R9 = freshVar("syscall_r9");
+    const std::string R10 = freshVar("syscall_r10");
+    const std::string R11 = freshVar("syscall_r11");
+    OS << "#if !defined(_WIN64) || !defined(__x86_64__)\n"
+          "#error \"Windows x64 syscall C projection requires Windows "
+          "x86-64\"\n"
+          "#endif\n";
+    emitIndent(Indent);
+    OS << "{\n";
+    emitIndent(Indent + 1);
+    OS << "uint64_t " << Rax << " = " << valueStr(Call.getArgOperand(0))
+       << ";\n";
+    emitIndent(Indent + 1);
+    OS << "uint64_t " << Rdx << " = " << valueStr(Call.getArgOperand(1))
+       << ";\n";
+    const std::pair<llvm::StringRef, std::string> FixedInputs[] = {
+        {"r8", R8}, {"r9", R9}, {"r10", R10}};
+    for (unsigned Index = 0; Index < 3; ++Index) {
+      emitIndent(Indent + 1);
+      OS << "register uint64_t " << FixedInputs[Index].second << " __asm__(\""
+         << FixedInputs[Index].first
+         << "\") = " << valueStr(Call.getArgOperand(Index + 2)) << ";\n";
+    }
+    emitIndent(Indent + 1);
+    OS << "register uint64_t " << R11 << " __asm__(\"r11\");\n";
+    emitIndent(Indent + 1);
+    OS << "__asm__ volatile(\"syscall\" : \"+a\"(" << Rax << "), \"=r\"(" << R11
+       << "), \"+d\"(" << Rdx << "), \"+r\"(" << R8 << "), \"+r\"(" << R9
+       << "), \"+r\"(" << R10 << ") : : \"rcx\", \"memory\", \"cc\");\n";
+    if (ResultLive) {
+      const std::string *Fields[] = {&Rax, &R11, &Rdx, &R8, &R9, &R10};
+      for (unsigned Index = 0; Index < std::size(Fields); ++Index) {
+        emitIndent(Indent + 1);
+        OS << Name << ".field_" << Index << " = " << *Fields[Index] << ";\n";
+      }
     }
     emitIndent(Indent);
     OS << "}\n";

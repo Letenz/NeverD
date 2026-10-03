@@ -11343,9 +11343,9 @@
         "docs/python-plugins.md"
       ],
       "limitations": [
-        "Requires a complete caller-supplied version-1 declarative profile or synchronous per-instruction decoder, bounded function ranges and explicit external bindings. It does not infer an instruction set or certify that the supplied rules match an engine.",
+        "Requires caller-supplied semantics through a version-1 declarative profile or a synchronous C/Python decoder callback, bounded function ranges and explicit external bindings. It does not infer an instruction set or certify that the supplied rules match an engine.",
         "Returns reachable CFG coverage or C over an explicit little-endian register-state buffer. Source ABI, object types and original source text are not recovered by this API.",
-        "State lowering currently uses the AArch64 carrier and scalar floating-conversion policy. Path-dependent decoding, unresolved indirect targets and arbitrary environment contracts remain unsupported.",
+        "State lowering currently uses the AArch64 carrier and scalar floating-conversion policy. Callbacks require stable byte/PC/context results and a synchronous single reply; path-dependent decoder state, unresolved indirect targets and arbitrary environment contracts remain unsupported.",
         "Unknown instructions, malformed profiles, invalid ranges and exhausted decoding limits fail without partial source. Optional unaligned pointer spelling requires supported compiler extensions; portable memory helpers remain the default."
       ],
       "tests": [
@@ -11354,6 +11354,39 @@
           "target": "NeverDBytecodeCAPITests",
           "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
           "filter": "*/BytecodeDecoderCAPI.BothSourceRoutesExecuteNarrowWritesWithCanaries/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.ContextualDecodersAreIndependentAndBoundedByFunctionEnd",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.DecoderReplyFailuresStopBeforeFurtherInstructions",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDBytecodeCAPITests",
+          "source": "unittests/devirtualization/BytecodeCAPITests.cpp",
+          "filter": "BytecodeCAPI.DecoderRequestFailuresDoNotInvokePluginCode",
           "platforms": [
             "darwin",
             "linux",

@@ -132,9 +132,22 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
   return true;
 }
 
+void Decoder::configureFor(const BinaryImage &Img) {
+  // A PE image runs on Windows, whose system service convention an x64
+  // SYSCALL follows.
+  if (X86)
+    X86->setSyscallConvention(Img.Format == BinaryFormat::COFF
+                                  ? X86Lifter::SyscallConvention::WindowsNT
+                                  : X86Lifter::SyscallConvention::Linux);
+}
+
 bool Decoder::init(const BinaryImage &Img) {
-  if (Img.Mode != InstructionMode::MixedARMThumb)
-    return init(Img.Arch, Img.Mode);
+  if (Img.Mode != InstructionMode::MixedARMThumb) {
+    if (!init(Img.Arch, Img.Mode))
+      return false;
+    configureFor(Img);
+    return true;
+  }
   if (Img.Arch != Arch::ARM)
     return false;
   if (Img.Entry != 0)

@@ -2865,6 +2865,7 @@ void computeCallRegisterEffects(
   Decoder ExtraDec;
   if (!ExtraDec.init(Img.Arch, Img.Mode))
     return;
+  ExtraDec.configureFor(Img);
   CFGBuilder ExtraCFG;
   ExtraCFG.setKnownFuncEntries(&FuncEntries);
   ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);

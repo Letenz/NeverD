@@ -1106,6 +1106,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         NeedsX87FpremHelpers = true;
       else if (Ex.IntrinsicId == Intrinsic::X64Syscall)
         NeedsX64SyscallHelper = true;
+      else if (Ex.IntrinsicId == Intrinsic::X64WindowsSyscall)
+        NeedsX64WindowsSyscallHelper = true;
       else if (Ex.IntrinsicId != Intrinsic::None &&
                (intrinsicCName(Ex.IntrinsicId) ||
                 x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId)))
@@ -1942,6 +1944,38 @@ void HighCWriter::writeX64SyscallHelper() {
         "}\n\n";
 }
 
+void HighCWriter::writeX64WindowsSyscallHelper() {
+  if (!NeedsX64WindowsSyscallHelper)
+    return;
+  // The NT system service convention puts the service number in EAX and the
+  // first four arguments in R10, RDX, R8 and R9; later arguments are read
+  // from the stack, whose layout C does not reproduce.  The handler returns
+  // RAX and may change every volatile register, so all of them come back.
+  OS << "#if !defined(_WIN64) || !defined(__x86_64__)\n"
+        "#error \"neverd_x64_windows_syscall requires Windows x86-64\"\n"
+        "#endif\n"
+        "static inline unsigned _BitInt(384) neverd_x64_windows_syscall(\n"
+        "    uint64_t number, uint64_t arg1, uint64_t arg2, uint64_t arg3,\n"
+        "    uint64_t arg4) {\n"
+        "    uint64_t rax = number, rdx = arg2;\n"
+        "    register uint64_t r10 __asm__(\"r10\") = arg1;\n"
+        "    register uint64_t r8 __asm__(\"r8\") = arg3;\n"
+        "    register uint64_t r9 __asm__(\"r9\") = arg4;\n"
+        "    register uint64_t r11 __asm__(\"r11\");\n"
+        "    __asm__ volatile(\"syscall\"\n"
+        "        : \"+a\"(rax), \"+d\"(rdx), \"+r\"(r10), \"+r\"(r8), "
+        "\"+r\"(r9), \"=r\"(r11)\n"
+        "        :\n"
+        "        : \"rcx\", \"memory\", \"cc\");\n"
+        "    unsigned _BitInt(384) result = r10;\n"
+        "    result = (result << 64) | r9;\n"
+        "    result = (result << 64) | r8;\n"
+        "    result = (result << 64) | rdx;\n"
+        "    result = (result << 64) | r11;\n"
+        "    return (result << 64) | rax;\n"
+        "}\n\n";
+}
+
 void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   prepareFunctionIdentifiers(Funcs);
   collectImageObjects(Funcs);
@@ -2000,6 +2034,7 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeMemoryHelpers();
   writeX87FpremHelpers();
   writeX64SyscallHelper();
+  writeX64WindowsSyscallHelper();
   writeForwardDecls(Funcs);
   writeImageObjects();
 

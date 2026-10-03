@@ -641,14 +641,15 @@ TEST(LowInstructionBoundary, IntegerAndMaskUsesOutputAndDynamicWidths) {
 LowFunc buildFunction(Arch Architecture, InstructionMode Mode,
                       std::vector<uint8_t> Bytes,
                       std::vector<Symbol> Symbols = {},
-                      bool UseNoReturnIndex = false) {
+                      bool UseNoReturnIndex = false,
+                      BinaryFormat Format = BinaryFormat::ELF) {
   BinaryImage Image;
   Image.Arch = Architecture;
   Image.Mode = Mode;
   Image.Bits = Architecture == Arch::X64 || Architecture == Arch::AArch64
                    ? Bitness::Bits64
                    : Bitness::Bits32;
-  Image.Format = BinaryFormat::ELF;
+  Image.Format = Format;
   Image.Base = kEntry;
   Image.Symbols = std::move(Symbols);
 
@@ -660,7 +661,7 @@ LowFunc buildFunction(Arch Architecture, InstructionMode Mode,
   Image.Segments.push_back(std::move(Text));
 
   Decoder Dec;
-  if (!Dec.init(Architecture, Mode)) {
+  if (!Dec.init(Image)) {
     ADD_FAILURE() << "decoder initialization failed";
     return {};
   }
@@ -934,6 +935,81 @@ TEST(LowInstructionBoundary, BackwardSharedEpilogueKeepsOtherPhysicalEdges) {
                      Op.Inputs[0].isConst() && Op.Inputs[0].Offset == F.Tail;
   EXPECT_EQ(CallsToTail, 1U);
   EXPECT_FALSE(F.restores(CallAndB));
+}
+
+TEST(LowInstructionBoundary, WindowsX64SyscallFollowsTheServiceConvention) {
+  // An NT system service stub: mov r10, rcx; mov eax, 55h; syscall; ret.
+  // The service number is in RAX and the first argument in R10; the handler
+  // hands back RAX, R11 and the volatile RDX, R8, R9 and R10.
+  LowFunc Low =
+      buildFunction(Arch::X64, InstructionMode::Default,
+                    {0x4c, 0x8b, 0xd1, 0xb8, 0x55, 0, 0, 0, 0x0f, 0x05, 0xc3},
+                    {}, false, BinaryFormat::COFF);
+  const LowOp *Syscall = nullptr;
+  std::vector<std::pair<uint64_t, uint64_t>> Returned;
+  bool ResumeAddress = false;
+  for (const LowBlock &Block : Low.Blocks)
+    for (const LowOp &Op : Block.Ops) {
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
+          Op.Inputs[0].Offset ==
+              static_cast<uint64_t>(Intrinsic::X64WindowsSyscall))
+        Syscall = &Op;
+      if (Syscall && Op.Opcode == NdOp::SUBBYTES && Op.Output.isReg() &&
+          Op.Inputs[0] == Syscall->Output)
+        Returned.push_back({Op.Output.Offset, Op.Inputs[1].Offset});
+      if (Syscall && Op.Opcode == NdOp::COPY && Op.Output.isReg() &&
+          Op.Output.Offset == x86reg::RCX && Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset == kEntry + 10)
+        ResumeAddress = true;
+    }
+  ASSERT_NE(Syscall, nullptr);
+  EXPECT_EQ(Syscall->Output.Size, 48u);
+  ASSERT_EQ(Syscall->NumInputs, 6u);
+  const uint64_t Inputs[] = {x86reg::RAX, x86reg::R10, x86reg::RDX, x86reg::R8,
+                             x86reg::R9};
+  for (unsigned Index = 0; Index < 5; ++Index) {
+    EXPECT_TRUE(Syscall->Inputs[Index + 1].isReg()) << Index;
+    EXPECT_EQ(Syscall->Inputs[Index + 1].Offset, Inputs[Index]) << Index;
+  }
+  const std::vector<std::pair<uint64_t, uint64_t>> Expected = {
+      {x86reg::RAX, 0}, {x86reg::R11, 8}, {x86reg::RDX, 16},
+      {x86reg::R8, 24}, {x86reg::R9, 32}, {x86reg::R10, 40}};
+  EXPECT_EQ(Returned, Expected);
+  EXPECT_TRUE(ResumeAddress);
+  // The LLVM backend binds the same registers for a Windows target.
+  MedFunc Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Med}, Context, "windows-syscall", Arch::X64, {},
+                            nullptr, BinaryFormat::COFF);
+  ASSERT_NE(Module, nullptr);
+  ASSERT_TRUE(validLLVMModule(*Module));
+  unsigned Asms = 0;
+  for (const llvm::Function &Function : *Module)
+    for (const llvm::BasicBlock &Block : Function)
+      for (const llvm::Instruction &Instruction : Block)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction))
+          if (const auto *Asm =
+                  llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
+              Asm && Asm->getAsmString() == "syscall") {
+            ++Asms;
+            EXPECT_EQ(Call->arg_size(), 5u);
+            EXPECT_EQ(Asm->getConstraintString(),
+                      "={ax},={r11},={dx},={r8},={r9},={r10},0,2,3,4,5,~{rcx},"
+                      "~{memory},~{dirflag},~{fpsr},~{flags}");
+          }
+  EXPECT_EQ(Asms, 1u);
+  // An ELF image keeps the Linux convention.
+  LowFunc Linux =
+      buildFunction(Arch::X64, InstructionMode::Default,
+                    {0x4c, 0x8b, 0xd1, 0xb8, 0x55, 0, 0, 0, 0x0f, 0x05, 0xc3});
+  unsigned LinuxCalls = 0;
+  for (const LowBlock &Block : Linux.Blocks)
+    for (const LowOp &Op : Block.Ops)
+      LinuxCalls +=
+          Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
+          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X64Syscall);
+  EXPECT_EQ(LinuxCalls, 1u);
 }
 
 TEST(LowInstructionBoundary, X64SyscallRetainsNumberAndArguments) {

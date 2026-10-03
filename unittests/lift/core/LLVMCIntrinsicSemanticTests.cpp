@@ -1138,6 +1138,42 @@ TEST(LLVMCIntrinsicSemantics, LinuxX64SyscallUsesRegisterABI) {
 #endif
 }
 
+TEST(LLVMCIntrinsicSemantics, WindowsX64SyscallUsesTheServiceConvention) {
+  llvm::LLVMContext C;
+  llvm::Module M("windows-x64-syscall", C);
+  M.setDataLayout("e-p:64:64");
+  M.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+  llvm::IRBuilder<> B(C);
+  auto *I64 = B.getInt64Ty();
+  auto *Regs = llvm::StructType::create(C, "neverd.x64.windows_syscall_result");
+  Regs->setBody({I64, I64, I64, I64, I64, I64});
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(I64, {B.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "neverd_test_nt_service", M);
+  B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+  auto *Syscall = llvm::InlineAsm::get(
+      llvm::FunctionType::get(Regs, {I64, I64, I64, I64, I64}, false),
+      "syscall",
+      "={ax},={r11},={dx},={r8},={r9},={r10},0,2,3,4,5,~{rcx},~{memory},"
+      "~{dirflag},~{fpsr},~{flags}",
+      true);
+  auto *Result =
+      B.CreateCall(Syscall, {B.getInt64(0x55), B.getInt64(2), B.getInt64(3),
+                             B.getInt64(4), B.getInt64(1)});
+  B.CreateStore(B.CreateExtractValue(Result, 2), &*Fn->arg_begin());
+  B.CreateRet(B.CreateExtractValue(Result, 0));
+
+  const std::string Text = emit(M);
+  EXPECT_NE(Text.find("requires Windows x86-64"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("__asm__(\"r10\")"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("__asm__(\"r8\")"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("__asm__(\"r9\")"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("__asm__(\"r11\")"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("\"+d\"("), std::string::npos) << Text;
+  EXPECT_NE(Text.find("__asm__ volatile(\"syscall\""), std::string::npos)
+      << Text;
+}
+
 TEST(LLVMCIntrinsicSemantics, X87I80BitcastMaterializesExpressionSource) {
   llvm::LLVMContext C;
   llvm::Module M("x87-i80-bitcast-expression", C);

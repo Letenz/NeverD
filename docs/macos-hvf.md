@@ -342,6 +342,8 @@ The manual [Intel diagnostic workflow](../.github/workflows/hvf-intel-diagnostic
 
 `intel-image` selects `macos-15-intel` by default or `macos-26-intel` for a controlled comparison, just as in the complete workflow. The run title identifies the selected image, and the availability check still requires a native x86-64 host. An image change includes the OS, SDK and toolchain; it does not isolate a kernel change.
 
+Compilation has a separate 120-minute budget within a 180-minute job: the first macOS 26 full build took 76 minutes. Native method execution remains limited to 120 seconds and the diagnostic action to 30 minutes.
+
 Before each method, the action uploads its immutable execution plan and a host snapshot. After execution it preserves original XML, process retirement, controller status and a second snapshot. Snapshots include memory, swap, load, disk and process IDs/state/CPU/RSS/executable names, without process arguments or environments; collection errors remain visible. An execution or upload failure stops later methods. Each method retains its 120-second execution cap; an unreachable host may prevent cleanup and final upload. Only already uploaded artifacts survive that loss. These are partial diagnostic results and cannot satisfy the complete CPU or independent Darwin gate. A last start marker identifies an execution boundary, not the failing guest instruction or root cause.
 
 The complete `Native macOS HVF` workflow also accepts optional `source-ref`. It defaults to the workflow commit and otherwise requires a full SHA. Native jobs and the aggregate auditor check out and verify that same source; the audit compares evidence against the tested source, even when the workflow controller has a different revision.

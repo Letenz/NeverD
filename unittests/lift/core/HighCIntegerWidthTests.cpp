@@ -1248,6 +1248,87 @@ TEST(HighCIntegerWidths, SegmentedOffsetsDoNotAliasOverlappingImageBacking) {
       << Source;
 }
 
+/// Compile \p Source for \p Triple without linking it, so the host need not
+/// run the target; returns the compiler's diagnostics when it fails.
+static std::optional<std::string> compileForTarget(const std::string &Source,
+                                                   llvm::StringRef Triple) {
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto FoundCompiler = llvm::sys::findProgramByName("clang");
+  if (!FoundCompiler)
+    return std::string("clang is required");
+  const std::string Compiler = *FoundCompiler;
+#endif
+  llvm::SmallString<128> SourcePath, ErrorPath;
+  if (llvm::sys::fs::createTemporaryFile("neverd-target", "c", SourcePath) ||
+      llvm::sys::fs::createTemporaryFile("neverd-target", "err", ErrorPath))
+    return std::string("cannot create temporary files");
+  llvm::FileRemover RemoveSource(SourcePath);
+  llvm::FileRemover RemoveError(ErrorPath);
+  {
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(SourcePath, EC);
+    if (EC)
+      return EC.message();
+    OS << Source;
+  }
+  const std::string Target = ("--target=" + Triple).str();
+  llvm::SmallVector<llvm::StringRef, 8> Arguments{
+      Compiler,         "-std=gnu17",    Target,
+      "-ffreestanding", "-fsyntax-only", SourcePath};
+  std::optional<llvm::StringRef> Redirects[] = {std::nullopt, ErrorPath.str(),
+                                                ErrorPath.str()};
+  if (llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt, Redirects) ==
+      0)
+    return std::nullopt;
+  auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+  return Errors ? (*Errors)->getBuffer().str() : std::string("failed");
+}
+
+TEST(HighCIntegerWidths, WindowsX64SyscallUsesTheServiceConvention) {
+  // return (uint64_t)syscall(0x55, 1, 2, 3, 4) under the NT convention: the
+  // helper runs SYSCALL with the service number in RAX and the arguments in
+  // R10, RDX, R8 and R9, and only a Windows x86-64 target may compile it.
+  HighFunc Func;
+  Func.Name = "nt_service";
+  Func.ReturnType = NdType::makeInt(8, false);
+  auto Call = HighExpr::makeCall(
+      "neverd_x64_windows_syscall", 0,
+      {HighExpr::makeConst(0x55, 8), HighExpr::makeConst(1, 8),
+       HighExpr::makeConst(2, 8), HighExpr::makeConst(3, 8),
+       HighExpr::makeConst(4, 8)});
+  Call->IntrinsicId = Intrinsic::X64WindowsSyscall;
+  Call->Type = NdType::makeInt(48, false);
+  auto Status =
+      HighExpr::makeBinop(NdOp::SUBBYTES, Call, HighExpr::makeConst(0, 8));
+  Status->Type = NdType::makeInt(8, false);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = Status;
+  Func.Body.push_back(std::move(Return));
+
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("#if !defined(_WIN64) || !defined(__x86_64__)"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("unsigned _BitInt(384) neverd_x64_windows_syscall("),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("register uint64_t r10 __asm__(\"r10\") = arg1;"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("neverd_x64_windows_syscall(85, 1, 2, 3, 4)"),
+            std::string::npos)
+      << Source;
+  const auto Windows = compileForTarget(Source, "x86_64-pc-windows-msvc");
+  EXPECT_FALSE(Windows) << *Windows << Source;
+  const auto Linux = compileForTarget(Source, "x86_64-unknown-linux-gnu");
+  ASSERT_TRUE(Linux) << Source;
+  EXPECT_NE(Linux->find("requires Windows x86-64"), std::string::npos)
+      << *Linux;
+}
+
 TEST(HighCIntegerWidths, LinuxX64ExitOmitsUnusedUnknownRegisterInputs) {
   const auto U64 = NdType::makeInt(8, false);
   auto UnknownRegister = [&](int Id) {
