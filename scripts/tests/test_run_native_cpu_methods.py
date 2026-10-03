@@ -109,9 +109,10 @@ class NativeMethodEvidenceTests(unittest.TestCase):
                             for names in expected))
         moved = copy.deepcopy(self.document)
         moved["tests"].reverse()
+        moved_root = self.root / "different" / "runner"
         for test in moved["tests"]:
-            test["command"][0] = "/different/runner/Owner"
-            test["properties"][-1]["value"] = "/different/runner"
+            test["command"][0] = str(moved_root / "Owner")
+            test["properties"][-1]["value"] = str(moved_root)
         self.assertEqual(expected, [{test["name"] for test in
                                    methods.shard_inventory(moved, i, 2)["tests"]}
                                    for i in range(2)])
