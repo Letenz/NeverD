@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: aee97573f638441a0d68f7791fa814871dc91c7d7d5ad93373725b00e25925ac -->
+<!-- i18n-source: 43701db74dfe3fb59f552a78b88ace1c40c70eef0b1d4d461047864429293865 -->
 
 [← Índice de documentación](README.md)
 
@@ -70,7 +70,7 @@ El pequeño benchmark ARM64 equivalente midió 73.9 ms con Unicorn y 95.1 ms con
 
 La ejecución completa anterior `37106679688` terminó el 2026-10-03 a las 08:35 UTC con una anotación de GitHub sobre pérdida de comunicación con el runner. No produjo resultados CPU; esto no identifica una instrucción invitada defectuosa. Intel alojado en modo `full` usa ahora cuatro grupos, con un máximo de dos trabajos simultáneos. Cada trabajo compila y comprueba primero el inventario CTest completo de los veinte objetivos. `--hvf-shard INDEX/COUNT` asigna métodos completos por objetivo e identidad, conservando todos sus parámetros juntos aunque difieran sus propiedades de ejecución. Cada grupo guarda inventarios completo y seleccionado, plan, XML original, correspondencias, estados de proceso y lista permitida de variables necesarias. Un grupo solo aporta evidencia parcial.
 
-Un trabajo Linux independiente ejecuta `scripts/audit_hvf_shards.py` y vuelve a derivar objetivos y requisitos nativos desde las fuentes extraídas. Exige el mismo intento, el mismo commit sin cambios locales, la ISA macOS correcta y contratos normalizados coincidentes. Los cuatro grupos deben ser disjuntos y su unión igual al inventario completo; todos los procesos deben finalizar correctamente y cada requisito nativo pasar. Grupos ausentes, filtros cambiados, resúmenes contradictorios, XML incompleto o requisitos nativos omitidos provocan fallo. Cada trabajo nativo conserva transporte, recuperación, CR8 y la validación Darwin independiente. Los runners propios mantienen CTest sin dividir. Dividir la ejecución no demuestra por sí solo la aceptación Intel.
+Un trabajo Linux independiente ejecuta `scripts/audit_hvf_shards.py` y vuelve a derivar objetivos y requisitos nativos desde las fuentes extraídas. Exige el mismo intento, el mismo commit sin cambios locales, la ISA macOS correcta y contratos normalizados coincidentes. Los cuatro grupos deben ser disjuntos y su unión igual al inventario completo; todos los procesos deben finalizar correctamente y cada requisito nativo pasar. Grupos ausentes, filtros cambiados, resúmenes contradictorios, XML incompleto o requisitos nativos omitidos provocan fallo. Cada trabajo nativo conserva transporte, recuperación, CR8 y la validación Darwin independiente. Los runners propios mantienen CTest sin dividir. Dividir la ejecución no demuestra por sí solo la aceptación Intel. Cada reintento debe ejecutar de nuevo todos los trabajos nativos para que los cuatro artefactos CPU pertenezcan al mismo intento; no se combinan artefactos de intentos anteriores.
 
 ## Última verificación nativa local
 

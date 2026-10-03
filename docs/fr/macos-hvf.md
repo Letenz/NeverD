@@ -1,6 +1,6 @@
 **Langues**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: aee97573f638441a0d68f7791fa814871dc91c7d7d5ad93373725b00e25925ac -->
+<!-- i18n-source: 43701db74dfe3fb59f552a78b88ace1c40c70eef0b1d4d461047864429293865 -->
 
 [← Index de la documentation](README.md)
 
@@ -70,7 +70,7 @@ Le petit benchmark ARM64 comparable a donné 73.9 ms pour Unicorn contre 95.1 ms
 
 L’exécution complète précédente `37106679688` s’est terminée le 2026-10-03 à 08:35 UTC avec une annotation GitHub signalant la perte de communication du runner. Aucun résultat CPU n’a été produit ; cela ne désigne pas une instruction invitée fautive. Le mode Intel hébergé `full` utilise désormais quatre lots, avec au plus deux jobs simultanés. Chaque job compile et vérifie d’abord l’inventaire CTest complet des vingt cibles. `--hvf-shard INDEX/COUNT` répartit les méthodes entières par cible et identité, en gardant tous leurs paramètres ensemble même si leurs propriétés d’exécution diffèrent. Chaque lot conserve inventaires complet et sélectionné, plan, XML original, correspondances, états des processus et liste autorisée des variables nécessaires. Un lot ne constitue qu’une preuve partielle.
 
-Un job Linux distinct exécute `scripts/audit_hvf_shards.py` et redérive cibles et obligations natives depuis les sources extraites. Il exige la même tentative, la même révision sans modification locale, la bonne ISA macOS et des contrats d’exécution normalisés identiques. Les quatre lots doivent être disjoints et leur union égale à l’inventaire complet ; tous les processus doivent terminer correctement et chaque obligation native réussir. Lot absent, filtre modifié, résumé incohérent, XML incomplet ou obligation native ignorée font échouer le contrôle. Chaque job natif conserve aussi transport, reprise, CR8 et validation Darwin indépendante. Les runners dédiés gardent CTest sans répartition. Répartir les tests ne prouve pas à lui seul l’acceptation Intel.
+Un job Linux distinct exécute `scripts/audit_hvf_shards.py` et redérive cibles et obligations natives depuis les sources extraites. Il exige la même tentative, la même révision sans modification locale, la bonne ISA macOS et des contrats d’exécution normalisés identiques. Les quatre lots doivent être disjoints et leur union égale à l’inventaire complet ; tous les processus doivent terminer correctement et chaque obligation native réussir. Lot absent, filtre modifié, résumé incohérent, XML incomplet ou obligation native ignorée font échouer le contrôle. Chaque job natif conserve aussi transport, reprise, CR8 et validation Darwin indépendante. Les runners dédiés gardent CTest sans répartition. Répartir les tests ne prouve pas à lui seul l’acceptation Intel. Un nouvel essai doit relancer tous les jobs natifs afin que les quatre artefacts CPU appartiennent à la même tentative ; les artefacts de tentatives précédentes ne sont pas combinés.
 
 ## Dernière validation native locale
 
