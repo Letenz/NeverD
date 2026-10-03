@@ -21,7 +21,10 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--build-only", action="store_true")
     parser.add_argument("--probe", action="store_true")
+    parser.add_argument("--floating-point", action="store_true")
     args = parser.parse_args()
+    if args.floating_point and args.arch != "X64":
+        parser.error("the x87 fixture requires X64")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     definition = (FIXTURES / "WindowsContextCases.def").read_text()
@@ -62,11 +65,11 @@ def main() -> None:
         obj = output / ("context-" + suffix + ".obj")
         flags = ["-std=c11", "-ffreestanding", "-fno-builtin", "-fno-stack-protector",
                  "-fno-vectorize", "-fno-slp-vectorize", "-O1"] if suffix == "c" else []
-        flags += ["-DNEVERD_CAPTURE_FP_PROBE"] if args.probe and args.arch == "X64" else []
+        flags += ["-DNEVERD_CAPTURE_FP_PROBE"] if (args.probe or args.floating_point) and args.arch == "X64" else []
         run([clang, "--target=" + settings[args.arch + "Target"], *flags, "-c",
              str(FIXTURES / ("windows_context." + suffix)), "-o", str(obj)])
         objects.append(str(obj))
-    program = output / settings["ProgramFile"]
+    program = output / settings["FPProgramFile" if args.floating_point else "ProgramFile"]
     run([link, "/nodefaultlib", "/subsystem:console", machine, "/timestamp:0",
          "/entry:" + settings["Entry"], *objects, str(output / "provider.lib"), "/out:" + str(program)])
     if args.build_only:
@@ -79,7 +82,9 @@ def main() -> None:
         raise RuntimeError(f"ARM64 native oracle cannot run on {host}")
     observations = []
     if args.probe:
-        cases = [("Probe", "!P")]
+        cases = [("Probe", "!" + chr(int(values["ProbeMode"])))]
+    elif args.floating_point:
+        cases = [("FloatingPoint", "!" + chr(int(values["FPMode"])))]
     success = True
     for name, argument in cases:
         result = subprocess.run([str(program), argument], capture_output=True, check=False,
@@ -94,7 +99,7 @@ def main() -> None:
                              "stdout": result.stdout.hex(), "stderr": result.stderr.hex(), "passed": passed})
     report = {"commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
               "architecture": args.arch, "host": host, "commands": commands,
-              "observations": observations, "passed": success, "probe": args.probe}
+              "observations": observations, "passed": success, "probe": args.probe, "floating_point": args.floating_point}
     (output / "observations.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
     if not success:

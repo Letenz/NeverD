@@ -1887,7 +1887,7 @@ jobs:
 
   windows-context-oracle:
     name: Windows caller context (${{ matrix.arch }})
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_cpu_only }}
+    if: ${{ github.event.action != 'closed' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
@@ -1904,12 +1904,17 @@ jobs:
         with:
           python-version: '3.12'
       - name: Compile and observe the original Windows caller context
-        run: python scripts/check_windows_context.py --arch ${{ matrix.arch }} --output build-context-oracle --probe
+        run: python scripts/check_windows_context.py --arch ${{ matrix.arch }} --output build-context-oracle
+      - name: Verify original nonempty x87 capture
+        if: ${{ matrix.arch == 'X64' }}
+        run: python scripts/check_windows_context.py --arch X64 --floating-point --output build-context-fp
       - name: Preserve caller context observations
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-context-${{ matrix.arch }}
-          path: build-context-oracle/
+          path: |
+            build-context-oracle/
+            build-context-fp/
           if-no-files-found: error
           retention-days: 14

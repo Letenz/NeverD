@@ -6,6 +6,12 @@
 #ifdef NEVERD_WINDOWS_PROCESS_VALUE
 NEVERD_WINDOWS_PROCESS_VALUE(X64CapturedContextFlags, 0x10000f)
 #endif
+// RtlCaptureContext publishes the legacy FXSAVE pointer fields, even for
+// a 64-bit caller. Exception snapshots retain their complete internal state.
+#ifdef NEVERD_WINDOWS_CAPTURE_FP_POINTER
+NEVERD_WINDOWS_CAPTURE_FP_POINTER(264)
+NEVERD_WINDOWS_CAPTURE_FP_POINTER(272)
+#endif
 #ifdef NEVERD_WINDOWS_PROCESS_TEXT
 NEVERD_WINDOWS_PROCESS_TEXT(CaptureContextBuffer,
                             "invalid or inaccessible caller context buffer")

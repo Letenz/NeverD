@@ -47,6 +47,9 @@ CaptureFixture:
 #define NEVERD_CAPTURE_X64_GPR(Name, Index, Value) movq $Value, %Name
 #include "WindowsContextCases.def"
 #undef NEVERD_CAPTURE_X64_GPR
+#ifdef NEVERD_CAPTURE_FP_PROBE
+  fxsave64 SeededFPState(%rip)
+#endif
   callq *X64TargetSlot(%rsp)
 .globl CaptureResume
 CaptureResume:

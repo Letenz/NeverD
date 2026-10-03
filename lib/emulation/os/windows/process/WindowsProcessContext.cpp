@@ -203,6 +203,12 @@ llvm::Error captureCallerContext(ExecutionBackend &CPU, uint64_t Destination) {
   llvm::support::endian::write16le(Bytes->data() + Offset, (*SS)[0]);
 #include "WindowsContextCapture.def"
 #undef NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT
+#define NEVERD_WINDOWS_CAPTURE_FP_POINTER(Offset)                              \
+  llvm::support::endian::write64le(                                            \
+      Bytes->data() + Offset,                                                  \
+      uint32_t(llvm::support::endian::read64le(Bytes->data() + Offset)));
+#include "WindowsContextCapture.def"
+#undef NEVERD_WINDOWS_CAPTURE_FP_POINTER
   }
   struct Range {
     GuestArchitecture ISA;

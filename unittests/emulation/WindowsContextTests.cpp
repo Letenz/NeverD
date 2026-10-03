@@ -132,6 +132,31 @@ struct CaptureState {
       llvm::cantFail(CPU.writeInteger(SP, TestReturnPC, sizeof(uint64_t)));
     else
       llvm::cantFail(CPU.writeRegister(ABI.info().Link, {TestReturnPC, 0}));
+    if (X64) {
+      const std::pair<CPURegister, uint64_t> Controls[] = {
+          {CPURegister::X64FPCW, X64FPControl},
+          {CPURegister::X64FPSW, X64FPStatus},
+          {CPURegister::X64FPTag, X64FPTag},
+          {CPURegister::X64FPOP, X64FPOpcode},
+          {CPURegister::X64FPIP, X64FPIP},
+          {CPURegister::X64FPDP, X64FPDP},
+          {CPURegister::X64MXCSR, X64Control}};
+      for (const auto &[R, V] : Controls)
+        llvm::cantFail(CPU.writeRegister(R, {V, 0}));
+      // Match the native fixture's logical FXSAVE slots at its nonzero TOP.
+      for (unsigned I = 0; I < X64FPRegisterCount; ++I) {
+        const auto Physical =
+            (I + (X64FPStatus >> X64TopShift)) % X64FPRegisterCount;
+        llvm::cantFail(CPU.writeRegister(
+            static_cast<CPURegister>(unsigned(CPURegister::X64FP0) + Physical),
+            {X64FPMantissa + I, X64FPExponent}));
+      }
+    } else {
+      llvm::cantFail(
+          CPU.writeRegister(CPURegister::AArch64FPCR, {ARM64Control, 0}));
+      llvm::cantFail(
+          CPU.writeRegister(CPURegister::AArch64FPSR, {ARM64Status, 0}));
+    }
     llvm::cantFail(CPU.write(DirectData, Initial));
   }
   std::vector<uint8_t> bytes() {
@@ -189,8 +214,40 @@ TEST_P(WindowsContext, CapturesAcrossPagesWithoutChangingTheCPU) {
   EXPECT_EQ(
       llvm::support::endian::read64le(Record + (X64 ? X64GPR : ARM64X0Offset)),
       X64 ? LastErrorSeed : 0);
-  if (!X64)
+  if (X64) {
+    EXPECT_EQ(llvm::support::endian::read16le(Record + X64FPOffset),
+              X64FPControl);
+    EXPECT_EQ(llvm::support::endian::read16le(Record + X64FPOffset +
+                                              X64FPStatusField),
+              X64FPStatus);
+    EXPECT_EQ(Record[X64FPOffset + X64FPTagField], X64FPTag);
+    EXPECT_EQ(llvm::support::endian::read16le(Record + X64FPOffset +
+                                              X64FPOpcodeField),
+              X64FPOpcode);
+    EXPECT_EQ(
+        llvm::support::endian::read64le(Record + X64FPOffset + X64FPIPField),
+        X64FPIP);
+    EXPECT_EQ(
+        llvm::support::endian::read64le(Record + X64FPOffset + X64FPDPField),
+        X64FPDP);
+    EXPECT_EQ(llvm::support::endian::read32le(Record + X64ControlOffset),
+              X64Control);
+    EXPECT_EQ(
+        llvm::support::endian::read32le(Record + X64FPOffset + X64MXCSRField),
+        X64Control);
+    for (unsigned I = 0; I < X64FPRegisterCount; ++I) {
+      const auto *Slot = Record + X64FPRegistersOffset + I * VectorBytes;
+      EXPECT_EQ(llvm::support::endian::read64le(Slot), X64FPMantissa + I);
+      EXPECT_EQ(llvm::support::endian::read16le(Slot + sizeof(uint64_t)),
+                X64FPExponent);
+    }
+  } else {
     EXPECT_EQ(llvm::support::endian::read64le(Record + ARM64LR), 0u);
+    EXPECT_EQ(llvm::support::endian::read32le(Record + ARM64ControlOffset),
+              ARM64Control);
+    EXPECT_EQ(llvm::support::endian::read32le(Record + ARM64FPSROffset),
+              ARM64Status);
+  }
   for (size_t I = 0; I < Bytes.size(); ++I) {
     const bool Captured =
         I >= CrossPageOffset &&

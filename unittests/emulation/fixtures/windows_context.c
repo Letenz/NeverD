@@ -37,6 +37,7 @@ __declspec(align(16)) const U64 VectorSeeds[] = {
 #if defined(__x86_64__)
 enum { Size = X64Size };
 #ifdef NEVERD_CAPTURE_FP_PROBE
+__declspec(align(16)) U8 SeededFPState[X64FXSize];
 __declspec(align(16)) const U64 FPSeed[X64FXSize / sizeof(U64)] = {
 #define NEVERD_CAPTURE_FP_WORD(Index, Value) [Index] = Value,
 #include "WindowsContextCases.def"
@@ -92,14 +93,17 @@ static void run(Capture API, U8 Fill) {
           SiteControl);
 #ifdef NEVERD_CAPTURE_FP_PROBE
   require(*(U32 *)(Context + X64ControlOffset) == X64Control, SiteControl);
+  require(*(U64 *)(SeededFPState + X64FPIPField) == X64FPIP &&
+              *(U64 *)(SeededFPState + X64FPDPField) == X64FPDP,
+          SiteControl);
   require(*(U16 *)(Context + X64FPOffset) == X64FPControl &&
               *(U16 *)(Context + X64FPOffset + X64FPStatusField) ==
                   X64FPStatus &&
               Context[X64FPOffset + X64FPTagField] == X64FPTag &&
               *(U16 *)(Context + X64FPOffset + X64FPOpcodeField) == X64FPOpcode,
           SiteControl);
-  require(*(U64 *)(Context + X64FPOffset + X64FPIPField) == X64FPIP &&
-              *(U64 *)(Context + X64FPOffset + X64FPDPField) == X64FPDP,
+  require(*(U64 *)(Context + X64FPOffset + X64FPIPField) == (U32)X64FPIP &&
+              *(U64 *)(Context + X64FPOffset + X64FPDPField) == (U32)X64FPDP,
           SiteControl);
   for (U32 I = 0; I < X64FPRegisterCount; ++I) {
     const U8 *Register = Context + X64FPRegistersOffset + I * VectorBytes;
