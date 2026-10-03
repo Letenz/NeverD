@@ -36,6 +36,7 @@
 #include <iterator>
 #include <set>
 #include <stdexcept>
+#include <string_view>
 
 namespace neverd {
 
@@ -5366,6 +5367,7 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
   struct PhiCopy {
     const llvm::PHINode *Phi;
     std::string RHS;
+    std::string Destination;
     std::string Temp;
   };
   std::vector<PhiCopy> Copies;
@@ -5388,7 +5390,7 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
         EdgeImmediates.emplace(Phi, *Imm);
     if (phiIncomingIsPrinted(Phi, Incoming, MaterializeEdge))
       Copies.push_back(
-          {Phi, integerPointerOperandStr(Incoming), freshVar("phi_edge")});
+          {Phi, integerPointerOperandStr(Incoming), getName(Phi), {}});
   }
   // Evaluate the whole edge against its predecessor state before publishing
   // any new PHI facts. Loop PHIs may exchange values, including cached ones.
@@ -5398,21 +5400,67 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
     KnownImmediates[Phi] = Immediate;
   if (Copies.empty())
     return;
-  emitIndent(Indent);
-  OS << "{\n";
-  // SSA edge updates are simultaneous. Materialize every source before any
-  // destination is overwritten, including loop PHIs that exchange values.
+
+  // Inspect rendered operands: inlining and path-local substitutions can make
+  // their variable reads differ from the immediate LLVM operands. Retain RHS
+  // evaluation order and delay a destination only if a later RHS reads its old
+  // value. Tokenize once per RHS, rather than searching every destination in
+  // every expression. Mentions in literals may conservatively keep a temp.
+  std::map<std::string, size_t, std::less<>> LastRead;
+  for (const auto &Copy : Copies)
+    LastRead.emplace(Copy.Destination, 0);
+  for (size_t I = 0; I < Copies.size(); ++I) {
+    llvm::StringRef RHS = Copies[I].RHS;
+    for (size_t Begin = 0; Begin < RHS.size();) {
+      if (!std::isalpha(static_cast<unsigned char>(RHS[Begin])) &&
+          RHS[Begin] != '_') {
+        ++Begin;
+        continue;
+      }
+      size_t End = Begin + 1;
+      while (End < RHS.size() &&
+             (std::isalnum(static_cast<unsigned char>(RHS[End])) ||
+              RHS[End] == '_'))
+        ++End;
+      auto Found =
+          LastRead.find(std::string_view(RHS.data() + Begin, End - Begin));
+      if (Found != LastRead.end())
+        Found->second = I + 1;
+      Begin = End;
+    }
+  }
+  bool HasTemps = false;
+  for (size_t I = 0; I < Copies.size(); ++I) {
+    auto &Copy = Copies[I];
+    if (!isCIdentifier(Copy.Destination) ||
+        LastRead.at(Copy.Destination) > I + 1) {
+      Copy.Temp = freshVar("phi_edge");
+      HasTemps = true;
+    }
+  }
+  if (HasTemps) {
+    emitIndent(Indent);
+    OS << "{\n";
+  }
+  const int CopyIndent = Indent + (HasTemps ? 1 : 0);
   for (const auto &Copy : Copies) {
-    emitIndent(Indent + 1);
-    OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Temp << " = "
-       << Copy.RHS << ";\n";
+    emitIndent(CopyIndent);
+    if (!Copy.Temp.empty())
+      OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Temp;
+    else
+      OS << Copy.Destination;
+    OS << " = " << Copy.RHS << ";\n";
   }
   for (const auto &Copy : Copies) {
-    emitIndent(Indent + 1);
-    OS << getName(Copy.Phi) << " = " << Copy.Temp << ";\n";
+    if (Copy.Temp.empty())
+      continue;
+    emitIndent(CopyIndent);
+    OS << Copy.Destination << " = " << Copy.Temp << ";\n";
   }
-  emitIndent(Indent);
-  OS << "}\n";
+  if (HasTemps) {
+    emitIndent(Indent);
+    OS << "}\n";
+  }
 }
 
 std::string
