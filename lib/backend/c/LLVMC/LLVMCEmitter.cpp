@@ -71,6 +71,16 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   for (llvm::Function &Fn : Mod) {
     llvm::StringRef Name = Fn.getName();
     std::string IntrinsicHelper;
+    if (Fn.getIntrinsicID() == llvm::Intrinsic::fshl ||
+        Fn.getIntrinsicID() == llvm::Intrinsic::fshr) {
+      IntrinsicHelper = Fn.getIntrinsicID() == llvm::Intrinsic::fshl
+                            ? "neverd_llvm_fshl"
+                            : "neverd_llvm_fshr";
+      if (const auto *Integer =
+              llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
+        IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      Name = IntrinsicHelper;
+    }
     if (const char *Kind = integerMinMaxSpelling(Fn.getIntrinsicID())) {
       IntrinsicHelper = std::string("neverd_llvm_") + Kind;
       if (const auto *Integer =
@@ -158,7 +168,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
-  std::set<std::pair<unsigned, bool>> FunnelShifts;
+  std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
   std::map<std::string, ScalarUnary> ScalarUnaries;
 
@@ -201,7 +211,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 (Width != 8 && Width != 16 && Width != 32 && Width != 64 &&
                  Width != 128))
               throw std::runtime_error("unsupported LLVM funnel shift width");
-            FunnelShifts.insert({Width, IID == llvm::Intrinsic::fshl});
+            FunnelShifts.emplace(
+                functionIdentifier(*Callee),
+                std::pair{Width, IID == llvm::Intrinsic::fshl});
           }
           auto Name = Callee->getName().str();
 
@@ -285,13 +297,13 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     }
     OS << "}\n\n";
   }
-  for (const auto &[Width, Left] : FunnelShifts) {
+  for (const auto &[Name, Shape] : FunnelShifts) {
+    const auto [Width, Left] = Shape;
     const std::string Type = Width == 128
                                  ? "unsigned __int128"
                                  : "uint" + std::to_string(Width) + "_t";
-    OS << "static inline " << Type << " neverd_llvm_fsh" << (Left ? "l" : "r")
-       << "_i" << Width << "(" << Type << " a, " << Type << " b, " << Type
-       << " amount) {\n"
+    OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
+       << Type << " b, " << Type << " amount) {\n"
        << "    unsigned int shift = (unsigned int)(amount % " << Width
        << ");\n";
     if (Left)

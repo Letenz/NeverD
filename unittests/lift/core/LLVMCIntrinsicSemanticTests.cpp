@@ -319,6 +319,82 @@ TEST(LLVMCIntrinsicSemantics, ScalarUnaryRejectsUnsupportedShapes) {
   }
 }
 
+TEST(LLVMCIntrinsicSemantics, FunnelShiftHelpersAvoidFunctionNameCollisions) {
+  for (bool IntrinsicFirst : {false, true}) {
+    SCOPED_TRACE(IntrinsicFirst);
+    llvm::LLVMContext Context;
+    llvm::Module Module("funnel-helper-identities", Context);
+    llvm::IRBuilder<> Builder(Context);
+    auto *Wide = Builder.getInt128Ty();
+    std::string Table;
+    for (unsigned Bits : {8u, 16u, 32u, 64u, 128u}) {
+      auto *Ty = Builder.getIntNTy(Bits);
+      for (bool Left : {true, false}) {
+        const auto ID = Left ? llvm::Intrinsic::fshl : llvm::Intrinsic::fshr;
+        const std::string Suffix =
+            std::string(Left ? "fshl_i" : "fshr_i") + std::to_string(Bits);
+        llvm::Function *Intrinsic = nullptr;
+        if (IntrinsicFirst)
+          Intrinsic =
+              llvm::Intrinsic::getOrInsertDeclaration(&Module, ID, {Ty});
+        // A normal two-argument function occupies the intrinsic helper's
+        // preferred C spelling. Both identities must survive either order.
+        auto *Collision =
+            llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                   llvm::GlobalValue::ExternalLinkage,
+                                   "neverd_llvm_" + Suffix, Module);
+        Builder.SetInsertPoint(
+            llvm::BasicBlock::Create(Context, "entry", Collision));
+        Builder.CreateRet(
+            Builder.CreateXor(Collision->getArg(0), Collision->getArg(1)));
+        if (!IntrinsicFirst)
+          Intrinsic =
+              llvm::Intrinsic::getOrInsertDeclaration(&Module, ID, {Ty});
+        const std::string Name = "check_" + Suffix;
+        Table += Name + ",";
+        auto *Fn = llvm::Function::Create(
+            llvm::FunctionType::get(Wide, {Wide, Wide, Wide}, false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+        Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+        auto *A = Builder.CreateTruncOrBitCast(Fn->getArg(0), Ty);
+        auto *B = Builder.CreateTruncOrBitCast(Fn->getArg(1), Ty);
+        auto *Count = Builder.CreateTruncOrBitCast(Fn->getArg(2), Ty);
+        auto *Shift = Builder.CreateCall(Intrinsic, {A, B, Count});
+        auto *Other = Builder.CreateCall(Collision, {A, B});
+        Builder.CreateRet(
+            Builder.CreateZExtOrBitCast(Builder.CreateXor(Shift, Other), Wide));
+      }
+    }
+    const std::string Source = "#include <stdint.h>\n" + emit(Module) + R"(
+typedef unsigned __int128 U128;
+int main(void) {
+  U128 (*functions[])(U128, U128, U128) = {)" +
+                               Table + R"(};
+  const unsigned widths[] = {8, 16, 32, 64, 128};
+  const U128 values[] = {0, 1, 0x89abcdefu, ~(U128)0,
+                        ((U128)1 << 127) | ((U128)1 << 63)};
+  for (unsigned w = 0; w < 5; ++w) {
+    const unsigned width = widths[w];
+    const U128 mask = ~(U128)0 >> (128 - width);
+    for (unsigned i = 0; i < 5; ++i)
+      for (unsigned j = 0; j < 5; ++j)
+        for (unsigned count = 0; count < 2 * width + 1; ++count) {
+          const U128 a = values[i] & mask, b = values[j] & mask;
+          const unsigned shift = (count & (unsigned)mask) % width;
+          const U128 left = shift ? ((a << shift) | (b >> (width - shift))) & mask : a;
+          const U128 right = shift ? ((a << (width - shift)) | (b >> shift)) & mask : b;
+          if (functions[2*w](a, b, count) != (left ^ a ^ b)) return 1;
+          if (functions[2*w+1](a, b, count) != (right ^ a ^ b)) return 2;
+        }
+  }
+  return 0;
+}
+)";
+    for (llvm::StringRef Optimization : {"-O0", "-O2"})
+      compileAndCheck(Source, false, {}, Optimization, true);
+  }
+}
+
 TEST(LLVMCIntrinsicSemantics, IntegerMinMaxKeepsWidthsSignednessAndProducers) {
   llvm::LLVMContext Context;
   llvm::Module Module("integer-minmax", Context);
