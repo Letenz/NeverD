@@ -136,8 +136,9 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 The native gate requires matching HVF cases to execute, including Darwin
 fixtures; missing `ld64.lld` cannot turn the required suite into a skip. Each
 transport must be verified on its own host; the results below distinguish
-Apple Silicon HVF, Linux KVM and Windows WHP. Intel HVF has passed its ten-case native transport gate; complete CPU and
-Darwin acceptance remains pending. See the
+Apple Silicon HVF, Intel HVF, Linux KVM and Windows WHP. All required Darwin
+workloads have passed on their respective matching hosts. Intel's broader
+CPU inventory remains a separate acceptance requirement. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
@@ -232,6 +233,24 @@ build-isolation checks, not additional native guest executions. The separate
 passed on macOS, Windows and Ubuntu at `e078b129c`.
 
 ### Hosted native verification, 2026-10-03
+
+The [Intel HVF Darwin gate](https://github.com/NeverSight/NeverD/actions/runs/37106013999)
+at clean source `8dcc74c59da303176801b99747a60339161b824b` passed every required
+x64 workload: **26/26**, across macOS and iOS Simulator. All 286 CTest
+registrations were reconciled against original GoogleTest XML: **52 passed,
+0 failed, 234 skipped**, with no missing, duplicate or unexecuted required
+results. All 32 method processes exited successfully. The native macOS kernel
+reference also passed; these results do not establish iOS device-kernel or
+broader Intel CPU acceptance.
+
+Artifact `11267489438` was downloaded and verified against SHA-256
+`cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`.
+Evidence is retained under `build-hvf/verification/hvf-intel-darwin-accepted/`.
+Execution uses the documented serial method policy on hosted Intel, including
+all parameters and the CTest environment. The runner was macOS x86-64 with
+four logical CPUs and Darwin 24.6.0. The same run also passed its ten-case
+transport preflight, 100 interruption/recovery repetitions and isolated CR8
+regression; these overlapping checks are not added to the Darwin totals.
 
 Both x64 transports executed the latest focused Darwin workload gate with
 Unicorn disabled, including the file-budget, direct-thread-entry and oversized

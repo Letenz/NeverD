@@ -171,221 +171,133 @@ Unicorn contract. No throughput improvement is promised by backend selection.
 
 ### Implementation validation, 2026-10-02 to 2026-10-03
 
-On an Apple M4 Max, macOS 15.6.1, SDK 15.5, Release: the focused CPU/process/C API
-suite passed 2,304 tests with zero failures (4,205 inapplicable platform, ISA or
-backend parameter cases skipped). The expanded no-Unicorn gate covers 19
-owners and passed 753 tests, including all nine required HVF cases, with 5,652
-inapplicable or disabled parameter cases skipped. The disabled-HVF configuration passed both configuration tests and
-skipped its five hardware cases. Packaging and evidence-script unit suites
-passed 10 and 17 tests respectively.
+Latest completed evidence (rows overlap and must not be added):
 
-A separate build with both testing and Unicorn disabled built the signed CLI,
-initialized HVF and executed the ARM64 ELF process fixture. Capability and
-Python SDK audits passed, along with 92 native-evidence/CI audit unit tests.
-The expanded gate also covers Linux/Windows processes, integer ABI, sessions
-and budgets. Removing a process test executable's entitlement verified that
-ordinary runs skip but required native runs fail.
+| Scope | Clean source | Result |
+| --- | --- | --- |
+| ARM64, complete CPU inventory, twenty owners | `defc93928` | 6,842 registered; 849 passed, 0 failed, 5,993 skipped; 16/16 required native checks |
+| ARM64, all Darwin workloads | `defc93928` | 286 registered; 65 passed, 0 failed, 221 skipped; 39/39 required native workloads |
+| Intel HVF, all Darwin workloads | `8dcc74c59` | 286 registered; 52 passed, 0 failed, 234 skipped; 26/26 required native workloads |
+| Intel HVF, complete FP owner | `3e01cda5c` | 71 registered; 35 passed, 0 failed, 36 skipped; twelve native HVF cases passed |
+| Intel HVF, native exception/state owner subset | `908a830e6` | All 253 native registrations passed: 120 raw exceptions, 128 public CPU division cases and five state transitions |
 
-The subsequent [Darwin process environment](darwin-emulation.md) extension
-expands that no-Unicorn gate to 20 owners. At `36e11ca8a`, 834 passed, zero
-failed and 5,903 skipped, with all 13 required ARM64 cases executed (nine HVF
-checks, three Darwin platform fixtures and one original host-kernel reference).
-This includes 65 Darwin checks and all 39 required ARM64 process workloads for
-macOS, iOS device and iOS Simulator guest contracts. Darwin's ARM64 OS pages
-are 16 KiB even though the shared CPU mapping granule remains 4 KiB.
+The ARM64 results use an Apple M4 Max, macOS 15.6.1, SDK 15.5, Release, with
+Unicorn disabled. Evidence for the full CPU and independent Darwin gates is
+retained in `build-hvf-native/hvf-launcher-clean-{full,darwin}-evidence/`.
+Foreign architectures/backends and unavailable software transports account for
+skips; every required native result was actually executed. The Intel inventory
+contains 6,840 registrations across the same twenty owners. Its only count
+difference is the ten-case Intel transport owner versus twelve on ARM64.
 
-A final check found that the raw cancellation fixture could execute a stale
-`HVC` when it rewrote its loop without guest instruction-cache maintenance.
-Using separate immutable loop and retry programs passed 1,000 repetitions with
-eight concurrent processes, followed by all 36 HVF/configuration/public API
-smoke tests. The production ARM64 adapter retains guest cache maintenance.
+The [Intel Darwin run](https://github.com/NeverSight/NeverD/actions/runs/37106013999)
+completed all 32 methods, including the original host-kernel reference. Its
+aggregate artifact `11267489438` was downloaded and SHA-256 verified against
+`cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`.
+Every original XML identity and process status was independently reconciled.
+Evidence is retained in `build-hvf/verification/hvf-intel-darwin-accepted/`.
+The same run passed all ten transport cases, 100 interruption/recovery
+repetitions and isolated CR8 state/privilege checks. It used macOS x86-64 with
+four logical CPUs and Darwin 24.6.0. This establishes the bounded macOS and
+iOS Simulator profiles; it does not establish iOS device-kernel behavior.
 
-Live CLI probes verified native selection, explicit foreign-ISA rejection,
-the software-contract selection, and a `device_access` diagnostic when a copy
-of the executable was signed without the entitlement. A standalone worker and
-the complete Qt 6.11.1 bundle passed signature checks across 186 Mach-O images.
-The packaged Cocoa GUI smoke and worker EVM load/disassembly passed. A signed
-probe loaded the bundle's engine and executed HVF initialization and the ARM64
-ELF fixture. This bundle's dependencies require macOS 15.0. Three backend translation units also
-compiled against the macOS x86-64 SDK at that stage. Native Intel transport
-results are recorded below; complete CPU/process acceptance is separate.
+The complete Intel CPU inventory is awaiting a successful result from the
+[current full run](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
+at `76a922088ceccb1e5fdaccbde7f0b3a680a4e3b8`. Earlier stalled or cancelled
+runs without complete evidence do not count as passes and do not identify a
+guest fault. One earlier [hosted run](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
+explicitly lost runner communication; its underlying cause was not established.
+CPU and Darwin workflow steps have explicit 30- and 15-minute limits.
 
-An alternating seven-sample microbenchmark, after warmup and excluding CPU
-creation, executed the same checked ARM64 loop on both backends: two setup
-instructions plus 1,000 `ADD/SUBS/B.NE` iterations, 3,002 guest instructions per
-run. Final registers and PC were checked. Median elapsed time was 73.9 ms for
-Unicorn and 95.1 ms for HVF (about 29% longer). This short integer loop provides
-no evidence of a speedup and is not representative of every workload.
+The [raw-fault](https://github.com/NeverSight/NeverD/actions/runs/37094333371)
+and [division](https://github.com/NeverSight/NeverD/actions/runs/37094335126)
+artifacts establish the 253 native exception/state cases above. They cover ten
+fault types at both privilege levels, recovery, mapping changes, private gateway
+integrity, terminal traps and observer stops. The five shared state-transition
+checks are counted only once. The [FP run](https://github.com/NeverSight/NeverD/actions/runs/37101437752)
+reconciled all 71 registrations, including physical FP state, every TOP,
+logical CPU switching and live probes. Standard host XRSTOR passed; compacted
+XRSTOR was unavailable on that runner. These independently verified subsets do
+not replace the full CPU gate.
 
-An extended seven-sample benchmark covered initialization, integer branches,
-ordinary RAM, TLS/calls, alternating CPUs and a Linux process. It ran while
-the shared host's load average was approximately 30 and observed large latency
-ranges; these results are not a stable throughput claim. Direct entry counting
-confirmed six native entries per ordinary ARM64 instruction (five maintenance
-steps and one guest step). Registers, PC, RAM and instruction counts matched
-the independent fixtures; the Linux process's normalized reports matched
-Unicorn for normal exit, memory fault, unknown service and instruction-budget
-stop. See the [detailed measurements](zh-CN/macos-hvf.md). Quiet-host performance
-measurement and the Intel Mac HVF gate remain outstanding; no self-hosted runner
-is currently configured for the repository. The focused Darwin gate has since
-passed on both Linux KVM and Windows WHP with Unicorn disabled: each passed all
-26 required x64 process cases, with 51 checks passed and zero failures overall.
-See the [hosted execution evidence](darwin-emulation.md#hosted-native-verification-2026-10-03)
-for the exact commits and scope.
+#### Evidence collection
 
-At clean source `48042a5e90e0977585114de092e423cd64b7f95f`, the Apple Silicon full
-gate passed 841 checks with zero failures, 5,942 inapplicable cases skipped and
-all 16 required outcomes executed, including the strengthened interruption
-inventory. Its 12-case transport subset also passed locally with no skips.
-The complete evidence is in `build-hvf-native/hvf-cr8-full-arm-evidence/`.
+Hosted Intel full and Darwin validation use `--execution-methods`. CTest still
+supplies every registered command and identity; each GoogleTest method runs in
+one process with all registered parameters, flags, environment and working
+directory. Unknown CTest properties are rejected. Direct GoogleTest commands
+and the plain native `GoogleTest/LaunchTest.cmake` wrapper are supported;
+custom executors, extra arguments and preassigned output paths are refused.
+The actual 6,840-case Intel inventory was parsed and reconciled before execution.
 
-Intel diagnosis removed writes to the framework-owned VMCS link pointer,
-preserved framework VM-exit controls and applied hardware CR0/CR4 fixed bits.
-An [independent 64-bit program](https://github.com/NeverSight/NeverD/actions/runs/37076076219)
-then established that the hosted runner could execute through QEMU HVF.
-The [isolated MSR experiment](https://github.com/NeverSight/NeverD/actions/runs/37078094659)
-identified `IA32_KERNEL_GS_BASE`: enabling that context alone restored execution
-and MTF stepping; the other eleven individual MSRs did not. The retained
-VM-instruction error 12 was also present on successful runs, so it does not
-identify the failed entry's cause. Production now initializes the managed
-kernel-GS context on each vCPU creation.
+Each child has an aggregate deadline capped at 120 seconds, followed by bounded
+process-group retirement. Individual parameter timeouts are not separately
+enforced inside GoogleTest. Raw XML, logs, exit status and exact CTest-name
+mappings are retained. A timeout or incomplete XML ends execution with a
+partial failure; complete assertion results still allow later methods to run.
+Missing, duplicate, unexecuted or skipped required-native results fail the gate.
+The summary records `execution=gtest-methods` and serial execution rather than
+claiming a CTest execution result. Self-hosted validation continues to use
+CTest's per-case processes and timeouts. The collector, gate, CI configuration,
+inventory and result-audit suites passed 124 checks. Temporary diagnostic
+workflows and instruction probes have been removed.
 
-The [isolated CR8 experiment](https://github.com/NeverSight/NeverD/actions/runs/37082402190)
-at `e61928b8c` then reproduced a separate TPR synchronization defect: guest
-writes and reads agreed at priorities 0, 1, 3 and 15, while host TPR readback
-remained zero; host TPR/APIC writes did not produce the requested nonzero guest value.
-Production `48042a5e9` uses authenticated CR8 read exits and retries unrelated
-host IRQ exits. Added native cases exercise all sixteen destination registers,
-CPL3 general-protection faults and unsolicited interrupts before cancellation.
-The initial native gate exposed zero VMCS RFLAGS on the first retry after
-cancellation recreated the vCPU. `99340b586` moved RIP/RFLAGS installation and
-capture to VMCS. The [native transport gate](https://github.com/NeverSight/NeverD/actions/runs/37086427775)
-at clean source `19a5f63a239bf1afac892f6907a72f62e8e998c1` then passed all ten
-required cases with zero skips. Separate one-process and cancellation checks
-also passed; all three interruption modes retained RFLAGS `0x202` through retry.
-The artifact SHA-256 was verified against GitHub metadata. This establishes
-transport recovery, not yet the complete Intel CPU and Darwin profiles.
-The full gate at `9319c880d` passed 100 interruption/recovery repetitions and
-transport, but did not return complete CPU/Darwin results; cancellation was
-requested after more than 100 minutes in its combined build/test step. The
-complete gate still needs all fourteen Intel requirements and broader CPU
-coverage to finish successfully. Stalled and
-cancelled runs are not acceptance evidence. Temporary instruction probes, API interposers and phase
-tracing are removed; actual NeverD tests own ongoing acceptance.
+#### Correctness and integration
 
-At clean source `9319c880d78e93f5cb8a7a9360778084934de258`, the ARM64 transport
-subset again passed all twelve cases without skips, and the native loop
-interruption/retry test passed 100 repetitions without failures or skips.
+Three Intel defects were reproduced and corrected. An
+[isolated MSR experiment](https://github.com/NeverSight/NeverD/actions/runs/37078094659)
+identified the missing managed `IA32_KERNEL_GS_BASE` context; the other eleven
+individual MSRs did not restore execution. VM-instruction error 12 was also
+present on successful runs and was not treated as the cause. An
+[independent CR8 comparison](https://github.com/NeverSight/NeverD/actions/runs/37082402190)
+showed that guest priorities 0, 1, 3 and 15 disagreed with host TPR readback;
+authenticated CR8 exits now preserve architectural ownership. Finally,
+cancellation recovery exposed zero RFLAGS after vCPU recreation; direct VMCS
+RIP/RFLAGS transfer restored all three interruption modes and retry. Their
+regressions remain in the native transport/state inventories.
 
-The [Intel checkpoint run](https://github.com/NeverSight/NeverD/actions/runs/37090528761)
-at clean source `e2a91ff057df563eb19183a045a3ad6446cb9af1` repeated all 100
-interruption/recovery cycles and passed the ten-case transport gate without
-skips. The isolated CR8 regression also passed: all sixteen destinations,
-CPL3 protection faults, resume-flag behavior and complete state preservation.
-Its separate JUnit result and the transport artifact were downloaded and their
-SHA-256 digests verified. The state owner compiled and registered 952 cases;
-these checkpoints do not establish completion of that larger suite.
+On ARM64, the raw cancellation fixture was corrected to use separate immutable
+loop and retry programs after rewriting one address exposed a stale `HVC`.
+It passed 1,000 repetitions with eight concurrent processes; production cache
+maintenance remains enabled. The clean `9319c880d` transport run also passed
+all twelve cases and 100 interruption/recovery repetitions without skips.
 
-At clean source `5251cc68591dc343c954c8b7a9b57fa5cb9190e8`, the
-[state-transition family](https://github.com/NeverSight/NeverD/actions/runs/37091386132)
-passed all five HVF cases in one process, with ten foreign-transport cases
-skipped. Its verified artifact covers TLS/privilege, CR8, cancellation and
-complete x87/SSE state across host changes, faults and stops. The job later
-stopped reporting during artifact upload. A subsequent serialized transport
-and state run reached the raw exception group without returning its result.
-These observations do not identify a particular instruction failure or prove
-a test-process concurrency defect. Later isolated results are recorded below;
-the complete CPU/Darwin gate remains separate.
+Build and public-integration checks established the following:
 
-At clean source `908a830e6e3f1bbae6bc7ed7e534f3b13aeb1c1e`, both focused jobs
-completed successfully. The [raw-fault job](https://github.com/NeverSight/NeverD/actions/runs/37094333371)
-passed all 120 native exception cases, covering ten fault types at both
-privilege levels, repeated recovery, mapping changes and private-gateway
-integrity. The [division job](https://github.com/NeverSight/NeverD/actions/runs/37094335126)
-passed all 128 native public-CPU division cases, including normal results,
-terminal traps, explicit recovery and observer stops. Each also passed all five
-state-transition cases, ten transport cases and 100 interruption/recovery
-repetitions. Shared checks overlap and must not be added as independent cases.
-Both artifacts were downloaded, SHA-256 verified and their individual XML
-results inspected. Temporary isolation workflow inputs and steps are removed.
-The [complete Intel gate](https://github.com/NeverSight/NeverD/actions/runs/37095689345)
-at `4c6a12b913123d0555f067035527fe29f856f3b9` compiled all twenty owners, but
-returned no CPU result after more than thirty minutes and was cancelled.
-Its completed job still provided no downloadable execution log. The build
-artifact's SHA-256 was verified; this is not full CPU acceptance. The
-[independent Darwin gate](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
-at `4cbb729389df9485c9a9699c63c0be3a48862794` ended with GitHub's explicit
-"hosted runner lost communication" annotation. Its transport and build
-checkpoints were verified, but no final execution log was available. This
-does not identify the underlying cause or establish Darwin acceptance. The
-[per-owner diagnosis](https://github.com/NeverSight/NeverD/actions/runs/37098336208)
-was cancelled after its FP step stopped returning results.
+- A build with both testing and Unicorn disabled produced a signed CLI that
+  initialized HVF and executed the ARM64 ELF fixture. HVF-disabled configuration
+  checks reported `build_disabled`, with no framework dependency.
+- Live probes verified native selection, explicit foreign-ISA rejection and
+  software-contract selection. Removing the process entitlement produced
+  `device_access`; required-native tests failed instead of silently skipping.
+- The Qt 6.11.1 bundle passed dependency/signature checks for 186 Mach-O images.
+  Its worker retained the entitlement; Cocoa startup and EVM loading passed.
+  A signed probe loaded its engine and matched 18 CLI reports across the three
+  ARM64 Darwin profiles. This bundle's dependencies require macOS 15.0.
+- The standalone worker suite passed eight checks, including three real-engine
+  integrations, and the fixture-backed Qt/IPC/MCP suite passed all nineteen.
+  The [desktop GUI workflow](https://github.com/NeverSight/NeverD/actions/runs/37053518872)
+  passed on macOS, Windows and Ubuntu at `e078b129c`.
+- Darwin also passed independently on Linux KVM and Windows WHP with Unicorn
+  disabled: each had 51 passes, zero failures and all 26 required x64 workloads.
+  Exact sources and artifacts are in the [Darwin evidence](darwin-emulation.md#hosted-native-verification-2026-10-03).
 
-The subsequent [FP method run](https://github.com/NeverSight/NeverD/actions/runs/37101437752)
-at clean source `3e01cda5c43908506bdb112ddacda02525854a9f` completed all 71
-registrations: 35 passed, none failed and 36 skipped. All twelve native HVF
-cases passed, including full physical FP state, every TOP, logical CPU
-switching and the live initialization probe. Standard host XRSTOR passed;
-compacted XRSTOR was unavailable on this runner. The aggregate artifact was
-SHA-256 verified and all original XML identities reconciled. This covers the
-entire FP owner, not the other nineteen CPU owners.
+#### Performance and remaining scope
 
-Hosted Intel full and Darwin validation now use `--execution-methods`. CTest
-still supplies every registered command and identity; each GoogleTest method
-runs in one process with all of its registered parameters, flags, environment
-and working directory. The mode rejects unsupported CTest properties rather
-than ignoring fixtures or resource contracts. Each child has an aggregate
-deadline capped at 120 seconds, followed by bounded process-group retirement;
-individual parameter timeouts are not separately enforced inside GoogleTest.
-Raw XML, logs, exit status and the exact CTest-name mapping are retained. A
-timeout or incomplete XML stops execution with a partial failure; complete
-assertion results still allow later methods to run. The
-normal inventory, required-native and missing-result gates remain mandatory.
-The summary identifies `execution=gtest-methods` and serial execution, and
-never labels it a CTest execution result. Self-hosted validation continues to
-use CTest's per-case processes and timeouts. Temporary diagnostic workflows
-and helpers have been removed.
+An alternating seven-sample benchmark, after warmup and excluding CPU creation,
+ran the same checked ARM64 loop on both backends: two setup instructions plus
+1,000 `ADD/SUBS/B.NE` iterations, or 3,002 guest instructions. Final registers
+and PC were checked. Median elapsed time was **73.9 ms for Unicorn** and
+**95.1 ms for HVF** (about 29% longer). This provides no evidence of a speedup
+and does not represent every workload.
 
-At clean source `d5864c055116a687546320e4acf0788ef4a4e735`, the updated
-ARM64 full inventory (including the latest Windows process environment work)
-completed 6,842 registrations across twenty owners: 849 passed, none failed
-and 5,993 skipped; all sixteen required native tests passed. The independent
-Darwin inventory passed all 39 native workloads (65 passed, 221 skipped).
-Evidence is in `build-hvf-native/hvf-method-clean-full-evidence/` and
-`build-hvf-native/hvf-method-clean-darwin-evidence/`. The
-[Intel full run](https://github.com/NeverSight/NeverD/actions/runs/37103182936)
-at that source built all twenty owners but stopped before execution: its newer
-CMake uses `GoogleTest/LaunchTest.cmake` and `DEF_SOURCE_LINE` metadata, which
-the first method parser rejected. The corrected parser explicitly supports
-the plain native wrapper and still refuses custom executors, output paths or
-extra arguments. Its 70 regression checks passed, and the actual 6,840-case
-Intel inventory was successfully parsed. The
-[replacement full run](https://github.com/NeverSight/NeverD/actions/runs/37104800707)
-at `defc93928a7a981100b38b66f98ed0a9d0300a95` remains pending. This clean source
-also repeated the ARM64 6,842-case and 286-case Darwin gates with identical
-outcomes, retained in `build-hvf-native/hvf-launcher-clean-{full,darwin}-evidence/`.
-
-Before committing this runner change, its 67 infrastructure checks passed.
-The current ARM64 inventory executed all 6,809 registrations across twenty
-owners: 845 passed, none failed and 5,964 skipped, including all sixteen
-required native tests. A separate Darwin run passed all 39 native workloads
-(65 passed, 221 skipped). These pre-commit results correctly record dirty
-source; clean-source reruns are recorded separately.
-
-After integrating the subsequent `dev` changes, clean source
-`f4bf8dde5cbc33d18ce053cb0722a54047e5a2d0` again passed all twelve ARM64
-transport cases with no skips. The independent Darwin gate passed 65 checks,
-failed none and skipped 221 inapplicable cases; all 39 required native workloads
-executed. The new host/parallel summary fields were also verified in actual
-Apple Silicon and Intel transport artifacts. Local evidence is in
-`build-hvf-native/hvf-final-dev-transport-evidence/` and
-`build-hvf-native/hvf-final-dev-darwin-evidence/`.
-
-The subsequent integration pass repaired the test SDK's missing
-`neverd_session_set_load_progress` and made the shared worker test client wait
-for terminal responses while retaining progress for assertions. All eight
-standalone worker checks passed, including three real-engine integrations.
-The complete fixture-backed Qt/IPC/MCP suite passed all 19 checks on macOS.
-The [desktop GUI workflow](https://github.com/NeverSight/NeverD/actions/runs/37053518872)
-also passed on macOS, Windows and Ubuntu at commit `e078b129c`. This verifies
-the test fixture and worker transport repair across all three desktop hosts.
+An extended benchmark covered initialization, integer branches, ordinary RAM,
+TLS/calls, alternating CPUs and a Linux process. Shared-host load was about 30,
+so its large latency ranges are not a stable performance claim. Entry counting
+confirmed six native entries per ordinary ARM64 instruction: five maintenance
+steps and one guest step. Registers, PC, RAM and instruction counts matched;
+the Linux process reports matched for normal exit, memory fault, unknown
+service and instruction-budget stop. The [Chinese record](zh-CN/macos-hvf.md)
+retains these measurements. Quiet-host performance tests and complete Intel
+CPU acceptance remain outstanding. No dedicated self-hosted runner is currently
+configured. The bounded Darwin profiles do not implement dyld, Mach IPC or
+Apple application frameworks; see their [explicit contract](darwin-emulation.md).
