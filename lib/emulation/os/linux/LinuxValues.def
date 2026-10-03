@@ -68,6 +68,10 @@ NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
 NEVERD_LINUX_SERVICE(GetPID, 39, 172, 0)
 NEVERD_LINUX_SERVICE(GetTID, 186, 178, 0)
+NEVERD_LINUX_SERVICE(GetUID, 102, 174, 0)
+NEVERD_LINUX_SERVICE(GetEUID, 107, 175, 0)
+NEVERD_LINUX_SERVICE(GetGID, 104, 176, 0)
+NEVERD_LINUX_SERVICE(GetEGID, 108, 177, 0)
 NEVERD_LINUX_SERVICE(Mmap, 9, 222, 6)
 NEVERD_LINUX_SERVICE(Mprotect, 10, 226, 3)
 NEVERD_LINUX_SERVICE(Munmap, 11, 215, 2)
@@ -106,10 +110,12 @@ NEVERD_LINUX_DIAGNOSTIC(
     TLS, "ELF TLS template has an invalid, duplicate or unreadable layout")
 NEVERD_LINUX_DIAGNOSTIC(ThreadOperation,
                         "unsupported Linux arch_prctl operation {0}")
-NEVERD_LINUX_DIAGNOSTIC(MemoryOperation,
-                        "unsupported Linux memory operation {0}: protection={1:x}, flags={2:x}")
-NEVERD_LINUX_DIAGNOSTIC(MemoryState,
-                        "Linux process memory operation encountered invalid internal state")
+NEVERD_LINUX_DIAGNOSTIC(
+    MemoryOperation,
+    "unsupported Linux memory operation {0}: protection={1:x}, flags={2:x}")
+NEVERD_LINUX_DIAGNOSTIC(
+    MemoryState,
+    "Linux process memory operation encountered invalid internal state")
 NEVERD_LINUX_DIAGNOSTIC(
     ProgramHeaders,
     "ELF program headers have an invalid or unmapped process layout")

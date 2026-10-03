@@ -87,7 +87,12 @@ The supported Bionic subset is:
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
-- `__errno`, `getpid`, `gettid`, `android_get_device_api_level` (28).
+- `__errno`, `getpid`, `gettid`, `getuid`, `geteuid`, `getgid`, `getegid`,
+  `android_get_device_api_level` (28). Identity queries share the Linux
+  process model: PID/TID and real/effective UID/GID are 1000, including raw
+  `svc #0` and calls resolved through the explicit dynamic catalogue. They
+  preserve errno and never query host credentials. Credential changes such
+  as `setuid` remain unsupported.
 - `__system_property_get`, backed only by the explicit property dictionary.
   Missing properties return length zero and write NUL; values must fit 91 bytes
   plus NUL. Host properties are never inherited.

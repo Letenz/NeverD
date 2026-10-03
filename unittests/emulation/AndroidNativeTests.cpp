@@ -118,6 +118,75 @@ TEST_P(AndroidNative, KernelErrorsAndLibcErrnoHaveDifferentContracts) {
   ASSERT_EQ(R.Services.size(), 1);
   EXPECT_EQ(R.Services[0].Result, uint64_t(0) - 9);
 }
+TEST_P(AndroidNative, IdentityImportsAndRawServicesAgreeWithoutChangingErrno) {
+  auto R = run("identity_queries", {Buffer});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  const auto &Bytes = R.MemorySnapshots[0].Bytes;
+  ASSERT_EQ(Bytes.size(), 64u);
+  for (size_t I = 0; I < 6; ++I)
+    EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + I * 4), 1000u);
+  for (size_t I = 24; I < Bytes.size(); ++I)
+    EXPECT_EQ(Bytes[I], 0);
+  const std::vector<std::pair<std::string, uint64_t>> Queries = {
+      {"getpid", 172},  {"gettid", 178}, {"getuid", 174},
+      {"geteuid", 175}, {"getgid", 176}, {"getegid", 177}};
+  ASSERT_EQ(R.Services.size(), Queries.size());
+  for (size_t I = 0; I < Queries.size(); ++I) {
+    auto Call = llvm::find_if(R.NativeCalls, [&](const auto &E) {
+      return E.Name == Queries[I].first;
+    });
+    ASSERT_NE(Call, R.NativeCalls.end());
+    EXPECT_TRUE(Call->Library.empty());
+    EXPECT_EQ(Call->Result, 1000u);
+    EXPECT_EQ(R.Services[I].Number, Queries[I].second);
+    EXPECT_EQ(R.Services[I].Result, Call->Result);
+  }
+}
+TEST_P(AndroidNative,
+       DynamicIdentityQueriesPreserveNamesAndRequireOpenLibrary) {
+  returned(run("dynamic_identities", {Buffer, 0}), 100);
+  Options.Android->Libraries["libidentity.so"] = {"getuid", "geteuid", "getgid",
+                                                  "getegid"};
+  auto R = run("dynamic_identities", {Buffer, 0});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  const auto &Bytes = R.MemorySnapshots[0].Bytes;
+  ASSERT_EQ(Bytes.size(), 64u);
+  for (size_t I = 0; I < 4; ++I)
+    EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + I * 4), 1000u);
+  for (size_t I = 16; I < Bytes.size(); ++I)
+    EXPECT_EQ(Bytes[I], 0);
+  for (const char *Name : {"getuid", "geteuid", "getgid", "getegid"}) {
+    auto Lookup = llvm::find_if(R.NativeCalls, [&](const auto &E) {
+      return E.Name == "dlsym" && E.Symbol == Name;
+    });
+    ASSERT_NE(Lookup, R.NativeCalls.end());
+    EXPECT_EQ(Lookup->Library, "libidentity.so");
+    ASSERT_TRUE(Lookup->Result);
+    auto Call = llvm::find_if(R.NativeCalls,
+                              [&](const auto &E) { return E.Name == Name; });
+    ASSERT_NE(Call, R.NativeCalls.end());
+    EXPECT_EQ(Call->PC, *Lookup->Result);
+    EXPECT_EQ(Call->Library, "libidentity.so");
+    EXPECT_EQ(Call->Result, 1000u);
+  }
+  EXPECT_TRUE(R.Services.empty());
+  R = run("dynamic_identities", {Buffer, 1});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "getuid");
+  EXPECT_EQ(R.NativeCalls.back().Library, "libidentity.so");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidNative, IdentityMutationImportRemainsUnsupported) {
+  auto R = run("identity_mutation");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "setuid");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
 TEST_P(AndroidNative, AllocationsPreserveBytesAndReportExhaustion) {
   auto R = run("allocation", {Buffer});
   returned(R, 0);

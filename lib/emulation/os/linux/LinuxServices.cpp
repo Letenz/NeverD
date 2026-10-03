@@ -97,6 +97,12 @@ handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
     return std::optional<uint64_t>(ProcessID);
   case ServiceKind::GetTID:
     return std::optional<uint64_t>(ThreadID);
+  case ServiceKind::GetUID:
+  case ServiceKind::GetEUID:
+    return std::optional<uint64_t>(UserID);
+  case ServiceKind::GetGID:
+  case ServiceKind::GetEGID:
+    return std::optional<uint64_t>(GroupID);
   case ServiceKind::Mmap:
   case ServiceKind::Mprotect:
   case ServiceKind::Munmap:

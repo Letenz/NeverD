@@ -125,12 +125,16 @@ entropy. HWCAP/HWCAP2 are zero; there is no vDSO. Startup conventions follow the
 [Linux ELF loader](https://github.com/torvalds/linux/blob/master/fs/binfmt_elf.c).
 
 Implemented calls are `write`, `exit`, `exit_group`, `getpid`, `gettid`,
+`getuid`, `geteuid`, `getgid`, `getegid`,
 `mmap`, `mprotect`, `munmap` and `brk`, with
 separate [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)
 and [asm-generic ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)
 numbers. Returning x64 SYSCALL applies its RCX/R11 clobbers as well as RAX and
 the next PC. ARM64 uses x8 for the number and x0 for the result. Unknown calls
 stop as `unsupported_service`; they never execute host syscalls.
+Real/effective identity queries agree with the corresponding auxv entries.
+They use the deterministic model identity above; credential-changing services
+such as `setuid` remain unsupported.
 
 Static ELF TLS templates (`PT_TLS`) are validated as loader-owned facts, with
 one template, bounded file/memory extents, alignment congruence and readable
