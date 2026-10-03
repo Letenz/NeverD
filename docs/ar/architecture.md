@@ -586,6 +586,8 @@ CMake.
 
 يتولى `os/windows/driver/` تحميل صور برامج التشغيل وجلسات التنفيذ والسيناريوهات والتقارير وسياسات التنفيذ. ويضم `os/windows/kernel/` نماذج واجهات النواة وكائناتها، بما فيها WDM/KMDF ودورة حياة الأجهزة والطاقة والذاكرة والجدولة؛ وينتمي إليه `KernelModelPowerPolicy.cpp`. يتولى `os/windows/process/` بدء عمليات المستخدم وخدماتها، بينما يضم `os/windows/exception/` البحث المشترك عن معالجات الاستثناءات وفك المكدس. تظل مصادر برامج التشغيل والنواة ضمن `NeverDEmulation`؛ فالاستدعاءات والأنواع المشتركة لم تُفصل بعد إلى مكتبات مستقلة. يدير كل مجلد قائمة مصادره في ملف `CMakeLists.txt` الخاص به مع الحفاظ على توافق الترويسات العامة.
 
+تتولى `os/linux/process/` و`os/darwin/process/` تحميل الصور والمكدسات الأولية واستئناف التنفيذ. تتولى `os/linux/kernel/` و`os/darwin/kernel/` واجهة ABI لاستدعاءات النظام والخدمات وسياسة الذاكرة ضمن `NeverDEmulationLinuxKernel` و`NeverDEmulationDarwinKernel` باعتماد على حدود الذاكرة/CPU الأساسية وLLVM Support فقط. يحتوي `MemoryLayout` سياسة العناوين دون الصور التنفيذية أو ABI البدء. يعتمد Android مباشرةً على نموذج نواة Linux؛ وتحتفظ macOS وiOS بملفات منصة مستقلة. تتجه الاعتمادات من العمليات والمنصات إلى خدمات النواة. لا تعني هذه المجلدات دعم تحميل نوى أو برامج تشغيل Linux/Darwin. تبقى مفردات النظام المشتركة في ملفات `.def` بطبقة OS.
+
 | المكوّن | المسؤولية |
 |---|---|
 | `NeverDEmulationCore` | الذاكرة والأعطال والسجلات وحلقة التنفيذ المشتركة |
@@ -594,7 +596,6 @@ CMake.
 | `NeverDEmulationCPU` | تهيئة المعالج وتركيب المحركات |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | اتفاقيات الأعداد الصحيحة وجلسات CPU وميزانيات أحمال العمل |
 | `NeverDEmulationImage` | خطط الربط لمقاطع المحمّل |
-| `NeverDEmulationLinux` / `NeverDEmulationProcess` | بدء ELF وسياسة خدمات Linux وتقارير ملف العملية |
 | `NeverDEmulation` | نموذج Windows ودورة حياة برنامج التشغيل |
 
 على macOS تنتمي واجهة النقل الأصلية [HVF](macos-hvf.md) إلى `NeverDEmulationNative`: تستخدم ARM64 على Apple Silicon وx86-64 على Intel. تحدد ISA المضيف واجهة النقل، لا نظام الضيف. تعرّف [ملفات Darwin](darwin-emulation.md) بدء macOS وأجهزة iOS وiOS Simulator وخدماتها بصورة مستقلة. يختلف التحقق المتبقي لـ Linux ARM64 KVM وWindows ARM64 WHP عن نتائج macOS ARM64 HVF المسجلة بالفعل. يوضح دليل HVF التوفر وحالة القبول الكاملة.

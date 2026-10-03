@@ -112,13 +112,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   auto Calls = IntegerABI::get(IntegerCallingConvention::AAPCS64);
   if (!Calls)
     return Calls.takeError();
-  linux_model::ProcessLayout Layout{GuestArchitecture::AArch64,
-                                    *Calls,
-                                    linux_model::UserLimitARM64,
-                                    0,
-                                    PageSize,
-                                    Native.LoadBias,
-                                    false};
+  linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, PageSize};
   auto Backend = createExecutionBackend(Options.Backend,
                                         ExecutionContract::CheckedUserAArch64,
                                         *Space, GuestArchitecture::AArch64);

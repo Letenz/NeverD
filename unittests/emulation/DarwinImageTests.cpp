@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "DarwinTestImage.h"
 #include "gtest/gtest.h"
-#include "os/darwin/DarwinProcess.h"
+#include "os/darwin/process/DarwinProcess.h"
 
 #include "neverd/loader/MachO/MachOExecutionImage.h"
 

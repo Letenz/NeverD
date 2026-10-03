@@ -596,6 +596,8 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 
 `os/windows/driver/` 负责驱动映像加载、执行会话、场景、报告及执行策略；`os/windows/kernel/` 负责内核 API 与对象模型，包括 WDM/KMDF、设备生命周期、电源策略、内存和调度，`KernelModelPowerPolicy.cpp` 归属此处。`os/windows/process/` 负责用户进程启动与服务，`os/windows/exception/` 负责共享的异常搜索与展开。驱动与内核源码仍组成 `NeverDEmulation`，现有调用和共享类型尚未形成独立库边界。各目录用自己的 `CMakeLists.txt` 维护源码清单，公共头文件保持兼容。
 
+`os/linux/process/` 和 `os/darwin/process/` 负责映像装载、初始栈及执行续接。`os/linux/kernel/` 和 `os/darwin/kernel/` 负责系统调用 ABI、服务及内存策略，分别构建为 `NeverDEmulationLinuxKernel` 和 `NeverDEmulationDarwinKernel`，仅依赖核心内存/CPU 边界与 LLVM Support。其 `MemoryLayout` 契约只含地址策略，不包含可执行映像或启动 ABI。Android 直接依赖 Linux 内核模型；macOS 和 iOS 保留独立平台配置。依赖方向从进程/平台指向内核服务。这些内核目录不代表已支持 Linux/Darwin 内核映像或驱动加载。共享 OS 词汇保留在 OS 层 `.def` 文件中。
+
 | 组件 | 职责 |
 |---|---|
 | `NeverDEmulationCore` | 内存、故障、寄存器与共享执行循环 |
@@ -604,7 +606,6 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 | `NeverDEmulationCPU` | CPU 配置及后端组合 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整数 ABI、CPU 会话与工作负载预算 |
 | `NeverDEmulationImage` | 加载器分段映射计划 |
-| `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 启动、Linux 服务策略与进程报告 |
 | `NeverDEmulation` | Windows 模型与驱动生命周期 |
 
 macOS 的原生传输 [HVF](macos-hvf.md) 归 `NeverDEmulationNative` 所有：Apple Silicon 使用 ARM64，Intel 使用 x86-64。宿主 ISA 决定该传输的选择，不决定来宾 OS；[Darwin profile](darwin-emulation.md) 独立定义 macOS、iOS 设备和 iOS Simulator 的启动与服务。仍待完成的 Linux ARM64 KVM、Windows ARM64 WHP 验证不能与已有的 macOS ARM64 HVF 证据混为一谈。原生可用性和完整验收状态以 HVF 指南为准。

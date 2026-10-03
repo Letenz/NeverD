@@ -26,7 +26,7 @@ std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
 #define NEVERD_DARWIN_SERVICE(Name, Code, ReturnType)                          \
   if (Number == Code)                                                          \
     return ServiceKind::Name;
-#include "DarwinValues.def"
+#include "../DarwinValues.def"
 #undef NEVERD_DARWIN_SERVICE
   return std::nullopt;
 }
@@ -125,9 +125,9 @@ llvm::Error returnService(ExecutionBackend &CPU, const ServiceRequest &Request,
 
 llvm::Expected<std::optional<ServiceResult>>
 handleService(ExecutionBackend &CPU, DarwinMemory &Memory,
-              const ProcessServiceEvent &Event, const ProcessImage &Image,
-              const ProcessOptions &Options, ProcessResult &Result) {
-  auto Kind = serviceKind(Image.Architecture, Event.Number);
+              const ProcessServiceEvent &Event, const ProcessOptions &Options,
+              ProcessResult &Result) {
+  auto Kind = serviceKind(CPU.architecture(), Event.Number);
   if (!Kind) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic =

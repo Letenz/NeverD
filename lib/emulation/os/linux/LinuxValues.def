@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_LINUX_VALUE
 NEVERD_LINUX_VALUE(StackTop, 0x00007fffffff0000ULL)
+NEVERD_LINUX_VALUE(PointerSize64, 8)
 NEVERD_LINUX_VALUE(MinimumAddress, 0x10000)
 NEVERD_LINUX_VALUE(StaticPIEBias, 0x40000000)
 NEVERD_LINUX_VALUE(DynamicEntryLimit, 4096)
@@ -45,7 +46,7 @@ NEVERD_LINUX_THREAD_POINTER(GetGS, 0x1004, X64GSBase, false)
 NEVERD_LINUX_AUX(PHDR, 3, Layout.ProgramHeaderAddress)
 NEVERD_LINUX_AUX(PHENT, 4, Image.ELFMetadata->ProgramHeaderEntrySize)
 NEVERD_LINUX_AUX(PHNUM, 5, Image.ELFMetadata->ProgramHeaders.size())
-NEVERD_LINUX_AUX(PAGESZ, 6, Layout.PageSize)
+NEVERD_LINUX_AUX(PAGESZ, 6, Layout.Memory.PageSize)
 NEVERD_LINUX_AUX(BASE, 7, 0)
 NEVERD_LINUX_AUX(FLAGS, 8, 0)
 NEVERD_LINUX_AUX(ENTRY, 9, Image.Entry + Layout.LoadBias)

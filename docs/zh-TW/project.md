@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: dc2e183e5b0272875f3a219e97dcae8f4499d3cedfcd8866114cec94e1d07c28 -->
+<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
 
 <div align="center">
 
@@ -38,33 +38,7 @@ NeverD 是以 **1:1 指令級提升** 為核心的原生與智慧合約分析/�
 
 CLI、整合方與 AI 智慧體透過 **純 C API** 使用同一個引擎 **`libneverd`**，不直接連結 Capstone、LLVM 或內部 C++。
 
-輸入格式、host contract 與限制詳見 [EVM 指南](evm.md)及 [Solana SBF 指南](sbf.md)。
-
-實驗性 CLI `neverd mobile app.apk -o recovered-app` 可從 APK、DEX 與 smali 還原 Java，並產生 `report.json`。Android 還原僅使用 NeverD 內建的 C++20 引擎，執行時不需要 Python 或 Java。包含空格的路徑必須加上引號。支援的輸入、報告與還原限制請見 [Android 指南](android.md)。
-
-實驗性 iOS 流程 `neverd mobile App.ipa -o recovered-ios` 從 IPA、`.app` 或 Mach-O 輸出原生 C 和受支援的 Objective-C/Swift 原始碼，保留執行階段配置、原始碼單元和逐方法省略原因；生成程式碼不透過橋接呼叫原始二進位檔。環境、覆蓋率與獨立編譯驗證請見 [iOS 指南](ios.md)。
-
-實驗性的[直譯器原始碼還原](interpreter-recovery.md)使用 `neverd decompile --devirtualize --func ENTRY`，透過共用 LowIR/MedIR 管線，將支援的已連結 x64 ELF/PE 直譯器特化為 HighC 或 LLVMC。控制提示用來區分解碼器情境，不固定執行時輸入。未解析控制流程、不支援的語義與預算耗盡都會明確失敗；此模式不證明二進位替換或例外等價性。
-
-恢復預算可明確設定：`--vm-max-fields`、`--vm-max-refinements`、`--vm-max-queries` 的預設值仍為 16、16、4096。相容的 v3 C API 與失敗規則見恢復指南。
-
-恢復也提供 `--vm-chain-transfers=N`（預設 0）和 `--vm-no-control-discovery`。串接在已證明唯一目標的控制轉移之間保留符號關聯；達到上限後回到普通 CFG 邊界。機器狀態恢復可透過 `--vm-entry-frame=begin:end` 宣告未經執行時檢查、不會回繞的入口 RSP 偏移範圍。精確數值前提會寫入產生的 C 和報告；它不授予記憶體存取權限，也不構成等價證明。
-
-機器狀態恢復支援以 `--vm-entry-alignment=A:R` 宣告並檢查入口 RSP 同餘域。`A` 必須是正的二次冪，且 `R < A`。其他入口在客體記憶體存取或狀態寫入前回傳狀態 2。根位址高位仍自由，預設不假定對齊；此選項不提供原生等價認證。
-
-`--vm-external-stores-disjoint-frame` 為機器狀態恢復加入顯式、未經執行期檢查的前提：每次外部 STORE 的完整範圍必須避開 `--vm-entry-frame`。這種寫入只保留該區間內已有的事實，不約束 LOAD 或外部指標之間的別名；預設行為仍保守。原生證明 API 拒絕此域。
-
-超過 SSA 建構限制的大型恢復函式可透過 `--llvm` 使用有界的純量可變儲存契約。入口輸入、迴圈攜帶值和較早讀取的語意得到保留。不支援的隱含狀態、向量暫存器參數、映像重定位、歧義儲存和畸形控制流程會明確失敗；HighC 拒絕此回退路徑。原始碼輸出仍遵循既有機器狀態契約，不新增等價證明憑證。
-
-獨立的 C++ 迴圈證明 API 可在預算內推導巢狀迴圈不變量與字典序排名，再檢查原生程式碼至 LowIR 的精化關係，詳見[恢復指南](interpreter-recovery.md)；它不證明輸出 C 的等價性。
-
-獨立的 C++ `checkBinaryLLVMRefinement` API 對精確 LLVM 產物組合全新的原生與 LLVM 檢查；C 編譯仍不在證明範圍內。
-
-PE 恢復也會認證偏好基底位址的 DIR64 位元組並排除匯入寫入；固定映像契約不證明 ASLR 或初始化等價性。
-
-在明確的機器狀態契約下，解譯器恢復支援有界入口堆疊對齊分區及內部 `RET imm16` 清理。這些分區的自動原生至 LLVM 證明組合尚未完成。
-
-有界 `REP MOVS/STOS` 還原保留逐元素順序與重疊行為；原始指令的證明覆蓋仍待完成。
+使用方式、支援範圍與限制請見 [EVM](evm.md)、[Solana SBF](sbf.md)、[行動端原始碼還原](mobile.md)及實驗性[直譯器原始碼還原](interpreter-recovery.md)指南。
 
 <!-- i18n-section: why-neverd -->
 
@@ -113,7 +87,7 @@ Low/Med/High IR、已驗證 LLVM、可攜式 C11 與安全 stable Rust。詳見
 
 ### CPU 執行與客體環境
 
-NeverD 透過共用的來賓 OS 模型執行有界 Windows/Linux 程序與 x64 Windows 驅動程式。Unicorn 提供 x64/ARM64 軟體執行；相符的主機可依工作負載支援情況使用 KVM 或 WHP。後端選擇、環境能力、原生驗證與目前限制請見 [CPU 執行與來賓環境](emulation.md)。
+NeverD 將 CPU 後端與來賓 OS 模型分開，用於有界行程、Android 原生函式庫及 x64 Windows 驅動。Unicorn 提供 x64/ARM64 軟體執行；相同架構主機可用 KVM（Linux）、WHP（Windows）或 HVF（macOS）。支援環境、驗證結果與限制請見 [CPU 執行與來賓環境](emulation.md)。
 
 <!-- i18n-section: how-it-works -->
 

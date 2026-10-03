@@ -14,19 +14,19 @@ std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
 #define NEVERD_LINUX_SERVICE(Name, X64Number, ARMNumber, Count)                \
   if (Number == (ISA == GuestArchitecture::X64 ? X64Number : ARMNumber))       \
     return ServiceKind::Name;
-#include "LinuxValues.def"
+#include "../LinuxValues.def"
 #undef NEVERD_LINUX_SERVICE
 #define NEVERD_LINUX_X64_SERVICE(Name, Value, Count)                           \
   if (ISA == GuestArchitecture::X64 && Number == Value)                        \
     return ServiceKind::Name;
-#include "LinuxValues.def"
+#include "../LinuxValues.def"
 #undef NEVERD_LINUX_X64_SERVICE
   return std::nullopt;
 }
 
 llvm::Expected<std::optional<uint64_t>>
 writeOutput(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
-            const ProcessLayout &Layout, const ProcessOptions &Options,
+            const MemoryLayout &Layout, const ProcessOptions &Options,
             ProcessResult &Result) {
   const auto [FD, Address, Count, A3, A4, A5] = Event.Arguments;
   if (FD != StandardOutput && FD != StandardError)
@@ -73,9 +73,9 @@ writeOutput(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
 
 llvm::Expected<std::optional<uint64_t>>
 handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
-              const ProcessServiceEvent &Event, const ProcessLayout &Layout,
+              const ProcessServiceEvent &Event, const MemoryLayout &Layout,
               const ProcessOptions &Options, ProcessResult &Result) {
-  auto Kind = serviceKind(Layout.Architecture, Event.Number);
+  auto Kind = serviceKind(CPU.architecture(), Event.Number);
   if (!Kind) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = llvm::formatv(Service, Event.Number).str();
@@ -85,7 +85,7 @@ handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
 }
 llvm::Expected<std::optional<uint64_t>>
 handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
-              const ProcessServiceEvent &Event, const ProcessLayout &Layout,
+              const ProcessServiceEvent &Event, const MemoryLayout &Layout,
               const ProcessOptions &Options, ProcessResult &Result) {
   switch (Kind) {
   case ServiceKind::Exit:

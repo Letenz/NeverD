@@ -52,12 +52,10 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
         !Loaded->MainEntries)))
     return failure("unsupported Mach-O interpreter startup");
   ProcessImage Result{X64 ? GuestArchitecture::X64 : GuestArchitecture::AArch64,
-                      X64 ? PageSizeX64 : PageSizeARM64,
-                      MinimumAddress,
+                      {X64 ? PageSizeX64 : PageSizeARM64, MinimumAddress, {}},
                       Loaded->MainEntries == 1,
-                      {},
                       {}};
-  const uint64_t Page = Result.PageSize;
+  const uint64_t Page = Result.Memory.PageSize;
   if (Options.StackSize % Page || Options.StackSize >= Options.MemoryLimit ||
       Page > Options.MemoryLimit - Options.StackSize)
     return failure(
@@ -78,7 +76,7 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
           !Segment.Size || Segment.Size % Page || Info.InitialProtection ||
           Info.MaximumProtection)
         return failure("invalid Mach-O __PAGEZERO reservation");
-      Result.MinimumAddress = std::max(MinimumAddress, Segment.Size);
+      Result.Memory.MinimumAddress = std::max(MinimumAddress, Segment.Size);
       continue;
     }
     if (!Segment.Size)
@@ -90,9 +88,9 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
           "Darwin Mach header segment requires read and execute permissions");
     if (Info.InitialProtection && !(Info.InitialProtection & VM_PROT_READ))
       return failure("Darwin profile requires readable nonempty permissions");
-    Result.Maximum.push_back({Segment.VA,
-                              (Segment.Size + Page - 1) & ~(Page - 1),
-                              Info.MaximumProtection});
+    Result.Memory.Maximum.push_back({Segment.VA,
+                                     (Segment.Size + Page - 1) & ~(Page - 1),
+                                     Info.MaximumProtection});
     Mapped.push_back(Segment);
   }
   Image.Segments = std::move(Mapped);
@@ -103,7 +101,7 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
     return Plan.takeError();
   for (const auto &Region : Plan->Regions) {
     const uint64_t End = Region.Address + Region.Bytes.size();
-    if (Region.Address < Result.MinimumAddress || End > UserLimit ||
+    if (Region.Address < Result.Memory.MinimumAddress || End > UserLimit ||
         (Region.Address < StackTop + Page &&
          End > StackTop - Options.StackSize - Page) ||
         (Region.Address < ReturnGate + Page && End > ReturnGate))

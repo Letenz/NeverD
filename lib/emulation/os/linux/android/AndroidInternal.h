@@ -6,9 +6,10 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_ANDROIDINTERNAL_H
 #define NEVERD_EMULATION_ANDROIDINTERNAL_H
-#include "../LinuxMemory.h"
+#include "../kernel/LinuxMemory.h"
 
 #include "neverd/emulation/AndroidNative.h"
+#include "neverd/emulation/IntegerABI.h"
 #include "neverd/loader/ELF/ELFProgramLinking.h"
 
 #include <map>
@@ -42,9 +43,9 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
 class Bionic {
 public:
   Bionic(ExecutionBackend &CPU, linux_model::LinuxMemory &Memory,
-         const linux_model::ProcessLayout &Layout,
-         const ProcessOptions &Options, ProcessResult &Result,
-         ExecutionBudget &Budget, const LinkedImage &Linked)
+         const linux_model::MemoryLayout &Layout, const ProcessOptions &Options,
+         ProcessResult &Result, ExecutionBudget &Budget,
+         const LinkedImage &Linked)
       : CPU(CPU), Memory(Memory), Layout(Layout), Options(Options),
         Result(Result), Budget(Budget), Linked(Linked) {}
   bool timedOut() const { return Expired; }
@@ -53,7 +54,7 @@ public:
 private:
   ExecutionBackend &CPU;
   linux_model::LinuxMemory &Memory;
-  const linux_model::ProcessLayout &Layout;
+  const linux_model::MemoryLayout &Layout;
   const ProcessOptions &Options;
   ProcessResult &Result;
   ExecutionBudget &Budget;

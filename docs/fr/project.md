@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: dc2e183e5b0272875f3a219e97dcae8f4499d3cedfcd8866114cec94e1d07c28 -->
+<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
 
 <div align="center">
 
@@ -38,33 +38,7 @@ Le mode strict est **activé par défaut**. Une instruction sans lifter lève `U
 
 CLI, intégrateurs et agents IA utilisent un seul moteur — **`libneverd`** — via une **API C pure**. Ils ne lient pas Capstone, LLVM, ni le C++ interne directement.
 
-Les formats d’entrée, contrats host et limites sont documentés dans les guides [EVM](evm.md) et [Solana SBF](sbf.md).
-
-La CLI expérimentale `neverd mobile app.apk -o recovered-app` restaure Java depuis APK (multidex), DEX et smali et produit `report.json`. La restauration Android utilise uniquement le moteur intégré de NeverD en C++20 et ne nécessite aucun environnement Python ou Java à l’exécution. Entourez de guillemets les chemins contenant des espaces. Les entrées prises en charge, les rapports et les limites sont décrits dans le [guide Android](android.md).
-
-Le traitement iOS expérimental `neverd mobile App.ipa -o recovered-ios` exporte du C natif et des sources Objective-C/Swift prises en charge depuis IPA, `.app` ou Mach-O. Dispositions runtime, unités source et omissions par méthode restent explicites ; le code généré n’utilise aucun pont vers le binaire original. Voir le [guide iOS](ios.md) pour la configuration, la couverture et la recompilation indépendante.
-
-La [récupération expérimentale de sources d’interpréteur](interpreter-recovery.md) utilise `neverd decompile --devirtualize --func ENTRY` pour spécialiser les interpréteurs x64 ELF/PE liés pris en charge en HighC ou LLVMC, via le pipeline LowIR/MedIR commun. Les indications de contrôle séparent les contextes du décodeur sans fixer les entrées d’exécution. Contrôle non résolu, sémantique non prise en charge et budgets épuisés provoquent un échec explicite ; ce mode ne certifie ni le remplacement binaire ni l’équivalence des exceptions.
-
-Les budgets de récupération sont explicites : `--vm-max-fields`, `--vm-max-refinements` et `--vm-max-queries` conservent les valeurs par défaut 16, 16 et 4096. Le guide décrit l’API C v3 compatible et les règles d’échec.
-
-La récupération expose aussi `--vm-chain-transfers=N` (0 par défaut) et `--vm-no-control-discovery`. Le chaînage conserve les corrélations symboliques entre transferts dont la cible unique est prouvée ; sa limite revient aux frontières CFG ordinaires. Le mode état machine accepte des offsets d’entrée RSP sans bouclage, non vérifiés à l’exécution, via `--vm-entry-frame=begin:end`. La prémisse numérique exacte accompagne le C et le rapport, sans autoriser d’accès mémoire ni prouver l’équivalence.
-
-La récupération en état machine accepte `--vm-entry-alignment=A:R` comme domaine explicite et vérifié du RSP initial. `A` doit être une puissance de deux positive et `R < A`. Les autres valeurs renvoient le statut 2 avant tout accès invité ou écriture d’état. Les bits hauts restent libres et aucun alignement n’est supposé par défaut. Cette option ne certifie pas l’équivalence native.
-
-`--vm-external-stores-disjoint-frame` ajoute une précondition explicite, non vérifiée à l’exécution : chaque écriture STORE externe doit éviter entièrement `--vm-entry-frame`. Seuls les faits déjà connus dans cette plage sont conservés. Aucune contrainte ne porte sur LOAD ou sur les alias entre pointeurs externes ; le comportement par défaut reste conservateur. Les API de preuve native refusent ce domaine.
-
-Les grandes fonctions récupérées qui dépassent la limite de construction SSA peuvent utiliser `--llvm` avec un contrat borné de stockage scalaire mutable. Les entrées, les valeurs portées par les boucles et les lectures antérieures conservent leur sens. Les états implicites non pris en charge, paramètres en registres vectoriels, relocalisations, stockages ambigus et contrôles mal formés échouent explicitement ; HighC refuse ce repli. La sortie reste soumise au contrat existant de l’état machine, sans certificat d’équivalence supplémentaire.
-
-L’API C++ distincte de preuve des boucles infère des invariants bornés et des rangs lexicographiques pour les boucles imbriquées, puis revérifie le raffinement natif vers LowIR. Voir le [guide de récupération](interpreter-recovery.md) ; elle ne certifie pas le C émis.
-
-L’API C++ distincte `checkBinaryLLVMRefinement` compose de nouvelles vérifications natives et LLVM sur un artefact LLVM exact ; la compilation C reste hors du périmètre de preuve.
-
-La récupération PE authentifie aussi les octets DIR64 à la base préférée et exclut les écritures des imports ; ce contrat ne certifie ni l’ASLR ni l’initialisation.
-
-Sous le contrat explicite d’état machine, la récupération traite des partitions bornées d’alignement de pile à l’entrée et le nettoyage interne `RET imm16`. La composition automatique des preuves natif-vers-LLVM pour ces partitions reste à réaliser.
-
-La récupération bornée de `REP MOVS/STOS` conserve l’ordre des éléments et les recouvrements ; la preuve des instructions d’origine reste à réaliser.
+Consultez les guides [EVM](evm.md), [Solana SBF](sbf.md), [récupération de sources mobiles](mobile.md) et [récupération expérimentale de sources d’interpréteurs](interpreter-recovery.md) pour les usages, contrats pris en charge et limites.
 
 <!-- i18n-section: why-neverd -->
 
@@ -114,7 +88,7 @@ La récupération dépend des motifs de code pris en charge ; consultez la [vue 
 
 ### Exécution CPU et environnements invités
 
-NeverD exécute des processus Windows/Linux et des pilotes Windows x64 dans un périmètre défini, avec des modèles communs du système invité. Unicorn assure l’exécution logicielle x64/ARM64 ; les hôtes compatibles peuvent utiliser KVM ou WHP selon la charge. Voir [Exécution CPU et charges invitées](emulation.md) pour le choix du moteur, les environnements pris en charge, la validation native et les limites actuelles.
+NeverD sépare les backends CPU des modèles d’OS invités pour les processus bornés, les bibliothèques natives Android et les pilotes Windows x64. Unicorn exécute x64/ARM64 en logiciel ; les hôtes de même ISA peuvent utiliser KVM (Linux), WHP (Windows) ou HVF (macOS). Voir [Exécution CPU et charges invitées](emulation.md) pour les environnements, validations et limites.
 
 <!-- i18n-section: how-it-works -->
 
