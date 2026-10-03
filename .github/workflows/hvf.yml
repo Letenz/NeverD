@@ -198,6 +198,7 @@ jobs:
           path: build-hvf/native-build.log
           if-no-files-found: warn
       - name: Require actual host execution and record every result
+        timeout-minutes: 30
         if: inputs.validation == 'full'
         env:
           HVF_EXECUTION_METHODS: ${{ inputs.runner == 'hosted-intel' && '--execution-methods' || '' }}
@@ -214,6 +215,7 @@ jobs:
           path: build-hvf/native-evidence/
           if-no-files-found: warn
       - name: Require every native Darwin workload
+        timeout-minutes: 15
         if: inputs.validation == 'full' || inputs.validation == 'darwin'
         env:
           HVF_EXECUTION_METHODS: ${{ inputs.runner == 'hosted-intel' && '--execution-methods' || '' }}

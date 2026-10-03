@@ -26,7 +26,7 @@ else:
 def google_test_command(command):
     # CMake 4.3+ launches discovered GoogleTests through LaunchTest.cmake.
     # Only its plain native form is equivalent to our direct invocation:
-    # https://github.com/Kitware/CMake/blob/v4.3.0/Modules/GoogleTest/LaunchTest.cmake
+    # https://github.com/Kitware/CMake/blob/master/Modules/GoogleTest/LaunchTest.cmake
     if (len(command) == 13 and Path(command[0]).name == "cmake"
             and command[-2] == "-P"
             and Path(command[-1]).parts[-3:] == ("Modules", "GoogleTest", "LaunchTest.cmake")
@@ -181,18 +181,23 @@ def run_methods(document, evidence, environment):
         # GoogleTest does not enforce separate per-case timeouts in this mode.
         status = execute(command, directory, child_environment,
                          min(120, case_timeout * len(expected)), part)
+        incomplete = False
         try:
             cases = read_results(part / "results.xml", expected)
             outcomes.extend(cases)
             print(dict(Counter(case.outcome for case in cases)), flush=True)
         except (OSError, ValueError, KeyError, ET.ParseError) as error:
             errors.append(family + ": " + str(error))
+            incomplete = True
         if status["status"] != 0 or status["timed_out"] or not status["child_retired"]:
             errors.append(family + ": child execution failed or incomplete")
         (part / "identities.json").write_text(json.dumps({
             name: {"name": record.name, "labels": sorted(record.labels)}
             for name, record in expected.items()}, indent=2) + "\n")
-        if not status["child_retired"]:
+        # Publish the first timeout or incomplete result promptly rather than
+        # spending another deadline per method without complete evidence.
+        # Ordinary assertion failures with complete XML still collect later cases.
+        if incomplete or status["timed_out"] or not status["child_retired"]:
             break
     report = {"execution": "gtest-methods", "errors": errors, "results": [
         {"name": case.test.name, "labels": sorted(case.test.labels),

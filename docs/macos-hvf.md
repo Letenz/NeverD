@@ -337,7 +337,9 @@ and working directory. The mode rejects unsupported CTest properties rather
 than ignoring fixtures or resource contracts. Each child has an aggregate
 deadline capped at 120 seconds, followed by bounded process-group retirement;
 individual parameter timeouts are not separately enforced inside GoogleTest.
-Raw XML, logs, exit status and the exact CTest-name mapping are retained. The
+Raw XML, logs, exit status and the exact CTest-name mapping are retained. A
+timeout or incomplete XML stops execution with a partial failure; complete
+assertion results still allow later methods to run. The
 normal inventory, required-native and missing-result gates remain mandatory.
 The summary identifies `execution=gtest-methods` and serial execution, and
 never labels it a CTest execution result. Self-hosted validation continues to
@@ -352,7 +354,16 @@ Darwin inventory passed all 39 native workloads (65 passed, 221 skipped).
 Evidence is in `build-hvf-native/hvf-method-clean-full-evidence/` and
 `build-hvf-native/hvf-method-clean-darwin-evidence/`. The
 [Intel full run](https://github.com/NeverSight/NeverD/actions/runs/37103182936)
-uses this same source and remains pending.
+at that source built all twenty owners but stopped before execution: its newer
+CMake uses `GoogleTest/LaunchTest.cmake` and `DEF_SOURCE_LINE` metadata, which
+the first method parser rejected. The corrected parser explicitly supports
+the plain native wrapper and still refuses custom executors, output paths or
+extra arguments. Its 70 regression checks passed, and the actual 6,840-case
+Intel inventory was successfully parsed. The
+[replacement full run](https://github.com/NeverSight/NeverD/actions/runs/37104800707)
+at `defc93928a7a981100b38b66f98ed0a9d0300a95` remains pending. This clean source
+also repeated the ARM64 6,842-case and 286-case Darwin gates with identical
+outcomes, retained in `build-hvf-native/hvf-launcher-clean-{full,darwin}-evidence/`.
 
 Before committing this runner change, its 67 infrastructure checks passed.
 The current ARM64 inventory executed all 6,809 registrations across twenty

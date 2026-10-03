@@ -187,6 +187,7 @@ TLS/权限、CR8、取消，以及宿主修改、故障和停止前后的完整 
 每个 GoogleTest 方法以独立进程执行全部参数，保留标志、环境和工作目录；遇到未知 CTest 属性直接失败。
 每个方法的总时限不超过 120 秒，超时后对进程组作有界回收；方法内不再分别应用逐参数的 CTest 时限。
 保留原始 XML、日志、进程状态及 CTest 名称映射，继续强制检查原生必需项、漏跑和重复结果。
+首次超时或 XML 不完整会及时结束并发布部分失败结果；普通断言失败仍继续收集后续方法。
 摘要明确记录 `execution=gtest-methods` 和串行执行，不冒充 CTest 执行结果。
 自托管验收继续使用 CTest 的逐用例进程及时限；临时诊断工作流和脚本已移除。
 
@@ -195,8 +196,14 @@ TLS/权限、CR8、取消，以及宿主修改、故障和停止前后的完整 
 0 失败、5,993 跳过，16 个必需项全部通过。Darwin 独立清单为 65 通过、221 跳过，
 39 个原生工作负载全通过。证据保留于 `build-hvf-native/hvf-method-clean-full-evidence/`
 及 `build-hvf-native/hvf-method-clean-darwin-evidence/`。
-[当前 Intel 完整任务](https://github.com/NeverSight/NeverD/actions/runs/37103182936)
-使用相同源码，仍待结果。
+[该轮 Intel 完整任务](https://github.com/NeverSight/NeverD/actions/runs/37103182936)
+成功构建全部 20 个目标，但在执行前被验收工具拒绝：较新 CMake 使用
+`GoogleTest/LaunchTest.cmake` 包装命令和 `DEF_SOURCE_LINE` 元数据。
+修正后的解析器支持其普通原生形式，继续拒绝自定义执行器、输出路径或额外参数；
+70 项回归通过，真实 Intel 的 6,840 项清单也已完整解析。
+[新完整任务](https://github.com/NeverSight/NeverD/actions/runs/37104800707)使用
+`defc93928a7a981100b38b66f98ed0a9d0300a95`，仍待结果。该干净源码也再次通过相同
+ARM64 全量和 Darwin 检查，结果保存在 `build-hvf-native/hvf-launcher-clean-{full,darwin}-evidence/`。
 
 该验收工具的 67 项检查通过。提交前 ARM64 已跑完当前 20 个目标、6,809 个注册用例：
 845 通过、0 失败、5,964 跳过，16 个原生必需项全部通过；独立 Darwin 验收 65 通过、221 跳过，

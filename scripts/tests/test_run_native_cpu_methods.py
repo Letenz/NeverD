@@ -182,6 +182,28 @@ class NativeMethodEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "disables required native coverage"):
             methods.run_methods(self.document, self.root / "evidence", {"NEVERD_REQUIRE_HVF": "1"})
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX process groups")
+    def test_first_incomplete_method_publishes_partial_failure_without_another_deadline(self):
+        self.write_xml()
+        next_case = copy.deepcopy(self.document["tests"][0])
+        next_case["name"] = "Native.Later"
+        next_case["command"][1] = "--gtest_filter=Native.Later"
+        self.document["tests"].append(next_case)
+        for missing_xml in (False, True):
+            def execute(command, directory, environment, timeout, evidence):
+                evidence.mkdir(parents=True)
+                if not missing_xml:
+                    (evidence / "results.xml").write_bytes(self.xml.read_bytes())
+                return {"status": 0, "timed_out": not missing_xml, "child_retired": True}
+            with self.subTest(missing_xml=missing_xml), \
+                    mock.patch.object(methods, "execute", side_effect=execute) as child, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                cases, status = methods.run_methods(
+                    self.document, self.root / str(missing_xml), {})
+                self.assertEqual(child.call_count, 1)
+                self.assertEqual(status, 1)
+                self.assertLess(len(cases), len(self.document["tests"]))
+
 
 if __name__ == "__main__":
     unittest.main()
