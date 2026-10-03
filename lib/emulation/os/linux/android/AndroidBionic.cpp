@@ -232,10 +232,6 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
     return Value(ErrnoAddress);
   if (Name == "android_get_device_api_level")
     return Value(28);
-  if (Name == "getpid")
-    return Value(linux_model::ProcessID);
-  if (Name == "gettid")
-    return Value(linux_model::ThreadID);
   if (Name == "__stack_chk_fail" || Name == "abort")
     return failure("guest called " + Name);
   if (Name == "memcpy" || Name == "memmove" || Name == "memset" ||
@@ -362,6 +358,18 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
     return Value(0); // The ABI leaves x0 unspecified for void calls.
   }
   std::optional<linux_model::ServiceKind> Kind;
+  if (Name == "getpid")
+    Kind = linux_model::ServiceKind::GetPID;
+  if (Name == "gettid")
+    Kind = linux_model::ServiceKind::GetTID;
+  if (Name == "getuid")
+    Kind = linux_model::ServiceKind::GetUID;
+  if (Name == "geteuid")
+    Kind = linux_model::ServiceKind::GetEUID;
+  if (Name == "getgid")
+    Kind = linux_model::ServiceKind::GetGID;
+  if (Name == "getegid")
+    Kind = linux_model::ServiceKind::GetEGID;
   if (Name == "mmap" || Name == "mmap64")
     Kind = linux_model::ServiceKind::Mmap;
   if (Name == "mprotect")

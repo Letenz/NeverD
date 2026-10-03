@@ -121,6 +121,32 @@ TEST_P(LinuxProcess, InstructionCreditsSurviveQuantumResumptions) {
   EXPECT_EQ(Result.Instructions, Options.Limits.Instructions);
   EXPECT_FALSE(Result.ExitStatus);
 }
+TEST_P(LinuxProcess, IdentityQueriesAgreeWithStartupAuxiliaryVector) {
+  Options.Arguments[1] = IdentityQueries;
+  Options.InstructionQuantum = 3;
+  auto Result = run();
+  ASSERT_EQ(Result.Stop, ProcessStopReason::Exited) << Result.Diagnostic;
+  EXPECT_EQ(Result.ExitStatus, ExitStatus);
+  ASSERT_EQ(Result.Services.size(), 5u);
+  const std::vector<uint64_t> Numbers =
+      GetParam().ISA == GuestArchitecture::X64
+          ? std::vector<uint64_t>{102, 107, 104, 108}
+          : std::vector<uint64_t>{174, 175, 176, 177};
+  for (size_t I = 0; I < Numbers.size(); ++I) {
+    EXPECT_EQ(Result.Services[I].Number, Numbers[I]);
+    EXPECT_EQ(Result.Services[I].Result, Identity);
+  }
+}
+TEST_P(LinuxProcess, IdentityMutationRemainsAnUnsupportedService) {
+  Options.Arguments[1] = SetIdentity;
+  auto Result = run();
+  EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_FALSE(Result.ExitStatus);
+  ASSERT_EQ(Result.Services.size(), 1u);
+  EXPECT_EQ(Result.Services[0].Number,
+            GetParam().ISA == GuestArchitecture::X64 ? 105u : 146u);
+  EXPECT_FALSE(Result.Services[0].Result);
+}
 TEST_P(LinuxProcess,
        AnonymousMappingsHeapAndCodeSurviveRealServiceContinuations) {
   Path.replace_filename(Path.stem().string() + memory_fixture::Suffix);

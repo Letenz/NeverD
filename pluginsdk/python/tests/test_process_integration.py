@@ -131,6 +131,28 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.assertEqual(call["library"], "libfixture.so")
         self.assertEqual(call["pc"], lookup["result"])
         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+        names = ("getuid", "geteuid", "getgid", "getegid")
+        options = json.dumps({"backend": "unicorn", "android": {
+            "entry_symbol": "dynamic_identities", "arguments": [0x20000000, 0],
+            "memory": [{"address": 0x20000000, "size": 4096}],
+            "read_memory": [{"address": 0x20000000, "size": 16}],
+            "libraries": {"libidentity.so": list(names)},
+        }})
+        result = session.emulate_process(str(Path(fixtures) / "relr.so"),
+                                         "android-aarch64-api28-v1", options)
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(int(result["return_value"], 16), 0)
+        for name in names:
+            with self.subTest(symbol=name):
+                events = result["android"]["native_calls"]
+                lookup = next(e for e in events
+                              if e["name"] == "dlsym" and e["symbol"] == name)
+                call = next(e for e in events if e["name"] == name)
+                self.assertEqual(lookup["library"], "libidentity.so")
+                self.assertEqual(call["library"], "libidentity.so")
+                self.assertEqual(call["pc"], lookup["result"])
+                self.assertEqual(int(call["result"], 16), 1000)
+        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
 
 if __name__ == "__main__":
