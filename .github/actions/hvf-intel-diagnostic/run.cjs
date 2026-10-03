@@ -188,7 +188,7 @@ async function main() {
   });
 }
 
-module.exports = {runSequence, startCommand, testEnvironment, captureHostState};
+module.exports = {runSequence, startCommand, testEnvironment, captureHostState, UPLOAD_REVISION};
 if (require.main === module) {
   main().catch(error => {
     console.error(error.message);

@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 478f8b13db60f0a44791a4f6ae969f9fa285d6477c5a242f89d342c02345fc78 -->
+<!-- i18n-source: 13c30cb15cacba497163d2d7027684dbbfed986b61111754b7f61993bcbaccbe -->
 
 [← 文档索引](README.md)
 
@@ -210,3 +210,9 @@ CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所�
 `sample-active-child=true` 可在观测到原生子进程登记五秒后保存一次封存的执行中快照：对已核验身份的原生子进程采样一秒调用栈、截取最多 1 MiB 的当前日志尾部，并记录宿主状态。默认值为 `false`。为遵守 artifact 数量限制，启用采样的每个作业最多选择 166 个方法；采样命令限时二十秒，报告上限 1 MiB。身份核验和采集失败都会记录，包括命令返回 0 却没有调用栈报告的情况。执行中快照从独立的不可变目录上传；上传失败会取消原生子进程并使 action 失败。采样会改变调度，因此标记为带采样的部分证据，不重置原始方法计时，也不能替代完整验收。
 
 完整工作流也支持 `recovery-repetitions=1000`，用于集中调查中断与恢复问题；默认仍为 `100`。选择 1000 次时，重复测试步骤的总预算从三分钟变为十分钟。每次原生测试保留原始期限、断言和遇错停止行为，运行标题会标明加长的重复设置。这些重复测试不能替代完整 CPU 或 Darwin 验收。
+
+单独的 [Intel 恢复诊断工作流](../../.github/workflows/hvf-intel-recovery.yml) 只构建 `NeverDHvfTests`，在一个进程内使用原始 `HvfExecutor.Native*` 筛选器，选择 `repetitions=100` 或 `1000`。它要求精确的 `source-ref`、原生 Intel VM/vCPU 探测、Release、启用 HVF 并禁用 Unicorn。控制器、被测源码和官方 artifact 上传器分别检出。
+
+Action 在执行前上传计划。执行期间保存初始进程标记，每增加至少 25 个完整轮次保存进度；存在尚未保存的新日志且进度停滞时，额外保存至多一次现场。上传期间合并进度，进度 artifact 最多 42 份，每份日志副本最多 1 MiB，只上传封存目录。上传不会暂停各轮执行或重置计时器，但仍会影响宿主调度，因此属于带观测的部分证据。
+
+成功要求从第 1 轮到指定次数连续，每轮准确匹配原生测试的 RUN/OK/PASSED，无失败或跳过、退出码为零且确认进程已回收。重复执行时被覆盖的 XML 不能证明这些条件。原生执行总预算为三分钟或十分钟，控制器额外留出 30 秒清理，Action 上限为 20 分钟。上传失败会取消执行，取消操作会回收原生进程组和上传器。宿主仍可达时上传最终证据。不完整或截断的快照不能满足完整 CPU 或 Darwin 验收。
