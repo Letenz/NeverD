@@ -53,9 +53,11 @@ public:
       return hvf::error("hv_vmx_vcpu_read_vmcs", S);
     return V;
   }
-  llvm::Error unexpectedExit(uint64_t Reason) {
-    auto Text =
-        llvm::formatv("HVF Intel unexpected VM exit ({0:x})", Reason).str();
+  llvm::Error unexpectedExit(uint64_t Reason, const X64MachineState &Input) {
+    auto Text = llvm::formatv(
+                    "HVF Intel unexpected VM exit ({0:x}); input_rflags={1:x}",
+                    Reason, Input.reg(X64Register::FLAGS))
+                    .str();
     const std::pair<const char *, uint32_t> Fields[] = {
         {"qualification", VMCS_RO_EXIT_QUALIFIC},
         {"rip", VMCS_GUEST_RIP},
@@ -190,6 +192,12 @@ public:
     return E;
 #include "HvfX64Registers.def"
 #undef NEVERD_HVF_X64_REGISTER
+    // RIP/RFLAGS are VMCS fields. Install them directly on every entry,
+    // including after cancellation replaces the native vCPU.
+    if (auto E = vmcs(VMCS_GUEST_RIP, State.reg(X64Register::PC)))
+      return E;
+    if (auto E = vmcs(VMCS_GUEST_RFLAGS, State.reg(X64Register::FLAGS)))
+      return E;
     if (auto E = set(HV_X86_XCR0, x64::fp::FPAndSSE))
       return E;
     if (auto E = encodeX64XsaveState(State, FP))
@@ -211,6 +219,14 @@ public:
   }
 #include "HvfX64Registers.def"
 #undef NEVERD_HVF_X64_REGISTER
+    auto PC = vmcs(VMCS_GUEST_RIP);
+    if (!PC)
+      return PC.takeError();
+    auto Flags = vmcs(VMCS_GUEST_RFLAGS);
+    if (!Flags)
+      return Flags.takeError();
+    State.reg(X64Register::PC) = *PC;
+    State.reg(X64Register::FLAGS) = *Flags;
     // CR8 is an architectural shadow. HV_X86_TPR readback can disagree with
     // guest MOV CR8 on Intel hosts, so all CR8 accesses must exit. Checked
     // code cannot write CR8; an authenticated read is completed below.
@@ -254,7 +270,7 @@ public:
           return llvm::Error::success();
         if (*Reason != ExitMTF && *Reason != ExitException &&
             *Reason != ExitControlRegister)
-          return Native.unexpectedExit(*Reason);
+          return Native.unexpectedExit(*Reason, State);
         if (auto E = Native.capture(Next, Bytes))
           return E;
         if (*Reason == ExitControlRegister) {

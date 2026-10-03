@@ -62,9 +62,14 @@ before the admitted instruction. Debug exceptions routed to EL2 cannot be
 masked using the guest's `PSTATE.D`. All scalar, TLS and FP/SIMD state uses the
 existing ARM64 capture boundary and startup probe. Intel uses negotiated VMCS
 controls, monitor-trap stepping, TLB invalidation, complete FP/SSE XSAVE packets
-and authenticated exception exits. CR0/CR4 honor both framework writable masks
+and authenticated exception exits. RIP/RFLAGS are installed and captured
+directly through VMCS, including after vCPU recreation. CR0/CR4 honor both framework writable masks
 and hardware fixed bits; host-required bits are hidden by the guest read
-shadows. Each Intel vCPU creation, including cancellation recovery, binds and
+shadows. CR8 uses explicit VMX access exits and an architecture-owned read
+completion: the host TPR API can disagree with the guest's actual value.
+Only authenticated MOV-from-CR8 exits are completed; other control-register
+accesses fail. The checked instruction inventory is unchanged. Each Intel
+vCPU creation, including cancellation recovery, binds and
 initializes a private managed `IA32_KERNEL_GS_BASE`. Guest MSR access stays
 trapped, and unsupported MSR/SWAPGS instructions remain outside the checked ISA. Both architectures run the existing complete
 state startup probe before exposing a CPU.
@@ -73,6 +78,8 @@ Queue admission observes the borrowed stop token and original deadline. One
 native-step allowance covers preparation, maintenance, entry and capture.
 `RunDeadline` acknowledges outstanding interrupts before returning. Cancelled
 native entry recreates the vCPU so a late kick cannot affect the next task.
+Unsolicited Intel host-interrupt exits retry the same native state under the
+same cancellation generation, without reporting an instruction completion.
 Host/capture failures and authenticated x64 exceptions retain priority over a
 concurrent stop; ordinary cancelled state is not published. This is cooperative
 cancellation, not a hard real-time deadline.
@@ -206,11 +213,11 @@ passed on both Linux KVM and Windows WHP with Unicorn disabled: each passed all
 See the [hosted execution evidence](darwin-emulation.md#hosted-native-verification-2026-10-03)
 for the exact commits and scope.
 
-At clean source `561ebf37b9eaaec08043ac5816b2e083ecccaf68`, the Apple Silicon full
-gate passed 841 checks with zero failures, 5,939 inapplicable cases skipped and
+At clean source `48042a5e90e0977585114de092e423cd64b7f95f`, the Apple Silicon full
+gate passed 841 checks with zero failures, 5,942 inapplicable cases skipped and
 all 16 required outcomes executed, including the strengthened interruption
 inventory. Its 12-case transport subset also passed locally with no skips.
-The complete evidence is in `build-hvf-native/hvf-cancellation-full-evidence/`.
+The complete evidence is in `build-hvf-native/hvf-cr8-full-arm-evidence/`.
 
 Intel diagnosis removed writes to the framework-owned VMCS link pointer,
 preserved framework VM-exit controls and applied hardware CR0/CR4 fixed bits.
@@ -221,10 +228,23 @@ identified `IA32_KERNEL_GS_BASE`: enabling that context alone restored execution
 and MTF stepping; the other eleven individual MSRs did not. The retained
 VM-instruction error 12 was also present on successful runs, so it does not
 identify the failed entry's cause. Production now initializes the managed
-kernel-GS context on each vCPU creation. The [full native gate](https://github.com/NeverSight/NeverD/actions/runs/37078537517)
-at `56353de29` is validating this fix; Intel acceptance remains pending its
-complete result. Temporary instruction probes and API interposers are removed;
-the actual NeverD transport and process tests own ongoing acceptance.
+kernel-GS context on each vCPU creation.
+
+The [isolated CR8 experiment](https://github.com/NeverSight/NeverD/actions/runs/37082402190)
+at `e61928b8c` then reproduced a separate TPR synchronization defect: guest
+writes and reads agreed at priorities 0, 1, 3 and 15, while host TPR readback
+remained zero; host TPR/APIC writes did not produce the requested nonzero guest value.
+Production `48042a5e9` uses authenticated CR8 read exits and retries unrelated
+host IRQ exits. Added native cases exercise all sixteen destination registers,
+CPL3 general-protection faults and unsolicited interrupts before cancellation.
+The [full native gate](https://github.com/NeverSight/NeverD/actions/runs/37083061831)
+passed nine of ten transport cases. The remaining failure is the first
+retry after cancelling and recreating the vCPU; the full CPU and Darwin
+stages did not run. Intel acceptance remains pending that recovery fix and
+the complete gate. The earlier run `37078537517` was cancelled after a stalled runner and
+is not acceptance evidence. Temporary instruction probes and API interposers
+are removed; the actual NeverD transport and process tests own ongoing
+acceptance.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait

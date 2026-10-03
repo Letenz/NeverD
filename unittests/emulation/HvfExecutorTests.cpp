@@ -263,6 +263,7 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
     SCOPED_TRACE(Kind);
     ASSERT_EQ(llvm::toString(Prepare(PC)), "");
     ASSERT_EQ(State.reg(X64Register::PC), PC);
+    ASSERT_EQ(State.reg(X64Register::FLAGS), x64::InitialFlags);
     std::atomic<bool> Stop{false};
     std::promise<void> Entered;
     auto Ready = Entered.get_future();
@@ -319,6 +320,7 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
     llvm::consumeError(std::move(E));
     ASSERT_EQ(llvm::toString(Prepare(RetryPC)), "");
     EXPECT_EQ(State.reg(X64Register::PC), RetryPC + 1);
+    EXPECT_EQ(State.reg(X64Register::FLAGS), x64::InitialFlags);
     EXPECT_EQ(State.reg(X64Register::AX), 0x12345678u);
   }
   std::atomic<bool> Stop{false};
