@@ -216,6 +216,14 @@ Services::heap(const Service &S, const NativeCallEvent &Event) {
                                           : reallocateHeap(A[2], A[3], Flags);
   if (!Address)
     return Address.takeError();
+  if (S.Kind == API::HeapReAlloc && !*Address) {
+    // Native Windows reports allocation failure through the thread's Win32
+    // error slot, including oversized and in-place-only requests.
+    auto Value = error(ErrorNotEnoughMemory);
+    if (!Value)
+      return Value.takeError();
+    return std::optional<uint64_t>(*Value);
+  }
   return std::optional<uint64_t>(*Address);
 }
 } // namespace neverd::emulation::windows_process

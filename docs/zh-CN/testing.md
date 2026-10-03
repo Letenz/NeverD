@@ -1032,7 +1032,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` 共用 PEB 进程参数中的实时客户环境块。名称限 ASCII 且忽略大小写，值为 UTF-16。修改前校验输入、容量及可写内存。快照不受后续修改影响，释放时回收客户内存。模型的环境块上限为 64 KiB；字符串与展开操作有明确边界并检查工作负载截止时间。未知指针归属、格式错误的环境块、ANSI 代码页及展开缓冲区重叠仍不支持。`WindowsEnvironmentTests.cpp` 在可用后端比较原创 x64/ARM64 样例，CI 必须执行独立的原生 Windows 对照。
 
-`WindowsProcessHeap` 统一管理进程堆的分配、`HeapReAlloc`、释放和尺寸查询。调整大小保留原有有效数据；`HEAP_ZERO_MEMORY` 清零新增字节，`HEAP_REALLOC_IN_PLACE_ONLY` 禁止搬迁。容量不足时保留旧块和 LastError。独立页内存使收缩和释放能归还容量，分阶段扩容及有界复制检查工作负载截止时间。自定义堆、异常生成标志、未知归属以及不可访问的复制或清零范围均明确停止。`WindowsHeapTests.cpp` 覆盖两种 ISA、强制搬迁、预算复用和失败原子性；CI 也在原生 Windows 上运行同一原创 EXE。
+`WindowsProcessHeap` 统一管理进程堆的分配、`HeapReAlloc`、释放和尺寸查询。调整大小保留原有有效数据；`HEAP_ZERO_MEMORY` 清零新增字节，`HEAP_REALLOC_IN_PLACE_ONLY` 禁止搬迁。重分配失败时保留旧块，返回 NULL 并设置 `ERROR_NOT_ENOUGH_MEMORY`（8），与原生观测一致。独立页内存使收缩和释放能归还容量，分阶段扩容及有界复制检查工作负载截止时间。自定义堆、异常生成标志、未知归属以及不可访问的复制或清零范围均明确停止。`WindowsHeapTests.cpp` 覆盖两种 ISA、强制搬迁、预算复用和失败原子性；CI 也在原生 Windows 上运行同一原创 EXE。 PE 批量用例采用测试框架统一的 120 秒 CTest 外层限时，每个客户工作负载仍有独立的有限预算。堆样例为每个进程保留 20 秒，以便 WHP 完成全部数据校验。
 
 `WindowsDynamicTests.cpp` 使用原始 x64/ARM64 DLL 和 EXE，对照独立原生 Windows 观测，覆盖引用计数、共享依赖、嵌套加载、附加失败清理、转发查询、进程退出、无入口 DLL 以及重载时重新初始化 TLS。额外回归拒绝被修改的加载器元数据和失效代码指针，保持累计准备额度，并确保被中断 API 的结果仍未完成。Windows CI 强制执行原生对照和 WHP 用例；交叉编译与 Unicorn ARM64 不代表原生 ARM64 已执行验证。
 

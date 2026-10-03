@@ -109,7 +109,7 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` は PEB プロセスパラメーター内の実際のゲスト環境ブロックを共有します。名前は大文字小文字を区別しない ASCII、値は UTF-16 です。変更前に入力、容量、書き込み権限を検証します。スナップショットは後続の変更から独立し、解放時にゲストメモリを回収します。モデルのブロック上限は 64 KiB で、文字列と展開処理には境界と実行期限の検査があります。不明なポインター所有権、不正なブロック、ANSI コードページ、展開バッファーの重複は未対応です。`WindowsEnvironmentTests.cpp` は利用可能なバックエンドで独自の x64/ARM64 フィクスチャを比較し、CI では独立したネイティブ Windows オラクルを必須とします。
 
-`WindowsProcessHeap` はプロセスヒープの割り当て、[`HeapReAlloc`](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heaprealloc)、解放、サイズ照会を一元管理します。サイズ変更は保持範囲のデータを維持し、`HEAP_ZERO_MEMORY` は追加領域をゼロ化、`HEAP_REALLOC_IN_PLACE_ONLY` は移動を禁止します。容量不足では旧ブロックと LastError を保持します。独立したページの縮小・解放で容量を返却し、段階的な拡張と有界コピーで実行期限を確認します。独自ヒープ、例外生成フラグ、不明な所有権、アクセス不能なコピー・ゼロ化範囲は明示的に停止します。`WindowsHeapTests.cpp` は両 ISA、強制移動、予算再利用、失敗時の原子性を検証し、CI は同じ独自 EXE をネイティブ Windows でも実行します。
+`WindowsProcessHeap` はプロセスヒープの割り当て、[`HeapReAlloc`](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heaprealloc)、解放、サイズ照会を一元管理します。サイズ変更は保持範囲のデータを維持し、`HEAP_ZERO_MEMORY` は追加領域をゼロ化、`HEAP_REALLOC_IN_PLACE_ONLY` は移動を禁止します。再割り当て失敗時は旧ブロックを保持し、NULL と `ERROR_NOT_ENOUGH_MEMORY`（8）を返すネイティブの観測結果に一致します。独立したページの縮小・解放で容量を返却し、段階的な拡張と有界コピーで実行期限を確認します。独自ヒープ、例外生成フラグ、不明な所有権、アクセス不能なコピー・ゼロ化範囲は明示的に停止します。`WindowsHeapTests.cpp` は両 ISA、強制移動、予算再利用、失敗時の原子性を検証し、CI は同じ独自 EXE をネイティブ Windows でも実行します。
 
 動的アンロードのコールバック前にモジュールを初期化リストから外しますが、マッピング、名前検索、ロード／メモリリストへの所属はコールバック中も維持します。入口の復帰を調べるネイティブ比較では、システムワーカースレッドとは独立して初期スレッドを観測します。
 
@@ -127,7 +127,7 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 
 x64 GS と ARM64 x18 は TEB を指し、スタック範囲、自身、PID/TID、PEB、プロセスパラメーター、LastError、TLS を提供します。 UTF-8 を厳密に UTF-16 へ変換し、argv は Microsoft CRT 規則で引用します。 環境名は ASCII、大小文字を無視した重複は拒否し、値は Unicode 可、整列した環境は二重 NUL で終端します。 ホスト環境やファイルシステムは継承しません。 静的 TLS はテンプレートとゼロ BSS、32 ビット索引を設定し、動的 TLS は別の TEB スロットを使います。 起動・終了は変更後の回呼表を順に読み、期限と予算を共有します。 通常のプロセス終了は終了回呼を実行します。 入口からの return は常駐ゲスト DLL がない場合だけに対応し、プロセス終了処理中の二度目の `ExitProcess` は未対応です。
 
-正確な API は `WindowsProcessServices.def` にあります。`ExitProcess`、`RtlExitUserProcess`、標準出力ハンドルと同期 `WriteFile`、LastError、プロセス・スレッド ID と疑似ハンドル、`GetCommandLineW`、ヒープ確保・解放・サイズ、動的 TLS、`LoadLibraryA` / `LoadLibraryW` / `FreeLibrary` / `GetModuleHandleW` / `GetProcAddress` を扱います。`kernel32.dll`、`kernelbase.dll`、`ntdll.dll` の正確な名前だけを解決します。直接 syscall や偽の回呼ゲートでは API を選べません。ヒープの所有権と回収、バイナリー出力、API エラーと非同期 I/O・ユーザー例外の未対応を区別します。別名ポインターでも完了数の初期ゼロ化と実際の戻り先変更を反映します。
+正確な API は `WindowsProcessServices.def` にあります。`ExitProcess`、`RtlExitUserProcess`、標準出力ハンドルと同期 `WriteFile`、LastError、プロセス・スレッド ID と疑似ハンドル、`GetCommandLineW` / `HeapReAlloc`、ヒープ確保・解放・サイズ、動的 TLS、`LoadLibraryA` / `LoadLibraryW` / `FreeLibrary` / `GetModuleHandleW` / `GetProcAddress` を扱います。`kernel32.dll`、`kernelbase.dll`、`ntdll.dll` の正確な名前だけを解決します。直接 syscall や偽の回呼ゲートでは API を選べません。ヒープの所有権と回収、バイナリー出力、API エラーと非同期 I/O・ユーザー例外の未対応を区別します。別名ポインターでも完了数の初期ゼロ化と実際の戻り先変更を反映します。
 
 `windows.native_calls` はモジュール・関数名、宣言されたスカラー引数、nullable な結果を記録し、NT syscall 番号を捏造しません。`NeverDWindowsProcessTests` は実 PE、コンパイラー TLS、回呼変更、ヒープ、別名、不正メタデータ、権限、予算を検証し、`NeverDProcessPublicTests` は CLI/C ABI を検証します。Windows CI は同じ EXE を直接実行して独立比較し、WHP テストも必須です。ネイティブ ARM64 の実行証拠には対応マシンが必要です。
 

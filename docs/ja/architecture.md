@@ -972,7 +972,7 @@ UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の get
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` は PEB プロセスパラメーター内の実際のゲスト環境ブロックを共有します。名前は大文字小文字を区別しない ASCII、値は UTF-16 です。変更前に入力、容量、書き込み権限を検証します。スナップショットは後続の変更から独立し、解放時にゲストメモリを回収します。モデルのブロック上限は 64 KiB で、文字列と展開処理には境界と実行期限の検査があります。不明なポインター所有権、不正なブロック、ANSI コードページ、展開バッファーの重複は未対応です。`WindowsEnvironmentTests.cpp` は利用可能なバックエンドで独自の x64/ARM64 フィクスチャを比較し、CI では独立したネイティブ Windows オラクルを必須とします。
 
-`WindowsProcessHeap` はプロセスヒープの割り当て、`HeapReAlloc`、解放、サイズ照会を一元管理します。サイズ変更は保持範囲のデータを維持し、`HEAP_ZERO_MEMORY` は追加領域をゼロ化、`HEAP_REALLOC_IN_PLACE_ONLY` は移動を禁止します。容量不足では旧ブロックと LastError を保持します。独立したページの縮小・解放で容量を返却し、段階的な拡張と有界コピーで実行期限を確認します。独自ヒープ、例外生成フラグ、不明な所有権、アクセス不能なコピー・ゼロ化範囲は明示的に停止します。`WindowsHeapTests.cpp` は両 ISA、強制移動、予算再利用、失敗時の原子性を検証し、CI は同じ独自 EXE をネイティブ Windows でも実行します。
+`WindowsProcessHeap` はプロセスヒープの割り当て、`HeapReAlloc`、解放、サイズ照会を一元管理します。サイズ変更は保持範囲のデータを維持し、`HEAP_ZERO_MEMORY` は追加領域をゼロ化、`HEAP_REALLOC_IN_PLACE_ONLY` は移動を禁止します。再割り当て失敗時は旧ブロックを保持し、NULL と `ERROR_NOT_ENOUGH_MEMORY`（8）を返すネイティブの観測結果に一致します。独立したページの縮小・解放で容量を返却し、段階的な拡張と有界コピーで実行期限を確認します。独自ヒープ、例外生成フラグ、不明な所有権、アクセス不能なコピー・ゼロ化範囲は明示的に停止します。`WindowsHeapTests.cpp` は両 ISA、強制移動、予算再利用、失敗時の原子性を検証し、CI は同じ独自 EXE をネイティブ Windows でも実行します。
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 

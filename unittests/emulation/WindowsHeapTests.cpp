@@ -153,11 +153,11 @@ struct Heap {
     std::vector<uint8_t> Data(Size, Poison);
     llvm::cantFail(Space->write(Address, Data));
   }
-  void lastError() {
+  void lastError(uint32_t Expected = LastErrorSeed) {
     EXPECT_EQ(
         llvm::cantFail(Backend.CPU->readInteger(
             win::value::TEB + win::value::TebLastError, win::value::DWordSize)),
-        LastErrorSeed);
+        Expected);
   }
 };
 
@@ -212,7 +212,7 @@ TEST_P(WindowsHeap, MoveAndInPlaceResizePreserveDataAndOwnership) {
   H.free(Moved);
   H.free(Neighbor);
   EXPECT_EQ(H.Space->physicalMemory()->allocatedBytes(), Before);
-  H.lastError();
+  H.lastError(OutOfMemoryError);
 }
 TEST_P(WindowsHeap, AllocationFailurePreservesBlocksAndShrinkReturnsCapacity) {
   Heap H(Config);
@@ -250,7 +250,7 @@ TEST_P(WindowsHeap, AllocationFailurePreservesBlocksAndShrinkReturnsCapacity) {
   H.free(Neighbor);
   H.free(A);
   EXPECT_EQ(H.Space->physicalMemory()->allocatedBytes(), PageSize);
-  H.lastError();
+  H.lastError(OutOfMemoryError);
 }
 TEST_P(WindowsHeap, InvalidOwnershipFlagsAndPermissionsDoNotPublishChanges) {
   Heap H(Config);
