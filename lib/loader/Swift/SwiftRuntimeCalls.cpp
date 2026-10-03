@@ -417,6 +417,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // 6.1.2 arm64 and x86_64 clients put T metadata in swiftself.
     {"$ss10SetAlgebraPyxqd__ncSTRd__7ElementQyd__ACRtzlufCTj",
      "/usr/lib/swift/libswiftCore.dylib", "vIpppCpp"},
+    // Swift 6.1.2 macOS and Mac Catalyst clients on both architectures pass
+    // an indirect opaque result, the consumed value address, generic metadata
+    // and its Hashable witness. None of these arguments is swiftself.
+    {"$ss11AnyHashableVyABxcSHRzlufC", "/usr/lib/swift/libswiftCore.dylib",
+     "vIppp"},
     // The mutating _StringGuts.grow(Int) entry takes the capacity in the
     // first integer register and the two-word guts address in swiftself.
     {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
