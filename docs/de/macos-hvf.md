@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: d69d41d3c6a423807c5bd4acf21110f7fbb0543f9958019c7f46b7c8a7347640 -->
+<!-- i18n-source: 478f8b13db60f0a44791a4f6ae969f9fa285d6477c5a242f89d342c02345fc78 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -104,3 +104,5 @@ Der vollständige Workflow `Native macOS HVF` akzeptiert ebenfalls ein optionale
 Für `hosted-intel` akzeptiert der vollständige Workflow `intel-image=macos-15-intel` (Standard) oder `macos-26-intel`. Beide stehen in der [offiziellen Liste der Runner-Images](https://github.com/actions/runner-images). Damit lassen sich Hostumgebungen mit demselben `source-ref` gezielt vergleichen; das Image ändert auch Betriebssystem, SDK und Werkzeuge. Die Anforderungen an VM/vCPU, nativen Transport, CR8, vollständige CPU-Prüfung und Darwin bleiben gleich. Die Image-Auswahl allein belegt weder Stabilität noch eine Laufzeitkorrektur.
 
 `sample-active-child=true` sichert optional fünf Sekunden nach Beobachtung der Registrierung des nativen Kindprozesses einen abgeschlossenen Zwischenstand: eine einsekündige Stack-Aufzeichnung des eindeutig geprüften nativen Kindprozesses, höchstens 1 MiB vom Ende seines aktuellen Protokolls und den Hostzustand. Der Standardwert ist `false`. Damit die Artifact-Grenze eingehalten wird, sind bei aktivierter Aufzeichnung höchstens 166 Methoden pro Job zulässig. Der Aufzeichnungsbefehl ist auf zwanzig Sekunden und sein Bericht auf 1 MiB begrenzt. Fehler bei Identitätsprüfung und Erfassung werden dokumentiert, auch ein Exitstatus von 0 ohne Stack-Bericht. Der Upload erfolgt aus einem separaten unveränderlichen Verzeichnis; ein Uploadfehler bricht den nativen Kindprozess ab und lässt die Action fehlschlagen. Die Aufzeichnung beeinflusst die Ablaufplanung und wird als instrumentierter Teilnachweis gekennzeichnet. Sie startet den ursprünglichen Methodentimer nicht neu und ersetzt keine vollständige Abnahme.
+
+Der vollständige Workflow akzeptiert außerdem `recovery-repetitions=1000` für gezielte Untersuchungen von Unterbrechung und Wiederherstellung; der Standard bleibt `100`. Diese Auswahl erhöht das Zeitbudget des Wiederholungsschritts von drei auf zehn Minuten. Jeder native Test behält seine ursprüngliche Frist, seine Assertions und den Abbruch beim ersten Fehler. Der Ausführungstitel kennzeichnet die höhere Wiederholungszahl. Die Wiederholungen ersetzen nicht die vollständigen CPU- oder Darwin-Prüfungen.

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: d69d41d3c6a423807c5bd4acf21110f7fbb0543f9958019c7f46b7c8a7347640 -->
+<!-- i18n-source: 478f8b13db60f0a44791a4f6ae969f9fa285d6477c5a242f89d342c02345fc78 -->
 
 [← Índice de documentación](README.md)
 
@@ -104,3 +104,5 @@ El workflow completo `Native macOS HVF` también acepta `source-ref` opcional. P
 Para `hosted-intel`, el workflow completo acepta `intel-image=macos-15-intel` (predeterminado) o `macos-26-intel`, incluidos en las [imágenes oficiales de runners](https://github.com/actions/runner-images). Esto permite comparar explícitamente los entornos anfitriones con el mismo `source-ref`; la imagen también cambia el sistema, el SDK y las herramientas. Los requisitos de VM/vCPU, transporte nativo, CR8, CPU completo y Darwin se mantienen. Elegir una imagen no demuestra por sí solo estabilidad ni una corrección de ejecución.
 
 `sample-active-child=true` conserva opcionalmente una instantánea sellada cinco segundos después de observar el registro del proceso hijo nativo: un segundo de muestreo de pilas del proceso hijo nativo cuya identidad se ha verificado, hasta 1 MiB del final de su registro actual y el estado del anfitrión. El valor predeterminado es `false`. El muestreo admite como máximo 166 métodos por job para respetar el límite de artifacts; el comando tiene un plazo de veinte segundos y el informe un límite de 1 MiB. Los fallos de identificación y captura quedan registrados, incluso cuando el código de salida es cero pero no hay informe de pilas. La carga usa un directorio inmutable separado; si falla, cancela el proceso hijo nativo y hace fallar la acción. El muestreo altera la planificación y se etiqueta como evidencia parcial instrumentada. No reinicia el temporizador original del método ni sustituye la validación completa.
+
+El workflow completo también admite `recovery-repetitions=1000` para investigar de forma específica las interrupciones y la recuperación; el valor predeterminado sigue siendo `100`. Esta opción amplía el presupuesto del paso de repetición de tres a diez minutos. Cada prueba nativa conserva su plazo original, sus aserciones y la detención ante el primer fallo. El título de la ejecución identifica el mayor número de repeticiones. Estas no sustituyen las validaciones completas de CPU o Darwin.

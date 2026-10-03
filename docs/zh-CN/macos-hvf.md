@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: d69d41d3c6a423807c5bd4acf21110f7fbb0543f9958019c7f46b7c8a7347640 -->
+<!-- i18n-source: 478f8b13db60f0a44791a4f6ae969f9fa285d6477c5a242f89d342c02345fc78 -->
 
 [← 文档索引](README.md)
 
@@ -208,3 +208,5 @@ CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所�
 选择 `hosted-intel` 时，完整工作流支持 `intel-image=macos-15-intel`（默认）或 `macos-26-intel`，两者均在[官方 runner 镜像列表](https://github.com/actions/runner-images)中。可保持同一 `source-ref`，明确比较宿主环境；镜像同时改变系统、SDK 和工具链。VM/vCPU、原生传输、CR8、完整 CPU 和 Darwin 的要求不变。选择镜像本身不能证明稳定性或运行时修复。
 
 `sample-active-child=true` 可在观测到原生子进程登记五秒后保存一次封存的执行中快照：对已核验身份的原生子进程采样一秒调用栈、截取最多 1 MiB 的当前日志尾部，并记录宿主状态。默认值为 `false`。为遵守 artifact 数量限制，启用采样的每个作业最多选择 166 个方法；采样命令限时二十秒，报告上限 1 MiB。身份核验和采集失败都会记录，包括命令返回 0 却没有调用栈报告的情况。执行中快照从独立的不可变目录上传；上传失败会取消原生子进程并使 action 失败。采样会改变调度，因此标记为带采样的部分证据，不重置原始方法计时，也不能替代完整验收。
+
+完整工作流也支持 `recovery-repetitions=1000`，用于集中调查中断与恢复问题；默认仍为 `100`。选择 1000 次时，重复测试步骤的总预算从三分钟变为十分钟。每次原生测试保留原始期限、断言和遇错停止行为，运行标题会标明加长的重复设置。这些重复测试不能替代完整 CPU 或 Darwin 验收。
