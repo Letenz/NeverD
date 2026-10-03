@@ -1,6 +1,6 @@
 **Languages**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 4ad5761d6370d9ae8a26c9cf015210842c3c7817d1426b5df704408d1f0d1b7a -->
+<!-- i18n-source: 2266006a7b377ad4fcf7286e06f099b4964f598b0a7bb518c4da1e0cb68aad8e -->
 
 [← NeverD プロジェクト](project.md)
 
@@ -12,12 +12,6 @@
 
 英語のガイドは `docs/` 直下にあります。翻訳は `ar/`、`de/`、`es/`、`fr/`、`it/`、`ja/`、`ko/`、`ru/`、`zh-CN/`、`zh-TW/` に分かれています。各言語のディレクトリにはドキュメント索引 `README.md`、プロジェクト概要 `project.md`、各ガイド、`CONTRIBUTING.md`、`ATTRIBUTION.md`、`roadmap.md` があります。共有画像は `assets/` にあります。
 
-CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、ゲスト OS 方針を分離します。`NEVERD_ENABLE_CPU_EMULATION` は x64/ARM64 CPU 層を有効にし、`NEVERD_ENABLE_DRIVER_EMULATION` は範囲を限定した x64 Windows WDM/KMDF 環境を追加します。`linux-elf64-v1` は対応する Linux ELF プロセスを実行します。[CPU 実行](cpu-execution.md)、[ゲストプロセスのエミュレーション](process-emulation.md)、[Windows ドライバーエミュレーション](driver-emulation.md)を参照してください。
-
-`driver-strict` / `checked-x64-v1` は一致する Linux x64 host の KVM と Windows x64 host の WHP を許可します。`auto` は対応する native transport を選び、cross-ISA は Unicorn を選びます。明示的な Unicorn と従来の V1 API は portable software profile を保持します。native 実行は entry 前に canonical address と instruction effect を検証し、hardware 不可用時は fallback なしで失敗します。未対応 instruction/OS behavior は明示的な error です。Windows x64 のネイティブ CI は Unicorn を無効にして必須の 359 検査すべてに合格します。内訳は CPU 検査 131 件、組み込みイメージ 26 個・WDK イメージ 46 個・シナリオケース 40 件を優先アドレスと再配置先で実行したドライバー結果 224 件、および SEH 境界検査 4 件です ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). native ARM64 の実機証拠は未取得で、任意 driver や Android/Darwin の互換性を保証しません。
-
-`checked-aarch64-v1` と `checked-user-aarch64-v1` は限定された ARM64 FP32/FP64、固定幅 SIMD、完全な FPCR/FPSR/vector 状態を提供します。ISA が一致する Linux ARM64 は KVM、Windows ARM64 は WHP、異なる ISA は Unicorn を使用します。native ARM64 の実機検証は未完了で、Windows ドライバーのロードは x64 に限定されます。
-
 | 文書 | 説明 |
 |------|------|
 | [プロジェクト説明（日本語）](project.md) | 概要、クイックスタート、ビルド、SDK、CLI |
@@ -28,6 +22,7 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 | [デスクトップ検証記録 (英語)](../gui-qualification.md) | GUI の実測証拠、パッケージの境界、残るプラットフォーム検証 |
 | [インタープリターのソース復元](interpreter-recovery.md) | 実験的な x64 インタープリター特化、HighC/LLVMC 出力、実行前提、証拠と制限; 入れ子ループの証明候補; 明示的な探索予算とバージョン付き C API; 正確なネイティブから LLVM への証明 API |
 | [Windows 例外再構築](windows-exception-reconstruction.md) | SEH/C++ サポート表、IR 契約、ネイティブ patch 規則、PE 検証 |
+| [CPU 実行とゲスト環境](emulation.md) | バックエンドの選択、ゲスト環境、ネイティブ検証、現在の制限 |
 | [CPU 実行](cpu-execution.md) | 構成、機能照会、バックエンド可用性、型付き結果 |
 | [Bitvector 証明バックエンド](solver.md) | オプションの Z3 証明、証明付き合成、独立検査、query export |
 | [ゲストプロセスのエミュレーション](process-emulation.md) | Linux ELF プロファイル、起動、サービス、制限、テスト |
@@ -44,7 +39,3 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 | [Solana SBF 逆コンパイル](sbf.md) | SBF v0-v4、LLVM IR、C/Rust 出力、検証、既知の制限 |
 | [ロードマップ](roadmap.md) | 状態：native format、EVM、Solana SBF を実装済み |
 | 各言語のドキュメント | 上部の言語リンクから各言語の索引とプロジェクト概要を開けます |
-
-x64 と ARM64 のネイティブ起動検査は、排他的メモリリース下で限定された完全状態の実行を検証します。XSAVE パケットと ISA を識別するページテーブルキャッシュは単一の管理層が所有します。ネイティブ ARM64 負荷の証拠は未完了です。
-
-ネイティブ x64 の `FOP/FIP/FDP` はホストの保存・復元規則に従い、AMD は非アクティブな x87 例外メタデータをゼロにできます。起動プローブはマスクされていない保留例外でこれらを検証します。

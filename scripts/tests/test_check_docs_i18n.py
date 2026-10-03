@@ -47,6 +47,69 @@ class _OverlayView:
         return self._base.exists(path)
 
 
+class EmulationOverviewTests(unittest.TestCase):
+    def test_all_translations_preserve_reviewed_sections_and_navigation(self) -> None:
+        errors: list[str] = []
+        i18n.validate_emulation_overview(errors, i18n.RepositoryView(use_index=False))
+        self.assertEqual(errors, [])
+
+    def test_missing_translation_is_rejected_by_the_document_matrix(self) -> None:
+        path = Path("docs/ar/emulation.md")
+        view = i18n.RepositoryView(use_index=False)
+        exists = view.exists
+        errors: list[str] = []
+        with patch.object(view, "exists", side_effect=lambda p: p != path and exists(p)):
+            i18n.validate_matrix(errors, view)
+        self.assertTrue(any("missing localized documentation file" in error
+                            and path.as_posix() in error for error in errors), errors)
+
+    def test_source_change_requires_translation_review(self) -> None:
+        path = Path("docs/emulation.md")
+        changed = path.read_text(encoding="utf-8") + "\nA changed execution contract.\n"
+        errors: list[str] = []
+        i18n.validate_emulation_overview(errors, _OverlayView({path: changed}))
+        stale = [error for error in errors if "source revision differs" in error]
+        self.assertEqual(len(stale), len(i18n.LOCALES), errors)
+
+    def test_removed_api_detail_is_rejected_in_its_own_section(self) -> None:
+        path = Path("docs/zh-CN/emulation.md")
+        changed = path.read_text(encoding="utf-8").replace("`RtlCaptureContext`", "capture")
+        errors: list[str] = []
+        i18n.validate_emulation_overview(errors, _OverlayView({path: changed}))
+        self.assertTrue(any("API/options missing in caller-context" in error
+                            and "RtlCaptureContext" in error for error in errors), errors)
+
+    def test_readme_and_index_links_cannot_fall_back_to_english(self) -> None:
+        for filename in ("README.md", "project.md"):
+            with self.subTest(filename=filename):
+                path = Path("docs/fr") / filename
+                changed = path.read_text(encoding="utf-8").replace(
+                    "](emulation.md)", "](../emulation.md)")
+                errors: list[str] = []
+                i18n.validate_emulation_overview(errors, _OverlayView({path: changed}))
+                self.assertTrue(any("missing local emulation guide link" in error
+                                    for error in errors), errors)
+
+    def test_detail_links_cannot_switch_to_another_language(self) -> None:
+        path = Path("docs/ja/emulation.md")
+        for target in ("../cpu-execution.md", "../de/cpu-execution.md"):
+            with self.subTest(target=target):
+                changed = path.read_text(encoding="utf-8").replace(
+                    "](cpu-execution.md)", f"]({target})")
+                errors: list[str] = []
+                i18n.validate_emulation_overview(errors, _OverlayView({path: changed}))
+                self.assertTrue(any("body link must use the current locale" in error
+                                    for error in errors), errors)
+
+    def test_missing_language_selector_entry_is_rejected(self) -> None:
+        path = Path("docs/ko/emulation.md")
+        changed = path.read_text(encoding="utf-8").replace(
+            " | [Français](../fr/emulation.md)", "")
+        errors: list[str] = []
+        i18n.validate_emulation_overview(errors, _OverlayView({path: changed}))
+        self.assertTrue(any("language selector" in error for error in errors), errors)
+
+
 class LocalizedDocumentationMatrixTests(unittest.TestCase):
     def test_macos_guides_have_reviewed_examples_and_local_navigation(self) -> None:
         errors: list[str] = []
@@ -243,6 +306,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 Path("docs/python-plugins.md"),
                 Path("docs/roadmap.md"),
                 Path("docs/testing.md"),
+                Path("docs/emulation.md"),
                 Path("docs/cpu-execution.md"),
                 Path("docs/process-emulation.md"),
                 Path("docs/solver.md"),
@@ -260,7 +324,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
         )
 
     def test_cpu_process_and_solver_guides_are_in_every_localized_matrix(self) -> None:
-        for stem in ("cpu-execution", "process-emulation", "solver"):
+        for stem in ("emulation", "cpu-execution", "process-emulation", "solver"):
             self.assertIn(Path(f"docs/{stem}.md"), i18n.ENGLISH_DOCS)
             for locale in i18n.LOCALES:
                 self.assertIn(Path(f"docs/{locale}/{stem}.md"), i18n.localized_paths(locale))

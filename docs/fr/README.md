@@ -1,6 +1,6 @@
 **Langues**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 4ad5761d6370d9ae8a26c9cf015210842c3c7817d1426b5df704408d1f0d1b7a -->
+<!-- i18n-source: 2266006a7b377ad4fcf7286e06f099b4964f598b0a7bb518c4da1e0cb68aad8e -->
 
 [← Projet NeverD](project.md)
 
@@ -12,12 +12,6 @@ L’aperçu du projet, la compilation et le CLI se trouvent dans le README du d�
 
 Les guides anglais se trouvent directement dans `docs/`. Les traductions sont regroupées dans `ar/`, `de/`, `es/`, `fr/`, `it/`, `ja/`, `ko/`, `ru/`, `zh-CN/` et `zh-TW/`. Chaque répertoire contient l’index `README.md`, la présentation `project.md`, les guides thématiques, `CONTRIBUTING.md`, `ATTRIBUTION.md` et `roadmap.md`. Les images partagées restent dans `assets/`.
 
-L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur et politique OS. `NEVERD_ENABLE_CPU_EMULATION` active la couche CPU x64/ARM64 ; `NEVERD_ENABLE_DRIVER_EMULATION` ajoute l’environnement Windows WDM/KMDF x64 borné. `linux-elf64-v1` exécute les processus Linux ELF pris en charge. Voir [Exécution CPU](cpu-execution.md), [Émulation de processus invités](process-emulation.md) et [Émulation des pilotes Windows](driver-emulation.md).
-
-`driver-strict` / `checked-x64-v1` accepte KVM sur un hôte Linux x64 compatible et WHP sur un hôte Windows x64 compatible ; `auto` sélectionne ce transport natif, et les ISA différentes utilisent Unicorn. Unicorn explicite et l’API V1 conservent le profil logiciel portable. L’exécution native vérifie les adresses canoniques et les effets avant l’entrée ; le matériel indisponible provoque un échec sans repli. Instructions et comportements OS non pris en charge échouent explicitement. La CI native Windows x64 avec Unicorn désactivé réussit les 359 contrôles obligatoires : 131 contrôles CPU, 224 résultats de pilotes issus de 26 images intégrées, 46 images WDK et 40 cas de scénarios aux adresses préférées et relocalisées, ainsi que quatre contrôles de limites SEH ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Les preuves natives ARM64 restent manquantes ; aucune compatibilité universelle des pilotes ou Android/Darwin n’est établie.
-
-`checked-aarch64-v1` et `checked-user-aarch64-v1` fournissent FP32/FP64 et SIMD fixes bornés, avec état FPCR/FPSR/vectoriel complet. Les hôtes Linux ARM64 correspondants utilisent KVM, Windows ARM64 utilise WHP et une autre ISA utilise Unicorn. Les preuves natives ARM64 restent attendues ; les pilotes Windows sont chargés uniquement en x64.
-
 | Document | Description |
 |----------|-------------|
 | [README (français)](project.md) | Aperçu, démarrage rapide, compilation, SDK, CLI |
@@ -28,6 +22,7 @@ L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur
 | [Validation du bureau (anglais)](../gui-qualification.md) | Mesures GUI, limites du packaging et validations de plateforme restantes |
 | [Récupération de sources à partir d’un interpréteur](interpreter-recovery.md) | Spécialisation expérimentale `--devirtualize`, contrôles CLI, contrat d’exécution, preuves et limites; propositions de preuve pour boucles imbriquées; budgets de découverte explicites et API C versionnée; API de preuve exacte du natif vers LLVM |
 | [Reconstruction des exceptions Windows](windows-exception-reconstruction.md) | Matrice de support SEH/C++, contrat IR, règles de patch natif et validation PE |
+| [Exécution CPU et environnements invités](emulation.md) | Choix du moteur, environnements invités, validation native et limites actuelles |
 | [Exécution CPU](cpu-execution.md) | Configuration, capacités, disponibilité des backends et résultats typés |
 | [Preuves bitvector](solver.md) | Preuves Z3 facultatives, synthèse vérifiée, tests indépendants et export |
 | [Émulation de processus invités](process-emulation.md) | Profil Linux ELF, démarrage, services, limites et tests |
@@ -44,7 +39,3 @@ L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur
 | [Décompilation Solana SBF](sbf.md) | SBF v0-v4, LLVM IR, sorties C/Rust, vérification et limites connues |
 | [Feuille de route](roadmap.md) | État : formats natifs, EVM et Solana SBF implémentés |
 | Documentation traduite | Les liens de langue ci-dessus ouvrent l’index et la présentation de chaque langue |
-
-Les sondes natives x64 et ARM64 valident une exécution complète bornée sous bail mémoire exclusif. Les paquets XSAVE et les caches de tables identifiés par ISA ont une autorité unique ; les preuves des charges natives ARM64 restent incomplètes.
-
-Les champs x64 natifs `FOP/FIP/FDP` suivent les règles de sauvegarde/restauration hôte : AMD peut effacer les métadonnées x87 inactives. Les sondes de démarrage les valident avec une exception non masquée en attente.
