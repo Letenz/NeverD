@@ -124,7 +124,8 @@ jobs:
         shell: bash
         run: >-
           python3 scripts/run_native_cpu_ci.py --build build-hvf
-          --evidence build-hvf/transport-evidence --parallel 4
+          --evidence build-hvf/transport-evidence
+          --parallel ${{ inputs.validation == 'state-isolation' && '1' || '4' }}
           --require-hvf --hvf-transport-only 2>&1 | tee build-hvf/transport-run.log
       - name: Build and inventory Intel state and exception tests
         if: matrix.arch == 'X64' && inputs.validation != 'probe'
