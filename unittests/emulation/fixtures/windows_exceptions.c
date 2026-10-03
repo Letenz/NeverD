@@ -202,7 +202,9 @@ static U32 resolve(Pointers *P) {
   if (Mode == UnhandledMode)
     return ContinueSearch;
   if (Mode == NoncontinuableMode)
-    requireRecord(R->Flags == (SoftwareOriginate | Noncontinuable), R, 48);
+    requireRecord(R->Code == SoftwareCode &&
+                      R->Flags == (SoftwareOriginate | Noncontinuable),
+                  R, 48);
   if (Mode == DispositionMode)
     return 1;
   if (Mode == FlagsMode)
