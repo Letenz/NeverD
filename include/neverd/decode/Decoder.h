@@ -115,6 +115,9 @@ public:
 
   /// Start from image evidence, then select the mode at each decoded address.
   bool init(const BinaryImage &Img);
+  /// Apply the lifting settings \p Img implies beyond its architecture and
+  /// mode, such as the system call convention of its platform.
+  void configureFor(const BinaryImage &Img);
   bool selectMode(const BinaryImage &Img, va_t Addr,
                   std::optional<InstructionMode> IncomingMode = {});
   InstructionMode currentMode() const { return CurrentMode; }

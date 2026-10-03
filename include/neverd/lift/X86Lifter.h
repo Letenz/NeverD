@@ -54,6 +54,13 @@ public:
   bool isStrict() const { return Strict; }
   Arch targetArch() const { return TargetArch; }
 
+  /// The system call convention an x64 SYSCALL follows: the operating
+  /// system's handler defines which registers carry the call and which it
+  /// returns, so the image's platform decides it.
+  enum class SyscallConvention : uint8_t { Linux, WindowsNT };
+  void setSyscallConvention(SyscallConvention C) { Syscalls = C; }
+  SyscallConvention syscallConvention() const { return Syscalls; }
+
   /// x87 stack-top (TOP) accessors.  The ST(i) macro names physical slot
   /// (TOP+i)&7, so TOP advances in lift order; the CFG builder reads it around
   /// each lift to later re-base ST references into control-flow order.
@@ -282,6 +289,7 @@ private:
 
   Arch TargetArch;
   bool Strict = true;
+  SyscallConvention Syscalls = SyscallConvention::Linux;
   int FPUTop = 0;
 
   /// Set when the instruction just lifted reset TOP to an absolute value

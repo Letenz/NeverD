@@ -19,6 +19,8 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
 
+#include <iterator>
+
 #define DEBUG_TYPE "neverd-lift-x86"
 
 namespace neverd {
@@ -151,6 +153,26 @@ bool liftSystem(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_SYSCALL: {
     if (L.targetArch() != Arch::X64)
       return false;
+    if (L.syscallConvention() == X86Lifter::SyscallConvention::WindowsNT) {
+      // The NT system service convention: EAX holds the service number and
+      // R10, RDX, R8, R9 the first four arguments (R10, since SYSCALL itself
+      // overwrites RCX); later arguments are on the stack.  The handler
+      // returns the status in RAX and may change every volatile register.
+      NdVar Result = S.makeTemp(48);
+      S.emitIntrinsic(Intrinsic::X64WindowsSyscall, Result,
+                      {NdVar::reg(x86reg::RAX, 8), NdVar::reg(x86reg::R10, 8),
+                       NdVar::reg(x86reg::RDX, 8), NdVar::reg(x86reg::R8, 8),
+                       NdVar::reg(x86reg::R9, 8)});
+      const uint64_t Returned[] = {x86reg::RAX, x86reg::R11, x86reg::RDX,
+                                   x86reg::R8,  x86reg::R9,  x86reg::R10};
+      for (unsigned Index = 0; Index < std::size(Returned); ++Index)
+        S.emit(NdOp::SUBBYTES, NdVar::reg(Returned[Index], 8),
+               {Result, NdVar::scalar(8 * Index, 8)});
+      // SYSRET resumes at RCX, the instruction after SYSCALL.
+      S.emit(NdOp::COPY, NdVar::reg(x86reg::RCX, 8),
+             {NdVar::codeAddress(Insn->address + Insn->size, 8)});
+      break;
+    }
     // Keep all six syscall argument registers live through SSA. Pack pairs
     // to fit the LowIR intrinsic operand limit without implicit register reads.
     NdVar DxSi = S.makeTemp(16);

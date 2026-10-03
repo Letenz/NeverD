@@ -3,6 +3,7 @@
 
 A(Intrinsic::Syscall,      "syscall");
 A(Intrinsic::X64Syscall,   "syscall");
+A(Intrinsic::X64WindowsSyscall, "syscall");
 A(Intrinsic::Int1,         "int1");
 A(Intrinsic::IntN,         "int");
 A(Intrinsic::Into,         "into");

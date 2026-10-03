@@ -594,6 +594,53 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Builder.CreateOr(Rax, Builder.CreateShl(R11, 64));
   }
 
+  if (IC == I::X64WindowsSyscall) {
+    if (TargetArch != Arch::X64 || TargetFormat != BinaryFormat::COFF ||
+        !llvm::Triple(Mod->getTargetTriple()).isOSWindows())
+      llvm::report_fatal_error(
+          "X64WindowsSyscall requires the Windows x64 execution ABI");
+    if (Op.NumInputs != 6 || Op.Output.Size != 48 ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Op.MemoryOrdering != NdMemoryOrdering::None)
+      llvm::report_fatal_error("invalid X64WindowsSyscall register operands");
+    for (unsigned Index = 1; Index < 6; ++Index)
+      if (Op.Inputs[Index].Size != 8)
+        llvm::report_fatal_error("invalid X64WindowsSyscall register operands");
+    auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
+    auto *ResultTy = llvm::Type::getIntNTy(*Ctx, 384);
+    llvm::Type *Fields[6] = {I64Ty, I64Ty, I64Ty, I64Ty, I64Ty, I64Ty};
+    auto *RegsTy = llvm::StructType::getTypeByName(
+        *Ctx, "neverd.x64.windows_syscall_result");
+    if (!RegsTy)
+      RegsTy = llvm::StructType::create(*Ctx, Fields,
+                                        "neverd.x64.windows_syscall_result");
+    if (RegsTy->isOpaque() || RegsTy->getNumElements() != 6 ||
+        !llvm::all_of(RegsTy->elements(),
+                      [&](llvm::Type *Field) { return Field == I64Ty; }))
+      llvm::report_fatal_error("invalid Windows x64 syscall result structure");
+    // Service number in RAX, then R10, RDX, R8, R9; the handler hands back
+    // RAX, R11 and the volatile RDX, R8, R9 and R10.
+    llvm::Value *Arguments[] = {
+        getVar(Op.Inputs[1], Builder), getVar(Op.Inputs[3], Builder),
+        getVar(Op.Inputs[4], Builder), getVar(Op.Inputs[5], Builder),
+        getVar(Op.Inputs[2], Builder)};
+    auto *FnTy = llvm::FunctionType::get(
+        RegsTy, {I64Ty, I64Ty, I64Ty, I64Ty, I64Ty}, false);
+    auto *Asm = llvm::InlineAsm::get(
+        FnTy, "syscall",
+        "={ax},={r11},={dx},={r8},={r9},={r10},0,2,3,4,5,~{rcx},~{memory},"
+        "~{dirflag},~{fpsr},~{flags}",
+        true);
+    auto *Regs = Builder.CreateCall(Asm, Arguments, "syscall_result");
+    llvm::Value *Packed = llvm::ConstantInt::get(ResultTy, 0);
+    for (unsigned Index = 0; Index < 6; ++Index) {
+      llvm::Value *Field =
+          Builder.CreateZExt(Builder.CreateExtractValue(Regs, Index), ResultTy);
+      Packed = Builder.CreateOr(Packed, Builder.CreateShl(Field, 64 * Index));
+    }
+    return Packed;
+  }
+
   // FPREM/FPREM1 expose partial-reduction progress and quotient bits through
   // the x87 status word. The fused asm below captures status before a compiler
   // spill can change TOP or condition codes; the next synthetic read takes it.

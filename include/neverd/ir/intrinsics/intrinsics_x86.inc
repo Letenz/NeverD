@@ -364,3 +364,8 @@ ReadDr, WriteDr,
 // x64 Windows `int 2Dh` debug service (DebugPrint, DebugPrompt, ...).
 // Inputs: RAX (service code), RCX, RDX, R8, R9; output: RAX (status).
 DebugService,
+// Append-only: x64 SYSCALL under the Windows NT system service convention.
+// Inputs are RAX (service number), R10, RDX, R8, R9; further arguments live
+// on the stack.  The 48-byte result carries, in order, the returned RAX and
+// R11 and the volatile RDX, R8, R9 and R10.
+X64WindowsSyscall,
