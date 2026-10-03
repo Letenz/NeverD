@@ -14,7 +14,8 @@ struct CurrentFunction {
 };
 
 inline std::optional<CurrentFunction>
-currentFunction(const PipelineResult &Result, va_t Entry) {
+currentFunction(const PipelineResult &Result, va_t Entry,
+                bool RequireReturningBody = true) {
   CurrentFunction Found;
   for (const auto &Candidate : Result.LowFuncs)
     if (Candidate.Entry == Entry) {
@@ -43,7 +44,8 @@ currentFunction(const PipelineResult &Result, va_t Entry) {
   if (!Found.Low || !Found.Med || !Found.High || !Found.Audit ||
       !Found.Low->hasCompleteLiftCoverage() || !Found.Med->SourceTypeHint ||
       !Found.High->SourceTypeHint || !Found.Med->SourceParametersBound ||
-      Found.Med->DoesNotReturn || Found.High->DoesNotReturn ||
+      (RequireReturningBody &&
+       (Found.Med->DoesNotReturn || Found.High->DoesNotReturn)) ||
       Found.High->StructuredExceptionRegions ||
       Found.High->UnstructuredExceptionRegions ||
       !equalSourceABIs(*Found.Med->SourceTypeHint,

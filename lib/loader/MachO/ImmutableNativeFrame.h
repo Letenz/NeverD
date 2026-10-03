@@ -36,5 +36,28 @@ ImmutableNativeFrameCalls immutableNativeFrameCalls(
     const SourceLocalCalls &DirectCalls,
     const std::map<va_t, ImmutableNativeCallTarget> &KnownTargets,
     const std::map<va_t, SourceFunctionTypeHint> *NativeCallees);
+/// One bounded, freshly authenticated private-frame definition query owner.
+/// Consumers supply only independently established call contracts; this never
+/// recursively discovers targets or grants publication authority.
+struct AuthenticatedSourceFrameLoads {
+  const BinaryImage &Image;
+  const LowFunc &Function;
+  const SourceLocalCalls &DirectCalls;
+  const std::map<va_t, SourceFunctionTypeHint> *NativeCallees;
+  size_t &Budget;
+  std::optional<bool> MachineMatches;
+  size_t QueriesLeft = 64;
+  bool Exhausted = false;
+  const std::map<va_t, ImmutableNativeCallTarget> *KnownTargets = nullptr;
+  std::optional<ImmutableNativeFrameCalls> Contracts;
+  std::map<std::pair<int, size_t>, std::optional<SourceFrameLoadDefinition>>
+      Cache;
+
+  void beginRound(const std::map<va_t, ImmutableNativeCallTarget> &Known);
+  const NativeSourceCalls &calls();
+  std::optional<SourceFrameLoadDefinition> load(const LowBlock &Block,
+                                                size_t Index);
+};
+
 } // namespace neverd
 #endif

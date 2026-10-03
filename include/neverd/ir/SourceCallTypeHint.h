@@ -307,6 +307,15 @@ struct SourceCallTypeHint {
   };
   /// Present only for a dynamically loaded required Swift value witness.
   std::optional<SwiftValueWitnessKind> ValueWitness;
+  struct SwiftWitnessFrameOccurrence {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+    bool operator==(const SwiftWitnessFrameOccurrence &) const = default;
+  };
+  /// A frame-derived witness binding must be re-proved from current LowIR
+  /// and image bytes, including its full reaching byte and call-effect states.
+  std::optional<SwiftWitnessFrameOccurrence> SwiftWitnessFrame;
+
   struct SwiftVirtualEvidence {
     va_t MethodEntry = 0;
     va_t CallSite = 0;

@@ -8447,7 +8447,7 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
     return false;
-  if (Binding.ValueWitness &&
+  if ((Binding.ValueWitness || Binding.SwiftWitnessFrame) &&
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftValueWitness)
     return false;
   if (Binding.Virtual &&

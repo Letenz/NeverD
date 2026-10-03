@@ -834,9 +834,19 @@ swiftValueWitnessSlot(SourceCallTypeHint::SwiftValueWitnessKind Operation) {
 
 bool isSwiftValueWitnessSourceCallHint(const SourceCallTypeHint &Hint,
                                        Arch Architecture) {
-  if (!Hint.ValueWitness || Hint.BooleanResult ||
+  if (!Hint.ValueWitness || Hint.BooleanResult || Hint.WeakImport ||
+      Hint.ImmutableNativeCall || Hint.Virtual || Hint.FunctionParameterCall ||
+      Hint.AddressedFunctionABI || Hint.SwiftWitnessUndefDescriptor ||
       !Hint.CanonicalBooleanInputs.empty())
     return false;
+  if (Hint.SwiftWitnessFrame) {
+    const auto &Proof = *Hint.SwiftWitnessFrame;
+    if (Architecture != Arch::AArch64 || !Proof.FunctionEntry ||
+        Proof.FunctionEntry % 4 || !Proof.Site.Instruction ||
+        Proof.Site.Instruction % 4 || Proof.Site.Sequence < 0 ||
+        Proof.Site.Opcode != NdOp::INDIR_CALL || Proof.Site.StaticTarget)
+      return false;
+  }
   const auto Expected =
       swiftValueWitnessSourceCallHint(Architecture, *Hint.ValueWitness);
   return Expected &&

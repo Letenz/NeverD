@@ -34,68 +34,13 @@ bool generalRegister(const NdVar &Value) {
          Value.Offset <= a64reg::X28 && Value.Offset != a64reg::X18;
 }
 
-struct FrameProof {
-  const BinaryImage &Image;
-  const LowFunc &Function;
-  const SourceLocalCalls &DirectCalls;
-  const std::map<va_t, SourceFunctionTypeHint> *NativeCallees;
-  size_t &Budget;
-  std::optional<bool> MachineMatches;
-  size_t QueriesLeft = 64;
-  bool Exhausted = false;
-  const std::map<va_t, ImmutableNativeCallTarget> *KnownTargets = nullptr;
-  std::optional<ImmutableNativeFrameCalls> Contracts;
-  std::map<std::pair<int, size_t>, std::optional<SourceFrameLoadDefinition>>
-      Cache;
-
-  void beginRound(const std::map<va_t, ImmutableNativeCallTarget> &Known) {
-    KnownTargets = &Known;
-    Contracts.reset();
-    Cache.clear();
-  }
-
-  const NativeSourceCalls &calls() {
-    if (!Contracts)
-      Contracts = immutableNativeFrameCalls(Image, Function, DirectCalls,
-                                            *KnownTargets, NativeCallees);
-    return Contracts->Calls;
-  }
-
-  std::optional<SourceFrameLoadDefinition> load(const LowBlock &Block,
-                                                size_t Index) {
-    if (MachineMatches && !*MachineMatches)
-      return std::nullopt;
-    const auto Key = std::make_pair(Block.Id, Index);
-    if (const auto Found = Cache.find(Key); Found != Cache.end())
-      return Found->second;
-    if (!QueriesLeft) {
-      Exhausted = true;
-      return std::nullopt;
-    }
-    --QueriesLeft;
-    auto Definition = sourceFrameLoadedDefinition(Function, Image.Arch, calls(),
-                                                  Block.Id, Index);
-    // Most machine loads are not private-frame reloads. Only a successful
-    // candidate needs the independent machine replay, before it is exposed.
-    if (Definition) {
-      if (!MachineMatches)
-        MachineMatches =
-            immutableNativeFrameMachineMatches(Image, Function, Budget);
-      if (!*MachineMatches)
-        Definition.reset();
-    }
-    Cache.emplace(Key, Definition);
-    return Definition;
-  }
-};
-
 class Trace {
   const BinaryImage &Image;
   const LowBlock &Block;
   const SourceLocalCalls &DirectCalls;
   const std::map<va_t, SourceFunctionTypeHint> *NativeCallees;
   size_t &Budget;
-  FrameProof &Frame;
+  AuthenticatedSourceFrameLoads &Frame;
   std::map<va_t, const LowInstructionBoundary *> Boundaries;
 
   const LowInstructionBoundary *boundary(const LowOp &Op) const {
@@ -273,7 +218,7 @@ public:
   Trace(const BinaryImage &Image, const LowBlock &Block,
         const SourceLocalCalls &DirectCalls,
         const std::map<va_t, SourceFunctionTypeHint> *NativeCallees,
-        size_t &Budget, FrameProof &Frame)
+        size_t &Budget, AuthenticatedSourceFrameLoads &Frame)
       : Image(Image), Block(Block), DirectCalls(DirectCalls),
         NativeCallees(NativeCallees), Budget(Budget), Frame(Frame) {
     for (const auto &B : Block.InstructionBoundaries)
@@ -393,7 +338,8 @@ std::map<va_t, ImmutableNativeCallTarget> immutableNativeCallTargets(
     return {};
   const auto DirectCalls = sourceLocalCalls(Image, Function);
   std::map<va_t, ImmutableNativeCallTarget> Result;
-  FrameProof Frame{Image, Function, DirectCalls, NativeCallees, Remaining};
+  AuthenticatedSourceFrameLoads Frame{Image, Function, DirectCalls,
+                                      NativeCallees, Remaining};
   for (unsigned Round = 0; Round < 64 && Remaining; ++Round) {
     Frame.beginRound(Result);
     std::map<va_t, ImmutableNativeCallTarget> Added;

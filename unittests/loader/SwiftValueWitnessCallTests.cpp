@@ -1,3 +1,4 @@
+#include "../lift/core/SwiftWitnessFrameFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -139,6 +140,22 @@ struct CopyLoopFixture : Fixture {
   }
 };
 } // namespace
+
+TEST(SwiftValueWitnessCalls, FrameOriginCrossesAuthenticatedCallAndLoop) {
+  immutable_native_call_test::Fixture F;
+  swift_witness_frame_test::frameWitnessFixture(F);
+  ASSERT_TRUE(F.low());
+  auto Hints = buildSwiftValueWitnessCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  EXPECT_EQ(Hints.begin()->first, 0x104cU);
+  EXPECT_EQ(Hints.begin()->second.ValueWitness,
+            SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy);
+  auto Low = *F.low();
+  std::reverse(Low.Blocks.begin(), Low.Blocks.end());
+  Hints = buildSwiftValueWitnessCallHints(F.Image, Low);
+  ASSERT_EQ(Hints.size(), 1U);
+  EXPECT_EQ(Hints.begin()->first, 0x104cU);
+}
 
 TEST(SwiftValueWitnessCalls, TransparentCopyLoopsRetainTheirEntrySeed) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
@@ -648,7 +665,7 @@ TEST(SwiftValueWitnessCalls, ExactPrivateSpillAcrossBlocksPreservesWitness) {
     Add(Tail, 0x100c, NdOp::LOAD, NdVar::reg(F.Target, 8),
         {NdVar::tmp(TmpBase, 8)});
     Tail.Ops.insert(Tail.Ops.end(), Existing.begin(), Existing.end());
-    ASSERT_EQ(F.hints().size(), 1U);
+    ASSERT_EQ(F.hints().size(), Architecture == Arch::X64 ? 1U : 0U);
 
     // A partial overwrite poisons the exact slot even if its remaining bytes
     // still happen to carry the original pointer.
@@ -664,7 +681,7 @@ TEST(SwiftValueWitnessCalls, ExactPrivateSpillAcrossBlocksPreservesWitness) {
         {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(80, 8)});
     Add(Head, 0x1008, NdOp::STORE, {},
         {NdVar::tmp(TmpBase, 8), NdVar::cst(0, 8)});
-    EXPECT_EQ(F.hints().size(), 1U);
+    EXPECT_EQ(F.hints().size(), Architecture == Arch::X64 ? 1U : 0U);
     Head.Ops.pop_back();
     Head.Ops.pop_back();
 
@@ -792,5 +809,111 @@ TEST(SwiftValueWitnessCalls, DestroyProofRejectsMalformedControlFlow) {
     }
     }
     EXPECT_TRUE(F.hints().empty());
+  }
+}
+
+TEST(SwiftValueWitnessCalls, FrameOriginRejectsStaleMachineAndBorrowEvidence) {
+  for (unsigned Case = 0; Case < 25; ++Case) {
+    SCOPED_TRACE(Case);
+    immutable_native_call_test::Fixture F;
+    swift_witness_frame_test::frameWitnessFixture(F);
+    ASSERT_TRUE(F.low());
+    auto Low = *F.low();
+    auto Operation = [&](va_t Address, NdOp Code) -> LowOp & {
+      for (auto &B : Low.Blocks)
+        for (auto &O : B.Ops)
+          if (O.Addr == Address && O.Opcode == Code)
+            return O;
+      throw std::runtime_error("missing canonical operation");
+    };
+    switch (Case) {
+    case 0:
+      F.word(9, 0xb90023e8);
+      break; // Current four-byte store.
+    case 1:
+      F.word(14, 0xb94023e8);
+      break; // Current four-byte load.
+    case 2:
+      F.word(0, 0xa9bc53f3);
+      break; // Different active frame.
+    case 3:
+      F.word(13, 0x54ffffc1);
+      break; // Different encoded CFG.
+    case 4:
+      F.word(11, 0x94000075);
+      break; // Different direct callee.
+    case 5:
+      F.word(8, 0xf85f82c8);
+      break; // Different metadata source.
+    case 6:
+      F.word(19, 0xd63f0120);
+      break; // Different original target.
+    case 7:
+      F.Image.DyldBindSlots.at(0x2000).WeakImport = true;
+      break;
+    case 8:
+      F.Image.DyldBindSlots.at(0x2000).Addend = 8;
+      break;
+    case 9:
+      F.Image.DyldBindSlots.at(0x2000).Module = "/tmp/untrusted.dylib";
+      break;
+    case 10:
+      F.Image.ImportPtrSlots[0x2000] = "_unknown_effects";
+      F.Image.DyldBindSlots.at(0x2000).Name = "_unknown_effects";
+      break;
+    case 11:
+      Low.Blocks.front().InstructionBoundaries.clear();
+      break;
+    case 12:
+      --Low.LiftedInstructionCount;
+      break;
+    case 13:
+      Low.Blocks.front().Succs.clear();
+      break;
+    case 14:
+      Low.Blocks.back().Preds.clear();
+      break;
+    case 15:
+      Operation(0x1024, NdOp::STORE).Inputs[1].Size = 4;
+      break;
+    case 16:
+      Operation(0x1038, NdOp::LOAD).Output.Size = 4;
+      break;
+    case 17:
+      ++Operation(0x1038, NdOp::LOAD).Seq;
+      break;
+    case 18:
+      Operation(0x1024, NdOp::STORE).MemoryOrdering = NdMemoryOrdering::Release;
+      break;
+    case 19:
+      Low.Blocks.front().ExceptionalSuccs.push_back({});
+      break;
+    case 20:
+      Low.ModuleAnalysisRoots.insert(0x1030);
+      break;
+    case 21:
+      Low.Blocks.front().InstructionBoundaries.front().Size = 8;
+      break;
+    case 22:
+      // Re-lift the real changed machine: the address escapes BEFORE the
+      // reload, although the saved word and final witness pattern are intact.
+      F.word(10, 0x910003e0); // add x0,sp,#0, then objc_release(x0)
+      F.run();
+      Low = *F.low();
+      break;
+    case 23:
+      F.word(9, 0xb90023e8); // canonical partial initialization
+      F.run();
+      Low = *F.low();
+      break;
+    case 24:
+      // Re-execute the producer after crossing the call, rather than merely
+      // carrying a once-defined table through the counter loop.
+      F.word(13, 0x54ffff61); // b.ne 0x1020
+      F.run();
+      Low = *F.low();
+      break;
+    }
+    EXPECT_TRUE(buildSwiftValueWitnessCallHints(F.Image, Low).empty());
   }
 }

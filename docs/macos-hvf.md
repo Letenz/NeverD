@@ -131,8 +131,9 @@ gates. The transport profile reuses the full inventory's HVF requirements and
 records `hvf_transport_only=true`; it is not full CPU/process acceptance.
 On Intel, the workflow additionally runs `NeverDX64ExceptionTests` before the
 large dependency build, including the CR8 state regression and processor faults.
-It uploads these inventories and results with the transport checkpoint so a
-later build failure cannot erase completed native evidence.
+It uploads transport results and the state inventory before execution, then
+preserves the isolated CR8 result before running the complete state suite.
+Artifacts include the run attempt so reruns retain their own evidence.
 It can also run locally with `--require-hvf --hvf-transport-only` on
 `scripts/run_native_cpu_ci.py`. `validation=probe` runs only the VM/vCPU
 availability check without LLVM; it cannot establish instruction execution
@@ -258,6 +259,15 @@ tracing are removed; actual NeverD tests own ongoing acceptance.
 At clean source `9319c880d78e93f5cb8a7a9360778084934de258`, the ARM64 transport
 subset again passed all twelve cases without skips, and the native loop
 interruption/retry test passed 100 repetitions without failures or skips.
+
+The [Intel checkpoint run](https://github.com/NeverSight/NeverD/actions/runs/37090528761)
+at clean source `e2a91ff057df563eb19183a045a3ad6446cb9af1` repeated all 100
+interruption/recovery cycles and passed the ten-case transport gate without
+skips. The isolated CR8 regression also passed: all sixteen destinations,
+CPL3 protection faults, resume-flag behavior and complete state preservation.
+Its separate JUnit result and the transport artifact were downloaded and their
+SHA-256 digests verified. The state owner compiled and registered 952 cases;
+these checkpoints do not establish completion of that larger suite.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
