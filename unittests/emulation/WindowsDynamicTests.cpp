@@ -87,7 +87,14 @@ llvm::StringRef expected(bool NoEntry, llvm::StringRef File, char Mode) {
 #undef NEVERD_DYNAMIC_EXPECTED
   return {};
 }
+bool selected(bool NoEntry, llvm::StringRef File, const Case &C) {
+  const char Mode = C.Argument[1];
+  return (File != StaticProgramFile || Mode == ReferencesMode) &&
+         (!NoEntry || (Mode != FailedMiddleMode && Mode != LeafRole &&
+                       Mode != NestedFailureMode));
+}
 TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
+  uint64_t Scenarios = 0;
   for (bool NoEntry : {false, true}) {
     const auto Inputs = NoEntry ? Directory / NoEntryDirectory : Directory;
     Options.Windows = WindowsProcessOptions{{{LeafFile, Inputs / LeafFile},
@@ -95,9 +102,11 @@ TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
                                              {TopFile, Directory / TopFile}}};
     for (const char *File : {ProgramFile, StaticProgramFile})
       for (const auto &C : Cases) {
-        const auto Expected = expected(NoEntry, File, C.Argument[1]);
-        if (Expected.empty())
+        if (!selected(NoEntry, File, C))
           continue;
+        const auto Expected = expected(NoEntry, File, C.Argument[1]);
+        ASSERT_FALSE(Expected.empty()) << C.Name;
+        ++Scenarios;
         SCOPED_TRACE(C.Name);
         SCOPED_TRACE(NoEntry);
         SCOPED_TRACE(File);
@@ -114,6 +123,7 @@ TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
         EXPECT_EQ(llvm::toHex(R->StandardOutput), Expected);
       }
   }
+  EXPECT_EQ(Scenarios, ExpectedScenarios);
 }
 TEST_P(WindowsDynamic, RejectsModifiedLoaderStateAndRetiredCode) {
   Options.Windows = WindowsProcessOptions{
@@ -262,6 +272,7 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
   ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(TempPrefix, Temporary));
   const std::filesystem::path Root(Temporary.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  uint64_t Scenarios = 0;
   for (bool NoEntry : {false, true}) {
     for (const char *File :
          {ProgramFile, StaticProgramFile, LeafFile, MiddleFile, TopFile})
@@ -279,45 +290,46 @@ TEST(WindowsDynamicOracle, NativeWindowsLoadsAndUnloadsOriginalImages) {
       const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                           Error};
       for (const auto &C : Cases) {
-        if (File == StaticProgramFile && &C != &Cases[0])
+        if (!selected(NoEntry, File, C))
           continue;
-        if (NoEntry &&
-            (C.Argument[1] == FailedMiddleMode || C.Argument[1] == LeafRole ||
-             C.Argument[1] == NestedFailureMode))
-          continue;
+        ++Scenarios;
         SCOPED_TRACE(C.Name);
-        std::string Diagnostic;
-        bool Failed = false;
-        int Status = 0;
-        if (C.Argument[1] == ReturnMode) {
-          for (unsigned I = 0; I < NativeReturnRepetitions; ++I) {
+        const auto Expected = expected(NoEntry, File, C.Argument[1]);
+        ASSERT_FALSE(Expected.empty());
+        const unsigned Repetitions =
+            C.Argument[1] == ReturnMode ? NativeReturnRepetitions : 1;
+        for (unsigned I = 0; I < Repetitions; ++I) {
+          SCOPED_TRACE(I);
+          int Status;
+          if (C.Argument[1] == ReturnMode) {
             auto Thread = native_test::observeNativeThread(
                 Program, C.Argument, Output, Error, NativeTimeoutSeconds);
             ASSERT_TRUE(bool(Thread)) << llvm::toString(Thread.takeError());
-            EXPECT_EQ(*Thread, ExitStatus);
             Status = int(*Thread);
+          } else {
+            std::string Diagnostic;
+            bool Failed = false;
+            Status = llvm::sys::ExecuteAndWait(
+                Program, {Program, C.Argument}, std::nullopt, Redirects,
+                NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
+            ASSERT_FALSE(Failed) << Diagnostic;
           }
-        } else {
-          Status = llvm::sys::ExecuteAndWait(
-              Program, {Program, C.Argument}, std::nullopt, Redirects,
-              NativeTimeoutSeconds, 0, &Diagnostic, &Failed);
-        }
-        ASSERT_FALSE(Failed) << Diagnostic;
-        auto Out = llvm::MemoryBuffer::getFile(Output),
-             Err = llvm::MemoryBuffer::getFile(Error);
-        ASSERT_TRUE(bool(Out));
-        ASSERT_TRUE(bool(Err));
-        llvm::outs() << ObservationLabel << NoEntry << ' ' << File << ' '
-                     << C.Argument << ' ' << Status << ' '
-                     << llvm::toHex((*Out)->getBuffer()) << '\n';
-        if (const auto Expected = expected(NoEntry, File, C.Argument[1]);
-            !Expected.empty())
+          auto Out = llvm::MemoryBuffer::getFile(Output),
+               Err = llvm::MemoryBuffer::getFile(Error);
+          ASSERT_TRUE(bool(Out));
+          ASSERT_TRUE(bool(Err));
+          if (!I)
+            llvm::outs() << ObservationLabel << NoEntry << ' ' << File << ' '
+                         << C.Argument << ' ' << Status << ' '
+                         << llvm::toHex((*Out)->getBuffer()) << '\n';
           EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), Expected);
-        EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
-        EXPECT_TRUE((*Err)->getBuffer().empty());
+          EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
+          EXPECT_TRUE((*Err)->getBuffer().empty());
+        }
       }
     }
   }
+  EXPECT_EQ(Scenarios, ExpectedScenarios);
 #endif
 }
 } // namespace

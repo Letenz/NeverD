@@ -110,7 +110,7 @@ DWORD entry(void) {
   }
   if (Mode == UnusedArgument[0]) {
     CHECK(!GetProcAddress(Bridge, UnusedName));
-    CHECK(GetLastError() == ModuleMissing);
+    CHECK(GetLastError() == ProcedureMissing);
     ExitProcess(ExitStatus);
   } else if (Mode == CycleArgument[0])
     GetProcAddress(Bridge, CycleName);

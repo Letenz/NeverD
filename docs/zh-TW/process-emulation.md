@@ -95,7 +95,7 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
   --options='{"backend":"auto","arguments":["guest.exe","argument"],"environment":["MODE=test"]}'
 ```
 
-單執行緒設定將 PE32+ EXE 保持在偏好基址，接受可含進入點及靜態 TLS 的明確 DLL。`WindowsProcessOptions::Modules` 或 JSON `windows.modules` 以 `name`、`path` 提供最多 64 個客體基本名稱與主機輸入路徑，不搜尋或執行主機 DLL。ASCII 名稱不分大小寫；拒絕重複名稱及覆寫系統 API 提供者，只讀取可達檔案。名稱／序號函式與資料匯入繫結實際映射匯出；空洞、缺少符號、循環、繫結／延遲匯入及未支援的載入設定／CFG 明確失敗。可移動 DLL 衝突時套用 DIR64；固定衝突及寫入連結中繼資料的重定位在建立 CPU 前失敗。
+單執行緒設定將 PE32+ EXE 保持在偏好基址，接受可含進入點及靜態 TLS 的明確 DLL。`WindowsProcessOptions::Modules` 或 JSON `windows.modules` 以 `name`、`path` 提供最多 64 個客體基本名稱與主機輸入路徑，不搜尋或執行主機 DLL。ASCII 名稱不分大小寫；拒絕重複名稱及覆寫系統 API 提供者，只讀取可達檔案。名稱／序號函式與資料匯入繫結實際映射匯出；空洞、缺少符號、循環、繫結／延遲匯入及未支援的載入設定／CFG 明確失敗。可移動 DLL 衝突時套用 DIR64；固定衝突及寫入連結中繼資料的重定位在發布受影響映像前失敗。
 
 `readPEProgramExports` 擁有原始匯出身分與有界中繼資料讀取範圍；`WindowsProcessModules` 擁有模組圖和全程序精確提供者／名稱 API 跳板。`VirtualMemory` 在映射前登記全部映像，`AddressSpace` 管理頁面及權限。PEB/LDR 僅列真實映像，初始化串列保留載入器登記順序，並與依相依關係計算的掛接呼叫順序分別維護。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名稱，不分大小寫，無副檔名時補 `.dll`；路徑、非 ASCII 查詢及結尾點規則仍不支援。找不到名稱回傳錯誤 126，成功保留 LastError。API 模型不是已安裝系統 DLL。
 
@@ -107,7 +107,11 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 
 `WindowsProcessLoader` 從 `windows.modules` 載入 ASCII DLL 基底名稱，統一管理明確參考、共用相依與啟動模組保留。重複查詢轉送匯出不會增加額外參考。模組目錄槽位在重新載入時使用新的駐留世代。TLS 與 `DllMain` 在同一 CPU 上、暫停 API 的堆疊框架下方執行；還原暫存器保留客體記憶體寫入，並使用即時返回位址。動態附加／分離的保留指標為零。執行期附加失敗在清理後回傳錯誤 1114，並保留已成功的獨立巢狀載入。卸載釋放映像映射與 TLS，重新載入恢復原始映像內容。模型之外對載入器串列或 TLS 指標的修改會明確失敗。失敗與重新載入皆不會重設檔案、映像及中繼資料工作額度。API 提供者沒有虛構 DLL 控制代碼。檔案系統搜尋、非 ASCII 路徑、`LoadLibraryEx` 旗標、循環匯入及正在初始化或卸載之同一模組的重入轉換仍不支援。
 
+動態卸載回呼開始前，模組已退出初始化串列；其映射、名稱查詢及載入／記憶體串列成員身分在回呼期間仍然有效。入口返回的原生對照單獨觀察初始執行緒，不將系統工作執行緒的存活時間當作入口返回時間。
+
 `WindowsDynamicTests.cpp` 使用原始 x64/ARM64 DLL 與 EXE，比對獨立原生 Windows 觀測，涵蓋參考計數、共用相依、巢狀載入、附加失敗清理、轉送查詢、程序退出、無入口 DLL 及重新載入時的 TLS 初始化。額外回歸拒絕遭修改的載入器中繼資料與失效程式碼指標，保持累計準備額度，並確保中斷 API 的結果仍未完成。Windows CI 強制執行原生對照與 WHP 案例；交叉編譯及 Unicorn ARM64 不代表原生 ARM64 執行驗證。
+
+`GetProcAddress` 轉發鏈任一位置缺少程式庫皆傳回錯誤 127；顯式 `LoadLibrary` 載入目錄中缺少的模組傳回 126。原生對照與各可用後端均斷言全部 39 個已宣告載入情境；Windows 上每種 DLL 變體都重複 16 次驗證全部卸載後從入口返回。
 
 `WindowsExportTests.cpp` 使用原始 x64/ARM64 DLL 與 EXE，驗證轉送的程式碼／資料／序號呼叫、別名、初始化查詢、重定位、大小寫敏感的缺失項、LastError、循環與非駐留目標、無效指標，以及成功查詢後的中繼資料修改。同一 EXE 有獨立原生 Windows 對照；原生 CI 強制執行 WHP 案例。C ABI／CLI 測試比對完整報告。原生 ARM64 硬體證據仍待補齊。 具有及不具有匯出表的 EXE 變體涵蓋兩種相依圖、PEB 串列順序、結束通知順序，以及名稱／序號／空指標的錯誤碼。
 

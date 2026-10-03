@@ -138,8 +138,8 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       auto Next = Load(Index, *Key);
       if (!Next) {
         auto E = Next.takeError();
-        if (!Depth)
-          return std::move(E);
+        // Native lookup reports a missing forwarded library as a missing
+        // procedure, while an explicit LoadLibrary still reports error 126.
         uint32_t Code = 0;
         E = llvm::handleErrors(std::move(E), [&](const ModuleLoadError &F) {
           Code =
