@@ -30,6 +30,7 @@ struct Module {
   uint64_t Generation = 0, References = 0;
   ModuleState State = ModuleState::Retired;
   bool Attached = false, Pinned = false;
+  bool System = false;
   std::vector<ModuleRef> Dependencies;
   /// Index original entries, retaining holes, aliases and unresolved
   /// forwarders.
@@ -50,10 +51,13 @@ struct Program {
   std::vector<size_t> LoaderInitializationOrder;
   /// One exact provider/name gate per process, independent of the caller image.
   std::vector<Import> Gates;
-  std::map<std::pair<std::string, std::string>, uint64_t> ServiceGates;
   /// Preparation and subsequent export queries never replenish these credits.
   ImageReadBudget Reads{0, 0};
 };
+inline constexpr uint64_t ModuleCapacity =
+    windows_process_limits::Modules + value::SystemModuleCount + 1;
+llvm::Error prepareSystemModules(Program &P, VirtualMemory &Memory,
+                                 const ExecutionBudget &Budget);
 /// Guest load failures are distinct from unsupported metadata or transport
 /// failures. The running process may handle these errors and continue.
 class ModuleLoadError final : public llvm::ErrorInfo<ModuleLoadError> {

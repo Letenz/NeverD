@@ -191,7 +191,7 @@ protected:
   }
 };
 TEST_F(WindowsModuleTLS, CopiesRelocatedLinkedTemplatesIntoIndependentSlots) {
-  ASSERT_EQ(Program->Modules.size(), 3u);
+  ASSERT_EQ(Program->Modules.size(), 3u + win::value::SystemModuleCount);
   const auto &Changed = Program->Modules.back().Loaded;
   llvm::cantFail(Space->writeInteger(Changed.TLSTemplate, TemplateMarker, 1));
   auto Env = win::prepareEnvironment(*Space, *Program, Options);
@@ -199,6 +199,8 @@ TEST_F(WindowsModuleTLS, CopiesRelocatedLinkedTemplatesIntoIndependentSlots) {
   std::set<uint64_t> Indices, Blocks;
   bool Rebased = false;
   for (const auto &M : Program->Modules) {
+    if (M.System)
+      continue;
     const auto &I = M.Loaded;
     EXPECT_GE(I.Entry, I.Base);
     EXPECT_LT(I.Entry, I.Base + I.Size);

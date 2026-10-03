@@ -52,7 +52,7 @@ std::optional<size_t> findModule(const Program &P, llvm::StringRef Name) {
   return I->second;
 }
 llvm::Error retireModule(Program &P, ModuleRef Ref, VirtualMemory &Memory) {
-  if (!current(P, Ref) || !Ref.Index)
+  if (!current(P, Ref) || !Ref.Index || P.Modules[Ref.Index].System)
     return failure(text::Lifetime);
   auto &M = P.Modules[Ref.Index];
   if (auto E = Memory.releaseImage(M.Loaded.Base))
@@ -126,7 +126,7 @@ private:
     auto Slot = P.Slots.find(Name.lower());
     size_t Index;
     if (Slot == P.Slots.end()) {
-      if (P.Modules.size() > windows_process_limits::Modules)
+      if (P.Modules.size() >= ModuleCapacity)
         return llvm::joinErrors(failure(text::ModuleBudget),
                                 Memory.releaseImage(*Base));
       Index = P.Modules.size();
@@ -163,6 +163,9 @@ private:
       } else
         M.ExportMetadata.push_back(R);
     }
+    if (Main)
+      if (auto E = prepareSystemModules(P, Memory, Budget))
+        return std::move(E);
     for (const auto &Dependency : M.Loaded.Dependencies) {
       if (findProvider(Dependency))
         continue;
@@ -206,10 +209,6 @@ private:
     for (size_t M = 0; M < Change.Added.size(); ++M) {
       const size_t Index = Change.Added[M].Index;
       for (auto &I : P.Modules[Index].Loaded.Imports) {
-        if (I.Target) {
-          I.Gate = P.ServiceGates.at({I.Module, I.Name});
-          continue;
-        }
         auto Provider = findModule(P, I.Module);
         if (!Provider)
           return failure(text::ModuleMissing + I.Module);
@@ -289,19 +288,9 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
   const auto FileName = Path.filename().u8string();
   const std::string MainName(reinterpret_cast<const char *>(FileName.data()),
                              FileName.size());
-  if (Out.Catalogue.contains(llvm::StringRef(MainName).lower()))
+  if (findProvider(MainName) ||
+      Out.Catalogue.contains(llvm::StringRef(MainName).lower()))
     return failure(text::ModuleName + MainName);
-  for (const char *Provider : {text::Kernel32, text::KernelBase, text::NTDLL})
-    for (const auto &S : services()) {
-      if (findProvider(Provider) != S.Provider)
-        continue;
-      if (Out.Gates.size() == MaxImports)
-        return failure(text::ModuleBudget);
-      const uint64_t Gate =
-          GateBase + (FirstImportGate + Out.Gates.size()) * GateStride;
-      Out.Gates.push_back({0, &S, Provider, Gate, S.Name, std::nullopt});
-      Out.ServiceGates.emplace(std::pair{Provider, S.Name}, Gate);
-    }
   auto Linked = Linker(Out, Memory, Budget).run(MainName, &Path);
   if (!Linked)
     return Linked.takeError();

@@ -638,3 +638,16 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsHeap.RepeatedResizeReclaimsBudgetAndRejectsEnvironmentOwnership/"
     "WhpX64")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsSystemNative.RunsOriginalSystemModuleExecutable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSystem.ExecutesOriginalSystemModuleScenarios/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSystem.RejectsUnmodeledExportsOrdinalsAndChangedImages/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSystem.ProviderImagesUseSharedMappingsAndExportResolution/"
+    "WhpX64")
+#endif

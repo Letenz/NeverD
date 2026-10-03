@@ -80,6 +80,10 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       if (auto E = validateMetadata(Program, Index, Budget, *CPU))
         return std::move(E);
     const auto &Module = Program.Modules[Index];
+    // The model declares names, not a Windows build's ordinal assignment or
+    // complete export inventory. Never turn missing coverage into an API miss.
+    if (Module.System && Ordinal)
+      return failure(text::SystemOrdinal);
     const uint32_t MissingError =
         Ordinal ? ErrorInvalidOrdinal : ErrorProcedureNotFound;
     std::optional<size_t> Entry;
@@ -92,6 +96,12 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       if (I != Module.Names.end())
         Entry = I->second;
     }
+    if (!Entry && Module.System && !Symbol.empty() &&
+        !llvm::any_of(Module.Names, [&](const auto &E) {
+          return llvm::StringRef(E.first).equals_insensitive(Symbol);
+        }))
+      return failure(text::SystemExport + Program.Identities[Index].Name +
+                     text::ImportSeparator + Symbol);
     if (!Entry)
       return ExportResolution{std::nullopt, MissingError};
     if (!Visited.emplace(Index, *Entry).second)
@@ -125,14 +135,6 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
           Digits.getAsInteger(ForwarderOrdinalRadix, Number))
         return failure(text::ModuleForwarder);
       Ordinal = Number;
-    }
-    if (findProvider(*Key)) {
-      if (Ordinal || !findService(*Key, Symbol))
-        return failure(text::ModuleForwarder);
-      auto Gate = Program.ServiceGates.find({*Key, Symbol});
-      if (Gate == Program.ServiceGates.end())
-        return failure(text::Service);
-      return ExportResolution{Gate->second, 0};
     }
     if (Load) {
       auto Next = Load(Index, *Key);

@@ -56,7 +56,7 @@ llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
   const auto &Modules = Program.Identities;
   const auto &InitOrder = Program.LoaderInitializationOrder;
   const llvm::StringRef ImageName = Modules.front().Name;
-  if (Modules.size() > windows_process_limits::Modules + 1)
+  if (Modules.size() > ModuleCapacity)
     return failure(text::ModuleBudget);
   auto Name = utf16(ImageName);
   if (!Name)
@@ -115,8 +115,7 @@ llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
           Memory.map(TEB, EnvironmentEnd - TEB, Read | Write | UserAccessible))
     return std::move(E);
   Environment Out{};
-  uint64_t Cursor =
-      ModuleEntry + (windows_process_limits::Modules + 1) * ModuleStride;
+  uint64_t Cursor = ModuleEntry + ModuleCapacity * ModuleStride;
   auto Store = [&](const std::u16string &Text) -> llvm::Expected<uint64_t> {
     const uint64_t Size = (Text.size() + 1) * WideSize;
     if (Size > EnvironmentEnd - Cursor)
@@ -274,8 +273,7 @@ llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
        {std::pair{TEB + TebPEB, PointerSize},
         std::pair{PEB + PebLdr, PointerSize},
         std::pair{PEB + PebImageBase, PointerSize}, std::pair{Ldr, LdrSize},
-        std::pair{ModuleEntry,
-                  (windows_process_limits::Modules + 1) * ModuleStride}}) {
+        std::pair{ModuleEntry, ModuleCapacity * ModuleStride}}) {
     auto &Bytes = Out.LoaderMetadata[Address];
     Bytes.resize(Size);
     if (auto E = Memory.read(Address, Bytes))

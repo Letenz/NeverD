@@ -173,7 +173,7 @@ TEST_F(WindowsModuleImage,
        OwnsImageReservationsAndDeduplicatesDiamondDependencies) {
   auto P = load();
   ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
-  ASSERT_EQ(P->Modules.size(), 3u);
+  ASSERT_EQ(P->Modules.size(), 3u + win::value::SystemModuleCount);
   EXPECT_EQ(Space->mappedBytes(), 0u);
   std::set<uint64_t> Bases, Gates;
   size_t Moved = 0;
@@ -185,7 +185,7 @@ TEST_F(WindowsModuleImage,
     EXPECT_EQ(Info->AllocationBase, M.Base);
     EXPECT_EQ(Info->Type, MemImage);
     EXPECT_TRUE(llvm::cantFail(Memory->free(M.Base, 0, Release)).Unsupported);
-    if (I && M.Base != PreferredDLLBase)
+    if (I && !P->Modules[I].System && M.Base != PreferredDLLBase)
       ++Moved;
   }
   EXPECT_EQ(Moved, 1u);
@@ -194,7 +194,10 @@ TEST_F(WindowsModuleImage,
   ASSERT_EQ(P->AttachOrder.size(), 2u);
   EXPECT_EQ(P->Identities[P->AttachOrder.front()].Name, LeafFile);
   EXPECT_EQ(P->Identities[P->AttachOrder.back()].Name, MiddleFile);
-  EXPECT_EQ(P->AttachOrder, P->LoaderInitializationOrder);
+  EXPECT_EQ(P->AttachOrder,
+            std::vector<size_t>(P->LoaderInitializationOrder.begin() +
+                                    win::value::SystemModuleCount,
+                                P->LoaderInitializationOrder.end()));
 }
 TEST_F(WindowsModuleImage, RequiresExplicitCatalogueAndRejectsAmbiguousNames) {
   const auto Valid = Options;

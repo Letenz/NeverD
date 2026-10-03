@@ -20,7 +20,6 @@ constexpr Service Registry[] = {
 #include "WindowsProcessServices.def"
 #undef NEVERD_WINDOWS_PROCESS_API
 };
-static_assert((MaxImports + FirstImportGate) * GateStride <= GateSize);
 static_assert([] {
   for (auto &S : Registry)
     if (S.Arguments > std::tuple_size_v<decltype(NativeCallEvent::Arguments)>)
@@ -31,10 +30,9 @@ static_assert([] {
 llvm::ArrayRef<Service> services() { return Registry; }
 std::optional<APIProvider> findProvider(llvm::StringRef Module) {
   const auto Lower = Module.lower();
-  if (Lower == text::NTDLL)
-    return APIProvider::Native;
-  if (Lower == text::Kernel32 || Lower == text::KernelBase)
-    return APIProvider::Kernel;
+  for (const auto &Provider : systemProviders())
+    if (Lower == Provider.Name)
+      return Provider.Family;
   return std::nullopt;
 }
 const Service *findService(llvm::StringRef Module, llvm::StringRef Name) {
@@ -225,12 +223,17 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
         LoaderRequest{LoaderRequest::Kind::Free, A[0], {}, {}});
   case API::LoadLibraryA:
   case API::LoadLibraryW:
+  case API::GetModuleHandleA:
   case API::GetModuleHandleW: {
+    const bool Handle =
+        S.Kind == API::GetModuleHandleW || S.Kind == API::GetModuleHandleA;
     if (!A[0])
-      return S.Kind == API::GetModuleHandleW
-                 ? Value(Loaded.Base)
-                 : llvm::Expected<ServiceOutcome>(failure(text::Access));
-    const unsigned Unit = S.Kind == API::LoadLibraryA ? 1 : WideSize;
+      return Handle ? Value(Loaded.Base)
+                    : llvm::Expected<ServiceOutcome>(failure(text::Access));
+    const unsigned Unit =
+        S.Kind == API::LoadLibraryA || S.Kind == API::GetModuleHandleA
+            ? 1
+            : WideSize;
     std::string Name;
     for (uint64_t I = 0; I < MaxName; ++I) {
       if (!Budget.remainingMicroseconds())
@@ -253,7 +256,7 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
           return ServiceOutcome(unsupported(S));
         if (!llvm::StringRef(Name).contains('.'))
           Name += text::DLLExtension;
-        if (S.Kind != API::GetModuleHandleW) {
+        if (!Handle) {
           auto Key = moduleName(Name);
           if (!Key)
             return Key.takeError();

@@ -236,7 +236,7 @@ TEST_F(WindowsDynamicLink,
     ASSERT_TRUE(Info);
     EXPECT_EQ(Info->State, win::value::MemFree);
   }
-  EXPECT_EQ(P.Modules.size(), 2u);
+  EXPECT_EQ(P.Modules.size(), 2u + win::value::SystemModuleCount);
   EXPECT_LT(P.Reads.FileBytes, Before.FileBytes);
   EXPECT_LT(P.Reads.MappedBytes, Before.MappedBytes);
   EXPECT_LT(P.Reads.Records, Before.Records);

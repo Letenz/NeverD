@@ -965,7 +965,7 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProb
 
 XSAVE 校验诊断区分长度查询、本地数据准备和捕获数据解码，并保留 API 名称、返回字节数、容量及有限的头部/控制字段；独立预期位于 `WhpHostFailureCases.def`，不打印客户寄存器载荷。`InvalidInputReportsPreparationWithoutHostMutation` 还验证无效输入不会调用主机或修改其数据。共享 ISA 编解码器仍是唯一校验入口。
 
-WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执行中的主机调用失败，均保留 HRESULT 和 `WhpProtocol.def` 中声明的 API 名称；能力查询失败仍返回带类型的不可用结果。 `WhpHostFailureCases.def` 提供独立错误预期，覆盖与取消同时发生的主机失败，以及新版/旧版 XSAVE 查询、安装和捕获失败。 Windows 专项 CI 要求 192 项原生用例通过：16 项映射、2 项启动、10 项 FP/上下文、7 项共享 CPU、8 项整数用例，以及 `NativeInstallRetainsFPStateBeforeAnyGuestExecution` 的两种 API 变体。后两项在执行客户代码前对比完整 FP/SSE 与独立读取的元数据。 缺少注册、跳过、禁用或未运行都会使原生证据审计失败。 新增的 26 项检查覆盖 `X64BitStringTests.cpp` 在两种特权级下的全部用例。 Windows PE64 要求 53 项 WHP 进程用例和七项独立原生 Windows 对照用例。
+WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执行中的主机调用失败，均保留 HRESULT 和 `WhpProtocol.def` 中声明的 API 名称；能力查询失败仍返回带类型的不可用结果。 `WhpHostFailureCases.def` 提供独立错误预期，覆盖与取消同时发生的主机失败，以及新版/旧版 XSAVE 查询、安装和捕获失败。 Windows 专项 CI 要求 196 项原生用例通过：16 项映射、2 项启动、10 项 FP/上下文、7 项共享 CPU、8 项整数用例，以及 `NativeInstallRetainsFPStateBeforeAnyGuestExecution` 的两种 API 变体。后两项在执行客户代码前对比完整 FP/SSE 与独立读取的元数据。 缺少注册、跳过、禁用或未运行都会使原生证据审计失败。 新增的 26 项检查覆盖 `X64BitStringTests.cpp` 在两种特权级下的全部用例。 Windows PE64 要求 56 项 WHP 进程用例和八项独立原生 Windows 对照用例。
 
 `NeverDMemoryLifecycleTests` 独立于 Unicorn 构建，也覆盖仅启用原生后端的配置。禁用 Unicorn 时，专用的软件投影/设备用例明确跳过；匹配主机的共享 CPU 用例仍会注册。`WhpMemoryTests.cpp` 使用 `WhpMemoryCases.def` 中的 16 个用例隔离原生内存 API：单页/投影大小的后备内存、共享/独立分配、未触页/已驻留字节，以及存在/不存在第一个虚拟处理器。每个案例保留两个存活的逻辑所有者，反复切换其映射分区，销毁非活动所有者，并验证剩余映射无需重建即可继续使用。真实映射错误保留 HRESULT 并使测试失败；这是内存 API 证据，不是指令执行证明。
 
@@ -981,7 +981,7 @@ WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 192 项 CPU 检查及 4 项共享 SEH 续接回归，共有 420 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `192 CPU + 224 WHP + 4 SEH = 420`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 196 项 CPU 检查及 4 项共享 SEH 续接回归，共有 424 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `196 CPU + 224 WHP + 4 SEH = 424`.
 
 C SEH 作用域仍使用左闭右开区间。合法的 `__C_specific_handler` 落点可能位于其保护区间内：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 将 `EndLabel + 1` 写为区间末端。Windows OS 模型保留原始端点，并独立校验目标可执行性、所属函数和续接身份，重定位后同样如此。`KernelSEHContinuationCases.def` 保留原始样例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 覆盖常量处理器和过滤器。配套测试验证末端排除，以及非法目标被拒绝后派发状态仍可重试。这些纯模型检查纳入 `NeverDNativeDriverTests`，禁用 Unicorn 时仍会执行。
 
@@ -1030,11 +1030,13 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `WindowsProcessExports` 为静态导入和 `GetProcAddress` 共用名称／序号解析，覆盖代码、数据、别名及链式转发。 只有实际引用的启动转发才引入目录中的模块和初始化依赖，未使用的转发不加载文件。 导出名称区分大小写；名称缺失返回 NULL／错误 127，直接查询缺失序号（包括空洞）返回 NULL／错误 182，查询参数为空指针返回错误 87，成功保留 LastError。 未知模块句柄仍不支持。 有界 API 清单按精确提供方／名称一次性保留调用入口。 解析检查每个查询映像的实时 PE 头和导出元数据，拒绝修改或不可读字节，转发链最多 64 项，并共享准备阶段剩余的元数据额度及执行截止时间。 转发到空洞时返回目标映像基址并保留 LastError；转发到零序号返回错误 87。 返回基址是数据地址，不授予映像头执行权限。 运行时转发可以加载配置目录中的模块，并在返回查询结果前完成初始化。仍不支持实时改写导出表。
 
-`WindowsProcessLoader` 从 `windows.modules` 加载 ASCII DLL 基名，统一管理显式引用、共享依赖和启动模块保留。重复查询转发导出不会增加额外引用。模块目录槽位在重载时使用新的驻留代次。TLS 和 `DllMain` 在同一 CPU 上、被暂停 API 的栈帧下方执行；恢复寄存器保留客户内存写入，并使用实时返回地址。动态附加／分离的保留指针为零。显式加载期间的附加失败在清理后返回错误 1114，同时保留已成功的独立嵌套加载。卸载释放映像映射和 TLS，重载恢复原始映像内容。模型之外对加载器链表或 TLS 指针的修改会明确失败。失败和重载都不会重置文件、映像与元数据工作额度。API 提供方没有伪造的 DLL 句柄。文件系统搜索、非 ASCII 路径、`LoadLibraryEx` 标志、循环导入及正在初始化或卸载的同一模块的重入转换仍不支持。
+`WindowsProcessLoader` 从 `windows.modules` 加载 ASCII DLL 基名，统一管理显式引用、共享依赖和启动模块保留。重复查询转发导出不会增加额外引用。模块目录槽位在重载时使用新的驻留代次。TLS 和 `DllMain` 在同一 CPU 上、被暂停 API 的栈帧下方执行；恢复寄存器保留客户内存写入，并使用实时返回地址。动态附加／分离的保留指针为零。显式加载期间的附加失败在清理后返回错误 1114，同时保留已成功的独立嵌套加载。卸载释放映像映射和 TLS，重载恢复原始映像内容。模型之外对加载器链表或 TLS 指针的修改会明确失败。失败和重载都不会重置文件、映像与元数据工作额度。系统提供方以已映射 PE 的基址作为模块句柄。文件系统搜索、非 ASCII 路径、`LoadLibraryEx` 标志、循环导入及正在初始化或卸载的同一模块的重入转换仍不支持。
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` 共用 PEB 进程参数中的实时客户环境块。名称限 ASCII 且忽略大小写，值为 UTF-16。修改前校验输入、容量及可写内存。快照不受后续修改影响，释放时回收客户内存。模型的环境块上限为 64 KiB；字符串与展开操作有明确边界并检查工作负载截止时间。未知指针归属、格式错误的环境块、ANSI 代码页及展开缓冲区重叠仍不支持。`WindowsEnvironmentTests.cpp` 在可用后端比较原创 x64/ARM64 样例，CI 必须执行独立的原生 Windows 对照。
 
 `WindowsProcessHeap` 统一管理进程堆的分配、`HeapReAlloc`、释放和尺寸查询。调整大小保留原有有效数据；`HEAP_ZERO_MEMORY` 清零新增字节，`HEAP_REALLOC_IN_PLACE_ONLY` 禁止搬迁。重分配失败时保留旧块，返回 NULL 并设置 `ERROR_NOT_ENOUGH_MEMORY`（8），与原生观测一致。独立页内存使收缩和释放能归还容量，分阶段扩容及有界复制检查工作负载截止时间。自定义堆、异常生成标志、未知归属以及不可访问的复制或清零范围均明确停止。`WindowsHeapTests.cpp` 覆盖两种 ISA、强制搬迁、预算复用和失败原子性；CI 也在原生 Windows 上运行同一原创 EXE。 PE 批量用例采用测试框架统一的 120 秒 CTest 外层限时，每个客户工作负载仍有独立的有限预算。堆样例为每个进程保留 20 秒，以便 WHP 完成全部数据校验。
+
+`WindowsSystemModules` 为两种 ISA 构造有界的 `ntdll.dll`、`kernelbase.dll` 和 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 与 `GetProcAddress` 共用其映射基址；PEB/LDR 和 `MEM_IMAGE` 描述同一批映像。静态导入、按名称查询和客户 DLL 转发使用相同 API 跳板与导出解析器。提供方固定驻留，不执行客户初始化回调，普通客户 DLL 全部卸载后不会阻止入口返回。头部或导出元数据改变会停止查询。未知系统导出名称和非零系统序号查询明确停止；已建模名称的大小写不匹配和空名称返回错误 127，空指针查询返回 87。生成的字节和地址属于模型策略，不复刻特定 Windows DLL 布局、原生序号或跨提供方别名。`WindowsSystemTests.cpp` 对照原始 x64/ARM64 EXE 与原生 Windows，并独立观察八次初始线程返回。
 
 `WindowsDynamicTests.cpp` 使用原始 x64/ARM64 DLL 和 EXE，对照独立原生 Windows 观测，覆盖引用计数、共享依赖、嵌套加载、附加失败清理、转发查询、进程退出、无入口 DLL 以及重载时重新初始化 TLS。额外回归拒绝被修改的加载器元数据和失效代码指针，保持累计准备额度，并确保被中断 API 的结果仍未完成。Windows CI 强制执行原生对照和 WHP 用例；交叉编译与 Unicorn ARM64 不代表原生 ARM64 已执行验证。
 

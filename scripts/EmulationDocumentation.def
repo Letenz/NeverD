@@ -371,7 +371,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "192 CPU + 224 WHP + 4 SEH = 420")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "196 CPU + 224 WHP + 4 SEH = 424")
 NEVERD_EMULATION_DOC_TOKEN(Project, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -533,4 +533,26 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsHeap, "ERROR_NOT_ENOUGH_MEMORY")
 NEVERD_EMULATION_DOC_TOKEN(WindowsHeap, "HEAP_ZERO_MEMORY")
 NEVERD_EMULATION_DOC_TOKEN(WindowsHeap, "HEAP_REALLOC_IN_PLACE_ONLY")
 NEVERD_EMULATION_DOC_TOKEN(WindowsHeap, "WindowsHeapTests.cpp")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsSystem, "README.md")
+NEVERD_EMULATION_DOC_PATH(WindowsSystem, "docs/{locale}/project.md")
+NEVERD_EMULATION_DOC_PATH(WindowsSystem, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsSystem, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsSystem, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsSystem, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsSystem, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsSystem, "docs/{locale}/process-emulation.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "WindowsSystemModules")
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "GetModuleHandleA")
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "GetModuleHandleW")
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "GetProcAddress")
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "MEM_IMAGE")
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "kernel32.dll")
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "kernelbase.dll")
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "ntdll.dll")
+NEVERD_EMULATION_DOC_TOKEN(WindowsSystem, "WindowsSystemTests.cpp")
 #endif
