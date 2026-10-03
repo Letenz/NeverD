@@ -2339,20 +2339,20 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         report(errors, "driver SEH example differs from public execution scenario")
     exports = re.findall(
         r"NEVERD_KERNEL_API\((\w+),",
-        view.read_text(Path("lib/emulation/os/windows/KernelAPIs.def")),
+        view.read_text(Path("lib/emulation/os/windows/kernel/KernelAPIs.def")),
     )
     exports = [name for name in exports if name != "Name"]
     exports += re.findall(
         r"NEVERD_KERNEL_REGISTRY_API\((\w+),",
-        view.read_text(Path("lib/emulation/os/windows/KernelRegistryAPIs.def")),
+        view.read_text(Path("lib/emulation/os/windows/kernel/KernelRegistryAPIs.def")),
     )
     exports += re.findall(
         r"NEVERD_KERNEL_DISPATCHER_API\((\w+),",
-        view.read_text(Path("lib/emulation/os/windows/KernelDispatcherAPIs.def")),
+        view.read_text(Path("lib/emulation/os/windows/kernel/KernelDispatcherAPIs.def")),
     )
     framework_exports = re.findall(
         r"^NEVERD_FRAMEWORK_API\((\w+),",
-        view.read_text(Path("lib/emulation/os/windows/KernelFrameworkAPIs.def")),
+        view.read_text(Path("lib/emulation/os/windows/kernel/KernelFrameworkAPIs.def")),
         re.MULTILINE,
     )
     if not framework_exports:
@@ -2367,13 +2367,13 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
     ):
         exports += re.findall(
             rf"{macro}\((\w+),",
-            view.read_text(Path("lib/emulation/os/windows") / inventory),
+            view.read_text(Path("lib/emulation/os/windows/kernel") / inventory),
         )
     # These are adapter-bound indirect methods, not kernel import names. Only
     # implemented entries belong to the supported API documentation inventory.
     exports += re.findall(
         r"NEVERD_DMA_OPERATION\((\w+),[^\n]*, true\)",
-        view.read_text(Path("lib/emulation/os/windows/KernelDMAOperations.def")),
+        view.read_text(Path("lib/emulation/os/windows/kernel/KernelDMAOperations.def")),
     )
     required = (
         "NEVERD_ENABLE_DRIVER_EMULATION=ON",

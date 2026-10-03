@@ -12,7 +12,7 @@
 
 #include "DMATestMemory.h"
 #include "gtest/gtest.h"
-#include "os/windows/KernelDMA.h"
+#include "os/windows/kernel/KernelDMA.h"
 
 #include <algorithm>
 #include <array>

@@ -14,9 +14,9 @@
 #define NEVERD_UNITTESTS_EMULATION_KERNELFRAMEWORKTESTSUPPORT_H
 
 #include "gtest/gtest.h"
-#include "os/windows/DriverImage.h"
-#include "os/windows/KernelFramework.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelFramework.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 #include "neverd/emulation/GuestMemory.h"

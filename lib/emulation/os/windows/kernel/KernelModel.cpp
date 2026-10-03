@@ -11,7 +11,7 @@
 
 #include "KernelModel.h"
 
-#include "DriverImage.h"
+#include "../driver/DriverImage.h"
 #include "KernelAPIIRQL.h"
 #include "KernelException.h"
 #include "KernelModelRuntime.h"

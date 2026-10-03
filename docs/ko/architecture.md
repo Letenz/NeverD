@@ -558,6 +558,8 @@ CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프
 
 `NEVERD_ENABLE_SEMANTIC_TESTS`의 기본값은 `ON`이며 `unittests/semantic`의 테스트 그룹과 통합 실행 대상을 제어합니다. Unicorn 없이 네이티브 CPU 테스트를 빌드하려면 `BUILD_TESTING=ON`을 유지하고 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF`와 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`를 설정합니다. 적절한 SDK 헤더가 있는 Windows ARM64/MSVC를 포함하여 네이티브 KVM/WHP 테스트를 계속 빌드할 수 있습니다. Windows ARM64에서 Unicorn을 활성화하려면 ARM64 LLVM-MinGW 도구 모음이 필요합니다. 이 빌드 분리는 ARM64 네이티브 실행 검증을 의미하지 않습니다.
 
+`os/windows/driver/`는 드라이버 이미지 로드, 실행 세션, 시나리오, 보고서와 실행 정책을 담당합니다. `os/windows/kernel/`은 WDM/KMDF, 장치 수명 주기, 전원 정책, 메모리와 스케줄링을 포함한 커널 API 및 객체 모델을 담당하며 `KernelModelPowerPolicy.cpp`는 여기에 속합니다. `os/windows/process/`는 사용자 프로세스 시작과 서비스를, `os/windows/exception/`은 공통 예외 검색과 언와인딩을 담당합니다. 드라이버와 커널 소스는 계속 `NeverDEmulation`을 구성하며 기존 호출과 공유 형식은 아직 독립된 라이브러리 경계로 분리되지 않았습니다. 각 디렉터리의 `CMakeLists.txt`가 소스 목록을 관리하고 공개 헤더의 호환성을 유지합니다.
+
 | 구성 요소 | 책임 |
 |---|---|
 | `NeverDEmulationCore` | 메모리, fault, 레지스터, 공통 실행 루프 |

@@ -12,7 +12,7 @@
 
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "os/windows/WindowsX64ExecutionPolicy.h"
+#include "os/windows/driver/WindowsX64ExecutionPolicy.h"
 
 #include "neverd/emulation/DriverProfile.h"
 

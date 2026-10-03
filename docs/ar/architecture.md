@@ -584,6 +584,8 @@ CMake.
 
 تكون `NEVERD_ENABLE_SEMANTIC_TESTS` بقيمة `ON` افتراضياً، وتتحكم في مجموعة `unittests/semantic` وأهداف تشغيلها المجمعة. لبناء اختبارات CPU الأصلية دون Unicorn، أبقِ `BUILD_TESTING=ON` واضبط `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` و`NEVERD_EMULATION_BACKEND_UNICORN=OFF`. تظل اختبارات KVM/WHP الأصلية متاحة، بما فيها إعداد Windows ARM64/MSVC مع ترويسات SDK المناسبة. لا يزال تفعيل Unicorn على Windows ARM64 يتطلب سلسلة أدوات ARM64 LLVM-MinGW. فصل البناء هذا لا يثبت تنفيذ ARM64 على عتاد أصلي.
 
+يتولى `os/windows/driver/` تحميل صور برامج التشغيل وجلسات التنفيذ والسيناريوهات والتقارير وسياسات التنفيذ. ويضم `os/windows/kernel/` نماذج واجهات النواة وكائناتها، بما فيها WDM/KMDF ودورة حياة الأجهزة والطاقة والذاكرة والجدولة؛ وينتمي إليه `KernelModelPowerPolicy.cpp`. يتولى `os/windows/process/` بدء عمليات المستخدم وخدماتها، بينما يضم `os/windows/exception/` البحث المشترك عن معالجات الاستثناءات وفك المكدس. تظل مصادر برامج التشغيل والنواة ضمن `NeverDEmulation`؛ فالاستدعاءات والأنواع المشتركة لم تُفصل بعد إلى مكتبات مستقلة. يدير كل مجلد قائمة مصادره في ملف `CMakeLists.txt` الخاص به مع الحفاظ على توافق الترويسات العامة.
+
 | المكوّن | المسؤولية |
 |---|---|
 | `NeverDEmulationCore` | الذاكرة والأعطال والسجلات وحلقة التنفيذ المشتركة |

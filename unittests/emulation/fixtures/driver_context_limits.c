@@ -28,15 +28,15 @@
 #undef NEVERD_CONTEXT_LIMIT_FAILURE
 
 #define NEVERD_WDM_VALUE(Name, Value) enum { Name = Value };
-#include "../../../lib/emulation/os/windows/KernelValues.def"
-#include "../../../lib/emulation/os/windows/WindowsKernelLayout.def"
+#include "../../../lib/emulation/os/windows/kernel/KernelValues.def"
+#include "../../../lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
 #undef NEVERD_WDM_VALUE
 #define NEVERD_KERNEL_POOL_FLAG(Name, Value) enum { PoolFlag##Name = Value };
-#include "../../../lib/emulation/os/windows/KernelPoolFlags.def"
+#include "../../../lib/emulation/os/windows/kernel/KernelPoolFlags.def"
 #undef NEVERD_KERNEL_POOL_FLAG
 #define NEVERD_KERNEL_DISPATCHER_VALUE(Name, Value)                            \
   enum { Context##Name = Value };
-#include "../../../lib/emulation/os/windows/KernelDispatcherValues.def"
+#include "../../../lib/emulation/os/windows/kernel/KernelDispatcherValues.def"
 #undef NEVERD_KERNEL_DISPATCHER_VALUE
 
 // WDK dispatcher storage is opaque. Win64 objects have eight-byte alignment.

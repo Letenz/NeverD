@@ -1261,6 +1261,8 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 
 `NEVERD_ENABLE_SEMANTIC_TESTS` defaults to `ON` and controls the test group in `unittests/semantic`, including its aggregate runners. To build native CPU tests without Unicorn, keep `BUILD_TESTING=ON` and set both `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` and `NEVERD_EMULATION_BACKEND_UNICORN=OFF`. The native KVM/WHP tests remain available, including Windows ARM64/MSVC builds with suitable SDK headers. Enabling Unicorn on Windows ARM64 still requires an ARM64 LLVM-MinGW toolchain. This build separation does not establish native ARM64 runtime coverage.
 
+`os/windows/driver/` owns driver image loading, execution sessions, scenarios, reports and execution policy. `os/windows/kernel/` owns kernel API and object models, including WDM/KMDF, device lifecycle, power policy, memory and scheduling; `KernelModelPowerPolicy.cpp` belongs there. `os/windows/process/` owns user-process startup and services, while `os/windows/exception/` owns shared exception search and unwind. Driver and kernel sources still form `NeverDEmulation`: their existing calls and shared types are not independent library boundaries. Each directory maintains its own `CMakeLists.txt` source list, and public headers remain compatible.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
@@ -1298,7 +1300,8 @@ lib/emulation/
   backends/hvf/          macOS host virtualization on the matching ISA
   abi/                   Guest calling conventions independent of OS and CPU transport
   runtime/               CPU composition and shared workload accounting
-  os/windows/            Windows driver workload, ABI policy and kernel model
+  os/windows/driver/     Driver loading, sessions, scenarios and execution policy
+  os/windows/kernel/     Kernel APIs, WDM/KMDF and device/power/memory models
   os/windows/exception/  Shared Windows x64 exception search and unwind
   os/windows/process/    Windows PE64 user process startup and user API models
   os/linux/              Linux ELF process startup and system-call ABI/services
@@ -1323,8 +1326,8 @@ OS. Architecture code accepts an already-created machine and authoritative
 memory; it neither chooses nor constructs a concrete backend. Backend code
 implements the architecture's machine boundary. `runtime` owns that
 composition and the host/guest selection rules. Windows code uses the public
-CPU and memory interfaces, and its CMake source inventory stays in
-`os/windows/CMakeLists.txt`. The existing public headers remain compatible.
+CPU and memory interfaces. `os/windows/CMakeLists.txt` composes the
+driver and kernel source inventories into the existing component.
 
 [`IntegerABI`](../include/neverd/emulation/IntegerABI.h) owns Win64, SysV
 AMD64 and AAPCS64 call-frame operations for non-variadic 64-bit integer/pointer
@@ -1745,7 +1748,7 @@ KVM x64/ARM64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture
 
 ## Windows driver emulation
 
-Windows CR8/GS admission belongs to `os/windows/WindowsX64ExecutionPolicy`, not
+Windows CR8/GS admission belongs to `os/windows/driver/WindowsX64ExecutionPolicy`, not
 the CPU transports. Native `driver-strict` uses the architecture's validated
 instruction/effect boundary; the Windows environment continues to own driver
 objects, API semantics and lifecycle. Unsupported accesses stop before native

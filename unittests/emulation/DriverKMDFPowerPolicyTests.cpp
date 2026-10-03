@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "fixtures/driver_kmdf_power_policy_test.h"
 #include "gtest/gtest.h"
-#include "os/windows/KernelFramework.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/kernel/KernelFramework.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

@@ -683,6 +683,8 @@ CPU-Ausführung ist unabhängig von Gastbetriebssystem und Image. OS-Policy und 
 
 `NEVERD_ENABLE_SEMANTIC_TESTS` ist standardmäßig `ON` und steuert die Testgruppe in `unittests/semantic` samt ihren Sammelzielen. Für native CPU-Tests ohne Unicorn bleibt `BUILD_TESTING=ON` aktiv; zusätzlich werden `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` und `NEVERD_EMULATION_BACKEND_UNICORN=OFF` gesetzt. Native KVM/WHP-Tests bleiben damit verfügbar, auch unter Windows ARM64/MSVC mit geeigneten SDK-Headern. Unicorn unter Windows ARM64 benötigt weiterhin eine ARM64-LLVM-MinGW-Toolchain. Diese Trennung des Builds belegt noch keine native ARM64-Ausführung.
 
+`os/windows/driver/` verwaltet das Laden von Treiberabbildern, Ausführungssitzungen, Szenarien, Berichte und Ausführungsregeln. `os/windows/kernel/` enthält die Kernel-API- und Objektmodelle einschließlich WDM/KMDF, Gerätelebenszyklus, Energieverwaltung, Speicher und Ablaufplanung; hier gehört `KernelModelPowerPolicy.cpp` hin. `os/windows/process/` verwaltet Start und Dienste von Benutzerprozessen, `os/windows/exception/` die gemeinsame Ausnahmesuche und Stapelabwicklung. Treiber- und Kernelquellen bilden weiterhin `NeverDEmulation`; bestehende Aufrufe und gemeinsame Typen sind noch keine unabhängigen Bibliotheksgrenzen. Jedes Verzeichnis pflegt seine Quellliste in einer eigenen `CMakeLists.txt`; öffentliche Header bleiben kompatibel.
+
 | Komponente | Zuständigkeit |
 |---|---|
 | `NeverDEmulationCore` | Speicher, Fehler, Register und gemeinsame Ausführungsschleife |

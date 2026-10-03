@@ -512,6 +512,8 @@ CPU 執行獨立於客體 OS 與映像。OS 政策及程序入口與傳輸層、
 
 `NEVERD_ENABLE_SEMANTIC_TESTS` 預設為 `ON`，控制 `unittests/semantic` 中的測試組及其彙總執行目標。建置不依賴 Unicorn 的原生 CPU 測試時，保留 `BUILD_TESTING=ON`，同時設定 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 和 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`。原生 KVM/WHP 測試仍可建置，包括具備對應 SDK 標頭的 Windows ARM64/MSVC 組態。在 Windows ARM64 上啟用 Unicorn 仍需 ARM64 LLVM-MinGW 工具鏈。這項建置解耦不等於 ARM64 原生執行驗證。
 
+`os/windows/driver/` 負責驅動映像載入、執行工作階段、情境、報告與執行策略；`os/windows/kernel/` 負責核心 API 與物件模型，包括 WDM/KMDF、裝置生命週期、電源策略、記憶體及排程，`KernelModelPowerPolicy.cpp` 歸屬此處。`os/windows/process/` 負責使用者程序啟動與服務，`os/windows/exception/` 負責共用的例外搜尋與展開。驅動與核心原始碼仍組成 `NeverDEmulation`，現有呼叫與共用型別尚未形成獨立程式庫邊界。各目錄以自己的 `CMakeLists.txt` 維護原始碼清單，公開標頭檔維持相容。
+
 | 元件 | 職責 |
 |---|---|
 | `NeverDEmulationCore` | 記憶體、錯誤、暫存器與共用執行迴圈 |
