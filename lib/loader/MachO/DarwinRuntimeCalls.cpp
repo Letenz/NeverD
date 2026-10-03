@@ -75,6 +75,52 @@ uint16_t darwinIndirectAffineTransformInputBytes(Arch Architecture,
              : 48;
 }
 
+std::optional<SourceFrameEffects>
+darwinMatrixSourceFrameEffects(const BinaryImage &Image,
+                               const SourceCallTypeHint &Binding) {
+  if (Image.Arch != Arch::AArch64 ||
+      Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+      (Binding.TargetName != "CATransform3DMakeTranslation" &&
+       Binding.TargetName != "CATransform3DScale") ||
+      Binding.WeakImport || Binding.DoesNotReturn)
+    return std::nullopt;
+  const auto Expected =
+      darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
+  const auto Bind = Image.DyldBindSlots.find(Binding.TargetAddress);
+  if (!Expected || Expected->WeakImport || Expected->DoesNotReturn ||
+      Expected->CallKind != Binding.CallKind ||
+      Expected->TargetName != Binding.TargetName ||
+      Expected->ByteCount != Binding.ByteCount ||
+      !equalSourceABIs(Expected->Signature, Binding.Signature) ||
+      Bind == Image.DyldBindSlots.end() || Bind->second.WeakImport ||
+      !darwinExportModuleMatches(
+          "/System/Library/Frameworks/QuartzCore.framework/QuartzCore|"
+          "/System/Library/Frameworks/QuartzCore.framework/Versions/A/"
+          "QuartzCore",
+          Bind->second.Module) ||
+      std::find(Image.DynInfo.NeededLibs.begin(),
+                Image.DynInfo.NeededLibs.end(),
+                Bind->second.Module) == Image.DynInfo.NeededLibs.end())
+    return std::nullopt;
+  // CATransform3D.h and the matrix operations define all sixteen CGFloat
+  // fields, with no padding or pointer contents on Darwin arm64. The existing
+  // exact declaration/bridge owns the physical ABI; no arbitrary record
+  // return acquires this definite-write contract.
+  SourceFrameEffects Effects;
+  Effects.InitializesIndirectResult = true;
+  if (Binding.TargetName == "CATransform3DScale") {
+    const auto Bytes =
+        darwinIndirectAffineTransformInputBytes(Image.Arch, Binding.TargetName);
+    if (Bytes != 128)
+      return std::nullopt;
+    Effects.WritableFrameParameters.emplace(0, Bytes);
+    Effects.InitializedFrameParameters.insert(0);
+  }
+  return sourceFrameEffectsMatchABI(Effects, Binding.Signature)
+             ? std::optional(Effects)
+             : std::nullopt;
+}
+
 std::optional<SourceCallTypeHint>
 darwinCompilerRTSourceCallHint(const BinaryImage &Image, va_t TargetAddress) {
   constexpr llvm::StringLiteral SymbolName = "___isPlatformVersionAtLeast";

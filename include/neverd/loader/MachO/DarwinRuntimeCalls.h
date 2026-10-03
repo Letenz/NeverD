@@ -2,6 +2,7 @@
 #define NEVERD_LOADER_MACHO_DARWINRUNTIMECALLS_H
 
 #include "neverd/ir/SourceCallTypeHint.h"
+#include "neverd/ir/low/SourceFrameEffects.h"
 
 #include <optional>
 
@@ -26,6 +27,13 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
 /// zero for unsupported names or architectures; result size is independent.
 uint16_t darwinIndirectAffineTransformInputBytes(Arch Architecture,
                                                  const std::string &Name);
+
+/// Exact strong QuartzCore matrix producers initialize a complete pointer-free
+/// result. Scale consumes an initialized by-value input copy and may write it.
+/// This authenticates the import/ABI contract, not a LowIR call occurrence.
+std::optional<SourceFrameEffects>
+darwinMatrixSourceFrameEffects(const BinaryImage &Image,
+                               const SourceCallTypeHint &Binding);
 
 /// A linked compiler-rt builtin with a stable public C contract. Unlike an
 /// imported runtime call, TargetAddress is the exact local function entry.

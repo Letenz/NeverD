@@ -1319,11 +1319,14 @@ static bool restoresNativeSourceStateImpl(
     return false;
   std::set<int64_t> IncomingStackSlots;
   if (EntrySignature) {
+    // Copy queries consume a separately authenticated fixed source declaration.
+    // They do not infer an entry ABI from frame use; preserve the narrower
+    // NativeAnalysis rule for the existing inference/preservation consumers.
     std::string Error;
     if (EntrySignature->Architecture != Architecture ||
         (EntrySignature->Origin !=
              SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
-         !HasStackStore) ||
+         !HasStackStore && !CopyQuery) ||
         !validateSourceABI(*EntrySignature, Error))
       return false;
     for (const auto &Parameter : EntrySignature->Parameters) {

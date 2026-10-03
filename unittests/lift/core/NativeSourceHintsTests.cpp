@@ -5377,6 +5377,83 @@ TEST(NativeSourceHints,
   std::string Error;
   ASSERT_TRUE(
       assignDarwinObjCSourceABI(CallHint->Signature, Arch::AArch64, Error));
+  // A super message ABI alone does not lend private frame storage. Supply
+  // the exact current runtime import and declaration used by the effect owner.
+  Fixture.Image.MachOTwoLevelNamespace = true;
+  Fixture.Image.DynInfo.NeededLibs = {
+      "/usr/lib/libobjc.A.dylib",
+      "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+  Section TextSection;
+  TextSection.VA = 0x1000;
+  TextSection.Size = TextSection.FileSz = 0x100;
+  TextSection.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  TextSection.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+  Fixture.Image.Sections.push_back(TextSection);
+  Segment ImportData;
+  ImportData.VA = 0x3000;
+  ImportData.Size = ImportData.FileSz = 8;
+  ImportData.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  ImportData.Data.resize(8);
+  Fixture.Image.Segments.push_back(ImportData);
+  Fixture.Image.ImportPtrSlots[0x3000] = "_objc_msgSendSuper2";
+  Fixture.Image.DyldBindSlots[0x3000] = {"_objc_msgSendSuper2", 0,
+                                         "/usr/lib/libobjc.A.dylib", false};
+  const uint32_t Stub[] = {0xd0000010, 0xf9400210, 0xd61f0200};
+  for (unsigned I = 0; I < std::size(Stub); ++I)
+    llvm::support::endian::write32le(
+        Fixture.Image.Segments[0].Data.data() + 0x80 + I * 4, Stub[I]);
+  CallHint->TargetAddress = 0x1080;
+  CallHint->TargetName = "objc_msgSendSuper2";
+  CallHint->Selector = "layoutSublayers";
+  const auto Declaration =
+      objcSelectorSourceTypeHint(Fixture.Image, CallHint->Selector);
+  ASSERT_TRUE(Declaration);
+  CallHint->Signature = *Declaration;
+  ASSERT_TRUE(objcSuperSourceFrameEffects(Fixture.Image, *CallHint));
+  for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = Fixture.Image;
+    auto Binding = *CallHint;
+    switch (Mutation) {
+    case 0:
+      Image.DyldBindSlots.at(0x3000).WeakImport = true;
+      break;
+    case 1:
+      Image.DyldBindSlots.at(0x3000).Addend = 8;
+      break;
+    case 2:
+      Image.DyldBindSlots.at(0x3000).Module = "/other/libobjc";
+      break;
+    case 3:
+      Image.ImportPtrSlots[0x3000] = "_objc_msgSend";
+      break;
+    case 4:
+      Image.DynInfo.NeededLibs.clear();
+      break;
+    case 5:
+      Image.Segments[0].Data[0x80] ^= 1;
+      break;
+    case 6:
+      Binding.WeakImport = true;
+      break;
+    case 7:
+      Binding.DoesNotReturn = true;
+      break;
+    case 8:
+      Binding.TargetName = "objc_msgSend";
+      break;
+    case 9:
+      Binding.Selector = "missingIndependentDeclaration";
+      break;
+    case 10:
+      Binding.Signature.Parameters[0].Location.ValueBytes = 4;
+      break;
+    case 11:
+      Binding.TargetAddress += 4;
+      break;
+    }
+    EXPECT_FALSE(objcSuperSourceFrameEffects(Image, Binding));
+  }
   auto &MedCall = Fixture.Med.Blocks[0].Ops[0];
   MedCall.SourceCallHint = CallHint;
 

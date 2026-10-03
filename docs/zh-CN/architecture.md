@@ -589,13 +589,15 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 | 组件 | 职责 |
 |---|---|
 | `NeverDEmulationCore` | 内存、故障、寄存器与共享执行循环 |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP 传输与可移植 Unicorn 执行 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP/HVF 传输与可移植 Unicorn 执行 |
 | `NeverDEmulationArch` | ISA 准入、架构状态、页表和 FP 状态布局 |
 | `NeverDEmulationCPU` | CPU 配置及后端组合 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整数 ABI、CPU 会话与工作负载预算 |
 | `NeverDEmulationImage` | 加载器分段映射计划 |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 启动、Linux 服务策略与进程报告 |
 | `NeverDEmulation` | Windows 模型与驱动生命周期 |
+
+macOS 的原生传输 [HVF](macos-hvf.md) 归 `NeverDEmulationNative` 所有：Apple Silicon 使用 ARM64，Intel 使用 x86-64。宿主 ISA 决定该传输的选择，不决定来宾 OS；[Darwin profile](darwin-emulation.md) 独立定义 macOS、iOS 设备和 iOS Simulator 的启动与服务。仍待完成的 Linux ARM64 KVM、Windows ARM64 WHP 验证不能与已有的 macOS ARM64 HVF 证据混为一谈。原生可用性和完整验收状态以 HVF 指南为准。
 
 CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构、特权、地址位宽和功能。`ExecutionBudget` 为每个工作负载持有共享指令／事件计数和绝对单调 deadline；恢复执行不会重置预算。`ExecutionSession` 管理 CPU、hooks 及待处理的服务／故障续接。会话可共享内存和预算，但采用协作调度，不是并行 SMP。恢复前必须恰好消费一次待处理请求。CPU 故障优先于资源停止；无法解释的引擎停止不代表工作负载成功。
 
@@ -607,11 +609,11 @@ CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构
 
 使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
 
-Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
+Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM、WHP 和 HVF 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
-ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。成功仅验证这段有界初始化程序；仍需独立的 ARM64 原生工作负载验证。
+ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 
-x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。这些自检仅证明有界初始化；ARM64 原生工作负载仍缺少独立验证。
+x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 
 共享 XSAVE 解码器区分标准格式与压缩格式的 SSE 初始状态。XSTATE_BV[1] 清零时，两种格式都初始化 XMM 寄存器；标准格式仍读取并校验 MXCSR，压缩格式才初始化 MXCSR。`X64XsaveCases.def` 提供独立的数据布局和原创主机 XRSTOR 程序。`X64XsaveTests.cpp` 检查拒绝状态的原子性，并以真实主机执行对照两种格式，同时保留调用方 FP/SSE 状态。主机架构或所需指令功能不可用时，对照测试明确跳过。
 
@@ -1002,8 +1004,12 @@ Combine 的精确强导入 `Publisher.sink(receiveValue:)` 重载在 `Failure ==
 
 无显式参数的原生 Swift 类方法由 loader 与 C API 共用完整 ABI 声明所有者。`NativeSwiftSelf` 接收者事实要求当前入口声明、匹配的类元数据，以及全部机器指令和 CFG 边的规范重提升；复制、破坏和合流沿用既有寄存器/字节分析。对于 ObjC 编码为空的对象字段，`SwiftMetadata` 独立核对有界 kind-7 反射记录、完整字段类型、类及父类描述符、ObjC ivar、偏移向量和精确字段偏移符号。生成代码仍动态读取 ivar 偏移，不用初始字节冻结继承布局。发布时重新构建当前 LowIR 提示，验证完整 ABI、已接受的审计、规范 HighIR 参数、精确的源级 self/字段路径和唯一求值。歧义记录、部分值、路径冲突、存储变化或陈旧凭据均被拒绝。字段身份不授予副本存储、帧借用、noescape 或纯函数权限；`CALayer.setTransform:` 仍需独立证明其 128 字节参数副本。O0/O2 对照使用原始 ARM64 与原样生成 C、真实 ObjC/CALayer 调用、变化的运行时字段偏移及 nil 字段值。
 
+有限多目标间接分派也保留延后处理的条件依赖：合流后的目标集合即使有限，仍可能包含不可行分支。失败后的反向搜索会跳过无法新增字段、上下文或生产者需求位的条件，继续寻找有用的外层条件。候选选择和激活使用同一规则及发现预算。这些候选不会删除边；发布结果仍须重新证明完整可达图。 仅在既有精度细化停滞后，才遍历有限分派的条件依赖。启用该步骤消耗一次新的细化，并沿用同一累计工作上限，避免无关选择器抢占已有生产者或原生条件的细化预算。 条件候选耗尽后，延后处理的生产者及其他精度细化仍可继续；只有新的证明才能关闭失败。
+
 HighIR 在复制尾部调用前查询 `SourceCallTypeHint::requiresUniqueSourceOccurrence`。布尔结果、回调参数、不可变目标、帧中值见证、虚分派和原生 Swift 接收者凭据各自对应一次原始机器调用；返回尾部、跳转尾部和嵌套出口改写均保留共享求值位置，即使复制后的源码路径互斥也不复制凭据。普通调用声明继续使用原有复制规则。发布仍重新证明当前机器、ABI、操作数和动态目标，并要求唯一源码求值。测试覆盖全部凭据类型、嵌套表达式、普通调用优化，以及完整 ARM64 共享存储和回调尾部与生成 C 在 O0/O2 下的对照。
 
 共享 `SourceABI` 所有者区分逻辑上的按值结构体与物理地址载体。Darwin ARM64 C 声明中的六个或十六个 double 保留完整结构体类型，通过八字节整数寄存器或自然对齐栈槽传参，独立于浮点参数寄存器和 x8 返回指针。ABI 相等判断与投影分组保留该区别、调用约定及参数角色，拒绝部分、重叠、不兼容或陈旧载体。仅有声明不能绑定 LowIR 调用、投影入口、输出 HighC 调用或授权帧借用，仍需独立副本存储证明。编译器与原生 ABI 测试覆盖寄存器耗尽、栈布局、任意浮点位型、副本改写隔离及独立间接返回；这不是完整 `setTransform:` 恢复测试。
 
 共享的 `SourceFrameAnalysis` 在独立效果凭据说明消费方及完整间接结果生产者后，可核验原始调用处已初始化的私有按值副本。分析覆盖全部到达路径和循环回边、精确活动范围、其他实参别名及后续使用。消费副本会使初始化事实和保存字节身份失效；后续读取必须先有新的确定写入。可能写入和帧释放也会清除初始化事实，同时保留 Swift scratch 的活跃生命周期义务。查询只有在完整帧恢复证明通过后才返回实参范围，不授予机器身份、SDK 效果、调用绑定或源码发布权限。测试覆盖分支、循环、部分写入、别名及保留的 scratch；真实 ObjC/CALayer 的 ARM64 用例拒绝读取已消费副本，接受独立证明已初始化且可丢弃的副本。
+
+Objective-C 消费者仅在共享帧证明认证原始调用处整个一次性副本生命周期后绑定间接按值结构体，分别保留逻辑结构体声明与物理指针。证明要求当前规范机器码/LowIR、独立声明的 Swift 入口及字段接收者、全部中间调用 ABI，以及独立所有者提供的 `objc_msgSendSuper2` 和完整矩阵返回效果，不引入递归或重复帧规则。发布时重新检查，并将完整直线 HighIR 函数体与规范重放比较，覆盖初始化和后续使用；陈旧或缺失凭据、重复求值均拒绝。HighC 通过一次 memcpy 快照构造逻辑结构体。首个消费者仅支持 ARM64 固定私有副本，不授权任意指针、动态栈或通用 noescape。原生测试在 O0/O2 将原样生成 C 与原始 ARM64 调用方及真实 ObjC/CALayer 对照，覆盖 nil、浮点位型、运行时字段偏移及 callee 合法改写一次性副本。

@@ -1493,3 +1493,86 @@ TEST(DarwinIndirectRecordCalls,
   executeSource(Source);
 }
 } // namespace
+
+TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
+  constexpr auto QuartzCore =
+      "/System/Library/Frameworks/QuartzCore.framework/QuartzCore";
+  for (const char *Name :
+       {"CATransform3DMakeTranslation", "CATransform3DScale"}) {
+    auto Image = image(("_" + std::string(Name)).c_str());
+    Image.DynInfo.NeededLibs = {QuartzCore};
+    Image.DyldBindSlots.at(0x2180).Module = QuartzCore;
+    auto Binding = darwinRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Binding);
+    auto Effects = darwinMatrixSourceFrameEffects(Image, *Binding);
+    ASSERT_TRUE(Effects);
+    EXPECT_TRUE(Effects->InitializesIndirectResult);
+    EXPECT_EQ(Effects->WritableFrameParameters.size(),
+              std::string(Name) == "CATransform3DScale" ? 1U : 0U);
+    EXPECT_EQ(Effects->InitializedFrameParameters.size(),
+              Effects->WritableFrameParameters.size());
+    EXPECT_TRUE(Effects->ReadOnlyFrameParameters.empty());
+    for (unsigned Mutation = 0; Mutation < 18; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto I = Image;
+      auto B = *Binding;
+      switch (Mutation) {
+      case 0:
+        I.Arch = Arch::X64;
+        break;
+      case 1:
+        I.Format = BinaryFormat::ELF;
+        break;
+      case 2:
+        I.IsRelocatable = true;
+        break;
+      case 3:
+        I.Bits = Bitness::Bits32;
+        break;
+      case 4:
+        I.DyldBindSlots.at(0x2180).WeakImport = true;
+        break;
+      case 5:
+        I.DyldBindSlots.at(0x2180).Addend = 8;
+        break;
+      case 6:
+        I.DyldBindSlots.at(0x2180).Module = "/not/QuartzCore";
+        break;
+      case 7:
+        I.DynInfo.NeededLibs.clear();
+        break;
+      case 8:
+        I.ImportPtrSlots[0x2180] = "_other";
+        break;
+      case 9:
+        I.ConflictingImportStorageSlots.insert(0x2180);
+        break;
+      case 10:
+        B.WeakImport = true;
+        break;
+      case 11:
+        B.DoesNotReturn = true;
+        break;
+      case 12:
+        B.TargetName = "CATransform3DMakeScale";
+        break;
+      case 13:
+        B.TargetAddress += 8;
+        break;
+      case 14:
+        B.Signature.Parameters[0].Location.ValueBytes = 4;
+        break;
+      case 15:
+        B.Signature.ReturnLocation.RegisterOffset = a64reg::X0;
+        break;
+      case 16:
+        B.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+        break;
+      case 17:
+        ++B.ByteCount;
+        break;
+      }
+      EXPECT_FALSE(darwinMatrixSourceFrameEffects(I, B));
+    }
+  }
+}

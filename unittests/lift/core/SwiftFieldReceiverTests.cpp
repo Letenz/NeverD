@@ -4,6 +4,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"
@@ -271,7 +272,7 @@ TEST(SwiftFieldReceiver, ReflectionAndIvarIdentityRemainSeparateFromLayout) {
             "CALayer");
 }
 
-TEST(SwiftFieldReceiver, IndirectRecordDeclarationDoesNotIssueCopyReceipt) {
+TEST(SwiftFieldReceiver, IncompleteRecordDeclarationDoesNotIssueCopyReceipt) {
   FieldFixture F;
   F.text(0x3660, "setTransform:");
   F.Image.ObjCSourceReferences[0x3600].Name = "setTransform:";
@@ -283,6 +284,7 @@ TEST(SwiftFieldReceiver, IndirectRecordDeclarationDoesNotIssueCopyReceipt) {
       objcReceiverSourceTypeHint(F.Image, "setTransform:", *Field);
   ASSERT_TRUE(Declaration.Signature);
   ASSERT_TRUE(Declaration.Signature->Parameters[2].IndirectByValue);
+  F.u32(F.Entry + 36, 0x6d0603e0); // only 16 of the last 32 bytes initialized
   F.run();
   ASSERT_TRUE(F.low());
   EXPECT_FALSE(buildObjCSourceCallHints(F.Image, *F.low()).count(F.Call));
@@ -295,6 +297,166 @@ TEST(SwiftFieldReceiver, IndirectRecordDeclarationDoesNotIssueCopyReceipt) {
           EXPECT_FALSE(Op.SourceCallHint);
         }
   EXPECT_EQ(Calls, 1U);
+}
+
+TEST(SwiftFieldReceiver, InitializedRecordCopyKeepsLogicalMessageAndPublishes) {
+  FieldFixture F;
+  F.text(0x3660, "setTransform:");
+  F.Image.ObjCSourceReferences[0x3600].Name = "setTransform:";
+  F.run();
+  ASSERT_TRUE(F.high());
+  auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+  const auto Call = F.call(Bound.Function);
+  ASSERT_TRUE(Call);
+  ASSERT_EQ(Call->Operands.size(), 3U);
+  EXPECT_EQ(Call->Operands[2]->Type->Size, 8U);
+  EXPECT_EQ(Call->SourceCallHint->Signature.Parameters[2].Type->Size, 128U);
+  EXPECT_TRUE(sdk::objCNativeSwiftReceiverSourceCallBound(
+      *Call, F.Image, F.Result, Bound.Function, {}));
+}
+
+TEST(SwiftFieldReceiver, RecordCopyRejectsStaleStorageAndPublication) {
+  for (unsigned Case = 0; Case < 30; ++Case) {
+    SCOPED_TRACE(Case);
+    FieldFixture F;
+    F.text(0x3660, "setTransform:");
+    F.Image.ObjCSourceReferences[0x3600].Name = "setTransform:";
+    F.run();
+    auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+    auto Call = F.call(Bound.Function);
+    ASSERT_TRUE(Call);
+    ASSERT_TRUE(sdk::objCNativeSwiftReceiverSourceCallBound(
+        *Call, F.Image, F.Result, Bound.Function, {}));
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+    Call->SourceCallHint = Hint;
+    MedOp *Med = nullptr;
+    for (auto &M : F.Result.MedFuncs)
+      for (auto &B : M.Blocks)
+        for (auto &Op : B.Ops)
+          if (Op.Addr == F.Call && Op.Opcode == NdOp::CALL)
+            Med = &Op;
+    ASSERT_NE(Med, nullptr);
+    auto Store =
+        std::find_if(Bound.Function.Body.begin(), Bound.Function.Body.end(),
+                     [](const auto &S) { return S.Kind == StmtKind::Store; });
+    ASSERT_NE(Store, Bound.Function.Body.end());
+    switch (Case) {
+    case 0:
+      Hint->ByValueCopy.reset();
+      break;
+    case 1:
+      Hint->ByValueCopy->FrameOffset += 8;
+      break;
+    case 2:
+      Hint->ByValueCopy->Bytes = 64;
+      break;
+    case 3:
+      Hint->ByValueCopy->Parameter = 1;
+      break;
+    case 4:
+      ++Hint->ByValueCopy->FunctionEntry;
+      break;
+    case 5:
+      ++Hint->ByValueCopy->Site.Sequence;
+      break;
+    case 6:
+      Hint->Signature.Parameters[2].Type = NdType::makePtr(NdType::makeVoid());
+      break;
+    case 7:
+      Hint->Signature.Parameters[2].Location.ValueBytes = 4;
+      break;
+    case 8:
+      Hint->Signature.Parameters[2].IndirectByValue = false;
+      break;
+    case 9:
+      Hint->NativeSwiftReceiver.reset();
+      break;
+    case 10:
+      Call->Operands[2] = Call->Operands[0];
+      break;
+    case 11: {
+      HighStmt S;
+      S.Kind = StmtKind::Call;
+      S.CallExpr = Call;
+      Bound.Function.Body.push_back(S);
+      break;
+    }
+    case 12:
+      Store->StoreVal = HighExpr::makeConst(1, Store->StoreVal->Type->Size);
+      break;
+    case 13:
+      Bound.Function.Body.erase(Store);
+      break;
+    case 14:
+      std::swap(Bound.Function.Body[0], Bound.Function.Body[1]);
+      break;
+    case 15:
+      Bound.Function.FrameSize += 16;
+      break;
+    case 16: {
+      auto H = std::make_shared<SourceCallTypeHint>(*Med->SourceCallHint);
+      H->ByValueCopy.reset();
+      Med->SourceCallHint = H;
+      break;
+    }
+    case 17:
+      for (auto &B : F.low()->Blocks)
+        for (auto &Op : B.Ops)
+          if (Op.Opcode == NdOp::STORE)
+            Op.Inputs[1] = NdVar::scalar(1, Op.Inputs[1].Size);
+      break;
+    case 18:
+      F.u32(F.Entry + 36, 0xd503201f);
+      break;
+    case 19:
+      Bound.Function.SourceTypeHint->Parameters[0].Location.RegisterOffset =
+          a64reg::X0;
+      break;
+    case 20:
+      Hint->WeakImport = true;
+      break;
+    case 21:
+      Call->Operands[2] = HighExpr::makeConst(0, 4);
+      break;
+    case 22: {
+      HighStmt S = *Store;
+      Bound.Function.Body.push_back(S);
+      break;
+    }
+    case 23:
+      Call->Type = NdType::makeInt(8, false);
+      break;
+    case 24:
+      for (auto &M : F.Result.MedFuncs)
+        for (auto &B : M.Blocks)
+          for (auto &Op : B.Ops)
+            if (Op.Opcode == NdOp::STORE)
+              Op.Inputs[1] = MedVar::makeConst(1, Op.Inputs[1].Size);
+      break;
+    case 25:
+      Hint->Receiver->Steps[0].OffsetSlot += 8;
+      break;
+    case 26:
+      Call->Operands[0] = HighExpr::makeConst(0, 8);
+      break;
+    case 27:
+      Call->CallAddr += 4;
+      break;
+    case 28: {
+      Hint->ByValueCopy.reset();
+      auto H = std::make_shared<SourceCallTypeHint>(*Med->SourceCallHint);
+      H->ByValueCopy.reset();
+      Med->SourceCallHint = H;
+      break;
+    }
+    case 29:
+      Hint->Signature.Parameters[2].Type =
+          NdType::makeStruct(std::vector<TypeRef>(6, NdType::makeFloat(8)));
+      break;
+    }
+    EXPECT_FALSE(sdk::objCNativeSwiftReceiverSourceCallBound(
+        *Call, F.Image, F.Result, Bound.Function, {}));
+  }
 }
 
 TEST(SwiftFieldReceiver, MutableObjCInitializersDoNotMakeReflectionMutable) {

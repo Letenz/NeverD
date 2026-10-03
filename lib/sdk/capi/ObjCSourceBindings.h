@@ -184,8 +184,9 @@ inline bool plainNativeBinding(const SourceCallTypeHint &Binding) {
          Binding.SwiftStringInputs.empty() && !Binding.Format &&
          !Binding.NilTerminated && !Binding.SwiftTypeMetadata &&
          !Binding.Receiver && !Binding.NativeSwiftReceiver &&
-         !Binding.SelectorResultUse && !Binding.SelectorResultTypeUse &&
-         !Binding.SelectorArgumentTypeUse && !Binding.SelectorForwardingUse &&
+         !Binding.ByValueCopy && !Binding.SelectorResultUse &&
+         !Binding.SelectorResultTypeUse && !Binding.SelectorArgumentTypeUse &&
+         !Binding.SelectorForwardingUse &&
          !Binding.SelectorArgumentStorageUse &&
          !Binding.ObjCIndirectResultStorage && !Binding.ByteCount &&
          !Binding.ImmutablePointerSlot && !Binding.AddressedFunctionABI &&
@@ -228,6 +229,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
              Expected.SwiftWitnessUndefDescriptor &&
          Binding.FunctionParameterCall == Expected.FunctionParameterCall &&
          Binding.ImmutableNativeCall == Expected.ImmutableNativeCall &&
+         Binding.ByValueCopy == Expected.ByValueCopy &&
          Binding.DoesNotReturn == Expected.DoesNotReturn &&
          Binding.WeakImport == Expected.WeakImport &&
          Binding.ReturnedArgument == Expected.ReturnedArgument &&
@@ -8521,10 +8523,20 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress)
     return false;
-  if (hasIndirectSourceParameters(Hint) || !validateSourceABI(Hint, Reason) ||
-      Hint.Architecture != Image.Arch ||
+  if (((hasIndirectSourceParameters(Hint) || Binding.ByValueCopy) &&
+       (!ContainingFunction || !NativeSwiftReceiverProved ||
+        !isObjCByValueCopyHint(Binding, ContainingFunction->Entry,
+                               Image.Arch))) ||
+      !validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
+  if (Binding.ByValueCopy) {
+    const auto &Copy = *Binding.ByValueCopy;
+    const auto Offset = privateFrameArgumentOffset(
+        Expression.Operands[Copy.Parameter], *ContainingFunction, Image.Arch);
+    if (!Offset || *Offset != Copy.FrameOffset)
+      return false;
+  }
   if (Binding.SelectorArgumentStorageUse) {
     const auto &Evidence = *Binding.SelectorArgumentStorageUse;
     if (!ContainingFunction || Evidence.Parameter >= Expression.Operands.size())

@@ -574,13 +574,15 @@ CPU 実行はゲスト OS と image から独立しています。OS policy と 
 | コンポーネント | 責務 |
 |---|---|
 | `NeverDEmulationCore` | memory、fault、register、共有実行ループ |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP transport と portable な Unicorn 実行 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP/HVF transport と portable な Unicorn 実行 |
 | `NeverDEmulationArch` | ISA 検証、アーキテクチャ状態、ページテーブルと FP 配置 |
 | `NeverDEmulationCPU` | CPU 設定とバックエンド構成 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | integer ABI、CPU session、workload budget |
 | `NeverDEmulationImage` | loader segment の mapping plan |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 起動、Linux service policy、process report |
 | `NeverDEmulation` | Windows model と driver lifecycle |
+
+macOS のネイティブ転送 [HVF](macos-hvf.md) は `NeverDEmulationNative` が所有し、Apple Silicon では ARM64、Intel では x86-64 を使います。ホスト ISA は転送層を選択しますが、ゲスト OS は決めません。[Darwin プロファイル](darwin-emulation.md) が macOS、iOS デバイス、iOS Simulator の起動とサービスを別に定義します。未完了の Linux ARM64 KVM、Windows ARM64 WHP 検証は、記録済みの macOS ARM64 HVF の証拠とは区別します。可用性と完全な検証状態は HVF ガイドに記載します。
 
 CPU factory と capability query は同じ `ExecutionConfiguration` を使い、allocation 前に architecture、privilege、address width、feature を検証します。`ExecutionBudget` は workload ごとに命令/event の共有カウンターと絶対 monotonic deadline を持ち、再開しても予算を補充しません。`ExecutionSession` は CPU、hook、pending service/fault continuation を所有します。session 間で memory と budget を共有できますが、実行は協調的で並列 SMP ではありません。pending request は再開前に正確に一度消費します。CPU failure は resource stop より優先され、説明できない engine stop は workload 成功を意味しません。
 
@@ -592,11 +594,11 @@ CPU factory と capability query は同じ `ExecutionConfiguration` を使い、
 
 選択したバックエンドの機能は `executionCapabilities(Contract, ISA, Backend)` で照会します。`NativeLegacyX64` はネイティブ x64 ドライバー実行を表し、`NeverDNativeDriverTests` は既存のドライバー群を検証します。このテストは Unicorn を無効にしたビルドでも実行できます。
 
-Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
+Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP、HVF は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
 
-ARM64 KVM/WHP の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。成功が証明するのはこの有限の初期化プログラムであり、独立した native ARM64 ワークロード検証は未完了です。
+ARM64 KVM/WHP/HVF の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。
 
-x64 KVM/WHP のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみで、ARM64 の独立したネイティブ負荷検証は未完了です。
+x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。
 
 共有 XSAVE デコーダーは標準形式と圧縮形式の SSE 初期状態を区別します。XSTATE_BV[1] が 0 の場合、どちらも XMM を初期化しますが、標準形式は MXCSR を読み取り検証し、圧縮形式は MXCSR を初期化します。`X64XsaveCases.def` は独立したデータ配置と独自のホスト XRSTOR プログラムを提供します。`X64XsaveTests.cpp` は拒否時の状態の原子性を検証し、呼び出し元の FP/SSE 状態を保存しながら、両形式を実ホストの実行結果と比較します。ホストのアーキテクチャーや必要な命令機能が利用できなければ明示的にスキップします。
 
@@ -1014,8 +1016,12 @@ Combine の正確な強いインポートである `Publisher.sink(receiveValue:
 
 明示的な引数を持たないネイティブ Swift クラスメソッドの完全な ABI 宣言は、loader と C API が共有する単一の所有者で判定する。`NativeSwiftSelf` の受信者情報には現在の入口宣言、対応するクラスメタデータ、全機械命令と CFG 辺の正規再リフトが必要であり、コピー、破壊、合流には既存のレジスタ／バイト解析を使う。ObjC 型符号が空のオブジェクトフィールドでは、`SwiftMetadata` が境界付き kind-7 反射レコード、完全なフィールド型、クラスとスーパークラスの記述子、ObjC ivar、オフセットベクトル、正確なフィールドオフセットシンボルを照合する。生成コードは実行時 ivar オフセットを読み、初期値で継承レイアウトを固定しない。公開時には現在の LowIR 情報を再構築し、完全な ABI、承認済み監査、正規 HighIR 引数、ソース self／フィールド経路、各呼び出しの一意な評価を検証する。曖昧な記録、部分値、経路競合、記憶域の変更、古い証拠は拒否する。フィールドの同一性はコピー記憶域、フレーム借用、noescape、純粋性を許可しない。`CALayer.setTransform:` の 128 バイト引数コピーは別途証明する。O0/O2 では元の ARM64 と無修正の生成 C を、実際の ObjC/CALayer 呼び出し、変更された実行時フィールドオフセット、nil フィールドで比較する。
 
+有限の複数ターゲットを持つ間接ディスパッチも、遅延ガード依存関係を保持します。合流後の集合が有限でも、実行不可能な分岐が含まれる場合があります。失敗後の逆探索は、新しいフィールド・コンテキスト・生成元要求ビットを追加できないガードを通過し、有用な外側のガードを探します。候補選択と有効化は同じ規則と探索予算を使います。候補自体は辺を除去せず、公開には到達可能グラフ全体の再証明が必要です。 有限ディスパッチの依存関係の走査は、既存の精度改善が停滞してから開始します。有効化は同じ累積作業上限内で新たな改善を1回消費し、無関係なセレクターが既存の生成元やネイティブガードの改善予算を先に使わないようにします。 ガード候補を使い切っても、遅延した生成元や他の精度改善は継続できます。失敗の解消には新たな証明が必要です。
+
 HighIR の末尾複製は、呼び出しを複製する前に `SourceCallTypeHint::requiresUniqueSourceOccurrence` を確認する。真偽値、コールバック引数、不変ターゲット、フレーム内の値証人、仮想ディスパッチ、ネイティブ Swift レシーバーの証拠は、それぞれ元の機械呼び出し一回を指す。return、jump、入れ子の出口の変換では、分岐が排他的でも評価位置を共有したままにする。通常の呼び出し宣言には既存の複製規則を適用する。公開時には現在の機械コード、ABI、オペランド、動的ターゲットを再検証し、ソース上の評価が一回であることを要求する。全証拠種別、入れ子式、通常の呼び出し最適化を検証し、完全な ARM64 の共有ストアとコールバック末尾を生成 C と O0/O2 で比較する。
 
 共有 `SourceABI` は、論理的な値渡しレコードと物理的なアドレス載体を区別する。Darwin ARM64 C の六個または十六個の double を持つ宣言は完全なレコード型を保持し、浮動小数点引数レジスタや x8 結果ポインターと独立した八バイトの整数レジスタまたは自然整列スタックスロットを使う。ABI 比較と投影のグループ化は、この区別、呼び出し規約、引数の役割を保持する。部分値、重複、不整合、古い載体は拒否する。宣言だけでは LowIR 呼び出しの束縛、入口投影、HighC 呼び出しの出力、フレーム借用を許可せず、コピー記憶域の独立した証明が必要である。コンパイラとネイティブ ABI テストはレジスタ枯渇、スタック配置、任意の浮動小数点ビット、副本の書き換え隔離、独立した間接戻り値を検証する。完全な `setTransform:` 復元テストではない。
 
 共有の `SourceFrameAnalysis` は、消費側と完全な間接結果の生成側について独立した効果証明がある場合、元の呼び出し位置で初期化済みのプライベートな値渡しコピーを検証できます。全到達経路とループの後退辺、有効範囲、他の引数との別名関係、後続の使用を確認します。コピーを消費すると初期化情報と保存バイトの同一性は失われ、再読には新たな確定書き込みが必要です。書き込みの可能性やフレーム解放でも初期化情報を無効化し、保持された Swift scratch の寿命義務は維持します。問い合わせはフレーム全体の復元証明後に引数範囲だけを返し、機械コードの同一性、SDK 効果、呼び出し束縛、ソース公開の権限は与えません。分岐、ループ、部分書き込み、別名、保持された scratch をテストします。実際の ObjC/CALayer を使う ARM64 テストは消費済みコピーの読み取りを拒否し、独立に初期化が証明された使い捨てコピーを受け入れます。
+
+Objective-C の利用側は、元の呼び出しにおける使い捨てコピーの全寿命を共有フレーム解析が証明した場合にのみ、間接値渡しレコードを束縛する。論理レコード型と物理ポインターは別々に保持する。現在の正規機械語/LowIR、独立した Swift 入口とフィールド受信者の宣言、途中の全呼び出し ABI、および専用所有者による `objc_msgSendSuper2` と完全な行列結果の効果を要求し、再帰やフレーム規則の重複を導入しない。公開時には再検証し、初期化と後続利用を含む直線的な HighIR 本体全体を正規再生と比較する。古い証明、証明の削除、重複評価は拒否する。HighC は一回の memcpy スナップショットで論理レコードを作る。最初の利用側は ARM64 の固定私有コピーのみを対象とし、任意ポインター、動的スタック、汎用 noescape を許可しない。O0/O2 のネイティブ比較は、変更していない生成 C、元の ARM64 呼び出し、実際の ObjC/CALayer を用い、nil、浮動小数点ビット、実行時フィールド位置、被呼び出し側によるコピーの合法な変更を確認する。

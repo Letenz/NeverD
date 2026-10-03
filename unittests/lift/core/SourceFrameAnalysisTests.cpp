@@ -1026,6 +1026,27 @@ TEST(SourceFrameAnalysis, ProvesInitializedCopiesFromIndependentResultEffects) {
   EXPECT_FALSE(F.query());
 }
 
+TEST(SourceFrameAnalysis, CopyQueryAcceptsCompleteDeclaredEntryABI) {
+  RecordCopyFixture F;
+  F.Entry.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  ASSERT_TRUE(F.query());
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Entry = F.Entry;
+    if (Case == 0)
+      Entry.Architecture = Arch::X64;
+    if (Case == 1)
+      Entry.Parameters.push_back(
+          {"missing", NdType::makePtr(NdType::makeVoid())});
+    if (Case == 2)
+      Entry = F.Producer;
+    if (Case == 3)
+      Entry = F.Consumer;
+    EXPECT_FALSE(
+        sourceFrameByValueCopies(F.Low, Arch::AArch64, F.Calls, F.Site, Entry));
+  }
+}
+
 TEST(SourceFrameAnalysis, CopyEffectsKeepPointerAndRecordPermissionsDistinct) {
   RecordCopyFixture F;
   const auto Valid =

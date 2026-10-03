@@ -1323,6 +1323,222 @@ TEST(NativeStackSpecialization, RefinesGuardsBeforeRejectingAnUnsupportedPath) {
   EXPECT_TRUE(Limited.Residual.Blocks.empty());
 }
 
+StackProvider finiteDispatchDecoder(bool Spilled, bool Unknown = false,
+                                    bool LateInvalid = false) {
+  StackProvider P;
+  P.add(0x100, {operation(NdOp::INT_SUB, r(40), {r(32), c(24)}),
+                operation(NdOp::COPY, r(16), {Unknown ? r(8) : c(0)})});
+  if (Spilled)
+    P.add(0x101, {operation(NdOp::STORE, {}, {r(40), r(16)}), branch(0x200)});
+  else
+    P.add(0x101, {branch(0x200)});
+  if (Spilled)
+    P.add(0x200, {operation(NdOp::LOAD, r(16), {r(40)})});
+  else
+    P.add(0x200, {});
+  // The dispatch has four finite candidates after a join loses the phase.
+  // Only phases zero and one are reachable from the initialized entry.
+  P.add(0x201, {operation(NdOp::INT_AND, r(24), {r(16), c(3)}),
+                operation(NdOp::INT_MULT, r(24), {r(24), c(0x100)}),
+                operation(NdOp::INT_ADD, r(24), {r(24), c(0x400)}),
+                operation(NdOp::INDIR_BR, {}, {r(24)})});
+  P.add(0x400, {operation(NdOp::COPY, r(16), {c(1)})});
+  if (Spilled)
+    P.add(0x401, {operation(NdOp::STORE, {}, {r(40), r(16)}), branch(0x200)});
+  else
+    P.add(0x401, {branch(0x200)});
+  if (LateInvalid) {
+    P.add(0x500, {operation(NdOp::COPY, r(16), {c(2)})});
+    if (Spilled)
+      P.add(0x501, {operation(NdOp::STORE, {}, {r(40), r(16)}), branch(0x200)});
+    else
+      P.add(0x501, {branch(0x200)});
+  } else {
+    P.add(0x500, {operation(NdOp::INT_ADD, r(0), {r(8), c(17)})});
+    P.nativeReturn(0x501);
+  }
+  return P;
+}
+
+TEST(NativeStackSpecialization, RefinesFiniteDispatchBeforeUnsupportedArm) {
+  for (bool Spilled : {false, true})
+    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+      SCOPED_TRACE(Spilled);
+      SCOPED_TRACE(Order == llvm::endianness::little ? "little" : "big");
+      auto P = finiteDispatchDecoder(Spilled);
+      auto O = stackOptions();
+      O.ByteOrder = Order;
+      const auto Baseline = specializeInterpreter(P, {0x100}, O);
+      EXPECT_EQ(Baseline.Status, SpecializationStatus::Unsupported);
+      EXPECT_TRUE(Baseline.Residual.Blocks.empty());
+      O.DiscoverControlState = true;
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      EXPECT_GT(R.ControlRefinements, 0u);
+      for (uint64_t Input :
+           {uint64_t{0}, uint64_t{1}, uint64_t{37}, UINT64_MAX}) {
+        const auto Run = execute(R.Residual, Input, 0, Order);
+        ASSERT_TRUE(Run);
+        EXPECT_EQ(Run->Value, Input + 17);
+        EXPECT_EQ(Run->Stack, 0x10000u);
+      }
+    }
+}
+
+TEST(NativeStackSpecialization, FiniteGuardsDoNotPreemptExistingRefinement) {
+  auto P = guardedDecoder(false);
+  // A runtime dispatch before the decoder has a large, irrelevant selector
+  // expression. Its four valid arms converge before the native phase guard.
+  // Only that guard needs refinement; eagerly walking the selector would
+  // consume the discovery budget before the useful dependency is inspected.
+  P.add(0x10, {operation(NdOp::COPY, r(56), {r(8)})});
+  for (va_t Address = 0x11; Address != 0x91; ++Address)
+    P.add(Address, {operation(NdOp::INT_MULT, r(56), {r(56), c(3)}),
+                    operation(NdOp::INT_XOR, r(56), {r(56), r(8)})});
+  P.add(0x91, {operation(NdOp::INT_AND, r(56), {r(56), c(3)}),
+               operation(NdOp::INT_MULT, r(56), {r(56), c(0x100)}),
+               operation(NdOp::INT_ADD, r(56), {r(56), c(0x800)}),
+               operation(NdOp::INDIR_BR, {}, {r(56)})});
+  for (va_t Address : {0x800, 0x900, 0xa00, 0xb00})
+    P.add(Address, {branch(0x100)});
+  auto O = stackOptions();
+  O.DiscoverControlState = true;
+  O.MaxDiscoveryVisits = 256;
+  const auto R = specializeInterpreter(P, {0x10}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_GT(R.ControlRefinements, 0u);
+  EXPECT_LT(R.DiscoveryVisits, O.MaxDiscoveryVisits);
+  for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{42}, UINT64_MAX}) {
+    const auto Run = execute(R.Residual, Input);
+    ASSERT_TRUE(Run);
+    EXPECT_EQ(Run->Value, Input + 17);
+    EXPECT_EQ(Run->Stack, 0x10000u);
+  }
+}
+
+TEST(NativeStackSpecialization,
+     FiniteDispatchCannotHideReachableUnsupportedArm) {
+  for (bool Spilled : {false, true})
+    for (bool Late : {false, true}) {
+      SCOPED_TRACE(Spilled);
+      SCOPED_TRACE(Late);
+      auto P = finiteDispatchDecoder(Spilled, !Late, Late);
+      auto O = stackOptions();
+      O.DiscoverControlState = true;
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      EXPECT_FALSE(R.complete());
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+      EXPECT_TRUE(R.Origins.empty());
+      EXPECT_TRUE(R.Reads.empty());
+    }
+}
+
+TEST(NativeStackSpecialization, FiniteDispatchRefinementHonorsBudgets) {
+  for (bool Spilled : {false, true}) {
+    SCOPED_TRACE(Spilled);
+    auto P = finiteDispatchDecoder(Spilled);
+    auto O = stackOptions();
+    O.DiscoverControlState = true;
+    const auto Complete = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(Complete.complete()) << Complete.Diagnostic;
+    ASSERT_GT(Complete.DiscoveryVisits, 0u);
+    // Successful attempts can spend optional discovery work. Locate a real
+    // adjacent failure/success boundary rather than subtracting from the
+    // reported total and assuming all those visits were necessary.
+    uint64_t FirstComplete = 0;
+    for (uint64_t Limit = 1; Limit <= Complete.DiscoveryVisits; ++Limit) {
+      O.MaxDiscoveryVisits = Limit;
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      if (R.complete()) {
+        FirstComplete = Limit;
+        break;
+      }
+      EXPECT_EQ(R.Status, SpecializationStatus::BudgetExceeded);
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+    }
+    ASSERT_GT(FirstComplete, 0u);
+    O.MaxDiscoveryVisits = FirstComplete - 1;
+    const auto Short = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Short.Residual.Blocks.empty());
+    EXPECT_TRUE(Short.Origins.empty());
+    EXPECT_TRUE(Short.Reads.empty());
+    O.MaxDiscoveryVisits = Complete.DiscoveryVisits;
+    O.MaxControlRefinements = 0;
+    const auto NoRefinement = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(NoRefinement.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(NoRefinement.Residual.Blocks.empty());
+  }
+}
+
+TEST(NativeStackSpecialization, FiniteDispatchDoesNotHideOuterGuardRefinement) {
+  auto P = guardedDecoder(false);
+  // The outer phase guard makes this entire arm unreachable. Its inner
+  // dispatch depends on an independent runtime bit and cannot exclude either
+  // unsupported leaf by refining that selector alone.
+  P.add(0xdead, {operation(NdOp::INT_AND, r(24), {r(8), c(1)}),
+                 operation(NdOp::INT_ADD, r(24), {r(24), c(0xf000)}),
+                 operation(NdOp::INDIR_BR, {}, {r(24)})});
+  auto O = stackOptions();
+  O.DiscoverControlState = true;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{42}, UINT64_MAX}) {
+    const auto Run = execute(R.Residual, Input);
+    ASSERT_TRUE(Run);
+    EXPECT_EQ(Run->Value, Input + 17);
+    EXPECT_EQ(Run->Stack, 0x10000u);
+  }
+}
+
+TEST(NativeStackSpecialization, ExhaustedGuardKeepsDeferredProducerRefinement) {
+  auto P = finiteDispatchDecoder(false);
+  // The next phase is one for every input, but the cancellation crosses a
+  // projection. Once the phase guard's own demands are exhausted, a finite
+  // producer still needs its independent input bit to retain the relation.
+  P.add(0x400, {operation(NdOp::INT_AND, r(16), {r(8), c(1)}), branch(0x450)});
+  P.add(0x450, {operation(NdOp::INT_AND, r(56), {r(8), c(1)}),
+                operation(NdOp::INT_XOR, r(16), {r(16), r(56)}),
+                operation(NdOp::INT_ADD, r(16), {r(16), c(1)}), branch(0x200)});
+  auto O = stackOptions();
+  O.ControlRegisters = {{16, 8}};
+  O.DiscoverControlState = true;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{42}, UINT64_MAX}) {
+    const auto Run = execute(R.Residual, Input);
+    ASSERT_TRUE(Run);
+    EXPECT_EQ(Run->Value, Input + 17);
+    EXPECT_EQ(Run->Stack, 0x10000u);
+  }
+}
+
+TEST(NativeStackSpecialization, DeferredProducerFitsRefinementBudget) {
+  auto P = finiteDispatchDecoder(false);
+  // The first failure needs the phase field: without the mask its target
+  // domain is not finite. A deferred producer then needs the input bit across
+  // the XOR to retain the cancellation. Both refinements must fit the budget
+  // without spending another retry on optional finite-guard collection.
+  P.add(0x201, {operation(NdOp::INT_MULT, r(24), {r(16), c(0x100)}),
+                operation(NdOp::INT_ADD, r(24), {r(24), c(0x400)}),
+                operation(NdOp::INDIR_BR, {}, {r(24)})});
+  P.add(0x400, {operation(NdOp::INT_AND, r(16), {r(8), c(1)}), branch(0x450)});
+  P.add(0x450, {operation(NdOp::INT_AND, r(56), {r(8), c(1)}),
+                operation(NdOp::INT_XOR, r(16), {r(16), r(56)}),
+                operation(NdOp::INT_ADD, r(16), {r(16), c(1)}), branch(0x200)});
+  auto O = stackOptions();
+  O.DiscoverControlState = true;
+  O.MaxControlRefinements = 2;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{42}, UINT64_MAX}) {
+    const auto Run = execute(R.Residual, Input);
+    ASSERT_TRUE(Run);
+    EXPECT_EQ(Run->Value, Input + 17);
+    EXPECT_EQ(Run->Stack, 0x10000u);
+  }
+}
+
 TEST(NativeStackSpecialization,
      RefinesGuardsBeforeRejectingAnUnresolvedTarget) {
   auto P = guardedDecoder(false);

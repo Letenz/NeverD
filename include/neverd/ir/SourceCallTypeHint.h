@@ -453,6 +453,18 @@ struct SourceCallTypeHint {
   /// separately declared native Swift entry. Publication redoes the entry,
   /// machine/dataflow and emitted receiver proof; this is only a receipt.
   std::optional<SourceCallOccurrenceKey> NativeSwiftReceiver;
+  /// A disposable private copy at the original message occurrence. This is
+  /// only a projection receipt: publication must repeat the current complete
+  /// frame, machine, entry and call proof before using its logical record.
+  struct ByValueCopyStorage {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+    unsigned Parameter = 0;
+    int64_t FrameOffset = 0;
+    uint32_t Bytes = 0;
+    bool operator==(const ByValueCopyStorage &) const = default;
+  };
+  std::optional<ByValueCopyStorage> ByValueCopy;
   /// An exact post-call integer-register read that uniquely selected one
   /// otherwise conflicting Objective-C selector declaration. This is machine
   /// dataflow evidence, not a source type guess; publication revalidates the
@@ -528,7 +540,7 @@ struct SourceCallTypeHint {
   /// each owner's current proof; this predicate grants no source permission.
   bool requiresUniqueSourceOccurrence() const {
     return BooleanResult || FunctionParameterCall || ImmutableNativeCall ||
-           SwiftWitnessFrame || Virtual || NativeSwiftReceiver;
+           SwiftWitnessFrame || Virtual || NativeSwiftReceiver || ByValueCopy;
   }
 };
 

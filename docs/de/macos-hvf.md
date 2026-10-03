@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 26699fc7c6123371ff1bdf772f3c7091876e02768c97f805a3b9d0d19ca3a5db -->
+<!-- i18n-source: aee97573f638441a0d68f7791fa814871dc91c7d7d5ad93373725b00e25925ac -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -65,3 +65,20 @@ ARM64 glich 6,842 registrierte Fälle ab; Intel hat 6,840 in denselben 20 Zielen
 Die [vollständige Intel-CPU-Abnahme](https://github.com/NeverSight/NeverD/actions/runs/37106679688) bleibt offen: am 2026-10-03 um 08:24 UTC fehlten nach der konfigurierten Frist Endergebnis und CPU-Artefakt. Build und Vorprüfungen ersetzen diese Abnahme nicht. Ein macOS-Kernelvergleich belegt keinen iOS-Gerätekernel.
 
 Der vergleichbare kurze ARM64-Test benötigte 73.9 ms mit Unicorn und 95.1 ms mit HVF, also etwa 29 % mehr Zeit. Ein Geschwindigkeitsgewinn ist nicht belegt. Normale Instruktionen verursachen sechs native Eintritte; Messungen unter hoher Hostlast sind keine stabilen Durchsatzbelege. [Detaillierte Nachweise](../macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03) und der [begrenzte Darwin-Vertrag](darwin-emulation.md) beschreiben den genauen Umfang.
+
+## Vollständiges Intel-Inventar in Teilmengen
+
+Der frühere vollständige Lauf `37106679688` endete am 2026-10-03 um 08:35 UTC; GitHub meldete den Verlust der Runner-Kommunikation. Es liegen keine CPU-Ergebnisse vor, also kein Nachweis für einen bestimmten fehlerhaften Gastbefehl. Hosted Intel `full` nutzt jetzt vier Shards mit höchstens zwei gleichzeitigen Jobs. Jeder Job baut und prüft zuerst das vollständige CTest-Inventar der zwanzig Ziele. `--hvf-shard INDEX/COUNT` verteilt ganze Methoden anhand von Ziel und Identität; sämtliche Parameter bleiben zusammen, auch bei unterschiedlichen Ausführungseigenschaften. Jeder Shard bewahrt vollständiges und ausgewähltes Inventar, Ablaufplan, Original-XML, Identitätszuordnungen, Prozessstatus und die Positivliste notwendiger Umgebungsvariablen. Ein Shard ist nur ein Teilnachweis.
+
+Ein separater Linux-Job führt `scripts/audit_hvf_shards.py` aus und leitet Ziele und native Pflichtfälle erneut aus dem ausgecheckten Quellstand ab. Er verlangt denselben Versuch, denselben unveränderten Commit, die richtige macOS-Host-ISA und übereinstimmende normalisierte Ausführungsverträge. Die vier Shards müssen disjunkt sein und gemeinsam exakt das vollständige Inventar ergeben; alle Kindprozesse müssen erfolgreich enden und alle nativen Pflichtfälle bestehen. Fehlende Shards, geänderte Filter, widersprüchliche Zusammenfassungen, unvollständiges XML oder übersprungene Pflichtfälle scheitern. Jeder native Job behält Transport, Wiederaufnahme, CR8 und die unabhängige Darwin-Prüfung. Eigene Runner nutzen weiterhin ungeteiltes CTest. Die Aufteilung allein belegt keine Intel-Abnahme.
+
+## Neueste lokale native Validierung
+
+Unveränderter Quellstand `26f8fa88b`, 2026-10-03. Alle vier ARM64-Shards bestanden die Gesamtprüfung; auch die separate Darwin-Prüfung bestand. Die Zeilen überlappen und dürfen nicht addiert werden.
+
+| Umfang | Registriert | Bestanden | Fehler | Übersprungen | Native Pflichtfälle |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU, vier Shards | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| Darwin | 286 | 65 | 0 | 221 | 39/39 |
+
+`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`

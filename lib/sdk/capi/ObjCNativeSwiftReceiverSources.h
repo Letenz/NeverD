@@ -3,6 +3,7 @@
 
 #include "../../loader/Swift/SwiftMangledClassMethodABI.h"
 #include "ObjCNativeCurrentFunction.h"
+#include "ObjCNativeSourceCallCallees.h"
 #include "ObjCSourceBindings.h"
 #include "SourceExpressionIdentity.h"
 
@@ -112,7 +113,7 @@ struct BodyProof {
         Depth);
   }
   bool sameArgument(const ExprPtr &E, const ExprPtr &A, BodyProof &Actual,
-                    unsigned Depth = 0) {
+                    unsigned Depth = 0, bool FollowDefinitions = true) {
     if (!E || !A || !Budget || Depth >= 64)
       return false;
     --Budget;
@@ -124,9 +125,12 @@ struct BodyProof {
       const auto &X = *E->SourceCallHint, &Y = *A->SourceCallHint;
       if (!E->Operands.empty() || !A->Operands.empty() ||
           (X.CallKind != SourceCallTypeHint::Kind::RuntimeSelector &&
-           X.CallKind != SourceCallTypeHint::Kind::RuntimeIvarOffset) ||
+           X.CallKind != SourceCallTypeHint::Kind::RuntimeIvarOffset &&
+           X.CallKind !=
+               SourceCallTypeHint::Kind::RuntimeProfileCounterStorage) ||
           X.CallKind != Y.CallKind || X.TargetAddress != Y.TargetAddress ||
           X.TargetName != Y.TargetName || X.OwnerClass != Y.OwnerClass ||
+          X.ByteCount != Y.ByteCount ||
           !equalSourceABIs(X.Signature, Y.Signature) ||
           !objcSourceCallBound(*E, Image, {}) ||
           !objcSourceCallBound(*A, Image, {}))
@@ -139,7 +143,14 @@ struct BodyProof {
     Right.Operands.clear();
     if (!sameSourceExpressionIdentity(Left, Right, Budget))
       return false;
-    if (E->Kind == ExprKind::Var && E->Var.Kind != MedVar::Param) {
+    if (E->Kind == ExprKind::Var && highSourceFrameBase(Function, E->Var))
+      return highSourceFrameBase(Actual.Function, A->Var) &&
+             Function.FrameSize == Actual.Function.FrameSize &&
+             Function.FrameHeadroom == Actual.Function.FrameHeadroom &&
+             !Definitions.count(highSourceLocalIdentity(E->Var)) &&
+             !Actual.Definitions.count(highSourceLocalIdentity(A->Var));
+    if (FollowDefinitions && E->Kind == ExprKind::Var &&
+        E->Var.Kind != MedVar::Param) {
       const auto Key = highSourceLocalIdentity(E->Var);
       const auto D = Definitions.find(Key),
                  Other = Actual.Definitions.find(Key);
@@ -154,8 +165,45 @@ struct BodyProof {
       return Valid;
     }
     for (size_t I = 0; I < E->Operands.size(); ++I)
-      if (!sameArgument(E->Operands[I], A->Operands[I], Actual, Depth + 1))
+      if (!sameArgument(E->Operands[I], A->Operands[I], Actual, Depth + 1,
+                        FollowDefinitions))
         return false;
+    return true;
+  }
+  bool sameCopyBody(BodyProof &Actual) {
+    if (Function.FrameSize != Actual.Function.FrameSize ||
+        Function.FrameHeadroom != Actual.Function.FrameHeadroom ||
+        Function.Body.size() != Actual.Function.Body.size())
+      return false;
+    for (size_t I = 0; I < Function.Body.size(); ++I) {
+      if (!Budget--)
+        return false;
+      const auto &A = Function.Body[I], &B = Actual.Function.Body[I];
+      // The initial consumer is a straight-line copy lifetime. Preserve every
+      // initializer, intervening effect and post-call use, not only the address
+      // passed to the message. Structured copy lifetimes need their own replay.
+      const auto Flat = [](const HighStmt &S) {
+        return S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
+               S.DefaultBody.empty() && S.EHClauses.empty() &&
+               S.EHClauseBodies.empty();
+      };
+      if (!Flat(A) || !Flat(B) || A.Kind != B.Kind || A.Addr != B.Addr ||
+          A.MemoryOrdering != B.MemoryOrdering ||
+          A.MemoryAddressSpace != B.MemoryAddressSpace ||
+          A.GotoTarget != B.GotoTarget ||
+          A.LoopHeaderAddr != B.LoopHeaderAddr || A.IsPhiCopy != B.IsPhiCopy)
+        return false;
+      const ExprPtr Left[] = {A.Dst,      A.Val,       A.Cond,
+                              A.RetVal,   A.StoreAddr, A.StoreVal,
+                              A.CallExpr, A.SwitchExpr};
+      const ExprPtr Right[] = {B.Dst,      B.Val,       B.Cond,
+                               B.RetVal,   B.StoreAddr, B.StoreVal,
+                               B.CallExpr, B.SwitchExpr};
+      for (size_t J = 0; J < std::size(Left); ++J)
+        if (bool(Left[J]) != bool(Right[J]) ||
+            (Left[J] && !sameArgument(Left[J], Right[J], Actual, 0, false)))
+          return false;
+    }
     return true;
   }
   std::optional<Calls> calls() {
@@ -246,7 +294,17 @@ inline bool objCNativeSwiftReceiverSourceCallBound(
       !equalSourceABIs(*Function.SourceTypeHint, *Declaration) ||
       !equalSourceABIs(*Current->Med->SourceTypeHint, *Declaration))
     return false;
-  const auto Hints = buildObjCSourceCallHints(Image, *Current->Low);
+  auto Callees = nativePublicationCallees(Result, *Current->Med);
+  for (auto It = Callees.begin(); It != Callees.end();) {
+    const auto Callee =
+        native_source_detail::currentFunction(Result, It->first);
+    if (!Callee || !equalSourceABIs(*Callee->High->SourceTypeHint, It->second))
+      It = Callees.erase(It);
+    else
+      ++It;
+  }
+  const auto Hints = buildObjCSourceCallHints(Image, *Current->Low, nullptr,
+                                              nullptr, &Callees);
   std::map<SourceCallOccurrenceKey, const SourceCallTypeHint *> Expected;
   for (const auto &[Address, Hint] : Hints)
     if (Hint.NativeSwiftReceiver)
@@ -273,6 +331,7 @@ inline bool objCNativeSwiftReceiverSourceCallBound(
       if (!Op.SourceCallHint ||
           Op.SourceCallHint->NativeSwiftReceiver != Site ||
           Op.SourceCallHint->Receiver != Found->second->Receiver ||
+          Op.SourceCallHint->ByValueCopy != Found->second->ByValueCopy ||
           Op.SourceCallHint->Selector != Found->second->Selector ||
           !equalSourceABIs(Op.SourceCallHint->Signature,
                            Found->second->Signature) ||
@@ -307,6 +366,13 @@ inline bool objCNativeSwiftReceiverSourceCallBound(
     const auto Calls = Proof.calls();
     if (!Calls || Calls->size() != Expected.size())
       return false;
+    if (std::any_of(Expected.begin(), Expected.end(), [](const auto &Item) {
+          return Item.second->ByValueCopy.has_value();
+        })) {
+      auto &ExpectedBody = F == Current->High ? Canonical : BoundCanonical;
+      if (!ExpectedBody.sameCopyBody(Proof))
+        return false;
+    }
     for (const auto &[Site, Call] : *Calls) {
       const auto H = Expected.find(Site);
       const auto &ExpectedCalls =
@@ -325,6 +391,7 @@ inline bool objCNativeSwiftReceiverSourceCallBound(
           return false;
       if (H == Expected.end() ||
           Call->SourceCallHint->Receiver != H->second->Receiver ||
+          Call->SourceCallHint->ByValueCopy != H->second->ByValueCopy ||
           Call->SourceCallHint->Selector != H->second->Selector ||
           !equalSourceABIs(Call->SourceCallHint->Signature,
                            H->second->Signature))
