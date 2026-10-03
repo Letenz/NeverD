@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
+<!-- i18n-source: 340ac2d4daababf1ede69d21ea0d2a80e38e6fd6ae307434171e27dfcf40d8ad -->
 
 [← ドキュメント一覧](README.md)
 
@@ -88,3 +88,9 @@ CPU 実行前に `scripts/prepare_hvf_batches.py` が完全・選択済みイン
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
 `build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+
+## 独立した Intel 診断
+
+手動の [Intel 診断ワークフロー](../../.github/workflows/hvf-intel-diagnostic.yml) は、制御側と検証対象のソースを別々にチェックアウトします。`source-ref` は完全なコミット SHA、`shards` は元の十六分割の番号です。`first-method` はゼロ始まりで、`method-count=0` は残りすべてを選択します。`case-index` で元のパラメーターを一つ選べるのは `method-count=1` の場合だけです。選択前に全二十ターゲットの完全な一覧を取得し、元の Release ビルド、コマンド、パラメーター、必須ネイティブ検査を維持します。
+
+各メソッドの実行前に、不変の実行計画とホストのスナップショットをアップロードします。実行後は元の XML、プロセス回収、制御側の状態、二つ目のスナップショットを保存します。メモリ、スワップ、負荷、ディスク、プロセス ID・状態・CPU・RSS・実行ファイル名を記録し、引数や環境変数は含めません。収集エラーも残します。実行またはアップロードの失敗で後続メソッドを停止します。各メソッドの実行上限は引き続き 120 秒ですが、ホストとの通信が失われると回収や最終アップロードはできない場合があります。その場合、既にアップロードした証拠だけが残ります。部分診断は完全な CPU 検証や独立した Darwin 検証を満たしません。最後の開始マーカーは実行の境界を示すだけで、障害命令や根本原因を特定するものではありません。

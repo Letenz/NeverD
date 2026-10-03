@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
+<!-- i18n-source: 340ac2d4daababf1ede69d21ea0d2a80e38e6fd6ae307434171e27dfcf40d8ad -->
 
 [← 文档索引](README.md)
 
@@ -115,7 +115,7 @@ self-hosted runner。需要完整运行结果或可接入的原生 Intel Mac 才
 保留原始 XML、日志、退出状态和精确名称映射。首次超时或 XML 不完整及时返回部分失败，
 完整的断言失败结果仍允许收集后续方法。漏跑、重复、未执行或跳过原生必需项均失败。
 摘要明确记录 `execution=gtest-methods` 和串行执行；自托管继续使用 CTest 逐用例进程及时限。
-采集器、门禁、CI 配置、清单与结果审计共 124 项检查通过。临时诊断工作流及指令探针已清理。
+采集器、门禁、CI 配置、清单与结果审计共 124 项检查通过。先前的指令探针已清理；下述独立方法诊断仍用于调查 Intel 执行器失联。
 
 ### 修复与集成验证
 
@@ -192,3 +192,9 @@ CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所�
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
 `build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
+
+## 独立 Intel 诊断
+
+手动触发的 [Intel 诊断工作流](../../.github/workflows/hvf-intel-diagnostic.yml) 分别检出控制器与被测源码。`source-ref` 必须是完整提交 SHA；`shards` 选择原十六分片中的片号。`first-method` 从零计数，`method-count=0` 选择剩余方法；只有 `method-count=1` 时，`case-index` 才能选取一个原始参数。先发现全部二十个目标的完整清单，再进行选择；保留原 Release 构建、命令、参数与原生必需检查。
+
+每个方法开始前，Action 上传不可变执行计划及主机快照；结束后保存原始 XML、进程回收、控制器状态及第二份快照。快照记录内存、交换空间、负载、磁盘，以及进程编号、状态、CPU、RSS 和可执行文件名，不包含进程参数或环境；采集错误也会保留。执行或上传失败即停止后续方法。每个方法仍有 120 秒执行上限；主机失联可能阻止清理和最终上传，此时只能使用已上传的证据。这些局部诊断不能替代完整 CPU 或独立 Darwin 验收。最后一个开始标记只能定位执行边界，不能直接确定故障指令或根因。
