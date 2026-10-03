@@ -1528,7 +1528,7 @@ constants and transport parameters.
 
 | Contract | Guest ISA | Available execution |
 |----------|-----------|---------------------|
-| `driver-strict` | x64 | Unicorn / KVM / WHP (backend-qualified) |
+| `driver-strict` | x64 | Unicorn / KVM / WHP / HVF (backend-qualified) |
 | `software-cpu-v1` | x64 or ARM64 | Unicorn, including ARM64 scalar, FP/SIMD and TLS execution within Unicorn's ISA support |
 | `checked-x64-v1` | x64 | Shared bounded integer, SSE/SSE2 and device-transaction admission over Unicorn, matching Linux KVM or matching Windows WHP |
 | `checked-aarch64-v1` | ARM64 | Shared bounded integer, FP32/FP64 and fixed-width SIMD admission over Unicorn, matching Linux KVM or matching Windows WHP |
