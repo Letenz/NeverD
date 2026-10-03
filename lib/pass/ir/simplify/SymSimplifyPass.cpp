@@ -534,6 +534,10 @@ SymSimplifyResult SymSimplifyPass::simplifyWithResult(llvm::Function &F,
   if (F.hasFnAttribute(kObfuscatedFnAttr))
     return Result;
 
+  Result.Rewrites = simplifyFiniteValueSlices(F, Opts);
+  if (Result.Rewrites)
+    Result.Outcome = SymSimplifyOutcome::Rewritten;
+
   // Collect roots before mutating: rewriting one replaces its uses (including
   // any in another root's operands) in place, so a later root re-reads the
   // already-simplified operand rather than a stale one.

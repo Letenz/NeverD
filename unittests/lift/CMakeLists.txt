@@ -1522,6 +1522,7 @@ endif()
 # or relinking the ~100-TU NeverDLiftTests binary.
 add_neverd_unittest(NeverDSymSimplifyGuardTests
   pipeline/SymSimplifyGuardTests.cpp
+  pipeline/SymSimplifyFiniteTests.cpp
   LINK_COMPONENTS
   Pipeline
 )
@@ -1531,6 +1532,11 @@ target_include_directories(NeverDSymSimplifyGuardTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/pipeline
   ${LLVM_INCLUDE_DIRS}
 )
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDSymSimplifyGuardTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  )
+endif()
 
 # Pins the recovery against the flattening it undoes.  Both passes reach it
 # through the same prebuilt NeverDPipeline archive, so the closed loop costs a

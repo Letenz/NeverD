@@ -38,6 +38,8 @@ prebuilt-LLVM guidance.
 
 ## Modular MBA simplification
 
+`SymSimplifyFinite.*` covers complete two-valued slices at widths from 8 to 512 bits, shared-use profitability, every supported poison-generating annotation, independent volatile reads and freezes, explicit undef/poison, deep iterative traversal, budgets and the obfuscation stamp. Original and simplified IR execute against an independent oracle over every byte input and randomized full-width inputs at O0/O2. Translation-object tests require distinct cache identities for distinct finite-value budgets.
+
 `SymExpr.*` checks constant non-low windows with exhaustive four-bit inputs and masks, wide carriers, nested structural operations, mixed known/unknown byte reassembly and arithmetic carry counterexamples. Budget regressions combine a wide node with the recursion boundary and reject copying an oversized constant. Unknown windows must remain symbolic without expanding the expression DAG. `SymState.*` also distinguishes derived scalar constants from literal-only region facts in both byte orders, without growing the DAG or changing complete stored words.
 
 `SymReadability.*` covers subtraction and complement spelling, n-ary operator
