@@ -154,7 +154,7 @@ TEST_P(WindowsEnvironment, ValidatesUpdatesBeforePublishingGuestBytes) {
   ProcessResult Result{};
   win::Services OS(*Backend.CPU, *Space, Program.Modules.front().Loaded, Env,
                    Options, Result, Virtual, Program, *Budget);
-  auto Write = [&](uint64_t Address, const std::u16string &Text) {
+  auto Store = [&](uint64_t Address, const std::u16string &Text) {
     std::vector<uint8_t> Bytes((Text.size() + 1) * sizeof(char16_t));
     for (size_t I = 0; I < Text.size(); ++I)
       llvm::support::endian::write16le(Bytes.data() + I * sizeof(char16_t),
@@ -175,8 +175,8 @@ TEST_P(WindowsEnvironment, ValidatesUpdatesBeforePublishingGuestBytes) {
   };
   const uint64_t Name = win::value::GateBase;
   const uint64_t Value = Name + PageSize;
-  Write(Name, DirectName);
-  Write(Value, std::u16string(DirectGrowthUnits, u'x'));
+  Store(Name, DirectName);
+  Store(Value, std::u16string(DirectGrowthUnits, u'x'));
   const auto Original = Bytes();
   const uint64_t Protected = (Env.Variables + PageSize) & ~(PageSize - 1);
   llvm::cantFail(Space->protect(Protected, PageSize, Read | UserAccessible));
@@ -186,17 +186,17 @@ TEST_P(WindowsEnvironment, ValidatesUpdatesBeforePublishingGuestBytes) {
   EXPECT_EQ(Bytes(), Original);
   llvm::cantFail(
       Space->protect(Protected, PageSize, Read | Write | UserAccessible));
-  Write(Value, std::u16string(DirectOversizeUnits, u'x'));
+  Store(Value, std::u16string(DirectOversizeUnits, u'x'));
   Failed = Call(win::API::SetEnvironmentVariableW, {Name, Value});
   ASSERT_FALSE(bool(Failed));
   llvm::consumeError(Failed.takeError());
   EXPECT_EQ(Bytes(), Original);
 
-  Write(Value, std::u16string(DirectValueUnits, u'x'));
+  Store(Value, std::u16string(DirectValueUnits, u'x'));
   auto Set =
       llvm::cantFail(Call(win::API::SetEnvironmentVariableW, {Name, Value}));
   EXPECT_EQ(Set.Value, 1u);
-  Write(Name, std::u16string(DirectExpansion) +
+  Store(Name, std::u16string(DirectExpansion) +
                   std::u16string(DirectTailUnits, u'x'));
   const auto Changed = Bytes();
   Failed = Call(win::API::ExpandEnvironmentStringsW, {Name, 0, 0});
