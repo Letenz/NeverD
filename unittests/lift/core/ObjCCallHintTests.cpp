@@ -8914,6 +8914,131 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactFrameworkStorageIdentities) {
   }
 }
 
+TEST(ObjCCallHints, ContentSizeCategoryStorageKeepsCurrentExternalIdentity) {
+  constexpr llvm::StringLiteral Name = "_UIContentSizeCategoryLarge";
+  constexpr llvm::StringLiteral Module =
+      "/System/Library/Frameworks/UIKit.framework/UIKit";
+  auto Image = runtimeImage(Name);
+  Image.DyldBindSlots[0x2180] = {Name.str(), 0, Module.str(), false};
+  const auto Hint = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->TargetName, "UIContentSizeCategoryLarge");
+  EXPECT_EQ(Hint->Signature.Origin,
+            SourceFunctionTypeHint::OriginKind::DarwinSDK);
+  EXPECT_TRUE(Hint->Signature.Parameters.empty());
+  EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+
+  // Keep both loads: the import cell names the external pointer object,
+  // whose contents remain a runtime NSString identity rather than a literal.
+  HighFunc Function;
+  Function.Name = "content_size_category";
+  Function.ReturnType = NdType::makeInt(8);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeLoad(
+      HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8), NdType::makeInt(8)),
+      NdType::makeInt(8));
+  Function.Body = {Return};
+  const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  const auto *Address = sourceCall(Bound.Function);
+  ASSERT_NE(Address, nullptr);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+  ASSERT_EQ(Bound.Function.Body.front().RetVal->Kind, ExprKind::Load);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+  EXPECT_NE(Source.find("[] __asm__(\"_UIContentSizeCategoryLarge\");"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+
+  for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.DyldBindSlots[0x2180].Module += ".impostor";
+    if (Mutation == 1)
+      Changed.DyldBindSlots[0x2180].WeakImport = true;
+    if (Mutation == 2)
+      Changed.DyldBindSlots[0x2180].Addend = 8;
+    if (Mutation == 3)
+      Changed.DyldBindSlots.clear();
+    if (Mutation == 4)
+      Changed.ImportPtrSlots[0x2180] += "Suffix";
+    if (Mutation == 5)
+      Changed.DyldBindSlots[0x2180].Name += "Suffix";
+    if (Mutation == 6)
+      Changed.ConflictingImportStorageSlots.insert(0x2180);
+    if (Mutation == 7)
+      Changed.ImportStorageSlots[0x2180] = {Name.str(), 8};
+    if (Mutation == 8)
+      Changed.ImportStorageSlots[0x2180] = {"_other", 0};
+    if (Mutation == 9)
+      Changed.Arch = Arch::X64;
+    if (Mutation == 10)
+      Changed.Format = BinaryFormat::ELF;
+    if (Mutation == 11)
+      Changed.IsRelocatable = true;
+    if (Mutation == 12)
+      Changed.Bits = Bitness::Bits32;
+    if (Mutation == 13)
+      Changed.DyldBindSlots[0x2180].Module =
+          "/System/Library/Frameworks/Foundation.framework/Foundation";
+    EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180)) << Mutation;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {})) << Mutation;
+  }
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    auto Forged = *Address;
+    auto Evidence =
+        std::make_shared<SourceCallTypeHint>(*Address->SourceCallHint);
+    Forged.SourceCallHint = Evidence;
+    auto &H = *Evidence;
+    if (Mutation == 0)
+      H.TargetName += "Suffix";
+    if (Mutation == 1)
+      H.TargetAddress += 8;
+    if (Mutation == 2)
+      H.Signature.ReturnType = NdType::makeInt(4);
+    if (Mutation == 3)
+      H.Signature.Parameters.push_back({"arg", NdType::makeInt(8)});
+    if (Mutation == 4)
+      Forged.Operands.push_back(HighExpr::makeConst(0, 8));
+    EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {})) << Mutation;
+  }
+}
+
+TEST(ObjCCallHints,
+     SupplementalFrameworkStorageRejectsThreadLocalSubstitution) {
+  for (const char *Name :
+       {"_UIEdgeInsetsZero", "_UIApplicationWillTerminateNotification",
+        "_UIContentSizeCategoryLarge"}) {
+    auto Image = runtimeImage(Name);
+    Image.DyldBindSlots[0x2180] = {
+        Name, 0, "/System/Library/Frameworks/UIKit.framework/UIKit", false};
+    const auto Hint = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    auto Address = HighExpr::makeCall(Hint->TargetName, 0x2180, {});
+    Address->Type = Hint->Signature.ReturnType;
+    Address->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+    for (const auto Kind :
+         {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+          llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+          llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+          llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+          llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+      auto Changed = Image;
+      Changed.Sections[1].Type = Kind;
+      EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+          << Name << Kind;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
+          << Name << Kind;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactExternalStorageIdentity) {
   constexpr llvm::StringLiteral Module = "/usr/lib/swift/libswiftCore.dylib";
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {

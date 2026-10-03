@@ -482,9 +482,9 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
     return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
 
   // These UIKit constants are public external storage, rather than functions
-  // or implementation-owned objects. The command-line-tools SDK used to
-  // generate DarwinSourceDataDeclarations.inc has no UIKit headers or binary,
-  // so retain the same exact symbol/provider proof here.
+  // or implementation-owned objects. The base Darwin data catalog excludes
+  // UIKit, so retain the same exact symbol/provider proof for independently
+  // verified supplemental declarations here.
   // https://developer.apple.com/documentation/uikit/uiapplicationdidreceivememorywarningnotification
   llvm::StringRef FrameworkData;
   const auto Bind = Image.DyldBindSlots.find(ImportSlot);
@@ -527,6 +527,12 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
           "NSStrokeWidthAttributeName", "NSUnderlineStyleAttributeName"})
       MatchFrameworkData(Name,
                          "/System/Library/Frameworks/UIKit.framework/UIKit");
+  // Complete device/simulator ASTs and fresh Mac Catalyst compiler probes
+  // declare external, non-TLS NSString *const storage. Bind its address and
+  // retain the load; the name does not establish an NSString value or layout.
+  if (Image.Arch == Arch::AArch64)
+    MatchFrameworkData("UIContentSizeCategoryLarge",
+                       "/System/Library/Frameworks/UIKit.framework/UIKit");
   // CIContext.h imports OpenGLES on iOS, unavailable in the CLT SDK used by
   // the generated catalog. Complete Xcode 26.5 iPhoneOS and arm64 simulator
   // ASTs agree that these are external, non-TLS NSString pointer objects.
@@ -584,7 +590,7 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
         SwiftMetadata = D.Name;
   // Compiler evidence names ordinary external storage. A current TLS slot
   // supplies a different runtime access contract, even with the same spelling.
-  if (!SwiftMetadata.empty())
+  if (!SwiftMetadata.empty() || !FrameworkData.empty())
     if (const auto *Section = Image.getSectionFor(ImportSlot))
       switch (Section->Type & llvm::MachO::SECTION_TYPE) {
       case llvm::MachO::S_THREAD_LOCAL_REGULAR:
