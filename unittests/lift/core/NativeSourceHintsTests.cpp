@@ -9331,3 +9331,80 @@ TEST(NativeSourceHints,
             .valid(Published));
   }
 }
+
+TEST(NativeSourceHints, GenericAnyHashableDoesNotClaimConsumedUIntEffects) {
+  using namespace swift_consumed_input_test;
+  Fixture F;
+  for (const auto &[Slot, Name] : std::map<va_t, std::string>{
+           {MetadataSlot, "_$sSiN"}, {WitnessSlot, "_$sSiSHsWP"}}) {
+    F.Image.ImportPtrSlots[Slot] = Name;
+    F.Image.DyldBindSlots[Slot].Name = Name;
+  }
+  // A scalar result permits an internal typed body independently of the
+  // private input's lifetime. It cannot turn a generic call into a UInt
+  // consumption proof or authorize publishing its private-frame use.
+  F.word(10, 0xd28000e0); // mov x0, #7
+  F.word(11, 0xa9417bfd);
+  F.word(12, 0x910083ff);
+  F.word(13, 0xd65f03c0);
+  F.Image.Symbols[0].Size = 56;
+  F.runUInt();
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  EXPECT_TRUE(buildSwiftConsumedInputCallHints(F.Image, *F.low()).empty());
+  EXPECT_TRUE(validateSwiftConsumedInputBindings(F.Image, F.low(), *F.med()));
+  NativeSourceCalls Calls;
+  for (const auto &Block : F.med()->Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL) {
+        ASSERT_TRUE(Op.SourceCallHint);
+        EXPECT_FALSE(Op.SourceCallHint->SwiftConsumedInput);
+        EXPECT_FALSE(swiftConsumedInputCallEffects(F.Image, *F.low(),
+                                                   *Op.SourceCallHint));
+        Calls[{Op.Addr, Op.OriginSeq}].Signature =
+            &Op.SourceCallHint->Signature;
+      }
+  ASSERT_EQ(Calls.size(), 1U);
+  EXPECT_FALSE(restoresNativeSourceState(*F.low(), Arch::AArch64, Calls));
+  std::string Error;
+  const auto Hint = F.infer(Error);
+  ASSERT_TRUE(Hint) << Error;
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Int);
+}
+
+TEST(NativeSourceHints, ScalarResultCannotSkipConsumedUIntStateProof) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    F.word(10, 0xd28000e0); // mov x0, #7
+    F.word(11, 0xa9417bfd);
+    F.word(12, 0x910083ff);
+    F.word(13, 0xd65f03c0);
+    F.Image.Symbols[0].Size = 56;
+    if (Case == 1)
+      F.word(3, 0xb9000be0); // Only half the input is initialized.
+    if (Case == 2)
+      F.word(3, 0xd503201f); // Missing initialization.
+    if (Case == 3)
+      F.word(10, 0xf94007e0); // Read the consumed input as the result.
+    F.runUInt();
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    if (Case >= 4) {
+      for (auto &Block : F.med()->Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput) {
+            auto Hint =
+                std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+            if (Case == 4)
+              Hint->SwiftConsumedInput.reset();
+            else
+              Hint->Signature.Parameters[1].Location.ValueBytes = 4;
+            Op.SourceCallHint = std::move(Hint);
+          }
+    }
+    std::string Error;
+    const auto Hint = F.infer(Error);
+    EXPECT_EQ(bool(Hint), Case == 0) << Error;
+  }
+}

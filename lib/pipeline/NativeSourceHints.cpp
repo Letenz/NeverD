@@ -1638,8 +1638,13 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
           RequiresFrameEffectProof |=
               isSwiftValueBufferProjection(Image, Op.Inputs[0].ConstVal) ||
               isObjCContextProjection(Image, Op.Inputs[0].ConstVal) ||
-              isSwiftAccessCallTarget(Image, Op.Inputs[0].ConstVal) ||
-              isSwiftConsumedInputCallTarget(Image, Op.Inputs[0].ConstVal);
+              isSwiftAccessCallTarget(Image, Op.Inputs[0].ConstVal);
+        // The generic AnyHashable constructor is shared by unrelated types.
+        // Only its independently authenticated UInt occurrence claims the
+        // consumed-input effect. The unconditional binding validation above
+        // rebuilds those occurrences from current LowIR, so removing a receipt
+        // cannot bypass this state proof. An ordinary generic call gains no
+        // private-frame permission from having the same runtime target.
         RequiresFrameEffectProof |=
             Op.SourceCallHint &&
             (Op.SourceCallHint->SwiftConsumedInput ||
