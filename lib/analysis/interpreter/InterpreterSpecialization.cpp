@@ -151,17 +151,6 @@ std::optional<uint64_t> affineDisplacement(SymContext &Ctx, SymRef Value,
   return detail::frameRelativeOffset(Ctx, Value, Root);
 }
 
-bool framePredicateLeavesHighBitsFree(const SymState &State, SymRef Predicate,
-                                      SymRef Root, uint64_t MaxVisited) {
-  const SymContext &Ctx = State.context();
-  if (!Root || Ctx.width(Root) != 64 || !Ctx.isVar(Root) ||
-      !Ctx.varInfo(Ctx.varId(Root)).Fresh)
-    return false;
-  const auto Dependencies =
-      detail::gatherControlDependencies(State, Predicate, Root, MaxVisited);
-  return Dependencies.FrameRootBits && (*Dependencies.FrameRootBits >> 32) == 0;
-}
-
 Projection project(SymState &State, SymRef Root,
                    const std::set<uint64_t> &AffineCandidates,
                    const FrameOrigins &Origins, const FrameFacts &Frame) {
@@ -1334,10 +1323,11 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
         if (Ctx.width(Value) == 64 && Mask == UINT64_MAX &&
             affineDisplacement(Ctx, Value, Root)) {
           if (!WideFrameRootDomain)
-            WideFrameRootDomain = framePredicateLeavesHighBitsFree(
-                State, Predicate, Root, Options.MaxSymbolicNodes);
-          // On a reachable path, the free high bits give this bijective
-          // translation at least 2^32 values, beyond any uint32_t limit.
+            WideFrameRootDomain = detail::frameRootDomainExceedsLimit(
+                State, Predicate, Root, Options.EntryFrameBounds,
+                Options.MaxControlTuples, Options.MaxSymbolicNodes);
+          // On a reachable path, the declared interval still gives this
+          // bijective translation more values than the actual tuple limit.
           // This refusal proves neither feasibility nor a finite relation;
           // narrow producer demands and the final reachability check remain.
           if (*WideFrameRootDomain)
@@ -2491,23 +2481,25 @@ bool Specializer::evaluate(int Id) {
       if (Original.Opcode == NdOp::LOAD) {
         const auto Memory = lowMemoryOperands(Original);
         const SymRef Address = Exec.operandValue(*Memory.Address);
-        // The canonical frame root is one fresh 64-bit variable. An incoming
-        // relation independent of it, or a complete dependency walk confined
-        // to its low 32 bits, leaves at least 32 independent high bits.
-        // A proved displacement translates those values bijectively, so the
-        // domain exceeds any uint32_t immutable-address limit. This omits an
-        // optional query, not the runtime read or a reachability check.
-        if (ExactFrameAddress && !WideFrameRootDomain) {
-          WideFrameRootDomain = detail::hasUnconstrainedProjectionInput(
-              Ctx, IncomingPredicate, FrameRoot,
-              Options.MaxImmutableReadAddresses, Options.MaxSymbolicNodes);
-          if (!*WideFrameRootDomain)
-            WideFrameRootDomain = framePredicateLeavesHighBitsFree(
-                State, EntryPredicate, FrameRoot, Options.MaxSymbolicNodes);
+        // Exact root-relative translation preserves domain cardinality, even
+        // under the declared nonwrapping bounds. Cache the refusal only for
+        // the unchanged entry predicate; chained guards require a new proof.
+        // Neither the runtime read nor reachability is removed by this proof.
+        bool FreeFrameAddress = false;
+        if (ExactFrameAddress) {
+          const auto Predicate = Exec.pathPredicate();
+          if (Predicate == EntryPredicate) {
+            if (!WideFrameRootDomain)
+              WideFrameRootDomain = detail::frameRootDomainExceedsLimit(
+                  State, Predicate, FrameRoot, Options.EntryFrameBounds,
+                  Options.MaxImmutableReadAddresses, Options.MaxSymbolicNodes);
+            FreeFrameAddress = *WideFrameRootDomain;
+          } else {
+            FreeFrameAddress = detail::frameRootDomainExceedsLimit(
+                State, Predicate, FrameRoot, Options.EntryFrameBounds,
+                Options.MaxImmutableReadAddresses, Options.MaxSymbolicNodes);
+          }
         }
-        const bool FreeFrameAddress = ExactFrameAddress &&
-                                      WideFrameRootDomain.value_or(false) &&
-                                      Exec.pathPredicate() == EntryPredicate;
         struct CertifiedRead {
           SpecializationReadWitness Witness;
           uint64_t Value;

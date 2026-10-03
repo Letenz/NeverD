@@ -240,7 +240,9 @@ When a guard narrows an address dependency to a byte slice, refinement also reta
 
 Optional immutable-address enumeration stops when a feasible address lacks a certificate. The original runtime read remains. Observed values and certificates are used only after the complete domain is proved; cache hits still recheck the current read extent, and an observed malformed certificate remains an error.
 
-A complete dependency proof may skip enumeration of a full 64-bit `root + constant` control value when the current edge predicate leaves the fresh root's high 32 bits free. This neither fixes the root nor proves reachability. Narrow producer masks and final feasibility checks still apply; a predicate bounding the whole root follows normal finite projection.
+Recovery can skip optional enumeration of a full 64-bit `root + constant` control value or immutable-read address when the current predicate provably permits more values than the actual `MaxControlTuples` or `MaxImmutableReadAddresses` limit. The proof accounts for the declared nonwrapping frame interval: every fixed low-32-bit residue must have more than that many roots. Only exact top-level conjuncts matching those bounds are omitted from the dependency walk; all remaining conjuncts must leave the fresh root's high 32 bits free. Stricter restrictions, unsupported dependencies and exhausted work fall back to normal solving.
+
+Each proof shares one `MaxSymbolicNodes` work budget across bound matching and dependency walks. A changed path predicate requires a fresh proof. This refusal neither fixes inputs nor proves reachability; runtime reads, narrow producer masks, immutable-read certificates and final feasibility checks remain required.
 
 At capacity, finite-proof reuse replaces the least recently used records with eligible proofs that fit individually. Successful lookups refresh recency; duplicate stores, misses and rejected candidates do not. Evicted proofs may need to be established again. Only complete domains or proved domain-limit excesses are retained, and every new solver call still consumes the shared query budget.
 

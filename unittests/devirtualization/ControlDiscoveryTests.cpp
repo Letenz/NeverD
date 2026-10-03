@@ -7,9 +7,173 @@
 #include "../../lib/analysis/interpreter/ControlDiscovery.h"
 #include "gtest/gtest.h"
 
+#include <limits>
+
 using namespace neverd::analysis;
 using namespace neverd::analysis::detail;
 using namespace neverd::symbolic;
+
+TEST(ControlDiscovery, BoundedFrameCardinalityRetainsRuntimeInputs) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "frame");
+  const auto Low = Ctx.mkEq(Ctx.mkExtract(Root, 0, 32), Ctx.mkConst(32, 5));
+  const auto Input = State.read(SymSpace::Register, 16, 8);
+  const auto Guard = Ctx.mkAnd(Low, Ctx.mkUle(Input, Ctx.mkConst(64, 17)));
+  const auto False = Ctx.mkFalse();
+  const auto Nodes = Ctx.numNodes();
+  EXPECT_TRUE(frameRootDomainExceedsLimit(State, Guard, Root, std::nullopt,
+                                          UINT32_MAX, 100));
+  EXPECT_TRUE(
+      frameRootDomainExceedsLimit(State, False, Root, std::nullopt, 16, 100));
+  // The predicate may be unreachable: the result is deliberately conditional.
+  // It must never authorize a reachable edge or a constant input by itself.
+  EXPECT_EQ(Ctx.numNodes(), Nodes);
+  for (SpecializationEntryFrameBounds Bounds :
+       {SpecializationEntryFrameBounds{-64, 8}, {-64, -8}, {0, 8}, {0, 1}}) {
+    EXPECT_TRUE(
+        frameRootDomainExceedsLimit(State, Guard, Root, Bounds, 16, 100));
+    if (Bounds.Begin == 0 && Bounds.End == 1)
+      EXPECT_TRUE(frameRootDomainExceedsLimit(State, Guard, Root, Bounds,
+                                              UINT32_MAX, 100));
+    else
+      EXPECT_FALSE(frameRootDomainExceedsLimit(State, Guard, Root, Bounds,
+                                               UINT32_MAX, 100));
+  }
+}
+
+TEST(ControlDiscovery, BoundedFrameCardinalityUsesExactStrictLimits) {
+  constexpr uint64_t Lower = uint64_t{1} << 63;
+  constexpr uint64_t Upper = Lower + (uint64_t{2} << 32) - 1;
+  const SpecializationEntryFrameBounds Bounds{
+      std::numeric_limits<int64_t>::min(),
+      static_cast<int64_t>(UINT64_MAX - Upper + 1)};
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "frame");
+  const auto LowerGuard = Ctx.mkUle(Ctx.mkConst(64, Lower), Root);
+  const auto UpperGuard = Ctx.mkUle(Root, Ctx.mkConst(64, Upper));
+  // Each residue has exactly two members in this interval, independently
+  // checked by their explicit values, including both boundary residues.
+  for (uint64_t Residue : {uint64_t{0}, uint64_t{17}, uint64_t{UINT32_MAX}}) {
+    EXPECT_GE(Lower + Residue, Lower);
+    EXPECT_LE(Lower + Residue + (uint64_t{1} << 32), Upper);
+    EXPECT_GT(Lower + Residue + (uint64_t{2} << 32), Upper);
+    const auto Low =
+        Ctx.mkEq(Ctx.mkExtract(Root, 0, 32), Ctx.mkConst(32, Residue));
+    const auto Guard = Ctx.mkAnd({LowerGuard, UpperGuard, Low});
+    EXPECT_TRUE(
+        frameRootDomainExceedsLimit(State, Guard, Root, Bounds, 1, 100));
+    EXPECT_FALSE(
+        frameRootDomainExceedsLimit(State, Guard, Root, Bounds, 2, 100));
+    if (Residue == UINT32_MAX) {
+      const auto Tighter = Ctx.mkUle(Root, Ctx.mkConst(64, Upper - 1));
+      // One member remains. A same-shaped bound with a different constant
+      // cannot be stripped, whether it replaces or accompanies the contract.
+      for (auto Predicate :
+           {Ctx.mkAnd({LowerGuard, Low, Tighter}), Ctx.mkAnd(Guard, Tighter)})
+        EXPECT_FALSE(frameRootDomainExceedsLimit(State, Predicate, Root, Bounds,
+                                                 1, 100));
+    }
+    if (Residue == 0) {
+      const auto Tighter = Ctx.mkUle(Ctx.mkConst(64, Lower + 1), Root);
+      EXPECT_FALSE(frameRootDomainExceedsLimit(State, Ctx.mkAnd(Guard, Tighter),
+                                               Root, Bounds, 1, 100));
+    }
+  }
+  // The largest signed frame interval leaves only two adjacent 64-bit roots;
+  // fixing low32 can leave one. It has no uniform two-value lower bound.
+  const SpecializationEntryFrameBounds Extreme{
+      std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max()};
+  EXPECT_FALSE(
+      frameRootDomainExceedsLimit(State, Ctx.mkTrue(), Root, Extreme, 1, 100));
+}
+
+TEST(ControlDiscovery, BoundedFrameCardinalityKeepsNonconjunctiveRestrictions) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "frame");
+  const auto Other = Ctx.mkFreshVar(64, "other");
+  const SpecializationEntryFrameBounds Bounds{-64, 8};
+  const auto Lower = Ctx.mkUle(Ctx.mkConst(64, 64), Root);
+  const auto Upper = Ctx.mkUle(Root, Ctx.mkConst(64, UINT64_MAX - 7));
+  const auto Low = Ctx.mkEq(Ctx.mkExtract(Root, 0, 32), Ctx.mkConst(32, 5));
+  const auto High = Ctx.mkEq(Ctx.mkExtract(Root, 32, 32), Ctx.mkConst(32, 7));
+  EXPECT_TRUE(frameRootDomainExceedsLimit(State, Ctx.mkAnd({Lower, Upper, Low}),
+                                          Root, Bounds, 16, 100));
+  for (auto Restriction : {High, Ctx.mkNot(Lower), Ctx.mkOr(Lower, Low),
+                           Ctx.mkUle(Root, Ctx.mkConst(64, 64)),
+                           Ctx.mkUle(Ctx.mkConst(64, UINT64_MAX - 7), Root),
+                           Ctx.mkUle(Ctx.mkConst(64, 64), Other)}) {
+    EXPECT_FALSE(
+        frameRootDomainExceedsLimit(State, Restriction, Root, Bounds, 16, 100));
+  }
+  const auto External = State.load(Ctx.mkConst(64, 0x800), 8);
+  EXPECT_FALSE(frameRootDomainExceedsLimit(
+      State, Ctx.mkEq(External, Ctx.mkConst(64, 7)), Root, Bounds, 16, 100));
+  const auto Narrow = Ctx.mkUle(Ctx.mkExtract(Root, 0, 32), Ctx.mkConst(32, 7));
+  EXPECT_TRUE(frameRootDomainExceedsLimit(
+      State, Ctx.mkAnd({Lower, Upper, Narrow}), Root, Bounds, 16, 100));
+}
+
+TEST(ControlDiscovery, BoundedFrameCardinalityRejectsInvalidContracts) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "frame");
+  const auto True = Ctx.mkTrue();
+  for (auto InvalidRoot :
+       {SymRef(), SymRef(0x7fffffff), Ctx.mkFreshVar(32, "narrow"),
+        Ctx.mkVar("named", 64), State.read(SymSpace::Register, 0, 8),
+        Ctx.mkAdd(Root, Ctx.mkConst(64, 1))})
+    EXPECT_FALSE(frameRootDomainExceedsLimit(State, True, InvalidRoot,
+                                             std::nullopt, 16, 100));
+  for (auto Predicate : {SymRef(), SymRef(0x7fffffff), Root})
+    EXPECT_FALSE(frameRootDomainExceedsLimit(State, Predicate, Root,
+                                             std::nullopt, 16, 100));
+  for (SpecializationEntryFrameBounds Bounds :
+       {SpecializationEntryFrameBounds{8, 8}, {9, 8}})
+    EXPECT_FALSE(
+        frameRootDomainExceedsLimit(State, True, Root, Bounds, 16, 100));
+  EXPECT_FALSE(
+      frameRootDomainExceedsLimit(State, True, Root, std::nullopt, 0, 100));
+  EXPECT_FALSE(
+      frameRootDomainExceedsLimit(State, True, Root, std::nullopt, 16, 0));
+}
+
+TEST(ControlDiscovery, BoundedFrameCardinalitySharesOneWalkBudget) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "frame");
+  const SpecializationEntryFrameBounds Bounds{-64, 8};
+  const auto Low = Ctx.mkEq(Ctx.mkExtract(Root, 0, 32), Ctx.mkConst(32, 5));
+  const auto Input =
+      Ctx.mkEq(State.read(SymSpace::Register, 16, 8), Ctx.mkConst(64, 7));
+  const auto Lower = Ctx.mkUle(Ctx.mkConst(64, 64), Root);
+  const auto Upper = Ctx.mkUle(Root, Ctx.mkConst(64, UINT64_MAX - 7));
+  const auto Guard = Ctx.mkAnd({Low, Input, Lower, Upper});
+  const auto Nodes = Ctx.numNodes();
+  const auto MinimumBudget = [&](SymRef Predicate) {
+    for (uint64_t Budget = 0; Budget <= 100; ++Budget)
+      if (frameRootDomainExceedsLimit(State, Predicate, Root, Bounds, 16,
+                                      Budget))
+        return Budget;
+    return uint64_t{0};
+  };
+  const auto Full = MinimumBudget(Guard);
+  ASSERT_GT(Full, 0U);
+  for (auto Clause : {Low, Input, Lower, Upper}) {
+    const auto Separate = MinimumBudget(Clause);
+    ASSERT_GT(Separate, 0U);
+    EXPECT_GT(Full, Separate);
+    EXPECT_FALSE(
+        frameRootDomainExceedsLimit(State, Guard, Root, Bounds, 16, Separate));
+  }
+  EXPECT_TRUE(
+      frameRootDomainExceedsLimit(State, Guard, Root, Bounds, 16, Full));
+  EXPECT_FALSE(
+      frameRootDomainExceedsLimit(State, Guard, Root, Bounds, 16, Full - 1));
+  EXPECT_EQ(Ctx.numNodes(), Nodes);
+}
 
 TEST(ControlDiscovery, ExactRegisterByteSlicesUseMachineByteOrder) {
   for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {

@@ -12220,6 +12220,94 @@
           "runner": "gtest",
           "target": "NeverDInterpreterSpecializationTests",
           "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalityRetainsRuntimeInputs",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalityUsesExactStrictLimits",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalityKeepsNonconjunctiveRestrictions",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalityRejectsInvalidContracts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
+          "filter": "ControlDiscovery.BoundedFrameCardinalitySharesOneWalkBudget",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.NonwrappingBoundsKeepGuardedFrameReadsUnbounded",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.BoundedFrameReadsUseTheirOwnEnumerationLimit",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.BoundedFrameDomainDoesNotProveReachability",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlDiscoveryTests.cpp",
           "filter": "ControlDiscovery.DisjointSumsDoNotInventCarryDependencies",
           "platforms": [
             "darwin",

@@ -527,4 +527,87 @@ ControlDiscovery gatherControlDependencies(const SymState &State, SymRef Value,
   return Discoverer(State, FrameRoot, MaxVisited).run(Value);
 }
 
+bool frameRootDomainExceedsLimit(
+    const SymState &State, SymRef Predicate, SymRef FrameRoot,
+    const std::optional<SpecializationEntryFrameBounds> &Bounds, uint32_t Limit,
+    uint64_t MaxVisited) {
+  const SymContext &Ctx = State.context();
+  uint64_t Remaining = MaxVisited;
+  const auto Charge = [&](uint64_t Count = 1) {
+    if (Count > Remaining)
+      return false;
+    Remaining -= Count;
+    return true;
+  };
+  const auto Valid = [&](SymRef Value, uint32_t Width) {
+    return Value && Value.index() < Ctx.numNodes() && Ctx.width(Value) == Width;
+  };
+  if (!Limit || !Charge() || !Valid(FrameRoot, 64) || !Ctx.isVar(FrameRoot) ||
+      Ctx.node(FrameRoot).Aux >= Ctx.numVars() ||
+      !Ctx.varInfo(Ctx.varId(FrameRoot)).Fresh ||
+      Ctx.varInfo(Ctx.varId(FrameRoot)).Width != 64 || !Valid(Predicate, 1) ||
+      (Bounds && Bounds->Begin >= Bounds->End))
+    return false;
+
+  const uint64_t Lower =
+      Bounds && Bounds->Begin < 0 ? uint64_t{0} - uint64_t(Bounds->Begin) : 0;
+  const uint64_t Upper = Bounds && Bounds->End > 0
+                             ? UINT64_MAX - uint64_t(Bounds->End - 1)
+                             : UINT64_MAX;
+  const uint64_t Span = Upper - Lower;
+  // Every fixed low32 residue occurs at least floor((Span + 1) / 2^32)
+  // times in [Lower, Upper]. Do not overflow at the full 64-bit domain or
+  // narrow its 2^32-value lower bound to the uint32_t enumeration limit.
+  const uint64_t Guaranteed =
+      (Span >> 32) + ((Span & UINT32_MAX) == UINT32_MAX);
+  if (Guaranteed <= Limit)
+    return false;
+
+  llvm::SmallVector<SymRef, 8> Pending{Predicate};
+  while (!Pending.empty()) {
+    const SymRef Clause = Pending.pop_back_val();
+    if (!Charge() || !Valid(Clause, 1))
+      return false;
+    const auto Operands = Ctx.operands(Clause);
+    if (Ctx.op(Clause) == SymOp::And) {
+      if (Operands.empty())
+        return false;
+      for (SymRef Operand : Operands) {
+        if (!Charge() || !Valid(Operand, 1))
+          return false;
+        Pending.push_back(Operand);
+      }
+      continue;
+    }
+    // Remove only exact top-level conjuncts of the declared interval. In
+    // particular, stricter bounds and bounds beneath OR/NOT stay in the
+    // dependency walk; omitting them could turn a singleton into a large set.
+    if (Bounds && Ctx.op(Clause) == SymOp::Ule) {
+      if (Operands.size() != 2 || !Charge(2))
+        return false;
+      const bool LowerBound =
+          Operands[1] == FrameRoot && Valid(Operands[0], 64);
+      const bool UpperBound =
+          Operands[0] == FrameRoot && Valid(Operands[1], 64);
+      if (LowerBound || UpperBound) {
+        const auto Constant = Operands[LowerBound ? 0 : 1];
+        if (Ctx.isConst(Constant)) {
+          if (!Charge())
+            return false;
+          if (Ctx.constValue(Constant).getZExtValue() ==
+              (LowerBound ? Lower : Upper))
+            continue;
+        }
+      }
+    }
+    const auto Dependencies =
+        gatherControlDependencies(State, Clause, FrameRoot, Remaining);
+    if (!Charge(Dependencies.Visited) ||
+        Dependencies.Status != ControlDiscoveryStatus::Complete ||
+        !Dependencies.FrameRootBits || (*Dependencies.FrameRootBits >> 32))
+      return false;
+  }
+  return true;
+}
+
 } // namespace neverd::analysis::detail
