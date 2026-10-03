@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/DriverScenario.h"
+#include "os/windows/driver/DriverScenario.h"
 
 #include "neverd/emulation/DriverSession.h"
 

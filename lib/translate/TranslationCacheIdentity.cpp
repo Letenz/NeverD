@@ -92,6 +92,7 @@ void hashSemanticPolicy(StableHashWriter &Hash,
   const SymSimplifyOptions &Options = Policy.Simplify;
   Hash.addU64(stableSize(Options.MinMeasuredNodes));
   Hash.addU64(stableSize(Options.MinInstructionsSaved));
+  Hash.addU64(stableSize(Options.MaxFiniteValueWork));
   Hash.addU32(Options.MBA.MaxAtoms);
   Hash.addU32(Options.MBA.MaxSynthesisAtoms);
   Hash.addU32(Options.MBA.MaxOptimalSynthesisAtoms);

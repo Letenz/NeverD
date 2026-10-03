@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: d9345f71317ee20a0dad0782fac2d8329f4f02eb68f6b84c1910c44995e64f89 -->
+<!-- i18n-source: 3cb657d51407ff98150288cf4af4240ae72b519fe469a26f1103ca1733af1e93 -->
 
 [← 文件索引](README.md)
 
@@ -94,6 +94,8 @@ CPU 執行前，`scripts/prepare_hvf_batches.py` 保存完整清單、各片所�
 手動觸發的 [Intel 診斷工作流程](../../.github/workflows/hvf-intel-diagnostic.yml) 分別檢出控制器與受測原始碼。`source-ref` 必須是完整提交 SHA；`shards` 選取原十六分片中的片號。`first-method` 從零計數，`method-count=0` 選取剩餘方法；只有 `method-count=1` 時，`case-index` 才能選取一個原始參數。先探索全部二十個目標的完整清單，再進行選取；保留原 Release 建置、命令、參數與原生必要檢查。
 
 `intel-image` 與完整工作流程一致，預設選擇 `macos-15-intel`，也可選擇 `macos-26-intel` 做受控對照。執行標題標明所選映像檔，可用性檢查仍要求原生 x86-64 主機。切換映像檔同時涉及作業系統、SDK 與工具鏈，不能據此單獨歸因於核心變更。
+
+在總計 180 分鐘的工作內，編譯具有獨立的 120 分鐘預算：首輪 macOS 26 完整建置耗時 76 分鐘。原生方法執行仍限制為 120 秒，診斷 Action 仍限制為 30 分鐘。
 
 每個方法開始前，Action 上傳不可變執行計畫與主機快照；結束後保存原始 XML、行程回收、控制器狀態與第二份快照。快照記錄記憶體、交換空間、負載、磁碟，以及行程編號、狀態、CPU、RSS 與執行檔名稱，不包含行程參數或環境；蒐集錯誤也會保留。執行或上傳失敗即停止後續方法。每個方法仍有 120 秒執行上限；主機失聯可能阻止清理及最終上傳，此時只能使用已上傳的證據。這些局部診斷不能取代完整 CPU 或獨立 Darwin 驗收。最後一個開始標記只能定位執行邊界，不能直接確定故障指令或根因。
 

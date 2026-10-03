@@ -12,8 +12,8 @@
 
 #include "DriverImage.h"
 
+#include "../kernel/KernelExportRegistry.h"
 #include "GuardControlFlow.h"
-#include "KernelExportRegistry.h"
 
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/emulation/GuestMemory.h"

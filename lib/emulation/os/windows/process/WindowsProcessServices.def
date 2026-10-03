@@ -3,8 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// Provider families are exact. Kernel admits kernel32.dll and kernelbase.dll.
-// No wildcard API-set binding or guessed syscall number is permitted.
+// Kernel admits kernel32.dll and kernelbase.dll unless an API has an exact
+// module restriction below. No wildcard API-set binding or guessed syscall
+// number is permitted.
 #ifdef NEVERD_WINDOWS_PROCESS_API
 NEVERD_WINDOWS_PROCESS_API(ExitProcess, Kernel, 1, false)
 NEVERD_WINDOWS_PROCESS_API(RtlExitUserProcess, Native, 1, false)
@@ -47,8 +48,17 @@ NEVERD_WINDOWS_PROCESS_API(RemoveVectoredExceptionHandler, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(AddVectoredContinueHandler, Kernel, 2, true)
 NEVERD_WINDOWS_PROCESS_API(RemoveVectoredContinueHandler, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(RaiseException, Kernel, 4, true)
+NEVERD_WINDOWS_PROCESS_API(RtlCaptureContext, Kernel, 1, true)
 #endif
 #ifdef NEVERD_WINDOWS_PROCESS_NAMED_API
 NEVERD_WINDOWS_PROCESS_NAMED_API(CSpecificHandler, "__C_specific_handler",
                                  Native, 4, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(NativeCaptureContext, "RtlCaptureContext",
+                                 Native, 1, true)
+#endif
+// A restriction declares both the provider and the known absence from the
+// other modules in its family. It does not turn unrelated unknown exports into
+// successful negative lookups.
+#ifdef NEVERD_WINDOWS_PROCESS_API_MODULE
+NEVERD_WINDOWS_PROCESS_API_MODULE(RtlCaptureContext, Kernel32)
 #endif

@@ -973,6 +973,8 @@ CPU アフィニティー、新規プロセス、ウォームキャッシュ、R
 
 ## モジュール式 MBA 簡約
 
+`SymSimplifyFinite.*` は 8〜512 ビットの完全な二値域、共有使用の費用計算、対応するすべての poison 生成注釈、独立した volatile 読み出しと freeze、明示的 undef/poison、深い反復走査、予算、難読化属性を検証します。元の IR と簡約後の IR を O0/O2 で実行し、全バイト入力とランダムな全幅入力を独立した期待値と比較します。翻訳オブジェクトのテストでは、有限値予算が異なる場合にキャッシュ識別子も異なることを要求します。
+
 `SymExpr.*` は 4 ビットの入力とマスクの全組合せで下位端以外の定数範囲を検査し、幅広い値、入れ子の構造操作、既知・未知バイトの再結合、桁上がりの反例も扱います。予算テストは幅の広いノードを再帰境界に置き、予算を超える定数のコピーを拒否します。未知の範囲は式 DAG を増大させず、記号式のまま残す必要があります。 `SymState.*` は両方のバイト順序で、導出したスカラー定数とメモリ領域のリテラル定数を区別し、DAG や保存されたワード全体が変化しないことも確認します。
 
 `SymReadability.*` は減算と補数の表記、結合的演算のコスト、1 ビットおよび広幅リテラル、共有木の飽和、予算付き候補選択、サンプリングを無効にした 3 ビットの総当たり同値性を確認します。`SymMBASample.*` は全演算子、決定的な割り当て、未使用の広幅入力について、狭幅と任意精度の検証を AP 評価器と比較します。評価方式の異なる版で候補品質を比べる場合は、両方の出力を同じ尺度で数え直してください。SDK の版ごとのサイズカウンターは診断専用です。
@@ -1079,7 +1081,7 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 210 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 438 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `210 CPU + 224 WHP + 4 SEH = 438`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 214 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 442 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `214 CPU + 224 WHP + 4 SEH = 442`.
 
 C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
 
@@ -1140,6 +1142,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 
 `AddVectoredContinueHandler` と `RemoveVectoredContinueHandler` は独立した順序付きリストを管理し、例外ハンドラーと保持登録数 128 の上限を共有します。ベクター例外ハンドラーが実行再開を受け入れると、継続ハンドラーは同じ変更可能な例外レコードと `CONTEXT` を参照します。入れ子の例外や DLL 通知を含め、最終コンテキスト検証は継続コールバックの終了後に行います。異なる種類のハンドラーのハンドルは削除できません。`WindowsContinuationTests.cpp` は独自 EXE の順序、早期終了、登録変更、コンテキスト修復、入れ子の配送、ローダーコールバック、プロセス終了をネイティブ Windows と比較します。検証済みの Windows x64 ベクター処理経路は `EXCEPTION_NONCONTINUABLE` が設定されていても実行再開を許可しますが、フレームベースの SEH の動作を証明するものではありません。ネイティブ ARM64 実行は未検証です。
 
+`RtlCaptureContext` は x64 と ARM64 の `kernel32.dll`、`ntdll.dll` で利用できます。共通の `WindowsProcessContext` と `IntegerABI` が CPU 状態や LastError を変更せず、呼び出し元の PC/SP を保存します。ネイティブ Windows の観測で、x64 のフラグ `0x10000f`、未使用の home／デバッグ／ベクトル領域の保持、従来の 32 ビット x87 アドレス欄を確認しました。ARM64 は LR を PC に保存し、記録内の X0/LR をゼロにします。レジスタ、SIMD、浮動小数点制御はゲストから取得し、x64 セレクタと MXCSR 能力マスクは設定されたゲスト CPU に従います。無効、未整列、または一部アクセス不能な出力レコードは書き込み前に失敗します。`WindowsContextTests.cpp` は直接インポート、提供元検索、VEH コールバック、ページ境界をまたぐ出力、失敗時の原子性を検証します。`scripts/check_windows_context.py` は独自実行ファイルを Windows x64／ARM64 で実行し、非空の x87 状態を別途検証します。この ARM64 API の観測はネイティブ KVM/WHP 実行の証拠ではありません。コンテキスト復元、スタック走査、動的関数テーブルは引き続き別の実装課題です。 `WindowsProcessServices.def` は正確なモジュール制約を宣言します。`kernelbase.dll` での検索はネイティブ観測と一致する `ERROR_PROC_NOT_FOUND`（127）を返し、存在しないエクスポートを追加しません。 [RtlCaptureContext](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-rtlcapturecontext).
+
 `WindowsProcessSEH` は `os/windows/exception/` の共有 `X64SEH`（ドライバー環境なしでも利用可能な `NeverDEmulationWindowsException`）で x64 `__C_specific_handler` と UNWIND_INFO V1 を処理します。VEH 検索後のフィルター、finally、非局所的なハンドラーへの転送、入れ子／衝突アンワインド、再配置された EXE/DLL フレームに対応し、非揮発 GPR/XMM を保持します。フィルターによる継続では同じ `CONTEXT` で VCH を実行します。`WindowsSEHTests.cpp` は独自の 23 シナリオをネイティブ Windows と比較し、KVM/WHP/Unicorn は同じ意味論を使います。プロセス予算内でイメージ世代、ヘッダー、アンワインド／スコープのバイト列、言語ハンドラーのコード領域、IAT を再検証します。メタデータ変更や保持中のイメージのアンロードは明示的なエラーです。ARM64 のフレーム SEH、C++ EH、動的関数テーブル、汎用 RtlUnwind/NtContinue、ローダー／VEH／VCH コールバック境界を越えるアンワインドは未対応です。
 
 `EXCEPTION_NONCONTINUABLE` に対して x64 フィルターが `EXCEPTION_CONTINUE_EXECUTION` を返すと、新しいコンテキストで `STATUS_NONCONTINUABLE_EXCEPTION`（`0xc0000025`、フラグ `0x81`、関連レコードは null）を配信します。VEH を再実行してから保持した論理スタックを再検索し、同じ深度・実行予算で finally の順序と EXE/DLL フレームの同一性を保ちます。23 のネイティブシナリオは 21 の正常実行と二つの終了を含みます。元の `CONTEXT` を復元しても、VEH/VCH がこの二次例外の継続を受け入れると未処理のまま終了し、モデルは実行時失敗を報告します。ソフトウェア例外のアドレスは保存 PC と一致し、内部ディスパッチャーのアドレスとレジスター配置はモデルの方針です。 [Windows x64 CI](https://github.com/NeverSight/NeverD/actions/runs/37141166235).
@@ -1159,3 +1163,5 @@ Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 分離契約の回帰テストは、厳密・不足予算、部分ワード、両エンディアン、未アクセスメモリの同一性、アフィン保存領域の境界、遅れて到着する先行辺の上書き、既定の無効化を検証します。C API／CLI は v6 の互換性と無効ドメインを検査します。HighC と LLVMC を O0／O2 で実行し、戻り値、メモリ、スタック、保存状態を確認しますが、ネイティブ等価証明ではありません。
 
 有限ディスパッチの回帰は、レジスタとフレームの状態、両エンディアン、到達可能な不正分岐、遅い先行辺、使い切った内側ガード、隣接探索予算を検証します。訪問上限テストは算術相関、入れ子ループ、デコードモード、フォールスルーの計数、総作業上限、旧フラグの優先順位を扱います。CLIは両C経路・両ソースABIをO0/O2で実行し、C/Python v8はレイアウト、不正フィールド、将来末尾の無視を検証します。 回帰では、大きな無関係の有限セレクターの後でもネイティブガード用の探索予算が残り、最後の改善回数が既に指名された生成元に優先して使われることも確認します。
+
+`NeverDLLVMCPhiTests` は、独立した更新と相互依存する更新を O0/O2 で実行し、反復ゼロ、反復境界、全ビット幅のランダム初期値を検査します。可読性の検査では、独立更新にスナップショット変数がなく、複合交換では必要なものだけ残ることを要求します。既存の分岐、switch、移動した分岐本体、交換ループのテストも、選択された辺と同時代入の意味を検証します。

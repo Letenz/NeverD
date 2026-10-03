@@ -21,11 +21,11 @@
 #undef NEVERD_DISPATCHER_FAILURE
 #undef NEVERD_DISPATCHER_CASE
 #define NEVERD_WDM_VALUE(Name, Value) enum { Name = Value };
-#include "../../../lib/emulation/os/windows/KernelValues.def"
+#include "../../../lib/emulation/os/windows/kernel/KernelValues.def"
 #undef NEVERD_WDM_VALUE
 #define NEVERD_KERNEL_DISPATCHER_VALUE(Name, Value)                            \
   enum { Dispatcher##Name = Value };
-#include "../../../lib/emulation/os/windows/KernelDispatcherValues.def"
+#include "../../../lib/emulation/os/windows/kernel/KernelDispatcherValues.def"
 #undef NEVERD_KERNEL_DISPATCHER_VALUE
 
 // Public x64 WDM declarations, independently checked against Microsoft's

@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/KernelMMIO.h"
+#include "os/windows/kernel/KernelMMIO.h"
 
 #include <map>
 

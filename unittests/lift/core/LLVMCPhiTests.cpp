@@ -171,6 +171,129 @@ int main(void) {
 )");
 }
 
+TEST(LLVMCValues, IndependentLoopPhiUpdatesNeedNoSnapshotLocals) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("independent-loop-updates", Context);
+  llvm::IRBuilder<> B(Context);
+  auto *I64 = B.getInt64Ty();
+  auto *F = llvm::Function::Create(
+      llvm::FunctionType::get(B.getVoidTy(), {I64, I64, B.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "independent_loop", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", F);
+  auto *Loop = llvm::BasicBlock::Create(Context, "loop", F);
+  auto *Body = llvm::BasicBlock::Create(Context, "body", F);
+  auto *Exit = llvm::BasicBlock::Create(Context, "exit", F);
+  B.SetInsertPoint(Entry);
+  B.CreateBr(Loop);
+  B.SetInsertPoint(Loop);
+  auto *A = B.CreatePHI(I64, 2, "value");
+  auto *C = B.CreatePHI(I64, 2, "value_suffix");
+  auto *Index = B.CreatePHI(I64, 2, "index");
+  A->addIncoming(F->getArg(1), Entry);
+  C->addIncoming(B.getInt64(11), Entry);
+  Index->addIncoming(B.getInt64(0), Entry);
+  B.CreateCondBr(B.CreateICmpULT(Index, F->getArg(0)), Body, Exit);
+  B.SetInsertPoint(Body);
+  A->addIncoming(B.CreateAdd(A, B.getInt64(3)), Body);
+  C->addIncoming(B.CreateAdd(B.CreateMul(C, B.getInt64(5)), B.getInt64(9)),
+                 Body);
+  Index->addIncoming(B.CreateAdd(Index, B.getInt64(1)), Body);
+  B.CreateBr(Loop);
+  B.SetInsertPoint(Exit);
+  B.CreateStore(A, F->getArg(2));
+  B.CreateStore(C, B.CreateGEP(I64, F->getArg(2), B.getInt64(1)));
+  B.CreateRetVoid();
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  EXPECT_EQ(Source.find("phi_edge"), std::string::npos) << Source;
+  Source += R"(
+int main(void) {
+  uint64_t seed = UINT64_MAX;
+  for (unsigned trial = 0; trial < 128; ++trial) {
+    seed = seed * UINT64_C(6364136223846793005) + 1;
+    for (uint64_t count = 0; count < 33; ++count) {
+      uint64_t output[2] = {0, 0}, a = seed, b = 11;
+      for (uint64_t i = 0; i < count; ++i) { a += 3; b = b * 5 + 9; }
+      independent_loop(count, seed, output);
+      if (output[0] != a || output[1] != b) return 1;
+    }
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
+TEST(LLVMCValues, CompoundLoopPhiReadsKeepOnlyNeededSnapshots) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("compound-loop-updates", Context);
+  llvm::IRBuilder<> B(Context);
+  auto *I64 = B.getInt64Ty();
+  auto *F = llvm::Function::Create(
+      llvm::FunctionType::get(B.getVoidTy(), {I64, I64, B.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "compound_loop", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", F);
+  auto *Loop = llvm::BasicBlock::Create(Context, "loop", F);
+  auto *Body = llvm::BasicBlock::Create(Context, "body", F);
+  auto *Exit = llvm::BasicBlock::Create(Context, "exit", F);
+  B.SetInsertPoint(Entry);
+  B.CreateBr(Loop);
+  B.SetInsertPoint(Loop);
+  auto *A = B.CreatePHI(I64, 2, "first");
+  auto *C = B.CreatePHI(I64, 2, "second");
+  auto *D = B.CreatePHI(I64, 2, "third");
+  auto *Index = B.CreatePHI(I64, 2, "index");
+  A->addIncoming(F->getArg(1), Entry);
+  C->addIncoming(B.getInt64(13), Entry);
+  D->addIncoming(B.getInt64(29), Entry);
+  Index->addIncoming(B.getInt64(0), Entry);
+  B.CreateCondBr(B.CreateICmpULT(Index, F->getArg(0)), Body, Exit);
+  B.SetInsertPoint(Body);
+  A->addIncoming(B.CreateAdd(C, B.getInt64(7)), Body);
+  C->addIncoming(B.CreateXor(D, A), Body);
+  D->addIncoming(B.CreateMul(B.CreateAdd(A, D), B.getInt64(3)), Body);
+  Index->addIncoming(B.CreateAdd(Index, B.getInt64(1)), Body);
+  B.CreateBr(Loop);
+  B.SetInsertPoint(Exit);
+  B.CreateStore(A, F->getArg(2));
+  B.CreateStore(C, B.CreateGEP(I64, F->getArg(2), B.getInt64(1)));
+  B.CreateStore(D, B.CreateGEP(I64, F->getArg(2), B.getInt64(2)));
+  B.CreateRetVoid();
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  // One snapshot is read once; acyclic updates and loop seeds use assignments.
+  EXPECT_EQ(llvm::StringRef(Source).count("phi_edge"), 2U) << Source;
+  Source += R"(
+int main(void) {
+  uint64_t seed = 0;
+  for (unsigned trial = 0; trial < 128; ++trial) {
+    seed = seed * UINT64_C(2862933555777941757) + UINT64_C(3037000493);
+    for (uint64_t count = 0; count < 33; ++count) {
+      uint64_t output[3] = {0, 0, 0}, a = seed, b = 13, c = 29;
+      for (uint64_t i = 0; i < count; ++i) {
+        uint64_t next_a = b + 7, next_b = c ^ a, next_c = (a + c) * 3;
+        a = next_a; b = next_b; c = next_c;
+      }
+      compound_loop(count, seed, output);
+      if (output[0] != a || output[1] != b || output[2] != c) return 1;
+    }
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
 TEST(LLVMCValues, InlinedFalseArmKeepsLoopEntryPhiCopy) {
   llvm::LLVMContext Context;
   llvm::Module Module("inlined-loop-entry", Context);

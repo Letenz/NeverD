@@ -10,8 +10,8 @@
 
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "os/windows/KernelDispatcher.h"
-#include "os/windows/KernelInterrupts.h"
+#include "os/windows/kernel/KernelDispatcher.h"
+#include "os/windows/kernel/KernelInterrupts.h"
 
 #include <array>
 

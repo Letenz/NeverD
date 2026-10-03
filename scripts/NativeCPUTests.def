@@ -696,3 +696,15 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsSEH.CallbacksShareTheProcessBudget/WhpX64")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsContextNative.RunsOriginalCallerContextExecutable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsContext.CapturesTheCallerAcrossProvidersAndCallbacks/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsContext.RejectsInvalidBuffersBeforePublishingState/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsContext.CapturesAcrossPagesWithoutChangingTheCPU/WhpX64")
+#endif

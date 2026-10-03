@@ -11,7 +11,7 @@
 
 #include "DriverScenario.h"
 
-#include "WindowsKernelLayout.h"
+#include "../kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverReportFields.h"
 #include "neverd/emulation/DriverSession.h"

@@ -35,7 +35,7 @@ permissions:
 jobs:
   native-method:
     runs-on: ${{ inputs.intel-image == 'macos-26-intel' && 'macos-26-intel' || 'macos-15-intel' }}
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -112,7 +112,9 @@ jobs:
             -DNEVERD_EMULATION_BACKEND_HVF=ON
       - name: Build every original native inventory owner
         working-directory: source
-        timeout-minutes: 70
+        # The first macOS 26 LLVM source build took 76 minutes. Keep a
+        # separate compilation budget without extending native test limits.
+        timeout-minutes: 120
         run: |
           python3 - <<'PY'
           import platform

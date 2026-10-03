@@ -592,6 +592,8 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 
 `NEVERD_ENABLE_SEMANTIC_TESTS` 默认为 `ON`，控制 `unittests/semantic` 中的测试组及其聚合运行目标。构建不依赖 Unicorn 的原生 CPU 测试时，保留 `BUILD_TESTING=ON`，同时设置 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 和 `NEVERD_EMULATION_BACKEND_UNICORN=OFF`。原生 KVM/WHP 测试仍可构建，包括具有对应 SDK 头文件的 Windows ARM64/MSVC 配置。在 Windows ARM64 上启用 Unicorn 仍需 ARM64 LLVM-MinGW 工具链。这项构建解耦不等于 ARM64 原生运行验证。
 
+`os/windows/driver/` 负责驱动映像加载、执行会话、场景、报告及执行策略；`os/windows/kernel/` 负责内核 API 与对象模型，包括 WDM/KMDF、设备生命周期、电源策略、内存和调度，`KernelModelPowerPolicy.cpp` 归属此处。`os/windows/process/` 负责用户进程启动与服务，`os/windows/exception/` 负责共享的异常搜索与展开。驱动与内核源码仍组成 `NeverDEmulation`，现有调用和共享类型尚未形成独立库边界。各目录用自己的 `CMakeLists.txt` 维护源码清单，公共头文件保持兼容。
+
 | 组件 | 职责 |
 |---|---|
 | `NeverDEmulationCore` | 内存、故障、寄存器与共享执行循环 |
@@ -988,6 +990,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读�
 
 `AddVectoredContinueHandler` 和 `RemoveVectoredContinueHandler` 管理独立的有序列表，与异常处理器共用最多保留 128 个注册项的限制。向量异常处理器接受继续执行后，继续处理器读取同一份可修改的异常记录和 `CONTEXT`；最终上下文校验在这些回调完成后进行，包含嵌套异常与 DLL 通知。两类处理器的句柄不可交叉移除。`WindowsContinuationTests.cpp` 将顺序、提前结束派发、增删、上下文修复、嵌套派发、加载器回调及进程退出的原创 EXE 场景与原生 Windows 对照。已测 Windows x64 向量处理路径允许在设置 `EXCEPTION_NONCONTINUABLE` 时继续执行；这不代表基于栈帧的 SEH 行为。原生 ARM64 执行仍未验证。
 
+`RtlCaptureContext` 已通过 `kernel32.dll` 和 `ntdll.dll` 支持 x64、ARM64。共享的 `WindowsProcessContext` 与 `IntegerABI` 保存调用者 PC/SP，不修改 CPU 状态或 LastError。原生 Windows 观察确认 x64 标志为 `0x10000f`，未涉及的 home／调试／向量存储保持原样，x87 地址字段保留传统的低 32 位；ARM64 从 LR 保存 PC，并清零记录中的 X0/LR。寄存器、SIMD 与浮点控制来自客体；x64 选择子和 MXCSR 能力掩码遵循配置的客体 CPU。无效、未对齐或部分不可访问的目标记录在写入前明确失败。`WindowsContextTests.cpp` 覆盖静态导入、提供者查询、VEH 回调、跨页输出及失败原子性。`scripts/check_windows_context.py` 在原生 Windows x64、ARM64 上运行原创程序，并单独验证非空 x87 状态。这些 ARM64 API 观察不代表原生 KVM/WHP 执行验证。上下文恢复、栈回溯和动态函数表仍需继续实现。 `WindowsProcessServices.def` 声明精确的模块限制：模型在 `kernelbase.dll` 中查询此符号时返回 `ERROR_PROC_NOT_FOUND`（127），与原生观察一致，不凭空增加导出。 [RtlCaptureContext](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-rtlcapturecontext).
+
 `WindowsProcessSEH` 使用 `os/windows/exception/` 中共享的 `X64SEH`（`NeverDEmulationWindowsException`，无需启用驱动环境），处理 x64 `__C_specific_handler` 和 UNWIND_INFO V1。VEH 搜索结束后支持过滤器、finally 回调、非局部处理器跳转、嵌套／冲突展开以及重定位 EXE/DLL 栈帧，保留非易失 GPR/XMM 状态。过滤器选择继续执行时，VCH 使用同一份 `CONTEXT`。`WindowsSEHTests.cpp` 将 23 个原创场景与原生 Windows 对照；KVM/WHP/Unicorn 共用这些语义。派发在进程预算内重新校验映像代次、头部、展开／作用域字节、语言处理器代码区域及 IAT 绑定。元数据被修改或保留的映像被卸载时明确失败。ARM64 栈式 SEH、C++ EH、动态函数表、通用 RtlUnwind/NtContinue、跨加载器／VEH／VCH 回调边界展开仍不支持。
 
 当记录包含 `EXCEPTION_NONCONTINUABLE` 而 x64 过滤器返回 `EXCEPTION_CONTINUE_EXECUTION` 时，系统使用新上下文派发 `STATUS_NONCONTINUABLE_EXCEPTION`（`0xc0000025`，标志 `0x81`，关联记录指针为空）。先重新运行 VEH，再从保留的逻辑栈重新搜索，在相同深度与执行预算内保留 finally 顺序和 EXE/DLL 栈帧身份。23 个原生场景包括 21 个成功执行和两个终止场景：即使恢复原始 `CONTEXT`，VEH/VCH 接受继续这个二次异常后，它仍未处理。模型将此结果报告为运行时失败。软件异常地址等于保存的 PC；内部派发器地址和寄存器布局由模型定义。 [Windows x64 CI](https://github.com/NeverSight/NeverD/actions/runs/37141166235).
@@ -1045,3 +1049,7 @@ Swift 元数据绑定可从两个或三个符号名义类型描述符验证嵌�
 共享帧分析区分存活的不透明值与每个字节均已初始化的存储。独立认证的初始化、读取和销毁效果携带有界类型身份及范围；所有到达路径和循环回边必须具有一致的存活值，释放帧前必须销毁。原始字节读取、无类型借用、重叠写入、重复初始化、缺少销毁及不确定别名不能使用该事实。可能被写入的填充字节保留原有的潜在帧指针污点，只有确定写入才能清除。既有的字节初始化、按值副本和寄存器保存证明仍然独立。真实 Swift AnyHashable 复制见证会保留部分目标填充字节，原始 ARM64 helper 与原样生成 C 在 O0/O2 的对照已确认这一点。该 IR 协议不识别这些 helper，也不授予帧效果或源码发布权限；loader 消费者仍需独立认证当前机器、类型、ABI 和生命周期。
 
 `SwiftOpaqueValueEffects` 独立认证 AnyHashable 复制、相等比较和销毁的有界作用。四个编译器/SDK 配置证明 40 字节类型化临时值的复制、借用、销毁及生命周期结束，填充字节仍未指定。loader 重放当前完整 ARM64 调用方和被调方的机器码、LowIR 与 CFG，验证 helper 每条指令和物理 ABI，并要求不可变普通 GOT 槽中的精确强元数据及运行时导入。复制建立类型化值，相等比较读取值，销毁结束其寿命；返回地址只保留可能的帧别名。动态值见证分派和真实 `swiftcc i1` 相等结果保持不变。既有 IR 所有者检查实际帧初始化、逃逸、别名、每条路径及循环回边。原生推导现在使用同一所有者，并提供当前 callee LowIR 和完整审计。LowToMed 记录原始调用位置，变换保留唯一求值。发布从当前镜像独立重建 callee 和入口 ABI，再比较完整的 canonical MedIR/HighIR 与绑定后的源码，包括分支、碰撞循环回边、全部参数和每个内存作用。删除凭据或提供已定义的标量结果都不能绕过生命周期证明。首个有界消费者仅接受完整的复制/比较/销毁调用组；其它调用需要独立接入。循环不会被展开成直线，填充字节也不会被视为已初始化。
+
+`SymSimplifyPass` 还会计算有预算限制的整数表达式片段，其输入均来自同一个至多两个可能具体值的 SSA 值。布尔值、单比特掩码和符号位提取可建立完整值域，无需采样。每个中间操作在两个值上都必须有定义，包括溢出、精确移位、不相交 OR、窄化和符号注解。替换保留原始锚点，只计算真正变成死代码的指令，并且必须减少 LLVM 指令数。不相关输入、不完整值域、显式 undef/poison 或工作预算耗尽均不能授权重写。`MaxFiniteValueWork` 限制这一推导阶段；零表示禁用。该预算纳入翻译缓存身份，优化流程使用管线模式版本 5。这不推断内存私有性、循环不变量或源代码 ABI。
+
+LLVMC 在保持 PHI 边上同时更新语义的同时，省去不必要的快照局部变量。右侧表达式保持原求值顺序；只有后面的已渲染表达式读取某个变量的旧值时，才延迟写入该目标。在内联和路径局部替换之后检查完整标识符；无法识别的目标拼写保守保留临时变量。循环依赖和交换保留必要快照，独立更新直接赋值。这只改变 C 渲染，不改变 LLVM 语义或 ABI 推断。

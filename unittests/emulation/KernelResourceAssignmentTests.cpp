@@ -9,7 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/KernelResources.h"
+#include "os/windows/kernel/KernelResources.h"
 
 namespace neverd::emulation {
 namespace {

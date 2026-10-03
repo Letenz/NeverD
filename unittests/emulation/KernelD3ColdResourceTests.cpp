@@ -11,7 +11,7 @@
 
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "os/windows/KernelMMIO.h"
+#include "os/windows/kernel/KernelMMIO.h"
 
 namespace neverd::emulation {
 namespace {

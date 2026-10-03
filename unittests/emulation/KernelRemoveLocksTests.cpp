@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/KernelRemoveLocks.h"
+#include "os/windows/kernel/KernelRemoveLocks.h"
 
 #include <array>
 #include <limits>

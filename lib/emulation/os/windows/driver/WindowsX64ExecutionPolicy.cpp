@@ -12,7 +12,7 @@
 
 #include "WindowsX64ExecutionPolicy.h"
 
-#include "WindowsKernelLayout.h"
+#include "../kernel/WindowsKernelLayout.h"
 
 #include "llvm/Support/Error.h"
 

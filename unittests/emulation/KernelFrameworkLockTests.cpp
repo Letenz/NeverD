@@ -6,10 +6,10 @@
 
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
-#include "os/windows/DriverImage.h"
-#include "os/windows/KernelFramework.h"
-#include "os/windows/KernelModel.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelFramework.h"
+#include "os/windows/kernel/KernelModel.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 namespace neverd::emulation {
 namespace {

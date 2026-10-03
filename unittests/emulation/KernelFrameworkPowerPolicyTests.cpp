@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "KernelFrameworkTestSupport.h"
-#include "os/windows/DriverScenario.h"
+#include "os/windows/driver/DriverScenario.h"
 
 namespace neverd::emulation {
 namespace {

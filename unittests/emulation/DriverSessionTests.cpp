@@ -10,8 +10,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/DriverImage.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

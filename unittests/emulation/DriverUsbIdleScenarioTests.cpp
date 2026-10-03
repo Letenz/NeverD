@@ -5,9 +5,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/DriverScenario.h"
-#include "os/windows/KernelUsbIdle.h"
-#include "os/windows/WindowsKernelLayout.h"
+#include "os/windows/driver/DriverScenario.h"
+#include "os/windows/kernel/KernelUsbIdle.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 

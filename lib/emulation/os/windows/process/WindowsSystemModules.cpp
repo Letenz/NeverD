@@ -30,7 +30,7 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
                                 ImageReadBudget &Budget) {
   std::vector<const Service *> Exports;
   for (const auto &S : services())
-    if (S.Provider == Provider.Family)
+    if (findService(Provider.Name, S.Name) == &S)
       Exports.push_back(&S);
   llvm::sort(Exports, [](const auto *A, const auto *B) {
     return llvm::StringRef(A->Name) < B->Name;

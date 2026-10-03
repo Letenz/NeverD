@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-#include "os/windows/KernelAPIIRQL.h"
+#include "os/windows/kernel/KernelAPIIRQL.h"
 
 #include <set>
 #include <string>
@@ -30,12 +30,12 @@ void expectLimit(llvm::StringRef Name, uint8_t Expected) {
 TEST(DriverKernelAPIIRQL, CoversExactSupportedInventoryWithoutDuplicates) {
   const llvm::StringLiteral Supported[] = {
 #define NEVERD_KERNEL_API(Name, Arity, Availability) #Name,
-#include "os/windows/KernelAPIs.def"
+#include "os/windows/kernel/KernelAPIs.def"
 #undef NEVERD_KERNEL_API
   };
   const llvm::StringLiteral Catalog[] = {
 #define NEVERD_KERNEL_IRQL_API(Name, Maximum) #Name,
-#include "os/windows/KernelAPIIRQL.def"
+#include "os/windows/kernel/KernelAPIIRQL.def"
 #undef NEVERD_KERNEL_IRQL_API
   };
   std::set<std::string> SupportedNames;
@@ -55,7 +55,7 @@ TEST(DriverKernelAPIIRQL, CoversExactSupportedInventoryWithoutDuplicates) {
 
 TEST(DriverKernelAPIIRQL, EveryRegistryOperationRequiresPassiveLevel) {
 #define NEVERD_KERNEL_REGISTRY_API(Name, Arity) expectLimit(#Name, 0);
-#include "os/windows/KernelRegistryAPIs.def"
+#include "os/windows/kernel/KernelRegistryAPIs.def"
 #undef NEVERD_KERNEL_REGISTRY_API
 }
 
@@ -136,7 +136,7 @@ TEST(DriverKernelAPIIRQL,
 
 TEST(DriverKernelAPIIRQL, DispatcherKeepsItsOwnNarrowerChecks) {
 #define NEVERD_KERNEL_DISPATCHER_API(Name, Arity) expectLimit(#Name, 15);
-#include "os/windows/KernelDispatcherAPIs.def"
+#include "os/windows/kernel/KernelDispatcherAPIs.def"
 #undef NEVERD_KERNEL_DISPATCHER_API
 }
 
