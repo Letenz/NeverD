@@ -168,7 +168,7 @@ NEVERD_WINDOWS_PROCESS_TEXT(ReentrantExit,
 #ifdef NEVERD_WINDOWS_PROCESS_TEXT
 NEVERD_WINDOWS_PROCESS_TEXT(
     UserException,
-    "invalid API output pointer requires Windows user exception dispatch")
+    "invalid API pointer requires Windows user exception dispatch")
 NEVERD_WINDOWS_PROCESS_TEXT(
     LoaderDisagreement,
     "loader facts or original bytes disagree with PE execution admission")
