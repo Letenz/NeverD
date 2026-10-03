@@ -172,6 +172,12 @@ struct SymSimplifyOptions {
   /// MinInstructionsSaved is zero.
   size_t MaxFiniteValueWork = 262144;
 
+  /// Cumulative work for exact modular truth sets over one retained SSA value.
+  /// Includes width-weighted algebra, dependencies, uses and rewrite work.
+  /// Zero disables this phase; incomplete or disconnected sets stay unchanged.
+  /// Requires strict instruction savings, including under aggressive().
+  size_t MaxPredicateWork = 262144;
+
   /// Take every rewrite the engine can derive, however small the expression
   /// and however little the result saves.
   static SymSimplifyOptions aggressive() {

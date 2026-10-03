@@ -29,6 +29,7 @@ namespace {
 SymSimplifyOptions finiteOnly() {
   SymSimplifyOptions Opts;
   Opts.MinMeasuredNodes = std::numeric_limits<size_t>::max();
+  Opts.MaxPredicateWork = 0;
   return Opts;
 }
 
