@@ -72,6 +72,7 @@ struct Service {
 llvm::ArrayRef<Service> services();
 std::optional<APIProvider> findProvider(llvm::StringRef Module);
 const Service *findService(llvm::StringRef Module, llvm::StringRef Name);
+bool isServiceAbsent(llvm::StringRef Module, llvm::StringRef Name);
 struct ImageRegion {
   uint64_t Address;
   unsigned Permissions;

@@ -157,9 +157,17 @@ void entry(void) {
     if (Line[I] == ModePrefix && Line[I + 1])
       Mode = Line[I + 1];
   Capture API = RtlCaptureContext;
-  if (Mode == NativeMode || Mode == BaseMode) {
+  if (Mode == NativeMode || Mode == BaseMode || Mode == KernelMode) {
     API = (Capture)GetProcAddress(
-        GetModuleHandleA(Mode == NativeMode ? Native : Base), Symbol);
+        GetModuleHandleA(
+            Mode == NativeMode ? Native : (Mode == BaseMode ? Base : Kernel)),
+        Symbol);
+    if (Mode == BaseMode) {
+      require(!API && GetLastError() == ProcedureNotFound, SiteProvider);
+      emit(&Mode, sizeof(Mode));
+      ExitProcess(CompletionStatus);
+      return;
+    }
     require(API != 0, SiteProvider);
   }
   if (Mode == CallbackMode) {

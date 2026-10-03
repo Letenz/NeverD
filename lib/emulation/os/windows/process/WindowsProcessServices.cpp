@@ -32,6 +32,27 @@ static_assert([] {
       return false;
   return true;
 }());
+
+const Service *findDeclaredService(llvm::StringRef Module,
+                                   llvm::StringRef Name) {
+  const auto Provider = findProvider(Module);
+  for (const auto &S : Registry)
+    if (Name == S.Name && Provider == S.Provider)
+      return &S;
+  return nullptr;
+}
+
+bool permitsModule(const Service &S, llvm::StringRef Module) {
+  switch (S.Kind) {
+#define NEVERD_WINDOWS_PROCESS_API_MODULE(Name, ModuleName)                    \
+  case API::Name:                                                              \
+    return Module.equals_insensitive(text::ModuleName);
+#include "WindowsProcessServices.def"
+#undef NEVERD_WINDOWS_PROCESS_API_MODULE
+  default:
+    return true;
+  }
+}
 } // namespace
 llvm::ArrayRef<Service> services() { return Registry; }
 std::optional<APIProvider> findProvider(llvm::StringRef Module) {
@@ -42,11 +63,14 @@ std::optional<APIProvider> findProvider(llvm::StringRef Module) {
   return std::nullopt;
 }
 const Service *findService(llvm::StringRef Module, llvm::StringRef Name) {
-  const auto Provider = findProvider(Module);
-  for (const auto &S : Registry)
-    if (Name == S.Name && Provider == S.Provider)
-      return &S;
+  if (const auto *S = findDeclaredService(Module, Name))
+    if (permitsModule(*S, Module))
+      return S;
   return nullptr;
+}
+bool isServiceAbsent(llvm::StringRef Module, llvm::StringRef Name) {
+  const auto *S = findDeclaredService(Module, Name);
+  return S && !permitsModule(*S, Module);
 }
 std::optional<uint64_t> Services::unsupported(const Service &S) {
   Result.Stop = ProcessStopReason::UnsupportedService;

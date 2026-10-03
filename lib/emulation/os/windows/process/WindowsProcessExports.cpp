@@ -85,7 +85,8 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
         return std::move(E);
     const auto &Module = Program.Modules[Index];
     // The model declares names, not a Windows build's ordinal assignment or
-    // complete export inventory. Never turn missing coverage into an API miss.
+    // complete export inventory. Only declared provider restrictions establish
+    // a known absence; missing coverage must not become an API miss.
     if (Module.System && Ordinal)
       return failure(text::SystemOrdinal);
     const uint32_t MissingError =
@@ -101,6 +102,7 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
         Entry = I->second;
     }
     if (!Entry && Module.System && !Symbol.empty() &&
+        !isServiceAbsent(Program.Identities[Index].Name, Symbol) &&
         !llvm::any_of(Module.Names, [&](const auto &E) {
           return llvm::StringRef(E.first).equals_insensitive(Symbol);
         }))
