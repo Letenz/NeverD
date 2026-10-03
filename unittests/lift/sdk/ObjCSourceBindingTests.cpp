@@ -5,9 +5,11 @@
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceInputs.h"
+#include "../../../lib/sdk/capi/SourceSwiftWitnessFrameProjection.h"
 #include "../core/CFunctionParameterCallFixture.h"
 #include "../core/ImmutableNativeCallFixture.h"
 #include "../core/RuntimeFunctionAddressFixture.h"
+#include "../core/SwiftWitnessFrameFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -14830,5 +14832,310 @@ TEST(ObjCSourceBindings,
     WrongName.ImportPtrSlots[0x3000] = "_sprintf";
     WrongName.DyldBindSlots[0x3000].Name = "_sprintf";
     EXPECT_FALSE(darwinRuntimeFormatDeclaration(WrongName, 0x3000));
+  }
+}
+
+TEST(SwiftValueWitnessCalls, PublicationReplaysCurrentFrameOccurrence) {
+  immutable_native_call_test::Fixture F;
+  swift_witness_frame_test::frameWitnessFixture(F);
+  ASSERT_TRUE(F.high());
+  ASSERT_TRUE(F.med());
+  EXPECT_TRUE(validateSwiftWitnessFrameBindings(F.Image, F.low(), *F.med()));
+  EXPECT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(*F.high()));
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+  EXPECT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(Bound.Function));
+}
+
+TEST(SwiftValueWitnessCalls,
+     FramePublicationRejectsStaleAndRepeatedOccurrences) {
+  for (unsigned Case = 0; Case < 27; ++Case) {
+    SCOPED_TRACE(Case);
+    immutable_native_call_test::Fixture F;
+    swift_witness_frame_test::frameWitnessFixture(F);
+    ASSERT_TRUE(F.high());
+    ASSERT_TRUE(F.med());
+    ExprPtr Call;
+    walkStmts(F.high()->Body, [&](HighStmt &S) {
+      forEachExpr(S, [&](ExprPtr &Root) {
+        std::vector<ExprPtr> Pending{Root};
+        while (!Pending.empty()) {
+          auto E = Pending.back();
+          Pending.pop_back();
+          if (!E)
+            continue;
+          if (E->SourceCallHint && E->SourceCallHint->SwiftWitnessFrame)
+            Call = E;
+          E->forEachChildExpr([&](const ExprPtr &C) { Pending.push_back(C); });
+        }
+      });
+    });
+    ASSERT_TRUE(Call);
+    auto Hint = *Call->SourceCallHint;
+    MedOp *MedCall = nullptr;
+    for (auto &B : F.med()->Blocks)
+      for (auto &O : B.Ops)
+        if (O.Opcode == NdOp::INDIR_CALL)
+          MedCall = &O;
+    ASSERT_TRUE(MedCall);
+    switch (Case) {
+    case 0:
+      F.word(9, 0xb90023e8);
+      break;
+    case 1:
+      F.Image.DyldBindSlots.at(0x2000).WeakImport = true;
+      break;
+    case 2:
+      Hint.SwiftWitnessFrame->FunctionEntry += 4;
+      break;
+    case 3:
+      ++Hint.SwiftWitnessFrame->Site.Sequence;
+      break;
+    case 4:
+      Hint.SwiftWitnessFrame->Site.Instruction += 4;
+      break;
+    case 5:
+      Hint.SwiftWitnessFrame->Site.Opcode = NdOp::CALL;
+      break;
+    case 6:
+      Hint.SwiftWitnessFrame->Site.StaticTarget = 0x1100;
+      break;
+    case 7:
+      Hint.SwiftWitnessFrame.reset();
+      break;
+    case 8:
+      Hint.Signature.Parameters.back().Location.RegisterOffset += 8;
+      break;
+    case 9:
+      Hint.Signature.Parameters.back().Type = NdType::makeInt(4);
+      break;
+    case 10:
+      Hint.WeakImport = true;
+      break;
+    case 11:
+      Hint.ReturnedArgument = 0;
+      break;
+    case 12:
+      Hint.ValueWitness =
+          SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy;
+      break;
+    case 13:
+      Call->Operands.back() = HighExpr::makeConst(0, 8);
+      break;
+    case 14:
+      std::swap(Call->Operands[0], Call->Operands[1]);
+      break;
+    case 15:
+      Call->IndirectTarget = HighExpr::makeConst(0x1200, 8);
+      break;
+    case 16:
+      Call->IsIndirectCall = false;
+      break;
+    case 17:
+      Call->Operands.pop_back();
+      break;
+    case 18:
+      Call->Type = NdType::makeInt(4);
+      break;
+    case 19: {
+      HighStmt S;
+      S.Kind = StmtKind::Call;
+      S.CallExpr = Call;
+      F.high()->Body.push_back(S);
+      break;
+    }
+    case 20: {
+      auto H = *MedCall->SourceCallHint;
+      H.SwiftWitnessFrame.reset();
+      MedCall->SourceCallHint = std::make_shared<const SourceCallTypeHint>(H);
+      break;
+    }
+    case 21:
+      --MedCall->NumInputs;
+      break;
+    case 22:
+      ++MedCall->OriginSeq;
+      break;
+    case 23:
+      MedCall->PreservesCallerSaved = true;
+      break;
+    case 24:
+      F.Result.LowFuncs.push_back(*F.low());
+      break;
+    case 25:
+      for (auto &A : F.Result.FunctionAudits)
+        if (A.Entry == 0x1000)
+          A.MedIRVerified = false;
+      break;
+    case 26:
+      F.med()->SourceParametersBound = false;
+      break;
+    }
+    Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(Hint);
+    EXPECT_FALSE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                     .valid(*F.high()));
+  }
+}
+
+TEST(SwiftValueWitnessCalls, GeneratedFrameWitnessSourceMatchesOriginalARM64) {
+#if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
+  using namespace immutable_native_call_test;
+  immutable_native_call_test::Fixture F;
+  swift_witness_frame_test::frameWitnessFixture(F);
+  ASSERT_TRUE(F.high());
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+  ASSERT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(Bound.Function));
+  const auto Audit =
+      std::find_if(F.Result.FunctionAudits.begin(),
+                   F.Result.FunctionAudits.end(), [](const auto &A) {
+                     return A.Entry == immutable_native_call_test::Entry;
+                   });
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  const auto Allowed = [&](const HighExpr &E) {
+    return objcSourceCallBound(E, F.Image, Functions, nullptr, nullptr,
+                               &Bound.Function);
+  };
+  const auto Limitation = sourceBodyLimitation(
+      Bound.Function, *Bound.Function.SourceTypeHint, &*Audit, Allowed);
+  ASSERT_TRUE(Limitation.empty()) << Limitation;
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-witness-frame", Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code E;
+      std::filesystem::remove_all(Work, E);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "witness.c").string();
+  std::ofstream(Path) << Source << R"(
+#include <stdio.h>
+extern void *original_witness(void *,void *,void *,uint64_t,void *);
+__asm__(".text\n.p2align 2\n.globl _original_witness\n_original_witness:\n"
+        ".long 0xa9bb53f3,0xa9015bf5,0xa9047bfd,0xaa0003f3,0xaa0103f4\n"
+        ".long 0xaa0203f5,0x92401476,0x910006d6,0xf85f82a8,0xf90013e8,0xaa0403e0\n"
+        "bl _objc_release\n"
+        ".long 0xf10006d6,0x54ffffe1,0xf94013e8,0xf9400908\n"
+        ".long 0xaa1303e0,0xaa1403e1,0xaa1503e2,0xd63f0100\n"
+        ".long 0xa9447bfd,0xa9415bf5,0xa8c553f3,0xd65f03c0\n");
+static uint64_t table[8], metadata[3], calls, selected;
+static void *expected_dst, *expected_src;
+static void * __attribute__((swiftcall)) copy_a(void *d,void *s,void *m) {
+  if(d!=expected_dst || s!=expected_src || m!=metadata+1) __builtin_trap();
+  ++calls; selected=1;
+  ((uint64_t*)d)[0]=((uint64_t*)s)[0]^metadata[1];
+  ((uint64_t*)d)[1]=((uint64_t*)s)[1]+metadata[2];
+  return d;
+}
+static void * __attribute__((swiftcall)) copy_b(void *d,void *s,void *m) {
+  void *r=copy_a(d,s,m); selected=2; return r;
+}
+int main(void) {
+  const uint32_t words[]={0xa9bb53f3,0xa9015bf5,0xa9047bfd,0xaa0003f3,0xaa0103f4,
+    0xaa0203f5,0x92401476,0x910006d6,0xf85f82a8,0xf90013e8,0xaa0403e0,0x94000035,
+    0xf10006d6,0x54ffffe1,0xf94013e8,0xf9400908,0xaa1303e0,0xaa1403e1,
+    0xaa1503e2,0xd63f0100,0xa9447bfd,0xa9415bf5,0xa8c553f3,0xd65f03c0};
+  const uint32_t *machine=(const uint32_t*)(uintptr_t)original_witness;
+  for(unsigned i=0;i<24;++i){uint32_t mask=i==11?0xfc000000U:UINT32_MAX;
+    if((machine[i]&mask)!=(words[i]&mask))return 1;}
+  uint64_t state=UINT64_C(0xb123456789abcdef);
+  for(unsigned i=0;i<2048;++i){
+    state=state*UINT64_C(6364136223846793005)+1;
+    uint64_t s[]={state,state^UINT64_C(0x71823456abcdef98)};
+    uint64_t a[]={17,0,0,31},b[]={17,0,0,31};
+    metadata[0]=(uintptr_t)table;metadata[1]=state;metadata[2]=~state;
+    unsigned choice=i%2+1;
+    table[2]=(uintptr_t)(choice==1?copy_a:copy_b);
+    expected_src=s;expected_dst=a+1;calls=0;selected=0;
+    void *ra=original_witness(a+1,s,metadata+1,state,0);
+    if(ra!=a+1||calls!=1||selected!=choice)return 2;
+    expected_dst=b+1;calls=0;selected=0;
+    void *rb=indirect_native(b+1,s,metadata+1,state,0);
+    if(rb!=b+1||calls!=1||selected!=choice||memcmp(a,b,sizeof(a)))return 3;
+    if(a[0]!=17||a[3]!=31||a[1]!=(s[0]^state)||a[2]!=s[1]+~state)return 4;
+    if(s[0]!=state||s[1]!=(state^UINT64_C(0x71823456abcdef98)))return 5;
+  }
+  return 0;
+}
+)";
+  for (const auto *Level : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Level);
+    const auto Output = (Work / (std::string("witness") + Level)).string();
+    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
+                                            "-lobjc",          "-o",  Output};
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0) << Source;
+  }
+#else
+  GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";
+#endif
+}
+
+TEST(SwiftValueWitnessCalls, ScalarInferenceRechecksFrameBinding) {
+  for (unsigned Case = 0; Case < 10; ++Case) {
+    SCOPED_TRACE(Case);
+    immutable_native_call_test::Fixture F;
+    swift_witness_frame_test::frameWitnessFixture(F);
+    F.EntrySignature = {};
+    F.run();
+    ASSERT_TRUE(F.high());
+    ASSERT_TRUE(F.med());
+    ASSERT_TRUE(F.low());
+    if (Case == 1)
+      F.word(9, 0xb90023e8);
+    if (Case == 2)
+      F.Image.DyldBindSlots.at(0x2000).WeakImport = true;
+    for (auto &B : F.med()->Blocks)
+      for (auto &O : B.Ops) {
+        if (O.Opcode != NdOp::INDIR_CALL)
+          continue;
+        ASSERT_TRUE(O.SourceCallHint);
+        auto H = *O.SourceCallHint;
+        if (Case == 3)
+          H.SwiftWitnessFrame.reset();
+        if (Case == 4)
+          ++H.SwiftWitnessFrame->Site.Sequence;
+        if (Case == 5)
+          H.ValueWitness =
+              SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy;
+        if (Case == 6)
+          --O.NumInputs;
+        if (Case == 7)
+          O.DoesNotReturn = true;
+        if (Case == 8)
+          O.Inputs[3].Size = 4;
+        if (Case == 9)
+          H.Signature.Parameters.back().Location.RegisterOffset += 8;
+        O.SourceCallHint = std::make_shared<const SourceCallTypeHint>(H);
+      }
+    auto A = std::find_if(F.Result.FunctionAudits.begin(),
+                          F.Result.FunctionAudits.end(),
+                          [](const auto &A) { return A.Entry == 0x1000; });
+    ASSERT_NE(A, F.Result.FunctionAudits.end());
+    std::string Reason;
+    const auto Hint = inferNativeSourceTypeHint(F.Image, *F.med(), *F.high(),
+                                                *A, Reason, F.low());
+    EXPECT_EQ(bool(Hint), Case == 0) << Reason;
   }
 }

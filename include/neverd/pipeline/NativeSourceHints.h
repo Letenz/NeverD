@@ -50,6 +50,13 @@ struct NativeSourceCalleeContracts {
 std::map<va_t, SourceFunctionTypeHint>
 boundNativeBooleanCallees(const MedFunc &Caller);
 
+/// Re-prove private-frame-derived Swift witness call occurrences from current
+/// machine/LowIR and the loader's shared byte/effect owner. Both persisted
+/// receipts and freshly discovered occurrences must agree with current MedIR.
+/// This does not grant frame effects, body completeness or publication rights.
+bool validateSwiftWitnessFrameBindings(const BinaryImage &Image,
+                                       const LowFunc *Low, const MedFunc &Med);
+
 /// Exact direct call targets followed by an observed full-word read of the
 /// second integer return register in the same block. This is a demand, not a
 /// callee ABI proof. Calls, intrinsics and overlapping writes end the scan.

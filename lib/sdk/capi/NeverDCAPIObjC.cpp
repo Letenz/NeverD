@@ -27,6 +27,7 @@
 #include "SessionImpl.h"
 #include "SourceProjectionEvidenceJSON.h"
 #include "SourceRegisterCopyProjection.h"
+#include "SourceSwiftWitnessFrameProjection.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -251,6 +252,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     std::map<va_t, ObjCSourceBindingResult> Projections;
     const ObjCProfileStorage ProfileStorage(S->Img);
     const SourceRegisterCopyProjectionValidator RegisterCopies(S->Img, Result);
+    const SourceSwiftWitnessFrameProjectionValidator WitnessFrames(S->Img,
+                                                                   Result);
     std::map<va_t, ObjCBlockSourceBindingResult> BlockProjections;
     std::map<va_t, ObjCSynchronizedSourceProof> SynchronizedProjections;
     std::set<va_t> ResumeOnlyProjections;
@@ -393,6 +396,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Reason = "synchronized cleanup proof is no longer valid";
       if (!RegisterCopies.valid(Binding.Function))
         Reason = "source register-copy proof is no longer valid";
+      if (!WitnessFrames.valid(Binding.Function))
+        Reason = "Swift witness frame proof is no longer valid";
       if (Reason.empty()) {
         auto ReadOnlyHelpers =
             readOnlyScalarSourceHelpers(Binding.Function, S->Img);
@@ -707,6 +712,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Evidence.append(Projection.Diagnostics);
         if (!RegisterCopies.valid(Projection.Function)) {
           Reason = "source register-copy proof is no longer valid";
+          Evidence.Complete = false;
+          Evidence.add(SourceProjectionIssue::Body, Reason);
+        }
+        if (!WitnessFrames.valid(Projection.Function)) {
+          Reason = "Swift witness frame proof is no longer valid";
           Evidence.Complete = false;
           Evidence.add(SourceProjectionIssue::Body, Reason);
         }

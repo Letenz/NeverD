@@ -18,6 +18,47 @@
 #include "llvm/Support/Endian.h"
 
 namespace neverd {
+void AuthenticatedSourceFrameLoads::beginRound(
+    const std::map<va_t, ImmutableNativeCallTarget> &Known) {
+  KnownTargets = &Known;
+  Contracts.reset();
+  Cache.clear();
+}
+
+const NativeSourceCalls &AuthenticatedSourceFrameLoads::calls() {
+  if (!Contracts)
+    Contracts = immutableNativeFrameCalls(Image, Function, DirectCalls,
+                                          *KnownTargets, NativeCallees);
+  return Contracts->Calls;
+}
+
+std::optional<SourceFrameLoadDefinition>
+AuthenticatedSourceFrameLoads::load(const LowBlock &Block, size_t Index) {
+  if (MachineMatches && !*MachineMatches)
+    return std::nullopt;
+  const auto Key = std::make_pair(Block.Id, Index);
+  if (const auto Found = Cache.find(Key); Found != Cache.end())
+    return Found->second;
+  if (!QueriesLeft) {
+    Exhausted = true;
+    return std::nullopt;
+  }
+  --QueriesLeft;
+  auto Definition = sourceFrameLoadedDefinition(Function, Image.Arch, calls(),
+                                                Block.Id, Index);
+  // Most machine loads are not private-frame reloads. Only a successful
+  // candidate needs the independent machine replay, before it is exposed.
+  if (Definition) {
+    if (!MachineMatches)
+      MachineMatches =
+          immutableNativeFrameMachineMatches(Image, Function, Budget);
+    if (!*MachineMatches)
+      Definition.reset();
+  }
+  Cache.emplace(Key, Definition);
+  return Definition;
+}
+
 namespace {
 bool sameOperation(const LowOp &A, const LowOp &B) {
   if (A.Opcode != B.Opcode || A.Addr != B.Addr || A.Seq != B.Seq ||
