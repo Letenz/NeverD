@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
+<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
 
 [← 문서 목록](README.md)
 
@@ -64,7 +64,7 @@ Apple Silicon에서는 `-DNEVERD_LLVM_PREBUILT=ON`을 추가할 수 있습니다
 
 ARM64는 등록 항목 6,842개를 대조했고 Intel은 같은 20개 대상에 6,840개가 있습니다. Intel 예외, 나눗셈, 상태 전환의 네이티브 253개도 모두 통과했습니다. [Intel Darwin 실행](https://github.com/NeverSight/NeverD/actions/runs/37106013999)은 식별자 286개와 프로세스 32개를 대조하고 전송 계층 10개, 복구 100회, CR8도 통과했습니다. 수집기와 감사 검사 124개가 통과했습니다. CLI, SDK, worker, Mach-O 186개 서명을 통합 검증했으며 해당 패키지 의존성은 macOS 15.0을 요구합니다.
 
-[Intel 전체 CPU 검증](https://github.com/NeverSight/NeverD/actions/runs/37106679688)은 미완료입니다. 2026-10-03 08:24 UTC 기준으로 설정한 기한이 지나도 최종 결과나 CPU 산출물이 없었습니다. 빌드와 사전 검사는 전체 결과를 대신하지 않습니다. macOS 커널 대조는 iOS 실기기 커널의 증거가 아닙니다.
+Intel 전체 CPU 검증은 미완료입니다. [이전 실행](https://github.com/NeverSight/NeverD/actions/runs/37106679688)은 2026-10-03 08:35 UTC에 끝났고 GitHub는 실행기 통신 단절을 기록했습니다. CPU 산출물은 남지 않았습니다. 빌드와 사전 검사는 전체 결과를 대신하지 않습니다. macOS 커널 대조는 iOS 실기기 커널의 증거가 아닙니다.
 
 동일 계약의 작은 ARM64 벤치마크는 Unicorn 73.9 ms, HVF 95.1 ms로 약 29 % 더 오래 걸렸습니다. 속도 향상은 입증되지 않았습니다. 일반 명령당 네이티브 진입 여섯 번이 필요하며 호스트 고부하 측정은 안정적 성능의 근거가 아닙니다. [자세한 증거](../macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03)와 [제한된 Darwin 계약](darwin-emulation.md)을 참고하세요.
 
@@ -75,6 +75,8 @@ ARM64는 등록 항목 6,842개를 대조했고 Intel은 같은 20개 대상에 
 CPU 실행 전에 `scripts/prepare_hvf_batches.py`가 전체·선택 목록과 메서드 계획을 저장하고 워크플로가 진단 자료로 별도 업로드합니다. 로컬 composite action은 네 배치를 순서대로 실행하며 배치마다 원본 XML, 식별자 매핑, 프로세스 상태와 필요한 환경 변수 허용 목록을 즉시 업로드합니다. 외부의 30분 제한은 네 배치와 모든 업로드를 함께 포함합니다. 배치 하나가 실패하면 후속 실행을 중단합니다. 실패나 시간 초과 후에도 실행기와 통신할 수 있으면 별도의 2분 진단 업로드를 수행합니다. 실행기가 단절되면 이전에 업로드한 증거만 남습니다. 계획이나 미완료 진단 묶음은 통과한 샤드로 인정하지 않습니다.
 
 별도 Linux 작업의 `scripts/audit_hvf_shards.py`는 체크아웃한 소스에서 대상과 필수 네이티브 항목을 다시 도출합니다. 워크플로는 현재 시도의 CPU 아티팩트만 내려받으며, 감사는 같은 깨끗한 커밋의 열여섯 샤드, 올바른 macOS 호스트 ISA, 일치하는 정규화 실행 계약을 요구합니다. 샤드는 겹치지 않고 합집합이 전체 목록과 정확히 같아야 하며 모든 자식 프로세스와 필수 항목이 성공해야 합니다. 누락, 필터 변경, 요약 불일치, 불완전한 XML, 필수 항목 건너뜀은 실패입니다. 각 네이티브 작업은 전송, 복구, CR8 및 독립 Darwin 검사도 유지합니다. 자체 호스팅은 분할하지 않은 CTest를 사용합니다. 배치 저장 자체가 Intel 검증 완료를 의미하지는 않습니다. 재시도에서는 모든 네이티브 작업을 다시 실행하며 이전 시도의 아티팩트를 합치지 않습니다.
+
+[실행 `37123148209`](https://github.com/NeverSight/NeverD/actions/runs/37123148209)의 깨끗한 소스 `f5f29a484`에서 처음 검증한 CPU 배치는 샤드 `1/16`입니다. 메서드 프로세스 31개에서 등록 결과 476개를 대조해 82개 통과, 0개 실패, 394개 건너뜀을 확인했으며 이 샤드의 필수 네이티브 항목 1개도 통과했습니다. 산출물 `11274755752`의 SHA-256을 검증하고 원본 XML, 자식 프로세스 종료 상태, 목록 및 메서드 계획을 실행 전 계획과 대조했습니다. 이는 Intel의 부분 증거이며 전체 CPU 검증 완료를 뜻하지 않습니다.
 
 ## 최신 로컬 네이티브 검증
 

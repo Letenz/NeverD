@@ -207,14 +207,14 @@ four logical CPUs and Darwin 24.6.0. This establishes the bounded macOS and
 iOS Simulator profiles; it does not establish iOS device-kernel behavior.
 
 The complete Intel CPU inventory remains unverified. The
-[latest full run](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
+[earlier full run](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
 at `76a922088ceccb1e5fdaccbde7f0b3a680a4e3b8` built all twenty owners and passed
 ten transport cases, 100 recovery repetitions and CR8. Those checkpoint
-artifacts were downloaded and SHA-256 verified. As of 2026-10-03 08:24 UTC,
-the CPU step had exceeded its configured thirty-minute limit without a final
-status or CPU artifact; the job-log endpoint returned 404 and the repository
-had no self-hosted runners. A completed full result or an accessible native
-Intel Mac is needed to close this acceptance gap. Earlier stalled or cancelled
+artifacts were downloaded and SHA-256 verified. The run ended on 2026-10-03
+at 08:35 UTC with a GitHub annotation reporting lost runner communication;
+no CPU artifact was produced and the job-log endpoint returned 404. The
+repository had no self-hosted runners. A completed full result or an accessible
+native Intel Mac is needed to close this acceptance gap. Earlier stalled or cancelled
 runs without complete evidence do not count as passes and do not identify a
 guest fault. One earlier [hosted run](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
 explicitly lost runner communication; its underlying cause was not established.
@@ -321,6 +321,8 @@ The earlier full run `37106679688` ended on 2026-10-03 at 08:35 UTC with a GitHu
 Before CPU execution, `scripts/prepare_hvf_batches.py` saves the full inventory and each selected inventory and method plan; the workflow uploads these diagnostics separately. A local composite action executes four batches and uploads each batch’s original XML, identity mappings, process status and required environment-variable whitelist immediately. One outer 30-minute deadline covers all four batches and their uploads. A failed batch prevents subsequent execution. A separate two-minute diagnostic upload follows failure or timeout while the runner remains reachable; lost runners can only be diagnosed from previously uploaded evidence. Plans and unfinished diagnostic bundles cannot count as passing shards.
 
 `scripts/audit_hvf_shards.py` runs in a separate Linux job and rederives owners and native requirements from the checked-out source. The workflow downloads only the current attempt’s CPU artifacts; the auditor requires all sixteen shards from one clean commit, the correct native macOS ISA, matching normalized full execution contracts, disjoint results whose union equals the full inventory, successful child retirement, and every required native result. Missing shards, changed filters, mismatched summaries, incomplete XML and required-native skips fail. Every native job also retains transport, recovery, CR8 and the independent Darwin gate. Self-hosted execution keeps the unsharded CTest path. Batching does not itself establish Intel acceptance. A retry must rerun all native jobs; artifacts from earlier attempts are not combined.
+
+The first verified CPU batch from [run `37123148209`](https://github.com/NeverSight/NeverD/actions/runs/37123148209), clean source `f5f29a484`, is shard `1/16`: 476 registered results, 82 passed, 0 failed and 394 skipped across 31 method processes; its one required-native case passed. Artifact `11274755752` was SHA-256 verified, and the original XML, child exit status, inventory and method plan were reconciled against the pre-execution plan. This is partial Intel evidence and does not close complete CPU acceptance.
 
 ## Latest local native verification
 

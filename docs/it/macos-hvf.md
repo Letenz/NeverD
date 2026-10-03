@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
+<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
 
 [← Indice della documentazione](README.md)
 
@@ -64,7 +64,7 @@ Stato al 2026-10-03; le righe si sovrappongono e non vanno sommate:
 
 ARM64 ha riconciliato 6,842 registrazioni; Intel ne ha 6,840 negli stessi 20 target. Sono passati anche tutti i 253 casi nativi Intel di eccezioni, divisione e transizione di stato. Il [run Darwin Intel](https://github.com/NeverSight/NeverD/actions/runs/37106013999) verifica 286 identità e 32 processi, oltre a dieci casi di trasporto, 100 riprese e CR8. Collettore e audit hanno superato 124 controlli. L’integrazione copre CLI, SDK, worker e firma di 186 immagini Mach-O; le dipendenze del pacchetto richiedono macOS 15.0.
 
-La [verifica CPU Intel completa](https://github.com/NeverSight/NeverD/actions/runs/37106679688) resta aperta: alle 08:24 UTC del 2026-10-03 non erano disponibili risultato finale o artefatto CPU dopo la scadenza configurata. Compilazione e verifiche preliminari non sostituiscono quel risultato. Il confronto col kernel macOS non dimostra il comportamento del kernel su un dispositivo iOS.
+La verifica CPU Intel completa resta aperta. L’[esecuzione precedente](https://github.com/NeverSight/NeverD/actions/runs/37106679688) è terminata il 2026-10-03 alle 08:35 UTC; GitHub ha segnalato la perdita di comunicazione con il runner, senza artefatto CPU. Compilazione e verifiche preliminari non sostituiscono il risultato completo. Il confronto col kernel macOS non dimostra il comportamento del kernel su un dispositivo iOS.
 
 Il piccolo benchmark ARM64 equivalente ha misurato 73.9 ms con Unicorn e 95.1 ms con HVF, circa il 29 % di tempo in più. Nessuna accelerazione è dimostrata. Un’istruzione ordinaria richiede sei ingressi nativi; misure con host molto carico non provano prestazioni stabili. Consultare le [prove dettagliate](../macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03) e il [contratto Darwin limitato](darwin-emulation.md).
 
@@ -75,6 +75,8 @@ L’esecuzione completa `37106679688` è terminata il 2026-10-03 alle 08:35 UTC;
 Prima dell’esecuzione CPU, `scripts/prepare_hvf_batches.py` salva inventario completo, selezioni e piani dei metodi; il workflow carica separatamente questa diagnostica. Un’azione composita locale esegue quattro batch e carica subito dopo ciascuno XML originale, corrispondenze, stati dei processi e lista consentita delle variabili necessarie. Un unico limite esterno di 30 minuti comprende tutti i batch e i caricamenti. Il fallimento di un batch impedisce l’esecuzione dei successivi. Dopo errore o timeout, un caricamento diagnostico separato dispone di due minuti se il runner rimane raggiungibile; con la perdita della connessione restano soltanto le prove già caricate. Piani e pacchetti incompleti non valgono come partizioni superate.
 
 Un job Linux separato esegue `scripts/audit_hvf_shards.py` e ricava nuovamente target e requisiti nativi dai sorgenti estratti. Il workflow scarica solo artefatti CPU del tentativo corrente; l’audit richiede tutte le sedici partizioni dello stesso commit senza modifiche locali, ISA macOS corretta e contratti normalizzati coincidenti. I risultati devono essere disgiunti e coprire esattamente l’inventario completo; tutti i processi devono terminare correttamente e ogni requisito nativo deve passare. Partizioni mancanti, filtri modificati, riepiloghi incoerenti, XML incompleto o requisiti saltati causano errore. Ogni job nativo conserva trasporto, ripresa, CR8 e verifica Darwin indipendente. I runner propri mantengono CTest senza suddivisione. I batch da soli non dimostrano l’accettazione Intel. Ogni nuovo tentativo deve rieseguire tutti i job nativi; gli artefatti dei tentativi precedenti non vengono combinati.
+
+Il primo batch CPU verificato dell’[esecuzione `37123148209`](https://github.com/NeverSight/NeverD/actions/runs/37123148209), sorgente pulito `f5f29a484`, è la partizione `1/16`: 476 risultati registrati in 31 processi di metodi, con 82 superati, 0 falliti e 394 saltati; anche il suo unico caso nativo obbligatorio è passato. È stato verificato lo SHA-256 dell’artefatto `11274755752`; XML originale, stati di uscita, inventario e piano dei metodi sono stati confrontati con il piano precedente all’esecuzione. Questa prova Intel parziale non conclude la verifica CPU completa.
 
 ## Ultima verifica nativa locale
 
