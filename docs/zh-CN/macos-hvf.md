@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bd0eb751d4d918ce2ee29d1da4708e381378fc235bd81b584c5fef11454e41bb -->
+<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
 
 [← 文档索引](README.md)
 
@@ -180,11 +180,11 @@ CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所�
 
 ## 最新本机原生验证
 
-干净源码 `26f8fa88b`，2026-10-03：ARM64 四片全部通过汇总审计，独立 Darwin 门禁也通过。两行覆盖重叠，不可相加。
+干净源码 `353dcd75f`，2026-10-03：ARM64 十六片全部通过汇总审计，独立 Darwin 门禁也通过。两行覆盖重叠，不可相加。
 
 | 范围 | 注册 | 通过 | 失败 | 跳过 | 必需原生项 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU，四片 | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| CPU，十六片 | 6,908 | 857 | 0 | 6,051 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`
+`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`

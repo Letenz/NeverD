@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bd0eb751d4d918ce2ee29d1da4708e381378fc235bd81b584c5fef11454e41bb -->
+<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -76,11 +76,11 @@ CPU 実行前に `scripts/prepare_hvf_batches.py` が完全・選択済みイン
 
 ## 最新のローカルネイティブ検証
 
-2026-10-03、クリーンなソース `26f8fa88b`。ARM64 の四シャードは統合監査に合格し、独立 Darwin 検証も合格しました。行は重複するため合算しません。
+2026-10-03、クリーンなソース `353dcd75f`。ARM64 の十六シャードは統合監査に合格し、独立 Darwin 検証も合格しました。行は重複するため合算しません。
 
 | 範囲 | 登録 | 合格 | 失敗 | スキップ | 必須ネイティブ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU、四シャード | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| CPU、十六シャード | 6,908 | 857 | 0 | 6,051 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`
+`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`

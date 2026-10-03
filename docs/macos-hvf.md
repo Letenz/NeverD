@@ -322,11 +322,11 @@ Before CPU execution, `scripts/prepare_hvf_batches.py` saves the full inventory 
 
 ## Latest local native verification
 
-Clean source `26f8fa88b`, 2026-10-03. All four ARM64 shards reconciled successfully; the separate Darwin gate also passed. The rows overlap and must not be added.
+Clean source `353dcd75f`, 2026-10-03. All sixteen ARM64 shards reconciled successfully; the separate Darwin gate also passed. The rows overlap and must not be added.
 
 | Scope | Registered | Passed | Failed | Skipped | Required native |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, four shards | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| CPU, sixteen shards | 6,908 | 857 | 0 | 6,051 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`
+`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bd0eb751d4d918ce2ee29d1da4708e381378fc235bd81b584c5fef11454e41bb -->
+<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
 
 [← Índice de documentación](README.md)
 
@@ -76,11 +76,11 @@ Un trabajo Linux independiente ejecuta `scripts/audit_hvf_shards.py` y vuelve a 
 
 ## Última verificación nativa local
 
-Fuentes sin cambios locales `26f8fa88b`, 2026-10-03. Los cuatro grupos ARM64 superaron la auditoría conjunta y la validación Darwin independiente también pasó. Las filas se solapan y no deben sumarse.
+Fuentes sin cambios locales `353dcd75f`, 2026-10-03. Los dieciséis grupos ARM64 superaron la auditoría conjunta y la validación Darwin independiente también pasó. Las filas se solapan y no deben sumarse.
 
 | Ámbito | Registrados | Pasados | Fallidos | Omitidos | Nativos obligatorios |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, cuatro grupos | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| CPU, dieciséis grupos | 6,908 | 857 | 0 | 6,051 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`
+`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`

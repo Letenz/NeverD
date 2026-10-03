@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bd0eb751d4d918ce2ee29d1da4708e381378fc235bd81b584c5fef11454e41bb -->
+<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
 
 [← Indice della documentazione](README.md)
 
@@ -76,11 +76,11 @@ Un job Linux separato esegue `scripts/audit_hvf_shards.py` e ricava nuovamente t
 
 ## Ultima verifica nativa locale
 
-Sorgenti senza modifiche locali `26f8fa88b`, 2026-10-03. Tutti i quattro gruppi ARM64 hanno superato l’audit complessivo, così come la verifica Darwin indipendente. Le righe si sovrappongono e non vanno sommate.
+Sorgenti senza modifiche locali `353dcd75f`, 2026-10-03. Tutti i sedici gruppi ARM64 hanno superato l’audit complessivo, così come la verifica Darwin indipendente. Le righe si sovrappongono e non vanno sommate.
 
 | Ambito | Registrati | Superati | Falliti | Saltati | Obbligatori nativi |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, quattro gruppi | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| CPU, sedici gruppi | 6,908 | 857 | 0 | 6,051 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`
+`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`

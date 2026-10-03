@@ -1,6 +1,6 @@
 **Языки**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bd0eb751d4d918ce2ee29d1da4708e381378fc235bd81b584c5fef11454e41bb -->
+<!-- i18n-source: 4fe3725ff9e09f256ae2f0f1ff627f7530bc5c57e8a057aba3f161e8650ed6f1 -->
 
 [← Оглавление документации](README.md)
 
@@ -76,11 +76,11 @@ ARM64 сверил 6,842 регистрации; Intel имеет 6,840 в те�
 
 ## Последняя локальная нативная проверка
 
-Исходники без локальных изменений `26f8fa88b`, 2026-10-03. Все четыре части ARM64 прошли итоговый аудит, отдельная проверка Darwin тоже пройдена. Строки пересекаются, их нельзя складывать.
+Исходники без локальных изменений `353dcd75f`, 2026-10-03. Все шестнадцать частей ARM64 прошли итоговый аудит, отдельная проверка Darwin тоже пройдена. Строки пересекаются, их нельзя складывать.
 
 | Область | Зарегистрировано | Пройдено | Ошибки | Пропущено | Обязательные нативные |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| CPU, четыре части | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| CPU, шестнадцать частей | 6,908 | 857 | 0 | 6,051 | 16/16 |
 | Darwin | 286 | 65 | 0 | 221 | 39/39 |
 
-`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`
+`build-hvf-native/hvf-batches-353dcd75f/aggregate.json` · `build-hvf-native/hvf-batches-353dcd75f/darwin/summary.json`
