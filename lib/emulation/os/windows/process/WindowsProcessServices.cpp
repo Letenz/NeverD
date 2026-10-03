@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "WindowsProcessExceptions.h"
 #include "WindowsProcessModules.h"
 
 #include "neverd/emulation/CPU.h"
@@ -20,7 +21,6 @@ constexpr Service Registry[] = {
 #include "WindowsProcessServices.def"
 #undef NEVERD_WINDOWS_PROCESS_API
 };
-static_assert((MaxImports + FirstImportGate) * GateStride <= GateSize);
 static_assert([] {
   for (auto &S : Registry)
     if (S.Arguments > std::tuple_size_v<decltype(NativeCallEvent::Arguments)>)
@@ -31,10 +31,9 @@ static_assert([] {
 llvm::ArrayRef<Service> services() { return Registry; }
 std::optional<APIProvider> findProvider(llvm::StringRef Module) {
   const auto Lower = Module.lower();
-  if (Lower == text::NTDLL)
-    return APIProvider::Native;
-  if (Lower == text::Kernel32 || Lower == text::KernelBase)
-    return APIProvider::Kernel;
+  for (const auto &Provider : systemProviders())
+    if (Lower == Provider.Name)
+      return Provider.Family;
   return std::nullopt;
 }
 const Service *findService(llvm::StringRef Module, llvm::StringRef Name) {
@@ -63,78 +62,70 @@ llvm::Expected<uint64_t> Services::error(uint32_t Code, uint64_t ReturnValue) {
     return std::move(E);
   return ReturnValue;
 }
-llvm::Expected<std::optional<uint64_t>>
-Services::heap(const Service &S, const NativeCallEvent &Event) {
+llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
+                                                const NativeCallEvent &Event) {
   const auto &A = Event.Arguments;
-  if (A[0] != HeapHandle)
-    return unsupported(S);
-  const uint32_t Flags = A[1];
-  const uint32_t Allowed =
-      HeapNoSerialize | (S.Kind == API::HeapAlloc ? HeapZeroMemory : 0);
-  if (Flags & ~Allowed)
-    return unsupported(S);
-  auto Found = Allocations.find(A[2]);
-  if (S.Kind == API::HeapSize)
-    return std::optional<uint64_t>(
-        Found == Allocations.end() ? UINT64_MAX : Found->second.Size);
-  if (S.Kind == API::HeapFree) {
-    if (!A[2])
-      return std::optional<uint64_t>(1);
-    if (Found == Allocations.end())
-      return std::optional<uint64_t>(0);
-    if (auto E = Memory.unmap(Found->first, Found->second.MappedSize))
-      return std::move(E);
-    Allocations.erase(Found);
-    return std::optional<uint64_t>(1);
-  }
-  const uint64_t Size = A[2];
-  if (Size > Options.MemoryLimit || Size > UINT64_MAX - PageSize)
-    return std::optional<uint64_t>(0);
-  const uint64_t Mapped =
-      (std::max<uint64_t>(Size, 1) + PageSize - 1) & ~(PageSize - 1);
-  uint64_t Address = HeapBase;
-  for (const auto &[Start, Allocation] : Allocations) {
-    if (Mapped <= Start - Address)
-      break;
-    Address = Start + Allocation.MappedSize;
-  }
-  if (Address >= HeapLimit || Mapped > HeapLimit - Address ||
-      Mapped > Options.MemoryLimit - Memory.mappedBytes())
-    return std::optional<uint64_t>(0);
-  if (auto E = Memory.map(Address, Mapped, Read | Write | UserAccessible)) {
-    bool Exhausted = false;
-    E = llvm::handleErrors(
-        std::move(E), [&](const GuestMemoryLimitError &) { Exhausted = true; });
-    if (E)
-      return std::move(E);
-    if (Exhausted)
-      return std::optional<uint64_t>(0);
-  }
-  Allocations.emplace(Address, Allocation{Size, Mapped});
-  // Fresh guest backing is zero-filled. With no HEAP_ZERO_MEMORY flag its
-  // contents are unspecified; the model's deterministic zeroes are permitted.
-  return std::optional<uint64_t>(Address);
-}
-llvm::Expected<std::optional<uint64_t>>
-Services::invoke(const Service &S, const NativeCallEvent &Event) {
-  const auto &A = Event.Arguments;
-  auto WinError = [&](uint32_t Code,
-                      uint64_t ReturnValue =
-                          0) -> llvm::Expected<std::optional<uint64_t>> {
+  auto WinError = [&](uint32_t Code, uint64_t ReturnValue =
+                                         0) -> llvm::Expected<ServiceOutcome> {
     auto V = error(Code, ReturnValue);
     if (!V)
       return V.takeError();
-    return std::optional<uint64_t>(*V);
+    return ServiceOutcome(*V);
   };
-  auto Value = [](uint64_t N) -> llvm::Expected<std::optional<uint64_t>> {
-    return std::optional<uint64_t>(N);
+  auto Value = [](uint64_t N) -> llvm::Expected<ServiceOutcome> {
+    return ServiceOutcome(N);
+  };
+  auto Wrap = [](llvm::Expected<std::optional<uint64_t>> V)
+      -> llvm::Expected<ServiceOutcome> {
+    if (!V)
+      return V.takeError();
+    return ServiceOutcome(*V);
   };
   switch (S.Kind) {
+  case API::AddVectoredExceptionHandler:
+  case API::AddVectoredContinueHandler: {
+    const auto Kind = S.Kind == API::AddVectoredContinueHandler
+                          ? VectoredExceptions::HandlerKind::Continue
+                          : VectoredExceptions::HandlerKind::Exception;
+    auto Handle = Exceptions.add(Kind, uint32_t(A[0]) != 0, A[1]);
+    if (!Handle)
+      return Handle.takeError();
+    return Value(*Handle);
+  }
+  case API::RemoveVectoredExceptionHandler:
+    return Value(
+        Exceptions.remove(VectoredExceptions::HandlerKind::Exception, A[0]));
+  case API::RemoveVectoredContinueHandler:
+    return Value(
+        Exceptions.remove(VectoredExceptions::HandlerKind::Continue, A[0]));
+  case API::RaiseException: {
+    const uint32_t Flags = A[1];
+    const uint32_t Count = A[3] ? uint32_t(A[2]) : 0;
+    if ((Flags & ~ExceptionNoncontinuable) || Count > MaxExceptionArguments)
+      return failure(text::ExceptionArguments);
+    auto Access = access(A[3], Count * PointerSize, Read);
+    if (!Access)
+      return Access.takeError();
+    if (!*Access)
+      return failure(text::Access);
+    ServiceOutcome::Exception Raised{
+        uint32_t(A[0]),
+        uint32_t(Flags | ExceptionSoftwareOriginate),
+        Event.PC,
+        {}};
+    for (uint32_t I = 0; I < Count; ++I) {
+      auto Argument = CPU.readInteger(A[3] + I * PointerSize, PointerSize);
+      if (!Argument)
+        return Argument.takeError();
+      Raised.Arguments.push_back(*Argument);
+    }
+    return ServiceOutcome(std::move(Raised));
+  }
   case API::ExitProcess:
   case API::RtlExitUserProcess:
     Result.ExitStatus = uint32_t(A[0]);
     Result.Stop = ProcessStopReason::Exited;
-    return std::nullopt;
+    return ServiceOutcome(std::nullopt);
   case API::GetLastError: {
     auto V = CPU.readInteger(TEB + TebLastError, DWordSize);
     if (!V)
@@ -156,6 +147,12 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
     return Value(CurrentThread);
   case API::GetCommandLineW:
     return Value(Env.CommandLine);
+  case API::GetEnvironmentVariableW:
+  case API::SetEnvironmentVariableW:
+  case API::GetEnvironmentStringsW:
+  case API::FreeEnvironmentStringsW:
+  case API::ExpandEnvironmentStringsW:
+    return Wrap(environment(S, Event));
   case API::GetProcessHeap:
     return Value(HeapHandle);
   case API::VirtualAlloc:
@@ -163,11 +160,12 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
   case API::VirtualProtect:
   case API::VirtualQuery:
   case API::FlushInstructionCache:
-    return memory(S, Event);
+    return Wrap(memory(S, Event));
   case API::HeapAlloc:
+  case API::HeapReAlloc:
   case API::HeapFree:
   case API::HeapSize:
-    return heap(S, Event);
+    return Wrap(heap(S, Event));
   case API::GetStdHandle:
     switch (uint32_t(A[0])) {
     case StdInputSelector:
@@ -183,7 +181,7 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
     // Only synchronous writes to the two explicit byte sinks are modeled.
     // Check every argument before publishing output or a guest completion.
     if (A[4])
-      return unsupported(S);
+      return ServiceOutcome(unsupported(S));
     const uint64_t Count = uint32_t(A[2]);
     auto Written = access(A[3], DWordSize, Write);
     if (!Written)
@@ -191,7 +189,7 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
     if (!*Written) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = text::UserException;
-      return std::nullopt;
+      return ServiceOutcome(std::nullopt);
     }
     if (A[0] != StandardOutput && A[0] != StandardError) {
       if (auto E = CPU.writeInteger(A[3], 0, DWordSize))
@@ -210,7 +208,7 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
                     Result.StandardError.size()) {
       Result.Stop = ProcessStopReason::OutputLimit;
       Result.Diagnostic = text::Output;
-      return std::nullopt;
+      return ServiceOutcome(std::nullopt);
     }
     // Win32 clears the completion count before copying the input. In
     // particular, the buffer may overlap this DWORD or a return-address slot.
@@ -260,43 +258,68 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
       return std::move(E);
     return Value(1);
   }
+  case API::FreeLibrary:
+    return ServiceOutcome(
+        LoaderRequest{LoaderRequest::Kind::Free, A[0], {}, {}});
+  case API::LoadLibraryA:
+  case API::LoadLibraryW:
+  case API::GetModuleHandleA:
   case API::GetModuleHandleW: {
+    const bool Handle =
+        S.Kind == API::GetModuleHandleW || S.Kind == API::GetModuleHandleA;
     if (!A[0])
-      return Value(Loaded.Base);
+      return Handle ? Value(Loaded.Base)
+                    : llvm::Expected<ServiceOutcome>(failure(text::Access));
+    const unsigned Unit =
+        S.Kind == API::LoadLibraryA || S.Kind == API::GetModuleHandleA
+            ? 1
+            : WideSize;
     std::string Name;
     for (uint64_t I = 0; I < MaxName; ++I) {
-      if (A[0] >= UserLimit || I * WideSize + WideSize > UserLimit - A[0])
+      if (!Budget.remainingMicroseconds())
+        return failure(text::ModuleTimeout);
+      if (Modules.Reads.MetadataBytes < Unit)
+        return failure(text::ExportBudget);
+      Modules.Reads.MetadataBytes -= Unit;
+      if (A[0] >= UserLimit || I * Unit + Unit > UserLimit - A[0])
         return failure(text::Access);
-      auto Accessible = access(A[0] + I * WideSize, WideSize, Read);
+      auto Accessible = access(A[0] + I * Unit, Unit, Read);
       if (!Accessible)
         return Accessible.takeError();
       if (!*Accessible)
         return failure(text::Access);
-      auto C = CPU.readInteger(A[0] + I * WideSize, WideSize);
+      auto C = CPU.readInteger(A[0] + I * Unit, Unit);
       if (!C)
         return C.takeError();
       if (!*C) {
         if (Name.empty() || Name.back() == '.')
-          return unsupported(S);
+          return ServiceOutcome(unsupported(S));
         if (!llvm::StringRef(Name).contains('.'))
           Name += text::DLLExtension;
-        for (const auto &M : Modules.Identities)
-          if (llvm::StringRef(Name).equals_insensitive(M.Name))
-            return Value(M.Base);
+        if (!Handle) {
+          auto Key = moduleName(Name);
+          if (!Key)
+            return Key.takeError();
+          return ServiceOutcome(
+              LoaderRequest{LoaderRequest::Kind::Load, 0, *Key, {}});
+        }
+        if (auto M = findModule(Modules, Name))
+          return Value(Modules.Modules[*M].Loaded.Base);
         return WinError(ErrorModuleNotFound);
       }
       if (*C > ASCIIUpperBound || !(llvm::isAlnum(char(*C)) || *C == '_' ||
                                     *C == '-' || *C == '.' || *C == ' '))
-        return unsupported(S);
+        return ServiceOutcome(unsupported(S));
       Name += char(*C);
     }
-    return unsupported(S);
+    return ServiceOutcome(unsupported(S));
   }
   case API::GetProcAddress: {
-    auto Module = llvm::find_if(Modules.Identities,
-                                [&](const auto &M) { return M.Base == A[0]; });
+    auto Module = llvm::find_if(Modules.Identities, [&](const auto &M) {
+      return M.Base && M.Base == A[0];
+    });
     if (Module == Modules.Identities.end())
-      return unsupported(S);
+      return ServiceOutcome(unsupported(S));
     std::optional<uint16_t> Ordinal;
     std::string Name;
     if (A[1] <= ImportOrdinalMask)
@@ -326,14 +349,10 @@ Services::invoke(const Service &S, const NativeCallEvent &Event) {
         Name += char(*C);
       }
       if (!Terminated)
-        return unsupported(S);
+        return ServiceOutcome(unsupported(S));
     }
-    auto Target =
-        resolveExport(Modules, size_t(Module - Modules.Identities.begin()),
-                      Name, Ordinal, Budget, &CPU);
-    if (!Target)
-      return Target.takeError();
-    return Target->Address ? Value(*Target->Address) : WinError(Target->Error);
+    return ServiceOutcome(LoaderRequest{LoaderRequest::Kind::Export, A[0],
+                                        std::move(Name), Ordinal});
   }
   }
   return failure(text::Service);

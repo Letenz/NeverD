@@ -43,7 +43,13 @@ struct SourceABIParameter {
   SourceABIValueLocation Location;
 };
 
+/// Whether any logical parameter requires an indirect by-value copy. This
+/// checks the representation, not its validity or any storage/effect proof.
+bool hasIndirectSourceParameters(const SourceFunctionTypeHint &Hint);
+
 /// Physical parameters of a validated signature, in source member order.
+/// An indirect record contributes one pointer-to-record carrier; the logical
+/// record stays in Hint.Parameters and is not a source pointer parameter.
 /// An invalid signature returns no bindings, never a partial prefix.
 std::vector<SourceABIParameter>
 sourceABIParameters(const SourceFunctionTypeHint &Hint);
@@ -62,8 +68,9 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
 /// callers supply any language-specific hidden parameters. This describes a
 /// signature without authenticating its declaration or authorizing rewriting.
 /// ARM64 calls support three-signed-word and six/sixteen-double results through
-/// the hidden x8 pointer; entry projection and indirect record parameters
-/// remain unsupported.
+/// the hidden x8 pointer. Six/sixteen-double ARM64 parameters carry a pointer
+/// to a by-value copy, independently of x8. Their storage/effect proof and
+/// source entry/call projection remain separate and unsupported.
 bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic);
 

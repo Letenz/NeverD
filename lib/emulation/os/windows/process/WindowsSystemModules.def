@@ -1,0 +1,28 @@
+//===- WindowsSystemModules.def - Modeled system image layout ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// These are bounded model images, not bytes or ordinals from a Windows build.
+#ifdef NEVERD_WINDOWS_SYSTEM_MODULE
+NEVERD_WINDOWS_SYSTEM_MODULE(NTDLL, Native, 0x71100000)
+NEVERD_WINDOWS_SYSTEM_MODULE(KernelBase, Kernel, 0x71110000)
+NEVERD_WINDOWS_SYSTEM_MODULE(Kernel32, Kernel, 0x71120000)
+#endif
+#ifdef NEVERD_WINDOWS_PROCESS_VALUE
+NEVERD_WINDOWS_PROCESS_VALUE(SystemModuleCount, 3)
+NEVERD_WINDOWS_PROCESS_VALUE(SystemImageSize, 0x3000)
+NEVERD_WINDOWS_PROCESS_VALUE(SystemExportRVA, 0x1000)
+NEVERD_WINDOWS_PROCESS_VALUE(SystemCodeRVA, 0x2000)
+NEVERD_WINDOWS_PROCESS_VALUE(SystemOrdinalBase, 1)
+NEVERD_WINDOWS_PROCESS_VALUE(SystemPEVersion, 6)
+#endif
+#ifdef NEVERD_WINDOWS_PROCESS_TEXT
+NEVERD_WINDOWS_PROCESS_TEXT(SystemExportSection, ".edata")
+NEVERD_WINDOWS_PROCESS_TEXT(SystemCodeSection, ".text")
+NEVERD_WINDOWS_PROCESS_TEXT(SystemExport, "system DLL export is not modeled: ")
+NEVERD_WINDOWS_PROCESS_TEXT(SystemOrdinal,
+                            "system DLL ordinal lookup is not modeled")
+NEVERD_WINDOWS_PROCESS_TEXT(SystemImage,
+                            "modeled system image exceeds its layout budget")
+#endif

@@ -354,6 +354,10 @@ public:
   llvm::APInt constValue(SymRef R) const;
   /// The value of \p R when it is a constant, otherwise nothing.
   std::optional<llvm::APInt> asConst(SymRef R) const;
+  /// Prove an at-most-64-bit window constant without changing the DAG. Work
+  /// and depth are bounded; invalid ranges or incomplete proofs yield nothing.
+  std::optional<llvm::APInt> constantWindow(SymRef R, uint32_t Low,
+                                            uint32_t Width) const;
   bool isConstZero(SymRef R) const;
   bool isConstOnes(SymRef R) const;
 

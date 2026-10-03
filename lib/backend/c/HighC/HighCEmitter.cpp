@@ -2025,6 +2025,11 @@ void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
+  for (const auto &Func : Funcs)
+    if (Func.SourceTypeHint &&
+        hasIndirectSourceParameters(*Func.SourceTypeHint))
+      throw std::invalid_argument(
+          "Indirect by-value source entries require a copy storage proof");
   std::vector<HighFunc> Working = Funcs;
   attachCxxFuncletBodies(Working);
   HighCWriter W(Out, Opts, Dbg, true,

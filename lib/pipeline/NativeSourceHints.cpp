@@ -2,6 +2,7 @@
 
 #include "../loader/Swift/SwiftBooleanProjection.h"
 #include "../loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../loader/Swift/SwiftMangledClassMethodABI.h"
 #include "NativeSourceFloatingReturn.h"
 #include "NativeSourceIntegerPrefixReturn.h"
 #include "NativeSourcePreservation.h"
@@ -20,6 +21,7 @@
 #include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
 #include "neverd/loader/ObjC/ObjCContextCallEffects.h"
 #include "neverd/loader/Swift/SwiftAccessEffects.h"
+#include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
@@ -33,6 +35,136 @@
 #include <tuple>
 
 namespace neverd {
+
+bool validateSwiftConsumedInputBindings(const BinaryImage &Image,
+                                        const LowFunc *Low,
+                                        const MedFunc &Med) {
+  bool Marked = false, Relevant = false;
+  size_t Budget = 262144;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return false;
+      Marked |= Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput;
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          Op.NumInputs && Op.Inputs[0].isConst())
+        Relevant |=
+            isSwiftConsumedInputCallTarget(Image, Op.Inputs[0].ConstVal);
+    }
+  if (!Marked && !Relevant)
+    return true;
+  if (!Low || Low->Entry != Med.Entry)
+    return false;
+  const auto Current = buildSwiftConsumedInputCallHints(Image, *Low);
+  std::set<va_t> Seen;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return false;
+      const auto Found = Current.find(Op.Addr);
+      const bool Receipt =
+          Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput;
+      if (!Receipt &&
+          (Found == Current.end() ||
+           (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)))
+        continue;
+      if (!Receipt || Found == Current.end())
+        return false;
+      const auto &Binding = *Op.SourceCallHint;
+      const auto &Expected = Found->second;
+      const auto &Site = Expected.SwiftConsumedInput->Site;
+      if (Binding.SwiftConsumedInput != Expected.SwiftConsumedInput ||
+          Binding.CallKind != Expected.CallKind ||
+          Binding.TargetName != Expected.TargetName ||
+          Binding.TargetAddress != Expected.TargetAddress ||
+          Binding.WeakImport || Binding.DoesNotReturn ||
+          !equalSourceABIs(Binding.Signature, Expected.Signature) ||
+          Op.Opcode != Site.Opcode || Op.OriginSeq != Site.Sequence ||
+          Op.NumInputs != 5 || !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].ConstVal != Site.StaticTarget ||
+          Op.Inputs[0].Size != 8 || Op.DoesNotReturn ||
+          Op.PreservesCallerSaved || !Seen.insert(Op.Addr).second)
+        return false;
+      for (unsigned I = 1; I < Op.NumInputs; ++I)
+        if (Op.Inputs[I].Size != 8)
+          return false;
+    }
+  return Seen.size() == Current.size();
+}
+
+bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
+                                         const LowFunc *Low,
+                                         const MedFunc &Med) {
+  bool Marked = false;
+  size_t Budget = 100000;
+  for (const auto &B : Med.Blocks)
+    for (const auto &Op : B.Ops) {
+      if (!Budget--)
+        return false;
+      Marked |= Op.SourceCallHint &&
+                (Op.SourceCallHint->NativeSwiftReceiver ||
+                 (Op.SourceCallHint->Receiver &&
+                  Op.SourceCallHint->Receiver->Origin ==
+                      ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf));
+    }
+  const auto Declaration =
+      swiftMangledZeroArgClassMethodSourceABI(Image, Med.Entry);
+  if (!Marked && !Declaration)
+    return true;
+  if (!Low || Low->Entry != Med.Entry)
+    return !Marked;
+  const auto Callees = boundNativeBooleanCallees(Med);
+  const auto Current =
+      buildObjCSourceCallHints(Image, *Low, nullptr, nullptr, &Callees);
+  std::set<va_t> Required, Seen;
+  for (const auto &[Site, B] : Current)
+    if (B.NativeSwiftReceiver)
+      Required.insert(Site);
+  if (!Marked && Required.empty())
+    return true;
+  if (!Declaration || !Med.SourceTypeHint ||
+      !equalSourceABIs(*Declaration, *Med.SourceTypeHint) ||
+      !Med.SourceParametersBound)
+    return false;
+  for (const auto &B : Med.Blocks)
+    for (const auto &Op : B.Ops) {
+      if (!Budget--)
+        return false;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      const auto C = Current.find(Op.Addr);
+      const bool Native =
+          Op.SourceCallHint &&
+          (Op.SourceCallHint->NativeSwiftReceiver ||
+           (Op.SourceCallHint->Receiver &&
+            Op.SourceCallHint->Receiver->Origin ==
+                ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf));
+      if (!Native && !Required.count(Op.Addr))
+        continue;
+      if (!Native || C == Current.end() || !C->second.NativeSwiftReceiver ||
+          Op.SourceCallHint->NativeSwiftReceiver !=
+              C->second.NativeSwiftReceiver ||
+          Op.SourceCallHint->Receiver != C->second.Receiver ||
+          Op.SourceCallHint->ByValueCopy != C->second.ByValueCopy ||
+          Op.SourceCallHint->Selector != C->second.Selector ||
+          Op.SourceCallHint->TargetAddress != C->second.TargetAddress ||
+          !equalSourceABIs(Op.SourceCallHint->Signature, C->second.Signature) ||
+          Op.Opcode != NdOp::CALL ||
+          Op.OriginSeq != C->second.NativeSwiftReceiver->Sequence ||
+          Op.NumInputs != sourceABIParameters(C->second.Signature).size() + 1 ||
+          !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].ConstVal !=
+              C->second.NativeSwiftReceiver->StaticTarget ||
+          Op.DoesNotReturn || Op.PreservesCallerSaved ||
+          !Seen.insert(Op.Addr).second)
+        return false;
+      const auto Parameters = sourceABIParameters(C->second.Signature);
+      for (size_t I = 0; I < Parameters.size(); ++I)
+        if (Op.Inputs[I + 1].Size != Parameters[I].Location.ValueBytes)
+          return false;
+    }
+  return Seen == Required;
+}
 
 bool validateSwiftWitnessFrameBindings(const BinaryImage &Image,
                                        const LowFunc *Low, const MedFunc &Med) {
@@ -458,7 +590,9 @@ bool hasNativeSourceStateContract(
       Low->Blocks.size() > 16384)
     return false;
   NativeSourceCalls Calls;
-  if (!validateSwiftWitnessFrameBindings(Image, Low, Med))
+  if (!validateSwiftConsumedInputBindings(Image, Low, Med) ||
+      !validateSwiftWitnessFrameBindings(Image, Low, Med) ||
+      !validateNativeSwiftReceiverBindings(Image, Low, Med))
     return false;
   if (!validateSourceRegisterCopies(Image, *Low, Med.RegisterCopyProjections) ||
       (TerminalContext && !Med.RegisterCopyProjections.empty()))
@@ -628,7 +762,19 @@ bool hasNativeSourceStateContract(
         static_cast<SourceFrameEffects &>(Contract) = *Effects;
       }
       if (StaticMessage && Binding.CallKind == Kind::ObjCSuper2)
-        Contract.ReadOnlyFrameParameters.emplace(0, 16);
+        if (const auto Effects = objcSuperSourceFrameEffects(Image, Binding))
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      if (Binding.ByValueCopy) {
+        if (!isObjCByValueCopyHint(Binding, Med.Entry, Image.Arch))
+          return false;
+        Contract.ByValueFrameParameters.insert(Binding.ByValueCopy->Parameter);
+      }
+      if (StaticRuntime && Binding.CallKind == Kind::DarwinRuntimeCall &&
+          Binding.Signature.ReturnLocation.Kind ==
+              SourceABICarrierKind::IndirectResultPointer) {
+        if (const auto Effects = darwinMatrixSourceFrameEffects(Image, Binding))
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
       if (StaticRuntime && Binding.CallKind == Kind::SwiftRuntimeCall &&
           (Binding.TargetName == "swift_beginAccess" ||
            Binding.TargetName == "swift_endAccess")) {
@@ -636,6 +782,14 @@ bool hasNativeSourceStateContract(
                                            Op.Inputs[0].ConstVal};
         const auto Effects = swiftAccessCallEffects(Image, *Low, Site, Binding);
         if (!Effects || Op.DoesNotReturn || Op.PreservesCallerSaved)
+          return false;
+        static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
+      if (Binding.SwiftConsumedInput) {
+        const auto Effects =
+            swiftConsumedInputCallEffects(Image, *Low, Binding);
+        if (!StaticRuntime || !Effects || Op.DoesNotReturn ||
+            Op.PreservesCallerSaved)
           return false;
         static_cast<SourceFrameEffects &>(Contract) = *Effects;
       }
@@ -1309,8 +1463,11 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
        (!Low || !validateSourceRegisterCopies(Image, *Low,
                                               Med.RegisterCopyProjections))))
     return Reject("source register-copy proof is no longer valid");
-  if (!validateSwiftWitnessFrameBindings(Image, Low, Med))
+  if (!validateSwiftConsumedInputBindings(Image, Low, Med) ||
+      !validateSwiftWitnessFrameBindings(Image, Low, Med))
     return Reject("Swift witness frame proof is no longer valid");
+  if (!validateNativeSwiftReceiverBindings(Image, Low, Med))
+    return Reject("native Swift receiver proof is no longer valid");
   if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
       Image.IsRelocatable ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
@@ -1482,9 +1639,16 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
               isSwiftValueBufferProjection(Image, Op.Inputs[0].ConstVal) ||
               isObjCContextProjection(Image, Op.Inputs[0].ConstVal) ||
               isSwiftAccessCallTarget(Image, Op.Inputs[0].ConstVal);
+        // The generic AnyHashable constructor is shared by unrelated types.
+        // Only its independently authenticated UInt occurrence claims the
+        // consumed-input effect. The unconditional binding validation above
+        // rebuilds those occurrences from current LowIR, so removing a receipt
+        // cannot bypass this state proof. An ordinary generic call gains no
+        // private-frame permission from having the same runtime target.
         RequiresFrameEffectProof |=
             Op.SourceCallHint &&
-            (Op.SourceCallHint->TargetName == "swift_beginAccess" ||
+            (Op.SourceCallHint->SwiftConsumedInput ||
+             Op.SourceCallHint->TargetName == "swift_beginAccess" ||
              Op.SourceCallHint->TargetName == "swift_endAccess");
         RequiresImmutableCallProof |=
             Op.SourceCallHint &&

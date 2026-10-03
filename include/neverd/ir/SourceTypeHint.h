@@ -48,6 +48,10 @@ struct SourceParameterTypeHint {
   /// components are present; the source parameter remains one logical value.
   std::vector<SourceABIValueLocation> Components;
   Role TheRole = Role::Ordinary;
+  /// The logical record is passed by value through the address of its copy.
+  /// Type retains the record; Location carries its eight-byte address.
+  /// This ABI fact alone proves neither copy storage nor any memory effect.
+  bool IndirectByValue = false;
 };
 
 /// A runtime declaration or observed native machine signature for source

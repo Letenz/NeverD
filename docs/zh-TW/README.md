@@ -31,8 +31,8 @@ CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略�
 | [CPU 執行](cpu-execution.md) | 組態、能力查詢、後端可用性與型別化結果 |
 | [Bitvector 證明後端](solver.md) | 選用 Z3 證明、門控合成、獨立檢查與查詢匯出 |
 | [客體程序模擬](process-emulation.md) | Linux ELF 設定檔、程序啟動、服務、限制與測試 |
-| [macOS/iOS 行程環境](../darwin-emulation.md) | Mach-O 啟動、裝置與模擬器平台、Darwin 服務及分頁規則 |
-| [macOS HVF](../macos-hvf.md) | 主機同架構硬體執行、簽章權限、封裝與驗證 |
+| [macOS/iOS 行程環境](darwin-emulation.md) | Mach-O 啟動、裝置與模擬器平台、Darwin 服務及分頁規則 |
+| [macOS HVF](macos-hvf.md) | 主機同架構硬體執行、簽章權限、封裝與驗證 |
 | [Windows 驅動程式模擬](driver-emulation.md) | 有界 x64 WDM/KMDF 生命週期、請求、硬體情境、SEH、PnP 子集、後端選擇及限制 |
 | [記憶體安全稽核與獵取](memory-safety.md) | 堆積生命週期與拷貝越界分析：各格式身分契約、匯/源目錄、判定、預算與 JSON 模式 |
 | [原生外掛](plugins.md) | 純 C 描述元 ABI、回呼與事件、建置/連結流程、探索順序及相容性規則 |

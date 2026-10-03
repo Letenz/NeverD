@@ -74,10 +74,16 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       return failure(text::ModuleExport);
     if (Ordinal && !*Ordinal)
       return ExportResolution{std::nullopt, ErrorInvalidParameter};
-    if (CPU && Validated.insert(Index).second)
+    if (CPU &&
+        (!Load || Program.Modules[Index].State != ModuleState::Prepared) &&
+        Validated.insert(Index).second)
       if (auto E = validateMetadata(Program, Index, Budget, *CPU))
         return std::move(E);
     const auto &Module = Program.Modules[Index];
+    // The model declares names, not a Windows build's ordinal assignment or
+    // complete export inventory. Never turn missing coverage into an API miss.
+    if (Module.System && Ordinal)
+      return failure(text::SystemOrdinal);
     const uint32_t MissingError =
         Ordinal ? ErrorInvalidOrdinal : ErrorProcedureNotFound;
     std::optional<size_t> Entry;
@@ -90,6 +96,12 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
       if (I != Module.Names.end())
         Entry = I->second;
     }
+    if (!Entry && Module.System && !Symbol.empty() &&
+        !llvm::any_of(Module.Names, [&](const auto &E) {
+          return llvm::StringRef(E.first).equals_insensitive(Symbol);
+        }))
+      return failure(text::SystemExport + Program.Identities[Index].Name +
+                     text::ImportSeparator + Symbol);
     if (!Entry)
       return ExportResolution{std::nullopt, MissingError};
     if (!Visited.emplace(Index, *Entry).second)
@@ -124,26 +136,27 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
         return failure(text::ModuleForwarder);
       Ordinal = Number;
     }
-    if (findProvider(*Key)) {
-      if (Ordinal || !findService(*Key, Symbol))
-        return failure(text::ModuleForwarder);
-      auto Gate = Program.ServiceGates.find({*Key, Symbol});
-      if (Gate == Program.ServiceGates.end())
-        return failure(text::Service);
-      return ExportResolution{Gate->second, 0};
-    }
     if (Load) {
       auto Next = Load(Index, *Key);
-      if (!Next)
-        return Next.takeError();
+      if (!Next) {
+        auto E = Next.takeError();
+        // Native lookup reports a missing forwarded library as a missing
+        // procedure, while an explicit LoadLibrary still reports error 126.
+        uint32_t Code = 0;
+        E = llvm::handleErrors(std::move(E), [&](const ModuleLoadError &F) {
+          Code =
+              F.Code == ErrorModuleNotFound ? ErrorProcedureNotFound : F.Code;
+        });
+        if (E)
+          return std::move(E);
+        return ExportResolution{std::nullopt, Code};
+      }
       Index = *Next;
     } else {
-      auto Next = llvm::find_if(Program.Identities, [&](const auto &M) {
-        return llvm::StringRef(M.Name).equals_insensitive(*Key);
-      });
-      if (Next == Program.Identities.end())
+      auto Next = findModule(Program, *Key);
+      if (!Next)
         return failure(text::ForwarderLoad + *Key);
-      Index = size_t(Next - Program.Identities.begin());
+      Index = *Next;
     }
   }
   return failure(text::ForwarderDepth);

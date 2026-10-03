@@ -117,6 +117,7 @@ bool mergeInferredBlockABI(SourceCallTypeHint &A, const SourceCallTypeHint &B,
     auto &Left = A.Signature.Parameters[I];
     const auto &Right = B.Signature.Parameters[I];
     if (Left.Name != Right.Name || Left.TheRole != Right.TheRole ||
+        Left.IndirectByValue || Right.IndirectByValue ||
         !sameLocation(Left.Location, Right.Location) ||
         !Left.Components.empty() || !Right.Components.empty())
       return false;

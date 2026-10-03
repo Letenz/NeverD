@@ -17,9 +17,11 @@ import xml.etree.ElementTree as ET
 if __package__:
     from .audit_ci_test_inventory import parse_inventory
     from .audit_ci_test_results import OUTCOME_NAMES, parse_junit
+    from .run_native_cpu_methods import run_methods, shard_inventory
 else:
     from audit_ci_test_inventory import parse_inventory
     from audit_ci_test_results import OUTCOME_NAMES, parse_junit
+    from run_native_cpu_methods import run_methods, shard_inventory
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,6 +141,8 @@ def run(
     with_drivers: bool = False, require_hvf: bool = False,
     darwin_backend: str | None = None,
     hvf_transport_only: bool = False,
+    execution_methods: bool = False,
+    hvf_shard: tuple[int, int] | None = None,
 ) -> int:
     if hvf_transport_only and not require_hvf:
         raise ValueError("HVF transport profile requires --require-hvf")
@@ -146,6 +150,8 @@ def run(
         raise ValueError("Darwin workload coverage is a separate native profile")
     if require_hvf and (require_whp or with_drivers):
         raise ValueError("HVF coverage is a separate native CPU profile")
+    if hvf_shard is not None and (not require_hvf or hvf_transport_only or not execution_methods):
+        raise ValueError("HVF shards require the complete HVF profile and method execution")
     host_architecture = platform.machine()
     if darwin_backend:
         owners, required = darwin_inventory(ROOT, darwin_backend, host_architecture)
@@ -187,7 +193,8 @@ def run(
     ]
     inventory = subprocess.check_output([*base, "--show-only=json-v1"], text=True)
     (evidence / "inventory.json").write_text(inventory, encoding="utf-8")
-    tests = parse_inventory(json.loads(inventory))
+    document = json.loads(inventory)
+    tests = parse_inventory(document)
     registered_owners = {label for test in tests for label in test.labels}
     missing_owners = set(owners) - registered_owners
     if missing_owners:
@@ -197,20 +204,34 @@ def run(
         raise ValueError(
             f"missing required native {native_name} tests: {sorted(required_missing)}"
         )
+    full_registered = len(tests)
+    if hvf_shard is not None:
+        # Check the complete registrations before selecting a shard. Deleting a
+        # required case must never make it disappear from a shard's obligations.
+        document = shard_inventory(document, *hvf_shard)
+        (evidence / "full-inventory.json").write_text(inventory, encoding="utf-8")
+        (evidence / "inventory.json").write_text(
+            json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        tests = parse_inventory(document)
+        required &= {test.name for test in tests}
     junit = evidence / "results.xml"
     environment = dict(os.environ)
     if require_hvf or darwin_backend == "hvf":
         environment["NEVERD_REQUIRE_HVF"] = "1"
     if require_whp or darwin_backend == "whp":
         environment["NEVERD_REQUIRE_NATIVE_WHP"] = "1"
-    result = subprocess.run([
-        *base, "--no-tests=error", "--parallel", str(parallel),
-        "--output-on-failure", "--output-junit", str(junit),
-        "--test-output-size-passed", output_limits[0],
-        "--test-output-size-failed", output_limits[0],
-        "--output-log", str(evidence / "ctest.log"),
-    ], env=environment)
-    cases = parse_junit(ET.parse(junit).getroot())
+    if execution_methods:
+        cases, execution_status = run_methods(document, evidence, environment)
+    else:
+        result = subprocess.run([
+            *base, "--no-tests=error", "--parallel", str(parallel),
+            "--output-on-failure", "--output-junit", str(junit),
+            "--test-output-size-passed", output_limits[0],
+            "--test-output-size-failed", output_limits[0],
+            "--output-log", str(evidence / "ctest.log"),
+        ], env=environment)
+        cases = parse_junit(ET.parse(junit).getroot())
+        execution_status = result.returncode
     counts = Counter(case.outcome for case in cases)
     expected, actual = set(tests), {case.test for case in cases}
     required_unexecuted = [
@@ -231,7 +252,8 @@ def run(
             "version": platform.version(),
         },
         "logical_cpus": os.cpu_count(),
-        "parallel": parallel,
+        "parallel": 1 if execution_methods else parallel,
+        "execution": "gtest-methods" if execution_methods else "ctest",
         "owners": owners,
         "registered": len(tests),
         "total": len(cases),
@@ -241,20 +263,24 @@ def run(
         "require_whp": require_whp,
         "require_hvf": require_hvf,
         "hvf_transport_only": hvf_transport_only,
+        "hvf_shard": (None if hvf_shard is None else
+                      {"index": hvf_shard[0], "count": hvf_shard[1]}),
+        "full_registered": full_registered,
         "darwin_backend": darwin_backend,
         "with_drivers": with_drivers,
         "required_native_tests": len(required),
         "required_native_names": sorted(required),
         "required_native_missing": sorted(required_missing),
         "required_native_unexecuted": required_unexecuted,
-        "ctest_status": result.returncode,
+        "ctest_status": None if execution_methods else execution_status,
+        "execution_status": execution_status,
     }
     (evidence / "summary.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary), flush=True)
     return int(bool(
-        result.returncode or counts["failed"] or counts["disabled"]
+        execution_status or counts["failed"] or counts["disabled"]
         or counts["not_run"] or expected != actual or len(cases) != len(tests)
         or (required_hardware and required_unexecuted)
     ))
@@ -272,14 +298,27 @@ def main() -> int:
     parser.add_argument("--require-darwin-backend", choices=("hvf", "kvm", "whp"),
                         help="require every native Darwin workload on the host ISA")
     parser.add_argument("--with-drivers", action="store_true")
+    parser.add_argument("--execution-methods", action="store_true",
+                        help="execute the full CTest inventory in serial, bounded GoogleTest method processes")
+    parser.add_argument("--hvf-shard", metavar="INDEX/COUNT",
+                        help="execute one zero-based full HVF method shard; all shards require independent aggregation")
     args = parser.parse_args()
     if args.parallel < 1:
         parser.error("parallel jobs must be positive")
+    shard = None
+    if args.hvf_shard is not None:
+        if not re.fullmatch(r"[0-9]+/[0-9]+", args.hvf_shard):
+            parser.error("HVF shard must be INDEX/COUNT")
+        shard = tuple(map(int, args.hvf_shard.split("/")))
+        if shard[1] < 2 or not 0 <= shard[0] < shard[1]:
+            parser.error("HVF shard requires 0 <= index < count and count >= 2")
     return run(
         args.build.resolve(), args.evidence.resolve(), args.parallel,
         args.require_whp, args.with_drivers, args.require_hvf,
         args.require_darwin_backend,
         args.hvf_transport_only,
+        args.execution_methods,
+        shard,
     )
 
 

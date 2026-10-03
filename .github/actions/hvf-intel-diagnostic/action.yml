@@ -1,0 +1,30 @@
+name: Preserve every native HVF diagnostic method
+description: Upload a prepared marker before each method and original results immediately afterwards
+inputs:
+  source:
+    description: Separate clean checkout of the exact tested commit
+    required: true
+  build:
+    description: Release build within that source checkout
+    required: true
+  evidence:
+    description: New diagnostic evidence directory
+    required: true
+  upload-action:
+    description: Separate checkout of the pinned official upload-artifact action
+    required: true
+  shard:
+    description: Original full inventory shard, INDEX/COUNT
+    required: true
+  first-method:
+    description: First zero-based original method index
+    default: '0'
+  method-count:
+    description: Number of methods, or zero for the remaining suffix
+    default: '0'
+  case-index:
+    description: One original parameter index, or -1 for all; requires method-count=1
+    default: '-1'
+runs:
+  using: node24
+  main: run.cjs

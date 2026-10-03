@@ -167,6 +167,54 @@ TEST(SwiftABIProjectionPlan, BatchHintsNeverExpandUnambiguousCalleeEvidence) {
                std::invalid_argument);
 }
 
+TEST(SwiftABIProjectionPlan, ConventionAndContextRoleKeepDistinctIdentity) {
+  auto C = signature(NdType::makePtr(NdType::makeVoid()), Arch::AArch64);
+  std::string Error;
+  auto Swift = C;
+  ASSERT_TRUE(assignDarwinSwiftSourceABI(Swift, Arch::AArch64, Error));
+  // This shape has equal physical locations under both calling conventions.
+  EXPECT_EQ(C.Parameters[0].Location.RegisterOffset,
+            Swift.Parameters[0].Location.RegisterOffset);
+  auto Context = Swift;
+  Context.Parameters[0].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  ASSERT_TRUE(assignDarwinSwiftSourceABI(Context, Arch::AArch64, Error));
+  auto Ordinary = C;
+  Ordinary.Parameters[0].Location = Context.Parameters[0].Location;
+  ASSERT_TRUE(validateSourceABI(Ordinary, Error));
+  auto Plan =
+      planABIProjections({row(0, 0x1000, C), row(1, 0x1000, Swift),
+                          row(2, 0x1000, Context), row(3, 0x1000, Ordinary)},
+                         {});
+  EXPECT_EQ(Plan.Batches.size(), 4U);
+}
+
+TEST(SwiftABIProjectionPlan, ByValueCopyNeverCoalescesWithSourcePointer) {
+  for (unsigned Count : {6U, 16U}) {
+    const auto Record =
+        NdType::makeStruct(std::vector<TypeRef>(Count, NdType::makeFloat(8)));
+    SourceFunctionTypeHint Value;
+    Value.ReturnType = NdType::makeVoid();
+    Value.Parameters.push_back({"value", Record});
+    std::string Error;
+    ASSERT_TRUE(assignDarwinFixedSourceABI(Value, Arch::AArch64, Error));
+    auto Pointer = Value;
+    Pointer.Parameters[0].Type = NdType::makePtr(Record);
+    ASSERT_TRUE(assignDarwinFixedSourceABI(Pointer, Arch::AArch64, Error));
+    EXPECT_FALSE(equalSourceABIs(Value, Pointer));
+    const auto Plan = planABIProjections(
+        {row(0, 0x1000, Value), row(1, 0x1000, Pointer)}, {});
+    EXPECT_EQ(Plan.Batches.size(), 2U);
+    auto Missing = Value;
+    Missing.Parameters[0].IndirectByValue = false;
+    EXPECT_THROW(planABIProjections({row(0, 0x1000, Missing)}, {}),
+                 std::invalid_argument);
+    auto Spurious = Pointer;
+    Spurious.Parameters[0].IndirectByValue = true;
+    EXPECT_THROW(planABIProjections({row(0, 0x1000, Spurious)}, {}),
+                 std::invalid_argument);
+  }
+}
+
 TEST(SwiftABIProjectionPlan,
      InvalidOrDuplicateIdentitiesCannotStackInOneBatch) {
   auto Hint = signature();

@@ -17,7 +17,8 @@ struct BooleanFixture {
                  bool Prefix = false, bool OpaquePrefix = false,
                  bool ObjectEquality = false, bool Suffix = false,
                  bool Native = false, bool Pair = false,
-                 bool NativeCallee = false) {
+                 bool NativeCallee = false,
+                 llvm::StringRef ImportOverride = {}) {
     Image.Arch = Arch::AArch64;
     Image.Format = BinaryFormat::MachO;
     Image.Bits = Bitness::Bits64;
@@ -59,7 +60,11 @@ struct BooleanFixture {
       Body[Body.size() - 2] = 0xa8c27bfd;      // LDP FP,LR,[SP],#32
     }
     if (Twice)
-      Body.insert(Body.end() - 2, {0x94000037, 0x12000000});
+      // Reinitialize every input after the first call clobbers the volatile
+      // carriers. Two result-bit receipts do not define missing arguments.
+      Body.insert(Body.end() - 2,
+                  {0xd28000a0, 0xd2800001, 0xd28000e2, 0xd2800003, 0x52800024,
+                   0x94000032, 0x12000000});
     if (Pair)
       Body.insert(Body.end() - 2, 0xd2800021); // MOV X1,#1 before return.
     if (OpaquePrefix)
@@ -82,10 +87,12 @@ struct BooleanFixture {
     word(0x1100, 0xb0000010);
     word(0x1104, 0xf9404210);
     word(0x1108, 0xd61f0200);
-    const auto Import = ObjectEquality ? SwiftBooleanObjectEqualityImport
-                        : Suffix       ? SwiftBooleanSuffixImport
-                        : Prefix       ? SwiftBooleanPrefixImport
-                                       : SwiftBooleanComparisonImport;
+    llvm::StringRef Import = ObjectEquality ? SwiftBooleanObjectEqualityImport
+                             : Suffix       ? SwiftBooleanSuffixImport
+                             : Prefix       ? SwiftBooleanPrefixImport
+                                            : SwiftBooleanComparisonImport;
+    if (!ImportOverride.empty())
+      Import = ImportOverride;
     Image.ImportPtrSlots[0x2080] = Import.str();
     EXPECT_TRUE(Image.recordDyldBindSlot(0x2080, Import, 0, Provider, false));
     ObjCMethod Method;
@@ -495,5 +502,115 @@ TEST(ObjCSwiftBooleanSources, MachineModesDoNotNormalizeTheRuntimeResult) {
       for (const auto &Block : Function.Blocks)
         for (const auto &Op : Block.Ops)
           EXPECT_FALSE(Op.SourceCallHint && Op.SourceCallHint->BooleanResult);
+  }
+}
+
+TEST(ObjCSwiftBooleanSources, AnyHashableEqualityRechecksCurrentOneBitCall) {
+  for (unsigned Mutation = 0; Mutation < 16; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    BooleanFixture F(true, false, false, false, false, false, false, false,
+                     false, false, SwiftBooleanAnyHashableEqualityImport);
+    auto E = F.expression();
+    ASSERT_TRUE(E);
+    ASSERT_EQ(E->Operands.size(), 2U);
+    ASSERT_EQ(E->SourceCallHint->Signature.Parameters.size(), 2U);
+    EXPECT_EQ(E->SourceCallHint->TargetName,
+              SwiftBooleanAnyHashableEqualityImport.drop_front());
+    ASSERT_TRUE(
+        objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
+    EXPECT_FALSE(objcSourceCallBound(*E, F.Image, {}));
+    auto Binding = std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
+    E->SourceCallHint = Binding;
+    switch (Mutation) {
+    case 0:
+      F.Image.DyldBindSlots[0x2080].Module = "/tmp/libswiftCore.dylib";
+      break;
+    case 1:
+      F.Image.DyldBindSlots[0x2080].WeakImport = true;
+      break;
+    case 2:
+      F.Image.DyldBindSlots[0x2080].Addend = 8;
+      break;
+    case 3:
+      Binding->Signature.Parameters[1].TheRole =
+          SourceParameterTypeHint::Role::SwiftContext;
+      break;
+    case 4:
+      Binding->Signature.Parameters.push_back(Binding->Signature.Parameters[1]);
+      break;
+    case 5:
+      Binding->Signature.ReturnType = NdType::makeInt(8);
+      break;
+    case 6:
+      Binding->BooleanResult->Site.Sequence += 1;
+      break;
+    case 7:
+      E->Operands[0] = HighExpr::makeConst(91, 8);
+      break;
+    case 8:
+      E->Operands[1].reset();
+      break;
+    case 9:
+      for (auto &Low : F.Result.LowFuncs)
+        for (auto &B : Low.Blocks)
+          for (auto &Op : B.Ops)
+            if (Op.Opcode == NdOp::INT_AND)
+              for (auto &Input : Op.Inputs)
+                if (Input.isConst() && Input.Offset == 1)
+                  Input.Offset = 3;
+      break;
+    case 10:
+      F.word(0x101c, 0x94000038);
+      break;
+    case 11:
+      F.Result.SourceImage = nullptr;
+      break;
+    case 12:
+      F.Result.FunctionAudits[0].MedIRVerified = false;
+      break;
+    case 13: {
+      HighStmt Duplicate;
+      Duplicate.Kind = StmtKind::Call;
+      Duplicate.CallExpr = E;
+      F.high().Body.push_back(Duplicate);
+      break;
+    }
+    case 14:
+      Binding->BooleanResult.reset();
+      break;
+    case 15:
+      Binding->Signature.Parameters[1].Location.ValueBytes = 4;
+      break;
+    }
+    EXPECT_FALSE(
+        objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
+  }
+}
+
+TEST(ObjCSwiftBooleanSources,
+     PublicationKeepsCanonicalArgumentsForEveryBooleanImport) {
+  for (const auto Import :
+       {SwiftBooleanComparisonImport, SwiftBooleanPrefixImport,
+        SwiftBooleanSuffixImport, SwiftBooleanObjectEqualityImport,
+        SwiftBooleanAnyHashableEqualityImport}) {
+    SCOPED_TRACE(Import.str());
+    BooleanFixture F(true, false, false, false, false,
+                     Import == SwiftBooleanObjectEqualityImport, false, false,
+                     false, false, Import);
+    const auto E = F.expression();
+    ASSERT_TRUE(E);
+    ASSERT_TRUE(
+        objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
+    for (size_t I = 0; I < E->Operands.size(); ++I) {
+      SCOPED_TRACE(I);
+      const auto Original = E->Operands[I];
+      E->Operands[I] =
+          HighExpr::makeConst(0x123456789abcdef0ULL, Original->Type->Size);
+      EXPECT_FALSE(
+          objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
+      E->Operands[I] = Original;
+      EXPECT_TRUE(
+          objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
+    }
   }
 }

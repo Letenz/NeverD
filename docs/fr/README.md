@@ -31,8 +31,8 @@ L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur
 | [Exécution CPU](cpu-execution.md) | Configuration, capacités, disponibilité des backends et résultats typés |
 | [Preuves bitvector](solver.md) | Preuves Z3 facultatives, synthèse vérifiée, tests indépendants et export |
 | [Émulation de processus invités](process-emulation.md) | Profil Linux ELF, démarrage, services, limites et tests |
-| [Environnements de processus macOS/iOS](../darwin-emulation.md) | Démarrage Mach-O, plateformes appareil et simulateur, services Darwin et règles de pages |
-| [macOS HVF](../macos-hvf.md) | Exécution matérielle avec l’ISA de l’hôte, droits de signature, packaging et validation |
+| [Environnements de processus macOS/iOS](darwin-emulation.md) | Démarrage Mach-O, plateformes appareil et simulateur, services Darwin et règles de pages |
+| [macOS HVF](macos-hvf.md) | Exécution matérielle avec l’ISA de l’hôte, droits de signature, packaging et validation |
 | [Émulation des pilotes Windows](driver-emulation.md) | Cycle WDM/KMDF x64 borné, requêtes, scénarios matériels, SEH, sous-ensembles PnP, choix du moteur et limites |
 | [Audit et chasse de sûreté mémoire](memory-safety.md) | Analyse de durée de vie du tas et de débordement de copie : contrat d’identité par format, catalogue puits/sources, verdicts, budgets et schéma JSON |
 | [Plugins natifs](plugins.md) | ABI de descripteur en C pur, callbacks et événements, procédure de compilation/liaison, découverte et règles de compatibilité |

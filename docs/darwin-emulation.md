@@ -1,3 +1,7 @@
+**Languages**: [English](darwin-emulation.md) | [简体中文](zh-CN/darwin-emulation.md) | [繁體中文](zh-TW/darwin-emulation.md) | [日本語](ja/darwin-emulation.md) | [한국어](ko/darwin-emulation.md) | [Français](fr/darwin-emulation.md) | [Deutsch](de/darwin-emulation.md) | [Español](es/darwin-emulation.md) | [Italiano](it/darwin-emulation.md) | [Русский](ru/darwin-emulation.md) | [العربية](ar/darwin-emulation.md)
+
+[← Documentation index](README.md)
+
 # macOS and iOS guest process environments
 
 NeverD's Darwin environments run bounded freestanding Mach-O processes. They
@@ -136,8 +140,9 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 The native gate requires matching HVF cases to execute, including Darwin
 fixtures; missing `ld64.lld` cannot turn the required suite into a skip. Each
 transport must be verified on its own host; the results below distinguish
-Apple Silicon HVF, Linux KVM and Windows WHP. Intel HVF has passed its ten-case native transport gate; complete CPU and
-Darwin acceptance remains pending. See the
+Apple Silicon HVF, Intel HVF, Linux KVM and Windows WHP. All required Darwin
+workloads have passed on their respective matching hosts. Intel's broader
+CPU inventory remains a separate acceptance requirement. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
@@ -158,7 +163,7 @@ for both runners. Wrong host architectures, Rosetta, timeouts and any result
 mismatch fail the reference gate; its JSON records the source, OS and compiler.
 Run it locally with `python3 scripts/run_darwin_kernel_reference.py
 --architecture arm64 --evidence build-kernel-reference` (use `x86_64` on Intel).
-The focused workload gate preserves the full inventory and JUnit results, and fails on missing or
+The focused workload gate preserves the full inventory and original test XML, and fails on missing or
 skipped native workloads even when loader-only tests pass:
 
 ```sh
@@ -204,6 +209,23 @@ platform, oversized-write error ordering and formatted native-case inventories.
 The native inventory/result/CI regression suite passed 106 tests. Capability,
 localized-documentation, provenance and formatting checks also passed.
 
+After later `dev` integration, clean source
+`f4bf8dde5cbc33d18ce053cb0722a54047e5a2d0` repeated the independent ARM64
+Darwin gate: 65 passed, zero failed, 221 skipped and all 39 required native
+workloads executed. Evidence is in
+`build-hvf-native/hvf-final-dev-darwin-evidence/`. This rerun validates the
+Darwin owner; it does not claim a new complete CPU gate for unrelated Windows
+process changes merged in the meantime.
+
+The later clean-source method run at
+`d5864c055116a687546320e4acf0788ef4a4e735` again passed all 39 ARM64 Darwin
+workloads (65 passed, 221 skipped), with all 286 CTest identities reconciled
+against original GoogleTest XML. The full twenty-owner run at that source
+passed 849 cases, failed none and skipped 5,993 across all 6,842 registrations.
+Its sixteen native requirements all passed. These runs include the subsequent
+Windows environment changes and explicitly record method-level process
+isolation. Evidence is in `build-hvf-native/hvf-method-clean-{full,darwin}-evidence/`.
+
 Earlier integration checks exercised all five platform/ISA combinations through
 the Python SDK. The packaged engine matched 18 no-Unicorn CLI reports across
 all three ARM64 profiles, and the bundle passed dependency/signature checks for
@@ -215,6 +237,25 @@ build-isolation checks, not additional native guest executions. The separate
 passed on macOS, Windows and Ubuntu at `e078b129c`.
 
 ### Hosted native verification, 2026-10-03
+
+The [Intel HVF Darwin gate](https://github.com/NeverSight/NeverD/actions/runs/37106013999)
+at clean source `8dcc74c59da303176801b99747a60339161b824b` passed every required
+x64 workload: **26/26**, across macOS and iOS Simulator. All 286 CTest
+registrations were reconciled against original GoogleTest XML: **52 passed,
+0 failed, 234 skipped**, with no missing, duplicate or unexecuted required
+results. The 234 skips are 65 disabled-Unicorn cases, 39 foreign ARM64
+guests and 130 foreign-host backends. All 32 method processes exited
+successfully. The native macOS kernel reference also passed; these results do not establish iOS device-kernel or
+broader Intel CPU acceptance.
+
+Artifact `11267489438` was downloaded and verified against SHA-256
+`cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`.
+Evidence is retained under `build-hvf/verification/hvf-intel-darwin-accepted/`.
+Execution uses the documented serial method policy on hosted Intel, including
+all parameters and the CTest environment. The runner was macOS x86-64 with
+four logical CPUs and Darwin 24.6.0. The same run also passed its ten-case
+transport preflight, 100 interruption/recovery repetitions and isolated CR8
+regression; these overlapping checks are not added to the Darwin totals.
 
 Both x64 transports executed the latest focused Darwin workload gate with
 Unicorn disabled, including the file-budget, direct-thread-entry and oversized

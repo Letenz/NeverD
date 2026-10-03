@@ -221,7 +221,7 @@ TEST_P(UserCPU, PrivilegedInstructionsStayOutsideTheUserContract) {
 }
 TEST_P(UserCPU, SelectorsCannotEscalatePrivilege) {
   if (GetParam().ISA != GuestArchitecture::X64)
-    GTEST_SKIP();
+    GTEST_SKIP() << "segment selectors are specific to the x64 guest ISA";
   auto Context = llvm::cantFail(CPU->saveContext());
   const auto CS = llvm::cantFail(CPU->reg(X64Register::CS));
   const auto SS = llvm::cantFail(CPU->reg(X64Register::SS));

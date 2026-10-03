@@ -77,6 +77,7 @@ inline std::string key(const SourceFunctionTypeHint &Hint) {
   std::string Key;
   number(Key, static_cast<unsigned>(Hint.Origin));
   number(Key, static_cast<unsigned>(Hint.Architecture));
+  number(Key, static_cast<unsigned>(Hint.Convention));
   number(Key, Hint.HasExplicitABI);
   type(Key, Hint.ReturnType);
   location(Key, Hint.ReturnLocation);
@@ -88,6 +89,8 @@ inline std::string key(const SourceFunctionTypeHint &Hint) {
     number(Key, Parameter.Name.size());
     Key += Parameter.Name;
     type(Key, Parameter.Type);
+    number(Key, static_cast<unsigned>(Parameter.TheRole));
+    number(Key, Parameter.IndirectByValue);
     location(Key, Parameter.Location);
     number(Key, Parameter.Components.size());
     for (const auto &Component : Parameter.Components)

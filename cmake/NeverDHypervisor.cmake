@@ -3,7 +3,7 @@ include_guard(GLOBAL)
 set(NEVERD_HVF_SIGN_IDENTITY "-" CACHE STRING "Signing identity for HVF executables (default: ad-hoc)")
 function(neverd_sign_hypervisor target)
   cmake_parse_arguments(PARSE_ARGV 1 _sign "IMPORTED_ENGINE" "" "")
-  if(NOT APPLE)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     return()
   endif()
   # Standalone consumers cannot inspect the imported engine's build flags.

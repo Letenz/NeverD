@@ -4,6 +4,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/SourceFrameEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -415,7 +416,8 @@ TEST(SourceAggregate, SixDoubleResultsUseDarwinArm64IndirectPointerOnly) {
   EXPECT_FALSE(validateSourceABI(Bad, Error));
   Bad = Hint;
   Bad.Parameters.push_back({"transform", Transform});
-  EXPECT_FALSE(assignDarwinFixedSourceABI(Bad, Arch::AArch64, Error));
+  EXPECT_TRUE(assignDarwinFixedSourceABI(Bad, Arch::AArch64, Error));
+  EXPECT_TRUE(Bad.Parameters.back().IndirectByValue);
   Bad = Hint;
   EXPECT_FALSE(assignDarwinFixedSourceABI(Bad, Arch::X64, Error));
   Bad = Hint;
@@ -433,6 +435,302 @@ TEST(SourceAggregate, SixDoubleResultsUseDarwinArm64IndirectPointerOnly) {
   const auto Mixed = NdType::makeStruct(
       {Double, Double, Double, Double, Double, NdType::makeInt(8)});
   EXPECT_TRUE(sourceAggregateMembers(Mixed).empty());
+}
+
+TEST(SourceAggregate,
+     IndirectTransformParameterKeepsLogicalRecordAndPhysicalPointer) {
+  for (unsigned Count : {6U, 16U}) {
+    auto Record =
+        NdType::makeStruct(std::vector<TypeRef>(Count, NdType::makeFloat(8)));
+    auto H = declaration(Record);
+    H.ReturnType = NdType::makeVoid();
+    std::string Error;
+    ASSERT_TRUE(assignDarwinObjCSourceABI(H, Arch::AArch64, Error)) << Error;
+    EXPECT_TRUE(equalSourceTypes(H.Parameters[2].Type, Record));
+    EXPECT_TRUE(H.Parameters[2].IndirectByValue);
+    EXPECT_TRUE(hasIndirectSourceParameters(H));
+    EXPECT_TRUE(H.Parameters[2].Components.empty());
+    const auto Physical = sourceABIParameters(H);
+    ASSERT_EQ(Physical.size(), 3U);
+    EXPECT_EQ(Physical[2].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_TRUE(equalSourceTypes(Physical[2].Type->Pointee, Record));
+    EXPECT_EQ(Physical[2].Location.ValueBytes, 8U);
+    EXPECT_EQ(Physical[2].Location.RegisterOffset,
+              getTargetRegInfo(Arch::AArch64).IntParamRegs[2]);
+  }
+}
+
+TEST(SourceAggregate, IndirectRecordsShareIntegerBankAndNaturalStackSlots) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (unsigned Count : {6U, 16U})
+    for (unsigned Prefix : {0U, 7U, 8U}) {
+      SCOPED_TRACE(std::to_string(Count) + ":" + std::to_string(Prefix));
+      const auto Record =
+          NdType::makeStruct(std::vector<TypeRef>(Count, NdType::makeFloat(8)));
+      SourceFunctionTypeHint H;
+      H.ReturnType = Record;
+      for (unsigned I = 0; I < Prefix; ++I)
+        H.Parameters.push_back(
+            {"word" + std::to_string(I), NdType::makeInt(8)});
+      H.Parameters.push_back({"before", NdType::makeFloat(8)});
+      H.Parameters.push_back({"first", Record});
+      H.Parameters.push_back({"byte", NdType::makeInt(1)});
+      H.Parameters.push_back({"second", Record});
+      H.Parameters.push_back({"after", NdType::makeFloat(8)});
+      std::string Error;
+      ASSERT_TRUE(assignDarwinFixedSourceABI(H, Arch::AArch64, Error)) << Error;
+      const auto P = sourceABIParameters(H);
+      ASSERT_EQ(P.size(), Prefix + 5U);
+      EXPECT_EQ(P[Prefix].Location.RegisterOffset, TRI.FPParamRegs[0]);
+      EXPECT_EQ(P.back().Location.RegisterOffset, TRI.FPParamRegs[1]);
+      EXPECT_EQ(H.ReturnLocation.Kind,
+                SourceABICarrierKind::IndirectResultPointer);
+      EXPECT_EQ(H.ReturnLocation.RegisterOffset, TRI.indirectResultReg());
+      const auto &First = P[Prefix + 1].Location;
+      const auto &Byte = P[Prefix + 2].Location;
+      const auto &Second = P[Prefix + 3].Location;
+      if (Prefix < 8) {
+        EXPECT_EQ(First.Kind, SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(First.RegisterOffset, TRI.IntParamRegs[Prefix]);
+      } else {
+        EXPECT_EQ(First.Kind, SourceABICarrierKind::Stack);
+        EXPECT_EQ(First.EntryStackOffset, 0);
+      }
+      EXPECT_EQ(First.ValueBytes, 8U);
+      EXPECT_EQ(Second.ValueBytes, 8U);
+      if (!Prefix) {
+        EXPECT_EQ(Byte.RegisterOffset, TRI.IntParamRegs[1]);
+        EXPECT_TRUE(Byte.ExtendTo32Bits);
+        EXPECT_EQ(Second.RegisterOffset, TRI.IntParamRegs[2]);
+      } else {
+        EXPECT_EQ(Byte.Kind, SourceABICarrierKind::Stack);
+        EXPECT_EQ(Byte.EntryStackOffset, Prefix == 7 ? 0 : 8);
+        EXPECT_EQ(Byte.ValueBytes, 1U);
+        EXPECT_FALSE(Byte.ExtendTo32Bits);
+        EXPECT_EQ(Second.Kind, SourceABICarrierKind::Stack);
+        EXPECT_EQ(Second.EntryStackOffset, Prefix == 7 ? 8 : 16);
+      }
+      EXPECT_TRUE(validateSourceABI(H, Error)) << Error;
+      EXPECT_EQ(P[Prefix + 1].ParameterIndex, Prefix + 1);
+      EXPECT_EQ(P[Prefix + 1].ByteOffset, 0U);
+    }
+}
+
+TEST(SourceAggregate, IndirectRecordsRejectPartialOrIncompatibleCarriers) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (unsigned Count : {6U, 16U}) {
+    const auto Record =
+        NdType::makeStruct(std::vector<TypeRef>(Count, NdType::makeFloat(8)));
+    auto H = declaration(Record);
+    H.ReturnType = NdType::makeVoid();
+    std::string Error;
+    ASSERT_TRUE(assignDarwinObjCSourceABI(H, Arch::AArch64, Error));
+    for (unsigned Mutation = 0; Mutation != 23; ++Mutation) {
+      SCOPED_TRACE(std::to_string(Count) + ":" + std::to_string(Mutation));
+      auto Bad = H;
+      auto &P = Bad.Parameters[2];
+      switch (Mutation) {
+      case 0:
+        P.IndirectByValue = false;
+        break;
+      case 1:
+        P.Type = NdType::makePtr(Record);
+        break;
+      case 2:
+        P.Type = NdType::makeInt(8);
+        break;
+      case 3:
+        P.Type = quad();
+        break;
+      case 4:
+        P.Type =
+            NdType::makeStruct(std::vector<TypeRef>(5, NdType::makeFloat(8)));
+        break;
+      case 5:
+        P.Type =
+            NdType::makeStruct(std::vector<TypeRef>(6, NdType::makeFloat(4)));
+        break;
+      case 6:
+        P.Components.push_back(P.Location);
+        break;
+      case 7:
+        P.Location.ValueBytes = 4;
+        break;
+      case 8:
+        P.Location.ValueBytes = Record->Size;
+        break;
+      case 9:
+        P.Location.RegisterOffset = TRI.IntParamRegs[0];
+        break;
+      case 10:
+        P.Location.RegisterOffset = TRI.indirectResultReg();
+        break;
+      case 11:
+        P.Location.RegisterOffset = 20 * 8;
+        break;
+      case 12:
+        P.Location.Kind = SourceABICarrierKind::IndirectResultPointer;
+        break;
+      case 13:
+        P.Location = {SourceABICarrierKind::FloatingRegister,
+                      TRI.FPParamRegs[0], 0, 8};
+        break;
+      case 14:
+        P.Location.ExtendTo32Bits = true;
+        break;
+      case 15:
+        P.Location.EntryStackOffset = 8;
+        break;
+      case 16:
+        P.Location = {SourceABICarrierKind::Stack, 0, 4, 8};
+        break;
+      case 17:
+        P.Location = {SourceABICarrierKind::Stack, 0, -8, 8};
+        break;
+      case 18:
+        P.Location = {SourceABICarrierKind::Stack, 0, 4096, 8};
+        break;
+      case 19:
+        Bad.Architecture = Arch::X64;
+        break;
+      case 20:
+        Bad.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
+        break;
+      case 21:
+        P.TheRole = SourceParameterTypeHint::Role::SwiftContext;
+        break;
+      case 22: {
+        P.Type = NdType::makeStruct(
+            std::vector<TypeRef>(Count, NdType::makeFloat(8)));
+        P.Type->FieldOffsets.back() -= 8;
+        break;
+      }
+      }
+      EXPECT_FALSE(validateSourceABI(Bad, Error));
+      EXPECT_FALSE(Error.empty());
+      EXPECT_TRUE(sourceABIParameters(Bad).empty());
+      EXPECT_FALSE(equalSourceABIs(H, Bad));
+    }
+    auto Stack = H;
+    Stack.Parameters[2].Location = {SourceABICarrierKind::Stack, 0, 0, 8};
+    ASSERT_TRUE(validateSourceABI(Stack, Error));
+    Stack.Parameters.push_back(Stack.Parameters[2]);
+    EXPECT_FALSE(validateSourceABI(Stack, Error));
+    EXPECT_TRUE(sourceABIParameters(Stack).empty());
+    auto X64 = H, Swift = H, Scalar = H;
+    EXPECT_FALSE(assignDarwinFixedSourceABI(X64, Arch::X64, Error));
+    EXPECT_FALSE(assignDarwinSwiftSourceABI(Swift, Arch::AArch64, Error));
+    EXPECT_FALSE(assignDarwinScalarSourceABI(Scalar, Arch::AArch64, Error));
+  }
+}
+
+TEST(SourceAggregate, ReassigningDirectParametersClearsIndirectCopyMode) {
+  for (auto Type :
+       {quad(), NdType::makePtr(NdType::makeVoid()), NdType::makeInt(1)}) {
+    auto H = declaration(Type);
+    H.ReturnType = NdType::makeVoid();
+    H.Parameters[2].IndirectByValue = true;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinFixedSourceABI(H, Arch::AArch64, Error)) << Error;
+    EXPECT_FALSE(hasIndirectSourceParameters(H));
+    EXPECT_TRUE(validateSourceABI(H, Error));
+  }
+}
+
+TEST(SourceAggregate,
+     IndirectCopyABIAloneDoesNotBindSourceCallsOrFrameBorrows) {
+  for (unsigned Count : {6U, 16U}) {
+    const auto Record =
+        NdType::makeStruct(std::vector<TypeRef>(Count, NdType::makeFloat(8)));
+    auto H = declaration(Record);
+    H.ReturnType = NdType::makeVoid();
+    std::string Error;
+    ASSERT_TRUE(assignDarwinFixedSourceABI(H, Arch::AArch64, Error));
+    SourceFrameEffects Effect;
+    Effect.ReadOnlyFrameParameters.emplace(2, Record->Size);
+    EXPECT_FALSE(sourceFrameEffectsMatchABI(Effect, H));
+    Effect.ReadOnlyFrameParameters.clear();
+    Effect.WritableFrameParameters.emplace(2, Record->Size);
+    EXPECT_FALSE(sourceFrameEffectsMatchABI(Effect, H));
+
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = 0x1000;
+    Block.EndAddr = 0x1008;
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = 0x1000;
+    Call.addInput(NdVar::cst(0x2000, 8));
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1004;
+    Block.Ops = {Call, Return};
+    Low.Blocks = {Block};
+    std::map<va_t, SourceFunctionTypeHint> Hints{{0x2000, H}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceCalleeTypeHints(&Hints);
+    auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    size_t Calls = 0;
+    for (const auto &B : Med.Blocks)
+      for (const auto &Op : B.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          ++Calls;
+          EXPECT_EQ(Op.Addr, Call.Addr);
+          EXPECT_FALSE(Op.SourceCallHint);
+          EXPECT_EQ(Op.NumInputs, 1U);
+        }
+    EXPECT_EQ(Calls, 1U);
+    Med.SourceTypeHint = H;
+    inferMedTypes(Med, Arch::AArch64);
+    EXPECT_FALSE(Med.SourceTypeHint);
+    EXPECT_FALSE(Med.SourceParametersBound);
+  }
+}
+
+TEST(SourceAggregate, HighCRejectsUnprovedIndirectCopyEntriesAndCalls) {
+  for (unsigned Count : {6U, 16U}) {
+    auto H = declaration(
+        NdType::makeStruct(std::vector<TypeRef>(Count, NdType::makeFloat(8))));
+    H.ReturnType = NdType::makeVoid();
+    std::string Error;
+    ASSERT_TRUE(assignDarwinFixedSourceABI(H, Arch::AArch64, Error));
+    HighFunc F;
+    F.Entry = 0x1000;
+    F.Name = "unproved_record_copy";
+    F.ReturnType = NdType::makeVoid();
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    F.Body = {Return};
+    F.SourceTypeHint = H;
+    for (const auto &P : H.Parameters)
+      F.Params.push_back({P.Name, P.Type});
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    std::string C;
+    llvm::raw_string_ostream Out(C);
+    EXPECT_THROW(HighCEmitter().emit({F}, Out, Options), std::invalid_argument);
+    F.SourceTypeHint.reset();
+    F.Params.clear();
+    auto Call = HighExpr::makeCall("consume_transform", 0x2000,
+                                   {HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0x8000, 8)});
+    auto Binding = std::make_shared<SourceCallTypeHint>();
+    Binding->CallKind = SourceCallTypeHint::Kind::Native;
+    Binding->Signature = H;
+    Binding->TargetAddress = 0x2000;
+    Binding->TargetName = "consume_transform";
+    Call->Type = NdType::makeVoid();
+    Call->SourceCallHint = Binding;
+    HighStmt Invoke;
+    Invoke.Kind = StmtKind::Call;
+    Invoke.CallExpr = Call;
+    F.Body.insert(F.Body.begin(), Invoke);
+    EXPECT_THROW(HighCEmitter().emit({F}, Out, Options), std::invalid_argument);
+  }
 }
 
 TEST(SourceAggregate, IndirectResultEntryRequiresASeparateStorageProof) {

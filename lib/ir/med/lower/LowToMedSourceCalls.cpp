@@ -9,6 +9,7 @@
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
 
@@ -64,9 +65,10 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     if (auto It = ObjCBlockCaptureReceivers->find(Low.Entry);
         It != ObjCBlockCaptureReceivers->end())
       BlockCaptures = &It->second;
-  auto Hints = Image ? buildObjCSourceCallHints(*Image, Low, BlockParameters,
-                                                BlockCaptures)
-                     : std::map<va_t, SourceCallTypeHint>();
+  auto Hints =
+      Image ? buildObjCSourceCallHints(*Image, Low, BlockParameters,
+                                       BlockCaptures, SourceCalleeTypeHints)
+            : std::map<va_t, SourceCallTypeHint>();
   if (Image) {
     auto SwiftHints = buildSwiftValueWitnessCallHints(*Image, Low);
     for (auto &[Address, Hint] : SwiftHints) {
@@ -79,6 +81,18 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       auto [It, Inserted] = Hints.emplace(Address, std::move(Hint));
       if (!Inserted)
         Hints.erase(It);
+    }
+  }
+  if (Image) {
+    for (auto &[Address, Hint] :
+         buildSwiftConsumedInputCallHints(*Image, Low)) {
+      const auto Existing = Hints.find(Address);
+      if (Existing != Hints.end() &&
+          Existing->second.CallKind == Hint.CallKind &&
+          Existing->second.TargetAddress == Hint.TargetAddress &&
+          Existing->second.TargetName == Hint.TargetName &&
+          equalSourceABIs(Existing->second.Signature, Hint.Signature))
+        Existing->second.SwiftConsumedInput = Hint.SwiftConsumedInput;
     }
   }
   const SourceFunctionTypeHint *EntrySignature = nullptr;
@@ -239,7 +253,16 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       }
       std::string Diagnostic;
       if (!Hint || Hint->Signature.Architecture != TargetArch ||
-          !validateSourceABI(Hint->Signature, Diagnostic)) {
+          !validateSourceABI(Hint->Signature, Diagnostic) ||
+          // The ABI describes an address of a by-value copy. Until a call
+          // owns a separate copy-storage proof, leave the original operation
+          // unbound; a physical pointer is not its logical record argument.
+          (hasIndirectSourceParameters(Hint->Signature) &&
+           (!isObjCByValueCopyHint(*Hint, Low.Entry, TargetArch) ||
+            Op.Opcode != NdOp::CALL || !Op.Inputs[0].isConst() ||
+            Hint->ByValueCopy->Site.Instruction != Op.Addr ||
+            Hint->ByValueCopy->Site.Sequence != Op.OriginSeq ||
+            Hint->ByValueCopy->Site.StaticTarget != Op.Inputs[0].ConstVal))) {
         Ops.push_back(std::move(Op));
         continue;
       }

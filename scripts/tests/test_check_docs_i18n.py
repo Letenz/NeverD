@@ -48,6 +48,61 @@ class _OverlayView:
 
 
 class LocalizedDocumentationMatrixTests(unittest.TestCase):
+    def test_macos_guides_have_reviewed_examples_and_local_navigation(self) -> None:
+        errors: list[str] = []
+        i18n.validate_macos_guides(errors, i18n.RepositoryView(use_index=False))
+        self.assertEqual(errors, [])
+
+    def test_missing_macos_translation_is_rejected(self) -> None:
+        path = Path("docs/ar/macos-hvf.md")
+        view = i18n.RepositoryView(use_index=False)
+        exists = view.exists
+        read_text = view.read_text
+
+        def read_existing(p: Path) -> str:
+            if p == path:
+                raise FileNotFoundError(path)
+            return read_text(p)
+
+        errors: list[str] = []
+        with patch.object(view, "exists", side_effect=lambda p: p != path and exists(p)), \
+                patch.object(view, "read_text", side_effect=read_existing):
+            i18n.validate_matrix(errors, view)
+        self.assertTrue(any("missing localized documentation file" in error
+                            and str(path) in error for error in errors), errors)
+
+    def test_macos_source_change_requires_translation_review(self) -> None:
+        path = Path("docs/macos-hvf.md")
+        changed = path.read_text(encoding="utf-8") + "\nA changed source contract.\n"
+        errors: list[str] = []
+        i18n.validate_macos_guides(errors, _OverlayView({path: changed}))
+        stale = [error for error in errors if "Mac guide source revision differs" in error]
+        self.assertEqual(len(stale), len(i18n.LOCALES), errors)
+
+    def test_darwin_translated_command_drift_is_rejected(self) -> None:
+        path = Path("docs/ja/darwin-emulation.md")
+        changed = path.read_text(encoding="utf-8").replace(
+            "--require-darwin-backend hvf", "--require-darwin-backend kvm")
+        errors: list[str] = []
+        i18n.validate_macos_guides(errors, _OverlayView({path: changed}))
+        self.assertTrue(any("executable examples differ" in error for error in errors), errors)
+
+    def test_macos_index_cannot_fall_back_to_english(self) -> None:
+        path = Path("docs/fr/README.md")
+        changed = path.read_text(encoding="utf-8").replace(
+            "](macos-hvf.md)", "](../macos-hvf.md)")
+        errors: list[str] = []
+        i18n.validate_macos_guides(errors, _OverlayView({path: changed}))
+        self.assertTrue(any("missing local Mac guide link" in error for error in errors), errors)
+
+    def test_macos_selector_must_include_every_language(self) -> None:
+        path = Path("docs/ko/macos-hvf.md")
+        changed = path.read_text(encoding="utf-8").replace(
+            " | [Français](../fr/macos-hvf.md)", "")
+        errors: list[str] = []
+        i18n.validate_macos_guides(errors, _OverlayView({path: changed}))
+        self.assertTrue(any("language selector" in error for error in errors), errors)
+
     def test_readme_links_use_repository_paths_on_windows(self) -> None:
         source = Path(__file__).with_suffix('.def').read_text(encoding='utf-8')
         base, source_slug, canonical_slug, *cases = ast.literal_eval(
@@ -199,6 +254,8 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 Path("docs/driver-emulation.md"),
                 Path("docs/interpreter-recovery.md"),
                 Path("docs/mobile.md"),
+                Path("docs/macos-hvf.md"),
+                Path("docs/darwin-emulation.md"),
             },
         )
 

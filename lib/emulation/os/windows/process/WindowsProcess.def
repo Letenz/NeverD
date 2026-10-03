@@ -15,6 +15,8 @@ NEVERD_WINDOWS_PROCESS_VALUE(MaxImports, 4096)
 NEVERD_WINDOWS_PROCESS_VALUE(MaxName, 256)
 NEVERD_WINDOWS_PROCESS_VALUE(MaxCallbacks, 128)
 NEVERD_WINDOWS_PROCESS_VALUE(MaxStringUnits, 32767)
+NEVERD_WINDOWS_PROCESS_VALUE(EnvironmentCapacity, 0x10000)
+NEVERD_WINDOWS_PROCESS_VALUE(ErrorEnvironmentNotFound, 203)
 NEVERD_WINDOWS_PROCESS_VALUE(PointerSize, 8)
 NEVERD_WINDOWS_PROCESS_VALUE(WideSize, 2)
 NEVERD_WINDOWS_PROCESS_VALUE(DWordSize, 4)
@@ -59,6 +61,7 @@ NEVERD_WINDOWS_PROCESS_VALUE(ErrorInvalidUserBuffer, 1784)
 NEVERD_WINDOWS_PROCESS_VALUE(ErrorModuleNotFound, 126)
 NEVERD_WINDOWS_PROCESS_VALUE(HeapZeroMemory, 8)
 NEVERD_WINDOWS_PROCESS_VALUE(HeapNoSerialize, 1)
+NEVERD_WINDOWS_PROCESS_VALUE(HeapReallocInPlaceOnly, 0x10)
 NEVERD_WINDOWS_PROCESS_VALUE(DynamicTLSCount, 64)
 NEVERD_WINDOWS_PROCESS_VALUE(TLSOutOfIndexes, UINT32_MAX)
 NEVERD_WINDOWS_PROCESS_VALUE(DLLProcessAttach, 1)
@@ -109,6 +112,12 @@ NEVERD_WINDOWS_PROCESS_TEXT(TLS,
 NEVERD_WINDOWS_PROCESS_TEXT(Layout, "image overlaps reserved process memory")
 NEVERD_WINDOWS_PROCESS_TEXT(
     Strings, "invalid UTF-8, environment or oversized process strings")
+NEVERD_WINDOWS_PROCESS_TEXT(EnvironmentChanged,
+                            "unsupported process environment pointer or block")
+NEVERD_WINDOWS_PROCESS_TEXT(EnvironmentLimit,
+                            "process environment string limit exceeded")
+NEVERD_WINDOWS_PROCESS_TEXT(EnvironmentTimeout,
+                            "process environment operation exceeded deadline")
 NEVERD_WINDOWS_PROCESS_TEXT(Service, "unregistered Windows service entry")
 NEVERD_WINDOWS_PROCESS_TEXT(ServiceArguments,
                             "unsupported Windows API arguments: ")
@@ -149,7 +158,6 @@ NEVERD_WINDOWS_PROCESS_TEXT(DOSMagic, "MZ")
 #ifdef NEVERD_WINDOWS_PROCESS_VALUE
 NEVERD_WINDOWS_PROCESS_VALUE(AttachReturnGate, 0x71000010)
 NEVERD_WINDOWS_PROCESS_VALUE(DetachReturnGate, 0x71000020)
-NEVERD_WINDOWS_PROCESS_VALUE(FirstImportGate, 3)
 NEVERD_WINDOWS_PROCESS_VALUE(GateSize, 0x20000)
 NEVERD_WINDOWS_PROCESS_VALUE(DLLProcessDetach, 0)
 #endif
@@ -160,11 +168,16 @@ NEVERD_WINDOWS_PROCESS_TEXT(ReentrantExit,
 #ifdef NEVERD_WINDOWS_PROCESS_TEXT
 NEVERD_WINDOWS_PROCESS_TEXT(
     UserException,
-    "invalid API output pointer requires Windows user exception dispatch")
+    "invalid API pointer requires Windows user exception dispatch")
 NEVERD_WINDOWS_PROCESS_TEXT(
     LoaderDisagreement,
     "loader facts or original bytes disagree with PE execution admission")
 #endif
 #ifdef NEVERD_WINDOWS_PROCESS_VALUE
 NEVERD_WINDOWS_PROCESS_VALUE(MaxImportDescriptors, 4096)
+#endif
+
+#ifdef NEVERD_WINDOWS_PROCESS_TEXT
+NEVERD_WINDOWS_PROCESS_TEXT(HeapTimeout,
+                            "process heap operation exceeded deadline")
 #endif

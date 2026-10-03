@@ -49,7 +49,8 @@ inline bool objcSourceCallBound(
     const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
         *BlockParameterReceivers = nullptr,
     const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
-        *BlockCaptureReceivers = nullptr);
+        *BlockCaptureReceivers = nullptr,
+    bool NativeSwiftReceiverProved = false);
 
 struct ObjCSourceBindingResult {
   HighFunc Function;
@@ -158,6 +159,7 @@ inline bool samePhysicalSourceCall(const SourceFunctionTypeHint &Observed,
     const auto &Right = Declared.Parameters[I];
     if (Left.TheRole != SourceParameterTypeHint::Role::Ordinary ||
         Right.TheRole != SourceParameterTypeHint::Role::Ordinary ||
+        Left.IndirectByValue != Right.IndirectByValue ||
         !sameScalarCarrier(Left.Type, Right.Type) ||
         !sameSourceLocation(Left.Location, Right.Location) ||
         Left.Components.size() != Right.Components.size())
@@ -181,7 +183,8 @@ inline bool plainNativeBinding(const SourceCallTypeHint &Binding) {
          Binding.CanonicalBooleanInputs.empty() &&
          Binding.SwiftStringInputs.empty() && !Binding.Format &&
          !Binding.NilTerminated && !Binding.SwiftTypeMetadata &&
-         !Binding.Receiver && !Binding.SelectorResultUse &&
+         !Binding.Receiver && !Binding.NativeSwiftReceiver &&
+         !Binding.ByValueCopy && !Binding.SelectorResultUse &&
          !Binding.SelectorResultTypeUse && !Binding.SelectorArgumentTypeUse &&
          !Binding.SelectorForwardingUse &&
          !Binding.SelectorArgumentStorageUse &&
@@ -226,6 +229,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
              Expected.SwiftWitnessUndefDescriptor &&
          Binding.FunctionParameterCall == Expected.FunctionParameterCall &&
          Binding.ImmutableNativeCall == Expected.ImmutableNativeCall &&
+         Binding.ByValueCopy == Expected.ByValueCopy &&
          Binding.DoesNotReturn == Expected.DoesNotReturn &&
          Binding.WeakImport == Expected.WeakImport &&
          Binding.ReturnedArgument == Expected.ReturnedArgument &&
@@ -2058,6 +2062,15 @@ inline bool swiftImportedTypeDescriptor(const BinaryImage &Image, va_t Slot,
                                         llvm::StringRef Provider) {
   if (swiftSystemFrameworkNominalDescriptor(Symbol, Provider))
     return true;
+  // Swift 6.1.2 emits this nominal descriptor in symbolic type references;
+  // all four macOS/Mac Catalyst SDK targets export it from CoreFoundation's
+  // overlay, despite its CoreGraphics declaration context. Authenticate only
+  // the exact strong immutable import, never a module-name prefix or layout.
+  if (Image.Arch == Arch::AArch64 &&
+      Provider == "/usr/lib/swift/libswiftCoreFoundation.dylib" &&
+      Symbol == "_$s12CoreGraphics7CGFloatVMn" &&
+      isImmutableImageImportSlot(Image, Slot))
+    return true;
   // The bundled macOS SDK's libswiftDispatch TBD exports these descriptors for
   // public Dispatch option sets. A strong, immutable dyld bind supplies their
   // exact identity in the image; only that identity is used when rebuilding a
@@ -3090,7 +3103,10 @@ struct SwiftTypeMetadataPairProof {
 // remain unchanged.
 inline bool swiftDescriptorTypeRecipeMatches(
     llvm::StringRef MangledType, llvm::StringRef Recipe,
-    const std::vector<SwiftTypeMetadataDescriptorReference> &Descriptors) {
+    const std::vector<SwiftTypeMetadataDescriptorReference> &Descriptors,
+    bool *RequiresStructuredProof = nullptr) {
+  if (RequiresStructuredProof)
+    *RequiresStructuredProof = false;
   if ((Descriptors.size() != 2 && Descriptors.size() != 3) ||
       Descriptors[0].Offset != 0)
     return false;
@@ -3111,7 +3127,52 @@ inline bool swiftDescriptorTypeRecipeMatches(
       Descriptors[1].Offset == 6 && Descriptors[2].Offset == 12 &&
       ReferenceAt(0) && ReferenceAt(6) && ReferenceAt(12) && Recipe[5] == 'y' &&
       Recipe[11] == '_' && Recipe.substr(17) == "tG";
-  if (!StringKeyedGeneric && !NominalTuple && !TupleGeneric)
+  const bool NestedPairPrefix = Descriptors.size() == 2 &&
+                                Descriptors[1].Offset == 6 && ReferenceAt(0) &&
+                                ReferenceAt(6) && Recipe[5] == '_';
+  const bool NestedGenericPrefix =
+      Descriptors.size() == 3 && Descriptors[1].Offset == 6 &&
+      Descriptors[2].Offset == 12 && ReferenceAt(0) && ReferenceAt(6) &&
+      ReferenceAt(12) && Recipe[5] == 'y' && Recipe[11] == '_';
+  llvm::StringRef Tail = NestedPairPrefix      ? Recipe.drop_front(11)
+                         : NestedGenericPrefix ? Recipe.drop_front(17)
+                                               : llvm::StringRef{};
+  // Symbolic nominal references each occupy one substitution slot. Expanding
+  // their descriptor spellings introduces additional module/name slots: the
+  // raw AB/AC cannot be checked by textual concatenation, even if a forged
+  // cache/reference name happens to equal that expanded spelling.
+  std::string FirstLabel, SecondLabel;
+  const auto ReadLabel = [&](std::string &Label) {
+    if (Tail.empty() || !llvm::isDigit(Tail.front()))
+      return true;
+    if (Tail.front() == '0')
+      return false;
+    unsigned Length = 0;
+    while (!Tail.empty() && llvm::isDigit(Tail.front())) {
+      Length = Length * 10 + unsigned(Tail.front() - '0');
+      if (Length > 63)
+        return false;
+      Tail = Tail.drop_front();
+    }
+    if (!Length || Tail.size() < Length)
+      return false;
+    const auto Name = Tail.take_front(Length);
+    if ((!llvm::isAlpha(Name.front()) && Name.front() != '_') ||
+        !std::all_of(Name.begin(), Name.end(),
+                     [](char C) { return llvm::isAlnum(C) || C == '_'; }))
+      return false;
+    Label = Name.str();
+    Tail = Tail.drop_front(Length);
+    return true;
+  };
+  const bool RepeatedPrefix = (NestedPairPrefix || NestedGenericPrefix) &&
+                              ReadLabel(FirstLabel) && Tail.consume_front("_");
+  if (RequiresStructuredProof && RepeatedPrefix && Tail.starts_with("A"))
+    *RequiresStructuredProof = true;
+  const bool RepeatedTuple =
+      RepeatedPrefix && Tail.consume_front(NestedGenericPrefix ? "AC" : "AB") &&
+      ReadLabel(SecondLabel) && Tail == (NestedGenericPrefix ? "ttG" : "tt");
+  if (!StringKeyedGeneric && !NominalTuple && !TupleGeneric && !RepeatedTuple)
     return false;
   llvm::SwiftDemangleOptions Options;
   Options.MaxInputBytes = 8000;
@@ -3162,8 +3223,38 @@ inline bool swiftDescriptorTypeRecipeMatches(
            Same(Same, Tuple.Children[0].Children[0], First, 0) &&
            Same(Same, Tuple.Children[1].Children[0], Second, 0);
   };
+  const auto NestedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                 const llvm::SwiftDemangleNode &First,
+                                 const llvm::SwiftDemangleNode &Repeated) {
+    if (!Shape(Tuple, "Tuple", 2) ||
+        !Shape(Tuple.Children[0], "TupleElement", 1) ||
+        !Shape(Tuple.Children[1], "TupleElement", 1) ||
+        !Same(Same, Tuple.Children[0].Children[0], First, 0) ||
+        !Shape(Tuple.Children[1].Children[0], "Type", 1))
+      return false;
+    const auto &Nested = Tuple.Children[1].Children[0].Children[0];
+    if (!Shape(Nested, "Tuple", 2))
+      return false;
+    const std::string *Labels[] = {&FirstLabel, &SecondLabel};
+    for (size_t I = 0; I < 2; ++I) {
+      const auto &Element = Nested.Children[I];
+      const auto &Label = *Labels[I];
+      if (!Shape(Element, "TupleElement", Label.empty() ? 1 : 2) ||
+          !Same(Same, Element.Children.back(), Repeated, 0))
+        return false;
+      if (!Label.empty()) {
+        const auto &Name = Element.Children[0];
+        if (Name.Kind != "TupleElementName" || Name.Text != Label ||
+            Name.Index || !Name.Children.empty())
+          return false;
+      }
+    }
+    return true;
+  };
   if (NominalTuple)
     return TupleMatches(Type.Root->Children[0], OuterType, ValueType);
+  if (RepeatedTuple && NestedPairPrefix)
+    return NestedMatches(Type.Root->Children[0], OuterType, ValueType);
   const auto &Generic = Type.Root->Children[0];
   const auto &Kind = OuterType.Children[0].Kind;
   const llvm::StringRef GenericKind = Kind == "Class" ? "BoundGenericClass"
@@ -3173,10 +3264,11 @@ inline bool swiftDescriptorTypeRecipeMatches(
                                                        : "";
   if (GenericKind.empty() || !Shape(Generic, GenericKind, 2) ||
       !Shape(Generic.Children[0], "Type", 1) ||
-      !Shape(Generic.Children[1], "TypeList", TupleGeneric ? 1 : 2))
+      !Shape(Generic.Children[1], "TypeList",
+             TupleGeneric || RepeatedTuple ? 1 : 2))
     return false;
   const auto &Arguments = Generic.Children[1].Children;
-  if (TupleGeneric) {
+  if (TupleGeneric || RepeatedTuple) {
     const auto Second = Parse(Descriptors[2].Symbol);
     if (!Second.Root || !Second.Error.empty() ||
         !Shape(*Second.Root, "Global", 1) ||
@@ -3184,9 +3276,12 @@ inline bool swiftDescriptorTypeRecipeMatches(
         !Shape(Second.Root->Children[0].Children[0], "Type", 1) ||
         !Shape(Arguments[0], "Type", 1))
       return false;
-    return Same(Same, Generic.Children[0], OuterType, 0) &&
-           TupleMatches(Arguments[0].Children[0], ValueType,
-                        Second.Root->Children[0].Children[0]);
+    if (!Same(Same, Generic.Children[0], OuterType, 0))
+      return false;
+    const auto &SecondType = Second.Root->Children[0].Children[0];
+    return RepeatedTuple
+               ? NestedMatches(Arguments[0].Children[0], ValueType, SecondType)
+               : TupleMatches(Arguments[0].Children[0], ValueType, SecondType);
   }
   if (!Shape(Arguments[0], "Type", 1) || !Shape(Arguments[1], "Type", 1))
     return false;
@@ -3393,10 +3488,12 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     Rebuilt.append(reinterpret_cast<const char *>(TypeBytes + I), 5);
     I += 5;
   }
-  if (Rebuilt.size() > 256 ||
-      (Expanded == Base
-           ? !swiftMangledType(Expanded)
-           : !swiftDescriptorTypeRecipeMatches(Base, Rebuilt, Descriptors)))
+  bool RequiresStructuredProof = false;
+  const bool StructuredMatches = swiftDescriptorTypeRecipeMatches(
+      Base, Rebuilt, Descriptors, &RequiresStructuredProof);
+  if (Rebuilt.size() > 256 || (RequiresStructuredProof || Expanded != Base
+                                   ? !StructuredMatches
+                                   : !swiftMangledType(Expanded)))
     return std::nullopt;
 
   return SwiftTypeMetadataPairProof{
@@ -8326,7 +8423,8 @@ inline bool objcSourceCallBound(
     const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
         *BlockParameterReceivers,
     const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
-        *BlockCaptureReceivers) {
+        *BlockCaptureReceivers,
+    bool NativeSwiftReceiverProved) {
   using namespace objc_binding_detail;
   if (Expression.Kind != ExprKind::Call || !Expression.SourceCallHint ||
       Expression.IntrinsicId != Intrinsic::None ||
@@ -8334,6 +8432,14 @@ inline bool objcSourceCallBound(
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const auto &Binding = *Expression.SourceCallHint;
+  const bool NativeReceiver =
+      Binding.Receiver && Binding.Receiver->Origin ==
+                              ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf;
+  if ((Binding.NativeSwiftReceiver || NativeReceiver) &&
+      (!NativeSwiftReceiverProved || !Binding.NativeSwiftReceiver ||
+       !NativeReceiver ||
+       Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage))
+    return false;
   if (Binding.SwiftWitnessUndefDescriptor) {
     if (!ContainingFunction ||
         !swiftWitnessUndefDescriptor(*ContainingFunction, Expression, Image,
@@ -8510,9 +8616,20 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress)
     return false;
-  if (!validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
+  if (((hasIndirectSourceParameters(Hint) || Binding.ByValueCopy) &&
+       (!ContainingFunction || !NativeSwiftReceiverProved ||
+        !isObjCByValueCopyHint(Binding, ContainingFunction->Entry,
+                               Image.Arch))) ||
+      !validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
+  if (Binding.ByValueCopy) {
+    const auto &Copy = *Binding.ByValueCopy;
+    const auto Offset = privateFrameArgumentOffset(
+        Expression.Operands[Copy.Parameter], *ContainingFunction, Image.Arch);
+    if (!Offset || *Offset != Copy.FrameOffset)
+      return false;
+  }
   if (Binding.SelectorArgumentStorageUse) {
     const auto &Evidence = *Binding.SelectorArgumentStorageUse;
     if (!ContainingFunction || Evidence.Parameter >= Expression.Operands.size())

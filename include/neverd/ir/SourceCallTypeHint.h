@@ -17,6 +17,7 @@ namespace neverd {
 struct ObjCReceiverTypeHint {
   enum class OriginKind {
     MethodEntry,
+    NativeSwiftSelf,
     MethodParameter,
     BlockParameter,
     ClassReference,
@@ -320,6 +321,17 @@ struct SourceCallTypeHint {
   /// and image bytes, including its full reaching byte and call-effect states.
   std::optional<SwiftWitnessFrameOccurrence> SwiftWitnessFrame;
 
+  struct SwiftConsumedInputEvidence {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+    va_t MetadataSlot = 0;
+    va_t WitnessSlot = 0;
+    bool operator==(const SwiftConsumedInputEvidence &) const = default;
+  };
+  /// Type-specific input lifetime only; current frame and publication proofs
+  /// must revalidate this original call, all operands and their unique use.
+  std::optional<SwiftConsumedInputEvidence> SwiftConsumedInput;
+
   struct SwiftVirtualEvidence {
     va_t MethodEntry = 0;
     va_t CallSite = 0;
@@ -448,6 +460,22 @@ struct SourceCallTypeHint {
   /// For ObjCSuper2 this is the exact current-class reference stored in the
   /// objc_super record, not the dynamic receiver pointer.
   std::optional<ObjCReceiverTypeHint> Receiver;
+  /// Exact ordinary message occurrence whose receiver originates in a
+  /// separately declared native Swift entry. Publication redoes the entry,
+  /// machine/dataflow and emitted receiver proof; this is only a receipt.
+  std::optional<SourceCallOccurrenceKey> NativeSwiftReceiver;
+  /// A disposable private copy at the original message occurrence. This is
+  /// only a projection receipt: publication must repeat the current complete
+  /// frame, machine, entry and call proof before using its logical record.
+  struct ByValueCopyStorage {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+    unsigned Parameter = 0;
+    int64_t FrameOffset = 0;
+    uint32_t Bytes = 0;
+    bool operator==(const ByValueCopyStorage &) const = default;
+  };
+  std::optional<ByValueCopyStorage> ByValueCopy;
   /// An exact post-call integer-register read that uniquely selected one
   /// otherwise conflicting Objective-C selector declaration. This is machine
   /// dataflow evidence, not a source type guess; publication revalidates the
@@ -516,6 +544,16 @@ struct SourceCallTypeHint {
   /// Revalidate the complete slot and pool against the current image.
   va_t ImmutablePointerSlot = 0;
   std::optional<SourceFunctionTypeHint> AddressedFunctionABI;
+
+  /// These receipts bind one original machine call to one source evaluation.
+  /// A transformation may move that evaluation, but cannot duplicate the
+  /// receipt, even onto mutually exclusive paths. Publication still repeats
+  /// each owner's current proof; this predicate grants no source permission.
+  bool requiresUniqueSourceOccurrence() const {
+    return BooleanResult || FunctionParameterCall || ImmutableNativeCall ||
+           SwiftWitnessFrame || SwiftConsumedInput || Virtual ||
+           NativeSwiftReceiver || ByValueCopy;
+  }
 };
 
 } // namespace neverd

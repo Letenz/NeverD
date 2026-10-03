@@ -1,0 +1,88 @@
+//===- WindowsHeapCases.def - Independent heap resize contracts ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_HEAP_VALUE
+NEVERD_HEAP_VALUE(ExitStatus, 41)
+NEVERD_HEAP_VALUE(FailureStatus, 91)
+NEVERD_HEAP_VALUE(LastErrorSeed, 0x678)
+NEVERD_HEAP_VALUE(OutOfMemoryError, 8)
+NEVERD_HEAP_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_HEAP_VALUE(StderrSelector, 0xfffffff4)
+NEVERD_HEAP_VALUE(ModePrefix, '!')
+NEVERD_HEAP_VALUE(NativeTimeoutSeconds, 10)
+NEVERD_HEAP_VALUE(InstructionLimit, 500000)
+NEVERD_HEAP_VALUE(TimeoutMicroseconds, 20000000)
+NEVERD_HEAP_VALUE(PageSize, 0x1000)
+NEVERD_HEAP_VALUE(HeapZero, 8)
+NEVERD_HEAP_VALUE(HeapInPlace, 0x10)
+NEVERD_HEAP_VALUE(HeapException, 4)
+NEVERD_HEAP_VALUE(HeapUnknown, 0x80000000)
+NEVERD_HEAP_VALUE(HeapAlignment, 16)
+NEVERD_HEAP_VALUE(SmallSize, 257)
+NEVERD_HEAP_VALUE(MediumSize, 769)
+NEVERD_HEAP_VALUE(LargeSize, 0x1017)
+NEVERD_HEAP_VALUE(TinySize, 17)
+NEVERD_HEAP_VALUE(PatternSeed, 0x5a)
+NEVERD_HEAP_VALUE(Poison, 0x9d)
+NEVERD_HEAP_VALUE(RepeatCount, 48)
+NEVERD_HEAP_VALUE(DirectLimit, 0x20000)
+NEVERD_HEAP_VALUE(LimitedMemory, 0xc0000)
+NEVERD_HEAP_VALUE(LimitedStack, 0x10000)
+#endif
+#ifdef NEVERD_HEAP_TEXT
+NEVERD_HEAP_TEXT(ProgramFile, "heap.exe")
+NEVERD_HEAP_TEXT(X64Dir, "X64")
+NEVERD_HEAP_TEXT(AArch64Dir, "AArch64")
+NEVERD_HEAP_TEXT(TempPrefix, "neverd-process-heap")
+NEVERD_HEAP_TEXT(StdoutFile, "stdout.bin")
+NEVERD_HEAP_TEXT(StderrFile, "stderr.bin")
+NEVERD_HEAP_TEXT(NativeOnly, "requires native Windows x64")
+NEVERD_HEAP_TEXT(MissingTools, "requires Clang and lld-link heap fixtures")
+NEVERD_HEAP_TEXT(ObservationLabel, "Heap observations: ")
+NEVERD_HEAP_TEXT(SnapshotArgument, "!E")
+NEVERD_HEAP_TEXT(ReclaimArgument, "!R")
+#endif
+#ifdef NEVERD_HEAP_MODE
+NEVERD_HEAP_MODE(ResizeMode, 'S')
+NEVERD_HEAP_MODE(FailureMode, 'F')
+NEVERD_HEAP_MODE(ZeroMode, 'Z')
+NEVERD_HEAP_MODE(InPlaceMode, 'I')
+NEVERD_HEAP_MODE(ReclaimMode, 'R')
+NEVERD_HEAP_MODE(SnapshotMode, 'E')
+#endif
+#ifdef NEVERD_HEAP_CASE
+NEVERD_HEAP_CASE(Resize, "!S", "0100000078060000")
+NEVERD_HEAP_CASE(
+    Failure, "!F",
+    "00000000080000000000000008000000000000000800000000000000080000000000000008"
+    "0000000000000008000000000000000800000000000000080000000100000008000000")
+NEVERD_HEAP_CASE(Zero, "!Z", "0100000078060000")
+NEVERD_HEAP_CASE(InPlace, "!I", "0100000078060000")
+NEVERD_HEAP_CASE(Reclaim, "!R", "0100000078060000")
+#endif
+#ifdef NEVERD_HEAP_API
+NEVERD_HEAP_API(ExitProcess)
+NEVERD_HEAP_API(GetCommandLineW)
+NEVERD_HEAP_API(GetStdHandle)
+NEVERD_HEAP_API(WriteFile)
+NEVERD_HEAP_API(GetLastError)
+NEVERD_HEAP_API(SetLastError)
+NEVERD_HEAP_API(GetProcessHeap)
+NEVERD_HEAP_API(HeapAlloc)
+NEVERD_HEAP_API(HeapReAlloc)
+NEVERD_HEAP_API(HeapFree)
+NEVERD_HEAP_API(HeapSize)
+NEVERD_HEAP_API(GetEnvironmentStringsW)
+#endif
+#ifdef NEVERD_HEAP_BUILD
+NEVERD_HEAP_BUILD(OutputDirectory, "windows-heap-fixtures")
+NEVERD_HEAP_BUILD(X64Target, "x86_64-pc-windows-msvc")
+NEVERD_HEAP_BUILD(AArch64Target, "aarch64-pc-windows-msvc")
+NEVERD_HEAP_BUILD(X64Machine, "x64")
+NEVERD_HEAP_BUILD(AArch64Machine, "arm64")
+NEVERD_HEAP_BUILD(ProgramEntry, "entry")
+NEVERD_HEAP_BUILD(ProgramBase, "0x140000000")
+NEVERD_HEAP_BUILD(ProviderFile, "kernel32.dll")
+#endif

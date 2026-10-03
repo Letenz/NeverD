@@ -247,6 +247,194 @@ TEST(SymExpr, StructuralOperatorsCollapseWhereTheyCan) {
       16u);
 }
 
+TEST(SymExpr, NonLowBitwiseWindowsRetainProvedConstants) {
+  for (unsigned Width : {16u, 32u, 64u, 128u, 256u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width);
+    const unsigned Low = Width - 8;
+    const auto Mask = llvm::APInt::getBitsSet(Width, Low, Width);
+    const auto Literal = llvm::APInt(Width, 0x5a).shl(Low);
+    auto Slice = [&](SymRef Value) {
+      return Ctx.constantWindow(Value, Low, 8);
+    };
+    EXPECT_EQ(Slice(Ctx.mkAnd(X, Ctx.mkConst(~Mask))),
+              std::optional<llvm::APInt>(llvm::APInt(8, 0)));
+    EXPECT_EQ(Slice(Ctx.mkOr(X, Ctx.mkConst(Mask))),
+              std::optional<llvm::APInt>(llvm::APInt(8, 0xff)));
+    EXPECT_EQ(Slice(Ctx.mkXor(Ctx.mkAnd(X, Ctx.mkConst(~Mask)),
+                              Ctx.mkConst(Literal))),
+              std::optional<llvm::APInt>(llvm::APInt(8, 0x5a)));
+    EXPECT_EQ(Slice(Ctx.mkNot(Ctx.mkOr(X, Ctx.mkConst(Mask)))),
+              std::optional<llvm::APInt>(llvm::APInt(8, 0)));
+    EXPECT_FALSE(Slice(Ctx.mkXor(X, Ctx.mkConst(Literal))));
+  }
+}
+
+TEST(SymExpr, ConstantWindowsFollowStructuralCarriersWithoutLosingUnknowns) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 8);
+  SymRef Y = Ctx.mkVar("y", 8);
+  SymRef Wide = Ctx.mkZExt(X, 32);
+  EXPECT_EQ(Ctx.constantWindow(Ctx.mkNot(Wide), 8, 16),
+            std::optional<llvm::APInt>(llvm::APInt(16, 0xffff)));
+  SymRef Packed = Ctx.mkConcat(Ctx.mkConst(8, 0xa5), X);
+  EXPECT_EQ(Ctx.constantWindow(Ctx.mkXor(Packed, Ctx.mkZExt(Y, 16)), 8, 8),
+            std::optional<llvm::APInt>(llvm::APInt(8, 0xa5)));
+  SymRef Crossed = Ctx.mkExtract(Ctx.mkNot(Wide), 4, 24);
+  SymRef Mixed = Ctx.mkXor(Crossed, Ctx.mkZExt(Y, 24));
+  EXPECT_EQ(Ctx.constantWindow(Mixed, 12, 8),
+            std::optional<llvm::APInt>(llvm::APInt(8, 0xff)));
+
+  const SymRef Unknown[] = {
+      Ctx.mkExtract(Ctx.mkNot(Wide), 7, 2),
+      Ctx.mkExtract(Ctx.mkNot(Ctx.mkSExt(X, 32)), 8, 8),
+      Ctx.mkExtract(Ctx.mkXor(Packed, Ctx.mkZExt(Y, 16)), 4, 8)};
+  for (SymRef Value : Unknown)
+    EXPECT_FALSE(Ctx.constantWindow(Value, 0, Ctx.width(Value)));
+  for (uint64_t A = 0; A != 256; ++A) {
+    uint64_t Values[] = {A, A ^ 0x5a};
+    EXPECT_EQ(Ctx.evalU64(Unknown[0], Values), ((~A) >> 7) & 3);
+    EXPECT_EQ(Ctx.evalU64(Unknown[1], Values), A < 128 ? 0xffu : 0u);
+    EXPECT_EQ(Ctx.evalU64(Unknown[2], Values),
+              (((0xa500 | A) ^ (A ^ 0x5a)) >> 4) & 0xff);
+  }
+}
+
+TEST(SymExpr, NonLowBitwiseWindowsMatchEverySmallInputAndMask) {
+  for (unsigned M = 0; M != 16; ++M)
+    for (unsigned N = 0; N != 16; ++N) {
+      SymContext Ctx;
+      SymRef X = Ctx.mkVar("x", 4), Y = Ctx.mkVar("y", 4);
+      SymRef MX = Ctx.mkAnd(X, Ctx.mkConst(4, M));
+      SymRef NY = Ctx.mkOr(Y, Ctx.mkConst(4, N));
+      const SymRef Expressions[] = {Ctx.mkAnd(MX, NY), Ctx.mkOr(MX, NY),
+                                    Ctx.mkXor(MX, NY), Ctx.mkNot(MX)};
+      for (unsigned Low = 1; Low != 4; ++Low)
+        for (unsigned Bits = 1; Bits <= 4 - Low; ++Bits) {
+          const uint64_t Mask = (1u << Bits) - 1;
+          llvm::SmallVector<std::optional<llvm::APInt>, 4> Windows;
+          for (SymRef Expression : Expressions)
+            Windows.push_back(Ctx.constantWindow(Expression, Low, Bits));
+          for (uint64_t A = 0; A != 16; ++A)
+            for (uint64_t B = 0; B != 16; ++B) {
+              const uint64_t Expected[] = {(A & M) & (B | N), (A & M) | (B | N),
+                                           (A & M) ^ (B | N), ~(A & M)};
+              for (unsigned I = 0; I != std::size(Expected); ++I)
+                if (Windows[I])
+                  ASSERT_EQ(Windows[I]->getZExtValue(),
+                            (Expected[I] >> Low) & Mask)
+                      << A << ',' << B << ',' << M << ',' << N << ',' << Low
+                      << ',' << Bits << ',' << I;
+            }
+        }
+    }
+}
+
+TEST(SymExpr, ConstantWindowSearchDoesNotExpandDeepOrWideUnknownExpressions) {
+  SymContext Ctx;
+  SymRef Root = Ctx.mkVar("root", 64);
+  for (unsigned I = 0; I != 96; ++I) {
+    SymRef Other = Ctx.mkFreshVar(64, "other");
+    Root = I % 2 ? Ctx.mkOr(Root, Other) : Ctx.mkAnd(Root, Other);
+  }
+  llvm::SmallVector<SymRef, 512> Wide;
+  for (unsigned I = 0; I != 512; ++I)
+    Wide.push_back(Ctx.mkFreshVar(64, "wide"));
+  SymRef Many = Ctx.mkXor(Wide);
+  for (SymRef Value : {Root, Many}) {
+    const size_t Before = Ctx.numNodes();
+    EXPECT_FALSE(Ctx.constantWindow(Value, 17, 13));
+    EXPECT_EQ(Ctx.numNodes(), Before);
+  }
+}
+
+TEST(SymExpr, ConstantWindowBudgetIncludesWideConstantsAndDepthRejections) {
+  SymContext Ctx;
+  constexpr unsigned Width = 64 * 512;
+  SymRef Wide = Ctx.mkAnd(Ctx.mkVar("wide", Width),
+                          Ctx.mkConst(llvm::APInt::getLowBitsSet(Width, 16)));
+  // A small result must not authorize copying an arbitrarily wide constant.
+  EXPECT_FALSE(Ctx.constantWindow(Wide, 20, 8));
+
+  for (unsigned Count : {4u, 512u}) {
+    SymContext Local;
+    llvm::SmallVector<SymRef, 512> Operands;
+    for (unsigned I = 0; I != Count; ++I)
+      Operands.push_back(Local.mkFreshVar(64, "leaf"));
+    SymRef Deep = Local.mkXor(Operands);
+    // The wide node sits at depth 31, just before the recursion cutoff.
+    for (unsigned I = 0; I != 30; ++I) {
+      SymRef Other = Local.mkFreshVar(64, "other");
+      Deep = I % 2 ? Local.mkAnd(Deep, Other) : Local.mkOr(Deep, Other);
+    }
+    SymRef Known = Local.mkNot(Local.mkZExt(Local.mkFreshVar(8, "low"), 64));
+    SymRef Root = Local.mkOr(Deep, Known);
+    ASSERT_EQ(Local.operand(Root, 0), Deep);
+    const size_t Before = Local.numNodes();
+    auto Window = Local.constantWindow(Root, 16, 8);
+    if (Count == 4)
+      EXPECT_EQ(Window, std::optional<llvm::APInt>(llvm::APInt(8, 0xff)));
+    else
+      EXPECT_FALSE(Window);
+    EXPECT_EQ(Local.numNodes(), Before);
+  }
+}
+
+TEST(SymExpr, ConstantWindowRejectsInvalidAndOversizedQueries) {
+  SymContext Ctx;
+  SymRef Value = Ctx.mkConst(128, 123);
+  const size_t Before = Ctx.numNodes();
+  EXPECT_FALSE(Ctx.constantWindow({}, 0, 8));
+  EXPECT_FALSE(Ctx.constantWindow(SymRef(uint32_t(Before + 1)), 0, 8));
+  EXPECT_FALSE(Ctx.constantWindow(Value, 0, 0));
+  EXPECT_FALSE(Ctx.constantWindow(Value, 0, 65));
+  EXPECT_FALSE(Ctx.constantWindow(Value, 127, 2));
+  EXPECT_FALSE(Ctx.constantWindow(Value, UINT32_MAX, 8));
+  EXPECT_EQ(Ctx.constantWindow(Value, 64, 64),
+            std::optional<llvm::APInt>(llvm::APInt(64, 0)));
+  EXPECT_EQ(Ctx.numNodes(), Before);
+}
+
+TEST(SymExpr, ConstantWindowsDoNotProjectAcrossArithmeticCarries) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 16);
+  SymRef Sum = Ctx.mkAdd(X, Ctx.mkOne(16));
+  SymRef Window = Ctx.mkExtract(Ctx.mkNot(Sum), 8, 8);
+  EXPECT_FALSE(Ctx.constantWindow(Window, 0, 8));
+  for (uint64_t A : {0u, 0xfeu, 0xffu, 0x100u, 0x7fffu, 0xffffu}) {
+    uint64_t Values[] = {A};
+    EXPECT_EQ(Ctx.evalU64(Window, Values), (~(A + 1) >> 8) & 0xff);
+  }
+}
+
+TEST(SymExpr, ByteStateReassemblyPreservesMixedKnownAndUnknownWindows) {
+  for (unsigned Width : {16u, 32u, 64u, 128u, 256u}) {
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width);
+    const auto Mask = llvm::APInt::getSplat(Width, llvm::APInt(16, 0x00ff));
+    const auto Fixed = llvm::APInt::getSplat(Width, llvm::APInt(16, 0xa500));
+    SymRef Word = Ctx.mkOr(Ctx.mkAnd(X, Ctx.mkConst(Mask)), Ctx.mkConst(Fixed));
+    llvm::SmallVector<SymRef, 32> Bytes;
+    for (unsigned Low = Width; Low != 0; Low -= 8) {
+      SymRef Byte = Ctx.mkExtract(Word, Low - 8, 8);
+      if (Low % 16 == 0)
+        EXPECT_EQ(Ctx.constantWindow(Byte, 0, 8),
+                  std::optional<llvm::APInt>(llvm::APInt(8, 0xa5)));
+      else
+        EXPECT_FALSE(Ctx.constantWindow(Byte, 0, 8));
+      Bytes.push_back(Byte);
+    }
+    SymRef Roundtrip = Ctx.mkConcat(Bytes);
+    EXPECT_EQ(Roundtrip, Word);
+    for (unsigned A = 0; A != 256; ++A) {
+      const auto Value = llvm::APInt::getSplat(Width, llvm::APInt(8, A));
+      llvm::APInt Values[] = {Value};
+      EXPECT_EQ(Ctx.eval(Roundtrip, Values), (Value & Mask) | Fixed);
+    }
+  }
+}
+
 TEST(SymExpr, LowPrefixProjectsModularArithmeticAndBitwiseOperations) {
   for (uint32_t Width : {1u, 3u, 8u, 16u, 32u, 64u, 128u, 256u}) {
     SCOPED_TRACE(Width);

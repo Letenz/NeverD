@@ -1,7 +1,10 @@
 #include "gtest/gtest.h"
 
+#include "neverd/ir/SourceABI.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/SourceFrameAnalysis.h"
 #include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
 
@@ -98,6 +101,180 @@ NativeSourceCalls callsAt(va_t Address, const SourceFunctionTypeHint &Signature,
   return {{*nativeSourceCallKey(Call), Contract}};
 }
 } // namespace
+
+TEST(SourceFrameAnalysis, VolatileEntryIdentitySurvivesOnlyCompleteSpills) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mutation);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Carrier =
+          Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::R10;
+      const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+      const auto FrameBytes = Architecture == Arch::AArch64 ? 32 : 24;
+      const auto Input = NdVar::reg(Carrier, 8);
+      SourceFunctionTypeHint Empty;
+      Empty.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Empty.ReturnType = NdType::makeVoid();
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Empty, Architecture, Error));
+      auto Forward = Empty;
+      Forward.Parameters.push_back(
+          {"input",
+           NdType::makeInt(8),
+           {SourceABICarrierKind::IntegerRegister, Carrier, 0, 8}});
+      LowFunc F;
+      F.Entry = 0x1000;
+      LowBlock B;
+      B.Id = 0;
+      B.StartAddr = F.Entry;
+      B.Ops = {op(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(FrameBytes, 8)},
+                  0x1000),
+               op(NdOp::STORE, {}, {Stack, Input}, 0x1004),
+               op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)}, 0x1008),
+               op(NdOp::LOAD, Input, {Stack}, 0x100c),
+               op(NdOp::CALL, {}, {NdVar::cst(0x3000, 8)}, 0x1010),
+               op(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(FrameBytes, 8)},
+                  0x1014),
+               op(NdOp::RETURN, {}, {}, 0x1018)};
+      NativeSourceCallContract First, Second;
+      First.Signature = &Empty;
+      Second.Signature = &Forward;
+      NativeSourceCalls Calls{{*nativeSourceCallKey(B.Ops[2]), First},
+                              {*nativeSourceCallKey(B.Ops[4]), Second}};
+      if (Mutation == 1)
+        B.Ops[3] = op(NdOp::COPY, Input, {NdVar::scalar(0, 8)}, 0x100c);
+      if (Mutation == 2)
+        B.Ops[3].Output.Size = 4;
+      if (Mutation == 3)
+        B.Ops[1].Inputs[1].Size = 4;
+      if (Mutation == 4) {
+        B.Ops[3] = op(NdOp::COPY, Input, {Input}, 0x100c);
+      }
+      if (Mutation == 5) {
+        Forward.Parameters[0].Type = NdType::makeInt(4);
+        Forward.Parameters[0].Location.ValueBytes = 4;
+      }
+      if (Mutation == 6)
+        B.Ops.insert(B.Ops.begin() + 3,
+                     op(NdOp::STORE, {}, {Stack, NdVar::scalar(0, 1)}, 0x100a));
+      if (Mutation == 7)
+        B.Ops.insert(B.Ops.begin() + 1,
+                     op(NdOp::COPY, Input, {NdVar::scalar(0, 4)}, 0x1002));
+      if (Mutation == 8) {
+        // An unrelated callee-save write must still invalidate restoration.
+        const auto Preserved =
+            Architecture == Arch::AArch64 ? a64reg::X19 : x86reg::RBX;
+        B.Ops.insert(B.Ops.begin(), op(NdOp::COPY, NdVar::reg(Preserved, 8),
+                                       {NdVar::scalar(0, 8)}, 0x1000));
+      }
+      if (TRI.LinkRegister) {
+        const auto Address = NdVar::tmp(300, 8);
+        const auto Link = NdVar::reg(TRI.LinkRegister, 8);
+        const auto Save =
+            std::find_if(B.Ops.begin(), B.Ops.end(),
+                         [](const LowOp &O) { return O.Opcode == NdOp::CALL; });
+        B.Ops.insert(Save, {op(NdOp::INT_ADD, Address,
+                               {Stack, NdVar::scalar(16, 8)}, 0x1006),
+                            op(NdOp::STORE, {}, {Address, Link}, 0x1006)});
+        B.Ops.insert(
+            B.Ops.end() - 2,
+            {op(NdOp::INT_ADD, Address, {Stack, NdVar::scalar(16, 8)}, 0x1012),
+             op(NdOp::LOAD, Link, {Address}, 0x1012)});
+        B.Ops.back().addInput(Link);
+      }
+      F.Blocks.push_back(std::move(B));
+      std::set<uint64_t> Used;
+      const bool Valid =
+          restoresNativeSourceState(F, Architecture, Calls, &Used);
+      if (Mutation == 8) {
+        EXPECT_FALSE(Valid);
+      } else {
+        ASSERT_TRUE(Valid);
+        EXPECT_EQ(Used.count(Carrier), Mutation == 0 ? 1U : 0U);
+      }
+    }
+}
+
+TEST(SourceFrameAnalysis, VolatileEntryUsesMeetEveryPathAndLoopBackedge) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mutation);
+      const auto Carrier =
+          Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::R10;
+      const auto Input = NdVar::reg(Carrier, 8);
+      SourceFunctionTypeHint ABI;
+      ABI.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      ABI.ReturnType = NdType::makeVoid();
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(ABI, Architecture, Error));
+      ABI.Parameters.push_back(
+          {"input",
+           NdType::makeInt(8),
+           {SourceABICarrierKind::IntegerRegister, Carrier, 0, 8}});
+      LowFunc F;
+      F.Entry = 0x1000;
+      F.Blocks.resize(5);
+      for (unsigned I = 0; I < 5; ++I) {
+        F.Blocks[I].Id = I;
+        F.Blocks[I].StartAddr = 0x1000 + 0x100 * I;
+      }
+      F.Blocks[0].Succs = {1, 2};
+      F.Blocks[0].Ops = {
+          op(NdOp::COPY, NdVar::tmp(300, 8), {NdVar::scalar(0, 8)}, 0x1000)};
+      for (unsigned I : {1, 2}) {
+        F.Blocks[I].Preds = {0};
+        F.Blocks[I].Succs = {3};
+        F.Blocks[I].Ops = {
+            op(NdOp::COPY, Input, {Input}, F.Blocks[I].StartAddr)};
+      }
+      F.Blocks[3].Preds = {1, 2};
+      F.Blocks[3].Succs = {4};
+      F.Blocks[3].Ops = {op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)}, 0x1300)};
+      F.Blocks[4].Preds = {3};
+      F.Blocks[4].Ops = {op(NdOp::RETURN, {}, {}, 0x1400)};
+      const auto &TRI = getTargetRegInfo(Architecture);
+      if (TRI.LinkRegister) {
+        const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+        const auto Link = NdVar::reg(TRI.LinkRegister, 8);
+        F.Blocks[0].Ops = {
+            op(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(32, 8)}, 0x1000),
+            op(NdOp::STORE, {}, {Stack, Link}, 0x1004)};
+        F.Blocks[4].Ops = {
+            op(NdOp::LOAD, Link, {Stack}, 0x1400),
+            op(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(32, 8)}, 0x1404),
+            op(NdOp::RETURN, {}, {Link}, 0x1408)};
+      } else {
+        const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+        F.Blocks[0].Ops = {
+            op(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(24, 8)}, 0x1000)};
+        F.Blocks[4].Ops.insert(
+            F.Blocks[4].Ops.begin(),
+            op(NdOp::INT_ADD, Stack, {Stack, NdVar::scalar(24, 8)}, 0x1400));
+      }
+      NativeSourceCallContract Call;
+      Call.Signature = &ABI;
+      NativeSourceCalls Calls{{*nativeSourceCallKey(F.Blocks[3].Ops[0]), Call}};
+      if (Mutation == 1 || Mutation == 2)
+        F.Blocks[1].Ops[0] =
+            op(NdOp::COPY, NdVar::reg(Carrier, Mutation == 1 ? 8 : 4),
+               {NdVar::scalar(0, Mutation == 1 ? 8 : 4)}, 0x1100);
+      if (Mutation == 3) {
+        F.Blocks[1].Ops[0].Inputs[0] =
+            NdVar::reg(getTargetRegInfo(Architecture).IntParamRegs[0], 8);
+      }
+      if (Mutation == 4) {
+        F.Blocks[3].Preds.push_back(3);
+        F.Blocks[3].Succs.push_back(3);
+      }
+      if (Mutation == 5)
+        std::reverse(F.Blocks.begin(), F.Blocks.end());
+      std::set<uint64_t> Used;
+      ASSERT_TRUE(restoresNativeSourceState(F, Architecture, Calls, &Used));
+      EXPECT_EQ(Used.count(Carrier), Mutation == 0 || Mutation == 5 ? 1U : 0U);
+    }
+}
 
 TEST(SourceFrameAnalysis,
      ReturnsTheOriginalDefinitionWithoutPublishingAnAddress) {
@@ -931,4 +1108,348 @@ TEST(SourceFrameAnalysis, PrefixQueryRequiresRetainedRecordsAlreadyClosed) {
       }
       EXPECT_EQ(bool(F.query(Calls)), Closed || Flags < 32);
     }
+}
+
+namespace {
+struct RecordCopyFixture {
+  LowFunc Low;
+  SourceFunctionTypeHint Entry, Producer, Transform, Consumer;
+  NativeSourceCalls Calls;
+  NativeSourceCallKey Site;
+  const NdVar X1 = NdVar::reg(a64reg::X1, 8);
+  const NdVar X2 = NdVar::reg(a64reg::X2, 8);
+  const NdVar X8 = NdVar::reg(a64reg::X8, 8);
+  const NdVar X9 = NdVar::reg(a64reg::X9, 8);
+  const NdVar LR = NdVar::reg(a64reg::X30, 8);
+  va_t Next = 0x2000;
+  RecordCopyFixture() {
+    Low.Entry = Next;
+    LowBlock B;
+    B.Id = 0;
+    B.StartAddr = Low.Entry;
+    Low.Blocks.push_back(B);
+    Entry = signature(0);
+    Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Producer = signature(0);
+    Producer.ReturnType =
+        NdType::makeStruct(std::vector<TypeRef>(16, NdType::makeFloat(8)));
+    std::string Error;
+    EXPECT_TRUE(assignDarwinFixedSourceABI(Producer, Arch::AArch64, Error));
+    Transform = Producer;
+    Transform.Parameters = {{"input", NdType::makePtr(NdType::makeVoid())}};
+    EXPECT_TRUE(assignDarwinFixedSourceABI(Transform, Arch::AArch64, Error));
+    Consumer = signature(2);
+    Consumer.Parameters.push_back({"record", Producer.ReturnType});
+    EXPECT_TRUE(assignDarwinFixedSourceABI(Consumer, Arch::AArch64, Error));
+    add(NdOp::INT_SUB, SP, {SP, NdVar::scalar(288, 8)});
+    address(X9, 272);
+    add(NdOp::STORE, {}, {X9, LR});
+    address(X8, 128);
+    SourceFrameEffects Write;
+    Write.InitializesIndirectResult = true;
+    call(Producer, Write);
+    address(X8, 0);
+    address(X0, 128);
+    Write.WritableFrameParameters[0] = 128;
+    Write.InitializedFrameParameters.insert(0);
+    call(Transform, Write);
+    add(NdOp::COPY, X0, {NdVar::scalar(0, 8)});
+    add(NdOp::COPY, X1, {NdVar::scalar(0x8000, 8)});
+    address(X2, 0);
+    SourceFrameEffects Copy;
+    Copy.ByValueFrameParameters.insert(2);
+    Site = call(Consumer, Copy);
+    epilogue();
+  }
+  void add(NdOp Opcode, NdVar Output, std::initializer_list<NdVar> Inputs) {
+    Low.Blocks[0].Ops.push_back(op(Opcode, Output, Inputs, Next));
+    Next += 4;
+  }
+  void address(NdVar Output, unsigned Offset) {
+    add(NdOp::INT_ADD, Output, {SP, NdVar::scalar(Offset, 8)});
+  }
+  NativeSourceCallKey call(const SourceFunctionTypeHint &ABI,
+                           const SourceFrameEffects &Effects) {
+    add(NdOp::CALL, X0, {NdVar::cst(0x4000, 8)});
+    const auto Key = *nativeSourceCallKey(Low.Blocks[0].Ops.back());
+    Calls.merge(callsAt(Key.Instruction, ABI, Effects));
+    return Key;
+  }
+  void epilogue() {
+    address(X9, 272);
+    add(NdOp::LOAD, LR, {X9});
+    add(NdOp::INT_ADD, SP, {SP, NdVar::scalar(288, 8)});
+    add(NdOp::RETURN, {}, {LR});
+  }
+  auto query() const {
+    return sourceFrameByValueCopies(Low, Arch::AArch64, Calls, Site, Entry);
+  }
+};
+} // namespace
+
+TEST(SourceFrameAnalysis, ProvesInitializedCopiesFromIndependentResultEffects) {
+  RecordCopyFixture F;
+  ASSERT_TRUE(F.query());
+  EXPECT_EQ(*F.query(), (std::vector<SourceFrameByValueCopy>{{2, -288, 128}}));
+  EXPECT_TRUE(restoresNativeSourceState(F.Low, Arch::AArch64, F.Calls));
+  EXPECT_FALSE(
+      sourceFrameByValueCopies(F.Low, Arch::X64, F.Calls, F.Site, F.Entry));
+  auto Wrong = F.Site;
+  ++Wrong.Sequence;
+  EXPECT_FALSE(
+      sourceFrameByValueCopies(F.Low, Arch::AArch64, F.Calls, Wrong, F.Entry));
+  // An effect is independent evidence, not an implication of the return ABI.
+  F.Calls.begin()->second.InitializesIndirectResult = false;
+  EXPECT_FALSE(F.query());
+}
+
+TEST(SourceFrameAnalysis, CopyQueryAcceptsCompleteDeclaredEntryABI) {
+  RecordCopyFixture F;
+  F.Entry.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  ASSERT_TRUE(F.query());
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Entry = F.Entry;
+    if (Case == 0)
+      Entry.Architecture = Arch::X64;
+    if (Case == 1)
+      Entry.Parameters.push_back(
+          {"missing", NdType::makePtr(NdType::makeVoid())});
+    if (Case == 2)
+      Entry = F.Producer;
+    if (Case == 3)
+      Entry = F.Consumer;
+    EXPECT_FALSE(
+        sourceFrameByValueCopies(F.Low, Arch::AArch64, F.Calls, F.Site, Entry));
+  }
+}
+
+TEST(SourceFrameAnalysis, CopyEffectsKeepPointerAndRecordPermissionsDistinct) {
+  RecordCopyFixture F;
+  const auto Valid =
+      static_cast<const SourceFrameEffects &>(F.Calls.at(F.Site));
+  EXPECT_TRUE(sourceFrameEffectsMatchABI(Valid, F.Consumer));
+  for (unsigned Case = 0; Case < 10; ++Case) {
+    SCOPED_TRACE(Case);
+    auto ABI = F.Consumer;
+    auto Effects = Valid;
+    if (Case == 0)
+      Effects.ByValueFrameParameters = {0};
+    if (Case == 1)
+      Effects.ByValueFrameParameters = {3};
+    if (Case == 2)
+      Effects.ReadOnlyFrameParameters[2] = 128;
+    if (Case == 3)
+      Effects.WritableFrameParameters[2] = 128;
+    if (Case == 4)
+      Effects.InitializedFrameParameters = {2};
+    if (Case == 5)
+      Effects.InitializesIndirectResult = true;
+    if (Case == 6)
+      ABI.Parameters[2].Location.ValueBytes = 4;
+    if (Case == 7)
+      ABI.Parameters[2].Type = NdType::makePtr(NdType::makeVoid());
+    if (Case == 8)
+      ABI.Parameters[2].IndirectByValue = false;
+    if (Case == 9) {
+      ABI.Parameters[2].Location.Kind = SourceABICarrierKind::Stack;
+      ABI.Parameters[2].Location.RegisterOffset = 0;
+    }
+    EXPECT_FALSE(sourceFrameEffectsMatchABI(Effects, ABI));
+  }
+}
+
+TEST(SourceFrameAnalysis, RejectsPartialExpiredAliasedAndEscapingCopyStorage) {
+  for (unsigned Case = 0; Case < 14; ++Case) {
+    SCOPED_TRACE(Case);
+    RecordCopyFixture F;
+    auto &Ops = F.Low.Blocks[0].Ops;
+    auto At = std::find_if(Ops.begin(), Ops.end(), [&](const auto &Op) {
+      return nativeSourceCallKey(Op) == F.Site;
+    });
+    const auto Before = At - Ops.begin();
+    std::vector<LowOp> Prefix;
+    if (Case < 4) {
+      Prefix.push_back(op(NdOp::INT_ADD, F.X2,
+                          {SP, NdVar::scalar(Case == 0   ? 1
+                                             : Case == 1 ? 8
+                                             : Case == 2 ? 192
+                                                         : 320,
+                                             8)},
+                          0x3000));
+    } else if (Case == 4) {
+      Prefix.push_back(
+          op(NdOp::COPY, F.X2, {NdVar::scalar(0x9000, 8)}, 0x3000));
+    } else if (Case == 5) {
+      Prefix.push_back(op(NdOp::COPY, NdVar::reg(a64reg::X2, 4),
+                          {NdVar::scalar(0, 4)}, 0x3000));
+    } else if (Case == 6 || Case == 7) {
+      Prefix.push_back(
+          op(NdOp::STORE, {}, {Case == 6 ? F.X1 : F.X2, SP}, 0x3000));
+    } else if (Case == 8) {
+      Prefix.push_back(
+          op(NdOp::INT_ADD, SP, {SP, NdVar::scalar(16, 8)}, 0x3000));
+      Prefix.push_back(
+          op(NdOp::INT_SUB, SP, {SP, NdVar::scalar(16, 8)}, 0x3004));
+    } else if (Case == 9 || Case == 10) {
+      // Another argument can observe an alias even with a bounded borrow.
+      F.Calls.at(F.Site).ReadOnlyFrameParameters[0] = 8;
+      Prefix.push_back(op(NdOp::INT_ADD, X0,
+                          {SP, NdVar::scalar(Case == 9 ? 0 : 120, 8)}, 0x3000));
+    } else if (Case == 11) {
+      F.Calls.at(F.Site).ByValueFrameParameters.clear();
+    } else if (Case == 12) {
+      // One definite word cannot replace a complete 128-byte producer.
+      Ops[4] = op(NdOp::STORE, {}, {F.X8, NdVar::scalar(0, 8)}, 0x2010);
+    } else {
+      Prefix.push_back(op(NdOp::CALL, X0, {NdVar::cst(0x9000, 8)}, 0x3000));
+    }
+    Ops.insert(Ops.begin() + Before, Prefix.begin(), Prefix.end());
+    EXPECT_FALSE(F.query());
+  }
+}
+
+TEST(SourceFrameAnalysis, ConsumedCopiesNeedNewWritesBeforeLaterReads) {
+  for (unsigned Case = 0; Case < 5; ++Case) {
+    SCOPED_TRACE(Case);
+    RecordCopyFixture F;
+    auto &Ops = F.Low.Blocks[0].Ops;
+    auto At = std::find_if(Ops.begin(), Ops.end(), [&](const auto &Op) {
+      return nativeSourceCallKey(Op) == F.Site;
+    });
+    std::vector<LowOp> After{op(NdOp::COPY, F.X9, {SP}, 0x3000)};
+    if (Case == 1 || Case == 2)
+      After.push_back(op(NdOp::STORE, {},
+                         {F.X9, NdVar::scalar(5, Case == 1 ? 4 : 8)}, 0x3004));
+    if (Case != 3)
+      After.push_back(op(NdOp::LOAD, X0, {F.X9}, 0x3008));
+    if (Case == 4)
+      After.push_back(op(NdOp::STORE, {}, {F.X9, NdVar::scalar(5, 8)}, 0x300c));
+    Ops.insert(At + 1, After.begin(), After.end());
+    EXPECT_EQ(bool(F.query()), Case == 2 || Case == 3);
+  }
+}
+
+TEST(SourceFrameAnalysis, DefiniteResultsRespectSavedStateAndActiveExtent) {
+  for (unsigned Offset : {1, 192, 272, 288}) {
+    RecordCopyFixture F;
+    F.Low.Blocks[0].Ops[3].Inputs[1] = NdVar::scalar(Offset, 8);
+    EXPECT_FALSE(F.query()) << Offset;
+  }
+}
+
+TEST(SourceFrameAnalysis, CopyInitializationIsAMustFactAcrossEveryPredecessor) {
+  for (unsigned Case = 0; Case < 6; ++Case)
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Case);
+      RecordCopyFixture F;
+      const auto Original = F.Low.Blocks[0].Ops;
+      F.Low.Blocks.resize(4);
+      auto &Root = F.Low.Blocks[0], &Left = F.Low.Blocks[1],
+           &Right = F.Low.Blocks[2], &Join = F.Low.Blocks[3];
+      for (unsigned I = 0; I < 4; ++I) {
+        F.Low.Blocks[I].Id = I;
+        F.Low.Blocks[I].StartAddr = 0x2000 + I * 0x100;
+      }
+      Root.Ops.assign(Original.begin(), Original.begin() + 8);
+      Root.Succs = {1, 2};
+      Left.Preds = Right.Preds = {0};
+      Left.Succs = Right.Succs = {3};
+      Join.Preds = {1, 2};
+      Join.Ops.assign(Original.begin() + 8, Original.end());
+      Left.Ops =
+          Right.Ops = {op(NdOp::COPY, F.X9, {NdVar::scalar(0, 8)}, 0x3000)};
+      auto Borrow = signature(1);
+      if (Case) {
+        SourceFrameEffects Effects;
+        if (Case == 1)
+          Effects.ReadOnlyFrameParameters[0] = 8;
+        else
+          Effects.WritableFrameParameters[0] = 8;
+        Left.Ops = {op(NdOp::INT_ADD, X0,
+                       {SP, NdVar::scalar(Case == 5 ? 128 : 0, 8)}, 0x3000),
+                    op(NdOp::CALL, X0, {NdVar::cst(0x4000, 8)}, 0x3004)};
+        F.Calls.merge(callsAt(0x3004, Borrow, Effects));
+        if (Case == 3 || Case == 4) {
+          Left.Ops.push_back(op(NdOp::COPY, F.X9, {SP}, 0x3008));
+          Left.Ops.push_back(op(NdOp::STORE, {},
+                                {F.X9, NdVar::scalar(7, Case == 3 ? 8 : 4)},
+                                0x300c));
+        }
+      }
+      if (Reverse)
+        std::reverse(F.Low.Blocks.begin(), F.Low.Blocks.end());
+      EXPECT_EQ(bool(F.query()), Case != 2 && Case != 4);
+    }
+}
+
+TEST(SourceFrameAnalysis,
+     CopyInitializationIncludesConsumptionOnLoopBackedges) {
+  for (bool Reinitialize : {false, true})
+    for (bool Reverse : {false, true}) {
+      RecordCopyFixture F;
+      const auto Original = F.Low.Blocks[0].Ops;
+      F.Low.Blocks.resize(3);
+      auto &Root = F.Low.Blocks[0], &Loop = F.Low.Blocks[1],
+           &Exit = F.Low.Blocks[2];
+      for (unsigned I = 0; I < 3; ++I) {
+        F.Low.Blocks[I].Id = I;
+        F.Low.Blocks[I].StartAddr = 0x2000 + I * 0x100;
+      }
+      Root.Ops.assign(Original.begin(), Original.begin() + 8);
+      Root.Succs = {1};
+      Loop.Preds = {0, 1};
+      Loop.Succs = {1, 2};
+      Loop.Ops.assign(Original.begin() + 8, Original.begin() + 12);
+      if (Reinitialize) {
+        std::vector<LowOp> Prefix(Original.begin() + 3, Original.begin() + 8);
+        for (size_t I = 0; I < Prefix.size(); ++I) {
+          const auto OldSite = nativeSourceCallKey(Prefix[I]);
+          Prefix[I].Addr = 0x3000 + I * 4;
+          if (OldSite)
+            F.Calls.emplace(*nativeSourceCallKey(Prefix[I]),
+                            F.Calls.at(*OldSite));
+        }
+        Loop.Ops.insert(Loop.Ops.begin(), Prefix.begin(), Prefix.end());
+      }
+      Exit.Preds = {1};
+      Exit.Ops.assign(Original.begin() + 12, Original.end());
+      if (Reverse)
+        std::reverse(F.Low.Blocks.begin(), F.Low.Blocks.end());
+      EXPECT_EQ(bool(F.query()), Reinitialize);
+    }
+}
+
+TEST(SourceFrameAnalysis,
+     CopyAndResultEffectsPreserveRetainedScratchLifetimes) {
+  for (unsigned ScratchOffset : {0, 128, 288}) {
+    RecordCopyFixture F;
+    AccessLifetimeFixture Protocol;
+    auto &Ops = F.Low.Blocks[0].Ops;
+    for (auto &Op : Ops) {
+      if (Op.Output == SP && Op.NumInputs == 2 && Op.Inputs[1].isConst() &&
+          Op.Inputs[1].Offset == 288)
+        Op.Inputs[1] = NdVar::scalar(384, 8);
+      if (Op.Output == F.X9 && Op.Opcode == NdOp::INT_ADD &&
+          Op.Inputs[1].Offset == 272)
+        Op.Inputs[1] = NdVar::scalar(368, 8);
+    }
+    Ops.insert(
+        Ops.begin() + 3,
+        {op(NdOp::COPY, X0, {NdVar::scalar(0x6000, 8)}, 0x3100),
+         op(NdOp::INT_ADD, F.X1, {SP, NdVar::scalar(ScratchOffset, 8)}, 0x3104),
+         op(NdOp::COPY, F.X2, {NdVar::scalar(32, 8)}, 0x3108),
+         op(NdOp::COPY, Protocol.X3, {NdVar::scalar(0, 8)}, 0x310c),
+         op(NdOp::CALL, X0, {NdVar::cst(0x4000, 8)}, 0x3110)});
+    F.Calls.merge(callsAt(0x3110, Protocol.Begin, Protocol.Initialize));
+    auto After = std::find_if(Ops.begin(), Ops.end(), [&](const auto &Op) {
+      return nativeSourceCallKey(Op) == F.Site;
+    });
+    Ops.insert(
+        After + 1,
+        {op(NdOp::INT_ADD, X0, {SP, NdVar::scalar(ScratchOffset, 8)}, 0x3120),
+         op(NdOp::CALL, X0, {NdVar::cst(0x4000, 8)}, 0x3124)});
+    F.Calls.merge(callsAt(0x3124, Protocol.End, Protocol.Finish));
+    EXPECT_EQ(bool(F.query()), ScratchOffset == 288);
+  }
 }

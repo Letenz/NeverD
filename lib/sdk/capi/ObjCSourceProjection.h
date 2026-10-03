@@ -55,6 +55,9 @@ inline void collectSourceBodyDiagnostics(
         "method source signature disagrees with its runtime type hint");
   if (Hint.Parameters.size() > 64)
     Diagnostics.Complete = false;
+  if (hasIndirectSourceParameters(Hint))
+    Diagnostics.add(SourceProjectionIssue::ABI,
+                    "indirect by-value entry lacks a copy storage proof");
   std::string ABILimitation;
   if (Hint.HasExplicitABI && !validateSourceABI(Hint, ABILimitation))
     Diagnostics.add(SourceProjectionIssue::ABI, ABILimitation);

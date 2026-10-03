@@ -169,6 +169,8 @@ Swift 具体类型元数据的缓存/引用对只有在零值缓存、不可变�
 
 控制和守卫精度细化优先于可选帧分区重试，必要的更细分区仍可使用。恢复先完成一个余数的不动点，再开始下一个，但只有全部允许余数完成后才发布结果。显式入口对齐与分区域取交集，分派比较实际余数。上下文、操作、节点和求解器预算仍有界，并在各次重试间共享。 机器状态恢复支持用 `--vm-entry-alignment=A:R` 声明并检查入口 RSP 同余域。`A` 必须是正的二次幂，且 `R < A`。其他入口在客体访存或状态写入前返回状态 2。根地址高位仍自由，默认不假定对齐；此选项不提供原生等价认证。
 
+共享的 `SymContext::constantWindow` 只在结果每一位都已证明为常量时返回位运算窗口的值。证明可沿已有提取、完全位于一个拼接操作数内的窗口、零扩展和位运算进行；未知 XOR 输入与算术进位保持不透明。结果最多 64 位，递归最多 32 层，总工作预算为 256。每次节点访问、深度拒绝及拼接操作数检查都计费；复制常量还按其完整的 64 位字数计费。证明不完整时不返回常量。`SymState` 用这项只读查询导出寄存器和临时空间的常量字节；存储表达式与完整字重组保留原有身份。内存区域仍只导出字面常量字节：提前加入推导出的部分内存事实，可能拆散后续输入的来源并增加控制状态发现的工作量。
+
 `SymState` 统一管理显式分离契约下单次 STORE 对已有字节事实的保留。真实 STORE 仍执行，其他内存区域、失效代次及未知值默认状态保持写入后的状态，不读取或初始化缺失字节。`SymExec` 仅对一次普通 STORE 应用契约；恢复层另行保留范围内完整仿射槽和来源事实，汇合仍保持保守。
 
 `StringTransfer` 负责有界、有序的标量展开。恢复层负责值证明、共享预算及完整搬运指针的重新认证；生成的访问复用常规内存检查。
@@ -574,6 +576,8 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 
 `lib/pass/ir/simplify` 中的 `ByteMemoryForwardingPass` 在单个基本块内，根据固定字节 alloca 每个字节的最后一次写入重建完整整数读取。它按目标端序处理 8 至 128 位、宽度为整字节的访问，只接受对象内的精确常量 GEP。调用、未知写入和有序内存会清空记录。流水线在既有私有地址恢复后、两次 SROA 之间运行此 pass，并保留原始 store。指令扫描、地址遍历、跟踪字节、替换用途和新增 IR 均有有限预算。默认不引入快照；显式启用 `AllowStoreSnapshots` 后，在原 store 前仅 freeze 一次，并让写入与所有片段共享该值。这种可选 LLVM 精化不证明原生值已定义，也不恢复函数签名。
 
+语义不动点流水线还会启用 `SimplifyNumericMemory`。它在块内识别 integral AS0 的整数转指针地址，要求指针、索引及操作数同为 32 或 64 位，具有相同的精确 SSA 根及模运算常量偏移。单个最后写入者可直接提供完整整数读取，或通过一次移位和截断提供包含的子字，无须新增快照。第二遍扫描只在后续写入完整覆盖旧写入，且中间没有保留的读取、调用、可能抛异常或有序操作时删除旧写入。不同根仍可能别名，最终写入仍可观察。字节缓存操作共用有限的 `MaxMemorySteps` 预算。这不证明内存私有、跨块关系或普通 ABI。
+
 公共头文件在 `include/neverd` 下对应这些区域。不要意外让内部 C++ 类成为 SDK
 的一部分：稳定的外部操作应放入纯 C 头文件及某个职责明确的
 `lib/sdk/NeverDCAPI*.cpp` 文件。
@@ -587,13 +591,15 @@ CPU 执行独立于来宾 OS 和映像。OS 策略与进程入口同传输层、
 | 组件 | 职责 |
 |---|---|
 | `NeverDEmulationCore` | 内存、故障、寄存器与共享执行循环 |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP 传输与可移植 Unicorn 执行 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP/HVF 传输与可移植 Unicorn 执行 |
 | `NeverDEmulationArch` | ISA 准入、架构状态、页表和 FP 状态布局 |
 | `NeverDEmulationCPU` | CPU 配置及后端组合 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整数 ABI、CPU 会话与工作负载预算 |
 | `NeverDEmulationImage` | 加载器分段映射计划 |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 启动、Linux 服务策略与进程报告 |
 | `NeverDEmulation` | Windows 模型与驱动生命周期 |
+
+macOS 的原生传输 [HVF](macos-hvf.md) 归 `NeverDEmulationNative` 所有：Apple Silicon 使用 ARM64，Intel 使用 x86-64。宿主 ISA 决定该传输的选择，不决定来宾 OS；[Darwin profile](darwin-emulation.md) 独立定义 macOS、iOS 设备和 iOS Simulator 的启动与服务。仍待完成的 Linux ARM64 KVM、Windows ARM64 WHP 验证不能与已有的 macOS ARM64 HVF 证据混为一谈。原生可用性和完整验收状态以 HVF 指南为准。
 
 CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构、特权、地址位宽和功能。`ExecutionBudget` 为每个工作负载持有共享指令／事件计数和绝对单调 deadline；恢复执行不会重置预算。`ExecutionSession` 管理 CPU、hooks 及待处理的服务／故障续接。会话可共享内存和预算，但采用协作调度，不是并行 SMP。恢复前必须恰好消费一次待处理请求。CPU 故障优先于资源停止；无法解释的引擎停止不代表工作负载成功。
 
@@ -605,11 +611,11 @@ CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构
 
 使用 `executionCapabilities(Contract, ISA, Backend)` 查询所选后端的能力配置。`NativeLegacyX64` 描述原生 x64 驱动执行；`NeverDNativeDriverTests` 验证原有驱动集，也可在关闭 Unicorn 的构建中运行。
 
-Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
+Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM、WHP 和 HVF 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
-ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。成功仅验证这段有界初始化程序；仍需独立的 ARM64 原生工作负载验证。
+ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 
-x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。这些自检仅证明有界初始化；ARM64 原生工作负载仍缺少独立验证。
+x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 
 共享 XSAVE 解码器区分标准格式与压缩格式的 SSE 初始状态。XSTATE_BV[1] 清零时，两种格式都初始化 XMM 寄存器；标准格式仍读取并校验 MXCSR，压缩格式才初始化 MXCSR。`X64XsaveCases.def` 提供独立的数据布局和原创主机 XRSTOR 程序。`X64XsaveTests.cpp` 检查拒绝状态的原子性，并以真实主机执行对照两种格式，同时保留调用方 FP/SSE 状态。主机架构或所需指令功能不可用时，对照测试明确跳过。
 
@@ -936,6 +942,16 @@ Swift 外部数据生成器也支持通过泛型记录实例化类型元数据�
 
 精确的强导入 `URL.path` 与 `String.count` 也要求四个 Swift 6.1.2 编译器及 SDK 导出配置一致。路径 getter 通过 `swiftself` 读取不透明 URL，并返回 String 的两个字；字符计数把这两个字作为普通参数，返回一个整数字。发布时重新验证当前导入及完整 ABI。这些声明不增加值布局、纯函数或帧借用契约。原样生成的 C 与原始 ARM64 调用在 O0/O2 下对照真实 Foundation/Swift 操作，覆盖 Unicode 字素、桥接字符串及 URL 结果生命周期。
 
+精确强导入 `AnyHashable.init<T: Hashable>` 同样要求 Swift 6.1.2 四组编译器与 SDK 导出证据一致。完整 Swift ABI 依次包含不透明间接结果地址、被消耗的值地址、类型元数据和 Hashable 一致性表，均不使用 `swiftself`。共享 Swift 声明所有者保留全部四个载体，发布时重验当前提供方和完整 ABI。编译器仅将结果地址标为 `nocapture`；此声明不提供输入借用、值布局、帧作用或纯函数契约。原样生成 C 在 O0/O2 与原始 ARM64 调用及真实 Swift 构造、所有权和哈希操作对照验证。
+
+SwiftConsumedInputEffects 独立负责 AnyHashable 构造所消耗的精确 UInt 输入。四个真实编译器和 SDK 导出配置证明八字节 UInt 临时存储、完整初始化、精确元数据/见证实参以及紧随调用的寿命结束。当前 ARM64 机器码/LowIR 认证强运行时导入和两个不可变导入加载；共享帧分析要求八字节全部初始化，拒绝此前逃逸及确定重写前的后续读取，并保留全部调用作用。ABI 仍为四个不透明指针。发布通过标准流水线重新解码有界、直线、单调用函数，重新推导入口，并比较当前 MedIR、已保存和待发布 HighIR 中的每个初始化、内存作用、实参和唯一发生位置。删除凭据或同时修改已保存的表示都不能代替当前证明。此契约不授予泛型输入 noescape、结果布局或纯函数权限。完整的 17 指令 UInt 包装器与原样绑定 C 在真实 Swift 上进行 O0/O2 对照，涵盖计数器回绕、栈重用和存储保护区。
+
+UInt 消耗输入的状态检查只适用于当前已认证的 UInt 调用位置。其它类型共用泛型 AnyHashable 构造器，不会因此获得该作用，也不应阻止其普通内部 ABI 推导。推导前仍从当前 LowIR 重建全部 UInt 凭据，删除凭据、定义标量返回或改写 ABI 都不能绕过初始化与消耗寿命检查。内部函数具有类型不等于源码发布通过。
+
+SwiftSDKDeclarations 负责 AnyHashable 原始哈希的完整 ABI：普通 seed 参数和不透明 Swift self。布尔语义所有者独立认证相等比较的两个普通不透明输入与真实 swiftcc i1 结果，不能将运行时结果声明为已定义的整个字节。四个编译器及 SDK 导出配置确立这两份声明。发布时重放当前 MedIR，核对每个布尔调用实参并保持原始调用的唯一发生位置，也覆盖既有 String 和 NSObject 操作。不推断值布局、私有帧借用、noescape 或纯函数权限。完整五指令哈希和六指令相等比较 ABI 调用器与原样绑定 C 在 O0/O2 下对照真实 Swift，覆盖 seed 位型、值与引用类型、别名输入和存储保护区；这些夹具不证明整个 WMF 字典函数。
+
+SourceFrameAnalysis 将完整通用寄存器入口值与必须恢复的状态分开建模。它通过调用、精确私有栈保存和 CFG 合流跟踪易失入口字节，同时保留原有的被调用者保存寄存器、帧和链接寄存器恢复义务。调用破坏、部分写入和路径冲突会清除身份；循环必须达到定点。原生参数推导前，MedIR 还必须独立观察完整八字节。这样可保留直接转交给调用的 ARM64 x8 结果地址，而不猜测外部入口 ABI 或新增帧作用权限。完整五指令调用方与原样推导生成的 C 在 O0/O2 对真实 Swift 运行时进行对照。
+
 原生输入推断还考虑已绑定调用中隐式传递的完整整数参数。LowIR 只列出调用目标，不列出 ABI 参数，因此直接尾调用可能遗漏被保存的上下文。既有原生状态证明必须匹配每个调用位置，沿写入、调用破坏和栈帧存储追踪入口值的全部八字节，并证明状态恢复；MedIR 还须独立确认同一个完整入口字被观察。部分、被覆盖、歧义或未绑定的值不能创建参数。ARM64 与 x86_64 流水线测试要求重新提升并通过完整源码验证。原始 ARM64 尾跳指令与未经修改的生成 C 在 O0/O2 下对照，使用观测被调用函数核对两个输入和两个返回字；此测试隔离验证转发，不执行字典实现。
 
 ARM64 源码绑定新增十二个 UIKit 富文本属性键全局量，依据是完整设备与模拟器 SDK 对外部、非 TLS 的 `NSString *const` 存储声明，以及两份 UIKit 导出表中的精确链接身份。绑定保留外部存储地址和所有原生读取，不替换字符串内容或对象值。错误框架、符号变化、弱导入、非零附加值及失效的发布证据仍被拒绝；此补充目录不启用 x86_64 绑定。
@@ -948,13 +964,25 @@ super 调用证明保留窄返回值的未定义填充位并检查每个参数�
 
 UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读写方法保留完整的 32 字节 `UIEdgeInsets`：上、左、下、右四个 double 在 arm64 上由 d0–d3 传递。完整的设备与模拟器 SDK 声明一致，Apple Clang 独立复现全部六种编码。接收者查找保留 UIButton 匿名分类及 UIButton → UIControl → UIView 继承关系。运行时声明冲突、其他接收者、类方法、错误提供库及缺少匹配证据的架构仍不受支持。
 
-`windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、模块 TLS 和启动 `DllMain`、具名 Win32 API 和显式无环启动 DLL 图。客户 DLL 支持按名称／序号导入代码及数据、DIR64 重定位和真实加载器链表身份。动态加载、CRT／GUI、用户态 SEH 和线程仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。 支持有界转发导出，以及针对已驻留客户映像的 `GetProcAddress`。
+`windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、静态和动态 TLS、`DllMain`、具名 Win32 API 和显式无环 DLL 图。客户模块支持按名称／序号导入代码及数据、DIR64 重定位、转发导出和真实加载器链表身份。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用配置的模块目录。CRT／GUI、基于栈帧的用户态 SEH、线程和通用 Windows 应用兼容性仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。
 
 `readPEProgramExports` 拥有原始导出身份及有界元数据读取范围；`WindowsProcessModules` 拥有客户模块图和进程统一的精确提供方／名称 API 跳板。`VirtualMemory` 在映射前登记所有映像，`AddressSpace` 管理页面及权限。PEB/LDR 仅列出真实映像，初始化链表保留加载器登记顺序，并与按依赖计算的挂接调用顺序分别维护。`GetModuleHandleW` 接受 NULL 或 ASCII 基本名，不区分大小写，无扩展名时补 `.dll`；路径、非 ASCII 查询及末尾点规则仍不支持。名称缺失返回错误 126，成功保持 LastError。API 模型不等同于已安装的系统 DLL。
 
 `WindowsProcessLifetime` 在同一个 CPU 和执行预算下，按依赖顺序执行 DLL TLS 回调及 `DllMain`，随后执行 EXE TLS 和入口。每个模块都有独立 TLS 索引及对齐的数据块，从完成重定位和导入绑定的映像复制，共享 64 KiB 空间。TLS 保留参数为零，启动／进程退出的 `DllMain` 接收不透明非空值。显式进程退出按加载器链表的逆序分离已完成初始化的 DLL，再执行 EXE TLS 退出回调，即使 EXE 初始化尚未运行。启动 `DllMain(FALSE)` 以 `0xc0000142` 退出，不发送分离通知。故障和预算耗尽不伪造清理。带客户 DLL 的 PE 入口返回涉及尚未支持的线程终止，明确停止。非零 `SizeOfZeroFill` 仍不支持；实际 TLS 模板中的零初始化字节受支持。 无入口 DLL 接收 TLS 挂接通知，但不接收进程分离通知。
 
-`WindowsProcessExports` 为静态导入和 `GetProcAddress` 共用名称／序号解析，覆盖代码、数据、别名及链式转发。只有实际引用的启动转发才引入目录中的模块和初始化依赖，未使用的转发不加载文件。运行时可查询已驻留映像，包括在 `DllMain` 内；需要加载其他模块时明确停止。导出名称区分大小写；名称缺失返回 NULL／错误 127，直接查询缺失序号（包括空洞）返回 NULL／错误 182，查询参数为空指针返回错误 87，成功保留 LastError。未知模块句柄仍不支持。有界 API 清单按精确提供方／名称一次性保留调用入口。解析检查每个查询映像的实时 PE 头和导出元数据，拒绝修改或不可读字节，转发链最多 64 项，并共享准备阶段剩余的元数据额度及执行截止时间。这不包含 `LoadLibrary`／`FreeLibrary` 或实时改写导出表。 转发到空洞时返回目标映像基址并保留 LastError；转发到零序号返回错误 87。返回基址是数据地址，不授予映像头执行权限。
+`WindowsProcessExports` 为静态导入和 `GetProcAddress` 共用名称／序号解析，覆盖代码、数据、别名及链式转发。 只有实际引用的启动转发才引入目录中的模块和初始化依赖，未使用的转发不加载文件。 导出名称区分大小写；名称缺失返回 NULL／错误 127，直接查询缺失序号（包括空洞）返回 NULL／错误 182，查询参数为空指针返回错误 87，成功保留 LastError。 未知模块句柄仍不支持。 有界 API 清单按精确提供方／名称一次性保留调用入口。 解析检查每个查询映像的实时 PE 头和导出元数据，拒绝修改或不可读字节，转发链最多 64 项，并共享准备阶段剩余的元数据额度及执行截止时间。 转发到空洞时返回目标映像基址并保留 LastError；转发到零序号返回错误 87。 返回基址是数据地址，不授予映像头执行权限。 运行时转发可以加载配置目录中的模块，并在返回查询结果前完成初始化。仍不支持实时改写导出表。
+
+`WindowsProcessLoader` 从 `windows.modules` 加载 ASCII DLL 基名，统一管理显式引用、共享依赖和启动模块保留。重复查询转发导出不会增加额外引用。模块目录槽位在重载时使用新的驻留代次。TLS 和 `DllMain` 在同一 CPU 上、被暂停 API 的栈帧下方执行；恢复寄存器保留客户内存写入，并使用实时返回地址。动态附加／分离的保留指针为零。显式加载期间的附加失败在清理后返回错误 1114，同时保留已成功的独立嵌套加载。卸载释放映像映射和 TLS，重载恢复原始映像内容。模型之外对加载器链表或 TLS 指针的修改会明确失败。失败和重载都不会重置文件、映像与元数据工作额度。系统提供方以已映射 PE 的基址作为模块句柄。文件系统搜索、非 ASCII 路径、`LoadLibraryEx` 标志、循环导入及正在初始化或卸载的同一模块的重入转换仍不支持。
+
+`GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` 共用 PEB 进程参数中的实时客户环境块。名称限 ASCII 且忽略大小写，值为 UTF-16。修改前校验输入、容量及可写内存。快照不受后续修改影响，释放时回收客户内存。模型的环境块上限为 64 KiB；字符串与展开操作有明确边界并检查工作负载截止时间。未知指针归属、格式错误的环境块、ANSI 代码页及展开缓冲区重叠仍不支持。`WindowsEnvironmentTests.cpp` 在可用后端比较原创 x64/ARM64 样例，CI 必须执行独立的原生 Windows 对照。
+
+`WindowsProcessHeap` 统一管理进程堆的分配、`HeapReAlloc`、释放和尺寸查询。调整大小保留原有有效数据；`HEAP_ZERO_MEMORY` 清零新增字节，`HEAP_REALLOC_IN_PLACE_ONLY` 禁止搬迁。重分配失败时保留旧块，返回 NULL 并设置 `ERROR_NOT_ENOUGH_MEMORY`（8），与原生观测一致。独立页内存使收缩和释放能归还容量，分阶段扩容及有界复制检查工作负载截止时间。自定义堆、异常生成标志、未知归属以及不可访问的复制或清零范围均明确停止。`WindowsHeapTests.cpp` 覆盖两种 ISA、强制搬迁、预算复用和失败原子性；CI 也在原生 Windows 上运行同一原创 EXE。
+
+`WindowsSystemModules` 为两种 ISA 构造有界的 `ntdll.dll`、`kernelbase.dll` 和 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 与 `GetProcAddress` 共用其映射基址；PEB/LDR 和 `MEM_IMAGE` 描述同一批映像。静态导入、按名称查询和客户 DLL 转发使用相同 API 跳板与导出解析器。提供方固定驻留，不执行客户初始化回调，普通客户 DLL 全部卸载后不会阻止入口返回。头部或导出元数据改变会停止查询。未知系统导出名称和非零系统序号查询明确停止；已建模名称的大小写不匹配和空名称返回错误 127，空指针查询返回 87。生成的字节和地址属于模型策略，不复刻特定 Windows DLL 布局、原生序号或跨提供方别名。`WindowsSystemTests.cpp` 对照原始 x64/ARM64 EXE 与原生 Windows，并独立观察八次初始线程返回。
+
+`WindowsProcessExceptions` 在同一 CPU 和进程预算内实现 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序处理器可注册或移除处理器、触发嵌套异常、调用已建模 API、加载 DLL 以及退出进程。x64/ARM64 数据访问异常和 x64 整数除法异常可在校验客户对 `CONTEXT` 的修改后恢复；通用寄存器、SIMD 和受支持的浮点状态会保留。软件异常经模型提供方中的真实返回指令继续执行。模型限制为最多保留 128 个注册项、嵌套 16 层。非法处置值、被修改的异常指针、不支持的上下文字段和超限均明确失败。基于栈帧的 SEH／展开、调试器派发及执行／保护页异常仍不支持。`WindowsExceptionTests.cpp` 将原创 EXE／DLL 场景与原生 Windows 对照；原生 ARM64 KVM/WHP 证据仍待补齐。 软件异常记录带有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），与调用者传入的不可继续标志分别处理；原始 Windows 可执行文件精确核对软件异常和硬件异常的标志值。
+
+`AddVectoredContinueHandler` 和 `RemoveVectoredContinueHandler` 管理独立的有序列表，与异常处理器共用最多保留 128 个注册项的限制。向量异常处理器接受继续执行后，继续处理器读取同一份可修改的异常记录和 `CONTEXT`；最终上下文校验在这些回调完成后进行，包含嵌套异常与 DLL 通知。两类处理器的句柄不可交叉移除。`WindowsContinuationTests.cpp` 将顺序、提前结束派发、增删、上下文修复、嵌套派发、加载器回调及进程退出的原创 EXE 场景与原生 Windows 对照。已测 Windows x64 向量处理路径允许在设置 `EXCEPTION_NONCONTINUABLE` 时继续执行；这不代表基于栈帧的 SEH 行为。原生 ARM64 执行仍未验证。
 
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
@@ -989,3 +1017,17 @@ Combine 的精确强导入 `CurrentValueSubject` 初始化构造器使用 Swift 
 Combine 的精确强导入 `Publisher.sink(receiveValue:)` 重载在 `Failure == Never` 时传递五个指针载体：闭包代码和上下文、Publisher 元数据和见证表，以及通过 `swiftself` 传递的不透明 Publisher 地址；返回 `AnyCancellable` 指针。`AnyCancellable.store(in: Set<AnyCancellable>)` 接收可变 Set 地址和通过 `swiftself` 传递的对象，返回 void。两项声明均依据 Swift 6.1.2 在 ARM64 和 x86-64 macOS、Mac Catalyst 上的编译器证据，发布时重新核验当前提供方和完整 ABI。这些声明不推断泛型布局、闭包生命周期或私有帧借用效果。
 
 不可变 Swift 静态标量对象只有在有界结构化存储声明与当前完整对象范围一致时，才能保留一个重建后的地址身份。支持名义类型及非泛型扩展上下文；Darwin arm64/x86_64 上，冻结的 `CoreGraphics.CGFloat` 声明确认对象为 8 字节（[Apple ABI 说明](https://developer.apple.com/documentation/corefoundation/cgfloat-swift.struct/nativetype)），另由四个 macOS/Mac Catalyst 编译目标独立核验。`SwiftMetadata` 统一负责声明和唯一不可变存储证明，源码绑定及发布复用该证明。可变、重叠、带重定位、部分、TLS、泛型或有歧义的对象仍不恢复。对齐的字节辅助存储保留完整位型和共享地址，不据此推导访问器 ABI、帧借用或 noescape 权限。
+
+无显式参数的原生 Swift 类方法由 loader 与 C API 共用完整 ABI 声明所有者。`NativeSwiftSelf` 接收者事实要求当前入口声明、匹配的类元数据，以及全部机器指令和 CFG 边的规范重提升；复制、破坏和合流沿用既有寄存器/字节分析。对于 ObjC 编码为空的对象字段，`SwiftMetadata` 独立核对有界 kind-7 反射记录、完整字段类型、类及父类描述符、ObjC ivar、偏移向量和精确字段偏移符号。生成代码仍动态读取 ivar 偏移，不用初始字节冻结继承布局。发布时重新构建当前 LowIR 提示，验证完整 ABI、已接受的审计、规范 HighIR 参数、精确的源级 self/字段路径和唯一求值。歧义记录、部分值、路径冲突、存储变化或陈旧凭据均被拒绝。字段身份不授予副本存储、帧借用、noescape 或纯函数权限；`CALayer.setTransform:` 仍需独立证明其 128 字节参数副本。O0/O2 对照使用原始 ARM64 与原样生成 C、真实 ObjC/CALayer 调用、变化的运行时字段偏移及 nil 字段值。
+
+有限多目标间接分派也保留延后处理的条件依赖：合流后的目标集合即使有限，仍可能包含不可行分支。失败后的反向搜索会跳过无法新增字段、上下文或生产者需求位的条件，继续寻找有用的外层条件。候选选择和激活使用同一规则及发现预算。这些候选不会删除边；发布结果仍须重新证明完整可达图。 仅在既有精度细化停滞后，才遍历有限分派的条件依赖。启用该步骤消耗一次新的细化，并沿用同一累计工作上限，避免无关选择器抢占已有生产者或原生条件的细化预算。 条件候选耗尽后，延后处理的生产者及其他精度细化仍可继续；只有新的证明才能关闭失败。
+
+HighIR 在复制尾部调用前查询 `SourceCallTypeHint::requiresUniqueSourceOccurrence`。布尔结果、回调参数、不可变目标、帧中值见证、虚分派和原生 Swift 接收者凭据各自对应一次原始机器调用；返回尾部、跳转尾部和嵌套出口改写均保留共享求值位置，即使复制后的源码路径互斥也不复制凭据。普通调用声明继续使用原有复制规则。发布仍重新证明当前机器、ABI、操作数和动态目标，并要求唯一源码求值。测试覆盖全部凭据类型、嵌套表达式、普通调用优化，以及完整 ARM64 共享存储和回调尾部与生成 C 在 O0/O2 下的对照。
+
+共享 `SourceABI` 所有者区分逻辑上的按值结构体与物理地址载体。Darwin ARM64 C 声明中的六个或十六个 double 保留完整结构体类型，通过八字节整数寄存器或自然对齐栈槽传参，独立于浮点参数寄存器和 x8 返回指针。ABI 相等判断与投影分组保留该区别、调用约定及参数角色，拒绝部分、重叠、不兼容或陈旧载体。仅有声明不能绑定 LowIR 调用、投影入口、输出 HighC 调用或授权帧借用，仍需独立副本存储证明。编译器与原生 ABI 测试覆盖寄存器耗尽、栈布局、任意浮点位型、副本改写隔离及独立间接返回；这不是完整 `setTransform:` 恢复测试。
+
+共享的 `SourceFrameAnalysis` 在独立效果凭据说明消费方及完整间接结果生产者后，可核验原始调用处已初始化的私有按值副本。分析覆盖全部到达路径和循环回边、精确活动范围、其他实参别名及后续使用。消费副本会使初始化事实和保存字节身份失效；后续读取必须先有新的确定写入。可能写入和帧释放也会清除初始化事实，同时保留 Swift scratch 的活跃生命周期义务。查询只有在完整帧恢复证明通过后才返回实参范围，不授予机器身份、SDK 效果、调用绑定或源码发布权限。测试覆盖分支、循环、部分写入、别名及保留的 scratch；真实 ObjC/CALayer 的 ARM64 用例拒绝读取已消费副本，接受独立证明已初始化且可丢弃的副本。
+
+Objective-C 消费者仅在共享帧证明认证原始调用处整个一次性副本生命周期后绑定间接按值结构体，分别保留逻辑结构体声明与物理指针。证明要求当前规范机器码/LowIR、独立声明的 Swift 入口及字段接收者、全部中间调用 ABI，以及独立所有者提供的 `objc_msgSendSuper2` 和完整矩阵返回效果，不引入递归或重复帧规则。发布时重新检查，并将完整直线 HighIR 函数体与规范重放比较，覆盖初始化和后续使用；陈旧或缺失凭据、重复求值均拒绝。HighC 通过一次 memcpy 快照构造逻辑结构体。首个消费者仅支持 ARM64 固定私有副本，不授权任意指针、动态栈或通用 noescape。原生测试在 O0/O2 将原样生成 C 与原始 ARM64 调用方及真实 ObjC/CALayer 对照，覆盖 nil、浮点位型、运行时字段偏移及 callee 合法改写一次性副本。
+
+Swift 元数据绑定可从两个或三个符号名义类型描述符验证嵌套带标签元组及其单参数存储类型。有界配方解析器比较完整类型树、精确标签和重复类型的替换身份；展开描述符拼写不能改变替换索引。标签中的 `A` 仍是普通字符。来自 `libswiftCoreFoundation` 的精确强 `CoreGraphics.CGFloat` 描述符导入由四个 Swift 6.1.2 macOS/Mac Catalyst 编译目标和 SDK 导出认证。发布时重新检查当前描述符、缓存、引用和字节。生成助手保留原始配方及共享存储身份；O0/O2 下的真实 Swift 元数据查询区分不同标签和存储类型。这不授予泛型布局、值见证实现、回调 ABI、帧作用或 noescape 权限。

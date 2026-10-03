@@ -31,8 +31,8 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 | [CPU 실행](cpu-execution.md) | 구성, 기능 조회, 백엔드 가용성, 형식화된 결과 |
 | [비트벡터 증명 백엔드](solver.md) | 선택적 Z3 증명, 증명 게이트 합성, 독립 검사, query 내보내기 |
 | [게스트 프로세스 에뮬레이션](process-emulation.md) | Linux ELF 프로필, 시작, 서비스, 제한, 테스트 |
-| [macOS/iOS 프로세스 환경](../darwin-emulation.md) | Mach-O 시작, 기기와 시뮬레이터 구분, Darwin 서비스와 페이지 규칙 |
-| [macOS HVF](../macos-hvf.md) | 호스트와 동일한 ISA의 하드웨어 실행, 서명 권한, 패키징과 검증 |
+| [macOS/iOS 프로세스 환경](darwin-emulation.md) | Mach-O 시작, 기기와 시뮬레이터 구분, Darwin 서비스와 페이지 규칙 |
+| [macOS HVF](macos-hvf.md) | 호스트와 동일한 ISA의 하드웨어 실행, 서명 권한, 패키징과 검증 |
 | [Windows 드라이버 에뮬레이션](driver-emulation.md) | 제한된 x64 WDM/KMDF 수명 주기, 요청, 하드웨어 시나리오, SEH, PnP 하위 집합, 백엔드 선택 및 제한 |
 | [메모리 안전성 감사와 헌트](memory-safety.md) | 힙 수명과 복사 오버플로 분석: 형식별 신원 계약, 싱크/소스 카탈로그, 판정, 예산, JSON 스키마 |
 | [네이티브 플러그인](plugins.md) | 순수 C descriptor ABI, callback과 event, build/link workflow, discovery 및 호환성 규칙 |

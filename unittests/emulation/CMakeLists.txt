@@ -138,13 +138,21 @@ add_neverd_unittest(NeverDAndroidNativeTests
   LINK_COMPONENTS EmulationProcess)
 include(AndroidFixtures.cmake)
 
+# Batch PE scenarios use the common harness timeout; each guest workload
+# retains its own finite instruction, event and time budget.
 add_neverd_unittest(NeverDWindowsProcessTests
   WindowsProcessTests.cpp
   WindowsProcessMemoryTests.cpp
   WindowsModuleTests.cpp
   WindowsLifetimeTests.cpp
   WindowsExportTests.cpp
-  TIMEOUT 30
+  WindowsDynamicTests.cpp
+  WindowsEnvironmentTests.cpp
+  WindowsHeapTests.cpp
+  WindowsSystemTests.cpp
+  WindowsExceptionTests.cpp
+  WindowsContinuationTests.cpp
+  WindowsNativeTestSupport.cpp
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDWindowsProcessTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
@@ -152,6 +160,11 @@ include(WindowsProcessFixtures.cmake)
 include(WindowsModuleFixtures.cmake)
 include(WindowsLifetimeFixtures.cmake)
 include(WindowsExportFixtures.cmake)
+include(WindowsDynamicFixtures.cmake)
+include(WindowsEnvironmentFixtures.cmake)
+include(WindowsHeapFixtures.cmake)
+include(WindowsSystemFixtures.cmake)
+include(WindowsExceptionFixtures.cmake)
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp

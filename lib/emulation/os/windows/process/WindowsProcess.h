@@ -24,7 +24,9 @@ namespace value {
 #define NEVERD_WINDOWS_PROCESS_BYTES(Name, ...)                                \
   inline constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "WindowsProcess.def"
+#include "WindowsProcessExceptions.def"
 #include "WindowsProcessModules.def"
+#include "WindowsSystemModules.def"
 #undef NEVERD_WINDOWS_PROCESS_BYTES
 #undef NEVERD_WINDOWS_PROCESS_VALUE
 } // namespace value
@@ -32,7 +34,9 @@ namespace text {
 #define NEVERD_WINDOWS_PROCESS_TEXT(Name, Text)                                \
   inline constexpr char Name[] = Text;
 #include "WindowsProcess.def"
+#include "WindowsProcessExceptions.def"
 #include "WindowsProcessModules.def"
+#include "WindowsSystemModules.def"
 #undef NEVERD_WINDOWS_PROCESS_TEXT
 } // namespace text
 inline llvm::Error failure(const llvm::Twine &Message) {
@@ -45,6 +49,12 @@ enum class API {
 #undef NEVERD_WINDOWS_PROCESS_API
 };
 enum class APIProvider { Kernel, Native };
+struct SystemProvider {
+  const char *Name;
+  APIProvider Family;
+  uint64_t Base;
+};
+llvm::ArrayRef<SystemProvider> systemProviders();
 struct Service {
   API Kind;
   const char *Name;
@@ -93,7 +103,15 @@ struct ImageReadBudget {
 };
 struct Environment {
   uint64_t CommandLine;
+  uint64_t Variables = 0;
   std::u16string ImageName;
+  uint64_t StringCursor = 0;
+  std::map<size_t, uint64_t> ModuleNames;
+  struct TLSAllocation {
+    uint64_t Index, Address, Size;
+  };
+  std::map<size_t, TLSAllocation> TLS;
+  std::map<uint64_t, std::vector<uint8_t>> LoaderMetadata;
 };
 llvm::Expected<Image> loadImage(const std::filesystem::path &Path,
                                 uint64_t MemoryLimit);
@@ -104,17 +122,39 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                                          const ProcessOptions &Options);
 
 struct Program;
+struct LoaderRequest {
+  enum class Kind { Load, Free, Export };
+  Kind Operation;
+  uint64_t Module = 0;
+  std::string Name;
+  std::optional<uint16_t> Ordinal;
+};
+struct ServiceOutcome {
+  struct Exception {
+    uint32_t Code, Flags;
+    uint64_t Address;
+    std::vector<uint64_t> Arguments;
+  };
+  std::optional<uint64_t> Value;
+  std::optional<LoaderRequest> Request;
+  std::optional<Exception> Raised;
+  explicit ServiceOutcome(std::optional<uint64_t> Value) : Value(Value) {}
+  explicit ServiceOutcome(LoaderRequest Request)
+      : Request(std::move(Request)) {}
+  explicit ServiceOutcome(Exception Raised) : Raised(std::move(Raised)) {}
+};
+class VectoredExceptions;
 class Services final {
 public:
   Services(ExecutionBackend &CPU, AddressSpace &Memory, const Image &Image,
            const Environment &Environment, const ProcessOptions &Options,
            ProcessResult &Result, VirtualMemory &Virtual, Program &Program,
-           const ExecutionBudget &Budget)
+           const ExecutionBudget &Budget, VectoredExceptions &Exceptions)
       : CPU(CPU), Memory(Memory), Loaded(Image), Env(Environment),
         Options(Options), Result(Result), Virtual(Virtual), Modules(Program),
-        Budget(Budget) {}
-  llvm::Expected<std::optional<uint64_t>> invoke(const Service &Service,
-                                                 const NativeCallEvent &Event);
+        Budget(Budget), Exceptions(Exceptions) {}
+  llvm::Expected<ServiceOutcome> invoke(const Service &Service,
+                                        const NativeCallEvent &Event);
 
 private:
   std::optional<uint64_t> unsupported(const Service &Service);
@@ -122,6 +162,10 @@ private:
   llvm::Expected<bool> access(uint64_t Address, uint64_t Size, unsigned Rights);
   llvm::Expected<std::optional<uint64_t>> heap(const Service &,
                                                const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> environment(const Service &,
+                                                      const NativeCallEvent &);
+  llvm::Expected<std::u16string> readWide(uint64_t Address, uint64_t Limit);
+  llvm::Error writeWide(uint64_t Address, const std::u16string &Text);
   llvm::Expected<std::optional<uint64_t>> memory(const Service &,
                                                  const NativeCallEvent &);
   ExecutionBackend &CPU;
@@ -133,10 +177,16 @@ private:
   VirtualMemory &Virtual;
   Program &Modules;
   const ExecutionBudget &Budget;
+  VectoredExceptions &Exceptions;
   std::bitset<value::DynamicTLSCount> TLSSlots;
   struct Allocation {
     uint64_t Size, MappedSize;
+    bool EnvironmentSnapshot = false;
   };
+  llvm::Expected<uint64_t> allocateHeap(uint64_t Size, bool Snapshot = false);
+  llvm::Expected<bool> mapHeapPages(uint64_t Address, uint64_t Size);
+  llvm::Expected<uint64_t> reallocateHeap(uint64_t Address, uint64_t Size,
+                                          uint32_t Flags);
   std::map<uint64_t, Allocation> Allocations;
 };
 } // namespace neverd::emulation::windows_process

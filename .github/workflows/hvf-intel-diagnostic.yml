@@ -1,0 +1,137 @@
+name: Intel HVF method diagnosis
+run-name: Intel HVF diagnostic ${{ inputs.shards }} / ${{ inputs.source-ref }}
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: Exact forty-character source commit to reproduce
+        default: f5f29a484fb0ea96a8e1c9acc6ba5682d8971bd1
+        required: true
+        type: string
+      shards:
+        description: JSON array of original sixteen-way shard indices
+        default: '[0,5]'
+        required: true
+        type: string
+      first-method:
+        description: First zero-based method index in each original shard
+        default: '0'
+        type: string
+      method-count:
+        description: Number of methods, or zero for all remaining methods
+        default: '0'
+        type: string
+      case-index:
+        description: One original parameter index, or -1 for all; requires method-count=1
+        default: '-1'
+        type: string
+permissions:
+  contents: read
+jobs:
+  native-method:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        shard: ${{ fromJSON(inputs.shards) }}
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - name: Check out diagnostic controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: diagnostics
+          persist-credentials: false
+      - name: Check out exact failing or repaired source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source-ref }}
+          path: source
+          persist-credentials: false
+      - name: Check out unchanged official artifact uploader
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: actions/upload-artifact
+          ref: 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          path: artifact-uploader
+          persist-credentials: false
+      - name: Validate exact source and native Intel availability
+        working-directory: source
+        env:
+          EXPECTED_SOURCE: ${{ inputs.source-ref }}
+        run: |
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          test "$(uname -m)" = x86_64
+          sysctl kern.hv_support
+          mkdir build-hvf-probe
+          clang scripts/probe_hvf_host.c -framework Hypervisor -o build-hvf-probe/probe
+          codesign --force --sign - --entitlements resources/macos/neverd-hypervisor.entitlements build-hvf-probe/probe
+          python3 -c 'import subprocess; subprocess.run(["build-hvf-probe/probe"], check=True, timeout=10)'
+      - name: Check diagnostic contracts before expensive compilation
+        working-directory: diagnostics
+        run: |
+          python3 -m unittest scripts.tests.test_diagnose_hvf_methods -q
+          node --test .github/actions/hvf-intel-diagnostic/run.test.cjs
+      - name: Install matching hosted build and fixture tools
+        run: |
+          brew install ninja llvm lld
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+        with:
+          version: v0.16.0
+      - name: Prepare pinned native dependencies
+        working-directory: source
+        run: git submodule update --init --depth 1 third_party/capstone third_party/llvm-project
+      - name: Configure the original native Release profile
+        working-directory: source
+        run: |
+          cmake -S . -B build-hvf -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DNEVERD_LLVM_PREBUILT=OFF \
+            -DNEVERD_BUILD_SHARED=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+            -DNEVERD_ENABLE_CPU_EMULATION=ON \
+            -DNEVERD_ENABLE_DRIVER_EMULATION=OFF \
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+            -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
+            -DNEVERD_EMULATION_BACKEND_HVF=ON
+      - name: Build every original native inventory owner
+        working-directory: source
+        timeout-minutes: 70
+        run: |
+          python3 - <<'PY'
+          import platform
+          import subprocess
+          from pathlib import Path
+          from scripts.run_native_cpu_ci import hvf_inventory
+          owners, _ = hvf_inventory(Path.cwd(), platform.machine())
+          subprocess.run(['cmake', '--build', 'build-hvf', '--config', 'Release',
+                          '--target', *owners, '--parallel', '4'], check=True)
+          PY
+      - name: Preserve each method before and after native execution
+        uses: ./diagnostics/.github/actions/hvf-intel-diagnostic
+        timeout-minutes: 30
+        with:
+          source: source
+          build: source/build-hvf
+          evidence: source/build-hvf/method-diagnostic
+          upload-action: artifact-uploader
+          shard: ${{ matrix.shard }}/16
+          first-method: ${{ inputs.first-method }}
+          method-count: ${{ inputs.method-count }}
+          case-index: ${{ inputs.case-index }}
+      - name: Preserve incomplete diagnostics when the host remains reachable
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hvf-intel-diagnostic-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}-final
+          path: |
+            source/build-hvf/method-diagnostic/
+            source/build-hvf/CMakeCache.txt
+          if-no-files-found: warn

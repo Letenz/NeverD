@@ -396,7 +396,9 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
           {R"({"backend":"unicorn","android":{"entry_symbol":"add_arguments","arguments":[1,2,3,4,5,6,7,8,9,10],"trace_limit":4096}})",
            "192"},
           {R"({"backend":"unicorn","android":{"entry_symbol":"dynamic_lookup","libraries":{"libfixture.so":["strlen"]}}})",
-           "4"}}) {
+           "4"},
+          {R"({"backend":"unicorn","android":{"entry_symbol":"dynamic_identities","arguments":["0x20000000",0],"memory":[{"address":"0x20000000","size":4096}],"read_memory":[{"address":"0x20000000","size":16}],"libraries":{"libidentity.so":["getuid","geteuid","getgid","getegid"]}}})",
+           "0"}}) {
     auto Text = takeString(neverd_emulate_process_json(
         Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
     ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
@@ -416,6 +418,27 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
         }
       }
       EXPECT_TRUE(NamedLookup);
+    }
+    if (Expected == "0") {
+      const auto *Android = Parsed.getAsObject()->getObject(field::Android);
+      ASSERT_NE(Android, nullptr);
+      for (const char *Name : {"getuid", "geteuid", "getgid", "getegid"}) {
+        const llvm::json::Object *Lookup = nullptr, *Call = nullptr;
+        for (const auto &Event : *Android->getArray(field::NativeCalls)) {
+          const auto *E = Event.getAsObject();
+          if (E->getString(field::Name) == "dlsym" &&
+              E->getString(field::Symbol) == Name)
+            Lookup = E;
+          if (E->getString(field::Name) == Name)
+            Call = E;
+        }
+        ASSERT_NE(Lookup, nullptr);
+        ASSERT_NE(Call, nullptr);
+        EXPECT_EQ(Lookup->getString(field::Library), "libidentity.so");
+        EXPECT_EQ(Call->getString(field::Library), "libidentity.so");
+        EXPECT_EQ(Call->getString(field::PC), Lookup->getString(field::Result));
+        EXPECT_EQ(Call->getString(field::Result), "3e8");
+      }
     }
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     llvm::SmallString<128> Directory;

@@ -81,7 +81,12 @@ darwinDeclaredSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   static const auto Intel = signatures(Arch::X64);
   const auto &Index = Image.Arch == Arch::AArch64 ? Arm : Intel;
   const auto Found = Index.find(Import->str());
-  if (Found == Index.end() || !Found->second)
+  // A source declaration alone cannot project a physical copy address into
+  // a logical by-value record. Keep independently authenticated transform
+  // bridges in DarwinRuntimeCalls; in particular a weak import must not fall
+  // back from that bridge into an unproved ordinary call hint.
+  if (Found == Index.end() || !Found->second ||
+      hasIndirectSourceParameters(*Found->second))
     return std::nullopt;
   SourceCallTypeHint Result;
   Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;

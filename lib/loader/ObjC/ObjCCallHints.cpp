@@ -2,7 +2,9 @@
 
 #include "../MachO/DarwinRuntimeImport.h"
 #include "../MachO/DarwinSourceDeclarations.h"
+#include "../MachO/ImmutableNativeFrame.h"
 #include "../MachO/SourceLocalCall.h"
+#include "../Swift/SwiftMangledClassMethodABI.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -1107,7 +1109,7 @@ objcSelectorStubDynamicFormatSourceCallHint(const BinaryImage &Image,
   return Hint;
 }
 
-std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
+static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
     const BinaryImage &Image, const LowFunc &Function,
     const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters,
     const std::map<uint64_t, ObjCReceiverTypeHint> *BlockCaptures) {
@@ -1181,6 +1183,21 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
     if (const auto Receiver = objcMethodReceiverTypeHint(Image, Function.Entry))
       EntryFacts.Values.emplace(key(NdVar::reg(TRI.IntParamRegs[0], 8)),
                                 Value{Value::Kind::Receiver, 0, {}, *Receiver});
+    // The native entry is not an Objective-C wrapper. Its complete current
+    // declaration supplies swiftself; canonical lifting authenticates all
+    // bytes and CFG edges before the shared receiver facts can use that root.
+    if (const auto Receiver =
+            objcNativeSwiftSelfTypeHint(Image, Function.Entry)) {
+      size_t Budget = 262144;
+      const auto Signature =
+          swiftMangledZeroArgClassMethodSourceABI(Image, Function.Entry);
+      if (Signature &&
+          immutableNativeFrameMachineMatches(Image, Function, Budget))
+        EntryFacts.Values.emplace(
+            key(NdVar::reg(Signature->Parameters[0].Location.RegisterOffset,
+                           8)),
+            Value{Value::Kind::Receiver, 0, {}, *Receiver});
+    }
     if (const auto Signature = objcMethodSourceTypeHint(Image, Function.Entry))
       for (size_t Index = 0; Index < Signature->Parameters.size(); ++Index) {
         const auto &Parameter = Signature->Parameters[Index];
@@ -2059,6 +2076,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
               SelectorArgumentStorageUse = Evidence;
             }
           }
+          // Indirect records remain private candidates until the shared
+          // whole-function copy proof qualifies them after dataflow converges.
           if (Signature) {
             SourceCallTypeHint Hint;
             Hint.CallKind = Target->Name == "objc_msgSendSuper2"
@@ -2773,8 +2792,186 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
   }
   for (auto &Block : Bindings)
     for (auto &[Address, Hint] : Block)
-      if (CallOccurrences[Address] == 1)
+      if (CallOccurrences[Address] == 1) {
+        if (Hint.Receiver &&
+            Hint.Receiver->Origin ==
+                ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf) {
+          for (const auto &B : Function.Blocks)
+            for (const auto &Op : B.Ops)
+              if (Op.Addr == Address && Op.Opcode == NdOp::CALL &&
+                  Op.NumInputs == 1 && Op.Inputs[0].isConst())
+                Hint.NativeSwiftReceiver = SourceCallOccurrenceKey{
+                    Op.Addr, Op.Seq, Op.Opcode, Op.Inputs[0].Offset};
+          if (!Hint.NativeSwiftReceiver)
+            continue;
+        }
         Result.emplace(Address, std::move(Hint));
+      }
+  return Result;
+}
+std::optional<SourceFrameEffects>
+objcSuperSourceFrameEffects(const BinaryImage &Image,
+                            const SourceCallTypeHint &Binding) {
+  if ((Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      Binding.CallKind != SourceCallTypeHint::Kind::ObjCSuper2 ||
+      Binding.TargetName != "objc_msgSendSuper2" || Binding.Selector.empty() ||
+      Binding.WeakImport || Binding.DoesNotReturn)
+    return std::nullopt;
+  const auto Target = veneer(Image, Binding.TargetAddress);
+  if (!Target || Target->Name != Binding.TargetName ||
+      (!Target->Selector.empty() && Target->Selector != Binding.Selector))
+    return std::nullopt;
+  const auto Import = darwinRuntimeImport(Image, Target->ImportSlot);
+  const auto Bind = Image.DyldBindSlots.find(Target->ImportSlot);
+  const auto Declaration =
+      Binding.Receiver
+          ? objcSuperSourceTypeHint(Image, Binding.Selector, *Binding.Receiver)
+                .Signature
+          : objcSelectorSourceTypeHint(Image, Binding.Selector);
+  if (!Import || *Import != "_objc_msgSendSuper2" ||
+      Bind == Image.DyldBindSlots.end() ||
+      Bind->second.Module != "/usr/lib/libobjc.A.dylib" ||
+      std::find(Image.DynInfo.NeededLibs.begin(),
+                Image.DynInfo.NeededLibs.end(),
+                Bind->second.Module) == Image.DynInfo.NeededLibs.end() ||
+      !Declaration || !equalSourceABIs(*Declaration, Binding.Signature))
+    return std::nullopt;
+  SourceFrameEffects Effects;
+  Effects.ReadOnlyFrameParameters.emplace(0, 16);
+  return sourceFrameEffectsMatchABI(Effects, Binding.Signature)
+             ? std::optional(Effects)
+             : std::nullopt;
+}
+
+bool isObjCByValueCopyHint(const SourceCallTypeHint &Hint, va_t FunctionEntry,
+                           Arch Architecture) {
+  std::string Error;
+  if (!Hint.ByValueCopy || !Hint.NativeSwiftReceiver || !Hint.Receiver ||
+      Hint.Receiver->Origin !=
+          ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf ||
+      Hint.Receiver->Address != FunctionEntry ||
+      Hint.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+      Hint.TargetName != "objc_msgSend" || Hint.Selector.empty() ||
+      Hint.WeakImport || Hint.DoesNotReturn || Hint.Format ||
+      Hint.NilTerminated || Architecture != Arch::AArch64 ||
+      Hint.Signature.Architecture != Architecture ||
+      !validateSourceABI(Hint.Signature, Error) ||
+      Hint.Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+      !Hint.Signature.ReturnType ||
+      Hint.Signature.ReturnType->Kind != NdTypeKind::Void ||
+      Hint.Signature.Parameters.size() != 3)
+    return false;
+  const auto &Copy = *Hint.ByValueCopy;
+  const auto &Parameter = Hint.Signature.Parameters[2];
+  return Copy.FunctionEntry == FunctionEntry &&
+         Copy.Site == *Hint.NativeSwiftReceiver &&
+         Copy.Site.Opcode == NdOp::CALL && Copy.Site.StaticTarget &&
+         Copy.Site.StaticTarget == Hint.TargetAddress && Copy.Parameter == 2 &&
+         Parameter.IndirectByValue && Parameter.Type &&
+         Parameter.Type->Kind == NdTypeKind::Struct &&
+         Parameter.Type->Size == Copy.Bytes &&
+         (Copy.Bytes == 48 || Copy.Bytes == 128) && Copy.FrameOffset % 8 == 0 &&
+         Copy.FrameOffset >= -(1 << 20) &&
+         Copy.FrameOffset <= -static_cast<int64_t>(Copy.Bytes) &&
+         Parameter.Location.Kind == SourceABICarrierKind::IntegerRegister &&
+         Parameter.Location.RegisterOffset == a64reg::X2 &&
+         Parameter.Location.ValueBytes == 8 &&
+         !Hint.Signature.Parameters[0].IndirectByValue &&
+         !Hint.Signature.Parameters[1].IndirectByValue;
+}
+
+std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
+    const BinaryImage &Image, const LowFunc &Function,
+    const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters,
+    const std::map<uint64_t, ObjCReceiverTypeHint> *BlockCaptures,
+    const std::map<va_t, SourceFunctionTypeHint> *NativeCallees) {
+  auto Candidates =
+      sourceCallCandidates(Image, Function, BlockParameters, BlockCaptures);
+  std::map<va_t, SourceCallTypeHint> Result;
+  bool NeedsCopies = false;
+  for (const auto &[Address, Hint] : Candidates)
+    if (hasIndirectSourceParameters(Hint.Signature))
+      NeedsCopies = true;
+    else
+      Result.emplace(Address, Hint);
+  if (!NeedsCopies || Image.Arch != Arch::AArch64)
+    return Result;
+  const auto Entry =
+      swiftMangledZeroArgClassMethodSourceABI(Image, Function.Entry);
+  size_t Budget = 262144;
+  if (!Entry || !immutableNativeFrameMachineMatches(Image, Function, Budget))
+    return Result;
+  // The first phase owns declarations and register provenance. This phase
+  // never recursively discovers call hints, and its contracts point only to
+  // stable map nodes or separately supplied complete native declarations.
+  NativeSourceCalls Calls;
+  size_t Count = 0;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return Result;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      const auto Site = nativeSourceCallKey(Op);
+      if (!Site || Op.Opcode != NdOp::CALL || !Site->StaticTarget)
+        return Result;
+      NativeSourceCallContract Contract;
+      const auto Found = Candidates.find(Op.Addr);
+      if (Found != Candidates.end()) {
+        const auto &Binding = Found->second;
+        Contract.Signature = &Binding.Signature;
+        if (Binding.DoesNotReturn || Binding.WeakImport)
+          return Result;
+        if (hasIndirectSourceParameters(Binding.Signature)) {
+          if (!Binding.NativeSwiftReceiver ||
+              Binding.Signature.Parameters.size() != 3 ||
+              !Binding.Signature.Parameters[2].IndirectByValue ||
+              !Binding.Signature.ReturnType ||
+              Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
+              ++Count > 8)
+            return Result;
+          Contract.ByValueFrameParameters.insert(2);
+        } else if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCSuper2) {
+          const auto Effects = objcSuperSourceFrameEffects(Image, Binding);
+          if (!Effects)
+            return Result;
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+        } else if (Binding.Signature.ReturnLocation.Kind ==
+                   SourceABICarrierKind::IndirectResultPointer) {
+          const auto Effects = darwinMatrixSourceFrameEffects(Image, Binding);
+          if (!Effects)
+            return Result;
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+        }
+      } else {
+        if (!NativeCallees || *Site->StaticTarget == Function.Entry ||
+            !Image.hasAuthenticatedFunctionEntryAt(*Site->StaticTarget))
+          return Result;
+        const auto ABI = NativeCallees->find(*Site->StaticTarget);
+        if (ABI == NativeCallees->end() ||
+            ABI->second.Origin !=
+                SourceFunctionTypeHint::OriginKind::NativeAnalysis)
+          return Result;
+        Contract.Signature = &ABI->second;
+      }
+      if (!Calls.emplace(*Site, std::move(Contract)).second)
+        return Result;
+    }
+  for (auto &[Address, Hint] : Candidates) {
+    if (!hasIndirectSourceParameters(Hint.Signature) ||
+        !Hint.NativeSwiftReceiver)
+      continue;
+    const auto Copies = sourceFrameByValueCopies(
+        Function, Image.Arch, Calls, *Hint.NativeSwiftReceiver, *Entry);
+    if (!Copies || Copies->size() != 1 || Copies->front().Parameter != 2)
+      continue;
+    const auto &Copy = Copies->front();
+    Hint.ByValueCopy = SourceCallTypeHint::ByValueCopyStorage{
+        Function.Entry, *Hint.NativeSwiftReceiver, 2, Copy.FrameOffset,
+        static_cast<uint32_t>(Copy.Bytes)};
+    if (isObjCByValueCopyHint(Hint, Function.Entry, Image.Arch))
+      Result.emplace(Address, std::move(Hint));
+  }
   return Result;
 }
 } // namespace neverd

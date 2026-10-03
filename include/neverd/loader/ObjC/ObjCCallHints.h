@@ -2,6 +2,7 @@
 #define NEVERD_LOADER_OBJC_OBJCCALLHINTS_H
 
 #include "neverd/ir/SourceCallTypeHint.h"
+#include "neverd/ir/low/SourceFrameEffects.h"
 
 #include <map>
 #include <optional>
@@ -58,12 +59,25 @@ objcSelectorStubDynamicFormatSourceCallHint(const BinaryImage &Image,
 std::optional<SourceCallTypeHint>
 objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
+/// The dispatch runtime synchronously reads the two-word objc_super record;
+/// the actual method receives its object, not this private record's address.
+/// The caller separately proves the original LowIR occurrence and receiver.
+std::optional<SourceFrameEffects>
+objcSuperSourceFrameEffects(const BinaryImage &Image,
+                            const SourceCallTypeHint &Binding);
+
+/// Check the shape of a copy receipt, not its authority. Current machine and
+/// frame evidence must be rebuilt by buildObjCSourceCallHints at publication.
+bool isObjCByValueCopyHint(const SourceCallTypeHint &Hint, va_t FunctionEntry,
+                           Arch Architecture);
+
 /// Resolve source-only callsite declarations from runtime metadata and exact
 /// machine/LowIR evidence. Unknown and conflicting signatures remain unbound.
 std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
     const BinaryImage &Image, const LowFunc &Function,
     const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters = nullptr,
-    const std::map<uint64_t, ObjCReceiverTypeHint> *BlockCaptures = nullptr);
+    const std::map<uint64_t, ObjCReceiverTypeHint> *BlockCaptures = nullptr,
+    const std::map<va_t, SourceFunctionTypeHint> *NativeCallees = nullptr);
 
 } // namespace neverd
 #endif

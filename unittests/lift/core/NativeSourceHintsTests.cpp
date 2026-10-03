@@ -1,10 +1,13 @@
 #include "../../../lib/loader/Swift/SwiftBooleanProjection.h"
 #include "../../../lib/pipeline/NativeSourcePreservation.h"
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
+#include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceProjection.h"
+#include "../../../lib/sdk/capi/SourceSwiftConsumedInputProjection.h"
 #include "../../../lib/sdk/capi/SwiftMangledSourceABI.h"
 #include "CFunctionParameterCallFixture.h"
 #include "ImmutableNativeCallFixture.h"
+#include "SwiftConsumedInputFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -3311,14 +3314,18 @@ TEST(NativeSourceHints, VoidContractsPropagateAcrossExactNativeCallees) {
 }
 
 TEST(NativeSourceHints, ImplicitCallInputsRequireCompleteEntryByteEvidence) {
-  for (auto Architecture : {Arch::AArch64, Arch::X64})
+  for (const auto [Architecture, Volatile] :
+       {std::pair{Arch::AArch64, false}, std::pair{Arch::AArch64, true},
+        std::pair{Arch::X64, false}, std::pair{Arch::X64, true}})
     for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
       SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Volatile);
       SCOPED_TRACE(Mutation);
       NativeVoidFixture F(Architecture);
       F.useNativeVoidCallee();
-      const auto Context =
-          Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::RBX;
+      const auto Context = Architecture == Arch::AArch64
+                               ? (Volatile ? a64reg::X8 : a64reg::X20)
+                               : (Volatile ? x86reg::R10 : x86reg::RBX);
       auto &Call = F.Med.Blocks[0].Ops[0];
       auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
       Hint->Signature.Parameters.push_back(
@@ -3376,21 +3383,27 @@ TEST(NativeSourceHints, ImplicitCallInputsRequireCompleteEntryByteEvidence) {
 }
 
 TEST(NativeSourceHints, TailContextSurvivesNativeInferenceAndRelifting) {
-  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+  for (const auto [Architecture, Volatile] :
+       {std::pair{Arch::AArch64, false}, std::pair{Arch::AArch64, true},
+        std::pair{Arch::X64, false}, std::pair{Arch::X64, true}}) {
     SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    SCOPED_TRACE(Volatile);
     NativeFixture F(Architecture);
-    const auto ContextRegister =
-        Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::RBX;
+    const auto ContextRegister = Architecture == Arch::AArch64
+                                     ? (Volatile ? a64reg::X8 : a64reg::X20)
+                                     : (Volatile ? x86reg::R10 : x86reg::RBX);
     auto &Bytes = F.Image.Segments[0].Data;
     if (Architecture == Arch::AArch64) {
       // b helper; helper: add x0, x0, x20; ret
       llvm::support::endian::write32le(Bytes.data(), 0x14000010);
-      llvm::support::endian::write32le(Bytes.data() + 0x40, 0x8b140000);
+      llvm::support::endian::write32le(Bytes.data() + 0x40,
+                                       Volatile ? 0x8b080000 : 0x8b140000);
       llvm::support::endian::write32le(Bytes.data() + 0x44, 0xd65f03c0);
     } else {
       // jmp helper; helper: lea rax, [rdi + rbx]; ret
       const uint8_t Jump[] = {0xe9, 0x3b, 0, 0, 0};
-      const uint8_t Body[] = {0x48, 0x8d, 0x04, 0x1f, 0xc3};
+      const uint8_t Body[] = {uint8_t(Volatile ? 0x4a : 0x48), 0x8d, 0x04,
+                              uint8_t(Volatile ? 0x17 : 0x1f), 0xc3};
       std::copy(std::begin(Jump), std::end(Jump), Bytes.begin());
       std::copy(std::begin(Body), std::end(Body), Bytes.begin() + 0x40);
     }
@@ -3463,6 +3476,76 @@ TEST(NativeSourceHints, TailContextSurvivesNativeInferenceAndRelifting) {
     }
     EXPECT_EQ(Verified, 2U);
   }
+}
+
+TEST(NativeSourceHints, ForwardedSwiftResultAddressIsAnObservedEntryInput) {
+  using namespace immutable_native_call_test;
+  constexpr va_t ImportSlot = runtime_function_address_test::Slot;
+  Fixture F;
+  const std::string Name = "_$ss11AnyHashableVyABxcSHRzlufC";
+  F.Image.ImportPtrSlots[ImportSlot] = Name;
+  F.Image.DyldBindSlots[ImportSlot] = {
+      Name, 0, "/usr/lib/swift/libswiftCore.dylib", false};
+  F.Image.Symbols[0] = {"forward_result", Entry, 20, true};
+  // Only a normal prologue, the original BL, and the epilogue. The incoming
+  // x8 result address is observed by the complete Swift call ABI, never by
+  // an explicit LowIR input or an assumed entry signature.
+  const uint32_t Words[] = {0xa9bf7bfd, 0x910003fd, 0x9400003e, 0xa8c17bfd,
+                            0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Words); ++I)
+    F.word(I, Words[I]);
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {Entry};
+  F.Result = Pipeline().run(F.Image, F.Context, Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low() && F.med() && F.high());
+  const auto Audit = std::find_if(
+      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+      [&](const auto &A) { return A.Entry == Entry; });
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  std::string Error;
+  const auto Hint = inferNativeSourceTypeHint(F.Image, *F.med(), *F.high(),
+                                              *Audit, Error, F.low());
+  ASSERT_TRUE(Hint) << Error;
+  ASSERT_EQ(Hint->Parameters.size(), 4U);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_EQ(Hint->Parameters[3].Location.RegisterOffset, a64reg::X8);
+  EXPECT_EQ(Hint->Parameters[3].Location.ValueBytes, 8U);
+  // This is an internal source summary, not a guessed external Swift entry.
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::NativeAnalysis);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::C);
+  Options.SourceTypeHints.emplace(Entry, *Hint);
+  F.Result = Pipeline().run(F.Image, F.Context, Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.high() && F.high()->SourceTypeHint);
+  ASSERT_EQ(F.high()->Params.size(), 4U);
+  const auto CurrentAudit = std::find_if(
+      F.Result.FunctionAudits.begin(), F.Result.FunctionAudits.end(),
+      [&](const auto &A) { return A.Entry == Entry; });
+  ASSERT_NE(CurrentAudit, F.Result.FunctionAudits.end());
+  const auto Allowed = [&](const HighExpr &E) {
+    return sdk::objcSourceCallBound(E, F.Image, {}, nullptr, nullptr, F.high());
+  };
+  EXPECT_TRUE(sdk::sourceBodyLimitation(*F.high(), *F.high()->SourceTypeHint,
+                                        &*CurrentAudit, Allowed)
+                  .empty());
+  unsigned Calls = 0;
+  walkStmts(F.high()->Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (!E || E->Kind != ExprKind::Call)
+        return;
+      ++Calls;
+      ASSERT_TRUE(E->SourceCallHint);
+      ASSERT_EQ(E->Operands.size(), 4U);
+      const auto &Result = E->SourceCallHint->Signature.Parameters[0];
+      EXPECT_EQ(Result.TheRole,
+                SourceParameterTypeHint::Role::SwiftIndirectResult);
+      EXPECT_EQ(Result.Location.RegisterOffset, a64reg::X8);
+      EXPECT_TRUE(Allowed(*E));
+    });
+  });
+  EXPECT_EQ(Calls, 1U);
 }
 
 TEST(NativeSourceHints, VoidContractsAcceptExactSwiftStringBridgeCallBindings) {
@@ -5377,6 +5460,83 @@ TEST(NativeSourceHints,
   std::string Error;
   ASSERT_TRUE(
       assignDarwinObjCSourceABI(CallHint->Signature, Arch::AArch64, Error));
+  // A super message ABI alone does not lend private frame storage. Supply
+  // the exact current runtime import and declaration used by the effect owner.
+  Fixture.Image.MachOTwoLevelNamespace = true;
+  Fixture.Image.DynInfo.NeededLibs = {
+      "/usr/lib/libobjc.A.dylib",
+      "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+  Section TextSection;
+  TextSection.VA = 0x1000;
+  TextSection.Size = TextSection.FileSz = 0x100;
+  TextSection.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  TextSection.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+  Fixture.Image.Sections.push_back(TextSection);
+  Segment ImportData;
+  ImportData.VA = 0x3000;
+  ImportData.Size = ImportData.FileSz = 8;
+  ImportData.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  ImportData.Data.resize(8);
+  Fixture.Image.Segments.push_back(ImportData);
+  Fixture.Image.ImportPtrSlots[0x3000] = "_objc_msgSendSuper2";
+  Fixture.Image.DyldBindSlots[0x3000] = {"_objc_msgSendSuper2", 0,
+                                         "/usr/lib/libobjc.A.dylib", false};
+  const uint32_t Stub[] = {0xd0000010, 0xf9400210, 0xd61f0200};
+  for (unsigned I = 0; I < std::size(Stub); ++I)
+    llvm::support::endian::write32le(
+        Fixture.Image.Segments[0].Data.data() + 0x80 + I * 4, Stub[I]);
+  CallHint->TargetAddress = 0x1080;
+  CallHint->TargetName = "objc_msgSendSuper2";
+  CallHint->Selector = "layoutSublayers";
+  const auto Declaration =
+      objcSelectorSourceTypeHint(Fixture.Image, CallHint->Selector);
+  ASSERT_TRUE(Declaration);
+  CallHint->Signature = *Declaration;
+  ASSERT_TRUE(objcSuperSourceFrameEffects(Fixture.Image, *CallHint));
+  for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = Fixture.Image;
+    auto Binding = *CallHint;
+    switch (Mutation) {
+    case 0:
+      Image.DyldBindSlots.at(0x3000).WeakImport = true;
+      break;
+    case 1:
+      Image.DyldBindSlots.at(0x3000).Addend = 8;
+      break;
+    case 2:
+      Image.DyldBindSlots.at(0x3000).Module = "/other/libobjc";
+      break;
+    case 3:
+      Image.ImportPtrSlots[0x3000] = "_objc_msgSend";
+      break;
+    case 4:
+      Image.DynInfo.NeededLibs.clear();
+      break;
+    case 5:
+      Image.Segments[0].Data[0x80] ^= 1;
+      break;
+    case 6:
+      Binding.WeakImport = true;
+      break;
+    case 7:
+      Binding.DoesNotReturn = true;
+      break;
+    case 8:
+      Binding.TargetName = "objc_msgSend";
+      break;
+    case 9:
+      Binding.Selector = "missingIndependentDeclaration";
+      break;
+    case 10:
+      Binding.Signature.Parameters[0].Location.ValueBytes = 4;
+      break;
+    case 11:
+      Binding.TargetAddress += 4;
+      break;
+    }
+    EXPECT_FALSE(objcSuperSourceFrameEffects(Image, Binding));
+  }
   auto &MedCall = Fixture.Med.Blocks[0].Ops[0];
   MedCall.SourceCallHint = CallHint;
 
@@ -8854,5 +9014,397 @@ TEST(NativeSourceHints, SwiftAccessEffectsRecheckScalarInferenceAndScratchABI) {
           Op.SourceCallHint = std::move(Binding);
         }
     EXPECT_FALSE(F.infer(Error)) << Case << ": " << Error;
+  }
+}
+
+TEST(NativeSourceHints, ConsumedUIntRequiresCurrentTypeAndLifetimeEvidence) {
+  using namespace swift_consumed_input_test;
+  Fixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  auto Hints = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(Call);
+  ASSERT_TRUE(Hint.SwiftConsumedInput);
+  EXPECT_EQ(Hint.SwiftConsumedInput->MetadataSlot, MetadataSlot);
+  EXPECT_EQ(Hint.SwiftConsumedInput->WitnessSlot, WitnessSlot);
+  EXPECT_TRUE(Hint.requiresUniqueSourceOccurrence());
+  const auto Effects = swiftConsumedInputCallEffects(F.Image, *F.low(), Hint);
+  ASSERT_TRUE(Effects);
+  EXPECT_EQ(Effects->WritableFrameParameters,
+            (std::map<size_t, size_t>{{1, 8}}));
+  EXPECT_EQ(Effects->InitializedFrameParameters, (std::set<size_t>{1}));
+  EXPECT_TRUE(Effects->ReadOnlyFrameParameters.empty());
+  EXPECT_FALSE(Effects->InitializesIndirectResult);
+  std::string Error;
+  const auto Entry = F.infer(Error);
+  ASSERT_TRUE(Entry) << Error;
+  ASSERT_EQ(Entry->Parameters.size(), 2U);
+  EXPECT_EQ(Entry->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Entry->Parameters[1].Location.RegisterOffset, a64reg::X8);
+  EXPECT_EQ(Entry->ReturnType->Kind, NdTypeKind::Void);
+  F.EntrySignature = *Entry;
+  F.runUInt();
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  EXPECT_TRUE(validateSwiftConsumedInputBindings(F.Image, F.low(), *F.med()));
+  auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+  EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_TRUE(
+      sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
+          .valid(Bound.Function));
+}
+
+TEST(NativeSourceHints, ConsumedUIntRejectsStaleTypesInstructionsAndABI) {
+  using namespace swift_consumed_input_test;
+  Fixture F;
+  ASSERT_TRUE(F.low());
+  const auto Hints = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  for (unsigned Case = 0; Case < 34; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Image = F.Image;
+    auto Low = *F.low();
+    auto Hint = Hints.at(Call);
+    auto Change = [&](unsigned I, uint32_t W) {
+      llvm::support::endian::write32le(Image.Segments[0].Data.data() + I * 4,
+                                       W);
+    };
+    switch (Case) {
+    case 0:
+      Image.DyldBindSlots[MetadataSlot].Name = "_$sSiN";
+      break;
+    case 1:
+      Image.DyldBindSlots[WitnessSlot].Name = "_$sSiSHsWP";
+      break;
+    case 2:
+      Image.DyldBindSlots[RuntimeSlot].Name += "wrong";
+      break;
+    case 3:
+      Image.DyldBindSlots[MetadataSlot].WeakImport = true;
+      break;
+    case 4:
+      Image.DyldBindSlots[WitnessSlot].WeakImport = true;
+      break;
+    case 5:
+      Image.DyldBindSlots[RuntimeSlot].WeakImport = true;
+      break;
+    case 6:
+      Image.DyldBindSlots[MetadataSlot].Addend = 8;
+      break;
+    case 7:
+      Image.DyldBindSlots[WitnessSlot].Addend = 8;
+      break;
+    case 8:
+      Image.DyldBindSlots[RuntimeSlot].Addend = 8;
+      break;
+    case 9:
+      Image.DyldBindSlots[MetadataSlot].Module = "other";
+      break;
+    case 10:
+      Image.DyldBindSlots[WitnessSlot].Module = "other";
+      break;
+    case 11:
+      Image.DyldBindSlots[RuntimeSlot].Module = "other";
+      break;
+    case 12:
+      Image.ImportPtrSlots[MetadataSlot] = "_$sSiN";
+      break;
+    case 13:
+      Change(5, 0xb9400421);
+      break;
+    case 14:
+      Change(7, 0xb9400842);
+      break;
+    case 15:
+      Change(8, 0xd2800001);
+      break;
+    case 16:
+      Low.Blocks[0].InstructionBoundaries.clear();
+      break;
+    case 17:
+      Low.Blocks[0].Succs.push_back(123);
+      break;
+    case 18:
+      for (auto &B : Low.Blocks)
+        for (auto &O : B.Ops)
+          if (O.Addr == Call - 16 && O.Output.Size)
+            O.Output.Size = 4;
+      break;
+    case 19:
+      Hint.Signature.Parameters[1].Location.ValueBytes = 4;
+      break;
+    case 20:
+      Hint.Signature.Parameters[0].Location.RegisterOffset = a64reg::X9;
+      break;
+    case 21:
+      Hint.Signature.Parameters[2].TheRole =
+          SourceParameterTypeHint::Role::SwiftContext;
+      break;
+    case 22:
+      Hint.Signature.Parameters.pop_back();
+      break;
+    case 23:
+      Hint.SwiftConsumedInput->MetadataSlot += 8;
+      break;
+    case 24:
+      Hint.SwiftConsumedInput->WitnessSlot -= 8;
+      break;
+    case 25:
+      Hint.SwiftConsumedInput->Site.Instruction += 4;
+      break;
+    case 26:
+      Hint.SwiftConsumedInput->FunctionEntry += 4;
+      break;
+    case 27:
+      Hint.SwiftConsumedInput.reset();
+      break;
+    case 28:
+      Hint.WeakImport = true;
+      break;
+    case 29:
+      Hint.DoesNotReturn = true;
+      break;
+    case 30:
+      Image.Segments[1].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 31:
+      Image.Arch = Arch::X64;
+      break;
+    case 32:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 33:
+      Image.IsRelocatable = true;
+      break;
+    }
+    EXPECT_FALSE(swiftConsumedInputCallEffects(Image, Low, Hint));
+  }
+}
+
+TEST(NativeSourceHints,
+     ConsumedUIntCannotReadUninitializedOrConsumedFrameBytes) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    switch (Case) {
+    case 0:
+      F.word(3, 0xb9000be0);
+      break; // four-byte initialization
+    case 1:
+      F.word(3, 0xd503201f);
+      break; // missing initialization
+    case 2:
+      F.word(8, 0x910043e0);
+      break; // overlaps saved frame/link words
+    case 3:
+      F.word(10, 0xf94007e9);
+      F.word(11, 0xa9417bfd);
+      F.word(12, 0x910083ff);
+      F.word(13, 0xd65f03c0);
+      F.Image.Symbols[0].Size = 56;
+      break;
+    case 4:
+      F.word(3, 0xf90007ff);
+      F.word(8, 0x910073e0);
+      break; // range extends past active frame
+    case 5:
+      F.word(3, 0xf90007ff);
+      F.word(8, 0x910003e0);
+      break; // unwritten neighboring word
+    }
+    F.runUInt();
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    std::string Error;
+    EXPECT_FALSE(F.infer(Error)) << Error;
+  }
+}
+
+TEST(NativeSourceHints,
+     ConsumedUIntPublicationReplaysEveryCurrentRepresentation) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 18; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    std::string Error;
+    auto EntryHint = F.infer(Error);
+    ASSERT_TRUE(EntryHint) << Error;
+    F.EntrySignature = *EntryHint;
+    F.runUInt();
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    auto &Published = Bound.Function;
+    HighExpr *CallExpr = nullptr;
+    walkStmts(Published.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (E && E->SourceCallHint && E->SourceCallHint->SwiftConsumedInput)
+          CallExpr = E.get();
+      });
+    });
+    ASSERT_TRUE(CallExpr);
+    MedOp *CallOp = nullptr;
+    for (auto &B : F.med()->Blocks)
+      for (auto &O : B.Ops)
+        if (O.SourceCallHint && O.SourceCallHint->SwiftConsumedInput)
+          CallOp = &O;
+    ASSERT_TRUE(CallOp);
+    auto ClearMed = [&] {
+      auto H = std::make_shared<SourceCallTypeHint>(*CallOp->SourceCallHint);
+      H->SwiftConsumedInput.reset();
+      CallOp->SourceCallHint = H;
+    };
+    auto ClearHigh = [&] {
+      auto H = std::make_shared<SourceCallTypeHint>(*CallExpr->SourceCallHint);
+      H->SwiftConsumedInput.reset();
+      CallExpr->SourceCallHint = H;
+    };
+    switch (Case) {
+    case 0:
+      CallExpr->Operands[0] = HighExpr::makeConst(0, 8);
+      break;
+    case 1:
+      CallExpr->Operands[1] = HighExpr::makeConst(0, 8);
+      break;
+    case 2:
+      CallExpr->Operands[2] = CallExpr->Operands[3];
+      break;
+    case 3:
+      CallExpr->Operands[3] = CallExpr->Operands[2];
+      break;
+    case 4:
+      ClearMed();
+      break;
+    case 5:
+      ClearHigh();
+      break;
+    case 6:
+      ClearMed();
+      ClearHigh();
+      break;
+    case 7:
+      CallOp->Inputs[1] = CallOp->Inputs[2];
+      break;
+    case 8:
+      CallOp->Inputs[2] = CallOp->Inputs[3];
+      break;
+    case 9:
+      CallOp->Inputs[3] = CallOp->Inputs[4];
+      break;
+    case 10:
+      for (size_t I = 0; I < Published.Body.size(); ++I)
+        if (Published.Body[I].Kind == StmtKind::Store) {
+          Published.Body.erase(Published.Body.begin() + I);
+          break;
+        }
+      break;
+    case 11:
+      for (size_t I = 0; I < Published.Body.size(); ++I)
+        if (Published.Body[I].Kind == StmtKind::Call) {
+          Published.Body.insert(Published.Body.begin() + I, Published.Body[I]);
+          break;
+        }
+      break;
+    case 12:
+      Published.FrameSize += 16;
+      break;
+    case 13:
+      CallOp->OriginSeq += 1;
+      break;
+    case 14:
+      F.Image.DyldBindSlots[MetadataSlot].Name = "_$sSiN";
+      break;
+    case 15: {
+      auto H = std::make_shared<SourceCallTypeHint>(*CallExpr->SourceCallHint);
+      H->Signature.Parameters.pop_back();
+      CallExpr->SourceCallHint = H;
+    } break;
+    case 16:
+      F.word(3, 0xb9000be0);
+      break;
+    case 17:
+      F.Result.FunctionAudits.front().MedIRVerified = false;
+      break;
+    }
+    EXPECT_FALSE(
+        sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
+            .valid(Published));
+  }
+}
+
+TEST(NativeSourceHints, GenericAnyHashableDoesNotClaimConsumedUIntEffects) {
+  using namespace swift_consumed_input_test;
+  Fixture F;
+  for (const auto &[Slot, Name] : std::map<va_t, std::string>{
+           {MetadataSlot, "_$sSiN"}, {WitnessSlot, "_$sSiSHsWP"}}) {
+    F.Image.ImportPtrSlots[Slot] = Name;
+    F.Image.DyldBindSlots[Slot].Name = Name;
+  }
+  // A scalar result permits an internal typed body independently of the
+  // private input's lifetime. It cannot turn a generic call into a UInt
+  // consumption proof or authorize publishing its private-frame use.
+  F.word(10, 0xd28000e0); // mov x0, #7
+  F.word(11, 0xa9417bfd);
+  F.word(12, 0x910083ff);
+  F.word(13, 0xd65f03c0);
+  F.Image.Symbols[0].Size = 56;
+  F.runUInt();
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  EXPECT_TRUE(buildSwiftConsumedInputCallHints(F.Image, *F.low()).empty());
+  EXPECT_TRUE(validateSwiftConsumedInputBindings(F.Image, F.low(), *F.med()));
+  NativeSourceCalls Calls;
+  for (const auto &Block : F.med()->Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL) {
+        ASSERT_TRUE(Op.SourceCallHint);
+        EXPECT_FALSE(Op.SourceCallHint->SwiftConsumedInput);
+        EXPECT_FALSE(swiftConsumedInputCallEffects(F.Image, *F.low(),
+                                                   *Op.SourceCallHint));
+        Calls[{Op.Addr, Op.OriginSeq}].Signature =
+            &Op.SourceCallHint->Signature;
+      }
+  ASSERT_EQ(Calls.size(), 1U);
+  EXPECT_FALSE(restoresNativeSourceState(*F.low(), Arch::AArch64, Calls));
+  std::string Error;
+  const auto Hint = F.infer(Error);
+  ASSERT_TRUE(Hint) << Error;
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Int);
+}
+
+TEST(NativeSourceHints, ScalarResultCannotSkipConsumedUIntStateProof) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    Fixture F;
+    F.word(10, 0xd28000e0); // mov x0, #7
+    F.word(11, 0xa9417bfd);
+    F.word(12, 0x910083ff);
+    F.word(13, 0xd65f03c0);
+    F.Image.Symbols[0].Size = 56;
+    if (Case == 1)
+      F.word(3, 0xb9000be0); // Only half the input is initialized.
+    if (Case == 2)
+      F.word(3, 0xd503201f); // Missing initialization.
+    if (Case == 3)
+      F.word(10, 0xf94007e0); // Read the consumed input as the result.
+    F.runUInt();
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    if (Case >= 4) {
+      for (auto &Block : F.med()->Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput) {
+            auto Hint =
+                std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+            if (Case == 4)
+              Hint->SwiftConsumedInput.reset();
+            else
+              Hint->Signature.Parameters[1].Location.ValueBytes = 4;
+            Op.SourceCallHint = std::move(Hint);
+          }
+    }
+    std::string Error;
+    const auto Hint = F.infer(Error);
+    EXPECT_EQ(bool(Hint), Case == 0) << Error;
   }
 }

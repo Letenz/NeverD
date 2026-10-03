@@ -1,8 +1,15 @@
+**语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
+
+<!-- i18n-source: b3b4285b341fef4afed8cfe49f7fe8396536b9e63f924d14402ec7d0d3eb0b01 -->
+
+[← 文档索引](README.md)
+
 # macOS / iOS 来宾进程环境
 
 `os/darwin/` 提供共享的 Mach-O 启动、Darwin 系统调用和内存模型；
 `macos/`、`ios/` 分别定义平台契约。它们属于来宾 OS 层，HVF 属于宿主 CPU
 后端，二者独立选择。
+启用 `NEVERD_ENABLE_CPU_EMULATION` 即可，不需要开启 Windows 驱动模拟。
 
 | Profile | 平台 | 架构 |
 | --- | --- | --- |
@@ -33,6 +40,12 @@ OS 页独立持有物理内存，因此部分解除映射能释放预算，重�
 原始 `write` 长度超过 `INT_MAX` 时，直接返回 EINVAL，检查发生在描述符、来宾指针和
 输出预算之前。此顺序已有真实 macOS 系统调用对照。
 
+服务清单为 `exit`、`write`、`getpid`、`getppid`、`getuid`、`geteuid`、`getgid`、
+`getegid`、`mmap`、`mprotect`、`munmap`。PID/UID/GID 固定为 1000，PPID 为 1。
+匿名数据映射要求 `flags=0x1002`、描述符 -1 和零偏移；长度和非固定提示地址向上按 OS 页取整。
+旧式原始 mmap 的零长度请求返回零而不分配内存；`MAP_UNIX03` 不在当前契约内。
+Unmap/protect 地址必须对齐；允许 NONE/READ/WRITE，WRITE 隐含 READ，不接受匿名可执行映射。
+
 设备与模拟器的 Mach-O 平台标记必须分别匹配。此版本接受不依赖动态库、重定位、
 初始化函数或 TLS 的独立可执行文件。需要 dyld 链接、Mach IPC、线程、文件系统、
 Objective-C/Swift 运行时、Foundation/UIKit，或 arm64e/PAC 的输入会明确拒绝；
@@ -41,8 +54,16 @@ Objective-C/Swift 运行时、Foundation/UIKit，或 arm64e/PAC 的输入会明�
 测试使用自行编写、由 Clang/LLD 生成的五种 Mach-O 平台/架构用例，另有独立构造的
 线程入口和畸形文件测试、4 KiB/16 KiB 内存测试，以及 C API/CLI 报告一致性测试。
 Python SDK 也通过真实共享库执行五种平台/架构组合。
+
+```sh
+cmake --build build-hvf --target NeverDDarwinProcessTests NeverDProcessPublicTests --parallel 8
+ctest --test-dir build-hvf -L '^(NeverDDarwinProcessTests|NeverDProcessPublicTests)$' --output-on-failure
+python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
+  --evidence build-hvf-native/native-evidence --require-hvf
+```
+
 HVF 必需门禁也包含这些用例。完整支持边界、来源和命令见[英文说明](../darwin-emulation.md)。
-Intel HVF 的 10 项原生 transport 检查已全部通过，完整 CPU/Darwin 验收仍待完成；当前状态见
+Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已通过，完整 CPU 清单仍单独验收；当前状态见
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
@@ -59,6 +80,11 @@ Intel 与 Apple Silicon macOS 上执行这些程序，无需构建 NeverD 或 LL
 架构不符、Rosetta、超时或结果不符均失败，JSON 保留源码、系统和编译器信息。
 `scripts/run_native_cpu_ci.py --require-darwin-backend hvf` 可以在本机验收；
 Linux 使用 `kvm`，Windows 使用 `whp`，同时传入 `--build` 和 `--evidence` 路径。
+```sh
+python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
+  --evidence build-hvf-native/darwin-workload-evidence --require-darwin-backend hvf
+```
+
 缺少用例注册、跳过必需用例或缺少 `ld64.lld` 均不能通过。
 [原生 Darwin 专项工作流](../../.github/workflows/darwin-native.yml)提供关闭 Unicorn
 后的 x64 KVM/WHP 构建和验收；它需要 runner 实际提供虚拟化能力，保留完整测试证据。
@@ -89,6 +115,17 @@ Apple M4 Max / macOS 15.6.1，Release 构建，源码为
 各平台的线程入口、超长写入错误顺序及格式化换行后的测试清单解析。
 原生清单、结果核对和 CI 脚本的 106 项回归通过；能力、文档、来源及格式检查也通过。
 
+后续同步 `dev` 后，干净源码 `f4bf8dde5cbc33d18ce053cb0722a54047e5a2d0`
+再次通过独立 ARM64 Darwin 门禁：65 项通过、0 失败、221 项跳过，39 个必需原生
+工作负载全部执行。证据位于 `build-hvf-native/hvf-final-dev-darwin-evidence/`。
+这次复跑验证 Darwin 目标，不代表同期合入的其他 Windows 进程改动已经通过新的完整 CPU 门禁。
+
+后续干净源码 `d5864c055116a687546320e4acf0788ef4a4e735` 的方法级执行再次通过
+39 个 ARM64 Darwin 工作负载（65 通过、221 跳过），286 个 CTest 身份与原始 GoogleTest
+XML 全部核对一致。相同源码的完整 20 个目标覆盖 6,842 项，849 通过、0 失败、5,993 跳过，
+16 个必需原生项全通过；包含后续 Windows 环境变更，摘要明确记录方法级进程隔离。
+证据位于 `build-hvf-native/hvf-method-clean-{full,darwin}-evidence/`。
+
 较早的集成验证已覆盖五种平台/架构的 Python SDK 调用；包内引擎与关闭 Unicorn 的
 CLI 在三种 ARM64 平台的 18 个场景中报告一致。桌面包通过 186 个 Mach-O 的依赖、
 签名和 Cocoa 启动检查。同时关闭 HVF 与 Unicorn 的配置通过 38 项检查、跳过 231 项
@@ -97,6 +134,19 @@ CLI 在三种 ARM64 平台的 18 个场景中报告一致。桌面包通过 186 
 也在 macOS、Windows、Ubuntu 三个平台通过。
 
 ## 托管宿主原生验证（2026-10-03）
+
+[Intel HVF Darwin 门禁](https://github.com/NeverSight/NeverD/actions/runs/37106013999)
+在干净源码 `8dcc74c59da303176801b99747a60339161b824b` 上通过 macOS 与 iOS Simulator
+全部 **26/26** 个 x64 原生工作负载。286 个 CTest 身份均与原始 GoogleTest XML 核对一致：
+**52 通过、0 失败、234 跳过**，无缺失、重复或未执行的必需项。跳过项分别为 65 个关闭的
+Unicorn、39 个 ARM64 来宾和 130 个其他宿主后端；32 个方法进程全部正常退出。
+原始程序与 macOS 宿主内核的对照也通过；这不代表 iOS device 内核或更广泛的 Intel CPU 验收。
+
+产物 `11267489438` 已下载，SHA-256 为
+`cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`，与 GitHub 元数据一致。
+本地证据位于 `build-hvf/verification/hvf-intel-darwin-accepted/`。托管 Intel 使用已说明的
+方法级串行执行策略，保留全部参数与 CTest 环境；宿主为四个逻辑 CPU 的 macOS x86-64、Darwin 24.6.0。
+同一轮还通过 10 项 transport、100 次中断恢复和独立 CR8 回归；这些重叠检查不加入 Darwin 总数。
 
 两个 x64 后端都在关闭 Unicorn 后通过最新 Darwin 专项门禁，包含文件预算、独立线程
 入口及超长写入回归。源码均为 `36e11ca8a3d80aecf585d3328018839ce7fdb989`，

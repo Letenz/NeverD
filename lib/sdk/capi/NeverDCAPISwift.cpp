@@ -2,6 +2,7 @@
 #include "ObjCSourceProjection.h"
 #include "SessionImpl.h"
 #include "SourceRegisterCopyProjection.h"
+#include "SourceSwiftConsumedInputProjection.h"
 #include "SourceSwiftWitnessFrameProjection.h"
 #include "SwiftABIProjectionPlan.h"
 #include "SwiftRuntimeProjection.h"
@@ -326,6 +327,8 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
                         const PipelineResult &Projection) {
       const SourceRegisterCopyProjectionValidator RegisterCopies(Session->Img,
                                                                  Projection);
+      const SourceSwiftConsumedInputProjectionValidator ConsumedInputs(
+          Session->Img, Projection);
       const SourceSwiftWitnessFrameProjectionValidator WitnessFrames(
           Session->Img, Projection);
       std::map<va_t, const HighFunc *> Functions;
@@ -354,6 +357,8 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
                    "(possibly limited by max-func)";
         else if (!RegisterCopies.valid(*Function))
           Reason = "source register-copy proof is no longer valid";
+        else if (!ConsumedInputs.valid(*Function))
+          Reason = "Swift consumed-input proof is no longer valid";
         else if (!WitnessFrames.valid(*Function))
           Reason = "Swift witness frame proof is no longer valid";
         else

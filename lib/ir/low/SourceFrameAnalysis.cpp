@@ -103,7 +103,7 @@ struct State {
   RegisterFacts Registers;
   StackFacts Stack;
   // A written unknown value has no identity in Stack, but still initializes
-  // its bytes. This must-set is used only by the strict source-frame proof.
+  // its bytes. Private-frame and by-value-copy proofs share this must-set.
   std::set<int64_t> InitializedStack;
   struct ScratchIdentity {
     SourceFrameScratchEffect::Domain Domain;
@@ -229,6 +229,11 @@ public:
         RequirePrivateFrame(RequirePrivateFrame),
         ExternalMemoryDisjoint(ExternalMemoryDisjoint),
         EntrySignature(EntrySignature) {
+    TrackInitializedFrame = RequirePrivateFrame;
+    for (const auto &[Site, Contract] : Calls)
+      TrackInitializedFrame |= !Contract.InitializedFrameParameters.empty() ||
+                               !Contract.ByValueFrameParameters.empty() ||
+                               Contract.InitializesIndirectResult;
     if (Architecture == Arch::AArch64)
       for (const auto &[Site, Contract] : Calls)
         if (Contract.Signature)
@@ -247,6 +252,29 @@ public:
             ByteFact::Entry, static_cast<int64_t>(TRI.LinkRegister + I)};
     for (unsigned I = 0; I < 8; ++I)
       Initial.Registers[TRI.StackPointer + I] = {ByteFact::Frame, 0, I, true};
+    RequiredExitRegisters = Initial.Registers;
+    // Entry identity and call preservation are different facts. A volatile
+    // word can be forwarded directly through an ABI argument (not listed in
+    // LowIR CALL inputs), or saved privately and reloaded after a call.
+    // Track its original bytes without requiring the callee to preserve them.
+    // This does not declare an entry parameter: consumers still need an
+    // independent, complete source-visible use of the same incoming word.
+    const auto EntryWord = [&](uint64_t Register) {
+      if (!TRI.isFrameOrLinkReg(Register))
+        for (unsigned I = 0; I < 8; ++I)
+          Initial.Registers.try_emplace(
+              Register + I,
+              ByteFact{ByteFact::Entry, static_cast<int64_t>(Register + I)});
+    };
+    for (uint64_t Register : TRI.GeneralRegs)
+      EntryWord(Register);
+    // AArch64 describes its scalar bank in the authoritative subregister
+    // table; GeneralRegs is populated only on x86. Vector subregisters do
+    // not supply integer entry identities.
+    if (Architecture == Arch::AArch64)
+      for (const auto &Register : TRI.SubRegs)
+        if (Register.WideSize == 8 && !TRI.isVectorReg(Register.WideRegOff))
+          EntryWord(Register.WideRegOff);
   }
 
   State Initial;
@@ -254,6 +282,9 @@ public:
   bool DidTerminate = false;
   int64_t RequiredFrameSize = 0;
   bool TrackDefinitions = false;
+  bool TrackInitializedFrame = false;
+  std::optional<NativeSourceCallKey> CopyQuery;
+  std::optional<std::vector<SourceFrameByValueCopy>> Copies;
   std::optional<SourceFrameLoadDefinition> LoadedDefinition;
 
   bool transfer(const LowBlock &Block, State &Current, bool CheckExits,
@@ -321,8 +352,8 @@ public:
       return First.Value;
     };
     auto IsRestored = [&] {
-      return std::all_of(Initial.Registers.begin(), Initial.Registers.end(),
-                         [&](const auto &Item) {
+      return std::all_of(RequiredExitRegisters.begin(),
+                         RequiredExitRegisters.end(), [&](const auto &Item) {
                            return lookup(Current.Registers, Item.first) ==
                                   Item.second;
                          });
@@ -429,6 +460,8 @@ public:
             // bytes remain unknown; WrittenStack does not define their value.
             for (unsigned I = 0; I < 8; ++I) {
               put(Current.Stack, *SP + I, Value[I]);
+              if (TrackInitializedFrame)
+                Current.InitializedStack.insert(*SP + I);
               if (TrackStackArguments)
                 WrittenStack.insert(*SP + I);
             }
@@ -472,6 +505,19 @@ public:
           return false;
         }
         std::vector<std::pair<int64_t, size_t>> WritableFrameRanges;
+        std::vector<std::pair<int64_t, size_t>> BorrowedRanges;
+        std::vector<SourceFrameByValueCopy> CallCopies;
+        std::optional<std::pair<int64_t, size_t>> InitializedResult;
+        const auto Initialized = [&](int64_t Address, size_t Bytes) {
+          if (Remaining < Bytes)
+            return false;
+          Remaining -= Bytes;
+          for (size_t I = 0; I < Bytes; ++I)
+            if (!Current.InitializedStack.count(Address + int64_t(I)) ||
+                lookup(Current.Stack, Address + int64_t(I)).MayBeFrame)
+              return false;
+          return true;
+        };
         std::optional<int64_t> ReturnedFrame;
         std::optional<int64_t> ScratchAddress;
         bool RetainsScratch = false;
@@ -482,6 +528,21 @@ public:
           const size_t ParameterIndex = Physical.ParameterIndex;
           const auto &Parameter = Signature.Parameters[ParameterIndex];
           const auto &Location = Physical.Location;
+          if (Parameter.IndirectByValue) {
+            if (!Found->second.ByValueFrameParameters.count(ParameterIndex) ||
+                Tail || Location.Kind != SourceABICarrierKind::IntegerRegister)
+              return false;
+            const auto Address = FrameOffset(
+                NdVar::reg(Location.RegisterOffset, Location.ValueBytes));
+            const size_t Bytes = Parameter.Type->Size;
+            if (!Address || *Address % 8 || *Address < *SP ||
+                *Address > -static_cast<int64_t>(Bytes) ||
+                !Initialized(*Address, Bytes))
+              return false;
+            CallCopies.push_back({ParameterIndex, *Address, Bytes});
+            WritableFrameRanges.emplace_back(*Address, Bytes);
+            continue;
+          }
           if (Location.Kind == SourceABICarrierKind::Stack) {
             const bool TerminalArgument =
                 TerminalOnly && Found->second.terminates();
@@ -564,6 +625,12 @@ public:
             if (!Address || *Address < *SP ||
                 *Address > -static_cast<int64_t>(BorrowedBytes))
               return false;
+            if (Found->second.InitializedFrameParameters.count(
+                    ParameterIndex) &&
+                (!FrameOffset(NdVar::reg(Location.RegisterOffset, 8)) ||
+                 !Initialized(*Address, BorrowedBytes)))
+              return false;
+            BorrowedRanges.emplace_back(*Address, BorrowedBytes);
             const auto &Scratch = Found->second.Scratch;
             if (Scratch && Scratch->Parameter == ParameterIndex) {
               // Possible frame-or-external provenance cannot identify an
@@ -628,6 +695,31 @@ public:
             }
           }
         }
+        if (Found->second.InitializesIndirectResult) {
+          const auto Address = FrameOffset(
+              NdVar::reg(Signature.ReturnLocation.RegisterOffset, 8));
+          const size_t Bytes = Signature.ReturnType->Size;
+          if (Tail || !Address || *Address % 8 || *Address < *SP ||
+              *Address > -static_cast<int64_t>(Bytes))
+            return false;
+          InitializedResult = {*Address, Bytes};
+          WritableFrameRanges.emplace_back(*Address, Bytes);
+          BorrowedRanges.emplace_back(*Address, Bytes);
+        }
+        // A source-level copy changes the address seen by the callee. Another
+        // frame argument must not expose an alias of that disposable storage.
+        for (const auto &Copy : CallCopies) {
+          for (const auto &[Address, Bytes] : BorrowedRanges)
+            if (Copy.FrameOffset < Address + int64_t(Bytes) &&
+                Address < Copy.FrameOffset + int64_t(Copy.Bytes))
+              return false;
+          BorrowedRanges.emplace_back(Copy.FrameOffset, Copy.Bytes);
+        }
+        if (CheckExits && CopyQuery && *CopyQuery == *Key) {
+          if (CallCopies.empty() || Copies)
+            return false;
+          Copies = CallCopies;
+        }
         // External scratch could acquire a private record link through TLS.
         // Without an extent/provenance proof for that storage, fail closed.
         if (Found->second.Scratch && !ScratchAddress &&
@@ -636,7 +728,8 @@ public:
         for (const auto &[Address, Bytes] : WritableFrameRanges) {
           if (!InvalidateScratch(Address, Bytes))
             return false;
-          const size_t Work = Current.Stack.size() + WrittenStack.size();
+          const size_t Work = Current.Stack.size() + WrittenStack.size() +
+                              Current.InitializedStack.size();
           if (Remaining < Work)
             return false;
           Remaining -= Work;
@@ -653,6 +746,19 @@ public:
             return Byte >= Address &&
                    Byte - Address < static_cast<int64_t>(Bytes);
           });
+          std::erase_if(Current.InitializedStack, [&](int64_t Byte) {
+            return Byte >= Address && Byte - Address < int64_t(Bytes);
+          });
+        }
+        if (InitializedResult) {
+          const auto [Address, Bytes] = *InitializedResult;
+          if (Remaining < Bytes)
+            return false;
+          Remaining -= Bytes;
+          for (size_t I = 0; I < Bytes; ++I) {
+            Current.Stack.erase(Address + int64_t(I));
+            Current.InitializedStack.insert(Address + int64_t(I));
+          }
         }
         if (ScratchAddress) {
           const auto &Scratch = *Found->second.Scratch;
@@ -700,6 +806,8 @@ public:
             return Item.first < *SP && !Item.second.MayBeFrame;
           });
           std::erase_if(WrittenStack, [&](int64_t Byte) { return Byte < *SP; });
+          std::erase_if(Current.InitializedStack,
+                        [&](int64_t Byte) { return Byte < *SP; });
           std::erase_if(Current.Scratch,
                         [&](const auto &Item) { return Item.first < *SP; });
           Temps.clear();
@@ -874,7 +982,7 @@ public:
               return false;
             for (unsigned I = 0; I < Memory.AccessSize; ++I) {
               put(Current.Stack, *Address + I, Read(*Memory.StoredValue, I));
-              if (RequirePrivateFrame)
+              if (TrackInitializedFrame)
                 Current.InitializedStack.insert(*Address + I);
             }
             if (TrackStackArguments)
@@ -890,7 +998,7 @@ public:
                 return false;
           }
         } else {
-          if (RequirePrivateFrame && Address)
+          if (TrackInitializedFrame && Address)
             for (unsigned I = 0; I < Memory.AccessSize; ++I)
               if (!Current.InitializedStack.count(*Address + I))
                 return false;
@@ -1008,6 +1116,13 @@ public:
               return (!SP || Item.first < *SP) && !Item.second.MayBeFrame;
             });
           }
+          if (TrackInitializedFrame) {
+            if (Remaining < Current.InitializedStack.size())
+              return false;
+            Remaining -= Current.InitializedStack.size();
+            std::erase_if(Current.InitializedStack,
+                          [&](int64_t Byte) { return !SP || Byte < *SP; });
+          }
         }
       } else if (Op.Output.Size) {
         return false;
@@ -1027,6 +1142,7 @@ private:
   const NativeSourceCalls &Calls;
   const TargetRegInfo &TRI;
   std::set<uint64_t> Preserved;
+  RegisterFacts RequiredExitRegisters;
   bool TerminalOnly;
   bool TrackStackArguments;
   std::set<int64_t> IncomingStackSlots;
@@ -1091,8 +1207,9 @@ static bool validateFrameCalls(const LowFunc &Function, Arch Architecture,
     if ((Contract.terminates() &&
          !ordinaryFrameTermination(Contract, Architecture)) ||
         !Signature || Signature->Architecture != Architecture ||
-        Signature->ReturnLocation.Kind ==
-            SourceABICarrierKind::IndirectResultPointer ||
+        (Signature->ReturnLocation.Kind ==
+             SourceABICarrierKind::IndirectResultPointer &&
+         !Contract.InitializesIndirectResult) ||
         !validateSourceABI(*Signature, Error) ||
         !sourceFrameEffectsMatchABI(Contract, *Signature))
       return false;
@@ -1214,7 +1331,9 @@ static bool restoresNativeSourceStateImpl(
     const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
     std::set<uint64_t> *UsedEntryRegisters,
     const SourceFunctionTypeHint *EntrySignature, bool RequirePrivateFrame,
-    bool ExternalMemoryDisjoint, int64_t *RequiredFrameSize) {
+    bool ExternalMemoryDisjoint, int64_t *RequiredFrameSize,
+    const NativeSourceCallKey *CopyQuery = nullptr,
+    std::optional<std::vector<SourceFrameByValueCopy>> *Copies = nullptr) {
   const size_t Count = Function.Blocks.size();
   if (!Count || Count > 16384 ||
       (Architecture != Arch::AArch64 && Architecture != Arch::X64))
@@ -1224,11 +1343,14 @@ static bool restoresNativeSourceStateImpl(
     return false;
   std::set<int64_t> IncomingStackSlots;
   if (EntrySignature) {
+    // Copy queries consume a separately authenticated fixed source declaration.
+    // They do not infer an entry ABI from frame use; preserve the narrower
+    // NativeAnalysis rule for the existing inference/preservation consumers.
     std::string Error;
     if (EntrySignature->Architecture != Architecture ||
         (EntrySignature->Origin !=
              SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
-         !HasStackStore) ||
+         !HasStackStore && !CopyQuery) ||
         !validateSourceABI(*EntrySignature, Error))
       return false;
     for (const auto &Parameter : EntrySignature->Parameters) {
@@ -1249,6 +1371,8 @@ static bool restoresNativeSourceStateImpl(
   PreservationProof Proof(Architecture, Calls, false,
                           std::move(IncomingStackSlots), RequirePrivateFrame,
                           ExternalMemoryDisjoint, EntrySignature);
+  if (CopyQuery)
+    Proof.CopyQuery = *CopyQuery;
   const auto Graph = frameGraph(Function, Architecture, Calls, Proof.Remaining);
   if (!Graph || !Graph->HasReturn)
     return false;
@@ -1270,7 +1394,8 @@ static bool restoresNativeSourceStateImpl(
       State Next = Out;
       if (Incoming[Successor]) {
         Next = *Incoming[Successor];
-        if (!meetFrameState(Next, Out, Proof.Remaining, RequirePrivateFrame))
+        if (!meetFrameState(Next, Out, Proof.Remaining,
+                            Proof.TrackInitializedFrame))
           return false;
       }
       if (!Incoming[Successor] || Next != *Incoming[Successor]) {
@@ -1296,7 +1421,41 @@ static bool restoresNativeSourceStateImpl(
     *UsedEntryRegisters = std::move(Used);
   if (RequiredFrameSize)
     *RequiredFrameSize = Proof.RequiredFrameSize;
+  if (Copies)
+    *Copies = std::move(Proof.Copies);
   return true;
+}
+
+std::optional<std::vector<SourceFrameByValueCopy>>
+sourceFrameByValueCopies(const LowFunc &Function, Arch Architecture,
+                         const NativeSourceCalls &Calls,
+                         const NativeSourceCallKey &Site,
+                         const SourceFunctionTypeHint &EntrySignature) {
+  const auto Contract = Calls.find(Site);
+  std::string Error;
+  if (Architecture != Arch::AArch64 ||
+      EntrySignature.Architecture != Architecture ||
+      hasIndirectSourceParameters(EntrySignature) ||
+      EntrySignature.ReturnLocation.Kind ==
+          SourceABICarrierKind::IndirectResultPointer ||
+      !validateSourceABI(EntrySignature, Error) || Contract == Calls.end() ||
+      Contract->second.ByValueFrameParameters.empty())
+    return std::nullopt;
+  size_t Count = 0, Budget = 262144;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return std::nullopt;
+      Count += nativeSourceCallKey(Op) == Site;
+    }
+  if (Count != 1)
+    return std::nullopt;
+  std::optional<std::vector<SourceFrameByValueCopy>> Copies;
+  if (!restoresNativeSourceStateImpl(Function, Architecture, Calls, nullptr,
+                                     &EntrySignature, false, false, nullptr,
+                                     &Site, &Copies))
+    return std::nullopt;
+  return Copies;
 }
 
 std::optional<SourceFrameLoadDefinition>
@@ -1416,7 +1575,8 @@ sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
       State Current = Out;
       if (Incoming[Next]) {
         Current = *Incoming[Next];
-        if (!meetFrameState(Current, Out, Proof.Remaining, false))
+        if (!meetFrameState(Current, Out, Proof.Remaining,
+                            Proof.TrackInitializedFrame))
           return std::nullopt;
       }
       if (Incoming[Next] && Current == *Incoming[Next])
