@@ -109,6 +109,8 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` は PEB プロセスパラメーター内の実際のゲスト環境ブロックを共有します。名前は大文字小文字を区別しない ASCII、値は UTF-16 です。変更前に入力、容量、書き込み権限を検証します。スナップショットは後続の変更から独立し、解放時にゲストメモリを回収します。モデルのブロック上限は 64 KiB で、文字列と展開処理には境界と実行期限の検査があります。不明なポインター所有権、不正なブロック、ANSI コードページ、展開バッファーの重複は未対応です。`WindowsEnvironmentTests.cpp` は利用可能なバックエンドで独自の x64/ARM64 フィクスチャを比較し、CI では独立したネイティブ Windows オラクルを必須とします。
 
+`WindowsProcessHeap` はプロセスヒープの割り当て、[`HeapReAlloc`](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heaprealloc)、解放、サイズ照会を一元管理します。サイズ変更は保持範囲のデータを維持し、`HEAP_ZERO_MEMORY` は追加領域をゼロ化、`HEAP_REALLOC_IN_PLACE_ONLY` は移動を禁止します。容量不足では旧ブロックと LastError を保持します。独立したページの縮小・解放で容量を返却し、段階的な拡張と有界コピーで実行期限を確認します。独自ヒープ、例外生成フラグ、不明な所有権、アクセス不能なコピー・ゼロ化範囲は明示的に停止します。`WindowsHeapTests.cpp` は両 ISA、強制移動、予算再利用、失敗時の原子性を検証し、CI は同じ独自 EXE をネイティブ Windows でも実行します。
+
 動的アンロードのコールバック前にモジュールを初期化リストから外しますが、マッピング、名前検索、ロード／メモリリストへの所属はコールバック中も維持します。入口の復帰を調べるネイティブ比較では、システムワーカースレッドとは独立して初期スレッドを観測します。
 
 `WindowsDynamicTests.cpp` は元の x64/ARM64 DLL と EXE を独立したネイティブ Windows 観測と比較し、参照数、共有依存、入れ子ロード、attach 失敗時の清掃、転送照会、プロセス終了、入口なし DLL、再ロード時の TLS 初期化を確認します。追加回帰はローダー改変と無効なコードポインターを拒否し、累積準備予算と中断 API の未完了結果を確認します。Windows CI は原生オラクルと WHP ケースを必須にします。クロスコンパイルと Unicorn ARM64 はネイティブ ARM64 実行の証拠ではありません。

@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 7d465e53d8b02df92cfd1d84c9817ee79377e7094f58b046232e3ea5523fe1e5 -->
+<!-- i18n-source: 3beb87ac7132297765cac14a1a8e399b1b3baf42284cf76161a653b9a6263fae -->
 
 <div align="center">
 
@@ -119,6 +119,8 @@ L’exécution CPU sépare admission ISA, mémoire invitée, transport du moteur
 `windows-pe64-v1` prend en charge des processus console Windows x64/ARM64 bornés avec PEB/TEB, TLS statique et dynamique, `DllMain`, API Win32 nommées et graphes DLL explicites sans cycle. Les modules invités acceptent les imports de code/données par nom ou ordinal, DIR64, les exports redirigés et les véritables listes du chargeur. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary` et `GetProcAddress` utilisent le catalogue configuré. CRT/GUI, SEH utilisateur, threads et compatibilité Windows générale restent inachevés ; les preuves natives ARM64 KVM/WHP manquent encore.
 
 `GetEnvironmentVariableW`, `SetEnvironmentVariableW`, `GetEnvironmentStringsW`, `FreeEnvironmentStringsW`, `ExpandEnvironmentStringsW` partagent le bloc invité courant des paramètres de processus du PEB. Les noms ASCII ignorent la casse ; les valeurs sont en UTF-16. Les modifications valident les entrées, la capacité et les droits d’écriture avant publication. Les instantanés restent indépendants des modifications et libèrent leur mémoire invitée. Le modèle limite le bloc à 64 KiB ; chaînes et expansions sont bornées et vérifient l’échéance. La propriété inconnue des pointeurs, les blocs mal formés, les pages de codes ANSI et le chevauchement des tampons d’expansion restent non pris en charge. `WindowsEnvironmentTests.cpp` compare des fixtures originales x64/ARM64 sur les backends disponibles ; la CI exige un oracle Windows natif indépendant.
+
+`WindowsProcessHeap` centralise allocation, `HeapReAlloc`, libération et taille du tas du processus. Le redimensionnement conserve les octets retenus ; `HEAP_ZERO_MEMORY` initialise les octets ajoutés et `HEAP_REALLOC_IN_PLACE_ONLY` interdit le déplacement. Un manque de capacité conserve le bloc et LastError. Les pages indépendantes restituent leur capacité lors des réductions et libérations ; croissance préparée et copies bornées vérifient l’échéance. Tas personnalisés, indicateurs générant des exceptions, propriété inconnue et plages inaccessibles arrêtent explicitement l’exécution. `WindowsHeapTests.cpp` couvre les deux ISA, déplacement imposé, réutilisation du budget et atomicité des échecs ; CI exécute aussi le même EXE original sur Windows natif.
 
 La mémoire virtuelle Windows ajoute `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` et `FlushInstructionCache` pour le processus courant. La couche OS possède les réservations ; `AddressSpace` reste la référence pour les pages validées, les permissions et leur stockage. Les tests couvrent la réécriture de code, les défauts d’accès et la réutilisation du budget mémoire.
 
