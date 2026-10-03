@@ -1,6 +1,6 @@
 **语言**：[English](../emulation.md) | [简体中文](emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 958937aacc6b214e71730502c8f4d249d0c6417721a28a32c65de1e4fa927d63 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← 文档索引](README.md)
 
@@ -64,6 +64,6 @@ Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 
 受检 x64 还支持普通 RAM 上的 `CMPS/SCAS` 与 `REPE/REPNE`，涵盖算术标志、提前终止、逐元素停止和故障恢复；设备比较仍不支持。
 
-x64 与 ARM64 原生启动自检在独占内存租约下验证有界的完整状态执行。
+x64 与 ARM64 原生启动自检在独占内存租约下验证有界的完整状态执行。XSAVE 数据包和包含 ISA 身份的页表缓存由唯一权威层管理。
 
 原生 x64 的 `FOP/FIP/FDP` 遵循宿主保存、恢复规则：AMD 可能清零未生效的 x87 异常元数据。启动自检通过未屏蔽的待处理异常验证这些字段。

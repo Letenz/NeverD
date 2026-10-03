@@ -1,6 +1,6 @@
 **Langues** : [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 958937aacc6b214e71730502c8f4d249d0c6417721a28a32c65de1e4fa927d63 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← Index de la documentation](README.md)
 
@@ -64,6 +64,6 @@ Le profil x64 vérifié inclut `MOVS/STOS/LODS` sur RAM ordinaire et `CLD/STD`, 
 
 Le profil x64 vérifié prend aussi en charge `CMPS/SCAS` sur RAM ordinaire avec `REPE/REPNE`, indicateurs arithmétiques, fin anticipée, arrêts par élément et reprise après défaut. Les comparaisons de périphériques restent exclues.
 
-Les sondes natives x64 et ARM64 valident une exécution complète bornée sous bail mémoire exclusif.
+Les sondes natives x64 et ARM64 valident une exécution complète bornée sous bail mémoire exclusif. Les paquets XSAVE et les caches de tables identifiés par ISA ont une autorité unique.
 
 Les champs x64 natifs `FOP/FIP/FDP` suivent les règles de sauvegarde/restauration hôte : AMD peut effacer les métadonnées x87 inactives. Les sondes de démarrage les valident avec une exception non masquée en attente.

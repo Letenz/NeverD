@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_OS_DARWIN_DARWINKERNEL_H
 #define NEVERD_EMULATION_OS_DARWIN_DARWINKERNEL_H
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/ProcessSession.h"
 
 namespace neverd::emulation::darwin_model {

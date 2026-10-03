@@ -1,6 +1,6 @@
 **Lingue**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 958937aacc6b214e71730502c8f4d249d0c6417721a28a32c65de1e4fa927d63 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← Indice della documentazione](README.md)
 
@@ -64,6 +64,6 @@ Il profilo x64 verificato include `MOVS/STOS/LODS` sulla RAM ordinaria e `CLD/ST
 
 Il profilo x64 verificato supporta anche `CMPS/SCAS` sulla RAM ordinaria con `REPE/REPNE`, flag aritmetici, uscita anticipata, arresti per elemento e ripresa dopo errore. I confronti su dispositivi restano esclusi.
 
-Le sonde native x64 e ARM64 verificano esecuzione completa limitata con diritto esclusivo sulla memoria.
+Le sonde native x64 e ARM64 verificano esecuzione completa limitata con diritto esclusivo sulla memoria. Pacchetti XSAVE e cache di tabelle identificate per ISA hanno un’autorità unica.
 
 I campi x64 nativi `FOP/FIP/FDP` seguono le regole di salvataggio/ripristino dell’host: AMD può azzerare metadati x87 inattivi. Le sonde di avvio li verificano con un’eccezione pendente non mascherata.

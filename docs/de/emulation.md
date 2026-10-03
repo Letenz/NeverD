@@ -1,6 +1,6 @@
 **Sprachen**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 958937aacc6b214e71730502c8f4d249d0c6417721a28a32c65de1e4fa927d63 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← Dokumentationsindex](README.md)
 
@@ -64,6 +64,6 @@ Geprüftes x64 unterstützt `MOVS/STOS/LODS` auf normalem RAM und `CLD/STD` mit 
 
 Geprüftes x64 unterstützt auch `CMPS/SCAS` auf normalem RAM mit `REPE/REPNE`, arithmetischen Flags, vorzeitigem Ende, Stopps je Element und Fehlerwiederaufnahme. Gerätevergleiche bleiben ausgeschlossen.
 
-Native x64- und ARM64-Startproben prüfen begrenzte vollständige Zustandsausführung mit exklusivem Speicherrecht.
+Native x64- und ARM64-Startproben prüfen begrenzte vollständige Zustandsausführung mit exklusivem Speicherrecht. XSAVE-Pakete und ISA-abhängige Seitentabellen-Caches haben einen eindeutigen Besitzer.
 
 Native x64-Felder `FOP/FIP/FDP` folgen den Sicherungsregeln des Hosts: AMD darf inaktive x87-Ausnahmemetadaten löschen. Startprüfungen validieren sie mit einer ausstehenden unmaskierten Ausnahme.

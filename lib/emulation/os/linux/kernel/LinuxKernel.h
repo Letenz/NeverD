@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_OS_LINUX_LINUXKERNEL_H
 #define NEVERD_EMULATION_OS_LINUX_LINUXKERNEL_H
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/ProcessSession.h"
 
 namespace neverd::emulation::linux_model {

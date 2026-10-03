@@ -62,6 +62,6 @@ Checked x64 now includes ordinary-RAM `MOVS/STOS/LODS` and `CLD/STD`, with per-e
 
 Checked x64 also supports ordinary-RAM `CMPS/SCAS` with `REPE/REPNE`, including arithmetic flags, early termination, per-element stops and fault recovery. Device comparisons remain unsupported.
 
-Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease.
+Native x64 and ARM64 startup probes validate bounded complete-state execution under an exclusive memory lease. XSAVE packets and ISA-aware page-table caches have one authoritative owner.
 
 Native x64 `FOP/FIP/FDP` follow host save/restore rules: AMD may clear inactive x87 exception metadata. Startup probes validate these fields with a pending unmasked exception.

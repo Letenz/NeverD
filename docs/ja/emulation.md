@@ -1,6 +1,6 @@
 **言語**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 958937aacc6b214e71730502c8f4d249d0c6417721a28a32c65de1e4fa927d63 -->
+<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
 
 [← ドキュメント索引](README.md)
 
@@ -64,6 +64,6 @@ Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 
 検証付き x64 は通常 RAM の `CMPS/SCAS` と `REPE/REPNE` にも対応し、算術フラグ、早期終了、要素単位の停止、障害復旧を扱います。デバイス比較は未対応です。
 
-x64 と ARM64 のネイティブ起動検査は、排他的メモリリース下で限定された完全状態の実行を検証します。
+x64 と ARM64 のネイティブ起動検査は、排他的メモリリース下で限定された完全状態の実行を検証します。XSAVE パケットと ISA を識別するページテーブルキャッシュは単一の管理層が所有します。
 
 ネイティブ x64 の `FOP/FIP/FDP` はホストの保存・復元規則に従い、AMD は非アクティブな x87 例外メタデータをゼロにできます。起動プローブはマスクされていない保留例外でこれらを検証します。
