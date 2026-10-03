@@ -64,9 +64,10 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     if (auto It = ObjCBlockCaptureReceivers->find(Low.Entry);
         It != ObjCBlockCaptureReceivers->end())
       BlockCaptures = &It->second;
-  auto Hints = Image ? buildObjCSourceCallHints(*Image, Low, BlockParameters,
-                                                BlockCaptures)
-                     : std::map<va_t, SourceCallTypeHint>();
+  auto Hints =
+      Image ? buildObjCSourceCallHints(*Image, Low, BlockParameters,
+                                       BlockCaptures, SourceCalleeTypeHints)
+            : std::map<va_t, SourceCallTypeHint>();
   if (Image) {
     auto SwiftHints = buildSwiftValueWitnessCallHints(*Image, Low);
     for (auto &[Address, Hint] : SwiftHints) {
@@ -243,7 +244,12 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
           // The ABI describes an address of a by-value copy. Until a call
           // owns a separate copy-storage proof, leave the original operation
           // unbound; a physical pointer is not its logical record argument.
-          hasIndirectSourceParameters(Hint->Signature)) {
+          (hasIndirectSourceParameters(Hint->Signature) &&
+           (!isObjCByValueCopyHint(*Hint, Low.Entry, TargetArch) ||
+            Op.Opcode != NdOp::CALL || !Op.Inputs[0].isConst() ||
+            Hint->ByValueCopy->Site.Instruction != Op.Addr ||
+            Hint->ByValueCopy->Site.Sequence != Op.OriginSeq ||
+            Hint->ByValueCopy->Site.StaticTarget != Op.Inputs[0].ConstVal))) {
         Ops.push_back(std::move(Op));
         continue;
       }

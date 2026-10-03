@@ -7,6 +7,7 @@
 #include "neverd/loader/MachO/CFunctionParameterCalls.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
+#include "neverd/loader/ObjC/ObjCCallHints.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -130,7 +131,10 @@ HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
 
 std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   const auto &Hint = *E.SourceCallHint;
-  if (hasIndirectSourceParameters(Hint.Signature))
+  if ((hasIndirectSourceParameters(Hint.Signature) || Hint.ByValueCopy) &&
+      (!CurrentFunc ||
+       !isObjCByValueCopyHint(Hint, CurrentFunc->Entry, Opts.TheArch) ||
+       E.IsIndirectCall || E.CallAddr != Hint.ByValueCopy->Site.StaticTarget))
     throw std::invalid_argument(
         "Indirect by-value source calls require a copy storage proof");
   using Kind = SourceCallTypeHint::Kind;
@@ -1028,13 +1032,28 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     // constant instead of requiring the integer carrier to have pointer width.
     // Do not widen any nonzero integer here: those still require an explicit,
     // size-compatible pointer carrier.
-    auto Value =
-        Argument.Kind == ExprKind::Const && Carrier &&
-                Carrier->Kind == NdTypeKind::Int && Argument.ConstVal == 0 &&
-                SourceType && SourceType->Kind == NdTypeKind::Ptr &&
-                Carrier->Size != SourceType->Size
-            ? std::optional<std::string>("(" + typeToC(SourceType) + ")0")
-            : sourceValue(exprStr(Argument), Carrier, SourceType);
+    std::optional<std::string> Value;
+    if (Signature.Parameters[I].IndirectByValue) {
+      if (!Hint.ByValueCopy || Hint.ByValueCopy->Parameter != I || !Carrier ||
+          Carrier->Size != 8 ||
+          (Carrier->Kind != NdTypeKind::Ptr &&
+           Carrier->Kind != NdTypeKind::Int))
+        return bad("invalid by-value copy carrier");
+      // The current source gate proves disposable initialized storage. A
+      // memcpy snapshot avoids alignment/aliasing assumptions and evaluates
+      // the physical pointer exactly once while retaining the logical ABI.
+      Value = "({ " + declarationToC(SourceType, "nd_copy") +
+              "; __builtin_memcpy(&nd_copy, (const void *)(uintptr_t)(" +
+              exprStr(Argument) + "), " +
+              std::to_string(Hint.ByValueCopy->Bytes) + "); nd_copy; })";
+    } else
+      Value = Argument.Kind == ExprKind::Const && Carrier &&
+                      Carrier->Kind == NdTypeKind::Int &&
+                      Argument.ConstVal == 0 && SourceType &&
+                      SourceType->Kind == NdTypeKind::Ptr &&
+                      Carrier->Size != SourceType->Size
+                  ? std::optional<std::string>("(" + typeToC(SourceType) + ")0")
+                  : sourceValue(exprStr(Argument), Carrier, SourceType);
     if (!Value)
       return bad("argument carrier disagrees with the source declaration");
     if (I != FirstArgument)

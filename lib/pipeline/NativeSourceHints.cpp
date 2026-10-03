@@ -56,7 +56,9 @@ bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
     return true;
   if (!Low || Low->Entry != Med.Entry)
     return !Marked;
-  const auto Current = buildObjCSourceCallHints(Image, *Low);
+  const auto Callees = boundNativeBooleanCallees(Med);
+  const auto Current =
+      buildObjCSourceCallHints(Image, *Low, nullptr, nullptr, &Callees);
   std::set<va_t> Required, Seen;
   for (const auto &[Site, B] : Current)
     if (B.NativeSwiftReceiver)
@@ -86,6 +88,7 @@ bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
           Op.SourceCallHint->NativeSwiftReceiver !=
               C->second.NativeSwiftReceiver ||
           Op.SourceCallHint->Receiver != C->second.Receiver ||
+          Op.SourceCallHint->ByValueCopy != C->second.ByValueCopy ||
           Op.SourceCallHint->Selector != C->second.Selector ||
           Op.SourceCallHint->TargetAddress != C->second.TargetAddress ||
           !equalSourceABIs(Op.SourceCallHint->Signature, C->second.Signature) ||
@@ -701,7 +704,19 @@ bool hasNativeSourceStateContract(
         static_cast<SourceFrameEffects &>(Contract) = *Effects;
       }
       if (StaticMessage && Binding.CallKind == Kind::ObjCSuper2)
-        Contract.ReadOnlyFrameParameters.emplace(0, 16);
+        if (const auto Effects = objcSuperSourceFrameEffects(Image, Binding))
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      if (Binding.ByValueCopy) {
+        if (!isObjCByValueCopyHint(Binding, Med.Entry, Image.Arch))
+          return false;
+        Contract.ByValueFrameParameters.insert(Binding.ByValueCopy->Parameter);
+      }
+      if (StaticRuntime && Binding.CallKind == Kind::DarwinRuntimeCall &&
+          Binding.Signature.ReturnLocation.Kind ==
+              SourceABICarrierKind::IndirectResultPointer) {
+        if (const auto Effects = darwinMatrixSourceFrameEffects(Image, Binding))
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
       if (StaticRuntime && Binding.CallKind == Kind::SwiftRuntimeCall &&
           (Binding.TargetName == "swift_beginAccess" ||
            Binding.TargetName == "swift_endAccess")) {
