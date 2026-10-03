@@ -32,6 +32,9 @@ namespace win = windows_process;
 #include "fixtures/WindowsExceptionCases.def"
 #undef NEVERD_VEH_TEXT
 #undef NEVERD_VEH_VALUE
+#if defined(EXCEPTION_SOFTWARE_ORIGINATE)
+static_assert(SoftwareOriginate == EXCEPTION_SOFTWARE_ORIGINATE);
+#endif
 namespace x64_context {
 #define NEVERD_VEH_CONTEXT_X64(Name, Value) constexpr uint64_t Name = Value;
 #include "fixtures/WindowsExceptionCases.def"

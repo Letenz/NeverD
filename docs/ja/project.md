@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 963c9b52d2686352e1a24aea5d88f980c38be803ddfc6e415266f840eb0a1d0a -->
+<!-- i18n-source: 44c00e58844a6842194c916fd9f2830fd6c7787629e04128d6cb87797018c4e0 -->
 
 <div align="center">
 
@@ -123,7 +123,7 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 
 `WindowsSystemModules` は両 ISA 向けに `ntdll.dll`、`kernelbase.dll`、`kernel32.dll` の有界な PE64 モデルイメージを構築します。ASCII の `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW`、`GetProcAddress` はそのマップ済みベースを共有し、PEB/LDR と `MEM_IMAGE` も同じイメージを示します。静的インポート、名前検索、ゲスト DLL の転送は同じ API ゲートとエクスポート解決器を使います。提供元は常駐し、ゲスト初期化コールバックを持たず、通常のゲスト DLL をすべて解放すればエントリから復帰できます。ヘッダーやエクスポートメタデータの変更で検索を停止します。未対応のシステムエクスポート名と非ゼロ序数は明示的に停止し、対応名の大小文字違いと空名はエラー 127、NULL 検索は 87 を返します。生成バイトとアドレスはモデル方針であり、Windows DLL の版別配置、実際の序数、提供元間の別名は再構築しません。`WindowsSystemTests.cpp` は独自 x64/ARM64 EXE をネイティブ Windows と比較し、初期スレッドの復帰を独立して 8 回観測します。
 
-`WindowsProcessExceptions` は同じ CPU とプロセス予算で `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler`、`RaiseException` を実装します。順序付きハンドラーは登録・削除、入れ子の例外、モデル化 API、DLL 読み込み、プロセス終了を扱えます。x64/ARM64 のデータアクセス違反と x64 の整数除算例外は、ゲストが変更した `CONTEXT` の検証後に再開できます。汎用レジスター、SIMD、対応する FP 状態を保持し、ソフトウェア例外はモデル提供元内の実際の return 命令から再開します。保持する登録は 128 件、入れ子は 16 フレームまでです。不正な処置、例外ポインターの変更、未対応フィールド、上限超過は明示的に失敗します。フレームベースの SEH／アンワインド、継続ハンドラー、デバッガー配送、実行／ガードページ例外、継続不能例外の二次配送は未対応です。`WindowsExceptionTests.cpp` は独自 EXE／DLL をネイティブ Windows と比較します。ARM64 KVM/WHP の実機証拠は未取得です。
+`WindowsProcessExceptions` は同じ CPU とプロセス予算で `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler`、`RaiseException` を実装します。順序付きハンドラーは登録・削除、入れ子の例外、モデル化 API、DLL 読み込み、プロセス終了を扱えます。x64/ARM64 のデータアクセス違反と x64 の整数除算例外は、ゲストが変更した `CONTEXT` の検証後に再開できます。汎用レジスター、SIMD、対応する FP 状態を保持し、ソフトウェア例外はモデル提供元内の実際の return 命令から再開します。保持する登録は 128 件、入れ子は 16 フレームまでです。不正な処置、例外ポインターの変更、未対応フィールド、上限超過は明示的に失敗します。フレームベースの SEH／アンワインド、継続ハンドラー、デバッガー配送、実行／ガードページ例外、継続不能例外の二次配送は未対応です。`WindowsExceptionTests.cpp` は独自 EXE／DLL をネイティブ Windows と比較します。ARM64 KVM/WHP の実機証拠は未取得です。 ソフトウェア例外レコードには `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`）が付き、呼び出し元の継続不可フラグとは個別に扱います。元の Windows 実行ファイルでソフトウェア例外とハードウェア例外のフラグ値を厳密に照合します。
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 

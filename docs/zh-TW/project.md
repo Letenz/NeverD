@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 963c9b52d2686352e1a24aea5d88f980c38be803ddfc6e415266f840eb0a1d0a -->
+<!-- i18n-source: 44c00e58844a6842194c916fd9f2830fd6c7787629e04128d6cb87797018c4e0 -->
 
 <div align="center">
 
@@ -123,7 +123,7 @@ CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略�
 
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
-`WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。以堆疊框架為基礎的 SEH／展開、向量繼續處理器、偵錯器派送、執行／防護頁例外與不可繼續例外的二次派送仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。
+`WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。以堆疊框架為基礎的 SEH／展開、向量繼續處理器、偵錯器派送、執行／防護頁例外與不可繼續例外的二次派送仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
 
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 

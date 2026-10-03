@@ -100,7 +100,11 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
       return Access.takeError();
     if (!*Access)
       return failure(text::Access);
-    ServiceOutcome::Exception Raised{uint32_t(A[0]), Flags, Event.PC, {}};
+    ServiceOutcome::Exception Raised{
+        uint32_t(A[0]),
+        uint32_t(Flags | ExceptionSoftwareOriginate),
+        Event.PC,
+        {}};
     for (uint32_t I = 0; I < Count; ++I) {
       auto Argument = CPU.readInteger(A[3] + I * PointerSize, PointerSize);
       if (!Argument)

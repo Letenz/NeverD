@@ -77,7 +77,7 @@ VectoredExceptions::begin(Exception Raised, uint64_t StackPointer,
   if (Frames.size() >= MaxExceptionDepth)
     return failure(text::ExceptionLimit);
   if (Raised.Arguments.size() > MaxExceptionArguments ||
-      (Raised.Flags & ~ExceptionNoncontinuable))
+      (Raised.Flags & ~(ExceptionNoncontinuable | ExceptionSoftwareOriginate)))
     return failure(text::ExceptionArguments);
   auto Context = captureUserContext(CPU);
   if (!Context)
@@ -197,7 +197,7 @@ VectoredExceptions::returned(uint32_t Disposition) {
     return Flags.takeError();
   if ((F.Flags | *Flags) & ExceptionNoncontinuable)
     return failure(text::ExceptionContinuation);
-  if (*Flags)
+  if (*Flags & ~ExceptionSoftwareOriginate)
     return failure(text::ExceptionContext);
   std::vector<uint8_t> Changed(F.Context.size());
   if (auto E = CPU.read(F.Payload + ExceptionContextOffset, Changed))

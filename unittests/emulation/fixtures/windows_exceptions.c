@@ -69,6 +69,16 @@ static void require(int Valid, U32 Site) {
   WriteFile(GetStdHandle(StderrSelector), &Site, sizeof(Site), &Written, 0);
   ExitProcess(FailureStatus);
 }
+static void requireRecord(int Valid, const Record *R, U32 Site) {
+  if (Valid)
+    return;
+  U64 Observation[] = {Site,           R->Code,         R->Flags,
+                       (U64)R->Nested, (U64)R->Address, R->Count};
+  U32 Written;
+  WriteFile(GetStdHandle(StderrSelector), Observation, sizeof(Observation),
+            &Written, 0);
+  ExitProcess(FailureStatus);
+}
 static void complete(void) {
   U32 Result[] = {1, Mode}, Written;
   require(WriteFile(GetStdHandle(StdoutSelector), Result, sizeof(Result),
@@ -126,7 +136,9 @@ static U32 resolve(Pointers *P) {
     return ContinueExecution;
   }
   if (Mode == SoftwareMode) {
-    require(R->Code == SoftwareCode && R->Flags == 0 && !R->Nested, 11);
+    requireRecord(R->Code == SoftwareCode && R->Flags == SoftwareOriginate &&
+                      !R->Nested,
+                  R, 11);
     require(R->Count == (Calls == 1 ? MaxParameters : 0), 12);
     for (U32 I = 0; I < R->Count; ++I)
       require(R->Arguments[I] == DataValue + I, 13);
@@ -142,7 +154,8 @@ static U32 resolve(Pointers *P) {
       require(R->Code == NestedCode && Depth == 1, 16);
   }
   if (Mode == ReadMode || Mode == WriteMode || Mode == ContextMode) {
-    require(R->Code == AccessViolation && R->Count == 2, 17);
+    requireRecord(R->Code == AccessViolation && !R->Flags && R->Count == 2, R,
+                  17);
     require(R->Arguments[0] == (Mode == WriteMode), 18);
     require(R->Arguments[1] ==
                 (Mode == WriteMode ? (U64)WritePage : FaultAddress),
@@ -173,9 +186,9 @@ static U32 resolve(Pointers *P) {
   }
 #if defined(_M_X64) || defined(__x86_64__)
   if (Mode == DivideMode) {
-    require(R->Code == DivideByZero && R->Count == 0 &&
-                R->Address == (void *)&DivideFaultSite,
-            26);
+    requireRecord(R->Code == DivideByZero && !R->Flags && R->Count == 0 &&
+                      R->Address == (void *)&DivideFaultSite,
+                  R, 26);
     *(U64 *)(C + ContextPointer) = 2;
   }
 #endif
@@ -188,6 +201,8 @@ static U32 resolve(Pointers *P) {
     complete();
   if (Mode == UnhandledMode)
     return ContinueSearch;
+  if (Mode == NoncontinuableMode)
+    requireRecord(R->Flags == (SoftwareOriginate | Noncontinuable), R, 48);
   if (Mode == DispositionMode)
     return 1;
   if (Mode == FlagsMode)
@@ -284,7 +299,7 @@ U32 entry(void) {
       Arguments[I] = DataValue + I;
     SetLastError(LastErrorSeed);
     RaiseException(SoftwareCode,
-                   Mode == NoncontinuableMode ? 1
+                   Mode == NoncontinuableMode ? Noncontinuable
                    : Mode == RaiseFlagsMode   ? 2
                                               : 0,
                    Mode == ArgumentsMode ? MaxParameters + 1 : MaxParameters,
