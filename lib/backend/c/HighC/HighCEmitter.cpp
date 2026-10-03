@@ -15,6 +15,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../../../loader/Swift/SwiftErrorRuntime.h"
 #include "../UnalignedMemory.h"
 #include "HighCWriter.h"
 
@@ -859,6 +860,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                                          : Ex.CallTarget;
           if (DeclaredC)
             ResolvedName = DeclaredName;
+          if (hasSwiftErrorResult(Hint.Signature))
+            ResolvedName = SwiftWillThrowValueSourceName;
           bool IsDefinedIdentifier = false;
           if (!Runtime)
             if (const auto *Definition =
@@ -1613,6 +1616,31 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
               "}\n";
         continue;
       }
+      if (hasSwiftErrorResult(Signature)) {
+        const auto Expected = swiftWillThrowSourceSignature(Opts.TheArch);
+        const auto Link = SourceRuntimeLinkNames.find(Name);
+        if (!Expected || !equalSourceABIs(Signature, *Expected) ||
+            Declaration.WeakImport || Declaration.VariadicFixedCount ||
+            Link == SourceRuntimeLinkNames.end() ||
+            Link->second != "swift_willThrow")
+          throw std::invalid_argument(
+              "Unsupported Swift error-slot declaration");
+        const auto Original = GlobalIdentifierAllocator.allocate(
+            Identifier + "_original", "nd_error_runtime");
+        OS << "extern void " << Original << "("
+           << sourceParameterType(Signature.Parameters[0]) << ", "
+           << sourceParameterType(Signature.Parameters[1])
+           << ") __asm__(\"_swift_willThrow\") __attribute__((swiftcall));\n"
+              "static inline void "
+           << Identifier
+           << "(void *context, void *error) {\n"
+              "  void *slot = error;\n"
+              "  "
+           << Original
+           << "(context, &slot);\n"
+              "}\n";
+        continue;
+      }
       std::string Declarator = Identifier + "(";
       const auto Count =
           Declaration.VariadicFixedCount.value_or(Signature.Parameters.size());
@@ -2062,9 +2090,10 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         DebugContext *Dbg) {
   for (const auto &Func : Funcs)
     if (Func.SourceTypeHint &&
-        hasIndirectSourceParameters(*Func.SourceTypeHint))
-      throw std::invalid_argument(
-          "Indirect by-value source entries require a copy storage proof");
+        (hasIndirectSourceParameters(*Func.SourceTypeHint) ||
+         hasSwiftErrorResult(*Func.SourceTypeHint)))
+      throw std::invalid_argument("Indirect record or error-register source "
+                                  "entries need a projection proof");
   std::vector<HighFunc> Working = Funcs;
   attachCxxFuncletBodies(Working);
   HighCWriter W(Out, Opts, Dbg, true,

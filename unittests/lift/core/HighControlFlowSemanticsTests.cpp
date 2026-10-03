@@ -7005,7 +7005,7 @@ TEST(HighControlFlowSemantics, PlainBlocksSpliceIntoTheirList) {
 TEST(HighControlFlowSemantics, MachineCallReceiptsKeepOneSharedTailOccurrence) {
   // Source evidence authenticates one native occurrence. Mutually exclusive
   // source copies still need a new proof; a tail pass cannot clone a receipt.
-  for (unsigned Receipt = 0; Receipt < 9; ++Receipt)
+  for (unsigned Receipt = 0; Receipt < 10; ++Receipt)
     for (bool Assigned : {false, true})
       for (bool Nested : {false, true})
         for (bool JumpTail : {false, true}) {
@@ -7044,6 +7044,13 @@ TEST(HighControlFlowSemantics, MachineCallReceiptsKeepOneSharedTailOccurrence) {
           case 7:
             Hint->SwiftOpaqueValue =
                 decltype(Hint->SwiftOpaqueValue)::value_type{};
+            break;
+          case 9:
+            Hint->Signature.Parameters.push_back(
+                {"error",
+                 NdType::makePtr(NdType::makePtr(NdType::makeVoid()))});
+            Hint->Signature.Parameters.back().TheRole =
+                SourceParameterTypeHint::Role::SwiftErrorResult;
             break;
           case 8:
             break; // A declaration alone may be copied.

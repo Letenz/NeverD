@@ -5,6 +5,7 @@
 #include "../../loader/MachO/DarwinRuntimeImport.h"
 #include "../../loader/MachO/DarwinSourceDeclarations.h"
 #include "../../loader/ObjC/ObjCRuntimeData.h"
+#include "../../loader/Swift/SwiftErrorRuntime.h"
 #include "BorrowedByteSources.h"
 #include "CStringStorageSources.h"
 #include "ObjCConstantObjectSources.h"
@@ -8528,6 +8529,17 @@ inline bool objcSourceCallBound(
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftBooleanProjection)
     return false; // Requires the current pipeline and caller proof.
   const auto &Hint = Binding.Signature;
+  if (hasSwiftErrorResult(Hint)) {
+    if (!isSwiftWillThrowSourceCall(Binding, Image.Arch) ||
+        Expression.IsIndirectCall || Expression.Operands.size() != 2 ||
+        !equalSourceTypes(Expression.Type, Hint.ReturnType))
+      return false;
+    for (const auto &Argument : Expression.Operands)
+      if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
+          (Argument->Type->Kind != NdTypeKind::Int &&
+           Argument->Type->Kind != NdTypeKind::Ptr))
+        return false;
+  }
   if (Binding.NilTerminated &&
       (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
        !Binding.Receiver || Binding.Format || Binding.DoesNotReturn ||

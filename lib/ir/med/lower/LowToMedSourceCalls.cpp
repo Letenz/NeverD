@@ -1,5 +1,6 @@
 #include "../../../loader/Swift/SwiftBooleanProjection.h"
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../../../loader/Swift/SwiftErrorRuntime.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -268,6 +269,8 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       std::string Diagnostic;
       if (!Hint || Hint->Signature.Architecture != TargetArch ||
           !validateSourceABI(Hint->Signature, Diagnostic) ||
+          (hasSwiftErrorResult(Hint->Signature) &&
+           !isSwiftWillThrowSourceCall(*Hint, TargetArch)) ||
           // The ABI describes an address of a by-value copy. Until a call
           // owns a separate copy-storage proof, leave the original operation
           // unbound; a physical pointer is not its logical record argument.

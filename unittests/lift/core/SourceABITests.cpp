@@ -1,3 +1,4 @@
+#include "../../../lib/loader/Swift/SwiftErrorRuntime.h"
 #include "../../../lib/pipeline/PipelineReturnModelingDetail.h"
 #include "gtest/gtest.h"
 
@@ -805,6 +806,131 @@ TEST(SourceABI, SwiftSpecialParametersUseDedicatedRegistersWithoutBankSlots) {
     }
     EXPECT_FALSE(assignDarwinFixedSourceABI(Hint, Architecture, Error));
   }
+}
+
+TEST(SourceABI, SwiftErrorSlotIsAnInOutValueCarrierNotAnOrdinaryPointer) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto P = NdType::makePtr(NdType::makeVoid());
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = NdType::makeVoid();
+    Hint.Parameters = {
+        {"ordinary", P}, {"context", P}, {"error_slot", NdType::makePtr(P)}};
+    Hint.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+    Hint.Parameters[2].TheRole =
+        SourceParameterTypeHint::Role::SwiftErrorResult;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error)) << Error;
+    EXPECT_TRUE(hasSwiftErrorResult(Hint));
+    const auto Physical = sourceABIParameters(Hint);
+    ASSERT_EQ(Physical.size(), 3U);
+    EXPECT_TRUE(equalSourceTypes(Physical[2].Type, P));
+    EXPECT_FALSE(equalSourceTypes(Physical[2].Type, Hint.Parameters[2].Type));
+    EXPECT_EQ(Physical[2].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X21 : x86reg::R12);
+    EXPECT_EQ(Physical[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+      auto Bad = Hint;
+      if (Mutation == 0)
+        Bad.Parameters[2].Type = P;
+      if (Mutation == 1)
+        Bad.Parameters[2].Type = NdType::makePtr(NdType::makeInt(8));
+      if (Mutation == 2)
+        Bad.Parameters[2].Location.ValueBytes = 4;
+      if (Mutation == 3)
+        Bad.Parameters[2].Location.RegisterOffset =
+            Physical[0].Location.RegisterOffset;
+      if (Mutation == 4)
+        Bad.Parameters[2].Location.Kind = SourceABICarrierKind::Stack;
+      if (Mutation == 5)
+        Bad.Parameters[2].Location.ExtendTo32Bits = true;
+      if (Mutation == 6)
+        Bad.Parameters[1].TheRole = SourceParameterTypeHint::Role::Ordinary;
+      if (Mutation == 7)
+        Bad.Parameters.push_back({"after", P});
+      if (Mutation == 8)
+        Bad.Parameters[0] = Bad.Parameters[2];
+      if (Mutation == 9)
+        Bad.Convention = SourceFunctionTypeHint::ConventionKind::C;
+      if (Mutation == 10)
+        Bad.Parameters[2].Components = {Bad.Parameters[2].Location};
+      EXPECT_FALSE(validateSourceABI(Bad, Error)) << Mutation;
+      EXPECT_TRUE(sourceABIParameters(Bad).empty()) << Mutation;
+      EXPECT_FALSE(equalSourceABIs(Hint, Bad)) << Mutation;
+    }
+    // A description of a general in/out slot cannot be treated as a normal
+    // native call: no projection owns its error output.
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    LowBlock B;
+    B.Id = 0;
+    B.StartAddr = 0x1000;
+    B.EndAddr = 0x1004;
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = 0x1000;
+    Call.addInput(NdVar::cst(0x2000, 8));
+    B.Ops.push_back(Call);
+    Low.Blocks.push_back(B);
+    std::map<va_t, SourceFunctionTypeHint> Callees{{0x2000, Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCalleeTypeHints(&Callees);
+    const auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        EXPECT_FALSE(Op.SourceCallHint);
+  }
+}
+
+TEST(SourceABI, SwiftErrorValueAdapterDoesNotShadowItsRuntimeSymbol) {
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))
+#if defined(__aarch64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  const auto Signature = swiftWillThrowSourceSignature(Architecture);
+  ASSERT_TRUE(Signature);
+  auto Hint = std::make_shared<SourceCallTypeHint>();
+  Hint->CallKind = SourceCallTypeHint::Kind::SwiftRuntimeCall;
+  Hint->TargetAddress = 0x2000;
+  Hint->TargetName = "swift_willThrow";
+  Hint->Signature = *Signature;
+  auto Call = HighExpr::makeCall(
+      "swift_willThrow", 0x1100,
+      {HighExpr::makeConst(0x1234, 8), HighExpr::makeConst(0x5678, 8)});
+  Call->Type = NdType::makeVoid();
+  Call->SourceCallHint = Hint;
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = "notify";
+  Function.ReturnType = NdType::makeVoid();
+  HighStmt Statement;
+  Statement.Kind = StmtKind::Call;
+  Statement.CallExpr = Call;
+  Function.Body = {Statement};
+  CEmitterOptions Options;
+  Options.TheArch = Architecture;
+  Options.Format = BinaryFormat::MachO;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+  EXPECT_NE(Source.find("neverd_swift_will_throw_value"), std::string::npos);
+  EXPECT_EQ(Source.find("static inline void swift_willThrow("),
+            std::string::npos);
+  executeC(Source + R"(
+static unsigned calls;
+void runtime(void * __attribute__((swift_context)), void ** __attribute__((swift_error_result))) __asm__("_swift_willThrow") __attribute__((swiftcall));
+void __attribute__((swiftcall)) runtime(void * __attribute__((swift_context)) context, void ** __attribute__((swift_error_result)) error) {
+  if (context != (void *)0x1234 || *error != (void *)0x5678) __builtin_trap();
+  calls++;
+}
+int main(void) { for (unsigned i=0; i<100; ++i) notify(); return calls != 100; }
+)",
+           false);
+#else
+  GTEST_SKIP() << "Native Darwin Swift calling-convention execution required";
+#endif
 }
 
 TEST(SourceABI, SourceReturnComponentsNeverBecomeRewriteABIEvidence) {
