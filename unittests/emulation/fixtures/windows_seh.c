@@ -13,6 +13,7 @@ typedef unsigned char U8;
   enum { Name##Mode = ID };
 #define NEVERD_USER_SEH_NEGATIVE(Name, ID, Argument, Diagnostic)               \
   enum { Name##Mode = ID };
+#define NEVERD_USER_SEH_PROBE(Name, ID, Argument) enum { Name##Mode = ID };
 #define NEVERD_USER_SEH_ASM(Text) __asm__(Text);
 #include "WindowsSEHCases.def"
 typedef struct Record {
@@ -54,6 +55,88 @@ static void require(int Valid, U32 Site) {
   ExitProcess(FailureStatus);
 }
 static void trace(U32 ID) { Trace = (Trace << TraceShift) | ID; }
+static U64 Observations[MaxObservations][10];
+static U32 ObservationCount, SecondaryCount;
+static U64 OriginalPC, OriginalSP;
+static Record *OriginalRecord;
+static void observe(Pointers *P, U32 Site) {
+  require(ObservationCount < MaxObservations, 21);
+  U64 PC = *(U64 *)(P->Context + ContextPC);
+  U64 SP = *(U64 *)(P->Context + ContextSP);
+  if (!ObservationCount) {
+    OriginalPC = PC;
+    OriginalSP = SP;
+    OriginalRecord = P->Record;
+  }
+  U64 *O = Observations[ObservationCount++];
+  O[0] = Site;
+  O[1] = P->Record->Code;
+  O[2] = P->Record->Flags;
+  O[3] = P->Record->Count;
+  O[4] = P->Record->Nested ? P->Record->Nested->Code : 0;
+  O[5] = P->Record->Nested == OriginalRecord;
+  O[6] = PC == (U64)P->Record->Address;
+  O[7] = PC == OriginalPC;
+  O[8] = SP == OriginalSP;
+  O[9] = SP < OriginalSP;
+}
+static U32 secondaryVectored(Pointers *P) {
+  observe(P, VectoredTrace);
+  trace(VectoredTrace);
+  if (Mode == SecondaryVectoredMode && P->Record->Code == NoncontinuableCode &&
+      !SecondaryCount++)
+    return -1;
+  return 0;
+}
+static U32 secondaryContinued(Pointers *P) {
+  observe(P, ContinueTrace);
+  trace(ContinueTrace);
+  return 0;
+}
+static int secondaryFilter(Pointers *P) {
+  observe(P, FilterTrace);
+  trace(FilterTrace);
+  if (P->Record->Code == SoftwareCode)
+    return -1;
+  require(P->Record->Code == NoncontinuableCode, 22);
+  if (Mode == SecondaryRepeatMode && !SecondaryCount++)
+    return -1;
+  return Mode != SecondarySearchMode;
+}
+__declspec(noinline) static void secondaryInner(void) {
+  __try {
+    RaiseException(SoftwareCode, 1, 0, 0);
+    require(0, 23);
+  } __except (secondaryFilter(_exception_info())) {
+    require(_exception_code() == NoncontinuableCode, 24);
+    trace(HandlerTrace);
+  }
+}
+__declspec(noinline) static void secondaryCleanup(void) {
+  __try {
+    secondaryInner();
+  } __finally {
+    trace(_abnormal_termination() ? FinallyTrace : LocalHandlerTrace);
+  }
+}
+static void secondary(void) {
+  require(AddVectoredExceptionHandler(1, secondaryVectored) != 0, 25);
+  require(AddVectoredContinueHandler(1, secondaryContinued) != 0, 26);
+  __try {
+    if (Mode == SecondaryFinallyMode)
+      secondaryCleanup();
+    else
+      secondaryInner();
+    trace(ResumeTrace);
+  } __except (1) {
+    require(_exception_code() == NoncontinuableCode, 27);
+    trace(LocalHandlerTrace);
+  }
+  U32 Written;
+  require(WriteFile(GetStdHandle(StderrSelector), Observations,
+                    ObservationCount * sizeof(Observations[0]), &Written, 0),
+          28);
+}
 static U32 vectored(Pointers *P) {
   trace(VectoredTrace);
   return 0;
@@ -132,6 +215,17 @@ void entry(void) {
     }
   }
   require(Mode != 0, 10);
+  if (Mode == SecondarySameMode || Mode == SecondarySearchMode ||
+      Mode == SecondaryFinallyMode || Mode == SecondaryVectoredMode ||
+      Mode == SecondaryRepeatMode) {
+    secondary();
+    const U64 Output[] = {Mode, Trace};
+    U32 Written;
+    require(WriteFile(GetStdHandle(StdoutSelector), Output, sizeof(Output),
+                      &Written, 0),
+            29);
+    ExitProcess(CompletionStatus);
+  }
   if (Mode == VectoredFirstMode)
     require(AddVectoredExceptionHandler(1, vectored) != 0, 11);
   require(AddVectoredContinueHandler(1, continued) != 0, 12);

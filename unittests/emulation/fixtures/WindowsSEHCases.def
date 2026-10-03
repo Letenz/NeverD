@@ -31,6 +31,10 @@ NEVERD_USER_SEH_VALUE(InstructionLimit, 200000)
 NEVERD_USER_SEH_VALUE(TimeoutMicroseconds, 20000000)
 NEVERD_USER_SEH_VALUE(NativeTimeoutSeconds, 20)
 NEVERD_USER_SEH_VALUE(SmallEventLimit, 3)
+NEVERD_USER_SEH_VALUE(NoncontinuableCode, 0xc0000025)
+NEVERD_USER_SEH_VALUE(ContextSP, 152)
+NEVERD_USER_SEH_VALUE(ContextPC, 248)
+NEVERD_USER_SEH_VALUE(MaxObservations, 16)
 #endif
 #ifdef NEVERD_USER_SEH_TEXT
 NEVERD_USER_SEH_TEXT(ProgramFile, "user-seh.exe")
@@ -44,6 +48,14 @@ NEVERD_USER_SEH_TEXT(TempPrefix, "neverd-user-seh")
 NEVERD_USER_SEH_TEXT(StdoutFile, "stdout.bin")
 NEVERD_USER_SEH_TEXT(StderrFile, "stderr.bin")
 NEVERD_USER_SEH_TEXT(ObservationLabel, "User SEH observations: ")
+NEVERD_USER_SEH_TEXT(RecordLabel, "User SEH records: ")
+#endif
+#ifdef NEVERD_USER_SEH_PROBE
+NEVERD_USER_SEH_PROBE(SecondarySame, 'b', "!b")
+NEVERD_USER_SEH_PROBE(SecondarySearch, 'i', "!i")
+NEVERD_USER_SEH_PROBE(SecondaryFinally, 'j', "!j")
+NEVERD_USER_SEH_PROBE(SecondaryVectored, 'v', "!v")
+NEVERD_USER_SEH_PROBE(SecondaryRepeat, 'r', "!r")
 #endif
 #ifdef NEVERD_USER_SEH_CASE
 NEVERD_USER_SEH_CASE(Catch, 'C', "!C", 0x4)

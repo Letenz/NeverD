@@ -157,7 +157,12 @@ TEST(WindowsSEHNative, RunsOriginalSEHExecutable) {
              Error = (Root / StderrFile).string();
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                       Error};
-  for (const auto &C : Cases) {
+  const Case Probes[] = {
+#define NEVERD_USER_SEH_PROBE(Name, Mode, Argument) {#Name, Mode, Argument, 0},
+#include "fixtures/WindowsSEHCases.def"
+#undef NEVERD_USER_SEH_PROBE
+  };
+  auto Run = [&](const Case &C, bool Probe) {
     SCOPED_TRACE(C.Name);
     std::string Diagnostic;
     bool Failed = false;
@@ -172,10 +177,19 @@ TEST(WindowsSEHNative, RunsOriginalSEHExecutable) {
     llvm::outs() << ObservationLabel << C.Argument << ' ' << Status << ' '
                  << llvm::toHex((*Out)->getBuffer()) << '\n';
     EXPECT_EQ(Status, CompletionStatus) << llvm::toHex((*Err)->getBuffer());
+    if (Probe) {
+      llvm::outs() << RecordLabel << C.Argument << ' '
+                   << llvm::toHex((*Err)->getBuffer()) << '\n';
+      return;
+    }
     EXPECT_TRUE((*Err)->getBuffer().empty())
         << llvm::toHex((*Err)->getBuffer());
     EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), expected(C));
-  }
+  };
+  for (const auto &C : Cases)
+    Run(C, false);
+  for (const auto &C : Probes)
+    Run(C, true);
 #endif
 }
 } // namespace
