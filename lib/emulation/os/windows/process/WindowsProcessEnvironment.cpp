@@ -265,7 +265,9 @@ llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
   Out.ImageName = std::move(*Name);
   Out.StringCursor = Cursor;
   for (const auto &[Address, Size] :
-       {std::pair{Ldr, LdrSize},
+       {std::pair{TEB + TebPEB, PointerSize},
+        std::pair{PEB + PebLdr, PointerSize},
+        std::pair{PEB + PebImageBase, PointerSize}, std::pair{Ldr, LdrSize},
         std::pair{ModuleEntry,
                   (windows_process_limits::Modules + 1) * ModuleStride}}) {
     auto &Bytes = Out.LoaderMetadata[Address];

@@ -28,6 +28,12 @@ DWORD entry(void) {
   }
   if (Mode == ChangedTLSMode)
     *(ULONG_PTR *)(teb() + TebTLS) = 0;
+  if (Mode == ChangedPEBMode)
+    *(ULONG_PTR *)(teb() + TebPEB) = 0;
+  if (Mode == ChangedLdrMode) {
+    ULONG_PTR Peb = loadPointer(teb(), TebPEB);
+    *(ULONG_PTR *)(Peb + PebLdr) = 0;
+  }
   if (Mode == RepeatMode) {
     for (DWORD I = 0; I < RepeatCount; ++I) {
       void *M = LoadLibraryA(MiddleFile);

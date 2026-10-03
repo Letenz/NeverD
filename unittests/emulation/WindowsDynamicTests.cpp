@@ -125,11 +125,12 @@ TEST_P(WindowsDynamic, ExecutesOriginalRuntimeLoaderScenarios) {
   }
   EXPECT_EQ(Scenarios, ExpectedScenarios);
 }
-TEST_P(WindowsDynamic, RejectsModifiedLoaderStateAndRetiredCode) {
+TEST_P(WindowsDynamic, RejectsInvalidLoaderStateAndRetiredCode) {
   Options.Windows = WindowsProcessOptions{
       {{LeafFile, Directory / LeafFile}, {MiddleFile, Directory / MiddleFile}}};
   for (const char *Argument :
-       {ChangedLoaderArgument, ChangedTLSArgument, StaleCodeArgument}) {
+       {ChangedLoaderArgument, ChangedTLSArgument, ChangedPEBArgument,
+        ChangedLdrArgument, StaleCodeArgument}) {
     SCOPED_TRACE(Argument);
     Options.Arguments = {ProgramFile, Argument};
     auto R = emulateProcess(Directory / ProgramFile,
@@ -143,6 +144,18 @@ TEST_P(WindowsDynamic, RejectsModifiedLoaderStateAndRetiredCode) {
                 std::string::npos);
     }
     EXPECT_FALSE(R->ExitStatus);
+    EXPECT_TRUE(R->StandardError.empty());
+  }
+  for (const char *File : {ProgramFile, StaticProgramFile}) {
+    SCOPED_TRACE(File);
+    Options.Arguments = {File, ReentrantArgument};
+    auto R =
+        emulateProcess(Directory / File, ProcessProfile::WindowsPE64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::RuntimeFailure) << R->Diagnostic;
+    EXPECT_FALSE(R->ExitStatus);
+    EXPECT_NE(R->Diagnostic.find(windows_process::text::LoaderReentrant),
+              std::string::npos);
     EXPECT_TRUE(R->StandardError.empty());
   }
 }

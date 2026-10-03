@@ -340,6 +340,14 @@ NEVERD_DYNAMIC_EXPECTED(
 #endif
 #ifdef NEVERD_DYNAMIC_VALUE
 NEVERD_DYNAMIC_VALUE(ExpectedScenarios, 39)
+NEVERD_DYNAMIC_VALUE(ChangedPEBMode, 'p')
+NEVERD_DYNAMIC_VALUE(ChangedLdrMode, 'l')
+NEVERD_DYNAMIC_VALUE(ReentrantMode, 'u')
+#endif
+#ifdef NEVERD_DYNAMIC_TEXT
+NEVERD_DYNAMIC_TEXT(ChangedPEBArgument, "!p")
+NEVERD_DYNAMIC_TEXT(ChangedLdrArgument, "!l")
+NEVERD_DYNAMIC_TEXT(ReentrantArgument, "!u")
 #endif
 
 #ifdef NEVERD_DYNAMIC_BUILD

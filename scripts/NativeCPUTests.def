@@ -593,7 +593,7 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/WindowsDynamic.ExecutesOriginalRuntimeLoaderScenarios/"
     "WhpX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/WindowsDynamic.RejectsModifiedLoaderStateAndRetiredCode/"
+    "ExplicitBackends/WindowsDynamic.RejectsInvalidLoaderStateAndRetiredCode/"
     "WhpX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/WindowsDynamic.SharedBudgetsDoNotCompleteSuspendedCalls/"

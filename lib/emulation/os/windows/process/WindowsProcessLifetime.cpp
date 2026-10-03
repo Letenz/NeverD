@@ -11,6 +11,7 @@ namespace neverd::emulation::windows_process {
 using namespace value;
 Lifetime::Lifetime(windows_process::Program &Program) : Program(Program) {
   for (size_t I : Program.AttachOrder) {
+    Program.Modules[I].State = ModuleState::Initializing;
     Pending.push_back({moduleRef(Program, I), CallKind::TLS, DLLProcessAttach});
     Pending.push_back({moduleRef(Program, I), CallKind::DLL, DLLProcessAttach});
   }

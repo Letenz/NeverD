@@ -12,6 +12,8 @@ static void tls(void *Base, DWORD Reason, void *Reserved) {
   visibility(LeafRole, Base);
 }
 int dllEntry(void *Base, DWORD Reason, void *Reserved) {
+  if (Reason == AttachReason && mode() == ReentrantMode)
+    LoadLibraryW(MiddleName);
   trace(LeafRole, DLLKind, Reason, Reserved);
   visibility(LeafRole, Base);
   return !(Reason == AttachReason && mode() == LeafRole);
