@@ -55,7 +55,7 @@ SymState::constantRegionBytes(SymRef Base) const {
   if (Found == Regions.end())
     return Result;
   for (const auto &[Offset, Value] : Found->second.Bytes)
-    if (const auto Constant = Ctx->constantWindow(Value, 0, 8))
+    if (const auto Constant = Ctx->asConst(Value))
       Result.push_back(
           {Offset, static_cast<uint8_t>(Constant->getZExtValue())});
   return Result;

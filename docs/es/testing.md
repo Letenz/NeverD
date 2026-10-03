@@ -1070,7 +1070,7 @@ El flujo manual `Mobile Swift String ABI Evidence` compila pruebas fijas de igua
 
 ## Simplificación MBA modular
 
-`SymExpr.*` comprueba ventanas constantes sobre el bit inferior con todas las entradas y máscaras de cuatro bits, valores anchos, estructuras anidadas, recomposición de bytes conocidos y desconocidos y contraejemplos de acarreo. Las regresiones de presupuesto sitúan un nodo ancho en el límite recursivo y rechazan copiar constantes demasiado grandes. Las ventanas desconocidas deben permanecer simbólicas sin ampliar el DAG.
+`SymExpr.*` comprueba ventanas constantes sobre el bit inferior con todas las entradas y máscaras de cuatro bits, valores anchos, estructuras anidadas, recomposición de bytes conocidos y desconocidos y contraejemplos de acarreo. Las regresiones de presupuesto sitúan un nodo ancho en el límite recursivo y rechazan copiar constantes demasiado grandes. Las ventanas desconocidas deben permanecer simbólicas sin ampliar el DAG. `SymState.*` también distingue constantes escalares deducidas de hechos literales de regiones en ambos órdenes de bytes, sin ampliar el DAG ni cambiar las palabras almacenadas completas.
 
 `SymReadability.*` comprueba la escritura de restas y complementos, el coste de operadores asociativos, literales de un bit y anchos, saturación de árboles compartidos, selección de candidatos con presupuesto y equivalencia exhaustiva de tres bits sin muestreo. `SymMBASample.*` compara la verificación estrecha y de precisión arbitraria con el evaluador AP para todos los operadores, asignaciones deterministas y entradas anchas no usadas. Para comparar la calidad entre versiones de la puntuación, vuelva a contar ambas salidas con la misma métrica; los contadores de tamaño del SDK son solo diagnósticos.
 
