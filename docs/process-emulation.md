@@ -94,7 +94,7 @@ request; it is distinct from a successful zero return.
 
 ## Linux profile semantics
 
-`writev` shares those sinks on x64/ARM64 and through Android Bionic. It imports up to 1024 guest `iovec` entries before output, rejects negative lengths with `EINVAL`, validates all original user ranges, and applies Linux’s page-aligned transfer cap. An invalid descriptor returns `EBADF` before vector access; inaccessible metadata returns `EFAULT` without output. A later payload fault preserves the copied prefix. The output budget covers the whole vector before publication, across both streams. `write` and `writev` use the low 32 descriptor bits; vector count also follows Linux’s 32-bit import. Bionic alone converts raw negative errors to `-1` and `errno`. `LinuxOutputNativeTests` runs ten original cases on host Linux with regular-file redirects; modeled x64/ARM64 cases also check budgets. See the [Linux vector import contract](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c).
+`writev` shares those sinks on x64/ARM64 and through Android Bionic. It imports up to 1024 guest `iovec` entries before output, rejects negative lengths with `EINVAL`, validates user ranges, and applies Linux’s page-aligned transfer cap. An invalid descriptor returns `EBADF` before vector access; inaccessible metadata returns `EFAULT` without output. A later payload fault preserves the copied prefix. The output budget covers the whole vector before publication, across both streams. `write` and `writev` use the low 32 descriptor bits; vector count also follows Linux’s 32-bit import. Bionic alone converts raw negative errors to `-1` and `errno`. `LinuxOutputNativeTests` runs ten original cases on host Linux with regular-file redirects; modeled x64/ARM64 cases also check budgets. See the [Linux vector import contract](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c).
 
 The existing ELF loader supplies decoded program headers. OS policy validates
 ABI tags, segment alignment, mapped program-header tables and user-address
@@ -160,7 +160,8 @@ entries. This does not itself implement a thread scheduler.
 Descriptors 1 and 2 are virtual byte sinks. `write` validates readable user
 pages, returns a readable prefix when a later page is inaccessible, and returns
 guest `EFAULT` when no bytes are readable. A bad descriptor returns `EBADF`;
-a zero-count write on a valid descriptor succeeds without pointer access.
+a zero-count write still validates the user address range, but does not
+require a mapped page or read any payload.
 These sinks do not model Linux pipe atomicity or file objects. Native fixture
 comparison agrees on ordinary output and on partial writes to regular files;
 Linux pipes can reject that same small cross-page write completely. Output

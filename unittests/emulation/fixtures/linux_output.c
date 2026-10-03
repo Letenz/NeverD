@@ -141,6 +141,9 @@ void process_main(U64 *Stack) {
           Bytes);
     check(linux_service(ServiceWrite, HighArgument | StandardOutput,
                         KernelAddress, 0),
+          (U64)0 - ErrorFault);
+    check(linux_service(ServiceWrite, HighArgument | StandardOutput, BadAddress,
+                        0),
           0);
     break;
   default:

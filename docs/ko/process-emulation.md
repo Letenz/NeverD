@@ -54,7 +54,7 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Linux 프로필 의미론
 
-`writev`는 x64/ARM64와 Android Bionic에서 같은 출력 대상을 공유합니다. 출력 전에 게스트 `iovec`를 최대 1024개 가져오고, 음수 길이를 `EINVAL`로 거부하며, 모든 원래 사용자 주소 범위를 검증한 뒤 Linux의 페이지 정렬 전송 상한을 적용합니다. 잘못된 설명자는 벡터 접근 전에 `EBADF`, 읽을 수 없는 메타데이터는 출력 없이 `EFAULT`를 반환합니다. 이후 데이터 오류는 복사된 접두부를 유지합니다. 출력 예산은 게시 전에 두 스트림과 전체 벡터에 적용됩니다. `write`와 `writev`는 설명자의 하위 32비트를 사용하고 벡터 수도 Linux의 32비트 가져오기 규칙을 따릅니다. Bionic만 원시 음수 오류를 `-1`과 `errno`로 변환합니다. `LinuxOutputNativeTests`는 직접 작성한 열 사례를 호스트 Linux에서 일반 파일로 출력하여 검증하고, 모델의 x64/ARM64 사례는 예산도 검사합니다. [Linux 벡터 가져오기 계약](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)을 참고하세요.
+`writev`는 x64/ARM64와 Android Bionic에서 같은 출력 대상을 공유합니다. 출력 전에 게스트 `iovec`를 최대 1024개 가져오고, 음수 길이를 `EINVAL`로 거부하며, 사용자 주소 범위를 검증한 뒤 Linux의 페이지 정렬 전송 상한을 적용합니다. 잘못된 설명자는 벡터 접근 전에 `EBADF`, 읽을 수 없는 메타데이터는 출력 없이 `EFAULT`를 반환합니다. 이후 데이터 오류는 복사된 접두부를 유지합니다. 출력 예산은 게시 전에 두 스트림과 전체 벡터에 적용됩니다. `write`와 `writev`는 설명자의 하위 32비트를 사용하고 벡터 수도 Linux의 32비트 가져오기 규칙을 따릅니다. Bionic만 원시 음수 오류를 `-1`과 `errno`로 변환합니다. `LinuxOutputNativeTests`는 직접 작성한 열 사례를 호스트 Linux에서 일반 파일로 출력하여 검증하고, 모델의 x64/ARM64 사례는 예산도 검사합니다. [Linux 벡터 가져오기 계약](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)을 참고하세요.
 
 OS 정책은 기존 ELF 로더가 디코딩한 프로그램 헤더를 사용합니다. ABI 태그, 세그먼트 정렬, 매핑된 프로그램 헤더 테이블, user 주소 범위를 검증합니다. 매핑 계획은 할당 전에 범위, 권한, 겹침, 예산을 확인하고 완전히 준비한 전용 주소 공간만 공개합니다. 파일 페이지 앞/뒤 바이트를 보존하고 BSS를 0으로 채우며 세그먼트 권한을 지키고 스택 guard gap을 예약합니다. 페이지가 겹치는 레이아웃과 모순 헤더는 추측하지 않고 거부합니다.
 
@@ -68,7 +68,7 @@ Static TLS template `PT_TLS`는 loader 소유 사실로 검증합니다. templat
 
 x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`를 지원합니다. Set은 매핑되지 않은 user 범위 base도 받아들이지만 이후 역참조는 권한을 검사합니다. kernel 범위 base는 guest `EPERM`, 잘못된 Get 대상은 CPU fault 없이 `EFAULT`를 반환합니다. 나머지 operation은 명시적으로 실패합니다. ARM64 시작은 `MSR`로 `TPIDR_EL0`를 설정합니다. `MRS`, FS/GS 메모리 접근, context 복원은 quantum 및 backend 진입 사이에서 thread pointer를 보존합니다. 이는 thread scheduler를 구현하지 않습니다.
 
-파일 디스크립터 1과 2는 가상 바이트 sink입니다. `write`는 읽기 가능한 user 페이지를 검증하고, 뒤쪽 페이지 접근이 막히면 읽을 수 있는 prefix를 반환하며 한 바이트도 읽지 못하면 게스트 `EFAULT`를 반환합니다. 잘못된 디스크립터는 `EBADF`; 유효한 디스크립터에 0바이트 write는 포인터를 읽지 않습니다. Linux pipe 원자성이나 파일 객체는 모델링하지 않습니다. 출력 한도를 넘을 쓰기는 게시 전에 중단됩니다.
+파일 디스크립터 1과 2는 가상 바이트 sink입니다. `write`는 읽기 가능한 user 페이지를 검증하고, 뒤쪽 페이지 접근이 막히면 읽을 수 있는 prefix를 반환하며 한 바이트도 읽지 못하면 게스트 `EFAULT`를 반환합니다. 잘못된 디스크립터는 `EBADF`; 0바이트 쓰기도 사용자 주소 범위를 검사하지만 페이지 매핑이나 데이터 읽기를 요구하지 않습니다. Linux pipe 원자성이나 파일 객체는 모델링하지 않습니다. 출력 한도를 넘을 쓰기는 게시 전에 중단됩니다.
 
 익명 메모리 서비스는 이미지 및 스택과 같은 프로세스 주소 공간과 물리 메모리 예산을 사용합니다. `mmap`은 정확히 `MAP_PRIVATE | MAP_ANONYMOUS`와 일반 `PROT_NONE`, `PROT_READ`, `PROT_READ | PROT_WRITE`, `PROT_READ | PROT_EXEC` 또는 읽기 가능한 RWX 권한을 허용합니다. 비어 있고 페이지 정렬된 힌트를 우선하며, 그렇지 않으면 `0x100000000`부터, 이어 최소 사용자 주소부터 빈 영역을 찾고 스택 보호 영역을 보존합니다. 이 결정적 배치는 Linux ASLR을 모방하지 않습니다. 새 페이지는 개별 소유하며 0으로 채우므로 부분 해제로 고정되지 않은 페이지를 회수할 수 있습니다. CPU 투영이나 유지된 backing view는 자신의 수명이 끝날 때까지 폐기된 할당을 유지할 수 있습니다.
 

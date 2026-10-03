@@ -66,8 +66,8 @@ TEST(LinuxOutputNative, OriginalVectoredCallsMatchTheHostKernel) {
     std::string LaunchError;
     bool ExecutionFailed = false;
     const auto Status = llvm::sys::ExecuteAndWait(
-        Program, {ExecutableName, Mode}, std::nullopt, Redirects, NativeTimeout,
-        0, &LaunchError, &ExecutionFailed);
+        Program, {ExecutableName, Mode}, llvm::ArrayRef<llvm::StringRef>(),
+        Redirects, NativeTimeout, 0, &LaunchError, &ExecutionFailed);
     ASSERT_FALSE(ExecutionFailed) << LaunchError;
     auto Output = llvm::MemoryBuffer::getFile(Out);
     auto Error = llvm::MemoryBuffer::getFile(Err);

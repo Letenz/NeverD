@@ -81,10 +81,10 @@ writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
   if (FD != StandardOutput && FD != StandardError)
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (Kind == ServiceKind::Write) {
-    if (!Count)
-      return std::optional<uint64_t>(0);
     if (!userRange(Layout, Address, Count))
       return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+    if (!Count)
+      return std::optional<uint64_t>(0);
     const OutputBuffer Buffer{Address, Count};
     return publishOutput(CPU, FD, Buffer, Layout, Options, Result);
   }
