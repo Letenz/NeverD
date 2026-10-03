@@ -120,6 +120,15 @@ def inventory_contract(document):
             in method_inventory(document).items() for name, record in expected.items()}
 
 
+def method_plan(methods):
+    """Describe execution order without running any guest instruction."""
+    return [
+        {"index": index, "binary": key[0], "family": key[1], "identities": {
+            name: {"name": record.name, "labels": sorted(record.labels)}
+            for name, record in expected.items()}}
+        for index, (key, expected) in enumerate(methods.items())]
+
+
 def read_results(path, expected):
     root = ET.parse(path).getroot()
     if root.tag != "testsuites":
@@ -191,11 +200,8 @@ def run_methods(document, evidence, environment):
     outcomes, errors = [], []
     destination = evidence / "methods"
     destination.mkdir(parents=True, exist_ok=False)
-    (evidence / "method-plan.json").write_text(json.dumps([
-        {"index": index, "binary": key[0], "family": key[1], "identities": {
-            name: {"name": record.name, "labels": sorted(record.labels)}
-            for name, record in expected.items()}}
-        for index, (key, expected) in enumerate(methods.items())], indent=2) + "\n")
+    (evidence / "method-plan.json").write_text(
+        json.dumps(method_plan(methods), indent=2) + "\n")
     for index, (key, expected) in enumerate(methods.items()):
         binary, family, directory, variables, case_timeout = key
         child_environment = dict(environment)
