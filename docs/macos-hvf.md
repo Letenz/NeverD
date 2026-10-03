@@ -283,8 +283,22 @@ complete x87/SSE state across host changes, faults and stops. The job later
 stopped reporting during artifact upload. A subsequent serialized transport
 and state run reached the raw exception group without returning its result.
 These observations do not identify a particular instruction failure or prove
-a test-process concurrency defect. Raw faults, division and complete CPU/Darwin
-acceptance are tracked independently until their native results are available.
+a test-process concurrency defect. Later isolated results are recorded below;
+the complete CPU/Darwin gate remains separate.
+
+At clean source `908a830e6e3f1bbae6bc7ed7e534f3b13aeb1c1e`, both focused jobs
+completed successfully. The [raw-fault job](https://github.com/NeverSight/NeverD/actions/runs/37094333371)
+passed all 120 native exception cases, covering ten fault types at both
+privilege levels, repeated recovery, mapping changes and private-gateway
+integrity. The [division job](https://github.com/NeverSight/NeverD/actions/runs/37094335126)
+passed all 128 native public-CPU division cases, including normal results,
+terminal traps, explicit recovery and observer stops. Each also passed all five
+state-transition cases, ten transport cases and 100 interruption/recovery
+repetitions. Shared checks overlap and must not be added as independent cases.
+Both artifacts were downloaded, SHA-256 verified and their individual XML
+results inspected. Temporary isolation workflow inputs and steps are removed.
+The full gate is rerunning at `99c09f94e` with serialized tests and separate
+build evidence; its emulation implementation and tests match these focused runs.
 
 The subsequent integration pass repaired the test SDK's missing
 `neverd_session_set_load_progress` and made the shared worker test client wait
