@@ -118,6 +118,8 @@ TEST_P(WindowsEnvironment, RejectsInvalidStatePointersAndUnsupportedSemantics) {
 }
 TEST_P(WindowsEnvironment, SnapshotReleaseReclaimsLimitedGuestMemory) {
   Options.MemoryLimit = LimitedMemory;
+  Options.StackSize = LimitedStack;
+  Options.OutputLimit = PageSize;
   Options.Arguments = {ProgramFile, ReclaimArgument};
   auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
   ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());

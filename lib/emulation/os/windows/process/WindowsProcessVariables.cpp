@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "WindowsProcess.h"
 
+#include "neverd/emulation/CPU.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
@@ -151,6 +153,8 @@ Services::environment(const Service &S, const NativeCallEvent &Event) {
       size_t End = (*Source)[I] == u'%' ? Source->find(u'%', I + 1)
                                         : std::u16string::npos;
       if ((*Source)[I] != u'%' || End == std::u16string::npos) {
+        if (Expanded.size() + 1 >= MaxStringUnits)
+          return failure(text::EnvironmentLimit);
         Expanded += (*Source)[I++];
       } else {
         auto Key = key(Source->substr(I + 1, End - I - 1));
