@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: ff6f78bcd5a46c6e393db7da09a7b0eacd53c1553602c1f9226947d2d02c86d6 -->
+<!-- i18n-source: aee97573f638441a0d68f7791fa814871dc91c7d7d5ad93373725b00e25925ac -->
 
 [← 文件索引](README.md)
 
@@ -71,3 +71,14 @@ ARM64 核對 6,842 個註冊項，Intel 同一組 20 個目標為 6,840 項。In
 先前完整執行 `37106679688` 於 2026-10-03 08:35 UTC 結束；GitHub 記錄執行器失聯，沒有 CPU 結果，不能據此判定某條客體指令失敗。託管 Intel 的 `full` 現採四片，最多兩個作業並行。每片先建置並檢查完整二十個目標的 CTest 清單，再以 `--hvf-shard INDEX/COUNT` 按目標及方法身分分配整個方法；執行屬性不同也保留該方法的全部參數。每片保存完整與所選清單、執行計畫、原始 XML、身分對應、行程狀態及必要環境變數白名單。單片僅是部分證據。
 
 獨立 Linux 作業執行 `scripts/audit_hvf_shards.py`，由檢出的原始碼重新推導目標和必需原生項，要求同一次嘗試、同一乾淨提交、正確 macOS 宿主 ISA 與一致的正規化執行契約。四片必須互斥，聯集恰好等於完整清單；所有子行程成功結束，必需原生項全數通過。漏片、篩選器變更、摘要不符、XML 不完整及必需原生項跳過皆失敗。每個原生作業仍執行 transport、恢復、CR8 及獨立 Darwin 驗證；自託管保留未分片 CTest。分片本身不代表 Intel 已通過驗收。
+
+## 最新本機原生驗證
+
+乾淨原始碼 `26f8fa88b`，2026-10-03：ARM64 四片皆通過彙總稽核，獨立 Darwin 驗證亦通過。兩列覆蓋重疊，不可相加。
+
+| 範圍 | 註冊 | 通過 | 失敗 | 跳過 | 必需原生項 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU，四片 | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| Darwin | 286 | 65 | 0 | 221 | 39/39 |
+
+`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`

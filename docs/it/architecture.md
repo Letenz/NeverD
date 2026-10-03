@@ -678,13 +678,15 @@ L’esecuzione CPU è indipendente dal sistema operativo guest e dall’immagine
 | Componente | Responsabilità |
 |---|---|
 | `NeverDEmulationCore` | Memoria, fault, registri e ciclo di esecuzione condiviso |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Trasporti nativi KVM/WHP ed esecuzione portabile Unicorn |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Trasporti nativi KVM/WHP/HVF ed esecuzione portabile Unicorn |
 | `NeverDEmulationArch` | Ammissione ISA, stato architetturale, tabelle delle pagine e formato FP |
 | `NeverDEmulationCPU` | Configurazione CPU e composizione dei backend |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | ABI intere, sessioni CPU e budget dei workload |
 | `NeverDEmulationImage` | Piani di mapping per segmenti del loader |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | Avvio ELF, policy dei servizi Linux e report del processo |
 | `NeverDEmulation` | Modello Windows e ciclo di vita dei driver |
+
+Su macOS il trasporto nativo [HVF](macos-hvf.md) appartiene a `NeverDEmulationNative`: ARM64 su Apple Silicon, x86-64 su Intel. La ISA host seleziona il trasporto, non il sistema guest. I [profili Darwin](darwin-emulation.md) definiscono separatamente avvio e servizi di macOS, dispositivi iOS e iOS Simulator. Le verifiche ancora mancanti per Linux ARM64 KVM e Windows ARM64 WHP sono distinte dalle prove macOS ARM64 HVF già registrate. Disponibilità e stato completo della verifica sono espliciti nella guida HVF.
 
 Factory CPU e query delle capacità condividono `ExecutionConfiguration`; architettura, privilegio, larghezza degli indirizzi e feature vengono validati prima dell’allocazione. `ExecutionBudget` possiede un unico budget di istruzioni/eventi e una deadline monotona assoluta per workload; la ripresa non ricarica il credito. `ExecutionSession` possiede CPU, hook e continuazioni pendenti di servizio/fault. Le sessioni possono condividere memoria e budget, ma l’esecuzione è cooperativa, non SMP parallela. Ogni richiesta pendente va consumata esattamente una volta prima di riprendere. I fault CPU prevalgono sugli stop di risorse; uno stop inspiegato del motore non prova il successo del workload.
 

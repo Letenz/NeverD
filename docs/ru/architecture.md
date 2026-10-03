@@ -634,13 +634,15 @@ NeverD, но не все общие библиотеки LLVM и Capstone, до�
 | Компонент | Ответственность |
 |---|---|
 | `NeverDEmulationCore` | Память, ошибки, регистры и общий цикл выполнения |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Нативные транспорты KVM/WHP и переносимое исполнение Unicorn |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Нативные транспорты KVM/WHP/HVF и переносимое исполнение Unicorn |
 | `NeverDEmulationArch` | Допуск ISA, состояние архитектуры, таблицы страниц и формат FP |
 | `NeverDEmulationCPU` | Конфигурация CPU и композиция бэкендов |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | Целочисленные ABI, CPU-сессии и бюджеты нагрузки |
 | `NeverDEmulationImage` | Планы отображения сегментов загрузчика |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | Запуск ELF, политика служб Linux и отчёты процесса |
 | `NeverDEmulation` | Модель Windows и жизненный цикл драйвера |
+
+На macOS нативный транспорт [HVF](macos-hvf.md) принадлежит `NeverDEmulationNative`: ARM64 на Apple Silicon и x86-64 на Intel. ISA хоста определяет этот транспорт, но не гостевую ОС. [Профили Darwin](darwin-emulation.md) отдельно задают запуск и службы macOS, устройств iOS и iOS Simulator. Незавершённые проверки Linux ARM64 KVM и Windows ARM64 WHP отличаются от уже зафиксированных результатов macOS ARM64 HVF. Доступность и полный статус приёмки явно указаны в руководстве HVF.
 
 Фабрика CPU и запрос возможностей используют одну `ExecutionConfiguration`; архитектура, привилегии, ширина адреса и функции проверяются до выделения ресурсов. `ExecutionBudget` владеет общим счётом инструкций/событий и абсолютным монотонным deadline на нагрузку; возобновление не пополняет бюджет. `ExecutionSession` владеет CPU, hooks и ожидающими продолжениями службы/ошибки. Сессии могут совместно использовать память и бюджет, но выполнение кооперативное, не параллельное SMP. Ожидающий запрос надо потребить ровно один раз до возобновления. Ошибки CPU выше остановки по ресурсам; необъяснимая остановка движка не означает успех.
 

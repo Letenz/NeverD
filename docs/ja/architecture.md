@@ -574,13 +574,15 @@ CPU 実行はゲスト OS と image から独立しています。OS policy と 
 | コンポーネント | 責務 |
 |---|---|
 | `NeverDEmulationCore` | memory、fault、register、共有実行ループ |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP transport と portable な Unicorn 実行 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP/HVF transport と portable な Unicorn 実行 |
 | `NeverDEmulationArch` | ISA 検証、アーキテクチャ状態、ページテーブルと FP 配置 |
 | `NeverDEmulationCPU` | CPU 設定とバックエンド構成 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | integer ABI、CPU session、workload budget |
 | `NeverDEmulationImage` | loader segment の mapping plan |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 起動、Linux service policy、process report |
 | `NeverDEmulation` | Windows model と driver lifecycle |
+
+macOS のネイティブ転送 [HVF](macos-hvf.md) は `NeverDEmulationNative` が所有し、Apple Silicon では ARM64、Intel では x86-64 を使います。ホスト ISA は転送層を選択しますが、ゲスト OS は決めません。[Darwin プロファイル](darwin-emulation.md) が macOS、iOS デバイス、iOS Simulator の起動とサービスを別に定義します。未完了の Linux ARM64 KVM、Windows ARM64 WHP 検証は、記録済みの macOS ARM64 HVF の証拠とは区別します。可用性と完全な検証状態は HVF ガイドに記載します。
 
 CPU factory と capability query は同じ `ExecutionConfiguration` を使い、allocation 前に architecture、privilege、address width、feature を検証します。`ExecutionBudget` は workload ごとに命令/event の共有カウンターと絶対 monotonic deadline を持ち、再開しても予算を補充しません。`ExecutionSession` は CPU、hook、pending service/fault continuation を所有します。session 間で memory と budget を共有できますが、実行は協調的で並列 SMP ではありません。pending request は再開前に正確に一度消費します。CPU failure は resource stop より優先され、説明できない engine stop は workload 成功を意味しません。
 

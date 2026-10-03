@@ -680,13 +680,15 @@ CPU-Ausführung ist unabhängig von Gastbetriebssystem und Image. OS-Policy und 
 | Komponente | Zuständigkeit |
 |---|---|
 | `NeverDEmulationCore` | Speicher, Fehler, Register und gemeinsame Ausführungsschleife |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP-Transporte und portable Unicorn-Ausführung |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | native KVM/WHP/HVF-Transporte und portable Unicorn-Ausführung |
 | `NeverDEmulationArch` | ISA-Zulassung, Architekturzustand, Seitentabellen und FP-Layout |
 | `NeverDEmulationCPU` | CPU-Konfiguration und Backend-Komposition |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | Integer-Aufrufkonventionen, CPU-Sitzungen und Workload-Budgets |
 | `NeverDEmulationImage` | Mapping-Pläne für Loader-Segmente |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF-Start, Linux-Dienstpolicy und Prozessberichte |
 | `NeverDEmulation` | Windows-Modell und Treiberlebenszyklus |
+
+Unter macOS gehört der native Transport [HVF](macos-hvf.md) zu `NeverDEmulationNative`: ARM64 auf Apple Silicon, x86-64 auf Intel. Die Host-ISA bestimmt diesen Transport, nicht das Gast-OS. [Darwin-Profile](darwin-emulation.md) definieren Start und Dienste für macOS, iOS-Geräte und iOS Simulator getrennt. Die noch offenen Prüfungen für Linux ARM64 KVM und Windows ARM64 WHP sind von den belegten macOS-ARM64-HVF-Ergebnissen zu unterscheiden. Verfügbarkeit und vollständiger Abnahmestand stehen ausdrücklich im HVF-Leitfaden.
 
 CPU-Fabrik und Fähigkeitsabfrage verwenden dieselbe `ExecutionConfiguration`; Architektur, Privileg, Adressbreite und Features werden vor Allokation geprüft. `ExecutionBudget` besitzt ein gemeinsames Instruktions-/Eventbudget und eine absolute Deadline pro Workload; Fortsetzungen setzen das Budget nicht zurück. `ExecutionSession` besitzt CPU, Hooks sowie offene Service-/Fehlerfortsetzungen. Sessions dürfen Speicher und Budget teilen, laufen aber kooperativ, nicht als paralleles SMP. Ein ausstehender Request muss genau einmal vor dem Fortsetzen verbraucht werden. CPU-Fehler haben Vorrang vor Ressourcenstopps; ein unerklärter Engine-Stopp bedeutet keinen Workload-Erfolg.
 

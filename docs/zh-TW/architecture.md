@@ -509,13 +509,15 @@ CPU 執行獨立於客體 OS 與映像。OS 政策及程序入口與傳輸層、
 | 元件 | 職責 |
 |---|---|
 | `NeverDEmulationCore` | 記憶體、錯誤、暫存器與共用執行迴圈 |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP 傳輸與可攜式 Unicorn 執行 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 原生 KVM/WHP/HVF 傳輸與可攜式 Unicorn 執行 |
 | `NeverDEmulationArch` | ISA 准入、架構狀態、頁表及 FP 狀態配置 |
 | `NeverDEmulationCPU` | CPU 設定及後端組合 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 整數 ABI、CPU 工作階段與工作負載預算 |
 | `NeverDEmulationImage` | 載入器區段對映計畫 |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 啟動、Linux 服務政策與程序報告 |
 | `NeverDEmulation` | Windows 模型與驅動程式生命週期 |
+
+macOS 的原生傳輸 [HVF](macos-hvf.md) 由 `NeverDEmulationNative` 負責：Apple Silicon 使用 ARM64，Intel 使用 x86-64。宿主 ISA 決定該傳輸的選擇，不決定客體 OS；[Darwin profile](darwin-emulation.md) 獨立定義 macOS、iOS 裝置與 iOS Simulator 的啟動和服務。尚待完成的 Linux ARM64 KVM、Windows ARM64 WHP 驗證，不應與已有的 macOS ARM64 HVF 證據混淆。原生可用性及完整驗收狀態以 HVF 指南為準。
 
 CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗證架構、權限、位址寬度及功能。`ExecutionBudget` 為每個工作負載擁有共用指令／事件計數與絕對單調 deadline；恢復執行不會補回預算。`ExecutionSession` 擁有 CPU、hooks 與待處理的服務／錯誤續接。工作階段可共用記憶體與預算，但採合作式排程，並非平行 SMP。恢復前必須恰好消耗一次待處理要求。CPU 錯誤優先於資源停止；無法解釋的引擎停止不代表工作負載成功。
 

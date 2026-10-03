@@ -686,13 +686,15 @@ L’exécution CPU est indépendante de l’OS invité et de l’image. La polit
 | Composant | Responsabilité |
 |---|---|
 | `NeverDEmulationCore` | Mémoire, défauts, registres et boucle d’exécution partagée |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Transports natifs KVM/WHP et exécution portable Unicorn |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Transports natifs KVM/WHP/HVF et exécution portable Unicorn |
 | `NeverDEmulationArch` | Admission ISA, état architectural, tables de pages et format FP |
 | `NeverDEmulationCPU` | Configuration CPU et composition des moteurs |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | ABI entiers, sessions CPU et budgets de charge |
 | `NeverDEmulationImage` | Plans de mappage des segments du chargeur |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | Démarrage ELF, politique des services Linux et rapports de processus |
 | `NeverDEmulation` | Modèle Windows et cycle de vie du pilote |
+
+Sous macOS, le transport natif [HVF](macos-hvf.md) appartient à `NeverDEmulationNative` : ARM64 sur Apple Silicon, x86-64 sur Intel. L’ISA hôte détermine ce transport, pas l’OS invité. Les [profils Darwin](darwin-emulation.md) définissent séparément démarrage et services de macOS, iOS appareil et iOS Simulator. Les validations encore manquantes pour Linux ARM64 KVM et Windows ARM64 WHP sont distinctes des preuves macOS ARM64 HVF déjà enregistrées. Disponibilité et état complet de validation restent explicites dans le guide HVF.
 
 La fabrique CPU et la requête de capacités partagent `ExecutionConfiguration` ; elles valident architecture, privilège, largeur d’adresse et fonctionnalités avant allocation. `ExecutionBudget` possède un compte commun d’instructions/événements et une échéance monotone absolue par charge ; reprendre ne recharge pas le budget. `ExecutionSession` possède le CPU, ses hooks et les continuations service/défaut en attente. Les sessions peuvent partager mémoire et budget, mais l’exécution est coopérative, sans SMP parallèle. Chaque requête en attente doit être consommée exactement une fois avant reprise. Les erreurs CPU priment sur les arrêts de ressources ; un arrêt inexpliqué du moteur ne signifie pas réussite.
 

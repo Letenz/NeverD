@@ -581,13 +581,15 @@ CMake.
 | المكوّن | المسؤولية |
 |---|---|
 | `NeverDEmulationCore` | الذاكرة والأعطال والسجلات وحلقة التنفيذ المشتركة |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | نقل KVM/WHP الأصلي وتنفيذ Unicorn المحمول |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | نقل KVM/WHP/HVF الأصلي وتنفيذ Unicorn المحمول |
 | `NeverDEmulationArch` | قبول ISA وحالة المعمارية وجداول الصفحات وتنسيق FP |
 | `NeverDEmulationCPU` | تهيئة المعالج وتركيب المحركات |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | اتفاقيات الأعداد الصحيحة وجلسات CPU وميزانيات أحمال العمل |
 | `NeverDEmulationImage` | خطط الربط لمقاطع المحمّل |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | بدء ELF وسياسة خدمات Linux وتقارير ملف العملية |
 | `NeverDEmulation` | نموذج Windows ودورة حياة برنامج التشغيل |
+
+على macOS تنتمي واجهة النقل الأصلية [HVF](macos-hvf.md) إلى `NeverDEmulationNative`: تستخدم ARM64 على Apple Silicon وx86-64 على Intel. تحدد ISA المضيف واجهة النقل، لا نظام الضيف. تعرّف [ملفات Darwin](darwin-emulation.md) بدء macOS وأجهزة iOS وiOS Simulator وخدماتها بصورة مستقلة. يختلف التحقق المتبقي لـ Linux ARM64 KVM وWindows ARM64 WHP عن نتائج macOS ARM64 HVF المسجلة بالفعل. يوضح دليل HVF التوفر وحالة القبول الكاملة.
 
 يستخدم مصنع CPU واستعلام القدرات `ExecutionConfiguration` نفسه للتحقق من المعمارية والامتياز وحجم العنوان والميزات قبل التخصيص. تملك `ExecutionBudget` ميزانية تعليمات/أحداث واحدة وموعداً مطلقاً لكل حمل؛ الاستئناف لا يعيد الرصيد. تملك `ExecutionSession` CPU والخطافات وامتدادات طلبات الخدمة/الأعطال. قد تشترك الجلسات في الذاكرة والميزانية، لكن التنفيذ تعاوني وليس SMP متوازياً. يجب استهلاك الطلب المعلق مرة واحدة قبل الاستئناف؛ فشل CPU أعلى من توقف الموارد، والتوقف غير المفسر لا يعني نجاح الحمل.
 

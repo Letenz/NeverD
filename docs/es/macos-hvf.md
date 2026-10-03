@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: ff6f78bcd5a46c6e393db7da09a7b0eacd53c1553602c1f9226947d2d02c86d6 -->
+<!-- i18n-source: aee97573f638441a0d68f7791fa814871dc91c7d7d5ad93373725b00e25925ac -->
 
 [← Índice de documentación](README.md)
 
@@ -71,3 +71,14 @@ El pequeño benchmark ARM64 equivalente midió 73.9 ms con Unicorn y 95.1 ms con
 La ejecución completa anterior `37106679688` terminó el 2026-10-03 a las 08:35 UTC con una anotación de GitHub sobre pérdida de comunicación con el runner. No produjo resultados CPU; esto no identifica una instrucción invitada defectuosa. Intel alojado en modo `full` usa ahora cuatro grupos, con un máximo de dos trabajos simultáneos. Cada trabajo compila y comprueba primero el inventario CTest completo de los veinte objetivos. `--hvf-shard INDEX/COUNT` asigna métodos completos por objetivo e identidad, conservando todos sus parámetros juntos aunque difieran sus propiedades de ejecución. Cada grupo guarda inventarios completo y seleccionado, plan, XML original, correspondencias, estados de proceso y lista permitida de variables necesarias. Un grupo solo aporta evidencia parcial.
 
 Un trabajo Linux independiente ejecuta `scripts/audit_hvf_shards.py` y vuelve a derivar objetivos y requisitos nativos desde las fuentes extraídas. Exige el mismo intento, el mismo commit sin cambios locales, la ISA macOS correcta y contratos normalizados coincidentes. Los cuatro grupos deben ser disjuntos y su unión igual al inventario completo; todos los procesos deben finalizar correctamente y cada requisito nativo pasar. Grupos ausentes, filtros cambiados, resúmenes contradictorios, XML incompleto o requisitos nativos omitidos provocan fallo. Cada trabajo nativo conserva transporte, recuperación, CR8 y la validación Darwin independiente. Los runners propios mantienen CTest sin dividir. Dividir la ejecución no demuestra por sí solo la aceptación Intel.
+
+## Última verificación nativa local
+
+Fuentes sin cambios locales `26f8fa88b`, 2026-10-03. Los cuatro grupos ARM64 superaron la auditoría conjunta y la validación Darwin independiente también pasó. Las filas se solapan y no deben sumarse.
+
+| Ámbito | Registrados | Pasados | Fallidos | Omitidos | Nativos obligatorios |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU, cuatro grupos | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| Darwin | 286 | 65 | 0 | 221 | 39/39 |
+
+`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`

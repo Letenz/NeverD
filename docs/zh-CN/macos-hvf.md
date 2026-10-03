@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: ff6f78bcd5a46c6e393db7da09a7b0eacd53c1553602c1f9226947d2d02c86d6 -->
+<!-- i18n-source: aee97573f638441a0d68f7791fa814871dc91c7d7d5ad93373725b00e25925ac -->
 
 [← 文档索引](README.md)
 
@@ -175,3 +175,14 @@ Linux 进程在正常退出、内存故障、未知服务和预算停止时的�
 早前完整运行 `37106679688` 于 2026-10-03 08:35 UTC 结束，GitHub 明确记录运行器失联，未产生 CPU 结果；这不能定位某条来宾指令。托管 Intel 的 `full` 现分为四片，最多两个作业并发。每片先构建并检查完整的二十个目标和 CTest 清单，再由 `--hvf-shard INDEX/COUNT` 按目标和方法身份分配整个方法；执行属性不同也不拆散该方法的参数。各片保留完整及所选清单、执行计划、原始 XML、身份映射、退出状态和必要环境变量白名单。单片只是部分证据。
 
 独立 Linux 作业运行 `scripts/audit_hvf_shards.py`，从检出的源码重新推导目标和必需原生项，要求同一次尝试、同一干净提交、正确 macOS 宿主 ISA、规范化执行契约一致，且四片互斥、并集恰好等于完整清单。所有子进程必须成功退出，全部必需原生项必须通过；漏片、过滤器变更、摘要与原始结果不符、XML 不完整或原生必需项跳过均失败。每个原生作业仍执行 transport、恢复、CR8 和独立 Darwin 门禁；自托管保持未分片 CTest。分片本身不代表 Intel 已验收。
+
+## 最新本机原生验证
+
+干净源码 `26f8fa88b`，2026-10-03：ARM64 四片全部通过汇总审计，独立 Darwin 门禁也通过。两行覆盖重叠，不可相加。
+
+| 范围 | 注册 | 通过 | 失败 | 跳过 | 必需原生项 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU，四片 | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| Darwin | 286 | 65 | 0 | 221 | 39/39 |
+
+`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`

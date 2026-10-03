@@ -555,13 +555,15 @@ CPU 실행은 게스트 OS 및 이미지와 독립적입니다. OS 정책과 프
 | 구성 요소 | 책임 |
 |---|---|
 | `NeverDEmulationCore` | 메모리, fault, 레지스터, 공통 실행 루프 |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 네이티브 KVM/WHP 전송 및 이식 가능한 Unicorn 실행 |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | 네이티브 KVM/WHP/HVF 전송 및 이식 가능한 Unicorn 실행 |
 | `NeverDEmulationArch` | ISA 허용, 아키텍처 상태, 페이지 테이블과 FP 배치 |
 | `NeverDEmulationCPU` | CPU 구성과 백엔드 조합 |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | 정수 ABI, CPU 세션, 워크로드 예산 |
 | `NeverDEmulationImage` | 로더 세그먼트 매핑 계획 |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | ELF 시작, Linux 서비스 정책, 프로세스 보고서 |
 | `NeverDEmulation` | Windows 모델 및 드라이버 수명 주기 |
+
+macOS의 네이티브 전송 [HVF](macos-hvf.md)는 `NeverDEmulationNative`가 담당합니다. Apple Silicon은 ARM64, Intel은 x86-64를 사용합니다. 호스트 ISA는 전송을 선택하지만 게스트 OS를 결정하지 않습니다. [Darwin 프로필](darwin-emulation.md)은 macOS, iOS 기기 및 iOS Simulator의 시작과 서비스를 별도로 정의합니다. 아직 남은 Linux ARM64 KVM 및 Windows ARM64 WHP 검증은 이미 확보한 macOS ARM64 HVF 증거와 구분합니다. 가용성과 전체 검증 상태는 HVF 가이드에서 명시합니다.
 
 CPU factory와 기능 질의는 같은 `ExecutionConfiguration`을 사용하며 할당 전에 아키텍처, 권한, 주소 폭, 기능을 검증합니다. `ExecutionBudget`은 워크로드별 공유 명령/이벤트 계정과 절대 monotonic deadline을 소유하며 재개해도 예산이 초기화되지 않습니다. `ExecutionSession`은 CPU, hook, 대기 중 서비스/fault continuation을 소유합니다. 세션은 메모리와 예산을 공유할 수 있지만 실행은 협력식이며 병렬 SMP가 아닙니다. 대기 중 요청은 재개 전 정확히 한 번 소비해야 합니다. CPU 오류는 자원 정지보다 우선하며 설명되지 않은 엔진 정지는 성공이 아닙니다.
 

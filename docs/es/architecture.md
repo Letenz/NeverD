@@ -681,13 +681,15 @@ La ejecución CPU es independiente del SO invitado y de la imagen. La política 
 | Componente | Responsabilidad |
 |---|---|
 | `NeverDEmulationCore` | Memoria, fallos, registros y bucle común de ejecución |
-| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Transportes nativos KVM/WHP y ejecución portable Unicorn |
+| `NeverDEmulationNative` / `NeverDEmulationUnicorn` | Transportes nativos KVM/WHP/HVF y ejecución portable Unicorn |
 | `NeverDEmulationArch` | Admisión ISA, estado arquitectónico, tablas de páginas y formato FP |
 | `NeverDEmulationCPU` | Configuración CPU y composición de motores |
 | `NeverDEmulationABI` / `NeverDEmulationRuntime` | ABI enteras, sesiones CPU y presupuestos de carga |
 | `NeverDEmulationImage` | Planes de mapeo para segmentos del cargador |
 | `NeverDEmulationLinux` / `NeverDEmulationProcess` | Inicio ELF, política de servicios Linux e informes del proceso |
 | `NeverDEmulation` | Modelo Windows y ciclo de vida del controlador |
+
+En macOS, el transporte nativo [HVF](macos-hvf.md) pertenece a `NeverDEmulationNative`: ARM64 en Apple Silicon y x86-64 en Intel. La ISA del host selecciona este transporte, no el OS invitado. Los [perfiles Darwin](darwin-emulation.md) definen por separado el inicio y los servicios de macOS, iOS dispositivo e iOS Simulator. Las verificaciones pendientes de Linux ARM64 KVM y Windows ARM64 WHP se distinguen de la evidencia macOS ARM64 HVF ya registrada. La disponibilidad y el estado completo de aceptación se indican en la guía HVF.
 
 La fábrica CPU y la consulta de capacidades comparten `ExecutionConfiguration`; validan arquitectura, privilegio, ancho de dirección y funciones antes de asignar recursos. `ExecutionBudget` posee una sola cuenta de instrucciones/eventos y un plazo monotónico absoluto por carga; reanudar no repone el presupuesto. `ExecutionSession` posee la CPU, hooks y continuaciones pendientes de servicio/fallo. Las sesiones pueden compartir memoria y presupuesto, pero la planificación es cooperativa, no SMP paralelo. Cada solicitud pendiente debe consumirse exactamente una vez antes de reanudar. Los fallos CPU prevalecen sobre la parada por recursos; una parada inexplicada del motor no significa éxito de la carga.
 

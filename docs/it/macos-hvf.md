@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: ff6f78bcd5a46c6e393db7da09a7b0eacd53c1553602c1f9226947d2d02c86d6 -->
+<!-- i18n-source: aee97573f638441a0d68f7791fa814871dc91c7d7d5ad93373725b00e25925ac -->
 
 [← Indice della documentazione](README.md)
 
@@ -71,3 +71,14 @@ Il piccolo benchmark ARM64 equivalente ha misurato 73.9 ms con Unicorn e 95.1 ms
 La precedente esecuzione completa `37106679688` è terminata il 2026-10-03 alle 08:35 UTC; un’annotazione GitHub segnala la perdita di comunicazione con il runner. Non ha prodotto risultati CPU e non identifica un’istruzione guest difettosa. Intel ospitato in modalità `full` usa ora quattro gruppi, con al massimo due job contemporanei. Ogni job compila e verifica prima l’intero inventario CTest dei venti target. `--hvf-shard INDEX/COUNT` assegna metodi interi per target e identità, mantenendo insieme tutti i parametri anche quando le proprietà di esecuzione differiscono. Ogni gruppo conserva inventari completo e selezionato, piano, XML originale, corrispondenze, stati dei processi e lista consentita delle variabili necessarie. Un gruppo costituisce soltanto una prova parziale.
 
 Un job Linux separato esegue `scripts/audit_hvf_shards.py` e ricava nuovamente target e requisiti nativi dai sorgenti estratti. Richiede stesso tentativo, stesso commit senza modifiche locali, ISA macOS corretta e contratti normalizzati coincidenti. I quattro gruppi devono essere disgiunti e la loro unione uguale all’inventario completo; tutti i processi devono terminare correttamente e ogni requisito nativo deve passare. Gruppi mancanti, filtri modificati, riepiloghi incoerenti, XML incompleto o requisiti nativi saltati causano errore. Ogni job nativo conserva trasporto, ripresa, CR8 e verifica Darwin indipendente. I runner propri mantengono CTest senza suddivisione. La suddivisione da sola non dimostra l’accettazione Intel.
+
+## Ultima verifica nativa locale
+
+Sorgenti senza modifiche locali `26f8fa88b`, 2026-10-03. Tutti i quattro gruppi ARM64 hanno superato l’audit complessivo, così come la verifica Darwin indipendente. Le righe si sovrappongono e non vanno sommate.
+
+| Ambito | Registrati | Superati | Falliti | Saltati | Obbligatori nativi |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU, quattro gruppi | 6,883 | 854 | 0 | 6,029 | 16/16 |
+| Darwin | 286 | 65 | 0 | 221 | 39/39 |
+
+`build-hvf-native/hvf-shards-26f8fa88b/aggregate.json` · `build-hvf-native/hvf-shards-26f8fa88b/darwin/summary.json`

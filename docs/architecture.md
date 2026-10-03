@@ -1263,7 +1263,7 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
 | `NeverDEmulationArch` | ISA admission, architecture state, x64/ARM64 page tables and x64 FP state layout |
-| `NeverDEmulationNative` | KVM/WHP machine transports |
+| `NeverDEmulationNative` | KVM/WHP/HVF machine transports |
 | `NeverDEmulationUnicorn` | Portable CPU execution and checked single-instruction transport |
 | `NeverDEmulationCPU` | CPU configuration and backend composition |
 | `NeverDEmulationABI` | Explicit scalar calling conventions, argument locations and call frames |
@@ -1275,6 +1275,8 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 | `NeverDEmulationDarwin` | Shared Darwin Mach-O startup, BSD services and memory; distinct macOS/iOS/simulator profiles |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
+
+On macOS, [HVF](macos-hvf.md) is the native transport owned by `NeverDEmulationNative`: ARM64 on Apple Silicon and x86-64 on Intel. The host ISA selects this transport; it does not select a guest OS. [Darwin profiles](darwin-emulation.md) separately define macOS, iOS device and iOS Simulator startup and services. Remaining Linux ARM64 KVM and Windows ARM64 WHP validation gaps do not negate the recorded macOS ARM64 HVF results. Native availability and complete acceptance results remain explicit in the HVF guide.
 
 The five CPU components declare LLVM Support as their LLVM dependency.
 Consumers inherit Support and its dependencies, Capstone, and the enabled CPU
@@ -1291,6 +1293,7 @@ lib/emulation/
   backends/unicorn/      Portable machine execution
   backends/kvm/          Linux host virtualization
   backends/whp/          Windows host virtualization
+  backends/hvf/          macOS host virtualization on the matching ISA
   abi/                   Guest calling conventions independent of OS and CPU transport
   runtime/               CPU composition and shared workload accounting
   os/windows/            Windows driver workload, ABI policy and kernel model
@@ -1423,7 +1426,7 @@ flowchart TD
   Windows[Windows guest environment] --> Runtime[Runtime CPU factory]
   Client[Other C++ CPU clients] --> Runtime
   Runtime --> ISA[x64 and ARM64 checked execution]
-  Runtime --> Transport[Unicorn / KVM / WHP]
+  Runtime --> Transport[Unicorn / KVM / WHP / HVF]
   ISA --> Machine[ISA machine interfaces]
   Transport -->|implements| Machine
   ISA --> Core[Core execution contracts and memory]
