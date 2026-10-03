@@ -1,0 +1,199 @@
+//===- WindowsExceptionCases.def - Independent user exception cases ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_VEH_VALUE
+NEVERD_VEH_VALUE(ExitStatus, 47)
+NEVERD_VEH_VALUE(FailureStatus, 97)
+NEVERD_VEH_VALUE(LastErrorSeed, 0x968)
+NEVERD_VEH_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_VEH_VALUE(StderrSelector, 0xfffffff4)
+NEVERD_VEH_VALUE(ContinueExecution, 0xffffffff)
+NEVERD_VEH_VALUE(ContinueSearch, 0)
+NEVERD_VEH_VALUE(SoftwareCode, 0xe7654321)
+NEVERD_VEH_VALUE(NestedCode, 0xe7654322)
+NEVERD_VEH_VALUE(AttachCode, 0xe7654323)
+NEVERD_VEH_VALUE(DetachCode, 0xe7654324)
+NEVERD_VEH_VALUE(ContextProbeCode, 0xe7654325)
+NEVERD_VEH_VALUE(AccessViolation, 0xc0000005)
+NEVERD_VEH_VALUE(DivideByZero, 0xc0000094)
+NEVERD_VEH_VALUE(FaultAddress, 0x60000003)
+NEVERD_VEH_VALUE(PageSize, 0x1000)
+NEVERD_VEH_VALUE(PageReadWrite, 4)
+NEVERD_VEH_VALUE(PageReadOnly, 2)
+NEVERD_VEH_VALUE(MemReserveCommit, 0x3000)
+NEVERD_VEH_VALUE(MemRelease, 0x8000)
+NEVERD_VEH_VALUE(DataValue, 0x123456789abcdef0ULL)
+NEVERD_VEH_VALUE(VectorLow, 0x8765432101234567ULL)
+NEVERD_VEH_VALUE(VectorHigh, 0xfedcba9812345678ULL)
+NEVERD_VEH_VALUE(VectorInitialLow, 0xabcdef0123456789ULL)
+NEVERD_VEH_VALUE(VectorInitialHigh, 0x0123456789abcdefULL)
+NEVERD_VEH_VALUE(MaxParameters, 15)
+NEVERD_VEH_VALUE(NativeTimeoutSeconds, 10)
+NEVERD_VEH_VALUE(InstructionLimit, 300000)
+NEVERD_VEH_VALUE(TimeoutMicroseconds, 20000000)
+NEVERD_VEH_VALUE(ModePrefix, '!')
+NEVERD_VEH_VALUE(SmallEventLimit, 8)
+NEVERD_VEH_VALUE(ModelHandlerLimit, 128)
+NEVERD_VEH_VALUE(OrderTrace, 0x213)
+NEVERD_VEH_VALUE(DuplicateTrace, 0x113)
+NEVERD_VEH_VALUE(MutationTrace, 0x143)
+NEVERD_VEH_VALUE(NextMutationTrace, 0x243)
+#endif
+#ifdef NEVERD_VEH_TEXT
+NEVERD_VEH_TEXT(ProgramFile, "vectored-exceptions.exe")
+NEVERD_VEH_TEXT(LibraryFile, "vectored-callback.dll")
+NEVERD_VEH_TEXT(X64Dir, "X64")
+NEVERD_VEH_TEXT(AArch64Dir, "AArch64")
+NEVERD_VEH_TEXT(TempPrefix, "neverd-vectored-exceptions")
+NEVERD_VEH_TEXT(StdoutFile, "stdout.bin")
+NEVERD_VEH_TEXT(StderrFile, "stderr.bin")
+NEVERD_VEH_TEXT(NativeOnly, "requires native Windows x64")
+NEVERD_VEH_TEXT(MissingTools, "requires Clang and lld-link exception fixtures")
+NEVERD_VEH_TEXT(ObservationLabel, "Vectored exception observations: ")
+NEVERD_VEH_TEXT(RecursiveArgument, "!B")
+#endif
+#ifdef NEVERD_VEH_CASE
+NEVERD_VEH_CASE(Order, "!O", "010000004F000000", false)
+NEVERD_VEH_CASE(Mutation, "!M", "010000004D000000", false)
+NEVERD_VEH_CASE(Software, "!S", "0100000053000000", false)
+NEVERD_VEH_CASE(Nested, "!N", "010000004E000000", false)
+NEVERD_VEH_CASE(Read, "!R", "0100000052000000", false)
+NEVERD_VEH_CASE(Write, "!W", "0100000057000000", false)
+NEVERD_VEH_CASE(Context, "!C", "0100000043000000", false)
+NEVERD_VEH_CASE(Loader, "!L", "010000004C000000", false)
+NEVERD_VEH_CASE(Exit, "!E", "0100000045000000", false)
+NEVERD_VEH_CASE(Divide, "!D", "0100000044000000", true)
+#endif
+#ifdef NEVERD_VEH_NEGATIVE
+NEVERD_VEH_NEGATIVE("!U", ExceptionUnhandled)
+NEVERD_VEH_NEGATIVE("!I", ExceptionDisposition)
+NEVERD_VEH_NEGATIVE("!F", ExceptionContext)
+NEVERD_VEH_NEGATIVE("!T", ExceptionContext)
+NEVERD_VEH_NEGATIVE("!G", ExceptionContext)
+NEVERD_VEH_NEGATIVE("!K", ExceptionContext)
+NEVERD_VEH_NEGATIVE("!Q", ExceptionContinuation)
+NEVERD_VEH_NEGATIVE("!H", ExceptionHandler)
+NEVERD_VEH_NEGATIVE("!A", ExceptionArguments)
+NEVERD_VEH_NEGATIVE("!Z", ExceptionArguments)
+NEVERD_VEH_NEGATIVE("!B", ExceptionLimit)
+NEVERD_VEH_NEGATIVE("!V", ExceptionLimit)
+NEVERD_VEH_NEGATIVE("!J", ExceptionFrame)
+NEVERD_VEH_NEGATIVE("!Y", ExceptionContext)
+#endif
+#ifdef NEVERD_VEH_MODE
+NEVERD_VEH_MODE(OrderMode, 'O')
+NEVERD_VEH_MODE(MutationMode, 'M')
+NEVERD_VEH_MODE(SoftwareMode, 'S')
+NEVERD_VEH_MODE(NestedMode, 'N')
+NEVERD_VEH_MODE(ReadMode, 'R')
+NEVERD_VEH_MODE(WriteMode, 'W')
+NEVERD_VEH_MODE(ContextMode, 'C')
+NEVERD_VEH_MODE(LoaderMode, 'L')
+NEVERD_VEH_MODE(ExitMode, 'E')
+NEVERD_VEH_MODE(DivideMode, 'D')
+NEVERD_VEH_MODE(UnhandledMode, 'U')
+NEVERD_VEH_MODE(DispositionMode, 'I')
+NEVERD_VEH_MODE(FlagsMode, 'F')
+NEVERD_VEH_MODE(PCMode, 'T')
+NEVERD_VEH_MODE(StackMode, 'G')
+NEVERD_VEH_MODE(PrivilegedMode, 'K')
+NEVERD_VEH_MODE(NoncontinuableMode, 'Q')
+NEVERD_VEH_MODE(HandlerMode, 'H')
+NEVERD_VEH_MODE(ArgumentsMode, 'A')
+NEVERD_VEH_MODE(RaiseFlagsMode, 'Z')
+NEVERD_VEH_MODE(RecursiveMode, 'B')
+NEVERD_VEH_MODE(HandlerLimitMode, 'V')
+NEVERD_VEH_MODE(PointersMode, 'J')
+NEVERD_VEH_MODE(FPMode, 'Y')
+#endif
+#ifdef NEVERD_VEH_API
+NEVERD_VEH_API(ExitProcess)
+NEVERD_VEH_API(GetCommandLineW)
+NEVERD_VEH_API(GetStdHandle)
+NEVERD_VEH_API(WriteFile)
+NEVERD_VEH_API(GetLastError)
+NEVERD_VEH_API(SetLastError)
+NEVERD_VEH_API(AddVectoredExceptionHandler)
+NEVERD_VEH_API(RemoveVectoredExceptionHandler)
+NEVERD_VEH_API(RaiseException)
+NEVERD_VEH_API(VirtualAlloc)
+NEVERD_VEH_API(VirtualFree)
+NEVERD_VEH_API(VirtualProtect)
+NEVERD_VEH_API(LoadLibraryA)
+NEVERD_VEH_API(FreeLibrary)
+#endif
+#ifdef NEVERD_VEH_BUILD
+NEVERD_VEH_BUILD(OutputDirectory, "windows-exception-fixtures")
+NEVERD_VEH_BUILD(X64Target, "x86_64-pc-windows-msvc")
+NEVERD_VEH_BUILD(AArch64Target, "aarch64-pc-windows-msvc")
+NEVERD_VEH_BUILD(X64Machine, "x64")
+NEVERD_VEH_BUILD(AArch64Machine, "arm64")
+NEVERD_VEH_BUILD(ProgramEntry, "entry")
+NEVERD_VEH_BUILD(ProgramBase, "0x140000000")
+NEVERD_VEH_BUILD(LibraryEntry, "DllMain")
+NEVERD_VEH_BUILD(ProviderFile, "kernel32.dll")
+#endif
+// Independent fixture ABI facts; native SDK assertions verify these offsets.
+#ifdef NEVERD_VEH_CONTEXT_X64
+NEVERD_VEH_CONTEXT_X64(ContextSize, 1232)
+NEVERD_VEH_CONTEXT_X64(ContextFlags, 48)
+NEVERD_VEH_CONTEXT_X64(ContextPC, 248)
+NEVERD_VEH_CONTEXT_X64(ContextSP, 152)
+NEVERD_VEH_CONTEXT_X64(ContextPointer, 128)
+NEVERD_VEH_CONTEXT_X64(ContextResult, 120)
+NEVERD_VEH_CONTEXT_X64(ContextVector, 416)
+NEVERD_VEH_CONTEXT_X64(ContextVectorCount, 16)
+NEVERD_VEH_CONTEXT_X64(ContextControl, 52)
+NEVERD_VEH_CONTEXT_X64(ContextControlCopy, 280)
+NEVERD_VEH_CONTEXT_X64(ContextPrivileged, 56)
+NEVERD_VEH_CONTEXT_X64(ContextAll, 0x10000b)
+NEVERD_VEH_CONTEXT_X64(ControlValue, 0x5f80)
+#endif
+#ifdef NEVERD_VEH_CONTEXT_ARM64
+NEVERD_VEH_CONTEXT_ARM64(ContextSize, 912)
+NEVERD_VEH_CONTEXT_ARM64(ContextFlags, 0)
+NEVERD_VEH_CONTEXT_ARM64(ContextPC, 264)
+NEVERD_VEH_CONTEXT_ARM64(ContextSP, 256)
+NEVERD_VEH_CONTEXT_ARM64(ContextPointer, 8)
+NEVERD_VEH_CONTEXT_ARM64(ContextResult, 8)
+NEVERD_VEH_CONTEXT_ARM64(ContextVector, 272)
+NEVERD_VEH_CONTEXT_ARM64(ContextVectorCount, 32)
+NEVERD_VEH_CONTEXT_ARM64(ContextControl, 784)
+NEVERD_VEH_CONTEXT_ARM64(ContextControlCopy, 784)
+NEVERD_VEH_CONTEXT_ARM64(ContextPrivileged, 152)
+NEVERD_VEH_CONTEXT_ARM64(ContextAll, 0x400007)
+NEVERD_VEH_CONTEXT_ARM64(ControlValue, 0x01400000)
+#endif
+#ifdef NEVERD_VEH_ASM
+#if defined(_M_X64) || defined(__x86_64__)
+NEVERD_VEH_ASM(ReadFault, ".text\n.p2align 4\n.globl "
+                          "ReadFault\nReadFault:\nmovq (%rcx), %rax\nretq\n")
+NEVERD_VEH_ASM(WriteFault, ".text\n.p2align 4\n.globl "
+                           "WriteFault\nWriteFault:\nmovq %rdx, (%rcx)\nretq\n")
+NEVERD_VEH_ASM(
+    ContextFault,
+    ".text\n.p2align 4\n.globl ContextFault\nContextFault:\nmovdqu "
+    "VectorSeed(%rip), %xmm0\n.globl ContextFaultSite\nContextFaultSite:\nmovq "
+    "(%rcx), %rax\n.globl ContextResume\nContextResume:\nmovdqu %xmm0, "
+    "(%rdx)\nretq\n")
+NEVERD_VEH_ASM(
+    DivideFault,
+    ".text\n.p2align 4\n.globl DivideFault\nDivideFault:\nmovq $16, %rax\nxorq "
+    "%rdx, %rdx\n.globl DivideFaultSite\nDivideFaultSite:\ndivq %rcx\nretq\n")
+#else
+NEVERD_VEH_ASM(
+    ReadFault,
+    ".text\n.p2align 4\n.globl ReadFault\nReadFault:\nldr x0, [x0]\nret\n")
+NEVERD_VEH_ASM(
+    WriteFault,
+    ".text\n.p2align 4\n.globl WriteFault\nWriteFault:\nstr x1, [x0]\nret\n")
+NEVERD_VEH_ASM(
+    ContextFault,
+    ".text\n.p2align 4\n.globl ContextFault\nContextFault:\nadrp "
+    "x9, VectorSeed\nadd x9, x9, :lo12:VectorSeed\nldr q0, "
+    "[x9]\n.globl ContextFaultSite\nContextFaultSite:\nldr x0, "
+    "[x0]\n.globl ContextResume\nContextResume:\nstr q0, [x1]\nret\n")
+#endif
+#endif

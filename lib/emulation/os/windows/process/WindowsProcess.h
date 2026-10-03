@@ -24,6 +24,7 @@ namespace value {
 #define NEVERD_WINDOWS_PROCESS_BYTES(Name, ...)                                \
   inline constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "WindowsProcess.def"
+#include "WindowsProcessExceptions.def"
 #include "WindowsProcessModules.def"
 #include "WindowsSystemModules.def"
 #undef NEVERD_WINDOWS_PROCESS_BYTES
@@ -33,6 +34,7 @@ namespace text {
 #define NEVERD_WINDOWS_PROCESS_TEXT(Name, Text)                                \
   inline constexpr char Name[] = Text;
 #include "WindowsProcess.def"
+#include "WindowsProcessExceptions.def"
 #include "WindowsProcessModules.def"
 #include "WindowsSystemModules.def"
 #undef NEVERD_WINDOWS_PROCESS_TEXT
@@ -128,21 +130,29 @@ struct LoaderRequest {
   std::optional<uint16_t> Ordinal;
 };
 struct ServiceOutcome {
+  struct Exception {
+    uint32_t Code, Flags;
+    uint64_t Address;
+    std::vector<uint64_t> Arguments;
+  };
   std::optional<uint64_t> Value;
   std::optional<LoaderRequest> Request;
+  std::optional<Exception> Raised;
   explicit ServiceOutcome(std::optional<uint64_t> Value) : Value(Value) {}
   explicit ServiceOutcome(LoaderRequest Request)
       : Request(std::move(Request)) {}
+  explicit ServiceOutcome(Exception Raised) : Raised(std::move(Raised)) {}
 };
+class VectoredExceptions;
 class Services final {
 public:
   Services(ExecutionBackend &CPU, AddressSpace &Memory, const Image &Image,
            const Environment &Environment, const ProcessOptions &Options,
            ProcessResult &Result, VirtualMemory &Virtual, Program &Program,
-           const ExecutionBudget &Budget)
+           const ExecutionBudget &Budget, VectoredExceptions &Exceptions)
       : CPU(CPU), Memory(Memory), Loaded(Image), Env(Environment),
         Options(Options), Result(Result), Virtual(Virtual), Modules(Program),
-        Budget(Budget) {}
+        Budget(Budget), Exceptions(Exceptions) {}
   llvm::Expected<ServiceOutcome> invoke(const Service &Service,
                                         const NativeCallEvent &Event);
 
@@ -167,6 +177,7 @@ private:
   VirtualMemory &Virtual;
   Program &Modules;
   const ExecutionBudget &Budget;
+  VectoredExceptions &Exceptions;
   std::bitset<value::DynamicTLSCount> TLSSlots;
   struct Allocation {
     uint64_t Size, MappedSize;

@@ -651,3 +651,20 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsSystem.ProviderImagesUseSharedMappingsAndExportResolution/"
     "WhpX64")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsExceptionsNative.RunsOriginalExceptionExecutable")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsExceptions.ExecutesOriginalExceptionScenarios/WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/"
+    "WindowsExceptions.RejectsUnsupportedDispatchAndInvalidContinuations/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsExceptions.NestedHandlersShareTheProcessEventBudget/"
+    "WhpX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsExceptions.ContextValidationPreservesStoppedCPUAndMemory/"
+    "WhpX64")
+#endif

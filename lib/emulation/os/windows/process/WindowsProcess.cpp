@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../../runtime/RuntimeValues.h"
+#include "WindowsProcessExceptions.h"
 #include "WindowsProcessLoader.h"
 
 #include "neverd/emulation/ExecutionSession.h"
@@ -59,7 +60,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     Trap.resize(DWordSize);
     llvm::support::endian::write32le(Trap.data(), ArmServiceInstruction);
   }
-  for (uint64_t Gate : {ReturnGate, AttachReturnGate, DetachReturnGate})
+  for (uint64_t Gate :
+       {ReturnGate, AttachReturnGate, DetachReturnGate, ExceptionReturnGate})
     if (auto E = (*Space)->write(Gate, Trap))
       return std::move(E);
   for (const auto &Module : Program->Modules)
@@ -96,7 +98,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (auto E = Backend->CPU->writeRegister(
           X64 ? CPURegister::X64GSBase : CPURegister::AArch64X18, {TEB, 0}))
     return std::move(E);
-  auto Session = ExecutionSession::create(std::move(Backend->CPU), Resources);
+  VectoredExceptions Exceptions(*Backend->CPU, *ABI, StackBase);
+  auto Session = ExecutionSession::create(
+      std::move(Backend->CPU), Resources,
+      [&](const BackendFault &Fault) { return Exceptions.accepts(Fault); });
   if (!Session)
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
@@ -107,7 +112,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   Result.Entry = Loaded->Entry;
   Result.InitializersEnabled = true;
   Services OS(CPU, **Space, *Loaded, *Env, Options, Result, Virtual, *Program,
-              *Resources);
+              *Resources, Exceptions);
   Lifetime Life(*Program);
   Loader Modules(*Program, Virtual, **Space, *Env, CPU, *Resources);
   std::optional<Lifetime::Call> Active;
@@ -236,8 +241,12 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Result.Diagnostic = runtime::Timeout;
       break;
     }
+    const bool Fault =
+        Result.LastCPUExit &&
+        Result.LastCPUExit->Kind == ExecutionExitKind::RecoverableFault;
     if (!Result.LastCPUExit ||
-        Result.LastCPUExit->Kind != ExecutionExitKind::ServiceRequest) {
+        (Result.LastCPUExit->Kind != ExecutionExitKind::ServiceRequest &&
+         !Fault)) {
       Result.Stop = ProcessStopReason::CPUFailure;
       Result.Diagnostic =
           Result.LastCPUExit ? Result.LastCPUExit->Diagnostic : text::CPUExit;
@@ -247,6 +256,26 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Result.Stop = ProcessStopReason::EventLimit;
       Result.Diagnostic = runtime::EventLimit;
       break;
+    }
+    if (Fault) {
+      auto Raised = (*Session)->takeRecoverableFault();
+      if (!Raised) {
+        Failed(Raised.takeError());
+        break;
+      }
+      auto SP = CPU.readRegister(ABI->info().StackPointer);
+      if (!SP) {
+        Failed(SP.takeError());
+        break;
+      }
+      auto Transfer = Exceptions.begin(VectoredExceptions::exception(*Raised),
+                                       (*SP)[0], Pending.size());
+      if (!Transfer) {
+        Failed(Transfer.takeError());
+        break;
+      }
+      Result.PC = Transfer->PC;
+      continue;
     }
     auto Request = (*Session)->takeServiceRequest();
     if (!Request) {
@@ -265,7 +294,24 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Result.Diagnostic = text::Service;
       break;
     }
-    if (Request->PC == ExpectedGate && (*SP)[0] == ExpectedSP) {
+    if (Exceptions.returning(Request->PC, (*SP)[0], Pending.size())) {
+      auto V = CPU.readRegister(ABI->info().Result);
+      if (!V) {
+        Failed(V.takeError());
+        break;
+      }
+      auto Transfer = Exceptions.returned(uint32_t((*V)[0]));
+      if (!Transfer) {
+        Failed(Transfer.takeError());
+        break;
+      }
+      Result.PC = Transfer->PC;
+      if (Transfer->CompletedEvent)
+        Result.NativeCalls[*Transfer->CompletedEvent].Result = 0;
+      continue;
+    }
+    if (!Exceptions.activeAt(Pending.size()) && Request->PC == ExpectedGate &&
+        (*SP)[0] == ExpectedSP) {
       auto V = CPU.readRegister(ABI->info().Result);
       if (!V) {
         Failed(V.takeError());
@@ -345,6 +391,23 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Failed(V.takeError());
       break;
     }
+    if (V->Raised) {
+      // RaiseException resumes through its modeled executable RET. Its CONTEXT
+      // therefore points inside the provider, preserving the original live
+      // return slot and ARM64 LR when a handler elects to continue.
+      if (auto E = CPU.writeRegister(PCRegister, {Request->NextPC, 0})) {
+        Failed(std::move(E));
+        break;
+      }
+      auto Transfer = Exceptions.begin(std::move(*V->Raised), StackPointer,
+                                       Pending.size(), EventIndex);
+      if (!Transfer) {
+        Failed(Transfer.takeError());
+        break;
+      }
+      Result.PC = Transfer->PC;
+      continue;
+    }
     if (V->Request) {
       if (Pending.size() >= MaxLoaderDepth) {
         Failed(failure(text::ModuleBudget));
@@ -385,6 +448,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       const uint32_t Status = *Result.ExitStatus;
       Result.ExitStatus.reset();
       Pending.clear();
+      Exceptions.abandon();
       // Process-detach callbacks may still observe the exiting caller's
       // frame. Abandon its continuation without overwriting that storage.
       RootStackPointer = StackPointer;
