@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
+<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
 
 [← 文件索引](README.md)
 
@@ -64,7 +64,7 @@ Apple Silicon 可加上 `-DNEVERD_LLVM_PREBUILT=ON`；Intel 從固定版本 LLVM
 
 ARM64 核對 6,842 個註冊項，Intel 同一組 20 個目標為 6,840 項。Intel 253 個原生例外、除法與狀態切換項也全數通過。[Intel Darwin 工作](https://github.com/NeverSight/NeverD/actions/runs/37106013999) 核對 286 個身分、32 個行程，並通過十項傳輸、100 次恢復及 CR8。蒐集器與稽核共 124 項檢查通過。CLI、SDK、worker 及 186 個 Mach-O 的簽章均有整合驗證；該封裝的相依項目要求 macOS 15.0。
 
-[Intel 完整 CPU 驗收](https://github.com/NeverSight/NeverD/actions/runs/37106679688) 仍待結果：截至 2026-10-03 08:24 UTC，超過設定期限仍無最終結果或 CPU 產物。建置及前置檢查不等於完整驗收。macOS 核心對照也不是 iOS 實體裝置核心證據。
+Intel 完整 CPU 驗收仍未完成。[先前執行](https://github.com/NeverSight/NeverD/actions/runs/37106679688) 於 2026-10-03 08:35 UTC 結束，GitHub 記錄執行器失聯，未產生 CPU 產物。建置及前置檢查不等於完整驗收。macOS 核心對照也不是 iOS 實體裝置核心證據。
 
 同契約 ARM64 小型基準為 Unicorn 73.9 ms、HVF 95.1 ms，耗時約多 29%，尚未證明加速。一般指令需要六次原生進入；高宿主負載下的量測不能視為穩定效能。詳見[完整證據](../macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03)及[有限 Darwin 契約](darwin-emulation.md)。
 
@@ -75,6 +75,8 @@ ARM64 核對 6,842 個註冊項，Intel 同一組 20 個目標為 6,840 項。In
 CPU 執行前，`scripts/prepare_hvf_batches.py` 保存完整清單、各片所選清單與方法計畫，由工作流程獨立上傳這些診斷。一個本機 composite action 連續執行四批，每批結束立即上傳原始 XML、身分對應、行程狀態及必要環境變數白名單。外層統一的 30 分鐘期限涵蓋四批執行與上傳；某批失敗後不再執行後續批次。失敗或逾時後，只要執行器仍可通訊，另有獨立的兩分鐘診斷上傳；宿主失聯時只能依靠先前已上傳的證據。計畫及未完成的診斷包不能算作通過的分片。
 
 獨立 Linux 作業執行 `scripts/audit_hvf_shards.py`，由檢出的原始碼重新推導目標及必需原生項。工作流程僅下載本次嘗試的 CPU 產物；稽核要求同一乾淨提交的全部十六片、正確 macOS 宿主 ISA、一致的正規化執行契約，且分片互斥、聯集恰好等於完整清單。所有子行程必須成功結束，全部必需原生項必須通過；漏片、篩選器變更、摘要不符、XML 不完整及必需原生項跳過皆失敗。每個原生作業仍執行 transport、恢復、CR8 及獨立 Darwin 驗證；自託管保留未分片 CTest。分批保存本身不代表 Intel 已通過驗收。重試須重新執行全部原生作業，不混用先前嘗試的產物。
+
+[執行 `37123148209`](https://github.com/NeverSight/NeverD/actions/runs/37123148209) 在乾淨原始碼 `f5f29a484` 上產生的首份已核驗 CPU 批次為第 `1/16` 片：476 個註冊結果、31 個方法行程，82 通過、0 失敗、394 跳過；該片唯一的必要原生項通過。產物 `11274755752` 已核驗 SHA-256，原始 XML、子行程退出狀態、清單與方法計畫均與執行前計畫核對一致。這只是 Intel 的部分證據，不代表完整 CPU 驗收通過。
 
 ## 最新本機原生驗證
 

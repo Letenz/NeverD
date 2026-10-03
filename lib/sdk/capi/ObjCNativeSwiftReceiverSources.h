@@ -171,40 +171,12 @@ struct BodyProof {
     return true;
   }
   bool sameCopyBody(BodyProof &Actual) {
-    if (Function.FrameSize != Actual.Function.FrameSize ||
-        Function.FrameHeadroom != Actual.Function.FrameHeadroom ||
-        Function.Body.size() != Actual.Function.Body.size())
-      return false;
-    for (size_t I = 0; I < Function.Body.size(); ++I) {
-      if (!Budget--)
-        return false;
-      const auto &A = Function.Body[I], &B = Actual.Function.Body[I];
-      // The initial consumer is a straight-line copy lifetime. Preserve every
-      // initializer, intervening effect and post-call use, not only the address
-      // passed to the message. Structured copy lifetimes need their own replay.
-      const auto Flat = [](const HighStmt &S) {
-        return S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
-               S.DefaultBody.empty() && S.EHClauses.empty() &&
-               S.EHClauseBodies.empty();
-      };
-      if (!Flat(A) || !Flat(B) || A.Kind != B.Kind || A.Addr != B.Addr ||
-          A.MemoryOrdering != B.MemoryOrdering ||
-          A.MemoryAddressSpace != B.MemoryAddressSpace ||
-          A.GotoTarget != B.GotoTarget ||
-          A.LoopHeaderAddr != B.LoopHeaderAddr || A.IsPhiCopy != B.IsPhiCopy)
-        return false;
-      const ExprPtr Left[] = {A.Dst,      A.Val,       A.Cond,
-                              A.RetVal,   A.StoreAddr, A.StoreVal,
-                              A.CallExpr, A.SwitchExpr};
-      const ExprPtr Right[] = {B.Dst,      B.Val,       B.Cond,
-                               B.RetVal,   B.StoreAddr, B.StoreVal,
-                               B.CallExpr, B.SwitchExpr};
-      for (size_t J = 0; J < std::size(Left); ++J)
-        if (bool(Left[J]) != bool(Right[J]) ||
-            (Left[J] && !sameArgument(Left[J], Right[J], Actual, 0, false)))
-          return false;
-    }
-    return true;
+    return sameStraightLineSourceBody(
+        Function, Actual.Function,
+        [&](const ExprPtr &E, const ExprPtr &A) {
+          return sameArgument(E, A, Actual, 0, false);
+        },
+        Budget);
   }
   std::optional<Calls> calls() {
     const auto Flow = analyzeHighSourceFlow(Function, false);

@@ -2123,6 +2123,10 @@ invalid names, TLS slot 6 consume-once errors, and named calls through guest
 traps. Unknown implementations and unsupported process-wide lookup scopes
 must stop. C/CLI and Python integration tests check the same lookup names and
 returned addresses; no host library supplies those functions.
+Identity fixtures compare Bionic imports, named dynamic calls and raw ARM64
+services, retain errno, and reject calls after the provider closes. Linux
+x64/ARM64 fixtures compare real/effective UID/GID queries with startup auxv;
+credential mutation must still stop as unsupported.
 Linux regression tests guard the shared kernel-service boundary. Native KVM
 and WHP cells may be unavailable on the host; report their skips separately.
 

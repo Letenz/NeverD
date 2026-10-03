@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
+<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -64,7 +64,7 @@ Stand 2026-10-03; die Zeilen überschneiden sich und dürfen nicht addiert werde
 
 ARM64 glich 6,842 registrierte Fälle ab; Intel hat 6,840 in denselben 20 Zielen. Zusätzlich bestanden alle 253 nativen Intel-Ausnahme-, Divisions- und Zustandsfälle. Der [Intel-Darwin-Lauf](https://github.com/NeverSight/NeverD/actions/runs/37106013999) prüfte 286 Identitäten und 32 Prozesse sowie zehn Transportfälle, 100 Wiederanläufe und CR8. Sammler und Audits bestanden 124 Prüfungen. CLI, SDKs, Worker und die Signaturen von 186 Mach-O-Dateien wurden integriert geprüft; die Paketabhängigkeiten verlangen macOS 15.0.
 
-Die [vollständige Intel-CPU-Abnahme](https://github.com/NeverSight/NeverD/actions/runs/37106679688) bleibt offen: am 2026-10-03 um 08:24 UTC fehlten nach der konfigurierten Frist Endergebnis und CPU-Artefakt. Build und Vorprüfungen ersetzen diese Abnahme nicht. Ein macOS-Kernelvergleich belegt keinen iOS-Gerätekernel.
+Die vollständige Intel-CPU-Abnahme bleibt offen. Der [frühere Lauf](https://github.com/NeverSight/NeverD/actions/runs/37106679688) endete am 2026-10-03 um 08:35 UTC; GitHub meldete den Verlust der Runner-Kommunikation, ohne CPU-Artefakt. Build und Vorprüfungen ersetzen die vollständige Abnahme nicht. Ein macOS-Kernelvergleich belegt keinen iOS-Gerätekernel.
 
 Der vergleichbare kurze ARM64-Test benötigte 73.9 ms mit Unicorn und 95.1 ms mit HVF, also etwa 29 % mehr Zeit. Ein Geschwindigkeitsgewinn ist nicht belegt. Normale Instruktionen verursachen sechs native Eintritte; Messungen unter hoher Hostlast sind keine stabilen Durchsatzbelege. [Detaillierte Nachweise](../macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03) und der [begrenzte Darwin-Vertrag](darwin-emulation.md) beschreiben den genauen Umfang.
 
@@ -75,6 +75,8 @@ Der vollständige Lauf `37106679688` endete am 2026-10-03 um 08:35 UTC; GitHub m
 Vor der CPU-Ausführung speichert `scripts/prepare_hvf_batches.py` das vollständige Inventar, die ausgewählten Inventare und Methodenpläne; der Workflow lädt diese Diagnosen separat hoch. Eine lokale Composite Action führt vier Batches aus und lädt nach jedem sofort Original-XML, Identitätszuordnungen, Prozessstatus und die Positivliste notwendiger Umgebungsvariablen hoch. Eine gemeinsame äußere Frist von 30 Minuten umfasst alle vier Batches samt Uploads. Nach einem fehlgeschlagenen Batch werden weitere Batches nicht ausgeführt. Nach Fehler oder Zeitüberschreitung folgt ein separater Diagnose-Upload mit zwei Minuten Frist, solange der Runner erreichbar bleibt. Bei Verbindungsverlust sind nur bereits hochgeladene Nachweise verfügbar. Pläne und unvollständige Diagnosepakete gelten nicht als bestandene Shards.
 
 Ein separater Linux-Job führt `scripts/audit_hvf_shards.py` aus und leitet Ziele und native Pflichtfälle erneut aus dem ausgecheckten Quellstand ab. Der Workflow lädt nur CPU-Artefakte des aktuellen Versuchs herunter; die Prüfung verlangt alle sechzehn Shards desselben unveränderten Commits, die richtige macOS-Host-ISA und gleiche normalisierte Ausführungsverträge. Die Ergebnisse müssen disjunkt sein und exakt das vollständige Inventar abdecken; alle Kindprozesse müssen erfolgreich enden und alle Pflichtfälle bestehen. Fehlende Shards, geänderte Filter, widersprüchliche Zusammenfassungen, unvollständiges XML oder übersprungene Pflichtfälle scheitern. Jeder native Job behält Transport, Wiederaufnahme, CR8 und die unabhängige Darwin-Prüfung. Eigene Runner nutzen weiterhin ungeteiltes CTest. Batches allein belegen keine Intel-Abnahme. Bei einer Wiederholung müssen alle nativen Jobs erneut laufen; Artefakte früherer Versuche werden nicht kombiniert.
+
+Der erste geprüfte CPU-Batch aus [Lauf `37123148209`](https://github.com/NeverSight/NeverD/actions/runs/37123148209), sauberer Quellstand `f5f29a484`, ist Shard `1/16`: 476 registrierte Ergebnisse in 31 Methodenprozessen, davon 82 bestanden, 0 fehlgeschlagen und 394 übersprungen; sein einziger verpflichtender nativer Fall bestand. Der SHA-256 von Artefakt `11274755752` wurde geprüft; Original-XML, Prozess-Exitstatus, Inventar und Methodenplan wurden mit dem vorab gespeicherten Plan abgeglichen. Dieser Intel-Teilnachweis schließt die vollständige CPU-Abnahme nicht ab.
 
 ## Neueste lokale native Validierung
 

@@ -11,6 +11,7 @@
 #include "neverd/loader/ObjC/ObjCContextCallEffects.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/loader/Swift/SwiftAccessEffects.h"
+#include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/support/BranchEncoding.h"
@@ -274,10 +275,22 @@ ImmutableNativeFrameCalls immutableNativeFrameCalls(
     const std::map<va_t, ImmutableNativeCallTarget> &KnownTargets,
     const std::map<va_t, SourceFunctionTypeHint> *NativeCallees) {
   ImmutableNativeFrameCalls Result;
+  const auto ConsumedInputs = buildSwiftConsumedInputCallHints(Image, Function);
   const auto Add = [&](const NativeSourceCallKey &Site, va_t Target,
                        const SourceFunctionTypeHint &Signature) {
     SourceFrameEffects Effects;
-    if (isSwiftAccessCallTarget(Image, Target)) {
+    if (isSwiftConsumedInputCallTarget(Image, Target)) {
+      const auto Binding = ConsumedInputs.find(Site.Instruction);
+      const auto Found =
+          Binding != ConsumedInputs.end() &&
+                  Binding->second.SwiftConsumedInput->Site == Site &&
+                  equalSourceABIs(Binding->second.Signature, Signature)
+              ? swiftConsumedInputCallEffects(Image, Function, Binding->second)
+              : std::nullopt;
+      if (!Found)
+        return;
+      Effects = *Found;
+    } else if (isSwiftAccessCallTarget(Image, Target)) {
       const auto Slot = darwinImportVeneerSlot(Image, Target);
       const auto Binding =
           Slot ? swiftRuntimeSourceCallHint(Image, *Slot) : std::nullopt;
@@ -310,10 +323,15 @@ ImmutableNativeFrameCalls immutableNativeFrameCalls(
     static_cast<SourceFrameEffects &>(Contract) = std::move(Effects);
     Result.Calls.emplace(Site, std::move(Contract));
   };
-  for (const auto &[Site, Word] : DirectCalls)
-    if (const auto ABI = immutableNativeDirectCallABI(Image, *Site.StaticTarget,
-                                                      NativeCallees))
+  for (const auto &[Site, Word] : DirectCalls) {
+    const auto Consumed = ConsumedInputs.find(Site.Instruction);
+    if (Consumed != ConsumedInputs.end() &&
+        Consumed->second.SwiftConsumedInput->Site == Site)
+      Add(Site, *Site.StaticTarget, Consumed->second.Signature);
+    else if (const auto ABI = immutableNativeDirectCallABI(
+                 Image, *Site.StaticTarget, NativeCallees))
       Add(Site, *Site.StaticTarget, *ABI);
+  }
   if (NativeCallees)
     for (const auto &[Address, Target] : KnownTargets) {
       const auto ABI = NativeCallees->find(Target.Target);

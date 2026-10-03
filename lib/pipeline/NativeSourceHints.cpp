@@ -21,6 +21,7 @@
 #include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
 #include "neverd/loader/ObjC/ObjCContextCallEffects.h"
 #include "neverd/loader/Swift/SwiftAccessEffects.h"
+#include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
@@ -34,6 +35,62 @@
 #include <tuple>
 
 namespace neverd {
+
+bool validateSwiftConsumedInputBindings(const BinaryImage &Image,
+                                        const LowFunc *Low,
+                                        const MedFunc &Med) {
+  bool Marked = false, Relevant = false;
+  size_t Budget = 262144;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return false;
+      Marked |= Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput;
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          Op.NumInputs && Op.Inputs[0].isConst())
+        Relevant |=
+            isSwiftConsumedInputCallTarget(Image, Op.Inputs[0].ConstVal);
+    }
+  if (!Marked && !Relevant)
+    return true;
+  if (!Low || Low->Entry != Med.Entry)
+    return false;
+  const auto Current = buildSwiftConsumedInputCallHints(Image, *Low);
+  std::set<va_t> Seen;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return false;
+      const auto Found = Current.find(Op.Addr);
+      const bool Receipt =
+          Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput;
+      if (!Receipt &&
+          (Found == Current.end() ||
+           (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)))
+        continue;
+      if (!Receipt || Found == Current.end())
+        return false;
+      const auto &Binding = *Op.SourceCallHint;
+      const auto &Expected = Found->second;
+      const auto &Site = Expected.SwiftConsumedInput->Site;
+      if (Binding.SwiftConsumedInput != Expected.SwiftConsumedInput ||
+          Binding.CallKind != Expected.CallKind ||
+          Binding.TargetName != Expected.TargetName ||
+          Binding.TargetAddress != Expected.TargetAddress ||
+          Binding.WeakImport || Binding.DoesNotReturn ||
+          !equalSourceABIs(Binding.Signature, Expected.Signature) ||
+          Op.Opcode != Site.Opcode || Op.OriginSeq != Site.Sequence ||
+          Op.NumInputs != 5 || !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].ConstVal != Site.StaticTarget ||
+          Op.Inputs[0].Size != 8 || Op.DoesNotReturn ||
+          Op.PreservesCallerSaved || !Seen.insert(Op.Addr).second)
+        return false;
+      for (unsigned I = 1; I < Op.NumInputs; ++I)
+        if (Op.Inputs[I].Size != 8)
+          return false;
+    }
+  return Seen.size() == Current.size();
+}
 
 bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
                                          const LowFunc *Low,
@@ -533,7 +590,8 @@ bool hasNativeSourceStateContract(
       Low->Blocks.size() > 16384)
     return false;
   NativeSourceCalls Calls;
-  if (!validateSwiftWitnessFrameBindings(Image, Low, Med) ||
+  if (!validateSwiftConsumedInputBindings(Image, Low, Med) ||
+      !validateSwiftWitnessFrameBindings(Image, Low, Med) ||
       !validateNativeSwiftReceiverBindings(Image, Low, Med))
     return false;
   if (!validateSourceRegisterCopies(Image, *Low, Med.RegisterCopyProjections) ||
@@ -724,6 +782,14 @@ bool hasNativeSourceStateContract(
                                            Op.Inputs[0].ConstVal};
         const auto Effects = swiftAccessCallEffects(Image, *Low, Site, Binding);
         if (!Effects || Op.DoesNotReturn || Op.PreservesCallerSaved)
+          return false;
+        static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
+      if (Binding.SwiftConsumedInput) {
+        const auto Effects =
+            swiftConsumedInputCallEffects(Image, *Low, Binding);
+        if (!StaticRuntime || !Effects || Op.DoesNotReturn ||
+            Op.PreservesCallerSaved)
           return false;
         static_cast<SourceFrameEffects &>(Contract) = *Effects;
       }
@@ -1397,7 +1463,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
        (!Low || !validateSourceRegisterCopies(Image, *Low,
                                               Med.RegisterCopyProjections))))
     return Reject("source register-copy proof is no longer valid");
-  if (!validateSwiftWitnessFrameBindings(Image, Low, Med))
+  if (!validateSwiftConsumedInputBindings(Image, Low, Med) ||
+      !validateSwiftWitnessFrameBindings(Image, Low, Med))
     return Reject("Swift witness frame proof is no longer valid");
   if (!validateNativeSwiftReceiverBindings(Image, Low, Med))
     return Reject("native Swift receiver proof is no longer valid");
@@ -1571,10 +1638,12 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
           RequiresFrameEffectProof |=
               isSwiftValueBufferProjection(Image, Op.Inputs[0].ConstVal) ||
               isObjCContextProjection(Image, Op.Inputs[0].ConstVal) ||
-              isSwiftAccessCallTarget(Image, Op.Inputs[0].ConstVal);
+              isSwiftAccessCallTarget(Image, Op.Inputs[0].ConstVal) ||
+              isSwiftConsumedInputCallTarget(Image, Op.Inputs[0].ConstVal);
         RequiresFrameEffectProof |=
             Op.SourceCallHint &&
-            (Op.SourceCallHint->TargetName == "swift_beginAccess" ||
+            (Op.SourceCallHint->SwiftConsumedInput ||
+             Op.SourceCallHint->TargetName == "swift_beginAccess" ||
              Op.SourceCallHint->TargetName == "swift_endAccess");
         RequiresImmutableCallProof |=
             Op.SourceCallHint &&

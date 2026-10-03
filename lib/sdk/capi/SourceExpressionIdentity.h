@@ -64,5 +64,45 @@ inline bool sameSourceExpressionIdentity(const HighExpr &A, const HighExpr &B,
                                       Budget, Depth + 1);
 }
 
+// Exact, bounded replay of a straight-line private-copy lifetime. The caller
+// authenticates expression annotations; every initializer, memory effect and
+// subsequent use remains in the comparison. Structured bodies need their own
+// proof rather than being silently flattened.
+template <class EqualExpression>
+inline bool sameStraightLineSourceBody(const HighFunc &Expected,
+                                       const HighFunc &Actual,
+                                       EqualExpression Equal, size_t &Budget) {
+  if (Expected.FrameSize != Actual.FrameSize ||
+      Expected.FrameHeadroom != Actual.FrameHeadroom ||
+      Expected.Body.size() != Actual.Body.size())
+    return false;
+  const auto Flat = [](const HighStmt &S) {
+    return S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
+           S.DefaultBody.empty() && S.EHClauses.empty() &&
+           S.EHClauseBodies.empty();
+  };
+  for (size_t I = 0; I < Expected.Body.size(); ++I) {
+    if (!Budget)
+      return false;
+    --Budget;
+    const auto &A = Expected.Body[I], &B = Actual.Body[I];
+    if (!Flat(A) || !Flat(B) || A.Kind != B.Kind || A.Addr != B.Addr ||
+        A.MemoryOrdering != B.MemoryOrdering ||
+        A.MemoryAddressSpace != B.MemoryAddressSpace ||
+        A.GotoTarget != B.GotoTarget || A.LoopHeaderAddr != B.LoopHeaderAddr ||
+        A.IsPhiCopy != B.IsPhiCopy)
+      return false;
+    const ExprPtr Left[] = {A.Dst,       A.Val,      A.Cond,     A.RetVal,
+                            A.StoreAddr, A.StoreVal, A.CallExpr, A.SwitchExpr};
+    const ExprPtr Right[] = {B.Dst,       B.Val,      B.Cond,     B.RetVal,
+                             B.StoreAddr, B.StoreVal, B.CallExpr, B.SwitchExpr};
+    for (size_t J = 0; J < std::size(Left); ++J)
+      if (bool(Left[J]) != bool(Right[J]) ||
+          (Left[J] && !Equal(Left[J], Right[J])))
+        return false;
+  }
+  return true;
+}
+
 } // namespace neverd::sdk
 #endif

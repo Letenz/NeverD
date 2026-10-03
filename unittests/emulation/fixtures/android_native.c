@@ -13,6 +13,13 @@ extern void free(void *);
 extern int *__errno(void);
 extern int __system_property_get(const char *, char *);
 extern int android_get_device_api_level(void);
+extern int getpid(void);
+extern int gettid(void);
+extern unsigned int getuid(void);
+extern unsigned int geteuid(void);
+extern unsigned int getgid(void);
+extern unsigned int getegid(void);
+extern int setuid(unsigned int);
 extern long write(int, const void *, u64);
 extern u64 unknown_native_function(u64);
 static volatile u64 seed = 5;
@@ -61,6 +68,25 @@ u64 raw_error(void) {
   __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory");
   return x0 == (u64)-9 && *__errno() == 77 ? 0 : 1;
 }
+u64 identity_queries(unsigned int *out) {
+  *__errno() = 77;
+  out[0] = getpid();
+  out[1] = gettid();
+  out[2] = getuid();
+  out[3] = geteuid();
+  out[4] = getgid();
+  out[5] = getegid();
+  const u64 numbers[] = {172, 178, 174, 175, 176, 177};
+  for (unsigned int i = 0; i < 6; ++i) {
+    register u64 x0 __asm__("x0") = ~(u64)0;
+    register u64 x8 __asm__("x8") = numbers[i];
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8) : "memory");
+    if (x0 != out[i])
+      return 1;
+  }
+  return *__errno() == 77 ? 0 : 2;
+}
+u64 identity_mutation(void) { return setuid(0); }
 u64 print_bytes(void) {
   const char text[] = {'A', 0, (char)255, '\n'};
   return write(1, text, sizeof(text));
@@ -103,6 +129,29 @@ extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
 extern char *dlerror(void);
 typedef u64 (*length_fn)(const char *);
+typedef unsigned int (*identity_fn)(void);
+
+u64 dynamic_identities(unsigned int *out, u64 after_close) {
+  *__errno() = 77;
+  void *handle = dlopen("libidentity.so", 2);
+  if (!handle)
+    return 100;
+  const char *names[] = {"getuid", "geteuid", "getgid", "getegid"};
+  identity_fn saved = 0;
+  for (unsigned int i = 0; i < 4; ++i) {
+    identity_fn query = (identity_fn)dlsym(handle, names[i]);
+    if (!query)
+      return 101 + i;
+    out[i] = query();
+    if (!i)
+      saved = query;
+  }
+  if (dlclose(handle))
+    return 105;
+  if (after_close)
+    return saved();
+  return *__errno() == 77 ? 0 : 106;
+}
 
 u64 dynamic_lookup(void) {
   void *h = dlopen("libfixture.so", 2);

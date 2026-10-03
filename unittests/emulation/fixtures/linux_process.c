@@ -70,6 +70,20 @@ void process_main(U64 *Stack) {
     *(volatile char *)Message = 0;
   if (Args[1][0] == Unknown)
     linux_service(UnknownService, 0, 0, 0);
+  if (Args[1][0] == SetIdentity)
+    linux_service(ServiceSetUID, 0, 0, 0);
+  if (Args[1][0] == IdentityQueries) {
+    const U64 Services[] = {ServiceGetUID, ServiceGetEUID, ServiceGetGID,
+                            ServiceGetEGID};
+    const U64 Tags[] = {UIDTag, EUIDTag, GIDTag, EGIDTag};
+    for (U64 I = 0; I < 4; ++I) {
+      // Unused argument registers must not become the zero-argument result.
+      U64 Value = linux_service(Services[I], ~(U64)0, BadAddress, InitialData);
+      if (Value != Identity || Value != auxv(Aux, Tags[I]))
+        finish(FailureStatus);
+    }
+    finish(ExitStatus);
+  }
   if (Args[1][0] == Partial) {
     for (U64 I = 0; I < sizeof(Tail) - 1; ++I)
       LastPage[PageSize - (sizeof(Tail) - 1) + I] = Tail[I];

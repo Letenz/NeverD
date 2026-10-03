@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 7b7a26730482946b80bce613ecd7e26d679194bac6127d8c568a9a10a2f2712f -->
+<!-- i18n-source: 5fae66eaf03299a6fb8668594dfe0186ab007263e179d3ae289a6f64efe5d5ec -->
 
 [← 文档索引](README.md)
 
@@ -87,10 +87,10 @@ SHA-256 为 `cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`�
 宿主为四个逻辑 CPU 的 macOS x86-64、Darwin 24.6.0。
 这些结果证明有限 macOS 和 iOS Simulator 契约通过，不代表 iOS device 内核实测。
 
-完整 Intel CPU 清单仍未验收。[最新任务](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
+完整 Intel CPU 清单仍未验收。[先前任务](https://github.com/NeverSight/NeverD/actions/runs/37106679688)
 在 `76a922088ceccb1e5fdaccbde7f0b3a680a4e3b8` 上完成了 20 个目标构建、10 项 transport、
-100 次恢复和 CR8 检查，前置产物已下载并核对 SHA-256。截至 2026-10-03 08:24 UTC，
-CPU 步骤超过设定的 30 分钟仍未返回终态或 CPU 产物，作业日志接口返回 404；仓库没有
+100 次恢复和 CR8 检查，前置产物已下载并核对 SHA-256。该任务于 2026-10-03 08:35 UTC
+结束，GitHub 记录运行器失联；没有 CPU 产物，作业日志接口返回 404。仓库当时没有
 self-hosted runner。需要完整运行结果或可接入的原生 Intel Mac 才能关闭这项验收缺口。
 早前停滞或取消且缺少完整证据的任务不计为通过，也不能据此推断来宾故障。
 一轮[早前任务](https://github.com/NeverSight/NeverD/actions/runs/37097301977)
@@ -179,6 +179,8 @@ Linux 进程在正常退出、内存故障、未知服务和预算停止时的�
 CPU 执行前，`scripts/prepare_hvf_batches.py` 保存完整清单、各片所选清单和方法计划，由工作流独立上传这些诊断。一个本地 composite action 连续执行四批，每批结束立即上传原始 XML、身份映射、进程状态和必要环境变量白名单。外层统一的 30 分钟期限覆盖四批执行与上传；某批失败后不再执行后续批次。失败或超时后，只要运行器仍可通信，另有独立的两分钟诊断上传；宿主失联时只能依靠此前已上传的证据。计划及未完成的诊断包不能算作通过的分片。
 
 独立 Linux 作业运行 `scripts/audit_hvf_shards.py`，从检出的源码重新推导目标和必需原生项。工作流仅下载本次尝试的 CPU 产物；审计要求同一干净提交的全部十六片、正确 macOS 宿主 ISA、规范化执行契约一致，且分片互斥、并集恰好等于完整清单。所有子进程必须成功退出，全部必需原生项必须通过；漏片、过滤器变更、摘要不符、XML 不完整或必需原生项跳过均失败。每个原生作业仍执行 transport、恢复、CR8 和独立 Darwin 门禁；自托管保持未分片 CTest。分批保存本身不代表 Intel 已验收。重试须重新运行全部原生作业，不混用之前尝试的产物。
+
+[运行 `37123148209`](https://github.com/NeverSight/NeverD/actions/runs/37123148209) 在干净源码 `f5f29a484` 上产生的首份已核验 CPU 批次为第 `1/16` 片：476 个注册结果、31 个方法进程，82 通过、0 失败、394 跳过；该片唯一的必需原生项通过。产物 `11274755752` 已核验 SHA-256，原始 XML、子进程退出状态、清单和方法计划均与执行前计划核对一致。这只是 Intel 的部分证据，不代表完整 CPU 验收通过。
 
 ## 最新本机原生验证
 

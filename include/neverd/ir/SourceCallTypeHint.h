@@ -321,6 +321,17 @@ struct SourceCallTypeHint {
   /// and image bytes, including its full reaching byte and call-effect states.
   std::optional<SwiftWitnessFrameOccurrence> SwiftWitnessFrame;
 
+  struct SwiftConsumedInputEvidence {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+    va_t MetadataSlot = 0;
+    va_t WitnessSlot = 0;
+    bool operator==(const SwiftConsumedInputEvidence &) const = default;
+  };
+  /// Type-specific input lifetime only; current frame and publication proofs
+  /// must revalidate this original call, all operands and their unique use.
+  std::optional<SwiftConsumedInputEvidence> SwiftConsumedInput;
+
   struct SwiftVirtualEvidence {
     va_t MethodEntry = 0;
     va_t CallSite = 0;
@@ -540,7 +551,8 @@ struct SourceCallTypeHint {
   /// each owner's current proof; this predicate grants no source permission.
   bool requiresUniqueSourceOccurrence() const {
     return BooleanResult || FunctionParameterCall || ImmutableNativeCall ||
-           SwiftWitnessFrame || Virtual || NativeSwiftReceiver || ByValueCopy;
+           SwiftWitnessFrame || SwiftConsumedInput || Virtual ||
+           NativeSwiftReceiver || ByValueCopy;
   }
 };
 
