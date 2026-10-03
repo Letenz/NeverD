@@ -31,8 +31,8 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 | [CPU 実行](cpu-execution.md) | 構成、機能照会、バックエンド可用性、型付き結果 |
 | [Bitvector 証明バックエンド](solver.md) | オプションの Z3 証明、証明付き合成、独立検査、query export |
 | [ゲストプロセスのエミュレーション](process-emulation.md) | Linux ELF プロファイル、起動、サービス、制限、テスト |
-| [macOS/iOS プロセス環境](../darwin-emulation.md) | Mach-O 起動、デバイスとシミュレータの区別、Darwin サービスとページ規則 |
-| [macOS HVF](../macos-hvf.md) | ホストと同じ ISA のハードウェア実行、署名権限、パッケージと検証 |
+| [macOS/iOS プロセス環境](darwin-emulation.md) | Mach-O 起動、デバイスとシミュレータの区別、Darwin サービスとページ規則 |
+| [macOS HVF](macos-hvf.md) | ホストと同じ ISA のハードウェア実行、署名権限、パッケージと検証 |
 | [Windows ドライバーエミュレーション](driver-emulation.md) | 有界 x64 WDM/KMDF ライフサイクル、要求、ハードウェアシナリオ、SEH、PnP サブセット、バックエンド選択と制限 |
 | [メモリ安全性の監査とハント](memory-safety.md) | ヒープ寿命とコピー越境解析：形式ごとの識別契約、シンク／ソースカタログ、判定、予算、JSON スキーマ |
 | [ネイティブプラグイン](plugins.md) | 純粋 C descriptor ABI、callback と event、build/link workflow、discovery、互換性規則 |

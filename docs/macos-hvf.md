@@ -1,3 +1,7 @@
+**Languages**: [English](macos-hvf.md) | [简体中文](zh-CN/macos-hvf.md) | [繁體中文](zh-TW/macos-hvf.md) | [日本語](ja/macos-hvf.md) | [한국어](ko/macos-hvf.md) | [Français](fr/macos-hvf.md) | [Deutsch](de/macos-hvf.md) | [Español](es/macos-hvf.md) | [Italiano](it/macos-hvf.md) | [Русский](ru/macos-hvf.md) | [العربية](ar/macos-hvf.md)
+
+[← Documentation index](README.md)
+
 # macOS native CPU execution (HVF)
 
 NeverD uses Apple's [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor)

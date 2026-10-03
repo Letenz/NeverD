@@ -61,6 +61,7 @@ ARCHITECTURE_CAPABILITY_TOKENS = {
     ),
 }
 GUIDE_STEMS = ("evm", "sbf", "android", "ios")
+MACOS_GUIDE_STEMS = ("macos-hvf", "darwin-emulation")
 SBF_GUIDE_DOCS = (
     Path("docs/sbf.md"),
     *(Path(f"docs/{locale}/sbf.md") for locale in LOCALES),
@@ -726,6 +727,7 @@ ENGLISH_DOCS = (
     Path("docs/driver-emulation.md"),
     Path("docs/interpreter-recovery.md"),
     Path("docs/mobile.md"),
+    *(Path(f"docs/{stem}.md") for stem in MACOS_GUIDE_STEMS),
 )
 
 
@@ -752,6 +754,7 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
         Path(f"docs/{locale}/process-emulation.md"),
         Path(f"docs/{locale}/solver.md"),
         Path(f"docs/{locale}/mobile.md"),
+        *(Path(f"docs/{locale}/{stem}.md") for stem in MACOS_GUIDE_STEMS),
     )
 
 
@@ -2914,7 +2917,37 @@ def validate_synced_guide_examples(errors: list[str], view: RepositoryView) -> N
                            + ", ".join(sorted(missing)))
 
 
+def validate_macos_guides(errors: list[str], view: RepositoryView) -> None:
+    """Keep every Mac guide discoverable, reviewed and executable in each locale."""
+    for stem in MACOS_GUIDE_STEMS:
+        source = Path(f"docs/{stem}.md")
+        original = view.read_text(source)
+        revision = hashlib.sha256(original.encode("utf-8")).hexdigest()
+        validate_language_selector(source, stem, None, errors, view)
+        for locale in LOCALES:
+            path = Path(f"docs/{locale}/{stem}.md")
+            text = view.read_text(path)
+            validate_language_selector(path, stem, locale, errors, view)
+            if README_SOURCE_REVISION.findall(text) != [revision]:
+                report(errors, f"{path}: Mac guide source revision differs from {source}; "
+                       "review the translation before updating its i18n-source SHA-256")
+            if readme_example_signature(original) != readme_example_signature(text):
+                report(errors, f"{path}: Mac guide executable examples differ from {source}")
+            index = Path(f"docs/{locale}/README.md")
+            if f"{stem}.md" not in LINK_RE.findall(view.read_text(index)):
+                report(errors, f"{index}: missing local Mac guide link: {stem}.md")
+
+
 def validate_matrix(errors: list[str], view: RepositoryView) -> None:
+    for path in MARKDOWN_DOCS:
+        if not view.exists(path):
+            report(
+                errors,
+                f"missing localized documentation file: {display_path(path)}",
+            )
+    if errors:
+        return
+
     # Execution contracts and document paths stay in the .def inventory, so
     # every locale is checked against one set of semantic entry points.
     inventory = view.read_text(Path("scripts/EmulationDocumentation.def"))
@@ -2930,17 +2963,12 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
         for path in dict.fromkeys(paths):
             require_tokens(Path(path), tuple(doc_tokens[group]), errors, view)
 
-    for path in MARKDOWN_DOCS:
-        if not view.exists(path):
-            report(
-                errors,
-                f"missing localized documentation file: {display_path(path)}",
-            )
     if errors:
         return
 
     validate_readme_parity(errors, view)
     validate_synced_guide_examples(errors, view)
+    validate_macos_guides(errors, view)
     validate_driver_documents(errors, view)
     validate_architecture_semantics(errors, view)
     validate_sbf_evidence(errors, view)
@@ -3052,6 +3080,8 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
             process_guide,
             solver_guide,
             _mobile_overview,
+            _hvf_guide,
+            _darwin_guide,
         ) = localized_paths(locale)
         require_tokens(
             _interpreter_guide,

@@ -1,0 +1,67 @@
+**Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
+
+<!-- i18n-source: 26699fc7c6123371ff1bdf772f3c7091876e02768c97f805a3b9d0d19ca3a5db -->
+
+[← Indice della documentazione](README.md)
+
+# Esecuzione CPU nativa su macOS (HVF)
+
+NeverD usa [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor) come equivalente macOS di KVM e WHP. `--backend hvf` lo seleziona esplicitamente; `auto` lo usa per un contratto nativo compatibile e ISA host/guest coincidenti: ARM64 su Apple Silicon, x86-64 su Intel. `software-cpu-v1` e l’esecuzione automatica tra ISA diverse usano Unicorn. Un eseguibile tradotto da Rosetta viene rifiutato.
+
+Servono macOS 11 o successivo e virtualizzazione hardware; le altre dipendenze possono richiedere versioni più recenti. Il backend nativo selezionato segnala l’indisponibilità senza ripiego silenzioso. [Virtualization.framework](https://developer.apple.com/documentation/virtualization) gestisce VM complete; NeverD richiede il controllo di vCPU, registri, mappature ed eccezioni offerto da Hypervisor.framework.
+
+## Compilazione e firma
+
+Attivare `NEVERD_ENABLE_CPU_EMULATION=ON` oppure l’emulazione dei driver. `NEVERD_EMULATION_BACKEND_HVF` è `ON` per impostazione predefinita e collega il framework solo su macOS. Con `OFF`, il nome `hvf` resta riconosciuto, ma l’API delle capacità restituisce `build_disabled`.
+
+L’**eseguibile del processo** deve avere [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor). Firmare soltanto `libneverd.dylib` non basta. CMake firma CLI, worker e test usando `resources/macos/neverd-hypervisor.entitlements`. `NEVERD_HVF_SIGN_IDENTITY` usa `-` per la firma ad hoc, oppure un’identità già disponibile. Il packaging riapplica e verifica il diritto dopo la correzione delle dipendenze Mach-O.
+
+L’applicazione che incorpora la libreria firma il proprio eseguibile; NeverD non rifirma l’interprete Python installato. `cpu-capabilities --configuration=JSON --probe-host` controlla il processo effettivo. Il worker autonomo viene firmato per impostazione predefinita; usare `NEVERD_WORKER_SIGN_HVF=OFF` solo quando non necessita di HVF.
+
+## Responsabilità ed esecuzione
+
+`backends/hvf/HvfExecutor` possiede una VM per processo e una vCPU, create, usate e distrutte su un thread dedicato. Le CPU logiche condividono l’esecutore e serializzano gli ingressi. Il cambio CPU rimuove prima le due regioni fisiche del proprietario precedente. Distruggere una CPU inattiva non modifica le mappature altrui. I collegamenti vengono rimossi prima di liberare RAM; una registrazione parziale fallita viene annullata. Se la rimozione fallisce, la VM viene terminata prima del rilascio della memoria; un errore irrecuperabile di distruzione arresta il processo.
+
+Le mappature host usano la dimensione di pagina host, inclusi 16 KiB su Apple Silicon. Tabelle architetturali e budget CPU guest restano a 4 KiB. Ammissione delle istruzioni, permessi, stato, transazioni di memoria e servizi OS rimangono nelle rispettive componenti. Il worker nativo non chiama osservatori guest né acquisisce i blocchi centrali della memoria del chiamante.
+
+ARM64 esegue singolarmente cinque istruzioni immutabili di manutenzione TLB/I-cache, poi l’istruzione ammessa. `PSTATE.D` non maschera le eccezioni di debug indirizzate a EL2. Lo stato scalare, TLS e FP/SIMD viene acquisito integralmente. Intel negozia i controlli VMCS, usa monitor trap, invalida i TLB e trasferisce pacchetti XSAVE completi. RIP/RFLAGS passano direttamente per VMCS anche dopo la ricreazione della vCPU. CR0/CR4 rispettano maschere del framework e bit hardware obbligatori. Le uscite autenticate di lettura CR8 vengono completate nello strato ISA; altri accessi ai registri di controllo falliscono. Ogni vCPU inizializza un `IA32_KERNEL_GS_BASE` privato e gestito; gli accessi MSR guest restano intercettati, mentre MSR/SWAPGS non supportati sono rifiutati.
+
+La coda conserva token di arresto e scadenza originali. Preparazione, manutenzione, ingresso e acquisizione condividono il budget. `RunDeadline` attende la conferma degli interrupt prima di restituire il controllo. L’annullamento ricrea la vCPU per isolare interrupt tardivi; quelli host Intel non pertinenti riprovano nella stessa generazione. Errori di acquisizione ed eccezioni autenticate prevalgono sull’arresto simultaneo; il normale stato annullato non viene pubblicato. L’annullamento è cooperativo, senza garanzie di tempo reale rigido.
+
+## Verifica
+
+Usare Release con CMake, Ninja, Python 3, Clang, `ld.lld`, `lld-link`, `ld64.lld` e `codesign`. I linker LLVM generano fixture ELF, PE e Mach-O; una fixture nativa obbligatoria assente causa un errore.
+
+```sh
+cmake -S . -B build-hvf -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DNEVERD_BUILD_SHARED=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+  -DNEVERD_ENABLE_CPU_EMULATION=ON \
+  -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+  -DNEVERD_EMULATION_BACKEND_UNICORN=OFF
+python3 scripts/run_native_cpu_ci.py --build build-hvf \
+  --evidence build-hvf/native-evidence --require-hvf
+```
+
+Apple Silicon può aggiungere `-DNEVERD_LLVM_PREBUILT=ON`; Intel compila la revisione LLVM fissata. Il [workflow HVF](../../.github/workflows/hvf.yml) supporta runner `self-hosted, macOS, ARM64/X64, hvf` e `hosted-intel` su `macos-15-intel`. Verifica prima creazione e distruzione reali di VM/vCPU. `validation=probe` non prova l’esecuzione di istruzioni; `transport` controlla soltanto il trasporto; `darwin` richiede tutti i carichi Darwin compatibili; `full` richiede entrambe le verifiche complete CPU e Darwin.
+
+Il trasporto richiede 12 casi ARM64 o 10 Intel; la verifica CPU completa richiede rispettivamente 16 o 14 controlli obbligatori. Copertura: stato completo, privilegi, permessi, attraversamento di pagine, alias, cambio CPU, rollback, annullamento e ripresa. Intel controlla CR8 prima della compilazione estesa. Gli artefatti conservano inventario, revisione, host, risultati e tentativi distinti. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) considera sperimentale la virtualizzazione annidata; resta utile un Mac nativo dedicato.
+
+Su Intel ospitato, `--execution-methods` esegue in serie ogni metodo GoogleTest con tutti i parametri CTest, flag, ambiente e directory originali. Le proprietà sconosciute sono rifiutate. La scadenza complessiva per metodo è al massimo 120 secondi, senza limite separato per parametro; segue la terminazione del gruppo di processi con attesa limitata. Si conservano XML originale, associazioni dei nomi e stato d’uscita. Timeout o XML incompleto producono un fallimento parziale; casi nativi obbligatori mancanti o saltati impediscono il successo. I runner dedicati mantengono processi e scadenze CTest per singolo caso.
+
+## Risultati e limiti
+
+Stato al 2026-10-03; le righe si sovrappongono e non vanno sommate:
+
+| Ambito | Sorgente | Superati | Falliti | Saltati | Obbligatori nativi |
+| --- | --- | ---: | ---: | ---: | ---: |
+| CPU ARM64, 20 target | `defc93928` | 849 | 0 | 5,993 | 16/16 |
+| Darwin ARM64 | `defc93928` | 65 | 0 | 221 | 39/39 |
+| Darwin Intel | `8dcc74c59` | 52 | 0 | 234 | 26/26 |
+| Target FP Intel completo | `3e01cda5c` | 35 | 0 | 36 | 12 casi HVF |
+
+ARM64 ha riconciliato 6,842 registrazioni; Intel ne ha 6,840 negli stessi 20 target. Sono passati anche tutti i 253 casi nativi Intel di eccezioni, divisione e transizione di stato. Il [run Darwin Intel](https://github.com/NeverSight/NeverD/actions/runs/37106013999) verifica 286 identità e 32 processi, oltre a dieci casi di trasporto, 100 riprese e CR8. Collettore e audit hanno superato 124 controlli. L’integrazione copre CLI, SDK, worker e firma di 186 immagini Mach-O; le dipendenze del pacchetto richiedono macOS 15.0.
+
+La [verifica CPU Intel completa](https://github.com/NeverSight/NeverD/actions/runs/37106679688) resta aperta: alle 08:24 UTC del 2026-10-03 non erano disponibili risultato finale o artefatto CPU dopo la scadenza configurata. Compilazione e verifiche preliminari non sostituiscono quel risultato. Il confronto col kernel macOS non dimostra il comportamento del kernel su un dispositivo iOS.
+
+Il piccolo benchmark ARM64 equivalente ha misurato 73.9 ms con Unicorn e 95.1 ms con HVF, circa il 29 % di tempo in più. Nessuna accelerazione è dimostrata. Un’istruzione ordinaria richiede sei ingressi nativi; misure con host molto carico non provano prestazioni stabili. Consultare le [prove dettagliate](../macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03) e il [contratto Darwin limitato](darwin-emulation.md).
