@@ -50,6 +50,30 @@ class NaturalLoopEvidence {
     return true;
   }
 
+  /// The blocks that reach \p Latch without passing \p Header, plus the
+  /// header; nullopt when that reaches the entry, so the header does not
+  /// dominate the latch.
+  std::optional<std::set<int>> closure(int Header, int Latch) {
+    std::set<int> Members{Header};
+    std::vector<int> Pending{Latch};
+    while (!Pending.empty()) {
+      const int Block = Pending.back();
+      Pending.pop_back();
+      if (!consume())
+        return std::nullopt;
+      if (!Members.insert(Block).second)
+        continue;
+      if (Block == Entry || !Reachable[Block] || Predecessors[Block].empty())
+        return std::nullopt;
+      for (int Predecessor : Predecessors[Block]) {
+        if (!consume())
+          return std::nullopt;
+        Pending.push_back(Predecessor);
+      }
+    }
+    return Members;
+  }
+
 public:
   explicit NaturalLoopEvidence(const MedFunc &Function) : Function(Function) {
     const size_t Count = Function.Blocks.size();
@@ -112,6 +136,9 @@ public:
     }
   }
 
+  /// The blocks of the loop that the back edge from \p Branch to \p Target
+  /// closes, together with those of every other back edge to the same
+  /// header: the natural loop of that header.
   std::optional<std::set<int>> body(va_t Branch, va_t Target) {
     if (!Valid)
       return std::nullopt;
@@ -123,23 +150,15 @@ public:
     if (std::find(Successors.begin(), Successors.end(), Header->second) ==
         Successors.end())
       return std::nullopt;
-    std::set<int> Members{Header->second};
-    std::vector<int> Pending{Latch->second};
-    while (!Pending.empty()) {
-      const int Block = Pending.back();
-      Pending.pop_back();
-      if (!consume())
-        return std::nullopt;
-      if (!Members.insert(Block).second)
-        continue;
-      if (Block == Entry || !Reachable[Block] || Predecessors[Block].empty())
-        return std::nullopt;
-      for (int Predecessor : Predecessors[Block]) {
-        if (!consume())
-          return std::nullopt;
-        Pending.push_back(Predecessor);
-      }
-    }
+    std::optional<std::set<int>> Members =
+        closure(Header->second, Latch->second);
+    if (!Members)
+      return std::nullopt;
+    // A predecessor the header does not dominate enters the loop instead.
+    for (int Other : Predecessors[Header->second])
+      if (Other != Latch->second && Reachable[Other] && !Members->count(Other))
+        if (std::optional<std::set<int>> More = closure(Header->second, Other))
+          Members->insert(More->begin(), More->end());
     return Members;
   }
 
@@ -226,6 +245,17 @@ void detectAndConvertLoops(HighFunc &Func,
       if (!OwnsRegion)
         continue;
 
+      // A jump to an unconditional latch runs on to the next iteration, as
+      // falling off the end of the body does; the latch's address stays as
+      // an anchor there.
+      const va_t LatchAddr = LatchCond ? 0 : Func.Body[I].Addr;
+      bool LatchEntered = false;
+      if (LatchAddr != 0 && LatchAddr != InvalidVA &&
+          HeaderIdx != static_cast<size_t>(I))
+        walkStmts(Func.Body, [&](const HighStmt &S) {
+          LatchEntered |= S.Kind == StmtKind::Goto && S.GotoTarget == LatchAddr;
+        });
+
       std::vector<HighStmt> LoopBody;
       LoopBody.reserve(static_cast<size_t>(I) - HeaderIdx);
       for (size_t K = HeaderIdx; K < static_cast<size_t>(I); ++K) {
@@ -305,6 +335,8 @@ void detectAndConvertLoops(HighFunc &Func,
         return false;
       };
 
+      auto ToLatch = [&](va_t GT) { return LatchEntered && GT == LatchAddr; };
+
       std::function<void(std::vector<HighStmt> &, va_t)> ConvertLoopGotos;
       ConvertLoopGotos = [&](std::vector<HighStmt> &Stmts, va_t Hdr) {
         for (auto &S : Stmts) {
@@ -312,7 +344,7 @@ void detectAndConvertLoops(HighFunc &Func,
               S.GotoTarget != InvalidVA) {
             if (IsExit(S.GotoTarget))
               S.Kind = StmtKind::Break;
-            else if (S.GotoTarget == Hdr)
+            else if (S.GotoTarget == Hdr || ToLatch(S.GotoTarget))
               S.Kind = StmtKind::Continue;
           }
           if (S.Kind == StmtKind::If && S.Body.size() == 1 &&
@@ -320,7 +352,7 @@ void detectAndConvertLoops(HighFunc &Func,
             va_t GotoDest = S.Body[0].GotoTarget;
             if (IsExit(GotoDest))
               S.Body[0].Kind = StmtKind::Break;
-            else if (GotoDest == Hdr)
+            else if (GotoDest == Hdr || ToLatch(GotoDest))
               S.Body[0].Kind = StmtKind::Continue;
           }
           if (S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
@@ -331,6 +363,12 @@ void detectAndConvertLoops(HighFunc &Func,
         }
       };
       ConvertLoopGotos(WhileStmt.Body, Target);
+      if (LatchEntered) {
+        HighStmt Anchor;
+        Anchor.Kind = StmtKind::Block;
+        Anchor.Addr = LatchAddr;
+        WhileStmt.Body.push_back(std::move(Anchor));
+      }
 
       Func.Body[HeaderIdx] = std::move(WhileStmt);
       for (size_t K = HeaderIdx + 1; K <= static_cast<size_t>(I); ++K) {

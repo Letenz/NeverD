@@ -6790,6 +6790,53 @@ TEST(HighControlFlowSemantics, HoistedTailKeepsTheLabelItsJumpCarried) {
   EXPECT_EQ(execute(F, 2), std::optional<uint64_t>(10));
 }
 
+TEST(HighControlFlowSemantics, LoopTakesEveryBackedgeToItsHeader) {
+  // 0x1100 is entered from 0x1000 and closed by two latches: the conditional
+  // one at 0x1200 and the jump at 0x1300, which 0x1104 branches to.  Both
+  // belong to one loop, so neither stays a jump to its header.
+  HighFunc F;
+  F.Entry = 0x1000;
+  auto Split = conditional(0x1104, 0x1300);
+  Split.Body.front().Addr = 0;
+  auto Latch = conditional(0x1200, 0x1100);
+  Latch.Body.front().Addr = 0;
+  F.Body = {assign(0x1000, 1, 0),
+            assign(0x1100, 1, 7),
+            Split,
+            Latch,
+            jump(0x1204, 0x1400),
+            jump(0x1300, 0x1100),
+            result(0x1400, local(1))};
+  MedFunc Med;
+  Med.Entry = F.Entry;
+  Med.Blocks.resize(5);
+  for (int I = 0; I < 5; ++I) {
+    Med.Blocks[I].Id = I;
+    Med.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+  }
+  Med.Blocks[0].Succs = {1};
+  Med.Blocks[1].Succs = {2, 3};
+  Med.Blocks[2].Succs = {1, 4};
+  Med.Blocks[3].Succs = {1};
+  for (const auto &S : F.Body) {
+    MedOp Op;
+    Op.Addr = S.Addr;
+    Med.Blocks[(S.Addr - 0x1000) / 0x100].Ops.push_back(Op);
+  }
+  detectAndConvertLoops(F, {}, Med, false);
+  size_t Loops = 0, HeaderJumps = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Loops += S.Kind == StmtKind::While;
+    HeaderJumps += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1100;
+  });
+  EXPECT_EQ(Loops, 1u);
+  EXPECT_EQ(HeaderJumps, 0u);
+  const auto Graph = buildHighSourceFlowGraph(F);
+  for (const auto &Item : Graph.Diagnostics.Items)
+    ADD_FAILURE() << Item.Reason << " at " << Item.RelatedAddress;
+  EXPECT_TRUE(Graph.Diagnostics.Complete);
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
   // break of its own, so nothing reaches the trailing return.
