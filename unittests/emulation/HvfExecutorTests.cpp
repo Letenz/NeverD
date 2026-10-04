@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <future>
+#include <system_error>
 #if defined(__x86_64__)
 #include <Hypervisor/hv_vmx.h>
 #include <mach/mach_time.h>
@@ -28,6 +29,153 @@
 namespace neverd::emulation::hvf {
 // Test-only access keeps the lifecycle experiment out of the production API.
 struct ExecutorProbe {
+  enum class Fault {
+    None,
+    BeforeReplacement,
+    BeforeOldDestroy,
+    BeforeNewCreate
+  };
+  static void ownerMarker(const char *Phase, uint64_t Generation,
+                          uint64_t Owner) {
+    llvm::outs() << "INTEL_OWNER phase=" << Phase
+                 << " vcpu_generation=" << Generation
+                 << " owner_generation=" << Generation << " owner=" << Owner
+                 << " vm_generation=1\n";
+    llvm::outs().flush();
+  }
+  static llvm::Error checkOwner(Executor &Host, uint64_t &Owner, bool HasCPU) {
+    return Host.submit([&](Executor &H) -> llvm::Error {
+      uint64_t Current = 0;
+      if (pthread_threadid_np(nullptr, &Current) || !Current ||
+          (Owner && Current != Owner) || H.Mapped || H.Active ||
+          !H.Failure.empty() || !H.VMCreated || H.CPUCreated != HasCPU ||
+          !H.VMLease.owns_lock())
+        return diagnostic::error("owner handoff state mismatch");
+      Owner = Current;
+      return llvm::Error::success();
+    });
+  }
+  static llvm::Error recreateOwner(Executor &Host, uint64_t Generation,
+                                   uint64_t &Owner, Fault Inject = Fault::None,
+                                   bool Trace = true) {
+    struct Handoff {
+      std::mutex Mutex;
+      std::condition_variable Changed;
+      bool Start = false, Cancel = false;
+      uint64_t Owner = 0;
+      std::promise<void> Parked;
+      std::promise<llvm::Error> Ready;
+    };
+    auto State = std::make_shared<Handoff>();
+    auto Parked = State->Parked.get_future();
+    auto Ready = State->Ready.get_future();
+    std::thread Replacement;
+    try {
+      if (Inject == Fault::BeforeReplacement)
+        throw std::system_error(
+            std::make_error_code(std::errc::resource_unavailable_try_again));
+      Replacement = std::thread([State, &Host, Generation, Inject, Trace] {
+        // Precreation can fail without leaving Host without a Worker. Until
+        // Start, this thread must not access Host or any native HVF resource.
+        if (pthread_threadid_np(nullptr, &State->Owner))
+          State->Owner = 0;
+        State->Parked.set_value();
+        {
+          std::unique_lock Lock(State->Mutex);
+          State->Changed.wait(Lock,
+                              [&] { return State->Start || State->Cancel; });
+          if (State->Cancel)
+            return;
+        }
+        if (Trace)
+          ownerMarker("owner_activate", Generation + 1, State->Owner);
+        Host.VMLease.lock(); // The old owner released this same mutex.
+        if (Trace)
+          ownerMarker("lease_acquire_end", Generation + 1, State->Owner);
+        llvm::Error Result = llvm::Error::success();
+        if (Inject == Fault::BeforeNewCreate) {
+          Result = diagnostic::error("injected before new CPU creation");
+        } else {
+          if (Trace)
+            ownerMarker("vcpu_create_begin", Generation + 1, State->Owner);
+          Result = Host.createCPU();
+          if (!Result && Trace)
+            ownerMarker("vcpu_create_end", Generation + 1, State->Owner);
+        }
+        State->Ready.set_value(std::move(Result));
+        // Even failed initialization must service the original destructor.
+        Host.work();
+      });
+    } catch (const std::system_error &) {
+      return diagnostic::error("owner replacement thread creation failed");
+    }
+    auto Cancel = llvm::scope_exit([&] {
+      if (Replacement.joinable()) {
+        {
+          std::lock_guard Lock(State->Mutex);
+          State->Cancel = true;
+        }
+        State->Changed.notify_one();
+        Replacement.join();
+      }
+    });
+    Parked.get();
+    if (!State->Owner)
+      return diagnostic::error("replacement owner identity unavailable");
+    if (Trace)
+      ownerMarker("replacement_parked", Generation + 1, State->Owner);
+    if (auto E = Host.submit([&](Executor &H) -> llvm::Error {
+          uint64_t Current = 0;
+          if (pthread_threadid_np(nullptr, &Current) || !Current ||
+              Current == State->Owner || (Owner && Owner != Current) ||
+              H.Mapped || H.Active || !H.Failure.empty() || !H.VMCreated ||
+              !H.CPUCreated || !H.VMLease.owns_lock())
+            return diagnostic::error("owner reset requires an idle live VM");
+          Owner = Current;
+          if (Inject == Fault::BeforeOldDestroy)
+            return diagnostic::error("injected before old CPU destruction");
+          if (Trace)
+            ownerMarker("vcpu_destroy_begin", Generation, Owner);
+          if (auto Error = H.destroyCPU())
+            return Error;
+          if (Trace)
+            ownerMarker("vcpu_destroy_end", Generation, Owner);
+          H.VMLease.unlock();
+          if (Trace)
+            ownerMarker("lease_release_end", Generation, Owner);
+          return llvm::Error::success();
+        }))
+      return E; // Cancel/join the parked replacement; old Worker remains live.
+    // This diagnostic has one submitter. submit must finish before Admission
+    // is acquired: taking it inside submit would deadlock its nonrecursive
+    // lock.
+    std::unique_lock Gate(Host.Admission);
+    {
+      std::lock_guard Lock(Host.Mutex);
+      if (Host.Pending || Host.Shutdown)
+        std::abort();
+      Host.Shutdown = true;
+      Host.Changed.notify_one();
+    }
+    if (Trace)
+      ownerMarker("owner_join_begin", Generation, Owner);
+    Host.Worker.join(); // Never join while holding Host.Mutex.
+    if (Trace)
+      ownerMarker("owner_join_end", Generation, Owner);
+    {
+      std::lock_guard Lock(Host.Mutex);
+      Host.Shutdown = false;
+      Host.Worker = std::move(Replacement);
+    }
+    {
+      std::lock_guard Lock(State->Mutex);
+      State->Start = true;
+    }
+    State->Changed.notify_one();
+    auto Result = Ready.get();
+    Owner = State->Owner;
+    return Result;
+  }
   static void marker(const char *Phase, uint64_t Generation, uint64_t Owner) {
     llvm::outs() << "INTEL_LIFECYCLE phase=" << Phase
                  << " generation=" << Generation << " owner=" << Owner << '\n';
@@ -85,18 +233,20 @@ bool probeFlag(const char *Name) {
 struct RetainedExecutor {
   std::shared_ptr<hvf::Executor> Host;
   uint64_t Recreations = 0, Owner = 0;
-  bool RecreateCPU = false, RecreateVM = false;
+  bool RecreateCPU = false, RecreateVM = false, RecreateOwner = false;
   ~RetainedExecutor() {
     if (RecreateCPU) {
       // No fixture or machine may keep the worker alive beyond this marker.
       if (Host.use_count() != 1)
         std::abort();
       const std::weak_ptr<hvf::Executor> Retiring = Host;
-      hvf::ExecutorProbe::marker("executor_retire_begin", Recreations + 1, Owner);
+      auto Marker = RecreateOwner ? hvf::ExecutorProbe::ownerMarker
+                                  : hvf::ExecutorProbe::marker;
+      Marker("executor_retire_begin", Recreations + 1, Owner);
       Host.reset(); // Original native teardown followed by Worker.join().
       if (!Retiring.expired())
         std::abort();
-      hvf::ExecutorProbe::marker("executor_retire_end", Recreations + 1, Owner);
+      Marker("executor_retire_end", Recreations + 1, Owner);
     }
   }
 };
@@ -108,7 +258,11 @@ protected:
 #if defined(__x86_64__)
   RetainedExecutor *Retained = nullptr;
   void TearDown() override {
-    if (Retained && Retained->RecreateCPU)
+    if (Retained && Retained->RecreateOwner)
+      EXPECT_EQ(llvm::toString(hvf::ExecutorProbe::recreateOwner(
+                    *Host, ++Retained->Recreations, Retained->Owner)),
+                "");
+    else if (Retained && Retained->RecreateCPU)
       EXPECT_EQ(llvm::toString(hvf::ExecutorProbe::recreate(
                     *Host, ++Retained->Recreations, Retained->Owner,
                     Retained->RecreateVM)),
@@ -139,9 +293,15 @@ protected:
       // destroyed before them when the diagnostic process exits.
       auto &Output = llvm::outs(); // Outlive the optional final trace.
       static RetainedExecutor RetainedHost{
-          Host, 0, 0, probeFlag("NEVERD_HVF_INTEL_RECREATE_VCPU"),
-          probeFlag("NEVERD_HVF_INTEL_RECREATE_VM")};
+          Host,
+          0,
+          0,
+          probeFlag("NEVERD_HVF_INTEL_RECREATE_VCPU"),
+          probeFlag("NEVERD_HVF_INTEL_RECREATE_VM"),
+          probeFlag("NEVERD_HVF_INTEL_RECREATE_OWNER")};
       ASSERT_TRUE(!RetainedHost.RecreateVM || RetainedHost.RecreateCPU);
+      ASSERT_TRUE(!RetainedHost.RecreateOwner ||
+                  (RetainedHost.RecreateCPU && !RetainedHost.RecreateVM));
       ASSERT_EQ(Host, RetainedHost.Host);
       Retained = &RetainedHost;
       Output << "INTEL_PROBE phase=executor_retained\n";
@@ -485,6 +645,57 @@ TEST_F(HvfExecutor, CompletionFailureOutranksConcurrentStop) {
 #if defined(__x86_64__)
 // Opt-in diagnostics are not production acceptance requirements. In particular,
 // a finite API return is not yet a rule for authenticating guest completion.
+class HvfIntelHandoff : public testing::Test {
+  void SetUp() override {
+    if (!probeFlag("NEVERD_HVF_INTEL_PROBE"))
+      GTEST_SKIP() << "explicit Intel diagnostic experiment required";
+    for (const char *Name :
+         {"NEVERD_HVF_INTEL_REUSE_EXECUTOR", "NEVERD_HVF_INTEL_RECREATE_VCPU",
+          "NEVERD_HVF_INTEL_RECREATE_VM", "NEVERD_HVF_INTEL_RECREATE_OWNER"})
+      ASSERT_FALSE(probeFlag(Name));
+  }
+};
+TEST_F(HvfIntelHandoff, FailureControls) {
+  using Probe = hvf::ExecutorProbe;
+  struct Case {
+    Probe::Fault Fault;
+    const char *Name, *Error;
+  };
+  const Case Cases[] = {{Probe::Fault::BeforeReplacement, "replacement",
+                         "owner replacement thread creation failed"},
+                        {Probe::Fault::BeforeOldDestroy, "old_destroy",
+                         "injected before old CPU destruction"},
+                        {Probe::Fault::BeforeNewCreate, "new_create",
+                         "injected before new CPU creation"}};
+  for (auto [Fault, Name, Error] : Cases) {
+    const auto Marker = [&](const char *Phase) {
+      llvm::outs() << "INTEL_HANDOFF_CONTROL case=" << Name
+                   << " phase=" << Phase << '\n';
+      llvm::outs().flush();
+    };
+    Marker("begin");
+    auto Created = hvf::Executor::acquire();
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    auto Host = std::move(*Created);
+    uint64_t Owner = 0;
+    ASSERT_EQ(llvm::toString(Probe::checkOwner(*Host, Owner, true)), "");
+    ASSERT_EQ(
+        llvm::toString(Probe::recreateOwner(*Host, 1, Owner, Fault, false)),
+        Error);
+    // Read state through the surviving worker without auto-creating a CPU or
+    // executing a guest. New-create failure leaves CPUCreated false.
+    ASSERT_EQ(llvm::toString(Probe::checkOwner(
+                  *Host, Owner, Fault != Probe::Fault::BeforeNewCreate)),
+              "");
+    Marker("state_checked");
+    ASSERT_EQ(Host.use_count(), 1);
+    const std::weak_ptr<hvf::Executor> Retiring = Host;
+    Host.reset(); // Original teardown must remain responsive after any fault.
+    ASSERT_TRUE(Retiring.expired());
+    Marker("cleanup_end");
+  }
+}
+
 class HvfIntelProbe : public HvfExecutor {
   void SetUp() override {
     const auto *Enabled = std::getenv("NEVERD_HVF_INTEL_PROBE");
