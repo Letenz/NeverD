@@ -6,7 +6,8 @@ self-contained and carries no SDK implementation or build-time dependency.
 Declarations must agree between macOS and iOS preprocessing environments;
 exports and reexports establish which exact library may supply each symbol.
 Public inputs include Foundation, graphics, file and vector I/O attributes,
-notifications, uniform type identifiers, logging and digests.
+system control declarations, notifications, uniform type identifiers, logging
+and digests.
 """
 import argparse
 import ctypes
@@ -168,6 +169,14 @@ def main():
         profiles = [clang.extract(source, sdk, target,
                                   ("-F", str(nested_frameworks)))
                     for target in TARGETS]
+        # sysctl.h includes unrelated kernel interfaces. Add only this
+        # requested declaration family, retaining any conflicting evidence.
+        source.write_text("#include <sys/types.h>\n#include <sys/sysctl.h>\n")
+        for profile, target in zip(profiles, TARGETS):
+            system_controls = clang.extract(source, sdk, target)
+            for name in ("sysctl", "sysctlbyname", "sysctlnametomib"):
+                if name in system_controls:
+                    profile.setdefault(name, set()).update(system_controls[name])
     version = json.loads((sdk / "SDKSettings.json").read_text())["Version"]
     exports = load_exports(sdk, frameworks)
     core_services = load_exports(sdk, ("CoreServices",))
