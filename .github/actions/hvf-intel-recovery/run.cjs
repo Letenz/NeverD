@@ -7,6 +7,7 @@ const {performance} = require('node:perf_hooks');
 const {startCommand, testEnvironment, captureHostState, UPLOAD_REVISION} =
   require('../hvf-intel-diagnostic/run.cjs');
 const {verifyIdentity} = require('../hvf-intel-diagnostic/active-sample.cjs');
+const {captureRuntime} = require('../hvf-intel-diagnostic/runtime.cjs');
 
 const LIMIT = 1024 * 1024;
 const MAX_PROGRESS = 42;
@@ -193,6 +194,7 @@ async function main() {
     '--build', path.resolve(input('build')), '--repetitions', repetitions, '--experiment', experiment], environment);
   if (await preparation.completion !== 0) throw new Error('recovery preparation failed');
   const plan = JSON.parse(fs.readFileSync(path.join(evidence, 'plan.json'), 'utf8'));
+  save(path.join(evidence, 'observer-runtime.json'), captureRuntime());
   save(path.join(evidence, 'host-start.json'), await captureHostState(evidence, environment, group.signal));
   const uploads = path.join(evidence, 'uploads');
   fs.mkdirSync(uploads);
@@ -209,7 +211,7 @@ async function main() {
   // Seal the pre-execution plan separately; its directory never becomes live.
   const prepared = path.join(evidence, 'prepared');
   fs.mkdirSync(prepared);
-  for (const name of ['plan.json', 'inventory.json', 'host-start.json']) {
+  for (const name of ['plan.json', 'inventory.json', 'host-start.json', 'observer-runtime.json']) {
     fs.copyFileSync(path.join(evidence, name), path.join(prepared, name), fs.constants.COPYFILE_EXCL);
   }
   await upload(prepared, 'plan');
