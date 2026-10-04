@@ -78,6 +78,23 @@ Les mappings de fichiers, partagés ou fixes, la croissance descendante, les gra
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## Horloges invitées explicites
+
+L’option `linux_time` fournit des valeurs fixes aux appels système Linux et à Android Bionic. Le modèle ne lit pas l’horloge hôte, ne fait pas avancer le temps avec les instructions et ne suppose aucune époque par défaut.
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+Les identifiants statiques 0–9 et 11 sont acceptés. Chaque horloge est indépendante ; une valeur absente reste inconnue. Les identifiants dupliqués ou inconnus sont refusés. Les secondes sont signées sur 64 bits et les nanosecondes sont dans `[0, 1000000000)`. Les entiers JSON doivent rester dans `±9007199254740991` ; les chaînes décimales préservent toute la plage 64 bits. Les champs de fuseau horaire sont signés sur 32 bits. C++ utilise `ProcessOptions::LinuxTime` ; les autres profils OS refusent cette option.
+
+`clock_gettime`, `gettimeofday` et `time` sur x64 partagent ces entrées. Une entrée absente, une horloge dynamique ou une écriture partielle non modélisée provoque un arrêt explicite ; les écritures terminées sont conservées. Réglage du temps, sommeil et horloges matérielles restent non pris en charge. Voir le [contrat complet des horloges](../process-emulation.md#explicit-guest-clocks) pour l’ordre des écritures, les erreurs et les pointeurs.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Profil Windows PE64

@@ -78,6 +78,23 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## 明確提供客體時鐘
+
+選用的 `linux_time` 為 Linux 系統呼叫與 Android Bionic 提供固定時鐘輸入。模型不讀取主機時鐘、不隨指令執行推進時間，也不猜測預設時間。
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+支援靜態時鐘 ID 0–9 與 11；各時鐘獨立，未提供的值仍屬未知。重複或未知 ID 會被拒絕。秒數為帶正負號的 64 位元整數，奈秒範圍為 `[0, 1000000000)`。JSON 整數須介於 `±9007199254740991` 內；十進位字串可表示完整 64 位元範圍，時區欄位為帶正負號的 32 位元整數。C++ 使用 `ProcessOptions::LinuxTime`，其他 OS 設定不接受此選項。
+
+`clock_gettime`、`gettimeofday` 與 x64 的 `time` 共用這些輸入。缺少輸入、動態時鐘或未建模的部分寫入會明確停止；已完成的寫入仍保留。不模擬校時、睡眠或實際裝置時鐘。欄位順序、錯誤碼和指標語義請見[完整時鐘契約](../process-emulation.md#explicit-guest-clocks)。
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 設定檔

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "LinuxMemory.h"
+#include "LinuxTime.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -42,6 +43,10 @@ handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
               const ProcessServiceEvent &Event, const MemoryLayout &Layout,
               const ProcessOptions &Options, ProcessResult &Result) {
   switch (Kind) {
+  case ServiceKind::Time:
+  case ServiceKind::GetTimeOfDay:
+  case ServiceKind::ClockGetTime:
+    return timeService(CPU, Kind, Event, Layout, Options, Result);
   case ServiceKind::Exit:
   case ServiceKind::ExitGroup:
     Result.Stop = ProcessStopReason::Exited;
