@@ -325,6 +325,14 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
         Analysis.Inlinable.insert(Call);
     }
   coalesceScalarPhiNames(Fn);
+  // This contract uses the LLVM function's own unsigned scalar C objects.
+  // Debug/image and composed text projections need their own type evidence.
+  UseScalarExpressionTypes =
+      !Dbg && !Img && ValueTexts.empty() && OmittedInlined.empty();
+  for (const auto &BB : Fn)
+    for (const auto &Phi : BB.phis())
+      if (Analysis.Inlinable.count(&Phi))
+        UseScalarExpressionTypes = false;
 
   auto ClearPath = [&]() {
     // Layout facts from one arm/backedge cannot substitute values on another.
@@ -457,6 +465,7 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
   };
   Write(Regions, Indent);
   ClearPath();
+  UseScalarExpressionTypes = false;
   return true;
 }
 

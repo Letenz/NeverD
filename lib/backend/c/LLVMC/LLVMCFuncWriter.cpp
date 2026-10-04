@@ -2228,6 +2228,7 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
 }
 
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
+  UseScalarExpressionTypes = false;
   Dominators.recalculate(Fn);
   NextVar = 0;
   ValNames.clear();
