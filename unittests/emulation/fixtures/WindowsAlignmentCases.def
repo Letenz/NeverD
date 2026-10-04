@@ -48,6 +48,8 @@ NEVERD_WINDOWS_ALIGNMENT_API(WriteFile)
 #endif
 #ifdef NEVERD_WINDOWS_ALIGNMENT_OPERATION
 // Original assembly is independent of the checked CPU's encoding inventory.
+// Register prefixes here use assembler syntax, not C++ remainder operators.
+// clang-format off
 NEVERD_WINDOWS_ALIGNMENT_OPERATION(MovapsLoad, movaps (%rcx), %xmm0)
 NEVERD_WINDOWS_ALIGNMENT_OPERATION(MovapsStore, movaps %xmm0, (%rcx))
 NEVERD_WINDOWS_ALIGNMENT_OPERATION(MovapdLoad, movapd (%rcx), %xmm0)
@@ -57,6 +59,7 @@ NEVERD_WINDOWS_ALIGNMENT_OPERATION(MovdqaStore, movdqa %xmm0, (%rcx))
 NEVERD_WINDOWS_ALIGNMENT_OPERATION(Paddq, paddq (%rcx), %xmm0)
 NEVERD_WINDOWS_ALIGNMENT_OPERATION(Psllq, psllq (%rcx), %xmm0)
 NEVERD_WINDOWS_ALIGNMENT_OPERATION(Xorps, xorps (%rcx), %xmm0)
+// clang-format on
 #endif
 #ifdef NEVERD_WINDOWS_ALIGNMENT_SCENARIO
 NEVERD_WINDOWS_ALIGNMENT_SCENARIO(Readable)

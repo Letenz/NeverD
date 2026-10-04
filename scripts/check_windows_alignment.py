@@ -109,13 +109,15 @@ def main() -> None:
         clang, link = tool("clang"), tool("lld-link")
         sources = [DEFINITION, FIXTURES / "windows_alignment.c", FIXTURES / "windows_alignment.S",
                    Path(__file__).resolve()]
-        report["source_sha256"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+        report["source_sha256"] = {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                                    for p in sources}
         apis = re.findall(r"^NEVERD_WINDOWS_ALIGNMENT_API\((\w+)\)$", DEFINITION.read_text(), re.M)
         provider = output / "provider.def"
         provider.write_text("LIBRARY " + settings["Provider"] + "\nEXPORTS\n" +
                             "".join("  " + api + "\n" for api in apis), encoding="utf-8")
         timeout = values["BuildTimeoutSeconds"]
+        run([clang, "--version"], "compiler", timeout)
+        run([link, "--version"], "linker", timeout)
         run([link, "/lib", "/machine:x64", "/def:" + str(provider),
              "/out:" + str(output / "provider.lib")], "imports", timeout)
         objects = []
