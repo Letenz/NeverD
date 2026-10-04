@@ -19,6 +19,7 @@
 #include "../UnalignedMemory.h"
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
+#include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
@@ -1025,6 +1026,11 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
   }
+  // Native image/debug projections keep their separate source contracts.
+  // Pure scalar loop recovery proves its exact replacement before publishing
+  // into this private clone and retains the existing path on refusal.
+  if (!Dbg && !Img && !Opts.Image)
+    llvmc::recoverScalarLoops(*Projection, ProjectionOnly);
   for (auto &Function : *Projection)
     if (!ProjectionOnly || &Function == ProjectionOnly) {
       llvmc::factorCommonBranchTests(Function);

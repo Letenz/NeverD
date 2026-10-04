@@ -93,6 +93,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDLLVMScalarLoopRecoveryTests` 涵蓋前綴與前驅攜帶值重構、零次迴圈分支、自回邊迴圈判斷前移、仿射狀態、回繞時的等式退路、額外更新的 poison、高位元資料差異及不支援的輸入契約。精確／少一累計預算檢查原子拒絕；獨立算術 oracle 在 O0/O2 執行原始與恢復 LLVM，涵蓋全部位元組控制輸入。這些測試不代表原生 ABI 恢復或預設短 C 輸出已完成。
 
+`NeverDLLVMCScalarLoopRecoveryTests` 檢查預設整模組與單函式輸出、回傳路徑清理後的持續恢復、函式身分和屬性、呼叫繫結、既有及新增內建函式與符號衝突、共用預算、副作用呼叫、缺少輸入定義性、中繼資料、映像投影、外部區塊位址和外來函式選擇。獨立算術與旋轉 oracle 在 O0/O2 下執行產生的 C，並啟用未定義行為陷阱；算術也與獨立編譯的原始 LLVM 對照，涵蓋所有位元組控制輸入、邊界字值及確定性的完整位寬資料。
+
 初始化契約回歸涵蓋部分及分離的位元組範圍、固定別名、兩個分支、每個返回點、迴圈首輪讀取與迴圈內先寫後讀。先讀後寫、漏寫、客體寫入、未知別名、特殊記憶體存取、物件外範圍，以及輸入／工作預算耗盡，都必須失敗。獨立的僅輸出狀態字 C 案例在 O1/O2 編譯後保留精確 LLVM 屬性，並通過全新的原生到 LLVM 組合證明。
 
 受條件保護的倒數測試涵蓋拒絕本體模板後的重試、任意字長輸入的完整迴圈頭證明、切點與查詢預算的累計計費，以及真實入口契約違規時立即拒絕。
@@ -100,6 +102,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 `NeverDInterpreterLLVMRefinementTests` 檢查全新的原生到 LLVM 組合證明、精確文字／函式綁定、獨立預算、完整觀察項及刻意擴大的原始碼域。修改位元組、殘餘程式、結果、旗標、狀態碼、框架寫入、poison 或錯誤／過期迴圈方案，都必須拒絕組合憑據。任意字長倒數要求兩段歸納前提；獨立 C 案例在 O1/O2 編譯後驗證實際序列化 LLVM 輸入。狀態模型回歸拒絕隱藏入口回邊，對入口集合計費且不複製附屬來源資訊。
 
 ```sh
+cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
+build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
