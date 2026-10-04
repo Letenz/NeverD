@@ -149,8 +149,7 @@ NEVERD_LINUX_DIAGNOSTIC(
 NEVERD_LINUX_DIAGNOSTIC(
     MemoryState,
     "Linux process memory operation encountered invalid internal state")
-NEVERD_LINUX_DIAGNOSTIC(MemoryAdvice,
-                        "unsupported Linux madvise behavior {0}")
+NEVERD_LINUX_DIAGNOSTIC(MemoryAdvice, "unsupported Linux madvise behavior {0}")
 NEVERD_LINUX_DIAGNOSTIC(
     ProgramHeaders,
     "ELF program headers have an invalid or unmapped process layout")
