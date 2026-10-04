@@ -118,8 +118,8 @@ void entry(void) {
   const U32 OperationCount = sizeof(Operations) / sizeof(*Operations);
   for (Op = 0; Op < OperationCount; ++Op) {
     Current = &Operations[Op];
-    for (U32 I = 0; I < PageBytes; ++I)
-      Memory[I] = (U8)(I ^ MemorySeed);
+    for (U32 I = 0; I < PageBytes / sizeof(U64); ++I)
+      ((U64 *)Memory)[I] = VectorHigh ^ I;
     Repair = 0;
     for (Case = 0; Case < ScenarioCount; ++Case) {
       Operand = (U64)Memory + 1;
@@ -157,8 +157,8 @@ void entry(void) {
               SiteVector);
       require(VirtualProtect(Memory, PageBytes, PageReadWrite, &Previous),
               SiteProtection);
-      for (U32 I = 0; I < PageBytes; ++I)
-        require(Memory[I] == (U8)(I ^ MemorySeed), SiteMemory);
+      for (U32 I = 0; I < PageBytes / sizeof(U64); ++I)
+        require(((U64 *)Memory)[I] == (VectorHigh ^ I), SiteMemory);
     }
     // Repair the operand in CONTEXT and retry the same faulting instruction.
     for (U32 I = 0; I < VectorBytes; ++I)
