@@ -1870,3 +1870,353 @@ TEST(SwiftFixedRecordConstructor,
             .valid(B.Function));
   }
 }
+
+namespace {
+struct ConstructorMessageFixture : FixedConstructorFixture {
+  static constexpr va_t Caller = 0x1100, Stub = 0x1300;
+  static constexpr va_t Message = Caller + 44, Selector = 0x3c00;
+  ConstructorMessageFixture() : FixedConstructorFixture(Arch::AArch64) {
+    segment(Caller, 0x100, "__text_caller", true);
+    segment(Stub, 0x20, "__objc_stubs", true);
+    u32(Entry, 0xf9000020); // str x0, [x1]
+    u32(Entry + 4, 0xd65f03c0);
+    for (auto &S : Image.Symbols)
+      if (S.Addr == Entry)
+        S.Size = 8;
+    const uint32_t Words[] = {
+        0xa9be7bfd,
+        0xa90153f3,
+        0x910003fd,
+        0xaa0103f4,
+        0xaa0003e1,
+        0xaa1f03e0,
+        0x9e6703e0,
+        0x9e6703e1,
+        0x9e6703e2,
+        0x94000000 | uint32_t(((Entry - (Caller + 36)) / 4) & 0x03ffffff),
+        0xaa1403e0,
+        0x94000000 | uint32_t(((Stub - Message) / 4) & 0x03ffffff),
+        0xaa1f03e0,
+        0xa94153f3,
+        0xa8c27bfd,
+        0xd65f03c0};
+    for (unsigned I = 0; I != std::size(Words); ++I)
+      u32(Caller + 4 * I, Words[I]);
+    // ADRP/LDR selector, ADRP/LDR strong objc_msgSend slot, BR x16.
+    const uint32_t StubWords[] = {0xd0000001, 0xf9460021, 0xb0000030,
+                                  0xf9400610, 0xd61f0200};
+    for (unsigned I = 0; I != std::size(StubWords); ++I)
+      u32(Stub + 4 * I, StubWords[I]);
+    Image.Symbols.push_back({"caller", Caller, sizeof(Words), true});
+    Image.RuntimeFunctionAddrs.insert(Caller);
+    Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+    Image.DynInfo.NeededLibs.push_back(
+        "/System/Library/Frameworks/QuartzCore.framework/QuartzCore");
+    EXPECT_TRUE(Image.recordDyldBindSlot(0x6008, "_objc_msgSend", 0,
+                                         "/usr/lib/libobjc.A.dylib", false));
+    Image.ImportPtrSlots[0x6008] = "_objc_msgSend";
+    text(0x3c60, "setNeedsDisplay");
+    pointer(Selector, 0x3c60);
+    Image.ObjCSourceReferences[Selector] = {ObjCSourceReference::Kind::Selector,
+                                            Selector, 8, "setNeedsDisplay"};
+  }
+  PipelineResult run(llvm::LLVMContext &Context) {
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Entry, Caller};
+    PipelineResult R;
+    for (unsigned Round = 0; Round != 4; ++Round) {
+      R = Pipeline().run(Image, Context, Options);
+      std::map<va_t, std::string> D;
+      if (!sdk::inferObjCNativeDependencies(Image, R, Options, D,
+                                            Options.OnlyFunctionEntries))
+        break;
+    }
+    return R;
+  }
+};
+} // namespace
+
+TEST(SwiftFixedRecordConstructor,
+     MessageReplayUsesCurrentDispatchAndArguments) {
+  ConstructorMessageFixture F;
+  const auto Stub = objcSelectorStubSourceCallHint(F.Image, F.Stub);
+  ASSERT_TRUE(Stub);
+  ASSERT_EQ(Stub->Selector, "setNeedsDisplay");
+  llvm::LLVMContext Context;
+  auto R = F.run(Context);
+  const auto C = sdk::native_source_detail::currentFunction(R, F.Caller);
+  ASSERT_TRUE(C);
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &H : R.HighFuncs)
+    Functions.emplace(H.Entry, &H);
+  auto B =
+      sdk::bindObjCSourceReferences(*C->High, F.Image, nullptr, &Functions);
+  ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+  unsigned Messages = 0;
+  walkStmts(B.Function.Body, [&](const HighStmt &S) {
+    if (S.CallExpr && S.CallExpr->SourceCallHint &&
+        S.CallExpr->SourceCallHint->CallKind ==
+            SourceCallTypeHint::Kind::ObjCMessage) {
+      ++Messages;
+      EXPECT_EQ(S.Addr, F.Message);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*S.CallExpr, F.Image, Functions,
+                                           nullptr, nullptr, &B.Function));
+    }
+  });
+  ASSERT_EQ(Messages, 1u);
+  EXPECT_TRUE(sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+                  .valid(B.Function));
+}
+
+TEST(SwiftFixedRecordConstructor, MessageReplayRejectsChangedCurrentEvidence) {
+  for (unsigned Mutation = 0; Mutation != 36; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ConstructorMessageFixture F;
+    llvm::LLVMContext Context;
+    auto R = F.run(Context);
+    const auto C = sdk::native_source_detail::currentFunction(R, F.Caller);
+    ASSERT_TRUE(C);
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &H : R.HighFuncs)
+      Functions.emplace(H.Entry, &H);
+    auto B =
+        sdk::bindObjCSourceReferences(*C->High, F.Image, nullptr, &Functions);
+    ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+    ASSERT_TRUE(sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+                    .valid(B.Function));
+    HighStmt *Statement = nullptr;
+    walkStmts(B.Function.Body, [&](HighStmt &S) {
+      if (S.Addr == F.Message && S.CallExpr)
+        Statement = &S;
+    });
+    ASSERT_TRUE(Statement);
+    Statement->CallExpr = std::make_shared<HighExpr>(*Statement->CallExpr);
+    auto &Call = *Statement->CallExpr;
+    auto H = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
+    Call.SourceCallHint = H;
+    MedOp *Med = nullptr;
+    LowOp *Low = nullptr;
+    for (auto &M : R.MedFuncs)
+      if (M.Entry == F.Caller)
+        for (auto &Block : M.Blocks)
+          for (auto &O : Block.Ops)
+            if (O.Addr == F.Message && O.Opcode == NdOp::CALL)
+              Med = &O;
+    for (auto &L : R.LowFuncs)
+      if (L.Entry == F.Caller)
+        for (auto &Block : L.Blocks)
+          for (auto &O : Block.Ops)
+            if (O.Addr == F.Message && O.Opcode == NdOp::CALL)
+              Low = &O;
+    ASSERT_TRUE(Med && Low);
+    switch (Mutation) {
+    case 0:
+      Call.Operands[0] = HighExpr::makeConst(0, 8);
+      break;
+    case 1:
+      Call.Operands[1] = HighExpr::makeConst(0, 8);
+      break;
+    case 2:
+      Call.CallAddr += 4;
+      break;
+    case 3:
+      H->Selector = "removeAllAnimations";
+      break;
+    case 4:
+      H->SelectorReferenceAddress += 8;
+      break;
+    case 5:
+      H->Signature.Parameters[0].Location.RegisterOffset += 8;
+      break;
+    case 6:
+      Call.SourceCallHint.reset();
+      break;
+    case 7:
+      B.Function.Body.push_back(*Statement);
+      break;
+    case 8:
+      Statement->CallExpr.reset();
+      break;
+    case 9:
+      Statement->Addr += 4;
+      break;
+    case 10:
+      H->CallKind = SourceCallTypeHint::Kind::Native;
+      break;
+    case 11:
+      Call.IsIndirectCall = true;
+      break;
+    case 12:
+      Call.Type = NdType::makeInt(8);
+      break;
+    case 13:
+      Call.Operands.pop_back();
+      break;
+    case 14:
+      Call.Operands[0] = HighExpr::makeConst(0, 4);
+      break;
+    case 15:
+      H->WeakImport = true;
+      break;
+    case 16:
+      H->DoesNotReturn = true;
+      break;
+    case 17:
+      H->ReturnedArgument = 0;
+      break;
+    case 18:
+      Med->Inputs[1].Size = 4;
+      break;
+    case 19:
+      Med->NumInputs = 2;
+      break;
+    case 20:
+      ++Med->OriginSeq;
+      break;
+    case 21:
+      Med->Addr += 4;
+      break;
+    case 22:
+      Med->SourceCallHint.reset();
+      break;
+    case 23:
+      Med->PreservesCallerSaved = true;
+      break;
+    case 24:
+      Low->Addr += 4;
+      break;
+    case 25:
+      F.u32(F.Stub + 16, 0xd503201f);
+      break;
+    case 26:
+      F.Image.DyldBindSlots[0x6008].Module = "wrong";
+      break;
+    case 27:
+      F.Image.DyldBindSlots[0x6008].WeakImport = true;
+      break;
+    case 28:
+      F.Image.ObjCSourceReferences[F.Selector].Name = "removeAllAnimations";
+      break;
+    case 29:
+      F.u32(F.Message - 4, 0xaa1503e0);
+      break;
+    case 30:
+      Med->SourceCallHint.reset();
+      Call.SourceCallHint.reset();
+      break;
+    case 31:
+      F.Image.Sections[3].Type = llvm::MachO::S_THREAD_LOCAL_VARIABLES;
+      break;
+    case 32:
+      F.Image.Sections.back().Flags =
+          F.Image.Sections.back().Flags | SegmentFlags::Writable;
+      break;
+    case 33:
+      F.text(0x3c60, "removeAllAnimations");
+      break;
+    case 34:
+      F.Image.DataPtrRelocSlots.erase(F.Selector);
+      break;
+    case 35:
+      F.Image.Sections.push_back(F.Image.Sections.back());
+      break;
+    }
+    EXPECT_FALSE(sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+                     .valid(B.Function));
+  }
+}
+
+TEST(SwiftFixedRecordConstructor,
+     MessageIdentityKeepsExactSelectorPointerOwner) {
+  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ConstructorMessageFixture F;
+    ASSERT_TRUE(objcImmutableSelectorStubSourceCallHint(F.Image, F.Stub));
+    ASSERT_TRUE(readInitialImageSelectorPointer(F.Image, F.Selector));
+    // Ordinary pointers still reject a selector metadata record; admitting
+    // this one exact record must not suppress other conflicting fixups.
+    EXPECT_FALSE(readInitialImagePointer(F.Image, F.Selector));
+    const uint32_t TLS[] = {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+                            llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+                            llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+                            llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+                            llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS};
+    if (Mutation < 5)
+      F.Image.Sections[3].Type = TLS[Mutation];
+    else if (Mutation < 10)
+      F.Image.Sections[1].Type = TLS[Mutation - 5];
+    else
+      switch (Mutation) {
+      case 10:
+        F.Image.DataPtrRelocTargetOwners[F.Selector] += 1;
+        break;
+      case 11:
+        F.Image.MachOResolvedChainedPointerSlots.erase(F.Selector);
+        break;
+      case 12:
+        F.Image.ObjCSourceReferences[F.Selector].Address += 8;
+        break;
+      case 13:
+        F.Image.ObjCSourceReferences[F.Selector].Size = 4;
+        break;
+      case 14:
+        F.Image.ObjCSourceReferences[F.Selector].TheKind =
+            ObjCSourceReference::Kind::Class;
+        break;
+      case 15:
+        F.Image.DataPtrRelocSlots.insert(F.Selector + 4);
+        break;
+      case 16:
+        F.Image.CodePtrRelocSlots.insert(F.Selector);
+        break;
+      case 17:
+        F.Image.DyldBindSlots[F.Selector] = {"_alias", 0, "bad", false};
+        break;
+      case 18:
+        F.Image.ObjCSourceReferences[F.Selector + 4] =
+            F.Image.ObjCSourceReferences[F.Selector];
+        break;
+      case 19:
+        F.Image.Sections[3].Flags =
+            F.Image.Sections[3].Flags | SegmentFlags::Writable;
+        break;
+      case 20:
+        F.Image.Sections.push_back(F.Image.Sections[1]);
+        break;
+      case 21:
+        F.Image.Sections[3].Type = llvm::MachO::S_LAZY_SYMBOL_POINTERS;
+        break;
+      }
+    EXPECT_FALSE(objcImmutableSelectorStubSourceCallHint(F.Image, F.Stub));
+  }
+}
+
+TEST(SwiftFixedRecordConstructor,
+     MessageIdentityRejectsTLSCodeAndSelectorText) {
+  const uint32_t TLS[] = {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+                          llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+                          llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+                          llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+                          llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS};
+  for (bool Code : {false, true})
+    for (const auto Type : TLS) {
+      SCOPED_TRACE(Code);
+      SCOPED_TRACE(Type);
+      ConstructorMessageFixture F;
+      size_t Index = F.Image.Sections.size() - 1;
+      if (!Code) {
+        auto Text = F.Image.Sections[1];
+        Text.VA = Text.FileOff = 0x3c60;
+        Text.Size = Text.FileSz = 0x20;
+        Text.Type = llvm::MachO::S_CSTRING_LITERALS;
+        F.Image.Sections[1].Size = F.Image.Sections[1].FileSz = 0xc60;
+        Index = F.Image.Sections.size();
+        F.Image.Sections.push_back(Text);
+        F.Image.DataPtrRelocTargetOwners[F.Selector] = Text.VA;
+      }
+      ASSERT_TRUE(objcImmutableSelectorStubSourceCallHint(F.Image, F.Stub));
+      F.Image.Sections[Index].Type = Type;
+      EXPECT_FALSE(objcImmutableSelectorStubSourceCallHint(F.Image, F.Stub));
+    }
+}

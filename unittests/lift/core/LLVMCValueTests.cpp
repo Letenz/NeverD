@@ -11,6 +11,7 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
@@ -20,6 +21,7 @@
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/TargetParser/Host.h"
 
 #include <stdexcept>
@@ -28,7 +30,8 @@ namespace {
 
 void compileAndRun(const std::string &Source,
                    llvm::StringRef Optimization = "-O2",
-                   const std::string &ReferenceIR = {}) {
+                   const std::string &ReferenceIR = {},
+                   bool CheckUndefinedBehavior = false) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -73,6 +76,10 @@ void compileAndRun(const std::string &Source,
                                                    BinaryPath};
   if (!ReferenceIR.empty())
     Arguments.push_back(ReferencePath);
+  if (CheckUndefinedBehavior) {
+    Arguments.push_back("-fsanitize=undefined");
+    Arguments.push_back("-fsanitize-trap=all");
+  }
   std::string Error;
   int Result = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
                                          Redirects, 30, 0, &Error);
@@ -1837,4 +1844,202 @@ TEST(LLVMCValues, DeepConstantExpressionsExhaustABoundedFold) {
   } catch (const std::runtime_error &Error) {
     EXPECT_STREQ(Error.what(), "LLVM C constant-fold budget exceeded");
   }
+}
+
+// Exercise the typed expression projection inside an admitted scalar loop.
+// The independent reference is the same LLVM function compiled directly by
+// Clang, not another generated C expression with the same promotion rules.
+std::string checkScalarLoopExpression(llvm::StringRef Body) {
+  const std::string IR = R"(
+define i64 @expression_loop(i64 %a, i64 %b, i32 %n) {
+entry:
+  br label %header
+header:
+  %i = phi i32 [0, %entry], [%next, %body]
+  %state = phi i64 [%a, %entry], [%result, %body]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+)" + Body.str() + R"(
+  %next = add i32 %i, 1
+  br label %header
+exit:
+  ret i64 %state
+}
+)";
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(IR, Error, Context);
+  if (!Module || llvm::verifyModule(*Module, &llvm::errs())) {
+    ADD_FAILURE() << Error.getMessage().str();
+    return {};
+  }
+  std::string Source, Before, After, Reference;
+  llvm::raw_string_ostream BeforeOut(Before);
+  Module->print(BeforeOut, nullptr);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  llvm::raw_string_ostream Out(Source);
+  EXPECT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  llvm::raw_string_ostream AfterOut(After);
+  Module->print(AfterOut, nullptr);
+  EXPECT_EQ(Before, After);
+  EXPECT_NE(Source.find("for ("), std::string::npos) << Source;
+  Module->getFunction("expression_loop")->setName("reference_loop");
+  llvm::raw_string_ostream ReferenceOut(Reference);
+  Module->print(ReferenceOut, nullptr);
+  const std::string Main = R"(
+extern uint64_t reference_loop(uint64_t, uint64_t, uint32_t);
+int main(void) {
+  const uint64_t values[] = {
+    0, 1, 2, 7, 31, 32, 40, 63, 127, 128, 255, 256, 32767, 32768,
+    65535, 65536, UINT32_MAX, UINT64_C(1) << 32,
+    UINT64_C(1) << 63, UINT64_MAX, UINT64_C(0xfedcba9876543210)
+  };
+  for (unsigned x = 0; x < sizeof(values) / sizeof(values[0]); ++x)
+    for (unsigned y = 0; y < sizeof(values) / sizeof(values[0]); ++y)
+      for (unsigned n = 0; n < 5; ++n)
+        if (expression_loop(values[x], values[y], n) !=
+            reference_loop(values[x], values[y], n)) return 1;
+  uint64_t random = 0x82439b7du;
+  for (unsigned k = 0; k < 4096; ++k) {
+    random ^= random << 13; random ^= random >> 7; random ^= random << 17;
+    uint64_t a = random;
+    random ^= random << 13; random ^= random >> 7; random ^= random << 17;
+    if (expression_loop(a, random, k % 5) !=
+        reference_loop(a, random, k % 5)) return 2;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization, Reference,
+                  /*CheckUndefinedBehavior=*/true);
+  return Source;
+}
+
+TEST(LLVMCScalarExpressions, NarrowProductKeepsUnsignedPromotionAndWrapping) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %x = trunc i64 %state to i16
+  %y = trunc i64 %b to i16
+  %product = mul i16 %x, %y
+  %result = zext i16 %product to i64
+)");
+  EXPECT_NE(Source.find("(uint32_t)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(uint16_t)"), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions, WidenedProductExecutesAtItsLLVMWidth) {
+  checkScalarLoopExpression(R"(
+  %x = trunc i64 %state to i32
+  %y = trunc i64 %b to i32
+  %wide_x = zext i32 %x to i64
+  %wide_y = zext i32 %y to i64
+  %result = mul i64 %wide_x, %wide_y
+)");
+}
+
+TEST(LLVMCScalarExpressions, NarrowArithmeticNormalizesBeforeRightShift) {
+  checkScalarLoopExpression(R"(
+  %x = trunc i64 %state to i8
+  %y = trunc i64 %b to i8
+  %difference = sub i8 %x, %y
+  %sum = add i8 %difference, 123
+  %shifted = shl i8 %sum, 1
+  %divided = lshr i8 %shifted, 2
+  %result = zext i8 %divided to i64
+)");
+}
+
+TEST(LLVMCScalarExpressions, WidenedLogicalShiftAcceptsTheFullShiftDomain) {
+  checkScalarLoopExpression(R"(
+  %x = trunc i64 %state to i32
+  %wide = zext i32 %x to i64
+  %amount = and i64 %b, 63
+  %result = lshr i64 %wide, %amount
+)");
+}
+
+TEST(LLVMCScalarExpressions, LowBitFromWideValueCannotWidenWordArithmetic) {
+  checkScalarLoopExpression(R"(
+  %bit = trunc i64 %state to i1
+  %word = zext i1 %bit to i32
+  %wrapped = add i32 %word, -1
+  %result = zext i32 %wrapped to i64
+)");
+}
+
+TEST(LLVMCScalarExpressions, SignedComparisonsRetainSignInterpretation) {
+  for (unsigned Bits : {8, 16, 32}) {
+    SCOPED_TRACE(Bits);
+    const std::string Type = "i" + std::to_string(Bits);
+    checkScalarLoopExpression(
+        "  %x = trunc i64 %state to " + Type + "\n  %y = trunc i64 %b to " +
+        Type + "\n  %less = icmp slt " + Type + " %x, %y\n" +
+        "  %result = select i1 %less, i64 %b, i64 %state\n");
+  }
+  checkScalarLoopExpression(R"(
+  %less = icmp slt i64 %state, %b
+  %result = select i1 %less, i64 %b, i64 %state
+)");
+  checkScalarLoopExpression(R"(
+  %less = icmp sgt i64 %state, -9223372036854775808
+  %result = select i1 %less, i64 %b, i64 %state
+)");
+}
+
+TEST(LLVMCScalarExpressions, SignedExtensionsKeepNegativeBitPatterns) {
+  for (unsigned Bits : {8, 16, 32}) {
+    SCOPED_TRACE(Bits);
+    const std::string Type = "i" + std::to_string(Bits);
+    checkScalarLoopExpression("  %x = trunc i64 %state to " + Type +
+                              "\n  %wide = sext " + Type + " %x to i64\n" +
+                              "  %result = xor i64 %wide, %b\n");
+  }
+}
+
+TEST(LLVMCScalarExpressions, PrecedencePreservesNestedArithmeticAndSelections) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %inner = sub i64 %b, 7
+  %difference = sub i64 %state, %inner
+  %other = add i64 %b, 9
+  %product = mul i64 %difference, %other
+  %bits = and i64 %state, 5
+  %choose = icmp eq i64 %bits, 1
+  %result = select i1 %choose, i64 %product, i64 %b
+)");
+  EXPECT_EQ(Source.find("(uint64_t)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(b - 7ull)"), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions, BooleanArithmeticNormalizesAfterEveryOperation) {
+  checkScalarLoopExpression(R"(
+  %x = trunc i64 %state to i1
+  %y = trunc i64 %b to i1
+  %sum = add i1 %x, %y
+  %result = zext i1 %sum to i64
+)");
+}
+
+TEST(LLVMCScalarExpressions, UnsupportedOperationsUseTheExistingWriter) {
+  checkScalarLoopExpression(R"(
+  %amount = and i64 %b, 63
+  %shifted = ashr i64 %state, %amount
+  %divisor = or i64 %b, 1
+  %result = udiv i64 %shifted, %divisor
+)");
+}
+
+TEST(LLVMCScalarExpressions, DeepExpressionKeepsMaterializedBoundaries) {
+  std::string Body;
+  std::string Previous = "%state";
+  for (unsigned I = 0; I != 96; ++I) {
+    const std::string Name = I == 95 ? "%result" : "%v" + std::to_string(I);
+    Body += "  " + Name + " = " + (I % 2 ? "xor" : "add") + " i64 " + Previous +
+            ", %b\n";
+    Previous = Name;
+  }
+  const auto Source = checkScalarLoopExpression(Body);
+  EXPECT_LT(Source.size(), 20000u);
+  EXPECT_NE(Source.find("uint64_t v"), std::string::npos) << Source;
 }

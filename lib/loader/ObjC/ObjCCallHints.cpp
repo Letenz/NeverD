@@ -1047,6 +1047,45 @@ objcSelectorStubSourceCallHint(const BinaryImage &Image, va_t Address) {
   return Hint;
 }
 
+std::optional<SourceCallTypeHint>
+objcImmutableSelectorStubSourceCallHint(const BinaryImage &Image,
+                                        va_t Address) {
+  const auto H = objcSelectorStubSourceCallHint(Image, Address);
+  const auto V = H ? veneer(Image, Address) : std::nullopt;
+  if (!H || !V || H->Selector.size() > 1024 ||
+      !readImmutableCodeBytes(Image, Address, 20))
+    return std::nullopt;
+  const auto *Code = Image.getSectionFor(Address);
+  const auto *Import = Image.getSectionFor(V->ImportSlot);
+  const auto *Reference = Image.getSectionFor(V->SelectorSlot);
+  if (!Code || !Import || !Reference ||
+      (Code->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_REGULAR ||
+      (Import->Type & llvm::MachO::SECTION_TYPE) !=
+          llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS ||
+      ((Reference->Type & llvm::MachO::SECTION_TYPE) !=
+           llvm::MachO::S_REGULAR &&
+       (Reference->Type & llvm::MachO::SECTION_TYPE) !=
+           llvm::MachO::S_LITERAL_POINTERS) ||
+      !isImmutableImageImportSlot(Image, V->ImportSlot))
+    return std::nullopt;
+  // libobjc may replace the selector reference during registration. Its
+  // original name is structural evidence, never a frozen runtime SEL value.
+  const auto Name = readInitialImageSelectorPointer(Image, V->SelectorSlot);
+  const auto *Text = Name ? Image.getSectionFor(*Name) : nullptr;
+  if (!Text ||
+      ((Text->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_REGULAR &&
+       (Text->Type & llvm::MachO::SECTION_TYPE) !=
+           llvm::MachO::S_CSTRING_LITERALS))
+    return std::nullopt;
+  const auto Bytes =
+      Name ? readImmutableImageBytes(Image, *Name, H->Selector.size() + 1)
+           : std::nullopt;
+  if (!Bytes || Bytes->back() ||
+      !std::equal(H->Selector.begin(), H->Selector.end(), Bytes->begin()))
+    return std::nullopt;
+  return H;
+}
+
 std::optional<ObjCArgumentTailCall>
 objcArgumentTailCall(const BinaryImage &Image, va_t Address) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||

@@ -1,0 +1,30 @@
+//===- AndroidMutex.def - Android API 28 LP64 mutex ABI ------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// ABI facts from android-9.0.0_r1 bits/pthread_types.h, pthread.h and
+// bionic/pthread_mutex.cpp. The model is independently implemented.
+#ifdef NEVERD_ANDROID_MUTEX_VALUE
+NEVERD_ANDROID_MUTEX_VALUE(AttributeBytes, 8)
+NEVERD_ANDROID_MUTEX_VALUE(MutexBytes, 40)
+NEVERD_ANDROID_MUTEX_VALUE(MutexAlignment, 4)
+NEVERD_ANDROID_MUTEX_VALUE(StateBytes, 2)
+NEVERD_ANDROID_MUTEX_VALUE(OwnerOffset, 4)
+NEVERD_ANDROID_MUTEX_VALUE(OwnerBytes, 4)
+NEVERD_ANDROID_MUTEX_VALUE(AttributeType, 0xf)
+NEVERD_ANDROID_MUTEX_VALUE(AttributeShared, 0x10)
+NEVERD_ANDROID_MUTEX_VALUE(AttributeProtocol, 0x20)
+NEVERD_ANDROID_MUTEX_VALUE(Normal, 0)
+NEVERD_ANDROID_MUTEX_VALUE(Recursive, 1)
+NEVERD_ANDROID_MUTEX_VALUE(ErrorChecking, 2)
+NEVERD_ANDROID_MUTEX_VALUE(TypeShift, 14)
+NEVERD_ANDROID_MUTEX_VALUE(Shared, 0x2000)
+NEVERD_ANDROID_MUTEX_VALUE(Counter, 0x1ffc)
+NEVERD_ANDROID_MUTEX_VALUE(CounterStep, 4)
+NEVERD_ANDROID_MUTEX_VALUE(LockState, 3)
+NEVERD_ANDROID_MUTEX_VALUE(Unlocked, 0)
+NEVERD_ANDROID_MUTEX_VALUE(Locked, 1)
+NEVERD_ANDROID_MUTEX_VALUE(Contended, 2)
+NEVERD_ANDROID_MUTEX_VALUE(Destroyed, 0xffff)
+#endif
