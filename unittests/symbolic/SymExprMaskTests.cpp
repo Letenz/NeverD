@@ -189,6 +189,73 @@ TEST(SymExprMask, ExhaustiveSmallWordsMatchOriginalOperations) {
   }
 }
 
+TEST(SymExprMask, RightShiftDiscardsOnlyUnobservedMaskBits) {
+  for (uint32_t W : {1U, 3U, 8U}) {
+    SymContext C;
+    auto X = C.mkVar("x", W);
+    const uint32_t Limit = 1U << W;
+    for (unsigned N = 0; N <= W + 1; ++N) {
+      auto Count = C.mkConst(32, N);
+      auto Direct = C.mkLShr(X, Count);
+      for (unsigned Mask = 0; Mask < Limit; ++Mask) {
+        auto Result = C.mkLShr(C.mkAnd(X, C.mkConst(W, Mask)), Count);
+        const uint32_t Observed = N >= W ? 0 : (Limit - 1) & ~((1U << N) - 1);
+        if ((Mask & Observed) == Observed)
+          EXPECT_EQ(Result, Direct);
+        SymEvalPlan Plan(C, Result);
+        for (unsigned Value = 0; Value < Limit; ++Value)
+          EXPECT_EQ(Plan.evalU64({Value}), N >= W ? 0U : (Value & Mask) >> N);
+      }
+    }
+  }
+}
+
+TEST(SymExprMask, RightShiftMaskKeepsCountsWidthsAndSourceIdentity) {
+  for (uint32_t W : {8U, 16U, 32U, 64U, 128U, 256U}) {
+    SCOPED_TRACE(W);
+    SymContext C;
+    auto X = C.mkVar("x", W), Y = C.mkVar("y", W);
+    const unsigned N = W / 4;
+    auto Count = C.mkConst(32, N);
+    auto Mask = llvm::APInt::getHighBitsSet(W, W - N);
+    auto Source = C.mkAnd(X, C.mkConst(Mask));
+    EXPECT_EQ(C.mkLShr(Source, Count), C.mkLShr(X, Count));
+    EXPECT_NE(C.mkLShr(Source, Count), C.mkLShr(Y, Count));
+    Mask.clearBit(W - 1);
+    EXPECT_NE(C.mkLShr(C.mkAnd(X, C.mkConst(Mask)), Count), C.mkLShr(X, Count));
+    auto VariableCount = C.mkVar("count", 32);
+    EXPECT_NE(C.mkLShr(Source, VariableCount), C.mkLShr(X, VariableCount));
+    EXPECT_NE(C.mkLShr(Source, C.mkConst(32, N - 1)),
+              C.mkLShr(X, C.mkConst(32, N - 1)));
+    auto Huge = C.mkConst(llvm::APInt::getOneBitSet(256, 200));
+    EXPECT_EQ(C.mkLShr(Source, Huge), C.mkZero(W));
+  }
+}
+
+TEST(SymExprMask, RightShiftConstantCountsHaveOneWidthIndependentIdentity) {
+  for (uint32_t W : Widths) {
+    SymContext C;
+    auto X = C.mkVar("x", W);
+    for (unsigned N : {0U, W / 2, W - 1, W, W + 1}) {
+      auto Short = C.mkConst(16, N), Long = C.mkConst(256, N);
+      EXPECT_EQ(C.mkLShr(X, Short), C.mkLShr(X, Long));
+      EXPECT_EQ(C.mkAShr(X, Short), C.mkAShr(X, Long));
+    }
+    auto Huge = C.mkConst(llvm::APInt::getOneBitSet(256, 200));
+    EXPECT_EQ(C.mkLShr(X, Huge), C.mkZero(W));
+    EXPECT_EQ(C.mkAShr(X, Huge), C.mkAShr(X, C.mkConst(32, W - 1)));
+  }
+  SymContext C;
+  auto X = C.mkVar("x", 8);
+  auto One = C.mkConst(1, 1), Three = C.mkConst(8, 3);
+  auto Large = C.mkConst(16, 257);
+  EXPECT_NE(C.mkLShr(X, One), C.mkLShr(X, Three));
+  EXPECT_NE(C.mkAShr(X, One), C.mkAShr(X, Three));
+  EXPECT_EQ(C.evalU64(C.mkLShr(X, Large), {128}), 0U);
+  EXPECT_EQ(C.evalU64(C.mkAShr(X, Large), {128}), 255U);
+  EXPECT_EQ(C.evalU64(C.mkAShr(X, One), {128}), 192U);
+}
+
 TEST(SymExprMask, SharedDeepSourcesAreOpaqueAndMBARequiresNoSamples) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", 32);

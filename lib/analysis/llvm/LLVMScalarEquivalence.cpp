@@ -31,9 +31,11 @@ struct Failure {
 
 struct Budget {
   uint64_t Remaining;
+  bool Exceeded = false;
   void spend(uint64_t N = 1) {
     if (N > Remaining) {
       Remaining = 0;
+      Exceeded = true;
       throw Failure{Status::BudgetExceeded,
                     "scalar proof work budget exhausted"};
     }
@@ -62,16 +64,21 @@ class Executor {
         std::min<uint64_t>(Work.Remaining, sym::SymKnownBits::MaxQueryWork));
     unsigned Remaining = Available;
     auto K = C.constantWindow(R, Low, Width, Remaining);
+    bool Complete = bool(K);
     if (!K && Width && Low <= C.width(R) && Width <= C.width(R) - Low) {
       if (auto Facts = BitFacts.query(R, Remaining)) {
+        Complete = true;
         auto Slice = Facts->extractBits(Width, Low);
         if (Slice.isConstant())
           K = Slice.One;
       }
     }
     Work.spend(Available - Remaining);
-    // The final value comparison has no later traversal to detect exhaustion.
-    if (!K && !Work.Remaining)
+    // An incomplete final query has no later traversal to detect exhaustion.
+    // Completed unknown facts, however, are an ordinary refusal even when
+    // they consume the last available unit.
+    if (!Complete && !Work.Remaining &&
+        Available < sym::SymKnownBits::MaxQueryWork)
       Work.spend();
     return K;
   }
@@ -418,6 +425,7 @@ checkLLVMScalarEquivalence(const llvm::Function &Original,
     Result.Diagnostic = E.Message;
   }
   Result.Work = Limits.MaxWork - Work.Remaining;
+  Result.WorkLimitExceeded = Work.Exceeded;
   Result.ControlBits.assign(Domain.begin(), Domain.end());
   return Result;
 }

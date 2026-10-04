@@ -120,7 +120,7 @@ static void maskProbeData(Function &F, ArrayRef<LLVMScalarControlBit> Bits) {
   }
 }
 
-bool Search::accept(Candidate &C) {
+bool Search::screen(Candidate &C, Cost *CandidateCost) {
   if (stopped() || !charge(size(*C.Function)))
     return false;
   ++Result.Candidates;
@@ -134,6 +134,8 @@ bool Search::accept(Candidate &C) {
   auto NewCost = cost(*C.Function);
   if (!(NewCost < CurrentCost))
     return false;
+  if (CandidateCost)
+    *CandidateCost = NewCost;
   // A zero-data query across the complete source control domain is only a
   // rejection filter. Bad region guesses can otherwise grow symbolic data
   // for thousands of iterations before their first counterexample. All input
@@ -150,9 +152,17 @@ bool Search::accept(Candidate &C) {
                                  *Probe.Function, ProbeLimits);
   Result.ProofWork += Screen.Work;
   if (Screen.Status != LLVMScalarEquivalenceStatus::Proved) {
-    Exhausted |= Result.ProofWork == Limits.MaxProofWork;
+    Exhausted |=
+        Screen.WorkLimitExceeded && Result.ProofWork == Limits.MaxProofWork;
     return false;
   }
+  return true;
+}
+
+bool Search::accept(Candidate &C) {
+  Cost NewCost;
+  if (!screen(C, &NewCost))
+    return false;
   auto ProofLimits = Limits.Proof;
   ProofLimits.MaxControlBits = ControlBitLimit;
   ProofLimits.MaxWork =
@@ -166,9 +176,17 @@ bool Search::accept(Candidate &C) {
   if (Proof.Status != LLVMScalarEquivalenceStatus::Proved) {
     // A candidate may exceed its own path/node/query ceiling. It authorizes
     // no change, but other proposals can still fit the shared search budget.
-    Exhausted |= Result.ProofWork == Limits.MaxProofWork;
+    Exhausted |=
+        Proof.WorkLimitExceeded && Result.ProofWork == Limits.MaxProofWork;
     return false;
   }
+  if (!charge(DeferredSeeds.size()))
+    return false;
+  SmallPtrSet<PHINode *, 16> MappedSeeds;
+  for (auto *P : DeferredSeeds)
+    if (auto *Mapped = dyn_cast_or_null<PHINode>(C.map(P)))
+      MappedSeeds.insert(Mapped);
+  DeferredSeeds = std::move(MappedSeeds);
   Accepted = std::move(C.Module);
   CurrentCost = NewCost;
   return true;
@@ -217,7 +235,7 @@ LLVMScalarLoopRecoveryResult Search::run() {
       ProbeSource = std::move(Probe.Module);
     }
   }
-  for (unsigned Phase = 0; Phase < 4 && !stopped(); ++Phase) {
+  for (unsigned Phase = 0; Phase < 5 && !stopped(); ++Phase) {
     while (!stopped()) {
       if (Result.ProvedTransforms >= Limits.MaxTransforms) {
         Exhausted = true;
@@ -242,6 +260,9 @@ LLVMScalarLoopRecoveryResult Search::run() {
           break;
         case 3:
           Changed = affine(*this, F, LI);
+          break;
+        case 4:
+          Changed = seeds(*this, F, DT, LI);
           break;
         }
       }

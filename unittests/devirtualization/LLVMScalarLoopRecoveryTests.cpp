@@ -192,6 +192,26 @@ body:
 exit: ret i32 %v
 })";
 
+constexpr char EntrySeed[] = R"(
+define i32 @f(i32 noundef %x, i8 noundef %n) {
+entry:
+ %bound = and i8 %n, 3
+ %seed = and i32 %x, 255
+ br label %head
+head:
+ %carried = phi i32 [%seed, %entry], [%masked, %body]
+ %i = phi i8 [0, %entry], [%next, %body]
+ %v = phi i32 [%x, %entry], [%sum, %body]
+ %more = icmp ult i8 %i, %bound
+ br i1 %more, label %body, label %exit
+body:
+ %masked = and i32 %carried, 255
+ %sum = add i32 %v, %carried
+ %next = add nuw i8 %i, 1
+ br label %head
+exit: ret i32 %v
+})";
+
 void replace(std::string &IR, llvm::StringRef From, llvm::StringRef To) {
   auto At = IR.find(From.str());
   ASSERT_NE(At, std::string::npos) << From.str();
@@ -515,6 +535,215 @@ TEST(LLVMScalarLoopRecovery, GuardAndUnitSearchKeepCumulativeBudgets) {
   EXPECT_FALSE(R.Module);
 }
 
+TEST(LLVMScalarLoopRecovery, EntryValueCanReplaceAProvedRedundantCarrier) {
+  Source Input(EntrySeed);
+  auto R = recover(Input);
+  ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+  auto IR = text(*R.Module);
+  EXPECT_EQ(IR.find("%carried = phi"), std::string::npos);
+  EXPECT_NE(IR.find("%seed = and i32 %x, 255"), std::string::npos);
+  EXPECT_NE(IR.find("%i = phi"), std::string::npos);
+}
+
+TEST(LLVMScalarLoopRecovery, EntryAgreementCannotEraseLaterHighData) {
+  std::string IR = EntrySeed;
+  replace(IR, "%masked = and i32 %carried, 255",
+          "%high = lshr i32 %x, 16\n %masked = or i32 %carried, %high");
+  Source Input(IR);
+  auto R = recover(Input);
+  EXPECT_EQ(R.Status, RecoveryStatus::Unchanged);
+  EXPECT_GT(R.Candidates, 0U);
+  EXPECT_FALSE(R.Module);
+}
+
+TEST(LLVMScalarLoopRecovery, SeedProposalsPreserveParallelSwaps) {
+  Source Input(R"(
+define i32 @f(i32 noundef %x, i8 noundef %n) {
+entry:
+ %bound = and i8 %n, 3
+ %other = xor i32 %x, 61
+ br label %head
+head:
+ %a = phi i32 [%x, %entry], [%b, %body]
+ %b = phi i32 [%other, %entry], [%a, %body]
+ %i = phi i8 [0, %entry], [%next, %body]
+ %more = icmp ult i8 %i, %bound
+ br i1 %more, label %body, label %exit
+body:
+ %next = add nuw i8 %i, 1
+ br label %head
+exit: ret i32 %a
+})");
+  auto R = recover(Input);
+  EXPECT_EQ(R.Status, RecoveryStatus::Unchanged);
+  EXPECT_GT(R.Candidates, 0U);
+  EXPECT_FALSE(R.Module);
+}
+
+TEST(LLVMScalarLoopRecovery, FailedSeedBatchSplitsBeforeAcceptingTwoCarriers) {
+  std::string IR = EntrySeed;
+  replace(IR, "%seed = and i32 %x, 255",
+          "%seed = and i32 %x, 255\n %other.seed = and i32 %x, 65280");
+  replace(IR,
+          " %carried = phi i32 [%seed, %entry], [%masked, %body]\n"
+          " %i = phi i8 [0, %entry], [%next, %body]\n"
+          " %v = phi i32 [%x, %entry], [%sum, %body]",
+          " %v = phi i32 [%x, %entry], [%sum, %body]\n"
+          " %carried = phi i32 [%seed, %entry], [%masked, %body]\n"
+          " %other = phi i32 [%other.seed, %entry], [%other.masked, %body]\n"
+          " %i = phi i8 [0, %entry], [%next, %body]");
+  replace(IR, "%sum = add i32 %v, %carried",
+          "%other.masked = and i32 %other, 65280\n"
+          " %both = add i32 %carried, %other\n %sum = add i32 %v, %both");
+  Source Input(IR);
+  auto R = recover(Input);
+  ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+  // Zero data cannot distinguish the live sum from either invariant. The
+  // full batch must fail, then the two valid replacements can pass together.
+  EXPECT_EQ(R.ProvedTransforms, 1U);
+  auto Output = text(*R.Module);
+  EXPECT_EQ(Output.find("%carried = phi"), std::string::npos);
+  EXPECT_EQ(Output.find("%other = phi"), std::string::npos);
+  EXPECT_NE(Output.find("%v = phi"), std::string::npos);
+}
+
+TEST(LLVMScalarLoopRecovery, SeedBatchChunksContinuePastTheFirstGroup) {
+  std::string IR = R"(
+define i32 @f(i32 noundef %x, i8 noundef %n) {
+entry:
+ %bound = and i8 %n, 3
+ %seed = and i32 %x, 255
+ br label %head
+head:
+)";
+  for (unsigned I = 0; I < 35; ++I) {
+    auto N = std::to_string(I);
+    IR += "%field" + N + " = phi i32 [%seed, %entry], [%masked" + N +
+          ", %body]\n";
+  }
+  IR += R"(
+ %i = phi i8 [0, %entry], [%next, %body]
+ %more = icmp ult i8 %i, %bound
+ br i1 %more, label %body, label %exit
+body:
+)";
+  for (unsigned I = 0; I < 35; ++I) {
+    auto N = std::to_string(I);
+    IR += "%masked" + N + " = and i32 %field" + N + ", 255\n";
+  }
+  IR += "%next = add nuw i8 %i, 1\n br label %head\nexit:\n";
+  std::string Sum = "%field0";
+  for (unsigned I = 1; I < 35; ++I) {
+    auto N = std::to_string(I);
+    IR += "%sum" + N + " = add i32 " + Sum + ", %field" + N + "\n";
+    Sum = "%sum" + N;
+  }
+  IR += "ret i32 " + Sum + "\n}";
+  Source Input(IR);
+  auto R = recover(Input);
+  ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+  EXPECT_GE(R.ProvedTransforms, 2U);
+  EXPECT_EQ(text(*R.Module).find("%field"), std::string::npos);
+}
+
+TEST(LLVMScalarLoopRecovery, SeedReplacementMustPreserveEveryBackedge) {
+  constexpr char IR[] = R"(
+define i32 @f(i32 noundef %x, i8 noundef %n) {
+entry:
+ %bound = and i8 %n, 3
+ %seed = and i32 %x, 255
+ br label %head
+head:
+ %carried = phi i32 [%seed, %entry], [%left.value, %left], [%right.value, %right]
+ %i = phi i8 [0, %entry], [%next, %left], [%next, %right]
+ %more = icmp ult i8 %i, %bound
+ br i1 %more, label %body, label %exit
+body:
+ %next = add nuw i8 %i, 1
+ %bit = and i8 %i, 1
+ %odd = icmp ne i8 %bit, 0
+ br i1 %odd, label %right, label %left
+left:
+ %left.value = and i32 %carried, 255
+ br label %head
+right:
+ %right.value = and i32 %carried, 255
+ br label %head
+exit: ret i32 %carried
+})";
+  Source Input(IR);
+  auto R = recover(Input);
+  ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+  EXPECT_EQ(text(*R.Module).find("%carried = phi"), std::string::npos);
+  for (bool Poison : {false, true}) {
+    std::string Bad = IR;
+    replace(Bad, "%right.value = and i32 %carried, 255",
+            Poison ? "%right.value = add nuw i32 %carried, -1"
+                   : "%right.value = xor i32 %carried, 43");
+    Source Other(Bad);
+    auto Kept = recover(Other);
+    EXPECT_EQ(Kept.Status,
+              Poison ? RecoveryStatus::Unsupported : RecoveryStatus::Unchanged);
+    EXPECT_FALSE(Kept.Module);
+  }
+}
+
+TEST(LLVMScalarLoopRecovery, EveryExternalEntryMustSupplyTheSameSeed) {
+  constexpr char IR[] = R"(
+define i32 @f(i32 noundef %x, i8 noundef %n) {
+entry:
+ %bound = and i8 %n, 3
+ %seed = and i32 %x, 255
+ %alternate = xor i32 %seed, 43
+ %bit = and i8 %n, 1
+ %choose = icmp eq i8 %bit, 0
+ br i1 %choose, label %left, label %right
+left: br label %head
+right: br label %head
+head:
+ %carried = phi i32 [%seed, %left], [%seed, %right], [%masked, %body]
+ %i = phi i8 [0, %left], [0, %right], [%next, %body]
+ %more = icmp ult i8 %i, %bound
+ br i1 %more, label %body, label %exit
+body:
+ %masked = and i32 %carried, 255
+ %next = add nuw i8 %i, 1
+ br label %head
+exit: ret i32 %carried
+})";
+  Source Same(IR);
+  auto R = recover(Same);
+  ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+  EXPECT_EQ(text(*R.Module).find("%carried = phi"), std::string::npos);
+  std::string Different = IR;
+  replace(Different, "[%seed, %right]", "[%alternate, %right]");
+  Source Other(Different);
+  auto Kept = recover(Other);
+  EXPECT_EQ(Kept.Status, RecoveryStatus::Unchanged);
+  EXPECT_FALSE(Kept.Module);
+}
+
+TEST(LLVMScalarLoopRecovery, SeedSearchBudgetsRemainAtomic) {
+  Source Input(EntrySeed);
+  auto Base = recover(Input);
+  ASSERT_EQ(Base.Status, RecoveryStatus::Recovered) << Base.Diagnostic;
+  for (bool Proof : {false, true}) {
+    LLVMScalarLoopRecoveryLimits L;
+    auto &Budget = Proof ? L.MaxProofWork : L.MaxConstructionWork;
+    Budget = Proof ? Base.ProofWork : Base.ConstructionWork;
+    EXPECT_EQ(recover(Input, L).Status, RecoveryStatus::Recovered) << Proof;
+    --Budget;
+    auto Short = recover(Input, L);
+    EXPECT_NE(Short.Status, RecoveryStatus::Recovered);
+    EXPECT_FALSE(Short.Module);
+  }
+  LLVMScalarLoopRecoveryLimits L;
+  L.MaxCandidates = 1;
+  auto Short = recover(Input, L);
+  EXPECT_EQ(Short.Status, RecoveryStatus::BudgetExceeded);
+  EXPECT_FALSE(Short.Module);
+}
+
 TEST(LLVMScalarLoopRecovery, RefusesMemoryAndUndefinedInputContracts) {
   for (const char *IR :
        {"define i8 @f(i8 %x) { ret i8 %x }",
@@ -688,7 +917,8 @@ TEST_F(LLVMScalarLoopCompiled, OriginalAndRecoveredMatchIndependentOracles) {
       {WidenedLast, "uint32_t", "x + 37u * (n & 7u)"},
       {NarrowZero.c_str(), "uint32_t", "(x + 46u * (n & 3u)) ^ 1u"},
       {LateUnit, "uint32_t",
-       "x + 7u * (n & 7u) + 19u * (n & 7u) * ((n & 7u) - 1u) / 2u"}};
+       "x + 7u * (n & 7u) + 19u * (n & 7u) * ((n & 7u) - 1u) / 2u"},
+      {EntrySeed, "uint32_t", "x + (x & 255u) * (n & 3u)"}};
   unsigned Number = 0;
   for (auto Case : Cases) {
     SCOPED_TRACE(Number++);
