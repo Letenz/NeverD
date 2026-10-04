@@ -1,0 +1,71 @@
+//===- X64PackedFloatIntegerCases.def - Packed SSE float to signed integer -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PACKED_FLOAT_INT_OPERATION
+// Name, prefix, opcode, source width, lanes, truncation, alignment.
+NEVERD_PACKED_FLOAT_INT_OPERATION(CVTPS2DQ, 0x66, 0x5b, 32, 4, false, 16)
+NEVERD_PACKED_FLOAT_INT_OPERATION(CVTTPS2DQ, 0xf3, 0x5b, 32, 4, true, 16)
+NEVERD_PACKED_FLOAT_INT_OPERATION(CVTPD2DQ, 0xf2, 0xe6, 64, 2, false, 16)
+NEVERD_PACKED_FLOAT_INT_OPERATION(CVTTPD2DQ, 0x66, 0xe6, 64, 2, true, 16)
+#endif
+#ifdef NEVERD_PACKED_FLOAT_INT_VALUE
+NEVERD_PACKED_FLOAT_INT_VALUE(OpcodeMap, 0x0f)
+NEVERD_PACKED_FLOAT_INT_VALUE(Rex, 0x40)
+NEVERD_PACKED_FLOAT_INT_VALUE(RexDestination, 0x04)
+NEVERD_PACKED_FLOAT_INT_VALUE(RexSource, 0x01)
+NEVERD_PACKED_FLOAT_INT_VALUE(RegisterMask, 0x07)
+NEVERD_PACKED_FLOAT_INT_VALUE(RegisterShift, 3)
+NEVERD_PACKED_FLOAT_INT_VALUE(RegisterModRM, 0xc0)
+NEVERD_PACKED_FLOAT_INT_VALUE(InitialMXCSR, 0x1f80)
+NEVERD_PACKED_FLOAT_INT_VALUE(InvalidStatus, 0x01)
+NEVERD_PACKED_FLOAT_INT_VALUE(PrecisionStatus, 0x20)
+NEVERD_PACKED_FLOAT_INT_VALUE(ExistingStatus, 0x3f)
+NEVERD_PACKED_FLOAT_INT_VALUE(FlushToZero, 0x8000)
+NEVERD_PACKED_FLOAT_INT_VALUE(RoundingMask, 0x6000)
+NEVERD_PACKED_FLOAT_INT_VALUE(RoundingShift, 13)
+NEVERD_PACKED_FLOAT_INT_VALUE(PhysicalExponent, 0x3fff)
+NEVERD_PACKED_FLOAT_INT_VALUE(SingleBits, 32)
+NEVERD_PACKED_FLOAT_INT_VALUE(DoubleBits, 64)
+NEVERD_PACKED_FLOAT_INT_VALUE(PatternStride, 37)
+NEVERD_PACKED_FLOAT_INT_VALUE(ClearFlags, 0x202)
+NEVERD_PACKED_FLOAT_INT_VALUE(DirectionFlag, 0x400)
+#endif
+#ifdef NEVERD_PACKED_FLOAT_INT_INPUT
+// Adjacent double payloads around signed32 rounding boundaries. The single
+// inputs cannot represent these fractions and must raise invalid instead.
+NEVERD_PACKED_FLOAT_INT_INPUT(BelowMaximumHalf, 0x4f000000, 0x41dfffffffdfffffULL)
+NEVERD_PACKED_FLOAT_INT_INPUT(AboveMaximumHalf, 0x4f000000, 0x41dfffffffe00001ULL)
+NEVERD_PACKED_FLOAT_INT_INPUT(AboveMinimumHalf, 0xcf000000, 0xc1e00000000fffffULL)
+NEVERD_PACKED_FLOAT_INT_INPUT(BelowMinimumHalf, 0xcf000000, 0xc1e0000000100001ULL)
+#endif
+#ifdef NEVERD_PACKED_FLOAT_INT_MIXED_INPUT
+// Independently vary exact, inexact, invalid and subnormal lanes.
+NEVERD_PACKED_FLOAT_INT_MIXED_INPUT(One)
+NEVERD_PACKED_FLOAT_INT_MIXED_INPUT(OneHalf)
+NEVERD_PACKED_FLOAT_INT_MIXED_INPUT(QuietNaN)
+NEVERD_PACKED_FLOAT_INT_MIXED_INPUT(MinSubnormal)
+#endif
+#ifdef NEVERD_PACKED_FLOAT_INT_BYTES
+// Fourth oracle argument is {128-bit memory source, FLAGS}; preserve host DF.
+NEVERD_PACKED_FLOAT_INT_BYTES(BeforeConversion, 0x9c, 0xff, 0x71, 0x10, 0x9d)
+NEVERD_PACKED_FLOAT_INT_BYTES(AfterConversion, 0x9c, 0x58, 0x9d)
+#endif
+#ifdef NEVERD_PACKED_FLOAT_INT_INVALID
+NEVERD_PACKED_FLOAT_INT_INVALID(VexPS, 0xc5, 0xf9, 0x5b, 0xc1)
+NEVERD_PACKED_FLOAT_INT_INVALID(VexTruncatePS, 0xc5, 0xfa, 0x5b, 0x01)
+NEVERD_PACKED_FLOAT_INT_INVALID(VexPD, 0xc5, 0xfb, 0xe6, 0xc1)
+NEVERD_PACKED_FLOAT_INT_INVALID(VexTruncatePD, 0xc5, 0xf9, 0xe6, 0x01)
+NEVERD_PACKED_FLOAT_INT_INVALID(EvexPS, 0x62, 0xf1, 0x7d, 0x08, 0x5b, 0xc1)
+NEVERD_PACKED_FLOAT_INT_INVALID(EvexTruncatePS, 0x62, 0xf1, 0x7e, 0x08, 0x5b, 0x01)
+NEVERD_PACKED_FLOAT_INT_INVALID(EvexPD, 0x62, 0xf1, 0xff, 0x08, 0xe6, 0xc1)
+NEVERD_PACKED_FLOAT_INT_INVALID(EvexTruncatePD, 0x62, 0xf1, 0xfd, 0x08, 0xe6, 0x01)
+NEVERD_PACKED_FLOAT_INT_INVALID(PSToMMX, 0x0f, 0x2d, 0xc0)
+NEVERD_PACKED_FLOAT_INT_INVALID(PDToMMX, 0x66, 0x0f, 0x2d, 0xc0)
+NEVERD_PACKED_FLOAT_INT_INVALID(TruncatePSToMMX, 0x0f, 0x2c, 0xc0)
+NEVERD_PACKED_FLOAT_INT_INVALID(TruncatePDToMMX, 0x66, 0x0f, 0x2c, 0xc0)
+#endif
+#ifdef NEVERD_PACKED_FLOAT_INT_TEXT
+NEVERD_PACKED_FLOAT_INT_TEXT(ObserverError, "packed float to integer observer failure")
+#endif
