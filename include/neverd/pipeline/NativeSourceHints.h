@@ -60,6 +60,10 @@ bool validateSwiftOpaqueValueBindings(
     const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
     const NativeSourceCalleeContracts *Callees);
 
+bool validateSwiftValueConstructorBindings(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    const NativeSourceCalleeContracts *Callees);
+
 /// Collect exact native call ABIs already bound in one MedIR caller. This is
 /// physical input evidence for the Boolean difference and immutable-target
 /// proofs, not a source-body certificate. Indirect receipts retain their

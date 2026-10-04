@@ -1,6 +1,8 @@
 #ifndef NEVERD_SDK_CAPI_SOURCEEXPRESSIONIDENTITY_H
 #define NEVERD_SDK_CAPI_SOURCEEXPRESSIONIDENTITY_H
 
+#include "../../loader/SourceUnwind.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
 
@@ -155,6 +157,39 @@ inline bool sameStructuredSourceBody(const HighFunc &Expected,
     return true;
   };
   return Compare(Compare, Expected.Body, Actual.Body, 0);
+}
+
+// Complete metadata and structured-body comparison. Annotation owners supply
+// their own expression policy; this never treats one owner's receipts as
+// permissions for another source projection.
+template <class EqualExpression>
+inline bool sameCompleteSourceBody(const HighFunc &E, const HighFunc &A,
+                                   EqualExpression Equal, size_t &Budget) {
+  if (!E.SourceTypeHint || !A.SourceTypeHint ||
+      !equalSourceABIs(*E.SourceTypeHint, *A.SourceTypeHint) ||
+      !equalSourceTypes(E.ReturnType, A.ReturnType) || E.Entry != A.Entry ||
+      E.FrameSize != A.FrameSize || E.FrameHeadroom != A.FrameHeadroom ||
+      E.Params.size() != A.Params.size() || E.DoesNotReturn ||
+      A.DoesNotReturn ||
+      bool(E.ExceptionMetadata) != bool(A.ExceptionMetadata) ||
+      (E.ExceptionMetadata && (!isPlainSourceUnwind(*E.ExceptionMetadata) ||
+                               !isPlainSourceUnwind(*A.ExceptionMetadata))) ||
+      E.StructuredExceptionRegions || A.StructuredExceptionRegions ||
+      E.UnstructuredExceptionRegions || A.UnstructuredExceptionRegions ||
+      E.RegisterCopyProjections != A.RegisterCopyProjections ||
+      E.ClassGetterCallFacts != A.ClassGetterCallFacts ||
+      E.Locals.size() != A.Locals.size())
+    return false;
+  for (size_t I = 0; I < E.Params.size(); ++I)
+    if (E.Params[I].Name != A.Params[I].Name ||
+        !equalSourceTypes(E.Params[I].Type, A.Params[I].Type))
+      return false;
+  for (size_t I = 0; I < E.Locals.size(); ++I)
+    if (E.Locals[I].Name != A.Locals[I].Name ||
+        E.Locals[I].StackOff != A.Locals[I].StackOff ||
+        !equalSourceTypes(E.Locals[I].Type, A.Locals[I].Type))
+      return false;
+  return sameStructuredSourceBody(E, A, Equal, Budget);
 }
 
 } // namespace neverd::sdk

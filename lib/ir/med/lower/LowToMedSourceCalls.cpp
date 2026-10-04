@@ -1,6 +1,7 @@
 #include "../../../loader/Swift/SwiftBooleanProjection.h"
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../../loader/Swift/SwiftMangledValueConstructorABI.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -185,6 +186,11 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
           ? buildSwiftOpaqueValueCallHints(*Image, Low, *SourceCalleeTypeHints,
                                            *SourceCalleeFunctions)
           : std::map<va_t, SourceCallTypeHint>{};
+  const auto ConstructorHints =
+      Image && SourceCalleeFunctions && SourceCalleeTypeHints
+          ? buildSwiftFixedRecordConstructorCallHints(
+                *Image, Low, *SourceCalleeTypeHints, *SourceCalleeFunctions)
+          : std::map<va_t, SourceCallTypeHint>{};
   const auto &TRI = getTargetRegInfo(TargetArch);
   auto Temporary = [&](uint16_t Size) {
     MedVar V;
@@ -259,6 +265,13 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         }
       }
       if (Hint) {
+        const auto Constructor = ConstructorHints.find(Op.Addr);
+        if (Constructor != ConstructorHints.end() &&
+            Hint->CallKind == Constructor->second.CallKind &&
+            Hint->TargetAddress == Constructor->second.TargetAddress &&
+            equalSourceABIs(Hint->Signature, Constructor->second.Signature))
+          Hint->SwiftValueConstructor =
+              Constructor->second.SwiftValueConstructor;
         const auto Found = OpaqueHints.find(Op.Addr);
         if (Found != OpaqueHints.end() &&
             Hint->CallKind == Found->second.CallKind &&

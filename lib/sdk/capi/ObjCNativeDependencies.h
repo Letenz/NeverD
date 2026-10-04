@@ -1,6 +1,7 @@
 #ifndef NEVERD_SDK_CAPI_OBJCNATIVEDEPENDENCIES_H
 #define NEVERD_SDK_CAPI_OBJCNATIVEDEPENDENCIES_H
 
+#include "../../loader/Swift/SwiftMangledValueConstructorABI.h"
 #include "ObjCNativeSourceCallCallees.h"
 #include "SwiftMangledSourceABI.h"
 #include "SwiftMergedArrayBufferSourceABI.h"
@@ -272,6 +273,12 @@ inline size_t inferObjCNativeDependencies(
         A->second->UnsupportedInstructions.empty() &&
         A->second->TruncatedPaths.empty();
     if (CompleteMangledAudit) {
+      if (auto Constructor =
+              swiftFixedRecordConstructorEntryABI(Image, *L->second)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Constructor));
+        ++Added;
+        continue;
+      }
       if (auto Mangled = swiftMergedURLArrayBufferSourceABI(
               Image, Target, Result, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
