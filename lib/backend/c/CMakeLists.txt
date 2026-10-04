@@ -9,6 +9,7 @@ add_neverd_component_library(NeverDBackendC
   LLVMC/LLVMCExprWriter.cpp
   LLVMC/LLVMCFuncWriter.cpp
   LLVMC/LLVMCScalarRegions.cpp
+  LLVMC/LLVMCScalarExpressions.cpp
   LLVMC/LLVMCStmtWriter.cpp
   pass/HighC/HighCDeadStoreAnalysis.cpp
   pass/HighC/HighCHiLoCollapse.cpp

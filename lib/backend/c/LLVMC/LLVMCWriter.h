@@ -135,6 +135,11 @@ public:
   /// Refusal leaves both the output and writer state unchanged.
   bool tryWriteScalarRegions(llvm::Function &Fn, int Indent);
   void coalesceScalarPhiNames(llvm::Function &Fn);
+  /// Typed pure-integer expressions for the admitted scalar source contract.
+  /// Unknown nodes or exhausted bounds keep the existing expression writer.
+  std::optional<std::string> scalarExpressionText(const llvm::Value *V,
+                                                  bool ForceExpression = false,
+                                                  bool InvertCompare = false);
 
   static bool isCallClobberName(llvm::StringRef Name) {
     return Name.contains("_call_clobber");
@@ -649,6 +654,7 @@ public:
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;
   mutable std::map<const llvm::Value *, std::string> KnownImmediates;
+  bool UseScalarExpressionTypes = false;
   mutable std::set<const llvm::Value *> ActiveImmediateFolds;
   mutable unsigned ImmediateFoldWork = 0;
   mutable const llvm::Function *LocalLoadValuesFor = nullptr;

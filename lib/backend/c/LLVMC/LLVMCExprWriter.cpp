@@ -2337,6 +2337,9 @@ void LLVMCWriter::markIndirectCalleeChains(llvm::Function &Fn) {
 std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   if (PointerSpelling)
     *PointerSpelling = false;
+  if (UseScalarExpressionTypes)
+    if (auto Text = scalarExpressionText(V))
+      return *Text;
   if (MaterializedExpressions.count(V)) {
     if (PointerSpelling)
       *PointerSpelling = V->getType()->isPointerTy();
@@ -2823,6 +2826,9 @@ std::string LLVMCWriter::logicalShiftLhs(const llvm::Instruction &Shift,
 }
 
 std::string LLVMCWriter::icmpInlineText(const llvm::ICmpInst &CI, bool Invert) {
+  if (UseScalarExpressionTypes)
+    if (auto Text = scalarExpressionText(&CI, /*ForceExpression=*/true, Invert))
+      return peelOperandWrap(*Text);
   const auto Predicate = Invert ? CI.getInversePredicate() : CI.getPredicate();
   std::string LHS =
       peelOperandWrap(comparedOperandText(CI.getOperand(0), CI.getOperand(1)));
