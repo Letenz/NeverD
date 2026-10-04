@@ -71,6 +71,7 @@ static const Operation *Current;
 static U8 *Memory;
 static U64 Operand;
 static U32 Calls, Op, Case, Repair;
+static U32 CompletedScenarios, CompletedRetries, ValidatedFaults;
 
 static void require(int Valid, U32 Site) {
   if (Valid)
@@ -84,7 +85,7 @@ static U32 observe(Pointers *Pointers) {
   const Record *R = Pointers->Record;
   U8 *C = Pointers->Context;
   require(!Calls++ && R && C && R->Code == (U32)AccessViolation && !R->Flags &&
-              !R->Nested && R->Count == 2 &&
+              !R->Nested && R->Count == AccessViolationParameters &&
               R->Address == (void *)Current->Fault &&
               *(U64 *)(C + ContextPC) == (U64)Current->Fault &&
               *(U64 *)(C + ContextPointer) == Operand &&
@@ -98,6 +99,7 @@ static U32 observe(Pointers *Pointers) {
   require(R->Arguments[0] == (PageFault ? Current->Store : 0) &&
               R->Arguments[1] == (PageFault ? Operand : WrappedAddress),
           SiteContext);
+  ++ValidatedFaults;
   if (Repair)
     *(U64 *)(C + ContextPointer) = (U64)Memory;
   else
@@ -159,6 +161,7 @@ void entry(void) {
               SiteProtection);
       for (U32 I = 0; I < PageBytes / sizeof(U64); ++I)
         require(((U64 *)Memory)[I] == (VectorHigh ^ I), SiteMemory);
+      ++CompletedScenarios;
     }
     // Repair the operand in CONTEXT and retry the same faulting instruction.
     for (U32 I = 0; I < VectorBytes; ++I)
@@ -175,11 +178,17 @@ void entry(void) {
     require(((U64 *)Memory)[0] == (Current->Store ? VectorLow : 0) &&
                 ((U64 *)Memory)[1] == (Current->Store ? VectorHigh : 0),
             SiteMemory);
+    ++CompletedRetries;
   }
+  require(CompletedScenarios == OperationCount * ScenarioCount &&
+              CompletedRetries == OperationCount &&
+              ValidatedFaults == CompletedScenarios + CompletedRetries,
+          SiteOutput);
   require(RemoveVectoredExceptionHandler(Handler) &&
               VirtualFree(Memory, 0, MemRelease),
           SiteCleanup);
-  U32 Result[] = {OperationCount, ScenarioCount, OperationCount}, Written;
+  U32 Result[] = {CompletedScenarios, CompletedRetries, ValidatedFaults},
+      Written;
   require(WriteFile(GetStdHandle(StdoutSelector), Result, sizeof(Result),
                     &Written, 0) &&
               Written == sizeof(Result),
