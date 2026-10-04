@@ -1188,3 +1188,5 @@ libswiftCore 的精确强导入 `Array._allocateBufferUninitialized(minimumCapac
 匿名 C 结构体名称包含每个整数字段的符号和位宽，以及指针字段的完整类型（包括回调签名）。字节布局相同但字段类型不同的结构体使用独立声明，不受函数输出顺序影响。O0/O2 执行检查以两种顺序覆盖指针、有符号字、无符号字和带类型指针结构体。
 
 `ByteCellScalarizationPass` 在共享的非保守 LLVM 管线中于常规 SROA 和字节转发之后运行。对于不逃逸的静态字节数组，它按每个常量整数访问边界切分，以 8/16/32/64 位单元表示覆盖区间。复合访问使用私有内存副本，保留字节序及每个存储操作数的一次使用，不插入 `freeze`，也不假定输入已初始化或有定义。随后 SROA 在汇合点和回边上提升这些精确单元。动态或逃逸使用、有序访问、对象元数据、调试记录及共享纯算术 intrinsic 契约之外的调用均保守处理。工作量、单元数和构造上限在修改函数前检查；不推断原生帧或 ABI。对象管线 schema 11 在两种缓存键中标识新优化配方。
+
+精确 SDK 绑定还覆盖 Foundation 的 `StringProtocol.components(separatedBy:)` 和 Swift 的 `_SetStorage.allocate(capacity:)`，要求四个 macOS/Mac Catalyst 配置的编译器输出与提供库导出一致。字符串分割保留分隔符地址、双方元数据指针、双方协议 witness 和 `swiftself` 接收者，返回完整数组指针。Set 分配区分容量与 `swiftself` 存储元数据。这些声明不提供容器布局、内存边界或 once 初始化器完整性证明。

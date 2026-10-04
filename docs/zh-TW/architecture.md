@@ -1128,3 +1128,5 @@ libswiftCore 的精確強匯入 `Array._allocateBufferUninitialized(minimumCapac
 匿名 C 結構體名稱包含每個整數欄位的符號和位寬，以及指標欄位的完整型別（包括回呼簽章）。位元組配置相同但欄位型別不同的結構體使用獨立宣告，不受函式輸出順序影響。O0/O2 執行檢查以兩種順序涵蓋指標、有號字、無號字及具型別指標結構體。
 
 `ByteCellScalarizationPass` 在共用的非保守 LLVM 管線中於一般 SROA 與位元組轉送之後執行。對不逃逸的靜態位元組陣列，它依每個常數整數存取邊界切分，以 8/16/32/64 位元單元表示涵蓋區間。複合存取使用私有記憶體副本，保留位元組序及每個儲存運算元的一次使用，不插入 `freeze`，也不假定輸入已初始化或有定義。隨後 SROA 在匯合點和回邊上提升這些精確單元。動態或逃逸使用、有序存取、物件中繼資料、除錯記錄及共用純算術 intrinsic 契約之外的呼叫均保守處理。工作量、單元數與建構上限在修改函式前檢查；不推斷原生框架或 ABI。物件管線 schema 11 在兩種快取鍵中標識新的最佳化配方。
+
+精確 SDK 綁定也涵蓋 Foundation 的 `StringProtocol.components(separatedBy:)` 與 Swift 的 `_SetStorage.allocate(capacity:)`，要求四個 macOS/Mac Catalyst 設定的編譯器輸出與提供程式庫匯出一致。字串分割保留分隔符位址、雙方中繼資料指標、雙方協定 witness 及 `swiftself` 接收者，回傳完整陣列指標。Set 配置區分容量與 `swiftself` 儲存中繼資料。這些宣告不提供容器配置、記憶體邊界或 once 初始化器完整性證明。
