@@ -33,6 +33,7 @@ EXPERIMENTS = {
     "instruction-owner-recreate": "HvfIntelProbe.InstructionOnly",
     "owner-failure-controls": "HvfIntelHandoff.FailureControls",
     "recovery-reuse": "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry",
+    "recovery-vm-recreate": "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry",
     "finite-deadline": "HvfIntelProbe.FiniteDeadline",
 }
 
@@ -40,12 +41,12 @@ EXPERIMENTS = {
 def recovery_contract(source, build, document, required, runner, repetitions, experiment="recovery"):
     if experiment not in ("recovery", *EXPERIMENTS):
         raise ValueError("unknown Intel experiment")
-    recovery = experiment in ("recovery", "recovery-reuse")
+    recovery = experiment in ("recovery", "recovery-reuse", "recovery-vm-recreate")
     owner_controls = experiment == "owner-failure-controls"
     if owner_controls and repetitions != 100:
         raise ValueError("owner failure controls require 100 repetitions")
     recreate_owner = experiment == "instruction-owner-recreate"
-    recreate_vm = experiment == "instruction-vm-recreate"
+    recreate_vm = experiment in ("instruction-vm-recreate", "recovery-vm-recreate")
     recreate = recreate_owner or recreate_vm or experiment == "instruction-vcpu-recreate"
     reuse = recreate or experiment in ("instruction-reuse", "recovery-reuse")
     methods = runner.method_inventory(document)
@@ -85,7 +86,10 @@ def recovery_contract(source, build, document, required, runner, repetitions, ex
         "required_for_acceptance": experiment == "recovery",
         "executor_reuse": reuse,
         "vcpu_recreate": recreate,
-        "vcpu_generations": repetitions + 1 if recreate else None,
+        # Recovery recreates vCPUs inside the test too. Lifecycle markers count
+        # only fixture boundaries, so they cannot establish its total creations.
+        "vcpu_generations": repetitions + 1 if recreate and not recovery else None,
+        "vcpu_boundary_generations": repetitions + 1 if recreate and recovery else None,
         "vm_recreate": recreate_vm,
         "vm_generations": repetitions + 1 if recreate_vm else None,
         "native_name": name, "required_ctest_name": record.name,

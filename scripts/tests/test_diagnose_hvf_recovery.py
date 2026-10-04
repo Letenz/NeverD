@@ -115,7 +115,7 @@ class RecoveryLogTests(unittest.TestCase):
                    log.replace(event + following, following + event),
                    log.replace(following, lifecycle_marker("vm_create_begin", 22)),
                    log.replace(event, lifecycle_marker("vm_destroy_end", 22, 43)),
-                   vm_only, cpu_only)
+                   vm_only, cpu_only, log.replace(retirement(100), ""))
         for changed in changes:
             with self.subTest(log=changed[-200:]):
                 self.assertIsNotNone(diagnostic.read_repetitions(changed, NAME, 100, True, True, True)["error"])
@@ -173,6 +173,18 @@ class RecoveryLogTests(unittest.TestCase):
         self.assertEqual(result["completed_repetitions"], 1)
         self.assertEqual(result["started_repetitions"], 2)
         self.assertIn("failure", result["error"])
+
+    def test_recovery_vm_prefix_requires_all_completed_boundaries(self):
+        first = iteration(1, reuse=True, recreate=True, recreate_vm=True)
+        second = iteration(2, reuse=True, recreate=True, recreate_vm=True)
+        prefix = first + second.split(lifecycle_marker("vm_create_begin", 3))[0]
+        result = diagnostic.read_repetitions(prefix, NAME, 1000, True, True, True)
+        self.assertEqual(result, {"completed_repetitions": 1, "started_repetitions": 2,
+                                 "next_expected_event": "ok", "error": "incomplete repetition evidence"})
+        for broken in (prefix.replace(lifecycle_marker("vm_destroy_end", 1), ""),
+                       prefix.replace(lifecycle_marker("vm_create_begin", 2), "")):
+            self.assertNotEqual(diagnostic.read_repetitions(broken, NAME, 1000, True, True, True)["error"],
+                                "incomplete repetition evidence")
 
 
 class RecoveryContractTests(unittest.TestCase):
@@ -246,11 +258,11 @@ class RecoveryContractTests(unittest.TestCase):
             contract = diagnostic.recovery_contract(
                 self.root, self.build, self.document, {NAME}, runner, 100, experiment)
             self.assertEqual(contract["native_name"], name)
-            native_filter = "HvfExecutor.Native*" if experiment == "recovery-reuse" else name
+            native_filter = "HvfExecutor.Native*" if experiment in ("recovery-reuse", "recovery-vm-recreate") else name
             self.assertEqual(contract["command"][1], "--gtest_filter=" + native_filter)
             environment = {"NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1"}
             recreate_owner = experiment == "instruction-owner-recreate"
-            recreate_vm = experiment == "instruction-vm-recreate"
+            recreate_vm = experiment in ("instruction-vm-recreate", "recovery-vm-recreate")
             recreate = recreate_owner or recreate_vm or experiment == "instruction-vcpu-recreate"
             reuse = recreate or experiment in ("instruction-reuse", "recovery-reuse")
             if reuse:
@@ -264,7 +276,9 @@ class RecoveryContractTests(unittest.TestCase):
             self.assertEqual(contract["native_requirements"], environment)
             self.assertEqual(contract["executor_reuse"], reuse)
             self.assertEqual(contract["vcpu_recreate"], recreate)
-            self.assertEqual(contract["vcpu_generations"], 101 if recreate else None)
+            recovery_vm = experiment == "recovery-vm-recreate"
+            self.assertEqual(contract["vcpu_generations"], 101 if recreate and not recovery_vm else None)
+            self.assertEqual(contract["vcpu_boundary_generations"], 101 if recovery_vm else None)
             self.assertEqual(contract["vm_recreate"], recreate_vm)
             self.assertEqual(contract["vm_generations"], 101 if recreate_vm else None)
             controls = experiment == "owner-failure-controls"
@@ -286,7 +300,7 @@ class RecoveryContractTests(unittest.TestCase):
         self.add_probe(name)
         self.add_probe(diagnostic.EXPERIMENTS["owner-failure-controls"])
         keys = ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR", "NEVERD_HVF_INTEL_RECREATE_VCPU", "NEVERD_HVF_INTEL_RECREATE_VM", "NEVERD_HVF_INTEL_RECREATE_OWNER")
-        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse", "instruction-vcpu-recreate", "instruction-vm-recreate", "instruction-owner-recreate", "owner-failure-controls"):
+        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse", "recovery-vm-recreate", "instruction-vcpu-recreate", "instruction-vm-recreate", "instruction-owner-recreate", "owner-failure-controls"):
             with self.subTest(mode=mode):
                 self.evidence = self.build / ("evidence-" + mode)
                 plan = self.prepare(experiment=mode)
@@ -302,6 +316,24 @@ class RecoveryContractTests(unittest.TestCase):
                 self.binary.chmod(0o755)
                 with mock.patch.dict(os.environ, dict.fromkeys(keys, "1")):
                     self.assertEqual(diagnostic.execute(self.root, self.evidence), 0)
+
+    def test_recovery_vm_retains_native_identity_budget_and_boundary_only_counter(self):
+        plan = self.prepare(1000, "recovery-vm-recreate")
+        self.assertEqual(plan["native_name"], NAME)
+        self.assertEqual(plan["required_ctest_name"], NAME)
+        self.assertEqual(plan["command"][1:], ["--gtest_filter=HvfExecutor.Native*",
+                                             "--gtest_repeat=1000", "--gtest_break_on_failure"])
+        self.assertEqual(plan["timeout_seconds"], 600)
+        self.assertEqual(plan["native_requirements"], {
+            "NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1",
+            "NEVERD_HVF_INTEL_REUSE_EXECUTOR": "1", "NEVERD_HVF_INTEL_RECREATE_VCPU": "1",
+            "NEVERD_HVF_INTEL_RECREATE_VM": "1"})
+        self.assertTrue(plan["executor_reuse"] and plan["vcpu_recreate"] and plan["vm_recreate"])
+        self.assertTrue(plan["guest_execution"] and plan["native_execution"] and plan["native_hvf_calls"])
+        self.assertFalse(plan["required_for_acceptance"] or plan["owner_recreate"])
+        self.assertIsNone(plan["vcpu_generations"])
+        self.assertEqual(plan["vcpu_boundary_generations"], 1001)
+        self.assertEqual(plan["vm_generations"], 1001)
 
     def test_failure_controls_reject_wrong_budget_or_unwitnessed_success(self):
         name = diagnostic.EXPERIMENTS["owner-failure-controls"]
