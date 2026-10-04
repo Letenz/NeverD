@@ -789,6 +789,15 @@ hosts skip explicitly; backend cells distinguish unavailable execution.
 
 ## Process emulation checks
 
+`AndroidFinalizerTests.cpp` runs independent C ABI callers at O0/O2 with ordinary,
+APS2 and RELR relocations. It checks constructor registrations, exact callback
+order and arguments, DSO filtering, duplicate and NULL registrations, recursive
+finalization, callbacks that register callbacks, nested `pthread_once`, stack
+preservation, dynamic provider lifetime and registry isolation. Invalid guest
+targets, callback failures, raw exits, capacity and instruction/event limits
+must not complete a suspended finalize event. C API/CLI and the real Python SDK
+verify the same guest effects and dynamic symbol identities.
+
 `AndroidSyscallTests.cpp` executes independent C fixtures at O0/O2 with ordinary,
 Android-packed and RELR relocations. It compares named, raw SVC and variadic
 identity calls; verifies errno, six-argument memory calls, full-width pointers,
