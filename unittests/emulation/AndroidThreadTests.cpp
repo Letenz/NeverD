@@ -166,6 +166,14 @@ TEST_P(AndroidThread, EntryReturnAndDetachedCompletionAreSeparateBoundaries) {
   }
 }
 TEST_P(AndroidThread, ThreadAndProcessExitKeepDifferentOwnership) {
+  for (uint64_t Mode : {0u, 1u}) {
+    auto R = run("threads_last_exit", Mode);
+    EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, Mode ? 7u : 8u);
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_EQ(R.NativeThreads.size(), 1u);
+    EXPECT_TRUE(R.NativeThreads[0].Finished);
+  }
   for (uint64_t Mode : {0u, 1u, 2u, 3u, 4u}) {
     auto R = run("threads_exit", Mode);
     ASSERT_EQ(R.NativeThreads.size(), 2u);

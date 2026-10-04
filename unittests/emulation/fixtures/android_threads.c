@@ -273,3 +273,11 @@ u64 threads_boundary(u64 *out, u64 mode) {
   pthread_create(out + 1, 0, start, out);
   return pthread_join(out[1], 0);
 }
+u64 threads_last_exit(u64 *out, u64 mode) {
+  (void)out;
+  if (mode)
+    syscall(93, 263);
+  else
+    raw_call(93, 264);
+  return 1;
+}

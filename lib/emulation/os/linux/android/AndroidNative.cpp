@@ -204,13 +204,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   };
   bool NeedSchedule = false;
   uint64_t QuantumRemaining = Options.InstructionQuantum;
-  auto FinishThread = [&](uint64_t Value) {
+  auto FinishThread = [&](uint64_t Value, uint32_t ExitStatus = 0) {
     if (!Threads.callbacks().empty()) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = diagnostic::ThreadCallbackExit;
       return false;
     }
-    if (auto E = Threads.finish(Value)) {
+    if (auto E = Threads.finish(Value, ExitStatus)) {
       RuntimeFailure(std::move(E));
       return false;
     }
@@ -411,7 +411,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         break;
       }
       if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
-        if (!FinishThread(0))
+        if (!FinishThread(0, *Threads.kernel()->Exit))
           break;
         continue;
       }
@@ -481,7 +481,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         break;
       }
       if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
-        if (!FinishThread(0))
+        if (!FinishThread(0, *Threads.kernel()->Exit))
           break;
         continue;
       }

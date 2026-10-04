@@ -297,7 +297,8 @@ void GuestThreads::suspend(const ServiceRequest &Request, size_t Event) {
   current().Waiting->Request = Request;
   current().Waiting->Event = Event;
 }
-llvm::Error GuestThreads::finish(uint64_t Value) {
+llvm::Error GuestThreads::finish(uint64_t Value, uint32_t ExitStatus) {
+  LastExitStatus = ExitStatus;
   current().Report.Finished = true;
   current().Report.ReturnValue = Value;
   current().Kernel.Exit.reset();
@@ -328,7 +329,7 @@ llvm::Expected<bool> GuestThreads::schedule() {
       Result.Stop = ProcessStopReason::Returned;
     else {
       Result.Stop = ProcessStopReason::Exited;
-      Result.ExitStatus = 0;
+      Result.ExitStatus = LastExitStatus;
     }
     return false;
   }

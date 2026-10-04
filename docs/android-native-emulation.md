@@ -408,7 +408,9 @@ fail at the API 28 target boundary; NULL lookup returns ESRCH, self-join
 returns EDEADLK, and detached or already claimed targets return EINVAL.
 No runnable thread with outstanding joins is an explicit unsupported stop.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
-the current thread and leaves its pthread result zero. `exit_group` terminates
+the current thread and leaves its pthread result zero. When the last thread
+exits without an entry return, its low eight status bits become the workload
+exit status. `exit_group` terminates
 the workload. Guest cleanup handlers, TLS keys/destructors, exit during a
 once/finalize callback, blocking mutex/once waits, timers, cancellation,
 signals and clone remain unsupported. No cleanup or completion is invented.

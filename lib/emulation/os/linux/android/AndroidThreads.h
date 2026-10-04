@@ -45,7 +45,7 @@ public:
   uint64_t returnSP() const { return current().ReturnSP; }
   BionicResult invoke(const NativeCallEvent &Call);
   void suspend(const ServiceRequest &Request, size_t Event);
-  llvm::Error finish(uint64_t Value);
+  llvm::Error finish(uint64_t Value, uint32_t ExitStatus = 0);
   /// Round robin, including the current thread if it is the only runnable
   /// owner. False classifies all-finished or a join cycle in Result.
   llvm::Expected<bool> schedule();
@@ -74,6 +74,7 @@ private:
   ProcessResult &Result;
   std::deque<Thread> Threads;
   size_t Current = 0;
+  uint32_t LastExitStatus = 0;
   Thread &current() { return Threads[Current]; }
   const Thread &current() const { return Threads[Current]; }
   llvm::Error access(uint64_t Address, uint64_t Size, unsigned Permissions,
