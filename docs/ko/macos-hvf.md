@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 48ad654328e8b7f59295e47eee52da3bbc88ab1d81beb58efe1872a8273c9c45 -->
+<!-- i18n-source: 242b3ff958deb9ce46712843be3bc2c42ab3d063b28fb38b595e857d47f933aa -->
 
 [← 문서 목록](README.md)
 
@@ -188,3 +188,5 @@ Executor/VM/소유 스레드 세션 전체를 유지한 유한 기한 복구 비
 매 회차 VM/vCPU를 다시 만드는 복구 테스트도 두 이미지 모두 runner 연결 끊김으로 종료되었습니다: [macOS 15 / 37213675739](https://github.com/gmh5225/test_mac_intel/actions/runs/37213675739), [macOS 26 / 37213681083](https://github.com/gmh5225/test_mac_intel/actions/runs/37213681083). 소스 `7dd7342ec`, 헬퍼 `4c702d35a`, 워크플로 `fad0eadf2`를 사용했습니다. 검증된 산출물 23/26개는 각각 502/503, 575/576회 완료/시작을 입증하는 연속 로그를 보존합니다. 최종 네이티브 결과와 프로세스 회수 기록은 없습니다. GitHub는 통신 중단만 확인하며 원인을 밝히지는 않습니다. 일반 명령만 실행한 VM 재생성 통과를 이 복구 부하에 적용할 수 없습니다. 두 테스트 통과가 전제인 전체 세션 재설정 실험은 아직 시작하지 않았습니다.
 
 업로더 `jitless` 대조([37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863), macOS 15/26)는 복구 테스트 시작 전에 실패했습니다. 공식 업로더의 HTTP 파서가 필요한 WebAssembly를 `--jitless`가 비활성화하여 두 plan 업로드 모두 신호 없이 코드 1로 종료되었습니다. 각 실행의 검증된 산출물은 2개이며 plan은 최종 증거에서 복구한 것으로 독립적인 사전 업로드 성공이 아닙니다. 네이티브 복구를 테스트하지 못했지만 앞선 HVF 기능 탐색 실행을 부정하지는 않습니다. 대체 선택 모드 `js-interpreter`는 컨트롤러의 plan/progress 업로드 자식에만 `--no-turbofan --no-maglev --no-sparkplug`를 전달하여 WebAssembly와 다른 코드 생성을 유지합니다. 부모, 네이티브 부하와 기한은 그대로이며 provenance/final은 기본 모드입니다. 실제 로컬 HTTP 및 자격 증명 없는 공식 업로더 검사는 통과했으나 HVF 안정성 수정의 증거는 아닙니다.
+
+`js-interpreter` vCPU 재생성 복구 대조는 소스 `7dd7342ec`, 헬퍼 `caeb594ad`, 워크플로 `e6d054c45`를 사용했습니다. macOS 26([37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679))은 1000/1000을 통과했으며 산출물 43개, plan/progress 호출 41개 전부, 네이티브/컨트롤러 종료 코드 0, 자식 회수와 마지막 경계 세대 1001의 종료를 독립 검증했습니다. macOS 15([37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672))에서는 progress-018 업로더가 SIGSEGV로 중단되어 산출물 21개에 460회 완료/461회 시작 및 이후 취소와 SIGKILL 회수가 남았습니다. IPS의 PID 62812, 부모 59666, 시각과 Node UUID가 일치하며 상위 프레임은 V8 동시 힙 마킹, 잘못된 주소는 `0x80000000`입니다. JavaScript 컴파일러를 끄는 세 플래그가 실제 적용되었고 두 이미지의 Node 파일 SHA도 같습니다. 이 모드도 업로더 충돌을 제거하지 못했습니다. 프레임만으로 원인을 확정할 수 없고 macOS 15의 네이티브 결과는 알 수 없습니다. 전체 CPU/Darwin 검증과 캐시 후보의 양쪽 이미지 통과 조건은 미충족입니다. 기존 임시 탐색 및 마지막 클라이언트 해제 후 VM 반환 계약을 어기는 기본 영구 캐시는 구현하지 않았습니다.
