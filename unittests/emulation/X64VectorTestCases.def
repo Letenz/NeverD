@@ -1,0 +1,15 @@
+//===- X64VectorTestCases.def - Shared vector harness constants ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_VECTOR_VALUE(VectorBytes, 16)
+NEVERD_VECTOR_VALUE(WordBytes, 8)
+NEVERD_VECTOR_VALUE(XmmCount, 16)
+NEVERD_VECTOR_VALUE(MemoryModRM, 0x01)
+NEVERD_VECTOR_VALUE(Nop, 0x90)
+NEVERD_VECTOR_VALUE(Lock, 0xf0)
+NEVERD_VECTOR_VALUE(Flags, 0xad7)
+NEVERD_VECTOR_VALUE(MXCSR, 0x5fa1)
+NEVERD_VECTOR_VALUE(SentinelLow, 0x76543210abcdef01ULL)
+NEVERD_VECTOR_VALUE(SentinelHigh, 0x123456789abcdef0ULL)
