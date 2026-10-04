@@ -672,7 +672,23 @@ CMake.
 | `lib/support` | Helper condivisi per il caricamento binario | Loader |
 | `lib/translate` | Contratti versionati per guest state/policy/exit, runtime ABI fissa, guest memory controllata, audit di IR/oggetti/LinkGraph generati, linking nativo sealed e dispatcher C++ sperimentale da x86-64 ad AArch64 | Contratti IR, LLVM, LLVM Object e JITLink |
 
-`ByteMemoryForwardingPass`, in `lib/pass/ir/simplify`, ricostruisce letture intere complete dall’ultima scrittura di ogni byte di un alloca fisso nello stesso blocco di base. Accetta larghezze da 8 a 128 bit multiple di otto e GEP costanti esatti interni all’oggetto, rispettando l’ordine dei byte del target. Chiamate non modellate, scritture sconosciute e accessi ordinati cancellano i fatti. La pipeline lo esegue tra due passaggi SROA dopo il recupero esistente degli indirizzi privati, conservando gli store. Scansioni di istruzioni e indirizzi, byte tracciati, usi sostituiti e nuovo IR hanno budget finiti. Per impostazione predefinita non crea snapshot; `AllowStoreSnapshots` esplicito congela il valore una sola volta nello store e lo condivide con tutti i frammenti. Questa raffinazione LLVM opzionale non certifica la definitezza nativa né una firma di funzione.
+### Ripartizione di analisi e semplificazione
+
+| Directory | Responsabilità |
+|---|---|
+| `lib/analysis/core` | Analisi condivise, domini finiti e coordinamento delle prove relazionali |
+| `lib/analysis/llvm` | Importazione LLVM condivisa, equivalenza scalare e recupero dei cicli |
+| `lib/analysis/bytecode` | Validazione e abbassamento del bytecode esterno |
+| `lib/analysis/arch/x86_64` | Adattatori x64 nativi per immagini, registri/flag, stack, trasferimenti di stringhe e raffinamento |
+| `lib/analysis/arch/aarch64` | Requisiti di estensione ARM64; recupero nativo non ancora implementato |
+| `lib/pass/ir/simplify/common` | Semplificazione LLVM comune con larghezze e layout dei dati espliciti |
+| `lib/symbolic` | Motori condivisi per espressioni, MBA, bit noti ed esecuzione |
+
+Identità dei registri, layout dei flag e riconoscimento dei byte nativi appartengono ad `arch/<isa>`. Il nucleo condiviso invoca contratti x64 espliciti; ARM64 richiede un adattatore e una selezione propri. `LLVMInterpreterModel.h` e `InterpreterModel.h` contengono i tipi comuni; l’adattatore x64 passa la dimensione del proprio stato all’importatore LLVM. Gli header pubblici nativi sono in `include/neverd/analysis/arch/x86_64`; i vecchi percorsi restano header di inoltro.
+
+I servizi OS restano in `lib/emulation/os`. I loro contratti non provano l’ABI nativa o la semantica dei registri. La semplificazione scalare LLVM e simbolica resta condivisa; un semplificatore specifico per ISA andrà in `lib/pass/ir/simplify/arch/<isa>` e richiederà evidenze esplicite sul target.
+
+`ByteMemoryForwardingPass`, in `lib/pass/ir/simplify/common`, ricostruisce letture intere complete dall’ultima scrittura di ogni byte di un alloca fisso nello stesso blocco di base. Accetta larghezze da 8 a 128 bit multiple di otto e GEP costanti esatti interni all’oggetto, rispettando l’ordine dei byte del target. Chiamate non modellate, scritture sconosciute e accessi ordinati cancellano i fatti. La pipeline lo esegue tra due passaggi SROA dopo il recupero esistente degli indirizzi privati, conservando gli store. Scansioni di istruzioni e indirizzi, byte tracciati, usi sostituiti e nuovo IR hanno budget finiti. Per impostazione predefinita non crea snapshot; `AllowStoreSnapshots` esplicito congela il valore una sola volta nello store e lo condivide con tutti i frammenti. Questa raffinazione LLVM opzionale non certifica la definitezza nativa né una firma di funzione.
 
 La propagazione dei byte e l’analisi inversa delle sovrascritture conservano i fatti attraverso intrinsic che ritornano normalmente solo se LLVM non segnala accessi alla memoria né altri effetti collaterali, senza operand bundle o contratto convergent. Chiamate e risultati restano al loro posto. Vale per alloca e indirizzi numerici; le chiamate ordinarie restano barriere anche con `memory(none)`. Non aggiunge separazione degli alias, ipotesi di memoria privata o relazioni tra blocchi.
 

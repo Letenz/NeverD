@@ -6,7 +6,7 @@
 #ifndef NEVERD_LLVM_INTERPRETER_MODEL_INTERNAL_H
 #define NEVERD_LLVM_INTERPRETER_MODEL_INTERNAL_H
 
-#include "neverd/analysis/LLVMInterpreterMachineState.h"
+#include "neverd/analysis/LLVMInterpreterModel.h"
 #include "neverd/analysis/LLVMScalarFunctionModel.h"
 
 #include "llvm/IR/ConstantRange.h"
@@ -62,7 +62,7 @@ class Builder {
   uint64_t NextRegister = uint64_t{1} << 40;
   uint64_t NextTemporary = 0;
   uint64_t Work = 0, InputItems = 0, Operations = 0;
-  static constexpr unsigned StateBytes = sizeof(InterpreterMachineStateX64V1);
+  const unsigned StateBytes;
   static constexpr uint64_t DefinednessOffset =
       LLVMInterpreterDefinednessOffset;
 
@@ -98,9 +98,10 @@ class Builder {
 
 public:
   Builder(const llvm::Function &Function,
-          const LLVMInterpreterModelLimits &Limits,
+          const LLVMInterpreterModelLimits &Limits, unsigned StateBytes,
           std::vector<LLVMScalarArgument> *ScalarArguments = nullptr)
-      : F(Function), Limits(Limits), ScalarArguments(ScalarArguments) {}
+      : F(Function), Limits(Limits), ScalarArguments(ScalarArguments),
+        StateBytes(StateBytes) {}
   InterpreterMachineStateModel build();
 };
 } // namespace neverd::analysis::llvm_model

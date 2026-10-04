@@ -588,7 +588,23 @@ NeverD 依赖，不穷举 CMake helper 统一提供的 LLVM 和 Capstone 库。
 | `lib/support` | 共享二进制加载 helper | Loader |
 | `lib/translate` | 带版本的 guest state/策略/退出、固定 runtime ABI、受检 guest memory、生成 IR/目标文件/LinkGraph 审计、sealed 原生链接，以及实验性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 与 JITLink 契约 |
 
-`lib/pass/ir/simplify` 中的 `ByteMemoryForwardingPass` 在单个基本块内，根据固定字节 alloca 每个字节的最后一次写入重建完整整数读取。它按目标端序处理 8 至 128 位、宽度为整字节的访问，只接受对象内的精确常量 GEP。未知调用、未知写入和有序内存会清空记录。流水线在既有私有地址恢复后、两次 SROA 之间运行此 pass，并保留原始 store。指令扫描、地址遍历、跟踪字节、替换用途和新增 IR 均有有限预算。默认不引入快照；显式启用 `AllowStoreSnapshots` 后，在原 store 前仅 freeze 一次，并让写入与所有片段共享该值。这种可选 LLVM 精化不证明原生值已定义，也不恢复函数签名。
+### 分析与化简的架构归属
+
+| 目录 | 职责 |
+|---|---|
+| `lib/analysis/core` | 共享分析、有限域和关系证明编排 |
+| `lib/analysis/llvm` | 共享 LLVM 导入、标量等价与循环恢复 |
+| `lib/analysis/bytecode` | 外部字节码校验与降低 |
+| `lib/analysis/arch/x86_64` | 原生 x64 映像、寄存器/标志位、栈、字符串传送与精化适配器 |
+| `lib/analysis/arch/aarch64` | ARM64 扩展要求；尚无原生恢复实现 |
+| `lib/pass/ir/simplify/common` | 依赖显式位宽和数据布局的通用 LLVM 化简 |
+| `lib/symbolic` | 共享表达式、MBA、位事实与执行引擎 |
+
+原生寄存器身份、标志位布局和指令字节识别归 `arch/<isa>`。共享核心目前调用显式的 x64 契约；接入 ARM64 需要独立适配器和分派，不能直接改名复用这些契约。`LLVMInterpreterModel.h` 与 `InterpreterModel.h` 保存共享模型类型；x64 适配器向 LLVM 导入器传入自己的状态尺寸。原生公开头文件位于 `include/neverd/analysis/arch/x86_64`，旧包含路径保留转发头文件。
+
+OS 服务继续归 `lib/emulation/os`，其环境契约不能证明原生 ABI 或寄存器语义。LLVM 标量与符号化简保持共享；未来确有 ISA 专属化简时，放入 `lib/pass/ir/simplify/arch/<isa>`，并要求明确的目标架构证据。
+
+`lib/pass/ir/simplify/common` 中的 `ByteMemoryForwardingPass` 在单个基本块内，根据固定字节 alloca 每个字节的最后一次写入重建完整整数读取。它按目标端序处理 8 至 128 位、宽度为整字节的访问，只接受对象内的精确常量 GEP。未知调用、未知写入和有序内存会清空记录。流水线在既有私有地址恢复后、两次 SROA 之间运行此 pass，并保留原始 store。指令扫描、地址遍历、跟踪字节、替换用途和新增 IR 均有有限预算。默认不引入快照；显式启用 `AllowStoreSnapshots` 后，在原 store 前仅 freeze 一次，并让写入与所有片段共享该值。这种可选 LLVM 精化不证明原生值已定义，也不恢复函数签名。
 
 字节转发和反向覆盖分析仅在 LLVM 确认 intrinsic 无内存访问、无其他副作用、可正常返回，且没有 operand bundle 或 convergent 契约时保留字节事实。调用及其结果仍留在原处。此规则同时适用于 alloca 和数值地址内存；普通调用即使标注 `memory(none)` 仍是边界。它不增加别名分离、私有内存假设或跨块关系。
 

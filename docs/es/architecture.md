@@ -675,7 +675,23 @@ helper de CMake.
 | `lib/support` | Helpers compartidos de carga binaria | Loader |
 | `lib/translate` | Contratos versionados de estado/policy/exit guest, ABI runtime fija, memoria guest comprobada, auditorías de IR/objetos/LinkGraphs generados, enlace nativo sellado y dispatcher C++ experimental de x86-64 a AArch64 | Contratos IR, LLVM, LLVM Object y JITLink |
 
-`ByteMemoryForwardingPass`, en `lib/pass/ir/simplify`, reconstruye lecturas enteras completas a partir de la última escritura de cada byte de un alloca fijo dentro del mismo bloque básico. Admite anchos de 8 a 128 bits múltiplos de ocho y GEP constantes exactos dentro del objeto, respetando el orden de bytes del destino. Las llamadas no modeladas, escrituras desconocidas y accesos ordenados borran los hechos. Se ejecuta entre dos pasadas SROA tras la recuperación existente de direcciones privadas y conserva los stores. Los recorridos de instrucciones y direcciones, bytes seguidos, usos reemplazados e IR añadido tienen límites finitos. Por defecto no introduce instantáneas; `AllowStoreSnapshots` explícito congela el valor una sola vez en el store y lo comparte con todos los fragmentos. Este refinamiento LLVM opcional no certifica valores nativos definidos ni una firma de función.
+### Distribución de análisis y simplificación
+
+| Directorio | Responsabilidad |
+|---|---|
+| `lib/analysis/core` | Análisis compartidos, dominios finitos y coordinación de pruebas relacionales |
+| `lib/analysis/llvm` | Importación LLVM compartida, equivalencia escalar y recuperación de bucles |
+| `lib/analysis/bytecode` | Validación y reducción de bytecode externo |
+| `lib/analysis/arch/x86_64` | Adaptadores x64 nativos de imagen, registros/indicadores, pila, transferencia de cadenas y refinamiento |
+| `lib/analysis/arch/aarch64` | Requisitos de extensión ARM64; recuperación nativa aún sin implementar |
+| `lib/pass/ir/simplify/common` | Simplificación LLVM común con anchuras y disposición de datos explícitas |
+| `lib/symbolic` | Motores compartidos de expresiones, MBA, bits conocidos y ejecución |
+
+Las identidades de registros, los indicadores y el reconocimiento de bytes nativos pertenecen a `arch/<isa>`. El núcleo compartido invoca contratos x64 explícitos; ARM64 necesita su propio adaptador y selección. `LLVMInterpreterModel.h` e `InterpreterModel.h` contienen los tipos comunes; el adaptador x64 proporciona su tamaño de estado al importador LLVM. Las cabeceras públicas nativas están en `include/neverd/analysis/arch/x86_64`; las rutas anteriores se conservan como cabeceras de reenvío.
+
+Los servicios del SO siguen en `lib/emulation/os`. Sus contratos no prueban la ABI nativa ni la semántica de registros. La simplificación escalar LLVM y simbólica sigue compartida; un simplificador específico de ISA debe ir en `lib/pass/ir/simplify/arch/<isa>` y exigir evidencia explícita del destino.
+
+`ByteMemoryForwardingPass`, en `lib/pass/ir/simplify/common`, reconstruye lecturas enteras completas a partir de la última escritura de cada byte de un alloca fijo dentro del mismo bloque básico. Admite anchos de 8 a 128 bits múltiplos de ocho y GEP constantes exactos dentro del objeto, respetando el orden de bytes del destino. Las llamadas no modeladas, escrituras desconocidas y accesos ordenados borran los hechos. Se ejecuta entre dos pasadas SROA tras la recuperación existente de direcciones privadas y conserva los stores. Los recorridos de instrucciones y direcciones, bytes seguidos, usos reemplazados e IR añadido tienen límites finitos. Por defecto no introduce instantáneas; `AllowStoreSnapshots` explícito congela el valor una sola vez en el store y lo comparte con todos los fragmentos. Este refinamiento LLVM opcional no certifica valores nativos definidos ni una firma de función.
 
 La propagación de bytes y el análisis inverso de sobrescrituras conservan los hechos a través de intrinsics que retornan normalmente solo si LLVM no indica acceso a memoria ni otros efectos secundarios, sin operand bundles ni contrato convergent. Las llamadas y sus resultados permanecen en su lugar. Se aplica a alloca y a direcciones numéricas; las llamadas ordinarias siguen siendo barreras incluso con `memory(none)`. No añade separación de alias, supuestos de memoria privada ni relaciones entre bloques.
 

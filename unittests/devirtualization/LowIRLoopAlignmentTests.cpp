@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/LowIRLoopInference.h"
+#include "../../lib/analysis/core/LowIRLoopInference.h"
 #include "gtest/gtest.h"
 
 #include "neverd/analysis/LowIRRefinement.h"

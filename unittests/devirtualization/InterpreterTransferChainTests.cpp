@@ -5,7 +5,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/FrameEntryConstraints.h"
+#include "../../lib/analysis/core/FrameEntryConstraints.h"
 #include "gtest/gtest.h"
 
 #include "neverd/analysis/InterpreterSpecialization.h"
