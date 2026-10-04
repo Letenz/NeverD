@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
+<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
 
 [← 문서 목록](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon에서는 `-DNEVERD_LLVM_PREBUILT=ON`을 추가할 수 있습니다. Intel은 고정된 LLVM 리비전을 소스에서 빌드합니다. [HVF 워크플로](../../.github/workflows/hvf.yml)는 `self-hosted, macOS, ARM64/X64, hvf`와 `macos-15-intel`의 `hosted-intel`을 지원합니다. 먼저 실제 VM/vCPU 생성과 삭제를 확인합니다. `validation=probe`는 명령 실행의 증거가 아니며, `transport`는 전송 계층만, `darwin`은 일치하는 모든 Darwin 작업을, `full`은 전체 CPU와 Darwin 검증을 모두 요구합니다.
 
-전송 계층의 필수 항목은 ARM64 15개, Intel 11개이며 전체 CPU 검증은 각각 23개, 20개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
+전송 계층의 필수 항목은 ARM64 15개, Intel 12개이며 전체 CPU 검증은 각각 23개, 20개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
 
 호스팅 Intel의 `--execution-methods`는 전체 CTest 목록의 모든 매개변수, 플래그, 환경 및 작업 디렉터리를 유지하여 GoogleTest 메서드를 직렬 실행합니다. 알 수 없는 속성은 거부합니다. 메서드 전체 기한은 최대 120초이며 내부 매개변수마다 별도 기한을 적용하지 않습니다. 이후 제한된 시간 안에 프로세스 그룹을 회수합니다. 원본 XML, 이름 대응, 종료 상태를 보존합니다. 시간 초과나 불완전한 XML은 부분 실패를 만들고, 필수 네이티브 항목 누락이나 건너뛰기는 통과할 수 없습니다. 자체 runner는 CTest의 사례별 프로세스와 기한을 유지합니다.
 

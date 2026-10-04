@@ -313,6 +313,27 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires --require-hvf"):
             self.run_evidence(hvf_transport_only=True)
 
+    def test_transport_profile_requires_intel_owner_vm_return(self):
+        name = "HvfIntelOwner.FreshExecutorsRetireVMsOnOneOwnerThread"
+        (self.root / "scripts/NativeHVFTests.def").write_text(
+            'NEVERD_NATIVE_HVF_OWNER(NeverDHvfTests)\n'
+            'NEVERD_NATIVE_HVF_REQUIRED_TEST("Hvf.Executes")\n'
+            f'NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(X64, "{name}")\n')
+        (self.build / "CMakeFiles/TargetDirectories.txt").write_text(
+            str(self.build / "unittests/emulation/CMakeFiles/NeverDHvfTests.dir") + "\n")
+        self.records = tuple(TestRecord(test, frozenset({"NeverDHvfTests"}))
+                             for test in ("Hvf.Executes", name))
+        self.reported = self.records
+        run = lambda: self.run_evidence(require_hvf=True, hvf_transport_only=True,
+                                       host_architecture="x86_64")
+        self.assertEqual(run(), 0)
+        self.assertIn(name, self.summary()["required_native_names"])
+        self.changes[self.records[1]] = ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "no HVF")
+        self.assertEqual(run(), 1)
+        self.records = self.records[:1]
+        with self.assertRaisesRegex(ValueError, "missing required native HVF"):
+            run()
+
     def test_repository_transport_requirements_are_the_full_gates_transport_subset(self):
         for host in ("arm64", "x86_64"):
             with self.subTest(host=host):
@@ -321,8 +342,10 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 self.assertEqual(owners, ["NeverDHvfTests"])
                 self.assertTrue(transport)
                 self.assertLess(transport, full)
-                self.assertTrue(all(name.startswith(("Hvf.", "HvfExecutor.", "HvfConfiguration."))
+                self.assertTrue(all(name.startswith(("Hvf.", "HvfExecutor.", "HvfConfiguration.", "HvfIntelOwner."))
                                     for name in transport))
+                owner_release = "HvfIntelOwner.FreshExecutorsRetireVMsOnOneOwnerThread"
+                self.assertEqual(owner_release in transport, host == "x86_64")
 
     def add_hvf_host_requirements(self):
         definition = (self.root / "scripts/NativeCPUTests.def").read_text()

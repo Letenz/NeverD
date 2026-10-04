@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
+<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
 
 [← 文档索引](README.md)
 
@@ -36,7 +36,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 15 项、Intel 11 项；完整门禁分别要求 23 项和 20 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
+门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 15 项、Intel 12 项；完整门禁分别要求 23 项和 20 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
 
 手动工作流默认使用带 `hvf` 标签的自托管宿主，也可选择 `hosted-intel` 尝试
 GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `scripts/probe_hvf_host.c`，

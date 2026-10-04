@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
+<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon kann `-DNEVERD_LLVM_PREBUILT=ON` ergänzen; Intel baut die festgelegte LLVM-Revision aus dem Quellcode. Der [HVF-Workflow](../../.github/workflows/hvf.yml) unterstützt `self-hosted, macOS, ARM64/X64, hvf` sowie `hosted-intel` mit `macos-15-intel`. Zuerst müssen VM/vCPU tatsächlich erstellt und beendet werden. `validation=probe` beweist noch keine Instruktionsausführung; `transport` prüft nur den Transport, `darwin` alle passenden Darwin-Lasten und `full` die vollständigen CPU- und Darwin-Prüfungen.
 
-Die Transportprüfung verlangt 15 ARM64- oder 11 Intel-Fälle, die vollständige CPU-Prüfung 23 beziehungsweise 20 Pflichtfälle. Abgedeckt sind vollständiger Zustand, Privilegien, Speicherrechte, Seitengrenzen, Aliase, CPU-Wechsel, Rollback, Abbruch und Wiederaufnahme. Intel prüft CR8 vor dem großen Build. Inventar, Quellrevision, Host, Ergebnisse und Wiederholungsversuche bleiben als Artefakte erhalten. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) bezeichnet verschachtelte Virtualisierung als experimentell; für reproduzierbare Abnahme bleibt ein dedizierter nativer Mac sinnvoll.
+Die Transportprüfung verlangt 15 ARM64- oder 12 Intel-Fälle, die vollständige CPU-Prüfung 23 beziehungsweise 20 Pflichtfälle. Abgedeckt sind vollständiger Zustand, Privilegien, Speicherrechte, Seitengrenzen, Aliase, CPU-Wechsel, Rollback, Abbruch und Wiederaufnahme. Intel prüft CR8 vor dem großen Build. Inventar, Quellrevision, Host, Ergebnisse und Wiederholungsversuche bleiben als Artefakte erhalten. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) bezeichnet verschachtelte Virtualisierung als experimentell; für reproduzierbare Abnahme bleibt ein dedizierter nativer Mac sinnvoll.
 
 Auf gehostetem Intel führt `--execution-methods` jede GoogleTest-Methode mit sämtlichen CTest-Parametern, Flags, Umgebungsvariablen und Arbeitsverzeichnis seriell aus. Unbekannte Eigenschaften werden abgewiesen. Die Gesamtfrist pro Methode beträgt höchstens 120 Sekunden; einzelne Parameter haben innerhalb von GoogleTest keine separate Frist. Danach wird die Prozessgruppe zeitlich begrenzt beendet. Original-XML, Namenszuordnung und Exitstatus werden gespeichert. Timeout oder unvollständiges XML ergeben einen Teilfehler; fehlende oder übersprungene native Pflichtfälle können nicht bestehen. Eigene Runner verwenden weiterhin CTest-Prozesse und Fristen pro Testfall.
 
