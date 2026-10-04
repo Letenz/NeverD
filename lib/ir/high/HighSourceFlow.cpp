@@ -231,6 +231,19 @@ class SourceFlow {
            Expression->Var.Kind == MedVar::Temp ||
            Expression->Var.Kind == MedVar::Param;
   }
+  static bool unknownPhiValue(const ExprPtr &Expression,
+                              const ExprPtr &Destination) {
+    return Expression && Expression->Kind == ExprKind::Undef &&
+           Expression->Operands.empty() && !Expression->IndirectTarget &&
+           Expression->IntrinsicId == Intrinsic::None &&
+           Expression->IntrinsicOutputs.empty() &&
+           Expression->MemoryOrdering == NdMemoryOrdering::None &&
+           Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+           Expression->Type && Destination && Destination->Type &&
+           Expression->Type->Size == Destination->Type->Size &&
+           (Expression->Type->Kind == NdTypeKind::Int ||
+            Expression->Type->Kind == NdTypeKind::Ptr);
+  }
   // An integer cast of unchanged width preserves equality and zero tests.
   // Narrowing, extension and floating conversion do not preserve these
   // facts. Bound the peel so malformed expression cycles remain unknown.
@@ -346,6 +359,7 @@ class SourceFlow {
             Statement.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
             scalarLocal(Statement.Dst) && !entryValue(Statement.Dst->Var) &&
             (scalarLocal(stripIntegerView(Statement.Val)) ||
+             unknownPhiValue(Statement.Val, Statement.Dst) ||
              (Statement.Val->Kind == ExprKind::Const &&
               Statement.Val->Operands.empty() && Statement.Val->Type &&
               Statement.Val->Type->Kind == NdTypeKind::Int));

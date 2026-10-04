@@ -640,6 +640,38 @@ struct NestedCallbackFixture : OnceFixture {
   }
 };
 
+struct ConditionalOnceContextFixture : NestedCallbackFixture {
+  ExprPtr Context;
+  ConditionalOnceContextFixture() {
+    Image.Symbols.push_back({"_context_choice", 0x2018, 8, false});
+    MedVar Variable;
+    Variable.Kind = MedVar::Temp;
+    Variable.TheArch = Image.Arch;
+    Variable.Id = 50003;
+    Variable.Size = 8;
+    Context = HighExpr::makeVar(Variable, NdType::makeInt(8, false));
+    HighStmt Copy;
+    Copy.Kind = StmtKind::Assign;
+    Copy.IsPhiCopy = true;
+    Copy.Addr = 0x1088;
+    Copy.Dst = Context;
+    Copy.Val = NestedOnce->Operands[2];
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Addr = 0x1084;
+    Branch.Cond = HighExpr::makeLoad(
+        HighExpr::makeConst(0x2018, 8, ConstantAddressProvenance::DataAddress),
+        NdType::makeInt(8, false));
+    Branch.Body = {Copy};
+    Copy.Addr = 0x108c;
+    Copy.Val = HighExpr::makeUndef(8);
+    Branch.ElseBody = {Copy};
+    NestedOnce->Operands[2] = Context;
+    Pipeline.HighFuncs[1].Body.insert(Pipeline.HighFuncs[1].Body.begin(),
+                                      std::move(Branch));
+  }
+};
+
 struct NestedCallbackGraphFixture : NestedCallbackFixture {
   static constexpr va_t MiddleAddress = 0x1090;
   static constexpr va_t SecondLeafAddress = 0x10b0;
@@ -1209,6 +1241,195 @@ TEST(SwiftOnceSources, NestedContextsMayUseUnobservedScalarRegisterViews) {
   EXPECT_TRUE(Flow.Complete);
   EXPECT_TRUE(Flow.Items.empty());
   EXPECT_EQ(F.SecondOnce->Operands[2]->Kind, ExprKind::Var);
+}
+
+TEST(SwiftOnceSources, NestedContextPhiBecomesDeadOnlyAfterDescendantProof) {
+  ConditionalOnceContextFixture F;
+  const auto &Original = F.Pipeline.HighFuncs[1];
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.NestedCallbacks.count(Original.Entry), 1U);
+  const auto Projected =
+      projectSwiftOnceNestedCallback(Original, F.Image, Plan, F.functions());
+  ASSERT_TRUE(Projected);
+  const auto Flow = analyzeHighSourceFlow(Projected->Function, false);
+  EXPECT_TRUE(Flow.Complete);
+  EXPECT_TRUE(Flow.Items.empty());
+  EXPECT_TRUE(swift_once_source_detail::ignoresContext(Projected->Function));
+  EXPECT_EQ(Projected->Function.Body[0].Body[0].Addr, 0x1088U);
+  EXPECT_EQ(Projected->Function.Body[0].ElseBody[0].Addr, 0x108cU);
+  EXPECT_EQ(Projected->Function.Body[1].CallExpr->Operands[2]->Kind,
+            ExprKind::Const);
+  EXPECT_EQ(Original.Body[0].ElseBody[0].Val->Kind, ExprKind::Undef);
+  EXPECT_EQ(F.NestedOnce->Operands[2], F.Context);
+  EXPECT_FALSE(Original.SourceTypeHint);
+
+  HighStmt Observe;
+  Observe.Kind = StmtKind::Store;
+  Observe.StoreAddr = HighExpr::makeConst(0x2010, 8);
+  MedVar Input;
+  Input.Kind = MedVar::Param;
+  Input.Id = 0;
+  Input.Size = 8;
+  Observe.StoreVal = HighExpr::makeVar(Input, NdType::makeInt(8));
+  F.Pipeline.HighFuncs.back().Body.insert(
+      F.Pipeline.HighFuncs.back().Body.begin(), Observe);
+  EXPECT_FALSE(
+      projectSwiftOnceNestedCallback(Original, F.Image, Plan, F.functions()));
+  EXPECT_TRUE(
+      discoverSwiftOnceSources(F.Image, F.Pipeline).NestedCallbacks.empty());
+}
+
+TEST(SwiftOnceSources, NestedContextPhiKeepsEveryOtherObservation) {
+  for (unsigned Variant = 0; Variant != 10; ++Variant) {
+    SCOPED_TRACE(Variant);
+    ConditionalOnceContextFixture F;
+    auto &Outer = F.Pipeline.HighFuncs[1];
+    const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+    ASSERT_EQ(Plan.NestedCallbacks.count(Outer.Entry), 1U);
+    auto &Unknown = Outer.Body[0].ElseBody[0];
+    HighStmt Observe;
+    Observe.Kind = StmtKind::Store;
+    Observe.StoreAddr = HighExpr::makeConst(0x2010, 8);
+    Observe.StoreVal = F.Context;
+    switch (Variant) {
+    case 0:
+      Outer.Body.insert(Outer.Body.end() - 1, Observe);
+      break;
+    case 1:
+      Outer.ReturnType = F.Context->Type;
+      Outer.Body.back().RetVal = F.Context;
+      break;
+    case 2: {
+      HighStmt Branch;
+      Branch.Kind = StmtKind::If;
+      Branch.Cond = F.Context;
+      Observe.StoreVal = HighExpr::makeConst(8, 8);
+      Branch.Body = {Observe};
+      Outer.Body.insert(Outer.Body.end() - 1, Branch);
+      break;
+    }
+    case 3:
+      Observe = HighStmt{};
+      Observe.Kind = StmtKind::Call;
+      Observe.CallExpr = HighExpr::makeCall({}, 0, {});
+      Observe.CallExpr->Type = NdType::makeVoid();
+      Observe.CallExpr->IsIndirectCall = true;
+      Observe.CallExpr->IndirectTarget = F.Context;
+      Outer.Body.insert(Outer.Body.end() - 1, Observe);
+      break;
+    case 4:
+      Unknown.IsPhiCopy = false;
+      break;
+    case 5:
+      Unknown.Val =
+          HighExpr::makeLoad(Outer.Body[0].Body[0].Val, NdType::makeInt(8));
+      break;
+    case 6:
+      Unknown.Val->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 7:
+      Unknown.Val->IndirectTarget = Outer.Body[0].Body[0].Val;
+      break;
+    case 8:
+      F.Image.Arch = Arch::X64;
+      break;
+    case 9:
+      F.NestedOnce->SourceCallHint.reset();
+      break;
+    }
+    EXPECT_FALSE(
+        projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions()));
+    EXPECT_TRUE(
+        discoverSwiftOnceSources(F.Image, F.Pipeline).NestedCallbacks.empty());
+  }
+}
+
+TEST(SwiftOnceSources, CallbackContextProofIncludesIndirectTargets) {
+  for (const auto Kind : {ExprKind::Var, ExprKind::Phi}) {
+    NestedCallbackFixture F;
+    auto &Leaf = F.Pipeline.HighFuncs.back();
+    MedVar Input;
+    Input.Kind = MedVar::Param;
+    Input.Id = 0;
+    Input.Size = 8;
+    auto Target = HighExpr::makeVar(Input, NdType::makePtr(NdType::makeVoid()));
+    Target->Kind = Kind;
+    HighStmt Observe;
+    Observe.Kind = StmtKind::Call;
+    Observe.CallExpr = HighExpr::makeCall({}, 0, {});
+    Observe.CallExpr->Type = NdType::makeVoid();
+    Observe.CallExpr->IsIndirectCall = true;
+    Observe.CallExpr->IndirectTarget = Target;
+    Leaf.Body.insert(Leaf.Body.begin(), Observe);
+    EXPECT_FALSE(swift_once_source_detail::ignoresContext(Leaf));
+    EXPECT_TRUE(
+        discoverSwiftOnceSources(F.Image, F.Pipeline).NestedCallbacks.empty());
+  }
+}
+
+TEST(SwiftOnceSources, EmittedContextPhiPreservesOnceAndStoreEffects) {
+  ConditionalOnceContextFixture F;
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr =
+      HighExpr::makeConst(0x2010, 8, ConstantAddressProvenance::DataAddress);
+  Store.StoreVal = HighExpr::makeConst(85, 8);
+  F.Pipeline.HighFuncs.back().Body.insert(
+      F.Pipeline.HighFuncs.back().Body.begin(), Store);
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  auto Functions = F.functions();
+  const auto Projected =
+      projectSwiftOnceNestedCallbacks(F.Image, Plan, Functions);
+  ASSERT_EQ(Projected.size(), 1U);
+  Functions[0x1080] = &Projected.at(0x1080).Function;
+  std::vector<HighFunc> Bodies;
+  for (const va_t Entry : {va_t{0x1080}, F.LeafAddress}) {
+    auto Bound = bindObjCSourceReferences(*Functions.at(Entry), F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    if (Entry == 0x1080)
+      Bound.Function.Name = "test_context_phi";
+    Bodies.push_back(std::move(Bound.Function));
+  }
+  CEmitterOptions Options;
+  Options.TheArch = F.Image.Arch;
+  Options.Format = F.Image.Format;
+  Options.Image = &F.Image;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  HighCEmitter Emitter;
+  Emitter.prepareImageFunctionNames(F.Image);
+  ASSERT_TRUE(Emitter.emit(Bodies, Out, Options));
+  Source += R"C(
+#include <stdlib.h>
+static int64_t predicate;
+static uint64_t object, choice;
+static unsigned calls, initializations;
+uintptr_t neverd_local_storage_2010_address(void) { return (uintptr_t)&object; }
+uintptr_t neverd_local_storage_2018_address(void) { return (uintptr_t)&choice; }
+uintptr_t neverd_local_storage_2020_address(void) { return (uintptr_t)&predicate; }
+void swift_once(void *p, void (*callback)(void *), void *context) {
+  if (p != &predicate || context) abort();
+  ++calls;
+  if (predicate != -1) {
+    predicate = -1;
+    ++initializations;
+    callback(context);
+    if (object != 85) abort();
+  }
+}
+int main(void) {
+  const uint64_t choices[] = {0, 1, 2, UINT64_MAX};
+  for (unsigned i = 0; i < 4; ++i) {
+    choice = choices[i]; predicate = 0; object = calls = initializations = 0;
+    test_context_phi((void *)(uintptr_t)0xBAD);
+    if (object != 7 || calls != 1 || initializations != 1) return 1;
+    test_context_phi((void *)(uintptr_t)0xF00);
+    if (object != 7 || calls != 2 || initializations != 1) return 2;
+  }
+  return 0;
+}
+)C";
+  executeOnceSource(Source);
 }
 
 TEST(SwiftOnceSources, EmittedNestedGraphExecutesAllEffectsAtO0AndO2) {

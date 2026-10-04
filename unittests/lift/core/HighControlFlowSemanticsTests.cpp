@@ -383,6 +383,63 @@ TEST(HighControlFlowSemantics, DeadIntegerViewPhiCopiesPreserveEffectBarriers) {
   }
 }
 
+TEST(HighControlFlowSemantics, DeadUnknownPhiCopiesNeverDefineObservedBits) {
+  for (unsigned Variant = 0; Variant != 12; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = guardedPhiCopy();
+    auto &Copy = F.Body[0].ElseBody[0];
+    Copy.Val = HighExpr::makeUndef(8);
+    const auto Unknown = Copy.Val;
+    switch (Variant) {
+    case 0:
+      break;
+    case 1:
+      F.Body[1].Cond = HighExpr::makeConst(1, 1);
+      break;
+    case 2:
+      Copy.IsPhiCopy = false;
+      break;
+    case 3:
+      Copy.Val = HighExpr::makeUndef(4);
+      break;
+    case 4:
+      Unknown->Type = NdType::makeFloat(8);
+      break;
+    case 5:
+      Unknown->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 6:
+      Copy.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 7:
+      Unknown->IndirectTarget = local(2);
+      break;
+    case 8:
+      Unknown->Operands = {local(2)};
+      break;
+    case 9:
+      Unknown->IntrinsicOutputs.push_back(local(2)->Var);
+      break;
+    case 10:
+      Copy.Val = HighExpr::makeLoad(local(2), NdType::makeInt(8));
+      break;
+    case 11:
+      Copy.Val = HighExpr::makeCall("observe", 0x2000, {});
+      Copy.Val->Type = NdType::makeInt(8);
+      break;
+    }
+    const auto Before = Copy.Val;
+    EXPECT_EQ(eliminateHighDeadPhiCopies(F), Variant == 0);
+    if (Variant == 0) {
+      EXPECT_EQ(F.Body[0].ElseBody[0].Addr, 0x1008U);
+      for (uint64_t Input : {0ULL, 1ULL, 2ULL, 0xffffffffffffffffULL})
+        EXPECT_EQ(execute(F, Input), Input ? 42u : 7u);
+    } else {
+      EXPECT_EQ(F.Body[0].ElseBody[0].Val, Before);
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, RewrittenGuardKeepsTheReachingPhiValue) {
   auto F = guardedPhiCopy();
   F.Body.insert(F.Body.begin(), assign(0, 2, 19));
