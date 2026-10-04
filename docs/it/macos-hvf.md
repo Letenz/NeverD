@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 858db03696efbbcf71d350f1bb042790bc6916f0e1131a86558e2d4785233a41 -->
+<!-- i18n-source: e6e2b82cd66393c28afe67bf6c8ac60fefa0bb6b06e4e0ff1321821fef727d93 -->
 
 [← Indice della documentazione](README.md)
 
@@ -172,3 +172,5 @@ Il programma indipendente e invariato `hvf-edge-cases`, revisione `f150b38`, ha 
 Questi risultati restringono l’indagine, ma non dimostrano una correzione di produzione. Conservare VM e thread Executor è un confronto diagnostico, non una modifica del ciclo di vita accettata. Intel richiede ancora i 1000 recuperi originali, l’intero inventario CPU e il controllo Darwin indipendente sul medesimo candidato pulito.
 
 Entrambi i controlli hanno ora superato 1000/1000 iterazioni sulle due immagini Intel: ricreazione della vCPU (37195529270, 37195554929) e di VM più vCPU con lo stesso owner (37196504453, 37196535787). Il secondo documenta 8000 eventi nativi ordinati e la distruzione finale della generazione 1001 per esecuzione; sono stati verificati tutti i 24/27 hash, le uscite native e del controllore a zero e la raccolta dei processi. Ciò restringe il confronto con il rinnovo completo di Executor, senza identificare la causa o dimostrare una correzione. Il prossimo diagnostico manterrà la VM e sostituirà vCPU e thread proprietario. Restano necessari il recupero originale e la validazione CPU/Darwin completa.
+
+Il cambio di owner non ha completato 1000 cicli: l’uploader ha subito SIGTRAP nell’analisi delle stringhe V8 su macOS 15 (37198629082) e SIGSEGV nella ricerca degli scope V8 su macOS 26 (37198630903). Il controllore ha annullato e raccolto i processi nativi. I log conservano 24/25 e 467/468 cicli completati/avviati, senza asserzione nativa o risultato finale. Entrambi i runner sono rimasti raggiungibili con rapporti di crash corrispondenti. Sono interruzioni dell’osservatore, non successi nativi o perdite confermate del runner. La causa resta ignota; confrontare controlli di solo caricamento prima di modificare il backend.

@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 858db03696efbbcf71d350f1bb042790bc6916f0e1131a86558e2d4785233a41 -->
+<!-- i18n-source: e6e2b82cd66393c28afe67bf6c8ac60fefa0bb6b06e4e0ff1321821fef727d93 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -172,3 +172,5 @@ Das unabhängige, unveränderte Programm `hvf-edge-cases` bei `f150b38` beendete
 Die Ergebnisse grenzen die Untersuchung ein, belegen aber keine Produktkorrektur. VM und Executor-Threads beizubehalten ist ein Diagnosevergleich, keine akzeptierte Lebenszyklusänderung. Intel benötigt weiterhin den ursprünglichen 1000-fachen Wiederherstellungstest, das vollständige CPU-Inventar und die unabhängige Darwin-Prüfung am selben sauberen Kandidaten.
 
 Beide Lebenszyklusvergleiche bestanden jetzt auf beiden Intel-Images jeweils 1000/1000 Durchläufe: vCPU-Neuerstellung (37195529270, 37195554929) sowie VM- und vCPU-Neuerstellung bei gleichem owner (37196504453, 37196535787). Letztere belegt je Lauf 8000 geordnete native Ereignisse und die abschließende Zerstörung von Generation 1001; alle 24/27 Artefakt-Hashes, Rückgabecodes null und das Einsammeln der Kindprozesse wurden geprüft. Das grenzt den Vergleich mit vollständigem Executor-Wechsel ein, beweist aber weder Ursache noch Produktkorrektur. Als Nächstes bleiben die VM erhalten und werden vCPU und Besitzer-Thread ersetzt. Originaler Wiederherstellungstest und vollständige CPU/Darwin-Abnahme bleiben erforderlich.
+
+Der owner-Wechsel beendete die 1000 Runden nicht: Der Uploader erlitt SIGTRAP beim V8-Stringparsen auf macOS 15 (37198629082) und SIGSEGV bei der V8-Scope-Suche auf macOS 26 (37198630903). Der Controller brach daraufhin die nativen Prozesse ab und sammelte sie ein. Gesichert sind 24/25 bzw. 467/468 beendete/gestartete Runden ohne native Assertion oder Endergebnis. Beide Runner blieben erreichbar und lieferten passende Crashberichte. Das sind vom Beobachter ausgelöste Abbrüche, keine nativen Erfolge oder bestätigten Runner-Verluste. Die Ursache ist offen; vor Backend-Änderungen werden reine Upload-Kontrollen verglichen.

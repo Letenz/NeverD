@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 858db03696efbbcf71d350f1bb042790bc6916f0e1131a86558e2d4785233a41 -->
+<!-- i18n-source: e6e2b82cd66393c28afe67bf6c8ac60fefa0bb6b06e4e0ff1321821fef727d93 -->
 
 [← 문서 목록](README.md)
 
@@ -172,3 +172,5 @@ M4 Max, macOS 15.6.1, Release, Apple Clang 17, 사전 빌드 LLVM에서 검증�
 조사 범위는 좁아졌지만 제품 수정이 입증되지는 않았습니다. VM과 Executor 스레드 유지는 진단 비교이며 채택된 수명 변경이 아닙니다. Intel은 동일한 깨끗한 후보에서 원래 1000회 복구 테스트, 전체 CPU 목록 및 독립 Darwin 관문을 통과해야 합니다.
 
 두 Intel 이미지에서 vCPU 재생성(37195529270, 37195554929)과 같은 owner에서 VM 및 vCPU 재생성(37196504453, 37196535787)이 각각 1000/1000회를 통과했습니다. 후자는 실행마다 네이티브 이벤트 8000개의 순서, 마지막 1001세대 소멸, 산출물 해시 24/27개, 네이티브·제어기 종료 코드 0과 자식 프로세스 회수를 검증했습니다. 전체 Executor 교체와의 차이를 좁히는 근거이며 원인이나 제품 수정의 증명은 아닙니다. 다음 진단은 VM을 유지하고 vCPU와 owner 스레드를 교체합니다. 원래 복구 시험과 전체 CPU/Darwin 검증은 여전히 필요합니다.
+
+owner 교체 1000회 실험은 완료되지 않았습니다. macOS 15 업로더는 V8 문자열 구문 분석에서 SIGTRAP(37198629082), macOS 26은 V8 범위 검색에서 SIGSEGV(37198630903)로 중단됐고 제어기가 네이티브 프로세스를 취소·회수했습니다. 보존 로그는 완료/시작 24/25회와 467/468회이며 네이티브 단언 실패나 최종 결과는 없습니다. 두 runner 모두 연결을 유지하며 일치하는 충돌 보고서를 제공했습니다. 관찰기 때문에 중단된 것으로 네이티브 통과나 runner 연결 단절의 증거가 아닙니다. 원인은 미확정이며 백엔드를 바꾸기 전에 업로드 전용 대조와 비교합니다.
