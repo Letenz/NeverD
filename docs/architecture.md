@@ -1784,6 +1784,14 @@ Windows workloads; OS models cannot override authentication state or infer
 active keys. Other PAuth encodings and system-control access stay unsupported.
 See the [checked CPU contract](cpu-execution.md).
 
+The same ISA owner describes baseline no-offset `LDAR[B/H]` and `STLR[B/H]`
+as exact, naturally aligned 1/2/4/8-byte ordinary-RAM accesses. Original
+instructions execute under the shared physical lease and RAM transaction,
+preserving pre-effect observers and whole-state rollback. This cooperative
+ordering contract does not admit exclusive monitors, parallel SMP, unaligned
+accesses or optional acquire/release encodings; see the
+[CPU contract](cpu-execution.md) for the complete boundary.
+
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 
 KVM x64 obtains actual special registers from an acknowledged synchronized capture or an explicit `KVM_GET_SREGS` read, and compares only the protocol fields in `KvmX64State.def`. `KVM_CAP_SYNC_REGS` determines whether synchronized capture is available for each register set; unsupported sets retain explicit read ioctls. It writes the projection again when CR3, CPL, TLS, CR8 or another defined field differs. Only a fully captured single-step debug exit permits reuse of runnable state; exceptions, cancellation and failed entries reestablish it. `X64StateTransition` checks actual CPU loads across TLS, privilege and CR8 changes, repeated faults and cancellation. KVM compares general registers and the complete FP/SSE state against the last acknowledged debug capture using `X64HostRegisters.def` and `X64FPState.def`, and reinstalls changed input. Host writes and context restoration participate in this comparison; exceptions, cancellation and failures invalidate reuse. Stepping is armed and actual general/FP state is read back for every instruction.

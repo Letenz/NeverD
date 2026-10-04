@@ -2085,6 +2085,17 @@ unchanged code/data bytes. Run it together with `NeverDAArch64StateTests`,
 admission or startup probes. Native platform cells without hardware remain
 explicit skips; no active-authentication or real Android process claim follows.
 
+`AArch64AcquireReleaseTests.cpp` in `NeverDAArch64MemoryTests` runs independently
+encoded byte, halfword, word and doubleword acquire/release accesses through
+both checked privileges on available Unicorn/KVM/WHP/HVF transports. It checks
+the entire scalar/vector state and data page, zero-register and aliased-base
+operands, SP addressing, exact page tails, read/write/user permissions, observer
+cancellation and retry. Misalignment and neighboring exclusive, limited-order,
+RCpc and optional pre-indexed encodings must stop before effects. Run this
+target with the checked CPU, state, FP, PAuth and execution-session suites when
+changing instruction admission. Unavailable hardware cells remain skips;
+these tests do not establish parallel memory ordering.
+
 The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller’s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.
 
 `X64FPState.def` declares compacted AVX, AVX-512, CET_U/CET_S and AMX transport layouts, including 64-byte component alignment. Present extension payloads must be architectural zero init state; absent payloads and alignment padding do not define state. Layout bits determine offsets, and unknown layouts, non-initial payloads or incorrect lengths fail before publication. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState` and `InitialWideComponentsDoNotHideFPState` cover 872-byte and 10752-byte WHP packets. This transport support does not admit those extension instructions.

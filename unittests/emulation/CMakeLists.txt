@@ -34,6 +34,7 @@ add_neverd_unittest(NeverDAArch64PAuthTests
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
+  AArch64AcquireReleaseTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
