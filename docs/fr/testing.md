@@ -291,6 +291,8 @@ Le x64 vérifié admet aussi les formes masquées historiques `SS`, `SD`, `PS`, 
 
 `check_windows_simd.py` construit un exécutable Windows x64 original et indépendant à partir de `WindowsSIMDCases.def` et de la liste des cas scalaires. Ses 2 048 observations couvrent les opérandes registre/RAM, toutes les combinaisons de masques et les indicateurs persistants effacés ou tous activés. La CI Windows conserve les codes et paramètres bruts des exceptions ainsi que les deux champs MXCSR de `CONTEXT`. Le test vérifie le PC exact, la préservation des XMM et les résultats masqués avant de restaurer l’état hôte. `--build-only` prouve uniquement la compilation. Ces observations n’activent pas le SIMD non masqué en exécution checked et ne prouvent pas une exécution ARM64 native.
 
+`WindowsSIMDStatusCases.def` fige les 63 combinaisons non vides d’états actifs observées sous Windows natif. `WindowsSIMDMappingTests.cpp` vérifie les codes et paramètres exacts, rejette les défauts incohérents et contrôles invalides, puis injecte la frontière du défaut pour vérifier les enregistrements, les deux contrôles de CONTEXT et une continuation masquée. L’exécutable original de la CI Windows vérifie indépendamment ces résultats. Ce test injecté ne prouve pas la livraison des exceptions par Unicorn et n’active pas le SIMD non masqué en exécution checked.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

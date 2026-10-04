@@ -27,6 +27,10 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsSIMDMapping.NativeObservationsDetermineStatusAndParameters")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsSIMDMapping.RequiresConsistentX64FaultAndControl")
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64PackedFloatIntegerOracle.CVTPS2DQMatchesOriginalInstructions")

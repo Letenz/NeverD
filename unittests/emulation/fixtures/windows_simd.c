@@ -52,6 +52,11 @@ static const Operation Operations[] = {
 #undef NEVERD_SIMD_CASE
 #undef NEVERD_WINDOWS_SIMD_LEAF
 };
+static const unsigned StatusCodes[] = {
+#define NEVERD_WINDOWS_SIMD_STATUS(Active, MXCSR, Code) [Active] = Code,
+#include "WindowsSIMDStatusCases.def"
+#undef NEVERD_WINDOWS_SIMD_STATUS
+};
 _Alignas(VectorBytes) static unsigned char Initial[StateBytes],
     Before[StateBytes], After[StateBytes], Host[StateBytes];
 static U64 Record[FieldCount];
@@ -86,7 +91,16 @@ static LONG CALLBACK observe(EXCEPTION_POINTERS *Pointers) {
   const unsigned char *Vectors = (const unsigned char *)C->FltSave.XmmRegisters;
   for (unsigned I = 0; I < VectorBytes * VectorCount; ++I)
     require(Vectors[I] == Before[XmmOffset + I], SiteVector);
-  // Record the OS result without assuming an NTSTATUS or MXCSR convention.
+  // Literal expectations were frozen from the independent original Windows
+  // run before production classification was implemented.
+  const unsigned Active = C->MxCsr & ~(C->MxCsr >> MaskShift) & Sticky;
+  require(Active && E->ExceptionCode == StatusCodes[Active] &&
+              !E->ExceptionFlags &&
+              E->NumberParameters == ExceptionParameterCount &&
+              !E->ExceptionInformation[0] &&
+              E->ExceptionInformation[1] == C->MxCsr &&
+              C->MxCsr == C->FltSave.MxCsr,
+          SiteStatus);
   C->Rip = (U64)Current->Resume;
   return EXCEPTION_CONTINUE_EXECUTION;
 }

@@ -289,6 +289,8 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 `check_windows_simd.py` собирает независимую оригинальную программу Windows x64 из `WindowsSIMDCases.def` и перечня скалярных случаев. 2 048 наблюдений охватывают операнды в регистрах/RAM, все комбинации масок исключений и полностью сброшенные или установленные накопленные флаги. Windows CI сохраняет исходные коды и параметры исключений и оба поля MXCSR в `CONTEXT`. Перед восстановлением состояния хоста тест проверяет точный PC сбоя, неизменность XMM и результаты при маскированных исключениях. `--build-only` подтверждает только компиляцию. Эти наблюдения не включают немаскированный SIMD в режиме checked и не подтверждают нативное выполнение ARM64.
 
+`WindowsSIMDStatusCases.def` фиксирует все 63 непустые комбинации активных состояний, наблюдавшиеся в нативной Windows. `WindowsSIMDMappingTests.cpp` проверяет точные коды и параметры, отклоняет несогласованные сбои и недопустимые управляющие значения и внедряет границу сбоя для проверки записей, обоих управляющих полей CONTEXT и продолжения с масками. Оригинальная программа Windows CI независимо проверяет фиксированные результаты. Внедрённый тест не доказывает доставку исключений Unicorn и не включает немаскированный SIMD в режиме checked.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

@@ -279,6 +279,8 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `check_windows_simd.py` 根据 `WindowsSIMDCases.def` 和标量用例清单构建独立的原创 Windows x64 程序。2,048 组观察覆盖寄存器/RAM 操作数、全部异常屏蔽位组合，以及清零或全部置位的粘滞状态。Windows CI 保留原始异常代码、参数和 `CONTEXT` 中的两份 MXCSR；测试在恢复宿主状态前检查精确故障 PC、未改变的 XMM 状态和屏蔽异常后的结果。`--build-only` 仅证明编译成功。这些观察不启用 checked 模式下未屏蔽的 SIMD，也不代表 ARM64 原生执行。
 
+`WindowsSIMDStatusCases.def` 固化了原生 Windows 上观察到的全部 63 种非空有效状态组合。`WindowsSIMDMappingTests.cpp` 检查精确代码与参数、拒绝不一致的故障和无效控制值，并通过注入故障边界检查异常记录、CONTEXT 中的两份控制状态及屏蔽异常后的继续执行。Windows CI 中的原创程序独立验证这些固定结果。注入测试不证明 Unicorn 能产生该异常，也不启用 checked 模式下未屏蔽的 SIMD。
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

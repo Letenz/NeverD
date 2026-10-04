@@ -291,6 +291,8 @@ Geprüftes x64 erlaubt auch maskierte Legacy-Formen `SS`, `SD`, `PS`, `PD` von `
 
 `check_windows_simd.py` erstellt aus `WindowsSIMDCases.def` und dem skalaren Fallinventar ein unabhängiges, selbst entwickeltes Windows-x64-Programm. Seine 2.048 Beobachtungen umfassen Register-/RAM-Operanden, alle Ausnahmemasken und gelöschte oder vollständig gesetzte dauerhafte Statusbits. Die Windows-CI speichert rohe Ausnahmecodes, Parameter und beide MXCSR-Felder in `CONTEXT`. Der Test prüft den genauen Fehler-PC, unveränderte XMM-Zustände und maskierte Ergebnisse, bevor er den Hostzustand wiederherstellt. `--build-only` belegt nur die Kompilierung. Diese Beobachtungen aktivieren keine unmaskierten SIMD-Ausnahmen in checked-Ausführung und belegen keine native ARM64-Ausführung.
 
+`WindowsSIMDStatusCases.def` fixiert alle 63 nicht leeren Kombinationen aktiver Statusbits aus nativem Windows. `WindowsSIMDMappingTests.cpp` prüft genaue Codes und Parameter, weist inkonsistente Fehler und ungültige Steuerwerte zurück und injiziert die Fehlergrenze zur Prüfung der Datensätze, beider CONTEXT-Steuerwerte und einer maskierten Fortsetzung. Das originale Windows-CI-Programm prüft die fixierten Ergebnisse unabhängig. Der injizierte Test belegt keine Unicorn-Ausnahmezustellung und aktiviert kein unmaskiertes SIMD in checked-Ausführung.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

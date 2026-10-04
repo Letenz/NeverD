@@ -911,6 +911,8 @@ These cases require `NEVERD_WDM_SEH_FIXTURE` and its optional CFG companion.
 
 `check_windows_simd.py` builds an independent original Windows x64 executable from `WindowsSIMDCases.def` and the scalar case inventory. Its 2,048 observations cover register/RAM operands, every exception-mask combination and clear/all-set sticky flags. The Windows CI job preserves raw exception codes, parameters and both MXCSR fields in `CONTEXT`; the fixture verifies exact fault PCs, unchanged XMM state and masked results before restoring host state. `--build-only` is compilation evidence only. These observations do not enable checked unmasked SIMD or claim native ARM64 execution.
 
+`WindowsSIMDStatusCases.def` freezes all 63 nonempty active-status combinations observed on native Windows. `WindowsSIMDMappingTests.cpp` verifies their exact codes and parameters, rejects inconsistent faults and invalid controls, and injects the fault boundary to check exception records, both CONTEXT controls and a masked continuation. The original Windows CI executable independently enforces the frozen results. The injected test does not establish Unicorn exception delivery or enable checked unmasked SIMD.
+
 `HardwareBackendTests.cpp` exercises the native checked backend on supported
 hosts: high virtual addresses, pre-effect observer stops, RAM aliases, context
 restore against current mappings, fault lifetime, bounded loops, unsupported
