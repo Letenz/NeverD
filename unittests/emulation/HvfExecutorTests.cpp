@@ -379,7 +379,8 @@ TEST_F(HvfExecutor, CompletionFailureOutranksConcurrentStop) {
 // a finite API return is not yet a rule for authenticating guest completion.
 class HvfIntelProbe : public HvfExecutor {
   void SetUp() override {
-    if (!std::getenv("NEVERD_HVF_INTEL_PROBE"))
+    const auto *Enabled = std::getenv("NEVERD_HVF_INTEL_PROBE");
+    if (!Enabled || llvm::StringRef(Enabled) != "1")
       GTEST_SKIP() << "explicit Intel diagnostic experiment required";
     llvm::outs() << "INTEL_PROBE phase=executor_initialization\n";
     llvm::outs().flush();
@@ -566,6 +567,11 @@ TEST_F(HvfIntelProbe, FiniteDeadline) {
                                 Expired ? 0 : mach_absolute_time() + Slice);
                   })),
               "");
+    // Preserve a stale MTF/no-entry observation, but never classify a guest
+    // exception, VM-entry failure or other exit as successful expiration.
+    EXPECT_TRUE(Reason == VMX_REASON_MTF || Reason == VMX_REASON_IRQ ||
+                Reason == VMX_REASON_VMX_TIMER_EXPIRED)
+        << "unexpected MTF probe exit=" << Reason;
     EXPECT_TRUE((RIP == PC + 7 && AX == State.reg(X64Register::AX)) ||
                 (RIP == PC + 10 && AX == State.reg(X64Register::AX) + 1));
   }
