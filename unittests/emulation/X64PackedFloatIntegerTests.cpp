@@ -275,7 +275,7 @@ void nativeOracle(OperationKind Kind) {
                     Check(input(C, Inputs[L], Right, Negate),
                           InitialMXCSR | R.Control | Sticky | Flush,
                           InitialFlags);
-                    ASSERT_FALSE(HasFatalFailure());
+                    ASSERT_FALSE(testing::Test::HasFatalFailure());
                   }
       for (const auto &I : mixedInputs(C))
         for (const auto &R : Roundings)
@@ -284,7 +284,7 @@ void nativeOracle(OperationKind Kind) {
               SCOPED_TRACE(C.Name);
               SCOPED_TRACE(testing::PrintToString(I.Right));
               Check(I, InitialMXCSR | R.Control | Sticky | Flush, Flags);
-              ASSERT_FALSE(HasFatalFailure());
+              ASSERT_FALSE(testing::Test::HasFatalFailure());
             }
     }
   }
