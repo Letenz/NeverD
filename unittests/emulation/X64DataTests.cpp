@@ -32,20 +32,24 @@ namespace {
 #undef NEVERD_DATA_TEXT
 #undef NEVERD_DATA_VALUE
 
+#define NEVERD_MXCSR_TEXT(Name, Text) constexpr char MXCSR##Name[] = Text;
+#include "X64MXCSRCases.def"
+#undef NEVERD_MXCSR_TEXT
 using Parameter = std::tuple<ExecutionBackendKind, ExecutionContract>;
-class X64Data : public testing::TestWithParam<Parameter> {
+class X64DataBase : public testing::Test {
 protected:
+  virtual Parameter parameter() const = 0;
   std::unique_ptr<ExecutionBackend> CPU;
   void SetUp() override {
-    auto B =
-        createExecutionBackend(std::get<0>(GetParam()), std::get<1>(GetParam()),
-                               Limit, GuestArchitecture::X64);
+    auto B = createExecutionBackend(std::get<0>(parameter()),
+                                    std::get<1>(parameter()), Limit,
+                                    GuestArchitecture::X64);
     if (!B) {
       auto E = B.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(E));
       if (Unavailable &&
-          !requireHvf(std::get<0>(GetParam()), GuestArchitecture::X64))
+          !requireHvf(std::get<0>(parameter()), GuestArchitecture::X64))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }
@@ -56,6 +60,7 @@ protected:
     llvm::cantFail(CPU->setReg(X64Register::CX, Data));
     llvm::cantFail(CPU->setReg(X64Register::FLAGS, InitialFlags));
   }
+  void arithmetic(uint64_t DAZ, llvm::ArrayRef<uint8_t> Selected = {});
   ExecutionExit run(llvm::ArrayRef<uint8_t> Bytes, BackendHooks Hooks = {}) {
     std::vector<uint8_t> CodeBytes(Bytes.begin(), Bytes.end());
     CodeBytes.push_back(NopOpcode);
@@ -75,6 +80,11 @@ protected:
     llvm::cantFail(CPU->writeInteger(Data, Low, WordBytes));
     llvm::cantFail(CPU->writeInteger(Data + WordBytes, High, WordBytes));
   }
+};
+
+class X64Data : public X64DataBase,
+                public testing::WithParamInterface<Parameter> {
+  Parameter parameter() const override { return GetParam(); }
 };
 
 TEST_P(X64Data, MemoryArithmeticPreviewMatchesNativeBytesAndDefinedFlags) {
@@ -307,7 +317,7 @@ TEST_P(X64Data, VectorStorePermissionFaultPreservesBothWords) {
   EXPECT_EQ(llvm::cantFail(CPU->xmm(0)), (RegisterValue{Low, High}));
 }
 
-TEST_P(X64Data, MaskedSSEArithmeticMatchesIndependentHostExecution) {
+void X64DataBase::arithmetic(uint64_t DAZ, llvm::ArrayRef<uint8_t> Selected) {
 #if defined(__x86_64__) || defined(_M_X64)
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
@@ -323,6 +333,8 @@ TEST_P(X64Data, MaskedSSEArithmeticMatchesIndependentHostExecution) {
   };
   auto Check = [&](unsigned Width, bool Double,
                    llvm::ArrayRef<uint8_t> Instruction) {
+    if (!Selected.empty() && Selected != Instruction)
+      return;
 #ifdef _WIN32
     std::vector<uint8_t> Oracle(std::begin(Win64Before), std::end(Win64Before));
     const auto After = llvm::ArrayRef<uint8_t>(Win64After);
@@ -363,11 +375,12 @@ TEST_P(X64Data, MaskedSSEArithmeticMatchesIndependentHostExecution) {
           X64MachineState Seed;
           Seed.Xmm[0] = A;
           Seed.Xmm[1] = B;
-          Seed.MXCSR = InitialMXCSR | Rounding | Flush;
+          Seed.MXCSR = InitialMXCSR | Rounding | Flush | DAZ;
           alignas(x64::fp::RegisterSlotBytes)
               std::array<uint8_t, x64::fp::LegacyBytes>
                   Input{}, Output{}, Host{};
-          llvm::cantFail(encodeX64FXState(Seed, Input));
+          llvm::cantFail(
+              encodeX64FXState(Seed, Input, x64::fp::ArchitecturalMXCSRMask));
           Execute(Input.data(), Output.data(), Host.data(), nullptr);
           X64MachineState Expected;
           llvm::cantFail(decodeX64FXState(Expected, Output));
@@ -416,6 +429,38 @@ TEST_P(X64Data, MaskedSSEArithmeticMatchesIndependentHostExecution) {
   GTEST_SKIP();
 #endif
 }
+
+TEST_P(X64Data, MaskedSSEArithmeticMatchesIndependentHostExecution) {
+  arithmetic(0);
+}
+struct DAZParameter {
+  ExecutionBackendKind Backend;
+  ExecutionContract Contract;
+  std::string name() const {
+    return std::string(executionBackendName(Backend)) +
+           (Contract == ExecutionContract::CheckedUserX64
+                ? MXCSRUserSuffix
+                : MXCSRSupervisorSuffix);
+  }
+};
+void PrintTo(const DAZParameter &P, std::ostream *OS) { *OS << P.name(); }
+class X64DAZData : public X64DataBase,
+                   public testing::WithParamInterface<DAZParameter> {
+  Parameter parameter() const override {
+    return {GetParam().Backend, GetParam().Contract};
+  }
+};
+#define NEVERD_X64_SSE_INSTRUCTION(Name, Width, Alignment, Double, ...)        \
+  TEST_P(X64DAZData, DAZ##Name##MatchesIndependentHostExecution) {             \
+    const auto Mask =                                                          \
+        llvm::cantFail(CPU->supportedControlBits(CPURegister::X64MXCSR));      \
+    if (!(Mask[0] & x64::fp::DenormalsAreZero))                                \
+      GTEST_SKIP();                                                            \
+    constexpr uint8_t Bytes[] = {__VA_ARGS__};                                 \
+    arithmetic(x64::fp::DenormalsAreZero, Bytes);                              \
+  }
+#include "arch/x86_64/X64SSEInstructions.def"
+#undef NEVERD_X64_SSE_INSTRUCTION
 
 TEST_P(X64Data, SSEMemoryObserverStopsBeforeResultAndStatusChanges) {
   auto Check = [&](unsigned Width, llvm::ArrayRef<uint8_t> Instruction) {
@@ -800,6 +845,21 @@ TEST_P(X64Data, UnmodeledFormsRemainExplicitlyUnsupported) {
         << Exit.Diagnostic;
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    DAZBackends, X64DAZData,
+    testing::Values(
+        DAZParameter{ExecutionBackendKind::Unicorn,
+                     ExecutionContract::CheckedX64},
+        DAZParameter{ExecutionBackendKind::Unicorn,
+                     ExecutionContract::CheckedUserX64},
+        DAZParameter{ExecutionBackendKind::KVM, ExecutionContract::CheckedX64},
+        DAZParameter{ExecutionBackendKind::KVM,
+                     ExecutionContract::CheckedUserX64},
+        DAZParameter{ExecutionBackendKind::WHP, ExecutionContract::CheckedX64},
+        DAZParameter{ExecutionBackendKind::WHP,
+                     ExecutionContract::CheckedUserX64}),
+    [](const auto &Info) { return Info.param.name(); });
 
 INSTANTIATE_TEST_SUITE_P(
     Backends, X64Data,

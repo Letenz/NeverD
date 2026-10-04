@@ -22,6 +22,8 @@ public:
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
+  llvm::Expected<RegisterValue>
+      supportedControlBits(CPURegister) const override;
   llvm::Expected<RegisterValue> readRegister(CPURegister) override;
   llvm::Error writeRegister(CPURegister, const RegisterValue &) override;
   llvm::Expected<std::unique_ptr<BackendContext>> saveContext() override;

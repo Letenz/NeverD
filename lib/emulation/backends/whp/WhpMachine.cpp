@@ -22,6 +22,9 @@ llvm::Expected<std::unique_ptr<WhpPartition>>
 createWhpX64Partition(MemoryProjection &Memory);
 class WhpMachine final : public X64Machine {
 public:
+  // Private startup execution discovers and verifies this mask before return.
+  uint32_t MXCSRMask = x64::fp::ArchitecturalMXCSRMask;
+  uint32_t mxcsrMask() const override { return MXCSRMask; }
   explicit WhpMachine(MemoryProjection &Memory)
       : Binding([&Memory] { return createWhpX64Partition(Memory); }) {}
   llvm::Error step(X64MachineState &State, uint64_t Root,
@@ -32,7 +35,8 @@ public:
     auto Active = Binding.acquire(Control);
     if (!Active)
       return Active.takeError();
-    return static_cast<WhpX64Partition &>(**Active).step(State, Root, Control);
+    return static_cast<WhpX64Partition &>(**Active).step(State, Root, Control,
+                                                         MXCSRMask);
   }
 
 private:
@@ -126,7 +130,7 @@ createWhpX64Partition(MemoryProjection &Memory) {
 llvm::Expected<std::unique_ptr<X64Machine>>
 createWhpMachine(MemoryProjection &Memory) {
   auto M = std::make_unique<WhpMachine>(Memory);
-  if (auto E = verifyX64Machine(*M, Memory))
+  if (auto E = verifyX64Machine(*M, Memory, &M->MXCSRMask))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }

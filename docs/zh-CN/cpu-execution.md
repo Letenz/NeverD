@@ -64,11 +64,13 @@ checked user x64 只拦截精确的无前缀 `SYSCALL` 编码；checked user ARM
 
 ## x64 扩展与原生 CPU 状态
 
-checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MOVHLPS`，以及带屏蔽的标量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留粘滞状态、舍入和 FTZ；拒绝 DAZ 与未屏蔽异常。KVM/WHP 同步全部 16 个 XMM 寄存器及 MXCSR；未列出的编码和操作数组合仍拒绝。
+checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MOVHLPS`，以及带屏蔽的标量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留粘滞状态、舍入和 FTZ；拒绝 未屏蔽异常。KVM/WHP 同步全部 16 个 XMM 寄存器及 MXCSR；未列出的编码和操作数组合仍拒绝。
 
-checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
+checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 未屏蔽异常、x87 或 AVX。
 
-在可移植软件配置中，Unicorn 会对传统 `MINSS/MINSD/MINPS/MINPD` 和 `MAXSS/MAXSD/MAXPS/MAXPD` 选中的值应用 DAZ。选中的次正规输入变为有符号零；NaN 载荷和已有 MXCSR 状态保持不变。`test_x86_sse_minmax_daz` 检查寄存器、RAM 和寄存器别名形式，覆盖 DAZ 开关、全部舍入模式、FTZ 和粘滞状态。checked KVM/WHP 配置仍拒绝 DAZ。
+在可移植软件配置中，Unicorn 会对传统 `MINSS/MINSD/MINPS/MINPD` 和 `MAXSS/MAXSD/MAXPS/MAXPD` 选中的值应用 DAZ。选中的次正规输入变为有符号零；NaN 载荷和已有 MXCSR 状态保持不变。`test_x86_sse_minmax_daz` 检查寄存器、RAM 和寄存器别名形式，覆盖 DAZ 开关、全部舍入模式、FTZ 和粘滞状态。
+
+KVM/WHP 通过私有 `FXSAVE64` 执行探测 `MXCSR_MASK`，并用有符号次正规数的算术验证所宣告的 DAZ 能力。checked Unicorn 提供软件掩码。`supportedControlBits` 返回 CPU 的不可变掩码；FX/XSAVE、快照和 Windows CONTEXT 使用同一能力。checked `LDMXCSR/STMXCSR` 精确访问 m32，检查完整 RAM 范围，并在故障或观察回调取消时保留状态。加载保留位触发 #GP；未屏蔽 SIMD 异常仍不支持。`X64MXCSRTests.cpp` 检查控制值与重试；`X64DAZData` 用原始本机指令对照全部 28 种已准入 SSE 算术形式，覆盖 DAZ、舍入和 FTZ。这不扩展 HVF 的 DAZ 支持。
 
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
@@ -88,11 +90,11 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CMPSS`、`CMPSD`、`CMPPS` 和 `CMPPD` 在 KVM、WHP 和 checked Unicorn 上执行八种传统比较条件。共享 `Source` 规则接纳解码后的条件别名，保留控制值仍不支持。标量形式保留高位通道并读取 m32/m64，向量形式要求对齐的 m128。FLAGS 和已有 MXCSR 状态保留，无效及次正规状态按有效通道累积。Capstone 统一负责指令族 ID 和 SSE 条件，取代仅在 lifter 内修正身份的逻辑；Unicorn 在各比较函数内部分类次正规输入。
 
-`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 通过共享 `Source` 规则转换传统 SSE 精度。标量结果保留目标高 64/96 位；打包扩宽读取 m64 并写入两个双精度数，打包缩窄读取对齐的 m128、写入两个单精度数并清零高 64 位。KVM、WHP 和 checked Unicorn 执行原始指令，保留 FLAGS，并按舍入与 FTZ 控制累积已屏蔽异常的 MXCSR 状态。Unicorn 在转换函数中逐个分类有效次正规输入。DAZ、未屏蔽异常和 VEX/EVEX 仍不支持。
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 通过共享 `Source` 规则转换传统 SSE 精度。标量结果保留目标高 64/96 位；打包扩宽读取 m64 并写入两个双精度数，打包缩窄读取对齐的 m128、写入两个单精度数并清零高 64 位。KVM、WHP 和 checked Unicorn 执行原始指令，保留 FLAGS，并按舍入与 FTZ 控制累积已屏蔽异常的 MXCSR 状态。Unicorn 在转换函数中逐个分类有效次正规输入。未屏蔽异常和 VEX/EVEX 仍不支持。
 
-`CVTDQ2PS` 和 `CVTDQ2PD` 通过共享 `Source` 规则转换打包的有符号 32 位整数。单精度读取对齐的 m128 并使用 MXCSR 舍入；双精度读取可未对齐的 m64，结果精确。目标 XMM 全部位被替换，FLAGS 和已有 MXCSR 状态保留，非精确单精度结果累积精度状态。KVM、WHP 和 checked Unicorn 执行原始指令。Unicorn 在选择八字节读取前识别两种打包扩宽转换。DAZ、未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
+`CVTDQ2PS` 和 `CVTDQ2PD` 通过共享 `Source` 规则转换打包的有符号 32 位整数。单精度读取对齐的 m128 并使用 MXCSR 舍入；双精度读取可未对齐的 m64，结果精确。目标 XMM 全部位被替换，FLAGS 和已有 MXCSR 状态保留，非精确单精度结果累积精度状态。KVM、WHP 和 checked Unicorn 执行原始指令。Unicorn 在选择八字节读取前识别两种打包扩宽转换。未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
 
-`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 舍入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截断。共享 `Source` 规则要求对齐的 m128 或 XMM 输入。NaN 或越界通道产生 signed32 indefinite 并设置无效状态；其他有效但非精确通道独立累积精度状态。单精度输入产生四个整数，双精度输入产生两个并清零目标高 64 位。FLAGS 和已有 MXCSR 状态保留；FTZ 不丢弃次正规输入。KVM、WHP 和 checked Unicorn 执行原始指令。DAZ、未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
+`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 舍入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截断。共享 `Source` 规则要求对齐的 m128 或 XMM 输入。NaN 或越界通道产生 signed32 indefinite 并设置无效状态；其他有效但非精确通道独立累积精度状态。单精度输入产生四个整数，双精度输入产生两个并清零目标高 64 位。FLAGS 和已有 MXCSR 状态保留；FTZ 不丢弃次正规输入。KVM、WHP 和 checked Unicorn 执行原始指令。未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
 
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 

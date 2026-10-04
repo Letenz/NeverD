@@ -46,6 +46,10 @@ constexpr size_t programBytes() {
 
 /// Verify bounded native initialization using private supervisor code/data.
 /// This does not certify arbitrary workloads or another execution profile.
-llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory);
+/// When requested, discover MXCSR_MASK using original FXSAVE64 execution and
+/// verify advertised DAZ numerically. Publish the mask only after all checks;
+/// its architectural zero-mask fallback does not advertise DAZ.
+llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
+                             uint32_t *MXCSRMask = nullptr);
 } // namespace neverd::emulation
 #endif

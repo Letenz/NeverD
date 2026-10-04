@@ -131,9 +131,13 @@ llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU,
         return V.takeError();
       State.Xmm[I] = *V;
     }
-    if (auto E = encodeX64FXState(
-            State, llvm::MutableArrayRef(Bytes).slice(X64ContextFPOffset,
-                                                      x64::fp::LegacyBytes)))
+    auto Mask = CPU.supportedControlBits(CPURegister::X64MXCSR);
+    if (!Mask)
+      return Mask.takeError();
+    if (auto E = encodeX64FXState(State,
+                                  llvm::MutableArrayRef(Bytes).slice(
+                                      X64ContextFPOffset, x64::fp::LegacyBytes),
+                                  (*Mask)[0]))
       return std::move(E);
   } else {
     for (unsigned I = 0; I < AArch64ContextVectorCount; ++I) {
@@ -278,11 +282,14 @@ llvm::Error restoreUserContext(ExecutionBackend &CPU,
       return E;
     if (auto E = validateX64FPState(State.FP))
       return E;
-    if (State.MXCSR != MXCSR || (MXCSR & ~x64::AllowedMXCSR) ||
+    auto Mask = CPU.supportedControlBits(CPURegister::X64MXCSR);
+    if (!Mask)
+      return Mask.takeError();
+    if (State.MXCSR != MXCSR || (MXCSR & ~(*Mask)[0]) ||
         (MXCSR & x64::InitialMXCSR) != x64::InitialMXCSR)
       return failure(text::ExceptionContext);
     std::vector<uint8_t> Canonical(x64::fp::LegacyBytes);
-    if (auto E = encodeX64FXState(State, Canonical))
+    if (auto E = encodeX64FXState(State, Canonical, (*Mask)[0]))
       return E;
     if (FP != llvm::ArrayRef(Canonical))
       return failure(text::ExceptionContext);

@@ -10,6 +10,8 @@
 #include "core/MemoryProjection.h"
 #include "gtest/gtest.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <cstring>
 
 namespace neverd::emulation {
@@ -21,7 +23,7 @@ namespace {
 #include "X64ProbeCases.def"
 #undef NEVERD_X64_PROBE_TEST_CODE
 #undef NEVERD_X64_PROBE_TEST_VALUE
-class OriginalTransport final : public X64Machine {
+class OriginalTransport : public X64Machine {
 public:
   X64Machine &Native;
   MemoryProjection &Memory;
@@ -95,6 +97,66 @@ TEST_P(X64ProbeExecution, ExistingGuestMappingAndRAMSurviveInitialization) {
   EXPECT_EQ(After, Before);
   EXPECT_EQ(Original.Entries, Instructions);
 }
+#define NEVERD_X64_MASK_TEST_VALUE(Name, Value) constexpr uint32_t Name = Value;
+#include "X64ProbeCases.def"
+#undef NEVERD_X64_MASK_TEST_VALUE
+class MaskTransport final : public OriginalTransport {
+public:
+  using OriginalTransport::OriginalTransport;
+  std::optional<uint32_t> Raw;
+  bool CorruptDAZ = false, FailDAZ = false;
+  llvm::Error step(X64MachineState &State, uint64_t Root,
+                   MachineRunControl Control) override {
+    if (FailDAZ && Entries == Instructions + 1)
+      return diagnostic::error(diagnostic::KvmState);
+    if (auto E = OriginalTransport::step(State, Root, Control))
+      return E;
+    if (Raw && Entries == Instructions + 1) {
+      auto *Saved = Memory.data() + x64::gateway::DataGPA +
+                    State.reg(X64Register::R11) -
+                    x64ExceptionMonitorBase(Memory);
+      llvm::support::endian::write32le(Saved + MaskOffset, *Raw);
+    }
+    if (CorruptDAZ && Entries == Instructions + 2)
+      State.MXCSR |= DenormalStatus;
+    return llvm::Error::success();
+  }
+};
+class X64MXCSRProbe : public X64ProbeExecution {};
+TEST_P(X64MXCSRProbe, NativeSaveAndDAZExecutionAuthenticateCapability) {
+  MaskTransport Original(*Machine, *Memory);
+  uint32_t Mask = MaskSentinel;
+  ASSERT_EQ(llvm::toString(verifyX64Machine(Original, *Memory, &Mask)), "");
+  EXPECT_EQ(Mask, Machine->mxcsrMask());
+  EXPECT_TRUE(Mask == SupportedMask || Mask == FallbackMask);
+  EXPECT_EQ(Original.Entries, Instructions + (Mask == SupportedMask ? 2 : 1));
+}
+TEST_P(X64MXCSRProbe, ZeroMaskUsesBaselineAndRejectedProbesPublishNothing) {
+  for (const auto Raw : {uint32_t(0), uint32_t(1), SupportedMask}) {
+    MaskTransport Original(*Machine, *Memory);
+    Original.Raw = Raw;
+    Original.CorruptDAZ = Raw == SupportedMask;
+    uint32_t Mask = MaskSentinel;
+    auto E = verifyX64Machine(Original, *Memory, &Mask);
+    EXPECT_EQ(bool(E), Raw != 0);
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(Mask, Raw ? MaskSentinel : FallbackMask);
+    EXPECT_EQ(llvm::toString(Memory->mutableMemory()), "");
+  }
+  MaskTransport Failure(*Machine, *Memory);
+  Failure.FailDAZ = true;
+  uint32_t Mask = MaskSentinel;
+  EXPECT_EQ(llvm::toString(verifyX64Machine(Failure, *Memory, &Mask)),
+            diagnostic::KvmState);
+  EXPECT_EQ(Mask, MaskSentinel);
+  EXPECT_EQ(llvm::toString(Memory->mutableMemory()), "");
+}
+INSTANTIATE_TEST_SUITE_P(
+    Native, X64MXCSRProbe,
+    testing::Values(ProbeBackend{ExecutionBackendKind::KVM},
+                    ProbeBackend{ExecutionBackendKind::WHP}),
+    [](const auto &Info) { return executionBackendName(Info.param.Backend); });
+
 INSTANTIATE_TEST_SUITE_P(
     Native, X64ProbeExecution,
     testing::Values(ProbeBackend{ExecutionBackendKind::KVM},
