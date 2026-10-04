@@ -2121,19 +2121,31 @@ KVM x64/ARM64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
-ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
+ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, A/B return-address signing/authentication with the keys disabled, and all four BTI forms on unguarded pages. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
 Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
 `NeverDAArch64PAuthTests` runs both checked privilege profiles on available
 Unicorn/KVM/WHP/HVF transports. Independent encodings cover all 128 HINT selectors,
-the twelve admitted disabled-key forms, zero and high-bit return addresses,
+the twelve admitted disabled-key forms, four unguarded BTI forms,
+zero and high-bit return addresses,
 and rejected non-HINT authentication, stripping, branches and system-register
 access. Every attempt checks the complete scalar/vector inventory, PC and
 unchanged code/data bytes. Run it together with `NeverDAArch64StateTests`,
 `NeverDAArch64FPTests` and the checked CPU/session regressions after changing
 admission or startup probes. Native platform cells without hardware remain
 explicit skips; no active-authentication or real Android process claim follows.
+
+`NeverDAArch64BTITests` executes independently encoded direct calls, indirect
+calls/jumps and returns to all four original BTI words on unguarded pages.
+EL0/EL1 checks preserve the branch trace, link register, following memory effects,
+observer stops, saved contexts and shared instruction budgets. The exhaustive
+HINT-selector test checks complete scalar/vector state and neighboring rejection;
+the startup probe also executes all four BTI words. Projection tests walk the
+actual leaves after permission, privilege and alias changes to verify GP stays
+clear. Run the BTI, PAuth, state, FP, memory, projection, checked CPU and session
+targets together. These checks do not establish guarded-page enforcement or
+native Android equivalence; unavailable hardware cells remain explicit skips.
 
 `AArch64AcquireReleaseTests.cpp` in `NeverDAArch64MemoryTests` runs independently
 encoded byte, halfword, word and doubleword acquire/release accesses through

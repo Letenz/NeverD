@@ -1,0 +1,19 @@
+//===- AArch64BTIHints.def - Branch targets in unguarded memory -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// The checked machine maps only unguarded pages. These exact HINT-space words
+// execute through the transport without enabling branch-target enforcement.
+// Guarded translations and PSTATE.BTYPE propagation require a separate
+// contract.
+#ifdef NEVERD_AARCH64_BTI_HINT
+NEVERD_AARCH64_BTI_HINT(BTI, 0xd503241f)
+NEVERD_AARCH64_BTI_HINT(BTI_C, 0xd503245f)
+NEVERD_AARCH64_BTI_HINT(BTI_J, 0xd503249f)
+NEVERD_AARCH64_BTI_HINT(BTI_JC, 0xd50324df)
+#endif
+// Capstone represents BTI as a HINT alias, not a separate instruction ID.
+#ifdef NEVERD_AARCH64_BTI_FAMILY
+NEVERD_AARCH64_BTI_FAMILY(BTI)
+#endif
