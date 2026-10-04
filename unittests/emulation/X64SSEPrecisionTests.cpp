@@ -114,17 +114,30 @@ Result reference(const Conversion &C, const Input &I, uint64_t Control) {
     llvm::APFloat Value(SourceFormat, llvm::APInt(C.Bits, Raw));
     if (Value.isDenormal())
       Status |= DenormalStatus;
+    // x86 detects range after rounding to destination precision with an
+    // unbounded exponent. APFloat's finite overflow clamp reports only
+    // opInexact, and its bounded underflow result is not this range proof.
+    bool Tiny = false;
+    if (Value.isFinite() && !Value.isZero()) {
+      const int Exponent = llvm::ilogb(Value);
+      auto Normalized = llvm::scalbn(Value, -Exponent, R.Mode);
+      bool LosesInfo = false;
+      Normalized.convert(ResultFormat, R.Mode, &LosesInfo);
+      const int RoundedExponent = Exponent + llvm::ilogb(Normalized);
+      if (RoundedExponent > llvm::APFloat::semanticsMaxExponent(ResultFormat))
+        Status |= OverflowStatus;
+      Tiny =
+          RoundedExponent < llvm::APFloat::semanticsMinExponent(ResultFormat);
+    }
     bool LosesInfo = false;
     const auto Converted = Value.convert(ResultFormat, R.Mode, &LosesInfo);
     if (Converted & llvm::APFloat::opInvalidOp)
       Status |= InvalidStatus;
-    if (Converted & llvm::APFloat::opOverflow)
-      Status |= OverflowStatus;
-    if (Converted & llvm::APFloat::opUnderflow)
+    if (Tiny && (Converted & llvm::APFloat::opInexact))
       Status |= UnderflowStatus;
     if (Converted & llvm::APFloat::opInexact)
       Status |= PrecisionStatus;
-    if ((Control & FlushToZero) && Value.isDenormal()) {
+    if ((Control & FlushToZero) && Tiny) {
       Value = llvm::APFloat::getZero(ResultFormat, Value.isNegative());
       Status |= UnderflowStatus | PrecisionStatus;
     }
