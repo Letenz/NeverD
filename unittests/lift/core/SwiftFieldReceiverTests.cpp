@@ -204,7 +204,144 @@ struct FieldFixture {
     return Result;
   }
 };
+
+struct SwiftRuntimeRootFixture : FieldFixture {
+  static constexpr const char *Provider = "/usr/lib/swift/libswiftCore.dylib";
+  static constexpr const char *Superclass = "_OBJC_CLASS_$__TtCs12_SwiftObject";
+  SwiftRuntimeRootFixture() {
+    Image.ObjCClasses.resize(1);
+    auto &C = Image.ObjCClasses.front();
+    C.SuperclassAddress = 0;
+    C.SuperclassName = "_TtCs12_SwiftObject";
+    C.InstanceStart = 16;
+    C.InstanceSize = 24;
+    C.Ivars[0].Offset = 16;
+    u32(0x3014, 0);
+    u32(0x3104, 0);
+    u32(0x3108, (12u << 16) | 1);
+    u32(0x3304, 16);
+    u32(0x3308, 24);
+    u32(0x5028, 2);
+    u32(0x5030, 24);
+    u32(0x5034, 7);
+    u64(0x5060, 16);
+    u64(Slot, 16);
+    u64(0x5008, 0);
+    Image.DataPtrRelocSlots.erase(0x5008);
+    Image.DataPtrRelocTargetOwners.erase(0x5008);
+    Image.DynInfo.NeededLibs.push_back(Provider);
+    Image.ImportPtrSlots[0x5008] = Superclass;
+    Image.DyldBindSlots[0x5008] = {Superclass, 0, Provider, false};
+  }
+};
 } // namespace
+
+TEST(SwiftFieldReceiver, AuthenticatesImportedSwiftRuntimeRootIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftRuntimeRootFixture F;
+    F.Image.Arch = Architecture;
+    const auto Identity = swiftObjCClassIdentity(F.Image, 0x5000);
+    ASSERT_TRUE(Identity);
+    EXPECT_EQ(Identity->Module, "Demo");
+    EXPECT_EQ(Identity->Name, "Derived");
+    EXPECT_EQ(Identity->Metadata, 0x5000U);
+    EXPECT_EQ(Identity->Descriptor, 0x3000U);
+    EXPECT_TRUE(isInitialImageImportSlot(F.Image, 0x5008));
+    EXPECT_FALSE(isImmutableImageImportSlot(F.Image, 0x5008));
+    // This class identity cannot turn native Swift field records into the
+    // separate Objective-C reflection/field-layout proof.
+    EXPECT_FALSE(
+        swiftObjCStoredFieldClass(F.Image, Identity->RuntimeName, F.Slot));
+  }
+}
+
+TEST(SwiftFieldReceiver, ImportedSwiftRootRequiresCurrentExactDeclaration) {
+  for (unsigned Variant = 0; Variant != 25; ++Variant) {
+    SCOPED_TRACE(Variant);
+    SwiftRuntimeRootFixture F;
+    auto &C = F.Image.ObjCClasses.front();
+    switch (Variant) {
+    case 0:
+      F.Image.DyldBindSlots.at(0x5008).WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots.at(0x5008).Module = "/usr/lib/libobjc.A.dylib";
+      break;
+    case 2:
+      F.Image.DynInfo.NeededLibs.pop_back();
+      break;
+    case 3:
+      F.Image.DyldBindSlots.at(0x5008).Addend = 8;
+      break;
+    case 4:
+      F.Image.ImportPtrSlots.at(0x5008) = "_other_class";
+      break;
+    case 5:
+      F.Image.DyldBindSlots.erase(0x5008);
+      break;
+    case 6:
+      F.Image.MachOTwoLevelNamespace = false;
+      break;
+    case 7:
+      F.Image.ConflictingImportStorageSlots.insert(0x5008);
+      break;
+    case 8:
+      C.SuperclassName = "NSObject";
+      break;
+    case 9:
+      C.InheritanceStatus = "unresolved";
+      break;
+    case 10:
+      C.SuperclassAddress = 0x5100;
+      break;
+    case 11:
+      F.relative(0x3014, 0x3188);
+      break;
+    case 12:
+      C.RootClass = true;
+      break;
+    case 13:
+      C.InstanceStart = 8;
+      F.u32(0x3304, 8);
+      break;
+    case 14:
+      F.u32(0x5030, 32);
+      break;
+    case 15:
+      F.u32(0x3308, 32);
+      break;
+    case 16:
+      F.u32(0x502c, 8);
+      break;
+    case 17:
+      F.Image.DataPtrRelocSlots.insert(0x5008);
+      break;
+    case 18:
+      F.Image.RelDataPtrRelocSlots.insert(0x500c);
+      break;
+    case 19:
+      F.Image.ImportPtrSlots[0x500c] = "_overlapping_import";
+      break;
+    case 20:
+      F.Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 21:
+      F.Image.Format = BinaryFormat::ELF;
+      break;
+    case 22:
+      F.Image.DataPtrRelocSlots.insert(0x5030);
+      break;
+    case 23:
+      F.Image.ImportStorageSlots[0x5008] = {F.Superclass, 8,
+                                            ImportStorageEvidence::LoaderBind};
+      break;
+    case 24:
+      F.Image.Sections.push_back(F.Image.Sections.back());
+      break;
+    }
+    EXPECT_FALSE(swiftObjCClassIdentity(F.Image, 0x5000));
+  }
+}
 
 TEST(SwiftFieldReceiver, ReflectionAndIvarIdentityRemainSeparateFromLayout) {
   FieldFixture F;
