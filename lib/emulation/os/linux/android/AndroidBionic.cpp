@@ -292,6 +292,8 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return dlfcn(Call);
   if (Name == symbol::PthreadOnce)
     return once(Call);
+  if (Name.starts_with(symbol::PthreadAttrPrefix))
+    return threadAttributes(Call);
   if (Name == symbol::StrtokR) {
     auto R = tokenize(Call);
     if (!R)

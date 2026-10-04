@@ -2266,6 +2266,15 @@ guest effects through the shared engine. The API 28 cursor contract is checked
 against [pinned AOSP source](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strtok.c);
 this is model evidence, not a native Android device comparison.
 
+Independent thread-attribute fixtures run at O0/O2 with ordinary, APS2 and
+RELR packing. They check the complete 56-byte LP64 object, retained padding,
+destruction fill, integer versus pointer widths, historical inheritance rules,
+full-width stack values, invalid-value precedence, ignored scope pointers,
+overlapping outputs, inaccessible unused tails and provider lifetime. C/CLI
+and the actual Python wrapper exercise named dynamic calls through the shared
+library. Thread creation and thread-state queries remain explicit unsupported
+stops. These are pinned API 28 model checks, not an Android device comparison.
+
 Independent mutex fixtures run at O0/O2 with ordinary, APS2 and RELR packing.
 They check eight-byte attributes, four-byte getter outputs, complete 40-byte
 initialization, overlapping attributes, static initializers, all three lock

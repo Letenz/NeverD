@@ -4,6 +4,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidStrings.cpp
   AndroidFormatting.cpp
   AndroidMutex.cpp
+  AndroidThreadAttributes.cpp
   AndroidMemory.cpp
   AndroidNative.cpp
   LINK_COMPONENTS Loader EmulationRuntime EmulationImage EmulationABI EmulationLinuxKernel

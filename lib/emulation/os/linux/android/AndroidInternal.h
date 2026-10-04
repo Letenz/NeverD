@@ -105,6 +105,7 @@ private:
                                        uint64_t ReturnValue = 0);
   BionicResult dlfcn(NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
+  BionicResult threadAttributes(const NativeCallEvent &Call);
   llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
   class StringFormatter;
   BionicResult format(const NativeCallEvent &Call);

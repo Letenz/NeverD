@@ -320,6 +320,40 @@ ABI references: Android 9 [`pthread_mutex.cpp`](https://github.com/aosp-mirror/p
 and [`pthread_types.h`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/bits/pthread_types.h).
 These declarations and state rules inform an independent implementation.
 
+## API 28 thread attributes
+
+`pthread_attr_init`, `destroy`, and the get/set pairs for `detachstate`,
+`inheritsched`, `schedpolicy`, `schedparam`, `stack`, `stacksize`, `guardsize`
+and `scope` operate on guest LP64 storage. The 56-byte, eight-byte-aligned
+object keeps its padding and reserved bytes during initialization: only its
+six fields are assigned. Defaults include a 1 MiB minus 16 KiB stack and a
+4 KiB guard. Destruction fills all 56 bytes with `0x42`.
+
+Getters write four-byte integers or eight-byte pointers/sizes as declared.
+Inheritance flags take precedence over API 28's historical scheduling-policy
+fallback. Stack-size-only assignment accepts any size at least 16 KiB;
+assignment of a stack address and size additionally requires page alignment.
+Stack addresses are opaque guest values. Guard sizes and scheduling policies
+retain the supplied values without inventing validation absent from Bionic.
+Invalid enums and sizes return EINVAL before accessing the attribute. Scope
+operations ignore the attribute: system scope succeeds and process scope
+returns ENOTSUP. These direct pthread error returns preserve errno.
+
+The model checks all affected spans before publishing writes, and preserves
+ordered reads/writes when `getstack` outputs overlap the attribute. Invalid
+memory or alignment stops explicitly. These are attribute operations only:
+`pthread_create`, `pthread_getattr_np`, thread scheduling and host thread
+forwarding remain unsupported. The shared symbol catalogue also supplies
+named dynamic calls through `dlsym` and enforces provider lifetime.
+
+This independently implemented model follows pinned AOSP
+[`pthread_attr.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/pthread_attr.cpp),
+[`pthread_types.h`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/include/bits/pthread_types.h),
+[`pthread.h`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/include/pthread.h)
+and [`pthread_internal.h`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/pthread_internal.h).
+`AndroidThreadAttributes.def` owns layout constants; the existing Android
+symbol and diagnostic tables retain their respective vocabularies.
+
 ## Evidence and limits
 
 `android.native_calls` records import arguments and nullable results.

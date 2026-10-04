@@ -16,6 +16,54 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_thread_attributes_keep_bytes_and_dynamic_names(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for optimization in ("O0", "O2"):
+            for closed in (False, True):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": "thread_attribute_dynamic", "arguments": [0x20000000, int(closed)],
+                    "initialize": False, "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 80}],
+                    "libraries": {"libthread-model.so": ["pthread_attr_init", "pthread_attr_getstacksize"]},
+                }}
+                result = session.emulate_process(
+                    str(Path(fixtures) / f"thread-attributes-{optimization}-relr.so"),
+                    "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service" if closed else "returned",
+                                 result["diagnostic"])
+                events = result["android"]["native_calls"]
+                names = ("pthread_attr_init",) if closed else ("pthread_attr_init", "pthread_attr_getstacksize")
+                for name in names:
+                    lookup = next(e for e in events if e["name"] == "dlsym" and e["symbol"] == name)
+                    call = next(e for e in events if e["name"] == name)
+                    self.assertEqual(call["library"], "libthread-model.so")
+                    self.assertEqual(call["pc"], lookup["result"])
+                    self.assertEqual(call["result"], None if closed else "0")
+                memory = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+                expected = bytearray([0xa5] * 56)
+                expected[:4] = bytes(4)
+                expected[8:40] = bytes(32)
+                expected[16:24] = (0xfc000).to_bytes(8, "little")
+                expected[24:32] = (4096).to_bytes(8, "little")
+                self.assertEqual(memory[16:], bytes(64) if closed else (0xfc000).to_bytes(8, "little") + expected)
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_android_formatting_uses_guest_variadic_calls(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
