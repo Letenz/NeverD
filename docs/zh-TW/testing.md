@@ -247,6 +247,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64IntegerFloatTests.cpp` 使用獨立的 `X64IntegerFloatCases.def` 編碼、`APFloat` 預期值，以及保存/還原浮點狀態後執行的原生指令。涵蓋兩種整數寬度、四種捨入模式、精度黏滯狀態、FTZ、所有 GPR/XMM 組合及完整 CPU/RAM 保留。非對齊、跨頁、頁尾來源、權限修復、觀察者停止/失敗和重試均檢查精確範圍。原生 KVM/WHP 在兩個權限層級均為必測。
 
+`X64FloatIntegerTests.cpp` 使用獨立的 `X64FloatIntegerCases.def` 編碼、`APFloat` 和原生暫存器/記憶體指令，檢查捨入及截斷轉換。兩種整數寬度均涵蓋帶正負號邊界、中點值、NaN、無窮、次正規數、全部捨入模式、黏滯狀態和 FTZ。檢查所有 GPR/XMM 組合、完整 CPU/RAM 狀態、精確頁尾讀取、可復原跨頁錯誤及觀察者取消/重試。兩個權限層級的原生 KVM/WHP 結果均為必測。
+
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
 ```bash
@@ -1027,7 +1029,7 @@ KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備�
 
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM、WHP 和 HVF 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
-ARM64 KVM/WHP/HVF 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。
+ARM64 KVM/WHP/HVF 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。 程式亦包含金鑰停用時的 A/B 返回位址簽署與驗證，以及非防護頁面的四種 BTI 指令。
 
 x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.def`。單一時限涵蓋 NOP、朝正無窮捨入的 FP32 加法、雙通道 SIMD 加法、FS/GS 載入及 CS/SS/CR8 讀取；每一步比較完整的純量、XMM、實體 x87 和控制狀態。x64 與 ARM64 自檢都必須取得實體記憶體的獨占執行租約。`MemoryProjection` 統一保存快取身分（ISA、位址空間、映射世代、權限及監控變體）和各 ISA 已提交的頁表根歷史。建構器在改寫私有位元組前使快取失效；失敗的重建不能重用部分寫入的頁表，呼叫者也不能傳入過期頁表根。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。
 
@@ -1079,7 +1081,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 365 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 593 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `365 CPU + 224 WHP + 4 SEH = 593`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 388 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 616 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `388 CPU + 224 WHP + 4 SEH = 616`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 

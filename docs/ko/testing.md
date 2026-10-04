@@ -249,6 +249,8 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `X64IntegerFloatTests.cpp`는 독립적인 `X64IntegerFloatCases.def` 인코딩, `APFloat` 기대값, FP 상태를 저장·복원하는 네이티브 명령을 사용합니다. 두 정수 너비, 네 반올림 모드, 누적 정밀도 상태, FTZ, 모든 GPR/XMM 쌍과 전체 CPU/RAM 보존을 검사합니다. 비정렬·페이지 경계·페이지 끝 소스, 권한 복구, 관찰자 중단·실패와 재시도에서 정확한 범위를 확인합니다. 양쪽 권한 수준의 네이티브 KVM/WHP 사례는 필수입니다.
 
+`X64FloatIntegerTests.cpp`는 독립적인 `X64FloatIntegerCases.def` 인코딩, `APFloat`, 네이티브 레지스터·메모리 명령으로 반올림과 버림 변환을 검사합니다. 두 정수 너비에서 부호 경계, 중간값, NaN, 무한대, 비정규 수, 모든 반올림 모드, 누적 상태, FTZ를 다룹니다. 모든 GPR/XMM 쌍, 전체 CPU/RAM 상태, 정확한 페이지 끝 읽기, 복구 가능한 페이지 경계 오류, 관찰자 취소·재시도를 검사합니다. 두 권한 수준의 네이티브 KVM/WHP 결과는 필수입니다.
+
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
 
 ```bash
@@ -1071,7 +1073,7 @@ KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드�
 
 Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP/HVF는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
-ARM64 KVM/WHP/HVF 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다.
+ARM64 KVM/WHP/HVF 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다. 이 프로그램에는 키가 비활성화된 A/B 반환 주소 서명 및 인증과 보호되지 않은 페이지의 네 가지 BTI 명령도 포함됩니다.
 
 x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다.
 
@@ -1123,7 +1125,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 290개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 518개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `365 CPU + 224 WHP + 4 SEH = 593`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 290개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 518개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `388 CPU + 224 WHP + 4 SEH = 616`.
 
 C SEH 범위는 끝 주소를 포함하지 않는 반개방 구간입니다. 유효한 `__C_specific_handler` 착지점이 보호 구간 안에 있을 수 있습니다. [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608)은 구간 끝에 `EndLabel + 1`을 기록합니다. Windows OS 모델은 원래 경계를 유지하며 재배치 후에도 실행 가능 여부, 소유 함수, 후속 실행 주소의 일치를 각각 검증합니다. `KernelSEHContinuationCases.def`는 원본 픽스처 배치를 보존하고 `ScopeEndLabelMayOverlapTheHandlerLandingPad`는 상수 처리기와 필터를 검사합니다. 관련 테스트는 끝 주소 제외와 잘못된 대상 거부 후 디스패치 상태를 소비하지 않고 재시도할 수 있음을 확인합니다. 이 순수 모델 검사는 Unicorn을 비활성화한 `NeverDNativeDriverTests`에서도 실행됩니다.
 

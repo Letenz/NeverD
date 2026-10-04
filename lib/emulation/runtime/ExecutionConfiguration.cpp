@@ -33,6 +33,9 @@ const char *const ARMInstructions[] = {
 #define NEVERD_AARCH64_INSTRUCTION(Name, Kind) #Name,
 #include "../arch/aarch64/CheckedAArch64Instructions.def"
 #undef NEVERD_AARCH64_INSTRUCTION
+#define NEVERD_AARCH64_BTI_FAMILY(Name) #Name,
+#include "../arch/aarch64/AArch64BTIHints.def"
+#undef NEVERD_AARCH64_BTI_FAMILY
 };
 const char *const X64UserInstructions[] = {
 #define NEVERD_CHECKED_X64_INSTRUCTION(Name) #Name,
@@ -46,6 +49,9 @@ const char *const ARMUserInstructions[] = {
 #define NEVERD_AARCH64_INSTRUCTION(Name, Kind) #Name,
 #include "../arch/aarch64/CheckedAArch64Instructions.def"
 #undef NEVERD_AARCH64_INSTRUCTION
+#define NEVERD_AARCH64_BTI_FAMILY(Name) #Name,
+#include "../arch/aarch64/AArch64BTIHints.def"
+#undef NEVERD_AARCH64_BTI_FAMILY
 #define NEVERD_AARCH64_SERVICE(Kind, Name, Mask, Value, Shift, ImmediateMask)  \
   #Name,
 #include "../arch/aarch64/AArch64ServiceInstructions.def"

@@ -1487,6 +1487,15 @@ registry. The native runner retains the original import event until every
 selected callback returns; neither registration nor workload teardown calls
 host destructors. Symbol spellings and diagnostics remain in Android's `.def`
 inventories.
+`GuestThreads` owns opt-in Android thread identities, stacks, TLS and complete
+saved CPU contexts over one transport and shared RAM. Callback and join
+continuations follow their thread. The runner switches only after consuming
+the pending service or quantum and charges all threads to one budget.
+Linux's optional `ThreadContext` is the sole identity and thread-exit input
+for named, variadic and raw services; an absent context retains the existing
+single-thread Linux contract. Bionic process state is never copied on a switch.
+`AndroidThreads.def` owns placement/capacity policy; existing Android and
+process report inventories own names, diagnostics and wire fields.
 An optional ordered `default_scope` names resident catalogue providers visible
 to `RTLD_DEFAULT`. Android native input validation checks its membership and
 uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
@@ -1672,6 +1681,8 @@ Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` 
 
 `CVTSI2SS` and `CVTSI2SD` convert signed 32/64-bit integers using MXCSR rounding and retain precision status. The shared `IntegerSource` rule admits only XMM destinations with r32/r64 or m32/m64 sources. Legacy instructions preserve the upper 96/64 destination bits; memory checks use the integer width. KVM, WHP and checked Unicorn execute the original instruction. Unmasked exceptions, MMX and VEX/EVEX remain excluded.
 
+`CVTSS2SI` and `CVTSD2SI` use MXCSR rounding to produce signed 32/64-bit integers through the shared `IntegerResult` rule; `CVTTSS2SI` and `CVTTSD2SI` always truncate. Masked NaN or out-of-range conversions return the integer indefinite and set invalid status; valid inexact results set precision status. Existing sticky bits, FLAGS and XMM sources are preserved. An r32 result clears the upper GPR half. RAM reads use the floating source width, independent of destination width; FTZ does not discard subnormal inputs. These rules apply to KVM, WHP and checked Unicorn.
+
 `X64AlignmentTests.cpp` checks that misaligned operands of admitted aligned SSE instructions report recoverable or terminal `#GP(0)` before data observers, permission checks or device callbacks. Faults retain the complete public x64 register context, PC and RAM; address-size wrapping precedes FS/GS addition, and repairing the address retries the original instruction. Direct KVM/WHP machine cases independently verify the hardware boundary. Windows ring3 delivers classified `operand_alignment` faults; other `#GP` causes remain unsupported.
 
 The x64 machine boundary returns typed synchronous processor exceptions,
@@ -1820,7 +1831,7 @@ Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profil
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
-ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
+ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md). The program also executes all four BTI forms on unguarded pages.
 
 Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
@@ -1852,6 +1863,14 @@ This architecture contract applies equally to Android, Darwin, Linux and
 Windows workloads; OS models cannot override authentication state or infer
 active keys. Other PAuth encodings and system-control access stay unsupported.
 See the [checked CPU contract](cpu-execution.md).
+
+`AArch64BTIHints.def` owns the four exact landing-pad encodings admitted in
+the existing unguarded ARM64 machine. `AArch64PageTables` keeps GP clear in
+guest, alias and monitor leaves; the startup probe executes each original
+word and checks complete state. ISA admission and capability reporting share
+this boundary for every OS and transport. Guarded translations and branch-type
+state propagation remain outside the contract; no loader or OS shortcut may
+silently turn a guarded execution request into this mode.
 
 The same ISA owner describes baseline no-offset `LDAR[B/H]` and `STLR[B/H]`
 as exact, naturally aligned 1/2/4/8-byte ordinary-RAM accesses. Original

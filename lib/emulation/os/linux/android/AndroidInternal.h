@@ -28,6 +28,12 @@ namespace diagnostic {
 #undef NEVERD_ANDROID_DIAGNOSTIC
 } // namespace diagnostic
 inline constexpr uint64_t PageSize = 4096;
+namespace thread_attribute_abi {
+#define NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE(Name, Value)                     \
+  inline constexpr unsigned Name = Value;
+#include "AndroidThreadAttributes.def"
+#undef NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE
+} // namespace thread_attribute_abi
 inline constexpr uint64_t TLSAddress = 0x7000000000;
 inline constexpr uint64_t StdioAddress = TLSAddress - PageSize;
 inline constexpr uint64_t ThunkBase = TLSAddress + PageSize;
@@ -68,17 +74,23 @@ struct GuestCallback {
   std::optional<uint64_t> Argument;
   std::variant<OnceCallback, FinalizeCallback> Continuation;
 };
+struct GuestThreadWait {};
+struct GuestThreadExit {
+  uint64_t Value;
+};
 /// A returning model either completes now or suspends for a guest callback.
-using BionicValue = std::variant<uint64_t, GuestCallback>;
+using BionicValue =
+    std::variant<uint64_t, GuestCallback, GuestThreadWait, GuestThreadExit>;
 using BionicResult = llvm::Expected<std::optional<BionicValue>>;
+class GuestThreads;
 class Bionic {
 public:
   Bionic(ExecutionBackend &CPU, linux_model::LinuxMemory &Memory,
          const linux_model::MemoryLayout &Layout, const ProcessOptions &Options,
          ProcessResult &Result, ExecutionBudget &Budget,
-         const LinkedImage &Linked)
+         const LinkedImage &Linked, GuestThreads *Threads = nullptr)
       : CPU(CPU), Memory(Memory), Layout(Layout), Options(Options),
-        Result(Result), Budget(Budget), Linked(Linked) {}
+        Result(Result), Budget(Budget), Linked(Linked), Threads(Threads) {}
   bool timedOut() const { return Expired; }
   BionicResult invoke(NativeCallEvent &Call);
   BionicResult finishCallback(const GuestCallback &Callback);
@@ -91,6 +103,9 @@ private:
   ProcessResult &Result;
   ExecutionBudget &Budget;
   const LinkedImage &Linked;
+  GuestThreads *Threads;
+  uint64_t tlsAddress() const;
+  uint64_t threadID() const;
   bool Expired = false;
   struct LibraryState {
     uint64_t Handle = 0, References = 0;
@@ -117,6 +132,7 @@ private:
                                        uint64_t ReturnValue = 0);
   BionicResult dlfcn(NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
+  BionicResult threadAttributes(const NativeCallEvent &Call);
   llvm::Error finishOnce(const OnceCallback &Callback);
   BionicResult registerExit(const NativeCallEvent &Call);
   BionicResult finalize(uint64_t DSO);

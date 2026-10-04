@@ -580,7 +580,7 @@ CPU factory 與能力查詢共用 `ExecutionConfiguration`，並在配置前驗�
 
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM、WHP 和 HVF 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
-ARM64 KVM/WHP/HVF 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。
+ARM64 KVM/WHP/HVF 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。 程式亦包含金鑰停用時的 A/B 返回位址簽署與驗證，以及非防護頁面的四種 BTI 指令。
 
 x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.def`。單一時限涵蓋 NOP、朝正無窮捨入的 FP32 加法、雙通道 SIMD 加法、FS/GS 載入及 CS/SS/CR8 讀取；每一步比較完整的純量、XMM、實體 x87 和控制狀態。x64 與 ARM64 自檢都必須取得實體記憶體的獨占執行租約。`MemoryProjection` 統一保存快取身分（ISA、位址空間、映射世代、權限及監控變體）和各 ISA 已提交的頁表根歷史。建構器在改寫私有位元組前使快取失效；失敗的重建不能重用部分寫入的頁表，呼叫者也不能傳入過期頁表根。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。
 
@@ -920,6 +920,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 `MOVLPS`、`MOVHPS`、`MOVLPD` 和 `MOVHPD` 精確傳輸八位元組 RAM，無對齊要求。`X64VectorInstructions.def` 宣告儲存使用的半部；`X64VectorOperands.def` 限定 XMM/m64 運算元對。載入保留另一個 64 位元半部，高半部儲存觀察者接收高半部資料。KVM、WHP 和 checked Unicorn 共用全範圍權限檢查與 RAM 回復。僅暫存器形式的 `MOVHLPS`/`MOVLHPS` 保留各自語義。
 
 `CVTSI2SS` 與 `CVTSI2SD` 依 MXCSR 捨入規則轉換帶正負號的 32/64 位元整數，並保留精度狀態。共用的 `IntegerSource` 規則僅允許 XMM 目的及 r32/r64 或 m32/m64 來源。傳統指令保留目的的高 96/64 位元；記憶體檢查採用整數寬度。KVM、WHP 和 checked Unicorn 執行原始指令。未遮罩例外、MMX 和 VEX/EVEX 仍不支援。
+
+`CVTSS2SI` 與 `CVTSD2SI` 透過共用 `IntegerResult` 規則，依 MXCSR 捨入模式產生帶正負號的 32/64 位元整數；`CVTTSS2SI` 與 `CVTTSD2SI` 一律向零截斷。遮罩例外時，NaN 或超出範圍的轉換傳回整數不定值並設定無效狀態；有效但不精確的結果設定精度狀態。既有黏滯位元、FLAGS 和 XMM 來源維持不變。r32 結果清除通用暫存器高半部。RAM 讀取採用浮點來源寬度，與目的寬度無關；FTZ 不會捨棄次正規輸入。KVM、WHP 和 checked Unicorn 共用這些規則。
 
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 

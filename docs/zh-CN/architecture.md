@@ -664,7 +664,7 @@ CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构
 
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM、WHP 和 HVF 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
-ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
+ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。 程序还包括密钥关闭时的 A/B 返回地址签名和认证，以及非防护页上的四种 BTI 指令。
 
 x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 
@@ -980,6 +980,8 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 `MOVLPS`、`MOVHPS`、`MOVLPD` 和 `MOVHPD` 精确传输八字节 RAM，无对齐要求。`X64VectorInstructions.def` 声明存储使用的半部；`X64VectorOperands.def` 限定 XMM/m64 操作数对。加载保留另一个 64 位半部，高半部存储观察者接收高半部数据。KVM、WHP 和 checked Unicorn 共享全范围权限检查与 RAM 回滚。仅寄存器形式的 `MOVHLPS`/`MOVLHPS` 保留各自语义。
 
 `CVTSI2SS` 与 `CVTSI2SD` 按 MXCSR 舍入规则转换有符号 32/64 位整数，并保留精度状态。共享的 `IntegerSource` 规则仅允许 XMM 目的及 r32/r64 或 m32/m64 源。传统指令保留目的的高 96/64 位；内存检查采用整数宽度。KVM、WHP 和 checked Unicorn 执行原始指令。未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
+
+`CVTSS2SI` 与 `CVTSD2SI` 通过共享 `IntegerResult` 规则，按 MXCSR 舍入模式生成有符号 32/64 位整数；`CVTTSS2SI` 与 `CVTTSD2SI` 始终向零截断。屏蔽异常时，NaN 或越界转换返回整数不定值并置无效状态；有效但不精确的结果置精度状态。既有粘滞位、FLAGS 和 XMM 源保持不变。r32 结果清除通用寄存器高半部。RAM 读取采用浮点源宽度，与目的宽度无关；FTZ 不丢弃次正规输入。KVM、WHP 和 checked Unicorn 共用这些规则。
 
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 

@@ -17,7 +17,7 @@ inputs:
     description: Original one-process repetition count, 100 or 1000
     default: '1000'
   experiment:
-    description: Explicit diagnostic mode, recovery, lifecycle, instruction or finite-deadline
+    description: Explicit recovery or isolated lifecycle, instruction, instruction-reuse, instruction-vcpu-recreate, instruction-vm-recreate, recovery-reuse, recovery-vcpu-recreate, recovery-vm-recreate or finite-deadline mode
     default: recovery
 runs:
   using: node24

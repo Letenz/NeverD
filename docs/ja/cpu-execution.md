@@ -80,6 +80,8 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `CVTSI2SS` と `CVTSI2SD` は MXCSR の丸め規則で符号付き 32/64 ビット整数を変換し、精度状態を保持します。共有の `IntegerSource` 規則は XMM 出力と r32/r64 または m32/m64 入力のみを許可します。従来形式は出力の上位 96/64 ビットを保持し、メモリ検査には整数幅を使います。KVM、WHP、checked Unicorn は元の命令を実行します。非マスク例外、MMX、VEX/EVEX は対象外です。
 
+`CVTSS2SI` と `CVTSD2SI` は共有の `IntegerResult` 規則で MXCSR の丸めに従い符号付き 32/64 ビット整数を生成し、`CVTTSS2SI` と `CVTTSD2SI` は常にゼロ方向へ切り捨てます。例外をマスクした NaN・範囲外変換は整数不定値を返して無効状態を設定し、有効な不正確結果は精度状態を設定します。既存の累積状態、FLAGS、XMM 入力は保持されます。r32 出力は汎用レジスタの上位半分をゼロにします。RAM 読み取り幅は出力幅に関係なく浮動小数点入力幅で決まり、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn に共通の規則です。
+
 `X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
 
 thread pointer は x64 FS/GS base と ARM64 `TPIDR_EL0` を正確な `MRS`/`MSR` encoding で扱います。native transport と CPU snapshot は memory とは独立してこの状態を保持しますが、OS thread や TLS block を作るものではありません。supervisor x64 は1/2/4 byte の aligned scalar MMIO と restart boundary ごとに1要素の MOVS を許可します。device read には effect のない prepared preview と最大一度の commit が必要です。user profile は device mapping を拒否し、RMW、wide MMIO、port I/O も未対応です。
@@ -104,7 +106,7 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 
 Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP、HVF は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
 
-ARM64 KVM/WHP/HVF の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。
+ARM64 KVM/WHP/HVF の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。 このプログラムには、鍵を無効にした A/B リターンアドレス署名・認証と、保護されていないページでの4種類の BTI 命令も含まれます。
 
 x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。
 

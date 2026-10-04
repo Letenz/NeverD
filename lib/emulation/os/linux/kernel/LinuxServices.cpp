@@ -29,25 +29,33 @@ std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
 llvm::Expected<std::optional<uint64_t>>
 handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
               const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-              const ProcessOptions &Options, ProcessResult &Result) {
+              const ProcessOptions &Options, ProcessResult &Result,
+              ThreadContext *Thread) {
   auto Kind = serviceKind(CPU.architecture(), Event.Number);
   if (!Kind) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = llvm::formatv(Service, Event.Number).str();
     return std::optional<uint64_t>();
   }
-  return handleService(CPU, Memory, *Kind, Event, Layout, Options, Result);
+  return handleService(CPU, Memory, *Kind, Event, Layout, Options, Result,
+                       Thread);
 }
 llvm::Expected<std::optional<uint64_t>>
 handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
               const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-              const ProcessOptions &Options, ProcessResult &Result) {
+              const ProcessOptions &Options, ProcessResult &Result,
+              ThreadContext *Thread) {
   switch (Kind) {
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:
   case ServiceKind::ClockGetTime:
     return timeService(CPU, Kind, Event, Layout, Options, Result);
   case ServiceKind::Exit:
+    if (Thread) {
+      Thread->Exit = Event.Arguments[0] & ExitMask;
+      return std::optional<uint64_t>();
+    }
+    [[fallthrough]];
   case ServiceKind::ExitGroup:
     Result.Stop = ProcessStopReason::Exited;
     Result.ExitStatus = Event.Arguments[0] & ExitMask;
@@ -55,7 +63,7 @@ handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
   case ServiceKind::GetPID:
     return std::optional<uint64_t>(ProcessID);
   case ServiceKind::GetTID:
-    return std::optional<uint64_t>(ThreadID);
+    return std::optional<uint64_t>(Thread ? Thread->ID : ThreadID);
   case ServiceKind::GetUID:
   case ServiceKind::GetEUID:
     return std::optional<uint64_t>(UserID);
