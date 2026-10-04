@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: e487b81bf30bd187bfd39cdffecc614db482d7499b487cb075a845a27c3631b1 -->
+<!-- i18n-source: 100fc149f035b5f133930186baac6655480571d50a0b80e958aa14b1abf7c7fe -->
 
 [← 文件索引](README.md)
 
@@ -179,6 +179,10 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 
 有限期限恢復對照保留整個 Executor/VM/owner 工作階段，在 macOS 15 通過 1000/1000 輪（37203540596）。macOS 26（37203542459）完成 772 輪，第 773 輪因呼叫端的 50 ms 期限在進入階段耗盡、原生回呼尚未開始而觸發斷言。原生程序在 `--gtest_break_on_failure` 下以 SIGTRAP 結束並被回收，runner 保持連線；43/34 個產物雜湊均已核驗。這是原生測試斷言，與上傳器崩潰或 runner 失聯不同，也不能單獨歸因於 VM 生命週期。測試修正沿用 2 秒協作式進入期限，在 owner 完成準備後開始原生 50 ms 計時，並受外層期限約束。全部中斷模式、真實返回斷言、重試檢查及獨立的 600 秒控制器期限均保留。後續控制器還會在 guest 執行前封存實際 Node 檔案的 SHA256、原生 Mach-O UUID 與 Node/V8 版本；這證明採集時的磁碟檔案身分，不證明程序記憶體完整性，也不能補齊舊崩潰缺少的雜湊。
 
-固定 owner 執行緒候選 `faad8299b` 在兩套映像也未通過原始 fresh-Executor recovery1000 門檻：GitHub 分別確認 macOS 15（37202068724）與 macOS 26（37202070988）失聯。15/12 個已核驗產物分別保留 302/303、225/226 輪完成/開始的證據，均缺少最終原生結果與程序回收紀錄。保持 owner 執行緒存活不足以解決這兩次執行的問題。候選未合併，也未啟動完整 CPU/Darwin 驗證；日誌前綴無法定位故障點。
+固定 owner 執行緒候選 `faad8299b` 在兩套映像也未通過原始 fresh-Executor recovery1000 門檻：GitHub 分別確認 macOS 15（37202068724）與 macOS 26（37202070988）失聯。15/12 個已核驗產物分別保留 302/303、225/226 輪完成/開始的證據，均缺少最終原生結果與程序回收紀錄。保持 owner 執行緒存活不足以解決這兩次執行的問題。候選已於 2026-10-04 13:16:49 UTC 透過 [PR #444](https://github.com/NeverSight/NeverD/pull/444) 合併至 `dev`。合併不代表執行階段修復已驗證或完整 CPU/Darwin 驗收通過；保存的日誌前綴無法定位故障點。
 
 修正後的測試 `7dd7342ec` 隨後在 macOS 15（37204841332）與 macOS 26（37204843517）均連續通過 1000/1000 輪工作階段重用恢復。每次執行的 43 個產物、原生與控制器零結束碼、程序回收及前後一致的 Node 執行環境紀錄均已獨立核驗。這驗證了該診斷中的進入預算修正，尚未解決 fresh-Executor 失聯或完成 Intel 全面驗收。
+
+修正後的恢復測試僅在每輪重建 vCPU（受測原始碼 `7dd7342ec`、控制器 `31afddad3`、工作流程 `10bf50753`），已在 macOS 15 完成 1000 輪並通過（[37215096822](https://github.com/gmh5225/test_mac_intel/actions/runs/37215096822)，43 個已核驗產物）。原生程序與控制器最終退出碼皆為 0，子程序已回收；生命週期證據為 1 個 VM、1001 代 vCPU 邊界，總計／執行中的 vCPU 數仍未知。macOS 26（[37215098793](https://github.com/gmh5225/test_mac_intel/actions/runs/37215098793)，19 個產物）的 progress-016 上傳器收到 SIGSEGV；IPS 與 PID 32519、父程序 29104、擷取時間和 Node UUID 相符。原生日誌證明完成 403 輪、開始第 404 輪，未見斷言失敗。控制器隨後取消並回收原生程序（SIGKILL），沒有最終原生結果。這屬於未完成的原生證據，不能判為 runner 失聯或通過。執行前記錄的 Node 24.19.0 SHA-256 為 `1052eb9c7d6c60a79b968e09f75af55a73462b0f6dff0964336d63b5e13eb63c`；它證明磁碟檔案身分，不證明程序記憶體未改變。這些固定原始碼的結果不能驗證後續合併至 dev 的版本。
+
+每輪重建 VM/vCPU 的恢復測試最終也在兩套映像確認失聯：[macOS 15 / 37213675739](https://github.com/gmh5225/test_mac_intel/actions/runs/37213675739)、[macOS 26 / 37213681083](https://github.com/gmh5225/test_mac_intel/actions/runs/37213681083)。兩者使用原始碼 `7dd7342ec`、控制器 `4c702d35a`、工作流程 `fad0eadf2`。23/26 個已核驗產物保存連續日誌，分別證明 502/503、575/576 輪完成／開始，均沒有最終原生結果與程序回收紀錄。GitHub 僅確認通訊中斷，未確認原因。僅執行一般指令時的 VM 重建通過結論不能擴大至此恢復負載；依賴這兩組通過的整個工作階段重設實驗仍未啟動。
