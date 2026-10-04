@@ -225,6 +225,7 @@ void HighCWriter::prepareFunctionIdentifiers(
   // to.  Give the linked API first choice of that spelling so the veneer gets
   // a distinct C identifier instead of recursively calling itself.
   std::set<std::string> LinkedRuntimeNames;
+  std::set<std::string> DarwinLinkNames;
   std::set<const HighExpr *> Seen;
   std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &Expr) {
     if (!Expr || !Seen.insert(Expr.get()).second)
@@ -241,9 +242,10 @@ void HighCWriter::prepareFunctionIdentifiers(
                 SourceFunctionTypeHint::OriginKind::DarwinSDK ||
             (Hint.Signature.Origin ==
                  SourceFunctionTypeHint::OriginKind::DarwinRuntime &&
-             Hint.TargetName == "__isPlatformVersionAtLeast"))
+             Hint.TargetName == "__isPlatformVersionAtLeast")) {
           Name = "neverd_darwin_" + Hint.TargetName;
-        else
+          DarwinLinkNames.insert(Hint.TargetName);
+        } else
           Name = Hint.TargetName;
       }
       if (Hint.CallKind == Kind::SwiftBooleanProjection)
@@ -271,6 +273,12 @@ void HighCWriter::prepareFunctionIdentifiers(
     ExternalFunctionIdentifiers.emplace(Name, Identifier);
     ExternalFunctionIdentifiers.try_emplace(RenderedName.str(), Identifier);
   }
+  // The C alias and its assembler link name occupy different namespaces in
+  // the declaration, but defining the latter as an ordinary C function still
+  // interposes on the imported API. Reserve its exact source spelling too,
+  // including underscores that belong to the Darwin API itself.
+  for (const auto &Name : DarwinLinkNames)
+    GlobalIdentifierAllocator.allocate(Name, "nd_external");
 
   for (const HighFunc &Func : Funcs) {
     std::string SourceName = Func.Name;

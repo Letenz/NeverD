@@ -14,6 +14,12 @@ struct BinaryImage;
 std::optional<SourceCallTypeHint>
 darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
+/// Complete ARM64 HFA declaration for an ordinary immutable import veneer.
+/// Reuses the current machine decoder and strong SDK import/ABI owner. This
+/// is an entry candidate: relifting and source publication remain mandatory.
+std::optional<SourceFunctionTypeHint>
+darwinHFAImportVeneerSourceABI(const BinaryImage &Image, va_t Address);
+
 /// Canonical arm64 carrier signature for the supported CoreGraphics affine
 /// bridges and QuartzCore CATransform3DScale. The input transform is an
 /// indirect pointer; transform results retain their complete hidden result

@@ -39,6 +39,235 @@
 
 using namespace neverd;
 
+namespace {
+struct HFAImportVeneerFixture {
+  static constexpr va_t Entry = 0x1000, Slot = 0x2080;
+  BinaryImage Image;
+  PipelineOptions Options;
+  llvm::LLVMContext Context;
+  PipelineResult Result;
+
+  HFAImportVeneerFixture(const char *Name, const char *Provider) {
+    Image.Arch = Arch::AArch64;
+    Image.Format = BinaryFormat::MachO;
+    Image.Bits = Bitness::Bits64;
+    Image.DynInfo.NeededLibs = {Provider};
+    for (unsigned I = 0; I != 2; ++I) {
+      Segment S;
+      S.VA = Entry + I * 0x1000;
+      S.FileOff = I * 0x100;
+      S.Size = S.FileSz = 0x100;
+      S.Flags = SegmentFlags::Readable |
+                (I ? SegmentFlags::None : SegmentFlags::Executable);
+      S.Data.resize(0x100);
+      if (!I) {
+        const uint32_t Words[] = {0xb0000010, 0xf9404210, 0xd61f0200};
+        for (unsigned J = 0; J != 3; ++J)
+          llvm::support::endian::write32le(S.Data.data() + 4 * J, Words[J]);
+      }
+      Section Sec;
+      Sec.VA = S.VA;
+      Sec.FileOff = S.FileOff;
+      Sec.Size = Sec.FileSz = S.FileSz;
+      Sec.Flags = S.Flags;
+      Sec.Type = I ? 0 : llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+      Image.Sections.push_back(Sec);
+      Image.Segments.push_back(std::move(S));
+    }
+    Image.ImportPtrSlots[Slot] = Name;
+    EXPECT_TRUE(Image.recordDyldBindSlot(Slot, Name, 0, Provider, false));
+    Image.Symbols.push_back({"anonymous_veneer", Entry, 12, true});
+    Options.OnlyFunctionEntries = {Entry};
+    Options.EmitDumpOutput = false;
+    Result = Pipeline().run(Image, Context, Options);
+  }
+
+  size_t infer() {
+    std::map<va_t, std::string> Diagnostics;
+    return sdk::inferObjCNativeDependencies(Image, Result, Options, Diagnostics,
+                                            {Entry});
+  }
+};
+} // namespace
+
+TEST(NativeSourceHints, HFAImportVeneerRetainsCompleteDeclaredResult) {
+  struct Case {
+    const char *Name, *Provider;
+    size_t Components;
+  };
+  for (const auto &C : {
+           Case{
+               "_CGRectStandardize",
+               "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+               4},
+           Case{
+               "_CLLocationCoordinate2DMake",
+               "/System/Library/Frameworks/CoreLocation.framework/CoreLocation",
+               2},
+           Case{"___sincos_stret", "/usr/lib/libSystem.B.dylib", 2},
+       }) {
+    SCOPED_TRACE(C.Name);
+    HFAImportVeneerFixture F(C.Name, C.Provider);
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    ASSERT_EQ(F.Result.HighFuncs.size(), 1U);
+    EXPECT_FALSE(F.Result.HighFuncs[0].SourceTypeHint);
+    ASSERT_EQ(F.infer(), 1U);
+    const auto &Hint = F.Options.SourceTypeHints.at(F.Entry);
+    const auto Declared = darwinRuntimeSourceCallHint(F.Image, F.Slot);
+    ASSERT_TRUE(Declared);
+    EXPECT_TRUE(equalSourceABIs(Hint, Declared->Signature));
+    EXPECT_EQ(Hint.ReturnComponents.size(), C.Components);
+    // A declaration candidate must survive a fresh lift and all ordinary
+    // publication checks with every record field still present.
+    auto Relifted = Pipeline().run(F.Image, F.Context, F.Options);
+    ASSERT_TRUE(Relifted.Success) << Relifted.Error;
+    ASSERT_EQ(Relifted.HighFuncs.size(), 1U);
+    const auto &Function = Relifted.HighFuncs[0];
+    ASSERT_TRUE(Function.SourceTypeHint);
+    EXPECT_TRUE(equalSourceABIs(*Function.SourceTypeHint, Hint));
+    std::map<va_t, const HighFunc *> Functions{{F.Entry, &Function}};
+    const auto Bound = sdk::bindObjCSourceReferences(Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    const auto Allowed = [&](const HighExpr &Call) {
+      return sdk::objcSourceCallBound(Call, F.Image, Functions);
+    };
+    ASSERT_EQ(Relifted.FunctionAudits.size(), 1U);
+    EXPECT_TRUE(sdk::sourceBodyLimitation(Bound.Function, Hint,
+                                          &Relifted.FunctionAudits[0], Allowed)
+                    .empty());
+  }
+}
+
+TEST(NativeSourceHints, HFAImportVeneerRequiresCurrentCodeAndImport) {
+  HFAImportVeneerFixture F("___sincos_stret", "/usr/lib/libSystem.B.dylib");
+  ASSERT_TRUE(darwinHFAImportVeneerSourceABI(F.Image, F.Entry));
+  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = F.Image;
+    va_t Entry = F.Entry;
+    switch (Mutation) {
+    case 0:
+    case 1:
+    case 2:
+      Image.Segments[0].Data[4 * Mutation] ^= 1;
+      break;
+    case 3:
+      Image.Segments[0].Flags =
+          Image.Segments[0].Flags | SegmentFlags::Writable;
+      break;
+    case 4:
+      Image.Segments[1].Flags =
+          Image.Segments[1].Flags | SegmentFlags::Writable;
+      Image.Sections[1].Flags =
+          Image.Sections[1].Flags | SegmentFlags::Writable;
+      break;
+    case 5:
+      Image.Sections.push_back(Image.Sections[0]);
+      break;
+    case 6:
+      Image.Sections.push_back(Image.Sections[1]);
+      break;
+    case 7:
+      Image.Segments[0].Data.resize(11);
+      break;
+    case 8:
+      Image.DyldBindSlots[F.Slot].WeakImport = true;
+      break;
+    case 9:
+      Image.DyldBindSlots[F.Slot].Addend = 8;
+      break;
+    case 10:
+      Image.DyldBindSlots[F.Slot].Module = "/tmp/libSystem.B.dylib";
+      break;
+    case 11:
+      Image.DynInfo.NeededLibs.clear();
+      break;
+    case 12:
+      Image.ImportPtrSlots[F.Slot] = "_sin";
+      break;
+    case 13:
+      Image.DyldBindSlots.clear();
+      break;
+    case 14:
+      Image.ConflictingImportStorageSlots.insert(F.Slot);
+      break;
+    case 15:
+      Image.CodePtrRelocSlots.insert(F.Entry + 8);
+      break;
+    case 16:
+      Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 17:
+      Image.Arch = Arch::X64;
+      break;
+    case 18:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 19:
+      Image.IsRelocatable = true;
+      break;
+    case 20:
+      Image.Bits = Bitness::Bits32;
+      break;
+    case 21:
+      ++Entry;
+      break;
+    }
+    EXPECT_FALSE(darwinHFAImportVeneerSourceABI(Image, Entry));
+  }
+}
+
+TEST(NativeSourceHints, HFAImportVeneerNeedsACompleteLiftBeforeRelifting) {
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    HFAImportVeneerFixture F("___sincos_stret", "/usr/lib/libSystem.B.dylib");
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    ASSERT_EQ(F.Result.FunctionAudits.size(), 1U);
+    auto &Audit = F.Result.FunctionAudits[0];
+    switch (Mutation) {
+    case 0:
+      Audit.Disposition = PipelineFunctionDisposition::Candidate;
+      break;
+    case 1:
+      Audit.HasLowIR = false;
+      break;
+    case 2:
+      Audit.MedIRVerified = false;
+      break;
+    case 3:
+      --Audit.LiftedInstructions;
+      break;
+    case 4:
+      Audit.DecodeFailures.push_back(F.Entry);
+      break;
+    case 5:
+      Audit.TruncatedPaths.push_back(F.Entry);
+      break;
+    case 6:
+      ++Audit.Entry;
+      break;
+    }
+    EXPECT_EQ(F.infer(), 0U);
+    EXPECT_TRUE(F.Options.SourceTypeHints.empty());
+  }
+}
+
+TEST(NativeSourceHints, HFAImportVeneerDoesNotGuessOtherDeclarations) {
+  for (const auto Name : {"_sin", "_unknown_hfa"}) {
+    HFAImportVeneerFixture F(Name, "/usr/lib/libSystem.B.dylib");
+    EXPECT_FALSE(darwinHFAImportVeneerSourceABI(F.Image, F.Entry));
+  }
+  HFAImportVeneerFixture Indirect(
+      "_CGAffineTransformMakeScale",
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
+  const auto Declaration =
+      darwinRuntimeSourceCallHint(Indirect.Image, Indirect.Slot);
+  ASSERT_TRUE(Declaration);
+  EXPECT_EQ(Declaration->Signature.ReturnLocation.Kind,
+            SourceABICarrierKind::IndirectResultPointer);
+  EXPECT_FALSE(darwinHFAImportVeneerSourceABI(Indirect.Image, Indirect.Entry));
+}
+
 TEST(NativeSourceHints, CFunctionParameterCallKeepsTheCompleteVoidCallback) {
   using namespace c_function_parameter_test;
   Fixture F;
