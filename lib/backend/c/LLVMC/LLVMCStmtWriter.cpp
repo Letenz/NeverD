@@ -5411,6 +5411,7 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
     return;
   struct PhiCopy {
     const llvm::PHINode *Phi;
+    const llvm::Value *Incoming;
     std::string RHS;
     std::string Destination;
     std::string Temp;
@@ -5439,7 +5440,7 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
       const std::string RHS = integerPointerOperandStr(Incoming);
       const std::string Destination = getName(Phi);
       if (!ForceMaterialized || RHS != Destination)
-        Copies.push_back({Phi, RHS, Destination, {}});
+        Copies.push_back({Phi, Incoming, RHS, Destination, {}});
     }
   }
   // Evaluate the whole edge against its predecessor state before publishing
@@ -5495,6 +5496,11 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
   const int CopyIndent = Indent + (HasTemps ? 1 : 0);
   for (const auto &Copy : Copies) {
     emitIndent(CopyIndent);
+    if (Copy.Temp.empty())
+      if (auto Update = scalarUpdateText(Copy.Phi, Copy.Incoming)) {
+        OS << *Update << ";\n";
+        continue;
+      }
     if (!Copy.Temp.empty())
       OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Temp;
     else

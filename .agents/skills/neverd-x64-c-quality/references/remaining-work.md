@@ -69,12 +69,21 @@ analysis and comparison output belong outside the repository.
 
 ## Closed control-flow regressions
 
+- Admitted scalar loops now name the complete returned PHI group by role.
+  Counters move into `for` declarations only after all coalesced members and
+  transitive inline uses pass a bounded confinement check; materialized values
+  retain their own lifetimes. LoopInfo stays alive through output, and role names reserve called C
+  function identifiers. Compound
+  add/subtract/bitwise updates and increments follow snapshot scheduling, with
+  narrow multiplication, boolean masks and reversed subtraction left explicit.
+  O0/O2 regressions cover wrapping counters, escaping values and old-value reads.
+
 - Typed scalar expressions now distinguish LLVM width from the promoted C
   type and operator precedence. Redundant unsigned casts are omitted, while
   narrow wrapping, signed interpretation and widened arithmetic/shift carriers
   remain explicit. Bounded fallback and existing materialization preserve deep
   expressions. Independent LLVM comparisons at O0/O2 run with undefined-behavior
-  traps. Debug/image/composed projections and source-variable naming still need
+  traps. Debug/image/composed projections and broader source naming still need
   their own evidence and cleanup.
 
 - LLVMC plans complete bounded integer CFGs before printing nested header

@@ -268,4 +268,66 @@ LLVMCWriter::scalarExpressionText(const llvm::Value *V, bool ForceExpression,
   return operand(*E, Primary);
 }
 
+std::optional<std::string>
+LLVMCWriter::scalarUpdateText(const llvm::Value *Destination,
+                              const llvm::Value *Incoming) {
+  if (!UseScalarExpressionTypes || !Destination || !Incoming ||
+      !Destination->getType()->isIntegerTy() ||
+      Destination->getType() != Incoming->getType())
+    return std::nullopt;
+  const unsigned Bits = Destination->getType()->getIntegerBitWidth();
+  // i1 uses a byte C carrier: ++ or compound arithmetic would lose its mask.
+  if (Bits != 8 && Bits != 16 && Bits != 32 && Bits != 64)
+    return std::nullopt;
+  const auto *BO = llvm::dyn_cast<llvm::BinaryOperator>(Incoming);
+  if (!BO || !Analysis.Inlinable.count(BO) ||
+      MaterializedExpressions.count(BO) || !scalarExpressionText(BO))
+    return std::nullopt;
+  const char *Op = nullptr;
+  switch (BO->getOpcode()) {
+  case llvm::Instruction::Add:
+    Op = "+=";
+    break;
+  case llvm::Instruction::Sub:
+    Op = "-=";
+    break;
+  case llvm::Instruction::And:
+    Op = "&=";
+    break;
+  case llvm::Instruction::Or:
+    Op = "|=";
+    break;
+  case llvm::Instruction::Xor:
+    Op = "^=";
+    break;
+  default:
+    // In particular, narrow compound multiplication could overflow signed
+    // integer promotions, and arithmetic right shift needs a signed carrier.
+    return std::nullopt;
+  }
+  const auto Name = getName(Destination);
+  auto L = scalarExpressionText(BO->getOperand(0));
+  auto R = scalarExpressionText(BO->getOperand(1));
+  const llvm::Value *Other = nullptr;
+  std::string RHS;
+  if (L && R && *L == Name) {
+    Other = BO->getOperand(1);
+    RHS = *R;
+  } else if (BO->isCommutative() && L && R && *R == Name) {
+    Other = BO->getOperand(0);
+    RHS = *L;
+  } else {
+    return std::nullopt;
+  }
+  if (const auto *C = llvm::dyn_cast<llvm::ConstantInt>(Other))
+    if ((BO->getOpcode() == llvm::Instruction::Add ||
+         BO->getOpcode() == llvm::Instruction::Sub) &&
+        (C->isOne() || C->isMinusOne())) {
+      const bool Increment =
+          C->isOne() == (BO->getOpcode() == llvm::Instruction::Add);
+      return std::string(Increment ? "++" : "--") + Name;
+    }
+  return Name + " " + Op + " " + RHS;
+}
+
 } // namespace neverd

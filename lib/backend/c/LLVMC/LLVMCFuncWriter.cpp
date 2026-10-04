@@ -2229,6 +2229,7 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
 
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   UseScalarExpressionTypes = false;
+  ScopedScalarNames.clear();
   Dominators.recalculate(Fn);
   NextVar = 0;
   ValNames.clear();
@@ -9240,6 +9241,7 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   // or changing the instruction-order freshVar sequence.
   std::set<std::string> DeclaredNames(CallDeclNames.begin(),
                                       CallDeclNames.end());
+  DeclaredNames.insert(ScopedScalarNames.begin(), ScopedScalarNames.end());
   llvm::StringMap<std::string> ArrayDeclarations;
   std::vector<std::pair<size_t, std::string>> MissingDecls;
   for (llvm::BasicBlock &BB : Fn) {
