@@ -68,6 +68,8 @@ checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MO
 
 checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
 
+在可移植软件配置中，Unicorn 会对传统 `MINSS/MINSD/MINPS/MINPD` 和 `MAXSS/MAXSD/MAXPS/MAXPD` 选中的值应用 DAZ。选中的次正规输入变为有符号零；NaN 载荷和已有 MXCSR 状态保持不变。`test_x86_sse_minmax_daz` 检查寄存器、RAM 和寄存器别名形式，覆盖 DAZ 开关、全部舍入模式、FTZ 和粘滞状态。checked KVM/WHP 配置仍拒绝 DAZ。
+
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。
