@@ -44,10 +44,13 @@ public:
   void setReturnSP(uint64_t SP) { current().ReturnSP = SP; }
   uint64_t returnSP() const { return current().ReturnSP; }
   BionicResult invoke(const NativeCallEvent &Call);
+  bool onceActive(uint64_t Control) const;
+  BionicResult waitOnce(uint64_t Control);
+  void completeOnce(uint64_t Control);
   void suspend(const ServiceRequest &Request, size_t Event);
   llvm::Error finish(uint64_t Value, uint32_t ExitStatus = 0);
   /// Round robin, including the current thread if it is the only runnable
-  /// owner. False classifies all-finished or a join cycle in Result.
+  /// owner. False classifies all-finished or a wait cycle in Result.
   llvm::Expected<bool> schedule();
   void report();
 
@@ -55,6 +58,14 @@ private:
   struct Join {
     size_t Target;
     uint64_t Output;
+  };
+  struct Once {
+    size_t Owner;
+    uint64_t Control;
+    bool Ready = false;
+  };
+  struct Wait {
+    std::variant<Join, Once> Operation;
     std::optional<ServiceRequest> Request;
     size_t Event = 0;
   };
@@ -64,7 +75,7 @@ private:
     std::array<uint8_t, thread_attribute_abi::ObjectBytes> Attributes{};
     std::unique_ptr<BackendContext> Context;
     std::vector<PendingCallback> Callbacks;
-    std::optional<Join> Waiting;
+    std::optional<Wait> Waiting;
     std::optional<size_t> Joiner;
     uint64_t MappingBase = 0, MappingSize = 0, ReturnSP = 0;
   };
@@ -81,7 +92,9 @@ private:
                      unsigned Alignment = 8);
   llvm::Error put64(uint64_t Address, uint64_t Value);
   llvm::Error retire(size_t Index);
-  llvm::Error completeJoin(Thread &Waiter);
+  std::optional<size_t> onceOwner(uint64_t Control) const;
+  bool ready(const Wait &Pending) const;
+  llvm::Error completeWait(Thread &Waiter);
   BionicResult create(const NativeCallEvent &Call);
   BionicResult unsupported(llvm::StringRef Reason);
 };

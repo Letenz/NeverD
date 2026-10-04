@@ -292,6 +292,143 @@ TEST_P(AndroidThread, GuardPagesCallbackExitAndCorruptTLSRemainExplicitStops) {
   EXPECT_NE(R.Diagnostic.find("TLS identity"), std::string::npos);
   EXPECT_FALSE(R.NativeThreads[1].Finished);
 }
+TEST_P(AndroidThread, OnceWaitersObserveOneInitializerAndPreserveContexts) {
+  for (uint64_t Mode : {0u, 1u, 2u}) {
+    SCOPED_TRACE(Mode);
+    if (Mode == 2)
+      Options.Android->Libraries["libc.so"] = {"pthread_once"};
+    auto R = run("threads_once_wait", Mode);
+    returned(R, 0);
+    ASSERT_EQ(R.NativeThreads.size(), 4u);
+    EXPECT_EQ(word(R, 1), 1u);
+    EXPECT_EQ(word(R, 3), 1u);
+    EXPECT_EQ(word(R, 4), 0x123456789abcdef0ULL);
+    EXPECT_EQ(word(R, 5), 0xfedcba9876543210ULL);
+    EXPECT_EQ(word(R, 6), 0u);
+    EXPECT_EQ(word(R, 7), 0u);
+    EXPECT_EQ(word(R, 8), 2u);
+    EXPECT_EQ(word(R, 9), 2u);
+    std::set<uint64_t> Callers;
+    unsigned OnceCalls = 0;
+    bool Named = false;
+    for (const auto &Call : R.NativeCalls) {
+      if (Call.Name == "pthread_once") {
+        ++OnceCalls;
+        EXPECT_EQ(Call.Result, 0u);
+        ASSERT_TRUE(Call.ThreadID);
+        Callers.insert(*Call.ThreadID);
+      }
+      Named |= Call.Name == "dlsym" && Call.Symbol == "pthread_once" &&
+               Call.Library == "libc.so";
+    }
+    EXPECT_EQ(OnceCalls, 6u);
+    EXPECT_EQ(Callers, (std::set<uint64_t>{1000, 1001, 1002, 1003}));
+    EXPECT_EQ(Named, Mode == 2);
+    for (size_t I = 1; I <= 3; ++I) {
+      const size_t Row = I * 32;
+      const uint64_t Cookie = 0xfeedface0000ULL + I;
+      EXPECT_EQ(word(R, Row + 1), 0u);
+      EXPECT_EQ(word(R, Row + 2), Mode == 1 && I == 2 ? 0x123456789abcdef0ULL
+                                                      : 0xfedcba9876543210ULL);
+      for (size_t Offset : {3u, 8u, 9u})
+        EXPECT_EQ(word(R, Row + Offset), Cookie);
+      EXPECT_EQ(word(R, Row + 4), 70u + I);
+      EXPECT_EQ(word(R, Row + 5), 1000u + I);
+      EXPECT_EQ(word(R, Row + 6), R.NativeThreads[I].TLS);
+      EXPECT_EQ(word(R, Row + 7), 1u);
+      EXPECT_TRUE(R.NativeThreads[I].Retired);
+      EXPECT_FALSE(R.NativeThreads[I].Waiting);
+    }
+  }
+}
+TEST_P(AndroidThread, OnceWaitsRejectUnknownRecursiveAndReinitializedControls) {
+  Options.Android->Memory.push_back({Buffer + 4096, 4096, {}, false});
+  for (uint64_t Mode : {0u, 1u, 8u}) {
+    SCOPED_TRACE(Mode);
+    auto R = run("threads_once_failure", Mode);
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_EQ(R.NativeThreads.size(), 1u);
+    EXPECT_NE(R.Diagnostic.find("pthread_once"), std::string::npos);
+    EXPECT_EQ(word(R, 7), 0u);
+    for (const auto &Call : R.NativeCalls)
+      if (Call.Name == "pthread_once")
+        EXPECT_FALSE(Call.Result);
+  }
+}
+TEST_P(AndroidThread, OnceAndJoinCyclesKeepAllWaitsIncomplete) {
+  Options.Android->Memory.push_back({Buffer + 4096, 4096, {}, false});
+  for (uint64_t Mode : {2u, 3u}) {
+    SCOPED_TRACE(Mode);
+    auto R = run("threads_once_failure", Mode);
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_NE(R.Diagnostic.find("pending waits"), std::string::npos);
+    ASSERT_EQ(R.NativeThreads.size(), Mode == 2 ? 2u : 3u);
+    for (const auto &Thread : R.NativeThreads) {
+      EXPECT_TRUE(Thread.Waiting);
+      EXPECT_FALSE(Thread.Finished);
+    }
+    for (const auto &Call : R.NativeCalls)
+      if (Call.Name == "pthread_once" || Call.Name == "pthread_join")
+        EXPECT_FALSE(Call.Result);
+  }
+}
+TEST_P(AndroidThread, OnceWakeupsRecheckGuestMemoryBeforeCompletingWaiters) {
+  Options.Android->Memory.push_back({Buffer + 4096, 4096, {}, false});
+  // Service boundaries order the release, callback return and third-thread
+  // mutation without preempting the few instructions before each import.
+  Options.InstructionQuantum = 1000;
+  for (uint64_t Mode : {4u, 5u, 6u}) {
+    SCOPED_TRACE(Mode);
+    auto R = run("threads_once_failure", Mode);
+    EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure) << R.Diagnostic;
+    unsigned Completed = 0, Pending = 0;
+    for (const auto &Call : R.NativeCalls)
+      if (Call.Name == "pthread_once") {
+        Completed += Call.Result.has_value();
+        Pending += !Call.Result.has_value();
+      }
+    EXPECT_EQ(Completed, Mode == 4 ? 0u : 1u);
+    EXPECT_EQ(Pending, Mode == 4 ? 2u : 1u);
+    if (Mode == 5)
+      EXPECT_NE(R.Diagnostic.find("completion changed"), std::string::npos);
+  }
+}
+TEST_P(AndroidThread, OnceWaitingDoesNotCompleteCallsOrResetTheBudget) {
+  Options.Android->Memory.push_back({Buffer + 4096, 4096, {}, false});
+  Options.Limits.Instructions = 2000;
+  auto R = run("threads_once_failure", 7);
+  EXPECT_EQ(R.Stop, ProcessStopReason::InstructionLimit) << R.Diagnostic;
+  EXPECT_EQ(R.Instructions, 2000u);
+  ASSERT_EQ(R.NativeThreads.size(), 2u);
+  EXPECT_TRUE(R.NativeThreads[0].Waiting);
+  EXPECT_FALSE(R.ReturnValue);
+  unsigned Pending = 0;
+  for (const auto &Call : R.NativeCalls)
+    if (Call.Name == "pthread_once") {
+      EXPECT_FALSE(Call.Result);
+      ++Pending;
+    }
+  EXPECT_EQ(Pending, 2u);
+}
+TEST_P(AndroidThread, OnceWaitsAgreeWithNativeTransport) {
+  ExecutionConfiguration C;
+  C.Backend = ExecutionBackendKind::HVF;
+  C.Architecture = GuestArchitecture::AArch64;
+  C.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Probe = probeExecutionBackend(C);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  auto Software = run("threads_once_wait", 1);
+  returned(Software, 0);
+  Options.Backend = ExecutionBackendKind::HVF;
+  auto Native = run("threads_once_wait", 1);
+  returned(Native, 0);
+  EXPECT_EQ(Native.SelectedBackend, ExecutionBackendKind::HVF);
+  Native.SelectedBackend = Software.SelectedBackend;
+  Native.BackendSelectionReason = Software.BackendSelectionReason;
+  EXPECT_EQ(processResultJSON(Native), processResultJSON(Software));
+}
 TEST_P(AndroidThread, AvailableNativeTransportAgreesWithSoftwareContexts) {
   ExecutionConfiguration C;
   C.Backend = ExecutionBackendKind::HVF;

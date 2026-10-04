@@ -145,8 +145,12 @@ The supported Bionic subset is:
   to 2 only after normal return. A completed control returns zero without
   invoking its initializer. Nested initialization of different controls and
   modeled imports inside callbacks share the caller's execution budget.
-  An in-progress control, including recursive initialization of the same
-  control, stops as unsupported; concurrent once waits are not modeled. Callback
+  With cooperative threads enabled, a caller waits when another live guest
+  thread owns the initializer. All waiters become runnable only after that
+  callback returns and its completion word is written. Resumption restores
+  the original CPU/TLS/stack and rechecks the control before completing the
+  original import. Recursive initialization and running controls without a
+  known owner stop as unsupported. Resetting an active control also stops. Callback
   faults and exhausted budgets leave the call result incomplete. Unwinding,
   cancellation and fork recovery are unsupported.
 - `__cxa_atexit` stores the guest callback, opaque argument and DSO token;
@@ -408,13 +412,13 @@ then publishes the full pointer result and releases its storage. Detached
 threads release storage on completion. Invalid non-null or retired handles
 fail at the API 28 target boundary; NULL lookup returns ESRCH, self-join
 returns EDEADLK, and detached or already claimed targets return EINVAL.
-No runnable thread with outstanding joins is an explicit unsupported stop.
+No runnable thread with outstanding join or once waits is an explicit unsupported stop.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
 the current thread and leaves its pthread result zero. When the last thread
 exits without an entry return, its low eight status bits become the workload
 exit status. `exit_group` terminates
 the workload. Guest cleanup handlers, TLS keys/destructors, exit during a
-once/finalize callback, blocking mutex/once waits, timers, cancellation,
+once/finalize callback, blocking mutex waits, timers, cancellation,
 signals and clone remain unsupported. No cleanup or completion is invented.
 
 By default the selected entry's return stops observation, even with live
