@@ -5372,6 +5372,57 @@ ExprPtr loadSlot() {
   return HighExpr::makeLoad(HighExpr::makeConst(0x100, 8), NdType::makeInt(8));
 }
 
+TEST(HighControlFlowSemantics, StoreThroughAnAliasKeepsAFieldRetest) {
+  // p = q = 0x100; p->f = 1; t = p->f; v = 0;
+  // if (t) { q->f = x; if (p->f) v = 7; }  return v;
+  // The store through q may change p->f, so `t` does not imply the second
+  // test; a call that may write memory is the same case.
+  auto PointerTo = [](int Id) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(Id),
+                               HighExpr::makeConst(8, 8));
+  };
+  auto LoadP = [&] {
+    return HighExpr::makeLoad(PointerTo(5), NdType::makeInt(8));
+  };
+  auto Store = [](va_t Address, ExprPtr Pointer, ExprPtr Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Store;
+    S.Addr = Address;
+    S.StoreAddr = std::move(Pointer);
+    S.StoreVal = std::move(Value);
+    return S;
+  };
+  auto Field = assign(0x100c, 2, 0);
+  Field.Val = LoadP();
+  HighStmt Retest;
+  Retest.Kind = StmtKind::If;
+  Retest.Addr = 0x101c;
+  Retest.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, LoadP(),
+                                    HighExpr::makeConst(0, 8));
+  Retest.Body = {assign(0x1020, 1, 7)};
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Addr = 0x1014;
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(2),
+                                   HighExpr::makeConst(0, 8));
+  Guard.Body = {Store(0x1018, PointerTo(6), local(0)), Retest};
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Body = {assign(0x1000, 5, 0x100),
+            assign(0x1004, 6, 0x100),
+            Store(0x1008, PointerTo(5), HighExpr::makeConst(1, 8)),
+            Field,
+            assign(0x1010, 1, 0),
+            Guard,
+            result(0x1030, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t { return X ? 7 : 0; };
+  for (uint64_t X : {0, 1})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  invertSkipGotos(F);
+  for (uint64_t X : {0, 1})
+    EXPECT_EQ(execute(F, X), Expected(X)) << X;
+}
+
 TEST(HighControlFlowSemantics, SkipOverWorkStaysOnTheOuterElsePath) {
   // `*m = 0; w = 0; if (x != 0) { if (x == 2) { w = 1; goto J; } } else
   // { w = 3; } *m = 7; J: return *m + w;` The outer else runs into the store

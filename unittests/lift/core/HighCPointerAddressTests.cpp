@@ -29412,84 +29412,98 @@ TEST(HighCPointerAddresses, NestedIfKeepsImpliedGuardAfterPointerCall) {
 }
 
 TEST(HighCPointerAddresses, NestedIfFlattensImpliedFalseElseInNestedIfElse) {
-  HighFunc Func;
-  Func.Name = "implied_false_else";
-  Func.Entry = 0x140001000;
-  Func.ReturnType = NdType::makeVoid();
-  auto Temp = [](int Id, int SSA, int Size = 8) {
-    MedVar V;
-    V.Kind = MedVar::Temp;
-    V.Id = Id;
-    V.SSAVer = SSA;
-    V.Size = static_cast<uint16_t>(Size);
-    V.TheArch = Arch::X64;
-    return V;
-  };
-  auto LoadP = [&](int SSA) {
-    HighStmt S;
-    S.Kind = StmtKind::Assign;
-    S.Dst = HighExpr::makeVar(Temp(76, SSA));
-    S.Val = HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                                                   HighExpr::makeConst(56, 8)),
-                               NdType::makeInt(8));
-    return S;
-  };
-  auto Skip = [&](int Id) {
-    HighStmt S;
-    S.Kind = StmtKind::Assign;
-    S.Dst = HighExpr::makeVar(Temp(Id, 0));
-    S.Val = HighExpr::makeUndef(8);
-    return S;
-  };
-  HighStmt Fetch;
-  Fetch.Kind = StmtKind::Assign;
-  Fetch.Dst = HighExpr::makeVar(Temp(94, 7, 4), NdType::makeInt(4));
-  Fetch.Val = HighExpr::makeCall(
-      "addref", 0x140002500,
-      {HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Temp(76, 20)),
-                           HighExpr::makeConst(8, 8))});
-  HighStmt Bump;
-  Bump.Kind = StmtKind::Store;
-  Bump.StoreAddr =
-      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Temp(76, 21)),
-                          HighExpr::makeConst(8, 8));
-  Bump.StoreVal = HighExpr::makeConst(1, 4);
-  HighStmt Release;
-  Release.Kind = StmtKind::Call;
-  Release.CallExpr = HighExpr::makeCall("dtor", 0x140002600,
-                                        {HighExpr::makeVar(Temp(76, 22))});
-  HighStmt Inner;
-  Inner.Kind = StmtKind::IfElse;
-  Inner.Cond =
-      HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(76, 22)),
-                          HighExpr::makeConst(0, 8));
-  Inner.Body = {Skip(41)};
-  Inner.ElseBody = {Release};
-  HighStmt Last;
-  Last.Kind = StmtKind::IfElse;
-  Last.Cond =
-      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(94, 7, 4)),
-                          HighExpr::makeConst(1, 4));
-  Last.Body = {Skip(33)};
-  Last.ElseBody = {LoadP(21), Bump, LoadP(22), Inner};
-  HighStmt Guard;
-  Guard.Kind = StmtKind::If;
-  Guard.Cond =
-      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(76, 20)),
-                          HighExpr::makeConst(0, 8));
-  Guard.Body = {Fetch, Last};
-  Func.Body = {LoadP(20), Guard};
-  invertSkipGotos(Func);
-  const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("addref("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("dtor("), std::string::npos) << Source;
-  const auto BodyAt = Source.find("void implied_false_else");
-  ASSERT_NE(BodyAt, std::string::npos) << Source;
-  size_t PtrIfCount = 0;
-  for (size_t Pos = BodyAt;
-       (Pos = Source.find("if (t76", Pos)) != std::string::npos; Pos += 7)
-    ++PtrIfCount;
-  EXPECT_EQ(PtrIfCount, 1u) << Source;
+  // p = a->f; if (p) { r = Fetch; if (r != 1) {} else { q = a->f; ...;
+  // q = a->f; if (q == 0) {} else dtor(q); } }
+  // The reloads of a->f equal the tested p only when nothing between them
+  // may write memory: addref() and the store through q can change a->f, as
+  // the binary's own retest of it allows.
+  for (bool Writes : {false, true}) {
+    SCOPED_TRACE(Writes);
+    HighFunc Func;
+    Func.Name = "implied_false_else";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeVoid();
+    auto Temp = [](int Id, int SSA, int Size = 8) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.Id = Id;
+      V.SSAVer = SSA;
+      V.Size = static_cast<uint16_t>(Size);
+      V.TheArch = Arch::X64;
+      return V;
+    };
+    auto LoadP = [&](int SSA) {
+      HighStmt S;
+      S.Kind = StmtKind::Assign;
+      S.Dst = HighExpr::makeVar(Temp(76, SSA));
+      S.Val =
+          HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                                 HighExpr::makeConst(56, 8)),
+                             NdType::makeInt(8));
+      return S;
+    };
+    auto Skip = [&](int Id) {
+      HighStmt S;
+      S.Kind = StmtKind::Assign;
+      S.Dst = HighExpr::makeVar(Temp(Id, 0));
+      S.Val = HighExpr::makeUndef(8);
+      return S;
+    };
+    HighStmt Fetch;
+    Fetch.Kind = StmtKind::Assign;
+    Fetch.Dst = HighExpr::makeVar(Temp(94, 7, 4), NdType::makeInt(4));
+    Fetch.Val = Writes
+                    ? HighExpr::makeCall(
+                          "addref", 0x140002500,
+                          {HighExpr::makeBinop(NdOp::INT_ADD,
+                                               HighExpr::makeVar(Temp(76, 20)),
+                                               HighExpr::makeConst(8, 8))})
+                    : parameter(1, NdType::makeInt(4));
+    HighStmt Bump;
+    Bump.Kind = StmtKind::Store;
+    Bump.StoreAddr =
+        HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Temp(76, 21)),
+                            HighExpr::makeConst(8, 8));
+    Bump.StoreVal = HighExpr::makeConst(1, 4);
+    HighStmt Release;
+    Release.Kind = StmtKind::Call;
+    Release.CallExpr = HighExpr::makeCall("dtor", 0x140002600,
+                                          {HighExpr::makeVar(Temp(76, 22))});
+    HighStmt Inner;
+    Inner.Kind = StmtKind::IfElse;
+    Inner.Cond =
+        HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(76, 22)),
+                            HighExpr::makeConst(0, 8));
+    Inner.Body = {Skip(41)};
+    Inner.ElseBody = {Release};
+    HighStmt Last;
+    Last.Kind = StmtKind::IfElse;
+    Last.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                                    HighExpr::makeVar(Temp(94, 7, 4)),
+                                    HighExpr::makeConst(1, 4));
+    Last.Body = {Skip(33)};
+    Last.ElseBody = {LoadP(21), LoadP(22), Inner};
+    if (Writes)
+      Last.ElseBody.insert(Last.ElseBody.begin() + 1, Bump);
+    HighStmt Guard;
+    Guard.Kind = StmtKind::If;
+    Guard.Cond =
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(76, 20)),
+                            HighExpr::makeConst(0, 8));
+    Guard.Body = {Fetch, Last};
+    Func.Body = {LoadP(20), Guard};
+    invertSkipGotos(Func);
+    const std::string Source = emitFunctions({Func});
+    EXPECT_EQ(Source.find("addref(") != std::string::npos, Writes) << Source;
+    EXPECT_NE(Source.find("dtor("), std::string::npos) << Source;
+    const auto BodyAt = Source.find("void implied_false_else");
+    ASSERT_NE(BodyAt, std::string::npos) << Source;
+    size_t PtrIfCount = 0;
+    for (size_t Pos = BodyAt;
+         (Pos = Source.find("if (t76", Pos)) != std::string::npos; Pos += 7)
+      ++PtrIfCount;
+    EXPECT_EQ(PtrIfCount, Writes ? 2u : 1u) << Source;
+  }
 }
 
 TEST(HighCPointerAddresses, NestedIfKeepsWorkAfterImpliedOrSkip) {

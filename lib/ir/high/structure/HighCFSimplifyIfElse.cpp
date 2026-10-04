@@ -1662,10 +1662,43 @@ static const HighExpr *stmtCallExpr(const HighStmt &S) {
   return firstCallInExpr(S.Val.get());
 }
 
+/// Whether \p E reads memory: a load, a call, or a variable that holds a load.
+static bool condReadsMemory(const HighExpr *E,
+                            const FieldLoadDefs *FieldLoads) {
+  if (!E)
+    return false;
+  if (E->Kind == ExprKind::Load || E->Kind == ExprKind::Call)
+    return true;
+  if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) && FieldLoads &&
+      FieldLoads->find(varKey(E->Var)) != FieldLoads->end())
+    return true;
+  bool Reads = false;
+  E->forEachChildExpr([&](const ExprPtr &Child) {
+    Reads |= condReadsMemory(Child.get(), FieldLoads);
+  });
+  return Reads;
+}
+
+/// Whether \p S itself may write memory.  Any call or store may, wherever it
+/// points: a callee can write through any pointer it reaches, and a store
+/// through one pointer can alias a load through another.
+static bool stmtMayWriteMemory(const HighStmt &S) {
+  if (S.Kind == StmtKind::Store || S.Kind == StmtKind::Call)
+    return true;
+  bool Writes = false;
+  forEachExpr(
+      S, [&](const ExprPtr &E) { Writes |= exprHasObservableEffect(E.get()); });
+  return Writes;
+}
+
 static bool stmtInvalidatesCond(const HighStmt &S, const HighExpr *Cond,
                                 const FieldLoadDefs *FieldLoads) {
   if (!Cond)
     return false;
+  // A test of memory says nothing about a later load once it may have
+  // changed, as when a loop rereads a field after a call.
+  if (stmtMayWriteMemory(S) && condReadsMemory(Cond, FieldLoads))
+    return true;
   MedVar Dest;
   ExprPtr Val;
   if (isValueAssign(S, Dest, Val) && exprUsesVar(Cond, Dest))
@@ -1772,9 +1805,13 @@ static ImpliedAct peelAgainstOuters(HighStmt &S,
   if ((S.Kind != StmtKind::If && S.Kind != StmtKind::IfElse) || !S.Cond ||
       Outers.empty())
     return ImpliedAct::None;
+  // A test that calls or stores may change memory before it reads it.
+  const bool CondWrites = exprHasObservableEffect(S.Cond.get());
   ExprPtr Cur = S.Cond;
   bool Partial = false;
   for (const HighExpr *Outer : Outers) {
+    if (CondWrites && condReadsMemory(Outer, FieldLoads))
+      continue;
     if (auto Rest = dropAndPrefix(Outer, Cur, false, FieldLoads)) {
       if (isConstTrue(*Rest)) {
         if (S.ElseBody.empty())
@@ -2038,6 +2075,33 @@ static bool dropImpliedFallthroughConds(std::vector<HighStmt> &Body,
         composeWorkAssigns(Body, 0, I, std::make_shared<HighExpr>(*S.Cond));
     ExprPtr Inner =
         composeWorkAssigns(Body, 0, J, std::make_shared<HighExpr>(*Next.Cond));
+    // The loads of either test, including those of the assignments composed
+    // into it, come from this window; a write in it may make two loads of
+    // one address differ.
+    if (condReadsMemory(Head.get(), FieldLoads) ||
+        condReadsMemory(Inner.get(), FieldLoads)) {
+      const size_t From = I > limits::kMaxComposedWorkAssigns
+                              ? I - limits::kMaxComposedWorkAssigns
+                              : 0;
+      bool Writes = false;
+      for (size_t K = From; K <= J && !Writes; ++K) {
+        if (K == I) {
+          Writes = exprHasObservableEffect(S.Cond.get());
+          continue;
+        }
+        Writes = stmtMayWriteMemory(Body[K]);
+        if (K != J) {
+          walkStmts(Body[K].Body, [&](const HighStmt &N) {
+            Writes |= stmtMayWriteMemory(N);
+          });
+          walkStmts(Body[K].ElseBody, [&](const HighStmt &N) {
+            Writes |= stmtMayWriteMemory(N);
+          });
+        }
+      }
+      if (Writes)
+        continue;
+    }
     auto Rest = dropOrDisjunct(Head, Inner, false, FieldLoads);
     if (!Rest) {
       const HighExpr *P = peelCond(Inner.get());
