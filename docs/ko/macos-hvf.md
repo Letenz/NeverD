@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 100fc149f035b5f133930186baac6655480571d50a0b80e958aa14b1abf7c7fe -->
+<!-- i18n-source: 48ad654328e8b7f59295e47eee52da3bbc88ab1d81beb58efe1872a8273c9c45 -->
 
 [← 문서 목록](README.md)
 
@@ -186,3 +186,5 @@ Executor/VM/소유 스레드 세션 전체를 유지한 유한 기한 복구 비
 매 회차 vCPU만 다시 만드는 수정된 복구 테스트(소스 `7dd7342ec`, 헬퍼 `31afddad3`, 워크플로 `10bf50753`)는 macOS 15에서 1000회를 모두 통과했습니다([37215096822](https://github.com/gmh5225/test_mac_intel/actions/runs/37215096822), 검증된 산출물 43개). 네이티브와 컨트롤러의 최종 종료 코드는 0이며 자식 프로세스 회수도 확인했습니다. VM은 1세대, vCPU 경계는 1001세대지만 전체/실행 vCPU 수는 알 수 없습니다. macOS 26([37215098793](https://github.com/gmh5225/test_mac_intel/actions/runs/37215098793), 19개)에서는 progress-016 업로더에 SIGSEGV가 발생했습니다. IPS의 PID 32519, 부모 29104, 수집 시각과 Node UUID가 일치합니다. 저장된 네이티브 로그는 403회 완료, 404회 시작을 입증하며 assertion 실패는 없습니다. 컨트롤러가 네이티브 프로세스를 취소하고 회수했으나(SIGKILL) 최종 네이티브 결과는 없습니다. 이는 미완료 증거이며 runner 연결 끊김이나 통과가 아닙니다. 실행 전 기록한 Node 24.19.0 SHA-256은 `1052eb9c7d6c60a79b968e09f75af55a73462b0f6dff0964336d63b5e13eb63c`입니다. 이는 디스크 파일의 신원을 입증하며 프로세스 메모리가 바뀌지 않았음을 입증하지는 않습니다. 이 고정 소스 결과로 이후 dev 병합을 검증할 수 없습니다.
 
 매 회차 VM/vCPU를 다시 만드는 복구 테스트도 두 이미지 모두 runner 연결 끊김으로 종료되었습니다: [macOS 15 / 37213675739](https://github.com/gmh5225/test_mac_intel/actions/runs/37213675739), [macOS 26 / 37213681083](https://github.com/gmh5225/test_mac_intel/actions/runs/37213681083). 소스 `7dd7342ec`, 헬퍼 `4c702d35a`, 워크플로 `fad0eadf2`를 사용했습니다. 검증된 산출물 23/26개는 각각 502/503, 575/576회 완료/시작을 입증하는 연속 로그를 보존합니다. 최종 네이티브 결과와 프로세스 회수 기록은 없습니다. GitHub는 통신 중단만 확인하며 원인을 밝히지는 않습니다. 일반 명령만 실행한 VM 재생성 통과를 이 복구 부하에 적용할 수 없습니다. 두 테스트 통과가 전제인 전체 세션 재설정 실험은 아직 시작하지 않았습니다.
+
+업로더 `jitless` 대조([37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863), macOS 15/26)는 복구 테스트 시작 전에 실패했습니다. 공식 업로더의 HTTP 파서가 필요한 WebAssembly를 `--jitless`가 비활성화하여 두 plan 업로드 모두 신호 없이 코드 1로 종료되었습니다. 각 실행의 검증된 산출물은 2개이며 plan은 최종 증거에서 복구한 것으로 독립적인 사전 업로드 성공이 아닙니다. 네이티브 복구를 테스트하지 못했지만 앞선 HVF 기능 탐색 실행을 부정하지는 않습니다. 대체 선택 모드 `js-interpreter`는 컨트롤러의 plan/progress 업로드 자식에만 `--no-turbofan --no-maglev --no-sparkplug`를 전달하여 WebAssembly와 다른 코드 생성을 유지합니다. 부모, 네이티브 부하와 기한은 그대로이며 provenance/final은 기본 모드입니다. 실제 로컬 HTTP 및 자격 증명 없는 공식 업로더 검사는 통과했으나 HVF 안정성 수정의 증거는 아닙니다.

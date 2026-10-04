@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 100fc149f035b5f133930186baac6655480571d50a0b80e958aa14b1abf7c7fe -->
+<!-- i18n-source: 48ad654328e8b7f59295e47eee52da3bbc88ab1d81beb58efe1872a8273c9c45 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -186,3 +186,5 @@ Executor/VM/所有スレッドのセッション全体を保持した有限期�
 vCPU のみを毎回再作成する修正済み回復テスト（ソース `7dd7342ec`、ヘルパー `31afddad3`、ワークフロー `10bf50753`）は macOS 15 で 1000 回すべてに合格しました（[37215096822](https://github.com/gmh5225/test_mac_intel/actions/runs/37215096822)、検証済み成果物 43 個）。ネイティブとコントローラーの終了コードは 0、子プロセスの回収も確認済みです。VM は 1 世代、vCPU 境界は 1001 世代ですが、vCPU の総数・実行数は不明です。macOS 26（[37215098793](https://github.com/gmh5225/test_mac_intel/actions/runs/37215098793)、19 個）では progress-016 のアップローダーが SIGSEGV で停止しました。IPS の PID 32519、親 29104、採取時刻と Node UUID が一致します。保存ログでは 403 回完了、404 回目開始、アサーション失敗はありません。その後コントローラーがネイティブプロセスを中止・回収し（SIGKILL）、最終結果はありません。ネイティブ実行の証拠は未完了で、runner 切断や合格とは判定しません。実行前に記録した Node 24.19.0 の SHA-256 は `1052eb9c7d6c60a79b968e09f75af55a73462b0f6dff0964336d63b5e13eb63c` です。これはディスク上のファイルの同一性を示し、プロセスメモリの不変性は示しません。この固定ソースの結果で、その後の dev へのマージは検証できません。
 
 毎回 VM/vCPU を再作成する回復テストも、両イメージで runner 切断が確定しました：[macOS 15 / 37213675739](https://github.com/gmh5225/test_mac_intel/actions/runs/37213675739)、[macOS 26 / 37213681083](https://github.com/gmh5225/test_mac_intel/actions/runs/37213681083)。ソース `7dd7342ec`、ヘルパー `4c702d35a`、ワークフロー `fad0eadf2` を使用しました。検証済み成果物 23/26 個の連続ログは、それぞれ完了/開始 502/503、575/576 回を証明します。最終ネイティブ結果とプロセス回収記録はありません。GitHub の確認は通信断であり、原因の特定ではありません。通常命令だけでの VM 再作成の合格は、この回復負荷には適用できません。両方の合格が前提のセッション全体のリセット実験は開始していません。
+
+アップローダーの `jitless` 対照（[37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863)、macOS 15/26）は回復テスト開始前に失敗しました。公式アップローダーの HTTP パーサーが必要とする WebAssembly を `--jitless` が無効にするため、両方の plan アップロードが終了コード 1、シグナルなしで終了しました。各 2 個の検証済み成果物があり、plan は最終成果物からの復元で、独立した事前アップロードの成功ではありません。回復テストは未実行ですが、先行する HVF 能力プローブの実行を否定しません。代替の任意モード `js-interpreter` は plan/progress アップロード子プロセスだけに `--no-turbofan --no-maglev --no-sparkplug` を渡し、WebAssembly と他のコード生成を維持します。親、ネイティブ負荷と期限は不変で、provenance/final は既定モードです。ローカルの実 HTTP と認証情報なしの公式アップローダー検査は合格しましたが、HVF 安定性の修正を証明しません。

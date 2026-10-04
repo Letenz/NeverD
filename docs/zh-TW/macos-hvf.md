@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 100fc149f035b5f133930186baac6655480571d50a0b80e958aa14b1abf7c7fe -->
+<!-- i18n-source: 48ad654328e8b7f59295e47eee52da3bbc88ab1d81beb58efe1872a8273c9c45 -->
 
 [← 文件索引](README.md)
 
@@ -186,3 +186,5 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 修正後的恢復測試僅在每輪重建 vCPU（受測原始碼 `7dd7342ec`、控制器 `31afddad3`、工作流程 `10bf50753`），已在 macOS 15 完成 1000 輪並通過（[37215096822](https://github.com/gmh5225/test_mac_intel/actions/runs/37215096822)，43 個已核驗產物）。原生程序與控制器最終退出碼皆為 0，子程序已回收；生命週期證據為 1 個 VM、1001 代 vCPU 邊界，總計／執行中的 vCPU 數仍未知。macOS 26（[37215098793](https://github.com/gmh5225/test_mac_intel/actions/runs/37215098793)，19 個產物）的 progress-016 上傳器收到 SIGSEGV；IPS 與 PID 32519、父程序 29104、擷取時間和 Node UUID 相符。原生日誌證明完成 403 輪、開始第 404 輪，未見斷言失敗。控制器隨後取消並回收原生程序（SIGKILL），沒有最終原生結果。這屬於未完成的原生證據，不能判為 runner 失聯或通過。執行前記錄的 Node 24.19.0 SHA-256 為 `1052eb9c7d6c60a79b968e09f75af55a73462b0f6dff0964336d63b5e13eb63c`；它證明磁碟檔案身分，不證明程序記憶體未改變。這些固定原始碼的結果不能驗證後續合併至 dev 的版本。
 
 每輪重建 VM/vCPU 的恢復測試最終也在兩套映像確認失聯：[macOS 15 / 37213675739](https://github.com/gmh5225/test_mac_intel/actions/runs/37213675739)、[macOS 26 / 37213681083](https://github.com/gmh5225/test_mac_intel/actions/runs/37213681083)。兩者使用原始碼 `7dd7342ec`、控制器 `4c702d35a`、工作流程 `fad0eadf2`。23/26 個已核驗產物保存連續日誌，分別證明 502/503、575/576 輪完成／開始，均沒有最終原生結果與程序回收紀錄。GitHub 僅確認通訊中斷，未確認原因。僅執行一般指令時的 VM 重建通過結論不能擴大至此恢復負載；依賴這兩組通過的整個工作階段重設實驗仍未啟動。
+
+上傳器 `jitless` 對照（[37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863)，macOS 15/26）皆在啟動恢復測試前失敗：官方上傳器的 HTTP 解析器依賴 WebAssembly，而 `--jitless` 使其無法使用，兩個計畫上傳程序皆以 1 退出且沒有訊號。每次有 2 個已核驗產物，plan 從最終證據中恢復，不能算獨立計畫上傳成功。這些失敗沒有測試原生恢復，但不否認工作流程先前已執行 HVF 能力探測。替代的可選模式 `js-interpreter` 僅給控制器的 plan/progress 上傳子程序傳入 `--no-turbofan --no-maglev --no-sparkplug`，保留 WebAssembly 與其他程式碼生成；父程序、原生負載及截止時間不變，provenance/final 上傳仍使用預設模式。本地真實 HTTP 請求與無憑據官方上傳器檢查通過，僅證明觀察工具相容性，不是 HVF 穩定性修復。
