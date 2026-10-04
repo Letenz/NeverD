@@ -86,6 +86,8 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `CMPSS`, `CMPSD`, `CMPPS`, `CMPPD`는 KVM, WHP, checked Unicorn에서 기존 8개 비교 조건을 실행합니다. 공유 `Source` 규칙은 디코딩된 별칭을 허용하고 예약 제어값은 거부합니다. 스칼라 형식은 상위 레인을 보존하고 m32/m64를 읽으며 벡터 형식은 정렬된 m128을 요구합니다. FLAGS와 기존 MXCSR 상태를 보존하고 활성 레인별 무효·비정규 상태를 누적합니다. Capstone이 명령 계열 ID와 SSE 조건을 소유하여 lifter 내부의 ID 보정을 대체합니다. Unicorn은 각 비교 함수에서 비정규 입력을 분류합니다.
 
+`CVTSS2SD`, `CVTSD2SS`, `CVTPS2PD`, `CVTPD2PS`는 공유 `Source` 규칙으로 기존 SSE 정밀도를 변환합니다. 스칼라 결과는 대상 상위 64/96비트를 보존합니다. 패킹 확장은 m64를 읽어 배정밀도 두 개를 쓰고, 축소는 정렬된 m128을 읽어 단정밀도 두 개를 쓰며 상위 64비트를 지웁니다. KVM, WHP, checked Unicorn의 원본 명령 실행은 FLAGS를 보존하고 반올림 및 FTZ 제어에 따라 마스크된 MXCSR 상태를 누적합니다. Unicorn은 변환 함수에서 활성 비정규 입력을 각각 분류합니다. DAZ, 마스크되지 않은 예외, VEX/EVEX는 제외됩니다.
+
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
 
 thread pointer는 x64 FS/GS base와 ARM64 `TPIDR_EL0`의 정확한 `MRS`/`MSR` 인코딩을 포함합니다. 네이티브 전송 계층과 CPU snapshot은 메모리와 독립적으로 상태를 보존하지만 OS 스레드나 TLS 블록을 만들지는 않습니다. supervisor x64는 1/2/4바이트 정렬 scalar MMIO와 재시작 경계마다 MOVS 한 요소를 지원합니다. 장치 읽기는 부작용 없는 준비 preview 후 최대 한 번 commit해야 합니다. user 프로필은 장치 매핑을 거부하며 RMW, 넓은 MMIO, 포트 I/O도 계속 미지원입니다.

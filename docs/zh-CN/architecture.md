@@ -987,6 +987,8 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CMPSS`、`CMPSD`、`CMPPS` 和 `CMPPD` 在 KVM、WHP 和 checked Unicorn 上执行八种传统比较条件。共享 `Source` 规则接纳解码后的条件别名，保留控制值仍不支持。标量形式保留高位通道并读取 m32/m64，向量形式要求对齐的 m128。FLAGS 和已有 MXCSR 状态保留，无效及次正规状态按有效通道累积。Capstone 统一负责指令族 ID 和 SSE 条件，取代仅在 lifter 内修正身份的逻辑；Unicorn 在各比较函数内部分类次正规输入。
 
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 通过共享 `Source` 规则转换传统 SSE 精度。标量结果保留目标高 64/96 位；打包扩宽读取 m64 并写入两个双精度数，打包缩窄读取对齐的 m128、写入两个单精度数并清零高 64 位。KVM、WHP 和 checked Unicorn 执行原始指令，保留 FLAGS，并按舍入与 FTZ 控制累积已屏蔽异常的 MXCSR 状态。Unicorn 在转换函数中逐个分类有效次正规输入。DAZ、未屏蔽异常和 VEX/EVEX 仍不支持。
+
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
 checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完整状态回读共用一次单步额度。`UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限；同步引擎调用返回前解除 hook 借用，而机器单步保留控制直到发布状态。Unicorn 与 WHP 暂存完整 CPU 状态，并在成功步骤发布前检查同一个控制条件。WHP 在准备前只创建一次额度。已确认的 x64 CPU 异常优先于回读期间到来的停止请求。回读取消时，checked RAM 事务丢弃推测写入；非受限软件契约不变。 `MachineInterruptedError` 区分已确认取消与主机或回读失败。共享 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 并允许重试；真实故障即使伴随停止请求也仍是 `BackendFailure`。

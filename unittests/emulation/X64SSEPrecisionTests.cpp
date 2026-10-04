@@ -497,80 +497,82 @@ TEST_P(X64SSEPrecision, MemoryFaultsPreserveValuesAndStatusAndRetry) {
   enum class Mapping { Denied, Absent, SupervisorOnly };
   for (const auto &C : Conversions)
     for (const auto &Input : {MinSubnormal, QuietNaN})
-      for (unsigned Page : {0u, 1u})
-        for (auto Kind :
-             {Mapping::Denied, Mapping::Absent, Mapping::SupervisorOnly}) {
-          if ((Kind == Mapping::SupervisorOnly && !GetParam().User) ||
-              (C.Alignment != 1 && Page))
-            continue;
-          resetMemory();
-          ASSERT_FALSE(HasFatalFailure());
-          const auto Width = sourceBytes(C);
-          const uint64_t Address =
-              Data + PageSize - (C.Alignment == 1 ? Width / 2 : Width);
-          const uint64_t Control = InitialMXCSR | ExistingStatus;
-          initialize(C, input(C, One, Input), Control, XmmCount - 1, 0, true,
-                     Address);
-          ASSERT_FALSE(HasFatalFailure());
-          auto Expected = snapshot();
-          const auto RAM = backing();
-          const auto PageAddress = Data + Page * PageSize;
-          if (Kind == Mapping::Absent)
-            ASSERT_EQ(llvm::toString(
-                          CPU->addressSpace()->unmap(PageAddress, PageSize)),
-                      "");
-          else
-            ASSERT_EQ(llvm::toString(CPU->protect(PageAddress, PageSize,
-                                                  Kind == Mapping::Denied
-                                                      ? Write | UserAccessible
-                                                      : Read | Write)),
-                      "");
-          unsigned Reads = 0, Writes = 0;
-          BackendHooks Hooks;
-          Hooks.Read = [&](uint64_t A, unsigned Size) {
-            EXPECT_EQ(A, Address);
-            EXPECT_EQ(Size, Width);
-            ++Reads;
-          };
-          Hooks.Write = [&](uint64_t, unsigned, uint64_t) { ++Writes; };
-          Hooks.RecoverableFault = [](const BackendFault &) { return true; };
-          const auto Bytes = instruction(C, XmmCount - 1, 0, true);
-          const auto Exit = run(Bytes, std::move(Hooks));
-          ASSERT_EQ(Exit.Kind, ExecutionExitKind::RecoverableFault)
-              << Exit.Diagnostic;
-          ASSERT_TRUE(Exit.Fault);
-          EXPECT_EQ(Exit.Fault->Address, Page ? PageAddress : Address);
-          EXPECT_EQ(Exit.Fault->Size, C.Alignment == 1 ? Width / 2 : Width);
-          EXPECT_EQ(Exit.Fault->Access, BackendAccessKind::Read);
-          EXPECT_EQ(Exit.Fault->Kind, Kind == Mapping::Absent
-                                          ? BackendFaultKind::UnmappedMemory
-                                          : BackendFaultKind::Protection);
-          EXPECT_EQ(Reads, 1u);
-          EXPECT_EQ(Writes, 0u);
-          expectSnapshot(Expected);
-          EXPECT_EQ(backing(), RAM);
-          ASSERT_TRUE(CPU->takeRecoverableFault());
-          EXPECT_FALSE(CPU->takeRecoverableFault());
-          if (Kind == Mapping::Absent)
-            ASSERT_EQ(llvm::toString(CPU->mapAlias(
-                          PageAddress, Alias + Page * PageSize, PageSize,
-                          Read | Write | UserAccessible)),
-                      "");
-          else
-            ASSERT_EQ(
-                llvm::toString(CPU->protect(PageAddress, PageSize,
-                                            Read | Write | UserAccessible)),
-                "");
-          const auto Retry = run(Bytes);
-          ASSERT_EQ(Retry.Kind, ExecutionExitKind::Stopped) << Retry.Diagnostic;
-          const auto Value = reference(C, input(C, One, Input), Control);
-          Expected[vectorRegister(GuestArchitecture::X64, XmmCount - 1)] =
-              Value.Vector;
-          Expected[CPURegister::X64MXCSR] = {Value.MXCSR, 0};
-          Expected[CPURegister::X64PC] = {Code + Bytes.size(), 0};
-          expectSnapshot(Expected);
-          EXPECT_EQ(backing(), RAM);
-        }
+      for (unsigned FirstBytes = C.Alignment == 1 ? 1 : sourceBytes(C);
+           FirstBytes <= sourceBytes(C); ++FirstBytes)
+        for (unsigned Page : {0u, 1u})
+          for (auto Kind :
+               {Mapping::Denied, Mapping::Absent, Mapping::SupervisorOnly}) {
+            if ((Kind == Mapping::SupervisorOnly && !GetParam().User) ||
+                (FirstBytes == sourceBytes(C) && Page))
+              continue;
+            resetMemory();
+            ASSERT_FALSE(HasFatalFailure());
+            const auto Width = sourceBytes(C);
+            const uint64_t Address = Data + PageSize - FirstBytes;
+            const uint64_t Control = InitialMXCSR | ExistingStatus;
+            initialize(C, input(C, One, Input), Control, XmmCount - 1, 0, true,
+                       Address);
+            ASSERT_FALSE(HasFatalFailure());
+            auto Expected = snapshot();
+            const auto RAM = backing();
+            const auto PageAddress = Data + Page * PageSize;
+            if (Kind == Mapping::Absent)
+              ASSERT_EQ(llvm::toString(
+                            CPU->addressSpace()->unmap(PageAddress, PageSize)),
+                        "");
+            else
+              ASSERT_EQ(llvm::toString(CPU->protect(PageAddress, PageSize,
+                                                    Kind == Mapping::Denied
+                                                        ? Write | UserAccessible
+                                                        : Read | Write)),
+                        "");
+            unsigned Reads = 0, Writes = 0;
+            BackendHooks Hooks;
+            Hooks.Read = [&](uint64_t A, unsigned Size) {
+              EXPECT_EQ(A, Address);
+              EXPECT_EQ(Size, Width);
+              ++Reads;
+            };
+            Hooks.Write = [&](uint64_t, unsigned, uint64_t) { ++Writes; };
+            Hooks.RecoverableFault = [](const BackendFault &) { return true; };
+            const auto Bytes = instruction(C, XmmCount - 1, 0, true);
+            const auto Exit = run(Bytes, std::move(Hooks));
+            ASSERT_EQ(Exit.Kind, ExecutionExitKind::RecoverableFault)
+                << Exit.Diagnostic;
+            ASSERT_TRUE(Exit.Fault);
+            EXPECT_EQ(Exit.Fault->Address, Page ? PageAddress : Address);
+            EXPECT_EQ(Exit.Fault->Size, Page ? Width - FirstBytes : FirstBytes);
+            EXPECT_EQ(Exit.Fault->Access, BackendAccessKind::Read);
+            EXPECT_EQ(Exit.Fault->Kind, Kind == Mapping::Absent
+                                            ? BackendFaultKind::UnmappedMemory
+                                            : BackendFaultKind::Protection);
+            EXPECT_EQ(Reads, 1u);
+            EXPECT_EQ(Writes, 0u);
+            expectSnapshot(Expected);
+            EXPECT_EQ(backing(), RAM);
+            ASSERT_TRUE(CPU->takeRecoverableFault());
+            EXPECT_FALSE(CPU->takeRecoverableFault());
+            if (Kind == Mapping::Absent)
+              ASSERT_EQ(llvm::toString(CPU->mapAlias(
+                            PageAddress, Alias + Page * PageSize, PageSize,
+                            Read | Write | UserAccessible)),
+                        "");
+            else
+              ASSERT_EQ(
+                  llvm::toString(CPU->protect(PageAddress, PageSize,
+                                              Read | Write | UserAccessible)),
+                  "");
+            const auto Retry = run(Bytes);
+            ASSERT_EQ(Retry.Kind, ExecutionExitKind::Stopped)
+                << Retry.Diagnostic;
+            const auto Value = reference(C, input(C, One, Input), Control);
+            Expected[vectorRegister(GuestArchitecture::X64, XmmCount - 1)] =
+                Value.Vector;
+            Expected[CPURegister::X64MXCSR] = {Value.MXCSR, 0};
+            Expected[CPURegister::X64PC] = {Code + Bytes.size(), 0};
+            expectSnapshot(Expected);
+            EXPECT_EQ(backing(), RAM);
+          }
 }
 
 TEST_P(X64SSEPrecision, ReadObserversStopBeforeConversionAndStatus) {
