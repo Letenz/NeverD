@@ -79,8 +79,10 @@ same instruction, event and deadline budget. `initialize: false` explicitly
 requests analysis of an **uninitialized** library; the report records this
 choice. A normal function return has `stop_reason: "returned"`, a
 `return_value`, and CLI status 0 regardless of its integer return value.
-Raw Linux `exit`/`exit_group` retain process-exit semantics. Destructors are not
-run when the observation ends at the selected function's return. The libc
+In the default single-thread mode, raw Linux `exit`/`exit_group` retain
+process-exit semantics. With guest threads enabled, `exit` ends the current
+thread and `exit_group` ends the workload. Destructors are not run when the
+observation ends at the selected function's return. The libc
 `exit` import and automatic FINI-array execution remain unsupported.
 
 ## Linking and Android contracts
