@@ -47,6 +47,13 @@ endif()
 
 add_library(neverd_shared SHARED ${NEVERD_SDK_SOURCES})
 
+# The Objective-C source proof includes many bounded replay templates. Its
+# Release MSVC object can exceed standard COFF's section-count limit (C1128).
+if(MSVC)
+    set_source_files_properties(capi/NeverDCAPIObjC.cpp PROPERTIES
+        COMPILE_OPTIONS /bigobj)
+endif()
+
 target_include_directories(neverd_shared
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     PUBLIC  ${CMAKE_SOURCE_DIR}/include
