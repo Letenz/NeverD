@@ -72,11 +72,14 @@ static U8 *Memory;
 static U64 Operand;
 static U32 Calls, Op, Case, Repair;
 static U32 CompletedScenarios, CompletedRetries, ValidatedFaults;
+static U64 ObservedVector[VectorBytes / sizeof(U64)];
 
 static void require(int Valid, U32 Site) {
   if (Valid)
     return;
-  U32 Failure[] = {Site, Op, Case, Repair}, Written;
+  U64 Failure[] = {
+      Site, Op, Case, Repair, Calls, ObservedVector[0], ObservedVector[1]};
+  U32 Written;
   WriteFile(GetStdHandle(StderrSelector), Failure, sizeof(Failure), &Written,
             0);
   ExitProcess(FailureStatus);
@@ -155,8 +158,10 @@ void entry(void) {
       U64 Vector[2] = {0, 0};
       Calls = 0;
       Current->Run((const void *)Operand, Vector);
-      require(Calls == 1 && Vector[0] == VectorLow && Vector[1] == VectorHigh,
-              SiteVector);
+      ObservedVector[0] = Vector[0];
+      ObservedVector[1] = Vector[1];
+      require(Calls == 1, SiteHandler);
+      require(Vector[0] == VectorLow && Vector[1] == VectorHigh, SiteVector);
       require(VirtualProtect(Memory, PageBytes, PageReadWrite, &Previous),
               SiteProtection);
       for (U32 I = 0; I < PageBytes / sizeof(U64); ++I)
@@ -172,8 +177,10 @@ void entry(void) {
     Calls = 0;
     U64 Vector[2] = {0, 0};
     Current->Run((const void *)Operand, Vector);
-    require(Calls == 1 && Vector[0] == Current->Low &&
-                Vector[1] == Current->High,
+    ObservedVector[0] = Vector[0];
+    ObservedVector[1] = Vector[1];
+    require(Calls == 1, SiteHandler);
+    require(Vector[0] == Current->Low && Vector[1] == Current->High,
             SiteVector);
     require(((U64 *)Memory)[0] == (Current->Store ? VectorLow : 0) &&
                 ((U64 *)Memory)[1] == (Current->Store ? VectorHigh : 0),
