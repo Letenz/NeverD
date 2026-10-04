@@ -79,8 +79,9 @@ same instruction, event and deadline budget. `initialize: false` explicitly
 requests analysis of an **uninitialized** library; the report records this
 choice. A normal function return has `stop_reason: "returned"`, a
 `return_value`, and CLI status 0 regardless of its integer return value.
-`exit`/`exit_group` retain Linux process-exit semantics. Destructors are not run
-when the observation ends at the selected function's return.
+Raw Linux `exit`/`exit_group` retain process-exit semantics. Destructors are not
+run when the observation ends at the selected function's return. The libc
+`exit` import and automatic FINI-array execution remain unsupported.
 
 ## Linking and Android contracts
 
@@ -146,6 +147,21 @@ The supported Bionic subset is:
   control, stops as unsupported; there is no guest thread scheduler. Callback
   faults and exhausted budgets leave the call result incomplete. Unwinding,
   cancellation and fork recovery are unsupported.
+- `__cxa_atexit` stores the guest callback, opaque argument and DSO token;
+  registration does not execute the callback or dereference those values.
+  `__cxa_finalize(dso)` invokes matching registrations in reverse order;
+  a NULL DSO selects all. Each registration is retired before invocation,
+  including during recursive finalization. Registrations made by a callback
+  are considered before older remaining entries. NULL callbacks are skipped.
+  Guest callbacks share the suspended caller's CPU, stack and budgets, including
+  nested `pthread_once`. A failed callback leaves the finalize event incomplete.
+  The registry has a model limit of 4096 pending slots, including NULL entries;
+  exceeding it stops explicitly. Finalizing all entries releases unused slots.
+  Callback alignment and execute permission are checked at invocation. A DSO
+  token is an opaque identity, independent of the catalogue's `dlopen` handles.
+  Catalogue `dlclose` does not unload guest code or automatically finalize it.
+  FILE cleanup, atfork handlers, exception unwinding and concurrent destruction
+  remain outside this single-thread model. No host callback is invoked.
 - `dlopen`, `dlsym`, `dlclose`, `dlerror`, using an explicit local catalogue
   described below. Function availability and implementation are separate:
   an available symbol whose call is unmodeled still stops explicitly.
@@ -175,6 +191,7 @@ These ABI choices are based on the pinned AOSP Android 9 definitions:
 [`__errno`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/bionic/__errno.cpp),
 [system property declarations](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/include/sys/system_properties.h),
 [`pthread_once`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_once.cpp),
+[`__cxa_atexit` and `__cxa_finalize`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdlib/atexit.c),
 and the [AArch64 syscall wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/arch-arm64/bionic/syscall.S).
 The model is independently implemented; these sources specify the ABI.
 

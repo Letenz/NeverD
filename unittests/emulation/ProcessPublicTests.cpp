@@ -15,6 +15,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -460,6 +461,65 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
     EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
               Parsed);
   }
+#endif
+}
+
+TEST_F(ProcessPublic, AndroidFinalizersKeepGuestEffectsAcrossSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+          "finalizers-O2-relr.so")
+             .string();
+  const std::string Request =
+      R"({"backend":"unicorn","android":{"entry_symbol":"cxa_dynamic","arguments":["0x20000000",0],"initialize":false,"memory":[{"address":"0x20000000","size":4096}],"read_memory":[{"address":"0x20000000","size":256}],"libraries":{"libfinalize-model.so":["__cxa_atexit","__cxa_finalize"]}}})";
+  auto Text = takeString(neverd_emulate_process_json(
+      Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+  EXPECT_EQ(Parsed.getAsObject()->getString(field::Stop), "returned");
+  EXPECT_EQ(Parsed.getAsObject()->getString(field::ReturnValue), "49");
+  const auto *Android = Parsed.getAsObject()->getObject(field::Android);
+  ASSERT_NE(Android, nullptr);
+  const llvm::json::Object *Lookup = nullptr, *Call = nullptr;
+  for (const auto &Event : *Android->getArray(field::NativeCalls)) {
+    const auto *E = Event.getAsObject();
+    if (E->getString(field::Name) == "dlsym")
+      Lookup = E;
+    if (E->getString(field::Name) == "__cxa_finalize")
+      Call = E;
+  }
+  ASSERT_NE(Lookup, nullptr);
+  ASSERT_NE(Call, nullptr);
+  EXPECT_EQ(Lookup->getString(field::Symbol), "__cxa_finalize");
+  EXPECT_EQ(Call->getString(field::Library), "libfinalize-model.so");
+  EXPECT_EQ(Call->getString(field::PC), Lookup->getString(field::Result));
+  EXPECT_EQ(Call->getString(field::Result), "0");
+  std::vector<uint8_t> Expected(256);
+  llvm::support::endian::write64le(Expected.data(), 1);
+  llvm::support::endian::write64le(Expected.data() + 48, 1000);
+  llvm::support::endian::write64le(Expected.data() + 64, 0x100000009);
+  const auto *Memory = Android->getArray(field::Memory);
+  ASSERT_NE(Memory, nullptr);
+  ASSERT_EQ(Memory->size(), 1u);
+  EXPECT_EQ(Memory->front().getAsObject()->getString(field::Bytes),
+            llvm::toHex(Expected, true));
+  EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
+                       test::shellQuote(Path) +
+                       " --profile=" + AndroidNativeAArch64 +
+                       " --options=" + test::shellQuote(Request) +
+                       test::redirectStdout(Output) + test::silenceStderr();
+  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+            process_cli::Success);
+  auto Bytes = llvm::MemoryBuffer::getFile(Output);
+  ASSERT_TRUE(bool(Bytes));
+  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
 #endif
 }
 

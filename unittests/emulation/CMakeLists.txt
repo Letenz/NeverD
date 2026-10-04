@@ -157,6 +157,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidTimeTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
+  AndroidFinalizerTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)

@@ -6,6 +6,10 @@
 // Shared spellings belong to the Android owner; model control flow stays in
 // C++.
 #ifdef NEVERD_ANDROID_DIAGNOSTIC
+NEVERD_ANDROID_DIAGNOSTIC(ExitCallbackLimit,
+                          "exit callback registry limit exceeded")
+NEVERD_ANDROID_DIAGNOSTIC(ExitCallbackAlignment,
+                          "exit callback address is not instruction aligned")
 NEVERD_ANDROID_DIAGNOSTIC(FailurePrefix, "Android native: ")
 NEVERD_ANDROID_DIAGNOSTIC(CallTimeout, "native call model timed out")
 NEVERD_ANDROID_DIAGNOSTIC(MemoryLimit,

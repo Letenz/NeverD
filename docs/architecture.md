@@ -1463,6 +1463,14 @@ callbacks preserve trace order and only complete their own calls. Instructions,
 services and deadlines continue through the existing execution session. The
 runner validates a normal callback return before Bionic marks the control
 complete. No SDK surface supplies separate initialization semantics.
+The same continuation boundary executes Bionic's C++ destruction callbacks.
+`AndroidFinalizers` owns the per-workload registry, DSO filtering and retirement
+before invocation. After a callback returns it selects the next current entry,
+so nested finalization and newly registered handlers share one authoritative
+registry. The native runner retains the original import event until every
+selected callback returns; neither registration nor workload teardown calls
+host destructors. Symbol spellings and diagnostics remain in Android's `.def`
+inventories.
 An optional ordered `default_scope` names resident catalogue providers visible
 to `RTLD_DEFAULT`. Android native input validation checks its membership and
 uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
