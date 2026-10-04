@@ -881,3 +881,43 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PackedShift."
     "DeviceCountsRejectBeforeAnyDeviceCallback/whpUser")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+// Aligned SSE faults retain their boundary on both WHP privilege levels.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "FaultPrecedesMemoryPermissionsMappingsAndObservers/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "FaultPrecedesMemoryPermissionsMappingsAndObservers/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "TerminalFaultPreservesCompletePublicContext/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "TerminalFaultPreservesCompletePublicContext/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "AddressRepairReexecutesTheFaultingInstruction/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "AddressRepairReexecutesTheFaultingInstruction/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "SegmentBaseFollowsAddressSizeWrappingBeforeAlignment/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "SegmentBaseFollowsAddressSizeWrappingBeforeAlignment/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "InstructionObserverStopDoesNotInventAnException/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Alignment."
+    "InstructionObserverStopDoesNotInventAnException/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/NativeX64Alignment."
+    "HardwarePrioritizesAlignmentAndPreservesAllState/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/NativeX64Alignment."
+    "HardwarePrioritizesAlignmentAndPreservesAllState/whpUser")
+#endif

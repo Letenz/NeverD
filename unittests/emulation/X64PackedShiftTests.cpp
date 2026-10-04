@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "X64VectorTestSupport.h"
+#include "arch/x86_64/X64Exception.h"
 #include "core/ExecutionDiagnostics.h"
 
 #include "llvm/ADT/APInt.h"
@@ -299,8 +300,16 @@ TEST_P(X64PackedShift, InvalidFormsRejectWithoutObservationsOrStateChanges) {
     Hooks.Read = [&](uint64_t, unsigned) { ++Observations; };
     Hooks.Write = [&](uint64_t, unsigned, uint64_t) { ++Observations; };
     const auto Exit = run(Bytes, std::move(Hooks));
-    EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation)
+    EXPECT_EQ(Exit.Kind, Address % VectorBytes
+                             ? ExecutionExitKind::GuestTrap
+                             : ExecutionExitKind::UnsupportedOperation)
         << Exit.Diagnostic;
+    if (Address % VectorBytes) {
+      ASSERT_TRUE(Exit.Fault);
+      EXPECT_EQ(Exit.Fault->Interrupt,
+                unsigned(x64::ExceptionVector::GeneralProtection));
+      EXPECT_EQ(Exit.Fault->ErrorCode, 0);
+    }
     EXPECT_EQ(Observations, 0u);
     expectState(I, I.Left, Code, Address);
   };

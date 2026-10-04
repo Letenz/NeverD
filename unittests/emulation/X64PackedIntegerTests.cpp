@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "X64VectorTestSupport.h"
+#include "arch/x86_64/X64Exception.h"
 #include "core/ExecutionDiagnostics.h"
 
 #include <stdexcept>
@@ -225,8 +226,16 @@ TEST_P(X64PackedInteger, InvalidFormsRejectBeforeObservations) {
       Hooks.Read = [&](uint64_t, unsigned) { ++Reads; };
       Hooks.Write = [&](uint64_t, unsigned, uint64_t) { ++Writes; };
       const auto Exit = run(Bytes, std::move(Hooks));
-      EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation)
+      EXPECT_EQ(Exit.Kind, Form == MisalignedForm
+                               ? ExecutionExitKind::GuestTrap
+                               : ExecutionExitKind::UnsupportedOperation)
           << Exit.Diagnostic;
+      if (Form == MisalignedForm) {
+        ASSERT_TRUE(Exit.Fault);
+        EXPECT_EQ(Exit.Fault->Interrupt,
+                  unsigned(x64::ExceptionVector::GeneralProtection));
+        EXPECT_EQ(Exit.Fault->ErrorCode, 0);
+      }
       EXPECT_EQ(Reads, 0u);
       EXPECT_EQ(Writes, 0u);
       expectState(Mixed, Mixed.Left, Code, Address);

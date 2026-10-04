@@ -72,6 +72,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。
 
+`X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows 一般保護故障的例外派送仍未納入 OS 模型。
+
 thread pointer 包含 x64 FS/GS 基底及 ARM64 `TPIDR_EL0` 的精確 `MRS`/`MSR` 編碼。原生傳輸與 CPU snapshot 會獨立於記憶體保存狀態，但不會建立 OS 執行緒或配置 TLS 區塊。supervisor x64 支援對齊的 1/2/4 位元組純量 MMIO 交易，以及每個重新啟動邊界一個 MOVS 元素。裝置讀取必須先提供無副作用預覽，再至多提交一次。user 設定拒絕裝置對映；RMW、寬 MMIO、連接埠 I/O 也仍不支援。
 
 KVM/WHP 會取消進行中的原生入口，並在釋放執行資源前確認取消。KVM 使用專用執行緒與暫時解除封鎖的 realtime signal；入口期間選定的 signal 不得被忽略。呼叫端的 signal mask/handler 不會變更。若客體進度不明，取消會成為終止性後端錯誤；不保證硬性 wall-clock 期限。

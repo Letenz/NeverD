@@ -72,6 +72,8 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
+`X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows の一般保護例外の配送は OS モデルの範囲外です。
+
 thread pointer は x64 FS/GS base と ARM64 `TPIDR_EL0` を正確な `MRS`/`MSR` encoding で扱います。native transport と CPU snapshot は memory とは独立してこの状態を保持しますが、OS thread や TLS block を作るものではありません。supervisor x64 は1/2/4 byte の aligned scalar MMIO と restart boundary ごとに1要素の MOVS を許可します。device read には effect のない prepared preview と最大一度の commit が必要です。user profile は device mapping を拒否し、RMW、wide MMIO、port I/O も未対応です。
 
 KVM/WHP は active native entry を cancel し、実行資源を解放する前に acknowledgement を待ちます。KVM は専用 execution thread と一時的に unblock する realtime signal を使います。entry 中、選択した signal は ignored であってはなりません。caller の signal mask/handler は変更しません。guest の進行が不確かな中断は terminal failure であり、厳密な wall-clock deadline は保証しません。
