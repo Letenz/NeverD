@@ -966,6 +966,8 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `X64ShuffleInstructions.def`는 `PSHUFD`, `PSHUFHW`, `PSHUFLW`, `SHUFPS`, `SHUFPD`를 추가합니다. `X64VectorOperands.def`는 XMM 대상, XMM 또는 정렬된 m128 원본, imm8의 완전한 세 피연산자 형식을 요구합니다. 원래 명령은 FLAGS와 MXCSR을 유지하며 비트 그대로 레인을 선택합니다. 메모리 형식은 16바이트 전체를 검사하고 정렬 오류는 데이터 관찰보다 먼저 발생합니다. KVM, WHP, checked Unicorn은 이 규칙을 공유합니다. 같은 목록은 피연산자가 정확히 두 개인 `UNPCKLPS`, `UNPCKHPS`, `UNPCKLPD`, `UNPCKHPD`도 허용하여 원래 대상과 원본의 비트 패턴을 교차 배치합니다. 하드웨어는 선택한 64비트만 가져올 수 있으며 checked RAM은 정렬된 m128 피연산자를 검사합니다.
 
+`MOVLPS`, `MOVHPS`, `MOVLPD`, `MOVHPD`는 정렬 요구 없이 RAM의 정확히 8바이트를 전송합니다. `X64VectorInstructions.def`는 저장할 절반을 선언하고 `X64VectorOperands.def`는 XMM/m64 쌍을 요구합니다. 로드는 나머지 64비트를 보존하며 상위 절반 저장 관찰자는 상위 데이터를 받습니다. KVM, WHP, checked Unicorn은 전체 범위 권한 검사와 RAM 롤백을 공유합니다. 레지스터 전용 `MOVHLPS`/`MOVLHPS`는 고유 의미를 유지합니다.
+
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
 
 checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게스트 실행과 전체 상태 읽기를 한 단계 시간 한도에서 처리합니다. `UC_HOOK_CODE`는 명령 진입에서 빌린 정지 토큰과 기한을 확인합니다. 동기 엔진 호출은 반환 전에 hook 참조를 해제하지만 기계 단계는 상태 게시까지 제어를 유지합니다. Unicorn과 WHP는 전체 CPU 상태를 임시 저장하고 성공한 단계의 게시 직전에 같은 제어 조건을 확인합니다. WHP는 준비 전에 시간 한도를 한 번만 만듭니다. 확인된 x64 CPU 예외는 상태 읽기 중 도착한 정지 요청보다 우선합니다. 읽기가 취소되면 checked RAM 트랜잭션은 추측 쓰기를 버리며 비제한 소프트웨어 계약은 그대로입니다. `MachineInterruptedError`는 확인된 취소와 호스트 또는 상태 읽기 실패를 구분합니다. 공통 checked CPU는 `Stopped` 또는 `Deadline`을 반환하고 CPU/RAM을 유지하며 재시도를 허용합니다. 동시 정지 요청이 있어도 실제 실패는 `BackendFailure`로 남습니다.
