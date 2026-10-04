@@ -1297,3 +1297,10 @@ cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemor
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
 ```
+
+تغطي `NeverDByteCellScalarizationTests` الكلمات المتداخلة ومساري دخول وحافتين راجعتين والوصولات العريضة والأحجام غير الأسية للعدد اثنين وترتيبي البايتات وحفظ اختيارات القيم والتزامات poison والكتابة الجزئية فوق poison ورفض الاستخدامات والميزانيات الدقيقة والناقصة عبر كائنات متعددة. يجب أن يزيل مسار Thin/Deep المعتاد المصفوفات المتبقية. تقارن مراجع O0/O2 مستقلة جميع بايتات الخرج البالغ عددها 24 وبايتات الحراسة وقيمة الإرجاع لعدد 8,192 مدخلاً في ثلاث نسخ، أي 49,152 استدعاء مع مصائد السلوك غير المعرف. فحوص ترجمة x86-64 وAArch64 وAArch64 بترتيب بايتات كبير وARM32 منفصلة عن تغطية التنفيذ الأصلي. شغّل هذا الهدف مع اختبارات تمرير البايتات والإطار الخاص عند تغيير عقود الذاكرة المشتركة.
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
+```

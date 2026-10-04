@@ -22,6 +22,10 @@ namespace neverd::analysis {
 /// The call itself and its result must remain in place.
 bool isLLVMMemoryTransparentIntrinsic(const llvm::Instruction &Instruction);
 
+/// The stricter arithmetic-only subset also permits introducing private
+/// storage. Memory-transparent stack/environment observers do not qualify.
+bool isLLVMFrameIndependentIntrinsic(const llvm::Instruction &Instruction);
+
 struct LLVMIntegerOffset {
   llvm::Value *Root;
   llvm::APInt Offset;

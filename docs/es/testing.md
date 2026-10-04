@@ -1375,3 +1375,10 @@ cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemor
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
 ```
+
+`NeverDByteCellScalarizationTests` cubre palabras solapadas, dos entradas y dos aristas de retorno, accesos anchos y de anchura no potencia de dos, ambos órdenes de bytes, elección de valores y obligaciones poison, sobrescrituras parciales de poison, rechazo de usos y presupuestos exactos/insuficientes entre objetos. La canalización Thin/Deep normal debe eliminar los arreglos residuales. Oráculos O0/O2 independientes comparan los 24 bytes de salida, las guardas y el retorno de 8.192 entradas en tres versiones: 49.152 llamadas con trampas de comportamiento indefinido. Las compilaciones x86-64, AArch64, AArch64 de orden grande y ARM32 son distintas de la cobertura de ejecución nativa. Ejecutar este objetivo junto con los de reenvío de bytes y marcos privados al cambiar contratos de memoria compartidos.
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
+```

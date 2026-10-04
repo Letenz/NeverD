@@ -27,6 +27,7 @@
 #include "neverd/pass/ir/obf/MBAPass.h"
 #include "neverd/pass/ir/obf/OpaquePredicatePass.h"
 #include "neverd/pass/ir/obf/ValueLaunderingPass.h"
+#include "neverd/pass/ir/simplify/ByteCellScalarizationPass.h"
 #include "neverd/pass/ir/simplify/ByteMemoryForwardingPass.h"
 #include "neverd/pass/ir/simplify/ControlFlowRecoveryPass.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
@@ -505,6 +506,8 @@ runOptimizationPipeline(llvm::Module &Mod,
     // Let ordinary promotion handle exact scalar homes before reconstructing
     // the overlapping accesses that still remain in byte storage.
     FramePromotion.addPass(ByteMemoryForwardingPass());
+    FramePromotion.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
+    FramePromotion.addPass(ByteCellScalarizationPass());
     FramePromotion.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
   }
   // Forward memory-equivalent frame reloads before semantic measurement.

@@ -12,6 +12,7 @@ add_neverd_component_library(NeverDPassIR
   obf/MBAPass.cpp
   obf/OpaquePredicatePass.cpp
   obf/ValueLaunderingPass.cpp
+  simplify/common/ByteCellScalarizationPass.cpp
   simplify/common/ByteMemoryForwardingPass.cpp
   simplify/common/ControlFlowRecoveryPass.cpp
   simplify/common/SymSimplifyPass.cpp

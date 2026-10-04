@@ -1342,3 +1342,10 @@ cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemor
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
 ```
+
+`NeverDByteCellScalarizationTests` проверяет перекрывающиеся слова, два входных пути и два обратных ребра, широкие доступы и ширины не в степени двух, оба порядка байтов, выбор сохраняемых значений и обязательства poison, частичную перезапись poison, отказ по полному графу использований и точные/недостаточные бюджеты нескольких объектов. Обычный конвейер Thin/Deep должен удалять оставшиеся массивы. Независимые оракулы O0/O2 сравнивают все 24 выходных байта, окружающие защитные байты и результат на 8192 входах в трёх версиях: 49152 вызова с ловушками неопределённого поведения. Компиляции x86-64, AArch64, AArch64 big-endian и ARM32 отделены от покрытия нативного исполнения. При изменении общих контрактов памяти запускайте эту цель вместе с тестами побайтовой передачи и приватных кадров.
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
+```

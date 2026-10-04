@@ -1182,3 +1182,10 @@ cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemor
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
 ```
+
+`NeverDByteCellScalarizationTests` 覆盖重叠字、两条入口路径和两条回边、宽及非二次幂位宽访问、两种字节序、存储值选择和 poison 义务保持、部分 poison 覆盖、完整使用图拒绝，以及跨对象的精确/不足预算。常规 Thin/Deep 管线必须消除残留数组。独立 O0/O2 oracle 对 8,192 个输入的三个版本比较全部 24 个输出字节、外围哨兵和返回值，共 49,152 次调用，启用未定义行为陷阱。x86-64、AArch64、大端 AArch64 和 ARM32 编译检查与原生执行覆盖分别记录。修改共享内存契约时，应连同字节转发和私有帧测试一起运行此目标。
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
+```

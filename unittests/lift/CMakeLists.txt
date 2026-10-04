@@ -1510,6 +1510,18 @@ if(UNIX AND NOT APPLE)
   endforeach()
 endif()
 
+# Exact cells for residual overlapping byte arrays after ordinary SROA.
+add_neverd_unittest(NeverDByteCellScalarizationTests
+  pipeline/ByteCellScalarizationTests.cpp
+  pipeline/ByteCellScalarizationCompileTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+target_compile_definitions(NeverDByteCellScalarizationTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
 # Exact overlapping byte accesses before ordinary scalar promotion.
 add_neverd_unittest(NeverDByteMemoryForwardingTests
   pipeline/ByteMemoryForwardingTests.cpp

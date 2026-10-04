@@ -1274,3 +1274,10 @@ cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemor
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
 ```
+
+`NeverDByteCellScalarizationTests` は重複ワード、2本の入口経路と2本の後退辺、広い幅と非2冪幅、両バイト順、格納値の選択と poison 義務の保持、poison の部分上書き、全使用の拒否判定、複数オブジェクトの厳密・不足予算を検査します。通常の Thin/Deep パイプラインでは残存配列を除去します。独立した O0/O2 oracle が 8,192 入力の3版で全24出力バイト、周辺ガード、戻り値を比較し、未定義動作トラップ付きで計49,152回呼び出します。x86-64、AArch64、ビッグエンディアン AArch64、ARM32 のコンパイル確認はネイティブ実行の検証とは別です。共有メモリ契約を変更するときは、バイト転送・プライベートフレームのテストとともに実行してください。
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
+```
