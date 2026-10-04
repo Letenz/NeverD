@@ -102,6 +102,22 @@ TEST_F(LLVMModel, FunctionAttributesAndMetadataCannotBecomeSilentAssumptions) {
   reject("loop metadata");
 }
 
+TEST_F(LLVMModel, PeelingHistoryKeepsStateEffectsAndMetadataBudgets) {
+  parse("store i64 29, ptr %state, align 8\n"
+        "br label %exit, !llvm.loop !0\nexit: ret i64 0",
+        "!0 = distinct !{!0, !1}\n"
+        "!1 = !{!\"llvm.loop.peeled.count\", i32 19}");
+  ASSERT_TRUE(Module);
+  expect(Oracle({op(NdOp::COPY, r(0), {n(29)})}));
+  expect(Oracle({op(NdOp::COPY, r(0), {n(30)})}), Status::Different);
+  LLVMInterpreterModelLimits Limits;
+  Limits.MaxInputItems = 0;
+  auto Result = model(Limits);
+  ASSERT_FALSE(static_cast<bool>(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("budget"),
+            std::string::npos);
+}
+
 TEST_F(LLVMModel, UniformMutableAliasTagIsAcceptedButMixedTagsAreRefused) {
   const char *Metadata = R"(
     !0 = !{!1, !1, i64 0}

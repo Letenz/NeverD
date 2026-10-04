@@ -138,6 +138,8 @@ Nach dem Beweis eines skalaren Kandidaten verwendet LLVMC `SymSimplifyPass::simp
 
 Der gemeinsame LLVM-Importer akzeptiert kanonische `llvm.assume(i1)`-Aufrufe ohne Operanden-Bundles und erfasst im bestehenden Definiertheitszustand, dass die Bedingung beim Erreichen wahr sein muss. Skalar- und Maschinenzustandsbeweise prüfen diese Verpflichtung, ohne den Eingabebereich einzuschränken oder sie als bewiesene Tatsache zu verwenden. Zusätzliche Aufruf-/Deklarationsverträge sowie undef/poison bleiben abgelehnt; Eingabe-IR und Beweisbudgets bleiben erhalten. Dies zertifiziert keine native ABI.
 
+Der Importer akzeptiert korrektes `llvm.loop.peeled.count` als vorzeichenlosen i32-Zähler des Optimierungsverlaufs. Er verwendet diesen nie als Iterationsgrenze, Eingabeeinschränkung oder Beleg für Terminierung/Definiertheit. Schleifenidentität und Operandenanzahl der Eigenschaften werden geprüft; fehlerhafte oder unbekannte Eigenschaften bleiben abgelehnt, und die Metadatenprüfung verbraucht die bestehenden Budgets.
+
 Das LLVM-Modell prüft `initializes`-Parameterverträge. Es nutzt die vorhandenen Zustandspointer-Projektionen und führt vor der normalen skalaren Ausgabe eine begrenzte byteweise Must-Datenflussanalyse aus; ein zweiter Wertauswerter entsteht nicht.
 
 `NeverDInterpreterLLVMRefinement` verknüpft Beweise von nativem Code zu LLVM. Es erzeugt beide Zustandsmodelle und Pflichtverträge neu, projiziert Flags nur am Einstieg gemäß dem maßgeblichen Profil und prüft beide Voraussetzungen erneut. Aufrufer dürfen Schleifenpläne vorschlagen, aber keine Modelle, Beobachtungen oder Nachweise ersetzen. Analysemodelle kopieren nur den ausführbaren Graphen und deklarierte Wurzeln; Rückkanten zum Einstieg werden vor einer wiederholten Initialisierung abgelehnt.
