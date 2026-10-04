@@ -203,6 +203,36 @@ ABI references: Android 9 [`dlfcn.h`](https://android.googlesource.com/platform/
 [`dlsym`/`dlclose`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/linker.cpp),
 and [`dlerror`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/dlfcn.cpp).
 
+## API 28 mutexes
+
+The Bionic model implements `pthread_mutexattr_init`, `destroy`, `gettype`,
+`settype`, `getpshared`, `setpshared`, `getprotocol`, and `setprotocol`, plus
+`pthread_mutex_init`, `destroy`, `lock`, `trylock`, and `unlock`. LP64 attributes
+occupy eight bytes. Mutex objects occupy 40 bytes with four-byte alignment;
+their guest bytes are authoritative, including static initializers. Ordinary
+operations retain padding and reserved storage. Initialization clears all
+40 bytes before interpreting an overlapping attribute, including when an
+invalid type returns EINVAL.
+
+Normal, recursive and error-checking mutexes retain their distinct behavior.
+Error-checking self-lock returns EDEADLK; busy try-lock returns EBUSY;
+recursive depth exhaustion returns EAGAIN; a non-owner unlock of a recursive
+or error-checking mutex returns EPERM. These are direct pthread return values
+and do not change errno. Ownership uses the same guest TID as `gettid`.
+Destroyed-object use stops explicitly, following the API 28 target behavior;
+older app-target compatibility is not modeled.
+
+This is a single-thread, non-priority-inheritance model. The process-shared
+attribute is retained but does not create another process or thread. A lock
+that must wait, an unlock that must wake a waiter, priority-inheritance
+objects, timed operations and unknown mutex operations stop as unsupported.
+Rejected modeled transitions check complete write spans before changing
+state or ownership. No host mutex or scheduler supplies guest behavior.
+
+ABI references: Android 9 [`pthread_mutex.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_mutex.cpp)
+and [`pthread_types.h`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/bits/pthread_types.h).
+These declarations and state rules inform an independent implementation.
+
 ## Evidence and limits
 
 `android.native_calls` records import arguments and nullable results.

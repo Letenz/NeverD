@@ -131,6 +131,10 @@ public:
   void writeEHWrapOpen(const EHWrapClause &Clause, int Indent);
   void writeEHWrapClose(const EHWrapClause &Clause, int Indent);
   void writeBasicBlock(const llvm::BasicBlock &BB, int Indent);
+  /// Plan a complete bounded scalar CFG before rendering nested loops/ifs.
+  /// Refusal leaves both the output and writer state unchanged.
+  bool tryWriteScalarRegions(llvm::Function &Fn, int Indent);
+  void coalesceScalarPhiNames(llvm::Function &Fn);
 
   static bool isCallClobberName(llvm::StringRef Name) {
     return Name.contains("_call_clobber");
@@ -519,7 +523,8 @@ public:
                                    llvm::StringRef Dest,
                                    const llvm::Value *Stored);
   void writePhiCopies(const llvm::BasicBlock *From, const llvm::BasicBlock *To,
-                      int Indent);
+                      int Indent, bool ForceMaterialized = false,
+                      const llvm::PHINode *Deferred = nullptr);
   bool phiIncomingIsPrinted(const llvm::PHINode *Phi, llvm::Value *Incoming,
                             bool ForceMaterialized = false);
   bool phiEdgeNeedsMaterialization(const llvm::BasicBlock *From,

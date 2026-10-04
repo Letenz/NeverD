@@ -1449,6 +1449,14 @@ C, CLI and Python consume the same option parser. No dependency graph,
 namespace or caller-specific scope is inferred from these explicit inputs.
 
 
+Bionic's private mutex model reads the API 28 LP64 object directly from guest
+memory. Attribute interpretation, lock state, recursive depth and ownership
+belong to this one model; static imports and named dynamic calls share it.
+The Linux service model supplies TID and errno constants. Complete affected
+write spans are validated before a transition, and no host lock or parallel
+object registry substitutes for guest bytes. Scheduling and priority
+inheritance remain explicit unsupported boundaries.
+
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
 it does not maintain another mapping table. The pure snapshot is sorted and
@@ -2981,6 +2989,8 @@ ARM64 source binding also authenticates `UIContentSizeCategoryLarge` as external
 Before rendering C, `LLVMCCommonBranches` factors identical integer exit tests from the two uniquely entered arms of a branch. The selected arm keeps its calls and memory accesses; explicit join PHIs preserve every successor value. The source clone is the only mutated IR. Graph, PHI-work and rewrite limits bound normalization; different comparisons, extra arm predecessors and exception-mapped functions retain their original control flow.
 
 `LLVMCLoopPhases` recombines the same total integer operation on every incoming edge of a loop PHI into one operation in the loop header. Operand PHIs preserve each edge and the previous iteration; identical tuples can reuse an existing PHI. Only an invariant available before the loop bypasses this selection. Shared roots, partial or poison-generating operations, constrained calls and exception-mapped functions remain unchanged. Planning is bounded and transactional, and only the source clone is modified; this does not merge peeled control-flow regions or recover source-level parameters.
+
+`LLVMCScalarRegions` plans complete integer CFGs before printing nested header-exit loops and conditionals. Every reachable block and successor edge must belong to the plan; memory, EH, irreducible or unsupported regions keep the existing projection. Bounds are 1024 blocks, 16384 instructions and 64 nesting levels. Printed-operand liveness coalesces only noninterfering PHIs, preserving parallel copies and live outer values. Constant-seeded, uniquely latched counters may use `for`; shared steps stay materialized, and header effects execute at every test. Single-use same-block funnel shifts with leaf operands can inline their total typed helpers. This rendering changes neither the caller IR nor the recovery/ABI contract.
 
 The shared `SourceABI` represents one bounded mixed Swift result as a flat logical record of three Float64 fields followed by an opaque pointer. Its independent physical results are d0–d2 and x0 on ARM64, or xmm0–xmm2 and rax on x86-64; this x86-64 shape also admits up to three ordinary double inputs. Assignment and validation share the same carrier mapping. LowIR/MedIR call extraction, typed HighIR records and HighC retain every field and one call evaluation. Ordinary C/Objective-C classification, mixed record parameters and other mixed layouts remain unsupported. This declaration contract does not authenticate a nominal layout, constructor, callback ownership or native entry. Compiler evidence covers four macOS/Mac Catalyst targets, while native O0/O2 fixtures check full floating bit patterns, nil/object identity, return guards and observable call counts against the real Swift runtime.
 
