@@ -18,6 +18,7 @@ add_neverd_component_library(NeverDBackendC
   pass/HighC/HighCVoidAnalysis.cpp
   pass/LLVMC/LLVMCCommonBranches.cpp
   pass/LLVMC/LLVMCLoopPhases.cpp
+  pass/LLVMC/LLVMCScalarLoopRecovery.cpp
   pass/LLVMC/LLVMCDeadStoreAnalysis.cpp
   pass/LLVMC/LLVMCHiLoCollapse.cpp
   pass/LLVMC/LLVMCIntrinsicAnalysis.cpp
@@ -33,6 +34,7 @@ add_neverd_component_library(NeverDBackendC
 
   LINK_COMPONENTS
   IR
+  LLVMScalarLoopRecovery
 )
 
 # Pure integer display folding uses LLVM's width and poison semantics.

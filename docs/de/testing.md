@@ -99,6 +99,8 @@ Regressionen der vorderen Phase prüfen zwei und drei aufeinanderfolgende Schlei
 
 `NeverDLLVMScalarLoopRecoveryTests` prüft Präfixe und Vorgängerzustände, Nulliterationspfade, Selbst-Rückkanten, affine Zustände, Gleichheit bei Überlauf, Poison durch zusätzliche Updates, hohe Datenbits und abgelehnte Eingabeverträge. Exakte und um eins gekürzte kumulative Budgets prüfen atomare Ablehnung. Unabhängige arithmetische Orakel führen ursprüngliches und rekonstruiertes LLVM bei O0/O2 für sämtliche Byte-Steuereingaben aus. Das bestätigt weder native ABI-Rekonstruktion noch standardmäßige C-Ausgabe.
 
+`NeverDLLVMCScalarLoopRecoveryTests` prüft vollständige und ausgewählte Standardausgabe, weitere Rekonstruktion nach Rückgabebereinigung, Identität und Attribute, Aufrufer, bestehende/neue Intrinsics und Konflikte, gemeinsame Budgets, Aufrufe mit Effekten, fehlende Eingabedefiniertheit, Metadaten, Images, externe Blockadressen und fremde Funktionsauswahl. Unabhängige Rechen- und Rotationsorakel führen das erzeugte C bei O0/O2 mit Fallen für undefiniertes Verhalten aus. Die Arithmetik wird zusätzlich für sämtliche Byte-Steuerwerte, Grenzwerte und deterministische Vollbreitendaten mit unabhängig kompiliertem Original-LLVM verglichen.
+
 Initialisierungsregressionen prüfen partielle und getrennte Bytebereiche, feste Aliasse, beide Zweige, jede Rückkehr, Lesezugriffe der ersten Iteration und Schreiben vor Lesen in Schleifen. Lesen vor Schreiben, fehlende Schreibzugriffe, Gastspeicherungen, unbekannte Aliasse, spezielle Speicherzugriffe, Bereiche außerhalb des Objekts und erschöpfte Budgets müssen scheitern. Ein unabhängiges C-Beispiel mit einem nur geschriebenen Zustandswort wird mit O1/O2 kompiliert, behält die exakten LLVM-Attribute und besteht eine neue kombinierte Prüfung von nativem Code zu LLVM.
 
 Geschützte Countdown-Tests prüfen den nächsten Versuch nach einem verworfenen Rumpf-Template, einen vollständigen Kopfbeweis für beliebige Worteingaben, gemeinsame Schnittpunkt-/Anfragebudgets und die sofortige Ablehnung echter Eingangsvertragsverletzungen.
@@ -106,6 +108,8 @@ Geschützte Countdown-Tests prüfen den nächsten Versuch nach einem verworfenen
 `NeverDInterpreterLLVMRefinementTests` prüft neue Gesamtbeweise, exakte Text-/Funktionsbindung, unabhängige Budgets, vollständige Beobachtungen und größere Quellbereiche. Geänderte Bytes, Restprogramme, Ergebnisse, Flags, Status, Frame-Schreibzugriffe, Poison und falsche/veraltete Schleifenpläne müssen den Gesamtnachweis verhindern. Beliebige Wortzähler erfordern beide induktiven Voraussetzungen; unabhängige C-Beispiele mit O1/O2 prüfen tatsächlichen serialisierten LLVM-Input. Zustandsmodelltests lehnen versteckte Einstieg-Rückkanten ab und begrenzen Wurzeln ohne Kopie zusätzlicher Herkunftsdaten.
 
 ```sh
+cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
+build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
