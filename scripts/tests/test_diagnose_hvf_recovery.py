@@ -18,13 +18,24 @@ from scripts import run_native_cpu_methods as runner
 NAME = "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry"
 
 
-def iteration(number, name=NAME):
+def iteration(number, name=NAME, reuse=False):
+    marker = "INTEL_PROBE phase=executor_retained\n" if reuse else ""
     return (f"Repeating all tests (iteration {number}) . . .\n"
-            f"[ RUN      ] {name}\n[       OK ] {name} (150 ms)\n"
+            f"[ RUN      ] {name}\n{marker}[       OK ] {name} (150 ms)\n"
             "[  PASSED  ] 1 test.\n")
 
 
 class RecoveryLogTests(unittest.TestCase):
+    def test_reuse_requires_one_native_marker_inside_every_iteration(self):
+        log = "".join(iteration(i, reuse=True) for i in range(1, 101))
+        marker = "INTEL_PROBE phase=executor_retained\n"
+        self.assertIsNone(diagnostic.read_repetitions(log, NAME, 100, True)["error"])
+        for changed in (log.replace(marker, "", 1), log.replace(marker, marker * 2, 1),
+                        marker + log, log + marker):
+            with self.subTest(log=changed[:100]):
+                self.assertIsNotNone(diagnostic.read_repetitions(changed, NAME, 100, True)["error"])
+        self.assertIsNotNone(diagnostic.read_repetitions(log, NAME, 100, False)["error"])
+
     def test_requires_continuous_exact_native_iterations(self):
         log = "".join(iteration(i) for i in range(1, 101))
         self.assertIsNone(diagnostic.read_repetitions(log, NAME, 100)["error"])
@@ -118,12 +129,14 @@ class RecoveryContractTests(unittest.TestCase):
             contract = diagnostic.recovery_contract(
                 self.root, self.build, self.document, {NAME}, runner, 100, experiment)
             self.assertEqual(contract["native_name"], name)
-            self.assertEqual(contract["command"][1], "--gtest_filter=" + name)
+            native_filter = "HvfExecutor.Native*" if experiment == "recovery-reuse" else name
+            self.assertEqual(contract["command"][1], "--gtest_filter=" + native_filter)
             environment = {"NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1"}
-            if experiment == "instruction-reuse":
+            reuse = experiment in ("instruction-reuse", "recovery-reuse")
+            if reuse:
                 environment["NEVERD_HVF_INTEL_REUSE_EXECUTOR"] = "1"
             self.assertEqual(contract["native_requirements"], environment)
-            self.assertEqual(contract["executor_reuse"], experiment == "instruction-reuse")
+            self.assertEqual(contract["executor_reuse"], reuse)
             self.assertEqual(contract["native_execution"], experiment != "lifecycle")
             self.assertFalse(contract["required_for_acceptance"])
         original = self.prepare()
@@ -135,19 +148,28 @@ class RecoveryContractTests(unittest.TestCase):
         name = diagnostic.EXPERIMENTS["instruction"]
         self.add_probe(name)
         keys = ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR")
-        for mode in ("recovery", "instruction", "instruction-reuse"):
+        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse"):
             with self.subTest(mode=mode):
                 self.evidence = self.build / ("evidence-" + mode)
                 plan = self.prepare(experiment=mode)
                 expected = {key: plan["native_requirements"][key]
                             for key in keys if key in plan["native_requirements"]}
-                log = "".join(iteration(i, plan["native_name"]) for i in range(1, 101))
+                log = "".join(iteration(i, plan["native_name"], plan["executor_reuse"])
+                              for i in range(1, 101))
                 self.binary.write_text(f"#!{sys.executable}\nimport os\n"
                     f"assert {{key: os.environ[key] for key in {keys!r} if key in os.environ}} == {expected!r}\n"
                     f"print({log!r}, end='', flush=True)\n")
                 self.binary.chmod(0o755)
                 with mock.patch.dict(os.environ, dict.fromkeys(keys, "1")):
                     self.assertEqual(diagnostic.execute(self.root, self.evidence), 0)
+
+    def test_old_source_without_reuse_support_cannot_pass_reuse_experiment(self):
+        self.prepare(experiment="recovery-reuse")
+        self.executable()
+        self.assertEqual(diagnostic.execute(self.root, self.evidence), 1)
+        result = json.loads((self.evidence / "result.json").read_text())
+        self.assertFalse(result["passed"])
+        self.assertIn("missing executor reuse marker", result["repetitions"]["error"])
 
     def test_experiment_missing_owner_or_unknown_mode_is_rejected(self):
         for mode in ("lifecycle", "instruction", "finite-deadline", "arbitrary"):

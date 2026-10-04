@@ -17,7 +17,7 @@ inputs:
     description: Original one-process repetition count, 100 or 1000
     default: '1000'
   experiment:
-    description: Explicit mode, recovery, lifecycle, instruction, instruction-reuse or finite-deadline
+    description: Explicit mode, recovery, lifecycle, instruction, instruction-reuse, recovery-reuse or finite-deadline
     default: recovery
 runs:
   using: node24

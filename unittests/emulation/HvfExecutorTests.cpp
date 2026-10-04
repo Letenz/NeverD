@@ -41,6 +41,21 @@ protected:
       FAIL() << Text;
     }
     Host = *Created;
+#if defined(__x86_64__)
+    const auto *Probe = std::getenv("NEVERD_HVF_INTEL_PROBE");
+    const auto *Reuse = std::getenv("NEVERD_HVF_INTEL_REUSE_EXECUTOR");
+    if (Probe && llvm::StringRef(Probe) == "1" && Reuse &&
+        llvm::StringRef(Reuse) == "1") {
+      // Diagnostic-only lifetime control; VM, vCPU and both worker threads
+      // survive together. Every fixture still detaches its mappings. This
+      // static is initialized after the native registry/VM mutexes and is
+      // destroyed before them when the diagnostic process exits.
+      static const auto RetainedHost = Host;
+      ASSERT_EQ(Host, RetainedHost);
+      llvm::outs() << "INTEL_PROBE phase=executor_retained\n";
+      llvm::outs().flush();
+    }
+#endif
   }
   MachineRunControl control() {
     return {Clock::now() + std::chrono::seconds(2)};
@@ -386,16 +401,6 @@ class HvfIntelProbe : public HvfExecutor {
     llvm::outs() << "INTEL_PROBE phase=executor_initialization\n";
     llvm::outs().flush();
     HvfExecutor::SetUp();
-    if (const auto *Reuse = std::getenv("NEVERD_HVF_INTEL_REUSE_EXECUTOR");
-        Reuse && llvm::StringRef(Reuse) == "1" && Host) {
-      // Retain only the diagnostic process's executor across fixture instances.
-      // Its static is initialized after the native registry/VM mutex, so it
-      // retires first at process exit. Mappings still detach every iteration.
-      static const auto RetainedHost = Host;
-      ASSERT_EQ(Host, RetainedHost);
-      llvm::outs() << "INTEL_PROBE phase=executor_retained\n";
-      llvm::outs().flush();
-    }
   }
 };
 

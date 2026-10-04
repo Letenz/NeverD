@@ -28,6 +28,7 @@ EXPERIMENTS = {
     "lifecycle": "HvfIntelProbe.LifecycleOnly",
     "instruction": "HvfIntelProbe.InstructionOnly",
     "instruction-reuse": "HvfIntelProbe.InstructionOnly",
+    "recovery-reuse": "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry",
     "finite-deadline": "HvfIntelProbe.FiniteDeadline",
 }
 
@@ -35,29 +36,31 @@ EXPERIMENTS = {
 def recovery_contract(source, build, document, required, runner, repetitions, experiment="recovery"):
     if experiment not in ("recovery", *EXPERIMENTS):
         raise ValueError("unknown Intel experiment")
+    recovery = experiment in ("recovery", "recovery-reuse")
+    reuse = experiment in ("instruction-reuse", "recovery-reuse")
     methods = runner.method_inventory(document)
     selected = [(key, expected) for key, expected in methods.items()
-                if (key[1].startswith("HvfExecutor.Native") if experiment == "recovery"
+                if (key[1].startswith("HvfExecutor.Native") if recovery
                     else key[1] == EXPERIMENTS[experiment])]
     if len(selected) != 1 or len(selected[0][1]) != 1:
         raise ValueError("selected filter must select exactly one native recovery test")
     key, expected = selected[0]
     name, record = next(iter(expected.items()))
     binary = (build / "bin/NeverDHvfTests").resolve()
-    if (Path(key[0]).resolve() != binary or (experiment == "recovery" and record.name not in required)
+    if (Path(key[0]).resolve() != binary or (recovery and record.name not in required)
             or "NeverDHvfTests" not in record.labels):
         raise ValueError("recovery test is not the selected source's required native owner")
-    native_filter = "HvfExecutor.Native*" if experiment == "recovery" else EXPERIMENTS[experiment]
+    native_filter = "HvfExecutor.Native*" if recovery else EXPERIMENTS[experiment]
     environment = {"NEVERD_REQUIRE_HVF": "1"}
     if experiment != "recovery":
         environment["NEVERD_HVF_INTEL_PROBE"] = "1"
-    if experiment == "instruction-reuse":
+    if reuse:
         environment["NEVERD_HVF_INTEL_REUSE_EXECUTOR"] = "1"
     return {
         "experiment": experiment,
         "native_execution": experiment != "lifecycle",
         "required_for_acceptance": experiment == "recovery",
-        "executor_reuse": experiment == "instruction-reuse",
+        "executor_reuse": reuse,
         "native_name": name, "required_ctest_name": record.name,
         "command": [str(binary), "--gtest_filter=" + native_filter,
                     f"--gtest_repeat={repetitions}", "--gtest_break_on_failure"],
@@ -103,10 +106,11 @@ def prepare(source, build, evidence, repetitions, experiment="recovery"):
     return plan
 
 
-def read_repetitions(log, name, repetitions):
+def read_repetitions(log, name, repetitions, executor_reuse=False):
     """Require every complete iteration in order; totals or overwritten XML cannot prove this."""
     completed, started, stage = 0, 0, "iteration"
     error = None
+    retained = False
     for line in log.splitlines():
         iteration = re.fullmatch(r"Repeating all tests \(iteration ([0-9]+)\) \. \. \.", line)
         run = re.fullmatch(r"\[ RUN      \] (.+)", line)
@@ -118,14 +122,23 @@ def read_repetitions(log, name, repetitions):
                 break
             started += 1
             stage = "run"
+            retained = False
         elif run:
             if stage != "run" or run[1] != name:
                 error = "unexpected or duplicate native RUN"
                 break
             stage = "ok"
+        elif line == "INTEL_PROBE phase=executor_retained":
+            if not executor_reuse or stage != "ok" or retained:
+                error = "unexpected or duplicate executor reuse marker"
+                break
+            retained = True
         elif passed:
             if stage != "ok" or passed[1] != name:
                 error = "unexpected or duplicate native OK"
+                break
+            if executor_reuse and not retained:
+                error = "missing executor reuse marker"
                 break
             stage = "summary"
         elif summary:
@@ -168,7 +181,8 @@ def execute(source, evidence):
         status = runner.execute(contract["command"], contract["working_directory"],
             environment, contract["timeout_seconds"], evidence / "execution")
     repeats = read_repetitions((evidence / "execution/output.log").read_text(),
-                              contract["native_name"], contract["repetitions"])
+                              contract["native_name"], contract["repetitions"],
+                              contract["executor_reuse"])
     retirement = json.loads((evidence / "retirement.json").read_text())
     success = (not repeats["error"] and status["status"] == 0 and not status["timed_out"]
                and status["child_retired"] and len(retirement) == 1
