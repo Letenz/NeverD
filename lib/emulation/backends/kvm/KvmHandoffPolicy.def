@@ -1,0 +1,9 @@
+//===- KvmHandoffPolicy.def - Bounded adaptive vCPU handoff policy --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Host scheduling policy, independent of guest instruction and time budgets.
+NEVERD_KVM_HANDOFF_VALUE(PollMicroseconds, 8)
+NEVERD_KVM_HANDOFF_VALUE(MissLimit, 2)
+NEVERD_KVM_HANDOFF_VALUE(RetryEntries, 256)

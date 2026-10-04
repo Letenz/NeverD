@@ -641,6 +641,8 @@ KVM x64 は完了確認済みの同期取得、または明示的な `KVM_GET_SR
 
 KVM x64/ARM64 は `KvmRunControl` により同じ専用 vCPU worker で状態準備、`KVM_RUN`、状態取得を実行します。`EINTR` の再試行でも準備は一度で、取消や取得失敗は状態を公開しません。`KvmAArch64Machine.cpp` の変換維持と全スカラー・ベクトル転送も一つの step deadline を共有します。呼び出し側は完了確認後に確定し、ISA decode、RAM transaction、OS policy、observer は呼び出し側に残ります。native ARM64 の実機証拠は未取得です。
 
+`KvmHandoffPolicy` は各ポーリング待機を 8 μs に制限し、連続して二回失敗するとブロック待機へ移行し、256 回の受け渡し後に再試行します。呼び出し側とワーカーは独立して適応し、呼び出し側は元の期限と停止トークンも確認します。アトミックな準備完了フラグはスケジューリングのヒントに限られ、パケット、コールバックの寿命、キャンセル確認は引き続きミューテックスで管理します。`NeverDKvmRunTests` は無効なポーリングの上限、復帰、相手の遅延変化、パケット再利用前のキャンセル確認を検証します。
+
 ## strict lifting の契約
 
 `Decoder` と各アーキテクチャ lifter は strict モードで開始します。Capstone が

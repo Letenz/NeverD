@@ -12,6 +12,7 @@
 #include <cstring>
 #include <signal.h>
 #include <thread>
+#include <vector>
 
 namespace {
 #define NEVERD_KVM_TEST_VALUE(Name, Value) constexpr unsigned Name = Value;
@@ -22,6 +23,13 @@ namespace {
 #undef NEVERD_KVM_TEST_TEXT
 #undef NEVERD_KVM_TEST_STATE_VALUE
 #undef NEVERD_KVM_TEST_VALUE
+#define NEVERD_KVM_HANDOFF_TEST_VALUE(Name, Value)                             \
+  constexpr unsigned Name = Value;
+#define NEVERD_KVM_HANDOFF_TEST_STATE(Name, Value)                             \
+  constexpr uint64_t Name = Value;
+#include "KvmHandoffCases.def"
+#undef NEVERD_KVM_HANDOFF_TEST_STATE
+#undef NEVERD_KVM_HANDOFF_TEST_VALUE
 enum class RunResult { Interrupted, Transient, Fatal, UntilKick };
 RunResult Result;
 unsigned Calls;
@@ -294,6 +302,77 @@ TEST_F(KvmRun, SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers) {
     EXPECT_EQ(Prepared[I], 1u);
     EXPECT_EQ(Captured[I], 1u);
     EXPECT_EQ(Packets[I], TransferInitialValue + I + TransferIncrement);
+  }
+}
+
+TEST_F(KvmRun,
+       ChangingPeerLatencyRetainsPacketsAndCancellationAcknowledgement) {
+  struct Packet {
+    uint64_t Input = 0, Output = 0;
+    unsigned Prepared = 0, Captured = 0, Completed = 0;
+  };
+  std::vector<Packet> Packets(PacketEntries * PacketPhases);
+  const auto Caller = std::this_thread::get_id();
+  const auto Deadline = std::chrono::steady_clock::now() +
+                        std::chrono::microseconds(PacketTimeoutMicroseconds);
+  for (unsigned I = 0; I < Packets.size(); ++I) {
+    auto &P = Packets[I];
+    const uint64_t Value = PacketSeed + I;
+    const bool Slow = (I / PacketEntries) % 2 == 0;
+    auto E = VM.runUntilExit(
+        {Deadline, &Stop},
+        [&] {
+          ++P.Prepared;
+          P.Input = Value;
+          if (Slow)
+            std::this_thread::sleep_for(
+                std::chrono::microseconds(SlowMicroseconds));
+          return llvm::Error::success();
+        },
+        [&] {
+          ++P.Captured;
+          EXPECT_EQ(std::this_thread::get_id(), EntryThread);
+          EXPECT_NE(std::this_thread::get_id(), Caller);
+          EXPECT_EQ(P.Input, Value);
+          P.Output = ~P.Input;
+          return llvm::Error::success();
+        },
+        [&] {
+          ++P.Completed;
+          EXPECT_EQ(std::this_thread::get_id(), Caller);
+          EXPECT_EQ(P.Output, ~Value);
+          return llvm::Error::success();
+        });
+    ASSERT_EQ(llvm::toString(std::move(E)), "");
+  }
+
+  // Cancel after slow transfers have forced blocking waits. The borrowed
+  // request must still retire before another packet or caller can proceed.
+  Result = RunResult::UntilKick;
+  Entered = false;
+  std::atomic<bool> Done{false};
+  std::thread Request([&] {
+    while (!Done && !Entered.load())
+      std::this_thread::yield();
+    Stop = true;
+  });
+  auto E = VM.runUntilExit({Deadline, &Stop});
+  Done = true;
+  Request.join();
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
+  llvm::consumeError(std::move(E));
+  EXPECT_TRUE(Entered);
+  Stop = false;
+  Result = RunResult::Transient;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+
+  for (unsigned I = 0; I < Packets.size(); ++I) {
+    const auto &P = Packets[I];
+    EXPECT_EQ(P.Prepared, 1u);
+    EXPECT_EQ(P.Captured, 1u);
+    EXPECT_EQ(P.Completed, 1u);
+    EXPECT_EQ(P.Input, PacketSeed + I);
+    EXPECT_EQ(P.Output, ~(PacketSeed + I));
   }
 }
 

@@ -238,6 +238,7 @@ target_include_directories(NeverDUserExecutionTests PRIVATE
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   add_neverd_unittest(NeverDKvmRunTests
     KvmRunTests.cpp
+    KvmHandoffTests.cpp
     TIMEOUT 10
     LINK_COMPONENTS EmulationNative)
   target_include_directories(NeverDKvmRunTests PRIVATE
