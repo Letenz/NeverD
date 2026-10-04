@@ -19,10 +19,18 @@ on:
         type: boolean
         default: false
       native_cpu_only:
-        description: 'Run focused native WHP CPU regressions with prebuilt LLVM'
+        description: 'Run focused native CPU regressions with prebuilt LLVM'
         required: true
         type: boolean
         default: false
+      native_cpu_backend:
+        description: 'Native x64 transport for the native_cpu_only profile'
+        required: true
+        type: choice
+        default: whp
+        options:
+          - whp
+          - kvm
       native_driver_tests:
         description: 'Include original driver outcomes in the native_cpu_only profile'
         required: true
@@ -1801,12 +1809,11 @@ jobs:
           PYTHONPATH: pluginsdk/python
 
   native-cpu:
-    name: Native CPU (Windows x64 WHP)
+    name: Native CPU (${{ inputs.native_cpu_backend == 'kvm' && 'Linux x64 KVM' || 'Windows x64 WHP' }})
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_cpu_only }}
-    runs-on: windows-latest
+    runs-on: ${{ inputs.native_cpu_backend == 'kvm' && 'ubuntu-24.04' || 'windows-latest' }}
     timeout-minutes: 30
     env:
-      NEVERD_REQUIRE_NATIVE_WHP: '1'
       NEVERD_NATIVE_DRIVER_TESTS: ${{ inputs.native_driver_tests && 'ON' || 'OFF' }}
       SCCACHE_GHA_ENABLED: 'true'
     steps:
@@ -1830,20 +1837,37 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install native CPU build tooling
+      - name: Install Windows native CPU build tooling
+        if: ${{ runner.os == 'Windows' }}
         shell: pwsh
         run: choco install ninja --yes --no-progress
 
+      - name: Install Linux native CPU build tooling
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld ninja-build
+
       - name: Enable the native CPU MSVC toolchain
+        if: ${{ runner.os == 'Windows' }}
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
+
+      - name: Prepare native KVM device access
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          python scripts/prepare_kvm_ci.py \
+            --output build-ci-native/native-evidence/device-access.json
 
       - name: Configure the native CPU profile
         shell: bash
         run: |
           python -m unittest scripts.tests.test_run_native_cpu_ci \
-            scripts.tests.test_build_wdk_driver_fixtures -q
+            scripts.tests.test_build_wdk_driver_fixtures \
+            scripts.tests.test_prepare_kvm_ci -q
           python scripts/check_capabilities.py
           python scripts/check_docs_i18n.py
           python scripts/audit_ci_test_results.py check-tool
@@ -1857,7 +1881,8 @@ jobs:
           cmake -S . -B build-ci-native -G Ninja \
             "${fixture_args[@]}" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl \
+            -DCMAKE_C_COMPILER=${{ inputs.native_cpu_backend == 'kvm' && 'clang' || 'cl' }} \
+            -DCMAKE_CXX_COMPILER=${{ inputs.native_cpu_backend == 'kvm' && 'clang++' || 'cl' }} \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DBUILD_TESTING=ON -DNEVERD_BUILD_SHARED=OFF \
@@ -1877,13 +1902,13 @@ jobs:
           python scripts/run_native_cpu_ci.py \
             --build build-ci-native \
             --evidence build-ci-native/native-evidence \
-            --parallel 4 --require-whp "${driver_args[@]}"
+            --parallel 4 --require-${{ inputs.native_cpu_backend }} "${driver_args[@]}"
 
       - name: Preserve native CPU evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: native-cpu-windows-x64-whp
+          name: native-cpu-${{ runner.os == 'Windows' && 'windows' || 'linux' }}-x64-${{ inputs.native_cpu_backend }}
           path: |
             build-ci-native/native-evidence/
             build-ci-native/driver-fixtures/build-manifest.json

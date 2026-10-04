@@ -1049,7 +1049,9 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 僅原生 CPU 的 CI 檢出初始化固定版本的 Capstone 原始碼，並使用經驗證的預建 LLVM 套件。設定 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 且停用 Unicorn 後端後，CPU 測試目標的設定、建置和連結均不需要 Unicorn 原始碼，也不依賴簽章庫及外部語料。預設 CI 仍啟用完整語意測試組。
 
-現有 `ci.yml` 在 Windows x64 runner 上提供明確選擇的 `native_cpu_only` 手動模式。`NativeCPUTests.def` 選擇測試目標；`run_native_cpu_ci.py` 先建置它們，再執行篩選後的 CTest，並儲存清單、JUnit、日誌和摘要。共用 CI 解析器區分通過、失敗、略過、停用和未執行結果。每個宣告的 WHP 原生映射案例都必須被探索並執行；缺少或略過原生證據會使聚焦工作失敗。預設的 LLVM 原始碼建置 CI 保持原樣。協定測試和編譯不能取代 WHP 或 ARM64 原生工作負載驗證。
+`ci.yml` 的手動模式 `native_cpu_only` 透過 `native_cpu_backend=whp` 選擇 Windows x64（預設），或透過 `native_cpu_backend=kvm` 選擇 Ubuntu x64。`NativeCPUTests.def` 共用 CPU／行程驗收要求，分別宣告後端專屬目標和案例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 驗證宿主，先建置全部目標再執行 CTest，並保留清單、JUnit、日誌和結果分類。即使 CTest 成功結束，缺少或略過必測案例仍會失敗。CI 停用 Unicorn；`--with-drivers` 要求所選後端執行相同的原址／重定位驅動程式範例。編譯和建立探測不能證明來賓執行或 ARM64 驗收。
+
+KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransferCases.def` 中 48 項狀態傳輸結果，包括 ioctl 擷取和選用能力查詢失敗。其他同步暫存器模式在宿主支援時執行，否則明確略過。穩定的參數名稱不依賴 ioctl 數值或元組格式。協定測試補充原生執行證據，不能取代它。
 
 `native-host-probe.yml` 在 Linux 與 Windows x64/ARM64 託管 runner 上執行獨立的 `probe_native_host.py`。`NativeHostProbe.def` 宣告能力查詢、VM/vCPU 建立及清理證據的順序。報告保留原始碼/二進位雜湊、原生宿主 ISA 及每一步宿主狀態碼。`setup_ready` 只證明初始化成功，不執行客體指令。缺少 API/裝置能力記為 `unavailable`；建置、初始化、清理、逾時或證據格式錯誤會使工作失敗。ARM64 託管環境的可用性須逐次觀察，此探測不構成 ARM64 工作負載驗收。 兩個 Linux 工作流程均透過 `prepare_kvm_ci.py`，只授予目前託管 runner 帳戶既有 KVM 字元裝置的存取權限，並記錄裝置身分及權限；腳本拒絕本機與自管機器，不會建立缺少的裝置。
 

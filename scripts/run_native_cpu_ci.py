@@ -29,8 +29,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def read_inventory(
     root: Path, filename: str, prefix: str, host_architecture: str | None = None,
+    backend: str | None = None,
 ) -> tuple[list[str], set[str]]:
     definitions = (root / "scripts" / filename).read_text(encoding="utf-8")
+    if backend is not None:
+        if backend not in {"kvm", "whp"}:
+            raise ValueError("native CPU coverage requires KVM or WHP")
+        prefix += rf"(?:_{backend.upper()})?"
     owners = re.findall(rf"^{prefix}_OWNER\((\w+)\)$", definitions, re.M)
     literal = r'((?:"[^"]+"\s*)+)'
     families = [
@@ -82,18 +87,40 @@ def read_inventory(
 
 
 def declared_inventory(
-    root: Path, with_drivers: bool = False
+    root: Path, with_drivers: bool = False, backend: str = "whp",
 ) -> tuple[list[str], set[str]]:
-    owners, required = read_inventory(root, "NativeCPUTests.def", "NEVERD_NATIVE_CPU")
+    owners, required = read_inventory(
+        root, "NativeCPUTests.def", "NEVERD_NATIVE_CPU", backend=backend,
+    )
     if with_drivers:
         driver_owners, driver_required = read_inventory(
-            root, "NativeDriverTests.def", "NEVERD_NATIVE_DRIVER"
+            root, "NativeDriverTests.def", "NEVERD_NATIVE_DRIVER", backend=backend,
         )
         if set(owners) & set(driver_owners) or required & driver_required:
             raise ValueError("overlapping native CPU and driver inventories")
         owners += driver_owners
         required |= driver_required
-    return owners, required
+    try:
+        expanded = {name.format(backend=backend, backend_title=backend.title())
+                    for name in required}
+    except (KeyError, ValueError, IndexError, AttributeError) as error:
+        raise ValueError("invalid native backend placeholder") from error
+    if len(expanded) != len(required):
+        raise ValueError("overlapping native backend requirements")
+    return owners, expanded
+
+
+def validate_native_host(root: Path, backend: str, system: str, architecture: str) -> None:
+    definitions = (root / "scripts" / "NativeCPUTests.def").read_text(encoding="utf-8")
+    hosts = re.findall(
+        rf'^NEVERD_NATIVE_CPU_HOST\({backend.upper()},\s*"([^"]+)",'
+        r'\s*"([^"]+)",\s*"([^"]+)"\)', definitions, re.M,
+    )
+    if len(hosts) != 1:
+        raise ValueError("expected one native CPU host declaration")
+    expected_system, *aliases = hosts[0]
+    if system != expected_system or architecture.lower() not in {name.lower() for name in aliases}:
+        raise ValueError(f"native {backend.upper()} CPU coverage requires {expected_system} x64")
 
 
 def darwin_inventory(
@@ -143,7 +170,10 @@ def run(
     hvf_transport_only: bool = False,
     execution_methods: bool = False,
     hvf_shard: tuple[int, int] | None = None,
+    require_kvm: bool = False,
 ) -> int:
+    if require_kvm and (require_whp or require_hvf or darwin_backend):
+        raise ValueError("KVM coverage is a separate native CPU profile")
     if hvf_transport_only and not require_hvf:
         raise ValueError("HVF transport profile requires --require-hvf")
     if darwin_backend and (require_whp or require_hvf or with_drivers):
@@ -153,14 +183,17 @@ def run(
     if hvf_shard is not None and (not require_hvf or hvf_transport_only or not execution_methods):
         raise ValueError("HVF shards require the complete HVF profile and method execution")
     host_architecture = platform.machine()
+    if require_kvm or require_whp:
+        validate_native_host(ROOT, "kvm" if require_kvm else "whp",
+                             platform.system(), host_architecture)
     if darwin_backend:
         owners, required = darwin_inventory(ROOT, darwin_backend, host_architecture)
     elif require_hvf:
         owners, required = hvf_inventory(ROOT, host_architecture, hvf_transport_only)
     else:
-        owners, required = declared_inventory(ROOT, with_drivers)
-    required_hardware = require_whp or require_hvf or bool(darwin_backend)
-    native_name = (darwin_backend or ("hvf" if require_hvf else "whp")).upper()
+        owners, required = declared_inventory(ROOT, with_drivers, "kvm" if require_kvm else "whp")
+    required_hardware = require_kvm or require_whp or require_hvf or bool(darwin_backend)
+    native_name = (darwin_backend or ("hvf" if require_hvf else "kvm" if require_kvm else "whp")).upper()
     output_limits = re.findall(
         r"^NEVERD_NATIVE_CPU_OUTPUT_LIMIT\(([1-9][0-9]*)\)$",
         (ROOT / "scripts" / "NativeCPUTests.def").read_text(encoding="utf-8"),
@@ -261,6 +294,7 @@ def run(
         "missing": sorted(test.name for test in expected - actual),
         "unexpected": sorted(test.name for test in actual - expected),
         "require_whp": require_whp,
+        "require_kvm": require_kvm,
         "require_hvf": require_hvf,
         "hvf_transport_only": hvf_transport_only,
         "hvf_shard": (None if hvf_shard is None else
@@ -292,6 +326,7 @@ def main() -> int:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--require-whp", action="store_true")
+    parser.add_argument("--require-kvm", action="store_true")
     parser.add_argument("--require-hvf", action="store_true")
     parser.add_argument("--hvf-transport-only", action="store_true",
                         help="only build and require the small HVF transport owner")
@@ -319,6 +354,7 @@ def main() -> int:
         args.hvf_transport_only,
         args.execution_methods,
         shard,
+        args.require_kvm,
     )
 
 

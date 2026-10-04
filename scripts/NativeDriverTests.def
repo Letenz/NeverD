@@ -23,35 +23,38 @@ NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
     "Corpus/"
     "DriverNativeExecution."
     "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
-    "whp_Original_",
-    "unittests/emulation/DriverBuiltinImages.def", "NEVERD_PARITY_IMAGE")
-NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
-    "Corpus/"
-    "DriverNativeExecution."
-    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Rebased_",
+    "{backend}_Original_",
     "unittests/emulation/DriverBuiltinImages.def", "NEVERD_PARITY_IMAGE")
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
     "Corpus/"
     "DriverNativeExecution."
     "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
-    "whp_Original_",
-    "unittests/emulation/DriverBackendParityCases.def", "NEVERD_PARITY_IMAGE")
+    "{backend}_Rebased_",
+    "unittests/emulation/DriverBuiltinImages.def", "NEVERD_PARITY_IMAGE")
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
     "Corpus/"
     "DriverNativeExecution."
-    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Rebased_",
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
+    "{backend}_Original_",
     "unittests/emulation/DriverBackendParityCases.def", "NEVERD_PARITY_IMAGE")
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
     "Corpus/"
     "DriverNativeExecution."
     "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
-    "whp_Original_",
+    "{backend}_Rebased_",
+    "unittests/emulation/DriverBackendParityCases.def", "NEVERD_PARITY_IMAGE")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Corpus/"
+    "DriverNativeExecution."
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
+    "{backend}_Original_",
     "unittests/emulation/DriverBackendParityCases.def",
     "NEVERD_PARITY_SCENARIO")
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
     "Corpus/"
     "DriverNativeExecution."
-    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/whp_Rebased_",
+    "OriginalCorpusPreservesKnownOutcomesWithoutPortableTransport/"
+    "{backend}_Rebased_",
     "unittests/emulation/DriverBackendParityCases.def",
     "NEVERD_PARITY_SCENARIO")
 #endif

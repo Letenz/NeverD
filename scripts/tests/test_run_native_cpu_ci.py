@@ -24,6 +24,8 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         (self.root / "scripts").mkdir()
         (self.root / "scripts" / "NativeCPUTests.def").write_text(
             'NEVERD_NATIVE_CPU_OUTPUT_LIMIT(65536)\n'
+            'NEVERD_NATIVE_CPU_HOST(KVM, "Linux", "x86_64", "AMD64")\n'
+            'NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")\n'
             'NEVERD_NATIVE_CPU_OWNER(Owner)\n'
             'NEVERD_NATIVE_CPU_REQUIRED_CASES("Native/Case/", "cases.def", "CASE")\n'
         )
@@ -64,11 +66,14 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         })
 
     def run_evidence(self, with_drivers=False, require_hvf=False,
-                     host_architecture="arm64", darwin_backend=None, hvf_transport_only=False,
-                     execution_methods=False):
+                     host_architecture=None, darwin_backend=None, hvf_transport_only=False,
+                     execution_methods=False, require_kvm=False, host_system=None):
+        host_architecture = host_architecture or ("arm64" if require_hvf or darwin_backend else "AMD64")
+        host_system = host_system or ("Linux" if require_kvm else "Windows")
         with (
             mock.patch.object(native, "ROOT", self.root),
             mock.patch.object(native.platform, "machine", return_value=host_architecture),
+            mock.patch.object(native.platform, "system", return_value=host_system),
             mock.patch.object(native.subprocess, "run", side_effect=self.execute),
             mock.patch.object(
                 native.subprocess, "check_output", side_effect=self.capture
@@ -76,12 +81,119 @@ class NativeCPUEvidenceTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()),
         ):
             return native.run(
-                self.build, self.evidence, 2, not (require_hvf or darwin_backend),
+                self.build, self.evidence, 2, not (require_hvf or darwin_backend or require_kvm),
                 with_drivers=with_drivers, require_hvf=require_hvf,
                 darwin_backend=darwin_backend,
                 hvf_transport_only=hvf_transport_only,
                 execution_methods=execution_methods,
+                require_kvm=require_kvm,
             )
+
+    def add_backend_requirements(self, backend):
+        definition = self.root / "scripts/NativeCPUTests.def"
+        definition.write_text(definition.read_text() +
+            'NEVERD_NATIVE_CPU_REQUIRED_TEST("CPU.Memory/{backend}")\n'
+            'NEVERD_NATIVE_CPU_REQUIRED_TEST("CPU.State/{backend_title}X64")\n'
+            'NEVERD_NATIVE_CPU_KVM_OWNER(KvmOwner)\n'
+            'NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST("Kvm.NativeCapture")\n'
+            'NEVERD_NATIVE_CPU_WHP_OWNER(WhpOwner)\n'
+            'NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST("Whp.NativeCapture")\n')
+        owner = backend.title() + "Owner"
+        targets = self.build / "CMakeFiles/TargetDirectories.txt"
+        targets.write_text(targets.read_text() + str(
+            self.build / f"unittests/emulation/CMakeFiles/{owner}.dir") + "\n")
+        self.records += (
+            TestRecord(f"CPU.Memory/{backend}", frozenset({"Owner"})),
+            TestRecord(f"CPU.State/{backend.title()}X64", frozenset({"Owner"})),
+            TestRecord(f"{backend.title()}.NativeCapture", frozenset({owner})),
+        )
+        self.reported = self.records
+
+    def test_kvm_selects_shared_contracts_and_its_own_transport_requirements(self):
+        self.add_backend_requirements("kvm")
+        self.changes[self.records[2]] = (
+            "notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "foreign backend")
+        with mock.patch.dict(native.os.environ, {}, clear=True):
+            self.assertEqual(self.run_evidence(require_kvm=True), 0)
+        self.assertTrue(self.summary()["require_kvm"])
+        self.assertFalse(self.summary()["require_whp"])
+        self.assertEqual(self.summary()["owners"], ["Owner", "KvmOwner"])
+        self.assertEqual(self.summary()["required_native_tests"], 5)
+        self.assertNotIn("NEVERD_REQUIRE_NATIVE_WHP", self.test_environment)
+        self.assertIn("Kvm.NativeCapture", self.summary()["required_native_names"])
+
+    def test_whp_keeps_its_own_transport_requirements(self):
+        self.add_backend_requirements("whp")
+        self.assertEqual(self.run_evidence(), 0)
+        self.assertEqual(self.summary()["owners"], ["Owner", "WhpOwner"])
+        self.assertEqual(self.summary()["required_native_tests"], 5)
+        self.assertIn("Whp.NativeCapture", self.summary()["required_native_names"])
+
+    def test_kvm_required_outcomes_cannot_be_skipped_or_replaced(self):
+        self.add_backend_requirements("kvm")
+        for record in self.records[-3:]:
+            with self.subTest(name=record.name):
+                self.changes = {record: ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "no KVM")}
+                self.assertEqual(self.run_evidence(require_kvm=True), 1)
+                self.assertEqual(self.summary()["required_native_unexecuted"], [record.name])
+        self.records = self.records[:-1]
+        with self.assertRaisesRegex(ValueError, "missing required native KVM.*Kvm.NativeCapture"):
+            self.run_evidence(require_kvm=True)
+
+    def test_native_profile_rejects_wrong_system_or_isa_before_build(self):
+        for kvm, system, architecture in (
+            (True, "Windows", "AMD64"), (True, "Linux", "aarch64"),
+            (False, "Linux", "x86_64"), (False, "Windows", "ARM64"),
+        ):
+            with self.subTest(kvm=kvm, system=system, architecture=architecture):
+                with self.assertRaisesRegex(ValueError, "CPU coverage requires"):
+                    self.run_evidence(require_kvm=kvm, host_system=system,
+                                      host_architecture=architecture)
+        self.assertEqual(self.executions, [])
+
+    def test_kvm_cannot_relax_a_different_native_profile(self):
+        for flags in ({"require_whp": True}, {"require_hvf": True}, {"darwin_backend": "kvm"}):
+            with self.subTest(flags=flags), self.assertRaisesRegex(ValueError, "separate native CPU profile"):
+                native.run(self.build, self.evidence, 2, require_kvm=True,
+                           **({"require_whp": False} | flags))
+
+    def test_native_templates_reject_unknown_backends_fields_and_collisions(self):
+        with self.assertRaisesRegex(ValueError, "requires KVM or WHP"):
+            native.declared_inventory(self.root, backend="unicorn")
+        definition = self.root / "scripts/NativeCPUTests.def"
+        original = definition.read_text()
+        for extra in (
+            'NEVERD_NATIVE_CPU_REQUIRED_TEST("CPU/{unknown}")\n',
+            'NEVERD_NATIVE_CPU_REQUIRED_TEST("CPU/{backend}")\n'
+            'NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST("CPU/kvm")\n',
+        ):
+            definition.write_text(original + extra)
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                native.declared_inventory(self.root, backend="kvm")
+
+    def test_kvm_drivers_require_both_explicit_native_load_outcomes(self):
+        self.add_drivers()
+        definition = self.root / "scripts/NativeDriverTests.def"
+        definition.write_text(definition.read_text().replace('"Driver/', '"{backend}/Driver/'))
+        self.records = tuple(TestRecord("kvm/" + record.name, record.labels)
+                             if "DriverOwner" in record.labels else record
+                             for record in self.records)
+        self.reported = self.records
+        self.assertEqual(self.run_evidence(require_kvm=True, with_drivers=True), 0)
+        self.changes[self.records[-1]] = ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "missing WDK fixture")
+        self.assertEqual(self.run_evidence(require_kvm=True, with_drivers=True), 1)
+        self.assertEqual(self.summary()["required_native_unexecuted"], [self.records[-1].name])
+
+    def test_repository_backends_require_identical_driver_outcomes(self):
+        outcomes = {}
+        for backend in ("kvm", "whp"):
+            _, cpu = native.declared_inventory(native.ROOT, backend=backend)
+            _, combined = native.declared_inventory(native.ROOT, with_drivers=True, backend=backend)
+            outcomes[backend] = {name.replace("/" + backend + "_", "/{backend}_")
+                                 for name in combined - cpu}
+            self.assertTrue(any("/{backend}_Original_" in name for name in outcomes[backend]))
+            self.assertTrue(any("/{backend}_Rebased_" in name for name in outcomes[backend]))
+        self.assertEqual(outcomes["kvm"], outcomes["whp"])
 
     def add_drivers(self):
         (self.root / "scripts" / "NativeDriverTests.def").write_text(
