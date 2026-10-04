@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/native-host-probe.yml'
       - 'scripts/probe_native_host.*'
+      - 'scripts/prepare_kvm_ci.py'
       - 'scripts/NativeHostProbe.def'
       - 'scripts/tests/test_probe_native_host.py'
       - 'lib/emulation/backends/kvm/KvmProtocol.def'
@@ -15,6 +16,7 @@ on:
     paths:
       - '.github/workflows/native-host-probe.yml'
       - 'scripts/probe_native_host.*'
+      - 'scripts/prepare_kvm_ci.py'
       - 'scripts/NativeHostProbe.def'
       - 'scripts/tests/test_probe_native_host.py'
       - 'lib/emulation/backends/kvm/KvmProtocol.def'
@@ -62,6 +64,9 @@ jobs:
           arch: ${{ matrix.msvc }}
       - name: Verify evidence classification
         run: python -m unittest scripts.tests.test_probe_native_host -v
+      - name: Prepare current hosted account KVM access
+        if: runner.os == 'Linux'
+        run: python scripts/prepare_kvm_ci.py --output build-native-host-probe/device-access.json
       - name: Probe actual VM and vCPU setup
         run: >-
           python scripts/probe_native_host.py
@@ -74,6 +79,7 @@ jobs:
           name: native-host-${{ matrix.backend }}-${{ matrix.arch }}
           path: |
             build-native-host-probe/summary.json
+            build-native-host-probe/device-access.json
             build-native-host-probe/*.stdout
             build-native-host-probe/*.stderr
           if-no-files-found: error

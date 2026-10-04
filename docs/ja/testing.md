@@ -1101,7 +1101,7 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 既存の `ci.yml` は Windows x64 runner で明示的に選ぶ手動モード `native_cpu_only` を提供します。`NativeCPUTests.def` が対象テストを選び、`run_native_cpu_ci.py` が構築してから絞り込んだ CTest を実行し、一覧・JUnit・ログ・集計を保存します。共通 CI パーサーは成功、失敗、スキップ、無効、未実行を区別します。宣言された WHP ネイティブマッピングケースはすべて検出・実行が必須で、証拠の欠落やスキップはこのジョブを失敗にします。既定の LLVM ソースビルド CI は変わりません。プロトコルテストやコンパイルは WHP・ARM64 のネイティブワークロード検証を代替しません。
 
-`native-host-probe.yml` は Linux と Windows の x64/ARM64 ホステッド runner で独立した `probe_native_host.py` を実行します。`NativeHostProbe.def` が能力照会、VM/vCPU 作成、解放の証拠の順序を定義します。レポートはソースとバイナリのハッシュ、ネイティブホスト ISA、各操作のステータスコードを保存します。`setup_ready` は初期化のみを証明し、ゲスト命令は実行しません。API/デバイス能力の欠如は `unavailable`、ビルド・初期化・解放・タイムアウト・不正な証拠はジョブ失敗です。ARM64 ホストの可用性は実行ごとに確認し、このプローブを ARM64 ワークロードの受け入れ証拠とはしません。
+`native-host-probe.yml` は Linux と Windows の x64/ARM64 ホステッド runner で独立した `probe_native_host.py` を実行します。`NativeHostProbe.def` が能力照会、VM/vCPU 作成、解放の証拠の順序を定義します。レポートはソースとバイナリのハッシュ、ネイティブホスト ISA、各操作のステータスコードを保存します。`setup_ready` は初期化のみを証明し、ゲスト命令は実行しません。API/デバイス能力の欠如は `unavailable`、ビルド・初期化・解放・タイムアウト・不正な証拠はジョブ失敗です。ARM64 ホストの可用性は実行ごとに確認し、このプローブを ARM64 ワークロードの受け入れ証拠とはしません。 両 Linux ワークフローは `prepare_kvm_ci.py` で既存の KVM キャラクターデバイスへのアクセスを現在のホステッド runner アカウントだけに付与し、デバイスの識別情報と権限を記録します。ローカルおよびセルフホスト環境は拒否し、存在しないデバイスは作成しません。
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 

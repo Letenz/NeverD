@@ -1047,7 +1047,7 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 現有 `ci.yml` 在 Windows x64 runner 上提供明確選擇的 `native_cpu_only` 手動模式。`NativeCPUTests.def` 選擇測試目標；`run_native_cpu_ci.py` 先建置它們，再執行篩選後的 CTest，並儲存清單、JUnit、日誌和摘要。共用 CI 解析器區分通過、失敗、略過、停用和未執行結果。每個宣告的 WHP 原生映射案例都必須被探索並執行；缺少或略過原生證據會使聚焦工作失敗。預設的 LLVM 原始碼建置 CI 保持原樣。協定測試和編譯不能取代 WHP 或 ARM64 原生工作負載驗證。
 
-`native-host-probe.yml` 在 Linux 與 Windows x64/ARM64 託管 runner 上執行獨立的 `probe_native_host.py`。`NativeHostProbe.def` 宣告能力查詢、VM/vCPU 建立及清理證據的順序。報告保留原始碼/二進位雜湊、原生宿主 ISA 及每一步宿主狀態碼。`setup_ready` 只證明初始化成功，不執行客體指令。缺少 API/裝置能力記為 `unavailable`；建置、初始化、清理、逾時或證據格式錯誤會使工作失敗。ARM64 託管環境的可用性須逐次觀察，此探測不構成 ARM64 工作負載驗收。
+`native-host-probe.yml` 在 Linux 與 Windows x64/ARM64 託管 runner 上執行獨立的 `probe_native_host.py`。`NativeHostProbe.def` 宣告能力查詢、VM/vCPU 建立及清理證據的順序。報告保留原始碼/二進位雜湊、原生宿主 ISA 及每一步宿主狀態碼。`setup_ready` 只證明初始化成功，不執行客體指令。缺少 API/裝置能力記為 `unavailable`；建置、初始化、清理、逾時或證據格式錯誤會使工作失敗。ARM64 託管環境的可用性須逐次觀察，此探測不構成 ARM64 工作負載驗收。 兩個 Linux 工作流程均透過 `prepare_kvm_ci.py`，只授予目前託管 runner 帳戶既有 KVM 字元裝置的存取權限，並記錄裝置身分及權限；腳本拒絕本機與自管機器，不會建立缺少的裝置。
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
