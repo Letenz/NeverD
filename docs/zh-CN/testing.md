@@ -1093,3 +1093,5 @@ Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 `NeverDLLVMCPhiTests` 还验证共同循环出口的不同后继 PHI 对、有序观察调用、输出内存及调用者 IR 不变。整模块与指定函数的 C 均在 O0/O2 下对照独立参考实现执行。不同退出判断及额外分支前驱覆盖保守处理。
 
 `NeverDLLVMCPhiTests` 用独立 O0/O2 oracle 检查多回边循环表达式合并、观察调用顺序、修改内存的调用之前的值快照、窄位宽回绕和符号扩展。覆盖整模块与单函数输出且调用方 IR 不变，以及入边冲突、共享根、poison 标注、未定义操作数、变量移位、受约束 intrinsic、异常函数和预算不足时完整拒绝。只有所有入边运算一致，旋转调用才可合并。
+
+`NeverDUnicornDecodeTests` 检查 AVX-512/APX CPU 模型的 EVEX 寄存器保留位，以及 ROUND 访存异常优先级、状态保留和恢复。独立 Linux x64 主机程序确认了传统编码的对齐异常和标量/VEX 编码的缺页异常。这些引擎测试不扩展 checked 指令准入，也不代表 APX 原生执行证据。

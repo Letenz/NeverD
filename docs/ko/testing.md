@@ -1175,3 +1175,5 @@ Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 `NeverDLLVMCPhiTests`는 공통 루프 종료 지점의 서로 다른 후속 PHI 쌍, 관찰 호출 순서, 출력 메모리 및 호출자 IR 보존도 검증합니다. 전체 모듈과 선택 함수의 C를 O0/O2에서 독립 참조 구현과 비교 실행합니다. 다른 종료 비교와 추가 선행 블록은 보수적 처리를 검사합니다.
 
 `NeverDLLVMCPhiTests`는 독립적인 O0/O2 oracle로 여러 역방향 간선의 연산 결합, 관찰 호출 순서, 메모리 수정 호출 전 값 스냅샷, 좁은 정수의 래핑과 부호 확장을 검사합니다. 전체 모듈 및 단일 함수 출력에서 호출자 IR 보존, 간선 불일치, 공유 루트, poison 속성, 미정의 피연산자, 가변 시프트, 제약된 intrinsic, 예외 함수, 예산 부족 시 전체 거부를 확인합니다. 모든 입력 연산이 같을 때만 회전 호출을 합칩니다.
+
+`NeverDUnicornDecodeTests`는 AVX-512/APX CPU 모델의 EVEX 레지스터 예약 비트와 ROUND 메모리 예외 우선순위, 상태 보존, 재개를 검사합니다. 독립적인 Linux x64 호스트 프로그램으로 기존 인코딩의 정렬 예외와 스칼라/VEX 인코딩의 페이지 폴트를 확인했습니다. 이 엔진 테스트는 checked ISA 허용 범위를 확장하거나 APX 네이티브 실행을 입증하지 않습니다.
