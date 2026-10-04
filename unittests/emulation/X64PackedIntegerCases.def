@@ -5,20 +5,10 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_PACKED_VALUE
-NEVERD_PACKED_VALUE(VectorBytes, 16)
-NEVERD_PACKED_VALUE(WordBytes, 8)
-NEVERD_PACKED_VALUE(XmmCount, 16)
 NEVERD_PACKED_VALUE(InputCount, 4)
 NEVERD_PACKED_VALUE(InvalidFormCount, 3)
 NEVERD_PACKED_VALUE(MMXForm, 0)
 NEVERD_PACKED_VALUE(LockedForm, 1)
-NEVERD_PACKED_VALUE(MemoryModRM, 0x01)
-NEVERD_PACKED_VALUE(Nop, 0x90)
-NEVERD_PACKED_VALUE(Lock, 0xf0)
-NEVERD_PACKED_VALUE(Flags, 0xad7)
-NEVERD_PACKED_VALUE(MXCSR, 0x5fa1)
-NEVERD_PACKED_VALUE(SentinelLow, 0x76543210abcdef01ULL)
-NEVERD_PACKED_VALUE(SentinelHigh, 0x123456789abcdef0ULL)
 #endif
 #ifdef NEVERD_PACKED_TEXT
 NEVERD_PACKED_TEXT(ObserverFailure, "packed source observer failed")

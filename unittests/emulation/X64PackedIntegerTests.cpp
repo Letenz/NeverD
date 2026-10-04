@@ -3,27 +3,17 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "HvfTestPolicy.h"
+#include "X64VectorTestSupport.h"
 #include "core/ExecutionDiagnostics.h"
-#include "gtest/gtest.h"
 
-#include "neverd/emulation/AddressSpace.h"
-#include "neverd/emulation/CPU.h"
-
-#include "llvm/Support/Endian.h"
-
-#include <array>
 #include <stdexcept>
-#include <vector>
 #if defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h>
 #endif
 
 namespace neverd::emulation {
 namespace {
-#define NEVERD_USER_VALUE(Name, Value) constexpr uint64_t Name = Value;
-#include "UserExecutionCases.def"
-#undef NEVERD_USER_VALUE
+using namespace vector_test;
 #define NEVERD_PACKED_VALUE(Name, Value) constexpr uint64_t Name = Value;
 #define NEVERD_PACKED_TEXT(Name, Value) constexpr char Name[] = Value;
 #define NEVERD_PACKED_OPERATION(Name, Intrinsic, ...)                          \
@@ -48,9 +38,6 @@ constexpr Instruction Instructions[] = {
 #include "X64PackedIntegerCases.def"
 #undef NEVERD_PACKED_OPERATION
 };
-struct Input {
-  RegisterValue Left, Right;
-};
 #define NEVERD_PACKED_INPUT(Name, AL, AH, BL, BH)                              \
   constexpr Input Name{{AL, AH}, {BL, BH}};
 #include "X64PackedIntegerCases.def"
@@ -66,19 +53,6 @@ constexpr Result Results[] = {
 #include "X64PackedIntegerCases.def"
 #undef NEVERD_PACKED_RESULT
 };
-struct Parameter {
-  const char *Name;
-  ExecutionBackendKind Backend;
-  bool User;
-};
-void PrintTo(const Parameter &P, std::ostream *OS) { *OS << P.Name; }
-constexpr Parameter Parameters[] = {
-#define NEVERD_INTEGER_BACKEND(Name, Backend, User)                            \
-  {#Name, ExecutionBackendKind::Backend, User},
-#include "X64IntegerCases.def"
-#undef NEVERD_INTEGER_BACKEND
-};
-
 void checkHost(const Result &R) {
 #if defined(__x86_64__) || defined(_M_X64)
   const auto Left = _mm_loadu_si128(
@@ -102,85 +76,12 @@ void checkHost(const Result &R) {
 #endif
 }
 
-class X64PackedInteger : public testing::TestWithParam<Parameter> {
+class X64PackedInteger : public X64VectorTest {
 protected:
-  std::unique_ptr<ExecutionBackend> CPU;
-  void SetUp() override { reset(); }
-  void reset() {
-    CPU.reset();
-    auto B = createExecutionBackend(GetParam().Backend,
-                                    GetParam().User
-                                        ? ExecutionContract::CheckedUserX64
-                                        : ExecutionContract::CheckedX64,
-                                    Limit, GuestArchitecture::X64);
-    if (!B) {
-      auto E = B.takeError();
-      const bool Unavailable = E.isA<BackendUnavailableError>();
-      auto Reason = llvm::toString(std::move(E));
-      if (Unavailable &&
-          !requireHvf(GetParam().Backend, GuestArchitecture::X64))
-        GTEST_SKIP() << Reason;
-      FAIL() << Reason;
-    }
-    CPU = std::move(B->CPU);
-    llvm::cantFail(
-        CPU->map(Code, PageSize, Read | Write | Execute | UserAccessible));
-    llvm::cantFail(CPU->map(Data, PageSize, Read | Write | UserAccessible));
-    llvm::cantFail(
-        CPU->mapAlias(Alias, Data, PageSize, Read | Write | UserAccessible));
-  }
-  void seed(const Input &Input, uint64_t Address = Data) {
-    llvm::cantFail(CPU->setXmm(0, Input.Left));
-    llvm::cantFail(CPU->setXmm(1, Input.Right));
-    for (unsigned Index = 2; Index < XmmCount; ++Index)
-      llvm::cantFail(
-          CPU->setXmm(Index, {SentinelLow + Index, SentinelHigh - Index}));
-    llvm::cantFail(CPU->setReg(X64Register::AX, SentinelLow));
-    llvm::cantFail(CPU->setReg(X64Register::DX, SentinelHigh));
-    llvm::cantFail(CPU->setReg(X64Register::CX, Address));
-    llvm::cantFail(CPU->setReg(X64Register::FLAGS, Flags));
-    llvm::cantFail(CPU->setReg(X64Register::MXCSR, MXCSR));
-    llvm::cantFail(CPU->writeInteger(Data, Input.Right[0], WordBytes));
-    llvm::cantFail(
-        CPU->writeInteger(Data + WordBytes, Input.Right[1], WordBytes));
-  }
-  ExecutionExit run(llvm::ArrayRef<uint8_t> Instruction,
-                    BackendHooks Hooks = {}) {
-    std::vector<uint8_t> Bytes(Instruction.begin(), Instruction.end());
-    Bytes.push_back(Nop);
-    llvm::cantFail(CPU->write(Code, Bytes));
-    Hooks.Instruction = [&](uint64_t PC, uint32_t) {
-      if (PC != Code)
-        CPU->stop();
-    };
-    llvm::cantFail(CPU->installHooks(std::move(Hooks)));
-    return llvm::cantFail(CPU->runUntilExit(Code, Timeout));
-  }
   std::vector<uint8_t> memory(const Instruction &I) {
     std::vector<uint8_t> Bytes(I.Bytes.begin(), I.Bytes.end());
     Bytes.back() = MemoryModRM;
     return Bytes;
-  }
-  void expectState(const Input &Input, const RegisterValue &Expected,
-                   uint64_t PC, uint64_t Address = Data) {
-    EXPECT_EQ(llvm::cantFail(CPU->xmm(0)), Expected);
-    EXPECT_EQ(llvm::cantFail(CPU->xmm(1)), Input.Right);
-    for (unsigned Index = 2; Index < XmmCount; ++Index)
-      EXPECT_EQ(llvm::cantFail(CPU->xmm(Index)),
-                (RegisterValue{SentinelLow + Index, SentinelHigh - Index}));
-    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::AX)), SentinelLow);
-    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::DX)), SentinelHigh);
-    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::CX)), Address);
-    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::FLAGS)), Flags);
-    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::MXCSR)), MXCSR);
-    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), PC);
-    // A terminal CPU fault rejects ordinary API reads. Inspect diagnostic
-    // backing directly without consuming the fault or changing guest state.
-    std::array<uint8_t, VectorBytes> Bytes{};
-    ASSERT_EQ(llvm::toString(CPU->snapshotBacking(Alias, Bytes)), "");
-    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data()), Input.Right[0]);
-    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + WordBytes),
-              Input.Right[1]);
   }
 };
 

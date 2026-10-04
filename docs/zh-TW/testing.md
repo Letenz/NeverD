@@ -225,6 +225,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64PackedIntegerTests.cpp` 使用 `X64PackedIntegerCases.def` 中的原始編碼和 180 組固定向量結果，並與原生 x64 編譯器 intrinsic 獨立核對。暫存器與頁尾別名 RAM 案例保留其他 XMM、整數哨兵值、FLAGS、MXCSR 和來源位元組。觀察器停止／失敗與可恢復讀取故障保留狀態，修復後可重試一次。MMX、LOCK、未對齊和 MMIO 都在回呼前拒絕。原生 CI 強制執行 WHP 的兩個特權級。
 
+`X64PackedShiftTests.cpp` 與原始 `X64PackedShiftCases.def` 使用 16 個立即數計數和 21 個變數計數，將十種移位與獨立純量計算、宿主 SSE2 intrinsic 對照。涵蓋計數／目標別名、高位忽略、對齊、觀察器、可恢復故障和裝置拒絕。`X64VectorTestSupport.h` 與打包算術測試共用暫存器與 RAM 斷言。原生 CI 強制執行 WHP 的兩個特權級。
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
@@ -1045,11 +1047,11 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 僅原生 CPU 的 CI 檢出初始化固定版本的 Capstone 原始碼，並使用經驗證的預建 LLVM 套件。設定 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 且停用 Unicorn 後端後，CPU 測試目標的設定、建置和連結均不需要 Unicorn 原始碼，也不依賴簽章庫及外部語料。預設 CI 仍啟用完整語意測試組。
 
-現有 `ci.yml` 在 Windows x64 runner 上提供明確選擇的 `native_cpu_only` 手動模式。`NativeCPUTests.def` 選擇十個測試目標；`run_native_cpu_ci.py` 先建置它們，再執行篩選後的 CTest，並儲存清單、JUnit、日誌和摘要。共用 CI 解析器區分通過、失敗、略過、停用和未執行結果。每個宣告的 WHP 原生映射案例都必須被探索並執行；缺少或略過原生證據會使聚焦工作失敗。預設的 LLVM 原始碼建置 CI 保持原樣。協定測試和編譯不能取代 WHP 或 ARM64 原生工作負載驗證。
+現有 `ci.yml` 在 Windows x64 runner 上提供明確選擇的 `native_cpu_only` 手動模式。`NativeCPUTests.def` 選擇測試目標；`run_native_cpu_ci.py` 先建置它們，再執行篩選後的 CTest，並儲存清單、JUnit、日誌和摘要。共用 CI 解析器區分通過、失敗、略過、停用和未執行結果。每個宣告的 WHP 原生映射案例都必須被探索並執行；缺少或略過原生證據會使聚焦工作失敗。預設的 LLVM 原始碼建置 CI 保持原樣。協定測試和編譯不能取代 WHP 或 ARM64 原生工作負載驗證。
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 256 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 484 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `256 CPU + 224 WHP + 4 SEH = 484`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 266 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 494 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `266 CPU + 224 WHP + 4 SEH = 494`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 

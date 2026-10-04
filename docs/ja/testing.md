@@ -228,6 +228,8 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `X64PackedIntegerTests.cpp` は `X64PackedIntegerCases.def` の独自エンコードと 180 組の固定結果を使い、ネイティブ x64 のコンパイラ intrinsic と独立に照合します。レジスタ形式とページ末尾の RAM エイリアス形式で、他の XMM、整数番兵値、FLAGS、MXCSR、入力バイトの保持を確認します。監視の停止・失敗と回復可能な読み取り障害では状態を保持し、修復後に一回再試行できます。MMX、LOCK、非整列、MMIO はコールバック前に拒否します。ネイティブ CI は WHP の両特権レベルを必須とします。
 
+`X64PackedShiftTests.cpp` と独自の `X64PackedShiftCases.def` は、16 個の即値と 21 個の可変回数で十種類のシフトを独立したスカラー計算およびネイティブ SSE2 intrinsic と照合します。回数と出力の同一レジスタ使用、上位ビットの無視、整列、監視、回復可能な障害、デバイス拒否を検証します。`X64VectorTestSupport.h` はパック算術テストとレジスタと RAM の検証を共有します。ネイティブ CI は WHP の両特権モードを必須とします。
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
@@ -1099,11 +1101,11 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 ネイティブ CPU 専用 CI は固定リビジョンの Capstone ソースを初期化し、検証済みの LLVM パッケージを使います。`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` と Unicorn アダプターの無効化により、CPU テストの構成・ビルド・リンクに Unicorn ソースは不要です。署名データや外部コーパスにも依存しません。既定の CI は完全な意味論テスト群を引き続き有効にします。
 
-既存の `ci.yml` は Windows x64 runner で明示的に選ぶ手動モード `native_cpu_only` を提供します。`NativeCPUTests.def` が十のテスト所有者を選び、`run_native_cpu_ci.py` が構築してから絞り込んだ CTest を実行し、一覧・JUnit・ログ・集計を保存します。共通 CI パーサーは成功、失敗、スキップ、無効、未実行を区別します。宣言された WHP ネイティブマッピングケースはすべて検出・実行が必須で、証拠の欠落やスキップはこのジョブを失敗にします。既定の LLVM ソースビルド CI は変わりません。プロトコルテストやコンパイルは WHP・ARM64 のネイティブワークロード検証を代替しません。
+既存の `ci.yml` は Windows x64 runner で明示的に選ぶ手動モード `native_cpu_only` を提供します。`NativeCPUTests.def` が対象テストを選び、`run_native_cpu_ci.py` が構築してから絞り込んだ CTest を実行し、一覧・JUnit・ログ・集計を保存します。共通 CI パーサーは成功、失敗、スキップ、無効、未実行を区別します。宣言された WHP ネイティブマッピングケースはすべて検出・実行が必須で、証拠の欠落やスキップはこのジョブを失敗にします。既定の LLVM ソースビルド CI は変わりません。プロトコルテストやコンパイルは WHP・ARM64 のネイティブワークロード検証を代替しません。
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 256 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 484 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `256 CPU + 224 WHP + 4 SEH = 484`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 266 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 494 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `266 CPU + 224 WHP + 4 SEH = 494`.
 
 C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
 

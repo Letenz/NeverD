@@ -6470,6 +6470,363 @@ struct NativeFloatingFixture : NativeFixture {
   }
 };
 
+TEST(NativeSourceHints,
+     FloatingPairDemandRequiresCompleteLowDoubleObservation) {
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    LowFunc F;
+    F.Blocks.emplace_back();
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.addInput(NdVar::cst(0x1080, 8));
+    LowOp Read;
+    Read.Opcode = NdOp::COPY;
+    Read.Output = NdVar::reg(a64reg::V(9), 16);
+    Read.addInput(NdVar::reg(a64reg::V(1), Mutation == 1 ? 8 : 16));
+    F.Blocks[0].Ops = {Call, Read};
+    if (Mutation == 2)
+      F.Blocks[0].Ops.back().Inputs[0].Size = 4;
+    if (Mutation == 3)
+      F.Blocks[0].Ops.back().Inputs[0].Offset += 8;
+    if (Mutation == 4)
+      F.Blocks[0].Ops.front().Opcode = NdOp::INDIR_CALL;
+    if (Mutation >= 5 && Mutation <= 8) {
+      LowOp Stop;
+      Stop.Opcode = Mutation == 5   ? NdOp::INTRINSIC
+                    : Mutation == 6 ? NdOp::INDIR_CALL
+                                    : NdOp::COPY;
+      if (Mutation >= 7) {
+        Stop.Output = NdVar::reg(a64reg::V(1) + (Mutation == 8 ? 4 : 0), 4);
+        Stop.addInput(NdVar::cst(0, 4));
+      }
+      F.Blocks[0].Ops.insert(F.Blocks[0].Ops.begin() + 1, Stop);
+    }
+    if (Mutation == 9) {
+      F.Blocks[0].Ops.back().Opcode = NdOp::INT_XOR;
+      F.Blocks[0].Ops.back().addInput(Read.Inputs[0]);
+    }
+    if (Mutation == 10) {
+      F.Blocks[0].Ops.pop_back();
+      F.Blocks.emplace_back();
+      F.Blocks.back().Ops.push_back(Read);
+    }
+    if (Mutation == 11)
+      F.Blocks[0].Ops.back().Inputs[0].Size = 32;
+    EXPECT_EQ(observedNativeFloatingPairReturns(F, Arch::AArch64),
+              Mutation <= 1 ? std::set<va_t>{0x1080} : std::set<va_t>{});
+    EXPECT_TRUE(observedNativeFloatingPairReturns(F, Arch::X64).empty());
+  }
+}
+
+TEST(NativeSourceHints, FloatingPairsRequireBothCurrentCompleteCarriers) {
+  for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    NativeFloatingFixture F(Arch::AArch64, 8);
+    auto Second = F.Med.Blocks[0].Ops[0];
+    Second.Opcode = NdOp::FLOAT_SUB;
+    Second.Output.RegOff = a64reg::V(1);
+    Second.Output.Id = 11;
+    F.Med.Blocks[0].Ops.insert(F.Med.Blocks[0].Ops.end() - 1, Second);
+    std::string Error;
+    auto Scalar = F.infer(Error);
+    ASSERT_TRUE(Scalar) << Error;
+    F.Med.SourceTypeHint = F.High.SourceTypeHint = *Scalar;
+    F.Med.SourceParametersBound = true;
+    auto &Ops = F.Med.Blocks[0].Ops;
+    switch (Mutation) {
+    case 1:
+      F.Med.SourceTypeHint->Origin = F.High.SourceTypeHint->Origin =
+          SourceFunctionTypeHint::OriginKind::DarwinSDK;
+      break;
+    case 2:
+      F.Audit.MedIRVerified = false;
+      break;
+    case 3:
+      F.High.Entry += 4;
+      break;
+    case 4:
+      F.Med.SourceParametersBound = false;
+      break;
+    case 5:
+      F.High.SourceTypeHint->ReturnType = NdType::makeFloat(4);
+      break;
+    case 6:
+      Ops[1].Output.Size = 4;
+      break;
+    case 7:
+      Ops[0].Output.Size = 4;
+      break;
+    case 8:
+      Ops[1].Output.RegOff += 8;
+      break;
+    case 9:
+      Ops.erase(Ops.begin() + 1);
+      break;
+    case 10: {
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(MedVar::makeConst(0x1080, 8));
+      Ops.insert(Ops.end() - 1, Call);
+      break;
+    }
+    case 11:
+      F.Med.Blocks[0].ExceptionalSuccs.emplace_back();
+      break;
+    case 12:
+      F.Med.Blocks[0].Succs.push_back(99);
+      break;
+    case 13:
+      F.Med.SourceTypeHint->Architecture = F.High.SourceTypeHint->Architecture =
+          Arch::X64;
+      break;
+    case 14:
+      F.Med.DoesNotReturn = true;
+      break;
+    case 15:
+      F.Med.SourceTypeHint->ReturnLocation.ValueBytes =
+          F.High.SourceTypeHint->ReturnLocation.ValueBytes = 4;
+      break;
+    case 16:
+      F.Med.SourceTypeHint->ReturnType = F.High.SourceTypeHint->ReturnType =
+          F.Med.ReturnType = F.High.ReturnType = NdType::makeInt(8);
+      break;
+    case 17:
+      F.High.Body.clear();
+      break;
+    }
+    const auto Pair =
+        refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit);
+    EXPECT_EQ(bool(Pair), Mutation == 0);
+    if (Pair) {
+      ASSERT_EQ(Pair->ReturnComponents.size(), 2U);
+      EXPECT_EQ(Pair->ReturnType->Kind, NdTypeKind::Struct);
+      for (unsigned I = 0; I != 2; ++I) {
+        EXPECT_EQ(Pair->ReturnComponents[I].Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Pair->ReturnComponents[I].RegisterOffset, a64reg::V(I));
+        EXPECT_EQ(Pair->ReturnComponents[I].ValueBytes, 8U);
+      }
+      EXPECT_TRUE(equalSourceABIs(*F.Med.SourceTypeHint, *Scalar));
+      F.Med.SourceTypeHint = F.High.SourceTypeHint = *Pair;
+      F.Med.ReturnType = F.High.ReturnType = Pair->ReturnType;
+      EXPECT_FALSE(refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit));
+    }
+  }
+}
+
+TEST(NativeSourceHints,
+     FloatingPairPathsMeetBothDoublesAcrossJoinsAndBackedges) {
+  for (bool Loop : {false, true})
+    for (bool Missing : {false, true}) {
+      NativeFloatingFixture F(Arch::AArch64, 8);
+      std::string Error;
+      const auto Scalar = F.infer(Error);
+      ASSERT_TRUE(Scalar) << Error;
+      F.Med.SourceTypeHint = F.High.SourceTypeHint = *Scalar;
+      F.Med.SourceParametersBound = true;
+      const auto First = F.Med.Blocks[0].Ops[0];
+      auto Second = First;
+      Second.Output.RegOff = a64reg::V(1);
+      Second.Output.Id = 11;
+      const auto Return = F.Med.Blocks[0].Ops.back();
+      F.Med.Blocks[0].Ops = {First};
+      F.Med.Blocks[0].Succs = {1, 2};
+      F.Med.Blocks.resize(4);
+      for (int I = 1; I != 4; ++I)
+        F.Med.Blocks[I].Id = I;
+      F.Med.Blocks[1].Preds =
+          Loop ? std::vector<int>{0, 1} : std::vector<int>{0};
+      F.Med.Blocks[1].Succs =
+          Loop ? std::vector<int>{1, 3} : std::vector<int>{3};
+      F.Med.Blocks[1].Ops = {Second};
+      F.Med.Blocks[2].Preds = {0};
+      F.Med.Blocks[2].Succs = {3};
+      Second.Output.Id = 12;
+      F.Med.Blocks[2].Ops =
+          Missing ? std::vector<MedOp>{} : std::vector<MedOp>{Second};
+      F.Med.Blocks[3].Preds = {1, 2};
+      F.Med.Blocks[3].Ops = {Return};
+      EXPECT_EQ(
+          bool(refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit)),
+          !Missing)
+          << "loop=" << Loop << " missing=" << Missing;
+    }
+}
+
+TEST(NativeSourceHints, FloatingPairReliftingPublishesBothComputedDoubles) {
+  NativeFixture F;
+  F.Audit.DecodedInstructions = F.Audit.LiftedInstructions = 5;
+  SourceFunctionTypeHint Scalar;
+  Scalar.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Scalar.ReturnType = NdType::makeFloat(8);
+  Scalar.Parameters = {{"a", NdType::makeFloat(8)},
+                       {"b", NdType::makeFloat(8)}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Scalar, Arch::AArch64, Error))
+      << Error;
+  LowFunc Low;
+  Low.Entry = F.Med.Entry;
+  LowBlock B;
+  B.Id = 0;
+  B.StartAddr = Low.Entry;
+  B.EndAddr = Low.Entry + 20;
+  for (unsigned I = 0; I != 2; ++I) {
+    LowOp Compute;
+    Compute.Addr = Low.Entry + I * 4;
+    Compute.Opcode = I ? NdOp::FLOAT_SUB : NdOp::FLOAT_ADD;
+    Compute.Output = NdVar::tmp(I, 8);
+    Compute.addInput(NdVar::reg(a64reg::V(0), 8));
+    Compute.addInput(NdVar::reg(a64reg::V(1), 8));
+    B.Ops.push_back(Compute);
+  }
+  for (unsigned I = 0; I != 2; ++I) {
+    LowOp Write;
+    Write.Addr = Low.Entry + 8 + I * 4;
+    Write.Opcode = NdOp::INT_ZEXT;
+    Write.Output = NdVar::reg(a64reg::V(I), 16);
+    Write.addInput(NdVar::tmp(I, 8));
+    B.Ops.push_back(Write);
+  }
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = Low.Entry + 16;
+  Return.addInput(NdVar::reg(a64reg::X30, 8));
+  B.Ops.push_back(Return);
+  Low.Blocks = {B};
+  const auto Bind = [&](const SourceFunctionTypeHint &Hint) {
+    std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceCalleeTypeHints(&Hints);
+    Converter.setSourceEntryTypeHints(&Hints);
+    F.Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    F.Med.SourceTypeHint = Hint;
+    recoverCallAbi(F.Med, Arch::AArch64, {});
+    inferMedTypes(F.Med, Arch::AArch64);
+    F.High = MedToHighConverter().convert(F.Med, Arch::AArch64);
+  };
+  Bind(Scalar);
+  const auto Pair = refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit);
+  ASSERT_TRUE(Pair);
+  Bind(*Pair);
+  ASSERT_TRUE(F.Med.SourceParametersBound);
+  EXPECT_TRUE(equalSourceTypes(F.High.ReturnType, Pair->ReturnType));
+  const auto Limitation = sdk::sourceBodyLimitation(F.High, *Pair, &F.Audit);
+  EXPECT_TRUE(Limitation.empty()) << Limitation;
+  EXPECT_FALSE(refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit));
+  unsigned Returns = 0;
+  walkStmts(F.High.Body, [&](const HighStmt &S) {
+    if (S.Kind != StmtKind::Return)
+      return;
+    ++Returns;
+    ASSERT_TRUE(S.RetVal);
+    EXPECT_TRUE(equalSourceTypes(S.RetVal->Type, Pair->ReturnType));
+    ASSERT_EQ(S.RetVal->Operands.size(), 2U);
+  });
+  EXPECT_EQ(Returns, 1U);
+  // A carrier write is only a candidate. Publication must still reject an
+  // undefined low lane after rebuilding the complete record-return function.
+  Low.Blocks[0].Ops[1].Inputs[1] = NdVar::tmp(99, 8);
+  Bind(*Pair);
+  EXPECT_FALSE(sdk::sourceBodyLimitation(F.High, *Pair, &F.Audit).empty());
+}
+
+TEST(NativeSourceHints,
+     FloatingRecordCallsKeepUpperLanesUnknownAndEvaluateOnce) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Width : {4U, 8U})
+      for (unsigned Count : {2U, 4U})
+        for (unsigned Lane = 0; Lane != Count; ++Lane)
+          for (bool Upper : {false, true}) {
+            if (Architecture == Arch::X64 &&
+                (Width != 8 || Count != 4 || Lane == 3))
+              continue;
+            SCOPED_TRACE(::testing::Message()
+                         << unsigned(Architecture) << ":" << Width << ":"
+                         << Count << ":" << Lane << ":" << Upper);
+            const auto &TRI = getTargetRegInfo(Architecture);
+            NativeFixture F(Architecture);
+            F.Audit.DecodedInstructions = F.Audit.LiftedInstructions = 4;
+            SourceFunctionTypeHint Entry;
+            Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+            Entry.ReturnType = NdType::makeFloat(Width);
+            std::string Error;
+            ASSERT_TRUE(assignDarwinFixedSourceABI(Entry, Architecture, Error))
+                << Error;
+            auto Callee = Entry;
+            std::vector<TypeRef> Members(Count, NdType::makeFloat(Width));
+            if (Architecture == Arch::X64)
+              Members.back() = NdType::makePtr(NdType::makeVoid());
+            Callee.ReturnType = NdType::makeStruct(Members);
+            ASSERT_TRUE(
+                Architecture == Arch::X64
+                    ? assignDarwinSwiftSourceABI(Callee, Architecture, Error)
+                    : assignDarwinFixedSourceABI(Callee, Architecture, Error))
+                << Error;
+            LowFunc Low;
+            Low.Entry = F.Med.Entry;
+            LowBlock B;
+            B.Id = 0;
+            B.StartAddr = Low.Entry;
+            B.EndAddr = Low.Entry + 16;
+            LowOp Call;
+            Call.Opcode = NdOp::CALL;
+            Call.Addr = Low.Entry;
+            Call.addInput(NdVar::cst(0x1080, 8));
+            B.Ops.push_back(Call);
+            LowOp Extract;
+            Extract.Opcode = NdOp::SUBBYTES;
+            Extract.Addr = Low.Entry + 4;
+            Extract.Output = NdVar::tmp(0, Width);
+            Extract.addInput(NdVar::reg(TRI.FPParamRegs[Lane], 16));
+            Extract.addInput(NdVar::cst(Upper ? Width : 0, 8));
+            B.Ops.push_back(Extract);
+            LowOp Write;
+            Write.Opcode = NdOp::INT_ZEXT;
+            Write.Addr = Low.Entry + 8;
+            Write.Output = NdVar::reg(TRI.FPReturnReg, 16);
+            Write.addInput(Extract.Output);
+            B.Ops.push_back(Write);
+            LowOp Return;
+            Return.Opcode = NdOp::RETURN;
+            Return.Addr = Low.Entry + 12;
+            Return.addInput(NdVar::reg(
+                TRI.LinkRegister ? TRI.LinkRegister : TRI.IntReturnReg, 8));
+            B.Ops.push_back(Return);
+            Low.Blocks = {B};
+            std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Entry},
+                                                         {0x1080, Callee}};
+            LowToMedConverter Converter;
+            Converter.setSourceCallHintsEnabled(true);
+            Converter.setSourceCalleeTypeHints(&Hints);
+            Converter.setSourceEntryTypeHints(&Hints);
+            F.Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+            F.Med.SourceTypeHint = Entry;
+            recoverCallAbi(F.Med, Architecture, {{0x1080, "two_doubles"}});
+            inferMedTypes(F.Med, Architecture);
+            F.High = MedToHighConverter().convert(F.Med, Architecture);
+            unsigned Calls = 0;
+            const auto Limitation = sdk::sourceBodyLimitation(
+                F.High, Entry, &F.Audit, [](const HighExpr &) { return true; });
+            EXPECT_EQ(Limitation.empty(), !Upper) << Limitation;
+            walkStmts(F.High.Body, [&](const HighStmt &S) {
+              forEachExpr(S, [&](const ExprPtr &E) {
+                const auto Visit = [&](const auto &Self,
+                                       const ExprPtr &X) -> void {
+                  if (!X)
+                    return;
+                  if (X->SourceCallHint)
+                    ++Calls;
+                  for (const auto &Operand : X->Operands)
+                    Self(Self, Operand);
+                };
+                Visit(Visit, E);
+              });
+            });
+            EXPECT_EQ(Calls, 1U);
+          }
+}
+
 TEST(NativeSourceHints, FloatingLanesPreserveScalarParametersAndResults) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Width : {4U, 8U})

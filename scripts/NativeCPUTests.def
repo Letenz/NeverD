@@ -848,3 +848,36 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PackedInteger."
     "DeviceSourcesRejectWithoutCallingTheDevice/whpUser")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+// Packed shifts retain count and memory semantics at both WHP privileges.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "ImmediateAndVectorCountsMatchHostAndScalarResults/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "ImmediateAndVectorCountsMatchHostAndScalarResults/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "SelfCountReadsTheOriginalDestination/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64PackedShift."
+                                "SelfCountReadsTheOriginalDestination/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "ZeroAndOversizedCountsStillObserveAndValidateMemory/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "ZeroAndOversizedCountsStillObserveAndValidateMemory/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "InvalidFormsRejectWithoutObservationsOrStateChanges/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "InvalidFormsRejectWithoutObservationsOrStateChanges/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "DeviceCountsRejectBeforeAnyDeviceCallback/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedShift."
+    "DeviceCountsRejectBeforeAnyDeviceCallback/whpUser")
+#endif

@@ -1074,16 +1074,35 @@ TEST(SourceAggregate, SwiftMixedCallAndReturnPreserveAllFourTypedFields) {
     ASSERT_TRUE(BoundCall.SourceCallHint);
     EXPECT_EQ(BoundCall.NumInputs, 6U);
     EXPECT_EQ(BoundCall.Output.Size, 32U);
-    std::map<uint64_t, uint64_t> Extracts;
+    std::map<uint64_t, MedVar> Extracts;
     for (const auto &Op : Med.Blocks.front().Ops)
       if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
           Op.Inputs[0] == BoundCall.Output && Op.Inputs[1].isConst()) {
         EXPECT_EQ(Op.Output.Size, 8U);
-        Extracts.emplace(Op.Inputs[1].ConstVal, Op.Output.RegOff);
+        Extracts.emplace(Op.Inputs[1].ConstVal, Op.Output);
       }
     ASSERT_EQ(Extracts.size(), 4U);
-    for (size_t I = 0; I != 4; ++I)
-      EXPECT_EQ(Extracts.at(I * 8), Hint.ReturnComponents[I].RegisterOffset);
+    for (size_t I = 0; I != 4; ++I) {
+      const auto &Value = Extracts.at(I * 8);
+      const auto &Location = Hint.ReturnComponents[I];
+      if (Location.Kind == SourceABICarrierKind::IntegerRegister) {
+        EXPECT_EQ(Value.Kind, MedVar::Reg);
+        EXPECT_EQ(Value.RegOff, Location.RegisterOffset);
+        continue;
+      }
+      EXPECT_EQ(Value.Kind, MedVar::Temp);
+      unsigned Merges = 0;
+      for (const auto &Op : Med.Blocks.front().Ops)
+        if (Op.Opcode == NdOp::CONCAT && Op.NumInputs == 2 &&
+            Op.Inputs[1] == Value) {
+          EXPECT_EQ(Op.Output.Kind, MedVar::Reg);
+          EXPECT_EQ(Op.Output.RegOff, Location.RegisterOffset);
+          EXPECT_EQ(Op.Output.Size, 16U);
+          EXPECT_EQ(Op.Inputs[0].Size, 8U);
+          ++Merges;
+        }
+      EXPECT_EQ(Merges, 1U);
+    }
     Med.SourceTypeHint = Hint;
     recoverCallAbi(Med, A, {});
     inferMedTypes(Med, A);
