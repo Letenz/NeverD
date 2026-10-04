@@ -121,6 +121,11 @@ llvm::Expected<uint64_t> Bionic::linkerError(llvm::StringRef Message,
     return std::move(E);
   return ReturnValue;
 }
+bool Bionic::isResident(const std::string &Library) const {
+  const auto &Scope = Options.Android->DefaultScope;
+  return Scope &&
+         std::find(Scope->begin(), Scope->end(), Library) != Scope->end();
+}
 llvm::Expected<std::optional<uint64_t>> Bionic::dlfcn(NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   auto Value = [](uint64_t V) { return std::optional<uint64_t>(V); };
@@ -157,16 +162,19 @@ llvm::Expected<std::optional<uint64_t>> Bionic::dlfcn(NativeCallEvent &Call) {
     if (Library->size() > 1024)
       return failure("dynamic library name exceeds the model limit");
     Call.Library = *Library;
-    // API 28 LP64 flags. Scope promotion and NODELETE need a fuller loader.
+    // API 28 LP64 accepts any combination of these bits, including zero
+    // and NOLOAD alone. Scope promotion and NODELETE need a fuller loader.
     uint32_t Flags = static_cast<uint32_t>(A[1]);
-    if ((Flags & ~7u) || ((Flags & 3u) != 1 && (Flags & 3u) != 2))
-      return Unsupported("only LAZY/NOW with optional NOLOAD are modeled");
+    if (Flags & ~0x1107u)
+      return Error("invalid flags to dlopen");
+    if (Flags & 0x1100u)
+      return Unsupported("GLOBAL and NODELETE require a fuller loader");
     if (!Linked.Libraries.count(*Library))
       return Error("library is absent from the explicit local catalogue");
     auto &State = OpenLibraries[*Library];
-    if (!State.References && (Flags & 4u))
+    if (!State.References && !isResident(*Library) && (Flags & 4u))
       return Error("library is not open (NOLOAD)");
-    if (!State.References) {
+    if (!State.Handle) {
       if (NextHandle > UINT64_MAX - 2)
         return failure("dynamic library handle space exhausted");
       State.Handle = NextHandle;
@@ -187,9 +195,24 @@ llvm::Expected<std::optional<uint64_t>> Bionic::dlfcn(NativeCallEvent &Call) {
     if (Symbol->size() > 1024)
       return failure("dynamic symbol name exceeds the model limit");
     Call.Symbol = *Symbol;
-    if (!A[0] || A[0] == UINT64_MAX)
+    if (!A[0]) {
+      const auto &Scope = Options.Android->DefaultScope;
+      if (!Scope)
+        return Unsupported(
+            "RTLD_DEFAULT requires ordered process scopes (default_scope)");
+      for (const auto &Library : *Scope) {
+        const auto &Symbols = Linked.Libraries.at(Library);
+        auto I = Symbols.find(*Symbol);
+        if (I != Symbols.end()) {
+          Call.Library = Library;
+          return Value(I->second);
+        }
+      }
+      return Error("symbol is absent from the explicit default scope");
+    }
+    if (A[0] == UINT64_MAX)
       return Unsupported(
-          "RTLD_DEFAULT / RTLD_NEXT require ordered process scopes");
+          "RTLD_NEXT requires ordered process scopes and caller identity");
     auto Handle = Handles.find(A[0]);
     if (Handle == Handles.end())
       return Error("invalid or closed dynamic library handle");
@@ -206,8 +229,13 @@ llvm::Expected<std::optional<uint64_t>> Bionic::dlfcn(NativeCallEvent &Call) {
       return Error("invalid or closed dynamic library handle", UINT64_MAX);
     Call.Library = Handle->second;
     auto &State = OpenLibraries.at(Handle->second);
-    if (!--State.References)
+    if (!State.References)
+      return Error("dynamic library handle has no outstanding opens",
+                   UINT64_MAX);
+    if (!--State.References && !isResident(Handle->second)) {
       Handles.erase(Handle);
+      State.Handle = 0;
+    }
     return Value(0);
   }
   return failure("invalid dlfcn model dispatch");
@@ -218,7 +246,8 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
   auto Value = [](uint64_t V) { return std::optional<uint64_t>(V); };
   if (!Call.Library.empty()) {
     auto I = OpenLibraries.find(Call.Library);
-    if (I == OpenLibraries.end() || !I->second.References) {
+    if (!isResident(Call.Library) &&
+        (I == OpenLibraries.end() || !I->second.References)) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic =
           "call through an inactive dynamic library: " + Call.Library;

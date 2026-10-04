@@ -144,8 +144,10 @@ NUL-free names no longer than 1024 bytes and no duplicate functions per library.
 Only functions are represented; data symbols and symbol versions need a fuller
 linker model.
 
-Supported flags are LP64 `RTLD_LAZY` (1) or `RTLD_NOW` (2), optionally with
-`RTLD_NOLOAD` (4). Repeated opens share a live handle and increment its reference
+Supported flags are any combination of LP64 `RTLD_LAZY` (1), `RTLD_NOW` (2)
+and `RTLD_NOLOAD` (4), including zero and NOLOAD alone, as accepted by API 28.
+Unknown bits return a linker error; recognized GLOBAL/NODELETE requests stop
+as unsupported. Repeated opens share a live handle and increment its reference
 count. The last close invalidates that handle; a later open receives a new one.
 Calls through a provider's trap while that provider is closed stop explicitly.
 Missing libraries/symbols, closed or invalid handles, and a null symbol name
@@ -153,10 +155,39 @@ return a lookup error. `dlerror()` consumes the pending guest error pointer in
 API 28 TLS slot 6 once; successful lookups do not clear an earlier error, and
 `errno` is independent. Error message wording belongs to the model.
 
-`dlopen(NULL)`, `RTLD_DEFAULT`, `RTLD_NEXT`, `RTLD_GLOBAL`, `RTLD_NODELETE`,
+An optional `default_scope` supplies the complete ordered provider list for
+`dlsym(RTLD_DEFAULT, name)` (handle 0 on LP64):
+
+```json
+{"android": {
+  "entry_symbol": "inspect_buffer",
+  "libraries": {"libfirst.so": ["strlen"], "libsecond.so": ["strlen", "memcmp"]},
+  "default_scope": ["libsecond.so", "libfirst.so"]
+}}
+```
+
+The first provider containing the requested function wins; reports retain its
+library identity. Entries must be distinct exact names in `libraries`. An
+omitted scope is unknown and stops explicitly; `[]` asserts an empty scope and
+produces ordinary lookup errors. Merely listing a library in the catalogue or
+opening it with `RTLD_LOCAL` does not add it to this search.
+
+Scope providers are explicitly resident for the whole workload. Their functions
+can be called before `dlopen`; `RTLD_NOLOAD` succeeds, and balanced opens/closes
+preserve their handles and callable traps. A close without an outstanding open
+returns a modeled error. Other providers retain the ordinary unload behavior
+above. Each workload starts with fresh handles and linker errors.
+
+This is a caller-supplied, fixed search snapshot. It must already incorporate
+the applicable namespace, global/local group visibility and search order for
+the workload; the model does not derive them from the input ELF, target SDK,
+dependencies or caller PC. It supplies neither actual provider binaries nor
+new function implementations. ELF import binding is unchanged by this scope.
+
+`dlopen(NULL)`, `RTLD_NEXT`, `RTLD_GLOBAL`, `RTLD_NODELETE`,
 Android linker namespaces and `android_dlopen_ext` remain unsupported. They
 stop with a diagnostic rather than selecting a guessed process-wide scope.
-Existing ELF import binding is unchanged by the catalogue.
+`RTLD_NEXT` additionally requires an authenticated caller position.
 
 ABI references: Android 9 [`dlfcn.h`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/include/dlfcn.h),
 [`dlsym`/`dlclose`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/linker.cpp),

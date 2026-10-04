@@ -1428,6 +1428,11 @@ lookups and the API 28 TLS `dlerror` slot; the C API, CLI and Python expose the
 same named request/call events. These catalogue entries never load host code.
 Missing entries return modeled lookup errors, while calls whose behavior or
 lookup scope is unsupported stop explicitly.
+An optional ordered `default_scope` names resident catalogue providers visible
+to `RTLD_DEFAULT`. Android native input validation checks its membership and
+uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
+C, CLI and Python consume the same option parser. No dependency graph,
+namespace or caller-specific scope is inferred from these explicit inputs.
 
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.

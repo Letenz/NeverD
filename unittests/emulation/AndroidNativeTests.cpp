@@ -488,6 +488,91 @@ TEST_P(AndroidNative, DynamicCatalogueRejectsMalformedCppInputs) {
               std::string::npos);
   }
 }
+TEST_P(AndroidNative, DefaultScopeUsesDeclaredOrderAndResidentProviders) {
+  Options.Android->Libraries = {{"libfixture.so", {"strlen"}},
+                                {"libother.so", {"strlen"}},
+                                {"libempty.so", {}}};
+  for (const std::string First : {"libother.so", "libfixture.so"}) {
+    const std::string Second =
+        First == "libother.so" ? "libfixture.so" : "libother.so";
+    Options.Android->DefaultScope =
+        std::vector<std::string>{"libempty.so", First, Second};
+    auto R = run("default_call");
+    returned(R, 6);
+    ASSERT_EQ(R.NativeCalls.size(), 2u);
+    const auto &Lookup = R.NativeCalls[0], &Call = R.NativeCalls[1];
+    EXPECT_EQ(Lookup.Name, "dlsym");
+    EXPECT_EQ(Lookup.Arguments[0], 0u);
+    EXPECT_EQ(Lookup.Symbol, "strlen");
+    EXPECT_EQ(Lookup.Library, First);
+    ASSERT_TRUE(Lookup.Result);
+    EXPECT_EQ(Call.Name, "strlen");
+    EXPECT_EQ(Call.Library, First);
+    EXPECT_EQ(Call.PC, *Lookup.Result);
+  }
+  Options.Android->DefaultScope = std::vector<std::string>{"libfixture.so"};
+  returned(run("default_resident_lifecycle"), 0);
+  // A fresh workload must not inherit this scope or its handles.
+  Options.Android->DefaultScope.reset();
+  EXPECT_EQ(run("default_call").Stop, ProcessStopReason::UnsupportedService);
+}
+TEST_P(AndroidNative, EmptyDefaultScopeAndLocalOpensPreserveLookupFailures) {
+  Options.Android->Libraries["libfixture.so"] = {"strlen"};
+  Options.Android->DefaultScope.emplace();
+  returned(run("default_call"), 100);
+  returned(run("default_missing"), 0);
+  returned(run("default_local_open"), 0);
+  Options.Android->DefaultScope = std::vector<std::string>{"libfixture.so"};
+  returned(run("default_missing"), 0);
+  auto R = run("dynamic_scope", {UINT64_MAX});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("caller identity"), std::string::npos);
+  EXPECT_EQ(run("dynamic_open", {0, 2}).Stop,
+            ProcessStopReason::UnsupportedService);
+}
+TEST_P(AndroidNative, DefaultScopeDoesNotImplementUnknownFunctions) {
+  Options.Android->Libraries["libfixture.so"] = {"unmodeled_fixture_export"};
+  Options.Android->DefaultScope = std::vector<std::string>{"libfixture.so"};
+  auto R = run("default_unknown");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  ASSERT_EQ(R.NativeCalls.size(), 2u);
+  ASSERT_TRUE(R.NativeCalls.front().Result);
+  EXPECT_EQ(R.NativeCalls.back().PC, *R.NativeCalls.front().Result);
+  EXPECT_EQ(R.NativeCalls.back().Name, "unmodeled_fixture_export");
+  EXPECT_EQ(R.NativeCalls.back().Library, "libfixture.so");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidNative, DynamicFlagsFollowBionicBitmaskContract) {
+  Options.Android->Libraries["libfixture.so"] = {"strlen"};
+  Options.Android->DefaultScope = std::vector<std::string>{"libfixture.so"};
+  for (uint64_t Flags = 0; Flags != 8; ++Flags) {
+    SCOPED_TRACE(Flags);
+    returned(run("dynamic_flag_combinations", {Flags}), 0);
+  }
+  for (uint64_t Flags : {8u, 0x80000000u, 0xffffffffu})
+    returned(run("dynamic_flag_combinations", {Flags}), 0);
+  for (uint64_t Flags : {0x100u, 0x1002u})
+    EXPECT_EQ(run("dynamic_flag_combinations", {Flags}).Stop,
+              ProcessStopReason::UnsupportedService);
+}
+TEST_P(AndroidNative, DefaultScopeRejectsUnknownOrRepeatedProviders) {
+  Options.Android->EntrySymbol = "default_call";
+  Options.Android->Libraries = {{"libfixture.so", {"strlen"}},
+                                {"libother.so", {}}};
+  for (const auto &Scope : std::vector<std::vector<std::string>>{
+           {"missing.so"},
+           {""},
+           {"libfixture.so", "libfixture.so"},
+           {"libfixture.so", "libother.so", "missing.so"},
+           {std::string("bad\0name", 8)}}) {
+    Options.Android->DefaultScope = Scope;
+    auto R =
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("default scope"),
+              std::string::npos);
+  }
+}
 INSTANTIATE_TEST_SUITE_P(Relocations, AndroidNative,
                          testing::Values("none", "android", "relr"));
 TEST(AndroidOptions, StrictWireTypesAndProfiles) {
@@ -502,7 +587,11 @@ TEST(AndroidOptions, StrictWireTypesAndProfiles) {
        R"({"android":{"libraries":{"x":["a","a"]}}})",
        R"({"android":{"libraries":{"x":[""]}}})",
        R"({"android":{"libraries":{"x":["bad\u0000name"]}}})",
-       R"({"android":{"libraries":{"":[]}}})"}) {
+       R"({"android":{"libraries":{"":[]}}})",
+       R"({"android":{"default_scope":null}})",
+       R"({"android":{"default_scope":{}}})",
+       R"({"android":{"default_scope":[7]}})",
+       R"({"android":{"default_scope":["bad\u0000name"]}})"}) {
     auto O = processOptionsFromJSON(Text);
     EXPECT_FALSE(bool(O)) << Text;
     llvm::consumeError(O.takeError());
@@ -518,6 +607,25 @@ TEST(AndroidOptions, StrictWireTypesAndProfiles) {
   auto Bad = emulateProcess("missing", ProcessProfile::LinuxELF64, *O);
   EXPECT_FALSE(bool(Bad));
   EXPECT_NE(llvm::toString(Bad.takeError()).find("Android"), std::string::npos);
+}
+TEST(AndroidOptions, DefaultScopeDistinguishesUnspecifiedFromEmpty) {
+  for (const char *Text :
+       {R"({"android":{}})", R"({"android":{"default_scope":[]}})",
+        R"({"android":{"default_scope":["b","a"]}})"}) {
+    auto O = processOptionsFromJSON(Text);
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    ASSERT_TRUE(O->Android);
+    if (llvm::StringRef(Text).contains("[\"b\"")) {
+      ASSERT_TRUE(O->Android->DefaultScope);
+      EXPECT_EQ(*O->Android->DefaultScope,
+                (std::vector<std::string>{"b", "a"}));
+    } else if (llvm::StringRef(Text).contains("[]")) {
+      ASSERT_TRUE(O->Android->DefaultScope);
+      EXPECT_TRUE(O->Android->DefaultScope->empty());
+    } else {
+      EXPECT_FALSE(O->Android->DefaultScope);
+    }
+  }
 }
 } // namespace
 } // namespace neverd::emulation
