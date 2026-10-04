@@ -115,7 +115,7 @@ jobs:
       - name: Prepare current hosted account KVM access
         if: runner.os == 'Linux'
         shell: bash
-        run: python3 scripts/prepare_kvm_ci.py --output build-ci-kvm-access.json
+        run: python3 scripts/prepare_kvm_ci.py --output build-ci/emulation-focused/device-access.json
 
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
