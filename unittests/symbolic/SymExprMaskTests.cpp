@@ -15,6 +15,76 @@ namespace {
 
 constexpr uint32_t Widths[] = {1, 3, 8, 32, 64, 128, 256};
 
+TEST(SymExprMask, BitwiseFieldsFitAnOuterMaskWithoutExpansion) {
+  for (unsigned W : {8U, 16U, 32U, 64U, 128U}) {
+    SCOPED_TRACE(W);
+    SymContext C;
+    auto X = C.mkVar("x", W), Y = C.mkVar("y", W);
+    llvm::APInt M(W, 0);
+    for (unsigned B = 0; B < W; B += 2)
+      M.setBit(B);
+    auto A = C.mkAnd(X, C.mkConst(M));
+    auto B = C.mkAnd(Y, C.mkConst(M.lshr(2)));
+    auto K = C.mkConst(M & llvm::APInt(W, 5));
+    for (bool Xor : {false, true}) {
+      auto Inner = Xor ? C.mkXor({A, B, K}) : C.mkOr({A, B, K});
+      auto Before = C.numNodes();
+      EXPECT_EQ(C.mkAnd(Inner, C.mkConst(M)), Inner);
+      EXPECT_EQ(C.numNodes(), Before);
+      llvm::APInt Inputs[] = {llvm::APInt::getAllOnes(W), M};
+      auto Left = Inputs[0] & M, Right = Inputs[1] & M.lshr(2);
+      auto Expected = Xor ? (Left ^ Right ^ (M & llvm::APInt(W, 5)))
+                          : (Left | Right | (M & llvm::APInt(W, 5)));
+      EXPECT_EQ(C.eval(Inner, Inputs), Expected);
+    }
+  }
+}
+
+TEST(SymExprMask, BitwiseContainmentMatchesEveryByteInputPair) {
+  for (uint64_t M : {15U, 85U, 240U, 129U}) {
+    SymContext C;
+    auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+    auto A = C.mkAnd(X, C.mkConst(8, M));
+    auto B = C.mkAnd(Y, C.mkConst(8, M & 0x33));
+    auto K = C.mkConst(8, M & 0x55);
+    auto Xor = C.mkAnd(C.mkXor({A, B, K}), C.mkConst(8, M));
+    auto Or = C.mkAnd(C.mkOr({A, B, K}), C.mkConst(8, M));
+    for (uint64_t XValue = 0; XValue < 256; ++XValue)
+      for (uint64_t YValue = 0; YValue < 256; ++YValue) {
+        uint64_t Inputs[] = {XValue, YValue};
+        auto Left = XValue & M, Right = YValue & M & 0x33;
+        EXPECT_EQ(C.evalU64(Xor, Inputs), Left ^ Right ^ (M & 0x55));
+        EXPECT_EQ(C.evalU64(Or, Inputs), Left | Right | (M & 0x55));
+      }
+  }
+}
+
+TEST(SymExprMask, ContainmentKeepsUnknownBitsAndBoundsBuilderWork) {
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto Mask = C.mkConst(8, 15), A = C.mkAnd(X, Mask);
+  for (auto Inner : {C.mkXor(A, Y), C.mkXor(A, C.mkConst(8, 128)),
+                     C.mkXor(A, C.mkAnd(Y, C.mkConst(8, 31))),
+                     C.mkOr(A, C.mkConst(8, 128))}) {
+    auto Result = C.mkAnd(Inner, Mask);
+    EXPECT_NE(Result, Inner);
+    EXPECT_EQ(C.evalU64(Result, {255, 255}), C.evalU64(Inner, {255, 255}) & 15);
+    EXPECT_NE(C.evalU64(Result, {255, 255}), C.evalU64(Inner, {255, 255}));
+  }
+  for (auto [W, Count] : {std::pair{32U, 9U}, std::pair{256U, 2U}}) {
+    SymContext Context;
+    auto Bound = Context.mkConst(W, 15);
+    llvm::SmallVector<SymRef, 16> Terms;
+    for (unsigned N = 0; N < Count; ++N)
+      Terms.push_back(Context.mkAnd(Context.mkFreshVar(W, "input"), Bound));
+    auto Inner = Context.mkXor(Terms);
+    auto Before = Context.numNodes();
+    auto Result = Context.mkAnd(Inner, Bound);
+    EXPECT_NE(Result, Inner);
+    EXPECT_LE(Context.numNodes() - Before, 1U);
+  }
+}
+
 TEST(SymExprMask, CombinesDisjointMasksOnTheSameSource) {
   for (uint32_t W : Widths) {
     SCOPED_TRACE(W);

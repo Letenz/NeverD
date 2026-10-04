@@ -216,6 +216,39 @@ exit:
   checkArithmetic(*Module, Source);
 }
 
+TEST(LLVMCScalarLoopRecovery, WidthAndCarrierMasksComposeBeforeEmission) {
+  constexpr char IR[] = R"(
+define i32 @accumulate(i32 noundef %seed, i32 noundef %delta, i8 noundef %count) {
+entry:
+  %bound = and i8 %count, 3
+  %wide.seed = zext i32 %seed to i64
+  %wide.delta = zext i32 %delta to i64
+  br label %head
+head:
+  %i = phi i8 [0, %entry], [%next, %body]
+  %value = phi i64 [%wide.seed, %entry], [%sum, %body]
+  %masked = and i8 %i, 15
+  %more = icmp ult i8 %masked, %bound
+  br i1 %more, label %body, label %exit
+body:
+  %sum = add i64 %value, %wide.delta
+  %next = add nuw i8 %masked, 1
+  br label %head
+exit:
+  %result = trunc i64 %value to i32
+  ret i32 %result
+})";
+  llvm::LLVMContext Context;
+  auto Module = parse(IR, Context);
+  ASSERT_TRUE(Module);
+  const auto Source = emit(*Module);
+  EXPECT_EQ(Source.find("uint64_t"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("& 15"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("for ("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  checkArithmetic(*Module, Source);
+}
+
 TEST(LLVMCScalarLoopRecovery, WidenedLastIndexKeepsTheZeroTripCase) {
   // A separate body and latch, with a narrow wrapped last index. Reusing that
   // index plus one as the only candidate bound would execute 256 extra steps

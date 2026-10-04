@@ -24,7 +24,9 @@ add_neverd_component_library(NeverDLLVMScalarLoopRecovery
   llvm/LLVMScalarLoopUnpeeling.cpp
   llvm/LLVMScalarLoopRegions.cpp
   llvm/LLVMScalarLoopAffine.cpp
+  llvm/LLVMScalarLoopReplacements.cpp
   llvm/LLVMScalarLoopSeeds.cpp
+  llvm/LLVMScalarLoopMasks.cpp
   llvm/LLVMScalarLoopWidths.cpp
   LINK_COMPONENTS LLVMInterpreterModel
   LLVM_COMPONENTS Analysis Core Support TransformUtils

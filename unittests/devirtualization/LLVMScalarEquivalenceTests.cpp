@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "LLVMScalarEquivalenceTest.h"
 
+#include "llvm/IR/Instructions.h"
+
 namespace neverd::analysis::scalar_test {
 namespace {
 constexpr char Counted[] = R"(
@@ -189,6 +191,100 @@ TEST(LLVMScalarEquivalence, WorkBudgetsIncludeFailedRefinementAttempts) {
   EXPECT_TRUE(Short.WorkLimitExceeded);
   L.MaxWork = 0;
   EXPECT_EQ(check(Counted, Closed, L).Status, Status::BudgetExceeded);
+}
+
+TEST(LLVMScalarEquivalence, SelfQueryKeepsCompleteDomainAndExactWorkLimits) {
+  Source Input(Counted);
+  const auto Before = Input.text();
+  auto Query = [&](const LLVMScalarEquivalenceLimits &L = {}) {
+    return checkLLVMScalarEquivalence(Input.function(), Input.function(), L);
+  };
+  const auto Base = Query();
+  ASSERT_EQ(Base.Status, Status::Proved) << Base.Diagnostic;
+  const auto Separate = check(Counted, Counted);
+  ASSERT_EQ(Separate.Status, Status::Proved) << Separate.Diagnostic;
+  EXPECT_EQ(Base.CompletedPartitions, 8U);
+  EXPECT_EQ(Base.ControlBits, Separate.ControlBits);
+  EXPECT_EQ(Base.Attempts, Separate.Attempts);
+  EXPECT_LT(Base.Work, Separate.Work);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = Base.Work;
+  EXPECT_EQ(Query(L).Status, Status::Proved);
+  --L.MaxWork;
+  const auto Short = Query(L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+  EXPECT_EQ(Short.Work, L.MaxWork);
+  EXPECT_LT(Short.CompletedPartitions, Base.CompletedPartitions);
+  EXPECT_EQ(Input.text(), Before);
+}
+
+TEST(LLVMScalarEquivalence, SelfQueryRetainsEveryLocalResourceCeiling) {
+  Source Input(Counted);
+  auto Query = [&](const LLVMScalarEquivalenceLimits &L) {
+    auto R = checkLLVMScalarEquivalence(Input.function(), Input.function(), L);
+    EXPECT_EQ(R.Status, Status::BudgetExceeded);
+    EXPECT_FALSE(R.WorkLimitExceeded);
+  };
+  for (auto Field : {&LLVMScalarEquivalenceLimits::MaxPartitions,
+                     &LLVMScalarEquivalenceLimits::MaxBlockVisits,
+                     &LLVMScalarEquivalenceLimits::MaxSymbolicNodes}) {
+    LLVMScalarEquivalenceLimits L;
+    L.*Field = 0;
+    Query(L);
+  }
+  LLVMScalarEquivalenceLimits L;
+  L.MaxControlBits = 2;
+  Query(L);
+  L = {};
+  L.MaxPartitions = 7;
+  Query(L);
+  for (auto Field : {&LLVMInterpreterModelLimits::MaxInputItems,
+                     &LLVMInterpreterModelLimits::MaxBlocks,
+                     &LLVMInterpreterModelLimits::MaxOperations,
+                     &LLVMInterpreterModelLimits::MaxWork}) {
+    L = {};
+    L.Model.*Field = 0;
+    Query(L);
+  }
+}
+
+TEST(LLVMScalarEquivalence, SelfQueryDoesNotCertifyUndefinedOrUnsupportedCode) {
+  for (const char *IR :
+       {"define i8 @f() { %dead = add nuw i8 255, 1 ret i8 0 }",
+        "define i8 @f(i8 noundef %x) { %v = add nuw i8 %x, 1 ret i8 %v }",
+        "define i8 @f() { ret i8 undef }", "define i8 @f() { ret i8 poison }",
+        "define i8 @f(i8 %x) { ret i8 %x }",
+        "define i8 @f(i8 noundef range(i8 0, 8) %x) { ret i8 %x }",
+        "define i8 @f(i8 noundef %x) { %v = udiv i8 %x, 3 ret i8 %v }",
+        "define i8 @f() { entry: br label %loop loop: br label %loop }"}) {
+    SCOPED_TRACE(IR);
+    Source Input(IR);
+    LLVMScalarEquivalenceLimits L;
+    L.MaxBlockVisits = 4;
+    const auto Self =
+        checkLLVMScalarEquivalence(Input.function(), Input.function(), L);
+    EXPECT_NE(Self.Status, Status::Proved);
+    EXPECT_EQ(Self.Status, check(IR, IR, L).Status);
+  }
+}
+
+TEST(LLVMScalarEquivalence, FunctionIdentityIsNeitherANameNorAPersistentProof) {
+  Source Input("define i8 @f() { %v = add i8 255, 1 ret i8 %v }");
+  auto Query = [&] {
+    return checkLLVMScalarEquivalence(Input.function(), Input.function());
+  };
+  EXPECT_EQ(Query().Status, Status::Proved);
+  auto &Add =
+      llvm::cast<llvm::BinaryOperator>(Input.function().front().front());
+  Add.setHasNoUnsignedWrap(true);
+  EXPECT_EQ(Query().Status, Status::Unproved);
+  Add.setHasNoUnsignedWrap(false);
+  EXPECT_EQ(Query().Status, Status::Proved);
+  Source Other("define i8 @f() { ret i8 1 }");
+  EXPECT_EQ(
+      checkLLVMScalarEquivalence(Input.function(), Other.function()).Status,
+      Status::Unproved);
 }
 
 TEST(LLVMScalarEquivalence, ExactRefusalDoesNotImplyWorkExhaustion) {
