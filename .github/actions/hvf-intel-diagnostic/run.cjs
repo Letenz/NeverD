@@ -5,6 +5,7 @@ const path = require('node:path');
 const {spawn, spawnSync, execFile} = require('node:child_process');
 const {captureActive, observeExecution, preserveActive, waitForNativeSample,
   validateSampling} = require('./active-sample.cjs');
+const {captureRuntime} = require('./runtime.cjs');
 const UPLOAD_REVISION = '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a';
 
 function testEnvironment(environment) {
@@ -141,6 +142,8 @@ async function main() {
     '--case-index', input('case-index')], environment);
   if (status !== 0) throw new Error(`diagnostic preparation failed: ${status}`);
   const plan = JSON.parse(fs.readFileSync(path.join(evidence, 'plan.json'), 'utf8'));
+  fs.writeFileSync(path.join(evidence, 'observer-runtime.json'),
+    JSON.stringify(captureRuntime(), null, 2) + '\n', {flag: 'wx'});
   const sampling = validateSampling(input('sample-active-child'), plan.methods.length);
   fs.writeFileSync(path.join(evidence, 'controller-options.json'), JSON.stringify({
     kind: 'partial-hvf-diagnostic-options', complete_inventory: false,

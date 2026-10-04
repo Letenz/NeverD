@@ -251,6 +251,23 @@ bool isInitialImageImportSlot(const BinaryImage &Image, va_t Address) {
   return imageImportSlot(Image, Address, false, false);
 }
 
+std::optional<uint64_t> readImmutableImageIvarOffset(const BinaryImage &Image,
+                                                     va_t Address) {
+  const auto Ref = Image.ObjCSourceReferences.find(Address);
+  const auto *Section = Image.getSectionFor(Address);
+  if (!supportedImage(Image) || Address % 8 || !Section ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_REGULAR ||
+      Ref == Image.ObjCSourceReferences.end() ||
+      Ref->second.TheKind != ObjCSourceReference::Kind::IvarOffset ||
+      Ref->second.Address != Address || Ref->second.Size != 8 ||
+      Ref->second.Name.empty() || Ref->second.ClassName.empty())
+    return std::nullopt;
+  const auto *Bytes = mappedBytes(Image, Address, 8, true);
+  if (!Bytes || hasConflictingFixups(Image, Address, 8, false, false, true))
+    return std::nullopt;
+  return llvm::support::endian::read64le(Bytes);
+}
+
 bool isImmutableImageClassImportSlot(const BinaryImage &Image, va_t Address) {
   const auto Ref = Image.ObjCSourceReferences.find(Address);
   const auto Bind = Image.DyldBindSlots.find(Address);

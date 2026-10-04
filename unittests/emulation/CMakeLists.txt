@@ -1,6 +1,9 @@
 add_neverd_unittest(NeverDHvfTests
   HvfTests.cpp
   HvfExecutorTests.cpp
+  HvfIntelDeadlineTests.cpp
+  HvfOwnerThreadTests.cpp
+  HvfIntelOwnerTests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU)
 
@@ -79,6 +82,7 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64DataTests.cpp
   X64PackedIntegerTests.cpp
   X64PackedShiftTests.cpp
+  X64VectorMaskTests.cpp
   X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
@@ -156,6 +160,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidTimeTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
+  AndroidFinalizerTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)

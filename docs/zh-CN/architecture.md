@@ -672,7 +672,7 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProb
 
 `X64StringInstructions.def` 统一管理普通 RAM 上 8/16/32/64 位的 `MOVS/STOS/LODS`；`CLD/STD` 只改变方向标志。每个 REP 元素在观察回调前验证整个操作数，并在一个可恢复边界提交。后续故障保留此前完成的元素；取消或回调异常不改变当前元素。FS/GS 仅作用于源地址，且在地址宽度截断之后相加。AL/AX 加载保留高位，EAX 加载零扩展。32 位地址模式的零次 REP 要求计数高位为零，MOVS/STOS 还要求参与的地址寄存器高位为零，否则不同真实 CPU 实现会产生不同结果。MOVS/STOS/LODS 的 REPNE 形式及 STOS/LODS 设备操作数仍不支持。`X64StringTransferTests.cpp` 用独立的主机指令对照宽度、方向、重叠和零次数，并分别检查权限、别名、回绕、故障和恢复。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的 STOS/LODS。
 
-`X64StringInstructions.def` 还统一管理普通 RAM 上 8/16/32/64 位的 `CMPS/SCAS` 及 `REPE/REPNE`。每个元素在观察回调前验证全部读取操作数，更新六个算术标志，并在首次满足终止条件时退出。数据故障恢复本次连续 REP 执行开始时的标志，同时保留已完成的指针和计数更新；公开接口恢复执行时，以已发布的 CPU 状态重新开始。停止和观察回调异常不改变当前元素，提前终止也不会读取下一个元素。FS/GS 仅影响 CMPS 源地址；SCAS 保留累加器和未使用的源寄存器。设备操作数及有歧义的 32 位零次数高位状态仍不支持。`X64StringComparisonTests.cpp` 用独立主机指令对照标志、方向、别名、回绕、权限和恢复，并通过 Linux x64 信号测试读取真实故障时的寄存器。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的两类条件重复形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
+`X64StringInstructions.def` 还统一管理普通 RAM 上 8/16/32/64 位的 `CMPS/SCAS` 及 `REPE/REPNE`。每个元素在观察回调前验证全部读取操作数，更新六个算术标志，并在首次满足终止条件时退出。数据故障恢复本次连续 REP 执行开始时的标志，同时保留已完成的指针和计数更新；公开接口恢复执行时，以已发布的 CPU 状态重新开始。停止和观察回调异常不改变当前元素，提前终止也不会读取下一个元素。FS/GS 仅影响 CMPS 源地址；SCAS 保留累加器和未使用的源寄存器。设备操作数及有歧义的 32 位零次数高位状态仍不支持。`X64StringComparisonTests.cpp` 用独立主机指令对照标志、方向、别名、回绕、权限和恢复，并通过 Linux x64 信号测试读取真实故障时的寄存器。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的两类条件重复形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。 Linux 原生验证覆盖首元素执行前后发生的故障，并区分 Intel 恢复入口 flags 与 Hyper-V 下 AMD EPYC 7763 保留最后一次比较 flags 的行为（[原生观测](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）；未知 CPU 厂商会明确失败。所有后端的 checked 来宾仍统一恢复入口 flags。
 
 `WhpResourceCache.h` 将逻辑 CPU 状态与 WHP 分区分离。运行时保留一个活动原生分区：同一 CPU 连续单步复用它；切换 CPU 时先销毁旧分区，再重建映射、虚拟处理器并恢复完整状态。逻辑 CPU 保留独立的 `MemoryProjection` 视图和权威 RAM。获取租约遵守取消信号和当前截止时间；销毁非活动 CPU 不会销毁其他 CPU 的分区。x64 保留宿主默认 XSAVE 特性组合，并通过 `WHvGetPartitionProperty` 验证实际分区，不通过清除依赖特性强制缩减掩码。CPU 协作式切换不提供并行硬件 SMP。
 
@@ -869,7 +869,7 @@ HighC 通过按精确值宽度复制字节的辅助函数输出普通内存写�
 
 Swift 布尔结果验证联合检查当前 Objective-C 入口 ABI、不可变的直接调用指令、精确强导入和完整 LowIR 消费者证明。其他调用必须具备当前运行时目录 ABI、完整的 8 指令类访问器证明，或精确强导入且由共享选择子或接收者声明层重新验证完整标量 ABI 的 super 调用。发布时仍需复核原生依赖、super 接收者及栈帧。未证明的原生或动态调用和重复调用点均被拒绝；这些事实本身不会发布源码，也不会声明运行时字节返回 ABI。
 
-具有入口地址上的函数符号的原生入口可暂时只把完整 x0 字作为可观察结果。源码推断绑定完整入口 ABI 后，发布检查会用该 ABI 重新运行同一 LowIR 证明；临时假设本身不提供源码绑定或字节返回 ABI。 原生保留寄存器推断只有用当前入口 ABI 重新验证该 Bool 调用的精确 LowIR 位置后，才能使用它。入口字节与完整状态恢复证明仍决定观察到的保留寄存器能否成为参数。 已绑定的双字原生结果只有在两个返回载体均通过原生配对证明时，才能把观察范围扩展到 x0/x1；发布前会重新推断完整的双字返回，再接受该 Bool 调用。
+具有入口地址上的函数符号的原生入口可暂时只把完整 x0 字作为可观察结果。源码推断绑定完整入口 ABI 后，发布检查会用该 ABI 重新运行同一 LowIR 证明；临时假设本身不提供源码绑定或字节返回 ABI。 原生保留寄存器推断只有用当前入口 ABI 重新验证该 Bool 调用的精确 LowIR 位置后，才能使用它。入口字节与完整状态恢复证明仍决定观察到的保留寄存器能否成为参数。 已绑定的双字原生结果只有在两个返回载体均通过原生配对证明时，才能把观察范围扩展到 x0/x1；发布前会重新推断完整的双字返回，再接受该 Bool 调用。 已绑定的原生标量结果采用共享 `SourceABI` 已验证的 1、2、4 或 8 字节宽度。原生推断仍须证明所有返回路径；发布前会重新推断完整的当前 ABI，再复核 LowIR 证明与源码实参。缩窄调用方返回值不会把运行时原始 `i1` 结果中的任何未知位变成已定义位。
 
 精确的 libswiftCore Hasher seed、String.hash(into:) 和 Hasher.finalize 导入可通过已验证的 Swift ABI 参数借用 ARM64 私有栈帧中的 72 字节区域。状态证明在调用后使所有借用字节失效，并拒绝与保存寄存器重叠或栈帧逃逸；仅名称匹配而缺少当前导入及 ABI 证明，不能授权借用。
 
@@ -960,6 +960,8 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。
+
+`X64VectorOperands.def` 统一定义传统 SSE 搬运、运算、移位、转换和掩码的完整操作数对。`MOVMSKPS`、`MOVMSKPD` 和 `PMOVMSKB` 从 XMM 提取符号位写入 r32/r64，并清零目标其余位。KVM、WHP 与 checked Unicorn 共用准入规则，保留 FLAGS、MXCSR 和源寄存器；掩码的内存操作数、MMX 和 VEX/EVEX 形式仍不支持。
 
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
@@ -1142,3 +1144,5 @@ metadata 局部变量可有多个常量定义，但共享 HighIR 源码 CFG 必�
 经过认证的嵌套 Swift once 回调返回 void，因此源码投影可以丢弃仅作为返回值使用、且经过有界检查的 64 位整数加减表达式。每个操作数和标量视图都必须不含调用、加载、有序内存访问、间接目标或未知输入。此证明不会确立私有栈帧边界，也不会改变原生函数 ABI。检查覆盖所有嵌套返回，并保留原始语句、分支、存储以及单独认证的 retain 副作用。当前子回调绑定和完整源码发布验证仍是必要条件。 已有类型的普通 once 调用者使用同一套完整子回调证明。用于计算被忽略上下文的调用和加载仍保留在调用者中；上下文独立性不允许移除这些求值副作用。
 
 `SwiftMetadata` 也认证以运行时导入 `_SwiftObject` 作为 Objective-C 父类的原生 Swift 类。当前类描述符、运行时名称、元数据头和 Objective-C 记录必须与来自 `libswiftCore` 的唯一强绑定、零偏移、双层命名空间类导入一致。初始导入槽验证复用不可变导入的唯一存储与重叠修复检查，同时允许可写的声明记录；它不授予稳定运行时指针、实例布局、对象复制或固定字段偏移权限。弱绑定、冲突、缺失及错误提供方仍不受支持；原生 kind-1 字段记录不会获得独立的 kind-7 Objective-C 字段证明。
+
+`swiftFixedRootClassStorage` 单独证明已注册原生 Swift 根类的有界存储，字段限于 `String?`、`String??` 和 `Bool?`。完整的 kind-1 反射、字段偏移声明、不可变偏移槽、元数据向量与 Objective-C ivar 必须逐项一致，并共同确认实例大小和对齐。源码绑定器随后可保留一个精确的编译器外提静态初始化对象，包括零值 once token、对象头、对应架构的 nil 编码和填充字节。存储范围来自布局证明，不能从符号之间的间距推断。首个调用点实现仅支持 ARM64：当前不可变指令和结构化源码必须将对应元数据访问器的实际结果传给强导入的 `swift_initStaticObject`。发布时重新验证存储和参数。`objc_opt_self`、初始化、计数器和结果写入均保留其可观察效果；此证明不提供运行时别名、纯函数、更广 ABI 或上层调用闭包的权限。O0/O2 原生检查将未修改的生成初始化 C 与重定向到受控存储和真实 Swift 类的原始 ARM64 指令序列比较，覆盖可选字段、字段修改、重复初始化、计数器回绕和边界哨兵。

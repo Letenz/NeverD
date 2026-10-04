@@ -442,7 +442,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "282 CPU + 224 WHP + 4 SEH = 510")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "290 CPU + 224 WHP + 4 SEH = 518")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -755,3 +755,38 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentDelivery,
 NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentDelivery, "72 + 9")
 NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentDelivery, "error_code")
 #endif
+
+NEVERD_EMULATION_DOC_PATH(VectorMasks, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(VectorMasks, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(VectorMasks, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(VectorMasks, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_TOKEN(VectorMasks, "X64VectorOperands.def")
+NEVERD_EMULATION_DOC_TOKEN(VectorMasks, "MOVMSKPS")
+NEVERD_EMULATION_DOC_TOKEN(VectorMasks, "MOVMSKPD")
+NEVERD_EMULATION_DOC_TOKEN(VectorMasks, "PMOVMSKB")
+NEVERD_EMULATION_DOC_PATH(VectorMaskTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(VectorMaskTests, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(VectorMaskTests, "X64VectorMaskTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(VectorMaskTests, "REX.W")
+
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault,
+                          "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault,
+                          "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault,
+                          "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault,
+                           "X64StringComparisonTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault, "Intel")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault, "AMD EPYC 7763")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault, "Hyper-V")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault, "37202522130")
+NEVERD_EMULATION_DOC_PATH(AlignmentPageEvidence, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(AlignmentPageEvidence, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence,
+                           "WindowsAlignmentProcessTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence, "4096")
+NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence, "81")

@@ -16,6 +16,51 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_finalizers_execute_guest_callbacks(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for optimization in ("O0", "O2"):
+            for closed in (False, True):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": "cxa_dynamic", "arguments": [0x20000000, int(closed)],
+                    "initialize": False, "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 256}],
+                    "libraries": {"libfinalize-model.so": ["__cxa_atexit", "__cxa_finalize"]},
+                }}
+                result = session.emulate_process(str(Path(fixtures) / f"finalizers-{optimization}-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service" if closed else "returned",
+                                 result["diagnostic"])
+                calls = result["android"]["native_calls"]
+                lookup = next(e for e in calls if e["name"] == "dlsym" and e["symbol"] == "__cxa_finalize")
+                call = next(e for e in calls if e["name"] == "__cxa_finalize")
+                self.assertEqual(call["library"], "libfinalize-model.so")
+                self.assertEqual(call["pc"], lookup["result"])
+                self.assertEqual(call["result"], None if closed else "0")
+                if not closed:
+                    self.assertEqual(int(result["return_value"], 16), 73)
+                expected = bytearray(256)
+                if not closed:
+                    for offset, value in ((0, 1), (48, 1000), (64, 0x100000009)):
+                        expected[offset:offset + 8] = value.to_bytes(8, "little")
+                self.assertEqual(bytes.fromhex(result["android"]["memory"][0]["bytes_hex"]), expected)
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_android_formatting_uses_guest_variadic_calls(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

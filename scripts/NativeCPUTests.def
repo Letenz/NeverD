@@ -29,6 +29,30 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64VectorMask.SignBitsMatchScalarAndHostResults/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64VectorMask.SignBitsMatchScalarAndHostResults/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64VectorMask.AllRegistersAndOperandWidthsZeroExtend/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64VectorMask.AllRegistersAndOperandWidthsZeroExtend/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64VectorMask.InvalidFormsRejectWithoutDataObservations/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64VectorMask.InvalidFormsRejectWithoutDataObservations/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64VectorMask.InstructionStopsAndFailuresPreserveState/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64VectorMask.InstructionStopsAndFailuresPreserveState/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsAlignment.ExecutesOriginalFaultAndRetryScenarios/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
