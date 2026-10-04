@@ -902,3 +902,401 @@ TEST(SwiftFieldReceiver, OpaqueExitsGrantNoReceiverPublication) {
   EXPECT_FALSE(sdk::objCNativeSwiftReceiverSourceCallBound(
       *C, F.Image, F.Result, B.Function, {}));
 }
+
+namespace {
+struct FixedRecordFixture {
+  BinaryImage Image;
+  static constexpr va_t Descriptor = 0x3000, Class = 0x3080;
+  static constexpr va_t Metadata = 0x3600, Witnesses = 0x3700;
+  FixedRecordFixture(Arch Architecture) {
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Architecture;
+    Image.Bits = Bitness::Bits64;
+    Image.MachOTwoLevelNamespace = true;
+    Image.MachOHasChainedFixups = true;
+    segment(0x1000, 0x100, "__text", true);
+    segment(0x3000, 0x1000, "__const");
+    segment(0x5000, 8, "__swift5_types");
+    segment(0x6000, 0x100, "__got");
+    Image.Sections.back().Type = llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS;
+    for (unsigned I = 0; I != 9; ++I) {
+      u32(0x1000 + I * 4, Architecture == Arch::AArch64 ? 0xd65f03c0 : 0xc3);
+      Image.RuntimeFunctionAddrs.insert(0x1000 + I * 4);
+    }
+    u32(Descriptor, 0x51);
+    relative(Descriptor + 4, 0x3140);
+    relative(Descriptor + 8, 0x3100);
+    relative(Descriptor + 12, 0x1020);
+    relative(Descriptor + 16, 0x3200);
+    u32(Descriptor + 20, 4);
+    u32(Descriptor + 24, 2);
+    text(0x3100, "Value");
+    relative(0x3148, 0x3150);
+    text(0x3150, "Demo");
+    u32(Class, 0x50);
+    relative(Class + 4, 0x3140);
+    relative(Class + 8, 0x3160);
+    text(0x3160, "Object");
+    relative(0x5000, Descriptor);
+    relative(0x5004, Class);
+    Image.Symbols.push_back({"_$s4Demo5ValueVMn", Descriptor, 0, false});
+    Image.Symbols.push_back({"_$s4Demo6ObjectCMn", Class, 0, false});
+    Image.Symbols.push_back({"_$s4Demo5ValueVN", Metadata, 0, false});
+    u64(Metadata, 0x200);
+    pointer(Metadata + 8, Descriptor);
+    pointer(Metadata - 8, Witnesses);
+    relative(0x3200, 0x3260);
+    u32(0x3208, 12u << 16);
+    u32(0x320c, 4);
+    symbolic(0x3260, Descriptor, 1);
+    symbolic(0x3270, 0x6000, 2);
+    text(0x3280, "Sd");
+    symbolic(0x3290, Class, 1);
+    const va_t Types[] = {0x3270, 0x3270, 0x3280, 0x3290};
+    for (unsigned I = 0; I != 4; ++I) {
+      u32(0x3210 + I * 12, 2);
+      relative(0x3214 + I * 12, Types[I]);
+      relative(0x3218 + I * 12, 0x3420 + I * 32);
+      text(0x3420 + I * 32, "field" + std::to_string(I));
+      u32(Metadata + 16 + I * 4, I * 8);
+    }
+    for (unsigned I = 0; I != 8; ++I)
+      pointer(Witnesses + I * 8, 0x1000 + I * 4, true);
+    u64(Witnesses + 64, 32);
+    u64(Witnesses + 72, 32);
+    u32(Witnesses + 80, 0x30007);
+    u32(Witnesses + 84, 0x7fffffff);
+    EXPECT_TRUE(Image.recordDyldBindSlot(
+        0x6000, "_$s12CoreGraphics7CGFloatVMn", 0,
+        "/usr/lib/swift/libswiftCoreFoundation.dylib", false));
+  }
+  void segment(va_t Address, uint64_t Size, const char *Name,
+               bool Code = false) {
+    Segment S;
+    S.VA = S.FileOff = Address;
+    S.Size = S.FileSz = Size;
+    S.Flags = SegmentFlags::Readable;
+    if (Code)
+      S.Flags = S.Flags | SegmentFlags::Executable;
+    S.Data.resize(Size);
+    Image.Segments.push_back(S);
+    Section R;
+    R.VA = R.FileOff = Address;
+    R.Size = R.FileSz = Size;
+    R.Flags = S.Flags;
+    R.Name = Name;
+    R.Type = Code ? llvm::MachO::S_ATTR_PURE_INSTRUCTIONS : 0;
+    Image.Sections.push_back(R);
+  }
+  uint8_t *bytes(va_t Address) {
+    for (auto &S : Image.Segments)
+      if (Address >= S.VA && Address - S.VA < S.Size)
+        return S.Data.data() + Address - S.VA;
+    return nullptr;
+  }
+  void u32(va_t Address, uint32_t Value) {
+    llvm::support::endian::write32le(bytes(Address), Value);
+  }
+  void u64(va_t Address, uint64_t Value) {
+    llvm::support::endian::write64le(bytes(Address), Value);
+  }
+  void relative(va_t Address, va_t Target) {
+    u32(Address, uint32_t(Target - Address));
+  }
+  void text(va_t Address, const std::string &Text) {
+    std::memcpy(bytes(Address), Text.c_str(), Text.size() + 1);
+  }
+  void symbolic(va_t Address, va_t Target, uint8_t Kind) {
+    *bytes(Address) = Kind;
+    relative(Address + 1, Target);
+    *bytes(Address + 5) = 0;
+  }
+  void pointer(va_t Address, va_t Target, bool Code = false) {
+    u64(Address, Target);
+    Image.MachOResolvedChainedPointerSlots.insert(Address);
+    (Code ? Image.CodePtrRelocSlots : Image.DataPtrRelocSlots).insert(Address);
+    if (!Code)
+      Image.DataPtrRelocTargetOwners[Address] = Image.getSectionFor(Target)->VA;
+  }
+  std::optional<SwiftFixedRecordStorage> prove() {
+    return swiftFixedRecordStorage(Image, Descriptor);
+  }
+};
+} // namespace
+
+TEST(SwiftFixedRecordStorage, IndependentNominalFieldsAndWitnessesAgree) {
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    FixedRecordFixture F(A);
+    ASSERT_EQ(swiftLocalRegisteredNominalType(F.Image, F.Descriptor),
+              "4Demo5ValueV");
+    ASSERT_EQ(swiftLocalRegisteredNominalType(F.Image, F.Class),
+              "4Demo6ObjectC");
+    const auto R = F.prove();
+    ASSERT_TRUE(R);
+    EXPECT_EQ(R->MangledType, "4Demo5ValueV");
+    EXPECT_EQ(R->Metadata, F.Metadata);
+    EXPECT_EQ(R->Size, 32u);
+    EXPECT_EQ(R->Alignment, 8u);
+    for (unsigned I = 0; I != 4; ++I) {
+      EXPECT_EQ(R->Fields[I].Offset, I * 8);
+      EXPECT_EQ(R->Fields[I].Name, "field" + std::to_string(I));
+      EXPECT_TRUE(R->Fields[I].IsMutable);
+      EXPECT_EQ(R->Fields[I].Storage,
+                I == 3 ? SwiftFixedRecordField::Kind::StrongReference
+                       : SwiftFixedRecordField::Kind::Float64);
+    }
+    EXPECT_EQ(R->Fields[0].MangledType, "12CoreGraphics7CGFloatV");
+    EXPECT_EQ(R->Fields[2].MangledType, "Sd");
+    EXPECT_EQ(R->Fields[3].MangledType, "4Demo6ObjectC");
+    // This physical storage certificate cannot widen Swift source declarations.
+    const auto Source = recoverSwiftTypes(F.Image);
+    ASSERT_FALSE(Source.empty());
+    EXPECT_NE(Source[0].Status, "recovered");
+    // Every ordinary Double field and immutable stored property is also valid.
+    for (unsigned I = 0; I != 3; ++I)
+      F.relative(0x3214 + I * 12, 0x3280);
+    for (unsigned I = 0; I != 4; ++I)
+      F.u32(0x3210 + I * 12, 0);
+    ASSERT_TRUE(F.prove());
+  }
+}
+
+TEST(SwiftFixedRecordStorage, RejectsStaleOrIncompleteStorageEvidence) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 47; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      FixedRecordFixture F(A);
+      ASSERT_TRUE(F.prove());
+      switch (Mutation) {
+      case 0:
+        F.u32(F.Descriptor, 0xd1);
+        break; // Generic instantiation required.
+      case 1:
+        F.u32(F.Descriptor, 0x151);
+        break; // Unrecognized descriptor version.
+      case 2:
+        F.u32(F.Descriptor, 0x10051);
+        break; // Dynamic metadata initialization.
+      case 3:
+        F.u32(F.Descriptor + 20, 3);
+        break;
+      case 4:
+        F.u32(F.Descriptor + 24, 3);
+        break;
+      case 5:
+        F.relative(F.Descriptor + 12, 0x1040);
+        break; // No authenticated accessor entry.
+      case 6:
+        F.Image.Symbols[0].Name = "_$s4Demo5OtherVMn";
+        break;
+      case 7:
+        F.Image.Symbols[1].Name = "_$s4Demo6ObjectVMn";
+        break;
+      case 8:
+        F.relative(0x5004, F.Descriptor);
+        break; // Reference class unregistered.
+      case 9:
+        F.u32(0x5000, 1);
+        break;
+      case 10:
+        F.Image.Symbols.push_back(F.Image.Symbols[2]);
+        break;
+      case 11:
+        F.Image.Exports.push_back({F.Image.Symbols[0].Name, 0, F.Descriptor});
+        break;
+      case 12:
+        F.Image.Symbols[2].Name = "_$s4Demo5OtherVN";
+        break;
+      case 13:
+        F.u64(F.Metadata, 0x201);
+        break;
+      case 14:
+        F.pointer(F.Metadata + 8, F.Class);
+        break;
+      case 15:
+        F.u32(F.Metadata + 24, 24);
+        break; // Overlapping stored fields.
+      case 16:
+        F.u32(F.Metadata + 28, 32);
+        break; // A gap cannot be hidden by stride.
+      case 17:
+        F.u64(F.Witnesses + 64, 24);
+        break;
+      case 18:
+        F.u64(F.Witnesses + 72, 40);
+        break;
+      case 19:
+        F.u32(F.Witnesses + 80, 0x400000 | 0x30007);
+        break; // Incomplete layout.
+      case 20:
+        F.u32(F.Witnesses + 80, 0x20007);
+        break; // POD contradicts strong reference.
+      case 21:
+        F.u32(F.Witnesses + 80, 0x130007);
+        break; // Other lifetime representation.
+      case 22:
+        F.Image.CodePtrRelocSlots.erase(F.Witnesses + 16);
+        break;
+      case 23:
+        F.Image.MachOResolvedChainedPointerSlots.erase(F.Metadata + 8);
+        break;
+      case 24:
+        F.Image.DataPtrRelocSlots.insert(F.Metadata + 17);
+        break;
+      case 25:
+        F.u32(0x3208, (16u << 16));
+        break;
+      case 26:
+        F.u32(0x320c, 5);
+        break;
+      case 27:
+        F.relative(0x3200, 0x3290);
+        break; // Field descriptor belongs to other type.
+      case 28:
+        F.u32(0x3204, 4);
+        break; // Struct cannot declare a superclass.
+      case 29:
+        F.u32(0x3210, 4);
+        break;
+      case 30:
+        F.relative(0x323c, 0x3420);
+        break; // Duplicate field name.
+      case 31:
+        F.text(0x3280, "Sf");
+        break; // Float is not Float64.
+      case 32:
+        F.text(0x3280, "SdSg");
+        break; // Optional has a distinct representation.
+      case 33:
+        F.text(0x3295, "Xw");
+        break; // Weak reference storage is not a strong pointer.
+      case 34:
+        F.text(0x3295, "Xo");
+        break; // Unowned reference.
+      case 35:
+        F.text(0x3295, "Sg");
+        break;
+      case 36:
+        F.symbolic(0x3290, F.Descriptor, 1);
+        break;
+      case 37:
+        F.u32(F.Class, 0xd0);
+        break; // Generic class type lacks arguments.
+      case 38:
+        F.Image.DyldBindSlots[0x6000].Module =
+            "/usr/lib/swift/libswiftCore.dylib";
+        break;
+      case 39:
+        F.Image.DyldBindSlots[0x6000].WeakImport = true;
+        break;
+      case 40:
+        F.Image.DyldBindSlots[0x6000].Addend = 8;
+        break;
+      case 41:
+        F.Image.Sections.back().Type =
+            llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS;
+        break;
+      case 42:
+        F.Image.Sections.back().Type = llvm::MachO::S_LAZY_SYMBOL_POINTERS;
+        break;
+      case 43:
+        F.Image.ConflictingImportStorageSlots.insert(0x6000);
+        break;
+      case 44:
+        F.Image.Segments[1].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 45:
+        F.Image.RuntimeFunctionAddrs.insert(F.Metadata + 24);
+        break;
+      case 46:
+        F.u64(0x3900, 0x200);
+        F.pointer(0x3908, F.Descriptor);
+        F.Image.Symbols.push_back({"different_metadata", 0x3900, 0, false});
+        break;
+      }
+      EXPECT_FALSE(F.prove());
+    }
+}
+
+TEST(SwiftFixedRecordStorage, CurrentPointersBoundsAndIndependentFieldTypes) {
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    FixedRecordFixture F(A);
+    ASSERT_TRUE(F.prove());
+    for (unsigned I = 0; I != 8; ++I) {
+      auto C = F;
+      C.pointer(C.Witnesses + I * 8, 0x1040, true);
+      EXPECT_FALSE(C.prove());
+    }
+    for (unsigned I = 0; I != 4; ++I) {
+      auto C = F;
+      C.relative(0x3214 + I * 12, I == 3 ? 0x3280 : 0x3290);
+      EXPECT_FALSE(C.prove());
+    }
+    for (unsigned I = 0; I != 3; ++I) {
+      auto C = F;
+      C.relative(0x3214 + I * 12, 0x3280);
+      EXPECT_TRUE(C.prove());
+    }
+    for (uint32_t Kind : {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+                          llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+                          llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+                          llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+      auto C = F;
+      C.Image.Sections.back().Type = Kind;
+      EXPECT_FALSE(C.prove());
+    }
+    auto Truncated = F;
+    Truncated.Image.Sections[1].FileSz = F.Witnesses + 87 - 0x3000;
+    EXPECT_FALSE(Truncated.prove());
+    auto Alias = F;
+    Alias.Image.Sections.push_back(Alias.Image.Sections[1]);
+    EXPECT_FALSE(Alias.prove());
+  }
+}
+
+TEST(SwiftFixedRecordStorage, RegistrationAndStorageCannotBeThreadLocal) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (unsigned Section : {1u, 2u})
+      for (uint32_t Kind :
+           {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+            llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+            llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+            llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+            llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+        SCOPED_TRACE(Section);
+        SCOPED_TRACE(Kind);
+        FixedRecordFixture F(A);
+        ASSERT_TRUE(F.prove());
+        F.Image.Sections[Section].Type = Kind;
+        EXPECT_FALSE(swiftLocalRegisteredNominalType(F.Image, F.Descriptor));
+        EXPECT_FALSE(F.prove());
+      }
+}
+
+TEST(SwiftFixedRecordStorage, PointerRecordsCannotHideInThreadLocalSlices) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (va_t Slot :
+         {FixedRecordFixture::Metadata - 8, FixedRecordFixture::Metadata + 8,
+          FixedRecordFixture::Witnesses, FixedRecordFixture::Witnesses + 56}) {
+      FixedRecordFixture F(A);
+      auto Left = F.Image.Sections[1];
+      auto Middle = Left, Right = Left;
+      Left.Size = Left.FileSz = Slot - Left.VA;
+      Middle.VA = Middle.FileOff = Slot;
+      Middle.Size = Middle.FileSz = 8;
+      Right.VA = Right.FileOff = Slot + 8;
+      Right.Size = Right.FileSz = 0x4000 - Right.VA;
+      F.Image.Sections[1] = Left;
+      F.Image.Sections.push_back(Middle);
+      F.Image.Sections.push_back(Right);
+      for (auto &[Address, Owner] : F.Image.DataPtrRelocTargetOwners) {
+        const auto Target = llvm::support::endian::read64le(F.bytes(Address));
+        Owner = F.Image.getSectionFor(Target)->VA;
+      }
+      ASSERT_TRUE(F.prove());
+      F.Image.Sections[F.Image.Sections.size() - 2].Type =
+          llvm::MachO::S_THREAD_LOCAL_REGULAR;
+      EXPECT_FALSE(F.prove()) << llvm::utohexstr(Slot);
+    }
+}
