@@ -1447,6 +1447,14 @@ C, CLI and Python consume the same option parser. No dependency graph,
 namespace or caller-specific scope is inferred from these explicit inputs.
 
 
+Bionic's private mutex model reads the API 28 LP64 object directly from guest
+memory. Attribute interpretation, lock state, recursive depth and ownership
+belong to this one model; static imports and named dynamic calls share it.
+The Linux service model supplies TID and errno constants. Complete affected
+write spans are validated before a transition, and no host lock or parallel
+object registry substitutes for guest bytes. Scheduling and priority
+inheritance remain explicit unsupported boundaries.
+
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
 it does not maintain another mapping table. The pure snapshot is sorted and
