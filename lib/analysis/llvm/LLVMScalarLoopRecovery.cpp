@@ -32,7 +32,22 @@ static uint64_t size(const Function &F) {
   return N;
 }
 
-bool Search::clone(Function &F, Candidate &C, bool Probe) {
+namespace {
+class IntegerWidthMapper : public ValueMapTypeRemapper {
+  unsigned MaxWidth;
+
+public:
+  explicit IntegerWidthMapper(unsigned Width) : MaxWidth(Width) {}
+  Type *remapType(Type *T) override {
+    if (T->isIntegerTy() && T->getIntegerBitWidth() > MaxWidth)
+      return IntegerType::get(T->getContext(), MaxWidth);
+    return T;
+  }
+};
+} // namespace
+
+bool Search::clone(Function &F, Candidate &C, bool Probe,
+                   unsigned MaxInternalWidth) {
   if (!Probe && Result.Candidates >= Limits.MaxCandidates)
     Exhausted = true;
   if (!charge(size(F)))
@@ -63,9 +78,38 @@ bool Search::clone(Function &F, Candidate &C, bool Probe) {
         Copy->copyAttributesFrom(Callee);
         C.Values[Callee] = Copy;
       }
+  if (MaxInternalWidth) {
+    if (!charge(size(F)))
+      return false;
+    // A type remapper alone does not preserve narrowed nonzero literals.
+    // Bind their original bit patterns explicitly before cloning operands.
+    for (auto &B : F)
+      for (auto &I : B)
+        for (auto &U : I.operands())
+          if (auto *K = dyn_cast<ConstantInt>(U.get()))
+            if (K->getBitWidth() > MaxInternalWidth)
+              C.Values[K] = ConstantInt::get(
+                  F.getContext(), K->getValue().trunc(MaxInternalWidth));
+  }
+  IntegerWidthMapper Types(MaxInternalWidth);
   SmallVector<ReturnInst *, 8> Returns;
   CloneFunctionInto(C.Function, &F, C.Values,
-                    CloneFunctionChangeType::DifferentModule, Returns);
+                    CloneFunctionChangeType::DifferentModule, Returns, "",
+                    nullptr, MaxInternalWidth ? &Types : nullptr);
+  if (MaxInternalWidth) {
+    if (!charge(size(*C.Function)))
+      return false;
+    SmallVector<CastInst *, 16> Redundant;
+    for (auto &B : *C.Function)
+      for (auto &I : B)
+        if (auto *Cast = dyn_cast<CastInst>(&I))
+          if (Cast->getType() == Cast->getOperand(0)->getType())
+            Redundant.push_back(Cast);
+    for (auto *Cast : Redundant) {
+      Cast->replaceAllUsesWith(Cast->getOperand(0));
+      Cast->eraseFromParent();
+    }
+  }
   return true;
 }
 
@@ -235,7 +279,7 @@ LLVMScalarLoopRecoveryResult Search::run() {
       ProbeSource = std::move(Probe.Module);
     }
   }
-  for (unsigned Phase = 0; Phase < 5 && !stopped(); ++Phase) {
+  for (unsigned Phase = 0; Phase < 6 && !stopped(); ++Phase) {
     while (!stopped()) {
       if (Result.ProvedTransforms >= Limits.MaxTransforms) {
         Exhausted = true;
@@ -263,6 +307,9 @@ LLVMScalarLoopRecoveryResult Search::run() {
           break;
         case 4:
           Changed = seeds(*this, F, DT, LI);
+          break;
+        case 5:
+          Changed = widths(*this, F, LI);
           break;
         }
       }

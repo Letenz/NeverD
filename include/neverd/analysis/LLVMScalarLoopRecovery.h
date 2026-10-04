@@ -40,9 +40,10 @@ struct LLVMScalarLoopRecoveryResult {
 };
 
 /// Reconstruct peeled scalar loops by proposing changes to SSA carriers,
-/// zero-trip regions and loop tests. Search preserves the complete proved
-/// source control domain. A zero-data screen may only reject proposals; it
-/// never replaces the required proof with all other input bits symbolic.
+/// zero-trip regions, loop tests and internal integer widths. Search preserves
+/// the complete proved source control domain. A zero-data screen may only
+/// reject proposals; it never replaces the required proof with all other
+/// input bits symbolic.
 /// Every accepted change must pass complete scalar equivalence against the
 /// original function, using the shared model and SymExec. No original-source
 /// template, native address or external solver participates. Unsupported or
