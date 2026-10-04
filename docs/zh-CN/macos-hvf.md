@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 100fc149f035b5f133930186baac6655480571d50a0b80e958aa14b1abf7c7fe -->
+<!-- i18n-source: 22ba6d21112d256e04570cdee32a639db23035b9abf497605ce33a6065066e12 -->
 
 [← 文档索引](README.md)
 
@@ -21,7 +21,7 @@ NeverD 使用 Apple 的 Hypervisor.framework，后端名为 `hvf`，对应 Linux
 
 实现复用现有 checked 契约、页表、寄存器模型和 RAM 事务。一个专用线程拥有进程内的 VM/vCPU，各逻辑 CPU 串行使用它；切换前退休旧映射，销毁时先解绑再释放 backing。Apple Silicon 的宿主映射按 16 KiB 对齐，来宾的权限和内存预算仍以 4 KiB 为单位。ARM64 关闭软件单步后，在一次原生进入中执行完整的固定 TLB/I-cache 维护序列。专用 HVC #1 必须通过返回 PC、syndrome、PSTATE 和 ESR_EL1 校验，才会单步执行准入的客体指令。`PSTATE.D` 不能屏蔽送往 EL2 的调试异常。完整传输标量、TLS 和 FP/SIMD。Intel 使用 VMCS、MTF、XSAVE 和处理器异常退出。RIP/RFLAGS 每次均直接通过 VMCS 传输，也覆盖取消后重建 vCPU 的入口。Intel 的 CR0/CR4 同时遵守框架可写掩码和硬件必置位，用读取影子保持来宾可见状态。CR8 使用 VMX 访问退出及架构层的读取完成逻辑，因为宿主 TPR 接口可能与来宾实际状态不一致；只处理经过硬件认证的 CR8 读取，其他控制寄存器访问明确失败，checked 指令准入范围不变。每次创建或取消后重建 Intel vCPU 都初始化独立的托管 `IA32_KERNEL_GS_BASE` 上下文，来宾 MSR 访问仍陷出；未支持的 MSR/SWAPGS 指令不会进入硬件。两种架构都必须通过现有完整状态启动探针。
 
-取消会确认原生中断已结束，再允许下一个任务进入；被取消的原生入口会重建 vCPU，防止旧中断影响后续任务。排队期间也检查停止令牌和期限。真正的宿主或状态读取错误优先保留，取消的普通 CPU/RAM 状态不提交。
+ARM64 通过 `RunDeadline` 确认原生中断已结束；Intel 在 owner 线程内使用有限期限的 `hv_vcpu_run_until` 轮询取消。确认退出后才允许下一个任务进入；被取消的原生入口会重建 vCPU，防止旧中断影响后续任务。排队期间也检查停止令牌和期限。真正的宿主或状态读取错误优先保留，取消的普通 CPU/RAM 状态不提交。
 
 实际硬件门禁及完整构建命令见[英文实现说明](../macos-hvf.md)。核心命令为：
 
@@ -36,7 +36,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 15 项、Intel 10 项；完整门禁分别要求 23 项和 18 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
+门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 15 项、Intel 12 项；完整门禁分别要求 23 项和 20 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
 
 手动工作流默认使用带 `hvf` 标签的自托管宿主，也可选择 `hosted-intel` 尝试
 GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `scripts/probe_hvf_host.c`，
@@ -290,3 +290,11 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 修正后的恢复测试仅在每轮重建 vCPU（被测源码 `7dd7342ec`、控制器 `31afddad3`、工作流 `10bf50753`），已在 macOS 15 完成 1000 轮并通过（[37215096822](https://github.com/gmh5225/test_mac_intel/actions/runs/37215096822)，43 个已核验产物）。原生进程和控制器最终退出码均为 0，子进程已回收；生命周期证据为 1 个 VM、1001 代 vCPU 边界，总计/执行中的 vCPU 数仍未知。macOS 26（[37215098793](https://github.com/gmh5225/test_mac_intel/actions/runs/37215098793)，19 个产物）的 progress-016 上传器收到 SIGSEGV；IPS 与 PID 32519、父进程 29104、采集时间和 Node UUID 匹配。原生日志证明完成 403 轮、开始第 404 轮，未见断言失败。控制器随后取消并回收原生进程（SIGKILL），没有最终原生结果。这属于未完成的原生证据，不能判为 runner 失联或通过。执行前记录的 Node 24.19.0 SHA-256 为 `1052eb9c7d6c60a79b968e09f75af55a73462b0f6dff0964336d63b5e13eb63c`；它证明磁盘文件身份，不证明进程内存未改变。这些固定源码的结果不能为后续合入 dev 的版本背书。
 
 每轮重建 VM/vCPU 的恢复测试最终也在两套镜像确认失联：[macOS 15 / 37213675739](https://github.com/gmh5225/test_mac_intel/actions/runs/37213675739)、[macOS 26 / 37213681083](https://github.com/gmh5225/test_mac_intel/actions/runs/37213681083)。两者使用源码 `7dd7342ec`、控制器 `4c702d35a`、工作流 `fad0eadf2`。23/26 个已核验产物保存连续日志，分别证明 502/503、575/576 轮完成/开始，均没有最终原生结果和进程回收记录。GitHub 仅确认通信中断，未确认原因。仅执行普通指令时的 VM 重建通过结论不能扩大到此恢复负载；依赖这两组通过的整个会话重置实验继续保持未启动。
+
+上传器 `jitless` 对照（[37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863)，macOS 15/26）均在启动恢复测试前失败：官方上传器的 HTTP 解析器依赖 WebAssembly，而 `--jitless` 使其不可用，两个计划上传进程均以 1 退出且没有信号。每次有 2 个已核验产物，plan 从最终证据中恢复，不能算独立计划上传成功。这些失败没有测试原生恢复，但不否认工作流此前已运行 HVF 能力探测。替代的可选模式 `js-interpreter` 仅给控制器的 plan/progress 上传子进程传入 `--no-turbofan --no-maglev --no-sparkplug`，保留 WebAssembly 及其他代码生成；父进程、原生负载和截止时间不变，provenance/final 上传仍使用默认模式。本地真实 HTTP 请求与无凭据官方上传器检查通过，仅证明观察工具兼容性，不是 HVF 稳定性修复。
+
+`js-interpreter` 模式的 vCPU 重建恢复对照使用源码 `7dd7342ec`、控制器 `caeb594ad`、工作流 `e6d054c45`。macOS 26（[37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679)）通过 1000/1000：43 个产物、全部 41 次 plan/progress 上传调用、原生/控制器退出码 0、子进程回收和最终第 1001 代边界退役均已独立核验。macOS 15（[37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672)）的 progress-018 上传器仍收到 SIGSEGV；21 个产物保留原生 460 轮完成/461 轮开始，随后控制器取消并以 SIGKILL 回收原生进程。IPS 的 PID 62812、父进程 59666、时间和 Node UUID 均匹配，顶部栈帧位于 V8 并发堆标记，非法地址为 `0x80000000`。禁用三个 JavaScript 编译层的参数确实生效，两镜像记录的 Node 文件 SHA 相同，说明该模式未消除上传器崩溃。栈帧不能确定根因，macOS 15 原生结果仍未知，完整 CPU/Darwin 验收和缓存候选的双镜像门槛均未满足。默认长期缓存还会违反既有临时探测与最后客户端释放后归还 VM 的约定，因此未实施。
+
+可复现的补充审计重新核验了运行 `37188627569`（源码 `392a9d171`）未改动的原始输出，全部 1000 轮有限期限探针通过核对。[审计器与 19 项回归测试](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)逐轮关联调用的 begin/end/capture、新鲜内存写入证据和 RIP，检查首个循环的固定预算与随后两个各自受控的 MTF 观测，并保留合法的未进入 guest 记录，不把它们计为指令进展。这是保存证据的复验，不是新的原生运行，也不改变既有结果、资源回收要求或 Intel 验收状态。
+
+省略额外 host kick 的对照仍在两个 runner 上失联：macOS 15 运行 `37221649736`、macOS 26 运行 `37221651593` 均有 GitHub 失联注记。源码 `023a4a68d` 保留三个恢复回合、重试及每轮 VM/vCPU 重建，生产 `lib` 与旧诊断源码 `7dd7342ec` 完全一致。34/15 个产物摘要均已核验；连续日志前缀证明 778/779、300/301 轮完成/开始，并保存 779/300 个已终止整行的线程 join 后省略标记；省略标记可能属于尚未完成的一轮。两次均缺少最终原生结果和回收记录，最后保存的标记不能定位故障。省略这个调用不足以避免本次观察到的失联，仍不能确定根因或宣称当前 `dev` 通过验收。[保存的证据](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。

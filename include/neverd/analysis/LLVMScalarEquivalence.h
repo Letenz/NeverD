@@ -31,7 +31,8 @@ struct LLVMScalarEquivalenceLimits {
   uint64_t MaxPartitions = 4096;
   uint64_t MaxBlockVisits = 4096;
   uint64_t MaxSymbolicNodes = 1048576;
-  /// Shared by both executions, all partition restarts and dependencies.
+  /// Shared by both executions, partition restarts, decision DAG normalization
+  /// and dependency queries. Local symbolic-query ceilings remain separate.
   uint64_t MaxWork = 16777216;
 };
 
@@ -55,6 +56,9 @@ struct LLVMScalarEquivalenceResult {
 /// shared expression algebra. No sampling or external SMT is used.
 /// A query using the same Function object models and executes it once per
 /// partition, retaining every admission, definedness and termination check.
+/// Unresolved control/definedness decisions receive a bounded bottom-up DAG
+/// normalization before input-bit discovery; this neither replays execution
+/// nor assumes that a source annotation is true.
 ///
 /// A result other than Proved authorizes no rewrite; Unproved need not mean
 /// inequivalent. Every limit is finite. Unsupported instructions, effects,

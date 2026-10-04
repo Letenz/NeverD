@@ -179,5 +179,101 @@ TEST_F(LinuxMemory, EmptyAndOverflowingRangesFollowTheirOwnSystemCallRules) {
   EXPECT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
   EXPECT_EQ(RAM->allocatedBytes(), 0u);
 }
+
+TEST_F(LinuxMemory, MergeAdviceSplitsAndRejoinsWithoutChangingMemory) {
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  ASSERT_EQ(llvm::toString(Space->writeInteger(UnitHint, FirstByte, 8)), "");
+  const auto Generation = Space->mappingGeneration();
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, 3 * PageSize - 1, 12), 0u);
+  EXPECT_TRUE(Memory->isMergeable(UnitHint + 3 * PageSize - 1));
+  EXPECT_FALSE(Memory->isMergeable(UnitHint - 1));
+  EXPECT_FALSE(Memory->isMergeable(UnitHint + 3 * PageSize));
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint + PageSize, 1, 13), 0u);
+  EXPECT_TRUE(Memory->isMergeable(UnitHint));
+  EXPECT_FALSE(Memory->isMergeable(UnitHint + PageSize));
+  EXPECT_TRUE(Memory->isMergeable(UnitHint + 2 * PageSize));
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint + PageSize, PageSize, 12), 0u);
+  EXPECT_TRUE(Memory->isMergeable(UnitHint + PageSize));
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, 3 * PageSize, 12), 0u);
+  EXPECT_EQ(Space->mappingGeneration(), Generation);
+  EXPECT_EQ(RAM->allocatedBytes(), 3 * PageSize);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 8), FirstByte);
+  EXPECT_TRUE(*Space->canAccess(UnitHint, 3 * PageSize, Read | Write));
+}
+
+TEST_F(LinuxMemory, MergeAdviceVisitsBothSidesOfHolesAndIgnoresProtection) {
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint + PageSize, PageSize), 0u);
+  ASSERT_EQ(call(ServiceKind::Mprotect, UnitHint, PageSize, 0), 0u);
+  ASSERT_EQ(
+      call(ServiceKind::Mprotect, UnitHint + 2 * PageSize, PageSize, ProtRead),
+      0u);
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint - PageSize, 5 * PageSize, 12),
+            uint64_t(0) - NoMemory);
+  EXPECT_TRUE(Memory->isMergeable(UnitHint));
+  EXPECT_FALSE(Memory->isMergeable(UnitHint + PageSize));
+  EXPECT_TRUE(Memory->isMergeable(UnitHint + 2 * PageSize));
+  EXPECT_FALSE(*Space->canAccess(UnitHint, 1, Read));
+  EXPECT_FALSE(*Space->canAccess(UnitHint + 2 * PageSize, 1, Write));
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, 3 * PageSize, 13),
+            uint64_t(0) - NoMemory);
+  EXPECT_FALSE(Memory->isMergeable(UnitHint));
+  EXPECT_FALSE(Memory->isMergeable(UnitHint + 2 * PageSize));
+}
+
+TEST_F(LinuxMemory, UnmapAndBreakShrinkRetireAdviceWithoutPinningPages) {
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  ASSERT_EQ(call(ServiceKind::Madvise, UnitHint, 3 * PageSize, 12), 0u);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint + PageSize, PageSize), 0u);
+  EXPECT_FALSE(Memory->isMergeable(UnitHint + PageSize));
+  EXPECT_EQ(RAM->allocatedBytes(), 2 * PageSize);
+  ASSERT_EQ(map(PageSize, UnitHint + PageSize), UnitHint + PageSize);
+  EXPECT_FALSE(Memory->isMergeable(UnitHint + PageSize));
+  EXPECT_TRUE(Memory->isMergeable(UnitHint));
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, 3 * PageSize), 0u);
+  EXPECT_FALSE(Memory->isMergeable(UnitHint));
+  EXPECT_EQ(RAM->allocatedBytes(), 0u);
+  ASSERT_EQ(call(ServiceKind::Brk, UnitHeap + 2 * PageSize),
+            UnitHeap + 2 * PageSize);
+  ASSERT_EQ(call(ServiceKind::Madvise, UnitHeap, 2 * PageSize, 12), 0u);
+  ASSERT_EQ(call(ServiceKind::Brk, UnitHeap + 1), UnitHeap + 1);
+  EXPECT_TRUE(Memory->isMergeable(UnitHeap));
+  EXPECT_FALSE(Memory->isMergeable(UnitHeap + PageSize));
+  ASSERT_EQ(call(ServiceKind::Brk, UnitHeap + 2 * PageSize),
+            UnitHeap + 2 * PageSize);
+  EXPECT_FALSE(Memory->isMergeable(UnitHeap + PageSize));
+}
+
+TEST_F(LinuxMemory, MergeAdviceValidatesRangesAndConsumesOnlyTheLowInt) {
+  ASSERT_EQ(map(PageSize), UnitHint);
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, 1, (1ULL << 32) | 12), 0u);
+  EXPECT_TRUE(Memory->isMergeable(UnitHint));
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint + 1, 0, 13),
+            uint64_t(0) - InvalidArgument);
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, UINT64_MAX, 13),
+            uint64_t(0) - InvalidArgument);
+  EXPECT_EQ(call(ServiceKind::Madvise, uint64_t(0) - PageSize, PageSize, 13),
+            uint64_t(0) - InvalidArgument);
+  EXPECT_EQ(call(ServiceKind::Madvise, uint64_t(0) - PageSize, 0, 13), 0u);
+  EXPECT_EQ(call(ServiceKind::Madvise, UserLimit, PageSize, 13),
+            uint64_t(0) - NoMemory);
+  EXPECT_TRUE(Memory->isMergeable(UnitHint));
+}
+
+TEST_F(LinuxMemory, UnsupportedAdviceCannotInventReturnsOrChangePolicy) {
+  ASSERT_EQ(map(PageSize), UnitHint);
+  ASSERT_EQ(call(ServiceKind::Madvise, UnitHint, PageSize, 12), 0u);
+  ASSERT_EQ(llvm::toString(Space->writeInteger(UnitHint, FirstByte, 8)), "");
+  const auto Generation = Space->mappingGeneration();
+  // In particular DONTNEED must not be accepted as a content-preserving hint.
+  for (uint64_t Advice : {0u, 4u, 8u, 0xffffffffu}) {
+    EXPECT_FALSE(call(ServiceKind::Madvise, UnitHint, PageSize, Advice));
+    EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Report.Diagnostic.find("madvise"), std::string::npos);
+    EXPECT_TRUE(Memory->isMergeable(UnitHint));
+    EXPECT_EQ(*Space->readInteger(UnitHint, 8), FirstByte);
+  }
+  EXPECT_EQ(Space->mappingGeneration(), Generation);
+}
 } // namespace
 } // namespace neverd::emulation

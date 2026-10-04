@@ -127,6 +127,12 @@ The supported Bionic subset is:
   `svc #0` and calls resolved through the explicit dynamic catalogue. They
   preserve errno and never query host credentials. Credential changes such
   as `setuid` remain unsupported.
+- `getpagesize`, returning the Android profile's 4096-byte guest page size
+  without changing errno. It uses the same layout as guest mappings,
+  independently of the host page size. Direct imports and explicit dynamic
+  catalogue entries share this behavior; provider lifetime rules still apply.
+  See the pinned Android 9
+  [Bionic implementation](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/getpagesize.cpp).
 - `__system_property_get`, backed only by the explicit property dictionary.
   Missing properties return length zero and write NUL; values must fit 91 bytes
   plus NUL. Host properties are never inherited.
@@ -171,10 +177,12 @@ The supported Bionic subset is:
 - `dlopen`, `dlsym`, `dlclose`, `dlerror`, using an explicit local catalogue
   described below. Function availability and implementation are separate:
   an available symbol whose call is unmodeled still stops explicitly.
-- `write`, `writev`, `mmap`/`mmap64`, `mprotect`, `munmap`, delegated to the shared Linux
+- `write`, `writev`, `mmap`/`mmap64`, `mprotect`, `munmap`, `madvise`, delegated to the shared Linux
   service implementation. Bionic wrappers translate negative kernel error
   values to -1 and thread-local errno; raw `svc #0` preserves negative errno
   bits and does not update TLS errno.
+  `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
+  for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
 - `syscall(number, ...)` uses the same Linux service table and effects. The
   AArch64 wrapper takes the number from x0 and six arguments from x1–x6;
   x7 is unused. It preserves full-width results and applies Bionic's -1/errno

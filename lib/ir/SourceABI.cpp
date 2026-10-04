@@ -10,6 +10,11 @@
 #include <utility>
 
 namespace neverd {
+bool isSourceBooleanType(const TypeRef &Type) {
+  return Type && Type->Kind == NdTypeKind::Int && Type->Size == 1 &&
+         !Type->IsSigned && Type->SourceName == kSourceBooleanCType;
+}
+
 namespace {
 bool sameLocation(const SourceABIValueLocation &Left,
                   const SourceABIValueLocation &Right) {
@@ -31,6 +36,9 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
   case NdTypeKind::Void:
     return Left->Size == 0;
   case NdTypeKind::Int:
+    if (Left->SourceName == kSourceBooleanCType ||
+        Right->SourceName == kSourceBooleanCType)
+      return isSourceBooleanType(Left) && isSourceBooleanType(Right);
     if (Left->Size == 16 &&
         (Left->SourceName == kSourceAArch64Vector128CType ||
          Right->SourceName == kSourceAArch64Vector128CType) &&
@@ -122,6 +130,32 @@ mixedSwiftResultLocations(Arch Architecture) {
           {SourceABICarrierKind::IntegerRegister, TRI.IntReturnReg, 0, 8}};
 }
 
+// Swift's UTF-8 repair result is {i64, ptr, i1}. The Boolean has one byte of
+// logical storage but only one defined physical bit. Do not admit a byte,
+// nested String layout, typed pointee, or ordinary C indirect result here.
+bool swiftBooleanTupleResult(
+    const TypeRef &Type, const std::vector<SourceAggregateMember> &Members) {
+  return Type && Type->Kind == NdTypeKind::Struct && Type->Size == 24 &&
+         Type->Fields.size() == 3 && Members.size() == 3 &&
+         Members[0].ByteOffset == 0 &&
+         Members[0].Type->Kind == NdTypeKind::Int &&
+         Members[0].Type->Size == 8 && !Members[0].Type->IsSigned &&
+         Members[1].ByteOffset == 8 &&
+         Members[1].Type->Kind == NdTypeKind::Ptr &&
+         Members[1].Type->Size == 8 && Members[1].Type->Pointee &&
+         Members[1].Type->Pointee->Kind == NdTypeKind::Void &&
+         Members[2].ByteOffset == 16 && isSourceBooleanType(Members[2].Type);
+}
+
+std::vector<SourceABIValueLocation>
+swiftBooleanTupleResultLocations(Arch Architecture) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  return {{SourceABICarrierKind::IntegerRegister, TRI.IntReturnRegs[0], 0, 8},
+          {SourceABICarrierKind::IntegerRegister, TRI.IntReturnRegs[1], 0, 8},
+          {SourceABICarrierKind::BooleanRegister,
+           Architecture == Arch::AArch64 ? a64reg::X2 : x86reg::RCX, 0, 1}};
+}
+
 bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   if (Architecture != Arch::AArch64 && Architecture != Arch::X64)
     return false;
@@ -129,7 +163,8 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
     return scalarType(T) && T->Size == 8 && T->Kind != NdTypeKind::Float;
   };
   const auto Scalar = [](const TypeRef &T) {
-    return scalarType(T) && T->Kind != NdTypeKind::Float;
+    return scalarType(T) && T->Kind != NdTypeKind::Float &&
+           T->SourceName != kSourceBooleanCType;
   };
   if (!Hint.ReturnType || Hint.Parameters.size() > 64)
     return false;
@@ -203,7 +238,7 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   if (Architecture == Arch::AArch64 &&
       Hint.ReturnType->Kind == NdTypeKind::Float && scalarType(Hint.ReturnType))
     return true;
-  if (MixedResult)
+  if (MixedResult || swiftBooleanTupleResult(Hint.ReturnType, ReturnMembers))
     return true;
   return !ReturnMembers.empty() &&
          (ReturnMembers.size() <= 2 ||
@@ -269,7 +304,7 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
   }
   if (Result.empty())
     return {};
-  if (mixedSwiftResult(Type, Result))
+  if (mixedSwiftResult(Type, Result) || swiftBooleanTupleResult(Type, Result))
     return Result;
   const bool Floating = Result.front().Type->Kind == NdTypeKind::Float;
   if (Floating) {
@@ -290,8 +325,8 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
     return Result;
   }
   // Bound indirect results to the three signed words used by Darwin's
-  // NSOperatingSystemVersion. Other three-word leaf types need distinct C
-  // record identities before their source declarations can safely coexist.
+  // NSOperatingSystemVersion. Other three-word leaf types need separate
+  // compiler-backed physical ABI contracts.
   if (Result.size() == 3 &&
       !std::all_of(Result.begin(), Result.end(), [](const auto &Member) {
         return Member.Type->Kind == NdTypeKind::Int && Member.Type->IsSigned;
@@ -480,7 +515,9 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
         Type->Kind == NdTypeKind::Int && Type->Size == 16 &&
         Type->SourceName == kSourceAArch64Vector128CType &&
         Location.Kind == SourceABICarrierKind::FloatingRegister;
-    if ((!scalarType(Type) && !Vector128) || Location.ValueBytes != Type->Size)
+    if ((!scalarType(Type) && !Vector128) ||
+        Location.ValueBytes != Type->Size ||
+        Type->SourceName == kSourceBooleanCType)
       return false;
     if (Location.ExtendTo32Bits &&
         ((IsReturn &&
@@ -514,6 +551,14 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     const auto Members = sourceAggregateMembers(Type);
     if (Members.empty() || Parts.size() != Members.size())
       return false;
+    if (swiftBooleanTupleResult(Type, Members)) {
+      if (!IsReturn ||
+          Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
+        return false;
+      const auto Expected = swiftBooleanTupleResultLocations(Hint.Architecture);
+      return std::equal(Parts.begin(), Parts.end(), Expected.begin(),
+                        sameLocation);
+    }
     if (mixedSwiftResult(Type, Members)) {
       if (!IsReturn ||
           Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
@@ -568,7 +613,10 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
       const auto Members = sourceAggregateMembers(Hint.ReturnType);
       const bool ThreeSignedWords =
           Members.size() == 3 && Hint.ReturnType->Size == 24 &&
-          Members.front().Type->Kind != NdTypeKind::Float;
+          std::all_of(Members.begin(), Members.end(), [](const auto &M) {
+            return M.Type->Kind == NdTypeKind::Int && M.Type->Size == 8 &&
+                   M.Type->IsSigned;
+          });
       const bool IndirectDoubles =
           (Members.size() == 6 || Members.size() == 16) &&
           Hint.ReturnType->Size == Members.size() * 8 &&
@@ -802,7 +850,11 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     const auto Members = sourceAggregateMembers(Hint.ReturnType);
     if (Members.empty())
       return fail(Diagnostic, "Unsupported Darwin record return ABI");
-    if (mixedSwiftResult(Hint.ReturnType, Members)) {
+    if (swiftBooleanTupleResult(Hint.ReturnType, Members)) {
+      if (Convention != SourceFunctionTypeHint::ConventionKind::Swift)
+        return fail(Diagnostic, "Boolean tuple result requires the Swift ABI");
+      Hint.ReturnComponents = swiftBooleanTupleResultLocations(Architecture);
+    } else if (mixedSwiftResult(Hint.ReturnType, Members)) {
       if (Convention != SourceFunctionTypeHint::ConventionKind::Swift)
         return fail(Diagnostic, "Mixed record result requires the Swift ABI");
       Hint.ReturnComponents = mixedSwiftResultLocations(Architecture);

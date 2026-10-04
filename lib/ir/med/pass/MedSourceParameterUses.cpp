@@ -128,7 +128,8 @@ observedMedSourceEntryBytes(const MedFunc &Function,
   // predecessor owns the return. Only the declaration's bytes are observable.
   auto RootReturn = [&](const SourceABIValueLocation &Location) {
     if (Location.Kind != SourceABICarrierKind::IntegerRegister &&
-        Location.Kind != SourceABICarrierKind::FloatingRegister)
+        Location.Kind != SourceABICarrierKind::FloatingRegister &&
+        Location.Kind != SourceABICarrierKind::BooleanRegister)
       return;
     for (const auto &[Key, N] : Nodes) {
       const auto &V = N.Value;

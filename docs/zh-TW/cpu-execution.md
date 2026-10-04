@@ -82,6 +82,14 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CVTSS2SI` 與 `CVTSD2SI` 透過共用 `IntegerResult` 規則，依 MXCSR 捨入模式產生帶正負號的 32/64 位元整數；`CVTTSS2SI` 與 `CVTTSD2SI` 一律向零截斷。遮罩例外時，NaN 或超出範圍的轉換傳回整數不定值並設定無效狀態；有效但不精確的結果設定精度狀態。既有黏滯位元、FLAGS 和 XMM 來源維持不變。r32 結果清除通用暫存器高半部。RAM 讀取採用浮點來源寬度，與目的寬度無關；FTZ 不會捨棄次正規輸入。KVM、WHP 和 checked Unicorn 共用這些規則。
 
+`COMISS`、`COMISD`、`UCOMISS` 和 `UCOMISD` 透過共用 `Source` 規則比較純量 XMM 或 m32/m64 運算元。它們設定 CF/PF/ZF、清除 OF/SF/AF，保留其他 FLAGS 和來源通道。COMIS 對任意 NaN 設定無效狀態，UCOMIS 僅對 signaling NaN 設定該狀態；NaN 處理優先於次正規狀態。MXCSR 黏滯位元保留，捨入和 FTZ 不影響比較。KVM、WHP 和 checked Unicorn 共用精確記憶體檢查。固定版本的 Unicorn 比較函式重用既有次正規輸入分類邏輯。
+
+`CMPSS`、`CMPSD`、`CMPPS` 和 `CMPPD` 在 KVM、WHP 和 checked Unicorn 上執行八種傳統比較條件。共用 `Source` 規則接納解碼後的條件別名，保留控制值仍不支援。純量形式保留高位通道並讀取 m32/m64，向量形式要求對齊的 m128。FLAGS 與既有 MXCSR 狀態保留，無效及次正規狀態依有效通道累積。Capstone 統一負責指令族 ID 與 SSE 條件，取代僅在 lifter 內修正身分的邏輯；Unicorn 在各比較函式內部分類次正規輸入。
+
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 透過共用 `Source` 規則轉換傳統 SSE 精度。純量結果保留目標高 64/96 位元；打包擴寬讀取 m64 並寫入兩個雙精度數，打包縮窄讀取對齊的 m128、寫入兩個單精度數並清零高 64 位元。KVM、WHP 和 checked Unicorn 執行原始指令，保留 FLAGS，並依捨入與 FTZ 控制累積已遮罩例外的 MXCSR 狀態。Unicorn 在轉換函式中逐一分類有效次正規輸入。DAZ、未遮罩例外和 VEX/EVEX 仍不支援。
+
+`CVTDQ2PS` 和 `CVTDQ2PD` 透過共用 `Source` 規則轉換打包的有號 32 位元整數。單精度讀取對齊的 m128 並使用 MXCSR 捨入；雙精度讀取可未對齊的 m64，結果精確。目標 XMM 全部位元被替換，FLAGS 和既有 MXCSR 狀態保留，非精確單精度結果累積精度狀態。KVM、WHP 和 checked Unicorn 執行原始指令。Unicorn 在選擇八位元組讀取前辨識兩種打包擴寬轉換。DAZ、未遮罩例外、MMX 和 VEX/EVEX 仍不支援。
+
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
 thread pointer 包含 x64 FS/GS 基底及 ARM64 `TPIDR_EL0` 的精確 `MRS`/`MSR` 編碼。原生傳輸與 CPU snapshot 會獨立於記憶體保存狀態，但不會建立 OS 執行緒或配置 TLS 區塊。supervisor x64 支援對齊的 1/2/4 位元組純量 MMIO 交易，以及每個重新啟動邊界一個 MOVS 元素。裝置讀取必須先提供無副作用預覽，再至多提交一次。user 設定拒絕裝置對映；RMW、寬 MMIO、連接埠 I/O 也仍不支援。

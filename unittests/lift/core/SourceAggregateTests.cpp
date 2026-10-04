@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -83,6 +84,36 @@ TEST(SourceAggregate, RecordEncodingSeparatesShapeFromPhysicalABI) {
   auto Mixed = parseObjCMethodEncoding("value:", "v32@0:8{S=Qd}16");
   ASSERT_TRUE(Mixed);
   EXPECT_FALSE(assignDarwinObjCSourceABI(*Mixed, Arch::AArch64, Error));
+}
+
+TEST(SourceAggregate, RecordTagsKeepWordAndPointeeTypeIdentity) {
+  const auto Word = NdType::makeInt(8, false);
+  const auto Byte = NdType::makeInt(1, false);
+  auto Boolean = NdType::makeInt(1, false);
+  Boolean->SourceName = kSourceBooleanCType;
+  auto Callback = [&](TypeRef Result) {
+    auto Type = std::make_shared<NdType>();
+    Type->Kind = NdTypeKind::Func;
+    Type->RetType = Result;
+    Type->ParamTypes = {Word};
+    return NdType::makePtr(Type);
+  };
+  const std::vector<TypeRef> Leaves{Word,
+                                    NdType::makeInt(8, true),
+                                    NdType::makePtr(NdType::makeVoid()),
+                                    NdType::makePtr(Word),
+                                    NdType::makePtr(Byte),
+                                    NdType::makePtr(Boolean),
+                                    Callback(Byte),
+                                    Callback(Boolean)};
+  for (size_t I = 0; I != Leaves.size(); ++I) {
+    const auto Record = NdType::makeStruct({Leaves[I], Word});
+    ASSERT_FALSE(sourceAggregateMembers(Record).empty());
+    const auto Tag = typeToC(Record);
+    EXPECT_EQ(Tag, typeToC(NdType::makeStruct({Leaves[I], Word})));
+    for (size_t J = 0; J != I; ++J)
+      EXPECT_NE(Tag, typeToC(NdType::makeStruct({Leaves[J], Word})));
+  }
 }
 
 TEST(SourceAggregate, FixedCEncodingRejectsUnknownCallbackPrototypes) {
@@ -889,6 +920,175 @@ TEST(SourceAggregate, SwiftFourWordCallPreservesEveryReturnCarrier) {
   OS.flush();
   EXPECT_NE(C.find("swiftcall"), std::string::npos) << C;
   EXPECT_NE(C.find("field_3"), std::string::npos) << C;
+}
+
+TypeRef swiftBooleanTuple() {
+  const auto Boolean = NdType::makeInt(1, false);
+  Boolean->SourceName = kSourceBooleanCType;
+  return NdType::makeStruct({NdType::makeInt(8, false),
+                             NdType::makePtr(NdType::makeVoid()), Boolean});
+}
+
+TEST(SourceAggregate, SwiftBooleanTupleKeepsOneBitAndExcludesPadding) {
+  for (const auto A : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = swiftBooleanTuple();
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, A, Error)) << Error;
+    ASSERT_TRUE(validateSourceABI(Hint, Error)) << Error;
+    const auto Members = sourceAggregateMembers(Hint.ReturnType);
+    ASSERT_EQ(Members.size(), 3U);
+    ASSERT_EQ(Hint.ReturnComponents.size(), 3U);
+    EXPECT_EQ(Hint.ReturnType->Size, 24U);
+    for (unsigned I = 0; I != 3; ++I) {
+      EXPECT_EQ(Members[I].ByteOffset, I * 8);
+      EXPECT_EQ(Hint.ReturnComponents[I].ValueBytes, I == 2 ? 1U : 8U);
+      EXPECT_FALSE(Hint.ReturnComponents[I].ExtendTo32Bits);
+    }
+    EXPECT_EQ(Hint.ReturnComponents[2].Kind,
+              SourceABICarrierKind::BooleanRegister);
+    EXPECT_EQ(typeToC(Members[2].Type), "_Bool");
+    EXPECT_FALSE(equalSourceTypes(Members[2].Type, NdType::makeInt(1, false)));
+    EXPECT_NE(typeToC(Hint.ReturnType).find("b1"), std::string::npos);
+    for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+      auto Bad = Hint;
+      switch (Mutation) {
+      case 0:
+        Bad.ReturnComponents[2].Kind = SourceABICarrierKind::IntegerRegister;
+        break;
+      case 1:
+        Bad.ReturnComponents[2].ValueBytes = 8;
+        break;
+      case 2:
+        Bad.ReturnComponents[2].ExtendTo32Bits = true;
+        break;
+      case 3:
+        Bad.ReturnComponents[2].RegisterOffset =
+            Bad.ReturnComponents[1].RegisterOffset;
+        break;
+      case 4:
+        Bad.ReturnComponents.pop_back();
+        break;
+      case 5:
+        Bad.ReturnComponents[2].EntryStackOffset = 16;
+        break;
+      case 6:
+        Bad.Convention = SourceFunctionTypeHint::ConventionKind::C;
+        break;
+      case 7:
+        Bad.ReturnType = NdType::makeStruct(
+            {Members[0].Type, Members[1].Type, NdType::makeInt(1, false)});
+        break;
+      case 8:
+        Bad.ReturnType = NdType::makeStruct(
+            {Members[0].Type, Members[1].Type, NdType::makeInt(8, false)});
+        break;
+      case 9:
+        Bad.ReturnType = NdType::makeStruct(
+            {NdType::makeStruct({Members[0].Type, Members[1].Type}),
+             Members[2].Type});
+        break;
+      case 10:
+        Bad.ReturnType = NdType::makeStruct({Members[0].Type,
+                                             NdType::makePtr(Members[0].Type),
+                                             Members[2].Type});
+        break;
+      case 11:
+        Bad.ReturnLocation = Bad.ReturnComponents[0];
+        break;
+      case 12:
+        Bad.ReturnComponents[0].ValueBytes = 4;
+        break;
+      }
+      EXPECT_FALSE(validateSourceABI(Bad, Error)) << Mutation;
+      if (Mutation >= 7 && Mutation <= 10)
+        EXPECT_FALSE(assignDarwinSwiftSourceABI(Bad, A, Error)) << Mutation;
+    }
+    auto Bad = Hint;
+    EXPECT_FALSE(assignDarwinFixedSourceABI(Bad, A, Error));
+    EXPECT_FALSE(assignDarwinObjCSourceABI(Bad, A, Error));
+    Bad.ReturnType = NdType::makeVoid();
+    Bad.Parameters = {{"tuple", Hint.ReturnType}};
+    EXPECT_FALSE(assignDarwinSwiftSourceABI(Bad, A, Error));
+    Bad.Parameters = {{"bit", Members[2].Type}};
+    EXPECT_FALSE(assignDarwinSwiftSourceABI(Bad, A, Error));
+    EXPECT_FALSE(assignDarwinFixedSourceABI(Bad, A, Error));
+    Bad.Parameters.clear();
+    Bad.ReturnType = Members[2].Type;
+    EXPECT_FALSE(assignDarwinSwiftSourceABI(Bad, A, Error));
+  }
+}
+
+TEST(SourceAggregate, SwiftBooleanTupleCallRetainsUnknownPhysicalBits) {
+  for (const auto A : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = swiftBooleanTuple();
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, A, Error)) << Error;
+    const auto BitRegister = Hint.ReturnComponents[2].RegisterOffset;
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = "swift_boolean_tuple";
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = 0x1000;
+    Block.EndAddr = 0x1008;
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = 0x1000;
+    Call.addInput(NdVar::cst(0x2000, 8));
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1004;
+    Block.Ops = {Call, Return};
+    Low.Blocks = {Block};
+    std::map<va_t, SourceFunctionTypeHint> Hints{{0x1000, Hint},
+                                                 {0x2000, Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceCalleeTypeHints(&Hints);
+    auto Med = Converter.convert(Low, A, BinaryFormat::MachO);
+    ASSERT_EQ(Med.Blocks.size(), 1U);
+    const auto &Ops = Med.Blocks.front().Ops;
+    const auto Bound = std::find_if(Ops.begin(), Ops.end(), [](const auto &Op) {
+      return Op.Opcode == NdOp::CALL;
+    });
+    ASSERT_NE(Bound, Ops.end());
+    ASSERT_TRUE(Bound->SourceCallHint);
+    EXPECT_EQ(Bound->Output.Size, 24U);
+    std::map<uint64_t, uint16_t> Extracts;
+    bool UnknownUpperBits = false;
+    for (const auto &Op : Ops) {
+      if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+          Op.Inputs[0] == Bound->Output && Op.Inputs[1].isConst())
+        Extracts.emplace(Op.Inputs[1].ConstVal, Op.Output.Size);
+      if (Op.Opcode == NdOp::INT_AND && Op.NumInputs == 2 &&
+          Op.Inputs[1].isConst() && Op.Inputs[1].ConstVal == ~uint64_t(1)) {
+        EXPECT_EQ(Op.Inputs[0].RegOff, BitRegister);
+        EXPECT_EQ(Op.Inputs[0].Size, 8U);
+        UnknownUpperBits =
+            std::any_of(Med.CallClobbers.begin(), Med.CallClobbers.end(),
+                        [&](const auto &Clobber) {
+                          return Clobber.Value == Op.Inputs[0] &&
+                                 Clobber.CallSiteId == Bound->CallSiteId;
+                        });
+      }
+    }
+    EXPECT_EQ(Extracts,
+              (std::map<uint64_t, uint16_t>{{0, 8}, {8, 8}, {16, 1}}));
+    EXPECT_TRUE(UnknownUpperBits);
+    Med.SourceTypeHint = Hint;
+    recoverCallAbi(Med, A, {});
+    inferMedTypes(Med, A);
+    const auto High = MedToHighConverter().convert(Med, A);
+    std::string C;
+    llvm::raw_string_ostream OS(C);
+    CEmitterOptions Options;
+    Options.TheArch = A;
+    ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    EXPECT_NE(C.find("_Bool field_2"), std::string::npos) << C;
+    EXPECT_NE(C.find("swiftcall"), std::string::npos) << C;
+  }
 }
 
 SourceFunctionTypeHint mixedSwiftDeclaration() {

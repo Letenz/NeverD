@@ -5103,7 +5103,7 @@
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
           "source": "unittests/emulation/X64StringComparisonTests.cpp",
-          "filter": "*/X64StringComparison.LockedAndScalarSSEFormsRejectBeforeReads/*",
+          "filter": "*/X64StringComparison.LockedStringsRejectAndScalarSSEPreservesStringOperands/*",
           "platforms": [
             "darwin",
             "linux",

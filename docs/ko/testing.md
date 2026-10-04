@@ -95,6 +95,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `NeverDLLVMScalarEquivalenceTests`는 전체 루프 입력 영역, 0회 반복, PHI 동시 교환, switch, 상위 입력 비트, 마지막 분할의 반례, poison을 만드는 추가 갱신, 반환 범위, 미지원 계약 및 정확한·한 단위 부족·0 예산을 검사합니다. 독립적인 두 배 폭·오버플로 기준 구현이 지원하는 각 폭의 funnel 끝점과 제약된 곱셈을 검사하며 독립 중첩 루프 C의 O1/O2 출력이 컴파일러 입력 형태를 확인합니다. 상태 모델 테스트도 끝점을 검사합니다. `SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings`는 누적 계산과 기존 개별 한도를 검사합니다.
 
+`LLVMScalarDecision.*`는 깊은 exact 시프트·확장 조건, 상수 분기, 두 루프 역방향 간선, 보존된 상위 데이터 비트, 마지막 미정의 연산, 비종료, 검사한 함수의 수정, 정확한 예산·한 단위 부족·지역 한도를 검사합니다. `LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles`는 독립적으로 작성한 역방향 간선 하나와 두 개의 점화식을 부호 없는 C 오라클과 O0/O2에서 총 32,768회 비교합니다. 이는 스칼라 모델 검사이며 네이티브 ABI나 전체 바이너리 복원 범위를 뜻하지 않습니다.
+
 `SymKnownBitsTests`는 모든 바이트 입력 쌍과 임의 정밀도 경계값으로 확장 항등 관계, 래핑 없는 합, 다른 입력 출처, 전역적으로 정의된 시프트 의미를 확인합니다. 정확한/한 단위 부족 예산, 캐시 적중 비용, 저장 한도, 별도 컨텍스트, 깊이, 피연산자 수, 지원하지 않는 폭도 검사합니다. `SymExprExtensionTests`는 상수 상위 비트와 전체 시프트 횟수를 확인합니다. 스칼라 동등성 회귀는 데이터의 기호 상태를 유지하며 범위 제약을 증명하고, 마지막 분할 차이와 실행된 poison을 거부하며, 전체 증명의 예산 경계를 검사합니다. `SymMBAExtensionTests`는 샘플 검증을 끄고 유도 근거를 요구하며, 모든 바이트 입력 쌍으로 부호, 좁은 캐리, 비트 반전 및 작업 예산 소진 경계를 확인합니다.
 
 `NeverDLLVMScalarLoopRecoveryTests`는 접두 계산과 이전 블록 상태 복원, 0회 반복 분기, 자체 역방향 간선의 머리 조건, 아핀 상태, 래핑 시 동등 비교, 추가 갱신의 poison, 상위 데이터 비트 차이와 미지원 입력 계약을 검사합니다. 정확한 누적 예산과 한 단위 부족한 예산으로 원자적 거부를 확인합니다. 독립 산술 오라클은 모든 바이트 제어 입력에 대해 원본과 복원 LLVM을 O0/O2에서 실행합니다. 네이티브 ABI 복원이나 기본 C 출력의 증거는 아닙니다.
@@ -110,6 +112,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 추가 루프 회귀는 좁은 마지막 인덱스의 순환, 분리된 body/latch, 가드의 두 극성, 등식 피연산자 교환, 단위 간격 변수의 순서 변경과 감소, 0회 경로의 상위 데이터 차이, 새로 실행되는 poison 및 잘못된 경계를 검사합니다. 정확한 예산과 한 단위 부족한 구성·증명 예산, 후보 소진에서도 전체 거부를 유지합니다. 원래 LLVM과 생성 C를 O0/O2에서 독립적인 산술 oracle과 비교합니다.
 
 `NeverDLLVMCScalarLoopRecoveryTests`는 기본 전체 모듈·단일 함수 출력, 반환 경로 정리 후 추가 복원, 함수 정체성과 속성, 호출 연결, 기존·신규 내장 함수와 기호 충돌, 공유 예산, 부작용 호출, 입력 정의성 누락, 메타데이터, 이미지 투영, 외부 블록 주소와 외부 모듈 함수 선택을 검사합니다. 독립 산술·회전 오라클로 생성 C를 O0/O2 및 미정의 동작 트랩과 함께 실행합니다. 산술은 모든 바이트 제어값, 경계값과 결정적 전체 비트폭 데이터에서 독립 컴파일한 원본 LLVM과도 비교합니다.
+
+`SymSimplifyPredicates.*`는 독립 단계와 전체 pass의 정책, 보고된 작업량, 정확한 예산과 한 단위 부족한 예산, 비활성 단계 및 난독화 표시 함수도 비교합니다. 스칼라 소스 회귀 검사는 8/32/64비트 산술 인코딩 루프 종료 조건, 부호 있는 오버플로 거부, 반복과 함수 간에 공유되는 구성 제한을 다룹니다. 결과 반영이 실패하면 원래 IR을 유지합니다. 생성된 C는 O0/O2에서 독립적으로 컴파일한 원래 LLVM 및 산술 oracle과 비교 실행합니다.
 
 초기화 계약 회귀는 부분 및 분리된 바이트 범위, 고정 별칭, 양쪽 분기, 모든 반환, 첫 반복의 읽기와 반복 안의 저장 후 읽기를 검사합니다. 저장 전 읽기, 누락된 저장, 게스트 저장, 알 수 없는 별칭, 특수 메모리 접근, 객체 밖 범위와 입력/작업 예산 소진은 실패해야 합니다. 출력 전용 상태 워드를 쓰는 독립 C 예제를 O1/O2로 컴파일해 정확한 LLVM 속성을 유지한 채 새로운 네이티브→LLVM 조합 증명을 통과하는지 확인합니다.
 
@@ -250,6 +254,14 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 `X64IntegerFloatTests.cpp`는 독립적인 `X64IntegerFloatCases.def` 인코딩, `APFloat` 기대값, FP 상태를 저장·복원하는 네이티브 명령을 사용합니다. 두 정수 너비, 네 반올림 모드, 누적 정밀도 상태, FTZ, 모든 GPR/XMM 쌍과 전체 CPU/RAM 보존을 검사합니다. 비정렬·페이지 경계·페이지 끝 소스, 권한 복구, 관찰자 중단·실패와 재시도에서 정확한 범위를 확인합니다. 양쪽 권한 수준의 네이티브 KVM/WHP 사례는 필수입니다.
 
 `X64FloatIntegerTests.cpp`는 독립적인 `X64FloatIntegerCases.def` 인코딩, `APFloat`, 네이티브 레지스터·메모리 명령으로 반올림과 버림 변환을 검사합니다. 두 정수 너비에서 부호 경계, 중간값, NaN, 무한대, 비정규 수, 모든 반올림 모드, 누적 상태, FTZ를 다룹니다. 모든 GPR/XMM 쌍, 전체 CPU/RAM 상태, 정확한 페이지 끝 읽기, 복구 가능한 페이지 경계 오류, 관찰자 취소·재시도를 검사합니다. 두 권한 수준의 네이티브 KVM/WHP 결과는 필수입니다.
+
+`X64SSEComparisonTests.cpp`는 독립적인 `X64SSEComparisonCases.def` 인코딩, `APFloat` 순서, 호스트 FLAGS와 FP 상태를 저장·복원하는 네이티브 명령을 사용합니다. 21개 원시 입력의 모든 쌍으로 NaN·비정규 우선순위, 0, 무한대, 인접값을 검사합니다. 모든 XMM 쌍과 별칭, 누적 MXCSR, 반올림 독립성, DF 보존, 전체 CPU/RAM 상태, 정확한 페이지 끝·경계 읽기, 관찰자 취소·재시도를 확인합니다. 두 권한 수준의 네이티브 KVM/WHP 결과는 필수입니다.
+
+`X64SSEPredicateTests.cpp`는 `X64SSEPredicateCases.def`의 독립 조건, `X64SSEComparisonCases.def`의 공유 원시 입력, `APFloat` 순서와 원본 네이티브 명령을 사용합니다. 모든 입력 쌍, 혼합 레인의 예외 우선순위, 스칼라 상위 레인, XMM 별칭, 전체 CPU/RAM 상태, 페이지 끝·경계 읽기, 정렬 우선순위와 관찰자·결함 재시도를 검사합니다. 직접 Capstone 검사는 모든 제어 바이트, 두 구문, 두 디코딩 API와 32/64비트 모드를 다룹니다. 두 권한 수준의 네이티브 KVM/WHP 결과는 필수이며 예약 제어값, VEX/EVEX, 장치 피연산자는 제외됩니다. 값 행렬은 명령과 비교 조건별로, 반올림·제어 행렬은 명령별로 나눕니다. `NativeCPUTests.def`는 기존의 모든 조합을 필수로 유지하며 게스트 제한과 CTest의 15초 제한은 바뀌지 않습니다. 컴파일 시 각 명령·조건 조합이 정확히 한 번 나타나는지 검사합니다.
+
+`X64SSEPrecisionTests.cpp`는 독립적인 `X64SSEPrecisionCases.def` 인코딩, `APFloat` 정밀도 반올림과 원본 네이티브 명령을 결합합니다. 범위 검사는 제한 없는 지수로 반올림하며, 유한값으로 향하는 오버플로와 정규값으로 반올림되는 작은 결과도 다룹니다. 양 부호, NaN 페이로드, 모든 반올림/FTZ/누적 상태, 패킹 레인 집계, XMM 별칭, 전체 CPU/RAM 상태, 정확한 소스 폭, 정렬 우선순위, 페이지 결함, 관찰자 취소·재시도를 검사합니다. 두 권한 수준의 KVM/WHP 사례는 필수입니다.
+
+`X64PackedFloatTests.cpp`는 독립적인 `X64PackedFloatCases.def` 인코딩, 부호 있는 `APFloat` 기댓값과 원본 네이티브 명령을 사용합니다. 모든 입력 쌍, 정수 경계, 정밀도 중간값, 반올림, 누적 상태와 FTZ를 검사합니다. 두 권한 수준에서 별칭, 모든 XMM 쌍, 전체 CPU/RAM, m64의 모든 페이지 분할, 정확한 페이지 끝, 정렬 우선순위와 관찰자·결함 재시도를 확인합니다. 모든 KVM/WHP 사례가 필수입니다.
 
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
 
@@ -1125,7 +1137,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 290개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 518개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `388 CPU + 224 WHP + 4 SEH = 616`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 290개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 518개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `570 CPU + 224 WHP + 4 SEH = 798`.
 
 C SEH 범위는 끝 주소를 포함하지 않는 반개방 구간입니다. 유효한 `__C_specific_handler` 착지점이 보호 구간 안에 있을 수 있습니다. [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608)은 구간 끝에 `EndLabel + 1`을 기록합니다. Windows OS 모델은 원래 경계를 유지하며 재배치 후에도 실행 가능 여부, 소유 함수, 후속 실행 주소의 일치를 각각 검증합니다. `KernelSEHContinuationCases.def`는 원본 픽스처 배치를 보존하고 `ScopeEndLabelMayOverlapTheHandlerLandingPad`는 상수 처리기와 필터를 검사합니다. 관련 테스트는 끝 주소 제외와 잘못된 대상 거부 후 디스패치 상태를 소비하지 않고 재시도할 수 있음을 확인합니다. 이 순수 모델 검사는 Unicorn을 비활성화한 `NeverDNativeDriverTests`에서도 실행됩니다.
 
@@ -1263,4 +1275,11 @@ python3 scripts/benchmark_cpu.py \
 cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
+```
+
+`NeverDByteCellScalarizationTests`는 겹치는 워드, 두 진입 경로와 두 역방향 간선, 넓은 비트 폭과 2의 거듭제곱이 아닌 폭, 양쪽 바이트 순서, 저장 값 선택과 poison 의무 보존, 부분 poison 덮어쓰기, 전체 사용 그래프 거부 및 여러 객체에 걸친 정확한/부족한 예산을 검사합니다. 일반 Thin/Deep 파이프라인은 남은 배열을 제거해야 합니다. 독립 O0/O2 oracle은 8,192개 입력의 세 버전에서 24개 출력 바이트 전체, 주변 가드와 반환값을 비교하며 미정의 동작 트랩을 켜고 총 49,152회 호출합니다. x86-64, AArch64, 빅 엔디언 AArch64 및 ARM32 컴파일 검사는 네이티브 실행 검증과 별개입니다. 공통 메모리 계약 변경 시 바이트 전달 및 전용 프레임 테스트와 함께 실행합니다.
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
 ```

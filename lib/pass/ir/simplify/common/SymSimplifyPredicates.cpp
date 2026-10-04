@@ -35,18 +35,22 @@ struct AffineValue {
 
 class WorkBudget {
   size_t Remaining;
+  bool Exceeded = false;
 
 public:
   explicit WorkBudget(size_t Limit) : Remaining(Limit) {}
   bool spend(size_t Amount = 1) {
     if (Amount > Remaining) {
       Remaining = 0;
+      Exceeded = true;
       return false;
     }
     Remaining -= Amount;
     return true;
   }
   bool empty() const { return Remaining == 0; }
+  size_t remaining() const { return Remaining; }
+  bool exceeded() const { return Exceeded; }
 };
 
 bool supportedType(const llvm::Value *V) {
@@ -357,18 +361,26 @@ findDead(llvm::Instruction *Root, llvm::Value *Anchor, WorkBudget &Budget) {
 
 } // namespace
 
-unsigned simplifyModularPredicates(llvm::Function &F,
-                                   const SymSimplifyOptions &Opts) {
+SymPredicateSimplifyResult
+SymSimplifyPass::simplifyPredicates(llvm::Function &F,
+                                    SymSimplifyOptions Opts) {
+  if (!Opts.MaxPredicateWork || F.hasFnAttribute(kObfuscatedFnAttr))
+    return {};
   WorkBudget Budget(Opts.MaxPredicateWork);
+  unsigned Rewrites = 0;
+  auto Result = [&] {
+    return SymPredicateSimplifyResult{
+        Rewrites, Opts.MaxPredicateWork - Budget.remaining(),
+        Budget.exceeded()};
+  };
   llvm::SmallVector<llvm::WeakTrackingVH, 64> Roots;
   for (llvm::Instruction &I : llvm::instructions(F)) {
     if (!Budget.spend())
-      return 0;
+      return Result();
     if (I.getType()->isIntegerTy(1) && !I.use_empty())
       Roots.push_back(&I);
   }
   PredicateAnalysis Analysis(Budget);
-  unsigned Rewrites = 0;
   for (llvm::WeakTrackingVH &Handle : llvm::reverse(Roots)) {
     if (Budget.empty())
       break;
@@ -405,7 +417,12 @@ unsigned simplifyModularPredicates(llvm::Function &F,
     }
     ++Rewrites;
   }
-  return Rewrites;
+  return Result();
+}
+
+unsigned simplifyModularPredicates(llvm::Function &F,
+                                   const SymSimplifyOptions &Opts) {
+  return SymSimplifyPass::simplifyPredicates(F, Opts).Rewrites;
 }
 
 } // namespace neverd

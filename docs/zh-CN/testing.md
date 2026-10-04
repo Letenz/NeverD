@@ -93,6 +93,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `NeverDLLVMScalarEquivalenceTests` 覆盖完整循环域、零次循环、PHI 同时交换、switch、高位输入、最后分区反例、产生 poison 的额外更新、返回范围、不支持的契约，以及精确、少一单位和零预算。独立双宽与溢出参考实现覆盖各受支持字宽的漏斗移位端点和带溢出约束的乘法；独立嵌套循环 C 在 O1/O2 检查编译器输入形态。状态模型测试也检查漏斗移位端点。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 检查累计查询计费和不变的局部上限。
 
+`LLVMScalarDecision.*` 覆盖深层精确移位/扩展约束、常量分支决策、两条循环回边、保留高数据位、末端未定义操作、不终止、已检查函数的后续修改，以及精确/少一/局部预算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 将独立编写的单回边和双回边递推与无符号 C oracle 在 O0/O2 下比较，共 32,768 次调用。这些是标量模型检查，不代表原生 ABI 或完整二进制还原覆盖。
+
 `SymKnownBitsTests` 以全部字节输入对和任意精度边界值检查事实，涵盖扩展恒等关系、不回绕加法、不同来源及全定义移位语义。还检查精确/少一预算、缓存命中计费、存储上限、独立上下文、深度、操作数数量与不支持的位宽。`SymExprExtensionTests` 检查常量高位及完整移位计数。标量等价回归在证明值域约束时保留符号数据，拒绝最后分区差异及已执行的 poison，并以精确/少一预算核验完整证明计费。 `SymMBAExtensionTests` 在关闭采样验证时要求推导证据，检查全部字节输入对，并保留有符号、窄进位、按位取反及工作量耗尽的边界。
 
 `NeverDLLVMScalarLoopRecoveryTests` 覆盖前缀和前驱携带值重构、零次循环分支、自回边循环判断前移、仿射状态、回绕时的等式退路、额外更新的 poison、高位数据差异及不支持的输入契约。精确/少一累计预算检查原子拒绝；独立算术 oracle 在 O0/O2 执行原始与恢复 LLVM，覆盖全部字节控制输入。这些测试不代表原生 ABI 恢复或默认短 C 输出已完成。
@@ -108,6 +110,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 新增循环回归覆盖窄位宽末索引回绕、分离的 body/latch、两种入口条件方向、等式操作数交换、单位步长变量换序与递减、零次路径的高位数据差异、新增执行的 poison 和错误边界候选。精确/少一构造及证明预算和候选耗尽保持整体拒绝。原始 LLVM 与生成 C 在 O0/O2 下对照独立算术 oracle 运行。
 
 `NeverDLLVMCScalarLoopRecoveryTests` 检查默认整模块与单函数输出、返回路径清理后的继续恢复、函数身份和属性、调用绑定、已有及新增内建函数与符号冲突、共享预算、副作用调用、缺失输入定义性、元数据、映像投影、外部块地址和外来函数选择。独立算术与旋转 oracle 在 O0/O2 下执行生成 C，并开启未定义行为陷阱；算术还与独立编译的原始 LLVM 对照，覆盖所有字节控制输入、边界字值和确定性全位宽数据。
+
+`SymSimplifyPredicates.*` 还对照独立阶段与完整 pass 的策略、报告工作量、恰好及少一单位预算、禁用阶段和带混淆标记的函数。标量源码回归覆盖 8/32/64 位算术编码循环终止条件、有符号溢出拒绝，以及跨轮次和函数共享的构造限制。发布失败时保留原 IR；生成 C 在 O0/O2 下与独立编译的原始 LLVM 和算术 oracle 对照运行。
 
 初始化契约回归覆盖部分及分离的字节范围、固定别名、两个分支、每个返回点、循环首轮读取和循环内先写后读。先读后写、漏写、客体写入、未知别名、特殊内存访问、对象外范围，以及输入／工作预算耗尽，都必须失败。独立的仅输出状态字 C 用例在 O1/O2 编译后保留精确 LLVM 属性，并通过全新的原生到 LLVM 组合证明。
 
@@ -248,6 +252,14 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 `X64IntegerFloatTests.cpp` 使用独立的 `X64IntegerFloatCases.def` 编码、`APFloat` 期望值，以及保存/恢复浮点状态后执行的原生指令。覆盖两种整数宽度、四种舍入模式、精度粘滞状态、FTZ、所有 GPR/XMM 组合及完整 CPU/RAM 保留。非对齐、跨页、页末源、权限修复、观察者停止/失败和重试均检查精确范围。原生 KVM/WHP 在两个权限级别均为必测。
 
 `X64FloatIntegerTests.cpp` 使用独立的 `X64FloatIntegerCases.def` 编码、`APFloat` 和原生寄存器/内存指令，检查舍入及截断转换。两种整数宽度均覆盖有符号边界、中点值、NaN、无穷、次正规数、全部舍入模式、粘滞状态和 FTZ。检查所有 GPR/XMM 组合、完整 CPU/RAM 状态、精确页末读取、可恢复跨页故障及观察者取消/重试。两个权限级别的原生 KVM/WHP 结果均为必测。
+
+`X64SSEComparisonTests.cpp` 使用独立的 `X64SSEComparisonCases.def` 编码、`APFloat` 排序及保存/恢复宿主 FLAGS 和浮点状态的原生指令。21 种原始输入的全部配对覆盖 NaN/次正规优先级、零、无穷及相邻值。检查所有 XMM 配对与别名、MXCSR 粘滞位、舍入无关性、DF 保留、完整 CPU/RAM 状态、精确页末/跨页读取及观察者取消/重试。两个权限级别的原生 KVM/WHP 结果均为必测。
+
+`X64SSEPredicateTests.cpp` 使用 `X64SSEPredicateCases.def` 中的独立条件、`X64SSEComparisonCases.def` 中共享的原始输入、`APFloat` 排序和原生指令对照。测试覆盖全部输入对、混合通道异常优先级、标量高位保留、XMM 别名、完整 CPU/RAM 状态、页尾/跨页读取、对齐优先级及观察者/故障重试。直接 Capstone 检查覆盖全部控制字节、两种语法、两种解码 API 和 32/64 位模式。两个权限层级的原生 KVM/WHP 结果均为必测；保留控制值、VEX/EVEX 和设备操作数仍排除。 数值矩阵按指令及比较条件拆分，舍入与控制矩阵按指令拆分。`NativeCPUTests.def` 仍要求所有原始组合；来宾时限和 15 秒 CTest 时限保持不变。编译期检查要求每个指令/条件组合恰好出现一次。
+
+`X64SSEPrecisionTests.cpp` 结合独立的 `X64SSEPrecisionCases.def` 编码、`APFloat` 精度舍入和原生指令对照。范围检查使用无界指数下的舍入，覆盖定向舍入到有限值的溢出及舍入到正规数的微小结果。测试涵盖正负号、NaN 载荷、全部舍入/FTZ/粘滞状态、打包通道聚合、XMM 别名、完整 CPU/RAM 状态、精确源宽度、对齐优先级、页故障和观察者取消/重试。两个权限层级的 KVM/WHP 用例均为必测。
+
+`X64PackedFloatTests.cpp` 使用独立的 `X64PackedFloatCases.def` 编码、有符号 `APFloat` 期望值及原生指令对照。测试涵盖全部输入对、整数边界、精度中点、舍入模式、粘滞状态与 FTZ，并在两个权限层级检查寄存器别名、所有 XMM 组合、完整 CPU/RAM、每种 m64 跨页位置、精确页尾、对齐优先级及观察者/故障重试。全部 KVM/WHP 用例均为必测。
 
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
@@ -1043,7 +1055,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 388 项 CPU 检查及 4 项共享 SEH 续接回归，共有 616 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `388 CPU + 224 WHP + 4 SEH = 616`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 570 项 CPU 检查及 4 项共享 SEH 续接回归，共有 798 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `570 CPU + 224 WHP + 4 SEH = 798`.
 
 C SEH 作用域仍使用左闭右开区间。合法的 `__C_specific_handler` 落点可能位于其保护区间内：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 将 `EndLabel + 1` 写为区间末端。Windows OS 模型保留原始端点，并独立校验目标可执行性、所属函数和续接身份，重定位后同样如此。`KernelSEHContinuationCases.def` 保留原始样例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 覆盖常量处理器和过滤器。配套测试验证末端排除，以及非法目标被拒绝后派发状态仍可重试。这些纯模型检查纳入 `NeverDNativeDriverTests`，禁用 Unicorn 时仍会执行。
 
@@ -1181,4 +1193,11 @@ python3 scripts/benchmark_cpu.py \
 cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
+```
+
+`NeverDByteCellScalarizationTests` 覆盖重叠字、两条入口路径和两条回边、宽及非二次幂位宽访问、两种字节序、存储值选择和 poison 义务保持、部分 poison 覆盖、完整使用图拒绝，以及跨对象的精确/不足预算。常规 Thin/Deep 管线必须消除残留数组。独立 O0/O2 oracle 对 8,192 个输入的三个版本比较全部 24 个输出字节、外围哨兵和返回值，共 49,152 次调用，启用未定义行为陷阱。x86-64、AArch64、大端 AArch64 和 ARM32 编译检查与原生执行覆盖分别记录。修改共享内存契约时，应连同字节转发和私有帧测试一起运行此目标。
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
 ```

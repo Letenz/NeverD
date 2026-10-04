@@ -156,7 +156,7 @@ def hvf_inventory(
     if transport_only:
         owner = "NeverDHvfTests"
         required = {name for name in required if name.startswith(
-            ("Hvf.", "HvfExecutor.", "HvfConfiguration."))}
+            ("Hvf.", "HvfExecutor.", "HvfConfiguration.", "HvfIntelOwner."))}
         if owner not in owners or not required:
             raise ValueError("HVF transport profile requires its owner and native cases")
         owners = [owner]

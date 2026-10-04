@@ -89,7 +89,8 @@ class Trace {
       return false;
     const auto Clobbers = [&](const SourceABIValueLocation &Location) {
       return (Location.Kind == SourceABICarrierKind::IntegerRegister ||
-              Location.Kind == SourceABICarrierKind::FloatingRegister) &&
+              Location.Kind == SourceABICarrierKind::FloatingRegister ||
+              Location.Kind == SourceABICarrierKind::BooleanRegister) &&
              overlaps(Value,
                       NdVar::reg(Location.RegisterOffset, Location.ValueBytes));
     };

@@ -45,7 +45,8 @@ struct SwiftSDKDeclaration {
 // signature alphabet records only physical scalar carriers: p is a pointer,
 // z is an unsigned word, b is an unsigned byte, I is swift_indirect_result,
 // and C is swift_context.
-// A parenthesized pair is returned in the two integer result registers.
+// A parenthesized pair is returned in the two integer result registers;
+// (zpB) is the complete word/pointer/i1 result with a genuine _Bool field.
 constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // Foundation's NSNotFound getter has no arguments and returns one Int
     // carrier. The exact strong import is required by darwinRuntimeImport.
@@ -305,6 +306,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // The capacity is an Int carrier; the mutable String's address is
     // swiftself in both arm64 and x86_64 Swift 6.1.2 client IR.
     {"$sSS15reserveCapacityyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
+    // Four Swift 6.1.2 macOS/Mac Catalyst profiles declare {i64, ptr, i1}
+    // (i64, i64). The repair flag is neither a byte result nor String padding.
+    {"$sSS18_fromUTF8RepairingySS6result_Sb11repairsMadetSRys5UInt8VGFZ",
+     "/usr/lib/swift/libswiftCore.dylib", "(zpB)zz"},
     // Swift 6.1.2 arm64 client IR passes the inout Hasher address followed
     // by the two String words to String.hash(into:).
     {"$sSS4hash4intoys6HasherVz_tF", "/usr/lib/swift/libswiftCore.dylib",
@@ -338,6 +343,9 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     {"$sSa16_createNewBuffer14bufferIsUnique15minimumCapacity13growForAppendy"
      "Sb_SiSbtFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vbzbC"},
+    // Capacity and generic metadata are ordinary parameters, with no context.
+    {"$sSa28_allocateBufferUninitialized15minimumCapacitys06_ArrayB0VyxGSi_tFZ",
+     "/usr/lib/swift/libswiftCore.dylib", "pzp"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
     // DispatchQueue.global(qos:) reads the QoSClass value by address and
@@ -398,6 +406,14 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pzC"},
+    // Four Swift 6.1.2 macOS/Mac Catalyst profiles preserve the separator
+    // address, both generic metadata and both witnesses as ordinary inputs;
+    // the receiver address is swiftself. The complete Array result is a ptr.
+    {"$sSy10FoundationE10components11separatedBySaySSGqd___tSyRd__lF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "ppppppC"},
     // StringProtocol.caseInsensitiveCompare<String> carries five generic
     // pointers and the String value address in swiftself.
     {"$sSy10FoundationE22caseInsensitiveCompareySo18NSComparisonResultVqd__"
@@ -431,6 +447,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // and its Hashable witness. None of these arguments is swiftself.
     {"$ss11AnyHashableVyABxcSHRzlufC", "/usr/lib/swift/libswiftCore.dylib",
      "vIppp"},
+    // Four Swift 6.1.2 profiles pass capacity as the ordinary Int carrier
+    // and the specialized SetStorage metadata in swiftself, returning a ptr.
+    {"$ss11_SetStorageC8allocate8capacityAByxGSi_tFZ",
+     "/usr/lib/swift/libswiftCore.dylib", "pzC"},
     // The mutating _StringGuts.grow(Int) entry takes the capacity in the
     // first integer register and the two-word guts address in swiftself.
     {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
@@ -499,7 +519,11 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
   llvm::StringRef Encoding(Found->Signature);
   if (Encoding.consume_front("(zz)"))
     Signature.ReturnType = NdType::makeInt(16, false);
-  else if (Encoding.consume_front("p"))
+  else if (Encoding.consume_front("(zpB)")) {
+    const auto Boolean = NdType::makeInt(1, false);
+    Boolean->SourceName = kSourceBooleanCType;
+    Signature.ReturnType = NdType::makeStruct({Word, Pointer, Boolean});
+  } else if (Encoding.consume_front("p"))
     Signature.ReturnType = Pointer;
   else if (Encoding.consume_front("z"))
     Signature.ReturnType = Word;

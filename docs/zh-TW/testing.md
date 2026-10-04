@@ -93,6 +93,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDLLVMScalarEquivalenceTests` 涵蓋完整迴圈域、零次迴圈、PHI 同時交換、switch、高位輸入、最後分區反例、產生 poison 的額外更新、回傳範圍、不支援的契約，以及精確、少一單位及零預算。獨立雙寬與溢位參考實作涵蓋各支援字寬的漏斗位移端點及帶溢位約束的乘法；獨立巢狀迴圈 C 於 O1/O2 檢查編譯器輸入形態。狀態模型測試也檢查漏斗位移端點。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 檢查累計查詢計費與不變的局部上限。
 
+`LLVMScalarDecision.*` 涵蓋深層精確位移/擴展約束、常數分支決策、兩條迴圈回邊、保留高資料位元、末端未定義操作、不終止、已檢查函式的後續修改，以及精確/少一/局部預算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 將獨立撰寫的單回邊和雙回邊遞推與無號 C oracle 在 O0/O2 下比較，共 32,768 次呼叫。這些是純量模型檢查，不代表原生 ABI 或完整二進位還原涵蓋。
+
 `SymKnownBitsTests` 以全部位元組輸入對及任意精度邊界值檢查事實，涵蓋擴展恆等關係、不回繞加法、不同來源及全定義位移語意。亦檢查精確/少一預算、快取命中計費、儲存上限、獨立上下文、深度、運算元數量與不支援的位寬。`SymExprExtensionTests` 檢查常數高位元與完整位移計數。純量等價回歸在證明值域約束時保留符號資料，拒絕最後分區差異及已執行的 poison，並以精確/少一預算核驗完整證明計費。 `SymMBAExtensionTests` 在關閉取樣驗證時要求推導證據，檢查全部位元組輸入對，並保留有號、窄進位、位元反相及工作量耗盡的邊界。
 
 `NeverDLLVMScalarLoopRecoveryTests` 涵蓋前綴與前驅攜帶值重構、零次迴圈分支、自回邊迴圈判斷前移、仿射狀態、回繞時的等式退路、額外更新的 poison、高位元資料差異及不支援的輸入契約。精確／少一累計預算檢查原子拒絕；獨立算術 oracle 在 O0/O2 執行原始與恢復 LLVM，涵蓋全部位元組控制輸入。這些測試不代表原生 ABI 恢復或預設短 C 輸出已完成。
@@ -108,6 +110,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 新增迴圈迴歸涵蓋窄位寬末索引回繞、分離的 body/latch、兩種入口條件方向、等式運算元交換、單位步長變數換序與遞減、零次路徑的高位資料差異、新增執行的 poison 和錯誤邊界候選。精確／少一建構及證明預算和候選耗盡保持整體拒絕。原始 LLVM 與產生 C 在 O0/O2 下對照獨立算術 oracle 執行。
 
 `NeverDLLVMCScalarLoopRecoveryTests` 檢查預設整模組與單函式輸出、回傳路徑清理後的持續恢復、函式身分和屬性、呼叫繫結、既有及新增內建函式與符號衝突、共用預算、副作用呼叫、缺少輸入定義性、中繼資料、映像投影、外部區塊位址和外來函式選擇。獨立算術與旋轉 oracle 在 O0/O2 下執行產生的 C，並啟用未定義行為陷阱；算術也與獨立編譯的原始 LLVM 對照，涵蓋所有位元組控制輸入、邊界字值及確定性的完整位寬資料。
+
+`SymSimplifyPredicates.*` 也對照獨立階段與完整 pass 的策略、回報工作量、恰好與少一單位預算、停用階段及帶混淆標記的函式。純量原始碼回歸涵蓋 8/32/64 位元算術編碼迴圈終止條件、有號溢位拒絕，以及跨輪次與函式共用的建構限制。發布失敗時保留原 IR；產生的 C 在 O0/O2 下與獨立編譯的原始 LLVM 及算術 oracle 對照執行。
 
 初始化契約回歸涵蓋部分及分離的位元組範圍、固定別名、兩個分支、每個返回點、迴圈首輪讀取與迴圈內先寫後讀。先讀後寫、漏寫、客體寫入、未知別名、特殊記憶體存取、物件外範圍，以及輸入／工作預算耗盡，都必須失敗。獨立的僅輸出狀態字 C 案例在 O1/O2 編譯後保留精確 LLVM 屬性，並通過全新的原生到 LLVM 組合證明。
 
@@ -248,6 +252,14 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 `X64IntegerFloatTests.cpp` 使用獨立的 `X64IntegerFloatCases.def` 編碼、`APFloat` 預期值，以及保存/還原浮點狀態後執行的原生指令。涵蓋兩種整數寬度、四種捨入模式、精度黏滯狀態、FTZ、所有 GPR/XMM 組合及完整 CPU/RAM 保留。非對齊、跨頁、頁尾來源、權限修復、觀察者停止/失敗和重試均檢查精確範圍。原生 KVM/WHP 在兩個權限層級均為必測。
 
 `X64FloatIntegerTests.cpp` 使用獨立的 `X64FloatIntegerCases.def` 編碼、`APFloat` 和原生暫存器/記憶體指令，檢查捨入及截斷轉換。兩種整數寬度均涵蓋帶正負號邊界、中點值、NaN、無窮、次正規數、全部捨入模式、黏滯狀態和 FTZ。檢查所有 GPR/XMM 組合、完整 CPU/RAM 狀態、精確頁尾讀取、可復原跨頁錯誤及觀察者取消/重試。兩個權限層級的原生 KVM/WHP 結果均為必測。
+
+`X64SSEComparisonTests.cpp` 使用獨立的 `X64SSEComparisonCases.def` 編碼、`APFloat` 排序及保存/還原宿主 FLAGS 和浮點狀態的原生指令。21 種原始輸入的全部配對涵蓋 NaN/次正規優先級、零、無窮及相鄰值。檢查所有 XMM 配對與別名、MXCSR 黏滯位元、捨入無關性、DF 保留、完整 CPU/RAM 狀態、精確頁尾/跨頁讀取及觀察者取消/重試。兩個權限層級的原生 KVM/WHP 結果均為必測。
+
+`X64SSEPredicateTests.cpp` 使用 `X64SSEPredicateCases.def` 的獨立條件、`X64SSEComparisonCases.def` 的共用原始輸入、`APFloat` 排序及原生指令對照。測試涵蓋全部輸入配對、混合通道例外優先級、純量高位保留、XMM 別名、完整 CPU/RAM 狀態、頁尾/跨頁讀取、對齊優先級及觀察者/故障重試。直接 Capstone 檢查涵蓋全部控制位元組、兩種語法、兩種解碼 API 與 32/64 位元模式。兩個權限層級的原生 KVM/WHP 結果均為必測；保留控制值、VEX/EVEX 與裝置運算元仍排除。 數值矩陣按指令及比較條件拆分，捨入與控制矩陣按指令拆分。`NativeCPUTests.def` 仍要求所有原始組合；客體時限及 15 秒 CTest 時限維持不變。編譯期檢查要求每個指令/條件組合恰好出現一次。
+
+`X64SSEPrecisionTests.cpp` 結合獨立的 `X64SSEPrecisionCases.def` 編碼、`APFloat` 精度捨入及原生指令對照。範圍檢查使用無界指數下的捨入，涵蓋定向捨入至有限值的溢位及捨入至正規數的微小結果。測試涵蓋正負號、NaN 載荷、全部捨入/FTZ/黏滯狀態、打包通道聚合、XMM 別名、完整 CPU/RAM 狀態、精確來源寬度、對齊優先級、頁面錯誤及觀察者取消/重試。兩個權限層級的 KVM/WHP 案例均為必測。
+
+`X64PackedFloatTests.cpp` 使用獨立的 `X64PackedFloatCases.def` 編碼、有號 `APFloat` 預期值及原生指令對照。測試涵蓋全部輸入對、整數邊界、精度中點、捨入模式、黏滯狀態與 FTZ，並在兩個權限層級檢查暫存器別名、所有 XMM 組合、完整 CPU/RAM、每種 m64 跨頁位置、精確頁尾、對齊優先級及觀察者/錯誤重試。全部 KVM/WHP 案例均為必測。
 
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
@@ -1081,7 +1093,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 388 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 616 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `388 CPU + 224 WHP + 4 SEH = 616`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 570 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 798 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `570 CPU + 224 WHP + 4 SEH = 798`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 
@@ -1219,4 +1231,11 @@ python3 scripts/benchmark_cpu.py \
 cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
+```
+
+`NeverDByteCellScalarizationTests` 涵蓋重疊字、兩條入口路徑與兩條回邊、寬及非二次冪位元寬度存取、兩種位元組序、儲存值選擇與 poison 義務保留、部分 poison 覆寫、完整使用圖拒絕，以及跨物件的精確/不足預算。一般 Thin/Deep 管線必須消除殘留陣列。獨立 O0/O2 oracle 對 8,192 個輸入的三個版本比較全部 24 個輸出位元組、周圍哨兵及回傳值，共 49,152 次呼叫，啟用未定義行為陷阱。x86-64、AArch64、大端 AArch64 與 ARM32 編譯檢查和原生執行涵蓋範圍分別記錄。修改共用記憶體契約時，應連同位元組轉送與私有框架測試一起執行此目標。
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
 ```

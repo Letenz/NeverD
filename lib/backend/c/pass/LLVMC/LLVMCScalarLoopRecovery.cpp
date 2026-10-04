@@ -7,6 +7,7 @@
 #include "LLVMCScalarLoopRecovery.h"
 
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
@@ -52,7 +53,10 @@ bool hasScalarLoop(Function &F, uint64_t &ScanWork) {
   return !Loops.empty();
 }
 
-bool cleanCandidate(Module &M) {
+bool cleanCandidate(Module &M,
+                    analysis::LLVMScalarLoopRecoveryLimits &Remaining) {
+  if (!Remaining.MaxConstructionWork)
+    return false;
   LoopAnalysisManager Loops;
   FunctionAnalysisManager Functions;
   CGSCCAnalysisManager CallGraph;
@@ -78,6 +82,38 @@ bool cleanCandidate(Module &M) {
     return false;
   }
   Pipeline.run(M, Modules);
+  bool Changed = false;
+  for (auto &F : M) {
+    if (!Remaining.MaxConstructionWork)
+      return false;
+    --Remaining.MaxConstructionWork;
+    if (F.isDeclaration())
+      continue;
+    SymSimplifyOptions Options;
+    Options.MaxPredicateWork =
+        std::min<uint64_t>(65536, Remaining.MaxConstructionWork);
+    const auto R = SymSimplifyPass::simplifyPredicates(F, Options);
+    Remaining.MaxConstructionWork -= R.Work;
+    if (R.Rewrites) {
+      Functions.invalidate(F, PreservedAnalyses::none());
+      Changed = true;
+    }
+  }
+  if (Changed) {
+    // Recovery can expose a new predicate after the ordinary semantic pass.
+    // InstCombine first reveals its scalar boundary; LICM then makes an
+    // invariant boundary available outside the loop for the next search.
+    // CSE gives equivalent counter updates one SSA identity again.
+    // The final complete-source proof remains mandatory after all cleanup.
+    ModulePassManager Finish;
+    if (auto Error = Passes.parsePassPipeline(
+            Finish, "function(instcombine,loop-mssa(licm),instcombine,"
+                    "early-cse,simplifycfg)")) {
+      consumeError(std::move(Error));
+      return false;
+    }
+    Finish.run(M, Modules);
+  }
   return !verifyModule(M);
 }
 
@@ -182,7 +218,7 @@ recoverScalarLoops(llvm::Module &Module, const llvm::Function *Only,
       }
       if (R.Status != LLVMScalarLoopRecoveryStatus::Recovered)
         break;
-      if (!cleanCandidate(*R.Module)) {
+      if (!cleanCandidate(*R.Module, Remaining)) {
         Refused = true;
         break;
       }

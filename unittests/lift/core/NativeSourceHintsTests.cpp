@@ -7381,6 +7381,62 @@ TEST(NativeSourceHints, IntegerPairReturnsPreserveBothWordsOfBoundRecordCalls) {
     }
 }
 
+TEST(NativeSourceHints, StringWordsStayDefinedWhenTheCalleeAlsoReturnsBoolean) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      NativeRecordResultFixture F(Architecture, true);
+      auto &Ops = F.Med.Blocks[0].Ops;
+      auto Binding =
+          std::make_shared<SourceCallTypeHint>(*Ops[0].SourceCallHint);
+      const auto Boolean = NdType::makeInt(1, false);
+      Boolean->SourceName = kSourceBooleanCType;
+      Binding->Signature.ReturnType =
+          NdType::makeStruct({NdType::makeInt(8, false),
+                              NdType::makePtr(NdType::makeVoid()), Boolean});
+      std::string Error;
+      ASSERT_TRUE(
+          assignDarwinSwiftSourceABI(Binding->Signature, Architecture, Error));
+      Ops[0].SourceCallHint = Binding;
+      Ops[0].Output.Size = 24;
+      for (unsigned I = 1; I != 3; ++I)
+        Ops[I].Inputs[0].Size = 24;
+      // No byte-valued definition of the third carrier is needed or allowed
+      // by this proof of just the two full String words.
+      if (Mutation == 1)
+        Binding->Signature.ReturnComponents[2].Kind =
+            SourceABICarrierKind::IntegerRegister;
+      if (Mutation == 2)
+        Binding->Signature.ReturnComponents.pop_back();
+      if (Mutation == 3)
+        Ops[0].Output.Size = 16;
+      if (Mutation == 4)
+        Ops[2].Inputs[0].Size = 16;
+      if (Mutation == 5)
+        Ops[2].Output.Size = 4;
+      if (Mutation == 6)
+        Ops[2].Inputs[1].ConstVal = 16;
+      if (Mutation == 7)
+        Ops[1].Output.Size = 4;
+      if (Mutation == 8) {
+        Binding->Signature.ReturnType = NdType::makeInt(16, false);
+        ASSERT_TRUE(assignDarwinSwiftSourceABI(Binding->Signature, Architecture,
+                                               Error));
+      }
+      const auto Pair = inferNativeSourceTypeHint(
+          F.Image, F.Med, F.High, F.Audit, Error, nullptr, true);
+      if (Mutation == 0) {
+        ASSERT_TRUE(Pair) << Error;
+        EXPECT_EQ(Pair->ReturnType->Size, 16U);
+        EXPECT_EQ(Pair->ReturnComponents.size(), 2U);
+        EXPECT_EQ(Ops[0].SourceCallHint->Signature.ReturnType->Size, 24U);
+        EXPECT_EQ(Ops[0].SourceCallHint->Signature.ReturnComponents.size(), 3U);
+      } else {
+        EXPECT_FALSE(Pair) << Error;
+      }
+    }
+}
+
 TEST(NativeSourceHints, RecordResultDefinitionsRequireTheCompleteCallPrefix) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Mutation = 0; Mutation < 15; ++Mutation) {

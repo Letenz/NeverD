@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 100fc149f035b5f133930186baac6655480571d50a0b80e958aa14b1abf7c7fe -->
+<!-- i18n-source: 22ba6d21112d256e04570cdee32a639db23035b9abf497605ce33a6065066e12 -->
 
 [← 문서 목록](README.md)
 
@@ -28,7 +28,7 @@ macOS 11 이상과 하드웨어 가상화가 필요합니다. 다른 의존성�
 
 ARM64는 소프트웨어 단일 단계를 끄고 전체 고정 TLB/I-cache 유지 관리 시퀀스를 한 번의 네이티브 진입으로 실행합니다. 전용 HVC #1의 반환 PC, syndrome, PSTATE와 변경되지 않은 ESR_EL1을 정확히 확인한 뒤 허용된 게스트 명령 하나를 단일 단계로 실행합니다. `PSTATE.D`는 EL2로 전달되는 디버그 예외를 가리지 못합니다. 스칼라, TLS, FP/SIMD 상태를 모두 캡처합니다. Intel은 VMCS 제어를 협상하고 monitor trap, TLB 무효화, 완전한 XSAVE 패킷을 사용합니다. RIP/RFLAGS는 vCPU 재생성 후에도 VMCS를 통해 직접 전송합니다. CR0/CR4는 프레임워크 마스크와 하드웨어 고정 비트를 따릅니다. 인증된 CR8 읽기 종료는 ISA 계층이 완료하며 다른 제어 레지스터 접근은 실패합니다. 각 vCPU는 전용 관리 대상 `IA32_KERNEL_GS_BASE`를 초기화합니다. 게스트 MSR 접근은 가로채며 지원하지 않는 MSR/SWAPGS는 허용하지 않습니다.
 
-대기열은 원래 중지 토큰과 기한을 유지합니다. 준비, 유지 관리, 진입, 캡처는 하나의 시간 예산을 공유합니다. `RunDeadline`은 인터럽트 확인이 끝난 후 반환합니다. 취소 시 vCPU를 재생성해 늦게 도착하는 인터럽트를 격리합니다. 무관한 Intel 호스트 인터럽트는 같은 취소 세대에서 재시도합니다. 캡처 오류와 인증된 예외는 동시 중지보다 우선하며 일반적인 취소 상태는 공개하지 않습니다. 협력적 취소이며 엄격한 실시간 보장은 아닙니다.
+대기열은 원래 중지 토큰과 기한을 유지합니다. 준비, 유지 관리, 진입, 캡처는 하나의 시간 예산을 공유합니다. ARM64의 `RunDeadline`은 인터럽트 확인이 끝난 후 반환합니다. Intel은 소유 스레드에서 유한 기한의 `hv_vcpu_run_until` 호출로 취소를 확인합니다. 취소 시 vCPU를 재생성해 늦게 도착하는 인터럽트를 격리합니다. 무관한 Intel 호스트 인터럽트는 같은 취소 세대에서 재시도합니다. 캡처 오류와 인증된 예외는 동시 중지보다 우선하며 일반적인 취소 상태는 공개하지 않습니다. 협력적 취소이며 엄격한 실시간 보장은 아닙니다.
 
 ## 검증 방법
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon에서는 `-DNEVERD_LLVM_PREBUILT=ON`을 추가할 수 있습니다. Intel은 고정된 LLVM 리비전을 소스에서 빌드합니다. [HVF 워크플로](../../.github/workflows/hvf.yml)는 `self-hosted, macOS, ARM64/X64, hvf`와 `macos-15-intel`의 `hosted-intel`을 지원합니다. 먼저 실제 VM/vCPU 생성과 삭제를 확인합니다. `validation=probe`는 명령 실행의 증거가 아니며, `transport`는 전송 계층만, `darwin`은 일치하는 모든 Darwin 작업을, `full`은 전체 CPU와 Darwin 검증을 모두 요구합니다.
 
-전송 계층의 필수 항목은 ARM64 15개, Intel 10개이며 전체 CPU 검증은 각각 23개, 18개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
+전송 계층의 필수 항목은 ARM64 15개, Intel 12개이며 전체 CPU 검증은 각각 23개, 20개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
 
 호스팅 Intel의 `--execution-methods`는 전체 CTest 목록의 모든 매개변수, 플래그, 환경 및 작업 디렉터리를 유지하여 GoogleTest 메서드를 직렬 실행합니다. 알 수 없는 속성은 거부합니다. 메서드 전체 기한은 최대 120초이며 내부 매개변수마다 별도 기한을 적용하지 않습니다. 이후 제한된 시간 안에 프로세스 그룹을 회수합니다. 원본 XML, 이름 대응, 종료 상태를 보존합니다. 시간 초과나 불완전한 XML은 부분 실패를 만들고, 필수 네이티브 항목 누락이나 건너뛰기는 통과할 수 없습니다. 자체 runner는 CTest의 사례별 프로세스와 기한을 유지합니다.
 
@@ -186,3 +186,11 @@ Executor/VM/소유 스레드 세션 전체를 유지한 유한 기한 복구 비
 매 회차 vCPU만 다시 만드는 수정된 복구 테스트(소스 `7dd7342ec`, 헬퍼 `31afddad3`, 워크플로 `10bf50753`)는 macOS 15에서 1000회를 모두 통과했습니다([37215096822](https://github.com/gmh5225/test_mac_intel/actions/runs/37215096822), 검증된 산출물 43개). 네이티브와 컨트롤러의 최종 종료 코드는 0이며 자식 프로세스 회수도 확인했습니다. VM은 1세대, vCPU 경계는 1001세대지만 전체/실행 vCPU 수는 알 수 없습니다. macOS 26([37215098793](https://github.com/gmh5225/test_mac_intel/actions/runs/37215098793), 19개)에서는 progress-016 업로더에 SIGSEGV가 발생했습니다. IPS의 PID 32519, 부모 29104, 수집 시각과 Node UUID가 일치합니다. 저장된 네이티브 로그는 403회 완료, 404회 시작을 입증하며 assertion 실패는 없습니다. 컨트롤러가 네이티브 프로세스를 취소하고 회수했으나(SIGKILL) 최종 네이티브 결과는 없습니다. 이는 미완료 증거이며 runner 연결 끊김이나 통과가 아닙니다. 실행 전 기록한 Node 24.19.0 SHA-256은 `1052eb9c7d6c60a79b968e09f75af55a73462b0f6dff0964336d63b5e13eb63c`입니다. 이는 디스크 파일의 신원을 입증하며 프로세스 메모리가 바뀌지 않았음을 입증하지는 않습니다. 이 고정 소스 결과로 이후 dev 병합을 검증할 수 없습니다.
 
 매 회차 VM/vCPU를 다시 만드는 복구 테스트도 두 이미지 모두 runner 연결 끊김으로 종료되었습니다: [macOS 15 / 37213675739](https://github.com/gmh5225/test_mac_intel/actions/runs/37213675739), [macOS 26 / 37213681083](https://github.com/gmh5225/test_mac_intel/actions/runs/37213681083). 소스 `7dd7342ec`, 헬퍼 `4c702d35a`, 워크플로 `fad0eadf2`를 사용했습니다. 검증된 산출물 23/26개는 각각 502/503, 575/576회 완료/시작을 입증하는 연속 로그를 보존합니다. 최종 네이티브 결과와 프로세스 회수 기록은 없습니다. GitHub는 통신 중단만 확인하며 원인을 밝히지는 않습니다. 일반 명령만 실행한 VM 재생성 통과를 이 복구 부하에 적용할 수 없습니다. 두 테스트 통과가 전제인 전체 세션 재설정 실험은 아직 시작하지 않았습니다.
+
+업로더 `jitless` 대조([37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863), macOS 15/26)는 복구 테스트 시작 전에 실패했습니다. 공식 업로더의 HTTP 파서가 필요한 WebAssembly를 `--jitless`가 비활성화하여 두 plan 업로드 모두 신호 없이 코드 1로 종료되었습니다. 각 실행의 검증된 산출물은 2개이며 plan은 최종 증거에서 복구한 것으로 독립적인 사전 업로드 성공이 아닙니다. 네이티브 복구를 테스트하지 못했지만 앞선 HVF 기능 탐색 실행을 부정하지는 않습니다. 대체 선택 모드 `js-interpreter`는 컨트롤러의 plan/progress 업로드 자식에만 `--no-turbofan --no-maglev --no-sparkplug`를 전달하여 WebAssembly와 다른 코드 생성을 유지합니다. 부모, 네이티브 부하와 기한은 그대로이며 provenance/final은 기본 모드입니다. 실제 로컬 HTTP 및 자격 증명 없는 공식 업로더 검사는 통과했으나 HVF 안정성 수정의 증거는 아닙니다.
+
+`js-interpreter` vCPU 재생성 복구 대조는 소스 `7dd7342ec`, 헬퍼 `caeb594ad`, 워크플로 `e6d054c45`를 사용했습니다. macOS 26([37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679))은 1000/1000을 통과했으며 산출물 43개, plan/progress 호출 41개 전부, 네이티브/컨트롤러 종료 코드 0, 자식 회수와 마지막 경계 세대 1001의 종료를 독립 검증했습니다. macOS 15([37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672))에서는 progress-018 업로더가 SIGSEGV로 중단되어 산출물 21개에 460회 완료/461회 시작 및 이후 취소와 SIGKILL 회수가 남았습니다. IPS의 PID 62812, 부모 59666, 시각과 Node UUID가 일치하며 상위 프레임은 V8 동시 힙 마킹, 잘못된 주소는 `0x80000000`입니다. JavaScript 컴파일러를 끄는 세 플래그가 실제 적용되었고 두 이미지의 Node 파일 SHA도 같습니다. 이 모드도 업로더 충돌을 제거하지 못했습니다. 프레임만으로 원인을 확정할 수 없고 macOS 15의 네이티브 결과는 알 수 없습니다. 전체 CPU/Darwin 검증과 캐시 후보의 양쪽 이미지 통과 조건은 미충족입니다. 기존 임시 탐색 및 마지막 클라이언트 해제 후 VM 반환 계약을 어기는 기본 영구 캐시는 구현하지 않았습니다.
+
+실행 `37188627569`(소스 `392a9d171`)의 변경되지 않은 출력을 재현 가능한 보충 감사로 다시 검증하여 유한 기한 탐침 1,000회를 모두 대조했습니다. [감사기와 19개 회귀 테스트](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)는 각 begin/end/capture를 해당 호출, 새로운 메모리 쓰기 증거 및 RIP와 연결하고, 첫 루프의 고정 예산과 별도로 제어되는 두 MTF 관측을 확인합니다. 정상적인 guest 미진입 관측은 보존하지만 명령 실행 진전으로 세지 않습니다. 저장된 증거를 다시 검증한 것으로, 새로운 네이티브 실행이 아니며 기존 결과, 리소스 회수 요건 또는 Intel 승인 상태를 변경하지 않습니다.
+
+추가 host kick을 생략한 대조에서도 두 runner가 모두 연결을 잃었습니다. macOS 15 실행 `37221649736`과 macOS 26 실행 `37221651593`에 GitHub 연결 단절 주석이 있습니다. 소스 `023a4a68d`는 세 복구 단계, 재시도 및 매 반복의 VM/vCPU 재생성을 유지하며, 제품 `lib`는 이전 진단 소스 `7dd7342ec`와 동일합니다. 아티팩트 34/15개의 해시를 모두 검증했습니다. 연속 로그 앞부분은 완료/시작 778/779와 300/301회를 증명하며, join 이후 생략을 나타내는 줄바꿈 완료 마커는 779/300개입니다. 마커는 아직 끝나지 않은 반복에도 속할 수 있습니다. 두 실행 모두 최종 네이티브 결과와 회수 기록이 없고 마지막 저장 마커는 장애 위치를 특정하지 못합니다. 이 호출의 생략만으로 이번 연결 단절을 막지 못했으며, 근본 원인이나 현재 `dev`의 승인도 입증하지 못했습니다. [보존된 증거](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries).
