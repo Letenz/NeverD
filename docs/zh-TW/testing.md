@@ -1132,7 +1132,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 `WindowsProcessContext` 保留每個派送框架的來源。已支援的 x64 資料存取和除法故障在 `CONTEXT.EFlags` 中呈現 RF（`0x10000`）；`RaiseException`（包括軟體拋出的存取違規碼）保留目前上下文。來源資訊貫穿 VEH/VCH 和 SEH 搜尋／展開。合法繼續執行時還原不含 RF 的邏輯 CPU 旗標；客戶修改 RF 會在發布狀態前被拒絕。此受限設定不模擬指令中斷點或客戶控制的 RF。`WindowsExceptionTests.cpp` 檢查儲存記錄、還原，以及拒絕時 CPU／RAM 不變。
 
-Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` 故障映射為 `STATUS_ACCESS_VIOLATION`，參數為 `[read, UINT64_MAX]`，儲存指令亦相同。原因由 CPU 層提供，Windows 不憑向量 13 猜測或重新解碼指令。`WindowsAlignmentProcessTests.cpp` 執行原始 PE 指令，涵蓋 72 種故障情境及 9 次位址修復重試（`72 + 9`），檢查 PC、RF、XMM 與 RAM。未分類或欄位不一致的故障仍會拒絕。程序與驅動程式故障報告保留可空的 `cause` 及十六進位 `error_code`，區分缺失與零。此派送適用於 checked x64 使用者態執行契約。 每次故障或修復重試後，範例都會匯出完整的 4096 位元組頁面；宿主核對全部 81 份快照及實際完成計數，來賓時限保持不變。
+Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` 故障映射為 `STATUS_ACCESS_VIOLATION`，參數為 `[read, UINT64_MAX]`，儲存指令亦相同。原因由 CPU 層提供，Windows 不憑向量 13 猜測或重新解碼指令。`WindowsAlignmentProcessTests.cpp` 執行原始 PE 指令，涵蓋 72 種故障情境及 9 次位址修復重試（`72 + 9`），檢查 PC、RF、XMM 與 RAM。未分類或欄位不一致的故障仍會拒絕。程序與驅動程式故障報告保留可空的 `cause` 及十六進位 `error_code`，區分缺失與零。此派送適用於 checked x64 使用者態執行契約。 每次故障或修復重試後，範例都會匯出完整的 4096 位元組頁面；宿主核對全部 81 份快照及實際完成計數，來賓時限保持不變。 原生程序及初始執行緒觀測使用 `CREATE_DEFAULT_ERROR_MODE`：GoogleTest 會啟用可繼承的 `SEM_NOALIGNMENTFAULTEXCEPT` 旗標，使 Windows 自動修復正在測量的故障。因此原生驗證使用系統預設行為，避免測試框架策略干擾結果。
 
 `AddVectoredContinueHandler` 與 `RemoveVectoredContinueHandler` 管理獨立的有序串列，與例外處理器共用最多保留 128 個註冊項的限制。向量例外處理器接受繼續執行後，繼續處理器讀取同一份可修改的例外記錄與 `CONTEXT`；最終內容驗證在這些回呼完成後進行，包含巢狀例外與 DLL 通知。兩類處理器的控制代碼不可交叉移除。`WindowsContinuationTests.cpp` 將順序、提早結束派送、增刪、內容修復、巢狀派送、載入器回呼及程序結束的原創 EXE 案例與原生 Windows 比較。已測 Windows x64 向量處理路徑允許在設定 `EXCEPTION_NONCONTINUABLE` 時繼續執行；這不代表以堆疊框架為基礎的 SEH 行為。原生 ARM64 執行仍未驗證。
 
