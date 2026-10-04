@@ -5,6 +5,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
+#include "HvfTestPolicy.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -49,7 +50,7 @@ protected:
       auto E = B.takeError();
       const bool Unavailable = E.isA<BackendUnavailableError>();
       auto Reason = llvm::toString(std::move(E));
-      if (Unavailable)
+      if (Unavailable && !requireHvf(P.Backend, P.ISA))
         GTEST_SKIP() << Reason;
       FAIL() << Reason;
     }

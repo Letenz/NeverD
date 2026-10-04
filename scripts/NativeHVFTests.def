@@ -38,6 +38,30 @@ NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
     ARM64, "Hvf.GuestBranchCannotEnterPrivateMaintenance")
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Checked/InstructionFetch.GuestAliasStoreChangesTheNextInstruction/"
+           "HvfARM64Supervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Checked/InstructionFetch.GuestAliasStoreChangesTheNextInstruction/"
+           "HvfARM64User")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Checked/InstructionFetch.HostAliasWriteAndContextRestoreUseFreshBytes/"
+           "HvfARM64Supervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Checked/InstructionFetch.HostAliasWriteAndContextRestoreUseFreshBytes/"
+           "HvfARM64User")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    X64, "Checked/InstructionFetch.GuestAliasStoreChangesTheNextInstruction/"
+         "HvfX64Supervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    X64, "Checked/InstructionFetch.GuestAliasStoreChangesTheNextInstruction/"
+         "HvfX64User")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    X64, "Checked/InstructionFetch.HostAliasWriteAndContextRestoreUseFreshBytes/"
+         "HvfX64Supervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    X64, "Checked/InstructionFetch.HostAliasWriteAndContextRestoreUseFreshBytes/"
+         "HvfX64User")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
     ARM64,
     "HvfExecutor.GuestFaultDoesNotPublishAtEitherARMPrivilegeAndAllowsRetry")
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
