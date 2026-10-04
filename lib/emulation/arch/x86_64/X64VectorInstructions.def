@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// Name, memory width, alignment, move/store, complete operand-pair form.
+// Name, memory width, alignment, move/store, complete operand form.
 // Floating-point operations retain masked MXCSR status/control.
 // MMX, VEX/EVEX and unmasked FP exceptions remain outside this contract.
 // String MOVSD has separate operand admission and restart semantics.
@@ -48,3 +48,7 @@ NEVERD_X64_VECTOR_INSTRUCTION(CVTTSD2SI, 8, 1, false, IntegerResult)
 NEVERD_X64_VECTOR_INSTRUCTION(MOVMSKPS, 0, 1, false, RegisterMask)
 NEVERD_X64_VECTOR_INSTRUCTION(MOVMSKPD, 0, 1, false, RegisterMask)
 NEVERD_X64_VECTOR_INSTRUCTION(PMOVMSKB, 0, 1, false, RegisterMask)
+#define NEVERD_X64_SHUFFLE_INSTRUCTION(Name)                                   \
+  NEVERD_X64_VECTOR_INSTRUCTION(Name, 16, 16, false, SourceControl)
+#include "X64ShuffleInstructions.def"
+#undef NEVERD_X64_SHUFFLE_INSTRUCTION

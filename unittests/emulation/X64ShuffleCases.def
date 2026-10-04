@@ -1,0 +1,48 @@
+//===- X64ShuffleCases.def - Independent lane-selection cases -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_SHUFFLE_OPERATION
+// Name, mandatory prefix, opcode. These do not import the admission table.
+NEVERD_SHUFFLE_OPERATION(PSHUFD, 0x66, 0x70)
+NEVERD_SHUFFLE_OPERATION(PSHUFHW, 0xf3, 0x70)
+NEVERD_SHUFFLE_OPERATION(PSHUFLW, 0xf2, 0x70)
+NEVERD_SHUFFLE_OPERATION(SHUFPS, 0, 0xc6)
+NEVERD_SHUFFLE_OPERATION(SHUFPD, 0x66, 0xc6)
+#endif
+#ifdef NEVERD_SHUFFLE_VALUE
+NEVERD_SHUFFLE_VALUE(OpcodeMap, 0x0f)
+NEVERD_SHUFFLE_VALUE(RegisterModRM, 0xc0)
+NEVERD_SHUFFLE_VALUE(RegisterFieldBits, 3)
+NEVERD_SHUFFLE_VALUE(RegisterFieldMask, 7)
+NEVERD_SHUFFLE_VALUE(Rex, 0x40)
+NEVERD_SHUFFLE_VALUE(RexDestination, 0x04)
+NEVERD_SHUFFLE_VALUE(RexSource, 0x01)
+NEVERD_SHUFFLE_VALUE(ControlBits, 2)
+NEVERD_SHUFFLE_VALUE(ControlMask, 3)
+NEVERD_SHUFFLE_VALUE(PhysicalExponent, 0x3fff)
+#endif
+#ifdef NEVERD_SHUFFLE_INPUT
+// Distinct words, raw signaling NaNs, signed zeros and denormals.
+NEVERD_SHUFFLE_INPUT(0x0011002200330044ULL, 0x0055006600770088ULL,
+                     0x1122334455667788ULL, 0x99aabbccddeeff00ULL)
+NEVERD_SHUFFLE_INPUT(0x7ff0000000000001ULL, 0xfff0000000000001ULL,
+                     0x800000007f800001ULL, 0xff80000100000001ULL)
+NEVERD_SHUFFLE_INPUT(0x8000000000000000ULL, 0x0000000080000000ULL,
+                     0x7fc00001ff800001ULL, 0x0000000000000001ULL)
+#endif
+#ifdef NEVERD_SHUFFLE_INVALID
+NEVERD_SHUFFLE_INVALID(MMXRegister, 0x0f, 0x70, 0xc1, 0xff)
+NEVERD_SHUFFLE_INVALID(MMXMemory, 0x0f, 0x70, 0x01, 0xff)
+NEVERD_SHUFFLE_INVALID(VexDwords, 0xc5, 0xf9, 0x70, 0xc1, 0xff)
+NEVERD_SHUFFLE_INVALID(VexHighWords, 0xc5, 0xfa, 0x70, 0xc1, 0xff)
+NEVERD_SHUFFLE_INVALID(VexLowWords, 0xc5, 0xfb, 0x70, 0xc1, 0xff)
+NEVERD_SHUFFLE_INVALID(VexSingles, 0xc5, 0xf8, 0xc6, 0xc1, 0xff)
+NEVERD_SHUFFLE_INVALID(VexDoubles, 0xc5, 0xf9, 0xc6, 0xc1, 0xff)
+NEVERD_SHUFFLE_INVALID(VexMemory, 0xc5, 0xf9, 0x70, 0x01, 0xff)
+NEVERD_SHUFFLE_INVALID(EvexDwords, 0x62, 0xf1, 0x7d, 0x08, 0x70, 0xc1, 0xff)
+#endif
+#ifdef NEVERD_SHUFFLE_TEXT
+NEVERD_SHUFFLE_TEXT(ObserverError, "shuffle observer failure")
+#endif

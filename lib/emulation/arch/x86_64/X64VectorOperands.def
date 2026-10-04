@@ -1,11 +1,13 @@
-//===- X64VectorOperands.def - Complete legacy SSE operand pairs --------===//
+//===- X64VectorOperands.def - Complete legacy SSE operand forms --------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// Each row is a complete destination/source alternative. Memory and General
-// use the instruction's declared width; Integer permits r32/r64, and
-// Immediate permits imm8. Xmm names only the modeled XMM0-XMM15 register bank.
+// Each row is a complete destination/source/control alternative. Absent
+// requires exactly two operands; an explicit control requires exactly three.
+// Memory and General use the instruction's declared width; Integer permits
+// r32/r64, and Immediate permits imm8. Xmm names only the modeled XMM0-XMM15
+// register bank.
 #ifdef NEVERD_X64_VECTOR_FORM
 NEVERD_X64_VECTOR_FORM(RegisterPair)
 NEVERD_X64_VECTOR_FORM(Source)
@@ -15,24 +17,27 @@ NEVERD_X64_VECTOR_FORM(VectorOrImmediate)
 NEVERD_X64_VECTOR_FORM(Immediate)
 NEVERD_X64_VECTOR_FORM(IntegerResult)
 NEVERD_X64_VECTOR_FORM(RegisterMask)
+NEVERD_X64_VECTOR_FORM(SourceControl)
 #endif
 #ifdef NEVERD_X64_VECTOR_OPERANDS
-NEVERD_X64_VECTOR_OPERANDS(RegisterPair, Xmm, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(Source, Xmm, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(Source, Xmm, Memory)
-NEVERD_X64_VECTOR_OPERANDS(Move, Xmm, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(Move, Xmm, Memory)
-NEVERD_X64_VECTOR_OPERANDS(Move, Memory, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(GeneralMove, Xmm, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(GeneralMove, Xmm, Memory)
-NEVERD_X64_VECTOR_OPERANDS(GeneralMove, Memory, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(GeneralMove, Xmm, General)
-NEVERD_X64_VECTOR_OPERANDS(GeneralMove, General, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(VectorOrImmediate, Xmm, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(VectorOrImmediate, Xmm, Memory)
-NEVERD_X64_VECTOR_OPERANDS(VectorOrImmediate, Xmm, Immediate)
-NEVERD_X64_VECTOR_OPERANDS(Immediate, Xmm, Immediate)
-NEVERD_X64_VECTOR_OPERANDS(IntegerResult, Integer, Xmm)
-NEVERD_X64_VECTOR_OPERANDS(IntegerResult, Integer, Memory)
-NEVERD_X64_VECTOR_OPERANDS(RegisterMask, Integer, Xmm)
+NEVERD_X64_VECTOR_OPERANDS(RegisterPair, Xmm, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(Source, Xmm, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(Source, Xmm, Memory, Absent)
+NEVERD_X64_VECTOR_OPERANDS(Move, Xmm, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(Move, Xmm, Memory, Absent)
+NEVERD_X64_VECTOR_OPERANDS(Move, Memory, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(GeneralMove, Xmm, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(GeneralMove, Xmm, Memory, Absent)
+NEVERD_X64_VECTOR_OPERANDS(GeneralMove, Memory, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(GeneralMove, Xmm, General, Absent)
+NEVERD_X64_VECTOR_OPERANDS(GeneralMove, General, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(VectorOrImmediate, Xmm, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(VectorOrImmediate, Xmm, Memory, Absent)
+NEVERD_X64_VECTOR_OPERANDS(VectorOrImmediate, Xmm, Immediate, Absent)
+NEVERD_X64_VECTOR_OPERANDS(Immediate, Xmm, Immediate, Absent)
+NEVERD_X64_VECTOR_OPERANDS(IntegerResult, Integer, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(IntegerResult, Integer, Memory, Absent)
+NEVERD_X64_VECTOR_OPERANDS(RegisterMask, Integer, Xmm, Absent)
+NEVERD_X64_VECTOR_OPERANDS(SourceControl, Xmm, Xmm, Immediate)
+NEVERD_X64_VECTOR_OPERANDS(SourceControl, Xmm, Memory, Immediate)
 #endif

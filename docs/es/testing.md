@@ -244,6 +244,8 @@ El x64 comprobado admite también las formas heredadas enmascaradas `SS`, `SD`, 
 
 `X64VectorMaskTests.cpp` compara codificaciones originales independientes con extracción escalar e intrinsics SSE nativos: cada bit fuente y las 16 GPR × 16 XMM con ambos valores REX.W. Las instantáneas de todos los registros públicos, la RAM y los observadores verifican la extensión con ceros y la conservación del estado. Las paradas, los fallos de callbacks y las formas no admitidas no publican efectos. La validación nativa KVM/WHP exige ambos modos de privilegio.
 
+`X64ShuffleTests.cpp` usa codificaciones independientes de `X64ShuffleCases.def` y compara la selección escalar de elementos con intrínsecos nativos. Cubre los 256 controles con registros, fuente idéntica y alias al final de página, todas las parejas XMM, el estado público completo de CPU y RAM, paradas y excepciones de observadores, permisos, fallos de alineación y reintentos. MMX, VEX/EVEX, LOCK y los operandos de dispositivos deben rechazarse sin efectos. La aceptación nativa KVM/WHP exige estos casos en ambos niveles de privilegio; las parejas host/ISA no disponibles se omiten explícitamente.
+
 `X64AlignmentTests.cpp` comprueba que los operandos desalineados de instrucciones aligned SSE admitidas notifican un `#GP(0)` recuperable o terminal antes de observadores, permisos o callbacks de dispositivo. Se conserva todo el contexto público de registros x64, PC y RAM. El ajuste al ancho de dirección precede a la suma de FS/GS; reparar la dirección permite reintentar la instrucción original. Pruebas directas KVM/WHP verifican de forma independiente el límite de hardware. Windows ring3 entrega los fallos clasificados `operand_alignment`; otras causas de `#GP` siguen sin admitirse.
 
 ```bash
