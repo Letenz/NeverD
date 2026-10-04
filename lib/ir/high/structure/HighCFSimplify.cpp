@@ -2423,6 +2423,27 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     return L[I].Addr != 0 && L[I].Addr != InvalidVA &&
            (I == 0 || L[I - 1].Addr != L[I].Addr) && usesOf(L[I].Addr) != 0;
   };
+  // Statements starting each address anywhere in the tree.  A copied tail
+  // keeps its addresses, so a jump names one statement only when exactly one
+  // starts its target.
+  std::map<va_t, unsigned> AddressStarts;
+  std::function<void(const std::vector<HighStmt> &)> CountStarts =
+      [&](const std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          const HighStmt &S = L[I];
+          if (S.Addr != 0 && S.Addr != InvalidVA &&
+              (I == 0 || L[I - 1].Addr != S.Addr))
+            ++AddressStarts[S.Addr];
+          CountStarts(S.Body);
+          CountStarts(S.ElseBody);
+          for (const auto &C : S.Cases)
+            CountStarts(C.Body);
+          CountStarts(S.DefaultBody);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            CountStarts(ClauseBody);
+        }
+      };
+  CountStarts(Body);
 
   // Reads of each variable anywhere in the function (assignment targets are
   // writes, not reads). An indirect call reads its target like an operand.
@@ -2663,6 +2684,10 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         L[I].Body = std::move(L[I].ElseBody);
         L[I].ElseBody.clear();
       }
+      // `if (c) { A } else {}`  ->  `if (c) { A }`, which the rules below
+      // take for a plain if.
+      if (L[I].Kind == StmtKind::IfElse && L[I].Cond && L[I].ElseBody.empty())
+        L[I].Kind = StmtKind::If;
       // T11: `X: S...; goto X;` -> `while (1) { S... }` and
       // `X: S...; if (c) goto X;` -> `do { S... } while (c);`.
       if (L[I].Kind == StmtKind::Goto || isCondGoto(L[I])) {
@@ -2790,6 +2815,54 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
             L[I].Body = std::move(L[I].ElseBody);
             L[I].ElseBody.clear();
           }
+          Changed = true;
+          continue;
+        }
+      }
+      // T2e: `if (c) { A } else { B; goto Y; } S...; Y:` runs S only after A,
+      // so S moves to the end of A's arm.  S must hold no entered label: a
+      // jump into the arm would be legal C but no clearer, and a labelled
+      // tail left in place can still be copied to each of its jumps.  Y must
+      // be the one statement starting its address, since a label resolves to
+      // the first statement printed there.
+      if (L[I].Kind == StmtKind::IfElse && L[I].Cond &&
+          !L[I].ElseBody.empty() &&
+          L[I].ElseBody.back().Kind == StmtKind::Goto &&
+          (L[I].Body.empty() || !isTerminator(L[I].Body.back()))) {
+        const va_t Y = L[I].ElseBody.back().GotoTarget;
+        size_t J = I + 1;
+        while (J < L.size() && !(L[J].Addr == Y && labelStart(L, J)))
+          ++J;
+        std::function<bool(const std::vector<HighStmt> &, size_t, size_t)>
+            Unentered = [&](const std::vector<HighStmt> &List, size_t From,
+                            size_t To) {
+              for (size_t K = From; K < To; ++K) {
+                const HighStmt &S = List[K];
+                if (labelStart(List, K))
+                  return false;
+                for (const auto *Inner : {&S.Body, &S.ElseBody, &S.DefaultBody})
+                  if (!Unentered(*Inner, 0, Inner->size()))
+                    return false;
+                for (const auto &C : S.Cases)
+                  if (!Unentered(C.Body, 0, C.Body.size()))
+                    return false;
+                for (const auto &ClauseBody : S.EHClauseBodies)
+                  if (!Unentered(ClauseBody, 0, ClauseBody.size()))
+                    return false;
+              }
+              return true;
+            };
+        if (J < L.size() && J > I + 1 && AddressStarts[Y] == 1 &&
+            (!isTerminator(L[J - 1]) || SpliceRegions) &&
+            Unentered(L, I + 1, J)) {
+          popGoto(L[I].ElseBody);
+          --Uses[Y];
+          L[I].Body.insert(L[I].Body.end(),
+                           std::make_move_iterator(L.begin() + I + 1),
+                           std::make_move_iterator(L.begin() + J));
+          L.erase(L.begin() + I + 1, L.begin() + J);
+          if (L[I].ElseBody.empty())
+            L[I].Kind = StmtKind::If;
           Changed = true;
           continue;
         }

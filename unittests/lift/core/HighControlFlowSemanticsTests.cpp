@@ -3617,6 +3617,56 @@ TEST(HighControlFlowSemantics, SameArmsMergeOnlyWhenTheyLeave) {
   }
 }
 
+namespace {
+/// if (x & 1) { v = 1; <Then> } else { <Else> }  v = v + 10;  J: return v;
+/// with one arm ending in `goto J`.
+HighFunc armJumpsPastAStatement(bool FromElse) {
+  auto Plus10 = assign(0x1010, 1, 0);
+  Plus10.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(10, 8));
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  if (FromElse) {
+    Arms.Body = {assign(0x1004, 1, 1)};
+    Arms.ElseBody = {assign(0x1008, 1, 3), jump(0x100c, 0x1020)};
+  } else {
+    // An if/else whose else arm is empty is a plain if.
+    Arms.Body = {assign(0x1004, 1, 1), jump(0x1008, 0x1020)};
+  }
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1020;
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 0), Arms, Plus10, Label,
+            result(0x1024, local(1))};
+  return F;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, ArmJumpPastStatementsBecomesStructured) {
+  for (bool FromElse : {false, true}) {
+    SCOPED_TRACE(FromElse);
+    HighFunc F = armJumpsPastAStatement(FromElse);
+    auto Expected = [&](uint64_t X) -> uint64_t {
+      if (FromElse)
+        return X & 1 ? 11 : 3;
+      return X & 1 ? 1 : 10;
+    };
+    for (uint64_t X : {0, 1})
+      ASSERT_EQ(execute(F, X), Expected(X));
+    reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+    for (uint64_t X : {0, 1})
+      EXPECT_EQ(execute(F, X), Expected(X)) << X;
+    size_t Gotos = 0;
+    walkStmts(F.Body,
+              [&](const HighStmt &S) { Gotos += S.Kind == StmtKind::Goto; });
+    EXPECT_EQ(Gotos, 0u);
+  }
+}
+
 TEST(HighControlFlowSemantics, EnteredDoWhileKeepsItsShape) {
   // `goto X; Top: do { y = y + 1; X: } while (y != 3); if (x) goto Top;`
   // The jump to Top runs the body before the test; `while (y != 3)` would
