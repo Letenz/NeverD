@@ -31,10 +31,12 @@ public:
   llvm::Expected<uint64_t> add(HandlerKind Kind, bool First, uint64_t Handler);
   uint64_t remove(HandlerKind Kind, uint64_t Handle);
   static bool recoverable(GuestArchitecture Architecture,
-                          const BackendFault &Fault);
+                          const BackendFault &Fault,
+                          std::optional<uint64_t> MXCSR = std::nullopt);
   bool accepts(const BackendFault &Fault) const;
-  static std::optional<Exception> exception(GuestArchitecture Architecture,
-                                            const BackendFault &Fault);
+  static std::optional<Exception>
+  exception(GuestArchitecture Architecture, const BackendFault &Fault,
+            std::optional<uint64_t> MXCSR = std::nullopt);
   llvm::Expected<Transfer> begin(Exception Raised, uint64_t StackPointer,
                                  size_t LoaderDepth,
                                  std::optional<size_t> Event = std::nullopt);
@@ -47,6 +49,8 @@ public:
   void abandon() { Frames.clear(); }
 
 private:
+  llvm::Expected<std::optional<Exception>>
+  exception(const BackendFault &) const;
   struct Handler {
     uint64_t Handle, PC;
     bool Live = true;

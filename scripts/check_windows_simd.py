@@ -120,7 +120,8 @@ def main() -> None:
             return found
 
         clang, link = tool("clang"), tool("lld-link")
-        sources = [DEFINITION, CASES, FIXTURES / "windows_simd.c", FIXTURES / "windows_simd.S",
+        sources = [DEFINITION, CASES, FIXTURES / "WindowsSIMDStatusCases.def",
+                   FIXTURES / "windows_simd.c", FIXTURES / "windows_simd.S",
                    Path(__file__).resolve()]
         report["source_sha256"] = {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                                    for p in sources}

@@ -1,0 +1,20 @@
+//===- X64SIMDException.def - Windows SIMD exception classification ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WINDOWS_SIMD_EXCEPTION_VALUE
+NEVERD_WINDOWS_SIMD_EXCEPTION_VALUE(StatusMask, 0x3f)
+NEVERD_WINDOWS_SIMD_EXCEPTION_VALUE(MaskShift, 7)
+NEVERD_WINDOWS_SIMD_EXCEPTION_VALUE(ParameterCount, 2)
+#endif
+#ifdef NEVERD_WINDOWS_SIMD_EXCEPTION_PRIORITY
+// Windows x64 observations establish this order over active MXCSR status.
+// Denormal operand maps to invalid operation, after divide by zero.
+NEVERD_WINDOWS_SIMD_EXCEPTION_PRIORITY(Invalid, 0x01, 0xc0000090)
+NEVERD_WINDOWS_SIMD_EXCEPTION_PRIORITY(DivideByZero, 0x04, 0xc000008e)
+NEVERD_WINDOWS_SIMD_EXCEPTION_PRIORITY(Denormal, 0x02, 0xc0000090)
+NEVERD_WINDOWS_SIMD_EXCEPTION_PRIORITY(Overflow, 0x08, 0xc0000091)
+NEVERD_WINDOWS_SIMD_EXCEPTION_PRIORITY(Underflow, 0x10, 0xc0000093)
+NEVERD_WINDOWS_SIMD_EXCEPTION_PRIORITY(Precision, 0x20, 0xc000008f)
+#endif

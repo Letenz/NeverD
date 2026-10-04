@@ -6,6 +6,7 @@
 #include "WindowsProcessExceptions.h"
 
 #include "../../../arch/x86_64/X64Exception.h"
+#include "../exception/X64SIMDException.h"
 #include "WindowsProcessContext.h"
 
 #include "llvm/Support/Endian.h"
@@ -52,17 +53,39 @@ uint64_t ExceptionDispatcher::remove(HandlerKind Kind, uint64_t Handle) {
   return 0;
 }
 bool ExceptionDispatcher::recoverable(GuestArchitecture Architecture,
-                                      const BackendFault &Fault) {
-  return exception(Architecture, Fault).has_value();
+                                      const BackendFault &Fault,
+                                      std::optional<uint64_t> MXCSR) {
+  return exception(Architecture, Fault, MXCSR).has_value();
 }
 bool ExceptionDispatcher::accepts(const BackendFault &Fault) const {
-  return recoverable(CPU.architecture(), Fault) &&
+  auto Raised = exception(Fault);
+  if (!Raised) {
+    // A failed state read cannot authorize recovery. Leave the CPU's original
+    // fault terminal instead of fabricating a Windows exception record.
+    llvm::consumeError(Raised.takeError());
+    return false;
+  }
+  return Raised->has_value() &&
          (llvm::any_of(Handlers, [](const auto &H) { return H.Live; }) ||
           hasFrameHandlers());
 }
+llvm::Expected<std::optional<ExceptionDispatcher::Exception>>
+ExceptionDispatcher::exception(const BackendFault &Fault) const {
+  std::optional<uint64_t> MXCSR;
+  if (CPU.architecture() == GuestArchitecture::X64 &&
+      Fault.Kind == BackendFaultKind::Interrupt &&
+      Fault.Interrupt == unsigned(x64::ExceptionVector::SIMD)) {
+    auto Control = CPU.reg(X64Register::MXCSR);
+    if (!Control)
+      return Control.takeError();
+    MXCSR = *Control;
+  }
+  return exception(CPU.architecture(), Fault, MXCSR);
+}
 std::optional<ExceptionDispatcher::Exception>
 ExceptionDispatcher::exception(GuestArchitecture Architecture,
-                               const BackendFault &Fault) {
+                               const BackendFault &Fault,
+                               std::optional<uint64_t> MXCSR) {
   if (Fault.Cause) {
     // The shared architecture owns the cause. Other #GP(0) results remain
     // unclassified: their Windows status cannot be inferred from the vector.
@@ -82,6 +105,20 @@ ExceptionDispatcher::exception(GuestArchitecture Architecture,
       Fault.Kind == BackendFaultKind::Interrupt &&
       Fault.Interrupt == X64DivideVector)
     return Exception{StatusIntegerDivideByZero, 0, Fault.PC, {}};
+  if (Architecture == GuestArchitecture::X64 &&
+      Fault.Kind == BackendFaultKind::Interrupt &&
+      Fault.Interrupt == unsigned(x64::ExceptionVector::SIMD)) {
+    if (!MXCSR || Fault.ErrorCode || Fault.Address || Fault.Size ||
+        Fault.Access)
+      return std::nullopt;
+    auto SIMD = windows_exception::x64SIMDException(*MXCSR);
+    if (!SIMD)
+      return std::nullopt;
+    return Exception{SIMD->Code,
+                     0,
+                     Fault.PC,
+                     {SIMD->Parameters.begin(), SIMD->Parameters.end()}};
+  }
   if ((Fault.Kind == BackendFaultKind::UnmappedMemory ||
        Fault.Kind == BackendFaultKind::Protection) &&
       Fault.Address && Fault.Size && Fault.Access &&
@@ -103,10 +140,12 @@ ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
 llvm::Expected<ExceptionDispatcher::Transfer>
 ExceptionDispatcher::beginFault(const BackendFault &Fault,
                                 uint64_t StackPointer, size_t LoaderDepth) {
-  auto Raised = exception(CPU.architecture(), Fault);
+  auto Raised = exception(Fault);
   if (!Raised)
+    return Raised.takeError();
+  if (!*Raised)
     return failure(text::ExceptionContext);
-  return beginDispatch(std::move(*Raised), StackPointer, LoaderDepth, {}, {},
+  return beginDispatch(std::move(**Raised), StackPointer, LoaderDepth, {}, {},
                        ContextOrigin::HardwareFault);
 }
 llvm::Expected<ExceptionDispatcher::Transfer>

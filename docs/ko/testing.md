@@ -281,6 +281,8 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `check_windows_simd.py`는 `WindowsSIMDCases.def`와 스칼라 사례 목록으로 독립적인 자체 Windows x64 실행 파일을 빌드합니다. 2,048개 관측은 레지스터/RAM 피연산자, 모든 예외 마스크 조합, 고정 상태 플래그의 전체 해제와 전체 설정을 다룹니다. Windows CI는 원래 예외 코드, 매개변수와 `CONTEXT`의 두 MXCSR 필드를 보존합니다. 테스트는 호스트 상태를 복원하기 전에 정확한 오류 PC, 변경되지 않은 XMM 상태와 마스킹된 결과를 검증합니다. `--build-only`는 컴파일 증거일 뿐입니다. 이 관측은 checked 실행의 마스킹되지 않은 SIMD를 활성화하거나 ARM64 네이티브 실행을 입증하지 않습니다.
 
+`WindowsSIMDStatusCases.def`는 네이티브 Windows에서 관측한 63개 비어 있지 않은 활성 상태 조합을 고정합니다. `WindowsSIMDMappingTests.cpp`는 정확한 코드와 매개변수, 일관되지 않은 오류 및 잘못된 제어 값의 거부를 검증하며 오류 경계를 주입하여 예외 레코드, CONTEXT의 두 제어 값과 마스킹 후 계속 실행을 확인합니다. Windows CI의 자체 프로그램은 고정된 결과를 독립적으로 검증합니다. 주입 테스트는 Unicorn의 예외 전달을 입증하거나 checked 실행의 마스킹되지 않은 SIMD를 활성화하지 않습니다.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
