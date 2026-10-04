@@ -3,6 +3,10 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#ifdef NEVERD_X64_EXCEPTION_VALUE
+// A memory alignment #GP does not identify a segment selector.
+NEVERD_X64_EXCEPTION_VALUE(NoSelectorErrorCode, 0)
+#endif
 #ifdef NEVERD_X64_EXCEPTION
 // Name, vector, processor-pushed error code, post-instruction trap.
 NEVERD_X64_EXCEPTION(Divide, 0, false, false)

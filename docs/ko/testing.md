@@ -223,9 +223,11 @@ ARM64 하드웨어나 hypervisor가 없으면 native coverage skip이며 통과�
 
 checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
 
-`X64PackedIntegerTests.cpp`는 `X64PackedIntegerCases.def`의 독립 인코딩과 180개 고정 벡터 결과를 네이티브 x64 컴파일러 intrinsic과 별도로 대조합니다. 레지스터 및 페이지 끝의 RAM 별칭 사례는 다른 XMM, 정수 센티널, FLAGS, MXCSR과 소스 바이트를 보존합니다. 관찰자 중지·실패와 복구 가능한 읽기 결함은 상태를 보존하며 복구 후 한 번 재시도합니다. MMX, LOCK, 비정렬 및 MMIO는 콜백 전에 거부합니다. 네이티브 CI에서 WHP의 두 권한 수준을 필수로 실행합니다.
+`X64PackedIntegerTests.cpp`는 `X64PackedIntegerCases.def`의 독립 인코딩과 180개 고정 벡터 결과를 네이티브 x64 컴파일러 intrinsic과 별도로 대조합니다. 레지스터 및 페이지 끝의 RAM 별칭 사례는 다른 XMM, 정수 센티널, FLAGS, MXCSR과 소스 바이트를 보존합니다. 관찰자 중지·실패와 복구 가능한 읽기 결함은 상태를 보존하며 복구 후 한 번 재시도합니다. 비정렬은 `#GP(0)`를 발생시키며 MMX, LOCK 및 MMIO는 계속 콜백 전에 거부합니다. 네이티브 CI에서 WHP의 두 권한 수준을 필수로 실행합니다.
 
 `X64PackedShiftTests.cpp`와 독립 `X64PackedShiftCases.def`는 즉시 횟수 16개와 가변 횟수 21개에서 열 종류의 시프트를 독립 스칼라 계산 및 네이티브 SSE2 intrinsic과 대조합니다. 횟수/대상 별칭, 상위 비트 무시, 정렬, 관찰자, 복구 가능한 결함, 장치 거부를 검증합니다. `X64VectorTestSupport.h`는 패킹 산술 테스트와 레지스터 및 RAM 검증을 공유합니다. 네이티브 CI에서 WHP의 두 권한 모드를 필수로 실행합니다.
+
+`X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows 일반 보호 오류 전달은 아직 OS 모델에 포함되지 않습니다.
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
@@ -1095,7 +1097,7 @@ WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 210개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 438개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `266 CPU + 224 WHP + 4 SEH = 494`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 210개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 438개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `278 CPU + 224 WHP + 4 SEH = 506`.
 
 C SEH 범위는 끝 주소를 포함하지 않는 반개방 구간입니다. 유효한 `__C_specific_handler` 착지점이 보호 구간 안에 있을 수 있습니다. [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608)은 구간 끝에 `EndLabel + 1`을 기록합니다. Windows OS 모델은 원래 경계를 유지하며 재배치 후에도 실행 가능 여부, 소유 함수, 후속 실행 주소의 일치를 각각 검증합니다. `KernelSEHContinuationCases.def`는 원본 픽스처 배치를 보존하고 `ScopeEndLabelMayOverlapTheHandlerLandingPad`는 상수 처리기와 필터를 검사합니다. 관련 테스트는 끝 주소 제외와 잘못된 대상 거부 후 디스패치 상태를 소비하지 않고 재시도할 수 있음을 확인합니다. 이 순수 모델 검사는 Unicorn을 비활성화한 `NeverDNativeDriverTests`에서도 실행됩니다.
 

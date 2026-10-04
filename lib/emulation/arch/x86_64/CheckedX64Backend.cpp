@@ -420,10 +420,15 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       A += CPU.FSBase;
     if ((Locked || I.id == X86_INS_XCHG) && A % O.size)
       return llvm::make_error<UnsupportedExecutionError>();
-    // Misaligned aligned-vector forms would raise #GP. No native instruction
-    // executes until that exception has an explicit checked-model contract.
-    if (Vector && A % Vector->Alignment)
-      return llvm::make_error<UnsupportedExecutionError>();
+    // Aligned SSE raises #GP(0) before any page lookup or data observation.
+    // Keep this architectural outcome identical on native and software
+    // transports, including an absent/protected operand or a wrapped span.
+    if (Vector && A % Vector->Alignment) {
+      BackendFault Fault{BackendFaultKind::Interrupt, I.address};
+      Fault.Interrupt = unsigned(x64::ExceptionVector::GeneralProtection);
+      Fault.ErrorCode = x64::NoSelectorErrorCode;
+      return raiseFault(Fault, true);
+    }
     // Some SETcc and SSE destinations have advisory decoder access metadata
     // marking them as reads. The architecture owns their actual effects.
     unsigned OperandAccess = O.access;

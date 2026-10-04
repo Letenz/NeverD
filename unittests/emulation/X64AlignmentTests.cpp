@@ -84,6 +84,19 @@ protected:
 
 TEST_P(X64Alignment, FaultPrecedesMemoryPermissionsMappingsAndObservers) {
   initialize();
+  unsigned DeviceCalls = 0;
+  if (!GetParam().User) {
+    GuestMMIOCallbacks Device;
+    Device.Read = [&](uint64_t, unsigned) -> llvm::Expected<uint64_t> {
+      ++DeviceCalls;
+      return 0;
+    };
+    Device.Write = [&](uint64_t, unsigned, uint64_t) {
+      ++DeviceCalls;
+      return llvm::Error::success();
+    };
+    llvm::cantFail(CPU->mapMMIO(Stack, PageSize, std::move(Device)));
+  }
   for (const auto &I : Instructions) {
     SCOPED_TRACE(I.Name);
     for (unsigned Offset = 1; Offset < VectorBytes; ++Offset) {
@@ -112,12 +125,43 @@ TEST_P(X64Alignment, FaultPrecedesMemoryPermissionsMappingsAndObservers) {
         EXPECT_EQ(Faults, 1u);
         EXPECT_EQ(Reads, 0u);
         EXPECT_EQ(Writes, 0u);
+        EXPECT_EQ(DeviceCalls, 0u);
         EXPECT_EQ(snapshot(), Before);
         expectRAM();
         llvm::cantFail(
             CPU->protect(Data, PageSize, Read | Write | UserAccessible));
       }
     }
+  }
+}
+
+TEST_P(X64Alignment, InstructionObserverStopDoesNotInventAnException) {
+  initialize();
+  llvm::cantFail(CPU->setReg(X64Register::CX, Data + 1));
+  const auto Before = snapshot();
+  for (const auto &I : Instructions) {
+    llvm::cantFail(CPU->write(Code, I.Bytes));
+    unsigned Instructions = 0, Faults = 0;
+    BackendHooks Hooks;
+    Hooks.Instruction = [&](uint64_t PC, unsigned Size) {
+      EXPECT_EQ(PC, Code);
+      EXPECT_EQ(Size, I.Bytes.size());
+      ++Instructions;
+      CPU->stop();
+    };
+    Hooks.RecoverableFault = [&](const BackendFault &) {
+      ++Faults;
+      return true;
+    };
+    llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+    const auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+    ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+    EXPECT_EQ(Instructions, 1u);
+    EXPECT_EQ(Faults, 0u);
+    EXPECT_FALSE(CPU->fault());
+    EXPECT_FALSE(CPU->takeRecoverableFault());
+    EXPECT_EQ(snapshot(), Before);
+    expectRAM();
   }
 }
 

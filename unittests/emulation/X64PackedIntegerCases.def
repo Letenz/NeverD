@@ -9,6 +9,7 @@ NEVERD_PACKED_VALUE(InputCount, 4)
 NEVERD_PACKED_VALUE(InvalidFormCount, 3)
 NEVERD_PACKED_VALUE(MMXForm, 0)
 NEVERD_PACKED_VALUE(LockedForm, 1)
+NEVERD_PACKED_VALUE(MisalignedForm, 2)
 #endif
 #ifdef NEVERD_PACKED_TEXT
 NEVERD_PACKED_TEXT(ObserverFailure, "packed source observer failed")
