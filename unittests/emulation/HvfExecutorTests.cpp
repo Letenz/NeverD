@@ -16,19 +16,106 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <future>
 #if defined(__x86_64__)
 #include <Hypervisor/hv_vmx.h>
 #include <mach/mach_time.h>
+#include <pthread.h>
+#endif
+
+#if defined(__x86_64__)
+namespace neverd::emulation::hvf {
+// Test-only access keeps the lifecycle experiment out of the production API.
+struct ExecutorProbe {
+  static void marker(const char *Phase, uint64_t Generation, uint64_t Owner) {
+    llvm::outs() << "INTEL_LIFECYCLE phase=" << Phase
+                 << " generation=" << Generation << " owner=" << Owner << '\n';
+    llvm::outs().flush();
+  }
+  static llvm::Error recreate(Executor &Host, uint64_t Generation,
+                              uint64_t &Owner, bool RecreateVM) {
+    return Host.submit([&](Executor &H) -> llvm::Error {
+      uint64_t Current = 0;
+      if (pthread_threadid_np(nullptr, &Current) || !Current)
+        return diagnostic::error("lifecycle owner identity unavailable");
+      if (Owner && Owner != Current)
+        return diagnostic::error("lifecycle owner changed");
+      Owner = Current;
+      if (H.Mapped || H.Active || !H.Failure.empty() || !H.VMCreated ||
+          !H.CPUCreated || !H.VMLease.owns_lock())
+        return diagnostic::error("lifecycle reset requires an idle live VM");
+      marker("vcpu_destroy_begin", Generation, Owner);
+      if (auto E = H.destroyCPU())
+        return E;
+      marker("vcpu_destroy_end", Generation, Owner);
+      if (RecreateVM) {
+        // Intel RunControl contains only the Mach timebase. Keep it and the
+        // VM lease while changing only the native VM's lifetime on this owner.
+        marker("vm_destroy_begin", Generation, Owner);
+        if (auto S = hv_vm_destroy())
+          return error("probe hv_vm_destroy", S);
+        H.VMCreated = false;
+        marker("vm_destroy_end", Generation, Owner);
+        marker("vm_create_begin", Generation + 1, Owner);
+        if (auto S = hv_vm_create(HV_VM_DEFAULT))
+          return unavailable("probe hv_vm_create", S);
+        H.VMCreated = true;
+        marker("vm_create_end", Generation + 1, Owner);
+      }
+      marker("vcpu_create_begin", Generation + 1, Owner);
+      if (auto E = H.createCPU())
+        return E;
+      marker("vcpu_create_end", Generation + 1, Owner);
+      return llvm::Error::success();
+    });
+  }
+};
+} // namespace neverd::emulation::hvf
 #endif
 
 namespace neverd::emulation {
 namespace {
 using Clock = std::chrono::steady_clock;
+#if defined(__x86_64__)
+bool probeFlag(const char *Name) {
+  const auto *Value = std::getenv(Name);
+  return Value && llvm::StringRef(Value) == "1";
+}
+struct RetainedExecutor {
+  std::shared_ptr<hvf::Executor> Host;
+  uint64_t Recreations = 0, Owner = 0;
+  bool RecreateCPU = false, RecreateVM = false;
+  ~RetainedExecutor() {
+    if (RecreateCPU) {
+      // No fixture or machine may retain this executor beyond this marker.
+      if (Host.use_count() != 1)
+        std::abort();
+      const std::weak_ptr<hvf::Executor> Retiring = Host;
+      auto Marker = hvf::ExecutorProbe::marker;
+      Marker("executor_retire_begin", Recreations + 1, Owner);
+      Host.reset(); // Wait for native teardown on the shared process owner.
+      if (!Retiring.expired())
+        std::abort();
+      Marker("executor_retire_end", Recreations + 1, Owner);
+    }
+  }
+};
+#endif
 class HvfExecutor : public testing::Test {
 protected:
   std::unique_ptr<MemoryProjection> Memory;
   std::shared_ptr<hvf::Executor> Host;
+#if defined(__x86_64__)
+  RetainedExecutor *Retained = nullptr;
+  void TearDown() override {
+    if (Retained && Retained->RecreateCPU)
+      EXPECT_EQ(llvm::toString(hvf::ExecutorProbe::recreate(
+                    *Host, ++Retained->Recreations, Retained->Owner,
+                    Retained->RecreateVM)),
+                "");
+  }
+#endif
   void SetUp() override {
     Memory = llvm::cantFail(MemoryProjection::create(4096));
     auto Created = hvf::Executor::acquire();
@@ -41,6 +128,27 @@ protected:
       FAIL() << Text;
     }
     Host = *Created;
+#if defined(__x86_64__)
+    const auto *Probe = std::getenv("NEVERD_HVF_INTEL_PROBE");
+    const auto *Reuse = std::getenv("NEVERD_HVF_INTEL_REUSE_EXECUTOR");
+    if (Probe && llvm::StringRef(Probe) == "1" && Reuse &&
+        llvm::StringRef(Reuse) == "1") {
+      // Diagnostic-only lifetime control; VM and process owner survive.
+      // The optional probes recreate vCPU or VM after detaching mappings.
+      // Every fixture still owns fresh memory. This
+      // static is initialized after the native registry/VM mutexes and is
+      // destroyed before them when the diagnostic process exits.
+      auto &Output = llvm::outs(); // Outlive the optional final trace.
+      static RetainedExecutor RetainedHost{
+          Host, 0, 0, probeFlag("NEVERD_HVF_INTEL_RECREATE_VCPU"),
+          probeFlag("NEVERD_HVF_INTEL_RECREATE_VM")};
+      ASSERT_TRUE(!RetainedHost.RecreateVM || RetainedHost.RecreateCPU);
+      ASSERT_EQ(Host, RetainedHost.Host);
+      Retained = &RetainedHost;
+      Output << "INTEL_PROBE phase=executor_retained\n";
+      Output.flush();
+    }
+#endif
   }
   MachineRunControl control() {
     return {Clock::now() + std::chrono::seconds(2)};
@@ -526,33 +634,66 @@ TEST_F(HvfIntelProbe, FiniteDeadline) {
     llvm::outs().flush();
     return llvm::Error::success();
   };
-  ASSERT_EQ(llvm::toString(Binding.execute(
-                control(),
-                [&](auto &Native) -> llvm::Error {
-                  uint64_t Controls = 0;
-                  if (auto S = hv_vmx_vcpu_read_vmcs(
-                          Native.cpu(), VMCS_CTRL_CPU_BASED, &Controls))
-                    return hvf::error("probe controls", S);
-                  if (auto S = hv_vmx_vcpu_write_vmcs(
-                          Native.cpu(), VMCS_CTRL_CPU_BASED,
-                          Controls & ~uint64_t(CPU_BASED_MTF)))
-                    return hvf::error("probe disable MTF", S);
-                  if (auto S = hv_vmx_vcpu_write_vmcs(Native.cpu(),
-                                                      VMCS_GUEST_RIP, PC + 1))
-                    return hvf::error("probe fresh store PC", S);
-                  const auto Deadline = mach_absolute_time() + Slice;
-                  for (unsigned N = 0; N < 128; ++N) {
-                    if (auto E = Call(Native, "finite_loop", Deadline))
-                      return E;
-                    if (Reason != VMX_REASON_IRQ &&
-                        Reason != VMX_REASON_VMX_TIMER_EXPIRED)
-                      return diagnostic::error("unexpected finite loop exit");
-                    if (mach_absolute_time() >= Deadline)
-                      return llvm::Error::success();
-                  }
-                  return diagnostic::error("too many finite deadline exits");
-                })),
-            "");
+  const auto WitnessControl = control();
+  ASSERT_EQ(
+      llvm::toString(Binding.execute(
+          WitnessControl,
+          [&](auto &Native) -> llvm::Error {
+            uint64_t Controls = 0;
+            if (auto S = hv_vmx_vcpu_read_vmcs(Native.cpu(),
+                                               VMCS_CTRL_CPU_BASED, &Controls))
+              return hvf::error("probe controls", S);
+            if (auto S =
+                    hv_vmx_vcpu_write_vmcs(Native.cpu(), VMCS_CTRL_CPU_BASED,
+                                           Controls & ~uint64_t(CPU_BASED_MTF)))
+              return hvf::error("probe disable MTF", S);
+            if (auto S = hv_vmx_vcpu_write_vmcs(Native.cpu(), VMCS_GUEST_RIP,
+                                                PC + 1))
+              return hvf::error("probe fresh store PC", S);
+            // A finite slice can expire before any guest instruction
+            // executes. Preserve that observation and the same guest
+            // state; never renew the overall witness deadline.
+            const auto MachStart = mach_absolute_time();
+            const auto Remaining =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    WitnessControl.Deadline - Clock::now())
+                    .count();
+            if (Remaining <= 0)
+              return diagnostic::error("finite witness budget exhausted");
+            const auto End = MachStart + uint64_t(Remaining) * Timebase.denom /
+                                             Timebase.numer;
+            llvm::outs() << "INTEL_PROBE witness_budget mach_start="
+                         << MachStart << " mach_end=" << End
+                         << " remaining_ns=" << Remaining
+                         << " timebase_numer=" << Timebase.numer
+                         << " timebase_denom=" << Timebase.denom
+                         << " max_calls=4096\n";
+            llvm::outs().flush();
+            auto Deadline = std::min(End, mach_absolute_time() + Slice);
+            for (unsigned N = 0; N < 4096; ++N) {
+              if (WitnessControl.interrupted())
+                return diagnostic::error("finite witness budget exhausted");
+              if (auto E = Call(Native, "finite_loop", Deadline))
+                return E;
+              if (Reason != VMX_REASON_IRQ &&
+                  Reason != VMX_REASON_VMX_TIMER_EXPIRED)
+                return diagnostic::error("unexpected finite loop exit");
+              const auto Nonce = State.reg(X64Register::AX);
+              if (AX != Nonce || !((RIP == PC + 1 && Witness->load() == 0) ||
+                                   (RIP == PC + 4 && Witness->load() == Nonce)))
+                return diagnostic::error("invalid finite guest witness");
+              if (WitnessControl.interrupted())
+                return diagnostic::error("finite witness budget exhausted");
+              if (Reason == VMX_REASON_VMX_TIMER_EXPIRED) {
+                if (Witness->load() == Nonce)
+                  return llvm::Error::success();
+                probePhase("finite_slice_without_guest_progress");
+                Deadline = std::min(End, mach_absolute_time() + Slice);
+              }
+            }
+            return diagnostic::error("too many finite deadline exits");
+          })),
+      "");
   ASSERT_EQ(Witness->load(), State.reg(X64Register::AX));
   ASSERT_EQ(RIP, PC + 4);
   // Observe expiration/entry races with a distinct instruction and old MTF
@@ -651,9 +792,8 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
       // the admitted owner while preserving the outer cooperative deadline.
       auto NativeControl = Control;
       if (Kind == Deadline)
-        NativeControl.Deadline =
-            std::min(Control.Deadline,
-                     Clock::now() + std::chrono::milliseconds(50));
+        NativeControl.Deadline = std::min(
+            Control.Deadline, Clock::now() + std::chrono::milliseconds(50));
       Phase = "native entry";
       EntryBudgetMicroseconds =
           std::chrono::duration_cast<std::chrono::microseconds>(
