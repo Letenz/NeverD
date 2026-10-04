@@ -936,4 +936,416 @@ TEST(LLVMCValues, LoopPhasesPreserveConstrainedCallsAndExceptionFunctions) {
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
 }
 
+std::string emitScalarRegions(llvm::StringRef IR) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(IR, Error, Context);
+  if (!Module) {
+    ADD_FAILURE() << Error.getMessage().str();
+    return {};
+  }
+  std::string Before;
+  llvm::raw_string_ostream BeforeOut(Before);
+  Module->print(BeforeOut, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  EXPECT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  for (const auto &Function : *Module) {
+    if (Function.isDeclaration())
+      continue;
+    std::string Selected;
+    llvm::raw_string_ostream SelectedOut(Selected);
+    EXPECT_TRUE(neverd::LLVMCEmitter().emit(*Module, SelectedOut, Options,
+                                            nullptr, nullptr, &Function));
+    // Selected-function emission deliberately omits unrelated prototypes and
+    // module spacing. Its actual function projection must be identical.
+    const std::string Definition = " " + Function.getName().str() + "(";
+    const auto WholeAt = Source.find(Definition);
+    const auto SelectedAt = Selected.find(Definition);
+    EXPECT_NE(WholeAt, std::string::npos);
+    EXPECT_NE(SelectedAt, std::string::npos);
+    if (WholeAt != std::string::npos && SelectedAt != std::string::npos)
+      EXPECT_EQ(Source.substr(WholeAt), Selected.substr(SelectedAt));
+  }
+  std::string After;
+  llvm::raw_string_ostream AfterOut(After);
+  Module->print(AfterOut, nullptr);
+  EXPECT_EQ(Before, After);
+  return Source;
+}
+
+TEST(LLVMCScalarRegions, NestedLoopsAndDiamondIgnorePhysicalBlockOrder) {
+  const auto Source = emitScalarRegions(R"(
+define i16 @grid(i16 %seed, i16 %rows, i16 %cols) {
+entry:
+  br label %outer
+exit:
+  ret i16 %sum
+odd:
+  %minus = sub i16 %inner_sum, %j
+  br label %join
+inner:
+  %j = phi i16 [0, %outer], [%jn, %join]
+  %inner_sum = phi i16 [%sum, %outer], [%chosen, %join]
+  %done = icmp uge i16 %j, %cols
+  br i1 %done, label %outer_step, label %body
+outer_step:
+  %total = add i16 %inner_sum, %i
+  %in = add i16 %i, 1
+  br label %outer
+outer:
+  %i = phi i16 [0, %entry], [%in, %outer_step]
+  %sum = phi i16 [%seed, %entry], [%total, %outer_step]
+  %more = icmp ult i16 %i, %rows
+  br i1 %more, label %inner, label %exit
+body:
+  %bit = and i16 %j, 1
+  %test = icmp ne i16 %bit, 0
+  br i1 %test, label %odd, label %even
+even:
+  %plus = xor i16 %inner_sum, %i
+  br label %join
+join:
+  %chosen = phi i16 [%minus, %odd], [%plus, %even]
+  %jn = add i16 %j, 1
+  br label %inner
+}
+)");
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  const auto First = Source.find("for (");
+  ASSERT_NE(First, std::string::npos) << Source;
+  EXPECT_NE(Source.find("for (", First + 1), std::string::npos) << Source;
+  size_t Declarations = 0;
+  for (size_t At = 0;
+       (At = Source.find("    uint16_t ", At)) != std::string::npos; ++At)
+    ++Declarations;
+  EXPECT_EQ(Declarations, 3u) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (unsigned seed = 65520; seed < 65536; ++seed)
+    for (unsigned rows = 0; rows < 9; ++rows)
+      for (unsigned cols = 0; cols < 11; ++cols) {
+        uint16_t expected = seed;
+        for (unsigned i = 0; i < rows; ++i) {
+          for (unsigned j = 0; j < cols; ++j)
+            expected = j & 1 ? expected - j : expected ^ i;
+          expected += i;
+        }
+        if (grid(seed, rows, cols) != expected) return 1;
+      }
+  return 0;
+}
+)",
+                  Optimization);
+}
+
+TEST(LLVMCScalarRegions, HeaderEffectsRunAtEveryTestIncludingExit) {
+  const auto Source = emitScalarRegions(R"(
+declare i32 @observe(i32)
+define i32 @header_calls(i32 %n) {
+entry:
+  br label %header
+header:
+  %i = phi i32 [0, %entry], [%next, %body]
+  %v = call i32 @observe(i32 %i)
+  %more = icmp ult i32 %v, %n
+  br i1 %more, label %body, label %exit
+body:
+  %next = add i32 %i, 1
+  br label %header
+exit:
+  %answer = phi i32 [%v, %header]
+  ret i32 %answer
+}
+)");
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  EXPECT_NE(Source.find("while (1)"), std::string::npos) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+static unsigned calls, wrong;
+uint32_t observe(uint32_t value) {
+  if (value != calls++) wrong = 1;
+  return value;
+}
+int main(void) {
+  for (unsigned n = 0; n < 80; ++n) {
+    calls = wrong = 0;
+    if (header_calls(n) != n || calls != n + 1 || wrong) return 1;
+  }
+  return 0;
+}
+)",
+                  Optimization);
+}
+
+TEST(LLVMCScalarRegions, SimultaneousSwapsAndLiveExitKeepOldValues) {
+  const auto Source = emitScalarRegions(R"(
+define i32 @swap_values(i32 %n, i32 %x, i32 %y) {
+entry:
+  br label %header
+header:
+  %i = phi i32 [0, %entry], [%next, %body]
+  %a = phi i32 [%x, %entry], [%b, %body]
+  %b = phi i32 [%y, %entry], [%a, %body]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+  %next = add i32 %i, 1
+  br label %header
+exit:
+  %shifted = shl i32 %a, 3
+  %result = xor i32 %shifted, %b
+  ret i32 %result
+}
+)");
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  EXPECT_NE(Source.find("phi_edge"), std::string::npos) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (uint32_t n = 0; n < 33; ++n)
+    for (uint32_t x = 0; x < 256; ++x) {
+      uint32_t y = ~x;
+      uint32_t a = n & 1 ? y : x, b = n & 1 ? x : y;
+      if (swap_values(n, x, y) != ((a << 3) ^ b)) return 1;
+    }
+  return 0;
+}
+)",
+                  Optimization);
+}
+
+TEST(LLVMCScalarRegions, MultiExitFallbackRetainsEarlyExitAndPhiEdges) {
+  const auto Source = emitScalarRegions(R"(
+define i32 @early(i32 %n, i32 %stop) {
+entry:
+  br label %header
+header:
+  %i = phi i32 [0, %entry], [%next, %step]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+  %quit = icmp eq i32 %i, %stop
+  br i1 %quit, label %exit, label %step
+step:
+  %next = add i32 %i, 1
+  br label %header
+exit:
+  %result = phi i32 [%n, %header], [%i, %body]
+  ret i32 %result
+}
+)");
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (uint32_t n = 0; n < 24; ++n)
+    for (uint32_t stop = 0; stop < 27; ++stop)
+      if (early(n, stop) != (n < stop ? n : stop)) return 1;
+  return 0;
+}
+)",
+                  Optimization);
+}
+
+TEST(LLVMCScalarRegions, LiveOuterValueCannotAliasInnerAccumulator) {
+  const auto Source = emitScalarRegions(R"(
+define i32 @separate_lifetimes(i32 %seed, i32 %n) {
+entry:
+  br label %outer
+outer:
+  %i = phi i32 [0, %entry], [%next, %step]
+  %a = phi i32 [%seed, %entry], [%combined, %step]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %inner, label %exit
+inner:
+  %j = phi i32 [0, %outer], [%jn, %body]
+  %b = phi i32 [%a, %outer], [%changed, %body]
+  %again = icmp ult i32 %j, 4
+  br i1 %again, label %body, label %step
+body:
+  %changed = add i32 %b, %j
+  %jn = add i32 %j, 1
+  br label %inner
+step:
+  %combined = xor i32 %a, %b
+  %next = add i32 %i, 1
+  br label %outer
+exit:
+  ret i32 %a
+}
+)");
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  // Both names must remain, because the old outer value survives the inner
+  // loop. Removing that copy silently turns the final xor into zero.
+  EXPECT_NE(Source.find("uint32_t a"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint32_t b"), std::string::npos) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (uint32_t seed = 0; seed < 256; ++seed)
+    for (uint32_t n = 0; n < 20; ++n) {
+      uint32_t a = ~seed;
+      for (uint32_t i = 0; i < n; ++i) {
+        uint32_t b = a;
+        for (uint32_t j = 0; j < 4; ++j) b += j;
+        a ^= b;
+      }
+      if (separate_lifetimes(~seed, n) != a) return 1;
+    }
+  return 0;
+}
+)",
+                  Optimization);
+}
+
+TEST(LLVMCScalarRegions, InlinedFunnelShiftKeepsWidthEndpointsAndOldCarrier) {
+  const auto Source = emitScalarRegions(R"(
+declare i8 @llvm.fshr.i8(i8, i8, i8)
+define i8 @byte_rounds(i8 %seed, i8 %n, i8 %right, i8 %shift) {
+entry:
+  br label %header
+header:
+  %i = phi i8 [0, %entry], [%next, %body]
+  %a = phi i8 [%seed, %entry], [%changed, %body]
+  %more = icmp ult i8 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+  %rotated = call i8 @llvm.fshr.i8(i8 %a, i8 %right, i8 %shift)
+  %changed = xor i8 %rotated, %i
+  %next = add i8 %i, 1
+  br label %header
+exit:
+  ret i8 %a
+}
+)");
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("rotated"), std::string::npos) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (unsigned seed = 200; seed < 256; ++seed)
+    for (unsigned n = 0; n < 33; ++n)
+      for (unsigned shift = 0; shift < 64; ++shift) {
+        unsigned k = shift % 8;
+        uint8_t a = seed, right = seed ^ 93;
+        for (unsigned i = 0; i < n; ++i) {
+          uint8_t r = k ? ((unsigned)a << (8 - k)) | (right >> k) : right;
+          a = r ^ i;
+        }
+        if (byte_rounds(seed, n, right, shift) != a) return 1;
+      }
+  return 0;
+}
+)",
+                  Optimization);
+}
+
+TEST(LLVMCScalarRegions, SharedStepStaysMaterializedBeforePhiPublication) {
+  const auto Source = emitScalarRegions(R"(
+define i8 @shared_step(i8 %seed, i8 %n) {
+entry:
+  br label %header
+header:
+  %i = phi i8 [0, %entry], [%next, %body]
+  %a = phi i8 [%seed, %entry], [%sum, %body]
+  %more = icmp ult i8 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+  %next = add i8 %i, 1
+  %sum = add i8 %a, %next
+  br label %header
+exit:
+  ret i8 %a
+}
+)");
+  EXPECT_NE(Source.find("while ("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("for ("), std::string::npos) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (unsigned seed = 241; seed < 256; ++seed)
+    for (unsigned n = 0; n < 256; ++n) {
+      uint8_t expected = seed;
+      for (unsigned i = 0; i < n; ++i) expected += i + 1;
+      if (shared_step(seed, n) != expected) return 1;
+    }
+  return 0;
+}
+)",
+                  Optimization);
+}
+
+TEST(LLVMCScalarRegions, MultipleEntriesKeepIrreducibleFallback) {
+  const auto Source = emitScalarRegions(R"(
+define i32 @multiple_entries(i32 %n, i1 %choose) {
+entry:
+  br i1 %choose, label %left, label %right
+left:
+  %a = phi i32 [%n, %entry], [%bn, %right]
+  %an = sub i32 %a, 1
+  %stopa = icmp eq i32 %a, 0
+  br i1 %stopa, label %exit, label %right
+right:
+  %b = phi i32 [%n, %entry], [%an, %left]
+  %bn = sub i32 %b, 1
+  %stopb = icmp eq i32 %b, 0
+  br i1 %stopb, label %exit, label %left
+exit:
+  %result = phi i32 [11, %left], [23, %right]
+  ret i32 %result
+}
+)");
+  EXPECT_NE(Source.find("goto "), std::string::npos) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (unsigned n = 0; n < 97; ++n)
+    for (unsigned choose = 0; choose < 2; ++choose) {
+      unsigned in_left = choose ^ (n & 1);
+      if (multiple_entries(n, choose) != (in_left ? 11 : 23)) return 1;
+    }
+  return 0;
+}
+)",
+                  Optimization);
+}
+
+TEST(LLVMCScalarRegions, OversizedGraphFallsBackWithoutLosingTheLoop) {
+  std::string IR = R"(
+define i32 @large_graph(i32 %n) {
+entry:
+  br label %header
+header:
+  %i = phi i32 [0, %entry], [%next, %step]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %bridge0, label %exit
+)";
+  for (unsigned I = 0; I < 1024; ++I) {
+    IR += "bridge" + std::to_string(I) + ":\n  br label %";
+    IR += I == 1023 ? "step\n" : "bridge" + std::to_string(I + 1) + "\n";
+  }
+  IR += R"(
+step:
+  %next = add i32 %i, 1
+  br label %header
+exit:
+  ret i32 %i
+}
+)";
+  const auto Source = emitScalarRegions(IR);
+  EXPECT_EQ(Source.find("for ("), std::string::npos) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (uint32_t n = 0; n < 17; ++n)
+    if (large_graph(n) != n) return 1;
+  return 0;
+}
+)",
+                  Optimization);
+}
+
 } // namespace

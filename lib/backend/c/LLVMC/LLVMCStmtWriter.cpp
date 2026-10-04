@@ -5404,7 +5404,9 @@ bool LLVMCWriter::edgePrintsPhiCopy(const llvm::BasicBlock *From,
 }
 
 void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
-                                 const llvm::BasicBlock *To, int Indent) {
+                                 const llvm::BasicBlock *To, int Indent,
+                                 bool ForceMaterialized,
+                                 const llvm::PHINode *Deferred) {
   if (!From || !To)
     return;
   struct PhiCopy {
@@ -5416,12 +5418,14 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
   std::vector<PhiCopy> Copies;
   std::map<const llvm::Value *, std::string> EdgeImmediates;
   const bool SinglePredecessor = To->getSinglePredecessor() != nullptr;
-  const bool MaterializeEdge = phiEdgeNeedsMaterialization(From, To);
+  const bool MaterializeEdge =
+      ForceMaterialized || phiEdgeNeedsMaterialization(From, To);
   for (const llvm::Instruction &Inst : *To) {
     const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst);
     if (!Phi)
       break;
-    if ((Phi->use_empty() && !phiPrintedAsJoinCallArg(Phi)) ||
+    if (Phi == Deferred ||
+        (Phi->use_empty() && !phiPrintedAsJoinCallArg(Phi)) ||
         Analysis.Inlinable.count(Phi) || Analysis.DeadFrameStores.count(Phi))
       continue;
     const int IncomingIndex = Phi->getBasicBlockIndex(From);
@@ -5431,9 +5435,12 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
     if (SinglePredecessor)
       if (auto Imm = foldImmediate(Incoming))
         EdgeImmediates.emplace(Phi, *Imm);
-    if (phiIncomingIsPrinted(Phi, Incoming, MaterializeEdge))
-      Copies.push_back(
-          {Phi, integerPointerOperandStr(Incoming), getName(Phi), {}});
+    if (phiIncomingIsPrinted(Phi, Incoming, MaterializeEdge)) {
+      const std::string RHS = integerPointerOperandStr(Incoming);
+      const std::string Destination = getName(Phi);
+      if (!ForceMaterialized || RHS != Destination)
+        Copies.push_back({Phi, RHS, Destination, {}});
+    }
   }
   // Evaluate the whole edge against its predecessor state before publishing
   // any new PHI facts. Loop PHIs may exchange values, including cached ones.
