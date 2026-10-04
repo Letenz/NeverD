@@ -53,6 +53,26 @@ memory. A snapshot that becomes unreadable fails explicitly. Terminal CPU or
 model faults do not produce snapshots. No host addresses are exposed as guest
 memory.
 
+For input larger than the 64 KiB options JSON limit, supply `path` instead of
+`bytes_hex` in a `memory` region. C++ callers set `NativeMemoryRegion::File`.
+The path names an explicit regular file on the caller's host; relative paths
+use the caller's working directory and JSON paths are UTF-8. The complete file
+must fit the region. Preparation copies its bytes into already budgeted guest
+memory and leaves the remaining bytes zero. Guest writes never modify the
+file, and another workload reads its current contents again.
+
+```json
+{"address":"0x20000000","size":131072,"path":"input.bin"}
+```
+
+`path` and `bytes_hex` are mutually exclusive, including empty `bytes_hex`.
+Missing files, non-regular files, oversized files and detected size changes
+during copying fail before CPU execution. Keep the input stable while it is
+read; copying is not an atomic filesystem snapshot. The region shares the
+image/stack memory limit, and bounded reads check the preparation deadline.
+Blocking host filesystem I/O itself has no hard deadline guarantee. This
+explicit preparation input does not expose host files through guest APIs.
+
 By default, DT_INIT and DT_INIT_ARRAY constructors execute in order before the
 selected function, with an explicit empty argc/argv/envp. All calls share the
 same instruction, event and deadline budget. `initialize: false` explicitly
@@ -93,6 +113,8 @@ The supported Bionic subset is:
   checked before either effect, and errno is preserved. Invalid pointers and
   exhausted scan/deadline bounds stop explicitly. No host tokenizer or hidden
   process cursor supplies state; `strtok` remains unsupported.
+- `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, for the bounded integer and
+  byte-string formatting subset described below.
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
@@ -145,7 +167,8 @@ TLS uses the API 28 Bionic layout: TPIDR_EL0 points to a guest TLS block,
 deterministic analysis value, not host randomness. `__stack_chk_guard` aliases
 that value; `__stack_chk_fail` and `abort` fail explicitly. The known `__sF`
 stdio data symbol has an opaque, inaccessible guest address: field reads fail
-instead of receiving fabricated FILE contents. stdio operations are not modeled.
+instead of receiving fabricated FILE contents. FILE I/O operations remain
+unmodeled; string formatting does not expose a FILE object.
 
 These ABI choices are based on the pinned AOSP Android 9 definitions:
 [Bionic TLS slots](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/private/bionic_tls.h),
@@ -154,6 +177,42 @@ These ABI choices are based on the pinned AOSP Android 9 definitions:
 [`pthread_once`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_once.cpp),
 and the [AArch64 syscall wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/arch-arm64/bionic/syscall.S).
 The model is independently implemented; these sources specify the ABI.
+
+### String formatting
+
+The four string formatting imports share one Android implementation. It reads
+ordinary GP arguments from x0–x7 and then the guest stack. The `v` forms consume
+the caller's actual 32-byte AAPCS64 `va_list`, including its GP save area and
+overflow stack; they never use the host's variadic ABI. The caller's list is
+not modified. Narrow integer arguments undergo the guest's integer promotions;
+`long`, `long long`, `intmax_t`, `size_t`, pointers and `ptrdiff_t` have LP64 widths.
+
+Supported conversions are `d i u o x X p s c %`, with `hh h l ll j z t` integer
+lengths, signs, alternate form, left/zero padding, and fixed or `*` width and
+precision. Android's `q D O U` integer aliases and ignored grouping flag are
+accepted. `%s` operates on bytes; precision bounds its memory reads. NULL strings
+use `(null)`. Pointer output includes `0x`, including NULL; API 28's zero-value
+`%#.0o` emits no digits. Embedded NUL from `%c` counts toward the result.
+
+Successful calls preserve errno, write a terminating NUL when capacity is
+nonzero, and return the complete required length excluding that terminator.
+`snprintf(NULL, 0, ...)` still validates and counts its input. Truncation needs
+only the actual destination prefix to be writable. Padding is counted without
+materializing discarded bytes; input scans and retained output share the
+process's existing memory and deadline limits.
+
+Floating-point, wide text, positional arguments, `%n`, unknown conversions,
+`snprintf` capacities above INT_MAX, and lengths exceeding INT_MAX stop as
+`unsupported_service` before publishing output. This boundary does not simulate
+Bionic's version-specific overflow or fortify error side effects. Invalid guest
+memory or malformed GP `va_list` state fails explicitly. Guest strings are never
+passed to host printf functions. Resolving these names with `dlsym` uses the
+same implementation and provider lifetime checks as direct imports.
+
+The independently authored implementation and compiled O0/O2 callers follow
+[AAPCS64's variadic layout](https://github.com/ARM-software/abi-aa/blob/2025Q1/aapcs64/aapcs64.rst#the-va_list-type),
+Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp)
+and [conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp).
 
 ### Explicit dynamic symbol catalogue
 

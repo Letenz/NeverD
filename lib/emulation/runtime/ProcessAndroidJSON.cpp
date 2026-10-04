@@ -14,7 +14,7 @@ namespace {
 namespace field = process_report;
 llvm::Error invalid(llvm::StringRef Key) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 "invalid Android native option: " + Key);
+                                 llvm::Twine(field::AndroidOptions) + Key);
 }
 llvm::Expected<uint64_t> number(const llvm::json::Value &V,
                                 llvm::StringRef Name) {
@@ -126,6 +126,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         const auto *O = Item.getAsObject();
         if (!O || !O->get(field::Address) || !O->get(field::Size))
           return invalid(Name);
+        if (O->get(field::Path) && O->get(field::Bytes))
+          return invalid(field::Path);
         NativeMemoryRegion Region;
         for (const auto &[K, Entry] : *O) {
           llvm::StringRef Field = K;
@@ -140,6 +142,14 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
               return invalid(Field);
             std::string Data = llvm::fromHex(*S);
             Region.Bytes.assign(Data.begin(), Data.end());
+          } else if (Name == field::Memory && Field == field::Path) {
+            auto S = string(Entry, Field);
+            if (!S)
+              return S.takeError();
+            if (S->empty())
+              return invalid(Field);
+            Region.File = std::filesystem::path(std::u8string(
+                reinterpret_cast<const char8_t *>(S->data()), S->size()));
           } else if (Name == field::Memory && Field == field::Executable) {
             auto B = Entry.getAsBoolean();
             if (!B)

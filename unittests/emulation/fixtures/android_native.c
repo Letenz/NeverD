@@ -39,6 +39,18 @@ u64 properties(char *out) {
   return android_get_device_api_level();
 }
 u64 absent_property(char *out) { return __system_property_get("missing", out); }
+u64 inspect_memory_input(unsigned char *p, u64 n) {
+  u64 hash = 14695981039346656037ul;
+  const u64 *words = (const u64 *)p;
+  for (u64 i = 0; i < n / 8; ++i)
+    hash = (hash ^ words[i]) * 1099511628211ul;
+  for (u64 i = n & ~(u64)7; i < n; ++i)
+    hash = (hash ^ p[i]) * 1099511628211ul;
+  if (n)
+    p[0] ^= 255;
+  p[n] = 165;
+  return hash;
+}
 u64 allocation(char *out) {
   char *p = calloc(4, 8);
   if (!p || p[31])

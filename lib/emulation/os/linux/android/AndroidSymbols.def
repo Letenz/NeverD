@@ -49,4 +49,8 @@ NEVERD_ANDROID_SYMBOL(MutexTryLock, "pthread_mutex_trylock")
 NEVERD_ANDROID_SYMBOL(MutexUnlock, "pthread_mutex_unlock")
 NEVERD_ANDROID_SYMBOL(PthreadMutexAttrPrefix, "pthread_mutexattr_")
 NEVERD_ANDROID_SYMBOL(PthreadMutexObjectPrefix, "pthread_mutex_")
+NEVERD_ANDROID_SYMBOL(Snprintf, "snprintf")
+NEVERD_ANDROID_SYMBOL(Vsnprintf, "vsnprintf")
+NEVERD_ANDROID_SYMBOL(Sprintf, "sprintf")
+NEVERD_ANDROID_SYMBOL(Vsprintf, "vsprintf")
 #endif
