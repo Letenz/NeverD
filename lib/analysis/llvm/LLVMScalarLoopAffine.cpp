@@ -54,14 +54,21 @@ std::optional<APInt> coefficient(const APInt &Base, const APInt &Target) {
 
 bool affine(Search &S, Function &F, LoopInfo &LI) {
   for (auto *L : LI.getLoopsInPreorder()) {
-    SmallVector<Recurrence, 8> Recurrences;
+    SmallVector<Recurrence, 8> Recurrences, NonUnit;
     for (auto &P : L->getHeader()->phis()) {
       if (!S.charge())
         return false;
-      if (auto R = recurrence(P, *L))
-        Recurrences.push_back(*R);
+      if (auto R = recurrence(P, *L)) {
+        auto &Group =
+            R->Step.isOne() || R->Step.isAllOnes() ? Recurrences : NonUnit;
+        Group.push_back(*R);
+      }
     }
-    // Keep earlier carriers as bases. Whole-function proof, not the modular
+    if (!S.charge(NonUnit.size()))
+      return false;
+    llvm::append_range(Recurrences, NonUnit);
+    // Prefer unit-step bases independently of PHI order, retaining source
+    // order within each group. Whole-function proof, not the modular
     // coefficient alone, decides definedness of flagged source updates.
     for (unsigned J = 1; J < Recurrences.size(); ++J)
       for (unsigned I = 0; I < J; ++I) {
