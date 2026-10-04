@@ -4,6 +4,9 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
+#include "neverd/pipeline/Pipeline.h"
+
+#include "llvm/Support/Endian.h"
 
 using namespace neverd;
 
@@ -208,4 +211,158 @@ TEST(JumpTableTargetOwners, IndexedTargetsRejectIndependentFunctionEntries) {
   Builder.setExecutableCodeOwnerIndex(&Owners);
   const auto Low = Builder.build(Image, Dec, Image.Entry);
   EXPECT_TRUE(Low.JumpTables.empty());
+}
+
+namespace {
+BinaryImage selectedFunctionBoundaryFixture(BinaryFormat Format,
+                                            Arch Architecture, bool Tail,
+                                            unsigned Evidence) {
+  BinaryImage Image;
+  Image.Format = Format;
+  Image.Arch = Architecture;
+  Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                   ? Bitness::Bits32
+                   : Bitness::Bits64;
+  if (Architecture == Arch::ARM)
+    Image.Mode = InstructionMode::ARM;
+  Image.Entry = 0x1000;
+  Segment Text;
+  Text.VA = Image.Entry;
+  Text.Size = Text.FileSz = 0x18;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.Size);
+  if (Architecture == Arch::AArch64) {
+    llvm::support::endian::write32le(Text.Data.data(),
+                                     Tail ? 0x14000004 : 0xd65f03c0);
+    llvm::support::endian::write32le(Text.Data.data() + 0x10, 0x52800540);
+    llvm::support::endian::write32le(Text.Data.data() + 0x14, 0xd65f03c0);
+  } else if (Architecture == Arch::ARM) {
+    llvm::support::endian::write32le(Text.Data.data(),
+                                     Tail ? 0xea000002 : 0xe12fff1e);
+    llvm::support::endian::write32le(Text.Data.data() + 0x10, 0xe3a0002a);
+    llvm::support::endian::write32le(Text.Data.data() + 0x14, 0xe12fff1e);
+  } else {
+    Text.Data[0] = Tail ? 0xe9 : 0xc3;
+    if (Tail)
+      llvm::support::endian::write32le(Text.Data.data() + 1, 0xb);
+    Text.Data[0x10] = 0xb8;
+    Text.Data[0x11] = 42;
+    Text.Data[0x15] = 0xc3;
+  }
+  Section Sec;
+  Sec.VA = Text.VA;
+  Sec.Size = Text.Size;
+  Sec.Flags = Text.Flags;
+  Sec.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+  Image.Sections.push_back(Sec);
+  Image.Segments.push_back(std::move(Text));
+  Segment Table;
+  Table.VA = 0x2000;
+  Table.Size = Table.FileSz = 8;
+  Table.Flags = SegmentFlags::Readable;
+  Table.Data.resize(8);
+  llvm::support::endian::write64le(Table.Data.data(), 0x1010);
+  Image.Segments.push_back(std::move(Table));
+  Image.CodePtrRelocSlots.insert(0x2000);
+  Image.Symbols.push_back(Symbol::makeFunc(Image.Entry));
+  auto Other = Symbol::makeFunc(0x1010);
+  Other.IsFunc = Evidence != 1;
+  Other.IsBoundaryGuess = Evidence == 2;
+  if (Evidence != 3)
+    Image.Symbols.push_back(Other);
+  ExceptionFunction Shared;
+  Shared.Kind = RuntimeFunctionKind::Primary;
+  Shared.ParseStatus = ExceptionParseStatus::Complete;
+  Shared.CodeRange = {0x1000, 0x1018};
+  Image.ExceptionMetadata.Functions.push_back(Shared);
+  Image.ExceptionMetadata.rebuildIndex();
+  return Image;
+}
+} // namespace
+
+TEST(JumpTableTargetOwners, SelectedFunctionsKeepIndependentSymbolBoundaries) {
+  for (auto Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+    for (auto Architecture : {Arch::AArch64, Arch::X64, Arch::ARM, Arch::X86})
+      for (bool Tail : {false, true})
+        for (bool Reverse : {false, true}) {
+          SCOPED_TRACE(static_cast<int>(Format));
+          SCOPED_TRACE(static_cast<int>(Architecture));
+          SCOPED_TRACE(Tail);
+          SCOPED_TRACE(Reverse);
+          // A shared unwind range does not join independently callable
+          // entries, even when an absolute relocation names the second one.
+          auto Image =
+              selectedFunctionBoundaryFixture(Format, Architecture, Tail, 0);
+          if (Reverse)
+            std::reverse(Image.Symbols.begin(), Image.Symbols.end());
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          auto SelectedImage = Image;
+          auto Full = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Full.Success) << Full.Error;
+          auto First = std::find_if(
+              Full.LowFuncs.begin(), Full.LowFuncs.end(),
+              [&](const LowFunc &F) { return F.Entry == Image.Entry; });
+          ASSERT_NE(First, Full.LowFuncs.end());
+          EXPECT_TRUE(
+              std::any_of(Full.LowFuncs.begin(), Full.LowFuncs.end(),
+                          [](const LowFunc &F) { return F.Entry == 0x1010; }));
+          Options.OnlyFunctionEntries = {Image.Entry};
+          auto Selected = Pipeline().run(SelectedImage, Context, Options);
+          ASSERT_TRUE(Selected.Success) << Selected.Error;
+          ASSERT_EQ(Selected.LowFuncs.size(), 1U);
+          const auto &Low = Selected.LowFuncs.front();
+          EXPECT_EQ(Low.Entry, Image.Entry);
+          ASSERT_EQ(Low.Blocks.size(), 1U);
+          EXPECT_EQ(Low.ModuleAnalysisRoots, std::set<va_t>{Image.Entry});
+          EXPECT_EQ(Low.OrdinaryModuleAnalysisRoots,
+                    First->OrdinaryModuleAnalysisRoots);
+          std::string AllBody, SelectedBody;
+          llvm::raw_string_ostream AllStream(AllBody),
+              SelectedStream(SelectedBody);
+          Pipeline::dumpLowIR({*First}, AllStream);
+          Pipeline::dumpLowIR({Low}, SelectedStream);
+          EXPECT_EQ(SelectedBody, AllBody);
+          unsigned Calls = 0;
+          for (const auto &Operation : Low.Blocks.front().Ops) {
+            EXPECT_LT(Operation.Addr, 0x1010U);
+            if (Operation.Opcode == NdOp::CALL) {
+              ++Calls;
+              ASSERT_TRUE(Operation.Inputs[0].isConst());
+              EXPECT_EQ(Operation.Inputs[0].Offset, 0x1010U);
+            }
+          }
+          EXPECT_EQ(Calls, Tail ? 1U : 0U);
+        }
+}
+
+TEST(JumpTableTargetOwners, SelectedFunctionsKeepUnprovenInteriorRoots) {
+  for (auto Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+    for (auto Architecture : {Arch::AArch64, Arch::X64, Arch::ARM, Arch::X86})
+      for (bool Tail : {false, true})
+        for (unsigned Evidence : {1U, 2U, 3U}) {
+          SCOPED_TRACE(static_cast<int>(Format));
+          SCOPED_TRACE(static_cast<int>(Architecture));
+          SCOPED_TRACE(Tail);
+          SCOPED_TRACE(Evidence);
+          // A nonfunction symbol, padding guess, or absent symbol does not
+          // remove an address-taken local block from the current CFG.
+          auto Image = selectedFunctionBoundaryFixture(Format, Architecture,
+                                                       Tail, Evidence);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Image.Entry};
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          ASSERT_EQ(Result.LowFuncs.size(), 1U);
+          const auto &Low = Result.LowFuncs.front();
+          EXPECT_TRUE(Low.ModuleAnalysisRoots.count(0x1010));
+          EXPECT_TRUE(std::any_of(
+              Low.Blocks.begin(), Low.Blocks.end(),
+              [](const LowBlock &B) { return B.StartAddr == 0x1010; }));
+        }
 }
