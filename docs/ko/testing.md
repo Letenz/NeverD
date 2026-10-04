@@ -1089,7 +1089,7 @@ WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 
 
 네이티브 CPU 전용 CI는 고정 버전의 Capstone 소스를 초기화하고 검증된 LLVM 패키지를 사용합니다. `NEVERD_ENABLE_SEMANTIC_TESTS=OFF`와 Unicorn 어댑터 비활성화를 함께 설정하면 CPU 테스트의 구성, 빌드 및 링크에 Unicorn 소스가 필요하지 않습니다. 서명 데이터와 외부 코퍼스도 필요하지 않습니다. 기본 CI에서는 전체 의미론 테스트 그룹을 계속 활성화합니다.
 
-기존 `ci.yml`은 Windows x64 runner에서 명시적으로 선택하는 수동 모드 `native_cpu_only`를 제공합니다. `NativeCPUTests.def`가 열 테스트 소유자를 선택하고, `run_native_cpu_ci.py`가 먼저 빌드한 후 필터링된 CTest를 실행하여 목록, JUnit, 로그, 요약을 저장합니다. 공통 CI 파서는 통과, 실패, 건너뜀, 비활성화, 미실행을 구분합니다. 선언된 WHP 네이티브 매핑 사례는 모두 발견되고 실행되어야 하며, 네이티브 증거가 없거나 건너뛰면 이 작업은 실패합니다. 기본 LLVM 소스 빌드 CI는 그대로 유지됩니다. 프로토콜 테스트와 컴파일은 WHP 또는 ARM64 네이티브 워크로드 검증을 대신하지 않습니다.
+기존 `ci.yml`은 Windows x64 runner에서 명시적으로 선택하는 수동 모드 `native_cpu_only`를 제공합니다. `NativeCPUTests.def`가 테스트 대상을 선택하고, `run_native_cpu_ci.py`가 먼저 빌드한 후 필터링된 CTest를 실행하여 목록, JUnit, 로그, 요약을 저장합니다. 공통 CI 파서는 통과, 실패, 건너뜀, 비활성화, 미실행을 구분합니다. 선언된 WHP 네이티브 매핑 사례는 모두 발견되고 실행되어야 하며, 네이티브 증거가 없거나 건너뛰면 이 작업은 실패합니다. 기본 LLVM 소스 빌드 CI는 그대로 유지됩니다. 프로토콜 테스트와 컴파일은 WHP 또는 ARM64 네이티브 워크로드 검증을 대신하지 않습니다.
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
