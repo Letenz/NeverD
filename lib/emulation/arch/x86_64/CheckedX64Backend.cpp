@@ -91,7 +91,15 @@ enum class VectorForm {
 #include "X64VectorOperands.def"
 #undef NEVERD_X64_VECTOR_FORM
 };
-enum class VectorOperand { Absent, Xmm, Memory, General, Integer, Immediate };
+enum class VectorOperand {
+  Absent,
+  Xmm,
+  Memory,
+  General,
+  Integer,
+  IntegerMemory,
+  Immediate
+};
 struct VectorOperandPattern {
   VectorForm Form;
   VectorOperand Destination, Source, Control;
@@ -148,6 +156,9 @@ bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
     return isGeneralOperand(O) && O.size == Width;
   case VectorOperand::Integer:
     return isGeneralOperand(O) &&
+           (O.size == x64::DWordBytes || O.size == x64::WordBytes);
+  case VectorOperand::IntegerMemory:
+    return O.type == X86_OP_MEM &&
            (O.size == x64::DWordBytes || O.size == x64::WordBytes);
   case VectorOperand::Immediate:
     return O.type == X86_OP_IMM && O.imm >= 0 && O.imm <= UINT8_MAX;
