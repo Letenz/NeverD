@@ -93,6 +93,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDLLVMScalarEquivalenceTests` 涵蓋完整迴圈域、零次迴圈、PHI 同時交換、switch、高位輸入、最後分區反例、產生 poison 的額外更新、回傳範圍、不支援的契約，以及精確、少一單位及零預算。獨立雙寬與溢位參考實作涵蓋各支援字寬的漏斗位移端點及帶溢位約束的乘法；獨立巢狀迴圈 C 於 O1/O2 檢查編譯器輸入形態。狀態模型測試也檢查漏斗位移端點。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 檢查累計查詢計費與不變的局部上限。
 
+`SymKnownBitsTests` 以全部位元組輸入對及任意精度邊界值檢查事實，涵蓋擴展恆等關係、不回繞加法、不同來源及全定義位移語意。亦檢查精確/少一預算、快取命中計費、儲存上限、獨立上下文、深度、運算元數量與不支援的位寬。`SymExprExtensionTests` 檢查常數高位元與完整位移計數。純量等價回歸在證明值域約束時保留符號資料，拒絕最後分區差異及已執行的 poison，並以精確/少一預算核驗完整證明計費。 `SymMBAExtensionTests` 在關閉取樣驗證時要求推導證據，檢查全部位元組輸入對，並保留有號、窄進位、位元反相及工作量耗盡的邊界。
+
 `NeverDLLVMScalarLoopRecoveryTests` 涵蓋前綴與前驅攜帶值重構、零次迴圈分支、自回邊迴圈判斷前移、仿射狀態、回繞時的等式退路、額外更新的 poison、高位元資料差異及不支援的輸入契約。精確／少一累計預算檢查原子拒絕；獨立算術 oracle 在 O0/O2 執行原始與恢復 LLVM，涵蓋全部位元組控制輸入。這些測試不代表原生 ABI 恢復或預設短 C 輸出已完成。
 
 `NeverDLLVMCScalarLoopRecoveryTests` 檢查預設整模組與單函式輸出、回傳路徑清理後的持續恢復、函式身分和屬性、呼叫繫結、既有及新增內建函式與符號衝突、共用預算、副作用呼叫、缺少輸入定義性、中繼資料、映像投影、外部區塊位址和外來函式選擇。獨立算術與旋轉 oracle 在 O0/O2 下執行產生的 C，並啟用未定義行為陷阱；算術也與獨立編譯的原始 LLVM 對照，涵蓋所有位元組控制輸入、邊界字值及確定性的完整位寬資料。
@@ -227,7 +229,7 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64PackedShiftTests.cpp` 與原始 `X64PackedShiftCases.def` 使用 16 個立即數計數和 21 個變數計數，將十種移位與獨立純量計算、宿主 SSE2 intrinsic 對照。涵蓋計數／目標別名、高位忽略、對齊、觀察器、可恢復故障和裝置拒絕。`X64VectorTestSupport.h` 與打包算術測試共用暫存器與 RAM 斷言。原生 CI 強制執行 WHP 的兩個特權級。
 
-`X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows 一般保護故障的例外派送仍未納入 OS 模型。
+`X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
@@ -1049,7 +1051,9 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 僅原生 CPU 的 CI 檢出初始化固定版本的 Capstone 原始碼，並使用經驗證的預建 LLVM 套件。設定 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 且停用 Unicorn 後端後，CPU 測試目標的設定、建置和連結均不需要 Unicorn 原始碼，也不依賴簽章庫及外部語料。預設 CI 仍啟用完整語意測試組。
 
-現有 `ci.yml` 在 Windows x64 runner 上提供明確選擇的 `native_cpu_only` 手動模式。`NativeCPUTests.def` 選擇測試目標；`run_native_cpu_ci.py` 先建置它們，再執行篩選後的 CTest，並儲存清單、JUnit、日誌和摘要。共用 CI 解析器區分通過、失敗、略過、停用和未執行結果。每個宣告的 WHP 原生映射案例都必須被探索並執行；缺少或略過原生證據會使聚焦工作失敗。預設的 LLVM 原始碼建置 CI 保持原樣。協定測試和編譯不能取代 WHP 或 ARM64 原生工作負載驗證。
+`ci.yml` 的手動模式 `native_cpu_only` 透過 `native_cpu_backend=whp` 選擇 Windows x64（預設），或透過 `native_cpu_backend=kvm` 選擇 Ubuntu x64。`NativeCPUTests.def` 共用 CPU／行程驗收要求，分別宣告後端專屬目標和案例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 驗證宿主，先建置全部目標再執行 CTest，並保留清單、JUnit、日誌和結果分類。即使 CTest 成功結束，缺少或略過必測案例仍會失敗。CI 停用 Unicorn；`--with-drivers` 要求所選後端執行相同的原址／重定位驅動程式範例。編譯和建立探測不能證明來賓執行或 ARM64 驗收。 Ubuntu 設定使用上游簽署的 Clang/LLD 21 套件；Clang 18/19 的 CR8 宣告與固定版本的 WDK 標頭衝突。 Linux 原生驗收使用 CMake 4.2.3，避免 GoogleTest 參數註解進入 CTest 測試識別。
+
+KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransferCases.def` 中 48 項狀態傳輸結果，包括 ioctl 擷取和選用能力查詢失敗。其他同步暫存器模式在宿主支援時執行，否則明確略過。穩定的參數名稱不依賴 ioctl 數值或元組格式。協定測試補充原生執行證據，不能取代它。
 
 `native-host-probe.yml` 在 Linux 與 Windows x64/ARM64 託管 runner 上執行獨立的 `probe_native_host.py`。`NativeHostProbe.def` 宣告能力查詢、VM/vCPU 建立及清理證據的順序。報告保留原始碼/二進位雜湊、原生宿主 ISA 及每一步宿主狀態碼。`setup_ready` 只證明初始化成功，不執行客體指令。缺少 API/裝置能力記為 `unavailable`；建置、初始化、清理、逾時或證據格式錯誤會使工作失敗。ARM64 託管環境的可用性須逐次觀察，此探測不構成 ARM64 工作負載驗收。 兩個 Linux 工作流程均透過 `prepare_kvm_ci.py`，只授予目前託管 runner 帳戶既有 KVM 字元裝置的存取權限，並記錄裝置身分及權限；腳本拒絕本機與自管機器，不會建立缺少的裝置。
 
@@ -1057,7 +1061,7 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 278 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 506 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `278 CPU + 224 WHP + 4 SEH = 506`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 282 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 510 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `282 CPU + 224 WHP + 4 SEH = 510`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 
@@ -1121,6 +1125,10 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
+
+`WindowsProcessContext` 保留每個派送框架的來源。已支援的 x64 資料存取和除法故障在 `CONTEXT.EFlags` 中呈現 RF（`0x10000`）；`RaiseException`（包括軟體拋出的存取違規碼）保留目前上下文。來源資訊貫穿 VEH/VCH 和 SEH 搜尋／展開。合法繼續執行時還原不含 RF 的邏輯 CPU 旗標；客戶修改 RF 會在發布狀態前被拒絕。此受限設定不模擬指令中斷點或客戶控制的 RF。`WindowsExceptionTests.cpp` 檢查儲存記錄、還原，以及拒絕時 CPU／RAM 不變。
+
+Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` 故障映射為 `STATUS_ACCESS_VIOLATION`，參數為 `[read, UINT64_MAX]`，儲存指令亦相同。原因由 CPU 層提供，Windows 不憑向量 13 猜測或重新解碼指令。`WindowsAlignmentProcessTests.cpp` 執行原始 PE 指令，涵蓋 72 種故障情境及 9 次位址修復重試（`72 + 9`），檢查 PC、RF、XMM 與 RAM。未分類或欄位不一致的故障仍會拒絕。程序與驅動程式故障報告保留可空的 `cause` 及十六進位 `error_code`，區分缺失與零。此派送適用於 checked x64 使用者態執行契約。
 
 `AddVectoredContinueHandler` 與 `RemoveVectoredContinueHandler` 管理獨立的有序串列，與例外處理器共用最多保留 128 個註冊項的限制。向量例外處理器接受繼續執行後，繼續處理器讀取同一份可修改的例外記錄與 `CONTEXT`；最終內容驗證在這些回呼完成後進行，包含巢狀例外與 DLL 通知。兩類處理器的控制代碼不可交叉移除。`WindowsContinuationTests.cpp` 將順序、提早結束派送、增刪、內容修復、巢狀派送、載入器回呼及程序結束的原創 EXE 案例與原生 Windows 比較。已測 Windows x64 向量處理路徑允許在設定 `EXCEPTION_NONCONTINUABLE` 時繼續執行；這不代表以堆疊框架為基礎的 SEH 行為。原生 ARM64 執行仍未驗證。
 

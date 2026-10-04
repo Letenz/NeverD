@@ -347,6 +347,10 @@ NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "WhpMemoryCases.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "native_cpu_only")
 NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "NativeCPUTests.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "run_native_cpu_ci.py")
+NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "native_cpu_backend=kvm")
+NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "native_cpu_backend=whp")
+NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "--require-kvm")
+NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "KvmStateTransferCases.def")
 
 NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "WhpHostFailureCases.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeCPUCI, "WhpProtocol.def")
@@ -438,7 +442,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "278 CPU + 224 WHP + 4 SEH = 506")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "282 CPU + 224 WHP + 4 SEH = 510")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -718,7 +722,36 @@ NEVERD_EMULATION_DOC_TOKEN(X64Alignment, "#GP(0)")
 
 NEVERD_EMULATION_DOC_PATH(WindowsAlignmentOracle, "docs/testing.md")
 NEVERD_EMULATION_DOC_PATH(WindowsAlignmentOracle, "docs/{locale}/testing.md")
-NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentOracle, "windows-alignment-oracle.yml")
+NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentOracle,
+                           "windows-alignment-oracle.yml")
 NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentOracle, "check_windows_alignment.py")
 NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentOracle, "WindowsAlignmentCases.def")
 NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentOracle, "72")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsFaultFlags, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsFaultFlags, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsFaultFlags, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsFaultFlags,
+                          "docs/{locale}/process-emulation.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsFaultFlags, "CONTEXT.EFlags")
+NEVERD_EMULATION_DOC_TOKEN(WindowsFaultFlags, "0x10000")
+NEVERD_EMULATION_DOC_TOKEN(WindowsFaultFlags, "WindowsExceptionTests.cpp")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsAlignmentDelivery, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsAlignmentDelivery, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsAlignmentDelivery, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsAlignmentDelivery,
+                          "docs/{locale}/process-emulation.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentDelivery, "operand_alignment")
+NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentDelivery,
+                           "WindowsAlignmentProcessTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentDelivery, "72 + 9")
+NEVERD_EMULATION_DOC_TOKEN(WindowsAlignmentDelivery, "error_code")
+#endif

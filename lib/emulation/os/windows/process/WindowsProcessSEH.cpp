@@ -170,7 +170,7 @@ ExceptionDispatcher::startUnwind() {
   if (auto E = ReadGuest(F.Payload + ExceptionContextOffset, Changed))
     return std::move(E);
   if (auto E = restoreUserContext(CPU, *F.Snapshot, F.Context, Changed,
-                                  StackBase, StackTop))
+                                  StackBase, StackTop, F.Origin))
     return std::move(E);
   auto Caller = readUnwindContext(Changed);
   if (!Caller)
@@ -236,7 +236,7 @@ ExceptionDispatcher::advanceUnwind(std::optional<int32_t> Filter) {
   if (auto E = writeUnwindContext(Next->State.Registers, Context))
     return std::move(E);
   if (auto E = restoreUserContext(CPU, *F.Snapshot, F.Context, Context,
-                                  StackBase, StackTop))
+                                  StackBase, StackTop, F.Origin))
     return std::move(E);
   if (Next->Kind == Kind::Handler) {
     if (Next->SegmentIndex >= S.Origins.size())

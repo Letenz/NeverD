@@ -17,6 +17,48 @@ namespace field = process_report;
 #define NEVERD_PROCESS_TEST_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "ProcessReportCases.def"
 #undef NEVERD_PROCESS_TEST_TEXT
+#define NEVERD_FAULT_REPORT_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "FaultReportCases.def"
+#undef NEVERD_FAULT_REPORT_TEXT
+
+TEST(ProcessReport, RetainsOptionalFaultCauseAndFullWidthProcessorCode) {
+  ProcessResult Result{ProcessProfile::WindowsPE64,
+                       GuestArchitecture::X64,
+                       ExecutionBackendKind::KVM,
+                       {}};
+  Result.LastCPUExit = ExecutionExit{ExecutionExitKind::GuestTrap,
+                                     BackendFault{BackendFaultKind::Interrupt},
+                                     {}};
+  auto Check = [&](std::optional<uint64_t> Code, const char *Expected) {
+    for (bool Classified : {false, true}) {
+      auto &Fault = *Result.LastCPUExit->Fault;
+      Fault.ErrorCode = Code;
+      Fault.Cause = Classified
+                        ? std::optional(BackendFaultCause::OperandAlignment)
+                        : std::nullopt;
+      auto JSON = llvm::cantFail(llvm::json::parse(processResultJSON(Result)));
+      const auto *Record = JSON.getAsObject()
+                               ->getObject(field::CPUExit)
+                               ->getObject(field::Fault);
+      ASSERT_NE(Record, nullptr);
+      if (Classified)
+        EXPECT_EQ(Record->getString(field::Cause), AlignmentCause);
+      else
+        EXPECT_TRUE(Record->get(field::Cause)->getAsNull());
+      if (Code)
+        EXPECT_EQ(Record->getString(field::ErrorCode), Expected);
+      else
+        EXPECT_TRUE(Record->get(field::ErrorCode)->getAsNull());
+    }
+  };
+#define NEVERD_FAULT_REPORT_CASE(Name, Code, ProcessHex, DriverHex)            \
+  {                                                                            \
+    SCOPED_TRACE(#Name);                                                       \
+    Check(Code, ProcessHex);                                                   \
+  }
+#include "FaultReportCases.def"
+#undef NEVERD_FAULT_REPORT_CASE
+}
 
 TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
 #define NEVERD_PROCESS_INVALID_JSON(Name, Text)                                \

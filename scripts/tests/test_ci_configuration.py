@@ -470,7 +470,7 @@ class CiConfigurationTests(unittest.TestCase):
             "the compiler cache must not introduce a prebuilt-LLVM fast path",
         )
 
-    def test_native_cpu_dispatch_keeps_default_ci_and_requires_whp_evidence(self):
+    def test_native_cpu_dispatch_keeps_default_ci_and_requires_selected_native_evidence(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         native = source.split("  native-cpu:\n", 1)[1].split(
             "  build-and-test:\n", 1
@@ -479,7 +479,7 @@ class CiConfigurationTests(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' && inputs.native_cpu_only",
             native,
         )
-        self.assertIn("NEVERD_REQUIRE_NATIVE_WHP: '1'", native)
+        self.assertIn("inputs.native_cpu_backend == 'kvm' && 'ubuntu-24.04' || 'windows-latest'", native)
         self.assertIn("SCCACHE_GHA_ENABLED: 'true'", native)
         self.assertIn("mozilla-actions/sccache-action@", native)
         self.assertIn("-DCMAKE_C_COMPILER_LAUNCHER=sccache", native)
@@ -487,7 +487,20 @@ class CiConfigurationTests(unittest.TestCase):
         self.assertIn("-DNEVERD_EMULATION_BACKEND_UNICORN=OFF", native)
         self.assertIn("-DNEVERD_ENABLE_SEMANTIC_TESTS=OFF", native)
         self.assertIn("scripts/run_native_cpu_ci.py", native)
-        self.assertIn("--require-whp", native)
+        self.assertIn("NEVERD_NATIVE_CPU_BACKEND: ${{ inputs.native_cpu_backend }}", native)
+        self.assertIn('--require-"$NEVERD_NATIVE_CPU_BACKEND"', native)
+        self.assertIn("scripts/prepare_kvm_ci.py", native)
+        self.assertIn("build-ci-native/native-evidence/device-access.json", native)
+        self.assertLess(native.index("scripts/prepare_kvm_ci.py"),
+                        native.index("scripts/run_native_cpu_ci.py"))
+        self.assertIn("inputs.native_cpu_backend == 'kvm' && 'clang' || 'cl'", native)
+        self.assertIn("inputs.native_cpu_backend == 'kvm' && 'clang++' || 'cl'", native)
+        linux_tools = native.split("      - name: Install Linux native CPU build tooling\n", 1)[1].split(
+            "      - name: Enable the native CPU MSVC toolchain\n", 1)[0]
+        self.assertIn("runner.os == 'Linux'", linux_tools)
+        self.assertIn("signed-by=/usr/share/keyrings/neverd-llvm.asc", linux_tools)
+        self.assertIn("clang-21 lld-21", linux_tools)
+        self.assertIn('/usr/lib/llvm-21/bin >> "$GITHUB_PATH"', linux_tools)
         self.assertIn("inputs.native_driver_tests", native)
         self.assertIn("driver_args+=(--with-drivers)", native)
         self.assertIn("scripts/build_wdk_driver_fixtures.py", native)
@@ -511,3 +524,9 @@ class CiConfigurationTests(unittest.TestCase):
             "\npermissions:", 1
         )[0]
         self.assertIn("default: false", dispatch)
+        transport = dispatch.split("      native_cpu_backend:\n", 1)[1].split(
+            "      native_driver_tests:\n", 1)[0]
+        self.assertIn("type: choice", transport)
+        self.assertIn("default: whp", transport)
+        self.assertIn("- whp\n", transport)
+        self.assertIn("- kvm\n", transport)

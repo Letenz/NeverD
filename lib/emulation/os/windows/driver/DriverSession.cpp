@@ -1770,6 +1770,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     Observation.Address = Fault->Address;
     Observation.Size = Fault->Size;
     Observation.Interrupt = Fault->Interrupt;
+    Observation.ErrorCode = Fault->ErrorCode;
+    if (Fault->Cause)
+      Observation.Cause = backendFaultCauseName(*Fault->Cause);
     if (Fault->Access)
       Observation.Access = backendAccessKindName(*Fault->Access);
     Result.Fault = std::move(Observation);
