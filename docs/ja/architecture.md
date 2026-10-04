@@ -1009,6 +1009,8 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `CVTDQ2PS` と `CVTDQ2PD` は共有 `Source` 規則で符号付き32ビット整数をパック変換します。単精度は整列した m128 と MXCSR の丸めを使用し、倍精度は非整列も可能な m64 を読み正確に変換します。宛先 XMM 全体を置換し、FLAGS と既存の MXCSR 状態を保持し、不正確な単精度結果は精度フラグを蓄積します。KVM、WHP、checked Unicorn は元の命令を実行します。Unicorn は両パック拡張を識別して8バイト読取を選択します。DAZ、非マスク例外、MMX、VEX/EVEX は対象外です。
 
+`CVTPS2DQ` と `CVTPD2DQ` は MXCSR の丸めを使用し、`CVTTPS2DQ` と `CVTTPD2DQ` はゼロ方向へ切り捨てます。共有 `Source` 規則は整列した m128 または XMM 入力を要求します。NaN や範囲外のレーンは signed32 indefinite と無効フラグを生成し、他の有効な不正確レーンは独立して精度フラグを加えます。単精度入力は整数4個、倍精度入力は2個となり上位64ビットをクリアします。FLAGS と既存の MXCSR 状態を保持し、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn は元の命令を実行します。DAZ、非マスク例外、MMX、VEX/EVEX は対象外です。
+
 `X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
 
 checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト実行、完全な状態読み出しを一つのステップ時間枠で処理します。`UC_HOOK_CODE` は命令入口で借用した停止トークンと期限を確認します。同期エンジン呼び出しは戻る前に hook の借用を解除しますが、マシンステップは状態公開まで制御を保持します。Unicorn と WHP は完全な CPU 状態を一時保存し、成功したステップの公開直前に同じ制御を確認します。WHP は準備前に時間枠を一度だけ作ります。確認済みの x64 CPU 例外は読み出し中の停止要求に優先します。読み出しが中止されると checked RAM トランザクションは投機的な書き込みを破棄し、非制限ソフトウェア契約は変わりません。 `MachineInterruptedError` は確認済みの中止をホストや状態読み出しの失敗と区別します。共通 checked CPU は `Stopped` または `Deadline` を返し、CPU/RAM を保持して再試行を許可します。同時に停止要求があっても実際の失敗は `BackendFailure` のままです。
