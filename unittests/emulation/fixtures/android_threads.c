@@ -35,8 +35,169 @@ extern int dlclose(void *);
 extern char *dlerror(void);
 extern int __cxa_atexit(void (*)(void *), void *, void *);
 extern void __cxa_finalize(void *);
+extern int munmap(void *, u64);
 
 static u64 *Shared;
+
+static u64 *WaitOutput;
+static int WaitControl, InnerControl;
+static u64 WaitMode;
+static int (*OnceCall)(int *, void (*)(void));
+static int direct_once(int *control, void (*initializer)(void)) {
+  return pthread_once(control, initializer);
+}
+static u64 load_flag(u64 index) {
+  return __atomic_load_n(WaitOutput + index, __ATOMIC_ACQUIRE);
+}
+static void store_flag(u64 index, u64 value) {
+  __atomic_store_n(WaitOutput + index, value, __ATOMIC_RELEASE);
+}
+static void wrong_initializer(void) { store_flag(7, 1); }
+static void waited_inner(void) {
+  ++WaitOutput[3];
+  store_flag(0, 1);
+  while (!load_flag(2))
+    gettid();
+  WaitOutput[4] = 0x123456789abcdef0UL;
+}
+static void waited_outer(void) {
+  ++WaitOutput[1];
+  OnceCall(&InnerControl, waited_inner);
+  WaitOutput[5] = 0xfedcba9876543210UL;
+}
+static void *once_waiter(void *arg) {
+  u64 index = (u64)arg, *row = WaitOutput + index * 32;
+  const u64 cookie = 0xfeedface0000UL + index;
+  volatile u64 local = cookie;
+  register u64 held __asm__("x19") = cookie;
+  *__errno() = 70 + index;
+  row[5] = gettid();
+  __asm__ volatile("mrs %0, tpidr_el0" : "=r"(row[6]));
+  __asm__ volatile("fmov d8, %1" : "+r"(held) : "r"(cookie) : "d8");
+  store_flag(index * 32, 1);
+  const int inner = WaitMode == 1 && index == 2;
+  row[1] = OnceCall(inner ? &InnerControl : &WaitControl,
+                    index == 1 ? waited_outer : wrong_initializer);
+  __asm__ volatile("fmov %1, d8" : "+r"(held), "=r"(row[9]));
+  row[8] = held;
+  row[2] = WaitOutput[inner ? 4 : 5];
+  row[3] = local;
+  row[4] = *__errno();
+  row[7] = 1;
+  return (void *)cookie;
+}
+u64 threads_once_wait(u64 *out, u64 mode) {
+  WaitOutput = out;
+  WaitMode = mode;
+  OnceCall = direct_once;
+  if (mode == 2) {
+    void *library = dlopen("libc.so", 0);
+    OnceCall = (int (*)(int *, void (*)(void)))dlsym(library, "pthread_once");
+    if (!OnceCall)
+      return 1;
+  }
+  u64 threads[3];
+  if (pthread_create(threads, 0, once_waiter, (void *)1))
+    return 2;
+  while (!load_flag(0))
+    gettid();
+  for (u64 i = 2; i <= 3; ++i)
+    if (pthread_create(threads + i - 1, 0, once_waiter, (void *)i))
+      return 3;
+  while (!load_flag(64) || !load_flag(96))
+    gettid();
+  store_flag(2, 1);
+  out[6] = OnceCall(&WaitControl, wrong_initializer);
+  for (u64 i = 1; i <= 3; ++i) {
+    void *result;
+    if (pthread_join(threads[i - 1], &result) ||
+        result != (void *)(0xfeedface0000UL + i))
+      return 4;
+  }
+  out[8] = WaitControl;
+  out[9] = InnerControl;
+  // Completed controls ignore the initializer argument, including an
+  // otherwise invalid address. No additional callback may be invoked.
+  return OnceCall(&WaitControl, (void (*)(void))3);
+}
+
+static int *FaultControl;
+static u64 EntryHandle;
+static void fault_initializer(void) {
+  store_flag(0, 1);
+  if (WaitMode == 1 || WaitMode == 8) {
+    if (WaitMode == 8)
+      *FaultControl = 0;
+    pthread_once(FaultControl, wrong_initializer);
+  } else if (WaitMode == 2) {
+    pthread_join(EntryHandle, 0);
+  } else {
+    while (!load_flag(2))
+      gettid();
+    if (WaitMode == 4)
+      munmap(FaultControl, 4096);
+  }
+}
+static void *fault_owner(void *arg) {
+  (void)arg;
+  pthread_once(FaultControl, fault_initializer);
+  return 0;
+}
+static void *control_mutator(void *arg) {
+  (void)arg;
+  while (__atomic_load_n(FaultControl, __ATOMIC_ACQUIRE) != 2)
+    gettid();
+  if (WaitMode == 5)
+    __atomic_store_n(FaultControl, 3, __ATOMIC_RELEASE);
+  else
+    munmap(FaultControl, 4096);
+  return 0;
+}
+static void cycle_inner(void) {
+  store_flag(3, 1);
+  while (!load_flag(0))
+    gettid();
+  pthread_once(&WaitControl, wrong_initializer);
+}
+static void cycle_outer(void) {
+  store_flag(0, 1);
+  while (!load_flag(3))
+    gettid();
+  pthread_once(&InnerControl, wrong_initializer);
+}
+static void *cycle_worker(void *arg) {
+  if (arg)
+    pthread_once(&WaitControl, cycle_outer);
+  else
+    pthread_once(&InnerControl, cycle_inner);
+  return 0;
+}
+u64 threads_once_failure(u64 *out, u64 mode) {
+  WaitOutput = out;
+  WaitMode = mode;
+  FaultControl = (int *)(out + 512);
+  if (!mode) {
+    *FaultControl = 1;
+    return pthread_once(FaultControl, wrong_initializer);
+  }
+  if (mode == 1 || mode == 8)
+    return pthread_once(FaultControl, fault_initializer);
+  u64 first, second;
+  if (mode == 3) {
+    pthread_create(&first, 0, cycle_worker, (void *)1);
+    pthread_create(&second, 0, cycle_worker, 0);
+    return pthread_join(first, 0);
+  }
+  EntryHandle = pthread_self();
+  pthread_create(&first, 0, fault_owner, 0);
+  if (mode == 5 || mode == 6)
+    pthread_create(&second, 0, control_mutator, 0);
+  while (!load_flag(0))
+    gettid();
+  if (mode != 7)
+    store_flag(2, 1);
+  return pthread_once(FaultControl, wrong_initializer);
+}
 static u64 tls(void) {
   u64 value;
   __asm__ volatile("mrs %0, tpidr_el0" : "=r"(value));
