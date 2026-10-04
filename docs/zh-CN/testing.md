@@ -89,6 +89,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `NeverDLLVMInterpreterModelTests` 将独立编写的 LLVM 与完整状态 LowIR 参考实现比较，覆盖位宽、并行 PHI、switch、客体内存、独立状态码、poison 检查、内建函数值域、被拒绝的契约和四种建模预算。测试完成任意字长倒计数循环的完整证明，并拒绝被改写的状态码。独立 C 用例在 O1/O2 编译后必须满足同一观察契约。这些测试验证受支持的模型；自动不变量发现和编译器正确性仍是独立义务。 变量移位用例覆盖全部四种位宽、经掩码或分支限制的移位量、边界及越界移位量、无回绕与精确标志、严格 poison 拒绝，以及 O1/O2 编译后的 C。
 
+`NeverDLLVMScalarEquivalenceTests` 覆盖完整循环域、零次循环、PHI 同时交换、switch、高位输入、最后分区反例、产生 poison 的额外更新、返回范围、不支持的契约，以及精确、少一单位和零预算。独立双宽与溢出参考实现覆盖各受支持字宽的漏斗移位端点和带溢出约束的乘法；独立嵌套循环 C 在 O1/O2 检查编译器输入形态。状态模型测试也检查漏斗移位端点。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 检查累计查询计费和不变的局部上限。
+
 初始化契约回归覆盖部分及分离的字节范围、固定别名、两个分支、每个返回点、循环首轮读取和循环内先写后读。先读后写、漏写、客体写入、未知别名、特殊内存访问、对象外范围，以及输入／工作预算耗尽，都必须失败。独立的仅输出状态字 C 用例在 O1/O2 编译后保留精确 LLVM 属性，并通过全新的原生到 LLVM 组合证明。
 
 受条件保护的倒计数测试覆盖拒绝循环体模板后的重试、任意字长输入的完整循环头证明、切点与查询预算的累计计费，以及真实入口契约违规时立即拒绝。
@@ -96,6 +98,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 `NeverDInterpreterLLVMRefinementTests` 检查全新的原生到 LLVM 组合证明、精确文本／函数绑定、独立预算、完整观察项及刻意扩大的源码域。修改字节、残余程序、结果、标志、状态码、栈帧写入、poison 或错误／过期循环方案，都必须拒绝组合凭据。任意字长倒计数要求两段归纳前提；独立 C 用例在 O1/O2 编译后验证真实序列化 LLVM 输入。状态模型回归拒绝隐藏入口回边，对入口集合计费且不复制附属来源信息。
 
 ```sh
+cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
+build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -942,6 +946,8 @@ KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备�
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` 在宿主修改通用寄存器、首尾 XMM 寄存器、MXCSR 和 x87 控制字后，验证连续执行及真实 CPU 写入。停止进入后的实际 `FXSAVE64` 字节验证全部物理 80 位寄存器、TOP、标签、操作码和指针；重复除法异常也会使复用失效。这些机器边界测试不向 checked 配置开放额外的 x87 指令。
 
 `NeverDKvmStateTransferTests` 在真实 KVM 执行后注入寄存器或 XSAVE 读取失败，然后用未改变的输入重试。独立的整数和打包字节结果证明失败的读取不会复用已经前进的原生状态。只有该测试程序包装 `ioctl`；原生主机不可用时明确跳过。
+
+`NeverDKvmStateTransferTests` 还在真实 KVM 上覆盖 `KVM_CAP_SYNC_REGS` 缺失、单独支持和组合支持，以及能力查询失败。`SynchronizedCapturesRemoveOnlySupportedReadIoctls` 统计真实读取调用并核对连续单步后的完整 CPU 状态；`CancelledWarmEntryRequiresFreshSpecialStateOnRetry` 要求取消后重新读取特殊寄存器。捕获失败、整数/SIMD 重试、推测 RAM 回滚和异常优先级使用相同能力矩阵；原生覆盖不可用时明确跳过。
 
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM、WHP 和 HVF 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 

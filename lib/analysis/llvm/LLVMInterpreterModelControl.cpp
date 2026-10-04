@@ -50,7 +50,8 @@ bool Builder::emitControl(LowBlock &Out, const llvm::Instruction &I) {
       emit(Out, op(NdOp::BRANCH, {}, {num(address(T))}));
   } else if (auto *Ret = llvm::dyn_cast<llvm::ReturnInst>(&I)) {
     auto *V = Ret->getReturnValue();
-    if (!V || !V->getType()->isIntegerTy(64))
+    if (!V || (ScalarArguments ? !V->getType()->isIntegerTy()
+                               : !V->getType()->isIntegerTy(64)))
       fail("invalid machine-state status return");
     auto Attr =
         F.getAttributes().getRetAttrs().getAttribute(llvm::Attribute::Range);

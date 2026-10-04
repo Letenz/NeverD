@@ -67,6 +67,17 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       CatalogBytes += Symbol.size();
     }
   }
+  if (Native.DefaultScope) {
+    if (Native.DefaultScope->size() > Native.Libraries.size())
+      return failure("invalid Android default scope size");
+    std::set<std::string> Unique;
+    for (const auto &Library : *Native.DefaultScope) {
+      if (!Native.Libraries.count(Library) || !Unique.insert(Library).second)
+        return failure(
+            "Android default scope requires unique catalogue libraries");
+      CatalogBytes += Library.size();
+    }
+  }
   if (CatalogBytes > Options.MemoryLimit)
     return failure("Android symbol catalogue exceeds memory limit");
   ELFLoader Loader;

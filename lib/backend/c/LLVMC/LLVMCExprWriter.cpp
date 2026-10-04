@@ -674,6 +674,28 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     return Clean;
   }
 
+  // LLVM arrays are first-class values. Their C carrier is a record containing
+  // an array, so copies, calls and PHIs keep value semantics instead of decay.
+  if (C->getType()->isAggregateType()) {
+    std::string Text = "(" + typeToCLLVM(C->getType()) + "){";
+    const bool Array = C->getType()->isArrayTy();
+    if (Array)
+      Text += "{";
+    if (llvm::isa<llvm::UndefValue, llvm::ConstantAggregateZero>(C)) {
+      Text += "0";
+    } else {
+      const unsigned Count =
+          Array ? llvm::cast<llvm::ArrayType>(C->getType())->getNumElements()
+                : llvm::cast<llvm::StructType>(C->getType())->getNumElements();
+      for (unsigned I = 0; I < Count; ++I) {
+        if (I)
+          Text += ", ";
+        Text += constStr(C->getAggregateElement(I));
+      }
+    }
+    return Text + (Array ? "}}" : "}");
+  }
+
   if (llvm::isa<llvm::UndefValue>(C))
     return "0";
 
@@ -2935,6 +2957,22 @@ std::string LLVMCWriter::gepExpr(const llvm::GEPOperator &GEP) {
            ")0x" + llvm::utohexstr(Scale.getZExtValue()) + "ULL";
   }
   return "(void*)(uintptr_t)(" + Carrier + ")(" + Sum + ")";
+}
+
+std::string LLVMCWriter::aggregateMemberPath(llvm::Type *Ty,
+                                             llvm::ArrayRef<unsigned> Indices) {
+  std::string Path;
+  for (unsigned Index : Indices) {
+    if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Ty)) {
+      Path += ".elements[" + std::to_string(Index) + "]";
+      Ty = Array->getElementType();
+    } else {
+      auto *Struct = llvm::cast<llvm::StructType>(Ty);
+      Path += ".field_" + std::to_string(Index);
+      Ty = Struct->getElementType(Index);
+    }
+  }
+  return Path;
 }
 
 std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {

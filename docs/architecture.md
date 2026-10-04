@@ -47,7 +47,11 @@ can supply a static profile or a synchronous per-instruction decoder callback.
 `lib/analysis/bytecode` owns encoding and CFG validation: both producers feed
 the same operand, temporary-definedness and operation validation. They produce
 LowIR; explicit byte-addressed state lowering then feeds the existing source
-routes. Image-independent source ABI binding uses caller-supplied contracts,
+routes. That shared lowering also owns the optional opaque source-context
+parameter: it captures state and context once on entry and forwards them through
+bound calls without inferring alias separation or decoder-context identity.
+CLI and SDK request validation select the same contract. Image-independent
+source ABI binding uses caller-supplied contracts,
 while runtime signature discovery from native images retains its format gates.
 This source-only path does not authenticate native instruction boundaries or
 authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
@@ -904,6 +908,8 @@ The finite-query cache accounts for serialized keys, numeric results and recency
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.
 
+`modelLLVMScalarFunction` reuses this importer for pure `noundef` integer arguments and integer returns (`i1/i8/i16/i32/i64`). The shared model handles funnel-shift endpoints and guarded multiplication with double-width products. `checkLLVMScalarEquivalence` executes both models through `SymExec`, discovers controlling input bits, exhausts their complete combinations and keeps all other bits symbolic. Every return must agree and every executed operation must remain defined; partition, path, node and cumulative work budgets bound the query. `SymContext::constantWindow` exposes cumulative query accounting without relaxing its existing per-query ceilings. Refusal permits no rewrite. This read-only C++ query neither changes default source output nor supplies a persistent native/ABI or compiler certificate.
+
 The LLVM model owns validation of `initializes` parameter contracts. It reuses state-pointer projections and performs bounded byte-level must-dataflow before ordinary scalar emission; no second value evaluator is introduced.
 
 `NeverDInterpreterLLVMRefinement` owns native-to-LLVM proof composition. It rebuilds both state models and mandatory contracts, uses the authoritative profile for an entry-only flag projection, and checks both premises afresh. Clients may propose loop plans but cannot replace models, observations or receipts. Analysis models copy executable graphs and declared roots only; entry backedges are rejected before state initialization can repeat.
@@ -1434,6 +1440,11 @@ callbacks preserve trace order and only complete their own calls. Instructions,
 services and deadlines continue through the existing execution session. The
 runner validates a normal callback return before Bionic marks the control
 complete. No SDK surface supplies separate initialization semantics.
+An optional ordered `default_scope` names resident catalogue providers visible
+to `RTLD_DEFAULT`. Android native input validation checks its membership and
+uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
+C, CLI and Python consume the same option parser. No dependency graph,
+namespace or caller-specific scope is inferred from these explicit inputs.
 
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
@@ -1734,7 +1745,7 @@ Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profil
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
-ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity and a two-lane SIMD addition. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
+ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
 Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
@@ -1757,6 +1768,15 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 `X64StringInstructions.def` also owns ordinary-RAM `CMPS/SCAS` at 8/16/32/64 bits with `REPE/REPNE`. Every element validates both complete read operands before observers, updates all six arithmetic flags, and stops on the first matching termination condition. A data fault restores the flags from entry to this uninterrupted REP while retaining completed pointer/count changes; a public resume starts from the published CPU state. Stops and observer exceptions leave the current element untouched. Early termination never reads the next element. FS/GS affects only the CMPS source; SCAS leaves the accumulator and unused source register unchanged. Device operands and ambiguous inactive 32-bit upper halves remain excluded. `X64StringComparisonTests.cpp` compares independent host instructions, flags, direction, aliases, wrapping, permissions and recovery; its Linux x64 signal oracle checks actual fault-time registers. The original WDK resource driver executes both conditional-repeat forms at all four widths through `driver_resource_strings.def`. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
 
 `WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP.
+
+The fixed ARM64 machine configuration disables pointer authentication at
+EL0/EL1. Shared `AArch64PAuthHints.def` admission accepts only the compatible
+HINT-space signing/authentication words; transports execute original bytes.
+The startup probe checks disabled A/B return signing against the full state.
+This architecture contract applies equally to Android, Darwin, Linux and
+Windows workloads; OS models cannot override authentication state or infer
+active keys. Other PAuth encodings and system-control access stay unsupported.
+See the [checked CPU contract](cpu-execution.md).
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 
@@ -2961,3 +2981,7 @@ Before rendering C, `LLVMCCommonBranches` factors identical integer exit tests f
 `LLVMCLoopPhases` recombines the same total integer operation on every incoming edge of a loop PHI into one operation in the loop header. Operand PHIs preserve each edge and the previous iteration; identical tuples can reuse an existing PHI. Only an invariant available before the loop bypasses this selection. Shared roots, partial or poison-generating operations, constrained calls and exception-mapped functions remain unchanged. Planning is bounded and transactional, and only the source clone is modified; this does not merge peeled control-flow regions or recover source-level parameters.
 
 The shared `SourceABI` represents one bounded mixed Swift result as a flat logical record of three Float64 fields followed by an opaque pointer. Its independent physical results are d0–d2 and x0 on ARM64, or xmm0–xmm2 and rax on x86-64; this x86-64 shape also admits up to three ordinary double inputs. Assignment and validation share the same carrier mapping. LowIR/MedIR call extraction, typed HighIR records and HighC retain every field and one call evaluation. Ordinary C/Objective-C classification, mixed record parameters and other mixed layouts remain unsupported. This declaration contract does not authenticate a nominal layout, constructor, callback ownership or native entry. Compiler evidence covers four macOS/Mac Catalyst targets, while native O0/O2 fixtures check full floating bit patterns, nil/object identity, return guards and observable call counts against the real Swift runtime.
+
+`SwiftMetadata` owns registered internal nominal and protocol identities for both source recipes and bounded storage queries. One query authenticates a fixed 32-byte struct containing three Double/CGFloat fields and one nonoptional strong local class reference. The full registration, reflection owner, exact ordinary immutable CGFloat import, field offsets, unique metadata object and complete immutable value-witness layout must agree. All eight witness code pointers remain dynamic; storage evidence grants no witness effects, constructor or callback ABI, native-entry proof, frame permission, or source publication. The existing scalar-only Swift declaration recovery stays conservative. Four-target compiler records and Onone/O Swift values independently check the layout, floating bit patterns, reference identity, copy isolation and destruction. Registration and structural records must use ordinary immutable storage; TLS substitutions are rejected, including during recipe publication.
+
+`SwiftMangledValueConstructorABI` independently authenticates one bounded value-constructor declaration against the current registered fixed-record storage. The complete declaration tree must match all four field labels, three Double/CGFloat arguments, an optional thick `(Bool) -> Void` callback, and the owning struct result. Shared `SourceABI` assigns all five input carriers and four result carriers. The callback code/context pair is distinct from the stored strong delegate reference. Conflicting symbols, stale field records and other declaration shapes are rejected. This query supplies a declaration only; current constructor body, caller, callback ownership and publication proofs remain separate. Four-target compiler evidence and O0/O2 controlled Swift constructor calls check full floating bits, nil and capturing callbacks, reference lifetime and all returned fields without authorizing the original constructor body.

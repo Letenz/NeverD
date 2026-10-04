@@ -1157,6 +1157,42 @@ bool LLVMCWriter::deadNullAssignBlocks(
 void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
+  // Aggregate SSA values and storage arrays have distinct C declarations but
+  // identical byte layouts. A byte copy also preserves unaligned accesses.
+  auto AggregateAddress = [&](const llvm::Value *Ptr) {
+    std::string Text = valueStr(Ptr);
+    if (llvm::isa<llvm::GlobalVariable>(Ptr))
+      Text = "&" + Text;
+    return Text;
+  };
+  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
+      Load && Load->getType()->isAggregateType()) {
+    if (!Load->isSimple() || Load->getPointerAddressSpace() != 0)
+      throw std::runtime_error(
+          "C projection has an unsupported aggregate load");
+    emitIndent(Indent);
+    OS << "__builtin_memcpy(&" << getName(Load) << ", "
+       << AggregateAddress(Load->getPointerOperand()) << ", "
+       << CurMod->getDataLayout().getTypeStoreSize(Load->getType()) << ");\n";
+    return;
+  }
+  if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst);
+      Store && Store->getValueOperand()->getType()->isAggregateType()) {
+    if (!Store->isSimple() || Store->getPointerAddressSpace() != 0)
+      throw std::runtime_error(
+          "C projection has an unsupported aggregate store");
+    auto *Value = Store->getValueOperand();
+    const auto Temp = freshVar();
+    emitIndent(Indent);
+    OS << "{ " << typeToCLLVM(Value->getType()) << " " << Temp << " = "
+       << valueStr(Value) << ";\n";
+    emitIndent(Indent + 1);
+    OS << "__builtin_memcpy(" << AggregateAddress(Store->getPointerOperand())
+       << ", &" << Temp << ", "
+       << CurMod->getDataLayout().getTypeStoreSize(Value->getType())
+       << "); }\n";
+    return;
+  }
   if (auto *Freeze = llvm::dyn_cast<llvm::FreezeInst>(&Inst)) {
     if (Freeze->use_empty() || isCallClobberValue(Freeze))
       return;
@@ -3126,12 +3162,21 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 
   if (auto *EV = llvm::dyn_cast<llvm::ExtractValueInst>(&Inst)) {
     auto *Agg = EV->getAggregateOperand();
-    unsigned Idx = EV->getIndices()[0];
     auto It = Analysis.IntrinsicStructNames.find(Agg);
     if (It != Analysis.IntrinsicStructNames.end())
       return;
     emitIndent(Indent);
-    OS << Name << " = " << valueStr(Agg) << ".field_" << Idx << ";\n";
+    OS << Name << " = (" << valueStr(Agg) << ")"
+       << aggregateMemberPath(Agg->getType(), EV->getIndices()) << ";\n";
+    return;
+  }
+
+  if (auto *Insert = llvm::dyn_cast<llvm::InsertValueInst>(&Inst)) {
+    emitIndent(Indent);
+    OS << Name << " = " << valueStr(Insert->getAggregateOperand()) << ";\n";
+    emitIndent(Indent);
+    OS << Name << aggregateMemberPath(Insert->getType(), Insert->getIndices())
+       << " = " << valueStr(Insert->getInsertedValueOperand()) << ";\n";
     return;
   }
 

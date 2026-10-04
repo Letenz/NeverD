@@ -132,6 +132,25 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.assertEqual(call["pc"], lookup["result"])
         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
         names = ("getuid", "geteuid", "getgid", "getegid")
+        for scope, stop, expected in ((["libfixture.so"], "returned", 6),
+                                      ([], "returned", 100),
+                                      (None, "unsupported_service", None)):
+            native = {"entry_symbol": "default_call",
+                      "libraries": {"libfixture.so": ["strlen"]}}
+            if scope is not None:
+                native["default_scope"] = scope
+            result = session.emulate_process(
+                str(Path(fixtures) / "relr.so"), "android-aarch64-api28-v1",
+                json.dumps({"backend": "unicorn", "android": native}))
+            self.assertEqual(result["stop_reason"], stop, result["diagnostic"])
+            if expected is not None:
+                self.assertEqual(int(result["return_value"], 16), expected)
+            if scope:
+                lookup, call = result["android"]["native_calls"]
+                self.assertEqual(lookup["arguments"][0], "0")
+                self.assertEqual(lookup["library"], "libfixture.so")
+                self.assertEqual(call["name"], "strlen")
+                self.assertEqual(call["pc"], lookup["result"])
         options = json.dumps({"backend": "unicorn", "android": {
             "entry_symbol": "dynamic_identities", "arguments": [0x20000000, 0],
             "memory": [{"address": 0x20000000, "size": 4096}],

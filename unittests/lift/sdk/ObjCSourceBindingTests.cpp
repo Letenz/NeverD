@@ -15885,6 +15885,9 @@ namespace {
 SwiftTypeMetadataFixture swiftLabeledNestedTupleFixture(bool Generic) {
   auto F = Generic ? swiftTupleContainerRecipeFixture(Arch::AArch64)
                    : swiftNominalTupleTypeFixture(Arch::AArch64);
+  // This mapping contains only imported descriptor slots, matching the
+  // ordinary non-lazy GOT in the compiler/runtime evidence.
+  F.Image.Sections[2].Type = llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS;
   const std::string Base =
       Generic ? "_$ss23_ContiguousArrayStorageCys11AnyHashableV_"
                 "12CoreGraphics7CGFloatV4from_AG2tottG"
@@ -15937,6 +15940,31 @@ TEST(ObjCSourceBindings, SwiftNestedTupleKeepsLabelsAndRepeatedDescriptor) {
     EXPECT_NE(Source.find("__asm__(\"_$s12CoreGraphics7CGFloatVMn\")"),
               std::string::npos);
   }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftCGFloatTupleRequiresOrdinaryCurrentImportStorage) {
+  for (bool Generic : {false, true})
+    for (uint32_t Kind :
+         {llvm::MachO::S_REGULAR, llvm::MachO::S_LAZY_SYMBOL_POINTERS,
+          llvm::MachO::S_THREAD_LOCAL_REGULAR,
+          llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+          llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+          llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+          llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+      SCOPED_TRACE(Generic);
+      SCOPED_TRACE(Kind);
+      auto F = swiftLabeledNestedTupleFixture(Generic);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      F.Image.Sections[2].Type = Kind;
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      std::set<std::string> Names;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                   std::runtime_error);
+    }
 }
 
 TEST(ObjCSourceBindings, SwiftFlatTupleLabelDoesNotBecomeASubstitution) {

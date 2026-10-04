@@ -74,6 +74,7 @@ private:
   std::map<std::string, LibraryState> OpenLibraries;
   std::map<uint64_t, std::string> Handles;
   uint64_t NextHandle = 1;
+  bool isResident(const std::string &Library) const;
   struct Allocation {
     uint64_t Size, MappedSize;
   };

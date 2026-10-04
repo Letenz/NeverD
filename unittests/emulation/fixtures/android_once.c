@@ -69,6 +69,19 @@ u64 once_readonly(u32 *control, u32 state) {
   return (u32)pthread_once(control, initialize_constructor);
 }
 
+u64 once_default(struct observed *output) {
+  int (*initialize)(u32 *, void (*)(void)) = dlsym((void *)0, "pthread_once");
+  if (!initialize)
+    return 99;
+  void *library = dlopen("libinit.so", 4);
+  if (!library || dlclose(library))
+    return 98;
+  current = output;
+  initialize(&output->outer, initialize_outer);
+  initialize(&output->outer, initialize_outer);
+  return 0;
+}
+
 static void initialize_recursive(void) {
   ++current->outer_count;
   pthread_once(&current->outer, initialize_recursive);

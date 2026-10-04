@@ -88,6 +88,17 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           return invalid(Name);
         Out.Properties.emplace(Key.str(), std::move(*S));
       }
+    } else if (Name == field::DefaultScope) {
+      const auto *Scope = V.getAsArray();
+      if (!Scope)
+        return invalid(Name);
+      Out.DefaultScope.emplace();
+      for (const auto &Library : *Scope) {
+        auto S = string(Library, Name);
+        if (!S)
+          return S.takeError();
+        Out.DefaultScope->push_back(std::move(*S));
+      }
     } else if (Name == field::Libraries) {
       const auto *Libraries = V.getAsObject();
       if (!Libraries)

@@ -89,6 +89,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDLLVMInterpreterModelTests` 將獨立編寫的 LLVM 與完整狀態 LowIR 參考實作比較，涵蓋位寬、平行 PHI、switch、客體記憶體、獨立狀態碼、poison 檢查、內建函式值域、被拒絕的契約及四種建模預算。測試完成任意字長倒數迴圈的完整證明，並拒絕遭改寫的狀態碼。獨立 C 用例經 O1/O2 編譯後必須滿足相同觀察契約。這些測試驗證受支援的模型；自動不變量發現與編譯器正確性仍是獨立義務。 變數位移用例涵蓋全部四種位寬、經遮罩或分支限制的位移量、邊界及越界位移量、無回繞與精確旗標、嚴格 poison 拒絕，以及 O1/O2 編譯後的 C。
 
+`NeverDLLVMScalarEquivalenceTests` 涵蓋完整迴圈域、零次迴圈、PHI 同時交換、switch、高位輸入、最後分區反例、產生 poison 的額外更新、回傳範圍、不支援的契約，以及精確、少一單位及零預算。獨立雙寬與溢位參考實作涵蓋各支援字寬的漏斗位移端點及帶溢位約束的乘法；獨立巢狀迴圈 C 於 O1/O2 檢查編譯器輸入形態。狀態模型測試也檢查漏斗位移端點。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 檢查累計查詢計費與不變的局部上限。
+
 初始化契約回歸涵蓋部分及分離的位元組範圍、固定別名、兩個分支、每個返回點、迴圈首輪讀取與迴圈內先寫後讀。先讀後寫、漏寫、客體寫入、未知別名、特殊記憶體存取、物件外範圍，以及輸入／工作預算耗盡，都必須失敗。獨立的僅輸出狀態字 C 案例在 O1/O2 編譯後保留精確 LLVM 屬性，並通過全新的原生到 LLVM 組合證明。
 
 受條件保護的倒數測試涵蓋拒絕本體模板後的重試、任意字長輸入的完整迴圈頭證明、切點與查詢預算的累計計費，以及真實入口契約違規時立即拒絕。
@@ -96,6 +98,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 `NeverDInterpreterLLVMRefinementTests` 檢查全新的原生到 LLVM 組合證明、精確文字／函式綁定、獨立預算、完整觀察項及刻意擴大的原始碼域。修改位元組、殘餘程式、結果、旗標、狀態碼、框架寫入、poison 或錯誤／過期迴圈方案，都必須拒絕組合憑據。任意字長倒數要求兩段歸納前提；獨立 C 案例在 O1/O2 編譯後驗證實際序列化 LLVM 輸入。狀態模型回歸拒絕隱藏入口回邊，對入口集合計費且不複製附屬來源資訊。
 
 ```sh
+cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
+build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -980,6 +984,8 @@ KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備�
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` 在主機修改通用暫存器、首尾 XMM 暫存器、MXCSR 和 x87 控制字後，驗證連續執行及真實 CPU 寫入。停止進入後的實際 `FXSAVE64` 位元組驗證全部實體 80 位元暫存器、TOP、標籤、操作碼和指標；重複除法例外也會使重用失效。這些機器邊界測試不向 checked 設定開放額外的 x87 指令。
 
 `NeverDKvmStateTransferTests` 在真實 KVM 執行後注入暫存器或 XSAVE 讀取失敗，再以未變更的輸入重試。獨立的整數和封裝位元組結果證明失敗的讀取不會重用已前進的原生狀態。只有該測試程式包裝 `ioctl`；原生主機不可用時明確略過。
+
+`NeverDKvmStateTransferTests` 也在實際 KVM 上涵蓋 `KVM_CAP_SYNC_REGS` 缺失、個別支援、組合支援及能力查詢失敗。`SynchronizedCapturesRemoveOnlySupportedReadIoctls` 統計實際讀取呼叫並核對連續單步後的完整 CPU 狀態；`CancelledWarmEntryRequiresFreshSpecialStateOnRetry` 要求取消後重新讀取特殊暫存器。擷取失敗、整數/SIMD 重試、推測 RAM 回復與例外優先順序使用相同能力矩陣；原生覆蓋不可用時明確略過。
 
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM、WHP 和 HVF 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
