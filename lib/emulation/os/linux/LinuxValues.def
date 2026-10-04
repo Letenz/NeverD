@@ -161,4 +161,16 @@ NEVERD_LINUX_DIAGNOSTIC(Output,
                         "captured process output exceeds the workload limit")
 NEVERD_LINUX_DIAGNOSTIC(UnexpectedExit,
                         "CPU stopped without a modeled process continuation")
+NEVERD_LINUX_DIAGNOSTIC(TimePartialOutput,
+                        "partial Linux time output fault is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(TimeClockOption,
+                        "linux_time requires a known static Linux clock ID")
+NEVERD_LINUX_DIAGNOSTIC(TimeNanoseconds,
+                        "linux_time nanoseconds must be in [0, 1000000000)")
+NEVERD_LINUX_DIAGNOSTIC(TimeClockMissing,
+                        "Linux clock {0} has no explicit linux_time input")
+NEVERD_LINUX_DIAGNOSTIC(TimeDynamicClock,
+                        "dynamic and encoded Linux clocks are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(TimezoneMissing,
+                        "Linux timezone has no explicit linux_time input")
 #endif

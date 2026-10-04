@@ -1281,6 +1281,13 @@ The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
 
+Android's `AndroidSymbols.def` and `AndroidDiagnostics.def` own Bionic symbol
+spellings and native-model diagnostics. Kernel wrapper bindings stay in
+`AndroidKernelServices.def`; Linux clock diagnostics and process wire text stay
+with their existing Linux and report inventories. Keep control flow in C++ and
+independent test expectations in fixtures; ordinary punctuation and empty strings
+do not need vocabulary entries.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |

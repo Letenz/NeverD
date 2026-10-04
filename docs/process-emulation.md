@@ -139,48 +139,6 @@ Real/effective identity queries agree with the corresponding auxv entries.
 They use the deterministic model identity above; credential-changing services
 such as `setuid` remain unsupported.
 
-### Explicit guest clocks
-
-The optional `linux_time` input supplies fixed observations, shared by raw
-Linux services and Android Bionic. It never reads the host clock, advances time
-with instruction execution, or supplies a default epoch. For example:
-
-```json
-{"linux_time":{"clocks":[
-  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
-  {"id":1,"seconds":123,"nanoseconds":456789}],
-  "timezone":{"minutes_west":-60,"dst_time":0}}}
-```
-
-Clock IDs are Linux's static IDs 0–9 and 11: realtime, monotonic, process CPU,
-thread CPU, monotonic raw, realtime coarse, monotonic coarse, boottime,
-realtime alarm, boottime alarm and TAI. Each is independent; absent clocks are
-unknown, including coarse variants. Duplicate or unknown input IDs are errors.
-Seconds are signed 64-bit; nanoseconds must be in `[0, 1000000000)`. Integer
-JSON numbers are accepted within `±9007199254740991`; decimal strings preserve
-the full signed range. Timezone fields are signed 32-bit integers. C++ callers
-use `ProcessOptions::LinuxTime`, with the same value validation. Other process
-profiles reject this option.
-
-`clock_gettime` consumes the low signed 32 bits of its clock ID, returns
-`EINVAL` for invalid positive IDs before accessing the destination, and stops
-for unmodeled encoded/dynamic clocks. A known clock without input stops as
-`unsupported_service`. `gettimeofday` writes seconds and truncated microseconds
-as two ordered 64-bit fields, followed by the optional pair of 32-bit timezone
-fields. `gettimeofday(NULL, NULL)` needs no input. Missing timezone input stops
-after any completed timeval writes. The x64 `time` syscall returns realtime
-seconds and optionally stores one 64-bit value; ARM64 has no such syscall.
-These follow the Linux [time service](https://github.com/torvalds/linux/blob/v6.12/kernel/time/time.c)
-and [clock dispatch](https://github.com/torvalds/linux/blob/v6.12/kernel/time/posix-timers.c)
-contracts for the modeled subset.
-
-Fully writable outputs, including unaligned ones, are supported. A wholly
-inaccessible output returns `EFAULT`; earlier completed gettimeofday fields
-remain written. Mixed accessibility within a single 8-byte store or 16-byte
-timespec copy stops before that operation because architecture-specific partial
-fault writes are not modeled. Adjustment, resolution queries, scheduling,
-sleep and real device clocks remain unsupported.
-
 Static ELF TLS templates (`PT_TLS`) are validated as loader-owned facts, with
 one template, bounded file/memory extents, alignment congruence and readable
 initialized bytes. Guest startup allocates and initializes each TLS block and
@@ -240,6 +198,50 @@ guest errors and allow execution to continue. No memory service forwards a
 guest pointer or mapping request to the host OS.
 
 <a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: linux-clocks -->
+
+## Explicit guest clocks
+
+The optional `linux_time` input supplies fixed observations, shared by raw
+Linux services and Android Bionic. It never reads the host clock, advances time
+with instruction execution, or supplies a default epoch. For example:
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+Clock IDs are Linux's static IDs 0–9 and 11: realtime, monotonic, process CPU,
+thread CPU, monotonic raw, realtime coarse, monotonic coarse, boottime,
+realtime alarm, boottime alarm and TAI. Each is independent; absent clocks are
+unknown, including coarse variants. Duplicate or unknown input IDs are errors.
+Seconds are signed 64-bit; nanoseconds must be in `[0, 1000000000)`. Integer
+JSON numbers are accepted within `±9007199254740991`; decimal strings preserve
+the full signed range. Timezone fields are signed 32-bit integers. C++ callers
+use `ProcessOptions::LinuxTime`, with the same value validation. Other process
+profiles reject this option.
+
+`clock_gettime` consumes the low signed 32 bits of its clock ID, returns
+`EINVAL` for invalid positive IDs before accessing the destination, and stops
+for unmodeled encoded/dynamic clocks. A known clock without input stops as
+`unsupported_service`. `gettimeofday` writes seconds and truncated microseconds
+as two ordered 64-bit fields, followed by the optional pair of 32-bit timezone
+fields. `gettimeofday(NULL, NULL)` needs no input. Missing timezone input stops
+after any completed timeval writes. The x64 `time` syscall returns realtime
+seconds and optionally stores one 64-bit value; ARM64 has no such syscall.
+These follow the Linux [time service](https://github.com/torvalds/linux/blob/v6.12/kernel/time/time.c)
+and [clock dispatch](https://github.com/torvalds/linux/blob/v6.12/kernel/time/posix-timers.c)
+contracts for the modeled subset.
+
+Fully writable outputs, including unaligned ones, are supported. A wholly
+inaccessible output returns `EFAULT`; earlier completed gettimeofday fields
+remain written. Mixed accessibility within a single 8-byte store or 16-byte
+timespec copy stops before that operation because architecture-specific partial
+fault writes are not modeled. Adjustment, resolution queries, scheduling,
+sleep and real device clocks remain unsupported.
 
 <!-- i18n-section: windows-pe64 -->
 

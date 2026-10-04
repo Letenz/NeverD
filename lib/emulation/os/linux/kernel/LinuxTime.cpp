@@ -44,8 +44,7 @@ llvm::Expected<Reply> put(ExecutionBackend &CPU, uint64_t Address,
       if (!Part)
         return Part.takeError();
       if (*Part)
-        return unsupported(Result,
-                           "partial Linux time output fault is unmodeled");
+        return unsupported(Result, TimePartialOutput);
     }
     return Reply(0 - BadAddress);
   }
@@ -65,9 +64,9 @@ llvm::Expected<Reply> putWord(ExecutionBackend &CPU, uint64_t Address,
 llvm::Error validateTimeOptions(const LinuxTimeOptions &Options) {
   for (const auto &[ID, Value] : Options.Clocks) {
     if (!knownClock(ID))
-      return failure("linux_time requires a known static Linux clock ID");
+      return failure(TimeClockOption);
     if (Value.Nanoseconds < 0 || Value.Nanoseconds >= 1000000000)
-      return failure("linux_time nanoseconds must be in [0, 1000000000)");
+      return failure(TimeNanoseconds);
   }
   return llvm::Error::success();
 }
@@ -78,10 +77,7 @@ clockValue(int32_t ID, const ProcessOptions &Options, ProcessResult &Result) {
     if (I != Options.LinuxTime->Clocks.end())
       return I->second;
   }
-  unsupported(
-      Result,
-      llvm::formatv("Linux clock {0} has no explicit linux_time input", ID)
-          .str());
+  unsupported(Result, llvm::formatv(TimeClockMissing, ID).str());
   return std::nullopt;
 }
 llvm::Expected<Reply> timeService(ExecutionBackend &CPU, ServiceKind Kind,
@@ -94,8 +90,7 @@ llvm::Expected<Reply> timeService(ExecutionBackend &CPU, ServiceKind Kind,
     // clockid_t is a signed 32-bit ABI argument, including on LP64.
     int32_t ID = static_cast<int32_t>(static_cast<uint32_t>(A[0]));
     if (ID < 0)
-      return unsupported(Result,
-                         "dynamic and encoded Linux clocks are unmodeled");
+      return unsupported(Result, TimeDynamicClock);
     if (!knownClock(ID))
       return Reply(0 - InvalidArgument);
     auto Value = clockValue(ID, Options, Result);
@@ -133,8 +128,7 @@ llvm::Expected<Reply> timeService(ExecutionBackend &CPU, ServiceKind Kind,
   }
   if (A[1]) {
     if (!Options.LinuxTime || !Options.LinuxTime->Timezone)
-      return unsupported(Result,
-                         "Linux timezone has no explicit linux_time input");
+      return unsupported(Result, TimezoneMissing);
     const auto &Zone = *Options.LinuxTime->Timezone;
     uint8_t Bytes[8];
     llvm::support::endian::write32le(Bytes,

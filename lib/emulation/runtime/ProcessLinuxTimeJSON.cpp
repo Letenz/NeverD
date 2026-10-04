@@ -16,7 +16,7 @@ namespace {
 namespace field = process_report;
 llvm::Error invalid(llvm::StringRef Name) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 "invalid linux_time option: " + Name);
+                                 field::LinuxTimeOptions + Name);
 }
 llvm::Expected<int64_t> integer(const llvm::json::Value &V,
                                 llvm::StringRef Name, bool Narrow = false) {

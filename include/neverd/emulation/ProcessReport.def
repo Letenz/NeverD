@@ -120,10 +120,10 @@ NEVERD_PROCESS_CLI_STRING(
     "ios-simulator-macho64-v1")
 NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
 NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
-NEVERD_PROCESS_CLI_STRING(
-    OptionsHelp,
-    "Options JSON: backend, resource limits, "
-    "arguments/environment, Linux clocks, Android native or Windows module options")
+NEVERD_PROCESS_CLI_STRING(OptionsHelp,
+                          "Options JSON: backend, resource limits, "
+                          "arguments/environment, Linux clocks, Android native "
+                          "or Windows module options")
 NEVERD_PROCESS_CLI_STRING(OptionsValue, "json")
 #endif
 #ifdef NEVERD_PROCESS_CLI_STATUS
@@ -137,6 +137,8 @@ NEVERD_PROCESS_CLI_STATUS(Incomplete, 3)
 NEVERD_PROCESS_REPORT_TEXT(WindowsOptions, "invalid Windows process option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsProfile,
                            "Windows options require windows-pe64-v1")
-NEVERD_PROCESS_REPORT_TEXT(LinuxTimeProfile,
-                           "linux_time requires a Linux ELF64 or Android native profile")
+NEVERD_PROCESS_REPORT_TEXT(LinuxTimeOptions, "invalid linux_time option: ")
+NEVERD_PROCESS_REPORT_TEXT(
+    LinuxTimeProfile,
+    "linux_time requires a Linux ELF64 or Android native profile")
 #endif

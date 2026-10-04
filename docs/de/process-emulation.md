@@ -78,6 +78,23 @@ Datei-, gemeinsame und feste Mappings, abwärts wachsender Speicher, große Seit
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## Explizite Gastuhren
+
+Die optionale Eingabe `linux_time` liefert feste Zeitwerte für Linux-Systemaufrufe und Android Bionic. Das Modell liest keine Hostuhr, lässt die Zeit nicht mit ausgeführten Anweisungen fortschreiten und nimmt keinen Standardzeitpunkt an.
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+Die statischen Uhr-IDs 0–9 und 11 sind zulässig. Jede Uhr ist unabhängig; fehlende Werte bleiben unbekannt. Doppelte oder unbekannte IDs werden abgelehnt. Sekunden sind vorzeichenbehaftete 64-Bit-Werte, Nanosekunden liegen in `[0, 1000000000)`. JSON-Ganzzahlen sind auf `±9007199254740991` begrenzt; Dezimalzeichenfolgen erhalten den gesamten 64-Bit-Bereich. Zeitzonenfelder sind vorzeichenbehaftete 32-Bit-Werte. C++ verwendet `ProcessOptions::LinuxTime`; andere OS-Profile lehnen diese Option ab.
+
+`clock_gettime`, `gettimeofday` und x64-`time` teilen diese Eingaben. Fehlende Werte, dynamische Uhren oder nicht modellierte Teilschreibzugriffe führen zum expliziten Stopp; abgeschlossene Schreibzugriffe bleiben erhalten. Zeitanpassung, Schlafen und reale Geräteuhren bleiben unmodelliert. Schreibreihenfolge, Fehler und Zeiger beschreibt der [vollständige Uhrvertrag](../process-emulation.md#explicit-guest-clocks).
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows-PE64-Profil

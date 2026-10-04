@@ -1,0 +1,156 @@
+//===- AndroidDiagnostics.def - Android native diagnostics -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Shared spellings belong to the Android owner; model control flow stays in
+// C++.
+#ifdef NEVERD_ANDROID_DIAGNOSTIC
+NEVERD_ANDROID_DIAGNOSTIC(FailurePrefix, "Android native: ")
+NEVERD_ANDROID_DIAGNOSTIC(CallTimeout, "native call model timed out")
+NEVERD_ANDROID_DIAGNOSTIC(MemoryLimit,
+                          "native memory operation exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(GuestPointer, "invalid guest pointer in Bionic call")
+NEVERD_ANDROID_DIAGNOSTIC(UnterminatedString, "unterminated guest string")
+NEVERD_ANDROID_DIAGNOSTIC(AllocatorReturn, "anonymous allocator did not return")
+NEVERD_ANDROID_DIAGNOSTIC(AllocationOwnership,
+                          "free/realloc does not name a live allocation")
+NEVERD_ANDROID_DIAGNOSTIC(AllocationRelease,
+                          "could not release native allocation")
+NEVERD_ANDROID_DIAGNOSTIC(LinkerErrorLimit,
+                          "dynamic linker error exceeds its guest buffer")
+NEVERD_ANDROID_DIAGNOSTIC(DynamicLinkingPrefix,
+                          "unmodeled Android dynamic linking: ")
+NEVERD_ANDROID_DIAGNOSTIC(NullOpenScope,
+                          "dlopen(NULL) requires a process-wide symbol scope")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryNameLimit,
+                          "dynamic library name exceeds the model limit")
+NEVERD_ANDROID_DIAGNOSTIC(OpenFlags, "invalid flags to dlopen")
+NEVERD_ANDROID_DIAGNOSTIC(OpenScopeFlags,
+                          "GLOBAL and NODELETE require a fuller loader")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryAbsent,
+                          "library is absent from the explicit local catalogue")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryNotOpen, "library is not open (NOLOAD)")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryHandleLimit,
+                          "dynamic library handle space exhausted")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryReferenceOverflow,
+                          "dynamic library reference count overflow")
+NEVERD_ANDROID_DIAGNOSTIC(NullSymbol, "dynamic symbol name is null")
+NEVERD_ANDROID_DIAGNOSTIC(SymbolNameLimit,
+                          "dynamic symbol name exceeds the model limit")
+NEVERD_ANDROID_DIAGNOSTIC(
+    DefaultScope,
+    "RTLD_DEFAULT requires ordered process scopes (default_scope)")
+NEVERD_ANDROID_DIAGNOSTIC(DefaultSymbolAbsent,
+                          "symbol is absent from the explicit default scope")
+NEVERD_ANDROID_DIAGNOSTIC(
+    NextScope, "RTLD_NEXT requires ordered process scopes and caller identity")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryHandle,
+                          "invalid or closed dynamic library handle")
+NEVERD_ANDROID_DIAGNOSTIC(
+    LibrarySymbolAbsent, "symbol is absent from the explicit library catalogue")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryReferences,
+                          "dynamic library handle has no outstanding opens")
+NEVERD_ANDROID_DIAGNOSTIC(DlfcnDispatch, "invalid dlfcn model dispatch")
+NEVERD_ANDROID_DIAGNOSTIC(OnceControlAlignment,
+                          "unaligned pthread_once control")
+NEVERD_ANDROID_DIAGNOSTIC(OnceInProgress,
+                          "pthread_once initialization already underway")
+NEVERD_ANDROID_DIAGNOSTIC(OnceControlState,
+                          "unmodeled pthread_once control state")
+NEVERD_ANDROID_DIAGNOSTIC(OnceInitializerAlignment,
+                          "unaligned pthread_once initializer")
+NEVERD_ANDROID_DIAGNOSTIC(InactiveProviderPrefix,
+                          "call through an inactive dynamic library: ")
+NEVERD_ANDROID_DIAGNOSTIC(GuestCalledPrefix, "guest called ")
+NEVERD_ANDROID_DIAGNOSTIC(MemcpyOverlap, "overlapping memcpy operands")
+NEVERD_ANDROID_DIAGNOSTIC(StringAddressOverflow, "string address overflows")
+NEVERD_ANDROID_DIAGNOSTIC(StringScanLimit, "string scan exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(StringCompareLimit,
+                          "string comparison exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(ReallocationOwnership,
+                          "realloc does not name a live allocation")
+NEVERD_ANDROID_DIAGNOSTIC(ImportPrefix, "unmodeled Android import: ")
+NEVERD_ANDROID_DIAGNOSTIC(PthreadAlignment, "unaligned pthread object")
+NEVERD_ANDROID_DIAGNOSTIC(MutexAttributeOperation,
+                          "unmodeled mutex attribute operation")
+NEVERD_ANDROID_DIAGNOSTIC(MutexOperation, "unmodeled mutex operation")
+NEVERD_ANDROID_DIAGNOSTIC(MutexPriorityInheritance,
+                          "priority inheritance requires kernel mutex support")
+NEVERD_ANDROID_DIAGNOSTIC(MutexState, "invalid pthread mutex state")
+NEVERD_ANDROID_DIAGNOSTIC(MutexBlocking,
+                          "blocking lock requires thread scheduling")
+NEVERD_ANDROID_DIAGNOSTIC(MutexWake,
+                          "contended unlock requires futex wake support")
+NEVERD_ANDROID_DIAGNOSTIC(MutexOwner,
+                          "inconsistent pthread mutex owner and state")
+NEVERD_ANDROID_DIAGNOSTIC(TokenCursorAlignment,
+                          "unaligned strtok_r save pointer")
+NEVERD_ANDROID_DIAGNOSTIC(TokenAddressOverflow,
+                          "strtok_r string address overflows")
+NEVERD_ANDROID_DIAGNOSTIC(TokenContinuationOverflow,
+                          "strtok_r continuation address overflows")
+NEVERD_ANDROID_DIAGNOSTIC(TokenScanLimit, "strtok_r scan exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(
+    NativeOptions,
+    "requires Android native options and no process argv/environment")
+NEVERD_ANDROID_DIAGNOSTIC(EntrySelection,
+                          "select exactly one entry_symbol or entry_address")
+NEVERD_ANDROID_DIAGNOSTIC(ExecutionLimits,
+                          "invalid native execution limits or layout")
+NEVERD_ANDROID_DIAGNOSTIC(SnapshotLimits,
+                          "invalid memory snapshot extent or output budget")
+NEVERD_ANDROID_DIAGNOSTIC(Property, "invalid Android property name or value")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryCount, "too many modeled Android libraries")
+NEVERD_ANDROID_DIAGNOSTIC(LibraryName, "invalid modeled Android library name")
+NEVERD_ANDROID_DIAGNOSTIC(SymbolCatalogue,
+                          "invalid or excessive modeled Android symbols")
+NEVERD_ANDROID_DIAGNOSTIC(DefaultScopeSize,
+                          "invalid Android default scope size")
+NEVERD_ANDROID_DIAGNOSTIC(
+    DefaultScopeMembership,
+    "Android default scope requires unique catalogue libraries")
+NEVERD_ANDROID_DIAGNOSTIC(CatalogueMemoryLimit,
+                          "Android symbol catalogue exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(MemoryRegion, "invalid explicit native memory region")
+NEVERD_ANDROID_DIAGNOSTIC(SnapshotEntry,
+                          "requested snapshot is not readable at entry")
+NEVERD_ANDROID_DIAGNOSTIC(MissingCPUExit, "missing CPU exit")
+NEVERD_ANDROID_DIAGNOSTIC(CallbackStack,
+                          "native callback did not restore its stack")
+NEVERD_ANDROID_DIAGNOSTIC(SVCImmediate, "unsupported Android SVC immediate")
+NEVERD_ANDROID_DIAGNOSTIC(SnapshotReturn, "requested memory became unreadable")
+NEVERD_ANDROID_DIAGNOSTIC(Image, "requires an AArch64 ELF64LE shared library")
+NEVERD_ANDROID_DIAGNOSTIC(ImageTLS,
+                          "interpreters and ELF TLS templates are unsupported")
+NEVERD_ANDROID_DIAGNOSTIC(ExecutableStack, "executable stacks are unsupported")
+NEVERD_ANDROID_DIAGNOSTIC(
+    LoadExtent, "invalid Android PT_LOAD extent, alignment or permissions")
+NEVERD_ANDROID_DIAGNOSTIC(LoadAlignment,
+                          "load bias or PT_LOAD violates ELF alignment")
+NEVERD_ANDROID_DIAGNOSTIC(TextRelocation,
+                          "Android API 28 disallows text relocations")
+NEVERD_ANDROID_DIAGNOSTIC(ImageAddressOverflow,
+                          "image address overflows the user address space")
+NEVERD_ANDROID_DIAGNOSTIC(ImageReservedRange,
+                          "image overlaps a reserved native runtime range")
+NEVERD_ANDROID_DIAGNOSTIC(DynamicSymbolKindPrefix,
+                          "unsupported dynamic symbol kind: ")
+NEVERD_ANDROID_DIAGNOSTIC(ImportedDataPrefix,
+                          "unmodeled imported data symbol: ")
+NEVERD_ANDROID_DIAGNOSTIC(RelocationKindPrefix,
+                          "unsupported AArch64 dynamic relocation ")
+NEVERD_ANDROID_DIAGNOSTIC(RelativeSymbol, "relative relocation has a symbol")
+NEVERD_ANDROID_DIAGNOSTIC(RELROExtent, "invalid RELRO extent")
+NEVERD_ANDROID_DIAGNOSTIC(EntryKind,
+                          "entry symbol is not an ordinary defined function")
+NEVERD_ANDROID_DIAGNOSTIC(EntryAmbiguous, "ambiguous entry symbol")
+NEVERD_ANDROID_DIAGNOSTIC(EntryAbsentPrefix, "entry symbol was not found: ")
+NEVERD_ANDROID_DIAGNOSTIC(EntryPermission,
+                          "entry or constructor is not executable")
+NEVERD_ANDROID_DIAGNOSTIC(PreinitArray,
+                          "shared library preinit arrays are unsupported")
+NEVERD_ANDROID_DIAGNOSTIC(InitializerArray, "invalid initializer array")
+NEVERD_ANDROID_DIAGNOSTIC(DestroyedMutex,
+                          "guest called {0} on a destroyed mutex")
+#endif
