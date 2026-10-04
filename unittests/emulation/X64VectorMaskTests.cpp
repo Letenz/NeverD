@@ -227,6 +227,51 @@ TEST_P(X64VectorMask, InvalidFormsRejectWithoutDataObservations) {
   }
 }
 
+TEST_P(X64VectorMask, InstructionStopsAndFailuresPreserveState) {
+  for (const auto &M : Masks)
+    for (bool Fail : {false, true}) {
+      SCOPED_TRACE(M.Name);
+      SCOPED_TRACE(Fail);
+      reset();
+      ASSERT_FALSE(HasFatalFailure());
+      initialize(Inputs[0], 1);
+      auto Before = snapshot();
+      const auto Bytes = instruction(M, 0, 1, false);
+      llvm::cantFail(CPU->write(Code, Bytes));
+      unsigned Instructions = 0, Accesses = 0;
+      BackendHooks Hooks;
+      Hooks.Instruction = [&](uint64_t PC, unsigned Size) {
+        EXPECT_EQ(PC, Code);
+        EXPECT_EQ(Size, Bytes.size());
+        EXPECT_EQ(snapshot(), Before);
+        ++Instructions;
+        CPU->stop();
+        if (Fail)
+          throw std::runtime_error(ObserverError);
+      };
+      Hooks.Read = [&](uint64_t, unsigned) { ++Accesses; };
+      Hooks.Write = [&](uint64_t, unsigned, uint64_t) { ++Accesses; };
+      llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+      const auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+      EXPECT_EQ(Exit.Kind, Fail ? ExecutionExitKind::BackendFailure
+                                : ExecutionExitKind::Stopped)
+          << Exit.Diagnostic;
+      EXPECT_TRUE(Exit.StopRequested);
+      EXPECT_EQ(Instructions, 1u);
+      EXPECT_EQ(Accesses, 0u);
+      EXPECT_EQ(snapshot(), Before);
+      expectRAM();
+      if (!Fail) {
+        const auto Retry = run(Bytes);
+        ASSERT_EQ(Retry.Kind, ExecutionExitKind::Stopped) << Retry.Diagnostic;
+        Before[CPURegister::X64AX] = {scalarMask(M.Bits, Inputs[0]), 0};
+        Before[CPURegister::X64PC] = {Code + Bytes.size(), 0};
+        EXPECT_EQ(snapshot(), Before);
+        expectRAM();
+      }
+    }
+}
+
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64VectorMask,
                          testing::ValuesIn(Parameters),
                          [](const auto &Info) { return Info.param.Name; });

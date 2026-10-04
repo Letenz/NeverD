@@ -9,6 +9,7 @@
 #include "../../core/RAMTransaction.h"
 #include "X64Exception.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
@@ -85,59 +86,77 @@ uint64_t updateValue(unsigned Instruction, uint64_t Original, uint64_t Operand,
   }
 }
 bool isXmm(unsigned R) { return R >= X86_REG_XMM0 && R <= X86_REG_XMM15; }
+enum class VectorForm {
+#define NEVERD_X64_VECTOR_FORM(Name) Name,
+#include "X64VectorOperands.def"
+#undef NEVERD_X64_VECTOR_FORM
+};
+enum class VectorOperand { Xmm, Memory, General, Integer, Immediate };
+struct VectorOperandPair {
+  VectorForm Form;
+  VectorOperand Destination, Source;
+};
+constexpr VectorOperandPair VectorOperands[] = {
+#define NEVERD_X64_VECTOR_OPERANDS(Form, Destination, Source)                  \
+  {VectorForm::Form, VectorOperand::Destination, VectorOperand::Source},
+#include "X64VectorOperands.def"
+#undef NEVERD_X64_VECTOR_OPERANDS
+};
 struct VectorOperation {
   unsigned Width, Alignment;
-  bool Move, General;
+  bool Move;
+  VectorForm Form;
 };
 std::optional<VectorOperation> vectorOperation(unsigned Instruction) {
   switch (Instruction) {
-#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, General)   \
+#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, Form)      \
   case X86_INS_##Name:                                                         \
-    return VectorOperation{Width, Alignment, Move, General};
+    return VectorOperation{Width, Alignment, Move, VectorForm::Form};
 #include "X64VectorInstructions.def"
 #undef NEVERD_X64_VECTOR_INSTRUCTION
   default:
     return std::nullopt;
   }
 }
-enum class VectorCount { None, Immediate, VectorOrImmediate };
-VectorCount vectorCount(unsigned Instruction) {
-  switch (Instruction) {
-#define NEVERD_X64_PACKED_SHIFT(Name, Count)                                   \
-  case X86_INS_##Name:                                                         \
-    return VectorCount::Count;
-#include "X64PackedShiftInstructions.def"
-#undef NEVERD_X64_PACKED_SHIFT
+bool isGeneralOperand(const cs_x86_op &O) {
+  if (O.type != X86_OP_REG)
+    return false;
+  switch (O.reg) {
+#define NEVERD_X64_OPERAND_REGISTER(Name, Slot, Shift, Bits)                   \
+  case X86_REG_##Name:                                                         \
+    return X64Register::Slot != X64Register::PC && Shift == 0 &&               \
+           Bits / CHAR_BIT == O.size;
+#include "X64OperandRegisters.def"
+#undef NEVERD_X64_OPERAND_REGISTER
   default:
-    return VectorCount::None;
+    return false;
   }
 }
-bool admitsVectorOperands(unsigned Instruction, const cs_x86 &X,
-                          const VectorOperation &V) {
+bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
+                          unsigned Width) {
+  switch (Kind) {
+  case VectorOperand::Xmm:
+    return O.type == X86_OP_REG && isXmm(O.reg);
+  case VectorOperand::Memory:
+    return O.type == X86_OP_MEM && O.size == Width;
+  case VectorOperand::General:
+    return isGeneralOperand(O) && O.size == Width;
+  case VectorOperand::Integer:
+    return isGeneralOperand(O) &&
+           (O.size == x64::DWordBytes || O.size == x64::WordBytes);
+  case VectorOperand::Immediate:
+    return O.type == X86_OP_IMM && O.imm >= 0 && O.imm <= UINT8_MAX;
+  }
+  llvm_unreachable(diagnostic::Instruction);
+}
+bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
   if (X.op_count != 2)
     return false;
-  const auto &D = X.operands[0], &S = X.operands[1];
-  auto Xmm = [](const cs_x86_op &O) {
-    return O.type == X86_OP_REG && isXmm(O.reg);
-  };
-  const auto Count = vectorCount(Instruction);
-  if (Count != VectorCount::None && S.type == X86_OP_IMM)
-    return Xmm(D) && S.imm >= 0 && S.imm <= UINT8_MAX;
-  if (Count == VectorCount::Immediate)
-    return false;
-  if (!Xmm(D) && !(V.Move && Xmm(S)))
-    return false;
-  for (const auto &O : {D, S}) {
-    if (Xmm(O))
-      continue;
-    if (O.size != V.Width ||
-        (O.type != X86_OP_MEM && !(V.General && O.type == X86_OP_REG)))
-      return false;
-  }
-  return true;
-}
-bool isFloatingPointConversion(unsigned Instruction) {
-  return Instruction == X86_INS_CVTTSD2SI || Instruction == X86_INS_CVTTSS2SI;
+  return llvm::any_of(VectorOperands, [&](const auto &Pair) {
+    return Pair.Form == V.Form &&
+           matchesVectorOperand(Pair.Destination, X.operands[0], V.Width) &&
+           matchesVectorOperand(Pair.Source, X.operands[1], V.Width);
+  });
 }
 bool isAtomic(unsigned Instruction) {
   switch (Instruction) {
@@ -325,16 +344,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     return llvm::make_error<UnsupportedExecutionError>();
   }
   const auto Vector = vectorOperation(I.id);
-  const bool Conversion = isFloatingPointConversion(I.id);
-  if (Conversion &&
-      (X.op_count != 2 || X.operands[0].type != X86_OP_REG ||
-       isXmm(X.operands[0].reg) ||
-       (X.operands[0].size != x64::DWordBytes &&
-        X.operands[0].size != x64::WordBytes) ||
-       (X.operands[1].type != X86_OP_MEM &&
-        !(X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)))))
-    return llvm::make_error<UnsupportedExecutionError>();
-  if (Vector && !Conversion && !admitsVectorOperands(I.id, X, *Vector))
+  if (Vector && !admitsVectorOperands(X, *Vector))
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
   const bool Atomic = isAtomic(I.id);
