@@ -10,6 +10,15 @@ if(NEVERD_ENABLE_CPU_EMULATION)
     cpu-bench.cpp
     LINK_COMPONENTS EmulationCPU)
   neverd_sign_hypervisor(neverd-cpu-bench)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$" AND
+     NEVERD_EMULATION_BACKEND_HVF)
+    # Opt-in diagnostic library; never linked into timing executables.
+    add_library(neverd-hvf-entry-counter SHARED EXCLUDE_FROM_ALL
+      hvf-entry-counter.cpp)
+    target_compile_features(neverd-hvf-entry-counter PRIVATE cxx_std_20)
+    target_link_libraries(neverd-hvf-entry-counter PRIVATE "-framework Hypervisor")
+  endif()
 endif()
 
 option(NEVERD_BUILD_SOLVER_BENCH "Build the solver comparison and query export tool" OFF)

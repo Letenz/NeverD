@@ -2265,6 +2265,63 @@ use Unicorn. The existing ISA and OS contracts remain authoritative. See
 [HVF ownership, signing and hardware tests](macos-hvf.md). ARM64 hardware
 evidence and Intel runtime coverage are reported separately.
 
+`NeverDHvfTests` authenticates the non-stepped ARM64 maintenance exit separately
+from the guest single-step. Fault injection at the end of maintenance covers UDF,
+wrong HVC immediates and a correct immediate at a wrong PC. Deadline and stop
+tests require an actual native store before cancellation, preserve all caller
+registers/vectors at both privileges, then rewrite guest code and retry. A public
+CPU test rejects guest branches into the private maintenance area before fetching
+or observing those bytes. The HVF inventory also includes `NeverDInstructionFetchTests`
+for host/guest writes through aliases, context restoration and permission changes.
+
+### Reproduce checked ARM64 CPU measurements
+
+In a Release CPU build, `neverd-cpu-bench` links directly to the CPU components
+and checks every execution result. It emits JSON lines for initialization,
+integer/branch loops, RAM, TLS/calls and two alternating CPUs. Initialization is
+measured separately; ordinary execution excludes setup and verification. The
+two-CPU workload includes the intervening public API calls and checks. These are
+checked-execution microbenchmarks, not full OS throughput or cross-ISA comparisons.
+Explicit HVF requires an ARM64 macOS host; Unicorn must be enabled for its comparison.
+
+```bash
+cmake --build build-cpu --target neverd-cpu-bench --parallel 4
+build-cpu/bin/neverd-cpu-bench --backend hvf --samples 7 --warmup 1
+build-cpu/bin/neverd-cpu-bench --backend unicorn --samples 7 --warmup 1
+```
+
+Preserve a baseline executable **before** rebuilding after a change. The target
+statically links NeverD/Unicorn; inspect `otool -L` to confirm its dependencies.
+Use Python 3.11+ and independent saved executables for paired measurements:
+
+```bash
+python3 scripts/benchmark_cpu.py \
+  --baseline /path/to/before --baseline-label BEFORE_COMMIT \
+  --candidate /path/to/after --candidate-label AFTER_COMMIT \
+  --pairs 15 --output /path/to/new-comparison.json
+```
+
+The driver alternates process order, warms each workload, verifies the complete
+sample inventory, records binary hashes, labels, load and raw samples, and refuses
+to overwrite evidence. Both backends default to HVF; use `--baseline-backend unicorn`
+to compare the same candidate binary's software and native transports. Source labels
+are caller-supplied; retain compiler/configuration details alongside the results.
+Avoid running builds or other tests while measuring. Report spread and paired
+results; one host and these workloads do not establish a universal ranking.
+
+Native entry counting is a separate opt-in diagnostic. It adds instrumentation
+overhead, so discard its elapsed times. The count includes startup probes.
+
+```bash
+cmake --build build-cpu --target neverd-hvf-entry-counter --parallel 4
+DYLD_INSERT_LIBRARIES="$PWD/build-cpu/bin/libneverd-hvf-entry-counter.dylib" \
+  build-cpu/bin/neverd-cpu-bench --backend hvf --samples 1 --warmup 1
+```
+
+The library prints its whole-process `hv_vcpu_run` count to stderr. The timing
+driver rejects injected libraries, preventing accidental use of instrumented
+timings as normal performance results.
+
 Finite-dispatch regressions cover register and frame phases, both byte orders, reachable invalid arms, later predecessors, exhausted inner guards and adjacent discovery limits. Destination-cap tests cover retained arithmetic correlations, nested loops, decode modes, fallthrough counting, total work limits and legacy precedence. CLI tests execute both C routes and source ABIs at O0/O2; C/Python v8 tests check layouts, invalid fields and ignored future tails. Regressions also keep discovery work available for native guards behind large unrelated finite selectors, and reserve the last permitted refinement for an already nominated producer.
 
 `NeverDLLVMCPhiTests` executes independent and cross-dependent loop updates at O0/O2 over zero-trip loops, iteration boundaries and randomized full-width seeds. Readability assertions require no snapshot locals for independent updates and only the needed snapshot for compound exchanges. Existing branch, switch, moved-arm and swap-loop cases continue to check the selected edge and simultaneous assignment semantics.

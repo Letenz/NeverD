@@ -94,6 +94,8 @@ def main():
     parser.add_argument("--pairs", type=int, default=9)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if os.environ.get("DYLD_INSERT_LIBRARIES") or os.environ.get("LD_PRELOAD"):
+        parser.error("remove library injection before measuring uninstrumented timings")
     if not 1 <= args.pairs <= 1000:
         parser.error("--pairs must be between 1 and 1000")
     if args.output.exists():
