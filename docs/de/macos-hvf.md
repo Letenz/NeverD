@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
+<!-- i18n-source: 858db03696efbbcf71d350f1bb042790bc6916f0e1131a86558e2d4785233a41 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -171,4 +171,4 @@ Das unabhängige, unveränderte Programm `hvf-edge-cases` bei `f150b38` beendete
 
 Die Ergebnisse grenzen die Untersuchung ein, belegen aber keine Produktkorrektur. VM und Executor-Threads beizubehalten ist ein Diagnosevergleich, keine akzeptierte Lebenszyklusänderung. Intel benötigt weiterhin den ursprünglichen 1000-fachen Wiederherstellungstest, das vollständige CPU-Inventar und die unabhängige Darwin-Prüfung am selben sauberen Kandidaten.
 
-Die reine vCPU-Neuerstellung bestand 1000/1000 Durchläufe auf beiden Intel-Images (37195529270, 37195554929), einschließlich aller Markierungen und der abschließenden Zerstörung von Generation1001. Der nächste explizite Vergleich `instruction-vm-recreate` erstellt zusätzlich die VM neu, behält aber owner und exklusiven VM-Lock. Acht geordnete native Ereignisse je Durchlauf und die abschließende Zerstörung sind erforderlich. Das belegt weder Produktkorrektur noch vollständige Abnahme.
+Beide Lebenszyklusvergleiche bestanden jetzt auf beiden Intel-Images jeweils 1000/1000 Durchläufe: vCPU-Neuerstellung (37195529270, 37195554929) sowie VM- und vCPU-Neuerstellung bei gleichem owner (37196504453, 37196535787). Letztere belegt je Lauf 8000 geordnete native Ereignisse und die abschließende Zerstörung von Generation 1001; alle 24/27 Artefakt-Hashes, Rückgabecodes null und das Einsammeln der Kindprozesse wurden geprüft. Das grenzt den Vergleich mit vollständigem Executor-Wechsel ein, beweist aber weder Ursache noch Produktkorrektur. Als Nächstes bleiben die VM erhalten und werden vCPU und Besitzer-Thread ersetzt. Originaler Wiederherstellungstest und vollständige CPU/Darwin-Abnahme bleiben erforderlich.

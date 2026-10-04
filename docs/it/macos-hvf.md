@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
+<!-- i18n-source: 858db03696efbbcf71d350f1bb042790bc6916f0e1131a86558e2d4785233a41 -->
 
 [← Indice della documentazione](README.md)
 
@@ -171,4 +171,4 @@ Il programma indipendente e invariato `hvf-edge-cases`, revisione `f150b38`, ha 
 
 Questi risultati restringono l’indagine, ma non dimostrano una correzione di produzione. Conservare VM e thread Executor è un confronto diagnostico, non una modifica del ciclo di vita accettata. Intel richiede ancora i 1000 recuperi originali, l’intero inventario CPU e il controllo Darwin indipendente sul medesimo candidato pulito.
 
-La ricreazione della sola vCPU ha superato 1000/1000 iterazioni su entrambe le immagini Intel (37195529270, 37195554929), con tutti i marcatori e la distruzione finale della generazione1001. Il prossimo controllo esplicito `instruction-vm-recreate` ricrea anche la VM, mantenendo lo stesso owner e il lock esclusivo VM. Richiede otto eventi nativi ordinati per iterazione e la distruzione finale; non dimostra una correzione del prodotto o accettazione completa.
+Entrambi i controlli hanno ora superato 1000/1000 iterazioni sulle due immagini Intel: ricreazione della vCPU (37195529270, 37195554929) e di VM più vCPU con lo stesso owner (37196504453, 37196535787). Il secondo documenta 8000 eventi nativi ordinati e la distruzione finale della generazione 1001 per esecuzione; sono stati verificati tutti i 24/27 hash, le uscite native e del controllore a zero e la raccolta dei processi. Ciò restringe il confronto con il rinnovo completo di Executor, senza identificare la causa o dimostrare una correzione. Il prossimo diagnostico manterrà la VM e sostituirà vCPU e thread proprietario. Restano necessari il recupero originale e la validazione CPU/Darwin completa.

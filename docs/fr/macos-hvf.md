@@ -1,6 +1,6 @@
 **Langues**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
+<!-- i18n-source: 858db03696efbbcf71d350f1bb042790bc6916f0e1131a86558e2d4785233a41 -->
 
 [← Index de la documentation](README.md)
 
@@ -171,4 +171,4 @@ Le programme indépendant et inchangé `hvf-edge-cases`, révision `f150b38`, a 
 
 Ces résultats réduisent le champ d’investigation sans établir de correction. Conserver VM et threads Executor est un contrôle diagnostique, pas un changement de cycle de vie accepté. Intel exige encore les 1000 récupérations originales, l’inventaire CPU complet et le contrôle Darwin indépendant sur un même candidat propre.
 
-La recréation du seul vCPU a réussi 1000/1000 fois sur les deux images Intel (37195529270, 37195554929), avec tous les marqueurs et la destruction finale de la génération1001. Le prochain contrôle explicite `instruction-vm-recreate` recrée aussi la VM, en conservant le même owner et le verrou exclusif VM. Il exige huit événements natifs ordonnés par itération et la destruction finale ; il ne prouve ni correction du produit ni validation complète.
+Les deux contrôles ont désormais réussi 1000/1000 fois sur les deux images Intel : recréation du vCPU (37195529270, 37195554929), puis de la VM et du vCPU avec le même owner (37196504453, 37196535787). Ce dernier comprend 8000 événements natifs ordonnés et la destruction finale de la génération 1001 par exécution ; les 24/27 empreintes, les sorties natives et du contrôleur à zéro et la collecte des processus ont été vérifiées. Cela précise la comparaison avec le renouvellement complet d’Executor sans identifier la cause ni prouver une correction. Le prochain diagnostic conservera la VM et remplacera le vCPU et son thread propriétaire. La récupération originale et la validation CPU/Darwin complète restent nécessaires.

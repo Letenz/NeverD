@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
+<!-- i18n-source: 858db03696efbbcf71d350f1bb042790bc6916f0e1131a86558e2d4785233a41 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -171,4 +171,4 @@ M4 Max、macOS 15.6.1、Release、Apple Clang 17、ビルド済み LLVM で確�
 
 調査範囲は狭まりましたが、製品修正はまだ証明されていません。VM と Executor スレッドの保持は診断用の比較であり、採用済みのライフサイクル変更ではありません。Intel では同じクリーンな候補で元の 1000 回復旧テスト、CPU 全項目、独立 Darwin ゲートを通す必要があります。
 
-vCPU のみの再生成は両 Intel イメージで 1000/1000 回に合格し（37195529270、37195554929）、全ライフサイクル記録と最終第1001世代の破棄を確認しました。次の任意診断 `instruction-vm-recreate` は同じ owner と VM 排他ロックを保持して VM も再生成します。各回の8個のネイティブイベントの順序と最終破棄が必須です。製品修正や完全な受け入れ検証を意味しません。
+両 Intel イメージで、vCPU 再生成（37195529270、37195554929）と同じ owner 上での VM・vCPU 再生成（37196504453、37196535787）が、それぞれ 1000/1000 回に合格しました。後者では各実行の 8000 個のネイティブイベントの順序と最終第 1001 世代の破棄、24/27 個の成果物ハッシュ、ネイティブ処理・制御側の終了コード 0、子プロセス回収を確認しました。Executor 全体の再生成との差を絞る証拠であり、原因や製品修正の証明ではありません。次は VM を保持して vCPU と owner スレッドを交換します。元の回復試験と完全な CPU/Darwin 検証は引き続き必要です。
