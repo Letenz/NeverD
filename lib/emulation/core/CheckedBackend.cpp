@@ -17,9 +17,14 @@ llvm::Error CheckedBackend::initializeDecoder(cs_arch Arch, cs_mode Mode) {
   if (cs_open(Arch, Mode, &Decoder) != CS_ERR_OK ||
       cs_option(Decoder, CS_OPT_DETAIL, CS_OPT_ON) != CS_ERR_OK)
     return error(diagnostic::Decode);
+  Decoded = cs_malloc(Decoder);
+  if (!Decoded)
+    return error(diagnostic::Decode);
   return llvm::Error::success();
 }
 CheckedBackend::~CheckedBackend() {
+  if (Decoded)
+    cs_free(Decoded, 1);
   if (Decoder)
     cs_close(&Decoder);
 }
@@ -256,7 +261,7 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
           Hooks.InvalidInstruction();
         return llvm::make_error<UnsupportedExecutionError>();
       }
-      std::vector<uint8_t> Bytes(MaxInstructionBytes);
+      auto &Bytes = InstructionBytes;
       size_t Count = 0;
       for (; Count < Bytes.size() && Count <= UINT64_MAX - PC; ++Count) {
         if (Memory->check(PC + Count, 1, executionPermissions(Execute)))
@@ -266,16 +271,16 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
                 Execute))
           return E;
       }
-      cs_insn *Decoded = nullptr;
       if (!Count)
         return access(PC, 1, Execute, false, true);
-      if (!cs_disasm(Decoder, Bytes.data(), Count, PC, 1, &Decoded)) {
+      const uint8_t *Input = Bytes.data();
+      uint64_t DecodePC = PC;
+      if (!cs_disasm_iter(Decoder, &Input, &Count, &DecodePC, Decoded)) {
         FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
         if (Hooks.InvalidInstruction)
           Hooks.InvalidInstruction();
         return llvm::make_error<UnsupportedExecutionError>();
       }
-      auto Free = llvm::scope_exit([&] { cs_free(Decoded, 1); });
       if (Hooks.Instruction)
         Hooks.Instruction(PC, Decoded->size);
       if (FirstFault)

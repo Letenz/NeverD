@@ -12,6 +12,7 @@
 #include <atomic>
 #include <capstone/capstone.h>
 #include <chrono>
+#include <vector>
 namespace neverd::emulation {
 /// Shared pre-effect fault, observer, memory and bounded execution semantics.
 /// ISA admission and architectural state belong to the derived architecture.
@@ -64,7 +65,7 @@ public:
 protected:
   CheckedBackend(unsigned MaxInstructionBytes, unsigned InstructionAlignment,
                  bool UserMode)
-      : UserMode(UserMode), MaxInstructionBytes(MaxInstructionBytes),
+      : UserMode(UserMode), InstructionBytes(MaxInstructionBytes),
         InstructionAlignment(InstructionAlignment) {}
   llvm::Error initializeDecoder(cs_arch, cs_mode);
   virtual bool canonicalRange(uint64_t, uint64_t) const = 0;
@@ -98,7 +99,11 @@ protected:
 private:
   llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started,
                       bool &BackendFailed);
-  unsigned MaxInstructionBytes, InstructionAlignment;
+  // Storage only: bytes, permissions and decoding are refreshed on every step.
+  // The execution lease rejects recursive entry before this storage is touched.
+  std::vector<uint8_t> InstructionBytes;
+  cs_insn *Decoded = nullptr;
+  unsigned InstructionAlignment;
 };
 } // namespace neverd::emulation
 #endif
