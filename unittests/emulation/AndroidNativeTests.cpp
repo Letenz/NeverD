@@ -349,6 +349,97 @@ TEST_P(AndroidNative, DynamicPageSizeRetainsNamesAndProviderLifetime) {
   llvm::support::endian::write32le(Expected.data() + 8, 4096);
   EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
 }
+TEST_P(AndroidNative, MemoryAdviceSharesRawAndBionicRangeErrors) {
+  struct Case {
+    uint64_t Address, Length, Advice, Error;
+  };
+  const Case Cases[] = {{Buffer, 4095, 12, 0},
+                        {Buffer, 1, 13, 0},
+                        {Buffer, 1, (1ULL << 32) | 12, 0},
+                        {Buffer + 1, 0, 12, 22},
+                        {Buffer, UINT64_MAX, 12, 22},
+                        {Buffer, 4097, 12, 12},
+                        {0, 0, 12, 0},
+                        {0, 1, 13, 12}};
+  for (uint64_t Route = 0; Route < 3; ++Route) {
+    for (const auto &C : Cases) {
+      SCOPED_TRACE(Route);
+      SCOPED_TRACE(C.Address);
+      SCOPED_TRACE(C.Length);
+      const uint64_t Value =
+          C.Error ? (Route == 1 ? 0 - C.Error : UINT64_MAX) : 0;
+      const uint64_t Errno = C.Error && Route != 1 ? C.Error : 77;
+      auto R =
+          run("memory_advice", {Buffer, C.Address, C.Length, C.Advice, Route});
+      returned(R, Value);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      std::vector<uint8_t> Expected(64);
+      llvm::support::endian::write64le(Expected.data(), Value);
+      llvm::support::endian::write64le(Expected.data() + 8, Errno);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+      if (Route == 1) {
+        ASSERT_EQ(R.Services.size(), 1u);
+        EXPECT_EQ(R.Services[0].Number, 233u);
+        EXPECT_EQ(R.Services[0].Result, Value);
+      } else {
+        EXPECT_TRUE(R.Services.empty());
+        auto Call = llvm::find_if(R.NativeCalls, [&](const auto &E) {
+          return E.Name == (Route ? "syscall" : "madvise");
+        });
+        ASSERT_NE(Call, R.NativeCalls.end());
+        EXPECT_EQ(Call->Result, Value);
+        EXPECT_TRUE(Call->Library.empty());
+      }
+    }
+  }
+}
+TEST_P(AndroidNative, MemoryAdviceRejectsUnmodeledContentChanges) {
+  for (uint64_t Route = 0; Route < 3; ++Route) {
+    auto R = run("memory_advice", {Buffer, Buffer, 4096, 4, Route});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_FALSE(R.ReturnValue);
+    EXPECT_NE(R.Diagnostic.find("madvise"), std::string::npos);
+    if (Route == 1) {
+      ASSERT_EQ(R.Services.size(), 1u);
+      EXPECT_FALSE(R.Services[0].Result);
+    } else {
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Name, Route ? "syscall" : "madvise");
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+    }
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(64));
+  }
+}
+TEST_P(AndroidNative, DynamicMemoryAdviceRetainsProviderLifetimeAndNames) {
+  returned(run("dynamic_memory_advice", {Buffer, 4096, 12, 0}), 100);
+  Options.Android->Libraries["libadvice.so"] = {};
+  returned(run("dynamic_memory_advice", {Buffer, 4096, 12, 0}), 101);
+  Options.Android->Libraries["libadvice.so"] = {"madvise"};
+  auto R = run("dynamic_memory_advice", {Buffer, 4096, 12, 0});
+  returned(R, 0);
+  auto Lookup = llvm::find_if(R.NativeCalls, [](const auto &E) {
+    return E.Name == "dlsym" && E.Symbol == "madvise";
+  });
+  ASSERT_NE(Lookup, R.NativeCalls.end());
+  ASSERT_TRUE(Lookup->Result);
+  auto Call = llvm::find_if(R.NativeCalls,
+                            [](const auto &E) { return E.Name == "madvise"; });
+  ASSERT_NE(Call, R.NativeCalls.end());
+  EXPECT_EQ(Call->PC, *Lookup->Result);
+  EXPECT_EQ(Call->Library, "libadvice.so");
+  EXPECT_EQ(Call->Result, 0u);
+  EXPECT_TRUE(R.Services.empty());
+  R = run("dynamic_memory_advice", {Buffer, 4096, 13, 1});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "madvise");
+  EXPECT_EQ(R.NativeCalls.back().Library, "libadvice.so");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+  Options.Android->DefaultScope = std::vector<std::string>{"libadvice.so"};
+  returned(run("dynamic_memory_advice", {Buffer, 4096, 13, 1}), 0);
+}
 TEST_P(AndroidNative,
        VectoredOutputSharesKernelSemanticsAndPreservesLibcErrno) {
   auto R = run(output_fixture::AndroidEntry);
