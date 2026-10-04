@@ -93,6 +93,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDLLVMScalarEquivalenceTests` 涵蓋完整迴圈域、零次迴圈、PHI 同時交換、switch、高位輸入、最後分區反例、產生 poison 的額外更新、回傳範圍、不支援的契約，以及精確、少一單位及零預算。獨立雙寬與溢位參考實作涵蓋各支援字寬的漏斗位移端點及帶溢位約束的乘法；獨立巢狀迴圈 C 於 O1/O2 檢查編譯器輸入形態。狀態模型測試也檢查漏斗位移端點。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 檢查累計查詢計費與不變的局部上限。
 
+`LLVMScalarDecision.*` 涵蓋深層精確位移/擴展約束、常數分支決策、兩條迴圈回邊、保留高資料位元、末端未定義操作、不終止、已檢查函式的後續修改，以及精確/少一/局部預算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 將獨立撰寫的單回邊和雙回邊遞推與無號 C oracle 在 O0/O2 下比較，共 32,768 次呼叫。這些是純量模型檢查，不代表原生 ABI 或完整二進位還原涵蓋。
+
 `SymKnownBitsTests` 以全部位元組輸入對及任意精度邊界值檢查事實，涵蓋擴展恆等關係、不回繞加法、不同來源及全定義位移語意。亦檢查精確/少一預算、快取命中計費、儲存上限、獨立上下文、深度、運算元數量與不支援的位寬。`SymExprExtensionTests` 檢查常數高位元與完整位移計數。純量等價回歸在證明值域約束時保留符號資料，拒絕最後分區差異及已執行的 poison，並以精確/少一預算核驗完整證明計費。 `SymMBAExtensionTests` 在關閉取樣驗證時要求推導證據，檢查全部位元組輸入對，並保留有號、窄進位、位元反相及工作量耗盡的邊界。
 
 `NeverDLLVMScalarLoopRecoveryTests` 涵蓋前綴與前驅攜帶值重構、零次迴圈分支、自回邊迴圈判斷前移、仿射狀態、回繞時的等式退路、額外更新的 poison、高位元資料差異及不支援的輸入契約。精確／少一累計預算檢查原子拒絕；獨立算術 oracle 在 O0/O2 執行原始與恢復 LLVM，涵蓋全部位元組控制輸入。這些測試不代表原生 ABI 恢復或預設短 C 輸出已完成。

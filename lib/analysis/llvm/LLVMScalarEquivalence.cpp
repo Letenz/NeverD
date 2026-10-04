@@ -55,10 +55,15 @@ class Executor {
   llvm::DenseMap<uint32_t, unsigned> Variables;
   llvm::DenseMap<uint32_t, Ref> Folded;
   sym::SymKnownBits BitFacts;
+  llvm::DenseMap<uint32_t, Ref> Decisions;
+  // Query these facts only after visiting a decision's children. A shallow
+  // query may cache sound but incomplete facts near its depth/work boundary;
+  // those facts must not hide the stronger bottom-up normalization here.
+  sym::SymKnownBits DecisionFacts;
   unsigned InputVariables;
 
-  std::optional<llvm::APInt> constantWindow(Ref R, unsigned Low,
-                                            unsigned Width) {
+  std::optional<llvm::APInt> constantWindow(Ref R, unsigned Low, unsigned Width,
+                                            sym::SymKnownBits &Facts) {
     Work.spend();
     const unsigned Available = static_cast<unsigned>(
         std::min<uint64_t>(Work.Remaining, sym::SymKnownBits::MaxQueryWork));
@@ -66,9 +71,9 @@ class Executor {
     auto K = C.constantWindow(R, Low, Width, Remaining);
     bool Complete = bool(K);
     if (!K && Width && Low <= C.width(R) && Width <= C.width(R) - Low) {
-      if (auto Facts = BitFacts.query(R, Remaining)) {
+      if (auto Known = Facts.query(R, Remaining)) {
         Complete = true;
-        auto Slice = Facts->extractBits(Width, Low);
+        auto Slice = Known->extractBits(Width, Low);
         if (Slice.isConstant())
           K = Slice.One;
       }
@@ -81,6 +86,11 @@ class Executor {
         Available < sym::SymKnownBits::MaxQueryWork)
       Work.spend();
     return K;
+  }
+
+  std::optional<llvm::APInt> constantWindow(Ref R, unsigned Low,
+                                            unsigned Width) {
+    return constantWindow(R, Low, Width, BitFacts);
   }
 
   // Every unhandled expression conservatively demands all operand bits.
@@ -194,11 +204,7 @@ class Executor {
     return Result;
   }
 
-  Ref foldUncached(Ref R) {
-    if (auto K = constantWindow(R, 0, C.width(R)))
-      return C.mkConst(*K);
-    if (!dependencies(R, true).empty())
-      return R;
+  Ref evaluateIndependent(Ref R) {
     // Evaluation follows a complete no-variable-dependence proof. It does
     // not specialize or sample a runtime input. The whole context is bounded
     // and charged before the shared DAG evaluator traverses this expression.
@@ -207,6 +213,14 @@ class Executor {
     for (unsigned N = 0; N < C.numVars(); ++N)
       Values.push_back(llvm::APInt::getAllOnes(C.width(C.varRef(N))));
     return C.mkConst(C.eval(R, Values));
+  }
+
+  Ref foldUncached(Ref R) {
+    if (auto K = constantWindow(R, 0, C.width(R)))
+      return C.mkConst(*K);
+    if (!dependencies(R, true).empty())
+      return R;
+    return evaluateIndependent(R);
   }
 
   Ref fold(Ref R) {
@@ -222,6 +236,70 @@ class Executor {
     auto Value = foldUncached(R);
     Folded[R.index()] = Value;
     return Value;
+  }
+
+  Ref normalizeDecision(Ref Root) {
+    llvm::SmallVector<std::pair<Ref, bool>, 64> Pending;
+    Work.spend();
+    Pending.push_back({Root, false});
+    while (!Pending.empty()) {
+      Work.spend();
+      auto [R, Ready] = Pending.pop_back_val();
+      if (Decisions.contains(R.index()))
+        continue;
+      if (C.isConst(R) || C.op(R) == sym::SymOp::Var) {
+        Decisions[R.index()] = R;
+        continue;
+      }
+      if (!Ready) {
+        Work.spend(1 + C.operands(R).size());
+        Pending.push_back({R, true});
+        for (auto O : C.operands(R))
+          Pending.push_back({O, false});
+        continue;
+      }
+      llvm::SmallVector<Ref, 4> Operands;
+      bool Changed = false;
+      for (auto O : C.operands(R)) {
+        Work.spend();
+        Ref V = Decisions.at(O.index());
+        Operands.push_back(V);
+        Changed |= V != O;
+      }
+      Ref V = R;
+      if (Changed) {
+        // Copy the operands before rebuilding: interning may grow both of
+        // the context's node/operand vectors. Each original DAG node is
+        // normalized once, without expanding shared terms into trees.
+        Work.spend(1 + Operands.size());
+        V = C.rebuild(R, Operands);
+        checkNodes();
+      }
+      if (auto K = constantWindow(V, 0, C.width(V), DecisionFacts)) {
+        V = C.mkConst(*K);
+        checkNodes();
+      }
+      Decisions[R.index()] = V;
+    }
+    return Decisions.at(Root.index());
+  }
+
+  Evaluation decision(Ref R) {
+    auto Value = fold(R);
+    if (!C.isConst(Value))
+      Value = normalizeDecision(Value);
+    checkNodes();
+    if (C.isConst(Value))
+      return {Value, {}};
+    auto Needed = dependencies(Value);
+    if (!Needed.empty())
+      return {{}, std::move(Needed)};
+    // The complete bit-dependency walk can prove independence even when the
+    // initial bounded whole-value query could not. An empty result is a
+    // constant decision, never an absent return or permission to skip it.
+    Value = evaluateIndependent(Value);
+    checkNodes();
+    return {Value, {}};
   }
 
   void checkNodes() {
@@ -245,7 +323,7 @@ public:
            const LLVMScalarEquivalenceLimits &Limits,
            llvm::ArrayRef<Ref> Inputs)
       : C(Context), Work(Budget), Limits(Limits), BitFacts(Context),
-        InputVariables(Context.numVars()) {
+        DecisionFacts(Context), InputVariables(Context.numVars()) {
     for (unsigned N = 0; N < Inputs.size(); ++N)
       Variables[C.varId(Inputs[N])] = N;
   }
@@ -293,11 +371,11 @@ public:
           continue;
         }
         if (Step == sym::StepResult::Return) {
-          auto Definedness = fold(State.read(
+          auto Definedness = decision(State.read(
               sym::SymSpace::Register, LLVMInterpreterDefinednessOffset, 1));
-          auto K = C.asConst(Definedness);
-          if (!K)
-            return {{}, dependencies(Definedness)};
+          if (!Definedness.Value)
+            return Definedness;
+          auto K = C.asConst(Definedness.Value);
           if (!K->isZero())
             throw Failure{Status::Unproved,
                           "executed source operation is not defined"};
@@ -308,10 +386,10 @@ public:
         }
         unsigned Edge = 0;
         if (Step == sym::StepResult::CondBranch) {
-          auto Condition = fold(Exec.branchCondition());
-          auto K = C.asConst(Condition);
-          if (!K)
-            return {{}, dependencies(Condition)};
+          auto Condition = decision(Exec.branchCondition());
+          if (!Condition.Value)
+            return Condition;
+          auto K = C.asConst(Condition.Value);
           Edge = K->isZero() ? 1 : 0;
         } else if (Step != sym::StepResult::Branch)
           throw Failure{Status::Unsupported,

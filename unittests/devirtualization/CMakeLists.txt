@@ -68,6 +68,7 @@ target_compile_definitions(NeverDLLVMInterpreterModelTests PRIVATE
 
 add_neverd_unittest(NeverDLLVMScalarEquivalenceTests
   LLVMScalarEquivalenceTests.cpp
+  LLVMScalarDecisionTests.cpp
   LLVMScalarModelTests.cpp
   LLVMScalarCompileTests.cpp
   LINK_COMPONENTS LLVMInterpreterModel
