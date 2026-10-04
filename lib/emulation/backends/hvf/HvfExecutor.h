@@ -19,6 +19,7 @@
 #include <thread>
 
 namespace neverd::emulation::hvf {
+class OwnerThread;
 #if defined(__arm64__)
 using Cpu = hv_vcpu_t;
 #else
@@ -28,8 +29,8 @@ using Cpu = hv_vcpuid_t;
 llvm::Error error(const char *Operation, hv_return_t Status);
 llvm::Error unavailable(const char *Operation, hv_return_t Status);
 
-/// Every native call except ARM64's asynchronous interrupt runs on Worker. The
-/// submitting thread retains the core execution lease; actions must never
+/// Every native call except ARM64's asynchronous interrupt runs on one owner.
+/// The submitting thread retains the core execution lease; actions must never
 /// acquire a core lock or call guest observers on this worker.
 class Executor final {
 public:
@@ -51,6 +52,7 @@ public:
   llvm::Error run(MachineRunControl Control, Completion Complete);
 
 private:
+  friend struct ExecutorProbe;
   Executor();
   struct Request;
   llvm::Error submit(Action Run, const MachineRunControl *Control = nullptr);
@@ -64,6 +66,11 @@ private:
                    const std::array<MemoryRegistration, 2> &Memory);
   struct RunControl;
   std::unique_ptr<RunControl> Deadline;
+#if defined(__x86_64__)
+  // This reference also keeps the VM lease mutex alive for late global clients.
+  std::shared_ptr<OwnerThread> Owner;
+  uint64_t OwnerGeneration = 0;
+#endif
   // A dying executor and its replacement cannot own the process VM together.
   std::unique_lock<std::mutex> VMLease;
   bool VMCreated = false, CPUCreated = false;
@@ -80,7 +87,9 @@ private:
   std::condition_variable Changed;
   Request *Pending = nullptr;
   bool Shutdown = false;
+#if defined(__arm64__)
   std::thread Worker;
+#endif
 };
 
 /// Detach synchronously while the CPU's projection and physical owner live.

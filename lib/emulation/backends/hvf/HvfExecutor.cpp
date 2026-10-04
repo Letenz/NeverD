@@ -16,6 +16,7 @@
 #include <unistd.h>
 #if defined(__x86_64__)
 #include "HvfIntelDeadline.h"
+#include "HvfOwnerThread.h"
 
 #include <Hypervisor/hv_vmx.h>
 #include <mach/mach_time.h>
@@ -24,10 +25,17 @@
 namespace neverd::emulation::hvf {
 namespace {
 constexpr char Interrupted[] = "HVF entry interrupted";
+#if defined(__arm64__)
 std::mutex &vmMutex() {
   static std::mutex Mutex;
   return Mutex;
 }
+#else
+std::shared_ptr<OwnerThread> ownerThread() {
+  static const auto Owner = std::make_shared<OwnerThread>();
+  return Owner;
+}
+#endif
 std::string message(const char *Operation, hv_return_t Status) {
   return llvm::formatv("HVF {0} failed ({1:x})", Operation, uint32_t(Status))
       .str();
@@ -113,14 +121,31 @@ struct Executor::RunControl {
 #endif
 };
 
+#if defined(__arm64__)
 Executor::Executor() : Worker([this] { work(); }) {}
+#else
+Executor::Executor() : Owner(ownerThread()) {
+  OwnerGeneration = Owner->start([this] { work(); });
+}
+#endif
 llvm::Expected<std::shared_ptr<Executor>> Executor::acquire() {
   static std::mutex RegistryMutex;
   static std::weak_ptr<Executor> Current;
   std::lock_guard Lock(RegistryMutex);
   if (auto Host = Current.lock())
     return Host;
-  auto Host = std::shared_ptr<Executor>(new Executor());
+  std::shared_ptr<Executor> Host;
+#if defined(__x86_64__)
+  try {
+    Host = std::shared_ptr<Executor>(new Executor());
+  } catch (const std::exception &E) {
+    return llvm::make_error<BackendUnavailableError>(
+        std::string("HVF owner thread initialization failed: ") + E.what(),
+        BackendAvailability::InitializationFailed);
+  }
+#else
+  Host = std::shared_ptr<Executor>(new Executor());
+#endif
   if (auto E = Host->submit([](Executor &H) { return H.initialize(); }))
     return E;
   Current = Host;
@@ -138,7 +163,11 @@ Executor::~Executor() {
     Shutdown = true;
     Changed.notify_one();
   }
+#if defined(__arm64__)
   Worker.join();
+#else
+  Owner->wait(OwnerGeneration);
+#endif
 }
 llvm::Error Executor::submit(Action Run, const MachineRunControl *Control) {
   std::unique_lock Gate(Admission, std::defer_lock);
@@ -195,10 +224,11 @@ llvm::Error Executor::initialize() {
       !Supported)
     return diagnostic::unavailable("HVF is not available on this host",
                                    BackendAvailability::MissingCapability);
-  VMLease = std::unique_lock(vmMutex());
 #if defined(__arm64__)
+  VMLease = std::unique_lock(vmMutex());
   const auto Status = hv_vm_create(nullptr);
 #else
+  VMLease = std::unique_lock(Owner->vmMutex());
   const auto Status = hv_vm_create(HV_VM_DEFAULT);
 #endif
   if (Status != HV_SUCCESS)
