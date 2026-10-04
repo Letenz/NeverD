@@ -397,6 +397,8 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
            "192"},
           {R"({"backend":"unicorn","android":{"entry_symbol":"dynamic_lookup","libraries":{"libfixture.so":["strlen"]}}})",
            "4"},
+          {R"({"backend":"unicorn","android":{"entry_symbol":"default_call","libraries":{"libfixture.so":["strlen"]},"default_scope":["libfixture.so"]}})",
+           "6"},
           {R"({"backend":"unicorn","android":{"entry_symbol":"dynamic_identities","arguments":["0x20000000",0],"memory":[{"address":"0x20000000","size":4096}],"read_memory":[{"address":"0x20000000","size":16}],"libraries":{"libidentity.so":["getuid","geteuid","getgid","getegid"]}}})",
            "0"}}) {
     auto Text = takeString(neverd_emulate_process_json(
@@ -405,7 +407,7 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
     auto Parsed = llvm::cantFail(llvm::json::parse(Text));
     EXPECT_EQ(Parsed.getAsObject()->getString(field::Stop), "returned");
     EXPECT_EQ(Parsed.getAsObject()->getString(field::ReturnValue), Expected);
-    if (Expected == "4") {
+    if (Expected == "4" || Expected == "6") {
       bool NamedLookup = false;
       const auto *Android = Parsed.getAsObject()->getObject(field::Android);
       ASSERT_NE(Android, nullptr);

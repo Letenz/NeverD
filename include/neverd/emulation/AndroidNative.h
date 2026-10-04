@@ -50,6 +50,11 @@ struct AndroidNativeOptions {
   /// model. No host files are loaded. Calling an unmodeled function still
   /// stops.
   std::map<std::string, std::vector<std::string>> Libraries;
+  /// Complete ordered RTLD_DEFAULT search scope for this workload. Entries
+  /// name resident providers in Libraries; dlopen/close do not change this
+  /// scope or unload them. Absent means unknown (unsupported); empty means
+  /// explicitly no providers. No namespace or dependency order is inferred.
+  std::optional<std::vector<std::string>> DefaultScope;
 };
 } // namespace neverd::emulation
 #endif

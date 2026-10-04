@@ -2139,8 +2139,11 @@ report parity. No Android device, NDK sysroot, or proprietary fixture is used.
 The dynamic lookup fixtures exercise explicit library catalogues, provider
 identity, repeated opens and NOLOAD, missing symbols, stale handles, null and
 invalid names, TLS slot 6 consume-once errors, and named calls through guest
-traps. Unknown implementations and unsupported process-wide lookup scopes
-must stop. C/CLI and Python integration tests check the same lookup names and
+traps. Default-scope cases distinguish unknown and explicitly empty scopes,
+reverse duplicate-provider priority, skip providers without an export, retain
+resident functions and handles across opens/closes, and prevent local opens
+or a previous workload from widening the scope. Unknown implementations and
+unsupported lookup scopes must stop. C/CLI and Python integration tests check the same lookup names and
 returned addresses; no host library supplies those functions.
 Identity fixtures compare Bionic imports, named dynamic calls and raw ARM64
 services, retain errno, and reject calls after the provider closes. Linux
