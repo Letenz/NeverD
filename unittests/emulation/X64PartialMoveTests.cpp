@@ -163,9 +163,13 @@ protected:
     else if (Address >= Alias && Address < Alias + RAM.size())
       llvm::cantFail(CPU->writeInteger(Address, I.Right[0], WordBytes));
   }
-  auto backing() {
+  auto backing(bool Observing = false) {
     std::array<uint8_t, 2 * PageSize> Bytes{};
-    llvm::cantFail(CPU->snapshotBacking(Alias, Bytes));
+    // Diagnostic snapshots require a stopped CPU. Observers read the live,
+    // readable alias before effects; check errors in Release builds as well.
+    EXPECT_EQ(llvm::toString(Observing ? CPU->read(Alias, Bytes)
+                                       : CPU->snapshotBacking(Alias, Bytes)),
+              "");
     return Bytes;
   }
   void check(const Move &M, bool Store, unsigned Index, const Input &I,
@@ -183,7 +187,7 @@ protected:
       EXPECT_EQ(Address, Alias + Offset);
       EXPECT_EQ(Size, WordBytes);
       EXPECT_EQ(snapshot(), Expected);
-      EXPECT_EQ(backing(), RAM);
+      EXPECT_EQ(backing(true), RAM);
       ++Reads;
     };
     Hooks.Write = [&](uint64_t Address, unsigned Size, uint64_t Value) {
@@ -191,7 +195,7 @@ protected:
       EXPECT_EQ(Size, WordBytes);
       EXPECT_EQ(Value, I.Left[M.Lane]);
       EXPECT_EQ(snapshot(), Expected);
-      EXPECT_EQ(backing(), RAM);
+      EXPECT_EQ(backing(true), RAM);
       ++Writes;
     };
     const auto Bytes = instruction(M, Store, Index);
@@ -319,7 +323,7 @@ TEST_P(X64PartialMove, ObserverStopsAndFailuresPreserveState) {
           EXPECT_EQ(A, Address);
           EXPECT_EQ(Size, WordBytes);
           EXPECT_EQ(snapshot(), Before);
-          EXPECT_EQ(backing(), RAM);
+          EXPECT_EQ(backing(true), RAM);
           if (Fail)
             throw std::runtime_error(ObserverError);
           CPU->stop();
