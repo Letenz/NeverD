@@ -251,6 +251,15 @@ protected:
               "");
     return RAM;
   }
+  void expectSnapshot(const std::map<CPURegister, RegisterValue> &Expected) {
+    const auto Actual = snapshot();
+    ASSERT_EQ(Actual.size(), Expected.size());
+    for (const auto &[R, Value] : Expected) {
+      SCOPED_TRACE(static_cast<unsigned>(R));
+      ASSERT_NE(Actual.find(R), Actual.end());
+      EXPECT_EQ(Actual.at(R), Value);
+    }
+  }
   void check(const Comparison &C, Input I, uint64_t Control, unsigned Dest = 0,
              unsigned Source = 1, bool Memory = false, uint64_t Address = Data,
              uint64_t InitialFlags = Flags) {
@@ -272,7 +281,7 @@ protected:
     Hooks.Read = [&](uint64_t A, unsigned Size) {
       EXPECT_EQ(A, Address);
       EXPECT_EQ(Size, sourceBytes(C));
-      EXPECT_EQ(snapshot(), Expected);
+      expectSnapshot(Expected);
       EXPECT_EQ(backing(true), RAM);
       ++Reads;
     };
@@ -283,7 +292,7 @@ protected:
     Expected[CPURegister::X64FLAGS] = {Value.Flags, 0};
     Expected[CPURegister::X64MXCSR] = {Value.MXCSR, 0};
     Expected[CPURegister::X64PC] = {Code + Bytes.size(), 0};
-    EXPECT_EQ(snapshot(), Expected);
+    expectSnapshot(Expected);
     EXPECT_EQ(backing(), RAM);
     EXPECT_EQ(Reads, unsigned(Memory));
     EXPECT_EQ(Writes, 0u);
@@ -404,7 +413,7 @@ TEST_P(X64SSEComparison, CrossPageFaultsPreserveStatusAndRetry) {
                                           : BackendFaultKind::Protection);
           EXPECT_EQ(Reads, 1u);
           EXPECT_EQ(Writes, 0u);
-          EXPECT_EQ(snapshot(), Expected);
+          expectSnapshot(Expected);
           EXPECT_EQ(backing(), RAM);
           ASSERT_TRUE(CPU->takeRecoverableFault());
           EXPECT_FALSE(CPU->takeRecoverableFault());
@@ -424,7 +433,7 @@ TEST_P(X64SSEComparison, CrossPageFaultsPreserveStatusAndRetry) {
           Expected[CPURegister::X64FLAGS] = {Value.Flags, 0};
           Expected[CPURegister::X64MXCSR] = {Value.MXCSR, 0};
           Expected[CPURegister::X64PC] = {Code + Bytes.size(), 0};
-          EXPECT_EQ(snapshot(), Expected);
+          expectSnapshot(Expected);
           EXPECT_EQ(backing(), RAM);
         }
 }
@@ -444,7 +453,7 @@ TEST_P(X64SSEComparison, ReadObserversStopBeforeComparisonAndStatus) {
         Hooks.Read = [&](uint64_t A, unsigned Size) {
           EXPECT_EQ(A, Data + 1);
           EXPECT_EQ(Size, sourceBytes(C));
-          EXPECT_EQ(snapshot(), Expected);
+          expectSnapshot(Expected);
           EXPECT_EQ(backing(true), RAM);
           ++Reads;
           if (Fail)
@@ -459,7 +468,7 @@ TEST_P(X64SSEComparison, ReadObserversStopBeforeComparisonAndStatus) {
             << Exit.Diagnostic;
         EXPECT_EQ(Reads, 1u);
         EXPECT_EQ(Writes, 0u);
-        EXPECT_EQ(snapshot(), Expected);
+        expectSnapshot(Expected);
         EXPECT_EQ(backing(), RAM);
         if (!Fail) {
           const auto Retry = run(Bytes);
@@ -469,7 +478,7 @@ TEST_P(X64SSEComparison, ReadObserversStopBeforeComparisonAndStatus) {
           Expected[CPURegister::X64FLAGS] = {Value.Flags, 0};
           Expected[CPURegister::X64MXCSR] = {Value.MXCSR, 0};
           Expected[CPURegister::X64PC] = {Code + Bytes.size(), 0};
-          EXPECT_EQ(snapshot(), Expected);
+          expectSnapshot(Expected);
           EXPECT_EQ(backing(), RAM);
         }
       }
@@ -506,7 +515,7 @@ TEST_P(X64SSEComparison, InstructionObserversStopBeforeRegisterEffects) {
             << Exit.Diagnostic;
         EXPECT_EQ(Instructions, 1u);
         EXPECT_EQ(Accesses, 0u);
-        EXPECT_EQ(snapshot(), Before);
+        expectSnapshot(Before);
         EXPECT_EQ(backing(), RAM);
         if (!Fail) {
           const auto Retry = run(Bytes);
@@ -517,7 +526,7 @@ TEST_P(X64SSEComparison, InstructionObserversStopBeforeRegisterEffects) {
           Expected[CPURegister::X64FLAGS] = {Value.Flags, 0};
           Expected[CPURegister::X64MXCSR] = {Value.MXCSR, 0};
           Expected[CPURegister::X64PC] = {Code + Bytes.size(), 0};
-          EXPECT_EQ(snapshot(), Expected);
+          expectSnapshot(Expected);
           EXPECT_EQ(backing(), RAM);
         }
       }
@@ -544,7 +553,7 @@ TEST_P(X64SSEComparison, PageEndInputsUseOnlyTheFloatingSourceWidth) {
     Expected[CPURegister::X64FLAGS] = {Value.Flags, 0};
     Expected[CPURegister::X64MXCSR] = {Value.MXCSR, 0};
     Expected[CPURegister::X64PC] = {Code + Bytes.size(), 0};
-    EXPECT_EQ(snapshot(), Expected);
+    expectSnapshot(Expected);
     EXPECT_EQ(backing(), RAM);
   }
 }
@@ -566,7 +575,7 @@ TEST_P(X64SSEComparison, UnsupportedFormsRejectBeforeObservations) {
     EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation)
         << Exit.Diagnostic;
     EXPECT_EQ(Accesses, 0u);
-    EXPECT_EQ(snapshot(), Before);
+    expectSnapshot(Before);
     EXPECT_EQ(backing(), RAM);
   };
   for (const auto &C : Comparisons)
@@ -626,7 +635,7 @@ TEST_P(X64SSEComparison, DeviceOperandsRejectBeforeCallbacks) {
           << Exit.Diagnostic;
     }
     EXPECT_EQ(Calls, 0u);
-    EXPECT_EQ(snapshot(), Before);
+    expectSnapshot(Before);
     EXPECT_EQ(backing(), RAM);
   }
 }
