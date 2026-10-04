@@ -29,18 +29,24 @@ using namespace vector_test;
 #undef NEVERD_SHUFFLE_VALUE
 enum class Operation {
 #define NEVERD_SHUFFLE_OPERATION(Name, ...) Name,
+#define NEVERD_SHUFFLE_INTERLEAVE(Name, ...) Name,
 #include "X64ShuffleCases.def"
+#undef NEVERD_SHUFFLE_INTERLEAVE
 #undef NEVERD_SHUFFLE_OPERATION
 };
 struct Shuffle {
   const char *Name;
   Operation Kind;
   uint8_t Prefix, Opcode;
+  bool HasControl;
 };
 constexpr Shuffle Shuffles[] = {
 #define NEVERD_SHUFFLE_OPERATION(Name, Prefix, Opcode)                         \
-  {#Name, Operation::Name, Prefix, Opcode},
+  {#Name, Operation::Name, Prefix, Opcode, true},
+#define NEVERD_SHUFFLE_INTERLEAVE(Name, Prefix, Opcode)                        \
+  {#Name, Operation::Name, Prefix, Opcode, false},
 #include "X64ShuffleCases.def"
+#undef NEVERD_SHUFFLE_INTERLEAVE
 #undef NEVERD_SHUFFLE_OPERATION
 };
 constexpr Input Inputs[] = {
@@ -83,6 +89,25 @@ RegisterValue scalarResult(Operation Op, const Input &I, unsigned Control) {
   }
   case Operation::SHUFPD:
     return {I.Left[Control & 1], I.Right[(Control >> 1) & 1]};
+  case Operation::UNPCKLPS:
+  case Operation::UNPCKHPS: {
+    const unsigned Base = Op == Operation::UNPCKHPS ? WordBytes * CHAR_BIT : 0;
+    for (unsigned Lane = 0; Lane < WordBytes / sizeof(uint32_t); ++Lane) {
+      const unsigned SourceBit = Base + Lane * sizeof(uint32_t) * CHAR_BIT;
+      const unsigned DestinationBit = Lane * WordBytes * CHAR_BIT;
+      Result.insertBits(
+          Left.extractBits(sizeof(uint32_t) * CHAR_BIT, SourceBit),
+          DestinationBit);
+      Result.insertBits(
+          Right.extractBits(sizeof(uint32_t) * CHAR_BIT, SourceBit),
+          DestinationBit + sizeof(uint32_t) * CHAR_BIT);
+    }
+    break;
+  }
+  case Operation::UNPCKLPD:
+    return {I.Left[0], I.Right[0]};
+  case Operation::UNPCKHPD:
+    return {I.Left[1], I.Right[1]};
   }
   return {Result.getRawData()[0], Result.getRawData()[1]};
 }
@@ -114,6 +139,22 @@ RegisterValue nativeResult(Operation Op, const Input &I) {
                                              _mm_castsi128_pd(Right),
                                              Control & ControlMask));
     break;
+  case Operation::UNPCKLPS:
+    Result = _mm_castps_si128(
+        _mm_unpacklo_ps(_mm_castsi128_ps(Left), _mm_castsi128_ps(Right)));
+    break;
+  case Operation::UNPCKHPS:
+    Result = _mm_castps_si128(
+        _mm_unpackhi_ps(_mm_castsi128_ps(Left), _mm_castsi128_ps(Right)));
+    break;
+  case Operation::UNPCKLPD:
+    Result = _mm_castpd_si128(
+        _mm_unpacklo_pd(_mm_castsi128_pd(Left), _mm_castsi128_pd(Right)));
+    break;
+  case Operation::UNPCKHPD:
+    Result = _mm_castpd_si128(
+        _mm_unpackhi_pd(_mm_castsi128_pd(Left), _mm_castsi128_pd(Right)));
+    break;
   }
   RegisterValue Actual;
   _mm_storeu_si128(reinterpret_cast<__m128i *>(Actual.data()), Result);
@@ -131,7 +172,8 @@ TEST(X64ShuffleOracle, AllControlsMatchScalarLaneSelection) {
       nativeFunctions(std::make_index_sequence<unsigned(UINT8_MAX) + 1>{});
   for (const auto &S : Shuffles)
     for (const auto &I : Inputs)
-      for (unsigned Control = 0; Control <= UINT8_MAX; ++Control) {
+      for (unsigned Control = 0;
+           Control <= (S.HasControl ? unsigned(UINT8_MAX) : 0u); ++Control) {
         SCOPED_TRACE(S.Name);
         SCOPED_TRACE(Control);
         EXPECT_EQ(Functions[Control](S.Kind, I),
@@ -158,7 +200,8 @@ std::vector<uint8_t> instruction(const Shuffle &S, unsigned Control,
   Bytes.push_back(
       ((Destination & RegisterFieldMask) << RegisterFieldBits) |
       (Memory ? MemoryModRM : RegisterModRM | (Source & RegisterFieldMask)));
-  Bytes.push_back(Control);
+  if (S.HasControl)
+    Bytes.push_back(Control);
   return Bytes;
 }
 
@@ -219,7 +262,8 @@ protected:
   void controls(Operation Op) {
     const auto &S = Shuffles[unsigned(Op)];
     for (const auto &I : Inputs)
-      for (unsigned Control = 0; Control <= UINT8_MAX; ++Control) {
+      for (unsigned Control = 0;
+           Control <= (S.HasControl ? unsigned(UINT8_MAX) : 0u); ++Control) {
         check(S, I, Control);
         ASSERT_FALSE(HasFatalFailure());
         check(S, I, Control, 0, 0);
@@ -237,12 +281,27 @@ protected:
 #include "X64ShuffleCases.def"
 #undef NEVERD_SHUFFLE_OPERATION
 
+#define NEVERD_SHUFFLE_INTERLEAVE(Name, ...)                                   \
+  TEST_P(X64Shuffle, Name##InterleavesRawLanes) { controls(Operation::Name); }
+#include "X64ShuffleCases.def"
+#undef NEVERD_SHUFFLE_INTERLEAVE
+
 TEST_P(X64Shuffle, AllRegisterPairsRetainOriginalSources) {
   for (const auto &S : Shuffles)
     for (unsigned Destination = 0; Destination < XmmCount; ++Destination)
       for (unsigned Source = 0; Source < XmmCount; ++Source) {
         check(S, Inputs[(Destination + Source) % std::size(Inputs)],
               Destination * XmmCount + Source, Destination, Source);
+        ASSERT_FALSE(HasFatalFailure());
+      }
+}
+
+TEST_P(X64Shuffle, MemorySourcesCoverEveryDestination) {
+  for (const auto &S : Shuffles)
+    for (unsigned Destination = 0; Destination < XmmCount; ++Destination)
+      for (unsigned Control : {0u, unsigned(UINT8_MAX)}) {
+        check(S, Inputs[Destination % std::size(Inputs)], Control, Destination,
+              1, true);
         ASSERT_FALSE(HasFatalFailure());
       }
 }

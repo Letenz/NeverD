@@ -74,7 +74,7 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64VectorOperands.def` 统一定义传统 SSE 搬运、运算、移位、转换和掩码的完整操作数规则。`MOVMSKPS`、`MOVMSKPD` 和 `PMOVMSKB` 从 XMM 提取符号位写入 r32/r64，并清零目标其余位。KVM、WHP 与 checked Unicorn 共用准入规则，保留 FLAGS、MXCSR 和源寄存器；掩码的内存操作数、MMX 和 VEX/EVEX 形式仍不支持。
 
-`X64ShuffleInstructions.def` 新增 `PSHUFD`、`PSHUFHW`、`PSHUFLW`、`SHUFPS` 和 `SHUFPD`。`X64VectorOperands.def` 要求完整的三个操作数：XMM 目标、XMM 或对齐的 m128 源，以及 imm8。原始指令按位选择通道，保留 FLAGS 和 MXCSR；内存形式检查全部 16 字节，对齐故障先于数据观察。KVM、WHP 与 checked Unicorn 共用这些规则。
+`X64ShuffleInstructions.def` 新增 `PSHUFD`、`PSHUFHW`、`PSHUFLW`、`SHUFPS` 和 `SHUFPD`。`X64VectorOperands.def` 要求完整的三个操作数：XMM 目标、XMM 或对齐的 m128 源，以及 imm8。原始指令按位选择通道，保留 FLAGS 和 MXCSR；内存形式检查全部 16 字节，对齐故障先于数据观察。KVM、WHP 与 checked Unicorn 共用这些规则。 同一清单还允许恰有两个操作数的 `UNPCKLPS`、`UNPCKHPS`、`UNPCKLPD` 和 `UNPCKHPD`，交错原始目标与源的位模式。硬件可以只读取所选的 64 位；checked RAM 检查对齐的 m128 操作数。
 
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
