@@ -1,0 +1,107 @@
+//===- X64FloatIntegerCases.def - Independent scalar SSE conversions ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_FLOAT_INT_OPERATION
+// Name, mandatory prefix, opcode, source width, truncation. REX.W selects
+// the signed integer destination width independently of the source format.
+NEVERD_FLOAT_INT_OPERATION(CVTSS2SI, 0xf3, 0x2d, 32, false)
+NEVERD_FLOAT_INT_OPERATION(CVTSD2SI, 0xf2, 0x2d, 64, false)
+NEVERD_FLOAT_INT_OPERATION(CVTTSS2SI, 0xf3, 0x2c, 32, true)
+NEVERD_FLOAT_INT_OPERATION(CVTTSD2SI, 0xf2, 0x2c, 64, true)
+#endif
+#ifdef NEVERD_FLOAT_INT_VALUE
+NEVERD_FLOAT_INT_VALUE(OpcodeMap, 0x0f)
+NEVERD_FLOAT_INT_VALUE(Rex, 0x40)
+NEVERD_FLOAT_INT_VALUE(RexWide, 0x08)
+NEVERD_FLOAT_INT_VALUE(RexDestination, 0x04)
+NEVERD_FLOAT_INT_VALUE(RexSource, 0x01)
+NEVERD_FLOAT_INT_VALUE(RegisterMask, 0x07)
+NEVERD_FLOAT_INT_VALUE(RegisterShift, 3)
+NEVERD_FLOAT_INT_VALUE(RegisterModRM, 0xc0)
+NEVERD_FLOAT_INT_VALUE(InitialMXCSR, 0x1f80)
+NEVERD_FLOAT_INT_VALUE(InvalidStatus, 0x01)
+NEVERD_FLOAT_INT_VALUE(PrecisionStatus, 0x20)
+// Preserve the other four sticky flags, then repeat with all six flags set.
+NEVERD_FLOAT_INT_VALUE(ExistingStatus, 0x1e)
+NEVERD_FLOAT_INT_VALUE(FlushToZero, 0x8000)
+NEVERD_FLOAT_INT_VALUE(PhysicalExponent, 0x3fff)
+NEVERD_FLOAT_INT_VALUE(SingleBits, 32)
+NEVERD_FLOAT_INT_VALUE(DoubleBits, 64)
+NEVERD_FLOAT_INT_VALUE(PatternStride, 37)
+#endif
+#ifdef NEVERD_FLOAT_INT_ROUND
+NEVERD_FLOAT_INT_ROUND(Nearest, 0x0000, rmNearestTiesToEven)
+NEVERD_FLOAT_INT_ROUND(Down, 0x2000, rmTowardNegative)
+NEVERD_FLOAT_INT_ROUND(Up, 0x4000, rmTowardPositive)
+NEVERD_FLOAT_INT_ROUND(Truncate, 0x6000, rmTowardZero)
+#endif
+#ifdef NEVERD_FLOAT_INT_INPUT
+// Raw single/double payloads, never converted by the host C++ FP environment.
+NEVERD_FLOAT_INT_INPUT(Zero, 0x00000000, 0x0000000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(NegativeZero, 0x80000000, 0x8000000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(One, 0x3f800000, 0x3ff0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(NegativeOne, 0xbf800000, 0xbff0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(Half, 0x3f000000, 0x3fe0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(NegativeHalf, 0xbf000000, 0xbfe0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(OneHalf, 0x3fc00000, 0x3ff8000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(NegativeOneHalf, 0xbfc00000, 0xbff8000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(TwoHalf, 0x40200000, 0x4004000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(NegativeTwoHalf, 0xc0200000, 0xc004000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(MinSubnormal, 0x00000001, 0x0000000000000001ULL)
+NEVERD_FLOAT_INT_INPUT(NegativeMinSubnormal, 0x80000001, 0x8000000000000001ULL)
+NEVERD_FLOAT_INT_INPUT(MaxSubnormal, 0x007fffff, 0x000fffffffffffffULL)
+NEVERD_FLOAT_INT_INPUT(NegativeMaxSubnormal, 0x807fffff, 0x800fffffffffffffULL)
+NEVERD_FLOAT_INT_INPUT(MinNormal, 0x00800000, 0x0010000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(NegativeMinNormal, 0x80800000, 0x8010000000000000ULL)
+// Adjacent representable payloads around +/-2^31 and +/-2^63.
+NEVERD_FLOAT_INT_INPUT(BelowInt32Limit, 0x4effffff, 0x41dfffffffffffffULL)
+NEVERD_FLOAT_INT_INPUT(Int32Limit, 0x4f000000, 0x41e0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(AboveInt32Limit, 0x4f000001, 0x41e0000000000001ULL)
+NEVERD_FLOAT_INT_INPUT(AboveInt32Minimum, 0xceffffff, 0xc1dfffffffffffffULL)
+NEVERD_FLOAT_INT_INPUT(Int32Minimum, 0xcf000000, 0xc1e0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(BelowInt32Minimum, 0xcf000001, 0xc1e0000000000001ULL)
+NEVERD_FLOAT_INT_INPUT(BelowInt64Limit, 0x5effffff, 0x43dfffffffffffffULL)
+NEVERD_FLOAT_INT_INPUT(Int64Limit, 0x5f000000, 0x43e0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(AboveInt64Limit, 0x5f000001, 0x43e0000000000001ULL)
+NEVERD_FLOAT_INT_INPUT(AboveInt64Minimum, 0xdeffffff, 0xc3dfffffffffffffULL)
+NEVERD_FLOAT_INT_INPUT(Int64Minimum, 0xdf000000, 0xc3e0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(BelowInt64Minimum, 0xdf000001, 0xc3e0000000000001ULL)
+// The double forms distinguish exact INT_MAX from halfway overflow.
+NEVERD_FLOAT_INT_INPUT(Int32Maximum, 0x4f000000, 0x41dfffffffc00000ULL)
+NEVERD_FLOAT_INT_INPUT(Int32MaximumHalf, 0x4f000000, 0x41dfffffffe00000ULL)
+NEVERD_FLOAT_INT_INPUT(Int32MinimumHalf, 0xcf000000, 0xc1e0000000100000ULL)
+NEVERD_FLOAT_INT_INPUT(MaxFinite, 0x7f7fffff, 0x7fefffffffffffffULL)
+NEVERD_FLOAT_INT_INPUT(NegativeMaxFinite, 0xff7fffff, 0xffefffffffffffffULL)
+NEVERD_FLOAT_INT_INPUT(Infinity, 0x7f800000, 0x7ff0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(NegativeInfinity, 0xff800000, 0xfff0000000000000ULL)
+NEVERD_FLOAT_INT_INPUT(QuietNaN, 0x7fc01234, 0x7ff8123456789abcULL)
+NEVERD_FLOAT_INT_INPUT(NegativeQuietNaN, 0xffc01234, 0xfff8123456789abcULL)
+NEVERD_FLOAT_INT_INPUT(SignalingNaN, 0x7f801234, 0x7ff0123456789abcULL)
+NEVERD_FLOAT_INT_INPUT(NegativeSignalingNaN, 0xff801234, 0xfff0123456789abcULL)
+#endif
+#ifdef NEVERD_FLOAT_INT_BYTES
+// Poison the whole native return register so an r32 result must clear bit 63.
+NEVERD_FLOAT_INT_BYTES(PoisonResult, 0x48, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff)
+#endif
+#ifdef NEVERD_FLOAT_INT_INVALID
+NEVERD_FLOAT_INT_INVALID(VexSS, 0xc5, 0xfa, 0x2d, 0xc0)
+NEVERD_FLOAT_INT_INVALID(VexSD, 0xc5, 0xfb, 0x2d, 0xc0)
+NEVERD_FLOAT_INT_INVALID(VexTruncateSS, 0xc5, 0xfa, 0x2c, 0xc0)
+NEVERD_FLOAT_INT_INVALID(VexTruncateSD, 0xc5, 0xfb, 0x2c, 0xc0)
+NEVERD_FLOAT_INT_INVALID(VexWideSS, 0xc4, 0xe1, 0xfa, 0x2d, 0x01)
+NEVERD_FLOAT_INT_INVALID(VexWideSD, 0xc4, 0xe1, 0xfb, 0x2d, 0x01)
+NEVERD_FLOAT_INT_INVALID(EvexSS, 0x62, 0xf1, 0x7e, 0x08, 0x2d, 0xc0)
+NEVERD_FLOAT_INT_INVALID(EvexSD, 0x62, 0xf1, 0xff, 0x08, 0x2d, 0x01)
+NEVERD_FLOAT_INT_INVALID(EvexTruncateSS, 0x62, 0xf1, 0x7e, 0x08, 0x2c, 0xc0)
+NEVERD_FLOAT_INT_INVALID(EvexTruncateSD, 0x62, 0xf1, 0xff, 0x08, 0x2c, 0x01)
+// Packed conversions to MMX use different state and remain excluded.
+NEVERD_FLOAT_INT_INVALID(PSToMMX, 0x0f, 0x2d, 0xc0)
+NEVERD_FLOAT_INT_INVALID(PDToMMX, 0x66, 0x0f, 0x2d, 0xc0)
+NEVERD_FLOAT_INT_INVALID(TruncatePSToMMX, 0x0f, 0x2c, 0xc0)
+NEVERD_FLOAT_INT_INVALID(TruncatePDToMMX, 0x66, 0x0f, 0x2c, 0xc0)
+#endif
+#ifdef NEVERD_FLOAT_INT_TEXT
+NEVERD_FLOAT_INT_TEXT(ObserverError, "float to integer observer failure")
+#endif
