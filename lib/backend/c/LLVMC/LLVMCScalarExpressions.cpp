@@ -64,11 +64,24 @@ ScalarExpression binary(ScalarExpression L, ScalarExpression R, const char *Op,
           Width, Unsigned, Prec};
 }
 
+std::string compoundUpdate(const std::string &Name, unsigned Opcode,
+                           const char *Op, const llvm::Value *Other,
+                           const std::string &RHS) {
+  if (const auto *C = llvm::dyn_cast<llvm::ConstantInt>(Other))
+    if ((Opcode == llvm::Instruction::Add ||
+         Opcode == llvm::Instruction::Sub) &&
+        (C->isOne() || C->isMinusOne())) {
+      const bool Increment = C->isOne() == (Opcode == llvm::Instruction::Add);
+      return std::string(Increment ? "++" : "--") + Name;
+    }
+  return Name + " " + Op + " " + RHS;
+}
+
 } // namespace
 
 std::optional<std::string>
 LLVMCWriter::scalarExpressionText(const llvm::Value *V, bool ForceExpression,
-                                  bool InvertCompare) {
+                                  bool InvertCompare, bool Parenthesize) {
   using Expr = std::optional<ScalarExpression>;
   unsigned Work = 128;
   auto Render = [&](auto &&Self, const llvm::Value *Value, unsigned Depth,
@@ -265,7 +278,36 @@ LLVMCWriter::scalarExpressionText(const llvm::Value *V, bool ForceExpression,
   auto E = Render(Render, V, 0, ForceExpression);
   if (!E)
     return std::nullopt;
-  return operand(*E, Primary);
+  return Parenthesize ? operand(*E, Primary) : E->Text;
+}
+
+std::optional<std::string>
+LLVMCWriter::scalarConditionText(const llvm::Value *V, bool Invert) {
+  if (!UseScalarExpressionTypes || !V || !V->getType()->isIntegerTy(1))
+    return std::nullopt;
+  const auto *Cmp = llvm::dyn_cast<llvm::ICmpInst>(V);
+  if (Cmp && Analysis.Inlinable.count(Cmp) &&
+      !MaterializedExpressions.count(Cmp)) {
+    if (Cmp->isEquality())
+      for (unsigned I = 0; I != 2; ++I)
+        if (const auto *Zero =
+                llvm::dyn_cast<llvm::ConstantInt>(Cmp->getOperand(I));
+            Zero && Zero->isZero()) {
+          // The typed expression is already a normalized bit pattern, so
+          // testing it directly also preserves narrow arithmetic truncation.
+          auto Text =
+              scalarExpressionText(Cmp->getOperand(1 - I), false, false, false);
+          if (!Text)
+            return std::nullopt;
+          const bool Negate = Cmp->getPredicate() == llvm::CmpInst::ICMP_EQ;
+          return Negate != Invert ? "!(" + *Text + ")" : *Text;
+        }
+    return scalarExpressionText(Cmp, true, Invert, false);
+  }
+  auto Text = scalarExpressionText(V, false, false, false);
+  if (!Text)
+    return std::nullopt;
+  return Invert ? "!(" + *Text + ")" : *Text;
 }
 
 std::optional<std::string>
@@ -306,8 +348,8 @@ LLVMCWriter::scalarUpdateText(const llvm::Value *Destination,
     return std::nullopt;
   }
   const auto Name = getName(Destination);
-  auto L = scalarExpressionText(BO->getOperand(0));
-  auto R = scalarExpressionText(BO->getOperand(1));
+  auto L = scalarExpressionText(BO->getOperand(0), false, false, false);
+  auto R = scalarExpressionText(BO->getOperand(1), false, false, false);
   const llvm::Value *Other = nullptr;
   std::string RHS;
   if (L && R && *L == Name) {
@@ -319,15 +361,105 @@ LLVMCWriter::scalarUpdateText(const llvm::Value *Destination,
   } else {
     return std::nullopt;
   }
-  if (const auto *C = llvm::dyn_cast<llvm::ConstantInt>(Other))
-    if ((BO->getOpcode() == llvm::Instruction::Add ||
-         BO->getOpcode() == llvm::Instruction::Sub) &&
-        (C->isOne() || C->isMinusOne())) {
-      const bool Increment =
-          C->isOne() == (BO->getOpcode() == llvm::Instruction::Add);
-      return std::string(Increment ? "++" : "--") + Name;
+  return compoundUpdate(Name, BO->getOpcode(), Op, Other, RHS);
+}
+
+std::optional<LLVMCWriter::ScalarConditionalUpdate>
+LLVMCWriter::scalarConditionalUpdate(const llvm::Value *Destination,
+                                     const llvm::Value *Incoming) {
+  if (!UseScalarExpressionTypes || !Destination || !Incoming ||
+      !Destination->getType()->isIntegerTy() ||
+      Destination->getType() != Incoming->getType())
+    return std::nullopt;
+  const unsigned Bits = Destination->getType()->getIntegerBitWidth();
+  if (Bits != 8 && Bits != 16 && Bits != 32 && Bits != 64)
+    return std::nullopt;
+  const auto *BO = llvm::dyn_cast<llvm::BinaryOperator>(Incoming);
+  if (!BO || !Analysis.Inlinable.count(BO) ||
+      MaterializedExpressions.count(BO) || !scalarExpressionText(BO))
+    return std::nullopt;
+  const char *Op = nullptr;
+  switch (BO->getOpcode()) {
+  case llvm::Instruction::Add:
+    Op = "+=";
+    break;
+  case llvm::Instruction::Sub:
+    Op = "-=";
+    break;
+  case llvm::Instruction::Xor:
+    Op = "^=";
+    break;
+  case llvm::Instruction::Or:
+    Op = "|=";
+    break;
+  case llvm::Instruction::And:
+    Op = "&=";
+    break;
+  default:
+    return std::nullopt;
+  }
+  const auto Name = getName(Destination);
+  auto Independent = [&](const llvm::Value *Root) {
+    llvm::SmallVector<const llvm::Value *, 16> Pending{Root};
+    llvm::SmallPtrSet<const llvm::Value *, 32> Seen;
+    unsigned Work = 0;
+    while (!Pending.empty()) {
+      const auto *Value = Pending.pop_back_val();
+      if (++Work > 128)
+        return false;
+      if (!Seen.insert(Value).second || llvm::isa<llvm::ConstantInt>(Value))
+        continue;
+      const auto *Inst = llvm::dyn_cast<llvm::Instruction>(Value);
+      if (!Inst || !Analysis.Inlinable.count(Inst) ||
+          MaterializedExpressions.count(Inst)) {
+        if ((!Inst && !llvm::isa<llvm::Argument>(Value)) ||
+            getName(Value) == Name)
+          return false;
+        continue;
+      }
+      if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(Inst)) {
+        for (const auto &Arg : Call->args())
+          Pending.push_back(Arg.get());
+      } else {
+        for (const auto &Operand : Inst->operands())
+          Pending.push_back(Operand.get());
+      }
     }
-  return Name + " " + Op + " " + RHS;
+    return true;
+  };
+  for (unsigned I : {1u, 0u}) {
+    if (I == 0 && !BO->isCommutative())
+      continue;
+    const auto *Select = llvm::dyn_cast<llvm::SelectInst>(BO->getOperand(I));
+    if (!Select || !Analysis.Inlinable.count(Select) ||
+        MaterializedExpressions.count(Select))
+      continue;
+    for (bool IdentityWhenTrue : {false, true}) {
+      const auto *Identity = llvm::dyn_cast<llvm::ConstantInt>(
+          Select->getOperand(IdentityWhenTrue ? 1 : 2));
+      if (!Identity ||
+          (BO->getOpcode() == llvm::Instruction::And ? !Identity->isMinusOne()
+                                                     : !Identity->isZero()))
+        continue;
+      const auto *Term = Select->getOperand(IdentityWhenTrue ? 2 : 1);
+      auto Base =
+          scalarExpressionText(BO->getOperand(1 - I), false, false, false);
+      if (!Base)
+        continue;
+      const bool ChangesBase = *Base != Name;
+      if (ChangesBase &&
+          (!Independent(Select->getCondition()) || !Independent(Term)))
+        continue;
+      auto Condition =
+          scalarConditionText(Select->getCondition(), IdentityWhenTrue);
+      auto Text = scalarExpressionText(Term, false, false, false);
+      if (Condition && Text)
+        return ScalarConditionalUpdate{
+            ChangesBase ? Name + " = " + *Base : "", *Condition,
+            compoundUpdate(Name, BO->getOpcode(), Op, Term, *Text)};
+    }
+  }
+  return std::nullopt;
 }
 
 } // namespace neverd

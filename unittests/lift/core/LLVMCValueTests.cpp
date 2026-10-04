@@ -2057,3 +2057,140 @@ TEST(LLVMCScalarExpressions, ReversedSubtractionCannotUseACompoundUpdate) {
 )");
   EXPECT_EQ(Source.find(" -= "), std::string::npos) << Source;
 }
+
+TEST(LLVMCScalarExpressions, NeutralSelectionsBecomeConditionalUpdates) {
+  for (const std::string Op : {"add", "sub", "xor", "or", "and"})
+    for (bool IdentityWhenTrue : {false, true}) {
+      SCOPED_TRACE(Op + (IdentityWhenTrue ? " true" : " false"));
+      const std::string Identity = Op == "and" ? "-1" : "0";
+      const std::string Selected = IdentityWhenTrue ? Identity + ", i64 %term"
+                                                    : "%term, i64 " + Identity;
+      const std::string Operands =
+          Op == "add" || Op == "xor" ? "%selected, %base" : "%base, %selected";
+      const auto Source = checkScalarLoopExpression(R"(
+  %base = xor i64 %state, %b
+  %bit = and i64 %b, 1
+  %condition = icmp eq i64 %bit, 0
+  %term = add i64 %b, 3
+  %selected = select i1 %condition, i64 )" + Selected +
+                                                    "\n  %result = " + Op +
+                                                    " i64 " + Operands + "\n");
+      EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
+      EXPECT_EQ(Source.find(" ? "), std::string::npos) << Source;
+      const auto At = Source.find("    uint64_t result");
+      ASSERT_NE(At, std::string::npos) << Source;
+      const auto Declaration = Source.substr(At, Source.find('\n', At) - At);
+      EXPECT_NE(Declaration.find(" = a;"), std::string::npos) << Source;
+    }
+}
+
+TEST(LLVMCScalarExpressions, ConditionalUpdateKeepsOldDestinationCondition) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %base = add i64 %state, 1
+  %bit = and i64 %state, 1
+  %condition = icmp eq i64 %bit, 0
+  %selected = select i1 %condition, i64 %b, i64 0
+  %result = add i64 %base, %selected
+)");
+  EXPECT_NE(Source.find(" ? "), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions, UnchangedBaseNeedsNoAssignmentOrSnapshot) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %bit = and i64 %state, 1
+  %condition = icmp eq i64 %bit, 0
+  %term = xor i64 %state, %b
+  %selected = select i1 %condition, i64 %term, i64 0
+  %result = add i64 %state, %selected
+)");
+  EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
+  EXPECT_NE(Source.find(" += "), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" ? "), std::string::npos) << Source;
+  const auto At = Source.find("    uint64_t result");
+  ASSERT_NE(At, std::string::npos) << Source;
+  const auto NameBegin = At + std::string("    uint64_t ").size();
+  const auto Name =
+      Source.substr(NameBegin, Source.find(' ', NameBegin) - NameBegin);
+  EXPECT_EQ(Source.find(Name + " = " + Name + ";"), std::string::npos)
+      << Source;
+}
+
+TEST(LLVMCScalarExpressions, ConditionalUpdateKeepsOldDestinationContribution) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %base = add i64 %state, 1
+  %term = xor i64 %state, %b
+  %condition = icmp eq i64 %b, 0
+  %selected = select i1 %condition, i64 0, i64 %term
+  %result = add i64 %base, %selected
+)");
+  EXPECT_NE(Source.find(" ? "), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions,
+     SharedInlinedConditionStillReadsTheOldDestination) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %condition = icmp eq i64 %state, 0
+  %selected = select i1 %condition, i64 %b, i64 0
+  %increment = select i1 %condition, i64 1, i64 2
+  %base = add i64 %state, %increment
+  %result = add i64 %base, %selected
+)");
+  EXPECT_NE(Source.find(" ? "), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions,
+     ConditionalUpdateUsesMaterializedConditionSnapshot) {
+  // Exceed the expression-depth bound at the comparison itself. Multiple
+  // uses alone do not keep a comparison from being inlined.
+  std::string Body, Previous = "%state";
+  for (unsigned I = 0; I != 16; ++I) {
+    const std::string Name = "%v" + std::to_string(I);
+    Body += "  " + Name + " = add i64 " + Previous + ", %b\n";
+    Previous = Name;
+  }
+  Body += "  %condition = icmp eq i64 " + Previous + R"(, 0
+  %selected = select i1 %condition, i64 7, i64 0
+  %increment = select i1 %condition, i64 1, i64 2
+  %base = add i64 %state, %increment
+  %result = add i64 %base, %selected
+)";
+  const auto Source = checkScalarLoopExpression(Body);
+  EXPECT_NE(Source.find("uint8_t condition"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("if (condition"), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions, ConditionalTruthTestRetainsNarrowNormalization) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %x = trunc i64 %a to i8
+  %y = trunc i64 %b to i8
+  %wrapped = add i8 %x, %y
+  %condition = icmp eq i8 %wrapped, 0
+  %selected = select i1 %condition, i64 7, i64 0
+  %base = add i64 %state, 1
+  %result = add i64 %base, %selected
+)");
+  EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(uint8_t)"), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions, NonIdentitySelectionKeepsBothArms) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %condition = icmp eq i64 %b, 0
+  %selected = select i1 %condition, i64 5, i64 1
+  %base = xor i64 %state, %b
+  %result = add i64 %base, %selected
+)");
+  EXPECT_NE(Source.find(" ? "), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions, SharedSelectionKeepsItsMaterializedValue) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %condition = icmp eq i64 %b, 0
+  %selected = select i1 %condition, i64 5, i64 0
+  %base = xor i64 %state, %selected
+  %result = add i64 %base, %selected
+)");
+  const auto Select = Source.find(" ? ");
+  ASSERT_NE(Select, std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" ? ", Select + 1), std::string::npos) << Source;
+}
