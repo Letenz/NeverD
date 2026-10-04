@@ -89,6 +89,7 @@ private:
                                        uint64_t ReturnValue = 0);
   BionicResult dlfcn(NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
+  llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
 };
 llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                         const ProcessOptions &Options);
