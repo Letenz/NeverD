@@ -1334,3 +1334,11 @@ python3 scripts/benchmark_cpu.py \
 Подсчёт входов — отдельная диагностика с дополнительными затратами, включающая стартовые пробы; её время не является показателем производительности. Нагрузки не характеризуют целую ОС или сравнение между ISA.
 
 [Воспроизведение](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+`NeverDLLVMPrivateFrameTests` проверяет перекрывающиеся записи, все входы и обратные рёбра, сохранение адресов, пересекающиеся внешние выходы, неинициализированную/упорядоченную/неизвестную память, метаданные и атомарный отказ при точном бюджете и нехватке единицы. Независимые оракулы O0/O2 с ловушками неопределённого поведения сравнивают полные результаты, внешние объекты и байты кадра. Компиляция для x86-64, AArch64, big-endian AArch64 и ARM32 не доказывает нативное восстановление этих архитектур. При изменении общих вспомогательных правил адресов и эффектов повторять `NeverDByteMemoryForwardingTests`.
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

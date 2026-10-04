@@ -1212,3 +1212,11 @@ python3 scripts/benchmark_cpu.py \
 入口計數為獨立診斷，會增加開銷，包含啟動探針；計數執行的耗時不得混入效能結果。局部負載不代表完整 OS 或跨架構效能。
 
 [重現方法](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+`NeverDLLVMPrivateFrameTests` 涵蓋重疊寫入、所有入口路徑及迴圈回邊、保留的數值位址、外部輸出別名、未初始化／有序／未知記憶體、中繼資料，以及精確／少一單位預算下的原子拒絕。獨立 O0/O2 oracle 啟用未定義行為陷阱，比較完整回傳值、外部物件及框架位元組。編譯涵蓋 x86-64、AArch64、大端 AArch64 與 ARM32，不表示已支援這些架構的原生恢復。修改共用位址／副作用工具時，同時重跑 `NeverDByteMemoryForwardingTests`。
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```
