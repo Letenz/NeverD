@@ -269,8 +269,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Failed(SP.takeError());
         break;
       }
-      auto Transfer = Exceptions.begin(ExceptionDispatcher::exception(*Raised),
-                                       (*SP)[0], Pending.size());
+      auto Transfer = Exceptions.beginFault(*Raised, (*SP)[0], Pending.size());
       if (!Transfer) {
         Failed(Transfer.takeError());
         break;

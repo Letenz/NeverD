@@ -7,6 +7,7 @@
 #define NEVERD_EMULATION_WINDOWS_PROCESS_EXCEPTIONS_H
 #include "../exception/X64SEH.h"
 #include "WindowsProcess.h"
+#include "WindowsProcessContext.h"
 #include "WindowsProcessModules.h"
 
 #include "neverd/emulation/CPU.h"
@@ -36,6 +37,9 @@ public:
   llvm::Expected<Transfer> begin(Exception Raised, uint64_t StackPointer,
                                  size_t LoaderDepth,
                                  std::optional<size_t> Event = std::nullopt);
+  llvm::Expected<Transfer> beginFault(const BackendFault &Fault,
+                                      uint64_t StackPointer,
+                                      size_t LoaderDepth);
   bool activeAt(size_t LoaderDepth) const;
   bool returning(uint64_t PC, uint64_t SP, size_t LoaderDepth) const;
   llvm::Expected<Transfer> returned(uint32_t Disposition);
@@ -69,10 +73,12 @@ private:
     HandlerKind Kind = HandlerKind::Exception;
     std::unique_ptr<Unwind> SEH;
     std::optional<size_t> Rejected;
+    ContextOrigin Origin = ContextOrigin::Current;
   };
   llvm::Expected<Transfer>
   beginDispatch(Exception Raised, uint64_t StackPointer, size_t LoaderDepth,
-                std::optional<size_t> Event, std::optional<size_t> Rejected);
+                std::optional<size_t> Event, std::optional<size_t> Rejected,
+                ContextOrigin Origin = ContextOrigin::Current);
   std::list<Handler> &handlers(HandlerKind Kind);
   llvm::Expected<Transfer> callNext();
   llvm::Expected<Transfer> continueExecution();

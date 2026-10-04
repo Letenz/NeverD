@@ -12,7 +12,10 @@
 #include <vector>
 
 namespace neverd::emulation::windows_process {
-llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU);
+enum class ContextOrigin { Current, HardwareFault };
+llvm::Expected<std::vector<uint8_t>>
+captureUserContext(ExecutionBackend &CPU,
+                   ContextOrigin Origin = ContextOrigin::Current);
 /// RtlCaptureContext records the calling frame without changing CPU state.
 /// Validate the destination and return slot before publishing any bytes;
 /// fields outside the architecture's native capture contract stay untouched.
@@ -27,6 +30,7 @@ llvm::Error restoreUserContext(ExecutionBackend &CPU,
                                const BackendContext &Snapshot,
                                llvm::ArrayRef<uint8_t> Original,
                                llvm::ArrayRef<uint8_t> Changed,
-                               uint64_t StackBase, uint64_t StackTop);
+                               uint64_t StackBase, uint64_t StackTop,
+                               ContextOrigin Origin = ContextOrigin::Current);
 } // namespace neverd::emulation::windows_process
 #endif

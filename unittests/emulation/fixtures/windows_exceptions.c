@@ -125,6 +125,17 @@ static U32 resolve(Pointers *P) {
               *(U64 *)(C + ContextPC) && *(U64 *)(C + ContextSP),
           8);
   require(R->Address != 0 && R->Count <= MaxParameters, 9);
+#if defined(_M_X64) || defined(__x86_64__)
+  // Fault delivery exposes RF in the saved CONTEXT. Software raises and
+  // ordinary execution after a resumed instruction do not retain that bit.
+  const int Fault =
+      (R->Code == AccessViolation &&
+       (Mode == ReadMode || Mode == WriteMode || Mode == ContextMode)) ||
+      (R->Code == DivideByZero && Mode == DivideMode);
+  require((*(U32 *)(C + ContextProcessorFlags) & FaultResumeFlag) ==
+              (Fault ? FaultResumeFlag : 0),
+          ResumeFlagSite);
+#endif
   if (R->Code == AttachCode || R->Code == DetachCode) {
     require(Mode == LoaderMode && R->Count == 1 && R->Arguments[0] == DataValue,
             10);
@@ -135,10 +146,11 @@ static U32 resolve(Pointers *P) {
     require(*(U32 *)(C + ContextControl) == ControlValue, 47);
     return ContinueExecution;
   }
-  if (Mode == SoftwareMode) {
-    requireRecord(R->Code == SoftwareCode && R->Flags == SoftwareOriginate &&
-                      !R->Nested,
-                  R, 11);
+  if (Mode == SoftwareMode || Mode == SoftwareAccessMode) {
+    requireRecord(
+        R->Code == (Mode == SoftwareMode ? SoftwareCode : AccessViolation) &&
+            R->Flags == SoftwareOriginate && !R->Nested,
+        R, 11);
     require(R->Count == (Calls == 1 ? MaxParameters : 0), 12);
     for (U32 I = 0; I < R->Count; ++I)
       require(R->Arguments[I] == DataValue + I, 13);
@@ -300,7 +312,7 @@ U32 entry(void) {
     for (U32 I = 0; I < MaxParameters + 1; ++I)
       Arguments[I] = DataValue + I;
     SetLastError(LastErrorSeed);
-    RaiseException(SoftwareCode,
+    RaiseException(Mode == SoftwareAccessMode ? AccessViolation : SoftwareCode,
                    Mode == NoncontinuableMode ? Noncontinuable
                    : Mode == RaiseFlagsMode   ? 2
                                               : 0,
