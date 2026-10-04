@@ -248,8 +248,7 @@ TEST(X64SSEPredicateDecoder, FamilyAndPredicateAreIndependentOfSyntax) {
     }
 }
 
-TEST(X64SSEPredicateOracle,
-     MasksAndExceptionPriorityMatchOriginalInstructions) {
+void nativeOracle(OperationKind Kind) {
 #if defined(__x86_64__) || defined(_M_X64)
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
@@ -262,7 +261,9 @@ TEST(X64SSEPredicateOracle,
   constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64SSEPredicateCases.def"
 #undef NEVERD_SSE_PREDICATE_BYTES
-  for (const auto &C : Comparisons)
+  for (const auto &C : Comparisons) {
+    if (C.Op.Kind != Kind)
+      continue;
     for (bool Memory : {false, true}) {
 #ifdef _WIN32
       std::vector<uint8_t> Bytes(std::begin(Win64Before),
@@ -334,10 +335,18 @@ TEST(X64SSEPredicateOracle,
                 EXPECT_EQ(Actual.MXCSR, Expected.MXCSR);
               }
     }
+  }
 #else
   GTEST_SKIP();
 #endif
 }
+
+#define NEVERD_SSE_PREDICATE_OPERATION(Name, ...)                              \
+  TEST(X64SSEPredicateOracle, Name##MasksAndStatusMatchOriginalInstructions) { \
+    nativeOracle(OperationKind::Name);                                         \
+  }
+#include "X64SSEPredicateCases.def"
+#undef NEVERD_SSE_PREDICATE_OPERATION
 
 class X64SSEPredicate : public X64VectorTest {
 protected:
@@ -443,23 +452,23 @@ protected:
         continue;
       for (const auto &Left : Inputs)
         for (const auto &Right : Inputs)
-          for (auto Sticky : {uint64_t(0), ExistingStatus,
-                              ExistingStatus | InvalidStatus | DenormalStatus})
-            for (auto Flush : {uint64_t(0), FlushToZero}) {
-              SCOPED_TRACE(Left.Name);
-              SCOPED_TRACE(Right.Name);
-              const auto I = input(C, Left, Right);
-              const auto Control = InitialMXCSR | Sticky | Flush;
-              check(C, I, Control);
-              ASSERT_FALSE(HasFatalFailure());
-              check(C, I, Control, 0, 1, true, Alias + (C.Op.Alignment == 1));
-              ASSERT_FALSE(HasFatalFailure());
-              check(C, I, Control, 0, 1, true,
-                    Alias + PageSize -
-                        (C.Op.Alignment == 1 ? sourceBytes(C) / 2
-                                             : sourceBytes(C)));
-              ASSERT_FALSE(HasFatalFailure());
-            }
+          // Exhaust all numeric pairs here; the separate control matrix
+          // covers all rounding modes, sticky masks and FTZ settings.
+          for (auto Sticky : {uint64_t(0), ExistingStatus}) {
+            SCOPED_TRACE(Left.Name);
+            SCOPED_TRACE(Right.Name);
+            const auto I = input(C, Left, Right);
+            const auto Control = InitialMXCSR | Sticky;
+            check(C, I, Control);
+            ASSERT_FALSE(HasFatalFailure());
+            check(C, I, Control, 0, 1, true, Alias + (C.Op.Alignment == 1));
+            ASSERT_FALSE(HasFatalFailure());
+            check(C, I, Control, 0, 1, true,
+                  Alias + PageSize -
+                      (C.Op.Alignment == 1 ? sourceBytes(C) / 2
+                                           : sourceBytes(C)));
+            ASSERT_FALSE(HasFatalFailure());
+          }
     }
   }
 };

@@ -29,7 +29,13 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "X64SSEPredicateOracle.MasksAndExceptionPriorityMatchOriginalInstructions")
+    "X64SSEPredicateOracle.CMPSSMasksAndStatusMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateOracle.CMPSDMasksAndStatusMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateOracle.CMPPSMasksAndStatusMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateOracle.CMPPDMasksAndStatusMatchOriginalInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SSEPredicateDecoder.FamilyAndPredicateAreIndependentOfSyntax")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -871,12 +877,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64StringComparison."
     "ObserverFailureDoesNotPublishCurrentComparison/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64StringComparison."
+                                "LockedStringsRejectAndScalarSSEPreservesString"
+                                "Operands/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64StringComparison."
-    "LockedAndScalarSSEFormsRejectBeforeReads/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64StringComparison."
-    "LockedAndScalarSSEFormsRejectBeforeReads/{backend}User")
+    "LockedStringsRejectAndScalarSSEPreservesStringOperands/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64StringComparison."
     "CrossPageReadOnlyOperandsMatchHostThroughAliases/{backend}Supervisor")

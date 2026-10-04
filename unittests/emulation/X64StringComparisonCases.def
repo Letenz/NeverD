@@ -24,7 +24,7 @@ NEVERD_COMPARISON_HOST(Intel, "GenuineIntel", true)
 NEVERD_COMPARISON_HOST(AMD, "AuthenticAMD", false)
 #endif
 #ifdef NEVERD_COMPARISON_BYTES
-// The scalar SSE comparison has an immediate and must never reach CMPSD.
+// Scalar CMPSD must never enter the string comparison path.
 NEVERD_COMPARISON_BYTES(ScalarSSECompare, 0xf2, 0x0f, 0xc2, 0xc0, 0x00)
 #endif
 #ifdef NEVERD_COMPARISON_CASE
