@@ -58,10 +58,18 @@ llvm::Error initializeMemoryRegion(AddressSpace &Space,
                                    const NativeMemoryRegion &Region,
                                    const ExecutionBudget &Budget);
 struct OnceCallback {
-  uint64_t Entry, Control;
+  uint64_t Control;
+};
+struct FinalizeCallback {
+  uint64_t DSO;
+};
+struct GuestCallback {
+  uint64_t Entry;
+  std::optional<uint64_t> Argument;
+  std::variant<OnceCallback, FinalizeCallback> Continuation;
 };
 /// A returning model either completes now or suspends for a guest callback.
-using BionicValue = std::variant<uint64_t, OnceCallback>;
+using BionicValue = std::variant<uint64_t, GuestCallback>;
 using BionicResult = llvm::Expected<std::optional<BionicValue>>;
 class Bionic {
 public:
@@ -73,7 +81,7 @@ public:
         Result(Result), Budget(Budget), Linked(Linked) {}
   bool timedOut() const { return Expired; }
   BionicResult invoke(NativeCallEvent &Call);
-  llvm::Error finishOnce(const OnceCallback &Callback);
+  BionicResult finishCallback(const GuestCallback &Callback);
 
 private:
   ExecutionBackend &CPU;
@@ -95,6 +103,10 @@ private:
     uint64_t Size, MappedSize;
   };
   std::map<uint64_t, Allocation> Allocations;
+  struct ExitCallback {
+    uint64_t Entry, Argument, DSO;
+  };
+  std::vector<ExitCallback> ExitCallbacks;
   llvm::Error access(uint64_t Address, uint64_t Size, unsigned Permissions);
   llvm::Expected<uint8_t> byte(uint64_t Address);
   llvm::Expected<std::string> string(uint64_t Address);
@@ -105,6 +117,9 @@ private:
                                        uint64_t ReturnValue = 0);
   BionicResult dlfcn(NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
+  llvm::Error finishOnce(const OnceCallback &Callback);
+  BionicResult registerExit(const NativeCallEvent &Call);
+  BionicResult finalize(uint64_t DSO);
   llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
   class StringFormatter;
   BionicResult format(const NativeCallEvent &Call);

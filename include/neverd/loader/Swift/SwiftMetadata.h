@@ -92,6 +92,23 @@ struct SwiftObjCClassIdentity {
 std::optional<SwiftObjCClassIdentity>
 swiftObjCClassIdentity(const BinaryImage &Image, va_t Metadata);
 
+struct SwiftFixedRootClassField {
+  std::string Name, MangledType;
+  uint32_t Offset = 0, ByteCount = 0, Alignment = 0;
+};
+struct SwiftFixedRootClassStorage {
+  SwiftObjCClassIdentity Identity;
+  uint32_t Size = 0, Alignment = 0;
+  std::vector<SwiftFixedRootClassField> Fields;
+};
+/// Bounded native Swift root-class storage with Optional<String>,
+/// Optional<Optional<String>> or Optional<Bool> fields. Registered identity,
+/// complete kind-1 reflection, immutable offset declarations and metadata
+/// bounds must agree. This grants no initializer bytes, object identity,
+/// accessor ABI, runtime call effects or source-publication permission.
+std::optional<SwiftFixedRootClassStorage>
+swiftFixedRootClassStorage(const BinaryImage &Image, va_t Metadata);
+
 /// A separately authenticated Swift reflection field whose Objective-C type
 /// string is empty. The exact ivar/offset symbol/vector must agree; callers
 /// still load the runtime offset and prove the receiver's class provenance.

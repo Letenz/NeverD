@@ -132,7 +132,7 @@ DarwinMemory::protect(const ProcessServiceEvent &E) {
     if (Cursor >= R.Address + R.Size)
       continue;
     if (R.Device)
-      return failure("Darwin memory service encountered device memory");
+      return failure(diagnostic::MemoryDevice);
     Cursor = std::min(Address + *Size, R.Address + R.Size);
     if (Cursor == Address + *Size)
       break;
@@ -147,7 +147,7 @@ DarwinMemory::protect(const ProcessServiceEvent &E) {
           return P >= R.Address && P - R.Address < R.Size;
         });
     if (Max == Maximum.end())
-      return failure("Darwin mapping lost its maximum protection");
+      return failure(diagnostic::MemoryMaximum);
     if (Prot & ~Max->Protection)
       return error(PermissionDenied);
   }
@@ -207,9 +207,7 @@ DarwinMemory::handle(ServiceKind Kind, const ProcessServiceEvent &E,
        E.Arguments[1] <= UserLimit - E.Arguments[0] &&
        overlaps(E.Arguments[0], E.Arguments[1], ReturnGate, PageSize))) {
     Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic =
-        "unsupported Darwin memory mode (only private anonymous "
-        "data mappings; no JIT, file or private-gate mutation)";
+    Result.Diagnostic = diagnostic::MemoryMode;
     return std::optional<ServiceResult>();
   }
   llvm::Expected<ServiceResult> Value = IsMap ? map(E)

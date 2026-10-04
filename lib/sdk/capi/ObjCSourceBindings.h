@@ -4,6 +4,7 @@
 #include "../../ir/high/pass/HighFrameAddress.h"
 #include "../../loader/MachO/DarwinRuntimeImport.h"
 #include "../../loader/MachO/DarwinSourceDeclarations.h"
+#include "../../loader/ObjC/ObjCClassAccessorMachine.h"
 #include "../../loader/ObjC/ObjCRuntimeData.h"
 #include "../../loader/Swift/SwiftErrorRuntime.h"
 #include "BorrowedByteSources.h"
@@ -4725,6 +4726,247 @@ swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base) {
   return Hint;
 }
 
+struct SwiftStaticRootObjectProof {
+  SourceCallTypeHint Hint;
+  va_t Metadata = 0, Descriptor = 0;
+  std::string Initializer;
+};
+
+inline std::optional<SwiftStaticRootObjectProof>
+swiftStaticRootObjectStorage(const BinaryImage &Image, va_t Base) {
+  if (!Base || Base % 8 || Base > InvalidVA - 4104 ||
+      !Image.MachOTwoLevelNamespace)
+    return std::nullopt;
+  const auto *Storage = uniqueWritableDataSymbol(Image, Base, 24);
+  if (!Storage)
+    return std::nullopt;
+  llvm::StringRef Name(Storage->Name);
+  Name.consume_front("_");
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Tree = llvm::swiftDemangle(Name, Options);
+  const auto Shape = [](const auto &Node, llvm::StringRef Kind, size_t Count) {
+    return Node.Kind == Kind && !Node.Text && !Node.Index &&
+           Node.Children.size() == Count;
+  };
+  const auto Text = [](const auto &Node, llvm::StringRef Kind) {
+    return Node.Kind == Kind && Node.Text && !Node.Text->empty() &&
+           !Node.Index && Node.Children.empty();
+  };
+  if (!Tree.Root || !Tree.Error.empty() || !Shape(*Tree.Root, "Global", 2) ||
+      Tree.Root->Children[0].Kind != "OutlinedVariable" ||
+      Tree.Root->Children[0].Index != 0 || Tree.Root->Children[0].Text ||
+      !Tree.Root->Children[0].Children.empty() || !Name.ends_with("Tv_") ||
+      !Shape(Tree.Root->Children[1], "GlobalVariableOnceFunction", 2))
+    return std::nullopt;
+  const auto &Context = Tree.Root->Children[1].Children[0];
+  const auto &Properties = Tree.Root->Children[1].Children[1];
+  if (!Shape(Context, "Class", 2) || !Text(Context.Children[0], "Module") ||
+      !Text(Context.Children[1], "Identifier") ||
+      !Shape(Properties, "GlobalVariableOnceDeclList", 1) ||
+      !Text(Properties.Children[0], "Identifier"))
+    return std::nullopt;
+  const std::string &Module = *Context.Children[0].Text;
+  const std::string &ClassName = *Context.Children[1].Text;
+  const std::string RuntimeName = "_TtC" + std::to_string(Module.size()) +
+                                  Module + std::to_string(ClassName.size()) +
+                                  ClassName;
+  const ObjCClass *Class = nullptr;
+  for (const auto &C : Image.ObjCClasses)
+    if (C.Name == RuntimeName) {
+      if (Class)
+        return std::nullopt;
+      Class = &C;
+    }
+  const auto Layout =
+      Class ? swiftFixedRootClassStorage(Image, Class->Address) : std::nullopt;
+  if (!Layout || Layout->Identity.Module != Module ||
+      Layout->Identity.Name != ClassName || Layout->Alignment != 8)
+    return std::nullopt;
+  const uint32_t Width = 8 + ((Layout->Size + 7) & ~7u);
+  if (Storage->Size && Storage->Size != Width)
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Base);
+  if (!Section ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_REGULAR)
+    return std::nullopt;
+  for (const auto &Symbol : Image.Symbols)
+    if (&Symbol != Storage &&
+        (Symbol.Name == Storage->Name ||
+         (Symbol.Addr >= Base && Symbol.Addr - Base < Width) ||
+         (Symbol.Addr < Base && Symbol.Size &&
+          Base - Symbol.Addr < Symbol.Size)))
+      return std::nullopt;
+  auto Hint = localStorageHint(Image, Base, Width);
+  const auto Bytes = readInitialImageBytes(Image, Base, Width);
+  if (!Hint || !Bytes)
+    return std::nullopt;
+  for (const auto &Export : Image.Exports)
+    if (Export.Name == Storage->Name ||
+        (Export.Addr >= Base && Export.Addr - Base < Width))
+      return std::nullopt;
+  std::vector<uint8_t> Expected(Width);
+  for (const auto &Field : Layout->Fields) {
+    // Compiler and native-runtime oracles establish these extra inhabitants.
+    // They are architecture-specific; a symbol gap supplies no layout proof.
+    if (Field.MangledType == "SbSg")
+      Expected[8 + Field.Offset] = 2;
+    else if (Field.MangledType == "SSSgSg")
+      Expected[8 + Field.Offset + 8] = Image.Arch == Arch::AArch64 ? 1 : 2;
+    else if (Field.MangledType == "SSSg")
+      Expected[8 + Field.Offset + 8] = 0;
+    else
+      return std::nullopt;
+  }
+  if (*Bytes != Expected)
+    return std::nullopt;
+  Hint->TargetName = "swift_static_root_object:" + Storage->Name;
+  return SwiftStaticRootObjectProof{
+      *Hint, Class->Address, Layout->Identity.Descriptor,
+      llvm::StringRef(Storage->Name).drop_back(3).str()};
+}
+
+// Attribute storage to the class queried by the actual native producer. Keep
+// objc_opt_self and the metadata accessor's result unchanged; neither this
+// association nor the storage declaration grants a runtime alias or purity.
+inline bool swiftStaticRootObjectUse(const BinaryImage &Image,
+                                     const HighFunc &Function,
+                                     const HighExpr &Call, va_t Site,
+                                     const SwiftStaticRootObjectProof &Proof) {
+  if (Image.Arch != Arch::AArch64 || Function.Entry > InvalidVA - 12 || !Site ||
+      Site < Function.Entry + 12 || Function.Body.size() > 128 ||
+      Function.Name != Proof.Initializer || Call.Kind != ExprKind::Call ||
+      Call.IsIndirectCall || Call.IndirectTarget || !Call.SourceCallHint ||
+      Call.Operands.size() != 2 || !Call.Operands[0] ||
+      Call.IntrinsicId != Intrinsic::None || !Call.IntrinsicOutputs.empty() ||
+      Call.MemoryOrdering != NdMemoryOrdering::None ||
+      Call.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const auto Bytes = readImmutableCodeBytes(Image, Site - 12, 16);
+  if (!Bytes)
+    return false;
+  const auto Word = [&](unsigned I) {
+    return llvm::support::endian::read32le(Bytes->data() + I * 4);
+  };
+  if (!branch::A64BranchLink.matches(Word(0)) ||
+      !branch::A64BranchLink.matches(Word(3)) ||
+      (Word(1) & 0x9f00001f) != 0x90000001 ||
+      (Word(2) & 0xffc003ff) != 0x91000021)
+    return false;
+  const auto Producer = branch::a64BranchTarget(Word(0), Site - 12);
+  const auto Runtime = branch::a64BranchTarget(Word(3), Site);
+  const auto Machine =
+      Producer ? objcClassAccessorMachine(Image, *Producer) : std::nullopt;
+  const auto Slot =
+      Runtime ? darwinImportVeneerSlot(Image, *Runtime) : std::nullopt;
+  const auto Expected =
+      Slot ? swiftRuntimeSourceCallHint(Image, *Slot) : std::nullopt;
+  const auto Import =
+      Slot ? Image.DyldBindSlots.find(*Slot) : Image.DyldBindSlots.end();
+  if (!Machine || Machine->ClassAddress != Proof.Metadata || !Expected ||
+      !Image.hasAuthenticatedFunctionEntryAt(*Producer) ||
+      Image.nextKnownFunctionEntryAfter(*Producer) < *Producer + 32 ||
+      swiftRelativeAddress(Image, Proof.Descriptor + 12) != Producer ||
+      Expected->TargetName != "swift_initStaticObject" ||
+      Expected->WeakImport || Import == Image.DyldBindSlots.end() ||
+      Import->second.Module != "/usr/lib/swift/libswiftCore.dylib" ||
+      Import->second.WeakImport || Import->second.Addend ||
+      !runtimeBindingMatches(*Call.SourceCallHint, *Expected) ||
+      (Call.CallAddr != *Runtime && Call.CallAddr != *Slot))
+    return false;
+  const uint32_t Immediate =
+      ((Word(1) >> 29) & 3) | (((Word(1) >> 5) & 0x7ffff) << 2);
+  const int64_t Delta =
+      (int64_t(Immediate) - ((Immediate & 0x100000) ? 0x200000 : 0)) * 4096;
+  const va_t Page = (Site - 8) & ~va_t(4095);
+  if ((Delta < 0 && Page < uint64_t(-Delta)) ||
+      (Delta > 0 && Page > InvalidVA - uint64_t(Delta)))
+    return false;
+  const va_t AddressPage =
+      Delta < 0 ? Page - uint64_t(-Delta) : Page + uint64_t(Delta);
+  const uint32_t Offset = (Word(2) >> 10) & 4095;
+  if (AddressPage > InvalidVA - Offset ||
+      AddressPage + Offset != Proof.Hint.TargetAddress + 8)
+    return false;
+  const auto PlainLocal = [](const ExprPtr &E) {
+    return E && E->Kind == ExprKind::Var && E->Type && E->Type->Size == 8 &&
+           (E->Type->Kind == NdTypeKind::Int ||
+            E->Type->Kind == NdTypeKind::Ptr) &&
+           E->Var.Size == 8 &&
+           (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Temp) &&
+           E->Operands.empty() && !E->IndirectTarget && !E->IsIndirectCall &&
+           E->IntrinsicId == Intrinsic::None && E->IntrinsicOutputs.empty() &&
+           E->MemoryOrdering == NdMemoryOrdering::None &&
+           E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  };
+  if (!PlainLocal(Call.Operands[0]))
+    return false;
+  const auto &Object = Call.Operands[1];
+  if (!Object || !Object->Type || Object->Type->Size != 8 ||
+      (Object->Type->Kind != NdTypeKind::Int &&
+       Object->Type->Kind != NdTypeKind::Ptr) ||
+      Object->IsIndirectCall || Object->IndirectTarget ||
+      Object->IntrinsicId != Intrinsic::None ||
+      !Object->IntrinsicOutputs.empty() ||
+      Object->MemoryOrdering != NdMemoryOrdering::None ||
+      Object->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      (Object->Kind == ExprKind::Const &&
+       (Object->ConstVal != Proof.Hint.TargetAddress + 8 ||
+        !Object->Operands.empty())))
+    return false;
+  unsigned Owners = 0;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Function.Entry || Symbol.Name == Function.Name) {
+      if (Symbol.Addr != Function.Entry || Symbol.Name != Function.Name ||
+          !Symbol.IsFunc || ++Owners != 1)
+        return false;
+    }
+  if (Owners != 1 || !Image.hasAuthenticatedFunctionEntryAt(Function.Entry) ||
+      Site >= Image.nextKnownFunctionEntryAfter(Function.Entry))
+    return false;
+  const HighStmt *Previous = nullptr;
+  unsigned Found = 0, Definitions = 0;
+  for (const auto &S : Function.Body) {
+    if (!S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
+        !S.DefaultBody.empty() || !S.EHClauseBodies.empty())
+      return false;
+    if (S.Kind != StmtKind::Assign && S.Kind != StmtKind::Store &&
+        S.Kind != StmtKind::Call && S.Kind != StmtKind::Return)
+      return false;
+    if (S.Kind == StmtKind::Assign && PlainLocal(S.Dst) &&
+        highSourceLocalIdentity(S.Dst->Var) ==
+            highSourceLocalIdentity(Call.Operands[0]->Var))
+      ++Definitions;
+    const auto E = S.Kind == StmtKind::Assign   ? S.Val
+                   : S.Kind == StmtKind::Return ? S.RetVal
+                                                : S.CallExpr;
+    if (E.get() == &Call) {
+      if (++Found != 1 || S.Addr != Site || !Previous ||
+          Previous->Kind != StmtKind::Assign || Previous->Addr != Site - 12 ||
+          !PlainLocal(Previous->Dst) || !Previous->Val ||
+          highSourceLocalIdentity(Previous->Dst->Var) !=
+              highSourceLocalIdentity(Call.Operands[0]->Var))
+        return false;
+      const auto &P = *Previous->Val;
+      if (P.Kind != ExprKind::Call || P.IsIndirectCall || P.IndirectTarget ||
+          P.CallAddr != *Producer || !P.Operands.empty() || !P.Type ||
+          P.Type->Size != 8 ||
+          (P.Type->Kind != NdTypeKind::Int &&
+           P.Type->Kind != NdTypeKind::Ptr) ||
+          P.IntrinsicId != Intrinsic::None || !P.IntrinsicOutputs.empty() ||
+          P.MemoryOrdering != NdMemoryOrdering::None ||
+          P.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        return false;
+    }
+    Previous = &S;
+  }
+  return Found == 1 && Definitions == 1;
+}
+
 // Darwin dispatch_once_t (also used by swift_once) is an intptr_t, initialized
 // to zero in static storage. A completed token cannot be transplanted without
 // its initialized state. Keep token storage shared through the normal helpers.
@@ -8049,6 +8291,12 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                                                   *Expected)
                         ? swiftStaticStringPairStorageHint(Image, *Address - 8)
                         : std::nullopt;
+        if (!Hint && ExactTarget && Address && *Address >= 8) {
+          const auto Object = swiftStaticRootObjectStorage(Image, *Address - 8);
+          if (Object && swiftStaticRootObjectUse(Image, Function, *Original,
+                                                 StatementAddress, *Object))
+            Hint = Object->Hint;
+        }
         if (Hint) {
           const va_t Base = Hint->TargetAddress;
           const uint64_t Width = Hint->ByteCount;
@@ -9042,6 +9290,22 @@ inline bool objcSourceCallBound(
   if (Binding.CallKind ==
       SourceCallTypeHint::Kind::RuntimeLocalStorageAddress) {
     if (llvm::StringRef(Binding.TargetName)
+            .starts_with("swift_static_root_object:")) {
+      const auto Proof =
+          swiftStaticRootObjectStorage(Image, Binding.TargetAddress);
+      return Proof && Binding.TargetName == Proof->Hint.TargetName &&
+             Binding.ByteCount == Proof->Hint.ByteCount &&
+             Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+             !Binding.SelectorReferenceAddress &&
+             Binding.BorrowedByteInputs.empty() &&
+             Binding.SwiftStaticStringInputs.empty() &&
+             Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
+             !Expression.IndirectTarget && !Expression.CallAddr &&
+             Expression.CallTarget.empty() && Expression.Operands.empty() &&
+             Expression.IntrinsicOutputs.empty() &&
+             objc_projection_detail::sameHint(Proof->Hint.Signature, Hint);
+    }
+    if (llvm::StringRef(Binding.TargetName)
             .starts_with("swift_static_string_pairs:")) {
       const auto Expected =
           swiftStaticStringPairStorageHint(Image, Binding.TargetAddress);
@@ -9650,6 +9914,69 @@ inline bool objcSourceCallBound(
           SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
     const auto Expected = runtimeSourceCallHint(Image, Binding);
     if (Expected && runtimeBindingMatches(Binding, *Expected)) {
+      if (Binding.TargetName == "swift_initStaticObject" &&
+          Expression.Operands.size() == 2) {
+        const auto &Object = Expression.Operands[1];
+        bool HasStaticRootStorage = false;
+        std::vector<std::pair<ExprPtr, unsigned>> Pending{{Object, 0}};
+        unsigned Budget = 256;
+        while (!Pending.empty()) {
+          const auto [E, Depth] = Pending.back();
+          Pending.pop_back();
+          if (!E)
+            continue;
+          if (!Budget-- || Depth > 32)
+            return false;
+          HasStaticRootStorage |= E->SourceCallHint &&
+                                  llvm::StringRef(E->SourceCallHint->TargetName)
+                                      .starts_with("swift_static_root_object:");
+          for (const auto &Operand : E->Operands)
+            Pending.emplace_back(Operand, Depth + 1);
+          if (E->IndirectTarget)
+            Pending.emplace_back(E->IndirectTarget, Depth + 1);
+        }
+        if (HasStaticRootStorage) {
+          if (!Object || Object->Kind != ExprKind::BinOp ||
+              Object->Op != NdOp::INT_ADD || Object->Operands.size() != 2 ||
+              !Object->Operands[0] || !Object->Operands[0]->SourceCallHint ||
+              !llvm::StringRef(Object->Operands[0]->SourceCallHint->TargetName)
+                   .starts_with("swift_static_root_object:"))
+            return false;
+          const auto &Storage = *Object->Operands[0];
+          const auto Proof = swiftStaticRootObjectStorage(
+              Image, Storage.SourceCallHint->TargetAddress);
+          va_t Site = 0;
+          unsigned Occurrences = 0;
+          if (ContainingFunction)
+            walkStmts(ContainingFunction->Body, [&](const HighStmt &S) {
+              forEachExpr(S, [&](const ExprPtr &E) {
+                if (E.get() == &Expression) {
+                  Site = S.Addr;
+                  ++Occurrences;
+                }
+              });
+            });
+          if (!ContainingFunction || Occurrences != 1 || !Proof ||
+              !Object->Operands[1] ||
+              Object->Operands[1]->Kind != ExprKind::Const ||
+              !Object->Operands[1]->Type ||
+              Object->Operands[1]->Type->Kind != NdTypeKind::Int ||
+              Object->Operands[1]->Type->Size != 8 ||
+              Object->Operands[1]->ConstVal != 8 ||
+              !Object->Operands[1]->Operands.empty() ||
+              Object->Operands[1]->IsIndirectCall ||
+              Object->Operands[1]->IndirectTarget ||
+              Object->Operands[1]->IntrinsicId != Intrinsic::None ||
+              !Object->Operands[1]->IntrinsicOutputs.empty() ||
+              Object->Operands[1]->MemoryOrdering != NdMemoryOrdering::None ||
+              Object->Operands[1]->MemoryAddressSpace !=
+                  NdMemoryAddressSpace::Default ||
+              !objcSourceCallBound(Storage, Image, Functions) ||
+              !swiftStaticRootObjectUse(Image, *ContainingFunction, Expression,
+                                        Site, *Proof))
+            return false;
+        }
+      }
       // An LLVM i1 input does not promise the other bits of a byte. Accept
       // the complete source carrier only when this current value is exactly
       // zero or one; never infer normalization from its narrow type alone.

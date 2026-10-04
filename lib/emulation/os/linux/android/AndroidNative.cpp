@@ -153,7 +153,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   size_t NextConstructor = 0;
   bool MainCall = false;
   struct PendingCallback {
-    OnceCallback Call;
+    GuestCallback Call;
     ServiceRequest Request;
     size_t Event;
     uint64_t Link, StackPointer;
@@ -181,6 +181,20 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   auto RuntimeFailure = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;
     Result.Diagnostic = llvm::toString(std::move(E));
+  };
+  auto StartCallback = [&](const GuestCallback &Callback) -> llvm::Error {
+    // The suspended import's live stack remains in place. Both supported
+    // callback signatures fit the ordinary scalar register ABI.
+    if (Callback.Argument)
+      if (auto E = CPU.writeRegister(Calls->info().Arguments[0],
+                                     {*Callback.Argument, 0}))
+        return E;
+    if (auto E = CPU.writeRegister(Calls->info().Link, {ReturnPC, 0}))
+      return E;
+    if (auto E = CPU.writeRegister(CPURegister::AArch64PC, {Callback.Entry, 0}))
+      return E;
+    Result.PC = Callback.Entry;
+    return llvm::Error::success();
   };
   while (true) {
     auto Exit = (*Session)->run(Result.PC, Options.InstructionQuantum);
@@ -236,21 +250,34 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
           RuntimeFailure(failure(diagnostic::CallbackStack));
           break;
         }
-        if (auto E = LibC.finishOnce(Pending.Call)) {
-          RuntimeFailure(std::move(E));
+        auto Value = LibC.finishCallback(Pending.Call);
+        if (!Value) {
+          RuntimeFailure(Value.takeError());
           if (LibC.timedOut())
             Result.Stop = ProcessStopReason::Timeout;
           break;
         }
+        if (!*Value)
+          break;
+        if (auto *Next = std::get_if<GuestCallback>(&**Value)) {
+          if (auto E = StartCallback(*Next)) {
+            RuntimeFailure(std::move(E));
+            break;
+          }
+          Callbacks.back().Call = *Next;
+          continue;
+        }
+        const uint64_t Returned = std::get<uint64_t>(**Value);
         if (auto E = CPU.writeRegister(Calls->info().Link, {Pending.Link, 0})) {
           RuntimeFailure(std::move(E));
           break;
         }
-        if (auto E = linux_model::returnService(CPU, Pending.Request, 0)) {
+        if (auto E =
+                linux_model::returnService(CPU, Pending.Request, Returned)) {
           RuntimeFailure(std::move(E));
           break;
         }
-        Result.NativeCalls[Pending.Event].Result = 0;
+        Result.NativeCalls[Pending.Event].Result = Returned;
         Result.PC = Pending.Request.NextPC;
         Callbacks.pop_back();
         continue;
@@ -299,7 +326,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       }
       if (!*Value)
         break;
-      if (auto *Callback = std::get_if<OnceCallback>(&**Value)) {
+      if (auto *Callback = std::get_if<GuestCallback>(&**Value)) {
         auto Link = CPU.readRegister(Calls->info().Link);
         if (!Link) {
           RuntimeFailure(Link.takeError());
@@ -316,18 +343,12 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         }
         // Reuse the current guest stack below the suspended import. Preparing
         // a fresh top-level frame would overwrite its caller's live locals.
-        if (auto E = CPU.writeRegister(Calls->info().Link, {ReturnPC, 0})) {
-          RuntimeFailure(std::move(E));
-          break;
-        }
-        if (auto E = CPU.writeRegister(CPURegister::AArch64PC,
-                                       {Callback->Entry, 0})) {
+        if (auto E = StartCallback(*Callback)) {
           RuntimeFailure(std::move(E));
           break;
         }
         Callbacks.push_back({*Callback, *Request, Result.NativeCalls.size() - 1,
                              (*Link)[0], (*SP)[0]});
-        Result.PC = Callback->Entry;
         continue;
       }
       uint64_t Returned = std::get<uint64_t>(**Value);
