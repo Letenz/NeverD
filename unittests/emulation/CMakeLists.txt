@@ -1,6 +1,9 @@
 add_neverd_unittest(NeverDHvfTests
   HvfTests.cpp
   HvfExecutorTests.cpp
+  HvfIntelDeadlineTests.cpp
+  HvfOwnerThreadTests.cpp
+  HvfIntelOwnerTests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU)
 

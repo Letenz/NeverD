@@ -15,16 +15,27 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 #if defined(__x86_64__)
+#include "HvfIntelDeadline.h"
+#include "HvfOwnerThread.h"
+
 #include <Hypervisor/hv_vmx.h>
+#include <mach/mach_time.h>
 #endif
 
 namespace neverd::emulation::hvf {
 namespace {
 constexpr char Interrupted[] = "HVF entry interrupted";
+#if defined(__arm64__)
 std::mutex &vmMutex() {
   static std::mutex Mutex;
   return Mutex;
 }
+#else
+std::shared_ptr<OwnerThread> ownerThread() {
+  static const auto Owner = std::make_shared<OwnerThread>();
+  return Owner;
+}
+#endif
 std::string message(const char *Operation, hv_return_t Status) {
   return llvm::formatv("HVF {0} failed ({1:x})", Operation, uint32_t(Status))
       .str();
@@ -87,15 +98,12 @@ struct Executor::Request {
   bool Done = false;
 };
 struct Executor::RunControl {
+#if defined(__arm64__)
   struct Interrupt {
     Executor &Host;
     std::atomic<hv_return_t> Status{HV_SUCCESS};
     void operator()() noexcept {
-#if defined(__arm64__)
       const auto Result = hv_vcpus_exit(&Host.CPU, 1);
-#else
-      const auto Result = hv_vcpu_interrupt(&Host.CPU, 1);
-#endif
       if (Result != HV_SUCCESS)
         Status.store(Result);
     }
@@ -107,16 +115,37 @@ struct Executor::RunControl {
   };
   RunDeadline<Forward> Timer;
   explicit RunControl(Executor &Host) : Cancel{Host}, Timer(Forward{&Cancel}) {}
+#else
+  mach_timebase_info_data_t Timebase{};
+  explicit RunControl(Executor &) {}
+#endif
 };
 
+#if defined(__arm64__)
 Executor::Executor() : Worker([this] { work(); }) {}
+#else
+Executor::Executor() : Owner(ownerThread()) {
+  OwnerGeneration = Owner->start([this] { work(); });
+}
+#endif
 llvm::Expected<std::shared_ptr<Executor>> Executor::acquire() {
   static std::mutex RegistryMutex;
   static std::weak_ptr<Executor> Current;
   std::lock_guard Lock(RegistryMutex);
   if (auto Host = Current.lock())
     return Host;
-  auto Host = std::shared_ptr<Executor>(new Executor());
+  std::shared_ptr<Executor> Host;
+#if defined(__x86_64__)
+  try {
+    Host = std::shared_ptr<Executor>(new Executor());
+  } catch (const std::exception &E) {
+    return llvm::make_error<BackendUnavailableError>(
+        std::string("HVF owner thread initialization failed: ") + E.what(),
+        BackendAvailability::InitializationFailed);
+  }
+#else
+  Host = std::shared_ptr<Executor>(new Executor());
+#endif
   if (auto E = Host->submit([](Executor &H) { return H.initialize(); }))
     return E;
   Current = Host;
@@ -134,7 +163,11 @@ Executor::~Executor() {
     Shutdown = true;
     Changed.notify_one();
   }
+#if defined(__arm64__)
   Worker.join();
+#else
+  Owner->wait(OwnerGeneration);
+#endif
 }
 llvm::Error Executor::submit(Action Run, const MachineRunControl *Control) {
   std::unique_lock Gate(Admission, std::defer_lock);
@@ -191,10 +224,11 @@ llvm::Error Executor::initialize() {
       !Supported)
     return diagnostic::unavailable("HVF is not available on this host",
                                    BackendAvailability::MissingCapability);
-  VMLease = std::unique_lock(vmMutex());
 #if defined(__arm64__)
+  VMLease = std::unique_lock(vmMutex());
   const auto Status = hv_vm_create(nullptr);
 #else
+  VMLease = std::unique_lock(Owner->vmMutex());
   const auto Status = hv_vm_create(HV_VM_DEFAULT);
 #endif
   if (Status != HV_SUCCESS)
@@ -203,6 +237,12 @@ llvm::Error Executor::initialize() {
   if (auto E = createCPU())
     return E;
   Deadline = std::make_unique<RunControl>(*this);
+#if defined(__x86_64__)
+  if (mach_timebase_info(&Deadline->Timebase) != KERN_SUCCESS ||
+      !Deadline->Timebase.numer || !Deadline->Timebase.denom)
+    return diagnostic::unavailable("HVF could not read the Mach timebase",
+                                   BackendAvailability::HostAPI);
+#endif
   return llvm::Error::success();
 }
 llvm::Error Executor::createCPU() {
@@ -325,43 +365,49 @@ llvm::Error Executor::run(MachineRunControl Control, Completion Complete) {
   if (!CPUCreated)
     if (auto E = createCPU())
       return E;
-  Deadline->Cancel.Status.store(HV_SUCCESS);
-  bool ExitReadFailed = false;
-  auto Entry = Deadline->Timer.invoke(Control, [&]() noexcept {
 #if defined(__arm64__)
+  Deadline->Cancel.Status.store(HV_SUCCESS);
+  auto Entry = Deadline->Timer.invoke(Control, [&]() noexcept {
     return hv_vcpu_run(CPU);
-#else
-    // Host interrupts may exit before the admitted instruction completes.
-    // Keep the same native state and cancellation generation until an actual
-    // guest exit, host error, or requested stop/deadline is observed.
-    while (true) {
-      auto Status = hv_vcpu_run_until(CPU, HV_DEADLINE_FOREVER);
-      if (Status != HV_SUCCESS)
-        return Status;
-      uint64_t Reason = 0;
-      Status = hv_vmx_vcpu_read_vmcs(CPU, VMCS_RO_EXIT_REASON, &Reason);
-      if (Status != HV_SUCCESS) {
-        ExitReadFailed = true;
-        return Status;
-      }
-      if (Reason != VMX_REASON_IRQ || Control.interrupted())
-        return Status;
-    }
-#endif
   });
   llvm::Error Result = llvm::Error::success();
   if (Entry.Value) {
     if (*Entry.Value != HV_SUCCESS)
-      Result = ExitReadFailed
-                   ? error("hv_vmx_vcpu_read_vmcs(exit reason)", *Entry.Value)
-                   : runError(CPU, *Entry.Value);
+      Result = runError(CPU, *Entry.Value);
     else
       Result = Complete(Entry.Cancelled);
   }
   if (auto Status = Deadline->Cancel.Status.load(); Status != HV_SUCCESS)
     Result =
         llvm::joinErrors(std::move(Result), error("vcpu interrupt", Status));
-  if (Entry.Cancelled) {
+  const bool Cancelled = Entry.Cancelled;
+#else
+  static_assert(IntelInterruptExit == VMX_REASON_IRQ);
+  static_assert(IntelTimerExit == VMX_REASON_VMX_TIMER_EXPIRED);
+  auto Entry = runIntelEntry(
+      Control,
+      [&] {
+        const auto MachNow = mach_absolute_time();
+        return intelSliceDeadline(MachNow, std::chrono::steady_clock::now(),
+                                  Control.Deadline, Deadline->Timebase.numer,
+                                  Deadline->Timebase.denom);
+      },
+      [&](uint64_t Until) -> llvm::Expected<uint64_t> {
+        const auto Status = hv_vcpu_run_until(CPU, Until);
+        if (Status == HV_UNSUPPORTED)
+          return unavailable("hv_vcpu_run_until(finite deadline)", Status);
+        if (Status != HV_SUCCESS)
+          return runError(CPU, Status);
+        uint64_t Reason = 0;
+        if (auto S = hv_vmx_vcpu_read_vmcs(CPU, VMCS_RO_EXIT_REASON, &Reason))
+          return error("hv_vmx_vcpu_read_vmcs(exit reason)", S);
+        return Reason;
+      },
+      Complete);
+  auto Result = std::move(Entry.Result);
+  const bool Cancelled = Entry.Cancelled;
+#endif
+  if (Cancelled) {
     if (auto E = destroyCPU()) {
       Failure = llvm::toString(std::move(E));
       return llvm::joinErrors(
@@ -379,7 +425,7 @@ llvm::Error Executor::run(MachineRunControl Control, Completion Complete) {
   // over cancellation. Successful state is published by the caller only.
   if (Result)
     return Result;
-  if (Entry.Cancelled || Control.interrupted())
+  if (Cancelled || Control.interrupted())
     return diagnostic::interrupted(Interrupted, Control);
   return llvm::Error::success();
 }
