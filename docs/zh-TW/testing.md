@@ -1049,7 +1049,7 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 僅原生 CPU 的 CI 檢出初始化固定版本的 Capstone 原始碼，並使用經驗證的預建 LLVM 套件。設定 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 且停用 Unicorn 後端後，CPU 測試目標的設定、建置和連結均不需要 Unicorn 原始碼，也不依賴簽章庫及外部語料。預設 CI 仍啟用完整語意測試組。
 
-`ci.yml` 的手動模式 `native_cpu_only` 透過 `native_cpu_backend=whp` 選擇 Windows x64（預設），或透過 `native_cpu_backend=kvm` 選擇 Ubuntu x64。`NativeCPUTests.def` 共用 CPU／行程驗收要求，分別宣告後端專屬目標和案例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 驗證宿主，先建置全部目標再執行 CTest，並保留清單、JUnit、日誌和結果分類。即使 CTest 成功結束，缺少或略過必測案例仍會失敗。CI 停用 Unicorn；`--with-drivers` 要求所選後端執行相同的原址／重定位驅動程式範例。編譯和建立探測不能證明來賓執行或 ARM64 驗收。
+`ci.yml` 的手動模式 `native_cpu_only` 透過 `native_cpu_backend=whp` 選擇 Windows x64（預設），或透過 `native_cpu_backend=kvm` 選擇 Ubuntu x64。`NativeCPUTests.def` 共用 CPU／行程驗收要求，分別宣告後端專屬目標和案例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 驗證宿主，先建置全部目標再執行 CTest，並保留清單、JUnit、日誌和結果分類。即使 CTest 成功結束，缺少或略過必測案例仍會失敗。CI 停用 Unicorn；`--with-drivers` 要求所選後端執行相同的原址／重定位驅動程式範例。編譯和建立探測不能證明來賓執行或 ARM64 驗收。 Ubuntu 設定使用上游簽署的 Clang/LLD 21 套件；Clang 18/19 的 CR8 宣告與固定版本的 WDK 標頭衝突。
 
 KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransferCases.def` 中 48 項狀態傳輸結果，包括 ioctl 擷取和選用能力查詢失敗。其他同步暫存器模式在宿主支援時執行，否則明確略過。穩定的參數名稱不依賴 ioctl 數值或元組格式。協定測試補充原生執行證據，不能取代它。
 
