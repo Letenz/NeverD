@@ -33,8 +33,8 @@ struct ExecutorProbe {
                  << " generation=" << Generation << " owner=" << Owner << '\n';
     llvm::outs().flush();
   }
-  static llvm::Error recreateCPU(Executor &Host, uint64_t Generation,
-                                 uint64_t &Owner) {
+  static llvm::Error recreate(Executor &Host, uint64_t Generation,
+                              uint64_t &Owner, bool RecreateVM) {
     return Host.submit([&](Executor &H) -> llvm::Error {
       uint64_t Current = 0;
       if (pthread_threadid_np(nullptr, &Current) || !Current)
@@ -49,6 +49,20 @@ struct ExecutorProbe {
       if (auto E = H.destroyCPU())
         return E;
       marker("vcpu_destroy_end", Generation, Owner);
+      if (RecreateVM) {
+        // Intel RunControl contains only the Mach timebase. Keep it and the
+        // VM lease while changing only the native VM's lifetime on this owner.
+        marker("vm_destroy_begin", Generation, Owner);
+        if (auto S = hv_vm_destroy())
+          return error("probe hv_vm_destroy", S);
+        H.VMCreated = false;
+        marker("vm_destroy_end", Generation, Owner);
+        marker("vm_create_begin", Generation + 1, Owner);
+        if (auto S = hv_vm_create(HV_VM_DEFAULT))
+          return unavailable("probe hv_vm_create", S);
+        H.VMCreated = true;
+        marker("vm_create_end", Generation + 1, Owner);
+      }
       marker("vcpu_create_begin", Generation + 1, Owner);
       if (auto E = H.createCPU())
         return E;
@@ -71,7 +85,7 @@ bool probeFlag(const char *Name) {
 struct RetainedExecutor {
   std::shared_ptr<hvf::Executor> Host;
   uint64_t Recreations = 0, Owner = 0;
-  bool RecreateCPU = false;
+  bool RecreateCPU = false, RecreateVM = false;
   ~RetainedExecutor() {
     if (RecreateCPU) {
       // No fixture or machine may keep the worker alive beyond this marker.
@@ -95,8 +109,9 @@ protected:
   RetainedExecutor *Retained = nullptr;
   void TearDown() override {
     if (Retained && Retained->RecreateCPU)
-      EXPECT_EQ(llvm::toString(hvf::ExecutorProbe::recreateCPU(
-                    *Host, ++Retained->Recreations, Retained->Owner)),
+      EXPECT_EQ(llvm::toString(hvf::ExecutorProbe::recreate(
+                    *Host, ++Retained->Recreations, Retained->Owner,
+                    Retained->RecreateVM)),
                 "");
   }
 #endif
@@ -118,13 +133,15 @@ protected:
     if (Probe && llvm::StringRef(Probe) == "1" && Reuse &&
         llvm::StringRef(Reuse) == "1") {
       // Diagnostic-only lifetime control; VM and executor threads survive.
-      // The optional probe recreates only the vCPU after detaching mappings.
+      // The optional probes recreate vCPU or VM after detaching mappings.
       // Every fixture still owns fresh memory. This
       // static is initialized after the native registry/VM mutexes and is
       // destroyed before them when the diagnostic process exits.
       auto &Output = llvm::outs(); // Outlive the optional final trace.
       static RetainedExecutor RetainedHost{
-          Host, 0, 0, probeFlag("NEVERD_HVF_INTEL_RECREATE_VCPU")};
+          Host, 0, 0, probeFlag("NEVERD_HVF_INTEL_RECREATE_VCPU"),
+          probeFlag("NEVERD_HVF_INTEL_RECREATE_VM")};
+      ASSERT_TRUE(!RetainedHost.RecreateVM || RetainedHost.RecreateCPU);
       ASSERT_EQ(Host, RetainedHost.Host);
       Retained = &RetainedHost;
       Output << "INTEL_PROBE phase=executor_retained\n";
