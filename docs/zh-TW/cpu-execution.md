@@ -114,6 +114,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
 
+`CheckedBackend` 為每個 CPU 保留一塊取指緩衝區與一筆 `cs_disasm_iter` 指令記錄。每一步重新讀取具執行權限的位元組並解碼；程式碼寫入、別名變更或恢復執行後不會沿用舊解碼結果。執行租約在接觸重用儲存前拒絕遞迴執行。這可消除逐指令的緩衝區與記錄配置，同時保留指令觀察、系統服務攔截及精確故障處理。
+
 `WhpX64Partition.h` 將 x64 WHP 暫存器重用狀態歸屬到實際分區。固定資料包採用 `WhpX64Registers.def` 與 `X64HostRegisters.def`；每個成功單步仍完整讀取通用、控制、段暫存器及 FP/SSE 狀態。只有完整確認的除錯退出才能省略未變更的輸入，比較忽略保留位與聯合體填補。變更的 CR3、CPL、TLS、通用或 FP 輸入會重新安裝；部分失敗、取消及例外使重用失效。分區重建從全量安裝開始。這減少重複傳輸，不擴大指令准入，也不宣稱端到端加速。
 
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接納有界的基礎 FP32/FP64 算術、比較、移動與定寬 SIMD 運算。FPCR 支援四種捨入模式、FZ 和 DN；FPSR 保留累積狀態與 QC。不支援的控制位元及狀態位元在修改前拒絕。FP16 算術、SVE/SME、未遮罩例外、選用擴充及未列出的形式明確失敗。這些 CPU 能力不代表已支援 Windows ARM64 驅動程式載入或新增 OS 環境。

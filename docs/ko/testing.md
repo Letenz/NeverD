@@ -1120,6 +1120,8 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 
 `NeverDRunControlTests`에는 이식 가능한 `NativeEntryTests.cpp`와 Windows에서 WHP를 활성화할 때의 `WhpEntryControlTests.cpp`가 포함됩니다. 메모리 내 호스트 콜백으로 Hyper-V 없이 실행 거부, 재시도, 늦은 취소, 실제 오류 보존, 완료 결과의 우선순위와 확인된 콜백 수명을 검증합니다. `NeverDKvmRunTests`는 호출 스레드의 완료, 오류 우선순위와 재진입 거부를 확인합니다. 실제 `NeverDKvmStateTransferTests`는 `KvmStateTransferCases.def`의 원래 명령을 실행합니다. `ActualCPUExceptionOutranksStopDuringCapture`와 `PublicCPUExceptionOutranksStopDuringCapture`는 실제 레지스터/XSAVE 읽기 후 중지하여 나눗셈 예외, 원래 컨텍스트, RAM과 명시적 복구를 보존합니다. Wine의 Windows ABI에서 실행한 이식 가능한 테스트는 스레드와 제어 증거만 제공하며 네이티브 WHP 실행을 입증하지 않습니다. 사용할 수 없는 네이티브 전송은 명시적으로 건너뜁니다.
 
+`NeverDInstructionFetchTests`는 Unicorn, KVM, WHP로 x64/ARM64 checked 프로그램을 커널 모드와 사용자 모드에서 실행합니다. `InstructionFetchCases.def`는 피연산자 형식 전환, 상대 분기, 코드 별칭을 통한 게스트·호스트 쓰기, 컨텍스트 복원, 권한 철회, 독립 페이지 저장소, 페이지 끝 미리 읽기, 잘못되거나 잘린 인코딩, 재귀 실행 거부를 검사합니다. Windows 네이티브 CI에서는 모든 x64 WHP 사례가 통과해야 합니다. 사용할 수 없는 호스트/ISA 조합은 명시적으로 건너뛰며, 이식 가능한 ARM64 실행은 네이티브 ARM64 지원 증거가 아닙니다.
+
 `WhpStateTransferTests.cpp`는 두 세대 XSAVE API에 전송을 주입하여 변경 그룹, 전체 캡처, 패딩 무시, 부분 실패, 취소, 예외 우선순위와 파티션 재생성을 확인합니다. `ContinuedStepsReuseCapturedRegistersAndFP`는 생략된 설치를 세고 `PartialTransferFailuresPreserveStateAndForceFullRetry`는 전체 복원을 요구합니다. 이는 프로토콜 검사이며 네이티브 실행 증거를 대신하지 않습니다. 기존 네이티브 FP·상태 전환·드라이버·ring3 테스트도 필수입니다.
 
 `windows-pe64-v1`은 PEB/TEB, 정적·동적 TLS, `DllMain`, 이름 기반 Win32 API 및 명시적 비순환 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. 게스트 모듈은 이름/서수 코드·데이터 가져오기, DIR64 재배치, 전달 내보내기 및 실제 로더 목록 식별자를 지원합니다. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary`, `GetProcAddress`는 설정된 모듈 카탈로그를 사용합니다. CRT/GUI, ARM64 스택 프레임 기반 사용자 SEH, 스레드 및 일반 Windows 앱 호환성은 미완성이며 네이티브 ARM64 KVM/WHP 증거도 아직 없습니다.

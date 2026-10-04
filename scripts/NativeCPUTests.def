@@ -13,6 +13,7 @@ NEVERD_NATIVE_CPU_OWNER(NeverDWindowsProcessTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64FPTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64IntegerTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDMemoryLifecycleTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDInstructionFetchTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64MemoryUpdateTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64ExceptionTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDServiceRequestTests)
@@ -759,4 +760,58 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "StateAPIs/"
     "WhpStateTransfer.ReplacementPartitionCannotReuseRetiredNativeState/true")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+// Reusable decode storage must still consume fresh code and permissions.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/"
+    "InstructionFetch.AlternatingFormsKeepFreshOperandsAndRelativeBranches/"
+    "WhpX64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/"
+    "InstructionFetch.AlternatingFormsKeepFreshOperandsAndRelativeBranches/"
+    "WhpX64User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.GuestAliasStoreChangesTheNextInstruction/"
+    "WhpX64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.GuestAliasStoreChangesTheNextInstruction/"
+    "WhpX64User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.HostAliasWriteAndContextRestoreUseFreshBytes/"
+    "WhpX64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.HostAliasWriteAndContextRestoreUseFreshBytes/"
+    "WhpX64User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.ExecutePermissionIsRecheckedAfterResumption/"
+    "WhpX64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.ExecutePermissionIsRecheckedAfterResumption/"
+    "WhpX64User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.PageTailInstructionDoesNotRequireLookaheadBytes/"
+    "WhpX64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.PageTailInstructionDoesNotRequireLookaheadBytes/"
+    "WhpX64User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.CrossPageFetchUsesSeparateBacking/"
+    "WhpX64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.CrossPageFetchUsesSeparateBacking/"
+    "WhpX64User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.InvalidTailNeverExecutesThePreviousInstruction/"
+    "WhpX64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.InvalidTailNeverExecutesThePreviousInstruction/"
+    "WhpX64User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.ReentrantRunCannotOverwriteTheOuterInstruction/"
+    "WhpX64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.ReentrantRunCannotOverwriteTheOuterInstruction/"
+    "WhpX64User")
 #endif

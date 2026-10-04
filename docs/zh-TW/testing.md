@@ -1076,6 +1076,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 `NeverDRunControlTests` 包含可攜式 `NativeEntryTests.cpp` 和 Windows 啟用 WHP 時的 `WhpEntryControlTests.cpp`。記憶體主機回呼驗證拒絕入口、重試、晚到取消、真實錯誤保留、完成結果優先順序和已確認的回呼生命週期，無需 Hyper-V。`NeverDKvmRunTests` 檢查呼叫執行緒完成、錯誤優先順序及重入拒絕。真實 `NeverDKvmStateTransferTests` 執行 `KvmStateTransferCases.def` 原始指令；`ActualCPUExceptionOutranksStopDuringCapture` 和 `PublicCPUExceptionOutranksStopDuringCapture` 在真實暫存器/XSAVE 讀取後停止，並保留除零例外、原始上下文、RAM 和明確恢復。Wine 上採用 Windows ABI 執行的可攜式測試僅提供執行緒及控制協定證據，不證明原生 WHP 執行。不可用的原生後端仍明確略過。
 
+`NeverDInstructionFetchTests` 透過 Unicorn、KVM 與 WHP，在核心態與使用者態執行 x64/ARM64 checked 程式。`InstructionFetchCases.def` 涵蓋運算元形式切換、相對分支、客體與主機經程式碼別名寫入、上下文還原、權限撤銷、獨立頁面儲存、頁尾預讀、無效或截斷編碼及遞迴執行拒絕。Windows 原生 CI 要求所有 x64 WHP 案例通過。無法使用的主機/ISA 組合明確略過；可攜式 ARM64 執行不構成原生 ARM64 支援證據。
+
 `WhpStateTransferTests.cpp` 對兩代 XSAVE API 注入暫存器傳輸，檢查精確變更組、完整擷取、填補忽略、部分失敗、取消、例外優先順序與分區重建。`ContinuedStepsReuseCapturedRegistersAndFP` 統計省略的安裝；`PartialTransferFailuresPreserveStateAndForceFullRetry` 要求完整恢復。這些是協定檢查，而非原生執行證據；既有原生 FP、狀態轉換、驅動及 ring3 測試仍屬必要驗證。
 
 `windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、靜態與動態 TLS、`DllMain`、具名 Win32 API 和明確的無環 DLL 圖。客體模組支援依名稱／序號匯入程式碼與資料、DIR64 重定位、轉送匯出及真實載入器串列身分。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用設定的模組目錄。CRT／GUI、ARM64 以堆疊框架為基礎的使用者態 SEH、執行緒及通用 Windows 應用程式相容性仍待完成；原生 ARM64 KVM/WHP 證據仍缺失。
