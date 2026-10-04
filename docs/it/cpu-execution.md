@@ -64,7 +64,7 @@ La richiesta resta pendente e blocca esecuzione, mutazione CPU, binding dello sp
 
 ## Estensioni x64 e stato CPU nativo
 
-Il profilo x64 checked ammette movimenti e logica SSE/SSE2 legacy limitati, `MOVLHPS`/`MOVHLPS` e forme scalari mascherate `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`. MXCSR conserva stato sticky, arrotondamento e FTZ; eccezioni non mascherate sono rifiutati. KVM/WHP sincronizzano tutti i 16 registri XMM e MXCSR; codifiche e operandi non elencati restano esclusi.
+Il profilo x64 checked ammette movimenti e logica SSE/SSE2 legacy limitati, `MOVLHPS`/`MOVHLPS` e forme scalari mascherate `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`. MXCSR conserva stato sticky, arrotondamento e FTZ; le eccezioni non mascherate sono rifiutate. KVM/WHP sincronizzano tutti i 16 registri XMM e MXCSR; codifiche e operandi non elencati restano esclusi.
 
 Il profilo x64 checked ammette anche le forme legacy mascherate `SS`, `SD`, `PS`, `PD` di `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`. `X64SSEInstructions.def` centralizza larghezze, allineamento e ammissione. `MaskedSSEArithmeticMatchesIndependentHostExecution` confronta registri/RAM con un riferimento CPU host indipendente: quattro arrotondamenti, FTZ, zeri con segno, subnormali e NaN. `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifica l’arresto prima degli effetti. Le eccezioni non mascherate, x87 e AVX restano esclusi.
 

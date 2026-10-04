@@ -64,7 +64,7 @@ La requête reste en attente et bloque exécution, mutation du CPU, liaison d’
 
 ## Extensions x64 et état CPU natif
 
-Le x64 vérifié admet des déplacements et opérations logiques SSE/SSE2 historiques bornés, `MOVLHPS`/`MOVHLPS` et les formes scalaires masquées `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`. MXCSR préserve les statuts sticky, l’arrondi et FTZ ; les exceptions non masquées sont rejetés. KVM/WHP synchronisent les 16 registres XMM et MXCSR ; les encodages/opérandes non listés restent exclus.
+Le x64 vérifié admet des déplacements et opérations logiques SSE/SSE2 historiques bornés, `MOVLHPS`/`MOVHLPS` et les formes scalaires masquées `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`. MXCSR préserve les statuts sticky, l’arrondi et FTZ ; les exceptions non masquées sont rejetées. KVM/WHP synchronisent les 16 registres XMM et MXCSR ; les encodages/opérandes non listés restent exclus.
 
 Le x64 vérifié admet aussi les formes masquées historiques `SS`, `SD`, `PS`, `PD` de `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`. `X64SSEInstructions.def` centralise les largeurs, alignements et règles d’admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compare les formes registre/RAM à un oracle CPU hôte indépendant : quatre arrondis, FTZ, zéros signés, subnormaux et NaN. `SSEMemoryObserverStopsBeforeResultAndStatusChanges` vérifie l’arrêt avant les effets. Les exceptions non masquées, x87 et AVX restent exclus.
 
