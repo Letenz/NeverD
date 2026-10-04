@@ -1,6 +1,7 @@
 #ifndef NEVERD_SDK_CAPI_SOURCESWIFTVALUECONSTRUCTORPROJECTION_H
 #define NEVERD_SDK_CAPI_SOURCESWIFTVALUECONSTRUCTORPROJECTION_H
 
+#include "../../loader/MachO/ImmutableNativeFrame.h"
 #include "ObjCNativeCurrentFunction.h"
 #include "ObjCNativeDependencies.h"
 #include "ObjCSourceBindings.h"
@@ -42,10 +43,29 @@ inline bool ordinaryHint(SourceCallTypeHint H) {
   H.ByteCount = 0;
   return objc_binding_detail::plainNativeBinding(H);
 }
-inline bool sameHint(const SourceCallTypeHint &A, const SourceCallTypeHint &B) {
-  return ordinaryHint(A) && ordinaryHint(B) && A.CallKind == B.CallKind &&
-         A.TargetAddress == B.TargetAddress && A.TargetName == B.TargetName &&
-         A.Selector == B.Selector && A.OwnerClass == B.OwnerClass &&
+// A selector-wide declaration needs no guessed receiver class. This first
+// message replay accepts only a void message with self/command and no other
+// effects or annotations; receiver values still come from the complete replay.
+inline bool plainMessageHint(SourceCallTypeHint H) {
+  if (H.CallKind != SourceCallTypeHint::Kind::ObjCMessage || H.Receiver ||
+      H.SwiftValueConstructor || H.SwiftOpaqueValue || H.SwiftConsumedInput ||
+      H.SwiftWitnessFrame || H.Virtual || !H.Signature.ReturnType ||
+      H.Signature.ReturnType->Kind != NdTypeKind::Void ||
+      H.Signature.Parameters.size() != 2 ||
+      (!H.TargetName.empty() && H.TargetName != "objc_msgSend"))
+    return false;
+  H.CallKind = SourceCallTypeHint::Kind::Native;
+  H.Selector.clear();
+  H.SelectorReferenceAddress = 0;
+  return objc_binding_detail::plainNativeBinding(H);
+}
+inline bool sameHint(const SourceCallTypeHint &A, const SourceCallTypeHint &B,
+                     bool MessageProved = false) {
+  return ((ordinaryHint(A) && ordinaryHint(B)) ||
+          (MessageProved && plainMessageHint(A) && plainMessageHint(B))) &&
+         A.CallKind == B.CallKind && A.TargetAddress == B.TargetAddress &&
+         A.TargetName == B.TargetName && A.Selector == B.Selector &&
+         A.OwnerClass == B.OwnerClass &&
          A.SelectorReferenceAddress == B.SelectorReferenceAddress &&
          A.Receiver == B.Receiver && A.ByteCount == B.ByteCount &&
          A.ReturnedArgument == B.ReturnedArgument &&
@@ -54,8 +74,123 @@ inline bool sameHint(const SourceCallTypeHint &A, const SourceCallTypeHint &B) {
          A.SwiftValueConstructor == B.SwiftValueConstructor &&
          equalSourceABIs(A.Signature, B.Signature);
 }
+// Authenticate messages at original LowIR occurrences, including after a
+// saved marker is removed. The same loader owns selector-stub/SDK identity;
+// this adapter grants no call effects and does not resolve dynamic dispatch.
+inline std::optional<std::set<const HighExpr *>>
+messageCalls(const BinaryImage &Image, const LowFunc &Low, const MedFunc &Med,
+             const HighFunc &High) {
+  struct Site {
+    SourceCallOccurrenceKey Key;
+    SourceCallTypeHint Hint;
+  };
+  std::map<va_t, Site> Expected;
+  size_t Budget = 262144;
+  for (const auto &B : Low.Blocks)
+    for (const auto &O : B.Ops) {
+      if (!Budget--)
+        return std::nullopt;
+      const auto K = sourceCallOccurrenceKey(O);
+      if (!K || K->Opcode != NdOp::CALL || !K->StaticTarget)
+        continue;
+      const auto H =
+          objcImmutableSelectorStubSourceCallHint(Image, *K->StaticTarget);
+      if (!H || !plainMessageHint(*H))
+        continue;
+      if (Expected.size() >= 32 ||
+          !Expected.emplace(K->Instruction, Site{*K, *H}).second)
+        return std::nullopt;
+    }
+  if (!Expected.empty() &&
+      !immutableNativeFrameMachineMatches(Image, Low, Budget))
+    return std::nullopt;
+  std::set<va_t> SeenMed, SeenHigh;
+  for (const auto &B : Med.Blocks)
+    for (const auto &O : B.Ops) {
+      if (!Budget--)
+        return std::nullopt;
+      const bool Message =
+          O.SourceCallHint &&
+          O.SourceCallHint->CallKind == SourceCallTypeHint::Kind::ObjCMessage;
+      if (O.Opcode != NdOp::CALL && O.Opcode != NdOp::INDIR_CALL) {
+        if (Message)
+          return std::nullopt;
+        continue;
+      }
+      const auto I = Expected.find(O.Addr);
+      if (I == Expected.end()) {
+        if (Message)
+          return std::nullopt;
+        continue;
+      }
+      const auto &S = I->second;
+      auto H = S.Hint;
+      if (!Message || O.Opcode != S.Key.Opcode ||
+          O.OriginSeq != S.Key.Sequence || O.NumInputs != 3 ||
+          O.Inputs.size() < 3 || !O.Inputs[0].isConst() ||
+          O.Inputs[0].Size != 8 ||
+          O.Inputs[0].ConstVal != *S.Key.StaticTarget ||
+          O.Inputs[1].Size != 8 || O.Inputs[2].Size != 8 || O.Output.Size ||
+          !O.IntrinsicOutputs.empty() || O.Dead || O.DoesNotReturn ||
+          O.PreservesCallerSaved || O.CallPreservedGPRs ||
+          O.MemoryOrdering != NdMemoryOrdering::None ||
+          O.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          !SeenMed.insert(O.Addr).second)
+        return std::nullopt;
+      // Pipeline keeps the dispatch spelling; the loader declaration uses no
+      // display name. Only the canonical spelling is accepted above.
+      H.TargetName = O.SourceCallHint->TargetName;
+      if (!sameHint(H, *O.SourceCallHint, true))
+        return std::nullopt;
+    }
+  size_t StructuralBudget = 100000;
+  if (!sameStructuredSourceBody(
+          High, High, [](const ExprPtr &, const ExprPtr &) { return true; },
+          StructuralBudget))
+    return std::nullopt;
+  std::set<const HighExpr *> Calls;
+  bool Invalid = false;
+  // Only statement calls are supported here. Nested or copied messages are
+  // rejected by the bounded structural comparison, never silently admitted.
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    if (!Budget || Invalid) {
+      Invalid = true;
+      return;
+    }
+    --Budget;
+    if (!S.CallExpr || !S.CallExpr->SourceCallHint ||
+        S.CallExpr->SourceCallHint->CallKind !=
+            SourceCallTypeHint::Kind::ObjCMessage)
+      return;
+    const auto &E = *S.CallExpr;
+    const auto I = Expected.find(S.Addr);
+    if (S.Kind != StmtKind::Call || I == Expected.end() ||
+        E.Kind != ExprKind::Call || E.IsIndirectCall || E.IndirectTarget ||
+        E.CallAddr != I->second.Hint.TargetAddress || !E.Type ||
+        E.Type->Kind != NdTypeKind::Void || E.Operands.size() != 2 ||
+        !SeenHigh.insert(S.Addr).second || !Calls.insert(&E).second) {
+      Invalid = true;
+      return;
+    }
+    auto H = I->second.Hint;
+    H.TargetName = E.SourceCallHint->TargetName;
+    for (const auto &A : E.Operands)
+      if (!A || !A->Type || A->Type->Size != 8 ||
+          (A->Type->Kind != NdTypeKind::Int &&
+           A->Type->Kind != NdTypeKind::Ptr))
+        Invalid = true;
+    Invalid |= !sameHint(H, *E.SourceCallHint, true) ||
+               !objcSourceCallBound(E, Image, {}, nullptr, nullptr, &High);
+  });
+  if (Invalid || SeenMed.size() != Expected.size() || SeenHigh != SeenMed)
+    return std::nullopt;
+  return Calls;
+}
 inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
-                           size_t &Budget, unsigned Depth = 0) {
+                           size_t &Budget,
+                           const std::set<const HighExpr *> &ExpectedMessages,
+                           const std::set<const HighExpr *> &ActualMessages,
+                           unsigned Depth = 0) {
   if (!Expected || !Actual || !Budget || Depth >= 64)
     return false;
   --Budget;
@@ -64,7 +199,9 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
     return false;
   if (E.SourceCallHint) {
     if (E.Kind != ExprKind::Call ||
-        !sameHint(*E.SourceCallHint, *A.SourceCallHint))
+        !sameHint(*E.SourceCallHint, *A.SourceCallHint,
+                  ExpectedMessages.count(Expected.get()) &&
+                      ActualMessages.count(Actual.get())))
       return false;
     A.SourceCallHint = E.SourceCallHint;
   }
@@ -78,18 +215,26 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
     return false;
   for (size_t I = 0; I < Expected->Operands.size(); ++I)
     if (!sameExpression(Expected->Operands[I], Actual->Operands[I], Budget,
-                        Depth + 1))
+                        ExpectedMessages, ActualMessages, Depth + 1))
       return false;
   return !Expected->IndirectTarget ||
          sameExpression(Expected->IndirectTarget, Actual->IndirectTarget,
-                        Budget, Depth + 1);
+                        Budget, ExpectedMessages, ActualMessages, Depth + 1);
 }
-inline bool sameBody(const HighFunc &E, const HighFunc &A) {
+inline bool sameBody(const HighFunc &E, const HighFunc &A,
+                     const BinaryImage &Image, const LowFunc &ExpectedLow,
+                     const MedFunc &ExpectedMed, const LowFunc &ActualLow,
+                     const MedFunc &ActualMed) {
+  const auto ExpectedMessages =
+      messageCalls(Image, ExpectedLow, ExpectedMed, E);
+  const auto ActualMessages = messageCalls(Image, ActualLow, ActualMed, A);
+  if (!ExpectedMessages || !ActualMessages)
+    return false;
   size_t Budget = 100000;
   return sameCompleteSourceBody(
       E, A,
       [&](const ExprPtr &X, const ExprPtr &Y) {
-        return sameExpression(X, Y, Budget);
+        return sameExpression(X, Y, Budget, *ExpectedMessages, *ActualMessages);
       },
       Budget);
 }
@@ -238,15 +383,19 @@ public:
     Converter.setFuncNames(&Names);
     Converter.setJumpTables(Current->Low->JumpTables);
     const auto MedReplay = Converter.convert(*Current->Med, Image.Arch);
-    if (!sameBody(*Rebuilt->High, *Current->High) ||
-        !sameBody(*Rebuilt->High, MedReplay))
+    if (!sameBody(*Rebuilt->High, *Current->High, Image, *Rebuilt->Low,
+                  *Rebuilt->Med, *Current->Low, *Current->Med) ||
+        !sameBody(*Rebuilt->High, MedReplay, Image, *Rebuilt->Low,
+                  *Rebuilt->Med, *Current->Low, *Current->Med))
       return false;
     std::map<va_t, const HighFunc *> Functions;
     for (const auto &F : Fresh.HighFuncs)
       Functions.emplace(F.Entry, &F);
     auto Bound =
         bindObjCSourceReferences(*Rebuilt->High, Image, nullptr, &Functions);
-    return Bound.Limitation.empty() && sameBody(Bound.Function, Function);
+    return Bound.Limitation.empty() &&
+           sameBody(Bound.Function, Function, Image, *Rebuilt->Low,
+                    *Rebuilt->Med, *Current->Low, *Current->Med);
   }
 };
 } // namespace neverd::sdk

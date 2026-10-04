@@ -79,5 +79,10 @@ bool isImmutableImageClassImportSlot(const BinaryImage &Image, va_t Address);
 /// the slot's shared mutable identity and separately validate the target.
 std::optional<va_t> readInitialImagePointer(const BinaryImage &Image,
                                             va_t Address);
+/// Same initial resolved-pointer proof, admitting only the exact loader
+/// selector-reference record at this slot. This does not freeze the runtime
+/// SEL and does not prove the pointed-to selector string or dispatch ABI.
+std::optional<va_t> readInitialImageSelectorPointer(const BinaryImage &Image,
+                                                    va_t Address);
 } // namespace neverd
 #endif

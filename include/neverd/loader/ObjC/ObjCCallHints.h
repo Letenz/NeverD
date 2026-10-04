@@ -33,6 +33,12 @@ bool objcSelectorStubMatches(const BinaryImage &Image, va_t Address,
 std::optional<SourceCallTypeHint>
 objcSelectorStubSourceCallHint(const BinaryImage &Image, va_t Address);
 
+/// Revalidate that declaration against immutable stub bytes, ordinary strong
+/// import storage and the original selector reference/string. This grants no
+/// receiver-class, noescape or frame effects; dispatch remains dynamic.
+std::optional<SourceCallTypeHint>
+objcImmutableSelectorStubSourceCallHint(const BinaryImage &Image, va_t Address);
+
 struct ObjCArgumentTailCall {
   va_t SelectorStub = 0;
   uint64_t SourceRegister = 0;
