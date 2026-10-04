@@ -277,7 +277,7 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64SIMDExceptionTests.cpp` 繞過 checked 准入層，在兩個特權層級驗證 KVM/WHP 的原生 `#XM` 傳遞。`X64SIMDExceptionCases.def` 中八個原始案例涵蓋六類例外，包括精確的次正規結果及無界指數下精度精確的溢位。暫存器與 RAM 形式發生例外時，除規定的 MXCSR 狀態外，完整 GPR、XMM、x87、FLAGS、FS/GS 與客體記憶體皆保持不變。屏蔽例外後重試原指令；保留黏滯狀態並修復運算元，驗證舊旗標不會再次觸發例外。這些必要的底層測試尚未在 checked 執行中開放未屏蔽 SIMD，也不構成 Windows 例外代碼映射的證據。
 
-`check_windows_simd.py` 根據 `WindowsSIMDCases.def` 與純量案例清單建置獨立的原創 Windows x64 程式。2,048 組觀察涵蓋暫存器/RAM 運算元、全部例外遮罩組合，以及清零或全部設置的黏滯狀態。Windows CI 保留原始例外代碼、參數與 `CONTEXT` 中的兩份 MXCSR；測試在還原主機狀態前檢查精確故障 PC、未改變的 XMM 狀態與遮罩例外後的結果。`--build-only` 僅證明編譯成功。這些觀察不啟用 checked 模式下未遮罩的 SIMD，也不代表 ARM64 原生執行。
+`check_windows_simd.py` 根據 `WindowsSIMDCases.def` 與純量案例清單建置獨立的原創 Windows x64 程式。6,144 組觀察涵蓋暫存器/RAM 運算元、全部例外遮罩組合、清零或全部設置的黏滯狀態，以及跳過、遮罩後重試、修復運算元且保持遮罩位元不變後重試三條路徑。組合語言入口分別記錄 VEH/VCH 的即時 MXCSR、x87 控制狀態與保存的 `CONTEXT`。測試在還原主機狀態前檢查精確故障 PC、狀態保持、修復後的上下文與重試結果；CI 保留原始記錄與原始碼雜湊。`--build-only` 僅證明編譯成功。這些觀察不啟用 checked 模式下未遮罩的 SIMD，也不代表 ARM64 原生執行。
 
 `WindowsSIMDStatusCases.def` 固定了原生 Windows 上觀察到的全部 63 種非空有效狀態組合。`WindowsSIMDMappingTests.cpp` 檢查精確代碼與參數、拒絕不一致的故障及無效控制值，並透過注入故障邊界檢查例外記錄、CONTEXT 中的兩份控制狀態與遮罩例外後的繼續執行。Windows CI 中的原創程式獨立驗證這些固定結果。注入測試不證明 Unicorn 能產生該例外，也不啟用 checked 模式下未遮罩的 SIMD。
 

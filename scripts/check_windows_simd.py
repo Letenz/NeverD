@@ -40,28 +40,33 @@ def definitions() -> tuple[dict, dict, list, list]:
 def parse_observations(data: bytes) -> list[dict]:
     values, _, operations, fields = definitions()
     record = struct.Struct("<" + "Q" * len(fields))
-    if len(data) != record.size * len(operations) * 2 * values["MaskCount"] * 2:
+    if len(data) != record.size * len(operations) * 2 * values["MaskCount"] * 2 * values["ModeCount"]:
         raise ValueError("missing or extra Windows SIMD observations")
     records = []
     parameters = [field for field in fields if re.fullmatch(r"Parameter\d+", field)]
     fault_fields = ["Code", "Flags", "ParameterCount", "ExceptionPC", "ContextPC",
                     "ContextFlags", "ContextMXCSR", "ContextFXMXCSR", *parameters]
+    fault_fields += [field for field in fields if field.startswith(("Handler", "Continue"))]
     for index, words in enumerate(record.iter_unpack(data)):
         row = dict(zip(fields, words))
-        quotient, sticky = divmod(index, 2)
+        quotient, mode = divmod(index, values["ModeCount"])
+        quotient, sticky = divmod(quotient, 2)
         quotient, unmask = divmod(quotient, values["MaskCount"])
         op, memory = divmod(quotient, 2)
-        if tuple(row[key] for key in ("Operation", "Memory", "Unmask", "Sticky")) != (
-                op, memory, unmask, sticky):
+        if tuple(row[key] for key in ("Operation", "Memory", "Unmask", "Sticky", "Mode")) != (
+                op, memory, unmask, sticky, mode):
             raise ValueError("Windows SIMD observation order changed")
         expected = ((values["DefaultMXCSR"] & ~(unmask << values["MaskShift"]))
                     | (values["Sticky"] if sticky else 0))
-        if row["BeforeMXCSR"] != expected or not row["FaultPC"]:
+        if row["BeforeMXCSR"] != expected or not row["FaultPC"] or row["ResumePC"] <= row["FaultPC"]:
             raise ValueError("Windows SIMD observation has inconsistent input state")
         if row["Traps"] not in (0, 1) or (not unmask and row["Traps"]) or (
                 unmask & operations[op][1] and not row["Traps"]):
             raise ValueError("Windows SIMD trap count contradicts the original instruction")
         if row["Traps"]:
+            if row["Continues"] != 1 or row["ContinueContextPC"] != row[
+                    "ResumePC" if mode == values["ModeSkip"] else "FaultPC"]:
+                raise ValueError("Windows SIMD continuation differs from its repair mode")
             if not row["Code"] or row["ParameterCount"] > len(parameters):
                 raise ValueError("invalid Windows SIMD exception record")
             if not row["FaultPC"] == row["ExceptionPC"] == row["ContextPC"]:

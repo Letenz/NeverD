@@ -12,8 +12,18 @@ SaveInitial:
   fxsave64 (%rcx)
   retq
 
+// Capture live handler state before any compiler-generated prologue. This is
+// independent of the fault's saved CONTEXT and leaves every register intact.
+.globl ObserveEntry, ContinueEntry
+ObserveEntry:
+  fxsave64 HandlerState(%rip)
+  jmp observe
+ContinueEntry:
+  fxsave64 ContinueState(%rip)
+  jmp observeContinue
+
 // Each original leaf saves the host FP state before loading the test image.
-// The handler skips only the labelled faulting instruction. Both paths save
+// The handler skips or retries the labelled faulting instruction. Both paths save
 // the observed result and restore the host before returning to compiled C.
 #define NEVERD_WINDOWS_SIMD_LEAF(Name, Prefix, Escape, Opcode, ModRM)           \
   .p2align WrapperAlignmentPower; .globl Run##Name, Fault##Name, Resume##Name;  \
