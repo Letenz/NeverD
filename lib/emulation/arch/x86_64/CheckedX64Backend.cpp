@@ -427,6 +427,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       BackendFault Fault{BackendFaultKind::Interrupt, I.address};
       Fault.Interrupt = unsigned(x64::ExceptionVector::GeneralProtection);
       Fault.ErrorCode = x64::NoSelectorErrorCode;
+      Fault.Cause = BackendFaultCause::OperandAlignment;
       return raiseFault(Fault, true);
     }
     // Some SETcc and SSE destinations have advisory decoder access metadata

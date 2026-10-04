@@ -109,4 +109,15 @@ const char *backendAccessKindName(BackendAccessKind Kind) {
   llvm_unreachable(diagnostic::UnknownAccess);
 }
 
+const char *backendFaultCauseName(BackendFaultCause Cause) {
+  switch (Cause) {
+#define NEVERD_BACKEND_FAULT_CAUSE(Name, Spelling)                             \
+  case BackendFaultCause::Name:                                                \
+    return Spelling;
+#include "neverd/emulation/BackendFaults.def"
+#undef NEVERD_BACKEND_FAULT_CAUSE
+  }
+  llvm_unreachable(diagnostic::UnknownFault);
+}
+
 } // namespace neverd::emulation

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: e6e2b82cd66393c28afe67bf6c8ac60fefa0bb6b06e4e0ff1321821fef727d93 -->
+<!-- i18n-source: 33b7c2f526f323823c3f8b4e27103efa6c5ebcb12cdf8013b1cfd5b037f4f3fe -->
 
 [← Índice de documentación](README.md)
 
@@ -174,3 +174,5 @@ Estos resultados acotan la investigación, pero no establecen una corrección de
 Ambos controles de ciclo de vida superaron ya 1000/1000 iteraciones en las dos imágenes Intel: recreación de vCPU (37195529270, 37195554929) y de VM más vCPU conservando el mismo owner (37196504453, 37196535787). El segundo acredita 8000 eventos nativos ordenados y la destrucción final de la generación 1001 por ejecución; se verificaron las 24/27 huellas, las salidas nativas y del controlador a cero y la recogida de los procesos. Esto acota la comparación con la sustitución completa de Executor, pero no identifica la causa ni demuestra una corrección. El siguiente diagnóstico conservará la VM y sustituirá vCPU e hilo propietario. Siguen pendientes la recuperación original y la validación CPU/Darwin completa.
 
 El cambio de owner no completó 1000 rondas: el uploader sufrió SIGTRAP al analizar cadenas V8 en macOS 15 (37198629082) y SIGSEGV al buscar ámbitos V8 en macOS 26 (37198630903). El controlador canceló y recogió los procesos nativos. Los registros conservan 24/25 y 467/468 rondas completadas/iniciadas, sin aserción nativa ni resultado final. Ambos runners siguieron accesibles y entregaron informes coincidentes. Son interrupciones del observador, no aprobaciones nativas ni pérdidas confirmadas del runner. La causa sigue abierta; se compararán controles de solo subida antes de cambiar el backend.
+
+Los controles sintéticos (37199672430, 37199674303) y las repeticiones exactas de las instantáneas fallidas (37200549588, 37200551385) completaron 16/16 cargas cada uno, sin VM ni invitado. Se verificaron independientemente las 17 huellas por ejecución, salidas cero, ausencia de señales o cancelación y los bytes del commit fijado `e02e8c6`. Los cuatro comparten Node 24.19.0, V8 13.6.233.17-node.51 y el SHA256 del ejecutable. Su UUID Intel coincide con los informes anteriores, sin hash del ejecutable original. El contenido por sí solo no reprodujo la caída; siguen pendientes el efecto de la ejecución nativa simultánea, la causa y la aceptación Intel. [Evidencia verificada](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upload-controls).

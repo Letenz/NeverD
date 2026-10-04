@@ -1,0 +1,14 @@
+//===- FaultReportCases.def - Lossless optional fault metadata ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_FAULT_REPORT_TEXT
+NEVERD_FAULT_REPORT_TEXT(AlignmentCause, "operand_alignment")
+#endif
+#ifdef NEVERD_FAULT_REPORT_CASE
+NEVERD_FAULT_REPORT_CASE(Absent, std::nullopt, "", "")
+NEVERD_FAULT_REPORT_CASE(Zero, 0, "0", "0x0")
+NEVERD_FAULT_REPORT_CASE(AllBits, UINT64_MAX, "ffffffffffffffff",
+                         "0xFFFFFFFFFFFFFFFF")
+#endif

@@ -36,6 +36,11 @@ llvm::json::Value faultJSON(const std::optional<BackendFault> &Fault) {
                     : nullptr;
   Object[field::Interrupt] =
       Fault->Interrupt ? llvm::json::Value(*Fault->Interrupt) : nullptr;
+  Object[field::ErrorCode] =
+      Fault->ErrorCode ? llvm::json::Value(bits(*Fault->ErrorCode)) : nullptr;
+  Object[field::Cause] =
+      Fault->Cause ? llvm::json::Value(backendFaultCauseName(*Fault->Cause))
+                   : nullptr;
   return Object;
 }
 } // namespace
