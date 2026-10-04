@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
+<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
 
 [← Índice de documentación](README.md)
 
@@ -170,3 +170,5 @@ El candidato `909672ca6`, con plazo finito en el hilo propietario, sigue siendo 
 El programa independiente y sin modificar `hvf-edge-cases`, revisión `f150b38`, completó su invitado en modo real y 100000 intentos de llamada de interrupción aleatoria en ambas imágenes, en unos 362 y 398 segundos. Ambos terminaron con código cero y se recogieron sus procesos hijos; hashes, progreso y finalización del invitado se verificaron de forma independiente. Los intentos anteriores de 300 segundos alcanzaron el plazo del observador y fueron terminados y recogidos, sin pérdida del runner. El programa ignora los códigos de retorno de las interrupciones aleatorias: el número de intentos no demuestra entregas individuales. No sustituye la aceptación de NeverD ni una comparación de rendimiento. [Código, registros y auditoría](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream).
 
 Estos resultados acotan la investigación, pero no establecen una corrección de producción. Conservar VM e hilos Executor es una comparación diagnóstica, no un cambio de ciclo de vida aceptado. Intel aún debe superar las 1000 recuperaciones originales, el inventario CPU completo y la prueba Darwin independiente con el mismo candidato limpio.
+
+La recreación solo de vCPU superó 1000/1000 iteraciones en ambas imágenes Intel (37195529270, 37195554929), con todos los marcadores y la destrucción final de la generación1001. El siguiente control explícito `instruction-vm-recreate` recrea también la VM y conserva el mismo owner y bloqueo exclusivo VM. Exige ocho eventos nativos ordenados por iteración y la destrucción final; no demuestra una corrección del producto ni aceptación completa.

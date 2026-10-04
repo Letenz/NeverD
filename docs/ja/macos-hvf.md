@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
+<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -170,3 +170,5 @@ M4 Max、macOS 15.6.1、Release、Apple Clang 17、ビルド済み LLVM で確�
 独立した未変更の `hvf-edge-cases` プログラム `f150b38` は、両イメージで real-mode guest と 100000 回のランダム割り込み呼び出し試行を約 362 秒、398 秒で完了しました。終了コードは 0 で子プロセスも回収済みです。成果物とソースのハッシュ、進捗、guest 完了を独立検証しました。先の 300 秒実行は観測期限で終了・回収され、runner の通信断はありませんでした。上流コードはランダム割り込みの戻り値を無視するため、試行数は配信成功数を意味しません。NeverD の受け入れ検証や性能比較には代用できません。[ソース・ログ・監査](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream)。
 
 調査範囲は狭まりましたが、製品修正はまだ証明されていません。VM と Executor スレッドの保持は診断用の比較であり、採用済みのライフサイクル変更ではありません。Intel では同じクリーンな候補で元の 1000 回復旧テスト、CPU 全項目、独立 Darwin ゲートを通す必要があります。
+
+vCPU のみの再生成は両 Intel イメージで 1000/1000 回に合格し（37195529270、37195554929）、全ライフサイクル記録と最終第1001世代の破棄を確認しました。次の任意診断 `instruction-vm-recreate` は同じ owner と VM 排他ロックを保持して VM も再生成します。各回の8個のネイティブイベントの順序と最終破棄が必須です。製品修正や完全な受け入れ検証を意味しません。

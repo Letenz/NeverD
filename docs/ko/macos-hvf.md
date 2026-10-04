@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
+<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
 
 [← 문서 목록](README.md)
 
@@ -170,3 +170,5 @@ M4 Max, macOS 15.6.1, Release, Apple Clang 17, 사전 빌드 LLVM에서 검증�
 독립적인 원본 `hvf-edge-cases` 프로그램 `f150b38`은 두 이미지에서 real-mode guest와 100000회 무작위 인터럽트 호출 시도를 약 362초와 398초에 완료했습니다. 모두 종료 코드 0과 자식 프로세스 회수가 확인되었고, 산출물·소스 해시, 진행 표시, guest 완료도 독립 검증했습니다. 앞선 300초 실행은 관찰 기한에 도달해 회수되었으며 runner 연결은 유지되었습니다. 상류 코드는 무작위 인터럽트 반환값을 무시하므로 시도 횟수가 개별 전달 성공을 뜻하지 않습니다. NeverD 승인이나 성능 비교를 대신하지 않습니다. [소스·로그·감사](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream).
 
 조사 범위는 좁아졌지만 제품 수정이 입증되지는 않았습니다. VM과 Executor 스레드 유지는 진단 비교이며 채택된 수명 변경이 아닙니다. Intel은 동일한 깨끗한 후보에서 원래 1000회 복구 테스트, 전체 CPU 목록 및 독립 Darwin 관문을 통과해야 합니다.
+
+vCPU만 재생성하는 대조가 두 Intel 이미지에서 1000/1000회를 통과했고（37195529270, 37195554929）, 모든 수명 표시와 마지막 1001세대 소멸을 확인했습니다. 다음 선택 진단 `instruction-vm-recreate`는 같은 owner와 VM 배타 잠금을 유지하면서 VM도 재생성합니다. 매회 여덟 네이티브 이벤트의 순서와 최종 소멸이 필요합니다. 제품 수정이나 전체 승인을 의미하지 않습니다.

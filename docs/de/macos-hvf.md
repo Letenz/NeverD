@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
+<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -170,3 +170,5 @@ Der Kandidat `909672ca6` mit endlicher Frist im besitzenden Thread bleibt experi
 Das unabhängige, unveränderte Programm `hvf-edge-cases` bei `f150b38` beendete seinen Real-Mode-Gast und 100000 zufällige Interrupt-Aufrufversuche auf beiden Images nach etwa 362 und 398 Sekunden. Beide Exitcodes waren null, die Kindprozesse wurden eingesammelt. Artefakt- und Quellhashes, Fortschritt und Gastabschluss wurden unabhängig geprüft. Frühere Versuche erreichten die Beobachtungsgrenze von 300 Sekunden und wurden beendet und eingesammelt, ohne Runner-Verlust. Das Original ignoriert Rückgabecodes zufälliger Interrupts; Aufrufzahlen belegen keine einzelne Zustellung. Der Vergleich ersetzt weder NeverD-Abnahme noch Leistungsmessung. [Quellen, Protokolle und Prüfung](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream).
 
 Die Ergebnisse grenzen die Untersuchung ein, belegen aber keine Produktkorrektur. VM und Executor-Threads beizubehalten ist ein Diagnosevergleich, keine akzeptierte Lebenszyklusänderung. Intel benötigt weiterhin den ursprünglichen 1000-fachen Wiederherstellungstest, das vollständige CPU-Inventar und die unabhängige Darwin-Prüfung am selben sauberen Kandidaten.
+
+Die reine vCPU-Neuerstellung bestand 1000/1000 Durchläufe auf beiden Intel-Images (37195529270, 37195554929), einschließlich aller Markierungen und der abschließenden Zerstörung von Generation1001. Der nächste explizite Vergleich `instruction-vm-recreate` erstellt zusätzlich die VM neu, behält aber owner und exklusiven VM-Lock. Acht geordnete native Ereignisse je Durchlauf und die abschließende Zerstörung sind erforderlich. Das belegt weder Produktkorrektur noch vollständige Abnahme.

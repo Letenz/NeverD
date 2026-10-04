@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
+<!-- i18n-source: dd551098a37f71d522640a8c7be6e0d88dda7b7a1c43b1874e5108b59fe877c6 -->
 
 [← 文件索引](README.md)
 
@@ -170,3 +170,5 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 獨立且未修改的 `hvf-edge-cases` 程式 `f150b38` 在兩個映像上完成 real-mode guest 與 100000 次隨機中斷呼叫嘗試，耗時約 362、398 秒。兩次均正常結束並回收子程序；產物摘要、原始碼雜湊、進度標記與 guest 完成輸出均已獨立核驗。先前 300 秒嘗試達到觀察器期限後被回收，沒有 runner 失聯。上游程式忽略隨機中斷回傳值，呼叫次數不代表逐次成功交付。此對照不構成 NeverD 驗收或效能比較。[原始碼、紀錄與稽核](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream)。
 
 這些結果縮小調查範圍，但尚未證明正式修復。保留 VM 與 Executor 執行緒僅用於診斷對照，尚未成為接受的生命週期變更。Intel 仍須在同一個乾淨候選上通過原始 1000 輪恢復、完整 CPU 清單與獨立 Darwin 門檻。
+
+僅重建 vCPU 的對照在兩套 Intel 映像上均通過 1000/1000 輪（37195529270、37195554929），包含所有生命週期標記與第1001代的最終銷毀。下一項明確啟用的診斷 `instruction-vm-recreate` 也會重建 VM，同時保留相同 owner 與 VM 排他鎖。每輪要求八個有序原生事件與最終銷毀完成；這不代表正式修復或完整驗收。
