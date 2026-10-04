@@ -72,6 +72,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。
 
+`X64VectorOperands.def` 統一定義傳統 SSE 搬移、運算、移位、轉換與遮罩的完整運算元配對。`MOVMSKPS`、`MOVMSKPD` 與 `PMOVMSKB` 從 XMM 擷取符號位元寫入 r32/r64，並清零目的暫存器其餘位元。KVM、WHP 與 checked Unicorn 共用准入規則，保留 FLAGS、MXCSR 與來源暫存器；遮罩的記憶體運算元、MMX 與 VEX/EVEX 形式仍不支援。
+
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
 thread pointer 包含 x64 FS/GS 基底及 ARM64 `TPIDR_EL0` 的精確 `MRS`/`MSR` 編碼。原生傳輸與 CPU snapshot 會獨立於記憶體保存狀態，但不會建立 OS 執行緒或配置 TLS 區塊。supervisor x64 支援對齊的 1/2/4 位元組純量 MMIO 交易，以及每個重新啟動邊界一個 MOVS 元素。裝置讀取必須先提供無副作用預覽，再至多提交一次。user 設定拒絕裝置對映；RMW、寬 MMIO、連接埠 I/O 也仍不支援。
