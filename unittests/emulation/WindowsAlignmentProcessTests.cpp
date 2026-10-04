@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "WindowsNativeTestSupport.h"
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcessExceptions.h"
 
@@ -13,9 +14,9 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Program.h"
 
 namespace neverd::emulation {
 namespace {
@@ -27,8 +28,46 @@ namespace {
 #undef NEVERD_ALIGNMENT_PROCESS_VALUE
 #define NEVERD_WINDOWS_ALIGNMENT_VALUE(Name, Value)                            \
   constexpr uint64_t Name = Value;
+#define NEVERD_WINDOWS_ALIGNMENT_WIDE(Name, Value)                             \
+  constexpr uint64_t Name = Value;
 #include "fixtures/WindowsAlignmentCases.def"
+#undef NEVERD_WINDOWS_ALIGNMENT_WIDE
 #undef NEVERD_WINDOWS_ALIGNMENT_VALUE
+enum Scenario {
+#define NEVERD_WINDOWS_ALIGNMENT_SCENARIO(Name) Scenario##Name,
+#include "fixtures/WindowsAlignmentCases.def"
+#undef NEVERD_WINDOWS_ALIGNMENT_SCENARIO
+  ScenarioCount
+};
+struct Operation {
+  const char *Name;
+  bool Store;
+};
+constexpr Operation Operations[] = {
+#define NEVERD_ALIGNMENT_PROCESS_RESULT(Name, Store, Low, High) {#Name, Store},
+#include "fixtures/WindowsAlignmentProcessCases.def"
+#undef NEVERD_ALIGNMENT_PROCESS_RESULT
+};
+void expectOutput(llvm::StringRef Bytes) {
+  const size_t PageCount = std::size(Operations) * (ScenarioCount + 1);
+  const size_t ResultBytes = llvm::StringRef(ExpectedOutput).size() / 2;
+  ASSERT_EQ(Bytes.size(), PageCount * PageBytes + ResultBytes);
+  for (const auto &Op : Operations) {
+    SCOPED_TRACE(Op.Name);
+    for (size_t Case = 0; Case <= ScenarioCount; ++Case) {
+      SCOPED_TRACE(Case);
+      for (size_t Word = 0; Word < PageBytes / sizeof(uint64_t); ++Word) {
+        uint64_t Expected = VectorHigh ^ Word;
+        if (Case == ScenarioCount && Word < VectorBytes / sizeof(uint64_t))
+          Expected = Op.Store ? (Word == 0 ? VectorLow : VectorHigh) : 0;
+        ASSERT_EQ(llvm::support::endian::read64le(Bytes.data()), Expected)
+            << Word;
+        Bytes = Bytes.drop_front(sizeof(uint64_t));
+      }
+    }
+  }
+  EXPECT_EQ(llvm::toHex(Bytes), ExpectedOutput);
+}
 struct Profile {
   const char *Name;
   ExecutionBackendKind Backend;
@@ -98,7 +137,7 @@ TEST_P(WindowsAlignment, ExecutesOriginalFaultAndRetryScenarios) {
       << llvm::toHex(Result->StandardError);
   EXPECT_TRUE(Result->StandardError.empty())
       << llvm::toHex(Result->StandardError);
-  EXPECT_EQ(llvm::toHex(Result->StandardOutput), ExpectedOutput);
+  expectOutput(Result->StandardOutput);
 #endif
 }
 INSTANTIATE_TEST_SUITE_P(Backends, WindowsAlignment,
@@ -121,21 +160,16 @@ TEST(WindowsAlignmentNative, RunsOriginalFaultAndRetryExecutable) {
           .string();
   const auto Output = (Root / StdoutFile).string();
   const auto Error = (Root / StderrFile).string();
-  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
-                                                      Error};
-  std::string Diagnostic;
-  bool Failed = false;
-  const int Status =
-      llvm::sys::ExecuteAndWait(Program, {Program}, std::nullopt, Redirects,
-                                TimeoutSeconds, 0, &Diagnostic, &Failed);
-  ASSERT_FALSE(Failed) << Diagnostic;
+  auto Status =
+      native_test::observeNativeProcess(Program, Output, Error, TimeoutSeconds);
+  ASSERT_TRUE(bool(Status)) << llvm::toString(Status.takeError());
   auto Out = llvm::MemoryBuffer::getFile(Output);
   auto Err = llvm::MemoryBuffer::getFile(Error);
   ASSERT_TRUE(bool(Out));
   ASSERT_TRUE(bool(Err));
-  EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
+  EXPECT_EQ(*Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
   EXPECT_TRUE((*Err)->getBuffer().empty()) << llvm::toHex((*Err)->getBuffer());
-  EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), ExpectedOutput);
+  expectOutput((*Out)->getBuffer());
 #endif
 }
 } // namespace

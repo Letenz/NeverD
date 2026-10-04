@@ -3,9 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../interpreter/X64UserFlags.h"
+#include "X64UserFlags.h"
 
-#include "neverd/analysis/InterpreterLLVMRefinement.h"
+#include "neverd/analysis/arch/x86_64/InterpreterLLVMRefinement.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/AsmParser/Parser.h"

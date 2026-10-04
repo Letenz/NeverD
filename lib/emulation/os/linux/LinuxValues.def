@@ -121,6 +121,8 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(Audit, 0x6ffffefc)
 NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #endif
 #ifdef NEVERD_LINUX_DIAGNOSTIC
+NEVERD_LINUX_DIAGNOSTIC(AndroidOptions,
+                        "Android options require the Android native profile")
 NEVERD_LINUX_DIAGNOSTIC(
     Limits,
     "process limits must be positive and fit the checked execution profile")

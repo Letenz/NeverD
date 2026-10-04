@@ -14,6 +14,7 @@
 #include "llvm/Support/Endian.h"
 
 #include <array>
+#include <map>
 #include <vector>
 
 namespace neverd::emulation::vector_test {
@@ -93,6 +94,25 @@ protected:
     };
     llvm::cantFail(CPU->installHooks(std::move(Hooks)));
     return llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  }
+  auto snapshot() {
+    std::map<CPURegister, RegisterValue> State;
+#define NEVERD_SCALAR_REGISTER(ISA, Name, Bits, Backend)                       \
+  if (GuestArchitecture::ISA == GuestArchitecture::X64)                        \
+    State[CPURegister::ISA##Name] =                                            \
+        llvm::cantFail(CPU->readRegister(CPURegister::ISA##Name));
+#define NEVERD_EXTENDED_REGISTER(ISA, Name, Bits, Backend)                     \
+  NEVERD_SCALAR_REGISTER(ISA, Name, Bits, Backend)
+#define NEVERD_VECTOR_REGISTER(ISA, Index, Backend)                            \
+  if (GuestArchitecture::ISA == GuestArchitecture::X64) {                      \
+    const auto R = vectorRegister(GuestArchitecture::ISA, Index);              \
+    State[R] = llvm::cantFail(CPU->readRegister(R));                           \
+  }
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_VECTOR_REGISTER
+#undef NEVERD_EXTENDED_REGISTER
+#undef NEVERD_SCALAR_REGISTER
+    return State;
   }
   void expectState(const Input &Input, const RegisterValue &Expected,
                    uint64_t PC, uint64_t Address = Data) {

@@ -100,6 +100,14 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 `NeverDLLVMScalarLoopRecovery` 負責此純量域內明確啟用的迴圈重構。它僅複製目標函式與必要的內建函式宣告，證明完整來源控制域，再提出首輪前綴／攜帶值重排、零次迴圈區域合併、迴圈頭判斷和仿射攜帶值候選。資料歸零的篩選涵蓋來源控制域，但只能拒絕候選；每個接受結果仍須通過其餘輸入位元全部保持符號化的整函式證明。需要額外控制位元的候選會被拒絕。按末端判斷、迴圈 PHI、指令數的字典序成本選擇較小候選。建構、證明、候選數及變換數預算累計計費，耗盡時不發布部分函式；來源保持不變。C++ 搜尋提供已證明的候選，但不認證原生 ABI。
 
+內部位寬候選取不變函式介面中的最大整數寬度。複製明確映射整數常數的位元模式，並刪除變成恆等的轉換；intrinsic簽章維持不變。這個寬度僅用於提議，仍須對完整原函式證明高位元、有號次序、位移、定義性與終止均保持。掃描、映射及清理計入共用建構預算；沒有收益或預算耗盡時不發布候選。
+
+迴圈 PHI 僅在所有外部入口提供相同 SSA 值且種子支配它時，才能提出種子替換候選。只用於拒絕的篩選最多將 32 個候選分組；接受整批仍須證明原始完整函式。失敗批次分拆，失敗槽位只在當次搜尋中暫緩重試。所有回邊、平行 PHI、定義性與終止性仍須證明。`WorkLimitExceeded` 區分全域工作扣費失敗、精確預算處的一般拒絕及單次查詢上限；預算耗盡不發布部分結果。
+
+共用符號層僅在常數 AND 遮罩只改變邏輯右移捨棄的低位時消除它。常數計數先檢查完整無號值，再統一表示；算術右移超限時飽和至符號位。變數計數與 LLVM poison 義務保留原義。物件管線結構版本 9 在兩種快取識別中區分新的化簡配方。
+
+迴圈候選也可取自實際支配入口的條件及其純量邊界，並處理獨立 latch 到 header 的回邊。窄位寬末索引的回繞不能被假定為保持零次迴圈行為。單位步長遞推優先作為基準，同組保持原始碼順序，線性工作量計入預算。由入口條件提取的邊界僅提出零擴展或截斷候選；有符號或回繞比較以及最後一次更新仍須通過原始完整函式證明。
+
 未請求映像或除錯資訊投影時，LLVMC 現在自動呼叫純量迴圈恢復。有界掃描限制每個函式最多 1024 個區塊。恢復與 LLVM 清理在模組共用預算內反覆執行，最後透過共用匯入器和 SymExec，將最終函式本體對照原始函式重新證明。發布只修改輸出器副本，保留函式身分、屬性、呼叫端和內建函式繫結。符號衝突、外部保留的區塊位址、函式中繼資料及例外映射保留既有路徑；拒絕或預算耗盡時不發布中間函式。單函式輸出只正規化所選目標。這不推導原生輸入介面或記憶體私有性。
 
 LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，並在一般純量生成前執行有預算限制的逐位元組必然資料流分析，不引入第二套值求值器。
@@ -502,7 +510,23 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 | `lib/support` | 共用二進位載入 helper | Loader |
 | `lib/translate` | 帶版本的 guest state/策略/退出、固定 runtime ABI、受檢 guest memory、產生 IR/目標檔/LinkGraph 稽核、sealed 原生連結，以及實驗性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 與 JITLink 契約 |
 
-`lib/pass/ir/simplify` 的 `ByteMemoryForwardingPass` 在單一基本區塊內，依固定位元組 alloca 各位元組的最後寫入重建完整整數讀取。它依目標位元組順序處理 8 至 128 位元、寬度為整個位元組的存取，只接受物件內精確的常數 GEP。未知呼叫、未知寫入及有序記憶體會清除記錄。管線在既有私有位址復原之後、兩次 SROA 之間執行此 pass，並保留原始 store。指令掃描、位址走訪、追蹤位元組、替換用途及新增 IR 均有有限預算。預設不引入快照；明確啟用 `AllowStoreSnapshots` 後，在原 store 前僅 freeze 一次，並讓寫入及所有片段共用該值。這種可選的 LLVM 精化不證明原生值已定義，也不復原函式簽章。
+### 分析與化簡的架構歸屬
+
+| 目錄 | 職責 |
+|---|---|
+| `lib/analysis/core` | 共用分析、有限域與關係證明編排 |
+| `lib/analysis/llvm` | 共用 LLVM 匯入、純量等價與迴圈恢復 |
+| `lib/analysis/bytecode` | 外部位元組碼驗證與降低 |
+| `lib/analysis/arch/x86_64` | 原生 x64 映像、暫存器/旗標、堆疊、字串傳送與精化介接器 |
+| `lib/analysis/arch/aarch64` | ARM64 擴充要求；尚無原生恢復實作 |
+| `lib/pass/ir/simplify/common` | 使用明確位元寬度與資料配置的通用 LLVM 化簡 |
+| `lib/symbolic` | 共用運算式、MBA、位元事實與執行引擎 |
+
+原生暫存器身分、旗標配置及指令位元組識別歸 `arch/<isa>`。共用核心目前呼叫明確的 x64 契約；接入 ARM64 需要獨立介接器與分派，不能直接更名沿用契約。`LLVMInterpreterModel.h` 與 `InterpreterModel.h` 保存共用模型型別；x64 介接器向 LLVM 匯入器傳入自己的狀態大小。原生公開標頭位於 `include/neverd/analysis/arch/x86_64`，舊路徑保留轉送標頭。
+
+OS 服務仍歸 `lib/emulation/os`，環境契約不能證明原生 ABI 或暫存器語義。LLVM 純量與符號化簡保持共用；未來若需要 ISA 專屬化簡，放入 `lib/pass/ir/simplify/arch/<isa>`，並要求明確的目標架構證據。
+
+`lib/pass/ir/simplify/common` 的 `ByteMemoryForwardingPass` 在單一基本區塊內，依固定位元組 alloca 各位元組的最後寫入重建完整整數讀取。它依目標位元組順序處理 8 至 128 位元、寬度為整個位元組的存取，只接受物件內精確的常數 GEP。未知呼叫、未知寫入及有序記憶體會清除記錄。管線在既有私有位址復原之後、兩次 SROA 之間執行此 pass，並保留原始 store。指令掃描、位址走訪、追蹤位元組、替換用途及新增 IR 均有有限預算。預設不引入快照；明確啟用 `AllowStoreSnapshots` 後，在原 store 前僅 freeze 一次，並讓寫入及所有片段共用該值。這種可選的 LLVM 精化不證明原生值已定義，也不復原函式簽章。
 
 位元組轉發與反向覆寫分析僅在 LLVM 確認 intrinsic 無記憶體存取、無其他副作用、可正常返回，且沒有 operand bundle 或 convergent 契約時保留位元組事實。呼叫及其結果仍留在原處。此規則同時適用於 alloca 與數值位址記憶體；普通呼叫即使標註 `memory(none)` 仍是邊界。它不增加別名分離、私有記憶體假設或跨區塊關係。
 
@@ -570,7 +594,7 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `X64StringInstructions.def` 統一管理一般 RAM 上 8/16/32/64 位元的 `MOVS/STOS/LODS`；`CLD/STD` 只改變方向旗標。每個 REP 元素在觀察回呼前驗證整個運算元，並於一個可恢復邊界提交。後續錯誤保留先前完成的元素；取消或回呼例外不改變目前元素。FS/GS 僅作用於來源位址，且在位址寬度截斷之後相加。AL/AX 載入保留高位元，EAX 載入零擴展。32 位元位址模式的零次 REP 要求計數高位元為零，MOVS/STOS 還要求參與的位址暫存器高位元為零，否則不同真實 CPU 實作會產生不同結果。MOVS/STOS/LODS 的 REPNE 形式與 STOS/LODS 裝置運算元仍不支援。`X64StringTransferTests.cpp` 用獨立的主機指令對照寬度、方向、重疊和零次數，並分別檢查權限、別名、回繞、錯誤與恢復。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的 STOS/LODS。
 
-`X64StringInstructions.def` 也統一管理一般 RAM 上 8/16/32/64 位元的 `CMPS/SCAS` 與 `REPE/REPNE`。每個元素在觀察回呼前驗證全部讀取運算元，更新六個算術旗標，並於首次符合終止條件時退出。資料錯誤會恢復本次連續 REP 執行開始時的旗標，同時保留已完成的指標與計數更新；公開介面恢復執行時，以已發布的 CPU 狀態重新開始。停止與觀察回呼例外不改變目前元素，提前終止也不會讀取下一個元素。FS/GS 僅影響 CMPS 來源位址；SCAS 保留累加器與未使用的來源暫存器。裝置運算元及有歧義的 32 位元零次數高位元狀態仍不支援。`X64StringComparisonTests.cpp` 以獨立主機指令對照旗標、方向、別名、回繞、權限與恢復，並透過 Linux x64 訊號測試讀取實際錯誤時的暫存器。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的兩類條件重複形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
+`X64StringInstructions.def` 也統一管理一般 RAM 上 8/16/32/64 位元的 `CMPS/SCAS` 與 `REPE/REPNE`。每個元素在觀察回呼前驗證全部讀取運算元，更新六個算術旗標，並於首次符合終止條件時退出。資料錯誤會恢復本次連續 REP 執行開始時的旗標，同時保留已完成的指標與計數更新；公開介面恢復執行時，以已發布的 CPU 狀態重新開始。停止與觀察回呼例外不改變目前元素，提前終止也不會讀取下一個元素。FS/GS 僅影響 CMPS 來源位址；SCAS 保留累加器與未使用的來源暫存器。裝置運算元及有歧義的 32 位元零次數高位元狀態仍不支援。`X64StringComparisonTests.cpp` 以獨立主機指令對照旗標、方向、別名、回繞、權限與恢復，並透過 Linux x64 訊號測試讀取實際錯誤時的暫存器。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的兩類條件重複形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。 Linux 原生驗證涵蓋首元素執行前後發生的故障，並區分 Intel 還原入口 flags 與 Hyper-V 下 AMD EPYC 7763 保留最後一次比較 flags 的行為（[原生觀測](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）；未知 CPU 廠商會明確失敗。所有後端的 checked 來賓仍統一還原入口 flags。
 
 `WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
 
@@ -789,7 +813,7 @@ HighC 透過依精確值寬度複製位元組的輔助函式，輸出一般記�
 
 Swift 布林結果驗證共同檢查目前的 Objective-C 入口 ABI、不可變的直接呼叫指令、精確強匯入與完整 LowIR 使用端證明。其他呼叫必須具備目前的執行階段目錄 ABI、完整的 8 指令類別存取器證明，或精確強匯入且由共用選擇子或接收者宣告層重新驗證完整純量 ABI 的 super 呼叫。發布時仍須複核原生相依性、super 接收者與堆疊框架。未證明的原生或動態呼叫與重複呼叫點均被拒絕；這些事實本身不會發布原始碼，也不會宣告執行階段位元組回傳 ABI。
 
-具有入口位址上的函式符號的原生入口可暫時只將完整 x0 字視為可觀察結果。原始碼推斷繫結完整入口 ABI 後，發布檢查會以該 ABI 重新執行同一 LowIR 證明；暫時假設本身不提供原始碼繫結或位元組回傳 ABI。 原生保留暫存器推斷只有以目前入口 ABI 重新驗證該 Bool 呼叫的精確 LowIR 位置後，才能使用它。入口位元組與完整狀態復原證明仍決定觀察到的保留暫存器能否成為參數。 已繫結的雙字原生結果只有在兩個回傳載體皆通過原生配對證明時，才能將觀察範圍擴展至 x0/x1；發布前會重新推斷完整的雙字回傳，再接受該 Bool 呼叫。
+具有入口位址上的函式符號的原生入口可暫時只將完整 x0 字視為可觀察結果。原始碼推斷繫結完整入口 ABI 後，發布檢查會以該 ABI 重新執行同一 LowIR 證明；暫時假設本身不提供原始碼繫結或位元組回傳 ABI。 原生保留暫存器推斷只有以目前入口 ABI 重新驗證該 Bool 呼叫的精確 LowIR 位置後，才能使用它。入口位元組與完整狀態復原證明仍決定觀察到的保留暫存器能否成為參數。 已繫結的雙字原生結果只有在兩個回傳載體皆通過原生配對證明時，才能將觀察範圍擴展至 x0/x1；發布前會重新推斷完整的雙字回傳，再接受該 Bool 呼叫。 已繫結的原生純量結果採用共享 `SourceABI` 已驗證的 1、2、4 或 8 位元組寬度。原生推斷仍須證明所有回傳路徑；發布前會重新推斷完整的目前 ABI，再複核 LowIR 證明與原始碼實際引數。縮窄呼叫端回傳值不會將執行階段原始 `i1` 結果中的任何未知位元變成已定義位元。
 
 精確的 libswiftCore Hasher seed、String.hash(into:) 與 Hasher.finalize 匯入可透過已驗證的 Swift ABI 參數借用 ARM64 私有堆疊框架中的 72 位元組區域。狀態證明在呼叫後使所有借用位元組失效，並拒絕與儲存的暫存器重疊或框架逸出；僅名稱相符而缺少目前匯入及 ABI 證明，不能授權借用。
 
@@ -882,6 +906,12 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。
+
+`X64VectorOperands.def` 統一定義傳統 SSE 搬移、運算、移位、轉換與遮罩的完整運算元規則。`MOVMSKPS`、`MOVMSKPD` 與 `PMOVMSKB` 從 XMM 擷取符號位元寫入 r32/r64，並清零目的暫存器其餘位元。KVM、WHP 與 checked Unicorn 共用准入規則，保留 FLAGS、MXCSR 與來源暫存器；遮罩的記憶體運算元、MMX 與 VEX/EVEX 形式仍不支援。
+
+`X64ShuffleInstructions.def` 新增 `PSHUFD`、`PSHUFHW`、`PSHUFLW`、`SHUFPS` 與 `SHUFPD`。`X64VectorOperands.def` 要求完整的三個運算元：XMM 目的、XMM 或對齊的 m128 來源，以及 imm8。原始指令依位元選取通道，保留 FLAGS 與 MXCSR；記憶體形式檢查全部 16 位元組，對齊錯誤先於資料觀察。KVM、WHP 與 checked Unicorn 共用這些規則。 同一清單也允許恰有兩個運算元的 `UNPCKLPS`、`UNPCKHPS`、`UNPCKLPD` 與 `UNPCKHPD`，交錯原始目的與來源的位元模式。硬體可以只讀取所選的 64 位元；checked RAM 檢查對齊的 m128 運算元。
+
+`MOVLPS`、`MOVHPS`、`MOVLPD` 和 `MOVHPD` 精確傳輸八位元組 RAM，無對齊要求。`X64VectorInstructions.def` 宣告儲存使用的半部；`X64VectorOperands.def` 限定 XMM/m64 運算元對。載入保留另一個 64 位元半部，高半部儲存觀察者接收高半部資料。KVM、WHP 和 checked Unicorn 共用全範圍權限檢查與 RAM 回復。僅暫存器形式的 `MOVHLPS`/`MOVLHPS` 保留各自語義。
 
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
@@ -1064,3 +1094,5 @@ metadata 區域變數可有多個常數定義，但共用 HighIR 原始碼 CFG �
 經過認證的巢狀 Swift once 回呼傳回 void，因此原始碼投影可以捨棄僅作為傳回值使用、且經過有界檢查的 64 位元整數加減運算式。每個運算元與純量檢視都必須不含呼叫、載入、有序記憶體存取、間接目標或未知輸入。此證明不會確立私有堆疊框架邊界，也不會改變原生函式 ABI。檢查涵蓋所有巢狀傳回，並保留原始陳述式、分支、儲存及獨立認證的 retain 副作用。目前子回呼的繫結及完整原始碼發布驗證仍為必要條件。 已有型別的一般 once 呼叫端使用同一套完整子回呼證明。用於計算被忽略內容參數的呼叫與載入仍保留在呼叫端；內容獨立性不允許移除這些求值副作用。
 
 `SwiftMetadata` 也驗證以執行期匯入 `_SwiftObject` 作為 Objective-C 父類別的原生 Swift 類別。目前類別描述符、執行期名稱、元資料標頭與 Objective-C 記錄必須和來自 `libswiftCore` 的唯一強繫結、零偏移、雙層命名空間類別匯入一致。初始匯入槽驗證沿用不可變匯入的唯一儲存與重疊修正檢查，同時允許可寫入的宣告記錄；它不授予穩定執行期指標、實例配置、物件複製或固定欄位偏移權限。弱繫結、衝突、缺失與錯誤提供者仍不受支援；原生 kind-1 欄位記錄不會取得獨立的 kind-7 Objective-C 欄位證明。
+
+`swiftFixedRootClassStorage` 獨立證明已註冊原生 Swift 根類別的有界儲存，欄位限於 `String?`、`String??` 和 `Bool?`。完整的 kind-1 反射、欄位位移宣告、不可變位移槽、中繼資料向量與 Objective-C ivar 必須逐項一致，並共同確認實例大小與對齊。原始碼繫結器隨後可保留一個精確的編譯器外提靜態初始化物件，包括零值 once token、物件標頭、對應架構的 nil 編碼與填補位元組。儲存範圍來自配置證明，不能從符號之間的間距推斷。首個呼叫點實作僅支援 ARM64：目前不可變指令與結構化原始碼必須將對應中繼資料存取器的實際結果傳給強匯入的 `swift_initStaticObject`。發布時重新驗證儲存與引數。`objc_opt_self`、初始化、計數器與結果寫入均保留其可觀察效果；此證明不提供執行期別名、純函式、更廣 ABI 或上層呼叫閉包的權限。O0/O2 原生檢查將未修改的生成初始化 C 與重新導向至受控儲存及真實 Swift 類別的原始 ARM64 指令序列比較，涵蓋可選欄位、欄位修改、重複初始化、計數器回繞與邊界哨兵。

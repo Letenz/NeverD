@@ -8,6 +8,7 @@
 
 #include "neverd/analysis/LLVMScalarLoopRecovery.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
@@ -48,14 +49,26 @@ class Search {
   unsigned ControlBitLimit = 0;
   std::vector<LLVMScalarControlBit> SourceControlBits;
   bool Exhausted = false;
+  // Discovery scheduling only: defer previously tried seed replacements
+  // until a later search. Never reuse a rejection as a semantic fact.
+  llvm::SmallPtrSet<llvm::PHINode *, 16> DeferredSeeds;
 
 public:
   Search(const llvm::Function &F, const LLVMScalarLoopRecoveryLimits &L)
       : Original(F), Limits(L) {}
   bool charge(uint64_t Amount = 1);
   bool stopped() const { return Exhausted; }
-  bool clone(llvm::Function &F, Candidate &C, bool Probe = false);
+  bool clone(llvm::Function &F, Candidate &C, bool Probe = false,
+             unsigned MaxInternalWidth = 0);
+  // Rejection only; success here cannot authorize publication.
+  bool screen(Candidate &C, Cost *CandidateCost = nullptr);
   bool accept(Candidate &C);
+  bool seedDeferred(llvm::PHINode &P) const {
+    return DeferredSeeds.contains(&P);
+  }
+  bool deferSeed(llvm::PHINode &P) {
+    return charge() && DeferredSeeds.insert(&P).second;
+  }
   LLVMScalarLoopRecoveryResult run();
 };
 
@@ -65,6 +78,9 @@ bool zeroTrip(Search &S, llvm::Function &F, llvm::DominatorTree &DT,
               llvm::LoopInfo &LI);
 bool rotate(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
 bool affine(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
+bool seeds(Search &S, llvm::Function &F, llvm::DominatorTree &DT,
+           llvm::LoopInfo &LI);
+bool widths(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
 
 struct Counter {
   llvm::PHINode *Phi = nullptr;

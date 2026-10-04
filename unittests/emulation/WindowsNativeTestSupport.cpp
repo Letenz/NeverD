@@ -1,4 +1,4 @@
-//===- WindowsNativeTestSupport.cpp - Native thread oracle support -------===//
+//===- WindowsNativeTestSupport.cpp - Native Windows oracles -------------===//
 //
 // NeverD Decompiler
 //
@@ -6,6 +6,7 @@
 #include "WindowsNativeTestSupport.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Program.h"
 
 #if defined(_WIN32) && defined(_M_X64)
@@ -19,12 +20,14 @@ namespace neverd::emulation::native_test {
 #undef NEVERD_NATIVE_TEST_TEXT
 #undef NEVERD_NATIVE_TEST_VALUE
 #if defined(_WIN32) && defined(_M_X64)
-// Retain the initial thread to observe its return independently of the
-// process's remaining threads. The child uses only original test fixtures.
-llvm::Expected<uint32_t> observeNativeThread(
-    const std::filesystem::path &Program, llvm::StringRef Argument,
-    const std::filesystem::path &Output, const std::filesystem::path &Error,
-    uint32_t TimeoutSeconds) {
+namespace {
+enum class Completion { Process, InitialThread };
+llvm::Expected<uint32_t>
+observeNative(const std::filesystem::path &Program,
+              llvm::ArrayRef<llvm::StringRef> Arguments,
+              const std::filesystem::path &Output,
+              const std::filesystem::path &Error, uint32_t TimeoutSeconds,
+              Completion WaitFor) {
   struct Handle {
     HANDLE Value;
     ~Handle() {
@@ -54,7 +57,9 @@ llvm::Expected<uint32_t> observeNativeThread(
   if (Err.Value == INVALID_HANDLE_VALUE)
     return Failure();
   const std::string Name = Program.string();
-  auto Command = llvm::sys::flattenWindowsCommandLine({Name, Argument});
+  llvm::SmallVector<llvm::StringRef, 4> CommandArguments{Name};
+  CommandArguments.append(Arguments.begin(), Arguments.end());
+  auto Command = llvm::sys::flattenWindowsCommandLine(CommandArguments);
   if (!Command)
     return llvm::errorCodeToError(Command.getError());
   STARTUPINFOW Startup{};
@@ -64,8 +69,11 @@ llvm::Expected<uint32_t> observeNativeThread(
   Startup.hStdOutput = Out.Value;
   Startup.hStdError = Err.Value;
   PROCESS_INFORMATION Child{};
+  // GoogleTest enables SEM_NOALIGNMENTFAULTEXCEPT. Inheriting that sticky
+  // setting would make Windows repair the very faults an oracle must observe.
   if (!CreateProcessW(Program.c_str(), Command->data(), nullptr, nullptr, TRUE,
-                      0, nullptr, nullptr, &Startup, &Child))
+                      CREATE_DEFAULT_ERROR_MODE, nullptr, nullptr, &Startup,
+                      &Child))
     return Failure();
   auto Cleanup = llvm::scope_exit([&] {
     if (WaitForSingleObject(Child.hProcess, 0) == WAIT_TIMEOUT) {
@@ -76,16 +84,39 @@ llvm::Expected<uint32_t> observeNativeThread(
     CloseHandle(Child.hThread);
     CloseHandle(Child.hProcess);
   });
-  const DWORD Wait = WaitForSingleObject(
-      Child.hThread, TimeoutSeconds * MillisecondsPerSecond);
+  const bool Thread = WaitFor == Completion::InitialThread;
+  const DWORD Wait =
+      WaitForSingleObject(Thread ? Child.hThread : Child.hProcess,
+                          TimeoutSeconds * MillisecondsPerSecond);
   if (Wait == WAIT_TIMEOUT)
-    return llvm::createStringError(std::errc::timed_out, NativeThreadTimeout);
+    return llvm::createStringError(std::errc::timed_out,
+                                   Thread ? NativeThreadTimeout
+                                          : NativeProcessTimeout);
   if (Wait != WAIT_OBJECT_0)
     return Failure();
   DWORD Status;
-  if (!GetExitCodeThread(Child.hThread, &Status))
+  if (!(Thread ? GetExitCodeThread(Child.hThread, &Status)
+               : GetExitCodeProcess(Child.hProcess, &Status)))
     return Failure();
   return Status;
+}
+} // namespace
+
+llvm::Expected<uint32_t> observeNativeProcess(
+    const std::filesystem::path &Program, const std::filesystem::path &Output,
+    const std::filesystem::path &Error, uint32_t TimeoutSeconds) {
+  return observeNative(Program, {}, Output, Error, TimeoutSeconds,
+                       Completion::Process);
+}
+
+// Retain the initial thread to observe its return independently of the
+// process's remaining threads. The child uses only original test fixtures.
+llvm::Expected<uint32_t> observeNativeThread(
+    const std::filesystem::path &Program, llvm::StringRef Argument,
+    const std::filesystem::path &Output, const std::filesystem::path &Error,
+    uint32_t TimeoutSeconds) {
+  return observeNative(Program, {Argument}, Output, Error, TimeoutSeconds,
+                       Completion::InitialThread);
 }
 #endif
 } // namespace neverd::emulation::native_test

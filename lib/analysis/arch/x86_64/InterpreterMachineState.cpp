@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "neverd/analysis/InterpreterMachineState.h"
+#include "neverd/analysis/arch/x86_64/InterpreterMachineState.h"
 
 #include "X64UserFlags.h"
 

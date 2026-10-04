@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/ControlDiscovery.h"
+#include "../../lib/analysis/core/ControlDiscovery.h"
 #include "gtest/gtest.h"
 
 #include <limits>

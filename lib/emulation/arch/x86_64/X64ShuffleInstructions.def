@@ -1,0 +1,16 @@
+//===- X64ShuffleInstructions.def - Legacy SSE/SSE2 lane selection -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// XMM destination and XMM or aligned m128 source. SourceControl adds imm8.
+// The original instruction preserves FLAGS, MXCSR and all unselected state.
+NEVERD_X64_SHUFFLE_INSTRUCTION(PSHUFD, SourceControl)
+NEVERD_X64_SHUFFLE_INSTRUCTION(PSHUFHW, SourceControl)
+NEVERD_X64_SHUFFLE_INSTRUCTION(PSHUFLW, SourceControl)
+NEVERD_X64_SHUFFLE_INSTRUCTION(SHUFPS, SourceControl)
+NEVERD_X64_SHUFFLE_INSTRUCTION(SHUFPD, SourceControl)
+NEVERD_X64_SHUFFLE_INSTRUCTION(UNPCKLPS, Source)
+NEVERD_X64_SHUFFLE_INSTRUCTION(UNPCKHPS, Source)
+NEVERD_X64_SHUFFLE_INSTRUCTION(UNPCKLPD, Source)
+NEVERD_X64_SHUFFLE_INSTRUCTION(UNPCKHPD, Source)

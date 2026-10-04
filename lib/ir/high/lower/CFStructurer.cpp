@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <optional>
 #include <set>
 
 namespace neverd {
@@ -155,7 +156,8 @@ void MedToHighConverter::insertPhiCopies(HighFunc &Func,
         Branch.Body.insert(Branch.Body.end() - 1, Copies.begin(), Copies.end());
         continue;
       }
-      if (Branch.Kind == StmtKind::Goto && gotoHitsSuccessor(Branch.GotoTarget)) {
+      if (Branch.Kind == StmtKind::Goto &&
+          gotoHitsSuccessor(Branch.GotoTarget)) {
         Func.Body.insert(Func.Body.begin() + BranchIndex, Copies.begin(),
                          Copies.end());
         BranchIndex += Copies.size();
@@ -395,6 +397,120 @@ void MedToHighConverter::pullCompareTreeCases(HighFunc &Func,
 }
 
 //===----------------------------------------------------------------------===//
+// Block layout
+//===----------------------------------------------------------------------===//
+
+static va_t blockEntry(const MedBlock &Block) {
+  return Block.StartAddr     ? Block.StartAddr
+         : Block.Ops.empty() ? 0
+                             : Block.Ops.front().Addr;
+}
+
+/// The block \p Block runs into when it does not branch: -1 when it never
+/// does, nullopt when its edges do not say which successor that is.
+static std::optional<int> fallThroughOf(const MedFunc &Med,
+                                        const MedBlock &Block) {
+  const auto Valid = [&](int Id) {
+    return Id >= 0 && Id < static_cast<int>(Med.Blocks.size()) &&
+           Med.Blocks[Id].Id == Id;
+  };
+  if (!std::all_of(Block.Succs.begin(), Block.Succs.end(), Valid))
+    return std::nullopt;
+  if (!Block.Ops.empty()) {
+    const MedOp &Last = Block.Ops.back();
+    switch (Last.Opcode) {
+    case NdOp::RETURN:
+    case NdOp::BRANCH:
+    case NdOp::INDIR_BR:
+      return -1;
+    case NdOp::COND_BR: {
+      if (Last.NumInputs < 2 || !Last.Inputs[0].isConst())
+        return std::nullopt;
+      const va_t Taken = Last.Inputs[0].ConstVal;
+      // Both edges reach one block only when the branch targets the
+      // instruction after it.
+      if (Block.Succs.size() == 1)
+        return blockEntry(Med.Blocks[Block.Succs[0]]) == Taken &&
+                       Block.EndAddr == Taken
+                   ? std::optional<int>(Block.Succs[0])
+                   : std::nullopt;
+      if (Block.Succs.size() != 2)
+        return std::nullopt;
+      int Other = -1, Hits = 0;
+      for (int Successor : Block.Succs) {
+        if (blockEntry(Med.Blocks[Successor]) == Taken)
+          ++Hits;
+        else
+          Other = Successor;
+      }
+      return Hits == 1 && Other >= 0 ? std::optional<int>(Other) : std::nullopt;
+    }
+    default:
+      break;
+    }
+  }
+  if (Block.Succs.empty())
+    return -1;
+  if (Block.Succs.size() == 1)
+    return Block.Succs.front();
+  return std::nullopt;
+}
+
+std::vector<int> highBlockLayout(const MedFunc &Med,
+                                 const std::set<int> &Dispatched) {
+  const int Count = static_cast<int>(Med.Blocks.size());
+  std::vector<int> AddressOrder(Count);
+  for (int I = 0; I < Count; ++I)
+    AddressOrder[I] = I;
+  if (Count < 3 ||
+      Count > static_cast<int>(limits::kMaxStructurableMedBlocks) ||
+      (Med.ExceptionMetadata && Med.ExceptionMetadata->PersonalityVA != 0))
+    return AddressOrder;
+  for (int I = 0; I < Count; ++I) {
+    const MedBlock &Block = Med.Blocks[I];
+    if (Block.Id != I || !Block.ExceptionalSuccs.empty() ||
+        (!Dispatched.count(I) && !fallThroughOf(Med, Block)))
+      return AddressOrder;
+  }
+  if (blockEntry(Med.Blocks[0]) != Med.Entry)
+    return AddressOrder;
+
+  std::vector<std::vector<int>> Successors(Count);
+  for (int I = 0; I < Count; ++I) {
+    Successors[I] = Med.Blocks[I].Succs;
+    std::sort(Successors[I].begin(), Successors[I].end(), [&](int A, int B) {
+      const va_t X = blockEntry(Med.Blocks[A]), Y = blockEntry(Med.Blocks[B]);
+      return X != Y ? X > Y : A > B;
+    });
+    Successors[I].erase(std::unique(Successors[I].begin(), Successors[I].end()),
+                        Successors[I].end());
+  }
+  std::vector<int> Post;
+  Post.reserve(Count);
+  std::vector<bool> Seen(Count);
+  std::vector<std::pair<int, size_t>> Stack{{0, 0}};
+  Seen[0] = true;
+  while (!Stack.empty()) {
+    auto &[Block, Next] = Stack.back();
+    if (Next < Successors[Block].size()) {
+      const int Successor = Successors[Block][Next++];
+      if (!Seen[Successor]) {
+        Seen[Successor] = true;
+        Stack.push_back({Successor, 0});
+      }
+      continue;
+    }
+    Post.push_back(Block);
+    Stack.pop_back();
+  }
+  std::vector<int> Order(Post.rbegin(), Post.rend());
+  for (int I = 0; I < Count; ++I)
+    if (!Seen[I])
+      Order.push_back(I);
+  return Order;
+}
+
+//===----------------------------------------------------------------------===//
 // structureControlFlow — block-level dispatch
 //===----------------------------------------------------------------------===//
 
@@ -444,10 +560,23 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
           {EntryOf(Med.Blocks[Tree.Default.To]), Tree.Default.Region});
   }
 
-  for (int BlkIdx = 0; BlkIdx < static_cast<int>(Med.Blocks.size()); ++BlkIdx) {
+  std::set<int> Dispatched = TreeInterior;
+  for (const auto &[Root, Tree] : TreeAt)
+    Dispatched.insert(Root);
+  const std::vector<int> Order = highBlockLayout(Med, Dispatched);
+  // The block emitted after each position: a fall-through edge to any other
+  // block needs an explicit jump.
+  std::vector<int> NextEmitted(Order.size(), -1);
+  for (size_t Pos = Order.size(); Pos-- > 1;)
+    NextEmitted[Pos - 1] =
+        TreeInterior.count(Order[Pos]) ? NextEmitted[Pos] : Order[Pos];
+
+  for (size_t Pos = 0; Pos < Order.size(); ++Pos) {
+    const int BlkIdx = Order[Pos];
     // A compare tree's interior blocks run at its root, inside its switch.
     if (TreeInterior.count(BlkIdx))
       continue;
+    const int Next = NextEmitted[Pos];
     auto &CurBlock = Med.Blocks[BlkIdx];
     auto TreeIt = TreeAt.find(BlkIdx);
     const CompareTreeSwitch *Tree =
@@ -526,7 +655,6 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
             Other = Successor;
           }
         }
-        const int Next = BlkIdx + 1;
         if (Complete && Taken >= 0 && Other >= 0 && Other != Next) {
           const auto &Target = Med.Blocks[Other];
           HighStmt Transfer;
@@ -543,14 +671,18 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
     // Threading an empty branch block out of that edge (cold code ending in a
     // `jmp` back to the hot path) leaves a successor that need not be the next
     // block in source order; transfer to it explicitly.
+    // A conditional branch to the instruction after it also falls through
+    // there.
     if (!Tree && CurBlock.Succs.size() == 1) {
       const int Successor = CurBlock.Succs.front();
-      const bool Terminated = !CurBlock.Ops.empty() &&
-                              (CurBlock.Ops.back().Opcode == NdOp::BRANCH ||
-                               CurBlock.Ops.back().Opcode == NdOp::COND_BR ||
-                               CurBlock.Ops.back().Opcode == NdOp::INDIR_BR ||
-                               CurBlock.Ops.back().Opcode == NdOp::RETURN);
-      if (!Terminated && Successor != BlkIdx + 1 && Successor >= 0 &&
+      const bool Terminated =
+          !CurBlock.Ops.empty() &&
+          (CurBlock.Ops.back().Opcode == NdOp::BRANCH ||
+           (CurBlock.Ops.back().Opcode == NdOp::COND_BR &&
+            fallThroughOf(Med, CurBlock) != std::optional<int>(Successor)) ||
+           CurBlock.Ops.back().Opcode == NdOp::INDIR_BR ||
+           CurBlock.Ops.back().Opcode == NdOp::RETURN);
+      if (!Terminated && Successor != Next && Successor >= 0 &&
           Successor < static_cast<int>(Med.Blocks.size()) &&
           Med.Blocks[Successor].Id == Successor) {
         HighStmt Transfer;

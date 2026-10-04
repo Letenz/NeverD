@@ -1,6 +1,9 @@
 add_neverd_unittest(NeverDHvfTests
   HvfTests.cpp
   HvfExecutorTests.cpp
+  HvfIntelDeadlineTests.cpp
+  HvfOwnerThreadTests.cpp
+  HvfIntelOwnerTests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU)
 
@@ -79,6 +82,9 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64DataTests.cpp
   X64PackedIntegerTests.cpp
   X64PackedShiftTests.cpp
+  X64VectorMaskTests.cpp
+  X64ShuffleTests.cpp
+  X64PartialMoveTests.cpp
   X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)

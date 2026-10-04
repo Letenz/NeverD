@@ -49,7 +49,7 @@ writeOutput(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
       Result.StandardOutput.size() + Result.StandardError.size();
   if (Used > Options.OutputLimit || Count > Options.OutputLimit - Used) {
     Result.Stop = ProcessStopReason::OutputLimit;
-    Result.Diagnostic = "captured Darwin output exceeds the workload limit";
+    Result.Diagnostic = diagnostic::OutputLimit;
     return std::optional<ServiceResult>();
   }
   uint64_t Readable = 0;
@@ -131,7 +131,7 @@ handleService(ExecutionBackend &CPU, DarwinMemory &Memory,
   if (!Kind) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic =
-        llvm::formatv("unsupported Darwin service {0:x}", Event.Number).str();
+        llvm::formatv(diagnostic::UnsupportedService, Event.Number).str();
     return std::optional<ServiceResult>();
   }
   switch (*Kind) {

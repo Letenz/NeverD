@@ -8,6 +8,7 @@
 #if defined(__linux__) && defined(__x86_64__)
 #include <atomic>
 #include <cerrno>
+#include <cpuid.h>
 #include <csignal>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -674,75 +675,103 @@ void recordComparisonFault(int Signal, siginfo_t *Info, void *Context) {
 #endif
 
 TEST(X64StringComparisonOracle,
-     NativePageFaultRestoresFlagsAndRetainsProgress) {
+     NativePageFaultPreservesVendorFlagsAndRetainsProgress) {
 #if defined(__linux__) && defined(__x86_64__)
+  unsigned EAX, EBX, ECX, EDX;
+  ASSERT_TRUE(__get_cpuid(OracleVendorLeaf, &EAX, &EBX, &ECX, &EDX));
+  const unsigned VendorWords[] = {EBX, EDX, ECX};
+  const llvm::StringRef Vendor(reinterpret_cast<const char *>(VendorWords),
+                               sizeof(VendorWords));
+  std::optional<bool> RestoreFlags;
+#define NEVERD_COMPARISON_HOST(Name, VendorName, Restore)                      \
+  if (Vendor == VendorName)                                                    \
+    RestoreFlags = Restore;
+#include "X64StringComparisonCases.def"
+#undef NEVERD_COMPARISON_HOST
+  ASSERT_TRUE(RestoreFlags.has_value()) << Vendor.str();
+  SCOPED_TRACE(Vendor.str());
   for (const auto &C : Cases)
     for (uint8_t Prefix : {Rep, Repne})
-      for (bool SourceFault : {false, true}) {
-        if (SourceFault && !C.Source)
-          continue;
-        SCOPED_TRACE(C.Name);
-        SCOPED_TRACE(Prefix);
-        auto *Storage = static_cast<uint8_t *>(
-            mmap(nullptr, OraclePages * PageSize, PROT_READ | PROT_WRITE,
-                 MAP_SHARED | MAP_ANONYMOUS, -1, 0));
-        ASSERT_NE(Storage, MAP_FAILED);
-        auto Release =
-            llvm::scope_exit([&] { munmap(Storage, OraclePages * PageSize); });
-        auto *Record = new (Storage + 2 * PageSize) NativeComparisonFault;
-        auto *Source =
-            Storage + (SourceFault ? PageSize - C.Size : SourceOffset);
-        auto *Destination =
-            Storage + (SourceFault ? DestinationOffset : PageSize - C.Size);
-        const uint64_t Left = FillValue,
-                       Right = Prefix == Rep ? FillValue : DifferentValue;
-        if (C.Source)
-          std::memcpy(Source, &Left, C.Size);
-        std::memcpy(Destination, &Right, C.Size);
-        const uint64_t InputFlags =
-            Prefix == Rep ? PlainFlags : (AllFlags & ~Direction);
-        StringState State{FillValue, RepeatCount,
-                          C.Source ? reinterpret_cast<uintptr_t>(Source)
-                                   : InvalidPointer,
-                          reinterpret_cast<uintptr_t>(Destination), InputFlags};
-        const pid_t Child = fork();
-        ASSERT_GE(Child, 0);
-        if (!Child) {
-          NativeRecord.store(Record, std::memory_order_relaxed);
-          struct sigaction Action{};
-          Action.sa_sigaction = recordComparisonFault;
-          Action.sa_flags = SA_SIGINFO;
-          sigemptyset(&Action.sa_mask);
-          sigset_t Signals;
-          sigemptyset(&Signals);
-          sigaddset(&Signals, SIGSEGV);
-          if (sigaction(SIGSEGV, &Action, nullptr) ||
-              sigprocmask(SIG_UNBLOCK, &Signals, nullptr) ||
-              mprotect(Storage + PageSize, PageSize, PROT_NONE))
+      for (bool CompletedFirst : {false, true})
+        for (bool SourceFault : {false, true}) {
+          if (SourceFault && !C.Source)
+            continue;
+          SCOPED_TRACE(C.Name);
+          SCOPED_TRACE(Prefix);
+          SCOPED_TRACE(CompletedFirst);
+          SCOPED_TRACE(SourceFault);
+          auto *Storage = static_cast<uint8_t *>(
+              mmap(nullptr, OraclePages * PageSize, PROT_READ | PROT_WRITE,
+                   MAP_SHARED | MAP_ANONYMOUS, -1, 0));
+          ASSERT_NE(Storage, MAP_FAILED);
+          auto Release = llvm::scope_exit(
+              [&] { munmap(Storage, OraclePages * PageSize); });
+          auto *Record = new (Storage + 2 * PageSize) NativeComparisonFault;
+          const auto ProgressBytes = CompletedFirst ? C.Size : 0;
+          auto *Source =
+              Storage + (SourceFault ? PageSize - ProgressBytes : SourceOffset);
+          auto *Destination =
+              Storage +
+              (SourceFault ? DestinationOffset : PageSize - ProgressBytes);
+          const uint64_t Left = FillValue,
+                         Right = Prefix == Rep ? FillValue : DifferentValue;
+          if (C.Source)
+            std::memcpy(Source, &Left, C.Size);
+          std::memcpy(Destination, &Right, C.Size);
+          const uint64_t InputFlags =
+              Prefix == Rep ? PlainFlags : (AllFlags & ~Direction);
+          // A non-repeated native comparison independently supplies AMD's flags
+          // after one completed element. Faulting the first element keeps the
+          // input flags on either vendor; an unknown vendor is not guessed.
+          StringState Single{Left, 0, reinterpret_cast<uintptr_t>(&Left),
+                             reinterpret_cast<uintptr_t>(&Right), InputFlags};
+          runHost(C.Bytes, Single);
+          ASSERT_FALSE(HasFatalFailure());
+          const uint64_t ExpectedFlags =
+              *RestoreFlags || !CompletedFirst ? InputFlags : Single.Flags;
+          StringState State{
+              FillValue, RepeatCount,
+              C.Source ? reinterpret_cast<uintptr_t>(Source) : InvalidPointer,
+              reinterpret_cast<uintptr_t>(Destination), InputFlags};
+          const pid_t Child = fork();
+          ASSERT_GE(Child, 0);
+          if (!Child) {
+            NativeRecord.store(Record, std::memory_order_relaxed);
+            struct sigaction Action{};
+            Action.sa_sigaction = recordComparisonFault;
+            Action.sa_flags = SA_SIGINFO;
+            sigemptyset(&Action.sa_mask);
+            sigset_t Signals;
+            sigemptyset(&Signals);
+            sigaddset(&Signals, SIGSEGV);
+            if (sigaction(SIGSEGV, &Action, nullptr) ||
+                sigprocmask(SIG_UNBLOCK, &Signals, nullptr) ||
+                mprotect(Storage + PageSize, PageSize, PROT_NONE))
+              _exit(SetupFailure);
+            std::vector<uint8_t> Bytes{Prefix};
+            Bytes.insert(Bytes.end(), C.Bytes.begin(), C.Bytes.end());
+            runHost(Bytes, State);
             _exit(SetupFailure);
-          std::vector<uint8_t> Bytes{Prefix};
-          Bytes.insert(Bytes.end(), C.Bytes.begin(), C.Bytes.end());
-          runHost(Bytes, State);
-          _exit(SetupFailure);
+          }
+          int Status = 0;
+          pid_t Waited;
+          do {
+            Waited = waitpid(Child, &Status, 0);
+          } while (Waited < 0 && errno == EINTR);
+          ASSERT_EQ(Waited, Child);
+          ASSERT_TRUE(WIFEXITED(Status));
+          ASSERT_EQ(WEXITSTATUS(Status), FaultExit);
+          EXPECT_EQ(Record->Signal.load(), SIGSEGV);
+          EXPECT_EQ(Record->Address.load(),
+                    reinterpret_cast<uintptr_t>(Storage + PageSize));
+          EXPECT_EQ(Record->AX.load(), State.AX);
+          EXPECT_EQ(Record->CX.load(), RepeatCount - unsigned(CompletedFirst));
+          EXPECT_EQ(Record->SI.load(),
+                    State.SI + (C.Source ? ProgressBytes : 0));
+          EXPECT_EQ(Record->DI.load(), State.DI + ProgressBytes);
+          // The host adds RF when reporting the synchronous fault.
+          EXPECT_EQ(Record->Flags.load() & ~OracleResumeFlag, ExpectedFlags);
         }
-        int Status = 0;
-        pid_t Waited;
-        do {
-          Waited = waitpid(Child, &Status, 0);
-        } while (Waited < 0 && errno == EINTR);
-        ASSERT_EQ(Waited, Child);
-        ASSERT_TRUE(WIFEXITED(Status));
-        ASSERT_EQ(WEXITSTATUS(Status), FaultExit);
-        EXPECT_EQ(Record->Signal.load(), SIGSEGV);
-        EXPECT_EQ(Record->Address.load(),
-                  reinterpret_cast<uintptr_t>(Storage + PageSize));
-        EXPECT_EQ(Record->AX.load(), State.AX);
-        EXPECT_EQ(Record->CX.load(), RepeatCount - 1);
-        EXPECT_EQ(Record->SI.load(), State.SI + (C.Source ? C.Size : 0));
-        EXPECT_EQ(Record->DI.load(), State.DI + C.Size);
-        // The host adds RF when reporting the synchronous fault.
-        EXPECT_EQ(Record->Flags.load() & ~OracleResumeFlag, InputFlags);
-      }
 #else
   GTEST_SKIP() << FaultOracleUnavailable;
 #endif

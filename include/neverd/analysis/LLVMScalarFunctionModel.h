@@ -7,7 +7,7 @@
 #ifndef NEVERD_ANALYSIS_LLVMSCALARFUNCTIONMODEL_H
 #define NEVERD_ANALYSIS_LLVMSCALARFUNCTIONMODEL_H
 
-#include "neverd/analysis/LLVMInterpreterMachineState.h"
+#include "neverd/analysis/LLVMInterpreterModel.h"
 
 namespace neverd::analysis {
 

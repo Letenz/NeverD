@@ -1,0 +1,22 @@
+//===- RepFaultProbe.def - Temporary observation constants --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_REP_PROBE_VALUE
+NEVERD_REP_PROBE_VALUE(PageBytes, 4096)
+NEVERD_REP_PROBE_VALUE(RecordPage, 2)
+NEVERD_REP_PROBE_VALUE(TrapFlag, 0x100)
+NEVERD_REP_PROBE_VALUE(UnexpectedTrace, 73)
+NEVERD_REP_PROBE_VALUE(VendorBytes, 12)
+NEVERD_REP_PROBE_VALUE(VendorLeaf, 0)
+NEVERD_REP_PROBE_VALUE(FeatureLeaf, 1)
+NEVERD_REP_PROBE_VALUE(HypervisorBit, 31)
+#endif
+#ifdef NEVERD_REP_PROBE_TEXT
+NEVERD_REP_PROBE_TEXT(HostFormat, "host %s %08x hypervisor=%d\n")
+NEVERD_REP_PROBE_TEXT(
+    RecordFormat,
+    "%s %02x source=%d mode=%u exit=%d input=%llx first=%llx fault=%llx "
+    "count=%llu traps=%d trap_flags=%llx trap_count=%llu\n")
+#endif

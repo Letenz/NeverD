@@ -73,6 +73,12 @@ bool isImmutableImageImportSlot(const BinaryImage &Image, va_t Address);
 /// or permission to copy the imported object. Provider proof stays separate.
 bool isInitialImageImportSlot(const BinaryImage &Image, va_t Address);
 
+/// Read an immutable scalar ivar-offset slot with its exact loader reference.
+/// All other overlapping fixups remain forbidden. The declaration consumer
+/// must separately match the referenced class, field, type and layout.
+std::optional<uint64_t> readImmutableImageIvarOffset(const BinaryImage &Image,
+                                                     va_t Address);
+
 /// Same storage/fixup proof, additionally requiring one exact Class reference
 /// matching the strong imported class symbol. Only that matching metadata
 /// record is permitted; provider ownership remains the caller's obligation.
