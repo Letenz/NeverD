@@ -29,6 +29,134 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerOracle.CVTPS2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerOracle.CVTTPS2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerOracle.CVTPD2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerOracle.CVTTPD2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "EveryVectorPairAndAliasedSource/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "EveryVectorPairAndAliasedSource/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64PackedFloatOracle.CVTDQ2PSMatchesOriginalInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64PackedFloatOracle.CVTDQ2PDMatchesOriginalInstructions")
