@@ -114,6 +114,8 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
 
+`WhpX64Partition.h` は実際の分割区画ごとに x64 WHP のレジスタ再利用を管理します。固定パケットは `WhpX64Registers.def` と `X64HostRegisters.def` を使用し、成功した各ステップで汎用・制御・セグメントレジスタと完全な FP/SSE 状態を取得します。完了確認済みのデバッグ終了だけが未変更入力の省略を許可し、比較では予約ビットと共用体のパディングを無視します。CR3、CPL、TLS、汎用または FP 入力の変更は再設定され、部分失敗、キャンセル、例外は再利用を無効化します。区画再作成時は全状態を設定します。命令の許可範囲を広げず、処理全体の高速化も主張しません。
+
 `CheckedAArch64Instructions.def` と `AArch64InstructionEffects` は EL0/EL1 で範囲を限定した基本 FP32/FP64 演算、比較、転送、固定幅 SIMD を許可します。FPCR は4種類の丸め、FZ、DN に対応し、FPSR は累積状態と QC を保持します。未対応の制御・状態ビットは変更前に拒否します。FP16 演算、SVE/SME、非マスク例外、追加拡張、未列挙の形式は明示的なエラーです。Windows ARM64 ドライバーのロードや新しい OS 環境は追加しません。
 
 `AArch64InstructionEffects` が最大128ビットの scalar/FP/SIMD 単一・ペア RAM 範囲を所有します。共有 address space は CPU entry 前に全ページを検証し、`RAMTransaction` は宣言された完全な物理書き込みのみを確定します。128ビット書き込みは実行前に二つの64ビット値として順序付きで観測されます。停止・fault は RAM、vector、writeback を保持します。Xn/Vn の番号重複は有効で、pair 範囲のアドレス wrap は拒否します。`NeverDAArch64MemoryTests` は独立した `AArch64CrossPageCases.def` と `AArch64VectorMemoryCases.def` を使用します。

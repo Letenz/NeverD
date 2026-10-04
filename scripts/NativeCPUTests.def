@@ -708,3 +708,55 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsContext.CapturesAcrossPagesWithoutChangingTheCPU/WhpX64")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+// Partition-local reuse must preserve failed and cancelled entry boundaries.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/WhpStateTransfer.ContinuedStepsReuseCapturedRegistersAndFP/"
+    "false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/WhpStateTransfer.ContinuedStepsReuseCapturedRegistersAndFP/true")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/WhpStateTransfer.HostChangesInstallOnlyChangedGroups/false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/WhpStateTransfer.HostChangesInstallOnlyChangedGroups/true")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.ActualControlCapturesOverrideOldInputAssumptions/false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.ActualControlCapturesOverrideOldInputAssumptions/true")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.ReservedBitsAndUnionPaddingDoNotForceReinstallation/"
+    "false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.ReservedBitsAndUnionPaddingDoNotForceReinstallation/true")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.PartialTransferFailuresPreserveStateAndForceFullRetry/"
+    "false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.PartialTransferFailuresPreserveStateAndForceFullRetry/"
+    "true")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.CancelledCapturePreservesStateAndForcesFullRetry/false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.CancelledCapturePreservesStateAndForcesFullRetry/true")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.ExceptionsOutrankCancellationAndInvalidateReuse/false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.ExceptionsOutrankCancellationAndInvalidateReuse/true")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.ReplacementPartitionCannotReuseRetiredNativeState/false")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "StateAPIs/"
+    "WhpStateTransfer.ReplacementPartitionCannotReuseRetiredNativeState/true")
+#endif

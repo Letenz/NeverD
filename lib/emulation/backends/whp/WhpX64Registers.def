@@ -1,0 +1,35 @@
+//===- WhpX64Registers.def - WHP x64 control and segment register fields
+//---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WHP_X64_CONTROL
+NEVERD_WHP_X64_CONTROL(Cr0, x64::CR0)
+NEVERD_WHP_X64_CONTROL(Cr3, Root)
+NEVERD_WHP_X64_CONTROL(Cr4, x64::CR4 | x64::fp::OSXsave)
+NEVERD_WHP_X64_CONTROL(XCr0, x64::fp::FPAndSSE)
+NEVERD_WHP_X64_CONTROL(Efer, x64::EFER)
+NEVERD_WHP_X64_CONTROL(Cr8, State.reg(X64Register::CR8))
+#endif
+#ifdef NEVERD_WHP_X64_SEGMENT
+NEVERD_WHP_X64_SEGMENT(Cs, true, 0)
+NEVERD_WHP_X64_SEGMENT(Ss, false, 0)
+NEVERD_WHP_X64_SEGMENT(Ds, false, 0)
+NEVERD_WHP_X64_SEGMENT(Es, false, 0)
+NEVERD_WHP_X64_SEGMENT(Fs, false, State.FSBase)
+NEVERD_WHP_X64_SEGMENT(Gs, false, State.GSBase)
+#endif
+#ifdef NEVERD_WHP_X64_SEGMENT_FIELD
+NEVERD_WHP_X64_SEGMENT_FIELD(Base)
+NEVERD_WHP_X64_SEGMENT_FIELD(Limit)
+NEVERD_WHP_X64_SEGMENT_FIELD(Selector)
+NEVERD_WHP_X64_SEGMENT_FIELD(SegmentType)
+NEVERD_WHP_X64_SEGMENT_FIELD(NonSystemSegment)
+NEVERD_WHP_X64_SEGMENT_FIELD(DescriptorPrivilegeLevel)
+NEVERD_WHP_X64_SEGMENT_FIELD(Present)
+NEVERD_WHP_X64_SEGMENT_FIELD(Available)
+NEVERD_WHP_X64_SEGMENT_FIELD(Long)
+NEVERD_WHP_X64_SEGMENT_FIELD(Default)
+NEVERD_WHP_X64_SEGMENT_FIELD(Granularity)
+#endif
