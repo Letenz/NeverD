@@ -1488,12 +1488,17 @@ selected callback returns; neither registration nor workload teardown calls
 host destructors. Symbol spellings and diagnostics remain in Android's `.def`
 inventories.
 `GuestThreads` owns opt-in Android thread identities, stacks, TLS and complete
-saved CPU contexts over one transport and shared RAM. Callback and join
+saved CPU contexts over one transport and shared RAM. Callback, join and once
 continuations follow their thread. The runner switches only after consuming
 the pending service or quantum and charges all threads to one budget.
 Linux's optional `ThreadContext` is the sole identity and thread-exit input
 for named, variadic and raw services; an absent context retains the existing
 single-thread Linux contract. Bionic process state is never copied on a switch.
+Once ownership comes from active guest callback frames. Bionic writes the
+completion state before the scheduler wakes waiting threads; the scheduler
+rechecks guest memory before completing each original import. Unknown owners,
+recursive initialization and wait cycles remain explicit stops. The API 28
+control representation has one owner in `AndroidOnce.def`.
 `AndroidThreads.def` owns placement/capacity policy; existing Android and
 process report inventories own names, diagnostics and wire fields.
 An optional ordered `default_scope` names resident catalogue providers visible

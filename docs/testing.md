@@ -2301,7 +2301,13 @@ memory, recursion, unsupported imports,
 unbalanced callback stacks and exhaustion of the original instruction budget.
 C/CLI and Python tests check callback effects and ordered nullable call results
 through the real shared engine. This is modeled API 28 evidence, not a native
-Android device comparison or proof of concurrent initialization semantics.
+Android device comparison or proof of parallel SMP initialization semantics.
+Cooperative thread fixtures also check multiple once waiters, nested controls,
+join/once cycles, dynamic symbol lookup, retained registers and TLS, callback
+write ordering, and cumulative budgets. Control mutation or unmapping before
+waiter resumption must leave the original call incomplete. Complete reports
+from the same independent programs are compared between Unicorn and available
+native ARM64 HVF execution.
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
 tokens, exact cursor width, input mutations and errno preservation. Read-only

@@ -34,6 +34,12 @@ namespace thread_attribute_abi {
 #include "AndroidThreadAttributes.def"
 #undef NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE
 } // namespace thread_attribute_abi
+namespace once_abi {
+#define NEVERD_ANDROID_ONCE_VALUE(Name, Value)                                 \
+  inline constexpr unsigned Name = Value;
+#include "AndroidOnce.def"
+#undef NEVERD_ANDROID_ONCE_VALUE
+} // namespace once_abi
 inline constexpr uint64_t TLSAddress = 0x7000000000;
 inline constexpr uint64_t StdioAddress = TLSAddress - PageSize;
 inline constexpr uint64_t ThunkBase = TLSAddress + PageSize;

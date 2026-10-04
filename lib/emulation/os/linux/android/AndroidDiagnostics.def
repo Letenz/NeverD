@@ -17,7 +17,7 @@ NEVERD_ANDROID_DIAGNOSTIC(
     "unsupported thread flags, explicit stack or scheduling policy")
 NEVERD_ANDROID_DIAGNOSTIC(ThreadHandle, "invalid or retired pthread_t")
 NEVERD_ANDROID_DIAGNOSTIC(
-    ThreadDeadlock, "no runnable guest thread; pending joins cannot complete")
+    ThreadDeadlock, "no runnable guest thread; pending waits cannot complete")
 NEVERD_ANDROID_DIAGNOSTIC(
     ThreadCallbackExit,
     "thread exit during a guest callback requires cleanup semantics")
@@ -82,6 +82,8 @@ NEVERD_ANDROID_DIAGNOSTIC(OnceInProgress,
                           "pthread_once initialization already underway")
 NEVERD_ANDROID_DIAGNOSTIC(OnceControlState,
                           "unmodeled pthread_once control state")
+NEVERD_ANDROID_DIAGNOSTIC(
+    OnceWaitControl, "pthread_once completion changed before waiter resumed")
 NEVERD_ANDROID_DIAGNOSTIC(OnceInitializerAlignment,
                           "unaligned pthread_once initializer")
 NEVERD_ANDROID_DIAGNOSTIC(InactiveProviderPrefix,

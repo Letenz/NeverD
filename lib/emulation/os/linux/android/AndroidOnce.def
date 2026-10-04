@@ -1,0 +1,11 @@
+//===- AndroidOnce.def - Bionic API 28 once-control representation ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ANDROID_ONCE_VALUE
+NEVERD_ANDROID_ONCE_VALUE(ControlBytes, 4)
+NEVERD_ANDROID_ONCE_VALUE(NotStarted, 0)
+NEVERD_ANDROID_ONCE_VALUE(Running, 1)
+NEVERD_ANDROID_ONCE_VALUE(Complete, 2)
+#endif

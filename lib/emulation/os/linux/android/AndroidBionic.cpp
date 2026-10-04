@@ -248,42 +248,48 @@ BionicResult Bionic::dlfcn(NativeCallEvent &Call) {
 }
 BionicResult Bionic::once(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
-  if (A[0] % 4)
+  if (A[0] % once_abi::ControlBytes)
     return failure(diagnostic::OnceControlAlignment);
-  if (auto E = access(A[0], 4, Read))
+  if (auto E = access(A[0], once_abi::ControlBytes, Read))
     return std::move(E);
-  uint8_t Bytes[4];
+  uint8_t Bytes[once_abi::ControlBytes];
   if (auto E = CPU.read(A[0], Bytes))
     return std::move(E);
-  // Android API 28 has a four-byte 0/1/2 state. One guest thread has no
-  // concurrent initializer that could complete an in-progress control.
   uint32_t State = llvm::support::endian::read32le(Bytes);
-  if (State == 2)
+  if (State == once_abi::Complete)
     return std::optional<BionicValue>(uint64_t(0));
-  if (State != 0) {
+  if (State == once_abi::Running && Threads && Threads->enabled())
+    return Threads->waitOnce(A[0]);
+  if (State != once_abi::NotStarted ||
+      (Threads && Threads->enabled() && Threads->onceActive(A[0]))) {
     Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic =
-        State == 1 ? diagnostic::OnceInProgress : diagnostic::OnceControlState;
+    Result.Diagnostic = State == once_abi::Running
+                            ? diagnostic::OnceInProgress
+                            : diagnostic::OnceControlState;
     return std::optional<BionicValue>();
   }
-  if (auto E = access(A[0], 4, Write))
+  if (auto E = access(A[0], once_abi::ControlBytes, Write))
     return std::move(E);
   if (A[1] % 4)
     return failure(diagnostic::OnceInitializerAlignment);
   if (auto E = access(A[1], 4, Execute))
     return std::move(E);
-  llvm::support::endian::write32le(Bytes, 1);
+  llvm::support::endian::write32le(Bytes, once_abi::Running);
   if (auto E = CPU.write(A[0], Bytes))
     return std::move(E);
   return std::optional<BionicValue>(
       GuestCallback{A[1], std::nullopt, OnceCallback{A[0]}});
 }
 llvm::Error Bionic::finishOnce(const OnceCallback &Callback) {
-  if (auto E = access(Callback.Control, 4, Write))
+  if (auto E = access(Callback.Control, once_abi::ControlBytes, Write))
     return E;
-  uint8_t Bytes[4];
-  llvm::support::endian::write32le(Bytes, 2);
-  return CPU.write(Callback.Control, Bytes);
+  uint8_t Bytes[once_abi::ControlBytes];
+  llvm::support::endian::write32le(Bytes, once_abi::Complete);
+  if (auto E = CPU.write(Callback.Control, Bytes))
+    return E;
+  if (Threads && Threads->enabled())
+    Threads->completeOnce(Callback.Control);
+  return llvm::Error::success();
 }
 BionicResult Bionic::invoke(NativeCallEvent &Call) {
   if (Threads && Threads->enabled())

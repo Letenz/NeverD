@@ -210,24 +210,74 @@ llvm::Error GuestThreads::retire(size_t Index) {
   T.Report.Retired = true;
   return llvm::Error::success();
 }
-llvm::Error GuestThreads::completeJoin(Thread &Waiter) {
+std::optional<size_t> GuestThreads::onceOwner(uint64_t Control) const {
+  for (size_t I = 0; I < Threads.size(); ++I)
+    for (const auto &Pending : Threads[I].Callbacks)
+      if (const auto *Once =
+              std::get_if<OnceCallback>(&Pending.Call.Continuation))
+        if (Once->Control == Control)
+          return I;
+  return std::nullopt;
+}
+bool GuestThreads::onceActive(uint64_t Control) const {
+  return onceOwner(Control).has_value();
+}
+BionicResult GuestThreads::waitOnce(uint64_t Control) {
+  const auto Owner = onceOwner(Control);
+  // A raw running value is not evidence of an initializer that can finish.
+  // Same-thread recursion and externally forged controls remain unsupported.
+  if (!Owner || *Owner == Current)
+    return unsupported(diagnostic::OnceInProgress);
+  assert(!current().Waiting && "running thread already has a pending wait");
+  current().Waiting = Wait{Once{*Owner, Control}, std::nullopt};
+  return std::optional<BionicValue>(GuestThreadWait{});
+}
+void GuestThreads::completeOnce(uint64_t Control) {
+  // Bionic calls this only after the actual initializer returns and the
+  // completion word has been written successfully to shared guest memory.
+  for (auto &T : Threads)
+    if (T.Waiting)
+      if (auto *Once = std::get_if<GuestThreads::Once>(&T.Waiting->Operation))
+        if (Once->Owner == Current && Once->Control == Control)
+          Once->Ready = true;
+}
+bool GuestThreads::ready(const Wait &Pending) const {
+  if (const auto *J = std::get_if<Join>(&Pending.Operation))
+    return Threads[J->Target].Report.Finished;
+  return std::get<Once>(Pending.Operation).Ready;
+}
+llvm::Error GuestThreads::completeWait(Thread &Waiter) {
   const auto Pending = *Waiter.Waiting;
-  const auto &Target = Threads[Pending.Target];
-  // Recheck the destination after suspension: another guest may have unmapped
-  // it. Failure never invents a completed import or releases the target.
-  if (Pending.Output) {
-    if (auto E = access(Pending.Output, 8, Write))
+  const auto *J = std::get_if<Join>(&Pending.Operation);
+  // Recheck memory after suspension: another guest may have unmapped or
+  // changed it. Failure never invents a completed import or releases a target.
+  if (J) {
+    const auto &Target = Threads[J->Target];
+    if (J->Output) {
+      if (auto E = access(J->Output, 8, Write))
+        return E;
+      if (auto E = put64(J->Output, *Target.Report.ReturnValue))
+        return E;
+    }
+  } else {
+    const auto &Once = std::get<GuestThreads::Once>(Pending.Operation);
+    if (auto E = access(Once.Control, once_abi::ControlBytes, Read,
+                        once_abi::ControlBytes))
       return E;
-    if (auto E = put64(Pending.Output, *Target.Report.ReturnValue))
+    uint8_t Bytes[once_abi::ControlBytes];
+    if (auto E = CPU.read(Once.Control, Bytes))
       return E;
+    if (llvm::support::endian::read32le(Bytes) != once_abi::Complete)
+      return failure(diagnostic::OnceWaitControl);
   }
   if (Pending.Request) {
     if (auto E = linux_model::returnService(CPU, *Pending.Request, 0))
       return E;
     Result.NativeCalls[Pending.Event].Result = 0;
   }
-  if (auto E = retire(Pending.Target))
-    return E;
+  if (J)
+    if (auto E = retire(J->Target))
+      return E;
   Waiter.Waiting.reset();
   return llvm::Error::success();
 }
@@ -284,9 +334,9 @@ BionicResult GuestThreads::invoke(const NativeCallEvent &Call) {
     if (auto E = access(A[1], 8, Write))
       return std::move(E);
   Target.Joiner = Current;
-  current().Waiting = Join{Index, A[1], std::nullopt};
+  current().Waiting = Wait{Join{Index, A[1]}, std::nullopt};
   if (Target.Report.Finished) {
-    if (auto E = completeJoin(current()))
+    if (auto E = completeWait(current()))
       return std::move(E);
     return value(0);
   }
@@ -315,7 +365,7 @@ llvm::Expected<bool> GuestThreads::schedule() {
     if (T.Report.Finished)
       continue;
     Live = true;
-    if (T.Waiting && !Threads[T.Waiting->Target].Report.Finished)
+    if (T.Waiting && !ready(*T.Waiting))
       continue;
     Next = Candidate;
     Found = true;
@@ -350,7 +400,7 @@ llvm::Expected<bool> GuestThreads::schedule() {
     Current = Next;
   }
   if (current().Waiting)
-    if (auto E = completeJoin(current()))
+    if (auto E = completeWait(current()))
       return std::move(E);
   return true;
 }
