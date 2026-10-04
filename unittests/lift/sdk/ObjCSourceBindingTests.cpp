@@ -7319,6 +7319,175 @@ TEST(ObjCSourceBindings,
     }
 }
 
+namespace {
+SwiftTypeMetadataFixture swiftRegisteredLabeledOptionalFixture(
+    Arch Architecture, llvm::StringRef FirstLabel = "animationConfiguration",
+    llvm::StringRef SecondLabel = "playbackState", bool Indirect = false) {
+  auto F =
+      swiftRegisteredInternalTypeFixture(Architecture, 'V', false, Indirect);
+  const auto Label = [](llvm::StringRef Name) {
+    return Name.empty() ? std::string{}
+                        : std::to_string(Name.size()) + Name.str();
+  };
+  const std::string First = Label(FirstLabel), Second = Label(SecondLabel);
+  const std::string Base = "_$s13WMFComponents10ArticleTabV" + First +
+                           "_AA12PlaybackModeO" + Second + "tSg";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  auto Descriptor = F.Image.Symbols[2];
+  Descriptor.Addr = 0x40c0;
+  Descriptor.Name = "_$s13WMFComponents12PlaybackModeOMn";
+  F.Image.Symbols.push_back(Descriptor);
+  auto &Nominal = F.Image.Segments[3].Data;
+  llvm::support::endian::write32le(Nominal.data() + 0xc0, 0x52);
+  llvm::support::endian::write32le(Nominal.data() + 0xc4,
+                                   uint32_t(0x4040 - 0x40c4));
+  llvm::support::endian::write32le(Nominal.data() + 0xc8,
+                                   uint32_t(0x40e0 - 0x40c8));
+  std::memcpy(Nominal.data() + 0xe0, "PlaybackMode", 13);
+  F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 8;
+  llvm::support::endian::write32le(F.Image.Segments.back().Data.data() + 4,
+                                   uint32_t(0x40c0 - 0x6004));
+  auto &Data = F.Image.Segments[0].Data;
+  auto *Raw = Data.data() + F.TypeReference - 0x1000;
+  const auto Prefix = First + "_";
+  std::memcpy(Raw + 5, Prefix.data(), Prefix.size());
+  const size_t SecondOffset = 5 + Prefix.size();
+  Raw[SecondOffset] = 1;
+  llvm::support::endian::write32le(
+      Raw + SecondOffset + 1,
+      uint32_t(0x40c0 - (F.TypeReference + SecondOffset + 1)));
+  const auto Suffix = Second + "tSg";
+  std::memcpy(Raw + SecondOffset + 5, Suffix.c_str(), Suffix.size() + 1);
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000,
+                                   SecondOffset + 5 + Suffix.size());
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings,
+     RegisteredLabeledTupleOptionalKeepsBothTypesLabelsAndOuterWrapper) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const bool Indirect : {false, true})
+      for (const auto &Labels :
+           {std::pair{"animationConfiguration", "playbackState"},
+            {"columnA", "last"},
+            {"", "value"},
+            {"key", ""},
+            {"", ""}}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Indirect);
+        SCOPED_TRACE(Labels.first);
+        auto F = swiftRegisteredLabeledOptionalFixture(
+            Architecture, Labels.first, Labels.second, Indirect);
+        const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+            F.Image, F.Cache, F.Reference);
+        ASSERT_TRUE(Proof);
+        EXPECT_TRUE(Proof->Descriptors.empty());
+        EXPECT_EQ(Proof->TypeReference,
+                  F.Image.Symbols[0].Name.substr(
+                      3, F.Image.Symbols[0].Name.size() - 5));
+        const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+        for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+          EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+        std::set<std::string> Names;
+        EXPECT_EQ(renderObjCSwiftTypeMetadataHelpers(
+                      F.Image, Bound.SwiftTypeMetadataPairs, Names)
+                      .find("__asm__("),
+                  std::string::npos);
+      }
+}
+
+TEST(ObjCSourceBindings,
+     RegisteredLabeledTupleOptionalRejectsWrongCompositionAndStaleProof) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Mutation);
+      auto F = swiftRegisteredLabeledOptionalFixture(Architecture);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      auto &Data = F.Image.Segments[0].Data;
+      auto *Raw = Data.data() + F.TypeReference - 0x1000;
+      const auto SetType = [&](const std::string &Type) {
+        F.Image.Symbols[0].Name = "_$s" + Type + "MR";
+        F.Image.Symbols[1].Name = "_$s" + Type + "Md";
+      };
+      switch (Mutation) {
+      case 0:
+        Raw[7] = 'x';
+        break; // First label mismatch.
+      case 1:
+        Raw[37] = 'x';
+        break; // Second label mismatch.
+      case 2:
+        Raw[5] = '0';
+        break; // Invalid label length.
+      case 3:
+        Raw[29] = 't';
+        break; // Missing tuple separator.
+      case 4:
+        Raw[51] = 'X';
+        break; // No Optional constructor.
+      case 5:
+        Raw[53] = 'G';
+        break; // Missing terminator.
+      case 6:
+        Raw[30] = 2;
+        break; // No authenticated indirect descriptor.
+      case 7:
+        llvm::support::endian::write32le(
+            Raw + 31, uint32_t(F.LocalDescriptor - (F.TypeReference + 31)));
+        break; // Repeated first type is not the second enum.
+      case 8:
+        F.Image.Segments[3].Data[0xe0] = 'X';
+        break;
+      case 9:
+        F.Image.Segments[3].Data[0xc0] = 0x51;
+        break;
+      case 10:
+        F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 4;
+        break;
+      case 11:
+        F.Image.RelDataPtrRelocSlots.insert(F.TypeReference + 31);
+        break;
+      case 12:
+        SetType("13WMFComponents10ArticleTabVSg22animationConfiguration_"
+                "AA12PlaybackModeO13playbackStatet");
+        break; // Optional first element is not an Optional tuple.
+      case 13:
+        SetType("13WMFComponents10ArticleTabV22animationConfiguration_"
+                "AA12PlaybackModeO13playbackStatet");
+        break;
+      case 14:
+        SetType("13WMFComponents12PlaybackModeO22animationConfiguration_"
+                "AA10ArticleTabV13playbackStatetSg");
+        break;
+      case 15:
+        SetType("13WMFComponents10ArticleTabV13playbackState_"
+                "AA12PlaybackModeO22animationConfigurationtSg");
+        break;
+      case 16:
+        SetType("13WMFComponents10ArticleTabV_AA12PlaybackModeOtSg");
+        break;
+      case 17:
+        SetType("13WMFComponents10ArticleTabV22animationConfiguration_"
+                "AA12PlaybackModeO13playbackStatetSgSg");
+        break;
+      }
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+        EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+      std::set<std::string> Names;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                   std::runtime_error);
+    }
+}
+
 TEST(ObjCSourceBindings,
      RegisteredSwiftGOTReferencesKeepTheDirectTypeIdentity) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64})

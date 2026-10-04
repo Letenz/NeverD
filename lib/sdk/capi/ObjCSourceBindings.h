@@ -3155,42 +3155,58 @@ inline bool swiftDescriptorTypeRecipeMatches(
   // raw AB/AC cannot be checked by textual concatenation, even if a forged
   // cache/reference name happens to equal that expanded spelling.
   std::string FirstLabel, SecondLabel;
-  const auto ReadLabel = [&](std::string &Label) {
-    if (Tail.empty() || !llvm::isDigit(Tail.front()))
+  const auto ReadLabel = [](llvm::StringRef &Input, std::string &Label) {
+    if (Input.empty() || !llvm::isDigit(Input.front()))
       return true;
-    if (Tail.front() == '0')
+    if (Input.front() == '0')
       return false;
     unsigned Length = 0;
-    while (!Tail.empty() && llvm::isDigit(Tail.front())) {
-      Length = Length * 10 + unsigned(Tail.front() - '0');
+    while (!Input.empty() && llvm::isDigit(Input.front())) {
+      Length = Length * 10 + unsigned(Input.front() - '0');
       if (Length > 63)
         return false;
-      Tail = Tail.drop_front();
+      Input = Input.drop_front();
     }
-    if (!Length || Tail.size() < Length)
+    if (!Length || Input.size() < Length)
       return false;
-    const auto Name = Tail.take_front(Length);
+    const auto Name = Input.take_front(Length);
     if ((!llvm::isAlpha(Name.front()) && Name.front() != '_') ||
         !std::all_of(Name.begin(), Name.end(),
                      [](char C) { return llvm::isAlnum(C) || C == '_'; }))
       return false;
     Label = Name.str();
-    Tail = Tail.drop_front(Length);
+    Input = Input.drop_front(Length);
     return true;
   };
   const bool RepeatedPrefix =
       (NestedPairPrefix || NestedGenericPrefix || KeyedTuplePrefix) &&
-      ReadLabel(FirstLabel) && Tail.consume_front("_");
+      ReadLabel(Tail, FirstLabel) && Tail.consume_front("_");
   if (RequiresStructuredProof && RepeatedPrefix && Tail.starts_with("A"))
     *RequiresStructuredProof = true;
   const bool RepeatedTuple =
       RepeatedPrefix && Tail.consume_front(NestedPairPrefix ? "AB" : "AC") &&
-      ReadLabel(SecondLabel) &&
+      ReadLabel(Tail, SecondLabel) &&
       Tail == (KeyedTuplePrefix      ? "tG"
                : NestedGenericPrefix ? "ttG"
                                      : "tt");
+  std::string OptionalFirstLabel, OptionalSecondLabel;
+  auto OriginalTail = ReferenceAt(0) ? Recipe.drop_front(5) : llvm::StringRef{};
+  const bool OptionalTuplePrefix =
+      Descriptors.size() == 2 && ReferenceAt(0) &&
+      ReadLabel(OriginalTail, OptionalFirstLabel) &&
+      OriginalTail.consume_front("_") &&
+      Recipe.size() - OriginalTail.size() == Descriptors[1].Offset &&
+      ReferenceAt(Descriptors[1].Offset);
+  if (OptionalTuplePrefix)
+    OriginalTail = OriginalTail.drop_front(5);
+  const bool OptionalTupleLabels =
+      OptionalTuplePrefix && ReadLabel(OriginalTail, OptionalSecondLabel);
+  if (RequiresStructuredProof && OptionalTupleLabels &&
+      OriginalTail.starts_with("tSg"))
+    *RequiresStructuredProof = true;
+  const bool OptionalTuple = OptionalTupleLabels && OriginalTail == "tSg";
   if (!StringKeyedGeneric && !NominalTuple && !TupleGeneric && !RepeatedTuple &&
-      !OptionalPair)
+      !OptionalPair && !OptionalTuple)
     return false;
   llvm::SwiftDemangleOptions Options;
   Options.MaxInputBytes = 8000;
@@ -3237,22 +3253,29 @@ inline bool swiftDescriptorTypeRecipeMatches(
            Same(Same, Tuple.Children[0].Children[0], First, 0) &&
            Same(Same, Tuple.Children[1].Children[0], Second, 0);
   };
-  if (OptionalPair) {
+  const auto OptionalPayload = [&](const llvm::SwiftDemangleNode &Generic)
+      -> const llvm::SwiftDemangleNode * {
     const auto Optional = Parse("$sSq");
-    const auto &Tuple = Type.Root->Children[0];
     if (!Optional.Root || !Optional.Error.empty() ||
-        !Shape(*Optional.Root, "Global", 1) || !Shape(Tuple, "Tuple", 2) ||
-        !Shape(Tuple.Children[0], "TupleElement", 1) ||
-        !Shape(Tuple.Children[0].Children[0], "Type", 1))
-      return false;
-    const auto &First = Tuple.Children[0].Children[0];
-    const auto &Generic = First.Children[0];
-    if (!Shape(Generic, "BoundGenericEnum", 2) ||
+        !Shape(*Optional.Root, "Global", 1) ||
+        !Shape(Generic, "BoundGenericEnum", 2) ||
         !Shape(Generic.Children[0], "Type", 1) ||
         !Same(Same, Generic.Children[0].Children[0], Optional.Root->Children[0],
               0) ||
         !Shape(Generic.Children[1], "TypeList", 1) ||
-        !Same(Same, Generic.Children[1].Children[0], OuterType, 0))
+        !Shape(Generic.Children[1].Children[0], "Type", 1))
+      return nullptr;
+    return &Generic.Children[1].Children[0];
+  };
+  if (OptionalPair) {
+    const auto &Tuple = Type.Root->Children[0];
+    if (!Shape(Tuple, "Tuple", 2) ||
+        !Shape(Tuple.Children[0], "TupleElement", 1) ||
+        !Shape(Tuple.Children[0].Children[0], "Type", 1))
+      return false;
+    const auto &First = Tuple.Children[0].Children[0];
+    const auto *Payload = OptionalPayload(First.Children[0]);
+    if (!Payload || !Same(Same, *Payload, OuterType, 0))
       return false;
     // The symbolic nominal reference occupies slot AA; forming Optional<T>
     // occupies AB. These indices precede any textual descriptor expansion.
@@ -3269,16 +3292,20 @@ inline bool swiftDescriptorTypeRecipeMatches(
       !Shape(Value.Root->Children[0].Children[0], "Type", 1))
     return false;
   const auto &ValueType = Value.Root->Children[0].Children[0];
-  const auto RepeatedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
-                                   const llvm::SwiftDemangleNode &Repeated) {
+  const auto LabeledMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                  const llvm::SwiftDemangleNode &First,
+                                  const llvm::SwiftDemangleNode &Second,
+                                  const std::string &FirstName,
+                                  const std::string &SecondName) {
     if (!Shape(Tuple, "Tuple", 2))
       return false;
-    const std::string *Labels[] = {&FirstLabel, &SecondLabel};
+    const std::string *Labels[] = {&FirstName, &SecondName};
+    const llvm::SwiftDemangleNode *Elements[] = {&First, &Second};
     for (size_t I = 0; I < 2; ++I) {
       const auto &Element = Tuple.Children[I];
       const auto &Label = *Labels[I];
       if (!Shape(Element, "TupleElement", Label.empty() ? 1 : 2) ||
-          !Same(Same, Element.Children.back(), Repeated, 0))
+          !Same(Same, Element.Children.back(), *Elements[I], 0))
         return false;
       if (!Label.empty()) {
         const auto &Name = Element.Children[0];
@@ -3289,6 +3316,15 @@ inline bool swiftDescriptorTypeRecipeMatches(
     }
     return true;
   };
+  const auto RepeatedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                   const llvm::SwiftDemangleNode &Repeated) {
+    return LabeledMatches(Tuple, Repeated, Repeated, FirstLabel, SecondLabel);
+  };
+  if (OptionalTuple) {
+    const auto *Payload = OptionalPayload(Type.Root->Children[0]);
+    return Payload && LabeledMatches(Payload->Children[0], OuterType, ValueType,
+                                     OptionalFirstLabel, OptionalSecondLabel);
+  }
   const auto NestedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
                                  const llvm::SwiftDemangleNode &First,
                                  const llvm::SwiftDemangleNode &Repeated) {
@@ -3415,7 +3451,7 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
   constexpr size_t MaxDescriptors = 8;
   size_t SymbolicReferences = 0;
   std::vector<SwiftTypeMetadataDescriptorReference> Descriptors;
-  std::optional<SwiftTypeMetadataDescriptorReference> RegisteredType;
+  std::vector<SwiftTypeMetadataDescriptorReference> RegisteredTypes;
   std::string Expanded = "$s";
   std::string Rebuilt;
   for (uint32_t I = 0; I < Length;) {
@@ -3447,9 +3483,9 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       auto Inline = swiftLocalImportedLockType(Image, *LocalDescriptor);
       if (!Inline) {
         Inline = swiftLocalRegisteredNominalType(Image, *LocalDescriptor);
-        if (Inline && I == 0)
-          RegisteredType = SwiftTypeMetadataDescriptorReference{
-              0, *LocalDescriptor, "_$s" + *Inline + "Mn", std::nullopt};
+        if (Inline)
+          RegisteredTypes.push_back(
+              {I, *LocalDescriptor, "_$s" + *Inline + "Mn", std::nullopt});
       }
       if (!Inline) {
         // The shared protocol proof returns a simple existential spelling.
@@ -3547,12 +3583,13 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     Rebuilt.append(reinterpret_cast<const char *>(TypeBytes + I), 5);
     I += 5;
   }
-  if (RegisteredType && SymbolicReferences == 1 && Descriptors.empty()) {
+  if (!RegisteredTypes.empty() &&
+      SymbolicReferences == RegisteredTypes.size() && Descriptors.empty()) {
     bool RequiresOriginalRecipe = false;
     const bool Matches = swiftDescriptorTypeRecipeMatches(
         Base,
         llvm::StringRef(reinterpret_cast<const char *>(TypeBytes), Length),
-        {*RegisteredType}, &RequiresOriginalRecipe);
+        RegisteredTypes, &RequiresOriginalRecipe);
     if (RequiresOriginalRecipe) {
       if (!Matches)
         return std::nullopt;
