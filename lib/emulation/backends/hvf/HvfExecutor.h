@@ -28,7 +28,7 @@ using Cpu = hv_vcpuid_t;
 llvm::Error error(const char *Operation, hv_return_t Status);
 llvm::Error unavailable(const char *Operation, hv_return_t Status);
 
-/// Every native call except the asynchronous interrupt runs on Worker. The
+/// Every native call except ARM64's asynchronous interrupt runs on Worker. The
 /// submitting thread retains the core execution lease; actions must never
 /// acquire a core lock or call guest observers on this worker.
 class Executor final {
@@ -44,8 +44,9 @@ public:
 #if defined(__arm64__)
   const hv_vcpu_exit_t &exit() const { return *Exit; }
 #endif
-  /// Acknowledges the watchdog before returning. An interrupted entry discards
-  /// its vCPU, including pending exit requests, before another job can enter.
+  /// Acknowledges ARM64's watchdog or Intel's owner-thread finite deadline
+  /// before returning. An interrupted entry retires its vCPU before another job
+  /// enters.
   using Completion = llvm::function_ref<llvm::Error(bool Cancelled)>;
   llvm::Error run(MachineRunControl Control, Completion Complete);
 

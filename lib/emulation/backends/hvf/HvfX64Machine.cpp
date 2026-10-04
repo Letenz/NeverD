@@ -10,6 +10,7 @@
 
 #if defined(__APPLE__) && defined(__x86_64__) && defined(NEVERD_EMULATION_HVF)
 #include "HvfExecutor.h"
+#include "HvfIntelDeadline.h"
 
 #include "llvm/Support/FormatVariadic.h"
 
@@ -265,8 +266,9 @@ public:
         auto Reason = Native.vmcs(VMCS_RO_EXIT_REASON);
         if (!Reason)
           return Reason.takeError();
-        // External-interrupt exits can carry an acknowledged host kick.
-        if (Cancelled && *Reason == 1)
+        // An acknowledged IRQ/timer return is transport cancellation. It does
+        // not publish a partially executed instruction as guest completion.
+        if (Cancelled && hvf::isIntelTransportExit(*Reason))
           return llvm::Error::success();
         if (*Reason != ExitMTF && *Reason != ExitException &&
             *Reason != ExitControlRegister)
