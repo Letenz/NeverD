@@ -13,8 +13,15 @@ NEVERD_COMPARISON_VALUE(FillValue, 0x55)
 NEVERD_COMPARISON_VALUE(DifferentValue, 0xaa)
 NEVERD_COMPARISON_VALUE(OraclePages, 3)
 NEVERD_COMPARISON_VALUE(OracleResumeFlag, 0x10000)
+NEVERD_COMPARISON_VALUE(OracleVendorLeaf, 0)
 NEVERD_COMPARISON_VALUE(FaultExit, 71)
 NEVERD_COMPARISON_VALUE(SetupFailure, 72)
+#endif
+#ifdef NEVERD_COMPARISON_HOST
+// Intel documents rollback to entry flags. Native AMD EPYC observations retain
+// the last completed comparison; neither policy changes checked guest state.
+NEVERD_COMPARISON_HOST(Intel, "GenuineIntel", true)
+NEVERD_COMPARISON_HOST(AMD, "AuthenticAMD", false)
 #endif
 #ifdef NEVERD_COMPARISON_BYTES
 // The scalar SSE comparison has an immediate and must never reach CMPSD.
