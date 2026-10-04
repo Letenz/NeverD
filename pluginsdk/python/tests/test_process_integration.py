@@ -192,6 +192,30 @@ class ProcessIntegrationTests(unittest.TestCase):
                          [2, 2, 1, 1, 1, 1, 2, 1000, 1, 2, 1])
         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
         options = json.dumps({"backend": "unicorn", "android": {
+            "entry_symbol": "token_dynamic", "initialize": False,
+            "arguments": [0x20000000, 0],
+            "memory": [{"address": 0x20000000, "size": 4096}],
+            "read_memory": [{"address": 0x20000000, "size": 40}],
+            "libraries": {"libtokens.so": ["strtok_r"]},
+        }})
+        result = session.emulate_process(str(Path(fixtures) / "token-O2-relr.so"),
+                                         "android-aarch64-api28-v1", options)
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(int(result["return_value"], 16), 0)
+        events = result["android"]["native_calls"]
+        lookup = next(e for e in events if e["name"] == "dlsym")
+        self.assertEqual(lookup["symbol"], "strtok_r")
+        self.assertEqual(lookup["library"], "libtokens.so")
+        calls = [e for e in events if e["name"] == "strtok_r"]
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            self.assertEqual(call["library"], "libtokens.so")
+            self.assertEqual(call["pc"], lookup["result"])
+        memory = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+        self.assertEqual([int.from_bytes(memory[i:i + 8], "little")
+                          for i in range(0, len(memory), 8)], [0, 6, 0, 6, 0])
+        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+        options = json.dumps({"backend": "unicorn", "android": {
             "entry_symbol": "mutex_dynamic", "initialize": False,
             "arguments": [0x20000000, 0],
             "memory": [{"address": 0x20000000, "size": 4096}],

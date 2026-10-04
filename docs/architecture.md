@@ -1450,6 +1450,12 @@ C, CLI and Python consume the same option parser. No dependency graph,
 namespace or caller-specific scope is inferred from these explicit inputs.
 
 
+`AndroidStrings` owns Bionic's mutating token scan over guest memory. Imported
+and dynamically named `strtok_r` calls use the same bounded byte reads and
+caller-owned continuation pointer. It validates the complete cursor and
+delimiter write spans before publishing changes; no host string function or
+duplicate cursor state participates.
+
 Bionic's private mutex model reads the API 28 LP64 object directly from guest
 memory. Attribute interpretation, lock state, recursive depth and ownership
 belong to this one model; static imports and named dynamic calls share it.

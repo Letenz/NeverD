@@ -84,6 +84,15 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `strtok_r`, scanning guest byte strings and updating the caller's eight-byte,
+  aligned save pointer. Delimiters may change between calls; separate contexts
+  remain independent. API 28 clears the saved pointer at the final token or an
+  empty remainder. A null saved cursor returns NULL without reading delimiters
+  or writing memory. Only a terminating delimiter is overwritten; a final
+  token with no separator can reside in read-only memory. Both write spans are
+  checked before either effect, and errno is preserved. Invalid pointers and
+  exhausted scan/deadline bounds stop explicitly. No host tokenizer or hidden
+  process cursor supplies state; `strtok` remains unsupported.
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.

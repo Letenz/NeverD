@@ -147,6 +147,7 @@ target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/
 include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
+  AndroidTokenTests.cpp
   AndroidMutexTests.cpp
   AndroidSyscallTests.cpp
   TIMEOUT 30

@@ -2226,6 +2226,15 @@ unbalanced callback stacks and exhaustion of the original instruction budget.
 C/CLI and Python tests check callback effects and ordered nullable call results
 through the real shared engine. This is modeled API 28 evidence, not a native
 Android device comparison or proof of concurrent initialization semantics.
+Independent tokenization fixtures at O0/O2 and all three relocation packings
+check changed delimiters, interleaved contexts, unsigned bytes, final/empty
+tokens, exact cursor width, input mutations and errno preservation. Read-only
+inputs and cursors, invalid pointers, scan limits and stale dynamic providers
+have explicit outcomes. C/CLI and Python integration compare named calls and
+guest effects through the shared engine. The API 28 cursor contract is checked
+against [pinned AOSP source](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strtok.c);
+this is model evidence, not a native Android device comparison.
+
 Independent mutex fixtures run at O0/O2 with ordinary, APS2 and RELR packing.
 They check eight-byte attributes, four-byte getter outputs, complete 40-byte
 initialization, overlapping attributes, static initializers, all three lock
