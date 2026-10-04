@@ -67,6 +67,13 @@ protected:
     llvm::cantFail(CPU->installHooks(std::move(Hooks)));
     return llvm::cantFail(CPU->runUntilExit(Code, Timeout));
   }
+  uint64_t backing(uint64_t Address, unsigned Size = Word) {
+    std::array<uint8_t, Word> Bytes{};
+    const auto Error = llvm::toString(CPU->snapshotBacking(
+        Address, llvm::MutableArrayRef(Bytes).take_front(Size)));
+    EXPECT_TRUE(Error.empty()) << Error;
+    return llvm::support::endian::read32le(Bytes.data());
+  }
   using State = std::map<CPURegister, RegisterValue>;
   State state() {
     State Result;
@@ -147,6 +154,8 @@ TEST_P(X64MXCSR, LoadsAndStoresUseExactlyFourBytesAcrossPageBoundaries) {
 TEST_P(X64MXCSR, ObserversStopOrThrowBeforeEffectsAndRetry) {
   for (const bool Loading : {false, true})
     for (const bool Throw : {false, true}) {
+      SetUp();
+      ASSERT_TRUE(CPU);
       llvm::cantFail(CPU->setReg(X64Register::PC, Code));
       llvm::cantFail(CPU->setReg(X64Register::MXCSR, Initial));
       const uint64_t Value = Initial | (Mask & DAZ) | FTZ | Sticky;
@@ -169,7 +178,9 @@ TEST_P(X64MXCSR, ObserversStopOrThrowBeforeEffectsAndRetry) {
           << E.Diagnostic;
       EXPECT_EQ(Events, 1u);
       EXPECT_EQ(state(), Before);
-      EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, Word)), Value);
+      EXPECT_EQ(backing(Data), Value);
+      if (Throw)
+        continue;
       E = run(Bytes);
       ASSERT_EQ(E.Kind, ExecutionExitKind::Stopped) << E.Diagnostic;
       EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::MXCSR)),
@@ -180,6 +191,8 @@ TEST_P(X64MXCSR, ObserversStopOrThrowBeforeEffectsAndRetry) {
 }
 TEST_P(X64MXCSR, ReservedBitsFaultAndUnmaskedValuesRemainUnsupported) {
   for (const auto Value : {Initial | Reserved, uint64_t(0)}) {
+    SetUp();
+    ASSERT_TRUE(CPU);
     llvm::cantFail(CPU->setReg(X64Register::PC, Code));
     llvm::cantFail(CPU->writeInteger(Data, Value, Word));
     const auto Before = state();
@@ -197,24 +210,26 @@ TEST_P(X64MXCSR, ReservedBitsFaultAndUnmaskedValuesRemainUnsupported) {
   }
 }
 TEST_P(X64MXCSR, MissingPageAndDeniedStoresCannotPublishPartialEffects) {
-  const uint64_t Address = Data + Page - Word / 2;
-  llvm::cantFail(CPU->setReg(X64Register::CX, Address));
-  for (const bool Loading : {false, true}) {
-    llvm::cantFail(CPU->setReg(X64Register::PC, Code));
-    llvm::cantFail(CPU->writeInteger(Address, Initial | Reserved, Word));
-    llvm::cantFail(CPU->protect(Data + Page, Page, Execute | UserAccessible));
-    const auto Before = state();
-    auto E = run(Loading ? llvm::ArrayRef(Load) : llvm::ArrayRef(Store));
-    EXPECT_EQ(E.Kind, ExecutionExitKind::GuestFault) << E.Diagnostic;
-    ASSERT_TRUE(E.Fault);
-    EXPECT_EQ(E.Fault->Access,
-              Loading ? BackendAccessKind::Read : BackendAccessKind::Write);
-    EXPECT_EQ(state(), Before);
-    llvm::cantFail(
-        CPU->protect(Data + Page, Page, Read | Write | UserAccessible));
-    EXPECT_EQ(llvm::cantFail(CPU->readInteger(Address, Word)),
-              Initial | Reserved);
-  }
+  for (const bool Missing : {false, true})
+    for (const bool Loading : {false, true}) {
+      SetUp();
+      ASSERT_TRUE(CPU);
+      const uint64_t Address = Data + (Missing ? 2 : 1) * Page - Word / 2;
+      llvm::cantFail(CPU->setReg(X64Register::CX, Address));
+      llvm::cantFail(CPU->setReg(X64Register::PC, Code));
+      llvm::cantFail(CPU->writeInteger(Address, Initial, Word / 2));
+      if (!Missing)
+        llvm::cantFail(
+            CPU->protect(Data + Page, Page, Execute | UserAccessible));
+      const auto Before = state();
+      auto E = run(Loading ? llvm::ArrayRef(Load) : llvm::ArrayRef(Store));
+      EXPECT_EQ(E.Kind, ExecutionExitKind::GuestFault) << E.Diagnostic;
+      ASSERT_TRUE(E.Fault);
+      EXPECT_EQ(E.Fault->Access,
+                Loading ? BackendAccessKind::Read : BackendAccessKind::Write);
+      EXPECT_EQ(state(), Before);
+      EXPECT_EQ(backing(Address, Word / 2), Initial);
+    }
 }
 TEST_P(X64MXCSR, GuestLoadedDAZChangesArithmeticAndSurvivesContextSwitch) {
   ASSERT_EQ(Mask & DAZ, DAZ);
