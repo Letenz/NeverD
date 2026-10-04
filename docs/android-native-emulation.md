@@ -96,6 +96,15 @@ The supported Bionic subset is:
 - `__system_property_get`, backed only by the explicit property dictionary.
   Missing properties return length zero and write NUL; values must fit 91 bytes
   plus NUL. Host properties are never inherited.
+- `pthread_once`, executing the guest initializer on the current guest stack.
+  An API 28 four-byte control transitions from 0 to 1 before the callback and
+  to 2 only after normal return. A completed control returns zero without
+  invoking its initializer. Nested initialization of different controls and
+  modeled imports inside callbacks share the caller's execution budget.
+  An in-progress control, including recursive initialization of the same
+  control, stops as unsupported; there is no guest thread scheduler. Callback
+  faults and exhausted budgets leave the call result incomplete. Unwinding,
+  cancellation and fork recovery are unsupported.
 - `dlopen`, `dlsym`, `dlclose`, `dlerror`, using an explicit local catalogue
   described below. Function availability and implementation are separate:
   an available symbol whose call is unmodeled still stops explicitly.
@@ -114,7 +123,8 @@ instead of receiving fabricated FILE contents. stdio operations are not modeled.
 These ABI choices are based on the pinned AOSP Android 9 definitions:
 [Bionic TLS slots](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/private/bionic_tls.h),
 [`__errno`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/bionic/__errno.cpp),
-and [system property declarations](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/include/sys/system_properties.h).
+[system property declarations](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/include/sys/system_properties.h),
+and [`pthread_once`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_once.cpp).
 The model is independently implemented; these sources specify the ABI.
 
 ### Explicit dynamic symbol catalogue
