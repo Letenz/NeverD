@@ -156,7 +156,8 @@ void MedToHighConverter::insertPhiCopies(HighFunc &Func,
         Branch.Body.insert(Branch.Body.end() - 1, Copies.begin(), Copies.end());
         continue;
       }
-      if (Branch.Kind == StmtKind::Goto && gotoHitsSuccessor(Branch.GotoTarget)) {
+      if (Branch.Kind == StmtKind::Goto &&
+          gotoHitsSuccessor(Branch.GotoTarget)) {
         Func.Body.insert(Func.Body.begin() + BranchIndex, Copies.begin(),
                          Copies.end());
         BranchIndex += Copies.size();
