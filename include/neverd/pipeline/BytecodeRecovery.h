@@ -25,6 +25,7 @@ struct BytecodeRecoveryResult {
   uint64_t DecodedInstructions = 0;
   bool CheckedOnly = false;
   std::string Source;
+  bool WithContext = false;
 };
 
 /// Recover externally specified bytecode using JSON request schema version 1.

@@ -424,7 +424,10 @@ TEST(BytecodeDecoder, FullUnsignedConstantsAndMalformedFields) {
 class BytecodeSourceTest : public NeverDLiftTest {};
 
 class BytecodeDecoderSourceTest : public BytecodeSourceTest,
-                                  public ::testing::WithParamInterface<bool> {};
+                                  public ::testing::WithParamInterface<bool> {
+protected:
+  void checkBoundCalls(bool WithContext);
+};
 INSTANTIATE_TEST_SUITE_P(ProfileAndCallback, BytecodeDecoderSourceTest,
                          ::testing::Bool());
 
@@ -780,7 +783,7 @@ int main(void) {
   }
 }
 
-TEST_P(BytecodeDecoderSourceTest, BoundCallsRetainStateAndPropagateFailure) {
+void BytecodeDecoderSourceTest::checkBoundCalls(bool WithContext) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "source runtime checks require clang";
   auto P = toyProfile();
@@ -813,7 +816,8 @@ TEST_P(BytecodeDecoderSourceTest, BoundCallsRetainStateAndPropagateFailure) {
     std::vector<LowFunc> Low;
     std::map<va_t, SourceFunctionTypeHint> Hints;
     for (const auto *Input : {&F->Function, &G->Function}) {
-      auto Wrapped = lowerBytecodeState(*Input, 40, A, 10000, Bindings);
+      auto Wrapped =
+          lowerBytecodeState(*Input, 40, A, 10000, Bindings, WithContext);
       ASSERT_TRUE(bool(Wrapped)) << llvm::toString(Wrapped.takeError());
       Hints.emplace(Input->Entry, Wrapped->SourceABI);
       Low.push_back(std::move(Wrapped->Function));
@@ -839,7 +843,7 @@ TEST_P(BytecodeDecoderSourceTest, BoundCallsRetainStateAndPropagateFailure) {
       inferMedTypes(Med, A);
       recoverCallAbi(Med, A, Names);
       ASSERT_TRUE(verifyMedFunc(Med, "bytecode-call"));
-      ASSERT_EQ(Med.Params.size(), 1u);
+      ASSERT_EQ(Med.Params.size(), WithContext ? 2u : 1u);
       Functions.push_back(std::move(Med));
     }
     for (bool LLVM : {false, true}) {
@@ -868,8 +872,10 @@ TEST_P(BytecodeDecoderSourceTest, BoundCallsRetainStateAndPropagateFailure) {
         auto *External = Module->getFunction("toy_callback");
         ASSERT_NE(External, nullptr);
         ASSERT_TRUE(External->isDeclaration());
-        ASSERT_EQ(External->arg_size(), 1u);
+        ASSERT_EQ(External->arg_size(), WithContext ? 2u : 1u);
         ASSERT_TRUE(External->getArg(0)->getType()->isPointerTy());
+        if (WithContext)
+          ASSERT_TRUE(External->getArg(1)->getType()->isPointerTy());
         ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
         ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
       } else {
@@ -883,7 +889,58 @@ TEST_P(BytecodeDecoderSourceTest, BoundCallsRetainStateAndPropagateFailure) {
       OS.flush();
       ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
       const auto Path = tmpFile("calls.c");
-      std::ofstream(Path) << Source << R"(
+      std::ofstream File(Path);
+      File << Source;
+      if (WithContext)
+        File << R"(
+uint64_t toy_callback(void *bytes, void *opaque) {
+  uint64_t *state = (uint64_t *)bytes;
+  ++state[4];
+  if (!opaque) return 0;
+  uint64_t *context = (uint64_t *)opaque;
+  ++context[2];
+  // Re-enter the same recovered caller with a distinct state and context.
+  // The outer callback must resume with its own arguments still intact.
+  if (context[3]) {
+    context[3] = 0;
+    uint64_t inner[5] = {0, 2, 0, 0, 0};
+    uint64_t nested[4] = {1, UINT64_C(0xfedcba9876543210), 0, 0};
+    if (toy_caller(inner, nested) != nested[1] || inner[0] != 1 ||
+        inner[1] != 2 || inner[4] != 1 || nested[2] != 1)
+      return UINT64_MAX;
+  }
+  return context[2] == context[0] ? context[1] : 0;
+}
+int main(void) {
+  for (uint64_t n = 1; n <= 32; ++n) {
+    for (uint64_t stop = 0; stop <= n; ++stop) {
+      uint64_t state[5] = {0, n, UINT64_C(0x3141592653589793), 0, 0};
+      uint64_t context[4] = {stop, UINT64_C(0xabcdef0123456789) + n, 0, 1};
+      uint64_t result = toy_caller(state, context);
+      if (result != (stop ? context[1] : 0) ||
+          state[0] != (stop ? 3 * stop - 2 : 3 * n) ||
+          state[1] != (stop ? n - stop + 1 : 0) ||
+          state[2] != UINT64_C(0x3141592653589793) ||
+          state[4] != (stop ? stop : n) || context[2] != state[4] ||
+          context[0] != stop || context[3] != 0)
+        return 1;
+    }
+    uint64_t without[5] = {0, n, 0, 0, 0};
+    if (toy_caller(without, 0) != 0 || without[0] != 3 * n ||
+        without[1] != 0 || without[4] != n)
+      return 2;
+    // Context storage may alias state, including the value a following
+    // bytecode instruction reads. No restrict/noalias promise is available.
+    uint64_t alias[7] = {0, n, 2 * n, UINT64_C(0x9876543210abcdef), 0, 0, 0};
+    if (toy_caller(alias, alias + 2) != alias[3] ||
+        alias[0] != 3 * n - 2 || alias[1] != 1 || alias[4] != 2 * n)
+      return 3;
+  }
+  return 0;
+}
+)";
+      else
+        File << R"(
 uint64_t toy_callback(void *bytes) {
   uint64_t *state = (uint64_t *)bytes;
   ++state[4];
@@ -904,6 +961,7 @@ int main(void) {
   return 0;
 }
 )";
+      File.close();
       for (const char *Opt : {"-O0", "-O2"}) {
         const auto Program = tmpFile(std::string("calls-test") +
                                      neverd::test::executableSuffix());
@@ -918,6 +976,39 @@ int main(void) {
       }
     }
   }
+}
+
+TEST_P(BytecodeDecoderSourceTest, BoundCallsRetainStateAndPropagateFailure) {
+  checkBoundCalls(false);
+}
+
+TEST_P(BytecodeDecoderSourceTest,
+       BoundCallsRetainContextAcrossLoopsAndReentry) {
+  checkBoundCalls(true);
+}
+
+TEST_F(BytecodeSourceTest, SourceContextCopiesRespectTheOperationBudget) {
+  auto P = toyProfile();
+  P.Encodings.push_back(
+      {1, {{0, 255, 0x33}}, {{NdOp::CALL, {}, {constant(0x2000)}}}});
+  auto D = BytecodeDecoder::create(std::move(P));
+  ASSERT_TRUE(bool(D));
+  const std::vector<uint8_t> Code{0x33, 0xe7};
+  auto F = (*D)->function(Code, 0, 0, Code.size(), "budgeted");
+  ASSERT_TRUE(bool(F));
+  const std::vector<va_t> Calls{0x2000};
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (bool WithContext : {false, true}) {
+      const unsigned Needed = WithContext ? 12 : 10;
+      auto Short = lowerBytecodeState(F->Function, 32, A, Needed - 1, Calls,
+                                      WithContext);
+      ASSERT_FALSE(bool(Short));
+      EXPECT_NE(llvm::toString(Short.takeError()).find("budget exhausted"),
+                std::string::npos);
+      auto Exact =
+          lowerBytecodeState(F->Function, 32, A, Needed, Calls, WithContext);
+      ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+    }
 }
 
 TEST_P(BytecodeDecoderSourceTest,

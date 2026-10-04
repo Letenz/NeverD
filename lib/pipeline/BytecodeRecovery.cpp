@@ -77,7 +77,8 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
   for (const auto &[Key, Value] : *Root)
     if (Key != "schemaVersion" && Key != "profile" && Key != "layout" &&
         Key != "functions" && Key != "bindings" && Key != "base" &&
-        Key != "output" && Key != "optimize" && Key != "unaligned_pointers")
+        Key != "output" && Key != "optimize" && Key != "unaligned_pointers" &&
+        Key != "with_context")
       return invalid(llvm::Twine("unknown bytecode recovery key: ") +
                      llvm::StringRef(Key));
   if (Root->get(Decode ? "profile" : "layout"))
@@ -109,13 +110,14 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
   }
   if (Output != "check" && Output != "highc" && Output != "llvmc")
     return invalid("output must be check, highc or llvmc");
-  for (llvm::StringRef Key : {"optimize", "unaligned_pointers"})
+  for (llvm::StringRef Key : {"optimize", "unaligned_pointers", "with_context"})
     if (Root->get(Key) && !Root->getBoolean(Key))
       return invalid(Key + " must be a boolean");
   bool LLVMRoute = Output == "llvmc", Check = Output == "check";
   bool Optimize = Root->getBoolean("optimize").value_or(false);
   bool UnalignedPointers =
       Root->getBoolean("unaligned_pointers").value_or(false);
+  bool WithContext = Root->getBoolean("with_context").value_or(false);
   if (Optimize && !LLVMRoute)
     return invalid("optimize requires llvmc source emission");
   std::string ProfileJSON;
@@ -199,11 +201,13 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
   Result.DecodedBytes = Bytes;
   Result.DecodedInstructions = 1000000 - RemainingInstructions;
   Result.CheckedOnly = Check;
+  Result.WithContext = WithContext;
   if (Check)
     return Result;
   for (auto &F : Functions) {
-    auto Bound = lowerBytecodeState(F, (*Decoder)->profile().RegisterBytes,
-                                    Arch::AArch64, 10000000, BoundCalls);
+    auto Bound =
+        lowerBytecodeState(F, (*Decoder)->profile().RegisterBytes,
+                           Arch::AArch64, 10000000, BoundCalls, WithContext);
     if (!Bound)
       return invalid(F.Name + ": " + llvm::toString(Bound.takeError()));
     Hints.emplace(F.Entry, Bound->SourceABI);
@@ -229,7 +233,7 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
         }
     recoverCallAbi(Med, Arch::AArch64, CallNames);
     if (Med.SkippedSSA || !verifyMedFunc(Med, "bytecode-source") ||
-        Med.Params.size() != 1)
+        Med.Params.size() != (WithContext ? 2u : 1u))
       return invalid(F.Name + ": source IR validation failed");
     MedFunctions.push_back(std::move(Med));
   }

@@ -250,6 +250,15 @@ status-propagating calls through a synchronous external decoder. Malformed
 callback recipes share the profile's bank, width, temporary, overlap and budget
 checks. Layout and instruction-reply JSON reject ambiguous or unknown fields.
 
+The optional source-context contract is exercised on both AArch64 and x64
+carriers through both C routes: nested calls, an entry back-edge, full-width
+failure status, reentrant execution, null context and context/state aliases.
+The public C API also checks aliases on an unaligned bank through the optimized
+LLVM route at O0/O2 with undefined-behavior traps. CLI checks retain an unused
+context parameter in leaf functions. C/Python tests validate the option and
+response contract in check and emission modes, including rejection before
+decoder invocation and Python compatibility with older unary-ABI responses.
+
 `FloatingConversionsKeepArchitectureResultPolicies` checks float/double to
 signed/unsigned 32/64-bit results for AArch64 saturation and x86 indefinite
 values through both C routes, both memory spellings and O0/O2 with undefined

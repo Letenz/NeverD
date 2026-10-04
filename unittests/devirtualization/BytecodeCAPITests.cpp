@@ -29,6 +29,9 @@ struct DecoderContext {
                   {"space":"const","size":4,"value":{"offset":2,"bytes":1}}]}]})";
     else if (Opcode == 0xfe)
       JSON = R"({"size":1,"operations":[{"op":"RETURN","inputs":[]}]})";
+    else if (Opcode == 0xd2)
+      JSON = R"({"size":1,"operations":[{"op":"CALL","inputs":[
+        {"space":"const","size":8,"value":{"addend":8192}}]}]})";
     else
       JSON = R"({"error":"unknown contextual opcode"})";
     if (Context.Mode == 3)
@@ -140,6 +143,7 @@ TEST_P(BytecodeDecoderCAPI, BothSourceRoutesExecuteNarrowWritesWithCanaries) {
     EXPECT_EQ(Object->getInteger("decoded_instructions"), 2);
     EXPECT_EQ(Object->getInteger("decoded_bytes"), 4);
     EXPECT_EQ(Object->getString("scope"), "state-c");
+    EXPECT_EQ(Object->getBoolean("with_context"), false);
     if (GetParam()) {
       EXPECT_EQ(Context.Windows,
                 (std::vector<std::pair<uint64_t, size_t>>{{16, 4}, {19, 1}}));
@@ -178,6 +182,120 @@ int main(void) {
       EXPECT_TRUE(exec(Exe.string(), {}).ok());
     }
   }
+}
+
+TEST_P(BytecodeDecoderCAPI, SourceContextReachesBindingsAndMayAliasState) {
+  for (unsigned Route : {0u, 1u, 2u}) {
+    SCOPED_TRACE(Route);
+    DecoderContext Context;
+    Context.Key = 31;
+    auto Request = GetParam() ? externalRequest() : request();
+    auto &Root = *Request.getAsObject();
+    Root["output"] = Route ? "llvmc" : "highc";
+    Root["optimize"] = Route == 2;
+    Root["with_context"] = true;
+    Root["bindings"] = llvm::json::Array{
+        llvm::json::Object{{"address", 8192}, {"name", "api_service"}}};
+    auto &Range = *(*Root.getArray("functions"))[0].getAsObject();
+    Range["end"] = 21;
+    std::vector<unsigned char> Bytes{0xd2, 0x41, 0, 9, 0xfe};
+    if (GetParam()) {
+      for (unsigned Offset : {0u, 1u, 4u})
+        Bytes[Offset] ^= uint8_t(16 + Offset + Context.Key);
+    } else {
+      auto Encoding = llvm::json::parse(R"({"size":1,
+        "match":[{"offset":0,"value":210}],"operations":[
+          {"op":"CALL","inputs":[
+            {"space":"const","size":8,"value":{"addend":8192}}]}]})");
+      ASSERT_TRUE(bool(Encoding));
+      Root.getObject("profile")
+          ->getArray("encodings")
+          ->push_back(std::move(*Encoding));
+    }
+    auto Result = run(Request, Bytes, GetParam() ? &Context : nullptr);
+    auto *Object = Result.getAsObject();
+    ASSERT_NE(Object, nullptr);
+    ASSERT_EQ(Object->getBoolean("ok"), true)
+        << Object->getString("error").value_or("").str();
+    EXPECT_EQ(Object->getBoolean("with_context"), true);
+    EXPECT_EQ(Object->getInteger("decoded_bytes"), 5);
+    auto Source = Object->getString("source");
+    ASSERT_TRUE(Source);
+    if (!hasCrossTargetClang())
+      GTEST_SKIP() << "host Clang is unavailable";
+    auto File = tmpFile("bytecode-context.c");
+    std::ofstream(File) << Source->str() << R"(
+#include <string.h>
+uint64_t api_service(void *state, void *context) {
+  if (!context) return UINT64_C(0xfedcba9876543210);
+  uint32_t value;
+  memcpy(&value, context, 4);
+  ++value;
+  memcpy(context, &value, 4);
+  return (value & 1) ? 0 : UINT64_C(0xabcdef0123456789);
+}
+int main(void) {
+  for (unsigned i = 0; i < 1024; ++i) {
+    for (unsigned kind = 0; kind < 3; ++kind) {
+      unsigned char memory[14];
+      memset(memory, 0x5a, sizeof(memory));
+      uint32_t x = i * UINT32_C(0x01020305), separate = i, got;
+      memcpy(memory + 1, &x, 4);
+      void *context = kind == 0 ? (void *)&separate : kind == 1 ? memory + 1 : 0;
+      uint32_t updated = (kind == 0 ? separate : x) + 1;
+      uint64_t expected_status = kind == 2 ? UINT64_C(0xfedcba9876543210) :
+          (updated & 1) ? 0 : UINT64_C(0xabcdef0123456789);
+      uint32_t expected = (kind == 1 ? updated : x) + (!expected_status ? 9 : 0);
+      if (api_sum(memory + 1, context) != expected_status) return 1;
+      memcpy(&got, memory + 1, 4);
+      if (got != expected || separate != i + (kind == 0) || memory[0] != 0x5a)
+        return 2;
+      for (unsigned j = 5; j < sizeof(memory); ++j)
+        if (memory[j] != 0x5a) return 3;
+    }
+  }
+  return 0;
+})";
+    for (const auto *Optimization : {"-O0", "-O2"}) {
+      auto Exe = tmpFile(std::string("bytecode-context") +
+                         neverd::test::executableSuffix());
+      auto Built = exec(NEVERD_TEST_CLANG,
+                        {"-std=c11", Optimization, "-Werror",
+                         "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                         File.string(), "-o", Exe.string()});
+      ASSERT_TRUE(Built.ok()) << Built.err << '\n' << Source->str();
+      EXPECT_TRUE(exec(Exe.string(), {}).ok());
+    }
+  }
+}
+
+TEST_P(BytecodeDecoderCAPI, SourceContextSelectionIsStrictAlsoInCheckMode) {
+  for (bool Check : {false, true})
+    for (const auto &Selection : {"true", "false", "1", "null", "\"true\""}) {
+      SCOPED_TRACE(Selection);
+      DecoderContext Context;
+      auto Request = GetParam() ? externalRequest() : request();
+      auto &Root = *Request.getAsObject();
+      Root["output"] = Check ? "check" : "highc";
+      auto Value = llvm::json::parse(Selection);
+      ASSERT_TRUE(bool(Value));
+      const bool Valid = bool(Value->getAsBoolean());
+      Root["with_context"] = std::move(*Value);
+      auto Result = run(Request, GetParam() ? encoded(0) : Code,
+                        GetParam() ? &Context : nullptr);
+      auto *Object = Result.getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getBoolean("ok"), Valid);
+      if (Valid) {
+        EXPECT_EQ(Object->getBoolean("with_context"),
+                  Root.getBoolean("with_context"));
+        if (Check)
+          EXPECT_EQ(Object->getString("source"), "");
+      } else {
+        EXPECT_TRUE(Context.Windows.empty());
+        EXPECT_EQ(Object->get("source"), nullptr);
+      }
+    }
 }
 
 TEST_F(BytecodeCAPI, ContextualDecodersAreIndependentAndBoundedByFunctionEnd) {

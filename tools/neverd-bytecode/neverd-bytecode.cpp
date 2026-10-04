@@ -38,6 +38,10 @@ llvm::cl::opt<bool> Optimize(
 llvm::cl::opt<bool> UnalignedPointers(
     "unaligned-pointers",
     llvm::cl::desc("Use Clang/GCC unaligned aliasing scalar pointers in C"));
+llvm::cl::opt<bool> WithContext(
+    "with-context",
+    llvm::cl::desc(
+        "Pass an opaque context pointer through source functions and calls"));
 llvm::cl::opt<bool>
     Check("check", llvm::cl::desc("Check CFG decoding without emitting C"));
 
@@ -84,6 +88,7 @@ llvm::Error run() {
       {"base", Base.getValue()},
       {"output", Check ? "check" : (LLVMRoute ? "llvmc" : "highc")},
       {"optimize", Optimize.getValue()},
+      {"with_context", WithContext.getValue()},
       {"unaligned_pointers", UnalignedPointers.getValue()}};
   for (const auto &Field : {std::pair{"profile", ProfilePath.getValue()},
                             std::pair{"functions", FunctionsPath.getValue()},
