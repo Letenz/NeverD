@@ -93,6 +93,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `NeverDLLVMScalarEquivalenceTests`는 전체 루프 입력 영역, 0회 반복, PHI 동시 교환, switch, 상위 입력 비트, 마지막 분할의 반례, poison을 만드는 추가 갱신, 반환 범위, 미지원 계약 및 정확한·한 단위 부족·0 예산을 검사합니다. 독립적인 두 배 폭·오버플로 기준 구현이 지원하는 각 폭의 funnel 끝점과 제약된 곱셈을 검사하며 독립 중첩 루프 C의 O1/O2 출력이 컴파일러 입력 형태를 확인합니다. 상태 모델 테스트도 끝점을 검사합니다. `SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings`는 누적 계산과 기존 개별 한도를 검사합니다.
 
+`NeverDLLVMScalarLoopRecoveryTests`는 접두 계산과 이전 블록 상태 복원, 0회 반복 분기, 자체 역방향 간선의 머리 조건, 아핀 상태, 래핑 시 동등 비교, 추가 갱신의 poison, 상위 데이터 비트 차이와 미지원 입력 계약을 검사합니다. 정확한 누적 예산과 한 단위 부족한 예산으로 원자적 거부를 확인합니다. 독립 산술 오라클은 모든 바이트 제어 입력에 대해 원본과 복원 LLVM을 O0/O2에서 실행합니다. 네이티브 ABI 복원이나 기본 C 출력의 증거는 아닙니다.
+
 초기화 계약 회귀는 부분 및 분리된 바이트 범위, 고정 별칭, 양쪽 분기, 모든 반환, 첫 반복의 읽기와 반복 안의 저장 후 읽기를 검사합니다. 저장 전 읽기, 누락된 저장, 게스트 저장, 알 수 없는 별칭, 특수 메모리 접근, 객체 밖 범위와 입력/작업 예산 소진은 실패해야 합니다. 출력 전용 상태 워드를 쓰는 독립 C 예제를 O1/O2로 컴파일해 정확한 LLVM 속성을 유지한 채 새로운 네이티브→LLVM 조합 증명을 통과하는지 확인합니다.
 
 조건부 카운트다운 검증은 본문 템플릿 거부 후 재시도, 임의 워드 입력에 대한 완전한 헤더 증명, 절단점 및 쿼리 예산의 누적, 실제 진입 계약 위반의 즉시 거부를 검사합니다.
@@ -100,6 +102,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 `NeverDInterpreterLLVMRefinementTests`는 새로운 조합 증명, 정확한 텍스트/함수 바인딩, 독립 예산, 전체 관찰과 더 넓은 소스 영역을 검사합니다. 바이트, 잔여 코드, 결과, 플래그, 상태 코드, 프레임 쓰기, poison 및 잘못되거나 오래된 루프 계획은 조합 기록을 거부해야 합니다. 임의 워드 카운트다운에는 두 귀납 전제가 필요하며, 독립 C 예제의 O1/O2 컴파일은 실제 직렬화 LLVM 입력을 검증합니다. 상태 모델 회귀는 숨겨진 진입 역방향 간선을 거부하고 부수적인 출처 정보를 복사하지 않으면서 루트 예산을 검사합니다.
 
 ```sh
+cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --parallel 4
+build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
