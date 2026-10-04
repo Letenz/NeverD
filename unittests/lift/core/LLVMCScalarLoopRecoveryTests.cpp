@@ -145,12 +145,14 @@ std::string emit(llvm::Module &Module, const llvm::Function *Only = nullptr,
   return Source;
 }
 
-void checkArithmetic(llvm::Module &Module, const std::string &Source) {
+void checkArithmetic(llvm::Module &Module, const std::string &Source,
+                     llvm::StringRef CountType = "uint8_t") {
   Module.getFunction("accumulate")->setName("reference_accumulate");
   const std::string Reference = text(Module);
   Module.getFunction("reference_accumulate")->setName("accumulate");
-  const std::string Main = R"(
-extern uint32_t reference_accumulate(uint32_t, uint32_t, uint8_t);
+  const std::string Main =
+      "\nextern uint32_t reference_accumulate(uint32_t, uint32_t, " +
+      CountType.str() + ");\n" + R"(
 int main(void) {
   const uint32_t values[] = {0, 1, 2, 255, 256, 65535, 65536,
                             0x7fffffffU, 0x80000000U, 0xffffffffU};
@@ -184,6 +186,109 @@ TEST(LLVMCScalarLoopRecovery, DefaultEmitterRecoversPeeledLoops) {
   EXPECT_NE(Source.find("for ("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
   checkArithmetic(*Module, Source);
+}
+
+std::string encodedStopFixture(unsigned Width = 8) {
+  std::string IR = Prefix;
+  const std::string Stop = "  %done = icmp eq i8 %next, %bound";
+  IR.replace(IR.find(Stop), Stop.size(), R"(  %complement = xor i8 %i, -1
+  %remaining = add i8 %bound, %complement
+  %biased = add i8 %remaining, 127
+  %encoded = or i8 %biased, %remaining
+  %done = icmp sge i8 %encoded, 0)");
+  if (Width != 8) {
+    const auto Type = "i" + std::to_string(Width);
+    size_t Position = 0;
+    while ((Position = IR.find("i8 ", Position)) != std::string::npos) {
+      IR.replace(Position, 2, Type);
+      Position += Type.size();
+    }
+    IR.replace(IR.find(", 127"), 5,
+               ", " + std::to_string((uint64_t(1) << (Width - 1)) - 1));
+  }
+  return IR;
+}
+
+TEST(LLVMCScalarLoopRecovery, NewlyExposedModularStopsComposeWithLoopRecovery) {
+  // The encoded sign test is true exactly when next == bound. Recovery
+  // first exposes it; predicate cleanup then needs invariant motion and a
+  // shared SSA identity for the two equivalent counter updates.
+  for (unsigned Width : {8U, 32U, 64U}) {
+    SCOPED_TRACE(Width);
+    llvm::LLVMContext Context;
+    auto Module = parse(encodedStopFixture(Width), Context);
+    ASSERT_TRUE(Module);
+    const auto Source = emit(*Module);
+    EXPECT_NE(Source.find("for ("), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("while (1)"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("127"), std::string::npos) << Source;
+    checkArithmetic(*Module, Source, "uint" + std::to_string(Width) + "_t");
+  }
+}
+
+TEST(LLVMCScalarLoopRecovery, ModularStopDoesNotHideSourceOverflow) {
+  auto IR = encodedStopFixture();
+  const std::string Before = "%biased = add i8";
+  // A positive remaining value plus the bias overflows signed addition on a
+  // reachable iteration. Algebraic truth of the condition cannot erase poison.
+  IR.replace(IR.find(Before), Before.size(), "%biased = add nsw i8");
+  llvm::LLVMContext Context;
+  auto Module = parse(IR, Context);
+  ASSERT_TRUE(Module);
+  const auto Original = text(*Module);
+  EXPECT_EQ(neverd::llvmc::recoverScalarLoops(*Module), 0U);
+  EXPECT_EQ(text(*Module), Original);
+}
+
+TEST(LLVMCScalarLoopRecovery, PredicateConstructionBudgetIsSharedAndAtomic) {
+  const auto IR = encodedStopFixture();
+  auto Attempt = [&](uint64_t Work) {
+    llvm::LLVMContext Context;
+    auto Module = parse(IR, Context);
+    if (!Module)
+      return false;
+    const auto Before = text(*Module);
+    neverd::analysis::LLVMScalarLoopRecoveryLimits Limits;
+    Limits.MaxConstructionWork = Work;
+    const auto Changed =
+        neverd::llvmc::recoverScalarLoops(*Module, nullptr, Limits);
+    if (!Changed)
+      EXPECT_EQ(text(*Module), Before);
+    return Changed == 1;
+  };
+  // Find the publication boundary without fixing an implementation work
+  // count. Every unsuccessful run must preserve the complete original body.
+  uint64_t Low = 0;
+  uint64_t High =
+      neverd::analysis::LLVMScalarLoopRecoveryLimits().MaxConstructionWork;
+  ASSERT_TRUE(Attempt(High));
+  while (High - Low > 1) {
+    const auto Middle = Low + (High - Low) / 2;
+    if (Attempt(Middle))
+      High = Middle;
+    else
+      Low = Middle;
+  }
+  EXPECT_FALSE(Attempt(High - 1));
+  EXPECT_TRUE(Attempt(High));
+
+  auto Second = IR;
+  Second.replace(Second.find("@accumulate"), 11, "@second");
+  llvm::LLVMContext Context;
+  auto Module = parse(IR + Second, Context);
+  ASSERT_TRUE(Module);
+  auto *Untouched = Module->getFunction("second");
+  std::string Before;
+  llvm::raw_string_ostream Stream(Before);
+  Untouched->print(Stream);
+  neverd::analysis::LLVMScalarLoopRecoveryLimits Limits;
+  Limits.MaxConstructionWork = High;
+  EXPECT_EQ(neverd::llvmc::recoverScalarLoops(*Module, nullptr, Limits), 1U);
+  std::string After;
+  llvm::raw_string_ostream AfterStream(After);
+  Untouched->print(AfterStream);
+  EXPECT_EQ(After, Before);
 }
 
 TEST(LLVMCScalarLoopRecovery, InternalWidthDropsRedundantWideContainers) {
