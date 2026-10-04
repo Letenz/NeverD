@@ -93,6 +93,8 @@ void checkHost(const Result &R) {
   RegisterValue Actual;
   _mm_storeu_si128(reinterpret_cast<__m128i *>(Actual.data()), Value);
   EXPECT_EQ(Actual, R.Value);
+#else
+  (void)R;
 #endif
 }
 

@@ -31,6 +31,10 @@ NEVERD_X64_VECTOR_INSTRUCTION(POR, 16, 16, false, false)
 NEVERD_X64_VECTOR_INSTRUCTION(ANDNPS, 16, 16, false, false)
 NEVERD_X64_VECTOR_INSTRUCTION(ANDNPD, 16, 16, false, false)
 NEVERD_X64_VECTOR_INSTRUCTION(PANDN, 16, 16, false, false)
+#define NEVERD_X64_PACKED_INTEGER(Name)                                        \
+  NEVERD_X64_VECTOR_INSTRUCTION(Name, 16, 16, false, false)
+#include "X64PackedIntegerInstructions.def"
+#undef NEVERD_X64_PACKED_INTEGER
 #define NEVERD_X64_SSE_INSTRUCTION(Name, Width, Alignment, Double, ...)        \
   NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, false, false)
 #include "X64SSEInstructions.def"
