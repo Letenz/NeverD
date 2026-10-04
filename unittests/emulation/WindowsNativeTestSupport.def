@@ -12,4 +12,6 @@ NEVERD_NATIVE_TEST_TEXT(NullDevice, "NUL")
 NEVERD_NATIVE_TEST_TEXT(
     NativeThreadTimeout,
     "native initial thread did not terminate before deadline")
+NEVERD_NATIVE_TEST_TEXT(NativeProcessTimeout,
+                        "native process did not terminate before deadline")
 #endif
