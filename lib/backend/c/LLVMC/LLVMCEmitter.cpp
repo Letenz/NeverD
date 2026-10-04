@@ -17,6 +17,7 @@
 
 #include "../FloatConversion.h"
 #include "../UnalignedMemory.h"
+#include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
@@ -849,6 +850,9 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
   }
+  for (auto &Function : *Projection)
+    if (!ProjectionOnly || &Function == ProjectionOnly)
+      llvmc::factorCommonBranchTests(Function);
   llvm::LoopAnalysisManager Loops;
   llvm::FunctionAnalysisManager Functions;
   llvm::CGSCCAnalysisManager CallGraph;
