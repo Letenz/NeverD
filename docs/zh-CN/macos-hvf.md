@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 9a24ea23cf2a47db289e1e2b215d8900d8db1bd0cc636bab4cd68cb061aec251 -->
+<!-- i18n-source: a3d21e1f2505fe8dd441e3bbaadb4a3d3381f2923d087635ec3129190a86b102 -->
 
 [← 文档索引](README.md)
 
@@ -19,7 +19,7 @@ NeverD 使用 Apple 的 Hypervisor.framework，后端名为 `hvf`，对应 Linux
 能力查询区分构建支持与实际初始化；使用 `cpu-capabilities --configuration=JSON --probe-host`
 检查当前进程的硬件与签名条件。
 
-实现复用现有 checked 契约、页表、寄存器模型和 RAM 事务。一个专用线程拥有进程内的 VM/vCPU，各逻辑 CPU 串行使用它；切换前退休旧映射，销毁时先解绑再释放 backing。Apple Silicon 的宿主映射按 16 KiB 对齐，来宾的权限和内存预算仍以 4 KiB 为单位。ARM64 在每条来宾指令前单步执行 TLB/I-cache 维护，并完整传输标量、TLS 和 FP/SIMD。Intel 使用 VMCS、MTF、XSAVE 和处理器异常退出。RIP/RFLAGS 每次均直接通过 VMCS 传输，也覆盖取消后重建 vCPU 的入口。Intel 的 CR0/CR4 同时遵守框架可写掩码和硬件必置位，用读取影子保持来宾可见状态。CR8 使用 VMX 访问退出及架构层的读取完成逻辑，因为宿主 TPR 接口可能与来宾实际状态不一致；只处理经过硬件认证的 CR8 读取，其他控制寄存器访问明确失败，checked 指令准入范围不变。每次创建或取消后重建 Intel vCPU 都初始化独立的托管 `IA32_KERNEL_GS_BASE` 上下文，来宾 MSR 访问仍陷出；未支持的 MSR/SWAPGS 指令不会进入硬件。两种架构都必须通过现有完整状态启动探针。
+实现复用现有 checked 契约、页表、寄存器模型和 RAM 事务。一个专用线程拥有进程内的 VM/vCPU，各逻辑 CPU 串行使用它；切换前退休旧映射，销毁时先解绑再释放 backing。Apple Silicon 的宿主映射按 16 KiB 对齐，来宾的权限和内存预算仍以 4 KiB 为单位。ARM64 关闭软件单步后，在一次原生进入中执行完整的固定 TLB/I-cache 维护序列。专用 HVC #1 必须通过返回 PC、syndrome、PSTATE 和 ESR_EL1 校验，才会单步执行准入的客体指令。`PSTATE.D` 不能屏蔽送往 EL2 的调试异常。完整传输标量、TLS 和 FP/SIMD。Intel 使用 VMCS、MTF、XSAVE 和处理器异常退出。RIP/RFLAGS 每次均直接通过 VMCS 传输，也覆盖取消后重建 vCPU 的入口。Intel 的 CR0/CR4 同时遵守框架可写掩码和硬件必置位，用读取影子保持来宾可见状态。CR8 使用 VMX 访问退出及架构层的读取完成逻辑，因为宿主 TPR 接口可能与来宾实际状态不一致；只处理经过硬件认证的 CR8 读取，其他控制寄存器访问明确失败，checked 指令准入范围不变。每次创建或取消后重建 Intel vCPU 都初始化独立的托管 `IA32_KERNEL_GS_BASE` 上下文，来宾 MSR 访问仍陷出；未支持的 MSR/SWAPGS 指令不会进入硬件。两种架构都必须通过现有完整状态启动探针。
 
 取消会确认原生中断已结束，再允许下一个任务进入；被取消的原生入口会重建 vCPU，防止旧中断影响后续任务。排队期间也检查停止令牌和期限。真正的宿主或状态读取错误优先保留，取消的普通 CPU/RAM 状态不提交。
 
@@ -36,7 +36,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 12 项、Intel 10 项；完整门禁分别要求 16 项和 14 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
+门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 15 项、Intel 10 项；完整门禁分别要求 23 项和 18 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
 
 手动工作流默认使用带 `hvf` 标签的自托管宿主，也可选择 `hosted-intel` 尝试
 GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `scripts/probe_hvf_host.c`，
@@ -149,6 +149,8 @@ ARM64 裸中断测试原先交替覆盖同一地址，可能执行缓存中的�
 
 ### 性能与尚未完成的范围
 
+以下为优化前的历史结果；2026-10-04 的当前测量见文末。
+
 同机微基准使用 `checked-aarch64-v1`，运行两条初始化指令及 1,000 次 `ADD/SUBS/B.NE`，
 共 3,002 条指令。创建 CPU 与启动探针不计时；预热后交替运行两个后端，各取 7 次中位数，
 并核对最终寄存器与 PC。Unicorn 为 **73.9 ms**，HVF 为 **95.1 ms**，耗时约多 **29%**。
@@ -228,3 +230,39 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 2026-10-04，个人仓库首次 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) 和 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) 作业分别在创建后 8 秒和 5 秒启动。两者均在上传子进程异常退出后失败；控制器取消并回收了原生子进程，分别留下 3 轮和 105 轮完整记录。最终证据包已保存并独立核验。另一次[纯上传对照](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621) 的 16 次上传全部通过，17 份产物均核对了服务端摘要，并标明 `native_execution=false`。这些证据区分了上传失败与原生断言失败，尚不能定位根因，也不能算作请求的 1,000 轮通过。此前组织仓库的对照也在 5 秒后启动，因此这些样本不能证明换仓库改善了排队速度。
 
 后续 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) 与 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) 两次运行均于 2026-10-04 失败结束，GitHub 明确报告托管 runner 失联。分别保存的 10 份和 16 份产物均已核验。最后保留的原始日志证明分别连续完成 175 轮和 326 轮，随后各开始一轮；不能据此定位最终故障。两次均缺少原生最终结果及进程回收记录，完整作业日志接口均返回 HTTP 404。没有发出人工取消请求。Intel 的 1,000 轮门禁仍未验证通过。[保留的原始日志片段与运行、摘要清单](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04)可在 Actions 产物保留期结束后继续查阅。
+
+## ARM64 维护路径优化（2026-10-04）
+
+五条 TLB/I-cache 维护操作现在在同一个不可变私有代码段中连续执行，以专用 HVC #1 退出。传输层严格核对完整 syndrome、返回 PC、PSTATE 和 ESR_EL1，随后只单步执行一条准入的客体指令。仅在维护期间关闭软件单步；所有屏障、完整状态捕获和共用取消期限均保留。不使用 ERET，因为异常返回会使 ESR_EL1 在架构上成为 UNKNOWN。 [Arm](https://documentation-service.arm.com/static/649ae5b238511951cb799288).
+
+实机为 M4 Max、macOS 15.6.1，使用 Release、Apple Clang 17 和预编译 LLVM。独立计数中，相同的 42044 条客体指令及 56 条启动探针指令，原生进入从 252600 次降至 84200 次，即每条指令从六次降至两次。计数运行的耗时不纳入性能测量。三项故障/恢复测试在同一进程各连续通过 1000 轮；取消测试要求原生写入标记，并验证改写客体代码后成功重试。
+
+干净集成版本 [389bebfdd](https://github.com/NeverSight/NeverD/commit/389bebfdda31a0db19facc7ab8ca5461a8c8c1bc) 的完整 CPU 清单：2546 通过、4710 跳过、零失败，23 项必需原生用例全部通过。独立 Darwin 清单：130 通过、156 跳过、零失败，39 项必需原生用例全部通过。两者覆盖重叠，不能相加；不代表 iOS SDK 或设备上的独立验证。
+
+15 组进程配对交替运行，每个负载预热一次；测量时本任务未运行编译或测试。共享宿主负载为 26.7–33.0，软件对比为 28.8–32.6。表中为中位数［最小–最大］毫秒；加速比为逐对耗时比的中位数，95% 百分位 bootstrap 区间采用 10000 次重采样、种子 20261004。明显长尾和仅 15 组样本限制了结论的适用范围。
+
+`4b54908b9` → `056090929` / Release / Apple Clang 17 / LLVM 23 prebuilt / Unicorn `df88be772`.
+
+| 负载 | 优化前 ms［最小–最大］ | 优化后 ms［最小–最大］ | 配对加速比 | 95% 区间 | 更快的配对 |
+| --- | --- | --- | --- | --- | --- |
+| `initialization` | 1.292 [0.804–6.793] | 1.118 [0.797–29.077] | 0.998× | 0.809–1.154 | 7/15 |
+| `integer` | 125.426 [92.700–587.385] | 70.229 [54.067–895.051] | 1.595× | 1.373–1.884 | 13/15 |
+| `branch` | 251.909 [168.279–974.846] | 155.678 [106.833–1566.522] | 1.495× | 1.055–1.687 | 12/15 |
+| `memory` | 231.574 [140.137–1511.815] | 143.496 [96.508–1209.777] | 1.535× | 1.276–1.984 | 13/15 |
+| `tls_call` | 347.850 [203.188–2536.731] | 212.467 [136.304–1441.830] | 1.552× | 1.428–2.912 | 14/15 |
+| `two_cpu_switch` | 34.629 [25.019–416.105] | 26.684 [18.926–60.159] | 1.389× | 1.283–1.515 | 13/15 |
+
+### Unicorn / 优化后 HVF（大于 1 表示 HVF 更快）
+
+| 负载 | 配对加速比 | 95% 区间 |
+| --- | --- | --- |
+| `initialization` | 0.232× | 0.195–0.325 |
+| `integer` | 1.878× | 1.437–2.896 |
+| `branch` | 2.681× | 1.824–3.317 |
+| `memory` | 2.967× | 2.224–3.215 |
+| `tls_call` | 2.339× | 0.977–3.257 |
+| `two_cpu_switch` | 0.831× | 0.541–1.612 |
+
+这些是共享宿主上的 checked ARM64 工作负载实测，不是通用性能排名。Intel runner 失联与进程崩溃仍待单独定位。受限的 macOS/iOS CPU 环境并未因此变成完整 Apple OS 或设备模拟。
+
+[复现方法: `neverd-cpu-bench`, `benchmark_cpu.py`](../testing.md#reproduce-checked-arm64-cpu-measurements).

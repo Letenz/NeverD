@@ -1191,3 +1191,26 @@ Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 `NeverDLLVMCValueTests` は型付きスカラーループの C を、独立に直接コンパイルした LLVM と O0/O2 で比較し、生成 C の未定義動作をトラップします。境界値と決定的な全ビット幅入力で、狭い乗算とシフト前のラップ、拡張後の乗算と右シフト、真偽値への切り詰め、符号付き比較・拡張、優先順位、条件式、真偽値演算、未対応演算のフォールバック、深い式の実体化を検査します。呼び出し元 IR の不変性と冗長キャストの除去も確認します。
 
 `NeverDUnicornDecodeTests` は AVX-512/APX CPU モデルの EVEX レジスタ予約ビットと、ROUND のメモリ例外の優先順位、状態保持、再開を検証します。独立した Linux x64 ホストプログラムで、従来形式のアラインメント例外とスカラー/VEX 形式のページフォルトを確認しています。これらのエンジンテストは checked ISA の許可範囲を広げるものでも、APX のネイティブ実行を証明するものでもありません。
+
+## ARM64 CPU性能測定
+
+Release CPUビルドを使用します。明示的なHVFにはネイティブARM64 macOS、ソフトウェア比較にはUnicornの有効化が必要です。各結果を検証します。初期化は別途測定し、CPU切替には途中のAPI呼出しと検証を含みます。他の実行負荷は準備と検証を除きます。
+
+```bash
+cmake --build build-cpu --target neverd-cpu-bench --parallel 4
+build-cpu/bin/neverd-cpu-bench --backend hvf --samples 7 --warmup 1
+build-cpu/bin/neverd-cpu-bench --backend unicorn --samples 7 --warmup 1
+```
+
+再ビルド前に基準実行ファイルを保存してください。Python 3.11+で順序を交互に測定します。構成、ソースラベル、バイナリハッシュ、全標本を保存し、同時にビルドやテストを実行しないでください。
+
+```bash
+python3 scripts/benchmark_cpu.py \
+  --baseline /path/to/before --baseline-label BEFORE_COMMIT \
+  --candidate /path/to/after --candidate-label AFTER_COMMIT \
+  --pairs 15 --output /path/to/new-comparison.json
+```
+
+入口回数の計数は初期化プローブを含む独立診断で、追加負荷があります。その時間を性能結果に含めないでください。これらの負荷はOS全体や異なるISA間の性能を示しません。
+
+[再現方法](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)

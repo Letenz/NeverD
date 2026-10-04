@@ -1306,3 +1306,26 @@ Les régressions couvrent phases en registre et en pile, deux boutismes, branche
 `NeverDLLVMCValueTests` compare le C des boucles scalaires typées au LLVM compilé directement et indépendamment en O0/O2, avec des traps de comportement indéfini pour le C généré. Les valeurs limites et les entrées déterministes sur toute la largeur couvrent multiplication étroite, débordement avant décalage, multiplication et décalage élargis, troncature en booléen, comparaison et extension signées, priorité, expressions conditionnelles, arithmétique booléenne, repli des opérations non prises en charge et matérialisation des expressions profondes. Les tests vérifient aussi la préservation de l’IR appelant et la suppression des conversions redondantes.
 
 `NeverDUnicornDecodeTests` vérifie les bits EVEX réservés des formes registre sur les modèles CPU AVX-512/APX, ainsi que la priorité des fautes mémoire ROUND, la conservation de l’état et la reprise. Une sonde Linux x64 indépendante confirme les fautes d’alignement du codage classique et les fautes de page des formes scalaires/VEX. Ces tests du moteur n’étendent pas les instructions admises en mode checked et ne prouvent pas une exécution APX native.
+
+## Mesures CPU ARM64
+
+Utilisez une compilation CPU Release. HVF explicite exige macOS ARM64 natif ; activez Unicorn pour la comparaison logicielle. Chaque résultat est vérifié. L’initialisation est mesurée séparément ; les changements de CPU incluent les appels API et contrôles intermédiaires, les autres charges excluent préparation et vérification.
+
+```bash
+cmake --build build-cpu --target neverd-cpu-bench --parallel 4
+build-cpu/bin/neverd-cpu-bench --backend hvf --samples 7 --warmup 1
+build-cpu/bin/neverd-cpu-bench --backend unicorn --samples 7 --warmup 1
+```
+
+Conservez l’exécutable de référence avant de recompiler. Python 3.11+ alterne l’ordre des mesures. Gardez configuration, étiquettes des sources, empreintes binaires et échantillons complets ; ne lancez pas de compilation ou de tests en parallèle.
+
+```bash
+python3 scripts/benchmark_cpu.py \
+  --baseline /path/to/before --baseline-label BEFORE_COMMIT \
+  --candidate /path/to/after --candidate-label AFTER_COMMIT \
+  --pairs 15 --output /path/to/new-comparison.json
+```
+
+Le comptage des entrées est un diagnostic séparé incluant les sondes initiales et un surcoût ; ses durées sont exclues des mesures de performance. Ces charges ne représentent ni un OS complet ni une comparaison entre ISA.
+
+[Reproduction](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)

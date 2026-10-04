@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 9a24ea23cf2a47db289e1e2b215d8900d8db1bd0cc636bab4cd68cb061aec251 -->
+<!-- i18n-source: a3d21e1f2505fe8dd441e3bbaadb4a3d3381f2923d087635ec3129190a86b102 -->
 
 [← 文件索引](README.md)
 
@@ -26,7 +26,7 @@ NeverD 使用 Apple 的 [Hypervisor.framework](https://developer.apple.com/docum
 
 宿主映射遵循宿主頁大小，包括 Apple Silicon 的 16 KiB；架構頁表及客體 CPU 預算仍為 4 KiB。指令准入、權限、CPU 狀態、記憶體交易及 OS 服務仍由各自層負責。原生 worker 不呼叫客體觀察者，也不取得呼叫端的核心記憶體鎖。
 
-ARM64 先單步執行五條固定的 TLB/I-cache 維護指令，再執行准入的客體指令。`PSTATE.D` 不能遮蔽送往 EL2 的偵錯例外。純量、TLS、FP/SIMD 狀態完整擷取。Intel 協商 VMCS 控制、使用 monitor trap、失效化 TLB 並傳遞完整 XSAVE。RIP/RFLAGS 直接透過 VMCS 安裝與擷取，包含重新建立 vCPU 之後；CR0/CR4 同時遵守框架遮罩及硬體固定位元。經認證的 CR8 讀取退出由 ISA 層完成；其他控制暫存器存取失敗。每個 vCPU 都初始化私有、受管理的 `IA32_KERNEL_GS_BASE`；客體 MSR 存取仍陷出，不支援的 MSR/SWAPGS 不予准入。
+ARM64 關閉軟體單步後，在一次原生進入中執行完整的固定 TLB/I-cache 維護序列。專用 HVC #1 必須通過返回 PC、syndrome、PSTATE 和 ESR_EL1 校驗，才會單步執行准入的客體指令。`PSTATE.D` 不能遮蔽送往 EL2 的偵錯例外。純量、TLS、FP/SIMD 狀態完整擷取。Intel 協商 VMCS 控制、使用 monitor trap、失效化 TLB 並傳遞完整 XSAVE。RIP/RFLAGS 直接透過 VMCS 安裝與擷取，包含重新建立 vCPU 之後；CR0/CR4 同時遵守框架遮罩及硬體固定位元。經認證的 CR8 讀取退出由 ISA 層完成；其他控制暫存器存取失敗。每個 vCPU 都初始化私有、受管理的 `IA32_KERNEL_GS_BASE`；客體 MSR 存取仍陷出，不支援的 MSR/SWAPGS 不予准入。
 
 排隊與執行保留原始停止 token 及期限；準備、維護、進入與擷取共用預算。`RunDeadline` 等待中斷確認後才返回；取消會重建 vCPU，防止延遲中斷影響下一次執行。不相關的 Intel 宿主中斷在同一取消世代內重試。擷取錯誤及經認證的例外優先於同時發生的停止；一般取消狀態不會發布。這是合作式取消，沒有硬即時保證。
 
@@ -47,11 +47,13 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon 可加上 `-DNEVERD_LLVM_PREBUILT=ON`；Intel 從固定版本 LLVM 原始碼建置。[HVF 工作流程](../../.github/workflows/hvf.yml) 支援 `self-hosted, macOS, ARM64/X64, hvf`，也可用 `hosted-intel` 選擇 `macos-15-intel`。先驗證實際建立與銷毀 VM/vCPU。`validation=probe` 不能證明指令執行；`transport` 只驗證傳輸層；`darwin` 要求所有相符的 Darwin 工作負載；`full` 要求 CPU 與 Darwin 兩項完整驗收。
 
-傳輸層要求 ARM64 12 項、Intel 10 項；完整 CPU 門檻分別為 16、14 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
+傳輸層要求 ARM64 15 項、Intel 10 項；完整 CPU 門檻分別為 23、18 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
 
 託管 Intel 的 `--execution-methods` 從完整 CTest 清單取得所有參數、旗標、環境及工作目錄，以獨立行程循序執行各 GoogleTest 方法，拒絕未知屬性。方法總期限最多 120 秒，方法內不另套用逐參數期限；逾時後有界回收行程群組。原始 XML、名稱對應與退出狀態均保留。逾時或 XML 不完整會產生部分失敗；必需原生項缺失或跳過都不能通過。自託管仍採用 CTest 逐案例行程及期限。
 
 ## 驗收證據與限制
+
+以下為最佳化前的歷史結果；2026-10-04 的目前測量見文末。
 
 以下為 2026-10-03 記錄；各列有重疊，不能相加：
 
@@ -124,3 +126,39 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 2026-10-04，個人儲存庫首次 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) 與 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) 作業分別在建立後 8 秒及 5 秒啟動。兩者均因上傳子程序異常退出而失敗；控制器取消並回收原生子程序，分別留下 3 輪及 105 輪完整紀錄。最終證據包已保存並獨立核驗。另一次[純上傳對照](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621) 的 16 次上傳全部通過，17 份產物均核對伺服器摘要，並標示 `native_execution=false`。這些證據區分上傳失敗與原生斷言失敗，尚不能定位根因，也不能算作所要求的 1,000 輪通過。先前組織儲存庫的對照也在 5 秒後啟動，因此這些樣本不能證明更換儲存庫改善了排隊速度。
 
 後續 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) 與 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) 兩次執行均於 2026-10-04 失敗結束，GitHub 明確回報託管 runner 失聯。分別保存的 10 份及 16 份產物均已核驗。最後保留的原始日誌證明分別連續完成 175 輪及 326 輪，隨後各開始一輪；不能據此定位最終故障。兩次皆缺少原生最終結果與程序回收紀錄，完整作業日誌介面皆回傳 HTTP 404。沒有發出人工取消要求。Intel 的 1,000 輪門檻仍未驗證通過。[保留的原始日誌片段與執行、摘要清單](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04)可在 Actions 產物保留期結束後繼續查閱。
+
+## ARM64 維護路徑最佳化（2026-10-04）
+
+五條 TLB/I-cache 維護操作現在於同一個不可變私有程式碼段連續執行，以專用 HVC #1 退出。傳輸層嚴格核對完整 syndrome、返回 PC、PSTATE 和 ESR_EL1，隨後只單步執行一條准入的客體指令。僅在維護期間關閉軟體單步；所有屏障、完整狀態擷取和共用取消期限均保留。不使用 ERET，因為例外返回會使 ESR_EL1 在架構上成為 UNKNOWN。 [Arm](https://documentation-service.arm.com/static/649ae5b238511951cb799288).
+
+實機為 M4 Max、macOS 15.6.1，使用 Release、Apple Clang 17 和預編譯 LLVM。獨立計數中，相同的 42044 條客體指令及 56 條啟動探針指令，原生進入從 252600 次降至 84200 次，即每條指令從六次降至兩次。計數執行的耗時不納入效能測量。三項故障／恢復測試在同一程序各連續通過 1000 輪；取消測試要求原生寫入標記，並驗證改寫客體程式碼後成功重試。
+
+乾淨整合版本 [389bebfdd](https://github.com/NeverSight/NeverD/commit/389bebfdda31a0db19facc7ab8ca5461a8c8c1bc) 的完整 CPU 清單：2546 通過、4710 略過、零失敗，23 項必要原生案例全部通過。獨立 Darwin 清單：130 通過、156 略過、零失敗，39 項必要原生案例全部通過。兩者涵蓋範圍重疊，不能相加；不代表 iOS SDK 或裝置上的獨立驗證。
+
+15 組程序配對交替執行，每個負載暖機一次；測量時本工作未執行編譯或測試。共用宿主負載為 26.7–33.0，軟體對比為 28.8–32.6。表中為中位數［最小–最大］毫秒；加速比為逐對耗時比的中位數，95% 百分位 bootstrap 區間採用 10000 次重抽樣、種子 20261004。明顯長尾與僅 15 組樣本限制了結論的適用範圍。
+
+`4b54908b9` → `056090929` / Release / Apple Clang 17 / LLVM 23 prebuilt / Unicorn `df88be772`.
+
+| 負載 | 最佳化前 ms［最小–最大］ | 最佳化後 ms［最小–最大］ | 配對加速比 | 95% 區間 | 較快配對 |
+| --- | --- | --- | --- | --- | --- |
+| `initialization` | 1.292 [0.804–6.793] | 1.118 [0.797–29.077] | 0.998× | 0.809–1.154 | 7/15 |
+| `integer` | 125.426 [92.700–587.385] | 70.229 [54.067–895.051] | 1.595× | 1.373–1.884 | 13/15 |
+| `branch` | 251.909 [168.279–974.846] | 155.678 [106.833–1566.522] | 1.495× | 1.055–1.687 | 12/15 |
+| `memory` | 231.574 [140.137–1511.815] | 143.496 [96.508–1209.777] | 1.535× | 1.276–1.984 | 13/15 |
+| `tls_call` | 347.850 [203.188–2536.731] | 212.467 [136.304–1441.830] | 1.552× | 1.428–2.912 | 14/15 |
+| `two_cpu_switch` | 34.629 [25.019–416.105] | 26.684 [18.926–60.159] | 1.389× | 1.283–1.515 | 13/15 |
+
+### Unicorn / 最佳化後 HVF（大於 1 表示 HVF 較快）
+
+| 負載 | 配對加速比 | 95% 區間 |
+| --- | --- | --- |
+| `initialization` | 0.232× | 0.195–0.325 |
+| `integer` | 1.878× | 1.437–2.896 |
+| `branch` | 2.681× | 1.824–3.317 |
+| `memory` | 2.967× | 2.224–3.215 |
+| `tls_call` | 2.339× | 0.977–3.257 |
+| `two_cpu_switch` | 0.831× | 0.541–1.612 |
+
+這些是共用宿主上的 checked ARM64 工作負載實測，不是通用效能排名。Intel runner 失聯與程序崩潰仍待單獨定位。受限的 macOS/iOS CPU 環境並未因此變成完整 Apple OS 或裝置模擬。
+
+[重現方法: `neverd-cpu-bench`, `benchmark_cpu.py`](../testing.md#reproduce-checked-arm64-cpu-measurements).

@@ -1307,3 +1307,26 @@ Regressionen prüfen Register- und Rahmenphasen, beide Bytefolgen, erreichbare u
 `NeverDLLVMCValueTests` vergleicht typisierten skalaren Schleifen-C-Code bei O0/O2 mit unabhängig direkt kompiliertem LLVM; undefiniertes Verhalten im erzeugten C löst einen Trap aus. Grenzwerte und deterministische Eingaben voller Breite prüfen schmale Multiplikation, Überlauf vor Schiebeoperationen, verbreiterte Multiplikation und Rechtsverschiebung, Boolesche Kürzung, vorzeichenbehaftete Vergleiche und Erweiterungen, Operatorrang, bedingte Ausdrücke, Boolesche Arithmetik, Fallbacks und materialisierte tiefe Ausdrücke. Die Tests prüfen außerdem unverändertes Aufrufer-IR und das Entfernen redundanter Casts.
 
 `NeverDUnicornDecodeTests` prüft reservierte EVEX-Bits der Registerformen auf AVX-512/APX-CPU-Modellen sowie die Priorität von ROUND-Speicherfehlern, Zustandserhaltung und Fortsetzung. Ein unabhängiges Linux-x64-Hostprogramm bestätigt Ausrichtungsfehler der klassischen Kodierung und Seitenfehler der skalaren/VEX-Formen. Diese Engine-Tests erweitern weder die im checked-Modus zugelassenen Befehle noch belegen sie native APX-Ausführung.
+
+## ARM64-CPU-Leistungsmessung
+
+Verwenden Sie einen Release-CPU-Build. Explizites HVF benötigt natives ARM64-macOS; für den Softwarevergleich muss Unicorn aktiviert sein. Jeder Ergebniswert wird geprüft. Initialisierung wird separat gemessen; CPU-Wechsel enthalten API-Aufrufe und Prüfungen, andere Ausführungslasten schließen Einrichtung und Prüfung aus.
+
+```bash
+cmake --build build-cpu --target neverd-cpu-bench --parallel 4
+build-cpu/bin/neverd-cpu-bench --backend hvf --samples 7 --warmup 1
+build-cpu/bin/neverd-cpu-bench --backend unicorn --samples 7 --warmup 1
+```
+
+Sichern Sie die Ausgangsdatei vor dem Neubau. Python 3.11+ misst mit wechselnder Reihenfolge. Bewahren Sie Konfiguration, Quelllabels, Binärhashes und alle Stichproben auf; während der Messung keine parallelen Builds oder Tests.
+
+```bash
+python3 scripts/benchmark_cpu.py \
+  --baseline /path/to/before --baseline-label BEFORE_COMMIT \
+  --candidate /path/to/after --candidate-label AFTER_COMMIT \
+  --pairs 15 --output /path/to/new-comparison.json
+```
+
+Die separate Eintrittszählung beeinflusst Laufzeiten und enthält Startproben; ihre Zeiten sind keine Leistungsdaten. Diese Lasten belegen weder vollständigen OS-Durchsatz noch architekturübergreifende Leistung.
+
+[Reproduktion](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
