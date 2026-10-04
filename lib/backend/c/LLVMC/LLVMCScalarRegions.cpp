@@ -398,6 +398,7 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
     }
   };
   PlanCounters(PlanCounters, Regions);
+  const llvm::PHINode *EntryDeclaration = nullptr;
   if (UseScalarExpressionTypes) {
     // A short local must not hide an external or recursive callee. Reserve
     // the same C identifier used by the call writer before assigning roles.
@@ -439,8 +440,35 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
           OneResult = false;
         Result = Phi;
       }
-    if (OneResult && Result)
-      Rename(Result, "result");
+    if (OneResult && Result) {
+      const auto Name = Rename(Result, "result");
+      // A direct entry edge dominates all following source statements. An
+      // immutable leaf seed can declare the returned carrier at that edge,
+      // provided the whole coalesced group starts after entry and exactly one
+      // PHI on the edge owns this name. Other declarations retain their scope.
+      const auto *Entry = &Fn.getEntryBlock();
+      const auto *Branch =
+          llvm::dyn_cast<llvm::UncondBrInst>(Entry->getTerminator());
+      if (!Name.empty() && Branch) {
+        auto *Next = Branch->getSuccessor(0);
+        bool Confined = true;
+        for (const auto *Value : NameGroups.at(Name)) {
+          const auto *Phi = llvm::cast<llvm::PHINode>(Value);
+          Confined &= Phi->getParent() != Entry &&
+                      Dominators.dominates(Next, Phi->getParent());
+        }
+        unsigned Owners = 0;
+        for (const auto &Phi : Next->phis())
+          if (getName(&Phi) == Name) {
+            ++Owners;
+            const auto *Seed = Phi.getIncomingValueForBlock(Entry);
+            if (Confined && llvm::isa<llvm::Argument, llvm::ConstantInt>(Seed))
+              EntryDeclaration = &Phi;
+          }
+        if (Owners != 1)
+          EntryDeclaration = nullptr;
+      }
+    }
 
     // A direct LLVM use can inline through another value and be printed
     // outside the loop. Follow those uses through every inlined expression;
@@ -492,6 +520,8 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
   }
   auto Condition = [&](const ScalarRegion &Region) {
     auto *Br = llvm::cast<llvm::CondBrInst>(Region.Block->getTerminator());
+    if (auto Text = scalarConditionText(Br->getCondition(), Region.Invert))
+      return *Text;
     if (Region.Invert) {
       if (auto Text = invertedRelationalText(Br->getCondition()))
         return *Text;
@@ -518,7 +548,9 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
                 Region.Block == It->second->Latch)
               Deferred = It->second->Counter;
           writePhiCopies(Region.Block, Region.Target, Level,
-                         /*ForceMaterialized=*/true, Deferred);
+                         /*ForceMaterialized=*/true, Deferred,
+                         Region.Block == &Fn.getEntryBlock() ? EntryDeclaration
+                                                             : nullptr);
         }
         break;
       case ScalarRegion::Kind::If:

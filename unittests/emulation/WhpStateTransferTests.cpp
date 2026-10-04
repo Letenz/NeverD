@@ -13,6 +13,7 @@
 
 #include <cstring>
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace neverd::emulation {
@@ -36,6 +37,17 @@ constexpr Stage Stops[] = {
 #include "WhpStateTransferCases.def"
 #undef NEVERD_WHP_TRANSFER_STOP
 };
+struct MetadataCorruption {
+  WHV_REGISTER_NAME Register;
+  void (*Apply)(WHV_REGISTER_VALUE &);
+};
+constexpr MetadataCorruption Corruptions[] = {
+#define NEVERD_WHP_TRANSFER_METADATA(Register, Field)                          \
+  {WHvX64Register##Register,                                                   \
+   [](WHV_REGISTER_VALUE &Value) { --Value.Register.Field; }},
+#include "WhpStateTransferCases.def"
+#undef NEVERD_WHP_TRANSFER_METADATA
+};
 // This host models API transfers and partial failures, not processor semantics.
 // Native X64StateTransition/FP/exception suites separately run the real WHP
 // CPU.
@@ -43,12 +55,17 @@ struct HostState {
   std::map<WHV_REGISTER_NAME, WHV_REGISTER_VALUE> Registers;
   std::array<uint8_t, x64::fp::XsaveBytes> Xsave{};
   std::vector<WHV_REGISTER_NAME> LastInstalled;
+  std::vector<WHV_REGISTER_NAME> LastCaptured;
   std::atomic<bool> Stop{false};
   Stage Failure = Stage::None, StopAt = Stage::None;
   unsigned RegisterInstalls = 0, XsaveInstalls = 0, MetadataInstalls = 0;
   unsigned RegisterCaptures = 0, XsaveCaptures = 0, MetadataCaptures = 0;
+  unsigned CaptureCalls = 0;
+  std::optional<unsigned> CaptureFailureAt;
+  const MetadataCorruption *CorruptMetadata = nullptr;
   unsigned Entries = 0, Exception = x64::DebugVector;
-  bool ChangeControls = false, PoisonPadding = false;
+  bool ChangeControls = false, PoisonPadding = false,
+       OmitPacketMetadata = false;
 
   bool boundary(Stage Current) {
     if (Current == StopAt)
@@ -87,17 +104,26 @@ struct HostState {
                                      const WHV_REGISTER_NAME *Names,
                                      UINT32 Count, WHV_REGISTER_VALUE *Values) {
     auto &Self = *static_cast<HostState *>(Handle);
-    const bool Metadata = Names[0] == WHvX64RegisterFpControlStatus;
-    ++(Metadata ? Self.MetadataCaptures : Self.RegisterCaptures);
+    ++Self.CaptureCalls;
+    Self.LastCaptured.assign(Names, Names + Count);
+    if (Names[0] != WHvX64RegisterFpControlStatus)
+      ++Self.RegisterCaptures;
     for (unsigned I = 0; I < Count; ++I) {
+      const bool Metadata = Names[I] == WHvX64RegisterFpControlStatus ||
+                            Names[I] == WHvX64RegisterXmmControlStatus;
+      if (Names[I] == WHvX64RegisterFpControlStatus)
+        ++Self.MetadataCaptures;
       Values[I] = Self.Registers.at(Names[I]);
+      if (Self.CorruptMetadata && Self.CorruptMetadata->Register == Names[I])
+        Self.CorruptMetadata->Apply(Values[I]);
       if (Self.PoisonPadding && !Metadata) {
         if (Names[I] >= WHvX64RegisterEs && Names[I] <= WHvX64RegisterGs)
           Values[I].Segment.Reserved = ReservedSegmentBits;
         else
           Values[I].Reg128.High64 = UnionPadding;
       }
-      if (Self.boundary(Metadata ? Stage::MetadataCapture
+      if (Self.CaptureFailureAt == I ||
+          Self.boundary(Metadata ? Stage::MetadataCapture
                                  : Stage::RegisterCapture))
         return E_FAIL;
     }
@@ -112,6 +138,12 @@ struct HostState {
     ++Self.XsaveCaptures;
     EXPECT_GE(Size, Self.Xsave.size());
     std::memcpy(Bytes, Self.Xsave.data(), Self.Xsave.size());
+    if (Self.OmitPacketMetadata) {
+      auto *Packet = static_cast<uint8_t *>(Bytes);
+      llvm::support::endian::write16le(Packet + x64::fp::OpcodeOffset, 0);
+      llvm::support::endian::write64le(Packet + x64::fp::InstructionOffset, 0);
+      llvm::support::endian::write64le(Packet + x64::fp::DataOffset, 0);
+    }
     return Self.boundary(Stage::XsaveCapture) ? E_FAIL : S_OK;
   }
   static HRESULT WINAPI setXsave(WHV_PARTITION_HANDLE Handle, UINT32,
@@ -191,6 +223,9 @@ protected:
     State.FSBase = FSBase;
     State.GSBase = GSBase;
     State.Xmm.front()[0] = Vector;
+    State.FP.Opcode = FPOpcode;
+    State.FP.Instruction = FPInstruction;
+    State.FP.Data = FPData;
   }
   llvm::Error step(uint64_t PageRoot = Root) {
     return Host->step(
@@ -215,6 +250,7 @@ protected:
 };
 
 TEST_P(WhpStateTransfer, ContinuedStepsReuseCapturedRegistersAndFP) {
+  Target.OmitPacketMetadata = true;
   const auto Initial = State;
   for (unsigned I = 0; I < Steps; ++I)
     ASSERT_EQ(llvm::toString(step()), "");
@@ -224,10 +260,16 @@ TEST_P(WhpStateTransfer, ContinuedStepsReuseCapturedRegistersAndFP) {
   EXPECT_EQ(Target.RegisterCaptures, Steps);
   EXPECT_EQ(Target.XsaveCaptures, Steps);
   EXPECT_EQ(Target.MetadataCaptures, Steps);
+  EXPECT_EQ(Target.CaptureCalls, Steps);
+  ASSERT_EQ(Target.LastCaptured.size(), FullCaptureCount);
+  EXPECT_EQ(Target.LastCaptured[FullRegisterCount],
+            WHvX64RegisterFpControlStatus);
+  EXPECT_EQ(Target.LastCaptured.back(), WHvX64RegisterXmmControlStatus);
   EXPECT_EQ(State.reg(X64Register::AX), Integer + Steps);
   EXPECT_EQ(State.reg(X64Register::PC), PC + Steps);
   EXPECT_EQ(State.Xmm.front()[0], Vector + Steps);
   EXPECT_EQ(State.reg(X64Register::FLAGS), Initial.reg(X64Register::FLAGS));
+  EXPECT_EQ(State.FP, Initial.FP);
 }
 TEST_P(WhpStateTransfer, HostChangesInstallOnlyChangedGroups) {
   ASSERT_EQ(llvm::toString(step()), "");
@@ -295,6 +337,36 @@ TEST_P(WhpStateTransfer,
     llvm::consumeError(std::move(E));
     EXPECT_EQ(State, Before);
     Target.Failure = Stage::None;
+    ASSERT_NO_FATAL_FAILURE(expectFullRetry(Before));
+  }
+  // A failed combined read may have overwritten any prefix, including all
+  // ordinary registers before failing while reading the FP metadata.
+  for (unsigned Index = 0; Index < FullCaptureCount; ++Index) {
+    SCOPED_TRACE(Index);
+    ASSERT_EQ(llvm::toString(step()), "");
+    const auto Before = State;
+    const auto Captures = Target.XsaveCaptures;
+    Target.CaptureFailureAt = Index;
+    auto E = step();
+    EXPECT_TRUE(bool(E));
+    EXPECT_FALSE(E.isA<MachineInterruptedError>());
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(State, Before);
+    EXPECT_EQ(Target.XsaveCaptures, Captures);
+    Target.CaptureFailureAt.reset();
+    ASSERT_NO_FATAL_FAILURE(expectFullRetry(Before));
+  }
+  for (const auto &Corruption : Corruptions) {
+    SCOPED_TRACE(unsigned(Corruption.Register));
+    ASSERT_EQ(llvm::toString(step()), "");
+    const auto Before = State;
+    Target.CorruptMetadata = &Corruption;
+    auto E = step();
+    EXPECT_TRUE(bool(E));
+    EXPECT_FALSE(E.isA<MachineInterruptedError>());
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(State, Before);
+    Target.CorruptMetadata = nullptr;
     ASSERT_NO_FATAL_FAILURE(expectFullRetry(Before));
   }
 }

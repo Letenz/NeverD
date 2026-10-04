@@ -220,6 +220,8 @@ ARM64 hardware や hypervisor がない場合は native coverage の skip であ
 
 checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
 
+`X64PackedIntegerTests.cpp` は `X64PackedIntegerCases.def` の独自エンコードと 180 組の固定結果を使い、ネイティブ x64 のコンパイラ intrinsic と独立に照合します。レジスタ形式とページ末尾の RAM エイリアス形式で、他の XMM、整数番兵値、FLAGS、MXCSR、入力バイトの保持を確認します。監視の停止・失敗と回復可能な読み取り障害では状態を保持し、修復後に一回再試行できます。MMX、LOCK、非整列、MMIO はコールバック前に拒否します。ネイティブ CI は WHP の両特権レベルを必須とします。
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
@@ -1095,7 +1097,7 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 246 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 474 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `246 CPU + 224 WHP + 4 SEH = 474`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 256 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 484 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `256 CPU + 224 WHP + 4 SEH = 484`.
 
 C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
 
@@ -1139,6 +1141,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 `NeverDInstructionFetchTests` は Unicorn、KVM、WHP で x64/ARM64 checked プログラムを特権モードとユーザーモードで実行します。`InstructionFetchCases.def` はオペランド形式の切り替え、相対分岐、コードエイリアス経由のゲストとホストの書き込み、コンテキスト復元、権限取り消し、独立したページ領域、ページ末尾の先読み、不正・切断された符号化、再帰実行の拒否を検証します。Windows ネイティブ CI では全 x64 WHP ケースの成功が必須です。利用できないホスト/ISA の組み合わせは明示的にスキップし、移植可能な ARM64 実行をネイティブ ARM64 の証拠とは扱いません。
 
 `WhpStateTransferTests.cpp` は両世代の XSAVE API で転送を注入し、変更グループ、完全取得、パディング無視、部分失敗、キャンセル、例外優先順位、区画再作成を検証します。`ContinuedStepsReuseCapturedRegistersAndFP` は省略された設定を数え、`PartialTransferFailuresPreserveStateAndForceFullRetry` は完全復元を要求します。これはプロトコル検証であり、既存のネイティブ FP・状態遷移・ドライバー・ring3 テストも引き続き必要です。
+
+`WhpStateTransferCases.def` は、統合した 32 レジスタ取得の各途中位置での失敗と、七つすべてのメタデータフィールドの不一致も検証します。両世代の XSAVE API は呼び出し元の状態を保持し、再試行時に全状態を復元する必要があります。同じテストで各ステップのレジスタ読み出しが一回であることと、XSAVE が省略したメタデータの補完を確認します。
 
 `windows-pe64-v1` は PEB/TEB、静的・動的 TLS、`DllMain`、名前付き Win32 API、明示的な非循環 DLL グラフを持つ有界 Windows x64/ARM64 コンソールプロセスに対応します。ゲストモジュールは名前／序数によるコード・データのインポート、DIR64 再配置、転送エクスポートと実際のローダーリスト識別子を扱います。`LoadLibraryA` / `LoadLibraryW`、`FreeLibrary`、`GetProcAddress` は設定済みモジュールカタログを使用します。CRT/GUI、ARM64 のフレームベースのユーザー SEH、スレッド、一般的な Windows アプリ互換性は未完成で、ネイティブ ARM64 KVM/WHP の証拠も未取得です。
 
@@ -1193,6 +1197,8 @@ Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 `NeverDLLVMCValueTests` は型付きスカラーループの C を、独立に直接コンパイルした LLVM と O0/O2 で比較し、生成 C の未定義動作をトラップします。境界値と決定的な全ビット幅入力で、狭い乗算とシフト前のラップ、拡張後の乗算と右シフト、真偽値への切り詰め、符号付き比較・拡張、優先順位、条件式、真偽値演算、未対応演算のフォールバック、深い式の実体化を検査します。呼び出し元 IR の不変性と冗長キャストの除去も確認します。
 
 `NeverDLLVMCPhiTests` と `NeverDLLVMCValueTests` は、バイト幅カウンターの増減時のラップ、結合された終了値、ループ後のインライン利用、生存する外側の値、PHI スナップショットを検証します。未定義動作トラップ付きの独立 O0/O2 比較で、複合加算、逆順減算の拒否、狭い乗算、真偽値マスクを確認します。入れ子領域ではカウンターをループ内に宣言し、結果の変数を分離して元の LLVM を保持することを検査します。 実行可能な命名回帰では、外部関数を最初に生成された結果・カウンター名と衝突させ、呼び出しと観測副作用の保持を確認します。
+
+`NeverDLLVMCValueTests` は加減算・ビット演算の単位元の両分岐、同一基底値、インライン化された旧値依存、実体化済み条件のスナップショット、狭い整数の真偽判定、非単位元の分岐、共有 select を検査します。生成 C は未定義動作トラップを有効にし、独立にコンパイルした LLVM と O0/O2 で比較実行します。`NeverDLLVMCPhiTests` は並列旧値スナップショットと、共有スコープを要する分岐依存の初期化も検査します。呼び出し元 IR は変更しません。
 
 `NeverDUnicornDecodeTests` は AVX-512/APX CPU モデルの EVEX レジスタ予約ビットと、ROUND のメモリ例外の優先順位、状態保持、再開を検証します。独立した Linux x64 ホストプログラムで、従来形式のアラインメント例外とスカラー/VEX 形式のページフォルトを確認しています。これらのエンジンテストは checked ISA の許可範囲を広げるものでも、APX のネイティブ実行を証明するものでもありません。
 

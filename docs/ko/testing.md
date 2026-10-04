@@ -219,6 +219,8 @@ ARM64 하드웨어나 hypervisor가 없으면 native coverage skip이며 통과�
 
 checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
 
+`X64PackedIntegerTests.cpp`는 `X64PackedIntegerCases.def`의 독립 인코딩과 180개 고정 벡터 결과를 네이티브 x64 컴파일러 intrinsic과 별도로 대조합니다. 레지스터 및 페이지 끝의 RAM 별칭 사례는 다른 XMM, 정수 센티널, FLAGS, MXCSR과 소스 바이트를 보존합니다. 관찰자 중지·실패와 복구 가능한 읽기 결함은 상태를 보존하며 복구 후 한 번 재시도합니다. MMX, LOCK, 비정렬 및 MMIO는 콜백 전에 거부합니다. 네이티브 CI에서 WHP의 두 권한 수준을 필수로 실행합니다.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
@@ -1085,7 +1087,7 @@ WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 210개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 438개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `246 CPU + 224 WHP + 4 SEH = 474`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 210개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 438개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `256 CPU + 224 WHP + 4 SEH = 484`.
 
 C SEH 범위는 끝 주소를 포함하지 않는 반개방 구간입니다. 유효한 `__C_specific_handler` 착지점이 보호 구간 안에 있을 수 있습니다. [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608)은 구간 끝에 `EndLabel + 1`을 기록합니다. Windows OS 모델은 원래 경계를 유지하며 재배치 후에도 실행 가능 여부, 소유 함수, 후속 실행 주소의 일치를 각각 검증합니다. `KernelSEHContinuationCases.def`는 원본 픽스처 배치를 보존하고 `ScopeEndLabelMayOverlapTheHandlerLandingPad`는 상수 처리기와 필터를 검사합니다. 관련 테스트는 끝 주소 제외와 잘못된 대상 거부 후 디스패치 상태를 소비하지 않고 재시도할 수 있음을 확인합니다. 이 순수 모델 검사는 Unicorn을 비활성화한 `NeverDNativeDriverTests`에서도 실행됩니다.
 
@@ -1129,6 +1131,8 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 `NeverDInstructionFetchTests`는 Unicorn, KVM, WHP로 x64/ARM64 checked 프로그램을 커널 모드와 사용자 모드에서 실행합니다. `InstructionFetchCases.def`는 피연산자 형식 전환, 상대 분기, 코드 별칭을 통한 게스트·호스트 쓰기, 컨텍스트 복원, 권한 철회, 독립 페이지 저장소, 페이지 끝 미리 읽기, 잘못되거나 잘린 인코딩, 재귀 실행 거부를 검사합니다. Windows 네이티브 CI에서는 모든 x64 WHP 사례가 통과해야 합니다. 사용할 수 없는 호스트/ISA 조합은 명시적으로 건너뛰며, 이식 가능한 ARM64 실행은 네이티브 ARM64 지원 증거가 아닙니다.
 
 `WhpStateTransferTests.cpp`는 두 세대 XSAVE API에 전송을 주입하여 변경 그룹, 전체 캡처, 패딩 무시, 부분 실패, 취소, 예외 우선순위와 파티션 재생성을 확인합니다. `ContinuedStepsReuseCapturedRegistersAndFP`는 생략된 설치를 세고 `PartialTransferFailuresPreserveStateAndForceFullRetry`는 전체 복원을 요구합니다. 이는 프로토콜 검사이며 네이티브 실행 증거를 대신하지 않습니다. 기존 네이티브 FP·상태 전환·드라이버·ring3 테스트도 필수입니다.
+
+`WhpStateTransferCases.def`는 통합된 32개 레지스터 읽기의 모든 부분 접두부 실패와 일곱 메타데이터 필드의 충돌도 검사합니다. 두 XSAVE API 세대 모두 호출자 상태를 보존하고 재시도 시 전체 상태를 복원해야 합니다. 동일한 테스트에서 스텝당 레지스터 읽기가 한 번인지, XSAVE가 생략한 메타데이터를 해당 읽기로 복구하는지도 확인합니다.
 
 `windows-pe64-v1`은 PEB/TEB, 정적·동적 TLS, `DllMain`, 이름 기반 Win32 API 및 명시적 비순환 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. 게스트 모듈은 이름/서수 코드·데이터 가져오기, DIR64 재배치, 전달 내보내기 및 실제 로더 목록 식별자를 지원합니다. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary`, `GetProcAddress`는 설정된 모듈 카탈로그를 사용합니다. CRT/GUI, ARM64 스택 프레임 기반 사용자 SEH, 스레드 및 일반 Windows 앱 호환성은 미완성이며 네이티브 ARM64 KVM/WHP 증거도 아직 없습니다.
 
@@ -1183,6 +1187,8 @@ Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 `NeverDLLVMCValueTests`는 타입을 추적하는 스칼라 루프 C와 독립적으로 직접 컴파일한 LLVM을 O0/O2에서 비교하고, 생성 C의 정의되지 않은 동작에 트랩을 적용합니다. 경계값과 결정적인 전체 폭 입력으로 좁은 곱셈과 시프트 전 순환, 확장 곱셈과 오른쪽 시프트, 불리언 절단, 부호 있는 비교와 확장, 우선순위, 조건식, 불리언 산술, 미지원 연산의 기존 경로 및 깊은 표현식의 변수화를 검사합니다. 호출자 IR 보존과 불필요한 형 변환 제거도 확인합니다.
 
 `NeverDLLVMCPhiTests`와 `NeverDLLVMCValueTests`는 바이트 카운터의 증감 순환, 합쳐진 종료 값, 루프 이후 인라인 사용, 살아 있는 외부 변수와 PHI 스냅샷을 검사합니다. 정의되지 않은 동작 트랩을 켠 독립 O0/O2 비교로 복합 덧셈, 역순 뺄셈 거부, 좁은 곱셈과 불리언 마스크를 확인합니다. 중첩 영역 테스트는 루프 내부 카운터 선언과 별도 결과 변수를 요구하며 원본 LLVM 보존도 확인합니다. 실행 가능한 이름 회귀 테스트는 외부 함수 이름을 처음 생성된 결과·카운터 이름과 충돌시켜 호출과 관찰 부수 효과가 유지되는지 확인합니다.
+
+`NeverDLLVMCValueTests`는 덧셈·뺄셈·비트 갱신의 양쪽 항등원 분기, 같은 기본값, 인라인 이전 값 의존성, 구체화된 조건 스냅샷, 좁은 정수 참·거짓 검사, 비항등원 분기와 공유 select를 검사합니다. 생성 C는 미정의 동작 트랩을 활성화하고 독립적으로 컴파일한 LLVM과 O0/O2에서 비교 실행합니다. `NeverDLLVMCPhiTests`는 병렬 이전 값 스냅샷과 공유 범위에 남아야 하는 분기 초기값도 검사합니다. 호출자 IR은 변경하지 않습니다.
 
 `NeverDUnicornDecodeTests`는 AVX-512/APX CPU 모델의 EVEX 레지스터 예약 비트와 ROUND 메모리 예외 우선순위, 상태 보존, 재개를 검사합니다. 독립적인 Linux x64 호스트 프로그램으로 기존 인코딩의 정렬 예외와 스칼라/VEX 인코딩의 페이지 폴트를 확인했습니다. 이 엔진 테스트는 checked ISA 허용 범위를 확장하거나 APX 네이티브 실행을 입증하지 않습니다.
 

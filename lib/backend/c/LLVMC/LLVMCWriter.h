@@ -139,9 +139,20 @@ public:
   /// Unknown nodes or exhausted bounds keep the existing expression writer.
   std::optional<std::string> scalarExpressionText(const llvm::Value *V,
                                                   bool ForceExpression = false,
-                                                  bool InvertCompare = false);
+                                                  bool InvertCompare = false,
+                                                  bool Parenthesize = true);
+  std::optional<std::string> scalarConditionText(const llvm::Value *V,
+                                                 bool Invert = false);
   std::optional<std::string> scalarUpdateText(const llvm::Value *Destination,
                                               const llvm::Value *Incoming);
+  struct ScalarConditionalUpdate {
+    std::string Initial;
+    std::string Condition;
+    std::string Update;
+  };
+  std::optional<ScalarConditionalUpdate>
+  scalarConditionalUpdate(const llvm::Value *Destination,
+                          const llvm::Value *Incoming);
 
   static bool isCallClobberName(llvm::StringRef Name) {
     return Name.contains("_call_clobber");
@@ -531,7 +542,8 @@ public:
                                    const llvm::Value *Stored);
   void writePhiCopies(const llvm::BasicBlock *From, const llvm::BasicBlock *To,
                       int Indent, bool ForceMaterialized = false,
-                      const llvm::PHINode *Deferred = nullptr);
+                      const llvm::PHINode *Deferred = nullptr,
+                      const llvm::PHINode *Declare = nullptr);
   bool phiIncomingIsPrinted(const llvm::PHINode *Phi, llvm::Value *Incoming,
                             bool ForceMaterialized = false);
   bool phiEdgeNeedsMaterialization(const llvm::BasicBlock *From,

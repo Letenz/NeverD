@@ -815,3 +815,36 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Checked/InstructionFetch.ReentrantRunCannotOverwriteTheOuterInstruction/"
     "WhpX64User")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+// Packed integer effects and recovery must execute at both WHP privileges.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "ArithmeticMatchesGoldenVectorsAndHostInstructions/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "ArithmeticMatchesGoldenVectorsAndHostInstructions/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "SourceObserversStopOrFailBeforeStateChanges/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "SourceObserversStopOrFailBeforeStateChanges/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "SourceFaultsPreserveStateAndResumeAfterRepair/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "SourceFaultsPreserveStateAndResumeAfterRepair/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "InvalidFormsRejectBeforeObservations/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64PackedInteger."
+                                "InvalidFormsRejectBeforeObservations/whpUser")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "DeviceSourcesRejectWithoutCallingTheDevice/whpSupervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedInteger."
+    "DeviceSourcesRejectWithoutCallingTheDevice/whpUser")
+#endif

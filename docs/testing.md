@@ -779,6 +779,13 @@ hosts skip explicitly; backend cells distinguish unavailable execution.
 
 ## Process emulation checks
 
+`AndroidSyscallTests.cpp` executes independent C fixtures at O0/O2 with ordinary,
+Android-packed and RELR relocations. It compares named, raw SVC and variadic
+identity calls; verifies errno, six-argument memory calls, full-width pointers,
+binary vectored output, budget stops and nonreturning exits; and rejects unknown
+services and closed dynamic providers. The shared C API/CLI and actual Python
+wrapper also check `dlsym` provider identity for `syscall`.
+
 `LinuxMemory.*` in `NeverDLinuxProcessTests` checks raw anonymous-memory syscall
 rules, partial protection before a hole, page reclamation, transactional budget
 failure and program-break preservation. Original x64/ARM64 ELF fixtures verify
@@ -810,6 +817,8 @@ backend skips. The public Python wrapper also participates in
 the ordinary Python SDK tests and declaration audit.
 
 Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. This does not admit DAZ, unmasked exceptions, x87 or AVX.
+
+`X64PackedIntegerTests.cpp` uses original encodings and 180 literal vectors in `X64PackedIntegerCases.def`, checked independently against native x64 compiler intrinsics. Register and aliased page-end RAM cases preserve other XMM registers, integer sentinels, FLAGS, MXCSR and source bytes. Observer stops/failures and recoverable read faults preserve state; repair permits a single retry. MMX, LOCK, misalignment and MMIO reject before callbacks. Both WHP privileges are mandatory in native CI.
 
 ## Driver emulation checks
 
@@ -2085,6 +2094,17 @@ unchanged code/data bytes. Run it together with `NeverDAArch64StateTests`,
 admission or startup probes. Native platform cells without hardware remain
 explicit skips; no active-authentication or real Android process claim follows.
 
+`AArch64AcquireReleaseTests.cpp` in `NeverDAArch64MemoryTests` runs independently
+encoded byte, halfword, word and doubleword acquire/release accesses through
+both checked privileges on available Unicorn/KVM/WHP/HVF transports. It checks
+the entire scalar/vector state and data page, zero-register and aliased-base
+operands, SP addressing, exact page tails, read/write/user permissions, observer
+cancellation and retry. Misalignment and neighboring exclusive, limited-order,
+RCpc and optional pre-indexed encodings must stop before effects. Run this
+target with the checked CPU, state, FP, PAuth and execution-session suites when
+changing instruction admission. Unavailable hardware cells remain skips;
+these tests do not establish parallel memory ordering.
+
 The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller’s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.
 
 `X64FPState.def` declares compacted AVX, AVX-512, CET_U/CET_S and AMX transport layouts, including 64-byte component alignment. Present extension payloads must be architectural zero init state; absent payloads and alignment padding do not define state. Layout bits determine offsets, and unknown layouts, non-initial payloads or incorrect lengths fail before publication. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState` and `InitialWideComponentsDoNotHideFPState` cover 872-byte and 10752-byte WHP packets. This transport support does not admit those extension instructions.
@@ -2127,7 +2147,7 @@ The existing `ci.yml` provides an opt-in `native_cpu_only` manual mode on its Wi
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 46 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 246 CPU checks and four shared SEH continuation regressions, 474 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `246 CPU + 224 WHP + 4 SEH = 474`.
+`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 256 CPU checks and four shared SEH continuation regressions, 484 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `256 CPU + 224 WHP + 4 SEH = 484`.
 
 C SEH ranges remain half-open. A valid `__C_specific_handler` landing pad may lie inside its protected range: [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) emits `EndLabel + 1` as the scope end. The Windows OS model preserves the raw endpoints and independently validates executable targets, function ownership and continuation identity, including after rebasing. `KernelSEHContinuationCases.def` retains the original fixture layout; `ScopeEndLabelMayOverlapTheHandlerLandingPad` checks constant handlers and filters. Companion tests preserve the exclusive end and reject invalid targets without consuming the dispatch state. These pure checks run in `NeverDNativeDriverTests` with Unicorn disabled.
 
@@ -2172,6 +2192,8 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 `WhpStateTransferTests.cpp` checks both XSAVE API generations with injected register transfers: exact changed groups, complete capture, ignored padding, partial failures, cancellation, exception priority and partition replacement. `ContinuedStepsReuseCapturedRegistersAndFP` counts avoided installs; `PartialTransferFailuresPreserveStateAndForceFullRetry` requires complete restoration. These are protocol checks, not native execution evidence; existing native FP, state-transition, driver and ring3 suites remain required.
 
+`WhpStateTransferCases.def` also covers every partial prefix of the combined 32-register capture and conflicts in all seven metadata fields. Both XSAVE API generations must preserve caller state and force a complete retry. The same suite checks one register read per step and recovers omitted XSAVE metadata from that read.
+
 ### Android native workloads
 
 With CPU emulation enabled, build `NeverDAndroidNativeTests`,
@@ -2206,6 +2228,15 @@ unbalanced callback stacks and exhaustion of the original instruction budget.
 C/CLI and Python tests check callback effects and ordered nullable call results
 through the real shared engine. This is modeled API 28 evidence, not a native
 Android device comparison or proof of concurrent initialization semantics.
+Independent tokenization fixtures at O0/O2 and all three relocation packings
+check changed delimiters, interleaved contexts, unsigned bytes, final/empty
+tokens, exact cursor width, input mutations and errno preservation. Read-only
+inputs and cursors, invalid pointers, scan limits and stale dynamic providers
+have explicit outcomes. C/CLI and Python integration compare named calls and
+guest effects through the shared engine. The API 28 cursor contract is checked
+against [pinned AOSP source](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strtok.c);
+this is model evidence, not a native Android device comparison.
+
 Independent mutex fixtures run at O0/O2 with ordinary, APS2 and RELR packing.
 They check eight-byte attributes, four-byte getter outputs, complete 40-byte
 initialization, overlapping attributes, static initializers, all three lock
@@ -2346,5 +2377,7 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 `NeverDLLVMCValueTests` compares typed scalar-loop C directly with independently compiled LLVM at O0/O2, with undefined-behavior traps enabled for the generated C. Boundary and deterministic full-width inputs cover narrow multiplication and wrap before shifts, widened multiplication and right shifts, wide-to-boolean truncation, signed comparisons/extensions, precedence, conditional expressions, boolean arithmetic, unsupported-operation fallback and deep materialized expressions. The tests also assert unchanged caller IR and removal of redundant casts.
 
 `NeverDLLVMCPhiTests` and `NeverDLLVMCValueTests` cover scoped byte counters across increment/decrement wrap, coalesced exit values, inlined uses after a loop, live outer carriers and PHI snapshots. Independent O0/O2 checks with undefined-behavior traps verify compound additions, reversed-subtraction refusal, narrow multiplication and boolean masks. Nested-region tests require loop-local counter declarations and a distinct result carrier without changing source LLVM. An executable naming regression makes external callees collide with the initially generated result/counter identifiers and checks that both calls and observer effects survive.
+
+`NeverDLLVMCValueTests` checks both neutral-select polarities for add, subtract and bitwise updates, unchanged bases, inline old-value dependencies, materialized condition snapshots, narrow truth tests, nonidentity arms and shared selections. Generated C executes against independently compiled LLVM at O0/O2 with undefined-behavior traps. `NeverDLLVMCPhiTests` additionally checks parallel old-value snapshots and branch-dependent initializers that must stay in shared scope. Caller IR remains unchanged.
 
 `NeverDUnicornDecodeTests` checks reserved EVEX register fields on AVX-512/APX CPU models and ROUND memory-fault priority, retained state and resumption. A Linux x64 host probe independently confirms legacy alignment faults and scalar/VEX page faults. These engine tests do not extend checked ISA admission or establish native APX execution.

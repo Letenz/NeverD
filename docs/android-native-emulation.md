@@ -84,6 +84,15 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `strtok_r`, scanning guest byte strings and updating the caller's eight-byte,
+  aligned save pointer. Delimiters may change between calls; separate contexts
+  remain independent. API 28 clears the saved pointer at the final token or an
+  empty remainder. A null saved cursor returns NULL without reading delimiters
+  or writing memory. Only a terminating delimiter is overwritten; a final
+  token with no separator can reside in read-only memory. Both write spans are
+  checked before either effect, and errno is preserved. Invalid pointers and
+  exhausted scan/deadline bounds stop explicitly. No host tokenizer or hidden
+  process cursor supplies state; `strtok` remains unsupported.
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
@@ -112,6 +121,14 @@ The supported Bionic subset is:
   service implementation. Bionic wrappers translate negative kernel error
   values to -1 and thread-local errno; raw `svc #0` preserves negative errno
   bits and does not update TLS errno.
+- `syscall(number, ...)` uses the same Linux service table and effects. The
+  AArch64 wrapper takes the number from x0 and six arguments from x1–x6;
+  x7 is unused. It preserves full-width results and applies Bionic's -1/errno
+  conversion only to kernel errors. Successful calls preserve errno, and
+  exit services terminate the workload without returning to the caller.
+  Unknown numbers and unsupported memory or networking services stop explicitly.
+  Static and dynamic calls retain their native import event; only an actual
+  `svc #0` produces a raw service event.
 
 TLS uses the API 28 Bionic layout: TPIDR_EL0 points to a guest TLS block,
 `__errno` addresses slot 2, and the stack guard occupies slot 5. The guard is a
@@ -124,7 +141,8 @@ These ABI choices are based on the pinned AOSP Android 9 definitions:
 [Bionic TLS slots](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/private/bionic_tls.h),
 [`__errno`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/bionic/__errno.cpp),
 [system property declarations](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/include/sys/system_properties.h),
-and [`pthread_once`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_once.cpp).
+[`pthread_once`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_once.cpp),
+and the [AArch64 syscall wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/arch-arm64/bionic/syscall.S).
 The model is independently implemented; these sources specify the ABI.
 
 ### Explicit dynamic symbol catalogue

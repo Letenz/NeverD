@@ -65,6 +65,12 @@ sourceABIErrorResult(const SourceFunctionTypeHint &Hint);
 std::vector<SourceABIParameter>
 sourceABIParameters(const SourceFunctionTypeHint &Hint);
 
+/// HighIR representation of a validated call result before source binding.
+/// Scalars carry unsigned machine bits; void and complete records retain their
+/// logical type. This does not define any bytes outside the declared result.
+/// Invalid declarations have no representation.
+TypeRef sourceABICallResultType(const SourceFunctionTypeHint &Hint);
+
 /// Assign Darwin's ordinary fixed scalar calling convention, including a
 /// 128-bit integer result in two registers (parameters remain at most 64 bits).
 /// This describes

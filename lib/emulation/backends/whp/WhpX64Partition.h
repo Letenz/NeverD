@@ -10,6 +10,7 @@
 #include "../../arch/x86_64/X64Exception.h"
 #include "WhpXsaveState.h"
 
+#include <algorithm>
 #include <array>
 #include <utility>
 
@@ -35,7 +36,7 @@ public:
       if (auto E = Xsave.install(API, Partition, State))
         return E;
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
-    RegisterPacket Actual{};
+    CapturePacket Actual{};
     auto Next = State;
     auto Complete = [&]() -> llvm::Error {
       if (Exit.ExitReason != WHvRunVpExitReasonException)
@@ -43,7 +44,8 @@ public:
       // Read control and segment state too. The next comparison uses the
       // actual host values, not an assumption that prior inputs survived.
       if (const auto Status = API.WHvGetVirtualProcessorRegisters(
-              Partition, 0, Names, std::size(Names), Actual.data());
+              Partition, 0, CaptureNames.data(), CaptureNames.size(),
+              Actual.data());
           FAILED(Status))
         return whpError(diagnostic::WhpState, Status,
                         whp::operation::WHvGetVirtualProcessorRegisters);
@@ -52,7 +54,10 @@ public:
   Next.reg(X64Register::Name) = Actual[Index++].Reg64;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
-      if (auto E = Xsave.capture(API, Partition, Next))
+      WhpXsaveState::MetadataPacket Metadata{};
+      std::copy(Actual.begin() + std::size(Names), Actual.end(),
+                Metadata.begin());
+      if (auto E = Xsave.capture(API, Partition, Next, &Metadata))
         return E;
       Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
       const unsigned Vector = Exit.VpException.ExceptionType;
@@ -82,7 +87,8 @@ public:
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
     State = Next;
     CapturedState = Next;
-    CapturedRegisters = Actual;
+    std::copy_n(Actual.begin(), CapturedRegisters.size(),
+                CapturedRegisters.begin());
     Runnable = true;
     return llvm::Error::success();
   }
@@ -104,6 +110,16 @@ private:
 #undef NEVERD_WHP_X64_SEGMENT
       ;
   using RegisterPacket = std::array<WHV_REGISTER_VALUE, std::size(Names)>;
+  inline static constexpr auto CaptureNames = [] {
+    std::array<WHV_REGISTER_NAME,
+               std::size(Names) + std::size(WhpXsaveState::MetadataNames)>
+        Result{};
+    auto End = std::copy(std::begin(Names), std::end(Names), Result.begin());
+    std::copy(std::begin(WhpXsaveState::MetadataNames),
+              std::end(WhpXsaveState::MetadataNames), End);
+    return Result;
+  }();
+  using CapturePacket = std::array<WHV_REGISTER_VALUE, CaptureNames.size()>;
 
   static RegisterPacket registers(const X64MachineState &State, uint64_t Root) {
     RegisterPacket Values{};

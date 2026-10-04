@@ -50,6 +50,8 @@ supervisor and flat profiles do not advertise that boundary.
 
 Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. This does not admit DAZ, unmasked exceptions, x87 or AVX.
 
+`X64PackedIntegerInstructions.def` admits 45 legacy SSE2 packed integer operations: wrapping and saturating addition/subtraction, comparisons, multiplication, averages, extrema, byte differences, packing and unpacking. XMM and aligned 128-bit RAM sources share the existing checked path on KVM, WHP and Unicorn. FLAGS and MXCSR remain unchanged; faults or observer cancellation preserve state. MMX, VEX/EVEX and device operands remain excluded.
+
 Checked x64 also admits scalar `XCHG`, `XADD` and `CMPXCHG` at 8/16/32/64 bits,
 with natural alignment for locked or implicit-lock memory forms. An ISA-owned
 footprint describes every ordinary RAM write. The physical execution lease and
@@ -308,6 +310,8 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 
 `WhpX64Partition.h` owns x64 WHP register reuse for one actual partition. Fixed packets use `WhpX64Registers.def` and `X64HostRegisters.def`; every successful step still captures general, control, segment and complete FP/SSE state. Only fully acknowledged debug exits permit skipping unchanged inputs. Comparison ignores reserved bits and union padding. Changed CR3, CPL, TLS, GPR or FP inputs are installed; partial failure, cancellation and exceptions invalidate reuse. Partition replacement starts with a full install. This reduces redundant transfers, without extending instruction admission or claiming an end-to-end speedup.
 
+WHP captures the x87/SSE metadata from `WhpXsaveRegisters.def` in the same `WHvGetVirtualProcessorRegisters` call as the ordinary registers. The stopped vCPU remains under one partition lease. Complete XSAVE capture and all metadata consistency checks still precede publication; this removes one host API call per step, without a measured throughput claim.
+
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
 The checked EL0/EL1 ARM64 contracts keep all `SCTLR_EL1` pointer-authentication
@@ -322,6 +326,20 @@ HINTs, strip operations, non-HINT authentication, authenticated branches/loads,
 key registers and attempts to change `SCTLR_EL1` remain unsupported. Active
 PAuth, signing keys and authenticated guest pointers are not modeled. Linux
 startup continues to advertise no PAuth hardware capability.
+
+Checked ARM64 admits the baseline no-offset `LDAR`, `LDARB`, `LDARH`, `STLR`,
+`STLRB` and `STLRH` encodings for naturally aligned ordinary RAM. The ISA owner
+declares the exact 1/2/4/8-byte read or write before the original instruction
+executes through the transport. Zero-register operands still access memory;
+narrow loads clear the remaining destination bits. Permission faults and
+observer stops preserve the full CPU and RAM state. Misalignment, exclusive
+operations, RCpc, limited ordering and optional pre-indexed release encodings
+remain unsupported before effects. The physical execution lease and sequential
+RAM commits preserve ordering within this cooperative single-CPU contract;
+this does not model parallel SMP or an exclusive monitor. The fixed machine
+disables SP alignment traps, so SP bases require only the admitted data
+alignment. See Arm's [instruction definitions](https://documentation-service.arm.com/static/67e40f3398aa3c3b6eea6a85)
+and [memory ordering guide](https://developer.arm.com/documentation/102336/0100/Load-Acquire-and-Store-Release-instructions).
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 

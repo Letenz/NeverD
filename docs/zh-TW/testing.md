@@ -217,6 +217,8 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
 
+`X64PackedIntegerTests.cpp` 使用 `X64PackedIntegerCases.def` 中的原始編碼和 180 組固定向量結果，並與原生 x64 編譯器 intrinsic 獨立核對。暫存器與頁尾別名 RAM 案例保留其他 XMM、整數哨兵值、FLAGS、MXCSR 和來源位元組。觀察器停止／失敗與可恢復讀取故障保留狀態，修復後可重試一次。MMX、LOCK、未對齊和 MMIO 都在回呼前拒絕。原生 CI 強制執行 WHP 的兩個特權級。
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
@@ -1041,7 +1043,7 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 246 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 474 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `246 CPU + 224 WHP + 4 SEH = 474`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 256 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 484 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `256 CPU + 224 WHP + 4 SEH = 484`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 
@@ -1085,6 +1087,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 `NeverDInstructionFetchTests` 透過 Unicorn、KVM 與 WHP，在核心態與使用者態執行 x64/ARM64 checked 程式。`InstructionFetchCases.def` 涵蓋運算元形式切換、相對分支、客體與主機經程式碼別名寫入、上下文還原、權限撤銷、獨立頁面儲存、頁尾預讀、無效或截斷編碼及遞迴執行拒絕。Windows 原生 CI 要求所有 x64 WHP 案例通過。無法使用的主機/ISA 組合明確略過；可攜式 ARM64 執行不構成原生 ARM64 支援證據。
 
 `WhpStateTransferTests.cpp` 對兩代 XSAVE API 注入暫存器傳輸，檢查精確變更組、完整擷取、填補忽略、部分失敗、取消、例外優先順序與分區重建。`ContinuedStepsReuseCapturedRegistersAndFP` 統計省略的安裝；`PartialTransferFailuresPreserveStateAndForceFullRetry` 要求完整恢復。這些是協定檢查，而非原生執行證據；既有原生 FP、狀態轉換、驅動及 ring3 測試仍屬必要驗證。
+
+`WhpStateTransferCases.def` 也涵蓋合併後 32 個暫存器讀取中每個部分前綴失敗，以及全部七個中繼資料欄位衝突。兩代 XSAVE API 都必須保留呼叫端狀態並在重試時完整還原。同一套測試核對每步只有一次暫存器讀取，並從該讀取補齊 XSAVE 省略的中繼資料。
 
 `windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、靜態與動態 TLS、`DllMain`、具名 Win32 API 和明確的無環 DLL 圖。客體模組支援依名稱／序號匯入程式碼與資料、DIR64 重定位、轉送匯出及真實載入器串列身分。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用設定的模組目錄。CRT／GUI、ARM64 以堆疊框架為基礎的使用者態 SEH、執行緒及通用 Windows 應用程式相容性仍待完成；原生 ARM64 KVM/WHP 證據仍缺失。
 
@@ -1139,6 +1143,8 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 `NeverDLLVMCValueTests` 在 O0/O2 下，將具型別的純量迴圈 C 與直接獨立編譯的 LLVM 對照執行，並為產生的 C 啟用未定義行為陷阱。邊界值及確定性全位元寬度輸入涵蓋窄整數乘法、位移前回繞、擴寬乘法與右移、寬整數截斷成布林值、有號比較與擴展、優先順序、條件運算式、布林運算、不支援操作的回退及深運算式的實體化。測試也檢查呼叫端 IR 不變，以及冗餘轉型已移除。
 
 `NeverDLLVMCPhiTests` 與 `NeverDLLVMCValueTests` 涵蓋位元組計數器遞增遞減回繞、合併後的退出值、迴圈外的內聯使用、存活外層變數及 PHI 快照。獨立 O0/O2 檢查啟用未定義行為陷阱，驗證複合加法、反向減法拒絕、窄乘法及布林遮罩。巢狀區域測試要求計數器在迴圈內宣告、結果變數保持獨立，且不修改來源 LLVM。 可執行命名回歸讓外部函式與首次產生的結果變數及計數器同名，驗證呼叫與觀察副作用都被保留。
+
+`NeverDLLVMCValueTests` 檢查加減和位元運算中兩種單位元分支位置、未變的基底值、內聯舊值依賴、已具體化的條件快照、窄整數真假判斷、非單位元分支及共用選擇值。產生的 C 在 O0/O2 下與獨立編譯的 LLVM 對照執行，並啟用未定義行為陷阱。`NeverDLLVMCPhiTests` 也檢查平行舊值快照，以及必須留在共用作用域的分支初值。呼叫端 IR 保持不變。
 
 `NeverDUnicornDecodeTests` 檢查 AVX-512/APX CPU 模型的 EVEX 暫存器保留位，以及 ROUND 記憶體異常優先級、狀態保留和恢復。獨立 Linux x64 主機程式確認了傳統編碼的對齊異常和純量/VEX 編碼的分頁異常。這些引擎測試不擴展 checked 指令准入，也不代表 APX 原生執行證據。
 

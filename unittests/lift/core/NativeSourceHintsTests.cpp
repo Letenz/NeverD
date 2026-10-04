@@ -2775,6 +2775,189 @@ TEST(NativeSourceHints, RefinesOnlyExplicitlyPartialIntegerReturnCandidates) {
     }
 }
 
+TEST(NativeSourceHints,
+     RefinesLoweredSignedCallResultWithoutInventingUpperBits) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Signed : {false, true}) {
+      SCOPED_TRACE(int(Architecture));
+      SCOPED_TRACE(Signed);
+      NativeFixture F(Architecture);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      SourceFunctionTypeHint Callee, Entry;
+      Callee.Origin = Entry.Origin =
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Callee.ReturnType = NdType::makeInt(4, Signed);
+      Entry.ReturnType = NdType::makeInt(8, false);
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Callee, Architecture, Error));
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Architecture, Error));
+      std::map<va_t, SourceFunctionTypeHint> Hints{{0x1000, Entry},
+                                                   {0x1080, Callee}};
+      LowFunc Low;
+      Low.Entry = 0x1000;
+      LowBlock B;
+      B.Id = 0;
+      B.StartAddr = 0x1000;
+      B.EndAddr = 0x1008;
+      LowOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = 0x1000;
+      Call.Output = NdVar::reg(TRI.IntReturnReg, 8);
+      Call.addInput(NdVar::cst(0x1080, 8));
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = 0x1004;
+      Return.addInput(NdVar::reg(TRI.IntReturnReg, 8));
+      B.Ops = {Call, Return};
+      Low.Blocks = {B};
+      const auto Lower = [&] {
+        LowToMedConverter Converter;
+        Converter.setSourceCallHintsEnabled(true);
+        Converter.setSourceCalleeTypeHints(&Hints);
+        Converter.setSourceEntryTypeHints(&Hints);
+        F.Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+        recoverCallAbi(F.Med, Architecture, {{0x1080, "native_prefix"}});
+        F.Med.SourceTypeHint = Hints.at(0x1000);
+        inferMedTypes(F.Med, Architecture);
+        F.High = MedToHighConverter().convert(F.Med, Architecture);
+      };
+      Lower();
+      ASSERT_EQ(F.High.ReturnType->Size, 8U);
+      const auto Allowed = [](const HighExpr &) { return true; };
+      EXPECT_FALSE(
+          sdk::sourceBodyLimitation(F.High, Entry, &F.Audit, Allowed).empty());
+      const auto Refined = refineNativeSourceTypeHint(F.High, F.Audit);
+      ASSERT_TRUE(Refined);
+      EXPECT_EQ(Refined->ReturnType->Size, 4U);
+      EXPECT_EQ(Refined->ReturnLocation.ValueBytes, 4U);
+      EXPECT_EQ(F.High.ReturnType->Size, 8U);
+      EXPECT_EQ(Hints.at(0x1080).ReturnType->IsSigned, Signed);
+      Hints[0x1000] = *Refined;
+      Lower();
+      EXPECT_TRUE(sdk::sourceBodyLimitation(F.High, *Refined, &F.Audit, Allowed)
+                      .empty());
+      // The candidate does not define the original caller's high word.
+      Hints[0x1000] = Entry;
+      Lower();
+      EXPECT_FALSE(
+          sdk::sourceBodyLimitation(F.High, Entry, &F.Audit, Allowed).empty());
+    }
+}
+
+TEST(NativeSourceHints, IntegerPrefixCallBitsRequireTheCompleteDeclaredResult) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 17; ++Mutation) {
+      SCOPED_TRACE(int(Architecture));
+      SCOPED_TRACE(Mutation);
+      NativeFixture F(Architecture);
+      SourceFunctionTypeHint Entry, Callee;
+      Entry.Origin = Callee.Origin =
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Entry.ReturnType = NdType::makeInt(8, false);
+      for (const auto &Parameter : F.High.Params)
+        Entry.Parameters.push_back({Parameter.Name, Parameter.Type});
+      Callee.ReturnType = NdType::makeInt(4, true);
+      Callee.Parameters = {{"input", NdType::makeInt(4)}};
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Architecture, Error));
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Callee, Architecture, Error));
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->Signature = Callee;
+      auto Call = HighExpr::makeCall(
+          "native_prefix", 0x1080,
+          {HighExpr::makeVar(F.Med.Params[0], NdType::makeInt(4))});
+      Call->SourceCallHint = Hint;
+      Call->Type = sourceABICallResultType(Callee);
+      MedVar Local;
+      Local.Kind = MedVar::Temp;
+      Local.Id = 40;
+      Local.Size = 4;
+      const auto Value = [&] {
+        return HighExpr::makeVar(Local, Callee.ReturnType);
+      };
+      HighStmt Define;
+      Define.Kind = StmtKind::Assign;
+      Define.Dst = Value();
+      Define.Val = Call;
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal =
+          HighExpr::makeBinop(NdOp::CONCAT, HighExpr::makeUndef(4), Value());
+      Return.RetVal->Type = NdType::makeInt(8, false);
+      F.High.SourceTypeHint = Entry;
+      F.High.ReturnType = Entry.ReturnType;
+      F.High.Body = {Define, Return};
+      switch (Mutation) {
+      case 1:
+        Call->SourceCallHint.reset();
+        break;
+      case 2:
+        Hint->Signature.ReturnLocation.ValueBytes = 8;
+        break;
+      case 3:
+        Hint->Signature.ReturnType = NdType::makeFloat(4);
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+        break;
+      case 4:
+        Hint->Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+        break;
+      case 5:
+        Hint->Signature.ReturnType = NdType::makeInt(2);
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+        Call->Type = sourceABICallResultType(Hint->Signature);
+        break;
+      case 6:
+        Call->Type = NdType::makeInt(8, false);
+        break;
+      case 7:
+        Hint->DoesNotReturn = true;
+        break;
+      case 8:
+        Call->Operands.clear();
+        break;
+      case 9:
+        Return.RetVal->Operands[0] = HighExpr::makeConst(0, 4);
+        break;
+      case 10:
+        Define.Val = HighExpr::makeUndef(4);
+        F.High.Body[0] = Define;
+        break;
+      case 11:
+        F.High.Body.erase(F.High.Body.begin());
+        break;
+      case 12:
+        Call->Operands.push_back(HighExpr::makeConst(0, 4));
+        break;
+      case 13:
+        Call->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 14:
+        Call->Type = NdType::makeFloat(4);
+        break;
+      case 15:
+        Hint->Signature.ReturnComponents = {Hint->Signature.ReturnLocation};
+        break;
+      case 16:
+        Hint->Signature.ReturnLocation.Kind =
+            SourceABICarrierKind::FloatingRegister;
+        break;
+      default:
+        break;
+      }
+      const auto Refined = refineNativeSourceTypeHint(F.High, F.Audit);
+      EXPECT_EQ(bool(Refined), Mutation == 0);
+      if (Refined) {
+        EXPECT_EQ(Refined->ReturnLocation.ValueBytes, 4U);
+        EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);
+        EXPECT_EQ(Return.RetVal->Operands[0]->Kind, ExprKind::Undef);
+      }
+    }
+}
+
 TEST(NativeSourceHints, IntegerPrefixCallersCannotObserveUnknownUpperWord) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (uint16_t Width : {4, 8}) {
