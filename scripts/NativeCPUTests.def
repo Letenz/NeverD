@@ -29,6 +29,110 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPrecisionOracle.CVTSS2SDMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPrecisionOracle.CVTSD2SSMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPrecisionOracle.CVTPS2PDMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPrecisionOracle.CVTPD2PSMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTSS2SDValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTSS2SDValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTSS2SDRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTSS2SDRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTSD2SSValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTSD2SSValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTSD2SSRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTSD2SSRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTPS2PDValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTPS2PDValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTPS2PDRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTPS2PDRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTPD2PSValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTPD2PSValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTPD2PSRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "CVTPD2PSRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "EveryVectorPairAndAliasedSource/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "EveryVectorPairAndAliasedSource/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPrecision."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SSEPredicateOracle.CMPSSMasksAndStatusMatchOriginalInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SSEPredicateOracle.CMPSDMasksAndStatusMatchOriginalInstructions")
