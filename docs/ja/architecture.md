@@ -637,7 +637,7 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `AArch64InstructionEffects` が最大128ビットの scalar/FP/SIMD 単一・ペア RAM 範囲を所有します。共有 address space は CPU entry 前に全ページを検証し、`RAMTransaction` は宣言された完全な物理書き込みのみを確定します。128ビット書き込みは実行前に二つの64ビット値として順序付きで観測されます。停止・fault は RAM、vector、writeback を保持します。Xn/Vn の番号重複は有効で、pair 範囲のアドレス wrap は拒否します。`NeverDAArch64MemoryTests` は独立した `AArch64CrossPageCases.def` と `AArch64VectorMemoryCases.def` を使用します。
 
-KVM x64 は各エントリの前に実際の特殊レジスタを読み、`KvmX64State.def` で定義したプロトコルのフィールドだけを比較します。CR3、CPL、TLS、CR8 などが変われば投影を再設定します。実行可能状態を再利用できるのは、状態を完全に取得した単一ステップのデバッグ終了後だけです。例外、キャンセル、エントリ失敗後は再設定します。`X64StateTransition` は実 CPU の読み取りで TLS、特権レベル、CR8 の変更、反復例外とキャンセルを検証します。KVM は `X64HostRegisters.def` と `X64FPState.def` に従い、汎用レジスタと完全な FP/SSE 状態を直前に完了確認したデバッグ終了状態と比較し、変更された入力を再設定します。ホスト側の書き込みとコンテキスト復元も比較対象です。例外、キャンセル、失敗は再利用を無効にします。単一ステップの設定と実際の汎用・FP 状態の読み取りは各命令で行います。
+KVM x64 は完了確認済みの同期取得、または明示的な `KVM_GET_SREGS` 読み取りから実際の特殊レジスタを取得し、`KvmX64State.def` のプロトコルフィールドだけを比較します。`KVM_CAP_SYNC_REGS` はレジスタ集合ごとに同期取得の可否を示し、未対応の集合では明示的な読み取り ioctl を維持します。CR3、CPL、TLS、CR8 などが変われば投影を再設定します。実行可能状態を再利用できるのは、状態を完全に取得した単一ステップのデバッグ終了後だけです。例外、キャンセル、エントリ失敗後は再設定します。`X64StateTransition` は実 CPU の読み取りで TLS、特権レベル、CR8 の変更、反復例外とキャンセルを検証します。KVM は `X64HostRegisters.def` と `X64FPState.def` に従い、汎用レジスタと完全な FP/SSE 状態を直前に完了確認したデバッグ終了状態と比較し、変更された入力を再設定します。ホスト側の書き込みとコンテキスト復元も比較対象です。例外、キャンセル、失敗は再利用を無効にします。単一ステップの設定と実際の汎用・FP 状態の読み取りは各命令で行います。
 
 KVM x64/ARM64 は `KvmRunControl` により同じ専用 vCPU worker で状態準備、`KVM_RUN`、状態取得を実行します。`EINTR` の再試行でも準備は一度で、取消や取得失敗は状態を公開しません。`KvmAArch64Machine.cpp` の変換維持と全スカラー・ベクトル転送も一つの step deadline を共有します。呼び出し側は完了確認後に確定し、ISA decode、RAM transaction、OS policy、observer は呼び出し側に残ります。native ARM64 の実機証拠は未取得です。
 

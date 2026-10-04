@@ -656,7 +656,7 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProb
 
 `AArch64InstructionEffects` 负责标量及 FP/SIMD 的单次、成对 RAM 访问范围，单个操作数最大 128 位。共享地址空间在进入 CPU 前验证每一页；`RAMTransaction` 只提交完整声明的物理写入。128 位写观察器在生效前按顺序收到两个 64 位字。停止和故障保留 RAM、向量和地址写回。Xn/Vn 的编号重叠合法；发生地址回绕的成对访问被拒绝。`NeverDAArch64MemoryTests` 使用独立的 `AArch64CrossPageCases.def` 与 `AArch64VectorMemoryCases.def` 编码。
 
-KVM x64 在每次进入前读取实际特殊寄存器，只比较 `KvmX64State.def` 中定义的协议字段。CR3、CPL、TLS、CR8 或其他字段变化时重新写入投影。仅完整捕获的单步调试退出允许复用可运行状态；异常、取消或进入失败后都重新建立该状态。`X64StateTransition` 通过真实 CPU 读取验证 TLS、权限级和 CR8 变化、重复异常及取消。KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完整 FP/SSE 状态与上次确认完成的调试退出状态比较，只重新安装变化的输入。宿主写入和上下文恢复也参与比较；异常、取消及失败会使复用失效。每条指令仍启用单步并读取真实的通用及 FP 状态。
+KVM x64 从已确认完成的同步捕获或显式 `KVM_GET_SREGS` 读取中取得实际特殊寄存器，只比较 `KvmX64State.def` 中的协议字段。`KVM_CAP_SYNC_REGS` 分别确定各寄存器集合是否支持同步捕获；不支持的集合保留显式读取 ioctl。CR3、CPL、TLS、CR8 或其他字段变化时重新写入投影。仅完整捕获的单步调试退出允许复用可运行状态；异常、取消或进入失败后都重新建立该状态。`X64StateTransition` 通过真实 CPU 读取验证 TLS、权限级和 CR8 变化、重复异常及取消。KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完整 FP/SSE 状态与上次确认完成的调试退出状态比较，只重新安装变化的输入。宿主写入和上下文恢复也参与比较；异常、取消及失败会使复用失效。每条指令仍启用单步并读取真实的通用及 FP 状态。
 
 KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备状态、进入 `KVM_RUN` 和读取状态。`EINTR` 重试只准备一次；取消进入或读取失败不能发布状态。`KvmAArch64Machine.cpp` 在该线程上执行地址转换维护及完整标量、向量传递，并共用一次单步期限。调用线程只在确认完成后提交；ISA 解码、RAM 事务、OS 策略和观察器仍属于调用线程。ARM64 原生运行仍缺少实机证据。
 
