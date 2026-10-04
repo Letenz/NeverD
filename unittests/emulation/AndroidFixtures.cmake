@@ -69,6 +69,26 @@ foreach(_optimization O0 O2)
     list(APPEND _android_outputs "${_android_mutex_file}")
   endforeach()
 endforeach()
+foreach(_optimization O0 O2)
+  set(_android_syscall_object "${_android_fixture_dir}/syscall-${_optimization}.o")
+  add_custom_command(OUTPUT "${_android_syscall_object}"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
+      -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
+      -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+      -fno-asynchronous-unwind-tables "-${_optimization}" -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_syscall.c"
+      -o "${_android_syscall_object}"
+    DEPENDS fixtures/android_syscall.c VERBATIM)
+  foreach(_packing none android relr)
+    set(_android_syscall_file "${_android_fixture_dir}/syscall-${_optimization}-${_packing}.so")
+    add_custom_command(OUTPUT "${_android_syscall_file}"
+      COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
+        --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
+        "${_android_syscall_object}" -o "${_android_syscall_file}"
+      DEPENDS "${_android_syscall_object}" VERBATIM)
+    list(APPEND _android_outputs "${_android_syscall_file}")
+  endforeach()
+endforeach()
 add_custom_target(NeverDAndroidFixtures DEPENDS ${_android_outputs})
 add_dependencies(NeverDAndroidNativeTests NeverDAndroidFixtures)
 target_compile_definitions(NeverDAndroidNativeTests PRIVATE

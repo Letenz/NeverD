@@ -1430,6 +1430,11 @@ lookups and the API 28 TLS `dlerror` slot; the C API, CLI and Python expose the
 same named request/call events. These catalogue entries never load host code.
 Missing entries return modeled lookup errors, while calls whose behavior or
 lookup scope is unsupported stop explicitly.
+Bionic's `syscall` wrapper shifts the native arguments into a Linux service
+event and delegates number resolution to `LinuxServices.cpp`. Named wrappers,
+variadic calls and raw SVC therefore share memory, identity, output and exit
+semantics. Bionic alone owns libc error conversion; wrapper calls retain their
+native import event without inventing another executed service instruction.
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending

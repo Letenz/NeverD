@@ -779,6 +779,13 @@ hosts skip explicitly; backend cells distinguish unavailable execution.
 
 ## Process emulation checks
 
+`AndroidSyscallTests.cpp` executes independent C fixtures at O0/O2 with ordinary,
+Android-packed and RELR relocations. It compares named, raw SVC and variadic
+identity calls; verifies errno, six-argument memory calls, full-width pointers,
+binary vectored output, budget stops and nonreturning exits; and rejects unknown
+services and closed dynamic providers. The shared C API/CLI and actual Python
+wrapper also check `dlsym` provider identity for `syscall`.
+
 `LinuxMemory.*` in `NeverDLinuxProcessTests` checks raw anonymous-memory syscall
 rules, partial protection before a hole, page reclamation, transactional budget
 failure and program-break preservation. Original x64/ARM64 ELF fixtures verify
