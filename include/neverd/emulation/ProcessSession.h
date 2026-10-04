@@ -61,6 +61,7 @@ struct ProcessServiceEvent {
   /// Darwin BSD carry/error outcome. Absent when no return was modeled or
   /// when the selected OS uses a different error convention.
   std::optional<bool> Error;
+  std::optional<uint64_t> ThreadID;
 };
 
 struct ProcessResult {
@@ -81,6 +82,9 @@ struct ProcessResult {
   std::vector<NativeCallEvent> NativeCalls;
   std::vector<uint64_t> Trace;
   std::vector<NativeMemorySnapshot> MemorySnapshots;
+  std::vector<NativeThreadSnapshot> NativeThreads;
+  /// Runs in Trace: each row owns PCs from Index to the next row's Index.
+  std::vector<NativeTraceThread> TraceThreads;
 };
 
 llvm::Expected<ProcessProfile> parseProcessProfile(llvm::StringRef Name);

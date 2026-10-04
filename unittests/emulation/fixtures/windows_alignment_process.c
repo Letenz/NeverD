@@ -84,6 +84,12 @@ static void require(int Valid, U32 Site) {
             0);
   ExitProcess(FailureStatus);
 }
+static void writeOutput(const void *Bytes, U32 Size) {
+  U32 Written;
+  require(WriteFile(GetStdHandle(StdoutSelector), Bytes, Size, &Written, 0) &&
+              Written == Size,
+          SiteOutput);
+}
 static U32 observe(Pointers *Pointers) {
   const Record *R = Pointers->Record;
   U8 *C = Pointers->Context;
@@ -164,8 +170,9 @@ void entry(void) {
       require(Vector[0] == VectorLow && Vector[1] == VectorHigh, SiteVector);
       require(VirtualProtect(Memory, PageBytes, PageReadWrite, &Previous),
               SiteProtection);
-      for (U32 I = 0; I < PageBytes / sizeof(U64); ++I)
-        require(((U64 *)Memory)[I] == (VectorHigh ^ I), SiteMemory);
+      // Preserve every byte for independent host validation without spending
+      // the checked execution budget on repeated scalar page comparisons.
+      writeOutput(Memory, PageBytes);
       ++CompletedScenarios;
     }
     // Repair the operand in CONTEXT and retry the same faulting instruction.
@@ -182,9 +189,7 @@ void entry(void) {
     require(Calls == 1, SiteHandler);
     require(Vector[0] == Current->Low && Vector[1] == Current->High,
             SiteVector);
-    require(((U64 *)Memory)[0] == (Current->Store ? VectorLow : 0) &&
-                ((U64 *)Memory)[1] == (Current->Store ? VectorHigh : 0),
-            SiteMemory);
+    writeOutput(Memory, PageBytes);
     ++CompletedRetries;
   }
   require(CompletedScenarios == OperationCount * ScenarioCount &&
@@ -194,11 +199,7 @@ void entry(void) {
   require(RemoveVectoredExceptionHandler(Handler) &&
               VirtualFree(Memory, 0, MemRelease),
           SiteCleanup);
-  U32 Result[] = {CompletedScenarios, CompletedRetries, ValidatedFaults},
-      Written;
-  require(WriteFile(GetStdHandle(StdoutSelector), Result, sizeof(Result),
-                    &Written, 0) &&
-              Written == sizeof(Result),
-          SiteOutput);
+  U32 Result[] = {CompletedScenarios, CompletedRetries, ValidatedFaults};
+  writeOutput(Result, sizeof(Result));
   ExitProcess(ExitStatus);
 }

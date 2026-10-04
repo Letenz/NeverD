@@ -29,6 +29,8 @@ struct NativeCallEvent {
   /// obtained call.
   std::string Library;
   std::string Symbol;
+  /// Present for explicitly enabled Android guest-thread scheduling.
+  std::optional<uint64_t> ThreadID;
 };
 } // namespace neverd::emulation
 #endif

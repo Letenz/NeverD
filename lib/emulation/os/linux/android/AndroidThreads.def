@@ -1,0 +1,13 @@
+//===- AndroidThreads.def - Bounded guest-thread model policy -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Placement and capacity are explicit model policy, not Bionic TCB offsets.
+#ifdef NEVERD_ANDROID_THREAD_VALUE
+NEVERD_ANDROID_THREAD_VALUE(MaximumIdentities, 256)
+NEVERD_ANDROID_THREAD_VALUE(ArenaBase, 0x7100000000)
+NEVERD_ANDROID_THREAD_VALUE(ArenaStride, 64 * 1024 * 1024)
+NEVERD_ANDROID_THREAD_VALUE(IdentityOffset, 8)
+NEVERD_ANDROID_THREAD_VALUE(ReportBytes, 128)
+#endif

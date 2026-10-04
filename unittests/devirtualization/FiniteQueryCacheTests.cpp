@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/FiniteQueryCache.h"
+#include "../../lib/analysis/core/FiniteQueryCache.h"
 #include "gtest/gtest.h"
 
 #include "neverd/symbolic/SymState.h"

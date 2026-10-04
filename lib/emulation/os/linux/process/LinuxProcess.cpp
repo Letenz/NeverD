@@ -18,7 +18,7 @@ namespace neverd::emulation::linux_model {
 llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                                          const ProcessOptions &Options) {
   if (Options.Android)
-    return failure("Android options require the Android native profile");
+    return failure(AndroidOptions);
   if (!Options.Limits.Instructions || !Options.Limits.Events ||
       !Options.Limits.TimeoutMicroseconds || !Options.MemoryLimit ||
       !Options.StackSize || !Options.OutputLimit ||

@@ -6,7 +6,6 @@
 #include "X64VectorTestSupport.h"
 
 #include <climits>
-#include <map>
 #include <stdexcept>
 #if defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h>
@@ -115,25 +114,6 @@ protected:
     llvm::cantFail(CPU->writeRegister(CPURegister::X64FP0,
                                       {SentinelLow, PhysicalExponent}));
     llvm::cantFail(CPU->writeRegister(CPURegister::X64FPTag, {1, 0}));
-  }
-  auto snapshot() {
-    std::map<CPURegister, RegisterValue> State;
-#define NEVERD_SCALAR_REGISTER(ISA, Name, Bits, Backend)                       \
-  if (GuestArchitecture::ISA == GuestArchitecture::X64)                        \
-    State[CPURegister::ISA##Name] =                                            \
-        llvm::cantFail(CPU->readRegister(CPURegister::ISA##Name));
-#define NEVERD_EXTENDED_REGISTER(ISA, Name, Bits, Backend)                     \
-  NEVERD_SCALAR_REGISTER(ISA, Name, Bits, Backend)
-#define NEVERD_VECTOR_REGISTER(ISA, Index, Backend)                            \
-  if (GuestArchitecture::ISA == GuestArchitecture::X64) {                      \
-    const auto R = vectorRegister(GuestArchitecture::ISA, Index);              \
-    State[R] = llvm::cantFail(CPU->readRegister(R));                           \
-  }
-#include "neverd/emulation/Registers.def"
-#undef NEVERD_VECTOR_REGISTER
-#undef NEVERD_EXTENDED_REGISTER
-#undef NEVERD_SCALAR_REGISTER
-    return State;
   }
   void expectRAM() {
     std::array<uint8_t, VectorBytes> Bytes{};

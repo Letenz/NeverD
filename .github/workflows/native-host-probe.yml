@@ -1,10 +1,42 @@
 name: Native host setup
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   probe:
+    name: Temporary Linux x64 REP fault observations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compile and observe native restart state
+        shell: bash
+        run: |
+          mkdir -p build-rep-fault-probe
+          git rev-parse HEAD > build-rep-fault-probe/source.txt
+          git status --porcelain > build-rep-fault-probe/source-dirty.txt
+          lscpu > build-rep-fault-probe/cpu.txt
+          uname -a > build-rep-fault-probe/kernel.txt
+          clang++ --version > build-rep-fault-probe/compiler.txt
+          sha256sum scripts/diagnostics/RepFaultProbe.* unittests/emulation/X64StringTransferCases.def unittests/emulation/X64StringComparisonCases.def > build-rep-fault-probe/hashes.txt
+          clang++ -O2 -std=c++20 -Wall -Wextra -Werror -I unittests/emulation scripts/diagnostics/RepFaultProbe.cpp -o build-rep-fault-probe/probe
+          sha256sum build-rep-fault-probe/probe >> build-rep-fault-probe/hashes.txt
+          for trial in 1 2 3; do
+            build-rep-fault-probe/probe > "build-rep-fault-probe/observations-$trial.txt"
+          done
+      - name: Preserve bounded observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rep-fault-observations
+          path: build-rep-fault-probe/*.txt
+          if-no-files-found: error
+          retention-days: 14
+  windows-alignment:
     name: Temporary Windows alignment owner reproduction
     runs-on: windows-latest
     timeout-minutes: 30

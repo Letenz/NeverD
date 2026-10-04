@@ -6,16 +6,16 @@
 
 #include "neverd/analysis/InterpreterSpecialization.h"
 
+#include "../arch/x86_64/NativeStackControl.h"
+#include "../arch/x86_64/StringTransfer.h"
+#include "../arch/x86_64/X64Recovery.h"
 #include "ControlDiscovery.h"
 #include "FiniteQueryCache.h"
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
-#include "NativeStackControl.h"
-#include "StringTransfer.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -38,10 +38,6 @@ using ByteKey = std::pair<SymSpace, uint64_t>;
 using Constants = std::map<ByteKey, uint8_t>;
 using detail::FiniteValues;
 using detail::FiniteValueStatus;
-
-constexpr uint64_t X64PushfModelledFlags[] = {
-    x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
-    x86reg::SF, x86reg::DF, x86reg::OF};
 
 /// A finite relation over selected control fields. Empty Fields denotes Top.
 /// Field IDs index the register hints followed by the frame-slot hints. Only
@@ -403,22 +399,6 @@ bool validValue(const NdVar &Value) {
          (Value.isConst() || Value.Offset <= InvalidVA - (Value.Size - 1));
 }
 
-/// The x64 lifter uses these exact shapes to read and restore the system
-/// portion of RFLAGS. The residual keeps both intrinsics. During analysis a
-/// PUSHFQ snapshot is an unconstrained runtime value: this overapproximates
-/// every architectural flag image without inventing a constant or an alias
-/// fact. POPFQ has no modelled scalar output; later snapshots are fresh again.
-bool runtimeFlagsIntrinsic(const LowOp &Op) {
-  if (Op.NumInputs == 0 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2)
-    return false;
-  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
-  if (Id == Intrinsic::Pushf)
-    return Op.NumInputs == 1 && Op.Output.isTemp() && Op.Output.Size == 8;
-  if (Id == Intrinsic::Popf)
-    return Op.NumInputs == 2 && Op.Output.Size == 0 && Op.Inputs[1].Size == 8;
-  return false;
-}
-
 /// The allowlist is intentionally narrower than SymExec. In particular its BV
 /// division model does not certify architectural division faults, and naming an
 /// opaque result is not permission to publish a replacement of its instruction.
@@ -489,7 +469,7 @@ bool supported(const LowOp &Op) {
   case NdOp::NOP:
     return NoOutput && Op.NumInputs == 0;
   case NdOp::INTRINSIC:
-    return runtimeFlagsIntrinsic(Op) || detail::stringTransferShape(Op);
+    return x64::runtimeFlagsIntrinsic(Op) || detail::stringTransferShape(Op);
   default:
     return false;
   }
@@ -2244,10 +2224,10 @@ bool Specializer::evaluate(int Id) {
       // The architecture already emitted this call-to-fallthrough push.
       // Validate it through the same owner without adding another push or stack
       // context.
-      auto Expanded =
-          expandNativeStackControl(Instruction, NdVar::reg(x86reg::RSP, 8),
-                                   NdVar::tmp(NativeCallTargetTemp, 8),
-                                   NativeReturnExpansion::InternalTransfer);
+      auto Expanded = expandNativeStackControl(
+          Instruction, NdVar::reg(x64::StackPointer, 8),
+          NdVar::tmp(NativeCallTargetTemp, 8),
+          NativeReturnExpansion::InternalTransfer);
       if (!Expanded)
         return fail(SpecializationStatus::InvalidInput,
                     llvm::toString(Expanded.takeError()));
@@ -3360,7 +3340,7 @@ SpecializationResult Specializer::run() {
   }
   if (Options.EntryFrameAlignment &&
       (!Options.ExplicitMachineState || !Options.FrameBaseRegister ||
-       Options.FrameBaseRegister->Offset != x86reg::RSP ||
+       Options.FrameBaseRegister->Offset != x64::StackPointer ||
        !Options.EntryFrameAlignment->valid())) {
     fail(SpecializationStatus::InvalidInput,
          "entry alignment requires explicit machine state, an RSP frame root, "
@@ -3377,7 +3357,7 @@ SpecializationResult Specializer::run() {
   if (Options.ExternalStoresDisjointEntryFrame &&
       (!Options.ExplicitMachineState || !Options.EntryFrameBounds ||
        !Options.FrameBaseRegister ||
-       Options.FrameBaseRegister->Offset != x86reg::RSP)) {
+       Options.FrameBaseRegister->Offset != x64::StackPointer)) {
     fail(SpecializationStatus::InvalidInput,
          "external-store frame separation requires explicit machine state, "
          "an RSP frame root and entry frame bounds");
@@ -3415,7 +3395,7 @@ SpecializationResult Specializer::run() {
   // Source ABIs do not provide arbitrary incoming arithmetic flag values.
   // A retained PUSHFQ may use them only after reachable native code has
   // defined every modelled flag; must-provenance joins preserve this condition.
-  for (uint64_t Flag : X64PushfModelledFlags) {
+  for (uint64_t Flag : x64::ModelledFlags) {
     setUnsafeOrigin(NdVar::reg(Flag, 1), true, InitialOrigins);
     if (!Options.ExplicitMachineState)
       InitialOrigins.UndefinedFlags.insert(Flag);

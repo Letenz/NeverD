@@ -4,9 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "neverd/analysis/BinaryInterpreterSpecialization.h"
+#include "neverd/analysis/arch/x86_64/BinaryInterpreterSpecialization.h"
 
-#include "interpreter/NativeUndefinedIndependence.h"
+#include "../../core/NativeUndefinedIndependence.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"

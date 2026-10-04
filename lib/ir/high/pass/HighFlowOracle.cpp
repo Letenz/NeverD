@@ -9,12 +9,16 @@
 /// block pairs that structured flow runs through can be checked against the
 /// MedIR edges: a pair no edge joins is a path the structuring invented, an
 /// edge it never takes is a path it lost.  PHI copies, statements without an
-/// address, and jumps are transparent: they belong to whichever edge passes
-/// through them.  A lost PHI copy is not detected.
+/// address, jumps and empty label anchors are transparent: they belong to
+/// whichever edge passes through them.  A statement that does not return, such
+/// as `int 0x29` or a call that ends a MedIR block, ends its path.  A lost PHI
+/// copy is not detected.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/high/HighFlowOracle.h"
+
+#include "neverd/libc/LibCNames.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -22,6 +26,7 @@
 #include <functional>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace neverd {
@@ -39,13 +44,16 @@ struct FlowGraph {
   size_t Entry = 0;
   bool Complete = true;
 
-  explicit FlowGraph(const std::vector<HighStmt> &Body) {
+  FlowGraph(const std::vector<HighStmt> &Body,
+            std::function<bool(const HighStmt &)> EndsPath)
+      : EndsPath(std::move(EndsPath)) {
     Nodes.emplace_back();
     number(Body, 0);
     Entry = buildList(Body, 0, 0, 0);
   }
 
 private:
+  std::function<bool(const HighStmt &)> EndsPath;
   std::map<const HighStmt *, size_t> NodeOf;
   std::map<va_t, size_t> LabelAt;
 
@@ -129,7 +137,9 @@ private:
       break;
     }
     default:
-      if (!S.Body.empty() || !S.EHClauseBodies.empty()) {
+      if (EndsPath(S)) {
+        Succ.push_back(0);
+      } else if (!S.Body.empty() || !S.EHClauseBodies.empty()) {
         Succ.push_back(buildList(S.Body, Next, Brk, Cnt));
         for (const auto &Clause : S.EHClauseBodies)
           buildList(Clause, Next, Brk, Cnt);
@@ -170,17 +180,74 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
     for (int S : B.Succs)
       Edges.insert({B.Id, S});
 
-  const FlowGraph G(Func.Body);
+  // A call that ends a block with no successors does not return, and a copy
+  // of it elsewhere, often without an address, ends its path as well; so
+  // does a call to a routine known never to return.
+  auto CallOf = [](const HighStmt &S) -> const ExprPtr * {
+    if (S.Kind != StmtKind::Call && S.Kind != StmtKind::Assign &&
+        S.Kind != StmtKind::ExprStmt)
+      return nullptr;
+    const ExprPtr &E = S.Kind == StmtKind::Call ? S.CallExpr : S.Val;
+    return E && E->Kind == ExprKind::Call ? &E : nullptr;
+  };
+  std::set<va_t> FinalCalls;
+  for (const MedBlock &B : Med.Blocks) {
+    if (!B.Succs.empty())
+      continue;
+    auto Last = std::find_if(B.Ops.rbegin(), B.Ops.rend(),
+                             [](const MedOp &Op) { return !Op.Dead; });
+    if (Last != B.Ops.rend() &&
+        (Last->Opcode == NdOp::CALL || Last->Opcode == NdOp::INDIR_CALL))
+      FinalCalls.insert(Last->Addr);
+  }
+  std::set<std::string> NoReturn;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (const ExprPtr *Call = CallOf(S);
+        Call && FinalCalls.count(S.Addr) && !(*Call)->CallTarget.empty())
+      NoReturn.insert((*Call)->CallTarget);
+  });
+  const FlowGraph G(Func.Body, [&](const HighStmt &S) {
+    const ExprPtr *Call = CallOf(S);
+    if (!Call)
+      return false;
+    const std::string &Callee = (*Call)->CallTarget;
+    return isTerminatingHighCall(*Call) ||
+           (!Callee.empty() && (NoReturn.count(Callee) ||
+                                ((*Call)->IntrinsicId == Intrinsic::None &&
+                                 libc::isNoReturnFunction(Callee))));
+  });
   if (!G.Complete) {
     std::fprintf(stderr, "FLOWORACLE stage=%s entry=%llx incomplete\n",
                  StageName.c_str(), Entry);
     return;
   }
 
+  // Jumps and empty label anchors run nothing of a block of their own, and
+  // a test may merge the branches of several blocks (`a || b`) or run at a
+  // loop's latch while carrying one address.
   auto BlockOf = [&](size_t N) -> int {
     const HighStmt *S = G.Nodes[N].Statement;
     if (!S || S->IsPhiCopy || !S->Addr || S->Addr == InvalidVA)
       return -1;
+    switch (S->Kind) {
+    case StmtKind::Goto:
+    case StmtKind::Break:
+    case StmtKind::Continue:
+    case StmtKind::Nop:
+    case StmtKind::If:
+    case StmtKind::IfElse:
+    case StmtKind::While:
+    case StmtKind::DoWhile:
+    case StmtKind::For:
+    case StmtKind::Switch:
+      return -1;
+    case StmtKind::Block:
+      if (S->Body.empty())
+        return -1;
+      break;
+    default:
+      break;
+    }
     auto It = Owner.find(S->Addr);
     return It == Owner.end() ? -1 : It->second;
   };

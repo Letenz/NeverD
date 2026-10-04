@@ -15,6 +15,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <future>
 #if defined(__x86_64__)
 #include <Hypervisor/hv_vmx.h>
@@ -463,7 +464,7 @@ TEST_F(HvfIntelProbe, FiniteDeadline) {
   State.reg(X64Register::FLAGS) = x64::InitialFlags;
   State.reg(X64Register::BX) = PC + 0x100;
   auto Prepare = [&](uint64_t Entry) {
-    probePhase("prepare_with_watchdog");
+    probePhase("prepare_with_transport");
     State.reg(X64Register::AX) = mach_absolute_time();
     State.reg(X64Register::PC) = Entry;
     return Machine->step(State, *Root, control());
@@ -627,9 +628,8 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         Stop = true;
       });
-    auto Control = MachineRunControl{
-        Clock::now() + std::chrono::milliseconds(Kind == Deadline ? 50 : 2000),
-        &Stop};
+    auto Control = control();
+    Control.Stop = &Stop;
     bool NativeReturned = false;
     const char *Phase = "admission";
     int64_t EntryBudgetMicroseconds = 0;
@@ -646,19 +646,29 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
       InterruptCPU = Native.cpu();
       Signal.release();
       Entered.set_value();
+      // Admission can spend more than 50 ms waiting or binding memory. This
+      // fixture requires native cancellation, so start its short deadline on
+      // the admitted owner while preserving the outer cooperative deadline.
+      auto NativeControl = Control;
+      if (Kind == Deadline)
+        NativeControl.Deadline =
+            std::min(Control.Deadline,
+                     Clock::now() + std::chrono::milliseconds(50));
       Phase = "native entry";
       EntryBudgetMicroseconds =
           std::chrono::duration_cast<std::chrono::microseconds>(
-              Control.Deadline - Clock::now())
+              NativeControl.Deadline - Clock::now())
               .count();
-      return Native.run(Control, [&](bool Cancelled) -> llvm::Error {
+      return Native.run(NativeControl, [&](bool Cancelled) -> llvm::Error {
         NativeReturned = true;
         EXPECT_TRUE(Cancelled);
         uint64_t Reason = 0;
         if (auto S = hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_RO_EXIT_REASON,
                                            &Reason))
           return hvf::error("test read interrupted exit", S);
-        EXPECT_EQ(Reason, uint64_t(VMX_REASON_IRQ));
+        EXPECT_TRUE(Reason == VMX_REASON_IRQ ||
+                    Reason == VMX_REASON_VMX_TIMER_EXPIRED)
+            << "reason=" << Reason;
         return llvm::Error::success();
       });
     });
@@ -695,6 +705,87 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
   ASSERT_EQ(llvm::toString(Prepare(RetryPC)), "");
   EXPECT_EQ(State.reg(X64Register::PC), RetryPC + 1);
   EXPECT_EQ(State.reg(X64Register::AX), 0x12345678u);
+}
+
+TEST_F(HvfExecutor, IntelGuestStoreWitnessStopsAndRetries) {
+  auto Created = createHvfX64Machine(*Memory);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto Machine = std::move(*Created);
+  constexpr uint64_t PC = 0x10000, LoopPC = PC + 4, RetryPC = PC + 6;
+  // Preparation executes NOP. Only the subsequent raw entry can store a fresh
+  // nonce and reach the busy loop: a timer return alone is not a witness.
+  const uint8_t Code[] = {0x90, 0x48, 0x89, 0x03, 0xeb, 0xfe, 0x90};
+  ASSERT_EQ(llvm::toString(Memory->map(PC, 4096, Read | Write | Execute)), "");
+  ASSERT_EQ(llvm::toString(Memory->write(PC, Code)), "");
+  auto *Scratch =
+      Memory->physicalPointer(Memory->mappings().at(PC).Physical) + 0x100;
+  static_assert(std::atomic<uint64_t>::is_always_lock_free);
+  auto *Witness = std::construct_at(
+      reinterpret_cast<std::atomic<uint64_t> *>(Scratch), uint64_t(0));
+  auto DestroyWitness = llvm::scope_exit([&] { std::destroy_at(Witness); });
+  ASSERT_EQ(llvm::toString(Memory->beginRun()), "");
+  auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+  auto Root = buildX64PageTables(*Memory);
+  ASSERT_TRUE(bool(Root)) << llvm::toString(Root.takeError());
+  X64MachineState State;
+  State.reg(X64Register::FLAGS) = x64::InitialFlags;
+  State.reg(X64Register::BX) = PC + 0x100;
+  State.reg(X64Register::AX) = mach_absolute_time() | 1;
+  State.reg(X64Register::PC) = PC;
+  ASSERT_EQ(llvm::toString(Machine->step(State, *Root, control())), "");
+  ASSERT_EQ(State.reg(X64Register::PC), PC + 1);
+  const auto Nonce = State.reg(X64Register::AX);
+  ASSERT_EQ(Witness->load(), 0u);
+  std::atomic<bool> Stop{false}, Done{false};
+  std::thread Stopper([&] {
+    // Do not acquire the core lease from this thread while native execution
+    // owns it. The aligned hardware store is the only stop trigger.
+    while (Witness->load() != Nonce && !Done.load())
+      std::this_thread::yield();
+    if (Witness->load() == Nonce)
+      Stop = true;
+  });
+  auto Control = control();
+  Control.Stop = &Stop;
+  hvf::Binding Binding(Host, *Memory);
+  bool NativeReturned = false;
+  auto E = Binding.execute(Control, [&](auto &Native) -> llvm::Error {
+    uint64_t Controls = 0;
+    if (auto S =
+            hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_CTRL_CPU_BASED, &Controls))
+      return hvf::error("witness read stepping controls", S);
+    if (auto S = hv_vmx_vcpu_write_vmcs(Native.cpu(), VMCS_CTRL_CPU_BASED,
+                                        Controls & ~uint64_t(CPU_BASED_MTF)))
+      return hvf::error("witness disable MTF", S);
+    return Native.run(Control, [&](bool Cancelled) -> llvm::Error {
+      NativeReturned = true;
+      EXPECT_TRUE(Cancelled);
+      EXPECT_TRUE(Stop.load());
+      EXPECT_EQ(Witness->load(), Nonce);
+      uint64_t Reason = 0, RIP = 0;
+      if (auto S =
+              hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_RO_EXIT_REASON, &Reason))
+        return hvf::error("witness read interrupted exit", S);
+      EXPECT_TRUE(Reason == VMX_REASON_IRQ ||
+                  Reason == VMX_REASON_VMX_TIMER_EXPIRED);
+      if (auto S = hv_vcpu_read_register(Native.cpu(), HV_X86_RIP, &RIP))
+        return hvf::error("witness read loop PC", S);
+      EXPECT_EQ(RIP, LoopPC);
+      return llvm::Error::success();
+    });
+  });
+  Done = true;
+  Stopper.join();
+  EXPECT_TRUE(NativeReturned);
+  EXPECT_TRUE(Stop.load());
+  EXPECT_EQ(Witness->load(), Nonce);
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
+  llvm::consumeError(std::move(E));
+  State.reg(X64Register::PC) = RetryPC;
+  ASSERT_EQ(llvm::toString(Machine->step(State, *Root, control())), "");
+  EXPECT_EQ(State.reg(X64Register::PC), RetryPC + 1);
+  EXPECT_EQ(State.reg(X64Register::AX), Nonce);
+  EXPECT_EQ(State.reg(X64Register::FLAGS), x64::InitialFlags);
 }
 #endif
 } // namespace

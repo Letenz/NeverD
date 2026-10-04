@@ -5,9 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "LLVMInterpreterModelInternal.h"
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/IR/CFG.h"
-
-#include <bitset>
 
 namespace neverd::analysis::llvm_model {
 void Builder::validateInitialization() {
@@ -18,8 +17,8 @@ void Builder::validateInitialization() {
   const auto Ranges = Attribute.getValueAsConstantRangeList();
   if (Ranges.empty())
     fail("empty state initializes contract");
-  using Bits = std::bitset<StateBytes>;
-  Bits Claimed;
+  using Bits = llvm::BitVector;
+  Bits Claimed(StateBytes);
   uint64_t LastEnd = 0;
   bool First = true;
   for (const auto &Range : Ranges) {
@@ -51,6 +50,7 @@ void Builder::validateInitialization() {
   for (const auto &B : F) {
     work();
     auto &State = Flow[&B];
+    State.Stores.resize(StateBytes);
     State.Out = Claimed;
     for (const auto &I : B) {
       work();
@@ -81,7 +81,7 @@ void Builder::validateInitialization() {
       if (!Pointer || !StateOffsets.count(Pointer))
         continue;
       auto Slot = stateSlot(Pointer, bytes(Type), Alignment);
-      Bits Mask;
+      Bits Mask(StateBytes);
       work(Slot.Size);
       for (uint64_t J = 0; J != Slot.Size; ++J)
         Mask.set(Slot.Offset + J);
@@ -101,7 +101,7 @@ void Builder::validateInitialization() {
     Changed = false;
     for (const auto &B : F) {
       work();
-      Bits In;
+      Bits In(StateBytes);
       if (&B != &F.getEntryBlock()) {
         In = Claimed;
         for (const auto *Predecessor : llvm::predecessors(&B)) {
@@ -110,7 +110,8 @@ void Builder::validateInitialization() {
         }
       }
       auto &State = Flow.at(&B);
-      const auto Out = In | State.Stores;
+      auto Out = In;
+      Out |= State.Stores;
       Changed |= Out != State.Out;
       State.In = In;
       State.Out = Out;
@@ -127,11 +128,11 @@ void Builder::validateInitialization() {
         Initialized |= Access.Bytes;
         break;
       case Kind::Read:
-        if ((Access.Bytes & ~Initialized).any())
+        if (Access.Bytes.test(Initialized))
           fail("state initializes contract may read before initialization");
         break;
       case Kind::Return:
-        if ((Claimed & ~Initialized).any())
+        if (Claimed.test(Initialized))
           fail("state initializes contract may leave undef bytes at return");
         break;
       }
