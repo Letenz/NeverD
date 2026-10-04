@@ -2189,6 +2189,17 @@ Identity fixtures compare Bionic imports, named dynamic calls and raw ARM64
 services, retain errno, and reject calls after the provider closes. Linux
 x64/ARM64 fixtures compare real/effective UID/GID queries with startup auxv;
 credential mutation must still stop as unsupported.
+Independent `pthread_once` fixtures at O0/O2 and all three relocation packings
+check constructor initialization, nested callbacks, imports inside callbacks,
+repeated calls and live stack locals.
+Default-scope callbacks also retain their resident provider after the explicit
+handle closes; an absent scope and an explicit empty scope remain distinct.
+Negative cases cover invalid controls and callback addresses, read-only
+memory, recursion, unsupported imports,
+unbalanced callback stacks and exhaustion of the original instruction budget.
+C/CLI and Python tests check callback effects and ordered nullable call results
+through the real shared engine. This is modeled API 28 evidence, not a native
+Android device comparison or proof of concurrent initialization semantics.
 Linux regression tests guard the shared kernel-service boundary. Native KVM
 and WHP cells may be unavailable on the host; report their skips separately.
 

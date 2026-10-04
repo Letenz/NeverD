@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 77e637f400fa5f741338d1fc1bca20712b92e6323ef23d9fdb5b06dc7d3c0d9f -->
+<!-- i18n-source: bebc9b4b7e408e18ff142e834c8d2917380133b9a965a0a5c5841f8dc23e326e -->
 
 [← 문서 목록](README.md)
 
@@ -118,3 +118,5 @@ CPU 실행 전에 `scripts/prepare_hvf_batches.py`가 전체·선택 목록과 �
 2026-10-03에 깨끗한 소스 `e4a8169e69eb668ed3795efe4bd5f42cf4f287c2`가 HVF 활성화, Unicorn 비활성화, `NEVERD_LLVM_PREBUILT=ON` 설정의 로컬 네이티브 ARM64 Release 검증을 통과했습니다. 전체 CPU 프로필은 20개 대상, 520개 메서드, 7,125개 결과를 대조했으며 882개 통과, 6,243개 건너뛰기, 실패 0개였고 필수 네이티브 16개가 모두 통과했습니다. 독립 Darwin 프로필은 32개 메서드, 286개 결과를 대조했으며 65개 통과, 221개 건너뛰기, 실패 0개였고 필수 네이티브 39개가 모두 통과했습니다. 원래 단일 프로세스 복구 루프도 연속 1,000회 완료했고 이어서 네이티브 전송 12개가 모두 통과했습니다. 원본 로그, XML, 프로세스 상태와 해당 소스 정의를 독립적으로 확인했습니다. CPU와 Darwin 집계에는 중복이 있으므로 합산하면 안 됩니다. 이 결과는 Intel 전체 검증이나 iOS SDK 빌드를 입증하지 않습니다.
 
 소스 `bd284894c60427cf4e6a60e661a1fa0df8a070f5`를 사용한 [독립 Intel 복구 진단 실행](https://github.com/NeverSight/NeverD/actions/runs/37159724276)은 2026-10-03 23:41:30 UTC에 종료됐으며 GitHub 주석은 호스팅 runner와의 통신 상실을 보고했습니다. 계획과 진행 artifact 11개가 남았고 다운로드 후 서버 SHA-256과 대조했습니다. 마지막 보존 스냅샷은 252회 완료와 253회 시작을 증명하지만 최종 장애 지점을 특정하지는 못합니다. 최종 결과와 프로세스 회수 기록이 없고 전체 작업 로그 API는 404를 반환했습니다. 따라서 요청한 1,000회는 여전히 미검증입니다. 저장소에는 자체 호스팅 runner도 없었습니다. 이는 보존된 실패 증거이며 안정성 수정이나 Intel 전체 검증 통과를 뜻하지 않습니다.
+
+[개인 저장소 워크플로](https://github.com/gmh5225/test_mac_intel)를 이용하면 로컬 Intel Mac 없이 호스팅 Intel runner에서 검증할 수 있습니다. NeverD 진단 코드와 테스트 소스 버전을 각각 고정하고 워크플로 버전도 별도로 기록합니다. 대기 시간과 실행 안정성은 따로 평가해야 합니다. 복구 진단은 실패를 보고하기 전에 각 업로드 자식 프로세스의 PID, 부모, 실행 파일, 종료 코드, 신호와 종료 이유를 보존합니다. Action 실패 후 최대 20초 동안 기다리며 PID, 부모, 프로세스 이름과 실행 시간이 일치하는 macOS IPS 충돌 보고서만 수집합니다. 보고서가 없으면 이를 명시합니다. 업로드 실패는 원래 네이티브 실행을 중단하지만, 그 자체로 Hypervisor 오류나 테스트 성공을 입증하지는 않습니다.

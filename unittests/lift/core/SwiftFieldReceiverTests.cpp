@@ -1,10 +1,12 @@
 #include "../../../lib/loader/MachO/ImmutableNativeFrame.h"
 #include "../../../lib/loader/Swift/SwiftMangledClassMethodABI.h"
+#include "../../../lib/loader/Swift/SwiftMangledValueConstructorABI.h"
 #include "../../../lib/sdk/capi/ObjCNativeSwiftReceiverSources.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"
@@ -1299,4 +1301,242 @@ TEST(SwiftFixedRecordStorage, PointerRecordsCannotHideInThreadLocalSlices) {
           llvm::MachO::S_THREAD_LOCAL_REGULAR;
       EXPECT_FALSE(F.prove()) << llvm::utohexstr(Slot);
     }
+}
+
+namespace {
+struct FixedConstructorFixture : FixedRecordFixture {
+  static constexpr va_t Entry = 0x1080;
+  static constexpr const char *Name =
+      "_$s4Demo5ValueV6field06field16field26field34Demo5ValueV"
+      "12CoreGraphics7CGFloatV_12CoreGraphics7CGFloatVSdySbcSgtcfC";
+  FixedConstructorFixture(Arch A) : FixedRecordFixture(A) {
+    u32(Entry, A == Arch::AArch64 ? 0xd65f03c0 : 0x000000c3);
+    Image.Symbols.push_back({Name, Entry, A == Arch::AArch64 ? 4u : 1u, true});
+    Image.RuntimeFunctionAddrs.insert(Entry);
+  }
+  auto declaration() {
+    return swiftMangledFixedRecordConstructorDeclaration(Image, Entry);
+  }
+};
+} // namespace
+
+TEST(SwiftFixedRecordConstructor, CompleteDeclarationKeepsAllCarriers) {
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    FixedConstructorFixture F(A);
+    const auto D = F.declaration();
+    ASSERT_TRUE(D);
+    EXPECT_EQ(D->Storage.MangledType, "4Demo5ValueV");
+    ASSERT_EQ(D->Signature.Parameters.size(), 5u);
+    ASSERT_EQ(sourceABIParameters(D->Signature).size(), 5u);
+    ASSERT_EQ(D->Signature.ReturnComponents.size(), 4u);
+    EXPECT_EQ(D->Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::SwiftMangled);
+    std::string Error;
+    EXPECT_TRUE(validateSourceABI(D->Signature, Error)) << Error;
+    for (unsigned I = 0; I != 3; ++I) {
+      EXPECT_EQ(D->Signature.Parameters[I].Type->Kind, NdTypeKind::Float);
+      EXPECT_EQ(D->Signature.Parameters[I].Type->Size, 8u);
+      const auto FP = A == Arch::AArch64 ? a64reg::V(I) : x86reg::vectorReg(I);
+      EXPECT_EQ(D->Signature.Parameters[I].Location.Kind,
+                SourceABICarrierKind::FloatingRegister);
+      EXPECT_EQ(D->Signature.Parameters[I].Location.RegisterOffset, FP);
+      EXPECT_EQ(D->Signature.ReturnComponents[I].RegisterOffset, FP);
+      EXPECT_EQ(D->Signature.ReturnComponents[I].ValueBytes, 8u);
+    }
+    EXPECT_EQ(D->Signature.Parameters[3].Location.RegisterOffset,
+              A == Arch::AArch64 ? a64reg::X0 : x86reg::RDI);
+    EXPECT_EQ(D->Signature.Parameters[4].Location.RegisterOffset,
+              A == Arch::AArch64 ? a64reg::X1 : x86reg::RSI);
+    EXPECT_EQ(D->Signature.ReturnComponents[3].RegisterOffset,
+              A == Arch::AArch64 ? a64reg::X0 : x86reg::RAX);
+    for (unsigned I = 3; I != 5; ++I)
+      EXPECT_EQ(D->Signature.Parameters[I].TheRole,
+                SourceParameterTypeHint::Role::Ordinary);
+  }
+}
+
+TEST(SwiftFixedRecordConstructor,
+     RejectsDifferentDeclarationsAndCurrentIdentity) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 43; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      FixedConstructorFixture F(A);
+      ASSERT_TRUE(F.declaration());
+      auto &Name = F.Image.Symbols.back().Name;
+      auto Replace = [&](const char *From, const char *To) {
+        const auto P = Name.find(From);
+        ASSERT_NE(P, std::string::npos);
+        Name.replace(P, std::strlen(From), To);
+      };
+      switch (Mutation) {
+      case 0:
+        F.Image.Format = BinaryFormat::ELF;
+        break;
+      case 1:
+        F.Image.IsRelocatable = true;
+        break;
+      case 2:
+        F.Image.Bits = Bitness::Bits32;
+        break;
+      case 3:
+        F.Image.Arch = Arch::Unknown;
+        break;
+      case 4:
+        F.Image.MachOTwoLevelNamespace = false;
+        break;
+      case 5:
+        F.Image.Symbols.push_back(F.Image.Symbols.back());
+        break;
+      case 6: {
+        auto Other = F.Image.Symbols.back();
+        Other.Addr += 8;
+        F.Image.Symbols.push_back(Other);
+        break;
+      }
+      case 7:
+        F.Image.Symbols.push_back({"data_alias", F.Entry, 8, false});
+        break;
+      case 8:
+        F.Image.Symbols.back().IsFunc = false;
+        break;
+      case 9:
+        F.Image.Segments[0].Flags =
+            F.Image.Segments[0].Flags | SegmentFlags::Writable;
+        break;
+      case 10:
+        F.Image.DataPtrRelocSlots.insert(F.Entry);
+        break;
+      case 11:
+        Name.insert(0, "_");
+        break;
+      case 12:
+        Name += "unknown";
+        break;
+      case 13:
+        Replace("4Demo5ValueV", "4Demo5ValueC");
+        break;
+      case 14:
+        Name += "Tg5";
+        break;
+      case 15:
+        Replace("cfC", "cfc");
+        break;
+      case 16:
+        Replace("tcfC", "tKcfC");
+        break;
+      case 17:
+        Replace("tcfC", "tYacfC");
+        break;
+      case 18:
+        Replace("ySbcSg", "SiSbcSg");
+        break;
+      case 19:
+        Replace("ySbcSg", "ySucSg");
+        break;
+      case 20:
+        Replace("ySbcSg", "ySbc");
+        break;
+      case 21:
+        Replace("ySbcSg", "ySbXCSg");
+        break;
+      case 22:
+        Replace("ySbcSg", "ySbKcSg");
+        break;
+      case 23:
+        Replace("ySbcSg", "ySbYacSg");
+        break;
+      case 24:
+        Replace("ySbcSg", "ySbcSgSg");
+        break;
+      case 25:
+        Replace("VSdy", "VSfy");
+        break;
+      case 26:
+        Replace("12CoreGraphics7CGFloatV", "Sd");
+        break;
+      case 27:
+        Replace("_12CoreGraphics7CGFloatV", "_Sd");
+        break;
+      case 28:
+        Replace("field34Demo5ValueV", "field34Demo5OtherV");
+        break;
+      case 29:
+        Replace("6field1", "6other1");
+        break;
+      case 30:
+        Replace("6field3", "6field4");
+        break;
+      case 31:
+        F.Image.Symbols[2].Name = "other_metadata";
+        break;
+      case 32:
+        F.u64(F.Witnesses + 64, 24);
+        break;
+      case 33:
+        F.text(0x3295, "Sg");
+        break;
+      case 34:
+        F.Image.Sections[2].Type = llvm::MachO::S_THREAD_LOCAL_REGULAR;
+        break;
+      case 35:
+        F.Image.DyldBindSlots[0x6000].WeakImport = true;
+        break;
+      case 36:
+        F.Image.DyldBindSlots[0x6000].Module = "/usr/lib/libUnknown.dylib";
+        break;
+      case 37:
+        F.u32(0x3210, 4);
+        break;
+      case 38:
+        F.Image.Symbols.push_back(F.Image.Symbols[2]);
+        break;
+      case 39: {
+        auto Other = F.Image.Symbols[0];
+        Other.Addr += 8;
+        F.Image.Symbols.push_back(Other);
+        break;
+      }
+      case 40:
+        F.Image.Exports.push_back({"different_function", 0, F.Entry});
+        break;
+      case 41:
+        F.Image.Exports.push_back({Name, 0, F.Entry + 8});
+        break;
+      case 42:
+        Replace("ySbcSg", "ySbXBSg");
+        break;
+      }
+      EXPECT_FALSE(F.declaration());
+    }
+}
+
+TEST(SwiftFixedRecordConstructor,
+     IndependentFieldTypesAndLiveMetadataStayRequired) {
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    FixedConstructorFixture F(A);
+    ASSERT_TRUE(F.declaration());
+    auto &Name = F.Image.Symbols.back().Name;
+    for (unsigned I = 0; I != 2; ++I) {
+      const auto P = Name.find("12CoreGraphics7CGFloatV");
+      ASSERT_NE(P, std::string::npos);
+      Name.replace(P, std::strlen("12CoreGraphics7CGFloatV"), "Sd");
+      EXPECT_FALSE(F.declaration());
+      F.relative(0x3214 + I * 12, 0x3280);
+      ASSERT_TRUE(F.declaration());
+    }
+    const auto Original = F.declaration();
+    ASSERT_TRUE(Original);
+    F.u32(F.Metadata + 28, 32);
+    EXPECT_FALSE(F.declaration());
+    F.u32(F.Metadata + 28, 24);
+    ASSERT_TRUE(F.declaration());
+    F.Image.Symbols.back().Name += "TA";
+    EXPECT_FALSE(F.declaration());
+    EXPECT_EQ(Original->Signature.Parameters.size(), 5u);
+  }
+  FixedConstructorFixture F(Arch::AArch64);
+  F.Image.Symbols.back().Addr = F.Entry + 1;
+  F.Image.RuntimeFunctionAddrs.insert(F.Entry + 1);
+  EXPECT_FALSE(
+      swiftMangledFixedRecordConstructorDeclaration(F.Image, F.Entry + 1));
 }

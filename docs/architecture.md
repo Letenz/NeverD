@@ -1432,6 +1432,14 @@ lookups and the API 28 TLS `dlerror` slot; the C API, CLI and Python expose the
 same named request/call events. These catalogue entries never load host code.
 Missing entries return modeled lookup errors, while calls whose behavior or
 lookup scope is unsupported stop explicitly.
+Bionic also owns the API 28 `pthread_once` control state. It requests guest
+initialization through an internal callback result; the native runner suspends
+the import and runs the callback on the same CPU and live stack. Pending
+imports retain their event indices, return links and stack pointers, so nested
+callbacks preserve trace order and only complete their own calls. Instructions,
+services and deadlines continue through the existing execution session. The
+runner validates a normal callback return before Bionic marks the control
+complete. No SDK surface supplies separate initialization semantics.
 An optional ordered `default_scope` names resident catalogue providers visible
 to `RTLD_DEFAULT`. Android native input validation checks its membership and
 uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
@@ -2975,3 +2983,5 @@ Before rendering C, `LLVMCCommonBranches` factors identical integer exit tests f
 The shared `SourceABI` represents one bounded mixed Swift result as a flat logical record of three Float64 fields followed by an opaque pointer. Its independent physical results are d0–d2 and x0 on ARM64, or xmm0–xmm2 and rax on x86-64; this x86-64 shape also admits up to three ordinary double inputs. Assignment and validation share the same carrier mapping. LowIR/MedIR call extraction, typed HighIR records and HighC retain every field and one call evaluation. Ordinary C/Objective-C classification, mixed record parameters and other mixed layouts remain unsupported. This declaration contract does not authenticate a nominal layout, constructor, callback ownership or native entry. Compiler evidence covers four macOS/Mac Catalyst targets, while native O0/O2 fixtures check full floating bit patterns, nil/object identity, return guards and observable call counts against the real Swift runtime.
 
 `SwiftMetadata` owns registered internal nominal and protocol identities for both source recipes and bounded storage queries. One query authenticates a fixed 32-byte struct containing three Double/CGFloat fields and one nonoptional strong local class reference. The full registration, reflection owner, exact ordinary immutable CGFloat import, field offsets, unique metadata object and complete immutable value-witness layout must agree. All eight witness code pointers remain dynamic; storage evidence grants no witness effects, constructor or callback ABI, native-entry proof, frame permission, or source publication. The existing scalar-only Swift declaration recovery stays conservative. Four-target compiler records and Onone/O Swift values independently check the layout, floating bit patterns, reference identity, copy isolation and destruction. Registration and structural records must use ordinary immutable storage; TLS substitutions are rejected, including during recipe publication.
+
+`SwiftMangledValueConstructorABI` independently authenticates one bounded value-constructor declaration against the current registered fixed-record storage. The complete declaration tree must match all four field labels, three Double/CGFloat arguments, an optional thick `(Bool) -> Void` callback, and the owning struct result. Shared `SourceABI` assigns all five input carriers and four result carriers. The callback code/context pair is distinct from the stored strong delegate reference. Conflicting symbols, stale field records and other declaration shapes are rejected. This query supplies a declaration only; current constructor body, caller, callback ownership and publication proofs remain separate. Four-target compiler evidence and O0/O2 controlled Swift constructor calls check full floating bits, nil and capturing callbacks, reference lifetime and all returned fields without authorizing the original constructor body.

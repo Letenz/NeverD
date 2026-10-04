@@ -147,6 +147,22 @@ function commandGroup() {
   };
 }
 
+async function finishUpload(operation, record, suffix) {
+  try {
+    const status = await operation.completion;
+    if (status !== 0) {
+      throw new Error(`recovery ${suffix} upload failed: exit=${status}; ` +
+        `signal=${operation.result.signal}; reason=${operation.result.termination_reason}`);
+    }
+  } finally {
+    // A signalled uploader has a null exit status. Preserve its identity and
+    // outcome before cancelling the guest, rather than misattributing the
+    // missing native result to a hypervisor failure.
+    save(record, {...operation.result, pid: operation.child.pid ?? null, parent_pid: process.pid,
+      executable: process.execPath});
+  }
+}
+
 async function main() {
   const group = commandGroup();
   const interrupt = () => group.cancel();
@@ -174,6 +190,8 @@ async function main() {
   if (await preparation.completion !== 0) throw new Error('recovery preparation failed');
   const plan = JSON.parse(fs.readFileSync(path.join(evidence, 'plan.json'), 'utf8'));
   save(path.join(evidence, 'host-start.json'), await captureHostState(evidence, environment, group.signal));
+  const uploads = path.join(evidence, 'uploads');
+  fs.mkdirSync(uploads);
   const upload = async (directory, suffix) => {
     const uploadEnvironment = {...process.env,
       INPUT_NAME: `hvf-intel-recovery-attempt-${attempt}-${suffix}`, INPUT_PATH: directory,
@@ -182,7 +200,7 @@ async function main() {
       'INPUT_INCLUDE-HIDDEN-FILES': 'false', INPUT_ARCHIVE: 'true'};
     const operation = group.start(process.execPath, [path.join(uploader, 'dist/upload/index.js')],
       uploadEnvironment, {timeoutMs: 120000});
-    if (await operation.completion !== 0) throw new Error(`recovery ${suffix} upload failed`);
+    await finishUpload(operation, path.join(uploads, `${suffix}.json`), suffix);
   };
   // Seal the pre-execution plan separately; its directory never becomes live.
   const prepared = path.join(evidence, 'prepared');
@@ -204,5 +222,5 @@ async function main() {
   if (group.signal.aborted) throw new Error('recovery diagnosis interrupted during final collection');
 }
 
-module.exports = {progress, readProgress, observeRecovery, commandGroup, LIMIT, MAX_PROGRESS};
+module.exports = {progress, readProgress, observeRecovery, commandGroup, finishUpload, LIMIT, MAX_PROGRESS};
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });

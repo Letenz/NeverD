@@ -7,7 +7,7 @@ const path = require('node:path');
 const {once} = require('node:events');
 const {setTimeout: delay} = require('node:timers/promises');
 const {startCommand, testEnvironment} = require('../hvf-intel-diagnostic/run.cjs');
-const {readProgress, observeRecovery, commandGroup, LIMIT, MAX_PROGRESS} = require('./run.cjs');
+const {readProgress, observeRecovery, commandGroup, finishUpload, LIMIT, MAX_PROGRESS} = require('./run.cjs');
 const NAME = 'HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry';
 const environment = testEnvironment(process.env);
 const round = n => `Repeating all tests (iteration ${n}) . . .\n[ RUN      ] ${NAME}\n[       OK ] ${NAME} (150 ms)\n[  PASSED  ] 1 test.\n`;
@@ -23,20 +23,23 @@ function fixture(t) {
 }
 
 async function producer(directory, count = 100, options = {}) {
+  const {readyDelayMs = 0, ...commandOptions} = options;
   const script = `const fs = require('node:fs');
     const root = ${JSON.stringify(directory)};
     const round = ${round.toString()}; const NAME = ${JSON.stringify(NAME)};
     fs.writeFileSync(root + '/children.json', JSON.stringify({process_groups: [process.pid]}));
-    process.stdout.write('ready'); let n = 0;
+    setTimeout(() => process.stdout.write('ready'), ${readyDelayMs}); let n = 0;
     const interval = setInterval(() => {
       fs.appendFileSync(root + '/execution/output.log', round(++n));
       if (n === ${count}) clearInterval(interval);
     }, 5);`;
   const operation = startCommand(process.execPath, ['-e', script], environment,
-    {stdio: 'pipe', timeoutMs: 5000, ...options});
-  // Register an early rejection handler while awaiting the ready message.
-  operation.completion.catch(() => {});
-  await once(operation.child.stdout, 'data');
+    {stdio: 'pipe', timeoutMs: 5000, ...commandOptions});
+  // A loaded runner can terminate this synthetic child before its handshake.
+  // Observe that exit too, so the fixture never leaves a pending test promise.
+  await Promise.race([once(operation.child.stdout, 'data'), operation.completion.then(() => {
+    throw new Error('synthetic producer exited before readiness');
+  })]);
   return operation;
 }
 
@@ -119,11 +122,21 @@ test('hard artifact cap bounds even unexpectedly fast or excess native output', 
 });
 
 test('progress and pending uploads do not reset the original command deadline', async t => {
-  const directory = fixture(t), operation = await producer(directory, 10000, {timeoutMs: 300, graceMs: 50});
-  await assert.rejects(observed(operation, directory, async () => { await delay(450); }), /deadline/);
+  const directory = fixture(t), operation = await producer(directory, 10000, {timeoutMs: 2000, graceMs: 50});
+  let uploaded = false;
+  await assert.rejects(observed(operation, directory, async () => {
+    await Promise.allSettled([operation.completion]);
+    await delay(30);
+    uploaded = true;
+  }), /deadline/);
+  assert.equal(uploaded, true);
   assert.equal(operation.result.termination_reason, 'deadline');
-  assert.ok(Date.parse(operation.result.completed_at) - Date.parse(operation.result.started_at) < 1500);
+  assert.ok(Date.parse(operation.result.completed_at) - Date.parse(operation.result.started_at) < 3500);
   assert.notEqual(operation.child.exitCode, 0);
+});
+
+test('a producer deadline before readiness rejects instead of stranding the test', async t => {
+  await assert.rejects(producer(fixture(t), 10000, {readyDelayMs: 1000, timeoutMs: 100, graceMs: 50}), /deadline/);
 });
 
 test('failed upload cancels and retires the still-running producer', async t => {
@@ -133,6 +146,39 @@ test('failed upload cancels and retires the still-running producer', async t => 
   assert.equal(operation.result.termination_reason, 'progress-evidence-failure');
   assert.ok(operation.result.completed_at);
   assert.equal(operation.child.signalCode, 'SIGTERM');
+});
+
+test('uploader exit failures and fatal signals retain distinct process evidence', async t => {
+  const directory = fixture(t);
+  for (const [suffix, script, exit, signal] of [
+    ['success', 'process.exit(0)', 0, null],
+    ['exit', 'process.exit(7)', 7, null],
+    ['signal', "process.kill(process.pid, 'SIGTERM')", null, 'SIGTERM'],
+  ]) {
+    const operation = startCommand(process.execPath, ['-e', script], environment, {stdio: 'pipe'});
+    const record = path.join(directory, `${suffix}.json`);
+    const finished = finishUpload(operation, record, suffix);
+    if (suffix === 'success') await finished;
+    else await assert.rejects(finished, new RegExp(`exit=${exit}; signal=${signal}`));
+    const data = JSON.parse(fs.readFileSync(record));
+    assert.equal(data.pid, operation.child.pid);
+    assert.equal(data.executable, process.execPath);
+    assert.equal(data.exit_status, exit);
+    assert.equal(data.signal, signal);
+    assert.equal(data.termination_reason, null);
+    assert.ok(data.completed_at);
+  }
+});
+
+test('uploader deadline is preserved even when command completion rejects', async t => {
+  const directory = fixture(t), record = path.join(directory, 'timeout.json');
+  const operation = startCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
+    environment, {stdio: 'pipe', timeoutMs: 100, graceMs: 50});
+  await assert.rejects(finishUpload(operation, record, 'timeout'), /deadline/);
+  const data = JSON.parse(fs.readFileSync(record));
+  assert.equal(data.termination_reason, 'deadline');
+  assert.equal(data.pid, operation.child.pid);
+  assert.ok(data.completed_at);
 });
 
 test('external cancellation retires both uploader and the Python-owned native process group', async t => {
