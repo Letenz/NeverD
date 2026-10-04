@@ -2293,6 +2293,10 @@ Identity fixtures compare Bionic imports, named dynamic calls and raw ARM64
 services, retain errno, and reject calls after the provider closes. Linux
 x64/ARM64 fixtures compare real/effective UID/GID queries with startup auxv;
 credential mutation must still stop as unsupported.
+Page-size fixtures check the fixed 4096-byte guest layout, unchanged errno,
+direct and named dynamic calls, explicit catalogue membership, closed-provider
+rejection and resident-provider calls after close across all three relocation
+packings. The result does not depend on the host's page size.
 Independent `pthread_once` fixtures at O0/O2 and all three relocation packings
 check constructor initialization, nested callbacks, imports inside callbacks,
 repeated calls and live stack locals.

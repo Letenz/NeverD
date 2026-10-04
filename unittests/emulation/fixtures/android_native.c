@@ -11,6 +11,7 @@ extern void *calloc(u64, u64);
 extern void *realloc(void *, u64);
 extern void free(void *);
 extern int *__errno(void);
+extern int getpagesize(void);
 extern int __system_property_get(const char *, char *);
 extern int android_get_device_api_level(void);
 extern int getpid(void);
@@ -70,6 +71,12 @@ u64 libc_error(void) {
   *__errno() = 77;
   long result = write(99, (const void *)0, 5);
   return result == -1 && *__errno() == 9 ? 0 : 1;
+}
+u64 page_size(unsigned int *out) {
+  *__errno() = 77;
+  out[0] = getpagesize();
+  out[1] = *__errno();
+  return out[0];
 }
 u64 raw_error(void) {
   *__errno() = 77;
@@ -142,6 +149,23 @@ extern int dlclose(void *);
 extern char *dlerror(void);
 typedef u64 (*length_fn)(const char *);
 typedef unsigned int (*identity_fn)(void);
+
+u64 dynamic_page_size(unsigned int *out, u64 after_close) {
+  *__errno() = 77;
+  void *handle = dlopen("libpages.so", 2);
+  if (!handle)
+    return 100;
+  int (*query)(void) = (int (*)(void))dlsym(handle, "getpagesize");
+  if (!query)
+    return 101;
+  out[0] = query();
+  if (dlclose(handle))
+    return 102;
+  if (after_close)
+    out[2] = query();
+  out[1] = *__errno();
+  return 0;
+}
 
 u64 dynamic_identities(unsigned int *out, u64 after_close) {
   *__errno() = 77;
