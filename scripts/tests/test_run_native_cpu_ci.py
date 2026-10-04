@@ -136,7 +136,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 self.changes = {record: ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", "no KVM")}
                 self.assertEqual(self.run_evidence(require_kvm=True), 1)
                 self.assertEqual(self.summary()["required_native_unexecuted"], [record.name])
-        self.records = self.records[:-1]
+        self.records = (*self.records[:-1], TestRecord("Kvm.ProtocolOnly", frozenset({"KvmOwner"})))
         with self.assertRaisesRegex(ValueError, "missing required native KVM.*Kvm.NativeCapture"):
             self.run_evidence(require_kvm=True)
 

@@ -100,6 +100,7 @@ struct Parameter {
   unsigned long Request;
   int SyncMode;
 };
+void PrintTo(const Parameter &P, std::ostream *OS) { *OS << P.Name; }
 constexpr Parameter Parameters[] = {
 #define NEVERD_KVM_STATE_BASE_PARAMETER(Name, Vector, Request, Sync)           \
   {#Name, Vector, Request, Sync},

@@ -1867,7 +1867,7 @@ jobs:
         run: |
           python -m unittest scripts.tests.test_run_native_cpu_ci \
             scripts.tests.test_build_wdk_driver_fixtures \
-            scripts.tests.test_prepare_kvm_ci -q
+            scripts.tests.test_probe_native_host -q
           python scripts/check_capabilities.py
           python scripts/check_docs_i18n.py
           python scripts/audit_ci_test_results.py check-tool
