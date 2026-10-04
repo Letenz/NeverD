@@ -1,0 +1,101 @@
+//===- AArch64StructureMemoryCases.def - Independent NEON RAM fixtures ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ARM_STRUCTURE_CASE
+// Assembled words and semantic inputs, independent of production decoding.
+// Name, layout, load, element bytes, register count, vector bytes, lane,
+// first vector, base register, signed writeback and original instruction.
+// ld1 {v31.b}[15], [x1], #1
+NEVERD_ARM_STRUCTURE_CASE(LaneLoadB, Lane, true, 1, 1, 16, 15, 31, 1, 1,
+                          0x4ddf1c3f)
+// st1 {v31.b}[0], [x1], x3
+NEVERD_ARM_STRUCTURE_CASE(LaneStoreB, Lane, false, 1, 1, 16, 0, 31, 1, -19,
+                          0x0d83003f)
+// ld2 {v31.h, v0.h}[7], [x1], #4
+NEVERD_ARM_STRUCTURE_CASE(LaneLoadH, Lane, true, 2, 2, 16, 7, 31, 1, 4,
+                          0x4dff583f)
+// st2 {v31.h, v0.h}[0], [x1], x3
+NEVERD_ARM_STRUCTURE_CASE(LaneStoreH, Lane, false, 2, 2, 16, 0, 31, 1, -19,
+                          0x0da3403f)
+// ld3 {v31.s, v0.s, v1.s}[3], [x1], #12
+NEVERD_ARM_STRUCTURE_CASE(LaneLoadS, Lane, true, 4, 3, 16, 3, 31, 1, 12,
+                          0x4ddfb03f)
+// st3 {v31.s, v0.s, v1.s}[0], [x1], x3
+NEVERD_ARM_STRUCTURE_CASE(LaneStoreS, Lane, false, 4, 3, 16, 0, 31, 1, -19,
+                          0x0d83a03f)
+// ld4 {v31.d, v0.d, v1.d, v2.d}[1], [x1], #32
+NEVERD_ARM_STRUCTURE_CASE(LaneLoadD, Lane, true, 8, 4, 16, 1, 31, 1, 32,
+                          0x4dffa43f)
+// st4 {v31.d, v0.d, v1.d, v2.d}[0], [x1], x3
+NEVERD_ARM_STRUCTURE_CASE(LaneStoreD, Lane, false, 8, 4, 16, 0, 31, 1, -19,
+                          0x0da3a43f)
+// ld1 {v7.1d}, [x1]
+NEVERD_ARM_STRUCTURE_CASE(ListLoadOne, Sequential, true, 8, 1, 8, 0, 7, 1, 0,
+                          0x0c407c27)
+// st1 {v31.4h, v0.4h}, [x1], #16
+NEVERD_ARM_STRUCTURE_CASE(ListStoreTwo, Sequential, false, 2, 2, 8, 0, 31, 1,
+                          16, 0x0c9fa43f)
+// ld1 {v30.4s, v31.4s, v0.4s}, [x1], x3
+NEVERD_ARM_STRUCTURE_CASE(ListLoadThree, Sequential, true, 4, 3, 16, 0, 30, 1,
+                          -19, 0x4cc3683e)
+// st1 {v29.16b, v30.16b, v31.16b, v0.16b}, [sp], #64
+NEVERD_ARM_STRUCTURE_CASE(ListStoreFourSP, Sequential, false, 1, 4, 16, 0, 29,
+                          31, 64, 0x4c9f23fd)
+// ld2 {v31.8b, v0.8b}, [x1], #16
+NEVERD_ARM_STRUCTURE_CASE(InterleaveLoadTwo, Interleaved, true, 1, 2, 8, 0, 31,
+                          1, 16, 0x0cdf803f)
+// st2 {v8.2d, v9.2d}, [x1], x3
+NEVERD_ARM_STRUCTURE_CASE(InterleaveStoreTwo, Interleaved, false, 8, 2, 16, 0,
+                          8, 1, -19, 0x4c838c28)
+// ld3 {v30.4h, v31.4h, v0.4h}, [x1]
+NEVERD_ARM_STRUCTURE_CASE(InterleaveLoadThree, Interleaved, true, 2, 3, 8, 0,
+                          30, 1, 0, 0x0c40443e)
+// st3 {v31.4s, v0.4s, v1.4s}, [x1], #48
+NEVERD_ARM_STRUCTURE_CASE(InterleaveStoreThree, Interleaved, false, 4, 3, 16, 0,
+                          31, 1, 48, 0x4c9f483f)
+// ld4 {v29.2s, v30.2s, v31.2s, v0.2s}, [x1], x3
+NEVERD_ARM_STRUCTURE_CASE(InterleaveLoadFour, Interleaved, true, 4, 4, 8, 0, 29,
+                          1, -19, 0x0cc3083d)
+// st4 {v30.16b, v31.16b, v0.16b, v1.16b}, [x1]
+NEVERD_ARM_STRUCTURE_CASE(InterleaveStoreFour, Interleaved, false, 1, 4, 16, 0,
+                          30, 1, 0, 0x4c00003e)
+// ld4 {v31.2d, v0.2d, v1.2d, v2.2d}, [x1], #64
+NEVERD_ARM_STRUCTURE_CASE(InterleaveLoadWide, Interleaved, true, 8, 4, 16, 0,
+                          31, 1, 64, 0x4cdf0c3f)
+// st3 {v2.8b, v3.8b, v4.8b}, [x1], #24
+NEVERD_ARM_STRUCTURE_CASE(InterleaveStoreNarrow, Interleaved, false, 1, 3, 8, 0,
+                          2, 1, 24, 0x0c9f4022)
+// ld1r {v31.8b}, [x1], #1
+NEVERD_ARM_STRUCTURE_CASE(Replicate1B8, Replicate, true, 1, 1, 8, 0, 31, 1, 1,
+                          0x0ddfc03f)
+// ld2r {v31.8h, v0.8h}, [x1], #4
+NEVERD_ARM_STRUCTURE_CASE(Replicate2H16, Replicate, true, 2, 2, 16, 0, 31, 1, 4,
+                          0x4dffc43f)
+// ld3r {v31.2s, v0.2s, v1.2s}, [x1], #12
+NEVERD_ARM_STRUCTURE_CASE(Replicate3S8, Replicate, true, 4, 3, 8, 0, 31, 1, 12,
+                          0x0ddfe83f)
+// ld4r {v31.2d, v0.2d, v1.2d, v2.2d}, [x1], #32
+NEVERD_ARM_STRUCTURE_CASE(Replicate4D16, Replicate, true, 8, 4, 16, 0, 31, 1,
+                          32, 0x4dffec3f)
+// ld2r {v31.1d, v0.1d}, [x1], #16
+NEVERD_ARM_STRUCTURE_CASE(Replicate2D8, Replicate, true, 8, 2, 8, 0, 31, 1, 16,
+                          0x0dffcc3f)
+// ld4r {v31.16b, v0.16b, v1.16b, v2.16b}, [x1], #4
+NEVERD_ARM_STRUCTURE_CASE(Replicate4B16, Replicate, true, 1, 4, 16, 0, 31, 1, 4,
+                          0x4dffe03f)
+#endif
+#ifdef NEVERD_ARM_STRUCTURE_RESERVED
+// Reserved addressing/opcode/size combinations, not executable fixtures.
+NEVERD_ARM_STRUCTURE_RESERVED(MultipleOffsetWithoutWriteback, 0x0c417020)
+NEVERD_ARM_STRUCTURE_RESERVED(MultipleReservedBit, 0x0c607020)
+NEVERD_ARM_STRUCTURE_RESERVED(MultipleReservedOpcode, 0x0c409020)
+NEVERD_ARM_STRUCTURE_RESERVED(InterleavedOneDouble, 0x0c408c20)
+NEVERD_ARM_STRUCTURE_RESERVED(SingleOffsetWithoutWriteback, 0x0d410020)
+NEVERD_ARM_STRUCTURE_RESERVED(HalfwordOddSize, 0x0d404420)
+NEVERD_ARM_STRUCTURE_RESERVED(SingleWordHighSize, 0x0d408820)
+NEVERD_ARM_STRUCTURE_RESERVED(DoubleWithLaneBit, 0x0d409420)
+NEVERD_ARM_STRUCTURE_RESERVED(ReplicateStore, 0x0d00c020)
+NEVERD_ARM_STRUCTURE_RESERVED(ReplicateWithLaneBit, 0x0d40d020)
+#endif
