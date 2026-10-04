@@ -86,16 +86,25 @@ ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
   return beginDispatch(std::move(Raised), StackPointer, LoaderDepth, Event, {});
 }
 llvm::Expected<ExceptionDispatcher::Transfer>
+ExceptionDispatcher::beginFault(const BackendFault &Fault,
+                                uint64_t StackPointer, size_t LoaderDepth) {
+  if (!recoverable(CPU.architecture(), Fault))
+    return failure(text::ExceptionContext);
+  return beginDispatch(exception(Fault), StackPointer, LoaderDepth, {}, {},
+                       ContextOrigin::HardwareFault);
+}
+llvm::Expected<ExceptionDispatcher::Transfer>
 ExceptionDispatcher::beginDispatch(Exception Raised, uint64_t StackPointer,
                                    size_t LoaderDepth,
                                    std::optional<size_t> Event,
-                                   std::optional<size_t> Rejected) {
+                                   std::optional<size_t> Rejected,
+                                   ContextOrigin Origin) {
   if (Frames.size() >= MaxExceptionDepth)
     return failure(text::ExceptionLimit);
   if (Raised.Arguments.size() > MaxExceptionArguments ||
       (Raised.Flags & ~(ExceptionNoncontinuable | ExceptionSoftwareOriginate)))
     return failure(text::ExceptionArguments);
-  auto Context = captureUserContext(CPU);
+  auto Context = captureUserContext(CPU, Origin);
   if (!Context)
     return Context.takeError();
   auto Snapshot = CPU.saveContext();
@@ -137,6 +146,7 @@ ExceptionDispatcher::beginDispatch(Exception Raised, uint64_t StackPointer,
                     Top, Layout->PayloadAddress, Layout->ReturnStackPointer,
                     LoaderDepth, Event});
   Frames.back().Rejected = Rejected;
+  Frames.back().Origin = Origin;
   return callNext();
 }
 llvm::Expected<ExceptionDispatcher::Transfer> ExceptionDispatcher::callNext() {
@@ -261,7 +271,7 @@ ExceptionDispatcher::continueExecution() {
   if (auto E = CPU.read(F.Payload + ExceptionContextOffset, Changed))
     return std::move(E);
   if (auto E = restoreUserContext(CPU, *F.Snapshot, F.Context, Changed,
-                                  StackBase, StackTop))
+                                  StackBase, StackTop, F.Origin))
     return std::move(E);
   auto PC = CPU.readRegister(CPU.architecture() == GuestArchitecture::X64
                                  ? CPURegister::X64PC

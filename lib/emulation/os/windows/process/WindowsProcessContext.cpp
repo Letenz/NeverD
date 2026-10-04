@@ -91,7 +91,8 @@ llvm::Error writeUnwindContext(const X64SEH::Context &State,
   return llvm::Error::success();
 }
 
-llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU) {
+llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU,
+                                                        ContextOrigin Origin) {
   const bool X64 = CPU.architecture() == GuestArchitecture::X64;
   std::vector<uint8_t> Bytes(X64 ? X64ContextSize : AArch64ContextSize);
   llvm::support::endian::write32le(
@@ -101,6 +102,11 @@ llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU) {
     auto V = CPU.readRegister(F.Register);
     if (!V)
       return V.takeError();
+    // Windows exposes fault RF in CONTEXT, independently of the checked CPU's
+    // logical FLAGS. Its transport has already removed private debug state.
+    if (Origin == ContextOrigin::HardwareFault &&
+        F.Register == CPURegister::X64FLAGS)
+      (*V)[0] |= x64::ResumeFlag;
     for (unsigned I = 0; I < F.Size; ++I)
       Bytes[F.Offset + I] = (*V)[0] >> (I * CHAR_BIT);
   }
@@ -232,7 +238,8 @@ llvm::Error restoreUserContext(ExecutionBackend &CPU,
                                const BackendContext &Snapshot,
                                llvm::ArrayRef<uint8_t> Original,
                                llvm::ArrayRef<uint8_t> Changed,
-                               uint64_t StackBase, uint64_t StackTop) {
+                               uint64_t StackBase, uint64_t StackTop,
+                               ContextOrigin Origin) {
   const bool X64 = CPU.architecture() == GuestArchitecture::X64;
   const uint64_t Size = X64 ? X64ContextSize : AArch64ContextSize;
   if (Original.size() != Size || Changed.size() != Size)
@@ -244,7 +251,17 @@ llvm::Error restoreUserContext(ExecutionBackend &CPU,
     const uint64_t V = read(Changed, F);
     for (unsigned I = 0; I < F.Size; ++I)
       Mutable[F.Offset + I] = F.Mutable >> (I * CHAR_BIT);
-    Values.push_back({F.Register, {V, 0}});
+    uint64_t CPUValue = V;
+    if (Origin == ContextOrigin::HardwareFault &&
+        F.Register == CPURegister::X64FLAGS) {
+      if (!(read(Original, F) & x64::ResumeFlag))
+        return failure(text::ExceptionContext);
+      // RF is immutable in this bounded user CONTEXT profile. Validate its
+      // retained value below, then remove the delivery-only bit on restore.
+      // Debug breakpoints and caller changes to RF remain unsupported.
+      CPUValue &= ~x64::ResumeFlag;
+    }
+    Values.push_back({F.Register, {CPUValue, 0}});
     if (F.Register == CPURegister::X64PC ||
         F.Register == CPURegister::AArch64PC)
       PC = V;
