@@ -99,6 +99,8 @@ Les régressions de phase initiale couvrent deux ou trois boucles successives r�
 
 `NeverDLLVMScalarLoopRecoveryTests` couvre préfixes, états des prédécesseurs, chemins à zéro itération, boucles sur elles-mêmes, états affines, égalité après bouclage arithmétique, poison d'une mise à jour supplémentaire, bits de données hauts et contrats refusés. Des budgets exacts ou réduits d'une unité vérifient le refus atomique. Des oracles arithmétiques indépendants exécutent les LLVM original et reconstruit à O0/O2 pour toutes les entrées de contrôle sur un octet. Cela ne prouve ni récupération de l'ABI native ni sortie C par défaut.
 
+`NeverDLLVMCScalarLoopRecoveryTests` vérifie les sorties par défaut complètes et ciblées, la reprise après nettoyage des retours, identité et attributs, appelants, intrinsèques existants ou nouveaux et collisions, budgets partagés, appels à effets, entrées sans garantie de définition, métadonnées, images, adresses de blocs externes et sélections étrangères. Des oracles indépendants d’arithmétique et de rotation exécutent le C à O0/O2 avec pièges de comportement indéfini. L’arithmétique compare aussi le LLVM original compilé séparément sur tous les contrôles d’un octet, valeurs limites et données déterministes de pleine largeur.
+
 Les régressions couvrent les plages partielles et séparées, les alias fixes, les deux branches, chaque retour, les lectures à la première itération et les écritures précédant les lectures dans une boucle. Lecture avant écriture, écriture manquante, écriture invitée, alias inconnu, accès spécial, plage hors objet et épuisement des budgets doivent échouer. Un exemple C indépendant qui écrit un mot d’état sans le lire est compilé à O1/O2 ; il conserve les attributs LLVM exacts et passe une nouvelle preuve composée du natif vers LLVM.
 
 Les tests de décompte gardé couvrent la reprise après rejet du modèle du corps, une preuve complète sur un mot arbitraire à l’en-tête, les budgets partagés et le refus immédiat d’une violation réelle du contrat d’entrée.
@@ -106,6 +108,8 @@ Les tests de décompte gardé couvrent la reprise après rejet du modèle du cor
 `NeverDInterpreterLLVMRefinementTests` vérifie la composition nouvelle, la liaison texte/fonction exacte, les budgets indépendants, toutes les observations et le domaine source élargi. Des octets, résidus, résultats, drapeaux, statuts, écritures, poison ou plans faux/périmés doivent empêcher l’attestation composée. Le décompte sur un mot arbitraire exige les deux prémisses inductives ; des exemples C indépendants compilés en O1/O2 vérifient le LLVM sérialisé réel. Les régressions refusent les retours d’entrée cachés et bornent les racines sans copier la provenance accessoire.
 
 ```sh
+cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
+build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4

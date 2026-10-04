@@ -98,6 +98,8 @@ Las regresiones de fase inicial cubren dos y tres bucles secuenciales que reutil
 
 `NeverDLLVMScalarLoopRecoveryTests` cubre prefijos, estados de predecesores, alternativas de cero iteraciones, bucles sobre sí mismos, estados afines, igualdad con desbordamiento modular, poison por actualizaciones extra, bits altos y contratos rechazados. Los presupuestos exactos o reducidos en una unidad comprueban el rechazo atómico. Oráculos aritméticos independientes ejecutan el LLVM original y recuperado a O0/O2 con todas las entradas de control de un byte. No certifican recuperación de ABI nativa ni salida C predeterminada.
 
+`NeverDLLVMCScalarLoopRecoveryTests` comprueba salida completa y seleccionada por defecto, recuperación tras limpiar retornos, identidad y atributos, llamadores, intrínsecos existentes/nuevos y colisiones, presupuestos compartidos, llamadas con efectos, entradas sin garantía de definición, metadatos, imágenes, direcciones externas de bloques y selecciones ajenas. Oráculos independientes de aritmética y rotación ejecutan C en O0/O2 con trampas de comportamiento indefinido. La aritmética también compara LLVM original compilado aparte para todos los controles de un byte, valores límite y datos deterministas de ancho completo.
+
 Las regresiones cubren rangos parciales y separados, alias fijos, ambas ramas, cada retorno, lecturas en la primera iteración y escrituras antes de lecturas en bucles. Deben fallar las lecturas antes de escribir, escrituras ausentes o invitadas, alias desconocidos, accesos especiales, rangos fuera del objeto y presupuestos agotados. Un ejemplo C independiente con una palabra de estado solo de salida se compila a O1/O2, conserva los atributos LLVM exactos y supera una nueva prueba compuesta de código nativo a LLVM.
 
 Los tests de cuenta regresiva protegida cubren reintentos tras rechazar la plantilla del cuerpo, una prueba completa en la cabecera para palabras arbitrarias, presupuestos compartidos y rechazo inmediato de violaciones reales del contrato de entrada.
@@ -105,6 +107,8 @@ Los tests de cuenta regresiva protegida cubren reintentos tras rechazar la plant
 `NeverDInterpreterLLVMRefinementTests` comprueba composiciones nuevas, vínculo exacto texto/función, presupuestos independientes, observaciones completas y dominios fuente ampliados. Cambios de bytes, residuos, resultados, indicadores, estados, escrituras, poison o planes falsos/obsoletos deben impedir el comprobante compuesto. Los contadores de palabra arbitraria requieren ambas premisas inductivas; ejemplos C independientes compilados en O1/O2 prueban el LLVM serializado real. Las regresiones rechazan vueltas ocultas a la entrada y limitan raíces sin copiar procedencia auxiliar.
 
 ```sh
+cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
+build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
