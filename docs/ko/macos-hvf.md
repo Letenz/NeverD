@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3d21e1f2505fe8dd441e3bbaadb4a3d3381f2923d087635ec3129190a86b102 -->
+<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
 
 [← 문서 목록](README.md)
 
@@ -162,3 +162,11 @@ M4 Max, macOS 15.6.1, Release, Apple Clang 17, 사전 빌드 LLVM에서 검증�
 공유 호스트의 checked ARM64 작업 측정이며 보편적인 성능 순위를 뜻하지 않습니다. Intel runner 연결 끊김과 프로세스 충돌은 별도 조사가 남아 있습니다. 제한된 macOS/iOS CPU 환경을 완전한 Apple OS나 기기 에뮬레이션으로 간주할 수 없습니다.
 
 [재현 방법: `neverd-cpu-bench`, `benchmark_cpu.py`](../testing.md#reproduce-checked-arm64-cpu-measurements).
+
+## Intel 분리 실험 결과（2026-10-04）
+
+소유 스레드의 실행 기한을 유한하게 바꾼 후보 `909672ca6`은 실험 단계입니다. 원래 1000회 복구 테스트는 macOS 15와 26 모두에서 runner 연결을 잃었습니다. 마지막 보존 기록의 완료/시작 횟수는 277/278과 250/251입니다. 같은 후보에서 명시적 취소 없는 일반 명령 테스트도 macOS 15에서 연결이 끊겼습니다（576/577）. GitHub가 세 건 모두 확인했습니다. 최종 네이티브 결과와 프로세스 회수 기록은 없으며, 저장된 로그는 최종 장애 위치를 특정하지 못합니다. [원본 증거](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries).
+
+독립적인 원본 `hvf-edge-cases` 프로그램 `f150b38`은 두 이미지에서 real-mode guest와 100000회 무작위 인터럽트 호출 시도를 약 362초와 398초에 완료했습니다. 모두 종료 코드 0과 자식 프로세스 회수가 확인되었고, 산출물·소스 해시, 진행 표시, guest 완료도 독립 검증했습니다. 앞선 300초 실행은 관찰 기한에 도달해 회수되었으며 runner 연결은 유지되었습니다. 상류 코드는 무작위 인터럽트 반환값을 무시하므로 시도 횟수가 개별 전달 성공을 뜻하지 않습니다. NeverD 승인이나 성능 비교를 대신하지 않습니다. [소스·로그·감사](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream).
+
+조사 범위는 좁아졌지만 제품 수정이 입증되지는 않았습니다. VM과 Executor 스레드 유지는 진단 비교이며 채택된 수명 변경이 아닙니다. Intel은 동일한 깨끗한 후보에서 원래 1000회 복구 테스트, 전체 CPU 목록 및 독립 Darwin 관문을 통과해야 합니다.

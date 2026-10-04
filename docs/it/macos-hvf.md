@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3d21e1f2505fe8dd441e3bbaadb4a3d3381f2923d087635ec3129190a86b102 -->
+<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
 
 [← Indice della documentazione](README.md)
 
@@ -162,3 +162,11 @@ Quindici coppie di processi alternano l’ordine, con un riscaldamento per caric
 Sono misure di carichi ARM64 verificati su un host condiviso, non una classifica universale. Disconnessioni dei runner Intel e arresti anomali dei processi richiedono ancora indagini separate. I profili CPU limitati macOS/iOS non equivalgono all’emulazione completa di un sistema o dispositivo Apple.
 
 [Riproduzione: `neverd-cpu-bench`, `benchmark_cpu.py`](../testing.md#reproduce-checked-arm64-cpu-measurements).
+
+## Risultati degli esperimenti Intel isolati (2026-10-04)
+
+Il candidato `909672ca6`, con scadenza finita sul thread proprietario, resta sperimentale. Il test originale di 1000 recuperi ha perso la comunicazione con il runner sia su macOS 15 sia su 26; gli ultimi prefissi salvati mostrano 277/278 e 250/251 iterazioni completate/avviate. Anche le istruzioni ordinarie dello stesso candidato, senza annullamento esplicito, hanno perso la comunicazione su macOS 15 (576/577). GitHub ha confermato tutte e tre le perdite. Mancano il risultato nativo finale e il registro di raccolta del processo; i prefissi non localizzano il guasto finale. [Prove originali](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries).
+
+Il programma indipendente e invariato `hvf-edge-cases`, revisione `f150b38`, ha completato il guest in modalità reale e 100000 tentativi di chiamata di interrupt casuale su entrambe le immagini, in circa 362 e 398 secondi. Entrambi sono terminati con codice zero e i processi figli sono stati raccolti; hash, avanzamento e completamento del guest sono stati verificati indipendentemente. I precedenti tentativi di 300 secondi hanno raggiunto la scadenza dell’osservatore e sono stati terminati e raccolti, senza perdita del runner. Il programma ignora i codici di ritorno degli interrupt casuali: il numero di tentativi non prova la consegna individuale. Non sostituisce l’accettazione NeverD né un confronto prestazionale. [Sorgenti, log e verifica](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream).
+
+Questi risultati restringono l’indagine, ma non dimostrano una correzione di produzione. Conservare VM e thread Executor è un confronto diagnostico, non una modifica del ciclo di vita accettata. Intel richiede ancora i 1000 recuperi originali, l’intero inventario CPU e il controllo Darwin indipendente sul medesimo candidato pulito.
