@@ -16,6 +16,9 @@ inputs:
   repetitions:
     description: Original one-process repetition count, 100 or 1000
     default: '1000'
+  experiment:
+    description: Explicit diagnostic mode, recovery, lifecycle, instruction or finite-deadline
+    default: recovery
 runs:
   using: node24
   main: run.cjs

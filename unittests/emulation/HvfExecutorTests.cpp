@@ -13,10 +13,12 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <future>
 #if defined(__x86_64__)
 #include <Hypervisor/hv_vmx.h>
+#include <mach/mach_time.h>
 #endif
 
 namespace neverd::emulation {
@@ -373,6 +375,207 @@ TEST_F(HvfExecutor, CompletionFailureOutranksConcurrentStop) {
 }
 #endif
 #if defined(__x86_64__)
+// Opt-in diagnostics are not production acceptance requirements. In particular,
+// a finite API return is not yet a rule for authenticating guest completion.
+class HvfIntelProbe : public HvfExecutor {
+  void SetUp() override {
+    if (!std::getenv("NEVERD_HVF_INTEL_PROBE"))
+      GTEST_SKIP() << "explicit Intel diagnostic experiment required";
+    llvm::outs() << "INTEL_PROBE phase=executor_initialization\n";
+    llvm::outs().flush();
+    HvfExecutor::SetUp();
+  }
+};
+
+void probePhase(const char *Phase) {
+  llvm::outs() << "INTEL_PROBE phase=" << Phase << '\n';
+  llvm::outs().flush();
+}
+
+TEST_F(HvfIntelProbe, LifecycleOnly) {
+  // The machine factory executes startup instructions: do not call it here.
+  probePhase("lifecycle_binding");
+  hvf::Binding Binding(Host, *Memory);
+  ASSERT_EQ(llvm::toString(Binding.execute(
+                control(),
+                [](auto &Native) -> llvm::Error {
+                  uint64_t Time = 0;
+                  if (auto S = hv_vcpu_get_exec_time(Native.cpu(), &Time))
+                    return hvf::error("lifecycle execution time", S);
+                  EXPECT_EQ(Time, 0u);
+                  return llvm::Error::success();
+                })),
+            "");
+  probePhase("lifecycle_retirement");
+}
+
+TEST_F(HvfIntelProbe, InstructionOnly) {
+  probePhase("startup_probe");
+  auto Created = createHvfX64Machine(*Memory);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto Machine = std::move(*Created);
+  constexpr uint64_t PC = 0x10000;
+  const uint8_t Nop[] = {0x90};
+  ASSERT_EQ(llvm::toString(Memory->map(PC, 4096, Read | Write | Execute)), "");
+  ASSERT_EQ(llvm::toString(Memory->write(PC, Nop)), "");
+  ASSERT_EQ(llvm::toString(Memory->beginRun()), "");
+  auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+  auto Root = buildX64PageTables(*Memory);
+  ASSERT_TRUE(bool(Root)) << llvm::toString(Root.takeError());
+  X64MachineState State;
+  State.reg(X64Register::FLAGS) = x64::InitialFlags;
+  State.reg(X64Register::AX) = mach_absolute_time();
+  const auto Nonce = State.reg(X64Register::AX);
+  probePhase("ordinary_steps");
+  for (unsigned I = 0; I < 32; ++I) {
+    State.reg(X64Register::PC) = PC;
+    ASSERT_EQ(llvm::toString(Machine->step(State, *Root, control())), "");
+    ASSERT_EQ(State.reg(X64Register::PC), PC + 1);
+    ASSERT_EQ(State.reg(X64Register::AX), Nonce);
+    ASSERT_EQ(State.reg(X64Register::FLAGS), x64::InitialFlags);
+  }
+  probePhase("instruction_retirement");
+}
+
+TEST_F(HvfIntelProbe, FiniteDeadline) {
+  probePhase("startup_probe");
+  auto Created = createHvfX64Machine(*Memory);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto Machine = std::move(*Created);
+  constexpr uint64_t PC = 0x10000;
+  // nop; mov [rbx],rax; jmp .; nop; inc rax. Preparation executes only NOP.
+  const uint8_t Code[] = {0x90, 0x48, 0x89, 0x03, 0xeb,
+                          0xfe, 0x90, 0x48, 0xff, 0xc0};
+  ASSERT_EQ(llvm::toString(Memory->map(PC, 4096, Read | Write | Execute)), "");
+  ASSERT_EQ(llvm::toString(Memory->write(PC, Code)), "");
+  auto *Scratch =
+      Memory->physicalPointer(Memory->mappings().at(PC).Physical) + 0x100;
+  static_assert(std::atomic<uint64_t>::is_always_lock_free);
+  auto *Witness = std::construct_at(
+      reinterpret_cast<std::atomic<uint64_t> *>(Scratch), uint64_t(0));
+  auto DestroyWitness = llvm::scope_exit([&] { std::destroy_at(Witness); });
+  ASSERT_EQ(llvm::toString(Memory->beginRun()), "");
+  auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+  auto Root = buildX64PageTables(*Memory);
+  ASSERT_TRUE(bool(Root)) << llvm::toString(Root.takeError());
+  X64MachineState State;
+  State.reg(X64Register::FLAGS) = x64::InitialFlags;
+  State.reg(X64Register::BX) = PC + 0x100;
+  auto Prepare = [&](uint64_t Entry) {
+    probePhase("prepare_with_watchdog");
+    State.reg(X64Register::AX) = mach_absolute_time();
+    State.reg(X64Register::PC) = Entry;
+    return Machine->step(State, *Root, control());
+  };
+  ASSERT_EQ(llvm::toString(Prepare(PC)), "");
+  ASSERT_EQ(State.reg(X64Register::PC), PC + 1);
+  Witness->store(0); // Only the finite call may establish this witness.
+  mach_timebase_info_data_t Timebase{};
+  ASSERT_EQ(mach_timebase_info(&Timebase), KERN_SUCCESS);
+  ASSERT_NE(Timebase.numer, 0u);
+  const uint64_t Slice = (5000000ull * Timebase.denom) / Timebase.numer;
+  ASSERT_NE(Slice, 0u);
+  hvf::Binding Binding(Host, *Memory);
+  uint64_t Reason = 0, RIP = 0, AX = 0;
+  unsigned CallIndex = 0;
+  auto Call = [&](auto &Native, const char *Phase,
+                  uint64_t Deadline) -> llvm::Error {
+    uint64_t BeforeExec = 0, AfterExec = 0, BeforeReason = 0, BeforeRIP = 0;
+    if (auto S = hv_vcpu_get_exec_time(Native.cpu(), &BeforeExec))
+      return hvf::error("probe execution time before", S);
+    if (auto S = hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_RO_EXIT_REASON,
+                                       &BeforeReason))
+      return hvf::error("probe reason before", S);
+    if (auto S =
+            hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_GUEST_RIP, &BeforeRIP))
+      return hvf::error("probe RIP before", S);
+    const auto Index = ++CallIndex;
+    llvm::outs() << "INTEL_PROBE begin=" << Phase << " call=" << Index
+                 << " deadline=" << Deadline << " rip=" << BeforeRIP
+                 << " nonce=" << State.reg(X64Register::AX)
+                 << " witness=" << Witness->load() << '\n';
+    llvm::outs().flush();
+    const auto Before = mach_absolute_time();
+    // No Native.run(): isolate the finite API from asynchronous cancellation.
+    // The outer diagnostic controller bounds and retires the whole process.
+    const auto Status = hv_vcpu_run_until(Native.cpu(), Deadline);
+    const auto After = mach_absolute_time();
+    llvm::outs() << "INTEL_PROBE end=" << Phase << " call=" << Index
+                 << " status=" << uint32_t(Status) << " mach_before=" << Before
+                 << " mach_after=" << After << '\n';
+    llvm::outs().flush();
+    if (Status)
+      return hvf::error("finite deadline experiment (no fallback)", Status);
+    if (auto S = hv_vcpu_get_exec_time(Native.cpu(), &AfterExec))
+      return hvf::error("probe execution time after", S);
+    if (auto S =
+            hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_RO_EXIT_REASON, &Reason))
+      return hvf::error("probe exit reason", S);
+    if (auto S = hv_vmx_vcpu_read_vmcs(Native.cpu(), VMCS_GUEST_RIP, &RIP))
+      return hvf::error("probe RIP", S);
+    if (auto S = hv_vcpu_read_register(Native.cpu(), HV_X86_RAX, &AX))
+      return hvf::error("probe RAX", S);
+    llvm::outs() << "INTEL_PROBE capture=" << Phase << " call=" << Index
+                 << " exec_before=" << BeforeExec << " exec_after=" << AfterExec
+                 << " reason_before=" << BeforeReason << " reason=" << Reason
+                 << " rip_before=" << BeforeRIP << " rip=" << RIP
+                 << " rax=" << AX << " nonce=" << State.reg(X64Register::AX)
+                 << " witness=" << Witness->load() << '\n';
+    llvm::outs().flush();
+    return llvm::Error::success();
+  };
+  ASSERT_EQ(llvm::toString(Binding.execute(
+                control(),
+                [&](auto &Native) -> llvm::Error {
+                  uint64_t Controls = 0;
+                  if (auto S = hv_vmx_vcpu_read_vmcs(
+                          Native.cpu(), VMCS_CTRL_CPU_BASED, &Controls))
+                    return hvf::error("probe controls", S);
+                  if (auto S = hv_vmx_vcpu_write_vmcs(
+                          Native.cpu(), VMCS_CTRL_CPU_BASED,
+                          Controls & ~uint64_t(CPU_BASED_MTF)))
+                    return hvf::error("probe disable MTF", S);
+                  if (auto S = hv_vmx_vcpu_write_vmcs(Native.cpu(),
+                                                      VMCS_GUEST_RIP, PC + 1))
+                    return hvf::error("probe fresh store PC", S);
+                  const auto Deadline = mach_absolute_time() + Slice;
+                  for (unsigned N = 0; N < 128; ++N) {
+                    if (auto E = Call(Native, "finite_loop", Deadline))
+                      return E;
+                    if (Reason != VMX_REASON_IRQ &&
+                        Reason != VMX_REASON_VMX_TIMER_EXPIRED)
+                      return diagnostic::error("unexpected finite loop exit");
+                    if (mach_absolute_time() >= Deadline)
+                      return llvm::Error::success();
+                  }
+                  return diagnostic::error("too many finite deadline exits");
+                })),
+            "");
+  ASSERT_EQ(Witness->load(), State.reg(X64Register::AX));
+  ASSERT_EQ(RIP, PC + 4);
+  // Observe expiration/entry races with a distinct instruction and old MTF
+  // reason. Keep no-entry and one-entry outcomes as distinct observations.
+  for (bool Expired : {true, false}) {
+    ASSERT_EQ(llvm::toString(Prepare(PC + 6)), "");
+    ASSERT_EQ(State.reg(X64Register::PC), PC + 7);
+    Witness->store(0);
+    ASSERT_EQ(llvm::toString(Binding.execute(
+                  control(),
+                  [&](auto &Native) -> llvm::Error {
+                    return Call(Native, Expired ? "expired_mtf" : "finite_mtf",
+                                Expired ? 0 : mach_absolute_time() + Slice);
+                  })),
+              "");
+    EXPECT_TRUE((RIP == PC + 7 && AX == State.reg(X64Register::AX)) ||
+                (RIP == PC + 10 && AX == State.reg(X64Register::AX) + 1));
+  }
+  probePhase("verified_retry");
+  ASSERT_EQ(llvm::toString(Prepare(PC + 6)), "");
+  EXPECT_EQ(State.reg(X64Register::PC), PC + 7);
+  EXPECT_EQ(State.reg(X64Register::FLAGS), x64::InitialFlags);
+  probePhase("finite_retirement");
+}
+
 TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
   auto Created = createHvfX64Machine(*Memory);
   ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());

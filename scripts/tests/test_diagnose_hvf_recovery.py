@@ -79,9 +79,9 @@ class RecoveryContractTests(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def prepare(self, repetitions=100):
+    def prepare(self, repetitions=100, experiment="recovery"):
         with mock.patch.object(diagnostic.subprocess, "check_output", return_value=json.dumps(self.document)):
-            return diagnostic.prepare(self.root, self.build, self.evidence, repetitions)
+            return diagnostic.prepare(self.root, self.build, self.evidence, repetitions, experiment)
 
     def executable(self, suffix=""):
         log = "".join(iteration(i) for i in range(1, 101))
@@ -104,6 +104,52 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertTrue(json.loads((self.evidence / "result.json").read_text())["passed"])
         self.assertEqual(len(json.loads((self.evidence / "retirement.json").read_text())), 1)
         self.assertFalse(list(self.evidence.rglob("*.xml")))
+
+    def add_probe(self, name):
+        record = copy.deepcopy(self.document["tests"][0])
+        record["name"] = name
+        record["command"][1] = "--gtest_filter=" + name
+        self.document["tests"].append(record)
+
+    def test_opt_in_experiments_never_replace_required_recovery(self):
+        for experiment, name in diagnostic.EXPERIMENTS.items():
+            self.add_probe(name)
+            contract = diagnostic.recovery_contract(
+                self.root, self.build, self.document, {NAME}, runner, 100, experiment)
+            self.assertEqual(contract["native_name"], name)
+            self.assertEqual(contract["command"][1], "--gtest_filter=" + name)
+            self.assertEqual(contract["native_requirements"], {
+                "NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1"})
+            self.assertEqual(contract["native_execution"], experiment != "lifecycle")
+            self.assertFalse(contract["required_for_acceptance"])
+        original = self.prepare()
+        self.assertEqual(original["native_name"], NAME)
+        self.assertEqual(original["native_requirements"], {"NEVERD_REQUIRE_HVF": "1"})
+        self.assertTrue(original["required_for_acceptance"])
+
+    def test_experiment_missing_owner_or_unknown_mode_is_rejected(self):
+        for mode in ("lifecycle", "instruction", "finite-deadline", "arbitrary"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                self.prepare(experiment=mode)
+        self.add_probe(diagnostic.EXPERIMENTS["lifecycle"])
+        self.document["tests"][-1]["command"][0] = str(self.root / "wrong-owner")
+        with self.assertRaisesRegex(ValueError, "owner"):
+            self.prepare(experiment="lifecycle")
+        self.assertFalse(self.evidence.exists())
+
+    def test_incomplete_probe_cannot_pass_or_publish_an_acceptance_result(self):
+        name = diagnostic.EXPERIMENTS["finite-deadline"]
+        self.add_probe(name)
+        plan = self.prepare(experiment="finite-deadline")
+        self.assertFalse(plan["required_for_acceptance"])
+        self.binary.write_text(f"#!{sys.executable}\nimport os\n"
+            "assert os.environ['NEVERD_HVF_INTEL_PROBE'] == '1'\n"
+            f"print({iteration(1, name)!r}, end='', flush=True)\n")
+        self.binary.chmod(0o755)
+        self.assertEqual(diagnostic.execute(self.root, self.evidence), 1)
+        result = json.loads((self.evidence / "result.json").read_text())
+        self.assertFalse(result["passed"])
+        self.assertFalse(result["complete_inventory"])
 
     def test_all_ok_then_abnormal_exit_is_failure(self):
         self.prepare()
