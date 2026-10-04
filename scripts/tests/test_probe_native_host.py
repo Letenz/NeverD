@@ -1,11 +1,15 @@
 import json
+import os
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 from scripts import probe_native_host as probe
+from scripts import prepare_kvm_ci as access
 
 
 # Independent transcripts include creation and retirement, not just a boolean
@@ -202,6 +206,82 @@ class HostProbeRunnerTests(unittest.TestCase):
         code, report = self.run_probe()
         self.assertEqual(code, 1)
         self.assertEqual(report["commands"], [])
+
+
+class HostedKvmAccessTests(unittest.TestCase):
+    def setUp(self):
+        self.device = Path("/fixture-kvm")
+        self.info = SimpleNamespace(st_mode=stat.S_IFCHR | 0o600,
+                                    st_uid=0, st_gid=0, st_rdev=0x0102)
+        patches = (
+            mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true",
+                                         "RUNNER_ENVIRONMENT": "github-hosted"}),
+            mock.patch.object(access.platform, "system", return_value="Linux"),
+            mock.patch.object(access.os, "getuid", return_value=1001, create=True),
+            mock.patch.object(access.os, "major", side_effect=lambda value: value >> 8, create=True),
+            mock.patch.object(access.os, "minor", side_effect=lambda value: value & 0xff, create=True),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        patch = mock.patch.object(Path, "stat", return_value=self.info)
+        self.read_stat = patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch.object(access.os, "access", side_effect=[False, True])
+        self.can_access = patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch.object(access.subprocess, "run")
+        self.run = patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_access_is_limited_to_the_current_hosted_account(self):
+        report = access.prepare(self.device)
+        self.assertEqual(report["status"], "access_granted")
+        self.assertEqual(report["commands"], [
+            ["sudo", "-n", "chown", "1001", "/fixture-kvm"],
+            ["sudo", "-n", "chmod", "u+rw", "/fixture-kvm"],
+        ])
+        self.assertEqual(self.run.call_count, 2)
+
+    def test_local_and_self_hosted_machines_cannot_be_mutated(self):
+        for changes in ({"GITHUB_ACTIONS": "false"}, {"RUNNER_ENVIRONMENT": "self-hosted"}):
+            with self.subTest(changes=changes), mock.patch.dict(os.environ, changes), self.assertRaises(ValueError):
+                access.prepare(self.device)
+        self.read_stat.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_missing_device_is_not_created(self):
+        self.read_stat.side_effect = FileNotFoundError()
+        self.assertEqual(access.prepare(self.device)["status"], "device_absent")
+        self.run.assert_not_called()
+
+    def test_an_accessible_device_needs_no_mutation(self):
+        self.can_access.side_effect = [True]
+        self.assertEqual(access.prepare(self.device)["status"], "already_accessible")
+        self.run.assert_not_called()
+
+    def test_regular_files_cannot_be_permission_targets(self):
+        self.info.st_mode = stat.S_IFREG | 0o600
+        with self.assertRaises(ValueError):
+            access.prepare(self.device)
+        self.run.assert_not_called()
+
+    def test_permission_failure_is_not_an_availability_skip(self):
+        self.run.side_effect = subprocess.CalledProcessError(1, ["sudo"])
+        with self.assertRaises(subprocess.CalledProcessError):
+            access.prepare(self.device)
+
+    def test_successful_commands_must_produce_access(self):
+        self.can_access.side_effect = [False, False]
+        with self.assertRaises(ValueError):
+            access.prepare(self.device)
+
+    def test_changed_device_identity_is_rejected(self):
+        changed = SimpleNamespace(**vars(self.info))
+        changed.st_rdev += 1
+        self.read_stat.side_effect = [self.info, changed]
+        with self.assertRaises(ValueError):
+            access.prepare(self.device)
 
 
 if __name__ == "__main__":

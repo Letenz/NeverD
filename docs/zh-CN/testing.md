@@ -1009,7 +1009,7 @@ WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执
 
 现有 `ci.yml` 在 Windows x64 runner 上提供显式选择的 `native_cpu_only` 手动模式。`NativeCPUTests.def` 选择测试目标；`run_native_cpu_ci.py` 先构建它们，再运行筛选后的 CTest，并保存清单、JUnit、日志和摘要。共享 CI 解析器区分通过、失败、跳过、禁用和未运行结果。每个声明的 WHP 原生映射用例都必须被发现并执行；缺失或跳过原生证据会使聚焦任务失败。默认的 LLVM 源码构建 CI 保持原样。协议测试和编译不能替代 WHP 或 ARM64 原生工作负载验证。
 
-`native-host-probe.yml` 在 Linux 和 Windows x64/ARM64 托管 runner 上运行独立的 `probe_native_host.py`。`NativeHostProbe.def` 声明能力查询、VM/vCPU 创建和清理证据的顺序。报告保留源码/二进制哈希、原生宿主 ISA 和每一步宿主状态码。`setup_ready` 只证明初始化成功，不执行来宾指令。缺失的 API/设备能力记为 `unavailable`；构建、初始化、清理、超时或证据格式错误会使任务失败。ARM64 托管环境的可用性须逐次观察，这个探测不构成 ARM64 工作负载验收。
+`native-host-probe.yml` 在 Linux 和 Windows x64/ARM64 托管 runner 上运行独立的 `probe_native_host.py`。`NativeHostProbe.def` 声明能力查询、VM/vCPU 创建和清理证据的顺序。报告保留源码/二进制哈希、原生宿主 ISA 和每一步宿主状态码。`setup_ready` 只证明初始化成功，不执行来宾指令。缺失的 API/设备能力记为 `unavailable`；构建、初始化、清理、超时或证据格式错误会使任务失败。ARM64 托管环境的可用性须逐次观察，这个探测不构成 ARM64 工作负载验收。 两个 Linux 工作流均通过 `prepare_kvm_ci.py`，仅向当前托管 runner 账户授予已有 KVM 字符设备的访问权限，并记录设备身份及权限；脚本拒绝本机与自托管机器，不会创建缺失的设备。
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 

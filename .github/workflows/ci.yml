@@ -112,6 +112,11 @@ jobs:
           brew install cmake lld ninja
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
+      - name: Prepare current hosted account KVM access
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python3 scripts/prepare_kvm_ci.py --output build-ci-kvm-access.json
+
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
         shell: pwsh
@@ -160,6 +165,7 @@ jobs:
             scripts.tests.test_audit_ci_test_inventory \
             scripts.tests.test_audit_ci_test_results \
             scripts.tests.test_run_native_cpu_ci \
+            scripts.tests.test_probe_native_host \
             scripts.tests.test_run_native_cpu_methods \
             scripts.tests.test_first_fatal_snapshots \
             scripts.tests.test_neverd_bench_harness \
