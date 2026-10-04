@@ -1266,3 +1266,10 @@ cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemor
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
 ```
+
+`NeverDByteCellScalarizationTests`는 겹치는 워드, 두 진입 경로와 두 역방향 간선, 넓은 비트 폭과 2의 거듭제곱이 아닌 폭, 양쪽 바이트 순서, 저장 값 선택과 poison 의무 보존, 부분 poison 덮어쓰기, 전체 사용 그래프 거부 및 여러 객체에 걸친 정확한/부족한 예산을 검사합니다. 일반 Thin/Deep 파이프라인은 남은 배열을 제거해야 합니다. 독립 O0/O2 oracle은 8,192개 입력의 세 버전에서 24개 출력 바이트 전체, 주변 가드와 반환값을 비교하며 미정의 동작 트랩을 켜고 총 49,152회 호출합니다. x86-64, AArch64, 빅 엔디언 AArch64 및 ARM32 컴파일 검사는 네이티브 실행 검증과 별개입니다. 공통 메모리 계약 변경 시 바이트 전달 및 전용 프레임 테스트와 함께 실행합니다.
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
+```

@@ -1391,3 +1391,10 @@ cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemor
 build-release/bin/NeverDLLVMPrivateFrameTests
 build-release/bin/NeverDByteMemoryForwardingTests
 ```
+
+`NeverDByteCellScalarizationTests` couvre les mots chevauchants, deux entrées et deux retours de boucle, les accès larges et de largeur non puissance de deux, les deux ordres d’octets, les choix de valeurs stockées et obligations poison, les écrasements partiels de poison, le rejet des usages et les budgets exacts/insuffisants entre objets. Le pipeline Thin/Deep normal doit éliminer les tableaux résiduels. Des oracles O0/O2 indépendants comparent les 24 octets de sortie, les gardes voisins et le retour pour 8 192 entrées et trois versions, soit 49 152 appels avec pièges de comportement indéfini. Les compilations x86-64, AArch64, AArch64 gros-boutiste et ARM32 ne constituent pas une couverture d’exécution native. Exécuter cette cible avec celles du transfert par octets et des cadres privés lors d’un changement des contrats mémoire partagés.
+
+```sh
+cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
+build-release/bin/NeverDByteCellScalarizationTests
+```

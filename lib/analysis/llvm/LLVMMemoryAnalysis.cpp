@@ -17,6 +17,26 @@ bool isLLVMMemoryTransparentIntrinsic(const llvm::Instruction &Instruction) {
          llvm::isGuaranteedToTransferExecutionToSuccessor(Call);
 }
 
+bool isLLVMFrameIndependentIntrinsic(const llvm::Instruction &Instruction) {
+  if (!isLLVMMemoryTransparentIntrinsic(Instruction))
+    return false;
+  // Memory(none) alone does not permit adding storage: frameaddress and
+  // returnaddress can observe this activation. Admit only generic arithmetic
+  // whose value depends on its unchanged operands, not allocation/layout.
+  switch (llvm::cast<llvm::IntrinsicInst>(Instruction).getIntrinsicID()) {
+  case llvm::Intrinsic::ctpop:
+  case llvm::Intrinsic::ctlz:
+  case llvm::Intrinsic::cttz:
+  case llvm::Intrinsic::bswap:
+  case llvm::Intrinsic::bitreverse:
+  case llvm::Intrinsic::fshl:
+  case llvm::Intrinsic::fshr:
+    return true;
+  default:
+    return false;
+  }
+}
+
 std::optional<LLVMIntegerOffset>
 splitLLVMIntegerOffset(llvm::Value *Value, llvm::APInt Offset,
                        llvm::function_ref<bool(uint64_t)> Charge) {
