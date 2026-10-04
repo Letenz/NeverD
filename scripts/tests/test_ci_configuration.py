@@ -495,6 +495,12 @@ class CiConfigurationTests(unittest.TestCase):
                         native.index("scripts/run_native_cpu_ci.py"))
         self.assertIn("inputs.native_cpu_backend == 'kvm' && 'clang' || 'cl'", native)
         self.assertIn("inputs.native_cpu_backend == 'kvm' && 'clang++' || 'cl'", native)
+        linux_tools = native.split("      - name: Install Linux native CPU build tooling\n", 1)[1].split(
+            "      - name: Enable the native CPU MSVC toolchain\n", 1)[0]
+        self.assertIn("runner.os == 'Linux'", linux_tools)
+        self.assertIn("signed-by=/usr/share/keyrings/neverd-llvm.asc", linux_tools)
+        self.assertIn("clang-21 lld-21", linux_tools)
+        self.assertIn('/usr/lib/llvm-21/bin >> "$GITHUB_PATH"', linux_tools)
         self.assertIn("inputs.native_driver_tests", native)
         self.assertIn("driver_args+=(--with-drivers)", native)
         self.assertIn("scripts/build_wdk_driver_fixtures.py", native)

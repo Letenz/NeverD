@@ -1093,7 +1093,7 @@ WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 
 
 네이티브 CPU 전용 CI는 고정 버전의 Capstone 소스를 초기화하고 검증된 LLVM 패키지를 사용합니다. `NEVERD_ENABLE_SEMANTIC_TESTS=OFF`와 Unicorn 어댑터 비활성화를 함께 설정하면 CPU 테스트의 구성, 빌드 및 링크에 Unicorn 소스가 필요하지 않습니다. 서명 데이터와 외부 코퍼스도 필요하지 않습니다. 기본 CI에서는 전체 의미론 테스트 그룹을 계속 활성화합니다.
 
-`ci.yml`의 수동 프로필 `native_cpu_only`는 `native_cpu_backend=whp`로 Windows x64(기본값)를, `native_cpu_backend=kvm`으로 Ubuntu x64를 선택합니다. `NativeCPUTests.def`는 CPU·프로세스 요구 사항을 공유하고 백엔드 전용 대상과 사례를 별도로 선언합니다. `run_native_cpu_ci.py --require-whp` 또는 `--require-kvm`은 호스트를 확인하고 모든 대상을 빌드한 뒤 CTest를 실행하며 목록, JUnit, 로그와 결과별 수를 보존합니다. CTest가 성공해도 필수 사례가 없거나 건너뛰면 실패합니다. CI는 Unicorn을 비활성화하고 `--with-drivers`는 선택한 백엔드에서 동일한 원래 주소·재배치 드라이버 집합을 요구합니다. 컴파일과 초기화 탐색은 게스트 실행이나 ARM64 검증을 입증하지 않습니다.
+`ci.yml`의 수동 프로필 `native_cpu_only`는 `native_cpu_backend=whp`로 Windows x64(기본값)를, `native_cpu_backend=kvm`으로 Ubuntu x64를 선택합니다. `NativeCPUTests.def`는 CPU·프로세스 요구 사항을 공유하고 백엔드 전용 대상과 사례를 별도로 선언합니다. `run_native_cpu_ci.py --require-whp` 또는 `--require-kvm`은 호스트를 확인하고 모든 대상을 빌드한 뒤 CTest를 실행하며 목록, JUnit, 로그와 결과별 수를 보존합니다. CTest가 성공해도 필수 사례가 없거나 건너뛰면 실패합니다. CI는 Unicorn을 비활성화하고 `--with-drivers`는 선택한 백엔드에서 동일한 원래 주소·재배치 드라이버 집합을 요구합니다. 컴파일과 초기화 탐색은 게스트 실행이나 ARM64 검증을 입증하지 않습니다. Ubuntu 프로필은 업스트림 서명된 Clang/LLD 21 패키지를 사용합니다. Clang 18/19의 CR8 선언은 고정된 WDK 헤더와 충돌합니다.
 
 KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTransferCases.def`의 상태 전송 결과 48개를 요구합니다. ioctl 캡처와 선택적 기능 질의 실패가 포함됩니다. 추가 동기화 레지스터 모드는 호스트가 지원할 때 실행하며, 지원하지 않으면 명시적으로 건너뜁니다. 안정적인 매개변수 이름은 ioctl 숫자나 튜플 형식에 의존하지 않습니다. 프로토콜 테스트는 네이티브 실행을 보완하며 대체하지 않습니다.
 
