@@ -231,7 +231,7 @@ class HostedKvmAccessTests(unittest.TestCase):
         self.can_access = patch.start()
         self.addCleanup(patch.stop)
         patch = mock.patch.object(access.subprocess, "run")
-        self.run = patch.start()
+        self.command = patch.start()
         self.addCleanup(patch.stop)
 
     def test_access_is_limited_to_the_current_hosted_account(self):
@@ -241,33 +241,33 @@ class HostedKvmAccessTests(unittest.TestCase):
             ["sudo", "-n", "chown", "1001", "/fixture-kvm"],
             ["sudo", "-n", "chmod", "u+rw", "/fixture-kvm"],
         ])
-        self.assertEqual(self.run.call_count, 2)
+        self.assertEqual(self.command.call_count, 2)
 
     def test_local_and_self_hosted_machines_cannot_be_mutated(self):
         for changes in ({"GITHUB_ACTIONS": "false"}, {"RUNNER_ENVIRONMENT": "self-hosted"}):
             with self.subTest(changes=changes), mock.patch.dict(os.environ, changes), self.assertRaises(ValueError):
                 access.prepare(self.device)
         self.read_stat.assert_not_called()
-        self.run.assert_not_called()
+        self.command.assert_not_called()
 
     def test_missing_device_is_not_created(self):
         self.read_stat.side_effect = FileNotFoundError()
         self.assertEqual(access.prepare(self.device)["status"], "device_absent")
-        self.run.assert_not_called()
+        self.command.assert_not_called()
 
     def test_an_accessible_device_needs_no_mutation(self):
         self.can_access.side_effect = [True]
         self.assertEqual(access.prepare(self.device)["status"], "already_accessible")
-        self.run.assert_not_called()
+        self.command.assert_not_called()
 
     def test_regular_files_cannot_be_permission_targets(self):
         self.info.st_mode = stat.S_IFREG | 0o600
         with self.assertRaises(ValueError):
             access.prepare(self.device)
-        self.run.assert_not_called()
+        self.command.assert_not_called()
 
     def test_permission_failure_is_not_an_availability_skip(self):
-        self.run.side_effect = subprocess.CalledProcessError(1, ["sudo"])
+        self.command.side_effect = subprocess.CalledProcessError(1, ["sudo"])
         with self.assertRaises(subprocess.CalledProcessError):
             access.prepare(self.device)
 
