@@ -1,7 +1,6 @@
 import copy
 import json
 import os
-import re
 from pathlib import Path
 import signal
 import subprocess
@@ -23,86 +22,30 @@ def lifecycle_marker(phase, generation, owner=42):
     return f"INTEL_LIFECYCLE phase={phase} generation={generation} owner={owner}\n"
 
 
-def owner_marker(phase, generation, owner=None):
-    owner = generation + 41 if owner is None else owner
-    return (f"INTEL_OWNER phase={phase} vcpu_generation={generation} "
-            f"owner_generation={generation} owner={owner} vm_generation=1\n")
-
-
-def retirement(number, owner=False):
-    return "".join((owner_marker if owner else lifecycle_marker)(phase, number + 1)
+def retirement(number):
+    return "".join(lifecycle_marker(phase, number + 1)
                    for phase in ("executor_retire_begin", "executor_retire_end"))
 
 
-def iteration(number, name=NAME, reuse=False, recreate=False, recreate_vm=False,
-              recreate_owner=False, controls=False):
+def iteration(number, name=NAME, reuse=False, recreate=False, recreate_vm=False):
     marker = "INTEL_PROBE phase=executor_retained\n" if reuse else ""
-    if recreate_owner:
-        marker += owner_marker("replacement_parked", number + 1)
-        marker += "".join(owner_marker(phase, number) for phase in (
-            "vcpu_destroy_begin", "vcpu_destroy_end", "lease_release_end",
-            "owner_join_begin", "owner_join_end"))
-        marker += "".join(owner_marker(phase, number + 1) for phase in (
-            "owner_activate", "lease_acquire_end", "vcpu_create_begin", "vcpu_create_end"))
-    elif recreate:
+    if recreate:
         phases = ("vcpu_destroy_begin", "vcpu_destroy_end", "vcpu_create_begin", "vcpu_create_end")
         if recreate_vm:
             phases = phases[:2] + ("vm_destroy_begin", "vm_destroy_end", "vm_create_begin", "vm_create_end") + phases[2:]
         marker += "".join(lifecycle_marker(phase, number + int("create" in phase)) for phase in phases)
-    if controls:
-        marker += "".join(f"INTEL_HANDOFF_CONTROL case={case} phase={phase}\n"
-                          for case in ("replacement", "old_destroy", "new_create")
-                          for phase in ("begin", "state_checked", "cleanup_end"))
     return (f"Repeating all tests (iteration {number}) . . .\n"
             f"[ RUN      ] {name}\n{marker}[       OK ] {name} (150 ms)\n"
             "[  PASSED  ] 1 test.\n")
 
 
 class RecoveryLogTests(unittest.TestCase):
-    def test_owner_handoff_requires_join_lease_generations_and_actual_final_owner(self):
-        log = "".join(iteration(i, reuse=True, recreate=True, recreate_owner=True)
-                      for i in range(1, 101)) + retirement(100, owner=True)
-        parse = lambda text: diagnostic.read_repetitions(text, NAME, 100, True, True, False, True)
-        self.assertIsNone(parse(log)["error"])
-        self.assertIsNotNone(parse(re.sub(r" owner=\d+ ", " owner=42 ", log))["error"])
-        reused_ids = re.sub(r" owner=(\d+) ", lambda m: f" owner={42 + int(m[1]) % 2} ", log)
-        self.assertIsNone(parse(reused_ids)["error"])
-        event = owner_marker("owner_join_end", 22)
-        following = owner_marker("owner_activate", 23)
-        last = owner_marker("executor_retire_end", 101)
-        changes = (log.replace(event, ""), log.replace(event, event * 2),
-                   log.replace(event + following, following + event),
-                   log.replace(following, owner_marker("owner_activate", 23, 42)),
-                   log.replace(event, owner_marker("owner_join_end", 22, 100)),
-                   log.replace("owner_generation=22", "owner_generation=21", 1),
-                   log.replace("vm_generation=1", "vm_generation=2", 1),
-                   log.replace(last, owner_marker("executor_retire_end", 100)),
-                   log.replace(last, ""), last + log, log + last,
-                   log.replace(owner_marker("lease_release_end", 22), ""),
-                   log.replace(owner_marker("lease_acquire_end", 23), ""),
-                   log.replace(event, lifecycle_marker("vcpu_destroy_end", 22)))
-        for changed in changes:
-            with self.subTest(log=changed[-200:]):
-                self.assertIsNotNone(parse(changed)["error"])
-        self.assertIsNotNone(diagnostic.read_repetitions(log, NAME, 100, True, True)["error"])
-        for args in ((True, False, False, True), (True, True, True, True)):
-            with self.assertRaises(ValueError):
-                diagnostic.read_repetitions(log, NAME, 100, *args)
+    def test_old_owner_handoff_markers_cannot_certify_current_execution(self):
+        log = iteration(1)
+        for marker in ("INTEL_OWNER phase=owner_join_end", "INTEL_HANDOFF_CONTROL case=replacement"):
+            changed = log.replace("[       OK ]", marker + "\n[       OK ]")
+            self.assertIn("shared process owner", diagnostic.read_repetitions(changed, NAME, 1)["error"])
 
-    def test_each_injected_control_requires_state_check_and_cleanup(self):
-        log = "".join(iteration(i, controls=True) for i in range(1, 101))
-        parse = lambda text: diagnostic.read_repetitions(text, NAME, 100, owner_failure_controls=True)
-        self.assertIsNone(parse(log)["error"])
-        end = "INTEL_HANDOFF_CONTROL case=old_destroy phase=cleanup_end\n"
-        following = "INTEL_HANDOFF_CONTROL case=new_create phase=begin\n"
-        for changed in (log.replace(end, "", 1), log.replace(end, end * 2, 1),
-                        log.replace(end + following, following + end, 1),
-                        log.replace("phase=state_checked", "phase=cleanup_end", 1),
-                        log.replace("case=replacement", "case=old_destroy", 1), end + log, log + end):
-            self.assertIsNotNone(parse(changed)["error"])
-        self.assertIsNotNone(diagnostic.read_repetitions(log, NAME, 100)["error"])
-        with self.assertRaises(ValueError):
-            diagnostic.read_repetitions(log, NAME, 100, True, owner_failure_controls=True)
 
     def test_vm_recreation_requires_both_resources_in_order(self):
         log = "".join(iteration(i, reuse=True, recreate=True, recreate_vm=True) for i in range(1, 101)) + retirement(100)
@@ -261,9 +204,8 @@ class RecoveryContractTests(unittest.TestCase):
             native_filter = "HvfExecutor.Native*" if experiment in ("recovery-reuse", "recovery-vcpu-recreate", "recovery-vm-recreate") else name
             self.assertEqual(contract["command"][1], "--gtest_filter=" + native_filter)
             environment = {"NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1"}
-            recreate_owner = experiment == "instruction-owner-recreate"
             recreate_vm = experiment in ("instruction-vm-recreate", "recovery-vm-recreate")
-            recreate = recreate_owner or recreate_vm or experiment in ("instruction-vcpu-recreate", "recovery-vcpu-recreate")
+            recreate = recreate_vm or experiment in ("instruction-vcpu-recreate", "recovery-vcpu-recreate")
             reuse = recreate or experiment in ("instruction-reuse", "recovery-reuse")
             if reuse:
                 environment["NEVERD_HVF_INTEL_REUSE_EXECUTOR"] = "1"
@@ -271,8 +213,6 @@ class RecoveryContractTests(unittest.TestCase):
                 environment["NEVERD_HVF_INTEL_RECREATE_VCPU"] = "1"
             if recreate_vm:
                 environment["NEVERD_HVF_INTEL_RECREATE_VM"] = "1"
-            if recreate_owner:
-                environment["NEVERD_HVF_INTEL_RECREATE_OWNER"] = "1"
             self.assertEqual(contract["native_requirements"], environment)
             self.assertEqual(contract["executor_reuse"], reuse)
             self.assertEqual(contract["vcpu_recreate"], recreate)
@@ -281,12 +221,7 @@ class RecoveryContractTests(unittest.TestCase):
             self.assertEqual(contract["vcpu_boundary_generations"], 101 if recovery_recreate else None)
             self.assertEqual(contract["vm_recreate"], recreate_vm)
             self.assertEqual(contract["vm_generations"], 101 if recreate_vm else None)
-            controls = experiment == "owner-failure-controls"
-            self.assertEqual(contract["owner_recreate"], recreate_owner)
-            self.assertEqual(contract["owner_generations"], 101 if recreate_owner else None)
-            self.assertEqual(contract["owner_failure_controls"], controls)
-            self.assertEqual(contract["expected_fault_checks"], 300 if controls else None)
-            self.assertEqual(contract["native_execution"], experiment != "lifecycle" and not controls)
+            self.assertEqual(contract["native_execution"], experiment != "lifecycle")
             self.assertEqual(contract["guest_execution"], contract["native_execution"])
             self.assertTrue(contract["native_hvf_calls"])
             self.assertFalse(contract["required_for_acceptance"])
@@ -295,21 +230,26 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual(original["native_requirements"], {"NEVERD_REQUIRE_HVF": "1"})
         self.assertTrue(original["required_for_acceptance"])
 
+    def test_per_executor_owner_experiments_are_rejected(self):
+        for experiment in ("instruction-owner-recreate", "owner-failure-controls"):
+            with self.subTest(experiment=experiment):
+                with self.assertRaisesRegex(ValueError, "unknown Intel experiment"):
+                    self.prepare(experiment=experiment)
+
     def test_parent_probe_environment_cannot_change_selected_experiment(self):
         name = diagnostic.EXPERIMENTS["instruction"]
         self.add_probe(name)
-        self.add_probe(diagnostic.EXPERIMENTS["owner-failure-controls"])
         keys = ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR", "NEVERD_HVF_INTEL_RECREATE_VCPU", "NEVERD_HVF_INTEL_RECREATE_VM", "NEVERD_HVF_INTEL_RECREATE_OWNER")
-        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse", "recovery-vcpu-recreate", "recovery-vm-recreate", "instruction-vcpu-recreate", "instruction-vm-recreate", "instruction-owner-recreate", "owner-failure-controls"):
+        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse", "recovery-vcpu-recreate", "recovery-vm-recreate", "instruction-vcpu-recreate", "instruction-vm-recreate"):
             with self.subTest(mode=mode):
                 self.evidence = self.build / ("evidence-" + mode)
                 plan = self.prepare(experiment=mode)
                 expected = {key: plan["native_requirements"][key]
                             for key in keys if key in plan["native_requirements"]}
-                log = "".join(iteration(i, plan["native_name"], plan["executor_reuse"], plan["vcpu_recreate"], plan["vm_recreate"], plan["owner_recreate"], plan["owner_failure_controls"])
+                log = "".join(iteration(i, plan["native_name"], plan["executor_reuse"], plan["vcpu_recreate"], plan["vm_recreate"])
                               for i in range(1, 101))
                 if plan["vcpu_recreate"]:
-                    log += retirement(100, owner=plan["owner_recreate"])
+                    log += retirement(100)
                 self.binary.write_text(f"#!{sys.executable}\nimport os\n"
                     f"assert {{key: os.environ[key] for key in {keys!r} if key in os.environ}} == {expected!r}\n"
                     f"print({log!r}, end='', flush=True)\n")
@@ -330,7 +270,7 @@ class RecoveryContractTests(unittest.TestCase):
             "NEVERD_HVF_INTEL_RECREATE_VM": "1"})
         self.assertTrue(plan["executor_reuse"] and plan["vcpu_recreate"] and plan["vm_recreate"])
         self.assertTrue(plan["guest_execution"] and plan["native_execution"] and plan["native_hvf_calls"])
-        self.assertFalse(plan["required_for_acceptance"] or plan["owner_recreate"])
+        self.assertFalse(plan["required_for_acceptance"])
         self.assertIsNone(plan["vcpu_generations"])
         self.assertEqual(plan["vcpu_boundary_generations"], 1001)
         self.assertEqual(plan["vm_generations"], 1001)
@@ -346,7 +286,7 @@ class RecoveryContractTests(unittest.TestCase):
             "NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1",
             "NEVERD_HVF_INTEL_REUSE_EXECUTOR": "1", "NEVERD_HVF_INTEL_RECREATE_VCPU": "1"})
         self.assertTrue(plan["executor_reuse"] and plan["vcpu_recreate"])
-        self.assertFalse(plan["vm_recreate"] or plan["owner_recreate"] or plan["required_for_acceptance"])
+        self.assertFalse(plan["vm_recreate"] or plan["required_for_acceptance"])
         self.assertIsNone(plan["vcpu_generations"])
         self.assertEqual(plan["vcpu_boundary_generations"], 1001)
         # Reuse alone, VM resets or missing final retirement cannot pass this
@@ -358,27 +298,6 @@ class RecoveryContractTests(unittest.TestCase):
                 text += retirement(1000)
             self.assertIsNotNone(diagnostic.read_repetitions(text, NAME, 1000, True, True)["error"])
 
-    def test_failure_controls_reject_wrong_budget_or_unwitnessed_success(self):
-        name = diagnostic.EXPERIMENTS["owner-failure-controls"]
-        self.add_probe(name)
-        with self.assertRaisesRegex(ValueError, "100 repetitions"):
-            self.prepare(1000, "owner-failure-controls")
-        self.prepare(experiment="owner-failure-controls")
-        log = "".join(iteration(i, name) for i in range(1, 101))
-        self.binary.write_text(f"#!{sys.executable}\nprint({log!r}, end='', flush=True)\n")
-        self.binary.chmod(0o755)
-        self.assertEqual(diagnostic.execute(self.root, self.evidence), 1)
-        self.assertIn("missing owner failure control", json.loads((self.evidence / "result.json").read_text())["repetitions"]["error"])
-
-    def test_retained_owner_source_cannot_pass_owner_recreation(self):
-        name = diagnostic.EXPERIMENTS["instruction-owner-recreate"]
-        self.add_probe(name)
-        self.prepare(experiment="instruction-owner-recreate")
-        log = "".join(iteration(i, name, reuse=True, recreate=True) for i in range(1, 101)) + retirement(100)
-        self.binary.write_text(f"#!{sys.executable}\nprint({log!r}, end='', flush=True)\n")
-        self.binary.chmod(0o755)
-        self.assertEqual(diagnostic.execute(self.root, self.evidence), 1)
-        self.assertFalse(json.loads((self.evidence / "result.json").read_text())["passed"])
 
     def test_reuse_only_source_cannot_pass_recreation_experiment(self):
         name = diagnostic.EXPERIMENTS["instruction-vcpu-recreate"]
