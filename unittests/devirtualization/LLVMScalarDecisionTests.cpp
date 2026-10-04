@@ -70,7 +70,76 @@ even:
 exit:)");
   return IR;
 }
+
+constexpr char ShiftRecurrence[] = R"(
+define i32 @f(i32 noundef %x, i32 noundef %y, i32 noundef %n) {
+entry:
+  %limit = and i32 %n, 7
+  %seed = and i32 %x, 31
+  br label %loop
+loop:
+  %i = phi i32 [0, %entry], [%next, %positive], [%next, %negative]
+  %v = phi i32 [%seed, %entry], [%left, %positive], [%right, %negative]
+  %more = icmp ult i32 %i, %limit
+  br i1 %more, label %body, label %exit
+body:
+  %low = and i32 %v, 15
+  %sum = add nuw nsw i32 %low, %seed
+  %next = add nuw nsw i32 %i, 1
+  %bit = and i32 %i, 1
+  %even = icmp eq i32 %bit, 0
+  br i1 %even, label %positive, label %negative
+positive:
+  %up = shl nuw nsw i32 %sum, 2
+  %left = xor i32 %up, %y
+  br label %loop
+negative:
+  %signed = or i32 %sum, -16
+  %down = shl nsw i32 %signed, 1
+  %right = xor i32 %down, %y
+  br label %loop
+exit:
+  %result = xor i32 %v, %x
+  ret i32 %result
+})";
 } // namespace
+
+TEST(LLVMScalarDecision, ProvesSignedAndUnsignedShiftGuardsOnBothBackedges) {
+  const auto R = self(ShiftRecurrence);
+  ASSERT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+  EXPECT_EQ(R.CompletedPartitions, 8U);
+  EXPECT_EQ(R.ControlBits,
+            (std::vector<LLVMScalarControlBit>{{2, 0}, {2, 1}, {2, 2}}));
+  EXPECT_EQ(check(ShiftRecurrence, ShiftRecurrence).Status, Status::Proved);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = R.Work;
+  EXPECT_EQ(self(ShiftRecurrence, L).Status, Status::Proved);
+  --L.MaxWork;
+  const auto Short = self(ShiftRecurrence, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+
+  std::string Wrong = ShiftRecurrence;
+  replace(Wrong, "ret i32 %result", R"(
+  %high = and i32 %y, -2147483648
+  %wrong = xor i32 %result, %high
+  ret i32 %wrong)");
+  EXPECT_EQ(check(ShiftRecurrence, Wrong).Status, Status::Unproved);
+}
+
+TEST(LLVMScalarDecision, ShiftRelationsDoNotAuthorizeOverflowOrStaleFacts) {
+  Source Input(ShiftRecurrence);
+  ASSERT_EQ(
+      checkLLVMScalarEquivalence(Input.function(), Input.function()).Status,
+      Status::Proved);
+  for (auto &B : Input.function())
+    for (auto &I : B)
+      if (I.getName() == "down")
+        I.setOperand(1, llvm::ConstantInt::get(I.getType(), 31));
+  EXPECT_NE(
+      checkLLVMScalarEquivalence(Input.function(), Input.function()).Status,
+      Status::Proved);
+}
 
 TEST(LLVMScalarDecision, DeepDefinednessRetainsTheCompleteControlDomain) {
   const auto R = self(Recurrence);
@@ -190,6 +259,50 @@ TEST(LLVMScalarDecision, MaskAndAnnotationChangesCannotReuseEarlierFacts) {
 }
 
 class LLVMScalarDecisionCompiled : public NeverDLiftTest {};
+
+TEST_F(LLVMScalarDecisionCompiled, ShiftBackedgesMatchIndependentArithmetic) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  ASSERT_EQ(self(ShiftRecurrence).Status, Status::Proved);
+  const auto Source = tmpFile("shift-recurrence.ll");
+  const auto Harness = tmpFile("shift-oracle.c");
+  std::ofstream(Source) << ShiftRecurrence;
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+uint32_t f(uint32_t, uint32_t, uint32_t);
+static uint32_t next_word(uint32_t *s) {
+  *s ^= *s << 13; *s ^= *s >> 17; *s ^= *s << 5;
+  return *s;
+}
+int main(void) {
+  uint32_t state = UINT32_C(0x3857bd9f);
+  const uint32_t edges[] = {0, 1, 15, 16, 31, 32,
+    UINT32_C(0x7fffffff), UINT32_C(0x80000000), UINT32_MAX};
+  for (unsigned k = 0; k < 8192; ++k) {
+    uint32_t x = k < 256 * 9 ? edges[k / 256] : next_word(&state);
+    uint32_t y = next_word(&state);
+    uint32_t n = k < 256 * 9 ? k % 256 : next_word(&state);
+    uint32_t seed = x & 31, v = seed;
+    for (uint32_t i = 0; i < (n & 7); ++i) {
+      uint32_t sum = (v & 15) + seed;
+      v = ((i & 1) ? ((sum | UINT32_C(0xfffffff0)) << 1) : (sum << 2)) ^ y;
+    }
+    if (f(x, y, n) != (v ^ x)) return 1;
+  }
+  return 0;
+})";
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    auto Program = tmpFile("shift-oracle");
+    auto Built = exec(NEVERD_TEST_CLANG,
+                      {"-std=c11", Optimization, "-fsanitize=undefined",
+                       "-fsanitize-trap=undefined", Source.string(),
+                       Harness.string(), "-o", Program.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    const auto Ran = exec(Program.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err;
+  }
+}
 
 TEST_F(LLVMScalarDecisionCompiled, DeepOneAndTwoBackedgeOracles) {
   if (!hasCrossTargetClang())
