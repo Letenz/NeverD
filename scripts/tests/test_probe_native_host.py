@@ -238,8 +238,8 @@ class HostedKvmAccessTests(unittest.TestCase):
         report = access.prepare(self.device)
         self.assertEqual(report["status"], "access_granted")
         self.assertEqual(report["commands"], [
-            ["sudo", "-n", "chown", "1001", "/fixture-kvm"],
-            ["sudo", "-n", "chmod", "u+rw", "/fixture-kvm"],
+            ["sudo", "-n", "chown", "1001", str(self.device)],
+            ["sudo", "-n", "chmod", "u+rw", str(self.device)],
         ])
         self.assertEqual(self.command.call_count, 2)
 
