@@ -4,12 +4,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/c/pass/LLVMC/LLVMCLoopPhases.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
@@ -631,6 +633,307 @@ TEST(LLVMCValues, CommonExitArmsWithAnotherPredecessorRemainValid) {
 
 TEST(LLVMCValues, CommonExitRetainsValuesReadBeforeArmCalls) {
   checkCommonBranch(false, false, false, true);
+}
+
+const char *LoopPhaseIR = R"(
+declare i32 @llvm.fshr.i32(i32, i32, i32)
+declare void @observe_phase(i32, ptr)
+define i32 @phased(i32 %seed, i32 %count, i32 %mask, ptr %output) {
+entry:
+  %limit = and i32 %count, 15
+  %r0 = call i32 @llvm.fshr.i32(i32 %seed, i32 %seed, i32 7)
+  %p0 = xor i32 %r0, %mask
+  br label %head
+head:
+  %index = phi i32 [0, %entry], [%inc, %left], [%inc, %right]
+  %value = phi i32 [%p0, %entry], [%pl, %left], [%pr, %right]
+  call void @observe_phase(i32 %value, ptr %output)
+  %done = icmp eq i32 %index, %limit
+  br i1 %done, label %exit, label %choose
+choose:
+  %inc = add i32 %index, 1
+  %bit = and i32 %index, 1
+  %odd = icmp ne i32 %bit, 0
+  br i1 %odd, label %left, label %right
+left:
+  %a = xor i32 %index, %seed
+  %next.left = add i32 %value, %a
+  %rl = call i32 @llvm.fshr.i32(i32 %next.left, i32 %next.left, i32 7)
+  %pl = xor i32 %rl, %mask
+  br label %head
+right:
+  %b = add i32 %index, 23
+  %next.right = sub i32 %value, %b
+  %rr = call i32 @llvm.fshr.i32(i32 %next.right, i32 %next.right, i32 7)
+  %pr = xor i32 %rr, %mask
+  br label %head
+exit:
+  ret i32 %value
+}
+)";
+
+void checkLoopPhases(bool OnlyFunction, bool DifferentOperation,
+                     bool SharedRoot, bool MemorySnapshot = false) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  std::string IR = LoopPhaseIR;
+  if (DifferentOperation) {
+    const std::string Old = "%pr = xor i32 %rr, %mask";
+    IR.replace(IR.find(Old), Old.size(), "%pr = or i32 %rr, %mask");
+  }
+  if (SharedRoot) {
+    const std::string Old = "%p0 = xor i32 %r0, %mask";
+    IR.replace(IR.find(Old), Old.size(),
+               Old + "\n  call void @observe_phase(i32 %p0, ptr %output)");
+  }
+  if (MemorySnapshot) {
+    const std::string Old =
+        "%r0 = call i32 @llvm.fshr.i32(i32 %seed, i32 %seed, i32 7)";
+    IR.replace(
+        IR.find(Old), Old.size(),
+        "%saved = load i32, ptr %output\n"
+        "  %r0 = call i32 @llvm.fshr.i32(i32 %saved, i32 %saved, i32 7)");
+    const std::string Root = "%p0 = xor i32 %r0, %mask";
+    IR.replace(IR.find(Root), Root.size(),
+               Root + "\n  call void @observe_phase(i32 %mask, ptr %output)");
+    const std::string Next = "%rr = call i32 @llvm.fshr.i32(i32 %next.right, "
+                             "i32 %next.right, i32 7)";
+    IR.replace(IR.find(Next), Next.size(),
+               "%saved.right = load i32, ptr %output\n"
+               "  %rr = call i32 @llvm.fshr.i32(i32 %saved.right, i32 "
+               "%saved.right, i32 7)");
+    const std::string Last = "%pr = xor i32 %rr, %mask";
+    IR.replace(IR.find(Last), Last.size(),
+               Last + "\n  call void @observe_phase(i32 %mask, ptr %output)");
+  }
+  auto Module = llvm::parseAssemblyString(IR, Error, Context);
+  ASSERT_TRUE(Module);
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Before;
+  llvm::raw_string_ostream BeforeStream(Before);
+  Module->print(BeforeStream, nullptr);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(
+      *Module, Output, Options, nullptr, nullptr,
+      OnlyFunction ? Module->getFunction("phased") : nullptr));
+  std::string After;
+  llvm::raw_string_ostream AfterStream(After);
+  Module->print(AfterStream, nullptr);
+  EXPECT_EQ(Before, After);
+  llvm::StringRef Call = "neverd_llvm_fshr_i32(";
+  size_t Calls = 0;
+  for (size_t At = 0; (At = Source.find(Call.str(), At)) != std::string::npos;
+       At += Call.size())
+    ++Calls;
+  // Include the helper definition itself. All three incoming edges must agree.
+  EXPECT_EQ(Calls, DifferentOperation || SharedRoot ? 4U : 2U) << Source;
+  Source = "#include <stdint.h>\nvoid observe_phase(uint32_t, void *);\n" +
+           Source + "\n#define DIFFERENT_OPERATION " +
+           std::to_string(DifferentOperation) + "\n#define SHARED_ROOT " +
+           std::to_string(SharedRoot) + "\n#define MEMORY_SNAPSHOT " +
+           std::to_string(MemorySnapshot) + "\n";
+  Source += R"(
+static volatile uint32_t phase_trace;
+void observe_phase(uint32_t value, void *output) {
+  *(uint32_t *)output = value;
+  phase_trace = phase_trace * UINT32_C(65599) + value;
+}
+static uint32_t rotate_right(uint32_t value) {
+  return (value >> 7) | (value << 25);
+}
+int main(void) {
+  uint32_t seed = UINT32_MAX, mask = 0;
+  for (unsigned trial = 0; trial < 512; ++trial) {
+    seed = seed * UINT32_C(1664525) + UINT32_C(1013904223);
+    mask = mask * UINT32_C(22695477) + 1;
+    for (uint32_t count = 0; count < 16; ++count) {
+      uint32_t value = rotate_right(seed) ^ mask;
+      uint32_t trace = MEMORY_SNAPSHOT ? mask : SHARED_ROOT ? value : 0;
+      for (uint32_t i = 0;; ++i) {
+        trace = trace * UINT32_C(65599) + value;
+        if (i == count) break;
+        if (i & 1) value = rotate_right(value + (i ^ seed)) ^ mask;
+        else {
+          value = rotate_right(MEMORY_SNAPSHOT ? value : value - (i + 23));
+          value = DIFFERENT_OPERATION ? value | mask : value ^ mask;
+          if (MEMORY_SNAPSHOT) trace = trace * UINT32_C(65599) + mask;
+        }
+      }
+      uint32_t output[] = {seed, UINT32_C(0x957d62ab)};
+      phase_trace = 0;
+      if (phased(seed, count, mask, (void *)output) != value) return 1;
+      if (output[0] != value || output[1] != UINT32_C(0x957d62ab)) return 2;
+      if (phase_trace != trace) return 3;
+    }
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
+TEST(LLVMCValues, LoopPhasesRecombineEveryBackedgeAndKeepObserverOrder) {
+  checkLoopPhases(false, false, false);
+  checkLoopPhases(true, false, false);
+}
+
+TEST(LLVMCValues, LoopPhasesRetainConflictingBackedgesAndSharedRoots) {
+  checkLoopPhases(false, true, false);
+  checkLoopPhases(false, false, true);
+}
+
+TEST(LLVMCValues, LoopPhasesKeepMemorySnapshotsBeforeModifyingCalls) {
+  checkLoopPhases(false, false, false, true);
+}
+
+TEST(LLVMCValues, LoopPhasesRetainNarrowWrapAndSignedExtension) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"(
+define i64 @width_phase(i64 %seed, i32 %count) {
+entry:
+  %limit = and i32 %count, 31
+  %n0 = trunc i64 %seed to i8
+  %x0 = sext i8 %n0 to i64
+  br label %head
+head:
+  %index = phi i32 [0, %entry], [%inc, %latch]
+  %value = phi i64 [%x0, %entry], [%x1, %latch]
+  %done = icmp eq i32 %index, %limit
+  br i1 %done, label %exit, label %latch
+latch:
+  %wide = add i64 %value, %seed
+  %n1 = trunc i64 %wide to i8
+  %x1 = sext i8 %n1 to i64
+  %inc = add i32 %index, 1
+  br label %head
+exit:
+  ret i64 %value
+}
+)",
+                                          Error, Context);
+  ASSERT_TRUE(Module);
+  ASSERT_TRUE(neverd::llvmc::factorLoopPhiExpressions(
+      *Module->getFunction("width_phase")));
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  unsigned Extensions = 0, Truncations = 0;
+  for (auto &Block : *Module->getFunction("width_phase"))
+    for (auto &I : Block) {
+      Extensions += llvm::isa<llvm::SExtInst>(I);
+      Truncations += llvm::isa<llvm::TruncInst>(I);
+    }
+  EXPECT_EQ(Extensions, 1U);
+  EXPECT_EQ(Truncations, 1U);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Output, Options));
+  Source += R"(
+int main(void) {
+  for (uint64_t seed = 0; seed < 1024; ++seed)
+    for (uint32_t count = 0; count < 32; ++count) {
+      uint64_t input = (seed << 48) | seed;
+      uint64_t expected = 0;
+      for (uint32_t i = 0; i <= count; ++i) {
+        uint64_t byte = (expected + input) & 255;
+        expected = byte < 128 ? byte : byte | ~UINT64_C(255);
+      }
+      if (width_phase(input, count) != expected) return 1;
+    }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
+TEST(LLVMCValues, LoopPhasesRejectPartialOperationsAndPreserveFrozenInputs) {
+  for (llvm::StringRef Operation :
+       {"add nuw i32 %x, 3", "lshr exact i32 %x, 3", "shl i32 %x, %amount",
+        "sdiv i32 %x, 3", "xor i32 %x, undef", "xor i32 %x, poison",
+        "freeze i32 %x"}) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    std::string Op = Operation.str();
+    std::string Back = Op;
+    Back.replace(Back.find("%x"), 2, "%p");
+    std::string IR =
+        "define i32 @refuse(i32 %x, i32 %amount, i1 %again) {\n"
+        "entry:\n %a = " +
+        Op +
+        "\n br label %head\nhead:\n"
+        " %p = phi i32 [%a, %entry], [%b, %latch]\n"
+        " br i1 %again, label %latch, label %exit\nlatch:\n %b = " +
+        Back + "\n br label %head\nexit:\n ret i32 %p\n}";
+    auto Module = llvm::parseAssemblyString(IR, Error, Context);
+    ASSERT_TRUE(Module) << IR;
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    EXPECT_FALSE(
+        neverd::llvmc::factorLoopPhiExpressions(*Module->getFunction("refuse")))
+        << Operation.str();
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  }
+}
+
+TEST(LLVMCValues, LoopPhaseBudgetRefusalLeavesOriginalIR) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(LoopPhaseIR, Error, Context);
+  ASSERT_TRUE(Module);
+  auto *Function = Module->getFunction("phased");
+  auto &Entry = Function->getEntryBlock();
+  for (unsigned I = 0; I < 65536; ++I)
+    llvm::BinaryOperator::CreateAdd(Function->getArg(0), Function->getArg(2),
+                                    "budget",
+                                    Entry.getTerminator()->getIterator());
+  std::string Before;
+  llvm::raw_string_ostream BeforeStream(Before);
+  Module->print(BeforeStream, nullptr);
+  EXPECT_FALSE(neverd::llvmc::factorLoopPhiExpressions(*Function));
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string After;
+  llvm::raw_string_ostream AfterStream(After);
+  Module->print(AfterStream, nullptr);
+  EXPECT_EQ(Before, After);
+}
+
+TEST(LLVMCValues, LoopPhasesPreserveConstrainedCallsAndExceptionFunctions) {
+  for (auto Attribute : {llvm::Attribute::Convergent, llvm::Attribute::NoMerge,
+                         llvm::Attribute::NoDuplicate}) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    auto Module = llvm::parseAssemblyString(LoopPhaseIR, Error, Context);
+    ASSERT_TRUE(Module);
+    auto *Function = Module->getFunction("phased");
+    for (auto &Block : *Function)
+      for (auto &I : Block)
+        if (auto *Intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(&I))
+          Intrinsic->addFnAttr(Attribute);
+    neverd::llvmc::factorLoopPhiExpressions(*Function);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    unsigned Calls = 0;
+    for (auto &Block : *Function)
+      for (auto &I : Block)
+        Calls += llvm::isa<llvm::IntrinsicInst>(I);
+    EXPECT_EQ(Calls, 3U);
+  }
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(LoopPhaseIR, Error, Context);
+  ASSERT_TRUE(Module);
+  auto *Function = Module->getFunction("phased");
+  auto Personality = Module->getOrInsertFunction(
+      "personality",
+      llvm::FunctionType::get(llvm::Type::getInt32Ty(Context), true));
+  Function->setPersonalityFn(
+      llvm::cast<llvm::Constant>(Personality.getCallee()));
+  EXPECT_FALSE(neverd::llvmc::factorLoopPhiExpressions(*Function));
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
 }
 
 } // namespace
