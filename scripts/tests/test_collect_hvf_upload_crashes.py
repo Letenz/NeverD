@@ -32,10 +32,13 @@ class UploadCrashTests(unittest.TestCase):
         payload = (json.dumps({"app_name": "node"}) + "\n" + json.dumps(self.report)).encode()
         (reports / "node-match.ips").write_bytes(payload)
         (reports / "node-other.ips").write_text(json.dumps({}) + "\n" + json.dumps({**self.report, "pid": 1}))
+        (reports / "node-unrelated-private-timestamp.ips").write_text('unrelated invalid report')
         result = collect(self.root / "evidence", [reports], 0)
         self.assertEqual(result["missing"], [])
         self.assertEqual(len(result["captured"]), 1)
         self.assertEqual((uploads / "crashes/progress-004.ips").read_bytes(), payload)
+        self.assertEqual(result["errors"], {"JSONDecodeError": 1})
+        self.assertNotIn("unrelated-private", (uploads / "crashes/collection.json").read_text())
 
     def test_partial_oversize_and_symlink_reports_do_not_escape_collection(self):
         partial = self.root / "partial.ips"

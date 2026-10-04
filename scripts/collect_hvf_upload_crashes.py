@@ -86,7 +86,10 @@ def collect(evidence, directories, wait_seconds):
                                                        "report": output.name})
                             remaining.remove(name)
                 except (OSError, UnicodeError, ValueError) as error:
-                    result["errors"][path.name] = type(error).__name__
+                    # A malformed report cannot be attributed to our child.
+                    # Count failed reads without disclosing unrelated names.
+                    kind = type(error).__name__
+                    result["errors"][kind] = result["errors"].get(kind, 0) + 1
         if not remaining or time.monotonic() >= deadline:
             break
         time.sleep(min(1, max(0, deadline - time.monotonic())))
