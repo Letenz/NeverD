@@ -909,6 +909,8 @@ These cases require `NEVERD_WDM_SEH_FIXTURE` and its optional CFG companion.
 
 `X64SIMDExceptionTests.cpp` bypasses checked admission to verify native KVM/WHP `#XM` transport at both privileges. Eight original cases in `X64SIMDExceptionCases.def` cover all six exception types, including exact tiny results and overflow with exact unbounded precision. Register and RAM forms preserve the complete GPR, XMM, x87, FLAGS, FS/GS and guest memory state on faults, apart from the specified MXCSR status. Masking the exception retries the original instruction; repairing operands while retaining sticky status verifies that old flags do not retrigger it. These mandatory transport checks do not enable unmasked SIMD in checked execution or establish Windows exception-code mapping.
 
+`check_windows_simd.py` builds an independent original Windows x64 executable from `WindowsSIMDCases.def` and the scalar case inventory. Its 2,048 observations cover register/RAM operands, every exception-mask combination and clear/all-set sticky flags. The Windows CI job preserves raw exception codes, parameters and both MXCSR fields in `CONTEXT`; the fixture verifies exact fault PCs, unchanged XMM state and masked results before restoring host state. `--build-only` is compilation evidence only. These observations do not enable checked unmasked SIMD or claim native ARM64 execution.
+
 `HardwareBackendTests.cpp` exercises the native checked backend on supported
 hosts: high virtual addresses, pre-effect observer stops, RAM aliases, context
 restore against current mappings, fault lifetime, bounded loops, unsupported

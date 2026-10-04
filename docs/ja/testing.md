@@ -280,6 +280,8 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `X64SIMDExceptionTests.cpp` は checked の許可判定を迂回し、両特権レベルで KVM/WHP のネイティブ `#XM` 伝達を検証します。`X64SIMDExceptionCases.def` の独自の八ケースは六種類の例外を網羅し、正確な微小結果と無制限の指数では精度が正確なオーバーフローも含みます。レジスタ形式と RAM 形式では、規定の MXCSR ステータスを除き、障害時の GPR、XMM、x87、FLAGS、FS/GS、ゲストメモリ全体を保持します。例外をマスクして元の命令を再試行し、粘着ステータスを残してオペランドを修復することで古いフラグが再発火しないことも確認します。この必須の転送検証は checked 実行で非マスク SIMD を有効にせず、Windows 例外コードの対応も証明しません。
 
+`check_windows_simd.py` は `WindowsSIMDCases.def` とスカラーケース一覧から、独立した独自の Windows x64 実行ファイルを構築します。2,048 件の観測でレジスタ/RAM オペランド、すべての例外マスクの組合せ、スティッキーフラグの全消去と全設定を網羅します。Windows CI は例外コード、パラメーター、`CONTEXT` 内の両方の MXCSR を保存します。テストはホスト状態を復元する前に、正確な障害 PC、変化していない XMM 状態、例外をマスクした結果を確認します。`--build-only` はコンパイルの証拠に限られます。この観測は checked 実行の非マスク SIMD を有効にせず、ARM64 のネイティブ実行も示しません。
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure

@@ -284,6 +284,8 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 يتجاوز `X64SIMDExceptionTests.cpp` طبقة قبول checked للتحقق من نقل `#XM` الأصلي في KVM/WHP عند مستويي الامتياز. تغطي الحالات الأصلية الثماني في `X64SIMDExceptionCases.def` أنواع الاستثناء الستة، بما فيها النتائج المتناهية الصغر الدقيقة والتجاوز الدقيق عند عدم تقييد الأس. تحفظ صيغ السجلات وRAM كامل حالة GPR وXMM وx87 وFLAGS وFS/GS وذاكرة الضيف عند الخطأ، باستثناء حالة MXCSR المحددة. يسمح حجب الاستثناء بإعادة تنفيذ التعليمة الأصلية؛ ويتحقق إصلاح المعاملات مع إبقاء الأعلام المتراكمة من أن الأعلام القديمة لا تعيد إطلاقه. لا تفعّل فحوص النقل الإلزامية هذه استثناءات SIMD غير المحجوبة في تنفيذ checked، ولا تثبت مطابقة رموز استثناءات Windows.
 
+يبني `check_windows_simd.py` برنامج Windows x64 أصلياً ومستقلاً من `WindowsSIMDCases.def` وقائمة الحالات العددية. تغطي الملاحظات البالغ عددها 2,048 معاملات السجلات/RAM وجميع تركيبات أقنعة الاستثناءات، مع تصفير أعلام الحالة المتراكمة أو ضبطها جميعاً. يحتفظ Windows CI برموز الاستثناءات ومعاملاتها الأصلية وحقلَي MXCSR في `CONTEXT`. يتحقق الاختبار من عنوان PC الدقيق للخطأ وبقاء حالة XMM دون تغيير والنتائج المقنّعة قبل استعادة حالة المضيف. يثبت `--build-only` نجاح الترجمة فقط. لا تفعّل هذه الملاحظات SIMD غير المقنّع في تنفيذ checked ولا تثبت تنفيذاً أصلياً على ARM64.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
