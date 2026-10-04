@@ -30,6 +30,8 @@ struct LLVMScalarFunctionModel {
 /// result. Supports i1/i8/i16/i32/i64 subject to the existing scalar model's
 /// instruction and attribute contract. Memory, pointer operations, ordinary
 /// calls, exceptions, undef/poison and unmodeled instructions are rejected.
+/// A canonical, bundle-free llvm.assume records a definedness obligation;
+/// it never restricts the symbolic input domain or supplies a proved fact.
 /// The caller must initialize LLVMInterpreterDefinednessOffset to zero and
 /// prove that it remains zero on every admitted execution, as well as prove
 /// termination and the complete return value. Model construction alone is
