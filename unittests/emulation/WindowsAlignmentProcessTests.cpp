@@ -1,0 +1,110 @@
+//===- WindowsAlignmentProcessTests.cpp - Windows SSE fault delivery ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#include "gtest/gtest.h"
+
+#include "neverd/emulation/CPU.h"
+#include "neverd/emulation/ProcessSession.h"
+
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
+
+namespace neverd::emulation {
+namespace {
+#define NEVERD_ALIGNMENT_PROCESS_VALUE(Name, Value)                            \
+  constexpr uint64_t Name = Value;
+#define NEVERD_ALIGNMENT_PROCESS_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/WindowsAlignmentProcessCases.def"
+#undef NEVERD_ALIGNMENT_PROCESS_TEXT
+#undef NEVERD_ALIGNMENT_PROCESS_VALUE
+#define NEVERD_WINDOWS_ALIGNMENT_VALUE(Name, Value)                            \
+  constexpr uint64_t Name = Value;
+#include "fixtures/WindowsAlignmentCases.def"
+#undef NEVERD_WINDOWS_ALIGNMENT_VALUE
+struct Profile {
+  const char *Name;
+  ExecutionBackendKind Backend;
+};
+constexpr Profile Profiles[] = {
+#define NEVERD_ALIGNMENT_PROCESS_BACKEND(Name, Backend)                        \
+  {#Name, ExecutionBackendKind::Backend},
+#include "fixtures/WindowsAlignmentProcessCases.def"
+#undef NEVERD_ALIGNMENT_PROCESS_BACKEND
+};
+void PrintTo(const Profile &P, std::ostream *OS) { *OS << P.Name; }
+class WindowsAlignment : public testing::TestWithParam<Profile> {};
+TEST_P(WindowsAlignment, ExecutesOriginalFaultAndRetryScenarios) {
+#ifndef NEVERD_WINDOWS_EXCEPTION_FIXTURE_DIR
+  GTEST_SKIP() << MissingTools;
+#else
+  ExecutionConfiguration Config;
+  Config.Architecture = GuestArchitecture::X64;
+  Config.Backend = GetParam().Backend;
+  Config.Contract = ExecutionContract::CheckedUserX64;
+  Config.Privilege = ExecutionPrivilege::User;
+  auto Probe = probeExecutionBackend(Config);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  ProcessOptions Options;
+  Options.Backend = GetParam().Backend;
+  Options.Limits.Instructions = InstructionLimit;
+  Options.Limits.TimeoutMicroseconds = TimeoutMicroseconds;
+  const auto Path =
+      std::filesystem::path(NEVERD_WINDOWS_EXCEPTION_FIXTURE_DIR) / X64Dir /
+      ProgramFile;
+  auto Result = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, ExitStatus)
+      << llvm::toHex(Result->StandardError);
+  EXPECT_TRUE(Result->StandardError.empty())
+      << llvm::toHex(Result->StandardError);
+  EXPECT_EQ(llvm::toHex(Result->StandardOutput), ExpectedOutput);
+#endif
+}
+INSTANTIATE_TEST_SUITE_P(Backends, WindowsAlignment,
+                         testing::ValuesIn(Profiles),
+                         [](const auto &P) { return P.param.Name; });
+TEST(WindowsAlignmentNative, RunsOriginalFaultAndRetryExecutable) {
+#if !defined(_WIN32) || !defined(_M_X64)
+  GTEST_SKIP() << NativeOnly;
+#elif !defined(NEVERD_WINDOWS_EXCEPTION_FIXTURE_DIR)
+  FAIL() << MissingTools;
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(TempPrefix, Temporary));
+  const std::filesystem::path Root(Temporary.c_str());
+  auto Cleanup = llvm::scope_exit(
+      [&] { llvm::sys::fs::remove_directories(Root.string()); });
+  const auto Program =
+      (std::filesystem::path(NEVERD_WINDOWS_EXCEPTION_FIXTURE_DIR) / X64Dir /
+       ProgramFile)
+          .string();
+  const auto Output = (Root / StdoutFile).string();
+  const auto Error = (Root / StderrFile).string();
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
+                                                      Error};
+  std::string Diagnostic;
+  bool Failed = false;
+  const int Status =
+      llvm::sys::ExecuteAndWait(Program, {Program}, std::nullopt, Redirects,
+                                TimeoutSeconds, 0, &Diagnostic, &Failed);
+  ASSERT_FALSE(Failed) << Diagnostic;
+  auto Out = llvm::MemoryBuffer::getFile(Output);
+  auto Err = llvm::MemoryBuffer::getFile(Error);
+  ASSERT_TRUE(bool(Out));
+  ASSERT_TRUE(bool(Err));
+  EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
+  EXPECT_TRUE((*Err)->getBuffer().empty()) << llvm::toHex((*Err)->getBuffer());
+  EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), ExpectedOutput);
+#endif
+}
+} // namespace
+} // namespace neverd::emulation

@@ -1,0 +1,52 @@
+//===- WindowsAlignmentProcessCases.def - Windows SSE fault contracts -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ALIGNMENT_PROCESS_VALUE
+NEVERD_ALIGNMENT_PROCESS_VALUE(ExitStatus, 47)
+NEVERD_ALIGNMENT_PROCESS_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_ALIGNMENT_PROCESS_VALUE(StderrSelector, 0xfffffff4)
+NEVERD_ALIGNMENT_PROCESS_VALUE(ContinueExecution, 0xffffffff)
+NEVERD_ALIGNMENT_PROCESS_VALUE(AccessViolation, 0xc0000005)
+NEVERD_ALIGNMENT_PROCESS_VALUE(ResumeFlag, 0x10000)
+NEVERD_ALIGNMENT_PROCESS_VALUE(PageNoAccess, 1)
+NEVERD_ALIGNMENT_PROCESS_VALUE(PageReadOnly, 2)
+NEVERD_ALIGNMENT_PROCESS_VALUE(PageReadWrite, 4)
+NEVERD_ALIGNMENT_PROCESS_VALUE(MemCommit, 0x1000)
+NEVERD_ALIGNMENT_PROCESS_VALUE(MemReserve, 0x2000)
+NEVERD_ALIGNMENT_PROCESS_VALUE(MemRelease, 0x8000)
+NEVERD_ALIGNMENT_PROCESS_VALUE(MaxParameters, 15)
+NEVERD_ALIGNMENT_PROCESS_VALUE(InstructionLimit, 3000000)
+NEVERD_ALIGNMENT_PROCESS_VALUE(TimeoutMicroseconds, 30000000)
+#endif
+#ifdef NEVERD_ALIGNMENT_PROCESS_BACKEND
+NEVERD_ALIGNMENT_PROCESS_BACKEND(UnicornX64, Unicorn)
+NEVERD_ALIGNMENT_PROCESS_BACKEND(KvmX64, Kvm)
+NEVERD_ALIGNMENT_PROCESS_BACKEND(WhpX64, Whp)
+#endif
+#ifdef NEVERD_ALIGNMENT_PROCESS_TEXT
+NEVERD_ALIGNMENT_PROCESS_TEXT(ProgramFile, "alignment-exceptions.exe")
+NEVERD_ALIGNMENT_PROCESS_TEXT(ExpectedOutput, "090000000800000009000000")
+NEVERD_ALIGNMENT_PROCESS_TEXT(X64Dir, "X64")
+NEVERD_ALIGNMENT_PROCESS_TEXT(X64Only, "requires the x64 SSE fault profile")
+NEVERD_ALIGNMENT_PROCESS_TEXT(NativeOnly, "requires native Windows x64")
+NEVERD_ALIGNMENT_PROCESS_TEXT(MissingTools,
+                              "requires Clang and lld-link alignment fixtures")
+NEVERD_ALIGNMENT_PROCESS_TEXT(TempPrefix, "neverd-windows-alignment")
+NEVERD_ALIGNMENT_PROCESS_TEXT(StdoutFile, "stdout.bin")
+NEVERD_ALIGNMENT_PROCESS_TEXT(StderrFile, "stderr.bin")
+#endif
+#ifdef NEVERD_ALIGNMENT_PROCESS_RESULT
+// After repairing RCX to an aligned zero vector, each original instruction
+// must execute exactly once. These expectations are independent of admission.
+NEVERD_ALIGNMENT_PROCESS_RESULT(MovapsLoad, false, 0, 0)
+NEVERD_ALIGNMENT_PROCESS_RESULT(MovapsStore, true, VectorLow, VectorHigh)
+NEVERD_ALIGNMENT_PROCESS_RESULT(MovapdLoad, false, 0, 0)
+NEVERD_ALIGNMENT_PROCESS_RESULT(MovapdStore, true, VectorLow, VectorHigh)
+NEVERD_ALIGNMENT_PROCESS_RESULT(MovdqaLoad, false, 0, 0)
+NEVERD_ALIGNMENT_PROCESS_RESULT(MovdqaStore, true, VectorLow, VectorHigh)
+NEVERD_ALIGNMENT_PROCESS_RESULT(Paddq, false, VectorLow, VectorHigh)
+NEVERD_ALIGNMENT_PROCESS_RESULT(Psllq, false, VectorLow, VectorHigh)
+NEVERD_ALIGNMENT_PROCESS_RESULT(Xorps, false, VectorLow, VectorHigh)
+#endif

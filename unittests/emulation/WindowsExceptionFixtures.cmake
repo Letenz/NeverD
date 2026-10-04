@@ -56,6 +56,35 @@ foreach(_arch X64 AArch64)
     list(APPEND _veh_outputs "${_dir}/${_output}")
   endforeach()
 endforeach()
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/WindowsAlignmentProcessCases.def"
+  _settings REGEX "^NEVERD_ALIGNMENT_PROCESS_TEXT\\(")
+foreach(_setting IN LISTS _settings)
+  if(_setting MATCHES "^NEVERD_ALIGNMENT_PROCESS_TEXT\\(([A-Za-z0-9_]+), \"([^\"]*)\"\\)$")
+    set("_alignment_${CMAKE_MATCH_1}" "${CMAKE_MATCH_2}")
+  endif()
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/WindowsAlignmentProcessCases.def")
+set(_dir "${_veh_dir}/${_alignment_X64Dir}")
+add_custom_command(OUTPUT "${_dir}/${_alignment_ProgramFile}"
+    "${_dir}/alignment-c.obj" "${_dir}/alignment-S.obj"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_veh_X64Target}"
+    -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+    -fno-vectorize -fno-slp-vectorize -O1 -Wall -Wextra -Werror -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/windows_alignment_process.c"
+    -o "${_dir}/alignment-c.obj"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_veh_X64Target}"
+    -c "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/windows_alignment.S"
+    -o "${_dir}/alignment-S.obj"
+  COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /subsystem:console
+    "/machine:${_veh_X64Machine}" /timestamp:0 "/entry:${_veh_ProgramEntry}"
+    "/base:${_veh_ProgramBase}" "${_dir}/alignment-c.obj"
+    "${_dir}/alignment-S.obj" "${_dir}/provider.lib"
+    "/out:${_dir}/${_alignment_ProgramFile}"
+  DEPENDS fixtures/windows_alignment_process.c fixtures/windows_alignment.S
+    fixtures/WindowsAlignmentCases.def fixtures/WindowsAlignmentProcessCases.def
+    fixtures/WindowsExceptionCases.def "${_dir}/provider.lib" VERBATIM)
+list(APPEND _veh_outputs "${_dir}/${_alignment_ProgramFile}")
 add_custom_target(NeverDWindowsExceptionFixtures DEPENDS ${_veh_outputs})
 add_dependencies(NeverDWindowsProcessTests NeverDWindowsExceptionFixtures)
 target_compile_definitions(NeverDWindowsProcessTests PRIVATE
