@@ -442,7 +442,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "290 CPU + 224 WHP + 4 SEH = 518")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "323 CPU + 224 WHP + 4 SEH = 551")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
