@@ -193,41 +193,59 @@ std::vector<uint8_t> instruction(const Comparison &C, unsigned Dest = 0,
 }
 
 TEST(X64SSEPredicateDecoder, FamilyAndPredicateAreIndependentOfSyntax) {
-  for (auto Syntax : {CS_OPT_SYNTAX_INTEL, CS_OPT_SYNTAX_ATT}) {
-    csh Decoder;
-    ASSERT_EQ(cs_open(CS_ARCH_X86, CS_MODE_64, &Decoder), CS_ERR_OK);
-    auto Close = llvm::scope_exit([&] { cs_close(&Decoder); });
-    ASSERT_EQ(cs_option(Decoder, CS_OPT_DETAIL, CS_OPT_ON), CS_ERR_OK);
-    ASSERT_EQ(cs_option(Decoder, CS_OPT_SYNTAX, Syntax), CS_ERR_OK);
-    for (const auto &Op : Operations)
-      for (bool Memory : {false, true})
-        for (unsigned Control = 0; Control <= UINT8_MAX; ++Control) {
-          SCOPED_TRACE(Op.Name);
-          SCOPED_TRACE(Control);
-          SCOPED_TRACE(Memory);
-          auto Bytes = instruction({Op, Predicates[0]}, XmmCount - 1,
-                                   XmmCount - 2, Memory);
-          Bytes.back() = Control;
-          cs_insn *Decoded = nullptr;
-          ASSERT_EQ(
-              cs_disasm(Decoder, Bytes.data(), Bytes.size(), Code, 1, &Decoded),
-              1u);
-          auto Free = llvm::scope_exit([&] { cs_free(Decoded, 1); });
-          EXPECT_EQ(Decoded->id, Op.DecoderID);
-          const auto &X = Decoded->detail->x86;
-          EXPECT_EQ(X.op_count, Control < FirstReservedControl ? 2 : 3);
-          EXPECT_EQ(X.sse_cc, Control < FirstReservedControl
-                                  ? X86_SSE_CC_EQ + Control
-                                  : X86_SSE_CC_INVALID);
-          EXPECT_EQ(X.avx_cc, X86_AVX_CC_INVALID);
-          const unsigned Source = Syntax == CS_OPT_SYNTAX_ATT
-                                      ? (Control < FirstReservedControl ? 0 : 1)
-                                      : 1;
-          EXPECT_EQ(X.operands[Source].type, Memory ? X86_OP_MEM : X86_OP_REG);
-          EXPECT_EQ(X.operands[Source].size,
-                    Memory ? Op.Bits * Op.Lanes / CHAR_BIT : VectorBytes);
-        }
-  }
+  for (auto Mode : {CS_MODE_32, CS_MODE_64})
+    for (auto Syntax : {CS_OPT_SYNTAX_INTEL, CS_OPT_SYNTAX_ATT}) {
+      csh Decoder;
+      ASSERT_EQ(cs_open(CS_ARCH_X86, Mode, &Decoder), CS_ERR_OK);
+      auto Close = llvm::scope_exit([&] { cs_close(&Decoder); });
+      ASSERT_EQ(cs_option(Decoder, CS_OPT_DETAIL, CS_OPT_ON), CS_ERR_OK);
+      ASSERT_EQ(cs_option(Decoder, CS_OPT_SYNTAX, Syntax), CS_ERR_OK);
+      for (const auto &Op : Operations)
+        for (bool Memory : {false, true})
+          for (bool Iterative : {false, true})
+            for (unsigned Control = 0; Control <= UINT8_MAX; ++Control) {
+              SCOPED_TRACE(Op.Name);
+              SCOPED_TRACE(Control);
+              SCOPED_TRACE(Memory);
+              auto Bytes = instruction(
+                  {Op, Predicates[0]},
+                  Mode == CS_MODE_64 ? XmmCount - 1 : RegisterMask,
+                  Mode == CS_MODE_64 ? XmmCount - 2 : RegisterMask - 1, Memory);
+              Bytes.back() = Control;
+              cs_insn *Decoded = nullptr;
+              if (Iterative) {
+                Decoded = cs_malloc(Decoder);
+                ASSERT_NE(Decoded, nullptr);
+                const uint8_t *Cursor = Bytes.data();
+                size_t Remaining = Bytes.size();
+                uint64_t PC = Code;
+                ASSERT_TRUE(
+                    cs_disasm_iter(Decoder, &Cursor, &Remaining, &PC, Decoded));
+                EXPECT_EQ(Remaining, 0u);
+                EXPECT_EQ(PC, Code + Bytes.size());
+              } else {
+                ASSERT_EQ(cs_disasm(Decoder, Bytes.data(), Bytes.size(), Code,
+                                    1, &Decoded),
+                          1u);
+              }
+              auto Free = llvm::scope_exit([&] { cs_free(Decoded, 1); });
+              EXPECT_EQ(Decoded->id, Op.DecoderID);
+              const auto &X = Decoded->detail->x86;
+              EXPECT_EQ(X.op_count, Control < FirstReservedControl ? 2 : 3);
+              EXPECT_EQ(X.sse_cc, Control < FirstReservedControl
+                                      ? X86_SSE_CC_EQ + Control
+                                      : X86_SSE_CC_INVALID);
+              EXPECT_EQ(X.avx_cc, X86_AVX_CC_INVALID);
+              const unsigned Source =
+                  Syntax == CS_OPT_SYNTAX_ATT
+                      ? (Control < FirstReservedControl ? 0 : 1)
+                      : 1;
+              EXPECT_EQ(X.operands[Source].type,
+                        Memory ? X86_OP_MEM : X86_OP_REG);
+              EXPECT_EQ(X.operands[Source].size,
+                        Memory ? Op.Bits * Op.Lanes / CHAR_BIT : VectorBytes);
+            }
+    }
 }
 
 TEST(X64SSEPredicateOracle,
