@@ -26,6 +26,11 @@ add_neverd_unittest(NeverDAArch64FPTests
 target_include_directories(NeverDAArch64FPTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
+add_neverd_unittest(NeverDAArch64PAuthTests
+  AArch64PAuthTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationCPU)
+
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp

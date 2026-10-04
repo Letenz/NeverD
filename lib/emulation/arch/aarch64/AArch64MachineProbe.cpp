@@ -51,6 +51,10 @@ llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
     Expected.reg(AArch64Register::PC) += aarch64::InstructionBytes;
     switch (Instruction.Kind) {
     case aarch64::probe::Step::Nop:
+    case aarch64::probe::Step::SignA:
+    case aarch64::probe::Step::AuthenticateA:
+    case aarch64::probe::Step::SignB:
+    case aarch64::probe::Step::AuthenticateB:
       break;
     case aarch64::probe::Step::FloatingAdd:
       Expected.Vectors[probe::ResultVector] = {probe::FloatRoundedUp, 0};
