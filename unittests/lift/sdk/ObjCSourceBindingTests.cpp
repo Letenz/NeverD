@@ -7188,6 +7188,137 @@ TEST(ObjCSourceBindings,
       }
 }
 
+namespace {
+SwiftTypeMetadataFixture
+swiftRegisteredOptionalPairFixture(Arch Architecture, char Kind = 'V',
+                                   bool Repeated = true,
+                                   bool Indirect = false) {
+  auto F =
+      swiftRegisteredInternalTypeFixture(Architecture, Kind, false, Indirect);
+  const std::string Type = "13WMFComponents10ArticleTab" + std::string(1, Kind);
+  const std::string Base =
+      "_$s" + Type + "Sg_" + Type + (Repeated ? "Sgt" : "t");
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  auto &Data = F.Image.Segments[0].Data;
+  std::memcpy(Data.data() + F.TypeReference + 5 - 0x1000,
+              Repeated ? "Sg_ABt" : "Sg_AAt", 7);
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000, 11);
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings,
+     RegisteredOptionalTupleSubstitutionsUseTheOriginalTypeTree) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char Kind : {'C', 'V', 'O'})
+      for (const bool Repeated : {false, true})
+        for (const bool Indirect : {false, true}) {
+          SCOPED_TRACE(static_cast<int>(Architecture));
+          SCOPED_TRACE(Kind);
+          SCOPED_TRACE(Repeated);
+          SCOPED_TRACE(Indirect);
+          auto F = swiftRegisteredOptionalPairFixture(Architecture, Kind,
+                                                      Repeated, Indirect);
+          const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+              F.Image, F.Cache, F.Reference);
+          ASSERT_TRUE(Proof);
+          EXPECT_TRUE(Proof->Descriptors.empty());
+          EXPECT_EQ(Proof->TypeReference,
+                    F.Image.Symbols[0].Name.substr(
+                        3, F.Image.Symbols[0].Name.size() - 5));
+          const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+          ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+          ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+          for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+            EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+          std::set<std::string> Names;
+          const auto Source = renderObjCSwiftTypeMetadataHelpers(
+              F.Image, Bound.SwiftTypeMetadataPairs, Names);
+          EXPECT_EQ(Source.find("__asm__("), std::string::npos);
+        }
+}
+
+TEST(ObjCSourceBindings,
+     RegisteredOptionalTupleRejectsExpandedSubstitutionsAndStaleIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 16; ++Mutation) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Mutation);
+      auto F = swiftRegisteredOptionalPairFixture(Architecture);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      auto &Data = F.Image.Segments[0].Data;
+      auto *Raw = Data.data() + F.TypeReference - 0x1000;
+      const auto SetNames = [&](const std::string &Type) {
+        F.Image.Symbols[0].Name = "_$s" + Type + "MR";
+        F.Image.Symbols[1].Name = "_$s" + Type + "Md";
+      };
+      switch (Mutation) {
+      case 0:
+        Raw[9] = 'A';
+        break; // AA is the underlying nominal type, not Optional<T>.
+      case 1:
+        SetNames(
+            "13WMFComponents10ArticleTabVSg_13WMFComponents10ArticleTabVt");
+        break;
+      case 2:
+        SetNames("13WMFComponents10ArticleTabVSg_ABt");
+        break; // A forged name equal to textual expansion is not a proof.
+      case 3:
+        Raw[9] = 'A';
+        SetNames("13WMFComponents10ArticleTabVSg_AAt");
+        break;
+      case 4:
+        Raw[9] = 'C';
+        break;
+      case 5:
+        Raw[10] = 'G';
+        break;
+      case 6:
+        Raw[11] = 't';
+        break;
+      case 7:
+        Raw[5] = 'X';
+        break;
+      case 8:
+        SetNames(
+            "13WMFComponents10ArticleTabVSg_13WMFComponents10ArticleTabCSgt");
+        break;
+      case 9:
+        SetNames("13WMFComponents10ArticleTabVSg4left_AD5rightt");
+        break; // The raw tuple has no labels.
+      case 10:
+        F.Image.Segments[3].Data[0x80] = 'X';
+        break;
+      case 11:
+        F.Image.Segments[3].Data[0x20] = 0x11;
+        break; // No unique registered nominal identity.
+      case 12:
+        F.Image.Sections.back().Size = 0;
+        break;
+      case 13:
+        F.Image.RelDataPtrRelocSlots.insert(F.TypeReference + 8);
+        break;
+      case 14:
+        F.Image.Sections[3].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 15:
+        F.Image.Segments[1].Data[F.Cache - 0x2000] = 1;
+        break;
+      }
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+        EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+      std::set<std::string> Names;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                   std::runtime_error);
+    }
+}
+
 TEST(ObjCSourceBindings,
      RegisteredSwiftGOTReferencesKeepTheDirectTypeIdentity) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64})
