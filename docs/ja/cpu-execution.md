@@ -68,6 +68,8 @@ checked x64 は限定された legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS
 
 checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
 
+可搬ソフトウェアプロファイルでは、Unicorn は従来の `MINSS/MINSD/MINPS/MINPD` と `MAXSS/MAXSD/MAXPS/MAXPD` が選択した値に DAZ を適用します。選択された非正規化入力は符号付きゼロになり、NaN ペイロードと既存の MXCSR 状態は保持されます。`test_x86_sse_minmax_daz` はレジスタ、RAM、同一レジスタの形式について、DAZ の有効・無効、全丸めモード、FTZ、累積状態を検証します。checked KVM/WHP プロファイルでは引き続き DAZ を拒否します。
+
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
 `X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。
