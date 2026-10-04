@@ -16,14 +16,15 @@ llvm::Expected<InitialStack> prepareStack(GuestMemory &Memory,
   uint64_t Cursor = Bytes.size();
   auto PushString = [&](llvm::StringRef Text) -> llvm::Expected<uint64_t> {
     if (Text.contains('\0'))
-      return failure("Darwin startup string contains a NUL byte");
+      return failure(diagnostic::StartupNul);
     if (Text.size() >= Cursor)
-      return failure("Darwin startup arguments exceed the stack");
+      return failure(diagnostic::StartupArguments);
     Cursor -= Text.size() + 1;
     std::copy(Text.begin(), Text.end(), Bytes.begin() + Cursor);
     return Base + Cursor;
   };
-  auto Executable = PushString(("executable_path=" + ExecutableName).str());
+  auto Executable =
+      PushString((value::ExecutablePathPrefix + ExecutableName).str());
   if (!Executable)
     return Executable.takeError();
   const auto Arguments = Options.Arguments.empty()
@@ -42,7 +43,7 @@ llvm::Expected<InitialStack> prepareStack(GuestMemory &Memory,
   Words.push_back(*Executable);
   Words.push_back(0);
   if (Words.size() > Cursor / 8 || Cursor - Words.size() * 8 < 256)
-    return failure("Darwin startup vector exceeds the stack");
+    return failure(diagnostic::StartupVector);
   Cursor = (Cursor - Words.size() * 8) & ~uint64_t(15);
   const uint64_t SP = Base + Cursor;
   for (const auto Word : Words) {
