@@ -48,6 +48,7 @@ namespace arm_context {
 #if defined(_WIN32) && defined(_M_X64)
 static_assert(sizeof(CONTEXT) == x64_context::ContextSize);
 static_assert(offsetof(CONTEXT, Rip) == x64_context::ContextPC);
+static_assert(offsetof(CONTEXT, EFlags) == x64_context::ContextProcessorFlags);
 static_assert(offsetof(CONTEXT, Rsp) == x64_context::ContextSP);
 static_assert(offsetof(CONTEXT, Rax) == x64_context::ContextResult);
 static_assert(offsetof(CONTEXT, Rcx) == x64_context::ContextPointer);

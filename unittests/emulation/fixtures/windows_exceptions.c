@@ -125,6 +125,17 @@ static U32 resolve(Pointers *P) {
               *(U64 *)(C + ContextPC) && *(U64 *)(C + ContextSP),
           8);
   require(R->Address != 0 && R->Count <= MaxParameters, 9);
+#if defined(_M_X64) || defined(__x86_64__)
+  // Fault delivery exposes RF in the saved CONTEXT. Software raises and
+  // ordinary execution after a resumed instruction do not retain that bit.
+  const int Fault =
+      (R->Code == AccessViolation &&
+       (Mode == ReadMode || Mode == WriteMode || Mode == ContextMode)) ||
+      (R->Code == DivideByZero && Mode == DivideMode);
+  require((*(U32 *)(C + ContextProcessorFlags) & FaultResumeFlag) ==
+              (Fault ? FaultResumeFlag : 0),
+          ResumeFlagSite);
+#endif
   if (R->Code == AttachCode || R->Code == DetachCode) {
     require(Mode == LoaderMode && R->Count == 1 && R->Arguments[0] == DataValue,
             10);

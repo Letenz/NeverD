@@ -42,6 +42,8 @@ NEVERD_VEH_VALUE(OrderTrace, 0x213)
 NEVERD_VEH_VALUE(DuplicateTrace, 0x113)
 NEVERD_VEH_VALUE(MutationTrace, 0x143)
 NEVERD_VEH_VALUE(NextMutationTrace, 0x243)
+NEVERD_VEH_VALUE(FaultResumeFlag, 0x10000)
+NEVERD_VEH_VALUE(ResumeFlagSite, 50)
 #endif
 #ifdef NEVERD_VEH_TEXT
 NEVERD_VEH_TEXT(ProgramFile, "vectored-exceptions.exe")
@@ -144,6 +146,7 @@ NEVERD_VEH_BUILD(ProviderFile, "kernel32.dll")
 #ifdef NEVERD_VEH_CONTEXT_X64
 NEVERD_VEH_CONTEXT_X64(ContextSize, 1232)
 NEVERD_VEH_CONTEXT_X64(ContextFlags, 48)
+NEVERD_VEH_CONTEXT_X64(ContextProcessorFlags, 68)
 NEVERD_VEH_CONTEXT_X64(ContextPC, 248)
 NEVERD_VEH_CONTEXT_X64(ContextSP, 152)
 NEVERD_VEH_CONTEXT_X64(ContextPointer, 128)
