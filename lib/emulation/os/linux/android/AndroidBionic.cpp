@@ -265,7 +265,8 @@ BionicResult Bionic::once(const NativeCallEvent &Call) {
   llvm::support::endian::write32le(Bytes, 1);
   if (auto E = CPU.write(A[0], Bytes))
     return std::move(E);
-  return std::optional<BionicValue>(OnceCallback{A[1], A[0]});
+  return std::optional<BionicValue>(
+      GuestCallback{A[1], std::nullopt, OnceCallback{A[0]}});
 }
 llvm::Error Bionic::finishOnce(const OnceCallback &Callback) {
   if (auto E = access(Callback.Control, 4, Write))
@@ -292,6 +293,10 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return dlfcn(Call);
   if (Name == symbol::PthreadOnce)
     return once(Call);
+  if (Name == symbol::CxaAtExit)
+    return registerExit(Call);
+  if (Name == symbol::CxaFinalize)
+    return finalize(A[0]);
   if (Name == symbol::StrtokR) {
     auto R = tokenize(Call);
     if (!R)
