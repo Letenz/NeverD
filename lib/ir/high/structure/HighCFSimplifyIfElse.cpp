@@ -23,6 +23,7 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/support/Diagnostic.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
@@ -333,7 +334,8 @@ static void dropImpliedInnerCondsNested(std::vector<HighStmt> &Body);
 static void dropImpliedFallthroughCondsNested(std::vector<HighStmt> &Body);
 static void preferPositiveIfElseNested(std::vector<HighStmt> &Body);
 static bool rewriteGuardedCallThis(std::vector<HighStmt> &Body);
-static void hoistIdenticalIfElseSuffixesNested(std::vector<HighStmt> &Body);
+static void hoistIdenticalIfElseSuffixesNested(std::vector<HighStmt> &Body,
+                                               const std::set<va_t> &Targets);
 
 static bool exprHasCall(const HighExpr *E) {
   if (!E)
@@ -542,7 +544,7 @@ void invertSkipGotos(HighFunc &Func) {
   inlineSmallExclusiveJoinNested(Func.Body, Func.Body);
   preferPositiveIfElseNested(Func.Body);
   rewriteGuardedCallThis(Func.Body);
-  hoistIdenticalIfElseSuffixesNested(Func.Body);
+  hoistIdenticalIfElseSuffixesNested(Func.Body, gotoTargets(Func.Body));
 }
 
 // Keep a no-op hook so session-destroy crashes can be A/B tested without
@@ -2268,7 +2270,32 @@ static bool rewriteGuardedCallThis(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
-static bool hoistIdenticalIfElseSuffixes(std::vector<HighStmt> &Body) {
+/// Moving the trailing pair \p Then[ThenAt], \p Else[ElseAt] out of an
+/// if/else keeps the else copy and drops the then copy. A jump to either one
+/// must still reach its whole instruction: the moved copy may not leave
+/// statements of its instruction behind, and the dropped one may not take a
+/// label with it. \p Stripped marks statements the move discards as well.
+static bool
+suffixPairKeepsLabels(const std::vector<HighStmt> &Then, size_t ThenAt,
+                      const std::vector<HighStmt> &Else, size_t ElseAt,
+                      llvm::function_ref<bool(va_t)> Entered,
+                      llvm::function_ref<bool(const HighStmt &)> Stripped) {
+  auto RestStays = [&](const std::vector<HighStmt> &Arm, size_t At) {
+    for (size_t K = At; K-- > 0 && Arm[K].Addr == Arm[At].Addr;)
+      if (!Stripped(Arm[K]))
+        return true;
+    return false;
+  };
+  const va_t ThenAddr = Then[ThenAt].Addr;
+  const va_t ElseAddr = Else[ElseAt].Addr;
+  if (Entered(ElseAddr) && RestStays(Else, ElseAt))
+    return false;
+  return !Entered(ThenAddr) ||
+         (ThenAddr == ElseAddr && !RestStays(Then, ThenAt));
+}
+
+static bool hoistIdenticalIfElseSuffixes(std::vector<HighStmt> &Body,
+                                         const std::set<va_t> &Targets) {
   bool Changed = false;
   for (int I = static_cast<int>(Body.size()) - 1; I >= 0; --I) {
     HighStmt &S = Body[static_cast<size_t>(I)];
@@ -2281,7 +2308,11 @@ static bool hoistIdenticalIfElseSuffixes(std::vector<HighStmt> &Body) {
       if (!isValueAssign(S.Body.back(), DestA, ValA) ||
           !isValueAssign(S.ElseBody.back(), DestB, ValB) || !ValA || !ValB ||
           DestA.Kind != DestB.Kind || DestA.Id != DestB.Id ||
-          !ValA->structuralEq(*ValB))
+          !ValA->structuralEq(*ValB) ||
+          !suffixPairKeepsLabels(
+              S.Body, S.Body.size() - 1, S.ElseBody, S.ElseBody.size() - 1,
+              [&](va_t Address) { return Targets.count(Address) != 0; },
+              [](const HighStmt &) { return false; }))
         break;
       Joins.push_back(std::move(S.ElseBody.back()));
       S.Body.pop_back();
@@ -2297,17 +2328,18 @@ static bool hoistIdenticalIfElseSuffixes(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
-static void hoistIdenticalIfElseSuffixesNested(std::vector<HighStmt> &Body) {
+static void hoistIdenticalIfElseSuffixesNested(std::vector<HighStmt> &Body,
+                                               const std::set<va_t> &Targets) {
   for (HighStmt &S : Body) {
-    hoistIdenticalIfElseSuffixesNested(S.Body);
-    hoistIdenticalIfElseSuffixesNested(S.ElseBody);
-    hoistIdenticalIfElseSuffixesNested(S.DefaultBody);
+    hoistIdenticalIfElseSuffixesNested(S.Body, Targets);
+    hoistIdenticalIfElseSuffixesNested(S.ElseBody, Targets);
+    hoistIdenticalIfElseSuffixesNested(S.DefaultBody, Targets);
     for (auto &C : S.Cases)
-      hoistIdenticalIfElseSuffixesNested(C.Body);
+      hoistIdenticalIfElseSuffixesNested(C.Body, Targets);
     for (auto &Clause : S.EHClauseBodies)
-      hoistIdenticalIfElseSuffixesNested(Clause);
+      hoistIdenticalIfElseSuffixesNested(Clause, Targets);
   }
-  hoistIdenticalIfElseSuffixes(Body);
+  hoistIdenticalIfElseSuffixes(Body, Targets);
 }
 
 static ExprPtr composeTrailingAssigns(const std::vector<HighStmt> &Body,
@@ -3245,7 +3277,8 @@ static bool armIsJoinClobber(const std::vector<HighStmt> &Arm) {
 }
 
 static bool coverVarFallthrough(std::vector<HighStmt> &Body, const MedVar &V,
-                                const ExprPtr &Def, va_t Join) {
+                                const ExprPtr &Def, va_t Join,
+                                bool JoinJumpsStripped) {
   // True when every path that runs past the end has assigned V: no
   // default is needed there. False when some did and some did not.
   auto EndCovered = [&] {
@@ -3282,7 +3315,15 @@ static bool coverVarFallthrough(std::vector<HighStmt> &Body, const MedVar &V,
       PrefixWrites = true;
   if (Last.Kind == StmtKind::If) {
     if (PrefixWrites) {
-      if (armIsJoinClobber(Last.Body) || bodyIsSkipGoto(Last.Body)) {
+      // Only a jump to the join, written out or just stripped, lets the
+      // if's arm keep its value; a jump anywhere else (a loop back edge,
+      // say) leaves on a path of its own.
+      bool ToJoin = false, Elsewhere = false;
+      for (const HighStmt &S : Last.Body)
+        if (S.Kind == StmtKind::Goto)
+          (S.GotoTarget == Join ? ToJoin : Elsewhere) = true;
+      if (Join && !Elsewhere && (ToJoin || JoinJumpsStripped) &&
+          (armIsJoinClobber(Last.Body) || bodyIsSkipGoto(Last.Body))) {
         Last.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Last.Cond);
         Last.Body = {makeVarAssign(V, Def)};
         Last.ElseBody.clear();
@@ -3297,7 +3338,7 @@ static bool coverVarFallthrough(std::vector<HighStmt> &Body, const MedVar &V,
       Body.push_back(makeVarAssign(V, Def));
       return true;
     }
-    if (!coverVarFallthrough(Last.Body, V, Def, Join))
+    if (!coverVarFallthrough(Last.Body, V, Def, Join, JoinJumpsStripped))
       return false;
     Last.Kind = StmtKind::IfElse;
     Last.ElseBody = {makeVarAssign(V, Def)};
@@ -3306,8 +3347,8 @@ static bool coverVarFallthrough(std::vector<HighStmt> &Body, const MedVar &V,
   if (Last.Kind == StmtKind::IfElse) {
     if (PrefixWrites)
       return EndCovered();
-    return coverVarFallthrough(Last.Body, V, Def, Join) &&
-           coverVarFallthrough(Last.ElseBody, V, Def, Join);
+    return coverVarFallthrough(Last.Body, V, Def, Join, JoinJumpsStripped) &&
+           coverVarFallthrough(Last.ElseBody, V, Def, Join, JoinJumpsStripped);
   }
   MedVar Dest;
   ExprPtr Val;
@@ -3590,6 +3631,21 @@ static bool foldJoinValueGotoChain(std::vector<HighStmt> &Body) {
   return false;
 }
 
+/// True when a jump inside \p S lands inside \p S as well. The sink follows
+/// each path to its first jump and takes that as the path leaving, which a
+/// jump to a later label of the same arm does not.
+static bool jumpsWithin(const HighStmt &S) {
+  std::set<va_t> Inside, Targets;
+  walkStatementTree(S, [&](const HighStmt &T) {
+    if (T.Addr && T.Addr != InvalidVA)
+      Inside.insert(T.Addr);
+    if (T.Kind == StmtKind::Goto)
+      Targets.insert(T.GotoTarget);
+  });
+  return std::any_of(Targets.begin(), Targets.end(),
+                     [&](va_t Target) { return Inside.count(Target) != 0; });
+}
+
 static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
   bool Changed = false;
   for (size_t P = 0; P + 1 < Body.size(); ++P) {
@@ -3598,7 +3654,7 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
         stmtHasStructuredRegion(Prev))
       continue;
     const va_t Join = uniqueNestedGoto(Prev);
-    if (countStmtTree(Prev) > 96)
+    if (countStmtTree(Prev) > 96 || jumpsWithin(Prev))
       continue;
     size_t I = P + 1;
     size_t DefI = SIZE_MAX;
@@ -3676,6 +3732,15 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
     if (EnteredBefore || (Prev.Kind == StmtKind::IfElse &&
                           isFunctionJumpTarget(Body[DefI].Addr, Body)))
       continue;
+    // That home keeps the label only when the default is its whole
+    // instruction. Statements of the instruction left in place keep its
+    // address too, and a jump resolved to them skips the default.
+    const va_t DefAddr = Body[DefI].Addr;
+    const bool SharesInstruction =
+        (DefI > 0 && Body[DefI - 1].Addr == DefAddr) ||
+        (DefI + 1 < Body.size() && Body[DefI + 1].Addr == DefAddr);
+    if (SharesInstruction && isFunctionJumpTarget(DefAddr, Body))
+      continue;
     // The join edges become fallthrough; a jump that skips later work in its
     // arm cannot.
     if (Join && !joinGotosAreTail(Prev, Join))
@@ -3713,14 +3778,15 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
       stripAssignGotoJoin(Next.Body, Dest, Join);
       stripAssignGotoJoin(Next.ElseBody, Dest, Join);
     }
-    if (!coverVarFallthrough(Next.Body, Dest, Def, Join))
+    if (!coverVarFallthrough(Next.Body, Dest, Def, Join, HasJoinIncoming))
       continue;
     if (Next.Kind == StmtKind::If) {
       Next.Kind = StmtKind::IfElse;
       HighStmt Else = makeVarAssign(Dest, Def);
       Else.Addr = Body[DefI].Addr;
       Next.ElseBody = {std::move(Else)};
-    } else if (!coverVarFallthrough(Next.ElseBody, Dest, Def, Join)) {
+    } else if (!coverVarFallthrough(Next.ElseBody, Dest, Def, Join,
+                                    HasJoinIncoming)) {
       continue;
     }
     Prev = std::move(Next);
@@ -3733,20 +3799,26 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
 
 bool sinkJoinDefaultsLate(HighFunc &Func) {
   // Late rewrites leave new `if (..) { v = x; goto J; } v = d; J:` shapes
-  // after structureIfElse has run; give the same sink another look.
+  // after structureIfElse has run; give the same sink another look.  A
+  // nested list is entered by jumps from outside it as well.
+  const std::set<va_t> Targets = gotoTargets(Func.Body);
   const std::set<va_t> Starts = statementStarts(Func.Body);
   const std::vector<HighStmt> *SavedBody = IfElseFunctionBody;
+  const std::set<va_t> *SavedTargets = IfElseFunctionTargets;
   const std::set<va_t> *SavedStarts = IfElseFunctionStarts;
   IfElseFunctionBody = &Func.Body;
+  IfElseFunctionTargets = &Targets;
   IfElseFunctionStarts = &Starts;
   struct RestoreBody {
     const std::vector<HighStmt> *Saved;
+    const std::set<va_t> *SavedTargets;
     const std::set<va_t> *SavedStarts;
     ~RestoreBody() {
       IfElseFunctionBody = Saved;
+      IfElseFunctionTargets = SavedTargets;
       IfElseFunctionStarts = SavedStarts;
     }
-  } Restore{SavedBody, SavedStarts};
+  } Restore{SavedBody, SavedTargets, SavedStarts};
   bool Changed = false;
   std::function<void(std::vector<HighStmt> &)> Visit =
       [&](std::vector<HighStmt> &L) {
@@ -4424,7 +4496,10 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       // the same call onto both edges of a join PHI, with undef pads on one
       // arm.
       if (Stmt.Kind == StmtKind::IfElse) {
-        auto deadPad = [](const HighStmt &S) {
+        // A pad at a jump target is that target's label.
+        auto deadPad = [&](const HighStmt &S) {
+          if (isFunctionJumpTarget(S.Addr, Body))
+            return false;
           if (isSkippablePad(S))
             return true;
           MedVar Dest;
@@ -4432,37 +4507,72 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
           return isValueAssign(S, Dest, Val) && Val &&
                  Val->Kind == ExprKind::Undef;
         };
-        auto stripDead = [&](std::vector<HighStmt> &Arm) {
-          while (!Arm.empty() && deadPad(Arm.front()))
-            Arm.erase(Arm.begin());
-          while (!Arm.empty() && deadPad(Arm.back()))
-            Arm.pop_back();
+        auto liveEnd = [&](const std::vector<HighStmt> &Arm, size_t End) {
+          while (End > 0 && deadPad(Arm[End - 1]))
+            --End;
+          return End;
         };
-        stripDead(Stmt.Body);
-        stripDead(Stmt.ElseBody);
-        std::vector<HighStmt> Joins;
-        while (!Stmt.Body.empty() && !Stmt.ElseBody.empty()) {
+        // Pair the arms' trailing statements, matching undef copies too: both
+        // paths give the join that value. A pad between two pairs, matching
+        // nothing on the other side, is dropped, since the earlier pair moves
+        // past it; one ahead of every pair stays. Count first: the arms change
+        // only when a pair moves out.
+        auto pairs = [&](size_t ThenAt, size_t ElseAt) {
           MedVar DestA, DestB;
           ExprPtr ValA, ValB;
-          if (!isValueAssign(Stmt.Body.back(), DestA, ValA) ||
-              !isValueAssign(Stmt.ElseBody.back(), DestB, ValB) || !ValA ||
-              !ValB || !sameJoinDest(DestA, DestB) ||
-              !ValA->structuralEq(*ValB))
+          return isValueAssign(Stmt.Body[ThenAt], DestA, ValA) &&
+                 isValueAssign(Stmt.ElseBody[ElseAt], DestB, ValB) && ValA &&
+                 ValB && sameJoinDest(DestA, DestB) &&
+                 ValA->structuralEq(*ValB) &&
+                 suffixPairKeepsLabels(
+                     Stmt.Body, ThenAt, Stmt.ElseBody, ElseAt,
+                     [&](va_t Address) {
+                       return isFunctionJumpTarget(Address, Body);
+                     },
+                     deadPad);
+        };
+        size_t ThenEnd = Stmt.Body.size();
+        size_t ElseEnd = Stmt.ElseBody.size();
+        size_t ThenCut = ThenEnd;
+        size_t ElseCut = ElseEnd;
+        std::vector<size_t> Moved;
+        while (ThenEnd > 0 && ElseEnd > 0) {
+          if (pairs(ThenEnd - 1, ElseEnd - 1)) {
+            Moved.push_back(--ElseEnd);
+            ThenCut = --ThenEnd;
+            ElseCut = ElseEnd;
+            continue;
+          }
+          const size_t ThenLive = liveEnd(Stmt.Body, ThenEnd);
+          const size_t ElseLive = liveEnd(Stmt.ElseBody, ElseEnd);
+          if (ThenLive == ThenEnd && ElseLive == ElseEnd)
             break;
-          Joins.push_back(std::move(Stmt.ElseBody.back()));
-          Stmt.Body.pop_back();
-          Stmt.ElseBody.pop_back();
-          stripDead(Stmt.Body);
-          stripDead(Stmt.ElseBody);
+          ThenEnd = ThenLive;
+          ElseEnd = ElseLive;
+        }
+        // Undef copies move only along with a value: alone they would just
+        // stand between the if and what follows it.
+        if (std::all_of(Moved.begin(), Moved.end(),
+                        [&](size_t At) { return deadPad(Stmt.ElseBody[At]); }))
+          Moved.clear();
+        std::vector<HighStmt> Joins;
+        if (!Moved.empty()) {
+          for (auto It = Moved.rbegin(); It != Moved.rend(); ++It)
+            Joins.push_back(std::move(Stmt.ElseBody[*It]));
+          Stmt.Body.erase(Stmt.Body.begin() + static_cast<long>(ThenCut),
+                          Stmt.Body.end());
+          Stmt.ElseBody.erase(Stmt.ElseBody.begin() +
+                                  static_cast<long>(ElseCut),
+                              Stmt.ElseBody.end());
         }
         if (!Joins.empty()) {
           const bool Drop = Stmt.Body.empty() && Stmt.ElseBody.empty();
           if (Drop)
             Body.erase(Body.begin() + I);
           size_t At = Drop ? static_cast<size_t>(I) : static_cast<size_t>(I + 1);
-          for (auto It = Joins.rbegin(); It != Joins.rend(); ++It)
+          for (HighStmt &Join : Joins)
             Body.insert(Body.begin() + static_cast<long>(At++),
-                        std::move(*It));
+                        std::move(Join));
           Changed = true;
           continue;
         }

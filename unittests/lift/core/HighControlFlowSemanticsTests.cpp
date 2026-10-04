@@ -6872,6 +6872,295 @@ TEST(HighControlFlowSemantics, ElseJumpToALabelInAnotherListStays) {
     EXPECT_EQ(execute(F, X, true), Expected[X]) << X;
 }
 
+TEST(HighControlFlowSemantics,
+     JoinDefaultStaysWithTheRestOfAnEnteredInstruction) {
+  // if (x & 1) { if (x & 2) goto D; v = x + 7; goto J; }
+  // D: v = x + 5; w = v;  J: return v;  -- the copy shares the default's
+  // instruction, so a default moved into an else arm would leave the jump to
+  // D landing on the copy without running the default.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  auto Plus = [](uint64_t Addend) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(0),
+                               HighExpr::makeConst(Addend, 8));
+  };
+  HighStmt Enter;
+  Enter.Kind = StmtKind::If;
+  Enter.Addr = 0x1004;
+  Enter.Cond = Bit(2);
+  Enter.Body = {jump(0x1004, 0x1020)};
+  auto Write = assign(0x1008, 1, 0);
+  Write.Val = Plus(7);
+  HighStmt Prev;
+  Prev.Kind = StmtKind::If;
+  Prev.Addr = 0x1000;
+  Prev.Cond = Bit(1);
+  Prev.Body = {Enter, Write, jump(0x100c, 0x1030)};
+  auto Default = assign(0x1020, 1, 0);
+  Default.Val = Plus(5);
+  auto Copy = assign(0x1020, 2, 0);
+  Copy.Val = local(1);
+  Copy.IsPhiCopy = true;
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1030;
+  HighFunc F;
+  F.Body = {Prev, Default, Copy, Label, result(0x1034, local(1))};
+  const uint64_t Expected[] = {5, 8, 7, 8};
+  for (uint64_t X : {0u, 1u, 2u, 3u})
+    ASSERT_EQ(execute(F, X, true), Expected[X]) << X;
+  sinkJoinDefaultsLate(F);
+  for (uint64_t X : {0u, 1u, 2u, 3u})
+    EXPECT_EQ(execute(F, X, true), Expected[X]) << X;
+}
+
+namespace {
+/// The statement lists holding a statement at \p Address.
+std::set<const std::vector<HighStmt> *>
+listsHolding(const std::vector<HighStmt> &Body, va_t Address) {
+  std::set<const std::vector<HighStmt> *> Lists;
+  std::function<void(const std::vector<HighStmt> &)> Visit =
+      [&](const std::vector<HighStmt> &L) {
+        for (const HighStmt &S : L) {
+          if (S.Addr == Address)
+            Lists.insert(&L);
+          Visit(S.Body);
+          Visit(S.ElseBody);
+        }
+      };
+  Visit(Body);
+  return Lists;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, SharedArmSuffixKeepsAnEnteredInstructionWhole) {
+  // if (x & 4) goto L;  if (x & 1) { w = 1; v = 9; } else { L: u = 2; v = 9; }
+  // -- both arms end in v = 9, but the else copy is the second statement of
+  // the instruction at L.  Moving it out alone would leave a jump to L able
+  // to land after the if/else without running u = 2.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  HighStmt Enter;
+  Enter.Kind = StmtKind::If;
+  Enter.Addr = 0x1000;
+  Enter.Cond = Bit(4);
+  Enter.Body = {jump(0x1000, 0x1020)};
+  auto ThenCopy = assign(0x100c, 1, 9);
+  ThenCopy.IsPhiCopy = true;
+  auto ElseCopy = assign(0x1020, 1, 9);
+  ElseCopy.IsPhiCopy = true;
+  HighStmt Split;
+  Split.Kind = StmtKind::IfElse;
+  Split.Addr = 0x1004;
+  Split.Cond = Bit(1);
+  Split.Body = {assign(0x1008, 2, 1), ThenCopy};
+  Split.ElseBody = {assign(0x1020, 3, 2), ElseCopy};
+  HighFunc Structured;
+  Structured.Body = {Enter, Split, result(0x1030, local(1))};
+  HighFunc Inverted = Structured;
+  structureIfElse(Structured, 10);
+  EXPECT_EQ(listsHolding(Structured.Body, 0x1020).size(), 1u);
+  invertSkipGotos(Inverted);
+  EXPECT_EQ(listsHolding(Inverted.Body, 0x1020).size(), 1u);
+}
+
+TEST(HighControlFlowSemantics, ArmsWithoutASharedSuffixKeepTheirUndefCopies) {
+  // if (x & 1) { a = 1; v = undef; } else { b = 2; }  -- nothing is shared,
+  // so the arms stay as they are: the undef copy still gives v its join
+  // value on that path.
+  HighStmt Pad;
+  Pad.Kind = StmtKind::Assign;
+  Pad.Addr = 0x1008;
+  Pad.IsPhiCopy = true;
+  Pad.Dst = local(3);
+  Pad.Val = HighExpr::makeUndef(8);
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1), Pad};
+  Arms.ElseBody = {assign(0x1010, 2, 2)};
+  HighFunc F;
+  F.Body = {Arms, result(0x1020, local(3))};
+  structureIfElse(F, 10);
+  size_t UndefCopies = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    UndefCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Undef;
+  });
+  EXPECT_EQ(UndefCopies, 1u);
+}
+
+TEST(HighControlFlowSemantics, MatchingUndefCopiesLeaveTheArmsTogether) {
+  // if (x & 1) { a = 1; v = x + 1; w = undef; }
+  // else { b = 2; v = x + 1; w = undef; }  -- both copies of the shared
+  // suffix move out, the undef one included: every path still gives w its
+  // join value.
+  auto Pad = [](va_t Address) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.IsPhiCopy = true;
+    S.Dst = local(3);
+    S.Val = HighExpr::makeUndef(8);
+    return S;
+  };
+  auto Join = [](va_t Address) {
+    auto S = assign(Address, 2, 0);
+    S.IsPhiCopy = true;
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(1, 8));
+    return S;
+  };
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1), Join(0x1008), Pad(0x1008)};
+  Arms.ElseBody = {assign(0x1010, 4, 2), Join(0x1014), Pad(0x1014)};
+  HighFunc F;
+  F.Body = {Arms, result(0x1020, local(3))};
+  structureIfElse(F, 10);
+  size_t UndefCopies = 0, JoinCopies = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    UndefCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Undef;
+    JoinCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::BinOp;
+  });
+  EXPECT_EQ(UndefCopies, 1u);
+  EXPECT_EQ(JoinCopies, 1u);
+}
+
+TEST(HighControlFlowSemantics, MatchingUndefCopiesAloneStayInTheirArms) {
+  // if (x & 1) { a = 1; w = undef; } else { b = 2; w = undef; }  -- with
+  // no value to move along, the undef copies stay where they are.
+  auto Pad = [](va_t Address) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.IsPhiCopy = true;
+    S.Dst = local(3);
+    S.Val = HighExpr::makeUndef(8);
+    return S;
+  };
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1), Pad(0x1008)};
+  Arms.ElseBody = {assign(0x1010, 4, 2), Pad(0x1014)};
+  HighFunc F;
+  F.Body = {Arms, result(0x1020, local(3))};
+  structureIfElse(F, 10);
+  size_t UndefCopies = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    UndefCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Undef;
+  });
+  EXPECT_EQ(UndefCopies, 2u);
+}
+
+TEST(HighControlFlowSemantics, UndefCopyAheadOfASharedSuffixStays) {
+  // if (x & 1) { a = 1; w = undef; v = x + 1; } else { b = 2; v = x + 1; }
+  // -- v = x + 1 moves out; the then arm's w = undef runs before it either
+  // way, so it stays and w keeps its join value on that path.
+  HighStmt Pad;
+  Pad.Kind = StmtKind::Assign;
+  Pad.Addr = 0x1006;
+  Pad.IsPhiCopy = true;
+  Pad.Dst = local(3);
+  Pad.Val = HighExpr::makeUndef(8);
+  auto Join = [](va_t Address) {
+    auto S = assign(Address, 2, 0);
+    S.IsPhiCopy = true;
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(1, 8));
+    return S;
+  };
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1), Pad, Join(0x1008)};
+  Arms.ElseBody = {assign(0x1010, 4, 2), Join(0x1014)};
+  HighFunc F;
+  F.Body = {Arms, result(0x1020, local(2))};
+  structureIfElse(F, 10);
+  size_t UndefCopies = 0, JoinCopies = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    UndefCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Undef;
+    JoinCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::BinOp;
+  });
+  EXPECT_EQ(UndefCopies, 1u);
+  EXPECT_EQ(JoinCopies, 1u);
+}
+
+TEST(HighControlFlowSemantics, JoinDefaultLeavesAnArmThatJumpsWithinItself) {
+  // H: n = n + 1;  if (x & 1) { if (x & 2) goto W; goto L; W: v = n + 7;
+  // return v; L: if (n < 3) goto H; }  v = x + 100;  return v;
+  // -- the arm's `goto L` lands later in the same arm, so the path through
+  // L runs on into the default, and `goto H` is the loop's back edge, not a
+  // jump past the default.
+  auto Plus = [](int Id, uint64_t Addend) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(Id),
+                               HighExpr::makeConst(Addend, 8));
+  };
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  auto Count = assign(0x1000, 4, 0);
+  Count.Val = Plus(4, 1);
+  HighStmt Skip;
+  Skip.Kind = StmtKind::If;
+  Skip.Addr = 0x1008;
+  Skip.Cond = Bit(2);
+  Skip.Body = {jump(0x1008, 0x1010)};
+  auto Write = assign(0x1010, 1, 0);
+  Write.Val = Plus(4, 7);
+  HighStmt Latch;
+  Latch.Kind = StmtKind::Block;
+  Latch.Addr = 0x1018;
+  HighStmt Back;
+  Back.Kind = StmtKind::If;
+  Back.Addr = 0x101c;
+  Back.Cond =
+      HighExpr::makeBinop(NdOp::INT_LESS, local(4), HighExpr::makeConst(3, 8));
+  Back.Body = {jump(0x101c, 0x1000)};
+  HighStmt Arm;
+  Arm.Kind = StmtKind::If;
+  Arm.Addr = 0x1004;
+  Arm.Cond = Bit(1);
+  Arm.Body = {
+      Skip, jump(0x100c, 0x1018), Write, result(0x1014, local(1)), Latch, Back};
+  auto Default = assign(0x1020, 1, 0);
+  Default.Val = Plus(0, 100);
+  HighFunc F;
+  F.Body = {assign(0x0ff0, 4, 0), Count, Arm, Default,
+            result(0x1024, local(1))};
+  auto BackEdges = [&] {
+    size_t Edges = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Edges += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1000;
+    });
+    return Edges;
+  };
+  EXPECT_FALSE(sinkJoinDefaultsLate(F));
+  EXPECT_EQ(BackEdges(), 1u);
+  EXPECT_EQ(F.Body.size(), 5u);
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
   // break of its own, so nothing reaches the trailing return.
