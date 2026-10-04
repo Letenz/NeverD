@@ -24,29 +24,46 @@ def repetition_budget(repetitions):
     return 180 if repetitions == 100 else 600
 
 
-def recovery_contract(source, build, document, required, runner, repetitions):
+EXPERIMENTS = {
+    "lifecycle": "HvfIntelProbe.LifecycleOnly",
+    "instruction": "HvfIntelProbe.InstructionOnly",
+    "finite-deadline": "HvfIntelProbe.FiniteDeadline",
+}
+
+
+def recovery_contract(source, build, document, required, runner, repetitions, experiment="recovery"):
+    if experiment not in ("recovery", *EXPERIMENTS):
+        raise ValueError("unknown Intel experiment")
     methods = runner.method_inventory(document)
     selected = [(key, expected) for key, expected in methods.items()
-                if key[1].startswith("HvfExecutor.Native")]
+                if (key[1].startswith("HvfExecutor.Native") if experiment == "recovery"
+                    else key[1] == EXPERIMENTS[experiment])]
     if len(selected) != 1 or len(selected[0][1]) != 1:
-        raise ValueError("original Native* filter must select exactly one native recovery test")
+        raise ValueError("selected filter must select exactly one native recovery test")
     key, expected = selected[0]
     name, record = next(iter(expected.items()))
     binary = (build / "bin/NeverDHvfTests").resolve()
-    if (Path(key[0]).resolve() != binary or record.name not in required
+    if (Path(key[0]).resolve() != binary or (experiment == "recovery" and record.name not in required)
             or "NeverDHvfTests" not in record.labels):
         raise ValueError("recovery test is not the selected source's required native owner")
+    native_filter = "HvfExecutor.Native*" if experiment == "recovery" else EXPERIMENTS[experiment]
+    environment = {"NEVERD_REQUIRE_HVF": "1"}
+    if experiment != "recovery":
+        environment["NEVERD_HVF_INTEL_PROBE"] = "1"
     return {
+        "experiment": experiment,
+        "native_execution": experiment != "lifecycle",
+        "required_for_acceptance": experiment == "recovery",
         "native_name": name, "required_ctest_name": record.name,
-        "command": [str(binary), "--gtest_filter=HvfExecutor.Native*",
+        "command": [str(binary), "--gtest_filter=" + native_filter,
                     f"--gtest_repeat={repetitions}", "--gtest_break_on_failure"],
         "working_directory": str(source), "repetitions": repetitions,
         "timeout_seconds": repetition_budget(repetitions),
-        "native_requirements": {"NEVERD_REQUIRE_HVF": "1"},
+        "native_requirements": environment,
     }
 
 
-def prepare(source, build, evidence, repetitions):
+def prepare(source, build, evidence, repetitions, experiment="recovery"):
     repetition_budget(repetitions)
     commit = shared.source_identity(source)
     if platform.system() != "Darwin" or platform.machine() != "x86_64":
@@ -65,7 +82,7 @@ def prepare(source, build, evidence, repetitions):
     records = runner.parse_inventory(document)
     if required - {record.name for record in records}:
         raise ValueError("transport inventory is missing required native cases")
-    contract = recovery_contract(source, build, document, required, runner, repetitions)
+    contract = recovery_contract(source, build, document, required, runner, repetitions, experiment)
     evidence.mkdir(parents=True, exist_ok=False)
     shared.write_json(evidence / "inventory.json", document)
     plan = {
@@ -136,7 +153,7 @@ def execute(source, evidence):
     ci, runner = shared.source_modules(source)
     _, required = ci.hvf_inventory(source, platform.machine(), True)
     contract = recovery_contract(source, build,
-        json.loads((evidence / "inventory.json").read_text()), required, runner, plan["repetitions"])
+        json.loads((evidence / "inventory.json").read_text()), required, runner, plan["repetitions"], plan.get("experiment", "recovery"))
     if any(plan.get(key) != value for key, value in contract.items()):
         raise ValueError("recovery command differs from its prepared contract")
     environment = shared.test_environment(os.environ)
@@ -165,13 +182,14 @@ def main():
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--build", type=Path)
+    parser.add_argument("--experiment", choices=("recovery", *EXPERIMENTS), default="recovery")
     parser.add_argument("--repetitions", type=int, choices=(100, 1000), default=1000)
     args = parser.parse_args()
     if args.mode == "execute":
         return execute(args.source.resolve(), args.evidence.resolve())
     if args.build is None:
         parser.error("prepare requires --build")
-    prepare(args.source.resolve(), args.build.resolve(), args.evidence.resolve(), args.repetitions)
+    prepare(args.source.resolve(), args.build.resolve(), args.evidence.resolve(), args.repetitions, args.experiment)
     return 0
 
 
