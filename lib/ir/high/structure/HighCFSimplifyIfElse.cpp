@@ -4123,11 +4123,12 @@ static void flattenElseGotoNextLabelNested(std::vector<HighStmt> &Body,
     if (NextRaw < Body.size()) {
       ChildFall = AddrMap::entryAddress(Body[NextRaw]);
       if (!ChildFall) {
+        // A statement without an address still runs before whatever follows
+        // this list, so S falls into the parent's continuation only when
+        // nothing is left to run; otherwise its continuation has no label.
         const size_t NextI = nextNonNopIndex(Body, NextRaw);
-        if (NextI < Body.size())
-          ChildFall = AddrMap::entryAddress(Body[NextI]);
-        if (!ChildFall)
-          ChildFall = FallthroughTarget;
+        ChildFall = NextI < Body.size() ? AddrMap::entryAddress(Body[NextI])
+                                        : FallthroughTarget;
       }
     }
     // Both arms of an if (and a block or try body) run into what follows S.

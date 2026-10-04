@@ -5709,6 +5709,59 @@ TEST(HighControlFlowSemantics, JumpOntoARepeatedAddressIsNotAFallthrough) {
   EXPECT_TRUE(F.Body[1].Body.empty());
 }
 
+TEST(HighControlFlowSemantics, ElseJumpPastAStatementWithoutAddressStays) {
+  // if (x & 1) { v = 1; }
+  // else {
+  //   if (x & 2) { v = 2; }
+  //   else { if (x & 4) { v = 4; } else { v = 3; goto J; } }
+  //   v = v + 10;
+  // }
+  // J: return v;
+  // The innermost jump skips `v = v + 10`, which has no address; J follows
+  // the outer if, not the middle one the jump's if/else ends.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  auto Copy = assign(0x1028, 1, 3);
+  Copy.IsPhiCopy = true;
+  HighStmt Inner;
+  Inner.Kind = StmtKind::IfElse;
+  Inner.Addr = 0x1020;
+  Inner.Cond = Bit(4);
+  Inner.Body = {assign(0x1024, 1, 4)};
+  Inner.ElseBody = {Copy, jump(0, 0x1040)};
+  HighStmt Middle;
+  Middle.Kind = StmtKind::IfElse;
+  Middle.Addr = 0x1010;
+  Middle.Cond = Bit(2);
+  Middle.Body = {assign(0x1014, 1, 2)};
+  Middle.ElseBody = {Inner};
+  auto Plus10 = assign(0, 1, 0);
+  Plus10.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(10, 8));
+  HighStmt Outer;
+  Outer.Kind = StmtKind::IfElse;
+  Outer.Addr = 0x1000;
+  Outer.Cond = Bit(1);
+  Outer.Body = {assign(0x1004, 1, 1)};
+  Outer.ElseBody = {Middle, Plus10};
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1040;
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Body = {Outer, Label, result(0x1044, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X & 1 ? 1 : X & 2 ? 12 : X & 4 ? 14 : 3;
+  };
+  for (uint64_t X : {0, 1, 2, 4})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  invertSkipGotos(F);
+  for (uint64_t X : {0, 1, 2, 4})
+    EXPECT_EQ(execute(F, X), Expected(X)) << X;
+}
+
 TEST(HighControlFlowSemantics, TailCopiesStayInTheirTryProtection) {
   // __try { v = 5; goto out; } __except (1) { goto out; } return 0;
   // out: observe(); return v;
