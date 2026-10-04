@@ -55,10 +55,10 @@ notice are preserved in
 
 
 The fork also includes the original 2026-10-04 bounded single-step fix by NeverD
-contributors, pinned at [commit 58268e5f](https://github.com/NeverSight/unicorn/commit/58268e5f6250f93fdec1f73f8823d855dd64d434).
+contributors, pinned at [commit df88be77](https://github.com/NeverSight/unicorn/commit/df88be772cfdffae7b1b930a47171d7c063f70dd).
 A count-one run uses a one-instruction translation block and stops before
 fetching a successor. Original public-API tests cover page tails, branches,
-self-loops, fault retention and code-store commitment on x64/ARM32/ARM64 as
+self-loops, ARM64 MMU successor faults, fault retention and code-store commitment on x64/ARM32/ARM64 as
 applicable. The QEMU copyright/license and dated modification notice remain
 in the modified source file.
 
