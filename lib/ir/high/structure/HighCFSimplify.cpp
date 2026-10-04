@@ -1129,7 +1129,7 @@ static bool endsItsBlock(const HighStmt &S) {
        S.Kind != StmtKind::ExprStmt) ||
       !Call || Call->Kind != ExprKind::Call)
     return false;
-  return isTerminatingHighCall(Call) ||
+  return isTerminatingHighCall(Call) || Call->DoesNotReturn ||
          (Call->IntrinsicId == Intrinsic::None && !Call->CallTarget.empty() &&
           libc::isNoReturnFunction(Call->CallTarget));
 }

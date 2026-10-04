@@ -229,6 +229,7 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
       Target.Name, Target.Addr ? Target.Addr : CurOp.Addr, std::move(Args));
   Call->IsIndirectCall = Target.IsIndirect;
   Call->IndirectParamIdx = Target.IndirectParam;
+  Call->DoesNotReturn = CurOp.DoesNotReturn;
   if (Target.IsIndirect) {
     // A bound Swift virtual call must use the target loaded before the
     // intervening retain/release effects; reloading its table slot here can
