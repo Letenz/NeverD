@@ -241,6 +241,55 @@ TEST_P(WindowsExceptions, ContextValidationPreservesStoppedCPUAndMemory) {
       GetParam().ISA,
       {BackendFaultKind::InvalidInstruction, win::value::GateBase}));
 }
+TEST_P(WindowsExceptions, FaultContextPreservesLogicalFlagsAndRejectsRFEdits) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << X64FaultContextOnly;
+  auto RAM = llvm::cantFail(PhysicalMemory::create(Options.MemoryLimit));
+  auto Space = llvm::cantFail(AddressSpace::create(RAM, Options.MemoryLimit));
+  const uint64_t StackBase = win::value::StackTop - Options.StackSize;
+  llvm::cantFail(Space->map(win::value::GateBase, PageSize,
+                            Read | Execute | UserAccessible));
+  llvm::cantFail(
+      Space->map(StackBase, Options.StackSize, Read | Write | UserAccessible));
+  auto Backend = llvm::cantFail(createExecutionBackend(Config, Space));
+  auto &CPU = *Backend.CPU;
+  llvm::cantFail(CPU.setReg(X64Register::PC, win::value::GateBase));
+  llvm::cantFail(CPU.setReg(X64Register::SP, win::value::StackTop - PageSize));
+  llvm::cantFail(CPU.setReg(X64Register::AX, DataValue));
+  llvm::cantFail(CPU.writeInteger(StackBase, VectorHigh, sizeof(uint64_t)));
+  const auto InitialFlags = llvm::cantFail(CPU.reg(X64Register::FLAGS));
+  for (auto Origin :
+       {win::ContextOrigin::Current, win::ContextOrigin::HardwareFault}) {
+    const bool Fault = Origin == win::ContextOrigin::HardwareFault;
+    auto Original = llvm::cantFail(win::captureUserContext(CPU, Origin));
+    auto Snapshot = llvm::cantFail(CPU.saveContext());
+    EXPECT_EQ(llvm::support::endian::read32le(
+                  Original.data() + x64_context::ContextProcessorFlags),
+              InitialFlags | (Fault ? FaultResumeFlag : 0));
+    EXPECT_EQ(llvm::cantFail(CPU.reg(X64Register::FLAGS)), InitialFlags);
+    llvm::cantFail(CPU.setReg(X64Register::AX, VectorLow));
+    const auto Before = llvm::cantFail(win::captureUserContext(CPU));
+    auto Changed = Original;
+    llvm::support::endian::write32le(
+        Changed.data() + x64_context::ContextProcessorFlags,
+        InitialFlags | (Fault ? 0 : FaultResumeFlag));
+    auto Error =
+        win::restoreUserContext(CPU, *Snapshot, Original, Changed, StackBase,
+                                win::value::StackTop, Origin);
+    ASSERT_TRUE(bool(Error));
+    EXPECT_NE(
+        llvm::toString(std::move(Error)).find(win::text::ExceptionContext),
+        std::string::npos);
+    EXPECT_EQ(llvm::cantFail(win::captureUserContext(CPU)), Before);
+    EXPECT_EQ(llvm::cantFail(CPU.readInteger(StackBase, sizeof(uint64_t))),
+              VectorHigh);
+    llvm::cantFail(win::restoreUserContext(CPU, *Snapshot, Original, Original,
+                                           StackBase, win::value::StackTop,
+                                           Origin));
+    EXPECT_EQ(llvm::cantFail(CPU.reg(X64Register::AX)), DataValue);
+    EXPECT_EQ(llvm::cantFail(CPU.reg(X64Register::FLAGS)), InitialFlags);
+  }
+}
 INSTANTIATE_TEST_SUITE_P(Backends, WindowsExceptions,
                          testing::ValuesIn(Profiles),
                          [](const auto &P) { return P.param.Name; });
