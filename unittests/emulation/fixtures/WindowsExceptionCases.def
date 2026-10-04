@@ -88,7 +88,10 @@ NEVERD_VEH_NEGATIVE("!Z", ExceptionArguments)
 NEVERD_VEH_NEGATIVE("!B", ExceptionLimit)
 NEVERD_VEH_NEGATIVE("!V", ExceptionLimit)
 NEVERD_VEH_NEGATIVE("!J", ExceptionFrame)
-NEVERD_VEH_NEGATIVE("!Y", ExceptionContext)
+#endif
+#ifdef NEVERD_VEH_SIMD_CASE
+// Both MXCSR copies are changed to zero, retaining valid context metadata.
+NEVERD_VEH_SIMD_CASE(UnmaskedContext, "!Y", "0100000059000000")
 #endif
 #ifdef NEVERD_VEH_MODE
 NEVERD_VEH_MODE(OrderMode, 'O')
