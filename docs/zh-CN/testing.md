@@ -233,6 +233,8 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64VectorMaskTests.cpp` 将独立原始编码与标量位提取及原生 SSE intrinsic 比较，覆盖每个源位、全部 16 个 GPR × 16 个 XMM 组合和两种 REX.W 值。完整公共寄存器快照、RAM 与数据观察器验证零扩展和状态保留；指令停止、回调失败及不支持的形式不得发布副作用。KVM/WHP 原生验收要求两个特权级均执行。
 
+`X64ShuffleTests.cpp` 使用 `X64ShuffleCases.def` 中的独立编码，并以原生 intrinsic 校验标量通道选择结果。覆盖全部 256 个控制值、寄存器与自身源、页尾内存别名、全部 XMM 寄存器配对、完整公开 CPU 状态和 RAM、观察回调停止与异常、权限、对齐故障和重试。MMX、VEX/EVEX、LOCK 与设备操作数必须无副作用地拒绝。原生 KVM/WHP 验收要求两个特权级的这些用例全部通过；不可用的宿主/ISA 组合仍明确跳过。
+
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
 ```bash

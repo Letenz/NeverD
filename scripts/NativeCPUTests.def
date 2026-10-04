@@ -29,6 +29,74 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64ShuffleOracle.AllControlsMatchScalarLaneSelection")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFDAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFDAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFHWAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFHWAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFLWAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFLWAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "SHUFPSAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "SHUFPSAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "SHUFPDAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "SHUFPDAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "AllRegisterPairsRetainOriginalSources/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "AllRegisterPairsRetainOriginalSources/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "MemoryStopsFaultsAndRetriesPreserveState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "MemoryStopsFaultsAndRetriesPreserveState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "AlignmentFaultPrecedesMemoryAndCanRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "AlignmentFaultPrecedesMemoryAndCanRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "InstructionStopsAndFailuresPreserveState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "InstructionStopsAndFailuresPreserveState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64VectorMask.SignBitsMatchScalarAndHostResults/"
     "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(

@@ -245,6 +245,8 @@ Geprüftes x64 erlaubt auch maskierte Legacy-Formen `SS`, `SD`, `PS`, `PD` von `
 
 `X64VectorMaskTests.cpp` vergleicht unabhängige Rohkodierungen mit skalarer Bitextraktion und nativen SSE-Intrinsics: jedes Quellbit und alle 16 GPR × 16 XMM mit beiden REX.W-Werten. Vollständige öffentliche Registerzustände, RAM und Datenbeobachter prüfen Nullerweiterung und Zustandserhalt. Befehlsstopps, Callback-Fehler und nicht unterstützte Formen dürfen keine Effekte veröffentlichen. Die native KVM/WHP-Abnahme verlangt beide Privilegstufen.
 
+`X64ShuffleTests.cpp` nutzt unabhängige Kodierungen aus `X64ShuffleCases.def` und vergleicht skalare Lane-Auswahl mit nativen Intrinsics. Geprüft werden alle 256 Steuerwerte mit Registern, identischer Quelle und Alias am Seitenende, sämtliche XMM-Paare, vollständiger öffentlicher CPU-Zustand und RAM, Beobachterstopps und -ausnahmen, Rechte, Ausrichtungsfehler und Wiederholungen. MMX, VEX/EVEX, LOCK und Geräteoperanden müssen ohne Wirkung abgewiesen werden. Die native KVM/WHP-Abnahme verlangt diese Fälle auf beiden Privilegstufen; nicht verfügbare Host/ISA-Paare werden ausdrücklich übersprungen.
+
 `X64AlignmentTests.cpp` prüft, dass fehlausgerichtete Operanden zugelassener aligned-SSE-Befehle einen behebbaren oder terminalen `#GP(0)` vor Datenbeobachtern, Rechteprüfungen oder Geräte-Callbacks melden. Der gesamte öffentliche x64-Registerkontext, PC und RAM bleiben erhalten. Der Adressbreitenumlauf erfolgt vor der Addition von FS/GS; nach Adresskorrektur wird derselbe Befehl wiederholt. Direkte KVM/WHP-Maschinentests prüfen die Hardwaregrenze unabhängig. Windows ring3 stellt klassifizierte `operand_alignment`-Fehler zu; andere Ursachen für `#GP` bleiben ununterstützt.
 
 ```bash

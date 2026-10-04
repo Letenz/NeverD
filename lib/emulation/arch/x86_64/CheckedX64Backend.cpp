@@ -91,14 +91,15 @@ enum class VectorForm {
 #include "X64VectorOperands.def"
 #undef NEVERD_X64_VECTOR_FORM
 };
-enum class VectorOperand { Xmm, Memory, General, Integer, Immediate };
-struct VectorOperandPair {
+enum class VectorOperand { Absent, Xmm, Memory, General, Integer, Immediate };
+struct VectorOperandPattern {
   VectorForm Form;
-  VectorOperand Destination, Source;
+  VectorOperand Destination, Source, Control;
 };
-constexpr VectorOperandPair VectorOperands[] = {
-#define NEVERD_X64_VECTOR_OPERANDS(Form, Destination, Source)                  \
-  {VectorForm::Form, VectorOperand::Destination, VectorOperand::Source},
+constexpr VectorOperandPattern VectorOperands[] = {
+#define NEVERD_X64_VECTOR_OPERANDS(Form, Destination, Source, Control)         \
+  {VectorForm::Form, VectorOperand::Destination, VectorOperand::Source,        \
+   VectorOperand::Control},
 #include "X64VectorOperands.def"
 #undef NEVERD_X64_VECTOR_OPERANDS
 };
@@ -135,6 +136,8 @@ bool isGeneralOperand(const cs_x86_op &O) {
 bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
                           unsigned Width) {
   switch (Kind) {
+  case VectorOperand::Absent:
+    return false;
   case VectorOperand::Xmm:
     return O.type == X86_OP_REG && isXmm(O.reg);
   case VectorOperand::Memory:
@@ -150,12 +153,13 @@ bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
   llvm_unreachable(diagnostic::Instruction);
 }
 bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
-  if (X.op_count != 2)
-    return false;
-  return llvm::any_of(VectorOperands, [&](const auto &Pair) {
-    return Pair.Form == V.Form &&
-           matchesVectorOperand(Pair.Destination, X.operands[0], V.Width) &&
-           matchesVectorOperand(Pair.Source, X.operands[1], V.Width);
+  return llvm::any_of(VectorOperands, [&](const auto &Pattern) {
+    const bool HasControl = Pattern.Control != VectorOperand::Absent;
+    return Pattern.Form == V.Form && X.op_count == (HasControl ? 3 : 2) &&
+           matchesVectorOperand(Pattern.Destination, X.operands[0], V.Width) &&
+           matchesVectorOperand(Pattern.Source, X.operands[1], V.Width) &&
+           (!HasControl ||
+            matchesVectorOperand(Pattern.Control, X.operands[2], V.Width));
   });
 }
 bool isAtomic(unsigned Instruction) {
