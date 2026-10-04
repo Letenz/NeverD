@@ -186,8 +186,95 @@ TEST(LLVMScalarEquivalence, WorkBudgetsIncludeFailedRefinementAttempts) {
   auto Short = check(Counted, Closed, L);
   EXPECT_EQ(Short.Status, Status::BudgetExceeded);
   EXPECT_EQ(Short.Work, L.MaxWork);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
   L.MaxWork = 0;
   EXPECT_EQ(check(Counted, Closed, L).Status, Status::BudgetExceeded);
+}
+
+TEST(LLVMScalarEquivalence, ExactRefusalDoesNotImplyWorkExhaustion) {
+  constexpr char A[] = "define i8 @f() { ret i8 3 }";
+  constexpr char B[] = "define i8 @f() { ret i8 4 }";
+  auto Base = check(A, B);
+  ASSERT_EQ(Base.Status, Status::Unproved);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = Base.Work;
+  auto Exact = check(A, B, L);
+  EXPECT_EQ(Exact.Status, Status::Unproved);
+  EXPECT_FALSE(Exact.WorkLimitExceeded);
+  --L.MaxWork;
+  auto Short = check(A, B, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+
+  constexpr char Loop[] = R"(
+define i8 @f() {
+entry: br label %loop
+loop: br label %loop
+})";
+  L = {};
+  L.MaxBlockVisits = 4;
+  Base = check(Loop, Loop, L);
+  ASSERT_EQ(Base.Status, Status::BudgetExceeded);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  L.MaxWork = Base.Work;
+  Exact = check(Loop, Loop, L);
+  EXPECT_EQ(Exact.Status, Status::BudgetExceeded);
+  EXPECT_FALSE(Exact.WorkLimitExceeded);
+  --L.MaxWork;
+  Short = check(Loop, Loop, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+}
+
+TEST(LLVMScalarEquivalence, CompletedUnknownFactsKeepExactRefusalWork) {
+  constexpr char A[] = "define i32 @f(i32 noundef %x) { ret i32 %x }";
+  constexpr char B[] = R"(
+define i32 @f(i32 noundef %x) {
+ %low = and i32 %x, 255
+ %different = add i32 %x, %low
+ ret i32 %different
+})";
+  auto Base = check(A, B);
+  ASSERT_EQ(Base.Status, Status::Unproved);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = Base.Work;
+  auto Exact = check(A, B, L);
+  EXPECT_EQ(Exact.Status, Status::Unproved);
+  EXPECT_FALSE(Exact.WorkLimitExceeded);
+  --L.MaxWork;
+  auto Short = check(A, B, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+}
+
+TEST(LLVMScalarEquivalence, LocalFactCeilingIsNotGlobalWorkExhaustion) {
+  constexpr char A[] = "define i32 @f(i32 noundef %x) { ret i32 %x }";
+  std::string B = "define i32 @f(i32 noundef %x) {\n";
+  std::string Previous = "%x";
+  for (unsigned I = 0; I < 16; ++I) {
+    auto Suffix = std::to_string(I);
+    B += "%mul" + Suffix + " = mul i32 " + Previous + ", 13\n";
+    B += "%shift" + Suffix + " = lshr i32 " + Previous + ", 5\n";
+    B += "%mix" + Suffix + " = xor i32 %shift" + Suffix + ", %x\n";
+    B += "%value" + Suffix + " = add i32 %mul" + Suffix + ", %mix" + Suffix +
+         "\n";
+    Previous = "%value" + Suffix;
+  }
+  B += "ret i32 " + Previous + "\n}";
+  auto Base = check(A, B);
+  ASSERT_EQ(Base.Status, Status::Unproved);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = Base.Work;
+  auto Exact = check(A, B, L);
+  EXPECT_EQ(Exact.Status, Status::Unproved);
+  EXPECT_FALSE(Exact.WorkLimitExceeded);
+  --L.MaxWork;
+  auto Short = check(A, B, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
 }
 
 TEST(LLVMScalarEquivalence, AllResourceLimitsFailWithoutProof) {
@@ -196,7 +283,9 @@ TEST(LLVMScalarEquivalence, AllResourceLimitsFailWithoutProof) {
                      &LLVMScalarEquivalenceLimits::MaxSymbolicNodes}) {
     LLVMScalarEquivalenceLimits L;
     L.*Field = 0;
-    EXPECT_EQ(check(Counted, Closed, L).Status, Status::BudgetExceeded);
+    auto R = check(Counted, Closed, L);
+    EXPECT_EQ(R.Status, Status::BudgetExceeded);
+    EXPECT_FALSE(R.WorkLimitExceeded);
   }
   LLVMScalarEquivalenceLimits L;
   L.MaxControlBits = 2;
@@ -231,6 +320,57 @@ a: ret i64 0
 b: ret i64 %x
 })";
   EXPECT_EQ(check(Wide, Wide).Status, Status::BudgetExceeded);
+}
+
+TEST(LLVMScalarEquivalence, ShiftedRangeGuardsKeepAllDataBitsSymbolic) {
+  for (unsigned Width : {8U, 16U, 32U, 64U}) {
+    SCOPED_TRACE(Width);
+    const auto T = "i" + std::to_string(Width);
+    const auto N = std::to_string(Width / 4);
+    const std::string Prefix = "define " + T + " @f(" + T + " noundef %x) {\n";
+    const std::string Part = "%part = lshr " + T + " %x, " + N + "\n";
+    const std::string Tail = " %part, " + N + "\n ret " + T + " %result\n}";
+    auto Safe = Prefix + Part + "%result = shl nuw " + T + Tail;
+    LLVMScalarEquivalenceLimits L;
+    L.MaxControlBits = 0;
+    auto R = check(Safe, Safe, L);
+    EXPECT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+    EXPECT_TRUE(R.ControlBits.empty());
+    EXPECT_EQ(R.CompletedPartitions, 1U);
+    auto Signed = Prefix + Part + "%result = shl nsw " + T + Tail;
+    EXPECT_NE(check(Signed, Signed, L).Status, Status::Proved);
+    auto Unsafe = Prefix + "%part = add " + T + " %x, 0\n" +
+                  "%result = shl nuw " + T + Tail;
+    EXPECT_NE(check(Unsafe, Unsafe, L).Status, Status::Proved);
+  }
+}
+
+TEST(LLVMScalarEquivalence, RightShiftViewsShareTheFullNumericCount) {
+  constexpr char Views[] = R"(
+define i32 @f(i32 noundef %x) {
+ %wide = zext i32 %x to i64
+ %shift = lshr i64 %wide, 8
+ %left = trunc nuw nsw i64 %shift to i32
+ %right = lshr i32 %x, 8
+ %different = icmp ne i32 %left, %right
+ br i1 %different, label %bad, label %done
+bad: ret i32 -1
+done: ret i32 %left
+})";
+  constexpr char Direct[] = R"(
+define i32 @f(i32 noundef %x) {
+ %result = lshr i32 %x, 8
+ ret i32 %result
+})";
+  LLVMScalarEquivalenceLimits L;
+  L.MaxControlBits = 0;
+  auto R = check(Views, Direct, L);
+  EXPECT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+  EXPECT_TRUE(R.ControlBits.empty());
+  EXPECT_EQ(R.CompletedPartitions, 1U);
+  std::string Wrong = Views;
+  Wrong.replace(Wrong.find("lshr i64 %wide, 8"), 17, "lshr i64 %wide, 9");
+  EXPECT_NE(check(Wrong, Direct, L).Status, Status::Proved);
 }
 
 TEST(LLVMScalarEquivalence, SignaturesAndInputContractsMustAgree) {

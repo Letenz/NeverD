@@ -42,6 +42,9 @@ struct LLVMScalarEquivalenceResult {
   uint64_t CompletedPartitions = 0;
   uint64_t Attempts = 0;
   uint64_t Work = 0;
+  /// A work charge exceeded MaxWork. Reaching the limit exactly, or refusing
+  /// another local resource limit, does not set this flag.
+  bool WorkLimitExceeded = false;
 };
 
 /// Prove complete return-value equality and defined termination for the
