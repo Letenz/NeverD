@@ -28,7 +28,7 @@ static_assert(probe::FloatingDestination < XmmCount &&
               probe::VectorDestination < XmmCount &&
               probe::VectorSource < XmmCount);
 
-llvm::Error stateMismatch(const probe::Instruction &Instruction,
+llvm::Error stateMismatch(llvm::StringRef Instruction,
                           const X64MachineState &Expected,
                           const X64MachineState &Observed) {
   std::string Details;
@@ -60,15 +60,15 @@ llvm::Error stateMismatch(const probe::Instruction &Instruction,
   };
   Lanes(probe::XmmName, Expected.Xmm, Observed.Xmm);
   Lanes(probe::FPName, Expected.FP.Registers, Observed.FP.Registers);
-  return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 llvm::formatv(probe::StateMismatch,
-                                               probe::State, Instruction.Name,
-                                               Details)
-                                     .str());
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      llvm::formatv(probe::StateMismatch, probe::State, Instruction, Details)
+          .str());
 }
 } // namespace
 
-llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory) {
+llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
+                             uint32_t *MXCSRMask) {
   if (auto E = Memory.beginRun())
     return E;
   auto Release = llvm::scope_exit([&] { Memory.endRun(); });
@@ -165,10 +165,63 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory) {
     if (auto E = Machine.step(State, *Root, Control))
       return E;
     if (State != Expected)
-      return stateMismatch(Instruction, Expected, State);
+      return stateMismatch(Instruction.Name, Expected, State);
     if (Control.interrupted())
       return diagnostic::interrupted(x64::probe::State, Control);
   }
+  if (!MXCSRMask)
+    return llvm::Error::success();
+  static_assert(probe::FXOffset % probe::StackAlignment == 0);
+  static_assert(probe::FXOffset + fp::LegacyBytes <= PageSize);
+  auto *Saved = Memory.data() + gateway::DataGPA + probe::FXOffset;
+  std::fill_n(Saved, fp::LegacyBytes, 0);
+  State.reg(X64Register::R11) = Base + probe::FXOffset;
+  auto Run = [&](llvm::StringRef Name,
+                 llvm::ArrayRef<uint8_t> Bytes) -> llvm::Error {
+    if (Control.interrupted())
+      return diagnostic::interrupted(probe::State, Control);
+    auto *Code = Memory.data() + gateway::CodeGPA + probe::CodeOffset;
+    std::memcpy(Code, Bytes.data(), Bytes.size());
+    State.reg(X64Register::PC) = Base + PageSize + probe::CodeOffset;
+    auto Expected = State;
+    Expected.reg(X64Register::PC) += Bytes.size();
+    if (auto E = Machine.step(State, *Root, Control))
+      return E;
+    if (State != Expected)
+      return stateMismatch(Name, Expected, State);
+    if (Control.interrupted())
+      return diagnostic::interrupted(probe::State, Control);
+    return llvm::Error::success();
+  };
+  constexpr uint8_t Save[] = {
+#define NEVERD_X64_PROBE_FXSAVE(...) __VA_ARGS__
+#include "X64MachineProbe.def"
+#undef NEVERD_X64_PROBE_FXSAVE
+  };
+  if (auto E = Run(probe::SaveName, Save))
+    return E;
+  const uint32_t Raw =
+      llvm::support::endian::read32le(Saved + fp::MXCSRMaskOffset);
+  const uint32_t Mask =
+      Raw ? Raw & fp::ArchitecturalMXCSRMask : fp::BaselineMXCSRMask;
+  if ((Mask & fp::BaselineMXCSRMask) != fp::BaselineMXCSRMask)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        llvm::formatv(probe::MXCSRMaskFailure, Raw).str());
+  if (Mask & fp::DenormalsAreZero) {
+    State.MXCSR = probe::DAZMXCSR;
+    State.Xmm[probe::FloatingDestination][0] =
+        (State.Xmm[probe::FloatingDestination][0] & ~probe::FloatMask) |
+        probe::NegativeZero;
+    State.Xmm[probe::FloatingSource][0] =
+        (State.Xmm[probe::FloatingSource][0] & ~probe::FloatMask) |
+        probe::NegativeSubnormal;
+    // -0 + DAZ(-subnormal) = -0, with no new denormal/precision status.
+    // The source, all other lanes and every control field must survive.
+    if (auto E = Run(probe::DAZName, probe::FloatingAdd))
+      return E;
+  }
+  *MXCSRMask = Mask;
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

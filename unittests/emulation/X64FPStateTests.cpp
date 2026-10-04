@@ -140,6 +140,33 @@ TEST(X64FPState, AbsentXsaveComponentsIgnoreStalePayloadAndUseInitState) {
     expectFP(Next, Expected);
   }
 }
+TEST(X64FPState, MXCSRMaskComesFromTheCPUAndCannotBeChangedByAPacket) {
+  for (const bool Compact : {false, true}) {
+    auto Before = seed(EmptySlot);
+    Before.MXCSR |= x64::fp::DenormalsAreZero;
+    std::array<uint8_t, x64::fp::XsaveBytes> Bytes{};
+    llvm::cantFail(encodeX64XsaveState(Before, Bytes, Compact,
+                                       x64::fp::ArchitecturalMXCSRMask));
+    EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() +
+                                              x64::fp::MXCSRMaskOffset),
+              x64::fp::ArchitecturalMXCSRMask);
+    const auto Packet = Bytes;
+    auto E = encodeX64XsaveState(Before, Bytes, Compact);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(Bytes, Packet);
+    X64MachineState Result;
+    const auto Unchanged = Result;
+    E = decodeX64XsaveState(Result, Bytes);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(Result, Unchanged);
+    llvm::cantFail(
+        decodeX64XsaveState(Result, Bytes, x64::fp::ArchitecturalMXCSRMask));
+    expectFP(Result, Before);
+  }
+}
+
 TEST(X64FPState, MalformedXsaveHeadersCannotPublishPartialState) {
   const auto Before = seed(EmptySlot);
   for (const auto Offset : {x64::fp::XStateOffset, x64::fp::XCompOffset,

@@ -74,8 +74,9 @@ public:
     return llvm::Error::success();
   }
   llvm::Error install(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
-                      const X64MachineState &State) {
-    if (auto E = encodeX64XsaveState(State, bytes(), true))
+                      const X64MachineState &State,
+                      uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask) {
+    if (auto E = encodeX64XsaveState(State, bytes(), true, MXCSRMask))
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                      llvm::formatv(XsaveEncodeFailure,
                                                    llvm::toString(std::move(E)),
@@ -95,7 +96,7 @@ public:
 #include "WhpXsaveRegisters.def"
 #undef NEVERD_WHP_XSAVE_FIELD
     Metadata[XmmControlStatus].XmmControlStatus.XmmStatusControlMask =
-        x64::AllowedMXCSR;
+        MXCSRMask;
     const auto MetadataStatus = API.WHvSetVirtualProcessorRegisters(
         Partition, 0, MetadataNames, std::size(MetadataNames), Metadata);
     return FAILED(MetadataStatus)
@@ -108,7 +109,8 @@ public:
   /// complete XSAVE packet and all metadata checks remain mandatory.
   llvm::Error capture(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
                       X64MachineState &State,
-                      const MetadataPacket *CapturedMetadata = nullptr) {
+                      const MetadataPacket *CapturedMetadata = nullptr,
+                      uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask) {
     UINT32 Written = 0;
     const auto Status = get(API, Partition, Buffer.base(), Size, Written);
     if (FAILED(Status))
@@ -117,7 +119,7 @@ public:
       return sizeError(Written, Size);
     const auto Packet = bytes().take_front(Written);
     auto Next = State;
-    if (auto E = decodeX64XsaveState(Next, Packet)) {
+    if (auto E = decodeX64XsaveState(Next, Packet, MXCSRMask)) {
       // Report only protocol metadata. The shared ISA codec remains the sole
       // authority for validation and never publishes a rejected packet.
       using namespace llvm::support::endian;

@@ -34,3 +34,11 @@ NEVERD_X64_PROBE_TEST_CODE(Program, 0x90, 0xf3, 0x45, 0x0f, 0x58, 0xe5, 0x66,
                            0x66, 0x41, 0x8c, 0xcc, 0x66, 0x41, 0x8c, 0xd5, 0x45,
                            0x0f, 0x20, 0xc3)
 #endif
+
+#ifdef NEVERD_X64_MASK_TEST_VALUE
+NEVERD_X64_MASK_TEST_VALUE(SupportedMask, 0xffff)
+NEVERD_X64_MASK_TEST_VALUE(FallbackMask, 0xffbf)
+NEVERD_X64_MASK_TEST_VALUE(MaskOffset, 28)
+NEVERD_X64_MASK_TEST_VALUE(DenormalStatus, 2)
+NEVERD_X64_MASK_TEST_VALUE(MaskSentinel, 0xa5a5a5a5)
+#endif

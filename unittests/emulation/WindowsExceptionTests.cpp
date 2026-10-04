@@ -193,15 +193,27 @@ TEST_P(WindowsExceptions, ContextValidationPreservesStoppedCPUAndMemory) {
     llvm::cantFail(
         CPU.writeRegister(vectorRegister(GetParam().ISA, I),
                           {VectorInitialLow + I, VectorInitialHigh - I}));
+  uint64_t Mask = 0;
+  if (X64) {
+    Mask = llvm::cantFail(CPU.supportedControlBits(CPURegister::X64MXCSR))[0];
+    llvm::cantFail(
+        CPU.setReg(X64Register::MXCSR, x64_context::DAZControl & Mask));
+  }
   auto Original = llvm::cantFail(win::captureUserContext(CPU));
+  if (X64)
+    EXPECT_EQ(llvm::support::endian::read32le(Original.data() +
+                                              x64_context::ContextControlMask),
+              Mask);
   auto Snapshot = llvm::cantFail(CPU.saveContext());
   llvm::cantFail(CPU.writeRegister(R, {VectorLow, 0}));
   llvm::cantFail(CPU.writeInteger(StackBase, VectorHigh, sizeof(uint64_t)));
   const auto Before = llvm::cantFail(win::captureUserContext(CPU));
-  const uint64_t InvalidOffsets[] = {
+  std::vector<uint64_t> InvalidOffsets = {
       X64 ? x64_context::ContextFlags : arm_context::ContextFlags,
       X64 ? x64_context::ContextPC : arm_context::ContextPC,
       X64 ? x64_context::ContextSP : arm_context::ContextSP};
+  if (X64)
+    InvalidOffsets.push_back(x64_context::ContextControlMask);
   for (uint64_t Offset : InvalidOffsets) {
     auto Changed = Original;
     llvm::support::endian::write64le(Changed.data() + Offset, 0);
@@ -225,6 +237,9 @@ TEST_P(WindowsExceptions, ContextValidationPreservesStoppedCPUAndMemory) {
       Changed.data() + VectorOffset + sizeof(uint64_t), VectorHigh);
   llvm::cantFail(win::restoreUserContext(CPU, *Snapshot, Original, Changed,
                                          StackBase, win::value::StackTop));
+  if (X64)
+    EXPECT_EQ(llvm::cantFail(CPU.reg(X64Register::MXCSR)),
+              x64_context::DAZControl & Mask);
   EXPECT_EQ(llvm::cantFail(CPU.readRegister(R))[0], VectorInitialLow);
   for (unsigned I = 0; I < VectorCount; ++I) {
     const RegisterValue Expected =
