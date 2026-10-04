@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
+#include "core/ExecutionDiagnostics.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/AddressSpace.h"
@@ -361,19 +362,25 @@ TEST_P(X64PackedInteger, DeviceSourcesRejectWithoutCallingTheDevice) {
                                      return llvm::Error::success();
                                    }};
     };
-    llvm::cantFail(CPU->mapMMIO(Stack, PageSize, std::move(Device)));
-    const auto Exit = run(memory(I));
-    EXPECT_EQ(Exit.Kind, GetParam().User
-                             ? ExecutionExitKind::GuestFault
-                             : ExecutionExitKind::UnsupportedOperation)
-        << Exit.Diagnostic;
+    const auto BeforePC = llvm::cantFail(CPU->reg(X64Register::PC));
+    auto Mapping = CPU->mapMMIO(Stack, PageSize, std::move(Device));
     if (GetParam().User) {
-      ASSERT_TRUE(Exit.Fault);
-      EXPECT_EQ(Exit.Fault->Kind, BackendFaultKind::Protection);
-      EXPECT_EQ(Exit.Fault->Access, BackendAccessKind::Read);
-      EXPECT_EQ(Exit.Fault->Address, Stack);
-      EXPECT_EQ(Exit.Fault->Size, VectorBytes);
+      // User profiles reject the mapping itself. Check that result rather
+      // than running an unmapped address after ignoring the setup error.
+      EXPECT_EQ(llvm::toString(std::move(Mapping)), diagnostic::DeviceMapping);
+      EXPECT_EQ(Calls, 0u);
+      expectState(Mixed, Mixed.Left, BeforePC, Stack);
+      llvm::cantFail(CPU->setReg(X64Register::CX, Data));
+      const auto Exit = run(memory(I));
+      ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+      const auto &Expected = Results[unsigned(I.Kind) * InputCount];
+      expectState(Mixed, Expected.Value, Code + I.Bytes.size());
+      continue;
     }
+    ASSERT_EQ(llvm::toString(std::move(Mapping)), "");
+    const auto Exit = run(memory(I));
+    EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation)
+        << Exit.Diagnostic;
     EXPECT_EQ(Calls, 0u);
     expectState(Mixed, Mixed.Left, Code, Stack);
   }
