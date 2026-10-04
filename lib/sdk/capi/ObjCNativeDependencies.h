@@ -7,6 +7,7 @@
 #include "SwiftMergedArrayBufferSourceABI.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/pipeline/NativeSourceHints.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -276,7 +277,7 @@ inline size_t inferObjCNativeDependencies(
     // A closed, compiler-observed Swift function shape supplies its own
     // source ABI. Native scalar inference must not erase its second return
     // word or reinterpret its stack and swiftcc argument carriers.
-    const bool CompleteMangledAudit =
+    const bool CompleteEntryAudit =
         A->second->Entry == Target &&
         A->second->Disposition == PipelineFunctionDisposition::Accepted &&
         A->second->HasLowIR && A->second->HasMedIR &&
@@ -285,7 +286,16 @@ inline size_t inferObjCNativeDependencies(
         A->second->DecodeFailures.empty() &&
         A->second->UnsupportedInstructions.empty() &&
         A->second->TruncatedPaths.empty();
-    if (CompleteMangledAudit) {
+    if (CompleteEntryAudit) {
+      // An ordinary import veneer preserves the SDK's complete record ABI.
+      // It must not acquire a scalar result from generic register inference.
+      // The current immutable bytes and import declaration own this candidate;
+      // the next pipeline run and normal publication still prove its body.
+      if (auto Imported = darwinHFAImportVeneerSourceABI(Image, Target)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Imported));
+        ++Added;
+        continue;
+      }
       if (auto Constructor =
               swiftFixedRecordConstructorEntryABI(Image, *L->second)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Constructor));

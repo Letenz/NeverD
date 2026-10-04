@@ -1417,6 +1417,59 @@ inline bool nestedOnceContext(const ExprPtr &Value) {
          Value->MemoryAddressSpace == NdMemoryAddressSpace::Default;
 }
 
+inline bool ignoresContext(const HighFunc &F);
+
+// This view only asks which inputs have uses outside the authenticated context
+// positions. It grants neither a callback ABI nor permission to erase those
+// arguments. The independent descendant proof must succeed before publication
+// rebuilds the bindings and repeats the same shared liveness cleanup.
+inline std::optional<HighFunc>
+onceContextLivenessView(const HighFunc &Function,
+                        const std::set<const HighExpr *> &Calls) {
+  HighFunc View = Function;
+  std::map<const HighExpr *, ExprPtr> Copies;
+  std::set<const HighExpr *> Active;
+  size_t Budget = 100000;
+  bool Valid = true;
+  std::function<ExprPtr(const ExprPtr &, unsigned)> Copy =
+      [&](const ExprPtr &E, unsigned Depth) -> ExprPtr {
+    if (!E || !Budget || Depth > 128 || Active.count(E.get())) {
+      Valid = false;
+      return {};
+    }
+    --Budget;
+    if (const auto Existing = Copies.find(E.get()); Existing != Copies.end())
+      return Existing->second;
+    Active.insert(E.get());
+    auto Result = std::make_shared<HighExpr>(*E);
+    for (size_t I = 0; I < E->Operands.size(); ++I) {
+      if (I == 2 && Calls.count(E.get())) {
+        auto Ignored =
+            HighExpr::makeConst(0, 8, ConstantAddressProvenance::Scalar);
+        Ignored->Type = NdType::makePtr(NdType::makeVoid());
+        Result->Operands[I] = std::move(Ignored);
+      } else {
+        Result->Operands[I] = Copy(E->Operands[I], Depth + 1);
+      }
+    }
+    if (E->IndirectTarget)
+      Result->IndirectTarget = Copy(E->IndirectTarget, Depth + 1);
+    Active.erase(E.get());
+    Copies.emplace(E.get(), Result);
+    return Result;
+  };
+  walkStmts(View.Body, [&](HighStmt &S) {
+    forEachExpr(S, [&](ExprPtr &E) {
+      if (E)
+        E = Copy(E, 0);
+    });
+  });
+  if (!Valid)
+    return std::nullopt;
+  eliminateHighDeadPhiCopies(View);
+  return View;
+}
+
 /// Each otherwise undeclared input must be used only as the context of an
 /// authenticated nested once call. A separate, bounded dependency proof must
 /// establish that every descendant initializer ignores that context.
@@ -1447,6 +1500,7 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
   size_t Budget = 100000;
   SwiftOnceNestedCallbackContract Contract;
   Contract.Signature = callbackHint(Image.Arch);
+  std::set<const HighExpr *> ContextCalls;
   bool Valid = true;
   const HighStmt *RetainedReturn =
       !F.Body.empty() && F.Body.back().Kind == StmtKind::Return &&
@@ -1457,7 +1511,7 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
                                                              unsigned Depth) {
     if (!Valid)
       return;
-    if (!E || !Budget-- || Depth > 128 || E->Kind == ExprKind::Undef) {
+    if (!E || !Budget-- || Depth > 128) {
       Valid = false;
       return;
     }
@@ -1494,17 +1548,17 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
       }
       Contract.Initializers.push_back(
           {*Predicate, std::nullopt, *Initializer, Contract.Signature});
+      ContextCalls.insert(E.get());
       // Do not interpret the independently proved, ignored context as an
       // ordinary entry read. All other operands still receive the full check.
       Visit(E->Operands[0], Depth + 1);
       Visit(E->Operands[1], Depth + 1);
       return;
     }
-    if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
-        E->Var.Kind == MedVar::Param)
-      Valid = false;
     for (const auto &Operand : E->Operands)
       Visit(Operand, Depth + 1);
+    if (E->IndirectTarget)
+      Visit(E->IndirectTarget, Depth + 1);
   };
   walkStmts(F.Body, [&](const HighStmt &Statement) {
     if (Statement.Kind == StmtKind::Return &&
@@ -1514,6 +1568,9 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
     forEachExpr(Statement, [&](const ExprPtr &E) { Visit(E, 0); });
   });
   if (!Valid || Contract.Initializers.empty())
+    return std::nullopt;
+  const auto View = onceContextLivenessView(F, ContextCalls);
+  if (!View || !ignoresContext(*View))
     return std::nullopt;
   return Contract;
 }
@@ -1539,9 +1596,12 @@ inline bool ignoresContext(const HighFunc &F) {
       return false;
     if (!Seen.insert(E.get()).second)
       continue;
-    if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Param)
+    if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
+        E->Var.Kind == MedVar::Param)
       return false;
     Pending.insert(Pending.end(), E->Operands.begin(), E->Operands.end());
+    if (E->IndirectTarget)
+      Pending.push_back(E->IndirectTarget);
   }
   return true;
 }
@@ -2865,6 +2925,7 @@ inline std::optional<ObjCSourceBindingResult> projectSwiftOnceNestedCallback(
       !objc_projection_detail::sameHint(Callback->second, Current->Signature))
     return std::nullopt;
   auto Result = bindSwiftOnceSourceReferences(Function, Image, Plan, Functions);
+  eliminateHighDeadPhiCopies(Result.Function);
   if (!swift_once_source_detail::ignoresContext(Result.Function))
     return std::nullopt;
   for (const auto &Initializer : Current->Initializers)

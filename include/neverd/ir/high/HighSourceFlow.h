@@ -75,7 +75,8 @@ std::vector<std::optional<uint64_t>> highSourceUnsignedUpperBounds(
     const std::vector<HighSourceUnsignedRangeQuery> &Queries);
 /// Remove side-effect-free PHI copies whose values cannot be observed on any
 /// feasible emitted path. Unknown control flow or exhausted analysis budgets
-/// leave the function unchanged. Retains addresses used as source labels.
+/// leave the function unchanged. This includes unused scalar unknowns, without
+/// defining any unknown bits. Retains addresses used as source labels.
 bool eliminateHighDeadPhiCopies(HighFunc &Function);
 } // namespace neverd
 #endif
