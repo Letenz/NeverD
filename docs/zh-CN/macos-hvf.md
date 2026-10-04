@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
+<!-- i18n-source: e6e2b82cd66393c28afe67bf6c8ac60fefa0bb6b06e4e0ff1321821fef727d93 -->
 
 [← 文档索引](README.md)
 
@@ -274,3 +274,7 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 独立且未修改的 `hvf-edge-cases` 程序 `f150b38` 在两个镜像上完成 real-mode guest 和 100000 次随机中断调用尝试，耗时约 362、398 秒。两次均正常退出并回收子进程；产物摘要、源码哈希、进度标记和 guest 完成输出均已独立核验。先前 300 秒尝试达到观察器期限后被回收，没有 runner 失联。上游程序忽略随机中断返回值，调用次数不代表逐次成功交付。该对照不构成 NeverD 验收或性能比较。[源码、日志与审计](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream)。
 
 这些结果缩小了调查范围，但尚未证明生产修复。保留 VM 和 Executor 线程仅用于诊断对照，尚未成为接受的生命周期变更。Intel 仍须在同一个干净候选上通过原始 1000 轮恢复、完整 CPU 清单和独立 Darwin 门禁。
+
+两项生命周期对照现已在两套 Intel 镜像上均通过 1000/1000 轮：仅重建 vCPU（37195529270、37195554929），以及保留同一 owner、重建 VM 和 vCPU（37196504453、37196535787）。后一项每次运行均包含 8000 个有序原生事件及第 1001 代的最终销毁；24/27 个产物摘要、原生与控制器正常退出、子进程回收均已核验。这缩小了与完整 Executor 周转的比较范围，但尚未定位原因或证明生产修复。下一项诊断将保留 VM、更换 vCPU 和 owner 线程；原始恢复及完整 CPU/Darwin 验收仍须通过。
+
+线程更换实验未完成 1000 轮：macOS 15 上传器在 V8 字符串解析中触发 SIGTRAP（37198629082），macOS 26 上传器在 V8 作用域查找中触发 SIGSEGV（37198630903）。控制器随后取消并回收原生进程；保存的日志分别显示 24/25、467/468 轮完成/开始，没有原生断言或最终原生结果。两台 runner 均保持在线并提供匹配的崩溃报告。这属于观察器触发的中断，既不是已验证的原生通过，也不是已确认的 runner 失联。原因仍未知；先用纯上传对照比较，再决定后端变更。

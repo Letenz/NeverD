@@ -717,6 +717,34 @@ swiftObjCClassIdentity(const BinaryImage &Image, va_t Metadata) {
       !reflectionClass(Tree->Children[0].Children[0].Children[0], *Module,
                        *Name))
     return std::nullopt;
+  // A native Swift root has no Swift superclass descriptor, but Objective-C
+  // records name the runtime's SwiftObject base. Its exact strong import
+  // authenticates only this declaration, not a local superclass address or
+  // a stable instance/field layout.
+  if (!Class->RootClass && !Class->SuperclassAddress &&
+      Class->SuperclassName == "_TtCs12_SwiftObject") {
+    const auto Bind = Image.DyldBindSlots.find(Metadata + 8);
+    constexpr llvm::StringLiteral Provider =
+        "/usr/lib/swift/libswiftCore.dylib";
+    const auto RO = Data.classRO(Metadata);
+    if (Word(20) || Class->InheritanceStatus != "resolved" ||
+        !Image.MachOTwoLevelNamespace ||
+        !isInitialImageImportSlot(Image, Metadata + 8) ||
+        Bind == Image.DyldBindSlots.end() || Bind->second.Module != Provider ||
+        Bind->second.Name != "_OBJC_CLASS_$__TtCs12_SwiftObject" ||
+        !llvm::is_contained(Image.DynInfo.NeededLibs, Provider) ||
+        Class->InstanceStart < 16 ||
+        Class->InstanceSize < Class->InstanceStart || !RO ||
+        !readInitialImageBytes(Image, *RO, 12) ||
+        !readInitialImageBytes(Image, Metadata + 40, 24) ||
+        Data.u32(*RO + 4) != Class->InstanceStart ||
+        Data.u32(*RO + 8) != Class->InstanceSize ||
+        Data.u32(Metadata + 44) != 0 ||
+        Data.u32(Metadata + 48) != Class->InstanceSize)
+      return std::nullopt;
+    return SwiftObjCClassIdentity{*Module, *Name, Class->Name, Metadata,
+                                  *Descriptor};
+  }
   const auto Super = Class->RootClass
                          ? Data.localPointer(Metadata + 8)
                          : readInitialImagePointer(Image, Metadata + 8);
