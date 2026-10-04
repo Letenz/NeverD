@@ -71,11 +71,21 @@ void Builder::validateContract() {
       auto K = A.getKindAsString();
       if (K != "min-legal-vector-width" && K != "no-trapping-math" &&
           K != "stack-protector-buffer-size" && K != "target-cpu" &&
-          K != "target-features" && K != "tune-cpu")
+          K != "target-features" && K != "tune-cpu" &&
+          !(ScalarArguments && K == "frame-pointer"))
         fail("unsupported string function attribute obligation");
       continue;
     }
     switch (A.getKindAsEnum()) {
+    case llvm::Attribute::NoInline:
+    case llvm::Attribute::AlwaysInline:
+    case llvm::Attribute::InlineHint:
+    case llvm::Attribute::OptimizeNone:
+    case llvm::Attribute::OptimizeForSize:
+    case llvm::Attribute::MinSize:
+      if (!ScalarArguments)
+        fail("unsupported function optimization attribute obligation");
+      break;
     // The admitted subset has no calls, synchronization, deallocation,
     // recursion or exceptional operations. Output loops have checked ranks.
     case llvm::Attribute::NoFree:
@@ -116,7 +126,10 @@ void Builder::validateContract() {
          A.getKindAsEnum() != llvm::Attribute::NoUndef))
       fail("unsupported return attribute obligation");
   for (auto &Arg : F.args())
-    for (auto A : F.getAttributes().getParamAttrs(Arg.getArgNo()))
+    for (auto A : F.getAttributes().getParamAttrs(Arg.getArgNo())) {
+      if (ScalarArguments && (!A.isEnumAttribute() ||
+                              A.getKindAsEnum() != llvm::Attribute::NoUndef))
+        fail("unsupported scalar argument attribute obligation");
       if (!((A.isEnumAttribute() &&
              (A.getKindAsEnum() == llvm::Attribute::NoUndef ||
               (A.getKindAsEnum() == llvm::Attribute::NoFree))) ||
@@ -124,6 +137,7 @@ void Builder::validateContract() {
              A.getKindAsEnum() == llvm::Attribute::Initializes) ||
             (A.getAsString() == "captures(none)")))
         fail("unsupported argument attribute obligation");
+    }
 }
 
 } // namespace neverd::analysis::llvm_model

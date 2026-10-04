@@ -13,6 +13,7 @@ add_neverd_component_library(NeverDLLVMInterpreterModel
   llvm/LLVMInterpreterModelInitialization.cpp
   llvm/LLVMInterpreterModelMemory.cpp
   llvm/LLVMInterpreterModelScalar.cpp
+  llvm/LLVMScalarEquivalence.cpp
   LINK_COMPONENTS InterpreterSpecialization
   LLVM_COMPONENTS Core Support
 )

@@ -106,11 +106,15 @@ bool Builder::emitScalar(LowBlock &Out, const llvm::Instruction &I) {
         Callee ? Callee->getIntrinsicID() : llvm::Intrinsic::not_intrinsic;
     bool Pop = ID == llvm::Intrinsic::ctpop,
          Add = ID == llvm::Intrinsic::sadd_with_overflow,
-         Sub = ID == llvm::Intrinsic::ssub_with_overflow;
-    if (!Callee || !Callee->isDeclaration() || (!Pop && !Add && !Sub) ||
-        Call->arg_size() != (Pop ? 1U : 2U) ||
+         Sub = ID == llvm::Intrinsic::ssub_with_overflow,
+         Funnel = ID == llvm::Intrinsic::fshl || ID == llvm::Intrinsic::fshr;
+    if (!Callee || !Callee->isDeclaration() ||
+        (!Pop && !Add && !Sub && !Funnel) ||
+        Call->arg_size() != (Funnel ? 3U
+                             : Pop  ? 1U
+                                    : 2U) ||
         !Call->getArgOperand(0)->getType()->isIntegerTy() ||
-        Call->getArgOperand(0)->getType()->isIntegerTy(1) ||
+        (!Funnel && Call->getArgOperand(0)->getType()->isIntegerTy(1)) ||
         Call->getCallingConv() != llvm::CallingConv::C ||
         Call->isMustTailCall() || Call->hasOperandBundles() ||
         Call->hasMetadataOtherThanDebugLoc() ||
@@ -123,10 +127,34 @@ bool Builder::emitScalar(LowBlock &Out, const llvm::Instruction &I) {
       if (Call->getAttributes().getParamAttrs(N).hasAttributes())
         fail("unsupported intrinsic argument contract");
     for (auto A : Call->getAttributes().getRetAttrs())
-      if (!Pop || A.isStringAttribute() ||
-          A.getKindAsEnum() != llvm::Attribute::Range)
+      if (!((A.isEnumAttribute() &&
+             A.getKindAsEnum() == llvm::Attribute::NoUndef) ||
+            (Pop && !A.isStringAttribute() &&
+             A.getKindAsEnum() == llvm::Attribute::Range)))
         fail("unsupported intrinsic return contract");
-    if (Pop) {
+    if (Funnel) {
+      const unsigned Bits = Call->getType()->getIntegerBitWidth();
+      auto A = value(Call->getArgOperand(0));
+      auto B = value(Call->getArgOperand(1));
+      const bool Left = ID == llvm::Intrinsic::fshl;
+      if (Bits == 1) {
+        emit(Out, op(NdOp::COPY, value(&I), {Left ? A : B}));
+      } else {
+        // The accepted word widths are powers of two. Funnel counts are
+        // modulo that width, including zero; ordinary LLVM shifts are not.
+        auto Count = local(A.Size), Inverse = local(A.Size);
+        auto Hi = local(A.Size), Lo = local(A.Size), Joined = local(A.Size);
+        auto Zero = local(1);
+        emit(Out, op(NdOp::INT_AND, Count,
+                     {value(Call->getArgOperand(2)), num(Bits - 1, A.Size)}));
+        emit(Out, op(NdOp::INT_SUB, Inverse, {num(Bits, A.Size), Count}));
+        emit(Out, op(NdOp::INT_LEFT, Hi, {A, Left ? Count : Inverse}));
+        emit(Out, op(NdOp::INT_RIGHT, Lo, {B, Left ? Inverse : Count}));
+        emit(Out, op(NdOp::INT_OR, Joined, {Hi, Lo}));
+        emit(Out, op(NdOp::INT_EQUAL, Zero, {Count, num(0, A.Size)}));
+        emit(Out, op(NdOp::SELECT, value(&I), {Zero, Left ? A : B, Joined}));
+      }
+    } else if (Pop) {
       if (Call->getType() != Call->getArgOperand(0)->getType())
         fail("invalid ctpop type");
       emit(Out, op(NdOp::POPCOUNT, value(&I), {value(Call->getArgOperand(0))}));
@@ -211,6 +239,23 @@ bool Builder::emitScalar(LowBlock &Out, const llvm::Instruction &I) {
                        Bad, {A, B}));
           requireEqual(Out, Bad, num(0, 1));
         }
+      } else if (K == NdOp::INT_MULT) {
+        // A full double-width product must equal the correspondingly
+        // extended low result. This also covers the i64 boundary without
+        // depending on host overflow or an unsupported division model.
+        auto Guard = [&](NdOp Extend) {
+          auto WideA = local(A.Size * 2), WideB = local(A.Size * 2);
+          auto Product = local(A.Size * 2), Back = local(A.Size * 2);
+          emit(Out, op(Extend, WideA, {A}));
+          emit(Out, op(Extend, WideB, {B}));
+          emit(Out, op(NdOp::INT_MULT, Product, {WideA, WideB}));
+          emit(Out, op(Extend, Back, {R}));
+          requireEqual(Out, Product, Back);
+        };
+        if (O->hasNoUnsignedWrap())
+          Guard(NdOp::INT_ZEXT);
+        if (O->hasNoSignedWrap())
+          Guard(NdOp::INT_SEXT);
       } else if (K == NdOp::INT_LEFT) {
         if (O->hasNoUnsignedWrap()) {
           auto Back = local(A.Size);

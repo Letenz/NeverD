@@ -17,7 +17,6 @@ TEST_F(LLVMModel, UnsupportedInstructionsAndConstantsFailClearly) {
       "%x = freeze i64 1\nret i64 %x",
       "%x = udiv i64 9, 3\nret i64 %x",
       "%x = srem i64 9, 3\nret i64 %x",
-      "%x = mul nsw i64 9, 3\nret i64 %x",
       "%x = shl i64 1, 64\nret i64 %x",
       "%x = shl i1 true, false\n%v = zext i1 %x to i64\nret i64 %v",
       "%x = add i1 true, true\n%v = zext i1 %x to i64\nret i64 %v",
