@@ -2297,6 +2297,27 @@ guest effects through the shared engine. The API 28 cursor contract is checked
 against [pinned AOSP source](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strtok.c);
 this is model evidence, not a native Android device comparison.
 
+Independent thread-attribute fixtures run at O0/O2 with ordinary, APS2 and
+RELR packing. They check the complete 56-byte LP64 object, retained padding,
+destruction fill, integer versus pointer widths, historical inheritance rules,
+full-width stack values, invalid-value precedence, ignored scope pointers,
+overlapping outputs, inaccessible unused tails and provider lifetime. C/CLI
+and the actual Python wrapper exercise named dynamic calls through the shared
+library. The default single-thread contract still rejects creation and
+thread-state queries. These are pinned API 28 model checks, not an Android
+device comparison.
+
+`AndroidThreadTests.cpp` opts into guest scheduling with independent O0/O2
+ordinary/APS2/RELR fixtures. It checks scalar/vector/flags/FP state, separate
+TLS/errno/dlerror/stack, common imported/raw/variadic identity, recursive mutex
+owners, nested once/finalize continuations, join/detach lifetime, thread versus
+process exit, instruction/report limits, guard faults and rejected state.
+Repeated software reports must match exactly. Available ARM64 HVF execution
+is compared separately with Unicorn; unavailable transport is an explicit
+skip. C API/CLI and Python checks preserve thread attribution and dynamically
+resolved API names. These tests do not establish concurrent SMP, blocking
+mutex/once behavior, or native Android device equivalence.
+
 Independent mutex fixtures run at O0/O2 with ordinary, APS2 and RELR packing.
 They check eight-byte attributes, four-byte getter outputs, complete 40-byte
 initialization, overlapping attributes, static initializers, all three lock

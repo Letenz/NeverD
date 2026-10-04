@@ -1487,6 +1487,15 @@ registry. The native runner retains the original import event until every
 selected callback returns; neither registration nor workload teardown calls
 host destructors. Symbol spellings and diagnostics remain in Android's `.def`
 inventories.
+`GuestThreads` owns opt-in Android thread identities, stacks, TLS and complete
+saved CPU contexts over one transport and shared RAM. Callback and join
+continuations follow their thread. The runner switches only after consuming
+the pending service or quantum and charges all threads to one budget.
+Linux's optional `ThreadContext` is the sole identity and thread-exit input
+for named, variadic and raw services; an absent context retains the existing
+single-thread Linux contract. Bionic process state is never copied on a switch.
+`AndroidThreads.def` owns placement/capacity policy; existing Android and
+process report inventories own names, diagnostics and wire fields.
 An optional ordered `default_scope` names resident catalogue providers visible
 to `RTLD_DEFAULT`. Android native input validation checks its membership and
 uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.

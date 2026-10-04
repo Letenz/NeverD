@@ -202,7 +202,7 @@ Bionic::mutex(const NativeCallEvent &Call) {
         return std::move(E);
     return Value(0);
   };
-  if (*Owner == linux_model::ThreadID) {
+  if (*Owner == threadID()) {
     if (Unlock) {
       if (Count)
         return SetState(State - CounterStep);
@@ -221,6 +221,6 @@ Bionic::mutex(const NativeCallEvent &Call) {
   if (Status != Unlocked)
     return Try ? Value(linux_model::ResourceBusy)
                : Unsupported(diagnostic::MutexBlocking);
-  return SetOwnedState(Base | Locked, linux_model::ThreadID, false);
+  return SetOwnedState(Base | Locked, threadID(), false);
 }
 } // namespace neverd::emulation::android_model
