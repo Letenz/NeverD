@@ -66,13 +66,13 @@ request は pending のまま実行、CPU 変更、空間 binding、context capt
 
 例外をマスクした x64 命令の説明は移植可能な基準です。KVM/WHP は `driver-strict`、`checked-x64-v1`、`checked-user-x64-v1` に `precise_simd_exceptions` を追加します。ネイティブ起動検証が正確な `#XM` と両方の再試行を確認してから、非マスク MXCSR 書き込み、`LDMXCSR`、Windows `CONTEXT` 復元を許可します。選択は `ExecutionProfiles.def` が管理し、`supportsSIMDExceptions` が実際のインスタンス能力を示します。checked Unicorn はマスクを要求し、ARM64 と HVF の例外能力は変更しません。
 
-checked x64 は限定された legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS`、mask 付き scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD` を許可します。MXCSR は sticky status、rounding、FTZ を保持し、unmasked exception は拒否します。KVM/WHP は16個すべての XMM register と MXCSR を同期します。列挙されていない encoding/operand は許可されません。
+checked x64 は限定された legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS`、mask 付き scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD` を許可します。MXCSR は sticky status、rounding、FTZ を保持し、移植可能な実行では unmasked exception を拒否します。KVM/WHP は16個すべての XMM register と MXCSR を同期します。列挙されていない encoding/operand は許可されません。
 
-checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。unmasked exception、x87、AVX は許可しません。
+checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。x87、AVX は許可しません。
 
 可搬ソフトウェアプロファイルでは、Unicorn は従来の `MINSS/MINSD/MINPS/MINPD` と `MAXSS/MAXSD/MAXPS/MAXPD` が選択した値に DAZ を適用します。選択された非正規化入力は符号付きゼロになり、NaN ペイロードと既存の MXCSR 状態は保持されます。`test_x86_sse_minmax_daz` はレジスタ、RAM、同一レジスタの形式について、DAZ の有効・無効、全丸めモード、FTZ、累積状態を検証します。
 
-KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付き非正規化数の演算で DAZ 能力を検証します。checked Unicorn はソフトウェアのマスクを提供します。`supportedControlBits` は CPU 固有の不変マスクを返し、FX/XSAVE、スナップショット、Windows CONTEXT が同じ能力を使用します。checked `LDMXCSR/STMXCSR` は m32 全体の RAM 権限を確認し、障害や観測コールバックの中止時には状態を保持します。予約ビットのロードは #GP、非マスク SIMD 例外は未対応です。`X64MXCSRTests.cpp` は制御と再試行を検証し、`X64DAZData` は許可された全 28 種の SSE 演算を実機の元命令と比較し、DAZ、丸め、FTZ を確認します。HVF の DAZ 対応は拡張しません。
+KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付き非正規化数の演算で DAZ 能力を検証します。checked Unicorn はソフトウェアのマスクを提供します。`supportedControlBits` は CPU 固有の不変マスクを返し、FX/XSAVE、スナップショット、Windows CONTEXT が同じ能力を使用します。checked `LDMXCSR/STMXCSR` は m32 全体の RAM 権限を確認し、障害や観測コールバックの中止時には状態を保持します。予約ビットのロードは #GP、移植可能な実行では非マスク SIMD 例外を拒否します。`X64MXCSRTests.cpp` は制御と再試行を検証し、`X64DAZData` は許可された全 28 種の SSE 演算を実機の元命令と比較し、DAZ、丸め、FTZ を確認します。HVF の DAZ 対応は拡張しません。
 
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
@@ -84,7 +84,7 @@ KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付�
 
 `MOVLPS`、`MOVHPS`、`MOVLPD`、`MOVHPD` は、アラインメントを要求せず RAM の正確に 8 バイトを転送します。`X64VectorInstructions.def` がストアする半分を宣言し、`X64VectorOperands.def` が XMM/m64 の組を要求します。ロードは残りの 64 ビットを保持し、上位半分のストア監視には上位データを渡します。KVM、WHP、checked Unicorn は全範囲の権限検査と RAM ロールバックを共有します。レジスタ専用の `MOVHLPS`/`MOVLHPS` は固有の意味を維持します。
 
-`CVTSI2SS` と `CVTSI2SD` は MXCSR の丸め規則で符号付き 32/64 ビット整数を変換し、精度状態を保持します。共有の `IntegerSource` 規則は XMM 出力と r32/r64 または m32/m64 入力のみを許可します。従来形式は出力の上位 96/64 ビットを保持し、メモリ検査には整数幅を使います。KVM、WHP、checked Unicorn は元の命令を実行します。非マスク例外、MMX、VEX/EVEX は対象外です。
+`CVTSI2SS` と `CVTSI2SD` は MXCSR の丸め規則で符号付き 32/64 ビット整数を変換し、精度状態を保持します。共有の `IntegerSource` 規則は XMM 出力と r32/r64 または m32/m64 入力のみを許可します。従来形式は出力の上位 96/64 ビットを保持し、メモリ検査には整数幅を使います。KVM、WHP、checked Unicorn は元の命令を実行します。MMX、VEX/EVEX は対象外です。
 
 `CVTSS2SI` と `CVTSD2SI` は共有の `IntegerResult` 規則で MXCSR の丸めに従い符号付き 32/64 ビット整数を生成し、`CVTTSS2SI` と `CVTTSD2SI` は常にゼロ方向へ切り捨てます。例外をマスクした NaN・範囲外変換は整数不定値を返して無効状態を設定し、有効な不正確結果は精度状態を設定します。既存の累積状態、FLAGS、XMM 入力は保持されます。r32 出力は汎用レジスタの上位半分をゼロにします。RAM 読み取り幅は出力幅に関係なく浮動小数点入力幅で決まり、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn に共通の規則です。
 
@@ -92,11 +92,11 @@ KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付�
 
 `CMPSS`、`CMPSD`、`CMPPS`、`CMPPD` は KVM、WHP、checked Unicorn で従来の8条件を実行します。共有 `Source` 規則はデコード済み別名を受け入れ、予約値は非対応です。スカラー形式は上位レーンを保持して m32/m64 を読み、パック形式は整列した m128 を要求します。FLAGS と既存 MXCSR 状態を保持し、有効レーンごとに無効・非正規化状態を累積します。Capstone が命令族 ID と SSE 条件を管理し、lifter 内だけの ID 修正を置き換えます。Unicorn は各比較関数内で非正規化入力を分類します。
 
-`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD`、`CVTPD2PS` は共有 `Source` 規則で従来の SSE 精度を変換します。スカラー結果は宛先の上位 64/96 ビットを保持します。パック拡張は m64 から倍精度2要素へ、縮小は整列した m128 から単精度2要素へ変換し上位64ビットをゼロにします。KVM、WHP、checked Unicorn の元の命令実行は FLAGS を保持し、丸めと FTZ に従ってマスクされた MXCSR 状態を累積します。Unicorn は変換関数で有効な非正規化入力を個別に分類します。非マスク例外、VEX/EVEX は対象外です。
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD`、`CVTPD2PS` は共有 `Source` 規則で従来の SSE 精度を変換します。スカラー結果は宛先の上位 64/96 ビットを保持します。パック拡張は m64 から倍精度2要素へ、縮小は整列した m128 から単精度2要素へ変換し上位64ビットをゼロにします。KVM、WHP、checked Unicorn の元の命令実行は FLAGS を保持し、丸めと FTZ に従ってマスクされた MXCSR 状態を累積します。Unicorn は変換関数で有効な非正規化入力を個別に分類します。VEX/EVEX は対象外です。
 
-`CVTDQ2PS` と `CVTDQ2PD` は共有 `Source` 規則で符号付き32ビット整数をパック変換します。単精度は整列した m128 と MXCSR の丸めを使用し、倍精度は非整列も可能な m64 を読み正確に変換します。宛先 XMM 全体を置換し、FLAGS と既存の MXCSR 状態を保持し、不正確な単精度結果は精度フラグを蓄積します。KVM、WHP、checked Unicorn は元の命令を実行します。Unicorn は両パック拡張を識別して8バイト読取を選択します。非マスク例外、MMX、VEX/EVEX は対象外です。
+`CVTDQ2PS` と `CVTDQ2PD` は共有 `Source` 規則で符号付き32ビット整数をパック変換します。単精度は整列した m128 と MXCSR の丸めを使用し、倍精度は非整列も可能な m64 を読み正確に変換します。宛先 XMM 全体を置換し、FLAGS と既存の MXCSR 状態を保持し、不正確な単精度結果は精度フラグを蓄積します。KVM、WHP、checked Unicorn は元の命令を実行します。Unicorn は両パック拡張を識別して8バイト読取を選択します。MMX、VEX/EVEX は対象外です。
 
-`CVTPS2DQ` と `CVTPD2DQ` は MXCSR の丸めを使用し、`CVTTPS2DQ` と `CVTTPD2DQ` はゼロ方向へ切り捨てます。共有 `Source` 規則は整列した m128 または XMM 入力を要求します。NaN や範囲外のレーンは signed32 indefinite と無効フラグを生成し、他の有効な不正確レーンは独立して精度フラグを加えます。単精度入力は整数4個、倍精度入力は2個となり上位64ビットをクリアします。FLAGS と既存の MXCSR 状態を保持し、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn は元の命令を実行します。非マスク例外、MMX、VEX/EVEX は対象外です。
+`CVTPS2DQ` と `CVTPD2DQ` は MXCSR の丸めを使用し、`CVTTPS2DQ` と `CVTTPD2DQ` はゼロ方向へ切り捨てます。共有 `Source` 規則は整列した m128 または XMM 入力を要求します。NaN や範囲外のレーンは signed32 indefinite と無効フラグを生成し、他の有効な不正確レーンは独立して精度フラグを加えます。単精度入力は整数4個、倍精度入力は2個となり上位64ビットをクリアします。FLAGS と既存の MXCSR 状態を保持し、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn は元の命令を実行します。MMX、VEX/EVEX は対象外です。
 
 `X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
 

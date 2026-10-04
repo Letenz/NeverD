@@ -29,11 +29,12 @@ NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Skip, 0x48, 0x83, 0x82, 0xf8, 0, 0, 0, 4)
 NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Mask, 0x81, 0x4a, 0x34, 0x80, 0x1f, 0, 0,
                                    0x81, 0x8a, 0x18, 0x01, 0, 0, 0x80, 0x1f, 0,
                                    0)
-// Repair XMM0/XMM1 low scalar operands and RAM [R8] to float 1.0.
+// Repair XMM0/XMM1 and RAM to float 1.0. Read the RAM pointer from saved
+// CONTEXT.R8; callback argument registers are volatile.
 NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Repair, 0xc7, 0x82, 0xa0, 0x01, 0, 0, 0, 0,
                                    0x80, 0x3f, 0xc7, 0x82, 0xb0, 0x01, 0, 0, 0,
-                                   0, 0x80, 0x3f, 0x41, 0xc7, 0x00, 0, 0, 0x80,
-                                   0x3f)
+                                   0, 0x80, 0x3f, 0x4c, 0x8b, 0x82, 0xb8, 0, 0,
+                                   0, 0x41, 0xc7, 0x00, 0, 0, 0x80, 0x3f)
 // Deliberately clobber the live destination; return CONTINUE_EXECUTION.
 NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Return, 0x66, 0x0f, 0xef, 0xc0, 0xb8, 0xff,
                                    0xff, 0xff, 0xff, 0xc3)

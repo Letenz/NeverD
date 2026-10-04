@@ -42,12 +42,17 @@ constexpr uint32_t StatusCodes[] = {
 #include "fixtures/WindowsSIMDStatusCases.def"
 #undef NEVERD_WINDOWS_SIMD_STATUS
 };
-class WindowsSIMDExecution
-    : public testing::TestWithParam<ExecutionBackendKind> {};
+struct Parameter {
+  ExecutionBackendKind Kind;
+};
+void PrintTo(const Parameter &P, std::ostream *OS) {
+  *OS << executionBackendName(P.Kind);
+}
+class WindowsSIMDExecution : public testing::TestWithParam<Parameter> {};
 
 TEST_P(WindowsSIMDExecution, ActualFaultExecutesGuestHandlersAndRetries) {
   auto Created = createExecutionBackend(
-      GetParam(), ExecutionContract::CheckedUserX64, simd::Limit);
+      GetParam().Kind, ExecutionContract::CheckedUserX64, simd::Limit);
   if (!Created) {
     auto E = Created.takeError();
     const bool Unavailable = E.isA<BackendUnavailableError>();
@@ -196,10 +201,10 @@ TEST_P(WindowsSIMDExecution, ActualFaultExecutesGuestHandlersAndRetries) {
         }
 }
 INSTANTIATE_TEST_SUITE_P(Native, WindowsSIMDExecution,
-                         testing::Values(ExecutionBackendKind::KVM,
-                                         ExecutionBackendKind::WHP),
+                         testing::Values(Parameter{ExecutionBackendKind::KVM},
+                                         Parameter{ExecutionBackendKind::WHP}),
                          [](const auto &Info) {
-                           return executionBackendName(Info.param);
+                           return executionBackendName(Info.param.Kind);
                          });
 } // namespace
 } // namespace neverd::emulation
