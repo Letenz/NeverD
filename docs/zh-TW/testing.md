@@ -1086,6 +1086,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 `WhpStateTransferTests.cpp` 對兩代 XSAVE API 注入暫存器傳輸，檢查精確變更組、完整擷取、填補忽略、部分失敗、取消、例外優先順序與分區重建。`ContinuedStepsReuseCapturedRegistersAndFP` 統計省略的安裝；`PartialTransferFailuresPreserveStateAndForceFullRetry` 要求完整恢復。這些是協定檢查，而非原生執行證據；既有原生 FP、狀態轉換、驅動及 ring3 測試仍屬必要驗證。
 
+`WhpStateTransferCases.def` 也涵蓋合併後 32 個暫存器讀取中每個部分前綴失敗，以及全部七個中繼資料欄位衝突。兩代 XSAVE API 都必須保留呼叫端狀態並在重試時完整還原。同一套測試核對每步只有一次暫存器讀取，並從該讀取補齊 XSAVE 省略的中繼資料。
+
 `windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、靜態與動態 TLS、`DllMain`、具名 Win32 API 和明確的無環 DLL 圖。客體模組支援依名稱／序號匯入程式碼與資料、DIR64 重定位、轉送匯出及真實載入器串列身分。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用設定的模組目錄。CRT／GUI、ARM64 以堆疊框架為基礎的使用者態 SEH、執行緒及通用 Windows 應用程式相容性仍待完成；原生 ARM64 KVM/WHP 證據仍缺失。
 
 輸入總位元組與映像總範圍各受 `memory_limit` 限制，執行期映射也計入映像預算。準備階段共用 65,536 筆紀錄、64 MiB 中繼資料讀取、名稱長度及整體截止時間；阻塞主機 I/O 無硬即時保證。原創 EXE→DLL→DLL 樣例驗證重定位指標、序號呼叫、共享資料、API 指標身分、`MEM_IMAGE`、載入器串列及 EXE TLS 掛接／分離。`NeverDWindowsProcessTests` 包含直接原生 Windows 對照，`NeverDPEProgramExportsTests` 驗證畸形資料與預算，`NeverDProcessPublicTests` 驗證 C ABI/CLI 目錄一致性。不可用後端明確略過。

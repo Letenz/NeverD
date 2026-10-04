@@ -1130,6 +1130,8 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 
 `WhpStateTransferTests.cpp`는 두 세대 XSAVE API에 전송을 주입하여 변경 그룹, 전체 캡처, 패딩 무시, 부분 실패, 취소, 예외 우선순위와 파티션 재생성을 확인합니다. `ContinuedStepsReuseCapturedRegistersAndFP`는 생략된 설치를 세고 `PartialTransferFailuresPreserveStateAndForceFullRetry`는 전체 복원을 요구합니다. 이는 프로토콜 검사이며 네이티브 실행 증거를 대신하지 않습니다. 기존 네이티브 FP·상태 전환·드라이버·ring3 테스트도 필수입니다.
 
+`WhpStateTransferCases.def`는 통합된 32개 레지스터 읽기의 모든 부분 접두부 실패와 일곱 메타데이터 필드의 충돌도 검사합니다. 두 XSAVE API 세대 모두 호출자 상태를 보존하고 재시도 시 전체 상태를 복원해야 합니다. 동일한 테스트에서 스텝당 레지스터 읽기가 한 번인지, XSAVE가 생략한 메타데이터를 해당 읽기로 복구하는지도 확인합니다.
+
 `windows-pe64-v1`은 PEB/TEB, 정적·동적 TLS, `DllMain`, 이름 기반 Win32 API 및 명시적 비순환 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. 게스트 모듈은 이름/서수 코드·데이터 가져오기, DIR64 재배치, 전달 내보내기 및 실제 로더 목록 식별자를 지원합니다. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary`, `GetProcAddress`는 설정된 모듈 카탈로그를 사용합니다. CRT/GUI, ARM64 스택 프레임 기반 사용자 SEH, 스레드 및 일반 Windows 앱 호환성은 미완성이며 네이티브 ARM64 KVM/WHP 증거도 아직 없습니다.
 
 입력 총 바이트와 이미지 전체 범위는 각각 `memory_limit`로 제한하고 런타임 매핑도 이미지 예산에 포함합니다. 준비 단계는 65,536개 레코드, 64 MiB 메타데이터 읽기, 이름 길이와 전체 작업 기한을 공유합니다. 호스트 I/O의 강제 시간 보장은 없습니다. 독자 EXE→DLL→DLL은 재배치, 서수, 공유 데이터, API 포인터, `MEM_IMAGE`, 목록, EXE TLS attach/detach를 확인합니다. `NeverDWindowsProcessTests`는 원본 네이티브 Windows 대조, `NeverDPEProgramExportsTests`는 잘못된 메타데이터와 예산, `NeverDProcessPublicTests`는 C ABI/CLI 일치를 검증합니다. 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.

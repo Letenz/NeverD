@@ -1140,6 +1140,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 
 `WhpStateTransferTests.cpp` は両世代の XSAVE API で転送を注入し、変更グループ、完全取得、パディング無視、部分失敗、キャンセル、例外優先順位、区画再作成を検証します。`ContinuedStepsReuseCapturedRegistersAndFP` は省略された設定を数え、`PartialTransferFailuresPreserveStateAndForceFullRetry` は完全復元を要求します。これはプロトコル検証であり、既存のネイティブ FP・状態遷移・ドライバー・ring3 テストも引き続き必要です。
 
+`WhpStateTransferCases.def` は、統合した 32 レジスタ取得の各途中位置での失敗と、七つすべてのメタデータフィールドの不一致も検証します。両世代の XSAVE API は呼び出し元の状態を保持し、再試行時に全状態を復元する必要があります。同じテストで各ステップのレジスタ読み出しが一回であることと、XSAVE が省略したメタデータの補完を確認します。
+
 `windows-pe64-v1` は PEB/TEB、静的・動的 TLS、`DllMain`、名前付き Win32 API、明示的な非循環 DLL グラフを持つ有界 Windows x64/ARM64 コンソールプロセスに対応します。ゲストモジュールは名前／序数によるコード・データのインポート、DIR64 再配置、転送エクスポートと実際のローダーリスト識別子を扱います。`LoadLibraryA` / `LoadLibraryW`、`FreeLibrary`、`GetProcAddress` は設定済みモジュールカタログを使用します。CRT/GUI、ARM64 のフレームベースのユーザー SEH、スレッド、一般的な Windows アプリ互換性は未完成で、ネイティブ ARM64 KVM/WHP の証拠も未取得です。
 
 入力総バイト数と全イメージ範囲はそれぞれ `memory_limit` に制限され、実行環境のマッピングも後者に含みます。準備は 65,536 レコード、64 MiB のメタデータ読み取り、名前長、共通期限で制限します。ホスト I/O の硬い時間保証はありません。独自 EXE→DLL→DLL は再配置、序数、共有データ、API ポインター、`MEM_IMAGE`、リスト、EXE TLS attach/detach を検証します。`NeverDWindowsProcessTests` はネイティブ Windows 対照、`NeverDPEProgramExportsTests` は不正メタデータと予算、`NeverDProcessPublicTests` は C ABI/CLI の一致を検証します。利用不能なバックエンドは明示的にスキップします。
