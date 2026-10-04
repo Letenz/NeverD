@@ -42,7 +42,7 @@ static const Operation Operations[] = {
 #include "WindowsAlignmentCases.def"
 #undef NEVERD_WINDOWS_ALIGNMENT_OPERATION
 };
-__declspec(align(16)) const U64 AlignmentSeed[] = {VectorLow, VectorHigh};
+_Alignas(VectorBytes) const U64 AlignmentSeed[] = {VectorLow, VectorHigh};
 static U64 Record[FieldCount];
 static const Operation *Current;
 static unsigned Calls;

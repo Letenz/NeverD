@@ -122,7 +122,7 @@ def main() -> None:
         for suffix in ("c", "S"):
             obj = output / ("alignment-" + suffix + ".obj")
             flags = ["-std=c11", "-ffreestanding", "-fno-builtin", "-fno-stack-protector",
-                     "-fno-vectorize", "-fno-slp-vectorize", "-O1", "-Wall", "-Wextra"] if suffix == "c" else []
+                     "-fno-vectorize", "-fno-slp-vectorize", "-O1", "-Wall", "-Wextra", "-Werror"] if suffix == "c" else []
             run([clang, "--target=" + settings["WindowsTarget" if native else "CrossTarget"],
                  *flags, "-c", str(FIXTURES / ("windows_alignment." + suffix)), "-o", str(obj)],
                 "compile-" + suffix, timeout)
