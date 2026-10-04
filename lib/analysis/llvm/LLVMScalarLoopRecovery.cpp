@@ -224,13 +224,13 @@ bool Search::accept(Candidate &C) {
         Proof.WorkLimitExceeded && Result.ProofWork == Limits.MaxProofWork;
     return false;
   }
-  if (!charge(DeferredSeeds.size()))
+  if (!charge(DeferredReplacements.size()))
     return false;
-  SmallPtrSet<PHINode *, 16> MappedSeeds;
-  for (auto *P : DeferredSeeds)
-    if (auto *Mapped = dyn_cast_or_null<PHINode>(C.map(P)))
-      MappedSeeds.insert(Mapped);
-  DeferredSeeds = std::move(MappedSeeds);
+  SmallPtrSet<Instruction *, 16> MappedReplacements;
+  for (auto *I : DeferredReplacements)
+    if (auto *Mapped = dyn_cast_or_null<Instruction>(C.map(I)))
+      MappedReplacements.insert(Mapped);
+  DeferredReplacements = std::move(MappedReplacements);
   Accepted = std::move(C.Module);
   CurrentCost = NewCost;
   return true;
@@ -279,7 +279,7 @@ LLVMScalarLoopRecoveryResult Search::run() {
       ProbeSource = std::move(Probe.Module);
     }
   }
-  for (unsigned Phase = 0; Phase < 6 && !stopped(); ++Phase) {
+  for (unsigned Phase = 0; Phase < 7 && !stopped(); ++Phase) {
     while (!stopped()) {
       if (Result.ProvedTransforms >= Limits.MaxTransforms) {
         Exhausted = true;
@@ -310,6 +310,9 @@ LLVMScalarLoopRecoveryResult Search::run() {
           break;
         case 5:
           Changed = widths(*this, F, LI);
+          break;
+        case 6:
+          Changed = masks(*this, F, LI);
           break;
         }
       }

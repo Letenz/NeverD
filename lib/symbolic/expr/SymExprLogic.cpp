@@ -133,6 +133,22 @@ SymRef SymContext::mkAnd(llvm::ArrayRef<SymRef> Ops) {
   if (auto Narrow = contractZeroExtensions(*this, SymOp::And, Rest, Acc))
     return Narrow;
 
+  // OR/XOR cannot set a bit that is zero in every operand. Explicit masks
+  // provide this fact without distributing AND or recursively walking the
+  // data expression. Bound both fan-in and word size for builder-time work.
+  if (W <= 128 && !Acc.isAllOnes() && Rest.size() == 1 &&
+      (op(Rest[0]) == SymOp::Or || op(Rest[0]) == SymOp::Xor)) {
+    auto Terms = operands(Rest[0]);
+    const auto Outside = ~Acc;
+    if (Terms.size() <= 8 && llvm::all_of(Terms, [&](SymRef Term) {
+          if (isConst(Term))
+            return (constValue(Term) & Outside).isZero();
+          return op(Term) == SymOp::And && isConst(operand(Term, 0)) &&
+                 (constValue(operand(Term, 0)) & Outside).isZero();
+        }))
+      return Rest[0];
+  }
+
   if (W == 1)
     if (SymRef Predicate =
             detail::recoverObservedComparison(*this, SymOp::And, Rest, Acc))

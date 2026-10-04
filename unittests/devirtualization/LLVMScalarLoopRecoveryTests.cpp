@@ -4,17 +4,12 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../lift/NeverDLiftFixture.h"
-#include "LLVMScalarEquivalenceTest.h"
-
-#include "neverd/analysis/LLVMScalarLoopRecovery.h"
-
-#include "llvm/IR/Verifier.h"
+#include "LLVMScalarLoopRecoveryTest.h"
 
 #include <cstring>
 
 namespace neverd::analysis::scalar_test {
 namespace {
-using RecoveryStatus = LLVMScalarLoopRecoveryStatus;
 constexpr char Header[] = R"(
 define i32 @f(i32 noundef %x, i8 noundef %n) {
 entry:
@@ -232,12 +227,6 @@ exit:
  ret i32 %result
 })";
 
-void replace(std::string &IR, llvm::StringRef From, llvm::StringRef To) {
-  auto At = IR.find(From.str());
-  ASSERT_NE(At, std::string::npos) << From.str();
-  IR.replace(At, From.size(), To.str());
-}
-
 std::string narrowZeroRegion() {
   std::string IR = ZeroRegion;
   replace(IR, "%empty = icmp eq i8 %bound, 0",
@@ -251,31 +240,6 @@ std::string narrowZeroRegion() {
   return IR;
 }
 
-std::string text(const llvm::Module &M) {
-  std::string S;
-  llvm::raw_string_ostream OS(S);
-  M.print(OS, nullptr);
-  return S;
-}
-LLVMScalarLoopRecoveryResult
-recover(Source &Input, const LLVMScalarLoopRecoveryLimits &L = {}) {
-  auto Before = Input.text();
-  auto R = recoverLLVMScalarLoops(Input.function(), L);
-  EXPECT_EQ(Input.text(), Before);
-  EXPECT_LE(R.ConstructionWork, L.MaxConstructionWork);
-  EXPECT_LE(R.ProofWork, L.MaxProofWork);
-  EXPECT_LE(R.Candidates, L.MaxCandidates);
-  if (R.Module) {
-    EXPECT_EQ(R.Status, RecoveryStatus::Recovered);
-    EXPECT_FALSE(llvm::verifyModule(*R.Module));
-    auto Proof = checkLLVMScalarEquivalence(Input.function(),
-                                            *R.Module->getFunction("f"));
-    EXPECT_EQ(Proof.Status, Status::Proved) << Proof.Diagnostic;
-  } else {
-    EXPECT_NE(R.Status, RecoveryStatus::Recovered);
-  }
-  return R;
-}
 } // namespace
 
 TEST(LLVMScalarLoopRecovery, SelfLatchBecomesHeaderTest) {
@@ -702,9 +666,18 @@ exit: ret i32 %carried
                    : "%right.value = xor i32 %carried, 43");
     Source Other(Bad);
     auto Kept = recover(Other);
-    EXPECT_EQ(Kept.Status,
-              Poison ? RecoveryStatus::Unsupported : RecoveryStatus::Unchanged);
-    EXPECT_FALSE(Kept.Module);
+    if (Poison) {
+      EXPECT_EQ(Kept.Status, RecoveryStatus::Unsupported);
+      EXPECT_FALSE(Kept.Module);
+    } else {
+      // A redundant mask on the other backedge may be removed independently.
+      // The evolving carrier and its distinct update must still survive.
+      EXPECT_TRUE(Kept.Status == RecoveryStatus::Recovered ||
+                  Kept.Status == RecoveryStatus::Unchanged);
+      auto Output = Kept.Module ? text(*Kept.Module) : Other.text();
+      EXPECT_NE(Output.find("%carried = phi"), std::string::npos);
+      EXPECT_NE(Output.find("xor i32 %carried, 43"), std::string::npos);
+    }
   }
 }
 
@@ -739,8 +712,12 @@ exit: ret i32 %carried
   replace(Different, "[%seed, %right]", "[%alternate, %right]");
   Source Other(Different);
   auto Kept = recover(Other);
-  EXPECT_EQ(Kept.Status, RecoveryStatus::Unchanged);
-  EXPECT_FALSE(Kept.Module);
+  // Mask removal must not turn two distinct external seeds into one seed.
+  EXPECT_TRUE(Kept.Status == RecoveryStatus::Recovered ||
+              Kept.Status == RecoveryStatus::Unchanged);
+  auto Output = Kept.Module ? text(*Kept.Module) : Other.text();
+  EXPECT_NE(Output.find("%carried = phi"), std::string::npos);
+  EXPECT_NE(Output.find("%alternate, %right"), std::string::npos);
 }
 
 TEST(LLVMScalarLoopRecovery, SeedSearchBudgetsRemainAtomic) {

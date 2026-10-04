@@ -7,46 +7,8 @@
 
 namespace neverd::analysis::scalar_recovery {
 using namespace llvm;
-namespace {
-using Slot = std::pair<PHINode *, Value *>;
-constexpr unsigned MaxBatch = 32;
-
-void substitute(Candidate &C, ArrayRef<Slot> Slots) {
-  for (auto [P, Seed] : Slots) {
-    auto *Target = C.get(P);
-    Target->replaceAllUsesWith(C.map(Seed));
-    Target->eraseFromParent();
-  }
-}
-
-bool propose(Search &S, Function &F, ArrayRef<Slot> Slots) {
-  if (Slots.empty())
-    return false;
-  Candidate C;
-  if (!S.clone(F, C))
-    return false;
-  substitute(C, Slots);
-  // Batch acceptance still needs complete symbolic data. Individually
-  // passing a zero-data screen proves neither a slot nor their composition.
-  if (S.accept(C))
-    return true;
-  if (S.stopped())
-    return false;
-  if (Slots.size() == 1) {
-    S.deferSeed(*Slots.front().first);
-    return false;
-  }
-  const unsigned Mid = Slots.size() / 2;
-  if (propose(S, F, Slots.take_front(Mid)))
-    return true;
-  if (S.stopped())
-    return false;
-  return propose(S, F, Slots.drop_front(Mid));
-}
-} // namespace
-
 bool seeds(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
-  SmallVector<Slot, MaxBatch> Slots;
+  SmallVector<Replacement, MaxReplacementBatch> Slots;
   for (auto *L : LI.getLoopsInPreorder()) {
     if (!S.charge())
       return false;
@@ -69,7 +31,7 @@ bool seeds(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
       }
       if (!Valid || !Seed || !HasBackedge || !DT.dominates(Seed, &P))
         continue;
-      if (S.seedDeferred(P))
+      if (S.replacementDeferred(P))
         continue;
       Candidate C;
       if (!S.clone(F, C))
@@ -77,12 +39,12 @@ bool seeds(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
       substitute(C, {{&P, Seed}});
       if (S.screen(C))
         Slots.push_back({&P, Seed});
-      else if (!S.deferSeed(P))
+      else if (!S.deferReplacement(P))
         return false;
       if (S.stopped())
         return false;
-      if (Slots.size() == MaxBatch) {
-        if (propose(S, F, Slots))
+      if (Slots.size() == MaxReplacementBatch) {
+        if (proposeReplacements(S, F, Slots))
           return true;
         if (S.stopped())
           return false;
@@ -92,6 +54,6 @@ bool seeds(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
   }
   // Agreement at every external entry only nominates the value. All actual
   // backedges, definedness and termination remain part of the full proof.
-  return propose(S, F, Slots);
+  return proposeReplacements(S, F, Slots);
 }
 } // namespace neverd::analysis::scalar_recovery

@@ -53,6 +53,8 @@ struct LLVMScalarEquivalenceResult {
 /// definedness; exhaust all their combinations and retain every remaining
 /// input bit symbolically. Return expressions must agree exactly in NeverD's
 /// shared expression algebra. No sampling or external SMT is used.
+/// A query using the same Function object models and executes it once per
+/// partition, retaining every admission, definedness and termination check.
 ///
 /// A result other than Proved authorizes no rewrite; Unproved need not mean
 /// inequivalent. Every limit is finite. Unsupported instructions, effects,

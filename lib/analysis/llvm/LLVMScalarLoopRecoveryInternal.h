@@ -29,6 +29,13 @@ struct Candidate {
   template <typename T> T *get(T *V) const { return llvm::cast<T>(map(V)); }
 };
 
+struct Replacement {
+  llvm::Instruction *Target;
+  llvm::Value *Preferred;
+  llvm::Value *Alternative = nullptr;
+};
+inline constexpr unsigned MaxReplacementBatch = 32;
+
 // Each accepted candidate reduces the tuple (non-header exit tests, loop
 // carriers, live instructions). Extra blocks alone do not improve this cost.
 struct Cost {
@@ -49,9 +56,9 @@ class Search {
   unsigned ControlBitLimit = 0;
   std::vector<LLVMScalarControlBit> SourceControlBits;
   bool Exhausted = false;
-  // Discovery scheduling only: defer previously tried seed replacements
+  // Discovery scheduling only: defer previously tried value replacements
   // until a later search. Never reuse a rejection as a semantic fact.
-  llvm::SmallPtrSet<llvm::PHINode *, 16> DeferredSeeds;
+  llvm::SmallPtrSet<llvm::Instruction *, 16> DeferredReplacements;
 
 public:
   Search(const llvm::Function &F, const LLVMScalarLoopRecoveryLimits &L)
@@ -63,14 +70,18 @@ public:
   // Rejection only; success here cannot authorize publication.
   bool screen(Candidate &C, Cost *CandidateCost = nullptr);
   bool accept(Candidate &C);
-  bool seedDeferred(llvm::PHINode &P) const {
-    return DeferredSeeds.contains(&P);
+  bool replacementDeferred(llvm::Instruction &I) const {
+    return DeferredReplacements.contains(&I);
   }
-  bool deferSeed(llvm::PHINode &P) {
-    return charge() && DeferredSeeds.insert(&P).second;
+  bool deferReplacement(llvm::Instruction &I) {
+    return charge() && DeferredReplacements.insert(&I).second;
   }
   LLVMScalarLoopRecoveryResult run();
 };
+
+void substitute(Candidate &C, llvm::ArrayRef<Replacement> Replacements);
+bool proposeReplacements(Search &S, llvm::Function &F,
+                         llvm::ArrayRef<Replacement> Replacements);
 
 bool unpeel(Search &S, llvm::Function &F, llvm::DominatorTree &DT,
             llvm::LoopInfo &LI);
@@ -81,6 +92,7 @@ bool affine(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
 bool seeds(Search &S, llvm::Function &F, llvm::DominatorTree &DT,
            llvm::LoopInfo &LI);
 bool widths(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
+bool masks(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
 
 struct Counter {
   llvm::PHINode *Phi = nullptr;
