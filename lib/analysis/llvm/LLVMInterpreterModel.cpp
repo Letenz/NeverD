@@ -114,9 +114,12 @@ void Builder::preflight() {
     input(B.size());
     for (const auto &I : B) {
       input(I.getNumOperands());
+      // An assume's inaccessible-memory marker is not a scalar memory
+      // access. emitScalar still validates its complete call contract and
+      // records the condition as an obligation, never as an input fact.
       if (ScalarArguments &&
-          (I.mayReadOrWriteMemory() || I.getType()->isPointerTy() ||
-           llvm::isa<llvm::AllocaInst>(I)))
+          ((I.mayReadOrWriteMemory() && !llvm::isa<llvm::AssumeInst>(I)) ||
+           I.getType()->isPointerTy() || llvm::isa<llvm::AllocaInst>(I)))
         fail("memory and pointer effects are unsupported in scalar models");
       for (const auto *V : I.operand_values()) {
         if (llvm::isa<llvm::Constant>(V) &&

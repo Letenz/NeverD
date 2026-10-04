@@ -934,6 +934,8 @@ After a proved scalar candidate, LLVMC reuses `SymSimplifyPass::simplifyPredicat
 
 `SymKnownBits` compares unsigned scalar multiples only after matching their base and proving the larger product cannot wrap. Low-word product equality collects modular coefficients and preserves factor multiplicity across extensions that retain the requested width; narrower overflow boundaries remain opaque. Both derivation sides, pending factors and matching consume the existing work/depth budgets; the analysis stays read-only.
 
+The shared LLVM importer admits canonical, bundle-free `llvm.assume(i1)` calls by recording that the reached condition must be true in the existing definedness state. Scalar and machine-state proofs check that obligation without restricting the input domain or treating it as an established fact. Extra call/declaration contracts and undef/poison remain rejected; input IR and proof budgets are preserved. This does not establish a native ABI.
+
 The LLVM model owns validation of `initializes` parameter contracts. It reuses state-pointer projections and performs bounded byte-level must-dataflow before ordinary scalar emission; no second value evaluator is introduced.
 
 `NeverDInterpreterLLVMRefinement` owns native-to-LLVM proof composition. It rebuilds both state models and mandatory contracts, uses the authoritative profile for an entry-only flag projection, and checks both premises afresh. Clients may propose loop plans but cannot replace models, observations or receipts. Analysis models copy executable graphs and declared roots only; entry backedges are rejected before state initialization can repeat.
