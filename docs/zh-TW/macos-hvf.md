@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
+<!-- i18n-source: 366a112bb4a26f17b9aa83b7c4ce81baee598edb0b82a9417e6b5400d982ac5f -->
 
 [← 文件索引](README.md)
 
@@ -190,3 +190,5 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 上傳器 `jitless` 對照（[37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863)，macOS 15/26）皆在啟動恢復測試前失敗：官方上傳器的 HTTP 解析器依賴 WebAssembly，而 `--jitless` 使其無法使用，兩個計畫上傳程序皆以 1 退出且沒有訊號。每次有 2 個已核驗產物，plan 從最終證據中恢復，不能算獨立計畫上傳成功。這些失敗沒有測試原生恢復，但不否認工作流程先前已執行 HVF 能力探測。替代的可選模式 `js-interpreter` 僅給控制器的 plan/progress 上傳子程序傳入 `--no-turbofan --no-maglev --no-sparkplug`，保留 WebAssembly 與其他程式碼生成；父程序、原生負載及截止時間不變，provenance/final 上傳仍使用預設模式。本地真實 HTTP 請求與無憑據官方上傳器檢查通過，僅證明觀察工具相容性，不是 HVF 穩定性修復。
 
 `js-interpreter` 模式的 vCPU 重建恢復對照使用原始碼 `7dd7342ec`、控制器 `caeb594ad`、工作流程 `e6d054c45`。macOS 26（[37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679)）通過 1000/1000：43 個產物、全部 41 次 plan/progress 上傳呼叫、原生／控制器退出碼 0、子程序回收與最終第 1001 代邊界退役皆已獨立核驗。macOS 15（[37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672)）的 progress-018 上傳器仍收到 SIGSEGV；21 個產物保留原生 460 輪完成／461 輪開始，隨後控制器取消並以 SIGKILL 回收原生程序。IPS 的 PID 62812、父程序 59666、時間和 Node UUID 皆相符，頂部堆疊框架位於 V8 並行堆積標記，無效位址為 `0x80000000`。禁用三個 JavaScript 編譯層的參數確實生效，兩映像記錄的 Node 檔案 SHA 相同，說明此模式未消除上傳器崩潰。堆疊不能確定根因，macOS 15 原生結果仍未知，完整 CPU/Darwin 驗收與快取候選的雙映像門檻皆未滿足。預設長期快取也會違反既有暫時探測及最後客戶端釋放後歸還 VM 的約定，因此未實作。
+
+可重現的補充審計重新核對了執行 `37188627569`（原始碼 `392a9d171`）未修改的原始輸出，全部 1000 輪有限期限探針通過核對。[審計器與 19 項回歸測試](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)逐輪關聯呼叫的 begin/end/capture、新鮮記憶體寫入證據與 RIP，檢查首個迴圈的固定預算及其後兩個各自受控的 MTF 觀測，並保留合法的未進入 guest 紀錄，不將它們計為指令進展。這是保存證據的複驗，不是新的原生執行，也不改變既有結果、資源回收要求或 Intel 驗收狀態。

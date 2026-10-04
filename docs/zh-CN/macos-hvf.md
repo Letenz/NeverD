@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
+<!-- i18n-source: 366a112bb4a26f17b9aa83b7c4ce81baee598edb0b82a9417e6b5400d982ac5f -->
 
 [← 文档索引](README.md)
 
@@ -294,3 +294,5 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 上传器 `jitless` 对照（[37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863)，macOS 15/26）均在启动恢复测试前失败：官方上传器的 HTTP 解析器依赖 WebAssembly，而 `--jitless` 使其不可用，两个计划上传进程均以 1 退出且没有信号。每次有 2 个已核验产物，plan 从最终证据中恢复，不能算独立计划上传成功。这些失败没有测试原生恢复，但不否认工作流此前已运行 HVF 能力探测。替代的可选模式 `js-interpreter` 仅给控制器的 plan/progress 上传子进程传入 `--no-turbofan --no-maglev --no-sparkplug`，保留 WebAssembly 及其他代码生成；父进程、原生负载和截止时间不变，provenance/final 上传仍使用默认模式。本地真实 HTTP 请求与无凭据官方上传器检查通过，仅证明观察工具兼容性，不是 HVF 稳定性修复。
 
 `js-interpreter` 模式的 vCPU 重建恢复对照使用源码 `7dd7342ec`、控制器 `caeb594ad`、工作流 `e6d054c45`。macOS 26（[37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679)）通过 1000/1000：43 个产物、全部 41 次 plan/progress 上传调用、原生/控制器退出码 0、子进程回收和最终第 1001 代边界退役均已独立核验。macOS 15（[37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672)）的 progress-018 上传器仍收到 SIGSEGV；21 个产物保留原生 460 轮完成/461 轮开始，随后控制器取消并以 SIGKILL 回收原生进程。IPS 的 PID 62812、父进程 59666、时间和 Node UUID 均匹配，顶部栈帧位于 V8 并发堆标记，非法地址为 `0x80000000`。禁用三个 JavaScript 编译层的参数确实生效，两镜像记录的 Node 文件 SHA 相同，说明该模式未消除上传器崩溃。栈帧不能确定根因，macOS 15 原生结果仍未知，完整 CPU/Darwin 验收和缓存候选的双镜像门槛均未满足。默认长期缓存还会违反既有临时探测与最后客户端释放后归还 VM 的约定，因此未实施。
+
+可复现的补充审计重新核验了运行 `37188627569`（源码 `392a9d171`）未改动的原始输出，全部 1000 轮有限期限探针通过核对。[审计器与 19 项回归测试](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)逐轮关联调用的 begin/end/capture、新鲜内存写入证据和 RIP，检查首个循环的固定预算与随后两个各自受控的 MTF 观测，并保留合法的未进入 guest 记录，不把它们计为指令进展。这是保存证据的复验，不是新的原生运行，也不改变既有结果、资源回收要求或 Intel 验收状态。

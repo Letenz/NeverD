@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
+<!-- i18n-source: 366a112bb4a26f17b9aa83b7c4ce81baee598edb0b82a9417e6b5400d982ac5f -->
 
 [← ドキュメント一覧](README.md)
 
@@ -190,3 +190,5 @@ vCPU のみを毎回再作成する修正済み回復テスト（ソース `7dd7
 アップローダーの `jitless` 対照（[37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863)、macOS 15/26）は回復テスト開始前に失敗しました。公式アップローダーの HTTP パーサーが必要とする WebAssembly を `--jitless` が無効にするため、両方の plan アップロードが終了コード 1、シグナルなしで終了しました。各 2 個の検証済み成果物があり、plan は最終成果物からの復元で、独立した事前アップロードの成功ではありません。回復テストは未実行ですが、先行する HVF 能力プローブの実行を否定しません。代替の任意モード `js-interpreter` は plan/progress アップロード子プロセスだけに `--no-turbofan --no-maglev --no-sparkplug` を渡し、WebAssembly と他のコード生成を維持します。親、ネイティブ負荷と期限は不変で、provenance/final は既定モードです。ローカルの実 HTTP と認証情報なしの公式アップローダー検査は合格しましたが、HVF 安定性の修正を証明しません。
 
 `js-interpreter` の vCPU 再作成回復対照はソース `7dd7342ec`、ヘルパー `caeb594ad`、ワークフロー `e6d054c45` を使用しました。macOS 26（[37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679)）は 1000/1000 に合格し、成果物 43 個、plan/progress の全 41 呼び出し、ネイティブ/コントローラー終了コード 0、子プロセス回収、境界世代 1001 の最終退役を独立検証しました。macOS 15（[37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672)）では progress-018 アップローダーが SIGSEGV で停止し、21 個の成果物に 460 回完了/461 回開始、その後の中止と SIGKILL による回収が残りました。IPS の PID 62812、親 59666、時刻と Node UUID は一致し、最上位フレームは V8 の並行ヒープマーク処理、無効アドレスは `0x80000000` です。三つの JavaScript コンパイラー無効化フラグは実際に使用され、両イメージの Node ファイル SHA も同じでした。このモードでもアップローダーの異常終了は解消しません。フレームだけでは原因を特定できず、macOS 15 のネイティブ結果は不明です。完全 CPU/Darwin 検証とキャッシュ候補の両イメージ合格条件は未達です。既存の一時プローブと最終クライアント解放後の VM 返却契約に反する既定の永続キャッシュは実装していません。
+
+実行 `37188627569`（ソース `392a9d171`）の未変更の出力に対する再現可能な追加監査で、有限期限プローブの全 1,000 回を照合しました。[監査器と 19 件の回帰テスト](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)は、各 begin/end/capture を呼び出し、新しい書き込み証拠、RIP と対応付け、最初のループの固定予算と個別に制御される二つの MTF 観測を検証します。合法な未入場の観測は保持し、命令の進展には数えません。保存済み証拠の再検証であり、新しいネイティブ実行ではありません。従来の結果、リソース解放要件、Intel の受け入れ状況は変わりません。

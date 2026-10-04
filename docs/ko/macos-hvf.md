@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
+<!-- i18n-source: 366a112bb4a26f17b9aa83b7c4ce81baee598edb0b82a9417e6b5400d982ac5f -->
 
 [← 문서 목록](README.md)
 
@@ -190,3 +190,5 @@ Executor/VM/소유 스레드 세션 전체를 유지한 유한 기한 복구 비
 업로더 `jitless` 대조([37217523688](https://github.com/gmh5225/test_mac_intel/actions/runs/37217523688) / [37217525863](https://github.com/gmh5225/test_mac_intel/actions/runs/37217525863), macOS 15/26)는 복구 테스트 시작 전에 실패했습니다. 공식 업로더의 HTTP 파서가 필요한 WebAssembly를 `--jitless`가 비활성화하여 두 plan 업로드 모두 신호 없이 코드 1로 종료되었습니다. 각 실행의 검증된 산출물은 2개이며 plan은 최종 증거에서 복구한 것으로 독립적인 사전 업로드 성공이 아닙니다. 네이티브 복구를 테스트하지 못했지만 앞선 HVF 기능 탐색 실행을 부정하지는 않습니다. 대체 선택 모드 `js-interpreter`는 컨트롤러의 plan/progress 업로드 자식에만 `--no-turbofan --no-maglev --no-sparkplug`를 전달하여 WebAssembly와 다른 코드 생성을 유지합니다. 부모, 네이티브 부하와 기한은 그대로이며 provenance/final은 기본 모드입니다. 실제 로컬 HTTP 및 자격 증명 없는 공식 업로더 검사는 통과했으나 HVF 안정성 수정의 증거는 아닙니다.
 
 `js-interpreter` vCPU 재생성 복구 대조는 소스 `7dd7342ec`, 헬퍼 `caeb594ad`, 워크플로 `e6d054c45`를 사용했습니다. macOS 26([37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679))은 1000/1000을 통과했으며 산출물 43개, plan/progress 호출 41개 전부, 네이티브/컨트롤러 종료 코드 0, 자식 회수와 마지막 경계 세대 1001의 종료를 독립 검증했습니다. macOS 15([37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672))에서는 progress-018 업로더가 SIGSEGV로 중단되어 산출물 21개에 460회 완료/461회 시작 및 이후 취소와 SIGKILL 회수가 남았습니다. IPS의 PID 62812, 부모 59666, 시각과 Node UUID가 일치하며 상위 프레임은 V8 동시 힙 마킹, 잘못된 주소는 `0x80000000`입니다. JavaScript 컴파일러를 끄는 세 플래그가 실제 적용되었고 두 이미지의 Node 파일 SHA도 같습니다. 이 모드도 업로더 충돌을 제거하지 못했습니다. 프레임만으로 원인을 확정할 수 없고 macOS 15의 네이티브 결과는 알 수 없습니다. 전체 CPU/Darwin 검증과 캐시 후보의 양쪽 이미지 통과 조건은 미충족입니다. 기존 임시 탐색 및 마지막 클라이언트 해제 후 VM 반환 계약을 어기는 기본 영구 캐시는 구현하지 않았습니다.
+
+실행 `37188627569`(소스 `392a9d171`)의 변경되지 않은 출력을 재현 가능한 보충 감사로 다시 검증하여 유한 기한 탐침 1,000회를 모두 대조했습니다. [감사기와 19개 회귀 테스트](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)는 각 begin/end/capture를 해당 호출, 새로운 메모리 쓰기 증거 및 RIP와 연결하고, 첫 루프의 고정 예산과 별도로 제어되는 두 MTF 관측을 확인합니다. 정상적인 guest 미진입 관측은 보존하지만 명령 실행 진전으로 세지 않습니다. 저장된 증거를 다시 검증한 것으로, 새로운 네이티브 실행이 아니며 기존 결과, 리소스 회수 요건 또는 Intel 승인 상태를 변경하지 않습니다.
