@@ -55,6 +55,12 @@ NEVERD_X64_VECTOR_INSTRUCTION(CVTTSS2SI, 4, 1, false, IntegerResult, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(CVTTSD2SI, 8, 1, false, IntegerResult, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(CVTSI2SS, 0, 1, false, IntegerSource, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(CVTSI2SD, 0, 1, false, IntegerSource, 0)
+// Legacy predicates 0-7 decode to family IDs with two operands and sse_cc.
+// Reserved controls retain an explicit immediate and fail Source admission.
+NEVERD_X64_VECTOR_INSTRUCTION(CMPSS, 4, 1, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CMPSD, 8, 1, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CMPPS, 16, 16, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CMPPD, 16, 16, false, Source, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(COMISS, 4, 1, false, Source, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(COMISD, 8, 1, false, Source, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(UCOMISS, 4, 1, false, Source, 0)
