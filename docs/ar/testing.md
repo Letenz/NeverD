@@ -226,7 +226,7 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 تستخدم `X64PackedIntegerTests.cpp` الترميزات الأصلية و180 نتيجة ثابتة من `X64PackedIntegerCases.def` وتقارنها بصورة مستقلة مع intrinsic لمترجم x64 الأصلي. تحافظ حالات السجلات وأسماء RAM المستعارة في نهاية الصفحة على سجلات XMM الأخرى والقيم الصحيحة المرجعية وFLAGS وMXCSR وبايتات المصدر. يحافظ توقف المراقب أو فشله وأخطاء القراءة القابلة للاسترداد على الحالة، ويسمح الإصلاح بإعادة المحاولة مرة واحدة. تُرفض MMX وLOCK وعدم المحاذاة وMMIO قبل الاستدعاءات الراجعة. يشترط CI الأصلي مستويي صلاحيات WHP.
 
-يقارن `X64PackedShiftTests.cpp` وحالات `X64PackedShiftCases.def` الأصلية عشر إزاحات بحسابات عددية مستقلة وSSE2 intrinsics أصلية، باستخدام 16 عدادًا فوريًا و21 عدادًا متغيرًا. تشمل الاختبارات اشتراك العداد والوجهة في السجل، وتجاهل البتات العليا، والمحاذاة، والمراقبين، والأخطاء القابلة للاسترداد ورفض الأجهزة. يتشارك `X64VectorTestSupport.h` تأكيدات الحالة مع اختبارات الحساب المعبأ. تفرض CI الأصلية نمطي امتياز WHP.
+يقارن `X64PackedShiftTests.cpp` وحالات `X64PackedShiftCases.def` الأصلية عشر إزاحات بحسابات عددية مستقلة وSSE2 intrinsics أصلية، باستخدام 16 عدادًا فوريًا و21 عدادًا متغيرًا. تشمل الاختبارات اشتراك العداد والوجهة في السجل، وتجاهل البتات العليا، والمحاذاة، والمراقبين، والأخطاء القابلة للاسترداد ورفض الأجهزة. يتشارك `X64VectorTestSupport.h` تأكيدات السجلات وRAM مع اختبارات الحساب المعبأ. تفرض CI الأصلية نمطي امتياز WHP.
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4

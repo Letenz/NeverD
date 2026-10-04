@@ -222,7 +222,7 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `X64PackedIntegerTests.cpp` は `X64PackedIntegerCases.def` の独自エンコードと 180 組の固定結果を使い、ネイティブ x64 のコンパイラ intrinsic と独立に照合します。レジスタ形式とページ末尾の RAM エイリアス形式で、他の XMM、整数番兵値、FLAGS、MXCSR、入力バイトの保持を確認します。監視の停止・失敗と回復可能な読み取り障害では状態を保持し、修復後に一回再試行できます。MMX、LOCK、非整列、MMIO はコールバック前に拒否します。ネイティブ CI は WHP の両特権レベルを必須とします。
 
-`X64PackedShiftTests.cpp` と独自の `X64PackedShiftCases.def` は、16 個の即値と 21 個の可変回数で十種類のシフトを独立したスカラー計算およびネイティブ SSE2 intrinsic と照合します。回数と出力の同一レジスタ使用、上位ビットの無視、整列、監視、回復可能な障害、デバイス拒否を検証します。`X64VectorTestSupport.h` はパック算術テストと状態検証を共有します。ネイティブ CI は WHP の両特権モードを必須とします。
+`X64PackedShiftTests.cpp` と独自の `X64PackedShiftCases.def` は、16 個の即値と 21 個の可変回数で十種類のシフトを独立したスカラー計算およびネイティブ SSE2 intrinsic と照合します。回数と出力の同一レジスタ使用、上位ビットの無視、整列、監視、回復可能な障害、デバイス拒否を検証します。`X64VectorTestSupport.h` はパック算術テストとレジスタと RAM の検証を共有します。ネイティブ CI は WHP の両特権モードを必須とします。
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4

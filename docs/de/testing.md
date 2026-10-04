@@ -231,7 +231,7 @@ Geprüftes x64 erlaubt auch maskierte Legacy-Formen `SS`, `SD`, `PS`, `PD` von `
 
 `X64PackedIntegerTests.cpp` prüft eigene Kodierungen und 180 feste Ergebnisse aus `X64PackedIntegerCases.def` unabhängig gegen native x64-Compiler-Intrinsics. Registerfälle und RAM-Aliase am Seitenende bewahren andere XMM, Ganzzahlprüfwerte, FLAGS, MXCSR und Quellbytes. Beobachterabbrüche/-fehler und behebbare Lesefehler bewahren den Zustand; nach Reparatur folgt ein erneuter Versuch. MMX, LOCK, Fehlausrichtung und MMIO werden vor Callbacks abgewiesen. Native CI verlangt beide WHP-Privilegstufen.
 
-`X64PackedShiftTests.cpp` und die eigenen Fälle in `X64PackedShiftCases.def` vergleichen zehn Schiebeoperationen mit unabhängigen skalaren Berechnungen und nativen SSE2-Intrinsics bei 16 unmittelbaren und 21 variablen Zählern. Sie prüfen Zähler-/Ziel-Aliase, ignorierte hohe Bits, Ausrichtung, Beobachter, behebbare Fehler und Geräteablehnung. `X64VectorTestSupport.h` teilt die Zustandsprüfungen mit gepackten Arithmetiktests. Beide WHP-Privilegmodi sind in nativer CI verpflichtend.
+`X64PackedShiftTests.cpp` und die eigenen Fälle in `X64PackedShiftCases.def` vergleichen zehn Schiebeoperationen mit unabhängigen skalaren Berechnungen und nativen SSE2-Intrinsics bei 16 unmittelbaren und 21 variablen Zählern. Sie prüfen Zähler-/Ziel-Aliase, ignorierte hohe Bits, Ausrichtung, Beobachter, behebbare Fehler und Geräteablehnung. `X64VectorTestSupport.h` teilt die Register- und RAM-Prüfungen mit gepackten Arithmetiktests. Beide WHP-Privilegmodi sind in nativer CI verpflichtend.
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4

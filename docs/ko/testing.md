@@ -221,7 +221,7 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `X64PackedIntegerTests.cpp`는 `X64PackedIntegerCases.def`의 독립 인코딩과 180개 고정 벡터 결과를 네이티브 x64 컴파일러 intrinsic과 별도로 대조합니다. 레지스터 및 페이지 끝의 RAM 별칭 사례는 다른 XMM, 정수 센티널, FLAGS, MXCSR과 소스 바이트를 보존합니다. 관찰자 중지·실패와 복구 가능한 읽기 결함은 상태를 보존하며 복구 후 한 번 재시도합니다. MMX, LOCK, 비정렬 및 MMIO는 콜백 전에 거부합니다. 네이티브 CI에서 WHP의 두 권한 수준을 필수로 실행합니다.
 
-`X64PackedShiftTests.cpp`와 독립 `X64PackedShiftCases.def`는 즉시 횟수 16개와 가변 횟수 21개에서 열 종류의 시프트를 독립 스칼라 계산 및 네이티브 SSE2 intrinsic과 대조합니다. 횟수/대상 별칭, 상위 비트 무시, 정렬, 관찰자, 복구 가능한 결함, 장치 거부를 검증합니다. `X64VectorTestSupport.h`는 패킹 산술 테스트와 상태 검증을 공유합니다. 네이티브 CI에서 WHP의 두 권한 모드를 필수로 실행합니다.
+`X64PackedShiftTests.cpp`와 독립 `X64PackedShiftCases.def`는 즉시 횟수 16개와 가변 횟수 21개에서 열 종류의 시프트를 독립 스칼라 계산 및 네이티브 SSE2 intrinsic과 대조합니다. 횟수/대상 별칭, 상위 비트 무시, 정렬, 관찰자, 복구 가능한 결함, 장치 거부를 검증합니다. `X64VectorTestSupport.h`는 패킹 산술 테스트와 레지스터 및 RAM 검증을 공유합니다. 네이티브 CI에서 WHP의 두 권한 모드를 필수로 실행합니다.
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4

@@ -219,7 +219,7 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64PackedIntegerTests.cpp` 使用 `X64PackedIntegerCases.def` 中的原始編碼和 180 組固定向量結果，並與原生 x64 編譯器 intrinsic 獨立核對。暫存器與頁尾別名 RAM 案例保留其他 XMM、整數哨兵值、FLAGS、MXCSR 和來源位元組。觀察器停止／失敗與可恢復讀取故障保留狀態，修復後可重試一次。MMX、LOCK、未對齊和 MMIO 都在回呼前拒絕。原生 CI 強制執行 WHP 的兩個特權級。
 
-`X64PackedShiftTests.cpp` 與原始 `X64PackedShiftCases.def` 使用 16 個立即數計數和 21 個變數計數，將十種移位與獨立純量計算、宿主 SSE2 intrinsic 對照。涵蓋計數／目標別名、高位忽略、對齊、觀察器、可恢復故障和裝置拒絕。`X64VectorTestSupport.h` 與打包算術測試共用完整檢查狀態斷言。原生 CI 強制執行 WHP 的兩個特權級。
+`X64PackedShiftTests.cpp` 與原始 `X64PackedShiftCases.def` 使用 16 個立即數計數和 21 個變數計數，將十種移位與獨立純量計算、宿主 SSE2 intrinsic 對照。涵蓋計數／目標別名、高位忽略、對齊、觀察器、可恢復故障和裝置拒絕。`X64VectorTestSupport.h` 與打包算術測試共用暫存器與 RAM 斷言。原生 CI 強制執行 WHP 的兩個特權級。
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4

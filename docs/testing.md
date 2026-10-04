@@ -820,7 +820,7 @@ Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` 
 
 `X64PackedIntegerTests.cpp` uses original encodings and 180 literal vectors in `X64PackedIntegerCases.def`, checked independently against native x64 compiler intrinsics. Register and aliased page-end RAM cases preserve other XMM registers, integer sentinels, FLAGS, MXCSR and source bytes. Observer stops/failures and recoverable read faults preserve state; repair permits a single retry. MMX, LOCK, misalignment and MMIO reject before callbacks. Both WHP privileges are mandatory in native CI.
 
-`X64PackedShiftTests.cpp` and original `X64PackedShiftCases.def` compare ten shifts against independent scalar calculations and native SSE2 intrinsics at 16 immediate and 21 variable counts. Coverage includes count/destination aliasing, ignored high bits, alignment, observers, recoverable faults and device rejection. `X64VectorTestSupport.h` shares full checked-state assertions with packed arithmetic tests. Both WHP privilege modes are mandatory in native CI.
+`X64PackedShiftTests.cpp` and original `X64PackedShiftCases.def` compare ten shifts against independent scalar calculations and native SSE2 intrinsics at 16 immediate and 21 variable counts. Coverage includes count/destination aliasing, ignored high bits, alignment, observers, recoverable faults and device rejection. `X64VectorTestSupport.h` shares register and RAM assertions with packed arithmetic tests. Both WHP privilege modes are mandatory in native CI.
 
 ## Driver emulation checks
 
