@@ -392,6 +392,42 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                       : ndVarToMedVar(NdVar::reg(Return.RegisterOffset,
                                                  Return.ValueBytes));
       std::vector<MedOp> ReturnOps;
+      const auto FloatingCarrier = [&](const SourceABIValueLocation &Location)
+          -> std::optional<std::pair<uint64_t, uint16_t>> {
+        if (Location.Kind != SourceABICarrierKind::FloatingRegister ||
+            !TRI.isVectorReg(Location.RegisterOffset))
+          return std::nullopt;
+        auto [Offset, Bytes] =
+            TRI.findWideReg(Location.RegisterOffset, Location.ValueBytes);
+        if (TRI.FPABIRegWidth)
+          Bytes = std::min(Bytes, TRI.FPABIRegWidth);
+        if (Bytes <= Location.ValueBytes ||
+            TRI.subRegByteOffset(Location.RegisterOffset, Location.ValueBytes,
+                                 Offset, Bytes) != 0)
+          return std::nullopt;
+        return std::make_pair(Offset, Bytes);
+      };
+      const auto AppendFloatingCarrier =
+          [&](MedVar Value, std::pair<uint64_t, uint16_t> Wide) {
+            // A source result, scalar or record member, defines only its low
+            // lane. Its suffix comes from this call's unknown clobber. Do not
+            // publish a narrow architectural register write: SSA would zero
+            // its upper lanes before this merge could retain their identity.
+            MedOp Upper;
+            Upper.Opcode = NdOp::SUBBYTES;
+            Upper.Addr = Op.Addr;
+            Upper.Output = Temporary(Wide.second - Value.Size);
+            Upper.addInput(ndVarToMedVar(NdVar::reg(Wide.first, Wide.second)));
+            Upper.addInput(MedVar::makeConst(Value.Size, 4));
+            MedOp Merge;
+            Merge.Opcode = NdOp::CONCAT;
+            Merge.Addr = Op.Addr;
+            Merge.Output = ndVarToMedVar(NdVar::reg(Wide.first, Wide.second));
+            Merge.addInput(Upper.Output);
+            Merge.addInput(Value);
+            ReturnOps.push_back(std::move(Upper));
+            ReturnOps.push_back(std::move(Merge));
+          };
       if (IndirectResult) {
         // Preserve the pre-call hidden pointer before SSA introduces the
         // caller-saved x8 clobber. A declared result initializes every record
@@ -432,16 +468,21 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         const auto Members = sourceAggregateMembers(Signature.ReturnType);
         for (size_t I = 0; I < Signature.ReturnComponents.size(); ++I) {
           const auto &Piece = Signature.ReturnComponents[I];
+          const auto Wide = FloatingCarrier(Piece);
           MedOp Extract;
           Extract.Opcode = NdOp::SUBBYTES;
           Extract.Addr = Op.Addr;
-          Extract.Output =
-              ndVarToMedVar(NdVar::reg(Piece.RegisterOffset, Piece.ValueBytes));
+          Extract.Output = Wide ? Temporary(Piece.ValueBytes)
+                                : ndVarToMedVar(NdVar::reg(Piece.RegisterOffset,
+                                                           Piece.ValueBytes));
           Extract.addInput(Op.Output);
           Extract.addInput(MedVar::makeConst(
               Members.empty() ? I * Piece.ValueBytes : Members[I].ByteOffset,
               4));
+          const auto Value = Extract.Output;
           ReturnOps.push_back(std::move(Extract));
+          if (Wide)
+            AppendFloatingCarrier(Value, *Wide);
         }
       } else if (Hint->CallKind ==
                  SourceCallTypeHint::Kind::SwiftBooleanProjection) {
@@ -486,35 +527,8 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Merge.addInput(Value);
         ReturnOps.push_back(std::move(Upper));
         ReturnOps.push_back(std::move(Merge));
-      } else if (Return.Kind == SourceABICarrierKind::FloatingRegister &&
-                 TRI.isVectorReg(Return.RegisterOffset)) {
-        auto [WideOffset, WideBytes] =
-            TRI.findWideReg(Return.RegisterOffset, Return.ValueBytes);
-        if (TRI.FPABIRegWidth)
-          WideBytes = std::min(WideBytes, TRI.FPABIRegWidth);
-        if (WideBytes > Return.ValueBytes &&
-            TRI.subRegByteOffset(Return.RegisterOffset, Return.ValueBytes,
-                                 WideOffset, WideBytes) == 0) {
-          // A scalar floating result defines only the low lane of its vector
-          // return carrier. Preserve that exact dependency when a later
-          // instruction copies the full vector: the suffix is this call's
-          // unknown clobber, not the pre-call value, while the prefix remains
-          // available to a later narrow source projection.
-          MedOp Upper;
-          Upper.Opcode = NdOp::SUBBYTES;
-          Upper.Addr = Op.Addr;
-          Upper.Output = Temporary(WideBytes - Return.ValueBytes);
-          Upper.addInput(ndVarToMedVar(NdVar::reg(WideOffset, WideBytes)));
-          Upper.addInput(MedVar::makeConst(Return.ValueBytes, 4));
-          MedOp Merge;
-          Merge.Opcode = NdOp::CONCAT;
-          Merge.Addr = Op.Addr;
-          Merge.Output = ndVarToMedVar(NdVar::reg(WideOffset, WideBytes));
-          Merge.addInput(Upper.Output);
-          Merge.addInput(Op.Output);
-          ReturnOps.push_back(std::move(Upper));
-          ReturnOps.push_back(std::move(Merge));
-        }
+      } else if (const auto Wide = FloatingCarrier(Return)) {
+        AppendFloatingCarrier(Op.Output, *Wide);
       }
       // These hints were matched to an exact imported runtime declaration by
       // the loader and passed ABI validation above. Carry its termination

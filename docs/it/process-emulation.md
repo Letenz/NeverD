@@ -78,6 +78,23 @@ Mappature di file, condivise o fisse, crescita verso il basso, pagine enormi, bl
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## Orologi guest espliciti
+
+L’opzione `linux_time` fornisce valori fissi alle chiamate Linux e ad Android Bionic. Il modello non legge l’orologio host, non fa avanzare il tempo con le istruzioni e non presume un’epoca predefinita.
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+Sono ammessi gli identificatori statici 0–9 e 11. Ogni orologio è indipendente; un valore omesso resta sconosciuto. Identificatori duplicati o sconosciuti vengono rifiutati. I secondi sono interi con segno a 64 bit e i nanosecondi appartengono a `[0, 1000000000)`. Gli interi JSON sono limitati a `±9007199254740991`; le stringhe decimali preservano l’intero intervallo a 64 bit. I campi del fuso orario sono interi con segno a 32 bit. C++ usa `ProcessOptions::LinuxTime`; gli altri profili OS rifiutano l’opzione.
+
+`clock_gettime`, `gettimeofday` e `time` su x64 condividono gli ingressi. Valori mancanti, orologi dinamici o scritture parziali non modellate causano un arresto esplicito; le scritture completate restano valide. Regolazione del tempo, sospensione e orologi fisici non sono modellati. Il [contratto completo degli orologi](../process-emulation.md#explicit-guest-clocks) descrive ordine delle scritture, errori e puntatori.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Profilo Windows PE64

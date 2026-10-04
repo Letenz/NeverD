@@ -16,7 +16,7 @@ llvm::Expected<uint64_t> Bionic::tokenize(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   uint64_t Input = A[0];
   if (A[2] % 8)
-    return failure("unaligned strtok_r save pointer");
+    return failure(diagnostic::TokenCursorAlignment);
   if (!Input) {
     if (auto E = access(A[2], 8, Read))
       return std::move(E);
@@ -38,7 +38,7 @@ llvm::Expected<uint64_t> Bionic::tokenize(const NativeCallEvent &Call) {
   std::optional<uint64_t> Token;
   for (uint64_t I = 0; I < Options.MemoryLimit; ++I) {
     if (Input > UINT64_MAX - I)
-      return failure("strtok_r string address overflows");
+      return failure(diagnostic::TokenAddressOverflow);
     uint64_t Address = Input + I;
     auto C = byte(Address);
     if (!C)
@@ -46,7 +46,7 @@ llvm::Expected<uint64_t> Bionic::tokenize(const NativeCallEvent &Call) {
     bool Split = Token && *C && Separators[*C];
     if (!*C || Split) {
       if (Split && Address == UINT64_MAX)
-        return failure("strtok_r continuation address overflows");
+        return failure(diagnostic::TokenContinuationOverflow);
       // Validate both effects before terminating the token. Only the delimiter
       // byte needs write access; an unseparated final token can be read-only.
       if (auto E = access(A[2], 8, Write))
@@ -66,6 +66,6 @@ llvm::Expected<uint64_t> Bionic::tokenize(const NativeCallEvent &Call) {
     if (!Separators[*C] && !Token)
       Token = Address;
   }
-  return failure("strtok_r scan exceeds memory limit");
+  return failure(diagnostic::TokenScanLimit);
 }
 } // namespace neverd::emulation::android_model

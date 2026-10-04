@@ -16,6 +16,17 @@
 #include <variant>
 
 namespace neverd::emulation::android_model {
+namespace symbol {
+#define NEVERD_ANDROID_SYMBOL(Name, Text) inline constexpr char Name[] = Text;
+#include "AndroidSymbols.def"
+#undef NEVERD_ANDROID_SYMBOL
+} // namespace symbol
+namespace diagnostic {
+#define NEVERD_ANDROID_DIAGNOSTIC(Name, Text)                                  \
+  inline constexpr char Name[] = Text;
+#include "AndroidDiagnostics.def"
+#undef NEVERD_ANDROID_DIAGNOSTIC
+} // namespace diagnostic
 inline constexpr uint64_t PageSize = 4096;
 inline constexpr uint64_t TLSAddress = 0x7000000000;
 inline constexpr uint64_t StdioAddress = TLSAddress - PageSize;
@@ -29,7 +40,7 @@ inline constexpr uint16_t ModelTrap = 0x4e44;
 inline constexpr uint64_t ReturnPC = ThunkBase;
 inline llvm::Error failure(llvm::Twine Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 "Android native: " + Message);
+                                 diagnostic::FailurePrefix + Message);
 }
 struct LinkedImage {
   uint64_t Entry, InitialBreak;

@@ -1277,6 +1277,19 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 
 `os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
 
+The Linux kernel component also owns validation and lookup of explicit fixed
+clock observations in `LinuxTimeOptions`, plus time-service output ordering.
+The process wire parser validates representations and delegates value policy
+to that owner. Android reuses clock lookup and raw kernel services; Bionic
+alone owns errno conversion and `time`'s user-space destination store.
+
+Android's `AndroidSymbols.def` and `AndroidDiagnostics.def` own Bionic symbol
+spellings and native-model diagnostics. Kernel wrapper bindings stay in
+`AndroidKernelServices.def`; Linux clock diagnostics and process wire text stay
+with their existing Linux and report inventories. Keep control flow in C++ and
+independent test expectations in fixtures; ordinary punctuation and empty strings
+do not need vocabulary entries.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |
@@ -3037,3 +3050,5 @@ The shared `SourceABI` represents one bounded mixed Swift result as a flat logic
 Constructor publication can independently authenticate ordinary void Objective-C selector stubs with only self and command parameters. The existing loader owns the immutable stub, strong ordinary import, initial selector reference and exact immutable selector name; the initial pointer proof does not freeze the runtime SEL. Every original LowIR occurrence must match one complete MedIR call and one HighIR statement. The bounded canonical replay still compares the receiver, selector, all expressions and effects across fresh, saved and bound bodies. Missing markers, copied or removed calls, stale ABI, changed machine bytes and conflicting storage are rejected. Dynamic dispatch and message side effects remain intact; this adds no receiver-class, frame, escape or purity permission.
 
 Native scalar-return refinement and MedToHigh share `SourceABI`'s call-result representation. A signed integer declaration stays signed while its lowered call carries unsigned machine bits of exactly the same width. The existing bounded return analysis may select the defined low word only when every return supports that projection and some return explicitly has unknown upper padding. Re-lifting and complete source publication remain mandatory; no upper bytes are invented. Floating, pointer, wrong-width and stale ABI results cannot supply this integer proof, and callers that observe the unknown upper word remain rejected.
+
+A native ARM64 scalar-double projection may be refined to a two-double record when a caller observes the complete low eight bytes of the second return register and both computed carriers pass the shared all-path return analysis. Integer and floating pairs share this owner; an unchanged entry lane does not establish a floating result. Upper Q halves remain outside the result contract. The candidate requires another pipeline run and complete source binding, initialized-value, frame, lifetime and dependency-closure checks before publication. It does not infer the original Swift declaration or extend x64 floating-record support. Regressions cover joins, backedges, clobbers, partial lanes and stale declarations. O0/O2 checks compare unchanged generated C with the original ARM64 wrapper and helper on controlled Objective-C objects, checking both fields, ordered messages, nil and aliases, counters and object lifetimes. Scalar and record floating-return lowering now share one prefix merge: each call retains its unknown vector suffix instead of introducing an architectural zeroing write.

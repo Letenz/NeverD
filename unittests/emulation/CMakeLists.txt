@@ -152,6 +152,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidMemoryTests.cpp
   AndroidTokenTests.cpp
   AndroidMutexTests.cpp
+  AndroidTimeTests.cpp
   AndroidSyscallTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)

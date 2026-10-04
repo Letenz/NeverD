@@ -78,6 +78,23 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## 명시적인 게스트 시계
+
+선택 항목인 `linux_time`은 Linux 시스템 호출과 Android Bionic에 고정된 시계 값을 제공합니다. 호스트 시계를 읽거나 명령 실행에 따라 시간을 진행시키거나 기본 시각을 추측하지 않습니다.
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+정적 시계 ID 0–9와 11을 지원합니다. 각 시계는 독립적이며 생략한 값은 알 수 없는 상태로 유지됩니다. 중복되거나 알 수 없는 ID는 거부합니다. 초는 부호 있는 64비트 정수이며 나노초 범위는 `[0, 1000000000)`입니다. JSON 정수는 `±9007199254740991` 이내여야 하고 십진 문자열은 전체 64비트 범위를 보존합니다. 시간대 필드는 부호 있는 32비트 정수입니다. C++에서는 `ProcessOptions::LinuxTime`을 사용하며 다른 OS 프로필은 이 옵션을 거부합니다.
+
+`clock_gettime`, `gettimeofday`, x64의 `time`이 같은 입력을 사용합니다. 입력 누락, 동적 시계 또는 모델링되지 않은 부분 쓰기는 명시적으로 중단되며 이미 완료된 쓰기는 유지됩니다. 시간 조정, 대기 및 실제 장치 시계는 지원하지 않습니다. 쓰기 순서, 오류 코드 및 포인터 동작은[전체 시계 계약](../process-emulation.md#explicit-guest-clocks)을 참조하세요.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 프로필

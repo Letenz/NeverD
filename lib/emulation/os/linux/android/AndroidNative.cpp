@@ -16,12 +16,11 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                         const ProcessOptions &Options) {
   if (!Options.Android || !Options.Arguments.empty() ||
       !Options.Environment.empty())
-    return failure(
-        "requires Android native options and no process argv/environment");
+    return failure(diagnostic::NativeOptions);
   const auto &Native = *Options.Android;
   if (Native.EntrySymbol.empty() == !Native.EntryAddress.has_value() ||
       Native.EntrySymbol.find('\0') != std::string::npos)
-    return failure("select exactly one entry_symbol or entry_address");
+    return failure(diagnostic::EntrySelection);
   if (!Options.Limits.Instructions || !Options.Limits.Events ||
       !Options.Limits.TimeoutMicroseconds || !Options.MemoryLimit ||
       !Options.StackSize || !Options.OutputLimit ||
@@ -33,7 +32,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       Native.LoadBias >= TLSAddress || Native.LoadBias % PageSize ||
       Native.TraceLimit > Options.OutputLimit / 8 ||
       Native.Arguments.size() > Options.StackSize / 8)
-    return failure("invalid native execution limits or layout");
+    return failure(diagnostic::ExecutionLimits);
   auto Budget = ExecutionBudget::create(Options.Limits);
   if (!Budget)
     return Budget.takeError();
@@ -42,44 +41,43 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   for (const auto &Read : Native.ReadMemory) {
     if (!Read.Size || Read.Size > Options.OutputLimit - ReportSize ||
         Read.Address > UINT64_MAX - Read.Size)
-      return failure("invalid memory snapshot extent or output budget");
+      return failure(diagnostic::SnapshotLimits);
     ReportSize += Read.Size;
   }
   for (const auto &[Name, Value] : Native.Properties)
     if (Name.empty() || Name.find('\0') != std::string::npos ||
         Value.find('\0') != std::string::npos || Value.size() >= 92 ||
         Name.size() > Options.MemoryLimit)
-      return failure("invalid Android property name or value");
+      return failure(diagnostic::Property);
   uint64_t SymbolCount = 0, CatalogBytes = 0;
   if (Native.Libraries.size() > 256)
-    return failure("too many modeled Android libraries");
+    return failure(diagnostic::LibraryCount);
   for (const auto &[Library, Symbols] : Native.Libraries) {
     if (Library.empty() || Library.size() > 1024 ||
         Library.find('\0') != std::string::npos)
-      return failure("invalid modeled Android library name");
+      return failure(diagnostic::LibraryName);
     CatalogBytes += Library.size();
     std::set<std::string> Unique;
     for (const auto &Symbol : Symbols) {
       if (++SymbolCount > 4096 || Symbol.empty() || Symbol.size() > 1024 ||
           Symbol.find('\0') != std::string::npos ||
           !Unique.insert(Symbol).second)
-        return failure("invalid or excessive modeled Android symbols");
+        return failure(diagnostic::SymbolCatalogue);
       CatalogBytes += Symbol.size();
     }
   }
   if (Native.DefaultScope) {
     if (Native.DefaultScope->size() > Native.Libraries.size())
-      return failure("invalid Android default scope size");
+      return failure(diagnostic::DefaultScopeSize);
     std::set<std::string> Unique;
     for (const auto &Library : *Native.DefaultScope) {
       if (!Native.Libraries.count(Library) || !Unique.insert(Library).second)
-        return failure(
-            "Android default scope requires unique catalogue libraries");
+        return failure(diagnostic::DefaultScopeMembership);
       CatalogBytes += Library.size();
     }
   }
   if (CatalogBytes > Options.MemoryLimit)
-    return failure("Android symbol catalogue exceeds memory limit");
+    return failure(diagnostic::CatalogueMemoryLimit);
   ELFLoader Loader;
   auto Image = Loader.load(Path);
   if (!Image)
@@ -103,7 +101,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         Region.Address >= TLSAddress ||
         Region.Size > TLSAddress - Region.Address ||
         Region.Bytes.size() > Region.Size)
-      return failure("invalid explicit native memory region");
+      return failure(diagnostic::MemoryRegion);
     unsigned Permissions =
         Read | Write | UserAccessible | (Region.Executable ? Execute : 0u);
     if (auto E = (*Space)->map(Region.Address, Region.Size, Permissions))
@@ -117,7 +115,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     if (!Accessible)
       return Accessible.takeError();
     if (!*Accessible)
-      return failure("requested snapshot is not readable at entry");
+      return failure(diagnostic::SnapshotEntry);
   }
   auto Calls = IntegerABI::get(IntegerCallingConvention::AAPCS64);
   if (!Calls)
@@ -213,7 +211,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         Result.LastCPUExit->Kind != ExecutionExitKind::ServiceRequest) {
       Result.Stop = ProcessStopReason::CPUFailure;
       Result.Diagnostic = Result.LastCPUExit ? Result.LastCPUExit->Diagnostic
-                                             : "missing CPU exit";
+                                             : diagnostic::MissingCPUExit;
       break;
     }
     if (!Resources->consumeEvents()) {
@@ -235,7 +233,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
           break;
         }
         if ((*SP)[0] != Pending.StackPointer) {
-          RuntimeFailure(failure("native callback did not restore its stack"));
+          RuntimeFailure(failure(diagnostic::CallbackStack));
           break;
         }
         if (auto E = LibC.finishOnce(Pending.Call)) {
@@ -343,7 +341,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       // an import model merely by carrying its immediate operand.
       if (Request->Immediate) {
         Result.Stop = ProcessStopReason::UnsupportedService;
-        Result.Diagnostic = "unsupported Android SVC immediate";
+        Result.Diagnostic = diagnostic::SVCImmediate;
         break;
       }
       auto Event = linux_model::readService(CPU, *Request);
@@ -382,7 +380,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         break;
       }
       if (!*Access) {
-        RuntimeFailure(failure("requested memory became unreadable"));
+        RuntimeFailure(failure(diagnostic::SnapshotReturn));
         break;
       }
       NativeMemorySnapshot Snapshot{Read.Address,
