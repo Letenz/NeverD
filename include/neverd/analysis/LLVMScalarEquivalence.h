@@ -42,6 +42,9 @@ struct LLVMScalarEquivalenceResult {
   uint64_t CompletedPartitions = 0;
   uint64_t Attempts = 0;
   uint64_t Work = 0;
+  /// A work charge exceeded MaxWork. Reaching the limit exactly, or refusing
+  /// another local resource limit, does not set this flag.
+  bool WorkLimitExceeded = false;
 };
 
 /// Prove complete return-value equality and defined termination for the
@@ -50,6 +53,8 @@ struct LLVMScalarEquivalenceResult {
 /// definedness; exhaust all their combinations and retain every remaining
 /// input bit symbolically. Return expressions must agree exactly in NeverD's
 /// shared expression algebra. No sampling or external SMT is used.
+/// A query using the same Function object models and executes it once per
+/// partition, retaining every admission, definedness and termination check.
 ///
 /// A result other than Proved authorizes no rewrite; Unproved need not mean
 /// inequivalent. Every limit is finite. Unsupported instructions, effects,

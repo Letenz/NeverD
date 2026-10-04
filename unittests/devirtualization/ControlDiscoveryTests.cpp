@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/ControlDiscovery.h"
+#include "../../lib/analysis/core/ControlDiscovery.h"
 #include "gtest/gtest.h"
 
 #include <limits>
@@ -880,12 +880,16 @@ TEST(ControlDiscovery, SumMasksBoundWideShiftAmountsAndKeepWideFallback) {
   const auto WideAmount = Ctx.mkConst(llvm::APInt(8192, 56));
   const auto WideShift = Ctx.mkLShr(Root, WideAmount);
   ASSERT_EQ(Ctx.op(WideShift), SymOp::LShr);
+  // The builder checks the complete numeric count before normalizing its
+  // storage. Dependency discovery sees the same expression as the narrow
+  // spelling and charges that actual expression, not its old input width.
+  ASSERT_EQ(WideShift, Low);
   const auto Slice = Ctx.mkExtract(Ctx.mkAdd(WideShift, High), 32, 32);
   const auto Full = gatherControlDependencies(State, Slice, Root, 512);
   ASSERT_EQ(Full.Status, ControlDiscoveryStatus::Complete);
-  EXPECT_GE(Full.Visited, 128U);
+  EXPECT_EQ(Full.Visited, Precise.Visited);
   ASSERT_TRUE(Full.FrameRootBits);
-  EXPECT_NE(*Full.FrameRootBits, 0U);
+  EXPECT_EQ(*Full.FrameRootBits, 0U);
   const auto Exact =
       gatherControlDependencies(State, Slice, Root, Full.Visited);
   EXPECT_EQ(Exact.Status, ControlDiscoveryStatus::Complete);
@@ -1081,6 +1085,8 @@ TEST(ControlDiscovery, WideMultiplyAndShiftConstantsChargeBeforeReading) {
   const auto Arithmetic = Ctx.mkAShr(Input, Amount);
   ASSERT_EQ(Ctx.op(Logical), SymOp::LShr);
   ASSERT_EQ(Ctx.op(Arithmetic), SymOp::AShr);
+  EXPECT_EQ(Ctx.width(Ctx.operand(Logical, 1)), Width);
+  EXPECT_EQ(Ctx.width(Ctx.operand(Arithmetic, 1)), Width);
   for (auto Value : {Product, Logical, Arithmetic}) {
     const auto Slice = Ctx.mkExtract(Value, Bit, 1);
     ASSERT_EQ(Ctx.op(Slice), SymOp::Extract);
@@ -1090,7 +1096,8 @@ TEST(ControlDiscovery, WideMultiplyAndShiftConstantsChargeBeforeReading) {
     EXPECT_TRUE(Short.RegisterRanges.empty());
     const auto Full = gatherControlDependencies(State, Slice, {}, 1000);
     ASSERT_EQ(Full.Status, ControlDiscoveryStatus::Complete);
-    const uint32_t ConstantWords = (Value == Product ? Width : Width * 2) / 64;
+    // In-range shift counts now use the value width after full-value checks.
+    const uint32_t ConstantWords = Width / 64;
     EXPECT_GE(Full.Visited, ConstantWords);
     ASSERT_EQ(Full.RegisterRanges.size(), 1u);
     const uint32_t SourceBit = Value == Product ? 1 : Bit + 1;

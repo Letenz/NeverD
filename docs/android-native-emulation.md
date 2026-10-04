@@ -4,7 +4,7 @@
 AArch64 shared library using NeverD's CPU, address space, AAPCS64 call frames,
 execution sessions, and Linux syscall models. This is a bounded native analysis
 environment, with explicit inputs and observable failures. It does not boot an
-Android system or supply ART, JNI, Binder, threads, signals, a filesystem, or a
+Android system or supply ART, JNI, Binder, signals, a filesystem, or a
 network. It never calls host functions to satisfy a guest import.
 
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`. The host transport is selected
@@ -79,8 +79,10 @@ same instruction, event and deadline budget. `initialize: false` explicitly
 requests analysis of an **uninitialized** library; the report records this
 choice. A normal function return has `stop_reason: "returned"`, a
 `return_value`, and CLI status 0 regardless of its integer return value.
-Raw Linux `exit`/`exit_group` retain process-exit semantics. Destructors are not
-run when the observation ends at the selected function's return. The libc
+In the default single-thread mode, raw Linux `exit`/`exit_group` retain
+process-exit semantics. With guest threads enabled, `exit` ends the current
+thread and `exit_group` ends the workload. Destructors are not run when the
+observation ends at the selected function's return. The libc
 `exit` import and automatic FINI-array execution remain unsupported.
 
 ## Linking and Android contracts
@@ -144,7 +146,7 @@ The supported Bionic subset is:
   invoking its initializer. Nested initialization of different controls and
   modeled imports inside callbacks share the caller's execution budget.
   An in-progress control, including recursive initialization of the same
-  control, stops as unsupported; there is no guest thread scheduler. Callback
+  control, stops as unsupported; concurrent once waits are not modeled. Callback
   faults and exhausted budgets leave the call result incomplete. Unwinding,
   cancellation and fork recovery are unsupported.
 - `__cxa_atexit` stores the guest callback, opaque argument and DSO token;
@@ -161,7 +163,7 @@ The supported Bionic subset is:
   token is an opaque identity, independent of the catalogue's `dlopen` handles.
   Catalogue `dlclose` does not unload guest code or automatically finalize it.
   FILE cleanup, atfork handlers, exception unwinding and concurrent destruction
-  remain outside this single-thread model. No host callback is invoked.
+  remain outside this model. No host callback is invoked.
 - `dlopen`, `dlsym`, `dlclose`, `dlerror`, using an explicit local catalogue
   described below. Function availability and implementation are separate:
   an available symbol whose call is unmodeled still stops explicitly.
@@ -326,7 +328,7 @@ and do not change errno. Ownership uses the same guest TID as `gettid`.
 Destroyed-object use stops explicitly, following the API 28 target behavior;
 older app-target compatibility is not modeled.
 
-This is a single-thread, non-priority-inheritance model. The process-shared
+This is a nonblocking, non-priority-inheritance model. The process-shared
 attribute is retained but does not create another process or thread. A lock
 that must wait, an unlock that must wake a waiter, priority-inheritance
 objects, timed operations and unknown mutex operations stop as unsupported.
@@ -336,6 +338,104 @@ state or ownership. No host mutex or scheduler supplies guest behavior.
 ABI references: Android 9 [`pthread_mutex.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_mutex.cpp)
 and [`pthread_types.h`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/bits/pthread_types.h).
 These declarations and state rules inform an independent implementation.
+
+## API 28 thread attributes
+
+`pthread_attr_init`, `destroy`, and the get/set pairs for `detachstate`,
+`inheritsched`, `schedpolicy`, `schedparam`, `stack`, `stacksize`, `guardsize`
+and `scope` operate on guest LP64 storage. The 56-byte, eight-byte-aligned
+object keeps its padding and reserved bytes during initialization: only its
+six fields are assigned. Defaults include a 1 MiB minus 16 KiB stack and a
+4 KiB guard. Destruction fills all 56 bytes with `0x42`.
+
+Getters write four-byte integers or eight-byte pointers/sizes as declared.
+Inheritance flags take precedence over API 28's historical scheduling-policy
+fallback. Stack-size-only assignment accepts any size at least 16 KiB;
+assignment of a stack address and size additionally requires page alignment.
+Stack addresses are opaque guest values. Guard sizes and scheduling policies
+retain the supplied values without inventing validation absent from Bionic.
+Invalid enums and sizes return EINVAL before accessing the attribute. Scope
+operations ignore the attribute: system scope succeeds and process scope
+returns ENOTSUP. These direct pthread error returns preserve errno.
+
+The model checks all affected spans before publishing writes, and preserves
+ordered reads/writes when `getstack` outputs overlap the attribute. Invalid
+memory or alignment stops explicitly. Attribute assignment does not create a
+thread or authorize a scheduling policy. The shared symbol catalogue also supplies
+named dynamic calls through `dlsym` and enforces provider lifetime.
+
+This independently implemented model follows pinned AOSP
+[`pthread_attr.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/pthread_attr.cpp),
+[`pthread_types.h`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/include/bits/pthread_types.h),
+[`pthread.h`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/include/pthread.h)
+and [`pthread_internal.h`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/pthread_internal.h).
+`AndroidThreadAttributes.def` owns layout constants; the existing Android
+symbol and diagnostic tables retain their respective vocabularies.
+
+## Cooperative guest threads
+
+The default `android.thread_limit: 1` preserves the single-thread contract.
+Values 2 through 256 enable a deterministic guest scheduler and bound the
+total identities created, including the entry thread. Retired identities are
+not reused. `pthread_create`, `pthread_join`, `pthread_detach`, `pthread_self`,
+`pthread_equal`, `pthread_exit`, `pthread_getattr_np`, and `pthread_gettid_np`
+share the imported and dynamically resolved call paths.
+
+Threads have separate saved CPU contexts, stacks, TPIDR_EL0, errno, linker
+errors and callback continuations. They share guest memory, allocations,
+library handles and the process destructor registry. Scheduling rotates at
+`instruction_quantum`, a blocking join, or thread completion. Native calls
+consume the current quantum instead of restarting it. The shared execution
+budget is never replenished. This is cooperative single-core execution, not
+SMP or a host pthread implementation. Normal, raw and variadic `gettid` and
+mutex ownership use the same current identity; `getpid` remains process-wide.
+
+Creation admits normal scheduling and a model-allocated stack. Inherited and
+historical API 28 flags retain their policy interpretation. Explicit stacks,
+unknown flags and scheduling policies requiring unmodeled behavior stop.
+Identity or memory capacity exhaustion returns EAGAIN without changing errno
+or publishing a handle. Pointer faults remain failures. Stack and guard sizes
+round to 4 KiB; each identity reserves a model address slot below a 64 MiB
+ceiling. A PROT_NONE guard precedes writable stack bytes, and a separate TLS
+page follows. `pthread_getattr_np` reports that actual model span, including
+the guard, and preserves copied reserved attribute bytes. Handles are opaque
+unmapped identities, distinct from TIDs; this does not reconstruct Bionic's
+private TCB or its allocator-dependent placement. Changed TLS identity slots
+or TPIDR_EL0 stop Bionic calls explicitly.
+
+A join retains its original service continuation until the target finishes,
+then publishes the full pointer result and releases its storage. Detached
+threads release storage on completion. Invalid non-null or retired handles
+fail at the API 28 target boundary; NULL lookup returns ESRCH, self-join
+returns EDEADLK, and detached or already claimed targets return EINVAL.
+No runnable thread with outstanding joins is an explicit unsupported stop.
+`pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
+the current thread and leaves its pthread result zero. When the last thread
+exits without an entry return, its low eight status bits become the workload
+exit status. `exit_group` terminates
+the workload. Guest cleanup handlers, TLS keys/destructors, exit during a
+once/finalize callback, blocking mutex/once waits, timers, cancellation,
+signals and clone remain unsupported. No cleanup or completion is invented.
+
+By default the selected entry's return stops observation, even with live
+children. `android.drain_threads: true` continues those children under the
+same limits. The entry's `return_value` remains visible if a later child stops
+with an error. `android.threads` records identity, placement, waiting,
+completion and retirement; completion of its initial row means the selected
+invocation ended, not that the process exited. Named calls and raw services
+include `thread_id`. `android.trace_threads` partitions the existing PC trace
+using zero-based `trace_index` and `thread_id`. Each new run consumes 16 bytes
+of the remaining report allowance; insufficient allowance truncates trace
+retention, not execution. Thread metadata reserves 128 bytes per allowed
+identity in addition to the trace and memory snapshots.
+
+These independently implemented API rules use AOSP Bionic revision
+`196632fb3c59ebbf1184d791a3e7124dd0c3f22b`:
+[`pthread_create.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/pthread_create.cpp),
+[`pthread_join.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/pthread_join.cpp),
+[`pthread_detach.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/pthread_detach.cpp),
+and [`pthread_exit.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/pthread_exit.cpp).
+They establish a bounded model contract, not native Android equivalence.
 
 ## Evidence and limits
 

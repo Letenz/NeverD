@@ -6894,6 +6894,421 @@ TEST(HighControlFlowSemantics, LoopTakesEveryBackedgeToItsHeader) {
   EXPECT_TRUE(Graph.Diagnostics.Complete);
 }
 
+TEST(HighControlFlowSemantics, ElseJumpToALabelInAnotherListStays) {
+  // if (x & 1) { } else { if (x & 2) v = 1; else { v = 0; goto L; } w = 2;
+  // return w; }  L: return 0;  -- L (0x10c7) lies 9 bytes before `w = 2`
+  // (0x10d0) but in the outer list, so the else jump never runs into w.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  auto Copy = assign(0x10c5, 1, 0);
+  Copy.IsPhiCopy = true;
+  HighStmt Inner;
+  Inner.Kind = StmtKind::IfElse;
+  Inner.Addr = 0x10c5;
+  Inner.Cond = Bit(2);
+  Inner.Body = {assign(0x10c5, 1, 1)};
+  Inner.ElseBody = {Copy, jump(0, 0x10c7)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::IfElse;
+  Outer.Addr = 0x1080;
+  Outer.Cond = Bit(1);
+  Outer.Body = {assign(0x1082, 2, 0)};
+  Outer.ElseBody = {Inner, assign(0x10d0, 2, 2), result(0x10d4, local(2))};
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x10c7;
+  HighFunc F;
+  F.Body = {Outer, Label, result(0x10c9, HighExpr::makeConst(0, 8))};
+  const uint64_t Expected[] = {0, 0, 2, 0};
+  for (uint64_t X : {0u, 1u, 2u, 3u})
+    ASSERT_EQ(execute(F, X, true), Expected[X]) << X;
+  invertSkipGotos(F);
+  for (uint64_t X : {0u, 1u, 2u, 3u})
+    EXPECT_EQ(execute(F, X, true), Expected[X]) << X;
+}
+
+TEST(HighControlFlowSemantics,
+     JoinDefaultStaysWithTheRestOfAnEnteredInstruction) {
+  // if (x & 1) { if (x & 2) goto D; v = x + 7; goto J; }
+  // D: v = x + 5; w = v;  J: return v;  -- the copy shares the default's
+  // instruction, so a default moved into an else arm would leave the jump to
+  // D landing on the copy without running the default.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  auto Plus = [](uint64_t Addend) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(0),
+                               HighExpr::makeConst(Addend, 8));
+  };
+  HighStmt Enter;
+  Enter.Kind = StmtKind::If;
+  Enter.Addr = 0x1004;
+  Enter.Cond = Bit(2);
+  Enter.Body = {jump(0x1004, 0x1020)};
+  auto Write = assign(0x1008, 1, 0);
+  Write.Val = Plus(7);
+  HighStmt Prev;
+  Prev.Kind = StmtKind::If;
+  Prev.Addr = 0x1000;
+  Prev.Cond = Bit(1);
+  Prev.Body = {Enter, Write, jump(0x100c, 0x1030)};
+  auto Default = assign(0x1020, 1, 0);
+  Default.Val = Plus(5);
+  auto Copy = assign(0x1020, 2, 0);
+  Copy.Val = local(1);
+  Copy.IsPhiCopy = true;
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1030;
+  HighFunc F;
+  F.Body = {Prev, Default, Copy, Label, result(0x1034, local(1))};
+  const uint64_t Expected[] = {5, 8, 7, 8};
+  for (uint64_t X : {0u, 1u, 2u, 3u})
+    ASSERT_EQ(execute(F, X, true), Expected[X]) << X;
+  sinkJoinDefaultsLate(F);
+  for (uint64_t X : {0u, 1u, 2u, 3u})
+    EXPECT_EQ(execute(F, X, true), Expected[X]) << X;
+}
+
+namespace {
+/// The statement lists holding a statement at \p Address.
+std::set<const std::vector<HighStmt> *>
+listsHolding(const std::vector<HighStmt> &Body, va_t Address) {
+  std::set<const std::vector<HighStmt> *> Lists;
+  std::function<void(const std::vector<HighStmt> &)> Visit =
+      [&](const std::vector<HighStmt> &L) {
+        for (const HighStmt &S : L) {
+          if (S.Addr == Address)
+            Lists.insert(&L);
+          Visit(S.Body);
+          Visit(S.ElseBody);
+        }
+      };
+  Visit(Body);
+  return Lists;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, SharedArmSuffixKeepsAnEnteredInstructionWhole) {
+  // if (x & 4) goto L;  if (x & 1) { w = 1; v = 9; } else { L: u = 2; v = 9; }
+  // -- both arms end in v = 9, but the else copy is the second statement of
+  // the instruction at L.  Moving it out alone would leave a jump to L able
+  // to land after the if/else without running u = 2.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  HighStmt Enter;
+  Enter.Kind = StmtKind::If;
+  Enter.Addr = 0x1000;
+  Enter.Cond = Bit(4);
+  Enter.Body = {jump(0x1000, 0x1020)};
+  auto ThenCopy = assign(0x100c, 1, 9);
+  ThenCopy.IsPhiCopy = true;
+  auto ElseCopy = assign(0x1020, 1, 9);
+  ElseCopy.IsPhiCopy = true;
+  HighStmt Split;
+  Split.Kind = StmtKind::IfElse;
+  Split.Addr = 0x1004;
+  Split.Cond = Bit(1);
+  Split.Body = {assign(0x1008, 2, 1), ThenCopy};
+  Split.ElseBody = {assign(0x1020, 3, 2), ElseCopy};
+  HighFunc Structured;
+  Structured.Body = {Enter, Split, result(0x1030, local(1))};
+  HighFunc Inverted = Structured;
+  structureIfElse(Structured, 10);
+  EXPECT_EQ(listsHolding(Structured.Body, 0x1020).size(), 1u);
+  invertSkipGotos(Inverted);
+  EXPECT_EQ(listsHolding(Inverted.Body, 0x1020).size(), 1u);
+}
+
+TEST(HighControlFlowSemantics, ArmsWithoutASharedSuffixKeepTheirUndefCopies) {
+  // if (x & 1) { a = 1; v = undef; } else { b = 2; }  -- nothing is shared,
+  // so the arms stay as they are: the undef copy still gives v its join
+  // value on that path.
+  HighStmt Pad;
+  Pad.Kind = StmtKind::Assign;
+  Pad.Addr = 0x1008;
+  Pad.IsPhiCopy = true;
+  Pad.Dst = local(3);
+  Pad.Val = HighExpr::makeUndef(8);
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1), Pad};
+  Arms.ElseBody = {assign(0x1010, 2, 2)};
+  HighFunc F;
+  F.Body = {Arms, result(0x1020, local(3))};
+  structureIfElse(F, 10);
+  size_t UndefCopies = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    UndefCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Undef;
+  });
+  EXPECT_EQ(UndefCopies, 1u);
+}
+
+TEST(HighControlFlowSemantics, MatchingUndefCopiesLeaveTheArmsTogether) {
+  // if (x & 1) { a = 1; v = x + 1; w = undef; }
+  // else { b = 2; v = x + 1; w = undef; }  -- both copies of the shared
+  // suffix move out, the undef one included: every path still gives w its
+  // join value.
+  auto Pad = [](va_t Address) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.IsPhiCopy = true;
+    S.Dst = local(3);
+    S.Val = HighExpr::makeUndef(8);
+    return S;
+  };
+  auto Join = [](va_t Address) {
+    auto S = assign(Address, 2, 0);
+    S.IsPhiCopy = true;
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(1, 8));
+    return S;
+  };
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1), Join(0x1008), Pad(0x1008)};
+  Arms.ElseBody = {assign(0x1010, 4, 2), Join(0x1014), Pad(0x1014)};
+  HighFunc F;
+  F.Body = {Arms, result(0x1020, local(3))};
+  structureIfElse(F, 10);
+  size_t UndefCopies = 0, JoinCopies = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    UndefCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Undef;
+    JoinCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::BinOp;
+  });
+  EXPECT_EQ(UndefCopies, 1u);
+  EXPECT_EQ(JoinCopies, 1u);
+}
+
+TEST(HighControlFlowSemantics, MatchingUndefCopiesAloneStayInTheirArms) {
+  // if (x & 1) { a = 1; w = undef; } else { b = 2; w = undef; }  -- with
+  // no value to move along, the undef copies stay where they are.
+  auto Pad = [](va_t Address) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.IsPhiCopy = true;
+    S.Dst = local(3);
+    S.Val = HighExpr::makeUndef(8);
+    return S;
+  };
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1), Pad(0x1008)};
+  Arms.ElseBody = {assign(0x1010, 4, 2), Pad(0x1014)};
+  HighFunc F;
+  F.Body = {Arms, result(0x1020, local(3))};
+  structureIfElse(F, 10);
+  size_t UndefCopies = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    UndefCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Undef;
+  });
+  EXPECT_EQ(UndefCopies, 2u);
+}
+
+TEST(HighControlFlowSemantics, UndefCopyAheadOfASharedSuffixStays) {
+  // if (x & 1) { a = 1; w = undef; v = x + 1; } else { b = 2; v = x + 1; }
+  // -- v = x + 1 moves out; the then arm's w = undef runs before it either
+  // way, so it stays and w keeps its join value on that path.
+  HighStmt Pad;
+  Pad.Kind = StmtKind::Assign;
+  Pad.Addr = 0x1006;
+  Pad.IsPhiCopy = true;
+  Pad.Dst = local(3);
+  Pad.Val = HighExpr::makeUndef(8);
+  auto Join = [](va_t Address) {
+    auto S = assign(Address, 2, 0);
+    S.IsPhiCopy = true;
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(1, 8));
+    return S;
+  };
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1), Pad, Join(0x1008)};
+  Arms.ElseBody = {assign(0x1010, 4, 2), Join(0x1014)};
+  HighFunc F;
+  F.Body = {Arms, result(0x1020, local(2))};
+  structureIfElse(F, 10);
+  size_t UndefCopies = 0, JoinCopies = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    UndefCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Undef;
+    JoinCopies +=
+        S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::BinOp;
+  });
+  EXPECT_EQ(UndefCopies, 1u);
+  EXPECT_EQ(JoinCopies, 1u);
+}
+
+TEST(HighControlFlowSemantics, JoinDefaultLeavesAnArmThatJumpsWithinItself) {
+  // H: n = n + 1;  if (x & 1) { if (x & 2) goto W; goto L; W: v = n + 7;
+  // return v; L: if (n < 3) goto H; }  v = x + 100;  return v;
+  // -- the arm's `goto L` lands later in the same arm, so the path through
+  // L runs on into the default, and `goto H` is the loop's back edge, not a
+  // jump past the default.
+  auto Plus = [](int Id, uint64_t Addend) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(Id),
+                               HighExpr::makeConst(Addend, 8));
+  };
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  auto Count = assign(0x1000, 4, 0);
+  Count.Val = Plus(4, 1);
+  HighStmt Skip;
+  Skip.Kind = StmtKind::If;
+  Skip.Addr = 0x1008;
+  Skip.Cond = Bit(2);
+  Skip.Body = {jump(0x1008, 0x1010)};
+  auto Write = assign(0x1010, 1, 0);
+  Write.Val = Plus(4, 7);
+  HighStmt Latch;
+  Latch.Kind = StmtKind::Block;
+  Latch.Addr = 0x1018;
+  HighStmt Back;
+  Back.Kind = StmtKind::If;
+  Back.Addr = 0x101c;
+  Back.Cond =
+      HighExpr::makeBinop(NdOp::INT_LESS, local(4), HighExpr::makeConst(3, 8));
+  Back.Body = {jump(0x101c, 0x1000)};
+  HighStmt Arm;
+  Arm.Kind = StmtKind::If;
+  Arm.Addr = 0x1004;
+  Arm.Cond = Bit(1);
+  Arm.Body = {
+      Skip, jump(0x100c, 0x1018), Write, result(0x1014, local(1)), Latch, Back};
+  auto Default = assign(0x1020, 1, 0);
+  Default.Val = Plus(0, 100);
+  HighFunc F;
+  F.Body = {assign(0x0ff0, 4, 0), Count, Arm, Default,
+            result(0x1024, local(1))};
+  auto BackEdges = [&] {
+    size_t Edges = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Edges += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1000;
+    });
+    return Edges;
+  };
+  EXPECT_FALSE(sinkJoinDefaultsLate(F));
+  EXPECT_EQ(BackEdges(), 1u);
+  EXPECT_EQ(F.Body.size(), 5u);
+}
+
+/// Two tests branch to one cold block placed far past the function, which
+/// jumps back to the join: `r = 5; if (x & 1 || x & 2) { r = 7; ... }`.  The
+/// join and the cold block each do more than a tail copy may repeat.
+MedFunc sharedColdBlock() {
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "shared_cold_block";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  auto Flag = [&](int Id) {
+    auto V = machineValue(Id, Architecture);
+    V.Size = 1;
+    return V;
+  };
+  auto Result = [&](int Version) {
+    auto V = machineValue(9, Architecture);
+    V.Kind = MedVar::Reg;
+    V.RegOff = TRI.IntReturnReg;
+    V.SSAVer = Version;
+    return V;
+  };
+  auto Stores = [&](va_t At, uint64_t Base) {
+    std::vector<MedOp> Ops;
+    for (unsigned K = 0; K < 6; ++K)
+      Ops.push_back(
+          operation(NdOp::STORE, At + K * 4, {}, {C(Base + K * 8), C(K)}));
+    return Ops;
+  };
+  const va_t Starts[] = {0x1000, 0x1100, 0x1200, 0x9000};
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = Starts[I];
+    M.Blocks[I].EndAddr = Starts[I] + 0x40;
+  }
+  auto Low = machineValue(1, Architecture),
+       High = machineValue(3, Architecture);
+  M.Blocks[0].Succs = {3, 1};
+  M.Blocks[0].Ops = {
+      operation(NdOp::COPY, 0x1000, Result(1), {C(5)}),
+      operation(NdOp::INT_AND, 0x1004, Low, {Input, C(1)}),
+      operation(NdOp::INT_NOTEQUAL, 0x1008, Flag(2), {Low, C(0)}),
+      operation(NdOp::COND_BR, 0x100c, {}, {C(0x9000), Flag(2)})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {3, 2};
+  M.Blocks[1].Ops = {
+      operation(NdOp::INT_AND, 0x1100, High, {Input, C(2)}),
+      operation(NdOp::INT_NOTEQUAL, 0x1104, Flag(4), {High, C(0)}),
+      operation(NdOp::COND_BR, 0x1108, {}, {C(0x9000), Flag(4)})};
+  M.Blocks[2].Preds = {1, 3};
+  M.Blocks[2].Phis = {{Result(3), {{1, Result(1)}, {3, Result(2)}}}};
+  M.Blocks[2].Ops = Stores(0x1200, 0x8000);
+  M.Blocks[2].Ops.push_back(operation(NdOp::RETURN, 0x1230, {}, {Result(3)}));
+  M.Blocks[3].Preds = {0, 1};
+  M.Blocks[3].Succs = {2};
+  M.Blocks[3].Ops = {operation(NdOp::COPY, 0x9000, Result(2), {C(7)})};
+  for (MedOp &Op : Stores(0x9004, 0x8100))
+    M.Blocks[3].Ops.push_back(std::move(Op));
+  M.Blocks[3].Ops.push_back(operation(NdOp::BRANCH, 0x9030, {}, {C(0x1200)}));
+  return M;
+}
+
+TEST(HighControlFlowSemantics, ColdBlockSharedByTwoBranchesRunsBeforeItsJoin) {
+  const auto F = MedToHighConverter().convert(sharedColdBlock(), Arch::X64);
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (uint64_t X : {0u, 1u, 2u, 3u}) {
+    SCOPED_TRACE(X);
+    EXPECT_NO_THROW(EXPECT_EQ(execute(F, X, true), X ? 7u : 5u));
+  }
+}
+
+TEST(HighControlFlowSemantics, BlockLayoutFollowsForwardEdgesUnlessUnsure) {
+  MedFunc M = sharedColdBlock();
+  EXPECT_EQ(highBlockLayout(M, {}), (std::vector<int>{0, 1, 3, 2}));
+  // An exception handler's regions follow addresses.
+  MedFunc Handled = M;
+  Handled.ExceptionMetadata.emplace();
+  Handled.ExceptionMetadata->PersonalityVA = 0x5000;
+  EXPECT_EQ(highBlockLayout(Handled, {}), (std::vector<int>{0, 1, 2, 3}));
+  // So does a block whose fall-through successor is unknown.
+  MedFunc Unknown = M;
+  Unknown.Blocks[1].Ops.back().Inputs[0] = MedVar::makeConst(0x7000, 8);
+  EXPECT_EQ(highBlockLayout(Unknown, {}), (std::vector<int>{0, 1, 2, 3}));
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
   // break of its own, so nothing reaches the trailing return.

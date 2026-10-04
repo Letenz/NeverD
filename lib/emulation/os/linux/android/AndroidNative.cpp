@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../../runtime/RuntimeValues.h"
 #include "AndroidInternal.h"
+#include "AndroidThreads.h"
 
 #include "neverd/emulation/ExecutionSession.h"
 #include "neverd/loader/ELF/ELFLoader.h"
@@ -18,6 +19,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       !Options.Environment.empty())
     return failure(diagnostic::NativeOptions);
   const auto &Native = *Options.Android;
+  if (!Native.ThreadLimit ||
+      Native.ThreadLimit > thread_model::MaximumIdentities ||
+      (Native.DrainThreads && Native.ThreadLimit == 1))
+    return failure(diagnostic::ThreadOptions);
   if (Native.EntrySymbol.empty() == !Native.EntryAddress.has_value() ||
       Native.EntrySymbol.find('\0') != std::string::npos)
     return failure(diagnostic::EntrySelection);
@@ -38,6 +43,12 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     return Budget.takeError();
   std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   uint64_t ReportSize = Native.TraceLimit * 8;
+  if (Native.ThreadLimit > 1) {
+    const uint64_t ThreadBytes = Native.ThreadLimit * thread_model::ReportBytes;
+    if (ThreadBytes > Options.OutputLimit - ReportSize)
+      return failure(diagnostic::SnapshotLimits);
+    ReportSize += ThreadBytes;
+  }
   for (const auto &Read : Native.ReadMemory) {
     if (!Read.Size || Read.Size > Options.OutputLimit - ReportSize ||
         Read.Address > UINT64_MAX - Read.Size)
@@ -134,12 +145,23 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                        Backend->Reason};
   Result.Entry = Result.PC = Linked->Entry;
   Result.InitializersEnabled = Native.Initialize;
+  uint64_t TraceThreadID = linux_model::ThreadID;
   auto Observe = [&](uint64_t PC, uint32_t) {
-    if (!Native.TraceLimit)
+    if (!Native.TraceLimit || Result.TraceTruncated)
       return;
-    if (Result.Trace.size() < Native.TraceLimit)
+    if (Result.Trace.size() < Native.TraceLimit) {
+      if (Native.ThreadLimit > 1 &&
+          (Result.TraceThreads.empty() ||
+           Result.TraceThreads.back().ID != TraceThreadID)) {
+        if (sizeof(NativeTraceThread) > Options.OutputLimit - ReportSize) {
+          Result.TraceTruncated = true;
+          return;
+        }
+        ReportSize += sizeof(NativeTraceThread);
+        Result.TraceThreads.push_back({Result.Trace.size(), TraceThreadID});
+      }
       Result.Trace.push_back(PC);
-    else
+    } else
       Result.TraceTruncated = true;
   };
   auto Session =
@@ -149,16 +171,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   auto &CPU = (*Session)->cpu();
   linux_model::LinuxMemory Memory(**Space, Layout, Linked->InitialBreak,
                                   Options);
-  Bionic LibC(CPU, Memory, Layout, Options, Result, *Resources, *Linked);
+  GuestThreads Threads(CPU, *Calls, Options, Result);
+  if (auto E = Threads.initialize(StackBase))
+    return std::move(E);
+  Bionic LibC(CPU, Memory, Layout, Options, Result, *Resources, *Linked,
+              &Threads);
   size_t NextConstructor = 0;
   bool MainCall = false;
-  struct PendingCallback {
-    GuestCallback Call;
-    ServiceRequest Request;
-    size_t Event;
-    uint64_t Link, StackPointer;
-  };
-  std::vector<PendingCallback> Callbacks;
   auto Prepare = [&]() -> llvm::Error {
     std::vector<uint64_t> Arguments;
     if (NextConstructor < Linked->Constructors.size()) {
@@ -174,6 +193,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                     Arguments);
     if (!Frame)
       return Frame.takeError();
+    Threads.setReturnSP(Frame->ReturnStackPointer);
     return CPU.writeRegister(CPURegister::AArch64PC, {Result.PC, 0});
   };
   if (auto E = Prepare())
@@ -181,6 +201,21 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   auto RuntimeFailure = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;
     Result.Diagnostic = llvm::toString(std::move(E));
+  };
+  bool NeedSchedule = false;
+  uint64_t QuantumRemaining = Options.InstructionQuantum;
+  auto FinishThread = [&](uint64_t Value, uint32_t ExitStatus = 0) {
+    if (!Threads.callbacks().empty()) {
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic = diagnostic::ThreadCallbackExit;
+      return false;
+    }
+    if (auto E = Threads.finish(Value, ExitStatus)) {
+      RuntimeFailure(std::move(E));
+      return false;
+    }
+    NeedSchedule = true;
+    return true;
   };
   auto StartCallback = [&](const GuestCallback &Callback) -> llvm::Error {
     // The suspended import's live stack remains in place. Both supported
@@ -197,7 +232,32 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     return llvm::Error::success();
   };
   while (true) {
-    auto Exit = (*Session)->run(Result.PC, Options.InstructionQuantum);
+    if (Threads.enabled() && (NeedSchedule || !QuantumRemaining)) {
+      auto Ready = Threads.schedule();
+      if (!Ready) {
+        RuntimeFailure(Ready.takeError());
+        break;
+      }
+      if (!*Ready)
+        break;
+      auto PC = CPU.readRegister(CPURegister::AArch64PC);
+      if (!PC) {
+        RuntimeFailure(PC.takeError());
+        break;
+      }
+      Result.PC = (*PC)[0];
+      NeedSchedule = false;
+      QuantumRemaining = Options.InstructionQuantum;
+    }
+    TraceThreadID = Threads.id();
+    auto &Callbacks = Threads.callbacks();
+    const uint64_t Before = Resources->instructions();
+    auto Exit = (*Session)->run(Result.PC, Threads.enabled()
+                                               ? QuantumRemaining
+                                               : Options.InstructionQuantum);
+    if (Threads.enabled())
+      QuantumRemaining -=
+          std::min(QuantumRemaining, Resources->instructions() - Before);
     if (!Exit) {
       RuntimeFailure(Exit.takeError());
       break;
@@ -209,8 +269,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       break;
     }
     Result.PC = (*PC)[0];
-    if (Exit->Kind == SessionExitKind::Quantum)
+    if (Exit->Kind == SessionExitKind::Quantum) {
+      NeedSchedule = true;
       continue;
+    }
     if (Exit->Kind == SessionExitKind::InstructionLimit) {
       Result.Stop = ProcessStopReason::InstructionLimit;
       Result.Diagnostic = runtime::InstructionLimit;
@@ -282,7 +344,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         Callbacks.pop_back();
         continue;
       }
-      if (!MainCall) {
+      if (Threads.isEntry() && !MainCall) {
         if (auto E = Prepare()) {
           RuntimeFailure(std::move(E));
           break;
@@ -294,13 +356,37 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         RuntimeFailure(Value.takeError());
         break;
       }
-      Result.ReturnValue = (*Value)[0];
-      Result.Stop = ProcessStopReason::Returned;
-      break;
+      if (Threads.enabled()) {
+        auto SP = CPU.readRegister(Calls->info().StackPointer);
+        if (!SP) {
+          RuntimeFailure(SP.takeError());
+          break;
+        }
+        if ((*SP)[0] != Threads.returnSP()) {
+          RuntimeFailure(failure(diagnostic::ThreadStack));
+          break;
+        }
+      }
+      const bool Entry = Threads.isEntry();
+      if (Entry)
+        Result.ReturnValue = (*Value)[0];
+      if (!Threads.enabled() || (Entry && !Native.DrainThreads)) {
+        if (auto E = Threads.finish((*Value)[0])) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        Result.Stop = ProcessStopReason::Returned;
+        break;
+      }
+      if (!FinishThread((*Value)[0]))
+        break;
+      continue;
     }
     auto Import = Linked->Imports.find(Request->PC);
     if (Request->Immediate == ModelTrap && Import != Linked->Imports.end()) {
       NativeCallEvent Event{Request->PC, Import->second};
+      if (Threads.enabled())
+        Event.ThreadID = Threads.id();
       auto Provider = Linked->DynamicProviders.find(Request->PC);
       if (Provider != Linked->DynamicProviders.end())
         Event.Library = Provider->second;
@@ -324,8 +410,23 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
           Result.Stop = ProcessStopReason::Timeout;
         break;
       }
+      if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
+        if (!FinishThread(0, *Threads.kernel()->Exit))
+          break;
+        continue;
+      }
       if (!*Value)
         break;
+      if (std::holds_alternative<GuestThreadWait>(**Value)) {
+        Threads.suspend(*Request, Result.NativeCalls.size() - 1);
+        NeedSchedule = true;
+        continue;
+      }
+      if (auto *Ended = std::get_if<GuestThreadExit>(&**Value)) {
+        if (!FinishThread(Ended->Value))
+          break;
+        continue;
+      }
       if (auto *Callback = std::get_if<GuestCallback>(&**Value)) {
         auto Link = CPU.readRegister(Calls->info().Link);
         if (!Link) {
@@ -370,12 +471,19 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         RuntimeFailure(Event.takeError());
         break;
       }
+      if (Threads.enabled())
+        Event->ThreadID = Threads.id();
       Result.Services.push_back(*Event);
-      auto Value = linux_model::handleService(CPU, Memory, *Event, Layout,
-                                              Options, Result);
+      auto Value = linux_model::handleService(
+          CPU, Memory, *Event, Layout, Options, Result, Threads.kernel());
       if (!Value) {
         RuntimeFailure(Value.takeError());
         break;
+      }
+      if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
+        if (!FinishThread(0, *Threads.kernel()->Exit))
+          break;
+        continue;
       }
       if (!*Value)
         break;
@@ -389,6 +497,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   }
   Result.Instructions = Resources->instructions();
   Result.Events = Resources->events();
+  Threads.report();
   // A terminal CPU fault can prohibit model memory access. Preserve that
   // original failure; memory snapshots are produced only at resumable stops.
   if (Result.Stop != ProcessStopReason::CPUFailure &&

@@ -86,18 +86,23 @@ public:
     auto It = Starts.find(Addr);
     return It != Starts.end() && It->second == 1;
   }
+
+  /// True when a statement starts at \p Addr.
+  bool starts(va_t Addr) const { return Starts.count(Addr) != 0; }
 };
 } // namespace
 
 /// Remove each goto whose target is the statement right after it in the same
-/// list. \p Entered holds every address a jump or handler reaches. With
-/// \p Late, statements may have moved, so the target must be the next
-/// statement's own address and no other statement may start there. The early
-/// form still runs in address order and also accepts padding between the
-/// jump and the next statement.
+/// list. \p Entered holds every address a jump or handler reaches, and
+/// \p Starts the statements of the whole function. With \p Late, statements
+/// may have moved, so the target must be the next statement's own address and
+/// no other statement may start there. The early form also accepts padding
+/// between the jump and the next statement: a target short of the next
+/// statement where no statement starts, since blocks need not follow their
+/// addresses.
 static bool removeTrivialGotos(std::vector<HighStmt> &Stmts,
                                const std::set<va_t> &Entered,
-                               const LabelStarts *Late) {
+                               const LabelStarts &Starts, bool Late) {
   bool Changed = false;
   for (int I = static_cast<int>(Stmts.size()) - 2; I >= 0; --I) {
     if (Stmts[I].Kind != StmtKind::Goto)
@@ -122,10 +127,10 @@ static bool removeTrivialGotos(std::vector<HighStmt> &Stmts,
     // goto, such as the `jmp $` self-loop, is a real backward jump.
     const va_t Own = Stmts[I].Addr;
     const bool OwnKnown = Own != 0 && Own != InvalidVA;
-    if (Late ? Target != NextAddr || !Late->unique(Target)
+    if (Late ? Target != NextAddr || !Starts.unique(Target)
              : !(Target == NextAddr ||
                  (OwnKnown && Target > Own && Target < NextAddr &&
-                  NextAddr - Target <= 16)))
+                  NextAddr - Target <= 16 && !Starts.starts(Target))))
       continue;
     // A goto that is itself a branch target (a lone `jmp` block) keeps its
     // address as an empty anchor, so gotos to it still have a label.
@@ -140,20 +145,20 @@ static bool removeTrivialGotos(std::vector<HighStmt> &Stmts,
     Changed = true;
   }
   for (auto &S : Stmts) {
-    Changed |= removeTrivialGotos(S.Body, Entered, Late);
-    Changed |= removeTrivialGotos(S.ElseBody, Entered, Late);
+    Changed |= removeTrivialGotos(S.Body, Entered, Starts, Late);
+    Changed |= removeTrivialGotos(S.ElseBody, Entered, Starts, Late);
     for (auto &C : S.Cases)
-      Changed |= removeTrivialGotos(C.Body, Entered, Late);
-    Changed |= removeTrivialGotos(S.DefaultBody, Entered, Late);
+      Changed |= removeTrivialGotos(C.Body, Entered, Starts, Late);
+    Changed |= removeTrivialGotos(S.DefaultBody, Entered, Starts, Late);
     for (auto &ClauseBody : S.EHClauseBodies)
-      Changed |= removeTrivialGotos(ClauseBody, Entered, Late);
+      Changed |= removeTrivialGotos(ClauseBody, Entered, Starts, Late);
   }
   return Changed;
 }
 
 bool dropJumpsToTheNextStatement(std::vector<HighStmt> &Body) {
   const LabelStarts Labels(Body);
-  return removeTrivialGotos(Body, Labels.entered(), &Labels);
+  return removeTrivialGotos(Body, Labels.entered(), Labels, /*Late=*/true);
 }
 
 //===----------------------------------------------------------------------===//
@@ -3468,7 +3473,8 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
   structureIfElse(Func, IfElseMaxPasses, &Med);
   auto TPost = Now();
 
-  removeTrivialGotos(Func.Body, gotoTargets(Func.Body), nullptr);
+  removeTrivialGotos(Func.Body, gotoTargets(Func.Body), LabelStarts(Func.Body),
+                     /*Late=*/false);
   simplifyNestedGotos(Func.Body);
 
   mergeConsecutiveCondBlocks(Func.Body);
