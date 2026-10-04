@@ -212,6 +212,26 @@ body:
 exit: ret i32 %v
 })";
 
+constexpr char WideInternal[] = R"(
+define i32 @f(i32 noundef %x, i8 noundef %n) {
+entry:
+ %bound = and i8 %n, 3
+ %wide = zext i32 %x to i64
+ br label %head
+head:
+ %v = phi i64 [%wide, %entry], [%sum, %body]
+ %i = phi i8 [0, %entry], [%next, %body]
+ %more = icmp ult i8 %i, %bound
+ br i1 %more, label %body, label %exit
+body:
+ %sum = add i64 %v, 4294967337
+ %next = add nuw i8 %i, 1
+ br label %head
+exit:
+ %result = trunc i64 %v to i32
+ ret i32 %result
+})";
+
 void replace(std::string &IR, llvm::StringRef From, llvm::StringRef To) {
   auto At = IR.find(From.str());
   ASSERT_NE(At, std::string::npos) << From.str();
@@ -744,6 +764,102 @@ TEST(LLVMScalarLoopRecovery, SeedSearchBudgetsRemainAtomic) {
   EXPECT_FALSE(Short.Module);
 }
 
+TEST(LLVMScalarLoopRecovery,
+     InternalWidthPreservesSignatureAndNonzeroLiterals) {
+  for (const char *Triple : {"x86_64-linux-gnu", "aarch64-linux-gnu",
+                             "aarch64_be-linux-gnu", "armv7-linux-gnueabihf"}) {
+    SCOPED_TRACE(Triple);
+    Source Input(std::string("target triple = \"") + Triple + "\"\n" +
+                 WideInternal);
+    auto R = recover(Input);
+    ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+    auto Output = text(*R.Module);
+    EXPECT_EQ(Output.find("i64"), std::string::npos);
+    EXPECT_NE(Output.find("add i32 %v, 41"), std::string::npos);
+    auto *F = R.Module->getFunction("f");
+    EXPECT_EQ(F->getFunctionType(), Input.function().getFunctionType());
+    EXPECT_EQ(checkLLVMScalarEquivalence(Input.function(), *F).Status,
+              Status::Proved);
+  }
+}
+
+TEST(LLVMScalarLoopRecovery, InternalWidthCannotDiscardHighBitsOrDefinedness) {
+  for (bool High : {false, true}) {
+    SCOPED_TRACE(High);
+    std::string IR = WideInternal;
+    if (High)
+      replace(IR, "%result = trunc i64 %v to i32",
+              "%high = lshr i64 %v, 32\n %result = trunc i64 %high to i32");
+    else {
+      // Keep source definedness exhaustively provable while narrowing makes
+      // an originally safe update overflow for some byte inputs.
+      replace(IR, "%sum = add i64 %v, 4294967337", "%sum = add nuw i64 %v, 41");
+      for (auto [From, To] :
+           {std::pair{"i32", "i8"}, std::pair{"i64", "i16"}}) {
+        size_t At = 0;
+        while ((At = IR.find(From, At)) != std::string::npos) {
+          IR.replace(At, std::strlen(From), To);
+          At += std::strlen(To);
+        }
+      }
+    }
+    Source Input(IR);
+    auto R = recover(Input);
+    EXPECT_EQ(R.Status, RecoveryStatus::Unchanged) << R.Diagnostic;
+    EXPECT_GT(R.Candidates, 0U);
+    EXPECT_FALSE(R.Module);
+  }
+}
+
+TEST(LLVMScalarLoopRecovery, InternalWidthPreservesSignedOrdering) {
+  std::string IR = WideInternal;
+  replace(IR, "%wide = zext i32 %x to i64",
+          "%wide = zext i32 %x to i64\n"
+          " %small = icmp slt i64 %wide, 2147483663");
+  replace(IR, "ret i32 %result",
+          "%chosen = select i1 %small, i32 %result, i32 %x\n"
+          " ret i32 %chosen");
+  Source Input(IR);
+  auto R = recover(Input);
+  EXPECT_EQ(R.Status, RecoveryStatus::Unchanged) << R.Diagnostic;
+  EXPECT_GT(R.Candidates, 0U);
+  EXPECT_FALSE(R.Module);
+}
+
+TEST(LLVMScalarLoopRecovery,
+     InternalWidthKeepsWiderInputsAndIntrinsicContracts) {
+  std::string IR = WideInternal;
+  replace(IR, "i8 noundef %n)", "i8 noundef %n, i64 noundef %unused)");
+  Source WideArgument(IR);
+  auto R = recover(WideArgument);
+  EXPECT_EQ(R.Status, RecoveryStatus::Unchanged);
+  EXPECT_FALSE(R.Module);
+  IR = WideInternal;
+  replace(IR, "%sum = add i64 %v, 4294967337",
+          "%sum = call i64 @llvm.fshl.i64(i64 %v, i64 %v, i64 1)");
+  IR += "\ndeclare i64 @llvm.fshl.i64(i64, i64, i64)\n";
+  Source WideIntrinsic(IR);
+  R = recover(WideIntrinsic);
+  EXPECT_EQ(R.Status, RecoveryStatus::Unchanged);
+  EXPECT_FALSE(R.Module);
+}
+
+TEST(LLVMScalarLoopRecovery, InternalWidthBudgetsRefusePartialCandidates) {
+  Source Input(WideInternal);
+  auto Base = recover(Input);
+  ASSERT_EQ(Base.Status, RecoveryStatus::Recovered) << Base.Diagnostic;
+  for (bool Proof : {false, true}) {
+    LLVMScalarLoopRecoveryLimits L;
+    auto &Budget = Proof ? L.MaxProofWork : L.MaxConstructionWork;
+    Budget = Proof ? Base.ProofWork : Base.ConstructionWork;
+    EXPECT_EQ(recover(Input, L).Status, RecoveryStatus::Recovered) << Proof;
+    --Budget;
+    auto Short = recover(Input, L);
+    EXPECT_EQ(Short.Status, RecoveryStatus::BudgetExceeded) << Proof;
+    EXPECT_FALSE(Short.Module);
+  }
+}
+
 TEST(LLVMScalarLoopRecovery, RefusesMemoryAndUndefinedInputContracts) {
   for (const char *IR :
        {"define i8 @f(i8 %x) { ret i8 %x }",
@@ -918,7 +1034,8 @@ TEST_F(LLVMScalarLoopCompiled, OriginalAndRecoveredMatchIndependentOracles) {
       {NarrowZero.c_str(), "uint32_t", "(x + 46u * (n & 3u)) ^ 1u"},
       {LateUnit, "uint32_t",
        "x + 7u * (n & 7u) + 19u * (n & 7u) * ((n & 7u) - 1u) / 2u"},
-      {EntrySeed, "uint32_t", "x + (x & 255u) * (n & 3u)"}};
+      {EntrySeed, "uint32_t", "x + (x & 255u) * (n & 3u)"},
+      {WideInternal, "uint32_t", "x + 41u * (n & 3u)"}};
   unsigned Number = 0;
   for (auto Case : Cases) {
     SCOPED_TRACE(Number++);

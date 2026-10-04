@@ -58,7 +58,8 @@ public:
       : Original(F), Limits(L) {}
   bool charge(uint64_t Amount = 1);
   bool stopped() const { return Exhausted; }
-  bool clone(llvm::Function &F, Candidate &C, bool Probe = false);
+  bool clone(llvm::Function &F, Candidate &C, bool Probe = false,
+             unsigned MaxInternalWidth = 0);
   // Rejection only; success here cannot authorize publication.
   bool screen(Candidate &C, Cost *CandidateCost = nullptr);
   bool accept(Candidate &C);
@@ -79,6 +80,7 @@ bool rotate(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
 bool affine(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
 bool seeds(Search &S, llvm::Function &F, llvm::DominatorTree &DT,
            llvm::LoopInfo &LI);
+bool widths(Search &S, llvm::Function &F, llvm::LoopInfo &LI);
 
 struct Counter {
   llvm::PHINode *Phi = nullptr;
