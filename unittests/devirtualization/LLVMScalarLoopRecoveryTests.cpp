@@ -144,6 +144,73 @@ exit:
  ret i32 %r
 })";
 
+// Independent scalar probes. The byte last index wraps on the skipped path;
+// its zero extension plus one is not the original zero-trip boundary.
+constexpr char WidenedLast[] = R"(
+define i32 @f(i32 noundef %x, i8 noundef %n) {
+entry:
+ %bound = and i8 %n, 7
+ %empty = icmp eq i8 0, %bound
+ br i1 %empty, label %exit, label %pre
+pre:
+ %last.byte = add i8 %bound, -1
+ %last = zext i8 %last.byte to i16
+ br label %head
+head:
+ %i = phi i16 [0, %pre], [%next, %latch]
+ %v = phi i32 [%x, %pre], [%sum, %latch]
+ br label %body
+body:
+ %sum = add i32 %v, 37
+ br label %latch
+latch:
+ %next = add nuw i16 %i, 1
+ %done = icmp eq i16 %i, %last
+ br i1 %done, label %exit, label %head
+exit:
+ %r = phi i32 [%x, %entry], [%sum, %latch]
+ ret i32 %r
+})";
+
+constexpr char LateUnit[] = R"(
+define i32 @f(i32 noundef %x, i8 noundef %n) {
+entry:
+ %bits = and i8 %n, 7
+ %bound = zext i8 %bits to i32
+ br label %head
+head:
+ %scaled = phi i32 [7, %entry], [%snext, %body]
+ %i = phi i32 [0, %entry], [%next, %body]
+ %v = phi i32 [%x, %entry], [%sum, %body]
+ %go = icmp ult i32 %i, %bound
+ br i1 %go, label %body, label %exit
+body:
+ %sum = add i32 %v, %scaled
+ %snext = add i32 %scaled, 19
+ %next = add nuw i32 %i, 1
+ br label %head
+exit: ret i32 %v
+})";
+
+void replace(std::string &IR, llvm::StringRef From, llvm::StringRef To) {
+  auto At = IR.find(From.str());
+  ASSERT_NE(At, std::string::npos) << From.str();
+  IR.replace(At, From.size(), To.str());
+}
+
+std::string narrowZeroRegion() {
+  std::string IR = ZeroRegion;
+  replace(IR, "%empty = icmp eq i8 %bound, 0",
+          "%last.byte = add i8 %bound, -1\n"
+          " %last = zext i8 %last.byte to i16\n"
+          " %empty = icmp eq i8 %bound, 0");
+  replace(IR, "%i = phi i8", "%i = phi i16");
+  replace(IR, "%next = add nuw i8 %i, 1", "%next = add nuw i16 %i, 1");
+  replace(IR, "%done = icmp eq i8 %next, %bound",
+          "%done = icmp eq i16 %i, %last");
+  return IR;
+}
+
 std::string text(const llvm::Module &M) {
   std::string S;
   llvm::raw_string_ostream OS(S);
@@ -285,6 +352,167 @@ TEST(LLVMScalarLoopRecovery, DifferentZeroTripObservationIsRetained) {
     EXPECT_NE(text(*R.Module).find("zero:"), std::string::npos);
   else
     EXPECT_EQ(R.Status, RecoveryStatus::Unchanged);
+}
+
+TEST(LLVMScalarLoopRecovery, WidenedLastIndexUsesOriginalGuardBoundary) {
+  for (bool Inverted : {false, true}) {
+    std::string IR = WidenedLast;
+    if (Inverted) {
+      replace(IR, "icmp eq i8 0, %bound", "icmp ne i8 %bound, 0");
+      replace(IR, "br i1 %empty, label %exit, label %pre",
+              "br i1 %empty, label %pre, label %exit");
+    }
+    Source Input(IR);
+    auto R = recover(Input);
+    ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+    // The three inferred last+1 candidates fail on the zero-trip partition.
+    EXPECT_GT(R.Candidates, 3U);
+    auto Result = text(*R.Module);
+    EXPECT_NE(Result.find("zext i8 %bound to i16"), std::string::npos);
+    EXPECT_NE(Result.find("icmp ult i16 %i"), std::string::npos);
+    EXPECT_EQ(Result.find("%last.byte ="), std::string::npos);
+  }
+}
+
+TEST(LLVMScalarLoopRecovery, DominatingGuardSurvivesNarrowLastIndex) {
+  for (bool Inverted : {false, true}) {
+    auto IR = narrowZeroRegion();
+    if (Inverted) {
+      replace(IR, "icmp eq i8 %bound, 0", "icmp ne i8 %bound, 0");
+      replace(IR, "br i1 %empty, label %zero, label %pre",
+              "br i1 %empty, label %pre, label %zero");
+    }
+    Source Input(IR);
+    auto R = recover(Input);
+    ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+    EXPECT_EQ(text(*R.Module).find("zero:"), std::string::npos);
+    EXPECT_EQ(text(*R.Module).find("gate:"), std::string::npos);
+  }
+}
+
+TEST(LLVMScalarLoopRecovery, GuardBoundaryIsAProposalNotAnAssumption) {
+  std::string IR = WidenedLast;
+  replace(IR, "%last.byte = add i8 %bound, -1",
+          "%last.byte = add i8 %bound, 0");
+  Source Input(IR);
+  auto R = recover(Input);
+  EXPECT_EQ(R.Status, RecoveryStatus::Unchanged);
+  EXPECT_GE(R.Candidates, 6U);
+  EXPECT_FALSE(R.Module);
+}
+
+TEST(LLVMScalarLoopRecovery, SignedLastIndexRequiresProvedOrdering) {
+  std::string IR = WidenedLast;
+  replace(IR, "%bound = and i8 %n, 7",
+          "%bits = and i8 %n, 3\n %bound = add i8 %bits, -128");
+  replace(IR, "icmp eq i8 0, %bound", "icmp eq i8 -128, %bound");
+  replace(IR, "zext i8 %last.byte", "sext i8 %last.byte");
+  replace(IR, "phi i16 [0, %pre]", "phi i16 [-128, %pre]");
+  replace(IR, "add nuw i16 %i, 1", "add i16 %i, 1");
+  Source Input(IR);
+  auto R = recover(Input);
+  ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+  // The unsigned order skips the wrapped boundary on the empty path and
+  // still admits all negative nonempty limits. Equality would execute extra
+  // iterations, and blindly zero-extending the original guard is different.
+  EXPECT_NE(text(*R.Module).find("icmp ult i16 %i"), std::string::npos);
+  EXPECT_NE(text(*R.Module).find("sext i8 %last.byte to i16"),
+            std::string::npos);
+}
+
+TEST(LLVMScalarLoopRecovery, GuardRelocationCannotEraseHiddenDataOrPoison) {
+  for (bool Poison : {false, true}) {
+    auto IR = narrowZeroRegion();
+    if (Poison) {
+      // This update was only defined on the original nonempty path.
+      replace(IR, "pre: br label %outer",
+              "pre:\n %required = sub nuw i8 %bound, 1\n br label %outer");
+      replace(IR, "%sum = add i32 %iv, 23",
+              "%amount = zext i8 %required to i32\n"
+              " %sum = add i32 %iv, %amount");
+    } else {
+      replace(IR, "%zx = xor i32 %zv, %zw",
+              "%zx = xor i32 %zv, %zw\n"
+              " %high = lshr i32 %x, 16\n"
+              " %hidden = add i32 %zx, %high");
+      replace(IR, "[%zx, %zero]", "[%hidden, %zero]");
+    }
+    Source Input(IR);
+    auto R = recover(Input);
+    if (R.Module)
+      EXPECT_NE(text(*R.Module).find("zero:"), std::string::npos);
+    else
+      EXPECT_EQ(R.Status, RecoveryStatus::Unchanged);
+  }
+}
+
+TEST(LLVMScalarLoopRecovery, UnitStepBaseDoesNotDependOnPhiOrder) {
+  for (bool Reordered : {false, true}) {
+    std::string IR = LateUnit;
+    if (Reordered)
+      replace(IR,
+              " %scaled = phi i32 [7, %entry], [%snext, %body]\n"
+              " %i = phi i32 [0, %entry], [%next, %body]",
+              " %i = phi i32 [0, %entry], [%next, %body]\n"
+              " %scaled = phi i32 [7, %entry], [%snext, %body]");
+    Source Input(IR);
+    auto R = recover(Input);
+    ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+    auto Result = text(*R.Module);
+    EXPECT_EQ(Result.find("%scaled = phi"), std::string::npos);
+    EXPECT_NE(Result.find("%i = phi"), std::string::npos);
+    EXPECT_NE(Result.find("mul i32 %i, 19"), std::string::npos);
+  }
+}
+
+TEST(LLVMScalarLoopRecovery, DescendingUnitStepAlsoProvidesAnAffineBase) {
+  std::string IR = LateUnit;
+  replace(IR, "%bound = zext i8 %bits to i32",
+          "%wide = zext i8 %bits to i32\n %bound = sub i32 6, %wide");
+  replace(IR, "phi i32 [0, %entry]", "phi i32 [6, %entry]");
+  replace(IR, "icmp ult i32 %i, %bound", "icmp ne i32 %i, %bound");
+  replace(IR, "add nuw i32 %i, 1", "sub i32 %i, 1");
+  Source Input(IR);
+  auto R = recover(Input);
+  ASSERT_EQ(R.Status, RecoveryStatus::Recovered) << R.Diagnostic;
+  auto Result = text(*R.Module);
+  EXPECT_EQ(Result.find("%scaled = phi"), std::string::npos);
+  EXPECT_NE(Result.find("mul i32 %i, -19"), std::string::npos);
+}
+
+TEST(LLVMScalarLoopRecovery, LateUnitDoesNotAuthorizePoisonousSourceUpdate) {
+  std::string IR = LateUnit;
+  replace(IR, "add i32 %scaled, 19", "add nuw i32 %scaled, 2147483651");
+  Source Input(IR);
+  auto R = recover(Input);
+  EXPECT_EQ(R.Status, RecoveryStatus::Unsupported);
+  EXPECT_EQ(R.Candidates, 0U);
+  EXPECT_FALSE(R.Module);
+}
+
+TEST(LLVMScalarLoopRecovery, GuardAndUnitSearchKeepCumulativeBudgets) {
+  for (auto IR : {WidenedLast, LateUnit}) {
+    Source Input(IR);
+    auto Base = recover(Input);
+    ASSERT_EQ(Base.Status, RecoveryStatus::Recovered);
+    for (bool Proof : {false, true}) {
+      LLVMScalarLoopRecoveryLimits L;
+      auto &Budget = Proof ? L.MaxProofWork : L.MaxConstructionWork;
+      Budget = Proof ? Base.ProofWork : Base.ConstructionWork;
+      EXPECT_EQ(recover(Input, L).Status, RecoveryStatus::Recovered);
+      --Budget;
+      auto Short = recover(Input, L);
+      EXPECT_NE(Short.Status, RecoveryStatus::Recovered);
+      EXPECT_FALSE(Short.Module);
+    }
+  }
+  Source Input(WidenedLast);
+  LLVMScalarLoopRecoveryLimits L;
+  L.MaxCandidates = 3;
+  auto R = recover(Input, L);
+  EXPECT_EQ(R.Status, RecoveryStatus::BudgetExceeded);
+  EXPECT_EQ(R.Candidates, 3U);
+  EXPECT_FALSE(R.Module);
 }
 
 TEST(LLVMScalarLoopRecovery, RefusesMemoryAndUndefinedInputContracts) {
@@ -450,12 +678,17 @@ TEST_F(LLVMScalarLoopCompiled, OriginalAndRecoveredMatchIndependentOracles) {
     const char *Type;
     const char *Oracle;
   };
+  auto NarrowZero = narrowZeroRegion();
   const Case Cases[] = {
       {Header, "uint32_t", "x + 9u * (n & 3u)"},
       {Carriers, "uint16_t", "x + 12u * ((n & 3u) + 1u)"},
       {ZeroRegion, "uint32_t", "(x + 46u * (n & 3u)) ^ 1u"},
       {Parallel, "uint32_t",
-       "x + 4u * (n & 3u) + 11u * (n & 3u) * ((n & 3u) - 1u) / 2u"}};
+       "x + 4u * (n & 3u) + 11u * (n & 3u) * ((n & 3u) - 1u) / 2u"},
+      {WidenedLast, "uint32_t", "x + 37u * (n & 7u)"},
+      {NarrowZero.c_str(), "uint32_t", "(x + 46u * (n & 3u)) ^ 1u"},
+      {LateUnit, "uint32_t",
+       "x + 7u * (n & 7u) + 19u * (n & 7u) * ((n & 7u) - 1u) / 2u"}};
   unsigned Number = 0;
   for (auto Case : Cases) {
     SCOPED_TRACE(Number++);
