@@ -48,7 +48,10 @@ struct ByteMemoryForwardingResult {
 
 /// Reconstruct complete scalar loads from the last writer of each byte in the
 /// same basic block. Only fixed byte allocas and constant, in-object GEPs are
-/// accepted. Calls, unknown writes and ordered memory discard the facts.
+/// accepted. Unknown calls, unknown writes and ordered memory discard facts.
+/// Pure, normally returning intrinsics preserve the facts when they have no
+/// memory effects, operand bundles or convergent contract. Their evaluations
+/// remain in place; ordinary calls are still barriers even with memory(none).
 ///
 /// With AllowStoreSnapshots, a potentially undefined value is frozen once at
 /// its original store; the store and every forwarded fragment share that
