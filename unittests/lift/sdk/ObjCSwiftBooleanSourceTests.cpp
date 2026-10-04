@@ -291,6 +291,49 @@ TEST(ObjCSwiftBooleanSources, NativePairReturnRechecksBothCarriers) {
       objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
 }
 
+TEST(ObjCSwiftBooleanSources, NarrowNativeReturnRepeatsCompletePublication) {
+  for (const unsigned Width : {1U, 2U, 4U}) {
+    SCOPED_TRACE(Width);
+    BooleanFixture F(true, false, false, false, false, false, false, true);
+    auto Entry = *provisionalNativeSwiftBooleanEntry(F.Image, 0x1000);
+    Entry.ReturnType = NdType::makeInt(Width, true);
+    Entry.ReturnLocation.ValueBytes = Width;
+    std::string Error;
+    ASSERT_TRUE(validateSourceABI(Entry, Error)) << Error;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {0x1000};
+    Options.SourceTypeHints.emplace(0x1000, Entry);
+    F.Result = Pipeline().run(F.Image, F.Context, Options);
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    const auto E = F.expression();
+    ASSERT_TRUE(E);
+    EXPECT_EQ(F.high().SourceTypeHint->ReturnType->Size, Width);
+    EXPECT_TRUE(
+        objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
+
+    auto Forged = *F.high().SourceTypeHint;
+    Forged.ReturnType = NdType::makeInt(8, true);
+    Forged.ReturnLocation.ValueBytes = 8;
+    F.high().SourceTypeHint = Forged;
+    EXPECT_FALSE(
+        objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
+    F.high().SourceTypeHint = Entry;
+    // The entry declaration does not excuse an observable undefined bit in
+    // the current LowIR. Publication must repeat the result-use proof.
+    for (auto &Low : F.Result.LowFuncs)
+      for (auto &Block : Low.Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::INT_AND)
+            for (auto &Input : Op.Inputs)
+              if (Input.isConst() && Input.Offset == 1)
+                Input.Offset = 3;
+    F.word(0x1020, 0x12000400); // AND W0, W0, #3.
+    EXPECT_FALSE(
+        objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high()));
+  }
+}
+
 TEST(ObjCSwiftBooleanSources,
      ObjectEqualityRechecksContextProviderAndConsumer) {
   BooleanFixture F(true, false, false, false, false, true);
