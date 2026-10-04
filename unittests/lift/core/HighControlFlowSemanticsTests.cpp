@@ -5760,6 +5760,44 @@ TEST(HighControlFlowSemantics, JumpOntoARepeatedAddressIsNotAFallthrough) {
   EXPECT_TRUE(F.Body[1].Body.empty());
 }
 
+TEST(HighControlFlowSemantics, HandlerReceivesNoBlockFromOutside) {
+  // __try { if (x) goto M; v = 1; } __except (1) { goto L; }  return v;
+  // L: if (x) { M: v = 3; }  v = v + 4;  return v;
+  // L is entered once, from the handler, but its block carries M, which the
+  // protected body enters: moved into the handler, that jump would enter the
+  // __except block, which C forbids.
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.Addr = 0x1000;
+  Try.EHRange = {0x1000, 0x1008};
+  Try.Body = {conditional(0x1000, 0x1028), assign(0x1004, 1, 1)};
+  HighEHClause Clause;
+  Clause.Kind = HighEHClauseKind::SEHExcept;
+  Clause.HandlerVA = 0x1010;
+  Try.EHClauses = {Clause};
+  Try.EHClauseBodies = {{jump(0x1010, 0x1020)}};
+  HighStmt Nested;
+  Nested.Kind = StmtKind::If;
+  Nested.Addr = 0x1020;
+  Nested.Cond = local(0);
+  Nested.Body = {assign(0x1028, 1, 3)};
+  auto Plus4 = assign(0x1030, 1, 0);
+  Plus4.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(4, 8));
+  HighFunc F;
+  F.Body = {Try, result(0x1014, local(1)), Nested, Plus4,
+            result(0x1034, local(1))};
+  reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+  std::set<va_t> InHandler;
+  std::size_t JumpsIn = 0;
+  for (const auto &Handler : F.Body.front().EHClauseBodies)
+    walkStmts(Handler, [&](const HighStmt &S) { InHandler.insert(S.Addr); });
+  walkStmts(F.Body.front().Body, [&](const HighStmt &S) {
+    JumpsIn += S.Kind == StmtKind::Goto && InHandler.count(S.GotoTarget);
+  });
+  EXPECT_EQ(JumpsIn, 0u);
+}
+
 TEST(HighControlFlowSemantics, ElseJumpPastAStatementWithoutAddressStays) {
   // if (x & 1) { v = 1; }
   // else {

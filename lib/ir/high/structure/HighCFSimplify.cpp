@@ -3071,12 +3071,14 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
 
   // T1g: a block entered only by one goto anywhere in the tree, placed after
   // a terminator and ending in one, is spliced in place of that goto.  The
-  // original statements become Nop.  Blocks never cross a __try boundary and
-  // carry no break/continue whose target the move could change.
+  // original statements become Nop.  Blocks never cross the boundary of a
+  // try body or of one of its handlers, which only the exception dispatcher
+  // enters, and carry no break/continue whose target the move could change.
   struct Site {
     std::vector<HighStmt> *List = nullptr;
     size_t Index = 0;
-    const HighStmt *Try = nullptr;
+    /// The innermost try body or handler holding the site.
+    const void *Try = nullptr;
     // Position in a pre-order walk of the tree: program order.
     size_t Order = 0;
     // Every (list, index) enclosing the site, outermost first.
@@ -3141,8 +3143,8 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     // only when exactly one statement starts it.
     std::map<va_t, unsigned> Starts;
     size_t Order = 0;
-    std::function<void(std::vector<HighStmt> &, const HighStmt *)> Collect =
-        [&](std::vector<HighStmt> &L, const HighStmt *Try) {
+    std::function<void(std::vector<HighStmt> &, const void *)> Collect =
+        [&](std::vector<HighStmt> &L, const void *Try) {
           for (size_t I = 0; I < L.size(); ++I) {
             HighStmt &S = L[I];
             ++Order;
@@ -3154,14 +3156,16 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
             if (S.Kind == StmtKind::Goto && usesOf(S.GotoTarget) == 1)
               Gotos.push_back({Site{&L, I, Try, Order, Chain}, S.GotoTarget});
             Chain.push_back({&L, I});
-            const HighStmt *Inner = S.Kind == StmtKind::SEHTry ? &S : Try;
-            Collect(S.Body, Inner);
+            const bool IsTry = S.Kind == StmtKind::SEHTry ||
+                               S.Kind == StmtKind::CxxTry ||
+                               S.Kind == StmtKind::ItaniumTry;
+            Collect(S.Body, IsTry ? static_cast<const void *>(&S) : Try);
             Collect(S.ElseBody, Try);
             for (auto &C : S.Cases)
               Collect(C.Body, Try);
             Collect(S.DefaultBody, Try);
             for (auto &ClauseBody : S.EHClauseBodies)
-              Collect(ClauseBody, Try);
+              Collect(ClauseBody, &ClauseBody);
             Chain.pop_back();
           }
         };
