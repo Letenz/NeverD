@@ -872,8 +872,9 @@ TEST_F(HvfIntelProbe, FiniteDeadline) {
               return diagnostic::error("finite witness budget exhausted");
             const auto End = MachStart + uint64_t(Remaining) * Timebase.denom /
                                              Timebase.numer;
-            llvm::outs() << "INTEL_PROBE witness_budget mach_start=" << MachStart
-                         << " mach_end=" << End << " remaining_ns=" << Remaining
+            llvm::outs() << "INTEL_PROBE witness_budget mach_start="
+                         << MachStart << " mach_end=" << End
+                         << " remaining_ns=" << Remaining
                          << " timebase_numer=" << Timebase.numer
                          << " timebase_denom=" << Timebase.denom
                          << " max_calls=4096\n";
@@ -1001,9 +1002,8 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
       // the admitted owner while preserving the outer cooperative deadline.
       auto NativeControl = Control;
       if (Kind == Deadline)
-        NativeControl.Deadline =
-            std::min(Control.Deadline,
-                     Clock::now() + std::chrono::milliseconds(50));
+        NativeControl.Deadline = std::min(
+            Control.Deadline, Clock::now() + std::chrono::milliseconds(50));
       Phase = "native entry";
       EntryBudgetMicroseconds =
           std::chrono::duration_cast<std::chrono::microseconds>(
