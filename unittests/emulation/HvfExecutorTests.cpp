@@ -15,6 +15,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <future>
 #if defined(__x86_64__)
 #include <Hypervisor/hv_vmx.h>
@@ -535,33 +536,65 @@ TEST_F(HvfIntelProbe, FiniteDeadline) {
     llvm::outs().flush();
     return llvm::Error::success();
   };
-  ASSERT_EQ(llvm::toString(Binding.execute(
-                control(),
-                [&](auto &Native) -> llvm::Error {
-                  uint64_t Controls = 0;
-                  if (auto S = hv_vmx_vcpu_read_vmcs(
-                          Native.cpu(), VMCS_CTRL_CPU_BASED, &Controls))
-                    return hvf::error("probe controls", S);
-                  if (auto S = hv_vmx_vcpu_write_vmcs(
-                          Native.cpu(), VMCS_CTRL_CPU_BASED,
-                          Controls & ~uint64_t(CPU_BASED_MTF)))
-                    return hvf::error("probe disable MTF", S);
-                  if (auto S = hv_vmx_vcpu_write_vmcs(Native.cpu(),
-                                                      VMCS_GUEST_RIP, PC + 1))
-                    return hvf::error("probe fresh store PC", S);
-                  const auto Deadline = mach_absolute_time() + Slice;
-                  for (unsigned N = 0; N < 128; ++N) {
-                    if (auto E = Call(Native, "finite_loop", Deadline))
-                      return E;
-                    if (Reason != VMX_REASON_IRQ &&
-                        Reason != VMX_REASON_VMX_TIMER_EXPIRED)
-                      return diagnostic::error("unexpected finite loop exit");
-                    if (mach_absolute_time() >= Deadline)
-                      return llvm::Error::success();
-                  }
-                  return diagnostic::error("too many finite deadline exits");
-                })),
-            "");
+  const auto WitnessControl = control();
+  ASSERT_EQ(
+      llvm::toString(Binding.execute(
+          WitnessControl,
+          [&](auto &Native) -> llvm::Error {
+            uint64_t Controls = 0;
+            if (auto S = hv_vmx_vcpu_read_vmcs(Native.cpu(),
+                                               VMCS_CTRL_CPU_BASED, &Controls))
+              return hvf::error("probe controls", S);
+            if (auto S =
+                    hv_vmx_vcpu_write_vmcs(Native.cpu(), VMCS_CTRL_CPU_BASED,
+                                           Controls & ~uint64_t(CPU_BASED_MTF)))
+              return hvf::error("probe disable MTF", S);
+            if (auto S = hv_vmx_vcpu_write_vmcs(Native.cpu(), VMCS_GUEST_RIP,
+                                                PC + 1))
+              return hvf::error("probe fresh store PC", S);
+            // A finite slice can expire before any guest instruction
+            // executes. Preserve that observation and the same guest
+            // state; never renew the overall witness deadline.
+            const auto MachStart = mach_absolute_time();
+            const auto Remaining =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    WitnessControl.Deadline - Clock::now())
+                    .count();
+            if (Remaining <= 0)
+              return diagnostic::error("finite witness budget exhausted");
+            const auto End = MachStart + uint64_t(Remaining) * Timebase.denom /
+                                             Timebase.numer;
+            llvm::outs() << "INTEL_PROBE witness_budget mach_start=" << MachStart
+                         << " mach_end=" << End << " remaining_ns=" << Remaining
+                         << " timebase_numer=" << Timebase.numer
+                         << " timebase_denom=" << Timebase.denom
+                         << " max_calls=4096\n";
+            llvm::outs().flush();
+            auto Deadline = std::min(End, mach_absolute_time() + Slice);
+            for (unsigned N = 0; N < 4096; ++N) {
+              if (WitnessControl.interrupted())
+                return diagnostic::error("finite witness budget exhausted");
+              if (auto E = Call(Native, "finite_loop", Deadline))
+                return E;
+              if (Reason != VMX_REASON_IRQ &&
+                  Reason != VMX_REASON_VMX_TIMER_EXPIRED)
+                return diagnostic::error("unexpected finite loop exit");
+              const auto Nonce = State.reg(X64Register::AX);
+              if (AX != Nonce || !((RIP == PC + 1 && Witness->load() == 0) ||
+                                   (RIP == PC + 4 && Witness->load() == Nonce)))
+                return diagnostic::error("invalid finite guest witness");
+              if (WitnessControl.interrupted())
+                return diagnostic::error("finite witness budget exhausted");
+              if (Reason == VMX_REASON_VMX_TIMER_EXPIRED) {
+                if (Witness->load() == Nonce)
+                  return llvm::Error::success();
+                probePhase("finite_slice_without_guest_progress");
+                Deadline = std::min(End, mach_absolute_time() + Slice);
+              }
+            }
+            return diagnostic::error("too many finite deadline exits");
+          })),
+      "");
   ASSERT_EQ(Witness->load(), State.reg(X64Register::AX));
   ASSERT_EQ(RIP, PC + 4);
   // Observe expiration/entry races with a distinct instruction and old MTF
