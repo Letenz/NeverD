@@ -148,6 +148,7 @@ include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
   AndroidMutexTests.cpp
+  AndroidSyscallTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)

@@ -210,6 +210,22 @@ class ProcessIntegrationTests(unittest.TestCase):
             self.assertEqual(call["pc"], lookup["result"])
             self.assertEqual(int(call["result"], 16), 0)
         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+        options = json.dumps({"backend": "unicorn", "android": {
+            "entry_symbol": "syscall_dynamic", "initialize": False,
+            "arguments": [0], "libraries": {"libservice.so": ["syscall"]},
+        }})
+        result = session.emulate_process(str(Path(fixtures) / "syscall-O2-relr.so"),
+                                         "android-aarch64-api28-v1", options)
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(int(result["return_value"], 16), 0)
+        events = result["android"]["native_calls"]
+        lookup = next(e for e in events if e["name"] == "dlsym" and e["symbol"] == "syscall")
+        call = next(e for e in events if e["name"] == "syscall")
+        self.assertEqual(call["library"], "libservice.so")
+        self.assertEqual(call["pc"], lookup["result"])
+        self.assertEqual(int(call["arguments"][0], 16), 178)
+        self.assertEqual(int(call["result"], 16), 1000)
+        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
 
 if __name__ == "__main__":
