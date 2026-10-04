@@ -51,6 +51,7 @@ public:
   llvm::Error run(MachineRunControl Control, Completion Complete);
 
 private:
+  friend struct ExecutorProbe;
   Executor();
   struct Request;
   llvm::Error submit(Action Run, const MachineRunControl *Control = nullptr);

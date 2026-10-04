@@ -18,14 +18,45 @@ from scripts import run_native_cpu_methods as runner
 NAME = "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry"
 
 
-def iteration(number, name=NAME, reuse=False):
+def lifecycle_marker(phase, generation, owner=42):
+    return f"INTEL_LIFECYCLE phase={phase} generation={generation} owner={owner}\n"
+
+
+def retirement(number):
+    return "".join(lifecycle_marker(phase, number + 1)
+                   for phase in ("executor_retire_begin", "executor_retire_end"))
+
+
+def iteration(number, name=NAME, reuse=False, recreate=False):
     marker = "INTEL_PROBE phase=executor_retained\n" if reuse else ""
+    if recreate:
+        marker += "".join(lifecycle_marker(phase, number + int("create" in phase)) for phase in (
+            "vcpu_destroy_begin", "vcpu_destroy_end", "vcpu_create_begin", "vcpu_create_end"))
     return (f"Repeating all tests (iteration {number}) . . .\n"
             f"[ RUN      ] {name}\n{marker}[       OK ] {name} (150 ms)\n"
             "[  PASSED  ] 1 test.\n")
 
 
 class RecoveryLogTests(unittest.TestCase):
+    def test_recreation_requires_owner_generation_native_calls_and_final_retirement(self):
+        log = "".join(iteration(i, reuse=True, recreate=True) for i in range(1, 101)) + retirement(100)
+        self.assertIsNone(diagnostic.read_repetitions(log, NAME, 100, True, True)["error"])
+        event = lifecycle_marker("vcpu_destroy_end", 22)
+        end = lifecycle_marker("executor_retire_end", 101)
+        malformed = [log.replace(event, ""), log.replace(event, event * 2),
+                     log.replace(event, lifecycle_marker("vcpu_create_end", 22)),
+                     log.replace(event, lifecycle_marker("vcpu_destroy_end", 23)),
+                     log.replace(event, lifecycle_marker("vcpu_destroy_end", 22, 43)),
+                     log.replace(event, lifecycle_marker("vcpu_destroy_end", 22, 0)),
+                     log.replace(event, "INTEL_LIFECYCLE corrupt\n"),
+                     log.replace(retirement(100), ""), log.replace(end, ""), log + end,
+                     retirement(100) + log, log.replace(event, event + retirement(100)),
+                     log.replace("INTEL_PROBE phase=executor_retained\n", "", 1)]
+        for changed in malformed:
+            with self.subTest(log=changed[-200:]):
+                self.assertIsNotNone(diagnostic.read_repetitions(changed, NAME, 100, True, True)["error"])
+        self.assertIsNotNone(diagnostic.read_repetitions(log, NAME, 100, True)["error"])
+
     def test_reuse_requires_one_native_marker_inside_every_iteration(self):
         log = "".join(iteration(i, reuse=True) for i in range(1, 101))
         marker = "INTEL_PROBE phase=executor_retained\n"
@@ -132,11 +163,16 @@ class RecoveryContractTests(unittest.TestCase):
             native_filter = "HvfExecutor.Native*" if experiment == "recovery-reuse" else name
             self.assertEqual(contract["command"][1], "--gtest_filter=" + native_filter)
             environment = {"NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1"}
-            reuse = experiment in ("instruction-reuse", "recovery-reuse")
+            recreate = experiment == "instruction-vcpu-recreate"
+            reuse = recreate or experiment in ("instruction-reuse", "recovery-reuse")
             if reuse:
                 environment["NEVERD_HVF_INTEL_REUSE_EXECUTOR"] = "1"
+            if recreate:
+                environment["NEVERD_HVF_INTEL_RECREATE_VCPU"] = "1"
             self.assertEqual(contract["native_requirements"], environment)
             self.assertEqual(contract["executor_reuse"], reuse)
+            self.assertEqual(contract["vcpu_recreate"], recreate)
+            self.assertEqual(contract["vcpu_generations"], 101 if recreate else None)
             self.assertEqual(contract["native_execution"], experiment != "lifecycle")
             self.assertFalse(contract["required_for_acceptance"])
         original = self.prepare()
@@ -147,21 +183,34 @@ class RecoveryContractTests(unittest.TestCase):
     def test_parent_probe_environment_cannot_change_selected_experiment(self):
         name = diagnostic.EXPERIMENTS["instruction"]
         self.add_probe(name)
-        keys = ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR")
-        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse"):
+        keys = ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR", "NEVERD_HVF_INTEL_RECREATE_VCPU")
+        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse", "instruction-vcpu-recreate"):
             with self.subTest(mode=mode):
                 self.evidence = self.build / ("evidence-" + mode)
                 plan = self.prepare(experiment=mode)
                 expected = {key: plan["native_requirements"][key]
                             for key in keys if key in plan["native_requirements"]}
-                log = "".join(iteration(i, plan["native_name"], plan["executor_reuse"])
+                log = "".join(iteration(i, plan["native_name"], plan["executor_reuse"], plan["vcpu_recreate"])
                               for i in range(1, 101))
+                if plan["vcpu_recreate"]:
+                    log += retirement(100)
                 self.binary.write_text(f"#!{sys.executable}\nimport os\n"
                     f"assert {{key: os.environ[key] for key in {keys!r} if key in os.environ}} == {expected!r}\n"
                     f"print({log!r}, end='', flush=True)\n")
                 self.binary.chmod(0o755)
                 with mock.patch.dict(os.environ, dict.fromkeys(keys, "1")):
                     self.assertEqual(diagnostic.execute(self.root, self.evidence), 0)
+
+    def test_reuse_only_source_cannot_pass_recreation_experiment(self):
+        name = diagnostic.EXPERIMENTS["instruction-vcpu-recreate"]
+        self.add_probe(name)
+        self.prepare(experiment="instruction-vcpu-recreate")
+        log = "".join(iteration(i, name, reuse=True) for i in range(1, 101))
+        self.binary.write_text(f"#!{sys.executable}\nprint({log!r}, end='', flush=True)\n")
+        self.binary.chmod(0o755)
+        self.assertEqual(diagnostic.execute(self.root, self.evidence), 1)
+        result = json.loads((self.evidence / "result.json").read_text())
+        self.assertIn("missing vCPU recreation", result["repetitions"]["error"])
 
     def test_old_source_without_reuse_support_cannot_pass_reuse_experiment(self):
         self.prepare(experiment="recovery-reuse")

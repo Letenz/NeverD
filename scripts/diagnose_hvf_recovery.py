@@ -28,6 +28,7 @@ EXPERIMENTS = {
     "lifecycle": "HvfIntelProbe.LifecycleOnly",
     "instruction": "HvfIntelProbe.InstructionOnly",
     "instruction-reuse": "HvfIntelProbe.InstructionOnly",
+    "instruction-vcpu-recreate": "HvfIntelProbe.InstructionOnly",
     "recovery-reuse": "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry",
     "finite-deadline": "HvfIntelProbe.FiniteDeadline",
 }
@@ -37,7 +38,8 @@ def recovery_contract(source, build, document, required, runner, repetitions, ex
     if experiment not in ("recovery", *EXPERIMENTS):
         raise ValueError("unknown Intel experiment")
     recovery = experiment in ("recovery", "recovery-reuse")
-    reuse = experiment in ("instruction-reuse", "recovery-reuse")
+    recreate = experiment == "instruction-vcpu-recreate"
+    reuse = recreate or experiment in ("instruction-reuse", "recovery-reuse")
     methods = runner.method_inventory(document)
     selected = [(key, expected) for key, expected in methods.items()
                 if (key[1].startswith("HvfExecutor.Native") if recovery
@@ -56,11 +58,15 @@ def recovery_contract(source, build, document, required, runner, repetitions, ex
         environment["NEVERD_HVF_INTEL_PROBE"] = "1"
     if reuse:
         environment["NEVERD_HVF_INTEL_REUSE_EXECUTOR"] = "1"
+    if recreate:
+        environment["NEVERD_HVF_INTEL_RECREATE_VCPU"] = "1"
     return {
         "experiment": experiment,
         "native_execution": experiment != "lifecycle",
         "required_for_acceptance": experiment == "recovery",
         "executor_reuse": reuse,
+        "vcpu_recreate": recreate,
+        "vcpu_generations": repetitions + 1 if recreate else None,
         "native_name": name, "required_ctest_name": record.name,
         "command": [str(binary), "--gtest_filter=" + native_filter,
                     f"--gtest_repeat={repetitions}", "--gtest_break_on_failure"],
@@ -106,11 +112,14 @@ def prepare(source, build, evidence, repetitions, experiment="recovery"):
     return plan
 
 
-def read_repetitions(log, name, repetitions, executor_reuse=False):
+def read_repetitions(log, name, repetitions, executor_reuse=False, vcpu_recreate=False):
     """Require every complete iteration in order; totals or overwritten XML cannot prove this."""
     completed, started, stage = 0, 0, "iteration"
     error = None
     retained = False
+    owner, lifecycle, retired = 0, 0, 0
+    phases = ("vcpu_destroy_begin", "vcpu_destroy_end", "vcpu_create_begin", "vcpu_create_end")
+    retirement = ("executor_retire_begin", "executor_retire_end")
     for line in log.splitlines():
         iteration = re.fullmatch(r"Repeating all tests \(iteration ([0-9]+)\) \. \. \.", line)
         run = re.fullmatch(r"\[ RUN      \] (.+)", line)
@@ -123,6 +132,7 @@ def read_repetitions(log, name, repetitions, executor_reuse=False):
             started += 1
             stage = "run"
             retained = False
+            lifecycle = 0
         elif run:
             if stage != "run" or run[1] != name:
                 error = "unexpected or duplicate native RUN"
@@ -133,12 +143,36 @@ def read_repetitions(log, name, repetitions, executor_reuse=False):
                 error = "unexpected or duplicate executor reuse marker"
                 break
             retained = True
+        elif line.startswith("INTEL_LIFECYCLE"):
+            event = re.fullmatch(r"INTEL_LIFECYCLE phase=([a-z_]+) generation=([0-9]+) owner=([0-9]+)", line)
+            if not vcpu_recreate or not executor_reuse or not event or int(event[3]) == 0:
+                error = "unexpected or malformed lifecycle marker"
+                break
+            phase, generation, current = event[1], int(event[2]), int(event[3])
+            if owner and owner != current:
+                error = "lifecycle owner changed"
+                break
+            owner = current
+            if (stage == "ok" and retained and lifecycle < len(phases)
+                    and phase == phases[lifecycle]
+                    and generation == started + (1 if lifecycle >= 2 else 0)):
+                lifecycle += 1
+            elif (stage == "iteration" and completed == repetitions
+                    and retired < len(retirement) and phase == retirement[retired]
+                    and generation == completed + 1):
+                retired += 1
+            else:
+                error = "missing, repeated or out-of-order lifecycle event"
+                break
         elif passed:
             if stage != "ok" or passed[1] != name:
                 error = "unexpected or duplicate native OK"
                 break
             if executor_reuse and not retained:
                 error = "missing executor reuse marker"
+                break
+            if vcpu_recreate and lifecycle != len(phases):
+                error = "missing vCPU recreation evidence"
                 break
             stage = "summary"
         elif summary:
@@ -152,6 +186,8 @@ def read_repetitions(log, name, repetitions, executor_reuse=False):
             break
     if error is None and (completed != repetitions or stage != "iteration"):
         error = "incomplete repetition evidence"
+    if error is None and vcpu_recreate and retired != len(retirement):
+        error = "missing final executor retirement evidence"
     return {"started_repetitions": started, "completed_repetitions": completed,
             "next_expected_event": stage, "error": error}
 
@@ -174,7 +210,8 @@ def execute(source, evidence):
     if any(plan.get(key) != value for key, value in contract.items()):
         raise ValueError("recovery command differs from its prepared contract")
     environment = shared.test_environment(os.environ)
-    for key in ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR"):
+    for key in ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR",
+                "NEVERD_HVF_INTEL_RECREATE_VCPU"):
         environment.pop(key, None)
     environment.update(contract["native_requirements"])
     with shared.NativeChildren(evidence):
@@ -182,7 +219,7 @@ def execute(source, evidence):
             environment, contract["timeout_seconds"], evidence / "execution")
     repeats = read_repetitions((evidence / "execution/output.log").read_text(),
                               contract["native_name"], contract["repetitions"],
-                              contract["executor_reuse"])
+                              contract["executor_reuse"], contract["vcpu_recreate"])
     retirement = json.loads((evidence / "retirement.json").read_text())
     success = (not repeats["error"] and status["status"] == 0 and not status["timed_out"]
                and status["child_retired"] and len(retirement) == 1

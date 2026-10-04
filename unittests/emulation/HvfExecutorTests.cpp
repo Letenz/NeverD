@@ -16,19 +16,90 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <future>
 #if defined(__x86_64__)
 #include <Hypervisor/hv_vmx.h>
 #include <mach/mach_time.h>
+#include <pthread.h>
+#endif
+
+#if defined(__x86_64__)
+namespace neverd::emulation::hvf {
+// Test-only access keeps the lifecycle experiment out of the production API.
+struct ExecutorProbe {
+  static void marker(const char *Phase, uint64_t Generation, uint64_t Owner) {
+    llvm::outs() << "INTEL_LIFECYCLE phase=" << Phase
+                 << " generation=" << Generation << " owner=" << Owner << '\n';
+    llvm::outs().flush();
+  }
+  static llvm::Error recreateCPU(Executor &Host, uint64_t Generation,
+                                 uint64_t &Owner) {
+    return Host.submit([&](Executor &H) -> llvm::Error {
+      uint64_t Current = 0;
+      if (pthread_threadid_np(nullptr, &Current) || !Current)
+        return diagnostic::error("lifecycle owner identity unavailable");
+      if (Owner && Owner != Current)
+        return diagnostic::error("lifecycle owner changed");
+      Owner = Current;
+      if (H.Mapped || H.Active || !H.Failure.empty() || !H.VMCreated ||
+          !H.CPUCreated || !H.VMLease.owns_lock())
+        return diagnostic::error("lifecycle reset requires an idle live VM");
+      marker("vcpu_destroy_begin", Generation, Owner);
+      if (auto E = H.destroyCPU())
+        return E;
+      marker("vcpu_destroy_end", Generation, Owner);
+      marker("vcpu_create_begin", Generation + 1, Owner);
+      if (auto E = H.createCPU())
+        return E;
+      marker("vcpu_create_end", Generation + 1, Owner);
+      return llvm::Error::success();
+    });
+  }
+};
+} // namespace neverd::emulation::hvf
 #endif
 
 namespace neverd::emulation {
 namespace {
 using Clock = std::chrono::steady_clock;
+#if defined(__x86_64__)
+bool probeFlag(const char *Name) {
+  const auto *Value = std::getenv(Name);
+  return Value && llvm::StringRef(Value) == "1";
+}
+struct RetainedExecutor {
+  std::shared_ptr<hvf::Executor> Host;
+  uint64_t Recreations = 0, Owner = 0;
+  bool RecreateCPU = false;
+  ~RetainedExecutor() {
+    if (RecreateCPU) {
+      // No fixture or machine may keep the worker alive beyond this marker.
+      if (Host.use_count() != 1)
+        std::abort();
+      const std::weak_ptr<hvf::Executor> Retiring = Host;
+      hvf::ExecutorProbe::marker("executor_retire_begin", Recreations + 1, Owner);
+      Host.reset(); // Original native teardown followed by Worker.join().
+      if (!Retiring.expired())
+        std::abort();
+      hvf::ExecutorProbe::marker("executor_retire_end", Recreations + 1, Owner);
+    }
+  }
+};
+#endif
 class HvfExecutor : public testing::Test {
 protected:
   std::unique_ptr<MemoryProjection> Memory;
   std::shared_ptr<hvf::Executor> Host;
+#if defined(__x86_64__)
+  RetainedExecutor *Retained = nullptr;
+  void TearDown() override {
+    if (Retained && Retained->RecreateCPU)
+      EXPECT_EQ(llvm::toString(hvf::ExecutorProbe::recreateCPU(
+                    *Host, ++Retained->Recreations, Retained->Owner)),
+                "");
+  }
+#endif
   void SetUp() override {
     Memory = llvm::cantFail(MemoryProjection::create(4096));
     auto Created = hvf::Executor::acquire();
@@ -46,14 +117,18 @@ protected:
     const auto *Reuse = std::getenv("NEVERD_HVF_INTEL_REUSE_EXECUTOR");
     if (Probe && llvm::StringRef(Probe) == "1" && Reuse &&
         llvm::StringRef(Reuse) == "1") {
-      // Diagnostic-only lifetime control; VM, vCPU and executor threads
-      // survive together. Every fixture still detaches its mappings. This
+      // Diagnostic-only lifetime control; VM and executor threads survive.
+      // The optional probe recreates only the vCPU after detaching mappings.
+      // Every fixture still owns fresh memory. This
       // static is initialized after the native registry/VM mutexes and is
       // destroyed before them when the diagnostic process exits.
-      static const auto RetainedHost = Host;
-      ASSERT_EQ(Host, RetainedHost);
-      llvm::outs() << "INTEL_PROBE phase=executor_retained\n";
-      llvm::outs().flush();
+      auto &Output = llvm::outs(); // Outlive the optional final trace.
+      static RetainedExecutor RetainedHost{
+          Host, 0, 0, probeFlag("NEVERD_HVF_INTEL_RECREATE_VCPU")};
+      ASSERT_EQ(Host, RetainedHost.Host);
+      Retained = &RetainedHost;
+      Output << "INTEL_PROBE phase=executor_retained\n";
+      Output.flush();
     }
 #endif
   }
