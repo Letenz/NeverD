@@ -8,6 +8,7 @@
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -15,6 +16,7 @@
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/SourceMgr.h"
 
 #include <utility>
 
@@ -475,6 +477,160 @@ int main(void) {
   return 0;
 }
 )");
+}
+
+const char *CommonBranchIR = R"(
+declare void @record_value(i32, ptr)
+define i64 @branch_loop(i32 %seed, i32 %count, i32 %flag, ptr %output) {
+entry:
+  %limit = and i32 %count, 31
+  %second = getelementptr i32, ptr %output, i32 1
+  br label %head
+head:
+  %index = phi i32 [0, %entry], [%inc, %latch]
+  %value = phi i32 [%seed, %entry], [%carried, %latch]
+  %toggle = xor i32 %index, %flag
+  %bit = and i32 %toggle, 1
+  %choose = icmp ne i32 %bit, 0
+  br i1 %choose, label %left, label %right
+left:
+  %a = add i32 %value, 7
+  %aa = xor i32 %value, -1
+  call void @record_value(i32 %a, ptr %output)
+  call void @record_value(i32 %aa, ptr %second)
+  %done.left = icmp uge i32 %index, %limit
+  br i1 %done.left, label %exit, label %latch
+right:
+  %b = xor i32 %value, 53
+  %bb = add i32 %value, 9
+  call void @record_value(i32 %b, ptr %output)
+  call void @record_value(i32 %bb, ptr %second)
+  %done.right = icmp uge i32 %index, %limit
+  br i1 %done.right, label %exit, label %latch
+latch:
+  %carried = phi i32 [%aa, %left], [%bb, %right]
+  %inc = add i32 %index, 1
+  br label %head
+exit:
+  %first = phi i32 [%a, %left], [%b, %right]
+  %last = phi i32 [%aa, %left], [%bb, %right]
+  %wide.first = zext i32 %first to i64
+  %upper = shl i64 %wide.first, 32
+  %wide.last = zext i32 %last to i64
+  %result = or i64 %upper, %wide.last
+  ret i64 %result
+}
+)";
+
+void checkCommonBranch(bool DifferentCondition, bool AdditionalPredecessor,
+                       bool OnlyFunction, bool SnapshotCondition = false) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  std::string IR = CommonBranchIR;
+  if (SnapshotCondition) {
+    const std::string Old = "%limit = and i32 %count, 31";
+    IR.replace(IR.find(Old), Old.size(),
+               "%entry.count = load i32, ptr %output\n"
+               "  %limit = and i32 %entry.count, 31");
+  }
+  if (DifferentCondition) {
+    const std::string Old = "%done.right = icmp uge i32 %index, %limit";
+    IR.replace(IR.find(Old), Old.size(),
+               "%other.limit = add i32 %limit, 1\n"
+               "  %done.right = icmp uge i32 %index, %other.limit");
+  }
+  if (AdditionalPredecessor) {
+    const std::string Old = "br i1 %choose, label %left, label %right\nleft:";
+    IR.replace(IR.find(Old), Old.size(),
+               "br i1 %choose, label %left, label %bridge\n"
+               "bridge:\n"
+               "  br i1 %choose, label %left, label %right\nleft:");
+  }
+  auto Module = llvm::parseAssemblyString(IR, Error, Context);
+  ASSERT_TRUE(Module);
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Before;
+  llvm::raw_string_ostream BeforeStream(Before);
+  Module->print(BeforeStream, nullptr);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(
+      *Module, Output, Options, nullptr, nullptr,
+      OnlyFunction ? Module->getFunction("branch_loop") : nullptr));
+  std::string After;
+  llvm::raw_string_ostream AfterStream(After);
+  Module->print(AfterStream, nullptr);
+  EXPECT_EQ(Before, After) << "Source normalization must use its own clone";
+  if (!DifferentCondition && !AdditionalPredecessor) {
+    size_t Comparisons = 0;
+    for (llvm::StringRef Token : {" >= ", " < "})
+      for (size_t At = 0;
+           (At = Source.find(Token.str(), At)) != std::string::npos;
+           At += Token.size())
+        ++Comparisons;
+    EXPECT_EQ(Comparisons, 1U) << Source;
+  }
+  // The external observer is supplied by the harness, including when only a
+  // selected function's source fragment is requested.
+  Source =
+      "#include <stdint.h>\nvoid record_value(uint32_t, void *);\n" + Source;
+  Source += "\n#define DIFFERENT_CONDITION " +
+            std::to_string(DifferentCondition) + "\n";
+  Source += R"(
+static volatile uint32_t observed_trace;
+void record_value(uint32_t value, void *address) {
+  *(uint32_t *)address = value;
+  observed_trace = observed_trace * UINT32_C(65599) + value;
+}
+int main(void) {
+  uint32_t seed = UINT32_MAX;
+  for (unsigned trial = 0; trial < 128; ++trial) {
+    seed = seed * UINT32_C(1664525) + UINT32_C(1013904223);
+    for (uint32_t count = 0; count < 32; ++count)
+      for (uint32_t flag = 0; flag < 4; ++flag) {
+        uint32_t value = seed, first = 0, last = 0, trace = 0;
+        for (uint32_t i = 0;; ++i) {
+          uint32_t choose = (i ^ flag) & 1;
+          first = choose ? value + 7 : value ^ 53;
+          last = choose ? ~value : value + 9;
+          trace = trace * UINT32_C(65599) + first;
+          trace = trace * UINT32_C(65599) + last;
+          if (i >= count + (DIFFERENT_CONDITION && !choose)) break;
+          value = last;
+        }
+        uint32_t output[] = {count, 0, UINT32_C(0xa154e93b)};
+        observed_trace = 0;
+        uint64_t actual = branch_loop(seed, count, flag, (void *)output);
+        if (actual != (((uint64_t)first << 32) | last)) return 1;
+        if (output[0] != first || output[1] != last) return 2;
+        if (output[2] != UINT32_C(0xa154e93b)) return 3;
+        if (observed_trace != trace) return 4;
+      }
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
+TEST(LLVMCValues, CommonLoopExitKeepsArmEffectsAndBothPhiPairs) {
+  checkCommonBranch(false, false, false);
+  checkCommonBranch(false, false, true);
+}
+
+TEST(LLVMCValues, DifferentExitComparisonsKeepTheirOwnControl) {
+  checkCommonBranch(true, false, false);
+}
+
+TEST(LLVMCValues, CommonExitArmsWithAnotherPredecessorRemainValid) {
+  checkCommonBranch(false, true, false);
+}
+
+TEST(LLVMCValues, CommonExitRetainsValuesReadBeforeArmCalls) {
+  checkCommonBranch(false, false, false, true);
 }
 
 } // namespace
