@@ -5,6 +5,13 @@ add_neverd_tool(neverd-bench
   neverd_shared
 )
 
+if(NEVERD_ENABLE_CPU_EMULATION)
+  add_neverd_tool(neverd-cpu-bench
+    cpu-bench.cpp
+    LINK_COMPONENTS EmulationCPU)
+  neverd_sign_hypervisor(neverd-cpu-bench)
+endif()
+
 option(NEVERD_BUILD_SOLVER_BENCH "Build the solver comparison and query export tool" OFF)
 if(NEVERD_BUILD_SOLVER_BENCH)
   add_neverd_tool(neverd-solver-bench
