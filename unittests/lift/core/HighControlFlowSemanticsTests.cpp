@@ -6837,6 +6837,41 @@ TEST(HighControlFlowSemantics, LoopTakesEveryBackedgeToItsHeader) {
   EXPECT_TRUE(Graph.Diagnostics.Complete);
 }
 
+TEST(HighControlFlowSemantics, ElseJumpToALabelInAnotherListStays) {
+  // if (x & 1) { } else { if (x & 2) v = 1; else { v = 0; goto L; } w = 2;
+  // return w; }  L: return 0;  -- L (0x10c7) lies 9 bytes before `w = 2`
+  // (0x10d0) but in the outer list, so the else jump never runs into w.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  auto Copy = assign(0x10c5, 1, 0);
+  Copy.IsPhiCopy = true;
+  HighStmt Inner;
+  Inner.Kind = StmtKind::IfElse;
+  Inner.Addr = 0x10c5;
+  Inner.Cond = Bit(2);
+  Inner.Body = {assign(0x10c5, 1, 1)};
+  Inner.ElseBody = {Copy, jump(0, 0x10c7)};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::IfElse;
+  Outer.Addr = 0x1080;
+  Outer.Cond = Bit(1);
+  Outer.Body = {assign(0x1082, 2, 0)};
+  Outer.ElseBody = {Inner, assign(0x10d0, 2, 2), result(0x10d4, local(2))};
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x10c7;
+  HighFunc F;
+  F.Body = {Outer, Label, result(0x10c9, HighExpr::makeConst(0, 8))};
+  const uint64_t Expected[] = {0, 0, 2, 0};
+  for (uint64_t X : {0u, 1u, 2u, 3u})
+    ASSERT_EQ(execute(F, X, true), Expected[X]) << X;
+  invertSkipGotos(F);
+  for (uint64_t X : {0u, 1u, 2u, 3u})
+    EXPECT_EQ(execute(F, X, true), Expected[X]) << X;
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
   // break of its own, so nothing reaches the trailing return.

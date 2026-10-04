@@ -47,6 +47,10 @@ namespace {
 /// entered by jumps from outside it, so proving a value unread needs the
 /// whole function rather than the list being rewritten.
 thread_local const std::vector<HighStmt> *IfElseFunctionBody = nullptr;
+/// Addresses that start a statement of that function.  Blocks need not lie
+/// in address order, so a jump lands on the statement starting at its target
+/// wherever it is, never on a nearby statement of the list being rewritten.
+thread_local const std::set<va_t> *IfElseFunctionStarts = nullptr;
 /// Values found read outside the statement list that defines them while the
 /// function is structured. Structuring repeats that question for the same
 /// definition; a remembered reader only keeps an assignment alive.
@@ -298,6 +302,16 @@ public:
 
 } // namespace
 
+/// The addresses that start a statement of \p Body, nested ones included.
+static std::set<va_t> statementStarts(const std::vector<HighStmt> &Body) {
+  std::set<va_t> Starts;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Addr != 0 && S.Addr != InvalidVA)
+      Starts.insert(S.Addr);
+  });
+  return Starts;
+}
+
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med) {
   ContinuationFolder(Med).run(Func);
 }
@@ -371,13 +385,20 @@ static bool rangeHasObservableWork(const std::vector<HighStmt> &Body,
   return false;
 }
 
+/// The statement of \p Body from \p After on that a jump to \p Target
+/// reaches. A target that starts no statement may have been folded away, so
+/// the first statement within 32 bytes after it stands in; one that starts a
+/// statement elsewhere in the function is that statement.
 static size_t findSkipTargetInList(const std::vector<HighStmt> &Body, size_t After,
                                    va_t Target) {
   if (!Target || Target == InvalidVA)
     return SIZE_MAX;
+  const bool Starts =
+      IfElseFunctionStarts && IfElseFunctionStarts->count(Target);
   for (size_t K = After; K < Body.size(); ++K) {
     const va_t Address = AddrMap::entryAddress(Body[K]);
-    if (Address == Target || (Address && Address >= Target && Address < Target + 32))
+    if (Address == Target ||
+        (!Starts && Address && Address > Target && Address < Target + 32))
       return K;
   }
   return SIZE_MAX;
@@ -488,12 +509,19 @@ static void invertSkipGotosGuarded(std::vector<HighStmt> &Body) {
 }
 
 void invertSkipGotos(HighFunc &Func) {
+  const std::set<va_t> Starts = statementStarts(Func.Body);
   const std::vector<HighStmt> *SavedBody = IfElseFunctionBody;
+  const std::set<va_t> *SavedStarts = IfElseFunctionStarts;
   IfElseFunctionBody = &Func.Body;
+  IfElseFunctionStarts = &Starts;
   struct RestoreBody {
     const std::vector<HighStmt> *Saved;
-    ~RestoreBody() { IfElseFunctionBody = Saved; }
-  } Restore{SavedBody};
+    const std::set<va_t> *SavedStarts;
+    ~RestoreBody() {
+      IfElseFunctionBody = Saved;
+      IfElseFunctionStarts = SavedStarts;
+    }
+  } Restore{SavedBody, SavedStarts};
   // Exception wrap builds try bodies after structureIfElse. Drop sibling
   // skip-gotos first; invert would nest the second skip into the first.
   dropDuplicateSkipGotosNested(Func.Body, gotoTargets(Func.Body));
@@ -576,6 +604,8 @@ static size_t findTargetIndex(AddrMap &AM, va_t Target) {
   auto It = AM.Idx.find(Target);
   if (It != AM.Idx.end())
     return It->second;
+  if (IfElseFunctionStarts && IfElseFunctionStarts->count(Target))
+    return SIZE_MAX;
   AM.ensureSorted();
   auto LB = std::lower_bound(AM.Sorted.begin(), AM.Sorted.end(),
                              std::make_pair(Target, size_t(0)));
@@ -592,7 +622,8 @@ static size_t findTargetIndexOrBlock(AddrMap &AM, va_t Target,
   const size_t Exact = findTargetIndex(AM, Target);
   if (Exact != SIZE_MAX)
     return Exact;
-  if (!Med || !Target || Target == InvalidVA)
+  if (!Med || !Target || Target == InvalidVA ||
+      (IfElseFunctionStarts && IfElseFunctionStarts->count(Target)))
     return SIZE_MAX;
   const MedBlock *Block = nullptr;
   va_t BlockEnd = 0;
@@ -3703,12 +3734,19 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
 bool sinkJoinDefaultsLate(HighFunc &Func) {
   // Late rewrites leave new `if (..) { v = x; goto J; } v = d; J:` shapes
   // after structureIfElse has run; give the same sink another look.
+  const std::set<va_t> Starts = statementStarts(Func.Body);
   const std::vector<HighStmt> *SavedBody = IfElseFunctionBody;
+  const std::set<va_t> *SavedStarts = IfElseFunctionStarts;
   IfElseFunctionBody = &Func.Body;
+  IfElseFunctionStarts = &Starts;
   struct RestoreBody {
     const std::vector<HighStmt> *Saved;
-    ~RestoreBody() { IfElseFunctionBody = Saved; }
-  } Restore{SavedBody};
+    const std::set<va_t> *SavedStarts;
+    ~RestoreBody() {
+      IfElseFunctionBody = Saved;
+      IfElseFunctionStarts = SavedStarts;
+    }
+  } Restore{SavedBody, SavedStarts};
   bool Changed = false;
   std::function<void(std::vector<HighStmt> &)> Visit =
       [&](std::vector<HighStmt> &L) {
@@ -4296,16 +4334,20 @@ static void structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
 
 void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
   const std::set<va_t> Targets = gotoTargets(Func.Body);
+  const std::set<va_t> Starts = statementStarts(Func.Body);
   const std::set<va_t> *Saved = IfElseFunctionTargets;
   const std::vector<HighStmt> *SavedBody = IfElseFunctionBody;
+  const std::set<va_t> *SavedStarts = IfElseFunctionStarts;
   std::set<std::tuple<int, int, int>> ReadOutside;
   auto *SavedReadOutside = IfElseReadOutside;
   IfElseFunctionTargets = &Targets;
   IfElseFunctionBody = &Func.Body;
+  IfElseFunctionStarts = &Starts;
   IfElseReadOutside = &ReadOutside;
   structureIfElseNested(Func.Body, MaxPasses, Med);
   IfElseFunctionTargets = Saved;
   IfElseFunctionBody = SavedBody;
+  IfElseFunctionStarts = SavedStarts;
   IfElseReadOutside = SavedReadOutside;
 }
 
