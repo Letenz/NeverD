@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/FrameOffsets.h"
+#include "../../lib/analysis/core/FrameOffsets.h"
 #include "gtest/gtest.h"
 
 #include "neverd/symbolic/SymState.h"

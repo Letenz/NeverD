@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/FiniteValues.h"
+#include "../../lib/analysis/core/FiniteValues.h"
 #include "gtest/gtest.h"
 
 #include <algorithm>

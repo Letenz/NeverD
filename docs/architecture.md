@@ -2537,7 +2537,23 @@ libraries supplied by the CMake helper.
 | `lib/support` | Shared binary-loading helpers | Loader |
 | `lib/translate` | Versioned guest state/policy/exits, fixed runtime ABI, checked guest memory, generated-IR/object/LinkGraph audits, sealed native linking, and the experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object, and JITLink contracts |
 
-`ByteMemoryForwardingPass` in `lib/pass/ir/simplify` reconstructs complete integer loads from the last writer of each byte in a fixed byte alloca, within one basic block. It accepts byte-multiple widths from 8 to 128 bits and exact in-object constant GEPs under the target byte order. Unknown calls, unknown writes and ordered memory clear the facts. The pipeline runs it between SROA passes after existing private-address recovery, preserving original stores. Instruction scans, address walks, tracked bytes, replacement uses and generated IR have finite limits. The default introduces no snapshots; explicit `AllowStoreSnapshots` freezes a value once at its store and shares that value with all fragments. This optional LLVM refinement does not certify native definedness or recover a function signature.
+### Analysis and simplification ownership
+
+| Directory | Responsibility |
+|---|---|
+| `lib/analysis/core` | Shared analysis, finite domains and relational proof orchestration |
+| `lib/analysis/llvm` | Shared LLVM import, scalar equivalence and loop recovery |
+| `lib/analysis/bytecode` | External bytecode validation and lowering |
+| `lib/analysis/arch/x86_64` | Native x64 image, register/flag, stack, string-transfer and refinement adapters |
+| `lib/analysis/arch/aarch64` | ARM64 extension requirements; no native recovery implementation yet |
+| `lib/pass/ir/simplify/common` | Target-independent LLVM simplification, using explicit widths and data layout |
+| `lib/symbolic` | Shared expression, MBA, known-bit and execution engines |
+
+Native register identities, flag layouts and instruction-byte recognition belong under `arch/<isa>`. The shared core currently invokes explicit x64 contracts; adding ARM64 requires a separate adapter and dispatch, not relabeling these contracts. `LLVMInterpreterModel.h` and `InterpreterModel.h` contain the shared model types. The x64 adapter supplies its state size to the LLVM importer. Native public headers live in `include/neverd/analysis/arch/x86_64`; old include paths remain forwarding headers.
+
+OS services remain under `lib/emulation/os`. Their environment contracts do not prove native ABI or register semantics. Keep LLVM scalar and symbolic simplification shared; an ISA-specific simplifier, if needed, belongs in `lib/pass/ir/simplify/arch/<isa>` and must require explicit target evidence.
+
+`ByteMemoryForwardingPass` in `lib/pass/ir/simplify/common` reconstructs complete integer loads from the last writer of each byte in a fixed byte alloca, within one basic block. It accepts byte-multiple widths from 8 to 128 bits and exact in-object constant GEPs under the target byte order. Unknown calls, unknown writes and ordered memory clear the facts. The pipeline runs it between SROA passes after existing private-address recovery, preserving original stores. Instruction scans, address walks, tracked bytes, replacement uses and generated IR have finite limits. The default introduces no snapshots; explicit `AllowStoreSnapshots` freezes a value once at its store and shares that value with all fragments. This optional LLVM refinement does not certify native definedness or recover a function signature.
 
 Byte forwarding and backward overwrite analysis retain byte facts across normally returning intrinsics only when LLVM reports no memory access or other side effects, with no operand bundles or convergent contract. The calls and their results remain in place. This applies to both alloca and numeric memory; ordinary calls remain barriers even with `memory(none)`. It adds no alias separation, private-memory assumption or cross-block relation.
 

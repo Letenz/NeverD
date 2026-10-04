@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/StringTransfer.h"
+#include "../../lib/analysis/arch/x86_64/StringTransfer.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"

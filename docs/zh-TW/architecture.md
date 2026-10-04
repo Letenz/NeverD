@@ -504,7 +504,23 @@ NeverD 相依，不窮舉 CMake helper 統一提供的 LLVM 與 Capstone 程式�
 | `lib/support` | 共用二進位載入 helper | Loader |
 | `lib/translate` | 帶版本的 guest state/策略/退出、固定 runtime ABI、受檢 guest memory、產生 IR/目標檔/LinkGraph 稽核、sealed 原生連結，以及實驗性的 x86-64 到 AArch64 C++ dispatcher | IR、LLVM、LLVM Object 與 JITLink 契約 |
 
-`lib/pass/ir/simplify` 的 `ByteMemoryForwardingPass` 在單一基本區塊內，依固定位元組 alloca 各位元組的最後寫入重建完整整數讀取。它依目標位元組順序處理 8 至 128 位元、寬度為整個位元組的存取，只接受物件內精確的常數 GEP。未知呼叫、未知寫入及有序記憶體會清除記錄。管線在既有私有位址復原之後、兩次 SROA 之間執行此 pass，並保留原始 store。指令掃描、位址走訪、追蹤位元組、替換用途及新增 IR 均有有限預算。預設不引入快照；明確啟用 `AllowStoreSnapshots` 後，在原 store 前僅 freeze 一次，並讓寫入及所有片段共用該值。這種可選的 LLVM 精化不證明原生值已定義，也不復原函式簽章。
+### 分析與化簡的架構歸屬
+
+| 目錄 | 職責 |
+|---|---|
+| `lib/analysis/core` | 共用分析、有限域與關係證明編排 |
+| `lib/analysis/llvm` | 共用 LLVM 匯入、純量等價與迴圈恢復 |
+| `lib/analysis/bytecode` | 外部位元組碼驗證與降低 |
+| `lib/analysis/arch/x86_64` | 原生 x64 映像、暫存器/旗標、堆疊、字串傳送與精化介接器 |
+| `lib/analysis/arch/aarch64` | ARM64 擴充要求；尚無原生恢復實作 |
+| `lib/pass/ir/simplify/common` | 使用明確位元寬度與資料配置的通用 LLVM 化簡 |
+| `lib/symbolic` | 共用運算式、MBA、位元事實與執行引擎 |
+
+原生暫存器身分、旗標配置及指令位元組識別歸 `arch/<isa>`。共用核心目前呼叫明確的 x64 契約；接入 ARM64 需要獨立介接器與分派，不能直接更名沿用契約。`LLVMInterpreterModel.h` 與 `InterpreterModel.h` 保存共用模型型別；x64 介接器向 LLVM 匯入器傳入自己的狀態大小。原生公開標頭位於 `include/neverd/analysis/arch/x86_64`，舊路徑保留轉送標頭。
+
+OS 服務仍歸 `lib/emulation/os`，環境契約不能證明原生 ABI 或暫存器語義。LLVM 純量與符號化簡保持共用；未來若需要 ISA 專屬化簡，放入 `lib/pass/ir/simplify/arch/<isa>`，並要求明確的目標架構證據。
+
+`lib/pass/ir/simplify/common` 的 `ByteMemoryForwardingPass` 在單一基本區塊內，依固定位元組 alloca 各位元組的最後寫入重建完整整數讀取。它依目標位元組順序處理 8 至 128 位元、寬度為整個位元組的存取，只接受物件內精確的常數 GEP。未知呼叫、未知寫入及有序記憶體會清除記錄。管線在既有私有位址復原之後、兩次 SROA 之間執行此 pass，並保留原始 store。指令掃描、位址走訪、追蹤位元組、替換用途及新增 IR 均有有限預算。預設不引入快照；明確啟用 `AllowStoreSnapshots` 後，在原 store 前僅 freeze 一次，並讓寫入及所有片段共用該值。這種可選的 LLVM 精化不證明原生值已定義，也不復原函式簽章。
 
 位元組轉發與反向覆寫分析僅在 LLVM 確認 intrinsic 無記憶體存取、無其他副作用、可正常返回，且沒有 operand bundle 或 convergent 契約時保留位元組事實。呼叫及其結果仍留在原處。此規則同時適用於 alloca 與數值位址記憶體；普通呼叫即使標註 `memory(none)` 仍是邊界。它不增加別名分離、私有記憶體假設或跨區塊關係。
 

@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/NativeUndefinedIndependence.h"
+#include "../../lib/analysis/core/NativeUndefinedIndependence.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"

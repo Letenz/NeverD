@@ -1,13 +1,14 @@
-add_subdirectory(interpreter)
+add_subdirectory(core)
 add_subdirectory(bytecode)
 
 add_neverd_component_library(NeverDBinaryInterpreterSpecialization
-  BinaryInterpreterSpecialization.cpp
+  arch/x86_64/BinaryInterpreterSpecialization.cpp
   LINK_COMPONENTS InterpreterSpecialization Decode Loader
 )
 
 add_neverd_component_library(NeverDLLVMInterpreterModel
-  llvm/LLVMInterpreterMachineState.cpp
+  llvm/LLVMInterpreterModel.cpp
+  arch/x86_64/LLVMInterpreterMachineState.cpp
   llvm/LLVMInterpreterModelContract.cpp
   llvm/LLVMInterpreterModelControl.cpp
   llvm/LLVMInterpreterModelInitialization.cpp
@@ -28,8 +29,8 @@ add_neverd_component_library(NeverDLLVMScalarLoopRecovery
 )
 
 add_neverd_component_library(NeverDInterpreterLLVMRefinement
-  llvm/InterpreterLLVMPreparation.cpp
-  llvm/InterpreterLLVMRefinement.cpp
+  arch/x86_64/InterpreterLLVMPreparation.cpp
+  arch/x86_64/InterpreterLLVMRefinement.cpp
   LINK_COMPONENTS BinaryInterpreterSpecialization LLVMInterpreterModel
   LLVM_COMPONENTS AsmParser Core Support
 )

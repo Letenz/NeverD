@@ -674,7 +674,23 @@ CMake-Helper bereitgestellten LLVM- und Capstone-Bibliotheken.
 | `lib/support` | Gemeinsame Hilfen zum Binärladen | Loader |
 | `lib/translate` | Versionierte Guest-State/Policy/Exit-Verträge, feste Runtime-ABI, geprüfter Guest-Speicher, Audits erzeugter IR/Objekte/LinkGraphs, versiegeltes natives Linken und der experimentelle C++-Dispatcher von x86-64 zu AArch64 | IR-, LLVM-, LLVM-Object- und JITLink-Verträge |
 
-`ByteMemoryForwardingPass` in `lib/pass/ir/simplify` rekonstruiert vollständige Integer-Lesezugriffe aus dem letzten Schreiber jedes Bytes eines festen Byte-alloca innerhalb eines Basisblocks. Er akzeptiert durch acht teilbare Breiten von 8 bis 128 Bit sowie genaue konstante GEPs innerhalb des Objekts und beachtet die Ziel-Byteordnung. Nicht modellierte Aufrufe, unbekannte Schreibzugriffe und geordnete Speicherzugriffe löschen die Fakten. Die Pipeline führt ihn nach der bestehenden privaten Adressrekonstruktion zwischen zwei SROA-Durchläufen aus und erhält die Stores. Instruktions- und Adressdurchläufe, verfolgte Bytes, ersetzte Verwendungen und neues IR haben endliche Budgets. Standardmäßig entstehen keine Snapshots; explizites `AllowStoreSnapshots` friert den Wert einmal vor dem Store ein und teilt ihn mit allen Fragmenten. Diese optionale LLVM-Verfeinerung zertifiziert weder native Definiertheit noch eine Funktionssignatur.
+### Architekturgrenzen für Analyse und Vereinfachung
+
+| Verzeichnis | Zuständigkeit |
+|---|---|
+| `lib/analysis/core` | Gemeinsame Analysen, endliche Domänen und relationale Beweissteuerung |
+| `lib/analysis/llvm` | Gemeinsamer LLVM-Import, skalare Äquivalenz und Schleifenrekonstruktion |
+| `lib/analysis/bytecode` | Validierung und Absenkung externen Bytecodes |
+| `lib/analysis/arch/x86_64` | Native x64-Adapter für Abbild, Register/Flags, Stack, Zeichenkettentransfer und Verfeinerung |
+| `lib/analysis/arch/aarch64` | ARM64-Erweiterungsanforderungen; native Rekonstruktion noch nicht implementiert |
+| `lib/pass/ir/simplify/common` | Gemeinsame LLVM-Vereinfachung mit expliziten Bitbreiten und Datenlayouts |
+| `lib/symbolic` | Gemeinsame Ausdrucks-, MBA-, Bitfakten- und Ausführungsengines |
+
+Registeridentitäten, Flaglayouts und die Erkennung nativer Befehlsbytes gehören nach `arch/<isa>`. Der gemeinsame Kern ruft derzeit explizite x64-Verträge auf; ARM64 benötigt einen eigenen Adapter und eine gezielte Auswahl. `LLVMInterpreterModel.h` und `InterpreterModel.h` enthalten gemeinsame Modelltypen; der x64-Adapter übergibt seine Zustandsgröße an den LLVM-Importer. Native öffentliche Header liegen unter `include/neverd/analysis/arch/x86_64`; bisherige Include-Pfade bleiben als Weiterleitungen erhalten.
+
+OS-Dienste bleiben unter `lib/emulation/os`. Ihre Umgebungsverträge beweisen weder native ABI- noch Registersemantik. Skalare LLVM- und symbolische Vereinfachung bleiben gemeinsam; ein ISA-spezifischer Vereinfacher gehört bei Bedarf nach `lib/pass/ir/simplify/arch/<isa>` und benötigt explizite Zielnachweise.
+
+`ByteMemoryForwardingPass` in `lib/pass/ir/simplify/common` rekonstruiert vollständige Integer-Lesezugriffe aus dem letzten Schreiber jedes Bytes eines festen Byte-alloca innerhalb eines Basisblocks. Er akzeptiert durch acht teilbare Breiten von 8 bis 128 Bit sowie genaue konstante GEPs innerhalb des Objekts und beachtet die Ziel-Byteordnung. Nicht modellierte Aufrufe, unbekannte Schreibzugriffe und geordnete Speicherzugriffe löschen die Fakten. Die Pipeline führt ihn nach der bestehenden privaten Adressrekonstruktion zwischen zwei SROA-Durchläufen aus und erhält die Stores. Instruktions- und Adressdurchläufe, verfolgte Bytes, ersetzte Verwendungen und neues IR haben endliche Budgets. Standardmäßig entstehen keine Snapshots; explizites `AllowStoreSnapshots` friert den Wert einmal vor dem Store ein und teilt ihn mit allen Fragmenten. Diese optionale LLVM-Verfeinerung zertifiziert weder native Definiertheit noch eine Funktionssignatur.
 
 Byte-Weiterleitung und rückwärtige Überschreibungsanalyse behalten Fakten über normal zurückkehrende Intrinsics nur bei, wenn LLVM weder Speicherzugriffe noch andere Seiteneffekte meldet und weder Operand-Bundles noch ein convergent-Vertrag vorliegen. Aufrufe und Ergebnisse bleiben an ihrem Ort. Dies gilt für alloca und numerische Adressen; gewöhnliche Aufrufe bleiben auch mit `memory(none)` Barrieren. Alias-Trennung, private Speicherannahmen und blockübergreifende Beziehungen werden nicht ergänzt.
 
