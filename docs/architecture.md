@@ -1690,6 +1690,8 @@ Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` 
 
 `COMISS`, `COMISD`, `UCOMISS` and `UCOMISD` compare scalar XMM or m32/m64 operands through the shared `Source` rule. They set CF/PF/ZF, clear OF/SF/AF and preserve other FLAGS and source lanes. COMIS signals invalid for any NaN; UCOMIS does so only for signaling NaNs. NaN handling precedes denormal status. MXCSR sticky bits are retained; rounding and FTZ do not change comparison. KVM, WHP and checked Unicorn share exact memory checks. The pinned Unicorn comparison helpers reuse its denormal-input classifier.
 
+`CMPSS`, `CMPSD`, `CMPPS` and `CMPPD` execute the eight legacy predicates on KVM, WHP and checked Unicorn. The shared `Source` rule accepts decoded predicate aliases; reserved controls remain unsupported. Scalar forms preserve upper lanes and use m32/m64; packed forms require aligned m128. FLAGS and existing MXCSR status are preserved, with invalid/denormal status accumulated per active lane. Capstone owns the family IDs and SSE conditions, replacing the lifter-only identity repair. Unicorn classifies denormal inputs inside each comparison helper.
+
 `X64AlignmentTests.cpp` checks that misaligned operands of admitted aligned SSE instructions report recoverable or terminal `#GP(0)` before data observers, permission checks or device callbacks. Faults retain the complete public x64 register context, PC and RAM; address-size wrapping precedes FS/GS addition, and repairing the address retries the original instruction. Direct KVM/WHP machine cases independently verify the hardware boundary. Windows ring3 delivers classified `operand_alignment` faults; other `#GP` causes remain unsupported.
 
 The x64 machine boundary returns typed synchronous processor exceptions,

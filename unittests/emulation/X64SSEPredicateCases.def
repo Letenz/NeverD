@@ -1,0 +1,50 @@
+//===- X64SSEPredicateCases.def - Independent legacy comparison masks ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_SSE_PREDICATE_OPERATION
+// Name, mandatory prefix, lane bits, active lanes, memory alignment.
+NEVERD_SSE_PREDICATE_OPERATION(CMPSS, 0xf3, 32, 1, 1)
+NEVERD_SSE_PREDICATE_OPERATION(CMPSD, 0xf2, 64, 1, 1)
+NEVERD_SSE_PREDICATE_OPERATION(CMPPS, 0, 32, 4, 16)
+NEVERD_SSE_PREDICATE_OPERATION(CMPPD, 0x66, 64, 2, 16)
+#endif
+#ifdef NEVERD_SSE_PREDICATE_CONDITION
+// Name, immediate, equal, less, greater, unordered, signals quiet NaNs.
+NEVERD_SSE_PREDICATE_CONDITION(EQ, 0, true, false, false, false, false)
+NEVERD_SSE_PREDICATE_CONDITION(LT, 1, false, true, false, false, true)
+NEVERD_SSE_PREDICATE_CONDITION(LE, 2, true, true, false, false, true)
+NEVERD_SSE_PREDICATE_CONDITION(UNORD, 3, false, false, false, true, false)
+NEVERD_SSE_PREDICATE_CONDITION(NEQ, 4, false, true, true, true, false)
+NEVERD_SSE_PREDICATE_CONDITION(NLT, 5, true, false, true, true, true)
+NEVERD_SSE_PREDICATE_CONDITION(NLE, 6, false, false, true, true, true)
+NEVERD_SSE_PREDICATE_CONDITION(ORD, 7, true, true, true, false, false)
+#endif
+#ifdef NEVERD_SSE_PREDICATE_VALUE
+NEVERD_SSE_PREDICATE_VALUE(CompareOpcode, 0xc2)
+NEVERD_SSE_PREDICATE_VALUE(FirstReservedControl, 8)
+#endif
+#ifdef NEVERD_SSE_PREDICATE_RESERVED
+NEVERD_SSE_PREDICATE_RESERVED(0x08)
+NEVERD_SSE_PREDICATE_RESERVED(0x0f)
+NEVERD_SSE_PREDICATE_RESERVED(0x10)
+NEVERD_SSE_PREDICATE_RESERVED(0x20)
+NEVERD_SSE_PREDICATE_RESERVED(0x40)
+NEVERD_SSE_PREDICATE_RESERVED(0x80)
+NEVERD_SSE_PREDICATE_RESERVED(0xff)
+#endif
+#ifdef NEVERD_SSE_PREDICATE_BYTES
+// Fourth oracle argument is {128-bit memory source, FLAGS}. Preserve host DF.
+NEVERD_SSE_PREDICATE_BYTES(BeforePredicate, 0x9c, 0xff, 0x71, 0x10, 0x9d)
+#endif
+#ifdef NEVERD_SSE_PREDICATE_INVALID
+NEVERD_SSE_PREDICATE_INVALID(VexSS, 0xc5, 0xfa, 0xc2, 0xc1, 0)
+NEVERD_SSE_PREDICATE_INVALID(VexSD, 0xc5, 0xfb, 0xc2, 0x01, 1)
+NEVERD_SSE_PREDICATE_INVALID(VexPS, 0xc5, 0xf8, 0xc2, 0xc1, 2)
+NEVERD_SSE_PREDICATE_INVALID(VexPD, 0xc5, 0xf9, 0xc2, 0x01, 3)
+NEVERD_SSE_PREDICATE_INVALID(EvexSS, 0x62, 0xf1, 0x7e, 0x08, 0xc2, 0xc1, 0)
+NEVERD_SSE_PREDICATE_INVALID(EvexSD, 0x62, 0xf1, 0xff, 0x08, 0xc2, 0x01, 1)
+NEVERD_SSE_PREDICATE_INVALID(EvexPS, 0x62, 0xf1, 0x7c, 0x08, 0xc2, 0xc1, 2)
+NEVERD_SSE_PREDICATE_INVALID(EvexPD, 0x62, 0xf1, 0xfd, 0x08, 0xc2, 0x01, 3)
+#endif

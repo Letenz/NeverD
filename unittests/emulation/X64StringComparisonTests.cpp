@@ -443,7 +443,8 @@ TEST_P(X64StringComparison, ObserverFailureDoesNotPublishCurrentComparison) {
     }
 }
 
-TEST_P(X64StringComparison, LockedAndScalarSSEFormsRejectBeforeReads) {
+TEST_P(X64StringComparison,
+       LockedStringsRejectAndScalarSSEPreservesStringOperands) {
   for (const auto &C : Cases)
     for (bool SSE : {false, true}) {
       resetCPU();
@@ -451,6 +452,7 @@ TEST_P(X64StringComparison, LockedAndScalarSSEFormsRejectBeforeReads) {
       StringState State{FillValue, RepeatCount, Data + SourceOffset,
                         Alias + DestinationOffset, PlainFlags};
       seed(State);
+      llvm::cantFail(CPU->setXmm(0, {0, FillValue}));
       unsigned Reads = 0;
       BackendHooks Hooks;
       Hooks.Read = [&](uint64_t, unsigned) { ++Reads; };
@@ -458,7 +460,10 @@ TEST_P(X64StringComparison, LockedAndScalarSSEFormsRejectBeforeReads) {
       auto Exit =
           run(SSE ? llvm::ArrayRef(ScalarSSECompare) : llvm::ArrayRef(Bytes),
               std::move(Hooks));
-      EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation);
+      EXPECT_EQ(Exit.Kind, SSE ? ExecutionExitKind::Stopped
+                               : ExecutionExitKind::UnsupportedOperation);
+      EXPECT_EQ(llvm::cantFail(CPU->xmm(0)),
+                (RegisterValue{SSE ? UINT64_MAX : 0, FillValue}));
       expectState(State);
       EXPECT_EQ(Reads, 0u);
     }
