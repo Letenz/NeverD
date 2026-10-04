@@ -33,6 +33,11 @@ NEVERD_DARWIN_VALUE(ProtRead, 1)
 NEVERD_DARWIN_VALUE(ProtWrite, 2)
 NEVERD_DARWIN_VALUE(ProtExecute, 4)
 #endif
+#ifdef NEVERD_DARWIN_TEXT
+NEVERD_DARWIN_TEXT(PageZeroSegment, "__PAGEZERO")
+NEVERD_DARWIN_TEXT(DyldPath, "/usr/lib/dyld")
+NEVERD_DARWIN_TEXT(ExecutablePathPrefix, "executable_path=")
+#endif
 #ifdef NEVERD_DARWIN_SERVICE
 NEVERD_DARWIN_SERVICE(Exit, 1, None)
 NEVERD_DARWIN_SERVICE(Write, 4, Wide)
@@ -45,4 +50,60 @@ NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
 NEVERD_DARWIN_SERVICE(Munmap, 73, Int)
 NEVERD_DARWIN_SERVICE(Mprotect, 74, Int)
 NEVERD_DARWIN_SERVICE(Mmap, 197, Wide)
+#endif
+
+#ifdef NEVERD_DARWIN_DIAGNOSTIC
+NEVERD_DARWIN_DIAGNOSTIC(
+    MemoryMode, "unsupported Darwin memory mode (only private anonymous "
+                "data mappings; no JIT, file or private-gate mutation)")
+NEVERD_DARWIN_DIAGNOSTIC(MemoryDevice,
+                         "Darwin memory service encountered device memory")
+NEVERD_DARWIN_DIAGNOSTIC(MemoryMaximum,
+                         "Darwin mapping lost its maximum protection")
+NEVERD_DARWIN_DIAGNOSTIC(ImageArchitecture,
+                         "Darwin profile requires a baseline x64 or ARM64 "
+                         "executable; iOS devices require ARM64")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ImagePlatform, "Mach-O platform does not match the explicit Darwin profile")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ImageEntry, "unsupported or ambiguous Mach-O entry/thread/stack contract")
+NEVERD_DARWIN_DIAGNOSTIC(ImageDependencies,
+                         "Darwin profile does not implement dynamic "
+                         "dependencies, fixups, initializers or TLS")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ImageCommands, "unsupported Mach-O execution flags, commands or encryption")
+NEVERD_DARWIN_DIAGNOSTIC(ImageInterpreter,
+                         "unsupported Mach-O interpreter startup")
+NEVERD_DARWIN_DIAGNOSTIC(
+    StackAlignment,
+    "Darwin stack size must be aligned to the guest OS page size")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SegmentPermissions,
+    "unsupported Darwin segment alignment, flags or permissions")
+NEVERD_DARWIN_DIAGNOSTIC(PageZeroReservation,
+                         "invalid Mach-O __PAGEZERO reservation")
+NEVERD_DARWIN_DIAGNOSTIC(
+    MachHeaderPermissions,
+    "Darwin Mach header segment requires read and execute permissions")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ReadableSegment, "Darwin profile requires readable nonempty permissions")
+NEVERD_DARWIN_DIAGNOSTIC(ImageOverlap,
+                         "Darwin image overlaps a reserved or non-user address")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessLimits,
+                         "invalid Darwin process options or resource limits")
+NEVERD_DARWIN_DIAGNOSTIC(ExecutableEntry,
+                         "Darwin entry does not name executable user memory")
+NEVERD_DARWIN_DIAGNOSTIC(MissingContinuation,
+                         "CPU stopped without a Darwin continuation")
+NEVERD_DARWIN_DIAGNOSTIC(ServiceTrap,
+                         "trap does not match the Darwin BSD service ABI")
+NEVERD_DARWIN_DIAGNOSTIC(StartupNul,
+                         "Darwin startup string contains a NUL byte")
+NEVERD_DARWIN_DIAGNOSTIC(StartupArguments,
+                         "Darwin startup arguments exceed the stack")
+NEVERD_DARWIN_DIAGNOSTIC(StartupVector,
+                         "Darwin startup vector exceeds the stack")
+NEVERD_DARWIN_DIAGNOSTIC(OutputLimit,
+                         "captured Darwin output exceeds the workload limit")
+NEVERD_DARWIN_DIAGNOSTIC(UnsupportedService, "unsupported Darwin service {0:x}")
 #endif

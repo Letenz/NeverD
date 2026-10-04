@@ -12,9 +12,17 @@
 namespace neverd::emulation::darwin_model {
 namespace value {
 #define NEVERD_DARWIN_VALUE(Name, Value) inline constexpr uint64_t Name = Value;
+#define NEVERD_DARWIN_TEXT(Name, Text) inline constexpr char Name[] = Text;
 #include "../DarwinValues.def"
+#undef NEVERD_DARWIN_TEXT
 #undef NEVERD_DARWIN_VALUE
 } // namespace value
+namespace diagnostic {
+#define NEVERD_DARWIN_DIAGNOSTIC(Name, Text)                                   \
+  inline constexpr char Name[] = Text;
+#include "../DarwinValues.def"
+#undef NEVERD_DARWIN_DIAGNOSTIC
+} // namespace diagnostic
 inline llvm::Error failure(llvm::StringRef Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
 }

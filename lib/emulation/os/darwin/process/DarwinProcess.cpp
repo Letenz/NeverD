@@ -26,7 +26,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Options.OutputLimit > Options.MemoryLimit ||
       Options.Arguments.size() > Options.StackSize / 8 ||
       Options.Environment.size() > Options.StackSize / 8)
-    return failure("invalid Darwin process options or resource limits");
+    return failure(diagnostic::ProcessLimits);
   auto Deadline = makeExecutionDeadline(Options.Limits.TimeoutMicroseconds);
   if (!Deadline)
     return Deadline.takeError();
@@ -63,7 +63,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (!Entry)
     return Entry.takeError();
   if (!*Entry)
-    return failure("Darwin entry does not name executable user memory");
+    return failure(diagnostic::ExecutableEntry);
   const auto StackBase = StackTop - Options.StackSize;
   if (auto E =
           MapPages(StackBase, Options.StackSize, Read | Write | UserAccessible))
@@ -156,7 +156,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Result.Diagnostic =
           Result.LastCPUExit && !Result.LastCPUExit->Diagnostic.empty()
               ? Result.LastCPUExit->Diagnostic
-              : "CPU stopped without a Darwin continuation";
+              : diagnostic::MissingContinuation;
       break;
     }
     if (!Resources->consumeEvents()) {
@@ -173,7 +173,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                               : ServiceRequestKind::AArch64SVC) ||
         (!X64 && Request->Immediate != SVCImmediate)) {
       Result.Stop = ProcessStopReason::UnsupportedService;
-      Result.Diagnostic = "trap does not match the Darwin BSD service ABI";
+      Result.Diagnostic = diagnostic::ServiceTrap;
       break;
     }
     if (Image->MainEntry && Request->PC == ReturnGate) {
