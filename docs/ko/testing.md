@@ -1029,6 +1029,8 @@ KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드�
 
 `NeverDKvmStateTransferTests`는 실제 KVM 실행 후 레지스터 또는 XSAVE 읽기 실패를 주입하고 변경되지 않은 입력으로 재시도합니다. 독립적인 정수와 패킹된 바이트 결과로 수집 실패 후 이미 진행된 네이티브 상태를 재사용하지 않는지 확인합니다. 이 실행 파일만 `ioctl`을 래핑하며 네이티브 호스트가 없으면 명시적으로 건너뜁니다.
 
+`NeverDKvmStateTransferTests`는 실제 KVM에서 `KVM_CAP_SYNC_REGS` 미지원, 개별 지원, 동시 지원 및 조회 실패를 검증합니다. `SynchronizedCapturesRemoveOnlySupportedReadIoctls`는 실제 읽기 횟수와 연속 스텝 뒤의 전체 CPU 상태를 확인합니다. `CancelledWarmEntryRequiresFreshSpecialStateOnRetry`는 취소 후 특수 레지스터를 다시 읽도록 요구합니다. 캡처 실패, 정수/SIMD 재시도, 추측 RAM 롤백, 예외 우선순위에도 같은 기능 행렬을 적용하며 네이티브 실행이 불가능하면 명시적으로 건너뜁니다.
+
 Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP/HVF는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
 ARM64 KVM/WHP/HVF 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다.

@@ -947,6 +947,8 @@ KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备�
 
 `NeverDKvmStateTransferTests` 在真实 KVM 执行后注入寄存器或 XSAVE 读取失败，然后用未改变的输入重试。独立的整数和打包字节结果证明失败的读取不会复用已经前进的原生状态。只有该测试程序包装 `ioctl`；原生主机不可用时明确跳过。
 
+`NeverDKvmStateTransferTests` 还在真实 KVM 上覆盖 `KVM_CAP_SYNC_REGS` 缺失、单独支持和组合支持，以及能力查询失败。`SynchronizedCapturesRemoveOnlySupportedReadIoctls` 统计真实读取调用并核对连续单步后的完整 CPU 状态；`CancelledWarmEntryRequiresFreshSpecialStateOnRetry` 要求取消后重新读取特殊寄存器。捕获失败、整数/SIMD 重试、推测 RAM 回滚和异常优先级使用相同能力矩阵；原生覆盖不可用时明确跳过。
+
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM、WHP 和 HVF 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
 ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。

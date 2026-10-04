@@ -122,6 +122,8 @@ KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備�
 
 KVM 根據 `X64HostRegisters.def` 和 `X64FPState.def` 將通用暫存器及完整 FP/SSE 狀態與上次確認完成的偵錯退出狀態比較，只重新安裝變更的輸入。主機寫入和上下文恢復也參與比較；例外、取消及失敗會使重用失效。每條指令仍啟用單步並讀取真實的通用及 FP 狀態。
 
+x64 KVM 查詢 `KVM_CAP_SYNC_REGS`，分別啟用主機支援的 `KVM_SYNC_X86_REGS` 與 `KVM_SYNC_X86_SREGS` 擷取集合。已確認完成的 `KVM_RUN` 透過共享區回傳實際暫存器；連續成功單步可省去 `KVM_GET_REGS` 與 `KVM_GET_SREGS`。未支援的集合或選用查詢失敗保留 ioctl 路徑。變更的輸入仍在 `KVM_SET_GUEST_DEBUG` 前安裝，共享髒位保持清零。例外、取消及擷取失敗使重用失效。完整 FP/SSE 擷取仍為必要，未變更的 FP 輸入免去重複 XSAVE 編碼。這減少傳輸呼叫，但不代表已證明端到端加速。[KVM API](https://docs.kernel.org/virt/kvm/api.html#kvm-cap-sync-regs)。
+
 硬體執行本身不保證更低的端到端耗時。目前原生執行逐條進行指令准入、觀察、狀態傳輸和 VM 退出。比較相同原始映像與情境時，應使用一致的指令和事件預算，同時報告結果一致性與耗時；測量 CLI 延遲時應包含啟動和載入。
 
 checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完整狀態回讀共用一次單步額度。`UC_HOOK_CODE` 在指令入口檢查借用的停止權杖和期限；同步引擎呼叫返回前解除 hook 借用，機器單步則保留控制直到發佈狀態。Unicorn 與 WHP 暫存完整 CPU 狀態，並在成功步驟發佈前檢查同一控制條件。WHP 在準備前只建立一次額度。已確認的 x64 CPU 例外優先於回讀期間到來的停止要求。回讀取消時，checked RAM 交易捨棄推測寫入；非受限軟體契約不變。 `MachineInterruptedError` 區分已確認取消與主機或回讀失敗。共用 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 並允許重試；真實故障即使伴隨停止要求也仍是 `BackendFailure`。

@@ -985,6 +985,8 @@ KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備�
 
 `NeverDKvmStateTransferTests` 在真實 KVM 執行後注入暫存器或 XSAVE 讀取失敗，再以未變更的輸入重試。獨立的整數和封裝位元組結果證明失敗的讀取不會重用已前進的原生狀態。只有該測試程式包裝 `ioctl`；原生主機不可用時明確略過。
 
+`NeverDKvmStateTransferTests` 也在實際 KVM 上涵蓋 `KVM_CAP_SYNC_REGS` 缺失、個別支援、組合支援及能力查詢失敗。`SynchronizedCapturesRemoveOnlySupportedReadIoctls` 統計實際讀取呼叫並核對連續單步後的完整 CPU 狀態；`CancelledWarmEntryRequiresFreshSpecialStateOnRetry` 要求取消後重新讀取特殊暫存器。擷取失敗、整數/SIMD 重試、推測 RAM 回復與例外優先順序使用相同能力矩陣；原生覆蓋不可用時明確略過。
+
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM、WHP 和 HVF 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
 ARM64 KVM/WHP/HVF 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。

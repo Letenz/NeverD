@@ -1039,6 +1039,8 @@ KVM x64/ARM64 は `KvmRunControl` により同じ専用 vCPU worker で状態準
 
 `NeverDKvmStateTransferTests` は実際の KVM 実行後にレジスタまたは XSAVE の読み取り失敗を注入し、変更前の入力で再試行します。独立した整数とパックドバイトの結果で、取得失敗後に進行済みのネイティブ状態が再利用されないことを確認します。このテスト実行ファイルだけが `ioctl` をラップし、ネイティブホストが利用できなければ明示的にスキップします。
 
+`NeverDKvmStateTransferTests` は実際の KVM で `KVM_CAP_SYNC_REGS` の非対応、個別対応、両方の対応と照会失敗を検証します。`SynchronizedCapturesRemoveOnlySupportedReadIoctls` は実際の読み取り回数と連続ステップ後の完全な CPU 状態を確認します。`CancelledWarmEntryRequiresFreshSpecialStateOnRetry` はキャンセル後の特殊レジスタ再取得を要求します。取得失敗、整数/SIMD の再試行、投機的 RAM の復元、例外の優先順位にも同じ能力マトリクスを適用し、ネイティブ実行が利用できなければ明示的にスキップします。
+
 Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP、HVF は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
 
 ARM64 KVM/WHP/HVF の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。
