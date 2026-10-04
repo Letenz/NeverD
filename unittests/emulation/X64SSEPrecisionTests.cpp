@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "X64VectorTestSupport.h"
+#include "arch/x86_64/X64Exception.h"
 #include "arch/x86_64/X64Machine.h"
 #include "core/ExecutionDiagnostics.h"
 
