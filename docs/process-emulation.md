@@ -129,7 +129,7 @@ entropy. HWCAP/HWCAP2 are zero; there is no vDSO. Startup conventions follow the
 
 Implemented calls are `write`, `writev`, `exit`, `exit_group`, `getpid`, `gettid`,
 `getuid`, `geteuid`, `getgid`, `getegid`,
-`mmap`, `mprotect`, `munmap`, `brk`, `gettimeofday` and `clock_gettime`, with
+`mmap`, `mprotect`, `munmap`, `madvise`, `brk`, `gettimeofday` and `clock_gettime`, with
 separate [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)
 and [asm-generic ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)
 numbers. Returning x64 SYSCALL applies its RCX/R11 clobbers as well as RAX and
@@ -189,6 +189,20 @@ and the memory budget; shrinking preserves bytes in its remaining partial page.
 Rules and error precedence for the supported subset follow the Linux
 [mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) and
 [protection](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c) services.
+
+`madvise` admits `MADV_MERGEABLE` and `MADV_UNMERGEABLE`. It records KSM
+eligibility over guest RAM, including read-only and `PROT_NONE` pages. The
+deterministic profile keeps the background scanner stopped: advice does not
+deduplicate backing allocations or change bytes or access permissions. Partial
+revocation splits the eligible range; `munmap` and heap shrink retire the
+removed policy, and new allocations start ineligible. Alignment and rounding
+overflow return `EINVAL`; an aligned empty range succeeds. Holes return
+`ENOMEM` while still applying advice to mapped portions on either side. The
+behavior argument uses its low 32 bits, matching the Linux `int` ABI. These
+rules follow Linux's [advice dispatch](https://github.com/torvalds/linux/blob/v6.8/mm/madvise.c)
+and [KSM policy](https://github.com/torvalds/linux/blob/v6.8/mm/ksm.c). Other
+advice, including `MADV_DONTNEED` and `MADV_FREE`, stops as an unsupported
+service before changing state; discarding content is not modeled as a hint.
 
 File/shared/fixed mappings, grow-down, huge pages, memory locking, protection
 keys, execute-only/write-only policy and other flags remain explicit unsupported

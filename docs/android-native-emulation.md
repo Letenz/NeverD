@@ -177,10 +177,12 @@ The supported Bionic subset is:
 - `dlopen`, `dlsym`, `dlclose`, `dlerror`, using an explicit local catalogue
   described below. Function availability and implementation are separate:
   an available symbol whose call is unmodeled still stops explicitly.
-- `write`, `writev`, `mmap`/`mmap64`, `mprotect`, `munmap`, delegated to the shared Linux
+- `write`, `writev`, `mmap`/`mmap64`, `mprotect`, `munmap`, `madvise`, delegated to the shared Linux
   service implementation. Bionic wrappers translate negative kernel error
   values to -1 and thread-local errno; raw `svc #0` preserves negative errno
   bits and does not update TLS errno.
+  `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
+  for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
 - `syscall(number, ...)` uses the same Linux service table and effects. The
   AArch64 wrapper takes the number from x0 and six arguments from x1–x6;
   x7 is unused. It preserves full-width results and applies Bionic's -1/errno

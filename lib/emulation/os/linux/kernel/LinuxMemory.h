@@ -21,12 +21,18 @@ public:
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
+  /// KSM eligibility only; the deterministic profile has no background scanner.
+  bool isMergeable(uint64_t Address) const;
 
 private:
   AddressSpace &Space;
   const uint64_t PageSize, UserLimit, Limit, MinimumBreak, GuardBase, GuardEnd;
   uint64_t ProgramBreak;
+  // Sorted, disjoint eligible intervals [begin, end). These own neither RAM
+  // nor mappings; unmapping and new anonymous allocations retire the policy.
+  std::vector<std::pair<uint64_t, uint64_t>> MergeableRanges;
 
+  void setMergeable(uint64_t Address, uint64_t Size, bool Mergeable);
   std::optional<uint64_t> roundSize(uint64_t Size) const;
   bool validRange(uint64_t Address, uint64_t Size) const;
   llvm::Expected<std::vector<AddressMapping>> reservedRanges() const;
@@ -38,6 +44,7 @@ private:
   llvm::Expected<uint64_t> map(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> protect(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> unmap(const ProcessServiceEvent &Event);
+  llvm::Expected<uint64_t> advise(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> setBreak(uint64_t Address);
 };
 } // namespace neverd::emulation::linux_model

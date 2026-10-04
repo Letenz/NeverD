@@ -821,6 +821,12 @@ the x64 fixture additionally calls rewritten executable memory. Protection
 failures use real guest stores. `MemoryLifecycle` also verifies that virtual
 layout snapshots expose RAM/device rights without pinning retired allocations.
 `NeverDProcessPublicTests` runs the memory fixture through the shared SDK/CLI.
+Merge-advice cases check range splitting, rejoining, partial revocation,
+`PROT_NONE`, both sides of holes, argument narrowing, range overflow and policy
+retirement without retaining page allocations. The x64/ARM64 memory fixtures
+also execute raw `madvise` calls. Android fixtures compare named imports, raw
+SVC and `syscall` errno behavior across all relocation formats, verify dynamic
+provider names and lifetime, and require unmodeled content advice to stop.
 
 The independent [process emulation suites](process-emulation.md#verification)
 compile real x64/AArch64 ELF process fixtures. `NeverDLinuxProcessTests` verifies

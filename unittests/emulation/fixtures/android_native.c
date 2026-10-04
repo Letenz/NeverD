@@ -12,6 +12,8 @@ extern void *realloc(void *, u64);
 extern void free(void *);
 extern int *__errno(void);
 extern int getpagesize(void);
+extern int madvise(void *, u64, int);
+extern long syscall(long, ...);
 extern int __system_property_get(const char *, char *);
 extern int android_get_device_api_level(void);
 extern int getpid(void);
@@ -77,6 +79,28 @@ u64 page_size(unsigned int *out) {
   out[0] = getpagesize();
   out[1] = *__errno();
   return out[0];
+}
+u64 memory_advice(u64 *out, u64 address, u64 length, u64 advice, u64 route) {
+  *__errno() = 77;
+  u64 result;
+  if (!route) {
+    result = madvise((void *)address, length, (int)advice);
+  } else if (route == 1) {
+    register u64 x0 __asm__("x0") = address;
+    register u64 x1 __asm__("x1") = length;
+    register u64 x2 __asm__("x2") = advice;
+    register u64 x8 __asm__("x8") = 233;
+    __asm__ volatile("svc #0"
+                     : "+r"(x0)
+                     : "r"(x1), "r"(x2), "r"(x8)
+                     : "memory");
+    result = x0;
+  } else {
+    result = syscall(233, address, length, advice);
+  }
+  out[0] = result;
+  out[1] = *__errno();
+  return result;
 }
 u64 raw_error(void) {
   *__errno() = 77;
@@ -165,6 +189,21 @@ u64 dynamic_page_size(unsigned int *out, u64 after_close) {
     out[2] = query();
   out[1] = *__errno();
   return 0;
+}
+
+u64 dynamic_memory_advice(u64 address, u64 length, u64 advice,
+                          u64 after_close) {
+  void *handle = dlopen("libadvice.so", 2);
+  if (!handle)
+    return 100;
+  int (*call)(void *, u64, int) =
+      (int (*)(void *, u64, int))dlsym(handle, "madvise");
+  if (!call)
+    return 101;
+  u64 result = call((void *)address, length, (int)advice);
+  if (dlclose(handle))
+    return 102;
+  return after_close ? (u64)call((void *)address, length, (int)advice) : result;
 }
 
 u64 dynamic_identities(unsigned int *out, u64 after_close) {
