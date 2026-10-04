@@ -19,7 +19,8 @@ class Value;
 namespace neverd::analysis {
 
 struct LLVMPrivateFrameObject {
-  /// A live AS0 pointer parameter, with at least Bytes accessible bytes.
+  /// A defined, stable AS0 pointer parameter to a live object, with at least
+  /// Bytes accessible bytes (not an LLVM undef/poison pointer).
   /// Its complete extent must be disjoint from the declared frame. Objects
   /// may alias each other; their contents and writes remain observable.
   llvm::Argument *Base = nullptr;
@@ -27,7 +28,9 @@ struct LLVMPrivateFrameObject {
 };
 
 struct LLVMPrivateFrameContract {
-  /// Fixed numeric entry value: an integer parameter or an entry-block load.
+  /// Defined, fixed numeric entry value: an integer parameter or an entry
+  /// load. The caller excludes LLVM undef/poison; a matching SSA identity
+  /// alone cannot establish that all uses denote one value.
   /// This is supplied by the caller's memory contract, not inferred from a
   /// register number, an LLVM name, a target triple or a known sample offset.
   llvm::Value *Base = nullptr;
@@ -62,10 +65,14 @@ struct LLVMPrivateFrameResult {
 /// The bounded analysis proves complete byte initialization before each read
 /// on every CFG predecessor and backedge. It rejects unknown/ordered memory,
 /// ordinary calls, exceptional control and unsupported pointer expressions.
-/// Only byte-sized integer loads/stores up to 128 bits are admitted. Numeric
-/// addresses used as data retain their original values; only memory operands
-/// are rewritten. Other object operands become direct constant GEPs without
-/// changing their contents. All original scalar instructions remain in place.
+/// Intrinsics must satisfy the shared memory-transparent contract and be
+/// ctpop/ctlz/cttz/bswap/bitreverse/fshl/fshr; memory(none) alone does not
+/// exclude stack-layout observations. Their original operands and flags are
+/// retained. Only byte-sized integer loads/stores up to 128 bits are admitted.
+/// Numeric addresses used as data retain their original values; only memory
+/// operands are rewritten. Other object operands become direct constant GEPs
+/// without changing their contents. All original scalar instructions remain in
+/// place.
 ///
 /// The input must be verified LLVM IR. Refusal leaves it unchanged. Success
 /// is a conditional memory projection for defined executions, not proof of

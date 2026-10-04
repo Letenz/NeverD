@@ -24,6 +24,26 @@ namespace neverd::analysis {
 namespace {
 using namespace llvm;
 
+bool isFrameIndependentIntrinsic(const Instruction &I) {
+  if (!isLLVMMemoryTransparentIntrinsic(I))
+    return false;
+  // Memory(none) alone does not permit adding storage: frameaddress and
+  // returnaddress can observe this activation. Admit only generic arithmetic
+  // whose value depends on its unchanged operands, not allocation/layout.
+  switch (cast<IntrinsicInst>(I).getIntrinsicID()) {
+  case Intrinsic::ctpop:
+  case Intrinsic::ctlz:
+  case Intrinsic::cttz:
+  case Intrinsic::bswap:
+  case Intrinsic::bitreverse:
+  case Intrinsic::fshl:
+  case Intrinsic::fshr:
+    return true;
+  default:
+    return false;
+  }
+}
+
 struct Access {
   Instruction *Operation;
   Value *Object; // null selects the projected frame
@@ -151,7 +171,7 @@ class Projection {
         auto *Load = dyn_cast<LoadInst>(&I);
         auto *Store = dyn_cast<StoreInst>(&I);
         if (!Load && !Store) {
-          if (isa<CallBase>(I) ? !isLLVMMemoryTransparentIntrinsic(I)
+          if (isa<CallBase>(I) ? !isFrameIndependentIntrinsic(I)
                                : I.mayReadOrWriteMemory() || I.mayThrow())
             return reject("private-frame analysis encountered an effect");
           continue;

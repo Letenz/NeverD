@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "LLVMPrivateFrameProjectionTest.h"
 
+#include "neverd/analysis/LLVMMemoryAnalysis.h"
+
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 
@@ -165,6 +167,25 @@ TEST(LLVMPrivateFrame, RequiresCurrentObjectAndCompleteExtentContracts) {
     auto R = projectLLVMPrivateFrame(F, Contract);
     EXPECT_EQ(R.Status, Result::Unsupported) << R.Diagnostic;
     EXPECT_EQ(print(*M), Before);
+  }
+}
+
+TEST(LLVMPrivateFrame, RejectsStackObservationsEvenWithNoMemoryEffects) {
+  for (const char *Name : {"frameaddress", "returnaddress"}) {
+    std::string Intrinsic = "@llvm." + std::string(Name) + ".p0";
+    auto IR = "declare ptr " + Intrinsic + "(i32 immarg)\n" + program();
+    replace(IR,
+            "done:", "done:\n%observed = call ptr " + Intrinsic + "(i32 0)");
+    replace(IR, "%answer = xor i64 %both, %root",
+            "%observedBits = ptrtoint ptr %observed to i64\n"
+            "%answer = xor i64 %both, %observedBits");
+    llvm::LLVMContext C;
+    auto M = parse(C, IR);
+    ASSERT_TRUE(M);
+    for (auto &I : llvm::instructions(M->getFunction("f")))
+      if (llvm::isa<llvm::CallBase>(I))
+        EXPECT_TRUE(isLLVMMemoryTransparentIntrinsic(I));
+    refuses(IR, "encountered an effect");
   }
 }
 
