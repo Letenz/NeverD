@@ -22,6 +22,47 @@ bool spend(unsigned &Remaining, unsigned Amount = 1) {
 }
 
 unsigned words(unsigned Width) { return (Width - 1) / 64 + 1; }
+
+// Recognize projections that preserve this exact source. Facts come from the
+// total symbolic expression, never from an LLVM no-wrap annotation.
+std::optional<bool> losslessProjection(const SymContext &C, SymRef Back,
+                                       SymRef Source, const Bits &Facts,
+                                       unsigned &Remaining) {
+  const unsigned W = C.width(Source);
+  if (C.op(Back) == SymOp::And && C.operands(Back).size() == 2) {
+    if (!spend(Remaining, 2 + words(W)))
+      return std::nullopt;
+    for (unsigned I = 0; I != 2; ++I) {
+      auto Mask = C.operand(Back, I);
+      if (C.operand(Back, 1 - I) == Source && C.isConst(Mask) &&
+          (Facts.Zero | C.constValue(Mask)).isAllOnes())
+        return true;
+    }
+  }
+  if (C.op(Back) != SymOp::AShr || !C.isConst(C.operand(Back, 1)))
+    return false;
+  if (!spend(Remaining, 3 + words(W)))
+    return std::nullopt;
+  // Arithmetic overshifts saturate at the sign bit in this total domain.
+  // The full count must be inspected before limiting it to the word width.
+  const unsigned Shift =
+      C.constValue(C.operand(Back, 1)).getLimitedValue(W - 1);
+  auto Product = C.operand(Back, 0);
+  if (!Shift || C.op(Product) != SymOp::Mul || C.operands(Product).size() != 2)
+    return false;
+  for (unsigned I = 0; I != 2; ++I) {
+    auto Factor = C.operand(Product, I);
+    if (C.operand(Product, 1 - I) != Source || !C.isConst(Factor) ||
+        C.constValue(Factor) != llvm::APInt::getOneBitSet(W, Shift))
+      continue;
+    // Left shift is canonicalized as multiplication by a power of two.
+    // Shifting it back is lossless only if all discarded bits and the new
+    // sign bit agree with the original sign, including negative sources.
+    const auto High = llvm::APInt::getHighBitsSet(W, Shift + 1);
+    return (Facts.Zero & High) == High || (Facts.One & High) == High;
+  }
+  return false;
+}
 } // namespace
 
 std::optional<Bits> SymKnownBits::query(SymRef R, unsigned &WorkBudget) {
@@ -189,6 +230,14 @@ std::optional<Bits> SymKnownBits::compare(SymRef R,
   if (!Value && Op == SymOp::Eq) {
     for (unsigned Side = 0; Side != 2; ++Side) {
       auto Back = Ops[Side], Source = Ops[1 - Side];
+      auto Lossless =
+          losslessProjection(C, Back, Source, Children[1 - Side], Remaining);
+      if (!Lossless)
+        return std::nullopt;
+      if (*Lossless) {
+        Value = true;
+        break;
+      }
       const auto Kind = C.op(Back);
       if (Kind != SymOp::ZExt && Kind != SymOp::SExt)
         continue;
