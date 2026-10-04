@@ -94,6 +94,8 @@ Las regresiones de fase inicial cubren dos y tres bucles secuenciales que reutil
 
 `NeverDLLVMInterpreterModelTests` compara LLVM independiente con oráculos LowIR de estado completo: anchos, PHI paralelos, switch, memoria invitada, estado separado, condiciones poison, rangos intrínsecos, contratos rechazados y cuatro presupuestos. Comprueba una prueba completa de cuenta regresiva de palabra arbitraria y rechaza un estado cambiado. C independiente compilado en O1/O2 debe cumplir las mismas observaciones. Se valida el modelo admitido; descubrir invariantes automáticamente y demostrar el compilador son obligaciones separadas. Los casos de desplazamiento variable cubren los cuatro anchos, cantidades limitadas por máscara o rama, valores límite y excesivos, indicadores sin desbordamiento y exactos, rechazo estricto de poison y C compilado en O1/O2.
 
+`NeverDLLVMScalarEquivalenceTests` cubre dominios completos de bucles, cero iteraciones, intercambios PHI simultáneos, switch, bits altos de entrada, contraejemplos en la última partición, actualizaciones adicionales que producen poison, rangos de retorno, contratos no admitidos y presupuestos exactos, insuficientes por una unidad y cero. Oráculos independientes de doble ancho y desbordamiento cubren extremos funnel y productos con restricciones en cada ancho admitido; C independiente con bucles anidados en O1/O2 comprueba el perfil de entrada del compilador. La suite del modelo de estado también comprueba los extremos. `SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` verifica la contabilidad acumulada y los límites locales sin cambios.
+
 Las regresiones cubren rangos parciales y separados, alias fijos, ambas ramas, cada retorno, lecturas en la primera iteración y escrituras antes de lecturas en bucles. Deben fallar las lecturas antes de escribir, escrituras ausentes o invitadas, alias desconocidos, accesos especiales, rangos fuera del objeto y presupuestos agotados. Un ejemplo C independiente con una palabra de estado solo de salida se compila a O1/O2, conserva los atributos LLVM exactos y supera una nueva prueba compuesta de código nativo a LLVM.
 
 Los tests de cuenta regresiva protegida cubren reintentos tras rechazar la plantilla del cuerpo, una prueba completa en la cabecera para palabras arbitrarias, presupuestos compartidos y rechazo inmediato de violaciones reales del contrato de entrada.
@@ -101,6 +103,8 @@ Los tests de cuenta regresiva protegida cubren reintentos tras rechazar la plant
 `NeverDInterpreterLLVMRefinementTests` comprueba composiciones nuevas, vínculo exacto texto/función, presupuestos independientes, observaciones completas y dominios fuente ampliados. Cambios de bytes, residuos, resultados, indicadores, estados, escrituras, poison o planes falsos/obsoletos deben impedir el comprobante compuesto. Los contadores de palabra arbitraria requieren ambas premisas inductivas; ejemplos C independientes compilados en O1/O2 prueban el LLVM serializado real. Las regresiones rechazan vueltas ocultas a la entrada y limitan raíces sin copiar procedencia auxiliar.
 
 ```sh
+cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
+build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

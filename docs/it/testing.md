@@ -94,6 +94,8 @@ Le regressioni della fase iniziale coprono due e tre cicli sequenziali che riuti
 
 `NeverDLLVMInterpreterModelTests` confronta LLVM indipendente con oracoli LowIR dello stato completo: larghezze, PHI paralleli, switch, memoria ospite, stato distinto, condizioni poison, intervalli intrinseci, contratti rifiutati e quattro budget. Verifica una prova completa del conto alla rovescia su una parola arbitraria e rifiuta stati alterati. C indipendente compilato a O1/O2 deve rispettare le stesse osservazioni. I test validano il modello ammesso; scoperta automatica degli invarianti e correttezza del compilatore restano separate. I casi di shift variabile coprono tutte e quattro le larghezze, conteggi limitati da maschere o rami, valori limite ed eccessivi, flag senza overflow ed esatti, rifiuto rigoroso del poison e C compilato a O1/O2.
 
+`NeverDLLVMScalarEquivalenceTests` verifica domini completi dei cicli, zero iterazioni, scambi PHI simultanei, switch, bit alti di ingresso, controesempi nell’ultima partizione, aggiornamenti aggiuntivi che producono poison, intervalli di ritorno, contratti non supportati e budget esatti, inferiori di uno o nulli. Oracoli indipendenti di larghezza doppia e overflow coprono gli estremi funnel e i prodotti vincolati per ogni larghezza ammessa; C indipendente con cicli annidati a O1/O2 verifica il profilo di ingresso del compilatore. Anche la suite del modello di stato verifica gli estremi. `SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` verifica la contabilità cumulativa e i limiti locali invariati.
+
 Le regressioni coprono intervalli parziali e separati, alias fissi, entrambi i rami, ogni ritorno, letture alla prima iterazione e scritture prima delle letture nei cicli. Letture prima della scrittura, scritture mancanti o guest, alias sconosciuti, accessi speciali, intervalli fuori oggetto e budget esauriti devono fallire. Un esempio C indipendente con una parola di stato solo in uscita viene compilato a O1/O2, conserva gli attributi LLVM esatti e supera una nuova prova composta dal codice nativo a LLVM.
 
 I test del conto alla rovescia protetto coprono il nuovo tentativo dopo il rifiuto del template del corpo, una prova completa all’intestazione per parole arbitrarie, budget condivisi e rifiuto immediato di violazioni reali del contratto di ingresso.
@@ -101,6 +103,8 @@ I test del conto alla rovescia protetto coprono il nuovo tentativo dopo il rifiu
 `NeverDInterpreterLLVMRefinementTests` controlla nuove prove composte, legame esatto testo/funzione, budget indipendenti, osservazioni complete e domini sorgente più ampi. Byte, residui, risultati, flag, stato, scritture, poison e piani errati/obsoleti devono impedire l’attestazione composta. I contatori di parola arbitraria richiedono entrambe le premesse induttive; esempi C indipendenti compilati O1/O2 verificano LLVM serializzato effettivo. Le regressioni rifiutano ritorni nascosti all’ingresso e limitano le radici senza copiare provenienza accessoria.
 
 ```sh
+cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
+build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

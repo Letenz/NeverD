@@ -20,18 +20,20 @@ void Builder::charge(uint64_t &Counter, uint64_t Amount, uint64_t Limit) {
 }
 NdVar Builder::local(unsigned Bytes) {
   work();
-  if (NextTemporary >= (uint64_t{1} << 38))
+  const unsigned Stride = std::max(8U, Bytes);
+  if (Stride > (uint64_t{1} << 38) - NextTemporary)
     fail("LLVM temporary namespace exhausted");
   NdVar V = NdVar::tmp(NextTemporary, Bytes);
-  NextTemporary += 8;
+  NextTemporary += Stride;
   return V;
 }
 NdVar Builder::fresh(unsigned Bytes) {
   work();
-  if (NextRegister >= (uint64_t{1} << 41))
+  const unsigned Stride = std::max(8U, Bytes);
+  if (Stride > (uint64_t{1} << 41) - NextRegister)
     fail("LLVM register namespace exhausted");
   NdVar V = rvar(NextRegister, Bytes);
-  NextRegister += 8;
+  NextRegister += Stride;
   return V;
 }
 int Builder::block() {
@@ -56,16 +58,30 @@ void Builder::emit(LowBlock &Block, LowOp Operation) {
 }
 
 void Builder::preflight() {
-  if (!F.getParent() || F.isDeclaration() || F.isVarArg() ||
-      F.arg_size() != 1 || !F.getArg(0)->getType()->isPointerTy() ||
-      !F.getReturnType()->isIntegerTy(64))
-    fail("LLVM model requires one state pointer and an i64 status result");
-  const auto &DL = F.getParent()->getDataLayout();
-  if (F.getParent()->getDataLayoutStr().empty() || !DL.isLittleEndian() ||
-      DL.getPointerSizeInBits(0) != 64 || DL.getIndexSizeInBits(0) != 64 ||
-      DL.isNonIntegralAddressSpace(0) ||
-      F.getArg(0)->getType()->getPointerAddressSpace() != 0)
-    fail("unsupported LLVM machine-state data layout");
+  if (!F.getParent() || F.isDeclaration() || F.isVarArg())
+    fail("LLVM model requires a nonvariadic definition in a module");
+  if (ScalarArguments) {
+    input(F.arg_size());
+    if (!F.getReturnType()->isIntegerTy())
+      fail("scalar model requires an integer return");
+    bytes(F.getReturnType());
+    for (const auto &Arg : F.args()) {
+      if (!Arg.getType()->isIntegerTy() ||
+          !Arg.hasAttribute(llvm::Attribute::NoUndef))
+        fail("scalar model requires noundef integer arguments");
+      bytes(Arg.getType());
+    }
+  } else {
+    if (F.arg_size() != 1 || !F.getArg(0)->getType()->isPointerTy() ||
+        !F.getReturnType()->isIntegerTy(64))
+      fail("LLVM model requires one state pointer and an i64 status result");
+    const auto &DL = F.getParent()->getDataLayout();
+    if (F.getParent()->getDataLayoutStr().empty() || !DL.isLittleEndian() ||
+        DL.getPointerSizeInBits(0) != 64 || DL.getIndexSizeInBits(0) != 64 ||
+        DL.isNonIntegralAddressSpace(0) ||
+        F.getArg(0)->getType()->getPointerAddressSpace() != 0)
+      fail("unsupported LLVM machine-state data layout");
+  }
   input(F.size());
   input(F.getParent()->getDataLayoutStr().size());
   for (auto Set : F.getAttributes())
@@ -98,6 +114,10 @@ void Builder::preflight() {
     input(B.size());
     for (const auto &I : B) {
       input(I.getNumOperands());
+      if (ScalarArguments &&
+          (I.mayReadOrWriteMemory() || I.getType()->isPointerTy() ||
+           llvm::isa<llvm::AllocaInst>(I)))
+        fail("memory and pointer effects are unsupported in scalar models");
       for (const auto *V : I.operand_values()) {
         if (llvm::isa<llvm::Constant>(V) &&
             !llvm::isa<llvm::ConstantInt, llvm::Function>(V))
@@ -166,6 +186,12 @@ int Builder::target(const llvm::BasicBlock *From, const llvm::BasicBlock *To) {
 }
 
 void Builder::createGraph() {
+  if (ScalarArguments)
+    for (const auto &Arg : F.args()) {
+      auto Slot = fresh(bytes(Arg.getType()));
+      Values[&Arg] = Slot;
+      ScalarArguments->push_back({Slot, Arg.getType()->getIntegerBitWidth()});
+    }
   for (const auto &B : F) {
     Blocks[&B] = block();
     for (const auto &I : B) {
@@ -196,7 +222,8 @@ void Builder::createGraph() {
     }
   }
   Result.Function.Entry = address(Blocks.at(&F.front()));
-  Result.Function.Name = "llvm_machine_state";
+  Result.Function.Name =
+      ScalarArguments ? "llvm_scalar_function" : "llvm_machine_state";
   for (const auto &B : F) {
     const auto *T = B.getTerminator();
     for (unsigned I = 0; I != T->getNumSuccessors(); ++I) {
@@ -270,9 +297,11 @@ void Builder::seal() {
 
 InterpreterMachineStateModel Builder::build() {
   preflight();
-  pointerProjections();
+  if (!ScalarArguments)
+    pointerProjections();
   validateContract();
-  validateInitialization();
+  if (!ScalarArguments)
+    validateInitialization();
   createGraph();
   emitEdges();
   for (const auto &B : F) {
@@ -281,7 +310,8 @@ InterpreterMachineStateModel Builder::build() {
       work();
       if (llvm::isa<llvm::PHINode>(I) || StateOffsets.count(&I))
         continue;
-      if (!emitMemory(Out, I) && !emitScalar(Out, I) && !emitControl(Out, I))
+      if (!(ScalarArguments ? false : emitMemory(Out, I)) &&
+          !emitScalar(Out, I) && !emitControl(Out, I))
         fail(llvm::Twine("unsupported LLVM instruction: ") + I.getOpcodeName());
     }
   }
@@ -307,6 +337,21 @@ modelLLVMInterpreterMachineStateX64(const llvm::Function &Function,
                                     const LLVMInterpreterModelLimits &Limits) {
   try {
     return llvm_model::Builder(Function, Limits).build();
+  } catch (const llvm_model::Failure &E) {
+    return llvm::createStringError(E.Budget ? llvm::errc::result_out_of_range
+                                            : llvm::errc::invalid_argument,
+                                   "%s", E.Message.c_str());
+  }
+}
+llvm::Expected<LLVMScalarFunctionModel>
+modelLLVMScalarFunction(const llvm::Function &Function,
+                        const LLVMInterpreterModelLimits &Limits) {
+  try {
+    LLVMScalarFunctionModel Model;
+    Model.Graph =
+        llvm_model::Builder(Function, Limits, &Model.Arguments).build();
+    Model.ResultBits = Function.getReturnType()->getIntegerBitWidth();
+    return Model;
   } catch (const llvm_model::Failure &E) {
     return llvm::createStringError(E.Budget ? llvm::errc::result_out_of_range
                                             : llvm::errc::invalid_argument,

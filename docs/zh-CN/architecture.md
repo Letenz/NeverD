@@ -193,6 +193,8 @@ Swift 具体类型元数据的缓存/引用对只有在零值缓存、不可变�
 
 `NeverDLLVMInterpreterModel` 负责独立、有界的标量 LLVM 导入，使用同一原始状态 ABI。`modelLLVMInterpreterMachineStateX64` 保留真实状态码返回，并生成显式语义有效性检查。`llvmInterpreterMachineStateContract` 提供完整观察项及零监视字节保持义务；入口域、内存与完整证明由调用方负责。LLVM 导入不改变普通提升或源码发布，也不证明编译器。
 
+`modelLLVMScalarFunction` 复用同一导入器，接受纯 `noundef` 整数参数和整数返回值（`i1/i8/i16/i32/i64`）。共享模型处理漏斗移位的端点，并以双倍位宽乘积检查乘法溢出约束。`checkLLVMScalarEquivalence` 通过 `SymExec` 执行两份模型，发现控制输入位，穷尽它们的全部组合，其余位保持符号化。每个返回值必须相同，每条已执行操作必须有定义；分区、路径、节点和累计工作预算限制查询。`SymContext::constantWindow` 提供累计查询计费，同时保留原有单次查询上限。拒绝结果不允许改写。这一只读 C++ 查询不改变默认源码输出，也不提供持久化的原生 ABI 或编译器证明。
+
 LLVM 模型负责验证 `initializes` 参数契约，复用状态指针投影，并在普通标量生成前执行有预算限制的逐字节必然数据流分析，不引入第二套值求值器。
 
 `NeverDInterpreterLLVMRefinement` 负责组合原生到 LLVM 的证明。它重新构建两侧状态模型和强制契约，通过权威执行配置生成只在入口执行的标志投影，并重新检查两个前提。调用方可提交循环候选方案，但不能替换模型、观察项或证明凭据。分析模型只复制可执行图和声明入口；入口回边会被拒绝，避免重复初始化状态。

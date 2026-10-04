@@ -95,6 +95,8 @@ Les régressions de phase initiale couvrent deux ou trois boucles successives r�
 
 `NeverDLLVMInterpreterModelTests` compare du LLVM indépendant à des oracles LowIR de tout l’état : largeurs, PHI parallèles, switch, mémoire invitée, statut distinct, gardes poison, plages intrinsèques, contrats refusés et quatre budgets. Il vérifie une preuve complète de décompte sur un mot arbitraire et rejette un statut modifié. Du C indépendant compilé à O1/O2 doit respecter les mêmes observations. Ces tests valident le modèle admis ; découverte automatique d’invariants et correction du compilateur restent séparées. Les cas de décalage variable couvrent les quatre largeurs, les comptes bornés par masque ou branchement, les valeurs limites et excessives, les indicateurs sans débordement et exacts, le refus strict du poison et du C compilé en O1/O2.
 
+`NeverDLLVMScalarEquivalenceTests` vérifie les domaines complets des boucles, zéro itération, les échanges PHI simultanés, switch, les bits hauts d’entrée, les contre-exemples de dernière partition, les mises à jour supplémentaires produisant poison, les plages de retour, les contrats non pris en charge et les budgets exacts, insuffisants d’une unité ou nuls. Des oracles indépendants de largeur double et de débordement couvrent les extrémités funnel et les produits contraints à chaque largeur admise ; du C indépendant à boucles imbriquées en O1/O2 vérifie le profil d’entrée compilateur. La suite du modèle d’état vérifie aussi les extrémités. `SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` vérifie la comptabilité cumulée et les plafonds locaux inchangés.
+
 Les régressions couvrent les plages partielles et séparées, les alias fixes, les deux branches, chaque retour, les lectures à la première itération et les écritures précédant les lectures dans une boucle. Lecture avant écriture, écriture manquante, écriture invitée, alias inconnu, accès spécial, plage hors objet et épuisement des budgets doivent échouer. Un exemple C indépendant qui écrit un mot d’état sans le lire est compilé à O1/O2 ; il conserve les attributs LLVM exacts et passe une nouvelle preuve composée du natif vers LLVM.
 
 Les tests de décompte gardé couvrent la reprise après rejet du modèle du corps, une preuve complète sur un mot arbitraire à l’en-tête, les budgets partagés et le refus immédiat d’une violation réelle du contrat d’entrée.
@@ -102,6 +104,8 @@ Les tests de décompte gardé couvrent la reprise après rejet du modèle du cor
 `NeverDInterpreterLLVMRefinementTests` vérifie la composition nouvelle, la liaison texte/fonction exacte, les budgets indépendants, toutes les observations et le domaine source élargi. Des octets, résidus, résultats, drapeaux, statuts, écritures, poison ou plans faux/périmés doivent empêcher l’attestation composée. Le décompte sur un mot arbitraire exige les deux prémisses inductives ; des exemples C indépendants compilés en O1/O2 vérifient le LLVM sérialisé réel. Les régressions refusent les retours d’entrée cachés et bornent les racines sans copier la provenance accessoire.
 
 ```sh
+cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
+build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

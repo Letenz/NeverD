@@ -113,11 +113,21 @@ std::optional<llvm::APInt> constantBitSlice(const SymContext &Ctx, SymRef A,
 
 std::optional<llvm::APInt> SymContext::constantWindow(SymRef A, uint32_t Low,
                                                       uint32_t Width) const {
+  unsigned Remaining = 256;
+  return constantWindow(A, Low, Width, Remaining);
+}
+
+std::optional<llvm::APInt>
+SymContext::constantWindow(SymRef A, uint32_t Low, uint32_t Width,
+                           unsigned &WorkBudget) const {
   if (!A || A.index() >= Nodes.size() || !Width || Width > 64 ||
       Low > width(A) || Width > width(A) - Low)
     return std::nullopt;
-  unsigned Remaining = 256;
-  return constantBitSlice(*this, A, Low, Width, Remaining);
+  const unsigned Available = std::min(WorkBudget, 256U);
+  unsigned Remaining = Available;
+  auto Result = constantBitSlice(*this, A, Low, Width, Remaining);
+  WorkBudget -= Available - Remaining;
+  return Result;
 }
 
 //===----------------------------------------------------------------------===//

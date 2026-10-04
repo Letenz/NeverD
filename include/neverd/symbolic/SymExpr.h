@@ -358,6 +358,12 @@ public:
   /// and depth are bounded; invalid ranges or incomplete proofs yield nothing.
   std::optional<llvm::APInt> constantWindow(SymRef R, uint32_t Low,
                                             uint32_t Width) const;
+  /// Same proof with a caller-owned cumulative work budget. Consumes only
+  /// inspected work while retaining the per-query work and depth ceilings;
+  /// insufficient budget yields no proof, never a guessed constant.
+  std::optional<llvm::APInt> constantWindow(SymRef R, uint32_t Low,
+                                            uint32_t Width,
+                                            unsigned &WorkBudget) const;
   bool isConstZero(SymRef R) const;
   bool isConstOnes(SymRef R) const;
 

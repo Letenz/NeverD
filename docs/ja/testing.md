@@ -92,6 +92,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `NeverDLLVMInterpreterModelTests` は独自 LLVM を全状態 LowIR 参照実装と比較し、ビット幅、並列 PHI、switch、ゲストメモリ、独立ステータス、poison ガード、組み込み関数の値域、拒否契約、四つの構築予算を検証します。任意ワードのカウントダウンを完全に証明し、変更されたステータスを拒否します。独自 C の O1/O2 コンパイル結果も同じ観測契約を満たす必要があります。これは対応モデルの検証であり、自動不変条件発見とコンパイラーの正しさは別の義務です。 可変シフトのケースは四つのビット幅、マスクや分岐で制限したシフト量、境界値と範囲外の値、オーバーフロー禁止と正確性フラグ、厳格な poison 拒否、O1/O2 でコンパイルした C を検証します。
 
+`NeverDLLVMScalarEquivalenceTests` は完全なループ入力領域、ゼロ回反復、PHI の同時交換、switch、入力の上位ビット、最後の分割での反例、poison を生む追加更新、戻り値範囲、未対応契約、ちょうど・1不足・ゼロの予算を検査します。独立した倍幅・オーバーフローの参照実装が各対応幅のファネル端点と制約付き乗算を検査し、独立した入れ子ループ C の O1/O2 出力がコンパイラー入力形態を確認します。状態モデルのスイートも端点を検査します。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` は累積計測と従来の局所上限を確認します。
+
 初期化契約の回帰テストは、部分・分離バイト範囲、固定別名、分岐の両側、各リターン、ループ初回の読み取り、ループ内の書き込み後の読み取りを検証します。先行読み取り、書き込み不足、ゲスト書き込み、未知の別名、特殊メモリアクセス、オブジェクト外範囲、入力／作業予算の枯渇は失敗しなければなりません。出力専用状態ワードを持つ独立した C 例を O1/O2 でコンパイルし、正確な LLVM 属性を保持したまま新たなネイティブから LLVM への合成証明を検証します。
 
 ガード付きカウントダウンの検証は、本体テンプレート拒否後の再試行、任意ワード入力に対する完全なヘッダー証明、共有カット・問い合わせ予算、実入口契約違反の即時拒否を含みます。
@@ -99,6 +101,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 `NeverDInterpreterLLVMRefinementTests` は新規の合成証明、正確なテキスト／関数の結合、独立予算、全観測項目、広いソース領域を検証します。バイト、残余、結果、フラグ、ステータス、フレーム書込み、poison、誤った／古いループ案の変更は合成証明を拒否させます。任意ワード幅のカウントダウンは両帰納前提を要求し、独立 C 例の O1/O2 コンパイルは実際の LLVM テキストを検証します。状態モデルの回帰は隠れた入口後退辺を拒否し、付随する出自情報をコピーせずルートを予算計上します。
 
 ```sh
+cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
+build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
