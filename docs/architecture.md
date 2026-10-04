@@ -810,11 +810,7 @@ reference to its public textual mangling after checking its immutable flags,
 parent module, name, accessor, and unique local symbols. Other direct `0x01`
 or symbolic references without a registered nominal-name or field-path proof,
 weak or mismatched providers, malformed records, and ambiguous symbols remain unsupported.
-When the exact pair passes that proof but its addresses travel through local
-variables, source projection may bind the defining constants. Each local must
-have one direct constant definition, be definitely assigned before use, and be
-read only as an argument in typed native calls carrying that same proven pair.
-Any reassignment or other use leaves the address unbound.
+Metadata locals may retain multiple constant definitions when the shared HighIR source CFG proves every reaching cache/reference pair, including branches, gotos, switches and loop backedges. The bounded analysis keeps correlated states rather than crossing independent address sets; it tracks only candidate call operands, rejects missing definitions and unpaired reads, and requires complete source flow without diagnostics. Each defining constant binds its own current pair, so the selected value pointer and runtime branch remain unchanged. At most 64 relevant locals and 16384 node/state visits are admitted. Cache, reference record and complete recipe must each occupy one ordinary regular section; TLS, split and overlapping storage are rejected at binding and publication. This extends address identity only, without changing ABI, frame, lifetime or unique-call proofs.
 
 On 64-bit AArch64 and x64 images, a direct integer store value narrower than a
 pointer remains numeric when its exact IR occurrence has scalar provenance,
