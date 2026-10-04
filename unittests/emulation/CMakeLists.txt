@@ -256,6 +256,7 @@ add_neverd_unittest(NeverDRunControlTests
   NativeEntryTests.cpp
   WhpEntryControlTests.cpp
   WhpXsaveTests.cpp
+  WhpStateTransferTests.cpp
   WhpMemoryTests.cpp
   WhpResourceTests.cpp
   MachineRunControlTests.cpp

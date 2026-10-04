@@ -114,6 +114,8 @@ x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `
 
 `WhpResourceCache.h`는 논리 CPU 상태와 WHP 파티션을 분리합니다. 런타임은 활성 네이티브 파티션 하나를 유지하며 같은 CPU의 연속 단계에서 재사용합니다. CPU를 전환할 때 이전 파티션을 먼저 제거한 다음 매핑과 가상 프로세서를 다시 만들고 전체 상태를 복원합니다. 논리 CPU는 독립적인 `MemoryProjection` 뷰와 권위 있는 RAM을 유지합니다. 임대 획득은 취소와 현재 기한을 따르며 비활성 CPU를 제거해도 다른 CPU의 파티션은 제거되지 않습니다. x64는 호스트의 기본 XSAVE 기능 조합을 보존하고 `WHvGetPartitionProperty`로 실제 파티션을 검증하며 종속 기능을 지워 마스크를 축소하지 않습니다. 협력적 CPU 전환은 병렬 하드웨어 SMP를 제공하지 않습니다.
 
+`WhpX64Partition.h`는 실제 파티션별로 x64 WHP 레지스터 재사용을 관리합니다. 고정 패킷은 `WhpX64Registers.def`와 `X64HostRegisters.def`를 사용하며, 성공한 매 스텝에서 일반·제어·세그먼트 레지스터와 전체 FP/SSE 상태를 캡처합니다. 완료가 확인된 디버그 종료만 변경 없는 입력의 생략을 허용하며, 비교 시 예약 비트와 공용체 패딩은 무시합니다. CR3, CPL, TLS, 일반 또는 FP 입력 변경은 재설치하고 부분 실패·취소·예외는 재사용을 무효화합니다. 파티션을 다시 만들면 전체 상태부터 설치합니다. 중복 전송을 줄이며 명령 허용 범위를 넓히거나 전체 속도 향상을 주장하지 않습니다.
+
 `CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.
 
 `AArch64InstructionEffects`는 최대 128비트 피연산자의 스칼라·FP/SIMD 단일/쌍 RAM 범위를 소유합니다. 공유 주소 공간은 CPU 진입 전 모든 페이지를 검사하고 `RAMTransaction`은 선언된 전체 물리 쓰기만 커밋합니다. 128비트 쓰기는 실행 전에 두 개의 64비트 값으로 순서대로 관찰됩니다. 정지와 오류는 RAM, 벡터와 주소 갱신을 보존합니다. Xn/Vn 번호 중복은 유효하며 쌍 접근 범위의 주소 래핑은 거부됩니다. `NeverDAArch64MemoryTests`는 독립적인 `AArch64CrossPageCases.def`와 `AArch64VectorMemoryCases.def`를 사용합니다.

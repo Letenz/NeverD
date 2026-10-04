@@ -12,17 +12,12 @@
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__)) &&             \
     defined(NEVERD_EMULATION_WHP)
 #include "WhpResourceCache.h"
-#include "WhpXsaveState.h"
+#include "WhpX64Partition.h"
 
-#include <vector>
 #include <windows.h>
 
 namespace neverd::emulation {
 namespace {
-class WhpX64Partition final : public WhpPartition {
-public:
-  WhpXsaveState Xsave;
-};
 llvm::Expected<std::unique_ptr<WhpPartition>>
 createWhpX64Partition(MemoryProjection &Memory);
 class WhpMachine final : public X64Machine {
@@ -37,106 +32,7 @@ public:
     auto Active = Binding.acquire(Control);
     if (!Active)
       return Active.takeError();
-    auto &Host = static_cast<WhpX64Partition &>(**Active);
-    auto &API = Host.API;
-    const auto Partition = Host.Partition;
-    auto &Xsave = Host.Xsave;
-    std::vector<WHV_REGISTER_NAME> Names;
-    std::vector<WHV_REGISTER_VALUE> Values;
-    auto Add = [&](WHV_REGISTER_NAME Name, uint64_t Value) {
-      WHV_REGISTER_VALUE V{};
-      V.Reg64 = Value;
-      Names.push_back(Name);
-      Values.push_back(V);
-    };
-#define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
-  Add(WHvX64Register##WHP, State.reg(X64Register::Name));
-#include "../../arch/x86_64/X64HostRegisters.def"
-#undef NEVERD_X64_HOST_REGISTER
-    // The admitted ISA excludes all instructions observing or modifying TF.
-    Values.back().Reg64 |= x64::TrapFlag;
-    const size_t ObservableCount = Names.size();
-    Add(WHvX64RegisterCr0, x64::CR0);
-    Add(WHvX64RegisterCr3, Root);
-    Add(WHvX64RegisterCr4, x64::CR4 | x64::fp::OSXsave);
-    Add(WHvX64RegisterXCr0, x64::fp::FPAndSSE);
-    Add(WHvX64RegisterEfer, x64::EFER);
-    Add(WHvX64RegisterCr8, State.reg(X64Register::CR8));
-    for (auto Name : {WHvX64RegisterCs, WHvX64RegisterSs, WHvX64RegisterDs,
-                      WHvX64RegisterEs, WHvX64RegisterFs, WHvX64RegisterGs}) {
-      WHV_REGISTER_VALUE V{};
-      const bool Code = Name == WHvX64RegisterCs;
-      V.Segment.Selector =
-          State.UserMode
-              ? (Code ? x64::UserCodeSelector : x64::UserDataSelector)
-              : (Code ? x64::CodeSelector : x64::DataSelector);
-      V.Segment.DescriptorPrivilegeLevel =
-          State.UserMode ? x64::UserPrivilege : 0;
-      V.Segment.Limit = x64::SegmentLimit;
-      V.Segment.Present = V.Segment.NonSystemSegment = V.Segment.Granularity =
-          1;
-      V.Segment.SegmentType = Code ? x64::CodeType : x64::DataType;
-      V.Segment.Long = Code;
-      V.Segment.Default = !Code;
-      if (Name == WHvX64RegisterGs)
-        V.Segment.Base = State.GSBase;
-      if (Name == WHvX64RegisterFs)
-        V.Segment.Base = State.FSBase;
-      Names.push_back(Name);
-      Values.push_back(V);
-    }
-    if (const auto Status = API.WHvSetVirtualProcessorRegisters(
-            Partition, 0, Names.data(), Names.size(), Values.data());
-        FAILED(Status))
-      return whpError(diagnostic::WhpState, Status,
-                      whp::operation::WHvSetVirtualProcessorRegisters);
-    if (auto E = Xsave.install(API, Partition, State))
-      return E;
-    WHV_RUN_VP_EXIT_CONTEXT Exit{};
-    auto Next = State;
-    auto Complete = [&]() -> llvm::Error {
-      if (Exit.ExitReason != WHvRunVpExitReasonException)
-        return diagnostic::error(diagnostic::WhpExit);
-      if (const auto Status = API.WHvGetVirtualProcessorRegisters(
-              Partition, 0, Names.data(), ObservableCount, Values.data());
-          FAILED(Status))
-        return whpError(diagnostic::WhpState, Status,
-                        whp::operation::WHvGetVirtualProcessorRegisters);
-      size_t I = 0;
-#define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
-  Next.reg(X64Register::Name) = Values[I++].Reg64;
-#include "../../arch/x86_64/X64HostRegisters.def"
-#undef NEVERD_X64_HOST_REGISTER
-      if (auto E = Xsave.capture(API, Partition, Next))
-        return E;
-      Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
-      const unsigned Vector = Exit.VpException.ExceptionType;
-      if (Vector != x64::DebugVector) {
-        if (!x64::isExceptionVector(Vector) ||
-            !(x64::ExceptionExitBitmap & (uint64_t(1) << Vector)))
-          return diagnostic::error(diagnostic::WhpExit);
-        const uint64_t Instrumentation = x64::TrapFlag | x64::ResumeFlag;
-        Next.reg(X64Register::FLAGS) =
-            (Next.reg(X64Register::FLAGS) & ~Instrumentation) |
-            (State.reg(X64Register::FLAGS) & Instrumentation);
-        State = Next;
-        return llvm::make_error<X64ExceptionError>(X64Exception{
-            Vector,
-            Exit.VpException.ExceptionInfo.ErrorCodeValid
-                ? std::optional<uint64_t>(Exit.VpException.ErrorCode)
-                : std::nullopt,
-            Vector == unsigned(x64::ExceptionVector::PageFault)
-                ? std::optional<uint64_t>(Exit.VpException.ExceptionParameter)
-                : std::nullopt});
-      }
-      return llvm::Error::success();
-    };
-    if (auto E = Host.run(Exit, Control, Complete))
-      return E;
-    if (Control.interrupted())
-      return diagnostic::interrupted(diagnostic::WhpRun, Control);
-    State = Next;
-    return llvm::Error::success();
+    return static_cast<WhpX64Partition &>(**Active).step(State, Root, Control);
   }
 
 private:

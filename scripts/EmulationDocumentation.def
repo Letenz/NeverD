@@ -162,6 +162,17 @@ NEVERD_EMULATION_DOC_TOKEN(KvmSyncCapture, "KVM_SET_GUEST_DEBUG")
 NEVERD_EMULATION_DOC_PATH(KvmSyncTests, "docs/testing.md")
 NEVERD_EMULATION_DOC_PATH(KvmSyncTests, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(KvmSyncTests, "KVM_CAP_SYNC_REGS")
+NEVERD_EMULATION_DOC_PATH(WhpStateReuse, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(WhpStateReuse, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_TOKEN(WhpStateReuse, "WhpX64Partition.h")
+NEVERD_EMULATION_DOC_TOKEN(WhpStateReuse, "WhpX64Registers.def")
+NEVERD_EMULATION_DOC_PATH(WhpStateReuseTest, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WhpStateReuseTest, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(WhpStateReuseTest, "WhpStateTransferTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(WhpStateReuseTest,
+                           "ContinuedStepsReuseCapturedRegistersAndFP")
+NEVERD_EMULATION_DOC_TOKEN(
+    WhpStateReuseTest, "PartialTransferFailuresPreserveStateAndForceFullRetry")
 NEVERD_EMULATION_DOC_TOKEN(KvmSyncTests,
                            "SynchronizedCapturesRemoveOnlySupportedReadIoctls")
 NEVERD_EMULATION_DOC_TOKEN(KvmSyncTests,
@@ -402,7 +413,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "214 CPU + 224 WHP + 4 SEH = 442")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "230 CPU + 224 WHP + 4 SEH = 458")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
