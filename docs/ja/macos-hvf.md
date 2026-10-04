@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bebc9b4b7e408e18ff142e834c8d2917380133b9a965a0a5c5841f8dc23e326e -->
+<!-- i18n-source: 9a24ea23cf2a47db289e1e2b215d8900d8db1bd0cc636bab4cd68cb061aec251 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -120,3 +120,7 @@ CPU 実行前に `scripts/prepare_hvf_batches.py` が完全・選択済みイン
 ソース `bd284894c60427cf4e6a60e661a1fa0df8a070f5` を使った[独立 Intel 復旧診断](https://github.com/NeverSight/NeverD/actions/runs/37159724276)は、2026-10-03 23:41:30 UTC に、ホスト型 runner との通信喪失を示す GitHub の注記とともに終了しました。計画と 11 個の進捗 artifact は残り、ダウンロードしてサーバーの SHA-256 と照合しました。最後の保存済みスナップショットは 252 回の完了と 253 回目の開始を証明しますが、最終的な障害箇所は特定できません。最終結果とプロセス回収記録はなく、完全なジョブログの API は 404 を返しました。したがって要求した 1,000 回は未検証です。リポジトリには依然としてセルフホスト runner がありませんでした。これは保存された失敗の証拠であり、安定性の修正や Intel の完全な合格ではありません。
 
 [個人リポジトリのワークフロー](https://github.com/gmh5225/test_mac_intel)を使えば、手元に Intel Mac がなくてもホスト型 Intel runner で検証できます。NeverD の診断コードとテスト対象のリビジョンを個別に固定し、ワークフローのリビジョンも記録します。待ち時間と実行の安定性は別々に評価してください。復旧診断は失敗を報告する前に、各アップロード子プロセスの PID、親、実行ファイル、終了コード、シグナル、終了理由を保存します。Action 失敗後は最大 20 秒待ち、PID、親、プロセス名、実行時刻が一致する macOS IPS クラッシュレポートだけを収集します。レポートがない場合も明記します。アップロード失敗時は元のネイティブ実行を停止しますが、それだけでは Hypervisor の障害やテスト成功を証明できません。
+
+2026-10-04、個人リポジトリの最初の [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) と [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) のジョブは、作成からそれぞれ 8 秒と 5 秒で開始しました。アップロード子プロセスの異常終了により失敗し、コントローラーがネイティブ子プロセスを停止・回収しました。完了した反復はそれぞれ 3 回と 105 回で、最終証拠を保存して独立に検証しました。別の[アップロードのみの対照](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621) は 16 回すべて成功し、17 個の成果物のサーバーダイジェストを確認しました。`native_execution=false` を明記しています。アップロードの失敗とネイティブのアサーション失敗は区別できますが、原因の特定や要求された 1,000 回の検証には至りません。以前の組織リポジトリの対照も 5 秒で開始しており、これらの標本だけでは待ち時間の改善を示せません。
+
+続く [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) と [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) の実行はいずれも 2026-10-04 に失敗し、GitHub はホストされた runner との通信断を明示しました。10 個と 16 個の成果物を検証しました。最後に保存されたログは、それぞれ 175 回と 326 回の連続完了と、その次の反復の開始を示しますが、最終的な障害位置は特定できません。両方ともネイティブの最終結果とプロセス回収記録がなく、完全なジョブログの取得は HTTP 404 でした。手動キャンセルは行っていません。Intel の 1,000 回の検証は未完了です。[元ログの保存済み部分と実行・ダイジェスト一覧](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04)は Actions 成果物の保持期限後も参照できます。

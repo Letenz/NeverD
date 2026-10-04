@@ -4,6 +4,7 @@
 #include "SourceRegisterCopyProjection.h"
 #include "SourceSwiftConsumedInputProjection.h"
 #include "SourceSwiftOpaqueValueProjection.h"
+#include "SourceSwiftValueConstructorProjection.h"
 #include "SourceSwiftWitnessFrameProjection.h"
 #include "SwiftABIProjectionPlan.h"
 #include "SwiftRuntimeProjection.h"
@@ -328,6 +329,8 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
                         const PipelineResult &Projection) {
       const SourceRegisterCopyProjectionValidator RegisterCopies(Session->Img,
                                                                  Projection);
+      const SourceSwiftValueConstructorProjectionValidator Constructors(
+          Session->Img, Projection);
       const SourceSwiftOpaqueValueProjectionValidator OpaqueValues(Session->Img,
                                                                    Projection);
       const SourceSwiftConsumedInputProjectionValidator ConsumedInputs(
@@ -360,6 +363,8 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
                    "(possibly limited by max-func)";
         else if (!RegisterCopies.valid(*Function))
           Reason = "source register-copy proof is no longer valid";
+        else if (!Constructors.valid(*Function))
+          Reason = "Swift value-constructor proof is no longer valid";
         else if (!OpaqueValues.valid(*Function))
           Reason = "Swift opaque-value proof is no longer valid";
         else if (!ConsumedInputs.valid(*Function))

@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bebc9b4b7e408e18ff142e834c8d2917380133b9a965a0a5c5841f8dc23e326e -->
+<!-- i18n-source: 9a24ea23cf2a47db289e1e2b215d8900d8db1bd0cc636bab4cd68cb061aec251 -->
 
 [← 文档索引](README.md)
 
@@ -224,3 +224,7 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 使用源码 `bd284894c60427cf4e6a60e661a1fa0df8a070f5` 的[独立 Intel 恢复诊断运行](https://github.com/NeverSight/NeverD/actions/runs/37159724276)于 2026-10-03 23:41:30 UTC 结束，GitHub 注释明确报告托管宿主失联。计划和十一份进度 artifact 得以保留，下载后均核对了服务端 SHA-256。最后保存的快照证明完整完成 252 轮并开始第 253 轮，不能据此定位最终故障。没有最终结果或进程回收记录，完整作业日志接口返回 404，因此请求的 1,000 轮仍未验证。仓库当时仍无自托管 runner。这些是保存下来的失败证据，不代表稳定性已经修复或 Intel 已通过完整验收。
 
 可使用[个人仓库工作流](https://github.com/gmh5225/test_mac_intel)在托管 Intel runner 上验证，无需本地 Intel 真机。它分别固定 NeverD 诊断代码和被测源码，并独立记录工作流版本。排队时间与运行稳定性需要分别判断。恢复诊断现在会在报告失败前保存每个上传子进程的 PID、父进程、可执行文件、退出码、信号和终止原因。Action 失败后，收集器最多等待 20 秒，仅复制与该子进程 PID、父进程、进程名和执行时间匹配的 macOS IPS 崩溃报告；报告缺失会明确记录。上传失败仍会终止原生运行，不能据此断定 Hypervisor 故障或测试通过。
+
+2026-10-04，个人仓库首次 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) 和 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) 作业分别在创建后 8 秒和 5 秒启动。两者均在上传子进程异常退出后失败；控制器取消并回收了原生子进程，分别留下 3 轮和 105 轮完整记录。最终证据包已保存并独立核验。另一次[纯上传对照](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621) 的 16 次上传全部通过，17 份产物均核对了服务端摘要，并标明 `native_execution=false`。这些证据区分了上传失败与原生断言失败，尚不能定位根因，也不能算作请求的 1,000 轮通过。此前组织仓库的对照也在 5 秒后启动，因此这些样本不能证明换仓库改善了排队速度。
+
+后续 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) 与 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) 两次运行均于 2026-10-04 失败结束，GitHub 明确报告托管 runner 失联。分别保存的 10 份和 16 份产物均已核验。最后保留的原始日志证明分别连续完成 175 轮和 326 轮，随后各开始一轮；不能据此定位最终故障。两次均缺少原生最终结果及进程回收记录，完整作业日志接口均返回 HTTP 404。没有发出人工取消请求。Intel 的 1,000 轮门禁仍未验证通过。[保留的原始日志片段与运行、摘要清单](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04)可在 Actions 产物保留期结束后继续查阅。

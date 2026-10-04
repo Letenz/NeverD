@@ -1,5 +1,6 @@
 #include "SwiftMangledValueConstructorABI.h"
 
+#include "../MachO/ImmutableNativeFrame.h"
 #include "SwiftFunctionSymbols.h"
 
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -167,5 +168,75 @@ swiftMangledFixedRecordConstructorDeclaration(const BinaryImage &Image,
     return std::nullopt;
   return SwiftFixedRecordConstructorDeclaration{std::move(*Storage),
                                                 std::move(Hint)};
+}
+bool requiresSwiftFixedRecordConstructorProof(
+    const SourceFunctionTypeHint &Signature) {
+  return Signature.Origin == SourceFunctionTypeHint::OriginKind::SwiftMangled &&
+         Signature.Parameters.size() == 5 && Signature.ReturnType &&
+         Signature.ReturnType->Kind == NdTypeKind::Struct &&
+         Signature.ReturnComponents.size() == 4;
+}
+
+std::optional<SourceFunctionTypeHint>
+swiftFixedRecordConstructorEntryABI(const BinaryImage &Image,
+                                    const LowFunc &Function) {
+  // The existing canonical machine/CFG owner is ARM64-only. Declaration
+  // support on x64 does not establish a current-body replay there.
+  if (Image.Arch != Arch::AArch64)
+    return std::nullopt;
+  const auto Declaration =
+      swiftMangledFixedRecordConstructorDeclaration(Image, Function.Entry);
+  size_t Budget = 262144;
+  if (!Declaration || !Function.hasCompleteLiftCoverage() ||
+      Function.DecodedInstructionCount > 256 ||
+      !immutableNativeFrameMachineMatches(Image, Function, Budget))
+    return std::nullopt;
+  return Declaration->Signature;
+}
+
+std::map<va_t, SourceCallTypeHint> buildSwiftFixedRecordConstructorCallHints(
+    const BinaryImage &Image, const LowFunc &Caller,
+    const std::map<va_t, SourceFunctionTypeHint> &CalleeABIs,
+    const std::map<va_t, const LowFunc *> &CalleeBodies) {
+  std::map<va_t, SourceCallTypeHint> Hints;
+  size_t Budget = 262144;
+  bool Checked = false;
+  std::set<va_t> Seen;
+  for (const auto &Block : Caller.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return {};
+      if (Op.Opcode != NdOp::CALL)
+        continue;
+      const auto Site = sourceCallOccurrenceKey(Op);
+      if (!Site || !Site->StaticTarget)
+        continue;
+      const auto ABI = CalleeABIs.find(*Site->StaticTarget);
+      const auto Body = CalleeBodies.find(*Site->StaticTarget);
+      if (ABI == CalleeABIs.end() || Body == CalleeBodies.end() ||
+          !Body->second || Body->second->Entry != *Site->StaticTarget)
+        continue;
+      const auto Current =
+          swiftFixedRecordConstructorEntryABI(Image, *Body->second);
+      if (!Current || !equalSourceABIs(*Current, ABI->second))
+        continue;
+      if (!Checked) {
+        if (!Caller.hasCompleteLiftCoverage() ||
+            Caller.DecodedInstructionCount > 1024 ||
+            !immutableNativeFrameMachineMatches(Image, Caller, Budget))
+          return {};
+        Checked = true;
+      }
+      if (Hints.size() >= 32 || !Seen.insert(Site->Instruction).second)
+        return {};
+      SourceCallTypeHint H;
+      H.Signature = *Current;
+      H.TargetAddress = *Site->StaticTarget;
+      H.SwiftValueConstructor =
+          SourceCallTypeHint::SwiftValueConstructorEvidence{Caller.Entry,
+                                                            *Site};
+      Hints.emplace(Site->Instruction, std::move(H));
+    }
+  return Hints;
 }
 } // namespace neverd

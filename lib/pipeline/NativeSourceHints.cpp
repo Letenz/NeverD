@@ -3,6 +3,7 @@
 #include "../loader/Swift/SwiftBooleanProjection.h"
 #include "../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../loader/Swift/SwiftMangledClassMethodABI.h"
+#include "../loader/Swift/SwiftMangledValueConstructorABI.h"
 #include "NativeSourceFloatingReturn.h"
 #include "NativeSourceIntegerPrefixReturn.h"
 #include "NativeSourcePreservation.h"
@@ -60,6 +61,82 @@ nativeSourceCalleeContracts(const BinaryImage &Image,
         It != Contracts.CurrentCallees.end())
       It->second.Audit = &Audit;
   return Contracts;
+}
+
+bool validateSwiftValueConstructorBindings(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    const NativeSourceCalleeContracts *Callees) {
+  std::set<va_t> Required;
+  if (Low) {
+    // Discovery uses the current original operations even if every receipt
+    // or the recorded mixed result has been removed from MedIR.
+    for (const auto &B : Low->Blocks)
+      for (const auto &O : B.Ops)
+        if (O.Opcode == NdOp::CALL)
+          if (const auto S = sourceCallOccurrenceKey(O);
+              S && S->StaticTarget &&
+              swiftMangledFixedRecordConstructorDeclaration(Image,
+                                                            *S->StaticTarget))
+            Required.insert(S->Instruction);
+  }
+  bool Marked = false;
+  for (const auto &B : Med.Blocks)
+    for (const auto &O : B.Ops)
+      if (O.SourceCallHint) {
+        Marked |= bool(O.SourceCallHint->SwiftValueConstructor);
+        // Removing a receipt while invalidating current declaration metadata
+        // cannot make a saved constructor call an unrelated native call.
+        if (requiresSwiftFixedRecordConstructorProof(
+                O.SourceCallHint->Signature))
+          Required.insert(O.Addr);
+      }
+  if (Required.empty() && !Marked)
+    return true;
+  if (!Low || Low->Entry != Med.Entry || !Callees ||
+      Callees->SourceImage != &Image)
+    return false;
+  std::map<va_t, SourceFunctionTypeHint> ABIs;
+  std::map<va_t, const LowFunc *> Bodies;
+  for (const auto &[Entry, C] : Callees->CurrentCallees)
+    if (C.Low && C.Signature && C.Audit &&
+        completeNativeAudit(Entry, *C.Audit) &&
+        C.Audit->DecodedInstructions == C.Low->DecodedInstructionCount) {
+      ABIs.emplace(Entry, *C.Signature);
+      Bodies.emplace(Entry, C.Low);
+    }
+  const auto Hints =
+      buildSwiftFixedRecordConstructorCallHints(Image, *Low, ABIs, Bodies);
+  if (Hints.size() != Required.size())
+    return false;
+  std::set<va_t> Seen;
+  size_t Budget = 262144;
+  for (const auto &B : Med.Blocks)
+    for (const auto &O : B.Ops) {
+      if (!Budget--)
+        return false;
+      const auto I = Hints.find(O.Addr);
+      const bool Receipt =
+          O.SourceCallHint && O.SourceCallHint->SwiftValueConstructor;
+      if (!Receipt && (I == Hints.end() || O.Opcode != NdOp::CALL))
+        continue;
+      if (!Receipt || I == Hints.end())
+        return false;
+      const auto &H = *O.SourceCallHint, &E = I->second;
+      const auto &Site = E.SwiftValueConstructor->Site;
+      if (H.SwiftValueConstructor != E.SwiftValueConstructor ||
+          H.CallKind != E.CallKind || H.TargetAddress != E.TargetAddress ||
+          H.DoesNotReturn || H.WeakImport ||
+          !equalSourceABIs(H.Signature, E.Signature) ||
+          O.Opcode != Site.Opcode || O.OriginSeq != Site.Sequence ||
+          O.NumInputs != 6 || O.Output.Size != 32 || !O.Inputs[0].isConst() ||
+          O.Inputs[0].ConstVal != Site.StaticTarget || O.DoesNotReturn ||
+          O.PreservesCallerSaved || !Seen.insert(O.Addr).second)
+        return false;
+      for (unsigned J = 0; J < O.NumInputs; ++J)
+        if (O.Inputs[J].Size != 8)
+          return false;
+    }
+  return Seen == Required;
 }
 
 bool validateSwiftOpaqueValueBindings(
@@ -672,7 +749,8 @@ bool hasNativeSourceStateContract(
       Low->Blocks.size() > 16384)
     return false;
   NativeSourceCalls Calls;
-  if (!validateSwiftOpaqueValueBindings(Image, Low, Med, Callees) ||
+  if (!validateSwiftValueConstructorBindings(Image, Low, Med, Callees) ||
+      !validateSwiftOpaqueValueBindings(Image, Low, Med, Callees) ||
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med) ||
       !validateNativeSwiftReceiverBindings(Image, Low, Med))
@@ -1562,7 +1640,9 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
        (!Low || !validateSourceRegisterCopies(Image, *Low,
                                               Med.RegisterCopyProjections))))
     return Reject("source register-copy proof is no longer valid");
-  if (!validateSwiftOpaqueValueBindings(Image, Low, Med, CalleeContracts) ||
+  if (!validateSwiftValueConstructorBindings(Image, Low, Med,
+                                             CalleeContracts) ||
+      !validateSwiftOpaqueValueBindings(Image, Low, Med, CalleeContracts) ||
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med))
     return Reject("Swift witness frame proof is no longer valid");

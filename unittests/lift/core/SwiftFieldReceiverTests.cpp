@@ -2,6 +2,7 @@
 #include "../../../lib/loader/Swift/SwiftMangledClassMethodABI.h"
 #include "../../../lib/loader/Swift/SwiftMangledValueConstructorABI.h"
 #include "../../../lib/sdk/capi/ObjCNativeSwiftReceiverSources.h"
+#include "../../../lib/sdk/capi/SourceSwiftValueConstructorProjection.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -1539,4 +1540,333 @@ TEST(SwiftFixedRecordConstructor,
   F.Image.RuntimeFunctionAddrs.insert(F.Entry + 1);
   EXPECT_FALSE(
       swiftMangledFixedRecordConstructorDeclaration(F.Image, F.Entry + 1));
+}
+
+// A linked, independently named constructor whose machine body forwards all
+// three FP lanes and the first opaque input. It exercises current re-lifting;
+// its declaration alone cannot certify either a changed body or caller.
+namespace {
+PipelineResult constructorPipeline(FixedConstructorFixture &F,
+                                   llvm::LLVMContext &Context,
+                                   bool WithCaller = false) {
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {F.Entry};
+  if (WithCaller) {
+    constexpr va_t Caller = 0x1100;
+    F.segment(Caller, 0x100, "__text_caller", true);
+    // An observable external store keeps this ordinary call in the pipeline;
+    // the empty identity leaf is intentionally eligible for leaf elimination.
+    F.u32(F.Entry, 0xf9000020); // str x0, [x1]
+    F.u32(F.Entry + 4, 0xd65f03c0);
+    for (auto &S : F.Image.Symbols)
+      if (S.Addr == F.Entry)
+        S.Size = 8;
+    const uint32_t Words[] = {0xa9bf7bfd, 0x910003fd, 0x97ffffde, 0xa8c17bfd,
+                              0xd65f03c0};
+    for (unsigned I = 0; I != std::size(Words); ++I)
+      F.u32(Caller + 4 * I, Words[I]);
+    F.Image.Symbols.push_back({"caller", Caller, sizeof(Words), true});
+    F.Image.RuntimeFunctionAddrs.insert(Caller);
+    Options.OnlyFunctionEntries.insert(Caller);
+  }
+  auto R = Pipeline().run(F.Image, Context, Options);
+  std::map<va_t, std::string> Diagnostics;
+  neverd::sdk::inferObjCNativeDependencies(F.Image, R, Options, Diagnostics,
+                                           {F.Entry});
+  return Pipeline().run(F.Image, Context, Options);
+}
+} // namespace
+
+TEST(SwiftFixedRecordConstructor, CurrentEntryAndSourceReplayKeepFourResults) {
+  FixedConstructorFixture F(Arch::AArch64);
+  llvm::LLVMContext Context;
+  auto R = constructorPipeline(F, Context);
+  ASSERT_TRUE(R.Success);
+  const auto Current =
+      neverd::sdk::native_source_detail::currentFunction(R, F.Entry);
+  ASSERT_TRUE(Current);
+  ASSERT_TRUE(swiftFixedRecordConstructorEntryABI(F.Image, *Current->Low));
+  ASSERT_EQ(Current->Med->SourceTypeHint->Parameters.size(), 5u);
+  ASSERT_EQ(Current->Med->SourceTypeHint->ReturnComponents.size(), 4u);
+  const auto B = neverd::sdk::bindObjCSourceReferences(*Current->High, F.Image);
+  ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+  EXPECT_TRUE(
+      neverd::sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+          .valid(B.Function));
+}
+
+TEST(SwiftFixedRecordConstructor, OriginalCallRequiresCurrentCompleteCallee) {
+  for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    FixedConstructorFixture F(Arch::AArch64);
+    llvm::LLVMContext Context;
+    auto R = constructorPipeline(F, Context, true);
+    ASSERT_TRUE(R.Success);
+    MedFunc *Caller = nullptr;
+    LowFunc *Low = nullptr;
+    for (auto &M : R.MedFuncs)
+      if (M.Entry == 0x1100)
+        Caller = &M;
+    for (auto &L : R.LowFuncs)
+      if (L.Entry == 0x1100)
+        Low = &L;
+    ASSERT_TRUE(Caller && Low);
+    MedOp *Call = nullptr;
+    for (auto &B : Caller->Blocks)
+      for (auto &O : B.Ops)
+        if (O.Opcode == NdOp::CALL && O.Addr == 0x1108)
+          Call = &O;
+    ASSERT_TRUE(Call && Call->SourceCallHint);
+    ASSERT_TRUE(Call->SourceCallHint->SwiftValueConstructor);
+    EXPECT_TRUE(Call->SourceCallHint->requiresUniqueSourceOccurrence());
+    auto Contracts = nativeSourceCalleeContracts(F.Image, R);
+    ASSERT_TRUE(validateSwiftValueConstructorBindings(F.Image, Low, *Caller,
+                                                      &Contracts));
+    auto ChangedHint =
+        std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+    Call->SourceCallHint = ChangedHint;
+    switch (Mutation) {
+    case 0:
+      ChangedHint->SwiftValueConstructor.reset();
+      break;
+    case 1:
+      Call->Output.Size = 8;
+      break;
+    case 2:
+      Call->NumInputs = 3;
+      break;
+    case 3:
+      Call->Inputs[1].Size = 4;
+      break;
+    case 4:
+      Call->OriginSeq += 1;
+      break;
+    case 5:
+      ChangedHint->Signature.ReturnComponents.pop_back();
+      break;
+    case 6:
+      Contracts.CurrentCallees.erase(F.Entry);
+      break;
+    case 7:
+      Contracts.CurrentCallees.at(F.Entry).Audit = nullptr;
+      break;
+    case 8:
+      F.u32(F.Entry, 0xaa0103e0);
+      break;
+    case 9:
+      F.Image.Symbols.back().Size = 4;
+      F.u32(0x1108, 0x94000001);
+      break;
+    case 10:
+      Call->PreservesCallerSaved = true;
+      break;
+    case 11:
+      for (auto &L : R.LowFuncs)
+        if (L.Entry == F.Entry)
+          L.Blocks[0].Ops[0].Addr += 4;
+      break;
+    case 12:
+      Caller->Blocks[0].Ops.push_back(*Call);
+      break;
+    case 13:
+      ChangedHint->SwiftValueConstructor.reset();
+      F.u32(F.Metadata + 16, 8);
+      break;
+    }
+    EXPECT_FALSE(validateSwiftValueConstructorBindings(F.Image, Low, *Caller,
+                                                       &Contracts));
+  }
+}
+
+TEST(SwiftFixedRecordConstructor, PublicationRebuildsCurrentEntryAndWholeBody) {
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    FixedConstructorFixture F(Arch::AArch64);
+    llvm::LLVMContext Context;
+    auto R = constructorPipeline(F, Context);
+    const auto C =
+        neverd::sdk::native_source_detail::currentFunction(R, F.Entry);
+    ASSERT_TRUE(C);
+    auto B = neverd::sdk::bindObjCSourceReferences(*C->High, F.Image);
+    ASSERT_TRUE(
+        neverd::sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+            .valid(B.Function));
+    switch (Mutation) {
+    case 0:
+      B.Function.SourceTypeHint->ReturnComponents.pop_back();
+      break;
+    case 1:
+      B.Function.Params.pop_back();
+      break;
+    case 2:
+      B.Function.Params[0].Type = NdType::makeFloat(4);
+      break;
+    case 3:
+      B.Function.Body.clear();
+      break;
+    case 4:
+      B.Function.FrameSize += 16;
+      break;
+    case 5:
+      B.Function.Body.push_back(B.Function.Body.back());
+      break;
+    case 6:
+      R.MedFuncs[0].Blocks[0].Ops.clear();
+      break;
+    case 7:
+      R.FunctionAudits[0].MedIRVerified = false;
+      break;
+    case 8:
+      F.u32(F.Entry, 0xaa0103e0);
+      break;
+    case 9:
+      F.u32(F.Metadata + 16, 8);
+      break;
+    case 10:
+      B.Function.SourceTypeHint->Parameters[3].Location.RegisterOffset += 8;
+      break;
+    case 11:
+      B.Function.Body.back().RetVal = HighExpr::makeConst(0, 8);
+      break;
+    }
+    EXPECT_FALSE(
+        neverd::sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+            .valid(B.Function));
+  }
+}
+
+TEST(SwiftFixedRecordConstructor,
+     X64DeclarationDoesNotBypassARM64MachineReplay) {
+  FixedConstructorFixture F(Arch::X64);
+  F.u32(F.Entry, 0xc3f88948); // mov rdi, rax; ret
+  for (auto &S : F.Image.Symbols)
+    if (S.Addr == F.Entry)
+      S.Size = 4;
+  auto D = F.declaration();
+  ASSERT_TRUE(D);
+  ASSERT_EQ(D->Signature.ReturnComponents.size(), 4u);
+  EXPECT_EQ(D->Signature.ReturnComponents[3].RegisterOffset, x86reg::RAX);
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {F.Entry};
+  Options.SourceTypeHints.emplace(F.Entry, D->Signature);
+  auto R = Pipeline().run(F.Image, Context, Options);
+  const auto C = neverd::sdk::native_source_detail::currentFunction(R, F.Entry);
+  ASSERT_TRUE(C);
+  EXPECT_FALSE(swiftFixedRecordConstructorEntryABI(F.Image, *C->Low));
+  const auto B = neverd::sdk::bindObjCSourceReferences(*C->High, F.Image);
+  ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+  EXPECT_FALSE(
+      neverd::sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+          .valid(B.Function));
+}
+
+TEST(SwiftFixedRecordConstructor,
+     CallerPublicationReplaysArgumentsAndOccurrence) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    FixedConstructorFixture F(Arch::AArch64);
+    F.segment(0x1100, 0x100, "__text_caller", true);
+    F.u32(F.Entry, 0xf9000020);
+    F.u32(F.Entry + 4, 0xd65f03c0);
+    for (auto &S : F.Image.Symbols)
+      if (S.Addr == F.Entry)
+        S.Size = 8;
+    const uint32_t Words[] = {0xa9bf7bfd, 0x910003fd, 0xaa0003e1, 0xaa1f03e0,
+                              0x9e6703e0, 0x9e6703e1, 0x9e6703e2, 0x97ffffd9,
+                              0xaa1f03e0, 0xa8c17bfd, 0xd65f03c0};
+    for (unsigned I = 0; I != std::size(Words); ++I)
+      F.u32(0x1100 + I * 4, Words[I]);
+    F.Image.Symbols.push_back({"caller", 0x1100, sizeof(Words), true});
+    F.Image.RuntimeFunctionAddrs.insert(0x1100);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {F.Entry, 0x1100};
+    PipelineResult R;
+    for (unsigned Round = 0; Round != 4; ++Round) {
+      R = Pipeline().run(F.Image, Context, Options);
+      std::map<va_t, std::string> D;
+      if (!neverd::sdk::inferObjCNativeDependencies(
+              F.Image, R, Options, D, Options.OnlyFunctionEntries))
+        break;
+    }
+    const auto C =
+        neverd::sdk::native_source_detail::currentFunction(R, 0x1100);
+    ASSERT_TRUE(C);
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &H : R.HighFuncs)
+      Functions.emplace(H.Entry, &H);
+    auto B = neverd::sdk::bindObjCSourceReferences(*C->High, F.Image, nullptr,
+                                                   &Functions);
+    ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+    ASSERT_TRUE(
+        neverd::sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+            .valid(B.Function));
+    HighExpr *Call = nullptr;
+    walkStmts(B.Function.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        std::vector<ExprPtr> Pending{E};
+        while (!Pending.empty()) {
+          auto V = Pending.back();
+          Pending.pop_back();
+          if (!V)
+            continue;
+          if (V->SourceCallHint && V->SourceCallHint->SwiftValueConstructor)
+            Call = V.get();
+          V->forEachChildExpr([&](const ExprPtr &C) { Pending.push_back(C); });
+        }
+      });
+    });
+    ASSERT_TRUE(Call);
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+    Call->SourceCallHint = Hint;
+    switch (Mutation) {
+    case 0:
+      Hint->SwiftValueConstructor.reset();
+      break;
+    case 1:
+      Call->Operands[0] = HighExpr::makeConst(7, 8);
+      break;
+    case 2:
+      Call->Operands[4] = HighExpr::makeConst(0, 8);
+      break;
+    case 3:
+      Call->Operands.pop_back();
+      break;
+    case 4:
+      Hint->Signature.ReturnComponents.pop_back();
+      break;
+    case 5:
+      Call->Type = NdType::makeInt(8);
+      break;
+    case 6:
+      Hint->SwiftValueConstructor->Site.Sequence += 1;
+      break;
+    case 8:
+      Hint->SwiftValueConstructor.reset();
+      F.u32(F.Metadata + 16, 8);
+      for (auto &M : R.MedFuncs)
+        for (auto &Block : M.Blocks)
+          for (auto &O : Block.Ops)
+            if (O.SourceCallHint && O.SourceCallHint->SwiftValueConstructor) {
+              auto H = std::make_shared<SourceCallTypeHint>(*O.SourceCallHint);
+              H->SwiftValueConstructor.reset();
+              O.SourceCallHint = H;
+            }
+      break;
+    case 7: {
+      HighStmt Extra;
+      Extra.Kind = StmtKind::Call;
+      Extra.CallExpr = std::make_shared<HighExpr>(*Call);
+      B.Function.Body.insert(B.Function.Body.begin(), Extra);
+      break;
+    }
+    }
+    EXPECT_FALSE(
+        neverd::sdk::SourceSwiftValueConstructorProjectionValidator(F.Image, R)
+            .valid(B.Function));
+  }
 }

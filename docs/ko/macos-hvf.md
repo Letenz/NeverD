@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bebc9b4b7e408e18ff142e834c8d2917380133b9a965a0a5c5841f8dc23e326e -->
+<!-- i18n-source: 9a24ea23cf2a47db289e1e2b215d8900d8db1bd0cc636bab4cd68cb061aec251 -->
 
 [← 문서 목록](README.md)
 
@@ -120,3 +120,7 @@ CPU 실행 전에 `scripts/prepare_hvf_batches.py`가 전체·선택 목록과 �
 소스 `bd284894c60427cf4e6a60e661a1fa0df8a070f5`를 사용한 [독립 Intel 복구 진단 실행](https://github.com/NeverSight/NeverD/actions/runs/37159724276)은 2026-10-03 23:41:30 UTC에 종료됐으며 GitHub 주석은 호스팅 runner와의 통신 상실을 보고했습니다. 계획과 진행 artifact 11개가 남았고 다운로드 후 서버 SHA-256과 대조했습니다. 마지막 보존 스냅샷은 252회 완료와 253회 시작을 증명하지만 최종 장애 지점을 특정하지는 못합니다. 최종 결과와 프로세스 회수 기록이 없고 전체 작업 로그 API는 404를 반환했습니다. 따라서 요청한 1,000회는 여전히 미검증입니다. 저장소에는 자체 호스팅 runner도 없었습니다. 이는 보존된 실패 증거이며 안정성 수정이나 Intel 전체 검증 통과를 뜻하지 않습니다.
 
 [개인 저장소 워크플로](https://github.com/gmh5225/test_mac_intel)를 이용하면 로컬 Intel Mac 없이 호스팅 Intel runner에서 검증할 수 있습니다. NeverD 진단 코드와 테스트 소스 버전을 각각 고정하고 워크플로 버전도 별도로 기록합니다. 대기 시간과 실행 안정성은 따로 평가해야 합니다. 복구 진단은 실패를 보고하기 전에 각 업로드 자식 프로세스의 PID, 부모, 실행 파일, 종료 코드, 신호와 종료 이유를 보존합니다. Action 실패 후 최대 20초 동안 기다리며 PID, 부모, 프로세스 이름과 실행 시간이 일치하는 macOS IPS 충돌 보고서만 수집합니다. 보고서가 없으면 이를 명시합니다. 업로드 실패는 원래 네이티브 실행을 중단하지만, 그 자체로 Hypervisor 오류나 테스트 성공을 입증하지는 않습니다.
+
+2026-10-04에 개인 저장소의 첫 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) 및 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) 작업은 생성 후 각각 8초와 5초 만에 시작했습니다. 두 작업 모두 업로드 자식 프로세스가 비정상 종료하여 실패했고, 제어기가 네이티브 자식 프로세스를 취소하고 회수했습니다. 각각 3회와 105회가 완료되었으며 최종 증거를 보존하고 독립적으로 검증했습니다. 별도의 [업로드 전용 대조](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621)는 업로드 16회를 모두 통과했고, 산출물 17개의 서버 해시를 확인했으며 `native_execution=false`를 기록했습니다. 이 증거는 업로드 실패와 네이티브 단언 실패를 구분하지만, 원인을 확정하거나 요청한 1,000회 검증을 완료하지는 않습니다. 이전 조직 저장소의 대조도 5초 만에 시작했으므로, 이 표본만으로 대기 시간 개선을 입증할 수 없습니다.
+
+이후 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) 및 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) 실행은 모두 2026-10-04에 실패로 종료되었고, GitHub는 호스팅 runner와의 통신 두절을 명시했습니다. 각각 산출물 10개와 16개를 검증했습니다. 마지막 보존 로그는 각각 175회와 326회의 연속 완료 및 다음 반복의 시작을 증명하지만, 최종 장애 위치를 특정하지는 못합니다. 두 실행 모두 네이티브 최종 결과와 프로세스 회수 기록이 없고, 전체 작업 로그 조회는 HTTP 404를 반환했습니다. 수동 취소 요청은 없었습니다. Intel의 1,000회 검증은 여전히 미완료입니다. [보존한 원본 로그 부분과 실행·해시 목록](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04)은 Actions 산출물 보존 기간이 끝난 뒤에도 확인할 수 있습니다.
