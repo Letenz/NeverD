@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3d21e1f2505fe8dd441e3bbaadb4a3d3381f2923d087635ec3129190a86b102 -->
+<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -162,3 +162,11 @@ M4 Max、macOS 15.6.1、Release、Apple Clang 17、ビルド済み LLVM で確�
 共有ホスト上の checked ARM64 ワークロードの測定であり、普遍的な性能順位を示すものではありません。Intel runner の切断とプロセスクラッシュは引き続き別途調査が必要です。限定的な macOS/iOS CPU 環境が Apple OS や実機全体のエミュレーションになるわけではありません。
 
 [再現方法: `neverd-cpu-bench`, `benchmark_cpu.py`](../testing.md#reproduce-checked-arm64-cpu-measurements).
+
+## Intel 分離実験の結果（2026-10-04）
+
+所有スレッドの実行期限を有限にした候補 `909672ca6` は実験段階です。元の 1000 回復旧テストは macOS 15 と 26 の両方で runner との通信を失いました。保存された末尾の完了/開始回数は 277/278 と 250/251 です。同じ候補で明示的なキャンセルを行わない通常命令テストも macOS 15 で通信を失いました（576/577）。GitHub が 3 件とも確認しています。最終ネイティブ結果とプロセス回収記録はなく、保存ログから最終的な障害箇所は特定できません。[元の証拠](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。
+
+独立した未変更の `hvf-edge-cases` プログラム `f150b38` は、両イメージで real-mode guest と 100000 回のランダム割り込み呼び出し試行を約 362 秒、398 秒で完了しました。終了コードは 0 で子プロセスも回収済みです。成果物とソースのハッシュ、進捗、guest 完了を独立検証しました。先の 300 秒実行は観測期限で終了・回収され、runner の通信断はありませんでした。上流コードはランダム割り込みの戻り値を無視するため、試行数は配信成功数を意味しません。NeverD の受け入れ検証や性能比較には代用できません。[ソース・ログ・監査](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream)。
+
+調査範囲は狭まりましたが、製品修正はまだ証明されていません。VM と Executor スレッドの保持は診断用の比較であり、採用済みのライフサイクル変更ではありません。Intel では同じクリーンな候補で元の 1000 回復旧テスト、CPU 全項目、独立 Darwin ゲートを通す必要があります。

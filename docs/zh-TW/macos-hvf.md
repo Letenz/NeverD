@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3d21e1f2505fe8dd441e3bbaadb4a3d3381f2923d087635ec3129190a86b102 -->
+<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
 
 [← 文件索引](README.md)
 
@@ -162,3 +162,11 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 這些是共用宿主上的 checked ARM64 工作負載實測，不是通用效能排名。Intel runner 失聯與程序崩潰仍待單獨定位。受限的 macOS/iOS CPU 環境並未因此變成完整 Apple OS 或裝置模擬。
 
 [重現方法: `neverd-cpu-bench`, `benchmark_cpu.py`](../testing.md#reproduce-checked-arm64-cpu-measurements).
+
+## Intel 隔離實驗結果（2026-10-04）
+
+有限 owner 期限候選 `909672ca6` 仍屬實驗方案。原始 1000 輪恢復測試在 macOS 15 與 26 上均失聯；最後保留的紀錄分別證明 277/278、250/251 輪已完成/已開始。同一候選的普通指令測試沒有主動取消操作，在 macOS 15 上也失聯（576/577）。三次均有 GitHub 失聯註記，均缺少最終原生結果與程序回收紀錄；保留的紀錄無法定位最終故障。[原始證據](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。
+
+獨立且未修改的 `hvf-edge-cases` 程式 `f150b38` 在兩個映像上完成 real-mode guest 與 100000 次隨機中斷呼叫嘗試，耗時約 362、398 秒。兩次均正常結束並回收子程序；產物摘要、原始碼雜湊、進度標記與 guest 完成輸出均已獨立核驗。先前 300 秒嘗試達到觀察器期限後被回收，沒有 runner 失聯。上游程式忽略隨機中斷回傳值，呼叫次數不代表逐次成功交付。此對照不構成 NeverD 驗收或效能比較。[原始碼、紀錄與稽核](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream)。
+
+這些結果縮小調查範圍，但尚未證明正式修復。保留 VM 與 Executor 執行緒僅用於診斷對照，尚未成為接受的生命週期變更。Intel 仍須在同一個乾淨候選上通過原始 1000 輪恢復、完整 CPU 清單與獨立 Darwin 門檻。

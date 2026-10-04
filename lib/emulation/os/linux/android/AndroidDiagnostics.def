@@ -153,4 +153,47 @@ NEVERD_ANDROID_DIAGNOSTIC(PreinitArray,
 NEVERD_ANDROID_DIAGNOSTIC(InitializerArray, "invalid initializer array")
 NEVERD_ANDROID_DIAGNOSTIC(DestroyedMutex,
                           "guest called {0} on a destroyed mutex")
+NEVERD_ANDROID_DIAGNOSTIC(
+    MemoryInputConflict, "memory path and initial bytes are mutually exclusive")
+NEVERD_ANDROID_DIAGNOSTIC(MemoryInputPath, "invalid memory input path")
+NEVERD_ANDROID_DIAGNOSTIC(MemoryInputRegular,
+                          "memory input must be a regular file")
+NEVERD_ANDROID_DIAGNOSTIC(MemoryInputExtent,
+                          "memory input file exceeds its region")
+NEVERD_ANDROID_DIAGNOSTIC(MemoryInputChanged,
+                          "memory input file changed while reading")
+NEVERD_ANDROID_DIAGNOSTIC(MemoryInputIO, "memory input file I/O failed: ")
+NEVERD_ANDROID_DIAGNOSTIC(MemoryInputDeadline,
+                          "memory input preparation deadline expired")
+NEVERD_ANDROID_DIAGNOSTIC(FormatInputLimit,
+                          "formatting input exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(FormatRegisterSaveArea,
+                          "invalid AAPCS64 register save area")
+NEVERD_ANDROID_DIAGNOSTIC(FormatCallStackAlignment,
+                          "unaligned AAPCS64 call stack")
+NEVERD_ANDROID_DIAGNOSTIC(FormatArgumentStack, "invalid AAPCS64 argument stack")
+NEVERD_ANDROID_DIAGNOSTIC(FormatStringOverflow,
+                          "formatting string address overflow")
+NEVERD_ANDROID_DIAGNOSTIC(FormatWidthPrecision,
+                          "format width or precision exceeds INT_MAX")
+NEVERD_ANDROID_DIAGNOSTIC(FormatResultLimit,
+                          "formatting result exceeds INT_MAX")
+NEVERD_ANDROID_DIAGNOSTIC(FormatOutputLimit,
+                          "formatting output exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(FormatWidthMagnitude,
+                          "format width magnitude exceeds INT_MAX")
+NEVERD_ANDROID_DIAGNOSTIC(FormatIncompleteConversion,
+                          "incomplete format conversion")
+NEVERD_ANDROID_DIAGNOSTIC(FormatTextLength,
+                          "wide or length-qualified text conversion")
+NEVERD_ANDROID_DIAGNOSTIC(FormatPointerLength,
+                          "length-qualified pointer conversion")
+NEVERD_ANDROID_DIAGNOSTIC(FormatConversion,
+                          "unsupported format conversion (including "
+                          "positional, floating-point, wide text and %n)")
+NEVERD_ANDROID_DIAGNOSTIC(
+    FormatCapacity, "snprintf capacity exceeds the supported INT_MAX bound")
+NEVERD_ANDROID_DIAGNOSTIC(FormatVAListAlignment, "unaligned AAPCS64 va_list")
+NEVERD_ANDROID_DIAGNOSTIC(FormatRegisterOffset,
+                          "invalid AAPCS64 general register offset")
 #endif

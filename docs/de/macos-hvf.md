@@ -1,6 +1,6 @@
 **Sprachen**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: a3d21e1f2505fe8dd441e3bbaadb4a3d3381f2923d087635ec3129190a86b102 -->
+<!-- i18n-source: 8f26e60b2d8386a9fac2779c8ee4c580c21df3c09d7a2eabe46de97a72474384 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -162,3 +162,11 @@ Fünfzehn Prozesspaare liefen in wechselnder Reihenfolge, mit einem Aufwärmdurc
 Gemessen wurden geprüfte ARM64-Arbeitslasten auf einem gemeinsam genutzten Host, keine allgemeine Leistungsrangliste. Verbindungsabbrüche und Prozessabstürze der Intel-Runner bleiben gesondert zu untersuchen. Die begrenzten macOS/iOS-CPU-Profile sind weiterhin keine vollständige Apple-OS- oder Geräteemulation.
 
 [Reproduktion: `neverd-cpu-bench`, `benchmark_cpu.py`](../testing.md#reproduce-checked-arm64-cpu-measurements).
+
+## Ergebnisse isolierter Intel-Versuche (2026-10-04)
+
+Der Kandidat `909672ca6` mit endlicher Frist im besitzenden Thread bleibt experimentell. Der ursprüngliche Test mit 1000 Wiederherstellungen verlor unter macOS 15 und 26 die Verbindung zum Runner. Die letzten gespeicherten Ausschnitte zeigen 277/278 und 250/251 beendete/gestartete Durchläufe. Auch gewöhnliche Anweisungen desselben Kandidaten ohne ausdrücklichen Abbruch verloren unter macOS 15 die Verbindung (576/577). GitHub bestätigte alle drei Verluste. Native Endergebnisse und Nachweise der Prozessbeendigung fehlen; die Ausschnitte bestimmen nicht den späteren Fehlerort. [Originalbelege](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries).
+
+Das unabhängige, unveränderte Programm `hvf-edge-cases` bei `f150b38` beendete seinen Real-Mode-Gast und 100000 zufällige Interrupt-Aufrufversuche auf beiden Images nach etwa 362 und 398 Sekunden. Beide Exitcodes waren null, die Kindprozesse wurden eingesammelt. Artefakt- und Quellhashes, Fortschritt und Gastabschluss wurden unabhängig geprüft. Frühere Versuche erreichten die Beobachtungsgrenze von 300 Sekunden und wurden beendet und eingesammelt, ohne Runner-Verlust. Das Original ignoriert Rückgabecodes zufälliger Interrupts; Aufrufzahlen belegen keine einzelne Zustellung. Der Vergleich ersetzt weder NeverD-Abnahme noch Leistungsmessung. [Quellen, Protokolle und Prüfung](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream).
+
+Die Ergebnisse grenzen die Untersuchung ein, belegen aber keine Produktkorrektur. VM und Executor-Threads beizubehalten ist ein Diagnosevergleich, keine akzeptierte Lebenszyklusänderung. Intel benötigt weiterhin den ursprünglichen 1000-fachen Wiederherstellungstest, das vollständige CPU-Inventar und die unabhängige Darwin-Prüfung am selben sauberen Kandidaten.

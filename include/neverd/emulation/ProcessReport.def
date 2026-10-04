@@ -134,6 +134,7 @@ NEVERD_PROCESS_CLI_STATUS(Incomplete, 3)
 #endif
 
 #ifdef NEVERD_PROCESS_REPORT_TEXT
+NEVERD_PROCESS_REPORT_TEXT(AndroidOptions, "invalid Android native option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsOptions, "invalid Windows process option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsProfile,
                            "Windows options require windows-pe64-v1")

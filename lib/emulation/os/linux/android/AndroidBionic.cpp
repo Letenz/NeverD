@@ -300,6 +300,9 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
   }
   if (Name.starts_with(symbol::PthreadMutexPrefix))
     return mutex(Call);
+  if (Name == symbol::Snprintf || Name == symbol::Vsnprintf ||
+      Name == symbol::Sprintf || Name == symbol::Vsprintf)
+    return format(Call);
   if (Name == symbol::Errno)
     return Value(ErrnoAddress);
   if (Name == symbol::Time) {

@@ -411,3 +411,11 @@ Fifteen alternating process pairs, with one warmup per workload and no build or 
 These are measurements of checked ARM64 workloads on one shared host, not a universal speed ranking. Intel runner disconnects and process crashes remain unresolved and require separate investigation. The bounded macOS/iOS CPU profiles do not become full Apple OS/device emulation.
 
 [Reproduction: `neverd-cpu-bench`, `benchmark_cpu.py`](testing.md#reproduce-checked-arm64-cpu-measurements).
+
+## Intel isolation results (2026-10-04)
+
+The finite owner-deadline candidate `909672ca6` remains experimental. The original 1000-repetition recovery test lost runner communication on both macOS 15 and 26; its last preserved prefixes contain 277/278 and 250/251 completed/started iterations. Ordinary instruction execution with the same candidate and no explicit cancellation also lost communication on macOS 15 (576/577). GitHub confirmed all three losses. None has a final native result or retirement record; a saved prefix does not locate the eventual fault. [Original evidence](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries).
+
+An independent, unchanged `hvf-edge-cases` program at `f150b38` completed its real-mode guest and 100000 random interrupt call attempts on both images, in approximately 362 and 398 seconds. Both exited zero and their children were reaped; artifact digests, source hashes, checkpoints and guest completion were independently checked. Earlier 300-second attempts reached their observer deadline and were retired, without losing the runner. The upstream program ignores random interrupt return codes, so attempt counts do not establish one-to-one delivery. This control is not NeverD acceptance or a performance comparison. [Source, logs and audit](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream).
+
+These results narrow the investigation but establish no production fix. Retaining the VM and executor threads is a diagnostic comparison, not an accepted lifecycle change. Intel still requires the original 1000-repetition recovery test, complete CPU inventory and independent Darwin gate on the same clean candidate.

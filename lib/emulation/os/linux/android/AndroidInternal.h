@@ -52,6 +52,11 @@ struct LinkedImage {
 llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
                                       const BinaryImage &Image,
                                       const ProcessOptions &Options);
+/// Populate an already admitted region. File input is bounded by its mapped
+/// extent and the workload's preparation deadline, before any CPU is created.
+llvm::Error initializeMemoryRegion(AddressSpace &Space,
+                                   const NativeMemoryRegion &Region,
+                                   const ExecutionBudget &Budget);
 struct OnceCallback {
   uint64_t Entry, Control;
 };
@@ -101,6 +106,8 @@ private:
   BionicResult dlfcn(NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
   llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
+  class StringFormatter;
+  BionicResult format(const NativeCallEvent &Call);
   llvm::Expected<std::optional<uint64_t>> mutex(const NativeCallEvent &Call);
 };
 llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
