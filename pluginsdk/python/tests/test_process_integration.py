@@ -153,6 +153,25 @@ class ProcessIntegrationTests(unittest.TestCase):
                 self.assertEqual(call["pc"], lookup["result"])
                 self.assertEqual(int(call["result"], 16), 1000)
         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+        options = json.dumps({"backend": "unicorn", "android": {
+            "entry_symbol": "once_values", "arguments": [0x20000000],
+            "memory": [{"address": 0x20000000, "size": 4096}],
+            "read_memory": [{"address": 0x20000000, "size": 44}],
+        }})
+        result = session.emulate_process(str(Path(fixtures) / "once-O2-relr.so"),
+                                         "android-aarch64-api28-v1", options)
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(int(result["return_value"], 16), 73)
+        events = result["android"]["native_calls"]
+        self.assertEqual([e["name"] for e in events],
+                         ["pthread_once"] * 4 + ["getuid", "pthread_once"])
+        self.assertEqual([int(e["result"], 16) for e in events],
+                         [0, 0, 0, 0, 1000, 0])
+        memory = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+        self.assertEqual([int.from_bytes(memory[i:i + 4], "little")
+                          for i in range(0, len(memory), 4)],
+                         [2, 2, 1, 1, 1, 1, 2, 1000, 1, 2, 1])
+        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
 
 if __name__ == "__main__":

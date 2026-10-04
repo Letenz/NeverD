@@ -461,6 +461,56 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidInitializersReturnThroughSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "once-O2-relr.so")
+             .string();
+  const std::string Request =
+      R"({"backend":"unicorn","android":{"entry_symbol":"once_values","arguments":["0x20000000"],"memory":[{"address":"0x20000000","size":4096}],"read_memory":[{"address":"0x20000000","size":44}]}})";
+  auto Text = takeString(neverd_emulate_process_json(
+      Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+  ASSERT_EQ(Parsed.getAsObject()->getString(field::Stop), "returned");
+  EXPECT_EQ(Parsed.getAsObject()->getString(field::ReturnValue), "49");
+  const auto *Android = Parsed.getAsObject()->getObject(field::Android);
+  ASSERT_NE(Android, nullptr);
+  const auto *Calls = Android->getArray(field::NativeCalls);
+  ASSERT_NE(Calls, nullptr);
+  ASSERT_EQ(Calls->size(), 6u);
+  for (size_t I = 0; I < Calls->size(); ++I) {
+    EXPECT_EQ((*Calls)[I].getAsObject()->getString(field::Name),
+              I == 4 ? "getuid" : "pthread_once");
+    EXPECT_EQ((*Calls)[I].getAsObject()->getString(field::Result),
+              I == 4 ? "3e8" : "0");
+  }
+  const auto *Memory = Android->getArray(field::Memory);
+  ASSERT_NE(Memory, nullptr);
+  ASSERT_EQ(Memory->size(), 1u);
+  EXPECT_EQ((*Memory)[0].getAsObject()->getString(field::Bytes),
+            "02000000020000000100000001000000010000000100000002000000"
+            "e8030000010000000200000001000000");
+  EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
+                       test::shellQuote(Path) +
+                       " --profile=" + AndroidNativeAArch64 +
+                       " --options=" + test::shellQuote(Request) +
+                       test::redirectStdout(Output) + test::silenceStderr();
+  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+            process_cli::Success);
+  auto Buffer = llvm::MemoryBuffer::getFile(Output);
+  ASSERT_TRUE(bool(Buffer));
+  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), Parsed);
+#endif
+}
+
 TEST_F(ProcessPublic, InvalidSetupDoesNotPoisonTheReusableSession) {
   EXPECT_EQ(
       neverd_emulate_process_json(nullptr, Path.c_str(), LinuxELF64, nullptr),

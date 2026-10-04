@@ -13,6 +13,7 @@
 #include "neverd/loader/ELF/ELFProgramLinking.h"
 
 #include <map>
+#include <variant>
 
 namespace neverd::emulation::android_model {
 inline constexpr uint64_t PageSize = 4096;
@@ -40,6 +41,12 @@ struct LinkedImage {
 llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
                                       const BinaryImage &Image,
                                       const ProcessOptions &Options);
+struct OnceCallback {
+  uint64_t Entry, Control;
+};
+/// A returning model either completes now or suspends for a guest callback.
+using BionicValue = std::variant<uint64_t, OnceCallback>;
+using BionicResult = llvm::Expected<std::optional<BionicValue>>;
 class Bionic {
 public:
   Bionic(ExecutionBackend &CPU, linux_model::LinuxMemory &Memory,
@@ -49,7 +56,8 @@ public:
       : CPU(CPU), Memory(Memory), Layout(Layout), Options(Options),
         Result(Result), Budget(Budget), Linked(Linked) {}
   bool timedOut() const { return Expired; }
-  llvm::Expected<std::optional<uint64_t>> invoke(NativeCallEvent &Call);
+  BionicResult invoke(NativeCallEvent &Call);
+  llvm::Error finishOnce(const OnceCallback &Callback);
 
 private:
   ExecutionBackend &CPU;
@@ -78,7 +86,8 @@ private:
   llvm::Error setErrno(uint32_t Value);
   llvm::Expected<uint64_t> linkerError(llvm::StringRef Message,
                                        uint64_t ReturnValue = 0);
-  llvm::Expected<std::optional<uint64_t>> dlfcn(NativeCallEvent &Call);
+  BionicResult dlfcn(NativeCallEvent &Call);
+  BionicResult once(const NativeCallEvent &Call);
 };
 llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                         const ProcessOptions &Options);

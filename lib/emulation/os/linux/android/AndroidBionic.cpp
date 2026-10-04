@@ -121,21 +121,19 @@ llvm::Expected<uint64_t> Bionic::linkerError(llvm::StringRef Message,
     return std::move(E);
   return ReturnValue;
 }
-llvm::Expected<std::optional<uint64_t>> Bionic::dlfcn(NativeCallEvent &Call) {
+BionicResult Bionic::dlfcn(NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
-  auto Value = [](uint64_t V) { return std::optional<uint64_t>(V); };
-  auto Error = [&](llvm::StringRef Message,
-                   uint64_t V = 0) -> llvm::Expected<std::optional<uint64_t>> {
+  auto Value = [](uint64_t V) { return std::optional<BionicValue>(V); };
+  auto Error = [&](llvm::StringRef Message, uint64_t V = 0) -> BionicResult {
     auto R = linkerError(Message, V);
     if (!R)
       return R.takeError();
     return Value(*R);
   };
-  auto Unsupported =
-      [&](llvm::StringRef Detail) -> llvm::Expected<std::optional<uint64_t>> {
+  auto Unsupported = [&](llvm::StringRef Detail) -> BionicResult {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = "unmodeled Android dynamic linking: " + Detail.str();
-    return std::optional<uint64_t>();
+    return std::optional<BionicValue>();
   };
   if (Call.Name == "dlerror") {
     uint8_t Pointer[8], Empty[8]{};
@@ -212,22 +210,63 @@ llvm::Expected<std::optional<uint64_t>> Bionic::dlfcn(NativeCallEvent &Call) {
   }
   return failure("invalid dlfcn model dispatch");
 }
-llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
+BionicResult Bionic::once(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  if (A[0] % 4)
+    return failure("unaligned pthread_once control");
+  if (auto E = access(A[0], 4, Read))
+    return std::move(E);
+  uint8_t Bytes[4];
+  if (auto E = CPU.read(A[0], Bytes))
+    return std::move(E);
+  // Android API 28 has a four-byte 0/1/2 state. One guest thread has no
+  // concurrent initializer that could complete an in-progress control.
+  uint32_t State = llvm::support::endian::read32le(Bytes);
+  if (State == 2)
+    return std::optional<BionicValue>(uint64_t(0));
+  if (State != 0) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = State == 1
+                            ? "pthread_once initialization already underway"
+                            : "unmodeled pthread_once control state";
+    return std::optional<BionicValue>();
+  }
+  if (auto E = access(A[0], 4, Write))
+    return std::move(E);
+  if (A[1] % 4)
+    return failure("unaligned pthread_once initializer");
+  if (auto E = access(A[1], 4, Execute))
+    return std::move(E);
+  llvm::support::endian::write32le(Bytes, 1);
+  if (auto E = CPU.write(A[0], Bytes))
+    return std::move(E);
+  return std::optional<BionicValue>(OnceCallback{A[1], A[0]});
+}
+llvm::Error Bionic::finishOnce(const OnceCallback &Callback) {
+  if (auto E = access(Callback.Control, 4, Write))
+    return E;
+  uint8_t Bytes[4];
+  llvm::support::endian::write32le(Bytes, 2);
+  return CPU.write(Callback.Control, Bytes);
+}
+BionicResult Bionic::invoke(NativeCallEvent &Call) {
   llvm::StringRef Name(Call.Name);
   const auto &A = Call.Arguments;
-  auto Value = [](uint64_t V) { return std::optional<uint64_t>(V); };
+  auto Value = [](uint64_t V) { return std::optional<BionicValue>(V); };
   if (!Call.Library.empty()) {
     auto I = OpenLibraries.find(Call.Library);
     if (I == OpenLibraries.end() || !I->second.References) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic =
           "call through an inactive dynamic library: " + Call.Library;
-      return std::optional<uint64_t>();
+      return std::optional<BionicValue>();
     }
   }
   if (Name == "dlopen" || Name == "dlsym" || Name == "dlclose" ||
       Name == "dlerror")
     return dlfcn(Call);
+  if (Name == "pthread_once")
+    return once(Call);
   if (Name == "__errno")
     return Value(ErrnoAddress);
   if (Name == "android_get_device_api_level")
@@ -372,16 +411,16 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
     if (!Returned)
       return Returned.takeError();
     if (!*Returned)
-      return std::optional<uint64_t>();
+      return std::optional<BionicValue>();
     if (**Returned >= uint64_t(0) - 4095) {
       if (auto E = setErrno(uint64_t(0) - **Returned))
         return std::move(E);
       return Value(UINT64_MAX);
     }
-    return *Returned;
+    return Value(**Returned);
   }
   Result.Stop = ProcessStopReason::UnsupportedService;
   Result.Diagnostic = "unmodeled Android import: " + Name.str();
-  return std::optional<uint64_t>();
+  return std::optional<BionicValue>();
 }
 } // namespace neverd::emulation::android_model

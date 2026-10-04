@@ -98,6 +98,142 @@ protected:
     Path = Saved;
   }
 };
+class AndroidOnce : public AndroidNative {};
+TEST_P(AndroidOnce, ConstructorsNestedImportsAndRepeatedCalls) {
+  auto R = run("once_values", {Buffer});
+  returned(R, 73);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  const std::vector<uint32_t> Expected = {2, 2, 1, 1, 1, 1, 2, 1000,
+                                          1, 2, 1, 0, 0, 0, 0, 0};
+  for (size_t I = 0; I < Expected.size(); ++I)
+    EXPECT_EQ(llvm::support::endian::read32le(
+                  R.MemorySnapshots[0].Bytes.data() + I * 4),
+              Expected[I]);
+  const std::vector<std::string> Names = {"pthread_once", "pthread_once",
+                                          "pthread_once", "pthread_once",
+                                          "getuid",       "pthread_once"};
+  ASSERT_EQ(R.NativeCalls.size(), Names.size());
+  for (size_t I = 0; I < Names.size(); ++I) {
+    EXPECT_EQ(R.NativeCalls[I].Name, Names[I]);
+    EXPECT_EQ(R.NativeCalls[I].Result, I == 4 ? 1000u : 0u);
+  }
+  EXPECT_TRUE(R.Services.empty());
+  Options.Android->Initialize = false;
+  R = run("once_values", {Buffer});
+  returned(R, 73);
+  EXPECT_EQ(
+      llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data() + 32),
+      0u);
+}
+TEST_P(AndroidOnce, CompletedControlNeedsNoCallbackOrWriteAccess) {
+  Options.Android->Initialize = false;
+  Options.Android->Memory[0].Bytes = {2, 0, 0, 0};
+  auto R = run("once_supplied", {Buffer, 0});
+  returned(R, 0);
+  ASSERT_EQ(R.NativeCalls.size(), 1u);
+  EXPECT_EQ(R.NativeCalls[0].Result, 0u);
+  returned(run("once_readonly", {Buffer, 2}), 0);
+  R = run("once_readonly", {Buffer, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_NE(R.Diagnostic.find("invalid guest pointer"), std::string::npos);
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidOnce, DynamicCallbacksRetainTheirProviderAndEvent) {
+  Options.Android->Initialize = false;
+  Options.Android->Libraries["libinit.so"] = {"pthread_once"};
+  auto R = run("once_dynamic", {Buffer});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  ASSERT_EQ(R.MemorySnapshots[0].Bytes.size(), 64u);
+  const std::vector<uint32_t> Expected = {2, 2, 1, 1, 1, 1, 2, 1000};
+  for (size_t I = 0; I < Expected.size(); ++I)
+    EXPECT_EQ(llvm::support::endian::read32le(
+                  R.MemorySnapshots[0].Bytes.data() + I * 4),
+              Expected[I]);
+  ASSERT_EQ(R.NativeCalls.size(), 7u);
+  EXPECT_EQ(R.NativeCalls[1].Name, "dlsym");
+  EXPECT_EQ(R.NativeCalls[1].Symbol, "pthread_once");
+  for (size_t I : {2u, 5u}) {
+    EXPECT_EQ(R.NativeCalls[I].Name, "pthread_once");
+    EXPECT_EQ(R.NativeCalls[I].Library, "libinit.so");
+    EXPECT_EQ(R.NativeCalls[I].PC, R.NativeCalls[1].Result);
+    EXPECT_EQ(R.NativeCalls[I].Result, 0u);
+  }
+  EXPECT_EQ(R.NativeCalls[3].Name, "pthread_once");
+  EXPECT_TRUE(R.NativeCalls[3].Library.empty());
+  EXPECT_EQ(R.NativeCalls[3].Result, 0u);
+  EXPECT_EQ(R.NativeCalls[4].Name, "getuid");
+  EXPECT_EQ(R.NativeCalls[4].Result, 1000u);
+}
+TEST_P(AndroidOnce, InvalidInputsCannotCompleteInitialization) {
+  Options.Android->Initialize = false;
+  for (auto Args : {std::vector<uint64_t>{0, Buffer},
+                    {Buffer + 1, Buffer},
+                    {Buffer, 0},
+                    {Buffer, Buffer},
+                    {Buffer, Buffer + 1}}) {
+    auto R = run("once_supplied", Args);
+    EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_EQ(R.NativeCalls.size(), 1u);
+    EXPECT_FALSE(R.NativeCalls[0].Result);
+  }
+  for (uint32_t State : {1u, 3u, 0xffffffffu}) {
+    Options.Android->Memory[0].Bytes.resize(4);
+    llvm::support::endian::write32le(Options.Android->Memory[0].Bytes.data(),
+                                     State);
+    auto R = run("once_supplied", {Buffer, 0});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_FALSE(R.NativeCalls[0].Result);
+    EXPECT_EQ(
+        llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data()),
+        State);
+  }
+}
+TEST_P(AndroidOnce, RecursiveAndFailedCallbacksRemainIncomplete) {
+  Options.Android->Initialize = false;
+  for (const char *Entry : {"once_recursive", "once_fails"}) {
+    auto R = run(Entry, {Buffer});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    EXPECT_EQ(
+        llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data()), 1u);
+    for (const auto &Call : R.NativeCalls)
+      EXPECT_FALSE(Call.Result);
+    if (std::string(Entry) == "once_fails") {
+      EXPECT_EQ(llvm::support::endian::read32le(
+                    R.MemorySnapshots[0].Bytes.data() + 4),
+                1u);
+      EXPECT_EQ(R.NativeCalls.back().Name, "unknown_initializer");
+    } else {
+      EXPECT_NE(R.Diagnostic.find("already underway"), std::string::npos);
+    }
+  }
+  auto R = run("once_bad_stack", {Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_NE(R.Diagnostic.find("did not restore its stack"), std::string::npos);
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidOnce, CallbackConsumesTheOriginalInstructionBudget) {
+  Options.Android->Initialize = false;
+  Options.Limits.Instructions = 300;
+  auto R = run("once_exhausts", {Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::InstructionLimit) << R.Diagnostic;
+  EXPECT_EQ(R.Instructions, 300u);
+  EXPECT_FALSE(R.ReturnValue);
+  ASSERT_EQ(R.NativeCalls.size(), 1u);
+  EXPECT_FALSE(R.NativeCalls[0].Result);
+  EXPECT_EQ(llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data()),
+            1u);
+  EXPECT_GT(
+      llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data() + 8),
+      0u);
+}
+INSTANTIATE_TEST_SUITE_P(OptimizationAndPacking, AndroidOnce,
+                         testing::Values("once-O0-none", "once-O0-android",
+                                         "once-O0-relr", "once-O2-none",
+                                         "once-O2-android", "once-O2-relr"));
+
 TEST_P(AndroidNative, ConstructorsStackArgumentsAndUninitializedAnalysis) {
   returned(run("add_arguments", {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}), 402);
   Options.Android->Initialize = false;

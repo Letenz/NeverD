@@ -148,6 +148,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   Bionic LibC(CPU, Memory, Layout, Options, Result, *Resources, *Linked);
   size_t NextConstructor = 0;
   bool MainCall = false;
+  struct PendingCallback {
+    OnceCallback Call;
+    ServiceRequest Request;
+    size_t Event;
+    uint64_t Link, StackPointer;
+  };
+  std::vector<PendingCallback> Callbacks;
   auto Prepare = [&]() -> llvm::Error {
     std::vector<uint64_t> Arguments;
     if (NextConstructor < Linked->Constructors.size()) {
@@ -214,6 +221,36 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       break;
     }
     if (Request->Immediate == ModelTrap && Request->PC == ReturnPC) {
+      if (!Callbacks.empty()) {
+        const auto Pending = Callbacks.back();
+        auto SP = CPU.readRegister(Calls->info().StackPointer);
+        if (!SP) {
+          RuntimeFailure(SP.takeError());
+          break;
+        }
+        if ((*SP)[0] != Pending.StackPointer) {
+          RuntimeFailure(failure("native callback did not restore its stack"));
+          break;
+        }
+        if (auto E = LibC.finishOnce(Pending.Call)) {
+          RuntimeFailure(std::move(E));
+          if (LibC.timedOut())
+            Result.Stop = ProcessStopReason::Timeout;
+          break;
+        }
+        if (auto E = CPU.writeRegister(Calls->info().Link, {Pending.Link, 0})) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        if (auto E = linux_model::returnService(CPU, Pending.Request, 0)) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        Result.NativeCalls[Pending.Event].Result = 0;
+        Result.PC = Pending.Request.NextPC;
+        Callbacks.pop_back();
+        continue;
+      }
       if (!MainCall) {
         if (auto E = Prepare()) {
           RuntimeFailure(std::move(E));
@@ -258,8 +295,40 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       }
       if (!*Value)
         break;
-      Result.NativeCalls.back().Result = **Value;
-      if (auto E = linux_model::returnService(CPU, *Request, **Value)) {
+      if (auto *Callback = std::get_if<OnceCallback>(&**Value)) {
+        auto Link = CPU.readRegister(Calls->info().Link);
+        if (!Link) {
+          RuntimeFailure(Link.takeError());
+          break;
+        }
+        auto SP = CPU.readRegister(Calls->info().StackPointer);
+        if (!SP) {
+          RuntimeFailure(SP.takeError());
+          break;
+        }
+        if (auto E = Calls->validateStackPointer((*SP)[0])) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        // Reuse the current guest stack below the suspended import. Preparing
+        // a fresh top-level frame would overwrite its caller's live locals.
+        if (auto E = CPU.writeRegister(Calls->info().Link, {ReturnPC, 0})) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        if (auto E = CPU.writeRegister(CPURegister::AArch64PC,
+                                       {Callback->Entry, 0})) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        Callbacks.push_back({*Callback, *Request, Result.NativeCalls.size() - 1,
+                             (*Link)[0], (*SP)[0]});
+        Result.PC = Callback->Entry;
+        continue;
+      }
+      uint64_t Returned = std::get<uint64_t>(**Value);
+      Result.NativeCalls.back().Result = Returned;
+      if (auto E = linux_model::returnService(CPU, *Request, Returned)) {
         RuntimeFailure(std::move(E));
         break;
       }

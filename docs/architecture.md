@@ -1426,6 +1426,14 @@ lookups and the API 28 TLS `dlerror` slot; the C API, CLI and Python expose the
 same named request/call events. These catalogue entries never load host code.
 Missing entries return modeled lookup errors, while calls whose behavior or
 lookup scope is unsupported stop explicitly.
+Bionic also owns the API 28 `pthread_once` control state. It requests guest
+initialization through an internal callback result; the native runner suspends
+the import and runs the callback on the same CPU and live stack. Pending
+imports retain their event indices, return links and stack pointers, so nested
+callbacks preserve trace order and only complete their own calls. Instructions,
+services and deadlines continue through the existing execution session. The
+runner validates a normal callback return before Bionic marks the control
+complete. No SDK surface supplies separate initialization semantics.
 
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
