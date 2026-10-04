@@ -107,12 +107,14 @@ struct VectorOperation {
   unsigned Width, Alignment;
   bool Move;
   VectorForm Form;
+  unsigned StoreLane;
 };
 std::optional<VectorOperation> vectorOperation(unsigned Instruction) {
   switch (Instruction) {
-#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, Form)      \
+#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, Form,      \
+                                      Lane)                                    \
   case X86_INS_##Name:                                                         \
-    return VectorOperation{Width, Alignment, Move, VectorForm::Form};
+    return VectorOperation{Width, Alignment, Move, VectorForm::Form, Lane};
 #include "X64VectorInstructions.def"
 #undef NEVERD_X64_VECTOR_INSTRUCTION
   default:
@@ -462,7 +464,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     else if (Vector && Vector->Move && OperandAccess == CS_AC_WRITE && N == 0 &&
              X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)) {
       const auto &V = CPU.Xmm[X.operands[1].reg - X86_REG_XMM0];
-      Accesses.push_back({A, O.size, Write, V[0], std::nullopt, V[1]});
+      Accesses.push_back(
+          {A, O.size, Write, V[Vector->StoreLane], std::nullopt, V[1]});
     } else if (OperandAccess == CS_AC_WRITE &&
                (I.id == X86_INS_MOV || I.id == X86_INS_MOVABS) && N == 0 &&
                X.op_count == 2) {

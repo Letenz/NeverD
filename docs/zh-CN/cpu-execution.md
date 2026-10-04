@@ -76,6 +76,8 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64ShuffleInstructions.def` 新增 `PSHUFD`、`PSHUFHW`、`PSHUFLW`、`SHUFPS` 和 `SHUFPD`。`X64VectorOperands.def` 要求完整的三个操作数：XMM 目标、XMM 或对齐的 m128 源，以及 imm8。原始指令按位选择通道，保留 FLAGS 和 MXCSR；内存形式检查全部 16 字节，对齐故障先于数据观察。KVM、WHP 与 checked Unicorn 共用这些规则。 同一清单还允许恰有两个操作数的 `UNPCKLPS`、`UNPCKHPS`、`UNPCKLPD` 和 `UNPCKHPD`，交错原始目标与源的位模式。硬件可以只读取所选的 64 位；checked RAM 检查对齐的 m128 操作数。
 
+`MOVLPS`、`MOVHPS`、`MOVLPD` 和 `MOVHPD` 精确传输八字节 RAM，无对齐要求。`X64VectorInstructions.def` 声明存储使用的半部；`X64VectorOperands.def` 限定 XMM/m64 操作数对。加载保留另一个 64 位半部，高半部存储观察者接收高半部数据。KVM、WHP 和 checked Unicorn 共享全范围权限检查与 RAM 回滚。仅寄存器形式的 `MOVHLPS`/`MOVLHPS` 保留各自语义。
+
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
 线程指针包括 x64 FS/GS 基址以及 ARM64 `TPIDR_EL0` 的精确 `MRS`/`MSR` 编码。原生传输和 CPU 快照独立于内存保存这些状态，但不会创建 OS 线程或分配 TLS 块。supervisor x64 支持对齐的 1/2/4 字节标量 MMIO 事务，以及每个重启边界一个 MOVS 元素。设备读取需先提供无副作用的预览，再至多提交一次。user 配置拒绝设备映射；RMW、宽 MMIO 和端口 I/O 仍不支持。
