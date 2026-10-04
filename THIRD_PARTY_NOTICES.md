@@ -45,6 +45,14 @@ semantics were checked against the
 and independently executed host instructions; no reference implementation was
 copied into NeverD.
 
+The original 2026-10-04 SSE MIN/MAX DAZ correction by NeverD contributors is
+preserved in [commit 16676651](https://github.com/NeverSight/unicorn/commit/16676651a4655bd486ae483f329e0550be09863b).
+The x86 helpers normalize the selected subnormal payload to signed zero when
+DAZ is enabled, retaining source-order, NaN and sticky-status behavior. Original
+unit fixtures are in `tests/unit/x86_sse_minmax_daz.def`; the modified helper
+retains its original LGPL notice and a dated change notice. Shared SoftFloat
+code is unchanged.
+
 The fork includes the original 2026-09-30 pre-entry cancellation fix by NeverD
 contributors. The TCG entry boundary honors an engine stop even when CPU startup
 has reset its exit flag. Original x64, ARM32 and ARM64 regressions control only
