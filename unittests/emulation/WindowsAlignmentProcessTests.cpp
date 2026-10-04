@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "WindowsNativeTestSupport.h"
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcessExceptions.h"
 
@@ -16,7 +17,6 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Program.h"
 
 namespace neverd::emulation {
 namespace {
@@ -160,19 +160,14 @@ TEST(WindowsAlignmentNative, RunsOriginalFaultAndRetryExecutable) {
           .string();
   const auto Output = (Root / StdoutFile).string();
   const auto Error = (Root / StderrFile).string();
-  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
-                                                      Error};
-  std::string Diagnostic;
-  bool Failed = false;
-  const int Status =
-      llvm::sys::ExecuteAndWait(Program, {Program}, std::nullopt, Redirects,
-                                TimeoutSeconds, 0, &Diagnostic, &Failed);
-  ASSERT_FALSE(Failed) << Diagnostic;
+  auto Status =
+      native_test::observeNativeProcess(Program, Output, Error, TimeoutSeconds);
+  ASSERT_TRUE(bool(Status)) << llvm::toString(Status.takeError());
   auto Out = llvm::MemoryBuffer::getFile(Output);
   auto Err = llvm::MemoryBuffer::getFile(Error);
   ASSERT_TRUE(bool(Out));
   ASSERT_TRUE(bool(Err));
-  EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
+  EXPECT_EQ(*Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
   EXPECT_TRUE((*Err)->getBuffer().empty()) << llvm::toHex((*Err)->getBuffer());
   expectOutput((*Out)->getBuffer());
 #endif

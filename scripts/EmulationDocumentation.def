@@ -790,3 +790,8 @@ NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence,
                            "WindowsAlignmentProcessTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence, "4096")
 NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence, "81")
+
+NEVERD_EMULATION_DOC_PATH(NativeWindowsErrorMode, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(NativeWindowsErrorMode, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(NativeWindowsErrorMode, "CREATE_DEFAULT_ERROR_MODE")
+NEVERD_EMULATION_DOC_TOKEN(NativeWindowsErrorMode, "SEM_NOALIGNMENTFAULTEXCEPT")
