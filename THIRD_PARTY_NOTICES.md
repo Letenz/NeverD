@@ -62,6 +62,14 @@ self-loops, ARM64 MMU successor faults, fault retention and code-store commitmen
 applicable. The QEMU copyright/license and dated modification notice remain
 in the modified source file.
 
+The original 2026-10-04 EVEX register-prefix correction is preserved in
+[commit 10d315e0](https://github.com/NeverSight/unicorn/commit/10d315e01526b2fb370a8646b13f4246b9b71694).
+APX extends the U field only for memory indexing; register forms retain their
+reserved-bit check. The decoder retains its original QEMU license notice.
+The [Intel APX specification](https://cdrdv2.intel.com/v1/dl/getContent/784266)
+and independent Linux x64 observations also distinguish legacy ROUNDPS
+alignment faults from scalar/VEX page faults in the original regression tests.
+
 ## Swift runtime ABI declarations
 
 `lib/loader/Swift/SwiftRuntimeDeclarations.inc` derives fixed C and Swift ABI declarations

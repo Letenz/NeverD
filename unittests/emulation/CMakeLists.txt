@@ -296,6 +296,17 @@ if(TARGET neverd_shared AND TARGET neverd)
 endif()
 
 if(NEVERD_EMULATION_BACKEND_UNICORN)
+  add_executable(NeverDUnicornDecodeTests
+    ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_x86_decode_boundaries.c)
+  target_include_directories(NeverDUnicornDecodeTests PRIVATE ${CMAKE_BINARY_DIR})
+  target_link_libraries(NeverDUnicornDecodeTests PRIVATE unicorn)
+  add_dependencies(NeverDUnitTests NeverDUnicornDecodeTests)
+  add_test(NAME UnicornDecode.RegisterU COMMAND NeverDUnicornDecodeTests
+    register_u_is_not_an_apx_index_bit)
+  add_test(NAME UnicornDecode.RoundMemory COMMAND NeverDUnicornDecodeTests
+    round_memory_fault_priority_and_recovery)
+  set_tests_properties(UnicornDecode.RegisterU UnicornDecode.RoundMemory PROPERTIES
+    LABELS NeverDUnicornDecodeTests TIMEOUT 15)
   target_compile_definitions(NeverDExecutionConfigurationTests PRIVATE NEVERD_TEST_UNICORN=1)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_neverd_unittest(NeverDUnicornStateTransferTests
