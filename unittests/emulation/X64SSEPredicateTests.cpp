@@ -73,6 +73,24 @@ constexpr auto Comparisons = [] {
       Result[N++] = {Op, P};
   return Result;
 }();
+// Splitting a matrix must neither omit nor repeat an opcode/predicate pair.
+constexpr std::pair<OperationKind, unsigned> ValueCases[] = {
+#define NEVERD_SSE_PREDICATE_TEST(Operation, Condition, Immediate)             \
+  {OperationKind::Operation, Immediate},
+#include "X64SSEPredicateCases.def"
+#undef NEVERD_SSE_PREDICATE_TEST
+};
+static_assert(std::size(ValueCases) == std::size(Comparisons));
+static_assert([] {
+  for (const auto &C : Comparisons) {
+    unsigned Matches = 0;
+    for (const auto &[Kind, Immediate] : ValueCases)
+      Matches += Kind == C.Op.Kind && Immediate == C.P.Immediate;
+    if (Matches != 1)
+      return false;
+  }
+  return true;
+}());
 constexpr uint64_t Roundings[] = {
 #define NEVERD_SSE_COMPARE_ROUND(Name, Bits) Bits,
 #include "X64SSEComparisonCases.def"
@@ -446,10 +464,12 @@ protected:
     EXPECT_EQ(Reads, unsigned(Memory));
     EXPECT_EQ(Writes, 0u);
   }
-  void compare(OperationKind Kind) {
+  void compare(OperationKind Kind, unsigned Immediate) {
+    unsigned Matched = 0;
     for (const auto &C : Comparisons) {
-      if (C.Op.Kind != Kind)
+      if (C.Op.Kind != Kind || C.P.Immediate != Immediate)
         continue;
+      ++Matched;
       for (const auto &Left : Inputs)
         for (const auto &Right : Inputs)
           // Exhaust all numeric pairs here; the separate control matrix
@@ -470,35 +490,49 @@ protected:
             ASSERT_FALSE(HasFatalFailure());
           }
     }
+    EXPECT_EQ(Matched, 1u);
   }
-};
-#define NEVERD_SSE_PREDICATE_OPERATION(Name, ...)                              \
-  TEST_P(X64SSEPredicate, Name##MasksAndStatusPreserveOtherState) {            \
-    compare(OperationKind::Name);                                              \
-  }
-#include "X64SSEPredicateCases.def"
-#undef NEVERD_SSE_PREDICATE_OPERATION
-
-TEST_P(X64SSEPredicate, RoundingModesAndUnrelatedFlagsRemainIndependent) {
-  const std::pair<NumericInput, NumericInput> Pairs[] = {
+  void rounding(OperationKind Kind) {
+    const std::pair<NumericInput, NumericInput> Pairs[] = {
 #define NEVERD_SSE_COMPARE_PAIR(Left, Right) {Left, Right},
 #include "X64SSEComparisonCases.def"
 #undef NEVERD_SSE_COMPARE_PAIR
-  };
-  for (const auto &C : Comparisons)
-    for (const auto &[Left, Right] : Pairs)
-      for (auto Rounding : Roundings)
-        for (auto InitialFlags : {ClearFlags, Flags, Flags | DirectionFlag})
-          for (auto Sticky : {uint64_t(0), ExistingStatus,
-                              ExistingStatus | InvalidStatus | DenormalStatus})
-            for (auto Flush : {uint64_t(0), FlushToZero})
-              for (bool Memory : {false, true}) {
-                check(C, input(C, Left, Right),
-                      InitialMXCSR | Rounding | Sticky | Flush, 0, 1, Memory,
-                      Data, InitialFlags);
-                ASSERT_FALSE(HasFatalFailure());
-              }
-}
+    };
+    unsigned Matched = 0;
+    for (const auto &C : Comparisons) {
+      if (C.Op.Kind != Kind)
+        continue;
+      ++Matched;
+      for (const auto &[Left, Right] : Pairs)
+        for (auto Rounding : Roundings)
+          for (auto InitialFlags : {ClearFlags, Flags, Flags | DirectionFlag})
+            for (auto Sticky :
+                 {uint64_t(0), ExistingStatus,
+                  ExistingStatus | InvalidStatus | DenormalStatus})
+              for (auto Flush : {uint64_t(0), FlushToZero})
+                for (bool Memory : {false, true}) {
+                  check(C, input(C, Left, Right),
+                        InitialMXCSR | Rounding | Sticky | Flush, 0, 1, Memory,
+                        Data, InitialFlags);
+                  ASSERT_FALSE(HasFatalFailure());
+                }
+    }
+    EXPECT_EQ(Matched, std::size(Predicates));
+  }
+};
+#define NEVERD_SSE_PREDICATE_TEST(Operation, Condition, Immediate)             \
+  TEST_P(X64SSEPredicate,                                                      \
+         Operation##Condition##MasksAndStatusPreserveOtherState) {             \
+    compare(OperationKind::Operation, Immediate);                              \
+  }
+#define NEVERD_SSE_PREDICATE_OPERATION(Name, ...)                              \
+  TEST_P(X64SSEPredicate,                                                      \
+         Name##RoundingModesAndUnrelatedFlagsRemainIndependent) {              \
+    rounding(OperationKind::Name);                                             \
+  }
+#include "X64SSEPredicateCases.def"
+#undef NEVERD_SSE_PREDICATE_OPERATION
+#undef NEVERD_SSE_PREDICATE_TEST
 
 TEST_P(X64SSEPredicate, MixedLanesAccumulateStatusAndScalarsIgnoreUpperInputs) {
   for (const auto &C : Comparisons)
