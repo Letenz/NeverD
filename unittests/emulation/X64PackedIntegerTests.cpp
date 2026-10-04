@@ -208,6 +208,11 @@ TEST_P(X64PackedInteger, ArithmeticMatchesGoldenVectorsAndHostInstructions) {
         EXPECT_EQ(Reads, unsigned(Memory));
         EXPECT_EQ(Writes, 0u);
         expectState(R.Arguments, R.Value, Code + Bytes.size(), Address);
+        EXPECT_EQ(llvm::cantFail(CPU->readInteger(Address, WordBytes)),
+                  R.Arguments.Right[0]);
+        EXPECT_EQ(
+            llvm::cantFail(CPU->readInteger(Address + WordBytes, WordBytes)),
+            R.Arguments.Right[1]);
       }
     }
   }
