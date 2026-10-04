@@ -29,6 +29,93 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateOracle.MasksAndExceptionPriorityMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateDecoder.FamilyAndPredicateAreIndependentOfSyntax")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "RoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "RoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "MixedLanesAccumulateStatusAndScalarsIgnoreUpperInputs/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "MixedLanesAccumulateStatusAndScalarsIgnoreUpperInputs/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "EveryVectorPairAndAliasedSource/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64SSEPredicate."
+                                "EveryVectorPairAndAliasedSource/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "MemoryFaultsPreserveMasksAndStatusAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "MemoryFaultsPreserveMasksAndStatusAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "ReadObserversStopBeforeComparisonAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "ReadObserversStopBeforeComparisonAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SSEComparisonOracle.FlagsAndExceptionPriorityMatchOriginalInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEComparison."
