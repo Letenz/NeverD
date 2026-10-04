@@ -54,7 +54,15 @@ Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` 
 
 `X64PackedShiftInstructions.def` admits ten legacy SSE2 packed shifts. Lane shifts accept imm8 or XMM/aligned m128 counts; byte shifts accept imm8 only. Variable counts use the unsigned low 64 bits without scalar count masking; the high 64 bits are ignored. Memory operands still require a complete 16-byte read for zero or oversized counts. FLAGS and MXCSR remain unchanged; MMX, VEX/EVEX and device operands remain excluded.
 
-`X64VectorOperands.def` owns complete operand-pair rules for legacy SSE moves, arithmetic, shifts, conversions and masks. `MOVMSKPS`, `MOVMSKPD` and `PMOVMSKB` extract XMM sign bits into r32/r64 and zero the remaining destination bits. KVM, WHP and checked Unicorn share this admission; FLAGS, MXCSR and source registers are preserved. Mask memory operands, MMX and VEX/EVEX forms remain unsupported.
+`X64VectorOperands.def` owns complete operand rules for legacy SSE moves, arithmetic, shifts, conversions and masks. `MOVMSKPS`, `MOVMSKPD` and `PMOVMSKB` extract XMM sign bits into r32/r64 and zero the remaining destination bits. KVM, WHP and checked Unicorn share this admission; FLAGS, MXCSR and source registers are preserved. Mask memory operands, MMX and VEX/EVEX forms remain unsupported.
+
+`X64ShuffleInstructions.def` adds `PSHUFD`, `PSHUFHW`, `PSHUFLW`, `SHUFPS` and `SHUFPD`. `X64VectorOperands.def` requires the complete three-operand form: XMM destination, XMM or aligned m128 source, and imm8. Original instructions select raw lanes without changing FLAGS or MXCSR. Memory forms validate all 16 bytes; alignment faults precede data observations. KVM, WHP and checked Unicorn share these rules. The same inventory admits `UNPCKLPS`, `UNPCKHPS`, `UNPCKLPD` and `UNPCKHPD` with exactly two operands. They interleave raw elements from the original destination and source. Hardware may fetch only the selected 64 bits; checked RAM validates the aligned m128 operand.
+
+`MOVLPS`, `MOVHPS`, `MOVLPD` and `MOVHPD` transfer exactly eight RAM bytes without an alignment requirement. `X64VectorInstructions.def` declares the store half; `X64VectorOperands.def` requires an XMM/m64 pair. Loads preserve the other 64 bits, and high-half store observers receive the upper half. KVM, WHP and checked Unicorn share whole-span permission checks and RAM rollback. Register-only `MOVHLPS`/`MOVLHPS` retain their distinct semantics.
+
+`CVTSI2SS` and `CVTSI2SD` convert signed 32/64-bit integers using MXCSR rounding and retain precision status. The shared `IntegerSource` rule admits only XMM destinations with r32/r64 or m32/m64 sources. Legacy instructions preserve the upper 96/64 destination bits; memory checks use the integer width. KVM, WHP and checked Unicorn execute the original instruction. Unmasked exceptions, MMX and VEX/EVEX remain excluded.
+
+`CVTSS2SI` and `CVTSD2SI` use MXCSR rounding to produce signed 32/64-bit integers through the shared `IntegerResult` rule; `CVTTSS2SI` and `CVTTSD2SI` always truncate. Masked NaN or out-of-range conversions return the integer indefinite and set invalid status; valid inexact results set precision status. Existing sticky bits, FLAGS and XMM sources are preserved. An r32 result clears the upper GPR half. RAM reads use the floating source width, independent of destination width; FTZ does not discard subnormal inputs. These rules apply to KVM, WHP and checked Unicorn.
 
 `X64AlignmentTests.cpp` checks that misaligned operands of admitted aligned SSE instructions report recoverable or terminal `#GP(0)` before data observers, permission checks or device callbacks. Faults retain the complete public x64 register context, PC and RAM; address-size wrapping precedes FS/GS addition, and repairing the address retries the original instruction. Direct KVM/WHP machine cases independently verify the hardware boundary. Windows ring3 delivers classified `operand_alignment` faults; other `#GP` causes remain unsupported.
 
@@ -288,7 +296,7 @@ Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profil
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
-ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
+ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, A/B return-address signing/authentication with the keys disabled, and all four BTI forms on unguarded pages. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
 Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
@@ -332,6 +340,17 @@ HINTs, strip operations, non-HINT authentication, authenticated branches/loads,
 key registers and attempts to change `SCTLR_EL1` remain unsupported. Active
 PAuth, signing keys and authenticated guest pointers are not modeled. Linux
 startup continues to advertise no PAuth hardware capability.
+
+`AArch64BTIHints.def` admits the four exact `BTI`, `BTI c`, `BTI j` and
+`BTI jc` words in the same checked contracts. All projected leaves have GP
+clear; guarded pages and branch-type state are not exposed by this machine.
+Under this contract each original word executes through the transport,
+preserves scalar/vector/memory state and consumes an ordinary instruction
+attempt. Native startup tests all four encodings, including on processors
+with FEAT_BTI. This follows Arm's [BTI instruction definition](https://documentation-service.arm.com/static/68da52dfbd7cab51328c0622).
+Admission does not enable guarded-page branch-target checking, interpret GNU
+BTI properties as enforcement, or advertise the BTI hardware capability to a
+guest OS. Unlisted HINTs and system-control writes remain unsupported.
 
 Checked ARM64 admits the baseline no-offset `LDAR`, `LDARB`, `LDARH`, `STLR`,
 `STLRB` and `STLRH` encodings for naturally aligned ordinary RAM. The ISA owner

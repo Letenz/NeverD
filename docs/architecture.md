@@ -910,6 +910,18 @@ The finite-query cache accounts for serialized keys, numeric results and recency
 
 `NeverDLLVMScalarLoopRecovery` owns opt-in reconstruction for this scalar domain. It clones only the function and needed intrinsic declarations, proves the complete source control domain, and proposes peeled-prefix/carrier retiming, zero-trip region removal, header tests and affine carriers. A zero-data screen spans the source control domain and may only reject; every accepted candidate still needs whole-function proof with all other input bits symbolic. Additional control bits are refused. Lexicographic cost (bottom tests, loop PHIs, instructions) selects smaller proposals. Construction, proof, candidate and transformation budgets are cumulative; exhaustion publishes no partial function. The source stays unchanged. The C++ search supplies proved candidates; it does not establish a native ABI.
 
+Constant AND masks of loop-header PHIs nominate zero or the unmasked PHI. Seed and mask proposals share batches of at most 32, splitting failed batches and retrying screened alternatives after full-data refusal. Each accepted combination still requires complete original-function proof; the mask itself supplies no range assumption. All work remains cumulative and exhaustion publishes no partial result.
+
+Shared symbolic builders also remove an outer AND mask from OR/XOR when every immediate constant or explicitly masked term has no bits outside that mask. The check handles at most eight terms and 128-bit words, without recursive discovery or expression expansion. Unknown bits retain the mask. Object pipeline schema 10 binds this simplification recipe in both cache identities.
+
+For a self-query on the same `Function` object, `checkLLVMScalarEquivalence` imports one model and executes it once per partition. It folds control and definedness on demand without normalizing intermediate data merely to compare a value with itself. Every operation, input obligation, control partition and termination check remains required under the existing ceilings. Distinct functions retain both executions; names and previous calls provide no reusable certificate.
+
+Internal-width proposals use the largest integer width in the unchanged function interface. Cloning explicitly maps integer literal bit patterns and removes casts that become identities; intrinsic signatures remain intact. This width is only a proposal: complete original-function proof must preserve high bits, signed ordering, shifts, definedness and termination. Scanning, remapping and cleanup consume the shared construction budget, and nonprofitable or exhausted proposals publish nothing.
+
+A loop PHI may propose its dominating seed only when every external entry supplies the same SSA value. Rejection-only screens group up to 32 proposals; each accepted batch still needs complete original-function proof. Failed batches split, and failed slots are deferred only within that search. All backedges, simultaneous PHIs, definedness and termination remain obligations. `WorkLimitExceeded` distinguishes a failed global work charge from an ordinary refusal at an exact budget or a local query ceiling. No partial result is published on exhaustion.
+
+Shared symbolic right shifts discard a constant AND mask only when it changes solely the low bits the logical shift removes. Constant counts are normalized only after checking their complete unsigned value; arithmetic overshifts saturate at the sign bit. Variable counts and LLVM poison obligations retain their full meaning. Object pipeline schema 10 separates the changed simplification recipe in both cache identities.
+
 Loop proposals also use actual dominating entry guards and their scalar bounds, including separate latch-to-header backedges. A narrow last-index wrap is not assumed to preserve zero-trip behavior. Unit-step recurrence bases precede other carriers, retaining source order within each group under charged linear work. Guard-derived bounds use zero extension or truncation as proposals only; signed/wrapping comparisons and every final update still require the original whole-function proof.
 
 LLVMC now consumes scalar loop recovery automatically when no image or debug projection is requested. A bounded scan admits at most 1024 blocks per function. Recovery and LLVM cleanup iterate under shared module budgets, then the exact final body is proved against the original through the shared importer and SymExec. Publication changes only the emitter clone and preserves function identity, attributes, callers and intrinsic bindings. Symbol collisions, externally retained block addresses, function metadata and exception mappings retain the existing path. Refusal or exhausted work publishes no intermediate function; selected-function emission normalizes only its target. This does not infer a native input interface or private memory.
@@ -1475,6 +1487,20 @@ registry. The native runner retains the original import event until every
 selected callback returns; neither registration nor workload teardown calls
 host destructors. Symbol spellings and diagnostics remain in Android's `.def`
 inventories.
+`GuestThreads` owns opt-in Android thread identities, stacks, TLS and complete
+saved CPU contexts over one transport and shared RAM. Callback, join and once
+continuations follow their thread. The runner switches only after consuming
+the pending service or quantum and charges all threads to one budget.
+Linux's optional `ThreadContext` is the sole identity and thread-exit input
+for named, variadic and raw services; an absent context retains the existing
+single-thread Linux contract. Bionic process state is never copied on a switch.
+Once ownership comes from active guest callback frames. Bionic writes the
+completion state before the scheduler wakes waiting threads; the scheduler
+rechecks guest memory before completing each original import. Unknown owners,
+recursive initialization and wait cycles remain explicit stops. The API 28
+control representation has one owner in `AndroidOnce.def`.
+`AndroidThreads.def` owns placement/capacity policy; existing Android and
+process report inventories own names, diagnostics and wire fields.
 An optional ordered `default_scope` names resident catalogue providers visible
 to `RTLD_DEFAULT`. Android native input validation checks its membership and
 uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
@@ -1652,7 +1678,15 @@ Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` 
 
 `X64PackedShiftInstructions.def` admits ten legacy SSE2 packed shifts. Lane shifts accept imm8 or XMM/aligned m128 counts; byte shifts accept imm8 only. Variable counts use the unsigned low 64 bits without scalar count masking; the high 64 bits are ignored. Memory operands still require a complete 16-byte read for zero or oversized counts. FLAGS and MXCSR remain unchanged; MMX, VEX/EVEX and device operands remain excluded.
 
-`X64VectorOperands.def` owns complete operand-pair rules for legacy SSE moves, arithmetic, shifts, conversions and masks. `MOVMSKPS`, `MOVMSKPD` and `PMOVMSKB` extract XMM sign bits into r32/r64 and zero the remaining destination bits. KVM, WHP and checked Unicorn share this admission; FLAGS, MXCSR and source registers are preserved. Mask memory operands, MMX and VEX/EVEX forms remain unsupported.
+`X64VectorOperands.def` owns complete operand rules for legacy SSE moves, arithmetic, shifts, conversions and masks. `MOVMSKPS`, `MOVMSKPD` and `PMOVMSKB` extract XMM sign bits into r32/r64 and zero the remaining destination bits. KVM, WHP and checked Unicorn share this admission; FLAGS, MXCSR and source registers are preserved. Mask memory operands, MMX and VEX/EVEX forms remain unsupported.
+
+`X64ShuffleInstructions.def` adds `PSHUFD`, `PSHUFHW`, `PSHUFLW`, `SHUFPS` and `SHUFPD`. `X64VectorOperands.def` requires the complete three-operand form: XMM destination, XMM or aligned m128 source, and imm8. Original instructions select raw lanes without changing FLAGS or MXCSR. Memory forms validate all 16 bytes; alignment faults precede data observations. KVM, WHP and checked Unicorn share these rules. The same inventory admits `UNPCKLPS`, `UNPCKHPS`, `UNPCKLPD` and `UNPCKHPD` with exactly two operands. They interleave raw elements from the original destination and source. Hardware may fetch only the selected 64 bits; checked RAM validates the aligned m128 operand.
+
+`MOVLPS`, `MOVHPS`, `MOVLPD` and `MOVHPD` transfer exactly eight RAM bytes without an alignment requirement. `X64VectorInstructions.def` declares the store half; `X64VectorOperands.def` requires an XMM/m64 pair. Loads preserve the other 64 bits, and high-half store observers receive the upper half. KVM, WHP and checked Unicorn share whole-span permission checks and RAM rollback. Register-only `MOVHLPS`/`MOVLHPS` retain their distinct semantics.
+
+`CVTSI2SS` and `CVTSI2SD` convert signed 32/64-bit integers using MXCSR rounding and retain precision status. The shared `IntegerSource` rule admits only XMM destinations with r32/r64 or m32/m64 sources. Legacy instructions preserve the upper 96/64 destination bits; memory checks use the integer width. KVM, WHP and checked Unicorn execute the original instruction. Unmasked exceptions, MMX and VEX/EVEX remain excluded.
+
+`CVTSS2SI` and `CVTSD2SI` use MXCSR rounding to produce signed 32/64-bit integers through the shared `IntegerResult` rule; `CVTTSS2SI` and `CVTTSD2SI` always truncate. Masked NaN or out-of-range conversions return the integer indefinite and set invalid status; valid inexact results set precision status. Existing sticky bits, FLAGS and XMM sources are preserved. An r32 result clears the upper GPR half. RAM reads use the floating source width, independent of destination width; FTZ does not discard subnormal inputs. These rules apply to KVM, WHP and checked Unicorn.
 
 `X64AlignmentTests.cpp` checks that misaligned operands of admitted aligned SSE instructions report recoverable or terminal `#GP(0)` before data observers, permission checks or device callbacks. Faults retain the complete public x64 register context, PC and RAM; address-size wrapping precedes FS/GS addition, and repairing the address retries the original instruction. Direct KVM/WHP machine cases independently verify the hardware boundary. Windows ring3 delivers classified `operand_alignment` faults; other `#GP` causes remain unsupported.
 
@@ -1802,7 +1836,7 @@ Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profil
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
-ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
+ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md). The program also executes all four BTI forms on unguarded pages.
 
 Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
@@ -1834,6 +1868,14 @@ This architecture contract applies equally to Android, Darwin, Linux and
 Windows workloads; OS models cannot override authentication state or infer
 active keys. Other PAuth encodings and system-control access stay unsupported.
 See the [checked CPU contract](cpu-execution.md).
+
+`AArch64BTIHints.def` owns the four exact landing-pad encodings admitted in
+the existing unguarded ARM64 machine. `AArch64PageTables` keeps GP clear in
+guest, alias and monitor leaves; the startup probe executes each original
+word and checks complete state. ISA admission and capability reporting share
+this boundary for every OS and transport. Guarded translations and branch-type
+state propagation remain outside the contract; no loader or OS shortcut may
+silently turn a guarded execution request into this mode.
 
 The same ISA owner describes baseline no-offset `LDAR[B/H]` and `STLR[B/H]`
 as exact, naturally aligned 1/2/4/8-byte ordinary-RAM accesses. Original
@@ -3096,3 +3138,13 @@ Authenticated nested Swift once callbacks return void, so their source projectio
 `SwiftMetadata` also authenticates native Swift classes whose Objective-C superclass is the imported runtime `_SwiftObject`. The current class descriptor, runtime name, metadata header and Objective-C record must agree with one strong, zero-addend, two-level class import from `libswiftCore`. Initial import-slot validation shares the same unique-storage and overlapping-fixup checks as immutable imports, while permitting writable declaration records. It grants no stable runtime pointer, instance layout, copied object, or fixed field offset. Weak, conflicting, missing and wrong-provider bindings remain unsupported; native kind-1 field records do not acquire the separate kind-7 Objective-C field proof.
 
 `swiftFixedRootClassStorage` separately proves bounded storage for a registered native Swift root class containing `String?`, `String??` and `Bool?` fields. Complete kind-1 reflection, field-offset declarations, immutable offset slots, the metadata vector and Objective-C ivars must agree on every field, instance size and alignment. The source binder can then preserve one exact compiler-outlined static initializer, including its zero once token, object header, architecture-specific nil values and padding. Its extent comes from that layout, never from a gap between symbols. The first call-site consumer is ARM64-only: current immutable instructions and structured source must pass the corresponding metadata accessor's actual result to the strong `swift_initStaticObject` import. Publication repeats the storage and argument proofs. `objc_opt_self`, initialization, counters and result stores remain observable; no runtime alias, purity, broader ABI or upper caller closure follows from this proof. O0/O2 native checks compare unchanged generated initializer C with the original ARM64 instruction sequence redirected to controlled storage and a genuine Swift class, covering optional fields, mutations, repeated initialization, counter wrap and guards.
+
+The Darwin C catalog includes `sysctl`, `sysctlbyname` and `sysctlnametomib` after declaration agreement across ARM64/x86-64 macOS and iOS preprocessing profiles and exact SDK export checks. The signed 32-bit result, pointer parameters and 64-bit `size_t` values retain their complete source ABI. These declarations supply no buffer bounds, frame-borrowing, noescape or purity facts; callers still need independent memory and publication proofs.
+
+Selecting function entries limits which bodies are lifted; it does not discard other confirmed function-symbol boundaries. Shared LowIR construction keeps the same symbol-entry inventory for full and selected analysis across Mach-O, ELF and COFF. Independently callable entries inside a shared unwind range remain separate, including address-taken entries and tail calls. Nonfunction symbols, padding guesses and unclassified interior code pointers do not acquire function-entry authority.
+
+Swift once addressors may return early when the predicate is already complete. The source proof requires both exits to return the same exact storage, with the sole `swift_once` call confined to the initialization path. Publication rechecks the current body, predicate, initializer, context parameter and ABI; an old discovery plan cannot authorize changed returns or additional effects.
+
+`LLVMMemoryAnalysis` owns literal integer-offset decomposition and the memory-transparent intrinsic contract used by byte forwarding and private-frame projection. `projectLLVMPrivateFrame` accepts an explicit numeric entry root, relative frame bounds and disjoint live object extents. It derives the actual access range and proves every loaded byte initialized across all predecessors and backedges before creating local storage. Original numeric address values and scalar instructions remain; external objects may alias each other and remain observable. Unknown effects, ordered memory, metadata, unresolved addresses, missing initialization and exhausted bounds refuse without mutation. Privacy, nonfaulting original accesses, nonwrapping bounds and unobserved final frame contents are caller preconditions. This shared 32/64-bit LLVM API is a conditional memory projection for defined executions, not native ABI or definedness evidence, and the default decompiler does not infer or invoke its contract.
+
+The projection admits only `ctpop`, `ctlz`, `cttz`, `bswap`, `bitreverse`, `fshl` and `fshr` under the shared intrinsic contract; memory-free stack/return-address observations remain rejected.

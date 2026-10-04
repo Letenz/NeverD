@@ -26,6 +26,35 @@ TEST(ProjectionCache, X64RootSurvivesAChangeOfCaller) {
   const auto Second = llvm::cantFail(buildX64PageTables(*Memory, false, true));
   EXPECT_EQ(Second, First);
 }
+TEST(ProjectionCache, ArmLeavesRemainUnguardedAcrossPermissionsAndAliases) {
+  auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+  llvm::cantFail(Memory->map(Code, PageSize, Read | Write | Execute));
+  constexpr uint64_t Alias = 0xffff000000400000;
+  llvm::cantFail(Memory->aliases(
+      {}, {{Alias, Code, PageSize, Read | Execute | UserAccessible}}));
+  // Independently walk four-level 4 KiB tables. GP is bit 50 in a leaf.
+  auto Leaf = [&](uint64_t VA) {
+    uint64_t Table = VA >> 48 ? aarch64::HighRoot : aarch64::LowRoot;
+    uint64_t Entry = 0;
+    for (unsigned Shift : {39u, 30u, 21u, 12u}) {
+      Entry = llvm::support::endian::read64le(Memory->data() + Table +
+                                              ((VA >> Shift) & 511) * 8);
+      EXPECT_EQ(Entry & 3, 3u);
+      Table = Entry & 0x0000fffffffff000ULL;
+    }
+    return Entry;
+  };
+  for (bool User : {false, true})
+    for (unsigned Permissions :
+         {unsigned(Read), unsigned(Read | Write), unsigned(Read | Execute),
+          unsigned(Read | Write | Execute)}) {
+      llvm::cantFail(
+          Memory->protect(Code, PageSize, Permissions | UserAccessible));
+      llvm::cantFail(buildAArch64PageTables(*Memory, User));
+      for (uint64_t VA : {Code, Alias, aarch64::VectorGPA, aarch64::EntryGPA})
+        EXPECT_EQ(Leaf(VA) & (1ULL << 50), 0u);
+    }
+}
 TEST(ProjectionCache, ArmThenX64CannotReuseAnotherISATables) {
   auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
   llvm::cantFail(buildAArch64PageTables(*Memory));

@@ -91,14 +91,23 @@ enum class VectorForm {
 #include "X64VectorOperands.def"
 #undef NEVERD_X64_VECTOR_FORM
 };
-enum class VectorOperand { Xmm, Memory, General, Integer, Immediate };
-struct VectorOperandPair {
-  VectorForm Form;
-  VectorOperand Destination, Source;
+enum class VectorOperand {
+  Absent,
+  Xmm,
+  Memory,
+  General,
+  Integer,
+  IntegerMemory,
+  Immediate
 };
-constexpr VectorOperandPair VectorOperands[] = {
-#define NEVERD_X64_VECTOR_OPERANDS(Form, Destination, Source)                  \
-  {VectorForm::Form, VectorOperand::Destination, VectorOperand::Source},
+struct VectorOperandPattern {
+  VectorForm Form;
+  VectorOperand Destination, Source, Control;
+};
+constexpr VectorOperandPattern VectorOperands[] = {
+#define NEVERD_X64_VECTOR_OPERANDS(Form, Destination, Source, Control)         \
+  {VectorForm::Form, VectorOperand::Destination, VectorOperand::Source,        \
+   VectorOperand::Control},
 #include "X64VectorOperands.def"
 #undef NEVERD_X64_VECTOR_OPERANDS
 };
@@ -106,12 +115,14 @@ struct VectorOperation {
   unsigned Width, Alignment;
   bool Move;
   VectorForm Form;
+  unsigned StoreLane;
 };
 std::optional<VectorOperation> vectorOperation(unsigned Instruction) {
   switch (Instruction) {
-#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, Form)      \
+#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, Form,      \
+                                      Lane)                                    \
   case X86_INS_##Name:                                                         \
-    return VectorOperation{Width, Alignment, Move, VectorForm::Form};
+    return VectorOperation{Width, Alignment, Move, VectorForm::Form, Lane};
 #include "X64VectorInstructions.def"
 #undef NEVERD_X64_VECTOR_INSTRUCTION
   default:
@@ -135,6 +146,8 @@ bool isGeneralOperand(const cs_x86_op &O) {
 bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
                           unsigned Width) {
   switch (Kind) {
+  case VectorOperand::Absent:
+    return false;
   case VectorOperand::Xmm:
     return O.type == X86_OP_REG && isXmm(O.reg);
   case VectorOperand::Memory:
@@ -144,18 +157,22 @@ bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
   case VectorOperand::Integer:
     return isGeneralOperand(O) &&
            (O.size == x64::DWordBytes || O.size == x64::WordBytes);
+  case VectorOperand::IntegerMemory:
+    return O.type == X86_OP_MEM &&
+           (O.size == x64::DWordBytes || O.size == x64::WordBytes);
   case VectorOperand::Immediate:
     return O.type == X86_OP_IMM && O.imm >= 0 && O.imm <= UINT8_MAX;
   }
   llvm_unreachable(diagnostic::Instruction);
 }
 bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
-  if (X.op_count != 2)
-    return false;
-  return llvm::any_of(VectorOperands, [&](const auto &Pair) {
-    return Pair.Form == V.Form &&
-           matchesVectorOperand(Pair.Destination, X.operands[0], V.Width) &&
-           matchesVectorOperand(Pair.Source, X.operands[1], V.Width);
+  return llvm::any_of(VectorOperands, [&](const auto &Pattern) {
+    const bool HasControl = Pattern.Control != VectorOperand::Absent;
+    return Pattern.Form == V.Form && X.op_count == (HasControl ? 3 : 2) &&
+           matchesVectorOperand(Pattern.Destination, X.operands[0], V.Width) &&
+           matchesVectorOperand(Pattern.Source, X.operands[1], V.Width) &&
+           (!HasControl ||
+            matchesVectorOperand(Pattern.Control, X.operands[2], V.Width));
   });
 }
 bool isAtomic(unsigned Instruction) {
@@ -458,7 +475,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     else if (Vector && Vector->Move && OperandAccess == CS_AC_WRITE && N == 0 &&
              X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)) {
       const auto &V = CPU.Xmm[X.operands[1].reg - X86_REG_XMM0];
-      Accesses.push_back({A, O.size, Write, V[0], std::nullopt, V[1]});
+      Accesses.push_back(
+          {A, O.size, Write, V[Vector->StoreLane], std::nullopt, V[1]});
     } else if (OperandAccess == CS_AC_WRITE &&
                (I.id == X86_INS_MOV || I.id == X86_INS_MOVABS) && N == 0 &&
                X.op_count == 2) {

@@ -114,8 +114,10 @@ TEST_P(AArch64PAuth, OnlyDeclaredHintWordsPreserveCompleteState) {
   for (unsigned Selector = 0; Selector < 128; ++Selector) {
     SCOPED_TRACE(Selector);
     const bool Admitted =
-        Selector == 0 || std::find(std::begin(Compatible), std::end(Compatible),
-                                   Selector) != std::end(Compatible);
+        Selector == 0 || Selector == 32 || Selector == 34 || Selector == 36 ||
+        Selector == 38 ||
+        std::find(std::begin(Compatible), std::end(Compatible), Selector) !=
+            std::end(Compatible);
     ASSERT_NO_FATAL_FAILURE(check(0xd503201f | (Selector << 5), Admitted));
   }
 }

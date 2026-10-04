@@ -97,6 +97,14 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `NeverDLLVMScalarLoopRecoveryTests` 覆盖前缀和前驱携带值重构、零次循环分支、自回边循环判断前移、仿射状态、回绕时的等式退路、额外更新的 poison、高位数据差异及不支持的输入契约。精确/少一累计预算检查原子拒绝；独立算术 oracle 在 O0/O2 执行原始与恢复 LLVM，覆盖全部字节控制输入。这些测试不代表原生 ABI 恢复或默认短 C 输出已完成。
 
+掩码回归覆盖交换操作数、零字段、保留输入高位、完整数据证明失败后的替代值、所有回边、回绕/溢出拒绝、超过32项的批次以及精确/少一预算下的原子拒绝。独立 LLVM 与生成 C 的算术预期在 O0/O2 下检查其与位宽恢复的组合。自等价回归保留完整控制域、poison/undef 与不支持约束的拒绝、非终止、局部上限和精确/少一工作计费；修改同一函数后，旧结果不再有效。这些仍是标量 LLVM 覆盖，不是原生 ABI 认证。
+
+共享掩码包含关系测试穷举全部字节输入对，覆盖非连续掩码和最高128位字，保留未知位/高位，并约束超出项数和位宽上限时的节点增长。带两条回边的符号循环必须相对独立闭式表达式证明掩码 XOR 递推。控制依赖测试按规范化后的移位量存储计费，并保留精确/少一预算和宽值保守退路。
+
+位宽回归覆盖非零常量、不变签名、更宽输入和intrinsic、可观察高位、有符号次序、新增溢出及精确／不足预算。同一标量候选在x86-64、AArch64、大端AArch64及ARM32目标三元组下测试，属于LLVM层覆盖，不代表原生ABI认证。原始／恢复LLVM及生成C分别通过O0/O2独立算术oracle，C启用未定义行为trap。
+
+种子回归覆盖全部外部入口一致性、多回边、隐藏高位数据、poison、并行交换、失败批次分拆、超过 32 个携带变量及原子预算。标量证明测试区分已完成的未知查询与全局工作量耗尽，并在不枚举数据位时证明安全移位。符号测试穷举字节值、掩码与计数，保留可观察高位、来源身份和大计数语义。跨位宽移位视图必须共享完整数值计数。这些检查不认证原生 ABI 恢复。
+
 新增循环回归覆盖窄位宽末索引回绕、分离的 body/latch、两种入口条件方向、等式操作数交换、单位步长变量换序与递减、零次路径的高位数据差异、新增执行的 poison 和错误边界候选。精确/少一构造及证明预算和候选耗尽保持整体拒绝。原始 LLVM 与生成 C 在 O0/O2 下对照独立算术 oracle 运行。
 
 `NeverDLLVMCScalarLoopRecoveryTests` 检查默认整模块与单函数输出、返回路径清理后的继续恢复、函数身份和属性、调用绑定、已有及新增内建函数与符号冲突、共享预算、副作用调用、缺失输入定义性、元数据、映像投影、外部块地址和外来函数选择。独立算术与旋转 oracle 在 O0/O2 下执行生成 C，并开启未定义行为陷阱；算术还与独立编译的原始 LLVM 对照，覆盖所有字节控制输入、边界字值和确定性全位宽数据。
@@ -232,6 +240,14 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 `X64PackedShiftTests.cpp` 与原始 `X64PackedShiftCases.def` 使用 16 个立即数计数和 21 个变量计数，将十种移位与独立标量计算、宿主 SSE2 intrinsic 对照。覆盖计数／目标别名、高位忽略、对齐、观察器、可恢复故障和设备拒绝。`X64VectorTestSupport.h` 与打包算术测试共用寄存器与 RAM 断言。原生 CI 强制执行 WHP 的两个特权级。
 
 `X64VectorMaskTests.cpp` 将独立原始编码与标量位提取及原生 SSE intrinsic 比较，覆盖每个源位、全部 16 个 GPR × 16 个 XMM 组合和两种 REX.W 值。完整公共寄存器快照、RAM 与数据观察器验证零扩展和状态保留；指令停止、回调失败及不支持的形式不得发布副作用。KVM/WHP 原生验收要求两个特权级均执行。
+
+`X64ShuffleTests.cpp` 使用 `X64ShuffleCases.def` 中的独立编码，并以原生 intrinsic 校验标量通道选择结果。覆盖全部 256 个控制值、寄存器与自身源、页尾内存别名、全部 XMM 寄存器配对、完整公开 CPU 状态和 RAM、观察回调停止与异常、权限、对齐故障和重试。MMX、VEX/EVEX、LOCK 与设备操作数必须无副作用地拒绝。原生 KVM/WHP 验收要求两个特权级的这些用例全部通过；不可用的宿主/ISA 组合仍明确跳过。 `UNPCKLPS`、`UNPCKHPS`、`UNPCKLPD` 和 `UNPCKHPD` 复用同一状态/故障矩阵及独立标量、原生对照，并检查内存源配合每个 XMM 目标寄存器。
+
+`X64PartialMoveTests.cpp` 与 `X64PartialMoveCases.def` 对照独立的标量/原生加载存储参考结果，覆盖全部 16 个 XMM 寄存器以及 NaN/次正规数的原始位。非对齐访问、别名、跨页故障、权限修复、观察者停止/失败和重试均检查完整 CPU 状态及两页 RAM。页末操作数只需八字节，存储无需读权限。寄存器别名、拒绝形式和设备回调单独验证；原生 KVM/WHP 在两个权限级别均为必测。
+
+`X64IntegerFloatTests.cpp` 使用独立的 `X64IntegerFloatCases.def` 编码、`APFloat` 期望值，以及保存/恢复浮点状态后执行的原生指令。覆盖两种整数宽度、四种舍入模式、精度粘滞状态、FTZ、所有 GPR/XMM 组合及完整 CPU/RAM 保留。非对齐、跨页、页末源、权限修复、观察者停止/失败和重试均检查精确范围。原生 KVM/WHP 在两个权限级别均为必测。
+
+`X64FloatIntegerTests.cpp` 使用独立的 `X64FloatIntegerCases.def` 编码、`APFloat` 和原生寄存器/内存指令，检查舍入及截断转换。两种整数宽度均覆盖有符号边界、中点值、NaN、无穷、次正规数、全部舍入模式、粘滞状态和 FTZ。检查所有 GPR/XMM 组合、完整 CPU/RAM 状态、精确页末读取、可恢复跨页故障及观察者取消/重试。两个权限级别的原生 KVM/WHP 结果均为必测。
 
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
@@ -975,7 +991,7 @@ KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备�
 
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM、WHP 和 HVF 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
-ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
+ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。 程序还包括密钥关闭时的 A/B 返回地址签名和认证，以及非防护页上的四种 BTI 指令。
 
 x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 
@@ -1027,7 +1043,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 290 项 CPU 检查及 4 项共享 SEH 续接回归，共有 518 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `290 CPU + 224 WHP + 4 SEH = 518`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 388 项 CPU 检查及 4 项共享 SEH 续接回归，共有 616 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `388 CPU + 224 WHP + 4 SEH = 616`.
 
 C SEH 作用域仍使用左闭右开区间。合法的 `__C_specific_handler` 落点可能位于其保护区间内：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 将 `EndLabel + 1` 写为区间末端。Windows OS 模型保留原始端点，并独立校验目标可执行性、所属函数和续接身份，重定位后同样如此。`KernelSEHContinuationCases.def` 保留原始样例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 覆盖常量处理器和过滤器。配套测试验证末端排除，以及非法目标被拒绝后派发状态仍可重试。这些纯模型检查纳入 `NeverDNativeDriverTests`，禁用 Unicorn 时仍会执行。
 
@@ -1094,7 +1110,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `WindowsProcessContext` 保留每个派发帧的来源。已支持的 x64 数据访问和除法故障在 `CONTEXT.EFlags` 中呈现 RF（`0x10000`）；`RaiseException`（包括软件抛出的访问违规码）保留当前上下文。来源信息贯穿 VEH/VCH 和 SEH 搜索／展开。合法继续执行时恢复不含 RF 的逻辑 CPU 标志；客户修改 RF 会在发布状态前被拒绝。此受限配置不模拟指令断点或客户控制的 RF。`WindowsExceptionTests.cpp` 检查保存记录、恢复，以及拒绝时 CPU／RAM 不变。
 
-Windows ring3 按独立原生观测，将 checked x64 的 `operand_alignment` 故障映射为 `STATUS_ACCESS_VIOLATION`，参数为 `[read, UINT64_MAX]`，存储指令也相同。原因由 CPU 层提供，Windows 不凭向量 13 猜测或重新解码指令。`WindowsAlignmentProcessTests.cpp` 执行原始 PE 指令，覆盖 72 种故障情境和 9 次地址修复重试（`72 + 9`），检查 PC、RF、XMM 和 RAM。未分类或字段不一致的故障仍会拒绝。进程与驱动故障报告保留可空的 `cause` 和十六进制 `error_code`，区分缺失与零。此派发适用于 checked x64 用户态执行契约。 每次故障或修复重试后，样例都会导出完整的 4096 字节页面；宿主核对全部 81 份快照及实际完成计数，来宾时限保持不变。
+Windows ring3 按独立原生观测，将 checked x64 的 `operand_alignment` 故障映射为 `STATUS_ACCESS_VIOLATION`，参数为 `[read, UINT64_MAX]`，存储指令也相同。原因由 CPU 层提供，Windows 不凭向量 13 猜测或重新解码指令。`WindowsAlignmentProcessTests.cpp` 执行原始 PE 指令，覆盖 72 种故障情境和 9 次地址修复重试（`72 + 9`），检查 PC、RF、XMM 和 RAM。未分类或字段不一致的故障仍会拒绝。进程与驱动故障报告保留可空的 `cause` 和十六进制 `error_code`，区分缺失与零。此派发适用于 checked x64 用户态执行契约。 每次故障或修复重试后，样例都会导出完整的 4096 字节页面；宿主核对全部 81 份快照及实际完成计数，来宾时限保持不变。 原生进程及初始线程观测使用 `CREATE_DEFAULT_ERROR_MODE`：GoogleTest 会启用可继承的 `SEM_NOALIGNMENTFAULTEXCEPT` 标志，使 Windows 自动修复正在测量的故障。因此原生验证使用系统默认行为，避免测试框架策略干扰结果。
 
 `AddVectoredContinueHandler` 和 `RemoveVectoredContinueHandler` 管理独立的有序列表，与异常处理器共用最多保留 128 个注册项的限制。向量异常处理器接受继续执行后，继续处理器读取同一份可修改的异常记录和 `CONTEXT`；最终上下文校验在这些回调完成后进行，包含嵌套异常与 DLL 通知。两类处理器的句柄不可交叉移除。`WindowsContinuationTests.cpp` 将顺序、提前结束派发、增删、上下文修复、嵌套派发、加载器回调及进程退出的原创 EXE 场景与原生 Windows 对照。已测 Windows x64 向量处理路径允许在设置 `EXCEPTION_NONCONTINUABLE` 时继续执行；这不代表基于栈帧的 SEH 行为。原生 ARM64 执行仍未验证。
 
@@ -1158,3 +1174,11 @@ python3 scripts/benchmark_cpu.py \
 入口计数为单独诊断，会增加开销，包含启动探针；计数运行耗时不得混入性能结果。局部负载不代表完整 OS 或跨架构性能。
 
 [复现方法](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+`NeverDLLVMPrivateFrameTests` 覆盖重叠写入、全部入口路径及循环回边、保留的数值地址、外部输出别名、未初始化／有序／未知内存、元数据，以及精确／少一单位预算下的原子拒绝。独立 O0/O2 oracle 启用未定义行为陷阱，比较完整返回值、外部对象及帧字节。编译覆盖 x86-64、AArch64、大端 AArch64 和 ARM32，不代表已支持这些架构的原生恢复。修改共享地址／副作用工具时同时重跑 `NeverDByteMemoryForwardingTests`。
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

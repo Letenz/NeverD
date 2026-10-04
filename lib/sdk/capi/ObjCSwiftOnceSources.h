@@ -754,11 +754,14 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
   for (const auto &S : F.Body)
     if (!InertLabel(S))
       Body.push_back(&S);
-  const bool HasSeparateLoad = Body.size() == 3;
+  const bool HasSeparateLoad =
+      !Body.empty() && Body.front()->Kind == StmtKind::Assign;
+  const size_t StatementOffset = HasSeparateLoad ? 1 : 0;
+  const bool HasEarlyReturn = Body.size() == StatementOffset + 3;
   if (F.Params.size() != 3 || !F.ReturnType || F.ReturnType->Size != 8 ||
       (F.ReturnType->Kind != NdTypeKind::Int &&
        F.ReturnType->Kind != NdTypeKind::Ptr) ||
-      (Body.size() != 2 && !HasSeparateLoad))
+      (Body.size() != StatementOffset + 2 && !HasEarlyReturn))
     return std::nullopt;
   const HighStmt *Assignment = HasSeparateLoad ? Body[0] : nullptr;
   const HighStmt &Conditional = *Body[HasSeparateLoad ? 1 : 0];
@@ -784,7 +787,17 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
                            Conditional.Body.size() == 1 &&
                            Conditional.Body[0].Kind == StmtKind::Call &&
                            Conditional.Body[0].CallExpr;
-  if (!BranchReturn && !SharedReturn && !InlinedLoad)
+  // Control-flow structuring may move the already-initialized return before
+  // the once call. Both exits must still return the exact same storage, and
+  // only the predicate != -1 path may invoke the initializer.
+  const bool EarlyReturn = HasEarlyReturn && Conditional.ElseBody.empty() &&
+                           Conditional.Body.size() == 1 &&
+                           Conditional.Body[0].Kind == StmtKind::Return &&
+                           Conditional.Body[0].RetVal &&
+                           Body[StatementOffset + 1]->Kind == StmtKind::Call &&
+                           Body[StatementOffset + 1]->CallExpr;
+  if (HasEarlyReturn ? !EarlyReturn
+                     : (!BranchReturn && !SharedReturn && !InlinedLoad))
     return std::nullopt;
   for (const auto &Parameter : F.Params)
     if (!Parameter.Type || Parameter.Type->Size != 8 ||
@@ -828,7 +841,8 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
   };
   auto Condition = Plain(Conditional.Cond);
   if (!Condition || Condition->Kind != ExprKind::BinOp ||
-      Condition->Op != (SharedReturn ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL) ||
+      Condition->Op != ((SharedReturn || EarlyReturn) ? NdOp::INT_EQUAL
+                                                      : NdOp::INT_NOTEQUAL) ||
       Condition->Operands.size() != 2)
     return std::nullopt;
   ExprPtr Added;
@@ -859,8 +873,9 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
   const auto Predicate =
       objc_binding_detail::constantAddress(*Loaded->Operands.front());
 
-  const auto &Once = *(SharedReturn ? Conditional.ElseBody[0].CallExpr
-                                    : Conditional.Body[0].CallExpr);
+  const auto &Once = *(EarlyReturn    ? Body[StatementOffset + 1]->CallExpr
+                       : SharedReturn ? Conditional.ElseBody[0].CallExpr
+                                      : Conditional.Body[0].CallExpr);
   if (!onceCall(Once, Image))
     return std::nullopt;
   const auto OncePredicate =
@@ -868,11 +883,17 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
   const auto Initializer =
       objc_binding_detail::constantAddress(*Once.Operands[1]);
   const auto Context = parameter(Once.Operands[2]);
+  const auto FirstValue =
+      ResolveAssigned(EarlyReturn    ? Conditional.Body[0].RetVal
+                      : BranchReturn ? Conditional.Body[1].RetVal
+                                     : FinalReturn.RetVal);
+  const auto SecondValue = ResolveAssigned(FinalReturn.RetVal);
   const auto FirstStorage =
-      objc_binding_detail::constantAddress(*ResolveAssigned(
-          BranchReturn ? Conditional.Body[1].RetVal : FinalReturn.RetVal));
-  const auto SecondStorage = objc_binding_detail::constantAddress(
-      *ResolveAssigned(FinalReturn.RetVal));
+      FirstValue ? objc_binding_detail::constantAddress(*FirstValue)
+                 : std::nullopt;
+  const auto SecondStorage =
+      SecondValue ? objc_binding_detail::constantAddress(*SecondValue)
+                  : std::nullopt;
   if (!Predicate || !OncePredicate || *Predicate != *OncePredicate ||
       !Initializer || !Context || *Context != 2 || !FirstStorage ||
       !SecondStorage || *FirstStorage != *SecondStorage ||

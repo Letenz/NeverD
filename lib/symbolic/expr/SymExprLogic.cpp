@@ -133,6 +133,22 @@ SymRef SymContext::mkAnd(llvm::ArrayRef<SymRef> Ops) {
   if (auto Narrow = contractZeroExtensions(*this, SymOp::And, Rest, Acc))
     return Narrow;
 
+  // OR/XOR cannot set a bit that is zero in every operand. Explicit masks
+  // provide this fact without distributing AND or recursively walking the
+  // data expression. Bound both fan-in and word size for builder-time work.
+  if (W <= 128 && !Acc.isAllOnes() && Rest.size() == 1 &&
+      (op(Rest[0]) == SymOp::Or || op(Rest[0]) == SymOp::Xor)) {
+    auto Terms = operands(Rest[0]);
+    const auto Outside = ~Acc;
+    if (Terms.size() <= 8 && llvm::all_of(Terms, [&](SymRef Term) {
+          if (isConst(Term))
+            return (constValue(Term) & Outside).isZero();
+          return op(Term) == SymOp::And && isConst(operand(Term, 0)) &&
+                 (constValue(operand(Term, 0)) & Outside).isZero();
+        }))
+      return Rest[0];
+  }
+
   if (W == 1)
     if (SymRef Predicate =
             detail::recoverObservedComparison(*this, SymOp::And, Rest, Acc))
@@ -450,6 +466,18 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
       return A;
     if (isConst(A))
       return mkConst(constValue(A).lshr(Amt.getZExtValue()));
+    // Compare the full unsigned count before canonicalizing its storage
+    // width. Equal in-range counts must denote the same shift expression.
+    B = mkConst(W, Amt.getZExtValue());
+    if (op(A) == SymOp::And && operands(A).size() == 2 &&
+        isConst(operand(A, 0)) &&
+        constValue(operand(A, 0)).countLeadingOnes() >=
+            W - Amt.getZExtValue()) {
+      // The mask changes only bits discarded by this logical right shift.
+      // Keep the original count and source; this says nothing about signed
+      // shifts, other masks, or LLVM's separate definedness obligations.
+      return mkLShr(operand(A, 1), B);
+    }
     if (op(A) == SymOp::Mul && operands(A).size() == 2 &&
         isConst(operand(A, 0))) {
       llvm::APInt Factor = constValue(operand(A, 0));
@@ -487,6 +515,9 @@ SymRef SymContext::mkAShr(SymRef A, SymRef B) {
     if (Amt.uge(W - 1))
       if (SymRef Predicate = detail::recoverSignComparison(*this, A))
         return mkSExt(Predicate, W);
+    // Arithmetic overshifts saturate at the sign bit. Inspect the complete
+    // count before narrowing so large counts cannot wrap to a smaller shift.
+    B = mkConst(W, Amt.uge(W - 1) ? W - 1 : Amt.getZExtValue());
   }
   if (isConstZero(A))
     return mkZero(W);

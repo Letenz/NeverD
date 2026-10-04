@@ -147,6 +147,44 @@ foreach(_optimization O0 O2)
   endforeach()
 endforeach()
 foreach(_optimization O0 O2)
+  set(_attribute_object "${_android_fixture_dir}/thread-attributes-${_optimization}.o")
+  add_custom_command(OUTPUT "${_attribute_object}"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
+      -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
+      -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+      -fno-asynchronous-unwind-tables "-${_optimization}" -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_thread_attributes.c" -o "${_attribute_object}"
+    DEPENDS fixtures/android_thread_attributes.c VERBATIM)
+  foreach(_packing none android relr)
+    set(_attribute_file "${_android_fixture_dir}/thread-attributes-${_optimization}-${_packing}.so")
+    add_custom_command(OUTPUT "${_attribute_file}"
+      COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
+        --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
+        "${_attribute_object}" -o "${_attribute_file}"
+      DEPENDS "${_attribute_object}" VERBATIM)
+    list(APPEND _android_outputs "${_attribute_file}")
+  endforeach()
+endforeach()
+foreach(_optimization O0 O2)
+  set(_threads_object "${_android_fixture_dir}/threads-${_optimization}.o")
+  add_custom_command(OUTPUT "${_threads_object}"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
+      -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
+      -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+      -fno-asynchronous-unwind-tables "-${_optimization}" -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_threads.c" -o "${_threads_object}"
+    DEPENDS fixtures/android_threads.c VERBATIM)
+  foreach(_packing none android relr)
+    set(_threads_file "${_android_fixture_dir}/threads-${_optimization}-${_packing}.so")
+    add_custom_command(OUTPUT "${_threads_file}"
+      COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
+        --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
+        "${_threads_object}" -o "${_threads_file}"
+      DEPENDS "${_threads_object}" VERBATIM)
+    list(APPEND _android_outputs "${_threads_file}")
+  endforeach()
+endforeach()
+foreach(_optimization O0 O2)
   set(_finalizers_object "${_android_fixture_dir}/finalizers-${_optimization}.o")
   add_custom_command(OUTPUT "${_finalizers_object}"
     COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28

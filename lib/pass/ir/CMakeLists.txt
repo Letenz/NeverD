@@ -24,4 +24,5 @@ add_neverd_component_library(NeverDPassIR
   IR
   Solver
   Symbolic
+  LLVMMemoryAnalysis
 )

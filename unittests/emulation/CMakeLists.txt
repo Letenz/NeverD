@@ -34,6 +34,11 @@ add_neverd_unittest(NeverDAArch64PAuthTests
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU)
 
+add_neverd_unittest(NeverDAArch64BTITests
+  AArch64BTITests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationCPU EmulationRuntime)
+
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
@@ -83,6 +88,10 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64PackedIntegerTests.cpp
   X64PackedShiftTests.cpp
   X64VectorMaskTests.cpp
+  X64ShuffleTests.cpp
+  X64PartialMoveTests.cpp
+  X64IntegerFloatTests.cpp
+  X64FloatIntegerTests.cpp
   X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
@@ -157,6 +166,8 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidMemoryTests.cpp
   AndroidTokenTests.cpp
   AndroidMutexTests.cpp
+  AndroidThreadAttributeTests.cpp
+  AndroidThreadTests.cpp
   AndroidTimeTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp

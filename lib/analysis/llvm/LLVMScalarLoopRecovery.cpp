@@ -32,7 +32,22 @@ static uint64_t size(const Function &F) {
   return N;
 }
 
-bool Search::clone(Function &F, Candidate &C, bool Probe) {
+namespace {
+class IntegerWidthMapper : public ValueMapTypeRemapper {
+  unsigned MaxWidth;
+
+public:
+  explicit IntegerWidthMapper(unsigned Width) : MaxWidth(Width) {}
+  Type *remapType(Type *T) override {
+    if (T->isIntegerTy() && T->getIntegerBitWidth() > MaxWidth)
+      return IntegerType::get(T->getContext(), MaxWidth);
+    return T;
+  }
+};
+} // namespace
+
+bool Search::clone(Function &F, Candidate &C, bool Probe,
+                   unsigned MaxInternalWidth) {
   if (!Probe && Result.Candidates >= Limits.MaxCandidates)
     Exhausted = true;
   if (!charge(size(F)))
@@ -63,9 +78,38 @@ bool Search::clone(Function &F, Candidate &C, bool Probe) {
         Copy->copyAttributesFrom(Callee);
         C.Values[Callee] = Copy;
       }
+  if (MaxInternalWidth) {
+    if (!charge(size(F)))
+      return false;
+    // A type remapper alone does not preserve narrowed nonzero literals.
+    // Bind their original bit patterns explicitly before cloning operands.
+    for (auto &B : F)
+      for (auto &I : B)
+        for (auto &U : I.operands())
+          if (auto *K = dyn_cast<ConstantInt>(U.get()))
+            if (K->getBitWidth() > MaxInternalWidth)
+              C.Values[K] = ConstantInt::get(
+                  F.getContext(), K->getValue().trunc(MaxInternalWidth));
+  }
+  IntegerWidthMapper Types(MaxInternalWidth);
   SmallVector<ReturnInst *, 8> Returns;
   CloneFunctionInto(C.Function, &F, C.Values,
-                    CloneFunctionChangeType::DifferentModule, Returns);
+                    CloneFunctionChangeType::DifferentModule, Returns, "",
+                    nullptr, MaxInternalWidth ? &Types : nullptr);
+  if (MaxInternalWidth) {
+    if (!charge(size(*C.Function)))
+      return false;
+    SmallVector<CastInst *, 16> Redundant;
+    for (auto &B : *C.Function)
+      for (auto &I : B)
+        if (auto *Cast = dyn_cast<CastInst>(&I))
+          if (Cast->getType() == Cast->getOperand(0)->getType())
+            Redundant.push_back(Cast);
+    for (auto *Cast : Redundant) {
+      Cast->replaceAllUsesWith(Cast->getOperand(0));
+      Cast->eraseFromParent();
+    }
+  }
   return true;
 }
 
@@ -120,7 +164,7 @@ static void maskProbeData(Function &F, ArrayRef<LLVMScalarControlBit> Bits) {
   }
 }
 
-bool Search::accept(Candidate &C) {
+bool Search::screen(Candidate &C, Cost *CandidateCost) {
   if (stopped() || !charge(size(*C.Function)))
     return false;
   ++Result.Candidates;
@@ -134,6 +178,8 @@ bool Search::accept(Candidate &C) {
   auto NewCost = cost(*C.Function);
   if (!(NewCost < CurrentCost))
     return false;
+  if (CandidateCost)
+    *CandidateCost = NewCost;
   // A zero-data query across the complete source control domain is only a
   // rejection filter. Bad region guesses can otherwise grow symbolic data
   // for thousands of iterations before their first counterexample. All input
@@ -150,9 +196,17 @@ bool Search::accept(Candidate &C) {
                                  *Probe.Function, ProbeLimits);
   Result.ProofWork += Screen.Work;
   if (Screen.Status != LLVMScalarEquivalenceStatus::Proved) {
-    Exhausted |= Result.ProofWork == Limits.MaxProofWork;
+    Exhausted |=
+        Screen.WorkLimitExceeded && Result.ProofWork == Limits.MaxProofWork;
     return false;
   }
+  return true;
+}
+
+bool Search::accept(Candidate &C) {
+  Cost NewCost;
+  if (!screen(C, &NewCost))
+    return false;
   auto ProofLimits = Limits.Proof;
   ProofLimits.MaxControlBits = ControlBitLimit;
   ProofLimits.MaxWork =
@@ -166,9 +220,17 @@ bool Search::accept(Candidate &C) {
   if (Proof.Status != LLVMScalarEquivalenceStatus::Proved) {
     // A candidate may exceed its own path/node/query ceiling. It authorizes
     // no change, but other proposals can still fit the shared search budget.
-    Exhausted |= Result.ProofWork == Limits.MaxProofWork;
+    Exhausted |=
+        Proof.WorkLimitExceeded && Result.ProofWork == Limits.MaxProofWork;
     return false;
   }
+  if (!charge(DeferredReplacements.size()))
+    return false;
+  SmallPtrSet<Instruction *, 16> MappedReplacements;
+  for (auto *I : DeferredReplacements)
+    if (auto *Mapped = dyn_cast_or_null<Instruction>(C.map(I)))
+      MappedReplacements.insert(Mapped);
+  DeferredReplacements = std::move(MappedReplacements);
   Accepted = std::move(C.Module);
   CurrentCost = NewCost;
   return true;
@@ -217,7 +279,7 @@ LLVMScalarLoopRecoveryResult Search::run() {
       ProbeSource = std::move(Probe.Module);
     }
   }
-  for (unsigned Phase = 0; Phase < 4 && !stopped(); ++Phase) {
+  for (unsigned Phase = 0; Phase < 7 && !stopped(); ++Phase) {
     while (!stopped()) {
       if (Result.ProvedTransforms >= Limits.MaxTransforms) {
         Exhausted = true;
@@ -242,6 +304,15 @@ LLVMScalarLoopRecoveryResult Search::run() {
           break;
         case 3:
           Changed = affine(*this, F, LI);
+          break;
+        case 4:
+          Changed = seeds(*this, F, DT, LI);
+          break;
+        case 5:
+          Changed = widths(*this, F, LI);
+          break;
+        case 6:
+          Changed = masks(*this, F, LI);
           break;
         }
       }

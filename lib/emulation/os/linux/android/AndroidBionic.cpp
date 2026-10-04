@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../kernel/LinuxTime.h"
 #include "AndroidInternal.h"
+#include "AndroidThreads.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -13,6 +14,12 @@
 #include <algorithm>
 
 namespace neverd::emulation::android_model {
+uint64_t Bionic::tlsAddress() const {
+  return Threads ? Threads->tls() : TLSAddress;
+}
+uint64_t Bionic::threadID() const {
+  return Threads ? Threads->id() : linux_model::ThreadID;
+}
 llvm::Error Bionic::access(uint64_t Address, uint64_t Size,
                            unsigned Permissions) {
   if (!Budget.remainingMicroseconds()) {
@@ -54,7 +61,7 @@ llvm::Expected<std::string> Bionic::string(uint64_t Address) {
 llvm::Error Bionic::setErrno(uint32_t Value) {
   uint8_t Bytes[4];
   llvm::support::endian::write32le(Bytes, Value);
-  return CPU.write(ErrnoAddress, Bytes);
+  return CPU.write(tlsAddress() + ErrnoAddress - TLSAddress, Bytes);
 }
 llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size) {
   uint64_t Effective = std::max(uint64_t(1), Size);
@@ -103,6 +110,8 @@ llvm::Error Bionic::release(uint64_t Address) {
 }
 llvm::Expected<uint64_t> Bionic::linkerError(llvm::StringRef Message,
                                              uint64_t ReturnValue) {
+  const uint64_t ErrorAddress = tlsAddress() + LinkerErrorAddress - TLSAddress;
+  const uint64_t ErrorSlot = tlsAddress() + LinkerErrorSlot - TLSAddress;
   // A fixed guest buffer, separate from errno, TLS ABI slots and constructor
   // argv/envp. A later error may replace its contents; dlerror consumes it
   // once.
@@ -110,15 +119,15 @@ llvm::Expected<uint64_t> Bionic::linkerError(llvm::StringRef Message,
     return failure(diagnostic::LinkerErrorLimit);
   std::vector<uint8_t> Bytes(Message.bytes_begin(), Message.bytes_end());
   Bytes.push_back(0);
-  if (auto E = access(LinkerErrorAddress, Bytes.size(), Write))
+  if (auto E = access(ErrorAddress, Bytes.size(), Write))
     return std::move(E);
-  if (auto E = CPU.write(LinkerErrorAddress, Bytes))
+  if (auto E = CPU.write(ErrorAddress, Bytes))
     return std::move(E);
   uint8_t Pointer[8];
-  llvm::support::endian::write64le(Pointer, LinkerErrorAddress);
-  if (auto E = access(LinkerErrorSlot, sizeof(Pointer), Write))
+  llvm::support::endian::write64le(Pointer, ErrorAddress);
+  if (auto E = access(ErrorSlot, sizeof(Pointer), Write))
     return std::move(E);
-  if (auto E = CPU.write(LinkerErrorSlot, Pointer))
+  if (auto E = CPU.write(ErrorSlot, Pointer))
     return std::move(E);
   return ReturnValue;
 }
@@ -142,13 +151,14 @@ BionicResult Bionic::dlfcn(NativeCallEvent &Call) {
     return std::optional<BionicValue>();
   };
   if (Call.Name == symbol::DLError) {
+    const uint64_t ErrorSlot = tlsAddress() + LinkerErrorSlot - TLSAddress;
     uint8_t Pointer[8], Empty[8]{};
-    if (auto E = access(LinkerErrorSlot, sizeof(Pointer), Read | Write))
+    if (auto E = access(ErrorSlot, sizeof(Pointer), Read | Write))
       return std::move(E);
-    if (auto E = CPU.read(LinkerErrorSlot, Pointer))
+    if (auto E = CPU.read(ErrorSlot, Pointer))
       return std::move(E);
     uint64_t Address = llvm::support::endian::read64le(Pointer);
-    if (auto E = CPU.write(LinkerErrorSlot, Empty))
+    if (auto E = CPU.write(ErrorSlot, Empty))
       return std::move(E);
     return Value(Address);
   }
@@ -238,44 +248,53 @@ BionicResult Bionic::dlfcn(NativeCallEvent &Call) {
 }
 BionicResult Bionic::once(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
-  if (A[0] % 4)
+  if (A[0] % once_abi::ControlBytes)
     return failure(diagnostic::OnceControlAlignment);
-  if (auto E = access(A[0], 4, Read))
+  if (auto E = access(A[0], once_abi::ControlBytes, Read))
     return std::move(E);
-  uint8_t Bytes[4];
+  uint8_t Bytes[once_abi::ControlBytes];
   if (auto E = CPU.read(A[0], Bytes))
     return std::move(E);
-  // Android API 28 has a four-byte 0/1/2 state. One guest thread has no
-  // concurrent initializer that could complete an in-progress control.
   uint32_t State = llvm::support::endian::read32le(Bytes);
-  if (State == 2)
+  if (State == once_abi::Complete)
     return std::optional<BionicValue>(uint64_t(0));
-  if (State != 0) {
+  if (State == once_abi::Running && Threads && Threads->enabled())
+    return Threads->waitOnce(A[0]);
+  if (State != once_abi::NotStarted ||
+      (Threads && Threads->enabled() && Threads->onceActive(A[0]))) {
     Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic =
-        State == 1 ? diagnostic::OnceInProgress : diagnostic::OnceControlState;
+    Result.Diagnostic = State == once_abi::Running
+                            ? diagnostic::OnceInProgress
+                            : diagnostic::OnceControlState;
     return std::optional<BionicValue>();
   }
-  if (auto E = access(A[0], 4, Write))
+  if (auto E = access(A[0], once_abi::ControlBytes, Write))
     return std::move(E);
   if (A[1] % 4)
     return failure(diagnostic::OnceInitializerAlignment);
   if (auto E = access(A[1], 4, Execute))
     return std::move(E);
-  llvm::support::endian::write32le(Bytes, 1);
+  llvm::support::endian::write32le(Bytes, once_abi::Running);
   if (auto E = CPU.write(A[0], Bytes))
     return std::move(E);
   return std::optional<BionicValue>(
       GuestCallback{A[1], std::nullopt, OnceCallback{A[0]}});
 }
 llvm::Error Bionic::finishOnce(const OnceCallback &Callback) {
-  if (auto E = access(Callback.Control, 4, Write))
+  if (auto E = access(Callback.Control, once_abi::ControlBytes, Write))
     return E;
-  uint8_t Bytes[4];
-  llvm::support::endian::write32le(Bytes, 2);
-  return CPU.write(Callback.Control, Bytes);
+  uint8_t Bytes[once_abi::ControlBytes];
+  llvm::support::endian::write32le(Bytes, once_abi::Complete);
+  if (auto E = CPU.write(Callback.Control, Bytes))
+    return E;
+  if (Threads && Threads->enabled())
+    Threads->completeOnce(Callback.Control);
+  return llvm::Error::success();
 }
 BionicResult Bionic::invoke(NativeCallEvent &Call) {
+  if (Threads && Threads->enabled())
+    if (auto E = Threads->validateTLS())
+      return std::move(E);
   llvm::StringRef Name(Call.Name);
   const auto &A = Call.Arguments;
   auto Value = [](uint64_t V) { return std::optional<BionicValue>(V); };
@@ -293,6 +312,14 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return dlfcn(Call);
   if (Name == symbol::PthreadOnce)
     return once(Call);
+  if (Name.starts_with(symbol::PthreadAttrPrefix))
+    return threadAttributes(Call);
+  if (Threads && Threads->enabled() &&
+      (Name == symbol::ThreadCreate || Name == symbol::ThreadJoin ||
+       Name == symbol::ThreadDetach || Name == symbol::ThreadSelf ||
+       Name == symbol::ThreadEqual || Name == symbol::ThreadExit ||
+       Name == symbol::ThreadGetAttr || Name == symbol::ThreadGetTID))
+    return Threads->invoke(Call);
   if (Name == symbol::CxaAtExit)
     return registerExit(Call);
   if (Name == symbol::CxaFinalize)
@@ -309,7 +336,7 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
       Name == symbol::Sprintf || Name == symbol::Vsprintf)
     return format(Call);
   if (Name == symbol::Errno)
-    return Value(ErrnoAddress);
+    return Value(tlsAddress() + ErrnoAddress - TLSAddress);
   if (Name == symbol::Time) {
     auto Now =
         linux_model::clockValue(linux_model::ClockRealtime, Options, Result);
@@ -473,10 +500,12 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     std::copy_n(A.begin() + (IsSyscall ? 1 : 0), Event.Arguments.size(),
                 Event.Arguments.begin());
     // Raw Linux service semantics are shared. Bionic alone owns errno/-1.
-    auto Returned = Kind ? linux_model::handleService(CPU, Memory, *Kind, Event,
-                                                      Layout, Options, Result)
-                         : linux_model::handleService(CPU, Memory, Event,
-                                                      Layout, Options, Result);
+    auto *Thread = Threads ? Threads->kernel() : nullptr;
+    auto Returned =
+        Kind ? linux_model::handleService(CPU, Memory, *Kind, Event, Layout,
+                                          Options, Result, Thread)
+             : linux_model::handleService(CPU, Memory, Event, Layout, Options,
+                                          Result, Thread);
     if (!Returned)
       return Returned.takeError();
     if (!*Returned)

@@ -384,6 +384,14 @@ Leading-phase regressions cover two and three sequential loops reusing one count
 
 `NeverDLLVMScalarLoopRecoveryTests` covers prefix and predecessor-carrier recovery, zero-trip alternatives, self-latch rotation, affine states, wrapping equality fallback, extra-update poison, differing high data bits and unsupported input contracts. Exact/short cumulative budgets check atomic refusal. Independent arithmetic oracles execute original and recovered LLVM at O0/O2, including all byte control inputs. These tests do not establish native ABI recovery or default C output.
 
+Mask regressions cover commuted operands, zero fields, retained high input bits, a screened alternative after full-data failure, every backedge, wrap/overflow rejection, batches larger than 32 and exact/short atomic budgets. Independent LLVM and emitted-C arithmetic oracles at O0/O2 check composition with width recovery. Self-query regressions retain complete control domains, poison/undef and unsupported-contract rejection, nontermination, local ceilings and exact/short work accounting; editing the same function invalidates any earlier outcome. These checks remain scalar LLVM coverage, not native ABI certification.
+
+Shared mask-containment tests exhaust every byte-input pair, cover noncontiguous masks and widths through 128 bits, retain unknown/high bits, and bound node growth beyond the fan-in/width ceilings. A symbolic loop with two backedges must prove its masked-XOR recurrence against an independent closed form. Control-discovery tests charge normalized shift-count storage while preserving exact/short budgets and the wide-value fallback.
+
+Width regressions cover nonzero literals, unchanged signatures, wider inputs and intrinsics, observable high bits, signed order, newly overflowing updates and exact/short budgets. The same scalar candidates run under x86-64, AArch64, big-endian AArch64 and ARM32 target triples; this is LLVM-level coverage, not native ABI certification. Independent original/recovered LLVM and emitted-C arithmetic oracles run at O0/O2, with C undefined-behavior traps.
+
+Seed regressions cover agreement at every external entry, multiple backedges, hidden high data, poison, parallel swaps, split batches, more than 32 carriers and atomic budgets. Scalar proof tests distinguish completed unknown queries from global work exhaustion and prove safe shifts without enumerating data bits. Symbolic tests exhaust byte values, masks and counts, retaining observable high bits, source identity and large-count semantics. Cross-width shift views must share the full numeric count. These checks do not certify native ABI recovery.
+
 Additional loop regressions cover narrow wrapped last indices, separate body/latch blocks, both guard polarities, swapped equality operands, reordered and descending unit-step carriers, zero-trip high-data differences, newly executed poison and wrong boundary guesses. Exact/short construction and proof budgets plus candidate exhaustion preserve atomic refusal. Original LLVM and emitted C run at O0/O2 against independent arithmetic oracles.
 
 `NeverDLLVMCScalarLoopRecoveryTests` checks default whole-module and selected-function output, continued recovery after return-path cleanup, function identity and attributes, caller bindings, existing/new intrinsics and symbol collisions, shared budgets, effectful calls, missing input-definedness, metadata, image projections, external block addresses and foreign selections. Independent arithmetic and rotation oracles execute generated C at O0/O2 with undefined-behavior traps; arithmetic also compares independently compiled original LLVM across every byte control, boundary words and deterministic full-width data.
@@ -842,6 +850,14 @@ Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` 
 `X64PackedShiftTests.cpp` and original `X64PackedShiftCases.def` compare ten shifts against independent scalar calculations and native SSE2 intrinsics at 16 immediate and 21 variable counts. Coverage includes count/destination aliasing, ignored high bits, alignment, observers, recoverable faults and device rejection. `X64VectorTestSupport.h` shares register and RAM assertions with packed arithmetic tests. Both WHP privilege modes are mandatory in native CI.
 
 `X64VectorMaskTests.cpp` checks independent raw encodings against scalar bit extraction and native SSE intrinsics, including every source bit and all 16 GPR × 16 XMM combinations with both REX.W values. Complete public register snapshots, RAM and data observers verify zero extension and preservation; instruction stops, callback failures and unsupported forms cannot publish effects. Native KVM/WHP acceptance requires both privilege modes.
+
+`X64ShuffleTests.cpp` uses independent encodings in `X64ShuffleCases.def` and scalar lane selection checked against native intrinsics. It covers all 256 controls with register, self-source and page-end alias operands, all XMM register pairs, full public CPU state and RAM, observer stops/failures, permissions, alignment faults and retries. MMX, VEX/EVEX, LOCK and device operands must reject without effects. Native KVM/WHP acceptance requires these cases at both privileges; unavailable host/ISA pairs remain explicit skips. The `UNPCKLPS`, `UNPCKHPS`, `UNPCKLPD` and `UNPCKHPD` cases reuse the same state/fault matrix and independent scalar/native oracles. Every XMM destination is also checked with a memory source.
+
+`X64PartialMoveTests.cpp` and `X64PartialMoveCases.def` compare independent scalar/native load and store oracles, all 16 XMM registers and raw NaN/subnormal bits. Full CPU state and both RAM pages are checked for unaligned accesses, aliases, cross-page faults, permission repair, observer stops/failures and retries. Page-end operands need only eight bytes, and stores need no read permission. Register aliases, rejected forms and device callbacks are checked separately; native KVM/WHP cases are mandatory at both privileges.
+
+`X64IntegerFloatTests.cpp` uses independent `X64IntegerFloatCases.def` encodings, `APFloat` expectations and original native instructions with saved/restored FP state. Both integer widths, four rounding modes, sticky precision status, FTZ, every GPR/XMM pair and full CPU/RAM preservation are checked. Unaligned, cross-page and page-end sources, permission repair, observer stops/failures and retries retain exact footprints. Native KVM/WHP cases are required at both privileges.
+
+`X64FloatIntegerTests.cpp` checks rounded and truncating scalar conversions using independent `X64FloatIntegerCases.def` encodings, `APFloat` and original native register/memory instructions. Signed limits, halfway values, NaNs, infinities, subnormals, all rounding modes, sticky status and FTZ cover both integer widths. Every GPR/XMM pair, full CPU/RAM state, exact page-end reads, recoverable cross-page faults and observer cancellation/retry are checked. Native KVM/WHP outcomes at both privileges are mandatory.
 
 `X64AlignmentTests.cpp` checks that misaligned operands of admitted aligned SSE instructions report recoverable or terminal `#GP(0)` before data observers, permission checks or device callbacks. Faults retain the complete public x64 register context, PC and RAM; address-size wrapping precedes FS/GS addition, and repairing the address retries the original instruction. Direct KVM/WHP machine cases independently verify the hardware boundary. Windows ring3 delivers classified `operand_alignment` faults; other `#GP` causes remain unsupported.
 
@@ -2105,19 +2121,31 @@ KVM x64/ARM64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
-ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
+ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, A/B return-address signing/authentication with the keys disabled, and all four BTI forms on unguarded pages. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
 Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
 `NeverDAArch64PAuthTests` runs both checked privilege profiles on available
 Unicorn/KVM/WHP/HVF transports. Independent encodings cover all 128 HINT selectors,
-the twelve admitted disabled-key forms, zero and high-bit return addresses,
+the twelve admitted disabled-key forms, four unguarded BTI forms,
+zero and high-bit return addresses,
 and rejected non-HINT authentication, stripping, branches and system-register
 access. Every attempt checks the complete scalar/vector inventory, PC and
 unchanged code/data bytes. Run it together with `NeverDAArch64StateTests`,
 `NeverDAArch64FPTests` and the checked CPU/session regressions after changing
 admission or startup probes. Native platform cells without hardware remain
 explicit skips; no active-authentication or real Android process claim follows.
+
+`NeverDAArch64BTITests` executes independently encoded direct calls, indirect
+calls/jumps and returns to all four original BTI words on unguarded pages.
+EL0/EL1 checks preserve the branch trace, link register, following memory effects,
+observer stops, saved contexts and shared instruction budgets. The exhaustive
+HINT-selector test checks complete scalar/vector state and neighboring rejection;
+the startup probe also executes all four BTI words. Projection tests walk the
+actual leaves after permission, privilege and alias changes to verify GP stays
+clear. Run the BTI, PAuth, state, FP, memory, projection, checked CPU and session
+targets together. These checks do not establish guarded-page enforcement or
+native Android equivalence; unavailable hardware cells remain explicit skips.
 
 `AArch64AcquireReleaseTests.cpp` in `NeverDAArch64MemoryTests` runs independently
 encoded byte, halfword, word and doubleword acquire/release accesses through
@@ -2178,7 +2206,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 46 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 290 CPU checks and four shared SEH continuation regressions, 518 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `290 CPU + 224 WHP + 4 SEH = 518`.
+`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 388 CPU checks and four shared SEH continuation regressions, 616 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `388 CPU + 224 WHP + 4 SEH = 616`.
 
 C SEH ranges remain half-open. A valid `__C_specific_handler` landing pad may lie inside its protected range: [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) emits `EndLabel + 1` as the scope end. The Windows OS model preserves the raw endpoints and independently validates executable targets, function ownership and continuation identity, including after rebasing. `KernelSEHContinuationCases.def` retains the original fixture layout; `ScopeEndLabelMayOverlapTheHandlerLandingPad` checks constant handlers and filters. Companion tests preserve the exclusive end and reject invalid targets without consuming the dispatch state. These pure checks run in `NeverDNativeDriverTests` with Unicorn disabled.
 
@@ -2273,7 +2301,13 @@ memory, recursion, unsupported imports,
 unbalanced callback stacks and exhaustion of the original instruction budget.
 C/CLI and Python tests check callback effects and ordered nullable call results
 through the real shared engine. This is modeled API 28 evidence, not a native
-Android device comparison or proof of concurrent initialization semantics.
+Android device comparison or proof of parallel SMP initialization semantics.
+Cooperative thread fixtures also check multiple once waiters, nested controls,
+join/once cycles, dynamic symbol lookup, retained registers and TLS, callback
+write ordering, and cumulative budgets. Control mutation or unmapping before
+waiter resumption must leave the original call incomplete. Complete reports
+from the same independent programs are compared between Unicorn and available
+native ARM64 HVF execution.
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
 tokens, exact cursor width, input mutations and errno preservation. Read-only
@@ -2282,6 +2316,27 @@ have explicit outcomes. C/CLI and Python integration compare named calls and
 guest effects through the shared engine. The API 28 cursor contract is checked
 against [pinned AOSP source](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strtok.c);
 this is model evidence, not a native Android device comparison.
+
+Independent thread-attribute fixtures run at O0/O2 with ordinary, APS2 and
+RELR packing. They check the complete 56-byte LP64 object, retained padding,
+destruction fill, integer versus pointer widths, historical inheritance rules,
+full-width stack values, invalid-value precedence, ignored scope pointers,
+overlapping outputs, inaccessible unused tails and provider lifetime. C/CLI
+and the actual Python wrapper exercise named dynamic calls through the shared
+library. The default single-thread contract still rejects creation and
+thread-state queries. These are pinned API 28 model checks, not an Android
+device comparison.
+
+`AndroidThreadTests.cpp` opts into guest scheduling with independent O0/O2
+ordinary/APS2/RELR fixtures. It checks scalar/vector/flags/FP state, separate
+TLS/errno/dlerror/stack, common imported/raw/variadic identity, recursive mutex
+owners, nested once/finalize continuations, join/detach lifetime, thread versus
+process exit, instruction/report limits, guard faults and rejected state.
+Repeated software reports must match exactly. Available ARM64 HVF execution
+is compared separately with Unicorn; unavailable transport is an explicit
+skip. C API/CLI and Python checks preserve thread attribution and dynamically
+resolved API names. These tests do not establish concurrent SMP, blocking
+mutex/once behavior, or native Android device equivalence.
 
 Independent mutex fixtures run at O0/O2 with ordinary, APS2 and RELR packing.
 They check eight-byte attributes, four-byte getter outputs, complete 40-byte
@@ -2315,7 +2370,7 @@ Input-file bytes and aggregate image extents each share `memory_limit`; runtime 
 
 `WindowsProcessContext` retains each dispatch frame’s origin. Admitted x64 data-access and divide faults expose RF (`0x10000`) in `CONTEXT.EFlags`; `RaiseException`, including software access-violation codes, retains the current context. The origin survives VEH/VCH and SEH search/unwind. Valid continuation restores logical CPU flags without RF; guest edits to RF are rejected before state publication. This bounded profile does not model instruction breakpoints or guest-controlled RF. `WindowsExceptionTests.cpp` checks saved records, restoration and unchanged CPU/RAM on rejection.
 
-Windows ring3 maps checked x64 `operand_alignment` faults to `STATUS_ACCESS_VIOLATION` with parameters `[read, UINT64_MAX]`, including stores, following independent native observations. The CPU layer supplies the cause; Windows does not guess it from vector 13 or decode the instruction again. `WindowsAlignmentProcessTests.cpp` runs original PE instructions across 72 fault scenarios and 9 address-repair retries (`72 + 9`), checking PC, RF, XMM state and RAM. Unclassified or inconsistent faults remain rejected. Process and driver fault reports preserve nullable `cause` and hexadecimal `error_code`; absence stays distinct from zero. This delivery applies to the checked x64 user profile. After every fault or repaired retry, the fixture exports the complete 4096-byte page; the host verifies all 81 snapshots and the actual completion counters within the unchanged guest deadline.
+Windows ring3 maps checked x64 `operand_alignment` faults to `STATUS_ACCESS_VIOLATION` with parameters `[read, UINT64_MAX]`, including stores, following independent native observations. The CPU layer supplies the cause; Windows does not guess it from vector 13 or decode the instruction again. `WindowsAlignmentProcessTests.cpp` runs original PE instructions across 72 fault scenarios and 9 address-repair retries (`72 + 9`), checking PC, RF, XMM state and RAM. Unclassified or inconsistent faults remain rejected. Process and driver fault reports preserve nullable `cause` and hexadecimal `error_code`; absence stays distinct from zero. This delivery applies to the checked x64 user profile. After every fault or repaired retry, the fixture exports the complete 4096-byte page; the host verifies all 81 snapshots and the actual completion counters within the unchanged guest deadline. Native process and initial-thread observations use `CREATE_DEFAULT_ERROR_MODE`: GoogleTest enables the inherited `SEM_NOALIGNMENTFAULTEXCEPT` flag, which can make Windows repair the faults being measured. The oracle therefore observes the system default instead of the test harness policy.
 
 `AddVectoredContinueHandler` and `RemoveVectoredContinueHandler` maintain a separate ordered list, sharing the 128 retained registration limit with exception handlers. Continue callbacks run after a vectored exception handler accepts continuation; they see the same mutable exception record and `CONTEXT`. Final context validation happens after these callbacks, including nested exceptions and DLL notifications. Handles cannot be removed through the other handler family. `WindowsContinuationTests.cpp` compares original executables for ordering, short-circuiting, mutation, context repair, nested dispatch, loader callbacks and process exit against native Windows. The tested Windows x64 vectored path permits continuation with `EXCEPTION_NONCONTINUABLE` set; this does not establish frame-based SEH behavior. Native ARM64 execution remains unverified.
 
@@ -2431,3 +2486,11 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 `NeverDLLVMCValueTests` checks both neutral-select polarities for add, subtract and bitwise updates, unchanged bases, inline old-value dependencies, materialized condition snapshots, narrow truth tests, nonidentity arms and shared selections. Generated C executes against independently compiled LLVM at O0/O2 with undefined-behavior traps. `NeverDLLVMCPhiTests` additionally checks parallel old-value snapshots and branch-dependent initializers that must stay in shared scope. Caller IR remains unchanged.
 
 `NeverDUnicornDecodeTests` checks reserved EVEX register fields on AVX-512/APX CPU models and ROUND memory-fault priority, retained state and resumption. A Linux x64 host probe independently confirms legacy alignment faults and scalar/VEX page faults. These engine tests do not extend checked ISA admission or establish native APX execution.
+
+`NeverDLLVMPrivateFrameTests` checks overlapping writes, all entry paths and loop backedges, retained numeric addresses, aliased external outputs, uninitialized/ordered/unknown memory, metadata and transactional exact/short budgets. Independent O0/O2 oracles compare complete return values, external objects and frame bytes with undefined-behavior traps. Four target compilations cover x86-64, AArch64, big-endian AArch64 and ARM32; they do not imply native recovery on those architectures. Re-run `NeverDByteMemoryForwardingTests` when changing the shared address/effect helpers.
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

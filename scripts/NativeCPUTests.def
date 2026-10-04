@@ -29,6 +29,292 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64FloatIntegerOracle.AllRoundingModesMatchOriginalNativeInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CVTSS2SIPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CVTSS2SIPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CVTSD2SIPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CVTSD2SIPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CVTTSS2SIPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CVTTSS2SIPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CVTTSD2SIPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CVTTSD2SIPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "EveryVectorSourceAndIntegerDestination/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "EveryVectorSourceAndIntegerDestination/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CrossPageFaultsPreserveStatusAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "CrossPageFaultsPreserveStatusAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64FloatInteger."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64IntegerFloatOracle.AllRoundingModesMatchOriginalNativeInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "CVTSI2SSPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "CVTSI2SSPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "CVTSI2SDPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "CVTSI2SDPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "EveryIntegerSourceAndVectorDestination/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "EveryIntegerSourceAndVectorDestination/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "CrossPageFaultsPreserveStatusAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "CrossPageFaultsPreserveStatusAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "ReadObserversStopBeforeConversionAndPrecisionStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "ReadObserversStopBeforeConversionAndPrecisionStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "PageEndInputsUseOnlyTheIntegerSourceWidth/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "PageEndInputsUseOnlyTheIntegerSourceWidth/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64IntegerFloat."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PartialMoveOracle.ScalarHalvesMatchNativeLoadsAndStores")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVLPSLoadsAndStoresPreserveOtherHalf/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVLPSLoadsAndStoresPreserveOtherHalf/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVHPSLoadsAndStoresPreserveOtherHalf/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVHPSLoadsAndStoresPreserveOtherHalf/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVLPDLoadsAndStoresPreserveOtherHalf/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVLPDLoadsAndStoresPreserveOtherHalf/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVHPDLoadsAndStoresPreserveOtherHalf/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVHPDLoadsAndStoresPreserveOtherHalf/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "CrossPageFaultsPreserveBothPagesAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "CrossPageFaultsPreserveBothPagesAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "ObserverStopsAndFailuresPreserveState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "ObserverStopsAndFailuresPreserveState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "PageEndOperandsDoNotAccessTheNextPage/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "PageEndOperandsDoNotAccessTheNextPage/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "StoresDoNotRequireReadPermission/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "StoresDoNotRequireReadPermission/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "RegisterEncodingsRetainDistinctLaneSemantics/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "RegisterEncodingsRetainDistinctLaneSemantics/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "UNPCKLPSInterleavesRawLanes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64Shuffle."
+                                "UNPCKLPSInterleavesRawLanes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "UNPCKHPSInterleavesRawLanes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64Shuffle."
+                                "UNPCKHPSInterleavesRawLanes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "UNPCKLPDInterleavesRawLanes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64Shuffle."
+                                "UNPCKLPDInterleavesRawLanes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "UNPCKHPDInterleavesRawLanes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64Shuffle."
+                                "UNPCKHPDInterleavesRawLanes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "MemorySourcesCoverEveryDestination/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "MemorySourcesCoverEveryDestination/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64ShuffleOracle.AllControlsMatchScalarLaneSelection")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFDAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFDAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFHWAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFHWAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFLWAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "PSHUFLWAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "SHUFPSAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "SHUFPSAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "SHUFPDAllControlsPreserveCompleteState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "SHUFPDAllControlsPreserveCompleteState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "AllRegisterPairsRetainOriginalSources/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "AllRegisterPairsRetainOriginalSources/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "MemoryStopsFaultsAndRetriesPreserveState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "MemoryStopsFaultsAndRetriesPreserveState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "AlignmentFaultPrecedesMemoryAndCanRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "AlignmentFaultPrecedesMemoryAndCanRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "InstructionStopsAndFailuresPreserveState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "InstructionStopsAndFailuresPreserveState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Shuffle."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64VectorMask.SignBitsMatchScalarAndHostResults/"
     "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(

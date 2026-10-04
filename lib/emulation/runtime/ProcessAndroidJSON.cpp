@@ -51,7 +51,7 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         return S.takeError();
       Out.EntrySymbol = std::move(*S);
     } else if (Name == field::EntryAddress || Name == field::LoadBias ||
-               Name == field::TraceLimit) {
+               Name == field::TraceLimit || Name == field::ThreadLimit) {
       auto N = number(V, Name);
       if (!N)
         return N.takeError();
@@ -59,13 +59,15 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         Out.EntryAddress = *N;
       else if (Name == field::LoadBias)
         Out.LoadBias = *N;
+      else if (Name == field::ThreadLimit)
+        Out.ThreadLimit = *N;
       else
         Out.TraceLimit = *N;
-    } else if (Name == field::Initialize) {
+    } else if (Name == field::Initialize || Name == field::DrainThreads) {
       auto B = V.getAsBoolean();
       if (!B)
         return invalid(Name);
-      Out.Initialize = *B;
+      (Name == field::Initialize ? Out.Initialize : Out.DrainThreads) = *B;
     } else if (Name == field::Arguments) {
       const auto *A = V.getAsArray();
       if (!A)
@@ -184,6 +186,8 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
       Call[field::Library] = Event.Library;
     if (!Event.Symbol.empty())
       Call[field::Symbol] = Event.Symbol;
+    if (Event.ThreadID)
+      Call[field::ThreadID] = *Event.ThreadID;
     Calls.push_back(std::move(Call));
   }
   for (uint64_t PC : Result.Trace)
@@ -192,10 +196,33 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
     Memory.push_back(
         llvm::json::Object{{field::Address, bits(Snapshot.Address)},
                            {field::Bytes, llvm::toHex(Snapshot.Bytes, true)}});
-  return llvm::json::Object{{field::Initialize, Result.InitializersEnabled},
-                            {field::NativeCalls, std::move(Calls)},
-                            {field::Trace, std::move(Trace)},
-                            {field::TraceTruncated, Result.TraceTruncated},
-                            {field::Memory, std::move(Memory)}};
+  llvm::json::Object Out{{field::Initialize, Result.InitializersEnabled},
+                         {field::NativeCalls, std::move(Calls)},
+                         {field::Trace, std::move(Trace)},
+                         {field::TraceTruncated, Result.TraceTruncated},
+                         {field::Memory, std::move(Memory)}};
+  if (!Result.NativeThreads.empty()) {
+    llvm::json::Array Threads, Spans;
+    for (const auto &T : Result.NativeThreads)
+      Threads.push_back(llvm::json::Object{
+          {field::ThreadID, T.ID},
+          {field::Handle, bits(T.Handle)},
+          {field::TLS, bits(T.TLS)},
+          {field::StackBase, bits(T.StackBase)},
+          {field::StackBytes, T.StackSize},
+          {field::GuardSize, T.GuardSize},
+          {field::Finished, T.Finished},
+          {field::Detached, T.Detached},
+          {field::Retired, T.Retired},
+          {field::Waiting, T.Waiting},
+          {field::ReturnValue,
+           T.ReturnValue ? llvm::json::Value(bits(*T.ReturnValue)) : nullptr}});
+    for (const auto &Span : Result.TraceThreads)
+      Spans.push_back(llvm::json::Object{{field::TraceIndex, Span.Index},
+                                         {field::ThreadID, Span.ID}});
+    Out[field::Threads] = std::move(Threads);
+    Out[field::TraceThreads] = std::move(Spans);
+  }
+  return Out;
 }
 } // namespace neverd::emulation
