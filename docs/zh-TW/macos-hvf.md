@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 366a112bb4a26f17b9aa83b7c4ce81baee598edb0b82a9417e6b5400d982ac5f -->
+<!-- i18n-source: 22ba6d21112d256e04570cdee32a639db23035b9abf497605ce33a6065066e12 -->
 
 [← 文件索引](README.md)
 
@@ -192,3 +192,5 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 `js-interpreter` 模式的 vCPU 重建恢復對照使用原始碼 `7dd7342ec`、控制器 `caeb594ad`、工作流程 `e6d054c45`。macOS 26（[37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679)）通過 1000/1000：43 個產物、全部 41 次 plan/progress 上傳呼叫、原生／控制器退出碼 0、子程序回收與最終第 1001 代邊界退役皆已獨立核驗。macOS 15（[37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672)）的 progress-018 上傳器仍收到 SIGSEGV；21 個產物保留原生 460 輪完成／461 輪開始，隨後控制器取消並以 SIGKILL 回收原生程序。IPS 的 PID 62812、父程序 59666、時間和 Node UUID 皆相符，頂部堆疊框架位於 V8 並行堆積標記，無效位址為 `0x80000000`。禁用三個 JavaScript 編譯層的參數確實生效，兩映像記錄的 Node 檔案 SHA 相同，說明此模式未消除上傳器崩潰。堆疊不能確定根因，macOS 15 原生結果仍未知，完整 CPU/Darwin 驗收與快取候選的雙映像門檻皆未滿足。預設長期快取也會違反既有暫時探測及最後客戶端釋放後歸還 VM 的約定，因此未實作。
 
 可重現的補充審計重新核對了執行 `37188627569`（原始碼 `392a9d171`）未修改的原始輸出，全部 1000 輪有限期限探針通過核對。[審計器與 19 項回歸測試](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)逐輪關聯呼叫的 begin/end/capture、新鮮記憶體寫入證據與 RIP，檢查首個迴圈的固定預算及其後兩個各自受控的 MTF 觀測，並保留合法的未進入 guest 紀錄，不將它們計為指令進展。這是保存證據的複驗，不是新的原生執行，也不改變既有結果、資源回收要求或 Intel 驗收狀態。
+
+省略額外 host kick 的對照仍在兩個 runner 上失聯：macOS 15 執行 `37221649736`、macOS 26 執行 `37221651593` 均有 GitHub 失聯註記。原始碼 `023a4a68d` 保留三個復原回合、重試及每輪 VM/vCPU 重建，產品 `lib` 與舊診斷原始碼 `7dd7342ec` 完全一致。34/15 個產物雜湊均已驗證；連續紀錄前綴證明 778/779、300/301 輪完成/開始，並保存 779/300 個已換行的執行緒 join 後省略標記；省略標記可能屬於尚未完成的一輪。兩次均缺少最終原生結果與回收紀錄，最後保存的標記無法定位故障。省略此呼叫不足以避免本次觀察到的失聯，仍無法確定根因或宣稱目前 `dev` 通過驗收。[保存的證據](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。
