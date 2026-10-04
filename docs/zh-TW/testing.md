@@ -983,6 +983,8 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 `NeverDKvmRunTests` 無需 `/dev/kvm` 即可驗證 `KvmRunControl` 借用的傳輸回呼。`StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries` 檢查準備、讀取和被攔截的主機進入使用同一執行緒，且中斷重試期間只準備一次。其他案例涵蓋準備失敗而不進入、讀取失敗、準備期間停止及活動進入被取消；隨後重新執行，確認不會重用舊回呼。驗證仍應包含真實取消、RAM 回滾、例外和原有驅動程式測試。 `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers` 驗證同一期限內的多次進入重用該執行緒，每輪傳輸只執行一次，並保持先前狀態封包不變。
 
+`KvmHandoffPolicy` 將每次輪詢等待限制為 8 μs，連續兩次未命中後改用阻塞等待，並在 256 次交接後重試。呼叫執行緒和工作執行緒分別自適應；呼叫執行緒同時遵守原始期限與停止標記。原子就緒標記只提示排程：資料包、回呼生命週期和取消確認仍由互斥鎖管理。`NeverDKvmRunTests` 檢查無效輪詢的上限、恢復、對端延遲變化及資料包重用前的取消確認。
+
 KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備狀態、進入 `KVM_RUN` 並讀取狀態。`EINTR` 重試僅準備一次；取消進入或讀取失敗不能發布。`KvmAArch64Machine.cpp` 在該執行緒執行位址轉換維護與完整純量、向量傳遞，共用一次單步期限。呼叫執行緒僅在確認完成後提交；ISA 解碼、RAM 交易、OS 策略和觀察器仍屬於呼叫執行緒。ARM64 原生執行仍缺少實機證據。
 
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops` 在主機修改通用暫存器、首尾 XMM 暫存器、MXCSR 和 x87 控制字後，驗證連續執行及真實 CPU 寫入。停止進入後的實際 `FXSAVE64` 位元組驗證全部實體 80 位元暫存器、TOP、標籤、操作碼和指標；重複除法例外也會使重用失效。這些機器邊界測試不向 checked 設定開放額外的 x87 指令。
@@ -1135,6 +1137,8 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 `NeverDLLVMCPhiTests` 也在 O0/O2 下執行結構化純量區域：區塊順序打亂的巢狀迴圈、菱形分支、零次迭代、窄整數回繞、迴圈頭觀測呼叫、PHI 交換、存活的外層變數、共用步進值及漏斗位移端點。測試檢查來源 IR 不變、合併後僅三個區域變數，以及多出口、不可約與過大圖形的可執行回退。這些案例為獨立合成；原始碼輸出本身不構成原生復原證明。
 
 `NeverDLLVMCValueTests` 在 O0/O2 下，將具型別的純量迴圈 C 與直接獨立編譯的 LLVM 對照執行，並為產生的 C 啟用未定義行為陷阱。邊界值及確定性全位元寬度輸入涵蓋窄整數乘法、位移前回繞、擴寬乘法與右移、寬整數截斷成布林值、有號比較與擴展、優先順序、條件運算式、布林運算、不支援操作的回退及深運算式的實體化。測試也檢查呼叫端 IR 不變，以及冗餘轉型已移除。
+
+`NeverDLLVMCPhiTests` 與 `NeverDLLVMCValueTests` 涵蓋位元組計數器遞增遞減回繞、合併後的退出值、迴圈外的內聯使用、存活外層變數及 PHI 快照。獨立 O0/O2 檢查啟用未定義行為陷阱，驗證複合加法、反向減法拒絕、窄乘法及布林遮罩。巢狀區域測試要求計數器在迴圈內宣告、結果變數保持獨立，且不修改來源 LLVM。 可執行命名回歸讓外部函式與首次產生的結果變數及計數器同名，驗證呼叫與觀察副作用都被保留。
 
 `NeverDUnicornDecodeTests` 檢查 AVX-512/APX CPU 模型的 EVEX 暫存器保留位，以及 ROUND 記憶體異常優先級、狀態保留和恢復。獨立 Linux x64 主機程式確認了傳統編碼的對齊異常和純量/VEX 編碼的分頁異常。這些引擎測試不擴展 checked 指令准入，也不代表 APX 原生執行證據。
 

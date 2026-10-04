@@ -2043,3 +2043,17 @@ TEST(LLVMCScalarExpressions, DeepExpressionKeepsMaterializedBoundaries) {
   EXPECT_LT(Source.size(), 20000u);
   EXPECT_NE(Source.find("uint64_t v"), std::string::npos) << Source;
 }
+
+TEST(LLVMCScalarExpressions, CommutedAdditionCanUseACompoundUpdate) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %result = add i64 %b, %state
+)");
+  EXPECT_NE(Source.find(" += "), std::string::npos) << Source;
+}
+
+TEST(LLVMCScalarExpressions, ReversedSubtractionCannotUseACompoundUpdate) {
+  const auto Source = checkScalarLoopExpression(R"(
+  %result = sub i64 %b, %state
+)");
+  EXPECT_EQ(Source.find(" -= "), std::string::npos) << Source;
+}

@@ -140,6 +140,8 @@ public:
   std::optional<std::string> scalarExpressionText(const llvm::Value *V,
                                                   bool ForceExpression = false,
                                                   bool InvertCompare = false);
+  std::optional<std::string> scalarUpdateText(const llvm::Value *Destination,
+                                              const llvm::Value *Incoming);
 
   static bool isCallClobberName(llvm::StringRef Name) {
     return Name.contains("_call_clobber");
@@ -655,6 +657,7 @@ public:
   std::vector<const llvm::CallBase *> RenderingCalls;
   mutable std::map<const llvm::Value *, std::string> KnownImmediates;
   bool UseScalarExpressionTypes = false;
+  std::set<std::string> ScopedScalarNames;
   mutable std::set<const llvm::Value *> ActiveImmediateFolds;
   mutable unsigned ImmediateFoldWork = 0;
   mutable const llvm::Function *LocalLoadValuesFor = nullptr;
