@@ -31,8 +31,9 @@ struct SourceAggregateMember {
 /// Flatten a validated record: one to four homogeneous floating leaves, or
 /// one to two 64-bit integer/pointer leaves, or three signed 64-bit integer
 /// leaves, or six/sixteen doubles for indirect Darwin arm64 results.
-/// Nested records retain their
-/// declared layout; padding, packed fields and mixed register classes fail.
+/// A flat three-double/opaque-pointer record retains all four fields; only a
+/// separately validated Swift result ABI may transport that mixed shape.
+/// Nested records retain their declared layout. Other mixtures fail.
 std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type);
 
 struct SourceABIParameter {
@@ -91,7 +92,10 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
 /// their dedicated registers without consuming that bank. A final error-slot
 /// pointer after swift_context transports its opaque pointee through x21/R12;
 /// the descriptor alone does not authorize call or entry source projection.
-/// Asynchronous contexts remain unsupported.
+/// A flat three-double/opaque-pointer result uses d0..d2+x0 on arm64 and
+/// xmm0..xmm2+rax on x86_64. The latter additionally admits up to three
+/// ordinary double parameters for this result shape. Mixed record parameters
+/// fail. Asynchronous contexts remain unsupported.
 bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic);
 

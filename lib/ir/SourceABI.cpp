@@ -93,6 +93,35 @@ bool fail(std::string &Diagnostic, const char *Message) {
   return false;
 }
 
+// The compiler-backed mixed Swift result is a flat record of three doubles
+// followed by one opaque pointer. Its logical layout is independent of the
+// three FP return lanes and the first integer return lane. Other mixtures,
+// nesting, typed pointees and by-value parameters need separate contracts.
+bool mixedSwiftResult(const TypeRef &Type,
+                      const std::vector<SourceAggregateMember> &Members) {
+  if (!Type || Type->Kind != NdTypeKind::Struct || Type->Size != 32 ||
+      Type->Fields.size() != 4 || Members.size() != 4)
+    return false;
+  for (size_t I = 0; I != 4; ++I) {
+    const auto &M = Members[I];
+    if (M.ByteOffset != I * 8 || !M.Type || M.Type->Size != 8 ||
+        (I < 3 ? M.Type->Kind != NdTypeKind::Float
+               : M.Type->Kind != NdTypeKind::Ptr || !M.Type->Pointee ||
+                     M.Type->Pointee->Kind != NdTypeKind::Void))
+      return false;
+  }
+  return true;
+}
+
+std::vector<SourceABIValueLocation>
+mixedSwiftResultLocations(Arch Architecture) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  return {{SourceABICarrierKind::FloatingRegister, TRI.FPParamRegs[0], 0, 8},
+          {SourceABICarrierKind::FloatingRegister, TRI.FPParamRegs[1], 0, 8},
+          {SourceABICarrierKind::FloatingRegister, TRI.FPParamRegs[2], 0, 8},
+          {SourceABICarrierKind::IntegerRegister, TRI.IntReturnReg, 0, 8}};
+}
+
 bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   if (Architecture != Arch::AArch64 && Architecture != Arch::X64)
     return false;
@@ -104,12 +133,16 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   };
   if (!Hint.ReturnType || Hint.Parameters.size() > 64)
     return false;
+  const auto ReturnMembers = sourceAggregateMembers(Hint.ReturnType);
+  const bool MixedResult = mixedSwiftResult(Hint.ReturnType, ReturnMembers);
   size_t FloatingParameters = 0;
   for (const auto &Parameter : Hint.Parameters) {
     if (Parameter.Type && Parameter.Type->Kind == NdTypeKind::Float) {
       // The compiler-observed arm64 swiftcc scalar lane is v0..v7. Keep
       // stack-passed Swift FP values outside this fixed ABI contract.
-      if (Architecture != Arch::AArch64 ||
+      if ((Architecture != Arch::AArch64 &&
+           (!MixedResult || Parameter.Type->Size != 8 ||
+            FloatingParameters == 3)) ||
           Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary ||
           !scalarType(Parameter.Type) ||
           ++FloatingParameters >
@@ -170,11 +203,12 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   if (Architecture == Arch::AArch64 &&
       Hint.ReturnType->Kind == NdTypeKind::Float && scalarType(Hint.ReturnType))
     return true;
-  const auto Members = sourceAggregateMembers(Hint.ReturnType);
-  return !Members.empty() &&
-         (Members.size() <= 2 ||
-          (Architecture == Arch::AArch64 && Members.size() == 4)) &&
-         std::all_of(Members.begin(), Members.end(),
+  if (MixedResult)
+    return true;
+  return !ReturnMembers.empty() &&
+         (ReturnMembers.size() <= 2 ||
+          (Architecture == Arch::AArch64 && ReturnMembers.size() == 4)) &&
+         std::all_of(ReturnMembers.begin(), ReturnMembers.end(),
                      [&](const auto &M) { return Word(M.Type); });
 }
 } // namespace
@@ -235,6 +269,8 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
   }
   if (Result.empty())
     return {};
+  if (mixedSwiftResult(Type, Result))
+    return Result;
   const bool Floating = Result.front().Type->Kind == NdTypeKind::Float;
   if (Floating) {
     // CGAffineTransform and CATransform3D contain six and sixteen doubles.
@@ -468,6 +504,14 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     const auto Members = sourceAggregateMembers(Type);
     if (Members.empty() || Parts.size() != Members.size())
       return false;
+    if (mixedSwiftResult(Type, Members)) {
+      if (!IsReturn ||
+          Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
+        return false;
+      const auto Expected = mixedSwiftResultLocations(Hint.Architecture);
+      return std::equal(Parts.begin(), Parts.end(), Expected.begin(),
+                        sameLocation);
+    }
     const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
     if (Floating && Members.size() > 4)
       return false;
@@ -693,7 +737,7 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     if (Records && Parameter.Type &&
         Parameter.Type->Kind == NdTypeKind::Struct) {
       const auto Members = sourceAggregateMembers(Parameter.Type);
-      if (Members.empty())
+      if (Members.empty() || mixedSwiftResult(Parameter.Type, Members))
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
       const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
       if (Floating && Members.size() > 4) {
@@ -748,34 +792,40 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     const auto Members = sourceAggregateMembers(Hint.ReturnType);
     if (Members.empty())
       return fail(Diagnostic, "Unsupported Darwin record return ABI");
-    const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
-    const bool IndirectDoubles =
-        Floating && (Members.size() == 6 || Members.size() == 16) &&
-        Hint.ReturnType->Size == Members.size() * 8 &&
-        Members.front().Type->Size == 8 && Architecture == Arch::AArch64 &&
-        Convention == SourceFunctionTypeHint::ConventionKind::C;
-    const bool SwiftFourWordReturn =
-        !Floating &&
-        Convention == SourceFunctionTypeHint::ConventionKind::Swift &&
-        Architecture == Arch::AArch64 && Members.size() == 4;
-    const auto Bank = Floating              ? TRI.FPParamRegs
-                      : SwiftFourWordReturn ? TRI.IntParamRegs
-                                            : TRI.IntReturnRegs;
-    const bool Indirect =
-        IndirectDoubles ||
-        (!Floating && Members.size() == 3 && Architecture == Arch::AArch64 &&
-         Convention == SourceFunctionTypeHint::ConventionKind::C);
-    if (Indirect)
-      Hint.ReturnLocation = {SourceABICarrierKind::IndirectResultPointer,
-                             TRI.indirectResultReg(), 0, 8};
-    else if ((Floating && Architecture != Arch::AArch64) ||
-             Members.size() > Bank.size())
-      return fail(Diagnostic, "Unsupported Darwin record return ABI");
-    for (size_t I = 0; !Indirect && I < Members.size(); ++I)
-      Hint.ReturnComponents.push_back(
-          {Floating ? SourceABICarrierKind::FloatingRegister
-                    : SourceABICarrierKind::IntegerRegister,
-           Bank[I], 0, Members[I].Type->Size});
+    if (mixedSwiftResult(Hint.ReturnType, Members)) {
+      if (Convention != SourceFunctionTypeHint::ConventionKind::Swift)
+        return fail(Diagnostic, "Mixed record result requires the Swift ABI");
+      Hint.ReturnComponents = mixedSwiftResultLocations(Architecture);
+    } else {
+      const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
+      const bool IndirectDoubles =
+          Floating && (Members.size() == 6 || Members.size() == 16) &&
+          Hint.ReturnType->Size == Members.size() * 8 &&
+          Members.front().Type->Size == 8 && Architecture == Arch::AArch64 &&
+          Convention == SourceFunctionTypeHint::ConventionKind::C;
+      const bool SwiftFourWordReturn =
+          !Floating &&
+          Convention == SourceFunctionTypeHint::ConventionKind::Swift &&
+          Architecture == Arch::AArch64 && Members.size() == 4;
+      const auto Bank = Floating              ? TRI.FPParamRegs
+                        : SwiftFourWordReturn ? TRI.IntParamRegs
+                                              : TRI.IntReturnRegs;
+      const bool Indirect =
+          IndirectDoubles ||
+          (!Floating && Members.size() == 3 && Architecture == Arch::AArch64 &&
+           Convention == SourceFunctionTypeHint::ConventionKind::C);
+      if (Indirect)
+        Hint.ReturnLocation = {SourceABICarrierKind::IndirectResultPointer,
+                               TRI.indirectResultReg(), 0, 8};
+      else if ((Floating && Architecture != Arch::AArch64) ||
+               Members.size() > Bank.size())
+        return fail(Diagnostic, "Unsupported Darwin record return ABI");
+      for (size_t I = 0; !Indirect && I < Members.size(); ++I)
+        Hint.ReturnComponents.push_back(
+            {Floating ? SourceABICarrierKind::FloatingRegister
+                      : SourceABICarrierKind::IntegerRegister,
+             Bank[I], 0, Members[I].Type->Size});
+    }
   } else if (Hint.ReturnType->Kind == NdTypeKind::Int &&
              Hint.ReturnType->Size == 16 && TRI.IntReturnRegs.size() >= 2) {
     for (size_t I = 0; I != 2; ++I)

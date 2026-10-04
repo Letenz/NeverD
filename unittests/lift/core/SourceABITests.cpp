@@ -938,6 +938,126 @@ int main(void) {
 #endif
 }
 
+TEST(SourceABI, NativeSwiftMixedResultRetainsEveryFieldAndOneCall) {
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))
+#if defined(__aarch64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  const auto Double = NdType::makeFloat(8);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  SourceFunctionTypeHint Signature;
+  Signature.ReturnType = NdType::makeStruct({Double, Double, Double, Pointer});
+  Signature.Parameters = {{"a", Double},
+                          {"b", Double},
+                          {"c", Double},
+                          {"code", Pointer},
+                          {"context", Pointer}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinSwiftSourceABI(Signature, Architecture, Error))
+      << Error;
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = "mixed_generated";
+  Function.ReturnType = Signature.ReturnType;
+  Function.SourceTypeHint = Signature;
+  std::vector<ExprPtr> Arguments;
+  for (size_t I = 0; I != Signature.Parameters.size(); ++I) {
+    const auto &P = Signature.Parameters[I];
+    Function.Params.push_back({P.Name, P.Type});
+    MedVar V;
+    V.Kind = MedVar::Param;
+    V.Id = I;
+    V.Size = P.Type->Size;
+    Arguments.push_back(HighExpr::makeVar(V, P.Type));
+  }
+  auto Binding = std::make_shared<SourceCallTypeHint>();
+  Binding->CallKind = SourceCallTypeHint::Kind::Native;
+  Binding->TargetAddress = 0x2000;
+  Binding->TargetName = "mixed_fixture";
+  Binding->Signature = Signature;
+  auto Call = HighExpr::makeCall("mixed_fixture", 0x2000, std::move(Arguments));
+  Call->Type = Signature.ReturnType;
+  Call->SourceCallHint = Binding;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = Call;
+  Function.Body = {Return};
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Architecture;
+  ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+  OS.flush();
+  const auto Record = typeToC(Signature.ReturnType);
+  Source += "\ntypedef " + Record + " Mixed;\n";
+  Source += R"(
+#include <string.h>
+#define SWIFT __attribute__((swiftcall))
+static unsigned calls;
+static uint64_t expected[3];
+static void *expected_code, *expected_context;
+static uint64_t bits(double value) {
+  uint64_t result; memcpy(&result, &value, 8); return result;
+}
+static double number(uint64_t value) {
+  double result; memcpy(&result, &value, 8); return result;
+}
+__attribute__((noinline)) Mixed SWIFT mixed_fixture(double a, double b,
+      double c, void *code, void *context) {
+  if (bits(a) != expected[0] || bits(b) != expected[1] ||
+      bits(c) != expected[2] || code != expected_code ||
+      context != expected_context) __builtin_trap();
+  ++calls;
+  return (Mixed){b, c, a, context};
+}
+extern Mixed SWIFT original_mixed(double, double, double, void *, void *);
+#if defined(__aarch64__)
+__asm__(".text\n.p2align 2\n_original_mixed:\n"
+        " stp x29, x30, [sp, #-16]!\n mov x29, sp\n"
+        " bl _mixed_fixture\n ldp x29, x30, [sp], #16\n ret\n");
+#else
+__asm__(".text\n_original_mixed:\n"
+        " pushq %rbp\n movq %rsp, %rbp\n"
+        " callq _mixed_fixture\n popq %rbp\n retq\n");
+#endif
+static int check(Mixed m) {
+  return bits(m.field_0) == expected[1] && bits(m.field_1) == expected[2] &&
+         bits(m.field_2) == expected[0] && m.field_3 == expected_context;
+}
+int main(void) {
+  const uint64_t special[] = {0, UINT64_C(0x8000000000000000), 1,
+    UINT64_C(0x7ff0000000000000), UINT64_C(0xfff0000000000000),
+    UINT64_C(0x7ff8000000001234), UINT64_C(0x7ff0000000000042),
+    UINT64_C(0x0010000000000000), UINT64_MAX};
+  for (uintptr_t i = 0; i != 4096; ++i) {
+    for (unsigned j = 0; j != 3; ++j)
+      expected[j] = i < 64 ? special[(i+j*3)%9] :
+          (i+j) * UINT64_C(0x9e3779b97f4a7c15);
+    expected_code = (void *)(i * UINT64_C(0xd1b54a32d192ed03));
+    expected_context = (void *)(~i * UINT64_C(0x94d049bb133111eb));
+    const double a=number(expected[0]), b=number(expected[1]), c=number(expected[2]);
+    struct { uint64_t before; Mixed value; uint64_t after; } actual =
+      {UINT64_C(0x1234567887654321), {0}, UINT64_C(0xfedcba9876543210)};
+    actual.value = mixed_generated(a,b,c,expected_code,expected_context);
+    if (calls != 2*i+1 || !check(actual.value) ||
+        actual.before != UINT64_C(0x1234567887654321) ||
+        actual.after != UINT64_C(0xfedcba9876543210)) return 1;
+    actual.value = original_mixed(a,b,c,expected_code,expected_context);
+    if (calls != 2*i+2 || !check(actual.value) ||
+        actual.before != UINT64_C(0x1234567887654321) ||
+        actual.after != UINT64_C(0xfedcba9876543210)) return 2;
+  }
+  return 0;
+}
+)";
+  executeC(Source, false);
+#else
+  GTEST_SKIP() << "Native Darwin Swift mixed-register execution required";
+#endif
+}
+
 TEST(SourceABI, SwiftErrorValueAdapterDoesNotShadowItsRuntimeSymbol) {
 #if defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))
 #if defined(__aarch64__)

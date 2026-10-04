@@ -891,6 +891,218 @@ TEST(SourceAggregate, SwiftFourWordCallPreservesEveryReturnCarrier) {
   EXPECT_NE(C.find("field_3"), std::string::npos) << C;
 }
 
+SourceFunctionTypeHint mixedSwiftDeclaration() {
+  const auto Double = NdType::makeFloat(8);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  SourceFunctionTypeHint Hint;
+  Hint.ReturnType = NdType::makeStruct({Double, Double, Double, Pointer});
+  Hint.Parameters = {{"first", Double},
+                     {"second", Double},
+                     {"third", Double},
+                     {"code", Pointer},
+                     {"context", Pointer}};
+  return Hint;
+}
+
+TEST(SourceAggregate, SwiftMixedResultKeepsIndependentFloatingAndObjectBanks) {
+  for (const auto A : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(A);
+    auto Hint = mixedSwiftDeclaration();
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, A, Error)) << Error;
+    ASSERT_TRUE(validateSourceABI(Hint, Error)) << Error;
+    ASSERT_EQ(Hint.ReturnComponents.size(), 4U);
+    const auto Members = sourceAggregateMembers(Hint.ReturnType);
+    ASSERT_EQ(Members.size(), 4U);
+    for (size_t I = 0; I != 4; ++I) {
+      const auto &Part = Hint.ReturnComponents[I];
+      EXPECT_EQ(Part.Kind, I == 3 ? SourceABICarrierKind::IntegerRegister
+                                  : SourceABICarrierKind::FloatingRegister);
+      EXPECT_EQ(Part.RegisterOffset,
+                I == 3 ? TRI.IntReturnReg : TRI.FPParamRegs[I]);
+      EXPECT_EQ(Part.ValueBytes, 8U);
+      EXPECT_EQ(Members[I].ByteOffset, I * 8);
+    }
+    const auto Parameters = sourceABIParameters(Hint);
+    ASSERT_EQ(Parameters.size(), 5U);
+    for (size_t I = 0; I != 5; ++I)
+      EXPECT_EQ(Parameters[I].Location.RegisterOffset,
+                I < 3 ? TRI.FPParamRegs[I] : TRI.IntParamRegs[I - 3]);
+    for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+      auto Bad = Hint;
+      switch (Mutation) {
+      case 0:
+        Bad.ReturnComponents.pop_back();
+        break;
+      case 1:
+        Bad.ReturnComponents[1] = Bad.ReturnComponents[0];
+        break;
+      case 2:
+        Bad.ReturnComponents[3] = Bad.ReturnComponents[2];
+        break;
+      case 3:
+        Bad.ReturnComponents[3].RegisterOffset = TRI.IntParamRegs[1];
+        break;
+      case 4:
+        Bad.ReturnComponents[1].ValueBytes = 4;
+        break;
+      case 5:
+        Bad.ReturnComponents[2].EntryStackOffset = 8;
+        break;
+      case 6:
+        Bad.ReturnComponents[3].ExtendTo32Bits = true;
+        break;
+      case 7:
+        Bad.ReturnComponents[0].Kind = SourceABICarrierKind::Stack;
+        break;
+      case 8:
+        Bad.ReturnLocation = Bad.ReturnComponents[3];
+        break;
+      case 9:
+        Bad.Convention = SourceFunctionTypeHint::ConventionKind::C;
+        break;
+      case 10:
+        Bad.Parameters[0].Location.ValueBytes = 4;
+        break;
+      case 11:
+        Bad.Parameters[4].Location = Bad.Parameters[3].Location;
+        break;
+      case 12:
+        Bad.Architecture = A == Arch::AArch64 ? Arch::X64 : Arch::AArch64;
+        break;
+      case 13:
+        Bad.ReturnType = NdType::makePtr(NdType::makeVoid());
+        break;
+      case 14:
+        Bad.ReturnLocation = {SourceABICarrierKind::IndirectResultPointer,
+                              TRI.indirectResultReg(), 0, 8};
+        break;
+      }
+      EXPECT_FALSE(validateSourceABI(Bad, Error)) << Mutation;
+      EXPECT_TRUE(sourceABIParameters(Bad).empty()) << Mutation;
+    }
+    auto Ordinary = mixedSwiftDeclaration();
+    EXPECT_FALSE(assignDarwinFixedSourceABI(Ordinary, A, Error));
+    Ordinary = mixedSwiftDeclaration();
+    EXPECT_FALSE(assignDarwinObjCSourceABI(Ordinary, A, Error));
+    auto Parameter = mixedSwiftDeclaration();
+    Parameter.Parameters.push_back({"record", Parameter.ReturnType});
+    EXPECT_FALSE(assignDarwinSwiftSourceABI(Parameter, A, Error));
+    EXPECT_FALSE(assignDarwinFixedSourceABI(Parameter, A, Error));
+  }
+}
+
+TEST(SourceAggregate, SwiftMixedResultRejectsUnprovedRecordShapes) {
+  for (const auto A : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+      auto Hint = mixedSwiftDeclaration();
+      auto Fields = Hint.ReturnType->Fields;
+      switch (Mutation) {
+      case 0:
+        Fields[0] = NdType::makeFloat(4);
+        break;
+      case 1:
+        Fields[1] = NdType::makeInt(8);
+        break;
+      case 2:
+        std::swap(Fields[0], Fields[3]);
+        break;
+      case 3:
+        Fields.pop_back();
+        break;
+      case 4:
+        Fields.push_back(NdType::makeFloat(8));
+        break;
+      case 5:
+        Fields[3] = NdType::makeInt(8);
+        break;
+      case 6:
+        Fields[3] = NdType::makePtr(NdType::makeInt(8));
+        break;
+      case 7:
+        Fields = {NdType::makeStruct(Fields)};
+        break;
+      default:
+        break;
+      }
+      Hint.ReturnType = NdType::makeStruct(Fields);
+      if (Mutation == 8)
+        Hint.ReturnType->FieldOffsets[2] = 8;
+      if (Mutation == 9)
+        Hint.ReturnType->Size = 40;
+      if (Mutation == 10)
+        Hint.ReturnType->Alignment = 4;
+      std::string Error;
+      EXPECT_FALSE(assignDarwinSwiftSourceABI(Hint, A, Error)) << Mutation;
+    }
+  }
+}
+
+TEST(SourceAggregate, SwiftMixedCallAndReturnPreserveAllFourTypedFields) {
+  for (const auto A : {Arch::AArch64, Arch::X64}) {
+    auto Hint = mixedSwiftDeclaration();
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, A, Error)) << Error;
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = "mixed_swift_forward";
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = 0x1000;
+    Block.EndAddr = 0x1008;
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = 0x1000;
+    Call.addInput(NdVar::cst(0x2000, 8));
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1004;
+    Block.Ops = {Call, Return};
+    Low.Blocks = {Block};
+    std::map<va_t, SourceFunctionTypeHint> Hints{{0x1000, Hint},
+                                                 {0x2000, Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceCalleeTypeHints(&Hints);
+    auto Med = Converter.convert(Low, A, BinaryFormat::MachO);
+    ASSERT_FALSE(Med.Blocks.empty());
+    const auto CallIt = std::find_if(
+        Med.Blocks.front().Ops.begin(), Med.Blocks.front().Ops.end(),
+        [](const auto &Op) { return Op.Opcode == NdOp::CALL; });
+    ASSERT_NE(CallIt, Med.Blocks.front().Ops.end());
+    const auto &BoundCall = *CallIt;
+    ASSERT_TRUE(BoundCall.SourceCallHint);
+    EXPECT_EQ(BoundCall.NumInputs, 6U);
+    EXPECT_EQ(BoundCall.Output.Size, 32U);
+    std::map<uint64_t, uint64_t> Extracts;
+    for (const auto &Op : Med.Blocks.front().Ops)
+      if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+          Op.Inputs[0] == BoundCall.Output && Op.Inputs[1].isConst()) {
+        EXPECT_EQ(Op.Output.Size, 8U);
+        Extracts.emplace(Op.Inputs[1].ConstVal, Op.Output.RegOff);
+      }
+    ASSERT_EQ(Extracts.size(), 4U);
+    for (size_t I = 0; I != 4; ++I)
+      EXPECT_EQ(Extracts.at(I * 8), Hint.ReturnComponents[I].RegisterOffset);
+    Med.SourceTypeHint = Hint;
+    recoverCallAbi(Med, A, {});
+    inferMedTypes(Med, A);
+    ASSERT_TRUE(Med.SourceParametersBound);
+    const auto High = MedToHighConverter().convert(Med, A);
+    EXPECT_TRUE(equalSourceTypes(High.ReturnType, Hint.ReturnType));
+    std::string C;
+    llvm::raw_string_ostream OS(C);
+    CEmitterOptions Options;
+    Options.TheArch = A;
+    ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    OS.flush();
+    EXPECT_NE(C.find("swiftcall"), std::string::npos) << C;
+    for (unsigned I = 0; I != 4; ++I)
+      EXPECT_NE(C.find("field_" + std::to_string(I)), std::string::npos) << C;
+    EXPECT_EQ(C.find("__asm__"), std::string::npos) << C;
+  }
+}
+
 TEST(SourceAggregate, WordRecordSpillsKeepArchitectureSpecificBankState) {
   const auto Word = NdType::makeInt(8, false);
   for (Arch A : {Arch::AArch64, Arch::X64})
