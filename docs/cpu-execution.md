@@ -60,6 +60,8 @@ Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` 
 
 `MOVLPS`, `MOVHPS`, `MOVLPD` and `MOVHPD` transfer exactly eight RAM bytes without an alignment requirement. `X64VectorInstructions.def` declares the store half; `X64VectorOperands.def` requires an XMM/m64 pair. Loads preserve the other 64 bits, and high-half store observers receive the upper half. KVM, WHP and checked Unicorn share whole-span permission checks and RAM rollback. Register-only `MOVHLPS`/`MOVLHPS` retain their distinct semantics.
 
+`CVTSI2SS` and `CVTSI2SD` convert signed 32/64-bit integers using MXCSR rounding and retain precision status. The shared `IntegerSource` rule admits only XMM destinations with r32/r64 or m32/m64 sources. Legacy instructions preserve the upper 96/64 destination bits; memory checks use the integer width. KVM, WHP and checked Unicorn execute the original instruction. Unmasked exceptions, MMX and VEX/EVEX remain excluded.
+
 `X64AlignmentTests.cpp` checks that misaligned operands of admitted aligned SSE instructions report recoverable or terminal `#GP(0)` before data observers, permission checks or device callbacks. Faults retain the complete public x64 register context, PC and RAM; address-size wrapping precedes FS/GS addition, and repairing the address retries the original instruction. Direct KVM/WHP machine cases independently verify the hardware boundary. Windows ring3 delivers classified `operand_alignment` faults; other `#GP` causes remain unsupported.
 
 Checked x64 also admits scalar `XCHG`, `XADD` and `CMPXCHG` at 8/16/32/64 bits,
