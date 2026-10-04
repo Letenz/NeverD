@@ -550,7 +550,23 @@ personality 인식이나 native lowering에서 추론하면 안 됩니다.
 | `lib/support` | 공유 바이너리 로드 helper | Loader |
 | `lib/translate` | version이 있는 guest state/policy/exit, 고정 runtime ABI, 검사된 guest memory, 생성 IR/object/LinkGraph audit, sealed native linking, experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object 및 JITLink 계약 |
 
-`lib/pass/ir/simplify`의 `ByteMemoryForwardingPass`는 단일 기본 블록에서 고정 바이트 alloca의 각 바이트를 마지막으로 쓴 값으로 완전한 정수 로드를 재구성합니다. 대상 바이트 순서에 따라 8~128비트의 바이트 배수 폭과 객체 내부의 정확한 상수 GEP만 허용합니다. 알 수 없는 호출, 알 수 없는 쓰기, 순서가 지정된 메모리 접근은 기록을 지웁니다. 기존 전용 주소 복원 후 두 SROA 사이에서 실행하며 원래 store를 유지합니다. 명령 스캔, 주소 탐색, 추적 바이트, 교체할 사용 지점, 추가 IR에는 유한 예산이 있습니다. 기본값은 스냅샷을 추가하지 않습니다. 명시적 `AllowStoreSnapshots`는 store 직전에 한 번 freeze하여 쓰기와 모든 조각이 같은 값을 공유하게 합니다. 이 선택적 LLVM 정제는 네이티브 값의 정의성이나 함수 시그니처를 증명하지 않습니다.
+### 분석 및 단순화의 아키텍처 경계
+
+| 디렉터리 | 역할 |
+|---|---|
+| `lib/analysis/core` | 공유 분석, 유한 도메인 및 관계 증명 조정 |
+| `lib/analysis/llvm` | 공유 LLVM 가져오기, 스칼라 동등성 및 루프 복원 |
+| `lib/analysis/bytecode` | 외부 바이트코드 검증 및 변환 |
+| `lib/analysis/arch/x86_64` | 네이티브 x64 이미지, 레지스터/플래그, 스택, 문자열 전송 및 정제 어댑터 |
+| `lib/analysis/arch/aarch64` | ARM64 확장 요구사항. 네이티브 복원은 아직 미구현 |
+| `lib/pass/ir/simplify/common` | 명시적 비트 너비와 데이터 레이아웃을 사용하는 공통 LLVM 단순화 |
+| `lib/symbolic` | 공유 표현식, MBA, 비트 정보 및 실행 엔진 |
+
+네이티브 레지스터 식별, 플래그 배치와 명령어 바이트 인식은 `arch/<isa>`에 둡니다. 공유 코어는 현재 명시적인 x64 계약을 호출합니다. ARM64에는 별도 어댑터와 디스패치가 필요하며 계약 이름만 바꿔 재사용할 수 없습니다. `LLVMInterpreterModel.h`와 `InterpreterModel.h`는 공유 모델 타입을 정의하고, x64 어댑터가 상태 크기를 LLVM 가져오기에 전달합니다. 네이티브 공개 헤더는 `include/neverd/analysis/arch/x86_64`에 있으며 기존 경로는 전달 헤더로 유지됩니다.
+
+OS 서비스는 `lib/emulation/os`에 유지합니다. 환경 계약은 네이티브 ABI나 레지스터 의미론을 증명하지 않습니다. LLVM 스칼라 및 기호 단순화는 공유하며, ISA 전용 단순화가 필요해지면 `lib/pass/ir/simplify/arch/<isa>`에 두고 명시적인 대상 아키텍처 증거를 요구합니다.
+
+`lib/pass/ir/simplify/common`의 `ByteMemoryForwardingPass`는 단일 기본 블록에서 고정 바이트 alloca의 각 바이트를 마지막으로 쓴 값으로 완전한 정수 로드를 재구성합니다. 대상 바이트 순서에 따라 8~128비트의 바이트 배수 폭과 객체 내부의 정확한 상수 GEP만 허용합니다. 알 수 없는 호출, 알 수 없는 쓰기, 순서가 지정된 메모리 접근은 기록을 지웁니다. 기존 전용 주소 복원 후 두 SROA 사이에서 실행하며 원래 store를 유지합니다. 명령 스캔, 주소 탐색, 추적 바이트, 교체할 사용 지점, 추가 IR에는 유한 예산이 있습니다. 기본값은 스냅샷을 추가하지 않습니다. 명시적 `AllowStoreSnapshots`는 store 직전에 한 번 freeze하여 쓰기와 모든 조각이 같은 값을 공유하게 합니다. 이 선택적 LLVM 정제는 네이티브 값의 정의성이나 함수 시그니처를 증명하지 않습니다.
 
 바이트 전달과 역방향 덮어쓰기 분석은 LLVM이 메모리 접근과 다른 부작용이 없고 정상 반환하며 operand bundle이나 convergent 계약도 없는 intrinsic에 대해서만 바이트 사실을 유지합니다. 호출과 결과는 원래 위치에 남습니다. alloca와 수치 주소 메모리에 모두 적용하며 일반 호출은 `memory(none)`이 있어도 경계로 남습니다. 별칭 분리, 전용 메모리 가정이나 블록 간 관계를 추가하지 않습니다.
 

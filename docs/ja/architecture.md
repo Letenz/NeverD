@@ -569,7 +569,23 @@ Capstone ライブラリは網羅しません。
 | `lib/support` | 共通のバイナリ読込み helper | Loader |
 | `lib/translate` | version 付き guest state/policy/exit、固定 runtime ABI、検査付き guest memory、生成 IR/object/LinkGraph audit、sealed native linking、experimental x86-64-to-AArch64 C++ dispatcher | IR、LLVM、LLVM Object、JITLink の契約 |
 
-`lib/pass/ir/simplify` の `ByteMemoryForwardingPass` は、単一基本ブロック内で固定長バイト alloca の各バイトの最後の書き込みから完全な整数ロードを再構成します。対象は 8〜128 ビットのバイト単位幅とオブジェクト内の正確な定数 GEP で、ターゲットのバイト順を使います。不明な呼び出し、不明な書き込み、順序付きメモリアクセスで記録を破棄します。既存の私有アドレス復元後、二つの SROA の間で実行し、元の store を保持します。命令走査、アドレス探索、追跡バイト、置換する使用箇所、追加 IR は有限予算で制限されます。既定ではスナップショットを追加しません。明示的な `AllowStoreSnapshots` は store の直前で一度だけ freeze し、書き込みと全断片で同じ値を共有します。この任意の LLVM 精化はネイティブ値の定義性や関数シグネチャを証明しません。
+### 解析と簡約のアーキテクチャ境界
+
+| ディレクトリ | 責務 |
+|---|---|
+| `lib/analysis/core` | 共有解析、有限領域、関係証明の制御 |
+| `lib/analysis/llvm` | 共有 LLVM インポート、スカラー等価性、ループ復元 |
+| `lib/analysis/bytecode` | 外部バイトコードの検証と変換 |
+| `lib/analysis/arch/x86_64` | ネイティブ x64 のイメージ、レジスタ/フラグ、スタック、文字列転送、精緻化アダプター |
+| `lib/analysis/arch/aarch64` | ARM64 拡張要件。ネイティブ復元は未実装 |
+| `lib/pass/ir/simplify/common` | 明示的なビット幅とデータレイアウトに基づく汎用 LLVM 簡約 |
+| `lib/symbolic` | 共有の式、MBA、既知ビット、実行エンジン |
+
+ネイティブのレジスタ識別、フラグ配置、命令バイトの認識は `arch/<isa>` に置きます。共有コアは現在、明示的な x64 契約を呼び出します。ARM64 には専用アダプターとディスパッチが必要であり、契約の改名では対応できません。`LLVMInterpreterModel.h` と `InterpreterModel.h` は共有モデル型を定義し、x64 アダプターが状態サイズを LLVM インポーターへ渡します。ネイティブ公開ヘッダーは `include/neverd/analysis/arch/x86_64` にあり、旧パスは転送ヘッダーとして残ります。
+
+OS サービスは `lib/emulation/os` に残ります。その環境契約はネイティブ ABI やレジスタ意味論の証明にはなりません。LLVM スカラーとシンボリック簡約は共有し、ISA 固有の簡約が必要になれば `lib/pass/ir/simplify/arch/<isa>` に置き、明示的なターゲット根拠を要求します。
+
+`lib/pass/ir/simplify/common` の `ByteMemoryForwardingPass` は、単一基本ブロック内で固定長バイト alloca の各バイトの最後の書き込みから完全な整数ロードを再構成します。対象は 8〜128 ビットのバイト単位幅とオブジェクト内の正確な定数 GEP で、ターゲットのバイト順を使います。不明な呼び出し、不明な書き込み、順序付きメモリアクセスで記録を破棄します。既存の私有アドレス復元後、二つの SROA の間で実行し、元の store を保持します。命令走査、アドレス探索、追跡バイト、置換する使用箇所、追加 IR は有限予算で制限されます。既定ではスナップショットを追加しません。明示的な `AllowStoreSnapshots` は store の直前で一度だけ freeze し、書き込みと全断片で同じ値を共有します。この任意の LLVM 精化はネイティブ値の定義性や関数シグネチャを証明しません。
 
 バイト転送と逆方向の上書き解析は、LLVM がメモリアクセスや他の副作用を認めず、通常復帰し、operand bundle と convergent 契約もない intrinsic に限りバイトの事実を保持します。呼び出しとその結果は元の位置に残ります。alloca と数値アドレスの両方に適用し、通常の呼び出しは `memory(none)` があっても障壁です。エイリアス分離、私有メモリの仮定、ブロック間の関係は追加しません。
 
