@@ -5,9 +5,9 @@
 //===----------------------------------------------------------------------===//
 NEVERD_X64_STRING_INSTRUCTION(MOVSB, 1, Move)
 NEVERD_X64_STRING_INSTRUCTION(MOVSW, 2, Move)
-// MOVSD shares a decoder identity with the SSE move. A combined instruction
-// inventory may omit this row when that identity is already present.
-#ifndef NEVERD_X64_STRING_SHARED_MOVSD
+// MOVSD and CMPSD share decoder identities with SSE operations. A combined
+// instruction inventory omits these rows when their vector IDs are present.
+#ifndef NEVERD_X64_STRING_SHARED_VECTOR
 NEVERD_X64_STRING_INSTRUCTION(MOVSD, 4, Move)
 #endif
 NEVERD_X64_STRING_INSTRUCTION(MOVSQ, 8, Move)
@@ -21,7 +21,9 @@ NEVERD_X64_STRING_INSTRUCTION(LODSD, 4, Load)
 NEVERD_X64_STRING_INSTRUCTION(LODSQ, 8, Load)
 NEVERD_X64_STRING_INSTRUCTION(CMPSB, 1, Compare)
 NEVERD_X64_STRING_INSTRUCTION(CMPSW, 2, Compare)
+#ifndef NEVERD_X64_STRING_SHARED_VECTOR
 NEVERD_X64_STRING_INSTRUCTION(CMPSD, 4, Compare)
+#endif
 NEVERD_X64_STRING_INSTRUCTION(CMPSQ, 8, Compare)
 NEVERD_X64_STRING_INSTRUCTION(SCASB, 1, Scan)
 NEVERD_X64_STRING_INSTRUCTION(SCASW, 2, Scan)
