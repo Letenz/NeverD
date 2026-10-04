@@ -9093,7 +9093,11 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
       InlinedFallthroughBlocks.insert(&BB);
   }
 
-  if (!UseRanges) {
+  const bool WroteScalarRegions =
+      EHWraps.empty() && !UseRanges && tryWriteScalarRegions(Fn, 1);
+  if (WroteScalarRegions) {
+    // The complete region plan owns all blocks and PHI edges.
+  } else if (!UseRanges) {
     EHSkippedMainBlocks.insert(SkipInTry.begin(), SkipInTry.end());
     // Multiple try ranges may share one recovered clause.  The fallback
     // prints all normal blocks first and moves handler bodies to __except;

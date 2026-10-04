@@ -69,6 +69,14 @@ analysis and comparison output belong outside the repository.
 
 ## Closed control-flow regressions
 
+- LLVMC plans complete bounded integer CFGs before printing nested header
+  loops and conditionals. Edge PHIs retain simultaneous semantics; liveness
+  coalesces only noninterfering carriers, and safe constant-seeded counters
+  print as `for` loops. Header effects, shared steps, swaps and live outer
+  values remain explicit. Memory, EH, irreducible and multi-exit shapes retain
+  the existing fallback. This closes scalar loop rendering, not general
+  devirtualization, ABI recovery or expression-format cleanup.
+
 - LLVMC keeps the true-arm exit when the false body moves ahead of a shared
   join. The LLVM fixture executes PHI and memory effects at O0/O2; a native
   four-case recovery fixture exercises the same structure through both C routes.
