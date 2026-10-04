@@ -3173,6 +3173,27 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       !CacheAddress || !ReferenceAddress || CacheAddress == ReferenceAddress)
     return std::nullopt;
 
+  // A metadata cache and its relative recipe are ordinary image objects,
+  // not TLS templates or pointer-section entries. Require the entire range
+  // to belong to one regular section, including any split or overlap.
+  const auto OrdinaryStorage = [&](va_t Address, uint64_t Size) {
+    if (!Size || Size > InvalidVA - Address)
+      return false;
+    const Section *Owner = nullptr;
+    for (const auto &S : Image.Sections) {
+      if (S.VA >= Address + Size || S.Size <= Address - std::min(Address, S.VA))
+        continue;
+      if (Owner || Address < S.VA || Size > S.Size - (Address - S.VA) ||
+          (S.Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_REGULAR)
+        return false;
+      Owner = &S;
+    }
+    return Owner != nullptr;
+  };
+  if (!OrdinaryStorage(CacheAddress, 8) ||
+      !OrdinaryStorage(ReferenceAddress, 8))
+    return std::nullopt;
+
   const Symbol *Cache = nullptr, *Reference = nullptr;
   for (const auto &Symbol : Image.Symbols) {
     if (Symbol.IsFunc || Symbol.Name.empty())
@@ -3225,6 +3246,7 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       TypeReference ? Image.readVA(*TypeReference, uint64_t(Length) + 1)
                     : nullptr;
   if (!TypeReference || !TypeBytes || *TypeReference > InvalidVA - Length ||
+      !OrdinaryStorage(*TypeReference, uint64_t(Length) + 1) ||
       TypeBytes[Length] != 0 ||
       Image.hasExecutableCodeOwnerAt(*TypeReference) ||
       Image.hasExecutableCodeOwnerAt(*TypeReference + Length) ||
@@ -6382,11 +6404,14 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   // A metadata pair can be moved through locals before an outlined helper
   // call. Bind its defining address only when every read of each local is a
   // direct argument of an exact, typed call carrying the proven pair.
+  // Multiple definitions retain correlated reaching states from the shared
+  // emitted-source CFG, including every loop backedge; never cross-product
+  // two independent address sets at a join.
   using MetadataLocal = HighSourceLocalIdentity;
   using MetadataAlias =
       std::pair<va_t, SourceCallTypeHint::SwiftTypeMetadataAddress>;
   struct MetadataDefinition {
-    va_t Address = 0;
+    std::set<va_t> Addresses;
     unsigned Count = 0;
     bool Valid = false;
   };
@@ -6404,20 +6429,24 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     ++Definition.Count;
     const auto Address =
         Statement.Val ? constantAddress(*Statement.Val) : std::nullopt;
-    Definition.Valid = Definition.Count == 1 && Address &&
+    Definition.Valid = (Definition.Count == 1 || Definition.Valid) && Address &&
                        Statement.Val->Kind == ExprKind::Const &&
-                       Statement.Val->Type && Statement.Val->Type->Size == 8;
+                       Statement.Val->Type && Statement.Val->Type->Size == 8 &&
+                       Statement.Dst->Type && Statement.Dst->Type->Size == 8 &&
+                       Statement.Dst->Var.Size == 8;
     if (Definition.Valid)
-      Definition.Address = *Address;
+      Definition.Addresses.insert(*Address);
   });
   std::map<MetadataLocal, unsigned> MetadataReads, MetadataPairedReads;
-  std::map<MetadataLocal, MetadataAlias> MetadataPairCandidates;
+  using MetadataChoices = std::map<va_t, MetadataAlias>;
+  std::map<MetadataLocal, MetadataChoices> MetadataPairCandidates;
   std::set<MetadataLocal> MetadataConflicts;
   size_t MetadataScanBudget = 1000000;
   bool MetadataScanComplete = true;
   const auto MetadataLocalAt =
       [&](const ExprPtr &Value) -> std::optional<MetadataLocal> {
-    if (!Value ||
+    if (!Value || !Value->Type || Value->Type->Size != 8 ||
+        Value->Var.Size != 8 ||
         (Value->Kind != ExprKind::Var && Value->Kind != ExprKind::Phi) ||
         !Value->Operands.empty() ||
         (Value->Var.Kind != MedVar::Reg && Value->Var.Kind != MedVar::Temp))
@@ -6428,12 +6457,24 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       return std::nullopt;
     return Key;
   };
+  using MetadataState = std::vector<va_t>;
+  std::map<MetadataLocal, size_t> MetadataCoordinates;
   const auto MetadataAddressAt =
-      [&](const ExprPtr &Value) -> std::optional<va_t> {
+      [&](const ExprPtr &Value,
+          const MetadataState &State) -> std::optional<va_t> {
     if (!Value)
       return std::nullopt;
-    if (const auto Local = MetadataLocalAt(Value))
-      return MetadataDefinitions.at(*Local).Address;
+    if (const auto Local = MetadataLocalAt(Value)) {
+      const auto I = MetadataCoordinates.find(*Local);
+      if (I == MetadataCoordinates.end()) {
+        const auto &D = MetadataDefinitions.at(*Local);
+        return D.Count == 1 ? std::optional<va_t>(*D.Addresses.begin())
+                            : std::nullopt;
+      }
+      return State[I->second] == InvalidVA
+                 ? std::nullopt
+                 : std::optional<va_t>(State[I->second]);
+    }
     return constantAddress(*Value);
   };
   using MetadataIndices = std::tuple<size_t, size_t, bool>;
@@ -6459,14 +6500,107 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     }
     return Found->second;
   };
+  // Track only locals carried by a candidate metadata call. Unrelated scalar
+  // assignments must not expand this bounded relational state space.
+  std::function<void(const ExprPtr &, unsigned)> FindMetadataCoordinates =
+      [&](const ExprPtr &E, unsigned Depth) {
+        if (!E || !MetadataScanComplete)
+          return;
+        if (Depth > 200 || !MetadataScanBudget) {
+          MetadataScanComplete = false;
+          return;
+        }
+        --MetadataScanBudget;
+        for (const auto &[I, J, Ordered] : MetadataPairIndices(*E))
+          for (const auto Index : {I, J})
+            if (const auto Local = MetadataLocalAt(E->Operands[Index]);
+                Local && MetadataDefinitions.at(*Local).Count > 1)
+              MetadataCoordinates.try_emplace(*Local,
+                                              MetadataCoordinates.size());
+        E->forEachChildExpr(
+            [&](const ExprPtr &C) { FindMetadataCoordinates(C, Depth + 1); });
+      };
+  walkStmts(Function.Body, [&](const HighStmt &S) {
+    forEachRhsExpr(S, [&](const ExprPtr &E) { FindMetadataCoordinates(E, 0); });
+  });
+  using MetadataPair = SourceCallTypeHint::SwiftTypeMetadataAddress;
+  std::map<std::pair<va_t, va_t>, std::optional<MetadataPair>> CurrentPairs;
+  const auto CurrentMetadataPair = [&](va_t Cache, va_t Reference) {
+    const auto [It, Fresh] = CurrentPairs.try_emplace({Cache, Reference});
+    if (Fresh)
+      It->second = swiftTypeMetadataPair(Image, Cache, Reference);
+    return It->second;
+  };
+  std::map<const HighExpr *, std::set<MetadataState>> MetadataCallStates;
+  const bool TraceMetadata = !MetadataCoordinates.empty();
+  if (TraceMetadata) {
+    const auto Flow = analyzeHighSourceFlow(Function, false);
+    const auto Graph = buildHighSourceFlowGraph(Function);
+    MetadataScanComplete =
+        MetadataScanComplete && Flow.Complete && Flow.Items.empty() &&
+        Graph.Diagnostics.Complete && Graph.Diagnostics.Items.empty() &&
+        !Graph.Nodes.empty() && MetadataCoordinates.size() <= 64;
+    if (MetadataScanComplete) {
+      std::vector<std::set<MetadataState>> Reached(Graph.Nodes.size());
+      std::vector<std::pair<size_t, MetadataState>> Work;
+      MetadataState Initial(MetadataCoordinates.size(), InvalidVA);
+      Reached[Graph.Entry].insert(Initial);
+      Work.emplace_back(Graph.Entry, Initial);
+      for (size_t W = 0; MetadataScanComplete && W < Work.size(); ++W) {
+        const auto [Index, Incoming] = Work[W];
+        if (!MetadataScanBudget || Work.size() > 16384) {
+          MetadataScanComplete = false;
+          break;
+        }
+        --MetadataScanBudget;
+        const auto &Node = Graph.Nodes[Index];
+        std::function<void(const ExprPtr &, unsigned)> Observe =
+            [&](const ExprPtr &E, unsigned Depth) {
+              if (!E || !MetadataScanComplete)
+                return;
+              if (Depth > 200 || !MetadataScanBudget) {
+                MetadataScanComplete = false;
+                return;
+              }
+              --MetadataScanBudget;
+              if (!MetadataPairIndices(*E).empty())
+                MetadataCallStates[E.get()].insert(Incoming);
+              E->forEachChildExpr(
+                  [&](const ExprPtr &C) { Observe(C, Depth + 1); });
+            };
+        if (Node.Test)
+          Observe(Node.Test, 0);
+        else if (Node.Statement)
+          forEachRhsExpr(*Node.Statement,
+                         [&](const ExprPtr &E) { Observe(E, 0); });
+        auto Outgoing = Incoming;
+        if (Node.Statement && Node.Statement->Kind == StmtKind::Assign)
+          if (const auto Local = MetadataLocalAt(Node.Statement->Dst))
+            if (const auto I = MetadataCoordinates.find(*Local);
+                I != MetadataCoordinates.end()) {
+              const auto A = constantAddress(*Node.Statement->Val);
+              if (!A) {
+                MetadataScanComplete = false;
+                break;
+              }
+              Outgoing[I->second] = *A;
+            }
+        for (size_t Next : Node.Successors)
+          if (Reached[Next].insert(Outgoing).second)
+            Work.emplace_back(Next, Outgoing);
+      }
+    }
+  }
+  const std::set<MetadataState> SingleDefinitionState{MetadataState{}};
   std::function<void(const ExprPtr &, unsigned)> ScanMetadata =
       [&](const ExprPtr &Value, unsigned Depth) {
         if (!Value)
           return;
-        if (Depth > 200 || !MetadataScanBudget--) {
+        if (Depth > 200 || !MetadataScanBudget) {
           MetadataScanComplete = false;
           return;
         }
+        --MetadataScanBudget;
         if (const auto Local = MetadataLocalAt(Value))
           ++MetadataReads[*Local];
         for (const auto &[I, J, Ordered] : MetadataPairIndices(*Value)) {
@@ -6475,28 +6609,58 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           if (!MetadataLocalAt(Value->Operands[I]) &&
               !MetadataLocalAt(Value->Operands[J]))
             continue;
-          const auto First = MetadataAddressAt(Value->Operands[I]);
-          const auto Second = MetadataAddressAt(Value->Operands[J]);
-          if (!First || !Second)
+          const auto Reaching = MetadataCallStates.find(Value.get());
+          if (TraceMetadata && Reaching == MetadataCallStates.end())
             continue;
-          auto Pair = swiftTypeMetadataPair(Image, *First, *Second);
-          if (!Pair && !Ordered)
-            Pair = swiftTypeMetadataPair(Image, *Second, *First);
-          if (!Pair)
+          const auto &States =
+              TraceMetadata ? Reaching->second : SingleDefinitionState;
+          std::map<MetadataLocal, MetadataChoices> Choices;
+          bool Valid = !States.empty();
+          for (const auto &State : States) {
+            if (!MetadataScanBudget) {
+              MetadataScanComplete = false;
+              Valid = false;
+              break;
+            }
+            --MetadataScanBudget;
+            const auto First = MetadataAddressAt(Value->Operands[I], State);
+            const auto Second = MetadataAddressAt(Value->Operands[J], State);
+            if (!First || !Second) {
+              Valid = false;
+              break;
+            }
+            auto Pair = CurrentMetadataPair(*First, *Second);
+            if (!Pair && !Ordered)
+              Pair = CurrentMetadataPair(*Second, *First);
+            if (!Pair) {
+              Valid = false;
+              break;
+            }
+            for (const auto Index : {I, J})
+              if (const auto Local = MetadataLocalAt(Value->Operands[Index])) {
+                const auto Address = Index == I ? *First : *Second;
+                const MetadataAlias Alias{Address, *Pair};
+                const auto [Found, Fresh] =
+                    Choices[*Local].emplace(Address, Alias);
+                if (!Fresh && Found->second != Alias)
+                  Valid = false;
+              }
+          }
+          if (!Valid)
             continue;
           for (const auto Index : {I, J})
             if (const auto Local = MetadataLocalAt(Value->Operands[Index])) {
               ++MetadataPairedReads[*Local];
-              const MetadataAlias Alias{MetadataDefinitions.at(*Local).Address,
-                                        *Pair};
-              const auto [Found, Fresh] =
-                  MetadataPairCandidates.emplace(*Local, Alias);
-              if (!Fresh && Found->second != Alias)
-                MetadataConflicts.insert(*Local);
+              for (const auto &[Address, Alias] : Choices.at(*Local)) {
+                const auto [Found, Fresh] =
+                    MetadataPairCandidates[*Local].emplace(Address, Alias);
+                if (!Fresh && Found->second != Alias)
+                  MetadataConflicts.insert(*Local);
+              }
             }
         }
-        for (const auto &Operand : Value->Operands)
-          ScanMetadata(Operand, Depth + 1);
+        Value->forEachChildExpr(
+            [&](const ExprPtr &C) { ScanMetadata(C, Depth + 1); });
       };
   walkStmts(Function.Body, [&](const HighStmt &Statement) {
     if (Statement.Dst)
@@ -6505,13 +6669,19 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     forEachRhsExpr(Statement,
                    [&](const ExprPtr &Value) { ScanMetadata(Value, 0); });
   });
-  std::map<MetadataLocal, MetadataAlias> MetadataAliasPlans;
+  std::map<MetadataLocal, MetadataChoices> MetadataAliasPlans;
   if (MetadataScanComplete)
-    for (const auto &[Local, Alias] : MetadataPairCandidates)
-      if (!MetadataConflicts.count(Local) && MetadataReads[Local] &&
+    for (const auto &[Local, Choices] : MetadataPairCandidates) {
+      bool Valid =
+          !MetadataConflicts.count(Local) && MetadataReads[Local] &&
           MetadataReads[Local] == MetadataPairedReads[Local] &&
-          swiftTypeMetadataAddressHint(Image, Alias.first, Alias.second))
-        MetadataAliasPlans.emplace(Local, Alias);
+          Choices.size() == MetadataDefinitions.at(Local).Addresses.size();
+      for (const auto &[Address, Alias] : Choices)
+        Valid &=
+            bool(swiftTypeMetadataAddressHint(Image, Address, Alias.second));
+      if (Valid)
+        MetadataAliasPlans.emplace(Local, Choices);
+    }
   if (!MetadataAliasPlans.empty()) {
     const auto Flow = analyzeHighSourceFlow(Function, false);
     if (!Flow.Complete || !Flow.Items.empty())
@@ -7354,9 +7524,9 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       const auto Local = MetadataLocalAt(Operand);
       const auto Plan =
           Local ? MetadataAliasPlans.find(*Local) : MetadataAliasPlans.end();
-      return Plan == MetadataAliasPlans.end()
+      return Plan == MetadataAliasPlans.end() || Plan->second.size() != 1
                  ? std::nullopt
-                 : std::optional<va_t>(Plan->second.first);
+                 : std::optional<va_t>(Plan->second.begin()->first);
     };
     if (Expression->Kind == ExprKind::Call && Expression->SourceCallHint &&
         Expression->SourceCallHint->CallKind ==
@@ -8213,16 +8383,23 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           }
           if (const auto Found = MetadataAliasPlans.find(Local);
               Found != MetadataAliasPlans.end()) {
-            const auto &[Address, Pair] = Found->second;
             const auto OriginalAddress = constantAddress(*Expression);
-            auto Hint = swiftTypeMetadataAddressHint(Image, Address, Pair);
-            if (OriginalAddress == Address && Hint) {
+            const auto Choice = OriginalAddress
+                                    ? Found->second.find(*OriginalAddress)
+                                    : Found->second.end();
+            const auto Pair = Choice == Found->second.end()
+                                  ? std::nullopt
+                                  : std::optional(Choice->second.second);
+            auto Hint = Pair ? swiftTypeMetadataAddressHint(
+                                   Image, *OriginalAddress, *Pair)
+                             : std::nullopt;
+            if (Hint) {
               auto Bound = HighExpr::makeCall({}, 0, {});
               Bound->Type = Expression->Type;
               Bound->SourceCallHint =
                   std::make_shared<SourceCallTypeHint>(std::move(*Hint));
               Expression = std::move(Bound);
-              Result.SwiftTypeMetadataPairs[Pair.CacheAddress] = Pair;
+              Result.SwiftTypeMetadataPairs[Pair->CacheAddress] = *Pair;
               return;
             }
           }

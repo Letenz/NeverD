@@ -1093,7 +1093,7 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 230 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 458 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `230 CPU + 224 WHP + 4 SEH = 458`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 246 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 474 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `246 CPU + 224 WHP + 4 SEH = 474`.
 
 C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
 
@@ -1133,6 +1133,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 `RunDeadline::invoke` は WHP の停止済み・期限切れの実行をホスト呼び出し前に拒否し、キャンセル中も実際のホスト結果を保持し、借用した停止トークンを解放する前に割り込みコールバックの完了を確認します。KVM と WHP は、完全に取得した非公開状態を実行リースの所有スレッドで検証してから、同時に到着した停止や期限を分類します。実際のホスト・取得エラーと認証済み x64 CPU 例外が優先されます。通常の成功状態はキャンセル確認が終わるまで公開せず、確認済みの中断では投機的な CPU/RAM 効果を破棄して再試行を許可します。準備、ネイティブ実行、状態取得には単一のステップ猶予を使います。協調キャンセルを提供しますが、厳密な実時間上限は保証しません。
 
 `NeverDRunControlTests` は移植可能な `NativeEntryTests.cpp` と、Windows で WHP を有効にした場合の `WhpEntryControlTests.cpp` を含みます。メモリ内のホストコールバックで、実行拒否、再試行、遅いキャンセル、実エラーの保持、完了結果の優先順位、確認済みコールバックの寿命を Hyper-V なしで検証します。`NeverDKvmRunTests` は所有スレッドでの完了、エラーの優先順位、再入拒否を確認します。実際の `NeverDKvmStateTransferTests` は `KvmStateTransferCases.def` の元の命令を実行します。`ActualCPUExceptionOutranksStopDuringCapture` と `PublicCPUExceptionOutranksStopDuringCapture` は実際のレジスタ/XSAVE 読み出し後に停止し、除算例外、元のコンテキスト、RAM、明示的な回復を保持します。Wine 上の Windows ABI による移植可能テストはスレッドと制御の証拠であり、ネイティブ WHP 実行の証拠ではありません。利用できないネイティブ経路は明示的にスキップします。
+
+`NeverDInstructionFetchTests` は Unicorn、KVM、WHP で x64/ARM64 checked プログラムを特権モードとユーザーモードで実行します。`InstructionFetchCases.def` はオペランド形式の切り替え、相対分岐、コードエイリアス経由のゲストとホストの書き込み、コンテキスト復元、権限取り消し、独立したページ領域、ページ末尾の先読み、不正・切断された符号化、再帰実行の拒否を検証します。Windows ネイティブ CI では全 x64 WHP ケースの成功が必須です。利用できないホスト/ISA の組み合わせは明示的にスキップし、移植可能な ARM64 実行をネイティブ ARM64 の証拠とは扱いません。
 
 `WhpStateTransferTests.cpp` は両世代の XSAVE API で転送を注入し、変更グループ、完全取得、パディング無視、部分失敗、キャンセル、例外優先順位、区画再作成を検証します。`ContinuedStepsReuseCapturedRegistersAndFP` は省略された設定を数え、`PartialTransferFailuresPreserveStateAndForceFullRetry` は完全復元を要求します。これはプロトコル検証であり、既存のネイティブ FP・状態遷移・ドライバー・ring3 テストも引き続き必要です。
 
@@ -1183,3 +1185,5 @@ Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 `NeverDLLVMCPhiTests` は共通のループ出口について、異なる後続 PHI の組、観測呼び出しの順序、出力メモリ、呼び出し元 IR の不変性も検証します。モジュール全体と指定関数の C を O0/O2 で独立した参照実装と比較します。異なる終了判定と追加の先行ブロックで保守的な処理を確認します。
 
 `NeverDLLVMCPhiTests` は独立した O0/O2 oracle により、複数の後退辺での演算統合、観測呼び出しの順序、メモリ変更呼び出し前のスナップショット、狭い整数の折り返し、符号拡張を検証します。モジュール全体と単一関数の出力で元の IR を維持し、辺の不一致、共有根、poison 注釈、未定義オペランド、可変シフト、制約付き intrinsic、例外関数、予算不足時の完全拒否を確認します。回転呼び出しの統合には全入力演算の一致が必要です。
+
+`NeverDLLVMCPhiTests` は構造化スカラー領域を O0/O2 で実行します。ブロック順を変えた入れ子ループ、菱形分岐、反復ゼロ、狭い整数の周回、ヘッダー観測呼び出し、PHI 交換、生存中の外側の値、共有ステップ、ファンネルシフト端点を検証します。元の IR の保持、三つのローカル変数への統合、および複数出口・非既約・過大グラフの実行可能なフォールバックも確認します。独立した合成例であり、ソース出力はネイティブ復元の証明ではありません。

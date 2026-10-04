@@ -58,6 +58,11 @@ add_neverd_unittest(NeverDMemoryLifecycleTests
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
+add_neverd_unittest(NeverDInstructionFetchTests
+  InstructionFetchTests.cpp
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationCPU)
+
 add_neverd_unittest(NeverDExecutionSessionTests
   ExecutionSessionTests.cpp
   ImageMappingTests.cpp

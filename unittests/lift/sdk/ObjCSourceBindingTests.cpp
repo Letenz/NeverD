@@ -4881,7 +4881,9 @@ TEST(ObjCSourceBindings,
   F.Function.Body.insert(F.Function.Body.end(),
                          Assign(CacheLocal, SwiftTypeMetadataFixture::Cache));
   const auto Reassigned = bindObjCSourceReferences(F.Function, F.Image);
-  EXPECT_FALSE(Reassigned.Function.Body[0].Val->SourceCallHint);
+  // A repeated identical definition preserves every reaching pair.
+  ASSERT_TRUE(Reassigned.Limitation.empty()) << Reassigned.Limitation;
+  EXPECT_TRUE(Reassigned.Function.Body[0].Val->SourceCallHint);
   F.Function.Body.pop_back();
 
   HighStmt OtherUse;
@@ -4896,6 +4898,340 @@ TEST(ObjCSourceBindings,
   const auto UseBeforeDefinition =
       bindObjCSourceReferences(F.Function, F.Image);
   EXPECT_FALSE(UseBeforeDefinition.Function.Body[2].Val->SourceCallHint);
+}
+
+namespace {
+struct MetadataChoiceFixture : SwiftTypeMetadataFixture {
+  static constexpr va_t CacheB = 0x2040, ReferenceB = 0x1040;
+  MedVar CacheVar, ReferenceVar;
+  HighStmt Use;
+  ExprPtr Condition;
+  explicit MetadataChoiceFixture(Arch A) : SwiftTypeMetadataFixture(A) {
+    auto &Bytes = Image.Segments[0].Data;
+    llvm::support::endian::write32le(Bytes.data() + 0x40, 0xb0 - 0x40);
+    llvm::support::endian::write32le(Bytes.data() + 0x44, 2);
+    std::memcpy(Bytes.data() + 0xb0, "Si", 3);
+    Image.Symbols.push_back({"_$sSiMR", ReferenceB, 8, false});
+    Image.Symbols.push_back({"_$sSiMd", CacheB, 8, false});
+    CacheVar.Kind = ReferenceVar.Kind = MedVar::Temp;
+    CacheVar.Id = 601;
+    ReferenceVar.Id = 602;
+    CacheVar.Size = ReferenceVar.Size = 8;
+    MedVar Choose;
+    Choose.Kind = MedVar::Param;
+    Choose.Id = 0;
+    Choose.Size = 8;
+    Condition = HighExpr::makeVar(Choose, NdType::makeInt(8));
+    Function.Params.push_back({"choose", NdType::makeInt(8)});
+    Use = Function.Body.front();
+    Use.Addr = 0x7100;
+    Use.Val->Operands = {local(CacheVar), local(ReferenceVar)};
+  }
+  ExprPtr local(MedVar V) const {
+    return HighExpr::makeVar(V, NdType::makePtr(NdType::makeVoid()));
+  }
+  HighStmt assign(MedVar V, va_t A, va_t Site = 0) const {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Site;
+    S.Dst = local(V);
+    S.Val = HighExpr::makeConst(A, 8, ConstantAddressProvenance::DataAddress);
+    return S;
+  }
+  std::vector<HighStmt> pair(bool Second) const {
+    return {assign(CacheVar, Second ? CacheB : Cache, Second ? 0x7040 : 0x7020),
+            assign(ReferenceVar, Second ? ReferenceB : Reference,
+                   Second ? 0x7044 : 0x7024)};
+  }
+  void body(unsigned Shape) {
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Cond = Condition;
+    Branch.Body = pair(false);
+    Branch.ElseBody = pair(true);
+    if (Shape == 1) {
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      Jump.GotoTarget = Use.Addr;
+      Branch.Body.push_back(Jump);
+    }
+    if (Shape < 2) {
+      Function.Body = {Branch, Use};
+    } else if (Shape < 4) {
+      Branch.Kind = Shape == 2 ? StmtKind::While : StmtKind::DoWhile;
+      Branch.ElseBody.clear();
+      Branch.Body = pair(true);
+      auto FirstUse = Use;
+      FirstUse.Addr = 0x7060;
+      Branch.Body.insert(Branch.Body.begin(), FirstUse);
+      Function.Body = pair(false);
+      Function.Body.push_back(Branch);
+      Function.Body.push_back(Use);
+    } else {
+      Branch.Kind = StmtKind::Switch;
+      Branch.Cond.reset();
+      Branch.SwitchExpr = Condition;
+      Branch.Body.clear();
+      Branch.ElseBody.clear();
+      Branch.Cases.push_back({0, pair(false)});
+      Branch.DefaultBody = pair(true);
+      Function.Body = {Branch, Use};
+    }
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftMetadataLocalChoicesKeepCorrelatedPaths) {
+  for (auto A : {Arch::AArch64, Arch::X64})
+    for (unsigned Shape = 0; Shape != 5; ++Shape) {
+      SCOPED_TRACE(Shape);
+      MetadataChoiceFixture F(A);
+      F.body(Shape);
+      const auto Flow = analyzeHighSourceFlow(F.Function, false);
+      ASSERT_TRUE(Flow.Complete);
+      ASSERT_TRUE(Flow.Items.empty());
+      const auto B = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+      ASSERT_EQ(B.SwiftTypeMetadataPairs.size(), 2u);
+      EXPECT_EQ(B.SwiftTypeMetadataPairs.at(F.Cache).ReferenceAddress,
+                F.Reference);
+      EXPECT_EQ(B.SwiftTypeMetadataPairs.at(F.CacheB).ReferenceAddress,
+                F.ReferenceB);
+      unsigned Bound = 0;
+      walkStmts(B.Function.Body, [&](const HighStmt &S) {
+        if (S.Kind != StmtKind::Assign)
+          return;
+        ASSERT_TRUE(S.Val && S.Val->SourceCallHint);
+        EXPECT_TRUE(objcSourceCallBound(*S.Val, F.Image, {}));
+        ++Bound;
+      });
+      EXPECT_EQ(Bound, 4u);
+    }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftMetadataLocalChoicesRejectUncorrelatedOrEscapedPaths) {
+  for (auto A : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      MetadataChoiceFixture F(A);
+      F.body(0);
+      auto &Branch = F.Function.Body[0];
+      switch (Mutation) {
+      case 0: // Both sets are individually valid; their selected pair is not.
+        Branch.ElseBody[1] = F.assign(F.ReferenceVar, F.Reference);
+        break;
+      case 1:
+        Branch.Body[1] = F.assign(F.ReferenceVar, F.ReferenceB);
+        break;
+      case 2: { // Independent conditions cannot justify a Cartesian pairing.
+        HighStmt Second = Branch;
+        Branch.Body = {F.pair(false)[0]};
+        Branch.ElseBody = {F.pair(true)[0]};
+        MedVar Other = F.Condition->Var;
+        Other.Id = 1;
+        Second.Cond = HighExpr::makeVar(Other, NdType::makeInt(8));
+        F.Function.Params.push_back({"other", NdType::makeInt(8)});
+        Second.Body = {F.pair(false)[1]};
+        Second.ElseBody = {F.pair(true)[1]};
+        F.Function.Body.insert(F.Function.Body.begin() + 1, Second);
+        break;
+      }
+      case 3: // Missing definition on one edge.
+        Branch.ElseBody.pop_back();
+        break;
+      case 4:
+        F.Function.Body.insert(F.Function.Body.begin(), F.Use);
+        break;
+      case 5: // Backedge introduces a mismatched pair after the first use.
+        F.body(2);
+        F.Function.Body[2].Body.pop_back();
+        break;
+      case 6: // Same failure in a loop which always executes once.
+        F.body(3);
+        F.Function.Body[2].Body.pop_back();
+        break;
+      case 7: {
+        auto S = F.Use;
+        S.Val = F.local(F.CacheVar);
+        F.Function.Body.push_back(S);
+        break;
+      }
+      case 8: {
+        HighStmt S;
+        S.Kind = StmtKind::Return;
+        S.RetVal = F.local(F.CacheVar);
+        F.Function.Body.push_back(S);
+        break;
+      }
+      case 9: {
+        HighStmt S;
+        S.Kind = StmtKind::Store;
+        S.StoreAddr = HighExpr::makeConst(0x9000, 8);
+        S.StoreVal = F.local(F.CacheVar);
+        F.Function.Body.push_back(S);
+        break;
+      }
+      case 10: // Use as a dynamic target is also a read, never an alias grant.
+        F.Use.Val->IndirectTarget = F.local(F.CacheVar);
+        break;
+      case 11:
+        Branch.Body[0].Dst->Var.Size = 4;
+        Branch.Body[0].Dst->Type = NdType::makeInt(4);
+        break;
+      case 12:
+        Branch.Body[0].Val = HighExpr::makeConst(F.Cache, 4);
+        break;
+      case 13:
+        Branch.Body[0].Val = F.Condition;
+        break;
+      case 14: {
+        auto Hint =
+            std::make_shared<SourceCallTypeHint>(*F.Use.Val->SourceCallHint);
+        Hint->Signature.Parameters[0].Location.ValueBytes = 4;
+        F.Use.Val->SourceCallHint = Hint;
+        break;
+      }
+      case 15:
+        F.Use.Val->SourceCallHint.reset();
+        break;
+      case 16: {
+        HighStmt Jump;
+        Jump.Kind = StmtKind::Goto;
+        Jump.GotoTarget = 0x7fff;
+        Branch.Body.push_back(Jump);
+        break;
+      }
+      case 17: { // Nested reads are not direct paired arguments.
+        auto Cast = std::make_shared<HighExpr>();
+        Cast->Kind = ExprKind::Cast;
+        Cast->Type = NdType::makePtr(NdType::makeVoid());
+        Cast->Operands = {F.local(F.CacheVar)};
+        F.Use.Val->Operands[0] = Cast;
+        break;
+      }
+      }
+      const auto B = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(B.Limitation.empty());
+      unsigned BoundCache = 0;
+      walkStmts(B.Function.Body, [&](const HighStmt &S) {
+        if (S.Kind == StmtKind::Assign && S.Dst &&
+            S.Dst->Var.Id == F.CacheVar.Id && S.Val && S.Val->SourceCallHint)
+          ++BoundCache;
+      });
+      EXPECT_EQ(BoundCache, 0u);
+    }
+}
+
+TEST(ObjCSourceBindings, SwiftMetadataLocalChoicesRevalidateCurrentIdentity) {
+  for (auto A : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      MetadataChoiceFixture F(A);
+      F.body(1);
+      const auto B = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+      const auto Address = B.Function.Body[0].ElseBody[0].Val;
+      ASSERT_TRUE(Address->SourceCallHint);
+      switch (Mutation) {
+      case 0:
+        F.Image.Symbols.back().Name = "_$sSbMd";
+        break;
+      case 1:
+        F.Image.Symbols[F.Image.Symbols.size() - 2].Name = "_$sSbMR";
+        break;
+      case 2:
+        F.Image.Segments[0].Data[0xb1] = 'b';
+        break;
+      case 3:
+        F.Image.Segments[0].Data[0x44] = 1;
+        break;
+      case 4:
+        F.Image.Segments[1].Data[F.CacheB - 0x2000] = 1;
+        break;
+      case 5:
+        F.Image.DataPtrRelocSlots.insert(F.ReferenceB);
+        break;
+      case 6:
+        F.Image.CodePtrRelocSlots.insert(F.CacheB);
+        break;
+      case 7:
+        F.Image.Sections[0].Type = 0x11; // S_THREAD_LOCAL_REGULAR
+        break;
+      }
+      EXPECT_FALSE(objcSourceCallBound(*Address, F.Image, {}));
+      const auto Fresh = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(Fresh.Limitation.empty());
+      EXPECT_FALSE(Fresh.Function.Body[0].ElseBody[0].Val->SourceCallHint);
+      std::set<std::string> Helpers;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, B.SwiftTypeMetadataPairs, Helpers),
+                   std::runtime_error);
+    }
+}
+
+TEST(ObjCSourceBindings, SwiftMetadataLocalChoicesBoundOnlyRelevantState) {
+  for (bool Relevant : {false, true}) {
+    SCOPED_TRACE(Relevant);
+    MetadataChoiceFixture F(Arch::AArch64);
+    F.body(0);
+    for (unsigned I = 0; I != 33; ++I) {
+      MedVar C = F.CacheVar, R = F.ReferenceVar;
+      C.Id += 10 + 2 * I;
+      R.Id += 10 + 2 * I;
+      HighStmt Branch;
+      Branch.Kind = StmtKind::IfElse;
+      Branch.Cond = F.Condition;
+      Branch.Body = {F.assign(C, F.Cache), F.assign(R, F.Reference)};
+      Branch.ElseBody = {F.assign(C, F.CacheB), F.assign(R, F.ReferenceB)};
+      if (!Relevant) {
+        // Unrelated numeric locals need no address identity or coordinates.
+        for (auto *Body : {&Branch.Body, &Branch.ElseBody})
+          for (auto &S : *Body)
+            S.Val = HighExpr::makeConst(42, 8);
+      }
+      F.Function.Body.insert(F.Function.Body.begin(), Branch);
+      if (Relevant) {
+        auto Call = F.Use;
+        Call.Val = std::make_shared<HighExpr>(*F.Use.Val);
+        Call.Val->Operands = {F.local(C), F.local(R)};
+        F.Function.Body.push_back(Call);
+      }
+    }
+    const auto B = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_EQ(B.Limitation.empty(), !Relevant);
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftMetadataLocalChoicesRejectNonordinaryRecipeStorage) {
+  for (uint32_t Kind : {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+                        llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+                        llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+                        llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+                        llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS})
+    for (unsigned Range = 0; Range != 3; ++Range) {
+      SCOPED_TRACE(Kind);
+      SCOPED_TRACE(Range);
+      MetadataChoiceFixture F(Arch::AArch64);
+      F.body(1);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(Bound.Limitation.empty());
+      const auto Address = Bound.Function.Body[0].ElseBody[0].Val;
+      if (Range < 2)
+        F.Image.Sections[Range].Type = Kind;
+      else {
+        auto Split = F.Image.Sections[0];
+        Split.VA = 0x10b1;
+        Split.Size = Split.FileSz = 1;
+        Split.Type = Kind;
+        F.Image.Sections.push_back(Split);
+      }
+      EXPECT_FALSE(objcSourceCallBound(*Address, F.Image, {}));
+      const auto B = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(B.Limitation.empty());
+      EXPECT_FALSE(B.Function.Body[0].ElseBody[0].Val->SourceCallHint);
+    }
 }
 
 TEST(ObjCSourceBindings, SwiftStdlibDescriptorRebuildsExactMetadataRecipe) {
