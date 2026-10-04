@@ -83,7 +83,7 @@ static void require(int Valid, U32 Site) {
 static U32 observe(Pointers *Pointers) {
   const Record *R = Pointers->Record;
   U8 *C = Pointers->Context;
-  require(!Calls++ && R && C && R->Code == AccessViolation && !R->Flags &&
+  require(!Calls++ && R && C && R->Code == (U32)AccessViolation && !R->Flags &&
               !R->Nested && R->Count == 2 &&
               R->Address == (void *)Current->Fault &&
               *(U64 *)(C + ContextPC) == (U64)Current->Fault &&
