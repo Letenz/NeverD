@@ -53,6 +53,26 @@ memory. A snapshot that becomes unreadable fails explicitly. Terminal CPU or
 model faults do not produce snapshots. No host addresses are exposed as guest
 memory.
 
+For input larger than the 64 KiB options JSON limit, supply `path` instead of
+`bytes_hex` in a `memory` region. C++ callers set `NativeMemoryRegion::File`.
+The path names an explicit regular file on the caller's host; relative paths
+use the caller's working directory and JSON paths are UTF-8. The complete file
+must fit the region. Preparation copies its bytes into already budgeted guest
+memory and leaves the remaining bytes zero. Guest writes never modify the
+file, and another workload reads its current contents again.
+
+```json
+{"address":"0x20000000","size":131072,"path":"input.bin"}
+```
+
+`path` and `bytes_hex` are mutually exclusive, including empty `bytes_hex`.
+Missing files, non-regular files, oversized files and detected size changes
+during copying fail before CPU execution. Keep the input stable while it is
+read; copying is not an atomic filesystem snapshot. The region shares the
+image/stack memory limit, and bounded reads check the preparation deadline.
+Blocking host filesystem I/O itself has no hard deadline guarantee. This
+explicit preparation input does not expose host files through guest APIs.
+
 By default, DT_INIT and DT_INIT_ARRAY constructors execute in order before the
 selected function, with an explicit empty argc/argv/envp. All calls share the
 same instruction, event and deadline budget. `initialize: false` explicitly

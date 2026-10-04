@@ -41,6 +41,11 @@ struct LinkedImage {
 llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
                                       const BinaryImage &Image,
                                       const ProcessOptions &Options);
+/// Populate an already admitted region. File input is bounded by its mapped
+/// extent and the workload's preparation deadline, before any CPU is created.
+llvm::Error initializeMemoryRegion(AddressSpace &Space,
+                                   const NativeMemoryRegion &Region,
+                                   const ExecutionBudget &Budget);
 struct OnceCallback {
   uint64_t Entry, Control;
 };

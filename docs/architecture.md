@@ -1426,6 +1426,11 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+`AndroidMemory` owns copies of caller-specified regular files into explicit
+guest regions before CPU creation. JSON parsing only records the path; C++,
+C, CLI and Python share region memory accounting, bounded file reads and
+preparation deadline checks. No guest filesystem or host-backed mapping is
+created, and guest writes cannot change the input file.
 The Android image model assigns distinct guest traps to an explicit library
 and function catalogue. Bionic owns `dlopen` reference counts, `dlsym` handle
 lookups and the API 28 TLS `dlerror` slot; the C API, CLI and Python expose the

@@ -9,6 +9,7 @@
 #include "neverd/emulation/ProcessCall.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -20,6 +21,10 @@ struct NativeMemoryRegion {
   /// Initial bytes followed by zero padding. Address and Size are page aligned.
   std::vector<uint8_t> Bytes;
   bool Executable = false;
+  /// Copy this explicit regular file into the region before execution, then
+  /// zero pad. Mutually exclusive with Bytes; guest writes never modify it.
+  /// Relative paths use the caller's working directory. The file must fit Size.
+  std::optional<std::filesystem::path> File;
 };
 struct NativeMemoryRead {
   uint64_t Address = 0, Size = 0;

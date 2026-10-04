@@ -1,0 +1,20 @@
+//===- AndroidMemoryInputs.def - Explicit native memory inputs -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ANDROID_MEMORY_TEXT
+NEVERD_ANDROID_MEMORY_TEXT(
+    ConflictingInputs, "memory path and initial bytes are mutually exclusive")
+NEVERD_ANDROID_MEMORY_TEXT(InvalidPath, "invalid memory input path")
+NEVERD_ANDROID_MEMORY_TEXT(RegularFile, "memory input must be a regular file")
+NEVERD_ANDROID_MEMORY_TEXT(FileExtent, "memory input file exceeds its region")
+NEVERD_ANDROID_MEMORY_TEXT(FileChanged,
+                           "memory input file changed while reading")
+NEVERD_ANDROID_MEMORY_TEXT(FileIO, "memory input file I/O failed: ")
+NEVERD_ANDROID_MEMORY_TEXT(Deadline,
+                           "memory input preparation deadline expired")
+#endif
+#ifdef NEVERD_ANDROID_MEMORY_VALUE
+NEVERD_ANDROID_MEMORY_VALUE(ReadChunk, 64 * 1024)
+#endif

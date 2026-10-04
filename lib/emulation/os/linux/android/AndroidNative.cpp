@@ -3,7 +3,6 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../../core/ExecutionDeadline.h"
 #include "../../../runtime/RuntimeValues.h"
 #include "AndroidInternal.h"
 
@@ -35,9 +34,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       Native.TraceLimit > Options.OutputLimit / 8 ||
       Native.Arguments.size() > Options.StackSize / 8)
     return failure("invalid native execution limits or layout");
-  auto Deadline = makeExecutionDeadline(Options.Limits.TimeoutMicroseconds);
-  if (!Deadline)
-    return Deadline.takeError();
+  auto Budget = ExecutionBudget::create(Options.Limits);
+  if (!Budget)
+    return Budget.takeError();
+  std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   uint64_t ReportSize = Native.TraceLimit * 8;
   for (const auto &Read : Native.ReadMemory) {
     if (!Read.Size || Read.Size > Options.OutputLimit - ReportSize ||
@@ -108,9 +108,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         Read | Write | UserAccessible | (Region.Executable ? Execute : 0u);
     if (auto E = (*Space)->map(Region.Address, Region.Size, Permissions))
       return std::move(E);
-    if (!Region.Bytes.empty())
-      if (auto E = (*Space)->write(Region.Address, Region.Bytes))
-        return std::move(E);
+    if (auto E = initializeMemoryRegion(**Space, Region, *Resources))
+      return std::move(E);
   }
   for (const auto &Read : Native.ReadMemory) {
     auto Accessible = (*Space)->canAccess(Read.Address, Read.Size,
@@ -137,10 +136,6 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                        Backend->Reason};
   Result.Entry = Result.PC = Linked->Entry;
   Result.InitializersEnabled = Native.Initialize;
-  auto Budget = ExecutionBudget::create(Options.Limits);
-  if (!Budget)
-    return Budget.takeError();
-  std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   auto Observe = [&](uint64_t PC, uint32_t) {
     if (!Native.TraceLimit)
       return;

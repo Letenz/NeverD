@@ -2210,6 +2210,11 @@ libraries. They exercise constructors, sectionless linking, stack arguments,
 TLS/stack guards, explicit properties, memory allocation, raw versus Bionic
 error returns, output and execution limits, unsupported imports, and SDK/CLI
 report parity. No Android device, NDK sysroot, or proprietary fixture is used.
+File-initialized memory tests copy more than 64 KiB through C++, C/CLI and
+Python, check a guest-computed hash, exact bytes, zero padding, guest-only
+mutations and fresh reads on a subsequent workload. They reject conflicting
+initializers, missing/non-regular/oversized inputs and aggregate memory-limit
+overflow. A deterministic expired deadline leaves guest bytes unchanged.
 The dynamic lookup fixtures exercise explicit library catalogues, provider
 identity, repeated opens and NOLOAD, missing symbols, stale handles, null and
 invalid names, TLS slot 6 consume-once errors, and named calls through guest
