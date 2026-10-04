@@ -562,6 +562,8 @@ void invertSkipGotos(HighFunc &Func);
 /// Copy catch-funclet and C++ unwind-funclet HighFunc bodies into empty
 /// `CxxCatch` / `CxxCleanup` clause slots of the parent. MSVC x64 catch
 /// handlers and destructor unwind actions are separate pdata functions.
+/// Only a function that received a body is simplified again: the others
+/// leave HighIR conversion final, as its flow check saw them.
 /// A funclet body may itself be a structured `CxxTry` whose handler VA is
 /// this function or another funclet already on the attach stack; copying
 /// those bodies without a cycle guard overflows the stack on full-image
@@ -573,6 +575,7 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
       ByEntry[Func.Entry] = &Func;
   for (HighFunc &Func : Funcs) {
     std::set<va_t> Active;
+    bool Attached = false;
     auto Attach = [&](auto &&Self, std::vector<HighStmt> &Stmts) -> void {
       for (HighStmt &Stmt : Stmts) {
         if (Stmt.Kind == StmtKind::CxxTry) {
@@ -592,6 +595,7 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
                     It->second != &Func) {
                   Active.insert(Target);
                   Stmt.EHClauseBodies[I] = It->second->Body;
+                  Attached = true;
                   Self(Self, Stmt.EHClauseBodies[I]);
                   Active.erase(Target);
                   continue;
@@ -609,7 +613,8 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
       }
     };
     Attach(Attach, Func.Body);
-    invertSkipGotos(Func);
+    if (Attached)
+      invertSkipGotos(Func);
   }
 }
 
