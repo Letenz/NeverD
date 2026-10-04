@@ -216,9 +216,21 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                  EntrySignature->ReturnLocation.Kind !=
                      SourceABICarrierKind::IndirectResultPointer) {
         Op.NumInputs = 0;
-        for (const auto &Piece : EntrySignature->ReturnComponents)
-          Op.addInput(ndVarToMedVar(
-              NdVar::reg(Piece.RegisterOffset, Piece.ValueBytes)));
+        for (const auto &Piece : EntrySignature->ReturnComponents) {
+          auto Value =
+              ndVarToMedVar(NdVar::reg(Piece.RegisterOffset, Piece.ValueBytes));
+          if (Piece.Kind == SourceABICarrierKind::BooleanRegister) {
+            MedOp Bit;
+            Bit.Opcode = NdOp::INT_AND;
+            Bit.Addr = Op.Addr;
+            Bit.Output = Temporary(1);
+            Bit.addInput(Value);
+            Bit.addInput(MedVar::makeConst(1, 1));
+            Value = Bit.Output;
+            Ops.push_back(std::move(Bit));
+          }
+          Op.addInput(Value);
+        }
       } else if (Op.Opcode == NdOp::RETURN && EntrySignature &&
                  !EntrySignature->ReturnComponents.empty()) {
         // Publish both physical dependencies before SSA. They are separate
@@ -469,19 +481,47 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         for (size_t I = 0; I < Signature.ReturnComponents.size(); ++I) {
           const auto &Piece = Signature.ReturnComponents[I];
           const auto Wide = FloatingCarrier(Piece);
+          const bool Boolean =
+              Piece.Kind == SourceABICarrierKind::BooleanRegister;
           MedOp Extract;
           Extract.Opcode = NdOp::SUBBYTES;
           Extract.Addr = Op.Addr;
-          Extract.Output = Wide ? Temporary(Piece.ValueBytes)
-                                : ndVarToMedVar(NdVar::reg(Piece.RegisterOffset,
-                                                           Piece.ValueBytes));
+          Extract.Output = (Wide || Boolean)
+                               ? Temporary(Piece.ValueBytes)
+                               : ndVarToMedVar(NdVar::reg(Piece.RegisterOffset,
+                                                          Piece.ValueBytes));
           Extract.addInput(Op.Output);
           Extract.addInput(MedVar::makeConst(
               Members.empty() ? I * Piece.ValueBytes : Members[I].ByteOffset,
               4));
           const auto Value = Extract.Output;
           ReturnOps.push_back(std::move(Extract));
-          if (Wide)
+          if (Boolean) {
+            // The genuine _Bool field normalizes bit zero. Keep every other
+            // physical bit dependent on this call's unknown clobber, including
+            // bits 7:1 of the low byte. A byte-valued extract alone would
+            // silently define them. Ordinary DCE can remove an unused carrier.
+            MedOp Upper;
+            Upper.Opcode = NdOp::INT_AND;
+            Upper.Addr = Op.Addr;
+            Upper.Output = Temporary(8);
+            Upper.addInput(ndVarToMedVar(NdVar::reg(Piece.RegisterOffset, 8)));
+            Upper.addInput(MedVar::makeConst(~uint64_t(1), 8));
+            MedOp Extend;
+            Extend.Opcode = NdOp::INT_ZEXT;
+            Extend.Addr = Op.Addr;
+            Extend.Output = Temporary(8);
+            Extend.addInput(Value);
+            MedOp Merge;
+            Merge.Opcode = NdOp::INT_OR;
+            Merge.Addr = Op.Addr;
+            Merge.Output = ndVarToMedVar(NdVar::reg(Piece.RegisterOffset, 8));
+            Merge.addInput(Upper.Output);
+            Merge.addInput(Extend.Output);
+            ReturnOps.push_back(std::move(Upper));
+            ReturnOps.push_back(std::move(Extend));
+            ReturnOps.push_back(std::move(Merge));
+          } else if (Wide)
             AppendFloatingCarrier(Value, *Wide);
         }
       } else if (Hint->CallKind ==

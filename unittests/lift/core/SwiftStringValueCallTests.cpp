@@ -171,3 +171,103 @@ TEST(ObjCCallHints, SwiftStringValueOperationsKeepContextAndResultCarriers) {
       }
     }
 }
+
+TEST(ObjCCallHints, SwiftCStringConstructionKeepsCompleteSDKDeclarations) {
+  using namespace runtime_function_address_test;
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Repair : {false, true}) {
+      const std::string Name =
+          Repair ? "$sSS18_fromUTF8RepairingySS6result_"
+                   "Sb11repairsMadetSRys5UInt8VGFZ"
+                 : "$sSa28_allocateBufferUninitialized15minimumCapacitys06_"
+                   "ArrayB0VyxGSi_tFZ";
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[Slot] = "_" + Name;
+      Image.DyldBindSlots[Slot] = {"_" + Name, 0,
+                                   "/usr/lib/swift/libswiftCore.dylib", false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+      ASSERT_TRUE(Hint) << Name;
+      const auto &Signature = Hint->Signature;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_EQ(Signature.Parameters.size(), 2U);
+      for (unsigned I = 0; I != 2; ++I) {
+        EXPECT_EQ(Signature.Parameters[I].TheRole,
+                  SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(Signature.Parameters[I].Type->Kind,
+                  Repair || I == 0 ? NdTypeKind::Int : NdTypeKind::Ptr);
+        EXPECT_EQ(Signature.Parameters[I].Type->Size, 8U);
+        EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                  TRI.IntParamRegs[I]);
+      }
+      if (Repair) {
+        EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Struct);
+        const auto Members = sourceAggregateMembers(Signature.ReturnType);
+        ASSERT_EQ(Members.size(), 3U);
+        EXPECT_TRUE(isSourceBooleanType(Members[2].Type));
+        ASSERT_EQ(Signature.ReturnComponents.size(), 3U);
+        EXPECT_EQ(Signature.ReturnComponents[0].RegisterOffset,
+                  TRI.IntReturnRegs[0]);
+        EXPECT_EQ(Signature.ReturnComponents[1].RegisterOffset,
+                  TRI.IntReturnRegs[1]);
+        EXPECT_EQ(Signature.ReturnComponents[2].Kind,
+                  SourceABICarrierKind::BooleanRegister);
+        EXPECT_EQ(Signature.ReturnComponents[2].RegisterOffset,
+                  Architecture == Arch::AArch64 ? a64reg::X2 : x86reg::RCX);
+        EXPECT_EQ(Signature.ReturnComponents[2].ValueBytes, 1U);
+      } else {
+        EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Signature.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+        EXPECT_TRUE(Signature.ReturnComponents.empty());
+      }
+      auto Call = HighExpr::makeCall(
+          "untrusted", Slot,
+          {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8)});
+      Call->Type = Signature.ReturnType;
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      EXPECT_FALSE(runtimeCFunctionAddressHint(Image, Slot));
+      for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+        auto Wrong = Image;
+        if (Mutation == 0)
+          Wrong.DyldBindSlots[Slot].Module = "/tmp/libswiftCore.dylib";
+        if (Mutation == 1)
+          Wrong.DyldBindSlots[Slot].WeakImport = true;
+        if (Mutation == 2)
+          Wrong.DyldBindSlots[Slot].Addend = 8;
+        if (Mutation == 3)
+          Wrong.DyldBindSlots[Slot].Name += "invalid";
+        if (Mutation == 4)
+          Wrong.DyldBindSlots.erase(Slot);
+        if (Mutation == 5)
+          Wrong.ConflictingImportStorageSlots.insert(Slot);
+        EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, Slot)) << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {})) << Mutation;
+      }
+      for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+        auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+        auto &S = Changed->Signature;
+        if (Mutation == 0)
+          S.Parameters.back().TheRole =
+              SourceParameterTypeHint::Role::SwiftContext;
+        if (Mutation == 1)
+          S.Parameters.front().Type = NdType::makeInt(4, false);
+        if (Mutation == 2) {
+          S.ReturnType = NdType::makeInt(16, false);
+          // A valid two-word ABI still omits part of the actual SDK result.
+          std::string Error;
+          ASSERT_TRUE(assignDarwinSwiftSourceABI(S, Architecture, Error));
+        }
+        if (Mutation == 3 && Repair)
+          S.ReturnComponents[2].Kind = SourceABICarrierKind::IntegerRegister;
+        if (Mutation == 3 && !Repair)
+          S.ReturnLocation.ValueBytes = 4;
+        if (Mutation == 4)
+          Changed->CanonicalBooleanInputs = {1};
+        Call->SourceCallHint = Changed;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {})) << Mutation;
+      }
+    }
+}

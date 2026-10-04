@@ -151,6 +151,30 @@ TEST(SwiftABIProjectionPlan,
   EXPECT_EQ(Plan.Batches.size(), 5U);
 }
 
+TEST(SwiftABIProjectionPlan, BooleanPointeesAndCallbackTypesKeepDistinctKeys) {
+  const auto Boolean = NdType::makeInt(1, false);
+  Boolean->SourceName = kSourceBooleanCType;
+  const auto Byte = NdType::makeInt(1, false);
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Callback : {false, true}) {
+      const auto Type = [&](const TypeRef &Value) {
+        return NdType::makePtr(Callback ? NdType::makeFunc(Value) : Value);
+      };
+      const auto A = signature(Type(Boolean), Architecture);
+      const auto B = signature(Type(Byte), Architecture);
+      EXPECT_FALSE(equalSourceABIs(A, B));
+      const auto Plan = planABIProjections(
+          {row(0, 0x1000, A), row(1, 0x1000, B), row(2, 0x1000, A)}, {});
+      ASSERT_EQ(Plan.Batches.size(), 2U);
+      const auto Owners = ownership(
+          Plan, {row(0, 0x1000, A), row(1, 0x1000, B), row(2, 0x1000, A)});
+      EXPECT_EQ(Owners.at(0), Owners.at(2));
+      EXPECT_NE(Owners.at(0), Owners.at(1));
+      EXPECT_THROW(planABIProjections({row(0, 0x1000, A)}, {{0x1000, B}}),
+                   std::invalid_argument);
+    }
+}
+
 TEST(SwiftABIProjectionPlan, BatchHintsNeverExpandUnambiguousCalleeEvidence) {
   auto Hint = signature();
   const std::map<va_t, SourceFunctionTypeHint> Base{{0x5000, Hint}};

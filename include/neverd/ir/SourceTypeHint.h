@@ -12,7 +12,11 @@ enum class SourceABICarrierKind : uint8_t {
   Stack,
   /// A hidden pointer to caller-owned result storage, separate from ordinary
   /// parameters. ValueBytes describes the pointer, not the returned record.
-  IndirectResultPointer
+  IndirectResultPointer,
+  /// Only bit zero of an integer register is a Swift i1 result. ValueBytes
+  /// describes its one-byte logical storage, not eight defined result bits.
+  /// This carrier is currently confined to the validated three-field result.
+  BooleanRegister
 };
 
 /// Physical location of one scalar source value. Stack offsets are relative
