@@ -67,8 +67,9 @@ public:
   }
   llvm::Error prepare(const AArch64MachineState &State) {
     using namespace aarch64;
-    // Debug exits are routed to EL2. PSTATE.D cannot mask them, so step the
-    // maintenance instructions explicitly before entering the guest.
+    // Debug exits are routed to EL2, where PSTATE.D cannot mask them. Disable
+    // software stepping for the immutable maintenance stub, then restore it
+    // only after its distinct HVC exit has been authenticated.
     const std::pair<hv_sys_reg_t, uint64_t> System[] = {
         {HV_SYS_REG_TTBR0_EL1, LowRoot},
         {HV_SYS_REG_TTBR1_EL1, HighRoot},
@@ -77,8 +78,7 @@ public:
         {HV_SYS_REG_SCTLR_EL1, SCTLR},
         {HV_SYS_REG_VBAR_EL1, VectorGPA},
         {HV_SYS_REG_CPACR_EL1, CPACR},
-        {HV_SYS_REG_MDSCR_EL1,
-         MDSCRSingleStep | MDSCRKernelDebug | MDSCRMonitorDebug},
+        {HV_SYS_REG_MDSCR_EL1, 0},
         {HV_SYS_REG_SP_EL0,
          State.UserMode ? State.reg(AArch64Register::SP) : 0},
         {HV_SYS_REG_SP_EL1,
@@ -109,9 +109,9 @@ public:
     }
     if (auto Status = hv_vcpu_set_trap_debug_exceptions(CPU, true))
       return hvf::unavailable("hv_vcpu_set_trap_debug_exceptions", Status);
-    if (auto E = set(HV_REG_CPSR, PStateEL1h | PStateDAIF | PStateSingleStep))
+    if (auto E = set(HV_REG_CPSR, PStateEL1h | PStateDAIF))
       return E;
-    return set(HV_REG_PC, EntryGPA);
+    return set(HV_REG_PC, MaintenanceEntryGPA);
   }
   llvm::Error capture(AArch64MachineState &State) {
     return captureAArch64State(
@@ -149,8 +149,11 @@ public:
           if (Exit.reason == HV_EXIT_REASON_CANCELED && Cancelled)
             return llvm::Error::success();
           if (Exit.reason == HV_EXIT_REASON_EXCEPTION &&
-              ((Exit.exception.syndrome >> aarch64::ExceptionClassShift) &
-               aarch64::ExceptionClassMask) == aarch64::StepFromLowerEL) {
+              (Capture
+                   ? ((Exit.exception.syndrome >>
+                       aarch64::ExceptionClassShift) &
+                      aarch64::ExceptionClassMask) == aarch64::StepFromLowerEL
+                   : Exit.exception.syndrome == aarch64::MaintenanceSyndrome)) {
             // A guest synchronous fault may enter EL1 before the debug exit
             // reaches EL2. That exit is not proof the instruction completed.
             // ESR was cleared before entry; admitted instructions cannot
@@ -165,6 +168,17 @@ public:
                                                         : aarch64::PStateEL1h;
             if (*Syndrome || (*PState & 0xf) != Mode)
               return diagnostic::error(diagnostic::ArmState);
+            if (!Capture) {
+              auto PC = Native.get(HV_REG_PC);
+              if (!PC)
+                return PC.takeError();
+              // HVF reports the return PC after HVC. A vector gateway, an
+              // early HVC or an unexpected branch cannot complete maintenance.
+              if (*PC !=
+                      aarch64::MaintenanceExitGPA + aarch64::InstructionBytes ||
+                  *PState != (aarch64::PStateEL1h | aarch64::PStateDAIF))
+                return diagnostic::error(diagnostic::ArmState);
+            }
             return Capture ? Native.capture(Next) : llvm::Error::success();
           }
           return llvm::createStringError(
@@ -177,19 +191,13 @@ public:
                   .str());
         });
       };
-      for (unsigned N = 0; N < std::size(aarch64::Maintenance); ++N) {
-        if (auto E = Native.set(HV_REG_CPSR, aarch64::PStateEL1h |
-                                                 aarch64::PStateDAIF |
-                                                 aarch64::PStateSingleStep))
-          return E;
-        if (auto E = Enter())
-          return E;
-        auto PC = Native.get(HV_REG_PC);
-        if (!PC)
-          return PC.takeError();
-        if (*PC != aarch64::EntryGPA + (N + 1) * aarch64::InstructionBytes)
-          return diagnostic::error(diagnostic::ArmState);
-      }
+      if (auto E = Enter())
+        return E;
+      if (auto E =
+              Native.set(HV_SYS_REG_MDSCR_EL1, aarch64::MDSCRSingleStep |
+                                                   aarch64::MDSCRKernelDebug |
+                                                   aarch64::MDSCRMonitorDebug))
+        return E;
       if (auto E = Native.set(HV_REG_PC, State.reg(AArch64Register::PC)))
         return E;
       if (auto E = Native.set(

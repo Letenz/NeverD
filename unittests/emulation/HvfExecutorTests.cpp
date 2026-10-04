@@ -106,6 +106,143 @@ TEST_F(HvfExecutor, PartialMappingFailureRetiresBorrowedBacking) {
   EXPECT_TRUE(bool(Recreated)) << llvm::toString(Recreated.takeError());
 }
 #if defined(__arm64__)
+AArch64MachineState maintenanceState(bool User, uint64_t PC) {
+  AArch64MachineState State;
+  State.UserMode = User;
+  for (unsigned N = 0; N < State.Registers.size(); ++N)
+    State.Registers[N] = 0x1234567800000000ull + N;
+  for (unsigned N = 0; N < State.Vectors.size(); ++N)
+    State.Vectors[N] = {0x8765432100000000ull + N, 0xfedcba9800000000ull - N};
+  State.reg(AArch64Register::PC) = PC;
+  State.reg(AArch64Register::SP) = PC + 0xff0;
+  State.reg(AArch64Register::NZCV) = 0xa0000000;
+  State.reg(AArch64Register::FPCR) = 0x01400000;
+  State.reg(AArch64Register::FPSR) = 0x08000015;
+  return State;
+}
+
+TEST_F(HvfExecutor, MaintenanceFaultsDoNotPublishAndAllowRetry) {
+  auto Machine = llvm::cantFail(createHvfAArch64Machine(*Memory));
+  constexpr uint64_t Code = 0x10000;
+  llvm::cantFail(
+      Memory->map(Code, 4096, Read | Write | Execute | UserAccessible));
+  const uint8_t Nop[] = {0x1f, 0x20, 0x03, 0xd5};
+  llvm::cantFail(Memory->write(Code, Nop));
+  for (bool User : {false, true}) {
+    SCOPED_TRACE(User);
+    auto State = maintenanceState(User, Code);
+    llvm::cantFail(Memory->beginRun());
+    auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+    llvm::cantFail(buildAArch64PageTables(*Memory, User));
+    auto *Tail = Memory->data() + aarch64::MaintenanceExitGPA;
+    // Change only instructions AFTER IC/DSB/ISB: startup has already warmed
+    // this stub, and an injection before cache invalidation may be invisible.
+    for (uint32_t Word : {
+             0u,          // UDF reaches the normal #0 fault vector
+             0xd4000002u, // HVC #0
+             0xd4000042u, // HVC #2
+             0x14000002u  // branch to HVC #1 at the wrong PC
+         }) {
+      SCOPED_TRACE(Word);
+      State.reg(AArch64Register::PC) = Code;
+      const auto Before = State;
+      llvm::support::endian::write32le(Tail, Word);
+      llvm::support::endian::write32le(Tail + 8, 0xd4000022);
+      auto E = Machine->step(State, control());
+      EXPECT_TRUE(bool(E));
+      EXPECT_FALSE(E.isA<MachineInterruptedError>());
+      llvm::consumeError(std::move(E));
+      EXPECT_EQ(State.Registers, Before.Registers);
+      EXPECT_EQ(State.Vectors, Before.Vectors);
+      EXPECT_EQ(State.UserMode, Before.UserMode);
+
+      llvm::support::endian::write32le(Tail, aarch64::MaintenanceHypercall);
+      llvm::support::endian::write32le(Tail + 8, 0);
+      auto Expected = Before;
+      Expected.reg(AArch64Register::PC) += 4;
+      ASSERT_EQ(llvm::toString(Machine->step(State, control())), "");
+      EXPECT_EQ(State.Registers, Expected.Registers);
+      EXPECT_EQ(State.Vectors, Expected.Vectors);
+      EXPECT_EQ(State.UserMode, Expected.UserMode);
+    }
+  }
+}
+
+TEST_F(HvfExecutor, MaintenanceCancellationDoesNotPublishAndAllowsCodeRewrite) {
+  auto Machine = llvm::cantFail(createHvfAArch64Machine(*Memory));
+  constexpr uint64_t Code = 0x10000;
+  llvm::cantFail(
+      Memory->map(Code, 4096, Read | Write | Execute | UserAccessible));
+  // The injected native STR is an execution witness. The stopper reads only
+  // this aligned word, never the core API/lock held by the submitting thread.
+  auto *Scratch =
+      Memory->physicalPointer(Memory->mappings().at(Code).Physical) + 0x100;
+  static_assert(std::atomic<uint64_t>::is_always_lock_free);
+  auto *Witness = std::construct_at(
+      reinterpret_cast<std::atomic<uint64_t> *>(Scratch), uint64_t(0));
+  auto DestroyWitness = llvm::scope_exit([&] { std::destroy_at(Witness); });
+  for (bool User : {false, true}) {
+    for (bool Deadline : {true, false}) {
+      SCOPED_TRACE(User);
+      SCOPED_TRACE(Deadline);
+      auto State = maintenanceState(User, Code);
+      State.reg(AArch64Register::X1) = Code + 0x100;
+      const uint8_t Nop[] = {0x1f, 0x20, 0x03, 0xd5};
+      llvm::cantFail(Memory->write(Code, Nop));
+      auto Step = [&](uint32_t Tail, MachineRunControl Control) {
+        llvm::cantFail(Memory->beginRun());
+        auto Release = llvm::scope_exit([&] { Memory->endRun(); });
+        llvm::cantFail(buildAArch64PageTables(*Memory, User));
+        llvm::support::endian::write32le(
+            Memory->data() + aarch64::MaintenanceExitGPA, Tail);
+        llvm::support::endian::write32le(
+            Memory->data() + aarch64::MaintenanceExitGPA + 4,
+            Tail == 0xf9000020 ? 0x14000000 : 0); // str witness; b .
+        return Machine->step(State, Control);
+      };
+      // Warm the guest NOP too; the retry must observe its replacement.
+      ASSERT_EQ(llvm::toString(Step(aarch64::MaintenanceHypercall, control())),
+                "");
+      State.reg(AArch64Register::PC) = Code;
+      const auto Before = State;
+      Witness->store(0);
+      std::atomic<bool> Stop{false}, Done{false};
+      std::thread Stopper;
+      if (!Deadline)
+        Stopper = std::thread([&] {
+          while (!Witness->load() && !Done.load())
+            std::this_thread::yield();
+          if (Witness->load())
+            Stop = true;
+        });
+      auto E =
+          Step(0xf9000020, // str x0, [x1]; then loop inside maintenance
+               {Clock::now() + std::chrono::milliseconds(Deadline ? 50 : 2000),
+                &Stop});
+      Done = true;
+      if (Stopper.joinable())
+        Stopper.join();
+      EXPECT_TRUE(E.isA<MachineInterruptedError>());
+      llvm::consumeError(std::move(E));
+      EXPECT_EQ(Witness->load(), Before.reg(AArch64Register::X0));
+      EXPECT_EQ(State.Registers, Before.Registers);
+      EXPECT_EQ(State.Vectors, Before.Vectors);
+      EXPECT_EQ(State.UserMode, Before.UserMode);
+
+      const uint8_t Move[] = {0x40, 0x05, 0x80, 0xd2}; // mov x0, #42
+      llvm::cantFail(Memory->write(Code, Move));
+      auto Expected = Before;
+      Expected.reg(AArch64Register::X0) = 42;
+      Expected.reg(AArch64Register::PC) += 4;
+      ASSERT_EQ(llvm::toString(Step(aarch64::MaintenanceHypercall, control())),
+                "");
+      EXPECT_EQ(State.Registers, Expected.Registers);
+      EXPECT_EQ(State.Vectors, Expected.Vectors);
+      EXPECT_EQ(State.UserMode, Expected.UserMode);
+    }
+  }
+}
+
 TEST_F(HvfExecutor,
        GuestFaultDoesNotPublishAtEitherARMPrivilegeAndAllowsRetry) {
   auto Machine = llvm::cantFail(createHvfAArch64Machine(*Memory));
