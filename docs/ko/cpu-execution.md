@@ -122,6 +122,8 @@ KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드�
 
 KVM은 `X64HostRegisters.def`와 `X64FPState.def`에 따라 일반 레지스터와 전체 FP/SSE 상태를 마지막으로 완료 확인한 디버그 종료 상태와 비교하고 변경된 입력을 다시 설치합니다. 호스트 쓰기와 컨텍스트 복원도 비교에 포함되며 예외, 취소와 실패는 재사용을 무효화합니다. 단일 단계 설정과 실제 일반/FP 상태 읽기는 명령마다 수행합니다.
 
+x64 KVM은 `KVM_CAP_SYNC_REGS`를 조회하고 지원되는 `KVM_SYNC_X86_REGS`와 `KVM_SYNC_X86_SREGS`를 각각 사용합니다. 완료가 확인된 `KVM_RUN`은 공유 영역에 실제 레지스터를 반환하므로 연속으로 성공한 스텝에서 `KVM_GET_REGS`와 `KVM_GET_SREGS`를 생략할 수 있습니다. 미지원 집합이나 선택적 조회 실패는 ioctl 경로를 유지합니다. 변경된 입력은 여전히 `KVM_SET_GUEST_DEBUG` 전에 설치하며 공유 dirty 비트는 0으로 유지합니다. 예외, 취소, 캡처 실패는 재사용을 무효화합니다. 전체 FP/SSE 캡처는 필수지만 변경 없는 FP 입력의 XSAVE 재인코딩은 생략합니다. 이는 전송 호출 감소이며 전체 실행 속도 향상을 입증하지는 않습니다. [KVM API](https://docs.kernel.org/virt/kvm/api.html#kvm-cap-sync-regs).
+
 하드웨어 실행 자체가 더 짧은 전체 지연 시간을 보장하지는 않습니다. 현재 네이티브 실행은 명령마다 허용 검사, 관찰, 상태 전송과 VM 종료를 수행합니다. 같은 원본 이미지와 시나리오를 동일한 명령·이벤트 예산으로 비교하고 시간과 함께 결과 일치를 보고해야 합니다. CLI 지연에는 시작과 로드도 포함합니다.
 
 checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게스트 실행과 전체 상태 읽기를 한 단계 시간 한도에서 처리합니다. `UC_HOOK_CODE`는 명령 진입에서 빌린 정지 토큰과 기한을 확인합니다. 동기 엔진 호출은 반환 전에 hook 참조를 해제하지만 기계 단계는 상태 게시까지 제어를 유지합니다. Unicorn과 WHP는 전체 CPU 상태를 임시 저장하고 성공한 단계의 게시 직전에 같은 제어 조건을 확인합니다. WHP는 준비 전에 시간 한도를 한 번만 만듭니다. 확인된 x64 CPU 예외는 상태 읽기 중 도착한 정지 요청보다 우선합니다. 읽기가 취소되면 checked RAM 트랜잭션은 추측 쓰기를 버리며 비제한 소프트웨어 계약은 그대로입니다. `MachineInterruptedError`는 확인된 취소와 호스트 또는 상태 읽기 실패를 구분합니다. 공통 checked CPU는 `Stopped` 또는 `Deadline`을 반환하고 CPU/RAM을 유지하며 재시도를 허용합니다. 동시 정지 요청이 있어도 실제 실패는 `BackendFailure`로 남습니다.

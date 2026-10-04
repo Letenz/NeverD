@@ -153,6 +153,19 @@ NEVERD_EMULATION_DOC_TOKEN(
     NativeCaptureTest,
     "ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops")
 NEVERD_EMULATION_DOC_TOKEN(NativeCaptureTest, "NeverDKvmStateTransferTests")
+NEVERD_EMULATION_DOC_PATH(KvmSyncCapture, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(KvmSyncCapture, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_TOKEN(KvmSyncCapture, "KVM_CAP_SYNC_REGS")
+NEVERD_EMULATION_DOC_TOKEN(KvmSyncCapture, "KVM_SYNC_X86_REGS")
+NEVERD_EMULATION_DOC_TOKEN(KvmSyncCapture, "KVM_SYNC_X86_SREGS")
+NEVERD_EMULATION_DOC_TOKEN(KvmSyncCapture, "KVM_SET_GUEST_DEBUG")
+NEVERD_EMULATION_DOC_PATH(KvmSyncTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(KvmSyncTests, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(KvmSyncTests, "KVM_CAP_SYNC_REGS")
+NEVERD_EMULATION_DOC_TOKEN(KvmSyncTests,
+                           "SynchronizedCapturesRemoveOnlySupportedReadIoctls")
+NEVERD_EMULATION_DOC_TOKEN(KvmSyncTests,
+                           "CancelledWarmEntryRequiresFreshSpecialStateOnRetry")
 NEVERD_EMULATION_DOC_PATH(ArmCapture, "docs/architecture.md")
 NEVERD_EMULATION_DOC_PATH(ArmCapture, "docs/cpu-execution.md")
 NEVERD_EMULATION_DOC_PATH(ArmCapture, "docs/driver-emulation.md")

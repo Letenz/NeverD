@@ -76,6 +76,16 @@ bool sameFPRegisters(const X64MachineState &L, const X64MachineState &R) {
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
+  void initializeSynchronizedRegisters() {
+    const int Supported = ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_SYNC_REGS);
+    if (Supported > 0)
+      SynchronizedRegisters =
+          Supported & (KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS);
+    // Request capture only. Install changed inputs with SET_*REGS before
+    // KVM_SET_GUEST_DEBUG, which associates single stepping with that RIP.
+    Run->kvm_valid_regs = SynchronizedRegisters;
+    Run->kvm_dirty_regs = 0;
+  }
   bool requiresExceptionMonitor() const override { return true; }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
@@ -97,10 +107,15 @@ public:
     // The ISA owns FP/SSE layout, TOP rotation and XSAVE init-state semantics.
     kvm_xsave F{};
     auto *Bytes = reinterpret_cast<uint8_t *>(F.region);
-    if (auto E = encodeX64XsaveState(State, {Bytes, sizeof(F.region)}))
-      return E;
+    const bool InstallFP =
+        !WasRunnable || !sameFPRegisters(State, CapturedState);
+    if (InstallFP)
+      if (auto E = encodeX64XsaveState(State, {Bytes, sizeof(F.region)}))
+        return E;
     auto Prepare = [&]() -> llvm::Error {
-      if (ioctl(CPU, KVM_GET_SREGS, &S) < 0)
+      if (WasRunnable && (SynchronizedRegisters & KVM_SYNC_X86_SREGS))
+        S = CapturedSpecial;
+      else if (ioctl(CPU, KVM_GET_SREGS, &S) < 0)
         return diagnostic::error(diagnostic::KvmState);
       const auto PreviousSpecial = S;
       S.cr0 = x64::CR0;
@@ -137,16 +152,15 @@ public:
       S.tr.present = 1;
       kvm_mp_state MP{};
       MP.mp_state = KVM_MP_STATE_RUNNABLE;
-      // Read actual special registers on every entry. Reapply the projection
-      // only when a defined field changed, including CR3, CPL, TLS or CR8.
+      // Use actual special registers, from the last acknowledged run or an
+      // explicit read. Reapply changed projection, CPL, TLS and CR8 fields.
       // Comparing protocol fields excludes kernel-owned structure padding.
       if ((!WasRunnable && ioctl(CPU, KVM_SET_MP_STATE, &MP) < 0) ||
           (!sameState(PreviousSpecial, S) &&
            ioctl(CPU, KVM_SET_SREGS, &S) < 0) ||
           ((!WasRunnable || !sameGeneralRegisters(State, CapturedState)) &&
            ioctl(CPU, KVM_SET_REGS, &R) < 0) ||
-          ((!WasRunnable || !sameFPRegisters(State, CapturedState)) &&
-           ioctl(CPU, KVM_SET_XSAVE, &F) < 0))
+          (InstallFP && ioctl(CPU, KVM_SET_XSAVE, &F) < 0))
         return diagnostic::error(diagnostic::KvmState);
       // KVM associates software single stepping with the current linear RIP.
       // Arm it after any required register installation, including on resume.
@@ -184,9 +198,17 @@ public:
                           R.rip, S.cr2)
                 .str());
       }
-      if (ioctl(CPU, KVM_GET_REGS, &R) < 0 ||
-          ioctl(CPU, KVM_GET_XSAVE, &F) < 0 ||
-          (Exception && ioctl(CPU, KVM_GET_SREGS, &S) < 0))
+      // KVM_RUN owns the shared packet until it returns. Capture it on the
+      // same vCPU worker; gateway authentication precedes publication below.
+      if (SynchronizedRegisters & KVM_SYNC_X86_REGS)
+        R = Run->s.regs.regs;
+      else if (ioctl(CPU, KVM_GET_REGS, &R) < 0)
+        return diagnostic::error(diagnostic::KvmState);
+      if (SynchronizedRegisters & KVM_SYNC_X86_SREGS)
+        S = Run->s.regs.sregs;
+      else if (Exception && ioctl(CPU, KVM_GET_SREGS, &S) < 0)
+        return diagnostic::error(diagnostic::KvmState);
+      if (ioctl(CPU, KVM_GET_XSAVE, &F) < 0)
         return diagnostic::error(diagnostic::KvmState);
       return llvm::Error::success();
     };
@@ -218,6 +240,7 @@ public:
     // Host writes or context restoration are compared against this capture;
     // faults, failed transfers and cancellation invalidate it on next entry.
     CapturedState = Next;
+    CapturedSpecial = S;
     Runnable = true;
     return llvm::Error::success();
   }
@@ -225,6 +248,8 @@ public:
 private:
   MemoryProjection &Memory;
   X64MachineState CapturedState;
+  kvm_sregs CapturedSpecial{};
+  uint64_t SynchronizedRegisters = 0;
   bool Runnable = false;
 };
 } // namespace
@@ -243,6 +268,7 @@ createKvmMachine(MemoryProjection &Memory) {
   if (ioctl(M->CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
     return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                    BackendAvailability::MissingCapability);
+  M->initializeSynchronizedRegisters();
   if (auto E = verifyX64Machine(*M, Memory))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
