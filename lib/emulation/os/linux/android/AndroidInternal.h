@@ -89,6 +89,8 @@ private:
                                        uint64_t ReturnValue = 0);
   BionicResult dlfcn(NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
+  class StringFormatter;
+  BionicResult format(const NativeCallEvent &Call);
   llvm::Expected<std::optional<uint64_t>> mutex(const NativeCallEvent &Call);
 };
 llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,

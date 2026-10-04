@@ -298,6 +298,9 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return once(Call);
   if (Name.starts_with("pthread_mutex"))
     return mutex(Call);
+  if (Name == "snprintf" || Name == "vsnprintf" || Name == "sprintf" ||
+      Name == "vsprintf")
+    return format(Call);
   if (Name == "__errno")
     return Value(ErrnoAddress);
   if (Name == "android_get_device_api_level")
