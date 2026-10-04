@@ -64,6 +64,8 @@ La solicitud queda pendiente y bloquea ejecución, mutaciones, cambios de espaci
 
 ## Extensiones x64 y estado CPU nativo
 
+Las descripciones de instrucciones x64 enmascaradas son la base portable. KVM/WHP añaden `precise_simd_exceptions` a `driver-strict`, `checked-x64-v1` y `checked-user-x64-v1`: la prueba de inicio nativa verifica un `#XM` preciso y ambos reintentos antes de permitir MXCSR sin máscara, `LDMXCSR` y restauración Windows `CONTEXT`. `ExecutionProfiles.def` controla la selección; `supportsSIMDExceptions` expone la capacidad de la instancia. Checked Unicorn sigue enmascarado; ARM64 y HVF no reciben capacidad nueva de excepciones.
+
 El x64 comprobado admite movimientos y lógica SSE/SSE2 heredados acotados, `MOVLHPS`/`MOVHLPS` y las formas escalares enmascaradas `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`. MXCSR conserva estado sticky, redondeo y FTZ; se rechazan excepciones no enmascaradas. KVM/WHP sincronizan los 16 registros XMM y MXCSR; las codificaciones y operandos no enumerados siguen rechazados.
 
 El x64 comprobado admite también las formas heredadas enmascaradas `SS`, `SD`, `PS`, `PD` de `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`. `X64SSEInstructions.def` centraliza anchuras, alineación y admisión. `MaskedSSEArithmeticMatchesIndependentHostExecution` compara registros/RAM con un oráculo CPU anfitrión independiente: cuatro redondeos, FTZ, ceros con signo, subnormales y NaN. `SSEMemoryObserverStopsBeforeResultAndStatusChanges` comprueba la parada antes de los efectos. Las excepciones sin máscara, x87 y AVX siguen excluidos.

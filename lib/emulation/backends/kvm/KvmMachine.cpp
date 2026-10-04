@@ -274,7 +274,7 @@ createKvmMachine(MemoryProjection &Memory) {
     return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                    BackendAvailability::MissingCapability);
   M->initializeSynchronizedRegisters();
-  if (auto E = verifyX64Machine(*M, Memory, &M->MXCSRMask))
+  if (auto E = verifyX64Machine(*M, Memory, &M->MXCSRMask, true))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }

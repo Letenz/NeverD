@@ -27,6 +27,8 @@ select a contract's fixed profile; explicit unsupported values fail.
 | `page_size` | 4096 | Guest mapping granule; other values are rejected |
 | `required_features` | `[]` | Required feature names from [the inventory](../include/neverd/emulation/ExecutionConfiguration.def) |
 
+The masked x64 instruction descriptions are the portable baseline. KVM/WHP add `precise_simd_exceptions` to `driver-strict`, `checked-x64-v1` and `checked-user-x64-v1`: the native startup probe verifies a precise `#XM` and both retries before enabling unmasked MXCSR writes, `LDMXCSR` and Windows `CONTEXT` restoration. `ExecutionProfiles.def` owns selection; `supportsSIMDExceptions` exposes the resolved instance capability. Checked Unicorn remains masked; ARM64 and HVF gain no exception capability here.
+
 `driver-strict` accepts x64 with backend-qualified capabilities; `software-cpu-v1` accepts x64 and ARM64.
 `checked-x64-v1` and `checked-aarch64-v1` require their named architecture
 and execute at supervisor privilege. `checked-user-x64-v1` and

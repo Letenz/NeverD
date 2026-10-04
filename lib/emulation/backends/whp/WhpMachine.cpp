@@ -130,7 +130,7 @@ createWhpX64Partition(MemoryProjection &Memory) {
 llvm::Expected<std::unique_ptr<X64Machine>>
 createWhpMachine(MemoryProjection &Memory) {
   auto M = std::make_unique<WhpMachine>(Memory);
-  if (auto E = verifyX64Machine(*M, Memory, &M->MXCSRMask))
+  if (auto E = verifyX64Machine(*M, Memory, &M->MXCSRMask, true))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }

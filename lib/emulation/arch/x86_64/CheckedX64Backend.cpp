@@ -193,8 +193,10 @@ bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
-                          std::unique_ptr<X64Machine> Machine, bool UserMode) {
-  auto B = std::unique_ptr<CheckedX64Backend>(new CheckedX64Backend(UserMode));
+                          std::unique_ptr<X64Machine> Machine, bool UserMode,
+                          bool SIMDExceptions) {
+  auto B = std::unique_ptr<CheckedX64Backend>(
+      new CheckedX64Backend(UserMode, SIMDExceptions));
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
   B->CPU.UserMode = UserMode;
@@ -241,9 +243,8 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
     return writeX64FPRegister(CPU.FP, R, V);
   if (R == CPURegister::X64MXCSR) {
     // DAZ is admitted only by the machine's immutable capability contract.
-    // SIMD exception delivery remains outside this masked profile.
-    if (V[1] || (V[0] & ~uint64_t(Machine->mxcsrMask())) ||
-        (V[0] & x64::InitialMXCSR) != x64::InitialMXCSR)
+    // Unmasked execution requires the resolved semantic exception capability.
+    if (V[1] || (V[0] & ~uint64_t(Machine->mxcsrMask())) || !permitsMXCSR(V[0]))
       return error(diagnostic::Register);
     CPU.MXCSR = V[0];
     return llvm::Error::success();
@@ -608,14 +609,14 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     if (!Value)
       return Value.takeError();
     // Reserved bits fault before changing MXCSR. An otherwise architectural
-    // value with unmasked exceptions is outside the checked execution profile.
+    // value with unmasked exceptions requires precise machine delivery.
     if (*Value & ~uint64_t(Machine->mxcsrMask())) {
       BackendFault Fault{BackendFaultKind::Interrupt, I.address};
       Fault.Interrupt = unsigned(x64::ExceptionVector::GeneralProtection);
       Fault.ErrorCode = x64::NoSelectorErrorCode;
       return raiseFault(Fault, true);
     }
-    if ((*Value & x64::InitialMXCSR) != x64::InitialMXCSR)
+    if (!permitsMXCSR(*Value))
       return llvm::make_error<UnsupportedExecutionError>();
   }
   if (DeviceAccess)

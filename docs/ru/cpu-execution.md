@@ -64,6 +64,8 @@ neverd cpu-capabilities \
 
 ## Расширения x64 и нативное состояние CPU
 
+Описания маскированных инструкций x64 задают переносимую основу. KVM/WHP добавляют `precise_simd_exceptions` для `driver-strict`, `checked-x64-v1` и `checked-user-x64-v1`: нативная проверка запуска подтверждает точный `#XM` и оба повтора до разрешения немаскированных записей MXCSR, `LDMXCSR` и восстановления Windows `CONTEXT`. Выбор принадлежит `ExecutionProfiles.def`; `supportsSIMDExceptions` сообщает возможность экземпляра. Checked Unicorn сохраняет маскирование; ARM64 и HVF здесь не получают новой поддержки исключений.
+
 Проверенный x64 допускает ограниченные legacy-перемещения и логические операции SSE/SSE2, `MOVLHPS`/`MOVHLPS` и маскированные скалярные формы `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`. MXCSR сохраняет sticky-статус, округление и FTZ; немаскированные исключения отклоняются. KVM/WHP синхронизируют все 16 XMM-регистров и MXCSR; не перечисленные кодировки и операнды остаются запрещены.
 
 Проверенный x64 также допускает маскированные legacy-формы `SS`, `SD`, `PS`, `PD` инструкций `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`. `X64SSEInstructions.def` централизует ширины, выравнивание и допуск. `MaskedSSEArithmeticMatchesIndependentHostExecution` сравнивает регистры/RAM с независимым эталоном CPU хоста: четыре режима округления, FTZ, знаковые нули, субнормальные числа и NaN. `SSEMemoryObserverStopsBeforeResultAndStatusChanges` проверяет остановку до эффектов. Немаскированные исключения, x87 и AVX остаются исключёнными.

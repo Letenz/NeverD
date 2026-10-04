@@ -123,6 +123,43 @@ public:
   }
 };
 class X64MXCSRProbe : public X64ProbeExecution {};
+class SIMDTransport final : public OriginalTransport {
+public:
+  using OriginalTransport::OriginalTransport;
+  enum class Failure { None, MissingFault, WrongVector, ChangedDestination };
+  Failure Mode = Failure::None;
+  llvm::Error step(X64MachineState &State, uint64_t Root,
+                   MachineRunControl Control) override {
+    return llvm::handleErrors(
+        OriginalTransport::step(State, Root, Control),
+        [&](const X64ExceptionError &E) -> llvm::Error {
+          auto Fault = E.exception();
+          if (Mode == Failure::MissingFault)
+            return llvm::Error::success();
+          if (Mode == Failure::WrongVector)
+            Fault.Vector = unsigned(x64::ExceptionVector::InvalidOpcode);
+          if (Mode == Failure::ChangedDestination)
+            State.Xmm[0][0] ^= CorruptBit;
+          return llvm::make_error<X64ExceptionError>(Fault);
+        });
+  }
+};
+TEST_P(X64MXCSRProbe, SIMDDeliveryAndRetryAreRequiredBeforePublication) {
+  using Failure = SIMDTransport::Failure;
+  for (auto Mode : {Failure::None, Failure::MissingFault, Failure::WrongVector,
+                    Failure::ChangedDestination}) {
+    SCOPED_TRACE(unsigned(Mode));
+    SIMDTransport Original(*Machine, *Memory);
+    Original.Mode = Mode;
+    uint32_t Mask = MaskSentinel;
+    auto E = verifyX64Machine(Original, *Memory, &Mask, true);
+    EXPECT_EQ(bool(E), Mode != Failure::None);
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(Mask,
+              Mode == Failure::None ? Machine->mxcsrMask() : MaskSentinel);
+    EXPECT_EQ(llvm::toString(Memory->mutableMemory()), "");
+  }
+}
 TEST_P(X64MXCSRProbe, NativeSaveAndDAZExecutionAuthenticateCapability) {
   MaskTransport Original(*Machine, *Memory);
   uint32_t Mask = MaskSentinel;

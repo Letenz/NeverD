@@ -1013,7 +1013,7 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
 
-`os/windows/exception/X64SIMDException` 依據保留的 MXCSR 與原生觀察到的優先順序，統一負責真實 x64 `#XM` 的 Windows 狀態碼及參數分類。使用者態分發要求故障中繼資料一致，並在例外記錄中包含 `{0, MXCSR}`；僅有黏滯狀態位元不能證明發生了故障。checked 模式下未遮罩的 SIMD 仍停用，等待可攜執行語意與繼續執行路徑驗證。
+`os/windows/exception/X64SIMDException` 依據保留的 MXCSR 與原生觀察到的優先順序，統一負責真實 x64 `#XM` 的 Windows 狀態碼及參數分類。使用者態分發要求故障中繼資料一致，並在例外記錄中包含 `{0, MXCSR}`；僅有黏滯狀態位元不能證明發生了故障。 關於遮罩例外的 x64 指令說明描述可攜基線。KVM/WHP 為 `driver-strict`、`checked-x64-v1` 與 `checked-user-x64-v1` 增加 `precise_simd_exceptions`：原生啟動探針驗證精確 `#XM` 及兩種重試後，才允許未遮罩的 MXCSR 寫入、`LDMXCSR` 與 Windows `CONTEXT` 還原。`ExecutionProfiles.def` 統一負責選擇，`supportsSIMDExceptions` 提供已解析的實例能力。checked Unicorn 仍要求遮罩；本次不擴展 ARM64 或 HVF 的例外能力。
 
 `AddVectoredContinueHandler` 與 `RemoveVectoredContinueHandler` 管理獨立的有序串列，與例外處理器共用最多保留 128 個註冊項的限制。向量例外處理器接受繼續執行後，繼續處理器讀取同一份可修改的例外記錄與 `CONTEXT`；最終內容驗證在這些回呼完成後進行，包含巢狀例外與 DLL 通知。兩類處理器的控制代碼不可交叉移除。`WindowsContinuationTests.cpp` 將順序、提早結束派送、增刪、內容修復、巢狀派送、載入器回呼及程序結束的原創 EXE 案例與原生 Windows 比較。已測 Windows x64 向量處理路徑允許在設定 `EXCEPTION_NONCONTINUABLE` 時繼續執行；這不代表以堆疊框架為基礎的 SEH 行為。原生 ARM64 執行仍未驗證。
 

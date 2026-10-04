@@ -64,6 +64,8 @@ neverd cpu-capabilities \
 
 ## امتدادات x64 وحالة التنفيذ الأصلي
 
+تمثل أوصاف تعليمات x64 المقنّعة الأساس المحمول. يضيف KVM/WHP قدرة `precise_simd_exceptions` إلى `driver-strict` و`checked-x64-v1` و`checked-user-x64-v1`: يتحقق فحص البدء الأصلي من `#XM` دقيق ومن مساري إعادة المحاولة قبل السماح بكتابة MXCSR غير المقنّع و`LDMXCSR` واستعادة Windows `CONTEXT`. يملك `ExecutionProfiles.def` الاختيار وتعرض `supportsSIMDExceptions` قدرة المثيل المحددة. يظل checked Unicorn مقنّعاً؛ ولا تضاف هنا قدرة استثناءات إلى ARM64 أو HVF.
+
 يقبل ملف x64 المفحوص تحريكات ومنطق SSE/SSE2 القديمة، و`MOVLHPS`/`MOVHLPS`، والأشكال العددية المقنّعة `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`. يحفظ MXCSR الأعلام المتراكمة والتقريب وFTZ؛ ويرفض الاستثناءات غير المقنّعة. تُزامن واجهات KVM/WHP سجلات XMM الستة عشر وMXCSR؛ رفض الترميز غير المدرج أو تراكيبه غير المدعومة يستمر وفق قائمة التعليمات المرجعية.
 
 يقبل x64 المفحوص أيضاً الأشكال القديمة المقنّعة `SS` و`SD` و`PS` و`PD` للتعليمات `ADD` و`SUB` و`MUL` و`DIV` و`SQRT` و`MIN` و`MAX`. يوحّد `X64SSEInstructions.def` عروض المعاملات والمحاذاة وقواعد القبول. يقارن `MaskedSSEArithmeticMatchesIndependentHostExecution` أشكال السجلات وRAM بمرجع مستقل على CPU المضيف، شاملاً أوضاع التقريب الأربعة وFTZ والأصفار الموقّعة والمدخلات دون الطبيعية وNaN. ويتحقق `SSEMemoryObserverStopsBeforeResultAndStatusChanges` من التوقف قبل الآثار. تبقى الاستثناءات غير المقنّعة وx87 وAVX غير مقبولة.

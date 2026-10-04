@@ -64,6 +64,8 @@ Die Anfrage bleibt anhängig und blockiert Ausführung, CPU-Mutation, Adressraum
 
 ## x64-Erweiterungen und nativer CPU-Zustand
 
+Die Beschreibungen maskierter x64-Befehle bilden die portable Basis. KVM/WHP ergänzen `precise_simd_exceptions` für `driver-strict`, `checked-x64-v1` und `checked-user-x64-v1`: Die native Startprüfung bestätigt ein präzises `#XM` und beide Wiederholungen vor unmaskierten MXCSR-Schreibzugriffen, `LDMXCSR` und Windows-`CONTEXT`-Wiederherstellung. `ExecutionProfiles.def` verwaltet die Auswahl; `supportsSIMDExceptions` zeigt die Fähigkeit der Instanz. Checked Unicorn bleibt maskiert; ARM64 und HVF erhalten hier keine neue Ausnahmefähigkeit.
+
 Geprüftes x64 unterstützt begrenzte Legacy-SSE/SSE2-Moves und Logik, `MOVLHPS`/`MOVHLPS` sowie maskierte skalare `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`-Formen. MXCSR erhält Sticky-Status, Rundung und FTZ; nicht maskierte Ausnahmen werden abgelehnt. KVM/WHP synchronisieren alle 16 XMM-Register und MXCSR; nicht gelistete Codierungen und Operanden bleiben ausgeschlossen.
 
 Geprüftes x64 erlaubt auch maskierte Legacy-Formen `SS`, `SD`, `PS`, `PD` von `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`. `X64SSEInstructions.def` verwaltet Breiten, Ausrichtung und Zulassung zentral. `MaskedSSEArithmeticMatchesIndependentHostExecution` vergleicht Register/RAM mit einem unabhängigen Host-CPU-Orakel: vier Rundungsmodi, FTZ, vorzeichenbehaftete Nullen, Subnormalzahlen und NaNs. `SSEMemoryObserverStopsBeforeResultAndStatusChanges` prüft den Stopp vor Effekten. Unmaskierte Ausnahmen, x87 und AVX bleiben ausgeschlossen.
