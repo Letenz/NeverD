@@ -1847,6 +1847,10 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         shell: bash
         run: |
+          # Match validated GoogleTest discovery: Ubuntu's CMake 3.28 includes
+          # GetParam() comments in test names for the pinned GoogleTest.
+          python -m pip install cmake==4.2.3
+          cmake --version
           # The pinned WDK uses 64-bit CR8 intrinsics; Clang 18/19 declare
           # incompatible signatures. Use the signed upstream LLVM packages.
           curl --fail --silent --show-error --location \
