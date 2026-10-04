@@ -90,6 +90,7 @@ private:
   BionicResult dlfcn(NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
   llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
+  llvm::Expected<std::optional<uint64_t>> mutex(const NativeCallEvent &Call);
 };
 llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                         const ProcessOptions &Options);

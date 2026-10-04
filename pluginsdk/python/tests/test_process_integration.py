@@ -215,6 +215,25 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.assertEqual([int.from_bytes(memory[i:i + 8], "little")
                           for i in range(0, len(memory), 8)], [0, 6, 0, 6, 0])
         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+        options = json.dumps({"backend": "unicorn", "android": {
+            "entry_symbol": "mutex_dynamic", "initialize": False,
+            "arguments": [0x20000000, 0],
+            "memory": [{"address": 0x20000000, "size": 4096}],
+            "read_memory": [{"address": 0x20000000, "size": 24}],
+            "libraries": {"libpthread-model.so": ["pthread_mutex_lock", "pthread_mutex_unlock"]},
+        }})
+        result = session.emulate_process(str(Path(fixtures) / "mutex-O2-relr.so"),
+                                         "android-aarch64-api28-v1", options)
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(int(result["return_value"], 16), 0)
+        for name in ("pthread_mutex_lock", "pthread_mutex_unlock"):
+            events = result["android"]["native_calls"]
+            lookup = next(e for e in events if e["name"] == "dlsym" and e["symbol"] == name)
+            call = next(e for e in events if e["name"] == name)
+            self.assertEqual(call["library"], "libpthread-model.so")
+            self.assertEqual(call["pc"], lookup["result"])
+            self.assertEqual(int(call["result"], 16), 0)
+        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
 
 if __name__ == "__main__":

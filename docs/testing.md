@@ -2211,6 +2211,15 @@ guest effects through the shared engine. The API 28 cursor contract is checked
 against [pinned AOSP source](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strtok.c);
 this is model evidence, not a native Android device comparison.
 
+Independent mutex fixtures run at O0/O2 with ordinary, APS2 and RELR packing.
+They check eight-byte attributes, four-byte getter outputs, complete 40-byte
+initialization, overlapping attributes, static initializers, all three lock
+types, errno preservation, recursive exhaustion, foreign owners, dynamic
+provider names and explicit unsupported contention. Cross-page tests retain
+unused read-only bytes and reject a denied owner write without publishing
+half a state transition. These are API 28 model checks, not native Android
+device or concurrent-thread equivalence evidence.
+
 Linux regression tests guard the shared kernel-service boundary. Native KVM
 and WHP cells may be unavailable on the host; report their skips separately.
 
