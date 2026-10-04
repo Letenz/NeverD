@@ -2,6 +2,7 @@
 
 #include "../MachO/DarwinRuntimeImport.h"
 #include "SwiftErrorRuntime.h"
+#include "SwiftOnceCallbackABI.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
@@ -936,11 +937,13 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     // Runtime/Once.h uses C_CC, including the context argument passed to the
     // callback. A source binding preserves the runtime call and its predicate;
     // it does not prove ownership or permit eager/omitted initialization.
+    const auto Callback = swiftOnceCallbackSourceABI(Image.Arch);
     Signature.ReturnType = NdType::makeVoid();
-    Signature.Parameters = {{"predicate", Pointer},
-                            {"function", NdType::makePtr(NdType::makeFunc(
-                                             NdType::makeVoid(), {Pointer}))},
-                            {"context", Pointer}};
+    Signature.Parameters = {
+        {"predicate", Pointer},
+        {"function", NdType::makePtr(NdType::makeFunc(
+                         Callback.ReturnType, {Callback.Parameters[0].Type}))},
+        {"context", Pointer}};
   } else if (Name == "swift_beginAccess") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"address", Pointer},

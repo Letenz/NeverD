@@ -7,6 +7,7 @@
 #include "SwiftBooleanRuntimeCandidate.h"
 #include "SwiftMangledClassMethodABI.h"
 #include "SwiftMangledStringBundleABI.h"
+#include "SwiftOnceCallbackABI.h"
 
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
@@ -64,6 +65,10 @@ inline bool nativeEntry(const BinaryImage &Image, va_t Address,
   const bool NativeAnalysis =
       Signature.Origin == SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
       (ScalarReturn || PairReturn);
+  // Discovery can supply the exact once callback declaration before lowering.
+  // Its origin tag is not publication authority: the source once owner must
+  // rediscover the current reference and context proof at that boundary.
+  const bool OnceCallback = isSwiftOnceCallbackSourceABI(Signature);
   // The closed mangled String bundle has a pointer in its second return word.
   // Recheck the exact symbol and full ABI here instead of treating its origin
   // tag as evidence or forcing its pair through native integer inference.
@@ -76,7 +81,7 @@ inline bool nativeEntry(const BinaryImage &Image, va_t Address,
       Signature.Origin == SourceFunctionTypeHint::OriginKind::SwiftMangled
           ? swiftMangledObjCObjectPairVoidMethodSourceABI(Image, Address)
           : std::nullopt;
-  if ((!NativeAnalysis &&
+  if ((!NativeAnalysis && !OnceCallback &&
        (!SwiftStringBundle ||
         !equalSourceABIs(*SwiftStringBundle, Signature)) &&
        (!SwiftClassMethod || !equalSourceABIs(*SwiftClassMethod, Signature))) ||
@@ -283,11 +288,13 @@ inline std::vector<SwiftBooleanProjection> qualifySwiftBooleanProjections(
       return {};
   const auto Hints = buildObjCSourceCallHints(Image, Low);
   const auto Virtuals = buildSwiftVirtualCallHints(Image, Low);
-  if (EntrySignature.Origin ==
-          SourceFunctionTypeHint::OriginKind::SwiftMangled &&
-      swiftMangledObjCObjectPairVoidMethodSourceABI(Image, Low.Entry)) {
+  if (isSwiftOnceCallbackSourceABI(EntrySignature) ||
+      (EntrySignature.Origin ==
+           SourceFunctionTypeHint::OriginKind::SwiftMangled &&
+       swiftMangledObjCObjectPairVoidMethodSourceABI(Image, Low.Entry))) {
     size_t Budget = 1U << 18;
-    if (!immutableNativeFrameMachineMatches(Image, Low, Budget))
+    if (!immutableNativeFrameMachineMatches(
+            Image, Low, Budget, ImmutableNativeFrameTerminators::MatchDecoder))
       return {};
   }
   std::vector<SwiftBooleanProjection> Selected;

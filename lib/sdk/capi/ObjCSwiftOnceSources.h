@@ -1,6 +1,7 @@
 #ifndef NEVERD_SDK_CAPI_OBJCSWIFTONCESOURCES_H
 #define NEVERD_SDK_CAPI_OBJCSWIFTONCESOURCES_H
 
+#include "../../loader/Swift/SwiftOnceCallbackABI.h"
 #include "ObjCSourceBindings.h"
 
 #include "neverd/pipeline/NativeSourceHints.h"
@@ -1352,14 +1353,7 @@ objcThunkContract(const HighFunc &F, const BinaryImage &Image) {
 }
 
 inline SourceFunctionTypeHint callbackHint(Arch Architecture) {
-  SourceFunctionTypeHint Hint;
-  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
-  Hint.ReturnType = NdType::makeVoid();
-  Hint.Parameters = {{"once_context", NdType::makePtr(NdType::makeVoid())}};
-  std::string Error;
-  if (!assignDarwinScalarSourceABI(Hint, Architecture, Error))
-    throw std::invalid_argument(Error);
-  return Hint;
+  return swiftOnceCallbackSourceABI(Architecture);
 }
 
 inline SourceFunctionTypeHint dispatchCallbackHint(Arch Architecture) {
@@ -2347,6 +2341,80 @@ discoverSwiftOnceSources(const BinaryImage &Image,
     }
   }
   return Plan;
+}
+
+// A declaration supplied during discovery is not a current callback proof.
+// This stricter entry consumer also requires a direct reference through one
+// authenticated libswiftCore veneer; legacy or nested-only plans do not grant
+// it. Other source once consumers retain their own independent contracts.
+inline bool currentSwiftOnceCallbackEntry(const HighFunc &Function,
+                                          const BinaryImage &Image,
+                                          const PipelineResult &Result) {
+  if (!Result.Success || Result.SourceImage != &Image ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      !Function.SourceTypeHint ||
+      !isSwiftOnceCallbackSourceABI(*Function.SourceTypeHint) ||
+      !swift_once_source_detail::ignoresContext(Function))
+    return false;
+  const auto Plan = discoverSwiftOnceSources(Image, Result);
+  const auto Callback = Plan.CallbackHints.find(Function.Entry);
+  if (Callback == Plan.CallbackHints.end() ||
+      !equalSourceABIs(Callback->second, *Function.SourceTypeHint))
+    return false;
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  if (std::count(Image.DynInfo.NeededLibs.begin(),
+                 Image.DynInfo.NeededLibs.end(), Provider.str()) != 1)
+    return false;
+  const auto Storage = Image.collectImportStorageSlots();
+  for (const auto &Caller : Result.HighFuncs) {
+    if (!Caller.SourceTypeHint)
+      continue;
+    bool Found = false;
+    size_t Budget = 100000;
+    walkStmts(Caller.Body, [&](const HighStmt &Statement) {
+      forEachRhsExpr(Statement, [&](const ExprPtr &Root) {
+        std::vector<ExprPtr> Pending{Root};
+        while (!Pending.empty() && Budget && !Found) {
+          --Budget;
+          const auto E = Pending.back();
+          Pending.pop_back();
+          if (!E)
+            continue;
+          E->forEachChildExpr([&](const ExprPtr &Child) {
+            if (Pending.size() < Budget)
+              Pending.push_back(Child);
+            else
+              Budget = 0;
+          });
+          if (!swift_once_source_detail::onceCall(*E, Image) ||
+              objc_binding_detail::constantAddress(*E->Operands[1]) !=
+                  Function.Entry)
+            continue;
+          const auto Predicate =
+              objc_binding_detail::constantAddress(*E->Operands[0]);
+          if (!Predicate ||
+              !objc_binding_detail::oncePredicateStorageHint(Image, *Predicate))
+            continue;
+          const auto Slot = darwinImportVeneerSlot(Image, E->CallAddr);
+          if (!Slot || *Slot != E->SourceCallHint->TargetAddress ||
+              Storage.Conflicts.count(*Slot) ||
+              !Image.isValidImportStorageSlot(*Slot, "_swift_once"))
+            continue;
+          const auto Bind = Image.DyldBindSlots.find(*Slot);
+          const auto Current = Storage.Slots.find(*Slot);
+          if (Bind != Image.DyldBindSlots.end() &&
+              Bind->second.Name == "_swift_once" && !Bind->second.WeakImport &&
+              !Bind->second.Addend && Bind->second.Module == Provider &&
+              Current != Storage.Slots.end() &&
+              Current->second.Name == "_swift_once" && !Current->second.Addend)
+            Found = true;
+        }
+      });
+    });
+    if (Budget && Found)
+      return true;
+  }
+  return false;
 }
 
 inline size_t applySwiftOnceSourceHints(const SwiftOnceSourcePlan &Plan,

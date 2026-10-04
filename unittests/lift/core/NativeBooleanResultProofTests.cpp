@@ -707,6 +707,86 @@ TEST(NativeBooleanResultProof, NarrowPredicateImmediateBeforeBooleanCall) {
   }
 }
 
+TEST(NativeBooleanResultProof, NarrowLiteralSnapshotsRequireCurrentBytes) {
+  for (const auto Opcode :
+       {NdOp::INT_EQUAL, NdOp::INT_NOTEQUAL, NdOp::INT_LESS, NdOp::INT_SLESS,
+        NdOp::INT_LESSEQUAL, NdOp::INT_SLESSEQUAL, NdOp::INT_CARRY,
+        NdOp::INT_SOVF, NdOp::INT_SBOR}) {
+    for (bool Reverse : {false, true}) {
+      for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+        SCOPED_TRACE(int(Opcode));
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(Mutation);
+        Fixture F;
+        const auto A = NdVar::tmp(0x10000, 8);
+        const auto B = NdVar::tmp(0x10008, 4);
+        std::vector<LowOp> Snapshot{
+            operation(NdOp::COPY, A, {NdVar::reg(a64reg::X19, 8)}),
+            operation(NdOp::COPY, B, {NdVar::cst(1, 4)})};
+        if (Mutation == 1)
+          Snapshot[1].Inputs[0] = NdVar::reg(a64reg::X20, 4);
+        if (Mutation == 2 || Mutation == 3)
+          Snapshot.push_back(operation(
+              NdOp::COPY, NdVar::tmp(B.Offset + 1, 1),
+              {Mutation == 2 ? NdVar::reg(a64reg::X20, 1) : NdVar::cst(0, 1)}));
+        if (Mutation == 4)
+          Snapshot[1].Inputs[0] = NdVar::tmp(0x10020, 4);
+        if (Mutation == 5) {
+          Snapshot[1].Output.Size = 2;
+          Snapshot[1].Inputs[0].Size = 2;
+        }
+        Snapshot.push_back(
+            operation(Opcode, NdVar::reg(a64reg::CFLAG, Mutation == 6 ? 8 : 1),
+                      {Reverse ? B : A, Reverse ? A : B}));
+        const size_t Count = Snapshot.size();
+        Snapshot.insert(Snapshot.end(),
+                        {call(), copy(a64reg::X8, a64reg::X0), mask(), ret()});
+        F.linear(std::move(Snapshot));
+        auto &Block = F.Low.Blocks.front();
+        for (size_t I = 0; I < Block.Ops.size(); ++I) {
+          Block.Ops[I].Addr =
+              F.Low.Entry + (I < Count ? 0 : (I - Count + 1) * 4);
+          Block.Ops[I].Seq = I < Count ? I : 0;
+        }
+        Block.EndAddr = Block.Ops.back().Addr + 4;
+        if (Mutation == 7) {
+          // An instruction-local temporary cannot survive into a later one.
+          for (size_t I = Count - 1; I < Block.Ops.size(); ++I)
+            Block.Ops[I].Addr += 4;
+          Block.EndAddr += 4;
+        }
+        F.bindCalls();
+        EXPECT_EQ(bool(F.prove()), Mutation == 0 || Mutation == 3);
+      }
+    }
+  }
+}
+
+TEST(NativeBooleanResultProof, LiteralSnapshotDoesNotHideDifferingFlagInput) {
+  for (bool Differs : {false, true}) {
+    Fixture F;
+    const auto A = NdVar::tmp(0x10000, 8);
+    const auto B = NdVar::tmp(0x10008, 4);
+    F.linear(
+        {call(),
+         operation(NdOp::COPY, A,
+                   {NdVar::reg(Differs ? a64reg::X0 : a64reg::X19, 8)}),
+         operation(NdOp::COPY, B, {NdVar::cst(1, 4)}),
+         operation(NdOp::INT_CARRY, NdVar::reg(a64reg::CFLAG, 1), {A, B}),
+         operation(NdOp::STORE, {},
+                   {NdVar::reg(a64reg::SP, 8), NdVar::reg(a64reg::CFLAG, 1)}),
+         mask(a64reg::X0, a64reg::X0), ret()});
+    auto &Block = F.Low.Blocks.front();
+    for (size_t I = 1; I < Block.Ops.size(); ++I) {
+      Block.Ops[I].Addr = F.Low.Entry + (I < 4 ? 4 : (I - 2) * 4);
+      Block.Ops[I].Seq = I < 4 ? I - 1 : 0;
+    }
+    Block.EndAddr = Block.Ops.back().Addr + 4;
+    F.bindCalls();
+    EXPECT_EQ(bool(F.prove()), !Differs);
+  }
+}
+
 TEST(NativeBooleanResultProof,
      FixedPointerCallObservesArgumentsNotUnrelatedVolatileBytes) {
   Fixture F;

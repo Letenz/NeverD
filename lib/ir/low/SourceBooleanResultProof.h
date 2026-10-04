@@ -143,6 +143,7 @@ struct Transfer {
   bool operator()(const LowBlock &Block, Bits &Registers) {
     Bits Temps;
     std::set<uint64_t> DefinedTemps;
+    std::set<uint64_t> LiteralTemps;
     va_t Instruction = InvalidVA;
     auto Read = [&](const NdVar &V, unsigned Byte) {
       return V.isConst()
@@ -154,6 +155,16 @@ struct Transfer {
         if (Read(V, I))
           return true;
       return false;
+    };
+    auto Literal = [&](const NdVar &V) {
+      if (V.isConst())
+        return true;
+      if (!V.isTemp())
+        return false;
+      for (unsigned I = 0; I < V.Size; ++I)
+        if (!LiteralTemps.count(V.Offset + I))
+          return false;
+      return true;
     };
     auto ObserveLocation = [&](const SourceABIValueLocation &Location) {
       if (Location.Kind == SourceABICarrierKind::None)
@@ -171,6 +182,7 @@ struct Transfer {
       if (Op.Addr != Instruction) {
         Temps.clear();
         DefinedTemps.clear();
+        LiteralTemps.clear();
         Instruction = Op.Addr;
       }
       if (Op.NumInputs > 6 || Op.Output.Size > 64 ||
@@ -400,10 +412,11 @@ struct Transfer {
                                        : Op.Inputs[I].Size != Op.Output.Size)
               return false;
         } else {
-          // AArch64 CMN/CMP can lift comparisons and arithmetic flags from a
-          // full-width register and a narrower encoded immediate. This
-          // transfer never calculates a predicate: identical inputs stay
-          // identical, and a differing input taints the whole result byte.
+          // AArch64 can snapshot a narrower encoded immediate before ADDS
+          // overwrites a source register. Retain that literal shape only for
+          // currently defined temporary bytes copied within this instruction.
+          // This never calculates a predicate: identical inputs stay identical,
+          // and a differing input still taints the whole result byte.
           const bool NarrowPredicateImmediate =
               (Op.Opcode == NdOp::INT_EQUAL ||
                Op.Opcode == NdOp::INT_NOTEQUAL || Op.Opcode == NdOp::INT_LESS ||
@@ -412,10 +425,10 @@ struct Transfer {
                Op.Opcode == NdOp::INT_SLESSEQUAL ||
                Op.Opcode == NdOp::INT_CARRY || Op.Opcode == NdOp::INT_SOVF ||
                Op.Opcode == NdOp::INT_SBOR) &&
-              ((Op.Inputs[0].isConst() &&
+              ((Literal(Op.Inputs[0]) &&
                 Op.Inputs[0].Size <= Op.Inputs[1].Size &&
                 Op.Inputs[1].Size <= 8) ||
-               (Op.Inputs[1].isConst() &&
+               (Literal(Op.Inputs[1]) &&
                 Op.Inputs[1].Size <= Op.Inputs[0].Size &&
                 Op.Inputs[0].Size <= 8));
           if (Op.Output.Size != 1 || (Op.Inputs[0].Size != Op.Inputs[1].Size &&
@@ -438,6 +451,8 @@ struct Transfer {
       } else if (Op.Opcode != NdOp::NOP || Op.NumInputs || Op.Output.Size)
         return false;
       if (Op.Output.Size) {
+        const bool LiteralCopy =
+            Op.Opcode == NdOp::COPY && Literal(Op.Inputs[0]);
         auto &Output = Op.Output.isReg() ? Registers : Temps;
         if (Op.Output.isReg() &&
             TRI.writeZeroExtends(Op.Output.Offset, Op.Output.Size)) {
@@ -448,12 +463,17 @@ struct Transfer {
         }
         for (unsigned I = 0; I < Value.size(); ++I) {
           put(Output, Op.Output.Offset + I, Value[I]);
-          if (Op.Output.isTemp())
+          if (Op.Output.isTemp()) {
             DefinedTemps.insert(Op.Output.Offset + I);
+            if (LiteralCopy)
+              LiteralTemps.insert(Op.Output.Offset + I);
+            else
+              LiteralTemps.erase(Op.Output.Offset + I);
+          }
         }
       }
       if (Registers.size() > MaxFacts || Temps.size() > MaxFacts ||
-          DefinedTemps.size() > MaxFacts)
+          DefinedTemps.size() > MaxFacts || LiteralTemps.size() > MaxFacts)
         return false;
     }
     return true;

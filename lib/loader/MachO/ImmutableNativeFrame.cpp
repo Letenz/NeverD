@@ -74,14 +74,16 @@ bool sameOperation(const LowOp &A, const LowOp &B) {
 }
 } // namespace
 
-bool immutableNativeFrameMachineMatches(const BinaryImage &Image,
-                                        const LowFunc &Function,
-                                        size_t &Budget) {
+bool immutableNativeFrameMachineMatches(
+    const BinaryImage &Image, const LowFunc &Function, size_t &Budget,
+    ImmutableNativeFrameTerminators Policy) {
   // Re-lift with the canonical decoder, including all frame address arithmetic,
   // stores, loads and flags. A saved LowIR annotation is not machine evidence.
   // Direct tails replay the CFG owner's operations only after authenticating
   // the original B and a current function entry outside this function's
-  // blocks. Indirect tails, opaque exits and jump tables remain unsupported.
+  // blocks. Decoder-classified opaque terminators retain their exact boundary;
+  // matching their bytes supplies no frame-effect or source-semantics contract.
+  // Indirect tails and jump tables remain unsupported.
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Arch != Arch::AArch64 || Image.Bits != Bitness::Bits64 ||
       !Function.Entry || Function.Entry % 4 ||
@@ -213,6 +215,19 @@ bool immutableNativeFrameMachineMatches(const BinaryImage &Image,
             Successors.clear();
           Successors.insert(*Immediate);
         }
+      }
+      // The CFG owner derives trap-only termination from this same decoder,
+      // since an opaque trap has no BRANCH/CALL/RETURN LowOp. Replaying only
+      // the slice would invent a fallthrough and reject an otherwise exact
+      // body. Effects and admissible trap kinds remain each consumer's job.
+      if (!DirectTail && Control == LowInstructionControl::None &&
+          Dec.isFunctionTerminator(Insn) && !Dec.isResumableTrap(Insn)) {
+        if (Policy != ImmutableNativeFrameTerminators::MatchDecoder)
+          return false;
+        Control = LowInstructionControl::Terminator;
+        Flags = LowInstructionControlFlag::Terminator;
+        EndsBlock = true;
+        Successors.clear();
       }
       if (Control != B.Control || Flags != B.ControlFlags ||
           Immediate != B.Immediate ||

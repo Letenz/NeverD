@@ -7,11 +7,16 @@
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 
 namespace neverd {
+enum class ImmutableNativeFrameTerminators { ExcludeOpaque, MatchDecoder };
+
 /// Loader-owned authentication only. Byte identities and frame effects remain
 /// in SourceFrameAnalysis and the individual effect owners.
-bool immutableNativeFrameMachineMatches(const BinaryImage &Image,
-                                        const LowFunc &Function,
-                                        size_t &Budget);
+/// Opaque exits remain excluded unless a consumer separately proves their
+/// control and observation semantics, then opts into decoder-only matching.
+bool immutableNativeFrameMachineMatches(
+    const BinaryImage &Image, const LowFunc &Function, size_t &Budget,
+    ImmutableNativeFrameTerminators =
+        ImmutableNativeFrameTerminators::ExcludeOpaque);
 
 std::optional<SourceFunctionTypeHint> immutableNativeDirectCallABI(
     const BinaryImage &Image, va_t Target,

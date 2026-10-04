@@ -4553,19 +4553,20 @@ inline bool swiftInlineSmallStringStorePair(const HighStmt &First,
 }
 
 inline std::optional<SourceCallTypeHint>
-swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base);
+swiftStaticStringStorageHint(const BinaryImage &Image, va_t Base);
 
-// Swift can leave a file-private literal array of (String, String) pairs in
-// writable __data without an nlist entry for the array itself. The two words
-// immediately before it give the pair and string counts; the next data symbol
-// bounds the object. Rebuild only arrays made entirely of inline ASCII Swift
-// Strings, with no relocations or named object overlapping their bytes.
+// Prefer one complete named static String storage object, including direct
+// payload aliases. Swift can also leave a file-private (String, String) array
+// without an nlist entry; that separate fallback validates its count words,
+// complete inline ASCII payload and exact next boundary.
 inline std::optional<SourceCallTypeHint>
-swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
+swiftInlineStringArrayHint(const BinaryImage &Image, va_t Address) {
+  if (auto Object = swiftStaticStringStorageHint(Image, Address))
+    return Object;
   // A direct payload reference must alias its enclosing static object when
   // that complete object is proved, including references in other functions.
   if (Address >= 40)
-    if (auto Object = swiftStaticStringPairStorageHint(Image, Address - 40))
+    if (auto Object = swiftStaticStringStorageHint(Image, Address - 40))
       return Object;
   if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
@@ -4656,10 +4657,10 @@ swiftPrivateScalarStorageHint(const BinaryImage &Image, va_t Address) {
 
 // swift_initStaticObject owns the once token immediately before its object.
 // Preserve that token, both header words, and the complete bounded literal
-// payload in one named storage object. Only inline ASCII String pairs need no
-// pointer relocation; a symbol gap alone is not an array-layout proof.
+// payload in one named storage object. Only canonical inline ASCII Strings
+// need no pointer relocation; a symbol gap alone is not an array-layout proof.
 inline std::optional<SourceCallTypeHint>
-swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base) {
+swiftStaticStringStorageHint(const BinaryImage &Image, va_t Base) {
   if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
       !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
@@ -4691,11 +4692,58 @@ swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base) {
     return std::nullopt;
   const auto &Variable = Parsed.Root->Children[0];
   if (Variable.Kind != "OutlinedVariable" || !Variable.Index || Variable.Text ||
-      !Variable.Children.empty() || Parsed.Root->Children[1].Kind != "Function")
+      !Variable.Children.empty())
     return std::nullopt;
-  const uint64_t Width = 40 + Count * 32;
+  const auto &Owner = Parsed.Root->Children[1];
+  unsigned StringsPerElement = 2;
+  if (Owner.Kind != "Function") {
+    // Older deployment targets outline a String array inside its one-time
+    // initializer: one once word, two heap words, count, doubled capacity and
+    // one 16-byte String per element. The complete declaration and initializer
+    // identity distinguish it from the pair-array form above. Neither form
+    // derives its extent from the following symbol alone.
+    const auto Shape = [](const auto &Node, llvm::StringRef Kind,
+                          size_t Children) {
+      return Node.Kind == Kind && !Node.Text && !Node.Index &&
+             Node.Children.size() == Children;
+    };
+    const auto Text = [](const auto &Node, llvm::StringRef Kind) {
+      return Node.Kind == Kind && Node.Text && !Node.Text->empty() &&
+             !Node.Index && Node.Children.empty();
+    };
+    if (Variable.Index != 0 || !Name.ends_with("Tv_") ||
+        !Shape(Owner, "GlobalVariableOnceFunction", 2))
+      return std::nullopt;
+    const auto &Context = Owner.Children[0];
+    const auto &Properties = Owner.Children[1];
+    if (!Shape(Context, "Class", 2) || !Text(Context.Children[0], "Module") ||
+        !Text(Context.Children[1], "Identifier") ||
+        !Shape(Properties, "GlobalVariableOnceDeclList", 1) ||
+        !Text(Properties.Children[0], "Identifier"))
+      return std::nullopt;
+    const auto Initializer = llvm::StringRef(Storage->Name).drop_back(3);
+    size_t Initializers = 0;
+    for (const auto &Symbol : Image.Symbols)
+      if (Symbol.Name == Initializer) {
+        if (!Symbol.IsFunc || !readImmutableCodeBytes(Image, Symbol.Addr, 4))
+          return std::nullopt;
+        ++Initializers;
+      }
+    if (Initializers != 1)
+      return std::nullopt;
+    StringsPerElement = 1;
+  }
+  const uint64_t Width = 40 + Count * StringsPerElement * 16;
   if (Base > InvalidVA - Width || (Storage->Size && Storage->Size != Width))
     return std::nullopt;
+  if (StringsPerElement == 1)
+    for (const auto &Symbol : Image.Symbols)
+      if (&Symbol != Storage &&
+          (Symbol.Name == Storage->Name ||
+           (Symbol.Addr >= Base && Symbol.Addr - Base < Width) ||
+           (Symbol.Addr < Base && Symbol.Size &&
+            Base - Symbol.Addr < Symbol.Size)))
+        return std::nullopt;
   auto Hint = localStorageHint(Image, Base, Width);
   const auto *Bytes = Hint ? Image.readVA(Base, Width) : nullptr;
   if (!Bytes)
@@ -4712,7 +4760,7 @@ swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base) {
   for (const auto &Export : Image.Exports)
     if (Export.Addr >= Base && Export.Addr < Base + Width)
       return std::nullopt;
-  for (uint64_t I = 0; I < Count * 2; ++I) {
+  for (uint64_t I = 0; I < Count * StringsPerElement; ++I) {
     const auto *String = Bytes + 40 + I * 16;
     if ((String[15] & 0xf0) != 0xe0 ||
         !isCanonicalSwiftSmallString(
@@ -4722,7 +4770,10 @@ swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base) {
   }
   // Revalidate this complete layout when the binding is consumed, while
   // sharing the ordinary named-storage helper with direct accesses.
-  Hint->TargetName = "swift_static_string_pairs:" + Storage->Name;
+  Hint->TargetName =
+      std::string(StringsPerElement == 1 ? "swift_static_strings:"
+                                         : "swift_static_string_pairs:") +
+      Storage->Name;
   return Hint;
 }
 
@@ -7220,7 +7271,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         return Expression;
       }
       if (auto Storage =
-              swiftInlineStringPairArrayHint(Image, Original->ConstVal)) {
+              swiftInlineStringArrayHint(Image, Original->ConstVal)) {
         const va_t Base = Storage->TargetAddress;
         const uint64_t Width = Storage->ByteCount;
         auto Helper = HighExpr::makeCall({}, 0, {});
@@ -8289,7 +8340,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                             Expression->Operands.size() == 2 &&
                             runtimeBindingMatches(*Expression->SourceCallHint,
                                                   *Expected)
-                        ? swiftStaticStringPairStorageHint(Image, *Address - 8)
+                        ? swiftStaticStringStorageHint(Image, *Address - 8)
                         : std::nullopt;
         if (!Hint && ExactTarget && Address && *Address >= 8) {
           const auto Object = swiftStaticRootObjectStorage(Image, *Address - 8);
@@ -8491,6 +8542,32 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       // the complete address leaf into the permanent shared string pool;
       // neither a borrowed buffer nor a decoded Swift object is substituted.
       if (TaggedCString == Index) {
+        Operand = Copy(Operand, Depth + 1, false, true, false);
+        continue;
+      }
+      // A complete array base remains an address when machine pointer
+      // arithmetic uses integer carriers, including beneath a dynamic load.
+      // Relocate only the authenticated address occurrence; an equal scalar
+      // immediate or an address fragment must keep its original meaning.
+      if (Operand && Operand->Kind == ExprKind::Const && Operand->Type &&
+          Operand->Type->Size == 8 &&
+          (Operand->Type->Kind == NdTypeKind::Int ||
+           Operand->Type->Kind == NdTypeKind::Ptr) &&
+          Operand->Operands.empty() && !Operand->SourceCallHint &&
+          !Operand->IndirectTarget && Operand->IntrinsicId == Intrinsic::None &&
+          Operand->IntrinsicOutputs.empty() &&
+          Operand->MemoryOrdering == NdMemoryOrdering::None &&
+          Operand->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          (Operand->ConstProvenance == ConstantAddressProvenance::Address ||
+           Operand->ConstProvenance ==
+               ConstantAddressProvenance::DataAddress) &&
+          (Operand->AddressOwnerVA == InvalidVA ||
+           Operand->AddressOwnerVA == Operand->ConstVal) &&
+          Expression->Kind == ExprKind::BinOp &&
+          Expression->Operands.size() == 2 &&
+          (Expression->Op == NdOp::INT_ADD ||
+           (Expression->Op == NdOp::INT_SUB && Index == 0)) &&
+          swiftStaticStringStorageHint(Image, Operand->ConstVal)) {
         Operand = Copy(Operand, Depth + 1, false, true, false);
         continue;
       }
@@ -9306,9 +9383,11 @@ inline bool objcSourceCallBound(
              objc_projection_detail::sameHint(Proof->Hint.Signature, Hint);
     }
     if (llvm::StringRef(Binding.TargetName)
-            .starts_with("swift_static_string_pairs:")) {
+            .starts_with("swift_static_string_pairs:") ||
+        llvm::StringRef(Binding.TargetName)
+            .starts_with("swift_static_strings:")) {
       const auto Expected =
-          swiftStaticStringPairStorageHint(Image, Binding.TargetAddress);
+          swiftStaticStringStorageHint(Image, Binding.TargetAddress);
       return Expected && Binding.TargetName == Expected->TargetName &&
              Binding.ByteCount == Expected->ByteCount &&
              Binding.Selector.empty() && Binding.OwnerClass.empty() &&
@@ -9342,7 +9421,7 @@ inline bool objcSourceCallBound(
     if (!Expected && Binding.ByteCount == 8 && !OptionalURL)
       Expected = oncePredicateStorageHint(Image, Binding.TargetAddress);
     if (!Expected) {
-      auto Array = swiftInlineStringPairArrayHint(Image, Binding.TargetAddress);
+      auto Array = swiftInlineStringArrayHint(Image, Binding.TargetAddress);
       if (Array && Array->ByteCount == Binding.ByteCount)
         Expected = std::move(Array);
     }
@@ -10811,7 +10890,7 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
       Hint = objc_binding_detail::oncePredicateStorageHint(Image, Address);
     if (!Hint) {
       auto Array =
-          objc_binding_detail::swiftInlineStringPairArrayHint(Image, Address);
+          objc_binding_detail::swiftInlineStringArrayHint(Image, Address);
       if (Array && Array->ByteCount == Width)
         Hint = std::move(Array);
     }

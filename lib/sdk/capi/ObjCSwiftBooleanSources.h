@@ -6,6 +6,7 @@
 #include "ObjCNativeSourceCallCallees.h"
 #include "ObjCSourceBindings.h"
 #include "ObjCSourceProjection.h"
+#include "ObjCSwiftOnceSources.h"
 #include "SourceExpressionIdentity.h"
 
 #include "neverd/ir/high/MedToHigh.h"
@@ -77,6 +78,13 @@ inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
   if (Instructions.size() != Audit->DecodedInstructions ||
       Instructions.size() != Audit->LiftedInstructions)
     return false;
+  if (isSwiftOnceCallbackSourceABI(*Function.SourceTypeHint)) {
+    // A saved ABI or discovery plan cannot authorize a callback after its
+    // caller, predicate, import, target or context usage has changed. Reuse
+    // the once owner's current graph proof instead of inferring from a name.
+    if (!currentSwiftOnceCallbackEntry(Function, Image, Result))
+      return false;
+  }
   if (Function.SourceTypeHint->Origin ==
       SourceFunctionTypeHint::OriginKind::NativeAnalysis) {
     if (!Med)
