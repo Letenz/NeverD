@@ -145,8 +145,10 @@ target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/
 include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
+  AndroidMutexTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
+target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
 include(AndroidFixtures.cmake)
 
 # Batch PE scenarios use the common harness timeout; each guest workload
