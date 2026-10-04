@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
+#include "X64DAZTestSupport.h"
 #include "arch/x86_64/X64Exception.h"
 #include "arch/x86_64/X64Machine.h"
 #include "gtest/gtest.h"
@@ -319,6 +320,8 @@ TEST_P(X64Data, VectorStorePermissionFaultPreservesBothWords) {
 
 void X64DataBase::arithmetic(uint64_t DAZ, llvm::ArrayRef<uint8_t> Selected) {
 #if defined(__x86_64__) || defined(_M_X64)
+  if (DAZ && !(daz_test::hostMXCSRMask() & DAZ))
+    GTEST_SKIP() << daz_test::HostUnavailable;
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
 #undef NEVERD_FP_BYTES

@@ -4,7 +4,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "X64VectorTestSupport.h"
+#include "X64DAZTestSupport.h"
 #include "arch/x86_64/X64Exception.h"
 #include "arch/x86_64/X64Machine.h"
 #include "core/ExecutionDiagnostics.h"
@@ -150,7 +150,8 @@ Result reference(const Conversion &C, const Input &I, uint64_t Control) {
     const auto Raw = C.SourceBits == DoubleBits
                          ? I.Right[Lane]
                          : I.Right[Lane / 2] >> ((Lane % 2) * SingleBits);
-    const llvm::APFloat Value(Format, llvm::APInt(C.SourceBits, Raw));
+    const auto Value =
+        daz_test::operand(Format, llvm::APInt(C.SourceBits, Raw), Control);
     llvm::APSInt Integer(SingleBits, false);
     bool Exact = false;
     const auto Converted = Value.convertToInteger(
@@ -191,8 +192,11 @@ std::vector<uint8_t> instruction(const Conversion &C, unsigned Dest = 0,
   return Bytes;
 }
 
-void nativeOracle(OperationKind Kind) {
+void nativeOracle(OperationKind Kind, uint64_t DAZ = 0) {
 #if defined(__x86_64__) || defined(_M_X64)
+  const auto Mask = daz_test::hostMXCSRMask();
+  if (DAZ && !(Mask & DAZ))
+    GTEST_SKIP() << daz_test::HostUnavailable;
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
 #undef NEVERD_FP_BYTES
@@ -241,11 +245,11 @@ void nativeOracle(OperationKind Kind) {
           Seed.Xmm[N] = {SentinelLow + N, SentinelHigh - N};
         Seed.Xmm[0] = I.Left;
         Seed.Xmm[1] = I.Right;
-        Seed.MXCSR = Control;
+        Seed.MXCSR = Control | DAZ;
         alignas(x64::fp::RegisterSlotBytes)
             std::array<uint8_t, x64::fp::LegacyBytes>
                 Before{}, After{}, Host{};
-        ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before)), "");
+        ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before, Mask)), "");
         alignas(x64::fp::RegisterSlotBytes) const std::array<uint64_t, 4>
             Arguments{I.Right[0], I.Right[1], InitialFlags, 0};
         const auto ActualFlags =
@@ -295,6 +299,12 @@ void nativeOracle(OperationKind Kind) {
 #define NEVERD_PACKED_FLOAT_INT_OPERATION(Name, ...)                           \
   TEST(X64PackedFloatIntegerOracle, Name##MatchesOriginalInstructions) {       \
     nativeOracle(OperationKind::Name);                                         \
+  }
+#include "X64PackedFloatIntegerCases.def"
+#undef NEVERD_PACKED_FLOAT_INT_OPERATION
+#define NEVERD_PACKED_FLOAT_INT_OPERATION(Name, ...)                           \
+  TEST(X64PackedFloatIntegerDAZOracle, Name##MatchesOriginalInstructions) {    \
+    nativeOracle(OperationKind::Name, daz_test::DenormalsAreZero);             \
   }
 #include "X64PackedFloatIntegerCases.def"
 #undef NEVERD_PACKED_FLOAT_INT_OPERATION
@@ -396,7 +406,7 @@ protected:
     EXPECT_EQ(Reads, unsigned(Memory));
     EXPECT_EQ(Writes, 0u);
   }
-  void convert(OperationKind Kind) {
+  void convert(OperationKind Kind, uint64_t DAZ = 0) {
     for (const auto &C : Conversions) {
       if (C.Kind != Kind)
         continue;
@@ -406,13 +416,13 @@ protected:
             for (bool Memory : {false, true}) {
               SCOPED_TRACE(Inputs[L].Name);
               SCOPED_TRACE(Right.Name);
-              check(C, input(C, Inputs[L], Right), InitialMXCSR | Sticky, 0, 1,
-                    Memory, Alias + (C.Alignment == 1));
+              check(C, input(C, Inputs[L], Right), InitialMXCSR | DAZ | Sticky,
+                    0, 1, Memory, Alias + (C.Alignment == 1));
               ASSERT_FALSE(HasFatalFailure());
             }
     }
   }
-  void rounding(OperationKind Kind) {
+  void rounding(OperationKind Kind, uint64_t DAZ = 0) {
     for (const auto &C : Conversions) {
       if (C.Kind != Kind)
         continue;
@@ -426,8 +436,8 @@ protected:
                   SCOPED_TRACE(Negate);
                   const auto I = input(C, Inputs[(N + 1) % std::size(Inputs)],
                                        Inputs[N], Negate);
-                  check(C, I, InitialMXCSR | R.Control | Sticky | Flush, 0, 1,
-                        Memory,
+                  check(C, I, InitialMXCSR | DAZ | R.Control | Sticky | Flush,
+                        0, 1, Memory,
                         Alias + PageSize -
                             (C.Alignment == 1 ? sourceBytes(C) / 2
                                               : sourceBytes(C)),
@@ -436,7 +446,7 @@ protected:
                 }
     }
   }
-  void mixed(OperationKind Kind) {
+  void mixed(OperationKind Kind, uint64_t DAZ = 0) {
     for (const auto &C : Conversions) {
       if (C.Kind != Kind)
         continue;
@@ -446,8 +456,8 @@ protected:
             for (auto Flush : {uint64_t(0), FlushToZero})
               for (bool Memory : {false, true}) {
                 SCOPED_TRACE(testing::PrintToString(I.Right));
-                check(C, I, InitialMXCSR | R.Control | Sticky | Flush, 0, 0,
-                      Memory);
+                check(C, I, InitialMXCSR | DAZ | R.Control | Sticky | Flush, 0,
+                      0, Memory);
                 ASSERT_FALSE(HasFatalFailure());
               }
     }
@@ -830,6 +840,23 @@ TEST_P(X64PackedFloatInteger, DeviceOperandsRejectBeforeCallbacks) {
     EXPECT_EQ(backing(), RAM);
   }
 }
+
+using X64PackedFloatIntegerDAZ = daz_test::Fixture<X64PackedFloatInteger>;
+#define NEVERD_PACKED_FLOAT_INT_OPERATION(Name, ...)                           \
+  TEST_P(X64PackedFloatIntegerDAZ, Name##ValuesAndStatusPreserveOtherState) {  \
+    convert(OperationKind::Name, daz_test::DenormalsAreZero);                  \
+  }                                                                            \
+  TEST_P(X64PackedFloatIntegerDAZ, Name##RoundingFlushAndStickyStatus) {       \
+    rounding(OperationKind::Name, daz_test::DenormalsAreZero);                 \
+  }                                                                            \
+  TEST_P(X64PackedFloatIntegerDAZ, Name##MixedLanesAccumulateStatus) {         \
+    mixed(OperationKind::Name, daz_test::DenormalsAreZero);                    \
+  }
+#include "X64PackedFloatIntegerCases.def"
+#undef NEVERD_PACKED_FLOAT_INT_OPERATION
+INSTANTIATE_TEST_SUITE_P(DAZBackends, X64PackedFloatIntegerDAZ,
+                         testing::ValuesIn(daz_test::Parameters),
+                         [](const auto &Info) { return Info.param.Name; });
 
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64PackedFloatInteger,
                          testing::ValuesIn(Parameters),
