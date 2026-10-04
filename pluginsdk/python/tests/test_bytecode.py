@@ -79,13 +79,16 @@ class BytecodeTests(unittest.TestCase):
         self.assertEqual(library.request["output"], "llvmc")
         self.assertEqual(result.decoded_bytes, 2)
         self.assertEqual(result.input_bytes, 3)
+        self.assertFalse(result.with_context)
+        self.assertNotIn("with_context", library.request)
         self.assertEqual(library.freed, [ctypes.addressof(library.buffer)])
 
     def test_failure_and_malformed_success_always_release_owned_response(self):
         reports = [dict(schemaVersion=1, ok=False, error="unsupported instruction")]
         for key, value in (("schemaVersion", 2), ("decoded_bytes", 4),
                            ("input_bytes", 4), ("scope", "original-c"),
-                           ("source", None), ("blocks", True)):
+                           ("source", None), ("blocks", True),
+                           ("with_context", 0), ("with_context", True)):
             bad = self.success()
             bad[key] = value
             reports.append(bad)
@@ -99,6 +102,34 @@ class BytecodeTests(unittest.TestCase):
     def test_nonfinite_rules_are_not_serialized_to_nonstandard_json(self):
         with self.assertRaises(ValueError):
             recover_bytecode(b"a", {"value": float("nan")}, [])
+
+    def test_source_context_requires_an_explicit_matching_contract(self):
+        for dynamic in (False, True):
+            def invoke(library, **kwargs):
+                if dynamic:
+                    return recover_bytecode_with_decoder(
+                        b"abc", {}, [], lambda data, pc: {}, api=HostAPI(library),
+                        **kwargs)
+                return recover_bytecode(b"abc", {}, [], api=HostAPI(library), **kwargs)
+
+            response = self.success()
+            response["with_context"] = True
+            response["source"] = "uint64_t sample(void *state, void *context);"
+            library = Library(response)
+            result = invoke(library, with_context=True)
+            self.assertTrue(result.with_context)
+            self.assertIs(library.request["with_context"], True)
+            self.assertEqual(len(library.freed), 1)
+            for invalid in (1, None, "true"):
+                library = Library(response)
+                with self.assertRaisesRegex(TypeError, "with_context"):
+                    invoke(library, with_context=invalid)
+                self.assertIsNone(library.request)
+            for legacy in (self.success(), dict(response, with_context=False)):
+                library = Library(legacy)
+                with self.assertRaisesRegex(NeverDError, "context contract"):
+                    invoke(library, with_context=True)
+                self.assertEqual(len(library.freed), 1)
 
     def test_decoder_windows_context_and_result_ownership(self):
         library = Library(self.success())

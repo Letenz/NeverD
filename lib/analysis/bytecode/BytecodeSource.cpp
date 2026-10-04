@@ -24,6 +24,7 @@ namespace {
 // pointer. Keep them separate from profile and scratch temporary offsets.
 constexpr uint64_t StatePointer = UINT64_C(1) << 60;
 constexpr uint64_t CallStatus = StatePointer + 8;
+constexpr uint64_t ContextPointer = StatePointer + 16;
 constexpr uint64_t ScratchBase = UINT64_C(1) << 61;
 
 llvm::Error invalid(const llvm::Twine &Message) {
@@ -34,12 +35,14 @@ llvm::Error invalid(const llvm::Twine &Message) {
 
 llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
     const LowFunc &Function, uint32_t RegisterBytes, Arch SourceArch,
-    uint64_t MaxOperations, llvm::ArrayRef<va_t> BoundCalls) {
+    uint64_t MaxOperations, llvm::ArrayRef<va_t> BoundCalls, bool WithContext) {
   if ((SourceArch != Arch::X64 && SourceArch != Arch::AArch64) ||
       !RegisterBytes || RegisterBytes > 65536 || Function.Blocks.empty() ||
       !Function.hasCompleteLiftCoverage() || !MaxOperations)
     return invalid("invalid function, bank or architecture");
   uint64_t Parameter = SourceArch == Arch::AArch64 ? a64reg::X0 : x86reg::RDI;
+  uint64_t ContextParameter =
+      SourceArch == Arch::AArch64 ? a64reg::X1 : x86reg::RSI;
   uint64_t Return = SourceArch == Arch::AArch64 ? a64reg::X0 : x86reg::RAX;
   BytecodeStateFunction Result;
   Result.Function = Function;
@@ -125,6 +128,9 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
         HasCall = true;
         Emit(NdOp::COPY, NdVar::reg(Parameter, 8),
              {NdVar::tmp(StatePointer, 8)}, O.Addr);
+        if (WithContext)
+          Emit(NdOp::COPY, NdVar::reg(ContextParameter, 8),
+               {NdVar::tmp(ContextPointer, 8)}, O.Addr);
         Emit(NdOp::CALL, NdVar::reg(Return, 8), {O.Inputs[0]}, O.Addr);
         Emit(NdOp::COPY, NdVar::tmp(CallStatus, 8), {NdVar::reg(Return, 8)},
              O.Addr);
@@ -262,7 +268,7 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
     Result.Function.Blocks.push_back(std::move(Failure));
     Count += 2;
   }
-  if (Count >= MaxOperations)
+  if (Count > MaxOperations || MaxOperations - Count < (WithContext ? 2u : 1u))
     return invalid("lowering operation budget exhausted");
   // Capture the parameter once, even when bytecode branches back to its first
   // instruction. Placing this copy in that instruction would read the native
@@ -293,6 +299,12 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
   Capture.Output = NdVar::tmp(StatePointer, 8);
   Capture.addInput(NdVar::reg(Parameter, 8));
   Entry.Ops.push_back(Capture);
+  if (WithContext) {
+    Capture.Seq = 1;
+    Capture.Output = NdVar::tmp(ContextPointer, 8);
+    Capture.Inputs[0] = NdVar::reg(ContextParameter, 8);
+    Entry.Ops.push_back(Capture);
+  }
   Result.Function.Blocks.insert(Result.Function.Blocks.begin(),
                                 std::move(Entry));
   auto &ABI = Result.SourceABI;
@@ -306,6 +318,14 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
   Argument.Type = NdType::makePtr(NdType::makeVoid());
   Argument.Location = {SourceABICarrierKind::IntegerRegister, Parameter, 0, 8};
   ABI.Parameters.push_back(std::move(Argument));
+  if (WithContext) {
+    SourceParameterTypeHint Context;
+    Context.Name = "context";
+    Context.Type = NdType::makePtr(NdType::makeVoid());
+    Context.Location = {SourceABICarrierKind::IntegerRegister, ContextParameter,
+                        0, 8};
+    ABI.Parameters.push_back(std::move(Context));
+  }
   std::string Diagnostic;
   if (!validateSourceABI(ABI, Diagnostic))
     return invalid(Diagnostic);

@@ -23,6 +23,7 @@ class BytecodeRecoveryResult:
     input_bytes: int
     scope: Literal["cfg", "state-c"]
     source: str
+    with_context: bool = False
 
 
 def recover_bytecode(
@@ -35,6 +36,7 @@ def recover_bytecode(
     output: Literal["check", "highc", "llvmc"] = "highc",
     optimize: bool = False,
     unaligned_pointers: bool = False,
+    with_context: bool = False,
     api: HostAPI | None = None,
 ) -> BytecodeRecoveryResult:
     """Check or emit caller-defined bytecode through the public C ABI.
@@ -43,10 +45,14 @@ def recover_bytecode(
     validates encoding, CFG and state lowering; it does not execute the input.
     Dynamic decoder contexts and original source ABIs are not inferred by this
     profile API. ``api`` can name an explicitly loaded library outside the host.
+    ``with_context=True`` adds a caller-owned opaque ``void *context`` to every
+    emitted function and bound call; it does not execute callbacks or store a
+    Python object in the output. Its lifetime belongs to the generated C caller.
     """
     return _recover(
         code, profile, functions, bindings=bindings, base=base, output=output,
         optimize=optimize, unaligned_pointers=unaligned_pointers, api=api,
+        with_context=with_context,
     )
 
 
@@ -61,6 +67,7 @@ def recover_bytecode_with_decoder(
     output: Literal["check", "highc", "llvmc"] = "highc",
     optimize: bool = False,
     unaligned_pointers: bool = False,
+    with_context: bool = False,
     api: HostAPI | None = None,
 ) -> BytecodeRecoveryResult:
     """Recover with a synchronous, trusted Python instruction decoder.
@@ -74,6 +81,8 @@ def recover_bytecode_with_decoder(
     CFG visit order. The decoder is not retained after this call. Exceptions
     are re-raised after the native response has been released; none crosses
     the C callback boundary. This does not execute input or infer source ABI.
+    ``with_context`` selects the emitted source ABI as in ``recover_bytecode``;
+    that runtime context is separate from this instruction decoder's closure.
     """
     if not callable(decoder):
         raise TypeError("decoder must be callable")
@@ -81,6 +90,7 @@ def recover_bytecode_with_decoder(
         code, layout, functions, decoder=decoder, bindings=bindings, base=base,
         output=output, optimize=optimize,
         unaligned_pointers=unaligned_pointers, api=api,
+        with_context=with_context,
     )
 
 
@@ -101,6 +111,7 @@ def _recover(
     output: Literal["check", "highc", "llvmc"],
     optimize: bool,
     unaligned_pointers: bool,
+    with_context: bool,
     api: HostAPI | None,
     decoder: Callable[[bytes, int], Mapping[str, Any]] | None = None,
 ) -> BytecodeRecoveryResult:
@@ -108,13 +119,18 @@ def _recover(
         raise TypeError("code must be bytes")
     if len(code) > 64 * 1024 * 1024:
         raise ValueError("code exceeds the 64 MiB limit")
-    request = _json_bytes(
-        {"schemaVersion": 1, "layout" if decoder is not None else "profile": dict(rules),
-         "functions": [dict(item) for item in functions],
-         "bindings": [dict(item) for item in bindings], "base": base, "output": output,
-         "optimize": optimize, "unaligned_pointers": unaligned_pointers},
-        "request",
-    )
+    if type(with_context) is not bool:
+        raise TypeError("with_context must be a boolean")
+    request_fields: dict[str, Any] = {
+        "schemaVersion": 1, "layout" if decoder is not None else "profile": dict(rules),
+        "functions": [dict(item) for item in functions],
+        "bindings": [dict(item) for item in bindings], "base": base, "output": output,
+        "optimize": optimize, "unaligned_pointers": unaligned_pointers,
+    }
+    # Keep the default ABI usable with engines predating this opt-in key.
+    if with_context:
+        request_fields["with_context"] = True
+    request = _json_bytes(request_fields, "request")
     buffer = (ctypes.c_ubyte * len(code)).from_buffer_copy(code)
     host = api if api is not None else HostAPI()
     if decoder is None:
@@ -168,6 +184,10 @@ def _recover(
               "input_bytes")
     if any(type(result.get(key)) is not int or result[key] < 0 for key in counts):
         raise NeverDError("invalid bytecode recovery coverage")
+    # An older engine may omit the field only for the default unary ABI.
+    selected_context = result.get("with_context", False)
+    if type(selected_context) is not bool or selected_context != with_context:
+        raise NeverDError("invalid bytecode recovery context contract")
     if (result.get("scope") not in ("cfg", "state-c") or
             not isinstance(result.get("source"), str) or
             result["input_bytes"] != len(code) or
@@ -179,6 +199,7 @@ def _recover(
         result["functions"], result["blocks"], result["decoded_instructions"],
         result["decoded_bytes"], result["input_bytes"],
         cast(Literal["cfg", "state-c"], result["scope"]), result["source"],
+        selected_context,
     )
 
 

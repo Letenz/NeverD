@@ -47,7 +47,11 @@ can supply a static profile or a synchronous per-instruction decoder callback.
 `lib/analysis/bytecode` owns encoding and CFG validation: both producers feed
 the same operand, temporary-definedness and operation validation. They produce
 LowIR; explicit byte-addressed state lowering then feeds the existing source
-routes. Image-independent source ABI binding uses caller-supplied contracts,
+routes. That shared lowering also owns the optional opaque source-context
+parameter: it captures state and context once on entry and forwards them through
+bound calls without inferring alias separation or decoder-context identity.
+CLI and SDK request validation select the same contract. Image-independent
+source ABI binding uses caller-supplied contracts,
 while runtime signature discovery from native images retains its format gates.
 This source-only path does not authenticate native instruction boundaries or
 authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).

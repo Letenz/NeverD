@@ -50,16 +50,20 @@ typedef void (*ND_BytecodeDecoderV1)(void *UserData, const unsigned char *Bytes,
 ///
 /// The strict JSON request contains schemaVersion:1, a version-1 profile object
 /// and a functions array. Optional keys: bindings, base, output ("check",
-/// "highc" or "llvmc"), optimize (llvmc only), unaligned_pointers.
-/// See docs/bytecode-profiles.md for the shared decoder and state-ABI
-/// contracts. A plugin can prepare these rules in C or Python; no dialect is
-/// built in.
+/// "highc" or "llvmc"), optimize (llvmc only), unaligned_pointers,
+/// with_context. with_context:true emits uint64_t callee(void *state, void
+/// *context) for all source functions and bindings, instead of the default
+/// unary state ABI. The source context is caller-owned and separate from
+/// decoder UserData. See docs/bytecode-profiles.md for the shared decoder and
+/// state-ABI contracts. A plugin can prepare these rules in C or Python; no
+/// dialect is built in.
 ///
 /// The owned JSON response contains schemaVersion:1 and ok. Success includes
 /// functions, blocks, decoded_instructions, decoded_bytes, input_bytes, scope
-/// ("cfg" or "state-c") and source (empty for check). Failure includes error
-/// and no partial source. Null means allocation failed. Free every non-null
-/// response with neverd_free_string(), including error responses.
+/// ("cfg" or "state-c"), with_context (selected ABI, also for check), and
+/// source (empty for check). Failure includes error and no partial source. Null
+/// means allocation failed. Free every non-null response with
+/// neverd_free_string(), including error responses.
 ///
 /// This is source recovery from an explicit semantic specification, not an
 /// execution sandbox, proof of interpreter equivalence, or original C ABI
