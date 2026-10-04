@@ -100,13 +100,31 @@ std::optional<VectorOperation> vectorOperation(unsigned Instruction) {
     return std::nullopt;
   }
 }
-bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
+enum class VectorCount { None, Immediate, VectorOrImmediate };
+VectorCount vectorCount(unsigned Instruction) {
+  switch (Instruction) {
+#define NEVERD_X64_PACKED_SHIFT(Name, Count)                                   \
+  case X86_INS_##Name:                                                         \
+    return VectorCount::Count;
+#include "X64PackedShiftInstructions.def"
+#undef NEVERD_X64_PACKED_SHIFT
+  default:
+    return VectorCount::None;
+  }
+}
+bool admitsVectorOperands(unsigned Instruction, const cs_x86 &X,
+                          const VectorOperation &V) {
   if (X.op_count != 2)
     return false;
   const auto &D = X.operands[0], &S = X.operands[1];
   auto Xmm = [](const cs_x86_op &O) {
     return O.type == X86_OP_REG && isXmm(O.reg);
   };
+  const auto Count = vectorCount(Instruction);
+  if (Count != VectorCount::None && S.type == X86_OP_IMM)
+    return Xmm(D) && S.imm >= 0 && S.imm <= UINT8_MAX;
+  if (Count == VectorCount::Immediate)
+    return false;
   if (!Xmm(D) && !(V.Move && Xmm(S)))
     return false;
   for (const auto &O : {D, S}) {
@@ -316,7 +334,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
        (X.operands[1].type != X86_OP_MEM &&
         !(X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)))))
     return llvm::make_error<UnsupportedExecutionError>();
-  if (Vector && !Conversion && !admitsVectorOperands(X, *Vector))
+  if (Vector && !Conversion && !admitsVectorOperands(I.id, X, *Vector))
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
   const bool Atomic = isAtomic(I.id);
