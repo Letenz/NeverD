@@ -71,6 +71,8 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
       }
       Table = Entry & AddressMask;
     }
+    // GP (bit 50) stays clear in every leaf, including monitor and alias pages.
+    // The checked CPU does not expose guarded translations or BTYPE state.
     uint64_t Entry =
         PA | TableDescriptor | AccessFlag | InnerShareable | UserNX;
     if (!(Permissions & GuestAccessPermissions))

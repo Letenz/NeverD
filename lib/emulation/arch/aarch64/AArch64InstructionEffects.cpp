@@ -24,6 +24,16 @@ bool disabledPAuthHint(uint32_t Word) {
     return false;
   }
 }
+bool unguardedBTIHint(uint32_t Word) {
+  switch (Word) {
+#define NEVERD_AARCH64_BTI_HINT(Name, Encoding) case Encoding:
+#include "AArch64BTIHints.def"
+#undef NEVERD_AARCH64_BTI_HINT
+    return true;
+  default:
+    return false;
+  }
+}
 namespace encoding {
 #define NEVERD_AARCH64_ENCODING(Name, Mask, Value)                             \
   bool is##Name(uint32_t Word) { return (Word & Mask) == Value; }
@@ -73,6 +83,11 @@ getAArch64InstructionEffects(const cs_insn &I,
   // machine, even when the decoder names their optional PAuth aliases.
   // They still execute through Machine::step and consume an ordinary attempt.
   if (disabledPAuthHint(Word))
+    return std::vector<AArch64MemoryAccess>();
+  // AArch64PageTables never sets GP. Execute the original landing-pad word,
+  // including on a transport that implements FEAT_BTI; do not replace bytes
+  // or infer guarded-page enforcement from the decoder's optional feature.
+  if (unguardedBTIHint(Word))
     return std::vector<AArch64MemoryAccess>();
   enum InstructionKind {
     Integer,
