@@ -606,6 +606,32 @@ TEST(NativeBooleanResultProof, EveryDeclaredResultComponentIsIndependent) {
   EXPECT_TRUE(F.prove());
 }
 
+TEST(NativeBooleanResultProof, BooleanTupleDefinesOnlyItsThirdCarrierLowBit) {
+  Fixture F;
+  const auto Boolean = NdType::makeInt(1, false);
+  Boolean->SourceName = kSourceBooleanCType;
+  F.Release.Parameters.clear();
+  F.Release.ReturnType =
+      NdType::makeStruct({NdType::makeInt(8, false),
+                          NdType::makePtr(NdType::makeVoid()), Boolean});
+  std::string Error;
+  ASSERT_TRUE(assignDarwinSwiftSourceABI(F.Release, Arch::AArch64, Error));
+  for (const auto Mask : {uint64_t(1), uint64_t(2), uint64_t(0xff),
+                          uint64_t(0x100), ~uint64_t(1)}) {
+    F.linear({call(), call(0x2100), mask(a64reg::X0, a64reg::X2, Mask), ret()});
+    EXPECT_EQ(bool(F.prove()), Mask == 1) << Mask;
+  }
+  // Returning the declared tuple observes only bit zero of its last carrier.
+  F.Entry = F.Release;
+  F.linear({call(), call(0x2100), ret()});
+  EXPECT_TRUE(F.prove());
+  F.linear({call(), call(0x2100),
+            operation(NdOp::STORE, {},
+                      {NdVar::cst(0x3000, 8), NdVar::reg(a64reg::X2, 1)}),
+            ret()});
+  EXPECT_FALSE(F.prove());
+}
+
 TEST(NativeBooleanResultProof, EveryPhysicalJoinAndLoopPathMustBeSafe) {
   Fixture F;
   F.diamond();

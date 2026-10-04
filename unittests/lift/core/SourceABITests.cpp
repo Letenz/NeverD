@@ -1058,6 +1058,103 @@ int main(void) {
 #endif
 }
 
+TEST(SourceABI, NativeSwiftBooleanTupleUsesI1AndPreservesBothWords) {
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))
+#if defined(__aarch64__)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  const auto Word = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Boolean = NdType::makeInt(1, false);
+  Boolean->SourceName = kSourceBooleanCType;
+  SourceFunctionTypeHint Signature;
+  Signature.ReturnType = NdType::makeStruct({Word, Pointer, Boolean});
+  Signature.Parameters = {{"word", Word}, {"pointer", Pointer}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinSwiftSourceABI(Signature, Architecture, Error))
+      << Error;
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = "boolean_tuple_generated";
+  Function.ReturnType = Signature.ReturnType;
+  Function.SourceTypeHint = Signature;
+  std::vector<ExprPtr> Arguments;
+  for (unsigned I = 0; I != 2; ++I) {
+    const auto &P = Signature.Parameters[I];
+    Function.Params.push_back({P.Name, P.Type});
+    MedVar V;
+    V.Kind = MedVar::Param;
+    V.Id = I;
+    V.Size = 8;
+    Arguments.push_back(HighExpr::makeVar(V, P.Type));
+  }
+  auto Binding = std::make_shared<SourceCallTypeHint>();
+  Binding->CallKind = SourceCallTypeHint::Kind::Native;
+  Binding->TargetAddress = 0x2000;
+  Binding->TargetName = "boolean_tuple_fixture";
+  Binding->Signature = Signature;
+  auto Call = HighExpr::makeCall(Binding->TargetName, 0x2000, Arguments);
+  Call->Type = Signature.ReturnType;
+  Call->SourceCallHint = Binding;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = Call;
+  Function.Body = {Return};
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Architecture;
+  ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+  OS.flush();
+  ASSERT_NE(Source.find("_Bool field_2"), std::string::npos) << Source;
+  Source += "\ntypedef " + typeToC(Signature.ReturnType) + " Result;\n";
+  Source += R"(
+#include <stddef.h>
+#define SWIFT __attribute__((swiftcall))
+_Static_assert(sizeof(Result) == 24 && offsetof(Result, field_2) == 16,
+               "Boolean tuple layout");
+uint64_t boolean_tuple_calls;
+// The fixture deliberately leaves bits 63:1 unspecified, including the seven
+// high bits of the Boolean's low byte. A uint8_t declaration fails this test.
+#if defined(__aarch64__)
+__asm__(".text\n.p2align 2\n_boolean_tuple_fixture:\n"
+        " adrp x8, _boolean_tuple_calls@PAGE\n"
+        " ldr x9, [x8, _boolean_tuple_calls@PAGEOFF]\n"
+        " add x9, x9, #1\n"
+        " str x9, [x8, _boolean_tuple_calls@PAGEOFF]\n"
+        " mov x2, x0\n eor x0, x0, #1\n ret\n");
+#else
+__asm__(".text\n_boolean_tuple_fixture:\n"
+        " incq _boolean_tuple_calls(%rip)\n"
+        " movq %rdi, %rcx\n movq %rsi, %rdx\n"
+        " movq %rdi, %rax\n xorq $1, %rax\n retq\n");
+#endif
+int main(void) {
+  unsigned char bytes[257];
+  for (uint64_t i = 0; i != 4096; ++i) {
+    const uint64_t word = i < 256 ? i : i * UINT64_C(0x9e3779b97f4a7c15);
+    void *pointer = i % 7 ? bytes + i % 257 : 0;
+    struct { uint64_t before; Result value; uint64_t after; } actual =
+        {UINT64_C(0x1234567887654321), {0}, UINT64_C(0xfedcba9876543210)};
+    actual.value = boolean_tuple_generated(word, pointer);
+    if (actual.value.field_0 != (word ^ 1) ||
+        actual.value.field_1 != pointer ||
+        (unsigned)actual.value.field_2 != (word & 1) ||
+        actual.before != UINT64_C(0x1234567887654321) ||
+        actual.after != UINT64_C(0xfedcba9876543210) ||
+        boolean_tuple_calls != i + 1) return 1;
+  }
+  return 0;
+}
+)";
+  executeC(Source, false);
+#else
+  GTEST_SKIP() << "Native Darwin Swift Boolean tuple execution required";
+#endif
+}
+
 TEST(SourceABI, SwiftErrorValueAdapterDoesNotShadowItsRuntimeSymbol) {
 #if defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))
 #if defined(__aarch64__)
@@ -1829,6 +1926,69 @@ void executeC(const std::string &Source, bool Math = false) {
     EXPECT_EQ(Status, 0) << Error
                          << (Errors ? (*Errors)->getBuffer().str() : "") << '\n'
                          << Source;
+  }
+}
+
+TEST(SourceABI, DistinctWordRecordsCompileAndExecuteInEitherEmissionOrder) {
+  const auto Word = NdType::makeInt(8, false);
+  const std::vector<TypeRef> Leaves{NdType::makePtr(NdType::makeVoid()),
+                                    NdType::makeInt(8, true), Word,
+                                    NdType::makePtr(Word)};
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  for (unsigned I = 0; I != Leaves.size(); ++I) {
+    const auto Record = NdType::makeStruct({Leaves[I], Word});
+    HighFunc Function;
+    Function.Name = "make_record_" + std::to_string(I);
+    Function.Entry = 0x1000 + I * 16;
+    Function.ReturnType = Record;
+    std::vector<ExprPtr> Values;
+    for (unsigned J = 0; J != 2; ++J) {
+      auto Type = Record->Fields[J];
+      Function.Params.push_back({"value" + std::to_string(J), Type});
+      MedVar Parameter;
+      Parameter.Kind = MedVar::Param;
+      Parameter.Id = J;
+      Parameter.Size = 8;
+      Parameter.TheArch = Arch::AArch64;
+      Values.push_back(HighExpr::makeVar(Parameter, Type));
+    }
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeRecord(Record, std::move(Values));
+    Function.Body.push_back(std::move(Return));
+    Functions.push_back(std::move(Function));
+    // Assert the compiler's actual field type, not just the formatter's tag.
+    Checks += "_Static_assert(_Generic(((" + typeToC(Record) +
+              "*)0)->field_0, " + typeToC(Leaves[I]) +
+              ": 1, default: 0), \"field type\");\n";
+  }
+  Checks += R"(
+int main(void) {
+    uint64_t value = UINT64_C(0xfedcba9876543210);
+    for (uint64_t i = 0; i != 257; ++i) {
+        if (make_record_0(&value, i).field_0 != &value) return 1;
+        if (make_record_0(&value, i).field_1 != i) return 2;
+        if (make_record_1(-1 - (int64_t)i, i).field_0 >= 0) return 3;
+        if (make_record_1(-1 - (int64_t)i, i).field_1 != i) return 4;
+        if (make_record_2(UINT64_MAX - i, i).field_0 != UINT64_MAX - i) return 5;
+        if (make_record_2(UINT64_MAX - i, i).field_1 != i) return 6;
+        if (*make_record_3(&value, i).field_0 != value) return 7;
+        if (make_record_3(&value, i).field_1 != i) return 8;
+    }
+    return 0;
+}
+)";
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    if (Reverse)
+      std::reverse(Functions.begin(), Functions.end());
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+    ASSERT_NO_FATAL_FAILURE(executeC(Source + Checks));
   }
 }
 

@@ -347,7 +347,8 @@ std::map<va_t, SourceCallTypeHint> buildCFunctionParameterCallHints(
         ++It;
     const auto EraseLocation = [&](const SourceABIValueLocation &Location) {
       if (Location.Kind == SourceABICarrierKind::IntegerRegister ||
-          Location.Kind == SourceABICarrierKind::FloatingRegister)
+          Location.Kind == SourceABICarrierKind::FloatingRegister ||
+          Location.Kind == SourceABICarrierKind::BooleanRegister)
         Kill(Values, NdVar::reg(Location.RegisterOffset, Location.ValueBytes));
     };
     EraseLocation(Signature->ReturnLocation);

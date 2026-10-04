@@ -271,13 +271,25 @@ std::string typeToC(const TypeRef &Ty) {
     if (sourceAggregateMembers(Ty).empty())
       throw std::invalid_argument("C record has no supported source layout");
     std::function<std::string(const TypeRef &)> Code = [&](const TypeRef &T) {
+      if (isSourceBooleanType(T))
+        return std::string("b1");
       if (T->Kind == NdTypeKind::Float)
         return std::string(T->Size == 4 ? "f" : "d");
-      // Preserve the historical name for full-width word leaves while giving
-      // newly supported narrow record fields a layout-distinct C tag.
-      if (T->Kind == NdTypeKind::Int && T->Size != 8)
+      // Record declarations share a translation unit. Equal storage widths
+      // do not make signed integers, unsigned integers and pointers the same
+      // C field type; the tag must be independent of which function is first.
+      if (T->Kind == NdTypeKind::Int)
         return std::string(T->IsSigned ? "i" : "u") +
                std::to_string(T->Size * 8);
+      if (T->Kind == NdTypeKind::Ptr || !T->SourceName.empty()) {
+        if (T->Kind == NdTypeKind::Ptr && T->Pointee->Kind == NdTypeKind::Void)
+          return std::string("pv");
+        // Include typed pointees, callback signatures and named nested
+        // records without embedding their C declarator syntax in a tag.
+        llvm::MD5 Hash;
+        Hash.update(typeToC(T));
+        return "t" + Hash.final().digest().str().str();
+      }
       std::string Result = "r" + std::to_string(T->Fields.size());
       for (const auto &Field : T->Fields)
         Result += "_" + Code(Field);

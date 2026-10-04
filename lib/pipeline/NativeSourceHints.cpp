@@ -670,33 +670,37 @@ nativeEntryRegisters(const BinaryImage &Image, const LowFunc *Low,
   return {Reads.begin(), Reads.end()};
 }
 
-// Typed two-word calls materialize their physical results through SUBBYTES.
-// Authenticate the complete lowering prefix before treating those extracts
-// as register definitions; ordinary SUBBYTES operations are only views.
-bool completeCallResultPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
-                              Arch Architecture) {
+// A complete declared call can return additional fields after its two full
+// integer result words. Authenticate both word extracts against that full ABI
+// before treating them as definitions; ordinary SUBBYTES are only views. This
+// never changes the callee's result shape or defines any later narrow carrier.
+bool completeCallWordPairPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
+                                Arch Architecture) {
   const auto &Call = Ops[Index];
   if (Ops.size() - Index < 3 || !Call.SourceCallHint ||
-      Call.Output.Kind != MedVar::Temp || Call.Output.Id < 0 ||
-      Call.Output.Size != 16)
+      Call.Output.Kind != MedVar::Temp || Call.Output.Id < 0)
     return false;
   const auto &Signature = Call.SourceCallHint->Signature;
   const auto &TRI = getTargetRegInfo(Architecture);
+  std::string Error;
   if (!Signature.HasExplicitABI || Signature.Architecture != Architecture ||
-      !Signature.ReturnType || Signature.ReturnType->Size != 16 ||
-      Signature.ReturnComponents.size() != 2 || TRI.IntReturnRegs.size() < 2)
+      !validateSourceABI(Signature, Error) ||
+      Signature.ReturnType->Size != Call.Output.Size ||
+      Signature.ReturnComponents.size() < 2 || TRI.IntReturnRegs.size() < 2)
     return false;
+  const auto Members = sourceAggregateMembers(Signature.ReturnType);
   for (unsigned I = 0; I < 2; ++I) {
     const auto &Location = Signature.ReturnComponents[I];
     const auto &Extract = Ops[Index + I + 1];
-    if (Location.Kind != SourceABICarrierKind::IntegerRegister ||
+    if ((!Members.empty() && Members[I].ByteOffset != I * 8U) ||
+        Location.Kind != SourceABICarrierKind::IntegerRegister ||
         Location.RegisterOffset != TRI.IntReturnRegs[I] ||
         Location.ValueBytes != 8 || Extract.Opcode != NdOp::SUBBYTES ||
         Extract.NumInputs != 2 || Extract.Output.Kind != MedVar::Reg ||
         Extract.Output.RegOff != Location.RegisterOffset ||
         Extract.Output.Size != 8 || Extract.Inputs[0] != Call.Output ||
-        Extract.Inputs[0].Size != 16 || !Extract.Inputs[1].isConst() ||
-        Extract.Inputs[1].ConstVal != I * 8U)
+        Extract.Inputs[0].Size != Call.Output.Size ||
+        !Extract.Inputs[1].isConst() || Extract.Inputs[1].ConstVal != I * 8U)
       return false;
   }
   return true;
@@ -1211,7 +1215,7 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
         if (Remaining < 2)
           return false;
         Remaining -= 2;
-        CallResultEnd = completeCallResultPrefix(Ops, OpIndex, Architecture)
+        CallResultEnd = completeCallWordPairPrefix(Ops, OpIndex, Architecture)
                             ? OpIndex + 3
                             : 0;
       }
