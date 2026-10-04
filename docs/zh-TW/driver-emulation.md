@@ -14,11 +14,11 @@ NeverD 的選用驅動程式模擬器執行受支援 x64 WDM 驅動程式的 PE 
 
 `DriverImage.def` 集中宣告嚴格 PE 驗證的大小、對齊限制及診斷文字；指標寬度來自 `DriverProfile.def`。`DriverImage.cpp` 負責驗證與重定位，可接受的映像和錯誤訊息保持不變。
 
-ARM64 主機上的 `checked-x64-v1` 使用 Unicorn 執行 x64 客體。每條指令與記憶體存取都在單步前驗證，並保留 Windows 物件檢查、寫入 observer、RAM 別名及僅保存 CPU 的內容。允許純量記憶體算術、自然對齊的鎖定算術、SETcc 與`BT/BTS/BTR/BTC`，並檢查讀寫權限；旗標由原生執行處理。有限 SIMD 包含舊式 SSE/SSE2 移動與邏輯、`MOVLHPS`/`MOVHLPS` 及帶遮罩的純量轉換／減法。全部 16 個 XMM 暫存器與 MXCSR 都會跨入口和內容還原保存；拒絕未遮罩 SIMD 例外、DAZ、x87、AVX 與未列出的操作。全寬 XMM store 會先依序觸發兩個 8 位元組寫入 observer，再修改任一 word。未對齊的 aligned-vector 形式仍不支援。一般 RAM 運算元可跨越獨立配置或別名映射的頁面；整段權限驗證通過後才寫入，失敗定位到第一個無法存取的位元組。MOVS 保留已完成元素與故障元素的重啟暫存器，不提交部分元素。
+ARM64 主機上的 `checked-x64-v1` 使用 Unicorn 執行 x64 客體。每條指令與記憶體存取都在單步前驗證，並保留 Windows 物件檢查、寫入 observer、RAM 別名及僅保存 CPU 的內容。允許純量記憶體算術、自然對齊的鎖定算術、SETcc 與`BT/BTS/BTR/BTC`，並檢查讀寫權限；旗標由原生執行處理。有限 SIMD 包含舊式 SSE/SSE2 移動與邏輯、`MOVLHPS`/`MOVHLPS` 及帶遮罩的純量轉換／減法。全部 16 個 XMM 暫存器與 MXCSR 都會跨入口和內容還原保存；拒絕未遮罩 SIMD 例外、x87、AVX 與未列出的操作。全寬 XMM store 會先依序觸發兩個 8 位元組寫入 observer，再修改任一 word。未對齊的 aligned-vector 形式仍不支援。一般 RAM 運算元可跨越獨立配置或別名映射的頁面；整段權限驗證通過後才寫入，失敗定位到第一個無法存取的位元組。MOVS 保留已完成元素與故障元素的重啟暫存器，不提交部分元素。
 
 supervisor x64 支援單次對齊的 1/2/4 位元組純量 MMIO 交易；裝置頁不會映射進原生 RAM。MOVS/REP MOVS 每個重新啟動邊界只執行一個元素。裝置來源必須提供無副作用的 prepared read，讓目的地 observer 可在裝置讀取提交前停止。Windows register bank 實作此準備流程；其他裝置會在產生效果前拒絕字串讀取。裝置 RMW、寬 MMIO、連接埠 I/O 仍不支援。要求位元組、裝置狀態及寫入事件分別比較，不依賴 Unicorn 對零計數 REP 額外觸發的終止 hook。KVM 使用標準 XSAVE 介面傳送 XMM/MXCSR 與 FP/SSE presence bits。此 supervisor 契約不提供使用者程序環境；逾時／取消在已准入的有界指令間檢查，不提供通用非同步搶佔，也不會在客體開始後切換後端。內建樣例與可用 WDK 情境會以 normal/CFG 及重定位映像和 Unicorn 比對；語料一致不代表支援任意驅動程式。
 
-checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
+checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。未遮罩例外、x87、AVX 仍未開放。
 
 開關：`NEVERD_EMULATION_BACKEND_KVM`、`NEVERD_EMULATION_BACKEND_WHP`。KVM 需要 `/dev/kvm` 權限；WHP 動態載入系統 DLL。新 C 入口為 `neverd_emulate_driver_backend_json`，v1 ABI 不變。報告記錄後端、契約與選擇原因。
 

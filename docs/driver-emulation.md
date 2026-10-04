@@ -21,7 +21,7 @@ aligned locked arithmetic, SETcc and `BT/BTS/BTR/BTC` retain read/write checks;
 native execution owns their flags. Legacy SSE/SSE2 moves, logical operations,
 MOVLHPS/MOVHLPS and masked scalar CVTTSS2SI/CVTTSD2SI/SUBSS/SUBSD are admitted.
 All sixteen XMM registers and MXCSR survive entry and context restoration;
-unmasked SIMD exceptions, DAZ, x87, AVX and unlisted operations remain rejected.
+unmasked SIMD exceptions, x87, AVX and unlisted operations remain rejected.
 Full-width XMM stores offer two ordered eight-byte write observations before
 either word changes. Ordinary RAM operands may cross mapped pages, including
 aliases of nonconsecutive physical pages. The whole operand must pass permission
@@ -58,7 +58,7 @@ the FP/SSE presence bits. The older FPU register interface is insufficient for
 this state contract. See the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
 and [WHP register API](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvvirtualprocessordatatypes).
 
-Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. This does not admit DAZ, unmasked exceptions, x87 or AVX.
+Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. This does not admit unmasked exceptions, x87 or AVX.
 
 ```bash
 build-release/bin/neverd emulate-driver path/to/driver.sys \
