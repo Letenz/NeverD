@@ -348,10 +348,14 @@ public:
       if (auto E = SpsrEl1(aarch64::PStateEL0t | aarch64::PStateDAIF |
                            State.reg(AArch64Register::NZCV)))
         return E;
-      if (auto E = CPU.run(aarch64::EntryGPA,
-                           std::size(aarch64::Maintenance) +
-                               aarch64::GateReturnInstructions,
+      if (auto E = CPU.run(aarch64::EntryGPA, std::size(aarch64::Maintenance),
                            &Control))
+        return E;
+      // Retire ERET separately: the count hook must not decode the first user
+      // instruction (or its successor) just to stop the private transition.
+      if (auto E = CPU.run(aarch64::EntryGPA + std::size(aarch64::Maintenance) *
+                                                   aarch64::InstructionBytes,
+                           aarch64::GateReturnInstructions, &Control))
         return E;
     }
 #define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
