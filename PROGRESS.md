@@ -1,5 +1,176 @@
 # NeverD Daily Progress
 
+Last verified: **2026-10-04 09:05 Asia/Shanghai (UTC+08:00)** / **2026-10-04 01:05 UTC**
+
+This point-in-time tracker separates delivered implementation, static review and observed execution evidence. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md) and [contribution guidance](CONTRIBUTING.md) remain authoritative. Suggested priorities are acceptance work, not deadlines or a project completion percentage.
+
+## Current snapshot
+
+Source review is pinned to [00f44615](https://github.com/NeverSight/NeverD/commit/00f446154f33ad569b3262c66233767bb368e7a7), observed at 00:58 UTC. Counts below use that observation unless explicitly updated.
+
+| Measure | Verified state |
+| --- | --- |
+| Open ordinary issues | 17, unchanged |
+| Open PRs at initial observation | 3: #394, #395, #396; up from zero before yesterday's proposal |
+| PRs merged since October 3 01:12 UTC, through 00:58 UTC | 31: #363–393; #363 is progress-only documentation, not product advancement |
+| In-window PR closures without merge | 0 |
+| Ordinary issue updates / closures in the window | 0 / 0 |
+| Previous source snapshot | [99340b58](https://github.com/NeverSight/NeverD/commit/99340b58657e3907588a33b363435f79b74b86fe) |
+| Change inventory | 226 commits; 895 raw file/submodule paths: 395 modified, 327 added, 173 removed |
+| New statically proven defects in reviewed scope | 0 |
+| Proposed changes from this review | PROGRESS.md only; no duplicate code fix |
+
+The [comparison](https://github.com/NeverSight/NeverD/compare/99340b58657e3907588a33b363435f79b74b86fe...00f446154f33ad569b3262c66233767bb368e7a7) was enumerated across 100 + 100 + 26 commits and an empty fourth page. GitHub caps comparison file lists at 300; the inventory instead compares complete recursive trees of 5,496 and 5,661 entries, neither truncated. Renames count as old/new paths in this raw tree inventory, so 895 is not a count of independent behavioral changes or fully reviewed files.
+
+### Changes since yesterday
+
+- Yesterday's [#363](https://github.com/NeverSight/NeverD/pull/363) merged at October 3 02:57:41 UTC as [988a6f01](https://github.com/NeverSight/NeverD/commit/988a6f01115bc91269595c047ce32e3e259c65cc). Subsequent human/repository editing corrected the historical Windows policy path to its new `driver/` location. That correction and the entire existing tracker are preserved below.
+- Windows process capabilities advanced through runtime DLL loading, Unicode environment APIs, heap reallocation, modeled system DLLs, VEH/VCH continuations, shared x64 SEH and caller-context capture: [#368](https://github.com/NeverSight/NeverD/pull/368), [#369](https://github.com/NeverSight/NeverD/pull/369), [#371](https://github.com/NeverSight/NeverD/pull/371), [#375–379](https://github.com/NeverSight/NeverD/pull/379), [#381](https://github.com/NeverSight/NeverD/pull/381), [#386](https://github.com/NeverSight/NeverD/pull/386) and [#387](https://github.com/NeverSight/NeverD/pull/387). Their complete implementation is outside today's bounded audit.
+- [#383](https://github.com/NeverSight/NeverD/pull/383) added synchronous external C/Python decoder callbacks to the shared bytecode pipeline; [#384](https://github.com/NeverSight/NeverD/pull/384) reconciled capability declarations.
+- [#391](https://github.com/NeverSight/NeverD/pull/391) separated Linux/Darwin kernel contracts from process startup. [#392](https://github.com/NeverSight/NeverD/pull/392) added Linux/Bionic vectored output and corrected scalar zero-write address validation.
+- Numeric memory, finite-value and modular predicate simplification, Swift/Objective-C recovery and LLVM C emission also advanced. These changes were inventoried, not comprehensively audited.
+- Intel HVF now has independently inspected Darwin success, but complete Intel CPU acceptance remains open. The later 1,000-repetition recovery run failed after runner communication loss; preserved progress does not prove the requested total.
+
+## Bounded static review
+
+**Mode:** Source, diffs, interfaces, callers, test declarations, configuration and already-existing CI evidence only. No project, build, test, benchmark, linter, formatter, repository script or dynamic analyzer was run. No CI workflow was dispatched or rerun.
+
+### External decoder callback and ownership boundary
+
+Full source/interface reads:
+- `include/neverd/{analysis/BytecodeDecoder.h,pipeline/BytecodeRecovery.h,sdk/NeverDCAPIBytecode.h}`
+- `lib/analysis/bytecode/{BytecodeDecoder.cpp,BytecodeProfile.cpp}`
+- `lib/pipeline/BytecodeRecovery.cpp`
+- `lib/sdk/capi/NeverDCAPIBytecode.cpp`
+- `pluginsdk/python/neverd_plugin/bytecode.py`
+- `unittests/devirtualization/BytecodeCAPITests.cpp`
+- `pluginsdk/python/tests/{test_bytecode.py,test_bytecode_integration.py}`
+
+Focused reads: Python `abi.py` callback/function declarations; `ffi.py::owned_string`; `BytecodeDecoderTests.cpp` source/call/loop and floating-policy sections (lines 601–996); callback contract in `docs/bytecode-profiles.md`; the external-bytecode capability and expected-public-surface entries. The decoder and pipeline patches in #383 were also read.
+
+Static conclusions:
+- Input windows end at the declared function boundary and are capped at 4,096 bytes. Callback recipes pass the same operand-width, storage-range, temporary-definedness, operation and CFG checks as static profiles.
+- Reply state is invocation-local. A repeated, missing, null, empty or oversized reply fails; accepted JSON is copied before the callback returns. The sink's return value means copied, not semantically validated.
+- Python retains the trampoline through the native call, catches callback exceptions, avoids re-entering the decoder after an exception and re-raises after the native response is freed by `owned_string`.
+- The graph and input limits do not preempt trusted callback code. Stable caller context and synchronous lifetime are explicit contracts, not sandbox guarantees. State-C output is not proof of equivalence to an unknown interpreter.
+- Existing tests describe independent reply-buffer reuse, error ownership, 64-bit PCs, reentrancy/concurrency and both C routes. They were read, not executed today.
+
+### Linux/Bionic output boundary
+
+Full source reads: `lib/emulation/os/linux/kernel/{LinuxOutput.cpp,LinuxKernel.h,LinuxServices.cpp}`, `lib/emulation/os/linux/LinuxValues.def`, `lib/emulation/os/linux/android/{AndroidBionic.cpp,AndroidKernelServices.def}`, `unittests/emulation/LinuxOutputNativeTests.cpp`, and `unittests/emulation/fixtures/{LinuxOutputCases.def,linux_output.c}`. The #392 LinuxOutput patch was also read.
+
+Focused caller/test reads: `LinuxProcessTests.cpp` scalar output cases and vectored registration/budget sections (lines 252–259, 281–289, 301–339); `AndroidNativeTests.cpp` vectored output/errno and budget sections (128–150), plus scalar-output and request-limit assertions.
+
+Static conclusions:
+- Descriptor lookup narrows to 32 bits before checking supported sinks; vector counts are bounded at 1,024. Descriptor metadata and signed lengths are imported before payload publication.
+- Address extents are validated before payload access. The one-vector transfer cap and multi-vector original-extent checks are deliberately distinct.
+- Whole-call output budgeting covers both streams before publishing that call. A later payload fault retains an earlier readable prefix; metadata errors publish no payload.
+- Bionic alone translates negative Linux results to `-1` and errno; raw services retain negative errno. The scalar zero-length path still checks user-address domain, whereas zero vectors ignore the table pointer.
+- The original Linux fixture compares regular-file redirects, not pipe atomicity. Native ARM64 backend coverage and complete process semantics cannot be inferred from these source checks.
+
+No new defect in these paths was established strongly enough for an automatic correction. The known Android default-scope/flag work is already proposed in #395; it is not duplicated here.
+
+### Native evidence collectors and acceptance boundaries
+
+Reviewed at the pinned source:
+- `scripts/run_native_cpu_ci.py:30–286`, `run_native_cpu_methods.py:26–244`, `audit_hvf_shards.py:40–164`, `prepare_hvf_batches.py:26–89`
+- `scripts/diagnose_hvf_methods.py:32–258`, `diagnose_hvf_recovery.py:21–159`
+- `.github/actions/hvf-intel-diagnostic/{run.cjs,active-sample.cjs}`, `.github/actions/hvf-intel-recovery/run.cjs`
+- `.github/workflows/{hvf.yml,hvf-intel-recovery.yml}`, `.github/actions/hvf-cpu-batches/action.yml`
+- `scripts/{NativeHVFTests.def,NativeDarwinTests.def}`
+- Associated `scripts/tests/test_{run_native_cpu_methods,audit_hvf_shards,prepare_hvf_batches,diagnose_hvf_methods,diagnose_hvf_recovery}.py`, both actions' `run.test.cjs` and diagnostic `active-sample.test.cjs`
+
+The audit checks exact command and CTest-property contracts, clean source/host/profile identity, whole-method shard membership, complete disjoint result union, required native outcomes, deadline and child-retirement records. The repetition path requires consecutive exact RUN/OK/PASSED records and final retirement. Partial plans/progress, missing shards, required skips and timed-out children cannot satisfy full acceptance. No new proven collector defect was found.
+
+**Separate uncertainty:** Direct-child completion is recorded; absence of every possible descendant is not independently established. No concrete present failure path was demonstrated. Static inspection cannot diagnose the hosted runner loss.
+
+## Existing CI and native evidence
+
+### Exact source snapshot
+
+At 01:04 UTC, the pinned `00f44615` had **10 checks: five successful, four cancelled and one skipped**:
+- [Main CI 37165654041](https://github.com/NeverSight/NeverD/actions/runs/37165654041): cancelled. Linux/macOS/Windows integration jobs cancelled; both Windows caller-context jobs succeeded; optional native WHP skipped.
+- [Mobile Decompilation 37165654036](https://github.com/NeverSight/NeverD/actions/runs/37165654036): cancelled. Ubuntu/macOS succeeded; Windows cancelled.
+- [LLVM Style 37165654017](https://github.com/NeverSight/NeverD/actions/runs/37165654017): succeeded.
+
+Legacy status contexts are empty. These partial successes do not establish full integration. Both CI/mobile workflow headers explicitly enable `cancel-in-progress`; no workflow policy was changed.
+
+The dev Actions creation window **October 3 01:12 UTC to October 4 00:58 UTC** contains **461 runs**, fully enumerated as 100 + 100 + 100 + 100 + 61 and an empty sixth page. At collection, its **99 main-CI runs were 96 cancelled, two failed and one in progress**; that last run later cancelled as recorded above. No green completed main-CI run was observed in the window. The real-application collection had 96 skipped, two cancelled and one queued run; that queued run belongs to earlier source `a4492d7b`, not today's pinned head.
+
+### Already-corrected main-CI failures
+
+The two failed main-CI runs, [37144486804](https://github.com/NeverSight/NeverD/actions/runs/37144486804) and [37147321022](https://github.com/NeverSight/NeverD/actions/runs/37147321022), report the same capability-manifest failure in their inspected Linux logs. The workflow step is named “Verify Debug and Release target flags,” but the failing assertion was `test_repository_manifest_is_honest_and_executable`: the old unparameterized BytecodeCAPI test filter and missing C/JSON/Python callback declarations.
+
+[10198de5](https://github.com/NeverSight/NeverD/commit/10198de584f7b3e6f549f0ec0e09bba4939e2ca5) synchronized the merged declarations; [#384](https://github.com/NeverSight/NeverD/pull/384) added the expanded evidence. Today's capability entry and expected-surface assertions retain these corrections. They are existing delivered fixes, not new fixes from this review, and do not prove current full CI success.
+
+### Native progress and remaining gaps
+
+**Intel Darwin, independently inspected:** [Run 37106013999](https://github.com/NeverSight/NeverD/actions/runs/37106013999), source `8dcc74c59da303176801b99747a60339161b824b`, succeeded. Artifact `11267489438` was downloaded and its SHA-256 matched `cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`. All 32 original XML/status/mapping sets reconcile: **286 unique results, 52 passed, 234 skipped, zero failed; all 26 required x64 HVF workloads passed**, including the original DarwinNative reference. All 32 processes recorded exit zero, no timeout and retirement. Existing logs additionally confirm ten transport cases, 100 recovery repetitions and isolated CR8 success. This is historical bounded Darwin/transport evidence, not full Intel CPU acceptance or today's head.
+
+**Intel recovery, independently inspected incomplete evidence:** [Run 37159724276](https://github.com/NeverSight/NeverD/actions/runs/37159724276) ended in failure at October 3 23:41:30 UTC. Controller `e4a8169e` tested source `bd284894c60427cf4e6a60e661a1fa0df8a070f5`. Only the plan and eleven progress artifacts survive; there is no final retirement result and the job-log endpoint returns 404. The last artifact `11286787441` was downloaded and matched its server SHA-256. Its untruncated original log proves **252 complete consecutive repetitions and the start of 253**, without a failure/skip in that preserved prefix. It does not prove iteration 253's outcome or the requested 1,000 repetitions. Repository documentation attributes the failure to lost runner communication; that annotation itself was not independently retrieved here. No root cause is inferred.
+
+**ARM64 HVF, maintainer-reported:** Current [HVF documentation](docs/macos-hvf.md) reports clean source `e4a8169e` with 7,125 CPU registrations, 882 passed, 6,243 inapplicable skips, zero failed and 16/16 required native cases; independent Darwin profile 65 passed, 221 skipped and 39/39 required cases, plus 1,000 recovery repetitions and twelve transport cases. These are local evidence reported by the maintainer, not local logs independently accessed today. CPU and Darwin totals overlap and must not be added.
+
+The complete Intel CPU gate, a complete uninterrupted current integration profile and native ARM64 KVM/WHP evidence remain distinct acceptance gaps.
+
+## Today's top priorities
+
+### 1. Close complete Intel CPU acceptance without overstating diagnostic progress
+
+**Dependency:** A matching native Intel execution with durable final evidence; the current preserved recovery prefix is insufficient.
+
+**Next action:** Reconcile already-authorized full inventory/shard evidence against the exact tested source and attempt. Preserve controller/source distinctions and investigate missing final evidence separately from guest semantics.
+
+**Acceptance:** All sixteen shards from one coherent clean source/attempt form the exact full inventory with every required native outcome passing and retirement recorded, or an equivalent complete unsharded gate. A transport success, partial shard or 252-of-1,000 recovery prefix does not qualify. This review initiates no execution.
+
+### 2. Obtain uninterrupted cross-platform integration and real-application qualification
+
+**Dependency:** The capability-manifest corrections are present; one identified source still needs terminal complete evidence.
+
+**Next action:** Inspect eventual authorized automatic results without transferring success between commits. Keep real-application producer/consumer identities separate from mobile fixture results.
+
+**Acceptance:** Linux, macOS and Windows complete their intended audited integration profiles for the same identified source, with required cases executed; real-application qualification supplies actual completed evidence instead of skipped/queued consumers.
+
+### 3. Review pending public boundary changes and map evidence to open criteria
+
+**Dependency:** Draft [#394](https://github.com/NeverSight/NeverD/pull/394) (LLVM C aggregate values/ABI) and [#395](https://github.com/NeverSight/NeverD/pull/395) (Android default symbol scopes) need review and exact-head evidence.
+
+**Next action:** Review aggregate interoperability/rejection cases and explicit scope/residency/flag contracts before counting them delivered. Relate implemented Windows/emulator and Swift/Objective-C work to [#104](https://github.com/NeverSight/NeverD/issues/104) and [#101](https://github.com/NeverSight/NeverD/issues/101), preserving remaining unsupported cases.
+
+**Acceptance:** Each selected criterion has an implementation/evidence link or explicit gap; draft work is not counted as merged acceptance. Seventeen issues remain open, including fourteen epics; no milestones, and only #12 is assigned. No issue is closed by inference from merged PRs.
+
+## Daily log
+
+### 2026-10-04 — Callback/output static review and native acceptance reconciliation
+
+- Enumerated 226 commits and 895 raw changed file/submodule paths since the previous pinned head.
+- Reviewed callback lifetime/validation, Linux/Bionic output boundaries and native evidence collectors with the exact bounded scope above; found no new proven defect warranting a code correction.
+- Counted 31 merged PRs by the initial observation, separating progress-only #363; ordinary issue count stayed 17.
+- Independently reconciled historical Intel Darwin success and the incomplete 252-repetition recovery prefix; kept reported local ARM64 results separate.
+- Diagnosed two historical main-CI failures as already-corrected capability drift. The pinned main CI and mobile workflows later cancelled.
+- Preserved the complete existing tracker and its later Windows policy-path correction.
+- Documentation-only topic-branch/draft-PR proposal. No tests, builds, repository scripts, manual CI, merge, deployment, dependency or security-setting changes. The English commit uses `[skip ci]`; independently configured automatic checks may still occur.
+
+## Publication observation and limits
+
+At 01:05 UTC, dev had advanced to [064b01cc](https://github.com/NeverSight/NeverD/commit/064b01ccadb1aa87788e47719f01e462353300a8) through [#396](https://github.com/NeverSight/NeverD/pull/396), merged at 01:01:05 UTC. It factors shared LLVM C exit tests. This later change is outside the pinned 226-commit inventory and source review. Open PRs fell to **two** and merged PRs since yesterday became **32**, including progress-only #363. The publication branch starts from the re-read current dev; PROGRESS.md was unchanged from the initially read blob.
+
+Collection limits:
+- Open issue/PR collection: twenty records (seventeen ordinary issues, three PRs), then empty second page. Updated collection: 34 PRs, no ordinary issue, then empty second page.
+- The first 100 most recently updated PRs crossed the tracking boundary and cover all in-window records; older complete PR history was not enumerated.
+- Exact-head workflows/checks: three/ten records, both followed by empty second pages. Six selected PRs (#363, #383, #392, #394–396) returned no submitted reviews, review threads or comments; this is not independent approval.
+- Two failed-run job collections and selected Linux logs were inspected. Not every historical log, native artifact or PR diff was audited. Artifact verification read data only and did not execute repository workloads.
+- AGENTS.md and CONTRIBUTING.md were read first; relevant architecture/testing/roadmap sections and repository guidance were consulted. Only the root AGENTS.md exists in the full tree.
+- GitHub reports dev unprotected and an empty repository ruleset collection. The topic-branch/draft-PR workflow is still followed; no protection settings were changed.
+- Broad Windows SEH/context/module semantics, Swift/Objective-C identity recovery, numeric optimization, all other changed paths and unmerged #394/#395 code remain outside today's bounded source audit. Static review cannot establish compilation, runtime behavior, race freedom, total ISA coverage or release readiness.
+
+## Previous snapshots (preserved)
+
+<details>
+<summary>October 3 tracker with the complete October 2, October 1 and September 30 history</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-03 09:12 Asia/Shanghai (UTC+08:00)** / **2026-10-03 01:12 UTC**
 
 This is a point-in-time daily issue/PR and static-review tracker. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md) and [contribution guidance](CONTRIBUTING.md) remain authoritative. Priorities below are proposed acceptance work, not assigned deadlines or an overall completion percentage.
@@ -668,6 +839,8 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>
 
