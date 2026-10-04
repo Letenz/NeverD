@@ -385,6 +385,16 @@ class HvfIntelProbe : public HvfExecutor {
     llvm::outs() << "INTEL_PROBE phase=executor_initialization\n";
     llvm::outs().flush();
     HvfExecutor::SetUp();
+    if (const auto *Reuse = std::getenv("NEVERD_HVF_INTEL_REUSE_EXECUTOR");
+        Reuse && llvm::StringRef(Reuse) == "1" && Host) {
+      // Retain only the diagnostic process's executor across fixture instances.
+      // Its static is initialized after the native registry/VM mutex, so it
+      // retires first at process exit. Mappings still detach every iteration.
+      static const auto RetainedHost = Host;
+      ASSERT_EQ(Host, RetainedHost);
+      llvm::outs() << "INTEL_PROBE phase=executor_retained\n";
+      llvm::outs().flush();
+    }
   }
 };
 

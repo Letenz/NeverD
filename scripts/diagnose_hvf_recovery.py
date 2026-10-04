@@ -27,6 +27,7 @@ def repetition_budget(repetitions):
 EXPERIMENTS = {
     "lifecycle": "HvfIntelProbe.LifecycleOnly",
     "instruction": "HvfIntelProbe.InstructionOnly",
+    "instruction-reuse": "HvfIntelProbe.InstructionOnly",
     "finite-deadline": "HvfIntelProbe.FiniteDeadline",
 }
 
@@ -50,10 +51,13 @@ def recovery_contract(source, build, document, required, runner, repetitions, ex
     environment = {"NEVERD_REQUIRE_HVF": "1"}
     if experiment != "recovery":
         environment["NEVERD_HVF_INTEL_PROBE"] = "1"
+    if experiment == "instruction-reuse":
+        environment["NEVERD_HVF_INTEL_REUSE_EXECUTOR"] = "1"
     return {
         "experiment": experiment,
         "native_execution": experiment != "lifecycle",
         "required_for_acceptance": experiment == "recovery",
+        "executor_reuse": experiment == "instruction-reuse",
         "native_name": name, "required_ctest_name": record.name,
         "command": [str(binary), "--gtest_filter=" + native_filter,
                     f"--gtest_repeat={repetitions}", "--gtest_break_on_failure"],
@@ -157,6 +161,8 @@ def execute(source, evidence):
     if any(plan.get(key) != value for key, value in contract.items()):
         raise ValueError("recovery command differs from its prepared contract")
     environment = shared.test_environment(os.environ)
+    for key in ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR"):
+        environment.pop(key, None)
     environment.update(contract["native_requirements"])
     with shared.NativeChildren(evidence):
         status = runner.execute(contract["command"], contract["working_directory"],

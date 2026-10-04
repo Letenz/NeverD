@@ -113,19 +113,41 @@ class RecoveryContractTests(unittest.TestCase):
 
     def test_opt_in_experiments_never_replace_required_recovery(self):
         for experiment, name in diagnostic.EXPERIMENTS.items():
-            self.add_probe(name)
+            if not any(record["name"] == name for record in self.document["tests"]):
+                self.add_probe(name)
             contract = diagnostic.recovery_contract(
                 self.root, self.build, self.document, {NAME}, runner, 100, experiment)
             self.assertEqual(contract["native_name"], name)
             self.assertEqual(contract["command"][1], "--gtest_filter=" + name)
-            self.assertEqual(contract["native_requirements"], {
-                "NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1"})
+            environment = {"NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1"}
+            if experiment == "instruction-reuse":
+                environment["NEVERD_HVF_INTEL_REUSE_EXECUTOR"] = "1"
+            self.assertEqual(contract["native_requirements"], environment)
+            self.assertEqual(contract["executor_reuse"], experiment == "instruction-reuse")
             self.assertEqual(contract["native_execution"], experiment != "lifecycle")
             self.assertFalse(contract["required_for_acceptance"])
         original = self.prepare()
         self.assertEqual(original["native_name"], NAME)
         self.assertEqual(original["native_requirements"], {"NEVERD_REQUIRE_HVF": "1"})
         self.assertTrue(original["required_for_acceptance"])
+
+    def test_parent_probe_environment_cannot_change_selected_experiment(self):
+        name = diagnostic.EXPERIMENTS["instruction"]
+        self.add_probe(name)
+        keys = ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR")
+        for mode in ("recovery", "instruction", "instruction-reuse"):
+            with self.subTest(mode=mode):
+                self.evidence = self.build / ("evidence-" + mode)
+                plan = self.prepare(experiment=mode)
+                expected = {key: plan["native_requirements"][key]
+                            for key in keys if key in plan["native_requirements"]}
+                log = "".join(iteration(i, plan["native_name"]) for i in range(1, 101))
+                self.binary.write_text(f"#!{sys.executable}\nimport os\n"
+                    f"assert {{key: os.environ[key] for key in {keys!r} if key in os.environ}} == {expected!r}\n"
+                    f"print({log!r}, end='', flush=True)\n")
+                self.binary.chmod(0o755)
+                with mock.patch.dict(os.environ, dict.fromkeys(keys, "1")):
+                    self.assertEqual(diagnostic.execute(self.root, self.evidence), 0)
 
     def test_experiment_missing_owner_or_unknown_mode_is_rejected(self):
         for mode in ("lifecycle", "instruction", "finite-deadline", "arbitrary"):
