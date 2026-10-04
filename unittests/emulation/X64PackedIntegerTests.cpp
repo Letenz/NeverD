@@ -9,6 +9,9 @@
 #include "neverd/emulation/AddressSpace.h"
 #include "neverd/emulation/CPU.h"
 
+#include "llvm/Support/Endian.h"
+
+#include <array>
 #include <stdexcept>
 #include <vector>
 #if defined(__x86_64__) || defined(_M_X64)
@@ -170,9 +173,12 @@ protected:
     EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::FLAGS)), Flags);
     EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::MXCSR)), MXCSR);
     EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), PC);
-    EXPECT_EQ(llvm::cantFail(CPU->readInteger(Alias, WordBytes)),
-              Input.Right[0]);
-    EXPECT_EQ(llvm::cantFail(CPU->readInteger(Alias + WordBytes, WordBytes)),
+    // A terminal CPU fault rejects ordinary API reads. Inspect diagnostic
+    // backing directly without consuming the fault or changing guest state.
+    std::array<uint8_t, VectorBytes> Bytes{};
+    ASSERT_EQ(llvm::toString(CPU->snapshotBacking(Alias, Bytes)), "");
+    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data()), Input.Right[0]);
+    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + WordBytes),
               Input.Right[1]);
   }
 };
@@ -259,7 +265,11 @@ TEST_P(X64PackedInteger, SourceFaultsPreserveStateAndResumeAfterRepair) {
         llvm::cantFail(CPU->protect(Data, PageSize, UserAccessible));
       unsigned Reads = 0;
       BackendHooks Hooks;
-      Hooks.Read = [&](uint64_t, unsigned) { ++Reads; };
+      Hooks.Read = [&](uint64_t Address, unsigned Size) {
+        EXPECT_EQ(Address, Data);
+        EXPECT_EQ(Size, VectorBytes);
+        ++Reads;
+      };
       Hooks.RecoverableFault = [](const BackendFault &) { return true; };
       const auto Bytes = memory(I);
       const auto Exit = run(Bytes, std::move(Hooks));
@@ -271,7 +281,9 @@ TEST_P(X64PackedInteger, SourceFaultsPreserveStateAndResumeAfterRepair) {
       EXPECT_EQ(Exit.Fault->Address, Data);
       EXPECT_EQ(Exit.Fault->Size, VectorBytes);
       EXPECT_EQ(Exit.Fault->Access, BackendAccessKind::Read);
-      EXPECT_EQ(Reads, 0u);
+      // Ordinary read observers report the attempted operand before its
+      // permission fault, but still precede every instruction effect.
+      EXPECT_EQ(Reads, 1u);
       expectState(Mixed, Mixed.Left, Code);
       ASSERT_TRUE(CPU->takeRecoverableFault());
       EXPECT_FALSE(CPU->takeRecoverableFault());
