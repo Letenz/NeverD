@@ -4613,6 +4613,175 @@ TEST(ObjCCallHints, SwiftFixedRuntimeImportsRequireExactStrongProvider) {
   }
 }
 
+namespace {
+BinaryImage errorRuntimeImage(Arch Architecture) {
+  auto Image = runtimeImage("_swift_willThrow", Architecture);
+  // This fixture has a distinct non-executable GOT segment, as the current
+  // import-storage owner requires; the generic runtime fixture shares text.
+  Segment Data;
+  Data.VA = 0x2000;
+  Data.FileOff = 0x1000;
+  Data.Size = Data.FileSz = 0x1000;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.resize(0x1000);
+  Image.Segments[0].Size = Image.Segments[0].FileSz = 0x1000;
+  Image.Segments[0].Data.resize(0x1000);
+  Image.Segments.push_back(Data);
+  Image.Sections[1].Type = llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS;
+  Image.DyldBindSlots[0x2180] = {"_swift_willThrow", 0,
+                                 "/usr/lib/swift/libswiftCore.dylib", false};
+  return Image;
+}
+} // namespace
+
+TEST(ObjCCallHints, SwiftWillThrowHasDedicatedErrorValueInput) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = errorRuntimeImage(Architecture);
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_EQ(Hint->Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Hint->Signature.Parameters[0].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    EXPECT_EQ(Hint->Signature.Parameters[1].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X21 : x86reg::R12);
+    const auto Inputs = sourceABIParameters(Hint->Signature);
+    ASSERT_EQ(Inputs.size(), 2U);
+    EXPECT_EQ(Inputs[1].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Inputs[1].Type->Pointee->Kind, NdTypeKind::Void);
+  }
+}
+
+TEST(ObjCCallHints, SwiftWillThrowRevalidatesErrorABIAndImport) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = errorRuntimeImage(Architecture);
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_TRUE(swiftRuntimePreservesErrorResult(Image, 0x1100, *Hint));
+    EXPECT_FALSE(swiftRuntimePreservesErrorResult(Image, 0x1104, *Hint));
+    EXPECT_FALSE(swiftRuntimePreservesErrorResult(Image, 0x2180, *Hint));
+    auto ChangedVeneer = Image;
+    ChangedVeneer.Segments[0].Data[0x100] = 0;
+    EXPECT_FALSE(
+        swiftRuntimePreservesErrorResult(ChangedVeneer, 0x1100, *Hint));
+    auto WrongSlot = *Hint;
+    WrongSlot.TargetAddress += 8;
+    EXPECT_FALSE(swiftRuntimePreservesErrorResult(Image, 0x1100, WrongSlot));
+    const auto Med = convert(Image, caller(Architecture));
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    const auto &Call = Med.CallInfos[0];
+    ASSERT_TRUE(Call.SourceCallHint);
+    ASSERT_EQ(Call.Args.size(), 2U);
+    EXPECT_EQ(Call.Args[0].RegOff,
+              Hint->Signature.Parameters[0].Location.RegisterOffset);
+    EXPECT_EQ(Call.Args[1].RegOff,
+              Hint->Signature.Parameters[1].Location.RegisterOffset);
+    EXPECT_EQ(Call.Args[1].Size, 8U);
+    EXPECT_EQ(Hint->Signature.Parameters[1].Type->Pointee->Kind,
+              NdTypeKind::Ptr);
+    EXPECT_EQ(Hint->Signature.Parameters[1].TheRole,
+              SourceParameterTypeHint::Role::SwiftErrorResult);
+    EXPECT_TRUE(Hint->requiresUniqueSourceOccurrence());
+    auto Expression = HighExpr::makeCall(
+        "untrusted", 0x1100,
+        {HighExpr::makeConst(0x7777, 8), HighExpr::makeConst(0x8888, 8)});
+    Expression->Type = NdType::makeVoid();
+    Expression->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+      auto Bad = Image;
+      auto &Bind = Bad.DyldBindSlots[0x2180];
+      if (Mutation == 0)
+        Bind.Module = "/tmp/libswiftCore.dylib";
+      if (Mutation == 1)
+        Bind.WeakImport = true;
+      if (Mutation == 2)
+        Bind.Addend = 1;
+      if (Mutation == 3)
+        Bind.Name += "_suffix";
+      if (Mutation == 4)
+        Bad.DyldBindSlots.clear();
+      if (Mutation == 5)
+        Bad.ConflictingImportStorageSlots.insert(0x2180);
+      if (Mutation == 6)
+        Bad.Sections[1].Flags = Bad.Sections[1].Flags | SegmentFlags::Writable;
+      if (Mutation == 7)
+        Bad.Sections[1].Type = llvm::MachO::S_THREAD_LOCAL_VARIABLES;
+      if (Mutation == 8)
+        Bad.Sections[1].Type = llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS;
+      if (Mutation == 9)
+        Bad.Sections[1].Type = llvm::MachO::S_THREAD_LOCAL_REGULAR;
+      if (Mutation == 10)
+        Bad.Sections[1].Type = llvm::MachO::S_LAZY_SYMBOL_POINTERS;
+      if (Mutation == 11)
+        Bad.MachOChainedFixupsAmbiguous = true;
+      if (Mutation == 12)
+        Bad.IsRelocatable = true;
+      if (Mutation == 13)
+        Bad.Format = BinaryFormat::ELF;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Bad, 0x2180)) << Mutation;
+      EXPECT_FALSE(swiftRuntimePreservesErrorResult(Bad, 0x1100, *Hint))
+          << Mutation;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Bad, {})) << Mutation;
+    }
+    for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+      HighExpr Bad = *Expression;
+      auto Binding = std::make_shared<SourceCallTypeHint>(*Hint);
+      Bad.SourceCallHint = Binding;
+      if (Mutation == 0)
+        Binding->Signature.Parameters[1].Location.RegisterOffset = 0;
+      if (Mutation == 1)
+        Binding->Signature.Parameters[1].Location.ValueBytes = 4;
+      if (Mutation == 2)
+        Binding->Signature.Parameters[1].TheRole =
+            SourceParameterTypeHint::Role::Ordinary;
+      if (Mutation == 3)
+        Binding->Signature.Parameters[1].Type =
+            NdType::makePtr(NdType::makeVoid());
+      if (Mutation == 4)
+        Binding->Signature.Convention =
+            SourceFunctionTypeHint::ConventionKind::C;
+      if (Mutation == 5)
+        Binding->TargetName = "swift_willThrowTypedImpl";
+      if (Mutation == 6)
+        Binding->ReturnedArgument = 1;
+      if (Mutation == 7)
+        Binding->Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+      if (Mutation == 8)
+        Bad.Operands[1] = HighExpr::makeConst(0, 4);
+      if (Mutation == 9)
+        Bad.Operands[0] = HighExpr::makeUndef(4);
+      if (Mutation == 10)
+        Binding->BorrowedByteInputs = {{1, 0}};
+      EXPECT_FALSE(sdk::objcSourceCallBound(Bad, Image, {})) << Mutation;
+      if (Mutation != 8 && Mutation != 9)
+        EXPECT_FALSE(swiftRuntimePreservesErrorResult(Image, 0x1100, *Binding))
+            << Mutation;
+    }
+    HighFunc Function;
+    Function.Entry = 0x1200;
+    Function.Name = "notify_error";
+    Function.ReturnType = NdType::makeVoid();
+    HighStmt Statement;
+    Statement.Kind = StmtKind::ExprStmt;
+    Statement.Val = Expression;
+    Function.Body = {Statement};
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    Options.Format = BinaryFormat::MachO;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+    EXPECT_NE(Source.find("swift_error_result"), std::string::npos) << Source;
+    EXPECT_NE(Source.find("void *slot = error"), std::string::npos) << Source;
+    EXPECT_NE(Source.find("(context, &slot)"), std::string::npos) << Source;
+    Function.SourceTypeHint = Hint->Signature;
+    EXPECT_THROW(HighCEmitter().emit({Function}, OS, Options),
+                 std::invalid_argument);
+  }
+}
+
 TEST(ObjCCallHints, SwiftFixedRuntimeDeclarationsExcludeCustomParameterABIs) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (const char *Name : {"_swift_willThrow", "_swift_allocBoxTyped",
@@ -8745,6 +8914,131 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactFrameworkStorageIdentities) {
   }
 }
 
+TEST(ObjCCallHints, ContentSizeCategoryStorageKeepsCurrentExternalIdentity) {
+  constexpr llvm::StringLiteral Name = "_UIContentSizeCategoryLarge";
+  constexpr llvm::StringLiteral Module =
+      "/System/Library/Frameworks/UIKit.framework/UIKit";
+  auto Image = runtimeImage(Name);
+  Image.DyldBindSlots[0x2180] = {Name.str(), 0, Module.str(), false};
+  const auto Hint = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->TargetName, "UIContentSizeCategoryLarge");
+  EXPECT_EQ(Hint->Signature.Origin,
+            SourceFunctionTypeHint::OriginKind::DarwinSDK);
+  EXPECT_TRUE(Hint->Signature.Parameters.empty());
+  EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+
+  // Keep both loads: the import cell names the external pointer object,
+  // whose contents remain a runtime NSString identity rather than a literal.
+  HighFunc Function;
+  Function.Name = "content_size_category";
+  Function.ReturnType = NdType::makeInt(8);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeLoad(
+      HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8), NdType::makeInt(8)),
+      NdType::makeInt(8));
+  Function.Body = {Return};
+  const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  const auto *Address = sourceCall(Bound.Function);
+  ASSERT_NE(Address, nullptr);
+  ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+  ASSERT_EQ(Bound.Function.Body.front().RetVal->Kind, ExprKind::Load);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+  EXPECT_NE(Source.find("[] __asm__(\"_UIContentSizeCategoryLarge\");"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+
+  for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.DyldBindSlots[0x2180].Module += ".impostor";
+    if (Mutation == 1)
+      Changed.DyldBindSlots[0x2180].WeakImport = true;
+    if (Mutation == 2)
+      Changed.DyldBindSlots[0x2180].Addend = 8;
+    if (Mutation == 3)
+      Changed.DyldBindSlots.clear();
+    if (Mutation == 4)
+      Changed.ImportPtrSlots[0x2180] += "Suffix";
+    if (Mutation == 5)
+      Changed.DyldBindSlots[0x2180].Name += "Suffix";
+    if (Mutation == 6)
+      Changed.ConflictingImportStorageSlots.insert(0x2180);
+    if (Mutation == 7)
+      Changed.ImportStorageSlots[0x2180] = {Name.str(), 8};
+    if (Mutation == 8)
+      Changed.ImportStorageSlots[0x2180] = {"_other", 0};
+    if (Mutation == 9)
+      Changed.Arch = Arch::X64;
+    if (Mutation == 10)
+      Changed.Format = BinaryFormat::ELF;
+    if (Mutation == 11)
+      Changed.IsRelocatable = true;
+    if (Mutation == 12)
+      Changed.Bits = Bitness::Bits32;
+    if (Mutation == 13)
+      Changed.DyldBindSlots[0x2180].Module =
+          "/System/Library/Frameworks/Foundation.framework/Foundation";
+    EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180)) << Mutation;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {})) << Mutation;
+  }
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    auto Forged = *Address;
+    auto Evidence =
+        std::make_shared<SourceCallTypeHint>(*Address->SourceCallHint);
+    Forged.SourceCallHint = Evidence;
+    auto &H = *Evidence;
+    if (Mutation == 0)
+      H.TargetName += "Suffix";
+    if (Mutation == 1)
+      H.TargetAddress += 8;
+    if (Mutation == 2)
+      H.Signature.ReturnType = NdType::makeInt(4);
+    if (Mutation == 3)
+      H.Signature.Parameters.push_back({"arg", NdType::makeInt(8)});
+    if (Mutation == 4)
+      Forged.Operands.push_back(HighExpr::makeConst(0, 8));
+    EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {})) << Mutation;
+  }
+}
+
+TEST(ObjCCallHints,
+     SupplementalFrameworkStorageRejectsThreadLocalSubstitution) {
+  for (const char *Name :
+       {"_UIEdgeInsetsZero", "_UIApplicationWillTerminateNotification",
+        "_UIContentSizeCategoryLarge"}) {
+    auto Image = runtimeImage(Name);
+    Image.DyldBindSlots[0x2180] = {
+        Name, 0, "/System/Library/Frameworks/UIKit.framework/UIKit", false};
+    const auto Hint = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    auto Address = HighExpr::makeCall(Hint->TargetName, 0x2180, {});
+    Address->Type = Hint->Signature.ReturnType;
+    Address->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+    for (const auto Kind :
+         {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+          llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+          llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+          llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+          llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+      auto Changed = Image;
+      Changed.Sections[1].Type = Kind;
+      EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+          << Name << Kind;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
+          << Name << Kind;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactExternalStorageIdentity) {
   constexpr llvm::StringLiteral Module = "/usr/lib/swift/libswiftCore.dylib";
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
@@ -8830,6 +9124,131 @@ TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactExternalStorageIdentity) {
       }
     }
   }
+}
+
+TEST(ObjCCallHints, SwiftStorageRejectsThreadLocalImportSlots) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Import : {"_$sSuN", "_$sSSSHsWP"})
+      for (const auto Kind :
+           {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+            llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+            llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+            llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+            llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+        auto Image = runtimeImage(Import, Architecture);
+        Image.DyldBindSlots[0x2180] = {
+            Import, 0, "/usr/lib/swift/libswiftCore.dylib", false};
+        Image.Sections[1].Type = Kind;
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Image, 0x2180))
+            << Import << " " << Kind;
+      }
+}
+
+TEST(ObjCCallHints, SwiftObjectIdentifierStorageRequiresCurrentDataIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Import : {"_$sSON", "_$sSOSHsWP"}) {
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          Import, 0, "/usr/lib/swift/libswiftCore.dylib", false};
+      const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      ASSERT_TRUE(Binding) << Import;
+      EXPECT_EQ(Binding->TargetName, llvm::StringRef(Import).drop_front());
+      EXPECT_EQ(Binding->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+      EXPECT_TRUE(Binding->Signature.Parameters.empty());
+      EXPECT_EQ(Binding->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+      EXPECT_FALSE(Binding->DoesNotReturn);
+
+      HighFunc Function;
+      Function.Name = "identifier_storage";
+      Function.ReturnType = NdType::makeInt(8);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                         NdType::makeInt(8));
+      Function.Body = {Return};
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      const auto *Address = sourceCall(Bound.Function);
+      ASSERT_NE(Address, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+      EXPECT_NE(Source.find("[] __asm__(\"" + std::string(Import) + "\");"),
+                std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+      for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+        auto Changed = Image;
+        auto &Bind = Changed.DyldBindSlots[0x2180];
+        switch (Mutation) {
+        case 0:
+          Bind.Module += ".impostor";
+          break;
+        case 1:
+          Bind.WeakImport = true;
+          break;
+        case 2:
+          Bind.Addend = 8;
+          break;
+        case 3:
+          Changed.DyldBindSlots.clear();
+          break;
+        case 4:
+          Changed.ImportPtrSlots[0x2180] = "_different";
+          break;
+        case 5:
+          Changed.ConflictingImportStorageSlots.insert(0x2180);
+          break;
+        case 6:
+          Changed.IsRelocatable = true;
+          break;
+        case 7:
+          Bind.Module.clear();
+          break;
+        case 8:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] =
+              std::string(Import) + "suffix";
+          break;
+        case 9:
+          Bind.Module = "/usr/lib/swift/libswiftFoundation.dylib";
+          break;
+        case 10:
+          Changed.Format = BinaryFormat::ELF;
+          break;
+        case 11:
+          Bind.Name = Changed.ImportPtrSlots[0x2180] = "_$sSOMa";
+          break;
+        case 12:
+          Changed.Sections[1].Type =
+              llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS;
+          break;
+        case 13:
+          Changed.Sections[1].Type = llvm::MachO::S_THREAD_LOCAL_VARIABLES;
+          break;
+        }
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+            << Import << " " << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
+            << Import << " " << Mutation;
+      }
+      for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+        auto Changed = *Address;
+        auto ChangedHint =
+            std::make_shared<SourceCallTypeHint>(*Address->SourceCallHint);
+        if (Mutation == 0)
+          ChangedHint->TargetAddress += 8;
+        if (Mutation == 1)
+          ChangedHint->Signature.ReturnLocation.ValueBytes = 4;
+        if (Mutation == 2)
+          Changed.Operands.push_back(HighExpr::makeConst(0, 8));
+        Changed.SourceCallHint = std::move(ChangedHint);
+        EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {})) << Mutation;
+      }
+    }
 }
 
 TEST(ObjCCallHints, SwiftFoundationCVarArgDescriptorKeepsExternalIdentity) {

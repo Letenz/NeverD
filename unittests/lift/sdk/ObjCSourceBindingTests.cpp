@@ -5,6 +5,7 @@
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "../../../lib/sdk/capi/ObjCSourceInputs.h"
+#include "../../../lib/sdk/capi/SourceSwiftConsumedInputProjection.h"
 #include "../../../lib/sdk/capi/SourceSwiftWitnessFrameProjection.h"
 #include "../core/CFunctionParameterCallFixture.h"
 #include "../core/ImmutableNativeCallFixture.h"
@@ -32,7 +33,54 @@ using namespace neverd::sdk;
 
 namespace {
 void frameTableFixture(immutable_native_call_test::Fixture &F);
+
+void checkConsumedInputAddressReplay(const ExprPtr &Address,
+                                     const BinaryImage &Image) {
+  ASSERT_TRUE(Address && Address->SourceCallHint);
+  for (unsigned Case = 0; Case < 10; ++Case) {
+    SCOPED_TRACE(Case);
+    auto CurrentImage = Image;
+    auto Copy = std::make_shared<HighExpr>(*Address);
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Address->SourceCallHint);
+    Copy->SourceCallHint = Hint;
+    switch (Case) {
+    case 0:
+      break; // Independently rebuilt annotation for the same identity.
+    case 1:
+      Hint->TargetAddress += 8;
+      break;
+    case 2:
+      Hint->TargetName += "wrong";
+      break;
+    case 3:
+      Hint->ByteCount = 8;
+      break;
+    case 4:
+      Hint->Signature.ReturnLocation.ValueBytes = 4;
+      break;
+    case 5:
+      Copy->Operands.push_back(HighExpr::makeConst(0, 8));
+      break;
+    case 6:
+      Copy->CallAddr = 1;
+      break;
+    case 7:
+      Hint->Selector = "unrelated:";
+      break;
+    case 8:
+      CurrentImage.Exports.clear();
+      break;
+    case 9:
+      CurrentImage.Exports.push_back({"_conflict", 0, Hint->TargetAddress});
+      break;
+    }
+    size_t Budget = 1000;
+    EXPECT_EQ(swift_consumed_input_detail::sameExpression(Address, Copy,
+                                                          CurrentImage, Budget),
+              Case == 0);
+  }
 }
+} // namespace
 
 TEST(ImmutableNativeCalls,
      ProvesOneOriginalIndirectOccurrenceAcrossRuntimeCall) {
@@ -3740,6 +3788,7 @@ TEST(ObjCSourceBindings,
   EXPECT_EQ(Identity->SourceCallHint->CallKind,
             SourceCallTypeHint::Kind::RuntimeSwiftNominalMetadataAddress);
   EXPECT_TRUE(objcSourceCallBound(*Identity, F.Image, {}));
+  checkConsumedInputAddressReplay(Identity, F.Image);
   std::set<std::string> Helpers;
   const auto Source = renderObjCSwiftNominalMetadataHelpers(
       F.Image, Bound.SwiftNominalMetadata, Helpers);
@@ -4097,6 +4146,7 @@ TEST(ObjCSourceBindings, SwiftWitnessTableNeedsOneExactReadOnlyExport) {
   EXPECT_EQ(Bound->SourceCallHint->CallKind,
             SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress);
   EXPECT_TRUE(objcSourceCallBound(*Bound, Image, {}));
+  checkConsumedInputAddressReplay(Bound, Image);
   std::set<std::string> Helpers;
   const auto Source = renderObjCSwiftWitnessTableHelpers(
       Image, Result.SwiftWitnessTables, Helpers);
@@ -4831,7 +4881,9 @@ TEST(ObjCSourceBindings,
   F.Function.Body.insert(F.Function.Body.end(),
                          Assign(CacheLocal, SwiftTypeMetadataFixture::Cache));
   const auto Reassigned = bindObjCSourceReferences(F.Function, F.Image);
-  EXPECT_FALSE(Reassigned.Function.Body[0].Val->SourceCallHint);
+  // A repeated identical definition preserves every reaching pair.
+  ASSERT_TRUE(Reassigned.Limitation.empty()) << Reassigned.Limitation;
+  EXPECT_TRUE(Reassigned.Function.Body[0].Val->SourceCallHint);
   F.Function.Body.pop_back();
 
   HighStmt OtherUse;
@@ -4846,6 +4898,340 @@ TEST(ObjCSourceBindings,
   const auto UseBeforeDefinition =
       bindObjCSourceReferences(F.Function, F.Image);
   EXPECT_FALSE(UseBeforeDefinition.Function.Body[2].Val->SourceCallHint);
+}
+
+namespace {
+struct MetadataChoiceFixture : SwiftTypeMetadataFixture {
+  static constexpr va_t CacheB = 0x2040, ReferenceB = 0x1040;
+  MedVar CacheVar, ReferenceVar;
+  HighStmt Use;
+  ExprPtr Condition;
+  explicit MetadataChoiceFixture(Arch A) : SwiftTypeMetadataFixture(A) {
+    auto &Bytes = Image.Segments[0].Data;
+    llvm::support::endian::write32le(Bytes.data() + 0x40, 0xb0 - 0x40);
+    llvm::support::endian::write32le(Bytes.data() + 0x44, 2);
+    std::memcpy(Bytes.data() + 0xb0, "Si", 3);
+    Image.Symbols.push_back({"_$sSiMR", ReferenceB, 8, false});
+    Image.Symbols.push_back({"_$sSiMd", CacheB, 8, false});
+    CacheVar.Kind = ReferenceVar.Kind = MedVar::Temp;
+    CacheVar.Id = 601;
+    ReferenceVar.Id = 602;
+    CacheVar.Size = ReferenceVar.Size = 8;
+    MedVar Choose;
+    Choose.Kind = MedVar::Param;
+    Choose.Id = 0;
+    Choose.Size = 8;
+    Condition = HighExpr::makeVar(Choose, NdType::makeInt(8));
+    Function.Params.push_back({"choose", NdType::makeInt(8)});
+    Use = Function.Body.front();
+    Use.Addr = 0x7100;
+    Use.Val->Operands = {local(CacheVar), local(ReferenceVar)};
+  }
+  ExprPtr local(MedVar V) const {
+    return HighExpr::makeVar(V, NdType::makePtr(NdType::makeVoid()));
+  }
+  HighStmt assign(MedVar V, va_t A, va_t Site = 0) const {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Site;
+    S.Dst = local(V);
+    S.Val = HighExpr::makeConst(A, 8, ConstantAddressProvenance::DataAddress);
+    return S;
+  }
+  std::vector<HighStmt> pair(bool Second) const {
+    return {assign(CacheVar, Second ? CacheB : Cache, Second ? 0x7040 : 0x7020),
+            assign(ReferenceVar, Second ? ReferenceB : Reference,
+                   Second ? 0x7044 : 0x7024)};
+  }
+  void body(unsigned Shape) {
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Cond = Condition;
+    Branch.Body = pair(false);
+    Branch.ElseBody = pair(true);
+    if (Shape == 1) {
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      Jump.GotoTarget = Use.Addr;
+      Branch.Body.push_back(Jump);
+    }
+    if (Shape < 2) {
+      Function.Body = {Branch, Use};
+    } else if (Shape < 4) {
+      Branch.Kind = Shape == 2 ? StmtKind::While : StmtKind::DoWhile;
+      Branch.ElseBody.clear();
+      Branch.Body = pair(true);
+      auto FirstUse = Use;
+      FirstUse.Addr = 0x7060;
+      Branch.Body.insert(Branch.Body.begin(), FirstUse);
+      Function.Body = pair(false);
+      Function.Body.push_back(Branch);
+      Function.Body.push_back(Use);
+    } else {
+      Branch.Kind = StmtKind::Switch;
+      Branch.Cond.reset();
+      Branch.SwitchExpr = Condition;
+      Branch.Body.clear();
+      Branch.ElseBody.clear();
+      Branch.Cases.push_back({0, pair(false)});
+      Branch.DefaultBody = pair(true);
+      Function.Body = {Branch, Use};
+    }
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftMetadataLocalChoicesKeepCorrelatedPaths) {
+  for (auto A : {Arch::AArch64, Arch::X64})
+    for (unsigned Shape = 0; Shape != 5; ++Shape) {
+      SCOPED_TRACE(Shape);
+      MetadataChoiceFixture F(A);
+      F.body(Shape);
+      const auto Flow = analyzeHighSourceFlow(F.Function, false);
+      ASSERT_TRUE(Flow.Complete);
+      ASSERT_TRUE(Flow.Items.empty());
+      const auto B = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+      ASSERT_EQ(B.SwiftTypeMetadataPairs.size(), 2u);
+      EXPECT_EQ(B.SwiftTypeMetadataPairs.at(F.Cache).ReferenceAddress,
+                F.Reference);
+      EXPECT_EQ(B.SwiftTypeMetadataPairs.at(F.CacheB).ReferenceAddress,
+                F.ReferenceB);
+      unsigned Bound = 0;
+      walkStmts(B.Function.Body, [&](const HighStmt &S) {
+        if (S.Kind != StmtKind::Assign)
+          return;
+        ASSERT_TRUE(S.Val && S.Val->SourceCallHint);
+        EXPECT_TRUE(objcSourceCallBound(*S.Val, F.Image, {}));
+        ++Bound;
+      });
+      EXPECT_EQ(Bound, 4u);
+    }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftMetadataLocalChoicesRejectUncorrelatedOrEscapedPaths) {
+  for (auto A : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      MetadataChoiceFixture F(A);
+      F.body(0);
+      auto &Branch = F.Function.Body[0];
+      switch (Mutation) {
+      case 0: // Both sets are individually valid; their selected pair is not.
+        Branch.ElseBody[1] = F.assign(F.ReferenceVar, F.Reference);
+        break;
+      case 1:
+        Branch.Body[1] = F.assign(F.ReferenceVar, F.ReferenceB);
+        break;
+      case 2: { // Independent conditions cannot justify a Cartesian pairing.
+        HighStmt Second = Branch;
+        Branch.Body = {F.pair(false)[0]};
+        Branch.ElseBody = {F.pair(true)[0]};
+        MedVar Other = F.Condition->Var;
+        Other.Id = 1;
+        Second.Cond = HighExpr::makeVar(Other, NdType::makeInt(8));
+        F.Function.Params.push_back({"other", NdType::makeInt(8)});
+        Second.Body = {F.pair(false)[1]};
+        Second.ElseBody = {F.pair(true)[1]};
+        F.Function.Body.insert(F.Function.Body.begin() + 1, Second);
+        break;
+      }
+      case 3: // Missing definition on one edge.
+        Branch.ElseBody.pop_back();
+        break;
+      case 4:
+        F.Function.Body.insert(F.Function.Body.begin(), F.Use);
+        break;
+      case 5: // Backedge introduces a mismatched pair after the first use.
+        F.body(2);
+        F.Function.Body[2].Body.pop_back();
+        break;
+      case 6: // Same failure in a loop which always executes once.
+        F.body(3);
+        F.Function.Body[2].Body.pop_back();
+        break;
+      case 7: {
+        auto S = F.Use;
+        S.Val = F.local(F.CacheVar);
+        F.Function.Body.push_back(S);
+        break;
+      }
+      case 8: {
+        HighStmt S;
+        S.Kind = StmtKind::Return;
+        S.RetVal = F.local(F.CacheVar);
+        F.Function.Body.push_back(S);
+        break;
+      }
+      case 9: {
+        HighStmt S;
+        S.Kind = StmtKind::Store;
+        S.StoreAddr = HighExpr::makeConst(0x9000, 8);
+        S.StoreVal = F.local(F.CacheVar);
+        F.Function.Body.push_back(S);
+        break;
+      }
+      case 10: // Use as a dynamic target is also a read, never an alias grant.
+        F.Use.Val->IndirectTarget = F.local(F.CacheVar);
+        break;
+      case 11:
+        Branch.Body[0].Dst->Var.Size = 4;
+        Branch.Body[0].Dst->Type = NdType::makeInt(4);
+        break;
+      case 12:
+        Branch.Body[0].Val = HighExpr::makeConst(F.Cache, 4);
+        break;
+      case 13:
+        Branch.Body[0].Val = F.Condition;
+        break;
+      case 14: {
+        auto Hint =
+            std::make_shared<SourceCallTypeHint>(*F.Use.Val->SourceCallHint);
+        Hint->Signature.Parameters[0].Location.ValueBytes = 4;
+        F.Use.Val->SourceCallHint = Hint;
+        break;
+      }
+      case 15:
+        F.Use.Val->SourceCallHint.reset();
+        break;
+      case 16: {
+        HighStmt Jump;
+        Jump.Kind = StmtKind::Goto;
+        Jump.GotoTarget = 0x7fff;
+        Branch.Body.push_back(Jump);
+        break;
+      }
+      case 17: { // Nested reads are not direct paired arguments.
+        auto Cast = std::make_shared<HighExpr>();
+        Cast->Kind = ExprKind::Cast;
+        Cast->Type = NdType::makePtr(NdType::makeVoid());
+        Cast->Operands = {F.local(F.CacheVar)};
+        F.Use.Val->Operands[0] = Cast;
+        break;
+      }
+      }
+      const auto B = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(B.Limitation.empty());
+      unsigned BoundCache = 0;
+      walkStmts(B.Function.Body, [&](const HighStmt &S) {
+        if (S.Kind == StmtKind::Assign && S.Dst &&
+            S.Dst->Var.Id == F.CacheVar.Id && S.Val && S.Val->SourceCallHint)
+          ++BoundCache;
+      });
+      EXPECT_EQ(BoundCache, 0u);
+    }
+}
+
+TEST(ObjCSourceBindings, SwiftMetadataLocalChoicesRevalidateCurrentIdentity) {
+  for (auto A : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      MetadataChoiceFixture F(A);
+      F.body(1);
+      const auto B = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(B.Limitation.empty()) << B.Limitation;
+      const auto Address = B.Function.Body[0].ElseBody[0].Val;
+      ASSERT_TRUE(Address->SourceCallHint);
+      switch (Mutation) {
+      case 0:
+        F.Image.Symbols.back().Name = "_$sSbMd";
+        break;
+      case 1:
+        F.Image.Symbols[F.Image.Symbols.size() - 2].Name = "_$sSbMR";
+        break;
+      case 2:
+        F.Image.Segments[0].Data[0xb1] = 'b';
+        break;
+      case 3:
+        F.Image.Segments[0].Data[0x44] = 1;
+        break;
+      case 4:
+        F.Image.Segments[1].Data[F.CacheB - 0x2000] = 1;
+        break;
+      case 5:
+        F.Image.DataPtrRelocSlots.insert(F.ReferenceB);
+        break;
+      case 6:
+        F.Image.CodePtrRelocSlots.insert(F.CacheB);
+        break;
+      case 7:
+        F.Image.Sections[0].Type = 0x11; // S_THREAD_LOCAL_REGULAR
+        break;
+      }
+      EXPECT_FALSE(objcSourceCallBound(*Address, F.Image, {}));
+      const auto Fresh = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(Fresh.Limitation.empty());
+      EXPECT_FALSE(Fresh.Function.Body[0].ElseBody[0].Val->SourceCallHint);
+      std::set<std::string> Helpers;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, B.SwiftTypeMetadataPairs, Helpers),
+                   std::runtime_error);
+    }
+}
+
+TEST(ObjCSourceBindings, SwiftMetadataLocalChoicesBoundOnlyRelevantState) {
+  for (bool Relevant : {false, true}) {
+    SCOPED_TRACE(Relevant);
+    MetadataChoiceFixture F(Arch::AArch64);
+    F.body(0);
+    for (unsigned I = 0; I != 33; ++I) {
+      MedVar C = F.CacheVar, R = F.ReferenceVar;
+      C.Id += 10 + 2 * I;
+      R.Id += 10 + 2 * I;
+      HighStmt Branch;
+      Branch.Kind = StmtKind::IfElse;
+      Branch.Cond = F.Condition;
+      Branch.Body = {F.assign(C, F.Cache), F.assign(R, F.Reference)};
+      Branch.ElseBody = {F.assign(C, F.CacheB), F.assign(R, F.ReferenceB)};
+      if (!Relevant) {
+        // Unrelated numeric locals need no address identity or coordinates.
+        for (auto *Body : {&Branch.Body, &Branch.ElseBody})
+          for (auto &S : *Body)
+            S.Val = HighExpr::makeConst(42, 8);
+      }
+      F.Function.Body.insert(F.Function.Body.begin(), Branch);
+      if (Relevant) {
+        auto Call = F.Use;
+        Call.Val = std::make_shared<HighExpr>(*F.Use.Val);
+        Call.Val->Operands = {F.local(C), F.local(R)};
+        F.Function.Body.push_back(Call);
+      }
+    }
+    const auto B = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_EQ(B.Limitation.empty(), !Relevant);
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftMetadataLocalChoicesRejectNonordinaryRecipeStorage) {
+  for (uint32_t Kind : {llvm::MachO::S_THREAD_LOCAL_REGULAR,
+                        llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+                        llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+                        llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+                        llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS})
+    for (unsigned Range = 0; Range != 3; ++Range) {
+      SCOPED_TRACE(Kind);
+      SCOPED_TRACE(Range);
+      MetadataChoiceFixture F(Arch::AArch64);
+      F.body(1);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(Bound.Limitation.empty());
+      const auto Address = Bound.Function.Body[0].ElseBody[0].Val;
+      if (Range < 2)
+        F.Image.Sections[Range].Type = Kind;
+      else {
+        auto Split = F.Image.Sections[0];
+        Split.VA = 0x10b1;
+        Split.Size = Split.FileSz = 1;
+        Split.Type = Kind;
+        F.Image.Sections.push_back(Split);
+      }
+      EXPECT_FALSE(objcSourceCallBound(*Address, F.Image, {}));
+      const auto B = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(B.Limitation.empty());
+      EXPECT_FALSE(B.Function.Body[0].ElseBody[0].Val->SourceCallHint);
+    }
 }
 
 TEST(ObjCSourceBindings, SwiftStdlibDescriptorRebuildsExactMetadataRecipe) {
@@ -7136,6 +7522,306 @@ TEST(ObjCSourceBindings,
         else
           EXPECT_EQ(Source.find("__asm__("), std::string::npos);
       }
+}
+
+namespace {
+SwiftTypeMetadataFixture
+swiftRegisteredOptionalPairFixture(Arch Architecture, char Kind = 'V',
+                                   bool Repeated = true,
+                                   bool Indirect = false) {
+  auto F =
+      swiftRegisteredInternalTypeFixture(Architecture, Kind, false, Indirect);
+  const std::string Type = "13WMFComponents10ArticleTab" + std::string(1, Kind);
+  const std::string Base =
+      "_$s" + Type + "Sg_" + Type + (Repeated ? "Sgt" : "t");
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  auto &Data = F.Image.Segments[0].Data;
+  std::memcpy(Data.data() + F.TypeReference + 5 - 0x1000,
+              Repeated ? "Sg_ABt" : "Sg_AAt", 7);
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000, 11);
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings,
+     RegisteredOptionalTupleSubstitutionsUseTheOriginalTypeTree) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char Kind : {'C', 'V', 'O'})
+      for (const bool Repeated : {false, true})
+        for (const bool Indirect : {false, true}) {
+          SCOPED_TRACE(static_cast<int>(Architecture));
+          SCOPED_TRACE(Kind);
+          SCOPED_TRACE(Repeated);
+          SCOPED_TRACE(Indirect);
+          auto F = swiftRegisteredOptionalPairFixture(Architecture, Kind,
+                                                      Repeated, Indirect);
+          const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+              F.Image, F.Cache, F.Reference);
+          ASSERT_TRUE(Proof);
+          EXPECT_TRUE(Proof->Descriptors.empty());
+          EXPECT_EQ(Proof->TypeReference,
+                    F.Image.Symbols[0].Name.substr(
+                        3, F.Image.Symbols[0].Name.size() - 5));
+          const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+          ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+          ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+          for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+            EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+          std::set<std::string> Names;
+          const auto Source = renderObjCSwiftTypeMetadataHelpers(
+              F.Image, Bound.SwiftTypeMetadataPairs, Names);
+          EXPECT_EQ(Source.find("__asm__("), std::string::npos);
+        }
+}
+
+TEST(ObjCSourceBindings,
+     RegisteredOptionalTupleRejectsExpandedSubstitutionsAndStaleIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 16; ++Mutation) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Mutation);
+      auto F = swiftRegisteredOptionalPairFixture(Architecture);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      auto &Data = F.Image.Segments[0].Data;
+      auto *Raw = Data.data() + F.TypeReference - 0x1000;
+      const auto SetNames = [&](const std::string &Type) {
+        F.Image.Symbols[0].Name = "_$s" + Type + "MR";
+        F.Image.Symbols[1].Name = "_$s" + Type + "Md";
+      };
+      switch (Mutation) {
+      case 0:
+        Raw[9] = 'A';
+        break; // AA is the underlying nominal type, not Optional<T>.
+      case 1:
+        SetNames(
+            "13WMFComponents10ArticleTabVSg_13WMFComponents10ArticleTabVt");
+        break;
+      case 2:
+        SetNames("13WMFComponents10ArticleTabVSg_ABt");
+        break; // A forged name equal to textual expansion is not a proof.
+      case 3:
+        Raw[9] = 'A';
+        SetNames("13WMFComponents10ArticleTabVSg_AAt");
+        break;
+      case 4:
+        Raw[9] = 'C';
+        break;
+      case 5:
+        Raw[10] = 'G';
+        break;
+      case 6:
+        Raw[11] = 't';
+        break;
+      case 7:
+        Raw[5] = 'X';
+        break;
+      case 8:
+        SetNames(
+            "13WMFComponents10ArticleTabVSg_13WMFComponents10ArticleTabCSgt");
+        break;
+      case 9:
+        SetNames("13WMFComponents10ArticleTabVSg4left_AD5rightt");
+        break; // The raw tuple has no labels.
+      case 10:
+        F.Image.Segments[3].Data[0x80] = 'X';
+        break;
+      case 11:
+        F.Image.Segments[3].Data[0x20] = 0x11;
+        break; // No unique registered nominal identity.
+      case 12:
+        F.Image.Sections.back().Size = 0;
+        break;
+      case 13:
+        F.Image.RelDataPtrRelocSlots.insert(F.TypeReference + 8);
+        break;
+      case 14:
+        F.Image.Sections[3].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 15:
+        F.Image.Segments[1].Data[F.Cache - 0x2000] = 1;
+        break;
+      }
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+        EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+      std::set<std::string> Names;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                   std::runtime_error);
+    }
+}
+
+namespace {
+SwiftTypeMetadataFixture swiftRegisteredLabeledOptionalFixture(
+    Arch Architecture, llvm::StringRef FirstLabel = "animationConfiguration",
+    llvm::StringRef SecondLabel = "playbackState", bool Indirect = false) {
+  auto F =
+      swiftRegisteredInternalTypeFixture(Architecture, 'V', false, Indirect);
+  const auto Label = [](llvm::StringRef Name) {
+    return Name.empty() ? std::string{}
+                        : std::to_string(Name.size()) + Name.str();
+  };
+  const std::string First = Label(FirstLabel), Second = Label(SecondLabel);
+  const std::string Base = "_$s13WMFComponents10ArticleTabV" + First +
+                           "_AA12PlaybackModeO" + Second + "tSg";
+  F.Image.Symbols[0].Name = Base + "MR";
+  F.Image.Symbols[1].Name = Base + "Md";
+  auto Descriptor = F.Image.Symbols[2];
+  Descriptor.Addr = 0x40c0;
+  Descriptor.Name = "_$s13WMFComponents12PlaybackModeOMn";
+  F.Image.Symbols.push_back(Descriptor);
+  auto &Nominal = F.Image.Segments[3].Data;
+  llvm::support::endian::write32le(Nominal.data() + 0xc0, 0x52);
+  llvm::support::endian::write32le(Nominal.data() + 0xc4,
+                                   uint32_t(0x4040 - 0x40c4));
+  llvm::support::endian::write32le(Nominal.data() + 0xc8,
+                                   uint32_t(0x40e0 - 0x40c8));
+  std::memcpy(Nominal.data() + 0xe0, "PlaybackMode", 13);
+  F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 8;
+  llvm::support::endian::write32le(F.Image.Segments.back().Data.data() + 4,
+                                   uint32_t(0x40c0 - 0x6004));
+  auto &Data = F.Image.Segments[0].Data;
+  auto *Raw = Data.data() + F.TypeReference - 0x1000;
+  const auto Prefix = First + "_";
+  std::memcpy(Raw + 5, Prefix.data(), Prefix.size());
+  const size_t SecondOffset = 5 + Prefix.size();
+  Raw[SecondOffset] = 1;
+  llvm::support::endian::write32le(
+      Raw + SecondOffset + 1,
+      uint32_t(0x40c0 - (F.TypeReference + SecondOffset + 1)));
+  const auto Suffix = Second + "tSg";
+  std::memcpy(Raw + SecondOffset + 5, Suffix.c_str(), Suffix.size() + 1);
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000,
+                                   SecondOffset + 5 + Suffix.size());
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings,
+     RegisteredLabeledTupleOptionalKeepsBothTypesLabelsAndOuterWrapper) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const bool Indirect : {false, true})
+      for (const auto &Labels :
+           {std::pair{"animationConfiguration", "playbackState"},
+            {"columnA", "last"},
+            {"", "value"},
+            {"key", ""},
+            {"", ""}}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Indirect);
+        SCOPED_TRACE(Labels.first);
+        auto F = swiftRegisteredLabeledOptionalFixture(
+            Architecture, Labels.first, Labels.second, Indirect);
+        const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+            F.Image, F.Cache, F.Reference);
+        ASSERT_TRUE(Proof);
+        EXPECT_TRUE(Proof->Descriptors.empty());
+        EXPECT_EQ(Proof->TypeReference,
+                  F.Image.Symbols[0].Name.substr(
+                      3, F.Image.Symbols[0].Name.size() - 5));
+        const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+        for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+          EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+        std::set<std::string> Names;
+        EXPECT_EQ(renderObjCSwiftTypeMetadataHelpers(
+                      F.Image, Bound.SwiftTypeMetadataPairs, Names)
+                      .find("__asm__("),
+                  std::string::npos);
+      }
+}
+
+TEST(ObjCSourceBindings,
+     RegisteredLabeledTupleOptionalRejectsWrongCompositionAndStaleProof) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Mutation);
+      auto F = swiftRegisteredLabeledOptionalFixture(Architecture);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      auto &Data = F.Image.Segments[0].Data;
+      auto *Raw = Data.data() + F.TypeReference - 0x1000;
+      const auto SetType = [&](const std::string &Type) {
+        F.Image.Symbols[0].Name = "_$s" + Type + "MR";
+        F.Image.Symbols[1].Name = "_$s" + Type + "Md";
+      };
+      switch (Mutation) {
+      case 0:
+        Raw[7] = 'x';
+        break; // First label mismatch.
+      case 1:
+        Raw[37] = 'x';
+        break; // Second label mismatch.
+      case 2:
+        Raw[5] = '0';
+        break; // Invalid label length.
+      case 3:
+        Raw[29] = 't';
+        break; // Missing tuple separator.
+      case 4:
+        Raw[51] = 'X';
+        break; // No Optional constructor.
+      case 5:
+        Raw[53] = 'G';
+        break; // Missing terminator.
+      case 6:
+        Raw[30] = 2;
+        break; // No authenticated indirect descriptor.
+      case 7:
+        llvm::support::endian::write32le(
+            Raw + 31, uint32_t(F.LocalDescriptor - (F.TypeReference + 31)));
+        break; // Repeated first type is not the second enum.
+      case 8:
+        F.Image.Segments[3].Data[0xe0] = 'X';
+        break;
+      case 9:
+        F.Image.Segments[3].Data[0xc0] = 0x51;
+        break;
+      case 10:
+        F.Image.Sections.back().Size = F.Image.Sections.back().FileSz = 4;
+        break;
+      case 11:
+        F.Image.RelDataPtrRelocSlots.insert(F.TypeReference + 31);
+        break;
+      case 12:
+        SetType("13WMFComponents10ArticleTabVSg22animationConfiguration_"
+                "AA12PlaybackModeO13playbackStatet");
+        break; // Optional first element is not an Optional tuple.
+      case 13:
+        SetType("13WMFComponents10ArticleTabV22animationConfiguration_"
+                "AA12PlaybackModeO13playbackStatet");
+        break;
+      case 14:
+        SetType("13WMFComponents12PlaybackModeO22animationConfiguration_"
+                "AA10ArticleTabV13playbackStatetSg");
+        break;
+      case 15:
+        SetType("13WMFComponents10ArticleTabV13playbackState_"
+                "AA12PlaybackModeO22animationConfigurationtSg");
+        break;
+      case 16:
+        SetType("13WMFComponents10ArticleTabV_AA12PlaybackModeOtSg");
+        break;
+      case 17:
+        SetType("13WMFComponents10ArticleTabV22animationConfiguration_"
+                "AA12PlaybackModeO13playbackStatetSgSg");
+        break;
+      }
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+        EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+      std::set<std::string> Names;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                   std::runtime_error);
+    }
 }
 
 TEST(ObjCSourceBindings,
@@ -15535,6 +16221,9 @@ namespace {
 SwiftTypeMetadataFixture swiftLabeledNestedTupleFixture(bool Generic) {
   auto F = Generic ? swiftTupleContainerRecipeFixture(Arch::AArch64)
                    : swiftNominalTupleTypeFixture(Arch::AArch64);
+  // This mapping contains only imported descriptor slots, matching the
+  // ordinary non-lazy GOT in the compiler/runtime evidence.
+  F.Image.Sections[2].Type = llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS;
   const std::string Base =
       Generic ? "_$ss23_ContiguousArrayStorageCys11AnyHashableV_"
                 "12CoreGraphics7CGFloatV4from_AG2tottG"
@@ -15587,6 +16276,31 @@ TEST(ObjCSourceBindings, SwiftNestedTupleKeepsLabelsAndRepeatedDescriptor) {
     EXPECT_NE(Source.find("__asm__(\"_$s12CoreGraphics7CGFloatVMn\")"),
               std::string::npos);
   }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftCGFloatTupleRequiresOrdinaryCurrentImportStorage) {
+  for (bool Generic : {false, true})
+    for (uint32_t Kind :
+         {llvm::MachO::S_REGULAR, llvm::MachO::S_LAZY_SYMBOL_POINTERS,
+          llvm::MachO::S_THREAD_LOCAL_REGULAR,
+          llvm::MachO::S_THREAD_LOCAL_ZEROFILL,
+          llvm::MachO::S_THREAD_LOCAL_VARIABLES,
+          llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+          llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+      SCOPED_TRACE(Generic);
+      SCOPED_TRACE(Kind);
+      auto F = swiftLabeledNestedTupleFixture(Generic);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      F.Image.Sections[2].Type = Kind;
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      std::set<std::string> Names;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                   std::runtime_error);
+    }
 }
 
 TEST(ObjCSourceBindings, SwiftFlatTupleLabelDoesNotBecomeASubstitution) {

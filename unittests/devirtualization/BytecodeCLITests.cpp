@@ -138,12 +138,16 @@ TEST_F(BytecodeCLI, EmitsBothRoutesAndPreservesOutputOnRejectedInput) {
     return std::string(std::istreambuf_iterator<char>(Stream), {});
   };
   Bytes();
-  for (unsigned Variant : {0u, 1u, 2u, 3u, 4u, 5u}) {
+  for (unsigned Variant = 0; Variant != 12; ++Variant) {
     const unsigned Route = Variant % 3;
+    const bool WithContext = Variant >= 6;
+    const bool Unaligned = (Variant / 3) % 2;
     SCOPED_TRACE(Route);
     auto Args = Arguments;
-    if (Variant >= 3)
+    if (Unaligned)
       Args.push_back("--unaligned-pointers");
+    if (WithContext)
+      Args.push_back("--with-context");
     if (Route)
       Args.push_back("--llvm");
     if (Route == 2)
@@ -151,15 +155,16 @@ TEST_F(BytecodeCLI, EmitsBothRoutesAndPreservesOutputOnRejectedInput) {
     auto Ran = exec(NEVERD_BYTECODE_BINARY, Args);
     ASSERT_TRUE(Ran.ok()) << Ran.err;
     const auto Source = Read();
-    if (Variant >= 3)
+    if (Unaligned)
       EXPECT_NE(Source.find("may_alias"), std::string::npos);
     EXPECT_NE(Source.find("example("), std::string::npos);
     EXPECT_EQ(Source.find("unknown value"), std::string::npos);
     if (hasCrossTargetClang()) {
-      std::ofstream(Output, std::ios::app) << R"(
+      std::ofstream(Output, std::ios::app)
+          << "\n#define CONTEXT_ARGUMENT " << (WithContext ? ", 0" : "") << R"(
 int main(void) {
   uint64_t state = UINT64_C(0xabcdef0123456789);
-  return example(&state) != 0 || state != UINT64_C(0xabcdef0123451234);
+  return example(&state CONTEXT_ARGUMENT) != 0 || state != UINT64_C(0xabcdef0123451234);
 }
 )";
       auto Program =

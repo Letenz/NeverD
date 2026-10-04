@@ -19,6 +19,10 @@ NEVERD_BACKEND_FAULT_KIND(Interrupt, "interrupt")
 NEVERD_BACKEND_FAULT_KIND(UnhandledException, "unhandled_exception")
 #endif
 
+#ifdef NEVERD_BACKEND_FAULT_CAUSE
+NEVERD_BACKEND_FAULT_CAUSE(OperandAlignment, "operand_alignment")
+#endif
+
 #ifdef NEVERD_BACKEND_ACCESS_KIND
 NEVERD_BACKEND_ACCESS_KIND(Read, "read")
 NEVERD_BACKEND_ACCESS_KIND(Write, "write")

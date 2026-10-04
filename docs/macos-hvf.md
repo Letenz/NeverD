@@ -63,9 +63,11 @@ owns instruction admission, page permissions, CPU state, memory transactions,
 service traps and guest OS behavior. Native worker actions cannot call guest
 observers or acquire the caller's core memory locks.
 
-ARM64 explicitly single-steps the immutable TLB/I-cache maintenance sequence
-before the admitted instruction. Debug exceptions routed to EL2 cannot be
-masked using the guest's `PSTATE.D`. All scalar, TLS and FP/SIMD state uses the
+ARM64 executes the complete immutable TLB/I-cache maintenance sequence in one
+native entry, with software stepping disabled. A distinct HVC #1 must match
+its exact return PC, syndrome, PSTATE and unchanged ESR_EL1 before the
+admitted guest instruction is single-stepped. `PSTATE.D` cannot mask debug
+exceptions routed to EL2. All scalar, TLS and FP/SIMD state uses the
 existing ARM64 capture boundary and startup probe. Intel uses negotiated VMCS
 controls, monitor-trap stepping, TLB invalidation, complete FP/SSE XSAVE packets
 and authenticated exception exits. RIP/RFLAGS are installed and captured
@@ -166,8 +168,8 @@ rollback, queue cancellation, native loop interruption and retry. Both ISAs have
 required raw loop interruption and completion-error fixtures. These must observe
 an actual native return; cancellation before entry cannot satisfy the loop test.
 The full profile also requires the Intel CR8 all-register and privilege regression.
-The transport profile requires 12 ARM64 or 10 Intel cases, and the full profile
-requires 16 or 14 respectively. Intel compilation alone does not establish Intel
+The transport profile requires 15 ARM64 or 10 Intel cases, and the full profile
+requires 23 or 18 respectively. Intel compilation alone does not establish Intel
 runtime correctness; its native gate remains required.
 
 Hardware-backed execution is not automatically faster for NeverD's checked
@@ -296,6 +298,8 @@ Build and public-integration checks established the following:
 
 #### Performance and remaining scope
 
+Historical measurements below predate the 2026-10-04 optimization; see the current results at the end of this page.
+
 An alternating seven-sample benchmark, after warmup and excluding CPU creation,
 ran the same checked ARM64 loop on both backends: two setup instructions plus
 1,000 `ADD/SUBS/B.NE` iterations, or 3,002 guest instructions. Final registers
@@ -349,3 +353,75 @@ Before each method, the action uploads its immutable execution plan and a host s
 The complete `Native macOS HVF` workflow also accepts optional `source-ref`. It defaults to the workflow commit and otherwise requires a full SHA. Native jobs and the aggregate auditor check out and verify that same source; the audit compares evidence against the tested source, even when the workflow controller has a different revision.
 
 For `hosted-intel`, the full workflow accepts `intel-image=macos-15-intel` (default) or `macos-26-intel`, both listed in the [official runner images](https://github.com/actions/runner-images). This permits an explicit host-environment comparison with the same `source-ref`; the image also changes the OS, SDK and tools. VM/vCPU, native transport, CR8, full CPU and Darwin requirements are unchanged. An image choice alone is not evidence of stability or a runtime fix.
+
+`sample-active-child=true` optionally preserves one sealed active snapshot five seconds after observing native child registration: a one-second stack sample of its verified native child, up to 1 MiB of its current log tail, and host state. It defaults to `false`. Sampling accepts at most 166 methods per job to stay within the artifact limit; the sampling command has a twenty-second deadline and a 1 MiB report limit. Identity and collection failures are recorded, including a zero exit status without a stack report. Active uploads use a separate immutable directory; an upload failure cancels the native child and fails the action. Sampling changes scheduling and is labeled instrumented partial evidence. It neither resets the original method timer nor replaces complete acceptance.
+
+The full workflow also accepts `recovery-repetitions=1000` for a focused interruption/recovery investigation; the default remains `100`. This choice gives the repetition step a ten-minute budget instead of three minutes. Each native test keeps its original deadline, assertions and stop-on-failure behavior. The run title identifies the longer repetition setting. These repetitions do not replace the complete CPU or Darwin gates.
+
+The separate [Intel recovery workflow](../.github/workflows/hvf-intel-recovery.yml) builds only `NeverDHvfTests` and runs the original `HvfExecutor.Native*` filter in one process with `repetitions=100` or `1000`. It requires an exact `source-ref`, a native Intel VM/vCPU probe, Release, HVF enabled and Unicorn disabled. Controller, tested source and official artifact uploader use separate checkouts.
+
+The action uploads its plan before execution. During execution it preserves an initial process marker, progress after at least 25 additional completed repetitions, and at most one stalled-progress snapshot when new output has not yet been preserved. It coalesces progress during uploads, limits progress artifacts to 42 and each log copy to 1 MiB, and uploads only sealed directories. Uploads do not pause individual repetitions or reset their timers; they still affect host scheduling, so this is instrumented partial evidence.
+
+Success requires consecutive iterations from 1 through the requested count, the exact native test with paired RUN/OK/PASSED records in every iteration, no failures or skips, exit status zero and confirmed process retirement. Overwritten repetition XML cannot prove this. Native execution has a three- or ten-minute total budget, with another 30 seconds for controller cleanup; the action has 20 minutes. An upload failure cancels execution, and cancellation retires both the native process group and uploader. Final evidence is uploaded when the host remains reachable. Incomplete or truncated snapshots never satisfy complete CPU or Darwin acceptance.
+
+`runner=hosted-intel` remains the recovery workflow default. `runner=self-hosted` uses the existing `[self-hosted, macOS, X64, hvf]` labels for an Intel host comparison. Both choices require native x86-64 and the VM/vCPU probe. Hosted images install Ninja; self-hosted hosts must already provide `cmake`, `ninja`, `python3`, `clang` and `codesign`. Source isolation, repetition limits, evidence checks and failure behavior are identical. This route requires an available matching runner; it does not provision hardware.
+
+On 2026-10-03, clean source `e4a8169e69eb668ed3795efe4bd5f42cf4f287c2` passed local native ARM64 Release validation with HVF enabled, Unicorn disabled and `NEVERD_LLVM_PREBUILT=ON`. The complete CPU profile reconciled 20 owners, 520 methods and 7,125 results: 882 passed, 6,243 skipped, zero failed, and all 16 required native cases passed. The independent Darwin profile reconciled 32 methods and 286 results: 65 passed, 221 skipped, zero failed, and all 39 required native cases passed. The original one-process recovery loop also completed 1,000 consecutive repetitions, followed by all 12 native transport cases. Original logs, XML, process status and source definitions were independently checked. CPU and Darwin totals overlap and must not be added. These results establish neither complete Intel acceptance nor an iOS SDK build.
+
+The [standalone Intel recovery run](https://github.com/NeverSight/NeverD/actions/runs/37159724276), using source `bd284894c60427cf4e6a60e661a1fa0df8a070f5`, ended at 23:41:30 UTC on 2026-10-03 with a GitHub annotation reporting lost hosted-runner communication. Its plan and eleven progress artifacts survived and were downloaded with verified server SHA-256 digests. The last preserved snapshot proves 252 complete repetitions and the start of repetition 253; it does not locate the eventual failure. No final result or process-retirement record was available, and the full job-log endpoint returned 404. The requested 1,000 repetitions therefore remain unverified. The repository still had no self-hosted runners. This is preserved failure evidence, not a stability fix or complete Intel acceptance.
+
+A [personal-repository harness](https://github.com/gmh5225/test_mac_intel) provides another hosted Intel route without local Intel hardware. It pins the NeverD diagnostic and tested-source revisions independently and records the workflow revision separately. Queue time and runtime stability must be evaluated separately. The recovery action now preserves each uploader child's PID, parent, executable, exit status, signal and termination reason before reporting failure. After a failed action, a bounded collector waits up to 20 seconds for macOS IPS crash reports that match that child's PID, parent, process name and execution time. Missing reports remain explicit; reports from unrelated processes are not copied. A failed upload still terminates the original native run and cannot establish a hypervisor failure or a passing loop.
+
+On 2026-10-04, the first personal-repository [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) and [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) jobs started 8 and 5 seconds after creation. They failed after uploader subprocesses exited; the controller cancelled and retired the native children after 3 and 105 complete repetitions respectively. Their final bundles were preserved and independently checked. A separate [uploader-only control](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621) passed all 16 uploads, with 17 server-digest-verified artifacts and `native_execution=false`. These observations distinguish upload failure from a native assertion failure; they neither identify its cause nor validate the requested 1,000 repetitions. The earlier organization control also started in 5 seconds, so these samples do not establish a queue-speed improvement.
+
+The subsequent [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) and [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) runs both ended in failure on 2026-10-04; GitHub explicitly reported lost hosted-runner communication. Their 10 and 16 artifacts were verified. The last preserved logs prove 175 and 326 consecutive complete repetitions respectively, followed by one started repetition; neither locates the eventual fault. Both lack final native results and retirement records, and both full job-log endpoints returned HTTP 404. No cancellation was requested. The 1,000-repetition gate remains unverified on Intel. [Retained original log prefixes and the run/digest manifest](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04) preserve these results beyond the Actions artifact retention period.
+
+## ARM64 maintenance optimization (2026-10-04)
+
+The five TLB/I-cache maintenance operations now run together in one immutable private stub, followed by a dedicated HVC #1. The transport verifies the complete syndrome, return PC, PSTATE and ESR_EL1 before executing exactly one admitted guest instruction. Software stepping is disabled only during maintenance; all barriers, full state capture and the shared cancellation deadline remain. ERET is deliberately absent because exception return makes ESR_EL1 architecturally UNKNOWN. [Arm](https://documentation-service.arm.com/static/649ae5b238511951cb799288).
+
+On an M4 Max with macOS 15.6.1, Release/Apple Clang 17 and prebuilt LLVM, separate instrumentation counted 252600 native entries before and 84200 after for the same 42044 guest plus 56 startup-probe instructions: six entries became two. Instrumented timings are excluded. Three recovery/fault tests each passed 1000 consecutive iterations in one process; cancellation requires a native memory-store witness and successful retry with rewritten guest code.
+
+The clean integration at [389bebfdd](https://github.com/NeverSight/NeverD/commit/389bebfdda31a0db19facc7ab8ca5461a8c8c1bc) passed the complete CPU inventory: 2546 passed, 4710 skipped, zero failed; all 23 required native cases passed. The separate Darwin inventory had 130 passed, 156 skipped, zero failed and all 39 required native cases passed. These inventories overlap; their totals must not be added. No iOS SDK/device oracle is claimed.
+
+Fifteen alternating process pairs, with one warmup per workload and no build or tests from this task running during measurement. The shared host load was 26.7–33.0 (software comparison: 28.8–32.6). Cells show median [minimum–maximum] milliseconds. Speedup is the median of paired before/after time ratios; the 95% percentile bootstrap interval uses 10000 resamples with seed 20261004. Long tails and only fifteen pairs limit generalization.
+
+`4b54908b9` → `056090929` / Release / Apple Clang 17 / LLVM 23 prebuilt / Unicorn `df88be772`.
+
+| Workload | Before ms [min–max] | After ms [min–max] | Paired speedup | 95% interval | Faster pairs |
+| --- | --- | --- | --- | --- | --- |
+| `initialization` | 1.292 [0.804–6.793] | 1.118 [0.797–29.077] | 0.998× | 0.809–1.154 | 7/15 |
+| `integer` | 125.426 [92.700–587.385] | 70.229 [54.067–895.051] | 1.595× | 1.373–1.884 | 13/15 |
+| `branch` | 251.909 [168.279–974.846] | 155.678 [106.833–1566.522] | 1.495× | 1.055–1.687 | 12/15 |
+| `memory` | 231.574 [140.137–1511.815] | 143.496 [96.508–1209.777] | 1.535× | 1.276–1.984 | 13/15 |
+| `tls_call` | 347.850 [203.188–2536.731] | 212.467 [136.304–1441.830] | 1.552× | 1.428–2.912 | 14/15 |
+| `two_cpu_switch` | 34.629 [25.019–416.105] | 26.684 [18.926–60.159] | 1.389× | 1.283–1.515 | 13/15 |
+
+### Unicorn / optimized HVF (above 1 favors HVF)
+
+| Workload | Paired speedup | 95% interval |
+| --- | --- | --- |
+| `initialization` | 0.232× | 0.195–0.325 |
+| `integer` | 1.878× | 1.437–2.896 |
+| `branch` | 2.681× | 1.824–3.317 |
+| `memory` | 2.967× | 2.224–3.215 |
+| `tls_call` | 2.339× | 0.977–3.257 |
+| `two_cpu_switch` | 0.831× | 0.541–1.612 |
+
+These are measurements of checked ARM64 workloads on one shared host, not a universal speed ranking. Intel runner disconnects and process crashes remain unresolved and require separate investigation. The bounded macOS/iOS CPU profiles do not become full Apple OS/device emulation.
+
+[Reproduction: `neverd-cpu-bench`, `benchmark_cpu.py`](testing.md#reproduce-checked-arm64-cpu-measurements).
+
+## Intel isolation results (2026-10-04)
+
+The finite owner-deadline candidate `909672ca6` remains experimental. The original 1000-repetition recovery test lost runner communication on both macOS 15 and 26; its last preserved prefixes contain 277/278 and 250/251 completed/started iterations. Ordinary instruction execution with the same candidate and no explicit cancellation also lost communication on macOS 15 (576/577). GitHub confirmed all three losses. None has a final native result or retirement record; a saved prefix does not locate the eventual fault. [Original evidence](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries).
+
+An independent, unchanged `hvf-edge-cases` program at `f150b38` completed its real-mode guest and 100000 random interrupt call attempts on both images, in approximately 362 and 398 seconds. Both exited zero and their children were reaped; artifact digests, source hashes, checkpoints and guest completion were independently checked. Earlier 300-second attempts reached their observer deadline and were retired, without losing the runner. The upstream program ignores random interrupt return codes, so attempt counts do not establish one-to-one delivery. This control is not NeverD acceptance or a performance comparison. [Source, logs and audit](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upstream).
+
+These results narrow the investigation but establish no production fix. Retaining the VM and executor threads is a diagnostic comparison, not an accepted lifecycle change. Intel still requires the original 1000-repetition recovery test, complete CPU inventory and independent Darwin gate on the same clean candidate.
+
+Both lifecycle controls now passed 1000/1000 on both Intel images: vCPU recreation (37195529270, 37195554929) and VM plus vCPU recreation on one retained owner (37196504453, 37196535787). The latter has 8000 ordered native events and final generation 1001 retirement per run; all 24/27 artifact digests, zero native/controller exits and child retirement were verified. This narrows the comparison with full Executor turnover but neither identifies the cause nor proves a production fix. The next diagnostic will retain the VM while replacing the vCPU and owner thread; original recovery and full CPU/Darwin acceptance remain required.
+
+Owner turnover did not complete its 1000-round experiment: the uploader crashed on macOS 15 with SIGTRAP in V8 string parsing (37198629082), and on macOS 26 with SIGSEGV in V8 scope lookup (37198630903). The controller then cancelled and reaped the native processes; the saved logs show 24/25 and 467/468 completed/started iterations, without a native assertion or final native result. Both runners stayed reachable and supplied matched crash reports. These are observer-triggered interruptions, not verified native passes or confirmed runner losses. The cause remains unknown; compare upload-only controls before changing the backend.
+
+Both synthetic upload-only controls (37199672430, 37199674303) and exact failed-snapshot replays (37200549588, 37200551385) completed 16/16 uploads per run without a VM or guest. All 17 artifact digests per run, zero exits, absence of signals/cancellation, and replay bytes against pinned payload commit `e02e8c6` were independently verified. All four controls share Node 24.19.0, V8 13.6.233.17-node.51 and the same executable SHA256. Their Intel UUID matches the earlier crash reports, which did not record executable hashes. These controls did not reproduce the crash from those payloads alone; concurrent native execution, the crash cause and Intel acceptance remain unresolved. [Verified evidence](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-upload-controls).

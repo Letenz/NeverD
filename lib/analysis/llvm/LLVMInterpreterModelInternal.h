@@ -7,6 +7,7 @@
 #define NEVERD_LLVM_INTERPRETER_MODEL_INTERNAL_H
 
 #include "neverd/analysis/LLVMInterpreterMachineState.h"
+#include "neverd/analysis/LLVMScalarFunctionModel.h"
 
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
@@ -47,6 +48,7 @@ inline LowOp op(NdOp Code, NdVar Output, std::initializer_list<NdVar> Inputs) {
 class Builder {
   const llvm::Function &F;
   const LLVMInterpreterModelLimits &Limits;
+  std::vector<LLVMScalarArgument> *ScalarArguments;
   InterpreterMachineStateModel Result;
   std::map<const llvm::Value *, NdVar> Values;
   std::map<const llvm::BasicBlock *, int> Blocks;
@@ -96,8 +98,9 @@ class Builder {
 
 public:
   Builder(const llvm::Function &Function,
-          const LLVMInterpreterModelLimits &Limits)
-      : F(Function), Limits(Limits) {}
+          const LLVMInterpreterModelLimits &Limits,
+          std::vector<LLVMScalarArgument> *ScalarArguments = nullptr)
+      : F(Function), Limits(Limits), ScalarArguments(ScalarArguments) {}
   InterpreterMachineStateModel build();
 };
 } // namespace neverd::analysis::llvm_model

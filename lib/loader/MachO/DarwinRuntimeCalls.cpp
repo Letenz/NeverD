@@ -5,12 +5,56 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinImportVeneer.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/StringRef.h"
 
 #include <algorithm>
 
 namespace neverd {
+
+std::optional<SourceFunctionTypeHint>
+darwinHFAImportVeneerSourceABI(const BinaryImage &Image, va_t Address) {
+  if (Image.Arch != Arch::AArch64)
+    return std::nullopt;
+  const auto Slot = darwinImportVeneerSlot(Image, Address);
+  if (!Slot || !isImmutableImageImportSlot(Image, *Slot))
+    return std::nullopt;
+  const auto Declaration = darwinRuntimeSourceCallHint(Image, *Slot);
+  if (!Declaration || Declaration->WeakImport || Declaration->DoesNotReturn ||
+      Declaration->Format || Declaration->NilTerminated ||
+      Declaration->CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+      Declaration->TargetAddress != *Slot)
+    return std::nullopt;
+  const auto &Provider = Image.DyldBindSlots.at(*Slot).Module;
+  if (std::find(Image.DynInfo.NeededLibs.begin(),
+                Image.DynInfo.NeededLibs.end(),
+                Provider) == Image.DynInfo.NeededLibs.end())
+    return std::nullopt;
+  const auto &Signature = Declaration->Signature;
+  std::string Error;
+  if (Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+      !Signature.ReturnType ||
+      Signature.ReturnType->Kind != NdTypeKind::Struct ||
+      Signature.ReturnComponents.size() < 2 ||
+      Signature.ReturnComponents.size() > 4 ||
+      !validateSourceABI(Signature, Error))
+    return std::nullopt;
+  const auto Members = sourceAggregateMembers(Signature.ReturnType);
+  if (Members.size() != Signature.ReturnComponents.size())
+    return std::nullopt;
+  for (size_t I = 0; I != Members.size(); ++I)
+    if (!Members[I].Type || Members[I].Type->Kind != NdTypeKind::Float ||
+        Signature.ReturnComponents[I].Kind !=
+            SourceABICarrierKind::FloatingRegister)
+      return std::nullopt;
+  auto Canonical = Signature;
+  if (!assignDarwinFixedSourceABI(Canonical, Image.Arch, Error) ||
+      !equalSourceABIs(Signature, Canonical))
+    return std::nullopt;
+  return Signature;
+}
 
 std::optional<SourceFunctionTypeHint>
 darwinIndirectAffineTransformSignature(Arch Architecture,
@@ -482,9 +526,9 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
     return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
 
   // These UIKit constants are public external storage, rather than functions
-  // or implementation-owned objects. The command-line-tools SDK used to
-  // generate DarwinSourceDataDeclarations.inc has no UIKit headers or binary,
-  // so retain the same exact symbol/provider proof here.
+  // or implementation-owned objects. The base Darwin data catalog excludes
+  // UIKit, so retain the same exact symbol/provider proof for independently
+  // verified supplemental declarations here.
   // https://developer.apple.com/documentation/uikit/uiapplicationdidreceivememorywarningnotification
   llvm::StringRef FrameworkData;
   const auto Bind = Image.DyldBindSlots.find(ImportSlot);
@@ -527,6 +571,12 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
           "NSStrokeWidthAttributeName", "NSUnderlineStyleAttributeName"})
       MatchFrameworkData(Name,
                          "/System/Library/Frameworks/UIKit.framework/UIKit");
+  // Complete device/simulator ASTs and fresh Mac Catalyst compiler probes
+  // declare external, non-TLS NSString *const storage. Bind its address and
+  // retain the load; the name does not establish an NSString value or layout.
+  if (Image.Arch == Arch::AArch64)
+    MatchFrameworkData("UIContentSizeCategoryLarge",
+                       "/System/Library/Frameworks/UIKit.framework/UIKit");
   // CIContext.h imports OpenGLES on iOS, unavailable in the CLT SDK used by
   // the generated catalog. Complete Xcode 26.5 iPhoneOS and arm64 simulator
   // ASTs agree that these are external, non-TLS NSString pointer objects.
@@ -582,6 +632,20 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
               Image.Arch == Arch::AArch64 ? D.AArch64Modules : D.X64Modules,
               Bind->second.Module))
         SwiftMetadata = D.Name;
+  // Compiler evidence names ordinary external storage. A current TLS slot
+  // supplies a different runtime access contract, even with the same spelling.
+  if (!SwiftMetadata.empty() || !FrameworkData.empty())
+    if (const auto *Section = Image.getSectionFor(ImportSlot))
+      switch (Section->Type & llvm::MachO::SECTION_TYPE) {
+      case llvm::MachO::S_THREAD_LOCAL_REGULAR:
+      case llvm::MachO::S_THREAD_LOCAL_ZEROFILL:
+      case llvm::MachO::S_THREAD_LOCAL_VARIABLES:
+      case llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS:
+      case llvm::MachO::S_THREAD_LOCAL_INIT_FUNCTION_POINTERS:
+        return std::nullopt;
+      default:
+        break;
+      }
   if (FrameworkData.empty() && !SwiftEmptyStorage && !SwiftIsaMask &&
       SwiftMetadata.empty() && *Import != "___stack_chk_guard")
     return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);

@@ -10,6 +10,7 @@
 #include "neverd/emulation/ExecutionBackend.h"
 #include "neverd/emulation/ExecutionBudget.h"
 #include "neverd/emulation/ExecutionExit.h"
+#include "neverd/emulation/LinuxTimeOptions.h"
 #include "neverd/emulation/WindowsProcessOptions.h"
 
 #include <array>
@@ -49,6 +50,7 @@ struct ProcessOptions {
   std::vector<std::string> Environment;
   std::optional<AndroidNativeOptions> Android;
   std::optional<WindowsProcessOptions> Windows;
+  std::optional<LinuxTimeOptions> LinuxTime;
 };
 
 struct ProcessServiceEvent {

@@ -6,6 +6,7 @@ import unittest
 from scripts.generate_swift_data_declarations import (conformance_storage,
                                                         generic_conformance_storage,
                                                         HASHABLE_TYPES,
+                                                        hashable_value,
                                                         METADATA_TYPES,
                                                         metadata_storage,
                                                         render,
@@ -76,6 +77,34 @@ PUBLISHER_IR = (Path(__file__).parent / 'fixtures' /
 
 
 class SwiftDataDeclarationTests(unittest.TestCase):
+    def test_object_identifier_uses_metatype_value_and_direct_storage_probes(self):
+        self.assertIn('ObjectIdentifier', METADATA_TYPES)
+        self.assertIn('ObjectIdentifier', HASHABLE_TYPES)
+        self.assertEqual(hashable_value('ObjectIdentifier'),
+                         'Swift.ObjectIdentifier(Swift.Int.self)')
+        metadata_ir = IR.replace('$sSSN', '$sSON').replace(
+            'metadata_String', 'metadata_ObjectIdentifier')
+        witness_ir = WITNESS_IR.replace('$sSSN', '$sSON').replace(
+            '$sSSSHsWP', '$sSOSHsWP').replace(
+            'witness_String', 'witness_ObjectIdentifier')
+        self.assertEqual(metadata_storage(metadata_ir,
+                                          ['metadata_ObjectIdentifier']),
+                         {'$sSON'})
+        self.assertEqual(witness_storage(witness_ir,
+                                         ['witness_ObjectIdentifier'], {'$sSON'}),
+                         {'$sSOSHsWP'})
+        for before, after in [
+            ('external global', 'external thread_local global'),
+            ('external global', 'extern_weak global'),
+            ('ptr nonnull @"$sSON"', 'ptr nonnull @"$sSuN"'),
+            ('ptr nonnull @"$sSOSHsWP"', 'ptr %runtime'),
+            ('align 8', 'align 4'),
+        ]:
+            with self.subTest(before=before, after=after):
+                self.assertEqual(witness_storage(
+                    witness_ir.replace(before, after),
+                    ['witness_ObjectIdentifier'], {'$sSON'}), set())
+
     def test_generic_conformance_keeps_complete_compiler_type_query(self):
         self.assertEqual(generic_conformance_storage(PUBLISHER_IR,
                                                     PUBLISHER_PROBES),

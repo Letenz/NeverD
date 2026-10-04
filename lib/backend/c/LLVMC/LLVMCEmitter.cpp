@@ -17,6 +17,9 @@
 
 #include "../FloatConversion.h"
 #include "../UnalignedMemory.h"
+#include "../pass/LLVMC/LLVMCCommonBranches.h"
+#include "../pass/LLVMC/LLVMCLoopPhases.h"
+#include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
@@ -33,8 +36,10 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MD5.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Scalar/DCE.h"
 #include "llvm/Transforms/Scalar/Scalarizer.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -71,6 +76,16 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   for (llvm::Function &Fn : Mod) {
     llvm::StringRef Name = Fn.getName();
     std::string IntrinsicHelper;
+    if (Fn.getIntrinsicID() == llvm::Intrinsic::fshl ||
+        Fn.getIntrinsicID() == llvm::Intrinsic::fshr) {
+      IntrinsicHelper = Fn.getIntrinsicID() == llvm::Intrinsic::fshl
+                            ? "neverd_llvm_fshl"
+                            : "neverd_llvm_fshr";
+      if (const auto *Integer =
+              llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
+        IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      Name = IntrinsicHelper;
+    }
     if (const char *Kind = integerMinMaxSpelling(Fn.getIntrinsicID())) {
       IntrinsicHelper = std::string("neverd_llvm_") + Kind;
       if (const auto *Integer =
@@ -135,8 +150,8 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   prepareFunctionIdentifiers(Mod);
   writeIncludes(Mod);
   OS << "\n";
+  writeStructDefs(Mod);
   if (!OnlyFunction) {
-    writeStructDefs(Mod);
     writeGlobals(Mod);
     writeForwardDecls(Mod);
     OS << "\n";
@@ -158,7 +173,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
-  std::set<std::pair<unsigned, bool>> FunnelShifts;
+  std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
   std::map<std::string, ScalarUnary> ScalarUnaries;
 
@@ -201,7 +216,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 (Width != 8 && Width != 16 && Width != 32 && Width != 64 &&
                  Width != 128))
               throw std::runtime_error("unsupported LLVM funnel shift width");
-            FunnelShifts.insert({Width, IID == llvm::Intrinsic::fshl});
+            FunnelShifts.emplace(
+                functionIdentifier(*Callee),
+                std::pair{Width, IID == llvm::Intrinsic::fshl});
           }
           auto Name = Callee->getName().str();
 
@@ -285,13 +302,13 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     }
     OS << "}\n\n";
   }
-  for (const auto &[Width, Left] : FunnelShifts) {
+  for (const auto &[Name, Shape] : FunnelShifts) {
+    const auto [Width, Left] = Shape;
     const std::string Type = Width == 128
                                  ? "unsigned __int128"
                                  : "uint" + std::to_string(Width) + "_t";
-    OS << "static inline " << Type << " neverd_llvm_fsh" << (Left ? "l" : "r")
-       << "_i" << Width << "(" << Type << " a, " << Type << " b, " << Type
-       << " amount) {\n"
+    OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
+       << Type << " b, " << Type << " amount) {\n"
        << "    unsigned int shift = (unsigned int)(amount % " << Width
        << ");\n";
     if (Left)
@@ -305,21 +322,82 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
 }
 
 void LLVMCWriter::writeStructDefs(llvm::Module &Mod) {
-  std::set<llvm::StructType *> Seen;
-  auto Structs = Mod.getIdentifiedStructTypes();
-  for (auto *ST : Structs) {
-    if (!Seen.insert(ST).second)
-      continue;
-    if (ST->isOpaque()) {
-      OS << llvmStructName(ST) << ";\n";
-      continue;
+  std::set<llvm::Type *> Seen;
+  std::function<void(llvm::Type *)> Visit = [&](llvm::Type *Ty) {
+    if (!Seen.insert(Ty).second)
+      return;
+    if (auto *FT = llvm::dyn_cast<llvm::FunctionType>(Ty)) {
+      Visit(FT->getReturnType());
+      for (auto *Parameter : FT->params())
+        Visit(Parameter);
+      return;
     }
-    OS << llvmStructName(ST) << " {\n";
-    for (unsigned I = 0; I < ST->getNumElements(); ++I) {
-      OS << "    " << typeToCLLVM(ST->getElementType(I)) << " field_" << I
-         << ";\n";
+    if (!Ty->isAggregateType())
+      return;
+    if (auto *ST = llvm::dyn_cast<llvm::StructType>(Ty); ST && ST->isOpaque()) {
+      OS << typeToCLLVM(Ty) << ";\n";
+      return;
     }
-    OS << "};\n\n";
+    for (auto *Child : Ty->subtypes())
+      Visit(Child);
+    // Selected-function fragments may be combined in one C translation unit.
+    // Include the complete LLVM shape, so equal records share a definition
+    // while incompatible named records still produce a C redefinition error.
+    std::string Shape;
+    llvm::raw_string_ostream ShapeOut(Shape);
+    Ty->print(ShapeOut);
+    llvm::MD5 Hash;
+    Hash.update(Shape);
+    const std::string Guard =
+        "NEVERD_C_AGGREGATE_" + Hash.final().digest().str().str();
+    OS << "#ifndef " << Guard << "\n#define " << Guard << "\n";
+    OS << typeToCLLVM(Ty) << " {\n";
+    if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Ty)) {
+      OS << "    " << typeToCLLVM(Array->getElementType()) << " elements["
+         << Array->getNumElements() << "];\n";
+    } else {
+      auto *ST = llvm::cast<llvm::StructType>(Ty);
+      for (unsigned I = 0; I < ST->getNumElements(); ++I)
+        OS << "    " << typeToCLLVM(ST->getElementType(I)) << " field_" << I
+           << ";\n";
+    }
+    OS << "}";
+    if (auto *ST = llvm::dyn_cast<llvm::StructType>(Ty); ST && ST->isPacked())
+      OS << " __attribute__((packed))";
+    OS << ";\n#endif\n";
+    const auto &Layout = Mod.getDataLayout();
+    OS << "_Static_assert(sizeof(" << typeToCLLVM(Ty)
+       << ") == " << Layout.getTypeAllocSize(Ty)
+       << ", \"LLVM aggregate size\");\n";
+    if (auto *ST = llvm::dyn_cast<llvm::StructType>(Ty)) {
+      const auto *RecordLayout = Layout.getStructLayout(ST);
+      for (unsigned I = 0; I < ST->getNumElements(); ++I)
+        OS << "_Static_assert(__builtin_offsetof(" << typeToCLLVM(Ty)
+           << ", field_" << I << ") == " << RecordLayout->getElementOffset(I)
+           << ", \"LLVM aggregate field offset\");\n";
+    }
+    OS << "\n";
+  };
+  auto VisitStorage = [&](llvm::Type *Ty) {
+    if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Ty))
+      Visit(Array->getElementType());
+    else
+      Visit(Ty);
+  };
+  for (auto &Global : Mod.globals())
+    VisitStorage(Global.getValueType());
+  for (auto &Fn : Mod) {
+    Visit(Fn.getFunctionType());
+    if (OnlyFunction && &Fn != OnlyFunction)
+      continue;
+    for (auto &BB : Fn)
+      for (auto &Inst : BB) {
+        Visit(Inst.getType());
+        if (auto *Allocation = llvm::dyn_cast<llvm::AllocaInst>(&Inst))
+          VisitStorage(Allocation->getAllocatedType());
+        for (const auto &Operand : Inst.operands())
+          Visit(Operand->getType());
+      }
   }
 }
 
@@ -449,6 +527,27 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       }
     }
 
+    // Storage arrays retain C array declarations; only SSA values need the
+    // record carrier. GEPs and image byte ranges still address this storage.
+    if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(GV.getValueType())) {
+      if (GV.hasLocalLinkage())
+        OS << "static ";
+      if (GV.isConstant())
+        OS << "const ";
+      OS << typeToCLLVM(Array->getElementType()) << " " << Name << "["
+         << Array->getNumElements() << "] = {";
+      if (llvm::isa<llvm::ConstantAggregateZero>(Init))
+        OS << "0";
+      else
+        for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
+          if (I)
+            OS << ", ";
+          OS << constStr(Init->getAggregateElement(unsigned(I)));
+        }
+      OS << "};\n";
+      continue;
+    }
+
     if (GV.isConstant())
       OS << "const ";
     OS << typeToCLLVM(GV.getValueType()) << " " << Name;
@@ -514,15 +613,16 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   for (auto &Fn : Mod) {
     if (OnlyFunction) {
-      // Vector declarations retain the calling convention in a selected
-      // function fragment without expanding its scalar declaration surface.
+      // Value carriers require declarations in selected function fragments,
+      // too; an implicit scalar return would change their calling convention.
       const auto *Signature = Fn.getFunctionType();
-      const bool HasVectorSignature =
+      const bool HasValueSignature =
           Signature->getReturnType()->isVectorTy() ||
+          Signature->getReturnType()->isAggregateType() ||
           llvm::any_of(Signature->params(), [](const llvm::Type *Type) {
-            return Type->isVectorTy();
+            return Type->isVectorTy() || Type->isAggregateType();
           });
-      if (!HasVectorSignature || &Fn == OnlyFunction ||
+      if (!HasValueSignature || &Fn == OnlyFunction ||
           !llvm::any_of(Fn.users(), [&](const llvm::User *User) {
             const auto *Instruction = llvm::dyn_cast<llvm::Instruction>(User);
             return Instruction && Instruction->getFunction() == OnlyFunction;
@@ -786,6 +886,94 @@ static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
   return false;
 }
 
+static bool containsArrayValue(llvm::Type *Ty) {
+  if (Ty->isArrayTy())
+    return true;
+  if (auto *ST = llvm::dyn_cast<llvm::StructType>(Ty); ST && !ST->isOpaque())
+    return llvm::any_of(ST->elements(), containsArrayValue);
+  return false;
+}
+
+static void validateArrayValueBoundaries(const llvm::Module &Mod,
+                                         const llvm::Function *Only) {
+  const auto &Target = Mod.getTargetTriple();
+  // A C record is a value carrier, but that alone does not authenticate its
+  // ABI against a raw LLVM aggregate. Admit the word pairs for which both
+  // lower to one/two integer argument/result registers. Larger, narrow-lane,
+  // nested and Windows aggregates need a separate ABI lowering contract.
+  const bool WordABI =
+      (Target.isOSLinux() || Target.isOSDarwin()) &&
+      (Target.isAArch64() || Target.getArch() == llvm::Triple::x86_64) &&
+      Mod.getDataLayout().getPointerSizeInBits() == 64;
+  auto CheckType = [&](llvm::Type *Ty) {
+    if (!containsArrayValue(Ty))
+      return;
+    const auto *Array = llvm::dyn_cast<llvm::ArrayType>(Ty);
+    if (!WordABI || !Array || !Array->getElementType()->isIntegerTy(64) ||
+        Array->getNumElements() < 1 || Array->getNumElements() > 2)
+      throw std::runtime_error(
+          "C projection has an unsupported array value ABI");
+  };
+  auto CheckSignature = [&](llvm::FunctionType *Ty, unsigned CC,
+                            const llvm::AttributeList &Attributes) {
+    bool HasArray = containsArrayValue(Ty->getReturnType());
+    bool HasArrayParameter = false;
+    unsigned ArgumentWords = 0;
+    bool WordParameters = true;
+    CheckType(Ty->getReturnType());
+    for (auto *Param : Ty->params()) {
+      HasArray |= containsArrayValue(Param);
+      HasArrayParameter |= containsArrayValue(Param);
+      CheckType(Param);
+      if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Param))
+        ArgumentWords += Array->getNumElements();
+      else if (Param->isIntegerTy(64) ||
+               (Param->isPointerTy() && Param->getPointerAddressSpace() == 0))
+        ++ArgumentWords;
+      else
+        WordParameters = false;
+    }
+    if (HasArray && CC != llvm::CallingConv::C)
+      throw std::runtime_error(
+          "C projection has an unsupported array calling convention");
+    if (HasArray)
+      for (auto Set : Attributes)
+        for (auto Kind :
+             {llvm::Attribute::ByVal, llvm::Attribute::ByRef,
+              llvm::Attribute::InAlloca, llvm::Attribute::Preallocated,
+              llvm::Attribute::StructRet, llvm::Attribute::InReg,
+              llvm::Attribute::Nest, llvm::Attribute::SwiftSelf,
+              llvm::Attribute::SwiftError})
+          if (Set.hasAttribute(Kind))
+            throw std::runtime_error(
+                "C projection has unsupported array ABI attributes");
+    // Once registers run out, C may spill a whole record while LLVM splits
+    // the raw aggregate. Do not infer that stack-argument ABI from its type.
+    const unsigned RegisterWords = Target.isAArch64() ? 8 : 6;
+    if (HasArrayParameter &&
+        (!WordParameters || ArgumentWords > RegisterWords || Ty->isVarArg()))
+      throw std::runtime_error(
+          "C projection has an unsupported array argument ABI");
+  };
+  for (const auto &Fn : Mod) {
+    if (Only && &Fn != Only)
+      continue;
+    CheckSignature(Fn.getFunctionType(), Fn.getCallingConv(),
+                   Fn.getAttributes());
+    for (const auto &BB : Fn)
+      for (const auto &Inst : BB)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+          CheckSignature(Call->getFunctionType(), Call->getCallingConv(),
+                         Call->getAttributes());
+          for (unsigned I = Call->getFunctionType()->getNumParams();
+               I < Call->arg_size(); ++I)
+            if (containsArrayValue(Call->getArgOperand(I)->getType()))
+              throw std::runtime_error(
+                  "C projection has an unsupported variadic array value");
+        }
+  }
+}
+
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
@@ -819,6 +1007,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   }
   if (llvm::verifyModule(Mod, &llvm::errs()))
     return false;
+  validateArrayValueBoundaries(Mod, Only);
   // Source normalization must not mutate the caller's IR. Remove dead
   // computations left by recovered control flow even when semantic
   // optimization is disabled; they can otherwise reference unneeded image
@@ -837,6 +1026,16 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
   }
+  // Native image/debug projections keep their separate source contracts.
+  // Pure scalar loop recovery proves its exact replacement before publishing
+  // into this private clone and retains the existing path on refusal.
+  if (!Dbg && !Img && !Opts.Image)
+    llvmc::recoverScalarLoops(*Projection, ProjectionOnly);
+  for (auto &Function : *Projection)
+    if (!ProjectionOnly || &Function == ProjectionOnly) {
+      llvmc::factorCommonBranchTests(Function);
+      llvmc::factorLoopPhiExpressions(Function);
+    }
   llvm::LoopAnalysisManager Loops;
   llvm::FunctionAnalysisManager Functions;
   llvm::CGSCCAnalysisManager CallGraph;

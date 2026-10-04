@@ -56,10 +56,24 @@ add_neverd_unittest(NeverDLLVMInterpreterModelTests
   LLVMInterpreterModelLoopTests.cpp
   LLVMInterpreterModelRejectionTests.cpp
   LLVMInterpreterModelShiftTests.cpp
+  LLVMInterpreterModelFunnelTests.cpp
   LINK_COMPONENTS LLVMInterpreterModel
   LINK_LIBS LLVMAsmParser LLVMIRReader
 )
 target_compile_definitions(NeverDLLVMInterpreterModelTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
+add_neverd_unittest(NeverDLLVMScalarEquivalenceTests
+  LLVMScalarEquivalenceTests.cpp
+  LLVMScalarModelTests.cpp
+  LLVMScalarCompileTests.cpp
+  LINK_COMPONENTS LLVMInterpreterModel
+  LINK_LIBS LLVMAsmParser LLVMIRReader
+)
+target_compile_definitions(NeverDLLVMScalarEquivalenceTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
   NEVERD_BINARY="$<TARGET_FILE:neverd>"
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
@@ -123,3 +137,14 @@ target_compile_definitions(NeverDInterpreterMachineStateTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
 )
 add_dependencies(NeverDInterpreterMachineStateTests neverd)
+
+add_neverd_unittest(NeverDLLVMScalarLoopRecoveryTests
+  LLVMScalarLoopRecoveryTests.cpp
+  LINK_COMPONENTS LLVMScalarLoopRecovery
+  LINK_LIBS LLVMAsmParser LLVMIRReader
+)
+target_compile_definitions(NeverDLLVMScalarLoopRecoveryTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)

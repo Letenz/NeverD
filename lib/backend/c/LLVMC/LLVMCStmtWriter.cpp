@@ -1157,6 +1157,42 @@ bool LLVMCWriter::deadNullAssignBlocks(
 void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
+  // Aggregate SSA values and storage arrays have distinct C declarations but
+  // identical byte layouts. A byte copy also preserves unaligned accesses.
+  auto AggregateAddress = [&](const llvm::Value *Ptr) {
+    std::string Text = valueStr(Ptr);
+    if (llvm::isa<llvm::GlobalVariable>(Ptr))
+      Text = "&" + Text;
+    return Text;
+  };
+  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
+      Load && Load->getType()->isAggregateType()) {
+    if (!Load->isSimple() || Load->getPointerAddressSpace() != 0)
+      throw std::runtime_error(
+          "C projection has an unsupported aggregate load");
+    emitIndent(Indent);
+    OS << "__builtin_memcpy(&" << getName(Load) << ", "
+       << AggregateAddress(Load->getPointerOperand()) << ", "
+       << CurMod->getDataLayout().getTypeStoreSize(Load->getType()) << ");\n";
+    return;
+  }
+  if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst);
+      Store && Store->getValueOperand()->getType()->isAggregateType()) {
+    if (!Store->isSimple() || Store->getPointerAddressSpace() != 0)
+      throw std::runtime_error(
+          "C projection has an unsupported aggregate store");
+    auto *Value = Store->getValueOperand();
+    const auto Temp = freshVar();
+    emitIndent(Indent);
+    OS << "{ " << typeToCLLVM(Value->getType()) << " " << Temp << " = "
+       << valueStr(Value) << ";\n";
+    emitIndent(Indent + 1);
+    OS << "__builtin_memcpy(" << AggregateAddress(Store->getPointerOperand())
+       << ", &" << Temp << ", "
+       << CurMod->getDataLayout().getTypeStoreSize(Value->getType())
+       << "); }\n";
+    return;
+  }
   if (auto *Freeze = llvm::dyn_cast<llvm::FreezeInst>(&Inst)) {
     if (Freeze->use_empty() || isCallClobberValue(Freeze))
       return;
@@ -3126,12 +3162,21 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 
   if (auto *EV = llvm::dyn_cast<llvm::ExtractValueInst>(&Inst)) {
     auto *Agg = EV->getAggregateOperand();
-    unsigned Idx = EV->getIndices()[0];
     auto It = Analysis.IntrinsicStructNames.find(Agg);
     if (It != Analysis.IntrinsicStructNames.end())
       return;
     emitIndent(Indent);
-    OS << Name << " = " << valueStr(Agg) << ".field_" << Idx << ";\n";
+    OS << Name << " = (" << valueStr(Agg) << ")"
+       << aggregateMemberPath(Agg->getType(), EV->getIndices()) << ";\n";
+    return;
+  }
+
+  if (auto *Insert = llvm::dyn_cast<llvm::InsertValueInst>(&Inst)) {
+    emitIndent(Indent);
+    OS << Name << " = " << valueStr(Insert->getAggregateOperand()) << ";\n";
+    emitIndent(Indent);
+    OS << Name << aggregateMemberPath(Insert->getType(), Insert->getIndices())
+       << " = " << valueStr(Insert->getInsertedValueOperand()) << ";\n";
     return;
   }
 
@@ -3917,9 +3962,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
       if (Call.arg_size() != 3 || (Width != 8 && Width != 16 && Width != 32 &&
                                    Width != 64 && Width != 128))
         throw std::runtime_error("unsupported LLVM funnel shift width");
-      std::string Expr = "neverd_llvm_fsh";
-      Expr += IID == llvm::Intrinsic::fshl ? 'l' : 'r';
-      Expr += "_i" + std::to_string(Width) + "(";
+      std::string Expr = functionIdentifier(*Callee) + "(";
       for (unsigned I = 0; I < 3; ++I) {
         if (I)
           Expr += ", ";
@@ -5361,11 +5404,15 @@ bool LLVMCWriter::edgePrintsPhiCopy(const llvm::BasicBlock *From,
 }
 
 void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
-                                 const llvm::BasicBlock *To, int Indent) {
+                                 const llvm::BasicBlock *To, int Indent,
+                                 bool ForceMaterialized,
+                                 const llvm::PHINode *Deferred,
+                                 const llvm::PHINode *Declare) {
   if (!From || !To)
     return;
   struct PhiCopy {
     const llvm::PHINode *Phi;
+    const llvm::Value *Incoming;
     std::string RHS;
     std::string Destination;
     std::string Temp;
@@ -5373,12 +5420,14 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
   std::vector<PhiCopy> Copies;
   std::map<const llvm::Value *, std::string> EdgeImmediates;
   const bool SinglePredecessor = To->getSinglePredecessor() != nullptr;
-  const bool MaterializeEdge = phiEdgeNeedsMaterialization(From, To);
+  const bool MaterializeEdge =
+      ForceMaterialized || phiEdgeNeedsMaterialization(From, To);
   for (const llvm::Instruction &Inst : *To) {
     const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst);
     if (!Phi)
       break;
-    if ((Phi->use_empty() && !phiPrintedAsJoinCallArg(Phi)) ||
+    if (Phi == Deferred ||
+        (Phi->use_empty() && !phiPrintedAsJoinCallArg(Phi)) ||
         Analysis.Inlinable.count(Phi) || Analysis.DeadFrameStores.count(Phi))
       continue;
     const int IncomingIndex = Phi->getBasicBlockIndex(From);
@@ -5388,9 +5437,12 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
     if (SinglePredecessor)
       if (auto Imm = foldImmediate(Incoming))
         EdgeImmediates.emplace(Phi, *Imm);
-    if (phiIncomingIsPrinted(Phi, Incoming, MaterializeEdge))
-      Copies.push_back(
-          {Phi, integerPointerOperandStr(Incoming), getName(Phi), {}});
+    if (phiIncomingIsPrinted(Phi, Incoming, MaterializeEdge)) {
+      const std::string RHS = integerPointerOperandStr(Incoming);
+      const std::string Destination = getName(Phi);
+      if (!ForceMaterialized || RHS != Destination)
+        Copies.push_back({Phi, Incoming, RHS, Destination, {}});
+    }
   }
   // Evaluate the whole edge against its predecessor state before publishing
   // any new PHI facts. Loop PHIs may exchange values, including cached ones.
@@ -5445,6 +5497,26 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
   const int CopyIndent = Indent + (HasTemps ? 1 : 0);
   for (const auto &Copy : Copies) {
     emitIndent(CopyIndent);
+    if (Copy.Phi == Declare && !HasTemps && Indent == 1) {
+      ScopedScalarNames.insert(Copy.Destination);
+      OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Destination << " = "
+         << Copy.RHS << ";\n";
+      continue;
+    }
+    if (Copy.Temp.empty())
+      if (auto Update = scalarConditionalUpdate(Copy.Phi, Copy.Incoming)) {
+        if (!Update->Initial.empty()) {
+          OS << Update->Initial << ";\n";
+          emitIndent(CopyIndent);
+        }
+        OS << "if (" << Update->Condition << ") " << Update->Update << ";\n";
+        continue;
+      }
+    if (Copy.Temp.empty())
+      if (auto Update = scalarUpdateText(Copy.Phi, Copy.Incoming)) {
+        OS << *Update << ";\n";
+        continue;
+      }
     if (!Copy.Temp.empty())
       OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Temp;
     else

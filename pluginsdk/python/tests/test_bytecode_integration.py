@@ -40,12 +40,44 @@ class BytecodeIntegrationTests(unittest.TestCase):
                 self.assertEqual(result.input_bytes, 2)
                 self.assertEqual(result.decoded_instructions, 1)
                 self.assertEqual(result.scope, "cfg" if output == "check" else "state-c")
+                self.assertFalse(result.with_context)
                 if output != "check":
                     self.assertIn("python_return", result.source)
         with self.assertRaisesRegex(NeverDError, "unknown|unsupported|no encoding"):
             recover_bytecode(b"\0", profile, functions, api=api)
         with self.assertRaises(NeverDError):
             recover_bytecode(b"M", profile, functions, optimize=True, api=api)
+
+    def test_source_context_abi_is_shared_by_profile_and_decoder(self):
+        api = self.load_api()
+        layout = {"version": 1, "register_bytes": 8, "byte_order": "little"}
+        recipes = {
+            0xd2: {"size": 1, "operations": [{"op": "CALL", "inputs": [
+                {"space": "const", "size": 8, "value": {"addend": 8192}},
+            ]}]},
+            0xfe: {"size": 1, "operations": [{"op": "RETURN", "inputs": []}]},
+        }
+        profile = dict(layout, encodings=[
+            dict(recipe, match=[{"offset": 0, "value": opcode}])
+            for opcode, recipe in recipes.items()
+        ])
+        functions = [{"entry": 0, "end": 2, "name": "contextual_source"}]
+        bindings = [{"address": 8192, "name": "runtime_service"}]
+        for output, optimize in (("check", False), ("highc", False),
+                                 ("llvmc", False), ("llvmc", True)):
+            with self.subTest(output=output, optimize=optimize):
+                options = dict(output=output, optimize=optimize, with_context=True,
+                               bindings=bindings, api=api)
+                static = recover_bytecode(b"\xd2\xfe", profile, functions, **options)
+                dynamic = recover_bytecode_with_decoder(
+                    b"\xd2\xfe", layout, functions, lambda data, pc: recipes[data[0]],
+                    **options)
+                self.assertEqual(static, dynamic)
+                self.assertTrue(static.with_context)
+                self.assertEqual(static.decoded_bytes, 2)
+                if output != "check":
+                    self.assertIn("runtime_service", static.source)
+                    self.assertIn("context", static.source)
 
     def test_callback_pc_context_reentrancy_and_concurrent_recovery(self):
         api = self.load_api()

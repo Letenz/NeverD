@@ -69,6 +69,46 @@ analysis and comparison output belong outside the repository.
 
 ## Closed control-flow regressions
 
+- LLVMC now invokes bounded scalar loop recovery in its source clone when no
+  image/debug projection applies. Search and cleanup repeat under shared
+  budgets, and the exact final body is reproved against the original. Function
+  identity, attributes, callers and intrinsic bindings survive publication;
+  metadata, external block addresses, collisions and exhausted work retain the
+  complete original function. Native ABI and memory projection stay separate.
+
+- Neutral select arms in admitted scalar regions now use conditional updates
+  after PHI snapshot scheduling. Changed bases require conditions and terms
+  independent of the old destination; unchanged bases need no self-assignment.
+  Materialized conditions stay snapshots and narrow truth tests keep their
+  normalization. A dominating direct entry edge may combine a returned
+  carrier declaration with an immutable leaf seed; branch-dependent seeds
+  retain shared scope. Independent O0/O2 checks preserve caller LLVM.
+
+- Admitted scalar loops now name the complete returned PHI group by role.
+  Counters move into `for` declarations only after all coalesced members and
+  transitive inline uses pass a bounded confinement check; materialized values
+  retain their own lifetimes. LoopInfo stays alive through output, and role names reserve called C
+  function identifiers. Compound
+  add/subtract/bitwise updates and increments follow snapshot scheduling, with
+  narrow multiplication, boolean masks and reversed subtraction left explicit.
+  O0/O2 regressions cover wrapping counters, escaping values and old-value reads.
+
+- Typed scalar expressions now distinguish LLVM width from the promoted C
+  type and operator precedence. Redundant unsigned casts are omitted, while
+  narrow wrapping, signed interpretation and widened arithmetic/shift carriers
+  remain explicit. Bounded fallback and existing materialization preserve deep
+  expressions. Independent LLVM comparisons at O0/O2 run with undefined-behavior
+  traps. Debug/image/composed projections and broader source naming still need
+  their own evidence and cleanup.
+
+- LLVMC plans complete bounded integer CFGs before printing nested header
+  loops and conditionals. Edge PHIs retain simultaneous semantics; liveness
+  coalesces only noninterfering carriers, and safe constant-seeded counters
+  print as `for` loops. Header effects, shared steps, swaps and live outer
+  values remain explicit. Memory, EH, irreducible and multi-exit shapes retain
+  the existing fallback. This closes scalar loop rendering, not general
+  devirtualization, ABI recovery or source-parameter inference.
+
 - LLVMC keeps the true-arm exit when the false body moves ahead of a shared
   join. The LLVM fixture executes PHI and memory effects at O0/O2; a native
   four-case recovery fixture exercises the same structure through both C routes.

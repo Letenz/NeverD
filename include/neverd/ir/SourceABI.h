@@ -31,8 +31,9 @@ struct SourceAggregateMember {
 /// Flatten a validated record: one to four homogeneous floating leaves, or
 /// one to two 64-bit integer/pointer leaves, or three signed 64-bit integer
 /// leaves, or six/sixteen doubles for indirect Darwin arm64 results.
-/// Nested records retain their
-/// declared layout; padding, packed fields and mixed register classes fail.
+/// A flat three-double/opaque-pointer record retains all four fields; only a
+/// separately validated Swift result ABI may transport that mixed shape.
+/// Nested records retain their declared layout. Other mixtures fail.
 std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type);
 
 struct SourceABIParameter {
@@ -47,12 +48,28 @@ struct SourceABIParameter {
 /// checks the representation, not its validity or any storage/effect proof.
 bool hasIndirectSourceParameters(const SourceFunctionTypeHint &Hint);
 
+/// Whether a signature has Swift's logical error-slot parameter. Consumers
+/// must model its in/out register or independently prove an unchanged output.
+bool hasSwiftErrorResult(const SourceFunctionTypeHint &Hint);
+
+/// The validated physical in/out value of a logical Swift error-slot
+/// parameter. The location is an output even though the platform ordinarily
+/// preserves that register. An absent or invalid slot returns no result.
+std::optional<SourceABIParameter>
+sourceABIErrorResult(const SourceFunctionTypeHint &Hint);
+
 /// Physical parameters of a validated signature, in source member order.
 /// An indirect record contributes one pointer-to-record carrier; the logical
 /// record stays in Hint.Parameters and is not a source pointer parameter.
 /// An invalid signature returns no bindings, never a partial prefix.
 std::vector<SourceABIParameter>
 sourceABIParameters(const SourceFunctionTypeHint &Hint);
+
+/// HighIR representation of a validated call result before source binding.
+/// Scalars carry unsigned machine bits; void and complete records retain their
+/// logical type. This does not define any bytes outside the declared result.
+/// Invalid declarations have no representation.
+TypeRef sourceABICallResultType(const SourceFunctionTypeHint &Hint);
 
 /// Assign Darwin's ordinary fixed scalar calling convention, including a
 /// 128-bit integer result in two registers (parameters remain at most 64 bits).
@@ -78,8 +95,13 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
 /// arguments and a scalar or one/two-word result. Arguments use the declared
 /// narrow width and may continue on the stack after the integer register bank.
 /// One declared swift_indirect_result and one swift_context pointer may use
-/// their dedicated registers without consuming that bank. Error results,
-/// asynchronous contexts and floating values are unsupported.
+/// their dedicated registers without consuming that bank. A final error-slot
+/// pointer after swift_context transports its opaque pointee through x21/R12;
+/// the descriptor alone does not authorize call or entry source projection.
+/// A flat three-double/opaque-pointer result uses d0..d2+x0 on arm64 and
+/// xmm0..xmm2+rax on x86_64. The latter additionally admits up to three
+/// ordinary double parameters for this result shape. Mixed record parameters
+/// fail. Asynchronous contexts remain unsupported.
 bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic);
 

@@ -54,19 +54,21 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Linux 프로필 의미론
 
+`writev`는 x64/ARM64와 Android Bionic에서 같은 출력 대상을 공유합니다. 출력 전에 게스트 `iovec`를 최대 1024개 가져오고, 음수 길이를 `EINVAL`로 거부하며, 사용자 주소 범위를 검증한 뒤 Linux의 페이지 정렬 전송 상한을 적용합니다. 잘못된 설명자는 벡터 접근 전에 `EBADF`, 읽을 수 없는 메타데이터는 출력 없이 `EFAULT`를 반환합니다. 이후 데이터 오류는 복사된 접두부를 유지합니다. 출력 예산은 게시 전에 두 스트림과 전체 벡터에 적용됩니다. `write`와 `writev`는 설명자의 하위 32비트를 사용하고 벡터 수도 Linux의 32비트 가져오기 규칙을 따릅니다. Bionic만 원시 음수 오류를 `-1`과 `errno`로 변환합니다. `LinuxOutputNativeTests`는 직접 작성한 열 사례를 호스트 Linux에서 일반 파일로 출력하여 검증하고, 모델의 x64/ARM64 사례는 예산도 검사합니다. [Linux 벡터 가져오기 계약](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)을 참고하세요.
+
 OS 정책은 기존 ELF 로더가 디코딩한 프로그램 헤더를 사용합니다. ABI 태그, 세그먼트 정렬, 매핑된 프로그램 헤더 테이블, user 주소 범위를 검증합니다. 매핑 계획은 할당 전에 범위, 권한, 겹침, 예산을 확인하고 완전히 준비한 전용 주소 공간만 공개합니다. 파일 페이지 앞/뒤 바이트를 보존하고 BSS를 0으로 채우며 세그먼트 권한을 지키고 스택 guard gap을 예약합니다. 페이지가 겹치는 레이아웃과 모순 헤더는 추측하지 않고 거부합니다.
 
 Static PIE는 최소 `0x40000000`의 결정적 load bias를 사용하고 더 큰 `PT_LOAD` 정렬 요구에 따라 높입니다. 모든 매핑 세그먼트, entry PC, `AT_PHDR`/`AT_ENTRY`가 같은 bias를 사용하며 원래 program-header 값은 유지되고 interpreter가 없으므로 `AT_BASE`는 0입니다. 매핑 원본은 분석 fixup이 적용되지 않은 파일 바이트입니다. guest 시작 코드가 직접 relocation과 초기화를 수행해야 합니다. loader는 section header 없이 원본 파일의 제한된 record에서 `PT_DYNAMIC`을 decode합니다. 존재 시 readable/terminated 상태이며 최대 4096개 항목이어야 합니다. `PT_INTERP`와 외부 dependency/filter/audit tag는 거부합니다. dynamic linker, symbol resolver, constructor runner는 제공하지 않습니다.
 
 초기 스택은 정렬된 argc/argv/envp/auxv, PHDR/PHENT/PHNUM, entry, 페이지 크기 및 identity 값을 포함합니다. 모델 PID/TID/UID/GID는 1000입니다. 재현성을 위해 `AT_RANDOM`은 입력 SHA-256의 첫 16바이트입니다. 이는 암호학적 엔트로피가 아닌 결정적 모델 정책입니다. HWCAP/HWCAP2는 0이며 vDSO는 없습니다.
 
-`write`, `exit`, `exit_group`, `getpid`, `gettid`, `mmap`, `mprotect`, `munmap`, `brk`를 구현하며 번호는 [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)와 [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)에서 다릅니다. 반환하는 x64 SYSCALL은 RCX/R11 clobber, RAX, 다음 PC를 반영합니다. ARM64는 번호에 x8, 결과에 x0을 사용합니다. 나머지는 `unsupported_service`로 중단하며 호스트 syscall을 실행하지 않습니다.
+`write`, `writev`, `exit`, `exit_group`, `getpid`, `gettid`, `mmap`, `mprotect`, `munmap`, `brk`를 구현하며 번호는 [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)와 [ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)에서 다릅니다. 반환하는 x64 SYSCALL은 RCX/R11 clobber, RAX, 다음 PC를 반영합니다. ARM64는 번호에 x8, 결과에 x0을 사용합니다. 나머지는 `unsupported_service`로 중단하며 호스트 syscall을 실행하지 않습니다.
 
 Static TLS template `PT_TLS`는 loader 소유 사실로 검증합니다. template 하나, 제한된 file/memory 범위, 일치하는 정렬, 읽을 수 있는 초기화 바이트가 필요합니다. guest startup이 TLS block을 할당·초기화하고 thread pointer를 설치합니다. Linux 모델은 libc별 TCB/DTV를 만들지 않습니다. 이에 따라 freestanding 프로그램의 컴파일러 생성 local-exec TLS를 지원합니다. dynamic TLS와 OS 스레드는 별도 작업입니다.
 
 x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`를 지원합니다. Set은 매핑되지 않은 user 범위 base도 받아들이지만 이후 역참조는 권한을 검사합니다. kernel 범위 base는 guest `EPERM`, 잘못된 Get 대상은 CPU fault 없이 `EFAULT`를 반환합니다. 나머지 operation은 명시적으로 실패합니다. ARM64 시작은 `MSR`로 `TPIDR_EL0`를 설정합니다. `MRS`, FS/GS 메모리 접근, context 복원은 quantum 및 backend 진입 사이에서 thread pointer를 보존합니다. 이는 thread scheduler를 구현하지 않습니다.
 
-파일 디스크립터 1과 2는 가상 바이트 sink입니다. `write`는 읽기 가능한 user 페이지를 검증하고, 뒤쪽 페이지 접근이 막히면 읽을 수 있는 prefix를 반환하며 한 바이트도 읽지 못하면 게스트 `EFAULT`를 반환합니다. 잘못된 디스크립터는 `EBADF`; 유효한 디스크립터에 0바이트 write는 포인터를 읽지 않습니다. Linux pipe 원자성이나 파일 객체는 모델링하지 않습니다. 출력 한도를 넘을 쓰기는 게시 전에 중단됩니다.
+파일 디스크립터 1과 2는 가상 바이트 sink입니다. `write`는 읽기 가능한 user 페이지를 검증하고, 뒤쪽 페이지 접근이 막히면 읽을 수 있는 prefix를 반환하며 한 바이트도 읽지 못하면 게스트 `EFAULT`를 반환합니다. 잘못된 디스크립터는 `EBADF`; 0바이트 쓰기도 사용자 주소 범위를 검사하지만 페이지 매핑이나 데이터 읽기를 요구하지 않습니다. Linux pipe 원자성이나 파일 객체는 모델링하지 않습니다. 출력 한도를 넘을 쓰기는 게시 전에 중단됩니다.
 
 익명 메모리 서비스는 이미지 및 스택과 같은 프로세스 주소 공간과 물리 메모리 예산을 사용합니다. `mmap`은 정확히 `MAP_PRIVATE | MAP_ANONYMOUS`와 일반 `PROT_NONE`, `PROT_READ`, `PROT_READ | PROT_WRITE`, `PROT_READ | PROT_EXEC` 또는 읽기 가능한 RWX 권한을 허용합니다. 비어 있고 페이지 정렬된 힌트를 우선하며, 그렇지 않으면 `0x100000000`부터, 이어 최소 사용자 주소부터 빈 영역을 찾고 스택 보호 영역을 보존합니다. 이 결정적 배치는 Linux ASLR을 모방하지 않습니다. 새 페이지는 개별 소유하며 0으로 채우므로 부분 해제로 고정되지 않은 페이지를 회수할 수 있습니다. CPU 투영이나 유지된 backing view는 자신의 수명이 끝날 때까지 폐기된 할당을 유지할 수 있습니다.
 
@@ -75,6 +77,23 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 파일/공유/고정 매핑, 아래 방향 확장, 대형 페이지, 메모리 잠금, 보호 키, 실행 전용/쓰기 전용 정책 및 다른 플래그는 명시적으로 지원하지 않습니다. 효과를 게시하거나 반환값을 만들기 전에 중단합니다. 지원 범위 안의 일반 범위/길이/정렬 오류는 게스트 오류를 반환하고 실행을 계속합니다. 게스트 포인터나 매핑 요청을 호스트 OS에 전달하지 않습니다.
 
 <a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: linux-clocks -->
+
+## 명시적인 게스트 시계
+
+선택 항목인 `linux_time`은 Linux 시스템 호출과 Android Bionic에 고정된 시계 값을 제공합니다. 호스트 시계를 읽거나 명령 실행에 따라 시간을 진행시키거나 기본 시각을 추측하지 않습니다.
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+정적 시계 ID 0–9와 11을 지원합니다. 각 시계는 독립적이며 생략한 값은 알 수 없는 상태로 유지됩니다. 중복되거나 알 수 없는 ID는 거부합니다. 초는 부호 있는 64비트 정수이며 나노초 범위는 `[0, 1000000000)`입니다. JSON 정수는 `±9007199254740991` 이내여야 하고 십진 문자열은 전체 64비트 범위를 보존합니다. 시간대 필드는 부호 있는 32비트 정수입니다. C++에서는 `ProcessOptions::LinuxTime`을 사용하며 다른 OS 프로필은 이 옵션을 거부합니다.
+
+`clock_gettime`, `gettimeofday`, x64의 `time`이 같은 입력을 사용합니다. 입력 누락, 동적 시계 또는 모델링되지 않은 부분 쓰기는 명시적으로 중단되며 이미 완료된 쓰기는 유지됩니다. 시간 조정, 대기 및 실제 장치 시계는 지원하지 않습니다. 쓰기 순서, 오류 코드 및 포인터 동작은[전체 시계 계약](../process-emulation.md#explicit-guest-clocks)을 참조하세요.
 
 <!-- i18n-section: windows-pe64 -->
 
@@ -114,6 +133,10 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 `WindowsSystemModules`는 두 ISA에 대해 `ntdll.dll`, `kernelbase.dll`, `kernel32.dll`의 제한된 PE64 모델 이미지를 만듭니다. ASCII `GetModuleHandleA` / [`GetModuleHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlew), `LoadLibraryA` / `LoadLibraryW`, [`GetProcAddress`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress)는 매핑된 베이스를 공유하며 PEB/LDR과 `MEM_IMAGE`도 같은 이미지를 나타냅니다. 정적 가져오기, 이름 조회와 게스트 DLL 전달은 동일한 API 게이트와 내보내기 해석기를 사용합니다. 제공자는 고정 상주하고 게스트 초기화 콜백이 없으며 일반 게스트 DLL을 모두 해제한 뒤 진입점 반환을 막지 않습니다. 헤더 또는 내보내기 메타데이터가 바뀌면 조회를 중단합니다. 미지원 시스템 내보내기 이름과 0이 아닌 서수 조회는 명시적으로 중단하며 지원 이름의 대소문자 불일치와 빈 이름은 오류 127, NULL 조회는 87을 반환합니다. 생성 바이트와 주소는 모델 정책이며 Windows DLL 버전별 배치, 네이티브 서수와 제공자 간 별칭은 재구성하지 않습니다. `WindowsSystemTests.cpp`는 자체 x64/ARM64 EXE를 네이티브 Windows와 비교하고 초기 스레드 반환을 독립적으로 8회 관측합니다.
 
 `WindowsProcessExceptions`는 같은 CPU와 프로세스 예산으로 `AddVectoredExceptionHandler`, `RemoveVectoredExceptionHandler`, `RaiseException`을 구현합니다. 순서가 있는 처리기는 등록·삭제, 중첩 예외, 모델 API 호출, DLL 로드와 프로세스 종료를 수행할 수 있습니다. x64/ARM64 데이터 접근 위반과 x64 정수 나눗셈 예외는 게스트의 `CONTEXT` 변경을 검증한 뒤 재개하며 범용 레지스터, SIMD 및 지원 FP 상태를 보존합니다. 소프트웨어 예외는 모델 공급자 내부의 실제 반환 명령으로 재개합니다. 보관된 등록은 128개, 중첩은 16프레임으로 제한합니다. 잘못된 처리 결과, 바뀐 예외 포인터, 미지원 필드와 한도 초과는 명시적으로 실패합니다. ARM64 스택 프레임 기반 SEH/언와인딩, 디버거 전달과 실행/가드 페이지 예외는 미지원입니다. `WindowsExceptionTests.cpp`는 자체 EXE/DLL을 네이티브 Windows와 비교하며 ARM64 KVM/WHP 실기기 증거는 아직 없습니다. [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler), [RemoveVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredexceptionhandler), [RaiseException](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-raiseexception), [CONTEXT x64](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-context), [ARM64_NT_CONTEXT](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-arm64_nt_context). 소프트웨어 예외 레코드에는 `EXCEPTION_SOFTWARE_ORIGINATE`(`0x80`)가 포함되며 호출자의 계속 불가 플래그와 별도로 처리됩니다. 원본 Windows 실행 파일은 소프트웨어 및 하드웨어 예외의 정확한 플래그 값을 검증합니다. [EXCEPTION_RECORD](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-exception_record).
+
+`WindowsProcessContext`는 각 디스패치 프레임의 발생 원인을 유지합니다. 지원하는 x64 데이터 접근·나눗셈 오류는 `CONTEXT.EFlags`에 RF(`0x10000`)를 표시하며, 소프트웨어 접근 위반 코드를 포함한 `RaiseException`은 현재 컨텍스트를 유지합니다. 발생 원인은 VEH/VCH와 SEH 검색·해제 과정에서도 유지됩니다. 유효한 계속 실행은 RF 없이 논리 CPU 플래그를 복원하며, 게스트의 RF 변경은 상태 반영 전에 거부됩니다. 이 제한된 프로필은 명령어 중단점이나 게스트가 제어하는 RF를 모델링하지 않습니다. `WindowsExceptionTests.cpp`는 저장 기록, 복원, 거부 시 CPU·RAM 불변성을 확인합니다.
+
+Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `operand_alignment` 오류를 매개변수 `[read, UINT64_MAX]`의 `STATUS_ACCESS_VIOLATION`으로 변환합니다. 저장 명령도 동일합니다. CPU 계층이 원인을 제공하며 Windows는 벡터 13으로 추측하거나 명령을 다시 디코딩하지 않습니다. `WindowsAlignmentProcessTests.cpp`는 원본 PE 명령으로 오류 시나리오 72개와 주소 수정 후 재시도 9개(`72 + 9`)를 실행하며 PC, RF, XMM, RAM을 검사합니다. 미분류 또는 일관되지 않은 오류는 거부합니다. 프로세스와 드라이버 오류 보고서는 nullable `cause`와 16진수 `error_code`를 보존하여 누락과 0을 구분합니다. 이 전달은 checked x64 사용자 프로파일에 적용됩니다.
 
 `AddVectoredContinueHandler`와 `RemoveVectoredContinueHandler`는 독립된 순서 목록을 관리하며 예외 처리기와 최대 128개 보존 등록 제한을 공유합니다. 벡터 예외 처리기가 실행 재개를 수락하면 계속 처리기는 같은 수정 가능한 예외 레코드와 `CONTEXT`를 봅니다. 중첩 예외와 DLL 알림을 포함한 콜백이 끝난 뒤 최종 컨텍스트를 검증합니다. 다른 종류의 처리기 API로 핸들을 제거할 수 없습니다. `WindowsContinuationTests.cpp`는 순서, 조기 종료, 등록 변경, 컨텍스트 복구, 중첩 전달, 로더 콜백과 프로세스 종료를 독자 EXE와 네이티브 Windows로 비교합니다. 검증한 Windows x64 벡터 경로에서는 `EXCEPTION_NONCONTINUABLE`이 설정되어도 재개할 수 있지만 스택 프레임 기반 SEH 동작의 근거는 아닙니다. 네이티브 ARM64 실행은 아직 검증하지 않았습니다. [AddVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredcontinuehandler), [RemoveVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredcontinuehandler).
 

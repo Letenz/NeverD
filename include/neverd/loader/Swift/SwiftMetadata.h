@@ -6,6 +6,7 @@
 
 #include "llvm/ADT/StringRef.h"
 
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -49,6 +50,39 @@ struct SwiftImmutableScalarStorage {
 std::optional<SwiftImmutableScalarStorage>
 swiftImmutableScalarStorage(const BinaryImage &Image, va_t Address);
 
+/// Stable identity of a registered internal nominal type or simple protocol.
+/// The bounded declaration tree, current descriptor/context bytes, and every
+/// registration record must agree. This supplies no layout or export address.
+std::optional<std::string>
+swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Descriptor);
+std::optional<std::string>
+swiftLocalRegisteredProtocolType(const BinaryImage &Image, va_t Descriptor);
+
+/// Exact ordinary immutable CGFloat descriptor import. Identity only; the
+/// frozen scalar representation must be established by its storage consumer.
+bool swiftImportedCGFloatDescriptor(const BinaryImage &Image, va_t Slot);
+
+struct SwiftFixedRecordField {
+  enum class Kind { Float64, StrongReference };
+  Kind Storage = Kind::Float64;
+  std::string Name, MangledType;
+  uint32_t Offset = 0;
+  bool IsMutable = false;
+};
+struct SwiftFixedRecordStorage {
+  std::string MangledType;
+  va_t Descriptor = 0, Metadata = 0, ValueWitnessTable = 0;
+  uint32_t Size = 0, Alignment = 0;
+  std::array<SwiftFixedRecordField, 4> Fields;
+};
+/// Authenticate one bounded fixed struct storage shape: three Double/CGFloat
+/// fields and one nonoptional strong local class reference. Complete registered
+/// identity, reflection, fixed offsets and immutable value-witness layout must
+/// agree. This is not a source type declaration, calling convention, ownership
+/// operation, native-entry proof, or permission to replace dynamic witnesses.
+std::optional<SwiftFixedRecordStorage>
+swiftFixedRecordStorage(const BinaryImage &Image, va_t Descriptor);
+
 /// Declared identity of a non-generic Swift class in Objective-C metadata.
 /// This does not reconstruct its instance layout or freeze live offsets.
 struct SwiftObjCClassIdentity {
@@ -57,6 +91,23 @@ struct SwiftObjCClassIdentity {
 };
 std::optional<SwiftObjCClassIdentity>
 swiftObjCClassIdentity(const BinaryImage &Image, va_t Metadata);
+
+struct SwiftFixedRootClassField {
+  std::string Name, MangledType;
+  uint32_t Offset = 0, ByteCount = 0, Alignment = 0;
+};
+struct SwiftFixedRootClassStorage {
+  SwiftObjCClassIdentity Identity;
+  uint32_t Size = 0, Alignment = 0;
+  std::vector<SwiftFixedRootClassField> Fields;
+};
+/// Bounded native Swift root-class storage with Optional<String>,
+/// Optional<Optional<String>> or Optional<Bool> fields. Registered identity,
+/// complete kind-1 reflection, immutable offset declarations and metadata
+/// bounds must agree. This grants no initializer bytes, object identity,
+/// accessor ABI, runtime call effects or source-publication permission.
+std::optional<SwiftFixedRootClassStorage>
+swiftFixedRootClassStorage(const BinaryImage &Image, va_t Metadata);
 
 /// A separately authenticated Swift reflection field whose Objective-C type
 /// string is empty. The exact ivar/offset symbol/vector must agree; callers

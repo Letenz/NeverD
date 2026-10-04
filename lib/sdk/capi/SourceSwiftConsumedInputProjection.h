@@ -25,9 +25,12 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
     using Kind = SourceCallTypeHint::Kind;
     const bool Runtime = X.CallKind == Kind::SwiftRuntimeCall &&
                          X.SwiftConsumedInput && Y.SwiftConsumedInput;
-    const bool Address = E.Operands.empty() && A.Operands.empty() &&
-                         (X.CallKind == Kind::DarwinRuntimeGlobalAddress ||
-                          X.CallKind == Kind::RuntimeProfileCounterStorage);
+    const bool Address =
+        E.Operands.empty() && A.Operands.empty() &&
+        (X.CallKind == Kind::DarwinRuntimeGlobalAddress ||
+         X.CallKind == Kind::RuntimeProfileCounterStorage ||
+         X.CallKind == Kind::RuntimeSwiftNominalMetadataAddress ||
+         X.CallKind == Kind::RuntimeSwiftWitnessTableAddress);
     if ((!Runtime && !Address) || E.Kind != ExprKind::Call ||
         X.CallKind != Y.CallKind || X.TargetAddress != Y.TargetAddress ||
         X.TargetName != Y.TargetName || X.ByteCount != Y.ByteCount ||

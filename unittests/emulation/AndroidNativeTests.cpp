@@ -20,6 +20,13 @@
 
 namespace neverd::emulation {
 namespace {
+namespace output_fixture {
+#define NEVERD_LINUX_OUTPUT_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_LINUX_OUTPUT_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "fixtures/LinuxOutputCases.def"
+#undef NEVERD_LINUX_OUTPUT_TEXT
+#undef NEVERD_LINUX_OUTPUT_VALUE
+} // namespace output_fixture
 constexpr uint64_t Buffer = 0x20000000;
 class AndroidNative : public testing::TestWithParam<const char *> {
 protected:
@@ -91,6 +98,176 @@ protected:
     Path = Saved;
   }
 };
+class AndroidOnce : public AndroidNative {};
+TEST_P(AndroidOnce, ConstructorsNestedImportsAndRepeatedCalls) {
+  auto R = run("once_values", {Buffer});
+  returned(R, 73);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  const std::vector<uint32_t> Expected = {2, 2, 1, 1, 1, 1, 2, 1000,
+                                          1, 2, 1, 0, 0, 0, 0, 0};
+  for (size_t I = 0; I < Expected.size(); ++I)
+    EXPECT_EQ(llvm::support::endian::read32le(
+                  R.MemorySnapshots[0].Bytes.data() + I * 4),
+              Expected[I]);
+  const std::vector<std::string> Names = {"pthread_once", "pthread_once",
+                                          "pthread_once", "pthread_once",
+                                          "getuid",       "pthread_once"};
+  ASSERT_EQ(R.NativeCalls.size(), Names.size());
+  for (size_t I = 0; I < Names.size(); ++I) {
+    EXPECT_EQ(R.NativeCalls[I].Name, Names[I]);
+    EXPECT_EQ(R.NativeCalls[I].Result, I == 4 ? 1000u : 0u);
+  }
+  EXPECT_TRUE(R.Services.empty());
+  Options.Android->Initialize = false;
+  R = run("once_values", {Buffer});
+  returned(R, 73);
+  EXPECT_EQ(
+      llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data() + 32),
+      0u);
+}
+TEST_P(AndroidOnce, CompletedControlNeedsNoCallbackOrWriteAccess) {
+  Options.Android->Initialize = false;
+  Options.Android->Memory[0].Bytes = {2, 0, 0, 0};
+  auto R = run("once_supplied", {Buffer, 0});
+  returned(R, 0);
+  ASSERT_EQ(R.NativeCalls.size(), 1u);
+  EXPECT_EQ(R.NativeCalls[0].Result, 0u);
+  returned(run("once_readonly", {Buffer, 2}), 0);
+  R = run("once_readonly", {Buffer, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_NE(R.Diagnostic.find("invalid guest pointer"), std::string::npos);
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidOnce, DynamicCallbacksRetainTheirProviderAndEvent) {
+  Options.Android->Initialize = false;
+  Options.Android->Libraries["libinit.so"] = {"pthread_once"};
+  auto R = run("once_dynamic", {Buffer});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  ASSERT_EQ(R.MemorySnapshots[0].Bytes.size(), 64u);
+  const std::vector<uint32_t> Expected = {2, 2, 1, 1, 1, 1, 2, 1000};
+  for (size_t I = 0; I < Expected.size(); ++I)
+    EXPECT_EQ(llvm::support::endian::read32le(
+                  R.MemorySnapshots[0].Bytes.data() + I * 4),
+              Expected[I]);
+  ASSERT_EQ(R.NativeCalls.size(), 7u);
+  EXPECT_EQ(R.NativeCalls[1].Name, "dlsym");
+  EXPECT_EQ(R.NativeCalls[1].Symbol, "pthread_once");
+  for (size_t I : {2u, 5u}) {
+    EXPECT_EQ(R.NativeCalls[I].Name, "pthread_once");
+    EXPECT_EQ(R.NativeCalls[I].Library, "libinit.so");
+    EXPECT_EQ(R.NativeCalls[I].PC, R.NativeCalls[1].Result);
+    EXPECT_EQ(R.NativeCalls[I].Result, 0u);
+  }
+  EXPECT_EQ(R.NativeCalls[3].Name, "pthread_once");
+  EXPECT_TRUE(R.NativeCalls[3].Library.empty());
+  EXPECT_EQ(R.NativeCalls[3].Result, 0u);
+  EXPECT_EQ(R.NativeCalls[4].Name, "getuid");
+  EXPECT_EQ(R.NativeCalls[4].Result, 1000u);
+}
+TEST_P(AndroidOnce, DefaultScopeCallbacksKeepResidentProviderAfterClose) {
+  Options.Android->Initialize = false;
+  Options.Android->Libraries["libinit.so"] = {"pthread_once"};
+  auto R = run("once_default", {Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  Options.Android->DefaultScope = std::vector<std::string>{};
+  returned(run("once_default", {Buffer}), 99);
+  Options.Android->DefaultScope = std::vector<std::string>{"libinit.so"};
+  R = run("once_default", {Buffer});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  const std::vector<uint32_t> Expected = {2, 2, 1, 1, 1, 1, 2, 1000};
+  for (size_t I = 0; I < Expected.size(); ++I)
+    EXPECT_EQ(llvm::support::endian::read32le(
+                  R.MemorySnapshots[0].Bytes.data() + I * 4),
+              Expected[I]);
+  ASSERT_EQ(R.NativeCalls.size(), 7u);
+  EXPECT_EQ(R.NativeCalls[0].Name, "dlsym");
+  EXPECT_EQ(R.NativeCalls[0].Library, "libinit.so");
+  EXPECT_EQ(R.NativeCalls[0].Symbol, "pthread_once");
+  EXPECT_EQ(R.NativeCalls[2].Name, "dlclose");
+  EXPECT_EQ(R.NativeCalls[2].Result, 0u);
+  for (size_t I : {3u, 6u}) {
+    EXPECT_EQ(R.NativeCalls[I].Name, "pthread_once");
+    EXPECT_EQ(R.NativeCalls[I].Library, "libinit.so");
+    EXPECT_EQ(R.NativeCalls[I].PC, R.NativeCalls[0].Result);
+    EXPECT_EQ(R.NativeCalls[I].Result, 0u);
+  }
+  EXPECT_EQ(R.NativeCalls[4].Name, "pthread_once");
+  EXPECT_TRUE(R.NativeCalls[4].Library.empty());
+  EXPECT_EQ(R.NativeCalls[4].Result, 0u);
+  EXPECT_EQ(R.NativeCalls[5].Name, "getuid");
+  EXPECT_EQ(R.NativeCalls[5].Result, 1000u);
+}
+TEST_P(AndroidOnce, InvalidInputsCannotCompleteInitialization) {
+  Options.Android->Initialize = false;
+  for (auto Args : {std::vector<uint64_t>{0, Buffer},
+                    {Buffer + 1, Buffer},
+                    {Buffer, 0},
+                    {Buffer, Buffer},
+                    {Buffer, Buffer + 1}}) {
+    auto R = run("once_supplied", Args);
+    EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_EQ(R.NativeCalls.size(), 1u);
+    EXPECT_FALSE(R.NativeCalls[0].Result);
+  }
+  for (uint32_t State : {1u, 3u, 0xffffffffu}) {
+    Options.Android->Memory[0].Bytes.resize(4);
+    llvm::support::endian::write32le(Options.Android->Memory[0].Bytes.data(),
+                                     State);
+    auto R = run("once_supplied", {Buffer, 0});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_FALSE(R.NativeCalls[0].Result);
+    EXPECT_EQ(
+        llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data()),
+        State);
+  }
+}
+TEST_P(AndroidOnce, RecursiveAndFailedCallbacksRemainIncomplete) {
+  Options.Android->Initialize = false;
+  for (const char *Entry : {"once_recursive", "once_fails"}) {
+    auto R = run(Entry, {Buffer});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    EXPECT_EQ(
+        llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data()), 1u);
+    for (const auto &Call : R.NativeCalls)
+      EXPECT_FALSE(Call.Result);
+    if (std::string(Entry) == "once_fails") {
+      EXPECT_EQ(llvm::support::endian::read32le(
+                    R.MemorySnapshots[0].Bytes.data() + 4),
+                1u);
+      EXPECT_EQ(R.NativeCalls.back().Name, "unknown_initializer");
+    } else {
+      EXPECT_NE(R.Diagnostic.find("already underway"), std::string::npos);
+    }
+  }
+  auto R = run("once_bad_stack", {Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_NE(R.Diagnostic.find("did not restore its stack"), std::string::npos);
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidOnce, CallbackConsumesTheOriginalInstructionBudget) {
+  Options.Android->Initialize = false;
+  Options.Limits.Instructions = 300;
+  auto R = run("once_exhausts", {Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::InstructionLimit) << R.Diagnostic;
+  EXPECT_EQ(R.Instructions, 300u);
+  EXPECT_FALSE(R.ReturnValue);
+  ASSERT_EQ(R.NativeCalls.size(), 1u);
+  EXPECT_FALSE(R.NativeCalls[0].Result);
+  EXPECT_EQ(llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data()),
+            1u);
+  EXPECT_GT(
+      llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data() + 8),
+      0u);
+}
+INSTANTIATE_TEST_SUITE_P(OptimizationAndPacking, AndroidOnce,
+                         testing::Values("once-O0-none", "once-O0-android",
+                                         "once-O0-relr", "once-O2-none",
+                                         "once-O2-android", "once-O2-relr"));
+
 TEST_P(AndroidNative, ConstructorsStackArgumentsAndUninitializedAnalysis) {
   returned(run("add_arguments", {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}), 402);
   Options.Android->Initialize = false;
@@ -117,6 +294,28 @@ TEST_P(AndroidNative, KernelErrorsAndLibcErrnoHaveDifferentContracts) {
   returned(R, 0);
   ASSERT_EQ(R.Services.size(), 1);
   EXPECT_EQ(R.Services[0].Result, uint64_t(0) - 9);
+}
+TEST_P(AndroidNative,
+       VectoredOutputSharesKernelSemanticsAndPreservesLibcErrno) {
+  auto R = run(output_fixture::AndroidEntry);
+  returned(R, 0);
+  EXPECT_EQ(R.StandardOutput, std::string(output_fixture::Message,
+                                          sizeof(output_fixture::Message) - 1));
+  EXPECT_TRUE(R.StandardError.empty());
+  ASSERT_EQ(R.Services.size(), 1u);
+  EXPECT_EQ(R.Services.front().Number, output_fixture::NativeARMWriteV);
+  EXPECT_EQ(R.Services.front().Result,
+            uint64_t(0) - output_fixture::ErrorDescriptor);
+}
+TEST_P(AndroidNative, VectoredOutputBudgetPublishesNothing) {
+  Options.OutputLimit = output_fixture::MessageSplit;
+  Options.Android->TraceLimit = 0;
+  Options.Android->ReadMemory.clear();
+  auto R = run(output_fixture::AndroidEntry);
+  EXPECT_EQ(R.Stop, ProcessStopReason::OutputLimit) << R.Diagnostic;
+  EXPECT_TRUE(R.StandardOutput.empty());
+  EXPECT_TRUE(R.StandardError.empty());
+  EXPECT_FALSE(R.ReturnValue);
 }
 TEST_P(AndroidNative, IdentityImportsAndRawServicesAgreeWithoutChangingErrno) {
   auto R = run("identity_queries", {Buffer});
@@ -459,6 +658,91 @@ TEST_P(AndroidNative, DynamicCatalogueRejectsMalformedCppInputs) {
               std::string::npos);
   }
 }
+TEST_P(AndroidNative, DefaultScopeUsesDeclaredOrderAndResidentProviders) {
+  Options.Android->Libraries = {{"libfixture.so", {"strlen"}},
+                                {"libother.so", {"strlen"}},
+                                {"libempty.so", {}}};
+  for (const std::string First : {"libother.so", "libfixture.so"}) {
+    const std::string Second =
+        First == "libother.so" ? "libfixture.so" : "libother.so";
+    Options.Android->DefaultScope =
+        std::vector<std::string>{"libempty.so", First, Second};
+    auto R = run("default_call");
+    returned(R, 6);
+    ASSERT_EQ(R.NativeCalls.size(), 2u);
+    const auto &Lookup = R.NativeCalls[0], &Call = R.NativeCalls[1];
+    EXPECT_EQ(Lookup.Name, "dlsym");
+    EXPECT_EQ(Lookup.Arguments[0], 0u);
+    EXPECT_EQ(Lookup.Symbol, "strlen");
+    EXPECT_EQ(Lookup.Library, First);
+    ASSERT_TRUE(Lookup.Result);
+    EXPECT_EQ(Call.Name, "strlen");
+    EXPECT_EQ(Call.Library, First);
+    EXPECT_EQ(Call.PC, *Lookup.Result);
+  }
+  Options.Android->DefaultScope = std::vector<std::string>{"libfixture.so"};
+  returned(run("default_resident_lifecycle"), 0);
+  // A fresh workload must not inherit this scope or its handles.
+  Options.Android->DefaultScope.reset();
+  EXPECT_EQ(run("default_call").Stop, ProcessStopReason::UnsupportedService);
+}
+TEST_P(AndroidNative, EmptyDefaultScopeAndLocalOpensPreserveLookupFailures) {
+  Options.Android->Libraries["libfixture.so"] = {"strlen"};
+  Options.Android->DefaultScope.emplace();
+  returned(run("default_call"), 100);
+  returned(run("default_missing"), 0);
+  returned(run("default_local_open"), 0);
+  Options.Android->DefaultScope = std::vector<std::string>{"libfixture.so"};
+  returned(run("default_missing"), 0);
+  auto R = run("dynamic_scope", {UINT64_MAX});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("caller identity"), std::string::npos);
+  EXPECT_EQ(run("dynamic_open", {0, 2}).Stop,
+            ProcessStopReason::UnsupportedService);
+}
+TEST_P(AndroidNative, DefaultScopeDoesNotImplementUnknownFunctions) {
+  Options.Android->Libraries["libfixture.so"] = {"unmodeled_fixture_export"};
+  Options.Android->DefaultScope = std::vector<std::string>{"libfixture.so"};
+  auto R = run("default_unknown");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  ASSERT_EQ(R.NativeCalls.size(), 2u);
+  ASSERT_TRUE(R.NativeCalls.front().Result);
+  EXPECT_EQ(R.NativeCalls.back().PC, *R.NativeCalls.front().Result);
+  EXPECT_EQ(R.NativeCalls.back().Name, "unmodeled_fixture_export");
+  EXPECT_EQ(R.NativeCalls.back().Library, "libfixture.so");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidNative, DynamicFlagsFollowBionicBitmaskContract) {
+  Options.Android->Libraries["libfixture.so"] = {"strlen"};
+  Options.Android->DefaultScope = std::vector<std::string>{"libfixture.so"};
+  for (uint64_t Flags = 0; Flags != 8; ++Flags) {
+    SCOPED_TRACE(Flags);
+    returned(run("dynamic_flag_combinations", {Flags}), 0);
+  }
+  for (uint64_t Flags : {8u, 0x80000000u, 0xffffffffu})
+    returned(run("dynamic_flag_combinations", {Flags}), 0);
+  for (uint64_t Flags : {0x100u, 0x1002u})
+    EXPECT_EQ(run("dynamic_flag_combinations", {Flags}).Stop,
+              ProcessStopReason::UnsupportedService);
+}
+TEST_P(AndroidNative, DefaultScopeRejectsUnknownOrRepeatedProviders) {
+  Options.Android->EntrySymbol = "default_call";
+  Options.Android->Libraries = {{"libfixture.so", {"strlen"}},
+                                {"libother.so", {}}};
+  for (const auto &Scope : std::vector<std::vector<std::string>>{
+           {"missing.so"},
+           {""},
+           {"libfixture.so", "libfixture.so"},
+           {"libfixture.so", "libother.so", "missing.so"},
+           {std::string("bad\0name", 8)}}) {
+    Options.Android->DefaultScope = Scope;
+    auto R =
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("default scope"),
+              std::string::npos);
+  }
+}
 INSTANTIATE_TEST_SUITE_P(Relocations, AndroidNative,
                          testing::Values("none", "android", "relr"));
 TEST(AndroidOptions, StrictWireTypesAndProfiles) {
@@ -473,7 +757,11 @@ TEST(AndroidOptions, StrictWireTypesAndProfiles) {
        R"({"android":{"libraries":{"x":["a","a"]}}})",
        R"({"android":{"libraries":{"x":[""]}}})",
        R"({"android":{"libraries":{"x":["bad\u0000name"]}}})",
-       R"({"android":{"libraries":{"":[]}}})"}) {
+       R"({"android":{"libraries":{"":[]}}})",
+       R"({"android":{"default_scope":null}})",
+       R"({"android":{"default_scope":{}}})",
+       R"({"android":{"default_scope":[7]}})",
+       R"({"android":{"default_scope":["bad\u0000name"]}})"}) {
     auto O = processOptionsFromJSON(Text);
     EXPECT_FALSE(bool(O)) << Text;
     llvm::consumeError(O.takeError());
@@ -489,6 +777,25 @@ TEST(AndroidOptions, StrictWireTypesAndProfiles) {
   auto Bad = emulateProcess("missing", ProcessProfile::LinuxELF64, *O);
   EXPECT_FALSE(bool(Bad));
   EXPECT_NE(llvm::toString(Bad.takeError()).find("Android"), std::string::npos);
+}
+TEST(AndroidOptions, DefaultScopeDistinguishesUnspecifiedFromEmpty) {
+  for (const char *Text :
+       {R"({"android":{}})", R"({"android":{"default_scope":[]}})",
+        R"({"android":{"default_scope":["b","a"]}})"}) {
+    auto O = processOptionsFromJSON(Text);
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    ASSERT_TRUE(O->Android);
+    if (llvm::StringRef(Text).contains("[\"b\"")) {
+      ASSERT_TRUE(O->Android->DefaultScope);
+      EXPECT_EQ(*O->Android->DefaultScope,
+                (std::vector<std::string>{"b", "a"}));
+    } else if (llvm::StringRef(Text).contains("[]")) {
+      ASSERT_TRUE(O->Android->DefaultScope);
+      EXPECT_TRUE(O->Android->DefaultScope->empty());
+    } else {
+      EXPECT_FALSE(O->Android->DefaultScope);
+    }
+  }
 }
 } // namespace
 } // namespace neverd::emulation

@@ -1,0 +1,17 @@
+//===- X64PackedShiftInstructions.def - Legacy SSE2 shift operands ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// XMM destination; lane shifts accept imm8 or an XMM/aligned m128 count.
+// Whole-register byte shifts accept only imm8. MMX and VEX/EVEX are excluded.
+NEVERD_X64_PACKED_SHIFT(PSLLW, VectorOrImmediate)
+NEVERD_X64_PACKED_SHIFT(PSLLD, VectorOrImmediate)
+NEVERD_X64_PACKED_SHIFT(PSLLQ, VectorOrImmediate)
+NEVERD_X64_PACKED_SHIFT(PSRLW, VectorOrImmediate)
+NEVERD_X64_PACKED_SHIFT(PSRLD, VectorOrImmediate)
+NEVERD_X64_PACKED_SHIFT(PSRLQ, VectorOrImmediate)
+NEVERD_X64_PACKED_SHIFT(PSRAW, VectorOrImmediate)
+NEVERD_X64_PACKED_SHIFT(PSRAD, VectorOrImmediate)
+NEVERD_X64_PACKED_SHIFT(PSLLDQ, Immediate)
+NEVERD_X64_PACKED_SHIFT(PSRLDQ, Immediate)

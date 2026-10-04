@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "arch/aarch64/AArch64Machine.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/AddressSpace.h"
@@ -104,6 +105,30 @@ TEST_F(Hvf, ConcurrentCallersKeepIndependentGuestRegisters) {
   A.join();
   B.join();
 }
+#if defined(__aarch64__) || defined(__arm64__)
+TEST_F(Hvf, GuestBranchCannotEnterPrivateMaintenance) {
+  const uint8_t Branch[] = {0x00, 0x00, 0x1f, 0xd6}; // br x0
+  llvm::cantFail(CPU->map(Code, Page, Read | Write | Execute));
+  llvm::cantFail(CPU->write(Code, Branch));
+  llvm::cantFail(
+      CPU->setReg(AArch64Register::X0, aarch64::MaintenanceEntryGPA));
+  unsigned Seen = 0;
+  BackendHooks Hooks;
+  Hooks.Instruction = [&](uint64_t PC, uint32_t) {
+    EXPECT_EQ(PC, Code);
+    ++Seen;
+  };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+  const auto Exit = llvm::cantFail(CPU->runUntilExit(Code, 1000000));
+  EXPECT_EQ(Exit.Kind, ExecutionExitKind::GuestFault) << Exit.Diagnostic;
+  ASSERT_TRUE(Exit.Fault);
+  EXPECT_EQ(Exit.Fault->Address, aarch64::MaintenanceEntryGPA);
+  EXPECT_EQ(Exit.Fault->Access, BackendAccessKind::Execute);
+  EXPECT_EQ(Seen, 1u);
+  EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::PC)),
+            aarch64::MaintenanceEntryGPA);
+}
+#endif
 TEST(HvfConfiguration, NativeSelectionAndBuildAvailabilityAreExplicit) {
   ExecutionConfiguration Config;
   Config.Architecture = ISA;

@@ -514,6 +514,9 @@ public:
                !isArchitecturalNoReturn(Block.Ops.back(), Architecture)))))
           return false;
         const auto &Signature = *Found->second.Signature;
+        const auto ErrorResult = sourceABIErrorResult(Signature);
+        if (Found->second.PreservesSwiftErrorResult && !ErrorResult)
+          return false;
         const bool Tail = Index + 1 < Block.Ops.size() &&
                           Block.Ops[Index + 1].Opcode == NdOp::RETURN &&
                           Block.Ops[Index + 1].Addr == Op.Addr;
@@ -884,6 +887,13 @@ public:
                         [&](const auto &Item) { return Item.first < *SP; });
           Temps.clear();
         }
+        // Swift's error slot is transported as an in/out register value. Its
+        // output invalidates the incoming identity even for a platform
+        // callee-save register and even at a tail call. Only an independently
+        // certified unchanged result may retain the old bytes.
+        if (ErrorResult && !Found->second.PreservesSwiftErrorResult)
+          for (unsigned I = 0; I < ErrorResult->Location.ValueBytes; ++I)
+            Current.Registers.erase(ErrorResult->Location.RegisterOffset + I);
         if (ReturnedFrame) {
           const auto &Alias = *Found->second.ReturnFrameOrExternal;
           const auto &Location = Signature.ReturnLocation;
@@ -1252,8 +1262,9 @@ static bool validateFrameCalls(const LowFunc &Function, Arch Architecture,
   for (const auto &[Site, Contract] : Calls) {
     if (const auto *Copy = Contract.RegisterCopy) {
       if (Architecture != Arch::AArch64 || Contract.Signature ||
-          Contract.terminates() || !Contract.empty() ||
-          Copy->Caller != Function.Entry || Copy->Site != Site ||
+          Contract.PreservesSwiftErrorResult || Contract.terminates() ||
+          !Contract.empty() || Copy->Caller != Function.Entry ||
+          Copy->Site != Site ||
           (Copy->Registers.empty() && !Copy->isReturnOnly()) ||
           Copy->Registers.size() > 16)
         return false;
@@ -1300,6 +1311,8 @@ static bool validateFrameCalls(const LowFunc &Function, Arch Architecture,
              SourceABICarrierKind::IndirectResultPointer &&
          !Contract.InitializesIndirectResult) ||
         !validateSourceABI(*Signature, Error) ||
+        (Contract.PreservesSwiftErrorResult &&
+         !sourceABIErrorResult(*Signature)) ||
         !sourceFrameEffectsMatchABI(Contract, *Signature))
       return false;
   }
@@ -1765,7 +1778,9 @@ bool observesTerminalNativeSourceState(const LowFunc &Function,
         !Signature->ReturnComponents.empty() ||
         (Contract.terminates() &&
          Signature->ReturnType->Kind != NdTypeKind::Void) ||
-        !validateSourceABI(*Signature, Error))
+        !validateSourceABI(*Signature, Error) ||
+        (Contract.PreservesSwiftErrorResult &&
+         !sourceABIErrorResult(*Signature)))
       return false;
     for (const auto &Parameter : Signature->Parameters)
       if (!Parameter.Components.empty() || !Parameter.Type ||
@@ -1816,7 +1831,11 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
         Signature->Architecture != Architecture ||
         Signature->ReturnLocation.Kind ==
             SourceABICarrierKind::IndirectResultPointer ||
-        !validateSourceABI(*Signature, Error))
+        !validateSourceABI(*Signature, Error) ||
+        (Contract.PreservesSwiftErrorResult &&
+         !sourceABIErrorResult(*Signature)) ||
+        (hasSwiftErrorResult(*Signature) &&
+         !Contract.PreservesSwiftErrorResult))
       return false;
   }
 

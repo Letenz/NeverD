@@ -4,7 +4,9 @@
 #include "../../ir/high/pass/HighFrameAddress.h"
 #include "../../loader/MachO/DarwinRuntimeImport.h"
 #include "../../loader/MachO/DarwinSourceDeclarations.h"
+#include "../../loader/ObjC/ObjCClassAccessorMachine.h"
 #include "../../loader/ObjC/ObjCRuntimeData.h"
+#include "../../loader/Swift/SwiftErrorRuntime.h"
 #include "BorrowedByteSources.h"
 #include "CStringStorageSources.h"
 #include "ObjCConstantObjectSources.h"
@@ -2069,7 +2071,7 @@ inline bool swiftImportedTypeDescriptor(const BinaryImage &Image, va_t Slot,
   if (Image.Arch == Arch::AArch64 &&
       Provider == "/usr/lib/swift/libswiftCoreFoundation.dylib" &&
       Symbol == "_$s12CoreGraphics7CGFloatVMn" &&
-      isImmutableImageImportSlot(Image, Slot))
+      swiftImportedCGFloatDescriptor(Image, Slot))
     return true;
   // The bundled macOS SDK's libswiftDispatch TBD exports these descriptors for
   // public Dispatch option sets. A strong, immutable dyld bind supplies their
@@ -2305,225 +2307,8 @@ swiftLocalImportedLockType(const BinaryImage &Image, va_t Address) {
   return "So16os_unfair_lock_sV";
 }
 
-/// The runtime also finds stable internal type names in registered type
-/// records. A symbol that is not exported cannot be linked as a descriptor;
-/// reconstruct its textual identity only after the descriptor bytes and the
-/// image's type or protocol registration agrees with that name. Private
-/// anonymous contexts have no such stable lookup identity and remain
-/// unsupported. Both record forms reserve the low bits; only direct records
-/// without additional flags are accepted here.
-/// swift/stdlib/public/runtime/MetadataLookup.cpp:
-/// _contextDescriptorMatchesMangling and _searchTypeMetadataRecordsInSections.
-inline std::optional<std::string>
-swiftLocalRegisteredTypeIdentity(const BinaryImage &Image, va_t Address,
-                                 bool Protocol) {
-  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
-      Image.Bits != Bitness::Bits64 ||
-      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
-      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
-      Address % 4)
-    return std::nullopt;
-  const Symbol *Descriptor = nullptr;
-  for (const auto &Candidate : Image.Symbols)
-    if (Candidate.Addr == Address) {
-      if (Descriptor || Candidate.IsFunc || Candidate.Name.empty())
-        return std::nullopt;
-      Descriptor = &Candidate;
-    }
-  if (!Descriptor || (Descriptor->Size && Descriptor->Size < 12))
-    return std::nullopt;
-  for (const auto &Candidate : Image.Symbols)
-    if (&Candidate != Descriptor && Candidate.Name == Descriptor->Name)
-      return std::nullopt;
-  for (const auto &Export : Image.Exports)
-    if (Export.Addr == Address || Export.Name == Descriptor->Name)
-      return std::nullopt;
-
-  llvm::StringRef SymbolName(Descriptor->Name);
-  SymbolName.consume_front("_");
-  llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
-  const auto Parsed = llvm::swiftDemangle(SymbolName, Options);
-  const auto Shape = [](const llvm::SwiftDemangleNode &Node,
-                        llvm::StringRef Kind, size_t Children) {
-    return Node.Kind == Kind && !Node.Text && !Node.Index &&
-           Node.Children.size() == Children;
-  };
-  if (!Parsed.Root || !Parsed.Error.empty() ||
-      !Shape(*Parsed.Root, "Global", 1) ||
-      !Shape(Parsed.Root->Children[0],
-             Protocol ? "ProtocolDescriptor" : "NominalTypeDescriptor", 1) ||
-      !Shape(Parsed.Root->Children[0].Children[0], "Type", 1))
-    return std::nullopt;
-  const auto &Nominal = Parsed.Root->Children[0].Children[0].Children[0];
-  if (Protocol && Nominal.Kind != "Protocol")
-    return std::nullopt;
-  const auto NominalKind = [&](const llvm::SwiftDemangleNode &Node) {
-    return Node.Kind == "Class"                  ? 16U
-           : Node.Kind == "Structure"            ? 17U
-           : Node.Kind == "Enum"                 ? 18U
-           : Protocol && Node.Kind == "Protocol" ? 3U
-                                                 : 0U;
-  };
-  const auto Identifier = [](const llvm::SwiftDemangleNode &Node,
-                             llvm::StringRef ExpectedKind) {
-    return Node.Kind == ExpectedKind && Node.Text && !Node.Index &&
-           Node.Children.empty() && !Node.Text->empty() &&
-           Node.Text->size() <= 128 &&
-           std::all_of(Node.Text->begin(), Node.Text->end(),
-                       [](char C) { return llvm::isAlnum(C) || C == '_'; });
-  };
-  std::vector<std::pair<unsigned, std::string>> Contexts;
-  const auto *Context = &Nominal;
-  while (const auto ContextKind = NominalKind(*Context)) {
-    if (Contexts.size() == 8 || Context->Text || Context->Index ||
-        Context->Children.size() != 2 ||
-        !Identifier(Context->Children[1], "Identifier"))
-      return std::nullopt;
-    Contexts.emplace_back(ContextKind, *Context->Children[1].Text);
-    Context = &Context->Children[0];
-  }
-  const auto &Module = *Context;
-  if (Contexts.empty() || !Identifier(Module, "Module") ||
-      *Module.Text == "__C" || *Module.Text == "__C_Synthesized" ||
-      !SymbolName.starts_with("$s") ||
-      !SymbolName.ends_with(Protocol ? "Mp" : "Mn"))
-    return std::nullopt;
-  const unsigned Kind = Contexts.front().first;
-
-  const auto MatchesText = [&](va_t Target,
-                               const std::string &Text) -> std::optional<bool> {
-    // Stop at the first different byte. An unrelated short name may be
-    // immediately followed by pointer storage that is not part of its text.
-    for (size_t I = 0; I <= Text.size(); ++I) {
-      if (Target > InvalidVA - I)
-        return std::nullopt;
-      const auto Byte = readImmutableImageBytes(Image, Target + I, 1);
-      if (!Byte)
-        return std::nullopt;
-      const uint8_t Expected = I == Text.size() ? 0 : uint8_t(Text[I]);
-      if (Byte->front() != Expected)
-        return false;
-    }
-    return true;
-  };
-  const auto MatchesIdentity = [&](va_t Target) -> std::optional<bool> {
-    std::set<va_t> Seen;
-    bool StableContexts = true;
-    for (const auto &[ContextKind, ContextName] : Contexts) {
-      if (Target % 4 || !Seen.insert(Target).second)
-        return std::nullopt;
-      const auto Bytes = readImmutableImageBytes(Image, Target, 12);
-      if (!Bytes)
-        return std::nullopt;
-      const uint32_t Flags = llvm::support::endian::read32le(Bytes->data());
-      if ((Flags & 0x1f) != ContextKind)
-        return false;
-      const auto TypeName = swiftRelativeAddress(Image, Target + 8);
-      if (!TypeName)
-        return std::nullopt;
-      const auto NameMatches = MatchesText(*TypeName, ContextName);
-      if (!NameMatches || !*NameMatches)
-        return NameMatches;
-      // Unknown versions, import identities and indirect parents cannot prove
-      // which textual declaration the runtime will select.
-      if ((Flags & 0xff00) || (Flags & 0x40000) ||
-          (llvm::support::endian::read32le(Bytes->data() + 4) & 1))
-        return std::nullopt;
-      StableContexts &= (Flags & 0xffff) == (ContextKind | 0x40);
-      const auto Parent = swiftRelativeAddress(Image, Target + 4);
-      if (!Parent)
-        return std::nullopt;
-      Target = *Parent;
-    }
-    if (Target % 4 || !Seen.insert(Target).second)
-      return std::nullopt;
-    const auto ParentBytes = readImmutableImageBytes(Image, Target, 12);
-    if (!ParentBytes)
-      return std::nullopt;
-    const uint32_t ParentFlags =
-        llvm::support::endian::read32le(ParentBytes->data());
-    if ((ParentFlags & 0x1f) != 0)
-      return false;
-    if ((ParentFlags & ~uint32_t(0x40)) ||
-        llvm::support::endian::read32le(ParentBytes->data() + 4))
-      return std::nullopt;
-    const auto ModuleName = swiftRelativeAddress(Image, Target + 8);
-    const auto ModuleMatches = ModuleName
-                                   ? MatchesText(*ModuleName, *Module.Text)
-                                   : std::optional<bool>{};
-    if (!ModuleMatches || !*ModuleMatches)
-      return ModuleMatches;
-    return StableContexts ? std::optional<bool>{true} : std::nullopt;
-  };
-  const auto Header = readImmutableImageBytes(Image, Address, 12);
-  const auto Identity = MatchesIdentity(Address);
-  if (!Header || !Identity || !*Identity ||
-      (llvm::support::endian::read32le(Header->data()) & 0xffff) !=
-          (Kind | 0x40))
-    return std::nullopt;
-
-  const Section *Records = nullptr;
-  for (const auto &Candidate : Image.Sections)
-    if (Candidate.Name == (Protocol ? "__swift5_protos" : "__swift5_types")) {
-      if (Records)
-        return std::nullopt;
-      Records = &Candidate;
-    }
-  if (!Records || !Records->isReadable() || Records->isWritable() ||
-      !Records->Size || Records->Size % 4 || Records->Size / 4 > 65536)
-    return std::nullopt;
-  const auto Bytes = readImmutableImageBytes(Image, Records->VA, Records->Size);
-  if (!Bytes)
-    return std::nullopt;
-  bool Registered = false;
-  for (uint64_t I = 0; I < Records->Size; I += 4) {
-    const uint32_t Reference =
-        llvm::support::endian::read32le(Bytes->data() + I);
-    if (!Reference)
-      continue;
-    if (Reference & 3)
-      return std::nullopt;
-    const auto Target = swiftRelativeAddress(Image, Records->VA + I);
-    const auto Match = Target ? MatchesIdentity(*Target) : std::nullopt;
-    if (!Match || (*Match && *Target != Address))
-      return std::nullopt;
-    Registered |= *Target == Address;
-  }
-  return Registered ? std::optional<std::string>(
-                          SymbolName.drop_front(2).drop_back(2).str() +
-                          (Protocol ? "_p" : ""))
-                    : std::nullopt;
-}
-
-inline std::optional<std::string>
-swiftLocalRegisteredNominalType(const BinaryImage &Image, va_t Address) {
-  return swiftLocalRegisteredTypeIdentity(Image, Address, false);
-}
-
-inline std::optional<std::string>
-swiftLocalRegisteredProtocolType(const BinaryImage &Image, va_t Address) {
-  // A single ordinary Swift protocol has simple existential metadata with
-  // one witness table. Exclude requirement signatures, associated types,
-  // special protocols and unknown flags before using that representation.
-  const auto Header = readImmutableImageBytes(Image, Address, 24);
-  if (!Header ||
-      (llvm::support::endian::read32le(Header->data()) & ~uint32_t(0x10000)) !=
-          0x43 ||
-      llvm::support::endian::read32le(Header->data() + 12) ||
-      llvm::support::endian::read32le(Header->data() + 20))
-    return std::nullopt;
-  const uint32_t Requirements =
-      llvm::support::endian::read32le(Header->data() + 16);
-  if (Requirements > 512 ||
-      !readImmutableImageBytes(Image, Address, 24 + Requirements * 8))
-    return std::nullopt;
-  return swiftLocalRegisteredTypeIdentity(Image, Address, true);
-}
+using ::neverd::swiftLocalRegisteredNominalType;
+using ::neverd::swiftLocalRegisteredProtocolType;
 
 inline std::optional<SourceCallTypeHint>
 swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
@@ -3107,13 +2892,20 @@ inline bool swiftDescriptorTypeRecipeMatches(
     bool *RequiresStructuredProof = nullptr) {
   if (RequiresStructuredProof)
     *RequiresStructuredProof = false;
-  if ((Descriptors.size() != 2 && Descriptors.size() != 3) ||
+  if (Descriptors.empty() || Descriptors.size() > 3 ||
       Descriptors[0].Offset != 0)
     return false;
   const auto ReferenceAt = [&](size_t Offset) {
     return Recipe.size() >= Offset + 5 &&
            (Recipe[Offset] == 1 || Recipe[Offset] == 2);
   };
+  const bool OptionalPairPrefix = Descriptors.size() == 1 && ReferenceAt(0) &&
+                                  Recipe.drop_front(5).starts_with("Sg_");
+  if (RequiresStructuredProof && OptionalPairPrefix)
+    *RequiresStructuredProof = true;
+  const bool OptionalPair =
+      OptionalPairPrefix &&
+      (Recipe.drop_front(5) == "Sg_ABt" || Recipe.drop_front(5) == "Sg_AAt");
   const bool StringKeyedGeneric =
       Descriptors.size() == 2 && Recipe.size() == 14 &&
       Descriptors[1].Offset == 8 && ReferenceAt(0) && ReferenceAt(8) &&
@@ -3147,41 +2939,58 @@ inline bool swiftDescriptorTypeRecipeMatches(
   // raw AB/AC cannot be checked by textual concatenation, even if a forged
   // cache/reference name happens to equal that expanded spelling.
   std::string FirstLabel, SecondLabel;
-  const auto ReadLabel = [&](std::string &Label) {
-    if (Tail.empty() || !llvm::isDigit(Tail.front()))
+  const auto ReadLabel = [](llvm::StringRef &Input, std::string &Label) {
+    if (Input.empty() || !llvm::isDigit(Input.front()))
       return true;
-    if (Tail.front() == '0')
+    if (Input.front() == '0')
       return false;
     unsigned Length = 0;
-    while (!Tail.empty() && llvm::isDigit(Tail.front())) {
-      Length = Length * 10 + unsigned(Tail.front() - '0');
+    while (!Input.empty() && llvm::isDigit(Input.front())) {
+      Length = Length * 10 + unsigned(Input.front() - '0');
       if (Length > 63)
         return false;
-      Tail = Tail.drop_front();
+      Input = Input.drop_front();
     }
-    if (!Length || Tail.size() < Length)
+    if (!Length || Input.size() < Length)
       return false;
-    const auto Name = Tail.take_front(Length);
+    const auto Name = Input.take_front(Length);
     if ((!llvm::isAlpha(Name.front()) && Name.front() != '_') ||
         !std::all_of(Name.begin(), Name.end(),
                      [](char C) { return llvm::isAlnum(C) || C == '_'; }))
       return false;
     Label = Name.str();
-    Tail = Tail.drop_front(Length);
+    Input = Input.drop_front(Length);
     return true;
   };
   const bool RepeatedPrefix =
       (NestedPairPrefix || NestedGenericPrefix || KeyedTuplePrefix) &&
-      ReadLabel(FirstLabel) && Tail.consume_front("_");
+      ReadLabel(Tail, FirstLabel) && Tail.consume_front("_");
   if (RequiresStructuredProof && RepeatedPrefix && Tail.starts_with("A"))
     *RequiresStructuredProof = true;
   const bool RepeatedTuple =
       RepeatedPrefix && Tail.consume_front(NestedPairPrefix ? "AB" : "AC") &&
-      ReadLabel(SecondLabel) &&
+      ReadLabel(Tail, SecondLabel) &&
       Tail == (KeyedTuplePrefix      ? "tG"
                : NestedGenericPrefix ? "ttG"
                                      : "tt");
-  if (!StringKeyedGeneric && !NominalTuple && !TupleGeneric && !RepeatedTuple)
+  std::string OptionalFirstLabel, OptionalSecondLabel;
+  auto OriginalTail = ReferenceAt(0) ? Recipe.drop_front(5) : llvm::StringRef{};
+  const bool OptionalTuplePrefix =
+      Descriptors.size() == 2 && ReferenceAt(0) &&
+      ReadLabel(OriginalTail, OptionalFirstLabel) &&
+      OriginalTail.consume_front("_") &&
+      Recipe.size() - OriginalTail.size() == Descriptors[1].Offset &&
+      ReferenceAt(Descriptors[1].Offset);
+  if (OptionalTuplePrefix)
+    OriginalTail = OriginalTail.drop_front(5);
+  const bool OptionalTupleLabels =
+      OptionalTuplePrefix && ReadLabel(OriginalTail, OptionalSecondLabel);
+  if (RequiresStructuredProof && OptionalTupleLabels &&
+      OriginalTail.starts_with("tSg"))
+    *RequiresStructuredProof = true;
+  const bool OptionalTuple = OptionalTupleLabels && OriginalTail == "tSg";
+  if (!StringKeyedGeneric && !NominalTuple && !TupleGeneric && !RepeatedTuple &&
+      !OptionalPair && !OptionalTuple)
     return false;
   llvm::SwiftDemangleOptions Options;
   Options.MaxInputBytes = 8000;
@@ -3195,22 +3004,18 @@ inline bool swiftDescriptorTypeRecipeMatches(
   };
   const auto Type = Parse(MangledType);
   const auto Outer = Parse(Descriptors[0].Symbol);
-  const auto Value = Parse(Descriptors[1].Symbol);
-  const auto String = Parse("$sSS");
   const auto Shape = [](const llvm::SwiftDemangleNode &N, llvm::StringRef Kind,
                         size_t Count) {
     return N.Kind == Kind && !N.Text && !N.Index && N.Children.size() == Count;
   };
-  for (const auto *Parsed : {&Type, &Outer, &Value, &String})
+  for (const auto *Parsed : {&Type, &Outer})
     if (!Parsed->Root || !Parsed->Error.empty() ||
         !Shape(*Parsed->Root, "Global", 1))
       return false;
-  for (const auto *Parsed : {&Outer, &Value})
-    if (!Shape(Parsed->Root->Children[0], "NominalTypeDescriptor", 1) ||
-        !Shape(Parsed->Root->Children[0].Children[0], "Type", 1))
-      return false;
+  if (!Shape(Outer.Root->Children[0], "NominalTypeDescriptor", 1) ||
+      !Shape(Outer.Root->Children[0].Children[0], "Type", 1))
+    return false;
   const auto &OuterType = Outer.Root->Children[0].Children[0];
-  const auto &ValueType = Value.Root->Children[0].Children[0];
   size_t Budget = 4096;
   const auto Same = [&](const auto &Self, const llvm::SwiftDemangleNode &A,
                         const llvm::SwiftDemangleNode &B,
@@ -3232,16 +3037,59 @@ inline bool swiftDescriptorTypeRecipeMatches(
            Same(Same, Tuple.Children[0].Children[0], First, 0) &&
            Same(Same, Tuple.Children[1].Children[0], Second, 0);
   };
-  const auto RepeatedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
-                                   const llvm::SwiftDemangleNode &Repeated) {
+  const auto OptionalPayload = [&](const llvm::SwiftDemangleNode &Generic)
+      -> const llvm::SwiftDemangleNode * {
+    const auto Optional = Parse("$sSq");
+    if (!Optional.Root || !Optional.Error.empty() ||
+        !Shape(*Optional.Root, "Global", 1) ||
+        !Shape(Generic, "BoundGenericEnum", 2) ||
+        !Shape(Generic.Children[0], "Type", 1) ||
+        !Same(Same, Generic.Children[0].Children[0], Optional.Root->Children[0],
+              0) ||
+        !Shape(Generic.Children[1], "TypeList", 1) ||
+        !Shape(Generic.Children[1].Children[0], "Type", 1))
+      return nullptr;
+    return &Generic.Children[1].Children[0];
+  };
+  if (OptionalPair) {
+    const auto &Tuple = Type.Root->Children[0];
+    if (!Shape(Tuple, "Tuple", 2) ||
+        !Shape(Tuple.Children[0], "TupleElement", 1) ||
+        !Shape(Tuple.Children[0].Children[0], "Type", 1))
+      return false;
+    const auto &First = Tuple.Children[0].Children[0];
+    const auto *Payload = OptionalPayload(First.Children[0]);
+    if (!Payload || !Same(Same, *Payload, OuterType, 0))
+      return false;
+    // The symbolic nominal reference occupies slot AA; forming Optional<T>
+    // occupies AB. These indices precede any textual descriptor expansion.
+    return TupleMatches(Tuple, First,
+                        Recipe.drop_front(5) == "Sg_ABt" ? First : OuterType);
+  }
+  const auto Value = Parse(Descriptors[1].Symbol);
+  const auto String = Parse("$sSS");
+  for (const auto *Parsed : {&Value, &String})
+    if (!Parsed->Root || !Parsed->Error.empty() ||
+        !Shape(*Parsed->Root, "Global", 1))
+      return false;
+  if (!Shape(Value.Root->Children[0], "NominalTypeDescriptor", 1) ||
+      !Shape(Value.Root->Children[0].Children[0], "Type", 1))
+    return false;
+  const auto &ValueType = Value.Root->Children[0].Children[0];
+  const auto LabeledMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                  const llvm::SwiftDemangleNode &First,
+                                  const llvm::SwiftDemangleNode &Second,
+                                  const std::string &FirstName,
+                                  const std::string &SecondName) {
     if (!Shape(Tuple, "Tuple", 2))
       return false;
-    const std::string *Labels[] = {&FirstLabel, &SecondLabel};
+    const std::string *Labels[] = {&FirstName, &SecondName};
+    const llvm::SwiftDemangleNode *Elements[] = {&First, &Second};
     for (size_t I = 0; I < 2; ++I) {
       const auto &Element = Tuple.Children[I];
       const auto &Label = *Labels[I];
       if (!Shape(Element, "TupleElement", Label.empty() ? 1 : 2) ||
-          !Same(Same, Element.Children.back(), Repeated, 0))
+          !Same(Same, Element.Children.back(), *Elements[I], 0))
         return false;
       if (!Label.empty()) {
         const auto &Name = Element.Children[0];
@@ -3252,6 +3100,15 @@ inline bool swiftDescriptorTypeRecipeMatches(
     }
     return true;
   };
+  const auto RepeatedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
+                                   const llvm::SwiftDemangleNode &Repeated) {
+    return LabeledMatches(Tuple, Repeated, Repeated, FirstLabel, SecondLabel);
+  };
+  if (OptionalTuple) {
+    const auto *Payload = OptionalPayload(Type.Root->Children[0]);
+    return Payload && LabeledMatches(Payload->Children[0], OuterType, ValueType,
+                                     OptionalFirstLabel, OptionalSecondLabel);
+  }
   const auto NestedMatches = [&](const llvm::SwiftDemangleNode &Tuple,
                                  const llvm::SwiftDemangleNode &First,
                                  const llvm::SwiftDemangleNode &Repeated) {
@@ -3317,6 +3174,27 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       !CacheAddress || !ReferenceAddress || CacheAddress == ReferenceAddress)
     return std::nullopt;
 
+  // A metadata cache and its relative recipe are ordinary image objects,
+  // not TLS templates or pointer-section entries. Require the entire range
+  // to belong to one regular section, including any split or overlap.
+  const auto OrdinaryStorage = [&](va_t Address, uint64_t Size) {
+    if (!Size || Size > InvalidVA - Address)
+      return false;
+    const Section *Owner = nullptr;
+    for (const auto &S : Image.Sections) {
+      if (S.VA >= Address + Size || S.Size <= Address - std::min(Address, S.VA))
+        continue;
+      if (Owner || Address < S.VA || Size > S.Size - (Address - S.VA) ||
+          (S.Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_REGULAR)
+        return false;
+      Owner = &S;
+    }
+    return Owner != nullptr;
+  };
+  if (!OrdinaryStorage(CacheAddress, 8) ||
+      !OrdinaryStorage(ReferenceAddress, 8))
+    return std::nullopt;
+
   const Symbol *Cache = nullptr, *Reference = nullptr;
   for (const auto &Symbol : Image.Symbols) {
     if (Symbol.IsFunc || Symbol.Name.empty())
@@ -3369,6 +3247,7 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       TypeReference ? Image.readVA(*TypeReference, uint64_t(Length) + 1)
                     : nullptr;
   if (!TypeReference || !TypeBytes || *TypeReference > InvalidVA - Length ||
+      !OrdinaryStorage(*TypeReference, uint64_t(Length) + 1) ||
       TypeBytes[Length] != 0 ||
       Image.hasExecutableCodeOwnerAt(*TypeReference) ||
       Image.hasExecutableCodeOwnerAt(*TypeReference + Length) ||
@@ -3378,6 +3257,7 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
   constexpr size_t MaxDescriptors = 8;
   size_t SymbolicReferences = 0;
   std::vector<SwiftTypeMetadataDescriptorReference> Descriptors;
+  std::vector<SwiftTypeMetadataDescriptorReference> RegisteredTypes;
   std::string Expanded = "$s";
   std::string Rebuilt;
   for (uint32_t I = 0; I < Length;) {
@@ -3407,8 +3287,12 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
         Image, *DescriptorAddress, TypeBytes[I]);
     if (!DescriptorSymbol && LocalDescriptor) {
       auto Inline = swiftLocalImportedLockType(Image, *LocalDescriptor);
-      if (!Inline)
+      if (!Inline) {
         Inline = swiftLocalRegisteredNominalType(Image, *LocalDescriptor);
+        if (Inline)
+          RegisteredTypes.push_back(
+              {I, *LocalDescriptor, "_$s" + *Inline + "Mn", std::nullopt});
+      }
       if (!Inline) {
         // The shared protocol proof returns a simple existential spelling.
         // Keep the recipe's own composition operator and insert only the
@@ -3504,6 +3388,23 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
                            std::move(FieldPath)});
     Rebuilt.append(reinterpret_cast<const char *>(TypeBytes + I), 5);
     I += 5;
+  }
+  if (!RegisteredTypes.empty() &&
+      SymbolicReferences == RegisteredTypes.size() && Descriptors.empty()) {
+    bool RequiresOriginalRecipe = false;
+    const bool Matches = swiftDescriptorTypeRecipeMatches(
+        Base,
+        llvm::StringRef(reinterpret_cast<const char *>(TypeBytes), Length),
+        RegisteredTypes, &RequiresOriginalRecipe);
+    if (RequiresOriginalRecipe) {
+      if (!Matches)
+        return std::nullopt;
+      // The registered nominal owner already proved the complete stable
+      // identity. Emit the declared textual type only after its full tree
+      // matches the original symbolic recipe; never export a private Mn.
+      Rebuilt = llvm::StringRef(Base).drop_front(2).str();
+      Expanded = Base;
+    }
   }
   bool RequiresStructuredProof = false;
   const bool StructuredMatches = swiftDescriptorTypeRecipeMatches(
@@ -4823,6 +4724,247 @@ swiftStaticStringPairStorageHint(const BinaryImage &Image, va_t Base) {
   // sharing the ordinary named-storage helper with direct accesses.
   Hint->TargetName = "swift_static_string_pairs:" + Storage->Name;
   return Hint;
+}
+
+struct SwiftStaticRootObjectProof {
+  SourceCallTypeHint Hint;
+  va_t Metadata = 0, Descriptor = 0;
+  std::string Initializer;
+};
+
+inline std::optional<SwiftStaticRootObjectProof>
+swiftStaticRootObjectStorage(const BinaryImage &Image, va_t Base) {
+  if (!Base || Base % 8 || Base > InvalidVA - 4104 ||
+      !Image.MachOTwoLevelNamespace)
+    return std::nullopt;
+  const auto *Storage = uniqueWritableDataSymbol(Image, Base, 24);
+  if (!Storage)
+    return std::nullopt;
+  llvm::StringRef Name(Storage->Name);
+  Name.consume_front("_");
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Tree = llvm::swiftDemangle(Name, Options);
+  const auto Shape = [](const auto &Node, llvm::StringRef Kind, size_t Count) {
+    return Node.Kind == Kind && !Node.Text && !Node.Index &&
+           Node.Children.size() == Count;
+  };
+  const auto Text = [](const auto &Node, llvm::StringRef Kind) {
+    return Node.Kind == Kind && Node.Text && !Node.Text->empty() &&
+           !Node.Index && Node.Children.empty();
+  };
+  if (!Tree.Root || !Tree.Error.empty() || !Shape(*Tree.Root, "Global", 2) ||
+      Tree.Root->Children[0].Kind != "OutlinedVariable" ||
+      Tree.Root->Children[0].Index != 0 || Tree.Root->Children[0].Text ||
+      !Tree.Root->Children[0].Children.empty() || !Name.ends_with("Tv_") ||
+      !Shape(Tree.Root->Children[1], "GlobalVariableOnceFunction", 2))
+    return std::nullopt;
+  const auto &Context = Tree.Root->Children[1].Children[0];
+  const auto &Properties = Tree.Root->Children[1].Children[1];
+  if (!Shape(Context, "Class", 2) || !Text(Context.Children[0], "Module") ||
+      !Text(Context.Children[1], "Identifier") ||
+      !Shape(Properties, "GlobalVariableOnceDeclList", 1) ||
+      !Text(Properties.Children[0], "Identifier"))
+    return std::nullopt;
+  const std::string &Module = *Context.Children[0].Text;
+  const std::string &ClassName = *Context.Children[1].Text;
+  const std::string RuntimeName = "_TtC" + std::to_string(Module.size()) +
+                                  Module + std::to_string(ClassName.size()) +
+                                  ClassName;
+  const ObjCClass *Class = nullptr;
+  for (const auto &C : Image.ObjCClasses)
+    if (C.Name == RuntimeName) {
+      if (Class)
+        return std::nullopt;
+      Class = &C;
+    }
+  const auto Layout =
+      Class ? swiftFixedRootClassStorage(Image, Class->Address) : std::nullopt;
+  if (!Layout || Layout->Identity.Module != Module ||
+      Layout->Identity.Name != ClassName || Layout->Alignment != 8)
+    return std::nullopt;
+  const uint32_t Width = 8 + ((Layout->Size + 7) & ~7u);
+  if (Storage->Size && Storage->Size != Width)
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Base);
+  if (!Section ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) != llvm::MachO::S_REGULAR)
+    return std::nullopt;
+  for (const auto &Symbol : Image.Symbols)
+    if (&Symbol != Storage &&
+        (Symbol.Name == Storage->Name ||
+         (Symbol.Addr >= Base && Symbol.Addr - Base < Width) ||
+         (Symbol.Addr < Base && Symbol.Size &&
+          Base - Symbol.Addr < Symbol.Size)))
+      return std::nullopt;
+  auto Hint = localStorageHint(Image, Base, Width);
+  const auto Bytes = readInitialImageBytes(Image, Base, Width);
+  if (!Hint || !Bytes)
+    return std::nullopt;
+  for (const auto &Export : Image.Exports)
+    if (Export.Name == Storage->Name ||
+        (Export.Addr >= Base && Export.Addr - Base < Width))
+      return std::nullopt;
+  std::vector<uint8_t> Expected(Width);
+  for (const auto &Field : Layout->Fields) {
+    // Compiler and native-runtime oracles establish these extra inhabitants.
+    // They are architecture-specific; a symbol gap supplies no layout proof.
+    if (Field.MangledType == "SbSg")
+      Expected[8 + Field.Offset] = 2;
+    else if (Field.MangledType == "SSSgSg")
+      Expected[8 + Field.Offset + 8] = Image.Arch == Arch::AArch64 ? 1 : 2;
+    else if (Field.MangledType == "SSSg")
+      Expected[8 + Field.Offset + 8] = 0;
+    else
+      return std::nullopt;
+  }
+  if (*Bytes != Expected)
+    return std::nullopt;
+  Hint->TargetName = "swift_static_root_object:" + Storage->Name;
+  return SwiftStaticRootObjectProof{
+      *Hint, Class->Address, Layout->Identity.Descriptor,
+      llvm::StringRef(Storage->Name).drop_back(3).str()};
+}
+
+// Attribute storage to the class queried by the actual native producer. Keep
+// objc_opt_self and the metadata accessor's result unchanged; neither this
+// association nor the storage declaration grants a runtime alias or purity.
+inline bool swiftStaticRootObjectUse(const BinaryImage &Image,
+                                     const HighFunc &Function,
+                                     const HighExpr &Call, va_t Site,
+                                     const SwiftStaticRootObjectProof &Proof) {
+  if (Image.Arch != Arch::AArch64 || Function.Entry > InvalidVA - 12 || !Site ||
+      Site < Function.Entry + 12 || Function.Body.size() > 128 ||
+      Function.Name != Proof.Initializer || Call.Kind != ExprKind::Call ||
+      Call.IsIndirectCall || Call.IndirectTarget || !Call.SourceCallHint ||
+      Call.Operands.size() != 2 || !Call.Operands[0] ||
+      Call.IntrinsicId != Intrinsic::None || !Call.IntrinsicOutputs.empty() ||
+      Call.MemoryOrdering != NdMemoryOrdering::None ||
+      Call.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const auto Bytes = readImmutableCodeBytes(Image, Site - 12, 16);
+  if (!Bytes)
+    return false;
+  const auto Word = [&](unsigned I) {
+    return llvm::support::endian::read32le(Bytes->data() + I * 4);
+  };
+  if (!branch::A64BranchLink.matches(Word(0)) ||
+      !branch::A64BranchLink.matches(Word(3)) ||
+      (Word(1) & 0x9f00001f) != 0x90000001 ||
+      (Word(2) & 0xffc003ff) != 0x91000021)
+    return false;
+  const auto Producer = branch::a64BranchTarget(Word(0), Site - 12);
+  const auto Runtime = branch::a64BranchTarget(Word(3), Site);
+  const auto Machine =
+      Producer ? objcClassAccessorMachine(Image, *Producer) : std::nullopt;
+  const auto Slot =
+      Runtime ? darwinImportVeneerSlot(Image, *Runtime) : std::nullopt;
+  const auto Expected =
+      Slot ? swiftRuntimeSourceCallHint(Image, *Slot) : std::nullopt;
+  const auto Import =
+      Slot ? Image.DyldBindSlots.find(*Slot) : Image.DyldBindSlots.end();
+  if (!Machine || Machine->ClassAddress != Proof.Metadata || !Expected ||
+      !Image.hasAuthenticatedFunctionEntryAt(*Producer) ||
+      Image.nextKnownFunctionEntryAfter(*Producer) < *Producer + 32 ||
+      swiftRelativeAddress(Image, Proof.Descriptor + 12) != Producer ||
+      Expected->TargetName != "swift_initStaticObject" ||
+      Expected->WeakImport || Import == Image.DyldBindSlots.end() ||
+      Import->second.Module != "/usr/lib/swift/libswiftCore.dylib" ||
+      Import->second.WeakImport || Import->second.Addend ||
+      !runtimeBindingMatches(*Call.SourceCallHint, *Expected) ||
+      (Call.CallAddr != *Runtime && Call.CallAddr != *Slot))
+    return false;
+  const uint32_t Immediate =
+      ((Word(1) >> 29) & 3) | (((Word(1) >> 5) & 0x7ffff) << 2);
+  const int64_t Delta =
+      (int64_t(Immediate) - ((Immediate & 0x100000) ? 0x200000 : 0)) * 4096;
+  const va_t Page = (Site - 8) & ~va_t(4095);
+  if ((Delta < 0 && Page < uint64_t(-Delta)) ||
+      (Delta > 0 && Page > InvalidVA - uint64_t(Delta)))
+    return false;
+  const va_t AddressPage =
+      Delta < 0 ? Page - uint64_t(-Delta) : Page + uint64_t(Delta);
+  const uint32_t Offset = (Word(2) >> 10) & 4095;
+  if (AddressPage > InvalidVA - Offset ||
+      AddressPage + Offset != Proof.Hint.TargetAddress + 8)
+    return false;
+  const auto PlainLocal = [](const ExprPtr &E) {
+    return E && E->Kind == ExprKind::Var && E->Type && E->Type->Size == 8 &&
+           (E->Type->Kind == NdTypeKind::Int ||
+            E->Type->Kind == NdTypeKind::Ptr) &&
+           E->Var.Size == 8 &&
+           (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Temp) &&
+           E->Operands.empty() && !E->IndirectTarget && !E->IsIndirectCall &&
+           E->IntrinsicId == Intrinsic::None && E->IntrinsicOutputs.empty() &&
+           E->MemoryOrdering == NdMemoryOrdering::None &&
+           E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  };
+  if (!PlainLocal(Call.Operands[0]))
+    return false;
+  const auto &Object = Call.Operands[1];
+  if (!Object || !Object->Type || Object->Type->Size != 8 ||
+      (Object->Type->Kind != NdTypeKind::Int &&
+       Object->Type->Kind != NdTypeKind::Ptr) ||
+      Object->IsIndirectCall || Object->IndirectTarget ||
+      Object->IntrinsicId != Intrinsic::None ||
+      !Object->IntrinsicOutputs.empty() ||
+      Object->MemoryOrdering != NdMemoryOrdering::None ||
+      Object->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      (Object->Kind == ExprKind::Const &&
+       (Object->ConstVal != Proof.Hint.TargetAddress + 8 ||
+        !Object->Operands.empty())))
+    return false;
+  unsigned Owners = 0;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Function.Entry || Symbol.Name == Function.Name) {
+      if (Symbol.Addr != Function.Entry || Symbol.Name != Function.Name ||
+          !Symbol.IsFunc || ++Owners != 1)
+        return false;
+    }
+  if (Owners != 1 || !Image.hasAuthenticatedFunctionEntryAt(Function.Entry) ||
+      Site >= Image.nextKnownFunctionEntryAfter(Function.Entry))
+    return false;
+  const HighStmt *Previous = nullptr;
+  unsigned Found = 0, Definitions = 0;
+  for (const auto &S : Function.Body) {
+    if (!S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
+        !S.DefaultBody.empty() || !S.EHClauseBodies.empty())
+      return false;
+    if (S.Kind != StmtKind::Assign && S.Kind != StmtKind::Store &&
+        S.Kind != StmtKind::Call && S.Kind != StmtKind::Return)
+      return false;
+    if (S.Kind == StmtKind::Assign && PlainLocal(S.Dst) &&
+        highSourceLocalIdentity(S.Dst->Var) ==
+            highSourceLocalIdentity(Call.Operands[0]->Var))
+      ++Definitions;
+    const auto E = S.Kind == StmtKind::Assign   ? S.Val
+                   : S.Kind == StmtKind::Return ? S.RetVal
+                                                : S.CallExpr;
+    if (E.get() == &Call) {
+      if (++Found != 1 || S.Addr != Site || !Previous ||
+          Previous->Kind != StmtKind::Assign || Previous->Addr != Site - 12 ||
+          !PlainLocal(Previous->Dst) || !Previous->Val ||
+          highSourceLocalIdentity(Previous->Dst->Var) !=
+              highSourceLocalIdentity(Call.Operands[0]->Var))
+        return false;
+      const auto &P = *Previous->Val;
+      if (P.Kind != ExprKind::Call || P.IsIndirectCall || P.IndirectTarget ||
+          P.CallAddr != *Producer || !P.Operands.empty() || !P.Type ||
+          P.Type->Size != 8 ||
+          (P.Type->Kind != NdTypeKind::Int &&
+           P.Type->Kind != NdTypeKind::Ptr) ||
+          P.IntrinsicId != Intrinsic::None || !P.IntrinsicOutputs.empty() ||
+          P.MemoryOrdering != NdMemoryOrdering::None ||
+          P.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        return false;
+    }
+    Previous = &S;
+  }
+  return Found == 1 && Definitions == 1;
 }
 
 // Darwin dispatch_once_t (also used by swift_once) is an intptr_t, initialized
@@ -6504,11 +6646,14 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   // A metadata pair can be moved through locals before an outlined helper
   // call. Bind its defining address only when every read of each local is a
   // direct argument of an exact, typed call carrying the proven pair.
+  // Multiple definitions retain correlated reaching states from the shared
+  // emitted-source CFG, including every loop backedge; never cross-product
+  // two independent address sets at a join.
   using MetadataLocal = HighSourceLocalIdentity;
   using MetadataAlias =
       std::pair<va_t, SourceCallTypeHint::SwiftTypeMetadataAddress>;
   struct MetadataDefinition {
-    va_t Address = 0;
+    std::set<va_t> Addresses;
     unsigned Count = 0;
     bool Valid = false;
   };
@@ -6526,20 +6671,24 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     ++Definition.Count;
     const auto Address =
         Statement.Val ? constantAddress(*Statement.Val) : std::nullopt;
-    Definition.Valid = Definition.Count == 1 && Address &&
+    Definition.Valid = (Definition.Count == 1 || Definition.Valid) && Address &&
                        Statement.Val->Kind == ExprKind::Const &&
-                       Statement.Val->Type && Statement.Val->Type->Size == 8;
+                       Statement.Val->Type && Statement.Val->Type->Size == 8 &&
+                       Statement.Dst->Type && Statement.Dst->Type->Size == 8 &&
+                       Statement.Dst->Var.Size == 8;
     if (Definition.Valid)
-      Definition.Address = *Address;
+      Definition.Addresses.insert(*Address);
   });
   std::map<MetadataLocal, unsigned> MetadataReads, MetadataPairedReads;
-  std::map<MetadataLocal, MetadataAlias> MetadataPairCandidates;
+  using MetadataChoices = std::map<va_t, MetadataAlias>;
+  std::map<MetadataLocal, MetadataChoices> MetadataPairCandidates;
   std::set<MetadataLocal> MetadataConflicts;
   size_t MetadataScanBudget = 1000000;
   bool MetadataScanComplete = true;
   const auto MetadataLocalAt =
       [&](const ExprPtr &Value) -> std::optional<MetadataLocal> {
-    if (!Value ||
+    if (!Value || !Value->Type || Value->Type->Size != 8 ||
+        Value->Var.Size != 8 ||
         (Value->Kind != ExprKind::Var && Value->Kind != ExprKind::Phi) ||
         !Value->Operands.empty() ||
         (Value->Var.Kind != MedVar::Reg && Value->Var.Kind != MedVar::Temp))
@@ -6550,12 +6699,24 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       return std::nullopt;
     return Key;
   };
+  using MetadataState = std::vector<va_t>;
+  std::map<MetadataLocal, size_t> MetadataCoordinates;
   const auto MetadataAddressAt =
-      [&](const ExprPtr &Value) -> std::optional<va_t> {
+      [&](const ExprPtr &Value,
+          const MetadataState &State) -> std::optional<va_t> {
     if (!Value)
       return std::nullopt;
-    if (const auto Local = MetadataLocalAt(Value))
-      return MetadataDefinitions.at(*Local).Address;
+    if (const auto Local = MetadataLocalAt(Value)) {
+      const auto I = MetadataCoordinates.find(*Local);
+      if (I == MetadataCoordinates.end()) {
+        const auto &D = MetadataDefinitions.at(*Local);
+        return D.Count == 1 ? std::optional<va_t>(*D.Addresses.begin())
+                            : std::nullopt;
+      }
+      return State[I->second] == InvalidVA
+                 ? std::nullopt
+                 : std::optional<va_t>(State[I->second]);
+    }
     return constantAddress(*Value);
   };
   using MetadataIndices = std::tuple<size_t, size_t, bool>;
@@ -6581,14 +6742,107 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     }
     return Found->second;
   };
+  // Track only locals carried by a candidate metadata call. Unrelated scalar
+  // assignments must not expand this bounded relational state space.
+  std::function<void(const ExprPtr &, unsigned)> FindMetadataCoordinates =
+      [&](const ExprPtr &E, unsigned Depth) {
+        if (!E || !MetadataScanComplete)
+          return;
+        if (Depth > 200 || !MetadataScanBudget) {
+          MetadataScanComplete = false;
+          return;
+        }
+        --MetadataScanBudget;
+        for (const auto &[I, J, Ordered] : MetadataPairIndices(*E))
+          for (const auto Index : {I, J})
+            if (const auto Local = MetadataLocalAt(E->Operands[Index]);
+                Local && MetadataDefinitions.at(*Local).Count > 1)
+              MetadataCoordinates.try_emplace(*Local,
+                                              MetadataCoordinates.size());
+        E->forEachChildExpr(
+            [&](const ExprPtr &C) { FindMetadataCoordinates(C, Depth + 1); });
+      };
+  walkStmts(Function.Body, [&](const HighStmt &S) {
+    forEachRhsExpr(S, [&](const ExprPtr &E) { FindMetadataCoordinates(E, 0); });
+  });
+  using MetadataPair = SourceCallTypeHint::SwiftTypeMetadataAddress;
+  std::map<std::pair<va_t, va_t>, std::optional<MetadataPair>> CurrentPairs;
+  const auto CurrentMetadataPair = [&](va_t Cache, va_t Reference) {
+    const auto [It, Fresh] = CurrentPairs.try_emplace({Cache, Reference});
+    if (Fresh)
+      It->second = swiftTypeMetadataPair(Image, Cache, Reference);
+    return It->second;
+  };
+  std::map<const HighExpr *, std::set<MetadataState>> MetadataCallStates;
+  const bool TraceMetadata = !MetadataCoordinates.empty();
+  if (TraceMetadata) {
+    const auto Flow = analyzeHighSourceFlow(Function, false);
+    const auto Graph = buildHighSourceFlowGraph(Function);
+    MetadataScanComplete =
+        MetadataScanComplete && Flow.Complete && Flow.Items.empty() &&
+        Graph.Diagnostics.Complete && Graph.Diagnostics.Items.empty() &&
+        !Graph.Nodes.empty() && MetadataCoordinates.size() <= 64;
+    if (MetadataScanComplete) {
+      std::vector<std::set<MetadataState>> Reached(Graph.Nodes.size());
+      std::vector<std::pair<size_t, MetadataState>> Work;
+      MetadataState Initial(MetadataCoordinates.size(), InvalidVA);
+      Reached[Graph.Entry].insert(Initial);
+      Work.emplace_back(Graph.Entry, Initial);
+      for (size_t W = 0; MetadataScanComplete && W < Work.size(); ++W) {
+        const auto [Index, Incoming] = Work[W];
+        if (!MetadataScanBudget || Work.size() > 16384) {
+          MetadataScanComplete = false;
+          break;
+        }
+        --MetadataScanBudget;
+        const auto &Node = Graph.Nodes[Index];
+        std::function<void(const ExprPtr &, unsigned)> Observe =
+            [&](const ExprPtr &E, unsigned Depth) {
+              if (!E || !MetadataScanComplete)
+                return;
+              if (Depth > 200 || !MetadataScanBudget) {
+                MetadataScanComplete = false;
+                return;
+              }
+              --MetadataScanBudget;
+              if (!MetadataPairIndices(*E).empty())
+                MetadataCallStates[E.get()].insert(Incoming);
+              E->forEachChildExpr(
+                  [&](const ExprPtr &C) { Observe(C, Depth + 1); });
+            };
+        if (Node.Test)
+          Observe(Node.Test, 0);
+        else if (Node.Statement)
+          forEachRhsExpr(*Node.Statement,
+                         [&](const ExprPtr &E) { Observe(E, 0); });
+        auto Outgoing = Incoming;
+        if (Node.Statement && Node.Statement->Kind == StmtKind::Assign)
+          if (const auto Local = MetadataLocalAt(Node.Statement->Dst))
+            if (const auto I = MetadataCoordinates.find(*Local);
+                I != MetadataCoordinates.end()) {
+              const auto A = constantAddress(*Node.Statement->Val);
+              if (!A) {
+                MetadataScanComplete = false;
+                break;
+              }
+              Outgoing[I->second] = *A;
+            }
+        for (size_t Next : Node.Successors)
+          if (Reached[Next].insert(Outgoing).second)
+            Work.emplace_back(Next, Outgoing);
+      }
+    }
+  }
+  const std::set<MetadataState> SingleDefinitionState{MetadataState{}};
   std::function<void(const ExprPtr &, unsigned)> ScanMetadata =
       [&](const ExprPtr &Value, unsigned Depth) {
         if (!Value)
           return;
-        if (Depth > 200 || !MetadataScanBudget--) {
+        if (Depth > 200 || !MetadataScanBudget) {
           MetadataScanComplete = false;
           return;
         }
+        --MetadataScanBudget;
         if (const auto Local = MetadataLocalAt(Value))
           ++MetadataReads[*Local];
         for (const auto &[I, J, Ordered] : MetadataPairIndices(*Value)) {
@@ -6597,28 +6851,58 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           if (!MetadataLocalAt(Value->Operands[I]) &&
               !MetadataLocalAt(Value->Operands[J]))
             continue;
-          const auto First = MetadataAddressAt(Value->Operands[I]);
-          const auto Second = MetadataAddressAt(Value->Operands[J]);
-          if (!First || !Second)
+          const auto Reaching = MetadataCallStates.find(Value.get());
+          if (TraceMetadata && Reaching == MetadataCallStates.end())
             continue;
-          auto Pair = swiftTypeMetadataPair(Image, *First, *Second);
-          if (!Pair && !Ordered)
-            Pair = swiftTypeMetadataPair(Image, *Second, *First);
-          if (!Pair)
+          const auto &States =
+              TraceMetadata ? Reaching->second : SingleDefinitionState;
+          std::map<MetadataLocal, MetadataChoices> Choices;
+          bool Valid = !States.empty();
+          for (const auto &State : States) {
+            if (!MetadataScanBudget) {
+              MetadataScanComplete = false;
+              Valid = false;
+              break;
+            }
+            --MetadataScanBudget;
+            const auto First = MetadataAddressAt(Value->Operands[I], State);
+            const auto Second = MetadataAddressAt(Value->Operands[J], State);
+            if (!First || !Second) {
+              Valid = false;
+              break;
+            }
+            auto Pair = CurrentMetadataPair(*First, *Second);
+            if (!Pair && !Ordered)
+              Pair = CurrentMetadataPair(*Second, *First);
+            if (!Pair) {
+              Valid = false;
+              break;
+            }
+            for (const auto Index : {I, J})
+              if (const auto Local = MetadataLocalAt(Value->Operands[Index])) {
+                const auto Address = Index == I ? *First : *Second;
+                const MetadataAlias Alias{Address, *Pair};
+                const auto [Found, Fresh] =
+                    Choices[*Local].emplace(Address, Alias);
+                if (!Fresh && Found->second != Alias)
+                  Valid = false;
+              }
+          }
+          if (!Valid)
             continue;
           for (const auto Index : {I, J})
             if (const auto Local = MetadataLocalAt(Value->Operands[Index])) {
               ++MetadataPairedReads[*Local];
-              const MetadataAlias Alias{MetadataDefinitions.at(*Local).Address,
-                                        *Pair};
-              const auto [Found, Fresh] =
-                  MetadataPairCandidates.emplace(*Local, Alias);
-              if (!Fresh && Found->second != Alias)
-                MetadataConflicts.insert(*Local);
+              for (const auto &[Address, Alias] : Choices.at(*Local)) {
+                const auto [Found, Fresh] =
+                    MetadataPairCandidates[*Local].emplace(Address, Alias);
+                if (!Fresh && Found->second != Alias)
+                  MetadataConflicts.insert(*Local);
+              }
             }
         }
-        for (const auto &Operand : Value->Operands)
-          ScanMetadata(Operand, Depth + 1);
+        Value->forEachChildExpr(
+            [&](const ExprPtr &C) { ScanMetadata(C, Depth + 1); });
       };
   walkStmts(Function.Body, [&](const HighStmt &Statement) {
     if (Statement.Dst)
@@ -6627,13 +6911,19 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     forEachRhsExpr(Statement,
                    [&](const ExprPtr &Value) { ScanMetadata(Value, 0); });
   });
-  std::map<MetadataLocal, MetadataAlias> MetadataAliasPlans;
+  std::map<MetadataLocal, MetadataChoices> MetadataAliasPlans;
   if (MetadataScanComplete)
-    for (const auto &[Local, Alias] : MetadataPairCandidates)
-      if (!MetadataConflicts.count(Local) && MetadataReads[Local] &&
+    for (const auto &[Local, Choices] : MetadataPairCandidates) {
+      bool Valid =
+          !MetadataConflicts.count(Local) && MetadataReads[Local] &&
           MetadataReads[Local] == MetadataPairedReads[Local] &&
-          swiftTypeMetadataAddressHint(Image, Alias.first, Alias.second))
-        MetadataAliasPlans.emplace(Local, Alias);
+          Choices.size() == MetadataDefinitions.at(Local).Addresses.size();
+      for (const auto &[Address, Alias] : Choices)
+        Valid &=
+            bool(swiftTypeMetadataAddressHint(Image, Address, Alias.second));
+      if (Valid)
+        MetadataAliasPlans.emplace(Local, Choices);
+    }
   if (!MetadataAliasPlans.empty()) {
     const auto Flow = analyzeHighSourceFlow(Function, false);
     if (!Flow.Complete || !Flow.Items.empty())
@@ -7476,9 +7766,9 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       const auto Local = MetadataLocalAt(Operand);
       const auto Plan =
           Local ? MetadataAliasPlans.find(*Local) : MetadataAliasPlans.end();
-      return Plan == MetadataAliasPlans.end()
+      return Plan == MetadataAliasPlans.end() || Plan->second.size() != 1
                  ? std::nullopt
-                 : std::optional<va_t>(Plan->second.first);
+                 : std::optional<va_t>(Plan->second.begin()->first);
     };
     if (Expression->Kind == ExprKind::Call && Expression->SourceCallHint &&
         Expression->SourceCallHint->CallKind ==
@@ -8001,6 +8291,12 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                                                   *Expected)
                         ? swiftStaticStringPairStorageHint(Image, *Address - 8)
                         : std::nullopt;
+        if (!Hint && ExactTarget && Address && *Address >= 8) {
+          const auto Object = swiftStaticRootObjectStorage(Image, *Address - 8);
+          if (Object && swiftStaticRootObjectUse(Image, Function, *Original,
+                                                 StatementAddress, *Object))
+            Hint = Object->Hint;
+        }
         if (Hint) {
           const va_t Base = Hint->TargetAddress;
           const uint64_t Width = Hint->ByteCount;
@@ -8335,16 +8631,23 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           }
           if (const auto Found = MetadataAliasPlans.find(Local);
               Found != MetadataAliasPlans.end()) {
-            const auto &[Address, Pair] = Found->second;
             const auto OriginalAddress = constantAddress(*Expression);
-            auto Hint = swiftTypeMetadataAddressHint(Image, Address, Pair);
-            if (OriginalAddress == Address && Hint) {
+            const auto Choice = OriginalAddress
+                                    ? Found->second.find(*OriginalAddress)
+                                    : Found->second.end();
+            const auto Pair = Choice == Found->second.end()
+                                  ? std::nullopt
+                                  : std::optional(Choice->second.second);
+            auto Hint = Pair ? swiftTypeMetadataAddressHint(
+                                   Image, *OriginalAddress, *Pair)
+                             : std::nullopt;
+            if (Hint) {
               auto Bound = HighExpr::makeCall({}, 0, {});
               Bound->Type = Expression->Type;
               Bound->SourceCallHint =
                   std::make_shared<SourceCallTypeHint>(std::move(*Hint));
               Expression = std::move(Bound);
-              Result.SwiftTypeMetadataPairs[Pair.CacheAddress] = Pair;
+              Result.SwiftTypeMetadataPairs[Pair->CacheAddress] = *Pair;
               return;
             }
           }
@@ -8528,6 +8831,17 @@ inline bool objcSourceCallBound(
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftBooleanProjection)
     return false; // Requires the current pipeline and caller proof.
   const auto &Hint = Binding.Signature;
+  if (hasSwiftErrorResult(Hint)) {
+    if (!isSwiftWillThrowSourceCall(Binding, Image.Arch) ||
+        Expression.IsIndirectCall || Expression.Operands.size() != 2 ||
+        !equalSourceTypes(Expression.Type, Hint.ReturnType))
+      return false;
+    for (const auto &Argument : Expression.Operands)
+      if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
+          (Argument->Type->Kind != NdTypeKind::Int &&
+           Argument->Type->Kind != NdTypeKind::Ptr))
+        return false;
+  }
   if (Binding.NilTerminated &&
       (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
        !Binding.Receiver || Binding.Format || Binding.DoesNotReturn ||
@@ -8975,6 +9289,22 @@ inline bool objcSourceCallBound(
   }
   if (Binding.CallKind ==
       SourceCallTypeHint::Kind::RuntimeLocalStorageAddress) {
+    if (llvm::StringRef(Binding.TargetName)
+            .starts_with("swift_static_root_object:")) {
+      const auto Proof =
+          swiftStaticRootObjectStorage(Image, Binding.TargetAddress);
+      return Proof && Binding.TargetName == Proof->Hint.TargetName &&
+             Binding.ByteCount == Proof->Hint.ByteCount &&
+             Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+             !Binding.SelectorReferenceAddress &&
+             Binding.BorrowedByteInputs.empty() &&
+             Binding.SwiftStaticStringInputs.empty() &&
+             Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
+             !Expression.IndirectTarget && !Expression.CallAddr &&
+             Expression.CallTarget.empty() && Expression.Operands.empty() &&
+             Expression.IntrinsicOutputs.empty() &&
+             objc_projection_detail::sameHint(Proof->Hint.Signature, Hint);
+    }
     if (llvm::StringRef(Binding.TargetName)
             .starts_with("swift_static_string_pairs:")) {
       const auto Expected =
@@ -9584,6 +9914,69 @@ inline bool objcSourceCallBound(
           SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
     const auto Expected = runtimeSourceCallHint(Image, Binding);
     if (Expected && runtimeBindingMatches(Binding, *Expected)) {
+      if (Binding.TargetName == "swift_initStaticObject" &&
+          Expression.Operands.size() == 2) {
+        const auto &Object = Expression.Operands[1];
+        bool HasStaticRootStorage = false;
+        std::vector<std::pair<ExprPtr, unsigned>> Pending{{Object, 0}};
+        unsigned Budget = 256;
+        while (!Pending.empty()) {
+          const auto [E, Depth] = Pending.back();
+          Pending.pop_back();
+          if (!E)
+            continue;
+          if (!Budget-- || Depth > 32)
+            return false;
+          HasStaticRootStorage |= E->SourceCallHint &&
+                                  llvm::StringRef(E->SourceCallHint->TargetName)
+                                      .starts_with("swift_static_root_object:");
+          for (const auto &Operand : E->Operands)
+            Pending.emplace_back(Operand, Depth + 1);
+          if (E->IndirectTarget)
+            Pending.emplace_back(E->IndirectTarget, Depth + 1);
+        }
+        if (HasStaticRootStorage) {
+          if (!Object || Object->Kind != ExprKind::BinOp ||
+              Object->Op != NdOp::INT_ADD || Object->Operands.size() != 2 ||
+              !Object->Operands[0] || !Object->Operands[0]->SourceCallHint ||
+              !llvm::StringRef(Object->Operands[0]->SourceCallHint->TargetName)
+                   .starts_with("swift_static_root_object:"))
+            return false;
+          const auto &Storage = *Object->Operands[0];
+          const auto Proof = swiftStaticRootObjectStorage(
+              Image, Storage.SourceCallHint->TargetAddress);
+          va_t Site = 0;
+          unsigned Occurrences = 0;
+          if (ContainingFunction)
+            walkStmts(ContainingFunction->Body, [&](const HighStmt &S) {
+              forEachExpr(S, [&](const ExprPtr &E) {
+                if (E.get() == &Expression) {
+                  Site = S.Addr;
+                  ++Occurrences;
+                }
+              });
+            });
+          if (!ContainingFunction || Occurrences != 1 || !Proof ||
+              !Object->Operands[1] ||
+              Object->Operands[1]->Kind != ExprKind::Const ||
+              !Object->Operands[1]->Type ||
+              Object->Operands[1]->Type->Kind != NdTypeKind::Int ||
+              Object->Operands[1]->Type->Size != 8 ||
+              Object->Operands[1]->ConstVal != 8 ||
+              !Object->Operands[1]->Operands.empty() ||
+              Object->Operands[1]->IsIndirectCall ||
+              Object->Operands[1]->IndirectTarget ||
+              Object->Operands[1]->IntrinsicId != Intrinsic::None ||
+              !Object->Operands[1]->IntrinsicOutputs.empty() ||
+              Object->Operands[1]->MemoryOrdering != NdMemoryOrdering::None ||
+              Object->Operands[1]->MemoryAddressSpace !=
+                  NdMemoryAddressSpace::Default ||
+              !objcSourceCallBound(Storage, Image, Functions) ||
+              !swiftStaticRootObjectUse(Image, *ContainingFunction, Expression,
+                                        Site, *Proof))
+            return false;
+        }
+      }
       // An LLVM i1 input does not promise the other bits of a byte. Accept
       // the complete source carrier only when this current value is exactly
       // zero or one; never infer normalization from its narrow type alone.

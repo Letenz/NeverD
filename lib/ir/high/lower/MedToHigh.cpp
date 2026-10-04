@@ -317,15 +317,10 @@ ExprPtr MedToHighConverter::inlineableDefinition(VarKey Key) const {
 }
 
 TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
-  if (Op.SourceCallHint) {
-    const auto &Signature = Op.SourceCallHint->Signature;
-    std::string Error;
-    if (Signature.ReturnType && validateSourceABI(Signature, Error) &&
-        ((Signature.ReturnType->Kind == NdTypeKind::Void && !Op.Output.Size) ||
-         (Signature.ReturnType->Kind == NdTypeKind::Struct &&
-          Signature.ReturnType->Size == Op.Output.Size)))
-      return Signature.ReturnType;
-  }
+  if (Op.SourceCallHint)
+    if (auto Type = sourceABICallResultType(Op.SourceCallHint->Signature);
+        Type && Type->Size == Op.Output.Size)
+      return Type;
   return NdType::makeInt(Op.Output.Size, false);
 }
 

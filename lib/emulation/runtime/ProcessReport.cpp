@@ -6,6 +6,7 @@
 #include "neverd/emulation/ProcessReport.h"
 
 #include "ProcessAndroidJSON.h"
+#include "ProcessLinuxTimeJSON.h"
 #include "ProcessWindowsJSON.h"
 
 #include "neverd/emulation/ProcessReportFields.h"
@@ -35,6 +36,11 @@ llvm::json::Value faultJSON(const std::optional<BackendFault> &Fault) {
                     : nullptr;
   Object[field::Interrupt] =
       Fault->Interrupt ? llvm::json::Value(*Fault->Interrupt) : nullptr;
+  Object[field::ErrorCode] =
+      Fault->ErrorCode ? llvm::json::Value(bits(*Fault->ErrorCode)) : nullptr;
+  Object[field::Cause] =
+      Fault->Cause ? llvm::json::Value(backendFaultCauseName(*Fault->Cause))
+                   : nullptr;
   return Object;
 }
 } // namespace
@@ -51,6 +57,13 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
   ProcessOptions Options;
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
+    if (Name == field::LinuxTime) {
+      auto Time = linuxTimeOptionsFromJSON(V);
+      if (!Time)
+        return Time.takeError();
+      Options.LinuxTime = std::move(*Time);
+      continue;
+    }
     if (Name == field::Windows) {
       auto Windows = windowsOptionsFromJSON(V);
       if (!Windows)

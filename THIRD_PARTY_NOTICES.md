@@ -53,6 +53,23 @@ independent subsequent run. The original QEMU notice and dated modification
 notice are preserved in
 [commit 9cbcf76a](https://github.com/NeverSight/unicorn/commit/9cbcf76a1eb74d200dca6a9d6cee3200e47e9743).
 
+
+The fork also includes the original 2026-10-04 bounded single-step fix by NeverD
+contributors, pinned at [commit df88be77](https://github.com/NeverSight/unicorn/commit/df88be772cfdffae7b1b930a47171d7c063f70dd).
+A count-one run uses a one-instruction translation block and stops before
+fetching a successor. Original public-API tests cover page tails, branches,
+self-loops, ARM64 MMU successor faults, fault retention and code-store commitment on x64/ARM32/ARM64 as
+applicable. The QEMU copyright/license and dated modification notice remain
+in the modified source file.
+
+The original 2026-10-04 EVEX register-prefix correction is preserved in
+[commit 10d315e0](https://github.com/NeverSight/unicorn/commit/10d315e01526b2fb370a8646b13f4246b9b71694).
+APX extends the U field only for memory indexing; register forms retain their
+reserved-bit check. The decoder retains its original QEMU license notice.
+The [Intel APX specification](https://cdrdv2.intel.com/v1/dl/getContent/784266)
+and independent Linux x64 observations also distinguish legacy ROUNDPS
+alignment faults from scalar/VEX page faults in the original regression tests.
+
 ## Swift runtime ABI declarations
 
 `lib/loader/Swift/SwiftRuntimeDeclarations.inc` derives fixed C and Swift ABI declarations

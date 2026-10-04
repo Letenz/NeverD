@@ -38,6 +38,12 @@
 
 namespace neverd::emulation {
 namespace {
+namespace session_diagnostic {
+#define NEVERD_DRIVER_SESSION_DIAGNOSTIC(Name, Text)                           \
+  constexpr char Name[] = Text;
+#include "DriverSessionDiagnostics.def"
+#undef NEVERD_DRIVER_SESSION_DIAGNOSTIC
+} // namespace session_diagnostic
 using namespace profile;
 constexpr uint64_t ReturnSentinel = ThunkBase + ThunkSize - ThunkStride;
 
@@ -82,11 +88,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       Options.TimeoutMilliseconds > MaxTimeoutMilliseconds ||
       Options.MemoryLimit > MaxMemoryLimit ||
       Options.EventLimit > MaxEventLimit)
-    return failure(llvm::formatv("driver limits must be positive (memory <= "
-                                 "{0} bytes, events <= {1}, timeout <= {2} "
-                                 "ms)",
-                                 MaxMemoryLimit, MaxEventLimit,
-                                 MaxTimeoutMilliseconds)
+    return failure(llvm::formatv(session_diagnostic::Limits, MaxMemoryLimit,
+                                 MaxEventLimit, MaxTimeoutMilliseconds)
                        .str());
   if (auto E = validateDriverScenario(Options))
     return std::move(E);
@@ -104,7 +107,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   Result.Entry = Image->Entry;
   Result.PC = Image->Entry;
   if (Image->Imports.size() > (ThunkSize / ThunkStride) - 1)
-    return failure("too many driver imports for the bounded x64 profile");
+    return failure(session_diagnostic::ImportLimit);
   auto Backend = createExecutionBackend(Options.Backend, Options.Contract,
                                         Options.MemoryLimit);
   if (!Backend)
@@ -172,7 +175,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         if (!Image->SecurityCookieAddress)
           return llvm::createStringError(
               llvm::inconvertibleErrorCode(),
-              "x64 SEH: image has no security cookie");
+              session_diagnostic::MissingSecurityCookie);
         if (auto E = Kernel.validateGuestAccess(Image->SecurityCookieAddress,
                                                 PointerSize, false))
           return std::move(E);
@@ -262,8 +265,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     }
     if (*StackPointer < ActiveStackBase ||
         *StackPointer >= ActiveStackBase + ActiveStackSize) {
-      Stop(DriverStopReason::ModelError,
-           "guest stack pointer exceeds the invocation stack");
+      Stop(DriverStopReason::ModelError, session_diagnostic::StackRange);
       return;
     }
     if (Address == ReturnSentinel) {
@@ -277,8 +279,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           Error += llvm::toString(AX.takeError());
         Stop(DriverStopReason::EngineError, Error);
       } else if (*SP != ExpectedReturnSP) {
-        Stop(DriverStopReason::ModelError,
-             "driver callback returned with an unbalanced stack");
+        Stop(DriverStopReason::ModelError, session_diagnostic::CallbackStack);
       } else {
         InvocationReturn = *AX;
         Stop(DriverStopReason::Returned, "");
@@ -294,7 +295,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     if (const auto *Export = Exports.lookup(Address)) {
       if (!KernelModel::argumentCount(*Export)) {
         Stop(DriverStopReason::UnsupportedAPI,
-             "unsupported import: " + Export->Module + "!" + Export->Name);
+             session_diagnostic::UnsupportedImport + Export->Module + "!" +
+                 Export->Name);
         return;
       }
       Pending = Export;
@@ -307,7 +309,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     }
     if (!Size || Size > MaxInstructionSize) {
       Stop(DriverStopReason::UnsupportedInstruction,
-           "invalid x64 instruction extent");
+           session_diagnostic::InstructionExtent);
       return;
     }
     if (auto E = Kernel.validateGuestAccess(Address, Size, false)) {
@@ -346,7 +348,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     if (*Inspection) {
       if (Size > UINT64_MAX - Address) {
         Stop(DriverStopReason::MemoryFault,
-             "environment read advances beyond the guest address range");
+             session_diagnostic::EnvironmentReadRange);
         return;
       }
       PendingEnvironmentRead = EnvironmentRead{**Inspection, Address + Size};
@@ -361,9 +363,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       return;
     if (Address < ThunkBase + ThunkSize &&
         (Address >= ThunkBase || Size > ThunkBase - Address)) {
-      Stop(DriverStopReason::UnsupportedAPI,
-           "reading bytes of an imported symbol requires an unmodeled kernel "
-           "image");
+      Stop(DriverStopReason::UnsupportedAPI, session_diagnostic::ImportRead);
       return;
     }
     if (auto E = Kernel.validateGuestAccess(Address, Size, false))
@@ -396,10 +396,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       Result.Writes.push_back(std::move(Event));
   };
   Hooks.Fault = [&](uint64_t Address, uint32_t Size, const char *Access) {
-    Stop(DriverStopReason::MemoryFault, std::string("guest ") + Access +
-                                            " fault at 0x" +
-                                            llvm::utohexstr(Address) + " (" +
-                                            std::to_string(Size) + " bytes)");
+    Stop(DriverStopReason::MemoryFault,
+         std::string(session_diagnostic::GuestFaultPrefix) + Access +
+             session_diagnostic::GuestFaultAddress + llvm::utohexstr(Address) +
+             " (" + std::to_string(Size) +
+             session_diagnostic::GuestFaultSizeSuffix);
   };
   Hooks.RecoverableFault = [&](const BackendFault &Fault) {
     if (!Stopped && Fault.Kind == BackendFaultKind::Interrupt &&
@@ -413,7 +414,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   };
   Hooks.Interrupt = [&](uint32_t Number) {
     Stop(DriverStopReason::UnsupportedInstruction,
-         "unmodeled CPU exception/interrupt " + std::to_string(Number));
+         session_diagnostic::CPUException + std::to_string(Number));
   };
   Hooks.InvalidInstruction = [&]() {
     auto PC = CPU.reg(X64Register::PC);
@@ -422,7 +423,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     else
       llvm::consumeError(PC.takeError());
     Stop(DriverStopReason::UnsupportedInstruction,
-         "CPU rejected an invalid or unsupported instruction");
+         session_diagnostic::RejectedInstruction);
   };
   if (auto E = CPU.installHooks(std::move(Hooks)))
     return std::move(E);
@@ -490,9 +491,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         Export->Kind == KernelExportRegistry::ExportKind::ProviderFunction;
     if (!CPU.executable(PC) ||
         ((PC >= ThunkBase && PC < ThunkBase + ThunkSize) && !ProviderCallback))
-      return failure("driver callback does not name guest executable code");
+      return failure(session_diagnostic::CallbackCode);
     if (Arguments.size() > MaxCallbackArguments)
-      return failure("scheduled callback exceeds the argument limit");
+      return failure(session_diagnostic::CallbackArguments);
     auto Frame = std::make_unique<Execution>();
     Frame->ID = ID;
     Frame->PC = PC;
@@ -504,7 +505,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     if (Frame->PrivateStack) {
       auto Slot = std::find(StackInUse.begin(), StackInUse.end(), false);
       if (Slot == StackInUse.end())
-        return failure("concurrent callback stack limit exhausted");
+        return failure(session_diagnostic::CallbackStackLimit);
       const size_t Index = Slot - StackInUse.begin();
       Frame->Base = CallbackStackBase + PageSize + Index * CallbackStackStride;
       Frame->Size = CallbackStackSize;
@@ -576,7 +577,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       if (!Ancestor->ExceptionCallback)
         continue;
       if (++NestedDepth > seh::MaxNestedExceptions)
-        return failure("nested exception depth limit exceeded");
+        return failure(session_diagnostic::ExceptionDepth);
       if (!Raised.PreviousRecord)
         Raised.PreviousRecord =
             Ancestor->Base + Ancestor->Size - seh::RecordsSize;
@@ -587,7 +588,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     auto State = std::make_unique<ExceptionExecution>();
     if (Frame.ExceptionCallback) {
       if (!Frame.Parent || !Frame.Parent->Exception)
-        return failure("SEH callback lost its suspended dispatch");
+        return failure(session_diagnostic::MissingSEHDispatch);
       const auto &Parent = *Frame.Parent->Exception;
       auto Nested =
           Exceptions.beginNested(Raised.Code, Search, {Frame.Base, Frame.Size},
@@ -603,7 +604,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     if (!Next)
       return Next.takeError();
     if (Next->Kind == X64SEH::ActionKind::Unhandled)
-      return failure("unhandled guest exception 0x" +
+      return failure(session_diagnostic::UnhandledException +
                      llvm::utohexstr(Raised.Code));
     if (Next->Kind == X64SEH::ActionKind::Handler &&
         Next->Bounds.Base == Frame.Base) {
@@ -680,7 +681,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         Frame.Wait = Kernel.takeWait();
         if (!Frame.Wait ||
             Frame.Wait->Type != KernelModel::Wait::Kind::FrameworkCallback)
-          return failure("framework callback entry lost its lock wait");
+          return failure(session_diagnostic::MissingFrameworkLockWait);
         auto Context = CPU.saveContext();
         if (!Context)
           return Context.takeError();
@@ -709,7 +710,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     if (!IRQL)
       return IRQL.takeError();
     if (*IRQL != Kernel.currentIRQL())
-      return failure("saved CPU IRQL disagrees with its model execution");
+      return failure(session_diagnostic::SavedIRQL);
     if (ProcessorViewMapped)
       if (auto E = RefreshProcessorView())
         return E;
@@ -785,11 +786,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         if (!IRQL)
           return IRQL.takeError();
         if (*IRQL != Kernel.currentIRQL())
-          return failure("CR8 read disagrees with the active model IRQL");
+          return failure(session_diagnostic::CR8Read);
         // MOV only changes its destination and instruction pointer. Preserve
         // flags, other registers and the already counted instruction.
         if (!Action.Destination)
-          return failure("IRQL read lost its destination register");
+          return failure(session_diagnostic::IRQLDestination);
         if (auto E = CPU.setReg(*Action.Destination, *IRQL))
           return E;
         NextPC = PendingEnvironmentRead->NextPC;
@@ -816,7 +817,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           if (!Return)
             return Return.takeError();
           if (!CPU.executable(*Return))
-            return failure("CFG check has a non-executable return address");
+            return failure(session_diagnostic::CFGReturnAddress);
           if (auto E = CPU.setReg(X64Register::SP, *SP + PointerSize))
             return E;
           NextPC = *Return;
@@ -826,8 +827,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         continue;
       }
       if (!Pending) {
-        Stop(DriverStopReason::EngineError,
-             "CPU stopped without a recognized exit");
+        Stop(DriverStopReason::EngineError, session_diagnostic::UnknownCPUExit);
         break;
       }
       if (!EventAvailable())
@@ -849,7 +849,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       unsigned Count = *KernelModel::argumentCount(*Pending);
       if (Count > MaxAPIArguments) {
         Stop(DriverStopReason::EngineError,
-             "kernel API argument contract exceeds the x64 dispatcher limit");
+             session_diagnostic::KernelArgumentContract);
         break;
       }
       if (auto E = Kernel.validateGuestAccess(*SP, 8, false)) {
@@ -858,7 +858,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       }
       auto ReadArgument = [&](unsigned I) -> llvm::Expected<uint64_t> {
         if (I >= MaxVariableAPIArguments)
-          return failure("kernel call exceeds the variable argument limit");
+          return failure(session_diagnostic::KernelArgumentLimit);
         auto Location = ABI.argumentLocation(*SP, I);
         if (!Location)
           return Location.takeError();
@@ -891,7 +891,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       }
       if (!CPU.executable(*ReturnPC)) {
         Stop(DriverStopReason::MemoryFault,
-             "kernel call has a non-executable return address");
+             session_diagnostic::KernelReturnAddress);
         break;
       }
       // Keep fixed arguments independent of the growing trace: a variadic read
@@ -903,7 +903,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         if (I < Arguments.size())
           return Arguments[I];
         if (I != Arguments.size())
-          return failure("variadic kernel arguments must be read in order");
+          return failure(session_diagnostic::VariadicArgumentOrder);
         auto Value = ReadArgument(I);
         if (!Value)
           return Value.takeError();
@@ -918,13 +918,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
               RaisedCode = Exception.code();
             });
         if (!OtherError && RaisedCode) {
-          const std::string Detail =
-              "raised guest exception 0x" + llvm::utohexstr(*RaisedCode);
+          const std::string Detail = session_diagnostic::RaisedException +
+                                     llvm::utohexstr(*RaisedCode);
           Result.Calls.back().Detail = Detail;
           // A model-raised exception starts at a normal API stop. Never use
           // this path to reset the backend's retained execution fault.
           if (CPU.fault() || CPU.hasDeviceError())
-            return failure("guest exception delivery requires a healthy CPU");
+            return failure(session_diagnostic::ExceptionCPU);
           auto Registers = CaptureRegisters(*ReturnPC);
           if (!Registers)
             return Registers.takeError();
@@ -957,10 +957,10 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         return E;
       if (auto Status = Kernel.takeThreadTermination()) {
         if (Frame.Parent)
-          return failure("nested system-thread termination is unsupported");
+          return failure(session_diagnostic::NestedThreadTermination);
         Frame.ThreadTerminated = true;
         InvocationReturn = *Status;
-        Result.Calls.back().Detail = "system thread terminated";
+        Result.Calls.back().Detail = session_diagnostic::ThreadTerminated;
         Stop(DriverStopReason::Returned, "");
         break;
       }
@@ -1015,7 +1015,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       auto Wait = Kernel.takeWait();
       if (Wait &&
           Wait->Type != KernelModel::Wait::Kind::InterruptSynchronization)
-        return failure("detached callback has an unrelated deferred wait");
+        return failure(session_diagnostic::DetachedCallbackWait);
       if (!Wait)
         if (auto E = Kernel.beginGuestCall(Call.Token))
           return E;
@@ -1045,11 +1045,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       const Execution *Destination = Current.get();
       while (Destination && Destination->Base != DestinationBase) {
         if (!Destination->ExceptionCallback)
-          return failure("exception transfer crosses a non-SEH callback");
+          return failure(session_diagnostic::ExceptionCallbackBoundary);
         Destination = Destination->Parent.get();
       }
       if (!Destination)
-        return failure("exception transfer lost its owning execution stack");
+        return failure(session_diagnostic::MissingExceptionStack);
       if (auto E = CPU.restoreContext(Original))
         return E;
       if (auto E = ApplyRegisters(Registers))
@@ -1253,15 +1253,15 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
               continue;
             }
             if (Next->Kind == X64SEH::ActionKind::Unhandled) {
-              ModelFailure(failure("unhandled guest exception 0x" +
+              ModelFailure(failure(session_diagnostic::UnhandledException +
                                    llvm::utohexstr(State.Raised.Code)));
               return llvm::Error::success();
             }
             auto Registers = Next->State.Registers;
             if (Next->Kind == X64SEH::ActionKind::ContinueExecution) {
               if (!State.CanContinue) {
-                ModelFailure(failure("continuing a modeled API exception is "
-                                     "unsupported"));
+                ModelFailure(
+                    failure(session_diagnostic::APIExceptionContinuation));
                 return llvm::Error::success();
               }
               auto Restored = Exceptions.continuation(
@@ -1300,8 +1300,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             auto Parent = std::move(Current->Parent);
             if (auto Wait = Kernel.takeWait()) {
               if (Parent->Wait) {
-                ModelFailure(
-                    failure("callback cannot replace its caller wait"));
+                ModelFailure(failure(session_diagnostic::CallbackReplacesWait));
                 return llvm::Error::success();
               }
               Parent->Wait = std::move(Wait);
@@ -1325,14 +1324,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             } else {
               Parent->ChildCall = Kernel.takeGuestCall();
               if (!Parent->ChildCall) {
-                ModelFailure(
-                    failure("model continuation lost its guest callback"));
+                ModelFailure(failure(session_diagnostic::MissingModelCallback));
                 return llvm::Error::success();
               }
               if (auto Wait = Kernel.takeWait()) {
                 if (Parent->Wait) {
                   ModelFailure(
-                      failure("callback cannot replace its caller wait"));
+                      failure(session_diagnostic::CallbackReplacesWait));
                   return llvm::Error::success();
                 }
                 Parent->Wait = std::move(Wait);
@@ -1353,8 +1351,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             if (!*Completion) {
               auto Call = Kernel.takeGuestCall();
               if (!Call) {
-                ModelFailure(
-                    failure("model continuation lost its guest callback"));
+                ModelFailure(failure(session_diagnostic::MissingModelCallback));
                 return llvm::Error::success();
               }
               if (auto E = StartDetachedCall(*Call)) {
@@ -1386,7 +1383,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             auto Wait = Kernel.takeWait();
             if (Wait && Wait->Type !=
                             KernelModel::Wait::Kind::InterruptSynchronization) {
-              ModelFailure(failure("scheduled callback has an unrelated wait"));
+              ModelFailure(failure(session_diagnostic::ScheduledCallbackWait));
               return llvm::Error::success();
             }
             if (!Wait)
@@ -1495,9 +1492,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
               (!Bound || *Frame->Wait->Deadline < *Bound))
             Bound = Frame->Wait->Deadline;
         if (!Bound) {
-          ModelFailure(
-              failure("STATUS_PENDING request or blocked wait is "
-                      "stalled: no scheduled completion source remains"));
+          ModelFailure(failure(session_diagnostic::StalledPending));
           return llvm::Error::success();
         }
         Next = Kernel.nextScheduled(true, Bound);
@@ -1564,9 +1559,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     if (auto E = Kernel.finishEntry())
       ModelFailure(std::move(E));
     else if (*Result.NTStatus && !(*Result.NTStatus & NTStatusFailureMask))
-      ModelFailure(
-          failure("DriverEntry must return STATUS_SUCCESS to initialize; "
-                  "nonzero successful or pending status is unsupported"));
+      ModelFailure(failure(session_diagnostic::InitializationStatus));
   }
   // Entry failure is a valid completed observation. No requests or unload are
   // delivered to a driver whose initialization did not succeed.
@@ -1690,8 +1683,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       const bool Deferred = Removing || Kernel.requestPending(Invocation->IRP);
       if (Input.DeferCallbackDrain) {
         if (!Kernel.requestPending(Invocation->IRP) || Removing) {
-          ModelFailure(failure("defer_callback_drain requires an IRP that "
-                               "remains pending after dispatch"));
+          ModelFailure(failure(session_diagnostic::DeferredDrain));
           break;
         }
         BatchedIRPs.push_back(Invocation->IRP);
@@ -1755,7 +1747,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   }
   if (auto E = Kernel.snapshot()) {
     Result.Diagnostic += (Result.Diagnostic.empty() ? "" : "; ") +
-                         std::string("object snapshot failed: ") +
+                         std::string(session_diagnostic::ObjectSnapshot) +
                          llvm::toString(std::move(E));
     if (Result.Stop == DriverStopReason::Returned) {
       Result.Stop = DriverStopReason::ModelError;
@@ -1770,6 +1762,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     Observation.Address = Fault->Address;
     Observation.Size = Fault->Size;
     Observation.Interrupt = Fault->Interrupt;
+    Observation.ErrorCode = Fault->ErrorCode;
+    if (Fault->Cause)
+      Observation.Cause = backendFaultCauseName(*Fault->Cause);
     if (Fault->Access)
       Observation.Access = backendAccessKindName(*Fault->Access);
     Result.Fault = std::move(Observation);

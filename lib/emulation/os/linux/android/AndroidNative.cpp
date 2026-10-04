@@ -3,7 +3,6 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../../core/ExecutionDeadline.h"
 #include "../../../runtime/RuntimeValues.h"
 #include "AndroidInternal.h"
 
@@ -17,12 +16,11 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                         const ProcessOptions &Options) {
   if (!Options.Android || !Options.Arguments.empty() ||
       !Options.Environment.empty())
-    return failure(
-        "requires Android native options and no process argv/environment");
+    return failure(diagnostic::NativeOptions);
   const auto &Native = *Options.Android;
   if (Native.EntrySymbol.empty() == !Native.EntryAddress.has_value() ||
       Native.EntrySymbol.find('\0') != std::string::npos)
-    return failure("select exactly one entry_symbol or entry_address");
+    return failure(diagnostic::EntrySelection);
   if (!Options.Limits.Instructions || !Options.Limits.Events ||
       !Options.Limits.TimeoutMicroseconds || !Options.MemoryLimit ||
       !Options.StackSize || !Options.OutputLimit ||
@@ -34,41 +32,52 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       Native.LoadBias >= TLSAddress || Native.LoadBias % PageSize ||
       Native.TraceLimit > Options.OutputLimit / 8 ||
       Native.Arguments.size() > Options.StackSize / 8)
-    return failure("invalid native execution limits or layout");
-  auto Deadline = makeExecutionDeadline(Options.Limits.TimeoutMicroseconds);
-  if (!Deadline)
-    return Deadline.takeError();
+    return failure(diagnostic::ExecutionLimits);
+  auto Budget = ExecutionBudget::create(Options.Limits);
+  if (!Budget)
+    return Budget.takeError();
+  std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   uint64_t ReportSize = Native.TraceLimit * 8;
   for (const auto &Read : Native.ReadMemory) {
     if (!Read.Size || Read.Size > Options.OutputLimit - ReportSize ||
         Read.Address > UINT64_MAX - Read.Size)
-      return failure("invalid memory snapshot extent or output budget");
+      return failure(diagnostic::SnapshotLimits);
     ReportSize += Read.Size;
   }
   for (const auto &[Name, Value] : Native.Properties)
     if (Name.empty() || Name.find('\0') != std::string::npos ||
         Value.find('\0') != std::string::npos || Value.size() >= 92 ||
         Name.size() > Options.MemoryLimit)
-      return failure("invalid Android property name or value");
+      return failure(diagnostic::Property);
   uint64_t SymbolCount = 0, CatalogBytes = 0;
   if (Native.Libraries.size() > 256)
-    return failure("too many modeled Android libraries");
+    return failure(diagnostic::LibraryCount);
   for (const auto &[Library, Symbols] : Native.Libraries) {
     if (Library.empty() || Library.size() > 1024 ||
         Library.find('\0') != std::string::npos)
-      return failure("invalid modeled Android library name");
+      return failure(diagnostic::LibraryName);
     CatalogBytes += Library.size();
     std::set<std::string> Unique;
     for (const auto &Symbol : Symbols) {
       if (++SymbolCount > 4096 || Symbol.empty() || Symbol.size() > 1024 ||
           Symbol.find('\0') != std::string::npos ||
           !Unique.insert(Symbol).second)
-        return failure("invalid or excessive modeled Android symbols");
+        return failure(diagnostic::SymbolCatalogue);
       CatalogBytes += Symbol.size();
     }
   }
+  if (Native.DefaultScope) {
+    if (Native.DefaultScope->size() > Native.Libraries.size())
+      return failure(diagnostic::DefaultScopeSize);
+    std::set<std::string> Unique;
+    for (const auto &Library : *Native.DefaultScope) {
+      if (!Native.Libraries.count(Library) || !Unique.insert(Library).second)
+        return failure(diagnostic::DefaultScopeMembership);
+      CatalogBytes += Library.size();
+    }
+  }
   if (CatalogBytes > Options.MemoryLimit)
-    return failure("Android symbol catalogue exceeds memory limit");
+    return failure(diagnostic::CatalogueMemoryLimit);
   ELFLoader Loader;
   auto Image = Loader.load(Path);
   if (!Image)
@@ -92,14 +101,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         Region.Address >= TLSAddress ||
         Region.Size > TLSAddress - Region.Address ||
         Region.Bytes.size() > Region.Size)
-      return failure("invalid explicit native memory region");
+      return failure(diagnostic::MemoryRegion);
     unsigned Permissions =
         Read | Write | UserAccessible | (Region.Executable ? Execute : 0u);
     if (auto E = (*Space)->map(Region.Address, Region.Size, Permissions))
       return std::move(E);
-    if (!Region.Bytes.empty())
-      if (auto E = (*Space)->write(Region.Address, Region.Bytes))
-        return std::move(E);
+    if (auto E = initializeMemoryRegion(**Space, Region, *Resources))
+      return std::move(E);
   }
   for (const auto &Read : Native.ReadMemory) {
     auto Accessible = (*Space)->canAccess(Read.Address, Read.Size,
@@ -107,18 +115,12 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     if (!Accessible)
       return Accessible.takeError();
     if (!*Accessible)
-      return failure("requested snapshot is not readable at entry");
+      return failure(diagnostic::SnapshotEntry);
   }
   auto Calls = IntegerABI::get(IntegerCallingConvention::AAPCS64);
   if (!Calls)
     return Calls.takeError();
-  linux_model::ProcessLayout Layout{GuestArchitecture::AArch64,
-                                    *Calls,
-                                    linux_model::UserLimitARM64,
-                                    0,
-                                    PageSize,
-                                    Native.LoadBias,
-                                    false};
+  linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, PageSize};
   auto Backend = createExecutionBackend(Options.Backend,
                                         ExecutionContract::CheckedUserAArch64,
                                         *Space, GuestArchitecture::AArch64);
@@ -132,10 +134,6 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                        Backend->Reason};
   Result.Entry = Result.PC = Linked->Entry;
   Result.InitializersEnabled = Native.Initialize;
-  auto Budget = ExecutionBudget::create(Options.Limits);
-  if (!Budget)
-    return Budget.takeError();
-  std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   auto Observe = [&](uint64_t PC, uint32_t) {
     if (!Native.TraceLimit)
       return;
@@ -154,6 +152,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   Bionic LibC(CPU, Memory, Layout, Options, Result, *Resources, *Linked);
   size_t NextConstructor = 0;
   bool MainCall = false;
+  struct PendingCallback {
+    GuestCallback Call;
+    ServiceRequest Request;
+    size_t Event;
+    uint64_t Link, StackPointer;
+  };
+  std::vector<PendingCallback> Callbacks;
   auto Prepare = [&]() -> llvm::Error {
     std::vector<uint64_t> Arguments;
     if (NextConstructor < Linked->Constructors.size()) {
@@ -176,6 +181,20 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   auto RuntimeFailure = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;
     Result.Diagnostic = llvm::toString(std::move(E));
+  };
+  auto StartCallback = [&](const GuestCallback &Callback) -> llvm::Error {
+    // The suspended import's live stack remains in place. Both supported
+    // callback signatures fit the ordinary scalar register ABI.
+    if (Callback.Argument)
+      if (auto E = CPU.writeRegister(Calls->info().Arguments[0],
+                                     {*Callback.Argument, 0}))
+        return E;
+    if (auto E = CPU.writeRegister(Calls->info().Link, {ReturnPC, 0}))
+      return E;
+    if (auto E = CPU.writeRegister(CPURegister::AArch64PC, {Callback.Entry, 0}))
+      return E;
+    Result.PC = Callback.Entry;
+    return llvm::Error::success();
   };
   while (true) {
     auto Exit = (*Session)->run(Result.PC, Options.InstructionQuantum);
@@ -206,7 +225,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         Result.LastCPUExit->Kind != ExecutionExitKind::ServiceRequest) {
       Result.Stop = ProcessStopReason::CPUFailure;
       Result.Diagnostic = Result.LastCPUExit ? Result.LastCPUExit->Diagnostic
-                                             : "missing CPU exit";
+                                             : diagnostic::MissingCPUExit;
       break;
     }
     if (!Resources->consumeEvents()) {
@@ -220,6 +239,49 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       break;
     }
     if (Request->Immediate == ModelTrap && Request->PC == ReturnPC) {
+      if (!Callbacks.empty()) {
+        const auto Pending = Callbacks.back();
+        auto SP = CPU.readRegister(Calls->info().StackPointer);
+        if (!SP) {
+          RuntimeFailure(SP.takeError());
+          break;
+        }
+        if ((*SP)[0] != Pending.StackPointer) {
+          RuntimeFailure(failure(diagnostic::CallbackStack));
+          break;
+        }
+        auto Value = LibC.finishCallback(Pending.Call);
+        if (!Value) {
+          RuntimeFailure(Value.takeError());
+          if (LibC.timedOut())
+            Result.Stop = ProcessStopReason::Timeout;
+          break;
+        }
+        if (!*Value)
+          break;
+        if (auto *Next = std::get_if<GuestCallback>(&**Value)) {
+          if (auto E = StartCallback(*Next)) {
+            RuntimeFailure(std::move(E));
+            break;
+          }
+          Callbacks.back().Call = *Next;
+          continue;
+        }
+        const uint64_t Returned = std::get<uint64_t>(**Value);
+        if (auto E = CPU.writeRegister(Calls->info().Link, {Pending.Link, 0})) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        if (auto E =
+                linux_model::returnService(CPU, Pending.Request, Returned)) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        Result.NativeCalls[Pending.Event].Result = Returned;
+        Result.PC = Pending.Request.NextPC;
+        Callbacks.pop_back();
+        continue;
+      }
       if (!MainCall) {
         if (auto E = Prepare()) {
           RuntimeFailure(std::move(E));
@@ -264,8 +326,34 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       }
       if (!*Value)
         break;
-      Result.NativeCalls.back().Result = **Value;
-      if (auto E = linux_model::returnService(CPU, *Request, **Value)) {
+      if (auto *Callback = std::get_if<GuestCallback>(&**Value)) {
+        auto Link = CPU.readRegister(Calls->info().Link);
+        if (!Link) {
+          RuntimeFailure(Link.takeError());
+          break;
+        }
+        auto SP = CPU.readRegister(Calls->info().StackPointer);
+        if (!SP) {
+          RuntimeFailure(SP.takeError());
+          break;
+        }
+        if (auto E = Calls->validateStackPointer((*SP)[0])) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        // Reuse the current guest stack below the suspended import. Preparing
+        // a fresh top-level frame would overwrite its caller's live locals.
+        if (auto E = StartCallback(*Callback)) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+        Callbacks.push_back({*Callback, *Request, Result.NativeCalls.size() - 1,
+                             (*Link)[0], (*SP)[0]});
+        continue;
+      }
+      uint64_t Returned = std::get<uint64_t>(**Value);
+      Result.NativeCalls.back().Result = Returned;
+      if (auto E = linux_model::returnService(CPU, *Request, Returned)) {
         RuntimeFailure(std::move(E));
         break;
       }
@@ -274,7 +362,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       // an import model merely by carrying its immediate operand.
       if (Request->Immediate) {
         Result.Stop = ProcessStopReason::UnsupportedService;
-        Result.Diagnostic = "unsupported Android SVC immediate";
+        Result.Diagnostic = diagnostic::SVCImmediate;
         break;
       }
       auto Event = linux_model::readService(CPU, *Request);
@@ -313,7 +401,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         break;
       }
       if (!*Access) {
-        RuntimeFailure(failure("requested memory became unreadable"));
+        RuntimeFailure(failure(diagnostic::SnapshotReturn));
         break;
       }
       NativeMemorySnapshot Snapshot{Read.Address,

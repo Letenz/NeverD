@@ -39,6 +39,18 @@ u64 properties(char *out) {
   return android_get_device_api_level();
 }
 u64 absent_property(char *out) { return __system_property_get("missing", out); }
+u64 inspect_memory_input(unsigned char *p, u64 n) {
+  u64 hash = 14695981039346656037ul;
+  const u64 *words = (const u64 *)p;
+  for (u64 i = 0; i < n / 8; ++i)
+    hash = (hash ^ words[i]) * 1099511628211ul;
+  for (u64 i = n & ~(u64)7; i < n; ++i)
+    hash = (hash ^ p[i]) * 1099511628211ul;
+  if (n)
+    p[0] ^= 255;
+  p[n] = 165;
+  return hash;
+}
 u64 allocation(char *out) {
   char *p = calloc(4, 8);
   if (!p || p[31])
@@ -213,6 +225,56 @@ u64 dynamic_closed(void) {
   return function("input");
 }
 u64 dynamic_scope(u64 scope) { return (u64)dlsym((void *)scope, "strlen"); }
+u64 default_call(void) {
+  length_fn length = (length_fn)dlsym(0, "strlen");
+  return length ? length("scoped") : 100;
+}
+u64 default_missing(void) {
+  *__errno() = 77;
+  if (dlerror() || dlsym(0, "missing_export"))
+    return 1;
+  const char *error = dlerror();
+  return error && *error && !dlerror() && *__errno() == 77 ? 0 : 2;
+}
+u64 default_unknown(void) {
+  length_fn function = (length_fn)dlsym(0, "unmodeled_fixture_export");
+  return function ? function("input") : 100;
+}
+u64 default_resident_lifecycle(void) {
+  *__errno() = 77;
+  if (dlerror() || dlsym(0, "missing_export"))
+    return 1;
+  length_fn length = (length_fn)dlsym(0, "strlen");
+  /* A successful lookup does not consume the earlier linker error. */
+  if (!length || length("before open") != 11 || !dlerror() || dlerror())
+    return 2;
+  void *a = dlopen("libfixture.so", 6);
+  void *b = dlopen("libfixture.so", 2);
+  if (!a || a != b || dlsym(a, "strlen") != (void *)length)
+    return 3;
+  if (dlclose(a) || dlclose(b) || length("resident") != 8 ||
+      dlsym(0, "strlen") != (void *)length ||
+      dlsym(a, "strlen") != (void *)length)
+    return 4;
+  void *c = dlopen("libfixture.so", 6);
+  if (c != a || dlclose(c) || dlerror() || *__errno() != 77)
+    return 5;
+  return 0;
+}
+u64 default_local_open(void) {
+  void *a = dlopen("libfixture.so", 2);
+  if (!a || !dlsym(a, "strlen") || dlsym(0, "strlen") || !dlerror())
+    return 1;
+  return dlclose(a) ? 2 : 0;
+}
+u64 dynamic_flag_combinations(u64 flags) {
+  void *a = dlopen("libfixture.so", (int)flags);
+  if (flags & ~0x1107ULL)
+    return !a && dlerror() && !dlerror() ? 0 : 1;
+  if (!a || !dlsym(a, "strlen") || dlerror())
+    return 2;
+  return dlclose(a) ? 3 : 0;
+}
 u64 dynamic_open(u64 name, u64 flags) {
   return (u64)dlopen((const char *)name, (int)flags);
 }

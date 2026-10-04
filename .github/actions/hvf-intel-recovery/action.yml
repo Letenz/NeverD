@@ -1,0 +1,24 @@
+name: Preserve live Intel HVF recovery evidence
+description: Observe the original single-process recovery loop without pausing between iterations
+inputs:
+  source:
+    description: Separate clean checkout of the exact tested commit
+    required: true
+  build:
+    description: Native Intel Release build within that checkout
+    required: true
+  evidence:
+    description: New diagnostic evidence directory
+    required: true
+  upload-action:
+    description: Separate checkout of the pinned official upload-artifact action
+    required: true
+  repetitions:
+    description: Original one-process repetition count, 100 or 1000
+    default: '1000'
+  experiment:
+    description: Explicit diagnostic mode, recovery, lifecycle, instruction or finite-deadline
+    default: recovery
+runs:
+  using: node24
+  main: run.cjs

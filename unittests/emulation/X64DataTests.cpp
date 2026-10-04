@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
+#include "arch/x86_64/X64Exception.h"
 #include "arch/x86_64/X64Machine.h"
 #include "gtest/gtest.h"
 
@@ -526,7 +527,11 @@ TEST_P(X64Data, MisalignedAlignedVectorStoreRejectsBeforeObservations) {
   BackendHooks H;
   H.Write = [&](uint64_t, uint32_t, uint64_t) { ++Writes; };
   EXPECT_EQ(run(AlignedVectorStore, std::move(H)).Kind,
-            ExecutionExitKind::UnsupportedOperation);
+            ExecutionExitKind::GuestTrap);
+  ASSERT_TRUE(CPU->fault());
+  EXPECT_EQ(CPU->fault()->Interrupt,
+            unsigned(x64::ExceptionVector::GeneralProtection));
+  EXPECT_EQ(CPU->fault()->ErrorCode, 0);
   EXPECT_EQ(Writes, 0u);
 }
 

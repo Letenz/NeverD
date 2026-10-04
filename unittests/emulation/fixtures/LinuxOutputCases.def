@@ -1,0 +1,81 @@
+//===- LinuxOutputCases.def - Independent vectored output observations ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifndef NEVERD_LINUX_OUTPUT_PAGE_SIZE
+#define NEVERD_LINUX_OUTPUT_PAGE_SIZE 4096
+#define NEVERD_LINUX_OUTPUT_MAX_IOVECS 1024
+#define NEVERD_LINUX_OUTPUT_MESSAGE "vector\0output\n"
+#define NEVERD_LINUX_OUTPUT_TAIL "tail"
+#define NEVERD_LINUX_OUTPUT_ERROR "\0\xff\x7f"
+#endif
+#ifdef NEVERD_LINUX_OUTPUT_VALUE
+NEVERD_LINUX_OUTPUT_VALUE(PageSize, NEVERD_LINUX_OUTPUT_PAGE_SIZE)
+NEVERD_LINUX_OUTPUT_VALUE(MaxVectors, NEVERD_LINUX_OUTPUT_MAX_IOVECS)
+NEVERD_LINUX_OUTPUT_VALUE(StandardOutput, 1)
+NEVERD_LINUX_OUTPUT_VALUE(StandardError, 2)
+NEVERD_LINUX_OUTPUT_VALUE(BadDescriptor, 99)
+NEVERD_LINUX_OUTPUT_VALUE(BadAddress, 1)
+NEVERD_LINUX_OUTPUT_VALUE(KernelAddress, 0xffffffffffffffffULL)
+NEVERD_LINUX_OUTPUT_VALUE(NegativeLength, 0x8000000000000000ULL)
+NEVERD_LINUX_OUTPUT_VALUE(HighArgument, 0x100000000ULL)
+NEVERD_LINUX_OUTPUT_VALUE(MaxReadWriteSize, 0x7ffff000)
+NEVERD_LINUX_OUTPUT_VALUE(ErrorDescriptor, 9)
+NEVERD_LINUX_OUTPUT_VALUE(ErrorFault, 14)
+NEVERD_LINUX_OUTPUT_VALUE(ErrorInvalid, 22)
+NEVERD_LINUX_OUTPUT_VALUE(ErrnoSeed, 77)
+NEVERD_LINUX_OUTPUT_VALUE(ExitStatus, 37)
+NEVERD_LINUX_OUTPUT_VALUE(FailureStatus, 91)
+NEVERD_LINUX_OUTPUT_VALUE(MessageSplit, 4)
+NEVERD_LINUX_OUTPUT_VALUE(NativeTimeout, 5)
+NEVERD_LINUX_OUTPUT_VALUE(NativeARMWriteV, 66)
+NEVERD_LINUX_OUTPUT_VALUE(NativeX64WriteV, 20)
+#endif
+#ifdef NEVERD_LINUX_OUTPUT_TEXT
+NEVERD_LINUX_OUTPUT_TEXT(Suffix, "-output.elf")
+NEVERD_LINUX_OUTPUT_TEXT(ExecutableName, "fixture")
+NEVERD_LINUX_OUTPUT_TEXT(Message, NEVERD_LINUX_OUTPUT_MESSAGE)
+NEVERD_LINUX_OUTPUT_TEXT(Tail, NEVERD_LINUX_OUTPUT_TAIL)
+NEVERD_LINUX_OUTPUT_TEXT(ErrorBytes, NEVERD_LINUX_OUTPUT_ERROR)
+NEVERD_LINUX_OUTPUT_TEXT(AndroidEntry, "vectored_output")
+NEVERD_LINUX_OUTPUT_TEXT(TemporaryPrefix, "neverd-linux-output")
+NEVERD_LINUX_OUTPUT_TEXT(OutputFile, "stdout")
+NEVERD_LINUX_OUTPUT_TEXT(ErrorFile, "stderr")
+NEVERD_LINUX_OUTPUT_TEXT(NativeX64, "X64-output.elf")
+NEVERD_LINUX_OUTPUT_TEXT(NativeARM64, "AArch64-output.elf")
+NEVERD_LINUX_OUTPUT_TEXT(NativeUnavailable,
+                         "native Linux x64/ARM64 with ELF fixtures required")
+NEVERD_LINUX_OUTPUT_TEXT(NativePageSize,
+                         "the Linux profile requires 4096-byte guest pages")
+#endif
+#ifdef NEVERD_LINUX_OUTPUT_CASE
+// Name, argv mode, expected captured stdout and stderr. These same authored
+// executables also run against the host kernel with regular-file redirects.
+NEVERD_LINUX_OUTPUT_CASE(Gather, 'g', NEVERD_LINUX_OUTPUT_MESSAGE,
+                         NEVERD_LINUX_OUTPUT_ERROR)
+NEVERD_LINUX_OUTPUT_CASE(Empty, 'e', "", "")
+NEVERD_LINUX_OUTPUT_CASE(Metadata, 'm', "", "")
+NEVERD_LINUX_OUTPUT_CASE(Lengths, 'l', "", "")
+NEVERD_LINUX_OUTPUT_CASE(CrossTable, 't', NEVERD_LINUX_OUTPUT_MESSAGE, "")
+NEVERD_LINUX_OUTPUT_CASE(Partial, 'p',
+                         NEVERD_LINUX_OUTPUT_MESSAGE NEVERD_LINUX_OUTPUT_TAIL,
+                         "")
+NEVERD_LINUX_OUTPUT_CASE(Maximum, 'x', NEVERD_LINUX_OUTPUT_MESSAGE, "")
+NEVERD_LINUX_OUTPUT_CASE(Addresses, 'a', "", "")
+NEVERD_LINUX_OUTPUT_CASE(ImportBeforeCap, 'i', "", "")
+NEVERD_LINUX_OUTPUT_CASE(ArgumentWidths, 'w', NEVERD_LINUX_OUTPUT_MESSAGE, "")
+#endif
+#ifdef NEVERD_LINUX_OUTPUT_SERVICE
+#if defined(__aarch64__)
+NEVERD_LINUX_OUTPUT_SERVICE(Write, 64)
+NEVERD_LINUX_OUTPUT_SERVICE(WriteV, 66)
+NEVERD_LINUX_OUTPUT_SERVICE(Exit, 93)
+NEVERD_LINUX_OUTPUT_SERVICE(Mprotect, 226)
+#else
+NEVERD_LINUX_OUTPUT_SERVICE(Write, 1)
+NEVERD_LINUX_OUTPUT_SERVICE(WriteV, 20)
+NEVERD_LINUX_OUTPUT_SERVICE(Exit, 60)
+NEVERD_LINUX_OUTPUT_SERVICE(Mprotect, 10)
+#endif
+#endif

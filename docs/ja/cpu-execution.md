@@ -68,6 +68,14 @@ checked x64 は限定された legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS
 
 checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
 
+`X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
+
+`X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。
+
+`X64VectorOperands.def` が従来の SSE 転送、演算、シフト、変換、マスクの完全なオペランド対を定義します。`MOVMSKPS`、`MOVMSKPD`、`PMOVMSKB` は XMM の符号ビットを r32/r64 に抽出し、宛先の残りのビットをゼロにします。KVM、WHP、checked Unicorn はこの受け入れ規則を共有し、FLAGS、MXCSR、ソースレジスタを保持します。マスクのメモリオペランド、MMX、VEX/EVEX 形式は未対応です。
+
+`X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
+
 thread pointer は x64 FS/GS base と ARM64 `TPIDR_EL0` を正確な `MRS`/`MSR` encoding で扱います。native transport と CPU snapshot は memory とは独立してこの状態を保持しますが、OS thread や TLS block を作るものではありません。supervisor x64 は1/2/4 byte の aligned scalar MMIO と restart boundary ごとに1要素の MOVS を許可します。device read には effect のない prepared preview と最大一度の commit が必要です。user profile は device mapping を拒否し、RMW、wide MMIO、port I/O も未対応です。
 
 KVM/WHP は active native entry を cancel し、実行資源を解放する前に acknowledgement を待ちます。KVM は専用 execution thread と一時的に unblock する realtime signal を使います。entry 中、選択した signal は ignored であってはなりません。caller の signal mask/handler は変更しません。guest の進行が不確かな中断は terminal failure であり、厳密な wall-clock deadline は保証しません。
@@ -110,9 +118,15 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `X64StringInstructions.def` は通常 RAM の 8/16/32/64 ビット `MOVS/STOS/LODS` を管理し、`CLD/STD` は他のフラグを変えずに方向を制御します。REP は各要素の全範囲を観測前に検証し、再開可能な境界で確定します。後続の障害でも完了済み要素は残り、停止やコールバック例外は現在の要素を変更しません。FS/GS はアドレス幅の切り詰め後にソースだけへ加算します。AL/AX のロードは上位ビットを保持し、EAX はゼロ拡張します。32 ビットアドレスのゼロ回 REP はカウントの上位ビットがゼロである必要があり、MOVS/STOS では使用するアドレスレジスタも同様です。それ以外は実 CPU ごとに結果が異なります。MOVS/STOS/LODS の REPNE 形式と STOS/LODS のデバイス操作数は未対応です。`X64StringTransferTests.cpp` は独立したホスト命令で幅、方向、重なり、ゼロ回を照合し、権限、エイリアス、折り返し、障害、再開も検証します。独自の WDK リソースドライバは `driver_resource_strings.def` を使い STOS/LODS の全四幅を実行します。
 
-`X64StringInstructions.def` は通常 RAM 上の 8/16/32/64 ビット `CMPS/SCAS` と `REPE/REPNE` も管理します。各要素は観測前に読み取り範囲全体を検証し、六つの算術フラグを更新して最初の終了条件で停止します。データ障害では、この連続した REP の開始時のフラグを復元し、完了済みのポインタとカウント更新は保持します。公開 API からの再開は公開済み CPU 状態を出発点とします。停止や観測例外は現在の要素を変更せず、早期終了後は次の要素を読みません。FS/GS は CMPS のソースだけに作用し、SCAS は累算器と未使用のソースレジスタを保持します。デバイス操作数と曖昧な 32 ビットゼロ回実行時の上位ビットは対象外です。`X64StringComparisonTests.cpp` は独立したホスト命令とフラグ、方向、エイリアス、折り返し、権限、再開を照合し、Linux x64 シグナルで実際の障害時レジスタも検証します。独自 WDK リソースドライバは `driver_resource_strings.def` で全四幅の両条件反復を実行します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
+`X64StringInstructions.def` は通常 RAM 上の 8/16/32/64 ビット `CMPS/SCAS` と `REPE/REPNE` も管理します。各要素は観測前に読み取り範囲全体を検証し、六つの算術フラグを更新して最初の終了条件で停止します。データ障害では、この連続した REP の開始時のフラグを復元し、完了済みのポインタとカウント更新は保持します。公開 API からの再開は公開済み CPU 状態を出発点とします。停止や観測例外は現在の要素を変更せず、早期終了後は次の要素を読みません。FS/GS は CMPS のソースだけに作用し、SCAS は累算器と未使用のソースレジスタを保持します。デバイス操作数と曖昧な 32 ビットゼロ回実行時の上位ビットは対象外です。`X64StringComparisonTests.cpp` は独立したホスト命令とフラグ、方向、エイリアス、折り返し、権限、再開を照合し、Linux x64 シグナルで実際の障害時レジスタも検証します。独自 WDK リソースドライバは `driver_resource_strings.def` で全四幅の両条件反復を実行します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。 Linux のネイティブ検証は最初の要素の実行前後の障害を対象とし、Intel の開始時 flags 復元と Hyper-V 上の AMD EPYC 7763 で観測された直前の比較 flags の保持を区別します（[ネイティブ観測](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）。未知の CPU ベンダーは明示的に失敗します。checked ゲストは全バックエンドで開始時 flags を復元します。
 
 `WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
+
+`CheckedBackend` は CPU ごとに命令フェッチ用バッファと `cs_disasm_iter` の命令レコードを保持します。各ステップで実行権限のあるバイトを読み直して再デコードし、コード書き込み、エイリアス変更、再開後に古いデコード結果を使いません。実行リースは再利用領域に触れる前に再帰実行を拒否します。命令ごとの領域確保をなくしつつ、命令観測、システムサービスの捕捉、正確な障害処理を維持します。 固定版 Unicorn の単一ステップは間接変換検索も含めて後続命令のフェッチ前に終了し、内部のコード書き込み再試行を完了済み命令として数えません。
+
+`WhpX64Partition.h` は実際の分割区画ごとに x64 WHP のレジスタ再利用を管理します。固定パケットは `WhpX64Registers.def` と `X64HostRegisters.def` を使用し、成功した各ステップで汎用・制御・セグメントレジスタと完全な FP/SSE 状態を取得します。完了確認済みのデバッグ終了だけが未変更入力の省略を許可し、比較では予約ビットと共用体のパディングを無視します。CR3、CPL、TLS、汎用または FP 入力の変更は再設定され、部分失敗、キャンセル、例外は再利用を無効化します。区画再作成時は全状態を設定します。命令の許可範囲を広げず、処理全体の高速化も主張しません。
+
+WHP は `WhpXsaveRegisters.def` の x87/SSE メタデータを通常のレジスタと同じ `WHvGetVirtualProcessorRegisters` 呼び出しで取得します。停止中の vCPU は同じ区画リースで保護されます。公開前の完全な XSAVE 取得とすべてのメタデータ整合性検査は維持します。ステップごとのホスト API 呼び出しを一つ削減しますが、スループット向上の測定結果を示すものではありません。
 
 `CheckedAArch64Instructions.def` と `AArch64InstructionEffects` は EL0/EL1 で範囲を限定した基本 FP32/FP64 演算、比較、転送、固定幅 SIMD を許可します。FPCR は4種類の丸め、FZ、DN に対応し、FPSR は累積状態と QC を保持します。未対応の制御・状態ビットは変更前に拒否します。FP16 演算、SVE/SME、非マスク例外、追加拡張、未列挙の形式は明示的なエラーです。Windows ARM64 ドライバーのロードや新しい OS 環境は追加しません。
 
@@ -121,6 +135,8 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 KVM x64/ARM64 は `KvmRunControl` により同じ専用 vCPU worker で状態準備、`KVM_RUN`、状態取得を実行します。`EINTR` の再試行でも準備は一度で、取消や取得失敗は状態を公開しません。`KvmAArch64Machine.cpp` の変換維持と全スカラー・ベクトル転送も一つの step deadline を共有します。呼び出し側は完了確認後に確定し、ISA decode、RAM transaction、OS policy、observer は呼び出し側に残ります。native ARM64 の実機証拠は未取得です。
 
 KVM は `X64HostRegisters.def` と `X64FPState.def` に従い、汎用レジスタと完全な FP/SSE 状態を直前に完了確認したデバッグ終了状態と比較し、変更された入力を再設定します。ホスト側の書き込みとコンテキスト復元も比較対象です。例外、キャンセル、失敗は再利用を無効にします。単一ステップの設定と実際の汎用・FP 状態の読み取りは各命令で行います。
+
+x64 KVM は `KVM_CAP_SYNC_REGS` を照会し、対応する `KVM_SYNC_X86_REGS` と `KVM_SYNC_X86_SREGS` を個別に使用します。完了確認済みの `KVM_RUN` は共有領域に実際のレジスタを返すため、連続して成功するステップでは `KVM_GET_REGS` と `KVM_GET_SREGS` を省略できます。非対応の集合や任意の照会の失敗では ioctl 経路を維持します。変更された入力は引き続き `KVM_SET_GUEST_DEBUG` より前に設定し、共有 dirty ビットはゼロのままです。例外、キャンセル、取得失敗は再利用を無効にします。完全な FP/SSE 取得は必須ですが、変更のない FP 入力の XSAVE 再エンコードは省略します。転送呼び出しの削減であり、処理全体の高速化を実証したものではありません。[KVM API](https://docs.kernel.org/virt/kvm/api.html#kvm-cap-sync-regs)。
 
 ハードウェア実行だけでは、処理全体の待ち時間が短くなるとは限りません。現在のネイティブ実行は命令ごとに許可判定、観測、状態転送と VM 終了を行います。同じ元のイメージとシナリオを同じ命令・イベント予算で比較し、時間と結果の一致を併記してください。CLI の待ち時間には起動とロードも含めます。
 

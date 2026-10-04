@@ -12,6 +12,18 @@
 
 namespace neverd::emulation {
 namespace {
+static_assert((aarch64::SCTLR & aarch64::PAuthEnableMask) == 0,
+              "checked PAuth hints require authentication disabled");
+bool disabledPAuthHint(uint32_t Word) {
+  switch (Word) {
+#define NEVERD_AARCH64_PAUTH_HINT(Name, Encoding) case Encoding:
+#include "AArch64PAuthHints.def"
+#undef NEVERD_AARCH64_PAUTH_HINT
+    return true;
+  default:
+    return false;
+  }
+}
 namespace encoding {
 #define NEVERD_AARCH64_ENCODING(Name, Mask, Value)                             \
   bool is##Name(uint32_t Word) { return (Word & Mask) == Value; }
@@ -56,6 +68,12 @@ getAArch64InstructionEffects(const cs_insn &I,
   using namespace encoding;
   if (I.size != aarch64::InstructionBytes || !I.detail)
     return llvm::make_error<UnsupportedExecutionError>();
+  const uint32_t Word = llvm::support::endian::read32le(I.bytes);
+  // Exact HINT-space words are compatible with the fixed disabled-key
+  // machine, even when the decoder names their optional PAuth aliases.
+  // They still execute through Machine::step and consume an ordinary attempt.
+  if (disabledPAuthHint(Word))
+    return std::vector<AArch64MemoryAccess>();
   enum InstructionKind {
     Integer,
     Memory,
@@ -74,7 +92,6 @@ getAArch64InstructionEffects(const cs_insn &I,
   default:
     return llvm::make_error<UnsupportedExecutionError>();
   }
-  const uint32_t Word = llvm::support::endian::read32le(I.bytes);
   if (Kind == System &&
       !((I.id == AARCH64_INS_MRS && isReadThreadPointer(Word)) ||
         (I.id == AARCH64_INS_MSR && isWriteThreadPointer(Word)) ||
@@ -159,8 +176,15 @@ getAArch64InstructionEffects(const cs_insn &I,
     unsigned Size = 1u << (Word >> SizeShift);
     uint64_t Address = Base;
     bool Writeback = false;
-    if (isUnsignedMemory(Word) || isImmediateMemory(Word) ||
-        isRegisterMemory(Word)) {
+    if (isAcquireReleaseMemory(Word)) {
+      // Admit only naturally aligned ordinary RAM. Original instructions still
+      // execute through the processor transport, under the shared physical
+      // execution lease and RAM transaction; no exclusive monitor is modeled.
+      if (Address % Size)
+        return llvm::make_error<UnsupportedExecutionError>();
+      Accesses.push_back({Address, Operand(Rt), Size, Load ? Read : Write});
+    } else if (isUnsignedMemory(Word) || isImmediateMemory(Word) ||
+               isRegisterMemory(Word)) {
       unsigned Opcode = (Word >> OpcodeShift) & OpcodeMask;
       Load = Vector ? bool(Opcode & VectorLoadBit) : Opcode != 0;
       if (Vector && (Opcode & VectorFullWidthBit)) {

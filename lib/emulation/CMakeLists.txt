@@ -78,13 +78,13 @@ add_neverd_component_library(NeverDEmulationImage
   LLVM_COMPONENTS Support)
 
 add_subdirectory(os/linux)
-add_subdirectory(os/linux/android)
 add_subdirectory(os/windows/exception)
 add_subdirectory(os/windows/process)
 add_subdirectory(os/darwin)
 add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
+  runtime/ProcessLinuxTimeJSON.cpp
   runtime/ProcessAndroidJSON.cpp
   runtime/ProcessWindowsJSON.cpp
   LINK_COMPONENTS EmulationLinux EmulationAndroid EmulationWindowsProcess EmulationDarwin

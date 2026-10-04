@@ -24,6 +24,10 @@ std::atomic<unsigned long> FailureRequest{0};
 std::atomic<unsigned long> CancellationRequest{0};
 std::atomic<neverd::emulation::ExecutionBackend *> PublicCPU{nullptr};
 std::atomic<std::atomic<bool> *> PrivateStop{nullptr};
+#if defined(__x86_64__)
+std::atomic<int> AllowedSync{0}, AvailableSync{0};
+std::atomic<unsigned> GeneralReads{0}, SpecialReads{0}, Entries{0};
+#endif
 } // namespace
 
 extern "C" int __real_ioctl(int, unsigned long, ...);
@@ -44,10 +48,29 @@ extern "C" int __wrap_ioctl(int FD, unsigned long Request, ...) {
   if (_IOC_DIR(Request) == _IOC_NONE) {
     const int Value = va_arg(Arguments, int);
     va_end(Arguments);
+#if defined(__x86_64__)
+    if (Request == KVM_CHECK_EXTENSION && Value == KVM_CAP_SYNC_REGS) {
+      if (AllowedSync < 0) {
+        errno = EIO;
+        return -1;
+      }
+      const int Result = __real_ioctl(FD, Request, Value);
+      AvailableSync = Result > 0 ? Result & AllowedSync : 0;
+      return AvailableSync;
+    }
+    if (Request == KVM_RUN)
+      ++Entries;
+#endif
     return __real_ioctl(FD, Request, Value);
   }
   auto *Value = va_arg(Arguments, void *);
   va_end(Arguments);
+#if defined(__x86_64__)
+  if (Request == KVM_GET_REGS)
+    ++GeneralReads;
+  if (Request == KVM_GET_SREGS)
+    ++SpecialReads;
+#endif
   const int Result = __real_ioctl(FD, Request, Value);
   auto Cancel = CancellationRequest.load();
   if (Result >= 0 && Cancel == Request &&
@@ -66,15 +89,26 @@ namespace {
 #define NEVERD_KVM_STATE_VALUE(Name, Value) constexpr uint64_t Name = Value;
 #define NEVERD_KVM_STATE_CODE(Name, ...)                                       \
   constexpr uint8_t Name[] = {__VA_ARGS__};
+#define NEVERD_KVM_STATE_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "KvmStateTransferCases.def"
+#undef NEVERD_KVM_STATE_TEXT
 #undef NEVERD_KVM_STATE_CODE
 #undef NEVERD_KVM_STATE_VALUE
-constexpr unsigned long Requests[] = {
-#define NEVERD_KVM_STATE_CAPTURE_REQUEST(Request) Request,
-#include "KvmStateTransferCases.def"
-#undef NEVERD_KVM_STATE_CAPTURE_REQUEST
+struct Parameter {
+  const char *Name;
+  bool Vector;
+  unsigned long Request;
+  int SyncMode;
 };
-using Parameter = std::tuple<bool, unsigned long>;
+void PrintTo(const Parameter &P, std::ostream *OS) { *OS << P.Name; }
+constexpr Parameter Parameters[] = {
+#define NEVERD_KVM_STATE_BASE_PARAMETER(Name, Vector, Request, Sync)           \
+  {#Name, Vector, Request, Sync},
+#define NEVERD_KVM_STATE_SYNC_PARAMETER NEVERD_KVM_STATE_BASE_PARAMETER
+#include "KvmStateTransferCases.def"
+#undef NEVERD_KVM_STATE_SYNC_PARAMETER
+#undef NEVERD_KVM_STATE_BASE_PARAMETER
+};
 class KvmStateTransfer : public testing::TestWithParam<Parameter> {
 protected:
   std::unique_ptr<MemoryProjection> Memory;
@@ -85,6 +119,8 @@ protected:
     FailureRequest = CancellationRequest = 0;
     PublicCPU = nullptr;
     PrivateStop = nullptr;
+    AllowedSync = GetParam().SyncMode;
+    AvailableSync = 0;
     Memory = llvm::cantFail(MemoryProjection::create(Limit));
     auto Created = createKvmMachine(*Memory);
     if (!Created) {
@@ -96,10 +132,12 @@ protected:
       FAIL() << Reason;
     }
     Machine = std::move(*Created);
+    if (AllowedSync > 0 && AvailableSync.load() != AllowedSync.load())
+      GTEST_SKIP() << SyncUnavailable;
     llvm::cantFail(Memory->map(Code, PageSize, Read | Write | Execute));
     llvm::cantFail(Memory->map(Data, PageSize, Read | Write));
     llvm::cantFail(Memory->write(Code, Warm));
-    const auto Body = std::get<0>(GetParam())
+    const auto Body = GetParam().Vector
                           ? llvm::ArrayRef<uint8_t>(IncrementVector)
                           : llvm::ArrayRef<uint8_t>(IncrementInteger);
     llvm::cantFail(Memory->write(Code + sizeof(Warm), Body));
@@ -110,6 +148,10 @@ protected:
     State.reg(X64Register::AX) = InitialInteger;
     State.Xmm.front() =
         State.Xmm[IncrementVectorIndex] = {InitialPacked, InitialPacked};
+  }
+  void TearDown() override {
+    Machine.reset();
+    AllowedSync = AvailableSync = 0;
   }
   llvm::Error step(const std::atomic<bool> *Stop = nullptr) {
     if (auto E = Memory->beginRun())
@@ -124,10 +166,48 @@ protected:
   }
 };
 
+TEST_P(KvmStateTransfer, SynchronizedCapturesRemoveOnlySupportedReadIoctls) {
+  std::array<uint8_t, RepeatedSteps> Nops;
+  Nops.fill(Warm[0]);
+  llvm::cantFail(Memory->write(Code, Nops));
+  ASSERT_EQ(llvm::toString(step()), "");
+  GeneralReads = SpecialReads = Entries = 0;
+  const auto Before = State;
+  for (unsigned Index = 1; Index < RepeatedSteps; ++Index)
+    ASSERT_EQ(llvm::toString(step()), "");
+  EXPECT_EQ(Entries.load(), RepeatedSteps - 1);
+  EXPECT_EQ(GeneralReads.load(),
+            AvailableSync & KVM_SYNC_X86_REGS ? 0 : RepeatedSteps - 1);
+  EXPECT_EQ(SpecialReads.load(),
+            AvailableSync & KVM_SYNC_X86_SREGS ? 0 : RepeatedSteps - 1);
+  auto Expected = Before;
+  Expected.reg(X64Register::PC) = Code + RepeatedSteps;
+  EXPECT_EQ(State, Expected);
+}
+
+TEST_P(KvmStateTransfer, CancelledWarmEntryRequiresFreshSpecialStateOnRetry) {
+  ASSERT_EQ(llvm::toString(step()), "");
+  const auto Before = State;
+  std::atomic<bool> Stop{true};
+  auto E = step(&Stop);
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
+  llvm::consumeError(std::move(E));
+  EXPECT_EQ(State, Before);
+  SpecialReads = 0;
+  Stop = false;
+  ASSERT_EQ(llvm::toString(step(&Stop)), "");
+  EXPECT_EQ(SpecialReads.load(), 1u);
+  const bool Vector = GetParam().Vector;
+  EXPECT_EQ(State.reg(X64Register::AX),
+            InitialInteger + (Vector ? 0 : IntegerIncrement));
+  const auto Packed = Vector ? IncrementedPacked : InitialPacked;
+  EXPECT_EQ(State.Xmm.front(), (ExecutionBackend::XmmValue{Packed, Packed}));
+}
+
 TEST_P(KvmStateTransfer, FailedReadRetainsInputAndReinstallsItBeforeRetry) {
   ASSERT_EQ(llvm::toString(step()), "");
   const auto Before = State;
-  FailureRequest = std::get<1>(GetParam());
+  FailureRequest = GetParam().Request;
   EXPECT_EQ(llvm::toString(step()), diagnostic::KvmState);
   EXPECT_EQ(FailureRequest.load(), 0u);
   EXPECT_EQ(State.Registers, Before.Registers);
@@ -136,7 +216,7 @@ TEST_P(KvmStateTransfer, FailedReadRetainsInputAndReinstallsItBeforeRetry) {
   EXPECT_EQ(State.FP.Registers, Before.FP.Registers);
   // The native CPU already changed, but the owner still holds the old input.
   ASSERT_EQ(llvm::toString(step()), "");
-  const bool Vector = std::get<0>(GetParam());
+  const bool Vector = GetParam().Vector;
   EXPECT_EQ(State.reg(X64Register::PC),
             Code + sizeof(Warm) +
                 (Vector ? sizeof(IncrementVector) : sizeof(IncrementInteger)));
@@ -163,8 +243,8 @@ TEST_P(KvmStateTransfer, PublicCancellationRetainsStateRAMAndFailurePriority) {
     PublicCPU = nullptr;
     FailureRequest = CancellationRequest = 0;
   });
-  const bool Failed = std::get<0>(GetParam());
-  const auto Request = std::get<1>(GetParam());
+  const bool Failed = GetParam().Vector;
+  const auto Request = GetParam().Request;
   if (Failed)
     FailureRequest = Request;
   else
@@ -201,7 +281,7 @@ TEST_P(KvmStateTransfer, PublicCancellationRetainsStateRAMAndFailurePriority) {
             Code + sizeof(StoreInteger));
 }
 TEST_P(KvmStateTransfer, ActualCPUExceptionOutranksStopDuringCapture) {
-  State.UserMode = std::get<0>(GetParam());
+  State.UserMode = GetParam().Vector;
   llvm::cantFail(
       Memory->protect(Code, PageSize, Read | Write | Execute | UserAccessible));
   llvm::cantFail(
@@ -212,7 +292,7 @@ TEST_P(KvmStateTransfer, ActualCPUExceptionOutranksStopDuringCapture) {
   const auto Before = State;
   std::atomic<bool> Stop{false};
   PrivateStop = &Stop;
-  CancellationRequest = std::get<1>(GetParam());
+  CancellationRequest = GetParam().Request;
   auto Release = llvm::scope_exit([&] {
     PrivateStop = nullptr;
     CancellationRequest = 0;
@@ -256,7 +336,7 @@ TEST_P(KvmStateTransfer, PublicCPUExceptionOutranksStopDuringCapture) {
   llvm::cantFail(CPU->writeInteger(Data, InitialInteger, WordBytes));
   llvm::cantFail(CPU->setReg(X64Register::AX, InitialInteger));
   llvm::cantFail(CPU->setReg(X64Register::SP, Data + PageSize - WordBytes));
-  const bool Recoverable = std::get<0>(GetParam());
+  const bool Recoverable = GetParam().Vector;
   bool Observed = false;
   BackendHooks Hooks;
   if (Recoverable)
@@ -268,7 +348,7 @@ TEST_P(KvmStateTransfer, PublicCPUExceptionOutranksStopDuringCapture) {
     };
   llvm::cantFail(CPU->installHooks(std::move(Hooks)));
   PublicCPU = CPU.get();
-  CancellationRequest = std::get<1>(GetParam());
+  CancellationRequest = GetParam().Request;
   auto Release = llvm::scope_exit([&] {
     PublicCPU = nullptr;
     CancellationRequest = 0;
@@ -305,8 +385,10 @@ TEST_P(KvmStateTransfer, PublicCPUExceptionOutranksStopDuringCapture) {
   }
 }
 INSTANTIATE_TEST_SUITE_P(Native, KvmStateTransfer,
-                         testing::Combine(testing::Bool(),
-                                          testing::ValuesIn(Requests)));
+                         testing::ValuesIn(Parameters),
+                         [](const testing::TestParamInfo<Parameter> &Info) {
+                           return Info.param.Name;
+                         });
 #else
 TEST(KvmStateTransfer, NativeX64UnavailableOnThisHost) {
   GTEST_SKIP() << diagnostic::Unavailable;

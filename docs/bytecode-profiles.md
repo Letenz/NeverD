@@ -182,6 +182,24 @@ instruction. Imported calls require explicit declarations:
 [{"address": 12288, "name": "example_callback"}]
 ```
 
+`--with-context` selects a second, opaque parameter for every recovered function
+and bound call:
+
+```c
+uint64_t callee(void *state, void *context);
+```
+
+The caller supplies the context when executing the generated C. Its pointer is
+captured once on entry and passed unchanged through internal calls and external
+bindings, including loops back to the entry. The callback owns the meaning of
+its contents, which may change or alias state or guest memory; the lowering
+assumes no disjointness. A null context is passed through without inspection.
+Independent or reentrant invocations may use different contexts without a global
+variable or a reserved state slot. Status propagation is unchanged. All bound
+implementations must use the selected ABI; the tool neither provides their
+bodies nor manages context lifetime. This runtime parameter is separate from
+the decoder callback context used while recovering source.
+
 Bindings supply names and signatures, not implementations. Register-indirect
 calls must first be resolved by the producer or explicitly modeled through a
 bound dispatcher with a defined state contract; guest integers are never cast
@@ -213,20 +231,24 @@ a terminating NUL. Each input is limited to 64 MiB. The strict request is:
   "base": 0,
   "output": "highc",
   "optimize": false,
-  "unaligned_pointers": false
+  "unaligned_pointers": false,
+  "with_context": false
 }
 ```
 
 Replace the empty `encodings` placeholder with a nonempty profile such as the
 example above. Only `schemaVersion`, `profile` and `functions` are mandatory.
 `output` is `check`, `highc` (default) or `llvmc`; optimization requires `llvmc`.
+`with_context` is a boolean, default false, selecting the source contract above.
 Unknown fields and wrong field types fail. Function declarations, bindings and
 whole-request instruction/operation budgets are validated by the same engine
 used by the CLI, including binding declarations supplied in check mode.
 
 Every non-null response is owned, including errors. Success contains
 `schemaVersion: 1`, `ok: true`, `functions`, `blocks`, `decoded_instructions`,
-`decoded_bytes`, `input_bytes`, `scope`, and `source`. Scope is `cfg` for check
+`decoded_bytes`, `input_bytes`, `scope`, `with_context`, and `source`. The boolean
+`with_context` reports the selected ABI even in check mode, without claiming
+source conversion or execution was verified. Scope is `cfg` for check
 mode, whose source is empty, or `state-c` for source emission. Failure contains
 `ok: false` and `error`, without partial source. Counts cover reachable bytes;
 unvisited input is still unclassified.
@@ -247,6 +269,10 @@ print(result.source)
 Here `profile` is the complete encoding example above. The wrapper owns and
 releases native responses and raises `NeverDError` for recovery failures. For
 an explicitly loaded library outside the plugin host, pass `api=HostAPI(library)`.
+Both Python recovery functions accept `with_context=True`; their result records
+the selected ABI. They do not accept or retain the future runtime context. An
+older engine can still serve the default unary ABI, but must explicitly confirm
+the context option before the wrapper returns a result requesting that ABI.
 See the runnable [C plugin](../plugins/bytecode/bytecode_plugin.c) and
 [Python plugin](../pluginsdk/python/examples/external_bytecode.py).
 

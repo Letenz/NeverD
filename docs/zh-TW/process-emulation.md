@@ -54,6 +54,8 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Linux 設定檔語意
 
+`writev` 在 x64/ARM64 與 Android Bionic 中共用上述輸出物件。它先匯入最多 1024 個來賓 `iovec`，負長度回傳 `EINVAL`，驗證使用者位址範圍，再套用 Linux 按頁對齊的傳輸上限。無效描述符先於向量存取回傳 `EBADF`；不可讀的描述符表回傳 `EFAULT`，不產生輸出。後續資料頁故障保留已複製的前綴。輸出預算在發布前涵蓋整個向量與兩個輸出串流。`write` 和 `writev` 使用描述符的低 32 位；向量數量也遵循 Linux 的 32 位匯入規則。僅 Bionic 將原始負錯誤碼轉換成 `-1` 與 `errno`。`LinuxOutputNativeTests` 在本機 Linux 上以一般檔案重新導向執行十個原創案例；模擬的 x64/ARM64 案例另驗證預算。請見 [Linux 向量匯入契約](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c)。
+
 OS 政策重用既有 ELF 載入器解碼的 program headers。它驗證 ABI 標籤、區段對齊、已對映的 program-header tables 和使用者位址範圍。通用對映計畫會在配置前檢查範圍、權限、重疊和預算，且只公開完全準備好的私有位址空間。保留檔案頁面前／尾位元組、將 BSS 清零、遵循區段權限並為堆疊保留 guard gaps。頁面重疊版面與矛盾 header 會被拒絕，不會猜測。
 
 靜態 PIE 使用至少 `0x40000000` 的確定性 load bias，並依較大的 `PT_LOAD` 對齊需求提高。所有對映區段、入口 PC、`AT_PHDR`/`AT_ENTRY` 使用相同 bias；原始 program header 值不變，且無 interpreter 時 `AT_BASE` 為 0。對映來源明確採用原始檔案位元組，不包含分析階段 pointer fixup；客體啟動必須自行執行 relocation 與初始化。Loader 從有界的原始檔案記錄解碼 `PT_DYNAMIC`，不依賴 section header。若存在，table 必須可讀、正確終止且最多 4096 筆。拒絕 `PT_INTERP` 與外部 dependency/filter/audit 標籤；不提供 dynamic linker、symbol resolver 或 constructor runner。
@@ -66,7 +68,7 @@ OS 政策重用既有 ELF 載入器解碼的 program headers。它驗證 ABI 標
 
 x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARCH_GET_GS`。Set 可接受尚未對映的 user-range 基底，後續解參照仍會檢查權限。kernel-range 基底回傳客體 `EPERM`；無效 Get 目標回傳 `EFAULT`，不觸發 CPU fault。其他操作明確失敗。ARM64 啟動以 `MSR` 安裝 `TPIDR_EL0`；`MRS`、FS/GS 記憶體存取與內容還原會跨執行量和 backend 入口保留 thread pointer。這本身不實作 thread scheduler。
 
-描述元 1、2 是虛擬位元組 sink。`write` 會驗證可讀的 user pages；若後續頁面無法存取，回傳可讀前綴；若沒有任何位元組可讀，回傳客體 `EFAULT`。錯誤描述元回傳 `EBADF`；有效描述元的零位元組寫入不會讀取指標。此處不模擬 Linux pipe 原子性或檔案物件。輸出超過限制時，會在發布寫入前停止。
+描述元 1、2 是虛擬位元組 sink。`write` 會驗證可讀的 user pages；若後續頁面無法存取，回傳可讀前綴；若沒有任何位元組可讀，回傳客體 `EFAULT`。錯誤描述元回傳 `EBADF`；零位元組寫入仍檢查使用者位址範圍，但不要求頁面已映射，也不讀取資料。此處不模擬 Linux pipe 原子性或檔案物件。輸出超過限制時，會在發布寫入前停止。
 
 匿名記憶體服務與映像、堆疊共用行程位址空間及實體記憶體預算。`mmap` 僅接受 `MAP_PRIVATE | MAP_ANONYMOUS`，權限為一般 `PROT_NONE`、`PROT_READ`、`PROT_READ | PROT_WRITE`、`PROT_READ | PROT_EXEC` 或可讀的 RWX。空閒且頁對齊的提示位址會被採用；否則先從 `0x100000000`、再從最低使用者位址搜尋空隙，並保留堆疊保護區。此確定性配置不模擬 Linux ASLR。新頁各自配置並清零；部分解除映射能回收未被固定的頁。CPU 投影或仍持有的 backing view 可將退役配置的生命週期延長至自身釋放時。
 
@@ -75,6 +77,23 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 檔案、共享、固定映射，向下成長、大頁、記憶體鎖定、保護鍵、僅執行／僅寫入策略及其他旗標均明確不支援：在發布效果或建立回傳值前停止。支援子集內的一般範圍、長度及對齊錯誤會回傳客體錯誤，允許繼續執行。任何記憶體服務均不會將客體指標或映射請求轉交主機 OS。
 
 <a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: linux-clocks -->
+
+## 明確提供客體時鐘
+
+選用的 `linux_time` 為 Linux 系統呼叫與 Android Bionic 提供固定時鐘輸入。模型不讀取主機時鐘、不隨指令執行推進時間，也不猜測預設時間。
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+支援靜態時鐘 ID 0–9 與 11；各時鐘獨立，未提供的值仍屬未知。重複或未知 ID 會被拒絕。秒數為帶正負號的 64 位元整數，奈秒範圍為 `[0, 1000000000)`。JSON 整數須介於 `±9007199254740991` 內；十進位字串可表示完整 64 位元範圍，時區欄位為帶正負號的 32 位元整數。C++ 使用 `ProcessOptions::LinuxTime`，其他 OS 設定不接受此選項。
+
+`clock_gettime`、`gettimeofday` 與 x64 的 `time` 共用這些輸入。缺少輸入、動態時鐘或未建模的部分寫入會明確停止；已完成的寫入仍保留。不模擬校時、睡眠或實際裝置時鐘。欄位順序、錯誤碼和指標語義請見[完整時鐘契約](../process-emulation.md#explicit-guest-clocks)。
 
 <!-- i18n-section: windows-pe64 -->
 
@@ -114,6 +133,10 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / [`GetModuleHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlew)、`LoadLibraryA` / `LoadLibraryW` 和 [`GetProcAddress`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress) 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler), [RemoveVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredexceptionhandler), [RaiseException](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-raiseexception), [CONTEXT x64](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-context), [ARM64_NT_CONTEXT](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-arm64_nt_context). 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。 [EXCEPTION_RECORD](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-exception_record).
+
+`WindowsProcessContext` 保留每個派送框架的來源。已支援的 x64 資料存取和除法故障在 `CONTEXT.EFlags` 中呈現 RF（`0x10000`）；`RaiseException`（包括軟體拋出的存取違規碼）保留目前上下文。來源資訊貫穿 VEH/VCH 和 SEH 搜尋／展開。合法繼續執行時還原不含 RF 的邏輯 CPU 旗標；客戶修改 RF 會在發布狀態前被拒絕。此受限設定不模擬指令中斷點或客戶控制的 RF。`WindowsExceptionTests.cpp` 檢查儲存記錄、還原，以及拒絕時 CPU／RAM 不變。
+
+Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` 故障映射為 `STATUS_ACCESS_VIOLATION`，參數為 `[read, UINT64_MAX]`，儲存指令亦相同。原因由 CPU 層提供，Windows 不憑向量 13 猜測或重新解碼指令。`WindowsAlignmentProcessTests.cpp` 執行原始 PE 指令，涵蓋 72 種故障情境及 9 次位址修復重試（`72 + 9`），檢查 PC、RF、XMM 與 RAM。未分類或欄位不一致的故障仍會拒絕。程序與驅動程式故障報告保留可空的 `cause` 及十六進位 `error_code`，區分缺失與零。此派送適用於 checked x64 使用者態執行契約。
 
 `AddVectoredContinueHandler` 與 `RemoveVectoredContinueHandler` 管理獨立的有序串列，與例外處理器共用最多保留 128 個註冊項的限制。向量例外處理器接受繼續執行後，繼續處理器讀取同一份可修改的例外記錄與 `CONTEXT`；最終內容驗證在這些回呼完成後進行，包含巢狀例外與 DLL 通知。兩類處理器的控制代碼不可交叉移除。`WindowsContinuationTests.cpp` 將順序、提早結束派送、增刪、內容修復、巢狀派送、載入器回呼及程序結束的原創 EXE 案例與原生 Windows 比較。已測 Windows x64 向量處理路徑允許在設定 `EXCEPTION_NONCONTINUABLE` 時繼續執行；這不代表以堆疊框架為基礎的 SEH 行為。原生 ARM64 執行仍未驗證。 [AddVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredcontinuehandler), [RemoveVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredcontinuehandler).
 

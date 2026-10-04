@@ -321,6 +321,14 @@ ImmutableNativeFrameCalls immutableNativeFrameCalls(
     NativeSourceCallContract Contract;
     Contract.Signature = &It->second;
     static_cast<SourceFrameEffects &>(Contract) = std::move(Effects);
+    if (hasSwiftErrorResult(Signature)) {
+      const auto Slot = darwinImportVeneerSlot(Image, Target);
+      const auto Binding =
+          Slot ? swiftRuntimeSourceCallHint(Image, *Slot) : std::nullopt;
+      Contract.PreservesSwiftErrorResult =
+          Binding && equalSourceABIs(Binding->Signature, Signature) &&
+          swiftRuntimePreservesErrorResult(Image, Target, *Binding);
+    }
     Result.Calls.emplace(Site, std::move(Contract));
   };
   for (const auto &[Site, Word] : DirectCalls) {

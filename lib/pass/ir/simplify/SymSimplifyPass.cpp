@@ -535,6 +535,7 @@ SymSimplifyResult SymSimplifyPass::simplifyWithResult(llvm::Function &F,
     return Result;
 
   Result.Rewrites = simplifyFiniteValueSlices(F, Opts);
+  Result.Rewrites += simplifyModularPredicates(F, Opts);
   if (Result.Rewrites)
     Result.Outcome = SymSimplifyOutcome::Rewritten;
 

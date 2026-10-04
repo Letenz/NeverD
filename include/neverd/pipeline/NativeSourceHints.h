@@ -60,6 +60,10 @@ bool validateSwiftOpaqueValueBindings(
     const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
     const NativeSourceCalleeContracts *Callees);
 
+bool validateSwiftValueConstructorBindings(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    const NativeSourceCalleeContracts *Callees);
+
 /// Collect exact native call ABIs already bound in one MedIR caller. This is
 /// physical input evidence for the Boolean difference and immutable-target
 /// proofs, not a source-body certificate. Indirect receipts retain their
@@ -91,6 +95,11 @@ bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
 /// callee ABI proof. Calls, intrinsics and overlapping writes end the scan.
 std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
                                                 Arch Architecture);
+
+/// ARM64 direct calls followed by a complete low-double read of d1/q1.
+/// This records demand only; it does not authenticate either result value.
+std::set<va_t> observedNativeFloatingPairReturns(const LowFunc &Function,
+                                                 Arch Architecture);
 
 /// arm64 direct calls whose x0..x3 results are all read as complete words
 /// before a call, intrinsic or overlapping write. Demand is per call site;
@@ -157,6 +166,14 @@ bool sourceStackStoreStateContract(const BinaryImage &Image, const LowFunc &Low,
 std::optional<SourceFunctionTypeHint>
 refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
                                   const PipelineFunctionAudit &Audit);
+
+/// Extend an inferred ARM64 double result to two doubles after both low-eight
+/// byte carriers pass the shared return-path proof. Unknown upper Q lanes are
+/// not results. Requires observed second-result demand, re-lifting and complete
+/// source validation; external declarations and entry-only values stay intact.
+std::optional<SourceFunctionTypeHint>
+refineNativeFloatingPairReturnHint(const MedFunc &Med, const HighFunc &High,
+                                   const PipelineFunctionAudit &Audit);
 
 /// An internal arm64 leaf projection can return its defined x0 together with
 /// unchanged x1..x3 inputs. Retains already-bound scalar input locations and

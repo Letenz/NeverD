@@ -19,6 +19,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/MD5.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <cctype>
@@ -309,6 +310,15 @@ std::string typeToC(const TypeRef &Ty) {
   }
 }
 
+static std::string anonymousAggregateName(llvm::Type *Ty) {
+  std::string Text;
+  llvm::raw_string_ostream Stream(Text);
+  Ty->print(Stream);
+  llvm::MD5 Hash;
+  Hash.update(Text);
+  return "struct neverd_aggregate_" + Hash.final().digest().str().str();
+}
+
 std::string llvmStructName(llvm::StructType *ST) {
   if (ST->hasName()) {
     std::string Raw = ST->getName().str();
@@ -323,8 +333,7 @@ std::string llvmStructName(llvm::StructType *ST) {
       Clean = "nd_" + Clean;
     return "struct " + Clean;
   }
-  return "struct anon_" +
-         std::to_string(reinterpret_cast<uintptr_t>(ST) & 0xFFFF);
+  return anonymousAggregateName(ST);
 }
 
 bool isCIntegerVectorType(llvm::Type *Ty) {
@@ -404,8 +413,12 @@ std::string typeToCLLVM(llvm::Type *Ty) {
            std::to_string(Bytes) + ")))";
   }
 
-  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(Ty))
-    return typeToCLLVM(AT->getElementType()) + "*";
+  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(Ty)) {
+    if (auto *IT = llvm::dyn_cast<llvm::IntegerType>(AT->getElementType()))
+      return "struct neverd_array_" + std::to_string(AT->getNumElements()) +
+             "_i" + std::to_string(IT->getBitWidth());
+    return anonymousAggregateName(AT);
+  }
 
   if (Ty->isFunctionTy())
     return "void*";

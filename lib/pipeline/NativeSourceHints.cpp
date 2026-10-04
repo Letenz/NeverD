@@ -3,6 +3,7 @@
 #include "../loader/Swift/SwiftBooleanProjection.h"
 #include "../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../loader/Swift/SwiftMangledClassMethodABI.h"
+#include "../loader/Swift/SwiftMangledValueConstructorABI.h"
 #include "NativeSourceFloatingReturn.h"
 #include "NativeSourceIntegerPrefixReturn.h"
 #include "NativeSourcePreservation.h"
@@ -60,6 +61,82 @@ nativeSourceCalleeContracts(const BinaryImage &Image,
         It != Contracts.CurrentCallees.end())
       It->second.Audit = &Audit;
   return Contracts;
+}
+
+bool validateSwiftValueConstructorBindings(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    const NativeSourceCalleeContracts *Callees) {
+  std::set<va_t> Required;
+  if (Low) {
+    // Discovery uses the current original operations even if every receipt
+    // or the recorded mixed result has been removed from MedIR.
+    for (const auto &B : Low->Blocks)
+      for (const auto &O : B.Ops)
+        if (O.Opcode == NdOp::CALL)
+          if (const auto S = sourceCallOccurrenceKey(O);
+              S && S->StaticTarget &&
+              swiftMangledFixedRecordConstructorDeclaration(Image,
+                                                            *S->StaticTarget))
+            Required.insert(S->Instruction);
+  }
+  bool Marked = false;
+  for (const auto &B : Med.Blocks)
+    for (const auto &O : B.Ops)
+      if (O.SourceCallHint) {
+        Marked |= bool(O.SourceCallHint->SwiftValueConstructor);
+        // Removing a receipt while invalidating current declaration metadata
+        // cannot make a saved constructor call an unrelated native call.
+        if (requiresSwiftFixedRecordConstructorProof(
+                O.SourceCallHint->Signature))
+          Required.insert(O.Addr);
+      }
+  if (Required.empty() && !Marked)
+    return true;
+  if (!Low || Low->Entry != Med.Entry || !Callees ||
+      Callees->SourceImage != &Image)
+    return false;
+  std::map<va_t, SourceFunctionTypeHint> ABIs;
+  std::map<va_t, const LowFunc *> Bodies;
+  for (const auto &[Entry, C] : Callees->CurrentCallees)
+    if (C.Low && C.Signature && C.Audit &&
+        completeNativeAudit(Entry, *C.Audit) &&
+        C.Audit->DecodedInstructions == C.Low->DecodedInstructionCount) {
+      ABIs.emplace(Entry, *C.Signature);
+      Bodies.emplace(Entry, C.Low);
+    }
+  const auto Hints =
+      buildSwiftFixedRecordConstructorCallHints(Image, *Low, ABIs, Bodies);
+  if (Hints.size() != Required.size())
+    return false;
+  std::set<va_t> Seen;
+  size_t Budget = 262144;
+  for (const auto &B : Med.Blocks)
+    for (const auto &O : B.Ops) {
+      if (!Budget--)
+        return false;
+      const auto I = Hints.find(O.Addr);
+      const bool Receipt =
+          O.SourceCallHint && O.SourceCallHint->SwiftValueConstructor;
+      if (!Receipt && (I == Hints.end() || O.Opcode != NdOp::CALL))
+        continue;
+      if (!Receipt || I == Hints.end())
+        return false;
+      const auto &H = *O.SourceCallHint, &E = I->second;
+      const auto &Site = E.SwiftValueConstructor->Site;
+      if (H.SwiftValueConstructor != E.SwiftValueConstructor ||
+          H.CallKind != E.CallKind || H.TargetAddress != E.TargetAddress ||
+          H.DoesNotReturn || H.WeakImport ||
+          !equalSourceABIs(H.Signature, E.Signature) ||
+          O.Opcode != Site.Opcode || O.OriginSeq != Site.Sequence ||
+          O.NumInputs != 6 || O.Output.Size != 32 || !O.Inputs[0].isConst() ||
+          O.Inputs[0].ConstVal != Site.StaticTarget || O.DoesNotReturn ||
+          O.PreservesCallerSaved || !Seen.insert(O.Addr).second)
+        return false;
+      for (unsigned J = 0; J < O.NumInputs; ++J)
+        if (O.Inputs[J].Size != 8)
+          return false;
+    }
+  return Seen == Required;
 }
 
 bool validateSwiftOpaqueValueBindings(
@@ -672,7 +749,8 @@ bool hasNativeSourceStateContract(
       Low->Blocks.size() > 16384)
     return false;
   NativeSourceCalls Calls;
-  if (!validateSwiftOpaqueValueBindings(Image, Low, Med, Callees) ||
+  if (!validateSwiftValueConstructorBindings(Image, Low, Med, Callees) ||
+      !validateSwiftOpaqueValueBindings(Image, Low, Med, Callees) ||
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med) ||
       !validateNativeSwiftReceiverBindings(Image, Low, Med))
@@ -819,6 +897,9 @@ bool hasNativeSourceStateContract(
       }();
       NativeSourceCallContract Contract;
       Contract.Signature = &Binding.Signature;
+      Contract.PreservesSwiftErrorResult =
+          StaticRuntime && swiftRuntimePreservesErrorResult(
+                               Image, Op.Inputs[0].ConstVal, Binding);
       if (Binding.SwiftOpaqueValue) {
         const LowFunc *Body = nullptr;
         if (StaticNative && Callees)
@@ -1212,19 +1293,25 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
 }
 
 std::optional<SourceFunctionTypeHint>
-integerPairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar) {
+nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
+                 SourceABICarrierKind Kind) {
   const auto Architecture = Scalar.Architecture;
+  const bool Floating = Kind == SourceABICarrierKind::FloatingRegister;
   if (Architecture != Arch::AArch64 && Architecture != Arch::X64)
     return std::nullopt;
+  if (Floating && Architecture != Arch::AArch64)
+    return std::nullopt;
   const auto &TRI = getTargetRegInfo(Architecture);
+  const auto &Registers = Floating ? TRI.FPParamRegs : TRI.IntReturnRegs;
   std::string Error;
   if (Scalar.Origin != SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
       !Scalar.HasExplicitABI || !validateSourceABI(Scalar, Error) ||
-      !integerCarrier(Scalar.ReturnType) || Scalar.ReturnType->Size != 8 ||
-      !Scalar.ReturnComponents.empty() ||
-      Scalar.ReturnLocation.Kind != SourceABICarrierKind::IntegerRegister ||
-      TRI.IntReturnRegs.size() < 2 || Med.DoesNotReturn || Med.IsVariadic ||
-      Scalar.ReturnLocation.RegisterOffset != TRI.IntReturnRegs[0] ||
+      (Floating ? Scalar.ReturnType->Kind != NdTypeKind::Float
+                : !integerCarrier(Scalar.ReturnType)) ||
+      Scalar.ReturnType->Size != 8 || !Scalar.ReturnComponents.empty() ||
+      Scalar.ReturnLocation.Kind != Kind || Registers.size() < 2 ||
+      Med.DoesNotReturn || Med.IsVariadic ||
+      Scalar.ReturnLocation.RegisterOffset != Registers[0] ||
       Scalar.ReturnLocation.ValueBytes != 8 || !Med.MultiReturn.empty() ||
       Med.FPReturnViaX87)
     return std::nullopt;
@@ -1240,23 +1327,29 @@ integerPairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar) {
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
         if (!Op.SourceCallHint ||
             !validateSourceABI(Op.SourceCallHint->Signature, Error) ||
+            (Floating &&
+             (Op.SourceCallHint->Signature.Architecture != Architecture ||
+              Op.DoesNotReturn != Op.SourceCallHint->DoesNotReturn)) ||
             Op.NumInputs !=
                 sourceABIParameters(Op.SourceCallHint->Signature).size() + 1)
           return std::nullopt;
     }
   }
   SourceFunctionTypeHint Pair = Scalar;
-  Pair.ReturnType =
-      NdType::makeStruct({Scalar.ReturnType, NdType::makeInt(8, false)});
+  Pair.ReturnType = NdType::makeStruct(
+      {Scalar.ReturnType,
+       Floating ? NdType::makeFloat(8) : NdType::makeInt(8, false)});
   Pair.ReturnLocation = {};
   for (unsigned I = 0; I < 2; ++I) {
-    SourceABIValueLocation Location{SourceABICarrierKind::IntegerRegister,
-                                    TRI.IntReturnRegs[I], 0, 8};
+    SourceABIValueLocation Location{Kind, Registers[I], 0, 8};
     std::optional<MedVar> Incoming;
-    for (const auto &Parameter : Med.Params)
-      if (Parameter.Kind == MedVar::Param && Parameter.Id >= 0 &&
-          Parameter.RegOff == Location.RegisterOffset && Parameter.Size == 8)
-        Incoming = Parameter;
+    // Floating pair refinement deliberately requires computed results. An
+    // unchanged incoming d1 is not evidence that a scalar function returns it.
+    if (!Floating)
+      for (const auto &Parameter : Med.Params)
+        if (Parameter.Kind == MedVar::Param && Parameter.Id >= 0 &&
+            Parameter.RegOff == Location.RegisterOffset && Parameter.Size == 8)
+          Incoming = Parameter;
     if (!definedReturnPaths(Med, Architecture, Location, Incoming))
       return std::nullopt;
     Pair.ReturnComponents.push_back(Location);
@@ -1418,17 +1511,16 @@ compilerRTPlatformVersionContract(const BinaryImage &Image, const MedFunc &Med,
   Result.Signature = std::move(Exact);
   return Result;
 }
-} // namespace
-
-std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
-                                                Arch Architecture) {
+std::set<va_t> observedNativePairReturns(const LowFunc &Function,
+                                         Arch Architecture, bool Floating) {
   if ((Architecture != Arch::AArch64 && Architecture != Arch::X64) ||
       Function.Blocks.size() > 16384)
     return {};
   const auto &TRI = getTargetRegInfo(Architecture);
-  if (TRI.IntReturnRegs.size() < 2)
+  const auto &Registers = Floating ? TRI.FPParamRegs : TRI.IntReturnRegs;
+  if (Registers.size() < 2 || (Floating && Architecture != Arch::AArch64))
     return {};
-  const auto Register = TRI.IntReturnRegs[1];
+  const auto Register = Registers[1];
   std::set<va_t> Targets;
   size_t Remaining = 262144;
   for (const auto &Block : Function.Blocks) {
@@ -1452,12 +1544,13 @@ std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
           Op.NumInputs == 2 && Op.Inputs[0] == Op.Inputs[1];
       if (!SelfZero)
         for (unsigned I = 0; I < Op.NumInputs; ++I)
-          // A caller may only inspect the low Boolean bits of a second
-          // result. This is still demand for that register's ABI component;
-          // integerPairReturn independently proves the complete word before
-          // it can change a callee signature.
+          // Integer demand may inspect only low Boolean bits. Floating demand
+          // must include the complete low double, possibly in a Q copy. The
+          // shared return proof independently checks the complete result;
+          // neither observation defines otherwise unknown result bytes.
           if (Op.Inputs[I].isReg() && Op.Inputs[I].Offset == Register &&
-              Op.Inputs[I].Size && Op.Inputs[I].Size <= 8)
+              (Floating ? Op.Inputs[I].Size == 8 || Op.Inputs[I].Size == 16
+                        : Op.Inputs[I].Size && Op.Inputs[I].Size <= 8))
             Targets.insert(*Pending);
       if (Op.Output.isReg() && Op.Output.Size &&
           (Op.Output.Offset <= Register
@@ -1467,6 +1560,17 @@ std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
     }
   }
   return Targets;
+}
+} // namespace
+
+std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
+                                                Arch Architecture) {
+  return observedNativePairReturns(Function, Architecture, false);
+}
+
+std::set<va_t> observedNativeFloatingPairReturns(const LowFunc &Function,
+                                                 Arch Architecture) {
+  return observedNativePairReturns(Function, Architecture, true);
 }
 
 std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
@@ -1559,7 +1663,9 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
        (!Low || !validateSourceRegisterCopies(Image, *Low,
                                               Med.RegisterCopyProjections))))
     return Reject("source register-copy proof is no longer valid");
-  if (!validateSwiftOpaqueValueBindings(Image, Low, Med, CalleeContracts) ||
+  if (!validateSwiftValueConstructorBindings(Image, Low, Med,
+                                             CalleeContracts) ||
+      !validateSwiftOpaqueValueBindings(Image, Low, Med, CalleeContracts) ||
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med))
     return Reject("Swift witness frame proof is no longer valid");
@@ -1862,14 +1968,17 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   if (Exact.Recognized)
     return Exact.Signature;
   if (ObserveIntegerPair)
-    if (auto Pair = integerPairReturn(Med, Hint))
+    if (auto Pair =
+            nativePairReturn(Med, Hint, SourceABICarrierKind::IntegerRegister))
       return Pair;
   return Hint;
 }
 
+namespace {
 std::optional<SourceFunctionTypeHint>
-refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
-                                  const PipelineFunctionAudit &Audit) {
+refineNativePairReturnHint(const MedFunc &Med, const HighFunc &High,
+                           const PipelineFunctionAudit &Audit,
+                           SourceABICarrierKind Kind) {
   if (Med.Entry != High.Entry || !completeNativeAudit(Med.Entry, Audit) ||
       !Med.SourceParametersBound || !Med.SourceTypeHint ||
       !High.SourceTypeHint || High.DoesNotReturn || High.Body.empty() ||
@@ -1877,7 +1986,22 @@ refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
       !equalSourceTypes(Med.ReturnType, Med.SourceTypeHint->ReturnType) ||
       !equalSourceTypes(High.ReturnType, Med.SourceTypeHint->ReturnType))
     return std::nullopt;
-  return integerPairReturn(Med, *Med.SourceTypeHint);
+  return nativePairReturn(Med, *Med.SourceTypeHint, Kind);
+}
+} // namespace
+
+std::optional<SourceFunctionTypeHint>
+refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
+                                  const PipelineFunctionAudit &Audit) {
+  return refineNativePairReturnHint(Med, High, Audit,
+                                    SourceABICarrierKind::IntegerRegister);
+}
+
+std::optional<SourceFunctionTypeHint>
+refineNativeFloatingPairReturnHint(const MedFunc &Med, const HighFunc &High,
+                                   const PipelineFunctionAudit &Audit) {
+  return refineNativePairReturnHint(Med, High, Audit,
+                                    SourceABICarrierKind::FloatingRegister);
 }
 
 std::optional<SourceFunctionTypeHint>

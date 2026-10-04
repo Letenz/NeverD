@@ -1,0 +1,21 @@
+//===- AndroidKernelServices.def - Bionic to Linux service bindings ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ANDROID_KERNEL_SERVICE
+NEVERD_ANDROID_KERNEL_SERVICE("getpid", GetPID)
+NEVERD_ANDROID_KERNEL_SERVICE("gettid", GetTID)
+NEVERD_ANDROID_KERNEL_SERVICE("getuid", GetUID)
+NEVERD_ANDROID_KERNEL_SERVICE("geteuid", GetEUID)
+NEVERD_ANDROID_KERNEL_SERVICE("getgid", GetGID)
+NEVERD_ANDROID_KERNEL_SERVICE("getegid", GetEGID)
+NEVERD_ANDROID_KERNEL_SERVICE("mmap", Mmap)
+NEVERD_ANDROID_KERNEL_SERVICE("mmap64", Mmap)
+NEVERD_ANDROID_KERNEL_SERVICE("mprotect", Mprotect)
+NEVERD_ANDROID_KERNEL_SERVICE("munmap", Munmap)
+NEVERD_ANDROID_KERNEL_SERVICE("write", Write)
+NEVERD_ANDROID_KERNEL_SERVICE("writev", WriteV)
+NEVERD_ANDROID_KERNEL_SERVICE("gettimeofday", GetTimeOfDay)
+NEVERD_ANDROID_KERNEL_SERVICE("clock_gettime", ClockGetTime)
+#endif

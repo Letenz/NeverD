@@ -1249,6 +1249,15 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
 
+add_neverd_unittest(NeverDLLVMCScalarLoopRecoveryTests
+  core/LLVMCScalarLoopRecoveryTests.cpp
+  LINK_COMPONENTS BackendC
+)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDLLVMCScalarLoopRecoveryTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
 add_neverd_unittest(NeverDAArch64DivisionSemanticTests
   aarch64/AArch64DivisionSemanticTests.cpp
   LINK_COMPONENTS Decode IRLow Support
@@ -1523,6 +1532,7 @@ endif()
 add_neverd_unittest(NeverDSymSimplifyGuardTests
   pipeline/SymSimplifyGuardTests.cpp
   pipeline/SymSimplifyFiniteTests.cpp
+  pipeline/SymSimplifyPredicateTests.cpp
   LINK_COMPONENTS
   Pipeline
 )

@@ -39,6 +39,235 @@
 
 using namespace neverd;
 
+namespace {
+struct HFAImportVeneerFixture {
+  static constexpr va_t Entry = 0x1000, Slot = 0x2080;
+  BinaryImage Image;
+  PipelineOptions Options;
+  llvm::LLVMContext Context;
+  PipelineResult Result;
+
+  HFAImportVeneerFixture(const char *Name, const char *Provider) {
+    Image.Arch = Arch::AArch64;
+    Image.Format = BinaryFormat::MachO;
+    Image.Bits = Bitness::Bits64;
+    Image.DynInfo.NeededLibs = {Provider};
+    for (unsigned I = 0; I != 2; ++I) {
+      Segment S;
+      S.VA = Entry + I * 0x1000;
+      S.FileOff = I * 0x100;
+      S.Size = S.FileSz = 0x100;
+      S.Flags = SegmentFlags::Readable |
+                (I ? SegmentFlags::None : SegmentFlags::Executable);
+      S.Data.resize(0x100);
+      if (!I) {
+        const uint32_t Words[] = {0xb0000010, 0xf9404210, 0xd61f0200};
+        for (unsigned J = 0; J != 3; ++J)
+          llvm::support::endian::write32le(S.Data.data() + 4 * J, Words[J]);
+      }
+      Section Sec;
+      Sec.VA = S.VA;
+      Sec.FileOff = S.FileOff;
+      Sec.Size = Sec.FileSz = S.FileSz;
+      Sec.Flags = S.Flags;
+      Sec.Type = I ? 0 : llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+      Image.Sections.push_back(Sec);
+      Image.Segments.push_back(std::move(S));
+    }
+    Image.ImportPtrSlots[Slot] = Name;
+    EXPECT_TRUE(Image.recordDyldBindSlot(Slot, Name, 0, Provider, false));
+    Image.Symbols.push_back({"anonymous_veneer", Entry, 12, true});
+    Options.OnlyFunctionEntries = {Entry};
+    Options.EmitDumpOutput = false;
+    Result = Pipeline().run(Image, Context, Options);
+  }
+
+  size_t infer() {
+    std::map<va_t, std::string> Diagnostics;
+    return sdk::inferObjCNativeDependencies(Image, Result, Options, Diagnostics,
+                                            {Entry});
+  }
+};
+} // namespace
+
+TEST(NativeSourceHints, HFAImportVeneerRetainsCompleteDeclaredResult) {
+  struct Case {
+    const char *Name, *Provider;
+    size_t Components;
+  };
+  for (const auto &C : {
+           Case{
+               "_CGRectStandardize",
+               "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+               4},
+           Case{
+               "_CLLocationCoordinate2DMake",
+               "/System/Library/Frameworks/CoreLocation.framework/CoreLocation",
+               2},
+           Case{"___sincos_stret", "/usr/lib/libSystem.B.dylib", 2},
+       }) {
+    SCOPED_TRACE(C.Name);
+    HFAImportVeneerFixture F(C.Name, C.Provider);
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    ASSERT_EQ(F.Result.HighFuncs.size(), 1U);
+    EXPECT_FALSE(F.Result.HighFuncs[0].SourceTypeHint);
+    ASSERT_EQ(F.infer(), 1U);
+    const auto &Hint = F.Options.SourceTypeHints.at(F.Entry);
+    const auto Declared = darwinRuntimeSourceCallHint(F.Image, F.Slot);
+    ASSERT_TRUE(Declared);
+    EXPECT_TRUE(equalSourceABIs(Hint, Declared->Signature));
+    EXPECT_EQ(Hint.ReturnComponents.size(), C.Components);
+    // A declaration candidate must survive a fresh lift and all ordinary
+    // publication checks with every record field still present.
+    auto Relifted = Pipeline().run(F.Image, F.Context, F.Options);
+    ASSERT_TRUE(Relifted.Success) << Relifted.Error;
+    ASSERT_EQ(Relifted.HighFuncs.size(), 1U);
+    const auto &Function = Relifted.HighFuncs[0];
+    ASSERT_TRUE(Function.SourceTypeHint);
+    EXPECT_TRUE(equalSourceABIs(*Function.SourceTypeHint, Hint));
+    std::map<va_t, const HighFunc *> Functions{{F.Entry, &Function}};
+    const auto Bound = sdk::bindObjCSourceReferences(Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    const auto Allowed = [&](const HighExpr &Call) {
+      return sdk::objcSourceCallBound(Call, F.Image, Functions);
+    };
+    ASSERT_EQ(Relifted.FunctionAudits.size(), 1U);
+    EXPECT_TRUE(sdk::sourceBodyLimitation(Bound.Function, Hint,
+                                          &Relifted.FunctionAudits[0], Allowed)
+                    .empty());
+  }
+}
+
+TEST(NativeSourceHints, HFAImportVeneerRequiresCurrentCodeAndImport) {
+  HFAImportVeneerFixture F("___sincos_stret", "/usr/lib/libSystem.B.dylib");
+  ASSERT_TRUE(darwinHFAImportVeneerSourceABI(F.Image, F.Entry));
+  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = F.Image;
+    va_t Entry = F.Entry;
+    switch (Mutation) {
+    case 0:
+    case 1:
+    case 2:
+      Image.Segments[0].Data[4 * Mutation] ^= 1;
+      break;
+    case 3:
+      Image.Segments[0].Flags =
+          Image.Segments[0].Flags | SegmentFlags::Writable;
+      break;
+    case 4:
+      Image.Segments[1].Flags =
+          Image.Segments[1].Flags | SegmentFlags::Writable;
+      Image.Sections[1].Flags =
+          Image.Sections[1].Flags | SegmentFlags::Writable;
+      break;
+    case 5:
+      Image.Sections.push_back(Image.Sections[0]);
+      break;
+    case 6:
+      Image.Sections.push_back(Image.Sections[1]);
+      break;
+    case 7:
+      Image.Segments[0].Data.resize(11);
+      break;
+    case 8:
+      Image.DyldBindSlots[F.Slot].WeakImport = true;
+      break;
+    case 9:
+      Image.DyldBindSlots[F.Slot].Addend = 8;
+      break;
+    case 10:
+      Image.DyldBindSlots[F.Slot].Module = "/tmp/libSystem.B.dylib";
+      break;
+    case 11:
+      Image.DynInfo.NeededLibs.clear();
+      break;
+    case 12:
+      Image.ImportPtrSlots[F.Slot] = "_sin";
+      break;
+    case 13:
+      Image.DyldBindSlots.clear();
+      break;
+    case 14:
+      Image.ConflictingImportStorageSlots.insert(F.Slot);
+      break;
+    case 15:
+      Image.CodePtrRelocSlots.insert(F.Entry + 8);
+      break;
+    case 16:
+      Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 17:
+      Image.Arch = Arch::X64;
+      break;
+    case 18:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 19:
+      Image.IsRelocatable = true;
+      break;
+    case 20:
+      Image.Bits = Bitness::Bits32;
+      break;
+    case 21:
+      ++Entry;
+      break;
+    }
+    EXPECT_FALSE(darwinHFAImportVeneerSourceABI(Image, Entry));
+  }
+}
+
+TEST(NativeSourceHints, HFAImportVeneerNeedsACompleteLiftBeforeRelifting) {
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    HFAImportVeneerFixture F("___sincos_stret", "/usr/lib/libSystem.B.dylib");
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    ASSERT_EQ(F.Result.FunctionAudits.size(), 1U);
+    auto &Audit = F.Result.FunctionAudits[0];
+    switch (Mutation) {
+    case 0:
+      Audit.Disposition = PipelineFunctionDisposition::Candidate;
+      break;
+    case 1:
+      Audit.HasLowIR = false;
+      break;
+    case 2:
+      Audit.MedIRVerified = false;
+      break;
+    case 3:
+      --Audit.LiftedInstructions;
+      break;
+    case 4:
+      Audit.DecodeFailures.push_back(F.Entry);
+      break;
+    case 5:
+      Audit.TruncatedPaths.push_back(F.Entry);
+      break;
+    case 6:
+      ++Audit.Entry;
+      break;
+    }
+    EXPECT_EQ(F.infer(), 0U);
+    EXPECT_TRUE(F.Options.SourceTypeHints.empty());
+  }
+}
+
+TEST(NativeSourceHints, HFAImportVeneerDoesNotGuessOtherDeclarations) {
+  for (const auto Name : {"_sin", "_unknown_hfa"}) {
+    HFAImportVeneerFixture F(Name, "/usr/lib/libSystem.B.dylib");
+    EXPECT_FALSE(darwinHFAImportVeneerSourceABI(F.Image, F.Entry));
+  }
+  HFAImportVeneerFixture Indirect(
+      "_CGAffineTransformMakeScale",
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
+  const auto Declaration =
+      darwinRuntimeSourceCallHint(Indirect.Image, Indirect.Slot);
+  ASSERT_TRUE(Declaration);
+  EXPECT_EQ(Declaration->Signature.ReturnLocation.Kind,
+            SourceABICarrierKind::IndirectResultPointer);
+  EXPECT_FALSE(darwinHFAImportVeneerSourceABI(Indirect.Image, Indirect.Entry));
+}
+
 TEST(NativeSourceHints, CFunctionParameterCallKeepsTheCompleteVoidCallback) {
   using namespace c_function_parameter_test;
   Fixture F;
@@ -2771,6 +3000,189 @@ TEST(NativeSourceHints, RefinesOnlyExplicitlyPartialIntegerReturnCandidates) {
         // The candidate is not a mutation of the analyzed body or its ABI.
         EXPECT_EQ(F.High.SourceTypeHint->ReturnType->Size, 8U);
         EXPECT_EQ(F.High.Body.back().RetVal->Type->Size, 8U);
+      }
+    }
+}
+
+TEST(NativeSourceHints,
+     RefinesLoweredSignedCallResultWithoutInventingUpperBits) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Signed : {false, true}) {
+      SCOPED_TRACE(int(Architecture));
+      SCOPED_TRACE(Signed);
+      NativeFixture F(Architecture);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      SourceFunctionTypeHint Callee, Entry;
+      Callee.Origin = Entry.Origin =
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Callee.ReturnType = NdType::makeInt(4, Signed);
+      Entry.ReturnType = NdType::makeInt(8, false);
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Callee, Architecture, Error));
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Architecture, Error));
+      std::map<va_t, SourceFunctionTypeHint> Hints{{0x1000, Entry},
+                                                   {0x1080, Callee}};
+      LowFunc Low;
+      Low.Entry = 0x1000;
+      LowBlock B;
+      B.Id = 0;
+      B.StartAddr = 0x1000;
+      B.EndAddr = 0x1008;
+      LowOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = 0x1000;
+      Call.Output = NdVar::reg(TRI.IntReturnReg, 8);
+      Call.addInput(NdVar::cst(0x1080, 8));
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = 0x1004;
+      Return.addInput(NdVar::reg(TRI.IntReturnReg, 8));
+      B.Ops = {Call, Return};
+      Low.Blocks = {B};
+      const auto Lower = [&] {
+        LowToMedConverter Converter;
+        Converter.setSourceCallHintsEnabled(true);
+        Converter.setSourceCalleeTypeHints(&Hints);
+        Converter.setSourceEntryTypeHints(&Hints);
+        F.Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+        recoverCallAbi(F.Med, Architecture, {{0x1080, "native_prefix"}});
+        F.Med.SourceTypeHint = Hints.at(0x1000);
+        inferMedTypes(F.Med, Architecture);
+        F.High = MedToHighConverter().convert(F.Med, Architecture);
+      };
+      Lower();
+      ASSERT_EQ(F.High.ReturnType->Size, 8U);
+      const auto Allowed = [](const HighExpr &) { return true; };
+      EXPECT_FALSE(
+          sdk::sourceBodyLimitation(F.High, Entry, &F.Audit, Allowed).empty());
+      const auto Refined = refineNativeSourceTypeHint(F.High, F.Audit);
+      ASSERT_TRUE(Refined);
+      EXPECT_EQ(Refined->ReturnType->Size, 4U);
+      EXPECT_EQ(Refined->ReturnLocation.ValueBytes, 4U);
+      EXPECT_EQ(F.High.ReturnType->Size, 8U);
+      EXPECT_EQ(Hints.at(0x1080).ReturnType->IsSigned, Signed);
+      Hints[0x1000] = *Refined;
+      Lower();
+      EXPECT_TRUE(sdk::sourceBodyLimitation(F.High, *Refined, &F.Audit, Allowed)
+                      .empty());
+      // The candidate does not define the original caller's high word.
+      Hints[0x1000] = Entry;
+      Lower();
+      EXPECT_FALSE(
+          sdk::sourceBodyLimitation(F.High, Entry, &F.Audit, Allowed).empty());
+    }
+}
+
+TEST(NativeSourceHints, IntegerPrefixCallBitsRequireTheCompleteDeclaredResult) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 17; ++Mutation) {
+      SCOPED_TRACE(int(Architecture));
+      SCOPED_TRACE(Mutation);
+      NativeFixture F(Architecture);
+      SourceFunctionTypeHint Entry, Callee;
+      Entry.Origin = Callee.Origin =
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Entry.ReturnType = NdType::makeInt(8, false);
+      for (const auto &Parameter : F.High.Params)
+        Entry.Parameters.push_back({Parameter.Name, Parameter.Type});
+      Callee.ReturnType = NdType::makeInt(4, true);
+      Callee.Parameters = {{"input", NdType::makeInt(4)}};
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Architecture, Error));
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Callee, Architecture, Error));
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->Signature = Callee;
+      auto Call = HighExpr::makeCall(
+          "native_prefix", 0x1080,
+          {HighExpr::makeVar(F.Med.Params[0], NdType::makeInt(4))});
+      Call->SourceCallHint = Hint;
+      Call->Type = sourceABICallResultType(Callee);
+      MedVar Local;
+      Local.Kind = MedVar::Temp;
+      Local.Id = 40;
+      Local.Size = 4;
+      const auto Value = [&] {
+        return HighExpr::makeVar(Local, Callee.ReturnType);
+      };
+      HighStmt Define;
+      Define.Kind = StmtKind::Assign;
+      Define.Dst = Value();
+      Define.Val = Call;
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal =
+          HighExpr::makeBinop(NdOp::CONCAT, HighExpr::makeUndef(4), Value());
+      Return.RetVal->Type = NdType::makeInt(8, false);
+      F.High.SourceTypeHint = Entry;
+      F.High.ReturnType = Entry.ReturnType;
+      F.High.Body = {Define, Return};
+      switch (Mutation) {
+      case 1:
+        Call->SourceCallHint.reset();
+        break;
+      case 2:
+        Hint->Signature.ReturnLocation.ValueBytes = 8;
+        break;
+      case 3:
+        Hint->Signature.ReturnType = NdType::makeFloat(4);
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+        break;
+      case 4:
+        Hint->Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+        break;
+      case 5:
+        Hint->Signature.ReturnType = NdType::makeInt(2);
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+        Call->Type = sourceABICallResultType(Hint->Signature);
+        break;
+      case 6:
+        Call->Type = NdType::makeInt(8, false);
+        break;
+      case 7:
+        Hint->DoesNotReturn = true;
+        break;
+      case 8:
+        Call->Operands.clear();
+        break;
+      case 9:
+        Return.RetVal->Operands[0] = HighExpr::makeConst(0, 4);
+        break;
+      case 10:
+        Define.Val = HighExpr::makeUndef(4);
+        F.High.Body[0] = Define;
+        break;
+      case 11:
+        F.High.Body.erase(F.High.Body.begin());
+        break;
+      case 12:
+        Call->Operands.push_back(HighExpr::makeConst(0, 4));
+        break;
+      case 13:
+        Call->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 14:
+        Call->Type = NdType::makeFloat(4);
+        break;
+      case 15:
+        Hint->Signature.ReturnComponents = {Hint->Signature.ReturnLocation};
+        break;
+      case 16:
+        Hint->Signature.ReturnLocation.Kind =
+            SourceABICarrierKind::FloatingRegister;
+        break;
+      default:
+        break;
+      }
+      const auto Refined = refineNativeSourceTypeHint(F.High, F.Audit);
+      EXPECT_EQ(bool(Refined), Mutation == 0);
+      if (Refined) {
+        EXPECT_EQ(Refined->ReturnLocation.ValueBytes, 4U);
+        EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);
+        EXPECT_EQ(Return.RetVal->Operands[0]->Kind, ExprKind::Undef);
       }
     }
 }
@@ -6287,6 +6699,363 @@ struct NativeFloatingFixture : NativeFixture {
   }
 };
 
+TEST(NativeSourceHints,
+     FloatingPairDemandRequiresCompleteLowDoubleObservation) {
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    LowFunc F;
+    F.Blocks.emplace_back();
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.addInput(NdVar::cst(0x1080, 8));
+    LowOp Read;
+    Read.Opcode = NdOp::COPY;
+    Read.Output = NdVar::reg(a64reg::V(9), 16);
+    Read.addInput(NdVar::reg(a64reg::V(1), Mutation == 1 ? 8 : 16));
+    F.Blocks[0].Ops = {Call, Read};
+    if (Mutation == 2)
+      F.Blocks[0].Ops.back().Inputs[0].Size = 4;
+    if (Mutation == 3)
+      F.Blocks[0].Ops.back().Inputs[0].Offset += 8;
+    if (Mutation == 4)
+      F.Blocks[0].Ops.front().Opcode = NdOp::INDIR_CALL;
+    if (Mutation >= 5 && Mutation <= 8) {
+      LowOp Stop;
+      Stop.Opcode = Mutation == 5   ? NdOp::INTRINSIC
+                    : Mutation == 6 ? NdOp::INDIR_CALL
+                                    : NdOp::COPY;
+      if (Mutation >= 7) {
+        Stop.Output = NdVar::reg(a64reg::V(1) + (Mutation == 8 ? 4 : 0), 4);
+        Stop.addInput(NdVar::cst(0, 4));
+      }
+      F.Blocks[0].Ops.insert(F.Blocks[0].Ops.begin() + 1, Stop);
+    }
+    if (Mutation == 9) {
+      F.Blocks[0].Ops.back().Opcode = NdOp::INT_XOR;
+      F.Blocks[0].Ops.back().addInput(Read.Inputs[0]);
+    }
+    if (Mutation == 10) {
+      F.Blocks[0].Ops.pop_back();
+      F.Blocks.emplace_back();
+      F.Blocks.back().Ops.push_back(Read);
+    }
+    if (Mutation == 11)
+      F.Blocks[0].Ops.back().Inputs[0].Size = 32;
+    EXPECT_EQ(observedNativeFloatingPairReturns(F, Arch::AArch64),
+              Mutation <= 1 ? std::set<va_t>{0x1080} : std::set<va_t>{});
+    EXPECT_TRUE(observedNativeFloatingPairReturns(F, Arch::X64).empty());
+  }
+}
+
+TEST(NativeSourceHints, FloatingPairsRequireBothCurrentCompleteCarriers) {
+  for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    NativeFloatingFixture F(Arch::AArch64, 8);
+    auto Second = F.Med.Blocks[0].Ops[0];
+    Second.Opcode = NdOp::FLOAT_SUB;
+    Second.Output.RegOff = a64reg::V(1);
+    Second.Output.Id = 11;
+    F.Med.Blocks[0].Ops.insert(F.Med.Blocks[0].Ops.end() - 1, Second);
+    std::string Error;
+    auto Scalar = F.infer(Error);
+    ASSERT_TRUE(Scalar) << Error;
+    F.Med.SourceTypeHint = F.High.SourceTypeHint = *Scalar;
+    F.Med.SourceParametersBound = true;
+    auto &Ops = F.Med.Blocks[0].Ops;
+    switch (Mutation) {
+    case 1:
+      F.Med.SourceTypeHint->Origin = F.High.SourceTypeHint->Origin =
+          SourceFunctionTypeHint::OriginKind::DarwinSDK;
+      break;
+    case 2:
+      F.Audit.MedIRVerified = false;
+      break;
+    case 3:
+      F.High.Entry += 4;
+      break;
+    case 4:
+      F.Med.SourceParametersBound = false;
+      break;
+    case 5:
+      F.High.SourceTypeHint->ReturnType = NdType::makeFloat(4);
+      break;
+    case 6:
+      Ops[1].Output.Size = 4;
+      break;
+    case 7:
+      Ops[0].Output.Size = 4;
+      break;
+    case 8:
+      Ops[1].Output.RegOff += 8;
+      break;
+    case 9:
+      Ops.erase(Ops.begin() + 1);
+      break;
+    case 10: {
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(MedVar::makeConst(0x1080, 8));
+      Ops.insert(Ops.end() - 1, Call);
+      break;
+    }
+    case 11:
+      F.Med.Blocks[0].ExceptionalSuccs.emplace_back();
+      break;
+    case 12:
+      F.Med.Blocks[0].Succs.push_back(99);
+      break;
+    case 13:
+      F.Med.SourceTypeHint->Architecture = F.High.SourceTypeHint->Architecture =
+          Arch::X64;
+      break;
+    case 14:
+      F.Med.DoesNotReturn = true;
+      break;
+    case 15:
+      F.Med.SourceTypeHint->ReturnLocation.ValueBytes =
+          F.High.SourceTypeHint->ReturnLocation.ValueBytes = 4;
+      break;
+    case 16:
+      F.Med.SourceTypeHint->ReturnType = F.High.SourceTypeHint->ReturnType =
+          F.Med.ReturnType = F.High.ReturnType = NdType::makeInt(8);
+      break;
+    case 17:
+      F.High.Body.clear();
+      break;
+    }
+    const auto Pair =
+        refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit);
+    EXPECT_EQ(bool(Pair), Mutation == 0);
+    if (Pair) {
+      ASSERT_EQ(Pair->ReturnComponents.size(), 2U);
+      EXPECT_EQ(Pair->ReturnType->Kind, NdTypeKind::Struct);
+      for (unsigned I = 0; I != 2; ++I) {
+        EXPECT_EQ(Pair->ReturnComponents[I].Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Pair->ReturnComponents[I].RegisterOffset, a64reg::V(I));
+        EXPECT_EQ(Pair->ReturnComponents[I].ValueBytes, 8U);
+      }
+      EXPECT_TRUE(equalSourceABIs(*F.Med.SourceTypeHint, *Scalar));
+      F.Med.SourceTypeHint = F.High.SourceTypeHint = *Pair;
+      F.Med.ReturnType = F.High.ReturnType = Pair->ReturnType;
+      EXPECT_FALSE(refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit));
+    }
+  }
+}
+
+TEST(NativeSourceHints,
+     FloatingPairPathsMeetBothDoublesAcrossJoinsAndBackedges) {
+  for (bool Loop : {false, true})
+    for (bool Missing : {false, true}) {
+      NativeFloatingFixture F(Arch::AArch64, 8);
+      std::string Error;
+      const auto Scalar = F.infer(Error);
+      ASSERT_TRUE(Scalar) << Error;
+      F.Med.SourceTypeHint = F.High.SourceTypeHint = *Scalar;
+      F.Med.SourceParametersBound = true;
+      const auto First = F.Med.Blocks[0].Ops[0];
+      auto Second = First;
+      Second.Output.RegOff = a64reg::V(1);
+      Second.Output.Id = 11;
+      const auto Return = F.Med.Blocks[0].Ops.back();
+      F.Med.Blocks[0].Ops = {First};
+      F.Med.Blocks[0].Succs = {1, 2};
+      F.Med.Blocks.resize(4);
+      for (int I = 1; I != 4; ++I)
+        F.Med.Blocks[I].Id = I;
+      F.Med.Blocks[1].Preds =
+          Loop ? std::vector<int>{0, 1} : std::vector<int>{0};
+      F.Med.Blocks[1].Succs =
+          Loop ? std::vector<int>{1, 3} : std::vector<int>{3};
+      F.Med.Blocks[1].Ops = {Second};
+      F.Med.Blocks[2].Preds = {0};
+      F.Med.Blocks[2].Succs = {3};
+      Second.Output.Id = 12;
+      F.Med.Blocks[2].Ops =
+          Missing ? std::vector<MedOp>{} : std::vector<MedOp>{Second};
+      F.Med.Blocks[3].Preds = {1, 2};
+      F.Med.Blocks[3].Ops = {Return};
+      EXPECT_EQ(
+          bool(refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit)),
+          !Missing)
+          << "loop=" << Loop << " missing=" << Missing;
+    }
+}
+
+TEST(NativeSourceHints, FloatingPairReliftingPublishesBothComputedDoubles) {
+  NativeFixture F;
+  F.Audit.DecodedInstructions = F.Audit.LiftedInstructions = 5;
+  SourceFunctionTypeHint Scalar;
+  Scalar.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Scalar.ReturnType = NdType::makeFloat(8);
+  Scalar.Parameters = {{"a", NdType::makeFloat(8)},
+                       {"b", NdType::makeFloat(8)}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Scalar, Arch::AArch64, Error))
+      << Error;
+  LowFunc Low;
+  Low.Entry = F.Med.Entry;
+  LowBlock B;
+  B.Id = 0;
+  B.StartAddr = Low.Entry;
+  B.EndAddr = Low.Entry + 20;
+  for (unsigned I = 0; I != 2; ++I) {
+    LowOp Compute;
+    Compute.Addr = Low.Entry + I * 4;
+    Compute.Opcode = I ? NdOp::FLOAT_SUB : NdOp::FLOAT_ADD;
+    Compute.Output = NdVar::tmp(I, 8);
+    Compute.addInput(NdVar::reg(a64reg::V(0), 8));
+    Compute.addInput(NdVar::reg(a64reg::V(1), 8));
+    B.Ops.push_back(Compute);
+  }
+  for (unsigned I = 0; I != 2; ++I) {
+    LowOp Write;
+    Write.Addr = Low.Entry + 8 + I * 4;
+    Write.Opcode = NdOp::INT_ZEXT;
+    Write.Output = NdVar::reg(a64reg::V(I), 16);
+    Write.addInput(NdVar::tmp(I, 8));
+    B.Ops.push_back(Write);
+  }
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = Low.Entry + 16;
+  Return.addInput(NdVar::reg(a64reg::X30, 8));
+  B.Ops.push_back(Return);
+  Low.Blocks = {B};
+  const auto Bind = [&](const SourceFunctionTypeHint &Hint) {
+    std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceCalleeTypeHints(&Hints);
+    Converter.setSourceEntryTypeHints(&Hints);
+    F.Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    F.Med.SourceTypeHint = Hint;
+    recoverCallAbi(F.Med, Arch::AArch64, {});
+    inferMedTypes(F.Med, Arch::AArch64);
+    F.High = MedToHighConverter().convert(F.Med, Arch::AArch64);
+  };
+  Bind(Scalar);
+  const auto Pair = refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit);
+  ASSERT_TRUE(Pair);
+  Bind(*Pair);
+  ASSERT_TRUE(F.Med.SourceParametersBound);
+  EXPECT_TRUE(equalSourceTypes(F.High.ReturnType, Pair->ReturnType));
+  const auto Limitation = sdk::sourceBodyLimitation(F.High, *Pair, &F.Audit);
+  EXPECT_TRUE(Limitation.empty()) << Limitation;
+  EXPECT_FALSE(refineNativeFloatingPairReturnHint(F.Med, F.High, F.Audit));
+  unsigned Returns = 0;
+  walkStmts(F.High.Body, [&](const HighStmt &S) {
+    if (S.Kind != StmtKind::Return)
+      return;
+    ++Returns;
+    ASSERT_TRUE(S.RetVal);
+    EXPECT_TRUE(equalSourceTypes(S.RetVal->Type, Pair->ReturnType));
+    ASSERT_EQ(S.RetVal->Operands.size(), 2U);
+  });
+  EXPECT_EQ(Returns, 1U);
+  // A carrier write is only a candidate. Publication must still reject an
+  // undefined low lane after rebuilding the complete record-return function.
+  Low.Blocks[0].Ops[1].Inputs[1] = NdVar::tmp(99, 8);
+  Bind(*Pair);
+  EXPECT_FALSE(sdk::sourceBodyLimitation(F.High, *Pair, &F.Audit).empty());
+}
+
+TEST(NativeSourceHints,
+     FloatingRecordCallsKeepUpperLanesUnknownAndEvaluateOnce) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Width : {4U, 8U})
+      for (unsigned Count : {2U, 4U})
+        for (unsigned Lane = 0; Lane != Count; ++Lane)
+          for (bool Upper : {false, true}) {
+            if (Architecture == Arch::X64 &&
+                (Width != 8 || Count != 4 || Lane == 3))
+              continue;
+            SCOPED_TRACE(::testing::Message()
+                         << unsigned(Architecture) << ":" << Width << ":"
+                         << Count << ":" << Lane << ":" << Upper);
+            const auto &TRI = getTargetRegInfo(Architecture);
+            NativeFixture F(Architecture);
+            F.Audit.DecodedInstructions = F.Audit.LiftedInstructions = 4;
+            SourceFunctionTypeHint Entry;
+            Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+            Entry.ReturnType = NdType::makeFloat(Width);
+            std::string Error;
+            ASSERT_TRUE(assignDarwinFixedSourceABI(Entry, Architecture, Error))
+                << Error;
+            auto Callee = Entry;
+            std::vector<TypeRef> Members(Count, NdType::makeFloat(Width));
+            if (Architecture == Arch::X64)
+              Members.back() = NdType::makePtr(NdType::makeVoid());
+            Callee.ReturnType = NdType::makeStruct(Members);
+            ASSERT_TRUE(
+                Architecture == Arch::X64
+                    ? assignDarwinSwiftSourceABI(Callee, Architecture, Error)
+                    : assignDarwinFixedSourceABI(Callee, Architecture, Error))
+                << Error;
+            LowFunc Low;
+            Low.Entry = F.Med.Entry;
+            LowBlock B;
+            B.Id = 0;
+            B.StartAddr = Low.Entry;
+            B.EndAddr = Low.Entry + 16;
+            LowOp Call;
+            Call.Opcode = NdOp::CALL;
+            Call.Addr = Low.Entry;
+            Call.addInput(NdVar::cst(0x1080, 8));
+            B.Ops.push_back(Call);
+            LowOp Extract;
+            Extract.Opcode = NdOp::SUBBYTES;
+            Extract.Addr = Low.Entry + 4;
+            Extract.Output = NdVar::tmp(0, Width);
+            Extract.addInput(NdVar::reg(TRI.FPParamRegs[Lane], 16));
+            Extract.addInput(NdVar::cst(Upper ? Width : 0, 8));
+            B.Ops.push_back(Extract);
+            LowOp Write;
+            Write.Opcode = NdOp::INT_ZEXT;
+            Write.Addr = Low.Entry + 8;
+            Write.Output = NdVar::reg(TRI.FPReturnReg, 16);
+            Write.addInput(Extract.Output);
+            B.Ops.push_back(Write);
+            LowOp Return;
+            Return.Opcode = NdOp::RETURN;
+            Return.Addr = Low.Entry + 12;
+            Return.addInput(NdVar::reg(
+                TRI.LinkRegister ? TRI.LinkRegister : TRI.IntReturnReg, 8));
+            B.Ops.push_back(Return);
+            Low.Blocks = {B};
+            std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Entry},
+                                                         {0x1080, Callee}};
+            LowToMedConverter Converter;
+            Converter.setSourceCallHintsEnabled(true);
+            Converter.setSourceCalleeTypeHints(&Hints);
+            Converter.setSourceEntryTypeHints(&Hints);
+            F.Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+            F.Med.SourceTypeHint = Entry;
+            recoverCallAbi(F.Med, Architecture, {{0x1080, "two_doubles"}});
+            inferMedTypes(F.Med, Architecture);
+            F.High = MedToHighConverter().convert(F.Med, Architecture);
+            unsigned Calls = 0;
+            const auto Limitation = sdk::sourceBodyLimitation(
+                F.High, Entry, &F.Audit, [](const HighExpr &) { return true; });
+            EXPECT_EQ(Limitation.empty(), !Upper) << Limitation;
+            walkStmts(F.High.Body, [&](const HighStmt &S) {
+              forEachExpr(S, [&](const ExprPtr &E) {
+                const auto Visit = [&](const auto &Self,
+                                       const ExprPtr &X) -> void {
+                  if (!X)
+                    return;
+                  if (X->SourceCallHint)
+                    ++Calls;
+                  for (const auto &Operand : X->Operands)
+                    Self(Self, Operand);
+                };
+                Visit(Visit, E);
+              });
+            });
+            EXPECT_EQ(Calls, 1U);
+          }
+}
+
 TEST(NativeSourceHints, FloatingLanesPreserveScalarParametersAndResults) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Width : {4U, 8U})
@@ -9406,5 +10175,263 @@ TEST(NativeSourceHints, ScalarResultCannotSkipConsumedUIntStateProof) {
     std::string Error;
     const auto Hint = F.infer(Error);
     EXPECT_EQ(bool(Hint), Case == 0) << Error;
+  }
+}
+
+TEST(NativeSourceHints, ConsumedObjectIdentifierRequiresItsOwnTypeContract) {
+  using namespace swift_consumed_input_test;
+  IdentifierFixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_TRUE(F.low());
+  const auto Hints = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(IdentifierCall);
+  const auto Effect = swiftConsumedInputCallEffects(F.Image, *F.low(), Hint);
+  ASSERT_TRUE(Effect);
+  EXPECT_EQ(Effect->WritableFrameParameters,
+            (std::map<size_t, size_t>{{1, 8}}));
+  EXPECT_EQ(Effect->InitializedFrameParameters, (std::set<size_t>{1}));
+  EXPECT_TRUE(Effect->ReadOnlyFrameParameters.empty());
+  EXPECT_FALSE(Effect->InitializesIndirectResult);
+  std::string Error;
+  const auto EntryHint = F.infer(Error);
+  ASSERT_TRUE(EntryHint) << Error;
+  ASSERT_EQ(EntryHint->Parameters.size(), 2U);
+  EXPECT_EQ(EntryHint->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(EntryHint->Parameters[1].Location.RegisterOffset, a64reg::X8);
+  F.EntrySignature = *EntryHint;
+  F.runUInt();
+  const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_TRUE(
+      sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
+          .valid(Bound.Function));
+}
+
+TEST(NativeSourceHints, ConsumedIdentifierRechecksTypeWindowAndCarrier) {
+  using namespace swift_consumed_input_test;
+  IdentifierFixture F;
+  ASSERT_TRUE(F.low());
+  const auto Hints = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  for (unsigned Case = 0; Case < 25; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Image = F.Image;
+    auto Low = *F.low();
+    auto Hint = Hints.at(IdentifierCall);
+    auto Change = [&](unsigned I, uint32_t Word) {
+      llvm::support::endian::write32le(Image.Segments[0].Data.data() + I * 4,
+                                       Word);
+    };
+    switch (Case) {
+    case 0:
+      Image.DyldBindSlots[MetadataSlot].Name = "_$sSuN";
+      break;
+    case 1:
+      Image.DyldBindSlots[WitnessSlot].Name = "_$sSuSHsWP";
+      break;
+    case 2:
+      Image.DyldBindSlots[MetadataSlot].WeakImport = true;
+      break;
+    case 3:
+      Image.DyldBindSlots[WitnessSlot].Module = "other";
+      break;
+    case 4:
+      Image.DyldBindSlots[WitnessSlot].Addend = 8;
+      break;
+    case 5:
+      Image.ImportPtrSlots[MetadataSlot] = "_$sSuN";
+      break;
+    case 6:
+      Change(8, 0x1100a108);
+      break; // partial result computation
+    case 7:
+      Change(8, 0x9100a101);
+      break; // destroys metadata identity
+    case 8:
+      Change(8, 0x9100a102);
+      break; // destroys witness identity
+    case 9:
+      Change(8, 0x94000038);
+      break; // intervening call
+    case 10:
+      Change(8, 0xf9400108);
+      break; // memory observation, not ADD
+    case 11:
+      Change(8, 0xd503201f);
+      break; // unsupported extra instruction
+    case 12:
+      Change(9, 0xd2800001);
+      break; // final instruction clobber
+    case 13:
+      Change(7, 0xb9400842);
+      break; // narrow witness
+    case 14:
+      Low.Blocks.front().InstructionBoundaries.clear();
+      break;
+    case 15:
+      Low.Blocks.front().Succs.push_back(0x2000);
+      break;
+    case 16:
+      for (auto &Block : Low.Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.Addr == IdentifierCall - 8 && Op.Output.Size)
+            Op.Output.Size = 4;
+      break;
+    case 17:
+      Hint.Signature.Parameters[1].Location.ValueBytes = 4;
+      break;
+    case 18:
+      Hint.Signature.Parameters[0].Location.RegisterOffset = a64reg::X9;
+      break;
+    case 19:
+      Hint.SwiftConsumedInput->MetadataSlot = WitnessSlot;
+      break;
+    case 20:
+      Hint.SwiftConsumedInput->Site.Instruction -= 4;
+      break;
+    case 21:
+      Hint.SwiftConsumedInput.reset();
+      break;
+    case 22:
+      for (auto &Section : Image.Sections)
+        if (Section.VA == RuntimeSlot)
+          Section.Type = llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS;
+      break;
+    }
+    if (Case == 23 || Case == 24) {
+      // Only the runtime slot is TLS/lazy: metadata and witness remain
+      // ordinary GOT identities and cannot mask a bad callee import.
+      auto *Got = const_cast<Section *>(Image.getSectionFor(RuntimeSlot));
+      ASSERT_TRUE(Got);
+      Section RuntimeSection = *Got;
+      Got->VA = MetadataSlot;
+      Got->Size = Got->FileSz = 16;
+      RuntimeSection.Size = RuntimeSection.FileSz = 8;
+      RuntimeSection.Type = Case == 23
+                                ? llvm::MachO::S_THREAD_LOCAL_VARIABLE_POINTERS
+                                : llvm::MachO::S_LAZY_SYMBOL_POINTERS;
+      Image.Sections.push_back(RuntimeSection);
+    }
+    EXPECT_FALSE(swiftConsumedInputCallEffects(Image, Low, Hint));
+  }
+  // The result-address window does not choose a type by its extent. A
+  // complete current UInt pair is independently valid; a mixed pair is not.
+  for (const auto &[Slot, Name] : std::map<va_t, std::string>{
+           {MetadataSlot, "_$sSuN"}, {WitnessSlot, "_$sSuSHsWP"}}) {
+    F.Image.ImportPtrSlots[Slot] = Name;
+    F.Image.DyldBindSlots[Slot].Name = Name;
+  }
+  F.runUInt();
+  const auto UInt = buildSwiftConsumedInputCallHints(F.Image, *F.low());
+  ASSERT_EQ(UInt.size(), 1U);
+  EXPECT_TRUE(swiftConsumedInputCallEffects(F.Image, *F.low(),
+                                            UInt.at(IdentifierCall)));
+}
+
+TEST(NativeSourceHints, ConsumedIdentifierCannotSkipInputLifetime) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 9; ++Case) {
+    SCOPED_TRACE(Case);
+    IdentifierFixture F;
+    F.word(11,
+           0xd28000e0); // Defined scalar result must not bypass state proof.
+    F.word(12, 0xa9417bfd);
+    F.word(13, 0x910083ff);
+    F.word(14, 0xd65f03c0);
+    F.Image.Symbols[0].Size = 60;
+    if (Case == 1)
+      F.word(3, 0xb9000be0); // partial initial value
+    if (Case == 2)
+      F.word(3, 0xd503201f); // no initial value
+    if (Case == 3)
+      F.word(11, 0xf94007e0); // consumed bytes as the result
+    if (Case == 4)
+      F.word(9, 0x910003e0); // unwritten adjacent word
+    if (Case == 5)
+      F.word(9, 0x910043e0); // saved frame word
+    if (Case == 6)
+      F.word(9, 0x910073e0); // partial active-frame range
+    F.runUInt();
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    if (Case >= 7) {
+      for (auto &Block : F.med()->Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput) {
+            auto Hint =
+                std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+            if (Case == 7)
+              Hint->SwiftConsumedInput.reset();
+            else
+              Hint->Signature.Parameters[1].Location.ValueBytes = 4;
+            Op.SourceCallHint = std::move(Hint);
+          }
+    }
+    std::string Error;
+    EXPECT_EQ(bool(F.infer(Error)), Case == 0) << Error;
+  }
+}
+
+TEST(NativeSourceHints, ConsumedIdentifierPublicationReplaysCurrentOperands) {
+  using namespace swift_consumed_input_test;
+  for (unsigned Case = 0; Case < 12; ++Case) {
+    SCOPED_TRACE(Case);
+    IdentifierFixture F;
+    std::string Error;
+    const auto EntryHint = F.infer(Error);
+    ASSERT_TRUE(EntryHint) << Error;
+    F.EntrySignature = *EntryHint;
+    F.runUInt();
+    auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    HighExpr *CallExpr = nullptr;
+    walkStmts(Bound.Function.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (E && E->SourceCallHint && E->SourceCallHint->SwiftConsumedInput)
+          CallExpr = E.get();
+      });
+    });
+    ASSERT_TRUE(CallExpr);
+    MedOp *CallOp = nullptr;
+    for (auto &Block : F.med()->Blocks)
+      for (auto &Op : Block.Ops)
+        if (Op.SourceCallHint && Op.SourceCallHint->SwiftConsumedInput)
+          CallOp = &Op;
+    ASSERT_TRUE(CallOp);
+    if (Case < 4)
+      CallExpr->Operands[Case] = HighExpr::makeConst(0, 8);
+    if (Case == 4 || Case == 6) {
+      auto Hint = std::make_shared<SourceCallTypeHint>(*CallOp->SourceCallHint);
+      Hint->SwiftConsumedInput.reset();
+      CallOp->SourceCallHint = Hint;
+    }
+    if (Case == 5 || Case == 6) {
+      auto Hint =
+          std::make_shared<SourceCallTypeHint>(*CallExpr->SourceCallHint);
+      Hint->SwiftConsumedInput.reset();
+      CallExpr->SourceCallHint = Hint;
+    }
+    if (Case == 7)
+      CallOp->Inputs[2] = CallOp->Inputs[3];
+    if (Case == 8)
+      F.word(3, 0xb9000be0);
+    if (Case == 9)
+      F.Result.FunctionAudits.front().MedIRVerified = false;
+    if (Case == 10)
+      for (size_t I = 0; I < Bound.Function.Body.size(); ++I)
+        if (Bound.Function.Body[I].Kind == StmtKind::Call) {
+          Bound.Function.Body.insert(Bound.Function.Body.begin() + I,
+                                     Bound.Function.Body[I]);
+          break;
+        }
+    if (Case == 11)
+      for (size_t I = 0; I < Bound.Function.Body.size(); ++I)
+        if (Bound.Function.Body[I].Kind == StmtKind::Store) {
+          Bound.Function.Body.erase(Bound.Function.Body.begin() + I);
+          break;
+        }
+    EXPECT_FALSE(
+        sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
+            .valid(Bound.Function));
   }
 }

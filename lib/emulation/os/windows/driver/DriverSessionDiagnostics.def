@@ -1,0 +1,100 @@
+//===- DriverSessionDiagnostics.def - Driver execution diagnostics -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Driver-session wording belongs here; execution policy remains in C++.
+#ifdef NEVERD_DRIVER_SESSION_DIAGNOSTIC
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(Limits,
+                                 "driver limits must be positive (memory <= "
+                                 "{0} bytes, events <= {1}, timeout <= {2} ms)")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    ImportLimit, "too many driver imports for the bounded x64 profile")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(MissingSecurityCookie,
+                                 "x64 SEH: image has no security cookie")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    StackRange, "guest stack pointer exceeds the invocation stack")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    CallbackStack, "driver callback returned with an unbalanced stack")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(UnsupportedImport, "unsupported import: ")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(InstructionExtent,
+                                 "invalid x64 instruction extent")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    EnvironmentReadRange,
+    "environment read advances beyond the guest address range")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    ImportRead,
+    "reading bytes of an imported symbol requires an unmodeled kernel image")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(GuestFaultPrefix, "guest ")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(GuestFaultAddress, " fault at 0x")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(GuestFaultSizeSuffix, " bytes)")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(CPUException,
+                                 "unmodeled CPU exception/interrupt ")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    RejectedInstruction, "CPU rejected an invalid or unsupported instruction")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    CallbackCode, "driver callback does not name guest executable code")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    CallbackArguments, "scheduled callback exceeds the argument limit")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(CallbackStackLimit,
+                                 "concurrent callback stack limit exhausted")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(ExceptionDepth,
+                                 "nested exception depth limit exceeded")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(MissingSEHDispatch,
+                                 "SEH callback lost its suspended dispatch")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(UnhandledException,
+                                 "unhandled guest exception 0x")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(MissingFrameworkLockWait,
+                                 "framework callback entry lost its lock wait")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    SavedIRQL, "saved CPU IRQL disagrees with its model execution")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    CR8Read, "CR8 read disagrees with the active model IRQL")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(IRQLDestination,
+                                 "IRQL read lost its destination register")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    CFGReturnAddress, "CFG check has a non-executable return address")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(UnknownCPUExit,
+                                 "CPU stopped without a recognized exit")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    KernelArgumentContract,
+    "kernel API argument contract exceeds the x64 dispatcher limit")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    KernelArgumentLimit, "kernel call exceeds the variable argument limit")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    KernelReturnAddress, "kernel call has a non-executable return address")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    VariadicArgumentOrder, "variadic kernel arguments must be read in order")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(RaisedException, "raised guest exception 0x")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    ExceptionCPU, "guest exception delivery requires a healthy CPU")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    NestedThreadTermination, "nested system-thread termination is unsupported")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(ThreadTerminated, "system thread terminated")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    DetachedCallbackWait, "detached callback has an unrelated deferred wait")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    ExceptionCallbackBoundary, "exception transfer crosses a non-SEH callback")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    MissingExceptionStack, "exception transfer lost its owning execution stack")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    APIExceptionContinuation,
+    "continuing a modeled API exception is unsupported")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(CallbackReplacesWait,
+                                 "callback cannot replace its caller wait")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(MissingModelCallback,
+                                 "model continuation lost its guest callback")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(ScheduledCallbackWait,
+                                 "scheduled callback has an unrelated wait")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    StalledPending, "STATUS_PENDING request or blocked wait is stalled: no "
+                    "scheduled completion source remains")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    InitializationStatus,
+    "DriverEntry must return STATUS_SUCCESS to initialize; nonzero successful "
+    "or pending status is unsupported")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    DeferredDrain,
+    "defer_callback_drain requires an IRP that remains pending after dispatch")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(ObjectSnapshot, "object snapshot failed: ")
+#endif

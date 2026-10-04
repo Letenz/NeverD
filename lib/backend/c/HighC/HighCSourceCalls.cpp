@@ -1,4 +1,5 @@
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../../../loader/Swift/SwiftErrorRuntime.h"
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
@@ -110,6 +111,8 @@ HighCWriter::sourceParameterType(const SourceParameterTypeHint &Parameter) {
     return Result + " __attribute__((swift_indirect_result))";
   case SourceParameterTypeHint::Role::SwiftContext:
     return Result + " __attribute__((swift_context))";
+  case SourceParameterTypeHint::Role::SwiftErrorResult:
+    return Result + " __attribute__((swift_error_result))";
   }
   throw std::invalid_argument("Unsupported source parameter role");
 }
@@ -186,6 +189,18 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return Call + "))";
   }
   const auto &Signature = Hint.Signature;
+  const bool ErrorSlot = hasSwiftErrorResult(Signature);
+  if (ErrorSlot) {
+    if (!isSwiftWillThrowSourceCall(Hint, Opts.TheArch) || E.IsIndirectCall ||
+        E.Operands.size() != 2 ||
+        !equalSourceTypes(E.Type, Signature.ReturnType))
+      return bad("unsupported Swift in/out error binding");
+    for (const auto &Argument : E.Operands)
+      if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
+          (Argument->Type->Kind != NdTypeKind::Ptr &&
+           Argument->Type->Kind != NdTypeKind::Int))
+        return bad("incomplete Swift error-register input");
+  }
   if (Hint.CallKind == Kind::CFunctionParameterCall) {
     if (!CurrentFunc ||
         !isCFunctionParameterSourceCall(E, *CurrentFunc, Opts.TheArch))
@@ -932,7 +947,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                          Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
     if (Runtime)
       Name = Hint.TargetName;
-    if (Hint.CallKind == Kind::SwiftStringBridge)
+    if (ErrorSlot)
+      Name = SwiftWillThrowValueSourceName;
+    else if (Hint.CallKind == Kind::SwiftStringBridge)
       Name = "neverd_swift_string_to_nsstring";
     else if (Hint.CallKind == Kind::SwiftStringFromNSString)
       Name = "neverd_nsstring_to_swift_string";
@@ -1026,7 +1043,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (auto Declared = declaredParamType(Argument.Var);
           Declared && Declared->Kind == NdTypeKind::Float)
         Carrier = Declared;
-    const auto &SourceType = Signature.Parameters[I].Type;
+    const auto &Parameter = Signature.Parameters[I];
+    const auto SourceType =
+        Parameter.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult
+            ? Parameter.Type->Pointee
+            : Parameter.Type;
     // A machine register may carry a null pointer through a subregister (for
     // example W0 on AArch64).  Preserve the exact zero as a C null pointer
     // constant instead of requiring the integer carrier to have pointer width.

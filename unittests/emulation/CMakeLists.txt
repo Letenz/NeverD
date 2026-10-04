@@ -1,6 +1,9 @@
 add_neverd_unittest(NeverDHvfTests
   HvfTests.cpp
   HvfExecutorTests.cpp
+  HvfIntelDeadlineTests.cpp
+  HvfOwnerThreadTests.cpp
+  HvfIntelOwnerTests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU)
 
@@ -26,9 +29,15 @@ add_neverd_unittest(NeverDAArch64FPTests
 target_include_directories(NeverDAArch64FPTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
+add_neverd_unittest(NeverDAArch64PAuthTests
+  AArch64PAuthTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationCPU)
+
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
+  AArch64AcquireReleaseTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
@@ -53,6 +62,12 @@ add_neverd_unittest(NeverDMemoryLifecycleTests
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
+add_neverd_unittest(NeverDInstructionFetchTests
+  InstructionFetchTests.cpp
+  TIMEOUT 15
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationCPU)
+
 add_neverd_unittest(NeverDExecutionSessionTests
   ExecutionSessionTests.cpp
   ImageMappingTests.cpp
@@ -65,6 +80,9 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64StringTransferTests.cpp
   X64StringComparisonTests.cpp
   X64DataTests.cpp
+  X64PackedIntegerTests.cpp
+  X64PackedShiftTests.cpp
+  X64VectorMaskTests.cpp
   X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
@@ -91,6 +109,7 @@ add_neverd_unittest(NeverDX64IntegerTests
 
 add_neverd_unittest(NeverDX64ExceptionTests
   X64ExceptionTests.cpp
+  X64AlignmentTests.cpp
   X64DivisionTests.cpp
   X64StateTransitionTests.cpp
   NO_PRETTY_VALUES
@@ -103,6 +122,7 @@ add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxProcessLayoutTests.cpp
   LinuxMemoryTests.cpp
+  LinuxOutputNativeTests.cpp
   ProcessReportTests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationProcess)
@@ -134,8 +154,16 @@ target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/
 include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
+  AndroidMemoryTests.cpp
+  AndroidTokenTests.cpp
+  AndroidMutexTests.cpp
+  AndroidTimeTests.cpp
+  AndroidSyscallTests.cpp
+  AndroidFormattingTests.cpp
+  AndroidFinalizerTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
+target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
 include(AndroidFixtures.cmake)
 
 # Batch PE scenarios use the common harness timeout; each guest workload
@@ -151,6 +179,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsHeapTests.cpp
   WindowsSystemTests.cpp
   WindowsExceptionTests.cpp
+  WindowsAlignmentProcessTests.cpp
   WindowsContinuationTests.cpp
   WindowsSEHTests.cpp
   WindowsContextTests.cpp
@@ -225,6 +254,7 @@ target_include_directories(NeverDUserExecutionTests PRIVATE
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NEVERD_EMULATION_BACKEND_KVM)
   add_neverd_unittest(NeverDKvmRunTests
     KvmRunTests.cpp
+    KvmHandoffTests.cpp
     TIMEOUT 10
     LINK_COMPONENTS EmulationNative)
   target_include_directories(NeverDKvmRunTests PRIVATE
@@ -250,6 +280,7 @@ add_neverd_unittest(NeverDRunControlTests
   NativeEntryTests.cpp
   WhpEntryControlTests.cpp
   WhpXsaveTests.cpp
+  WhpStateTransferTests.cpp
   WhpMemoryTests.cpp
   WhpResourceTests.cpp
   MachineRunControlTests.cpp
@@ -282,6 +313,17 @@ if(TARGET neverd_shared AND TARGET neverd)
 endif()
 
 if(NEVERD_EMULATION_BACKEND_UNICORN)
+  add_executable(NeverDUnicornDecodeTests
+    ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_x86_decode_boundaries.c)
+  target_include_directories(NeverDUnicornDecodeTests PRIVATE ${CMAKE_BINARY_DIR})
+  target_link_libraries(NeverDUnicornDecodeTests PRIVATE unicorn)
+  add_dependencies(NeverDUnitTests NeverDUnicornDecodeTests)
+  add_test(NAME UnicornDecode.RegisterU COMMAND NeverDUnicornDecodeTests
+    register_u_is_not_an_apx_index_bit)
+  add_test(NAME UnicornDecode.RoundMemory COMMAND NeverDUnicornDecodeTests
+    round_memory_fault_priority_and_recovery)
+  set_tests_properties(UnicornDecode.RegisterU UnicornDecode.RoundMemory PROPERTIES
+    LABELS NeverDUnicornDecodeTests TIMEOUT 15)
   target_compile_definitions(NeverDExecutionConfigurationTests PRIVATE NEVERD_TEST_UNICORN=1)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_neverd_unittest(NeverDUnicornStateTransferTests

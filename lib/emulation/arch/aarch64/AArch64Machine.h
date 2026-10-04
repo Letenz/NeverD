@@ -12,6 +12,7 @@
 #include "neverd/emulation/Registers.h"
 
 #include <chrono>
+#include <iterator>
 namespace neverd::emulation {
 namespace aarch64 {
 #define NEVERD_AARCH64_VALUE(Name, Value)                                      \
@@ -23,6 +24,8 @@ inline constexpr uint32_t Maintenance[] = {
 #include "AArch64Machine.def"
 #undef NEVERD_AARCH64_MAINTENANCE
 };
+inline constexpr uint64_t MaintenanceExitGPA =
+    MaintenanceEntryGPA + std::size(Maintenance) * InstructionBytes;
 inline bool canonical(uint64_t A) { return A <= UserMax || A >= KernelMin; }
 inline bool canonicalRange(uint64_t Address, uint64_t Size) {
   return Size && Size - 1 <= UINT64_MAX - Address && canonical(Address) &&

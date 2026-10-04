@@ -79,6 +79,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `stack_size` | 1048576 | Page-aligned stack within the memory budget |
 | `output_limit` | 1048576 | Combined captured stdout/stderr bytes |
 | `instruction_quantum` | 1024 | Admission interval before yielding to the runtime |
+| `linux_time` | Absent | Explicit fixed clock observations for Linux ELF64 and Android native workloads |
 
 `schema_version` is 1. Results include profile, architecture, selected backend
 and its selection reason, `stop_reason`, nullable `exit_status`, diagnostic,
@@ -93,6 +94,8 @@ request; it is distinct from a successful zero return.
 <!-- i18n-section: linux-semantics -->
 
 ## Linux profile semantics
+
+`writev` shares those sinks on x64/ARM64 and through Android Bionic. It imports up to 1024 guest `iovec` entries before output, rejects negative lengths with `EINVAL`, validates user ranges, and applies Linux’s page-aligned transfer cap. An invalid descriptor returns `EBADF` before vector access; inaccessible metadata returns `EFAULT` without output. A later payload fault preserves the copied prefix. The output budget covers the whole vector before publication, across both streams. `write` and `writev` use the low 32 descriptor bits; vector count also follows Linux’s 32-bit import. Bionic alone converts raw negative errors to `-1` and `errno`. `LinuxOutputNativeTests` runs ten original cases on host Linux with regular-file redirects; modeled x64/ARM64 cases also check budgets. See the [Linux vector import contract](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c).
 
 The existing ELF loader supplies decoded program headers. OS policy validates
 ABI tags, segment alignment, mapped program-header tables and user-address
@@ -124,9 +127,9 @@ execution; this is explicitly a deterministic model policy, not cryptographic
 entropy. HWCAP/HWCAP2 are zero; there is no vDSO. Startup conventions follow the
 [Linux ELF loader](https://github.com/torvalds/linux/blob/master/fs/binfmt_elf.c).
 
-Implemented calls are `write`, `exit`, `exit_group`, `getpid`, `gettid`,
+Implemented calls are `write`, `writev`, `exit`, `exit_group`, `getpid`, `gettid`,
 `getuid`, `geteuid`, `getgid`, `getegid`,
-`mmap`, `mprotect`, `munmap` and `brk`, with
+`mmap`, `mprotect`, `munmap`, `brk`, `gettimeofday` and `clock_gettime`, with
 separate [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)
 and [asm-generic ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)
 numbers. Returning x64 SYSCALL applies its RCX/R11 clobbers as well as RAX and
@@ -158,7 +161,8 @@ entries. This does not itself implement a thread scheduler.
 Descriptors 1 and 2 are virtual byte sinks. `write` validates readable user
 pages, returns a readable prefix when a later page is inaccessible, and returns
 guest `EFAULT` when no bytes are readable. A bad descriptor returns `EBADF`;
-a zero-count write on a valid descriptor succeeds without pointer access.
+a zero-count write still validates the user address range, but does not
+require a mapped page or read any payload.
 These sinks do not model Linux pipe atomicity or file objects. Native fixture
 comparison agrees on ordinary output and on partial writes to regular files;
 Linux pipes can reject that same small cross-page write completely. Output
@@ -194,6 +198,50 @@ guest errors and allow execution to continue. No memory service forwards a
 guest pointer or mapping request to the host OS.
 
 <a id="windows-pe64-profile"></a>
+
+<!-- i18n-section: linux-clocks -->
+
+## Explicit guest clocks
+
+The optional `linux_time` input supplies fixed observations, shared by raw
+Linux services and Android Bionic. It never reads the host clock, advances time
+with instruction execution, or supplies a default epoch. For example:
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+Clock IDs are Linux's static IDs 0–9 and 11: realtime, monotonic, process CPU,
+thread CPU, monotonic raw, realtime coarse, monotonic coarse, boottime,
+realtime alarm, boottime alarm and TAI. Each is independent; absent clocks are
+unknown, including coarse variants. Duplicate or unknown input IDs are errors.
+Seconds are signed 64-bit; nanoseconds must be in `[0, 1000000000)`. Integer
+JSON numbers are accepted within `±9007199254740991`; decimal strings preserve
+the full signed range. Timezone fields are signed 32-bit integers. C++ callers
+use `ProcessOptions::LinuxTime`, with the same value validation. Other process
+profiles reject this option.
+
+`clock_gettime` consumes the low signed 32 bits of its clock ID, returns
+`EINVAL` for invalid positive IDs before accessing the destination, and stops
+for unmodeled encoded/dynamic clocks. A known clock without input stops as
+`unsupported_service`. `gettimeofday` writes seconds and truncated microseconds
+as two ordered 64-bit fields, followed by the optional pair of 32-bit timezone
+fields. `gettimeofday(NULL, NULL)` needs no input. Missing timezone input stops
+after any completed timeval writes. The x64 `time` syscall returns realtime
+seconds and optionally stores one 64-bit value; ARM64 has no such syscall.
+These follow the Linux [time service](https://github.com/torvalds/linux/blob/v6.12/kernel/time/time.c)
+and [clock dispatch](https://github.com/torvalds/linux/blob/v6.12/kernel/time/posix-timers.c)
+contracts for the modeled subset.
+
+Fully writable outputs, including unaligned ones, are supported. A wholly
+inaccessible output returns `EFAULT`; earlier completed gettimeofday fields
+remain written. Mixed accessibility within a single 8-byte store or 16-byte
+timespec copy stops before that operation because architecture-specific partial
+fault writes are not modeled. Adjustment, resolution queries, scheduling,
+sleep and real device clocks remain unsupported.
 
 <!-- i18n-section: windows-pe64 -->
 
@@ -233,6 +281,10 @@ Input-file bytes and aggregate image extents each share `memory_limit`; runtime 
 `WindowsSystemModules` builds bounded PE64 model images for `ntdll.dll`, `kernelbase.dll` and `kernel32.dll` on both ISAs. Their mapped bases are shared by ASCII `GetModuleHandleA` / [`GetModuleHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlew), `LoadLibraryA` / `LoadLibraryW` and [`GetProcAddress`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress); PEB/LDR and `MEM_IMAGE` describe those same images. Static imports, named queries and guest forwarders use the same API gates and export resolver. Providers stay pinned, have no guest initialization callbacks and do not prevent entry return after ordinary guest DLLs unload. Changed headers or export metadata stop lookup. Unknown system export names and nonzero system ordinal queries stop explicitly; case-only mismatches of modeled names and empty names return error 127, while a null query returns 87. Generated bytes and addresses are model policy; Windows DLL version layouts, native ordinals and cross-provider aliases are not reconstructed. `WindowsSystemTests.cpp` compares original x64/ARM64 executables with native Windows, including eight independent initial-thread returns.
 
 `WindowsProcessExceptions` implements `AddVectoredExceptionHandler`, `RemoveVectoredExceptionHandler` and `RaiseException` on one CPU with the process budget. Ordered handlers may register or remove handlers, raise nested exceptions, call modeled APIs, load DLLs and exit the process. x64/ARM64 data-access violations and x64 integer divide faults can resume after validated guest edits to `CONTEXT`; general registers, SIMD and supported FP state are preserved. Software exceptions resume through a real return instruction in the modeled provider. The model bounds registrations to 128 retained entries and nesting to 16 frames. Invalid dispositions, changed exception pointers, unsupported context fields and exhausted bounds fail explicitly. ARM64 frame-based SEH/unwinding, debugger delivery and execute/guard faults remain unsupported. `WindowsExceptionTests.cpp` compares original EXE/DLL scenarios against native Windows; native ARM64 KVM/WHP evidence remains pending. [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler), [RemoveVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredexceptionhandler), [RaiseException](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-raiseexception), [CONTEXT x64](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-context), [ARM64_NT_CONTEXT](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-arm64_nt_context). Software exception records carry `EXCEPTION_SOFTWARE_ORIGINATE` (`0x80`), independently of the caller’s noncontinuable flag; the original Windows executable checks the exact software and hardware flag values. [EXCEPTION_RECORD](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-exception_record).
+
+`WindowsProcessContext` retains each dispatch frame’s origin. Admitted x64 data-access and divide faults expose RF (`0x10000`) in `CONTEXT.EFlags`; `RaiseException`, including software access-violation codes, retains the current context. The origin survives VEH/VCH and SEH search/unwind. Valid continuation restores logical CPU flags without RF; guest edits to RF are rejected before state publication. This bounded profile does not model instruction breakpoints or guest-controlled RF. `WindowsExceptionTests.cpp` checks saved records, restoration and unchanged CPU/RAM on rejection.
+
+Windows ring3 maps checked x64 `operand_alignment` faults to `STATUS_ACCESS_VIOLATION` with parameters `[read, UINT64_MAX]`, including stores, following independent native observations. The CPU layer supplies the cause; Windows does not guess it from vector 13 or decode the instruction again. `WindowsAlignmentProcessTests.cpp` runs original PE instructions across 72 fault scenarios and 9 address-repair retries (`72 + 9`), checking PC, RF, XMM state and RAM. Unclassified or inconsistent faults remain rejected. Process and driver fault reports preserve nullable `cause` and hexadecimal `error_code`; absence stays distinct from zero. This delivery applies to the checked x64 user profile.
 
 `AddVectoredContinueHandler` and `RemoveVectoredContinueHandler` maintain a separate ordered list, sharing the 128 retained registration limit with exception handlers. Continue callbacks run after a vectored exception handler accepts continuation; they see the same mutable exception record and `CONTEXT`. Final context validation happens after these callbacks, including nested exceptions and DLL notifications. Handles cannot be removed through the other handler family. `WindowsContinuationTests.cpp` compares original executables for ordering, short-circuiting, mutation, context repair, nested dispatch, loader callbacks and process exit against native Windows. The tested Windows x64 vectored path permits continuation with `EXCEPTION_NONCONTINUABLE` set; this does not establish frame-based SEH behavior. Native ARM64 execution remains unverified. [AddVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredcontinuehandler), [RemoveVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredcontinuehandler).
 

@@ -84,6 +84,8 @@ public:
   std::string functionIdentifier(const llvm::Function &Fn) const;
   void writeIncludes(llvm::Module &Mod);
   void writeStructDefs(llvm::Module &Mod);
+  std::string aggregateMemberPath(llvm::Type *Ty,
+                                  llvm::ArrayRef<unsigned> Indices);
   void writeGlobals(llvm::Module &Mod);
   void writeReferencedImageObjects(const llvm::Function &Fn);
   void writeForwardDecls(llvm::Module &Mod);
@@ -129,6 +131,28 @@ public:
   void writeEHWrapOpen(const EHWrapClause &Clause, int Indent);
   void writeEHWrapClose(const EHWrapClause &Clause, int Indent);
   void writeBasicBlock(const llvm::BasicBlock &BB, int Indent);
+  /// Plan a complete bounded scalar CFG before rendering nested loops/ifs.
+  /// Refusal leaves both the output and writer state unchanged.
+  bool tryWriteScalarRegions(llvm::Function &Fn, int Indent);
+  void coalesceScalarPhiNames(llvm::Function &Fn);
+  /// Typed pure-integer expressions for the admitted scalar source contract.
+  /// Unknown nodes or exhausted bounds keep the existing expression writer.
+  std::optional<std::string> scalarExpressionText(const llvm::Value *V,
+                                                  bool ForceExpression = false,
+                                                  bool InvertCompare = false,
+                                                  bool Parenthesize = true);
+  std::optional<std::string> scalarConditionText(const llvm::Value *V,
+                                                 bool Invert = false);
+  std::optional<std::string> scalarUpdateText(const llvm::Value *Destination,
+                                              const llvm::Value *Incoming);
+  struct ScalarConditionalUpdate {
+    std::string Initial;
+    std::string Condition;
+    std::string Update;
+  };
+  std::optional<ScalarConditionalUpdate>
+  scalarConditionalUpdate(const llvm::Value *Destination,
+                          const llvm::Value *Incoming);
 
   static bool isCallClobberName(llvm::StringRef Name) {
     return Name.contains("_call_clobber");
@@ -517,7 +541,9 @@ public:
                                    llvm::StringRef Dest,
                                    const llvm::Value *Stored);
   void writePhiCopies(const llvm::BasicBlock *From, const llvm::BasicBlock *To,
-                      int Indent);
+                      int Indent, bool ForceMaterialized = false,
+                      const llvm::PHINode *Deferred = nullptr,
+                      const llvm::PHINode *Declare = nullptr);
   bool phiIncomingIsPrinted(const llvm::PHINode *Phi, llvm::Value *Incoming,
                             bool ForceMaterialized = false);
   bool phiEdgeNeedsMaterialization(const llvm::BasicBlock *From,
@@ -642,6 +668,8 @@ public:
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;
   mutable std::map<const llvm::Value *, std::string> KnownImmediates;
+  bool UseScalarExpressionTypes = false;
+  std::set<std::string> ScopedScalarNames;
   mutable std::set<const llvm::Value *> ActiveImmediateFolds;
   mutable unsigned ImmediateFoldWork = 0;
   mutable const llvm::Function *LocalLoadValuesFor = nullptr;

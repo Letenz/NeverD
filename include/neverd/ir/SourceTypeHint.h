@@ -39,7 +39,12 @@ struct SourceParameterTypeHint {
     SwiftIndirectResult,
     /// Swift self/context in its dedicated register. The emitted declaration
     /// uses swift_context; this is not an ordinary integer argument.
-    SwiftContext
+    SwiftContext,
+    /// Logical pointer to an error slot, transported as its pointee value in
+    /// x21/R12. The register is an in/out carrier, not an address passed in an
+    /// ordinary argument register. This description supplies no read-only
+    /// contract or permission to discard the output.
+    SwiftErrorResult
   };
   std::string Name;
   TypeRef Type;

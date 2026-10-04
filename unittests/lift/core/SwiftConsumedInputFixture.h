@@ -56,5 +56,26 @@ struct Fixture : immutable_native_call_test::Fixture {
                                      low());
   }
 };
+constexpr va_t IdentifierCall = Call + 4;
+struct IdentifierFixture : Fixture {
+  IdentifierFixture() {
+    for (const auto &[Slot, Name] : std::map<va_t, std::string>{
+             {MetadataSlot, "_$sSON"}, {WitnessSlot, "_$sSOSHsWP"}}) {
+      Image.ImportPtrSlots[Slot] = Name;
+      Image.DyldBindSlots[Slot].Name = Name;
+    }
+    // Keep the complete typed input. Independently form the opaque result
+    // address between the witness load and the input-address computation.
+    word(8, 0x9100a108);  // add x8, x8, #40
+    word(9, 0x910023e0);  // add x0, sp, #8
+    word(10, 0x94000036); // bl 0x1100
+    word(11, 0xa9417bfd);
+    word(12, 0x910083ff);
+    word(13, 0xd65f03c0);
+    Image.Symbols[0].Name = "consumed_identifier";
+    Image.Symbols[0].Size = 56;
+    runUInt();
+  }
+};
 } // namespace swift_consumed_input_test
 #endif

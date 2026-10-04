@@ -6,7 +6,7 @@
 #include "DarwinTestImage.h"
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
-#include "os/darwin/DarwinProcess.h"
+#include "os/darwin/process/DarwinProcess.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessSession.h"
@@ -164,10 +164,10 @@ TEST_P(DarwinProcess, InitialStackAndDataPartialUnmapReleasesPhysicalBudget) {
                                      ProcessProfile::IOSSimulatorMachO64);
   auto Image = darwin_model::loadImage(Path, Profile, Options);
   ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
-  Options.StackSize = Image->PageSize * 4;
+  Options.StackSize = Image->Memory.PageSize * 4;
   Options.MemoryLimit =
-      Image->Plan.MappedBytes + Options.StackSize + Image->PageSize;
-  Options.OutputLimit = Image->PageSize;
+      Image->Plan.MappedBytes + Options.StackSize + Image->Memory.PageSize;
+  Options.OutputLimit = Image->Memory.PageSize;
   auto Result = run("release");
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
   EXPECT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;

@@ -111,14 +111,15 @@ inline std::optional<size_t> parameter(const ExprPtr &Value) {
   unsigned Depth = 0;
   while (E && E->Kind == ExprKind::Cast && E->Operands.size() == 1 && E->Type &&
          E->Type->Size == 8 && E->IntrinsicId == Intrinsic::None &&
-         E->IntrinsicOutputs.empty() &&
-         E->MemoryOrdering == NdMemoryOrdering::None &&
+         E->IntrinsicOutputs.empty() && !E->IsIndirectCall &&
+         !E->IndirectTarget && E->MemoryOrdering == NdMemoryOrdering::None &&
          E->MemoryAddressSpace == NdMemoryAddressSpace::Default && Depth++ < 16)
     E = E->Operands.front();
   if (!E || E->Kind != ExprKind::Var || E->Var.Kind != MedVar::Param ||
       E->Var.Id < 0 || E->Var.SSAVer != 0 || E->Var.RenameTag != -1 ||
       !E->Operands.empty() || !E->Type || E->Type->Size != 8 ||
       E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+      E->IsIndirectCall || E->IndirectTarget ||
       E->MemoryOrdering != NdMemoryOrdering::None ||
       E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return std::nullopt;
@@ -129,6 +130,7 @@ inline bool unknownScalarView(const ExprPtr &Value) {
   auto E = Value;
   for (unsigned Depth = 0; E && Depth < 16; ++Depth) {
     if (E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->IsIndirectCall || E->IndirectTarget ||
         E->MemoryOrdering != NdMemoryOrdering::None ||
         E->MemoryAddressSpace != NdMemoryAddressSpace::Default || !E->Type ||
         !E->Type->Size || E->Type->Size > 8)
@@ -171,6 +173,8 @@ inline bool projectedOnceContextUnused(const HighFunc &Function,
           Unused = false;
         for (const auto &Operand : E->Operands)
           Pending.push_back(Operand.get());
+        if (E->IndirectTarget)
+          Pending.push_back(E->IndirectTarget.get());
       }
       if (!Pending.empty())
         Unused = false;
@@ -1353,26 +1357,48 @@ inline SourceFunctionTypeHint addressorHint(Arch Architecture) {
   return Hint;
 }
 
+inline bool callbackScalarView(const ExprPtr &E) {
+  return E && E->Type && E->Type->Size == 8 &&
+         (E->Type->Kind == NdTypeKind::Int ||
+          E->Type->Kind == NdTypeKind::Ptr) &&
+         !E->IsIndirectCall && !E->IndirectTarget &&
+         E->IntrinsicId == Intrinsic::None && E->IntrinsicOutputs.empty() &&
+         E->MemoryOrdering == NdMemoryOrdering::None &&
+         E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+}
+
 inline bool discardableCallbackReturn(ExprPtr Value) {
   if (!Value)
     return true;
-  const auto Plain = [](const ExprPtr &E) {
-    return E && E->Type && E->Type->Size == 8 &&
-           (E->Type->Kind == NdTypeKind::Int ||
-            E->Type->Kind == NdTypeKind::Ptr) &&
-           E->IntrinsicId == Intrinsic::None && E->IntrinsicOutputs.empty() &&
-           E->MemoryOrdering == NdMemoryOrdering::None &&
-           E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  // Only the authenticated void callback role makes this value unobservable.
+  // Same-width machine integer addition/subtraction cannot trap or access
+  // memory, even if the discarded bits are a private-frame address. This does
+  // not establish frame bounds, erase any statement or define unknown inputs.
+  size_t Budget = 1024;
+  const auto Visit = [&](const auto &Self, const ExprPtr &E,
+                         unsigned Depth) -> bool {
+    if (!Budget || Depth > 16 || !callbackScalarView(E))
+      return false;
+    --Budget;
+    if (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast)
+      return E->Operands.size() == 1 &&
+             (!E->CastTo || equalSourceTypes(E->CastTo, E->Type)) &&
+             Self(Self, E->Operands[0], Depth + 1);
+    if (E->Kind == ExprKind::BinOp)
+      return (E->Op == NdOp::INT_ADD || E->Op == NdOp::INT_SUB) &&
+             E->Type->Kind == NdTypeKind::Int && E->Operands.size() == 2 &&
+             std::all_of(E->Operands.begin(), E->Operands.end(),
+                         [&](const ExprPtr &Operand) {
+                           return callbackScalarView(Operand) &&
+                                  Operand->Type->Kind == NdTypeKind::Int &&
+                                  Self(Self, Operand, Depth + 1);
+                         });
+    return E->Operands.empty() &&
+           (E->Kind == ExprKind::Const ||
+            (E->Kind == ExprKind::Var && E->Var.Size == 8 &&
+             (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Temp)));
   };
-  unsigned Depth = 0;
-  while (Plain(Value) &&
-         (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
-         Value->Operands.size() == 1 && Depth++ < 16)
-    Value = Value->Operands.front();
-  return Plain(Value) && Value->Operands.empty() &&
-         (Value->Kind == ExprKind::Const ||
-          (Value->Kind == ExprKind::Var && (Value->Var.Kind == MedVar::Reg ||
-                                            Value->Var.Kind == MedVar::Temp)));
+  return Visit(Visit, Value, 0);
 }
 
 // A once callback's result is ignored, but evaluating that result can still
@@ -1380,16 +1406,14 @@ inline bool discardableCallbackReturn(ExprPtr Value) {
 // kept as a separate statement before changing the callback to return void.
 inline ExprPtr retainedCallbackReturn(ExprPtr Value, const BinaryImage &Image) {
   unsigned Depth = 0;
-  while (Value &&
+  while (callbackScalarView(Value) &&
          (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
-         Value->Operands.size() == 1 && Depth++ < 16)
+         Value->Operands.size() == 1 &&
+         (!Value->CastTo || equalSourceTypes(Value->CastTo, Value->Type)) &&
+         Depth++ < 16)
     Value = Value->Operands.front();
-  if (!Value || Value->Kind != ExprKind::Call || Value->IsIndirectCall ||
-      Value->Operands.size() != 1 || !Value->SourceCallHint ||
-      Value->IntrinsicId != Intrinsic::None ||
-      !Value->IntrinsicOutputs.empty() ||
-      Value->MemoryOrdering != NdMemoryOrdering::None ||
-      Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+  if (!callbackScalarView(Value) || Value->Kind != ExprKind::Call ||
+      Value->Operands.size() != 1 || !Value->SourceCallHint)
     return {};
   const auto Expected =
       objcRuntimeSourceCallHint(Image, Value->SourceCallHint->TargetAddress);
@@ -1412,9 +1436,63 @@ inline bool nestedOnceContext(const ExprPtr &Value) {
          (Value->Type->Kind == NdTypeKind::Int ||
           Value->Type->Kind == NdTypeKind::Ptr) &&
          Value->IntrinsicId == Intrinsic::None &&
-         Value->IntrinsicOutputs.empty() &&
+         Value->IntrinsicOutputs.empty() && !Value->IsIndirectCall &&
+         !Value->IndirectTarget &&
          Value->MemoryOrdering == NdMemoryOrdering::None &&
          Value->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+}
+
+inline bool ignoresContext(const HighFunc &F);
+
+// This view only asks which inputs have uses outside the authenticated context
+// positions. It grants neither a callback ABI nor permission to erase those
+// arguments. The independent descendant proof must succeed before publication
+// rebuilds the bindings and repeats the same shared liveness cleanup.
+inline std::optional<HighFunc>
+onceContextLivenessView(const HighFunc &Function,
+                        const std::set<const HighExpr *> &Calls) {
+  HighFunc View = Function;
+  std::map<const HighExpr *, ExprPtr> Copies;
+  std::set<const HighExpr *> Active;
+  size_t Budget = 100000;
+  bool Valid = true;
+  std::function<ExprPtr(const ExprPtr &, unsigned)> Copy =
+      [&](const ExprPtr &E, unsigned Depth) -> ExprPtr {
+    if (!E || !Budget || Depth > 128 || Active.count(E.get())) {
+      Valid = false;
+      return {};
+    }
+    --Budget;
+    if (const auto Existing = Copies.find(E.get()); Existing != Copies.end())
+      return Existing->second;
+    Active.insert(E.get());
+    auto Result = std::make_shared<HighExpr>(*E);
+    for (size_t I = 0; I < E->Operands.size(); ++I) {
+      if (I == 2 && Calls.count(E.get())) {
+        auto Ignored =
+            HighExpr::makeConst(0, 8, ConstantAddressProvenance::Scalar);
+        Ignored->Type = NdType::makePtr(NdType::makeVoid());
+        Result->Operands[I] = std::move(Ignored);
+      } else {
+        Result->Operands[I] = Copy(E->Operands[I], Depth + 1);
+      }
+    }
+    if (E->IndirectTarget)
+      Result->IndirectTarget = Copy(E->IndirectTarget, Depth + 1);
+    Active.erase(E.get());
+    Copies.emplace(E.get(), Result);
+    return Result;
+  };
+  walkStmts(View.Body, [&](HighStmt &S) {
+    forEachExpr(S, [&](ExprPtr &E) {
+      if (E)
+        E = Copy(E, 0);
+    });
+  });
+  if (!Valid)
+    return std::nullopt;
+  eliminateHighDeadPhiCopies(View);
+  return View;
 }
 
 /// Each otherwise undeclared input must be used only as the context of an
@@ -1447,6 +1525,7 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
   size_t Budget = 100000;
   SwiftOnceNestedCallbackContract Contract;
   Contract.Signature = callbackHint(Image.Arch);
+  std::set<const HighExpr *> ContextCalls;
   bool Valid = true;
   const HighStmt *RetainedReturn =
       !F.Body.empty() && F.Body.back().Kind == StmtKind::Return &&
@@ -1457,7 +1536,7 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
                                                              unsigned Depth) {
     if (!Valid)
       return;
-    if (!E || !Budget-- || Depth > 128 || E->Kind == ExprKind::Undef) {
+    if (!E || !Budget-- || Depth > 128) {
       Valid = false;
       return;
     }
@@ -1494,17 +1573,17 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
       }
       Contract.Initializers.push_back(
           {*Predicate, std::nullopt, *Initializer, Contract.Signature});
+      ContextCalls.insert(E.get());
       // Do not interpret the independently proved, ignored context as an
       // ordinary entry read. All other operands still receive the full check.
       Visit(E->Operands[0], Depth + 1);
       Visit(E->Operands[1], Depth + 1);
       return;
     }
-    if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
-        E->Var.Kind == MedVar::Param)
-      Valid = false;
     for (const auto &Operand : E->Operands)
       Visit(Operand, Depth + 1);
+    if (E->IndirectTarget)
+      Visit(E->IndirectTarget, Depth + 1);
   };
   walkStmts(F.Body, [&](const HighStmt &Statement) {
     if (Statement.Kind == StmtKind::Return &&
@@ -1514,6 +1593,9 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
     forEachExpr(Statement, [&](const ExprPtr &E) { Visit(E, 0); });
   });
   if (!Valid || Contract.Initializers.empty())
+    return std::nullopt;
+  const auto View = onceContextLivenessView(F, ContextCalls);
+  if (!View || !ignoresContext(*View))
     return std::nullopt;
   return Contract;
 }
@@ -1539,9 +1621,12 @@ inline bool ignoresContext(const HighFunc &F) {
       return false;
     if (!Seen.insert(E.get()).second)
       continue;
-    if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Param)
+    if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
+        E->Var.Kind == MedVar::Param)
       return false;
     Pending.insert(Pending.end(), E->Operands.begin(), E->Operands.end());
+    if (E->IndirectTarget)
+      Pending.push_back(E->IndirectTarget);
   }
   return true;
 }
@@ -2098,7 +2183,8 @@ discoverSwiftOnceSources(const BinaryImage &Image,
                 !DirectTargets.count(*Initializer) &&
                 objc_binding_detail::oncePredicateStorageHint(Image,
                                                               *Predicate) &&
-                ignoresContext(*Callback->second))
+                independentCallbackChain(*Initializer, Image, Functions,
+                                         DirectTargets))
               Plan.CallbackHints.emplace(*Initializer,
                                          callbackHint(Image.Arch));
             if (Predicate && Initializer && Callback != Functions.end() &&
@@ -2574,10 +2660,18 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
             Null->Type = NdType::makePtr(NdType::makeVoid());
             E->Operands[0] = std::move(Storage);
             E->Operands[1] = std::move(Address);
-            E->Operands[2] = std::move(Null);
+            // Context independence does not erase evaluation effects in the
+            // caller. Keep loads and calls even when their value is ignored.
+            const bool DiscardContext =
+                Context ||
+                swift_once_source_detail::unknownScalarView(E->Operands[2]) ||
+                swift_once_source_detail::discardableCallbackReturn(
+                    E->Operands[2]);
+            if (DiscardContext)
+              E->Operands[2] = std::move(Null);
             Result.LocalStorageExtents[*Predicate] = 8;
             Result.Dependencies.insert(*Initializer);
-            if (Context)
+            if (DiscardContext && Context)
               Result.ErasedSwiftOnceContextParameters.insert(*Context);
             return E;
           }
@@ -2865,6 +2959,7 @@ inline std::optional<ObjCSourceBindingResult> projectSwiftOnceNestedCallback(
       !objc_projection_detail::sameHint(Callback->second, Current->Signature))
     return std::nullopt;
   auto Result = bindSwiftOnceSourceReferences(Function, Image, Plan, Functions);
+  eliminateHighDeadPhiCopies(Result.Function);
   if (!swift_once_source_detail::ignoresContext(Result.Function))
     return std::nullopt;
   for (const auto &Initializer : Current->Initializers)

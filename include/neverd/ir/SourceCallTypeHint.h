@@ -342,6 +342,16 @@ struct SourceCallTypeHint {
   /// must independently authenticate the occurrence and its whole lifetime.
   std::optional<SwiftOpaqueValueEvidence> SwiftOpaqueValue;
 
+  struct SwiftValueConstructorEvidence {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+    bool operator==(const SwiftValueConstructorEvidence &) const = default;
+  };
+  /// One original call to an independently declared value constructor. This
+  /// preserves all input/result carriers and unique evaluation; it is not a
+  /// body, ownership or publication proof.
+  std::optional<SwiftValueConstructorEvidence> SwiftValueConstructor;
+
   struct SwiftVirtualEvidence {
     va_t MethodEntry = 0;
     va_t CallSite = 0;
@@ -560,9 +570,15 @@ struct SourceCallTypeHint {
   /// receipt, even onto mutually exclusive paths. Publication still repeats
   /// each owner's current proof; this predicate grants no source permission.
   bool requiresUniqueSourceOccurrence() const {
+    // The first error-register projection preserves one runtime notification.
+    // Keep it shared even before the emitter materializes its logical slot.
+    for (const auto &P : Signature.Parameters)
+      if (P.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult)
+        return true;
     return BooleanResult || FunctionParameterCall || ImmutableNativeCall ||
            SwiftWitnessFrame || SwiftConsumedInput || SwiftOpaqueValue ||
-           Virtual || NativeSwiftReceiver || ByValueCopy;
+           SwiftValueConstructor || Virtual || NativeSwiftReceiver ||
+           ByValueCopy;
   }
 };
 

@@ -381,6 +381,36 @@ TEST(SymExpr, ConstantWindowBudgetIncludesWideConstantsAndDepthRejections) {
   }
 }
 
+TEST(SymExpr, ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("byte", 8);
+  SymRef Value = Ctx.mkZExt(X, 64);
+  unsigned Remaining = 1000;
+  const auto Expected = std::optional<llvm::APInt>(llvm::APInt(8, 0));
+  const auto Before = Ctx.numNodes();
+  EXPECT_EQ(Ctx.constantWindow(Value, 32, 8, Remaining), Expected);
+  const unsigned Used = 1000 - Remaining;
+  ASSERT_GT(Used, 0U);
+  ASSERT_LT(Used, 256U);
+  unsigned Exact = Used, Short = Used - 1, Zero = 0;
+  EXPECT_EQ(Ctx.constantWindow(Value, 32, 8, Exact), Expected);
+  EXPECT_EQ(Exact, 0U);
+  EXPECT_FALSE(Ctx.constantWindow(Value, 32, 8, Short));
+  EXPECT_FALSE(Ctx.constantWindow(Value, 32, 8, Zero));
+  EXPECT_EQ(Ctx.constantWindow(Value, 32, 8, Remaining), Expected);
+  EXPECT_EQ(Remaining, 1000 - 2 * Used);
+  unsigned Unknown = 1000;
+  EXPECT_FALSE(Ctx.constantWindow(Value, 0, 8, Unknown));
+  EXPECT_LT(Unknown, 1000U);
+  EXPECT_EQ(Ctx.numNodes(), Before);
+
+  constexpr unsigned WideBits = 64 * 512;
+  SymRef Wide = Ctx.mkConst(llvm::APInt::getLowBitsSet(WideBits, 16));
+  unsigned Large = 10000;
+  EXPECT_FALSE(Ctx.constantWindow(Wide, 20, 8, Large));
+  EXPECT_GE(Large, 10000 - 256U);
+}
+
 TEST(SymExpr, ConstantWindowRejectsInvalidAndOversizedQueries) {
   SymContext Ctx;
   SymRef Value = Ctx.mkConst(128, 123);

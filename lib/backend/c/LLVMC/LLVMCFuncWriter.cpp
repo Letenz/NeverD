@@ -499,7 +499,7 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
                  II->getIntrinsicID() == llvm::Intrinsic::cttz))
         continue;
       // Updating one vector lane requires a copy followed by an assignment.
-      if (llvm::isa<llvm::InsertElementInst>(&Inst))
+      if (llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(&Inst))
         continue;
       // Floating-point bitcasts copy the representation, rather than
       // performing the numeric conversion used by ordinary C casts.
@@ -2228,6 +2228,8 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
 }
 
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
+  UseScalarExpressionTypes = false;
+  ScopedScalarNames.clear();
   Dominators.recalculate(Fn);
   NextVar = 0;
   ValNames.clear();
@@ -9093,7 +9095,11 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
       InlinedFallthroughBlocks.insert(&BB);
   }
 
-  if (!UseRanges) {
+  const bool WroteScalarRegions =
+      EHWraps.empty() && !UseRanges && tryWriteScalarRegions(Fn, 1);
+  if (WroteScalarRegions) {
+    // The complete region plan owns all blocks and PHI edges.
+  } else if (!UseRanges) {
     EHSkippedMainBlocks.insert(SkipInTry.begin(), SkipInTry.end());
     // Multiple try ranges may share one recovered clause.  The fallback
     // prints all normal blocks first and moves handler bodies to __except;
@@ -9235,6 +9241,7 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   // or changing the instruction-order freshVar sequence.
   std::set<std::string> DeclaredNames(CallDeclNames.begin(),
                                       CallDeclNames.end());
+  DeclaredNames.insert(ScopedScalarNames.begin(), ScopedScalarNames.end());
   llvm::StringMap<std::string> ArrayDeclarations;
   std::vector<std::pair<size_t, std::string>> MissingDecls;
   for (llvm::BasicBlock &BB : Fn) {
@@ -9303,9 +9310,14 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   EHFallthroughLabels.reserve(EHFallthroughLabelCandidates.size());
   for (const llvm::BasicBlock *BB : EHFallthroughLabelCandidates)
     EHFallthroughLabels.push_back(blockLabel(BB));
-  const std::string Final = dropUnreferencedFallthroughEHLabels(
+  std::string Final = dropUnreferencedFallthroughEHLabels(
       dropUnusedCallDecls(std::move(Buffered), DropNames, ArrayDeclarations),
       EHFallthroughLabels);
+  // Removed prediction-only declarations need no empty prefix before the
+  // first actual scalar statement. This changes whitespace only.
+  if (WroteScalarRegions)
+    while (DeclInsertPos < Final.size() && Final[DeclInsertPos] == '\n')
+      Final.erase(DeclInsertPos, 1);
   for (const auto &[_, Target] : EHInvokeNormalGotos) {
     const std::string Name = blockLabel(Target);
     for (const auto &[Block, OtherName] : BlockLabels)

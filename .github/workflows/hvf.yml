@@ -1,5 +1,5 @@
 name: Native macOS HVF
-run-name: HVF ${{ inputs.runner == 'hosted-intel' && (inputs.intel-image || 'macos-15-intel') || inputs.runner }} / ${{ inputs.validation || 'full' }} / ${{ inputs.source-ref || github.sha }}
+run-name: HVF ${{ inputs.runner == 'hosted-intel' && (inputs.intel-image || 'macos-15-intel') || inputs.runner }} / ${{ inputs.validation || 'full' }} / ${{ inputs.source-ref || github.sha }}${{ inputs.recovery-repetitions == '1000' && ' / 1000 recovery repetitions' || '' }}
 on:
   workflow_dispatch:
     inputs:
@@ -27,11 +27,17 @@ on:
         type: choice
         default: '4'
         options: ['4', '1']
+      recovery-repetitions:
+        description: Native cancellation repetitions; 1000 enables a longer diagnostic run
+        type: choice
+        default: '100'
+        options: ['100', '1000']
 permissions:
   contents: read
 env:
   HVF_SOURCE: ${{ inputs.source-ref || github.sha }}
   HVF_INTEL_IMAGE: ${{ inputs.intel-image || 'macos-15-intel' }}
+  HVF_RECOVERY_REPETITIONS: ${{ inputs.recovery-repetitions || '100' }}
 jobs:
   native-hvf:
     # Both choices must create a real VM/vCPU before the LLVM build starts.
@@ -54,6 +60,10 @@ jobs:
           case "$HVF_INTEL_IMAGE" in
             macos-15-intel|macos-26-intel) ;;
             *) echo "Unsupported hosted Intel image" >&2; exit 1 ;;
+          esac
+          case "$HVF_RECOVERY_REPETITIONS" in
+            100|1000) ;;
+            *) echo "Unsupported recovery repetition count" >&2; exit 1 ;;
           esac
       - name: Check out the workflow implementation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -158,12 +168,12 @@ jobs:
           cmake --build build-hvf --target NeverDHvfTests --parallel 4 2>&1 | tee build-hvf/transport-build.log
       - name: Repeat native interruption and recovery
         if: inputs.validation != 'probe'
-        timeout-minutes: 3
+        timeout-minutes: ${{ inputs.recovery-repetitions == '1000' && 10 || 3 }}
         shell: bash
         env:
           NEVERD_REQUIRE_HVF: '1'
         run: |
-          build-hvf/bin/NeverDHvfTests --gtest_filter=HvfExecutor.Native* --gtest_repeat=100 --gtest_break_on_failure 2>&1 | tee build-hvf/transport-recovery.log
+          build-hvf/bin/NeverDHvfTests --gtest_filter=HvfExecutor.Native* --gtest_repeat="$HVF_RECOVERY_REPETITIONS" --gtest_break_on_failure 2>&1 | tee build-hvf/transport-recovery.log
       - name: Require native instruction execution before the full dependency build
         if: inputs.validation != 'probe'
         timeout-minutes: 3

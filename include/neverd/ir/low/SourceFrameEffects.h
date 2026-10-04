@@ -105,6 +105,8 @@ sourceFrameEffectsMatchABI(const SourceFrameEffects &Effects,
     return Bytes && Bytes <= (1U << 20) &&
            Index < Signature.Parameters.size() &&
            Signature.Parameters[Index].Components.empty() &&
+           Signature.Parameters[Index].TheRole !=
+               SourceParameterTypeHint::Role::SwiftErrorResult &&
            ScalarPointerCarrier(Signature.Parameters[Index].Type,
                                 Signature.Parameters[Index].Location);
   };

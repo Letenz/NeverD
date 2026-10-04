@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../kernel/LinuxTime.h"
 #include "AndroidInternal.h"
 
 #include "neverd/emulation/CPU.h"
@@ -16,17 +17,17 @@ llvm::Error Bionic::access(uint64_t Address, uint64_t Size,
                            unsigned Permissions) {
   if (!Budget.remainingMicroseconds()) {
     Expired = true;
-    return failure("native call model timed out");
+    return failure(diagnostic::CallTimeout);
   }
   if (!Size)
     return llvm::Error::success();
   if (Size > Options.MemoryLimit)
-    return failure("native memory operation exceeds memory limit");
+    return failure(diagnostic::MemoryLimit);
   auto Allowed = CPU.canAccess(Address, Size, Permissions | UserAccessible);
   if (!Allowed)
     return Allowed.takeError();
   if (!*Allowed)
-    return failure("invalid guest pointer in Bionic call");
+    return failure(diagnostic::GuestPointer);
   return llvm::Error::success();
 }
 llvm::Expected<uint8_t> Bionic::byte(uint64_t Address) {
@@ -48,7 +49,7 @@ llvm::Expected<std::string> Bionic::string(uint64_t Address) {
       return Text;
     Text.push_back(*V);
   }
-  return failure("unterminated guest string");
+  return failure(diagnostic::UnterminatedString);
 }
 llvm::Error Bionic::setErrno(uint32_t Value) {
   uint8_t Bytes[4];
@@ -74,7 +75,7 @@ llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size) {
   if (!Address)
     return Address.takeError();
   if (!*Address)
-    return failure("anonymous allocator did not return");
+    return failure(diagnostic::AllocatorReturn);
   if (**Address >= uint64_t(0) - 4095) {
     if (auto E = setErrno(uint64_t(0) - **Address))
       return std::move(E);
@@ -88,7 +89,7 @@ llvm::Error Bionic::release(uint64_t Address) {
     return llvm::Error::success();
   auto I = Allocations.find(Address);
   if (I == Allocations.end())
-    return failure("free/realloc does not name a live allocation");
+    return failure(diagnostic::AllocationOwnership);
   ProcessServiceEvent Event{
       0, 0, {Address, I->second.MappedSize, 0, 0, 0, 0}, std::nullopt};
   auto Returned =
@@ -96,7 +97,7 @@ llvm::Error Bionic::release(uint64_t Address) {
   if (!Returned)
     return Returned.takeError();
   if (!*Returned || **Returned)
-    return failure("could not release native allocation");
+    return failure(diagnostic::AllocationRelease);
   Allocations.erase(I);
   return llvm::Error::success();
 }
@@ -106,7 +107,7 @@ llvm::Expected<uint64_t> Bionic::linkerError(llvm::StringRef Message,
   // argv/envp. A later error may replace its contents; dlerror consumes it
   // once.
   if (Message.size() >= 1024)
-    return failure("dynamic linker error exceeds its guest buffer");
+    return failure(diagnostic::LinkerErrorLimit);
   std::vector<uint8_t> Bytes(Message.bytes_begin(), Message.bytes_end());
   Bytes.push_back(0);
   if (auto E = access(LinkerErrorAddress, Bytes.size(), Write))
@@ -121,23 +122,26 @@ llvm::Expected<uint64_t> Bionic::linkerError(llvm::StringRef Message,
     return std::move(E);
   return ReturnValue;
 }
-llvm::Expected<std::optional<uint64_t>> Bionic::dlfcn(NativeCallEvent &Call) {
+bool Bionic::isResident(const std::string &Library) const {
+  const auto &Scope = Options.Android->DefaultScope;
+  return Scope &&
+         std::find(Scope->begin(), Scope->end(), Library) != Scope->end();
+}
+BionicResult Bionic::dlfcn(NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
-  auto Value = [](uint64_t V) { return std::optional<uint64_t>(V); };
-  auto Error = [&](llvm::StringRef Message,
-                   uint64_t V = 0) -> llvm::Expected<std::optional<uint64_t>> {
+  auto Value = [](uint64_t V) { return std::optional<BionicValue>(V); };
+  auto Error = [&](llvm::StringRef Message, uint64_t V = 0) -> BionicResult {
     auto R = linkerError(Message, V);
     if (!R)
       return R.takeError();
     return Value(*R);
   };
-  auto Unsupported =
-      [&](llvm::StringRef Detail) -> llvm::Expected<std::optional<uint64_t>> {
+  auto Unsupported = [&](llvm::StringRef Detail) -> BionicResult {
     Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic = "unmodeled Android dynamic linking: " + Detail.str();
-    return std::optional<uint64_t>();
+    Result.Diagnostic = diagnostic::DynamicLinkingPrefix + Detail.str();
+    return std::optional<BionicValue>();
   };
-  if (Call.Name == "dlerror") {
+  if (Call.Name == symbol::DLError) {
     uint8_t Pointer[8], Empty[8]{};
     if (auto E = access(LinkerErrorSlot, sizeof(Pointer), Read | Write))
       return std::move(E);
@@ -148,108 +152,203 @@ llvm::Expected<std::optional<uint64_t>> Bionic::dlfcn(NativeCallEvent &Call) {
       return std::move(E);
     return Value(Address);
   }
-  if (Call.Name == "dlopen") {
+  if (Call.Name == symbol::DLOpen) {
     if (!A[0])
-      return Unsupported("dlopen(NULL) requires a process-wide symbol scope");
+      return Unsupported(diagnostic::NullOpenScope);
     auto Library = string(A[0]);
     if (!Library)
       return Library.takeError();
     if (Library->size() > 1024)
-      return failure("dynamic library name exceeds the model limit");
+      return failure(diagnostic::LibraryNameLimit);
     Call.Library = *Library;
-    // API 28 LP64 flags. Scope promotion and NODELETE need a fuller loader.
+    // API 28 LP64 accepts any combination of these bits, including zero
+    // and NOLOAD alone. Scope promotion and NODELETE need a fuller loader.
     uint32_t Flags = static_cast<uint32_t>(A[1]);
-    if ((Flags & ~7u) || ((Flags & 3u) != 1 && (Flags & 3u) != 2))
-      return Unsupported("only LAZY/NOW with optional NOLOAD are modeled");
+    if (Flags & ~0x1107u)
+      return Error(diagnostic::OpenFlags);
+    if (Flags & 0x1100u)
+      return Unsupported(diagnostic::OpenScopeFlags);
     if (!Linked.Libraries.count(*Library))
-      return Error("library is absent from the explicit local catalogue");
+      return Error(diagnostic::LibraryAbsent);
     auto &State = OpenLibraries[*Library];
-    if (!State.References && (Flags & 4u))
-      return Error("library is not open (NOLOAD)");
-    if (!State.References) {
+    if (!State.References && !isResident(*Library) && (Flags & 4u))
+      return Error(diagnostic::LibraryNotOpen);
+    if (!State.Handle) {
       if (NextHandle > UINT64_MAX - 2)
-        return failure("dynamic library handle space exhausted");
+        return failure(diagnostic::LibraryHandleLimit);
       State.Handle = NextHandle;
       NextHandle += 2;
       Handles.emplace(State.Handle, *Library);
     }
     if (State.References == UINT64_MAX)
-      return failure("dynamic library reference count overflow");
+      return failure(diagnostic::LibraryReferenceOverflow);
     ++State.References;
     return Value(State.Handle);
   }
-  if (Call.Name == "dlsym") {
+  if (Call.Name == symbol::DLSym) {
     if (!A[1])
-      return Error("dynamic symbol name is null");
+      return Error(diagnostic::NullSymbol);
     auto Symbol = string(A[1]);
     if (!Symbol)
       return Symbol.takeError();
     if (Symbol->size() > 1024)
-      return failure("dynamic symbol name exceeds the model limit");
+      return failure(diagnostic::SymbolNameLimit);
     Call.Symbol = *Symbol;
-    if (!A[0] || A[0] == UINT64_MAX)
-      return Unsupported(
-          "RTLD_DEFAULT / RTLD_NEXT require ordered process scopes");
+    if (!A[0]) {
+      const auto &Scope = Options.Android->DefaultScope;
+      if (!Scope)
+        return Unsupported(diagnostic::DefaultScope);
+      for (const auto &Library : *Scope) {
+        const auto &Symbols = Linked.Libraries.at(Library);
+        auto I = Symbols.find(*Symbol);
+        if (I != Symbols.end()) {
+          Call.Library = Library;
+          return Value(I->second);
+        }
+      }
+      return Error(diagnostic::DefaultSymbolAbsent);
+    }
+    if (A[0] == UINT64_MAX)
+      return Unsupported(diagnostic::NextScope);
     auto Handle = Handles.find(A[0]);
     if (Handle == Handles.end())
-      return Error("invalid or closed dynamic library handle");
+      return Error(diagnostic::LibraryHandle);
     Call.Library = Handle->second;
     const auto &Symbols = Linked.Libraries.at(Handle->second);
     auto I = Symbols.find(*Symbol);
     if (I == Symbols.end())
-      return Error("symbol is absent from the explicit library catalogue");
+      return Error(diagnostic::LibrarySymbolAbsent);
     return Value(I->second);
   }
-  if (Call.Name == "dlclose") {
+  if (Call.Name == symbol::DLClose) {
     auto Handle = Handles.find(A[0]);
     if (Handle == Handles.end())
-      return Error("invalid or closed dynamic library handle", UINT64_MAX);
+      return Error(diagnostic::LibraryHandle, UINT64_MAX);
     Call.Library = Handle->second;
     auto &State = OpenLibraries.at(Handle->second);
-    if (!--State.References)
+    if (!State.References)
+      return Error(diagnostic::LibraryReferences, UINT64_MAX);
+    if (!--State.References && !isResident(Handle->second)) {
       Handles.erase(Handle);
+      State.Handle = 0;
+    }
     return Value(0);
   }
-  return failure("invalid dlfcn model dispatch");
+  return failure(diagnostic::DlfcnDispatch);
 }
-llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
+BionicResult Bionic::once(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  if (A[0] % 4)
+    return failure(diagnostic::OnceControlAlignment);
+  if (auto E = access(A[0], 4, Read))
+    return std::move(E);
+  uint8_t Bytes[4];
+  if (auto E = CPU.read(A[0], Bytes))
+    return std::move(E);
+  // Android API 28 has a four-byte 0/1/2 state. One guest thread has no
+  // concurrent initializer that could complete an in-progress control.
+  uint32_t State = llvm::support::endian::read32le(Bytes);
+  if (State == 2)
+    return std::optional<BionicValue>(uint64_t(0));
+  if (State != 0) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic =
+        State == 1 ? diagnostic::OnceInProgress : diagnostic::OnceControlState;
+    return std::optional<BionicValue>();
+  }
+  if (auto E = access(A[0], 4, Write))
+    return std::move(E);
+  if (A[1] % 4)
+    return failure(diagnostic::OnceInitializerAlignment);
+  if (auto E = access(A[1], 4, Execute))
+    return std::move(E);
+  llvm::support::endian::write32le(Bytes, 1);
+  if (auto E = CPU.write(A[0], Bytes))
+    return std::move(E);
+  return std::optional<BionicValue>(
+      GuestCallback{A[1], std::nullopt, OnceCallback{A[0]}});
+}
+llvm::Error Bionic::finishOnce(const OnceCallback &Callback) {
+  if (auto E = access(Callback.Control, 4, Write))
+    return E;
+  uint8_t Bytes[4];
+  llvm::support::endian::write32le(Bytes, 2);
+  return CPU.write(Callback.Control, Bytes);
+}
+BionicResult Bionic::invoke(NativeCallEvent &Call) {
   llvm::StringRef Name(Call.Name);
   const auto &A = Call.Arguments;
-  auto Value = [](uint64_t V) { return std::optional<uint64_t>(V); };
+  auto Value = [](uint64_t V) { return std::optional<BionicValue>(V); };
   if (!Call.Library.empty()) {
     auto I = OpenLibraries.find(Call.Library);
-    if (I == OpenLibraries.end() || !I->second.References) {
+    if (!isResident(Call.Library) &&
+        (I == OpenLibraries.end() || !I->second.References)) {
       Result.Stop = ProcessStopReason::UnsupportedService;
-      Result.Diagnostic =
-          "call through an inactive dynamic library: " + Call.Library;
-      return std::optional<uint64_t>();
+      Result.Diagnostic = diagnostic::InactiveProviderPrefix + Call.Library;
+      return std::optional<BionicValue>();
     }
   }
-  if (Name == "dlopen" || Name == "dlsym" || Name == "dlclose" ||
-      Name == "dlerror")
+  if (Name == symbol::DLOpen || Name == symbol::DLSym ||
+      Name == symbol::DLClose || Name == symbol::DLError)
     return dlfcn(Call);
-  if (Name == "__errno")
+  if (Name == symbol::PthreadOnce)
+    return once(Call);
+  if (Name == symbol::CxaAtExit)
+    return registerExit(Call);
+  if (Name == symbol::CxaFinalize)
+    return finalize(A[0]);
+  if (Name == symbol::StrtokR) {
+    auto R = tokenize(Call);
+    if (!R)
+      return R.takeError();
+    return Value(*R);
+  }
+  if (Name.starts_with(symbol::PthreadMutexPrefix))
+    return mutex(Call);
+  if (Name == symbol::Snprintf || Name == symbol::Vsnprintf ||
+      Name == symbol::Sprintf || Name == symbol::Vsprintf)
+    return format(Call);
+  if (Name == symbol::Errno)
     return Value(ErrnoAddress);
-  if (Name == "android_get_device_api_level")
+  if (Name == symbol::Time) {
+    auto Now =
+        linux_model::clockValue(linux_model::ClockRealtime, Options, Result);
+    if (!Now)
+      return std::optional<BionicValue>();
+    // API 28's fallback obtains a timeval, then stores through the caller's
+    // time_t*. This is a user-space store, not the x64 time syscall's EFAULT.
+    if (A[0]) {
+      if (auto E = access(A[0], 8, Write))
+        return std::move(E);
+      uint8_t Bytes[8];
+      llvm::support::endian::write64le(Bytes,
+                                       static_cast<uint64_t>(Now->Seconds));
+      if (auto E = CPU.write(A[0], Bytes))
+        return std::move(E);
+    }
+    // A valid negative timestamp is not a Linux errno return.
+    return Value(static_cast<uint64_t>(Now->Seconds));
+  }
+  if (Name == symbol::DeviceAPILevel)
     return Value(28);
-  if (Name == "__stack_chk_fail" || Name == "abort")
-    return failure("guest called " + Name);
-  if (Name == "memcpy" || Name == "memmove" || Name == "memset" ||
-      Name == "memcmp") {
+  if (Name == symbol::StackCheckFail || Name == symbol::Abort)
+    return failure(diagnostic::GuestCalledPrefix + Name);
+  if (Name == symbol::Memcpy || Name == symbol::Memmove ||
+      Name == symbol::Memset || Name == symbol::Memcmp) {
     uint64_t Size = A[2];
-    if (auto E = access(A[0], Size, Name == "memcmp" ? Read : Write))
+    if (auto E = access(A[0], Size, Name == symbol::Memcmp ? Read : Write))
       return std::move(E);
-    if (Name != "memset")
+    if (Name != symbol::Memset)
       if (auto E = access(A[1], Size, Read))
         return std::move(E);
-    if (Name == "memcpy" && Size &&
+    if (Name == symbol::Memcpy && Size &&
         (A[0] <= A[1] ? A[1] - A[0] < Size : A[0] - A[1] < Size))
-      return failure("overlapping memcpy operands");
+      return failure(diagnostic::MemcpyOverlap);
     std::vector<uint8_t> Bytes(Size, static_cast<uint8_t>(A[1]));
-    if (Name != "memset" && Size)
+    if (Name != symbol::Memset && Size)
       if (auto E = CPU.read(A[1], Bytes))
         return std::move(E);
-    if (Name == "memcmp") {
+    if (Name == symbol::Memcmp) {
       std::vector<uint8_t> Left(Size);
       if (Size)
         if (auto E = CPU.read(A[0], Left))
@@ -264,28 +363,30 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
         return std::move(E);
     return Value(A[0]);
   }
-  if (Name == "strlen" || Name == "strnlen") {
-    uint64_t Bound = Name == "strnlen" ? std::min(A[1], Options.MemoryLimit)
-                                       : Options.MemoryLimit;
+  if (Name == symbol::Strlen || Name == symbol::Strnlen) {
+    uint64_t Bound = Name == symbol::Strnlen
+                         ? std::min(A[1], Options.MemoryLimit)
+                         : Options.MemoryLimit;
     for (uint64_t I = 0; I < Bound; ++I) {
       if (A[0] > UINT64_MAX - I)
-        return failure("string address overflows");
+        return failure(diagnostic::StringAddressOverflow);
       auto V = byte(A[0] + I);
       if (!V)
         return V.takeError();
       if (!*V)
         return Value(I);
     }
-    if (Name == "strnlen" && Bound == A[1])
+    if (Name == symbol::Strnlen && Bound == A[1])
       return Value(Bound);
-    return failure("string scan exceeds memory limit");
+    return failure(diagnostic::StringScanLimit);
   }
-  if (Name == "strcmp" || Name == "strncmp") {
-    uint64_t Bound = Name == "strncmp" ? std::min(A[2], Options.MemoryLimit)
-                                       : Options.MemoryLimit;
+  if (Name == symbol::Strcmp || Name == symbol::Strncmp) {
+    uint64_t Bound = Name == symbol::Strncmp
+                         ? std::min(A[2], Options.MemoryLimit)
+                         : Options.MemoryLimit;
     for (uint64_t I = 0; I < Bound; ++I) {
       if (A[0] > UINT64_MAX - I || A[1] > UINT64_MAX - I)
-        return failure("string address overflows");
+        return failure(diagnostic::StringAddressOverflow);
       auto Left = byte(A[0] + I);
       if (!Left)
         return Left.takeError();
@@ -297,11 +398,11 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
       if (!*Left)
         return Value(0);
     }
-    if (Name == "strncmp" && Bound == A[2])
+    if (Name == symbol::Strncmp && Bound == A[2])
       return Value(0);
-    return failure("string comparison exceeds memory limit");
+    return failure(diagnostic::StringCompareLimit);
   }
-  if (Name == "__system_property_get") {
+  if (Name == symbol::SystemPropertyGet) {
     auto Key = string(A[0]);
     if (!Key)
       return Key.takeError();
@@ -315,9 +416,10 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
       return std::move(E);
     return Value(Text.size());
   }
-  if (Name == "malloc" || Name == "calloc" || Name == "realloc") {
-    uint64_t Size = Name == "realloc" ? A[1] : A[0];
-    if (Name == "calloc") {
+  if (Name == symbol::Malloc || Name == symbol::Calloc ||
+      Name == symbol::Realloc) {
+    uint64_t Size = Name == symbol::Realloc ? A[1] : A[0];
+    if (Name == symbol::Calloc) {
       if (A[0] && A[1] > UINT64_MAX / A[0]) {
         if (auto E = setErrno(linux_model::NoMemory))
           return std::move(E);
@@ -326,10 +428,10 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
       Size = A[0] * A[1];
     }
     std::vector<uint8_t> Saved;
-    if (Name == "realloc" && A[0]) {
+    if (Name == symbol::Realloc && A[0]) {
       auto I = Allocations.find(A[0]);
       if (I == Allocations.end())
-        return failure("realloc does not name a live allocation");
+        return failure(diagnostic::ReallocationOwnership);
       uint64_t Copy = std::min(Size, I->second.Size);
       if (auto E = access(A[0], Copy, Read))
         return std::move(E);
@@ -347,56 +449,47 @@ llvm::Expected<std::optional<uint64_t>> Bionic::invoke(NativeCallEvent &Call) {
     if (!Saved.empty())
       if (auto E = CPU.write(*Address, Saved))
         return std::move(E);
-    if (Name == "realloc")
+    if (Name == symbol::Realloc)
       if (auto E = release(A[0]))
         return std::move(E);
     return Value(*Address);
   }
-  if (Name == "free") {
+  if (Name == symbol::Free) {
     if (auto E = release(A[0]))
       return std::move(E);
     return Value(0); // The ABI leaves x0 unspecified for void calls.
   }
   std::optional<linux_model::ServiceKind> Kind;
-  if (Name == "getpid")
-    Kind = linux_model::ServiceKind::GetPID;
-  if (Name == "gettid")
-    Kind = linux_model::ServiceKind::GetTID;
-  if (Name == "getuid")
-    Kind = linux_model::ServiceKind::GetUID;
-  if (Name == "geteuid")
-    Kind = linux_model::ServiceKind::GetEUID;
-  if (Name == "getgid")
-    Kind = linux_model::ServiceKind::GetGID;
-  if (Name == "getegid")
-    Kind = linux_model::ServiceKind::GetEGID;
-  if (Name == "mmap" || Name == "mmap64")
-    Kind = linux_model::ServiceKind::Mmap;
-  if (Name == "mprotect")
-    Kind = linux_model::ServiceKind::Mprotect;
-  if (Name == "munmap")
-    Kind = linux_model::ServiceKind::Munmap;
-  if (Name == "write")
-    Kind = linux_model::ServiceKind::Write;
-  if (Kind) {
-    ProcessServiceEvent Event{Call.PC, 0, {}, std::nullopt};
-    std::copy_n(A.begin(), Event.Arguments.size(), Event.Arguments.begin());
+#define NEVERD_ANDROID_KERNEL_SERVICE(Symbol, Service)                         \
+  if (Name == Symbol)                                                          \
+    Kind = linux_model::ServiceKind::Service;
+#include "AndroidKernelServices.def"
+#undef NEVERD_ANDROID_KERNEL_SERVICE
+  const bool IsSyscall = Name == symbol::Syscall;
+  if (Kind || IsSyscall) {
+    ProcessServiceEvent Event{Call.PC, IsSyscall ? A[0] : 0, {}, std::nullopt};
+    // AArch64 Bionic syscall(number, ...) shifts x1..x6 into the six
+    // kernel argument registers. The shared Linux table owns the number.
+    std::copy_n(A.begin() + (IsSyscall ? 1 : 0), Event.Arguments.size(),
+                Event.Arguments.begin());
     // Raw Linux service semantics are shared. Bionic alone owns errno/-1.
-    auto Returned = linux_model::handleService(CPU, Memory, *Kind, Event,
-                                               Layout, Options, Result);
+    auto Returned = Kind ? linux_model::handleService(CPU, Memory, *Kind, Event,
+                                                      Layout, Options, Result)
+                         : linux_model::handleService(CPU, Memory, Event,
+                                                      Layout, Options, Result);
     if (!Returned)
       return Returned.takeError();
     if (!*Returned)
-      return std::optional<uint64_t>();
+      return std::optional<BionicValue>();
     if (**Returned >= uint64_t(0) - 4095) {
       if (auto E = setErrno(uint64_t(0) - **Returned))
         return std::move(E);
       return Value(UINT64_MAX);
     }
-    return *Returned;
+    return Value(**Returned);
   }
   Result.Stop = ProcessStopReason::UnsupportedService;
-  Result.Diagnostic = "unmodeled Android import: " + Name.str();
-  return std::optional<uint64_t>();
+  Result.Diagnostic = diagnostic::ImportPrefix + Name.str();
+  return std::optional<BionicValue>();
 }
 } // namespace neverd::emulation::android_model
