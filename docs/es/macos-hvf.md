@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 9a24ea23cf2a47db289e1e2b215d8900d8db1bd0cc636bab4cd68cb061aec251 -->
+<!-- i18n-source: a3d21e1f2505fe8dd441e3bbaadb4a3d3381f2923d087635ec3129190a86b102 -->
 
 [← Índice de documentación](README.md)
 
@@ -26,7 +26,7 @@ La aplicación que integra la biblioteca firma su propio ejecutable. NeverD no v
 
 Los mapeos anfitriones respetan su tamaño de página, incluidos 16 KiB en Apple Silicon. Las tablas arquitectónicas y el presupuesto de CPU invitada siguen usando 4 KiB. La admisión de instrucciones, los permisos, el estado, las transacciones de memoria y los servicios OS permanecen en sus capas. El worker nativo no llama a observadores invitados ni toma los bloqueos centrales de memoria del llamador.
 
-ARM64 ejecuta por pasos cinco instrucciones inmutables de mantenimiento TLB/I-cache y luego la instrucción admitida. `PSTATE.D` no enmascara excepciones de depuración dirigidas a EL2. Se captura todo el estado escalar, TLS y FP/SIMD. Intel negocia controles VMCS, usa monitor trap, invalida TLB y transfiere paquetes XSAVE completos. RIP/RFLAGS pasan directamente por VMCS, también al recrear la vCPU. CR0/CR4 respetan máscaras del framework y bits fijos del hardware. La capa ISA completa las salidas autenticadas de lectura CR8; otros accesos a registros de control fallan. Cada vCPU inicializa un `IA32_KERNEL_GS_BASE` privado y gestionado; se interceptan accesos MSR invitados y se rechazan MSR/SWAPGS no admitidos.
+ARM64 ejecuta toda la secuencia inmutable de mantenimiento TLB/I-cache en una entrada nativa, con el paso a paso desactivado. Un HVC #1 específico debe coincidir exactamente con el PC de retorno, syndrome, PSTATE y ESR_EL1 sin cambios antes de ejecutar una sola instrucción admitida del huésped. `PSTATE.D` no enmascara las excepciones de depuración dirigidas a EL2. Se captura todo el estado escalar, TLS y FP/SIMD. Intel negocia controles VMCS, usa monitor trap, invalida TLB y transfiere paquetes XSAVE completos. RIP/RFLAGS pasan directamente por VMCS, también al recrear la vCPU. CR0/CR4 respetan máscaras del framework y bits fijos del hardware. La capa ISA completa las salidas autenticadas de lectura CR8; otros accesos a registros de control fallan. Cada vCPU inicializa un `IA32_KERNEL_GS_BASE` privado y gestionado; se interceptan accesos MSR invitados y se rechazan MSR/SWAPGS no admitidos.
 
 La cola conserva el token de parada y el plazo original. Preparación, mantenimiento, entrada y captura comparten el presupuesto. `RunDeadline` espera la confirmación de interrupciones antes de volver. La cancelación recrea la vCPU para aislar interrupciones tardías; las interrupciones ajenas del anfitrión Intel se reintentan en la misma generación. Fallos de captura y excepciones autenticadas conservan prioridad sobre una parada simultánea; no se publica el estado ordinario cancelado. La cancelación es cooperativa, sin garantía de tiempo real estricto.
 
@@ -47,11 +47,13 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon puede añadir `-DNEVERD_LLVM_PREBUILT=ON`; Intel compila la revisión fijada de LLVM. El [workflow HVF](../../.github/workflows/hvf.yml) admite runners `self-hosted, macOS, ARM64/X64, hvf` y `hosted-intel` con `macos-15-intel`. Primero exige crear y destruir una VM/vCPU real. `validation=probe` no demuestra ejecución de instrucciones; `transport` solo verifica transporte; `darwin` exige todas las cargas Darwin coincidentes; `full` exige ambas validaciones completas.
 
-Se requieren 12 pruebas de transporte ARM64 o 10 Intel, y 16 o 14 comprobaciones obligatorias en la validación CPU completa. Se cubren estado completo, privilegios, permisos, cruces de página, alias, cambios de CPU, reversión, cancelación y reintentos. Intel prueba CR8 antes de la compilación grande. Los artefactos conservan inventario, revisión, anfitrión, resultados e intentos separados. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) considera experimental la virtualización anidada; conviene mantener un Mac nativo dedicado.
+Se requieren 15 pruebas de transporte ARM64 o 10 Intel, y 23 o 18 comprobaciones obligatorias en la validación CPU completa. Se cubren estado completo, privilegios, permisos, cruces de página, alias, cambios de CPU, reversión, cancelación y reintentos. Intel prueba CR8 antes de la compilación grande. Los artefactos conservan inventario, revisión, anfitrión, resultados e intentos separados. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) considera experimental la virtualización anidada; conviene mantener un Mac nativo dedicado.
 
 En Intel alojado, `--execution-methods` ejecuta secuencialmente cada método GoogleTest con todos los parámetros CTest, flags, entorno y directorio originales. Rechaza propiedades desconocidas. Cada método tiene un plazo agregado de hasta 120 segundos, sin un plazo independiente por parámetro; después se retira el grupo de procesos con espera acotada. Se guardan XML original, nombres y estados de salida. Un timeout o XML incompleto produce fallo parcial; los casos nativos obligatorios ausentes u omitidos impiden aprobar. Los runners propios mantienen procesos y plazos CTest por caso.
 
 ## Evidencia y límites
+
+Las mediciones históricas siguientes preceden a la optimización; los resultados del 2026-10-04 están al final.
 
 Estado del 2026-10-03; las filas se solapan y no se suman:
 
@@ -124,3 +126,39 @@ El [workflow del repositorio personal](https://github.com/gmh5225/test_mac_intel
 El 2026-10-04, los primeros trabajos de [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) y [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) del repositorio personal comenzaron 8 y 5 segundos después de crearse. Fallaron tras la terminación anormal de subprocesos de carga; el controlador canceló y terminó los procesos nativos después de 3 y 105 repeticiones completas, respectivamente. Las pruebas finales se conservaron y verificaron de forma independiente. Un [control exclusivo de carga](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621) superó las 16 cargas; se verificaron los resúmenes del servidor de sus 17 artefactos, con `native_execution=false`. Estas observaciones distinguen un fallo de carga de una aserción nativa, pero no determinan su causa ni validan las 1.000 repeticiones solicitadas. El control anterior del repositorio de la organización también comenzó en 5 segundos, por lo que estas muestras no demuestran una mejora del tiempo de espera.
 
 Las ejecuciones posteriores de [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) y [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) terminaron con fallo el 2026-10-04; GitHub indicó explícitamente la pérdida de comunicación con el runner alojado. Se verificaron sus 10 y 16 artefactos. Los últimos registros conservados prueban 175 y 326 repeticiones completas consecutivas, respectivamente, seguidas del inicio de otra; no localizan el fallo final. Faltan los resultados nativos finales y las pruebas de terminación de procesos, y ambos registros completos devuelven HTTP 404. No se solicitó cancelación manual. Las 1.000 repeticiones siguen sin validarse en Intel. [Los fragmentos originales y el manifiesto de ejecuciones y resúmenes](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04) permanecen disponibles tras caducar los artefactos de Actions.
+
+## Optimización del mantenimiento ARM64 (2026-10-04)
+
+Las cinco operaciones TLB/I-cache se ejecutan juntas en un bloque privado inmutable terminado en HVC #1. El transporte verifica el syndrome completo, el PC de retorno, PSTATE y ESR_EL1 antes de ejecutar exactamente una instrucción admitida del huésped. Solo se desactiva el paso a paso durante el mantenimiento; se conservan todas las barreras, la captura completa y el plazo común de cancelación. No se usa ERET, porque el retorno de excepción deja ESR_EL1 arquitectónicamente UNKNOWN. [Arm](https://documentation-service.arm.com/static/649ae5b238511951cb799288).
+
+En M4 Max con macOS 15.6.1, Release, Apple Clang 17 y LLVM precompilado, la instrumentación independiente contó 252600 entradas antes y 84200 después para las mismas 42044 instrucciones del huésped y 56 de sondeo inicial: de seis entradas a dos. Los tiempos instrumentados quedan excluidos. Tres pruebas de fallos/recuperación superaron 1000 iteraciones consecutivas cada una en un proceso; la cancelación exige una escritura nativa como testigo y un reintento correcto tras modificar el código huésped.
+
+La integración limpia [389bebfdd](https://github.com/NeverSight/NeverD/commit/389bebfdda31a0db19facc7ab8ca5461a8c8c1bc) superó el inventario CPU completo: 2546 éxitos, 4710 omitidos, cero fallos y los 23 casos nativos obligatorios aprobados. Darwin independiente: 130 éxitos, 156 omitidos, cero fallos y los 39 casos nativos obligatorios aprobados. Los inventarios se solapan y no deben sumarse. No se demuestra una validación con SDK ni dispositivos iOS.
+
+Quince pares de procesos alternan el orden, con un calentamiento por carga y sin compilaciones ni pruebas de esta tarea en paralelo. La carga del host compartido fue 26.7–33.0; en la comparación por software, 28.8–32.6. Las celdas muestran mediana [mínimo–máximo] en milisegundos. La aceleración es la mediana de las razones de tiempo emparejadas; el intervalo bootstrap percentil del 95% usa 10000 remuestreos y semilla 20261004. Las colas largas y solo quince pares limitan la generalización.
+
+`4b54908b9` → `056090929` / Release / Apple Clang 17 / LLVM 23 prebuilt / Unicorn `df88be772`.
+
+| Carga | Antes ms [mín–máx] | Después ms [mín–máx] | Aceleración emparejada | Intervalo 95% | Pares más rápidos |
+| --- | --- | --- | --- | --- | --- |
+| `initialization` | 1.292 [0.804–6.793] | 1.118 [0.797–29.077] | 0.998× | 0.809–1.154 | 7/15 |
+| `integer` | 125.426 [92.700–587.385] | 70.229 [54.067–895.051] | 1.595× | 1.373–1.884 | 13/15 |
+| `branch` | 251.909 [168.279–974.846] | 155.678 [106.833–1566.522] | 1.495× | 1.055–1.687 | 12/15 |
+| `memory` | 231.574 [140.137–1511.815] | 143.496 [96.508–1209.777] | 1.535× | 1.276–1.984 | 13/15 |
+| `tls_call` | 347.850 [203.188–2536.731] | 212.467 [136.304–1441.830] | 1.552× | 1.428–2.912 | 14/15 |
+| `two_cpu_switch` | 34.629 [25.019–416.105] | 26.684 [18.926–60.159] | 1.389× | 1.283–1.515 | 13/15 |
+
+### Unicorn / HVF optimizado (más de 1 favorece HVF)
+
+| Carga | Aceleración emparejada | Intervalo 95% |
+| --- | --- | --- |
+| `initialization` | 0.232× | 0.195–0.325 |
+| `integer` | 1.878× | 1.437–2.896 |
+| `branch` | 2.681× | 1.824–3.317 |
+| `memory` | 2.967× | 2.224–3.215 |
+| `tls_call` | 2.339× | 0.977–3.257 |
+| `two_cpu_switch` | 0.831× | 0.541–1.612 |
+
+Son mediciones de cargas ARM64 verificadas en un anfitrión compartido, no una clasificación universal. Las desconexiones y caídas de procesos de los runners Intel siguen pendientes de investigación independiente. Los perfiles CPU limitados de macOS/iOS no equivalen a emular por completo un sistema o dispositivo Apple.
+
+[Reproducción: `neverd-cpu-bench`, `benchmark_cpu.py`](../testing.md#reproduce-checked-arm64-cpu-measurements).

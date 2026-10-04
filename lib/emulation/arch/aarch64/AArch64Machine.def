@@ -25,6 +25,7 @@ NEVERD_AARCH64_VALUE(PrivilegedNX, 1ull << 53)
 NEVERD_AARCH64_VALUE(UserNX, 1ull << 54)
 NEVERD_AARCH64_VALUE(VectorGPA, memory::PageSize)
 NEVERD_AARCH64_VALUE(EntryGPA, 2 * memory::PageSize)
+NEVERD_AARCH64_VALUE(MaintenanceEntryGPA, EntryGPA + 0x40)
 NEVERD_AARCH64_VALUE(ProbePC, EntryGPA + 0x100)
 NEVERD_AARCH64_VALUE(ProbeTimeoutMicroseconds, 1000000)
 NEVERD_AARCH64_VALUE(InternalBegin, VectorGPA)
@@ -67,12 +68,19 @@ NEVERD_AARCH64_VALUE(GicITS, 0x80040000ull)
 NEVERD_AARCH64_VALUE(GicVirtualTimerPPI, 27)
 NEVERD_AARCH64_VALUE(GicPerformancePPI, 23)
 NEVERD_AARCH64_VALUE(GatewayHypercall, 0xd4000002)
+// A distinct exit authenticates the straight-line, non-stepped maintenance stub.
+NEVERD_AARCH64_VALUE(MaintenanceHypercallImmediate, 1)
+NEVERD_AARCH64_VALUE(MaintenanceHypercall,
+                     GatewayHypercall | (MaintenanceHypercallImmediate << 5))
+NEVERD_AARCH64_VALUE(MaintenanceSyndrome,
+                     (0x16ull << 26) | (1ull << 25) | MaintenanceHypercallImmediate)
 NEVERD_AARCH64_VALUE(UserPage, 1ull << 6)
 NEVERD_AARCH64_VALUE(PStateEL0t, 0)
 NEVERD_AARCH64_VALUE(LowerELVector, 0x400)
 #endif
 // No general register or flags are modified by the maintenance sequence.
-// The KVM adapter steps these internally; WHP appends ERET to arm guest SS.
+// KVM steps these internally; WHP uses ERET to arm guest SS. HVF runs a second
+// immutable copy through HVC, leaving ESR_EL1 untouched for fault detection.
 #ifdef NEVERD_AARCH64_MAINTENANCE
 NEVERD_AARCH64_MAINTENANCE(TLBI_VMALLE1IS, 0xd508831f)
 NEVERD_AARCH64_MAINTENANCE(DSB_ISH, 0xd5033b9f)

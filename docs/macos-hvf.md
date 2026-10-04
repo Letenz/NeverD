@@ -63,9 +63,11 @@ owns instruction admission, page permissions, CPU state, memory transactions,
 service traps and guest OS behavior. Native worker actions cannot call guest
 observers or acquire the caller's core memory locks.
 
-ARM64 explicitly single-steps the immutable TLB/I-cache maintenance sequence
-before the admitted instruction. Debug exceptions routed to EL2 cannot be
-masked using the guest's `PSTATE.D`. All scalar, TLS and FP/SIMD state uses the
+ARM64 executes the complete immutable TLB/I-cache maintenance sequence in one
+native entry, with software stepping disabled. A distinct HVC #1 must match
+its exact return PC, syndrome, PSTATE and unchanged ESR_EL1 before the
+admitted guest instruction is single-stepped. `PSTATE.D` cannot mask debug
+exceptions routed to EL2. All scalar, TLS and FP/SIMD state uses the
 existing ARM64 capture boundary and startup probe. Intel uses negotiated VMCS
 controls, monitor-trap stepping, TLB invalidation, complete FP/SSE XSAVE packets
 and authenticated exception exits. RIP/RFLAGS are installed and captured
@@ -166,8 +168,8 @@ rollback, queue cancellation, native loop interruption and retry. Both ISAs have
 required raw loop interruption and completion-error fixtures. These must observe
 an actual native return; cancellation before entry cannot satisfy the loop test.
 The full profile also requires the Intel CR8 all-register and privilege regression.
-The transport profile requires 12 ARM64 or 10 Intel cases, and the full profile
-requires 16 or 14 respectively. Intel compilation alone does not establish Intel
+The transport profile requires 15 ARM64 or 10 Intel cases, and the full profile
+requires 23 or 18 respectively. Intel compilation alone does not establish Intel
 runtime correctness; its native gate remains required.
 
 Hardware-backed execution is not automatically faster for NeverD's checked
@@ -296,6 +298,8 @@ Build and public-integration checks established the following:
 
 #### Performance and remaining scope
 
+Historical measurements below predate the 2026-10-04 optimization; see the current results at the end of this page.
+
 An alternating seven-sample benchmark, after warmup and excluding CPU creation,
 ran the same checked ARM64 loop on both backends: two setup instructions plus
 1,000 `ADD/SUBS/B.NE` iterations, or 3,002 guest instructions. Final registers
@@ -371,3 +375,39 @@ A [personal-repository harness](https://github.com/gmh5225/test_mac_intel) provi
 On 2026-10-04, the first personal-repository [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) and [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) jobs started 8 and 5 seconds after creation. They failed after uploader subprocesses exited; the controller cancelled and retired the native children after 3 and 105 complete repetitions respectively. Their final bundles were preserved and independently checked. A separate [uploader-only control](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621) passed all 16 uploads, with 17 server-digest-verified artifacts and `native_execution=false`. These observations distinguish upload failure from a native assertion failure; they neither identify its cause nor validate the requested 1,000 repetitions. The earlier organization control also started in 5 seconds, so these samples do not establish a queue-speed improvement.
 
 The subsequent [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) and [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) runs both ended in failure on 2026-10-04; GitHub explicitly reported lost hosted-runner communication. Their 10 and 16 artifacts were verified. The last preserved logs prove 175 and 326 consecutive complete repetitions respectively, followed by one started repetition; neither locates the eventual fault. Both lack final native results and retirement records, and both full job-log endpoints returned HTTP 404. No cancellation was requested. The 1,000-repetition gate remains unverified on Intel. [Retained original log prefixes and the run/digest manifest](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04) preserve these results beyond the Actions artifact retention period.
+
+## ARM64 maintenance optimization (2026-10-04)
+
+The five TLB/I-cache maintenance operations now run together in one immutable private stub, followed by a dedicated HVC #1. The transport verifies the complete syndrome, return PC, PSTATE and ESR_EL1 before executing exactly one admitted guest instruction. Software stepping is disabled only during maintenance; all barriers, full state capture and the shared cancellation deadline remain. ERET is deliberately absent because exception return makes ESR_EL1 architecturally UNKNOWN. [Arm](https://documentation-service.arm.com/static/649ae5b238511951cb799288).
+
+On an M4 Max with macOS 15.6.1, Release/Apple Clang 17 and prebuilt LLVM, separate instrumentation counted 252600 native entries before and 84200 after for the same 42044 guest plus 56 startup-probe instructions: six entries became two. Instrumented timings are excluded. Three recovery/fault tests each passed 1000 consecutive iterations in one process; cancellation requires a native memory-store witness and successful retry with rewritten guest code.
+
+The clean integration at [389bebfdd](https://github.com/NeverSight/NeverD/commit/389bebfdda31a0db19facc7ab8ca5461a8c8c1bc) passed the complete CPU inventory: 2546 passed, 4710 skipped, zero failed; all 23 required native cases passed. The separate Darwin inventory had 130 passed, 156 skipped, zero failed and all 39 required native cases passed. These inventories overlap; their totals must not be added. No iOS SDK/device oracle is claimed.
+
+Fifteen alternating process pairs, with one warmup per workload and no build or tests from this task running during measurement. The shared host load was 26.7–33.0 (software comparison: 28.8–32.6). Cells show median [minimum–maximum] milliseconds. Speedup is the median of paired before/after time ratios; the 95% percentile bootstrap interval uses 10000 resamples with seed 20261004. Long tails and only fifteen pairs limit generalization.
+
+`4b54908b9` → `056090929` / Release / Apple Clang 17 / LLVM 23 prebuilt / Unicorn `df88be772`.
+
+| Workload | Before ms [min–max] | After ms [min–max] | Paired speedup | 95% interval | Faster pairs |
+| --- | --- | --- | --- | --- | --- |
+| `initialization` | 1.292 [0.804–6.793] | 1.118 [0.797–29.077] | 0.998× | 0.809–1.154 | 7/15 |
+| `integer` | 125.426 [92.700–587.385] | 70.229 [54.067–895.051] | 1.595× | 1.373–1.884 | 13/15 |
+| `branch` | 251.909 [168.279–974.846] | 155.678 [106.833–1566.522] | 1.495× | 1.055–1.687 | 12/15 |
+| `memory` | 231.574 [140.137–1511.815] | 143.496 [96.508–1209.777] | 1.535× | 1.276–1.984 | 13/15 |
+| `tls_call` | 347.850 [203.188–2536.731] | 212.467 [136.304–1441.830] | 1.552× | 1.428–2.912 | 14/15 |
+| `two_cpu_switch` | 34.629 [25.019–416.105] | 26.684 [18.926–60.159] | 1.389× | 1.283–1.515 | 13/15 |
+
+### Unicorn / optimized HVF (above 1 favors HVF)
+
+| Workload | Paired speedup | 95% interval |
+| --- | --- | --- |
+| `initialization` | 0.232× | 0.195–0.325 |
+| `integer` | 1.878× | 1.437–2.896 |
+| `branch` | 2.681× | 1.824–3.317 |
+| `memory` | 2.967× | 2.224–3.215 |
+| `tls_call` | 2.339× | 0.977–3.257 |
+| `two_cpu_switch` | 0.831× | 0.541–1.612 |
+
+These are measurements of checked ARM64 workloads on one shared host, not a universal speed ranking. Intel runner disconnects and process crashes remain unresolved and require separate investigation. The bounded macOS/iOS CPU profiles do not become full Apple OS/device emulation.
+
+[Reproduction: `neverd-cpu-bench`, `benchmark_cpu.py`](testing.md#reproduce-checked-arm64-cpu-measurements).

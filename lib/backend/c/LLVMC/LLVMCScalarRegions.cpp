@@ -28,6 +28,8 @@ struct ScalarRegion {
   llvm::BasicBlock *EntryPred = nullptr;
   llvm::BasicBlock *Latch = nullptr;
   const llvm::PHINode *Counter = nullptr;
+  const llvm::Loop *Scope = nullptr;
+  bool ScopedCounter = false;
 };
 
 class ScalarRegionPlan {
@@ -73,6 +75,7 @@ class ScalarRegionPlan {
             ScalarRegion::Kind::Loop, BB, Exit, !TrueBody, {}, {}};
         Region.EntryPred = Loop->getLoopPredecessor();
         Region.Latch = Loop->getLoopLatch();
+        Region.Scope = Loop;
         if (!edge(Region.First, BB, Body) ||
             !sequence(Body, BB, Loop, Region.First, Depth + 1) ||
             !edge(Region.Second, BB, Exit))
@@ -302,7 +305,9 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
   if (DebugFn)
     return false;
   std::vector<ScalarRegion> Regions;
-  if (!ScalarRegionPlan(Fn).build(Regions, Dominators))
+  // Region scopes borrow LoopInfo objects through the entire rendering pass.
+  ScalarRegionPlan Plan(Fn);
+  if (!Plan.build(Regions, Dominators))
     return false;
   // Funnel shifts have total, typed C helpers. A single same-block use and
   // leaf operands need neither a snapshot nor an additional expression-tree
@@ -393,6 +398,98 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
     }
   };
   PlanCounters(PlanCounters, Regions);
+  if (UseScalarExpressionTypes) {
+    // A short local must not hide an external or recursive callee. Reserve
+    // the same C identifier used by the call writer before assigning roles.
+    UsedNames.insert(functionIdentifier(Fn));
+    for (const auto &BB : Fn)
+      for (const auto &Inst : BB)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+          UsedNames.insert(functionIdentifier(*Call->getCalledFunction()));
+    // These are generated C roles, not recovered debug names. Rename the
+    // complete coalesced group so copies continue to refer to one object.
+    std::map<std::string, std::vector<const llvm::Value *>> NameGroups;
+    for (const auto &[Value, Name] : ValNames)
+      NameGroups[Name].push_back(Value);
+    auto Rename = [&](const llvm::Value *Value, const char *Hint) {
+      const auto OldName = getName(Value);
+      auto Found = NameGroups.find(OldName);
+      if (Found == NameGroups.end() ||
+          !llvm::all_of(Found->second, [&](const llvm::Value *Other) {
+            return llvm::isa<llvm::PHINode>(Other) &&
+                   Other->getType() == Value->getType();
+          }))
+        return std::string();
+      const auto Name = freshVar(Hint);
+      auto Group = std::move(Found->second);
+      NameGroups.erase(Found);
+      for (const auto *Other : Group)
+        ValNames[Other] = Name;
+      NameGroups[Name] = std::move(Group);
+      return Name;
+    };
+    const llvm::PHINode *Result = nullptr;
+    bool OneResult = true;
+    for (const auto &BB : Fn)
+      if (const auto *Ret =
+              llvm::dyn_cast<llvm::ReturnInst>(BB.getTerminator())) {
+        const auto *Phi =
+            llvm::dyn_cast_or_null<llvm::PHINode>(Ret->getReturnValue());
+        if (!Phi || (Result && Result != Phi))
+          OneResult = false;
+        Result = Phi;
+      }
+    if (OneResult && Result)
+      Rename(Result, "result");
+
+    // A direct LLVM use can inline through another value and be printed
+    // outside the loop. Follow those uses through every inlined expression;
+    // a materialized result is the boundary that retains its own lifetime.
+    unsigned ScopeWork = 0;
+    auto Confined = [&](const ScalarRegion &Region) {
+      auto Group = NameGroups.find(getName(Region.Counter));
+      if (Group == NameGroups.end())
+        return false;
+      llvm::SmallPtrSet<const llvm::Value *, 32> Seen;
+      llvm::SmallVector<const llvm::Value *, 32> Pending(Group->second.begin(),
+                                                         Group->second.end());
+      while (!Pending.empty()) {
+        const auto *Value = Pending.pop_back_val();
+        if (++ScopeWork > 65536)
+          return false;
+        if (!Seen.insert(Value).second)
+          continue;
+        const auto *Inst = llvm::dyn_cast<llvm::Instruction>(Value);
+        if (!Inst || !Region.Scope->contains(Inst))
+          return false;
+        for (const auto *User : Value->users()) {
+          if (++ScopeWork > 65536)
+            return false;
+          const auto *Use = llvm::dyn_cast<llvm::Instruction>(User);
+          if (!Use || !Region.Scope->contains(Use))
+            return false;
+          if (Analysis.Inlinable.count(Use) &&
+              !MaterializedExpressions.count(Use))
+            Pending.push_back(Use);
+        }
+      }
+      return true;
+    };
+    auto ScopeCounters = [&](auto &&Self, auto &Sequence) -> void {
+      for (auto &Region : Sequence) {
+        if (Region.Counter && Confined(Region)) {
+          const auto Name = Rename(Region.Counter, "i");
+          if (!Name.empty()) {
+            ScopedScalarNames.insert(Name);
+            Region.ScopedCounter = true;
+          }
+        }
+        Self(Self, Region.First);
+        Self(Self, Region.Second);
+      }
+    };
+    ScopeCounters(ScopeCounters, Regions);
+  }
   auto Condition = [&](const ScalarRegion &Region) {
     auto *Br = llvm::cast<llvm::CondBrInst>(Region.Block->getTerminator());
     if (Region.Invert) {
@@ -440,12 +537,20 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
         emitIndent(Level);
         if (Region.Counter) {
           const auto Name = getName(Region.Counter);
-          OS << "for (" << Name << " = "
+          OS << "for (";
+          if (Region.ScopedCounter)
+            OS << typeToCLLVM(Region.Counter->getType()) << " ";
+          OS << Name << " = "
              << valueStr(
                     Region.Counter->getIncomingValueForBlock(Region.EntryPred))
-             << "; " << Condition(Region) << "; " << Name << " = "
-             << valueStr(Region.Counter->getIncomingValueForBlock(Region.Latch))
-             << ") {\n";
+             << "; " << Condition(Region) << "; ";
+          const auto *Step =
+              Region.Counter->getIncomingValueForBlock(Region.Latch);
+          if (auto Update = scalarUpdateText(Region.Counter, Step))
+            OS << *Update;
+          else
+            OS << Name << " = " << valueStr(Step);
+          OS << ") {\n";
         } else {
           OS << "while (" << (HeaderWork ? "1" : Condition(Region)) << ") {\n";
         }

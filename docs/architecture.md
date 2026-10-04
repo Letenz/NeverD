@@ -1430,6 +1430,11 @@ lookups and the API 28 TLS `dlerror` slot; the C API, CLI and Python expose the
 same named request/call events. These catalogue entries never load host code.
 Missing entries return modeled lookup errors, while calls whose behavior or
 lookup scope is unsupported stop explicitly.
+Bionic's `syscall` wrapper shifts the native arguments into a Linux service
+event and delegates number resolution to `LinuxServices.cpp`. Named wrappers,
+variadic calls and raw SVC therefore share memory, identity, output and exit
+semantics. Bionic alone owns libc error conversion; wrapper calls retain their
+native import event without inventing another executed service instruction.
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending
@@ -1444,6 +1449,12 @@ uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
 C, CLI and Python consume the same option parser. No dependency graph,
 namespace or caller-specific scope is inferred from these explicit inputs.
 
+
+`AndroidStrings` owns Bionic's mutating token scan over guest memory. Imported
+and dynamically named `strtok_r` calls use the same bounded byte reads and
+caller-owned continuation pointer. It validates the complete cursor and
+delimiter write spans before publishing changes; no host string function or
+duplicate cursor state participates.
 
 Bionic's private mutex model reads the API 28 LP64 object directly from guest
 memory. Attribute interpretation, lock state, recursive depth and ownership
@@ -1785,6 +1796,14 @@ This architecture contract applies equally to Android, Darwin, Linux and
 Windows workloads; OS models cannot override authentication state or infer
 active keys. Other PAuth encodings and system-control access stay unsupported.
 See the [checked CPU contract](cpu-execution.md).
+
+The same ISA owner describes baseline no-offset `LDAR[B/H]` and `STLR[B/H]`
+as exact, naturally aligned 1/2/4/8-byte ordinary-RAM accesses. Original
+instructions execute under the shared physical lease and RAM transaction,
+preserving pre-effect observers and whole-state rollback. This cooperative
+ordering contract does not admit exclusive monitors, parallel SMP, unaligned
+accesses or optional acquire/release encodings; see the
+[CPU contract](cpu-execution.md) for the complete boundary.
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 
@@ -2994,6 +3013,8 @@ Before rendering C, `LLVMCCommonBranches` factors identical integer exit tests f
 
 `LLVMCScalarExpressions` tracks LLVM bit width separately from the C expression type and operator precedence within admitted scalar regions. It removes redundant unsigned casts while preserving narrow wrap, signed interpretation, widened arithmetic and full-width shifts. Integer promotions, including byte/word multiplication and wide-to-boolean truncation, remain explicit when needed. Rendering is bounded to 128 visited values and 32 recursive levels; unsupported expressions use the existing writer. Debug, image and composed-text projections require separate type evidence and do not use this path. Caller IR and ABI contracts remain unchanged.
 
+Within admitted scalar regions, LLVMC names a common returned PHI group by its result role and scopes a loop counter in its `for` declaration only when every member of its coalesced group and every inlined use stays inside that loop. Materialized values keep their own lifetimes. LoopInfo remains owned through rendering; confinement checks have a shared 65536-work bound. The shared PHI scheduler selects snapshots before eligible add/subtract/bitwise updates use compound assignments or increments. Boolean masks, narrow multiplication, reversed subtraction, escaping counters and old-value dependencies keep their required forms. Role names also reserve the call writer’s C callee identifiers to avoid hiding external or recursive functions.
+
 The shared `SourceABI` represents one bounded mixed Swift result as a flat logical record of three Float64 fields followed by an opaque pointer. Its independent physical results are d0–d2 and x0 on ARM64, or xmm0–xmm2 and rax on x86-64; this x86-64 shape also admits up to three ordinary double inputs. Assignment and validation share the same carrier mapping. LowIR/MedIR call extraction, typed HighIR records and HighC retain every field and one call evaluation. Ordinary C/Objective-C classification, mixed record parameters and other mixed layouts remain unsupported. This declaration contract does not authenticate a nominal layout, constructor, callback ownership or native entry. Compiler evidence covers four macOS/Mac Catalyst targets, while native O0/O2 fixtures check full floating bit patterns, nil/object identity, return guards and observable call counts against the real Swift runtime.
 
 `SwiftMetadata` owns registered internal nominal and protocol identities for both source recipes and bounded storage queries. One query authenticates a fixed 32-byte struct containing three Double/CGFloat fields and one nonoptional strong local class reference. The full registration, reflection owner, exact ordinary immutable CGFloat import, field offsets, unique metadata object and complete immutable value-witness layout must agree. All eight witness code pointers remain dynamic; storage evidence grants no witness effects, constructor or callback ABI, native-entry proof, frame permission, or source publication. The existing scalar-only Swift declaration recovery stays conservative. Four-target compiler records and Onone/O Swift values independently check the layout, floating bit patterns, reference identity, copy isolation and destruction. Registration and structural records must use ordinary immutable storage; TLS substitutions are rejected, including during recipe publication.
@@ -3003,3 +3024,5 @@ The shared `SourceABI` represents one bounded mixed Swift result as a flat logic
 `SwiftMangledValueConstructorABI` now authenticates the current complete constructor machine and LowIR before automatic entry selection. Each caller retains a `SwiftValueConstructor` receipt for one original occurrence and all five inputs/four results; inference reconstructs receipts even after marker deletion or scalar-result tampering. Publication independently runs a bounded canonical pipeline and declaration/native inference, then compares the complete current MedIR replay, saved HighIR and final bound structured body. The first consumer allows at most 256 constructor instructions, 1024 caller instructions, 32 functions and 32 constructor calls, with no new frame, callback or lifetime effects. Existing expression identity and opaque-value annotation policies remain separate. Native O0/O2 checks pair the entire original 64-instruction constructor with unmodified generated C on a controlled genuine Swift/Objective-C class, checking changed live ivar offsets, super dispatch and its returned object, captured callback lifetime, floating bits, profiling counters and guards. These checks do not establish the entire original Lottie caller or method closure. This first current-machine consumer is ARM64-only; x64 declaration support does not bypass the existing machine-replay boundary.
 
 Constructor publication can independently authenticate ordinary void Objective-C selector stubs with only self and command parameters. The existing loader owns the immutable stub, strong ordinary import, initial selector reference and exact immutable selector name; the initial pointer proof does not freeze the runtime SEL. Every original LowIR occurrence must match one complete MedIR call and one HighIR statement. The bounded canonical replay still compares the receiver, selector, all expressions and effects across fresh, saved and bound bodies. Missing markers, copied or removed calls, stale ABI, changed machine bytes and conflicting storage are rejected. Dynamic dispatch and message side effects remain intact; this adds no receiver-class, frame, escape or purity permission.
+
+Native scalar-return refinement and MedToHigh share `SourceABI`'s call-result representation. A signed integer declaration stays signed while its lowered call carries unsigned machine bits of exactly the same width. The existing bounded return analysis may select the defined low word only when every return supports that projection and some return explicitly has unknown upper padding. Re-lifting and complete source publication remain mandatory; no upper bytes are invented. Floating, pointer, wrong-width and stale ABI results cannot supply this integer proof, and callers that observe the unknown upper word remain rejected.

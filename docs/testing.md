@@ -779,6 +779,13 @@ hosts skip explicitly; backend cells distinguish unavailable execution.
 
 ## Process emulation checks
 
+`AndroidSyscallTests.cpp` executes independent C fixtures at O0/O2 with ordinary,
+Android-packed and RELR relocations. It compares named, raw SVC and variadic
+identity calls; verifies errno, six-argument memory calls, full-width pointers,
+binary vectored output, budget stops and nonreturning exits; and rejects unknown
+services and closed dynamic providers. The shared C API/CLI and actual Python
+wrapper also check `dlsym` provider identity for `syscall`.
+
 `LinuxMemory.*` in `NeverDLinuxProcessTests` checks raw anonymous-memory syscall
 rules, partial protection before a hole, page reclamation, transactional budget
 failure and program-break preservation. Original x64/ARM64 ELF fixtures verify
@@ -2087,6 +2094,17 @@ unchanged code/data bytes. Run it together with `NeverDAArch64StateTests`,
 admission or startup probes. Native platform cells without hardware remain
 explicit skips; no active-authentication or real Android process claim follows.
 
+`AArch64AcquireReleaseTests.cpp` in `NeverDAArch64MemoryTests` runs independently
+encoded byte, halfword, word and doubleword acquire/release accesses through
+both checked privileges on available Unicorn/KVM/WHP/HVF transports. It checks
+the entire scalar/vector state and data page, zero-register and aliased-base
+operands, SP addressing, exact page tails, read/write/user permissions, observer
+cancellation and retry. Misalignment and neighboring exclusive, limited-order,
+RCpc and optional pre-indexed encodings must stop before effects. Run this
+target with the checked CPU, state, FP, PAuth and execution-session suites when
+changing instruction admission. Unavailable hardware cells remain skips;
+these tests do not establish parallel memory ordering.
+
 The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller’s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.
 
 `X64FPState.def` declares compacted AVX, AVX-512, CET_U/CET_S and AMX transport layouts, including 64-byte component alignment. Present extension payloads must be architectural zero init state; absent payloads and alignment padding do not define state. Layout bits determine offsets, and unknown layouts, non-initial payloads or incorrect lengths fail before publication. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState` and `InitialWideComponentsDoNotHideFPState` cover 872-byte and 10752-byte WHP packets. This transport support does not admit those extension instructions.
@@ -2210,6 +2228,15 @@ unbalanced callback stacks and exhaustion of the original instruction budget.
 C/CLI and Python tests check callback effects and ordered nullable call results
 through the real shared engine. This is modeled API 28 evidence, not a native
 Android device comparison or proof of concurrent initialization semantics.
+Independent tokenization fixtures at O0/O2 and all three relocation packings
+check changed delimiters, interleaved contexts, unsigned bytes, final/empty
+tokens, exact cursor width, input mutations and errno preservation. Read-only
+inputs and cursors, invalid pointers, scan limits and stale dynamic providers
+have explicit outcomes. C/CLI and Python integration compare named calls and
+guest effects through the shared engine. The API 28 cursor contract is checked
+against [pinned AOSP source](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strtok.c);
+this is model evidence, not a native Android device comparison.
+
 Independent mutex fixtures run at O0/O2 with ordinary, APS2 and RELR packing.
 They check eight-byte attributes, four-byte getter outputs, complete 40-byte
 initialization, overlapping attributes, static initializers, all three lock
@@ -2280,6 +2307,63 @@ use Unicorn. The existing ISA and OS contracts remain authoritative. See
 [HVF ownership, signing and hardware tests](macos-hvf.md). ARM64 hardware
 evidence and Intel runtime coverage are reported separately.
 
+`NeverDHvfTests` authenticates the non-stepped ARM64 maintenance exit separately
+from the guest single-step. Fault injection at the end of maintenance covers UDF,
+wrong HVC immediates and a correct immediate at a wrong PC. Deadline and stop
+tests require an actual native store before cancellation, preserve all caller
+registers/vectors at both privileges, then rewrite guest code and retry. A public
+CPU test rejects guest branches into the private maintenance area before fetching
+or observing those bytes. The HVF inventory also includes `NeverDInstructionFetchTests`
+for host/guest writes through aliases, context restoration and permission changes.
+
+### Reproduce checked ARM64 CPU measurements
+
+In a Release CPU build, `neverd-cpu-bench` links directly to the CPU components
+and checks every execution result. It emits JSON lines for initialization,
+integer/branch loops, RAM, TLS/calls and two alternating CPUs. Initialization is
+measured separately; ordinary execution excludes setup and verification. The
+two-CPU workload includes the intervening public API calls and checks. These are
+checked-execution microbenchmarks, not full OS throughput or cross-ISA comparisons.
+Explicit HVF requires an ARM64 macOS host; Unicorn must be enabled for its comparison.
+
+```bash
+cmake --build build-cpu --target neverd-cpu-bench --parallel 4
+build-cpu/bin/neverd-cpu-bench --backend hvf --samples 7 --warmup 1
+build-cpu/bin/neverd-cpu-bench --backend unicorn --samples 7 --warmup 1
+```
+
+Preserve a baseline executable **before** rebuilding after a change. The target
+statically links NeverD/Unicorn; inspect `otool -L` to confirm its dependencies.
+Use Python 3.11+ and independent saved executables for paired measurements:
+
+```bash
+python3 scripts/benchmark_cpu.py \
+  --baseline /path/to/before --baseline-label BEFORE_COMMIT \
+  --candidate /path/to/after --candidate-label AFTER_COMMIT \
+  --pairs 15 --output /path/to/new-comparison.json
+```
+
+The driver alternates process order, warms each workload, verifies the complete
+sample inventory, records binary hashes, labels, load and raw samples, and refuses
+to overwrite evidence. Both backends default to HVF; use `--baseline-backend unicorn`
+to compare the same candidate binary's software and native transports. Source labels
+are caller-supplied; retain compiler/configuration details alongside the results.
+Avoid running builds or other tests while measuring. Report spread and paired
+results; one host and these workloads do not establish a universal ranking.
+
+Native entry counting is a separate opt-in diagnostic. It adds instrumentation
+overhead, so discard its elapsed times. The count includes startup probes.
+
+```bash
+cmake --build build-cpu --target neverd-hvf-entry-counter --parallel 4
+DYLD_INSERT_LIBRARIES="$PWD/build-cpu/bin/libneverd-hvf-entry-counter.dylib" \
+  build-cpu/bin/neverd-cpu-bench --backend hvf --samples 1 --warmup 1
+```
+
+The library prints its whole-process `hv_vcpu_run` count to stderr. The timing
+driver rejects injected libraries, preventing accidental use of instrumented
+timings as normal performance results.
+
 Finite-dispatch regressions cover register and frame phases, both byte orders, reachable invalid arms, later predecessors, exhausted inner guards and adjacent discovery limits. Destination-cap tests cover retained arithmetic correlations, nested loops, decode modes, fallthrough counting, total work limits and legacy precedence. CLI tests execute both C routes and source ABIs at O0/O2; C/Python v8 tests check layouts, invalid fields and ignored future tails. Regressions also keep discovery work available for native guards behind large unrelated finite selectors, and reserve the last permitted refinement for an already nominated producer.
 
 `NeverDLLVMCPhiTests` executes independent and cross-dependent loop updates at O0/O2 over zero-trip loops, iteration boundaries and randomized full-width seeds. Readability assertions require no snapshot locals for independent updates and only the needed snapshot for compound exchanges. Existing branch, switch, moved-arm and swap-loop cases continue to check the selected edge and simultaneous assignment semantics.
@@ -2291,5 +2375,7 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 `NeverDLLVMCPhiTests` also executes structured scalar regions at O0/O2: nested loops with shuffled block layout, diamonds, zero iterations, narrow wrap, header observers, PHI swaps, live outer carriers, shared steps and funnel-shift endpoints. It checks source-IR preservation, three-local coalescing, and executable fallback for multi-exit, irreducible and oversized graphs. These are independent synthetic fixtures; source rendering does not certify native recovery.
 
 `NeverDLLVMCValueTests` compares typed scalar-loop C directly with independently compiled LLVM at O0/O2, with undefined-behavior traps enabled for the generated C. Boundary and deterministic full-width inputs cover narrow multiplication and wrap before shifts, widened multiplication and right shifts, wide-to-boolean truncation, signed comparisons/extensions, precedence, conditional expressions, boolean arithmetic, unsupported-operation fallback and deep materialized expressions. The tests also assert unchanged caller IR and removal of redundant casts.
+
+`NeverDLLVMCPhiTests` and `NeverDLLVMCValueTests` cover scoped byte counters across increment/decrement wrap, coalesced exit values, inlined uses after a loop, live outer carriers and PHI snapshots. Independent O0/O2 checks with undefined-behavior traps verify compound additions, reversed-subtraction refusal, narrow multiplication and boolean masks. Nested-region tests require loop-local counter declarations and a distinct result carrier without changing source LLVM. An executable naming regression makes external callees collide with the initially generated result/counter identifiers and checks that both calls and observer effects survive.
 
 `NeverDUnicornDecodeTests` checks reserved EVEX register fields on AVX-512/APX CPU models and ROUND memory-fault priority, retained state and resumption. A Linux x64 host probe independently confirms legacy alignment faults and scalar/VEX page faults. These engine tests do not extend checked ISA admission or establish native APX execution.

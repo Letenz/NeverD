@@ -1142,4 +1142,29 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 
 `NeverDLLVMCValueTests` 在 O0/O2 下，將具型別的純量迴圈 C 與直接獨立編譯的 LLVM 對照執行，並為產生的 C 啟用未定義行為陷阱。邊界值及確定性全位元寬度輸入涵蓋窄整數乘法、位移前回繞、擴寬乘法與右移、寬整數截斷成布林值、有號比較與擴展、優先順序、條件運算式、布林運算、不支援操作的回退及深運算式的實體化。測試也檢查呼叫端 IR 不變，以及冗餘轉型已移除。
 
+`NeverDLLVMCPhiTests` 與 `NeverDLLVMCValueTests` 涵蓋位元組計數器遞增遞減回繞、合併後的退出值、迴圈外的內聯使用、存活外層變數及 PHI 快照。獨立 O0/O2 檢查啟用未定義行為陷阱，驗證複合加法、反向減法拒絕、窄乘法及布林遮罩。巢狀區域測試要求計數器在迴圈內宣告、結果變數保持獨立，且不修改來源 LLVM。 可執行命名回歸讓外部函式與首次產生的結果變數及計數器同名，驗證呼叫與觀察副作用都被保留。
+
 `NeverDUnicornDecodeTests` 檢查 AVX-512/APX CPU 模型的 EVEX 暫存器保留位，以及 ROUND 記憶體異常優先級、狀態保留和恢復。獨立 Linux x64 主機程式確認了傳統編碼的對齊異常和純量/VEX 編碼的分頁異常。這些引擎測試不擴展 checked 指令准入，也不代表 APX 原生執行證據。
+
+## ARM64 CPU 效能測量
+
+使用 Release CPU 建置；明確指定 HVF 需要原生 ARM64 macOS，軟體對比需啟用 Unicorn。工具驗證每個結果，啟動單獨計時；雙 CPU 切換包含中間 API 呼叫與檢查，其餘執行負載不含設定與驗證。
+
+```bash
+cmake --build build-cpu --target neverd-cpu-bench --parallel 4
+build-cpu/bin/neverd-cpu-bench --backend hvf --samples 7 --warmup 1
+build-cpu/bin/neverd-cpu-bench --backend unicorn --samples 7 --warmup 1
+```
+
+重新建置前保存基準執行檔，使用 Python 3.11+ 交替測量。保留編譯設定、原始碼標籤、二進位摘要及所有樣本，測量期間不要並行編譯或測試。
+
+```bash
+python3 scripts/benchmark_cpu.py \
+  --baseline /path/to/before --baseline-label BEFORE_COMMIT \
+  --candidate /path/to/after --candidate-label AFTER_COMMIT \
+  --pairs 15 --output /path/to/new-comparison.json
+```
+
+入口計數為獨立診斷，會增加開銷，包含啟動探針；計數執行的耗時不得混入效能結果。局部負載不代表完整 OS 或跨架構效能。
+
+[重現方法](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)

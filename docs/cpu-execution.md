@@ -327,6 +327,20 @@ key registers and attempts to change `SCTLR_EL1` remain unsupported. Active
 PAuth, signing keys and authenticated guest pointers are not modeled. Linux
 startup continues to advertise no PAuth hardware capability.
 
+Checked ARM64 admits the baseline no-offset `LDAR`, `LDARB`, `LDARH`, `STLR`,
+`STLRB` and `STLRH` encodings for naturally aligned ordinary RAM. The ISA owner
+declares the exact 1/2/4/8-byte read or write before the original instruction
+executes through the transport. Zero-register operands still access memory;
+narrow loads clear the remaining destination bits. Permission faults and
+observer stops preserve the full CPU and RAM state. Misalignment, exclusive
+operations, RCpc, limited ordering and optional pre-indexed release encodings
+remain unsupported before effects. The physical execution lease and sequential
+RAM commits preserve ordering within this cooperative single-CPU contract;
+this does not model parallel SMP or an exclusive monitor. The fixed machine
+disables SP alignment traps, so SP bases require only the admitted data
+alignment. See Arm's [instruction definitions](https://documentation-service.arm.com/static/67e40f3398aa3c3b6eea6a85)
+and [memory ordering guide](https://developer.arm.com/documentation/102336/0100/Load-Acquire-and-Store-Release-instructions).
+
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 
 KVM x64/ARM64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture state on one private vCPU worker. Preparation runs once across `EINTR` retries; cancelled entry or failed capture cannot publish. `KvmAArch64Machine.cpp` performs translation maintenance and complete scalar/vector transfers on this worker under one step deadline. The caller publishes only after acknowledgement; ISA decoding, RAM transactions, OS policy and observers remain on the caller thread. Native ARM64 runtime evidence is still pending.

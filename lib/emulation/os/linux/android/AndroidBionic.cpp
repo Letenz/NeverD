@@ -296,6 +296,12 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return dlfcn(Call);
   if (Name == "pthread_once")
     return once(Call);
+  if (Name == "strtok_r") {
+    auto R = tokenize(Call);
+    if (!R)
+      return R.takeError();
+    return Value(*R);
+  }
   if (Name.starts_with("pthread_mutex"))
     return mutex(Call);
   if (Name == "__errno")
@@ -433,12 +439,18 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     Kind = linux_model::ServiceKind::Service;
 #include "AndroidKernelServices.def"
 #undef NEVERD_ANDROID_KERNEL_SERVICE
-  if (Kind) {
-    ProcessServiceEvent Event{Call.PC, 0, {}, std::nullopt};
-    std::copy_n(A.begin(), Event.Arguments.size(), Event.Arguments.begin());
+  const bool IsSyscall = Name == "syscall";
+  if (Kind || IsSyscall) {
+    ProcessServiceEvent Event{Call.PC, IsSyscall ? A[0] : 0, {}, std::nullopt};
+    // AArch64 Bionic syscall(number, ...) shifts x1..x6 into the six
+    // kernel argument registers. The shared Linux table owns the number.
+    std::copy_n(A.begin() + (IsSyscall ? 1 : 0), Event.Arguments.size(),
+                Event.Arguments.begin());
     // Raw Linux service semantics are shared. Bionic alone owns errno/-1.
-    auto Returned = linux_model::handleService(CPU, Memory, *Kind, Event,
-                                               Layout, Options, Result);
+    auto Returned = Kind ? linux_model::handleService(CPU, Memory, *Kind, Event,
+                                                      Layout, Options, Result)
+                         : linux_model::handleService(CPU, Memory, Event,
+                                                      Layout, Options, Result);
     if (!Returned)
       return Returned.takeError();
     if (!*Returned)

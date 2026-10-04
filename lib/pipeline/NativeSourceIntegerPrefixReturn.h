@@ -128,7 +128,12 @@ inline bool hasNativeSourceIntegerPrefixReturn(const HighFunc &Function) {
       std::string Error;
       return !E->SourceCallHint->DoesNotReturn &&
              validateSourceABI(Signature, Error) &&
-             equalSourceTypes(E->Type, Signature.ReturnType) &&
+             Signature.ReturnType->Kind == NdTypeKind::Int &&
+             // The lowerer retains scalar machine bits, independently of the
+             // declaration's signedness. Keep the logical ABI unchanged and
+             // accept only its exact declared or canonical bit representation.
+             (equalSourceTypes(E->Type, Signature.ReturnType) ||
+              equalSourceTypes(E->Type, sourceABICallResultType(Signature))) &&
              Signature.ReturnComponents.empty() &&
              Signature.ReturnLocation.Kind ==
                  SourceABICarrierKind::IntegerRegister &&

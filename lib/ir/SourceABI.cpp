@@ -380,6 +380,16 @@ sourceABIErrorResult(const SourceFunctionTypeHint &Hint) {
   return std::nullopt;
 }
 
+TypeRef sourceABICallResultType(const SourceFunctionTypeHint &Hint) {
+  std::string Error;
+  if (!validateSourceABI(Hint, Error))
+    return nullptr;
+  if (Hint.ReturnType->Kind == NdTypeKind::Void ||
+      Hint.ReturnType->Kind == NdTypeKind::Struct)
+    return Hint.ReturnType;
+  return NdType::makeInt(Hint.ReturnType->Size, false);
+}
+
 bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                        std::string &Diagnostic) {
   Diagnostic.clear();

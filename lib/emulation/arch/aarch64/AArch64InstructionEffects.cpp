@@ -176,8 +176,15 @@ getAArch64InstructionEffects(const cs_insn &I,
     unsigned Size = 1u << (Word >> SizeShift);
     uint64_t Address = Base;
     bool Writeback = false;
-    if (isUnsignedMemory(Word) || isImmediateMemory(Word) ||
-        isRegisterMemory(Word)) {
+    if (isAcquireReleaseMemory(Word)) {
+      // Admit only naturally aligned ordinary RAM. Original instructions still
+      // execute through the processor transport, under the shared physical
+      // execution lease and RAM transaction; no exclusive monitor is modeled.
+      if (Address % Size)
+        return llvm::make_error<UnsupportedExecutionError>();
+      Accesses.push_back({Address, Operand(Rt), Size, Load ? Read : Write});
+    } else if (isUnsignedMemory(Word) || isImmediateMemory(Word) ||
+               isRegisterMemory(Word)) {
       unsigned Opcode = (Word >> OpcodeShift) & OpcodeMask;
       Load = Vector ? bool(Opcode & VectorLoadBit) : Opcode != 0;
       if (Vector && (Opcode & VectorFullWidthBit)) {

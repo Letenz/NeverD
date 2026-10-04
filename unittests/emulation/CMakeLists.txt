@@ -34,6 +34,7 @@ add_neverd_unittest(NeverDAArch64PAuthTests
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
+  AArch64AcquireReleaseTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
@@ -61,6 +62,7 @@ add_neverd_unittest(NeverDMemoryLifecycleTests
 add_neverd_unittest(NeverDInstructionFetchTests
   InstructionFetchTests.cpp
   TIMEOUT 15
+  NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU)
 
 add_neverd_unittest(NeverDExecutionSessionTests
@@ -146,7 +148,9 @@ target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/
 include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
+  AndroidTokenTests.cpp
   AndroidMutexTests.cpp
+  AndroidSyscallTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)

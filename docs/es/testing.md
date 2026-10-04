@@ -1297,4 +1297,29 @@ Las regresiones cubren fases en registro y marco, ambos órdenes de bytes, ramas
 
 `NeverDLLVMCValueTests` compara el C de bucles escalares tipados con LLVM compilado directa e independientemente en O0/O2, con trampas de comportamiento indefinido para el C generado. Los valores límite y entradas deterministas de ancho completo cubren multiplicación estrecha y desbordamiento antes del desplazamiento, multiplicación y desplazamiento ampliados, truncamiento booleano, comparación y extensión con signo, precedencia, expresiones condicionales, aritmética booleana, alternativas para operaciones no admitidas y materialización de expresiones profundas. También comprueba que el IR del llamador no cambie y que desaparezcan las conversiones redundantes.
 
+`NeverDLLVMCPhiTests` y `NeverDLLVMCValueTests` cubren contadores de un byte con incremento/decremento y desbordamiento, salidas fusionadas, usos integrados tras el bucle, valores externos vivos e instantáneas PHI. Las comparaciones independientes O0/O2 con trampas de comportamiento indefinido verifican suma compuesta, rechazo de resta invertida, multiplicación estrecha y máscaras booleanas. Las regiones anidadas requieren contadores locales al bucle, un resultado separado y LLVM fuente intacto. Una regresión ejecutable hace coincidir nombres de funciones externas con los identificadores iniciales de resultado y contador, y comprueba las llamadas y sus efectos observables.
+
 `NeverDUnicornDecodeTests` comprueba los bits EVEX reservados de las formas de registro en modelos CPU AVX-512/APX, así como la prioridad de los fallos de memoria ROUND, la conservación del estado y la reanudación. Una prueba independiente en Linux x64 confirma los fallos de alineación de la codificación clásica y los fallos de página de las formas escalares/VEX. Estas pruebas del motor no amplían las instrucciones admitidas en modo checked ni demuestran ejecución APX nativa.
+
+## Mediciones de CPU ARM64
+
+Use una compilación Release CPU. HVF explícito requiere macOS ARM64 nativo; active Unicorn para comparar software. Se verifica cada resultado. La inicialización se mide aparte; alternar CPU incluye llamadas API y verificaciones intermedias, las demás cargas excluyen preparación y comprobación.
+
+```bash
+cmake --build build-cpu --target neverd-cpu-bench --parallel 4
+build-cpu/bin/neverd-cpu-bench --backend hvf --samples 7 --warmup 1
+build-cpu/bin/neverd-cpu-bench --backend unicorn --samples 7 --warmup 1
+```
+
+Conserve el ejecutable de referencia antes de recompilar. Python 3.11+ alterna el orden. Guarde configuración, etiquetas de fuente, hashes binarios y muestras completas; no compile ni ejecute pruebas en paralelo.
+
+```bash
+python3 scripts/benchmark_cpu.py \
+  --baseline /path/to/before --baseline-label BEFORE_COMMIT \
+  --candidate /path/to/after --candidate-label AFTER_COMMIT \
+  --pairs 15 --output /path/to/new-comparison.json
+```
+
+El conteo de entradas es un diagnóstico separado, incluye sondeos iniciales y añade sobrecarga; descarte sus tiempos. Estas cargas no representan rendimiento de un OS completo ni comparaciones entre ISA.
+
+[Reproducción](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)

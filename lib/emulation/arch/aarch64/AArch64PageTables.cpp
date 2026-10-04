@@ -19,9 +19,10 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
   if (auto E = Memory.validateMappings(aarch64::canonicalRange))
     return E;
   using namespace aarch64;
-  static_assert(ProbePC >=
+  static_assert(MaintenanceEntryGPA >=
                 EntryGPA + (std::size(Maintenance) + GateReturnInstructions) *
                                InstructionBytes);
+  static_assert(ProbePC >= MaintenanceExitGPA + InstructionBytes);
   static_assert(ProbePC + std::size(probe::Program) * InstructionBytes <=
                 EntryGPA + memory::PageSize);
   Memory.invalidateProjection();
@@ -40,12 +41,18 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
   for (uint32_t Instruction : Maintenance) {
     llvm::support::endian::write32le(Memory.data() + EntryGPA + Offset,
                                      Instruction);
+    llvm::support::endian::write32le(
+        Memory.data() + MaintenanceEntryGPA + Offset, Instruction);
     Offset += InstructionBytes;
   }
 #define NEVERD_AARCH64_GATE_RETURN(Name, Encoding)                             \
   llvm::support::endian::write32le(Memory.data() + EntryGPA + Offset, Encoding);
 #include "AArch64Machine.def"
 #undef NEVERD_AARCH64_GATE_RETURN
+  // Do not use ERET here: exception return makes ESR_EL1 architecturally
+  // UNKNOWN, defeating the native transport's synchronous-fault sentinel.
+  llvm::support::endian::write32le(Memory.data() + MaintenanceExitGPA,
+                                   MaintenanceHypercall);
   uint64_t Next = FirstChildTable;
   auto Map = [&](uint64_t VA, uint64_t PA,
                  unsigned Permissions) -> llvm::Error {

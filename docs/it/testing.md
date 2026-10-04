@@ -1292,4 +1292,29 @@ Le regressioni coprono fasi in registri e frame, entrambi gli ordini dei byte, r
 
 `NeverDLLVMCValueTests` confronta il C dei cicli scalari tipizzati con LLVM compilato direttamente e indipendentemente a O0/O2, attivando trap per il comportamento indefinito nel C generato. Valori limite e input deterministici a larghezza completa coprono moltiplicazione stretta e riporto prima degli shift, moltiplicazione e shift estesi, troncamento booleano, confronti ed estensioni con segno, precedenza, espressioni condizionali, aritmetica booleana, percorsi alternativi per operazioni non supportate ed espressioni profonde materializzate. I test verificano anche IR chiamante invariato e rimozione delle conversioni ridondanti.
 
+`NeverDLLVMCPhiTests` e `NeverDLLVMCValueTests` coprono contatori a un byte con riporto in incremento/decremento, uscite unificate, usi inline dopo il ciclo, valori esterni ancora vivi e copie PHI. Confronti indipendenti O0/O2 con trap per comportamento indefinito verificano somma composta, rifiuto della sottrazione invertita, moltiplicazione stretta e maschere booleane. Le regioni annidate richiedono contatori locali al ciclo, un risultato distinto e LLVM sorgente invariato. Una regressione eseguibile fa coincidere i nomi delle funzioni esterne con quelli iniziali di risultato e contatore, verificando chiamate ed effetti osservabili.
+
 `NeverDUnicornDecodeTests` verifica i bit EVEX riservati delle forme registro sui modelli CPU AVX-512/APX, la priorità dei fault di memoria ROUND, la conservazione dello stato e la ripresa. Una prova indipendente su Linux x64 conferma i fault di allineamento della codifica classica e i fault di pagina delle forme scalari/VEX. Questi test del motore non ampliano le istruzioni ammesse in modalità checked e non dimostrano esecuzione APX nativa.
+
+## Misure CPU ARM64
+
+Usare una build CPU Release. HVF esplicito richiede macOS ARM64 nativo; attivare Unicorn per il confronto software. Ogni risultato viene verificato. L’inizializzazione è misurata separatamente; i cambi di CPU includono API e controlli intermedi, gli altri carichi escludono preparazione e verifica.
+
+```bash
+cmake --build build-cpu --target neverd-cpu-bench --parallel 4
+build-cpu/bin/neverd-cpu-bench --backend hvf --samples 7 --warmup 1
+build-cpu/bin/neverd-cpu-bench --backend unicorn --samples 7 --warmup 1
+```
+
+Conservare l’eseguibile di riferimento prima di ricompilare. Python 3.11+ alterna l’ordine. Conservare configurazione, etichette delle sorgenti, hash binari e tutti i campioni; evitare compilazioni e test paralleli.
+
+```bash
+python3 scripts/benchmark_cpu.py \
+  --baseline /path/to/before --baseline-label BEFORE_COMMIT \
+  --candidate /path/to/after --candidate-label AFTER_COMMIT \
+  --pairs 15 --output /path/to/new-comparison.json
+```
+
+Il conteggio degli ingressi è una diagnosi separata, include sonde iniziali e introduce overhead; i suoi tempi non sono misure prestazionali. I carichi non rappresentano un OS completo né confronti tra ISA.
+
+[Riproduzione](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
