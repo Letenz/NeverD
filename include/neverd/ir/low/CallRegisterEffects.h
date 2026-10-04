@@ -92,6 +92,10 @@ struct RegisterBlock {
 struct LocalRegisterEffect {
   GPRFamilyMask Writes = 0;
   std::set<va_t> Callees;
+  /// Direct targets of calls proved never to return that the name list does
+  /// not know.  Their writes reach no caller, so they stay out of Callees,
+  /// but their summaries still give those calls their parameters.
+  std::set<va_t> NoReturnCallees;
   /// Some effect escapes the may-write summary (an unknown call, an
   /// incomplete lift).
   bool Unknown = false;

@@ -337,7 +337,24 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
     }
   if (Target == InvalidVA)
     return false;
-  return libc::isNoReturnTarget(*CurrentImg, Target, NoReturnTargets);
+  if (libc::isNoReturnTarget(*CurrentImg, Target, NoReturnTargets))
+    return true;
+  // An internal callee needs a proof, which lifts it; padding after the call
+  // is where a compiler that knew the callee never returns left its trace.
+  return NoReturnCallees && CurrentImg->hasExecutableCodeOwnerAt(Target) &&
+         callIsFollowedByPadding(Rec) &&
+         NoReturnCallees->neverReturns(Target, NoReturnCalleeDepth);
+}
+
+bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
+  const va_t Next = Rec.Addr + Rec.Size;
+  if (isKnownFunctionEntry(Next))
+    return true;
+  if (CurrentImg->Arch != Arch::X86 && CurrentImg->Arch != Arch::X64)
+    return false;
+  const Segment *Seg = CurrentImg->getSegmentFor(Next);
+  return Seg && Next >= Seg->VA && Next - Seg->VA < Seg->Data.size() &&
+         Seg->Data[static_cast<size_t>(Next - Seg->VA)] == x86::kInt3;
 }
 
 void CFGBuilder::restoreAdjacentNoReturnCall(InsnRecord &Rec,

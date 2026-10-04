@@ -506,6 +506,8 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
           Step.TailCallee = TailCall;
           if (!NoReturnCall)
             Effect.Callees.insert(Op.Inputs[0].Offset);
+          else if (!EntersNoReturnFunction)
+            Effect.NoReturnCallees.insert(Op.Inputs[0].Offset);
         }
         break;
       }
@@ -639,8 +641,8 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
     for (const auto &[Entry, Effect] : Funcs) {
       if (UnknownReads.count(Entry) || FixedEntryReads.count(Entry))
         continue;
-      const bool ForwardsToUnknown = llvm::any_of(
-          Effect.Blocks, [&](const RegisterBlock &Block) {
+      const bool ForwardsToUnknown =
+          llvm::any_of(Effect.Blocks, [&](const RegisterBlock &Block) {
             return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
               return Step.TailCallee && !FixedEntryReads.count(Step.Callee) &&
                      (!Funcs.count(Step.Callee) ||
