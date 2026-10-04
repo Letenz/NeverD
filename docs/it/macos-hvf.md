@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
+<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
 
 [← Indice della documentazione](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon può aggiungere `-DNEVERD_LLVM_PREBUILT=ON`; Intel compila la revisione LLVM fissata. Il [workflow HVF](../../.github/workflows/hvf.yml) supporta runner `self-hosted, macOS, ARM64/X64, hvf` e `hosted-intel` su `macos-15-intel`. Verifica prima creazione e distruzione reali di VM/vCPU. `validation=probe` non prova l’esecuzione di istruzioni; `transport` controlla soltanto il trasporto; `darwin` richiede tutti i carichi Darwin compatibili; `full` richiede entrambe le verifiche complete CPU e Darwin.
 
-Il trasporto richiede 15 casi ARM64 o 11 Intel; la verifica CPU completa richiede rispettivamente 23 o 20 controlli obbligatori. Copertura: stato completo, privilegi, permessi, attraversamento di pagine, alias, cambio CPU, rollback, annullamento e ripresa. Intel controlla CR8 prima della compilazione estesa. Gli artefatti conservano inventario, revisione, host, risultati e tentativi distinti. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) considera sperimentale la virtualizzazione annidata; resta utile un Mac nativo dedicato.
+Il trasporto richiede 15 casi ARM64 o 12 Intel; la verifica CPU completa richiede rispettivamente 23 o 20 controlli obbligatori. Copertura: stato completo, privilegi, permessi, attraversamento di pagine, alias, cambio CPU, rollback, annullamento e ripresa. Intel controlla CR8 prima della compilazione estesa. Gli artefatti conservano inventario, revisione, host, risultati e tentativi distinti. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) considera sperimentale la virtualizzazione annidata; resta utile un Mac nativo dedicato.
 
 Su Intel ospitato, `--execution-methods` esegue in serie ogni metodo GoogleTest con tutti i parametri CTest, flag, ambiente e directory originali. Le proprietà sconosciute sono rifiutate. La scadenza complessiva per metodo è al massimo 120 secondi, senza limite separato per parametro; segue la terminazione del gruppo di processi con attesa limitata. Si conservano XML originale, associazioni dei nomi e stato d’uscita. Timeout o XML incompleto producono un fallimento parziale; casi nativi obbligatori mancanti o saltati impediscono il successo. I runner dedicati mantengono processi e scadenze CTest per singolo caso.
 

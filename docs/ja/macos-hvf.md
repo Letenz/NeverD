@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
+<!-- i18n-source: a3178a18ee18f1b147cc6950c932b37a4bccb59a14815068345b1a8ec8edb51f -->
 
 [← ドキュメント一覧](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon では `-DNEVERD_LLVM_PREBUILT=ON` を追加できます。Intel は固定された LLVM リビジョンをソースからビルドします。[HVF ワークフロー](../../.github/workflows/hvf.yml) は `self-hosted, macOS, ARM64/X64, hvf` および `macos-15-intel` の `hosted-intel` に対応します。最初に VM/vCPU を実際に作成、破棄します。`validation=probe` は命令実行の証拠ではなく、`transport` は転送層のみ、`darwin` は対応する全 Darwin ワークロード、`full` は CPU と Darwin の両方の完全な検証を要求します。
 
-転送層の必須項目は ARM64 が 15、Intel が 11、完全な CPU 検証はそれぞれ 23、20 です。全状態、特権、権限、ページ境界、エイリアス、CPU 切り替え、ロールバック、キャンセル、再試行を確認します。Intel は大きなビルドの前に CR8 を確認します。成果物に登録一覧、ソースリビジョン、ホスト、結果、各試行を残します。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) はネストした仮想化を実験的と位置付けており、再現可能な受け入れには専用のネイティブ Mac が適しています。
+転送層の必須項目は ARM64 が 15、Intel が 12、完全な CPU 検証はそれぞれ 23、20 です。全状態、特権、権限、ページ境界、エイリアス、CPU 切り替え、ロールバック、キャンセル、再試行を確認します。Intel は大きなビルドの前に CR8 を確認します。成果物に登録一覧、ソースリビジョン、ホスト、結果、各試行を残します。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) はネストした仮想化を実験的と位置付けており、再現可能な受け入れには専用のネイティブ Mac が適しています。
 
 ホスト型 Intel の `--execution-methods` は、完全な CTest 一覧から全パラメーター、フラグ、環境、作業ディレクトリを維持して GoogleTest メソッドを直列実行します。未知のプロパティは拒否します。メソッド全体の期限は最大 120 秒で、各パラメーターに個別の期限は適用しません。その後、期限を設けてプロセスグループを回収します。元の XML、名前対応、終了状態を保存します。タイムアウトや不完全な XML は部分失敗となり、必須ネイティブ項目の欠落やスキップは合格になりません。自己管理 runner は引き続き CTest のケースごとのプロセスと期限を使います。
 

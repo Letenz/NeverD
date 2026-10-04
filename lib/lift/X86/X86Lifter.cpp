@@ -1231,44 +1231,6 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
 
 namespace {
 
-// Capstone 6.0-alpha derives the SSE/SSE2 FP-compare pseudo-op ids (cmpeqps,
-// cmpleps, cmpnleps, ...) as a base plus the predicate index; the result
-// collides with unrelated enum entries (e.g. cmpleps -> X86_INS_CMPSB, the
-// string-compare byte op).  Routing such an id to the string lifter emits a
-// `cmps` that reads [rsi]/[rdi] -> bogus memory access.  All of these share
-// opcode 0F C2 with the predicate in the trailing immediate byte; the mandatory
-// prefix selects the width.  Re-derive the real instruction id from the opcode
-// so the lifter dispatches to the correct compare handler.
-void fixupCompareId(cs_insn *I) {
-  if (!I->detail)
-    return;
-  const cs_x86 &X = I->detail->x86;
-  if (X.opcode[0] != 0x0F || X.opcode[1] != 0xC2)
-    return;
-  uint8_t Mand = 0;
-  for (uint16_t N = 0; N < I->size; ++N) {
-    uint8_t B = I->bytes[N];
-    if (B == 0x0F)
-      break;
-    if (B == 0x66 || B == 0xF2 || B == 0xF3)
-      Mand = B;
-  }
-  switch (Mand) {
-  case 0xF3:
-    I->id = X86_INS_CMPSS;
-    break;
-  case 0xF2:
-    I->id = X86_INS_CMPSD;
-    break;
-  case 0x66:
-    I->id = X86_INS_CMPPD;
-    break;
-  default:
-    I->id = X86_INS_CMPPS;
-    break;
-  }
-}
-
 // The VEX/EVEX FP-compare pseudo-ops (vcmpltps, vcmpleps, ...) all decode to
 // the generic X86_INS_VCMP id; capstone keeps the width only in the mnemonic
 // suffix. Re-derive the width-specific id so the lifter can pick the right lane
@@ -1290,7 +1252,6 @@ void fixupVexCompareId(cs_insn *I) {
 } // anonymous namespace
 
 void X86Lifter::fixupDecodedInsn(cs_insn *I) {
-  fixupCompareId(I);
   fixupVexCompareId(I);
 }
 

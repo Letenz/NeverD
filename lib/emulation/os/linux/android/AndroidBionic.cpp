@@ -337,6 +337,8 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return format(Call);
   if (Name == symbol::Errno)
     return Value(tlsAddress() + ErrnoAddress - TLSAddress);
+  if (Name == symbol::GetPageSize)
+    return Value(PageSize);
   if (Name == symbol::Time) {
     auto Now =
         linux_model::clockValue(linux_model::ClockRealtime, Options, Result);

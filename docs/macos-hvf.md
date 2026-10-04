@@ -170,7 +170,7 @@ rollback, queue cancellation, native loop interruption and retry. Both ISAs have
 required raw loop interruption and completion-error fixtures. These must observe
 an actual native return; cancellation before entry cannot satisfy the loop test.
 The full profile also requires the Intel CR8 all-register and privilege regression.
-The transport profile requires 15 ARM64 or 11 Intel cases, and the full profile
+The transport profile requires 15 ARM64 or 12 Intel cases, and the full profile
 requires 23 or 20 respectively. Intel compilation alone does not establish Intel
 runtime correctness; its native gate remains required.
 

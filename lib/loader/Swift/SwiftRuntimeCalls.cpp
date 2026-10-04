@@ -406,6 +406,14 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pzC"},
+    // Four Swift 6.1.2 macOS/Mac Catalyst profiles preserve the separator
+    // address, both generic metadata and both witnesses as ordinary inputs;
+    // the receiver address is swiftself. The complete Array result is a ptr.
+    {"$sSy10FoundationE10components11separatedBySaySSGqd___tSyRd__lF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "ppppppC"},
     // StringProtocol.caseInsensitiveCompare<String> carries five generic
     // pointers and the String value address in swiftself.
     {"$sSy10FoundationE22caseInsensitiveCompareySo18NSComparisonResultVqd__"
@@ -439,6 +447,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // and its Hashable witness. None of these arguments is swiftself.
     {"$ss11AnyHashableVyABxcSHRzlufC", "/usr/lib/swift/libswiftCore.dylib",
      "vIppp"},
+    // Four Swift 6.1.2 profiles pass capacity as the ordinary Int carrier
+    // and the specialized SetStorage metadata in swiftself, returning a ptr.
+    {"$ss11_SetStorageC8allocate8capacityAByxGSi_tFZ",
+     "/usr/lib/swift/libswiftCore.dylib", "pzC"},
     // The mutating _StringGuts.grow(Int) entry takes the capacity in the
     // first integer register and the two-word guts address in swiftself.
     {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},

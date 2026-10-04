@@ -927,6 +927,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `COMISS`、`COMISD`、`UCOMISS` 和 `UCOMISD` 透過共用 `Source` 規則比較純量 XMM 或 m32/m64 運算元。它們設定 CF/PF/ZF、清除 OF/SF/AF，保留其他 FLAGS 和來源通道。COMIS 對任意 NaN 設定無效狀態，UCOMIS 僅對 signaling NaN 設定該狀態；NaN 處理優先於次正規狀態。MXCSR 黏滯位元保留，捨入和 FTZ 不影響比較。KVM、WHP 和 checked Unicorn 共用精確記憶體檢查。固定版本的 Unicorn 比較函式重用既有次正規輸入分類邏輯。
 
+`CMPSS`、`CMPSD`、`CMPPS` 和 `CMPPD` 在 KVM、WHP 和 checked Unicorn 上執行八種傳統比較條件。共用 `Source` 規則接納解碼後的條件別名，保留控制值仍不支援。純量形式保留高位通道並讀取 m32/m64，向量形式要求對齊的 m128。FLAGS 與既有 MXCSR 狀態保留，無效及次正規狀態依有效通道累積。Capstone 統一負責指令族 ID 與 SSE 條件，取代僅在 lifter 內修正身分的邏輯；Unicorn 在各比較函式內部分類次正規輸入。
+
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
 checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完整狀態回讀共用一次單步額度。`UC_HOOK_CODE` 在指令入口檢查借用的停止權杖和期限；同步引擎呼叫返回前解除 hook 借用，機器單步則保留控制直到發佈狀態。Unicorn 與 WHP 暫存完整 CPU 狀態，並在成功步驟發佈前檢查同一控制條件。WHP 在準備前只建立一次額度。已確認的 x64 CPU 例外優先於回讀期間到來的停止要求。回讀取消時，checked RAM 交易捨棄推測寫入；非受限軟體契約不變。 `MachineInterruptedError` 區分已確認取消與主機或回讀失敗。共用 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 並允許重試；真實故障即使伴隨停止要求也仍是 `BackendFailure`。
@@ -1128,3 +1130,5 @@ libswiftCore 的精確強匯入 `Array._allocateBufferUninitialized(minimumCapac
 匿名 C 結構體名稱包含每個整數欄位的符號和位寬，以及指標欄位的完整型別（包括回呼簽章）。位元組配置相同但欄位型別不同的結構體使用獨立宣告，不受函式輸出順序影響。O0/O2 執行檢查以兩種順序涵蓋指標、有號字、無號字及具型別指標結構體。
 
 `ByteCellScalarizationPass` 在共用的非保守 LLVM 管線中於一般 SROA 與位元組轉送之後執行。對不逃逸的靜態位元組陣列，它依每個常數整數存取邊界切分，以 8/16/32/64 位元單元表示涵蓋區間。複合存取使用私有記憶體副本，保留位元組序及每個儲存運算元的一次使用，不插入 `freeze`，也不假定輸入已初始化或有定義。隨後 SROA 在匯合點和回邊上提升這些精確單元。動態或逃逸使用、有序存取、物件中繼資料、除錯記錄及共用純算術 intrinsic 契約之外的呼叫均保守處理。工作量、單元數與建構上限在修改函式前檢查；不推斷原生框架或 ABI。物件管線 schema 11 在兩種快取鍵中標識新的最佳化配方。
+
+精確 SDK 綁定也涵蓋 Foundation 的 `StringProtocol.components(separatedBy:)` 與 Swift 的 `_SetStorage.allocate(capacity:)`，要求四個 macOS/Mac Catalyst 設定的編譯器輸出與提供程式庫匯出一致。字串分割保留分隔符位址、雙方中繼資料指標、雙方協定 witness 及 `swiftself` 接收者，回傳完整陣列指標。Set 配置區分容量與 `swiftself` 儲存中繼資料。這些宣告不提供容器配置、記憶體邊界或 once 初始化器完整性證明。
