@@ -136,7 +136,8 @@ TEST(X64IntegerFloatOracle, AllRoundingModesMatchOriginalNativeInstructions) {
               Block.base());
       for (auto Input : Inputs)
         for (const auto &R : Roundings)
-          for (auto Sticky : {uint64_t(0), ExistingStatus})
+          for (auto Sticky :
+               {uint64_t(0), ExistingStatus, ExistingStatus | PrecisionStatus})
             for (auto Flush : {uint64_t(0), FlushToZero}) {
               SCOPED_TRACE(C.Name);
               SCOPED_TRACE(Wide);
@@ -251,7 +252,8 @@ protected:
     for (bool Wide : {false, true})
       for (auto Input : Inputs)
         for (const auto &R : Roundings)
-          for (auto Sticky : {uint64_t(0), ExistingStatus})
+          for (auto Sticky :
+               {uint64_t(0), ExistingStatus, ExistingStatus | PrecisionStatus})
             for (auto Flush : {uint64_t(0), FlushToZero}) {
               check(C, Wide, Input, R, Sticky | Flush);
               ASSERT_FALSE(HasFatalFailure());

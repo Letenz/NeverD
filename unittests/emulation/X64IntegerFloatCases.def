@@ -20,7 +20,9 @@ NEVERD_INT_FLOAT_VALUE(RegisterShift, 3)
 NEVERD_INT_FLOAT_VALUE(RegisterModRM, 0xc0)
 NEVERD_INT_FLOAT_VALUE(InitialMXCSR, 0x1f80)
 NEVERD_INT_FLOAT_VALUE(PrecisionStatus, 0x20)
-NEVERD_INT_FLOAT_VALUE(ExistingStatus, 0x05)
+// Keep the other five exception flags, then also test a preexisting precision
+// flag. Exact conversion must preserve every sticky bit.
+NEVERD_INT_FLOAT_VALUE(ExistingStatus, 0x1f)
 NEVERD_INT_FLOAT_VALUE(FlushToZero, 0x8000)
 NEVERD_INT_FLOAT_VALUE(PhysicalExponent, 0x3fff)
 NEVERD_INT_FLOAT_VALUE(SingleBits, 32)
