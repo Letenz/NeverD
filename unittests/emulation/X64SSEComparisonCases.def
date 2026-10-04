@@ -1,0 +1,97 @@
+//===- X64SSEComparisonCases.def - Independent scalar SSE comparisons ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_SSE_COMPARE_OPERATION
+// Name, optional prefix, opcode, input width, whether quiet NaNs signal
+// invalid.
+NEVERD_SSE_COMPARE_OPERATION(COMISS, 0, 0x2f, 32, true)
+NEVERD_SSE_COMPARE_OPERATION(COMISD, 0x66, 0x2f, 64, true)
+NEVERD_SSE_COMPARE_OPERATION(UCOMISS, 0, 0x2e, 32, false)
+NEVERD_SSE_COMPARE_OPERATION(UCOMISD, 0x66, 0x2e, 64, false)
+#endif
+#ifdef NEVERD_SSE_COMPARE_VALUE
+NEVERD_SSE_COMPARE_VALUE(OpcodeMap, 0x0f)
+NEVERD_SSE_COMPARE_VALUE(Rex, 0x40)
+NEVERD_SSE_COMPARE_VALUE(RexDestination, 0x04)
+NEVERD_SSE_COMPARE_VALUE(RexSource, 0x01)
+NEVERD_SSE_COMPARE_VALUE(RegisterMask, 0x07)
+NEVERD_SSE_COMPARE_VALUE(RegisterShift, 3)
+NEVERD_SSE_COMPARE_VALUE(RegisterModRM, 0xc0)
+NEVERD_SSE_COMPARE_VALUE(InitialMXCSR, 0x1f80)
+NEVERD_SSE_COMPARE_VALUE(InvalidStatus, 0x01)
+NEVERD_SSE_COMPARE_VALUE(DenormalStatus, 0x02)
+NEVERD_SSE_COMPARE_VALUE(ExistingStatus, 0x3c)
+NEVERD_SSE_COMPARE_VALUE(FlushToZero, 0x8000)
+NEVERD_SSE_COMPARE_VALUE(PhysicalExponent, 0x3fff)
+NEVERD_SSE_COMPARE_VALUE(SingleBits, 32)
+NEVERD_SSE_COMPARE_VALUE(PatternStride, 37)
+NEVERD_SSE_COMPARE_VALUE(ArithmeticFlags, 0x8d5)
+NEVERD_SSE_COMPARE_VALUE(ClearFlags, 0x202)
+NEVERD_SSE_COMPARE_VALUE(DirectionFlag, 0x400)
+NEVERD_SSE_COMPARE_VALUE(EqualFlags, 0x40)
+NEVERD_SSE_COMPARE_VALUE(LessFlags, 0x01)
+NEVERD_SSE_COMPARE_VALUE(UnorderedFlags, 0x45)
+#endif
+#ifdef NEVERD_SSE_COMPARE_ROUND
+NEVERD_SSE_COMPARE_ROUND(Nearest, 0x0000)
+NEVERD_SSE_COMPARE_ROUND(Down, 0x2000)
+NEVERD_SSE_COMPARE_ROUND(Up, 0x4000)
+NEVERD_SSE_COMPARE_ROUND(Truncate, 0x6000)
+#endif
+#ifdef NEVERD_SSE_COMPARE_INPUT
+// Raw single/double payloads, including both signs of quiet and signaling NaNs.
+NEVERD_SSE_COMPARE_INPUT(Zero, 0x00000000, 0x0000000000000000ULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeZero, 0x80000000, 0x8000000000000000ULL)
+NEVERD_SSE_COMPARE_INPUT(One, 0x3f800000, 0x3ff0000000000000ULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeOne, 0xbf800000, 0xbff0000000000000ULL)
+NEVERD_SSE_COMPARE_INPUT(AboveOne, 0x3f800001, 0x3ff0000000000001ULL)
+NEVERD_SSE_COMPARE_INPUT(BelowOne, 0x3f7fffff, 0x3fefffffffffffffULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeAboveOne, 0xbf800001, 0xbff0000000000001ULL)
+NEVERD_SSE_COMPARE_INPUT(MinSubnormal, 0x00000001, 0x0000000000000001ULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeMinSubnormal, 0x80000001,
+                         0x8000000000000001ULL)
+NEVERD_SSE_COMPARE_INPUT(MaxSubnormal, 0x007fffff, 0x000fffffffffffffULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeMaxSubnormal, 0x807fffff,
+                         0x800fffffffffffffULL)
+NEVERD_SSE_COMPARE_INPUT(MinNormal, 0x00800000, 0x0010000000000000ULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeMinNormal, 0x80800000, 0x8010000000000000ULL)
+NEVERD_SSE_COMPARE_INPUT(MaxFinite, 0x7f7fffff, 0x7fefffffffffffffULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeMaxFinite, 0xff7fffff, 0xffefffffffffffffULL)
+NEVERD_SSE_COMPARE_INPUT(Infinity, 0x7f800000, 0x7ff0000000000000ULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeInfinity, 0xff800000, 0xfff0000000000000ULL)
+NEVERD_SSE_COMPARE_INPUT(QuietNaN, 0x7fc01234, 0x7ff8123456789abcULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeQuietNaN, 0xffc01234, 0xfff8123456789abcULL)
+NEVERD_SSE_COMPARE_INPUT(SignalingNaN, 0x7f801234, 0x7ff0123456789abcULL)
+NEVERD_SSE_COMPARE_INPUT(NegativeSignalingNaN, 0xff801234,
+                         0xfff0123456789abcULL)
+#endif
+#ifdef NEVERD_SSE_COMPARE_PAIR
+NEVERD_SSE_COMPARE_PAIR(One, AboveOne)
+NEVERD_SSE_COMPARE_PAIR(AboveOne, One)
+NEVERD_SSE_COMPARE_PAIR(Zero, NegativeZero)
+NEVERD_SSE_COMPARE_PAIR(MinSubnormal, MaxSubnormal)
+NEVERD_SSE_COMPARE_PAIR(QuietNaN, MinSubnormal)
+NEVERD_SSE_COMPARE_PAIR(SignalingNaN, QuietNaN)
+#endif
+#ifdef NEVERD_SSE_COMPARE_BYTES
+// Fourth oracle argument is {right operand, initial FLAGS}. Save host FLAGS,
+// install the supplied flags, execute the comparison, return FLAGS in RAX,
+// and restore the host flags (including DF) before returning to C++.
+NEVERD_SSE_COMPARE_BYTES(BeforeComparison, 0x9c, 0xff, 0x71, 0x08, 0x9d)
+NEVERD_SSE_COMPARE_BYTES(AfterComparison, 0x9c, 0x58, 0x9d)
+#endif
+#ifdef NEVERD_SSE_COMPARE_INVALID
+NEVERD_SSE_COMPARE_INVALID(VexOrderedSS, 0xc5, 0xf8, 0x2f, 0xc1)
+NEVERD_SSE_COMPARE_INVALID(VexOrderedSD, 0xc5, 0xf9, 0x2f, 0x01)
+NEVERD_SSE_COMPARE_INVALID(VexUnorderedSS, 0xc5, 0xf8, 0x2e, 0xc1)
+NEVERD_SSE_COMPARE_INVALID(VexUnorderedSD, 0xc5, 0xf9, 0x2e, 0x01)
+NEVERD_SSE_COMPARE_INVALID(EvexOrderedSS, 0x62, 0xf1, 0x7c, 0x08, 0x2f, 0xc1)
+NEVERD_SSE_COMPARE_INVALID(EvexOrderedSD, 0x62, 0xf1, 0xfd, 0x08, 0x2f, 0x01)
+NEVERD_SSE_COMPARE_INVALID(EvexUnorderedSS, 0x62, 0xf1, 0x7c, 0x08, 0x2e, 0xc1)
+NEVERD_SSE_COMPARE_INVALID(EvexUnorderedSD, 0x62, 0xf1, 0xfd, 0x08, 0x2e, 0x01)
+#endif
+#ifdef NEVERD_SSE_COMPARE_TEXT
+NEVERD_SSE_COMPARE_TEXT(ObserverError, "SSE comparison observer failure")
+#endif
