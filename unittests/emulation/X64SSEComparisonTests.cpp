@@ -355,6 +355,12 @@ TEST_P(X64SSEComparison, EveryVectorPairAndAliasedSource) {
               InitialMXCSR | ExistingStatus, Dest, Source);
         ASSERT_FALSE(HasFatalFailure());
       }
+      // An aliased source is still unordered for NaNs and still reports a
+      // denormal operand; identical register numbers do not imply equality.
+      for (const auto &Value : {QuietNaN, SignalingNaN, MinSubnormal}) {
+        check(C, input(C, Value, One), InitialMXCSR, Dest, Dest);
+        ASSERT_FALSE(HasFatalFailure());
+      }
       check(C, input(C, NegativeOne, MinSubnormal), InitialMXCSR, Dest, 1,
             true);
       ASSERT_FALSE(HasFatalFailure());
