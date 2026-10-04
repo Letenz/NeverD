@@ -2196,6 +2196,16 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidTimeTests.cpp` executes independent O0/O2 C fixtures with ordinary,
+APS2 and RELR relocations. It checks explicit fixed clocks, post-2038 and
+negative 64-bit seconds, exact timeval/timespec/timezone bytes, errno, dynamic
+provider lifetime, absent inputs, fault ordering and unsupported partial
+copies. Linux process fixtures execute the raw x64/ARM64 service ABIs at O0/O2
+through available backends. Process JSON tests cover malformed and lossless
+inputs; C API/CLI and Python tests preserve dynamic names and exact output.
+These are deterministic model checks, not an Android device or native Linux
+clock comparison. Unsupported native transports remain explicit skips.
+
 With CPU emulation enabled, build `NeverDAndroidNativeTests`,
 `NeverDLinuxProcessTests`, `NeverDExecutionSessionTests`, and
 `NeverDProcessPublicTests`. The Android fixtures are independently authored

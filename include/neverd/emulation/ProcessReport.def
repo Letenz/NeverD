@@ -22,6 +22,14 @@ NEVERD_PROCESS_OPTION_STRINGS(Environment, "environment", Environment)
 NEVERD_PROCESS_REPORT_FIELD(Modules, "modules")
 NEVERD_PROCESS_REPORT_FIELD(Path, "path")
 NEVERD_PROCESS_REPORT_FIELD(Android, "android")
+NEVERD_PROCESS_REPORT_FIELD(LinuxTime, "linux_time")
+NEVERD_PROCESS_REPORT_FIELD(Clocks, "clocks")
+NEVERD_PROCESS_REPORT_FIELD(ClockID, "id")
+NEVERD_PROCESS_REPORT_FIELD(Seconds, "seconds")
+NEVERD_PROCESS_REPORT_FIELD(Nanoseconds, "nanoseconds")
+NEVERD_PROCESS_REPORT_FIELD(Timezone, "timezone")
+NEVERD_PROCESS_REPORT_FIELD(MinutesWest, "minutes_west")
+NEVERD_PROCESS_REPORT_FIELD(DSTTime, "dst_time")
 NEVERD_PROCESS_REPORT_FIELD(EntrySymbol, "entry_symbol")
 NEVERD_PROCESS_REPORT_FIELD(EntryAddress, "entry_address")
 NEVERD_PROCESS_REPORT_FIELD(LoadBias, "load_bias")
@@ -115,7 +123,7 @@ NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
 NEVERD_PROCESS_CLI_STRING(
     OptionsHelp,
     "Options JSON: backend, resource limits, "
-    "arguments/environment, Android native or Windows module options")
+    "arguments/environment, Linux clocks, Android native or Windows module options")
 NEVERD_PROCESS_CLI_STRING(OptionsValue, "json")
 #endif
 #ifdef NEVERD_PROCESS_CLI_STATUS
@@ -129,4 +137,6 @@ NEVERD_PROCESS_CLI_STATUS(Incomplete, 3)
 NEVERD_PROCESS_REPORT_TEXT(WindowsOptions, "invalid Windows process option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsProfile,
                            "Windows options require windows-pe64-v1")
+NEVERD_PROCESS_REPORT_TEXT(LinuxTimeProfile,
+                           "linux_time requires a Linux ELF64 or Android native profile")
 #endif

@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../kernel/LinuxTime.h"
 #include "AndroidInternal.h"
 
 #include "neverd/emulation/CPU.h"
@@ -306,6 +307,25 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return mutex(Call);
   if (Name == "__errno")
     return Value(ErrnoAddress);
+  if (Name == "time") {
+    auto Now =
+        linux_model::clockValue(linux_model::ClockRealtime, Options, Result);
+    if (!Now)
+      return std::optional<BionicValue>();
+    // API 28's fallback obtains a timeval, then stores through the caller's
+    // time_t*. This is a user-space store, not the x64 time syscall's EFAULT.
+    if (A[0]) {
+      if (auto E = access(A[0], 8, Write))
+        return std::move(E);
+      uint8_t Bytes[8];
+      llvm::support::endian::write64le(Bytes,
+                                       static_cast<uint64_t>(Now->Seconds));
+      if (auto E = CPU.write(A[0], Bytes))
+        return std::move(E);
+    }
+    // A valid negative timestamp is not a Linux errno return.
+    return Value(static_cast<uint64_t>(Now->Seconds));
+  }
   if (Name == "android_get_device_api_level")
     return Value(28);
   if (Name == "__stack_chk_fail" || Name == "abort")
