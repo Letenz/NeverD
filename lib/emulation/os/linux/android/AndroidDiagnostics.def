@@ -6,6 +6,26 @@
 // Shared spellings belong to the Android owner; model control flow stays in
 // C++.
 #ifdef NEVERD_ANDROID_DIAGNOSTIC
+NEVERD_ANDROID_DIAGNOSTIC(
+    ThreadOptions,
+    "thread_limit must be 1..256; drain_threads requires more than one")
+NEVERD_ANDROID_DIAGNOSTIC(
+    ThreadDisabled,
+    "guest-thread scheduling requires thread_limit greater than one")
+NEVERD_ANDROID_DIAGNOSTIC(
+    ThreadAttributes,
+    "unsupported thread flags, explicit stack or scheduling policy")
+NEVERD_ANDROID_DIAGNOSTIC(ThreadHandle, "invalid or retired pthread_t")
+NEVERD_ANDROID_DIAGNOSTIC(
+    ThreadDeadlock, "no runnable guest thread; pending joins cannot complete")
+NEVERD_ANDROID_DIAGNOSTIC(
+    ThreadCallbackExit,
+    "thread exit during a guest callback requires cleanup semantics")
+NEVERD_ANDROID_DIAGNOSTIC(ThreadStack,
+                          "guest thread returned with a changed stack pointer")
+NEVERD_ANDROID_DIAGNOSTIC(ThreadEntry, "unaligned guest thread entry")
+NEVERD_ANDROID_DIAGNOSTIC(ThreadTLS,
+                          "guest thread changed its modeled TLS identity")
 NEVERD_ANDROID_DIAGNOSTIC(ExitCallbackLimit,
                           "exit callback registry limit exceeded")
 NEVERD_ANDROID_DIAGNOSTIC(ExitCallbackAlignment,

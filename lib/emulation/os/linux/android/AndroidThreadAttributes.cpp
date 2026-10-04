@@ -12,13 +12,6 @@
 #include <array>
 
 namespace neverd::emulation::android_model {
-namespace thread_attribute_abi {
-#define NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE(Name, Value)                     \
-  constexpr unsigned Name = Value;
-#include "AndroidThreadAttributes.def"
-#undef NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE
-} // namespace thread_attribute_abi
-
 BionicResult Bionic::threadAttributes(const NativeCallEvent &Call) {
   using namespace thread_attribute_abi;
   const auto &A = Call.Arguments;

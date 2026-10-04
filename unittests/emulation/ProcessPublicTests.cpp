@@ -882,6 +882,58 @@ TEST_F(ProcessPublic, AndroidMutexNamesMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidGuestThreadsMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "threads-O2-relr.so")
+          .string();
+  const std::string Request =
+      R"({"backend":"unicorn","instruction_quantum":7,"android":{"entry_symbol":"threads_dynamic","thread_limit":4,"initialize":false,"trace_limit":1000,"arguments":["0x20000000",0],"memory":[{"address":"0x20000000","size":4096}],"read_memory":[{"address":"0x20000000","size":64}],"libraries":{"libthread-model.so":["pthread_create","pthread_join"]}}})";
+  auto Text = takeString(neverd_emulate_process_json(
+      Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+  EXPECT_EQ(Parsed.getAsObject()->getString(field::Stop), "returned");
+  EXPECT_EQ(Parsed.getAsObject()->getString(field::ReturnValue), "4b");
+  const auto *Android = Parsed.getAsObject()->getObject(field::Android);
+  ASSERT_NE(Android, nullptr);
+  const auto *Threads = Android->getArray(field::Threads);
+  ASSERT_NE(Threads, nullptr);
+  ASSERT_EQ(Threads->size(), 2u);
+  EXPECT_EQ((*Threads)[1].getAsObject()->getBoolean(field::Finished), true);
+  EXPECT_EQ((*Threads)[1].getAsObject()->getBoolean(field::Retired), true);
+  ASSERT_NE(Android->getArray(field::TraceThreads), nullptr);
+  EXPECT_GT(Android->getArray(field::TraceThreads)->size(), 1u);
+  for (const auto &Event : *Android->getArray(field::NativeCalls)) {
+    const auto *Call = Event.getAsObject();
+    if (Call->getString(field::Name) == "pthread_create" ||
+        Call->getString(field::Name) == "pthread_join") {
+      EXPECT_EQ(Call->getString(field::Library), "libthread-model.so");
+      EXPECT_EQ(Call->getInteger(field::ThreadID), 1000);
+      EXPECT_EQ(Call->getString(field::Result), "0");
+    }
+  }
+  EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
+                       test::shellQuote(Path) +
+                       " --profile=" + AndroidNativeAArch64 +
+                       " --options=" + test::shellQuote(Request) +
+                       test::redirectStdout(Output) + test::silenceStderr();
+  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+            process_cli::Success);
+  auto Bytes = llvm::MemoryBuffer::getFile(Output);
+  ASSERT_TRUE(bool(Bytes));
+  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidThreadAttributesMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

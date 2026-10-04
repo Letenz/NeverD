@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../kernel/LinuxTime.h"
 #include "AndroidInternal.h"
+#include "AndroidThreads.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -13,6 +14,12 @@
 #include <algorithm>
 
 namespace neverd::emulation::android_model {
+uint64_t Bionic::tlsAddress() const {
+  return Threads ? Threads->tls() : TLSAddress;
+}
+uint64_t Bionic::threadID() const {
+  return Threads ? Threads->id() : linux_model::ThreadID;
+}
 llvm::Error Bionic::access(uint64_t Address, uint64_t Size,
                            unsigned Permissions) {
   if (!Budget.remainingMicroseconds()) {
@@ -54,7 +61,7 @@ llvm::Expected<std::string> Bionic::string(uint64_t Address) {
 llvm::Error Bionic::setErrno(uint32_t Value) {
   uint8_t Bytes[4];
   llvm::support::endian::write32le(Bytes, Value);
-  return CPU.write(ErrnoAddress, Bytes);
+  return CPU.write(tlsAddress() + ErrnoAddress - TLSAddress, Bytes);
 }
 llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size) {
   uint64_t Effective = std::max(uint64_t(1), Size);
@@ -103,6 +110,8 @@ llvm::Error Bionic::release(uint64_t Address) {
 }
 llvm::Expected<uint64_t> Bionic::linkerError(llvm::StringRef Message,
                                              uint64_t ReturnValue) {
+  const uint64_t ErrorAddress = tlsAddress() + LinkerErrorAddress - TLSAddress;
+  const uint64_t ErrorSlot = tlsAddress() + LinkerErrorSlot - TLSAddress;
   // A fixed guest buffer, separate from errno, TLS ABI slots and constructor
   // argv/envp. A later error may replace its contents; dlerror consumes it
   // once.
@@ -110,15 +119,15 @@ llvm::Expected<uint64_t> Bionic::linkerError(llvm::StringRef Message,
     return failure(diagnostic::LinkerErrorLimit);
   std::vector<uint8_t> Bytes(Message.bytes_begin(), Message.bytes_end());
   Bytes.push_back(0);
-  if (auto E = access(LinkerErrorAddress, Bytes.size(), Write))
+  if (auto E = access(ErrorAddress, Bytes.size(), Write))
     return std::move(E);
-  if (auto E = CPU.write(LinkerErrorAddress, Bytes))
+  if (auto E = CPU.write(ErrorAddress, Bytes))
     return std::move(E);
   uint8_t Pointer[8];
-  llvm::support::endian::write64le(Pointer, LinkerErrorAddress);
-  if (auto E = access(LinkerErrorSlot, sizeof(Pointer), Write))
+  llvm::support::endian::write64le(Pointer, ErrorAddress);
+  if (auto E = access(ErrorSlot, sizeof(Pointer), Write))
     return std::move(E);
-  if (auto E = CPU.write(LinkerErrorSlot, Pointer))
+  if (auto E = CPU.write(ErrorSlot, Pointer))
     return std::move(E);
   return ReturnValue;
 }
@@ -142,13 +151,14 @@ BionicResult Bionic::dlfcn(NativeCallEvent &Call) {
     return std::optional<BionicValue>();
   };
   if (Call.Name == symbol::DLError) {
+    const uint64_t ErrorSlot = tlsAddress() + LinkerErrorSlot - TLSAddress;
     uint8_t Pointer[8], Empty[8]{};
-    if (auto E = access(LinkerErrorSlot, sizeof(Pointer), Read | Write))
+    if (auto E = access(ErrorSlot, sizeof(Pointer), Read | Write))
       return std::move(E);
-    if (auto E = CPU.read(LinkerErrorSlot, Pointer))
+    if (auto E = CPU.read(ErrorSlot, Pointer))
       return std::move(E);
     uint64_t Address = llvm::support::endian::read64le(Pointer);
-    if (auto E = CPU.write(LinkerErrorSlot, Empty))
+    if (auto E = CPU.write(ErrorSlot, Empty))
       return std::move(E);
     return Value(Address);
   }
@@ -276,6 +286,9 @@ llvm::Error Bionic::finishOnce(const OnceCallback &Callback) {
   return CPU.write(Callback.Control, Bytes);
 }
 BionicResult Bionic::invoke(NativeCallEvent &Call) {
+  if (Threads && Threads->enabled())
+    if (auto E = Threads->validateTLS())
+      return std::move(E);
   llvm::StringRef Name(Call.Name);
   const auto &A = Call.Arguments;
   auto Value = [](uint64_t V) { return std::optional<BionicValue>(V); };
@@ -295,6 +308,12 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return once(Call);
   if (Name.starts_with(symbol::PthreadAttrPrefix))
     return threadAttributes(Call);
+  if (Threads && Threads->enabled() &&
+      (Name == symbol::ThreadCreate || Name == symbol::ThreadJoin ||
+       Name == symbol::ThreadDetach || Name == symbol::ThreadSelf ||
+       Name == symbol::ThreadEqual || Name == symbol::ThreadExit ||
+       Name == symbol::ThreadGetAttr || Name == symbol::ThreadGetTID))
+    return Threads->invoke(Call);
   if (Name == symbol::CxaAtExit)
     return registerExit(Call);
   if (Name == symbol::CxaFinalize)
@@ -311,7 +330,7 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
       Name == symbol::Sprintf || Name == symbol::Vsprintf)
     return format(Call);
   if (Name == symbol::Errno)
-    return Value(ErrnoAddress);
+    return Value(tlsAddress() + ErrnoAddress - TLSAddress);
   if (Name == symbol::Time) {
     auto Now =
         linux_model::clockValue(linux_model::ClockRealtime, Options, Result);
@@ -475,10 +494,12 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     std::copy_n(A.begin() + (IsSyscall ? 1 : 0), Event.Arguments.size(),
                 Event.Arguments.begin());
     // Raw Linux service semantics are shared. Bionic alone owns errno/-1.
-    auto Returned = Kind ? linux_model::handleService(CPU, Memory, *Kind, Event,
-                                                      Layout, Options, Result)
-                         : linux_model::handleService(CPU, Memory, Event,
-                                                      Layout, Options, Result);
+    auto *Thread = Threads ? Threads->kernel() : nullptr;
+    auto Returned =
+        Kind ? linux_model::handleService(CPU, Memory, *Kind, Event, Layout,
+                                          Options, Result, Thread)
+             : linux_model::handleService(CPU, Memory, Event, Layout, Options,
+                                          Result, Thread);
     if (!Returned)
       return Returned.takeError();
     if (!*Returned)

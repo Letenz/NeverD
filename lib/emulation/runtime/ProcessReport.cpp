@@ -126,6 +126,8 @@ std::string processResultJSON(const ProcessResult &Result) {
          Event.Result ? llvm::json::Value(bits(*Event.Result)) : nullptr}};
     if (Event.Error)
       Service[field::Error] = *Event.Error;
+    if (Event.ThreadID)
+      Service[field::ThreadID] = *Event.ThreadID;
     Services.push_back(std::move(Service));
   }
   llvm::json::Object Object{
