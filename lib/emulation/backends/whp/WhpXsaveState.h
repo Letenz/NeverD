@@ -12,12 +12,22 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Memory.h"
 
+#include <array>
+
 namespace neverd::emulation {
 /// WHP's legacy register interface does not preserve the complete physical
 /// x87 payload. Retain complete packets and use named control registers for
 /// the last-operation metadata omitted by some host XSAVE implementations.
 class WhpXsaveState {
 public:
+  inline static constexpr WHV_REGISTER_NAME MetadataNames[] = {
+#define NEVERD_WHP_XSAVE_REGISTER(Name) WHvX64Register##Name,
+#include "WhpXsaveRegisters.def"
+#undef NEVERD_WHP_XSAVE_REGISTER
+  };
+  using MetadataPacket =
+      std::array<WHV_REGISTER_VALUE, std::size(MetadataNames)>;
+
   WhpXsaveState() = default;
   WhpXsaveState(const WhpXsaveState &) = delete;
   WhpXsaveState &operator=(const WhpXsaveState &) = delete;
@@ -93,8 +103,12 @@ public:
                           whp::operation::WHvSetVirtualProcessorRegisters)
                : llvm::Error::success();
   }
+  /// CapturedMetadata, when present, must come from this stopped vCPU under
+  /// the same partition lease. It permits one combined register read; the
+  /// complete XSAVE packet and all metadata checks remain mandatory.
   llvm::Error capture(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
-                      X64MachineState &State) {
+                      X64MachineState &State,
+                      const MetadataPacket *CapturedMetadata = nullptr) {
     UINT32 Written = 0;
     const auto Status = get(API, Partition, Buffer.base(), Size, Written);
     if (FAILED(Status))
@@ -119,12 +133,17 @@ public:
                         read32le(P + x64::fp::MXCSROffset))
               .str());
     }
-    WHV_REGISTER_VALUE Metadata[std::size(MetadataNames)]{};
-    const auto MetadataStatus = API.WHvGetVirtualProcessorRegisters(
-        Partition, 0, MetadataNames, std::size(MetadataNames), Metadata);
-    if (FAILED(MetadataStatus))
-      return whpError(diagnostic::WhpState, MetadataStatus,
-                      whp::operation::WHvGetVirtualProcessorRegisters);
+    MetadataPacket OwnedMetadata{};
+    if (!CapturedMetadata) {
+      const auto MetadataStatus = API.WHvGetVirtualProcessorRegisters(
+          Partition, 0, MetadataNames, std::size(MetadataNames),
+          OwnedMetadata.data());
+      if (FAILED(MetadataStatus))
+        return whpError(diagnostic::WhpState, MetadataStatus,
+                        whp::operation::WHvGetVirtualProcessorRegisters);
+      CapturedMetadata = &OwnedMetadata;
+    }
+    const auto &Metadata = *CapturedMetadata;
     // Common controls must agree with the complete packet. Only the three
     // named last-operation fields supplement its potentially empty slots.
 #define NEVERD_WHP_XSAVE_FIELD(Register, Member, Field, Duplicated)            \
@@ -148,11 +167,6 @@ public:
 private:
   enum MetadataRegister {
 #define NEVERD_WHP_XSAVE_REGISTER(Name) Name,
-#include "WhpXsaveRegisters.def"
-#undef NEVERD_WHP_XSAVE_REGISTER
-  };
-  inline static constexpr WHV_REGISTER_NAME MetadataNames[] = {
-#define NEVERD_WHP_XSAVE_REGISTER(Name) WHvX64Register##Name,
 #include "WhpXsaveRegisters.def"
 #undef NEVERD_WHP_XSAVE_REGISTER
   };

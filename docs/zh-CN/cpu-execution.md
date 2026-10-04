@@ -118,6 +118,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProb
 
 `WhpX64Partition.h` 将 x64 WHP 寄存器复用状态归属到实际分区。固定数据包采用 `WhpX64Registers.def` 和 `X64HostRegisters.def`；每个成功单步仍完整读取通用、控制、段寄存器和 FP/SSE 状态。只有完全确认的调试退出才能省略未变化的输入，比较忽略保留位和联合体填充。变化的 CR3、CPL、TLS、通用或 FP 输入会重新安装；部分失败、取消及异常使复用失效。分区重建从全量安装开始。这减少重复传输，不扩大指令准入，也不宣称端到端提速。
 
+WHP 将 `WhpXsaveRegisters.def` 中的 x87/SSE 元数据与普通寄存器放入同一次 `WHvGetVirtualProcessorRegisters` 调用。停止的 vCPU 始终由同一个分区租约保护。发布前仍须完整捕获 XSAVE 并核对全部元数据一致性；每步减少一次宿主 API 调用，不据此宣称吞吐提升。
+
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
 
 `AArch64InstructionEffects` 负责标量及 FP/SIMD 的单次、成对 RAM 访问范围，单个操作数最大 128 位。共享地址空间在进入 CPU 前验证每一页；`RAMTransaction` 只提交完整声明的物理写入。128 位写观察器在生效前按顺序收到两个 64 位字。停止和故障保留 RAM、向量和地址写回。Xn/Vn 的编号重叠合法；发生地址回绕的成对访问被拒绝。`NeverDAArch64MemoryTests` 使用独立的 `AArch64CrossPageCases.def` 与 `AArch64VectorMemoryCases.def` 编码。

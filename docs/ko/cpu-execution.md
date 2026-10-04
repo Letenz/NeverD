@@ -118,6 +118,8 @@ x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `
 
 `WhpX64Partition.h`는 실제 파티션별로 x64 WHP 레지스터 재사용을 관리합니다. 고정 패킷은 `WhpX64Registers.def`와 `X64HostRegisters.def`를 사용하며, 성공한 매 스텝에서 일반·제어·세그먼트 레지스터와 전체 FP/SSE 상태를 캡처합니다. 완료가 확인된 디버그 종료만 변경 없는 입력의 생략을 허용하며, 비교 시 예약 비트와 공용체 패딩은 무시합니다. CR3, CPL, TLS, 일반 또는 FP 입력 변경은 재설치하고 부분 실패·취소·예외는 재사용을 무효화합니다. 파티션을 다시 만들면 전체 상태부터 설치합니다. 중복 전송을 줄이며 명령 허용 범위를 넓히거나 전체 속도 향상을 주장하지 않습니다.
 
+WHP는 `WhpXsaveRegisters.def`의 x87/SSE 메타데이터를 일반 레지스터와 동일한 `WHvGetVirtualProcessorRegisters` 호출로 읽습니다. 중지된 vCPU는 동일한 파티션 임대로 보호됩니다. 상태 게시 전에 전체 XSAVE 캡처와 모든 메타데이터 일관성 검사를 수행합니다. 스텝당 호스트 API 호출 하나를 줄이지만 처리량 향상을 측정한 결과는 아닙니다.
+
 `CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.
 
 `AArch64InstructionEffects`는 최대 128비트 피연산자의 스칼라·FP/SIMD 단일/쌍 RAM 범위를 소유합니다. 공유 주소 공간은 CPU 진입 전 모든 페이지를 검사하고 `RAMTransaction`은 선언된 전체 물리 쓰기만 커밋합니다. 128비트 쓰기는 실행 전에 두 개의 64비트 값으로 순서대로 관찰됩니다. 정지와 오류는 RAM, 벡터와 주소 갱신을 보존합니다. Xn/Vn 번호 중복은 유효하며 쌍 접근 범위의 주소 래핑은 거부됩니다. `NeverDAArch64MemoryTests`는 독립적인 `AArch64CrossPageCases.def`와 `AArch64VectorMemoryCases.def`를 사용합니다.

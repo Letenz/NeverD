@@ -118,6 +118,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `WhpX64Partition.h` 將 x64 WHP 暫存器重用狀態歸屬到實際分區。固定資料包採用 `WhpX64Registers.def` 與 `X64HostRegisters.def`；每個成功單步仍完整讀取通用、控制、段暫存器及 FP/SSE 狀態。只有完整確認的除錯退出才能省略未變更的輸入，比較忽略保留位與聯合體填補。變更的 CR3、CPL、TLS、通用或 FP 輸入會重新安裝；部分失敗、取消及例外使重用失效。分區重建從全量安裝開始。這減少重複傳輸，不擴大指令准入，也不宣稱端到端加速。
 
+WHP 將 `WhpXsaveRegisters.def` 中的 x87/SSE 中繼資料與一般暫存器放入同一次 `WHvGetVirtualProcessorRegisters` 呼叫。停止的 vCPU 始終由同一個分區租約保護。發布前仍須完整擷取 XSAVE 並核對全部中繼資料一致性；每步減少一次主機 API 呼叫，不據此宣稱吞吐量提升。
+
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接納有界的基礎 FP32/FP64 算術、比較、移動與定寬 SIMD 運算。FPCR 支援四種捨入模式、FZ 和 DN；FPSR 保留累積狀態與 QC。不支援的控制位元及狀態位元在修改前拒絕。FP16 算術、SVE/SME、未遮罩例外、選用擴充及未列出的形式明確失敗。這些 CPU 能力不代表已支援 Windows ARM64 驅動程式載入或新增 OS 環境。
 
 `AArch64InstructionEffects` 負責純量及 FP/SIMD 單次、成對 RAM 存取範圍，單一運算元最大 128 位元。共用位址空間在進入 CPU 前驗證每頁；`RAMTransaction` 僅提交完整宣告的實體寫入。128 位元寫入觀察器在生效前依序收到兩個 64 位元字。停止與故障保留 RAM、向量及位址寫回。Xn/Vn 編號重疊合法；位址回繞的成對存取被拒絕。`NeverDAArch64MemoryTests` 使用獨立的 `AArch64CrossPageCases.def` 與 `AArch64VectorMemoryCases.def` 編碼。

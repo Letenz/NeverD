@@ -1048,6 +1048,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `WhpStateTransferTests.cpp` 对两代 XSAVE API 注入寄存器传输，检查精确变化组、完整捕获、填充忽略、部分失败、取消、异常优先级及分区重建。`ContinuedStepsReuseCapturedRegistersAndFP` 统计省略的安装；`PartialTransferFailuresPreserveStateAndForceFullRetry` 要求完整恢复。这些是协议检查，不是原生执行证据；既有原生 FP、状态转换、驱动和 ring3 测试仍为必要验证。
 
+`WhpStateTransferCases.def` 还覆盖合并后的 32 寄存器读取中每个部分前缀失败，以及全部七个元数据字段冲突。两代 XSAVE API 均须保持调用方状态并在重试时完整恢复。同一套测试核对每步仅一次寄存器读取，以及从该读取补齐 XSAVE 省略的元数据。
+
 `windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、静态和动态 TLS、`DllMain`、具名 Win32 API 和显式无环 DLL 图。客户模块支持按名称／序号导入代码及数据、DIR64 重定位、转发导出和真实加载器链表身份。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用配置的模块目录。CRT／GUI、ARM64 基于栈帧的用户态 SEH、线程和通用 Windows 应用兼容性仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。
 
 输入文件总字节数和映像总范围各自受 `memory_limit` 限制，运行时映射也计入映像预算。准备阶段共享 65,536 条记录、64 MiB 元数据读取、名称长度和整个任务的截止时间限制；阻塞式主机 I/O 不保证硬实时。原创 EXE→DLL→DLL 样例检查重定位指针、序号调用、共享数据、API 指针身份、`MEM_IMAGE`、加载器链表及 EXE TLS 挂接／分离。`NeverDWindowsProcessTests` 包含这些检查和直接原生 Windows 对照；`NeverDPEProgramExportsTests` 验证畸形元数据及资源计费，`NeverDProcessPublicTests` 验证 C ABI/CLI 模块目录一致性。不可用后端明确跳过。
