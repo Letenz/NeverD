@@ -768,9 +768,10 @@ std::string driverResultJSON(const DriverResult &Result) {
   if (Result.Fault) {
     const auto &Fault = *Result.Fault;
     llvm::json::Object Item{
-        {field::Kind, Fault.Kind}, {field::PC, Address(Fault.PC)},
-        {field::Address, nullptr}, {field::Size, nullptr},
-        {field::Access, nullptr},  {field::Interrupt, nullptr}};
+        {field::Kind, Fault.Kind},   {field::PC, Address(Fault.PC)},
+        {field::Address, nullptr},   {field::Size, nullptr},
+        {field::Access, nullptr},    {field::Interrupt, nullptr},
+        {field::ErrorCode, nullptr}, {field::Cause, nullptr}};
     if (Fault.Address)
       Item[field::Address] = Address(*Fault.Address);
     if (Fault.Size)
@@ -779,6 +780,10 @@ std::string driverResultJSON(const DriverResult &Result) {
       Item[field::Access] = *Fault.Access;
     if (Fault.Interrupt)
       Item[field::Interrupt] = *Fault.Interrupt;
+    if (Fault.ErrorCode)
+      Item[field::ErrorCode] = Address(*Fault.ErrorCode);
+    if (Fault.Cause)
+      Item[field::Cause] = *Fault.Cause;
     Root[field::Fault] = std::move(Item);
   }
   if (Result.NTStatus) {

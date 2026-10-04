@@ -42,6 +42,7 @@ void expectFault(const BackendFault &Fault) {
   EXPECT_EQ(Fault.PC, Code);
   EXPECT_EQ(Fault.Interrupt, GeneralProtection);
   EXPECT_EQ(Fault.ErrorCode, 0);
+  EXPECT_EQ(Fault.Cause, BackendFaultCause::OperandAlignment);
   EXPECT_EQ(Fault.Address, std::nullopt);
   EXPECT_EQ(Fault.Size, std::nullopt);
   EXPECT_EQ(Fault.Access, std::nullopt);

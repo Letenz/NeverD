@@ -25,6 +25,41 @@ namespace {
 #undef NEVERD_PARITY_TEXT
 #undef NEVERD_PARITY_VALUE
 #undef NEVERD_PARITY_IMAGE
+#define NEVERD_FAULT_REPORT_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "FaultReportCases.def"
+#undef NEVERD_FAULT_REPORT_TEXT
+
+TEST(DriverNativeReport, RetainsOptionalFaultCauseAndFullWidthProcessorCode) {
+  DriverResult Result;
+  Result.Fault.emplace();
+  Result.Fault->Kind = backendFaultKindName(BackendFaultKind::Interrupt);
+  auto Check = [&](std::optional<uint64_t> Code, const char *Expected) {
+    for (bool Classified : {false, true}) {
+      Result.Fault->ErrorCode = Code;
+      Result.Fault->Cause = Classified
+                                ? std::optional<std::string>(AlignmentCause)
+                                : std::nullopt;
+      auto JSON = llvm::cantFail(llvm::json::parse(driverResultJSON(Result)));
+      const auto *Record = JSON.getAsObject()->getObject(field::Fault);
+      ASSERT_NE(Record, nullptr);
+      if (Classified)
+        EXPECT_EQ(Record->getString(field::Cause), AlignmentCause);
+      else
+        EXPECT_TRUE(Record->get(field::Cause)->getAsNull());
+      if (Code)
+        EXPECT_EQ(Record->getString(field::ErrorCode), Expected);
+      else
+        EXPECT_TRUE(Record->get(field::ErrorCode)->getAsNull());
+    }
+  };
+#define NEVERD_FAULT_REPORT_CASE(Name, Code, ProcessHex, DriverHex)            \
+  {                                                                            \
+    SCOPED_TRACE(#Name);                                                       \
+    Check(Code, DriverHex);                                                    \
+  }
+#include "FaultReportCases.def"
+#undef NEVERD_FAULT_REPORT_CASE
+}
 struct Workload {
   const char *Name;
   const char *Image;
