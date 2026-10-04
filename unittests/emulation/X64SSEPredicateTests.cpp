@@ -286,8 +286,8 @@ TEST(X64SSEPredicateOracle,
                 SCOPED_TRACE(C.Op.Name);
                 SCOPED_TRACE(C.P.Name);
                 SCOPED_TRACE(Memory);
-                SCOPED_TRACE(I.Left);
-                SCOPED_TRACE(I.Right);
+                SCOPED_TRACE(testing::PrintToString(I.Left));
+                SCOPED_TRACE(testing::PrintToString(I.Right));
                 SCOPED_TRACE(InitialFlags);
                 SCOPED_TRACE(Rounding);
                 X64MachineState Seed;
