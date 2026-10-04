@@ -363,8 +363,17 @@ TEST_P(X64PackedInteger, DeviceSourcesRejectWithoutCallingTheDevice) {
     };
     llvm::cantFail(CPU->mapMMIO(Stack, PageSize, std::move(Device)));
     const auto Exit = run(memory(I));
-    EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation)
+    EXPECT_EQ(Exit.Kind, GetParam().User
+                             ? ExecutionExitKind::GuestFault
+                             : ExecutionExitKind::UnsupportedOperation)
         << Exit.Diagnostic;
+    if (GetParam().User) {
+      ASSERT_TRUE(Exit.Fault);
+      EXPECT_EQ(Exit.Fault->Kind, BackendFaultKind::Protection);
+      EXPECT_EQ(Exit.Fault->Access, BackendAccessKind::Read);
+      EXPECT_EQ(Exit.Fault->Address, Stack);
+      EXPECT_EQ(Exit.Fault->Size, VectorBytes);
+    }
     EXPECT_EQ(Calls, 0u);
     expectState(Mixed, Mixed.Left, Code, Stack);
   }
