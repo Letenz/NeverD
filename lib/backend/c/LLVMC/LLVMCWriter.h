@@ -84,6 +84,8 @@ public:
   std::string functionIdentifier(const llvm::Function &Fn) const;
   void writeIncludes(llvm::Module &Mod);
   void writeStructDefs(llvm::Module &Mod);
+  std::string aggregateMemberPath(llvm::Type *Ty,
+                                  llvm::ArrayRef<unsigned> Indices);
   void writeGlobals(llvm::Module &Mod);
   void writeReferencedImageObjects(const llvm::Function &Fn);
   void writeForwardDecls(llvm::Module &Mod);

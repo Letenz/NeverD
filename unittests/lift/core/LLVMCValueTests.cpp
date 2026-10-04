@@ -20,13 +20,15 @@
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
+#include "llvm/TargetParser/Host.h"
 
 #include <stdexcept>
 
 namespace {
 
 void compileAndRun(const std::string &Source,
-                   llvm::StringRef Optimization = "-O2") {
+                   llvm::StringRef Optimization = "-O2",
+                   const std::string &ReferenceIR = {}) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -35,6 +37,10 @@ void compileAndRun(const std::string &Source,
   const std::string Compiler = *Program;
 #endif
   llvm::SmallString<128> SourcePath, BinaryPath, ErrorPath;
+  llvm::SmallString<128> ReferencePath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-llvmc-value", "ll",
+                                                  ReferencePath));
+  llvm::FileRemover RemoveReference(ReferencePath);
   ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-llvmc-value", "c",
                                                   SourcePath));
   llvm::FileRemover RemoveSource(SourcePath);
@@ -50,17 +56,23 @@ void compileAndRun(const std::string &Source,
     ASSERT_FALSE(EC);
     OS << Source;
   }
+  if (!ReferenceIR.empty()) {
+    llvm::raw_fd_ostream OS(ReferencePath, EC);
+    ASSERT_FALSE(EC);
+    OS << ReferenceIR;
+  }
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
-  const llvm::SmallVector<llvm::StringRef, 12> Arguments{
-      Compiler,
-      "-std=c11",
-      Optimization,
-      "-Werror=uninitialized",
-      "-Werror=return-type",
-      SourcePath,
-      "-o",
-      BinaryPath};
+  llvm::SmallVector<llvm::StringRef, 12> Arguments{Compiler,
+                                                   "-std=c11",
+                                                   Optimization,
+                                                   "-Werror=uninitialized",
+                                                   "-Werror=return-type",
+                                                   SourcePath,
+                                                   "-o",
+                                                   BinaryPath};
+  if (!ReferenceIR.empty())
+    Arguments.push_back(ReferencePath);
   std::string Error;
   int Result = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
                                          Redirects, 30, 0, &Error);
@@ -71,6 +83,294 @@ void compileAndRun(const std::string &Source,
   Result = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
                                      Redirects, 30, 0, &Error);
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
+}
+
+TEST(LLVMCValues, ArrayResultsKeepBothWordsAcrossExternalCalls) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("array-result", Context);
+  Module.setDataLayout("e-p:64:64");
+  Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
+  if (Module.getTargetTriple().isOSWindows() ||
+      !(Module.getTargetTriple().isAArch64() ||
+        Module.getTargetTriple().getArch() == llvm::Triple::x86_64))
+    GTEST_SKIP()
+        << "Raw array/C record ABI comparison requires AArch64 or SysV x64";
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Pair = llvm::ArrayType::get(Word, 2);
+  auto *Provider = llvm::Function::Create(
+      llvm::FunctionType::get(Pair, {Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "external_pair", Module);
+  auto *Score = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "read_pair", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Score));
+  auto *Result = B.CreateCall(Provider, {Score->getArg(0)}, "pair");
+  B.CreateRet(B.CreateXor(B.CreateExtractValue(Result, {0}),
+                          B.CreateExtractValue(Result, {1})));
+  auto *Second = llvm::Function::Create(Score->getFunctionType(),
+                                        llvm::GlobalValue::ExternalLinkage,
+                                        "read_second", Module);
+  B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Second));
+  B.CreateRet(
+      B.CreateExtractValue(B.CreateCall(Provider, {Second->getArg(0)}), {1}));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  EXPECT_EQ(Source.find("uint64_t* external_pair"), std::string::npos);
+  EXPECT_NE(Source.find(".elements[1]"), std::string::npos);
+  std::string FunctionSource;
+  llvm::raw_string_ostream FunctionOut(FunctionSource);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, FunctionOut, Options, nullptr,
+                                          nullptr, Score));
+  // The provider is compiled directly from LLVM in a separate translation
+  // unit. This catches a pointer-return ABI even if the C were syntactically
+  // valid, and makes a repeated external call observable.
+  const std::string Reference = R"(
+@calls = global i64 0
+define [2 x i64] @external_pair(i64 %x) {
+  %n = load i64, ptr @calls
+  %next = add i64 %n, 1
+  store i64 %next, ptr @calls
+  %hi = xor i64 %x, -9223372036854775808
+  %lo = add i64 %x, 17
+  %a = insertvalue [2 x i64] poison, i64 %lo, 0
+  %b = insertvalue [2 x i64] %a, i64 %hi, 1
+  ret [2 x i64] %b
+}
+)";
+  const std::string Main = R"(
+extern uint64_t calls;
+int main(void) {
+  const uint64_t values[] = {0, 1, 17, UINT64_MAX, UINT64_C(1) << 63};
+  for (unsigned i = 0; i < 5; ++i) {
+    uint64_t x = values[i], n = calls;
+    if (read_pair(x) != ((x + 17) ^ (x ^ (UINT64_C(1) << 63)))) return 1;
+    if (calls != n + 1) return 2;
+  }
+  return 0;
+}
+)";
+  std::string FullMain = Main;
+  const std::string CallCheck = "if (calls != n + 1) return 2;";
+  FullMain.insert(FullMain.find(CallCheck) + CallCheck.size(), R"(
+    if (read_second(x) != (x ^ (UINT64_C(1) << 63))) return 3;
+    if (calls != n + 2) return 4;
+)");
+  for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
+    compileAndRun(Source + FullMain, Optimization, Reference);
+    compileAndRun(FunctionSource + Main, Optimization, Reference);
+  }
+}
+
+TEST(LLVMCValues, ArrayArgumentsAndReturnsInteroperateWithLLVMCallers) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("array-argument", Context);
+  Module.setDataLayout("e-p:64:64");
+  Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
+  if (Module.getTargetTriple().isOSWindows() ||
+      !(Module.getTargetTriple().isAArch64() ||
+        Module.getTargetTriple().getArch() == llvm::Triple::x86_64))
+    GTEST_SKIP()
+        << "Raw array/C record ABI comparison requires AArch64 or SysV x64";
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Pair = llvm::ArrayType::get(Word, 2);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(Pair, {Pair, Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "c_pair", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Fn));
+  auto *First = B.CreateExtractValue(Fn->getArg(0), {0});
+  auto *Second = B.CreateExtractValue(Fn->getArg(0), {1});
+  auto *A = B.CreateInsertValue(llvm::PoisonValue::get(Pair),
+                                B.CreateAdd(Second, Fn->getArg(1)), {0});
+  B.CreateRet(B.CreateInsertValue(A, B.CreateXor(First, Fn->getArg(1)), {1}));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  const std::string Reference = R"(
+declare [2 x i64] @c_pair([2 x i64], i64)
+define i64 @call_c_pair(i64 %x, i64 %y, i64 %z) {
+  %a = insertvalue [2 x i64] poison, i64 %x, 0
+  %b = insertvalue [2 x i64] %a, i64 %y, 1
+  %r = call [2 x i64] @c_pair([2 x i64] %b, i64 %z)
+  %lo = extractvalue [2 x i64] %r, 0
+  %hi = extractvalue [2 x i64] %r, 1
+  %v = sub i64 %lo, %hi
+  ret i64 %v
+}
+)";
+  Source += R"(
+extern uint64_t call_c_pair(uint64_t, uint64_t, uint64_t);
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_MAX, UINT64_C(1) << 63};
+  for (unsigned i = 0; i < 4; ++i)
+    for (unsigned j = 0; j < 4; ++j)
+      for (unsigned k = 0; k < 4; ++k)
+        if (call_c_pair(values[i], values[j], values[k]) !=
+            (values[j] + values[k]) - (values[i] ^ values[k])) return 1;
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, Reference);
+}
+
+TEST(LLVMCValues, NestedAggregateInsertExtractSelectAndPhiHaveValueSemantics) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("aggregate-values", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Pair = llvm::ArrayType::get(Word, 2);
+  auto *Record = llvm::StructType::get(Context, {Word, Pair});
+  auto *Array = llvm::ArrayType::get(Record, 2);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Word, Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "aggregate_value", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Fn);
+  auto *Yes = llvm::BasicBlock::Create(Context, "yes", Fn);
+  auto *No = llvm::BasicBlock::Create(Context, "no", Fn);
+  auto *Merge = llvm::BasicBlock::Create(Context, "merge", Fn);
+  llvm::IRBuilder<llvm::NoFolder> B(Entry);
+  auto *A = B.CreateInsertValue(llvm::Constant::getNullValue(Array),
+                                Fn->getArg(0), {1, 1, 0}, "first");
+  auto *C = B.CreateInsertValue(A, Fn->getArg(1), {1, 1, 1}, "second");
+  auto *Flag = B.CreateICmpULT(Fn->getArg(0), Fn->getArg(1));
+  B.CreateCondBr(Flag, Yes, No);
+  B.SetInsertPoint(Yes);
+  B.CreateBr(Merge);
+  B.SetInsertPoint(No);
+  B.CreateBr(Merge);
+  B.SetInsertPoint(Merge);
+  auto *Phi = B.CreatePHI(Array, 2, "merged");
+  Phi->addIncoming(A, Yes);
+  Phi->addIncoming(C, No);
+  auto *Selected = B.CreateSelect(Flag, C, Phi, "selected");
+  B.CreateRet(B.CreateXor(B.CreateExtractValue(Selected, {1, 1, 0}),
+                          B.CreateExtractValue(Selected, {1, 1, 1})));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  Source += R"(
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_MAX, UINT64_C(1) << 63};
+  for (unsigned i = 0; i < 4; ++i)
+    for (unsigned j = 0; j < 4; ++j)
+      if (aggregate_value(values[i], values[j]) != (values[i] ^ values[j]))
+        return 1;
+  return 0;
+}
+
+
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
+TEST(LLVMCValues, UnprovedArrayBoundaryABIsFailBeforeWritingSource) {
+  for (unsigned Mode = 0; Mode < 11; ++Mode) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("unsupported-array-abi", Context);
+    Module.setTargetTriple(llvm::Triple(
+        Mode == 0 ? "x86_64-pc-windows-msvc" : "aarch64-unknown-linux-gnu"));
+    Module.setDataLayout("e-p:64:64");
+    llvm::Type *Element = Mode == 1 ? llvm::Type::getInt32Ty(Context)
+                                    : llvm::Type::getInt64Ty(Context);
+    llvm::Type *Result = llvm::ArrayType::get(Element, Mode == 2 ? 3 : 2);
+    if (Mode == 3)
+      Result =
+          llvm::StructType::get(Context, llvm::ArrayRef<llvm::Type *>{Result});
+    if (Mode == 4)
+      Module.setTargetTriple(llvm::Triple());
+    if (Mode == 5)
+      Module.setDataLayout("e-p:32:32");
+    llvm::SmallVector<llvm::Type *> Parameters;
+    if (Mode >= 7) {
+      Parameters.push_back(Result);
+      if (Mode == 7)
+        Parameters.append(7, llvm::Type::getInt64Ty(Context));
+      if (Mode == 8)
+        Parameters.push_back(llvm::Type::getDoubleTy(Context));
+    }
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(Result, Parameters, Mode == 9),
+        llvm::GlobalValue::ExternalLinkage, "external_array", Module);
+    if (Mode == 6)
+      Fn->setCallingConv(llvm::CallingConv::Fast);
+    if (Mode == 10)
+      Fn->addParamAttr(0, llvm::Attribute::InReg);
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}),
+                 std::runtime_error);
+    EXPECT_TRUE(Source.empty());
+  }
+}
+
+TEST(LLVMCValues, AggregateCopiesPreserveUnalignedMemoryAndArrayStorage) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("aggregate-memory", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Ptr = llvm::PointerType::getUnqual(Context);
+  auto *Pair = llvm::ArrayType::get(Word, 2);
+  auto *Global = new llvm::GlobalVariable(
+      Module, Pair, false, llvm::GlobalValue::ExternalLinkage,
+      llvm::ConstantArray::get(Pair, {llvm::ConstantInt::get(Word, 5),
+                                      llvm::ConstantInt::get(Word, 11)}),
+      "array_storage");
+  auto *Touch = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false),
+      llvm::GlobalValue::ExternalLinkage, "touch_words", Module);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Ptr, Ptr, Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "copy_aggregate", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Fn));
+  auto *Local = B.CreateAlloca(Pair, nullptr, "local_array");
+  auto *Input = B.CreateAlignedLoad(Pair, Fn->getArg(1), llvm::Align(1));
+  auto *Updated = B.CreateInsertValue(Input, Fn->getArg(2), {1});
+  B.CreateStore(Updated, Local);
+  B.CreateCall(Touch, {Local});
+  auto *Observed = B.CreateLoad(Pair, Local);
+  B.CreateAlignedStore(Observed, Fn->getArg(0), llvm::Align(1));
+  auto *Known = B.CreateLoad(Pair, Global);
+  B.CreateRet(B.CreateXor(B.CreateExtractValue(Known, {1}),
+                          B.CreateExtractValue(Observed, {0})));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  Source += R"(
+#include <string.h>
+void touch_words(void *p) {
+  uint64_t x;
+  memcpy(&x, p, 8); x ^= UINT64_C(0x0102030405060708); memcpy(p, &x, 8);
+}
+int main(void) {
+  for (unsigned offset = 1; offset < 8; ++offset) {
+    uint8_t src[32], dst[32], expected[32];
+    memset(src, 0x73, sizeof(src)); memset(dst, 0xa5, sizeof(dst));
+    memcpy(expected, dst, sizeof(dst));
+    uint64_t a = UINT64_C(0xfedcba9876543210), b = UINT64_MAX - offset;
+    memcpy(src + offset, &a, 8);
+    uint64_t changed = a ^ UINT64_C(0x0102030405060708);
+    memcpy(expected + offset, &changed, 8);
+    memcpy(expected + offset + 8, &b, 8);
+    if (copy_aggregate(dst + offset, src + offset, b) != (changed ^ 11)) return 1;
+    if (memcmp(dst, expected, sizeof(dst))) return 2;
+    uint64_t unchanged; memcpy(&unchanged, src + offset, 8);
+    if (unchanged != a) return 3;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
 }
 
 TEST(LLVMCValues, CompoundComparisonsPreserveConstantsAndPolarity) {

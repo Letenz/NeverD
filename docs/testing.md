@@ -332,6 +332,17 @@ Numeric-memory cases check full and contained single-writer forwarding, undef/po
 
 `NeverDMedMutableSourceTests` and `NeverDLLVMCValueTests` execute independent loops, reordered blocks, entry backedges, runtime stack arithmetic, earlier reads, branch joins, partial aliases, Boolean truth values and zero-inclusive bit counts at O0/O2. Negative cases reject malformed inputs, truncated targets, ambiguous carriers and exhausted budgets before emission. A CLI fixture above the SSA limit requires executable LLVMC output and explicit HighC refusal. Repeated updates and stored-expression chains across blocks also check C output size and execution.
 
+LLVMC aggregate tests link generated C with independently compiled LLVM
+callers and callees at O0/O2, checking both words of array results and exactly
+one observable call. They also execute nested insert/extract, PHI/select,
+array storage and unaligned copies with whole-buffer comparisons. Raw array
+call boundaries currently admit one/two i64 words on Linux/Darwin AArch64 or
+SysV x64, with array arguments restricted to i64/pointer signatures that
+fit the argument registers. Other layouts, Windows, custom conventions,
+variadic array arguments and register exhaustion fail explicitly. Native ABI
+execution runs on the host target; unsupported hosts skip that comparison.
+Generated size/field-offset assertions reject incompatible C object layouts.
+
 Additional regressions bound private loads/stores before LLVM promotion and C output size. They execute long mixed arithmetic chains, reordered SSA blocks, overlapping guest writes and zero returns at O0/O2, repeat key checks through the actual LLVM optimization pipeline, and reuse an emitter after rejected module generations.
 
 Compound-condition regressions execute conjunctions and disjunctions with nonzero equality constants, unsigned comparisons, signed comparisons in both operand orders, widened Boolean inputs and every Boolean-negation combination. C emission must preserve the complete truth table at O0/O2 and must not dereference a missing zero-comparison operand. Integer-address stores cover aligned and unaligned 32/64/128-bit carriers; byte backing arrays retain explicit alignment and exact base/partial accesses without scalar array assignments or incompatible typed aliasing.
