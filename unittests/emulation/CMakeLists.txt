@@ -84,6 +84,7 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64PackedShiftTests.cpp
   X64VectorMaskTests.cpp
   X64ShuffleTests.cpp
+  X64PartialMoveTests.cpp
   X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)

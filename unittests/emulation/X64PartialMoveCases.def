@@ -1,0 +1,64 @@
+//===- X64PartialMoveCases.def - Independent partial SSE move cases -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Original instruction bytes and scalar expectations, independent of ISA
+// admission. Prefix, load opcode, store opcode, selected 64-bit half.
+#ifdef NEVERD_PARTIAL_MOVE
+NEVERD_PARTIAL_MOVE(MOVLPS, 0x00, 0x12, 0x13, 0)
+NEVERD_PARTIAL_MOVE(MOVHPS, 0x00, 0x16, 0x17, 1)
+NEVERD_PARTIAL_MOVE(MOVLPD, 0x66, 0x12, 0x13, 0)
+NEVERD_PARTIAL_MOVE(MOVHPD, 0x66, 0x16, 0x17, 1)
+#endif
+#ifdef NEVERD_PARTIAL_INPUT
+// Distinct halves, zeros, subnormals and NaN payloads remain raw bits.
+NEVERD_PARTIAL_INPUT(0x0123456789abcdefULL, 0xfedcba9876543210ULL,
+                     0x8172635445362718ULL, 0xa5a5a5a55a5a5a5aULL)
+NEVERD_PARTIAL_INPUT(0x8000000000000000ULL, 0x0000000080000000ULL,
+                     0x0000000000000000ULL, 0xffffffffffffffffULL)
+NEVERD_PARTIAL_INPUT(0x7ff0000000000001ULL, 0xfff8123456789abcULL,
+                     0x7f800001ff800001ULL, 0x7fc12345ffc54321ULL)
+NEVERD_PARTIAL_INPUT(0x0000000000000001ULL, 0x8000000000000001ULL,
+                     0x0000000100000001ULL, 0x8000000180000001ULL)
+#endif
+#ifdef NEVERD_PARTIAL_VALUE
+NEVERD_PARTIAL_VALUE(OpcodeMap, 0x0f)
+NEVERD_PARTIAL_VALUE(Rex, 0x40)
+NEVERD_PARTIAL_VALUE(RexVector, 0x04)
+NEVERD_PARTIAL_VALUE(RexSource, 0x01)
+NEVERD_PARTIAL_VALUE(RegisterMask, 0x07)
+NEVERD_PARTIAL_VALUE(RegisterShift, 3)
+NEVERD_PARTIAL_VALUE(RegisterModRM, 0xc0)
+NEVERD_PARTIAL_VALUE(PhysicalExponent, 0x3fff)
+NEVERD_PARTIAL_VALUE(BoundaryTail, 4)
+NEVERD_PARTIAL_VALUE(PatternStride, 37)
+#endif
+#ifdef NEVERD_PARTIAL_OFFSET
+NEVERD_PARTIAL_OFFSET(0)
+NEVERD_PARTIAL_OFFSET(1)
+NEVERD_PARTIAL_OFFSET(7)
+NEVERD_PARTIAL_OFFSET(PageSize - WordBytes)
+NEVERD_PARTIAL_OFFSET(PageSize - BoundaryTail)
+#endif
+#ifdef NEVERD_PARTIAL_INVALID
+NEVERD_PARTIAL_INVALID(RegisterLowPD, 0x66, 0x0f, 0x12, 0xc1)
+NEVERD_PARTIAL_INVALID(RegisterHighPD, 0x66, 0x0f, 0x16, 0xc1)
+NEVERD_PARTIAL_INVALID(RegisterStoreLowPS, 0x0f, 0x13, 0xc1)
+NEVERD_PARTIAL_INVALID(RegisterStoreHighPS, 0x0f, 0x17, 0xc1)
+NEVERD_PARTIAL_INVALID(RegisterStoreLowPD, 0x66, 0x0f, 0x13, 0xc1)
+NEVERD_PARTIAL_INVALID(RegisterStoreHighPD, 0x66, 0x0f, 0x17, 0xc1)
+NEVERD_PARTIAL_INVALID(VexLowPS, 0xc5, 0xf8, 0x12, 0x01)
+NEVERD_PARTIAL_INVALID(VexHighPS, 0xc5, 0xf8, 0x16, 0x01)
+NEVERD_PARTIAL_INVALID(VexLowPD, 0xc5, 0xf9, 0x12, 0x01)
+NEVERD_PARTIAL_INVALID(VexHighPD, 0xc5, 0xf9, 0x16, 0x01)
+NEVERD_PARTIAL_INVALID(VexStoreLowPS, 0xc5, 0xf8, 0x13, 0x01)
+NEVERD_PARTIAL_INVALID(VexStoreHighPS, 0xc5, 0xf8, 0x17, 0x01)
+NEVERD_PARTIAL_INVALID(VexStoreLowPD, 0xc5, 0xf9, 0x13, 0x01)
+NEVERD_PARTIAL_INVALID(VexStoreHighPD, 0xc5, 0xf9, 0x17, 0x01)
+NEVERD_PARTIAL_INVALID(EvexLowPS, 0x62, 0xf1, 0x7c, 0x08, 0x12, 0x01)
+NEVERD_PARTIAL_INVALID(EvexHighPD, 0x62, 0xf1, 0xfd, 0x08, 0x16, 0x01)
+#endif
+#ifdef NEVERD_PARTIAL_TEXT
+NEVERD_PARTIAL_TEXT(ObserverError, "partial vector move observer failure")
+#endif

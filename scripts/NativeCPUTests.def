@@ -29,6 +29,74 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // Shared x64 contracts select the explicit native transport at both privileges.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PartialMoveOracle.ScalarHalvesMatchNativeLoadsAndStores")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVLPSLoadsAndStoresPreserveOtherHalf/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVLPSLoadsAndStoresPreserveOtherHalf/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVHPSLoadsAndStoresPreserveOtherHalf/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVHPSLoadsAndStoresPreserveOtherHalf/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVLPDLoadsAndStoresPreserveOtherHalf/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVLPDLoadsAndStoresPreserveOtherHalf/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVHPDLoadsAndStoresPreserveOtherHalf/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "MOVHPDLoadsAndStoresPreserveOtherHalf/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "CrossPageFaultsPreserveBothPagesAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "CrossPageFaultsPreserveBothPagesAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "ObserverStopsAndFailuresPreserveState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "ObserverStopsAndFailuresPreserveState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "PageEndOperandsDoNotAccessTheNextPage/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "PageEndOperandsDoNotAccessTheNextPage/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "StoresDoNotRequireReadPermission/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "StoresDoNotRequireReadPermission/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "RegisterEncodingsRetainDistinctLaneSemantics/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PartialMove."
+    "RegisterEncodingsRetainDistinctLaneSemantics/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Shuffle."
     "UNPCKLPSInterleavesRawLanes/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64Shuffle."
