@@ -9310,9 +9310,14 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   EHFallthroughLabels.reserve(EHFallthroughLabelCandidates.size());
   for (const llvm::BasicBlock *BB : EHFallthroughLabelCandidates)
     EHFallthroughLabels.push_back(blockLabel(BB));
-  const std::string Final = dropUnreferencedFallthroughEHLabels(
+  std::string Final = dropUnreferencedFallthroughEHLabels(
       dropUnusedCallDecls(std::move(Buffered), DropNames, ArrayDeclarations),
       EHFallthroughLabels);
+  // Removed prediction-only declarations need no empty prefix before the
+  // first actual scalar statement. This changes whitespace only.
+  if (WroteScalarRegions)
+    while (DeclInsertPos < Final.size() && Final[DeclInsertPos] == '\n')
+      Final.erase(DeclInsertPos, 1);
   for (const auto &[_, Target] : EHInvokeNormalGotos) {
     const std::string Name = blockLabel(Target);
     for (const auto &[Block, OtherName] : BlockLabels)

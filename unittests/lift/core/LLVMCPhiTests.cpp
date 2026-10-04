@@ -1588,4 +1588,96 @@ int main(void) {
   }
 }
 
+TEST(LLVMCScalarRegions, ConditionalPhiUpdateRetainsParallelOldValueSnapshot) {
+  const auto Source = emitScalarRegions(R"(
+define i32 @conditional_pair(i32 %seed, i32 %other, i32 %n) {
+entry:
+  br label %header
+header:
+  %i = phi i32 [0, %entry], [%next, %body]
+  %a = phi i32 [%seed, %entry], [%updated, %body]
+  %b = phi i32 [%other, %entry], [%a, %body]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+  %bit = and i32 %b, 1
+  %condition = icmp eq i32 %bit, 0
+  %selected = select i1 %condition, i32 0, i32 7
+  %base = add i32 %a, 5
+  %updated = add i32 %base, %selected
+  %next = add i32 %i, 1
+  br label %header
+exit:
+  %answer = xor i32 %a, %b
+  ret i32 %answer
+}
+)");
+  EXPECT_NE(Source.find("phi_edge"), std::string::npos) << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (uint32_t seed = 0; seed < 32; ++seed)
+    for (uint32_t other = 0; other < 32; ++other)
+      for (unsigned n = 0; n < 16; ++n) {
+        uint32_t a = UINT32_MAX - seed, b = other;
+        for (unsigned i = 0; i < n; ++i) {
+          uint32_t old = a;
+          a += 5u + (b & 1 ? 7u : 0u);
+          b = old;
+        }
+        if (conditional_pair(UINT32_MAX - seed, other, n) != (a ^ b))
+          return 1;
+      }
+  return 0;
+}
+)",
+                  Optimization, true);
+}
+
+TEST(LLVMCScalarRegions, BranchDependentSeedsKeepTheResultInSharedScope) {
+  const auto Source = emitScalarRegions(R"(
+define i32 @branch_seed(i32 %seed, i32 %n, i1 %choose) {
+entry:
+  br i1 %choose, label %left, label %right
+left:
+  %a = add i32 %seed, 9
+  br label %header
+right:
+  %b = xor i32 %seed, 11
+  br label %header
+header:
+  %i = phi i32 [0, %left], [0, %right], [%next, %body]
+  %state = phi i32 [%a, %left], [%b, %right], [%updated, %body]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+  %updated = add i32 %state, %i
+  %next = add i32 %i, 1
+  br label %header
+exit:
+  ret i32 %state
+}
+)");
+  const auto At = Source.find("    uint32_t result");
+  ASSERT_NE(At, std::string::npos) << Source;
+  EXPECT_EQ(Source.substr(At, Source.find('\n', At) - At).find('='),
+            std::string::npos)
+      << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int main(void) {
+  for (uint32_t seed = 0; seed < 32; ++seed)
+    for (unsigned n = 0; n < 16; ++n)
+      for (unsigned choose = 0; choose < 2; ++choose) {
+        uint32_t input = UINT32_MAX - seed;
+        uint32_t expected = choose ? input + 9u : input ^ 11u;
+        for (unsigned i = 0; i < n; ++i) expected += i;
+        if (branch_seed(input, n, choose) != expected) return 1;
+      }
+  return 0;
+}
+)",
+                  Optimization, true);
+}
+
 } // namespace

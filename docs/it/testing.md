@@ -1292,6 +1292,8 @@ Le regressioni coprono fasi in registri e frame, entrambi gli ordini dei byte, r
 
 `NeverDLLVMCPhiTests` e `NeverDLLVMCValueTests` coprono contatori a un byte con riporto in incremento/decremento, uscite unificate, usi inline dopo il ciclo, valori esterni ancora vivi e copie PHI. Confronti indipendenti O0/O2 con trap per comportamento indefinito verificano somma composta, rifiuto della sottrazione invertita, moltiplicazione stretta e maschere booleane. Le regioni annidate richiedono contatori locali al ciclo, un risultato distinto e LLVM sorgente invariato. Una regressione eseguibile fa coincidere i nomi delle funzioni esterne con quelli iniziali di risultato e contatore, verificando chiamate ed effetti osservabili.
 
+`NeverDLLVMCValueTests` verifica entrambe le posizioni del ramo neutro per somme, sottrazioni e operazioni bit a bit, basi invariate, dipendenze inline dal vecchio valore, istantanee delle condizioni, test stretti, rami non neutri e selezioni condivise. Il C generato viene eseguito a O0/O2 contro LLVM compilato indipendentemente, con trap per comportamento indefinito. `NeverDLLVMCPhiTests` verifica anche le istantanee parallele e le inizializzazioni dipendenti dai rami che devono mantenere l’ambito condiviso. L’IR chiamante resta invariato.
+
 `NeverDUnicornDecodeTests` verifica i bit EVEX riservati delle forme registro sui modelli CPU AVX-512/APX, la priorità dei fault di memoria ROUND, la conservazione dello stato e la ripresa. Una prova indipendente su Linux x64 conferma i fault di allineamento della codifica classica e i fault di pagina delle forme scalari/VEX. Questi test del motore non ampliano le istruzioni ammesse in modalità checked e non dimostrano esecuzione APX nativa.
 
 ## Misure CPU ARM64

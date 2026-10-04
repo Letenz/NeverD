@@ -69,6 +69,14 @@ analysis and comparison output belong outside the repository.
 
 ## Closed control-flow regressions
 
+- Neutral select arms in admitted scalar regions now use conditional updates
+  after PHI snapshot scheduling. Changed bases require conditions and terms
+  independent of the old destination; unchanged bases need no self-assignment.
+  Materialized conditions stay snapshots and narrow truth tests keep their
+  normalization. A dominating direct entry edge may combine a returned
+  carrier declaration with an immutable leaf seed; branch-dependent seeds
+  retain shared scope. Independent O0/O2 checks preserve caller LLVM.
+
 - Admitted scalar loops now name the complete returned PHI group by role.
   Counters move into `for` declarations only after all coalesced members and
   transitive inline uses pass a bounded confinement check; materialized values

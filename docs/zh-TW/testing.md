@@ -1142,6 +1142,8 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 
 `NeverDLLVMCPhiTests` 與 `NeverDLLVMCValueTests` 涵蓋位元組計數器遞增遞減回繞、合併後的退出值、迴圈外的內聯使用、存活外層變數及 PHI 快照。獨立 O0/O2 檢查啟用未定義行為陷阱，驗證複合加法、反向減法拒絕、窄乘法及布林遮罩。巢狀區域測試要求計數器在迴圈內宣告、結果變數保持獨立，且不修改來源 LLVM。 可執行命名回歸讓外部函式與首次產生的結果變數及計數器同名，驗證呼叫與觀察副作用都被保留。
 
+`NeverDLLVMCValueTests` 檢查加減和位元運算中兩種單位元分支位置、未變的基底值、內聯舊值依賴、已具體化的條件快照、窄整數真假判斷、非單位元分支及共用選擇值。產生的 C 在 O0/O2 下與獨立編譯的 LLVM 對照執行，並啟用未定義行為陷阱。`NeverDLLVMCPhiTests` 也檢查平行舊值快照，以及必須留在共用作用域的分支初值。呼叫端 IR 保持不變。
+
 `NeverDUnicornDecodeTests` 檢查 AVX-512/APX CPU 模型的 EVEX 暫存器保留位，以及 ROUND 記憶體異常優先級、狀態保留和恢復。獨立 Linux x64 主機程式確認了傳統編碼的對齊異常和純量/VEX 編碼的分頁異常。這些引擎測試不擴展 checked 指令准入，也不代表 APX 原生執行證據。
 
 ## ARM64 CPU 效能測量
