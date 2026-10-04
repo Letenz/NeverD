@@ -69,13 +69,21 @@ analysis and comparison output belong outside the repository.
 
 ## Closed control-flow regressions
 
+- Typed scalar expressions now distinguish LLVM width from the promoted C
+  type and operator precedence. Redundant unsigned casts are omitted, while
+  narrow wrapping, signed interpretation and widened arithmetic/shift carriers
+  remain explicit. Bounded fallback and existing materialization preserve deep
+  expressions. Independent LLVM comparisons at O0/O2 run with undefined-behavior
+  traps. Debug/image/composed projections and source-variable naming still need
+  their own evidence and cleanup.
+
 - LLVMC plans complete bounded integer CFGs before printing nested header
   loops and conditionals. Edge PHIs retain simultaneous semantics; liveness
   coalesces only noninterfering carriers, and safe constant-seeded counters
   print as `for` loops. Header effects, shared steps, swaps and live outer
   values remain explicit. Memory, EH, irreducible and multi-exit shapes retain
   the existing fallback. This closes scalar loop rendering, not general
-  devirtualization, ABI recovery or expression-format cleanup.
+  devirtualization, ABI recovery or source-parameter inference.
 
 - LLVMC keeps the true-arm exit when the false body moves ahead of a shared
   join. The LLVM fixture executes PHI and memory effects at O0/O2; a native
