@@ -144,34 +144,220 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SSEPredicateDecoder.FamilyAndPredicateAreIndependentOfSyntax")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPSSMasksAndStatusPreserveOtherState/{backend}Supervisor")
+    "CMPSSEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPSSMasksAndStatusPreserveOtherState/{backend}User")
+    "CMPSSEQMasksAndStatusPreserveOtherState/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPSDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+    "CMPSSLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPSDMasksAndStatusPreserveOtherState/{backend}User")
+    "CMPSSLTMasksAndStatusPreserveOtherState/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPPSMasksAndStatusPreserveOtherState/{backend}Supervisor")
+    "CMPSSLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPPSMasksAndStatusPreserveOtherState/{backend}User")
+    "CMPSSLEMasksAndStatusPreserveOtherState/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPPDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+    "CMPSSUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPPDMasksAndStatusPreserveOtherState/{backend}User")
+    "CMPSSUNORDMasksAndStatusPreserveOtherState/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "RoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+    "CMPSSNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "RoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+    "CMPSSNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
     "MixedLanesAccumulateStatusAndScalarsIgnoreUpperInputs/{backend}Supervisor")
