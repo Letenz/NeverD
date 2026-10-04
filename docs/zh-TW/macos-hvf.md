@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 242b3ff958deb9ce46712843be3bc2c42ab3d063b28fb38b595e857d47f933aa -->
+<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
 
 [← 文件索引](README.md)
 
@@ -28,7 +28,7 @@ NeverD 使用 Apple 的 [Hypervisor.framework](https://developer.apple.com/docum
 
 ARM64 關閉軟體單步後，在一次原生進入中執行完整的固定 TLB/I-cache 維護序列。專用 HVC #1 必須通過返回 PC、syndrome、PSTATE 和 ESR_EL1 校驗，才會單步執行准入的客體指令。`PSTATE.D` 不能遮蔽送往 EL2 的偵錯例外。純量、TLS、FP/SIMD 狀態完整擷取。Intel 協商 VMCS 控制、使用 monitor trap、失效化 TLB 並傳遞完整 XSAVE。RIP/RFLAGS 直接透過 VMCS 安裝與擷取，包含重新建立 vCPU 之後；CR0/CR4 同時遵守框架遮罩及硬體固定位元。經認證的 CR8 讀取退出由 ISA 層完成；其他控制暫存器存取失敗。每個 vCPU 都初始化私有、受管理的 `IA32_KERNEL_GS_BASE`；客體 MSR 存取仍陷出，不支援的 MSR/SWAPGS 不予准入。
 
-排隊與執行保留原始停止 token 及期限；準備、維護、進入與擷取共用預算。`RunDeadline` 等待中斷確認後才返回；取消會重建 vCPU，防止延遲中斷影響下一次執行。不相關的 Intel 宿主中斷在同一取消世代內重試。擷取錯誤及經認證的例外優先於同時發生的停止；一般取消狀態不會發布。這是合作式取消，沒有硬即時保證。
+排隊與執行保留原始停止 token 及期限；準備、維護、進入與擷取共用預算。ARM64 的 `RunDeadline` 等待中斷確認後才返回；Intel 在 owner 執行緒內透過有限期限的 `hv_vcpu_run_until` 輪詢取消。取消會重建 vCPU，防止延遲中斷影響下一次執行。不相關的 Intel 宿主中斷在同一取消世代內重試。擷取錯誤及經認證的例外優先於同時發生的停止；一般取消狀態不會發布。這是合作式取消，沒有硬即時保證。
 
 ## 驗證方式
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon 可加上 `-DNEVERD_LLVM_PREBUILT=ON`；Intel 從固定版本 LLVM 原始碼建置。[HVF 工作流程](../../.github/workflows/hvf.yml) 支援 `self-hosted, macOS, ARM64/X64, hvf`，也可用 `hosted-intel` 選擇 `macos-15-intel`。先驗證實際建立與銷毀 VM/vCPU。`validation=probe` 不能證明指令執行；`transport` 只驗證傳輸層；`darwin` 要求所有相符的 Darwin 工作負載；`full` 要求 CPU 與 Darwin 兩項完整驗收。
 
-傳輸層要求 ARM64 15 項、Intel 10 項；完整 CPU 門檻分別為 23、18 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
+傳輸層要求 ARM64 15 項、Intel 11 項；完整 CPU 門檻分別為 23、20 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
 
 託管 Intel 的 `--execution-methods` 從完整 CTest 清單取得所有參數、旗標、環境及工作目錄，以獨立行程循序執行各 GoogleTest 方法，拒絕未知屬性。方法總期限最多 120 秒，方法內不另套用逐參數期限；逾時後有界回收行程群組。原始 XML、名稱對應與退出狀態均保留。逾時或 XML 不完整會產生部分失敗；必需原生項缺失或跳過都不能通過。自託管仍採用 CTest 逐案例行程及期限。
 

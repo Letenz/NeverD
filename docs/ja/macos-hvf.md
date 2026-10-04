@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 242b3ff958deb9ce46712843be3bc2c42ab3d063b28fb38b595e857d47f933aa -->
+<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -28,7 +28,7 @@ macOS 11 以降とハードウェア仮想化が必要です。他の依存関�
 
 ARM64 はソフトウェア単一ステップを無効にし、固定の TLB/I-cache 保守シーケンス全体を1回のネイティブ実行で処理します。専用の HVC #1 について復帰 PC、syndrome、PSTATE、変更されていない ESR_EL1 を厳密に確認した後、許可されたゲスト命令を1命令だけ単一ステップ実行します。`PSTATE.D` では EL2 に送られるデバッグ例外をマスクできません。スカラー、TLS、FP/SIMD の全状態を取得します。Intel は VMCS 制御を調整し、monitor trap、TLB 無効化、完全な XSAVE パケットを使います。RIP/RFLAGS は vCPU 再作成後も VMCS で直接転送します。CR0/CR4 はフレームワークのマスクとハードウェアの固定ビットに従います。認証された CR8 読み出し終了は ISA 層が完了し、他の制御レジスタアクセスは失敗します。各 vCPU は専用の管理対象 `IA32_KERNEL_GS_BASE` を初期化します。ゲスト MSR アクセスは捕捉され、未対応の MSR/SWAPGS は許可されません。
 
-待ち行列も元の停止トークンと期限を守ります。準備、保守、進入、状態取得で一つの予算を共有します。`RunDeadline` は割り込みの確認完了を待って返ります。キャンセル後は vCPU を再作成し、遅れて届く割り込みを分離します。無関係な Intel ホスト割り込みは同じキャンセル世代で再試行します。状態取得エラーと認証済み例外は同時の停止より優先し、通常のキャンセル状態は公開しません。協調的キャンセルであり、ハードリアルタイムの保証ではありません。
+待ち行列も元の停止トークンと期限を守ります。準備、保守、進入、状態取得で一つの予算を共有します。ARM64 の `RunDeadline` は割り込みの確認完了を待って返ります。Intel は所有スレッド上で期限を有限に設定した `hv_vcpu_run_until` を呼び、キャンセルを確認します。キャンセル後は vCPU を再作成し、遅れて届く割り込みを分離します。無関係な Intel ホスト割り込みは同じキャンセル世代で再試行します。状態取得エラーと認証済み例外は同時の停止より優先し、通常のキャンセル状態は公開しません。協調的キャンセルであり、ハードリアルタイムの保証ではありません。
 
 ## 検証手順
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon では `-DNEVERD_LLVM_PREBUILT=ON` を追加できます。Intel は固定された LLVM リビジョンをソースからビルドします。[HVF ワークフロー](../../.github/workflows/hvf.yml) は `self-hosted, macOS, ARM64/X64, hvf` および `macos-15-intel` の `hosted-intel` に対応します。最初に VM/vCPU を実際に作成、破棄します。`validation=probe` は命令実行の証拠ではなく、`transport` は転送層のみ、`darwin` は対応する全 Darwin ワークロード、`full` は CPU と Darwin の両方の完全な検証を要求します。
 
-転送層の必須項目は ARM64 が 15、Intel が 10、完全な CPU 検証はそれぞれ 23、18 です。全状態、特権、権限、ページ境界、エイリアス、CPU 切り替え、ロールバック、キャンセル、再試行を確認します。Intel は大きなビルドの前に CR8 を確認します。成果物に登録一覧、ソースリビジョン、ホスト、結果、各試行を残します。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) はネストした仮想化を実験的と位置付けており、再現可能な受け入れには専用のネイティブ Mac が適しています。
+転送層の必須項目は ARM64 が 15、Intel が 11、完全な CPU 検証はそれぞれ 23、20 です。全状態、特権、権限、ページ境界、エイリアス、CPU 切り替え、ロールバック、キャンセル、再試行を確認します。Intel は大きなビルドの前に CR8 を確認します。成果物に登録一覧、ソースリビジョン、ホスト、結果、各試行を残します。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) はネストした仮想化を実験的と位置付けており、再現可能な受け入れには専用のネイティブ Mac が適しています。
 
 ホスト型 Intel の `--execution-methods` は、完全な CTest 一覧から全パラメーター、フラグ、環境、作業ディレクトリを維持して GoogleTest メソッドを直列実行します。未知のプロパティは拒否します。メソッド全体の期限は最大 120 秒で、各パラメーターに個別の期限は適用しません。その後、期限を設けてプロセスグループを回収します。元の XML、名前対応、終了状態を保存します。タイムアウトや不完全な XML は部分失敗となり、必須ネイティブ項目の欠落やスキップは合格になりません。自己管理 runner は引き続き CTest のケースごとのプロセスと期限を使います。
 

@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 242b3ff958deb9ce46712843be3bc2c42ab3d063b28fb38b595e857d47f933aa -->
+<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
 
 [← 문서 목록](README.md)
 
@@ -28,7 +28,7 @@ macOS 11 이상과 하드웨어 가상화가 필요합니다. 다른 의존성�
 
 ARM64는 소프트웨어 단일 단계를 끄고 전체 고정 TLB/I-cache 유지 관리 시퀀스를 한 번의 네이티브 진입으로 실행합니다. 전용 HVC #1의 반환 PC, syndrome, PSTATE와 변경되지 않은 ESR_EL1을 정확히 확인한 뒤 허용된 게스트 명령 하나를 단일 단계로 실행합니다. `PSTATE.D`는 EL2로 전달되는 디버그 예외를 가리지 못합니다. 스칼라, TLS, FP/SIMD 상태를 모두 캡처합니다. Intel은 VMCS 제어를 협상하고 monitor trap, TLB 무효화, 완전한 XSAVE 패킷을 사용합니다. RIP/RFLAGS는 vCPU 재생성 후에도 VMCS를 통해 직접 전송합니다. CR0/CR4는 프레임워크 마스크와 하드웨어 고정 비트를 따릅니다. 인증된 CR8 읽기 종료는 ISA 계층이 완료하며 다른 제어 레지스터 접근은 실패합니다. 각 vCPU는 전용 관리 대상 `IA32_KERNEL_GS_BASE`를 초기화합니다. 게스트 MSR 접근은 가로채며 지원하지 않는 MSR/SWAPGS는 허용하지 않습니다.
 
-대기열은 원래 중지 토큰과 기한을 유지합니다. 준비, 유지 관리, 진입, 캡처는 하나의 시간 예산을 공유합니다. `RunDeadline`은 인터럽트 확인이 끝난 후 반환합니다. 취소 시 vCPU를 재생성해 늦게 도착하는 인터럽트를 격리합니다. 무관한 Intel 호스트 인터럽트는 같은 취소 세대에서 재시도합니다. 캡처 오류와 인증된 예외는 동시 중지보다 우선하며 일반적인 취소 상태는 공개하지 않습니다. 협력적 취소이며 엄격한 실시간 보장은 아닙니다.
+대기열은 원래 중지 토큰과 기한을 유지합니다. 준비, 유지 관리, 진입, 캡처는 하나의 시간 예산을 공유합니다. ARM64의 `RunDeadline`은 인터럽트 확인이 끝난 후 반환합니다. Intel은 소유 스레드에서 유한 기한의 `hv_vcpu_run_until` 호출로 취소를 확인합니다. 취소 시 vCPU를 재생성해 늦게 도착하는 인터럽트를 격리합니다. 무관한 Intel 호스트 인터럽트는 같은 취소 세대에서 재시도합니다. 캡처 오류와 인증된 예외는 동시 중지보다 우선하며 일반적인 취소 상태는 공개하지 않습니다. 협력적 취소이며 엄격한 실시간 보장은 아닙니다.
 
 ## 검증 방법
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon에서는 `-DNEVERD_LLVM_PREBUILT=ON`을 추가할 수 있습니다. Intel은 고정된 LLVM 리비전을 소스에서 빌드합니다. [HVF 워크플로](../../.github/workflows/hvf.yml)는 `self-hosted, macOS, ARM64/X64, hvf`와 `macos-15-intel`의 `hosted-intel`을 지원합니다. 먼저 실제 VM/vCPU 생성과 삭제를 확인합니다. `validation=probe`는 명령 실행의 증거가 아니며, `transport`는 전송 계층만, `darwin`은 일치하는 모든 Darwin 작업을, `full`은 전체 CPU와 Darwin 검증을 모두 요구합니다.
 
-전송 계층의 필수 항목은 ARM64 15개, Intel 10개이며 전체 CPU 검증은 각각 23개, 18개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
+전송 계층의 필수 항목은 ARM64 15개, Intel 11개이며 전체 CPU 검증은 각각 23개, 20개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
 
 호스팅 Intel의 `--execution-methods`는 전체 CTest 목록의 모든 매개변수, 플래그, 환경 및 작업 디렉터리를 유지하여 GoogleTest 메서드를 직렬 실행합니다. 알 수 없는 속성은 거부합니다. 메서드 전체 기한은 최대 120초이며 내부 매개변수마다 별도 기한을 적용하지 않습니다. 이후 제한된 시간 안에 프로세스 그룹을 회수합니다. 원본 XML, 이름 대응, 종료 상태를 보존합니다. 시간 초과나 불완전한 XML은 부분 실패를 만들고, 필수 네이티브 항목 누락이나 건너뛰기는 통과할 수 없습니다. 자체 runner는 CTest의 사례별 프로세스와 기한을 유지합니다.
 

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 242b3ff958deb9ce46712843be3bc2c42ab3d063b28fb38b595e857d47f933aa -->
+<!-- i18n-source: 5d7dd654da3490beb84b9cb7ecb9a6f207a763d877d71868c2898224a73bb0b4 -->
 
 [← Índice de documentación](README.md)
 
@@ -28,7 +28,7 @@ Los mapeos anfitriones respetan su tamaño de página, incluidos 16 KiB en Apple
 
 ARM64 ejecuta toda la secuencia inmutable de mantenimiento TLB/I-cache en una entrada nativa, con el paso a paso desactivado. Un HVC #1 específico debe coincidir exactamente con el PC de retorno, syndrome, PSTATE y ESR_EL1 sin cambios antes de ejecutar una sola instrucción admitida del huésped. `PSTATE.D` no enmascara las excepciones de depuración dirigidas a EL2. Se captura todo el estado escalar, TLS y FP/SIMD. Intel negocia controles VMCS, usa monitor trap, invalida TLB y transfiere paquetes XSAVE completos. RIP/RFLAGS pasan directamente por VMCS, también al recrear la vCPU. CR0/CR4 respetan máscaras del framework y bits fijos del hardware. La capa ISA completa las salidas autenticadas de lectura CR8; otros accesos a registros de control fallan. Cada vCPU inicializa un `IA32_KERNEL_GS_BASE` privado y gestionado; se interceptan accesos MSR invitados y se rechazan MSR/SWAPGS no admitidos.
 
-La cola conserva el token de parada y el plazo original. Preparación, mantenimiento, entrada y captura comparten el presupuesto. `RunDeadline` espera la confirmación de interrupciones antes de volver. La cancelación recrea la vCPU para aislar interrupciones tardías; las interrupciones ajenas del anfitrión Intel se reintentan en la misma generación. Fallos de captura y excepciones autenticadas conservan prioridad sobre una parada simultánea; no se publica el estado ordinario cancelado. La cancelación es cooperativa, sin garantía de tiempo real estricto.
+La cola conserva el token de parada y el plazo original. Preparación, mantenimiento, entrada y captura comparten el presupuesto. En ARM64, `RunDeadline` espera la confirmación de interrupciones antes de volver. En Intel, el hilo propietario comprueba la cancelación mediante llamadas a `hv_vcpu_run_until` con plazos finitos. La cancelación recrea la vCPU para aislar interrupciones tardías; las interrupciones ajenas del anfitrión Intel se reintentan en la misma generación. Fallos de captura y excepciones autenticadas conservan prioridad sobre una parada simultánea; no se publica el estado ordinario cancelado. La cancelación es cooperativa, sin garantía de tiempo real estricto.
 
 ## Validación
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon puede añadir `-DNEVERD_LLVM_PREBUILT=ON`; Intel compila la revisión fijada de LLVM. El [workflow HVF](../../.github/workflows/hvf.yml) admite runners `self-hosted, macOS, ARM64/X64, hvf` y `hosted-intel` con `macos-15-intel`. Primero exige crear y destruir una VM/vCPU real. `validation=probe` no demuestra ejecución de instrucciones; `transport` solo verifica transporte; `darwin` exige todas las cargas Darwin coincidentes; `full` exige ambas validaciones completas.
 
-Se requieren 15 pruebas de transporte ARM64 o 10 Intel, y 23 o 18 comprobaciones obligatorias en la validación CPU completa. Se cubren estado completo, privilegios, permisos, cruces de página, alias, cambios de CPU, reversión, cancelación y reintentos. Intel prueba CR8 antes de la compilación grande. Los artefactos conservan inventario, revisión, anfitrión, resultados e intentos separados. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) considera experimental la virtualización anidada; conviene mantener un Mac nativo dedicado.
+Se requieren 15 pruebas de transporte ARM64 o 11 Intel, y 23 o 20 comprobaciones obligatorias en la validación CPU completa. Se cubren estado completo, privilegios, permisos, cruces de página, alias, cambios de CPU, reversión, cancelación y reintentos. Intel prueba CR8 antes de la compilación grande. Los artefactos conservan inventario, revisión, anfitrión, resultados e intentos separados. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) considera experimental la virtualización anidada; conviene mantener un Mac nativo dedicado.
 
 En Intel alojado, `--execution-methods` ejecuta secuencialmente cada método GoogleTest con todos los parámetros CTest, flags, entorno y directorio originales. Rechaza propiedades desconocidas. Cada método tiene un plazo agregado de hasta 120 segundos, sin un plazo independiente por parámetro; después se retira el grupo de procesos con espera acotada. Se guardan XML original, nombres y estados de salida. Un timeout o XML incompleto produce fallo parcial; los casos nativos obligatorios ausentes u omitidos impiden aprobar. Los runners propios mantienen procesos y plazos CTest por caso.
 

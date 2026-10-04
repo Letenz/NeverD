@@ -84,7 +84,9 @@ state startup probe before exposing a CPU.
 
 Queue admission observes the borrowed stop token and original deadline. One
 native-step allowance covers preparation, maintenance, entry and capture.
-`RunDeadline` acknowledges outstanding interrupts before returning. Cancelled
+On ARM64, `RunDeadline` acknowledges outstanding interrupts before returning.
+Intel polls cancellation on its owner thread through finite
+`hv_vcpu_run_until` calls. Cancelled
 native entry recreates the vCPU so a late kick cannot affect the next task.
 Unsolicited Intel host-interrupt exits retry the same native state under the
 same cancellation generation, without reporting an instruction completion.
@@ -168,8 +170,8 @@ rollback, queue cancellation, native loop interruption and retry. Both ISAs have
 required raw loop interruption and completion-error fixtures. These must observe
 an actual native return; cancellation before entry cannot satisfy the loop test.
 The full profile also requires the Intel CR8 all-register and privilege regression.
-The transport profile requires 15 ARM64 or 10 Intel cases, and the full profile
-requires 23 or 18 respectively. Intel compilation alone does not establish Intel
+The transport profile requires 15 ARM64 or 11 Intel cases, and the full profile
+requires 23 or 20 respectively. Intel compilation alone does not establish Intel
 runtime correctness; its native gate remains required.
 
 Hardware-backed execution is not automatically faster for NeverD's checked
