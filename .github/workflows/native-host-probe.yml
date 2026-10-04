@@ -1,86 +1,58 @@
 name: Native host setup
-
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - '.github/workflows/native-host-probe.yml'
-      - 'scripts/probe_native_host.*'
-      - 'scripts/prepare_kvm_ci.py'
-      - 'scripts/NativeHostProbe.def'
-      - 'scripts/tests/test_probe_native_host.py'
-      - 'lib/emulation/backends/kvm/KvmProtocol.def'
-      - 'lib/emulation/backends/whp/WhpProtocol.def'
-  push:
-    branches: [dev]
-    paths:
-      - '.github/workflows/native-host-probe.yml'
-      - 'scripts/probe_native_host.*'
-      - 'scripts/prepare_kvm_ci.py'
-      - 'scripts/NativeHostProbe.def'
-      - 'scripts/tests/test_probe_native_host.py'
-      - 'lib/emulation/backends/kvm/KvmProtocol.def'
-      - 'lib/emulation/backends/whp/WhpProtocol.def'
-
 permissions:
   contents: read
-
-concurrency:
-  group: native-host-setup-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   probe:
-    name: ${{ matrix.backend }} ${{ matrix.arch }} setup
-    runs-on: ${{ matrix.runner }}
+    name: Temporary Windows x64 alignment observations
+    runs-on: windows-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - backend: kvm
-            arch: X64
-            runner: ubuntu-24.04
-          - backend: kvm
-            arch: ARM64
-            runner: ubuntu-24.04-arm
-          - backend: whp
-            arch: X64
-            runner: windows-latest
-            msvc: x64
-          - backend: whp
-            arch: ARM64
-            runner: windows-11-arm
-            msvc: arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - name: Enable native Windows compiler
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
-          arch: ${{ matrix.msvc }}
-      - name: Verify evidence classification
-        run: python -m unittest scripts.tests.test_probe_native_host -v
-      - name: Prepare current hosted account KVM access
-        if: runner.os == 'Linux'
-        run: python scripts/prepare_kvm_ci.py --output build-native-host-probe/device-access.json
-      - name: Probe actual VM and vCPU setup
-        run: >-
-          python scripts/probe_native_host.py
-          --backend ${{ matrix.backend }} --arch ${{ matrix.arch }}
-          --output build-native-host-probe
-      - name: Preserve setup and availability evidence
+          arch: x64
+      - name: Build and observe original faulting PE
+        shell: python
+        run: |
+          import hashlib, json, pathlib, platform, re, shutil, subprocess
+          root = pathlib.Path.cwd()
+          out = root / 'build-alignment-probe'
+          out.mkdir()
+          fixtures = root / 'unittests/emulation/fixtures'
+          clang, link, objdump = [shutil.which(name) for name in ('clang', 'lld-link', 'llvm-objdump')]
+          evidence = {'source': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'compiler': subprocess.check_output([clang, '--version'], text=True), 'platform': platform.platform(), 'observations': []}
+          apis = re.findall(r'^NEVERD_VEH_API\((\w+)\)', (fixtures / 'WindowsExceptionCases.def').read_text(), re.M)
+          definition = out / 'provider.def'
+          definition.write_text('LIBRARY kernel32.dll\nEXPORTS\n' + ''.join('  ' + name + '\n' for name in apis))
+          subprocess.run([link, '/lib', '/machine:x64', '/def:' + str(definition), '/out:' + str(out / 'provider.lib')], check=True)
+          for variant in ('baseline', 'diagnostic'):
+              source = out / (variant + '.c')
+              text = subprocess.check_output(['git', 'show', 'ed62e6cb275ab680b8d47859306d92822b012996:unittests/emulation/fixtures/windows_alignment_process.c'], text=True) if variant == 'baseline' else (fixtures / 'windows_alignment_process.c').read_text()
+              source.write_text(text)
+              for optimization in ('O1', 'O0'):
+                  stem = variant + '-' + optimization
+                  obj, asm, exe = [out / (stem + suffix) for suffix in ('.obj', '-S.obj', '.exe')]
+                  subprocess.run([clang, '--target=x86_64-pc-windows-msvc', '-std=c11', '-ffreestanding', '-fno-builtin', '-fno-stack-protector', '-fno-vectorize', '-fno-slp-vectorize', '-' + optimization, '-Wall', '-Wextra', '-Werror', '-I', str(fixtures), '-c', str(source), '-o', str(obj)], check=True)
+                  subprocess.run([clang, '--target=x86_64-pc-windows-msvc', '-c', str(fixtures / 'windows_alignment.S'), '-o', str(asm)], check=True)
+                  subprocess.run([link, '/nodefaultlib', '/subsystem:console', '/machine:x64', '/timestamp:0', '/entry:entry', '/base:0x140000000', str(obj), str(asm), str(out / 'provider.lib'), '/out:' + str(exe)], check=True)
+                  (out / (stem + '-disassembly.txt')).write_text(subprocess.check_output([objdump, '-dr', str(exe)], text=True))
+                  for trial in range(3):
+                      result = subprocess.run([str(exe)], capture_output=True, timeout=30)
+                      evidence['observations'].append({'variant': variant, 'optimization': optimization, 'trial': trial, 'exit': result.returncode, 'stdout': result.stdout.hex(), 'stderr': result.stderr.hex(), 'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(), 'binary_sha256': hashlib.sha256(exe.read_bytes()).hexdigest()})
+                      (out / 'observations.json').write_text(json.dumps(evidence, indent=2) + '\n')
+                  print(stem, evidence['observations'][-1])
+      - name: Preserve bounded observations
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: native-host-${{ matrix.backend }}-${{ matrix.arch }}
+          name: alignment-fault-observations
           path: |
-            build-native-host-probe/summary.json
-            build-native-host-probe/device-access.json
-            build-native-host-probe/*.stdout
-            build-native-host-probe/*.stderr
+            build-alignment-probe/*.json
+            build-alignment-probe/*.txt
           if-no-files-found: error
           retention-days: 14
