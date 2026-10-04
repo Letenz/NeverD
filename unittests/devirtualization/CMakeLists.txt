@@ -137,3 +137,14 @@ target_compile_definitions(NeverDInterpreterMachineStateTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
 )
 add_dependencies(NeverDInterpreterMachineStateTests neverd)
+
+add_neverd_unittest(NeverDLLVMScalarLoopRecoveryTests
+  LLVMScalarLoopRecoveryTests.cpp
+  LINK_COMPONENTS LLVMScalarLoopRecovery
+  LINK_LIBS LLVMAsmParser LLVMIRReader
+)
+target_compile_definitions(NeverDLLVMScalarLoopRecoveryTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
