@@ -952,7 +952,7 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `X64VectorOperands.def`는 기존 SSE 이동, 연산, 시프트, 변환 및 마스크의 전체 피연산자 규칙을 정의합니다. `MOVMSKPS`, `MOVMSKPD`, `PMOVMSKB`는 XMM의 부호 비트를 r32/r64로 추출하고 대상의 나머지 비트를 0으로 만듭니다. KVM, WHP, checked Unicorn은 같은 허용 규칙을 사용하며 FLAGS, MXCSR 및 원본 레지스터를 보존합니다. 마스크의 메모리 피연산자, MMX 및 VEX/EVEX 형식은 지원하지 않습니다.
 
-`X64ShuffleInstructions.def`는 `PSHUFD`, `PSHUFHW`, `PSHUFLW`, `SHUFPS`, `SHUFPD`를 추가합니다. `X64VectorOperands.def`는 XMM 대상, XMM 또는 정렬된 m128 원본, imm8의 완전한 세 피연산자 형식을 요구합니다. 원래 명령은 FLAGS와 MXCSR을 유지하며 비트 그대로 레인을 선택합니다. 메모리 형식은 16바이트 전체를 검사하고 정렬 오류는 데이터 관찰보다 먼저 발생합니다. KVM, WHP, checked Unicorn은 이 규칙을 공유합니다.
+`X64ShuffleInstructions.def`는 `PSHUFD`, `PSHUFHW`, `PSHUFLW`, `SHUFPS`, `SHUFPD`를 추가합니다. `X64VectorOperands.def`는 XMM 대상, XMM 또는 정렬된 m128 원본, imm8의 완전한 세 피연산자 형식을 요구합니다. 원래 명령은 FLAGS와 MXCSR을 유지하며 비트 그대로 레인을 선택합니다. 메모리 형식은 16바이트 전체를 검사하고 정렬 오류는 데이터 관찰보다 먼저 발생합니다. KVM, WHP, checked Unicorn은 이 규칙을 공유합니다. 같은 목록은 피연산자가 정확히 두 개인 `UNPCKLPS`, `UNPCKHPS`, `UNPCKLPD`, `UNPCKHPD`도 허용하여 원래 대상과 원본의 비트 패턴을 교차 배치합니다. 하드웨어는 선택한 64비트만 가져올 수 있으며 checked RAM은 정렬된 m128 피연산자를 검사합니다.
 
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
 

@@ -74,7 +74,7 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64VectorOperands.def` 統一定義傳統 SSE 搬移、運算、移位、轉換與遮罩的完整運算元規則。`MOVMSKPS`、`MOVMSKPD` 與 `PMOVMSKB` 從 XMM 擷取符號位元寫入 r32/r64，並清零目的暫存器其餘位元。KVM、WHP 與 checked Unicorn 共用准入規則，保留 FLAGS、MXCSR 與來源暫存器；遮罩的記憶體運算元、MMX 與 VEX/EVEX 形式仍不支援。
 
-`X64ShuffleInstructions.def` 新增 `PSHUFD`、`PSHUFHW`、`PSHUFLW`、`SHUFPS` 與 `SHUFPD`。`X64VectorOperands.def` 要求完整的三個運算元：XMM 目的、XMM 或對齊的 m128 來源，以及 imm8。原始指令依位元選取通道，保留 FLAGS 與 MXCSR；記憶體形式檢查全部 16 位元組，對齊錯誤先於資料觀察。KVM、WHP 與 checked Unicorn 共用這些規則。
+`X64ShuffleInstructions.def` 新增 `PSHUFD`、`PSHUFHW`、`PSHUFLW`、`SHUFPS` 與 `SHUFPD`。`X64VectorOperands.def` 要求完整的三個運算元：XMM 目的、XMM 或對齊的 m128 來源，以及 imm8。原始指令依位元選取通道，保留 FLAGS 與 MXCSR；記憶體形式檢查全部 16 位元組，對齊錯誤先於資料觀察。KVM、WHP 與 checked Unicorn 共用這些規則。 同一清單也允許恰有兩個運算元的 `UNPCKLPS`、`UNPCKHPS`、`UNPCKLPD` 與 `UNPCKHPD`，交錯原始目的與來源的位元模式。硬體可以只讀取所選的 64 位元；checked RAM 檢查對齊的 m128 運算元。
 
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 

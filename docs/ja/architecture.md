@@ -975,7 +975,7 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `X64VectorOperands.def` が従来の SSE 転送、演算、シフト、変換、マスクの完全なオペランド規則を定義します。`MOVMSKPS`、`MOVMSKPD`、`PMOVMSKB` は XMM の符号ビットを r32/r64 に抽出し、宛先の残りのビットをゼロにします。KVM、WHP、checked Unicorn はこの受け入れ規則を共有し、FLAGS、MXCSR、ソースレジスタを保持します。マスクのメモリオペランド、MMX、VEX/EVEX 形式は未対応です。
 
-`X64ShuffleInstructions.def` は `PSHUFD`、`PSHUFHW`、`PSHUFLW`、`SHUFPS`、`SHUFPD` を追加します。`X64VectorOperands.def` は XMM 宛先、XMM または整列済み m128 ソース、imm8 の完全な3オペランド形式を要求します。元の命令は FLAGS と MXCSR を保持し、ビット列としてレーンを選択します。メモリ形式は16バイト全体を検証し、整列違反はデータ観察より先に発生します。KVM、WHP、checked Unicorn はこの規則を共有します。
+`X64ShuffleInstructions.def` は `PSHUFD`、`PSHUFHW`、`PSHUFLW`、`SHUFPS`、`SHUFPD` を追加します。`X64VectorOperands.def` は XMM 宛先、XMM または整列済み m128 ソース、imm8 の完全な3オペランド形式を要求します。元の命令は FLAGS と MXCSR を保持し、ビット列としてレーンを選択します。メモリ形式は16バイト全体を検証し、整列違反はデータ観察より先に発生します。KVM、WHP、checked Unicorn はこの規則を共有します。 同じ一覧は2オペランド形式の `UNPCKLPS`、`UNPCKHPS`、`UNPCKLPD`、`UNPCKHPD` も受け入れ、元の宛先とソースのビット列を交互に配置します。ハードウェアは選択された64ビットだけを取得できます。checked RAM は整列済み m128 オペランドを検証します。
 
 `X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
 

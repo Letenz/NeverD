@@ -233,7 +233,7 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64VectorMaskTests.cpp` 將獨立原始編碼與純量位元擷取及原生 SSE intrinsic 比較，涵蓋每個來源位元、全部 16 個 GPR × 16 個 XMM 組合及兩種 REX.W 值。完整公開暫存器快照、RAM 與資料觀察器驗證零擴展及狀態保留；指令停止、回呼失敗與不支援的形式不得發布副作用。KVM/WHP 原生驗收要求執行兩個特權層級。
 
-`X64ShuffleTests.cpp` 使用 `X64ShuffleCases.def` 中的獨立編碼，並以原生 intrinsic 驗證純量通道選取結果。涵蓋全部 256 個控制值、暫存器與自身來源、頁尾記憶體別名、全部 XMM 暫存器配對、完整公開 CPU 狀態和 RAM、觀察回呼停止與例外、權限、對齊錯誤及重試。MMX、VEX/EVEX、LOCK 與裝置運算元必須無副作用地拒絕。原生 KVM/WHP 驗收要求兩個特權層級的這些案例全數通過；無法使用的主機/ISA 組合仍明確跳過。
+`X64ShuffleTests.cpp` 使用 `X64ShuffleCases.def` 中的獨立編碼，並以原生 intrinsic 驗證純量通道選取結果。涵蓋全部 256 個控制值、暫存器與自身來源、頁尾記憶體別名、全部 XMM 暫存器配對、完整公開 CPU 狀態和 RAM、觀察回呼停止與例外、權限、對齊錯誤及重試。MMX、VEX/EVEX、LOCK 與裝置運算元必須無副作用地拒絕。原生 KVM/WHP 驗收要求兩個特權層級的這些案例全數通過；無法使用的主機/ISA 組合仍明確跳過。 `UNPCKLPS`、`UNPCKHPS`、`UNPCKLPD` 與 `UNPCKHPD` 沿用相同狀態/錯誤矩陣及獨立純量、原生對照，並檢查記憶體來源搭配每個 XMM 目的暫存器。
 
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
