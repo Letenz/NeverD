@@ -5406,7 +5406,8 @@ bool LLVMCWriter::edgePrintsPhiCopy(const llvm::BasicBlock *From,
 void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
                                  const llvm::BasicBlock *To, int Indent,
                                  bool ForceMaterialized,
-                                 const llvm::PHINode *Deferred) {
+                                 const llvm::PHINode *Deferred,
+                                 const llvm::PHINode *Declare) {
   if (!From || !To)
     return;
   struct PhiCopy {
@@ -5496,6 +5497,21 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
   const int CopyIndent = Indent + (HasTemps ? 1 : 0);
   for (const auto &Copy : Copies) {
     emitIndent(CopyIndent);
+    if (Copy.Phi == Declare && !HasTemps && Indent == 1) {
+      ScopedScalarNames.insert(Copy.Destination);
+      OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Destination << " = "
+         << Copy.RHS << ";\n";
+      continue;
+    }
+    if (Copy.Temp.empty())
+      if (auto Update = scalarConditionalUpdate(Copy.Phi, Copy.Incoming)) {
+        if (!Update->Initial.empty()) {
+          OS << Update->Initial << ";\n";
+          emitIndent(CopyIndent);
+        }
+        OS << "if (" << Update->Condition << ") " << Update->Update << ";\n";
+        continue;
+      }
     if (Copy.Temp.empty())
       if (auto Update = scalarUpdateText(Copy.Phi, Copy.Incoming)) {
         OS << *Update << ";\n";

@@ -2060,6 +2060,8 @@ LLVMCWriter::invertedRelationalText(const llvm::Value *V) {
 }
 
 std::string LLVMCWriter::condStr(const llvm::Value *V) {
+  if (auto Text = scalarConditionText(V))
+    return *Text;
   std::set<const llvm::Value *> Seen;
   while (V && Seen.insert(V).second) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
