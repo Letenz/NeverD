@@ -72,7 +72,7 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。
 
-`X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows 通用保护故障的异常派发仍未纳入 OS 模型。
+`X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
 线程指针包括 x64 FS/GS 基址以及 ARM64 `TPIDR_EL0` 的精确 `MRS`/`MSR` 编码。原生传输和 CPU 快照独立于内存保存这些状态，但不会创建 OS 线程或分配 TLS 块。supervisor x64 支持对齐的 1/2/4 字节标量 MMIO 事务，以及每个重启边界一个 MOVS 元素。设备读取需先提供无副作用的预览，再至多提交一次。user 配置拒绝设备映射；RMW、宽 MMIO 和端口 I/O 仍不支持。
 

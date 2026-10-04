@@ -189,6 +189,8 @@ struct DriverFault {
   std::optional<uint64_t> Size;
   std::optional<std::string> Access;
   std::optional<uint32_t> Interrupt;
+  std::optional<uint64_t> ErrorCode;
+  std::optional<std::string> Cause;
 };
 
 struct DriverResult {

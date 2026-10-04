@@ -33,7 +33,8 @@ public:
   static bool recoverable(GuestArchitecture Architecture,
                           const BackendFault &Fault);
   bool accepts(const BackendFault &Fault) const;
-  static Exception exception(const BackendFault &Fault);
+  static std::optional<Exception> exception(GuestArchitecture Architecture,
+                                            const BackendFault &Fault);
   llvm::Expected<Transfer> begin(Exception Raised, uint64_t StackPointer,
                                  size_t LoaderDepth,
                                  std::optional<size_t> Event = std::nullopt);

@@ -230,7 +230,7 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `X64PackedShiftTests.cpp` と独自の `X64PackedShiftCases.def` は、16 個の即値と 21 個の可変回数で十種類のシフトを独立したスカラー計算およびネイティブ SSE2 intrinsic と照合します。回数と出力の同一レジスタ使用、上位ビットの無視、整列、監視、回復可能な障害、デバイス拒否を検証します。`X64VectorTestSupport.h` はパック算術テストとレジスタと RAM の検証を共有します。ネイティブ CI は WHP の両特権モードを必須とします。
 
-`X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows の一般保護例外の配送は OS モデルの範囲外です。
+`X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
@@ -1113,7 +1113,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 279 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 507 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `279 CPU + 224 WHP + 4 SEH = 507`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 282 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 510 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `282 CPU + 224 WHP + 4 SEH = 510`.
 
 C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
 
@@ -1179,6 +1179,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 `WindowsProcessExceptions` は同じ CPU とプロセス予算で `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler`、`RaiseException` を実装します。順序付きハンドラーは登録・削除、入れ子の例外、モデル化 API、DLL 読み込み、プロセス終了を扱えます。x64/ARM64 のデータアクセス違反と x64 の整数除算例外は、ゲストが変更した `CONTEXT` の検証後に再開できます。汎用レジスター、SIMD、対応する FP 状態を保持し、ソフトウェア例外はモデル提供元内の実際の return 命令から再開します。保持する登録は 128 件、入れ子は 16 フレームまでです。不正な処置、例外ポインターの変更、未対応フィールド、上限超過は明示的に失敗します。ARM64 のフレームベースの SEH／アンワインド、デバッガー配送、実行／ガードページ例外は未対応です。`WindowsExceptionTests.cpp` は独自 EXE／DLL をネイティブ Windows と比較します。ARM64 KVM/WHP の実機証拠は未取得です。 ソフトウェア例外レコードには `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`）が付き、呼び出し元の継続不可フラグとは個別に扱います。元の Windows 実行ファイルでソフトウェア例外とハードウェア例外のフラグ値を厳密に照合します。
 
 `WindowsProcessContext` は各ディスパッチフレームの発生元を保持します。対応する x64 データアクセス／除算フォルトでは `CONTEXT.EFlags` に RF（`0x10000`）を示し、アクセス違反コードを含むソフトウェアの `RaiseException` では現在のコンテキストを保持します。発生元は VEH/VCH と SEH の検索／巻き戻しを通じて維持されます。有効な継続では RF を除いた論理 CPU フラグを復元し、ゲストによる RF の変更は状態公開前に拒否します。この限定プロファイルは命令ブレークポイントやゲストによる RF 制御を扱いません。`WindowsExceptionTests.cpp` は保存記録、復元、拒否時の CPU／RAM 不変性を確認します。
+
+Windows ring3 は独立したネイティブ観測に従い、checked x64 の `operand_alignment` 障害をパラメーター `[read, UINT64_MAX]` の `STATUS_ACCESS_VIOLATION` に変換します。ストア命令も同じです。原因は CPU 層が提供し、Windows はベクトル 13 から推測したり再デコードしたりしません。`WindowsAlignmentProcessTests.cpp` は元の PE 命令で 72 障害シナリオと 9 アドレス修復再試行（`72 + 9`）を実行し、PC、RF、XMM、RAM を確認します。未分類または不整合な障害は拒否します。プロセスとドライバーの障害レポートは nullable な `cause` と 16 進の `error_code` を保持し、欠落とゼロを区別します。この配送は checked x64 ユーザープロファイルに適用されます。
 
 `AddVectoredContinueHandler` と `RemoveVectoredContinueHandler` は独立した順序付きリストを管理し、例外ハンドラーと保持登録数 128 の上限を共有します。ベクター例外ハンドラーが実行再開を受け入れると、継続ハンドラーは同じ変更可能な例外レコードと `CONTEXT` を参照します。入れ子の例外や DLL 通知を含め、最終コンテキスト検証は継続コールバックの終了後に行います。異なる種類のハンドラーのハンドルは削除できません。`WindowsContinuationTests.cpp` は独自 EXE の順序、早期終了、登録変更、コンテキスト修復、入れ子の配送、ローダーコールバック、プロセス終了をネイティブ Windows と比較します。検証済みの Windows x64 ベクター処理経路は `EXCEPTION_NONCONTINUABLE` が設定されていても実行再開を許可しますが、フレームベースの SEH の動作を証明するものではありません。ネイティブ ARM64 実行は未検証です。
 

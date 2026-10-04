@@ -4,8 +4,10 @@
 //
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
+#include "os/windows/process/WindowsProcessExceptions.h"
 
 #include "neverd/emulation/CPU.h"
+#include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -39,6 +41,35 @@ constexpr Profile Profiles[] = {
 };
 void PrintTo(const Profile &P, std::ostream *OS) { *OS << P.Name; }
 class WindowsAlignment : public testing::TestWithParam<Profile> {};
+TEST(WindowsAlignmentMapping, RejectsUnclassifiedAndInconsistentFaults) {
+  using windows_process::ExceptionDispatcher;
+  BackendFault Fault{BackendFaultKind::Interrupt, FaultPC};
+  Fault.Interrupt = GeneralProtectionVector;
+  Fault.ErrorCode = 0;
+  Fault.Cause = BackendFaultCause::OperandAlignment;
+  const auto Mapped =
+      ExceptionDispatcher::exception(GuestArchitecture::X64, Fault);
+  ASSERT_TRUE(Mapped);
+  EXPECT_EQ(Mapped->Code, AccessViolation);
+  EXPECT_EQ(Mapped->Flags, 0u);
+  EXPECT_EQ(Mapped->Address, FaultPC);
+  EXPECT_EQ(Mapped->Arguments, (std::vector<uint64_t>{0, UINT64_MAX}));
+  EXPECT_TRUE(ExceptionDispatcher::recoverable(GuestArchitecture::X64, Fault));
+  EXPECT_FALSE(
+      ExceptionDispatcher::exception(GuestArchitecture::AArch64, Fault));
+#define NEVERD_ALIGNMENT_INVALID_FAULT(Name, Member, Value)                    \
+  {                                                                            \
+    SCOPED_TRACE(#Name);                                                       \
+    auto Invalid = Fault;                                                      \
+    Invalid.Member = Value;                                                    \
+    EXPECT_FALSE(                                                              \
+        ExceptionDispatcher::exception(GuestArchitecture::X64, Invalid));      \
+    EXPECT_FALSE(                                                              \
+        ExceptionDispatcher::recoverable(GuestArchitecture::X64, Invalid));    \
+  }
+#include "fixtures/WindowsAlignmentProcessCases.def"
+#undef NEVERD_ALIGNMENT_INVALID_FAULT
+}
 TEST_P(WindowsAlignment, ExecutesOriginalFaultAndRetryScenarios) {
 #ifndef NEVERD_WINDOWS_EXCEPTION_FIXTURE_DIR
   GTEST_SKIP() << MissingTools;
@@ -61,7 +92,8 @@ TEST_P(WindowsAlignment, ExecutesOriginalFaultAndRetryScenarios) {
       ProgramFile;
   auto Result = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
-  EXPECT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->Stop, ProcessStopReason::Exited)
+      << processResultJSON(*Result);
   EXPECT_EQ(Result->ExitStatus, ExitStatus)
       << llvm::toHex(Result->StandardError);
   EXPECT_TRUE(Result->StandardError.empty())

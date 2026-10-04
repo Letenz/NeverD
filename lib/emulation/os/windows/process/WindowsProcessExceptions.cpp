@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "WindowsProcessExceptions.h"
 
+#include "../../../arch/x86_64/X64Exception.h"
 #include "WindowsProcessContext.h"
 
 #include "llvm/Support/Endian.h"
@@ -52,33 +53,47 @@ uint64_t ExceptionDispatcher::remove(HandlerKind Kind, uint64_t Handle) {
 }
 bool ExceptionDispatcher::recoverable(GuestArchitecture Architecture,
                                       const BackendFault &Fault) {
-  if (Architecture == GuestArchitecture::X64 &&
-      Fault.Kind == BackendFaultKind::Interrupt &&
-      Fault.Interrupt == X64DivideVector)
-    return true;
-  return (Fault.Kind == BackendFaultKind::UnmappedMemory ||
-          Fault.Kind == BackendFaultKind::Protection) &&
-         Fault.Address && Fault.Size && Fault.Access &&
-         (*Fault.Access == BackendAccessKind::Read ||
-          *Fault.Access == BackendAccessKind::Write);
+  return exception(Architecture, Fault).has_value();
 }
 bool ExceptionDispatcher::accepts(const BackendFault &Fault) const {
   return recoverable(CPU.architecture(), Fault) &&
          (llvm::any_of(Handlers, [](const auto &H) { return H.Live; }) ||
           hasFrameHandlers());
 }
-ExceptionDispatcher::Exception
-ExceptionDispatcher::exception(const BackendFault &Fault) {
-  Exception E{uint32_t(Fault.Access ? StatusAccessViolation
-                                    : StatusIntegerDivideByZero),
-              0,
-              Fault.PC,
-              {}};
-  if (Fault.Access)
-    E.Arguments = {*Fault.Access == BackendAccessKind::Write ? ExceptionWrite
-                                                             : ExceptionRead,
-                   *Fault.Address};
-  return E;
+std::optional<ExceptionDispatcher::Exception>
+ExceptionDispatcher::exception(GuestArchitecture Architecture,
+                               const BackendFault &Fault) {
+  if (Fault.Cause) {
+    // The shared architecture owns the cause. Other #GP(0) results remain
+    // unclassified: their Windows status cannot be inferred from the vector.
+    if (Architecture != GuestArchitecture::X64 ||
+        *Fault.Cause != BackendFaultCause::OperandAlignment ||
+        Fault.Kind != BackendFaultKind::Interrupt ||
+        Fault.Interrupt != unsigned(x64::ExceptionVector::GeneralProtection) ||
+        Fault.ErrorCode != x64::NoSelectorErrorCode || Fault.Address ||
+        Fault.Size || Fault.Access)
+      return std::nullopt;
+    return Exception{StatusAccessViolation,
+                     0,
+                     Fault.PC,
+                     {ExceptionRead, ExceptionUnknownAddress}};
+  }
+  if (Architecture == GuestArchitecture::X64 &&
+      Fault.Kind == BackendFaultKind::Interrupt &&
+      Fault.Interrupt == X64DivideVector)
+    return Exception{StatusIntegerDivideByZero, 0, Fault.PC, {}};
+  if ((Fault.Kind == BackendFaultKind::UnmappedMemory ||
+       Fault.Kind == BackendFaultKind::Protection) &&
+      Fault.Address && Fault.Size && Fault.Access &&
+      (*Fault.Access == BackendAccessKind::Read ||
+       *Fault.Access == BackendAccessKind::Write))
+    return Exception{StatusAccessViolation,
+                     0,
+                     Fault.PC,
+                     {*Fault.Access == BackendAccessKind::Write ? ExceptionWrite
+                                                                : ExceptionRead,
+                      *Fault.Address}};
+  return std::nullopt;
 }
 llvm::Expected<ExceptionDispatcher::Transfer>
 ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
@@ -88,9 +103,10 @@ ExceptionDispatcher::begin(Exception Raised, uint64_t StackPointer,
 llvm::Expected<ExceptionDispatcher::Transfer>
 ExceptionDispatcher::beginFault(const BackendFault &Fault,
                                 uint64_t StackPointer, size_t LoaderDepth) {
-  if (!recoverable(CPU.architecture(), Fault))
+  auto Raised = exception(CPU.architecture(), Fault);
+  if (!Raised)
     return failure(text::ExceptionContext);
-  return beginDispatch(exception(Fault), StackPointer, LoaderDepth, {}, {},
+  return beginDispatch(std::move(*Raised), StackPointer, LoaderDepth, {}, {},
                        ContextOrigin::HardwareFault);
 }
 llvm::Expected<ExceptionDispatcher::Transfer>
