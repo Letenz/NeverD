@@ -34,7 +34,7 @@ NEVERD_PACKED_FLOAT_INT_VALUE(DirectionFlag, 0x400)
 #endif
 #ifdef NEVERD_PACKED_FLOAT_INT_INPUT
 // Adjacent double payloads around signed32 rounding boundaries. The single
-// inputs cannot represent these fractions and must raise invalid instead.
+// inputs collapse to the corresponding signed32 boundary values.
 NEVERD_PACKED_FLOAT_INT_INPUT(BelowMaximumHalf, 0x4f000000, 0x41dfffffffdfffffULL)
 NEVERD_PACKED_FLOAT_INT_INPUT(AboveMaximumHalf, 0x4f000000, 0x41dfffffffe00001ULL)
 NEVERD_PACKED_FLOAT_INT_INPUT(AboveMinimumHalf, 0xcf000000, 0xc1e00000000fffffULL)

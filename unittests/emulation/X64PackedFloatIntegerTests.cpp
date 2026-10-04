@@ -282,7 +282,7 @@ void nativeOracle(OperationKind Kind) {
           for (auto Sticky : {uint64_t(0), PrecisionStatus, ExistingStatus})
             for (auto Flush : {uint64_t(0), FlushToZero}) {
               SCOPED_TRACE(C.Name);
-              SCOPED_TRACE(I.Right);
+              SCOPED_TRACE(testing::PrintToString(I.Right));
               Check(I, InitialMXCSR | R.Control | Sticky | Flush, Flags);
               ASSERT_FALSE(HasFatalFailure());
             }
@@ -445,7 +445,7 @@ protected:
           for (auto Sticky : {uint64_t(0), ExistingStatus})
             for (auto Flush : {uint64_t(0), FlushToZero})
               for (bool Memory : {false, true}) {
-                SCOPED_TRACE(I.Right);
+                SCOPED_TRACE(testing::PrintToString(I.Right));
                 check(C, I, InitialMXCSR | R.Control | Sticky | Flush, 0, 0,
                       Memory);
                 ASSERT_FALSE(HasFatalFailure());
