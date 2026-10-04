@@ -40,6 +40,8 @@ NEVERD_LINUX_VALUE(MapAnonymous, 0x20)
 NEVERD_LINUX_VALUE(ProtRead, 0x01)
 NEVERD_LINUX_VALUE(ProtWrite, 0x02)
 NEVERD_LINUX_VALUE(ProtExecute, 0x04)
+NEVERD_LINUX_VALUE(AdviceMergeable, 12)
+NEVERD_LINUX_VALUE(AdviceUnmergeable, 13)
 NEVERD_LINUX_VALUE(ExitMask, 0xff)
 #endif
 #ifdef NEVERD_LINUX_X64_SERVICE
@@ -103,6 +105,7 @@ NEVERD_LINUX_SERVICE(GetEGID, 108, 177, 0)
 NEVERD_LINUX_SERVICE(Mmap, 9, 222, 6)
 NEVERD_LINUX_SERVICE(Mprotect, 10, 226, 3)
 NEVERD_LINUX_SERVICE(Munmap, 11, 215, 2)
+NEVERD_LINUX_SERVICE(Madvise, 28, 233, 3)
 NEVERD_LINUX_SERVICE(Brk, 12, 214, 1)
 #endif
 #ifdef NEVERD_LINUX_ABI
@@ -146,6 +149,7 @@ NEVERD_LINUX_DIAGNOSTIC(
 NEVERD_LINUX_DIAGNOSTIC(
     MemoryState,
     "Linux process memory operation encountered invalid internal state")
+NEVERD_LINUX_DIAGNOSTIC(MemoryAdvice, "unsupported Linux madvise behavior {0}")
 NEVERD_LINUX_DIAGNOSTIC(
     ProgramHeaders,
     "ELF program headers have an invalid or unmapped process layout")

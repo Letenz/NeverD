@@ -73,6 +73,7 @@ handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
   case ServiceKind::Mmap:
   case ServiceKind::Mprotect:
   case ServiceKind::Munmap:
+  case ServiceKind::Madvise:
   case ServiceKind::Brk:
     return Memory.handle(Kind, Event, Result);
   case ServiceKind::ArchPrctl:

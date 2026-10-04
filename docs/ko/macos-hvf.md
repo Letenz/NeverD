@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 366a112bb4a26f17b9aa83b7c4ce81baee598edb0b82a9417e6b5400d982ac5f -->
+<!-- i18n-source: 22ba6d21112d256e04570cdee32a639db23035b9abf497605ce33a6065066e12 -->
 
 [← 문서 목록](README.md)
 
@@ -192,3 +192,5 @@ Executor/VM/소유 스레드 세션 전체를 유지한 유한 기한 복구 비
 `js-interpreter` vCPU 재생성 복구 대조는 소스 `7dd7342ec`, 헬퍼 `caeb594ad`, 워크플로 `e6d054c45`를 사용했습니다. macOS 26([37218631679](https://github.com/gmh5225/test_mac_intel/actions/runs/37218631679))은 1000/1000을 통과했으며 산출물 43개, plan/progress 호출 41개 전부, 네이티브/컨트롤러 종료 코드 0, 자식 회수와 마지막 경계 세대 1001의 종료를 독립 검증했습니다. macOS 15([37218629672](https://github.com/gmh5225/test_mac_intel/actions/runs/37218629672))에서는 progress-018 업로더가 SIGSEGV로 중단되어 산출물 21개에 460회 완료/461회 시작 및 이후 취소와 SIGKILL 회수가 남았습니다. IPS의 PID 62812, 부모 59666, 시각과 Node UUID가 일치하며 상위 프레임은 V8 동시 힙 마킹, 잘못된 주소는 `0x80000000`입니다. JavaScript 컴파일러를 끄는 세 플래그가 실제 적용되었고 두 이미지의 Node 파일 SHA도 같습니다. 이 모드도 업로더 충돌을 제거하지 못했습니다. 프레임만으로 원인을 확정할 수 없고 macOS 15의 네이티브 결과는 알 수 없습니다. 전체 CPU/Darwin 검증과 캐시 후보의 양쪽 이미지 통과 조건은 미충족입니다. 기존 임시 탐색 및 마지막 클라이언트 해제 후 VM 반환 계약을 어기는 기본 영구 캐시는 구현하지 않았습니다.
 
 실행 `37188627569`(소스 `392a9d171`)의 변경되지 않은 출력을 재현 가능한 보충 감사로 다시 검증하여 유한 기한 탐침 1,000회를 모두 대조했습니다. [감사기와 19개 회귀 테스트](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)는 각 begin/end/capture를 해당 호출, 새로운 메모리 쓰기 증거 및 RIP와 연결하고, 첫 루프의 고정 예산과 별도로 제어되는 두 MTF 관측을 확인합니다. 정상적인 guest 미진입 관측은 보존하지만 명령 실행 진전으로 세지 않습니다. 저장된 증거를 다시 검증한 것으로, 새로운 네이티브 실행이 아니며 기존 결과, 리소스 회수 요건 또는 Intel 승인 상태를 변경하지 않습니다.
+
+추가 host kick을 생략한 대조에서도 두 runner가 모두 연결을 잃었습니다. macOS 15 실행 `37221649736`과 macOS 26 실행 `37221651593`에 GitHub 연결 단절 주석이 있습니다. 소스 `023a4a68d`는 세 복구 단계, 재시도 및 매 반복의 VM/vCPU 재생성을 유지하며, 제품 `lib`는 이전 진단 소스 `7dd7342ec`와 동일합니다. 아티팩트 34/15개의 해시를 모두 검증했습니다. 연속 로그 앞부분은 완료/시작 778/779와 300/301회를 증명하며, join 이후 생략을 나타내는 줄바꿈 완료 마커는 779/300개입니다. 마커는 아직 끝나지 않은 반복에도 속할 수 있습니다. 두 실행 모두 최종 네이티브 결과와 회수 기록이 없고 마지막 저장 마커는 장애 위치를 특정하지 못합니다. 이 호출의 생략만으로 이번 연결 단절을 막지 못했으며, 근본 원인이나 현재 `dev`의 승인도 입증하지 못했습니다. [보존된 증거](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries).

@@ -52,6 +52,11 @@ void process_main(U64 *Stack) {
     require(!Bytes[I * PageSize] && !Bytes[(I + 1) * PageSize - 1], CheckZero);
   writeByte(Bytes, FirstByte);
   writeByte(Bytes + Length - 1, SecondByte);
+  require(!call(ServiceMadvise, Address, Length - 1, 12) &&
+              !call(ServiceMadvise, Address + PageSize, 1, 13) &&
+              call(ServiceMadvise, Address + 1, 0, 12) ==
+                  (U64)0 - InvalidArgument,
+          CheckAdvice);
   require(!call(ServiceMprotect, Address, Length, ProtRead), CheckProtect);
   if (Mode == ProtectionFault[0]) {
     writeByte(Bytes, SecondByte);
@@ -67,6 +72,9 @@ void process_main(U64 *Stack) {
   require(!call(ServiceMprotect, Address, Length, ProtRead | ProtWrite),
           CheckProtect);
   require(!call(ServiceMunmap, Address + PageSize, PageSize, 0), CheckHole);
+  require(call(ServiceMadvise, Address, Length, 12) == (U64)0 - NoMemory &&
+              call(ServiceMadvise, Address, Length, 13) == (U64)0 - NoMemory,
+          CheckAdvice);
   require(call(ServiceMprotect, Address, Length, ProtRead) == (U64)0 - NoMemory,
           CheckHole);
   if (Mode == HoleFault[0]) {

@@ -126,9 +126,73 @@ llvm::Expected<bool> LinuxMemory::unmapPages(uint64_t Address, uint64_t Size) {
       return failure(MemoryState);
     if (auto E = Space.unmap(Begin, End - Begin))
       return std::move(E);
+    setMergeable(Begin, End - Begin, false);
     Removed = true;
   }
   return Removed;
+}
+
+bool LinuxMemory::isMergeable(uint64_t Address) const {
+  return std::any_of(MergeableRanges.begin(), MergeableRanges.end(),
+                     [Address](const auto &Range) {
+                       return Address >= Range.first && Address < Range.second;
+                     });
+}
+void LinuxMemory::setMergeable(uint64_t Address, uint64_t Size,
+                               bool Mergeable) {
+  const uint64_t End = Address + Size;
+  std::vector<std::pair<uint64_t, uint64_t>> Updated;
+  for (const auto &[Begin, Limit] : MergeableRanges) {
+    if (Limit <= Address || Begin >= End) {
+      Updated.emplace_back(Begin, Limit);
+      continue;
+    }
+    if (Begin < Address)
+      Updated.emplace_back(Begin, Address);
+    if (Limit > End)
+      Updated.emplace_back(End, Limit);
+  }
+  if (Mergeable)
+    Updated.emplace_back(Address, End);
+  std::sort(Updated.begin(), Updated.end());
+  MergeableRanges.clear();
+  for (const auto &Range : Updated) {
+    if (!MergeableRanges.empty() &&
+        MergeableRanges.back().second >= Range.first)
+      MergeableRanges.back().second =
+          std::max(MergeableRanges.back().second, Range.second);
+    else
+      MergeableRanges.push_back(Range);
+  }
+}
+
+llvm::Expected<uint64_t> LinuxMemory::advise(const ProcessServiceEvent &Event) {
+  const uint64_t Address = Event.Arguments[0], Length = Event.Arguments[1];
+  auto Size = roundSize(Length);
+  if (Address % PageSize || !Size || Address > UINT64_MAX - *Size)
+    return errorValue(InvalidArgument);
+  if (!*Size)
+    return 0;
+  auto Ranges = Space.mappings();
+  if (!Ranges)
+    return Ranges.takeError();
+  const uint64_t End = Address + *Size;
+  uint64_t Covered = 0;
+  for (const auto &Range : *Ranges) {
+    const uint64_t Begin = std::max(Address, Range.Address);
+    const uint64_t Limit = std::min(End, Range.Address + Range.Size);
+    if (Begin >= Limit)
+      continue;
+    if (Range.Device)
+      return failure(MemoryState);
+    setMergeable(Begin, Limit - Begin,
+                 uint32_t(Event.Arguments[2]) == AdviceMergeable);
+    Covered += Limit - Begin;
+  }
+  // Linux visits mapped ranges on both sides of a hole and still reports
+  // ENOMEM. Eligibility never changes guest bytes, permissions or ownership;
+  // physical deduplication needs a scanner, which this profile does not run.
+  return Covered == *Size ? 0 : errorValue(NoMemory);
 }
 
 llvm::Expected<uint64_t> LinuxMemory::map(const ProcessServiceEvent &Event) {
@@ -154,6 +218,8 @@ llvm::Expected<uint64_t> LinuxMemory::map(const ProcessServiceEvent &Event) {
   auto Mapped = mapPages(Address, *Size, permissions(Protection));
   if (!Mapped)
     return Mapped.takeError();
+  if (*Mapped)
+    setMergeable(Address, *Size, false);
   return *Mapped ? Address : errorValue(NoMemory);
 }
 
@@ -229,6 +295,7 @@ llvm::Expected<uint64_t> LinuxMemory::setBreak(uint64_t Address) {
       return Mapped.takeError();
     if (!*Mapped)
       return ProgramBreak;
+    setMergeable(Before, After - Before, false);
   }
   ProgramBreak = Address;
   return ProgramBreak;
@@ -237,6 +304,14 @@ llvm::Expected<uint64_t> LinuxMemory::setBreak(uint64_t Address) {
 llvm::Expected<std::optional<uint64_t>>
 LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
                     ProcessResult &Result) {
+  if (Kind == ServiceKind::Madvise &&
+      uint32_t(Event.Arguments[2]) != AdviceMergeable &&
+      uint32_t(Event.Arguments[2]) != AdviceUnmergeable) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic =
+        llvm::formatv(MemoryAdvice, int32_t(Event.Arguments[2])).str();
+    return std::optional<uint64_t>();
+  }
   if (((Kind == ServiceKind::Mmap || Kind == ServiceKind::Mprotect) &&
        !supportedProtection(Event.Arguments[2])) ||
       (Kind == ServiceKind::Mmap &&
@@ -255,6 +330,8 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
       return protect(Event);
     case ServiceKind::Munmap:
       return unmap(Event);
+    case ServiceKind::Madvise:
+      return advise(Event);
     case ServiceKind::Brk:
       return setBreak(Event.Arguments[0]);
     default:
