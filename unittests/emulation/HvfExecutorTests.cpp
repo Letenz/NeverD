@@ -15,6 +15,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <future>
 #if defined(__x86_64__)
 #include <Hypervisor/hv_vmx.h>
@@ -627,9 +628,8 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         Stop = true;
       });
-    auto Control = MachineRunControl{
-        Clock::now() + std::chrono::milliseconds(Kind == Deadline ? 50 : 2000),
-        &Stop};
+    auto Control = control();
+    Control.Stop = &Stop;
     bool NativeReturned = false;
     const char *Phase = "admission";
     int64_t EntryBudgetMicroseconds = 0;
@@ -646,12 +646,20 @@ TEST_F(HvfExecutor, NativeIntelCancellationAndCompletionFailureAllowRetry) {
       InterruptCPU = Native.cpu();
       Signal.release();
       Entered.set_value();
+      // Admission can spend more than 50 ms waiting or binding memory. This
+      // fixture requires native cancellation, so start its short deadline on
+      // the admitted owner while preserving the outer cooperative deadline.
+      auto NativeControl = Control;
+      if (Kind == Deadline)
+        NativeControl.Deadline =
+            std::min(Control.Deadline,
+                     Clock::now() + std::chrono::milliseconds(50));
       Phase = "native entry";
       EntryBudgetMicroseconds =
           std::chrono::duration_cast<std::chrono::microseconds>(
-              Control.Deadline - Clock::now())
+              NativeControl.Deadline - Clock::now())
               .count();
-      return Native.run(Control, [&](bool Cancelled) -> llvm::Error {
+      return Native.run(NativeControl, [&](bool Cancelled) -> llvm::Error {
         NativeReturned = true;
         EXPECT_TRUE(Cancelled);
         uint64_t Reason = 0;
