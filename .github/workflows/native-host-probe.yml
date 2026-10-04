@@ -5,56 +5,77 @@ permissions:
   contents: read
 jobs:
   probe:
-    name: Temporary Windows x64 alignment observations
+    name: Temporary Windows alignment owner reproduction
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 32
+          submodules: false
+      - name: Initialize pinned dependency
+        shell: bash
+        run: git submodule update --init --depth 1 third_party/capstone
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: 'v0.16.0'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
+      - name: Install native build tooling
+        shell: pwsh
+        run: choco install ninja --yes --no-progress
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
-      - name: Build and observe original faulting PE
+      - name: Configure original native profile
+        shell: bash
+        run: |
+          cmake -S . -B build-alignment-probe -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DBUILD_TESTING=ON -DNEVERD_BUILD_SHARED=OFF \
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_CPU_EMULATION=ON \
+            -DNEVERD_ENABLE_DRIVER_EMULATION=ON -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
+            -DNEVERD_LLVM_PREBUILT=ON
+          cmake --build build-alignment-probe --target NeverDWindowsProcessTests --parallel 4 --verbose > build-alignment-probe/build.txt 2>&1
+      - name: Observe identical PE through native launch boundaries
         shell: python
         run: |
-          import hashlib, json, pathlib, platform, re, shutil, subprocess
+          import hashlib, json, pathlib, platform, shutil, subprocess
           root = pathlib.Path.cwd()
           out = root / 'build-alignment-probe'
-          out.mkdir()
-          fixtures = root / 'unittests/emulation/fixtures'
-          clang, link, objdump = [shutil.which(name) for name in ('clang', 'lld-link', 'llvm-objdump')]
-          evidence = {'source': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'compiler': subprocess.check_output([clang, '--version'], text=True), 'platform': platform.platform(), 'observations': []}
-          apis = re.findall(r'^NEVERD_VEH_API\((\w+)\)', (fixtures / 'WindowsExceptionCases.def').read_text(), re.M)
-          definition = out / 'provider.def'
-          definition.write_text('LIBRARY kernel32.dll\nEXPORTS\n' + ''.join('  ' + name + '\n' for name in apis))
-          subprocess.run([link, '/lib', '/machine:x64', '/def:' + str(definition), '/out:' + str(out / 'provider.lib')], check=True)
-          for variant in ('baseline', 'diagnostic'):
-              source = out / (variant + '.c')
-              text = subprocess.check_output(['git', 'show', 'ed62e6cb275ab680b8d47859306d92822b012996:unittests/emulation/fixtures/windows_alignment_process.c'], text=True) if variant == 'baseline' else (fixtures / 'windows_alignment_process.c').read_text()
-              source.write_text(text)
-              for optimization in ('O1', 'O0'):
-                  stem = variant + '-' + optimization
-                  obj, asm, exe = [out / (stem + suffix) for suffix in ('.obj', '-S.obj', '.exe')]
-                  subprocess.run([clang, '--target=x86_64-pc-windows-msvc', '-std=c11', '-ffreestanding', '-fno-builtin', '-fno-stack-protector', '-fno-vectorize', '-fno-slp-vectorize', '-' + optimization, '-Wall', '-Wextra', '-Werror', '-I', str(fixtures), '-c', str(source), '-o', str(obj)], check=True)
-                  subprocess.run([clang, '--target=x86_64-pc-windows-msvc', '-c', str(fixtures / 'windows_alignment.S'), '-o', str(asm)], check=True)
-                  subprocess.run([link, '/nodefaultlib', '/subsystem:console', '/machine:x64', '/timestamp:0', '/entry:entry', '/base:0x140000000', str(obj), str(asm), str(out / 'provider.lib'), '/out:' + str(exe)], check=True)
-                  (out / (stem + '-disassembly.txt')).write_text(subprocess.check_output([objdump, '-dr', str(exe)], text=True))
-                  for trial in range(3):
-                      result = subprocess.run([str(exe)], capture_output=True, timeout=30)
-                      evidence['observations'].append({'variant': variant, 'optimization': optimization, 'trial': trial, 'exit': result.returncode, 'stdout': result.stdout.hex(), 'stderr': result.stderr.hex(), 'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(), 'binary_sha256': hashlib.sha256(exe.read_bytes()).hexdigest()})
-                      (out / 'observations.json').write_text(json.dumps(evidence, indent=2) + '\n')
-                  print(stem, evidence['observations'][-1])
+          exe = out / 'unittests/emulation/windows-exception-fixtures/X64/alignment-exceptions.exe'
+          owner = out / 'bin/NeverDWindowsProcessTests.exe'
+          report = {'source': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'platform': platform.platform(), 'fixture_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(), 'owner_sha256': hashlib.sha256(owner.read_bytes()).hexdigest(), 'observations': []}
+          (out / 'cpu.txt').write_text(subprocess.check_output(['powershell', '-NoProfile', '-Command', 'Get-CimInstance Win32_Processor | Select-Object Name,Manufacturer,ProcessorId | Format-List'], text=True))
+          (out / 'disassembly.txt').write_text(subprocess.check_output([shutil.which('llvm-objdump'), '-dr', str(exe)], text=True))
+          for trial in range(5):
+              for kind in ('pipe', 'file', 'owner'):
+                  args = [str(owner), '--gtest_filter=WindowsAlignmentNative.RunsOriginalFaultAndRetryExecutable'] if kind == 'owner' else [str(exe)]
+                  if kind == 'file':
+                      stdout, stderr = out / 'fixture-stdout.bin', out / 'fixture-stderr.bin'
+                      with stdout.open('wb') as o, stderr.open('wb') as e:
+                          result = subprocess.run(args, stdout=o, stderr=e, timeout=60)
+                      output, error = stdout.read_bytes(), stderr.read_bytes()
+                  else:
+                      result = subprocess.run(args, capture_output=True, timeout=60)
+                      output, error = result.stdout, result.stderr
+                  report['observations'].append({'kind': kind, 'trial': trial, 'exit': result.returncode, 'stdout': output.decode(errors='replace') if kind == 'owner' else output.hex(), 'stderr': error.hex()})
+                  (out / 'observations.json').write_text(json.dumps(report, indent=2) + '\n')
+                  print(kind, trial, result.returncode, output if kind != 'owner' else output[-240:], error)
       - name: Preserve bounded observations
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: alignment-fault-observations
           path: |
-            build-alignment-probe/*.json
-            build-alignment-probe/*.txt
+            build-alignment-probe/observations.json
+            build-alignment-probe/cpu.txt
+            build-alignment-probe/build.txt
+            build-alignment-probe/disassembly.txt
+            build-alignment-probe/CMakeCache.txt
           if-no-files-found: error
           retention-days: 14
