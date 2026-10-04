@@ -106,7 +106,79 @@ protected:
     Options.Arguments = {output_fixture::ExecutableName, std::string(1, Mode)};
     return run();
   }
+  ProcessResult runTime(char Mode, const char *Optimization) {
+    auto TimePath = Path.parent_path() /
+                    (Path.stem().string() + "-time-" + Optimization + ".elf");
+    Options.Arguments = {"clock", std::string(1, Mode)};
+    return llvm::cantFail(
+        emulateProcess(TimePath, ProcessProfile::LinuxELF64, Options));
+  }
 };
+
+TEST_P(LinuxProcess, ExplicitClocksPreserve64BitWireLayoutsOnBothISAs) {
+  Options.LinuxTime.emplace();
+  Options.LinuxTime->Timezone = LinuxTimezone{-60, 2};
+  Options.LinuxTime->Clocks[1] = {123, 456789};
+  Options.InstructionQuantum = 3;
+  for (const char *Opt : {"O0", "O2"}) {
+    for (int64_t Seconds : {int64_t(4294967297), int64_t(-1)}) {
+      Options.LinuxTime->Clocks[0] = {Seconds, 987654321};
+      auto R = runTime('n', Opt);
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      EXPECT_EQ(R.ExitStatus, 0u);
+      std::string Bytes;
+      auto Append = [&](uint64_t Word, unsigned Size) {
+        for (unsigned I = 0; I < Size; ++I)
+          Bytes.push_back(static_cast<char>(Word >> (I * 8)));
+      };
+      Append(static_cast<uint64_t>(Seconds), 8);
+      Append(987654, 8);
+      Append(uint32_t(0) - 60, 4);
+      Append(2, 4);
+      Append(static_cast<uint64_t>(Seconds), 8);
+      Append(987654321, 8);
+      Append(123, 8);
+      Append(456789, 8);
+      if (GetParam().ISA == GuestArchitecture::X64)
+        Append(static_cast<uint64_t>(Seconds), 8);
+      EXPECT_EQ(R.StandardOutput, Bytes);
+      EXPECT_EQ(R.Services[0].Number,
+                GetParam().ISA == GuestArchitecture::X64 ? 96u : 169u);
+      EXPECT_EQ(R.Services[1].Number,
+                GetParam().ISA == GuestArchitecture::X64 ? 228u : 113u);
+    }
+  }
+}
+TEST_P(LinuxProcess, TimeFaultsPreserveKernelErrnosAndOrderedWrites) {
+  Options.LinuxTime.emplace();
+  Options.LinuxTime->Clocks[0] = {4294967297, 987654321};
+  Options.LinuxTime->Timezone = LinuxTimezone{0, 0};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto R = runTime('f', Opt);
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    std::string Expected;
+    for (uint64_t V :
+         {uint64_t(4294967297), uint64_t(987654), uint64_t(4294967297)})
+      for (unsigned I = 0; I < 8; ++I)
+        Expected.push_back(static_cast<char>(V >> (I * 8)));
+    EXPECT_EQ(R.StandardOutput, Expected);
+  }
+}
+TEST_P(LinuxProcess, MissingDynamicAndPartialClockOperationsHaveNoReturn) {
+  for (const char *Opt : {"O0", "O2"}) {
+    for (char Mode : {'m', 'd', 'p'}) {
+      Options.LinuxTime.emplace();
+      if (Mode != 'm')
+        Options.LinuxTime->Clocks[0] = {1, 2};
+      auto R = runTime(Mode, Opt);
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_FALSE(R.ExitStatus);
+      ASSERT_FALSE(R.Services.empty());
+      EXPECT_FALSE(R.Services.back().Result);
+    }
+  }
+}
 
 TEST_P(LinuxProcess, LoadsDataBSSAndInitialStackThenHandlesErrorsAndExits) {
   // A tiny quantum forces many real CPU resumptions through the same process

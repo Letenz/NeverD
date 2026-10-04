@@ -16,6 +16,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/NoFolder.h"
 #include "llvm/IR/Operator.h"
@@ -28,6 +29,16 @@
 
 namespace neverd {
 namespace {
+
+// Pure arithmetic intrinsics do not observe or change memory. Keep their
+// evaluation and results in place while retaining the surrounding byte facts.
+// Ordinary calls and additional call-site contracts need separate authority.
+bool isMemoryTransparentIntrinsic(const llvm::Instruction *I) {
+  const auto *Call = llvm::dyn_cast<llvm::IntrinsicInst>(I);
+  return Call && !Call->hasOperandBundles() && !Call->isConvergent() &&
+         !Call->mayHaveSideEffects() && !Call->mayReadOrWriteMemory() &&
+         llvm::isGuaranteedToTransferExecutionToSuccessor(Call);
+}
 
 struct Address {
   llvm::AllocaInst *Object;
@@ -476,6 +487,8 @@ bool forwardNumericMemory(llvm::Function &F,
       auto *Store = llvm::dyn_cast<llvm::StoreInst>(I);
       auto *Load = llvm::dyn_cast<llvm::LoadInst>(I);
       if (!Store && !Load) {
+        if (isMemoryTransparentIntrinsic(I))
+          continue;
         if (llvm::isa<llvm::CallBase, llvm::FenceInst>(I) || I->mayThrow() ||
             I->mayWriteToMemory())
           Clear();
@@ -597,6 +610,8 @@ bool deleteNumericStores(llvm::Function &F,
       auto *Store = llvm::dyn_cast<llvm::StoreInst>(I);
       auto *Load = llvm::dyn_cast<llvm::LoadInst>(I);
       if (!Store && !Load) {
+        if (isMemoryTransparentIntrinsic(I))
+          continue;
         if (llvm::isa<llvm::CallBase, llvm::FenceInst>(I) || I->mayThrow() ||
             I->mayReadOrWriteMemory())
           Clear();
@@ -688,6 +703,8 @@ ByteMemoryForwardingPass::forward(llvm::Function &F,
       auto *Store = llvm::dyn_cast<llvm::StoreInst>(I);
       auto *Load = llvm::dyn_cast<llvm::LoadInst>(I);
       if (!Store && !Load) {
+        if (isMemoryTransparentIntrinsic(I))
+          continue;
         if (llvm::isa<llvm::CallBase, llvm::FenceInst>(I) ||
             I->mayWriteToMemory())
           Invalidate();

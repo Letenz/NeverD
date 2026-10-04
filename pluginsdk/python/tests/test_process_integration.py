@@ -15,6 +15,51 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_explicit_clocks_share_values_and_dynamic_api_names(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android native fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        options = {"backend": "unicorn", "linux_time": {"clocks": [
+            {"id": 0, "seconds": "4294967297", "nanoseconds": 987654321},
+            {"id": 1, "seconds": 123, "nanoseconds": 456789}]}, "android": {
+                "entry_symbol": "time_dynamic", "initialize": False,
+                "arguments": [0x20000000, 0],
+                "memory": [{"address": 0x20000000, "size": 4096}],
+                "read_memory": [{"address": 0x20000000, "size": 40}],
+                "libraries": {"libclock-model.so": ["time", "clock_gettime", "gettimeofday"]}}}
+        path = str(Path(fixtures) / "time-O2-relr.so")
+        result = session.emulate_process(path, "android-aarch64-api28-v1", json.dumps(options))
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(result["return_value"], "0")
+        calls = result["android"]["native_calls"]
+        for name in ("time", "clock_gettime", "gettimeofday"):
+            lookup = next(c for c in calls if c["name"] == "dlsym" and c["symbol"] == name)
+            call = next(c for c in calls if c["name"] == name)
+            self.assertEqual(call["pc"], lookup["result"])
+            self.assertEqual(call["library"], "libclock-model.so")
+        values = [4294967297, 123, 456789, 4294967297, 987654]
+        expected = b"".join(v.to_bytes(8, "little") for v in values)
+        self.assertEqual(bytes.fromhex(result["android"]["memory"][0]["bytes_hex"]), expected)
+        del options["linux_time"]
+        result = session.emulate_process(path, "android-aarch64-api28-v1", json.dumps(options))
+        self.assertEqual(result["stop_reason"], "unsupported_service")
+        self.assertIsNone(result["android"]["native_calls"][-1]["result"])
+        self.assertIn("no explicit linux_time input", result["diagnostic"])
+
     def test_darwin_profiles_preserve_bsd_errors_and_platform_identity(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

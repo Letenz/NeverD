@@ -78,6 +78,23 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## 明示的なゲストクロック
+
+省略可能な `linux_time` は、Linux システムコールと Android Bionic に固定のクロック入力を与えます。ホスト時刻の読み取り、命令実行に伴う時刻の進行、既定時刻の推測は行いません。
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+静的クロック ID 0–9 と 11 に対応します。各クロックは独立しており、省略した値は未知のままです。重複または未知の ID は拒否します。秒は符号付き 64 ビット、ナノ秒は `[0, 1000000000)` です。JSON 整数は `±9007199254740991` 以内に制限し、十進文字列では全 64 ビット範囲を保持します。タイムゾーンのフィールドは符号付き 32 ビットです。C++ では `ProcessOptions::LinuxTime` を使い、他の OS プロファイルでは拒否します。
+
+`clock_gettime`、`gettimeofday`、x64 の `time` が入力を共有します。入力の欠落、動的クロック、未モデル化の部分書き込みでは明示的に停止し、完了済みの書き込みは保持します。時刻調整、スリープ、実機クロックは未対応です。書き込み順、エラー、ポインタの扱いは[クロック契約の詳細](../process-emulation.md#explicit-guest-clocks)を参照してください。
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 プロファイル

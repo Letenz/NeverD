@@ -34,24 +34,23 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
   if (!Image.isELF() || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || !Image.ELFMetadata ||
       Image.ELFMetadata->Type != ET_DYN)
-    return failure("requires an AArch64 ELF64LE shared library");
+    return failure(diagnostic::Image);
   for (const auto &P : Image.ELFMetadata->ProgramHeaders) {
     if (P.Type == PT_INTERP || (P.Type == PT_TLS && P.MemorySize))
-      return failure("interpreters and ELF TLS templates are unsupported");
+      return failure(diagnostic::ImageTLS);
     if (P.Type == PT_GNU_STACK && (P.Flags & PF_X))
-      return failure("executable stacks are unsupported");
+      return failure(diagnostic::ExecutableStack);
     if (P.Type == PT_LOAD) {
       if (P.FileSize > P.MemorySize || P.FileOffset > Image.Raw.size() ||
           P.FileSize > Image.Raw.size() - P.FileOffset ||
           P.VirtualAddress % PageSize != P.FileOffset % PageSize ||
           (P.Flags & ~(PF_R | PF_W | PF_X)))
-        return failure(
-            "invalid Android PT_LOAD extent, alignment or permissions");
+        return failure(diagnostic::LoadExtent);
       if (P.Alignment > 1 &&
           (!llvm::isPowerOf2_64(P.Alignment) ||
            P.VirtualAddress % P.Alignment != P.FileOffset % P.Alignment ||
            Native.LoadBias % P.Alignment))
-        return failure("load bias or PT_LOAD violates ELF alignment");
+        return failure(diagnostic::LoadAlignment);
     }
   }
   auto Facts = readELFProgramLinking(Image);
@@ -59,7 +58,7 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
     return Facts.takeError();
   for (const auto &D : Facts->Dynamic)
     if (D.Tag == DT_TEXTREL || (D.Tag == DT_FLAGS && (D.Value & DF_TEXTREL)))
-      return failure("Android API 28 disallows text relocations");
+      return failure(diagnostic::TextRelocation);
   auto Plan = ImageMappingPlan::create(
       Image, Native.LoadBias, PageSize, Options.MemoryLimit - Options.StackSize,
       true, ImagePagePadding::FilePages, ImageByteSource::OriginalFile);
@@ -68,13 +67,13 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
   LinkedImage Out{};
   auto Address = [&](uint64_t VA) -> llvm::Expected<uint64_t> {
     if (VA > linux_model::UserLimitARM64 - Native.LoadBias)
-      return failure("image address overflows the user address space");
+      return failure(diagnostic::ImageAddressOverflow);
     return Native.LoadBias + VA;
   };
   for (const auto &Region : Plan->Regions) {
     uint64_t End = Region.Address + Region.Bytes.size();
     if (Region.Address < linux_model::MinimumAddress || End > StdioAddress)
-      return failure("image overlaps a reserved native runtime range");
+      return failure(diagnostic::ImageReservedRange);
     Out.InitialBreak = std::max(Out.InitialBreak, End);
     if (auto E = Space.map(Region.Address, Region.Bytes.size(), Read | Write))
       return std::move(E);
@@ -91,19 +90,19 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
     unsigned Type = S.Info & 15;
     if (Type == STT_TLS || Type == STT_GNU_IFUNC ||
         S.SectionIndex == SHN_COMMON || S.SectionIndex == SHN_XINDEX)
-      return failure("unsupported dynamic symbol kind: " + S.Name);
+      return failure(diagnostic::DynamicSymbolKindPrefix + S.Name);
     if (S.SectionIndex != SHN_UNDEF)
       return S.SectionIndex == SHN_ABS ? llvm::Expected<uint64_t>(S.Value)
                                        : Address(S.Value);
-    if (S.Name == "__sF") {
+    if (S.Name == symbol::StandardIO) {
       NeedsStdio = true;
       return StdioAddress;
     }
-    if (S.Name == "__stack_chk_guard")
+    if (S.Name == symbol::StackGuard)
       return GuardAddress;
     if (Type != STT_FUNC &&
         !(Type == STT_NOTYPE && RelType == R_AARCH64_JUMP_SLOT))
-      return failure("unmodeled imported data symbol: " + S.Name);
+      return failure(diagnostic::ImportedDataPrefix + S.Name);
     auto [I, New] =
         Imported.emplace(S.Name, ThunkBase + 8 * (Imported.size() + 1));
     if (New)
@@ -115,13 +114,12 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
       continue;
     if (Rel.Type != R_AARCH64_RELATIVE && Rel.Type != R_AARCH64_ABS64 &&
         Rel.Type != R_AARCH64_GLOB_DAT && Rel.Type != R_AARCH64_JUMP_SLOT)
-      return failure("unsupported AArch64 dynamic relocation " +
-                     llvm::Twine(Rel.Type));
+      return failure(diagnostic::RelocationKindPrefix + llvm::Twine(Rel.Type));
     auto Dest = Address(Rel.Address);
     if (!Dest)
       return Dest.takeError();
     if (Rel.Type == R_AARCH64_RELATIVE && Rel.Symbol)
-      return failure("relative relocation has a symbol");
+      return failure(diagnostic::RelativeSymbol);
     uint64_t Addend = static_cast<uint64_t>(Rel.Addend);
     if (!Rel.ExplicitAddend) {
       auto Value = get64(Space, *Dest);
@@ -164,7 +162,7 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
     if (!Begin)
       return Begin.takeError();
     if (*Begin >= TLSAddress || P.MemorySize > TLSAddress - *Begin)
-      return failure("invalid RELRO extent");
+      return failure(diagnostic::RELROExtent);
     uint64_t Start = *Begin & ~(PageSize - 1);
     uint64_t End = (*Begin + P.MemorySize + PageSize - 1) & ~(PageSize - 1);
     if (auto E = Space.protect(Start, End - Start, Read | UserAccessible))
@@ -202,23 +200,23 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
       if (S.Name != Native.EntrySymbol || S.SectionIndex == SHN_UNDEF)
         continue;
       if ((S.Info & 15) != STT_FUNC || S.SectionIndex >= SHN_LORESERVE)
-        return failure("entry symbol is not an ordinary defined function");
+        return failure(diagnostic::EntryKind);
       auto Entry = Address(S.Value);
       if (!Entry)
         return Entry.takeError();
       if (Out.Entry && Out.Entry != *Entry)
-        return failure("ambiguous entry symbol");
+        return failure(diagnostic::EntryAmbiguous);
       Out.Entry = *Entry;
     }
     if (!Out.Entry)
-      return failure("entry symbol was not found: " + Native.EntrySymbol);
+      return failure(diagnostic::EntryAbsentPrefix + Native.EntrySymbol);
   }
   auto Executable = [&](uint64_t PC) -> llvm::Error {
     auto Access = Space.canAccess(PC, 4, Execute | UserAccessible);
     if (!Access)
       return Access.takeError();
     if (PC % 4 || !*Access)
-      return failure("entry or constructor is not executable");
+      return failure(diagnostic::EntryPermission);
     return llvm::Error::success();
   };
   if (auto E = Executable(Out.Entry))
@@ -227,7 +225,7 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
   for (const auto &D : Facts->Dynamic)
     Tags[D.Tag] = D.Value;
   if (Tags[DT_PREINIT_ARRAYSZ])
-    return failure("shared library preinit arrays are unsupported");
+    return failure(diagnostic::PreinitArray);
   if (Native.Initialize) {
     if (Tags[DT_INIT]) {
       auto Init = Address(Tags[DT_INIT]);
@@ -237,7 +235,7 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
     }
     uint64_t Size = Tags[DT_INIT_ARRAYSZ];
     if (Size % 8 || Size > Options.MemoryLimit)
-      return failure("invalid initializer array");
+      return failure(diagnostic::InitializerArray);
     if (Size) {
       auto Start = Address(Tags[DT_INIT_ARRAY]);
       if (!Start)

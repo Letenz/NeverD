@@ -574,6 +574,68 @@ TEST_F(ProcessPublic, AndroidTokenNamesAndMutationsMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, ExplicitClockValuesAndNamesMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "time-O2-relr.so")
+             .string();
+  const std::string Request = R"({"backend":"unicorn","linux_time":{
+    "clocks":[{"id":0,"seconds":"4294967297","nanoseconds":987654321},
+              {"id":1,"seconds":123,"nanoseconds":456789}]},
+    "android":{"entry_symbol":"time_dynamic","initialize":false,
+      "arguments":["0x20000000",0],"memory":[{"address":"0x20000000","size":4096}],
+      "read_memory":[{"address":"0x20000000","size":40}],
+      "libraries":{"libclock-model.so":["time","clock_gettime","gettimeofday"]}}})";
+  auto Text = takeString(neverd_emulate_process_json(
+      Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+  ASSERT_EQ(Parsed.getAsObject()->getString(field::Stop), "returned");
+  EXPECT_EQ(Parsed.getAsObject()->getString(field::ReturnValue), "0");
+  const auto *Android = Parsed.getAsObject()->getObject(field::Android);
+  ASSERT_NE(Android, nullptr);
+  for (const char *Name : {"time", "clock_gettime", "gettimeofday"}) {
+    const llvm::json::Object *Lookup = nullptr, *Call = nullptr;
+    for (const auto &Event : *Android->getArray(field::NativeCalls)) {
+      const auto *E = Event.getAsObject();
+      if (E->getString(field::Name) == "dlsym" &&
+          E->getString(field::Symbol) == Name)
+        Lookup = E;
+      if (E->getString(field::Name) == Name)
+        Call = E;
+    }
+    ASSERT_NE(Lookup, nullptr);
+    ASSERT_NE(Call, nullptr);
+    EXPECT_EQ(Call->getString(field::Library), "libclock-model.so");
+    EXPECT_EQ(Call->getString(field::PC), Lookup->getString(field::Result));
+    EXPECT_EQ(Call->getString(field::Result),
+              std::string(Name) == "time" ? "100000001" : "0");
+  }
+  EXPECT_EQ(Android->getArray(field::Memory)
+                ->front()
+                .getAsObject()
+                ->getString(field::Bytes),
+            "01000000010000007b0000000000000055f8060000000000010000000100000006"
+            "120f0000000000");
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
+                       test::shellQuote(Path) +
+                       " --profile=" + AndroidNativeAArch64 +
+                       " --options=" + test::shellQuote(Request) +
+                       test::redirectStdout(Output) + test::silenceStderr();
+  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+            process_cli::Success);
+  auto Bytes = llvm::MemoryBuffer::getFile(Output);
+  ASSERT_TRUE(bool(Bytes));
+  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidMutexNamesMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

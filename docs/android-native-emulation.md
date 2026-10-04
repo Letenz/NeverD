@@ -105,6 +105,16 @@ The supported Bionic subset is:
 - `__system_property_get`, backed only by the explicit property dictionary.
   Missing properties return length zero and write NUL; values must fit 91 bytes
   plus NUL. Host properties are never inherited.
+- `time`, `gettimeofday`, and `clock_gettime`, using the shared explicit
+  [`linux_time` inputs](process-emulation.md#explicit-guest-clocks). Imports,
+  named dynamic calls and raw ARM64 services read the same fixed observations.
+  Successful calls preserve errno; kernel errors become `-1` and errno in
+  Bionic alone. API 28's `time` fallback stores through the caller's `time_t*`
+  in user space, so a bad destination is a runtime failure rather than a
+  returning kernel `EFAULT`. Signed timestamps retain all 64 bits, including
+  negative values; they are not mistaken for raw errno bits. No guest vDSO or
+  host clock is invoked. See the pinned Android 9
+  [Bionic wrappers](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/bionic/vdso.cpp).
 - `pthread_once`, executing the guest initializer on the current guest stack.
   An API 28 four-byte control transitions from 0 to 1 before the callback and
   to 2 only after normal return. A completed control returns zero without

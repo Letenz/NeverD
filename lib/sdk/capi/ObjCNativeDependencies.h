@@ -175,12 +175,15 @@ inline size_t inferObjCNativeDependencies(
   std::map<va_t, const MedFunc *> Med;
   std::map<va_t, const HighFunc *> High;
   std::map<va_t, const PipelineFunctionAudit *> Audits;
-  std::set<va_t> IntegerPairReturns, FourWordReturns;
+  std::set<va_t> IntegerPairReturns, FloatingPairReturns, FourWordReturns;
   for (const auto &Function : Result.LowFuncs) {
     Low.emplace(Function.Entry, &Function);
     const auto Observed =
         observedNativeIntegerPairReturns(Function, Image.Arch);
     IntegerPairReturns.insert(Observed.begin(), Observed.end());
+    const auto Floating =
+        observedNativeFloatingPairReturns(Function, Image.Arch);
+    FloatingPairReturns.insert(Floating.begin(), Floating.end());
     const auto FourWords = observedNativeFourWordReturns(Function, Image.Arch);
     FourWordReturns.insert(FourWords.begin(), FourWords.end());
   }
@@ -227,6 +230,16 @@ inline size_t inferObjCNativeDependencies(
                 Image, *L->second, *M->second, *Found->second, *A->second)) {
           Existing->second = std::move(*Record);
           ++Added;
+          continue;
+        }
+      if (FloatingPairReturns.count(Target) && Found != High.end() &&
+          M != Med.end() && A != Audits.end())
+        if (auto Pair = refineNativeFloatingPairReturnHint(
+                *M->second, *Found->second, *A->second)) {
+          if (!equalSourceABIs(Existing->second, *Pair)) {
+            Existing->second = std::move(*Pair);
+            ++Added;
+          }
           continue;
         }
       if (IntegerPairReturns.count(Target) && Found != High.end() &&
