@@ -138,6 +138,8 @@ Dopo la prova di un candidato scalare, LLVMC riutilizza `SymSimplifyPass::simpli
 
 L’importatore LLVM condiviso ammette chiamate canoniche `llvm.assume(i1)` senza bundle di operandi, registrando nello stato di definitezza esistente che la condizione deve essere vera quando viene raggiunta. Le prove scalari e dello stato macchina verificano questo obbligo senza restringere il dominio di ingresso né trattarlo come un fatto dimostrato. Contratti aggiuntivi di chiamata/dichiarazione e undef/poison restano rifiutati; IR di ingresso e budget di prova sono preservati. Questo non certifica un’ABI nativa.
 
+L’importatore accetta `llvm.loop.peeled.count` ben formato come contatore i32 senza segno della cronologia di ottimizzazione. Non lo usa mai come limite di iterazioni, restrizione di ingresso o fatto di terminazione/definitezza. Verifica identità del ciclo e numero di operandi delle proprietà; proprietà malformate o sconosciute restano rifiutate e la visita dei metadati consuma i budget esistenti.
+
 Il modello LLVM verifica i contratti di parametro `initializes`. Riutilizza le proiezioni dei puntatori di stato ed esegue un’analisi limitata delle inizializzazioni garantite, byte per byte, prima dell’emissione scalare ordinaria, senza un secondo valutatore di valori.
 
 `NeverDInterpreterLLVMRefinement` compone prove dal codice nativo a LLVM. Ricostruisce entrambi i modelli e i contratti obbligatori, proietta i flag solo all’ingresso secondo il profilo autorevole e verifica nuovamente entrambe le premesse. Il chiamante può proporre piani di ciclo ma non sostituire modelli, osservazioni o attestazioni. I modelli copiano solo il grafo eseguibile e le radici dichiarate; gli archi di ritorno all’ingresso sono rifiutati per evitare una nuova inizializzazione.

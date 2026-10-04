@@ -406,6 +406,8 @@ Additional loop regressions cover narrow wrapped last indices, separate body/lat
 
 `LLVMScalarAssume*` checks complete loop domains, last-partition failures, unreachable versus reached false conditions, sticky definedness across all byte inputs, exact/short budgets, changed IR and unsupported call contracts. Four target triples exercise shared modeling; 8,192 O0/O2 calls check an independent unsigned oracle. The state-model suite independently checks the same obligation and operand-bundle rejection.
 
+Loop-metadata regressions compare counted loops with an independent formula across all control partitions and exact/short budgets. Large or zero peeling-history counts cannot hide wrong results, nontermination or poison. API-constructed malformed metadata exercises importer rejection separately from LLVM assembly parsing; machine-state tests retain state effects and input limits.
+
 Initialization-contract regressions cover partial and separated byte ranges, fixed aliases, both branch arms, every return, first-iteration loop reads, and stores before loop reads. Read-before-write, missing writes, guest writes, unknown aliases, special memory accesses, out-of-object ranges and exhausted input/work budgets must fail. An independent output-only C fixture compiled at O1/O2 retains the exact LLVM attributes and passes fresh native-to-LLVM composition.
 
 Guarded countdown coverage checks retry after a rejected body template, a complete arbitrary-word header proof, preserved shared cutpoint/query budgets, and immediate refusal of a real entry-contract violation.

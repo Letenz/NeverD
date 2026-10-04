@@ -936,6 +936,8 @@ After a proved scalar candidate, LLVMC reuses `SymSimplifyPass::simplifyPredicat
 
 The shared LLVM importer admits canonical, bundle-free `llvm.assume(i1)` calls by recording that the reached condition must be true in the existing definedness state. Scalar and machine-state proofs check that obligation without restricting the input domain or treating it as an established fact. Extra call/declaration contracts and undef/poison remain rejected; input IR and proof budgets are preserved. This does not establish a native ABI.
 
+The importer accepts well-formed `llvm.loop.peeled.count` as an unsigned i32 optimization-history counter. It never uses that counter as a trip bound, input restriction or termination/definedness fact. Loop identity and property arities are checked; malformed or unknown properties remain unsupported, and metadata traversal consumes the existing budgets.
+
 The LLVM model owns validation of `initializes` parameter contracts. It reuses state-pointer projections and performs bounded byte-level must-dataflow before ordinary scalar emission; no second value evaluator is introduced.
 
 `NeverDInterpreterLLVMRefinement` owns native-to-LLVM proof composition. It rebuilds both state models and mandatory contracts, uses the authoritative profile for an entry-only flag projection, and checks both premises afresh. Clients may propose loop plans but cannot replace models, observations or receipts. Analysis models copy executable graphs and declared roots only; entry backedges are rejected before state initialization can repeat.
