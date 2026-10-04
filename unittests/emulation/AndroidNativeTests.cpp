@@ -295,6 +295,60 @@ TEST_P(AndroidNative, KernelErrorsAndLibcErrnoHaveDifferentContracts) {
   ASSERT_EQ(R.Services.size(), 1);
   EXPECT_EQ(R.Services[0].Result, uint64_t(0) - 9);
 }
+TEST_P(AndroidNative, PageSizeUsesGuestLayoutAndPreservesErrno) {
+  auto R = run("page_size", {Buffer});
+  returned(R, 4096);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  std::vector<uint8_t> Expected(64);
+  llvm::support::endian::write32le(Expected.data(), 4096);
+  llvm::support::endian::write32le(Expected.data() + 4, 77);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  auto Call = llvm::find_if(
+      R.NativeCalls, [](const auto &E) { return E.Name == "getpagesize"; });
+  ASSERT_NE(Call, R.NativeCalls.end());
+  EXPECT_EQ(Call->Result, 4096u);
+  EXPECT_TRUE(Call->Library.empty());
+  EXPECT_TRUE(R.Services.empty());
+}
+TEST_P(AndroidNative, DynamicPageSizeRetainsNamesAndProviderLifetime) {
+  returned(run("dynamic_page_size", {Buffer, 0}), 100);
+  Options.Android->Libraries["libpages.so"] = {};
+  returned(run("dynamic_page_size", {Buffer, 0}), 101);
+  Options.Android->Libraries["libpages.so"] = {"getpagesize"};
+  auto R = run("dynamic_page_size", {Buffer, 0});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  std::vector<uint8_t> Expected(64);
+  llvm::support::endian::write32le(Expected.data(), 4096);
+  llvm::support::endian::write32le(Expected.data() + 4, 77);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  auto Lookup = llvm::find_if(R.NativeCalls, [](const auto &E) {
+    return E.Name == "dlsym" && E.Symbol == "getpagesize";
+  });
+  ASSERT_NE(Lookup, R.NativeCalls.end());
+  ASSERT_TRUE(Lookup->Result);
+  EXPECT_EQ(Lookup->Library, "libpages.so");
+  auto Call = llvm::find_if(
+      R.NativeCalls, [](const auto &E) { return E.Name == "getpagesize"; });
+  ASSERT_NE(Call, R.NativeCalls.end());
+  EXPECT_EQ(Call->PC, *Lookup->Result);
+  EXPECT_EQ(Call->Library, "libpages.so");
+  EXPECT_EQ(Call->Result, 4096u);
+  EXPECT_TRUE(R.Services.empty());
+  R = run("dynamic_page_size", {Buffer, 1});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "getpagesize");
+  EXPECT_EQ(R.NativeCalls.back().Library, "libpages.so");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+  Options.Android->DefaultScope = std::vector<std::string>{"libpages.so"};
+  R = run("dynamic_page_size", {Buffer, 1});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  llvm::support::endian::write32le(Expected.data() + 8, 4096);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+}
 TEST_P(AndroidNative,
        VectoredOutputSharesKernelSemanticsAndPreservesLibcErrno) {
   auto R = run(output_fixture::AndroidEntry);

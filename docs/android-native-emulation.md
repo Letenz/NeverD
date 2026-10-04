@@ -127,6 +127,12 @@ The supported Bionic subset is:
   `svc #0` and calls resolved through the explicit dynamic catalogue. They
   preserve errno and never query host credentials. Credential changes such
   as `setuid` remain unsupported.
+- `getpagesize`, returning the Android profile's 4096-byte guest page size
+  without changing errno. It uses the same layout as guest mappings,
+  independently of the host page size. Direct imports and explicit dynamic
+  catalogue entries share this behavior; provider lifetime rules still apply.
+  See the pinned Android 9
+  [Bionic implementation](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/getpagesize.cpp).
 - `__system_property_get`, backed only by the explicit property dictionary.
   Missing properties return length zero and write NUL; values must fit 91 bytes
   plus NUL. Host properties are never inherited.
