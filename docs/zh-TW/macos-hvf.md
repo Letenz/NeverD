@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bebc9b4b7e408e18ff142e834c8d2917380133b9a965a0a5c5841f8dc23e326e -->
+<!-- i18n-source: 9a24ea23cf2a47db289e1e2b215d8900d8db1bd0cc636bab4cd68cb061aec251 -->
 
 [← 文件索引](README.md)
 
@@ -120,3 +120,7 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 使用原始碼 `bd284894c60427cf4e6a60e661a1fa0df8a070f5` 的[獨立 Intel 復原診斷執行](https://github.com/NeverSight/NeverD/actions/runs/37159724276)於 2026-10-03 23:41:30 UTC 結束，GitHub 註記明確回報託管主機失聯。計畫與十一份進度 artifact 得以保留，下載後皆核對服務端 SHA-256。最後保存的快照證明完整完成 252 回合並開始第 253 回合，不能據此定位最終故障。沒有最終結果或處理程序回收記錄，完整作業日誌介面傳回 404，因此要求的 1,000 回合仍未驗證。儲存庫當時仍無自架 runner。這些是保存下來的失敗證據，不代表穩定性已修復或 Intel 已通過完整驗收。
 
 可使用[個人倉庫工作流程](https://github.com/gmh5225/test_mac_intel)在託管 Intel runner 上驗證，不需要本機 Intel 硬體。它分別固定 NeverD 診斷程式和被測原始碼，並獨立記錄工作流程版本。排隊時間與執行穩定性須分別判斷。恢復診斷現在會在報告失敗前保存每個上傳子程序的 PID、父程序、執行檔、結束碼、訊號及終止原因。Action 失敗後，收集器最多等待 20 秒，只複製與該子程序 PID、父程序、程序名稱及執行時間相符的 macOS IPS 當機報告；缺少報告會明確記錄。上傳失敗仍會終止原生執行，不能據此判定 Hypervisor 故障或測試通過。
+
+2026-10-04，個人儲存庫首次 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37175472452) 與 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37175511460) 作業分別在建立後 8 秒及 5 秒啟動。兩者均因上傳子程序異常退出而失敗；控制器取消並回收原生子程序，分別留下 3 輪及 105 輪完整紀錄。最終證據包已保存並獨立核驗。另一次[純上傳對照](https://github.com/gmh5225/test_mac_intel/actions/runs/37177383621) 的 16 次上傳全部通過，17 份產物均核對伺服器摘要，並標示 `native_execution=false`。這些證據區分上傳失敗與原生斷言失敗，尚不能定位根因，也不能算作所要求的 1,000 輪通過。先前組織儲存庫的對照也在 5 秒後啟動，因此這些樣本不能證明更換儲存庫改善了排隊速度。
+
+後續 [macOS 26](https://github.com/gmh5225/test_mac_intel/actions/runs/37176652027) 與 [macOS 15](https://github.com/gmh5225/test_mac_intel/actions/runs/37176990174) 兩次執行均於 2026-10-04 失敗結束，GitHub 明確回報託管 runner 失聯。分別保存的 10 份及 16 份產物均已核驗。最後保留的原始日誌證明分別連續完成 175 輪及 326 輪，隨後各開始一輪；不能據此定位最終故障。兩次皆缺少原生最終結果與程序回收紀錄，完整作業日誌介面皆回傳 HTTP 404。沒有發出人工取消要求。Intel 的 1,000 輪門檻仍未驗證通過。[保留的原始日誌片段與執行、摘要清單](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04)可在 Actions 產物保留期結束後繼續查閱。
