@@ -262,6 +262,8 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `X64SSEPrecisionTests.cpp` は独立した `X64SSEPrecisionCases.def` の符号化、`APFloat` の精度丸め、元のネイティブ命令を組み合わせます。範囲検査は非有界指数での丸めを使い、有限値への方向付きオーバーフローと正規数へ丸められる微小結果も扱います。両符号、NaN ペイロード、全丸め/FTZ/累積状態、パックレーン集約、XMM 別名、CPU/RAM 全状態、正確な読取幅、整列優先順位、ページ障害、監視取消と再試行を検査します。両特権の KVM/WHP は必須です。
 
+`X64PackedFloatTests.cpp` は独立した `X64PackedFloatCases.def` の符号化、符号付き `APFloat` の期待値、元のネイティブ命令を使用します。全入力対、整数境界、精度の中間値、丸め、累積状態、FTZ を検査します。両特権で別名、全 XMM 対、完全な CPU/RAM、m64 の全ページ分割、正確なページ末尾、整列優先順位、監視と障害の再試行を確認します。全 KVM/WHP ケースが必須です。
+
 `X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
 
 ```bash
@@ -1145,7 +1147,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 544 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 772 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `544 CPU + 224 WHP + 4 SEH = 772`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 570 検査と純粋な SEH 継続の回帰検査 4 件を合わせ、必須の結果は 798 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `570 CPU + 224 WHP + 4 SEH = 798`.
 
 C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。
 

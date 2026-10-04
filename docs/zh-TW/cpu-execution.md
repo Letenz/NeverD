@@ -88,6 +88,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 透過共用 `Source` 規則轉換傳統 SSE 精度。純量結果保留目標高 64/96 位元；打包擴寬讀取 m64 並寫入兩個雙精度數，打包縮窄讀取對齊的 m128、寫入兩個單精度數並清零高 64 位元。KVM、WHP 和 checked Unicorn 執行原始指令，保留 FLAGS，並依捨入與 FTZ 控制累積已遮罩例外的 MXCSR 狀態。Unicorn 在轉換函式中逐一分類有效次正規輸入。DAZ、未遮罩例外和 VEX/EVEX 仍不支援。
 
+`CVTDQ2PS` 和 `CVTDQ2PD` 透過共用 `Source` 規則轉換打包的有號 32 位元整數。單精度讀取對齊的 m128 並使用 MXCSR 捨入；雙精度讀取可未對齊的 m64，結果精確。目標 XMM 全部位元被替換，FLAGS 和既有 MXCSR 狀態保留，非精確單精度結果累積精度狀態。KVM、WHP 和 checked Unicorn 執行原始指令。Unicorn 在選擇八位元組讀取前辨識兩種打包擴寬轉換。DAZ、未遮罩例外、MMX 和 VEX/EVEX 仍不支援。
+
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
 thread pointer 包含 x64 FS/GS 基底及 ARM64 `TPIDR_EL0` 的精確 `MRS`/`MSR` 編碼。原生傳輸與 CPU snapshot 會獨立於記憶體保存狀態，但不會建立 OS 執行緒或配置 TLS 區塊。supervisor x64 支援對齊的 1/2/4 位元組純量 MMIO 交易，以及每個重新啟動邊界一個 MOVS 元素。裝置讀取必須先提供無副作用預覽，再至多提交一次。user 設定拒絕裝置對映；RMW、寬 MMIO、連接埠 I/O 也仍不支援。
