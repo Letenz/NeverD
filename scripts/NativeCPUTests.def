@@ -2540,3 +2540,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64IntegerFloatDAZ."
     "CVTSI2SDPreservesStateAcrossRoundingModes/{backend}User")
 #endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/{backend}Supervisor_",
+    "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/{backend}User_",
+    "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
+#endif
