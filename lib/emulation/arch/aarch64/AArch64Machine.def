@@ -52,7 +52,10 @@ NEVERD_AARCH64_VALUE(TCR, 0x2b5103510ull)
 // Normal noncacheable RAM. Explicit I-cache maintenance precedes every step.
 NEVERD_AARCH64_VALUE(MAIR, 0x44)
 // Baseline RES1 bits, MMU enabled, little endian, no stack alignment trap.
+// Pointer authentication remains disabled at EL0/EL1 on every transport.
 NEVERD_AARCH64_VALUE(SCTLR, 0x30d00801)
+NEVERD_AARCH64_VALUE(PAuthEnableMask,
+                     (1ull << 31) | (1ull << 30) | (1ull << 27) | (1ull << 13))
 NEVERD_AARCH64_VALUE(CPACR, 3ull << 20)
 // Baseline rounding modes, FZ/DN and cumulative exception/QC status.
 // Exception enables, FP16 and optional alternative handling are not admitted.
