@@ -16,6 +16,48 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_formatting_uses_guest_variadic_calls(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for optimization in ("O0", "O2"):
+            for closed in (False, True):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": "format_dynamic", "arguments": [0x20000000, int(closed)],
+                    "initialize": False, "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 64}],
+                    "libraries": {"libformat-model.so": ["snprintf"]},
+                }}
+                result = session.emulate_process(str(Path(fixtures) / f"format-{optimization}-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service" if closed else "returned",
+                                 result["diagnostic"])
+                calls = result["android"]["native_calls"]
+                lookup = next(e for e in calls if e["name"] == "dlsym")
+                call = next(e for e in calls if e["name"] == "snprintf")
+                self.assertEqual(call["library"], "libformat-model.so")
+                self.assertEqual(call["pc"], lookup["result"])
+                self.assertEqual(call["result"], None if closed else "12")
+                if not closed:
+                    self.assertEqual(int(result["return_value"], 16), 18)
+                expected = bytes(64) if closed else b"symbol=0x10000000a" + bytes(46)
+                self.assertEqual(bytes.fromhex(result["android"]["memory"][0]["bytes_hex"]), expected)
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_android_local_memory_input_exceeds_json_limit(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
