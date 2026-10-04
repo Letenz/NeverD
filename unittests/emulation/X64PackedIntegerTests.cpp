@@ -217,6 +217,7 @@ TEST_P(X64PackedInteger, SourceObserversStopOrFailBeforeStateChanges) {
     for (bool Throw : {false, true}) {
       reset();
       ASSERT_FALSE(HasFatalFailure());
+      ASSERT_TRUE(CPU);
       seed(Mixed);
       unsigned Reads = 0, Writes = 0;
       BackendHooks Hooks;
@@ -288,6 +289,7 @@ TEST_P(X64PackedInteger, InvalidFormsRejectBeforeObservations) {
     for (unsigned Form = 0; Form < InvalidFormCount; ++Form) {
       reset();
       ASSERT_FALSE(HasFatalFailure());
+      ASSERT_TRUE(CPU);
       auto Bytes = memory(I);
       uint64_t Address = Data;
       if (Form == MMXForm)
@@ -316,6 +318,7 @@ TEST_P(X64PackedInteger, DeviceSourcesRejectWithoutCallingTheDevice) {
     SCOPED_TRACE(I.Name);
     reset();
     ASSERT_FALSE(HasFatalFailure());
+    ASSERT_TRUE(CPU);
     seed(Mixed, Stack);
     unsigned Calls = 0;
     GuestMMIOCallbacks Device;
