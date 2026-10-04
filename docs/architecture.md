@@ -932,6 +932,8 @@ After a proved scalar candidate, LLVMC reuses `SymSimplifyPass::simplifyPredicat
 
 `SymKnownBits` also proves equality with a masked copy when every omitted bit is known zero, and with a signed shift roundtrip when the exact source, power-of-two factor and full shift count match. The discarded bits and retained sign must be uniformly zero or one. These bounded, read-only relations consume query work without growing the DAG, enumerating data or assuming LLVM no-wrap flags.
 
+`SymKnownBits` compares unsigned scalar multiples only after matching their base and proving the larger product cannot wrap. Low-word product equality collects modular coefficients and preserves factor multiplicity across extensions that retain the requested width; narrower overflow boundaries remain opaque. Both derivation sides, pending factors and matching consume the existing work/depth budgets; the analysis stays read-only.
+
 The LLVM model owns validation of `initializes` parameter contracts. It reuses state-pointer projections and performs bounded byte-level must-dataflow before ordinary scalar emission; no second value evaluator is introduced.
 
 `NeverDInterpreterLLVMRefinement` owns native-to-LLVM proof composition. It rebuilds both state models and mandatory contracts, uses the authoritative profile for an entry-only flag projection, and checks both premises afresh. Clients may propose loop plans but cannot replace models, observations or receipts. Analysis models copy executable graphs and declared roots only; entry backedges are rejected before state initialization can repeat.

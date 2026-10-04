@@ -402,6 +402,8 @@ Additional loop regressions cover narrow wrapped last indices, separate body/lat
 
 `SymKnownBits.*` checks lossless masks and signed shift roundtrips against exhaustive byte-pair arithmetic, including negative values, changed roots, discarded unknown bits, mismatched factors/counts and wide overshifts. Widths through 128 bits retain exact/short query budgets and no DAG growth. Scalar decision tests add positive and negative updates on separate backedges, stale-input and overflow refusals, symbolic high data bits, and 16,384 O0/O2 calls against an independent unsigned oracle.
 
+`SymKnownBits.*` also exhausts byte pairs for scaled order and cross-width products, rejecting wrap, incorrect coefficients or factor multiplicities, and moving narrow overflow into a wider word. Queries through 128 bits retain exact/one-short work and no DAG growth. Scalar tests prove repeated addition and multiplication without enumerating data bits, retain every loop overflow obligation, and execute 16,384 O0/O2 calls against an independent oracle.
+
 Initialization-contract regressions cover partial and separated byte ranges, fixed aliases, both branch arms, every return, first-iteration loop reads, and stores before loop reads. Read-before-write, missing writes, guest writes, unknown aliases, special memory accesses, out-of-object ranges and exhausted input/work budgets must fail. An independent output-only C fixture compiled at O1/O2 retains the exact LLVM attributes and passes fresh native-to-LLVM composition.
 
 Guarded countdown coverage checks retry after a rejected body template, a complete arbitrary-word header proof, preserved shared cutpoint/query budgets, and immediate refusal of a real entry-contract violation.
