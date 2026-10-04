@@ -105,6 +105,7 @@ add_neverd_unittest(NeverDX64IntegerTests
 
 add_neverd_unittest(NeverDX64ExceptionTests
   X64ExceptionTests.cpp
+  X64AlignmentTests.cpp
   X64DivisionTests.cpp
   X64StateTransitionTests.cpp
   NO_PRETTY_VALUES

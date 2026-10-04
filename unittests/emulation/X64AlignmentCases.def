@@ -1,0 +1,26 @@
+//===- X64AlignmentCases.def - Independent SSE alignment observations ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ALIGNMENT_VALUE
+NEVERD_ALIGNMENT_VALUE(GeneralProtection, 13)
+NEVERD_ALIGNMENT_VALUE(Noncanonical, 0x0000800000000000ULL)
+NEVERD_ALIGNMENT_VALUE(HighAddressBits, 0x100000000ULL)
+NEVERD_ALIGNMENT_VALUE(AddressSizePrefix, 0x67)
+NEVERD_ALIGNMENT_VALUE(FSPrefix, 0x64)
+NEVERD_ALIGNMENT_VALUE(GSPrefix, 0x65)
+NEVERD_ALIGNMENT_VALUE(PhysicalExponent, 0x3fff)
+#endif
+#ifdef NEVERD_ALIGNMENT_INSTRUCTION
+// Name, result kind, independent original encoding through RCX.
+NEVERD_ALIGNMENT_INSTRUCTION(MOVAPSLoad, Load, 0x0f, 0x28, 0x01)
+NEVERD_ALIGNMENT_INSTRUCTION(MOVAPSStore, Store, 0x0f, 0x29, 0x01)
+NEVERD_ALIGNMENT_INSTRUCTION(MOVAPDLoad, Load, 0x66, 0x0f, 0x28, 0x01)
+NEVERD_ALIGNMENT_INSTRUCTION(MOVAPDStore, Store, 0x66, 0x0f, 0x29, 0x01)
+NEVERD_ALIGNMENT_INSTRUCTION(MOVDQALoad, Load, 0x66, 0x0f, 0x6f, 0x01)
+NEVERD_ALIGNMENT_INSTRUCTION(MOVDQAStore, Store, 0x66, 0x0f, 0x7f, 0x01)
+NEVERD_ALIGNMENT_INSTRUCTION(PADDQ, Add, 0x66, 0x0f, 0xd4, 0x01)
+NEVERD_ALIGNMENT_INSTRUCTION(PSLLQ, Shift, 0x66, 0x0f, 0xf3, 0x01)
+NEVERD_ALIGNMENT_INSTRUCTION(XORPS, Xor, 0x0f, 0x57, 0x01)
+#endif
