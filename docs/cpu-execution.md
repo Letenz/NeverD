@@ -288,7 +288,7 @@ Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profil
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
-ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, and A/B return-address signing/authentication with the keys disabled. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
+ARM64 KVM/WHP/HVF startup executes the private `AArch64MachineProbe.def` program: NOP, FP32 addition rounded toward positive infinity, a two-lane SIMD addition, A/B return-address signing/authentication with the keys disabled, and all four BTI forms on unguarded pages. Each step compares all 39 scalar fields and 32 vectors, including TLS, NZCV, cleared upper destination bits and retained/cumulative FPCR/FPSR state. The probe uses supervisor monitor storage and one overall deadline. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
 Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private supervisor pages. One deadline covers NOP, rounded FP32 addition, two-lane SIMD addition, FS/GS loads and CS/SS/CR8 reads; every step compares the complete scalar, XMM, physical x87 and control state. x64 and ARM64 probes require the exclusive physical-memory execution lease. `MemoryProjection` owns cache identity (ISA, address space, mapping generation, privilege and monitor variant) and committed root history per ISA. Builders invalidate before rewriting private bytes; failed replacement cannot reuse partially written tables, and callers cannot supply stale roots. The probes establish bounded initialization only. Linux ARM64 KVM and Windows ARM64 WHP workload validation remains pending; native macOS results are recorded in the [HVF guide](macos-hvf.md).
 
@@ -332,6 +332,17 @@ HINTs, strip operations, non-HINT authentication, authenticated branches/loads,
 key registers and attempts to change `SCTLR_EL1` remain unsupported. Active
 PAuth, signing keys and authenticated guest pointers are not modeled. Linux
 startup continues to advertise no PAuth hardware capability.
+
+`AArch64BTIHints.def` admits the four exact `BTI`, `BTI c`, `BTI j` and
+`BTI jc` words in the same checked contracts. All projected leaves have GP
+clear; guarded pages and branch-type state are not exposed by this machine.
+Under this contract each original word executes through the transport,
+preserves scalar/vector/memory state and consumes an ordinary instruction
+attempt. Native startup tests all four encodings, including on processors
+with FEAT_BTI. This follows Arm's [BTI instruction definition](https://documentation-service.arm.com/static/68da52dfbd7cab51328c0622).
+Admission does not enable guarded-page branch-target checking, interpret GNU
+BTI properties as enforcement, or advertise the BTI hardware capability to a
+guest OS. Unlisted HINTs and system-control writes remain unsupported.
 
 Checked ARM64 admits the baseline no-offset `LDAR`, `LDARB`, `LDARH`, `STLR`,
 `STLRB` and `STLRH` encodings for naturally aligned ordinary RAM. The ISA owner
