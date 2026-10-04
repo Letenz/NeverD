@@ -487,7 +487,8 @@ class CiConfigurationTests(unittest.TestCase):
         self.assertIn("-DNEVERD_EMULATION_BACKEND_UNICORN=OFF", native)
         self.assertIn("-DNEVERD_ENABLE_SEMANTIC_TESTS=OFF", native)
         self.assertIn("scripts/run_native_cpu_ci.py", native)
-        self.assertIn("--require-${{ inputs.native_cpu_backend }}", native)
+        self.assertIn("NEVERD_NATIVE_CPU_BACKEND: ${{ inputs.native_cpu_backend }}", native)
+        self.assertIn('--require-"$NEVERD_NATIVE_CPU_BACKEND"', native)
         self.assertIn("scripts/prepare_kvm_ci.py", native)
         self.assertIn("build-ci-native/native-evidence/device-access.json", native)
         self.assertLess(native.index("scripts/prepare_kvm_ci.py"),

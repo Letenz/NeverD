@@ -1814,6 +1814,7 @@ jobs:
     runs-on: ${{ inputs.native_cpu_backend == 'kvm' && 'ubuntu-24.04' || 'windows-latest' }}
     timeout-minutes: 30
     env:
+      NEVERD_NATIVE_CPU_BACKEND: ${{ inputs.native_cpu_backend }}
       NEVERD_NATIVE_DRIVER_TESTS: ${{ inputs.native_driver_tests && 'ON' || 'OFF' }}
       SCCACHE_GHA_ENABLED: 'true'
     steps:
@@ -1902,7 +1903,7 @@ jobs:
           python scripts/run_native_cpu_ci.py \
             --build build-ci-native \
             --evidence build-ci-native/native-evidence \
-            --parallel 4 --require-${{ inputs.native_cpu_backend }} "${driver_args[@]}"
+            --parallel 4 --require-"$NEVERD_NATIVE_CPU_BACKEND" "${driver_args[@]}"
 
       - name: Preserve native CPU evidence
         if: ${{ always() }}
