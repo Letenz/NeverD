@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "KvmRunControl.h"
 
+#include "KvmHandoffPolicy.h"
+
 #if defined(__linux__) && defined(NEVERD_EMULATION_KVM)
 #include "../../core/ExecutionDiagnostics.h"
 
@@ -28,6 +30,20 @@ namespace {
 #include "KvmRunControl.def"
 #undef NEVERD_KVM_RUN_VALUE
 using Clock = std::chrono::steady_clock;
+constexpr auto HandoffPoll =
+    std::chrono::microseconds(kvm::handoff::PollMicroseconds);
+
+bool pollReady(const std::atomic<bool> &Ready, Clock::time_point Until,
+               const std::atomic<bool> *Stop = nullptr) {
+  while (!Ready.load(std::memory_order_acquire) && Clock::now() < Until &&
+         !(Stop && Stop->load())) {
+#define NEVERD_KVM_PROCESSOR_PAUSE(Instruction) asm volatile(Instruction);
+#include "KvmRunControl.def"
+#undef NEVERD_KVM_PROCESSOR_PAUSE
+  }
+  return Ready.load(std::memory_order_acquire);
+}
+
 constexpr auto Poll =
     std::chrono::microseconds(execution_limits::CancelRetryMicroseconds);
 } // namespace
@@ -42,7 +58,11 @@ struct KvmRunControl::State {
   llvm::Error TransferError = llvm::Error::success();
   std::atomic<bool> Cancel{false};
   bool Ready = false, Initialized = false, Shutdown = false, Running = false;
-  bool Requested = false, Completed = false, PendingKick = false;
+  // Only these readiness hints are read without Mutex. Payloads, ownership
+  // and cancellation acknowledgement remain protected by the existing lock.
+  std::atomic<bool> Requested{false}, Completed{false};
+  KvmHandoffPolicy OwnerHandoff;
+  bool PendingKick = false;
   bool EntryInterrupted = false;
 
   ~State() {
@@ -109,7 +129,14 @@ struct KvmRunControl::State {
     Changed.notify_all();
     if (!Success)
       return;
+    KvmHandoffPolicy WorkerHandoff;
     while (true) {
+      if (!Shutdown && WorkerHandoff.begin()) {
+        Lock.unlock();
+        const bool Ready = pollReady(Requested, Clock::now() + HandoffPoll);
+        Lock.lock();
+        WorkerHandoff.finish(Ready);
+      }
       Changed.wait(Lock, [&] { return Shutdown || Requested; });
       if (Shutdown)
         return;
@@ -193,6 +220,14 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
   S.Completed = false;
   S.Requested = true;
   S.Changed.notify_all();
+  if (S.OwnerHandoff.begin()) {
+    Lock.unlock();
+    const bool Ready = pollReady(
+        S.Completed, std::min(Control.Deadline, Clock::now() + HandoffPoll),
+        Control.Stop);
+    Lock.lock();
+    S.OwnerHandoff.finish(Ready);
+  }
   while (!S.Completed) {
     const auto Now = Clock::now();
     if (Now >= Control.Deadline || Control.stopRequested())
@@ -204,7 +239,7 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
     const auto Wake = S.Cancel       ? Now + Poll
                       : Control.Stop ? std::min(Now + Poll, Control.Deadline)
                                      : Control.Deadline;
-    S.Changed.wait_until(Lock, Wake, [&] { return S.Completed; });
+    S.Changed.wait_until(Lock, Wake, [&] { return S.Completed.load(); });
   }
   if (S.Cancel) {
     // A completed KVM ioctl alone does not retire a late pending signal.
@@ -212,6 +247,7 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
     Lock.unlock();
     S.Worker.join();
     Lock.lock();
+    S.OwnerHandoff = {};
   }
   S.Control.Stop = nullptr;
   S.Prepare = S.Capture = {};

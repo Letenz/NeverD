@@ -1027,6 +1027,8 @@ Linux의 `NeverDUnicornDeadlineTests`는 pthread 스케줄링을 제어해 실�
 
 `NeverDKvmRunTests`는 `/dev/kvm` 없이 `KvmRunControl`의 빌린 전송 콜백을 검증합니다. `StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries`는 준비, 수집과 가로챈 호스트 진입이 같은 스레드를 사용하며 중단 후 재시도 중에도 준비를 한 번만 수행하는지 확인합니다. 다른 사례는 진입 없는 준비 실패, 수집 실패, 준비 중 정지와 활성 진입 취소를 검증한 뒤 새 실행이 이전 콜백을 재사용하지 않는지 확인합니다. 실제 취소, RAM 롤백, 예외와 기존 드라이버 테스트도 계속 포함해야 합니다. `SequentialEntriesReuseWorkerWithoutRetainingPriorTransfers`는 같은 기한 내의 여러 진입이 작업 스레드를 재사용하고 각 전송을 한 번만 수행하며 이전 상태 패킷을 변경하지 않는지 검증합니다.
 
+`KvmHandoffPolicy`는 각 폴링 대기를 8 μs로 제한하고 연속 두 번 실패하면 블로킹 대기로 전환하며 256번의 인계 후 다시 시도합니다. 호출 스레드와 작업 스레드는 각각 적응하며 호출 스레드는 원래 기한과 중지 토큰도 확인합니다. 원자적 준비 플래그는 스케줄링 힌트일 뿐이며 패킷, 콜백 수명, 취소 확인은 계속 뮤텍스로 관리합니다. `NeverDKvmRunTests`는 무효 폴링의 상한, 복구, 상대 지연 변화, 패킷 재사용 전 취소 확인을 검사합니다.
+
 KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드에서 상태 준비, `KVM_RUN`, 상태 캡처를 수행합니다. `EINTR` 재시도에도 준비는 한 번이며 취소나 캡처 실패는 게시할 수 없습니다. `KvmAArch64Machine.cpp`의 주소 변환 유지와 전체 스칼라·벡터 전송도 하나의 단일 단계 기한을 공유합니다. 호출 스레드는 완료 확인 후 커밋하며 ISA 해석, RAM 트랜잭션, OS 정책과 관찰자를 담당합니다. 네이티브 ARM64 실기 증거는 아직 없습니다.
 
 `ReusesCapturedStateAndInstallsHostChangesAcrossFaultsAndStops`는 호스트가 일반 레지스터, 첫 번째와 마지막 XMM 레지스터, MXCSR 및 x87 제어어를 변경한 뒤 연속 실행과 실제 CPU 저장을 검증합니다. 정지된 진입 이후의 실제 `FXSAVE64` 바이트로 모든 물리 80비트 레지스터, TOP, 태그, 연산 코드와 포인터를 확인하며 반복 나눗셈 예외도 재사용을 무효화합니다. 이 머신 경계 테스트는 checked 프로필에 추가 x87 명령을 허용하지 않습니다.

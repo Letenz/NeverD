@@ -748,6 +748,8 @@ KVM x64 obtiene los registros especiales reales de una captura sincronizada conf
 
 KVM x64/ARM64 usa `KvmRunControl` para preparar estado, entrar en `KVM_RUN` y capturarlo en el mismo trabajador vCPU privado. La preparación ocurre una vez incluso con `EINTR`; cancelaciones y fallos de captura impiden publicar. `KvmAArch64Machine.cpp` realiza mantenimiento de traducciones y transferencias escalares/vectoriales completas con un solo plazo de paso. El llamante publica tras confirmación y conserva decodificación ISA, transacciones RAM, política del SO y observadores. Faltan pruebas nativas ARM64.
 
+`KvmHandoffPolicy` limita cada espera activa a 8 μs, pasa a espera bloqueante tras dos intentos fallidos consecutivos y vuelve a intentarlo después de 256 intercambios. El llamador y el trabajador se adaptan de forma independiente; el llamador también respeta el plazo y el token de parada originales. Los indicadores atómicos solo orientan la planificación: el mutex sigue protegiendo los paquetes, la vida de los callbacks y la confirmación de cancelación. `NeverDKvmRunTests` comprueba el límite del sondeo improductivo, la recuperación, los cambios de latencia y la cancelación antes de reutilizar paquetes.
+
 ## Contrato de lifting estricto
 
 `Decoder` y cada lifter de arquitectura arrancan en modo estricto. Si Capstone

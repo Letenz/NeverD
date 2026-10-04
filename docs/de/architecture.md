@@ -747,6 +747,8 @@ KVM x64 erhält die tatsächlichen Spezialregister aus einer bestätigten synchr
 
 KVM x64/ARM64 verwendet `KvmRunControl` für Vorbereitung, `KVM_RUN` und Zustandserfassung auf demselben privaten vCPU-Worker. Auch bei `EINTR` erfolgt die Vorbereitung einmal; Abbruch oder Lesefehler verhindern Veröffentlichung. `KvmAArch64Machine.cpp` führt Übersetzungspflege und vollständige Skalar-/Vektortransfers unter einer gemeinsamen Schrittfrist aus. Der Aufrufer veröffentlicht nach Bestätigung; ISA-Decodierung, RAM-Transaktionen, OS-Politik und Beobachter bleiben bei ihm. Native ARM64-Laufzeitnachweise stehen aus.
 
+`KvmHandoffPolicy` begrenzt jedes aktive Warten auf 8 μs, wechselt nach zwei erfolglosen Versuchen zum blockierenden Warten und versucht es nach 256 Übergaben erneut. Aufrufer und Worker passen sich unabhängig an; der Aufrufer beachtet auch die ursprüngliche Frist und das Stopptoken. Atomare Bereitschaftsflags sind nur Hinweise für die Ablaufplanung: Pakete, Callback-Lebensdauer und Abbruchbestätigung bleiben durch den Mutex geschützt. `NeverDKvmRunTests` prüft begrenztes erfolgloses Polling, Erholung, wechselnde Latenzen und Abbruchbestätigung vor der Wiederverwendung von Paketen.
+
 ## Vertrag des strikten Liftings
 
 `Decoder` und jeder Architektur-Lifter starten im strikten Modus. Kann

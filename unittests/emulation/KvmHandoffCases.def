@@ -1,0 +1,18 @@
+//===- KvmHandoffCases.def - Adaptive waiting and packet lifetime checks --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_KVM_HANDOFF_TEST_VALUE
+NEVERD_KVM_HANDOFF_TEST_VALUE(PolicyEntries, 4096)
+NEVERD_KVM_HANDOFF_TEST_VALUE(MaximumSlowProbes, 64)
+NEVERD_KVM_HANDOFF_TEST_VALUE(MinimumRecoveredPolls, 3840)
+NEVERD_KVM_HANDOFF_TEST_VALUE(PreemptionPeriod, 3)
+NEVERD_KVM_HANDOFF_TEST_VALUE(PacketEntries, 600)
+NEVERD_KVM_HANDOFF_TEST_VALUE(PacketPhases, 3)
+NEVERD_KVM_HANDOFF_TEST_VALUE(SlowMicroseconds, 50)
+NEVERD_KVM_HANDOFF_TEST_VALUE(PacketTimeoutMicroseconds, 5000000)
+#endif
+#ifdef NEVERD_KVM_HANDOFF_TEST_STATE
+NEVERD_KVM_HANDOFF_TEST_STATE(PacketSeed, 0x123456789abcdef0ULL)
+#endif
