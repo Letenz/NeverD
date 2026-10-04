@@ -1254,3 +1254,11 @@ python3 scripts/benchmark_cpu.py \
 진입 횟수 계측은 시작 프로브를 포함하는 별도 진단이며 추가 비용이 있습니다. 그 시간은 성능 결과에서 제외하십시오. 이 부하들은 전체 OS나 ISA 간 성능을 나타내지 않습니다.
 
 [재현 방법](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+`NeverDLLVMPrivateFrameTests`는 겹치는 쓰기, 모든 진입 경로와 루프 역방향 간선, 수치 주소 보존, 외부 출력 별칭, 미초기화·순서 있는·알 수 없는 메모리, 메타데이터, 정확한 예산과 한 단위 부족 시 변경 없는 거부를 검증합니다. 독립 O0/O2 오라클은 미정의 동작 트랩으로 전체 반환값, 외부 객체, 프레임 바이트를 비교합니다. x86-64, AArch64, 빅 엔디언 AArch64, ARM32 컴파일 검증은 해당 아키텍처의 네이티브 복원 지원을 의미하지 않습니다. 공유 주소·효과 도우미 변경 시 `NeverDByteMemoryForwardingTests`도 실행합니다.
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

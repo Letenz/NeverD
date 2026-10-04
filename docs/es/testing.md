@@ -1365,3 +1365,11 @@ python3 scripts/benchmark_cpu.py \
 El conteo de entradas es un diagnóstico separado, incluye sondeos iniciales y añade sobrecarga; descarte sus tiempos. Estas cargas no representan rendimiento de un OS completo ni comparaciones entre ISA.
 
 [Reproducción](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+`NeverDLLVMPrivateFrameTests` cubre escrituras solapadas, todas las entradas y retornos de bucle, direcciones conservadas, salidas con alias, memoria no inicializada/ordenada/desconocida, metadatos y rechazo atómico con presupuesto exacto o una unidad insuficiente. Oráculos independientes O0/O2 con trampas de comportamiento indefinido comparan retornos completos, objetos externos y bytes del marco. Compilar para x86-64, AArch64, AArch64 de endian grande y ARM32 no demuestra recuperación nativa. Repetir `NeverDByteMemoryForwardingTests` al cambiar las utilidades comunes de direcciones y efectos.
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

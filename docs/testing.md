@@ -2445,3 +2445,11 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 `NeverDLLVMCValueTests` checks both neutral-select polarities for add, subtract and bitwise updates, unchanged bases, inline old-value dependencies, materialized condition snapshots, narrow truth tests, nonidentity arms and shared selections. Generated C executes against independently compiled LLVM at O0/O2 with undefined-behavior traps. `NeverDLLVMCPhiTests` additionally checks parallel old-value snapshots and branch-dependent initializers that must stay in shared scope. Caller IR remains unchanged.
 
 `NeverDUnicornDecodeTests` checks reserved EVEX register fields on AVX-512/APX CPU models and ROUND memory-fault priority, retained state and resumption. A Linux x64 host probe independently confirms legacy alignment faults and scalar/VEX page faults. These engine tests do not extend checked ISA admission or establish native APX execution.
+
+`NeverDLLVMPrivateFrameTests` checks overlapping writes, all entry paths and loop backedges, retained numeric addresses, aliased external outputs, uninitialized/ordered/unknown memory, metadata and transactional exact/short budgets. Independent O0/O2 oracles compare complete return values, external objects and frame bytes with undefined-behavior traps. Four target compilations cover x86-64, AArch64, big-endian AArch64 and ARM32; they do not imply native recovery on those architectures. Re-run `NeverDByteMemoryForwardingTests` when changing the shared address/effect helpers.
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

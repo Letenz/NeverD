@@ -1264,3 +1264,11 @@ python3 scripts/benchmark_cpu.py \
 入口回数の計数は初期化プローブを含む独立診断で、追加負荷があります。その時間を性能結果に含めないでください。これらの負荷はOS全体や異なるISA間の性能を示しません。
 
 [再現方法](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+`NeverDLLVMPrivateFrameTests` は重複書き込み、全入口経路とループ後退辺、数値アドレスの保持、外部出力の別名、未初期化・順序付き・未知メモリ、メタデータ、正確な予算と一単位不足時の無変更拒否を検証します。独立した O0/O2 オラクルは未定義動作トラップを使い、戻り値全体、外部オブジェクト、フレームのバイトを比較します。x86-64、AArch64、ビッグエンディアン AArch64、ARM32 のコンパイル確認は各アーキテクチャのネイティブ復元対応を意味しません。共有アドレス・効果ヘルパーの変更時は `NeverDByteMemoryForwardingTests` も再実行します。
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

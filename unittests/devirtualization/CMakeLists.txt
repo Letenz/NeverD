@@ -144,6 +144,18 @@ add_neverd_unittest(NeverDLLVMScalarLoopRecoveryTests
   LINK_COMPONENTS LLVMScalarLoopRecovery
   LINK_LIBS LLVMAsmParser LLVMIRReader
 )
+
+add_neverd_unittest(NeverDLLVMPrivateFrameTests
+  LLVMPrivateFrameProjectionTests.cpp
+  LLVMPrivateFrameCompileTests.cpp
+  LINK_COMPONENTS LLVMMemoryAnalysis
+  LINK_LIBS LLVMAsmParser
+)
+target_compile_definitions(NeverDLLVMPrivateFrameTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
 target_compile_definitions(NeverDLLVMScalarLoopRecoveryTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
   NEVERD_BINARY="$<TARGET_FILE:neverd>"

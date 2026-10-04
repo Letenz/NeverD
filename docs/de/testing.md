@@ -1380,3 +1380,11 @@ python3 scripts/benchmark_cpu.py \
 Die separate Eintrittszählung beeinflusst Laufzeiten und enthält Startproben; ihre Zeiten sind keine Leistungsdaten. Diese Lasten belegen weder vollständigen OS-Durchsatz noch architekturübergreifende Leistung.
 
 [Reproduktion](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+`NeverDLLVMPrivateFrameTests` prüft überlappende Schreibzugriffe, alle Eintrittspfade und Rückkanten, erhaltene Adressen, aliasierende Ausgaben, uninitialisierten/geordneten/unbekannten Speicher, Metadaten sowie atomare Ablehnung bei exaktem und um eins zu kleinem Budget. Unabhängige O0/O2-Orakel mit Traps für undefiniertes Verhalten vergleichen vollständige Rückgaben, externe Objekte und Frame-Bytes. Kompilierungen für x86-64, AArch64, Big-Endian-AArch64 und ARM32 belegen keine native Wiederherstellung dieser Architekturen. Bei Änderungen gemeinsamer Adress-/Effekthelfer auch `NeverDByteMemoryForwardingTests` ausführen.
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

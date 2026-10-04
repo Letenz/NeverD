@@ -7,6 +7,7 @@
 
 #include "neverd/pass/ir/simplify/ByteMemoryForwardingPass.h"
 
+#include "neverd/analysis/LLVMMemoryAnalysis.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -29,16 +30,6 @@
 
 namespace neverd {
 namespace {
-
-// Pure arithmetic intrinsics do not observe or change memory. Keep their
-// evaluation and results in place while retaining the surrounding byte facts.
-// Ordinary calls and additional call-site contracts need separate authority.
-bool isMemoryTransparentIntrinsic(const llvm::Instruction *I) {
-  const auto *Call = llvm::dyn_cast<llvm::IntrinsicInst>(I);
-  return Call && !Call->hasOperandBundles() && !Call->isConvergent() &&
-         !Call->mayHaveSideEffects() && !Call->mayReadOrWriteMemory() &&
-         llvm::isGuaranteedToTransferExecutionToSuccessor(Call);
-}
 
 struct Address {
   llvm::AllocaInst *Object;
@@ -122,10 +113,7 @@ bool needsSnapshot(llvm::Value *Value, llvm::StoreInst *Store) {
   return !llvm::isGuaranteedNotToBeUndefOrPoison(Value, nullptr, Store);
 }
 
-struct NumericAddress {
-  llvm::Value *Root;
-  llvm::APInt Offset;
-};
+using NumericAddress = analysis::LLVMIntegerOffset;
 
 std::optional<NumericAddress>
 numericAddress(llvm::Value *Pointer, const llvm::DataLayout &DL,
@@ -156,31 +144,11 @@ numericAddress(llvm::Value *Pointer, const llvm::DataLayout &DL,
   auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Pointer);
   if (!Cast || !Cast->getOperand(0)->getType()->isIntegerTy(Width))
     return std::nullopt;
-  llvm::Value *Value = Cast->getOperand(0);
-  for (;;) {
-    if (!charge(Result.AddressSteps, 1, Options.MaxAddressSteps, Result))
-      return std::nullopt;
-    auto *Binary = llvm::dyn_cast<llvm::BinaryOperator>(Value);
-    if (Binary && (Binary->getOpcode() == llvm::Instruction::Add ||
-                   Binary->getOpcode() == llvm::Instruction::Sub)) {
-      llvm::Value *Next = Binary->getOperand(0);
-      auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(Binary->getOperand(1));
-      if (!Constant && Binary->getOpcode() == llvm::Instruction::Add) {
-        Constant = llvm::dyn_cast<llvm::ConstantInt>(Next);
-        Next = Binary->getOperand(1);
-      }
-      if (Constant) {
-        Offset += Binary->getOpcode() == llvm::Instruction::Add
-                      ? Constant->getValue()
-                      : -Constant->getValue();
-        Value = Next;
-        continue;
-      }
-    }
-    // Preserve every other operation as an exact SSA root. In particular,
-    // never strip masks, truncation, extension or address-space casts.
-    return NumericAddress{Value, std::move(Offset)};
-  }
+  return analysis::splitLLVMIntegerOffset(
+      Cast->getOperand(0), std::move(Offset), [&](uint64_t Amount) {
+        return charge(Result.AddressSteps, Amount, Options.MaxAddressSteps,
+                      Result);
+      });
 }
 
 // Bottom means an unresolved cyclic definition, not an arbitrary value. A
@@ -487,7 +455,7 @@ bool forwardNumericMemory(llvm::Function &F,
       auto *Store = llvm::dyn_cast<llvm::StoreInst>(I);
       auto *Load = llvm::dyn_cast<llvm::LoadInst>(I);
       if (!Store && !Load) {
-        if (isMemoryTransparentIntrinsic(I))
+        if (analysis::isLLVMMemoryTransparentIntrinsic(*I))
           continue;
         if (llvm::isa<llvm::CallBase, llvm::FenceInst>(I) || I->mayThrow() ||
             I->mayWriteToMemory())
@@ -610,7 +578,7 @@ bool deleteNumericStores(llvm::Function &F,
       auto *Store = llvm::dyn_cast<llvm::StoreInst>(I);
       auto *Load = llvm::dyn_cast<llvm::LoadInst>(I);
       if (!Store && !Load) {
-        if (isMemoryTransparentIntrinsic(I))
+        if (analysis::isLLVMMemoryTransparentIntrinsic(*I))
           continue;
         if (llvm::isa<llvm::CallBase, llvm::FenceInst>(I) || I->mayThrow() ||
             I->mayReadOrWriteMemory())
@@ -703,7 +671,7 @@ ByteMemoryForwardingPass::forward(llvm::Function &F,
       auto *Store = llvm::dyn_cast<llvm::StoreInst>(I);
       auto *Load = llvm::dyn_cast<llvm::LoadInst>(I);
       if (!Store && !Load) {
-        if (isMemoryTransparentIntrinsic(I))
+        if (analysis::isLLVMMemoryTransparentIntrinsic(*I))
           continue;
         if (llvm::isa<llvm::CallBase, llvm::FenceInst>(I) ||
             I->mayWriteToMemory())

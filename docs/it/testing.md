@@ -1360,3 +1360,11 @@ python3 scripts/benchmark_cpu.py \
 Il conteggio degli ingressi è una diagnosi separata, include sonde iniziali e introduce overhead; i suoi tempi non sono misure prestazionali. I carichi non rappresentano un OS completo né confronti tra ISA.
 
 [Riproduzione](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+`NeverDLLVMPrivateFrameTests` copre scritture sovrapposte, tutti gli ingressi e archi di ritorno, indirizzi conservati, output con alias, memoria non inizializzata/ordinata/sconosciuta, metadati e rifiuto atomico con budget esatto o inferiore di uno. Oracoli indipendenti O0/O2 con trap per comportamento indefinito confrontano ritorni completi, oggetti esterni e byte del frame. La compilazione per x86-64, AArch64, AArch64 big-endian e ARM32 non dimostra il recupero nativo. Rieseguire `NeverDByteMemoryForwardingTests` quando cambiano gli helper comuni di indirizzi ed effetti.
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```

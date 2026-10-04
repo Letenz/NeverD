@@ -1287,3 +1287,11 @@ python3 scripts/benchmark_cpu.py \
 عدّ الدخول تشخيص منفصل يضيف كلفة ويشمل مجسات البدء؛ لا تُدرج أزمنته ضمن نتائج الأداء. هذه الأحمال لا تمثل نظام تشغيل كاملًا أو مقارنة بين ISA.
 
 [إعادة الإنتاج](../testing.md#reproduce-checked-arm64-cpu-measurements) · [HVF](macos-hvf.md)
+
+تختبر `NeverDLLVMPrivateFrameTests` الكتابات المتداخلة وجميع مسارات الدخول وحواف الرجوع وحفظ العناوين وتداخل المخرجات الخارجية والذاكرة غير المهيأة أو المرتبة أو المجهولة والبيانات الوصفية والرفض دون تغيير عند الميزانية الدقيقة أو الناقصة بوحدة. تقارن مراجع مستقلة عند O0/O2 قيم الإرجاع كاملة والكائنات الخارجية وبايتات الإطار مع مصائد السلوك غير المعرّف. الترجمة لأهداف x86-64 وAArch64 وAArch64 كبير النهاية وARM32 لا تثبت الاستعادة الأصلية لهذه المعماريات. أعد `NeverDByteMemoryForwardingTests` عند تغيير أدوات العناوين والتأثيرات المشتركة.
+
+```sh
+cmake --build build-release --target NeverDLLVMPrivateFrameTests NeverDByteMemoryForwardingTests --parallel 4
+build-release/bin/NeverDLLVMPrivateFrameTests
+build-release/bin/NeverDByteMemoryForwardingTests
+```
