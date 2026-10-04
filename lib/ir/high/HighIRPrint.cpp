@@ -210,7 +210,8 @@ bool HighExpr::structuralEq(const HighExpr &Other) const {
         SourceCallHint != Other.SourceCallHint ||
         IsIndirectCall != Other.IsIndirectCall ||
         IndirectParamIdx != Other.IndirectParamIdx ||
-        IntrinsicId != Other.IntrinsicId)
+        IntrinsicId != Other.IntrinsicId ||
+        DoesNotReturn != Other.DoesNotReturn)
       return false;
     break;
   case ExprKind::Cast:
@@ -243,8 +244,7 @@ bool HighExpr::structuralEq(const HighExpr &Other) const {
   if (static_cast<bool>(IndirectTarget) !=
       static_cast<bool>(Other.IndirectTarget))
     return false;
-  if (IndirectTarget &&
-      !IndirectTarget->structuralEq(*Other.IndirectTarget))
+  if (IndirectTarget && !IndirectTarget->structuralEq(*Other.IndirectTarget))
     return false;
   return true;
 }

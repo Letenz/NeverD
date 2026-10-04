@@ -225,6 +225,7 @@ add_neverd_unittest(NeverDLiftTests
   core/HighSymSimplifyTests.cpp
   core/HighFrameStoreForwardingTests.cpp
   core/MedNoReturnTests.cpp
+  core/InternalNoReturnTests.cpp
   eh/RegistrationTryLevelTests.cpp
   format/COFFARMFormatTests.cpp
   format/COFFARMFormatFragmentTests.cpp

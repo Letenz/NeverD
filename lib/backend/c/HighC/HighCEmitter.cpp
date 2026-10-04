@@ -1147,6 +1147,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           if (!UnresolvedIndirect) {
             ExternalCallSources[Name].insert(SourceName);
             Targets.insert(Name);
+            if (Ex.DoesNotReturn)
+              NoReturnCallTargets.insert(Name);
             if (auto FS = debugCallee(Ex)) {
               noteDebugExtern(Name, *FS);
               noteDebugExternCallSret(Name, *FS, Ex);
@@ -1540,8 +1542,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     ExternalFunctionIdentifiers.try_emplace(RenderedName.str(), Identifier);
     // The statement writer ends a path at a call to a known noreturn function
     // (isNoreturnCallExpr); its declaration must say so, or C falls through.
-    const bool NoReturn =
-        libc::isNoReturnFunction(Name) || libc::isNoReturnFunction(Identifier);
+    const bool NoReturn = libc::isNoReturnFunction(Name) ||
+                          libc::isNoReturnFunction(Identifier) ||
+                          NoReturnCallTargets.count(Name);
     if (auto Sources = ExternalCallSources.find(Name);
         Sources != ExternalCallSources.end())
       for (const std::string &SourceName : Sources->second)

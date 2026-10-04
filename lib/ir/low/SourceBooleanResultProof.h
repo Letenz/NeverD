@@ -158,6 +158,8 @@ struct Transfer {
     auto ObserveLocation = [&](const SourceABIValueLocation &Location) {
       if (Location.Kind == SourceABICarrierKind::None)
         return true;
+      if (Location.Kind == SourceABICarrierKind::BooleanRegister)
+        return !(lookup(Registers, Location.RegisterOffset) & 1);
       if (Location.Kind != SourceABICarrierKind::IntegerRegister &&
           Location.Kind != SourceABICarrierKind::FloatingRegister)
         return false;
@@ -256,6 +258,11 @@ struct Transfer {
         auto ClearResult = [&](const SourceABIValueLocation &Location) {
           if (Location.Kind == SourceABICarrierKind::None)
             return;
+          if (Location.Kind == SourceABICarrierKind::BooleanRegister) {
+            put(Registers, Location.RegisterOffset,
+                lookup(Registers, Location.RegisterOffset) & uint8_t(0xfe));
+            return;
+          }
           const auto Width = Location.ExtendTo32Bits ? 4U : Location.ValueBytes;
           for (unsigned I = 0; I < Width; ++I)
             Registers.erase(Location.RegisterOffset + I);

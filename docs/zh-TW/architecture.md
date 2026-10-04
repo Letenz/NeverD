@@ -923,6 +923,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CVTSS2SI` 與 `CVTSD2SI` 透過共用 `IntegerResult` 規則，依 MXCSR 捨入模式產生帶正負號的 32/64 位元整數；`CVTTSS2SI` 與 `CVTTSD2SI` 一律向零截斷。遮罩例外時，NaN 或超出範圍的轉換傳回整數不定值並設定無效狀態；有效但不精確的結果設定精度狀態。既有黏滯位元、FLAGS 和 XMM 來源維持不變。r32 結果清除通用暫存器高半部。RAM 讀取採用浮點來源寬度，與目的寬度無關；FTZ 不會捨棄次正規輸入。KVM、WHP 和 checked Unicorn 共用這些規則。
 
+`COMISS`、`COMISD`、`UCOMISS` 和 `UCOMISD` 透過共用 `Source` 規則比較純量 XMM 或 m32/m64 運算元。它們設定 CF/PF/ZF、清除 OF/SF/AF，保留其他 FLAGS 和來源通道。COMIS 對任意 NaN 設定無效狀態，UCOMIS 僅對 signaling NaN 設定該狀態；NaN 處理優先於次正規狀態。MXCSR 黏滯位元保留，捨入和 FTZ 不影響比較。KVM、WHP 和 checked Unicorn 共用精確記憶體檢查。固定版本的 Unicorn 比較函式重用既有次正規輸入分類邏輯。
+
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
 checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完整狀態回讀共用一次單步額度。`UC_HOOK_CODE` 在指令入口檢查借用的停止權杖和期限；同步引擎呼叫返回前解除 hook 借用，機器單步則保留控制直到發佈狀態。Unicorn 與 WHP 暫存完整 CPU 狀態，並在成功步驟發佈前檢查同一控制條件。WHP 在準備前只建立一次額度。已確認的 x64 CPU 例外優先於回讀期間到來的停止要求。回讀取消時，checked RAM 交易捨棄推測寫入；非受限軟體契約不變。 `MachineInterruptedError` 區分已確認取消與主機或回讀失敗。共用 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 並允許重試；真實故障即使伴隨停止要求也仍是 `BackendFailure`。
@@ -1116,5 +1118,11 @@ Swift once 位址存取器可以在謂詞表示初始化完成時提前返回。
 `LLVMMemoryAnalysis` 統一管理字面常數整數位移拆分及純 intrinsic 的記憶體透明契約，供位元組轉發和私有框架投影重用。`projectLLVMPrivateFrame` 接收明確數值入口根、相對框架邊界及與框架分離的有效物件範圍。它從實際存取推導範圍，並在所有前驅與迴圈回邊上證明每個讀取位元組已初始化，之後才建立區域儲存。原始數值位址及純量指令保留；外部物件可以互相別名，其內容仍可觀察。未知副作用、有序記憶體、中繼資料、未解析位址、初始化不足或預算耗盡均原樣拒絕。私有性、原始存取不故障、位址範圍不回繞及最終框架內容不被觀察，是呼叫端前提。此共用 32/64 位元 LLVM API 僅為有定義執行提供條件記憶體投影，不證明原生 ABI 或定義性；預設反編譯器不推斷或呼叫此契約。
 
 此投影僅接受符合共用契約的 `ctpop`、`ctlz`、`cttz`、`bswap`、`bitreverse`、`fshl` 與 `fshr`；即使不存取記憶體，觀察框架／回傳位址的 intrinsic 仍被拒絕。
+
+libswiftCore 的精確強匯入 `Array._allocateBufferUninitialized(minimumCapacity:)` 與 `String._fromUTF8Repairing` 要求 ARM64/x86-64 macOS 及 Mac Catalyst 四個設定中的 Swift 6.1.2 宣告與 SDK 匯出一致。陣列配置以容量和元素中繼資料為一般參數，傳回指標。UTF-8 修復接收兩個整數字，傳回完整的 `{i64, ptr, i1}` 記錄。共用 `SourceABI` 區分真正的 `_Bool` 欄位與八位元整數：結果位於 x0/x1/x2 的第 0 位元，或 RAX/RDX/RCX 的第 0 位元。邏輯儲存為 24 位元組，其中七個填補位元組未定義。降階保留兩個 String 字，並使布林暫存器的其餘位元依賴該呼叫的未知覆寫值；已宣告的元組回傳只觀察第 0 位元。原始碼繫結時重新核對目前提供程式庫及完整 ABI。其他元組布局、一般 C 分類及元組參數仍不支援。這些宣告不授予陣列布局、緩衝區邊界、堆疊框架借用、所有權或純函式權限。
+
+原生雙字回傳推斷會驗證完整的呼叫宣告及兩個相符的結果擷取操作。它可從較大的 Swift 結果中保留兩個 String 字，而不縮短被呼叫函式的宣告，也不定義額外的布林位元。ABI 投影批次也會在指標與回呼簽章中區分 `_Bool` 與位元組型別。
+
+匿名 C 結構體名稱包含每個整數欄位的符號和位寬，以及指標欄位的完整型別（包括回呼簽章）。位元組配置相同但欄位型別不同的結構體使用獨立宣告，不受函式輸出順序影響。O0/O2 執行檢查以兩種順序涵蓋指標、有號字、無號字及具型別指標結構體。
 
 `ByteCellScalarizationPass` 在共用的非保守 LLVM 管線中於一般 SROA 與位元組轉送之後執行。對不逃逸的靜態位元組陣列，它依每個常數整數存取邊界切分，以 8/16/32/64 位元單元表示涵蓋區間。複合存取使用私有記憶體副本，保留位元組序及每個儲存運算元的一次使用，不插入 `freeze`，也不假定輸入已初始化或有定義。隨後 SROA 在匯合點和回邊上提升這些精確單元。動態或逃逸使用、有序存取、物件中繼資料、除錯記錄及共用純算術 intrinsic 契約之外的呼叫均保守處理。工作量、單元數與建構上限在修改函式前檢查；不推斷原生框架或 ABI。物件管線 schema 11 在兩種快取鍵中標識新的最佳化配方。

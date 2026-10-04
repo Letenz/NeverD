@@ -39,6 +39,16 @@ namespace libc {
 class NoReturnTargetIndex;
 }
 
+/// Decides whether an internal function never returns, for a direct call the
+/// name list does not settle (InternalNoReturn.h implements the proof).
+class NoReturnCalleeProver {
+public:
+  virtual ~NoReturnCalleeProver() = default;
+  /// True when the function at \p Target is proved never to return, asked
+  /// by a CFG build that itself runs \p Depth proofs deep.
+  virtual bool neverReturns(va_t Target, unsigned Depth) const = 0;
+};
+
 namespace detail {
 using JumpTableProofPoint = std::pair<va_t, int>;
 using JumpTableProofLocation = std::pair<int, int>;
@@ -667,6 +677,15 @@ public:
   void setNoReturnTargetIndex(const libc::NoReturnTargetIndex *Index) {
     NoReturnTargets = Index;
   }
+  /// Ask \p Prover about a direct call to an internal function that the name
+  /// list does not know, when padding follows the call.  \p Depth is how
+  /// many proofs deep this build runs.  The prover must outlive the builds;
+  /// null leaves the name list alone.
+  void setNoReturnCalleeProver(const NoReturnCalleeProver *Prover,
+                               unsigned Depth = 0) {
+    NoReturnCallees = Prover;
+    NoReturnCalleeDepth = Depth;
+  }
   /// Borrow an index through all builds of one unchanged image. Pointer-byte,
   /// relocation, segment, bitness or mode changes require a fresh index. The
   /// index must outlive the builds; null or a different image uses live input.
@@ -1033,6 +1052,9 @@ private:
   /// (statically linked).  A true result makes explore() stop: the bytes after
   /// the call belong to the next function at -O2, not this one.
   bool isNoReturnCall(const InsnRecord &Rec) const;
+  /// True when padding follows the call \p Rec, as a compiler leaves after a
+  /// call it knows never returns: an x86 `int3`, or another function's entry.
+  bool callIsFollowedByPadding(const InsnRecord &Rec) const;
 
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).
@@ -2601,6 +2623,8 @@ private:
   /// CFG, so KnownFuncEntries must not clip or refuse them.
   std::set<va_t> CurrentExceptionalEntries;
   const libc::NoReturnTargetIndex *NoReturnTargets = nullptr;
+  const NoReturnCalleeProver *NoReturnCallees = nullptr;
+  unsigned NoReturnCalleeDepth = 0;
   const detail::AbsoluteRelocationRootIndex *AbsoluteRelocationRoots = nullptr;
   const ExecutableCodeOwnerIndex *ExecutableCodeOwners = nullptr;
   /// Sorted normalized addresses of \ref BinaryImage function symbols, so a

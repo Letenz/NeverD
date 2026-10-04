@@ -211,7 +211,7 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
     if (!Call)
       return false;
     const std::string &Callee = (*Call)->CallTarget;
-    return isTerminatingHighCall(*Call) ||
+    return isTerminatingHighCall(*Call) || (*Call)->DoesNotReturn ||
            (!Callee.empty() && (NoReturn.count(Callee) ||
                                 ((*Call)->IntrinsicId == Intrinsic::None &&
                                  libc::isNoReturnFunction(Callee))));

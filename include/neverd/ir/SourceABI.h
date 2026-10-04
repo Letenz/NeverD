@@ -12,6 +12,11 @@ namespace neverd {
 inline constexpr char kSourceAArch64Vector128CType[] =
     "uint8_t __attribute__((vector_size(16)))";
 
+/// A genuine C Boolean preserves swiftcc i1, unlike an unsigned byte. Its
+/// logical storage is one byte; physical definedness belongs to the carrier.
+inline constexpr char kSourceBooleanCType[] = "_Bool";
+bool isSourceBooleanType(const TypeRef &Type);
+
 /// Compare supported source types structurally, including fixed C callback
 /// signatures. Malformed, cyclic, and excessively deep types never compare
 /// equal, even when both references identify the same object.
@@ -33,6 +38,8 @@ struct SourceAggregateMember {
 /// leaves, or six/sixteen doubles for indirect Darwin arm64 results.
 /// A flat three-double/opaque-pointer record retains all four fields; only a
 /// separately validated Swift result ABI may transport that mixed shape.
+/// A flat unsigned-word/opaque-pointer/Boolean Swift result retains all three
+/// fields and excludes the seven trailing padding bytes.
 /// Nested records retain their declared layout. Other mixtures fail.
 std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type);
 
@@ -101,7 +108,9 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
 /// A flat three-double/opaque-pointer result uses d0..d2+x0 on arm64 and
 /// xmm0..xmm2+rax on x86_64. The latter additionally admits up to three
 /// ordinary double parameters for this result shape. Mixed record parameters
-/// fail. Asynchronous contexts remain unsupported.
+/// fail. An unsigned-word/opaque-pointer/Boolean result uses x0/x1/bit 0 of x2,
+/// or RAX/RDX/bit 0 of RCX. No other bit of its Boolean carrier is defined.
+/// Asynchronous contexts remain unsupported.
 bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic);
 

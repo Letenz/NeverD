@@ -443,7 +443,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "388 CPU + 224 WHP + 4 SEH = 616")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "413 CPU + 224 WHP + 4 SEH = 641")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -869,3 +869,23 @@ NEVERD_EMULATION_DOC_PATH(FloatIntegerTests, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(FloatIntegerTests, "X64FloatIntegerTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(FloatIntegerTests, "X64FloatIntegerCases.def")
 NEVERD_EMULATION_DOC_TOKEN(FloatIntegerTests, "APFloat")
+
+NEVERD_EMULATION_DOC_PATH(ScalarSSEComparisons, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(ScalarSSEComparisons, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(ScalarSSEComparisons, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(ScalarSSEComparisons,
+                          "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisons, "COMISS")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisons, "COMISD")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisons, "UCOMISS")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisons, "UCOMISD")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisons, "MXCSR")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisons, "Source")
+
+NEVERD_EMULATION_DOC_PATH(ScalarSSEComparisonTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(ScalarSSEComparisonTests, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisonTests,
+                           "X64SSEComparisonTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisonTests,
+                           "X64SSEComparisonCases.def")
+NEVERD_EMULATION_DOC_TOKEN(ScalarSSEComparisonTests, "APFloat")

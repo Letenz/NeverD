@@ -18,6 +18,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -2847,6 +2848,7 @@ bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
 void computeCallRegisterEffects(
     const BinaryImage &Img, const std::set<va_t> &FuncEntries,
     const libc::NoReturnTargetIndex &NoReturnTargets,
+    const NoReturnCalleeProver &NoReturnCallees,
     const detail::AbsoluteRelocationRootIndex &AbsoluteRelocationRoots,
     const ExecutableCodeOwnerIndex *CodeOwnerIndex, PipelineResult &Result) {
   if (Img.Arch != Arch::X64)
@@ -2869,6 +2871,7 @@ void computeCallRegisterEffects(
   CFGBuilder ExtraCFG;
   ExtraCFG.setKnownFuncEntries(&FuncEntries);
   ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);
+  ExtraCFG.setNoReturnCalleeProver(&NoReturnCallees);
   ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
   ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
   size_t ExtraLifts = 0;
@@ -2878,7 +2881,9 @@ void computeCallRegisterEffects(
   for (size_t Next = 0; Next < Work.size(); ++Next) {
     const va_t Caller = Work[Next];
     const int CalleeDepth = Depth[Caller] + 1;
-    const std::set<va_t> Callees = Effects[Caller].Callees;
+    std::set<va_t> Callees = Effects[Caller].Callees;
+    Callees.insert(Effects[Caller].NoReturnCallees.begin(),
+                   Effects[Caller].NoReturnCallees.end());
     for (va_t Callee : Callees) {
       if (Effects.count(Callee) ||
           CalleeDepth > limits::kMaxCallEffectCalleeDepth ||
@@ -2998,6 +3003,11 @@ void Pipeline::buildLowIR(
         FuncEntries.insert(Start);
     }
   }
+  // A single-function run lifts no callee, so a callee that never returns is
+  // proved on demand; whole-image runs share the same proofs.
+  const InternalNoReturnIndex NoReturnCallees(
+      Img, &FuncEntries, &NoReturnTargets, &AbsoluteRelocationRoots,
+      CodeOwnerIndex);
 
   // Decode cost tracks a function's instruction count, which is unknown before
   // the recursive-descent build runs.  Candidates are address-sorted, so the
@@ -3021,6 +3031,7 @@ void Pipeline::buildLowIR(
     CFGBuilder LocalCFG;
     LocalCFG.setKnownFuncEntries(&FuncEntries);
     LocalCFG.setNoReturnTargetIndex(&NoReturnTargets);
+    LocalCFG.setNoReturnCalleeProver(&NoReturnCallees);
     LocalCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
     LocalCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
     for (size_t I; (I = Claim()) < N;) {
@@ -3065,6 +3076,7 @@ void Pipeline::buildLowIR(
       CFGBuilder LocalCFG;
       LocalCFG.setKnownFuncEntries(&FuncEntries);
       LocalCFG.setNoReturnTargetIndex(&NoReturnTargets);
+      LocalCFG.setNoReturnCalleeProver(&NoReturnCallees);
       LocalCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
       LocalCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
       LocalCFG.setProtectedJumpTableRelocationSlots(&ProtectedRelocationSlots);
@@ -3391,7 +3403,7 @@ void Pipeline::buildLowIR(
     ++FuncCount;
   }
 
-  computeCallRegisterEffects(Img, FuncEntries, NoReturnTargets,
+  computeCallRegisterEffects(Img, FuncEntries, NoReturnTargets, NoReturnCallees,
                              AbsoluteRelocationRoots, CodeOwnerIndex, Result);
 }
 

@@ -914,7 +914,8 @@ public:
         if (CheckExits && EntrySignature) {
           const auto Escapes = [&](const SourceABIValueLocation &Location) {
             if (Location.Kind != SourceABICarrierKind::IntegerRegister &&
-                Location.Kind != SourceABICarrierKind::FloatingRegister)
+                Location.Kind != SourceABICarrierKind::FloatingRegister &&
+                Location.Kind != SourceABICarrierKind::BooleanRegister)
               return false;
             for (unsigned I = 0; I < Location.ValueBytes; ++I)
               if (lookup(Current.Registers, Location.RegisterOffset + I)

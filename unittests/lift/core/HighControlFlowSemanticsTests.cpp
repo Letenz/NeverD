@@ -5933,6 +5933,43 @@ TEST(HighControlFlowSemantics, DebugDeclaredNoReturnCalleeKeepsNoreturn) {
       << Source;
 }
 
+TEST(HighControlFlowSemantics, ProvedNoReturnCalleeIsDeclaredNoreturn) {
+  // if (c) bug_check_wrapper(1); return 0; -- no name list knows the callee,
+  // but the call carries a proof that it never returns, so the statement
+  // writer ends the path there and the declaration must say so too.
+  for (bool NoReturn : {false, true}) {
+    SCOPED_TRACE(NoReturn);
+    HighStmt Check;
+    Check.Kind = StmtKind::Call;
+    Check.Addr = 0x1004;
+    Check.CallExpr = HighExpr::makeCall("bug_check_wrapper", 0x5000,
+                                        {HighExpr::makeConst(1, 8)});
+    Check.CallExpr->DoesNotReturn = NoReturn;
+    HighStmt Test;
+    Test.Kind = StmtKind::If;
+    Test.Addr = 0x1000;
+    Test.Cond = local(0);
+    Test.Body = {Check};
+    HighFunc F;
+    F.Name = "checked";
+    F.Entry = 0x1000;
+    F.ReturnType = NdType::makeInt(8);
+    F.Body = {Test, result(0x1008, HighExpr::makeConst(0, 8))};
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    ASSERT_TRUE(HighCEmitter().emit({F}, Stream, {}));
+    Stream.flush();
+    const size_t Declaration = Source.find("bug_check_wrapper(");
+    ASSERT_NE(Declaration, std::string::npos) << Source;
+    const size_t End = Source.find(";\n", Declaration);
+    ASSERT_NE(End, std::string::npos) << Source;
+    EXPECT_EQ(Source.substr(Declaration, End - Declaration)
+                      .find("__attribute__((noreturn))") != std::string::npos,
+              NoReturn)
+        << Source;
+  }
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAJump) {
   // v = 1; goto X; v = 2; X: return v; -- nothing enters `v = 2`.
   HighFunc F;

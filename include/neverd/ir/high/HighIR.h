@@ -112,6 +112,9 @@ struct HighExpr {
   std::shared_ptr<const SourceCallTypeHint> SourceCallHint;
   Intrinsic IntrinsicId = Intrinsic::None;
   std::vector<MedVar> IntrinsicOutputs;
+  /// The MedIR call never returns: its callee is a routine the name list
+  /// knows or an internal one proved not to return.
+  bool DoesNotReturn = false;
 
   /// Operands plus \ref IndirectTarget.
   template <typename F> void forEachChildExpr(F &&Fn) const {
