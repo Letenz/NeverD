@@ -768,3 +768,25 @@ NEVERD_EMULATION_DOC_PATH(VectorMaskTests, "docs/testing.md")
 NEVERD_EMULATION_DOC_PATH(VectorMaskTests, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(VectorMaskTests, "X64VectorMaskTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(VectorMaskTests, "REX.W")
+
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault,
+                          "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault,
+                          "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(StringComparisonNativeFault,
+                          "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault,
+                           "X64StringComparisonTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault, "Intel")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault, "AMD EPYC 7763")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault, "Hyper-V")
+NEVERD_EMULATION_DOC_TOKEN(StringComparisonNativeFault, "37202522130")
+NEVERD_EMULATION_DOC_PATH(AlignmentPageEvidence, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(AlignmentPageEvidence, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence,
+                           "WindowsAlignmentProcessTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence, "4096")
+NEVERD_EMULATION_DOC_TOKEN(AlignmentPageEvidence, "81")
