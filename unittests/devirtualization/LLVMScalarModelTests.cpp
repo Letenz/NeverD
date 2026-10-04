@@ -6,6 +6,28 @@
 #include "LLVMScalarEquivalenceTest.h"
 
 namespace neverd::analysis::scalar_test {
+TEST(LLVMScalarModel, IntegerProofDoesNotDependOnNativeArchitecture) {
+  Source Sum("define i32 @f(i32 noundef %x, i32 noundef %y) {"
+             " %r = add i32 %x, %y\nret i32 %r }");
+  ASSERT_TRUE(Sum.Module);
+  for (const char *Triple : {"x86_64-linux-gnu", "aarch64-linux-gnu",
+                             "aarch64_be-linux-gnu", "armv7-linux-gnueabihf"}) {
+    SCOPED_TRACE(Triple);
+    Source Encoded(std::string("target triple = \"") + Triple +
+                   "\"\n"
+                   "define i32 @f(i32 noundef %x, i32 noundef %y) {"
+                   " %a = sub i32 %x, 42\n %b = add i32 %y, 42\n"
+                   " %r = add i32 %a, %b\n"
+                   " ret i32 %r }");
+    ASSERT_TRUE(Encoded.Module);
+    auto Before = Encoded.text();
+    auto Result =
+        checkLLVMScalarEquivalence(Encoded.function(), Sum.function());
+    EXPECT_EQ(Result.Status, Status::Proved) << Result.Diagnostic;
+    EXPECT_EQ(Encoded.text(), Before);
+  }
+}
+
 TEST(LLVMScalarModel, IntegerInputsAndResultsPreserveDeclaredWidths) {
   for (unsigned Bits : {1U, 8U, 16U, 32U, 64U}) {
     SCOPED_TRACE(Bits);

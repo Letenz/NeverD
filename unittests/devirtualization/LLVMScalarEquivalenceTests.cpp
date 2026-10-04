@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "LLVMScalarEquivalenceTest.h"
 
+#include "llvm/IR/Instructions.h"
+
 namespace neverd::analysis::scalar_test {
 namespace {
 constexpr char Counted[] = R"(
@@ -186,8 +188,189 @@ TEST(LLVMScalarEquivalence, WorkBudgetsIncludeFailedRefinementAttempts) {
   auto Short = check(Counted, Closed, L);
   EXPECT_EQ(Short.Status, Status::BudgetExceeded);
   EXPECT_EQ(Short.Work, L.MaxWork);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
   L.MaxWork = 0;
   EXPECT_EQ(check(Counted, Closed, L).Status, Status::BudgetExceeded);
+}
+
+TEST(LLVMScalarEquivalence, SelfQueryKeepsCompleteDomainAndExactWorkLimits) {
+  Source Input(Counted);
+  const auto Before = Input.text();
+  auto Query = [&](const LLVMScalarEquivalenceLimits &L = {}) {
+    return checkLLVMScalarEquivalence(Input.function(), Input.function(), L);
+  };
+  const auto Base = Query();
+  ASSERT_EQ(Base.Status, Status::Proved) << Base.Diagnostic;
+  const auto Separate = check(Counted, Counted);
+  ASSERT_EQ(Separate.Status, Status::Proved) << Separate.Diagnostic;
+  EXPECT_EQ(Base.CompletedPartitions, 8U);
+  EXPECT_EQ(Base.ControlBits, Separate.ControlBits);
+  EXPECT_EQ(Base.Attempts, Separate.Attempts);
+  EXPECT_LT(Base.Work, Separate.Work);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = Base.Work;
+  EXPECT_EQ(Query(L).Status, Status::Proved);
+  --L.MaxWork;
+  const auto Short = Query(L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+  EXPECT_EQ(Short.Work, L.MaxWork);
+  EXPECT_LT(Short.CompletedPartitions, Base.CompletedPartitions);
+  EXPECT_EQ(Input.text(), Before);
+}
+
+TEST(LLVMScalarEquivalence, SelfQueryRetainsEveryLocalResourceCeiling) {
+  Source Input(Counted);
+  auto Query = [&](const LLVMScalarEquivalenceLimits &L) {
+    auto R = checkLLVMScalarEquivalence(Input.function(), Input.function(), L);
+    EXPECT_EQ(R.Status, Status::BudgetExceeded);
+    EXPECT_FALSE(R.WorkLimitExceeded);
+  };
+  for (auto Field : {&LLVMScalarEquivalenceLimits::MaxPartitions,
+                     &LLVMScalarEquivalenceLimits::MaxBlockVisits,
+                     &LLVMScalarEquivalenceLimits::MaxSymbolicNodes}) {
+    LLVMScalarEquivalenceLimits L;
+    L.*Field = 0;
+    Query(L);
+  }
+  LLVMScalarEquivalenceLimits L;
+  L.MaxControlBits = 2;
+  Query(L);
+  L = {};
+  L.MaxPartitions = 7;
+  Query(L);
+  for (auto Field : {&LLVMInterpreterModelLimits::MaxInputItems,
+                     &LLVMInterpreterModelLimits::MaxBlocks,
+                     &LLVMInterpreterModelLimits::MaxOperations,
+                     &LLVMInterpreterModelLimits::MaxWork}) {
+    L = {};
+    L.Model.*Field = 0;
+    Query(L);
+  }
+}
+
+TEST(LLVMScalarEquivalence, SelfQueryDoesNotCertifyUndefinedOrUnsupportedCode) {
+  for (const char *IR :
+       {"define i8 @f() { %dead = add nuw i8 255, 1 ret i8 0 }",
+        "define i8 @f(i8 noundef %x) { %v = add nuw i8 %x, 1 ret i8 %v }",
+        "define i8 @f() { ret i8 undef }", "define i8 @f() { ret i8 poison }",
+        "define i8 @f(i8 %x) { ret i8 %x }",
+        "define i8 @f(i8 noundef range(i8 0, 8) %x) { ret i8 %x }",
+        "define i8 @f(i8 noundef %x) { %v = udiv i8 %x, 3 ret i8 %v }",
+        "define i8 @f() { entry: br label %loop loop: br label %loop }"}) {
+    SCOPED_TRACE(IR);
+    Source Input(IR);
+    LLVMScalarEquivalenceLimits L;
+    L.MaxBlockVisits = 4;
+    const auto Self =
+        checkLLVMScalarEquivalence(Input.function(), Input.function(), L);
+    EXPECT_NE(Self.Status, Status::Proved);
+    EXPECT_EQ(Self.Status, check(IR, IR, L).Status);
+  }
+}
+
+TEST(LLVMScalarEquivalence, FunctionIdentityIsNeitherANameNorAPersistentProof) {
+  Source Input("define i8 @f() { %v = add i8 255, 1 ret i8 %v }");
+  auto Query = [&] {
+    return checkLLVMScalarEquivalence(Input.function(), Input.function());
+  };
+  EXPECT_EQ(Query().Status, Status::Proved);
+  auto &Add =
+      llvm::cast<llvm::BinaryOperator>(Input.function().front().front());
+  Add.setHasNoUnsignedWrap(true);
+  EXPECT_EQ(Query().Status, Status::Unproved);
+  Add.setHasNoUnsignedWrap(false);
+  EXPECT_EQ(Query().Status, Status::Proved);
+  Source Other("define i8 @f() { ret i8 1 }");
+  EXPECT_EQ(
+      checkLLVMScalarEquivalence(Input.function(), Other.function()).Status,
+      Status::Unproved);
+}
+
+TEST(LLVMScalarEquivalence, ExactRefusalDoesNotImplyWorkExhaustion) {
+  constexpr char A[] = "define i8 @f() { ret i8 3 }";
+  constexpr char B[] = "define i8 @f() { ret i8 4 }";
+  auto Base = check(A, B);
+  ASSERT_EQ(Base.Status, Status::Unproved);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = Base.Work;
+  auto Exact = check(A, B, L);
+  EXPECT_EQ(Exact.Status, Status::Unproved);
+  EXPECT_FALSE(Exact.WorkLimitExceeded);
+  --L.MaxWork;
+  auto Short = check(A, B, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+
+  constexpr char Loop[] = R"(
+define i8 @f() {
+entry: br label %loop
+loop: br label %loop
+})";
+  L = {};
+  L.MaxBlockVisits = 4;
+  Base = check(Loop, Loop, L);
+  ASSERT_EQ(Base.Status, Status::BudgetExceeded);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  L.MaxWork = Base.Work;
+  Exact = check(Loop, Loop, L);
+  EXPECT_EQ(Exact.Status, Status::BudgetExceeded);
+  EXPECT_FALSE(Exact.WorkLimitExceeded);
+  --L.MaxWork;
+  Short = check(Loop, Loop, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+}
+
+TEST(LLVMScalarEquivalence, CompletedUnknownFactsKeepExactRefusalWork) {
+  constexpr char A[] = "define i32 @f(i32 noundef %x) { ret i32 %x }";
+  constexpr char B[] = R"(
+define i32 @f(i32 noundef %x) {
+ %low = and i32 %x, 255
+ %different = add i32 %x, %low
+ ret i32 %different
+})";
+  auto Base = check(A, B);
+  ASSERT_EQ(Base.Status, Status::Unproved);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = Base.Work;
+  auto Exact = check(A, B, L);
+  EXPECT_EQ(Exact.Status, Status::Unproved);
+  EXPECT_FALSE(Exact.WorkLimitExceeded);
+  --L.MaxWork;
+  auto Short = check(A, B, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+}
+
+TEST(LLVMScalarEquivalence, LocalFactCeilingIsNotGlobalWorkExhaustion) {
+  constexpr char A[] = "define i32 @f(i32 noundef %x) { ret i32 %x }";
+  std::string B = "define i32 @f(i32 noundef %x) {\n";
+  std::string Previous = "%x";
+  for (unsigned I = 0; I < 16; ++I) {
+    auto Suffix = std::to_string(I);
+    B += "%mul" + Suffix + " = mul i32 " + Previous + ", 13\n";
+    B += "%shift" + Suffix + " = lshr i32 " + Previous + ", 5\n";
+    B += "%mix" + Suffix + " = xor i32 %shift" + Suffix + ", %x\n";
+    B += "%value" + Suffix + " = add i32 %mul" + Suffix + ", %mix" + Suffix +
+         "\n";
+    Previous = "%value" + Suffix;
+  }
+  B += "ret i32 " + Previous + "\n}";
+  auto Base = check(A, B);
+  ASSERT_EQ(Base.Status, Status::Unproved);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = Base.Work;
+  auto Exact = check(A, B, L);
+  EXPECT_EQ(Exact.Status, Status::Unproved);
+  EXPECT_FALSE(Exact.WorkLimitExceeded);
+  --L.MaxWork;
+  auto Short = check(A, B, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
 }
 
 TEST(LLVMScalarEquivalence, AllResourceLimitsFailWithoutProof) {
@@ -196,7 +379,9 @@ TEST(LLVMScalarEquivalence, AllResourceLimitsFailWithoutProof) {
                      &LLVMScalarEquivalenceLimits::MaxSymbolicNodes}) {
     LLVMScalarEquivalenceLimits L;
     L.*Field = 0;
-    EXPECT_EQ(check(Counted, Closed, L).Status, Status::BudgetExceeded);
+    auto R = check(Counted, Closed, L);
+    EXPECT_EQ(R.Status, Status::BudgetExceeded);
+    EXPECT_FALSE(R.WorkLimitExceeded);
   }
   LLVMScalarEquivalenceLimits L;
   L.MaxControlBits = 2;
@@ -233,6 +418,57 @@ b: ret i64 %x
   EXPECT_EQ(check(Wide, Wide).Status, Status::BudgetExceeded);
 }
 
+TEST(LLVMScalarEquivalence, ShiftedRangeGuardsKeepAllDataBitsSymbolic) {
+  for (unsigned Width : {8U, 16U, 32U, 64U}) {
+    SCOPED_TRACE(Width);
+    const auto T = "i" + std::to_string(Width);
+    const auto N = std::to_string(Width / 4);
+    const std::string Prefix = "define " + T + " @f(" + T + " noundef %x) {\n";
+    const std::string Part = "%part = lshr " + T + " %x, " + N + "\n";
+    const std::string Tail = " %part, " + N + "\n ret " + T + " %result\n}";
+    auto Safe = Prefix + Part + "%result = shl nuw " + T + Tail;
+    LLVMScalarEquivalenceLimits L;
+    L.MaxControlBits = 0;
+    auto R = check(Safe, Safe, L);
+    EXPECT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+    EXPECT_TRUE(R.ControlBits.empty());
+    EXPECT_EQ(R.CompletedPartitions, 1U);
+    auto Signed = Prefix + Part + "%result = shl nsw " + T + Tail;
+    EXPECT_NE(check(Signed, Signed, L).Status, Status::Proved);
+    auto Unsafe = Prefix + "%part = add " + T + " %x, 0\n" +
+                  "%result = shl nuw " + T + Tail;
+    EXPECT_NE(check(Unsafe, Unsafe, L).Status, Status::Proved);
+  }
+}
+
+TEST(LLVMScalarEquivalence, RightShiftViewsShareTheFullNumericCount) {
+  constexpr char Views[] = R"(
+define i32 @f(i32 noundef %x) {
+ %wide = zext i32 %x to i64
+ %shift = lshr i64 %wide, 8
+ %left = trunc nuw nsw i64 %shift to i32
+ %right = lshr i32 %x, 8
+ %different = icmp ne i32 %left, %right
+ br i1 %different, label %bad, label %done
+bad: ret i32 -1
+done: ret i32 %left
+})";
+  constexpr char Direct[] = R"(
+define i32 @f(i32 noundef %x) {
+ %result = lshr i32 %x, 8
+ ret i32 %result
+})";
+  LLVMScalarEquivalenceLimits L;
+  L.MaxControlBits = 0;
+  auto R = check(Views, Direct, L);
+  EXPECT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+  EXPECT_TRUE(R.ControlBits.empty());
+  EXPECT_EQ(R.CompletedPartitions, 1U);
+  std::string Wrong = Views;
+  Wrong.replace(Wrong.find("lshr i64 %wide, 8"), 17, "lshr i64 %wide, 9");
+  EXPECT_NE(check(Wrong, Direct, L).Status, Status::Proved);
+}
+
 TEST(LLVMScalarEquivalence, SignaturesAndInputContractsMustAgree) {
   const char *Good = "define i32 @f(i32 noundef %x) { ret i32 %x }";
   for (const char *Bad :
@@ -242,5 +478,124 @@ TEST(LLVMScalarEquivalence, SignaturesAndInputContractsMustAgree) {
         "define i32 @f(i64 noundef %x) { ret i32 0 }",
         "define i32 @f(i32 noundef %x, i32 noundef %y) { ret i32 %x }"})
     EXPECT_EQ(check(Good, Bad).Status, Status::Unsupported) << Bad;
+}
+
+namespace {
+constexpr char BoundedProduct[] = R"(
+define i32 @f(i32 noundef %x, i32 noundef %y, i8 noundef %count) {
+entry:
+ %a = and i32 %x, 65535
+ %b = and i32 %y, 255
+ %product = mul nuw nsw i32 %a, %b
+ %n = and i8 %count, 3
+ br label %loop
+loop:
+ %i = phi i8 [0, %entry], [%next, %body]
+ %v = phi i32 [%product, %entry], [%sum, %body]
+ %more = icmp ult i8 %i, %n
+ br i1 %more, label %body, label %exit
+body:
+ %sum = add i32 %v, %x
+ %next = add nuw nsw i8 %i, 1
+ br label %loop
+exit:
+ ret i32 %v
+})";
+constexpr char ClosedProduct[] = R"(
+define i32 @f(i32 noundef %x, i32 noundef %y, i8 noundef %count) {
+ %a = and i32 %x, 65535
+ %b = and i32 %y, 255
+ %product = mul i32 %a, %b
+ %n = and i8 %count, 3
+ %wide = zext i8 %n to i32
+ %delta = mul i32 %wide, %x
+ %result = add i32 %product, %delta
+ ret i32 %result
+})";
+} // namespace
+
+TEST(LLVMScalarEquivalence, BitFactsDischargeGuardsWithoutSplittingDataInputs) {
+  auto R = check(BoundedProduct, ClosedProduct);
+  ASSERT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+  EXPECT_EQ(R.CompletedPartitions, 4U);
+  EXPECT_EQ(R.ControlBits, (std::vector<LLVMScalarControlBit>{{2, 0}, {2, 1}}));
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = R.Work;
+  EXPECT_EQ(check(BoundedProduct, ClosedProduct, L).Status, Status::Proved);
+  --L.MaxWork;
+  auto Short = check(BoundedProduct, ClosedProduct, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_EQ(Short.Work, L.MaxWork);
+
+  std::string Wrong = ClosedProduct;
+  Wrong.replace(Wrong.find("ret i32 %result"), 15,
+                "%last = icmp eq i8 %n, 3\n"
+                "%bad = xor i32 %result, 1\n"
+                "%out = select i1 %last, i32 %bad, i32 %result\n"
+                "ret i32 %out");
+  auto Bad = check(BoundedProduct, Wrong);
+  EXPECT_EQ(Bad.Status, Status::Unproved);
+  EXPECT_EQ(Bad.CompletedPartitions, 3U);
+}
+
+TEST(LLVMScalarEquivalence, BitFactsDoNotAssumePoisonGeneratingAnnotations) {
+  constexpr char Product[] = R"(
+define i32 @f(i32 noundef %x, i32 noundef %y) {
+ %a = and i32 %x, 65535
+ %b = and i32 %y, 255
+ %product = mul nuw nsw i32 %a, %b
+ ret i32 %product
+})";
+  ASSERT_EQ(check(Product, Product).Status, Status::Proved);
+  std::string DeadPoison = Product;
+  DeadPoison.insert(DeadPoison.find("ret i32"), "%dead = add nuw i32 -1, 1\n");
+  auto Bad = check(Product, DeadPoison);
+  EXPECT_EQ(Bad.Status, Status::Unproved);
+  EXPECT_NE(Bad.Diagnostic.find("not defined"), std::string::npos);
+  std::string Unbounded = Product;
+  Unbounded.replace(Unbounded.find("and i32 %x, 65535"), 17, "and i32 %x, -1");
+  EXPECT_NE(check(Unbounded, Unbounded).Status, Status::Proved);
+}
+
+TEST(LLVMScalarEquivalence, ExtensionFactsRetainSymbolicDataAndWideProducts) {
+  constexpr char Extended[] = R"(
+define i64 @f(i32 noundef %x, i32 noundef %y) {
+ %a = and i32 %x, 65535
+ %b = and i32 %y, 255
+ %sum = add nuw nsw i32 %a, %b
+ %left = sext i32 %sum to i64
+ %right = zext i32 %sum to i64
+ %different = icmp ne i64 %left, %right
+ br i1 %different, label %bad, label %good
+bad: ret i64 -1
+good:
+ %v = mul nuw nsw i64 %left, %right
+ ret i64 %v
+})";
+  constexpr char Direct[] = R"(
+define i64 @f(i32 noundef %x, i32 noundef %y) {
+ %a = and i32 %x, 65535
+ %b = and i32 %y, 255
+ %sum = add i32 %a, %b
+ %wide = sext i32 %sum to i64
+ %v = mul i64 %wide, %wide
+ ret i64 %v
+})";
+  auto R = check(Extended, Direct);
+  ASSERT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+  EXPECT_TRUE(R.ControlBits.empty());
+  EXPECT_EQ(R.CompletedPartitions, 1U);
+  LLVMScalarEquivalenceLimits L;
+  L.MaxWork = R.Work;
+  EXPECT_EQ(check(Extended, Direct, L).Status, Status::Proved);
+  --L.MaxWork;
+  auto Short = check(Extended, Direct, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_EQ(Short.CompletedPartitions, 0U);
+  EXPECT_EQ(Short.Work, L.MaxWork);
+  std::string Wrong = Direct;
+  Wrong.replace(Wrong.find("ret i64 %v"), 10,
+                "%bad = xor i64 %v, 1\nret i64 %bad");
+  EXPECT_EQ(check(Extended, Wrong).Status, Status::Unproved);
 }
 } // namespace neverd::analysis::scalar_test

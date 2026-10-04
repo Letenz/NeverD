@@ -1,0 +1,91 @@
+//===- NativeHostProbe.def - Native KVM/WHP setup evidence ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// This standalone fixture establishes host setup, not guest execution.
+#ifdef NEVERD_HOST_VALUE
+NEVERD_HOST_VALUE(ReadyExit, 0)
+NEVERD_HOST_VALUE(FailedExit, 1)
+NEVERD_HOST_VALUE(UnavailableExit, 77)
+NEVERD_HOST_VALUE(X64Architecture, 1)
+NEVERD_HOST_VALUE(ARM64Architecture, 2)
+NEVERD_HOST_VALUE(BuildTimeoutSeconds, 120)
+NEVERD_HOST_VALUE(ProbeTimeoutSeconds, 30)
+// Private addresses belong to this fixture, independent of the runtime map.
+NEVERD_HOST_VALUE(GicDistributor, 0x10000000)
+NEVERD_HOST_VALUE(GicRedistributor, 0x10020000)
+NEVERD_HOST_VALUE(GicITS, 0x10040000)
+NEVERD_HOST_VALUE(GicVirtualTimerPPI, 27)
+NEVERD_HOST_VALUE(GicPerformancePPI, 23)
+#endif
+#ifdef NEVERD_HOST_TEXT
+NEVERD_HOST_TEXT(RecordFormat, "%s\t%s\t%llu\t%llu\n")
+NEVERD_HOST_TEXT(OK, "ok")
+NEVERD_HOST_TEXT(Failed, "failed")
+NEVERD_HOST_TEXT(Unavailable, "unavailable")
+NEVERD_HOST_TEXT(LinuxX64, "x86_64")
+NEVERD_HOST_TEXT(LinuxARM64, "aarch64")
+#endif
+#ifdef NEVERD_HOST_STAGE
+// Scope, operation, phase. Order is the successful probe's exact transcript.
+NEVERD_HOST_STAGE(All, NativeArchitecture, Prepare)
+NEVERD_HOST_STAGE(Kvm, OpenKvm, Prepare)
+NEVERD_HOST_STAGE(Kvm, ApiVersion, Prepare)
+NEVERD_HOST_STAGE(Kvm, GuestDebugCapability, Prepare)
+NEVERD_HOST_STAGE(Kvm, CreateVM, Prepare)
+NEVERD_HOST_STAGE(Kvm, CreateCPU, Prepare)
+NEVERD_HOST_STAGE(KvmARM64, PreferredTarget, Prepare)
+NEVERD_HOST_STAGE(KvmARM64, InitializeCPU, Prepare)
+NEVERD_HOST_STAGE(Kvm, SetGuestDebug, Prepare)
+NEVERD_HOST_STAGE(Kvm, RunMappingSize, Prepare)
+NEVERD_HOST_STAGE(Kvm, CloseCPU, Cleanup)
+NEVERD_HOST_STAGE(Kvm, CloseVM, Cleanup)
+NEVERD_HOST_STAGE(Kvm, CloseKvm, Cleanup)
+NEVERD_HOST_STAGE(Whp, LoadLibrary, Prepare)
+NEVERD_HOST_STAGE(Whp, LibraryExports, Prepare)
+NEVERD_HOST_STAGE(Whp, HypervisorPresent, Prepare)
+NEVERD_HOST_STAGE(WhpARM64, Arm64Support, Prepare)
+NEVERD_HOST_STAGE(Whp, ExtendedExits, Prepare)
+NEVERD_HOST_STAGE(Whp, CreatePartition, Prepare)
+NEVERD_HOST_STAGE(Whp, ProcessorCount, Prepare)
+NEVERD_HOST_STAGE(Whp, ConfigureExits, Prepare)
+NEVERD_HOST_STAGE(WhpARM64, GicLpiBits, Prepare)
+NEVERD_HOST_STAGE(WhpARM64, ConfigureGic, Prepare)
+NEVERD_HOST_STAGE(Whp, SetupPartition, Prepare)
+NEVERD_HOST_STAGE(Whp, CreateVirtualProcessor, Prepare)
+NEVERD_HOST_STAGE(WhpARM64, SetRedistributor, Prepare)
+NEVERD_HOST_STAGE(Whp, DeleteVirtualProcessor, Cleanup)
+NEVERD_HOST_STAGE(Whp, DeletePartition, Cleanup)
+NEVERD_HOST_STAGE(Whp, FreeLibrary, Cleanup)
+#endif
+#ifdef NEVERD_HOST_AVAILABILITY_STAGE
+// Only failed availability checks may produce a skip. Setup errors fail.
+NEVERD_HOST_AVAILABILITY_STAGE(OpenKvm)
+NEVERD_HOST_AVAILABILITY_STAGE(ApiVersion)
+NEVERD_HOST_AVAILABILITY_STAGE(GuestDebugCapability)
+NEVERD_HOST_AVAILABILITY_STAGE(LoadLibrary)
+NEVERD_HOST_AVAILABILITY_STAGE(LibraryExports)
+NEVERD_HOST_AVAILABILITY_STAGE(HypervisorPresent)
+NEVERD_HOST_AVAILABILITY_STAGE(Arm64Support)
+NEVERD_HOST_AVAILABILITY_STAGE(ExtendedExits)
+#endif
+#ifdef NEVERD_HOST_RESOURCE
+NEVERD_HOST_RESOURCE(OpenKvm, CloseKvm)
+NEVERD_HOST_RESOURCE(CreateVM, CloseVM)
+NEVERD_HOST_RESOURCE(CreateCPU, CloseCPU)
+NEVERD_HOST_RESOURCE(LoadLibrary, FreeLibrary)
+NEVERD_HOST_RESOURCE(CreatePartition, DeletePartition)
+NEVERD_HOST_RESOURCE(CreateVirtualProcessor, DeleteVirtualProcessor)
+#endif
+#ifdef NEVERD_HOST_WHP_API
+// A failed LibraryExports record identifies the zero-based export index.
+NEVERD_HOST_WHP_API(WHvGetCapability)
+NEVERD_HOST_WHP_API(WHvCreatePartition)
+NEVERD_HOST_WHP_API(WHvSetPartitionProperty)
+NEVERD_HOST_WHP_API(WHvSetupPartition)
+NEVERD_HOST_WHP_API(WHvCreateVirtualProcessor)
+NEVERD_HOST_WHP_API(WHvSetVirtualProcessorRegisters)
+NEVERD_HOST_WHP_API(WHvDeleteVirtualProcessor)
+NEVERD_HOST_WHP_API(WHvDeletePartition)
+#endif

@@ -9,6 +9,7 @@
 #include "neverd/emulation/ProcessCall.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -20,6 +21,10 @@ struct NativeMemoryRegion {
   /// Initial bytes followed by zero padding. Address and Size are page aligned.
   std::vector<uint8_t> Bytes;
   bool Executable = false;
+  /// Copy this explicit regular file into the region before execution, then
+  /// zero pad. Mutually exclusive with Bytes; guest writes never modify it.
+  /// Relative paths use the caller's working directory. The file must fit Size.
+  std::optional<std::filesystem::path> File;
 };
 struct NativeMemoryRead {
   uint64_t Address = 0, Size = 0;
@@ -29,7 +34,7 @@ struct NativeMemorySnapshot {
   std::vector<uint8_t> Bytes;
 };
 
-/// Android 9 / API 28, little-endian AArch64, one native thread. Function
+/// Android 9 / API 28, little-endian AArch64. Function
 /// arguments are AAPCS64 scalar register/stack values, not process argv.
 /// Explicit inputs never inherit host properties, files, or environment.
 struct AndroidNativeOptions {
@@ -46,6 +51,14 @@ struct AndroidNativeOptions {
   bool Initialize = true;
   /// Retain this many admitted instruction PCs. Zero disables tracing.
   uint64_t TraceLimit = 0;
+  /// One preserves the single-thread contract. Values 2..256 opt into bounded
+  /// cooperative guest threads. Counts all created identities, including the
+  /// entry thread; retired identities are never reused within a workload.
+  uint64_t ThreadLimit = 1;
+  /// Continue scheduling children after the selected entry returns. Otherwise
+  /// stop at that return and report the remaining thread states. Requires
+  /// ThreadLimit > 1; never replenishes execution limits.
+  bool DrainThreads = false;
   /// Exact library names and available function names for the local dlfcn
   /// model. No host files are loaded. Calling an unmodeled function still
   /// stops.
@@ -55,6 +68,16 @@ struct AndroidNativeOptions {
   /// scope or unload them. Absent means unknown (unsupported); empty means
   /// explicitly no providers. No namespace or dependency order is inferred.
   std::optional<std::vector<std::string>> DefaultScope;
+};
+
+/// Model-owned identity and placement, not a public pthread_internal_t layout.
+struct NativeThreadSnapshot {
+  uint64_t ID, Handle, TLS, StackBase, StackSize, GuardSize;
+  bool Finished = false, Detached = false, Retired = false, Waiting = false;
+  std::optional<uint64_t> ReturnValue;
+};
+struct NativeTraceThread {
+  uint64_t Index, ID;
 };
 } // namespace neverd::emulation
 #endif

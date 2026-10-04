@@ -19,10 +19,18 @@ on:
         type: boolean
         default: false
       native_cpu_only:
-        description: 'Run focused native WHP CPU regressions with prebuilt LLVM'
+        description: 'Run focused native CPU regressions with prebuilt LLVM'
         required: true
         type: boolean
         default: false
+      native_cpu_backend:
+        description: 'Native x64 transport for the native_cpu_only profile'
+        required: true
+        type: choice
+        default: whp
+        options:
+          - whp
+          - kvm
       native_driver_tests:
         description: 'Include original driver outcomes in the native_cpu_only profile'
         required: true
@@ -112,6 +120,11 @@ jobs:
           brew install cmake lld ninja
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
+      - name: Prepare current hosted account KVM access
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python3 scripts/prepare_kvm_ci.py --output build-ci/emulation-focused/device-access.json
+
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
         shell: pwsh
@@ -160,6 +173,7 @@ jobs:
             scripts.tests.test_audit_ci_test_inventory \
             scripts.tests.test_audit_ci_test_results \
             scripts.tests.test_run_native_cpu_ci \
+            scripts.tests.test_probe_native_host \
             scripts.tests.test_run_native_cpu_methods \
             scripts.tests.test_first_fatal_snapshots \
             scripts.tests.test_neverd_bench_harness \
@@ -1795,12 +1809,12 @@ jobs:
           PYTHONPATH: pluginsdk/python
 
   native-cpu:
-    name: Native CPU (Windows x64 WHP)
+    name: Native CPU (${{ inputs.native_cpu_backend == 'kvm' && 'Linux x64 KVM' || 'Windows x64 WHP' }})
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_cpu_only }}
-    runs-on: windows-latest
+    runs-on: ${{ inputs.native_cpu_backend == 'kvm' && 'ubuntu-24.04' || 'windows-latest' }}
     timeout-minutes: 30
     env:
-      NEVERD_REQUIRE_NATIVE_WHP: '1'
+      NEVERD_NATIVE_CPU_BACKEND: ${{ inputs.native_cpu_backend }}
       NEVERD_NATIVE_DRIVER_TESTS: ${{ inputs.native_driver_tests && 'ON' || 'OFF' }}
       SCCACHE_GHA_ENABLED: 'true'
     steps:
@@ -1824,20 +1838,52 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install native CPU build tooling
+      - name: Install Windows native CPU build tooling
+        if: ${{ runner.os == 'Windows' }}
         shell: pwsh
         run: choco install ninja --yes --no-progress
 
+      - name: Install Linux native CPU build tooling
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          # Match validated GoogleTest discovery: Ubuntu's CMake 3.28 includes
+          # GetParam() comments in test names for the pinned GoogleTest.
+          python -m pip install cmake==4.2.3
+          cmake --version
+          # The pinned WDK uses 64-bit CR8 intrinsics; Clang 18/19 declare
+          # incompatible signatures. Use the signed upstream LLVM packages.
+          curl --fail --silent --show-error --location \
+            https://apt.llvm.org/llvm-snapshot.gpg.key \
+            --output "$RUNNER_TEMP/neverd-llvm.asc"
+          sudo install -m 0644 "$RUNNER_TEMP/neverd-llvm.asc" \
+            /usr/share/keyrings/neverd-llvm.asc
+          printf '%s\n' \
+            'deb [signed-by=/usr/share/keyrings/neverd-llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' \
+            | sudo tee /etc/apt/sources.list.d/neverd-llvm.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y clang-21 lld-21 ninja-build
+          printf '%s\n' /usr/lib/llvm-21/bin >> "$GITHUB_PATH"
+
       - name: Enable the native CPU MSVC toolchain
+        if: ${{ runner.os == 'Windows' }}
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
+
+      - name: Prepare native KVM device access
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          python scripts/prepare_kvm_ci.py \
+            --output build-ci-native/native-evidence/device-access.json
 
       - name: Configure the native CPU profile
         shell: bash
         run: |
           python -m unittest scripts.tests.test_run_native_cpu_ci \
-            scripts.tests.test_build_wdk_driver_fixtures -q
+            scripts.tests.test_build_wdk_driver_fixtures \
+            scripts.tests.test_probe_native_host -q
           python scripts/check_capabilities.py
           python scripts/check_docs_i18n.py
           python scripts/audit_ci_test_results.py check-tool
@@ -1851,7 +1897,8 @@ jobs:
           cmake -S . -B build-ci-native -G Ninja \
             "${fixture_args[@]}" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl \
+            -DCMAKE_C_COMPILER=${{ inputs.native_cpu_backend == 'kvm' && 'clang' || 'cl' }} \
+            -DCMAKE_CXX_COMPILER=${{ inputs.native_cpu_backend == 'kvm' && 'clang++' || 'cl' }} \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DBUILD_TESTING=ON -DNEVERD_BUILD_SHARED=OFF \
@@ -1871,13 +1918,13 @@ jobs:
           python scripts/run_native_cpu_ci.py \
             --build build-ci-native \
             --evidence build-ci-native/native-evidence \
-            --parallel 4 --require-whp "${driver_args[@]}"
+            --parallel 4 --require-"$NEVERD_NATIVE_CPU_BACKEND" "${driver_args[@]}"
 
       - name: Preserve native CPU evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: native-cpu-windows-x64-whp
+          name: native-cpu-${{ runner.os == 'Windows' && 'windows' || 'linux' }}-x64-${{ inputs.native_cpu_backend }}
           path: |
             build-ci-native/native-evidence/
             build-ci-native/driver-fixtures/build-manifest.json

@@ -22,14 +22,6 @@ NEVERD_KVM_STATE_VALUE(RepeatedSteps, 32)
 NEVERD_KVM_STATE_TEXT(SyncUnavailable,
                       "host lacks the requested KVM synchronized register set")
 #endif
-#ifdef NEVERD_KVM_STATE_SYNC_MODE
-NEVERD_KVM_STATE_SYNC_MODE(0)
-NEVERD_KVM_STATE_SYNC_MODE(KVM_SYNC_X86_REGS)
-NEVERD_KVM_STATE_SYNC_MODE(KVM_SYNC_X86_SREGS)
-NEVERD_KVM_STATE_SYNC_MODE(KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS)
-// An optional capability query failure must retain the original ioctl path.
-NEVERD_KVM_STATE_SYNC_MODE(-1)
-#endif
 #ifdef NEVERD_KVM_STATE_CODE
 NEVERD_KVM_STATE_CODE(Warm, 0x90)
 NEVERD_KVM_STATE_CODE(StoreInteger, 0x48, 0x89, 0x07)
@@ -40,7 +32,36 @@ NEVERD_KVM_STATE_CODE(IncrementVector, 0x66, 0x0f, 0xfc, 0xc1)
 // DIV RCX with a zero divisor must retain its actual CPU exception.
 NEVERD_KVM_STATE_CODE(DivideInteger, 0x48, 0xf7, 0xf1)
 #endif
-#ifdef NEVERD_KVM_STATE_CAPTURE_REQUEST
-NEVERD_KVM_STATE_CAPTURE_REQUEST(KVM_GET_REGS)
-NEVERD_KVM_STATE_CAPTURE_REQUEST(KVM_GET_XSAVE)
+// Names stay independent of host ioctl numbers and GoogleTest tuple rendering.
+#ifdef NEVERD_KVM_STATE_BASE_PARAMETER
+NEVERD_KVM_STATE_BASE_PARAMETER(IntegerRegistersIoctl, false, KVM_GET_REGS, 0)
+NEVERD_KVM_STATE_BASE_PARAMETER(IntegerRegistersQueryFailure, false,
+                                KVM_GET_REGS, -1)
+NEVERD_KVM_STATE_BASE_PARAMETER(IntegerXsaveIoctl, false, KVM_GET_XSAVE, 0)
+NEVERD_KVM_STATE_BASE_PARAMETER(IntegerXsaveQueryFailure, false, KVM_GET_XSAVE,
+                                -1)
+NEVERD_KVM_STATE_BASE_PARAMETER(VectorRegistersIoctl, true, KVM_GET_REGS, 0)
+NEVERD_KVM_STATE_BASE_PARAMETER(VectorRegistersQueryFailure, true, KVM_GET_REGS,
+                                -1)
+NEVERD_KVM_STATE_BASE_PARAMETER(VectorXsaveIoctl, true, KVM_GET_XSAVE, 0)
+NEVERD_KVM_STATE_BASE_PARAMETER(VectorXsaveQueryFailure, true, KVM_GET_XSAVE,
+                                -1)
+#endif
+#ifdef NEVERD_KVM_STATE_SYNC_PARAMETER
+NEVERD_KVM_STATE_SYNC_PARAMETER(IntegerRegistersSyncSpecial, false,
+                                KVM_GET_REGS, KVM_SYNC_X86_SREGS)
+NEVERD_KVM_STATE_SYNC_PARAMETER(IntegerXsaveSyncGeneral, false, KVM_GET_XSAVE,
+                                KVM_SYNC_X86_REGS)
+NEVERD_KVM_STATE_SYNC_PARAMETER(IntegerXsaveSyncSpecial, false, KVM_GET_XSAVE,
+                                KVM_SYNC_X86_SREGS)
+NEVERD_KVM_STATE_SYNC_PARAMETER(IntegerXsaveSyncBoth, false, KVM_GET_XSAVE,
+                                KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS)
+NEVERD_KVM_STATE_SYNC_PARAMETER(VectorRegistersSyncSpecial, true, KVM_GET_REGS,
+                                KVM_SYNC_X86_SREGS)
+NEVERD_KVM_STATE_SYNC_PARAMETER(VectorXsaveSyncGeneral, true, KVM_GET_XSAVE,
+                                KVM_SYNC_X86_REGS)
+NEVERD_KVM_STATE_SYNC_PARAMETER(VectorXsaveSyncSpecial, true, KVM_GET_XSAVE,
+                                KVM_SYNC_X86_SREGS)
+NEVERD_KVM_STATE_SYNC_PARAMETER(VectorXsaveSyncBoth, true, KVM_GET_XSAVE,
+                                KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS)
 #endif

@@ -29,13 +29,15 @@ struct SwiftBooleanProjection {
 namespace swift_boolean_projection_detail {
 inline bool nativeEntry(const BinaryImage &Image, va_t Address,
                         const SourceFunctionTypeHint &Signature) {
+  std::string Error;
+  if (!validateSourceABI(Signature, Error))
+    return false;
   const auto &Returns = getTargetRegInfo(Arch::AArch64).IntReturnRegs;
   const bool ScalarReturn =
       Signature.ReturnType && Signature.ReturnType->Kind == NdTypeKind::Int &&
-      Signature.ReturnType->Size == 8 &&
       Signature.ReturnLocation.Kind == SourceABICarrierKind::IntegerRegister &&
       Signature.ReturnLocation.RegisterOffset == Returns[0] &&
-      Signature.ReturnLocation.ValueBytes == 8 &&
+      Signature.ReturnLocation.ValueBytes == Signature.ReturnType->Size &&
       Signature.ReturnComponents.empty();
   const bool PairReturn =
       Signature.ReturnType &&

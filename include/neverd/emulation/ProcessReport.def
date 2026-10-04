@@ -22,10 +22,33 @@ NEVERD_PROCESS_OPTION_STRINGS(Environment, "environment", Environment)
 NEVERD_PROCESS_REPORT_FIELD(Modules, "modules")
 NEVERD_PROCESS_REPORT_FIELD(Path, "path")
 NEVERD_PROCESS_REPORT_FIELD(Android, "android")
+NEVERD_PROCESS_REPORT_FIELD(LinuxTime, "linux_time")
+NEVERD_PROCESS_REPORT_FIELD(Clocks, "clocks")
+NEVERD_PROCESS_REPORT_FIELD(ClockID, "id")
+NEVERD_PROCESS_REPORT_FIELD(Seconds, "seconds")
+NEVERD_PROCESS_REPORT_FIELD(Nanoseconds, "nanoseconds")
+NEVERD_PROCESS_REPORT_FIELD(Timezone, "timezone")
+NEVERD_PROCESS_REPORT_FIELD(MinutesWest, "minutes_west")
+NEVERD_PROCESS_REPORT_FIELD(DSTTime, "dst_time")
 NEVERD_PROCESS_REPORT_FIELD(EntrySymbol, "entry_symbol")
 NEVERD_PROCESS_REPORT_FIELD(EntryAddress, "entry_address")
 NEVERD_PROCESS_REPORT_FIELD(LoadBias, "load_bias")
 NEVERD_PROCESS_REPORT_FIELD(TraceLimit, "trace_limit")
+NEVERD_PROCESS_REPORT_FIELD(ThreadLimit, "thread_limit")
+NEVERD_PROCESS_REPORT_FIELD(DrainThreads, "drain_threads")
+NEVERD_PROCESS_REPORT_FIELD(Threads, "threads")
+NEVERD_PROCESS_REPORT_FIELD(ThreadID, "thread_id")
+NEVERD_PROCESS_REPORT_FIELD(TraceThreads, "trace_threads")
+NEVERD_PROCESS_REPORT_FIELD(TraceIndex, "trace_index")
+NEVERD_PROCESS_REPORT_FIELD(Handle, "handle")
+NEVERD_PROCESS_REPORT_FIELD(TLS, "tls")
+NEVERD_PROCESS_REPORT_FIELD(StackBase, "stack_base")
+NEVERD_PROCESS_REPORT_FIELD(StackBytes, "stack_size")
+NEVERD_PROCESS_REPORT_FIELD(GuardSize, "guard_size")
+NEVERD_PROCESS_REPORT_FIELD(Finished, "finished")
+NEVERD_PROCESS_REPORT_FIELD(Detached, "detached")
+NEVERD_PROCESS_REPORT_FIELD(Retired, "retired")
+NEVERD_PROCESS_REPORT_FIELD(Waiting, "waiting")
 NEVERD_PROCESS_REPORT_FIELD(Initialize, "initialize")
 NEVERD_PROCESS_REPORT_FIELD(Properties, "properties")
 NEVERD_PROCESS_REPORT_FIELD(Libraries, "libraries")
@@ -68,6 +91,8 @@ NEVERD_PROCESS_REPORT_FIELD(Address, "address")
 NEVERD_PROCESS_REPORT_FIELD(Size, "size")
 NEVERD_PROCESS_REPORT_FIELD(Access, "access")
 NEVERD_PROCESS_REPORT_FIELD(Interrupt, "interrupt")
+NEVERD_PROCESS_REPORT_FIELD(ErrorCode, "error_code")
+NEVERD_PROCESS_REPORT_FIELD(Cause, "cause")
 #endif
 #ifdef NEVERD_PROCESS_REPORT_LIMIT
 NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
@@ -112,10 +137,10 @@ NEVERD_PROCESS_CLI_STRING(
     "ios-simulator-macho64-v1")
 NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
 NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
-NEVERD_PROCESS_CLI_STRING(
-    OptionsHelp,
-    "Options JSON: backend, resource limits, "
-    "arguments/environment, Android native or Windows module options")
+NEVERD_PROCESS_CLI_STRING(OptionsHelp,
+                          "Options JSON: backend, resource limits, "
+                          "arguments/environment, Linux clocks, Android native "
+                          "or Windows module options")
 NEVERD_PROCESS_CLI_STRING(OptionsValue, "json")
 #endif
 #ifdef NEVERD_PROCESS_CLI_STATUS
@@ -126,7 +151,12 @@ NEVERD_PROCESS_CLI_STATUS(Incomplete, 3)
 #endif
 
 #ifdef NEVERD_PROCESS_REPORT_TEXT
+NEVERD_PROCESS_REPORT_TEXT(AndroidOptions, "invalid Android native option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsOptions, "invalid Windows process option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsProfile,
                            "Windows options require windows-pe64-v1")
+NEVERD_PROCESS_REPORT_TEXT(LinuxTimeOptions, "invalid linux_time option: ")
+NEVERD_PROCESS_REPORT_TEXT(
+    LinuxTimeProfile,
+    "linux_time requires a Linux ELF64 or Android native profile")
 #endif

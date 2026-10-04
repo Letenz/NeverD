@@ -78,6 +78,23 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## 明示的なゲストクロック
+
+省略可能な `linux_time` は、Linux システムコールと Android Bionic に固定のクロック入力を与えます。ホスト時刻の読み取り、命令実行に伴う時刻の進行、既定時刻の推測は行いません。
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+静的クロック ID 0–9 と 11 に対応します。各クロックは独立しており、省略した値は未知のままです。重複または未知の ID は拒否します。秒は符号付き 64 ビット、ナノ秒は `[0, 1000000000)` です。JSON 整数は `±9007199254740991` 以内に制限し、十進文字列では全 64 ビット範囲を保持します。タイムゾーンのフィールドは符号付き 32 ビットです。C++ では `ProcessOptions::LinuxTime` を使い、他の OS プロファイルでは拒否します。
+
+`clock_gettime`、`gettimeofday`、x64 の `time` が入力を共有します。入力の欠落、動的クロック、未モデル化の部分書き込みでは明示的に停止し、完了済みの書き込みは保持します。時刻調整、スリープ、実機クロックは未対応です。書き込み順、エラー、ポインタの扱いは[クロック契約の詳細](../process-emulation.md#explicit-guest-clocks)を参照してください。
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 プロファイル
@@ -116,6 +133,10 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 `WindowsSystemModules` は両 ISA 向けに `ntdll.dll`、`kernelbase.dll`、`kernel32.dll` の有界な PE64 モデルイメージを構築します。ASCII の `GetModuleHandleA` / [`GetModuleHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlew)、`LoadLibraryA` / `LoadLibraryW`、[`GetProcAddress`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress) はそのマップ済みベースを共有し、PEB/LDR と `MEM_IMAGE` も同じイメージを示します。静的インポート、名前検索、ゲスト DLL の転送は同じ API ゲートとエクスポート解決器を使います。提供元は常駐し、ゲスト初期化コールバックを持たず、通常のゲスト DLL をすべて解放すればエントリから復帰できます。ヘッダーやエクスポートメタデータの変更で検索を停止します。未対応のシステムエクスポート名と非ゼロ序数は明示的に停止し、対応名の大小文字違いと空名はエラー 127、NULL 検索は 87 を返します。生成バイトとアドレスはモデル方針であり、Windows DLL の版別配置、実際の序数、提供元間の別名は再構築しません。`WindowsSystemTests.cpp` は独自 x64/ARM64 EXE をネイティブ Windows と比較し、初期スレッドの復帰を独立して 8 回観測します。
 
 `WindowsProcessExceptions` は同じ CPU とプロセス予算で `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler`、`RaiseException` を実装します。順序付きハンドラーは登録・削除、入れ子の例外、モデル化 API、DLL 読み込み、プロセス終了を扱えます。x64/ARM64 のデータアクセス違反と x64 の整数除算例外は、ゲストが変更した `CONTEXT` の検証後に再開できます。汎用レジスター、SIMD、対応する FP 状態を保持し、ソフトウェア例外はモデル提供元内の実際の return 命令から再開します。保持する登録は 128 件、入れ子は 16 フレームまでです。不正な処置、例外ポインターの変更、未対応フィールド、上限超過は明示的に失敗します。ARM64 のフレームベースの SEH／アンワインド、デバッガー配送、実行／ガードページ例外は未対応です。`WindowsExceptionTests.cpp` は独自 EXE／DLL をネイティブ Windows と比較します。ARM64 KVM/WHP の実機証拠は未取得です。 [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler), [RemoveVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredexceptionhandler), [RaiseException](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-raiseexception), [CONTEXT x64](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-context), [ARM64_NT_CONTEXT](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-arm64_nt_context). ソフトウェア例外レコードには `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`）が付き、呼び出し元の継続不可フラグとは個別に扱います。元の Windows 実行ファイルでソフトウェア例外とハードウェア例外のフラグ値を厳密に照合します。 [EXCEPTION_RECORD](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-exception_record).
+
+`WindowsProcessContext` は各ディスパッチフレームの発生元を保持します。対応する x64 データアクセス／除算フォルトでは `CONTEXT.EFlags` に RF（`0x10000`）を示し、アクセス違反コードを含むソフトウェアの `RaiseException` では現在のコンテキストを保持します。発生元は VEH/VCH と SEH の検索／巻き戻しを通じて維持されます。有効な継続では RF を除いた論理 CPU フラグを復元し、ゲストによる RF の変更は状態公開前に拒否します。この限定プロファイルは命令ブレークポイントやゲストによる RF 制御を扱いません。`WindowsExceptionTests.cpp` は保存記録、復元、拒否時の CPU／RAM 不変性を確認します。
+
+Windows ring3 は独立したネイティブ観測に従い、checked x64 の `operand_alignment` 障害をパラメーター `[read, UINT64_MAX]` の `STATUS_ACCESS_VIOLATION` に変換します。ストア命令も同じです。原因は CPU 層が提供し、Windows はベクトル 13 から推測したり再デコードしたりしません。`WindowsAlignmentProcessTests.cpp` は元の PE 命令で 72 障害シナリオと 9 アドレス修復再試行（`72 + 9`）を実行し、PC、RF、XMM、RAM を確認します。未分類または不整合な障害は拒否します。プロセスとドライバーの障害レポートは nullable な `cause` と 16 進の `error_code` を保持し、欠落とゼロを区別します。この配送は checked x64 ユーザープロファイルに適用されます。
 
 `AddVectoredContinueHandler` と `RemoveVectoredContinueHandler` は独立した順序付きリストを管理し、例外ハンドラーと保持登録数 128 の上限を共有します。ベクター例外ハンドラーが実行再開を受け入れると、継続ハンドラーは同じ変更可能な例外レコードと `CONTEXT` を参照します。入れ子の例外や DLL 通知を含め、最終コンテキスト検証は継続コールバックの終了後に行います。異なる種類のハンドラーのハンドルは削除できません。`WindowsContinuationTests.cpp` は独自 EXE の順序、早期終了、登録変更、コンテキスト修復、入れ子の配送、ローダーコールバック、プロセス終了をネイティブ Windows と比較します。検証済みの Windows x64 ベクター処理経路は `EXCEPTION_NONCONTINUABLE` が設定されていても実行再開を許可しますが、フレームベースの SEH の動作を証明するものではありません。ネイティブ ARM64 実行は未検証です。 [AddVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredcontinuehandler), [RemoveVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredcontinuehandler).
 

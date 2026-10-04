@@ -2,6 +2,8 @@ add_neverd_unittest(NeverDHvfTests
   HvfTests.cpp
   HvfExecutorTests.cpp
   HvfIntelDeadlineTests.cpp
+  HvfOwnerThreadTests.cpp
+  HvfIntelOwnerTests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU)
 
@@ -79,6 +81,11 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64StringComparisonTests.cpp
   X64DataTests.cpp
   X64PackedIntegerTests.cpp
+  X64PackedShiftTests.cpp
+  X64VectorMaskTests.cpp
+  X64ShuffleTests.cpp
+  X64PartialMoveTests.cpp
+  X64IntegerFloatTests.cpp
   X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
@@ -105,6 +112,7 @@ add_neverd_unittest(NeverDX64IntegerTests
 
 add_neverd_unittest(NeverDX64ExceptionTests
   X64ExceptionTests.cpp
+  X64AlignmentTests.cpp
   X64DivisionTests.cpp
   X64StateTransitionTests.cpp
   NO_PRETTY_VALUES
@@ -149,9 +157,15 @@ target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/
 include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
+  AndroidMemoryTests.cpp
   AndroidTokenTests.cpp
   AndroidMutexTests.cpp
+  AndroidThreadAttributeTests.cpp
+  AndroidThreadTests.cpp
+  AndroidTimeTests.cpp
   AndroidSyscallTests.cpp
+  AndroidFormattingTests.cpp
+  AndroidFinalizerTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
@@ -170,6 +184,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsHeapTests.cpp
   WindowsSystemTests.cpp
   WindowsExceptionTests.cpp
+  WindowsAlignmentProcessTests.cpp
   WindowsContinuationTests.cpp
   WindowsSEHTests.cpp
   WindowsContextTests.cpp

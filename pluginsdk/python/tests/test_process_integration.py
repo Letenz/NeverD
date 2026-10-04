@@ -10,11 +10,293 @@ import ctypes
 import json
 import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_guest_threads_keep_identity_and_named_imports(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for optimization in ("O0", "O2"):
+            for closed in (False, True):
+                options = {"backend": "unicorn", "instruction_quantum": 7, "android": {
+                    "entry_symbol": "threads_dynamic", "thread_limit": 4, "trace_limit": 1000,
+                    "arguments": [0x20000000, int(closed)], "initialize": False,
+                    "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 64}],
+                    "libraries": {"libthread-model.so": ["pthread_create", "pthread_join"]},
+                }}
+                result = session.emulate_process(str(Path(fixtures) / f"threads-{optimization}-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service" if closed else "returned",
+                                 result["diagnostic"])
+                android = result["android"]
+                self.assertEqual(len(android["threads"]), 1 if closed else 2)
+                names = ("pthread_create",) if closed else ("pthread_create", "pthread_join")
+                for name in names:
+                    lookup = next(e for e in android["native_calls"] if e["name"] == "dlsym" and e["symbol"] == name)
+                    call = next(e for e in android["native_calls"] if e["name"] == name)
+                    self.assertEqual(call["thread_id"], 1000)
+                    self.assertEqual(call["pc"], lookup["result"])
+                    self.assertEqual(call["library"], "libthread-model.so")
+                    self.assertEqual(call["result"], None if closed else "0")
+                if not closed:
+                    child = android["threads"][1]
+                    self.assertEqual(child["thread_id"], 1001)
+                    self.assertTrue(child["finished"] and child["retired"])
+                    self.assertEqual({span["thread_id"] for span in android["trace_threads"]}, {1000, 1001})
+                    memory = bytes.fromhex(android["memory"][0]["bytes_hex"])
+                    self.assertEqual(int.from_bytes(memory[32:40], "little"), 0x1234567800000042)
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
+    def test_android_thread_attributes_keep_bytes_and_dynamic_names(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for optimization in ("O0", "O2"):
+            for closed in (False, True):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": "thread_attribute_dynamic", "arguments": [0x20000000, int(closed)],
+                    "initialize": False, "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 80}],
+                    "libraries": {"libthread-model.so": ["pthread_attr_init", "pthread_attr_getstacksize"]},
+                }}
+                result = session.emulate_process(
+                    str(Path(fixtures) / f"thread-attributes-{optimization}-relr.so"),
+                    "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service" if closed else "returned",
+                                 result["diagnostic"])
+                events = result["android"]["native_calls"]
+                names = ("pthread_attr_init",) if closed else ("pthread_attr_init", "pthread_attr_getstacksize")
+                for name in names:
+                    lookup = next(e for e in events if e["name"] == "dlsym" and e["symbol"] == name)
+                    call = next(e for e in events if e["name"] == name)
+                    self.assertEqual(call["library"], "libthread-model.so")
+                    self.assertEqual(call["pc"], lookup["result"])
+                    self.assertEqual(call["result"], None if closed else "0")
+                memory = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+                expected = bytearray([0xa5] * 56)
+                expected[:4] = bytes(4)
+                expected[8:40] = bytes(32)
+                expected[16:24] = (0xfc000).to_bytes(8, "little")
+                expected[24:32] = (4096).to_bytes(8, "little")
+                self.assertEqual(memory[16:], bytes(64) if closed else (0xfc000).to_bytes(8, "little") + expected)
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
+    def test_android_finalizers_execute_guest_callbacks(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for optimization in ("O0", "O2"):
+            for closed in (False, True):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": "cxa_dynamic", "arguments": [0x20000000, int(closed)],
+                    "initialize": False, "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 256}],
+                    "libraries": {"libfinalize-model.so": ["__cxa_atexit", "__cxa_finalize"]},
+                }}
+                result = session.emulate_process(str(Path(fixtures) / f"finalizers-{optimization}-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service" if closed else "returned",
+                                 result["diagnostic"])
+                calls = result["android"]["native_calls"]
+                lookup = next(e for e in calls if e["name"] == "dlsym" and e["symbol"] == "__cxa_finalize")
+                call = next(e for e in calls if e["name"] == "__cxa_finalize")
+                self.assertEqual(call["library"], "libfinalize-model.so")
+                self.assertEqual(call["pc"], lookup["result"])
+                self.assertEqual(call["result"], None if closed else "0")
+                if not closed:
+                    self.assertEqual(int(result["return_value"], 16), 73)
+                expected = bytearray(256)
+                if not closed:
+                    for offset, value in ((0, 1), (48, 1000), (64, 0x100000009)):
+                        expected[offset:offset + 8] = value.to_bytes(8, "little")
+                self.assertEqual(bytes.fromhex(result["android"]["memory"][0]["bytes_hex"]), expected)
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
+    def test_android_formatting_uses_guest_variadic_calls(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for optimization in ("O0", "O2"):
+            for closed in (False, True):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": "format_dynamic", "arguments": [0x20000000, int(closed)],
+                    "initialize": False, "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 64}],
+                    "libraries": {"libformat-model.so": ["snprintf"]},
+                }}
+                result = session.emulate_process(str(Path(fixtures) / f"format-{optimization}-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service" if closed else "returned",
+                                 result["diagnostic"])
+                calls = result["android"]["native_calls"]
+                lookup = next(e for e in calls if e["name"] == "dlsym")
+                call = next(e for e in calls if e["name"] == "snprintf")
+                self.assertEqual(call["library"], "libformat-model.so")
+                self.assertEqual(call["pc"], lookup["result"])
+                self.assertEqual(call["result"], None if closed else "12")
+                if not closed:
+                    self.assertEqual(int(result["return_value"], 16), 18)
+                expected = bytes(64) if closed else b"symbol=0x10000000a" + bytes(46)
+                self.assertEqual(bytes.fromhex(result["android"]["memory"][0]["bytes_hex"]), expected)
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
+    def test_android_local_memory_input_exceeds_json_limit(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android native fixtures are not configured")
+        from neverd_plugin import NeverDError, Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        image = str(Path(fixtures) / "relr.so")
+        with TemporaryDirectory(prefix="neverd-memory-") as directory:
+            path = Path(directory) / "input-数据.bin"
+            source = bytes((i * 37 + (i >> 8)) % 256 for i in range(65539))
+            path.write_bytes(source)
+            expected = 14695981039346656037
+            whole = len(source) // 8 * 8
+            for i in range(0, whole, 8):
+                word = int.from_bytes(source[i:i + 8], "little")
+                expected = ((expected ^ word) * 1099511628211) % (1 << 64)
+            for b in source[whole:]:
+                expected = ((expected ^ b) * 1099511628211) % (1 << 64)
+            region = {"address": 0x20000000, "size": 18 * 4096, "path": str(path)}
+            options = {"backend": "unicorn", "instruction_limit": 1000000,
+                       "timeout_microseconds": 20000000, "android": {
+                "entry_symbol": "inspect_memory_input",
+                "arguments": [0x20000000, len(source)], "memory": [region],
+                "read_memory": [{"address": 0x20000000, "size": 18 * 4096}],
+            }}
+            request = json.dumps(options)
+            self.assertLess(len(request), 65536)
+            result = session.emulate_process(image, "android-aarch64-api28-v1", request)
+            self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+            self.assertEqual(result["return_value"], format(expected, "x"))
+            actual = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+            mutated = bytes([source[0] ^ 255]) + source[1:] + bytes([165])
+            self.assertEqual(actual, mutated.ljust(region["size"], b"\0"))
+            self.assertEqual(path.read_bytes(), source)
+            region["size"] = 4096
+            with self.assertRaisesRegex(NeverDError, "file exceeds its region"):
+                session.emulate_process(image, "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(path.read_bytes(), source)
+
+    def test_explicit_clocks_share_values_and_dynamic_api_names(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android native fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        options = {"backend": "unicorn", "linux_time": {"clocks": [
+            {"id": 0, "seconds": "4294967297", "nanoseconds": 987654321},
+            {"id": 1, "seconds": 123, "nanoseconds": 456789}]}, "android": {
+                "entry_symbol": "time_dynamic", "initialize": False,
+                "arguments": [0x20000000, 0],
+                "memory": [{"address": 0x20000000, "size": 4096}],
+                "read_memory": [{"address": 0x20000000, "size": 40}],
+                "libraries": {"libclock-model.so": ["time", "clock_gettime", "gettimeofday"]}}}
+        path = str(Path(fixtures) / "time-O2-relr.so")
+        result = session.emulate_process(path, "android-aarch64-api28-v1", json.dumps(options))
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(result["return_value"], "0")
+        calls = result["android"]["native_calls"]
+        for name in ("time", "clock_gettime", "gettimeofday"):
+            lookup = next(c for c in calls if c["name"] == "dlsym" and c["symbol"] == name)
+            call = next(c for c in calls if c["name"] == name)
+            self.assertEqual(call["pc"], lookup["result"])
+            self.assertEqual(call["library"], "libclock-model.so")
+        values = [4294967297, 123, 456789, 4294967297, 987654]
+        expected = b"".join(v.to_bytes(8, "little") for v in values)
+        self.assertEqual(bytes.fromhex(result["android"]["memory"][0]["bytes_hex"]), expected)
+        del options["linux_time"]
+        result = session.emulate_process(path, "android-aarch64-api28-v1", json.dumps(options))
+        self.assertEqual(result["stop_reason"], "unsupported_service")
+        self.assertIsNone(result["android"]["native_calls"][-1]["result"])
+        self.assertIn("no explicit linux_time input", result["diagnostic"])
+
     def test_darwin_profiles_preserve_bsd_errors_and_platform_identity(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

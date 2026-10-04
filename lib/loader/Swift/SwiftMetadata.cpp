@@ -269,6 +269,68 @@ const ObjCClass *reflectionClassRecord(const BinaryImage &Image, va_t Address) {
     return nullptr;
   return Result;
 }
+// One declaration owner for fixed-storage queries and runtime-offset receiver
+// paths. Reading or freezing an offset remains the individual caller's job.
+std::optional<ReflectionNode>
+reflectionFieldOffsetType(const BinaryImage &Image,
+                          const SwiftObjCClassIdentity &Identity,
+                          const ObjCIvar &Ivar) {
+  const Symbol *Symbol = nullptr;
+  for (const auto &S : Image.Symbols)
+    if (S.Addr == Ivar.OffsetAddress) {
+      if (Symbol || S.IsFunc || (S.Size && S.Size != 8))
+        return std::nullopt;
+      Symbol = &S;
+    }
+  if (!Symbol)
+    return std::nullopt;
+  for (const auto &S : Image.Symbols)
+    if (&S != Symbol && (S.Name == Symbol->Name ||
+                         (S.Addr <= Ivar.OffsetAddress
+                              ? S.Size && Ivar.OffsetAddress - S.Addr < S.Size
+                              : S.Addr - Ivar.OffsetAddress < 8)))
+      return std::nullopt;
+  for (const auto &Export : Image.Exports)
+    if (Export.Addr >= Ivar.OffsetAddress &&
+        Export.Addr - Ivar.OffsetAddress < 8 &&
+        (Export.Addr != Ivar.OffsetAddress || Export.Name != Symbol->Name))
+      return std::nullopt;
+  auto Mangled = llvm::StringRef(Symbol->Name);
+  Mangled.consume_front("_");
+  const auto Tree = reflectionTree(Mangled);
+  if (!Tree || !reflectionShape(*Tree, "Global", 1) ||
+      !reflectionShape(Tree->Children[0], "FieldOffset", 2))
+    return std::nullopt;
+  const auto &F = Tree->Children[0];
+  if (F.Children[0].Kind != "Directness" || F.Children[0].Text ||
+      F.Children[0].Index != 0 || !F.Children[0].Children.empty() ||
+      !reflectionShape(F.Children[1], "Variable", 3))
+    return std::nullopt;
+  const auto &V = F.Children[1];
+  const auto &Member = V.Children[1];
+  const bool Named =
+      reflectionText(Member, "Identifier", Ivar.Name) ||
+      (reflectionShape(Member, "PrivateDeclName", 2) &&
+       Member.Children[0].Kind == "Identifier" && Member.Children[0].Text &&
+       !Member.Children[0].Text->empty() && !Member.Children[0].Index &&
+       Member.Children[0].Children.empty() &&
+       reflectionText(Member.Children[1], "Identifier", Ivar.Name));
+  if (!Named ||
+      !reflectionClass(V.Children[0], Identity.Module, Identity.Name) ||
+      !reflectionShape(V.Children[2], "Type", 1))
+    return std::nullopt;
+  return V.Children[2].Children[0];
+}
+
+bool reflectionNodesEqual(const ReflectionNode &A, const ReflectionNode &B) {
+  if (A.Kind != B.Kind || A.Text != B.Text || A.Index != B.Index ||
+      A.Children.size() != B.Children.size())
+    return false;
+  for (size_t I = 0; I < A.Children.size(); ++I)
+    if (!reflectionNodesEqual(A.Children[I], B.Children[I]))
+      return false;
+  return true;
+}
 } // namespace
 
 /// The runtime also finds stable internal type names in registered type
@@ -717,6 +779,34 @@ swiftObjCClassIdentity(const BinaryImage &Image, va_t Metadata) {
       !reflectionClass(Tree->Children[0].Children[0].Children[0], *Module,
                        *Name))
     return std::nullopt;
+  // A native Swift root has no Swift superclass descriptor, but Objective-C
+  // records name the runtime's SwiftObject base. Its exact strong import
+  // authenticates only this declaration, not a local superclass address or
+  // a stable instance/field layout.
+  if (!Class->RootClass && !Class->SuperclassAddress &&
+      Class->SuperclassName == "_TtCs12_SwiftObject") {
+    const auto Bind = Image.DyldBindSlots.find(Metadata + 8);
+    constexpr llvm::StringLiteral Provider =
+        "/usr/lib/swift/libswiftCore.dylib";
+    const auto RO = Data.classRO(Metadata);
+    if (Word(20) || Class->InheritanceStatus != "resolved" ||
+        !Image.MachOTwoLevelNamespace ||
+        !isInitialImageImportSlot(Image, Metadata + 8) ||
+        Bind == Image.DyldBindSlots.end() || Bind->second.Module != Provider ||
+        Bind->second.Name != "_OBJC_CLASS_$__TtCs12_SwiftObject" ||
+        !llvm::is_contained(Image.DynInfo.NeededLibs, Provider) ||
+        Class->InstanceStart < 16 ||
+        Class->InstanceSize < Class->InstanceStart || !RO ||
+        !readInitialImageBytes(Image, *RO, 12) ||
+        !readInitialImageBytes(Image, Metadata + 40, 24) ||
+        Data.u32(*RO + 4) != Class->InstanceStart ||
+        Data.u32(*RO + 8) != Class->InstanceSize ||
+        Data.u32(Metadata + 44) != 0 ||
+        Data.u32(Metadata + 48) != Class->InstanceSize)
+      return std::nullopt;
+    return SwiftObjCClassIdentity{*Module, *Name, Class->Name, Metadata,
+                                  *Descriptor};
+  }
   const auto Super = Class->RootClass
                          ? Data.localPointer(Metadata + 8)
                          : readInitialImagePointer(Image, Metadata + 8);
@@ -739,6 +829,111 @@ swiftObjCClassIdentity(const BinaryImage &Image, va_t Metadata) {
   }
   return SwiftObjCClassIdentity{*Module, *Name, Class->Name, Metadata,
                                 *Descriptor};
+}
+
+std::optional<SwiftFixedRootClassStorage>
+swiftFixedRootClassStorage(const BinaryImage &Image, va_t Metadata) {
+  const auto Identity = swiftObjCClassIdentity(Image, Metadata);
+  const auto *Class = reflectionClassRecord(Image, Metadata);
+  if (!Identity || !Class || Class->RootClass || Class->SuperclassAddress ||
+      Class->SuperclassName != "_TtCs12_SwiftObject" ||
+      Class->IvarStatus != "recovered" || Class->InstanceStart != 16 ||
+      Class->InstanceSize < 16 || Class->InstanceSize > 4096 ||
+      !reflectionRecordStorage(Image, Metadata, 80))
+    return std::nullopt;
+  const auto Registered =
+      swiftLocalRegisteredNominalType(Image, Identity->Descriptor);
+  const auto RegisteredTree =
+      Registered ? reflectionTree("$s" + *Registered) : std::nullopt;
+  if (!RegisteredTree || !reflectionShape(*RegisteredTree, "Global", 1) ||
+      !reflectionClass(RegisteredTree->Children[0], Identity->Module,
+                       Identity->Name))
+    return std::nullopt;
+  objc::RuntimeData Data(Image);
+  const va_t D = Identity->Descriptor;
+  const auto Count = Data.u32(D + 36), Vector = Data.u32(D + 40);
+  const auto Fields = reflectionRelative(Image, D + 16);
+  const auto RO = Data.classRO(Metadata);
+  const auto Ivars =
+      RO ? readInitialImagePointer(Image, *RO + 48) : std::nullopt;
+  if (!Count || !*Count || *Count > 32 || !Vector || *Vector != 10 ||
+      Data.u32(D + 28).value_or(0) < 10 + *Count ||
+      Data.u32(D + 32) != Data.u32(D + 28).value_or(0) - 10 || !Fields || !RO ||
+      !Ivars || Class->Ivars.size() != *Count ||
+      !reflectionRecordStorage(Image, *RO, 72) ||
+      !reflectionRecordStorage(Image, *Ivars, 8 + *Count * 32) ||
+      Data.u32(Metadata + 40) != 2 || Data.u32(Metadata + 52) != 7 ||
+      !reflectionRecordBytes(Image, *Fields, 16 + *Count * 12) ||
+      Data.u32(*Fields + 8) != ((12u << 16) | 1u) ||
+      Data.u32(*Fields + 12) != *Count || Data.u32(*Fields + 4) != 0 ||
+      !readInitialImageBytes(Image, *Ivars, 8) || Data.u32(*Ivars) != 32 ||
+      Data.u32(*Ivars + 4) != *Count)
+    return std::nullopt;
+  const auto SelfType = reflectionRelative(Image, *Fields);
+  const auto Offsets = readInitialImageBytes(
+      Image, Metadata + uint64_t(*Vector) * 8, *Count * 8);
+  if (!SelfType || reflectionContext(Image, *SelfType) != D || !Offsets)
+    return std::nullopt;
+  SwiftFixedRootClassStorage Result{*Identity, Class->InstanceSize, 8, {}};
+  uint32_t End = 16;
+  std::set<std::string> Names;
+  std::set<va_t> Slots;
+  for (uint32_t I = 0; I < *Count; ++I) {
+    const va_t Record = *Fields + 16 + uint64_t(I) * 12;
+    const auto &Ivar = Class->Ivars[I];
+    const auto NameAddress = reflectionRelative(Image, Record + 8);
+    const auto TypeAddress = reflectionRelative(Image, Record + 4);
+    const auto Name =
+        NameAddress ? reflectionString(Image, *NameAddress) : std::nullopt;
+    const auto Type =
+        TypeAddress ? reflectionString(Image, *TypeAddress) : std::nullopt;
+    if (!Name || !Type || *Name != Ivar.Name ||
+        !reflectionRecordStorage(Image, *NameAddress, Name->size() + 1, true) ||
+        !reflectionRecordStorage(Image, *TypeAddress, Type->size() + 1, true) ||
+        !Names.insert(*Name).second ||
+        !Slots.insert(Ivar.OffsetAddress).second ||
+        (Data.u32(Record).value_or(~2u) & ~2u))
+      return std::nullopt;
+    uint32_t Width = 0, Alignment = 0;
+    if (*Type == "SSSg" || *Type == "SSSgSg") {
+      Width = 16;
+      Alignment = 8;
+    } else if (*Type == "SbSg") {
+      Width = Alignment = 1;
+    } else
+      return std::nullopt;
+    const auto Offset = readImmutableImageIvarOffset(Image, Ivar.OffsetAddress);
+    const auto Ref = Image.ObjCSourceReferences.find(Ivar.OffsetAddress);
+    const auto RawName =
+        readInitialImagePointer(Image, Ivar.MetadataAddress + 8);
+    const auto RawType =
+        readInitialImagePointer(Image, Ivar.MetadataAddress + 16);
+    const auto Declared = reflectionFieldOffsetType(Image, *Identity, Ivar);
+    const auto Reflected = reflectionTree("$s" + *Type);
+    const uint32_t ExpectedOffset = (End + Alignment - 1) & ~(Alignment - 1);
+    if (!Offset || *Offset != ExpectedOffset || !Ivar.Offset ||
+        *Ivar.Offset != *Offset || Ivar.Size != Width ||
+        Ivar.Alignment != Alignment || !Ivar.TypeEncoding.empty() ||
+        Ivar.MetadataAddress != *Ivars + 8 + uint64_t(I) * 32 ||
+        readInitialImagePointer(Image, Ivar.MetadataAddress) !=
+            Ivar.OffsetAddress ||
+        !RawName || reflectionString(Image, *RawName) != Name || !RawType ||
+        !readImmutableImageBytes(Image, *RawType, 1) ||
+        Data.string(*RawType, true) != std::optional<std::string>("") ||
+        !readInitialImageBytes(Image, Ivar.MetadataAddress + 24, 8) ||
+        Data.u32(Ivar.MetadataAddress + 24) != (Alignment == 8 ? 3u : 0u) ||
+        Data.u32(Ivar.MetadataAddress + 28) != Width ||
+        Ref == Image.ObjCSourceReferences.end() || Ref->second.Name != *Name ||
+        Ref->second.ClassName != Class->Name ||
+        llvm::support::endian::read64le(Offsets->data() + I * 8) != *Offset ||
+        !rangeInBounds(*Offset, Width, Result.Size) || !Declared ||
+        !Reflected || !reflectionShape(*Reflected, "Global", 1) ||
+        !reflectionNodesEqual(*Declared, Reflected->Children[0]))
+      return std::nullopt;
+    End = ExpectedOffset + Width;
+    Result.Fields.push_back({*Name, *Type, ExpectedOffset, Width, Alignment});
+  }
+  return End == Result.Size ? std::optional(std::move(Result)) : std::nullopt;
 }
 
 std::optional<std::string> swiftObjCStoredFieldClass(const BinaryImage &Image,
@@ -826,50 +1021,8 @@ std::optional<std::string> swiftObjCStoredFieldClass(const BinaryImage &Image,
         Reference->second.Size != 8 || Reference->second.Name != Ivar.Name ||
         Reference->second.ClassName != Class->Name)
       return std::nullopt;
-    const Symbol *Symbol = nullptr;
-    for (const auto &S : Image.Symbols)
-      if (S.Addr == Ivar.OffsetAddress) {
-        if (Symbol || S.IsFunc || (S.Size && S.Size != 8))
-          return std::nullopt;
-        Symbol = &S;
-      }
-    if (!Symbol)
-      return std::nullopt;
-    for (const auto &S : Image.Symbols)
-      if (&S != Symbol && (S.Name == Symbol->Name ||
-                           (S.Addr <= Ivar.OffsetAddress
-                                ? S.Size && Ivar.OffsetAddress - S.Addr < S.Size
-                                : S.Addr - Ivar.OffsetAddress < 8)))
-        return std::nullopt;
-    for (const auto &Export : Image.Exports)
-      if (Export.Addr >= Ivar.OffsetAddress &&
-          Export.Addr - Ivar.OffsetAddress < 8 &&
-          (Export.Addr != Ivar.OffsetAddress || Export.Name != Symbol->Name))
-        return std::nullopt;
-    auto Mangled = llvm::StringRef(Symbol->Name);
-    Mangled.consume_front("_");
-    const auto Tree = reflectionTree(Mangled);
-    if (!Tree || !reflectionShape(*Tree, "Global", 1) ||
-        !reflectionShape(Tree->Children[0], "FieldOffset", 2))
-      return std::nullopt;
-    const auto &F = Tree->Children[0];
-    if (F.Children[0].Kind != "Directness" || F.Children[0].Text ||
-        F.Children[0].Index != 0 || !F.Children[0].Children.empty() ||
-        !reflectionShape(F.Children[1], "Variable", 3))
-      return std::nullopt;
-    const auto &V = F.Children[1];
-    const auto &Member = V.Children[1];
-    const bool Named =
-        reflectionText(Member, "Identifier", Ivar.Name) ||
-        (reflectionShape(Member, "PrivateDeclName", 2) &&
-         Member.Children[0].Kind == "Identifier" && Member.Children[0].Text &&
-         !Member.Children[0].Text->empty() && !Member.Children[0].Index &&
-         Member.Children[0].Children.empty() &&
-         reflectionText(Member.Children[1], "Identifier", Ivar.Name));
-    if (!Named ||
-        !reflectionClass(V.Children[0], Identity->Module, Identity->Name) ||
-        !reflectionShape(V.Children[2], "Type", 1) ||
-        !reflectionClass(V.Children[2].Children[0], "__C", *Type))
+    const auto DeclaredType = reflectionFieldOffsetType(Image, *Identity, Ivar);
+    if (!DeclaredType || !reflectionClass(*DeclaredType, "__C", *Type))
       return std::nullopt;
     if (Ivar.OffsetAddress == OffsetSlot) {
       Selected = &Ivar;

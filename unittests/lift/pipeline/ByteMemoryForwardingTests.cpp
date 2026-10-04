@@ -1604,4 +1604,196 @@ int main(void) {
   }
 }
 
+TEST(ByteMemoryForwarding, PureIntrinsicsPreserveAllocaAndNumericByteFacts) {
+  for (bool Numeric : {false, true}) {
+    for (llvm::StringRef Call :
+         {"call i64 @llvm.ctpop.i64(i64 %x)",
+          "call i64 @llvm.bswap.i64(i64 %x)",
+          "call i64 @llvm.bitreverse.i64(i64 %x)",
+          "call i64 @llvm.fshl.i64(i64 %x, i64 %x, i64 7)",
+          "call i64 @llvm.fshr.i64(i64 %x, i64 %x, i64 11)"}) {
+      for (llvm::StringRef Layout : {"e-p:64:64", "E-p:64:64"}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Numeric << ':' << Call.str() << ':' << Layout.str());
+        llvm::LLVMContext C;
+        auto M = parse(
+            C,
+            R"(
+          declare i64 @llvm.ctpop.i64(i64)
+          declare i64 @llvm.bswap.i64(i64)
+          declare i64 @llvm.bitreverse.i64(i64)
+          declare i64 @llvm.fshl.i64(i64, i64, i64)
+          declare i64 @llvm.fshr.i64(i64, i64, i64)
+          define i64 @f(i64 %root, i64 noundef %x) {
+          )" +
+                std::string(Numeric ? "%p = inttoptr i64 %root to ptr"
+                                    : "%p = alloca [8 x i8]") +
+                "\n store i64 %x, ptr %p, align 1\n %r = " + Call.str() + R"(
+            %v = load i64, ptr %p, align 1
+            %answer = xor i64 %v, %r
+            ret i64 %answer
+          })",
+            Layout);
+        ASSERT_TRUE(M);
+        auto &F = *M->getFunction("f");
+        EXPECT_EQ(forward(F, Numeric ? numericOptions()
+                                     : ByteMemoryForwardingOptions{})
+                      .ForwardedLoads,
+                  1u);
+        EXPECT_EQ(count<llvm::LoadInst>(F), 0u);
+        EXPECT_EQ(count<llvm::CallBase>(F), 1u);
+        EXPECT_EQ(count<llvm::StoreInst>(F), 1u);
+        EXPECT_EQ(count<llvm::FreezeInst>(F), 0u);
+      }
+    }
+  }
+}
+
+TEST(ByteMemoryForwarding, IntrinsicExceptionsAndOrdinaryCallsStayBarriers) {
+  for (bool Numeric : {false, true}) {
+    for (llvm::StringRef Barrier :
+         {"%r = call i64 @opaque(i64 %x)",
+          "%r = call i64 @llvm.ctpop.i64(i64 %x) convergent",
+          "%r = call i64 @llvm.ctpop.i64(i64 %x) [\"opaque\"()]",
+          "call void @llvm.lifetime.end.p0(ptr %p)",
+          "call void @llvm.memset.p0.i64(ptr %p, i8 0, i64 8, i1 false)",
+          "call void @llvm.sideeffect()", "call void @llvm.trap()"}) {
+      // LLVM lifetime markers require an allocation, not an integer address.
+      if (Numeric && Barrier.contains("llvm.lifetime.end"))
+        continue;
+      SCOPED_TRACE(::testing::Message() << Numeric << ':' << Barrier.str());
+      llvm::LLVMContext C;
+      auto M = parse(
+          C, R"(
+        declare i64 @opaque(i64) nounwind willreturn memory(none)
+        declare i64 @llvm.ctpop.i64(i64)
+        declare void @llvm.lifetime.end.p0(ptr)
+        declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
+        declare void @llvm.sideeffect()
+        declare void @llvm.trap()
+        define i64 @f(i64 %root, i64 noundef %x) {
+        )" +
+                 std::string(Numeric ? "%p = inttoptr i64 %root to ptr"
+                                     : "%p = alloca [8 x i8]") +
+                 "\n store i64 %x, ptr %p, align 1\n " + Barrier.str() + R"(
+          %v = load i64, ptr %p, align 1
+          store i64 17, ptr %p, align 1
+          ret i64 %v
+        })");
+      ASSERT_TRUE(M);
+      auto &F = *M->getFunction("f");
+      auto R = forward(F, Numeric ? numericOptions()
+                                  : ByteMemoryForwardingOptions{});
+      EXPECT_EQ(R.ForwardedLoads, 0u);
+      EXPECT_EQ(R.RemovedStores, 0u);
+      EXPECT_EQ(count<llvm::LoadInst>(F), 1u);
+      EXPECT_EQ(count<llvm::StoreInst>(F), 2u);
+      EXPECT_EQ(count<llvm::CallBase>(F), 1u);
+    }
+  }
+}
+
+TEST(ByteMemoryForwarding, PureIntrinsicRuntimeRetainsAddressesAndAllBytes) {
+  llvm::LLVMContext C;
+  auto M = parse(C, R"(
+    declare i64 @llvm.fshl.i64(i64, i64, i64)
+    declare i64 @llvm.ctpop.i64(i64)
+    define i64 @original(ptr noundef %buffer, i64 noundef %x) {
+      %root = ptrtoint ptr %buffer to i64
+      %p = inttoptr i64 %root to ptr
+      %destination = add i64 %root, 16
+      store i64 %destination, ptr %p, align 1
+      %rotate = call i64 @llvm.fshl.i64(i64 %x, i64 %x, i64 7)
+      %bits = call i64 @llvm.ctpop.i64(i64 %x)
+      %reload = load i64, ptr %p, align 1
+      %q = inttoptr i64 %reload to ptr
+      %mixed = xor i64 %rotate, %bits
+      store i64 %mixed, ptr %q, align 1
+      store i64 %x, ptr %p, align 1
+      %answer = xor i64 %mixed, %reload
+      ret i64 %answer
+    })");
+  ASSERT_TRUE(M);
+  llvm::ValueToValueMapTy Map;
+  auto *Rewritten = llvm::CloneFunction(M->getFunction("original"), Map);
+  Rewritten->setName("forwarded");
+  auto R = forward(*Rewritten, numericOptions());
+  EXPECT_EQ(R.ForwardedLoads, 1u);
+  EXPECT_EQ(R.RemovedStores, 1u);
+  EXPECT_EQ(count<llvm::CallBase>(*Rewritten), 2u);
+  EXPECT_EQ(count<llvm::LoadInst>(*Rewritten), 0u);
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto Program = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(bool(Program));
+  const std::string Compiler = *Program;
+#endif
+  llvm::SmallString<128> IR, Source, Binary, Error;
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-intrinsic-memory", "ll", IR));
+  llvm::FileRemover RemoveIR(IR);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-intrinsic-memory",
+                                                  "c", Source));
+  llvm::FileRemover RemoveSource(Source);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-intrinsic-memory",
+                                                  "exe", Binary));
+  llvm::FileRemover RemoveBinary(Binary);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-intrinsic-memory",
+                                                  "err", Error));
+  llvm::FileRemover RemoveError(Error);
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream OS(IR, EC);
+    ASSERT_FALSE(EC);
+    M->print(OS, nullptr);
+  }
+  {
+    llvm::raw_fd_ostream OS(Source, EC);
+    ASSERT_FALSE(EC);
+    OS << R"(
+#include <stdint.h>
+#include <string.h>
+extern uint64_t original(void *, uint64_t);
+extern uint64_t forwarded(void *, uint64_t);
+int main(void) {
+  uint64_t seed = UINT64_C(0x96c714da89326fe1);
+  for (unsigned k = 0; k != 8192; ++k) {
+    seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+    uint64_t x = k == 0 ? 0 : k == 1 ? UINT64_MAX : seed;
+    unsigned char actual[40], expected[40];
+    uint64_t bits = 0;
+    for (unsigned j = 0; j != 64; ++j) bits += (x >> j) & 1;
+    uint64_t mixed = ((x << 7) | (x >> 57)) ^ bits;
+    for (unsigned j = 0; j != 40; ++j) expected[j] = (unsigned char)(k + j * 3);
+    for (unsigned j = 0; j != 8; ++j) {
+      expected[3+j] = (unsigned char)(x >> (8*j));
+      expected[19+j] = (unsigned char)(mixed >> (8*j));
+    }
+    uint64_t answer = mixed ^ (uintptr_t)(actual + 19);
+    for (unsigned mode = 0; mode != 2; ++mode) {
+      for (unsigned j = 0; j != 40; ++j) actual[j] = (unsigned char)(k + j * 3);
+      uint64_t got = mode ? forwarded(actual + 3, x) : original(actual + 3, x);
+      if (got != answer || memcmp(actual, expected, 40)) return 1;
+    }
+  }
+  return 0;
+})";
+  }
+  for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, Error.str()};
+    const int Exit = llvm::sys::ExecuteAndWait(
+        Compiler,
+        {Compiler, Optimization, "-fsanitize=undefined",
+         "-fsanitize-trap=undefined", IR, Source, "-o", Binary},
+        std::nullopt, Redirects, 30);
+    auto Errors = llvm::MemoryBuffer::getFile(Error);
+    ASSERT_EQ(Exit, 0) << (Errors ? (*Errors)->getBuffer().str() : "");
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Binary, {Binary}, std::nullopt,
+                                        Redirects, 30),
+              0);
+  }
+}
+
 } // namespace

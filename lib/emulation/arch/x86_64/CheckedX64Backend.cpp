@@ -9,6 +9,7 @@
 #include "../../core/RAMTransaction.h"
 #include "X64Exception.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
@@ -85,41 +86,94 @@ uint64_t updateValue(unsigned Instruction, uint64_t Original, uint64_t Operand,
   }
 }
 bool isXmm(unsigned R) { return R >= X86_REG_XMM0 && R <= X86_REG_XMM15; }
+enum class VectorForm {
+#define NEVERD_X64_VECTOR_FORM(Name) Name,
+#include "X64VectorOperands.def"
+#undef NEVERD_X64_VECTOR_FORM
+};
+enum class VectorOperand {
+  Absent,
+  Xmm,
+  Memory,
+  General,
+  Integer,
+  IntegerMemory,
+  Immediate
+};
+struct VectorOperandPattern {
+  VectorForm Form;
+  VectorOperand Destination, Source, Control;
+};
+constexpr VectorOperandPattern VectorOperands[] = {
+#define NEVERD_X64_VECTOR_OPERANDS(Form, Destination, Source, Control)         \
+  {VectorForm::Form, VectorOperand::Destination, VectorOperand::Source,        \
+   VectorOperand::Control},
+#include "X64VectorOperands.def"
+#undef NEVERD_X64_VECTOR_OPERANDS
+};
 struct VectorOperation {
   unsigned Width, Alignment;
-  bool Move, General;
+  bool Move;
+  VectorForm Form;
+  unsigned StoreLane;
 };
 std::optional<VectorOperation> vectorOperation(unsigned Instruction) {
   switch (Instruction) {
-#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, General)   \
+#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, Form,      \
+                                      Lane)                                    \
   case X86_INS_##Name:                                                         \
-    return VectorOperation{Width, Alignment, Move, General};
+    return VectorOperation{Width, Alignment, Move, VectorForm::Form, Lane};
 #include "X64VectorInstructions.def"
 #undef NEVERD_X64_VECTOR_INSTRUCTION
   default:
     return std::nullopt;
   }
 }
-bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
-  if (X.op_count != 2)
+bool isGeneralOperand(const cs_x86_op &O) {
+  if (O.type != X86_OP_REG)
     return false;
-  const auto &D = X.operands[0], &S = X.operands[1];
-  auto Xmm = [](const cs_x86_op &O) {
-    return O.type == X86_OP_REG && isXmm(O.reg);
-  };
-  if (!Xmm(D) && !(V.Move && Xmm(S)))
+  switch (O.reg) {
+#define NEVERD_X64_OPERAND_REGISTER(Name, Slot, Shift, Bits)                   \
+  case X86_REG_##Name:                                                         \
+    return X64Register::Slot != X64Register::PC && Shift == 0 &&               \
+           Bits / CHAR_BIT == O.size;
+#include "X64OperandRegisters.def"
+#undef NEVERD_X64_OPERAND_REGISTER
+  default:
     return false;
-  for (const auto &O : {D, S}) {
-    if (Xmm(O))
-      continue;
-    if (O.size != V.Width ||
-        (O.type != X86_OP_MEM && !(V.General && O.type == X86_OP_REG)))
-      return false;
   }
-  return true;
 }
-bool isFloatingPointConversion(unsigned Instruction) {
-  return Instruction == X86_INS_CVTTSD2SI || Instruction == X86_INS_CVTTSS2SI;
+bool matchesVectorOperand(VectorOperand Kind, const cs_x86_op &O,
+                          unsigned Width) {
+  switch (Kind) {
+  case VectorOperand::Absent:
+    return false;
+  case VectorOperand::Xmm:
+    return O.type == X86_OP_REG && isXmm(O.reg);
+  case VectorOperand::Memory:
+    return O.type == X86_OP_MEM && O.size == Width;
+  case VectorOperand::General:
+    return isGeneralOperand(O) && O.size == Width;
+  case VectorOperand::Integer:
+    return isGeneralOperand(O) &&
+           (O.size == x64::DWordBytes || O.size == x64::WordBytes);
+  case VectorOperand::IntegerMemory:
+    return O.type == X86_OP_MEM &&
+           (O.size == x64::DWordBytes || O.size == x64::WordBytes);
+  case VectorOperand::Immediate:
+    return O.type == X86_OP_IMM && O.imm >= 0 && O.imm <= UINT8_MAX;
+  }
+  llvm_unreachable(diagnostic::Instruction);
+}
+bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
+  return llvm::any_of(VectorOperands, [&](const auto &Pattern) {
+    const bool HasControl = Pattern.Control != VectorOperand::Absent;
+    return Pattern.Form == V.Form && X.op_count == (HasControl ? 3 : 2) &&
+           matchesVectorOperand(Pattern.Destination, X.operands[0], V.Width) &&
+           matchesVectorOperand(Pattern.Source, X.operands[1], V.Width) &&
+           (!HasControl ||
+            matchesVectorOperand(Pattern.Control, X.operands[2], V.Width));
+  });
 }
 bool isAtomic(unsigned Instruction) {
   switch (Instruction) {
@@ -307,16 +361,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     return llvm::make_error<UnsupportedExecutionError>();
   }
   const auto Vector = vectorOperation(I.id);
-  const bool Conversion = isFloatingPointConversion(I.id);
-  if (Conversion &&
-      (X.op_count != 2 || X.operands[0].type != X86_OP_REG ||
-       isXmm(X.operands[0].reg) ||
-       (X.operands[0].size != x64::DWordBytes &&
-        X.operands[0].size != x64::WordBytes) ||
-       (X.operands[1].type != X86_OP_MEM &&
-        !(X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)))))
-    return llvm::make_error<UnsupportedExecutionError>();
-  if (Vector && !Conversion && !admitsVectorOperands(X, *Vector))
+  if (Vector && !admitsVectorOperands(X, *Vector))
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
   const bool Atomic = isAtomic(I.id);
@@ -402,10 +447,16 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       A += CPU.FSBase;
     if ((Locked || I.id == X86_INS_XCHG) && A % O.size)
       return llvm::make_error<UnsupportedExecutionError>();
-    // Misaligned aligned-vector forms would raise #GP. No native instruction
-    // executes until that exception has an explicit checked-model contract.
-    if (Vector && A % Vector->Alignment)
-      return llvm::make_error<UnsupportedExecutionError>();
+    // Aligned SSE raises #GP(0) before any page lookup or data observation.
+    // Keep this architectural outcome identical on native and software
+    // transports, including an absent/protected operand or a wrapped span.
+    if (Vector && A % Vector->Alignment) {
+      BackendFault Fault{BackendFaultKind::Interrupt, I.address};
+      Fault.Interrupt = unsigned(x64::ExceptionVector::GeneralProtection);
+      Fault.ErrorCode = x64::NoSelectorErrorCode;
+      Fault.Cause = BackendFaultCause::OperandAlignment;
+      return raiseFault(Fault, true);
+    }
     // Some SETcc and SSE destinations have advisory decoder access metadata
     // marking them as reads. The architecture owns their actual effects.
     unsigned OperandAccess = O.access;
@@ -424,7 +475,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     else if (Vector && Vector->Move && OperandAccess == CS_AC_WRITE && N == 0 &&
              X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)) {
       const auto &V = CPU.Xmm[X.operands[1].reg - X86_REG_XMM0];
-      Accesses.push_back({A, O.size, Write, V[0], std::nullopt, V[1]});
+      Accesses.push_back(
+          {A, O.size, Write, V[Vector->StoreLane], std::nullopt, V[1]});
     } else if (OperandAccess == CS_AC_WRITE &&
                (I.id == X86_INS_MOV || I.id == X86_INS_MOVABS) && N == 0 &&
                X.op_count == 2) {

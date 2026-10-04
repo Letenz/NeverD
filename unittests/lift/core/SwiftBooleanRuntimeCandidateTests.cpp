@@ -641,6 +641,42 @@ TEST(SwiftBooleanProjection, NativeEntryUsesConservativeWordUntilBound) {
   EXPECT_FALSE(provisionalNativeSwiftBooleanEntry(Method, F.Low.Entry));
 }
 
+TEST(SwiftBooleanProjection, BoundNativeIntegerReturnsUseSharedABIWidths) {
+  for (const unsigned Width : {1U, 2U, 4U, 8U}) {
+    for (const bool Signed : {false, true}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Signed);
+      ProjectionFixture F;
+      F.Image.ObjCMethods.clear();
+      F.Image.Symbols.push_back({"native_boolean_user", F.Low.Entry, 12, true});
+      auto Entry = *provisionalNativeSwiftBooleanEntry(F.Image, F.Low.Entry);
+      Entry.ReturnType = NdType::makeInt(Width, Signed);
+      Entry.ReturnLocation.ValueBytes = Width;
+      std::string Error;
+      ASSERT_TRUE(validateSourceABI(Entry, Error)) << Error;
+      EXPECT_TRUE(qualifySwiftBooleanProjection(F.Image, F.Low, Entry));
+
+      auto WrongCarrier = Entry;
+      WrongCarrier.ReturnLocation.ValueBytes = Width == 8 ? 4 : 8;
+      EXPECT_FALSE(qualifySwiftBooleanProjection(F.Image, F.Low, WrongCarrier));
+      // Even the narrowest return observes bit 1: a byte declaration cannot
+      // turn the runtime's one defined bit into a defined byte.
+      F.Low.Blocks[0].Ops[1].Inputs[1].Offset = 3;
+      F.word(0x3004, 0x92400400); // AND X0, X0, #3.
+      EXPECT_FALSE(qualifySwiftBooleanProjection(F.Image, F.Low, Entry));
+    }
+  }
+  ProjectionFixture F;
+  F.Image.ObjCMethods.clear();
+  F.Image.Symbols.push_back({"native_boolean_user", F.Low.Entry, 12, true});
+  auto Entry = *provisionalNativeSwiftBooleanEntry(F.Image, F.Low.Entry);
+  for (const unsigned Width : {0U, 3U, 16U}) {
+    Entry.ReturnType = NdType::makeInt(Width, false);
+    Entry.ReturnLocation.ValueBytes = Width;
+    EXPECT_FALSE(qualifySwiftBooleanProjection(F.Image, F.Low, Entry));
+  }
+}
+
 TEST(SwiftBooleanProjection,
      FixedObjectGetterRequiresCurrentStubImportSelectorAndFixedABI) {
   ProjectionFixture F;

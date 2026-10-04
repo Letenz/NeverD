@@ -68,6 +68,17 @@ std::optional<va_t> readImmutableImageCodePointer(const BinaryImage &Image,
 /// not a runtime object layout, provider export, or permission to copy bytes.
 bool isImmutableImageImportSlot(const BinaryImage &Image, va_t Address);
 
+/// Same exact import/fixup proof in possibly writable initializer storage.
+/// This authenticates an initial declaration, never a stable runtime pointer
+/// or permission to copy the imported object. Provider proof stays separate.
+bool isInitialImageImportSlot(const BinaryImage &Image, va_t Address);
+
+/// Read an immutable scalar ivar-offset slot with its exact loader reference.
+/// All other overlapping fixups remain forbidden. The declaration consumer
+/// must separately match the referenced class, field, type and layout.
+std::optional<uint64_t> readImmutableImageIvarOffset(const BinaryImage &Image,
+                                                     va_t Address);
+
 /// Same storage/fixup proof, additionally requiring one exact Class reference
 /// matching the strong imported class symbol. Only that matching metadata
 /// record is permitted; provider ownership remains the caller's obligation.

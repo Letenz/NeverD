@@ -7,13 +7,14 @@
 #include "neverd/analysis/LLVMScalarEquivalence.h"
 
 #include "neverd/symbolic/SymExec.h"
+#include "neverd/symbolic/SymKnownBits.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/Errc.h"
 
-#include <limits>
+#include <algorithm>
 #include <set>
 
 namespace neverd::analysis {
@@ -30,9 +31,11 @@ struct Failure {
 
 struct Budget {
   uint64_t Remaining;
+  bool Exceeded = false;
   void spend(uint64_t N = 1) {
     if (N > Remaining) {
       Remaining = 0;
+      Exceeded = true;
       throw Failure{Status::BudgetExceeded,
                     "scalar proof work budget exhausted"};
     }
@@ -51,16 +54,32 @@ class Executor {
   const LLVMScalarEquivalenceLimits &Limits;
   llvm::DenseMap<uint32_t, unsigned> Variables;
   llvm::DenseMap<uint32_t, Ref> Folded;
+  sym::SymKnownBits BitFacts;
   unsigned InputVariables;
 
   std::optional<llvm::APInt> constantWindow(Ref R, unsigned Low,
                                             unsigned Width) {
     Work.spend();
-    const unsigned Available = static_cast<unsigned>(std::min<uint64_t>(
-        Work.Remaining, std::numeric_limits<unsigned>::max()));
+    const unsigned Available = static_cast<unsigned>(
+        std::min<uint64_t>(Work.Remaining, sym::SymKnownBits::MaxQueryWork));
     unsigned Remaining = Available;
     auto K = C.constantWindow(R, Low, Width, Remaining);
+    bool Complete = bool(K);
+    if (!K && Width && Low <= C.width(R) && Width <= C.width(R) - Low) {
+      if (auto Facts = BitFacts.query(R, Remaining)) {
+        Complete = true;
+        auto Slice = Facts->extractBits(Width, Low);
+        if (Slice.isConstant())
+          K = Slice.One;
+      }
+    }
     Work.spend(Available - Remaining);
+    // An incomplete final query has no later traversal to detect exhaustion.
+    // Completed unknown facts, however, are an ordinary refusal even when
+    // they consume the last available unit.
+    if (!Complete && !Work.Remaining &&
+        Available < sym::SymKnownBits::MaxQueryWork)
+      Work.spend();
     return K;
   }
 
@@ -213,17 +232,26 @@ class Executor {
   }
 
 public:
+  bool sameValue(Ref A, Ref B) {
+    if (A == B)
+      return true;
+    auto Equality = C.mkEq(A, B);
+    checkNodes();
+    auto K = constantWindow(Equality, 0, 1);
+    return K && K->isOne();
+  }
+
   Executor(sym::SymContext &Context, Budget &Budget,
            const LLVMScalarEquivalenceLimits &Limits,
            llvm::ArrayRef<Ref> Inputs)
-      : C(Context), Work(Budget), Limits(Limits),
+      : C(Context), Work(Budget), Limits(Limits), BitFacts(Context),
         InputVariables(Context.numVars()) {
     for (unsigned N = 0; N < Inputs.size(); ++N)
       Variables[C.varId(Inputs[N])] = N;
   }
 
   Evaluation run(const LLVMScalarFunctionModel &Model,
-                 llvm::ArrayRef<Ref> Arguments) {
+                 llvm::ArrayRef<Ref> Arguments, bool CompareReturn = true) {
     sym::SymState State(C);
     sym::SymExec Exec(C, State);
     for (unsigned N = 0; N < Arguments.size(); ++N) {
@@ -253,7 +281,10 @@ public:
         if (Step == sym::StepResult::Unmodelled || Exec.unmodelledCount())
           throw Failure{Status::Unsupported, "unmodeled scalar operation"};
         if (Step == sym::StepResult::Continue) {
-          if (O.Output.isReg() || O.Output.isTemp()) {
+          // A reflexive query needs no normalized data return. Its control
+          // and definedness are still folded on demand below, after executing
+          // every operation and checking the same node/input ceilings.
+          if (CompareReturn && (O.Output.isReg() || O.Output.isTemp())) {
             auto V = fold(Exec.operandValue(O.Output));
             State.write(O.Output.isReg() ? sym::SymSpace::Register
                                          : sym::SymSpace::Temporary,
@@ -270,7 +301,8 @@ public:
           if (!K->isZero())
             throw Failure{Status::Unproved,
                           "executed source operation is not defined"};
-          auto Value = fold(Exec.branchTarget());
+          auto Value =
+              CompareReturn ? fold(Exec.branchTarget()) : Exec.branchTarget();
           checkNodes();
           return {Value, {}};
         }
@@ -324,13 +356,20 @@ checkLLVMScalarEquivalence(const llvm::Function &Original,
   auto Left = Model(Original);
   if (!Left)
     return Result;
-  auto Right = Model(Candidate);
-  if (!Right)
-    return Result;
-  if (Left->ResultBits != Right->ResultBits ||
-      Left->Arguments.size() != Right->Arguments.size() ||
-      !llvm::equal(Left->Arguments, Right->Arguments,
-                   [](auto A, auto B) { return A.Bits == B.Bits; })) {
+  // A self-query still proves admission, definedness and termination over
+  // the complete control domain. Only its duplicate model/execution is
+  // redundant. Identity is local to this call, never a name or cached result.
+  std::optional<LLVMScalarFunctionModel> Right;
+  if (&Original != &Candidate) {
+    Right = Model(Candidate);
+    if (!Right)
+      return Result;
+  }
+  if (Right &&
+      (Left->ResultBits != Right->ResultBits ||
+       Left->Arguments.size() != Right->Arguments.size() ||
+       !llvm::equal(Left->Arguments, Right->Arguments,
+                    [](auto A, auto B) { return A.Bits == B.Bits; }))) {
     Result.Status = Status::Unsupported;
     Result.Diagnostic = "scalar signatures differ";
     return Result;
@@ -368,8 +407,10 @@ checkLLVMScalarEquivalence(const llvm::Function &Original,
                            Context.mkConst(Value)));
         }
         Executor Exec(Context, Work, Limits, Inputs);
-        auto L = Exec.run(*Left, Args);
-        auto R = L.Needed.empty() ? Exec.run(*Right, Args) : Evaluation{};
+        auto L = Exec.run(*Left, Args, Right.has_value());
+        Evaluation R;
+        if (L.Needed.empty())
+          R = Right ? Exec.run(*Right, Args) : Evaluation{L.Value, {}};
         auto &Needed = L.Needed.empty() ? R.Needed : L.Needed;
         if (!Needed.empty()) {
           const auto OldSize = Domain.size();
@@ -382,7 +423,7 @@ checkLLVMScalarEquivalence(const llvm::Function &Original,
           break;
         }
         Work.spend();
-        if (!L.Value || !R.Value || L.Value != R.Value)
+        if (!L.Value || !R.Value || !Exec.sameValue(L.Value, R.Value))
           throw Failure{Status::Unproved,
                         "symbolic returns differ or remain unproved"};
         ++Result.CompletedPartitions;
@@ -397,6 +438,7 @@ checkLLVMScalarEquivalence(const llvm::Function &Original,
     Result.Diagnostic = E.Message;
   }
   Result.Work = Limits.MaxWork - Work.Remaining;
+  Result.WorkLimitExceeded = Work.Exceeded;
   Result.ControlBits.assign(Domain.begin(), Domain.end());
   return Result;
 }

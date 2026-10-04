@@ -31,6 +31,13 @@ class LinuxMemory;
 struct MemoryLayout {
   uint64_t UserLimit, PageSize;
 };
+/// Explicit OS-owned thread identity. The caller consumes Exit after a
+/// nonreturning SYS_exit; exit_group still terminates the whole process.
+/// An absent context retains the Linux single-thread workload contract.
+struct ThreadContext {
+  uint64_t ID = ThreadID;
+  std::optional<uint64_t> Exit;
+};
 struct ServiceABI {
   ServiceRequestKind Trap;
   CPURegister Number, Result, StackPointer, PC;
@@ -51,11 +58,13 @@ archPrctl(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
 llvm::Expected<std::optional<uint64_t>>
 handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
               const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-              const ProcessOptions &Options, ProcessResult &Result);
+              const ProcessOptions &Options, ProcessResult &Result,
+              ThreadContext *Thread = nullptr);
 /// Named entry for libc wrappers; syscall numbering stays in serviceABI policy.
 llvm::Expected<std::optional<uint64_t>>
 handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
               const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-              const ProcessOptions &Options, ProcessResult &Result);
+              const ProcessOptions &Options, ProcessResult &Result,
+              ThreadContext *Thread = nullptr);
 } // namespace neverd::emulation::linux_model
 #endif

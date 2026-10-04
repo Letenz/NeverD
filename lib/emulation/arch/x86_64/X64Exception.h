@@ -13,6 +13,10 @@
 
 namespace neverd::emulation {
 namespace x64 {
+#define NEVERD_X64_EXCEPTION_VALUE(Name, Value)                                \
+  inline constexpr uint64_t Name = Value;
+#include "X64Exceptions.def"
+#undef NEVERD_X64_EXCEPTION_VALUE
 enum class ExceptionVector : unsigned {
 #define NEVERD_X64_EXCEPTION(Name, Vector, Error, Trap) Name = Vector,
 #include "X64Exceptions.def"

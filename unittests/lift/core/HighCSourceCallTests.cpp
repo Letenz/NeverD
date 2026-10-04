@@ -2872,6 +2872,48 @@ int main(void) {
 )");
 }
 
+TEST(HighCSourceCalls, DarwinAliasLinkNamesDoNotBindToLiftedVeneers) {
+  const auto Double = NdType::makeFloat(8);
+  const auto Pair = NdType::makeStruct({Double, Double});
+  for (const std::string Name : {"neverd_test_hfa", "__neverd_test_hfa"}) {
+    SCOPED_TRACE(Name);
+    auto Runtime = native(Name, Pair, {Double});
+    Runtime.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Runtime.TargetAddress = 0x2080;
+    Runtime.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    std::string Error;
+    ASSERT_TRUE(
+        assignDarwinFixedSourceABI(Runtime.Signature, Arch::AArch64, Error));
+    auto Veneer = returning(
+        "_" + Name, call(Runtime, Pair, {parameter(0, Double)}), {Double});
+    Veneer.Entry = 0x1000;
+    Veneer.SourceTypeHint = Runtime.Signature;
+    auto Local = native("_" + Name, Pair, {Double});
+    Local.TargetAddress = Veneer.Entry;
+    Local.Signature = Runtime.Signature;
+    Local.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    auto Forward = returning(
+        "forward_hfa", call(Local, Pair, {parameter(0, Double)}), {Double});
+    Forward.Entry = 0x1100;
+    const auto Source = emit({Forward, Veneer}, true, Arch::AArch64);
+    ASSERT_NE(Source.find(Name + "_2(double arg0)"), std::string::npos)
+        << Source;
+    const auto Driver =
+        "\nstatic unsigned calls;\n"
+        "struct nd_record_r2_d_d_e provider(double) __asm__(\"_" +
+        Name +
+        "\");\nstruct nd_record_r2_d_d_e provider(double x) {\n"
+        "  ++calls; return (struct nd_record_r2_d_d_e){x + 3, x - 7};\n}\n"
+        "int main(void) {\n"
+        "  for (int i = -128; i <= 128; ++i) {\n"
+        "    struct nd_record_r2_d_d_e p = forward_hfa(i);\n"
+        "    if (p.field_0 != i + 3 || p.field_1 != i - 7) return 1;\n"
+        "  }\n return calls != 257;\n}\n";
+    for (const auto Optimization : {"-O0", "-O2"})
+      compileAndRun(Source + Driver, {Optimization});
+  }
+}
+
 TEST(HighCSourceCalls, RuntimeWeakCallsUsePublicObjectStorageTypes) {
   auto Pointer = NdType::makePtr(NdType::makeVoid());
   auto Storage = NdType::makePtr(Pointer);

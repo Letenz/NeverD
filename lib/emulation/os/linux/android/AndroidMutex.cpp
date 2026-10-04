@@ -8,6 +8,7 @@
 #include "neverd/emulation/CPU.h"
 
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/FormatVariadic.h"
 
 #include <array>
 
@@ -32,7 +33,7 @@ Bionic::mutex(const NativeCallEvent &Call) {
   auto ReadWord = [&](uint64_t Address, unsigned Size,
                       unsigned Alignment) -> llvm::Expected<uint64_t> {
     if (Address % Alignment)
-      return failure("unaligned pthread object");
+      return failure(diagnostic::PthreadAlignment);
     if (auto E = access(Address, Size, Read))
       return std::move(E);
     std::array<uint8_t, AttributeBytes> Bytes{};
@@ -43,7 +44,7 @@ Bionic::mutex(const NativeCallEvent &Call) {
   };
   auto Writable = [&](uint64_t Address, unsigned Size, unsigned Alignment) {
     if (Address % Alignment)
-      return failure("unaligned pthread object");
+      return failure(diagnostic::PthreadAlignment);
     return access(Address, Size, Write);
   };
   // Every write span is checked before any part of an operation is published.
@@ -52,30 +53,34 @@ Bionic::mutex(const NativeCallEvent &Call) {
     llvm::support::endian::write64le(Bytes, V);
     return CPU.write(Address, llvm::ArrayRef(Bytes).take_front(Size));
   };
-  if (Name.consume_front("pthread_mutexattr_")) {
-    if (Name == "init" || Name == "destroy") {
+  if (Name.starts_with(symbol::PthreadMutexAttrPrefix)) {
+    if (Name == symbol::MutexAttrInit || Name == symbol::MutexAttrDestroy) {
       if (auto E = Writable(A[0], AttributeBytes, AttributeBytes))
         return std::move(E);
-      if (auto E =
-              PutWord(A[0], AttributeBytes, Name == "init" ? 0 : UINT64_MAX))
+      if (auto E = PutWord(A[0], AttributeBytes,
+                           Name == symbol::MutexAttrInit ? 0 : UINT64_MAX))
         return std::move(E);
       return Value(0);
     }
-    const bool Setter = Name.starts_with("set");
+    const bool Setter = (Name == symbol::MutexAttrSetType ||
+                         Name == symbol::MutexAttrSetPShared ||
+                         Name == symbol::MutexAttrSetProtocol);
     unsigned Mask = 0, Shift = 0, Maximum = 0;
-    if (Name == "gettype" || Name == "settype") {
+    if (Name == symbol::MutexAttrGetType || Name == symbol::MutexAttrSetType) {
       Mask = AttributeType;
       Maximum = ErrorChecking;
-    } else if (Name == "getpshared" || Name == "setpshared") {
+    } else if (Name == symbol::MutexAttrGetPShared ||
+               Name == symbol::MutexAttrSetPShared) {
       Mask = AttributeShared;
       Shift = 4;
       Maximum = 1;
-    } else if (Name == "getprotocol" || Name == "setprotocol") {
+    } else if (Name == symbol::MutexAttrGetProtocol ||
+               Name == symbol::MutexAttrSetProtocol) {
       Mask = AttributeProtocol;
       Shift = 5;
       Maximum = 1;
     } else {
-      return Unsupported("unmodeled mutex attribute operation");
+      return Unsupported(diagnostic::MutexAttributeOperation);
     }
     const uint32_t Argument = static_cast<uint32_t>(A[1]);
     // Bionic validates an int setter argument before dereferencing attr.
@@ -102,9 +107,9 @@ Bionic::mutex(const NativeCallEvent &Call) {
     }
     return Value(0);
   }
-  if (!Name.consume_front("pthread_mutex_"))
-    return Unsupported("unmodeled mutex operation");
-  if (Name == "init") {
+  if (!Name.starts_with(symbol::PthreadMutexObjectPrefix))
+    return Unsupported(diagnostic::MutexOperation);
+  if (Name == symbol::MutexInit) {
     if (auto E = Writable(A[0], MutexBytes, MutexAlignment))
       return std::move(E);
     uint64_t Attribute = 0;
@@ -121,7 +126,7 @@ Bionic::mutex(const NativeCallEvent &Call) {
     }
     const uint64_t Type = Attribute & AttributeType;
     if (Type <= ErrorChecking && (Attribute & AttributeProtocol))
-      return Unsupported("priority inheritance requires kernel mutex support");
+      return Unsupported(diagnostic::MutexPriorityInheritance);
     std::array<uint8_t, MutexBytes> Bytes{};
     if (Type <= ErrorChecking)
       llvm::support::endian::write16le(
@@ -132,9 +137,9 @@ Bionic::mutex(const NativeCallEvent &Call) {
     // An invalid type still clears the complete object in this ABI.
     return Value(Type <= ErrorChecking ? 0 : linux_model::InvalidArgument);
   }
-  if (Name != "lock" && Name != "trylock" && Name != "unlock" &&
-      Name != "destroy")
-    return Unsupported("unmodeled mutex operation");
+  if (Name != symbol::MutexLock && Name != symbol::MutexTryLock &&
+      Name != symbol::MutexUnlock && Name != symbol::MutexDestroy)
+    return Unsupported(diagnostic::MutexOperation);
   auto Loaded = ReadWord(A[0], StateBytes, MutexAlignment);
   if (!Loaded)
     return Loaded.takeError();
@@ -142,15 +147,15 @@ Bionic::mutex(const NativeCallEvent &Call) {
   // API 28 fortifies destroyed-mutex use. Match the existing explicit abort
   // boundary instead of inventing an errno return or successful reuse.
   if (State == Destroyed)
-    return failure("guest called " + Call.Name + " on a destroyed mutex");
+    return failure(llvm::formatv(diagnostic::DestroyedMutex, Call.Name).str());
   const unsigned Type = State >> TypeShift, Status = State & LockState;
   const uint16_t Count = State & Counter;
   const uint16_t Base = State & ~uint16_t(Counter | LockState);
   if (Type > ErrorChecking)
-    return Unsupported("priority inheritance requires kernel mutex support");
+    return Unsupported(diagnostic::MutexPriorityInheritance);
   if (Status > Contended ||
       (Count && (Type != Recursive || Status == Unlocked)))
-    return failure("invalid pthread mutex state");
+    return failure(diagnostic::MutexState);
   auto SetState =
       [&](uint16_t Next) -> llvm::Expected<std::optional<uint64_t>> {
     if (auto E = Writable(A[0], StateBytes, MutexAlignment))
@@ -159,16 +164,17 @@ Bionic::mutex(const NativeCallEvent &Call) {
       return std::move(E);
     return Value(0);
   };
-  if (Name == "destroy")
+  if (Name == symbol::MutexDestroy)
     return Status == Unlocked ? SetState(Destroyed)
                               : Value(linux_model::ResourceBusy);
-  const bool Try = Name == "trylock", Unlock = Name == "unlock";
+  const bool Try = Name == symbol::MutexTryLock,
+             Unlock = Name == symbol::MutexUnlock;
   if (Type == Normal) {
     if (!Unlock && Status != Unlocked)
       return Try ? Value(linux_model::ResourceBusy)
-                 : Unsupported("blocking lock requires thread scheduling");
+                 : Unsupported(diagnostic::MutexBlocking);
     if (Unlock && Status == Contended)
-      return Unsupported("contended unlock requires futex wake support");
+      return Unsupported(diagnostic::MutexWake);
     // Normal mutexes do not inspect or change the owner field.
     return SetState(Base | (Unlock ? Unlocked : Locked));
   }
@@ -177,7 +183,7 @@ Bionic::mutex(const NativeCallEvent &Call) {
   if (!Owner)
     return Owner.takeError();
   if ((Status == Unlocked) != (*Owner == 0))
-    return failure("inconsistent pthread mutex owner and state");
+    return failure(diagnostic::MutexOwner);
   auto SetOwnedState =
       [&](uint16_t Next, uint32_t NextOwner,
           bool Release) -> llvm::Expected<std::optional<uint64_t>> {
@@ -196,12 +202,12 @@ Bionic::mutex(const NativeCallEvent &Call) {
         return std::move(E);
     return Value(0);
   };
-  if (*Owner == linux_model::ThreadID) {
+  if (*Owner == threadID()) {
     if (Unlock) {
       if (Count)
         return SetState(State - CounterStep);
       if (Status == Contended)
-        return Unsupported("contended unlock requires futex wake support");
+        return Unsupported(diagnostic::MutexWake);
       return SetOwnedState(Base, 0, true);
     }
     if (Type == ErrorChecking)
@@ -214,7 +220,7 @@ Bionic::mutex(const NativeCallEvent &Call) {
     return Value(linux_model::PermissionDenied);
   if (Status != Unlocked)
     return Try ? Value(linux_model::ResourceBusy)
-               : Unsupported("blocking lock requires thread scheduling");
-  return SetOwnedState(Base | Locked, linux_model::ThreadID, false);
+               : Unsupported(diagnostic::MutexBlocking);
+  return SetOwnedState(Base | Locked, threadID(), false);
 }
 } // namespace neverd::emulation::android_model

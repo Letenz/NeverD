@@ -78,6 +78,23 @@ output = bytes.fromhex(report["stdout_hex"])
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## ساعات الضيف المحددة صراحةً
+
+يوفّر الخيار `linux_time` قيماً ثابتة لاستدعاءات نظام Linux وAndroid Bionic. لا يقرأ النموذج ساعة المضيف، ولا يقدّم الوقت مع تنفيذ التعليمات، ولا يفترض وقتاً افتراضياً.
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+تُقبل معرّفات الساعات الثابتة 0–9 و11. كل ساعة مستقلة وتبقى القيم غير المقدّمة مجهولة. تُرفض المعرّفات المكررة أو غير المعروفة. الثواني أعداد صحيحة موقّعة من 64 بت، والنانوثواني ضمن `[0, 1000000000)`. تُقبل أعداد JSON الصحيحة ضمن `±9007199254740991`؛ وتحفظ السلاسل العشرية المجال الكامل لـ64 بت. حقول المنطقة الزمنية أعداد موقّعة من 32 بت. يستخدم C++ الحقل `ProcessOptions::LinuxTime` وترفض ملفات أنظمة التشغيل الأخرى هذا الخيار.
+
+تتشارك `clock_gettime` و`gettimeofday` واستدعاء `time` على x64 هذه المدخلات. تؤدي القيم المفقودة والساعات الديناميكية والكتابات الجزئية غير الممثلة إلى توقف صريح، مع الاحتفاظ بالكتابات المكتملة. لا تُحاكى تعديلات الوقت أو النوم أو ساعات الأجهزة الفعلية. يوضّح [عقد الساعات الكامل](../process-emulation.md#explicit-guest-clocks) ترتيب الكتابة والأخطاء ودلالات المؤشرات.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## ملف Windows PE64
@@ -116,6 +133,10 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 ينشئ `WindowsSystemModules` صور PE64 نموذجية محدودة لـ `ntdll.dll` و`kernelbase.dll` و`kernel32.dll` على المعماريتين. تتشارك استعلامات ASCII عبر `GetModuleHandleA` / [`GetModuleHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlew) و`LoadLibraryA` / `LoadLibraryW` و[`GetProcAddress`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress) قواعد الصور المعيّنة؛ وتصف PEB/LDR و`MEM_IMAGE` الصور نفسها. تستخدم الاستيرادات الثابتة والاستعلامات بالاسم وإحالات الضيف بوابات API ومحلل صادرات موحدين. يبقى المزوّدون مثبتين في الذاكرة دون استدعاءات تهيئة للضيف، ولا يمنعون عودة نقطة الدخول بعد إلغاء تحميل DLL الضيف العادية. يوقف تغيير الترويسات أو بيانات التصدير الوصفية الاستعلام. تتوقف صراحةً أسماء صادرات النظام غير الممثلة والاستعلامات بأرقام ترتيب غير صفرية؛ يعيد اختلاف حالة الأحرف فقط لاسم ممثل أو الاسم الفارغ الخطأ 127، ويعيد استعلام NULL الخطأ 87. البايتات والعناوين المولدة سياسة للنموذج، ولا تعيد إنشاء تخطيطات إصدارات Windows أو أرقامها الأصلية أو الأسماء المستعارة بين المزوّدين. يقارن `WindowsSystemTests.cpp` ملفات EXE أصلية لـ x64/ARM64 مع Windows أصلي، بما فيها ثماني ملاحظات مستقلة لعودة الخيط الأول.
 
 ينفذ `WindowsProcessExceptions` واجهات `AddVectoredExceptionHandler` و`RemoveVectoredExceptionHandler` و`RaiseException` على CPU واحد وبميزانية العملية نفسها. يمكن للمعالجات المرتبة تعديل التسجيلات وإثارة استثناءات متداخلة واستدعاء API الممثلة وتحميل DLL وإنهاء العملية. يمكن متابعة أخطاء الوصول إلى البيانات على x64/ARM64 والقسمة الصحيحة على x64 بعد التحقق من تعديلات الضيف على `CONTEXT`، مع حفظ السجلات العامة وSIMD وحالة FP المدعومة. تستأنف الاستثناءات البرمجية عبر تعليمة عودة فعلية داخل المزوّد الممثل. الحدود هي 128 تسجيلاً محتفظاً به و16 إطاراً متداخلاً. تفشل صراحةً نتائج المعالجة غير الصالحة والمؤشرات المعدلة والحقول غير المدعومة وتجاوز الحدود. ما زال SEH وفك المكدس القائمان على إطارات ARM64 والمصحح وأخطاء التنفيذ والحراسة غير مدعومة. يقارن `WindowsExceptionTests.cpp` سيناريوهات EXE/DLL أصلية مع Windows أصلي؛ وما زالت أدلة ARM64 KVM/WHP الأصلية مطلوبة. [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler), [RemoveVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredexceptionhandler), [RaiseException](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-raiseexception), [CONTEXT x64](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-context), [ARM64_NT_CONTEXT](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-arm64_nt_context). تحمل سجلات الاستثناءات البرمجية `EXCEPTION_SOFTWARE_ORIGINATE` (`0x80`) بصورة مستقلة عن علم عدم قابلية الاستمرار الذي يمرره المستدعي؛ ويتحقق ملف Windows التنفيذي الأصلي من القيم الدقيقة لأعلام الاستثناءات البرمجية والعتادية. [EXCEPTION_RECORD](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-exception_record).
+
+يحفظ `WindowsProcessContext` أصل كل إطار توزيع. تُظهر أخطاء x64 المدعومة للوصول إلى البيانات والقسمة علم RF (`0x10000`) في `CONTEXT.EFlags`؛ أما `RaiseException`، بما فيه رموز انتهاك الوصول البرمجية، فيحفظ السياق الحالي. يبقى الأصل محفوظاً خلال VEH/VCH والبحث وفك المكدس في SEH. تستعيد المتابعة الصالحة أعلام CPU المنطقية دون RF، وتُرفض تعديلات الضيف على RF قبل نشر الحالة. لا يحاكي هذا الملف المحدود نقاط توقف التعليمات أو تحكم الضيف في RF. يتحقق `WindowsExceptionTests.cpp` من السجلات المحفوظة والاستعادة وبقاء CPU/RAM دون تغيير عند الرفض.
+
+استنادًا إلى رصد أصلي مستقل، يحوّل Windows ring3 أخطاء checked x64 ذات السبب `operand_alignment` إلى `STATUS_ACCESS_VIOLATION` بمعاملات `[read, UINT64_MAX]`، بما يشمل تعليمات الكتابة. توفر طبقة CPU السبب؛ ولا يخمّنه Windows من المتجه 13 أو يعيد فك التعليمة. ينفذ `WindowsAlignmentProcessTests.cpp` تعليمات PE الأصلية في 72 سيناريو خطأ و9 محاولات بعد إصلاح العنوان (`72 + 9`)، مع فحص PC وRF وXMM وRAM. تُرفض الأخطاء غير المصنفة أو المتناقضة. تحفظ تقارير العمليات وبرامج التشغيل حقلي `cause` و`error_code` الست عشري القابلين للقيمة null، مع التمييز بين الغياب والصفر. ينطبق هذا التسليم على ملف المستخدم checked x64.
 
 تدير `AddVectoredContinueHandler` و`RemoveVectoredContinueHandler` قائمة مرتبة مستقلة تتشارك مع معالجات الاستثناءات حد 128 تسجيلاً محتفظاً به. بعد قبول معالج استثناء متجهي استئناف التنفيذ، ترى معالجات المتابعة سجل الاستثناء و`CONTEXT` القابلين للتعديل نفسيهما. يجري التحقق النهائي من السياق بعد هذه الاستدعاءات، بما فيها الاستثناءات المتداخلة وإشعارات DLL. لا يمكن إزالة مقبض عبر عائلة المعالجات الأخرى. يقارن `WindowsContinuationTests.cpp` ملفات EXE أصلية مع Windows الأصلي للتحقق من الترتيب والإنهاء المبكر وتعديل التسجيلات وإصلاح السياق والتداخل واستدعاءات المحمّل وخروج العملية. يسمح المسار المتجهي المختبر على Windows x64 بالمتابعة مع `EXCEPTION_NONCONTINUABLE`؛ ولا يثبت ذلك سلوك SEH القائم على إطارات المكدس. لم يُتحقق بعد من التنفيذ الأصلي على ARM64. [AddVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredcontinuehandler), [RemoveVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredcontinuehandler).
 

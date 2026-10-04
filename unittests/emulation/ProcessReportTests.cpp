@@ -17,6 +17,48 @@ namespace field = process_report;
 #define NEVERD_PROCESS_TEST_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "ProcessReportCases.def"
 #undef NEVERD_PROCESS_TEST_TEXT
+#define NEVERD_FAULT_REPORT_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "FaultReportCases.def"
+#undef NEVERD_FAULT_REPORT_TEXT
+
+TEST(ProcessReport, RetainsOptionalFaultCauseAndFullWidthProcessorCode) {
+  ProcessResult Result{ProcessProfile::WindowsPE64,
+                       GuestArchitecture::X64,
+                       ExecutionBackendKind::KVM,
+                       {}};
+  Result.LastCPUExit = ExecutionExit{ExecutionExitKind::GuestTrap,
+                                     BackendFault{BackendFaultKind::Interrupt},
+                                     {}};
+  auto Check = [&](std::optional<uint64_t> Code, const char *Expected) {
+    for (bool Classified : {false, true}) {
+      auto &Fault = *Result.LastCPUExit->Fault;
+      Fault.ErrorCode = Code;
+      Fault.Cause = Classified
+                        ? std::optional(BackendFaultCause::OperandAlignment)
+                        : std::nullopt;
+      auto JSON = llvm::cantFail(llvm::json::parse(processResultJSON(Result)));
+      const auto *Record = JSON.getAsObject()
+                               ->getObject(field::CPUExit)
+                               ->getObject(field::Fault);
+      ASSERT_NE(Record, nullptr);
+      if (Classified)
+        EXPECT_EQ(Record->getString(field::Cause), AlignmentCause);
+      else
+        EXPECT_TRUE(Record->get(field::Cause)->getAsNull());
+      if (Code)
+        EXPECT_EQ(Record->getString(field::ErrorCode), Expected);
+      else
+        EXPECT_TRUE(Record->get(field::ErrorCode)->getAsNull());
+    }
+  };
+#define NEVERD_FAULT_REPORT_CASE(Name, Code, ProcessHex, DriverHex)            \
+  {                                                                            \
+    SCOPED_TRACE(#Name);                                                       \
+    Check(Code, ProcessHex);                                                   \
+  }
+#include "FaultReportCases.def"
+#undef NEVERD_FAULT_REPORT_CASE
+}
 
 TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
 #define NEVERD_PROCESS_INVALID_JSON(Name, Text)                                \
@@ -85,6 +127,68 @@ TEST(ProcessReport, PreservesExplicitWindowsCatalogueAndRejectsOtherProfiles) {
     EXPECT_FALSE(bool(R));
     if (!R)
       EXPECT_EQ(llvm::toString(R.takeError()), field::WindowsProfile);
+  }
+}
+TEST(ProcessReport, LinuxClockInputIsLosslessAndRestrictedToLinuxProfiles) {
+  auto O = processOptionsFromJSON(R"({"linux_time":{"clocks":[
+    {"id":0,"seconds":"-9223372036854775808","nanoseconds":999999999},
+    {"id":1,"seconds":"9223372036854775807","nanoseconds":0}],
+    "timezone":{"minutes_west":-2147483648,"dst_time":2147483647}}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxTime);
+  EXPECT_EQ(O->LinuxTime->Clocks.at(0).Seconds, INT64_MIN);
+  EXPECT_EQ(O->LinuxTime->Clocks.at(1).Seconds, INT64_MAX);
+  EXPECT_EQ(O->LinuxTime->Clocks.at(0).Nanoseconds, 999999999);
+  EXPECT_EQ(O->LinuxTime->Timezone->MinutesWest, INT32_MIN);
+  for (auto P :
+       {ProcessProfile::WindowsPE64, ProcessProfile::MacOSMachO64,
+        ProcessProfile::IOSMachO64, ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing.elf", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::LinuxTimeProfile);
+  }
+  for (auto Bad : {LinuxTimespec{1, -1}, LinuxTimespec{1, 1000000000}}) {
+    O->LinuxTime->Clocks[0] = Bad;
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("nanoseconds"),
+              std::string::npos);
+  }
+  O->LinuxTime->Clocks = {{10, {1, 0}}};
+  auto R =
+      emulateProcess("missing.elf", ProcessProfile::AndroidNativeAArch64, *O);
+  ASSERT_FALSE(bool(R));
+  EXPECT_NE(llvm::toString(R.takeError()).find("clock ID"), std::string::npos);
+}
+TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
+  for (
+      const char *Bad :
+      {"null",
+       "[]",
+       "true",
+       R"({"unknown":0})",
+       R"({"clocks":{}})",
+       R"({"clocks":[{"id":0,"seconds":0}]})",
+       R"({"clocks":[{"id":0,"seconds":0,"nanoseconds":0,"extra":0}]})",
+       R"({"clocks":[{"id":0,"seconds":0,"nanoseconds":0},{"id":0,"seconds":1,"nanoseconds":1}]})",
+       R"({"clocks":[{"id":10,"seconds":0,"nanoseconds":0}]})",
+       R"({"clocks":[{"id":-3,"seconds":0,"nanoseconds":0}]})",
+       R"({"clocks":[{"id":4294967296,"seconds":0,"nanoseconds":0}]})",
+       R"({"clocks":[{"id":0,"seconds":0,"nanoseconds":-1}]})",
+       R"({"clocks":[{"id":0,"seconds":0,"nanoseconds":1000000000}]})",
+       R"({"clocks":[{"id":0,"seconds":9007199254740992,"nanoseconds":0}]})",
+       R"({"clocks":[{"id":0,"seconds":1e99,"nanoseconds":0}]})",
+       R"({"clocks":[{"id":0,"seconds":"9223372036854775808","nanoseconds":0}]})",
+       R"({"clocks":[{"id":0,"seconds":"-9223372036854775809","nanoseconds":0}]})",
+       R"({"clocks":[{"id":0,"seconds":"0x1","nanoseconds":0}]})",
+       R"({"clocks":[{"id":0,"seconds":1.5,"nanoseconds":0}]})",
+       R"({"timezone":{"minutes_west":0}})",
+       R"({"timezone":{"minutes_west":2147483648,"dst_time":0}})"}) {
+    SCOPED_TRACE(Bad);
+    auto R =
+        processOptionsFromJSON(std::string("{\"linux_time\":") + Bad + "}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
   }
 }
 } // namespace

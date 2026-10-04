@@ -69,6 +69,13 @@ analysis and comparison output belong outside the repository.
 
 ## Closed control-flow regressions
 
+- LLVMC now invokes bounded scalar loop recovery in its source clone when no
+  image/debug projection applies. Search and cleanup repeat under shared
+  budgets, and the exact final body is reproved against the original. Function
+  identity, attributes, callers and intrinsic bindings survive publication;
+  metadata, external block addresses, collisions and exhausted work retain the
+  complete original function. Native ABI and memory projection stay separate.
+
 - Neutral select arms in admitted scalar regions now use conditional updates
   after PHI snapshot scheduling. Changed bases require conditions and terms
   independent of the old destination; unchanged bases need no self-assignment.

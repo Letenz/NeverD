@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../lib/analysis/interpreter/NativeStackControl.h"
+#include "../../lib/analysis/arch/x86_64/NativeStackControl.h"
 #include "gtest/gtest.h"
 
 #include "neverd/symbolic/SymExec.h"

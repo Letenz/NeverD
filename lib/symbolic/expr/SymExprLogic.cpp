@@ -24,6 +24,36 @@
 #include <limits>
 
 namespace neverd::symbolic {
+namespace {
+
+// Keep the zero-filled high bits outside the bitwise operation. Only AND may
+// discard high constant bits; OR and XOR must retain every set constant bit.
+SymRef contractZeroExtensions(SymContext &C, SymOp Op,
+                              llvm::ArrayRef<SymRef> Rest,
+                              const llvm::APInt &Constant) {
+  if (C.op(Rest.front()) != SymOp::ZExt)
+    return {};
+  const unsigned Width = C.width(C.operand(Rest.front(), 0));
+  if (Op != SymOp::And && Constant.getActiveBits() > Width)
+    return {};
+  for (auto R : Rest)
+    if (C.op(R) != SymOp::ZExt || C.width(C.operand(R, 0)) != Width)
+      return {};
+  llvm::SmallVector<SymRef, 8> Narrow;
+  for (auto R : Rest)
+    Narrow.push_back(C.operand(R, 0));
+  Narrow.push_back(C.mkConst(Constant.trunc(Width)));
+  SymRef Value;
+  if (Op == SymOp::And)
+    Value = C.mkAnd(Narrow);
+  else if (Op == SymOp::Or)
+    Value = C.mkOr(Narrow);
+  else
+    Value = C.mkXor(Narrow);
+  return C.mkZExt(Value, Constant.getBitWidth());
+}
+
+} // namespace
 
 /// Shared shape for And/Or/Xor: flatten the nested same-operator operands,
 /// fold the constants into one, then let the caller apply the operator's own
@@ -99,6 +129,25 @@ SymRef SymContext::mkAnd(llvm::ArrayRef<SymRef> Ops) {
 
   if (Rest.empty())
     return mkConst(Acc);
+
+  if (auto Narrow = contractZeroExtensions(*this, SymOp::And, Rest, Acc))
+    return Narrow;
+
+  // OR/XOR cannot set a bit that is zero in every operand. Explicit masks
+  // provide this fact without distributing AND or recursively walking the
+  // data expression. Bound both fan-in and word size for builder-time work.
+  if (W <= 128 && !Acc.isAllOnes() && Rest.size() == 1 &&
+      (op(Rest[0]) == SymOp::Or || op(Rest[0]) == SymOp::Xor)) {
+    auto Terms = operands(Rest[0]);
+    const auto Outside = ~Acc;
+    if (Terms.size() <= 8 && llvm::all_of(Terms, [&](SymRef Term) {
+          if (isConst(Term))
+            return (constValue(Term) & Outside).isZero();
+          return op(Term) == SymOp::And && isConst(operand(Term, 0)) &&
+                 (constValue(operand(Term, 0)) & Outside).isZero();
+        }))
+      return Rest[0];
+  }
 
   if (W == 1)
     if (SymRef Predicate =
@@ -212,6 +261,9 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
   if (Rest.empty())
     return mkConst(Acc);
 
+  if (auto Narrow = contractZeroExtensions(*this, SymOp::Or, Rest, Acc))
+    return Narrow;
+
   if (W == 1)
     if (SymRef Predicate =
             detail::recoverObservedComparison(*this, SymOp::Or, Rest, Acc))
@@ -285,6 +337,9 @@ SymRef SymContext::mkXor(llvm::ArrayRef<SymRef> Ops) {
 
   if (Rest.empty())
     return mkConst(Acc);
+
+  if (auto Narrow = contractZeroExtensions(*this, SymOp::Xor, Rest, Acc))
+    return Narrow;
 
   if (W == 1 || !isVar(Rest[0]))
     if (SymRef Predicate =
@@ -411,6 +466,18 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
       return A;
     if (isConst(A))
       return mkConst(constValue(A).lshr(Amt.getZExtValue()));
+    // Compare the full unsigned count before canonicalizing its storage
+    // width. Equal in-range counts must denote the same shift expression.
+    B = mkConst(W, Amt.getZExtValue());
+    if (op(A) == SymOp::And && operands(A).size() == 2 &&
+        isConst(operand(A, 0)) &&
+        constValue(operand(A, 0)).countLeadingOnes() >=
+            W - Amt.getZExtValue()) {
+      // The mask changes only bits discarded by this logical right shift.
+      // Keep the original count and source; this says nothing about signed
+      // shifts, other masks, or LLVM's separate definedness obligations.
+      return mkLShr(operand(A, 1), B);
+    }
     if (op(A) == SymOp::Mul && operands(A).size() == 2 &&
         isConst(operand(A, 0))) {
       llvm::APInt Factor = constValue(operand(A, 0));
@@ -422,6 +489,10 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
       if (SymRef Predicate = detail::recoverSignComparison(*this, A))
         return mkZExt(Predicate, W);
   }
+  // Retain the entire count: truncating it to the narrow value width would
+  // turn a large, zero-producing shift into a small one.
+  if (op(A) == SymOp::ZExt)
+    return mkZExt(mkLShr(operand(A, 0), B), W);
   if (isConstZero(A))
     return mkZero(W);
   return intern(SymOp::LShr, W, {A, B}, 0);
@@ -444,6 +515,9 @@ SymRef SymContext::mkAShr(SymRef A, SymRef B) {
     if (Amt.uge(W - 1))
       if (SymRef Predicate = detail::recoverSignComparison(*this, A))
         return mkSExt(Predicate, W);
+    // Arithmetic overshifts saturate at the sign bit. Inspect the complete
+    // count before narrowing so large counts cannot wrap to a smaller shift.
+    B = mkConst(W, Amt.uge(W - 1) ? W - 1 : Amt.getZExtValue());
   }
   if (isConstZero(A))
     return mkZero(W);

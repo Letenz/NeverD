@@ -640,6 +640,94 @@ struct NestedCallbackFixture : OnceFixture {
   }
 };
 
+struct ConditionalOnceContextFixture : NestedCallbackFixture {
+  ExprPtr Context;
+  ConditionalOnceContextFixture() {
+    Image.Symbols.push_back({"_context_choice", 0x2018, 8, false});
+    MedVar Variable;
+    Variable.Kind = MedVar::Temp;
+    Variable.TheArch = Image.Arch;
+    Variable.Id = 50003;
+    Variable.Size = 8;
+    Context = HighExpr::makeVar(Variable, NdType::makeInt(8, false));
+    HighStmt Copy;
+    Copy.Kind = StmtKind::Assign;
+    Copy.IsPhiCopy = true;
+    Copy.Addr = 0x1088;
+    Copy.Dst = Context;
+    Copy.Val = NestedOnce->Operands[2];
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Addr = 0x1084;
+    Branch.Cond = HighExpr::makeLoad(
+        HighExpr::makeConst(0x2018, 8, ConstantAddressProvenance::DataAddress),
+        NdType::makeInt(8, false));
+    Branch.Body = {Copy};
+    Copy.Addr = 0x108c;
+    Copy.Val = HighExpr::makeUndef(8);
+    Branch.ElseBody = {Copy};
+    NestedOnce->Operands[2] = Context;
+    Pipeline.HighFuncs[1].Body.insert(Pipeline.HighFuncs[1].Body.begin(),
+                                      std::move(Branch));
+  }
+};
+
+ExprPtr ignoredCallbackFrameReturn() {
+  MedVar Stack;
+  Stack.Kind = MedVar::Reg;
+  Stack.TheArch = Arch::AArch64;
+  Stack.RegOff = getTargetRegInfo(Stack.TheArch).StackPointer;
+  Stack.Id = Stack.RegOff;
+  Stack.Size = 8;
+  auto Value =
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(uint64_t(-248), 8),
+                          HighExpr::makeVar(Stack, NdType::makeInt(8)));
+  Value->Type = NdType::makeInt(8);
+  return Value;
+}
+
+struct TypedOnceCallerFixture : NestedCallbackFixture {
+  ExprPtr RootOnce;
+  TypedOnceCallerFixture() {
+    auto &Outer = Pipeline.HighFuncs[1];
+    Outer.ReturnType = NdType::makeInt(8);
+    Outer.Body.back().RetVal = ignoredCallbackFrameReturn();
+    Pipeline.HighFuncs.erase(
+        std::remove_if(Pipeline.HighFuncs.begin(), Pipeline.HighFuncs.end(),
+                       [](const HighFunc &F) {
+                         return F.Entry == 0x1000 || F.Entry == 0x10c0;
+                       }),
+        Pipeline.HighFuncs.end());
+    Image.Symbols.push_back({"_$s4Test5outer_Wz", 0x2040, 8, false});
+    HighFunc Caller;
+    Caller.Entry = 0x10c0;
+    Caller.Name = "typed_once_caller";
+    Caller.SourceTypeHint = swift_once_source_detail::callbackHint(Image.Arch);
+    Caller.SourceTypeHint->Origin =
+        SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Caller.Params = {{"input", NdType::makePtr(NdType::makeVoid())}};
+    Caller.ReturnType = NdType::makeVoid();
+    MedVar Input;
+    Input.Kind = MedVar::Param;
+    Input.Id = 0;
+    Input.Size = 8;
+    RootOnce = HighExpr::makeCall(
+        "swift_once", 0x2080,
+        {HighExpr::makeConst(0x2040, 8, ConstantAddressProvenance::DataAddress),
+         HighExpr::makeConst(0x1080, 8, ConstantAddressProvenance::CodeAddress),
+         HighExpr::makeVar(Input, Caller.Params.front().Type)});
+    RootOnce->Type = NdType::makeVoid();
+    RootOnce->SourceCallHint = std::make_shared<SourceCallTypeHint>(
+        *swiftRuntimeSourceCallHint(Image, 0x2080));
+    HighStmt Invoke, Return;
+    Invoke.Kind = StmtKind::Call;
+    Invoke.CallExpr = RootOnce;
+    Return.Kind = StmtKind::Return;
+    Caller.Body = {Invoke, Return};
+    Pipeline.HighFuncs.push_back(std::move(Caller));
+  }
+};
+
 struct NestedCallbackGraphFixture : NestedCallbackFixture {
   static constexpr va_t MiddleAddress = 0x1090;
   static constexpr va_t SecondLeafAddress = 0x10b0;
@@ -1138,6 +1226,388 @@ TEST(SwiftOnceSources, NestedCallbackPreservesRetainInIgnoredReturn) {
       swift_once_source_detail::nestedCallbackContract(Outer, F.Image));
 }
 
+TEST(SwiftOnceSources, NestedCallbackDiscardsOnlyPureIgnoredReturnArithmetic) {
+  NestedCallbackFixture F;
+  auto &Outer = F.Pipeline.HighFuncs[1];
+  Outer.FrameSize = 512;
+  Outer.ReturnType = NdType::makeInt(8);
+  Outer.Body.back().RetVal = ignoredCallbackFrameReturn();
+  const auto OriginalReturn = Outer.Body.back().RetVal;
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.NestedCallbacks.count(Outer.Entry), 1U);
+  const auto Projected =
+      projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions());
+  ASSERT_TRUE(Projected);
+  EXPECT_EQ(Projected->Function.ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_FALSE(Projected->Function.Body.back().RetVal);
+  ASSERT_EQ(Projected->Function.Body.size(), Outer.Body.size());
+  EXPECT_EQ(Projected->Function.Body[0].Kind, StmtKind::Call);
+  EXPECT_EQ(Projected->Function.Body[1].Kind, StmtKind::Store);
+  EXPECT_EQ(Outer.Body.back().RetVal, OriginalReturn);
+  EXPECT_FALSE(Outer.SourceTypeHint);
+
+  // The local return proof cannot authenticate a changed descendant.
+  F.Pipeline.HighFuncs.back().SourceTypeHint.reset();
+  EXPECT_FALSE(
+      projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions()));
+}
+
+TEST(SwiftOnceSources, TypedOnceCallerRootsAnIndependentNestedCallbackChain) {
+  TypedOnceCallerFixture F;
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  EXPECT_TRUE(Plan.Getters.empty());
+  EXPECT_TRUE(Plan.ObjCThunks.empty());
+  EXPECT_TRUE(Plan.Addressors.empty());
+  ASSERT_EQ(Plan.NestedCallbacks.count(0x1080), 1U);
+  ASSERT_EQ(Plan.CallbackHints.size(), 2U);
+  PipelineOptions Options;
+  EXPECT_EQ(applySwiftOnceSourceHints(Plan, Options), 1U);
+  EXPECT_FALSE(Options.SourceTypeHints.count(0x1080));
+  const auto Projected =
+      projectSwiftOnceNestedCallbacks(F.Image, Plan, F.functions());
+  ASSERT_EQ(Projected.size(), 1U);
+  auto Functions = F.functions();
+  Functions[0x1080] = &Projected.at(0x1080).Function;
+  const auto Caller = bindSwiftOnceSourceReferences(F.Pipeline.HighFuncs.back(),
+                                                    F.Image, Plan, Functions);
+  EXPECT_EQ(Caller.Dependencies, std::set<va_t>{0x1080});
+  ASSERT_EQ(Caller.Function.Body[0].CallExpr->Operands[2]->Kind,
+            ExprKind::Const);
+  EXPECT_EQ(Caller.Function.Body[0].CallExpr->Operands[2]->ConstVal, 0U);
+  EXPECT_EQ(F.RootOnce->Operands[2]->Kind, ExprKind::Var);
+}
+
+TEST(SwiftOnceSources, TypedOnceRootStillRequiresIndependentCurrentEvidence) {
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    TypedOnceCallerFixture F;
+    if (Variant == 0)
+      F.Pipeline.HighFuncs.back().SourceTypeHint.reset();
+    else if (Variant == 1)
+      F.RootOnce->SourceCallHint.reset();
+    else if (Variant == 2)
+      F.Pipeline.HighFuncs[1].Body.back().RetVal = HighExpr::makeUndef(8);
+    else if (Variant == 3)
+      F.Image.Symbols.push_back({"_$s4Test5outer_WZ", 0x1080, 0, true});
+    else {
+      LowFunc Direct;
+      LowBlock Block;
+      LowOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(NdVar::cst(Variant == 4 ? 0x1080 : F.LeafAddress, 8));
+      Block.Ops.push_back(Call);
+      Direct.Blocks.push_back(std::move(Block));
+      F.Pipeline.LowFuncs.push_back(std::move(Direct));
+    }
+    const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+    EXPECT_TRUE(Plan.CallbackHints.empty());
+    EXPECT_TRUE(Plan.NestedCallbacks.empty());
+  }
+}
+
+TEST(SwiftOnceSources, TypedOnceCallerKeepsContextEvaluationEffects) {
+  for (const bool Load : {false, true}) {
+    TypedOnceCallerFixture F;
+    auto Input = F.RootOnce->Operands[2];
+    auto Effect = Load ? HighExpr::makeLoad(Input, Input->Type)
+                       : HighExpr::makeCall("effect", 0x10f0, {Input});
+    Effect->Type = Input->Type;
+    F.RootOnce->Operands[2] = Effect;
+    const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+    const auto Projected =
+        projectSwiftOnceNestedCallbacks(F.Image, Plan, F.functions());
+    ASSERT_EQ(Projected.size(), 1U);
+    auto Functions = F.functions();
+    Functions[0x1080] = &Projected.at(0x1080).Function;
+    const auto Caller = bindSwiftOnceSourceReferences(
+        F.Pipeline.HighFuncs.back(), F.Image, Plan, Functions);
+    EXPECT_EQ(Caller.Dependencies, std::set<va_t>{0x1080});
+    const auto &Context = Caller.Function.Body[0].CallExpr->Operands[2];
+    EXPECT_EQ(Context->Kind, Effect->Kind);
+    EXPECT_EQ(Context->Operands.front()->Var.Kind, MedVar::Param);
+    EXPECT_TRUE(Caller.ErasedSwiftOnceContextParameters.empty());
+    EXPECT_FALSE(swift_once_source_detail::projectedOnceContextUnused(
+        Caller.Function, 0));
+  }
+}
+
+TEST(SwiftOnceSources, IgnoredOnceContextStillObservesIndirectCallerUses) {
+  for (const auto Kind : {ExprKind::Var, ExprKind::Phi}) {
+    TypedOnceCallerFixture F;
+    auto Caller = F.Pipeline.HighFuncs.back();
+    Caller.Body.erase(Caller.Body.begin());
+    EXPECT_TRUE(
+        swift_once_source_detail::projectedOnceContextUnused(Caller, 0));
+    auto Target = std::make_shared<HighExpr>(*F.RootOnce->Operands[2]);
+    Target->Kind = Kind;
+    HighStmt Invoke;
+    Invoke.Kind = StmtKind::Call;
+    Invoke.CallExpr = HighExpr::makeCall({}, 0, {});
+    Invoke.CallExpr->Type = NdType::makeVoid();
+    Invoke.CallExpr->IsIndirectCall = true;
+    Invoke.CallExpr->IndirectTarget = Target;
+    Caller.Body.insert(Caller.Body.begin(), Invoke);
+    EXPECT_FALSE(
+        swift_once_source_detail::projectedOnceContextUnused(Caller, 0));
+  }
+}
+
+TEST(SwiftOnceSources, EmittedTypedOnceCallerPreservesContextRetainAtO0AndO2) {
+  TypedOnceCallerFixture F;
+  constexpr va_t RetainSlot = 0x2088;
+  F.Image.ImportPtrSlots[RetainSlot] = "_objc_retain";
+  F.Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+  F.Image.DyldBindSlots[RetainSlot] = {"_objc_retain", 0,
+                                       "/usr/lib/libobjc.A.dylib", false};
+  const auto Hint = objcRuntimeSourceCallHint(F.Image, RetainSlot);
+  ASSERT_TRUE(Hint);
+  auto Retain =
+      HighExpr::makeCall("objc_retain", RetainSlot, {F.RootOnce->Operands[2]});
+  Retain->Type = NdType::makePtr(NdType::makeVoid());
+  Retain->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+  F.RootOnce->Operands[2] = Retain;
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  const auto Projected =
+      projectSwiftOnceNestedCallbacks(F.Image, Plan, F.functions());
+  ASSERT_EQ(Projected.size(), 1U);
+  auto Functions = F.functions();
+  Functions[0x1080] = &Projected.at(0x1080).Function;
+  std::vector<HighFunc> Bodies;
+  for (const va_t Entry : {va_t{0x10c0}, va_t{0x1080}, F.LeafAddress}) {
+    const auto Once = bindSwiftOnceSourceReferences(*Functions.at(Entry),
+                                                    F.Image, Plan, Functions);
+    auto Bound = bindObjCSourceReferences(Once.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    Bodies.push_back(std::move(Bound.Function));
+  }
+  CEmitterOptions Options;
+  Options.TheArch = F.Image.Arch;
+  Options.Format = F.Image.Format;
+  Options.Image = &F.Image;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  HighCEmitter Emitter;
+  Emitter.prepareImageFunctionNames(F.Image);
+  ASSERT_TRUE(Emitter.emit(Bodies, Out, Options));
+  Source += R"C(
+#include <stdlib.h>
+static int64_t outer_predicate, leaf_predicate;
+static uint64_t object;
+static unsigned calls, retains;
+static void *last_context;
+uintptr_t neverd_local_storage_2010_address(void) { return (uintptr_t)&object; }
+uintptr_t neverd_local_storage_2020_address(void) { return (uintptr_t)&leaf_predicate; }
+uintptr_t neverd_local_storage_2040_address(void) { return (uintptr_t)&outer_predicate; }
+void *objc_retain(void *context) {
+  ++retains;
+  last_context = context;
+  return context;
+}
+void swift_once(void *p, void (*callback)(void *), void *context) {
+  ++calls;
+  if (p == &outer_predicate) {
+    if (context != last_context || !context) abort();
+  } else if (p != &leaf_predicate || context) abort();
+  if (*(int64_t *)p != -1) {
+    *(int64_t *)p = -1;
+    callback(context);
+  }
+}
+int main(void) {
+  typed_once_caller((void *)(uintptr_t)0xBAD);
+  if (object != 7 || calls != 2 || retains != 1) return 1;
+  typed_once_caller((void *)(uintptr_t)0xF00);
+  if (object != 7 || calls != 3 || retains != 2) return 2;
+  return 0;
+}
+)C";
+  executeOnceSource(Source);
+}
+
+TEST(SwiftOnceSources, IgnoredCallbackViewsRejectHiddenIndirectTargets) {
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    NestedCallbackFixture F;
+    auto &Outer = F.Pipeline.HighFuncs[1];
+    const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+    auto Context = F.NestedOnce->Operands[2];
+    if (Variant % 3 == 1) {
+      Context = HighExpr::makeUndef(8);
+      Context->Type = NdType::makePtr(NdType::makeVoid());
+    } else if (Variant % 3 == 2) {
+      Context->Var.Kind = MedVar::Temp;
+    }
+    if (Variant >= 3) {
+      auto View = std::make_shared<HighExpr>();
+      View->Kind = ExprKind::Cast;
+      View->Type = View->CastTo = Context->Type;
+      View->Operands = {Context};
+      Context = std::move(View);
+    }
+    Context->IndirectTarget = HighExpr::makeCall("effect", 0x10f0, {});
+    F.NestedOnce->Operands[2] = Context;
+    EXPECT_FALSE(swift_once_source_detail::nestedOnceContext(Context));
+    EXPECT_FALSE(
+        swift_once_source_detail::nestedCallbackContract(Outer, F.Image));
+    EXPECT_FALSE(
+        projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions()));
+  }
+}
+
+TEST(SwiftOnceSources, RetainedCallbackReturnRejectsMalformedScalarViews) {
+  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+    SCOPED_TRACE(Variant);
+    NestedCallbackFixture F;
+    constexpr va_t RetainSlot = 0x2088;
+    F.Image.ImportPtrSlots[RetainSlot] = "_objc_retain";
+    F.Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+    F.Image.DyldBindSlots[RetainSlot] = {"_objc_retain", 0,
+                                         "/usr/lib/libobjc.A.dylib", false};
+    const auto Hint = objcRuntimeSourceCallHint(F.Image, RetainSlot);
+    ASSERT_TRUE(Hint);
+    auto Retain = HighExpr::makeCall("objc_retain", RetainSlot,
+                                     {HighExpr::makeConst(0, 8)});
+    Retain->Type = NdType::makePtr(NdType::makeVoid());
+    Retain->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    ASSERT_TRUE(
+        swift_once_source_detail::retainedCallbackReturn(Retain, F.Image));
+    ExprPtr Value = Retain;
+    if (Variant != 0) {
+      Value = std::make_shared<HighExpr>();
+      Value->Kind = ExprKind::Cast;
+      Value->Type = Value->CastTo = NdType::makeInt(8);
+      Value->Operands = {Retain};
+    }
+    if (Variant < 2)
+      Value->IndirectTarget = HighExpr::makeCall("effect", 0x10f0, {});
+    else if (Variant == 2)
+      Value->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+    else
+      Value->CastTo = NdType::makeInt(4);
+    auto &Outer = F.Pipeline.HighFuncs[1];
+    Outer.ReturnType = Value->Type;
+    Outer.Body.back().RetVal = Value;
+    EXPECT_FALSE(
+        swift_once_source_detail::retainedCallbackReturn(Value, F.Image));
+    EXPECT_FALSE(
+        swift_once_source_detail::nestedCallbackContract(Outer, F.Image));
+  }
+}
+
+TEST(SwiftOnceSources, IgnoredReturnArithmeticRejectsEffectsAndMalformedViews) {
+  for (unsigned Variant = 0; Variant != 17; ++Variant) {
+    SCOPED_TRACE(Variant);
+    NestedCallbackFixture F;
+    auto &Outer = F.Pipeline.HighFuncs[1];
+    Outer.ReturnType = NdType::makeInt(8);
+    auto Value = ignoredCallbackFrameReturn();
+    auto &Operand = Value->Operands[1];
+    switch (Variant) {
+    case 0:
+      Operand = HighExpr::makeLoad(Operand, NdType::makeInt(8));
+      break;
+    case 1:
+      Operand = HighExpr::makeCall("effect", 0x10f0, {});
+      Operand->Type = NdType::makeInt(8);
+      break;
+    case 2:
+      Operand = HighExpr::makeUndef(8);
+      break;
+    case 3:
+      Operand->Var.Kind = MedVar::Param;
+      Operand->Var.Id = 2;
+      break;
+    case 4:
+      Value->Op = NdOp::INT_DIV;
+      break;
+    case 5:
+      Value->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 6:
+      Operand->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 7:
+      Value->IndirectTarget = HighExpr::makeCall("effect", 0x10f0, {});
+      break;
+    case 8:
+      Operand->IndirectTarget = HighExpr::makeCall("effect", 0x10f0, {});
+      break;
+    case 9:
+      Operand->Type = NdType::makeInt(4);
+      break;
+    case 10:
+      Operand->Type = NdType::makeFloat(8);
+      break;
+    case 11:
+      Value->Operands.push_back(HighExpr::makeConst(1, 8));
+      break;
+    case 12:
+      Operand->Operands.push_back(HighExpr::makeConst(1, 8));
+      break;
+    case 13:
+      Operand.reset();
+      break;
+    case 14:
+      Value->IntrinsicOutputs.push_back({});
+      break;
+    case 15:
+      Operand->Var.Size = 4;
+      break;
+    case 16:
+      Value->Operands[0]->Type = NdType::makePtr(NdType::makeVoid());
+      break;
+    }
+    EXPECT_FALSE(swift_once_source_detail::discardableCallbackReturn(Value));
+    Outer.Body.back().RetVal = Value;
+    EXPECT_FALSE(
+        swift_once_source_detail::nestedCallbackContract(Outer, F.Image));
+  }
+  auto Cycle = ignoredCallbackFrameReturn();
+  Cycle->Operands[1] = Cycle;
+  EXPECT_FALSE(swift_once_source_detail::discardableCallbackReturn(Cycle));
+  Cycle->Operands.clear();
+}
+
+TEST(SwiftOnceSources, IgnoredReturnArithmeticChecksEveryNestedReturn) {
+  NestedCallbackFixture F;
+  auto &Outer = F.Pipeline.HighFuncs[1];
+  Outer.ReturnType = NdType::makeInt(8);
+  auto Difference = HighExpr::makeBinop(
+      NdOp::INT_SUB, ignoredCallbackFrameReturn(), HighExpr::makeConst(16, 8));
+  Difference->Type = NdType::makeInt(8);
+  HighStmt Early;
+  Early.Kind = StmtKind::Return;
+  Early.RetVal = Difference;
+  Early.Addr = 0x1088;
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Cond = HighExpr::makeLoad(
+      HighExpr::makeConst(0x2010, 8, ConstantAddressProvenance::DataAddress),
+      NdType::makeInt(8));
+  Branch.Body = {Early};
+  Outer.Body.insert(Outer.Body.end() - 1, Branch);
+  Outer.Body.back().RetVal = ignoredCallbackFrameReturn();
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.NestedCallbacks.count(Outer.Entry), 1U);
+  const auto Projected =
+      projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions());
+  ASSERT_TRUE(Projected);
+  unsigned Returns = 0;
+  walkStmts(Projected->Function.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Return) {
+      ++Returns;
+      EXPECT_FALSE(S.RetVal);
+    }
+  });
+  EXPECT_EQ(Returns, 2U);
+  EXPECT_EQ(Outer.Body[2].Body[0].RetVal, Difference);
+  // Effects nested in any return must invalidate an already discovered plan.
+  Outer.Body[2].Body[0].RetVal =
+      HighExpr::makeLoad(Difference, NdType::makeInt(8));
+  EXPECT_FALSE(
+      projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions()));
+}
+
 TEST(SwiftOnceSources, ProjectsNestedGraphInDependencyOrderAndKeepsEffects) {
   for (const bool Reverse : {false, true}) {
     SCOPED_TRACE(Reverse);
@@ -1209,6 +1679,199 @@ TEST(SwiftOnceSources, NestedContextsMayUseUnobservedScalarRegisterViews) {
   EXPECT_TRUE(Flow.Complete);
   EXPECT_TRUE(Flow.Items.empty());
   EXPECT_EQ(F.SecondOnce->Operands[2]->Kind, ExprKind::Var);
+}
+
+TEST(SwiftOnceSources, NestedContextPhiBecomesDeadOnlyAfterDescendantProof) {
+  ConditionalOnceContextFixture F;
+  const auto &Original = F.Pipeline.HighFuncs[1];
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.NestedCallbacks.count(Original.Entry), 1U);
+  const auto Projected =
+      projectSwiftOnceNestedCallback(Original, F.Image, Plan, F.functions());
+  ASSERT_TRUE(Projected);
+  const auto Flow = analyzeHighSourceFlow(Projected->Function, false);
+  EXPECT_TRUE(Flow.Complete);
+  EXPECT_TRUE(Flow.Items.empty());
+  EXPECT_TRUE(swift_once_source_detail::ignoresContext(Projected->Function));
+  EXPECT_EQ(Projected->Function.Body[0].Body[0].Addr, 0x1088U);
+  EXPECT_EQ(Projected->Function.Body[0].ElseBody[0].Addr, 0x108cU);
+  EXPECT_EQ(Projected->Function.Body[1].CallExpr->Operands[2]->Kind,
+            ExprKind::Const);
+  EXPECT_EQ(Original.Body[0].ElseBody[0].Val->Kind, ExprKind::Undef);
+  EXPECT_EQ(F.NestedOnce->Operands[2], F.Context);
+  EXPECT_FALSE(Original.SourceTypeHint);
+
+  HighStmt Observe;
+  Observe.Kind = StmtKind::Store;
+  Observe.StoreAddr = HighExpr::makeConst(0x2010, 8);
+  MedVar Input;
+  Input.Kind = MedVar::Param;
+  Input.Id = 0;
+  Input.Size = 8;
+  Observe.StoreVal = HighExpr::makeVar(Input, NdType::makeInt(8));
+  F.Pipeline.HighFuncs.back().Body.insert(
+      F.Pipeline.HighFuncs.back().Body.begin(), Observe);
+  EXPECT_FALSE(
+      projectSwiftOnceNestedCallback(Original, F.Image, Plan, F.functions()));
+  EXPECT_TRUE(
+      discoverSwiftOnceSources(F.Image, F.Pipeline).NestedCallbacks.empty());
+}
+
+TEST(SwiftOnceSources, NestedContextPhiKeepsEveryOtherObservation) {
+  for (unsigned Variant = 0; Variant != 10; ++Variant) {
+    SCOPED_TRACE(Variant);
+    ConditionalOnceContextFixture F;
+    auto &Outer = F.Pipeline.HighFuncs[1];
+    const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+    ASSERT_EQ(Plan.NestedCallbacks.count(Outer.Entry), 1U);
+    auto &Unknown = Outer.Body[0].ElseBody[0];
+    HighStmt Observe;
+    Observe.Kind = StmtKind::Store;
+    Observe.StoreAddr = HighExpr::makeConst(0x2010, 8);
+    Observe.StoreVal = F.Context;
+    switch (Variant) {
+    case 0:
+      Outer.Body.insert(Outer.Body.end() - 1, Observe);
+      break;
+    case 1:
+      Outer.ReturnType = F.Context->Type;
+      Outer.Body.back().RetVal = F.Context;
+      break;
+    case 2: {
+      HighStmt Branch;
+      Branch.Kind = StmtKind::If;
+      Branch.Cond = F.Context;
+      Observe.StoreVal = HighExpr::makeConst(8, 8);
+      Branch.Body = {Observe};
+      Outer.Body.insert(Outer.Body.end() - 1, Branch);
+      break;
+    }
+    case 3:
+      Observe = HighStmt{};
+      Observe.Kind = StmtKind::Call;
+      Observe.CallExpr = HighExpr::makeCall({}, 0, {});
+      Observe.CallExpr->Type = NdType::makeVoid();
+      Observe.CallExpr->IsIndirectCall = true;
+      Observe.CallExpr->IndirectTarget = F.Context;
+      Outer.Body.insert(Outer.Body.end() - 1, Observe);
+      break;
+    case 4:
+      Unknown.IsPhiCopy = false;
+      break;
+    case 5:
+      Unknown.Val =
+          HighExpr::makeLoad(Outer.Body[0].Body[0].Val, NdType::makeInt(8));
+      break;
+    case 6:
+      Unknown.Val->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    case 7:
+      Unknown.Val->IndirectTarget = Outer.Body[0].Body[0].Val;
+      break;
+    case 8:
+      F.Image.Arch = Arch::X64;
+      break;
+    case 9:
+      F.NestedOnce->SourceCallHint.reset();
+      break;
+    }
+    EXPECT_FALSE(
+        projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions()));
+    EXPECT_TRUE(
+        discoverSwiftOnceSources(F.Image, F.Pipeline).NestedCallbacks.empty());
+  }
+}
+
+TEST(SwiftOnceSources, CallbackContextProofIncludesIndirectTargets) {
+  for (const auto Kind : {ExprKind::Var, ExprKind::Phi}) {
+    NestedCallbackFixture F;
+    auto &Leaf = F.Pipeline.HighFuncs.back();
+    MedVar Input;
+    Input.Kind = MedVar::Param;
+    Input.Id = 0;
+    Input.Size = 8;
+    auto Target = HighExpr::makeVar(Input, NdType::makePtr(NdType::makeVoid()));
+    Target->Kind = Kind;
+    HighStmt Observe;
+    Observe.Kind = StmtKind::Call;
+    Observe.CallExpr = HighExpr::makeCall({}, 0, {});
+    Observe.CallExpr->Type = NdType::makeVoid();
+    Observe.CallExpr->IsIndirectCall = true;
+    Observe.CallExpr->IndirectTarget = Target;
+    Leaf.Body.insert(Leaf.Body.begin(), Observe);
+    EXPECT_FALSE(swift_once_source_detail::ignoresContext(Leaf));
+    EXPECT_TRUE(
+        discoverSwiftOnceSources(F.Image, F.Pipeline).NestedCallbacks.empty());
+  }
+}
+
+TEST(SwiftOnceSources, EmittedContextPhiPreservesOnceAndStoreEffects) {
+  ConditionalOnceContextFixture F;
+  auto &Outer = F.Pipeline.HighFuncs[1];
+  Outer.FrameSize = 512;
+  Outer.ReturnType = NdType::makeInt(8);
+  Outer.Body.back().RetVal = ignoredCallbackFrameReturn();
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr =
+      HighExpr::makeConst(0x2010, 8, ConstantAddressProvenance::DataAddress);
+  Store.StoreVal = HighExpr::makeConst(85, 8);
+  F.Pipeline.HighFuncs.back().Body.insert(
+      F.Pipeline.HighFuncs.back().Body.begin(), Store);
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  auto Functions = F.functions();
+  const auto Projected =
+      projectSwiftOnceNestedCallbacks(F.Image, Plan, Functions);
+  ASSERT_EQ(Projected.size(), 1U);
+  Functions[0x1080] = &Projected.at(0x1080).Function;
+  std::vector<HighFunc> Bodies;
+  for (const va_t Entry : {va_t{0x1080}, F.LeafAddress}) {
+    auto Bound = bindObjCSourceReferences(*Functions.at(Entry), F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    if (Entry == 0x1080)
+      Bound.Function.Name = "test_context_phi";
+    Bodies.push_back(std::move(Bound.Function));
+  }
+  CEmitterOptions Options;
+  Options.TheArch = F.Image.Arch;
+  Options.Format = F.Image.Format;
+  Options.Image = &F.Image;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  HighCEmitter Emitter;
+  Emitter.prepareImageFunctionNames(F.Image);
+  ASSERT_TRUE(Emitter.emit(Bodies, Out, Options));
+  Source += R"C(
+#include <stdlib.h>
+static int64_t predicate;
+static uint64_t object, choice;
+static unsigned calls, initializations;
+uintptr_t neverd_local_storage_2010_address(void) { return (uintptr_t)&object; }
+uintptr_t neverd_local_storage_2018_address(void) { return (uintptr_t)&choice; }
+uintptr_t neverd_local_storage_2020_address(void) { return (uintptr_t)&predicate; }
+void swift_once(void *p, void (*callback)(void *), void *context) {
+  if (p != &predicate || context) abort();
+  ++calls;
+  if (predicate != -1) {
+    predicate = -1;
+    ++initializations;
+    callback(context);
+    if (object != 85) abort();
+  }
+}
+int main(void) {
+  const uint64_t choices[] = {0, 1, 2, UINT64_MAX};
+  for (unsigned i = 0; i < 4; ++i) {
+    choice = choices[i]; predicate = 0; object = calls = initializations = 0;
+    test_context_phi((void *)(uintptr_t)0xBAD);
+    if (object != 7 || calls != 1 || initializations != 1) return 1;
+    test_context_phi((void *)(uintptr_t)0xF00);
+    if (object != 7 || calls != 2 || initializations != 1) return 2;
+  }
+  return 0;
+}
+)C";
+  executeOnceSource(Source);
 }
 
 TEST(SwiftOnceSources, EmittedNestedGraphExecutesAllEffectsAtO0AndO2) {
@@ -1640,6 +2303,67 @@ TEST(SwiftOnceSources, BindsSharedReturnAddressorAfterIfElseStructuring) {
     EXPECT_EQ(Plan.Addressors.begin()->second.Initializer,
               AddressorFixture::InitializerAddress);
   }
+}
+
+TEST(SwiftOnceSources, EarlyReturnAddressorRevalidatesBothStoragePaths) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool InlineLoad : {false, true})
+      for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(InlineLoad);
+        SCOPED_TRACE(Mutation);
+        AddressorFixture F(Architecture);
+        auto &Accessor = F.Pipeline.HighFuncs[0];
+        auto &Body = Accessor.Body;
+        auto &Guard = Body[1];
+        auto Invoke = Guard.Body.front();
+        Guard.Cond->Op = NdOp::INT_EQUAL;
+        Guard.Body.erase(Guard.Body.begin());
+        // Keep the inert continuation label; selection is independent of it.
+        Body.insert(Body.end() - 1, Invoke);
+        if (InlineLoad) {
+          Body[1].Cond->Operands[0]->Operands[0] = Body[0].Val;
+          Body.erase(Body.begin());
+        }
+        const size_t GuardIndex = InlineLoad ? 0 : 1;
+        auto &CurrentGuard = Body[GuardIndex];
+        if (Mutation == 1)
+          CurrentGuard.Cond->Op = NdOp::INT_NOTEQUAL;
+        if (Mutation == 2)
+          CurrentGuard.Body[0].RetVal = HighExpr::makeConst(0x2018, 8);
+        if (Mutation == 3)
+          F.Once->Operands[0] = HighExpr::makeConst(0x2020, 8);
+        if (Mutation == 4)
+          F.Once->Operands[1] = HighExpr::makeConst(0x1090, 8);
+        if (Mutation == 5)
+          F.Once->Operands[2] = HighExpr::makeConst(0, 8);
+        if (Mutation == 6)
+          CurrentGuard.Body.insert(CurrentGuard.Body.begin(), Invoke);
+        if (Mutation == 7)
+          Body.insert(Body.end() - 1, Invoke);
+        if (Mutation == 8)
+          CurrentGuard.ElseBody.push_back(Invoke);
+        const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+        if (Mutation) {
+          EXPECT_TRUE(Plan.Addressors.empty());
+          continue;
+        }
+        ASSERT_EQ(Plan.Addressors.size(), 1U);
+        ASSERT_EQ(Plan.CallbackHints.size(), 1U);
+        const auto Bound = bindSwiftOnceSourceReferences(
+            F.Pipeline.HighFuncs.back(), F.Image, Plan, F.functions());
+        EXPECT_EQ(Bound.Dependencies,
+                  std::set<va_t>{AddressorFixture::InitializerAddress});
+        ASSERT_EQ(Bound.SwiftOnceAccessors.size(), 1U);
+        const auto Call = Bound.Function.Body[0].RetVal;
+        ASSERT_TRUE(Call);
+        ASSERT_TRUE(
+            swiftOnceAddressorBound(*Call, F.Image, Plan, F.functions()));
+        // Publication cannot reuse a prior plan after either return changes.
+        Body[GuardIndex].Body[0].RetVal = HighExpr::makeConst(0x2018, 8);
+        EXPECT_FALSE(
+            swiftOnceAddressorBound(*Call, F.Image, Plan, F.functions()));
+      }
 }
 
 TEST(SwiftOnceSources, SharedReturnAddressorRequiresExactControlFlow) {

@@ -27,30 +27,23 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
       (X64 ? !Profile.AllowX64 : Image.Arch != Arch::AArch64) ||
       Subtype != (X64 ? uint32_t(CPU_SUBTYPE_X86_64_ALL)
                       : uint32_t(CPU_SUBTYPE_ARM64_ALL)))
-    return failure(
-        "Darwin profile requires a baseline x64 or ARM64 executable; "
-        "iOS devices require ARM64");
+    return failure(diagnostic::ImageArchitecture);
   if (Loaded->Platforms.size() != 1 ||
       Loaded->Platforms.front() != Profile.Platform)
-    return failure(
-        "Mach-O platform does not match the explicit Darwin profile");
+    return failure(diagnostic::ImagePlatform);
   if (Loaded->MainEntries + Loaded->ThreadEntries != 1 ||
       Loaded->HasNonEntryThreadState || Loaded->RequestedStackSize)
-    return failure(
-        "unsupported or ambiguous Mach-O entry/thread/stack contract");
+    return failure(diagnostic::ImageEntry);
   if (!Loaded->Dependencies.empty() || Loaded->HasFixups ||
       Loaded->HasInitializers || Loaded->HasTLS)
-    return failure("Darwin profile does not implement dynamic dependencies, "
-                   "fixups, initializers or TLS");
+    return failure(diagnostic::ImageDependencies);
   if (Loaded->Encrypted || !Loaded->OtherCommands.empty() ||
       (Loaded->Flags & ~(MH_NOUNDEFS | MH_DYLDLINK | MH_TWOLEVEL | MH_PIE)))
-    return failure(
-        "unsupported Mach-O execution flags, commands or encryption");
+    return failure(diagnostic::ImageCommands);
   if (Loaded->Interpreters.size() > 1 ||
       (!Loaded->Interpreters.empty() &&
-       (Loaded->Interpreters.front() != "/usr/lib/dyld" ||
-        !Loaded->MainEntries)))
-    return failure("unsupported Mach-O interpreter startup");
+       (Loaded->Interpreters.front() != DyldPath || !Loaded->MainEntries)))
+    return failure(diagnostic::ImageInterpreter);
   ProcessImage Result{X64 ? GuestArchitecture::X64 : GuestArchitecture::AArch64,
                       {X64 ? PageSizeX64 : PageSizeARM64, MinimumAddress, {}},
                       Loaded->MainEntries == 1,
@@ -58,8 +51,7 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
   const uint64_t Page = Result.Memory.PageSize;
   if (Options.StackSize % Page || Options.StackSize >= Options.MemoryLimit ||
       Page > Options.MemoryLimit - Options.StackSize)
-    return failure(
-        "Darwin stack size must be aligned to the guest OS page size");
+    return failure(diagnostic::StackAlignment);
   unsigned PageZeroCount = 0;
   std::vector<Segment> Mapped;
   for (size_t I = 0; I < Image.Segments.size(); ++I) {
@@ -69,13 +61,12 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
         Segment.Size > UINT64_MAX - (Page - 1) || Info.Flags ||
         (Info.InitialProtection & ~7u) || (Info.MaximumProtection & ~7u) ||
         (Info.InitialProtection & ~Info.MaximumProtection))
-      return failure(
-          "unsupported Darwin segment alignment, flags or permissions");
-    if (Segment.Name == "__PAGEZERO") {
+      return failure(diagnostic::SegmentPermissions);
+    if (Segment.Name == PageZeroSegment) {
       if (++PageZeroCount > 1 || Segment.VA || Segment.FileSz ||
           !Segment.Size || Segment.Size % Page || Info.InitialProtection ||
           Info.MaximumProtection)
-        return failure("invalid Mach-O __PAGEZERO reservation");
+        return failure(diagnostic::PageZeroReservation);
       Result.Memory.MinimumAddress = std::max(MinimumAddress, Segment.Size);
       continue;
     }
@@ -84,10 +75,9 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
     if (!Segment.FileOff && Segment.FileSz &&
         (Info.InitialProtection & (VM_PROT_READ | VM_PROT_EXECUTE)) !=
             (VM_PROT_READ | VM_PROT_EXECUTE))
-      return failure(
-          "Darwin Mach header segment requires read and execute permissions");
+      return failure(diagnostic::MachHeaderPermissions);
     if (Info.InitialProtection && !(Info.InitialProtection & VM_PROT_READ))
-      return failure("Darwin profile requires readable nonempty permissions");
+      return failure(diagnostic::ReadableSegment);
     Result.Memory.Maximum.push_back({Segment.VA,
                                      (Segment.Size + Page - 1) & ~(Page - 1),
                                      Info.MaximumProtection});
@@ -105,7 +95,7 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
         (Region.Address < StackTop + Page &&
          End > StackTop - Options.StackSize - Page) ||
         (Region.Address < ReturnGate + Page && End > ReturnGate))
-      return failure("Darwin image overlaps a reserved or non-user address");
+      return failure(diagnostic::ImageOverlap);
   }
   Result.Plan = std::move(*Plan);
   return Result;

@@ -78,6 +78,23 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 <a id="windows-pe64-profile"></a>
 
+<!-- i18n-section: linux-clocks -->
+
+## 명시적인 게스트 시계
+
+선택 항목인 `linux_time`은 Linux 시스템 호출과 Android Bionic에 고정된 시계 값을 제공합니다. 호스트 시계를 읽거나 명령 실행에 따라 시간을 진행시키거나 기본 시각을 추측하지 않습니다.
+
+```json
+{"linux_time":{"clocks":[
+  {"id":0,"seconds":"4294967297","nanoseconds":987654321},
+  {"id":1,"seconds":123,"nanoseconds":456789}],
+  "timezone":{"minutes_west":-60,"dst_time":0}}}
+```
+
+정적 시계 ID 0–9와 11을 지원합니다. 각 시계는 독립적이며 생략한 값은 알 수 없는 상태로 유지됩니다. 중복되거나 알 수 없는 ID는 거부합니다. 초는 부호 있는 64비트 정수이며 나노초 범위는 `[0, 1000000000)`입니다. JSON 정수는 `±9007199254740991` 이내여야 하고 십진 문자열은 전체 64비트 범위를 보존합니다. 시간대 필드는 부호 있는 32비트 정수입니다. C++에서는 `ProcessOptions::LinuxTime`을 사용하며 다른 OS 프로필은 이 옵션을 거부합니다.
+
+`clock_gettime`, `gettimeofday`, x64의 `time`이 같은 입력을 사용합니다. 입력 누락, 동적 시계 또는 모델링되지 않은 부분 쓰기는 명시적으로 중단되며 이미 완료된 쓰기는 유지됩니다. 시간 조정, 대기 및 실제 장치 시계는 지원하지 않습니다. 쓰기 순서, 오류 코드 및 포인터 동작은[전체 시계 계약](../process-emulation.md#explicit-guest-clocks)을 참조하세요.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 프로필
@@ -116,6 +133,10 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 `WindowsSystemModules`는 두 ISA에 대해 `ntdll.dll`, `kernelbase.dll`, `kernel32.dll`의 제한된 PE64 모델 이미지를 만듭니다. ASCII `GetModuleHandleA` / [`GetModuleHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlew), `LoadLibraryA` / `LoadLibraryW`, [`GetProcAddress`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress)는 매핑된 베이스를 공유하며 PEB/LDR과 `MEM_IMAGE`도 같은 이미지를 나타냅니다. 정적 가져오기, 이름 조회와 게스트 DLL 전달은 동일한 API 게이트와 내보내기 해석기를 사용합니다. 제공자는 고정 상주하고 게스트 초기화 콜백이 없으며 일반 게스트 DLL을 모두 해제한 뒤 진입점 반환을 막지 않습니다. 헤더 또는 내보내기 메타데이터가 바뀌면 조회를 중단합니다. 미지원 시스템 내보내기 이름과 0이 아닌 서수 조회는 명시적으로 중단하며 지원 이름의 대소문자 불일치와 빈 이름은 오류 127, NULL 조회는 87을 반환합니다. 생성 바이트와 주소는 모델 정책이며 Windows DLL 버전별 배치, 네이티브 서수와 제공자 간 별칭은 재구성하지 않습니다. `WindowsSystemTests.cpp`는 자체 x64/ARM64 EXE를 네이티브 Windows와 비교하고 초기 스레드 반환을 독립적으로 8회 관측합니다.
 
 `WindowsProcessExceptions`는 같은 CPU와 프로세스 예산으로 `AddVectoredExceptionHandler`, `RemoveVectoredExceptionHandler`, `RaiseException`을 구현합니다. 순서가 있는 처리기는 등록·삭제, 중첩 예외, 모델 API 호출, DLL 로드와 프로세스 종료를 수행할 수 있습니다. x64/ARM64 데이터 접근 위반과 x64 정수 나눗셈 예외는 게스트의 `CONTEXT` 변경을 검증한 뒤 재개하며 범용 레지스터, SIMD 및 지원 FP 상태를 보존합니다. 소프트웨어 예외는 모델 공급자 내부의 실제 반환 명령으로 재개합니다. 보관된 등록은 128개, 중첩은 16프레임으로 제한합니다. 잘못된 처리 결과, 바뀐 예외 포인터, 미지원 필드와 한도 초과는 명시적으로 실패합니다. ARM64 스택 프레임 기반 SEH/언와인딩, 디버거 전달과 실행/가드 페이지 예외는 미지원입니다. `WindowsExceptionTests.cpp`는 자체 EXE/DLL을 네이티브 Windows와 비교하며 ARM64 KVM/WHP 실기기 증거는 아직 없습니다. [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler), [RemoveVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredexceptionhandler), [RaiseException](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-raiseexception), [CONTEXT x64](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-context), [ARM64_NT_CONTEXT](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-arm64_nt_context). 소프트웨어 예외 레코드에는 `EXCEPTION_SOFTWARE_ORIGINATE`(`0x80`)가 포함되며 호출자의 계속 불가 플래그와 별도로 처리됩니다. 원본 Windows 실행 파일은 소프트웨어 및 하드웨어 예외의 정확한 플래그 값을 검증합니다. [EXCEPTION_RECORD](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-exception_record).
+
+`WindowsProcessContext`는 각 디스패치 프레임의 발생 원인을 유지합니다. 지원하는 x64 데이터 접근·나눗셈 오류는 `CONTEXT.EFlags`에 RF(`0x10000`)를 표시하며, 소프트웨어 접근 위반 코드를 포함한 `RaiseException`은 현재 컨텍스트를 유지합니다. 발생 원인은 VEH/VCH와 SEH 검색·해제 과정에서도 유지됩니다. 유효한 계속 실행은 RF 없이 논리 CPU 플래그를 복원하며, 게스트의 RF 변경은 상태 반영 전에 거부됩니다. 이 제한된 프로필은 명령어 중단점이나 게스트가 제어하는 RF를 모델링하지 않습니다. `WindowsExceptionTests.cpp`는 저장 기록, 복원, 거부 시 CPU·RAM 불변성을 확인합니다.
+
+Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `operand_alignment` 오류를 매개변수 `[read, UINT64_MAX]`의 `STATUS_ACCESS_VIOLATION`으로 변환합니다. 저장 명령도 동일합니다. CPU 계층이 원인을 제공하며 Windows는 벡터 13으로 추측하거나 명령을 다시 디코딩하지 않습니다. `WindowsAlignmentProcessTests.cpp`는 원본 PE 명령으로 오류 시나리오 72개와 주소 수정 후 재시도 9개(`72 + 9`)를 실행하며 PC, RF, XMM, RAM을 검사합니다. 미분류 또는 일관되지 않은 오류는 거부합니다. 프로세스와 드라이버 오류 보고서는 nullable `cause`와 16진수 `error_code`를 보존하여 누락과 0을 구분합니다. 이 전달은 checked x64 사용자 프로파일에 적용됩니다.
 
 `AddVectoredContinueHandler`와 `RemoveVectoredContinueHandler`는 독립된 순서 목록을 관리하며 예외 처리기와 최대 128개 보존 등록 제한을 공유합니다. 벡터 예외 처리기가 실행 재개를 수락하면 계속 처리기는 같은 수정 가능한 예외 레코드와 `CONTEXT`를 봅니다. 중첩 예외와 DLL 알림을 포함한 콜백이 끝난 뒤 최종 컨텍스트를 검증합니다. 다른 종류의 처리기 API로 핸들을 제거할 수 없습니다. `WindowsContinuationTests.cpp`는 순서, 조기 종료, 등록 변경, 컨텍스트 복구, 중첩 전달, 로더 콜백과 프로세스 종료를 독자 EXE와 네이티브 Windows로 비교합니다. 검증한 Windows x64 벡터 경로에서는 `EXCEPTION_NONCONTINUABLE`이 설정되어도 재개할 수 있지만 스택 프레임 기반 SEH 동작의 근거는 아닙니다. 네이티브 ARM64 실행은 아직 검증하지 않았습니다. [AddVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredcontinuehandler), [RemoveVectoredContinueHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-removevectoredcontinuehandler).
 

@@ -113,7 +113,8 @@ NEVERD_CHECKED_X64_INSTRUCTION(RET)
 NEVERD_CHECKED_X64_INSTRUCTION(LFENCE)
 NEVERD_CHECKED_X64_INSTRUCTION(SFENCE)
 NEVERD_CHECKED_X64_INSTRUCTION(MFENCE)
-#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, General)   \
+#define NEVERD_X64_VECTOR_INSTRUCTION(Name, Width, Alignment, Move, Form,      \
+                                      Lane)                                    \
   NEVERD_CHECKED_X64_INSTRUCTION(Name)
 #include "X64VectorInstructions.def"
 #undef NEVERD_X64_VECTOR_INSTRUCTION

@@ -204,7 +204,566 @@ struct FieldFixture {
     return Result;
   }
 };
+
+struct SwiftRuntimeRootFixture : FieldFixture {
+  static constexpr const char *Provider = "/usr/lib/swift/libswiftCore.dylib";
+  static constexpr const char *Superclass = "_OBJC_CLASS_$__TtCs12_SwiftObject";
+  SwiftRuntimeRootFixture() {
+    Image.ObjCClasses.resize(1);
+    auto &C = Image.ObjCClasses.front();
+    C.SuperclassAddress = 0;
+    C.SuperclassName = "_TtCs12_SwiftObject";
+    C.InstanceStart = 16;
+    C.InstanceSize = 24;
+    C.Ivars[0].Offset = 16;
+    u32(0x3014, 0);
+    u32(0x3104, 0);
+    u32(0x3108, (12u << 16) | 1);
+    u32(0x3304, 16);
+    u32(0x3308, 24);
+    u32(0x5028, 2);
+    u32(0x5030, 24);
+    u32(0x5034, 7);
+    u64(0x5060, 16);
+    u64(Slot, 16);
+    u64(0x5008, 0);
+    Image.DataPtrRelocSlots.erase(0x5008);
+    Image.DataPtrRelocTargetOwners.erase(0x5008);
+    Image.DynInfo.NeededLibs.push_back(Provider);
+    Image.ImportPtrSlots[0x5008] = Superclass;
+    Image.DyldBindSlots[0x5008] = {Superclass, 0, Provider, false};
+  }
+};
+struct FixedRootFixture : SwiftRuntimeRootFixture {
+  static constexpr va_t FirstSlot = 0x3580, SecondSlot = 0x3588;
+  FixedRootFixture() {
+    auto &C = Image.ObjCClasses.front();
+    C.InstanceSize = 33;
+    C.Ivars = {{"model", "", 0x3408, FirstSlot, 16, 16, 8},
+               {"older", "", 0x3428, SecondSlot, 32, 1, 1}};
+    u32(0x301c, 13);
+    u32(0x3020, 3);
+    u32(0x3024, 2);
+    u32(0x3028, 10);
+    u32(0x310c, 2);
+    u32(0x3110, 2);
+    u32(0x311c, 2);
+    relative(0x3120, 0x31d0);
+    relative(0x3124, 0x31b0);
+    text(0x3190, "SSSgSg");
+    text(0x31a0, "model");
+    text(0x31b0, "older");
+    text(0x31d0, "SbSg");
+    u32(0x3308, 33);
+    u32(0x3404, 2);
+    pointer(0x3408, FirstSlot);
+    u32(0x3424, 16);
+    pointer(0x3428, SecondSlot);
+    pointer(0x3430, 0x31b0);
+    pointer(0x3438, 0x31f0);
+    u32(0x3440, 0);
+    u32(0x3444, 1);
+    u64(FirstSlot, 16);
+    u64(SecondSlot, 32);
+    u32(0x5030, 33);
+    u32(0x5038, 128);
+    u64(0x5050, 16);
+    u64(0x5058, 32);
+    Image.ObjCSourceReferences.erase(Slot);
+    Image.ObjCSourceReferences[FirstSlot] = {
+        ObjCSourceReference::Kind::IvarOffset, FirstSlot, 8, "model", C.Name};
+    Image.ObjCSourceReferences[SecondSlot] = {
+        ObjCSourceReference::Kind::IvarOffset, SecondSlot, 8, "older", C.Name};
+    Image.Symbols[1] = {"_$s4Demo7DerivedC5modelSSSgSgvpWvd", FirstSlot, 8,
+                        false};
+    Image.Symbols.push_back(
+        {"_$s4Demo7DerivedC5olderSbSgvpWvd", SecondSlot, 8, false});
+    Image.Symbols.push_back({"_$s4Demo7DerivedCMn", 0x3000, 44, false});
+    addSegment(0x7000, SegmentFlags::Readable);
+    auto &Registration = Image.Sections.back();
+    Registration.Name = "__swift5_types";
+    Registration.Size = Registration.FileSz = 4;
+    relative(0x7000, 0x3000);
+  }
+};
+struct StaticRootFixture : FixedRootFixture {
+  static constexpr va_t Base = 0x5400, Accessor = 0x1200;
+  static constexpr va_t SelfStub = 0x1320, InitStub = 0x1340, InitSlot = 0x3628;
+  HighFunc Function, MetadataFunction;
+  ExprPtr Init;
+  StaticRootFixture() {
+    Image.Symbols[0] = {"_$s4Demo7DerivedC6shared_WZ", Entry, 32, true};
+    Image.Symbols.push_back({"_$s4Demo7DerivedCMa", Accessor, 32, true});
+    Image.Symbols.push_back({"_$s4Demo7DerivedC6shared_WZTv_", Base, 0, false});
+    Image.Symbols.push_back(
+        {"_$s4Demo7DerivedC6shared_Wz", Base + 48, 8, false});
+    Image.RuntimeFunctionAddrs.insert(Accessor);
+    relative(0x300c, Accessor);
+    u64(Base + 32, 1);
+    u64(Base + 40, 2);
+    Image.ImportPtrSlots[0x3620] = "_objc_opt_self";
+    Image.DyldBindSlots[0x3620] = {"_objc_opt_self", 0,
+                                   "/usr/lib/libobjc.A.dylib", false};
+    Image.ImportPtrSlots[InitSlot] = "_swift_initStaticObject";
+    Image.DyldBindSlots[InitSlot] = {"_swift_initStaticObject", 0, Provider,
+                                     false};
+    const uint32_t Caller[] = {0xa9bf7bfd, 0x910003fd, 0x9400003e, 0x90000021,
+                               0x91102021, 0x9400008b, 0xa8c17bfd, 0xd65f03c0};
+    const uint32_t Metadata[] = {0xa9bf7bfd, 0x910003fd, 0x90000020,
+                                 0x91000000, 0x94000044, 0xd2800001,
+                                 0xa8c17bfd, 0xd65f03c0};
+    const uint32_t Self[] = {0xd0000010, 0xf9431210, 0xd61f0200};
+    const uint32_t Initialize[] = {0xd0000010, 0xf9431610, 0xd61f0200};
+    for (unsigned I = 0; I < 8; ++I) {
+      u32(Entry + I * 4, Caller[I]);
+      u32(Accessor + I * 4, Metadata[I]);
+    }
+    for (unsigned I = 0; I < 3; ++I) {
+      u32(SelfStub + I * 4, Self[I]);
+      u32(InitStub + I * 4, Initialize[I]);
+    }
+    auto Local = [](int Id) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.Id = Id;
+      V.Size = 8;
+      return HighExpr::makeVar(V, NdType::makePtr(NdType::makeVoid()));
+    };
+    Function.Entry = Entry;
+    Function.Name = Image.Symbols[0].Name;
+    Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+    HighStmt Query;
+    Query.Kind = StmtKind::Assign;
+    Query.Addr = Entry + 8;
+    Query.Dst = Local(0);
+    Query.Val = HighExpr::makeCall("metadata", Accessor, {});
+    Query.Val->Type = Function.ReturnType;
+    const auto Runtime = swiftRuntimeSourceCallHint(Image, InitSlot);
+    EXPECT_TRUE(Runtime);
+    Init = HighExpr::makeCall(
+        "swift_initStaticObject", InitStub,
+        {Local(0), HighExpr::makeConst(
+                       Base + 8, 8, ConstantAddressProvenance::DataAddress)});
+    Init->Type = Function.ReturnType;
+    if (Runtime)
+      Init->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Runtime);
+    HighStmt InitializeObject;
+    InitializeObject.Kind = StmtKind::Assign;
+    InitializeObject.Addr = Entry + 20;
+    InitializeObject.Dst = Local(1);
+    InitializeObject.Val = Init;
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.Addr = Entry + 28;
+    Return.RetVal = Local(1);
+    Function.Body = {Query, InitializeObject, Return};
+    MetadataFunction.Entry = Accessor;
+    MetadataFunction.Name = "_$s4Demo7DerivedCMa";
+    MetadataFunction.ReturnType = Function.ReturnType;
+    SourceFunctionTypeHint Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Signature.ReturnType = Function.ReturnType;
+    std::string Error;
+    EXPECT_TRUE(assignDarwinScalarSourceABI(Signature, Image.Arch, Error));
+    MetadataFunction.SourceTypeHint = Signature;
+  }
+  std::map<va_t, const HighFunc *> functions() const {
+    return {{Accessor, &MetadataFunction}};
+  }
+};
 } // namespace
+
+TEST(SwiftFieldReceiver, AuthenticatesImportedSwiftRuntimeRootIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SwiftRuntimeRootFixture F;
+    F.Image.Arch = Architecture;
+    const auto Identity = swiftObjCClassIdentity(F.Image, 0x5000);
+    ASSERT_TRUE(Identity);
+    EXPECT_EQ(Identity->Module, "Demo");
+    EXPECT_EQ(Identity->Name, "Derived");
+    EXPECT_EQ(Identity->Metadata, 0x5000U);
+    EXPECT_EQ(Identity->Descriptor, 0x3000U);
+    EXPECT_TRUE(isInitialImageImportSlot(F.Image, 0x5008));
+    EXPECT_FALSE(isImmutableImageImportSlot(F.Image, 0x5008));
+    // This class identity cannot turn native Swift field records into the
+    // separate Objective-C reflection/field-layout proof.
+    EXPECT_FALSE(
+        swiftObjCStoredFieldClass(F.Image, Identity->RuntimeName, F.Slot));
+  }
+}
+
+TEST(SwiftFieldReceiver, FixedNativeRootLayoutUsesImmutableDeclaredOffsets) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    FixedRootFixture F;
+    F.Image.Arch = Architecture;
+    EXPECT_FALSE(readImmutableImageBytes(F.Image, F.FirstSlot, 8));
+    EXPECT_EQ(readImmutableImageIvarOffset(F.Image, F.FirstSlot), 16U);
+    const auto Layout = swiftFixedRootClassStorage(F.Image, 0x5000);
+    ASSERT_TRUE(Layout);
+    EXPECT_EQ(Layout->Size, 33U);
+    EXPECT_EQ(Layout->Alignment, 8U);
+    ASSERT_EQ(Layout->Fields.size(), 2U);
+    EXPECT_EQ(Layout->Fields[0].MangledType, "SSSgSg");
+    EXPECT_EQ(Layout->Fields[0].Offset, 16U);
+    EXPECT_EQ(Layout->Fields[0].ByteCount, 16U);
+    EXPECT_EQ(Layout->Fields[1].MangledType, "SbSg");
+    EXPECT_EQ(Layout->Fields[1].Offset, 32U);
+    EXPECT_EQ(Layout->Fields[1].ByteCount, 1U);
+  }
+}
+
+TEST(SwiftFieldReceiver,
+     FixedNativeRootLayoutRejectsStaleOrIncompleteEvidence) {
+  for (unsigned Variant = 0; Variant != 20; ++Variant) {
+    SCOPED_TRACE(Variant);
+    FixedRootFixture F;
+    switch (Variant) {
+    case 0:
+      F.Image.ObjCSourceReferences.erase(F.FirstSlot);
+      break;
+    case 1:
+      F.Image.ObjCSourceReferences.at(F.FirstSlot).Name = "other";
+      break;
+    case 2:
+      F.Image.ObjCSourceReferences.at(F.FirstSlot).ClassName = "other";
+      break;
+    case 3:
+      F.Image.ObjCSourceReferences.at(F.FirstSlot).Size = 4;
+      break;
+    case 4:
+      F.Image.DataPtrRelocSlots.insert(F.FirstSlot);
+      break;
+    case 5:
+      F.Image.RelDataPtrRelocSlots.insert(F.FirstSlot + 4);
+      break;
+    case 6:
+      F.Image.Sections[1].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 7:
+      F.Image.Sections[1].Type = llvm::MachO::S_THREAD_LOCAL_REGULAR;
+      break;
+    case 8:
+      F.u64(F.FirstSlot, 24);
+      break;
+    case 9:
+      F.u64(0x5050, 24);
+      break;
+    case 10:
+      F.text(0x3190, "SS");
+      break;
+    case 11:
+      F.text(0x31a0, "other");
+      break;
+    case 12:
+      F.u32(0x3108, (12u << 16) | 7);
+      break;
+    case 13:
+      F.u32(0x3404, 1);
+      break;
+    case 14:
+      F.u32(0x5034, 15);
+      break;
+    case 15:
+      F.u32(0x5028, 0);
+      break;
+    case 16:
+      F.Image.Symbols[1].Name = "_$s4Demo7DerivedC5modelSSSgvpWvd";
+      break;
+    case 17:
+      F.u32(0x7000, 0);
+      break;
+    case 18:
+      F.Image.ObjCClasses[0].Ivars[1].Alignment = 8;
+      break;
+    case 19:
+      F.u32(0x3110, 3);
+      break;
+    }
+    EXPECT_FALSE(swiftFixedRootClassStorage(F.Image, 0x5000));
+  }
+}
+
+TEST(SwiftFieldReceiver,
+     StaticRootStoragePreservesTokenHeaderAndOptionalValues) {
+  StaticRootFixture F;
+  const auto Proof =
+      sdk::objc_binding_detail::swiftStaticRootObjectStorage(F.Image, F.Base);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->Hint.ByteCount, 48U);
+  EXPECT_TRUE(sdk::objc_binding_detail::swiftStaticRootObjectUse(
+      F.Image, F.Function, *F.Init, F.Entry + 20, *Proof));
+  auto Functions = F.functions();
+  const auto Bound =
+      sdk::bindObjCSourceReferences(F.Function, F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  ASSERT_EQ(Bound.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{F.Base, 48}}));
+  const auto Call = Bound.Function.Body[1].Val;
+  ASSERT_EQ(Call->Operands[1]->Kind, ExprKind::BinOp);
+  const auto Storage = Call->Operands[1]->Operands[0];
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Storage, F.Image, Functions));
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Call, F.Image, Functions, nullptr,
+                                       nullptr, &Bound.Function));
+  EXPECT_EQ(Bound.Function.Body[0].Val->CallAddr, F.Accessor);
+  EXPECT_EQ(Call->CallAddr, F.InitStub);
+  std::set<std::string> Helpers;
+  const auto C = sdk::renderObjCLocalStorageHelpers(
+      F.Image, Bound.LocalStorageExtents, Helpers);
+  EXPECT_NE(C.find("storage[48]"), std::string::npos);
+  EXPECT_NE(C.find("[32] = 1"), std::string::npos);
+  EXPECT_NE(C.find("[40] = 2"), std::string::npos);
+  F.u64(F.Base + 32, 0);
+  EXPECT_FALSE(sdk::objcSourceCallBound(*Storage, F.Image, Functions));
+  EXPECT_FALSE(sdk::objcSourceCallBound(*Call, F.Image, Functions, nullptr,
+                                        nullptr, &Bound.Function));
+}
+
+TEST(SwiftFieldReceiver,
+     StaticRootStoragePreservesOptionalDepthAndArchitecture) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const bool Nested : {false, true}) {
+      StaticRootFixture F;
+      F.Image.Arch = Architecture;
+      if (!Nested) {
+        F.text(0x3190, "SSSg");
+        F.Image.Symbols[1].Name = "_$s4Demo7DerivedC5modelSSSgvpWvd";
+      }
+      const uint64_t Nil = Nested ? (Architecture == Arch::AArch64 ? 1 : 2) : 0;
+      F.u64(F.Base + 32, Nil);
+      const auto Proof = sdk::objc_binding_detail::swiftStaticRootObjectStorage(
+          F.Image, F.Base);
+      ASSERT_TRUE(Proof);
+      EXPECT_EQ(Proof->Hint.ByteCount, 48U);
+      F.u64(F.Base + 32, Nil + 1);
+      EXPECT_FALSE(sdk::objc_binding_detail::swiftStaticRootObjectStorage(
+          F.Image, F.Base));
+    }
+  }
+}
+
+TEST(SwiftFieldReceiver, StaticRootStorageRejectsChangedPublishedArguments) {
+  for (unsigned Variant = 0; Variant != 14; ++Variant) {
+    SCOPED_TRACE(Variant);
+    StaticRootFixture F;
+    auto Functions = F.functions();
+    auto Bound =
+        sdk::bindObjCSourceReferences(F.Function, F.Image, nullptr, &Functions);
+    ASSERT_TRUE(Bound.LocalStorageExtents.count(F.Base));
+    const auto Call = Bound.Function.Body[1].Val;
+    const auto Object = Call->Operands[1];
+    const auto Storage = Object->Operands[0];
+    const auto Offset = Object->Operands[1];
+    switch (Variant) {
+    case 0:
+      Call->Operands[1] = Storage;
+      break;
+    case 1:
+      std::swap(Object->Operands[0], Object->Operands[1]);
+      break;
+    case 2:
+      Offset->ConstVal = 16;
+      break;
+    case 3:
+      Offset->Type = NdType::makeInt(1);
+      break;
+    case 4:
+      Offset->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 5:
+      Offset->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 6:
+      Offset->IndirectTarget = HighExpr::makeUndef(8);
+      break;
+    case 7:
+      Offset->Operands.push_back(HighExpr::makeUndef(8));
+      break;
+    case 8:
+      Object->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 9:
+      Object->Op = NdOp::INT_SUB;
+      break;
+    case 10:
+      Bound.Function.Body[0].Val->CallAddr += 4;
+      break;
+    case 11:
+      Bound.Function.Body[1].Addr += 4;
+      break;
+    case 12: {
+      auto Changed =
+          std::make_shared<SourceCallTypeHint>(*Storage->SourceCallHint);
+      Changed->ByteCount = 40;
+      Storage->SourceCallHint = Changed;
+      break;
+    }
+    case 13:
+      Bound.Function.Body.insert(Bound.Function.Body.begin(),
+                                 Bound.Function.Body[0]);
+      break;
+    }
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, F.Image, Functions, nullptr,
+                                          nullptr, &Bound.Function));
+  }
+}
+
+TEST(SwiftFieldReceiver, StaticRootStorageRejectsMalformedInitializersAndUses) {
+  for (unsigned Variant = 0; Variant != 18; ++Variant) {
+    SCOPED_TRACE(Variant);
+    StaticRootFixture F;
+    switch (Variant) {
+    case 0:
+      F.u64(F.Base, 1);
+      break;
+    case 1:
+      F.u64(F.Base + 8, 0x5000);
+      break;
+    case 2:
+      F.u64(F.Base + 32, 2);
+      break;
+    case 3:
+      *F.bytes(F.Base + 47) = 1;
+      break;
+    case 4:
+      F.Image.DataPtrRelocSlots.insert(F.Base + 16);
+      break;
+    case 5:
+      F.Image.Symbols.push_back({"overlap", F.Base - 8, 16, false});
+      break;
+    case 6:
+      F.Image.Symbols.push_back(
+          {"_$s4Demo7DerivedC6shared_WZTv_", F.Base + 128, 0, false});
+      break;
+    case 7:
+      F.Image.DyldBindSlots.at(F.InitSlot).WeakImport = true;
+      break;
+    case 8:
+      F.relative(0x300c, F.Accessor + 4);
+      break;
+    case 9:
+      F.u32(F.Entry + 12, 0x90000020);
+      break;
+    case 10:
+      F.Init->Operands[0] = HighExpr::makeUndef(8);
+      break;
+    case 11:
+      F.Function.Body[0].Val->CallAddr += 4;
+      break;
+    case 12:
+      F.Function.Name = "other";
+      break;
+    case 13:
+      F.Init->IndirectTarget = HighExpr::makeUndef(8);
+      break;
+    case 14:
+      F.Init->Operands[1]->IndirectTarget = HighExpr::makeUndef(8);
+      break;
+    case 15:
+      F.Function.Body[0].Val->Operands.push_back(HighExpr::makeUndef(8));
+      break;
+    case 16:
+      F.Image.Symbols[0].Name = "other";
+      break;
+    case 17:
+      F.Image.Arch = Arch::X64;
+      F.u64(F.Base + 32, 2);
+      break;
+    }
+    auto Functions = F.functions();
+    const auto Bound =
+        sdk::bindObjCSourceReferences(F.Function, F.Image, nullptr, &Functions);
+    EXPECT_FALSE(Bound.LocalStorageExtents.count(F.Base));
+  }
+}
+
+TEST(SwiftFieldReceiver, ImportedSwiftRootRequiresCurrentExactDeclaration) {
+  for (unsigned Variant = 0; Variant != 25; ++Variant) {
+    SCOPED_TRACE(Variant);
+    SwiftRuntimeRootFixture F;
+    auto &C = F.Image.ObjCClasses.front();
+    switch (Variant) {
+    case 0:
+      F.Image.DyldBindSlots.at(0x5008).WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots.at(0x5008).Module = "/usr/lib/libobjc.A.dylib";
+      break;
+    case 2:
+      F.Image.DynInfo.NeededLibs.pop_back();
+      break;
+    case 3:
+      F.Image.DyldBindSlots.at(0x5008).Addend = 8;
+      break;
+    case 4:
+      F.Image.ImportPtrSlots.at(0x5008) = "_other_class";
+      break;
+    case 5:
+      F.Image.DyldBindSlots.erase(0x5008);
+      break;
+    case 6:
+      F.Image.MachOTwoLevelNamespace = false;
+      break;
+    case 7:
+      F.Image.ConflictingImportStorageSlots.insert(0x5008);
+      break;
+    case 8:
+      C.SuperclassName = "NSObject";
+      break;
+    case 9:
+      C.InheritanceStatus = "unresolved";
+      break;
+    case 10:
+      C.SuperclassAddress = 0x5100;
+      break;
+    case 11:
+      F.relative(0x3014, 0x3188);
+      break;
+    case 12:
+      C.RootClass = true;
+      break;
+    case 13:
+      C.InstanceStart = 8;
+      F.u32(0x3304, 8);
+      break;
+    case 14:
+      F.u32(0x5030, 32);
+      break;
+    case 15:
+      F.u32(0x3308, 32);
+      break;
+    case 16:
+      F.u32(0x502c, 8);
+      break;
+    case 17:
+      F.Image.DataPtrRelocSlots.insert(0x5008);
+      break;
+    case 18:
+      F.Image.RelDataPtrRelocSlots.insert(0x500c);
+      break;
+    case 19:
+      F.Image.ImportPtrSlots[0x500c] = "_overlapping_import";
+      break;
+    case 20:
+      F.Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 21:
+      F.Image.Format = BinaryFormat::ELF;
+      break;
+    case 22:
+      F.Image.DataPtrRelocSlots.insert(0x5030);
+      break;
+    case 23:
+      F.Image.ImportStorageSlots[0x5008] = {F.Superclass, 8,
+                                            ImportStorageEvidence::LoaderBind};
+      break;
+    case 24:
+      F.Image.Sections.push_back(F.Image.Sections.back());
+      break;
+    }
+    EXPECT_FALSE(swiftObjCClassIdentity(F.Image, 0x5000));
+  }
+}
 
 TEST(SwiftFieldReceiver, ReflectionAndIvarIdentityRemainSeparateFromLayout) {
   FieldFixture F;

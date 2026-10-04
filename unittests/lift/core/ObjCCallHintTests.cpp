@@ -8265,6 +8265,9 @@ TEST(ObjCCallHints, SystemDeclarationsPreserveWidthsOpaquePointersAndExports) {
              {"setxattr", {8, 8, 8, 8, 4, 4}},
              {"listxattr", {8, 8, 8, 4}},
              {"removexattr", {8, 8, 4}},
+             {"sysctl", {8, 4, 8, 8, 8, 8}},
+             {"sysctlbyname", {8, 8, 8, 8, 8}},
+             {"sysctlnametomib", {8, 8, 8}},
              {"os_log_type_enabled", {8, 1}},
              {"asl_get", {8, 8}},
              {"asl_set", {8, 8, 8}},
@@ -8286,6 +8289,24 @@ TEST(ObjCCallHints, SystemDeclarationsPreserveWidthsOpaquePointersAndExports) {
         EXPECT_EQ(Hint->Signature.Parameters[I].Location.ValueBytes, Widths[I]);
       }
       EXPECT_EQ(Hint->Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      if (llvm::StringRef(Name).starts_with("sysctl")) {
+        EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+        EXPECT_EQ(Hint->Signature.ReturnType->Size, 4U);
+        EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);
+        const auto SizeIndex = Name == "sysctl" ? 3U : 2U;
+        const auto &SizePointer = Hint->Signature.Parameters[SizeIndex].Type;
+        ASSERT_EQ(SizePointer->Kind, NdTypeKind::Ptr);
+        ASSERT_TRUE(SizePointer->Pointee);
+        EXPECT_EQ(SizePointer->Pointee->Kind, NdTypeKind::Int);
+        EXPECT_EQ(SizePointer->Pointee->Size, 8U);
+        EXPECT_FALSE(SizePointer->Pointee->IsSigned);
+        if (Name != "sysctlnametomib") {
+          const auto &NewSize = Hint->Signature.Parameters.back().Type;
+          EXPECT_EQ(NewSize->Kind, NdTypeKind::Int);
+          EXPECT_EQ(NewSize->Size, 8U);
+          EXPECT_FALSE(NewSize->IsSigned);
+        }
+      }
       if (Name == "getxattr" || Name == "listxattr") {
         EXPECT_EQ(Hint->Signature.ReturnType->Size, 8);
         EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);

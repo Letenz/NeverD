@@ -2970,9 +2970,10 @@ void Pipeline::buildLowIR(
   const ExecutableCodeOwnerIndex ExecutableCodeOwners(Img);
   const ExecutableCodeOwnerIndex *CodeOwnerIndex = &ExecutableCodeOwners;
 
-  // Detected candidates plus, on a full-image run, every symbol/pdata start
-  // (PE symbols on every run, below).  `--func` otherwise keeps only the
-  // requested entries here; CFGBuilder queries
+  // Detected candidates plus every confirmed function-symbol start. Selecting
+  // bodies must not change their boundaries: one unwind range can cover
+  // independently callable entries, including address-taken ones. CFGBuilder
+  // also queries
   // RuntimeFunctionAddrs / KnownCodeRanges / ExceptionMetadata live so a
   // tail `jmp` to `_report_gsfailure` still becomes call+ret.
   // A padding-boundary guess is not a tail-call target: MSVC separates
@@ -2983,14 +2984,11 @@ void Pipeline::buildLowIR(
   for (const auto &C : Candidates)
     if (!BoundaryGuesses.count(C.first))
       FuncEntries.insert(C.first);
-  // A PE function symbol (PDB or export) names a real start, and a leaf
-  // function has no `.pdata` range for the live query to find.  Without the
-  // symbol, a single-function run falls through into the next function and
-  // decodes it as its own body, so PE keeps symbols on every run.
-  if (Opts.OnlyFunctionEntries.empty() || Img.Format == BinaryFormat::COFF)
-    for (const auto &Sym : Img.Symbols)
-      if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
-        FuncEntries.insert(Sym.Addr);
+  // The same symbol inventory owns both full-image and selected-function CFGs;
+  // unselected bodies need not be lifted to preserve their entry boundaries.
+  for (const auto &Sym : Img.Symbols)
+    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
+      FuncEntries.insert(Sym.Addr);
   if (Opts.OnlyFunctionEntries.empty()) {
     // A chained-unwind continuation is part of its parent function: a jump
     // to it must be followed, not modeled as a tail call to a missing one.
