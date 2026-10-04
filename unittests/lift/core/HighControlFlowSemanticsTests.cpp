@@ -7161,6 +7161,97 @@ TEST(HighControlFlowSemantics, JoinDefaultLeavesAnArmThatJumpsWithinItself) {
   EXPECT_EQ(F.Body.size(), 5u);
 }
 
+/// Two tests branch to one cold block placed far past the function, which
+/// jumps back to the join: `r = 5; if (x & 1 || x & 2) { r = 7; ... }`.  The
+/// join and the cold block each do more than a tail copy may repeat.
+MedFunc sharedColdBlock() {
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "shared_cold_block";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  auto Flag = [&](int Id) {
+    auto V = machineValue(Id, Architecture);
+    V.Size = 1;
+    return V;
+  };
+  auto Result = [&](int Version) {
+    auto V = machineValue(9, Architecture);
+    V.Kind = MedVar::Reg;
+    V.RegOff = TRI.IntReturnReg;
+    V.SSAVer = Version;
+    return V;
+  };
+  auto Stores = [&](va_t At, uint64_t Base) {
+    std::vector<MedOp> Ops;
+    for (unsigned K = 0; K < 6; ++K)
+      Ops.push_back(
+          operation(NdOp::STORE, At + K * 4, {}, {C(Base + K * 8), C(K)}));
+    return Ops;
+  };
+  const va_t Starts[] = {0x1000, 0x1100, 0x1200, 0x9000};
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = Starts[I];
+    M.Blocks[I].EndAddr = Starts[I] + 0x40;
+  }
+  auto Low = machineValue(1, Architecture),
+       High = machineValue(3, Architecture);
+  M.Blocks[0].Succs = {3, 1};
+  M.Blocks[0].Ops = {
+      operation(NdOp::COPY, 0x1000, Result(1), {C(5)}),
+      operation(NdOp::INT_AND, 0x1004, Low, {Input, C(1)}),
+      operation(NdOp::INT_NOTEQUAL, 0x1008, Flag(2), {Low, C(0)}),
+      operation(NdOp::COND_BR, 0x100c, {}, {C(0x9000), Flag(2)})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {3, 2};
+  M.Blocks[1].Ops = {
+      operation(NdOp::INT_AND, 0x1100, High, {Input, C(2)}),
+      operation(NdOp::INT_NOTEQUAL, 0x1104, Flag(4), {High, C(0)}),
+      operation(NdOp::COND_BR, 0x1108, {}, {C(0x9000), Flag(4)})};
+  M.Blocks[2].Preds = {1, 3};
+  M.Blocks[2].Phis = {{Result(3), {{1, Result(1)}, {3, Result(2)}}}};
+  M.Blocks[2].Ops = Stores(0x1200, 0x8000);
+  M.Blocks[2].Ops.push_back(operation(NdOp::RETURN, 0x1230, {}, {Result(3)}));
+  M.Blocks[3].Preds = {0, 1};
+  M.Blocks[3].Succs = {2};
+  M.Blocks[3].Ops = {operation(NdOp::COPY, 0x9000, Result(2), {C(7)})};
+  for (MedOp &Op : Stores(0x9004, 0x8100))
+    M.Blocks[3].Ops.push_back(std::move(Op));
+  M.Blocks[3].Ops.push_back(operation(NdOp::BRANCH, 0x9030, {}, {C(0x1200)}));
+  return M;
+}
+
+TEST(HighControlFlowSemantics, ColdBlockSharedByTwoBranchesRunsBeforeItsJoin) {
+  const auto F = MedToHighConverter().convert(sharedColdBlock(), Arch::X64);
+  EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+  for (uint64_t X : {0u, 1u, 2u, 3u}) {
+    SCOPED_TRACE(X);
+    EXPECT_NO_THROW(EXPECT_EQ(execute(F, X, true), X ? 7u : 5u));
+  }
+}
+
+TEST(HighControlFlowSemantics, BlockLayoutFollowsForwardEdgesUnlessUnsure) {
+  MedFunc M = sharedColdBlock();
+  EXPECT_EQ(highBlockLayout(M, {}), (std::vector<int>{0, 1, 3, 2}));
+  // An exception handler's regions follow addresses.
+  MedFunc Handled = M;
+  Handled.ExceptionMetadata.emplace();
+  Handled.ExceptionMetadata->PersonalityVA = 0x5000;
+  EXPECT_EQ(highBlockLayout(Handled, {}), (std::vector<int>{0, 1, 2, 3}));
+  // So does a block whose fall-through successor is unknown.
+  MedFunc Unknown = M;
+  Unknown.Blocks[1].Ops.back().Inputs[0] = MedVar::makeConst(0x7000, 8);
+  EXPECT_EQ(highBlockLayout(Unknown, {}), (std::vector<int>{0, 1, 2, 3}));
+}
+
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {
   // while (1) { if (x) return 1; v = 2; }  return v;  -- the loop has no
   // break of its own, so nothing reaches the trailing return.

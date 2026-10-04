@@ -121,6 +121,18 @@ bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);
 /// `if (c) { A; X: B } else { C; goto X; }` (or the mirror image) becomes
 /// `if (c) { A } else { C }` followed by B.
 bool hoistSharedArmTails(std::vector<HighStmt> &Body);
+/// The order structureControlFlow emits \p Med's blocks in: reverse
+/// postorder from the entry, visiting each block's successors from the
+/// highest address down.  Code laid out in source order keeps that order,
+/// while a block that a later block reaches by a forward edge, such as cold
+/// code moved away from its branch or a tail shared with later code, comes
+/// after the blocks that reach it; blocks the entry never reaches follow in
+/// address order.  \p Dispatched blocks transfer only explicitly (a compare
+/// tree's switch).  Address order when the function has an exception
+/// handler, whose regions follow addresses, or when a block's fall-through
+/// edge is unknown.
+std::vector<int> highBlockLayout(const MedFunc &Med,
+                                 const std::set<int> &Dispatched);
 
 /// Emit a label-per-block goto/return skeleton.  Used when structuring would
 /// exceed SSA limits, or when conversion fails and identity alone would leave
