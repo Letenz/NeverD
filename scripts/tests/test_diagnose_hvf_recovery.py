@@ -258,12 +258,12 @@ class RecoveryContractTests(unittest.TestCase):
             contract = diagnostic.recovery_contract(
                 self.root, self.build, self.document, {NAME}, runner, 100, experiment)
             self.assertEqual(contract["native_name"], name)
-            native_filter = "HvfExecutor.Native*" if experiment in ("recovery-reuse", "recovery-vm-recreate") else name
+            native_filter = "HvfExecutor.Native*" if experiment in ("recovery-reuse", "recovery-vcpu-recreate", "recovery-vm-recreate") else name
             self.assertEqual(contract["command"][1], "--gtest_filter=" + native_filter)
             environment = {"NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1"}
             recreate_owner = experiment == "instruction-owner-recreate"
             recreate_vm = experiment in ("instruction-vm-recreate", "recovery-vm-recreate")
-            recreate = recreate_owner or recreate_vm or experiment == "instruction-vcpu-recreate"
+            recreate = recreate_owner or recreate_vm or experiment in ("instruction-vcpu-recreate", "recovery-vcpu-recreate")
             reuse = recreate or experiment in ("instruction-reuse", "recovery-reuse")
             if reuse:
                 environment["NEVERD_HVF_INTEL_REUSE_EXECUTOR"] = "1"
@@ -276,9 +276,9 @@ class RecoveryContractTests(unittest.TestCase):
             self.assertEqual(contract["native_requirements"], environment)
             self.assertEqual(contract["executor_reuse"], reuse)
             self.assertEqual(contract["vcpu_recreate"], recreate)
-            recovery_vm = experiment == "recovery-vm-recreate"
-            self.assertEqual(contract["vcpu_generations"], 101 if recreate and not recovery_vm else None)
-            self.assertEqual(contract["vcpu_boundary_generations"], 101 if recovery_vm else None)
+            recovery_recreate = experiment in ("recovery-vcpu-recreate", "recovery-vm-recreate")
+            self.assertEqual(contract["vcpu_generations"], 101 if recreate and not recovery_recreate else None)
+            self.assertEqual(contract["vcpu_boundary_generations"], 101 if recovery_recreate else None)
             self.assertEqual(contract["vm_recreate"], recreate_vm)
             self.assertEqual(contract["vm_generations"], 101 if recreate_vm else None)
             controls = experiment == "owner-failure-controls"
@@ -300,7 +300,7 @@ class RecoveryContractTests(unittest.TestCase):
         self.add_probe(name)
         self.add_probe(diagnostic.EXPERIMENTS["owner-failure-controls"])
         keys = ("NEVERD_HVF_INTEL_PROBE", "NEVERD_HVF_INTEL_REUSE_EXECUTOR", "NEVERD_HVF_INTEL_RECREATE_VCPU", "NEVERD_HVF_INTEL_RECREATE_VM", "NEVERD_HVF_INTEL_RECREATE_OWNER")
-        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse", "recovery-vm-recreate", "instruction-vcpu-recreate", "instruction-vm-recreate", "instruction-owner-recreate", "owner-failure-controls"):
+        for mode in ("recovery", "instruction", "instruction-reuse", "recovery-reuse", "recovery-vcpu-recreate", "recovery-vm-recreate", "instruction-vcpu-recreate", "instruction-vm-recreate", "instruction-owner-recreate", "owner-failure-controls"):
             with self.subTest(mode=mode):
                 self.evidence = self.build / ("evidence-" + mode)
                 plan = self.prepare(experiment=mode)
@@ -334,6 +334,29 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertIsNone(plan["vcpu_generations"])
         self.assertEqual(plan["vcpu_boundary_generations"], 1001)
         self.assertEqual(plan["vm_generations"], 1001)
+
+    def test_recovery_cpu_boundary_preserves_vm_and_rejects_missing_retirement(self):
+        plan = self.prepare(1000, "recovery-vcpu-recreate")
+        self.assertEqual(plan["native_name"], NAME)
+        self.assertEqual(plan["required_ctest_name"], NAME)
+        self.assertEqual(plan["command"][1:], ["--gtest_filter=HvfExecutor.Native*",
+                                             "--gtest_repeat=1000", "--gtest_break_on_failure"])
+        self.assertEqual(plan["timeout_seconds"], 600)
+        self.assertEqual(plan["native_requirements"], {
+            "NEVERD_REQUIRE_HVF": "1", "NEVERD_HVF_INTEL_PROBE": "1",
+            "NEVERD_HVF_INTEL_REUSE_EXECUTOR": "1", "NEVERD_HVF_INTEL_RECREATE_VCPU": "1"})
+        self.assertTrue(plan["executor_reuse"] and plan["vcpu_recreate"])
+        self.assertFalse(plan["vm_recreate"] or plan["owner_recreate"] or plan["required_for_acceptance"])
+        self.assertIsNone(plan["vcpu_generations"])
+        self.assertEqual(plan["vcpu_boundary_generations"], 1001)
+        # Reuse alone, VM resets or missing final retirement cannot pass this
+        # CPU-only experiment, even if every iteration otherwise reports OK.
+        for reuse_only, vm, retire in ((True, False, False), (False, True, True), (False, False, False)):
+            text = "".join(iteration(i, reuse=True, recreate=not reuse_only, recreate_vm=vm)
+                           for i in range(1, 1001))
+            if retire:
+                text += retirement(1000)
+            self.assertIsNotNone(diagnostic.read_repetitions(text, NAME, 1000, True, True)["error"])
 
     def test_failure_controls_reject_wrong_budget_or_unwitnessed_success(self):
         name = diagnostic.EXPERIMENTS["owner-failure-controls"]

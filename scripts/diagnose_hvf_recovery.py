@@ -33,6 +33,7 @@ EXPERIMENTS = {
     "instruction-owner-recreate": "HvfIntelProbe.InstructionOnly",
     "owner-failure-controls": "HvfIntelHandoff.FailureControls",
     "recovery-reuse": "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry",
+    "recovery-vcpu-recreate": "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry",
     "recovery-vm-recreate": "HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry",
     "finite-deadline": "HvfIntelProbe.FiniteDeadline",
 }
@@ -41,13 +42,13 @@ EXPERIMENTS = {
 def recovery_contract(source, build, document, required, runner, repetitions, experiment="recovery"):
     if experiment not in ("recovery", *EXPERIMENTS):
         raise ValueError("unknown Intel experiment")
-    recovery = experiment in ("recovery", "recovery-reuse", "recovery-vm-recreate")
+    recovery = experiment in ("recovery", "recovery-reuse", "recovery-vcpu-recreate", "recovery-vm-recreate")
     owner_controls = experiment == "owner-failure-controls"
     if owner_controls and repetitions != 100:
         raise ValueError("owner failure controls require 100 repetitions")
     recreate_owner = experiment == "instruction-owner-recreate"
     recreate_vm = experiment in ("instruction-vm-recreate", "recovery-vm-recreate")
-    recreate = recreate_owner or recreate_vm or experiment == "instruction-vcpu-recreate"
+    recreate = recreate_owner or recreate_vm or experiment in ("instruction-vcpu-recreate", "recovery-vcpu-recreate")
     reuse = recreate or experiment in ("instruction-reuse", "recovery-reuse")
     methods = runner.method_inventory(document)
     selected = [(key, expected) for key, expected in methods.items()
