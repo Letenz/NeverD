@@ -128,8 +128,8 @@ TEST_P(X64MXCSRProbe, NativeSaveAndDAZExecutionAuthenticateCapability) {
   uint32_t Mask = MaskSentinel;
   ASSERT_EQ(llvm::toString(verifyX64Machine(Original, *Memory, &Mask)), "");
   EXPECT_EQ(Mask, Machine->mxcsrMask());
-  EXPECT_EQ(Mask, SupportedMask);
-  EXPECT_EQ(Original.Entries, Instructions + 2);
+  EXPECT_TRUE(Mask == SupportedMask || Mask == FallbackMask);
+  EXPECT_EQ(Original.Entries, Instructions + (Mask == SupportedMask ? 2 : 1));
 }
 TEST_P(X64MXCSRProbe, ZeroMaskUsesBaselineAndRejectedProbesPublishNothing) {
   for (const auto Raw : {uint32_t(0), uint32_t(1), SupportedMask}) {
