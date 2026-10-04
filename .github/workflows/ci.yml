@@ -1955,6 +1955,12 @@ jobs:
       - name: Verify original nonempty x87 capture
         if: ${{ matrix.arch == 'X64' }}
         run: python scripts/check_windows_context.py --arch X64 --floating-point --output build-context-fp
+      - name: Observe original SIMD exception masks and sticky status
+        if: ${{ matrix.arch == 'X64' }}
+        run: |
+          python -m unittest scripts.tests.test_check_windows_simd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_windows_simd.py --output build-simd-oracle
       - name: Preserve caller context observations
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -1963,5 +1969,6 @@ jobs:
           path: |
             build-context-oracle/
             build-context-fp/
+            build-simd-oracle/
           if-no-files-found: error
           retention-days: 14

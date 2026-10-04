@@ -279,6 +279,8 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `X64SIMDExceptionTests.cpp`는 checked 허용 판정을 우회하여 두 권한 수준에서 KVM/WHP의 네이티브 `#XM` 전달을 검증합니다. `X64SIMDExceptionCases.def`의 원본 사례 여덟 개는 정확한 미소 결과와 지수를 제한하지 않을 때 정밀도가 정확한 오버플로를 포함해 여섯 예외 유형을 다룹니다. 레지스터 및 RAM 형식은 지정된 MXCSR 상태를 제외하고 오류 시 전체 GPR, XMM, x87, FLAGS, FS/GS와 게스트 메모리를 보존합니다. 예외를 마스킹한 뒤 원래 명령을 재시도하며, 누적 상태를 유지한 채 피연산자를 수정해 이전 플래그가 예외를 다시 일으키지 않는지 확인합니다. 이 필수 전송 검증은 checked 실행의 마스킹되지 않은 SIMD를 활성화하거나 Windows 예외 코드 매핑을 입증하지 않습니다.
 
+`check_windows_simd.py`는 `WindowsSIMDCases.def`와 스칼라 사례 목록으로 독립적인 자체 Windows x64 실행 파일을 빌드합니다. 2,048개 관측은 레지스터/RAM 피연산자, 모든 예외 마스크 조합, 고정 상태 플래그의 전체 해제와 전체 설정을 다룹니다. Windows CI는 원래 예외 코드, 매개변수와 `CONTEXT`의 두 MXCSR 필드를 보존합니다. 테스트는 호스트 상태를 복원하기 전에 정확한 오류 PC, 변경되지 않은 XMM 상태와 마스킹된 결과를 검증합니다. `--build-only`는 컴파일 증거일 뿐입니다. 이 관측은 checked 실행의 마스킹되지 않은 SIMD를 활성화하거나 ARM64 네이티브 실행을 입증하지 않습니다.
+
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
 ctest --test-dir build-cpu -L '^NeverD(LinuxProcess|ExecutionSession|X64MemoryUpdate|ThreadPointer)Tests$' --output-on-failure
