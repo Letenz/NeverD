@@ -2305,6 +2305,67 @@ TEST(SwiftOnceSources, BindsSharedReturnAddressorAfterIfElseStructuring) {
   }
 }
 
+TEST(SwiftOnceSources, EarlyReturnAddressorRevalidatesBothStoragePaths) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool InlineLoad : {false, true})
+      for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(InlineLoad);
+        SCOPED_TRACE(Mutation);
+        AddressorFixture F(Architecture);
+        auto &Accessor = F.Pipeline.HighFuncs[0];
+        auto &Body = Accessor.Body;
+        auto &Guard = Body[1];
+        auto Invoke = Guard.Body.front();
+        Guard.Cond->Op = NdOp::INT_EQUAL;
+        Guard.Body.erase(Guard.Body.begin());
+        // Keep the inert continuation label; selection is independent of it.
+        Body.insert(Body.end() - 1, Invoke);
+        if (InlineLoad) {
+          Body[1].Cond->Operands[0]->Operands[0] = Body[0].Val;
+          Body.erase(Body.begin());
+        }
+        const size_t GuardIndex = InlineLoad ? 0 : 1;
+        auto &CurrentGuard = Body[GuardIndex];
+        if (Mutation == 1)
+          CurrentGuard.Cond->Op = NdOp::INT_NOTEQUAL;
+        if (Mutation == 2)
+          CurrentGuard.Body[0].RetVal = HighExpr::makeConst(0x2018, 8);
+        if (Mutation == 3)
+          F.Once->Operands[0] = HighExpr::makeConst(0x2020, 8);
+        if (Mutation == 4)
+          F.Once->Operands[1] = HighExpr::makeConst(0x1090, 8);
+        if (Mutation == 5)
+          F.Once->Operands[2] = HighExpr::makeConst(0, 8);
+        if (Mutation == 6)
+          CurrentGuard.Body.insert(CurrentGuard.Body.begin(), Invoke);
+        if (Mutation == 7)
+          Body.insert(Body.end() - 1, Invoke);
+        if (Mutation == 8)
+          CurrentGuard.ElseBody.push_back(Invoke);
+        const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+        if (Mutation) {
+          EXPECT_TRUE(Plan.Addressors.empty());
+          continue;
+        }
+        ASSERT_EQ(Plan.Addressors.size(), 1U);
+        ASSERT_EQ(Plan.CallbackHints.size(), 1U);
+        const auto Bound = bindSwiftOnceSourceReferences(
+            F.Pipeline.HighFuncs.back(), F.Image, Plan, F.functions());
+        EXPECT_EQ(Bound.Dependencies,
+                  std::set<va_t>{AddressorFixture::InitializerAddress});
+        ASSERT_EQ(Bound.SwiftOnceAccessors.size(), 1U);
+        const auto Call = Bound.Function.Body[0].RetVal;
+        ASSERT_TRUE(Call);
+        ASSERT_TRUE(
+            swiftOnceAddressorBound(*Call, F.Image, Plan, F.functions()));
+        // Publication cannot reuse a prior plan after either return changes.
+        Body[GuardIndex].Body[0].RetVal = HighExpr::makeConst(0x2018, 8);
+        EXPECT_FALSE(
+            swiftOnceAddressorBound(*Call, F.Image, Plan, F.functions()));
+      }
+}
+
 TEST(SwiftOnceSources, SharedReturnAddressorRequiresExactControlFlow) {
   for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
     SCOPED_TRACE(Mutation);
