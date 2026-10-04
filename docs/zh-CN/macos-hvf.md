@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 77e637f400fa5f741338d1fc1bca20712b92e6323ef23d9fdb5b06dc7d3c0d9f -->
+<!-- i18n-source: bebc9b4b7e408e18ff142e834c8d2917380133b9a965a0a5c5841f8dc23e326e -->
 
 [← 文档索引](README.md)
 
@@ -222,3 +222,5 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 2026-10-03，干净源码 `e4a8169e69eb668ed3795efe4bd5f42cf4f287c2` 在本机原生 ARM64 Release 配置下通过验证：启用 HVF、禁用 Unicorn，使用 `NEVERD_LLVM_PREBUILT=ON`。完整 CPU 配置核对了 20 个目标、520 个方法和 7,125 个结果：882 项通过、6,243 项跳过、零失败，16 项必需原生用例全部通过。独立 Darwin 配置核对了 32 个方法和 286 个结果：65 项通过、221 项跳过、零失败，39 项必需原生用例全部通过。原始单进程恢复循环还连续完成 1,000 次重复，随后 12 项原生传输测试全部通过。原始日志、XML、进程状态和对应源码定义均已独立核验。CPU 与 Darwin 的总数有重叠，不能相加。这些结果不代表 Intel 完整验收通过，也不代表已经完成 iOS SDK 构建。
 
 使用源码 `bd284894c60427cf4e6a60e661a1fa0df8a070f5` 的[独立 Intel 恢复诊断运行](https://github.com/NeverSight/NeverD/actions/runs/37159724276)于 2026-10-03 23:41:30 UTC 结束，GitHub 注释明确报告托管宿主失联。计划和十一份进度 artifact 得以保留，下载后均核对了服务端 SHA-256。最后保存的快照证明完整完成 252 轮并开始第 253 轮，不能据此定位最终故障。没有最终结果或进程回收记录，完整作业日志接口返回 404，因此请求的 1,000 轮仍未验证。仓库当时仍无自托管 runner。这些是保存下来的失败证据，不代表稳定性已经修复或 Intel 已通过完整验收。
+
+可使用[个人仓库工作流](https://github.com/gmh5225/test_mac_intel)在托管 Intel runner 上验证，无需本地 Intel 真机。它分别固定 NeverD 诊断代码和被测源码，并独立记录工作流版本。排队时间与运行稳定性需要分别判断。恢复诊断现在会在报告失败前保存每个上传子进程的 PID、父进程、可执行文件、退出码、信号和终止原因。Action 失败后，收集器最多等待 20 秒，仅复制与该子进程 PID、父进程、进程名和执行时间匹配的 macOS IPS 崩溃报告；报告缺失会明确记录。上传失败仍会终止原生运行，不能据此断定 Hypervisor 故障或测试通过。

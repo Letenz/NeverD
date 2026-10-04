@@ -7,7 +7,7 @@ const path = require('node:path');
 const {once} = require('node:events');
 const {setTimeout: delay} = require('node:timers/promises');
 const {startCommand, testEnvironment} = require('../hvf-intel-diagnostic/run.cjs');
-const {readProgress, observeRecovery, commandGroup, LIMIT, MAX_PROGRESS} = require('./run.cjs');
+const {readProgress, observeRecovery, commandGroup, finishUpload, LIMIT, MAX_PROGRESS} = require('./run.cjs');
 const NAME = 'HvfExecutor.NativeIntelCancellationAndCompletionFailureAllowRetry';
 const environment = testEnvironment(process.env);
 const round = n => `Repeating all tests (iteration ${n}) . . .\n[ RUN      ] ${NAME}\n[       OK ] ${NAME} (150 ms)\n[  PASSED  ] 1 test.\n`;
@@ -133,6 +133,39 @@ test('failed upload cancels and retires the still-running producer', async t => 
   assert.equal(operation.result.termination_reason, 'progress-evidence-failure');
   assert.ok(operation.result.completed_at);
   assert.equal(operation.child.signalCode, 'SIGTERM');
+});
+
+test('uploader exit failures and fatal signals retain distinct process evidence', async t => {
+  const directory = fixture(t);
+  for (const [suffix, script, exit, signal] of [
+    ['success', 'process.exit(0)', 0, null],
+    ['exit', 'process.exit(7)', 7, null],
+    ['signal', "process.kill(process.pid, 'SIGTERM')", null, 'SIGTERM'],
+  ]) {
+    const operation = startCommand(process.execPath, ['-e', script], environment, {stdio: 'pipe'});
+    const record = path.join(directory, `${suffix}.json`);
+    const finished = finishUpload(operation, record, suffix);
+    if (suffix === 'success') await finished;
+    else await assert.rejects(finished, new RegExp(`exit=${exit}; signal=${signal}`));
+    const data = JSON.parse(fs.readFileSync(record));
+    assert.equal(data.pid, operation.child.pid);
+    assert.equal(data.executable, process.execPath);
+    assert.equal(data.exit_status, exit);
+    assert.equal(data.signal, signal);
+    assert.equal(data.termination_reason, null);
+    assert.ok(data.completed_at);
+  }
+});
+
+test('uploader deadline is preserved even when command completion rejects', async t => {
+  const directory = fixture(t), record = path.join(directory, 'timeout.json');
+  const operation = startCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
+    environment, {stdio: 'pipe', timeoutMs: 100, graceMs: 50});
+  await assert.rejects(finishUpload(operation, record, 'timeout'), /deadline/);
+  const data = JSON.parse(fs.readFileSync(record));
+  assert.equal(data.termination_reason, 'deadline');
+  assert.equal(data.pid, operation.child.pid);
+  assert.ok(data.completed_at);
 });
 
 test('external cancellation retires both uploader and the Python-owned native process group', async t => {

@@ -76,7 +76,7 @@ jobs:
       - name: Check diagnostic contracts before compilation
         working-directory: diagnostics
         run: |
-          python3 -m unittest scripts.tests.test_diagnose_hvf_methods scripts.tests.test_diagnose_hvf_recovery -q
+          python3 -m unittest scripts.tests.test_diagnose_hvf_methods scripts.tests.test_diagnose_hvf_recovery scripts.tests.test_collect_hvf_upload_crashes -q
           node --test .github/actions/hvf-intel-diagnostic/*.test.cjs .github/actions/hvf-intel-recovery/*.test.cjs
       - name: Install build tools
         if: inputs.runner != 'self-hosted'
@@ -111,6 +111,7 @@ jobs:
         timeout-minutes: 30
         run: cmake --build build-hvf --config Release --target NeverDHvfTests --parallel 4
       - name: Preserve live recovery progress without pausing native iterations
+        id: recovery
         uses: ./diagnostics/.github/actions/hvf-intel-recovery
         timeout-minutes: 20
         with:
@@ -119,6 +120,10 @@ jobs:
           evidence: source/build-hvf/recovery-diagnostic
           upload-action: artifact-uploader
           repetitions: ${{ inputs.repetitions }}
+      - name: Preserve crash reports for failed uploader children
+        if: always() && (steps.recovery.outcome == 'failure' || steps.recovery.outcome == 'cancelled')
+        timeout-minutes: 1
+        run: python3 diagnostics/scripts/collect_hvf_upload_crashes.py --evidence source/build-hvf/recovery-diagnostic
       - name: Preserve final or incomplete evidence while the host remains reachable
         if: always()
         timeout-minutes: 2
