@@ -102,7 +102,77 @@ exit:
   %result = xor i32 %v, %x
   ret i32 %result
 })";
+
+constexpr char ProductRecurrence[] = R"(
+define i64 @f(i64 noundef %x, i32 noundef %n) {
+entry:
+  %limit = and i32 %n, 15
+  %seed = and i64 %x, 4095
+  br label %loop
+loop:
+  %i = phi i32 [0, %entry], [%next, %body]
+  %v = phi i64 [%seed, %entry], [%update, %body]
+  %more = icmp ult i32 %i, %limit
+  br i1 %more, label %body, label %exit
+body:
+  %masked = and i64 %v, 4095
+  %twice = add nuw nsw i64 %masked, %masked
+  %product = mul nuw nsw i64 %twice, 11
+  %sum = add nuw nsw i64 %product, %seed
+  %update = xor i64 %sum, %x
+  %next = add nuw nsw i32 %i, 1
+  br label %loop
+exit:
+  %result = xor i64 %v, %x
+  ret i64 %result
+})";
 } // namespace
+
+TEST(LLVMScalarDecision, RepeatedAdditionAndProductsKeepDataSymbolic) {
+  constexpr char Sequence[] = R"(
+define i32 @f(i32 noundef %x) {
+  %v = and i32 %x, 1023
+  %twice = add nuw nsw i32 %v, %v
+  %triple = add nuw nsw i32 %twice, %v
+  %product = mul nuw nsw i32 %triple, 7
+  ret i32 %product
+})";
+  LLVMScalarEquivalenceLimits L;
+  L.MaxControlBits = 0;
+  L.MaxPartitions = 1;
+  const auto R = self(Sequence, L);
+  ASSERT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+  EXPECT_TRUE(R.ControlBits.empty());
+  EXPECT_EQ(R.CompletedPartitions, 1U);
+  constexpr char Reference[] = R"(
+define i32 @f(i32 noundef %x) {
+  %v = and i32 %x, 1023
+  %result = mul i32 %v, 21
+  ret i32 %result
+})";
+  EXPECT_EQ(check(Sequence, Reference, L).Status, Status::Proved);
+  L.MaxWork = R.Work;
+  EXPECT_EQ(self(Sequence, L).Status, Status::Proved);
+  --L.MaxWork;
+  const auto Short = self(Sequence, L);
+  EXPECT_EQ(Short.Status, Status::BudgetExceeded);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+}
+
+TEST(LLVMScalarDecision, ProductRecurrencesStillProveEveryOverflowGuard) {
+  const auto R = self(ProductRecurrence);
+  ASSERT_EQ(R.Status, Status::Proved) << R.Diagnostic;
+  EXPECT_EQ(R.CompletedPartitions, 16U);
+  EXPECT_EQ(R.ControlBits, (std::vector<LLVMScalarControlBit>{
+                               {1, 0}, {1, 1}, {1, 2}, {1, 3}}));
+  EXPECT_EQ(check(ProductRecurrence, ProductRecurrence).Status, Status::Proved);
+  std::string Bad = ProductRecurrence;
+  replace(Bad, "%masked = and i64 %v, 4095", "%masked = and i64 %v, -1");
+  EXPECT_NE(self(Bad).Status, Status::Proved);
+  Bad = ProductRecurrence;
+  replace(Bad, "%twice, 11", "%twice, -1");
+  EXPECT_NE(self(Bad).Status, Status::Proved);
+}
 
 TEST(LLVMScalarDecision, ProvesSignedAndUnsignedShiftGuardsOnBothBackedges) {
   const auto R = self(ShiftRecurrence);
@@ -259,6 +329,47 @@ TEST(LLVMScalarDecision, MaskAndAnnotationChangesCannotReuseEarlierFacts) {
 }
 
 class LLVMScalarDecisionCompiled : public NeverDLiftTest {};
+
+TEST_F(LLVMScalarDecisionCompiled, ProductRecurrenceMatchesIndependentOracle) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  ASSERT_EQ(self(ProductRecurrence).Status, Status::Proved);
+  const auto Source = tmpFile("product-recurrence.ll");
+  const auto Harness = tmpFile("product-oracle.c");
+  std::ofstream(Source) << ProductRecurrence;
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+uint64_t f(uint64_t, uint32_t);
+static uint64_t next_word(uint64_t *s) {
+  *s ^= *s << 13; *s ^= *s >> 7; *s ^= *s << 17;
+  return *s;
+}
+int main(void) {
+  uint64_t state = UINT64_C(0x548137ac9fe062bd);
+  const uint64_t edges[] = {0, 1, 4095, 4096, 65535, 65536,
+    UINT64_C(0x7fffffffffffffff), UINT64_C(0x8000000000000000), UINT64_MAX};
+  for (unsigned k = 0; k < 8192; ++k) {
+    uint64_t x = k < 256 * 9 ? edges[k / 256] : next_word(&state);
+    uint32_t n = k < 256 * 9 ? k % 256 : (uint32_t)next_word(&state);
+    uint64_t seed = x & 4095, v = seed;
+    for (uint32_t i = 0; i < (n & 15); ++i)
+      v = ((v & 4095) * 22 + seed) ^ x;
+    if (f(x, n) != (v ^ x)) return 1;
+  }
+  return 0;
+})";
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    auto Program = tmpFile("product-oracle");
+    auto Built = exec(NEVERD_TEST_CLANG,
+                      {"-std=c11", Optimization, "-fsanitize=undefined",
+                       "-fsanitize-trap=undefined", Source.string(),
+                       Harness.string(), "-o", Program.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    const auto Ran = exec(Program.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err;
+  }
+}
 
 TEST_F(LLVMScalarDecisionCompiled, ShiftBackedgesMatchIndependentArithmetic) {
   if (!hasCrossTargetClang())

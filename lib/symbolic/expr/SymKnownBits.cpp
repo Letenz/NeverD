@@ -23,6 +23,16 @@ bool spend(unsigned &Remaining, unsigned Amount = 1) {
 
 unsigned words(unsigned Width) { return (Width - 1) / 64 + 1; }
 
+SymRef lowBitSource(const SymContext &C, SymRef R, unsigned Width) {
+  const auto Op = C.op(R);
+  if ((Op == SymOp::ZExt || Op == SymOp::SExt) &&
+      C.width(C.operand(R, 0)) >= Width)
+    return C.operand(R, 0);
+  if (Op == SymOp::Extract && C.node(R).Aux == 0)
+    return C.operand(R, 0);
+  return R;
+}
+
 // Recognize projections that preserve this exact source. Facts come from the
 // total symbolic expression, never from an LLVM no-wrap annotation.
 std::optional<bool> losslessProjection(const SymContext &C, SymRef Back,
@@ -279,9 +289,9 @@ std::optional<Bits> SymKnownBits::compare(SymRef R,
     }
   }
   if (!Value && (Op == SymOp::Ult || Op == SymOp::Ule)) {
-    auto Contains = containsNonwrappingSum(Ops[Op == SymOp::Ult ? 0 : 1],
-                                           Ops[Op == SymOp::Ult ? 1 : 0],
-                                           Remaining, Depth + 2);
+    auto Contains =
+        nonwrappingAtLeast(Ops[Op == SymOp::Ult ? 0 : 1],
+                           Ops[Op == SymOp::Ult ? 1 : 0], Remaining, Depth + 2);
     if (!Contains)
       return std::nullopt;
     if (*Contains)
@@ -300,16 +310,7 @@ std::optional<bool> SymKnownBits::sameLowBits(SymRef A, SymRef B,
     return true;
   if (Depth >= MaxDepth)
     return false;
-  auto Peel = [&](SymRef R) {
-    const auto Op = C.op(R);
-    if ((Op == SymOp::ZExt || Op == SymOp::SExt) &&
-        C.width(C.operand(R, 0)) >= Width)
-      return C.operand(R, 0);
-    if (Op == SymOp::Extract && C.node(R).Aux == 0)
-      return C.operand(R, 0);
-    return R;
-  };
-  auto Left = Peel(A), Right = Peel(B);
+  auto Left = lowBitSource(C, A, Width), Right = lowBitSource(C, B, Width);
   if (Left != A || Right != B)
     return sameLowBits(Left, Right, Width, Remaining, Depth + 1);
   auto IsExtension = [](SymOp Op) {
@@ -332,12 +333,14 @@ std::optional<bool> SymKnownBits::sameLowBits(SymRef A, SymRef B,
   }
   if (C.isConst(A) && C.isConst(B))
     return C.constValue(A).trunc(Width) == C.constValue(B).trunc(Width);
+  if (C.op(A) == SymOp::Mul || C.op(B) == SymOp::Mul)
+    return sameLowProduct(A, B, Width, Remaining, Depth);
   if (C.op(A) != C.op(B))
     return false;
   // These operations commute with reduction modulo 2^Width. Shifts, division,
   // comparisons and high extracts do not, so they cannot use this relation.
   const auto Op = C.op(A);
-  if (Op != SymOp::Add && Op != SymOp::Mul && !isBitwise(Op))
+  if (Op != SymOp::Add && !isBitwise(Op))
     return false;
   const auto As = C.operands(A), Bs = C.operands(B);
   if (As.size() != Bs.size())
@@ -367,10 +370,109 @@ std::optional<bool> SymKnownBits::sameLowBits(SymRef A, SymRef B,
   return true;
 }
 
-std::optional<bool> SymKnownBits::containsNonwrappingSum(SymRef Sum,
-                                                         SymRef Term,
-                                                         unsigned &Remaining,
-                                                         unsigned Depth) {
+std::optional<bool> SymKnownBits::sameLowProduct(SymRef A, SymRef B,
+                                                 unsigned Width,
+                                                 unsigned &Remaining,
+                                                 unsigned Depth) {
+  llvm::APInt CA(Width, 1), CB(Width, 1);
+  using Factor = std::pair<SymRef, unsigned>;
+  llvm::SmallVector<Factor, 8> LA, LB;
+  // Extensions can hide an associative product from ordinary interning.
+  // Flatten only within the requested modular width. A narrower operation
+  // stays behind its extension: its overflow cannot be moved to a wider word.
+  auto Collect =
+      [&](SymRef Root, llvm::APInt &Coefficient,
+          llvm::SmallVectorImpl<Factor> &Leaves) -> std::optional<bool> {
+    llvm::SmallVector<std::pair<SymRef, unsigned>, 16> Pending{{Root, Depth}};
+    while (!Pending.empty()) {
+      if (!spend(Remaining, 1 + words(Width)))
+        return std::nullopt;
+      auto [R, D] = Pending.pop_back_val();
+      if (D >= MaxDepth)
+        return false;
+      auto P = lowBitSource(C, R, Width);
+      if (P != R) {
+        Pending.push_back({P, D + 1});
+      } else if (C.isConst(R)) {
+        Coefficient *= C.constValue(R).zextOrTrunc(Width);
+      } else if (C.op(R) == SymOp::Mul) {
+        if (!spend(Remaining, C.operands(R).size()))
+          return std::nullopt;
+        // Keep multiplicity, even for shared terms, and charge before pushing.
+        for (auto O : C.operands(R))
+          Pending.push_back({O, D + 1});
+      } else {
+        Leaves.push_back({R, D});
+      }
+    }
+    return true;
+  };
+  auto GotA = Collect(A, CA, LA);
+  if (!GotA || !*GotA)
+    return GotA;
+  auto GotB = Collect(B, CB, LB);
+  if (!GotB || !*GotB)
+    return GotB;
+  if (CA != CB)
+    return false;
+  if (CA.isZero())
+    return true;
+  if (LA.size() != LB.size())
+    return false;
+  if (!spend(Remaining, LB.size()))
+    return std::nullopt;
+  llvm::SmallVector<bool, 8> Used(LB.size(), false);
+  for (auto [Term, TermDepth] : LA) {
+    bool Found = false;
+    for (unsigned I = 0; I != LB.size(); ++I) {
+      if (!spend(Remaining))
+        return std::nullopt;
+      if (Used[I])
+        continue;
+      auto Same = sameLowBits(Term, LB[I].first, Width, Remaining,
+                              std::max(TermDepth, LB[I].second) + 1);
+      if (!Same)
+        return std::nullopt;
+      if (*Same) {
+        Used[I] = true;
+        Found = true;
+        break;
+      }
+    }
+    if (!Found)
+      return false;
+  }
+  return true;
+}
+
+std::optional<bool> SymKnownBits::nonwrappingAtLeast(SymRef Sum, SymRef Term,
+                                                     unsigned &Remaining,
+                                                     unsigned Depth) {
+  // Repeated addition is interned as a scalar multiple. Compare unsigned
+  // coefficients only for the same base and a proved nonwrapping maximum.
+  if (C.op(Sum) == SymOp::Mul || C.op(Term) == SymOp::Mul) {
+    const unsigned W = C.width(Sum);
+    if (!spend(Remaining, 4 + 2 * words(W)))
+      return std::nullopt;
+    auto Scale = [&](SymRef R) {
+      if (C.op(R) == SymOp::Mul && C.operands(R).size() == 2)
+        for (unsigned I = 0; I != 2; ++I)
+          if (C.isConst(C.operand(R, I)))
+            return std::pair{C.operand(R, 1 - I),
+                             C.constValue(C.operand(R, I))};
+      return std::pair{R, llvm::APInt(W, 1)};
+    };
+    auto [A, KA] = Scale(Sum);
+    auto [B, KB] = Scale(Term);
+    if (A == B && KA.uge(KB)) {
+      auto K = infer(A, Remaining, Depth);
+      if (!K)
+        return std::nullopt;
+      bool Overflow = false;
+      (void)KA.umul_ov(K->getMaxValue(), Overflow);
+      return !Overflow;
+    }
+  }
   if (C.op(Sum) != SymOp::Add)
     return false;
   llvm::APInt Maximum(C.width(Sum), 0);
