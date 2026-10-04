@@ -18,6 +18,7 @@
 #include "../FloatConversion.h"
 #include "../UnalignedMemory.h"
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
+#include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
@@ -851,8 +852,10 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     lowerPackedVectorBitcasts(*Projection);
   }
   for (auto &Function : *Projection)
-    if (!ProjectionOnly || &Function == ProjectionOnly)
+    if (!ProjectionOnly || &Function == ProjectionOnly) {
       llvmc::factorCommonBranchTests(Function);
+      llvmc::factorLoopPhiExpressions(Function);
+    }
   llvm::LoopAnalysisManager Loops;
   llvm::FunctionAnalysisManager Functions;
   llvm::CGSCCAnalysisManager CallGraph;

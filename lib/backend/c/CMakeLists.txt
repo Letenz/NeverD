@@ -15,6 +15,7 @@ add_neverd_component_library(NeverDBackendC
   pass/HighC/HighCUsedVars.cpp
   pass/HighC/HighCVoidAnalysis.cpp
   pass/LLVMC/LLVMCCommonBranches.cpp
+  pass/LLVMC/LLVMCLoopPhases.cpp
   pass/LLVMC/LLVMCDeadStoreAnalysis.cpp
   pass/LLVMC/LLVMCHiLoCollapse.cpp
   pass/LLVMC/LLVMCIntrinsicAnalysis.cpp
