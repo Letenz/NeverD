@@ -61,6 +61,7 @@ add_neverd_unittest(NeverDMemoryLifecycleTests
 add_neverd_unittest(NeverDInstructionFetchTests
   InstructionFetchTests.cpp
   TIMEOUT 15
+  NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU)
 
 add_neverd_unittest(NeverDExecutionSessionTests
