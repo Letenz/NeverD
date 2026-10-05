@@ -55,8 +55,9 @@ struct DarwinFileMetadata {
 /// Initial bytes occupy every allocation unit through EOF, including zeros.
 /// Writes allocate touched units; truncate growth creates holes and shrinking
 /// drops whole units beyond EOF. A retained partial unit stays allocated.
-/// Successful mutations use this fixed mtime/ctime. Other metadata is
-/// preserved. Requires complete metadata, ordinary permissions, flags=0 and
+/// Successful byte mutations use this fixed mtime/ctime; unlink uses it for
+/// ctime and changes link_count to zero. Other metadata is preserved.
+/// Requires complete initial metadata, ordinary permissions, flags=0 and
 /// link_count=1.
 struct DarwinFileMutationPolicy {
   /// Independent of st_blksize and guest page size. Power of two, 512..16 MiB.
@@ -111,6 +112,10 @@ struct DarwinFileOptions {
   /// metadata remains unknown. A failed nonempty copyin can invalidate even
   /// configured metadata; later successful mutations do not restore it.
   std::map<std::string, DarwinFileMutationPolicy> MutationPolicies;
+  /// Explicit authority to change immediate names in these directories.
+  /// Independent of file-content writability. Namespace changes invalidate
+  /// the parent's observed metadata and directory snapshot.
+  std::set<std::string> MutableDirectories;
 };
 } // namespace neverd::emulation
 #endif

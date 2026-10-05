@@ -214,6 +214,28 @@ TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
   }
 }
 
+TEST(ProcessReport, DarwinNamespaceAuthorityRequiresAnExplicitBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true},
+    {"path":"/no","mutable":false},{"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->MutableDirectories,
+            (std::set<std::string>{"/"}));
+  EXPECT_TRUE(Good->DarwinFiles->WritableFiles.empty());
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(
+            R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto Extra = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true,"unknown":0}]}})");
+  EXPECT_FALSE(bool(Extra));
+  llvm::consumeError(Extra.takeError());
+}
+
 TEST(ProcessReport, DarwinDirectorySnapshotsHaveStrictLosslessWireFields) {
   const auto Original =
       llvm::cantFail(llvm::json::parse(darwin_test::DirectoryContentsJSON));

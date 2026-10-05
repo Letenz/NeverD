@@ -24,6 +24,8 @@ NEVERD_DARWIN_VALUE(UserID, 1000)
 NEVERD_DARWIN_VALUE(GroupID, 1000)
 NEVERD_DARWIN_VALUE(BadDescriptor, 9)
 NEVERD_DARWIN_VALUE(NoEntry, 2)
+NEVERD_DARWIN_VALUE(OperationNotPermitted, 1)
+NEVERD_DARWIN_VALUE(ResourceBusy, 16)
 NEVERD_DARWIN_VALUE(NoSuchAddress, 6)
 NEVERD_DARWIN_VALUE(NotDirectory, 20)
 NEVERD_DARWIN_VALUE(IsDirectory, 21)
@@ -48,6 +50,9 @@ NEVERD_DARWIN_VALUE(AtNoFollow, 0x20)
 NEVERD_DARWIN_VALUE(AtRealDevice, 0x200)
 NEVERD_DARWIN_VALUE(AtFDOnly, 0x400)
 NEVERD_DARWIN_VALUE(AtNoFollowAny, 0x800)
+NEVERD_DARWIN_VALUE(AtRemoveDirectory, 0x80)
+NEVERD_DARWIN_VALUE(AtRemoveDatalessDirectory, 0x100)
+NEVERD_DARWIN_VALUE(AtSystemDiscarded, 0x1000)
 NEVERD_DARWIN_VALUE(GetPath, 50)
 NEVERD_DARWIN_VALUE(DuplicateFD, 0)
 NEVERD_DARWIN_VALUE(GetDescriptorFlags, 1)
@@ -82,6 +87,7 @@ NEVERD_DARWIN_SERVICE(Read, 3, Wide)
 NEVERD_DARWIN_SERVICE(Write, 4, Wide)
 NEVERD_DARWIN_SERVICE(Open, 5, Int)
 NEVERD_DARWIN_SERVICE(Close, 6, Int)
+NEVERD_DARWIN_SERVICE(Unlink, 10, Int)
 NEVERD_DARWIN_SERVICE(Chdir, 12, Int)
 NEVERD_DARWIN_SERVICE(Fchdir, 13, Int)
 NEVERD_DARWIN_SERVICE(GetPID, 20, Int)
@@ -105,6 +111,7 @@ NEVERD_DARWIN_SERVICE(GetDirEntries64, 344, Wide)
 NEVERD_DARWIN_SERVICE(GetTimeOfDay, 116, Int)
 NEVERD_DARWIN_SERVICE(OpenAt, 463, Int)
 NEVERD_DARWIN_SERVICE(FstatAt64, 470, Int)
+NEVERD_DARWIN_SERVICE(UnlinkAt, 472, Int)
 NEVERD_DARWIN_SERVICE(Munmap, 73, Int)
 NEVERD_DARWIN_SERVICE(Mprotect, 74, Int)
 NEVERD_DARWIN_SERVICE(Mmap, 197, Wide)
@@ -172,6 +179,19 @@ NEVERD_DARWIN_DIAGNOSTIC(
     "Darwin writable immutable or append-only file flags are unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(FileNotWritable,
                          "Darwin file write access is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryMutableOption,
+                         "Darwin mutable path must name a directory")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryNotMutable,
+    "Darwin directory namespace mutation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryMutated, "Darwin post-mutation directory observations are unknown")
+NEVERD_DARWIN_DIAGNOSTIC(
+    NamespaceFlags,
+    "Darwin namespace metadata flags or special permissions are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    NamespaceAlias, "Darwin mutable namespace identity aliases are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(UnlinkFlags, "unsupported Darwin unlinkat flags")
 NEVERD_DARWIN_DIAGNOSTIC(FileMutationLimit,
                          "Darwin mutation exceeds the file storage budget")
 NEVERD_DARWIN_DIAGNOSTIC(FileMutatedMetadata,

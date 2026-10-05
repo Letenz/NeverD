@@ -188,6 +188,8 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Pread:
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
+  case ServiceKind::Unlink:
+  case ServiceKind::UnlinkAt:
   case ServiceKind::Chdir:
   case ServiceKind::Fchdir:
   case ServiceKind::FstatAt64:

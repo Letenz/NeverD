@@ -202,6 +202,22 @@ TEST_P(DarwinProcess,
   EXPECT_EQ(Result->StandardOutput, "s");
   EXPECT_TRUE(Result->StandardError.empty());
 }
+TEST_P(DarwinProcess, UnlinkPreservesOpenObjectsAndNativeNameLifetime) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.Arguments[2] = "/data";
+  auto Result = run("unlinked-file");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "u");
+  EXPECT_TRUE(Result->StandardError.empty());
+}
 TEST_P(DarwinProcess,
        PrivateFileMappingsRetainCopiesAfterCloseAndPreserveOffsets) {
   Options.DarwinFiles.emplace();

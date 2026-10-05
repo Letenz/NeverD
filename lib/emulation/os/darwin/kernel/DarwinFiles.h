@@ -45,6 +45,7 @@ private:
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileMutationPolicy *Policy = nullptr;
     std::optional<llvm::BitVector> Allocated;
+    bool Writable = false;
     bool MetadataInvalidated = false;
     std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
     llvm::ArrayRef<uint8_t> bytes() const {
@@ -76,11 +77,17 @@ private:
   const std::optional<DarwinFileOptions> &Options;
   std::map<uint32_t, Descriptor> Descriptors;
   std::map<std::string, std::shared_ptr<Contents>> Nodes;
+  std::vector<std::shared_ptr<Contents>> Unlinked;
+  std::set<std::string> ChangedDirectories;
+  bool NamespaceReady = false;
   std::optional<uint64_t> StorageUsed;
   std::optional<std::string> CurrentDirectory;
 
   uint32_t limit() const;
   uint32_t freeDescriptor(uint32_t Minimum = 0) const;
+  void initializeNamespace();
+  llvm::Error prepareMutation();
+  void reclaimUnlinked();
   llvm::Expected<Pathname> readPath(uint64_t Address);
   llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD);
   llvm::Expected<std::optional<ServiceResult>> open(uint64_t Address,
@@ -92,6 +99,8 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
              ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
           const char *PartialDiagnostic, ProcessResult &Result);

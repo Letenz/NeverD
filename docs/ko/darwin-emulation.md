@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 0c15750a4d37d9fcd687994b7121917b6e51fd427dd03e5831d00ef01cd1fbd5 -->
+<!-- i18n-source: 0de20e6b5b0a92721422de6cd168f08d02d0ab851a8d38159214df2ea73edb10 -->
 
 [← 문서 목록](README.md)
 
@@ -75,7 +75,7 @@ F_SETFL은 O_APPEND만 바꾸고 접근 모드, close-on-exec, FWASWRITTEN을 �
 
 DarwinMemory의 모든 매핑 구간을 unmap하기 전에는 변경을 거부하며 PROT_NONE과 닫힌 FD도 포함합니다. 실패/구형 0 길이 매핑은 임대를 남기지 않습니다. 새 매핑은 현재 바이트를 봅니다. O_WRONLY의 READ/WRITE mmap은 EACCES, PROT_NONE은 성공하고 mprotect로 읽기/쓰기를 부여할 수 있습니다.
 
-원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 생성/삭제/이름 변경/하드링크, 실제 파일 시스템 메타데이터 갱신, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
+원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 생성/디렉터리 삭제/이름 변경/하드링크, 실제 파일 시스템 메타데이터 갱신, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -106,6 +106,22 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 정책 없음, 디렉터리, 전체 EFAULT 뒤 알 수 없는 할당은 거부합니다. 0 값이나 거부된 변경으로 할당을 추론하지 않습니다. 자체 sparse-file-seek는 네이티브/게스트의 오류, 쓴 바이트, EOF와 설명 수명을 확인하며 앞선 FS별 구간 위치를 가정하지 않습니다. virtual-file-metadata는 정확한 정책 배치를 별도로 검사하고 C/CLI/Python은 다섯 구성을 검사합니다.
 
 [XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## 일반 파일 이름 삭제
+
+디렉터리 `mutable:true`(C++ `MutableDirectories`)는 바로 아래 이름 변경 권한이며 내용의 `writable`과 별개입니다. 권한이 없으면 미지원으로 중지합니다. 알려진 비영 flags, 부모 특수 권한, 자식 link_count≠1, 부모/자식의 알려진 별칭을 거부합니다. stat/스냅샷 inode를 함께 확인하고 명시적으로 다른 장치는 구별하며 경로 비용을 예산에 포함합니다.
+
+`unlink(10)` / `unlinkat(472)`는 기존 일반 이름을 제거합니다. unlinkat 하위32비트는 0 또는 `0x800`만 지원합니다. 알 수 없는 비트는 경로/FD보다 먼저 EINVAL; 디렉터리 제거 등 알려진 다른 모드는 미지원입니다. 공통 경로 해석으로 ENOENT, 파일 뒤 슬래시 ENOTDIR, 일반 디렉터리 EPERM, 루트 EBUSY를 보존하며 네이티브로 마지막 `.`/`..`도 검사했습니다.
+
+기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 생성·이름 변경·하드링크·디렉터리 제거는 남아 있습니다.
+
+부모 stat/readdir/SEEK_END는 구·신 FD 및 경로 모두에서 무효화되어 복사/커서 변경 전에 중지합니다. read/pread의 EISDIR와 SET/CUR/F_GETPATH/fchdir/상대 조회는 유지됩니다. 알려진 변경 정책은 nlink=0 및 고정 ctime만 적용하며 후속 쓰기도 nlink=1을 복구하지 않습니다. 정책 없음/EFAULT 뒤 메타데이터는 미상입니다. 실패는 상태를 보존하고 원본 `unlinked-file`은 네이티브 이름/FD 동작을 비교합니다. 정책 시간과 부모 무효화는 명시적 모델 규칙입니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"00"}],"directories":[{"path":"/work","mutable":true}]}}
+```
+
+[XNU unlink / unlinkat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [F_GETPATH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 ## 디렉터리와 상대 경로
 
@@ -198,7 +214,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 78개 또는 x64 52개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 81개 또는 x64 54개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -283,3 +299,5 @@ Mach 검증(2026-10-06, Release): Darwin 569개 중 성공 293, 사용 불가 �
 `build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
 
 희소 파일 위치 검증(2026-10-06): Release Darwin 671개 중 359개 통과, 사용 불가 백엔드 312개 건너뜀, 실패 0개. 필수 ARM64 HVF 78개를 모두 실행했고 Unicorn은 다섯 게스트를 검증했습니다. 집중 검사 147개 중 123개 통과, 24개 건너뜀. 네이티브 16개, 공개 C/CLI/report 122개(Darwin 비교 78개), Python 다섯 구성(12.344초), runner 66개가 통과했습니다. 집계는 중복되며 제한 시간과 과거 실패 기록을 유지합니다. 증거: `build-hvf-arm64/sparse-seek-validation-summary.json`. 할당 규칙은 명시적 가상 정책이며 APFS 동등성을 뜻하지 않습니다. 전체 CI와 실제 iOS 검증은 별도로 필요하고 Intel HVF Actions는 중지 상태입니다.
+
+unlink 검증(2026-10-06): Release Darwin 708개 중 384개 통과, 사용 불가324개 건너뜀, 실패0개. 필수 ARM64 HVF81개 모두 실행. 집중156개는137통과/19건너뜀; 네이티브17/17, C/CLI/report128/128(Darwin83), Python 다섯 구성16.268초, runner66/66 통과. 독립 설계·구현 검토에서 남은 차단 사항이 없었습니다. 집계 중복, 제한 시간 유지, 재시도 불필요. 증거: `build-hvf-arm64/unlink-validation-summary.json`. 부모 무효화와 고정 시간은 모델 규칙이며 전체 파일 시스템/런타임 및 실제 iOS 검증은 남아 있습니다. Intel HVF Actions는 중지, 전체 CI는 별도입니다.

@@ -125,6 +125,43 @@ TEST_P(DarwinMemoryTest, WriteOnlyNoneMappingRetainsLeaseAndCanGainReadWrite) {
   EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {FD, 0}).Error);
 }
 
+TEST_P(DarwinMemoryTest, UnlinkedFileBudgetSurvivesPartialUnmapAndFinalClose) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/other"] = {};
+  Options.DarwinFiles->WritableFiles = {"/data", "/other"};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  const auto FD = openFile(std::vector<uint8_t>(Page * 2, 'x'), 2);
+  auto Mapping = call(ServiceKind::Mmap, {0, Page * 2, 1, 2, FD, 0});
+  ASSERT_FALSE(Mapping.Error);
+  const auto Scratch = allocate(Page);
+  const uint8_t Other[] = {'/', 'o', 't', 'h', 'e', 'r', 0};
+  llvm::cantFail(Space->write(Scratch, Other));
+  const auto B = fileCall(ServiceKind::Open, {Scratch, 2});
+  ASSERT_FALSE(B.Error);
+  const uint64_t Capacity = darwin_file_limits::Bytes - 2 * 6 - 2 * 7 - 2;
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page * 2}).Error);
+  const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
+  llvm::cantFail(Space->write(Scratch, Path));
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {FD}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page * 2 + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Mapping.Value, 1)), 'x');
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Mapping.Value, Page}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page * 2 + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Mapping.Value + Page, 1)), 'x');
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Mapping.Value + Page, Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity}).Error);
+  auto Missing = fileCall(ServiceKind::Open, {Scratch});
+  EXPECT_TRUE(Missing.Error);
+  EXPECT_EQ(Missing.Value, 2u);
+}
+
 TEST_P(DarwinMemoryTest, FailedAndLegacyZeroFileMappingsDoNotRetainLeases) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->WritableFiles.insert("/data");

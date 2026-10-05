@@ -29,6 +29,8 @@ DarwinFiles::directory(Description &File, uint64_t Address, uint64_t Count,
     return Returned(InvalidArgument, true);
   if (File.Type != Kind::Directory)
     return Unsupported(diagnostic::FileDirectoryKind);
+  if (ChangedDirectories.contains(File.Path))
+    return Unsupported(diagnostic::DirectoryMutated);
   const auto Snapshot = Options->DirectoryContents.find(File.Path);
   if (Snapshot == Options->DirectoryContents.end())
     return Unsupported(diagnostic::DirectoryContents);

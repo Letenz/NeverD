@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 0c15750a4d37d9fcd687994b7121917b6e51fd427dd03e5831d00ef01cd1fbd5 -->
+<!-- i18n-source: 0de20e6b5b0a92721422de6cd168f08d02d0ab851a8d38159214df2ea73edb10 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -75,7 +75,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 يحتفظ DarwinMemory بعهدة الخرائط حتى آخر unmap، بما فيها PROT_NONE وFD المغلق، ويوقف التعديل خلالها. الفشل وmmap القديم صفري الطول لا يحتفظان بعهدة. ترى الخرائط الجديدة البايتات الحالية. يعطي O_WRONLY مع READ/WRITE الخطأ EACCES؛ يمكن لـ PROT_NONE اكتساب القراءة والكتابة عبر mprotect.
 
-تقارن برامج normal/nocancel الأصلية النواة الفعلية؛ تغطي اختبارات 4K/16K وC/CLI/Python خمسة تراكيب. الإنشاء والحذف وإعادة التسمية والروابط الصلبة وتحديث بيانات نظام الملفات الفعلي واتساق الخرائط وEOF SIGBUS لم تكتمل. لا تزال البيئة الكاملة وأجهزة iOS وIntel HVF دون تحقق، وتبقى Intel Actions معلقة.
+تقارن برامج normal/nocancel الأصلية النواة الفعلية؛ تغطي اختبارات 4K/16K وC/CLI/Python خمسة تراكيب. الإنشاء وحذف الأدلة وإعادة التسمية والروابط الصلبة وتحديث بيانات نظام الملفات الفعلي واتساق الخرائط وEOF SIGBUS لم تكتمل. لا تزال البيئة الكاملة وأجهزة iOS وIntel HVF دون تحقق، وتبقى Intel Actions معلقة.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -106,6 +106,22 @@ allocation_unit وmutation_time وseconds/nanoseconds مطلوبة وفق قوا
 يبقى غياب السياسة والأدلة والتخصيص المجهول بعد EFAULT الكامل غير مدعوم. لا تُستنتج تخصيصات من أصفار أو تعديلات مرفوضة. يقارن sparse-file-seek الأصلي أخطاء المضيف/الضيف والبايتات المكتوبة وEOF وعمر الوصف دون افتراض حدود مناطق سابقة خاصة بنظام الملفات. يفحص virtual-file-metadata هندسة السياسة الدقيقة منفصلاً وتغطي C/CLI/Python خمسة تراكيب.
 
 [XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## إزالة أسماء الملفات العادية
+
+تمنح `mutable:true` للدليل (C++ `MutableDirectories`) سلطة صريحة لتغيير الأسماء المباشرة، مستقلة عن `writable` للمحتوى. عند غيابها يتوقف التنفيذ. تُرفض flags المعروفة غير الصفرية وصلاحيات الأب الخاصة وlink_count غير1 للابن وأسماء الهوية البديلة المعروفة للأب/الابن. تجمع الهوية stat وinode اللقطات؛ الأجهزة المختلفة صراحة تبقى مستقلة وتُحسب المسارات في الميزانية.
+
+يزيل `unlink(10)` / `unlinkat(472)` الأسماء العادية القائمة. يدعم unlinkat أقل32 بت بقيمة0 أو `0x800`؛ البتات المجهولة تعطي EINVAL قبل المسار/FD، وأنماط الإزالة المعروفة الأخرى غير مدعومة. يحافظ محلل المسارات المشترك على ENOENT وENOTDIR لملف تتبعه `/` وEPERM للدليل العادي وEBUSY للجذر. جرى فحص نهايتي `.`/`..` أصليًا.
+
+تحتفظ FD/dup وعمليات الفتح المستقلة القديمة بالبيانات والمواضع والأعلام؛ يعيد F_GETPATH المسار القديم المحفوظ. تفشل الفتحات الجديدة ويبقى الأب الضمني وCWD. إذن الكتابة يتبع الكائن؛ تسترد close/dup2 أو الطفرة التالية ميزانية بايتاته الحالية بعد آخر واصف وآخر نطاق خريطة فقط. تبقى تكاليف المسارات الأولية؛ الإنشاء وإعادة التسمية والروابط الصلبة وحذف الأدلة ما زالت ناقصة.
+
+تصبح ملاحظات stat/readdir/SEEK_END للأب مجهولة لكل FD ومسار، فتتوقف قبل النسخ أو تغيير الموضع. تبقى read/pread بنتيجة EISDIR وتستمر SET/CUR/F_GETPATH/fchdir والبحث النسبي. تضبط السياسة المعروفة nlink=0 وctime الثابت دون استعادة nlink=1 لاحقًا؛ دون سياسة أو بعد EFAULT تبقى البيانات الوصفية مجهولة. الفشل يحفظ الحالة. يقارن `unlinked-file` سلوك الاسم/FD الأصلي؛ الوقت وإبطال الملاحظات قواعد نموذج صريحة.
+
+```json
+{"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"00"}],"directories":[{"path":"/work","mutable":true}]}}
+```
+
+[XNU unlink / unlinkat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [F_GETPATH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 ## الأدلة والمسارات النسبية
 
@@ -198,7 +214,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 78 على ARM64 أو 52 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
+يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 81 على ARM64 أو 54 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -283,3 +299,5 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 `build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
 
 تحقق الموضع المتناثر (2026-10-06): شملت Release Darwin عدد 671 حالة؛ نجحت 359 وتُخطيت 312 لعدم توفر الخلفية، بلا إخفاقات. نُفذت جميع حالات ARM64 HVF الإلزامية وعددها 78، وغطى Unicorn خمسة ملفات للضيف. الفحوص المركزة: نجحت 123 من 147 وتُخطيت 24. نجحت البرامج الأصلية الستة عشر، و122 فحص C/CLI/report (منها 78 مقارنة Darwin)، وخمسة ملفات Python خلال 12.344 ثانية، و66 اختبار runner. الأعداد متداخلة؛ لم تتغير المهل وحُفظت الإخفاقات السابقة. الدليل: `build-hvf-arm64/sparse-seek-validation-summary.json`. تمثل هندسة التخصيص سياسة افتراضية صريحة وليست تكافؤًا مع APFS. يبقى تحقق CI الكامل وiOS الفعلي منفصلًا، وتظل Intel HVF Actions معلقة.
+
+تحقق unlink ‏(2026-10-06): Release Darwin708 حالات؛ نجحت384 وتُخطيت324 لخلفيات غير متاحة، بلا إخفاقات؛ نُفذت جميع81 حالة ARM64 HVF إلزامية. المركزة156: نجحت137 وتُخطيت19. نجحت البرامج الأصلية17/17 وC/CLI/report128/128 (Darwin83) وخمسة ملفات Python خلال16.268ث وrunner66/66. لم تجد المراجعة المستقلة عوائق متبقية. الأعداد متداخلة، المهل ثابتة، ولا حاجة لإعادة. الدليل: `build-hvf-arm64/unlink-validation-summary.json`. الإبطال والوقت الثابت قواعد نموذج؛ نظام الملفات/runtime الكامل وiOS الفعلي لم يُعتمدا بعد. Intel HVF Actions معلقة وCI الكاملة منفصلة.

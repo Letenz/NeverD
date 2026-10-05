@@ -618,6 +618,77 @@ static int file_status(const char *path) {
   return 37;
 }
 /* Existing-file mutations execute unchanged against the native BSD ABI. */
+/* Original native/guest namespace and open-object lifetime comparison. */
+static int unlinked_file(const char *path) {
+  unsigned error;
+  int check = 80;
+#define UNLINK_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 a = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error);
+  u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error);
+  u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error);
+  char before[1024], after[1024], parent[1024], data[10];
+  unsigned size = 0, slash = 0;
+  while (path[size]) {
+    parent[size] = path[size];
+    if (path[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  u64 directory = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  UNLINK_EXPECT(!error);
+  UNLINK_EXPECT(call(92, a, 50, (u64)before, 0, 0, 0, &error) == 0 && !error);
+  UNLINK_EXPECT(call(199, a, 4, 0, 0, 0, 0, &error) == 4 && !error);
+  UNLINK_EXPECT(call(472, 999, (u64)-1, 0x80000000, 0, 0, 0, &error) == 22 &&
+                error);
+  UNLINK_EXPECT(call(472, 999, (u64)-1, 0, 0, 0, 0, &error) == 14 && error);
+  UNLINK_EXPECT(call(472, 999, (u64) "", 0, 0, 0, 0, &error) == 9 && error);
+  UNLINK_EXPECT(
+      call(472, a, (u64)(path + slash + 1), 0, 0, 0, 0, &error) == 20 && error);
+  UNLINK_EXPECT(call(472, directory, (u64)(path + slash + 1),
+                     0x1234567800000800UL, 0, 0, 0, &error) == 0 &&
+                !error);
+  UNLINK_EXPECT(call(5, (u64)path, 0, 0, 0, 0, 0, &error) == 2 && error);
+  UNLINK_EXPECT(call(10, (u64)path, 0, 0, 0, 0, 0, &error) == 2 && error);
+  UNLINK_EXPECT(call(92, d, 50, (u64)after, 0, 0, 0, &error) == 0 && !error);
+  UNLINK_EXPECT(equal(before, after));
+  UNLINK_EXPECT(call(92, d, 50, (u64)-1, 0, 0, 0, &error) == 14 && error);
+  UNLINK_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == 4 && !error);
+  UNLINK_EXPECT(call(199, b, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  UNLINK_EXPECT(call(92, d, 3, 0, 0, 0, 0, &error) == 2 && !error);
+  unsigned char status[144];
+  UNLINK_EXPECT(call(339, b, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  UNLINK_EXPECT(little_integer(status + 6, 2) == 0 &&
+                little_integer(status + 96, 8) == 10);
+  UNLINK_EXPECT(call(154, a, (u64) "XY", 2, 0, 0, 0, &error) == 2 && !error);
+  UNLINK_EXPECT(call(153, b, (u64)data, 10, 0, 0, 0, &error) == 10 && !error);
+  UNLINK_EXPECT(data[0] == 'X' && data[1] == 'Y' && data[2] == '2' &&
+                data[9] == '9');
+  UNLINK_EXPECT(call(201, d, 3, 0, 0, 0, 0, &error) == 0 && !error);
+  UNLINK_EXPECT(call(339, b, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  UNLINK_EXPECT(little_integer(status + 6, 2) == 0 &&
+                little_integer(status + 96, 8) == 3);
+  UNLINK_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == 4 && !error);
+  UNLINK_EXPECT(call(13, directory, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  UNLINK_EXPECT(call(5, (u64)(path + slash + 1), 0, 0, 0, 0, 0, &error) == 2 &&
+                error);
+  const u64 fds[] = {a, b, d, directory};
+  for (unsigned i = 0; i != 4; ++i)
+    UNLINK_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  UNLINK_EXPECT(call(5, (u64)path, 0, 0, 0, 0, 0, &error) == 2 && error);
+  UNLINK_EXPECT(call(4, 1, (u64) "u", 1, 0, 0, 0, &error) == 1 && !error);
+#undef UNLINK_EXPECT
+  return 37;
+}
+
 /* Native and guest comparison of sparse-seek boundaries and cursor lifetime.
  * Earlier data/hole placement is filesystem-specific; only occupied bytes,
  * dense initial input and EOF have fixed expected positions here. */
@@ -1012,6 +1083,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
 #endif
                0, mach_flags(1))
         .value;
+  if (equal(argv[1], "unlinked-file"))
+    return argc < 3 ? 79 : unlinked_file(argv[2]);
   if (equal(argv[1], "sparse-file-seek"))
     return argc < 3 ? 79 : sparse_file_seek(argv[2]);
   if (equal(argv[1], "virtual-file-metadata"))

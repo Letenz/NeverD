@@ -31,6 +31,9 @@ bool canonicalPath(llvm::StringRef Path, bool AllowRoot = false) {
   });
 }
 enum class PathKind { Missing, File, Directory };
+std::string parentPath(const std::string &Path) {
+  return Path.substr(0, std::max<size_t>(1, Path.rfind('/')));
+}
 PathKind pathKind(const DarwinFileOptions &Options, const std::string &Path) {
   if (Options.Files.contains(Path))
     return PathKind::File;
@@ -176,6 +179,46 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (auto E = PathInput(Path, true))
       return E;
   }
+  auto HasAlias = [&](const std::string &Path) {
+    auto Inode = Inodes.find(Path);
+    if (Inode == Inodes.end())
+      return false;
+    for (const auto &[Other, Number] : Inodes) {
+      if (Other == Path || Number != Inode->second)
+        continue;
+      auto A = Options.Metadata.find(Path), B = Options.Metadata.find(Other);
+      if (A == Options.Metadata.end() || B == Options.Metadata.end() ||
+          A->second.Device == B->second.Device)
+        return true;
+    }
+    return false;
+  };
+  for (const auto &Path : Options.MutableDirectories) {
+    if (pathKind(Options, Path) != PathKind::Directory)
+      return failure(diagnostic::DirectoryMutableOption);
+    if (!Options.Directories.contains(Path) &&
+        !Options.Metadata.contains(Path) &&
+        !Options.DirectoryContents.contains(Path) && ++Entries > limits::Files)
+      return failure(diagnostic::FileOptionsLimit);
+    if (auto E = PathInput(Path, true))
+      return E;
+    const auto M = Options.Metadata.find(Path);
+    if (M != Options.Metadata.end() &&
+        (M->second.Flags || (M->second.Mode & 07000)))
+      return failure(diagnostic::NamespaceFlags);
+    if (HasAlias(Path))
+      return failure(diagnostic::NamespaceAlias);
+  }
+  for (const auto &[Path, Bytes] : Options.Files) {
+    if (!Options.MutableDirectories.contains(parentPath(Path)))
+      continue;
+    const auto M = Options.Metadata.find(Path);
+    if (M != Options.Metadata.end() && M->second.Flags)
+      return failure(diagnostic::NamespaceFlags);
+    if (HasAlias(Path) ||
+        (M != Options.Metadata.end() && M->second.LinkCount != 1))
+      return failure(diagnostic::NamespaceAlias);
+  }
   for (const auto &Path : Options.WritableFiles) {
     if (!Options.Files.contains(Path))
       return failure(diagnostic::FileWritableOption);
@@ -185,17 +228,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (Metadata != Options.Metadata.end() &&
         (Metadata->second.Flags & FileRestrictedFlags))
       return failure(diagnostic::FileWritableFlags);
-    auto Inode = Inodes.find(Path);
-    if (Inode == Inodes.end())
-      continue;
-    for (const auto &[Other, Number] : Inodes) {
-      if (Other == Path || Number != Inode->second)
-        continue;
-      auto A = Options.Metadata.find(Path), B = Options.Metadata.find(Other);
-      if (A == Options.Metadata.end() || B == Options.Metadata.end() ||
-          A->second.Device == B->second.Device)
-        return failure(diagnostic::FileWritableAlias);
-    }
+    if (HasAlias(Path))
+      return failure(diagnostic::FileWritableAlias);
   }
   for (const auto &[Path, Policy] : Options.MutationPolicies) {
     const auto Metadata = Options.Metadata.find(Path);
@@ -259,6 +293,46 @@ void DarwinFiles::recordWrite(uint32_t FD) {
   Descriptors.at(FD).Open->Flags |= FileWasWritten;
 }
 
+void DarwinFiles::initializeNamespace() {
+  if (NamespaceReady)
+    return;
+  for (const auto &[Path, Bytes] : Options->Files) {
+    auto Node = std::make_shared<Contents>();
+    Node->Initial = Bytes;
+    Node->Writable = Options->WritableFiles.contains(Path);
+    const auto Metadata = Options->Metadata.find(Path);
+    if (Metadata != Options->Metadata.end())
+      Node->InitialMetadata = &Metadata->second;
+    const auto Policy = Options->MutationPolicies.find(Path);
+    if (Policy != Options->MutationPolicies.end())
+      Node->Policy = &Policy->second;
+    Nodes.emplace(Path, std::move(Node));
+  }
+  NamespaceReady = true;
+}
+
+void DarwinFiles::reclaimUnlinked() {
+  for (auto I = Unlinked.begin(); I != Unlinked.end();) {
+    if (I->use_count() == 1 && (*I)->Lease.use_count() == 1) {
+      *StorageUsed -= (*I)->bytes().size();
+      I = Unlinked.erase(I);
+    } else {
+      ++I;
+    }
+  }
+}
+
+llvm::Error DarwinFiles::prepareMutation() {
+  if (!StorageUsed) {
+    auto Footprint = fileOptionsFootprint(*Options);
+    if (!Footprint)
+      return Footprint.takeError();
+    StorageUsed = *Footprint;
+  }
+  reclaimUnlinked();
+  return llvm::Error::success();
+}
+
 llvm::Expected<DarwinFiles::Pathname> DarwinFiles::readPath(uint64_t Address) {
   std::string Path;
   for (uint64_t I = 0; I < limits::Path; ++I) {
@@ -307,7 +381,7 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   const bool Mutating = (Flags & OpenAccessMask) || (Flags & OpenTruncate);
   if (Mutating && File.Type == Kind::Directory)
     return returned(IsDirectory, true);
-  if (Mutating && !Options->WritableFiles.contains(File.Path))
+  if (Mutating && !File.File->Writable)
     return unsupported(Result, diagnostic::FileNotWritable);
   File.Flags = Flags & (OpenAccessMask | OpenAppend);
   if (Flags & OpenTruncate) {
@@ -325,6 +399,7 @@ llvm::Expected<DarwinFiles::Lookup>
 DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD) {
   if (!Options)
     return diagnostic::FileInputs;
+  initializeNamespace();
   auto Imported = readPath(Address);
   if (!Imported)
     return Imported.takeError();
@@ -371,30 +446,24 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD) {
         Prefix += '/';
       Prefix.append(Part.data(), Part.size());
     }
-    Type = pathKind(*Options, Prefix);
+    // Initial ancestor directories remain real after their last child name
+    // is removed. Regular-file names come only from the live namespace.
+    Type = Nodes.contains(Prefix) ? PathKind::File
+           : pathKind(*Options, Prefix) == PathKind::Directory
+               ? PathKind::Directory
+               : PathKind::Missing;
     if (Type == PathKind::Missing)
       return uint32_t(NoEntry);
   }
   auto Metadata = Options->Metadata.find(Prefix);
-  Description File{
-      Type == PathKind::File ? Kind::File : Kind::Directory,
-      Type == PathKind::File
-          ? llvm::ArrayRef<uint8_t>(Options->Files.at(Prefix))
-          : llvm::ArrayRef<uint8_t>(),
-      0, Metadata == Options->Metadata.end() ? nullptr : &Metadata->second,
-      std::move(Prefix)};
+  Description File{Type == PathKind::File ? Kind::File : Kind::Directory,
+                   {},
+                   0,
+                   Metadata == Options->Metadata.end() ? nullptr
+                                                       : &Metadata->second,
+                   std::move(Prefix)};
   if (Type == PathKind::File) {
-    auto &Node = Nodes[File.Path];
-    if (!Node) {
-      Node = std::make_shared<Contents>();
-      Node->Initial = File.Input;
-      Node->InitialMetadata = File.Metadata;
-      auto Policy = Options->MutationPolicies.find(File.Path);
-      if (Policy != Options->MutationPolicies.end())
-        Node->Policy = &Policy->second;
-    }
-    File.File = Node;
-    File.Input = {};
+    File.File = Nodes.at(File.Path);
     File.Metadata = nullptr;
   }
   return File;
@@ -409,6 +478,8 @@ DarwinFiles::copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::status(const Description &File, uint64_t Address,
                     ProcessResult &Result) {
+  if (File.Type == Kind::Directory && ChangedDirectories.contains(File.Path))
+    return unsupported(Result, diagnostic::DirectoryMutated);
   if (File.File && File.File->MetadataInvalidated)
     return unsupported(Result, diagnostic::FileMutatedMetadata);
   const auto *Metadata = File.File ? File.File->metadata() : File.Metadata;
@@ -441,6 +512,41 @@ DarwinFiles::statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
   if (auto *Reason = std::get_if<const char *>(&*Resolved))
     return unsupported(Result, *Reason);
   return status(std::get<Description>(*Resolved), Address, Result);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD,
+                    ProcessResult &Result) {
+  auto Resolved = resolvePath(Path, DirectoryFD);
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Resolved))
+    return unsupported(Result, *Reason);
+  auto &File = std::get<Description>(*Resolved);
+  if (File.Path == "/")
+    return returned(ResourceBusy, true);
+  if (File.Type == Kind::Directory)
+    return returned(OperationNotPermitted, true);
+  const auto Parent = parentPath(File.Path);
+  if (!Options->MutableDirectories.contains(Parent))
+    return unsupported(Result, diagnostic::DirectoryNotMutable);
+  if (auto E = prepareMutation())
+    return std::move(E);
+  auto &Node = *File.File;
+  if (Node.Policy && !Node.MetadataInvalidated) {
+    if (!Node.CurrentMetadata)
+      Node.CurrentMetadata = *Node.InitialMetadata;
+    Node.CurrentMetadata->LinkCount = 0;
+    Node.CurrentMetadata->ChangeTime = Node.Policy->Time;
+  } else {
+    Node.MetadataInvalidated = true;
+  }
+  ChangedDirectories.insert(Parent);
+  Unlinked.push_back(File.File);
+  Nodes.erase(File.Path);
+  return returned(0);
 }
 
 llvm::Expected<std::optional<ServiceResult>>
@@ -477,16 +583,12 @@ DarwinFiles::read(Description &File, uint64_t Address, uint64_t Count,
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::admitMutation(const Description &File, uint64_t Size,
                            ProcessResult &Result) {
-  if (!Options || !Options->WritableFiles.contains(File.Path))
+  if (!File.File->Writable)
     return unsupported(Result, diagnostic::FileNotWritable);
   if (File.File->Lease.use_count() != 1)
     return unsupported(Result, diagnostic::FileMutationMapping);
-  if (!StorageUsed) {
-    auto Footprint = fileOptionsFootprint(*Options);
-    if (!Footprint)
-      return Footprint.takeError();
-    StorageUsed = *Footprint;
-  }
+  if (auto E = prepareMutation())
+    return std::move(E);
   const uint64_t Other = *StorageUsed - File.bytes().size();
   if (Size > limits::Bytes - Other)
     return unsupported(Result, diagnostic::FileMutationLimit);
@@ -509,8 +611,9 @@ void DarwinFiles::publish(
   auto Units = [Unit](uint64_t Size) { return (Size + Unit - 1) / Unit; };
   if (!Node.Allocated) {
     Node.Allocated.emplace(Units(Node.Initial.size()), true);
-    Node.CurrentMetadata = *Node.InitialMetadata;
   }
+  if (!Node.CurrentMetadata)
+    Node.CurrentMetadata = *Node.InitialMetadata;
   Node.Allocated->resize(Units(Node.bytes().size()), false);
   if (Written)
     Node.Allocated->set(Written->first / Unit,
@@ -686,6 +789,17 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return open(A[0], A[1], AtCurrentDirectory, Result);
   if (Service == ServiceKind::OpenAt)
     return open(A[1], A[2], A[0], Result);
+  if (Service == ServiceKind::Unlink)
+    return unlink(A[0], AtCurrentDirectory, Result);
+  if (Service == ServiceKind::UnlinkAt) {
+    const uint32_t Flags = A[2];
+    if (Flags & ~uint32_t(AtRemoveDirectory | AtRemoveDatalessDirectory |
+                          AtNoFollowAny | AtSystemDiscarded))
+      return returned(InvalidArgument, true);
+    if (Flags & ~uint32_t(AtNoFollowAny))
+      return unsupported(Result, diagnostic::UnlinkFlags);
+    return unlink(A[1], A[0], Result);
+  }
   if (Service == ServiceKind::Truncate || Service == ServiceKind::Ftruncate) {
     if (A[1] > INT64_MAX)
       return returned(InvalidArgument, true);
@@ -774,6 +888,7 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                 Service == ServiceKind::Pread, Result);
   case ServiceKind::Close:
     Descriptors.erase(I);
+    reclaimUnlinked();
     return returned(0);
   case ServiceKind::Lseek:
     if (File.Type == Kind::File || File.Type == Kind::Directory) {
@@ -783,6 +898,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
           return unsupported(Result, diagnostic::FileSeek);
       if (File.Type == Kind::Directory && uint32_t(A[2]) == 2 && !File.Metadata)
         return unsupported(Result, diagnostic::FileMetadata);
+      if (File.Type == Kind::Directory && uint32_t(A[2]) == 2 &&
+          ChangedDirectories.contains(File.Path))
+        return unsupported(Result, diagnostic::DirectoryMutated);
     }
     return std::optional<ServiceResult>(seek(File, A[1], A[2]));
   case ServiceKind::Dup:
@@ -793,6 +911,7 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       return returned(BadDescriptor, true);
     if (Target != I->first)
       Descriptors.insert_or_assign(Target, Descriptor{FD.Open, false});
+    reclaimUnlinked();
     return returned(Target);
   }
   case ServiceKind::Fcntl:

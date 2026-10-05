@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 0c15750a4d37d9fcd687994b7121917b6e51fd427dd03e5831d00ef01cd1fbd5 -->
+<!-- i18n-source: 0de20e6b5b0a92721422de6cd168f08d02d0ab851a8d38159214df2ea73edb10 -->
 
 [← Indice della documentazione](README.md)
 
@@ -75,7 +75,7 @@ Input parzialmente leggibile si arresta prima degli effetti. EFAULT completo con
 
 DarwinMemory trattiene lease fino all’ultimo unmap, inclusi PROT_NONE e FD chiusi; le modifiche si arrestano finché esistono. Errori e vecchi mmap di lunghezza zero non trattengono lease. Le nuove mappe vedono i byte attuali. O_WRONLY con READ/WRITE dà EACCES; PROT_NONE può acquisire lettura/scrittura tramite mprotect.
 
-Programmi originali normali/nocancel confrontano il kernel nativo; test 4K/16K e C/CLI/Python coprono cinque combinazioni. Creazione, rimozione, rinomina, hard link, metadati del file system nativo, coerenza delle mappe e SIGBUS EOF restano incompleti. Ambiente completo, iOS fisico e Intel HVF non sono validati; Actions Intel resta sospeso.
+Programmi originali normali/nocancel confrontano il kernel nativo; test 4K/16K e C/CLI/Python coprono cinque combinazioni. Creazione, rimozione di directory, rinomina, hard link, metadati del file system nativo, coerenza delle mappe e SIGBUS EOF restano incompleti. Ambiente completo, iOS fisico e Intel HVF non sono validati; Actions Intel resta sospeso.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -106,6 +106,22 @@ Con mutation_policy e allocazione nota, lseek accetta SEEK_HOLE=3 e SEEK_DATA=4 
 Senza politica, per directory o dopo EFAULT completo con allocazione ignota il servizio resta escluso. Zeri e modifiche rifiutate non implicano allocazione. sparse-file-seek confronta errori, byte scritti, EOF e vita delle descrizioni native/guest senza assumere precedenti confini del FS. virtual-file-metadata controlla separatamente la geometria esatta della politica; C/CLI/Python coprono cinque profili.
 
 [XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## Rimozione dei nomi di file regolari
+
+`mutable:true` per directory (C++ `MutableDirectories`) autorizza i cambiamenti dei nomi immediati, indipendentemente da `writable`. Senza autorizzazione il modello si ferma. Rifiuta flags noti non nulli, permessi speciali del padre, link_count≠1 del figlio e alias noti padre/figlio; unisce stat e inode degli snapshot, distinguendo dispositivi esplicitamente diversi. I percorsi consumano il budget esistente.
+
+`unlink(10)` / `unlinkat(472)` rimuovono nomi regolari esistenti. unlinkat accetta solo i32 bit bassi 0 o `0x800`; bit sconosciuti danno EINVAL prima di percorso/FD, altri modi noti di rimozione restano non supportati. Risoluzione comune: ENOENT, ENOTDIR per file seguito da `/`, EPERM per directory ordinaria, EBUSY per radice. I suffissi `.`/`..` sono verificati nativamente.
+
+FD/dup/aperture indipendenti esistenti mantengono dati, cursori e flags; F_GETPATH conserva il vecchio percorso acquisito. Le nuove aperture falliscono, genitori impliciti e CWD restano. Il permesso di scrittura appartiene all’oggetto; close/dup2/modifica successiva recuperano i byte correnti solo dopo l’ultimo descrittore e mapping. I costi iniziali dei percorsi restano; creazione, rinomina, hard link e rimozione directory sono ancora incompleti.
+
+stat/readdir/SEEK_END del padre diventano sconosciuti per ogni FD/percorso e si fermano prima di copia/cursore. read/pread restano EISDIR; SET/CUR/F_GETPATH/fchdir/risoluzione relativa continuano. La politica nota imposta nlink=0 e ctime fisso; scritture successive non ripristinano nlink=1. Senza politica/dopo EFAULT i metadati restano ignoti. Errori preservano lo stato. `unlinked-file` confronta regole native nome/FD; tempi e invalidazione sono regole esplicite del modello.
+
+```json
+{"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"00"}],"directories":[{"path":"/work","mutable":true}]}}
+```
+
+[XNU unlink / unlinkat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [F_GETPATH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c).
 
 ## Directory e percorsi relativi
 
@@ -198,7 +214,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La verifica autonoma richiede tutti i 78 casi nativi ARM64 o 52 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
+La verifica autonoma richiede tutti i 81 casi nativi ARM64 o 54 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -283,3 +299,5 @@ Verifica metadati (2026-10-06): Release mirato148=124 riusciti/24 saltati. Darwi
 `build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
 
 Verifica del posizionamento sparse (2026-10-06): Release Darwin, 671 casi, 359 superati, 312 saltati per backend indisponibili, nessun errore. Eseguiti tutti i 78 casi ARM64 HVF obbligatori; Unicorn copre cinque profili. Test mirati: 123 superati su 147, 24 saltati. Superati 16 programmi nativi, 122 controlli C/CLI/report (78 confronti Darwin), cinque profili Python (12.344 s) e 66 test del runner. Conteggi sovrapposti, scadenze invariate ed errori precedenti conservati. Evidenze: `build-hvf-arm64/sparse-seek-validation-summary.json`. La geometria segue una politica virtuale esplicita, non equivale ad APFS. CI completa e iOS fisico restano da verificare; Intel HVF Actions resta sospeso.
+
+Verifica unlink (2026-10-06): Release Darwin708 casi,384 superati,324 saltati per backend indisponibili, nessun errore;81 ARM64 HVF obbligatori eseguiti. Mirati156:137 superati/19 saltati. Nativi17/17, C/CLI/report128/128 (Darwin83), Python cinque profili16.268s, runner66/66 superati. Revisione indipendente senza blocchi residui. Conteggi sovrapposti, scadenze invariate, nessuna ripetizione necessaria. Evidenze: `build-hvf-arm64/unlink-validation-summary.json`. Invalidazione/tempi fissi sono regole del modello; file system/runtime completo e iOS fisico restano da verificare. Intel HVF Actions sospeso; CI completa separata.

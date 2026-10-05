@@ -190,13 +190,21 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         const auto *D = Directory.getAsObject();
         if (!D ||
             D->size() != 1 + unsigned(bool(D->get(field::FileMetadata))) +
-                             unsigned(bool(D->get(field::DirectoryContents))))
+                             unsigned(bool(D->get(field::DirectoryContents))) +
+                             unsigned(bool(D->get(field::DirectoryMutable))))
           return invalid(Name);
         auto Path = D->getString(field::Path);
         if (!Path || Path->size() >= Remaining ||
             !Out.Directories.emplace(Path->str()).second)
           return invalid(field::Path);
         Remaining -= Path->size() + 1;
+        if (const auto *M = D->get(field::DirectoryMutable)) {
+          auto Mutable = M->getAsBoolean();
+          if (!Mutable)
+            return invalid(field::DirectoryMutable);
+          if (*Mutable)
+            Out.MutableDirectories.insert(Path->str());
+        }
         if (const auto *C = D->get(field::DirectoryContents)) {
           auto Parsed = directoryContents(*C);
           if (!Parsed)
