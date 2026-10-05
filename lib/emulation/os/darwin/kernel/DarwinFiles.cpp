@@ -197,6 +197,21 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
         return failure(diagnostic::FileWritableAlias);
     }
   }
+  for (const auto &[Path, Policy] : Options.MutationPolicies) {
+    const auto Metadata = Options.Metadata.find(Path);
+    const uint64_t Unit = Policy.AllocationUnit;
+    if (!Options.WritableFiles.contains(Path) ||
+        Metadata == Options.Metadata.end() || Unit < 512 ||
+        Unit > limits::Bytes || (Unit & (Unit - 1)) ||
+        Policy.Time.Nanoseconds < 0 || Policy.Time.Nanoseconds >= 1000000000)
+      return failure(diagnostic::FileMutationPolicy);
+    const auto &M = Metadata->second;
+    if ((M.Mode & ~0777) != FileRegularMode || M.Flags || M.LinkCount != 1 ||
+        M.Blocks != ((M.Size + Unit - 1) / Unit) * (Unit / 512))
+      return failure(diagnostic::FileMutationPolicy);
+    if (auto E = PathInput(Path, false))
+      return E;
+  }
   return Total;
 }
 } // namespace
@@ -299,6 +314,7 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
     auto Truncated = resize(File, 0, Result);
     if (!Truncated || !*Truncated || (**Truncated).Error)
       return Truncated;
+    File.Flags |= FileWasWritten;
   }
   Descriptors.emplace(FD, Descriptor{std::make_shared<Description>(File),
                                      bool(Flags & OpenCloseOnExec)});
@@ -372,9 +388,14 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD) {
     if (!Node) {
       Node = std::make_shared<Contents>();
       Node->Initial = File.Input;
+      Node->InitialMetadata = File.Metadata;
+      auto Policy = Options->MutationPolicies.find(File.Path);
+      if (Policy != Options->MutationPolicies.end())
+        Node->Policy = &Policy->second;
     }
     File.File = Node;
     File.Input = {};
+    File.Metadata = nullptr;
   }
   return File;
 }
@@ -390,7 +411,8 @@ DarwinFiles::status(const Description &File, uint64_t Address,
                     ProcessResult &Result) {
   if (File.File && File.File->MetadataInvalidated)
     return unsupported(Result, diagnostic::FileMutatedMetadata);
-  if (!File.Metadata)
+  const auto *Metadata = File.File ? File.File->metadata() : File.Metadata;
+  if (!Metadata)
     return unsupported(Result, diagnostic::FileMetadata);
   std::array<uint8_t, FileStatusSize> Bytes{};
   auto Put = [&](unsigned Offset, unsigned Width, uint64_t Value) {
@@ -402,7 +424,7 @@ DarwinFiles::status(const Description &File, uint64_t Address,
       llvm::support::endian::write64le(Bytes.data() + Offset, Value);
   };
 #define NEVERD_DARWIN_FILE_STATUS(Member, Native, Offset, Width)               \
-  Put(Offset, Width, static_cast<uint64_t>(File.Metadata->Member));
+  Put(Offset, Width, static_cast<uint64_t>(Metadata->Member));
 #include "DarwinFileStatus.def"
 #undef NEVERD_DARWIN_FILE_STATUS
   return copyout(Address, Bytes, diagnostic::FilePartialStatus, Result);
@@ -471,10 +493,32 @@ DarwinFiles::admitMutation(const Description &File, uint64_t Size,
   return returned(0);
 }
 
-void DarwinFiles::publish(Description &File, std::vector<uint8_t> Bytes) {
+void DarwinFiles::publish(
+    Description &File, std::vector<uint8_t> Bytes,
+    std::optional<std::pair<uint64_t, uint64_t>> Written) {
   *StorageUsed = *StorageUsed - File.bytes().size() + Bytes.size();
-  File.File->Modified = std::move(Bytes);
-  File.File->MetadataInvalidated = true;
+  auto &Node = *File.File;
+  Node.Modified = std::move(Bytes);
+  if (!Node.Policy || Node.MetadataInvalidated) {
+    Node.MetadataInvalidated = true;
+    return;
+  }
+  // This allocation rule is opted into explicitly, never inferred from the
+  // observed st_blksize or from which input bytes happen to be zero.
+  const uint64_t Unit = Node.Policy->AllocationUnit;
+  auto Units = [Unit](uint64_t Size) { return (Size + Unit - 1) / Unit; };
+  if (!Node.Allocated) {
+    Node.Allocated.emplace(Units(Node.Initial.size()), true);
+    Node.CurrentMetadata = *Node.InitialMetadata;
+  }
+  Node.Allocated->resize(Units(Node.bytes().size()), false);
+  if (Written)
+    Node.Allocated->set(Written->first / Unit,
+                        Units(Written->first + Written->second));
+  auto &M = *Node.CurrentMetadata;
+  M.Size = Node.bytes().size();
+  M.Blocks = Node.Allocated->count() * (Unit / 512);
+  M.ModificationTime = M.ChangeTime = Node.Policy->Time;
 }
 
 llvm::Expected<std::optional<ServiceResult>>
@@ -544,7 +588,7 @@ DarwinFiles::write(Description &File, uint64_t Address, uint64_t Count,
   if (auto E = Memory.read(
           Address, llvm::MutableArrayRef<uint8_t>(Bytes).slice(Offset, Count)))
     return std::move(E);
-  publish(File, std::move(Bytes));
+  publish(File, std::move(Bytes), std::pair{Offset, Count});
   if (!Positioned)
     File.Offset = Offset + Count;
   File.Flags |= FileWasWritten;
@@ -674,10 +718,14 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return write(File, A[1], A[2],
                  Service == ServiceKind::Pwrite ? A[3] : File.Offset,
                  Service == ServiceKind::Pwrite, Result);
-  case ServiceKind::Ftruncate:
+  case ServiceKind::Ftruncate: {
     if (File.Type != Kind::File || !(File.Flags & OpenAccessMask))
       return returned(InvalidArgument, true);
-    return resize(File, A[1], Result);
+    auto Truncated = resize(File, A[1], Result);
+    if (Truncated && *Truncated && !(**Truncated).Error)
+      File.Flags |= FileWasWritten;
+    return Truncated;
+  }
   case ServiceKind::Fstat64:
     return status(File, A[1], Result);
   case ServiceKind::GetDirEntries64:

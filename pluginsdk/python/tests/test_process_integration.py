@@ -500,6 +500,13 @@ class ProcessIntegrationTests(unittest.TestCase):
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
                                            ("writable-files", b"00006e"),
                                            ("writable-files-nocancel", b"00006e"),
+                                           ("virtual-file-metadata", bytes.fromhex(
+                                               "85ffffffa48101001032547698badcfeefcdab8998badcfe0000000000000000"
+                                               "01000000000000800100000000000000f9ffffffffffffff15cd5b0700000000"
+                                               "f9ffffffffffffff15cd5b0700000000fbffffffffffffff0600000000000000"
+                                               "012000000000000018000000000000000010000000000000efcdab8900000000"
+                                               "00000000000000000000000000000000")),
+
                                            ("stdin", b"\x00\xffx"),
                                            ("output-descriptors", b"ok"),
                                            ("file-status", b"s"), ("file-mapping", b"m"),
@@ -547,11 +554,16 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
-                        if mode.startswith("writable-files"):
+                        if mode.startswith("writable-files") or mode == "virtual-file-metadata":
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]
                             writable_file["writable"] = True
                             writable_file["metadata"]["flags"] = 0
+                            if mode == "virtual-file-metadata":
+                                writable_file["metadata"]["link_count"] = 1
+                                writable_file["mutation_policy"] = {
+                                    "allocation_unit": 4096,
+                                    "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}
                             file_options = json.dumps(writable_options)
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"], "exited", f"{mode}: {result['diagnostic']}")

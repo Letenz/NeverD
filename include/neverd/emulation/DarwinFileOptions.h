@@ -51,6 +51,19 @@ struct DarwinFileMetadata {
   DarwinFileTime BirthTime;
 };
 
+/// Explicit sparse-unit virtual filesystem contract, not an APFS observation.
+/// Initial bytes occupy every allocation unit through EOF, including zeros.
+/// Writes allocate touched units; truncate growth creates holes and shrinking
+/// drops whole units beyond EOF. A retained partial unit stays allocated.
+/// Successful mutations use this fixed mtime/ctime. Other metadata is
+/// preserved. Requires complete metadata, ordinary permissions, flags=0 and
+/// link_count=1.
+struct DarwinFileMutationPolicy {
+  /// Independent of st_blksize and guest page size. Power of two, 512..16 MiB.
+  uint32_t AllocationUnit = 0;
+  DarwinFileTime Time;
+};
+
 /// One observed directory record. NextOffset is the enumeration cursor after
 /// this entry, distinct from the optional d_seekoff observation. Cookies are
 /// local to a snapshot and need not increase; zero is reserved for rewind.
@@ -94,6 +107,10 @@ struct DarwinFileOptions {
   /// Explicit mutable regular files. Other catalogue entries stay read-only.
   /// Mutations are process-local; they never change these input bytes.
   std::set<std::string> WritableFiles;
+  /// Optional per-file virtual metadata policy. Without one, post-mutation
+  /// metadata remains unknown. A failed nonempty copyin can invalidate even
+  /// configured metadata; later successful mutations do not restore it.
+  std::map<std::string, DarwinFileMutationPolicy> MutationPolicies;
 };
 } // namespace neverd::emulation
 #endif

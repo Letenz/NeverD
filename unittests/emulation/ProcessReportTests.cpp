@@ -129,6 +129,55 @@ TEST(ProcessReport, DarwinWritableFilesRequireExplicitBooleanAdmission) {
   }
 }
 
+TEST(ProcessReport, DarwinMutationPolicyIsExplicitStrictAndLossless) {
+  auto M = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  (*M.getAsObject())["flags"] = 0;
+  (*M.getAsObject())["link_count"] = 1;
+  auto Parse = [&](llvm::StringRef Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","writable":true,"metadata":)" +
+        llvm::formatv("{0}", M).str() + R"(,"mutation_policy":)" +
+        Policy.str() + "}]}}");
+  };
+  auto Good = Parse(darwin_test::MutationPolicyJSON);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &P = Good->DarwinFiles->MutationPolicies.at("/data");
+  EXPECT_EQ(P.AllocationUnit, 4096u);
+  EXPECT_EQ(P.Time.Seconds, -7);
+  EXPECT_EQ(P.Time.Nanoseconds, 123456789);
+  for (auto Seconds : {INT64_MIN, int64_t(0), INT64_MAX}) {
+    auto Boundary =
+        Parse(R"({"allocation_unit":"4096","mutation_time":{"seconds":")" +
+              std::to_string(Seconds) + R"(","nanoseconds":999999999}})");
+    ASSERT_TRUE(bool(Boundary)) << llvm::toString(Boundary.takeError());
+    EXPECT_EQ(Boundary->DarwinFiles->MutationPolicies.at("/data").Time.Seconds,
+              Seconds);
+  }
+  for (
+      auto Bad :
+      {"null", "[]", "true", "{}", R"({"allocation_unit":4096})",
+       R"({"allocation_unit":4096,"mutation_time":null})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0,"nanoseconds":0,"extra":0}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0,"nanoseconds":0},"extra":0})",
+       R"({"allocation_unit":4096.5,"mutation_time":{"seconds":0,"nanoseconds":0}})",
+       R"({"allocation_unit":true,"mutation_time":{"seconds":0,"nanoseconds":0}})",
+       R"({"allocation_unit":4294967296,"mutation_time":{"seconds":0,"nanoseconds":0}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":"9223372036854775808","nanoseconds":0}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0,"nanoseconds":1000000000}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0,"nanoseconds":-1}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0.5,"nanoseconds":0}})",
+       R"({"allocation_unit":0,"mutation_time":{"seconds":0,"nanoseconds":0}})"}) {
+    auto Rejected = Parse(Bad);
+    EXPECT_FALSE(bool(Rejected)) << Bad;
+    llvm::consumeError(Rejected.takeError());
+  }
+  (*M.getAsObject())["blocks"] = 0;
+  auto Incoherent = Parse(darwin_test::MutationPolicyJSON);
+  EXPECT_FALSE(bool(Incoherent));
+  llvm::consumeError(Incoherent.takeError());
+}
+
 TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
   auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[],
     "directories":[{"path":"/empty/deep"}],"working_directory":"/empty"}})");

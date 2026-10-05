@@ -31,6 +31,8 @@ NEVERD_NATIVE_DARWIN_CASE(
 NEVERD_NATIVE_DARWIN_CASE(
     WritableFilesPreserveSharedContentsOffsetsAndNativeErrorOrder)
 NEVERD_NATIVE_DARWIN_CASE(
+    VirtualFileMetadataTracksConfiguredAllocationAndSharedLifetime)
+NEVERD_NATIVE_DARWIN_CASE(
     Stat64ObservationsPreserveLayoutErrorsAndDescriptorState)
 NEVERD_NATIVE_DARWIN_CASE(
     PrivateFileMappingsRetainCopiesAfterCloseAndPreserveOffsets)

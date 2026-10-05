@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: e14143fea85825a5b746e8fa74d0d9a439082587fccded15cfa8b43984098ae0 -->
+<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
 
 [← Índice de documentación](README.md)
 
@@ -69,17 +69,34 @@ El booleano estricto `"writable":true` o `DarwinFileOptions::WritableFiles` auto
 
 F_SETFL cambia solo O_APPEND y conserva acceso, close-on-exec y FWASWRITTEN. F_GETFL muestra 0x10000 tras transferir bytes no vacíos, también con pwrite y salida capturada. pwrite ignora append y conserva posición. INT_MAX se comprueba antes de FD; -1 en pwrite devuelve EINVAL antes aún. INT64_MAX devuelve EFBIG antes del caso vacío; se recorta la longitud antes de elegir EOF.
 
-La entrada parcialmente legible se detiene antes de efectos. EFAULT completo conserva bytes, pero append no vacío mueve la posición a EOF. El fallo de transporte no confirma contenido ni posición. Escritura no vacía, truncado y EFAULT completo no vacío invalidan la observación stat completa; consultas posteriores paran antes de copiar. La escritura vacía la conserva. Los 16 MiB suman rutas/NUL, entrada, registros, CWD, contenido actual y referencias de rutas escribibles. Reducir sustituye el almacenamiento y libera capacidad; entrada inicial y un búfer acotado adicional quedan fuera del límite lógico. Se rechazan alias inode conocidos y flags immutable/append-only.
+ftruncate exitoso, incluso sin cambiar tamaño, marca FWASWRITTEN en la descripción invocada y sus dup. O_TRUNC marca la nueva descripción, incluso O_RDONLY; truncate por ruta no marca las existentes.
+
+La entrada parcialmente legible se detiene antes de efectos. EFAULT completo conserva bytes, pero append no vacío mueve la posición a EOF. El fallo de transporte no confirma contenido ni posición. Sin `mutation_policy`, escritura no vacía, truncado y EFAULT completo no vacío invalidan la observación stat completa; consultas posteriores paran antes de copiar. La escritura vacía la conserva. Los 16 MiB suman rutas/NUL, entrada, registros, CWD, contenido actual y referencias de rutas escribibles. Reducir sustituye el almacenamiento y libera capacidad; entrada inicial y un búfer acotado adicional quedan fuera del límite lógico. Se rechazan alias inode conocidos y flags immutable/append-only.
 
 DarwinMemory mantiene reservas hasta el último unmap, incluso PROT_NONE y FD cerrados; las mutaciones paran mientras existan. Fallos y mmap antiguo de longitud cero no retienen reservas. Nuevos mapas ven bytes actuales. O_WRONLY con READ/WRITE da EACCES; PROT_NONE puede ganar lectura/escritura mediante mprotect.
 
-Programas originales normal/nocancel comparan el kernel nativo; pruebas 4K/16K y C/CLI/Python cubren cinco combinaciones. Crear, borrar, renombrar, enlaces físicos, metadatos nuevos, coherencia de mapas y SIGBUS EOF siguen pendientes. El entorno completo, dispositivos iOS e Intel HVF no están validados; Actions Intel permanece suspendido.
+Programas originales normal/nocancel comparan el kernel nativo; pruebas 4K/16K y C/CLI/Python cubren cinco combinaciones. Crear, borrar, renombrar, enlaces físicos, metadatos del sistema de archivos nativo, coherencia de mapas y SIGBUS EOF siguen pendientes. El entorno completo, dispositivos iOS e Intel HVF no están validados; Actions Intel permanece suspendido.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
 ```
 
 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
+
+## Metadatos mutables explícitos
+
+Cada archivo puede añadir mutation_policy junto a `writable: true` y metadata completos; C++ usa `DarwinFileOptions::MutationPolicies`. Es un contrato virtual de asignación dispersa explícito, sin inferir APFS ni consultar el reloj host. Si se omite, los metadatos posteriores siguen siendo desconocidos.
+
+allocation_unit, mutation_time y seconds/nanoseconds son obligatorios, con las reglas enteras sin pérdida existentes. La unidad es una potencia de dos entre512 bytes y16 MiB, independiente de block_size y páginas VM. Se requieren permisos normales sin set-id/sticky, flags=0, link_count=1 y asignación inicial densa: blocks=ceil(size/allocation_unit)*(allocation_unit/512). Ceros no implican huecos. La referencia de ruta cuenta en el límite lógico de16 MiB; la contabilidad de bloques no inventa ENOSPC.
+
+Escribir asigna toda unidad tocada, incluso ceros en huecos. truncate al crecer añade ceros sin asignar; al reducir descarta unidades después de EOF redondeado hacia arriba y retiene la última parcial. Volver a crecer no restaura asignaciones descartadas. Escrituras no vacías exitosas y todo truncate exitoso, incluso del mismo tamaño u O_TRUNC vacío, actualizan size/blocks y fijan mtime/ctime al tiempo suministrado. Otros campos y entradas se conservan; read no avanza atime. Stat por ruta, open independientes, dup y reapertura comparten nodo.
+
+Escritura vacía, rechazo por presupuesto/mapas, entrada parcial rechazada y fallo de transporte conservan el estado. EFAULT completo no vacío lo vuelve desconocido; un éxito posterior no lo reconstruye. Fallar la copia stat no cambia el nodo. virtual-file-metadata verifica144 bytes en cinco perfiles y C/CLI/Python: es prueba de política, no equivalencia APFS. Los programas nativos verifican aparte flags, posiciones y errores. Espacio de nombres, coherencia nativa, Mach y carga dinámica siguen pendientes.
+
+```json
+{"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
+```
+
 
 ## Directorios y rutas relativas
 
@@ -141,7 +158,7 @@ Release Darwin: 438 registros únicos, 210 aprobados, 228 omitidos, cero fallos.
 
 Cada archivo puede incluir `metadata`; todos los campos siguientes son obligatorios. Las cadenas decimales conservan el ancho completo; los números JSON deben ser enteros exactos dentro de ±(2^53−1). device es de 32 bits con signo, mode/link_count de 16 sin signo, inode de 64 sin signo y uid/gid/flags/generation de 32 sin signo. size debe coincidir con los bytes; blocks cabe en 64 bits con signo y block_size en 32 con signo no negativos. Los tiempos usan segundos de 64 bits con signo y 0–999999999 nanosegundos.
 
-`stat64` (338), `fstat64` (339) y `lstat64` (340) devuelven el mismo registro LP64 de 144 bytes en ARM64/x64. Comparten la resolución de open y respetan dup/close sin asignar FD ni mover cursores. rdev, relleno y campos reservados son cero. Son observaciones fijas: read no actualiza tiempos y mode no cambia el acceso al catálogo. Metadatos ausentes, flujos, enlaces simbólicos, stat antiguo, y seguridad ampliada siguen excluidos. Los errores de ruta/FD preceden al puntero de salida; las salidas parcialmente accesibles se rechazan antes de escribir. Las pruebas nativas comparan todos los bytes de un archivo real y los offsets del SDK; el mismo programa original comprueba las tres llamadas.
+`stat64` (338), `fstat64` (339) y `lstat64` (340) devuelven el mismo registro LP64 de 144 bytes en ARM64/x64. Comparten la resolución de open y respetan dup/close sin asignar FD ni mover cursores. rdev, relleno y campos reservados son cero. Las entradas aportan metadatos iniciales y la política opcional regula cambios; read no actualiza tiempos y mode no cambia el acceso al catálogo. Metadatos ausentes, flujos, enlaces simbólicos, stat antiguo, y seguridad ampliada siguen excluidos. Los errores de ruta/FD preceden al puntero de salida; las salidas parcialmente accesibles se rechazan antes de escribir. Las pruebas nativas comparan todos los bytes de un archivo real y los offsets del SDK; el mismo programa original comprueba las tres llamadas.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -250,3 +267,8 @@ Validación de archivos modificables (2026-10-06): Release Darwin, 610 registros
 Python superó inicialmente cinco segundos en tres casos ARM64 de directorio. Con argumentos idénticos pasaron los diez escenarios nuevos de escritura; uno iOS agotó5,005 s reales con1,263 s CPU. Las tres repeticiones aisladas pasaron con el mismo límite en2,43–3,17 s,10.941 instrucciones y salida65. Carga54–70 con16 CPU lógicas apoya presión de planificación, no garantiza latencia; se conservan fallos originales.
 
 El método Python final sin cambios pasó las cinco combinaciones en41,118 s, conservando cinco segundos por proceso y los fallos/diagnósticos anteriores por separado.
+
+
+Validación de metadatos (2026-10-06): Release focalizado148=124 aprobados/24 omitidos. Darwin completo645=343 aprobados/300 omitidos/2 tiempos agotados de directorios ARM64 HVF existentes. Repetición idéntica20=8 aprobados/12 omitidos, casos afectados3.818/3.949s con límite original5s. Las75 identidades HVF requeridas tienen observaciones exitosas; se conserva el primer fallo. C/CLI/informes117/117 con73 Darwin, Python cinco perfiles27.359s, nativo15/15, runners66/66 aprobados. Asignación virtual, no prueba APFS. Sin cambiar plazos; CI completa, Intel, iOS físico y entorno completo pendientes.
+
+`build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.

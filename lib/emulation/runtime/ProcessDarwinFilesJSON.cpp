@@ -68,6 +68,19 @@ directoryContents(const llvm::json::Value &Value) {
   }
   return Out;
 }
+llvm::Expected<DarwinFileTime> fileTime(const llvm::json::Value *Value,
+                                        llvm::StringRef Name) {
+  const auto *Time = Value ? Value->getAsObject() : nullptr;
+  if (!Time || Time->size() != 2 || !Time->get(field::Seconds) ||
+      !Time->get(field::Nanoseconds))
+    return invalid(Name);
+  auto Seconds = process_json::integer<int64_t>(*Time->get(field::Seconds));
+  auto Nanoseconds =
+      process_json::integer<int64_t>(*Time->get(field::Nanoseconds));
+  if (!Seconds || !Nanoseconds)
+    return invalid(Name);
+  return DarwinFileTime{*Seconds, *Nanoseconds};
+}
 llvm::Expected<DarwinFileMetadata> metadata(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
   if (!Object || Object->size() != 15)
@@ -110,18 +123,27 @@ llvm::Expected<DarwinFileMetadata> metadata(const llvm::json::Value &Value) {
         {field::FileModificationTime, &Out.ModificationTime},
         {field::FileChangeTime, &Out.ChangeTime},
         {field::FileBirthTime, &Out.BirthTime}}) {
-    const auto *Time = Object->getObject(Name);
-    if (!Time || Time->size() != 2 || !Time->get(field::Seconds) ||
-        !Time->get(field::Nanoseconds))
-      return invalid(Name);
-    auto Seconds = process_json::integer<int64_t>(*Time->get(field::Seconds));
-    auto Nanoseconds =
-        process_json::integer<int64_t>(*Time->get(field::Nanoseconds));
-    if (!Seconds || !Nanoseconds)
-      return invalid(Name);
-    *Destination = {*Seconds, *Nanoseconds};
+    auto Parsed = fileTime(Object->get(Name), Name);
+    if (!Parsed)
+      return Parsed.takeError();
+    *Destination = *Parsed;
   }
   return Out;
+}
+llvm::Expected<DarwinFileMutationPolicy>
+mutationPolicy(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object || Object->size() != 2)
+    return invalid(field::FileMutationPolicy);
+  const auto *Unit = Object->get(field::FileAllocationUnit);
+  auto Number = Unit ? process_json::integer<uint32_t>(*Unit) : std::nullopt;
+  if (!Number)
+    return invalid(field::FileAllocationUnit);
+  auto Time =
+      fileTime(Object->get(field::FileMutationTime), field::FileMutationTime);
+  if (!Time)
+    return Time.takeError();
+  return DarwinFileMutationPolicy{*Number, *Time};
 }
 llvm::Expected<std::vector<uint8_t>> bytes(const llvm::json::Value &Value,
                                            uint64_t &Remaining) {
@@ -196,7 +218,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         const auto *F = File.getAsObject();
         if (!F || !F->get(field::Bytes) ||
             F->size() != 2 + unsigned(bool(F->get(field::FileMetadata))) +
-                             unsigned(bool(F->get(field::FileWritable))))
+                             unsigned(bool(F->get(field::FileWritable))) +
+                             unsigned(bool(F->get(field::FileMutationPolicy))))
           return invalid(Name);
         auto Path = F->getString(field::Path);
         if (!Path || Path->size() >= Remaining)
@@ -219,6 +242,12 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           if (!Parsed)
             return Parsed.takeError();
           Out.Metadata.emplace(Path->str(), std::move(*Parsed));
+        }
+        if (const auto *P = F->get(field::FileMutationPolicy)) {
+          auto Parsed = mutationPolicy(*P);
+          if (!Parsed)
+            return Parsed.takeError();
+          Out.MutationPolicies.emplace(Path->str(), *Parsed);
         }
       }
     } else {

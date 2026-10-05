@@ -170,6 +170,23 @@ TEST_P(DarwinProcess,
   }
 }
 TEST_P(DarwinProcess,
+       VirtualFileMetadataTracksConfiguredAllocationAndSharedLifetime) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Options.Arguments[2] = "/data";
+  auto Result = run("virtual-file-metadata");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+            darwin_test::MutationMetadataHex);
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+TEST_P(DarwinProcess,
        PrivateFileMappingsRetainCopiesAfterCloseAndPreserveOffsets) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',

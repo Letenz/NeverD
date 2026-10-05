@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: e14143fea85825a5b746e8fa74d0d9a439082587fccded15cfa8b43984098ae0 -->
+<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
 
 [← Index de la documentation](README.md)
 
@@ -69,17 +69,34 @@ Le booléen strict `"writable":true` ou `DarwinFileOptions::WritableFiles` autor
 
 F_SETFL ne modifie que O_APPEND et conserve accès, close-on-exec et FWASWRITTEN. F_GETFL expose 0x10000 après un transfert non vide, y compris pwrite et la sortie capturée. pwrite ignore append et conserve la position. INT_MAX est vérifié avant FD ; pwrite à -1 donne EINVAL encore plus tôt. INT64_MAX donne EFBIG avant le cas vide ; la longueur est réduite avant de choisir EOF.
 
-Une entrée partiellement lisible arrête avant tout effet. EFAULT intégral conserve les octets, mais append non vide avance à EOF. Une panne du transport ne valide aucun contenu ni position. Écriture non vide, troncature et EFAULT intégral non vide invalident l’observation stat complète ; les requêtes suivantes s’arrêtent avant copie. Une écriture vide la conserve. Les 16 MiB comptent chemins/NUL, entrée, enregistrements, CWD, contenu actuel et références de chemins inscriptibles. Réduire remplace le stockage et récupère la capacité ; entrée initiale et tampon de remplacement borné sont supplémentaires. Alias inode connus et flags immutable/append-only sont refusés.
+ftruncate réussi, même sans changement de taille, marque FWASWRITTEN sur la description appelée et ses dup. O_TRUNC marque la nouvelle description, même O_RDONLY ; truncate par chemin ne marque aucune description existante.
+
+Une entrée partiellement lisible arrête avant tout effet. EFAULT intégral conserve les octets, mais append non vide avance à EOF. Une panne du transport ne valide aucun contenu ni position. Sans `mutation_policy`, écriture non vide, troncature et EFAULT intégral non vide invalident l’observation stat complète ; les requêtes suivantes s’arrêtent avant copie. Une écriture vide la conserve. Les 16 MiB comptent chemins/NUL, entrée, enregistrements, CWD, contenu actuel et références de chemins inscriptibles. Réduire remplace le stockage et récupère la capacité ; entrée initiale et tampon de remplacement borné sont supplémentaires. Alias inode connus et flags immutable/append-only sont refusés.
 
 DarwinMemory garde des baux jusqu’au dernier unmap, même pour PROT_NONE ou après close ; les mutations sont refusées jusque-là. Les échecs et anciens mmap de longueur zéro ne gardent aucun bail. Les nouveaux mappings voient les octets actuels. O_WRONLY avec READ/WRITE donne EACCES ; PROT_NONE peut ensuite gagner lecture/écriture par mprotect.
 
-Les programmes originaux normal/nocancel comparent le noyau natif ; tests 4K/16K et C/CLI/Python couvrent cinq combinaisons. Création, suppression, renommage, liens physiques, métadonnées modifiées, cohérence des mappings et SIGBUS EOF restent incomplets. Ni environnement complet, ni appareil iOS, ni Intel HVF ne sont validés ; les Actions Intel restent suspendues.
+Les programmes originaux normal/nocancel comparent le noyau natif ; tests 4K/16K et C/CLI/Python couvrent cinq combinaisons. Création, suppression, renommage, liens physiques, métadonnées du système de fichiers natif, cohérence des mappings et SIGBUS EOF restent incomplets. Ni environnement complet, ni appareil iOS, ni Intel HVF ne sont validés ; les Actions Intel restent suspendues.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
 ```
 
 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
+
+## Métadonnées modifiables explicites
+
+Un fichier peut ajouter mutation_policy à `writable: true` et aux metadata complètes ; C++ utilise `DarwinFileOptions::MutationPolicies`. Ce contrat virtuel d’allocation creuse est explicite : aucune allocation APFS ni heure hôte n’est déduite. Sans politique, les métadonnées après mutation restent inconnues.
+
+allocation_unit, mutation_time et seconds/nanoseconds sont obligatoires, avec les règles entières sans perte existantes. L’unité est une puissance de deux entre512 octets et16 MiB, indépendante de block_size et des pages VM. Il faut des permissions ordinaires sans set-id/sticky, flags=0, link_count=1 et une allocation initiale dense : blocks=ceil(size/allocation_unit)*(allocation_unit/512). Les octets nuls n’impliquent aucun trou. La référence du chemin compte dans les16 MiB logiques ; le registre d’allocation ne sert pas à inventer ENOSPC.
+
+Toute unité touchée par une écriture est allouée, même pour écrire des zéros dans un trou. Agrandir par truncate ajoute des zéros sans allocation ; réduire supprime les unités au-delà d’EOF arrondi vers le haut, conservant l’unité finale partielle. Agrandir ensuite ne restaure pas les unités supprimées. Une écriture non vide réussie ou tout truncate réussi, même de même taille ou O_TRUNC vide, met à jour size/blocks et fixe mtime/ctime au temps fourni. Les autres champs et entrées restent inchangés ; read n’avance pas atime. Stat par chemin, open indépendants, dup et réouverture partagent le nœud.
+
+Écriture vide, refus de budget/mapping, entrée partielle refusée et panne du transport préservent l’état connu. EFAULT intégral non vide le rend inconnu ; un succès ultérieur ne le reconstruit pas. Un échec de copie stat ne change pas le nœud. virtual-file-metadata vérifie144 octets sur cinq profils et C/CLI/Python : c’est un test de politique, pas une équivalence APFS. Les programmes natifs vérifient séparément flags, positions et erreurs. Espace de noms, cohérence native, Mach et chargement dynamique restent incomplets.
+
+```json
+{"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
+```
+
 
 ## Répertoires et chemins relatifs
 
@@ -141,7 +158,7 @@ Release Darwin : 438 identités uniques, 210 succès, 228 omissions, aucun éche
 
 Une entrée peut ajouter `metadata` ; tous les champs ci-dessous sont alors obligatoires. Les chaînes décimales préservent toute la largeur ; les nombres JSON restent des entiers exacts dans ±(2^53−1). device est signé sur 32 bits, mode/link_count non signés sur 16, inode non signé sur 64, uid/gid/flags/generation non signés sur 32. size doit égaler le nombre d’octets ; blocks tient sur 64 bits signés, block_size sur 32 bits signés non négatifs. Les temps utilisent des secondes signées sur 64 bits et 0–999999999 nanosecondes.
 
-`stat64` (338), `fstat64` (339) et `lstat64` (340) produisent le même enregistrement LP64 de 144 octets sur ARM64/x64. Ils partagent la résolution de open, suivent dup/close, sans allouer de FD ni modifier le curseur. rdev, remplissage et réserves sont nuls. Les observations sont fixes : read ne change pas les temps et mode ne modifie pas l’accès au catalogue. Métadonnées absentes, flux, liens symboliques, ancien stat, et sécurité étendue restent exclus. Les erreurs de chemin/FD précèdent le pointeur de sortie ; une sortie partiellement accessible est refusée avant écriture. Le test natif compare tous les octets d’un fichier réel et les offsets du SDK ; le même programme original vérifie les trois appels.
+`stat64` (338), `fstat64` (339) et `lstat64` (340) produisent le même enregistrement LP64 de 144 octets sur ARM64/x64. Ils partagent la résolution de open, suivent dup/close, sans allouer de FD ni modifier le curseur. rdev, remplissage et réserves sont nuls. Les entrées donnent les métadonnées initiales, puis la politique facultative régit les modifications ; read ne change pas les temps et mode ne modifie pas l’accès au catalogue. Métadonnées absentes, flux, liens symboliques, ancien stat, et sécurité étendue restent exclus. Les erreurs de chemin/FD précèdent le pointeur de sortie ; une sortie partiellement accessible est refusée avant écriture. Le test natif compare tous les octets d’un fichier réel et les offsets du SDK ; le même programme original vérifie les trois appels.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -250,3 +267,8 @@ Validation des fichiers modifiables (2026-10-06) : Release Darwin, 610 inscripti
 Python a d’abord dépassé cinq secondes dans trois cas de répertoire ARM64. L’observation sans changer les arguments a réussi les dix nouveaux cas inscriptibles ; un répertoire iOS a expiré à 5,005 s réelles pour 1,263 s CPU. Les trois reprises isolées, même limite, passent en 2,43–3,17 s : 10 941 instructions, sortie65. Charge54–70 pour16 CPU logiques : indice de pression de planification, pas une garantie de latence ; échecs conservés.
 
 La méthode Python finale inchangée a réussi les cinq combinaisons en41,118 s, avec cinq secondes par processus. Les échecs et diagnostics précédents restent séparés.
+
+
+Validation des métadonnées (2026-10-06) : Release ciblé148=124 réussites/24 ignorés. Darwin complet645=343 réussites/300 ignorés/2 délais dépassés dans l’énumération ARM64 HVF existante. Reprise identique20=8 réussites/12 ignorés,3.818/3.949s pour les cas concernés, limite initiale5s. Les75 identités HVF obligatoires ont des observations réussies ; le premier échec reste conservé. Public C/CLI/rapports117/117 dont73 Darwin, Python cinq profils27.359s, natif15/15, runners66/66 réussis. Allocation virtuelle, pas preuve APFS ; aucun délai modifié. CI complète, Intel, iOS physique et environnement complet restent à valider.
+
+`build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.

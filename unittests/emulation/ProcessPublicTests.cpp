@@ -406,6 +406,8 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
          {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
           std::pair{"writable-files", "303030303665"},
           std::pair{"writable-files-nocancel", "303030303665"},
+          std::pair{"virtual-file-metadata",
+                    emulation::darwin_test::MutationMetadataHex},
           std::pair{"stdin", "00ff78"}, std::pair{"output-descriptors", "6f6b"},
           std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"},
           std::pair{"directories", "64"}, std::pair{"directory-entries", "65"},
@@ -452,7 +454,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       emulation::darwin_test::DirectoryContentsJSON +
       R"(},{"path":"/empty"}],"working_directory":"/empty","stdin_hex":"00ff78","descriptor_limit":32},"arguments":["guest",")" +
       Mode + R"(","/data"]})";
-  if (llvm::StringRef(Mode).starts_with("writable-files")) {
+  if (llvm::StringRef(Mode).starts_with("writable-files") ||
+      llvm::StringRef(Mode) == "virtual-file-metadata") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *File = Input.getAsObject()
                      ->getObject(field::DarwinFiles)
@@ -461,6 +464,11 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
                      .getAsObject();
     (*File)[field::FileWritable] = true;
     (*File->getObject(field::FileMetadata))[field::FileFlags] = 0;
+    if (llvm::StringRef(Mode) == "virtual-file-metadata") {
+      (*File->getObject(field::FileMetadata))[field::FileLinkCount] = 1;
+      (*File)[field::FileMutationPolicy] = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::MutationPolicyJSON));
+    }
     Options = llvm::formatv("{0}", Input).str();
   }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),

@@ -10,6 +10,7 @@
 #include "neverd/emulation/AddressSpace.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 
 namespace neverd::emulation::darwin_model {
 namespace {
@@ -93,6 +94,18 @@ protected:
     ASSERT_FALSE(bool(Space->read(Base + Page, Bytes)));
     EXPECT_EQ(Bytes, Expected.vec());
   }
+  void mutationPolicy(uint32_t Unit = 4096) {
+    Options->WritableFiles.insert("/data");
+    Options->Metadata["/data"] = darwin_test::mutationMetadata(6);
+    Options->Metadata["/data"].Blocks = Unit / 512;
+    Options->MutationPolicies["/data"] = {Unit, {-7, 123456789}};
+  }
+  std::array<uint8_t, 144> status(uint64_t FD) {
+    EXPECT_EQ(ok(ServiceKind::Fstat64, {FD, Base + 256}), 0u);
+    std::array<uint8_t, 144> Bytes;
+    llvm::cantFail(Space->read(Base + 256, Bytes));
+    return Bytes;
+  }
 };
 
 TEST_P(DarwinFileTest, WritableNodesSurviveSeparateOpensDupAndLastClose) {
@@ -165,6 +178,266 @@ TEST_P(DarwinFileTest, TruncationChangesSharedBytesWithoutMovingCursors) {
   error(ServiceKind::Truncate, {Base, 0}, 21);
   error(ServiceKind::Open, {Base, 1}, 21);
   error(ServiceKind::Open, {Base, 3}, 22);
+}
+
+TEST_P(DarwinFileTest, TruncationRecordsOnlyTheParticipatingOpenDescription) {
+  Options->WritableFiles.insert("/data");
+  auto A = ok(ServiceKind::Open, {Base, 2});
+  auto D = ok(ServiceKind::Dup, {A});
+  auto B = ok(ServiceKind::Open, {Base, 2});
+  error(ServiceKind::Ftruncate, {D, UINT64_MAX}, 22);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {D, 6}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 3}), 0x10002u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Truncate, {Base, 3}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {B, darwin_file_limits::Bytes}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+  for (unsigned Access : {0u, 1u, 2u}) {
+    auto T = ok(ServiceKind::Open, {Base, 0x400 | Access});
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {T, 3}), 0x10000u | Access);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+    EXPECT_EQ(ok(ServiceKind::Close, {T}), 0u);
+  }
+}
+
+TEST_P(DarwinFileTest, MutationMetadataSharesOneNodeAndPreservesOtherFields) {
+  mutationPolicy();
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  const auto B = ok(ServiceKind::Open, {Base});
+  const auto D = ok(ServiceKind::Dup, {A});
+  auto Expected = status(B);
+  const auto Initial = Expected;
+  EXPECT_EQ(ok(ServiceKind::Write, {A, UINT64_MAX, 0}), 0u);
+  EXPECT_EQ(status(B), Initial);
+  // A same-size truncate still publishes the explicitly configured times.
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {D, 6}), 0u);
+  for (auto Offset : {48u, 64u}) {
+    llvm::support::endian::write64le(Expected.data() + Offset, uint64_t(-7));
+    llvm::support::endian::write64le(Expected.data() + Offset + 8, 123456789);
+  }
+  EXPECT_EQ(status(A), Expected);
+  EXPECT_EQ(status(B), Expected);
+  path("XY", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {D, Base + 128, 2, 8191}), 2u);
+  llvm::support::endian::write64le(Expected.data() + 96, 8193);
+  llvm::support::endian::write64le(Expected.data() + 104, 24);
+  EXPECT_EQ(status(B), Expected);
+  for (auto Kind : {ServiceKind::Stat64, ServiceKind::Lstat64}) {
+    EXPECT_EQ(ok(Kind, {Base, Base + 256}), 0u);
+    std::array<uint8_t, 144> Bytes;
+    llvm::cantFail(Space->read(Base + 256, Bytes));
+    EXPECT_EQ(Bytes, Expected);
+  }
+  EXPECT_EQ(ok(ServiceKind::FstatAt64, {B, UINT64_MAX, Base + 256, 0x400}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 0u);
+  for (auto FD : {A, B, D})
+    EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  EXPECT_EQ(status(ok(ServiceKind::Open, {Base})), Expected);
+  EXPECT_EQ(Options->Metadata.at("/data").Size, 6u);
+  EXPECT_EQ(Options->Metadata.at("/data").Blocks, 8u);
+  EXPECT_EQ(Options->Metadata.at("/data").ModificationTime.Seconds, INT64_MAX);
+}
+
+TEST_P(DarwinFileTest, SparseUnitMetadataTracksHolesWritesAndDiscardedUnits) {
+  for (uint32_t Unit : {512u, 4096u, 16384u}) {
+    SCOPED_TRACE(Unit);
+    mutationPolicy(Unit);
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    const auto FD = ok(ServiceKind::Open, {Base, 2});
+    auto Check = [&](uint64_t Size, uint64_t Blocks) {
+      auto Bytes = status(FD);
+      EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + 96), Size);
+      EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + 104), Blocks);
+      // I/O advice stays independent of the policy's allocation unit.
+      EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + 112), 4096u);
+    };
+    Check(6, Unit / 512);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, Unit * 6 + 1}), 0u);
+    Check(Unit * 6 + 1, Unit / 512);
+    llvm::cantFail(Space->writeInteger(Base + 128, 0, 2));
+    // A zero-valued write into a hole allocates, even without a byte change.
+    EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, Base + 128, 2, Unit * 2 - 1}), 2u);
+    Check(Unit * 6 + 1, Unit / 512 * 3);
+    EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, Base + 128, 2, Unit * 2 - 1}), 2u);
+    Check(Unit * 6 + 1, Unit / 512 * 3);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, Unit + 1}), 0u);
+    Check(Unit + 1, Unit / 512 * 2);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, Unit * 6 + 1}), 0u);
+    Check(Unit * 6 + 1, Unit / 512 * 2);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, Unit}), 0u);
+    Check(Unit, Unit / 512);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 0}), 0u);
+    Check(0, 0);
+    auto Empty = ok(ServiceKind::Open, {Base, 0x400});
+    EXPECT_EQ(status(Empty), status(FD));
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, Unit * 6 + 1}), 0u);
+    Check(Unit * 6 + 1, 0);
+    EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, Base + 128, 1, Unit * 4}), 1u);
+    Check(Unit * 6 + 1, Unit / 512);
+  }
+}
+
+TEST_P(DarwinFileTest, MutationMetadataRetainsKnownStateAcrossRejectedEffects) {
+  mutationPolicy();
+  const auto FD = ok(ServiceKind::Open, {Base, 10});
+  const auto Initial = status(FD);
+  const uint64_t End = Base + Page * 2 - 2;
+  path("X", End);
+  EXPECT_FALSE(invoke(ServiceKind::Write, {FD, End, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FilePartialWrite);
+  EXPECT_EQ(status(FD), Initial);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {FD, darwin_file_limits::Bytes}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(status(FD), Initial);
+  {
+    auto Mapping = Files->mappingSource(FD);
+    EXPECT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Mapping));
+    EXPECT_FALSE(invoke(ServiceKind::Write, {FD, End, 1}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+    EXPECT_EQ(status(FD), Initial);
+  }
+  EXPECT_EQ(ok(ServiceKind::Write, {FD, End, 1}), 1u);
+  const auto Current = status(FD);
+  EXPECT_NE(Current, Initial);
+  error(ServiceKind::Fstat64, {FD, 0}, 14);
+  const uint64_t Partial = Base + Page * 2 - 8;
+  llvm::cantFail(Space->writeInteger(Partial, 0xaabbccddeeff0011, 8));
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {FD, Partial}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FilePartialStatus);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Partial, 8)),
+            0xaabbccddeeff0011u);
+  EXPECT_EQ(status(FD), Current);
+}
+
+TEST_P(DarwinFileTest, InitialDenseAllocationIncludesEmptyAndMultipleUnits) {
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    SCOPED_TRACE(Case);
+    mutationPolicy(512);
+    const unsigned Size = Case ? 513 : 0;
+    Options->Files["/data"] = std::vector<uint8_t>(Size, 0);
+    Options->Metadata["/data"].Size = Size;
+    Options->Metadata["/data"].Blocks = Case ? 2 : 0;
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    const auto FD = ok(ServiceKind::Open, {Base, Case ? 2u : 0x402u});
+    path("", Base + 128);
+    if (Case == 1)
+      EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 512}), 0u);
+    else if (Case == 2)
+      EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, Base + 128, 1, 0}), 1u);
+    else
+      EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 0}), 0u);
+    EXPECT_EQ(llvm::support::endian::read64le(status(FD).data() + 104), Case);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 2048}), 0u);
+    EXPECT_EQ(llvm::support::endian::read64le(status(FD).data() + 104), Case);
+    EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, Base + 128, 1, 1536}), 1u);
+    EXPECT_EQ(llvm::support::endian::read64le(status(FD).data() + 104),
+              Case + 1);
+  }
+}
+
+TEST_P(DarwinFileTest,
+       UnknownMutationMetadataCannotBeResurrectedByLaterSuccess) {
+  for (bool InitiallyModified : {false, true}) {
+    mutationPolicy();
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    const auto FD = ok(ServiceKind::Open, {Base, 10});
+    if (InitiallyModified)
+      EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 8}), 0u);
+    error(ServiceKind::Write, {FD, UINT64_MAX, 1}, 14);
+    path("X", Base + 128);
+    EXPECT_EQ(ok(ServiceKind::Write, {FD, Base + 128, 1}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 1}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+    const auto Reopened = ok(ServiceKind::Open, {Base});
+    contents(Reopened, {'a'});
+    llvm::cantFail(Space->writeInteger(Base + 256, 0xaabb, 2));
+    EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Reopened, Base + 256}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256, 2)), 0xaabbu);
+    EXPECT_FALSE(invoke(ServiceKind::Stat64, {Base, Base + 256}));
+  }
+}
+
+TEST(DarwinFileOptions, MutationPolicyAdmitsOnlyExplicitCoherentMetadata) {
+  DarwinFileOptions Good;
+  Good.Files["/data"] = std::vector<uint8_t>(10);
+  Good.WritableFiles.insert("/data");
+  Good.Metadata["/data"] = darwin_test::mutationMetadata();
+  Good.MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  ASSERT_FALSE(bool(validateFileOptions(Good)));
+  for (uint32_t Unit :
+       {512u, 4096u, 16384u, uint32_t(darwin_file_limits::Bytes)}) {
+    auto O = Good;
+    O.MutationPolicies["/data"].AllocationUnit = Unit;
+    O.Metadata["/data"].Blocks = Unit / 512;
+    EXPECT_FALSE(bool(validateFileOptions(O)));
+  }
+  for (unsigned Case = 0; Case != 13; ++Case) {
+    auto O = Good;
+    auto &P = O.MutationPolicies["/data"];
+    auto &M = O.Metadata["/data"];
+    switch (Case) {
+    case 0:
+      O.WritableFiles.clear();
+      break;
+    case 1:
+      O.Metadata.clear();
+      break;
+    case 2:
+      P.AllocationUnit = 0;
+      break;
+    case 3:
+      P.AllocationUnit = 256;
+      break;
+    case 4:
+      P.AllocationUnit = 513;
+      break;
+    case 5:
+      P.AllocationUnit = darwin_file_limits::Bytes * 2;
+      break;
+    case 6:
+      P.Time.Nanoseconds = -1;
+      break;
+    case 7:
+      P.Time.Nanoseconds = 1000000000;
+      break;
+    case 8:
+      M.Blocks = 0;
+      break;
+    case 9:
+      M.Mode |= 04000;
+      break;
+    case 10:
+      M.Mode |= 02000;
+      break;
+    case 11:
+      M.Mode |= 01000;
+      break;
+    case 12:
+      M.LinkCount = 2;
+      break;
+    }
+    EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+              diagnostic::FileMutationPolicy)
+        << Case;
+  }
+  Good.Metadata["/data"].Flags = 1;
+  EXPECT_EQ(llvm::toString(validateFileOptions(Good)),
+            diagnostic::FileMutationPolicy);
+  Good.Metadata["/data"].Flags = 0;
+  Good.MutationPolicies["/absent"] = darwin_test::MutationPolicy;
+  EXPECT_EQ(llvm::toString(validateFileOptions(Good)),
+            diagnostic::FileMutationPolicy);
+  Good.MutationPolicies.erase("/absent");
+  Good.StandardInput = std::vector<uint8_t>(darwin_file_limits::Bytes - 28);
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  Good.StandardInput->push_back(0);
+  EXPECT_EQ(llvm::toString(validateFileOptions(Good)),
+            diagnostic::FileOptionsLimit);
 }
 
 TEST_P(DarwinFileTest, WriteErrorOrderZeroCountsAndClippedAppendMatchNative) {
@@ -317,10 +590,11 @@ public:
 
 TEST_P(DarwinFileTest,
        InputTransportFailuresDoNotCommitContentsOrAppendCursor) {
-  Options->WritableFiles.insert("/data");
+  mutationPolicy();
   FailingFileInput Input(*Space);
   Files = std::make_unique<DarwinFiles>(Input, Options);
   const auto FD = ok(ServiceKind::Open, {Base, 10});
+  const auto Initial = status(FD);
   for (bool Preflight : {true, false}) {
     Input.FailAccess = Preflight;
     Input.FailRead = !Preflight;
@@ -333,6 +607,7 @@ TEST_P(DarwinFileTest,
     Input.FailAccess = Input.FailRead = false;
     EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
     contents(FD, {'a', 'b', 0, 0xff, 'e', 'f'});
+    EXPECT_EQ(status(FD), Initial);
   }
 }
 

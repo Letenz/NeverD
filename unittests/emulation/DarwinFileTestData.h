@@ -26,6 +26,22 @@ inline DarwinFileMetadata metadata(uint64_t Size = 10) {
           {-3, 4},
           {-5, 6}};
 }
+inline DarwinFileMetadata mutationMetadata(uint64_t Size = 10) {
+  auto M = metadata(Size);
+  M.LinkCount = 1;
+  M.Flags = 0;
+  M.Blocks = Size ? 8 : 0;
+  return M;
+}
+inline constexpr DarwinFileMutationPolicy MutationPolicy{4096, {-7, 123456789}};
+inline constexpr char MutationPolicyJSON[] = R"({"allocation_unit":4096,
+  "mutation_time":{"seconds":-7,"nanoseconds":123456789}})";
+inline constexpr char MutationMetadataHex[] =
+    "85ffffffa48101001032547698badcfeefcdab8998badcfe0000000000000000"
+    "01000000000000800100000000000000f9ffffffffffffff15cd5b0700000000"
+    "f9ffffffffffffff15cd5b0700000000fbffffffffffffff0600000000000000"
+    "012000000000000018000000000000000010000000000000efcdab8900000000"
+    "00000000000000000000000000000000";
 inline DarwinDirectoryContents directoryContents() {
   return {{{".", 41, 4, 11, 0, 64},
            {"..", 41, 4, 22, 0},

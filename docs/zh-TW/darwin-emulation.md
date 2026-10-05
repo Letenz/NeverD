@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: e14143fea85825a5b746e8fa74d0d9a439082587fccded15cfa8b43984098ae0 -->
+<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
 
 [← 文件索引](README.md)
 
@@ -69,17 +69,34 @@ BSD 呼叫在 ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別
 
 F_SETFL 只改 O_APPEND 並保留存取模式、close-on-exec 與 FWASWRITTEN；實際傳輸非零位元組後 F_GETFL 顯示 0x10000，包含 pwrite 和輸出擷取。pwrite 忽略 append、不移游標。INT_MAX 長度檢查先於 FD，偏移 -1 的 pwrite 更早返回 EINVAL；INT64_MAX 在零寫之前返回 EFBIG，長度先裁剪再選 EOF。
 
-部分可讀輸入在效果前停止；完整 EFAULT 保留內容，但非空追加會移至 EOF。後端失敗不提交內容或游標。非零寫入、截斷及非零完整 EFAULT 使完整 stat 觀察失效，後續查詢在輸出前停止；零寫不失效。16 MiB 為路徑/NUL、輸入、目錄記錄、CWD、現有內容及可寫路徑引用的合計邏輯預算；縮小替換 backing 並回收容量，原始輸入與一個有界替換緩衝區另計。已知 inode 別名和 immutable/append-only 旗標暫拒絕。
+成功的 ftruncate（含大小不變）也為呼叫描述及其 dup 設定 FWASWRITTEN；O_TRUNC 為新描述設定，包含 O_RDONLY。路徑 truncate 不改變既有描述的旗標。
+
+部分可讀輸入在效果前停止；完整 EFAULT 保留內容，但非空追加會移至 EOF。後端失敗不提交內容或游標。未設定 `mutation_policy` 時，非零寫入、截斷及非零完整 EFAULT 使完整 stat 觀察失效，後續查詢在輸出前停止；零寫不失效。16 MiB 為路徑/NUL、輸入、目錄記錄、CWD、現有內容及可寫路徑引用的合計邏輯預算；縮小替換 backing 並回收容量，原始輸入與一個有界替換緩衝區另計。已知 inode 別名和 immutable/append-only 旗標暫拒絕。
 
 映射租約由 DarwinMemory 持有，全部區間 unmap 前拒絕 write、truncate、O_TRUNC，包含 PROT_NONE 和已 close 的 FD；失敗或舊式零長度映射不留租約。新映射取得目前內容。只寫 FD 的 READ/WRITE mmap 為 EACCES；PROT_NONE 可成功並以 mprotect 取得讀寫權限。
 
-原生一般/nocancel 程式比對位元組、游標、旗標及錯誤順序；單元測試涵蓋 4K/16K，C/CLI/Python 涵蓋五種組合。建立、刪除、改名、硬連結、修改後中繼資料、映射一致性與 EOF SIGBUS 尚缺；完整環境、iOS 實機與 Intel HVF 仍未驗收，Intel Actions 維持暫停。
+原生一般/nocancel 程式比對位元組、游標、旗標及錯誤順序；單元測試涵蓋 4K/16K，C/CLI/Python 涵蓋五種組合。建立、刪除、改名、硬連結、真實檔案系統的中繼資料更新、映射一致性與 EOF SIGBUS 尚缺；完整環境、iOS 實機與 Intel HVF 仍未驗收，Intel Actions 維持暫停。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
 ```
 
 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
+
+## 明確可變中繼資料
+
+檔案可在 `writable: true` 與完整 `metadata` 旁設定 `mutation_policy`；C++ 使用 `DarwinFileOptions::MutationPolicies`。這是明確選擇的虛擬稀疏分配契約，不推斷 APFS 或讀取宿主時間；省略時修改後中繼資料仍未知。
+
+allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿用無損規則。單位為 512 位元組至 16 MiB 的二次冪，獨立於 block_size 與 VM 頁。須為普通檔案權限（無 set-id/sticky）、flags=0、link_count=1，且初始密集分配滿足 blocks=ceil(size/allocation_unit)*(allocation_unit/512)。零位元組不能推斷為洞。策略路徑引用計入 16 MiB 邏輯預算；分配帳本不推導 ENOSPC。
+
+寫入分配所有觸及單位，向洞寫零也分配。truncate 增長只補零；縮小丟棄向上取整 EOF 之後的單位並保留末尾已分配的部分單位，重新增長不恢復已丟棄分配。非零成功寫和每次成功截斷（含同大小、空 O_TRUNC）更新 size/blocks，並設定固定 mtime/ctime；其餘欄位不變，讀取不推進 atime。路徑 stat、獨立 open、dup、重開共用節點，原始輸入不變。
+
+零寫、預算/映射拒絕、部分輸入和後端失敗保留已知狀態；非零完整 EFAULT 仍使中繼資料永久未知，後續成功修改不能恢復。stat 複製失敗不改節點。virtual-file-metadata 經五種組合與 C/CLI/Python 檢查144位元組記錄；分配是策略測試，非 APFS 原生等價證據。原生程式另驗證旗標、游標與錯誤順序。命名空間、真實檔案系統一致性、Mach 與動態執行階段仍待完成。
+
+```json
+{"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
+```
+
 
 ## 目錄與相對路徑
 
@@ -141,7 +158,7 @@ Release Darwin：438 個唯一登記項，210 通過、228 跳過、零失敗；
 
 檔案項目可提供 `metadata`，下例全部欄位均必填。十進位字串保留完整整數精度，JSON 數字限於 ±(2^53−1) 內的精確整數。device 為有號 32 位，mode/link_count 為無號 16 位，inode 為無號 64 位，uid/gid/flags/generation 為無號 32 位。size 必須等於檔案位元組數；blocks 不超過有號 64 位上限，block_size 為非負有號 32 位。四個時間使用有號 64 位秒及 0–999999999 奈秒，mode 必須符合檔案或目錄類型。
 
-`stat64` (338)、`fstat64` (339)、`lstat64` (340) 在 ARM64/x64 回傳相同的 144 位元組 LP64 記錄。路徑解析與 open 共用；FD 查詢遵循複製及關閉，不配置描述元也不改變游標。rdev、填補和保留欄位清零。中繼資料是呼叫方的固定觀察值，讀取不推進時間，mode 不改變存取授權。缺少中繼資料、串流狀態、符號連結、舊版 stat及擴充安全查詢仍不支援。路徑/FD 錯誤先於目的位址檢查；部分可寫輸出在寫入前停止。原生測試逐位元組對比真實檔案狀態並核對 SDK 配置，同一自編程式驗證三種呼叫。
+`stat64` (338)、`fstat64` (339)、`lstat64` (340) 在 ARM64/x64 回傳相同的 144 位元組 LP64 記錄。路徑解析與 open 共用；FD 查詢遵循複製及關閉，不配置描述元也不改變游標。rdev、填補和保留欄位清零。輸入提供初始中繼資料，可選修改策略決定後續變更；讀取不推進時間，mode 不改變存取授權。缺少中繼資料、串流狀態、符號連結、舊版 stat及擴充安全查詢仍不支援。路徑/FD 錯誤先於目的位址檢查；部分可寫輸出在寫入前停止。原生測試逐位元組對比真實檔案狀態並核對 SDK 配置，同一自編程式驗證三種呼叫。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -250,3 +267,8 @@ Mach 驗證（2026-10-06，Release）：Darwin 569 項中 293 通過、276 項�
 Python 首次整組測試的三個 ARM64 目錄案例超時。不改參數的診斷中，可寫案例 10/10 通過，但一個 iOS 目錄呼叫牆鐘 5.005 秒、CPU 1.263 秒後超時。同一 5 秒限制下單獨複驗三者全通過（2.43–3.17 秒、10,941 條指令、輸出 65）。16 邏輯核負載為 54–70，支持排程壓力解釋，不保證延遲穩定；保留原失敗。
 
 最終未改參數的 Python 整組測試涵蓋五種 profile/ISA 並通過，耗時41.118秒；每行程仍限5秒，先前失敗及診斷獨立保留。
+
+
+中繼資料策略驗證（2026-10-06）：Release專項148項為124通過/24跳過。完整Darwin645項為343通過/300跳過/2項既有ARM64 HVF目錄逾時；相同20項與原5秒時限複測為8通過/12跳過，受影響項3.818/3.949秒。75項必需HVF都有通過觀察，首次整輪失敗仍保留。公共C/CLI/報告117/117（Darwin73項）、Python五組27.359秒、原生15/15、runner66/66通過。分配策略非APFS證據；未改時限，完整CI、Intel、iOS實機和完整環境仍待驗收。
+
+`build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.

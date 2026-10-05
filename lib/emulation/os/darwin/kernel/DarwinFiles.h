@@ -8,6 +8,8 @@
 
 #include "DarwinKernel.h"
 
+#include "llvm/ADT/BitVector.h"
+
 #include <variant>
 
 namespace neverd::emulation::darwin_model {
@@ -39,10 +41,17 @@ private:
   struct Contents {
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> Modified;
+    const DarwinFileMetadata *InitialMetadata = nullptr;
+    std::optional<DarwinFileMetadata> CurrentMetadata;
+    const DarwinFileMutationPolicy *Policy = nullptr;
+    std::optional<llvm::BitVector> Allocated;
     bool MetadataInvalidated = false;
     std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
     llvm::ArrayRef<uint8_t> bytes() const {
       return Modified ? llvm::ArrayRef<uint8_t>(*Modified) : Initial;
+    }
+    const DarwinFileMetadata *metadata() const {
+      return CurrentMetadata ? &*CurrentMetadata : InitialMetadata;
     }
   };
   struct Description {
@@ -96,7 +105,8 @@ private:
   resize(Description &File, uint64_t Size, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   admitMutation(const Description &File, uint64_t Size, ProcessResult &Result);
-  void publish(Description &File, std::vector<uint8_t> Bytes);
+  void publish(Description &File, std::vector<uint8_t> Bytes,
+               std::optional<std::pair<uint64_t, uint64_t>> Written = {});
   llvm::Expected<std::optional<ServiceResult>>
   directory(Description &File, uint64_t Address, uint64_t Count,
             uint64_t Position, ProcessResult &Result);

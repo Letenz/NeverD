@@ -180,8 +180,11 @@ reset the file. Growth zero-fills gaps; truncation preserves every cursor.
 O_RDONLY|O_TRUNC also truncates. F_SETFL changes only O_APPEND, preserves access,
 close-on-exec and the observed FWASWRITTEN bit; unsupported flags stop explicitly.
 F_GETFL exposes FWASWRITTEN=0x10000 after nonzero transferred bytes, including
-positioned writes and captured output. pwrite ignores append and preserves the
-cursor. Count above INT_MAX returns EINVAL before FD lookup; pwrite offset -1
+positioned writes and captured output. Successful ftruncate also sets the bit,
+even at unchanged size, on the calling open description and its duplicates.
+O_TRUNC sets it on the newly opened description, including O_RDONLY; path
+truncate leaves existing description flags unchanged. pwrite ignores append
+and preserves the cursor. Count above INT_MAX returns EINVAL before FD lookup; pwrite offset -1
 returns EINVAL even earlier. Offset INT64_MAX returns EFBIG before zero-count
 success; length is clipped at that boundary before append chooses EOF.
 
@@ -189,8 +192,8 @@ Fully readable input commits its bytes and cursor once. A partially readable
 input stops before effects because native prefix writes and extension rollback
 are filesystem-dependent. Whole EFAULT preserves bytes; nonempty append still
 moves its cursor to EOF. Transport failures preserve contents and cursor.
-Successful nonzero writes, truncation and nonzero whole-EFAULT attempts invalidate
-the complete stat observation: native failed append can change mtime/ctime.
+Without an explicit mutation policy, successful nonzero writes, truncation and
+nonzero whole-EFAULT attempts invalidate the complete stat observation: native failed append can change mtime/ctime.
 Subsequent stat calls stop as unknown before output instead of returning stale
 size/timestamps/block allocation. Zero writes leave contents and metadata intact.
 
@@ -214,7 +217,7 @@ The original `writable-files` and `writable-files-nocancel` workloads compare
 actual bytes, offsets, flags and error order with the native kernel. Unit tests
 cover 4 KiB/16 KiB pages, budget reclamation, backend failure, metadata invalidation
 and mapping lifetime; C/CLI/Python exercise all five profile/ISA combinations.
-Creation, deletion, rename, hard links, post-mutation metadata, coherent vnode/COW
+Creation, deletion, rename, hard links, native filesystem metadata updates, coherent vnode/COW
 or shared mappings and EOF SIGBUS remain unfinished. This does not complete the
 macOS/iOS environment or establish physical iOS or Intel HVF verification.
 
@@ -222,6 +225,44 @@ References: [XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-
 [vnode offsets](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c),
 [file flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h),
 [mmap permissions](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
+
+## Explicit mutable metadata
+
+A file may add `mutation_policy` next to `writable: true` and complete `metadata`;
+C++ uses `DarwinFileOptions::MutationPolicies`. This selects a virtual sparse-unit
+filesystem contract. It does not infer APFS allocation or sample the host clock.
+Omitting it preserves the unknown post-mutation metadata contract above.
+
+```json
+{"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
+```
+
+Both fields and both time members are required, with the existing lossless integer
+rules. The allocation unit must be a power of two from 512 bytes to 16 MiB,
+independent of `block_size` and VM pages. Admission requires ordinary regular-file
+permissions (no set-id/sticky), `flags=0`, `link_count=1`, and dense initial
+allocation: `blocks=ceil(size/allocation_unit)*(allocation_unit/512)`. Dense is
+an explicit assertion even for zero bytes; the model never infers holes from
+their values. The policy path reference also counts toward the 16 MiB logical
+storage limit. Block accounting is a separate virtual ledger, not an ENOSPC model.
+
+Writes allocate every touched unit, including writes of zero into a hole. Truncate
+growth adds zero bytes without allocating units; shrink discards whole units beyond
+rounded-up EOF and retains an allocated final partial unit. Regrowth does not restore
+discarded allocation. Successful nonzero writes and every successful truncate,
+including same-size truncate and empty O_TRUNC, update size/blocks and set mtime/ctime
+to the supplied fixed time. All other metadata stays unchanged; reads do not advance
+atime. Stat by path, independent opens, dup and reopen share the same node state.
+Caller input observations remain unchanged.
+
+Zero writes, budget or mapping refusals, partial-input refusal and backend failure
+preserve known metadata. Nonempty whole-EFAULT still makes it unknown; later
+successful writes or truncation cannot reconstruct it. Failed stat copyout preserves
+the node. The `virtual-file-metadata` guest workload checks the complete 144-byte
+record through all five profiles and C/CLI/Python; its allocation results are policy
+tests, not native APFS comparisons. Existing native writable workloads verify the
+kernel flags, cursors and error ordering separately. Namespace changes, native
+filesystem coherence, Mach services and dynamic runtime loading remain unfinished.
 
 ## Directories and relative paths
 
@@ -376,8 +417,9 @@ The mode must match the catalogue kind, with optional permission bits.
 `stat64` (338), `fstat64` (339) and `lstat64` (340) return one 144-byte LP64
 record on ARM64 and x64. Path queries share `open`'s component resolver, while
 FD queries follow descriptor duplication and closure. The regular-file rdev,
-padding and reserved fields are zero. Metadata is a fixed caller observation:
-reads do not change timestamps, and mode bits do not change catalogue access.
+padding and reserved fields are zero. Inputs supply the initial metadata; the
+optional mutation policy governs changes. Reads do not change timestamps, and
+mode bits do not change catalogue access.
 Missing metadata, stream status, symbolic links, legacy stat layouts and
 extended-security variants remain unsupported. Missing paths and
 bad descriptors precede output-pointer checks; partial output stops before any
@@ -671,3 +713,22 @@ The Release Darwin gate passed 322 of 610 registrations, with 288 unavailable-ba
 Python's initial full integration run timed out in directory enumeration on three ARM64 profiles. An unchanged-argument observation passed all ten new writable scenarios, but one iOS directory call consumed 5.005 seconds wall time for 1.263 seconds CPU time and timed out. Isolated directory rechecks with the same five-second bound then passed all three ARM64 profiles in 2.43–3.17 seconds, each retiring 10,941 instructions and emitting `65`. Host load was 54–70 on 16 logical CPUs. These observations support scheduling pressure; they do not establish stable latency or erase the failed runs. Evidence: `writable-python-observation.json` and `writable-python-directory-recheck.json`.
 
 The final unmodified Python integration method passed all five profile/ISA combinations in 41.118 seconds under the original five-second per-process limit. The earlier failed and diagnostic runs remain separate evidence.
+
+
+### Mutable metadata verification, 2026-10-06
+
+Release focused coverage: 148 registrations, 124 passed, 24 unavailable-backend skips,
+zero failures. Full Darwin run: 645 registrations, 343 passed, 300 unavailable skips,
+and two existing ARM64 HVF directory-enumeration timeouts. The unchanged 20-case
+method recheck passed 8 with 12 unavailable skips; affected cases took 3.818/3.949s
+under the original 5s limit. All 75 required ARM64 HVF identities have passing
+observations across these runs; the first gate remains recorded as failed.
+Public C/CLI/report 117/117 passed, including 73 Darwin comparisons; the unmodified
+Python integration method passed all five profiles in 27.359s. Native original
+workloads 15/15 and runner tests 66/66 passed. New allocation results are explicit
+virtual-policy tests, not APFS observations. Evidence:
+`build-hvf-arm64/mutation-metadata-validation-summary.json` and
+`mutation-metadata-darwin-evidence/`, `mutation-metadata-directory-recheck/`,
+`mutation-metadata-focused.xml`, `mutation-metadata-public.xml`.
+No deadlines changed. Full GitHub CI, native Intel and physical iOS remain separate
+acceptance requirements; the full macOS/iOS goal is still incomplete.

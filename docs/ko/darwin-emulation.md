@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: e14143fea85825a5b746e8fa74d0d9a439082587fccded15cfa8b43984098ae0 -->
+<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
 
 [← 문서 목록](README.md)
 
@@ -69,17 +69,34 @@ BSD 호출에서 ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD
 
 F_SETFL은 O_APPEND만 바꾸고 접근 모드, close-on-exec, FWASWRITTEN을 보존합니다. 실제 비영 바이트 전송 뒤 F_GETFL에 0x10000이 나타나며 pwrite와 출력 캡처도 포함합니다. pwrite는 append를 무시하고 위치를 유지합니다. INT_MAX 길이 검사는 FD보다 앞서고 pwrite의 -1은 더 먼저 EINVAL입니다. INT64_MAX는 길이 0보다 먼저 EFBIG이며 길이를 제한한 뒤 EOF를 선택합니다.
 
-일부만 읽을 수 있는 입력은 효과 전에 중지합니다. 전체 EFAULT는 바이트를 보존하지만 비어 있지 않은 append는 위치를 EOF로 옮깁니다. 전송 실패는 내용/위치를 확정하지 않습니다. 비영 쓰기, 절단, 비영 전체 EFAULT는 완전한 stat 관측을 무효화해 후속 stat을 출력 전에 중지하며 0 쓰기는 유지합니다. 16 MiB는 경로/NUL, 입력, 디렉터리 레코드, CWD, 현재 내용 및 쓰기 경로 참조의 합계 논리 예산입니다. 축소 시 backing을 교체해 용량을 회수하고 초기 입력과 제한된 교체 버퍼는 별도입니다. 알려진 inode 별칭 및 immutable/append-only 플래그는 거부합니다.
+성공한 ftruncate는 크기가 같아도 호출 open 설명과 dup에 FWASWRITTEN을 설정합니다. O_TRUNC는 O_RDONLY를 포함해 새 설명에 설정하며 경로 truncate는 기존 설명의 플래그를 바꾸지 않습니다.
+
+일부만 읽을 수 있는 입력은 효과 전에 중지합니다. 전체 EFAULT는 바이트를 보존하지만 비어 있지 않은 append는 위치를 EOF로 옮깁니다. 전송 실패는 내용/위치를 확정하지 않습니다. `mutation_policy`가 없으면 비영 쓰기, 절단, 비영 전체 EFAULT는 완전한 stat 관측을 무효화해 후속 stat을 출력 전에 중지하며 0 쓰기는 유지합니다. 16 MiB는 경로/NUL, 입력, 디렉터리 레코드, CWD, 현재 내용 및 쓰기 경로 참조의 합계 논리 예산입니다. 축소 시 backing을 교체해 용량을 회수하고 초기 입력과 제한된 교체 버퍼는 별도입니다. 알려진 inode 별칭 및 immutable/append-only 플래그는 거부합니다.
 
 DarwinMemory의 모든 매핑 구간을 unmap하기 전에는 변경을 거부하며 PROT_NONE과 닫힌 FD도 포함합니다. 실패/구형 0 길이 매핑은 임대를 남기지 않습니다. 새 매핑은 현재 바이트를 봅니다. O_WRONLY의 READ/WRITE mmap은 EACCES, PROT_NONE은 성공하고 mprotect로 읽기/쓰기를 부여할 수 있습니다.
 
-원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 생성/삭제/이름 변경/하드링크, 변경 후 메타데이터, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
+원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 생성/삭제/이름 변경/하드링크, 실제 파일 시스템 메타데이터 갱신, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
 ```
 
 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
+
+## 명시적 가변 메타데이터
+
+파일의 `writable: true` 및 완전한 metadata 옆에 mutation_policy를 지정할 수 있습니다. C++은 `DarwinFileOptions::MutationPolicies`를 사용합니다. 명시적 가상 희소 할당 계약이며 APFS를 추측하거나 호스트 시계를 읽지 않습니다. 생략 시 변경 후 메타데이터는 계속 알 수 없습니다.
+
+allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 무손실 정수 규칙을 따릅니다. 단위는512바이트~16 MiB의2의 거듭제곱이며 block_size/VM 페이지와 독립적입니다. 일반 권한(set-id/sticky 없음), flags=0, link_count=1 및 초기 밀집 할당 blocks=ceil(size/allocation_unit)*(allocation_unit/512)가 필요합니다. 0 바이트로 구멍을 추론하지 않습니다. 정책 경로 참조도16 MiB 논리 예산에 포함하며 할당 장부로 ENOSPC를 추론하지 않습니다.
+
+쓰기는 닿은 모든 단위를 할당하며 구멍에 0을 써도 할당합니다. truncate 확장은 0만 추가하고 축소는 올림 EOF 밖의 단위를 버리며 마지막 부분 단위는 유지합니다. 재확장은 버린 할당을 복원하지 않습니다. 비영 성공 쓰기와 모든 성공 truncate(같은 크기/빈 O_TRUNC 포함)는 size/blocks와 고정 mtime/ctime을 갱신합니다. 다른 필드와 초기 입력은 그대로이며 읽기는 atime을 진행하지 않습니다. 경로 stat, 별도 open, dup, 재열기는 노드를 공유합니다.
+
+0 쓰기, 예산/매핑 거부, 부분 입력 거부, 백엔드 실패는 알려진 상태를 보존합니다. 비영 전체 EFAULT 뒤에는 메타데이터를 알 수 없으며 이후 성공으로 복원하지 않습니다. stat 출력 실패는 노드를 바꾸지 않습니다. virtual-file-metadata는 다섯 구성 및 C/CLI/Python으로144바이트를 검사합니다. 할당 검사는 정책 테스트이며 APFS 동등성 증거가 아닙니다. 네이티브는 플래그/위치/오류 순서를 별도로 검증합니다. 네임스페이스, 실제 FS 일관성, Mach, 동적 런타임은 미완성입니다.
+
+```json
+{"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
+```
+
 
 ## 디렉터리와 상대 경로
 
@@ -141,7 +158,7 @@ Release Darwin은 고유 등록 438건 중 210건 통과, 228건 건너뜀, 실�
 
 파일 항목에 `metadata`를 추가할 수 있으며 아래 필드는 모두 필수입니다. 십진 문자열은 정수의 전체 폭을 보존하고 JSON 숫자는 ±(2^53−1) 내 정확한 정수로 제한됩니다. device는 부호 있는 32비트, mode/link_count는 부호 없는 16비트, inode는 부호 없는 64비트, uid/gid/flags/generation은 부호 없는 32비트입니다. size는 파일 바이트 수와 같아야 하며 blocks는 부호 있는 64비트 상한 이하, block_size는 음수가 아닌 부호 있는 32비트입니다. 시간은 부호 있는 64비트 초와 0–999999999 나노초입니다.
 
-`stat64` (338), `fstat64` (339), `lstat64` (340)는 ARM64/x64에서 동일한 144바이트 LP64 레코드를 반환합니다. open과 경로 해석을 공유하며 FD 복제와 닫기를 따릅니다. FD를 할당하거나 커서를 바꾸지 않고 rdev, 패딩, 예약 필드는 0입니다. 메타데이터는 호출자의 고정 관측값이므로 읽기가 시간을 갱신하지 않고 mode가 접근 허가를 바꾸지 않습니다. 미지정 메타데이터, 스트림 상태, 심볼릭 링크, 구형 stat, 확장 보안은 미지원입니다. 경로/FD 오류를 출력 포인터보다 먼저 처리하며 부분 쓰기 가능 출력은 변경 전에 중지합니다. 네이티브 테스트는 실제 파일의 모든 바이트와 SDK 배치를 비교하고 동일한 자체 프로그램으로 세 호출을 검증합니다.
+`stat64` (338), `fstat64` (339), `lstat64` (340)는 ARM64/x64에서 동일한 144바이트 LP64 레코드를 반환합니다. open과 경로 해석을 공유하며 FD 복제와 닫기를 따릅니다. FD를 할당하거나 커서를 바꾸지 않고 rdev, 패딩, 예약 필드는 0입니다. 입력은 초기 메타데이터를 제공하고 변경은 선택적 정책을 따릅니다. 읽기가 시간을 갱신하지 않고 mode가 접근 허가를 바꾸지 않습니다. 미지정 메타데이터, 스트림 상태, 심볼릭 링크, 구형 stat, 확장 보안은 미지원입니다. 경로/FD 오류를 출력 포인터보다 먼저 처리하며 부분 쓰기 가능 출력은 변경 전에 중지합니다. 네이티브 테스트는 실제 파일의 모든 바이트와 SDK 배치를 비교하고 동일한 자체 프로그램으로 세 호출을 검증합니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -250,3 +267,8 @@ Mach 검증(2026-10-06, Release): Darwin 569개 중 성공 293, 사용 불가 �
 첫 Python 전체 테스트에서 ARM64 디렉터리 세 사례가 시간 초과했습니다. 인수를 바꾸지 않은 진단에서 새 쓰기 10/10은 통과했지만 iOS 한 사례는 경과 5.005초/CPU 1.263초 후 중지했습니다. 동일 5초 제한의 개별 재검사는 세 사례 모두 통과했습니다(2.43–3.17초, 10,941명령, 출력65). 논리 CPU16개에 부하54–70은 스케줄링 압력을 뒷받침하지만 지연 안정성을 보장하지 않으며 최초 실패도 보존합니다.
 
 마지막 변경 없는 Python 통합 메서드는 다섯 구성을 모두 통과했고 총41.118초였습니다. 프로세스별5초 제한은 그대로이며 앞선 실패와 진단 기록도 따로 보존합니다.
+
+
+메타데이터 검증(2026-10-06): Release 집중148개는124통과/24백엔드skip. 전체Darwin645개는343통과/300skip/기존ARM64 HVF디렉터리2개timeout. 동일한20개와 원래5초 제한 재검사는8통과/12skip, 해당 사례3.818/3.949초. 필수HVF75개 모두 통과 관측이 있으나 최초 실패를 보존합니다. 공개C/CLI/보고117/117(Darwin73), Python5구성27.359초, 네이티브15/15, runner66/66통과. 할당은APFS증거가 아니며 시한을 바꾸지 않았습니다. 전체CI/Intel/iOS실기기/완전한 환경은 미완성입니다.
+
+`build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.

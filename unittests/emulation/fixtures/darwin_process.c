@@ -618,6 +618,70 @@ static int file_status(const char *path) {
   return 37;
 }
 /* Existing-file mutations execute unchanged against the native BSD ABI. */
+/* Guest-only explicit sparse-unit policy: this does not claim APFS allocation
+ * equivalence. Native workloads separately verify the kernel syscall rules. */
+static int virtual_file_metadata(const char *path) {
+  unsigned error;
+  unsigned char initial[144], changed[144], current[144];
+  int check = 80;
+#define METADATA_EXPECT(expression)                                            \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 a = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
+  METADATA_EXPECT(!error);
+  u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  METADATA_EXPECT(!error);
+  u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  METADATA_EXPECT(!error);
+  METADATA_EXPECT(call(339, b, (u64)initial, 0, 0, 0, 0, &error) == 0 &&
+                  !error);
+  METADATA_EXPECT(call(154, d, (u64) "XY", 2, 8191, 0, 0, &error) == 2 &&
+                  !error);
+  METADATA_EXPECT(call(339, b, (u64)changed, 0, 0, 0, 0, &error) == 0 &&
+                  !error);
+  METADATA_EXPECT(little_integer(changed + 96, 8) == 8193);
+  METADATA_EXPECT(little_integer(changed + 104, 8) == 24);
+  METADATA_EXPECT(little_integer(changed + 48, 8) == (u64)-7 &&
+                  little_integer(changed + 56, 8) == 123456789);
+  METADATA_EXPECT(little_integer(changed + 64, 8) == (u64)-7 &&
+                  little_integer(changed + 72, 8) == 123456789);
+  for (unsigned i = 0; i != 144; ++i)
+    if (!((i >= 48 && i < 80) || (i >= 96 && i < 112)))
+      METADATA_EXPECT(changed[i] == initial[i]);
+  METADATA_EXPECT(call(200, (u64)path, 4097, 0, 0, 0, 0, &error) == 0 &&
+                  !error);
+  METADATA_EXPECT(call(201, a, 16385, 0, 0, 0, 0, &error) == 0 && !error);
+  METADATA_EXPECT(call(338, (u64)path, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                  !error);
+  METADATA_EXPECT(little_integer(current + 96, 8) == 16385);
+  METADATA_EXPECT(little_integer(current + 104, 8) == 16);
+  METADATA_EXPECT(call(154, a, (u64) "", 1, 16384, 0, 0, &error) == 1 &&
+                  !error);
+  METADATA_EXPECT(call(339, b, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                  !error);
+  METADATA_EXPECT(little_integer(current + 104, 8) == 24);
+  METADATA_EXPECT(call(201, d, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 fds[] = {a, b, d};
+  for (unsigned i = 0; i != 3; ++i)
+    METADATA_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  METADATA_EXPECT(!error);
+  METADATA_EXPECT(call(339, b, (u64)current, 0, 0, 0, 0, &error) == 0 &&
+                  !error);
+  METADATA_EXPECT(little_integer(current + 96, 8) == 0 &&
+                  little_integer(current + 104, 8) == 0);
+  METADATA_EXPECT(little_integer(current + 48, 8) == (u64)-7);
+  METADATA_EXPECT(call(4, 1, (u64)changed, sizeof(changed), 0, 0, 0, &error) ==
+                      sizeof(changed) &&
+                  !error);
+  METADATA_EXPECT(call(6, b, 0, 0, 0, 0, 0, &error) == 0 && !error);
+#undef METADATA_EXPECT
+  return 37;
+}
+
 static int writable_files(const char *path, unsigned nocancel) {
   const u64 op = nocancel ? 398 : 5, wr = nocancel ? 397 : 4;
   const u64 pr = nocancel ? 414 : 153, pw = nocancel ? 415 : 154;
@@ -639,6 +703,12 @@ static int writable_files(const char *path, unsigned nocancel) {
   MUTATE_EXPECT(!error && d != a);
   u64 ro = call(op, (u64)path, 0, 0, 0, 0, 0, &error);
   MUTATE_EXPECT(!error);
+  MUTATE_EXPECT(call(fc, a, 3, 0, 0, 0, 0, &error) == 2 && !error);
+  MUTATE_EXPECT(call(201, d, 10, 0, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(fc, a, 3, 0, 0, 0, 0, &error) == 0x10002 && !error);
+  MUTATE_EXPECT(call(fc, d, 3, 0, 0, 0, 0, &error) == 0x10002 && !error);
+  MUTATE_EXPECT(call(200, (u64)path, 10, 0, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(fc, b, 3, 0, 0, 0, 0, &error) == 10 && !error);
   MUTATE_EXPECT(call(199, a, 2, 0, 0, 0, 0, &error) == 2 && !error);
   MUTATE_EXPECT(call(wr, d, (u64) "XY", 2, 0, 0, 0, &error) == 2 && !error);
   MUTATE_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == 4 && !error);
@@ -684,6 +754,7 @@ static int writable_files(const char *path, unsigned nocancel) {
   MUTATE_EXPECT(call(200, (u64)path, 2, 0, 0, 0, 0, &error) == 0 && !error);
   u64 trunc = call(op, (u64)path, 0x400, 0, 0, 0, 0, &error);
   MUTATE_EXPECT(!error);
+  MUTATE_EXPECT(call(fc, trunc, 3, 0, 0, 0, 0, &error) == 0x10000 && !error);
   MUTATE_EXPECT(call(pr, ro, (u64)bytes, 16, 0, 0, 0, &error) == 0 && !error);
   MUTATE_EXPECT(call(cl, trunc, 0, 0, 0, 0, 0, &error) == 0 && !error);
   MUTATE_EXPECT(call(pw, b, (u64) "n", 1, 2, 0, 0, &error) == 1 && !error);
@@ -875,6 +946,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
 #endif
                0, mach_flags(1))
         .value;
+  if (equal(argv[1], "virtual-file-metadata"))
+    return argc < 3 ? 79 : virtual_file_metadata(argv[2]);
   if (equal(argv[1], "writable-files") ||
       equal(argv[1], "writable-files-nocancel"))
     return argc < 3 ? 49
