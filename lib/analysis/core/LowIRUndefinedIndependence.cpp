@@ -4954,6 +4954,20 @@ public:
           !Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference search budget exhausted");
       findChoices(Eligible, BranchArms, FilterBranches);
+      if (!NativeOrigins.empty()) {
+        std::set<va_t> Unique;
+        for (const auto &O : NativeOrigins) {
+          chargeCutSelection();
+          if (O.UniqueOriginal)
+            Unique.insert(O.CandidateAddress);
+        }
+        // Preserve the previous unique-origin search order before expanding
+        // the candidate family. All attempts still share the same budgets.
+        std::stable_partition(Choices.begin(), Choices.end(), [&](va_t A) {
+          chargeCutSelection();
+          return Unique.count(A);
+        });
+      }
       if (BranchArms && BranchArmEntries.empty())
         stop(Status::Unsupported, "no cyclic branch-arm cutpoints");
       // A complete branch-arm set can preserve phases that a shared header

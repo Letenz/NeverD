@@ -46,6 +46,8 @@ NativeLowIRRefinementResult checkNativeLowIRRefinement(
 /// Untrusted one-to-one residual mappings; original addresses may repeat.
 struct NativeLoopCutpointOrigin {
   va_t CandidateAddress, OriginalAddress;
+  /// Search priority only; this flag grants no semantic authority.
+  bool UniqueOriginal = false;
 };
 
 LowIRLoopInferenceResult inferNativeLowIRLoopRefinementPlan(

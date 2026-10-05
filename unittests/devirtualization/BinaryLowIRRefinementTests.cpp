@@ -1446,6 +1446,15 @@ TEST(BinaryLowIRLoopInference, CounterAndCallsUseInferredCheckedPlans) {
     ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
     EXPECT_EQ(R.Refinement.Certificate->Relation.Scope,
               LowIRRefinementScope::InductiveNativeToLowIRLoops);
+    // Adding repeated-origin candidates must retain the successful unique
+    // native cuts before attempting a different context correspondence.
+    for (const auto &C : R.Inference.Plan->Cutpoints)
+      EXPECT_EQ(std::count_if(Recovery.Origins.begin(), Recovery.Origins.end(),
+                              [&](const auto &O) {
+                                return O.NativeInstruction.Address ==
+                                       C.OriginalAddress;
+                              }),
+                1);
     // Origin metadata cannot excuse a different original instruction.
     P.Image.Segments[0].Data[Calls ? 10 : 8] = 0xfe;
     const auto Changed = inferAndCheckBinaryLowIRLoopRefinement(
