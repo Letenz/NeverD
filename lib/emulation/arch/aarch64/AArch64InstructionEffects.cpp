@@ -178,6 +178,8 @@ getAArch64InstructionEffects(const cs_insn &I,
     Memory,
     StructureMemory,
     System,
+    CacheMaintenance,
+    Barrier,
     Floating,
     Vector,
     ScalarConversion
@@ -194,6 +196,7 @@ getAArch64InstructionEffects(const cs_insn &I,
   }
   if (Kind == System &&
       !((I.id == AARCH64_INS_MRS && isReadThreadPointer(Word)) ||
+        (I.id == AARCH64_INS_MRS && isReadCacheType(Word)) ||
         (I.id == AARCH64_INS_MSR && isWriteThreadPointer(Word)) ||
         (I.id == AARCH64_INS_MRS &&
          (isReadFPControl(Word) || isReadFPStatus(Word))) ||
@@ -201,6 +204,25 @@ getAArch64InstructionEffects(const cs_insn &I,
          (isWriteFPControl(Word) || isWriteFPStatus(Word)))))
     return llvm::make_error<UnsupportedExecutionError>();
   const auto Source = Word & RegisterMask;
+  if (Kind == CacheMaintenance) {
+    if (!isCleanDataToUnification(Word) &&
+        !isInvalidateInstructionToUnification(Word))
+      return llvm::make_error<UnsupportedExecutionError>();
+    const uint64_t Address =
+        Source == aarch64::GPRCount ? 0 : State.Registers[Source];
+    if (!aarch64::canonicalRange(Address, 1))
+      return llvm::make_error<UnsupportedExecutionError>();
+    return std::vector<AArch64MemoryAccess>{{Address, {}, 1, Read, true}};
+  }
+  if (Kind == Barrier) {
+    // Named baseline DSB domains/access types only. The remaining options
+    // include optional speculation barriers and are not baseline DSB forms.
+    if ((I.id == AARCH64_INS_DSB && isDataSynchronization(Word) &&
+         ((Word >> BarrierOptionShift) & BarrierAccessMask)) ||
+        (I.id == AARCH64_INS_ISB && isInstructionSynchronization(Word)))
+      return std::vector<AArch64MemoryAccess>();
+    return llvm::make_error<UnsupportedExecutionError>();
+  }
   const bool UsesFloatingState = Kind == Floating || Kind == ScalarConversion;
   if (UsesFloatingState &&
       (State.reg(AArch64Register::FPCR) & ~aarch64::AllowedFPCR))

@@ -54,7 +54,9 @@ NEVERD_AARCH64_VALUE(TCR, 0x2b5103510ull)
 NEVERD_AARCH64_VALUE(MAIR, 0x44)
 // Baseline RES1 bits, MMU enabled, little endian, no stack alignment trap.
 // Pointer authentication remains disabled at EL0/EL1 on every transport.
-NEVERD_AARCH64_VALUE(SCTLR, 0x30d00801)
+// UCT and UCI permit the admitted original user cache-management instructions.
+NEVERD_AARCH64_VALUE(UserCacheAccess, (1ull << 15) | (1ull << 26))
+NEVERD_AARCH64_VALUE(SCTLR, 0x30d00801 | UserCacheAccess)
 NEVERD_AARCH64_VALUE(PAuthEnableMask,
                      (1ull << 31) | (1ull << 30) | (1ull << 27) | (1ull << 13))
 NEVERD_AARCH64_VALUE(CPACR, 3ull << 20)
@@ -68,12 +70,13 @@ NEVERD_AARCH64_VALUE(GicITS, 0x80040000ull)
 NEVERD_AARCH64_VALUE(GicVirtualTimerPPI, 27)
 NEVERD_AARCH64_VALUE(GicPerformancePPI, 23)
 NEVERD_AARCH64_VALUE(GatewayHypercall, 0xd4000002)
-// A distinct exit authenticates the straight-line, non-stepped maintenance stub.
+// A distinct exit authenticates the straight-line, non-stepped maintenance
+// stub.
 NEVERD_AARCH64_VALUE(MaintenanceHypercallImmediate, 1)
 NEVERD_AARCH64_VALUE(MaintenanceHypercall,
                      GatewayHypercall | (MaintenanceHypercallImmediate << 5))
-NEVERD_AARCH64_VALUE(MaintenanceSyndrome,
-                     (0x16ull << 26) | (1ull << 25) | MaintenanceHypercallImmediate)
+NEVERD_AARCH64_VALUE(MaintenanceSyndrome, (0x16ull << 26) | (1ull << 25) |
+                                              MaintenanceHypercallImmediate)
 NEVERD_AARCH64_VALUE(UserPage, 1ull << 6)
 NEVERD_AARCH64_VALUE(PStateEL0t, 0)
 NEVERD_AARCH64_VALUE(LowerELVector, 0x400)

@@ -119,6 +119,20 @@ llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
   const auto &Accesses = *Effects;
   // Validate the entire instruction before any native access or pair write.
   for (const auto &M : Accesses) {
+    if (M.CacheMaintenance) {
+      // Only readable ordinary RAM is admitted. Translation/fault behavior
+      // for other cache targets differs between implementations, so reject
+      // those targets as outside this contract rather than inventing a load
+      // or a universal architectural fault. Mapped aliases use their own
+      // rights.
+      auto Allowed = Memory->addressSpace()->canAccess(
+          M.Address, M.Size, executionPermissions(Read));
+      if (!Allowed)
+        return Allowed.takeError();
+      if (!*Allowed)
+        return llvm::make_error<UnsupportedExecutionError>();
+      continue;
+    }
     if (M.Permission == Read && Hooks.Read)
       Hooks.Read(M.Address, M.Size);
     if (M.Permission == Write && Hooks.Write) {

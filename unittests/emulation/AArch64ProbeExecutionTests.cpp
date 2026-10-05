@@ -33,6 +33,7 @@ public:
   AArch64Machine &Machine;
   MemoryProjection &Memory;
   bool UserMode;
+  unsigned CorruptStep = 0;
   std::vector<std::chrono::steady_clock::time_point> Deadlines;
   std::vector<uint32_t> Instructions;
   RelocatedProbe(AArch64Machine &Machine, MemoryProjection &Memory,
@@ -56,13 +57,23 @@ public:
     const uint64_t GuestPC =
         Code + (Instructions.size() - 1) * aarch64::InstructionBytes;
     Next.reg(AArch64Register::PC) = GuestPC;
+    // Relocate the cache operand too; keep monitor pages supervisor-only.
+    const auto OriginalTarget = Next.reg(AArch64Register::X28);
+    Next.reg(AArch64Register::X28) = Code;
     if (auto E = Machine.step(Next, Control))
       return E;
-    if (Next.UserMode != UserMode ||
+    if (Next.UserMode != UserMode || Next.reg(AArch64Register::X28) != Code ||
         Next.reg(AArch64Register::PC) != GuestPC + aarch64::InstructionBytes)
       return diagnostic::error(diagnostic::ArmState);
+    Next.reg(AArch64Register::X28) = OriginalTarget;
     Next.UserMode = State.UserMode;
     Next.reg(AArch64Register::PC) = OriginalPC + aarch64::InstructionBytes;
+    if (Instructions.size() == CorruptStep) {
+      if (CorruptStep == 13)
+        Next.reg(AArch64Register::X27) ^= 1; // CTR changed between reads.
+      else
+        Next.Vectors[0][1] ^= 1;
+    }
     State = Next;
     return llvm::Error::success();
   }
@@ -103,6 +114,14 @@ TEST_P(AArch64ProbeExecution,
   ASSERT_EQ(Probe.Deadlines.size(), ProbeInstructions);
   for (const auto &Deadline : Probe.Deadlines)
     EXPECT_EQ(Deadline, Probe.Deadlines.front());
+  for (unsigned Step = 12; Step <= ProbeInstructions; ++Step) {
+    SCOPED_TRACE(Step);
+    RelocatedProbe Corrupt(*Machine, *Memory, UserMode);
+    Corrupt.CorruptStep = Step;
+    EXPECT_EQ(llvm::toString(verifyAArch64Machine(Corrupt, *Memory)),
+              diagnostic::ArmState);
+    EXPECT_EQ(Corrupt.Instructions.size(), Step);
+  }
 }
 INSTANTIATE_TEST_SUITE_P(
     Transports, AArch64ProbeExecution,
