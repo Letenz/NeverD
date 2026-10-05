@@ -167,6 +167,8 @@ prepareInterpreterLLVMRefinement(
   if (Frame.RootRegister.Offset != 32 || Frame.RootRegister.Bytes != 8 ||
       Frame.Begin > 0 || Frame.End < 8)
     return invalid("LLVM proof requires an entry RSP frame and return slot");
+  if (Frame.EntryAlignment && !Frame.EntryAlignment->valid())
+    return invalid("LLVM proof requires a valid entry frame alignment");
   const uint64_t FrameBytes = uint64_t(Frame.End) - uint64_t(Frame.Begin);
   if (FrameBytes > Limits.NativeProof.Execution.MaxFrameBytes ||
       FrameBytes > Limits.LLVMProof.Execution.MaxFrameBytes ||
