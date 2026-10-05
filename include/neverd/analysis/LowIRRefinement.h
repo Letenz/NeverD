@@ -99,6 +99,9 @@ struct LowIRLoopCutpoint {
   /// by a separate bounded replay from the real entry. That replay establishes
   /// only a feasible paired witness; complete entry/transition coverage is
   /// still required. No abstract state is invented for an unreached cut.
+  /// Defined function-temporary bytes retain this prefix's fixed expressions.
+  /// Every arrival checks their definedness and values; declarations alone
+  /// provide no initial state, and temporary induction inputs are unsupported.
   bool UseEntryPrefix = false;
   std::vector<LowIRLoopInput> Inputs;
   std::vector<LowOp> Expressions;
@@ -303,9 +306,10 @@ struct LowIRRefinementResult {
 /// Candidate is semantic LowIR: no architecture sidecars are inferred for it.
 /// Instruction boundaries and temporary lifetimes must still be valid.
 /// Declared function temporaries start unbound and need a reaching definition
-/// on each executed path; other temporaries remain instruction-local. They
-/// are supported by finite execution, not by inductive cutpoint states. Loops
-/// require complete finite execution within the shared budgets. Every feasible
+/// on each executed path; other temporaries remain instruction-local. This API
+/// requires complete finite execution of loops within the shared budgets.
+/// The inductive API can retain checked, fixed entry-prefix temporaries.
+/// Every feasible
 /// terminal pair and complete entry-domain coverage are checked. Incomplete
 /// exploration, unknown aliases and unsupported operations refuse a
 /// certificate. Hashes bind all inputs and limits; rerun the check to validate
@@ -324,8 +328,9 @@ LowIRRefinementResult checkLowIRRefinement(
 /// component widths at all cuts). Finite segment exploration must cover its
 /// entire domain; a successful sibling cannot hide an unfinished path.
 ///
-/// The template checks all modified registers and the entire accessible frame
-/// at cuts. Inductive terminal observations include the entire frame when
+/// The template checks all modified registers, the entire accessible frame,
+/// and defined function-temporary bytes at cuts. Inductive terminal
+/// observations include the entire frame when
 /// written-byte observation is requested, a conservative strengthening that
 /// retains writes made in earlier iterations. Templates, predicates and ranks
 /// are explicit proof hints; they do not restrict the admitted entry domain.

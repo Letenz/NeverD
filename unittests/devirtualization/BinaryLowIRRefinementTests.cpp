@@ -968,6 +968,106 @@ TEST(BinaryLowIRLoopRefinement, UnboundedInputCountAndOriginalBytes) {
   refused(Check(), Status::Different);
 }
 
+TEST(BinaryLowIRLoopRefinement, CandidateTemporaryRetainsItsRealEntryValue) {
+  // top: jrcxz done; add rax,rdx; lea rcx,[rcx-1]; jmp top; done: ret.
+  Program P(
+      {0xe3, 9, 0x48, 0x01, 0xd0, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  auto &Candidate = Recovery.Residual;
+  LowIRLoopCutpoint Cut;
+  Cut.OriginalAddress = Entry;
+  Cut.UseEntryPrefix = true;
+  unsigned Mappings = 0;
+  for (const auto &Origin : Recovery.Origins)
+    if (Origin.NativeInstruction.Address == Entry) {
+      Cut.CandidateAddress = Origin.ResidualAddress;
+      ++Mappings;
+    }
+  ASSERT_EQ(Mappings, 1U);
+  const auto Parameter = [&](uint64_t Offset, uint16_t Bytes) {
+    const auto T = NdVar::tmp(Cut.Inputs.size() * 8, Bytes);
+    const LowIRLoopLocation L{LowIRLoopSpace::Register, Offset, Bytes};
+    Cut.Inputs.push_back({LowIRLoopSide::Original, L, T});
+    Cut.OriginalState.push_back({L, T});
+    Cut.CandidateState.push_back({L, T});
+    return T;
+  };
+  Parameter(x86reg::RAX, 8);
+  Cut.Rank = {Parameter(x86reg::RCX, 8)};
+  for (auto Flag :
+       {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF, x86reg::SF, x86reg::OF})
+    Parameter(Flag, 1);
+
+  constexpr uint64_t Saved = uint64_t{1} << 60;
+  constexpr va_t PrefixAddress = 0x80000000;
+  LowBlock Prefix;
+  Prefix.Id = -1;
+  unsigned Replaced = 0;
+  for (auto &B : Candidate.Blocks) {
+    ASSERT_NE(B.StartAddr, PrefixAddress);
+    Prefix.Id = std::max(Prefix.Id, B.Id);
+    if (B.StartAddr == Candidate.Entry)
+      Prefix.Succs = {B.Id};
+    for (auto &O : B.Ops)
+      for (unsigned I = 0; I != O.NumInputs; ++I)
+        if (O.Inputs[I] == NdVar::reg(x86reg::RDX, 8)) {
+          O.Inputs[I] = NdVar::tmp(Saved, 8);
+          ++Replaced;
+        }
+  }
+  ASSERT_GT(Replaced, 0U);
+  ASSERT_EQ(Prefix.Succs.size(), 1U);
+  ++Prefix.Id;
+  Prefix.StartAddr = PrefixAddress;
+  Prefix.EndAddr = PrefixAddress + 1;
+  LowOp Save;
+  Save.Opcode = NdOp::COPY;
+  Save.Output = NdVar::tmp(Saved, 8);
+  Save.addInput(NdVar::reg(x86reg::RDX, 8));
+  Save.Addr = PrefixAddress;
+  Save.Seq = 0;
+  LowOp Branch;
+  Branch.Opcode = NdOp::BRANCH;
+  Branch.addInput(NdVar::scalar(Candidate.Entry, 8));
+  Branch.Addr = PrefixAddress;
+  Branch.Seq = 1;
+  Prefix.Ops = {Save, Branch};
+  LowInstructionBoundary Boundary;
+  Boundary.Address = PrefixAddress;
+  Boundary.Size = 1;
+  Boundary.OpCount = 2;
+  Boundary.Control = LowInstructionControl::Branch;
+  Boundary.ControlFlags = LowInstructionControlFlag::Branch;
+  Boundary.Immediate = Candidate.Entry;
+  Prefix.InstructionBoundaries = {Boundary};
+  for (auto *Roots : {&Candidate.ModuleAnalysisRoots,
+                      &Candidate.OrdinaryModuleAnalysisRoots}) {
+    for (va_t Root : *Roots)
+      ASSERT_EQ(Root, Candidate.Entry);
+    if (!Roots->empty())
+      *Roots = {PrefixAddress};
+  }
+  Candidate.Entry = PrefixAddress;
+  Candidate.FunctionTemporaries = {{Saved, 8}};
+  Candidate.Blocks.push_back(std::move(Prefix));
+  const LowIRLoopRefinementPlan Plan{{Cut}};
+  const auto Check = [&] {
+    return checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options, Candidate,
+                                          P.Contract, Plan);
+  };
+  const auto Good = Check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Certificate->Relation.Scope,
+            LowIRRefinementScope::InductiveNativeToLowIRLoops);
+  EXPECT_EQ(Good.Proof.RankingChecks, 1U);
+  Candidate.Blocks.back().Ops.front().Inputs[0] = NdVar::reg(x86reg::R8, 8);
+  refused(Check(), Status::Different);
+  Candidate.Blocks.back().Ops.front().Inputs[0] = NdVar::reg(x86reg::RDX, 8);
+  Candidate.FunctionTemporaries.clear();
+  refused(Check(), Status::Invalid);
+}
+
 TEST(BinaryLowIRLoopRefinement, PhysicalCallsAndEarlierStackWrites) {
   // top: jrcxz done; call body; lea rcx,[rcx-1]; jmp top;
   // done: ret; body: add rax,rcx; ret.

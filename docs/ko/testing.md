@@ -1411,3 +1411,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SourceFrameAnalysis.CallStorage*`는 정확한 호출 위치, 도달 정의, 초기화, 패딩, 탈출, 경계 및 순환을 검사하며 소스 승인을 부여하지 않는다. `ObjCFrameBlockBorrows.*`는 설명자로 제한한 동기 대여와 import, 헤더, ABI, 명령을 변경한 19개 사례를 검사한다. 패딩은 증명되지 않은 상태로 유지하고 초기화되지 않은 소유권 필드를 거부한다. block 구성, 캡처 읽기 및 콜백 의존성 폐쇄는 별도의 게시 검사로 남는다.
 
 block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술자 중첩, 콜백 본문 변경, 오래된 기계 명령과 IR, 본문에서 분리된 호출 위치 및 정확한 투영 순서도 검사합니다. `MixedWidthFrameCopiesMeetEveryInitializedByte`와 `FrameCoverageCannotHideMissingBytesOrPointerJoins`는 두 합류 순서의 8/16바이트 저장, 누락 바이트, 쓰기 가능한 대여의 무효화 및 부분 덮어쓰기 후 남은 포인터 정체성을 검사합니다.
+
+루프 관계 테스트는 임의 반복 횟수에 걸친 실제 진입 접두부 임시 값 유지, 양쪽의 독립적인 임시 오프셋, 네이티브에서 LowIR로의 합성 및 검증된 추론을 다룹니다. 접두부 누락, 일부 미정의 바이트 읽기, 값 변화, 일반화된 진입 분기 사이의 정의 바이트 집합 충돌은 인증을 거부해야 합니다. 정확한 관측 및 질의 한도에서는 통과하고 하나 부족하면 실패하며, 수명 선언은 다이제스트에 바인딩됩니다. 고정된 접두부 값만 지원하며 일반 네이티브 ABI를 확립하지 않습니다.

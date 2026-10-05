@@ -1367,3 +1367,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SourceFrameAnalysis.CallStorage*` 涵蓋精確呼叫、到達定義、初始化、填充、逃逸、邊界和循環，不授予來源發布權限。`ObjCFrameBlockBorrows.*` 涵蓋描述符限定的同步借用，以及 19 種匯入、標頭、ABI 和機器指令修改。測試保留未證明的填充位元組並拒絕未初始化的所有權欄位；block 建構、擷取讀取及回呼相依閉包仍各自接受發布驗證。
 
 block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符重疊、回呼本體變更、過期機器指令與 IR、脫離本體的呼叫位置，以及精確投影順序。`MixedWidthFrameCopiesMeetEveryInitializedByte` 與 `FrameCoverageCannotHideMissingBytesOrPointerJoins` 檢查兩種合併順序下的 8/16 位元組寫入、缺失位元組、可寫借用失效和部分覆寫後仍保留的指標身分。
+
+迴圈關係測試涵蓋跨任意迭代次數保留的真實入口前綴暫存值、兩側獨立暫存偏移、原生至 LowIR 的組合及經過檢查的推斷。缺少前綴、部分未定義的讀取、值漂移及廣義入口分支間已定義位元組集合衝突時，必須拒絕認證。精確觀察量與查詢預算通過，少一單位時失敗；存續期宣告仍綁定憑證摘要。這些檢查僅支援固定前綴值，不建立一般原生 ABI。
