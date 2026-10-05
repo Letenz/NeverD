@@ -17,6 +17,7 @@ inline bool ordinaryHint(SourceCallTypeHint H) {
   case K::DarwinRuntimeCall:
   case K::RuntimeSelector:
   case K::RuntimeClass:
+  case K::RuntimeConstantString:
   case K::RuntimeIvarOffset:
   case K::RuntimeProfileCounterStorage:
   case K::DarwinRuntimeGlobalAddress:
@@ -38,10 +39,25 @@ inline bool ordinaryHint(SourceCallTypeHint H) {
   H.ByteCount = 0;
   return objc_binding_detail::plainNativeBinding(H);
 }
-inline bool sameHint(const SourceCallTypeHint &A, const SourceCallTypeHint &B) {
-  return ordinaryHint(A) && ordinaryHint(B) && A.CallKind == B.CallKind &&
-         A.TargetAddress == B.TargetAddress && A.TargetName == B.TargetName &&
-         A.Selector == B.Selector && A.OwnerClass == B.OwnerClass &&
+inline bool blockAddressHint(SourceCallTypeHint H) {
+  using K = SourceCallTypeHint::Kind;
+  if (H.CallKind != K::NativeAddress && H.CallKind != K::RuntimeBlockIsa &&
+      H.CallKind != K::RuntimeBlockDescriptor &&
+      H.CallKind != K::RuntimeBlockLiteral)
+    return false;
+  if (H.SwiftOpaqueValue || H.SwiftConsumedInput || H.SwiftWitnessFrame ||
+      H.SwiftValueConstructor || H.Virtual || H.NativeSwiftReceiver)
+    return false;
+  H.CallKind = K::Native;
+  return objc_binding_detail::plainNativeBinding(H);
+}
+inline bool sameHint(const SourceCallTypeHint &A, const SourceCallTypeHint &B,
+                     bool BlockAddresses = false) {
+  return (ordinaryHint(A) || (BlockAddresses && blockAddressHint(A))) &&
+         (ordinaryHint(B) || (BlockAddresses && blockAddressHint(B))) &&
+         A.CallKind == B.CallKind && A.TargetAddress == B.TargetAddress &&
+         A.TargetName == B.TargetName && A.Selector == B.Selector &&
+         A.OwnerClass == B.OwnerClass &&
          A.SelectorReferenceAddress == B.SelectorReferenceAddress &&
          A.Receiver == B.Receiver && A.ByteCount == B.ByteCount &&
          A.ReturnedArgument == B.ReturnedArgument &&
@@ -50,7 +66,8 @@ inline bool sameHint(const SourceCallTypeHint &A, const SourceCallTypeHint &B) {
          equalSourceABIs(A.Signature, B.Signature);
 }
 inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
-                           size_t &Budget, unsigned Depth = 0) {
+                           size_t &Budget, unsigned Depth = 0,
+                           bool BlockAddresses = false) {
   if (!Expected || !Actual || !Budget || Depth >= 64)
     return false;
   --Budget;
@@ -59,7 +76,7 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
     return false;
   if (E.SourceCallHint) {
     if (E.Kind != ExprKind::Call ||
-        !sameHint(*E.SourceCallHint, *A.SourceCallHint))
+        !sameHint(*E.SourceCallHint, *A.SourceCallHint, BlockAddresses))
       return false;
     A.SourceCallHint = E.SourceCallHint;
   }
@@ -73,32 +90,28 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
     return false;
   for (size_t I = 0; I < Expected->Operands.size(); ++I)
     if (!sameExpression(Expected->Operands[I], Actual->Operands[I], Budget,
-                        Depth + 1))
+                        Depth + 1, BlockAddresses))
       return false;
   return !Expected->IndirectTarget ||
          sameExpression(Expected->IndirectTarget, Actual->IndirectTarget,
-                        Budget, Depth + 1);
+                        Budget, Depth + 1, BlockAddresses);
 }
-inline bool sameBody(const HighFunc &Expected, const HighFunc &Actual) {
+inline bool sameBody(const HighFunc &Expected, const HighFunc &Actual,
+                     bool BlockAddresses = false) {
   size_t Budget = 100000;
   return sameCompleteSourceBody(
       Expected, Actual,
       [&](const ExprPtr &E, const ExprPtr &A) {
-        return sameExpression(E, A, Budget);
+        return sameExpression(E, A, Budget, 0, BlockAddresses);
       },
       Budget);
 }
-} // namespace objc_value_copy_detail
-
-inline bool objCByValueCopySourceCallBound(
-    const HighExpr &Expression, const BinaryImage &Image,
-    const PipelineResult &Result, const HighFunc &Function,
-    const std::map<va_t, const HighFunc *> &Functions) {
-  using native_swift_receiver_detail::BodyProof;
-  if (!Expression.SourceCallHint || !Expression.SourceCallHint->ByValueCopy ||
-      Expression.SourceCallHint->NativeSwiftReceiver || !Result.Success ||
-      Result.SourceImage != &Image || !Function.SourceTypeHint)
-    return false;
+inline std::optional<HighFunc>
+replayCurrentFunction(const BinaryImage &Image, const PipelineResult &Result,
+                      const HighFunc &Function) {
+  if (!Result.Success || Result.SourceImage != &Image ||
+      !Function.SourceTypeHint)
+    return std::nullopt;
   const auto Current =
       native_source_detail::currentFunction(Result, Function.Entry);
   const auto Declaration = objcMethodSourceTypeHint(Image, Function.Entry);
@@ -106,7 +119,7 @@ inline bool objCByValueCopySourceCallBound(
       !equalSourceABIs(*Declaration, *Function.SourceTypeHint) ||
       !equalSourceABIs(*Declaration, *Current->Med->SourceTypeHint) ||
       !validateObjCByValueCopyBindings(Image, Current->Low, *Current->Med))
-    return false;
+    return std::nullopt;
 
   // Rebuild from current machine/declarations, never from saved argument
   // values or cached signatures. Include bounded native dependencies so the
@@ -114,7 +127,7 @@ inline bool objCByValueCopySourceCallBound(
   std::map<va_t, const LowFunc *> Bodies;
   for (const auto &F : Result.LowFuncs)
     if (!Bodies.emplace(F.Entry, &F).second)
-      return false;
+      return std::nullopt;
   PipelineOptions Options;
   Options.EmitDumpOutput = false;
   Options.SourceTypeHints.emplace(Function.Entry, *Declaration);
@@ -128,7 +141,7 @@ inline bool objCByValueCopySourceCallBound(
     if (I == Bodies.end() || !I->second->hasCompleteLiftCoverage() ||
         I->second->DecodedInstructionCount > 1024 ||
         Options.OnlyFunctionEntries.size() > 32)
-      return false;
+      return std::nullopt;
     for (const auto &B : I->second->Blocks)
       for (const auto &Op : B.Ops)
         if (const auto S = sourceCallOccurrenceKey(Op);
@@ -142,7 +155,7 @@ inline bool objCByValueCopySourceCallBound(
   for (unsigned Round = 0; Round != 16; ++Round) {
     Fresh = Pipeline().run(Image, Context, Options);
     if (!Fresh.Success)
-      return false;
+      return std::nullopt;
     std::map<va_t, std::string> Diagnostics;
     if (!inferObjCNativeDependencies(Image, Fresh, Options, Diagnostics,
                                      Options.OnlyFunctionEntries)) {
@@ -154,7 +167,7 @@ inline bool objCByValueCopySourceCallBound(
       native_source_detail::currentFunction(Fresh, Function.Entry);
   if (!Complete || !Rebuilt ||
       !validateObjCByValueCopyBindings(Image, Rebuilt->Low, *Rebuilt->Med))
-    return false;
+    return std::nullopt;
   MedToHighConverter Converter;
   Converter.setBinaryImage(&Image);
   std::map<va_t, std::string> Names;
@@ -165,9 +178,63 @@ inline bool objCByValueCopySourceCallBound(
   const auto MedReplay = Converter.convert(*Current->Med, Image.Arch);
   if (!objc_value_copy_detail::sameBody(*Rebuilt->High, *Current->High) ||
       !objc_value_copy_detail::sameBody(*Rebuilt->High, MedReplay))
+    return std::nullopt;
+  return *Rebuilt->High;
+}
+} // namespace objc_value_copy_detail
+
+/// A construction proof observes an unprojected current HighIR call. Repeat
+/// the complete machine/frame replay and authenticate that call after ordinary
+/// reference binding. Unresolved references elsewhere in the body acquire no
+/// publication authority here; their owners must still prove them separately.
+inline bool objCByValueCopyFrameCallBound(
+    const HighExpr &Expression, const BinaryImage &Image,
+    const PipelineResult &Result, const HighFunc &Function,
+    const std::map<va_t, const HighFunc *> &Functions) {
+  using native_swift_receiver_detail::BodyProof;
+  if (!Expression.SourceCallHint || !Expression.SourceCallHint->ByValueCopy ||
+      Expression.SourceCallHint->NativeSwiftReceiver)
+    return false;
+  const auto Rebuilt =
+      objc_value_copy_detail::replayCurrentFunction(Image, Result, Function);
+  if (!Rebuilt || !objc_value_copy_detail::sameBody(*Rebuilt, Function))
+    return false;
+  BodyProof Actual{Image, Function};
+  const auto Calls = Actual.calls(true);
+  const auto Site = Expression.SourceCallHint->ByValueCopy->Site;
+  if (!Calls)
+    return false;
+  const auto Call = Calls->find(Site);
+  if (Call == Calls->end() || Call->second != &Expression)
     return false;
   const auto Bound =
-      bindObjCSourceReferences(*Rebuilt->High, Image, nullptr, &Functions);
+      bindObjCSourceReferences(*Rebuilt, Image, nullptr, &Functions);
+  BodyProof Normalized{Image, Bound.Function};
+  const auto BoundCalls = Normalized.calls(true);
+  if (!BoundCalls)
+    return false;
+  const auto BoundCall = BoundCalls->find(Site);
+  return BoundCall != BoundCalls->end() &&
+         objcSourceCallBound(*BoundCall->second, Image, Functions, nullptr,
+                             nullptr, &Bound.Function, nullptr, nullptr, false,
+                             true);
+}
+
+inline bool objCByValueCopySourceCallBound(
+    const HighExpr &Expression, const BinaryImage &Image,
+    const PipelineResult &Result, const HighFunc &Function,
+    const std::map<va_t, const HighFunc *> &Functions) {
+  using native_swift_receiver_detail::BodyProof;
+  if (!Expression.SourceCallHint || !Expression.SourceCallHint->ByValueCopy ||
+      Expression.SourceCallHint->NativeSwiftReceiver || !Result.Success ||
+      Result.SourceImage != &Image || !Function.SourceTypeHint)
+    return false;
+  const auto Rebuilt =
+      objc_value_copy_detail::replayCurrentFunction(Image, Result, Function);
+  if (!Rebuilt)
+    return false;
+  const auto Bound =
+      bindObjCSourceReferences(*Rebuilt, Image, nullptr, &Functions);
   if (!Bound.Limitation.empty() ||
       !objc_value_copy_detail::sameBody(Bound.Function, Function))
     return false;

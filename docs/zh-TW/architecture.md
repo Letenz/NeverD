@@ -1240,3 +1240,7 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 同一堆疊效果證明層單獨驗證精確的強 `CGRectApplyAffineTransform` 橋接：48 位元組已初始化變換是經 x0 傳遞的邏輯參數 1，矩形及結果則佔用 d0–d3。允許的輸入改寫會使副本失效，後續使用者必須先取得新的完整初始化；此呼叫不取得間接結果寫入權限。Objective-C 副本發現與原生堆疊驗證對四浮點 HFA 回傳及間接回傳都查詢同一證明層。
 
 `AuthenticatedSourceFrameLoads` 可透過 `swiftMetadataAccessorSourceCallHint` 跨越中繼資料存取器呼叫。兩條宣告路徑重用既有的編譯器證據表、準確的強連結 provider，以及完整的 Swift 請求與中繼資料回應 ABI。雙暫存器回應與一般的易失暫存器破壞規則保持完整；私有 spill 仍須通過共用的到達位元組證明。這不提供值配置、見證記憶體效應、堆疊借用或動態堆疊配置模型。
+
+`objcNonEscapingBlockSourceFrameEffects` 透過共用的 `sourceFrameCallArgumentStorage` 查詢認證堆疊上 block 的同步借用。它重播原始機器指令、目前接收者與派發、強匯入、完整標頭與描述符、回呼 ABI 和到達位元組。描述符限定可寫範圍，填充位元組不因此取得初始化證明；擷取欄位型別與回呼本體仍須獨立驗證。循環中的不確定觀察和私有堆疊位址擷取會被拒絕，相依性只使用已完成的證明輪次。
+
+來源建構重用發布階段的當前機器指令與完整 Low/Med/High 重放，認證與 block 分離的一次性值副本。最終發布獨立證明 block 建構和擷取生命週期，再比較 block 投影及一般參照繫結後的整個本體。不同寬度的私有向量讀取僅保留所有到達路徑均已初始化、且不含指標身分的純量位元組；可寫借用會清除舊初始化事實。 常量字串仍由既有參照證明層認證；block/副本證明不能授權弱匯入的常量物件。
