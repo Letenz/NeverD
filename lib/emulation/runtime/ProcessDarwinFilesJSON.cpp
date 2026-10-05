@@ -6,6 +6,7 @@
 #include "ProcessDarwinFilesJSON.h"
 
 #include "../os/darwin/kernel/DarwinFiles.h"
+#include "ProcessJSONInteger.h"
 
 #include "neverd/emulation/ProcessReportFields.h"
 
@@ -17,6 +18,61 @@ namespace field = process_report;
 llvm::Error invalid(llvm::StringRef Name) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  field::DarwinFilesOptions + Name);
+}
+llvm::Expected<DarwinFileMetadata> metadata(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object || Object->size() != 15)
+    return invalid(field::FileMetadata);
+  DarwinFileMetadata Out;
+  auto Number = [&](llvm::StringRef Name, auto &Destination) -> llvm::Error {
+    const auto *V = Object->get(Name);
+    using T = std::remove_reference_t<decltype(Destination)>;
+    auto N = V ? process_json::integer<T>(*V) : std::nullopt;
+    if (!N)
+      return invalid(Name);
+    Destination = *N;
+    return llvm::Error::success();
+  };
+  if (auto E = Number(field::FileDevice, Out.Device))
+    return std::move(E);
+  if (auto E = Number(field::FileInode, Out.Inode))
+    return std::move(E);
+  if (auto E = Number(field::FileMode, Out.Mode))
+    return std::move(E);
+  if (auto E = Number(field::FileLinkCount, Out.LinkCount))
+    return std::move(E);
+  if (auto E = Number(field::FileUID, Out.UID))
+    return std::move(E);
+  if (auto E = Number(field::FileGID, Out.GID))
+    return std::move(E);
+  if (auto E = Number(field::Size, Out.Size))
+    return std::move(E);
+  if (auto E = Number(field::FileBlockSize, Out.BlockSize))
+    return std::move(E);
+  if (auto E = Number(field::FileBlocks, Out.Blocks))
+    return std::move(E);
+  if (auto E = Number(field::FileFlags, Out.Flags))
+    return std::move(E);
+  if (auto E = Number(field::FileGeneration, Out.Generation))
+    return std::move(E);
+  for (const auto &[Name, Destination] :
+       {std::pair<llvm::StringRef, DarwinFileTime *>{field::FileAccessTime,
+                                                     &Out.AccessTime},
+        {field::FileModificationTime, &Out.ModificationTime},
+        {field::FileChangeTime, &Out.ChangeTime},
+        {field::FileBirthTime, &Out.BirthTime}}) {
+    const auto *Time = Object->getObject(Name);
+    if (!Time || Time->size() != 2 || !Time->get(field::Seconds) ||
+        !Time->get(field::Nanoseconds))
+      return invalid(Name);
+    auto Seconds = process_json::integer<int64_t>(*Time->get(field::Seconds));
+    auto Nanoseconds =
+        process_json::integer<int64_t>(*Time->get(field::Nanoseconds));
+    if (!Seconds || !Nanoseconds)
+      return invalid(Name);
+    *Destination = {*Seconds, *Nanoseconds};
+  }
+  return Out;
 }
 llvm::Expected<std::vector<uint8_t>> bytes(const llvm::json::Value &Value,
                                            uint64_t &Remaining) {
@@ -55,7 +111,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       for (const auto &File : *Files) {
         const auto *F = File.getAsObject();
-        if (!F || F->size() != 2 || !F->get(field::Bytes))
+        if (!F || (F->size() != 2 && F->size() != 3) || !F->get(field::Bytes) ||
+            (F->size() == 3 && !F->get(field::FileMetadata)))
           return invalid(Name);
         auto Path = F->getString(field::Path);
         if (!Path || Path->size() >= Remaining)
@@ -66,6 +123,12 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           return Data.takeError();
         if (!Out.Files.emplace(Path->str(), std::move(*Data)).second)
           return invalid(field::Path);
+        if (const auto *M = F->get(field::FileMetadata)) {
+          auto Parsed = metadata(*M);
+          if (!Parsed)
+            return Parsed.takeError();
+          Out.Metadata.emplace(Path->str(), std::move(*Parsed));
+        }
       }
     } else {
       return invalid(Name);

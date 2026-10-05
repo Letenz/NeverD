@@ -156,6 +156,9 @@ handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
   case ServiceKind::Dup:
   case ServiceKind::Dup2:
   case ServiceKind::Fcntl:
+  case ServiceKind::Stat64:
+  case ServiceKind::Fstat64:
+  case ServiceKind::Lstat64:
     return Files.handle(*Kind, Event, Result);
   case ServiceKind::GetPID:
     return std::optional<ServiceResult>({ProcessID, false});

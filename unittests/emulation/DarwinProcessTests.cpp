@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinFileTestData.h"
 #include "DarwinTestImage.h"
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
@@ -148,6 +149,31 @@ TEST_P(DarwinProcess, FiniteStandardInputRetainsBinaryBytesAndSharedCursor) {
   EXPECT_EQ(Result->ExitStatus, 37);
   EXPECT_EQ(Result->StandardOutput, std::string("\0\xffx", 3));
   EXPECT_TRUE(Result->StandardError.empty());
+}
+TEST_P(DarwinProcess,
+       Stat64ObservationsPreserveLayoutErrorsAndDescriptorState) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.Arguments[2] = "/data";
+  auto Missing = run("file-status");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Missing->Services.size(), 1u);
+  EXPECT_TRUE(Missing->StandardOutput.empty());
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::metadata();
+  auto Result = run("file-status");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "s");
+  EXPECT_TRUE(Result->StandardError.empty());
+  ASSERT_FALSE(Result->Services.empty());
+  EXPECT_EQ(Result->Services.front().Number,
+            (GetParam().ISA == GuestArchitecture::X64 ? 0x2000000u : 0u) +
+                338u);
+  EXPECT_EQ(Result->Services.front().Result, 0u);
+  EXPECT_EQ(Result->Services.front().Error, false);
 }
 TEST_P(DarwinProcess, OutputDescriptorsCanBeClosedReusedAndRedirected) {
   auto Result = run("output-descriptors");

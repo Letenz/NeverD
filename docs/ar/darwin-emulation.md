@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 813c9673241230afbb295a950aab1e14478b4bd4fe9de2d2f2e27b6fbe34f588 -->
+<!-- i18n-source: b3b9d7209329fb16b2966b305f8f5b8500d70521138d9ed32d89eda56e9018d1 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -55,13 +55,41 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 الخدمات الجديدة هي `open` و`read` و`pread` و`lseek` و`close` و`dup` و`dup2` و`fcntl`، مع مداخل nocancel لـ read/write/open/close/fcntl/pread. تدعم O_RDONLY/O_CLOEXEC وF_DUPFD وF_DUPFD_CLOEXEC وF_GETFD وF_SETFD وF_GETFL. لكل open مستقل موضعه؛ تتشارك النسخ الموضع مع أعلام close-on-exec منفصلة. لا يغير pread الموضع. يؤثر إغلاق أو استبدال 0/1/2 على العمليات اللاحقة، وتحتفظ نسخة الإخراج بوجهتها وميزانيتها.
 
-الحدود: 256 ملفاً، و16 MiB لمجموع المسارات/NUL/الملفات/الإدخال، ومسار أقصر من 1024 بايت ومكونات حتى 255 بايت. `descriptor_limit` سقف حصري بين 3 و4096 وافتراضيه 256؛ يبقى JSON محدوداً بـ64 KiB. تُرفض الخيارات غير الصالحة قبل التحميل. تعيد read الأكبر من INT_MAX الخطأ EINVAL قبل فحص FD؛ لا يلمس EOF الوجهة ويعيد العنوان غير الصالح EFAULT. يتوقف المخزن القابل للكتابة جزئياً قبل النسخ أو تغيير الموضع. تحفظ أخطاء SET/CUR/END الموضع. المسارات النسبية وفتح الأدلة والكتابة وstat وتعيين الملفات وseek المتناثر وبقية fcntl غير مدعومة. استخدام ملف كسلف لمسار يعيد ENOTDIR. يُقارن الكائن نفسه بنواة macOS الأصلية؛ وتغطي C/CLI/Python خمسة تراكيب للضيف، دون إثبات على جهاز iOS.
+الحدود: 256 ملفاً، و16 MiB لمجموع المسارات/NUL/الملفات/الإدخال، ومسار أقصر من 1024 بايت ومكونات حتى 255 بايت. `descriptor_limit` سقف حصري بين 3 و4096 وافتراضيه 256؛ يبقى JSON محدوداً بـ64 KiB. تُرفض الخيارات غير الصالحة قبل التحميل. تعيد read الأكبر من INT_MAX الخطأ EINVAL قبل فحص FD؛ لا يلمس EOF الوجهة ويعيد العنوان غير الصالح EFAULT. يتوقف المخزن القابل للكتابة جزئياً قبل النسخ أو تغيير الموضع. تحفظ أخطاء SET/CUR/END الموضع. المسارات النسبية وفتح الأدلة والكتابة وstat القديم وتعيين الملفات وseek المتناثر وبقية fcntl غير مدعومة. استخدام ملف كسلف لمسار يعيد ENOTDIR. يُقارن الكائن نفسه بنواة macOS الأصلية؛ وتغطي C/CLI/Python خمسة تراكيب للضيف، دون إثبات على جهاز iOS.
 
 تحقق Release بتاريخ 2026-10-05: عدد التسجيلات 381، نجح 177 وتُخطي 204 دون فشل، ونُفذت الحالات الإلزامية ARM64 HVF كلها 51/51. نجحت أيضاً سبعة برامج macOS أصلية و35 اختبار C/CLI وتقارير وخمسة تراكيب Python و66 اختباراً لسكربتات التحقق. الأعداد متداخلة. لا توجد أدلة أصلية Intel HVF/KVM/WHP للخدمات الجديدة؛ يبقى Intel HVF غير متحقق منه وتظل Actions معلقة. لا يتوفر SDK iOS أو مقارنة مع جهاز فعلي.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## بيانات وصفية صريحة للملفات
+
+يمكن أن يتضمن الملف `metadata`، وعندها تكون جميع الحقول أدناه مطلوبة. تحفظ السلاسل العشرية عرض العدد كاملاً؛ أرقام JSON محصورة بالأعداد الصحيحة الدقيقة ضمن ±(2^53−1). device عدد موقّع من 32 بت، وmode/link_count غير موقّعين من 16 بت، وinode غير موقّع من 64 بت، وuid/gid/flags/generation غير موقّعة من 32 بت. يجب أن يساوي size عدد البايتات، وألا يتجاوز blocks الحد الموقّع من 64 بت، وأن يكون block_size ضمن المجال الموقّع غير السالب من 32 بت. تستخدم الأوقات ثواني موقّعة من 64 بت و0–999999999 نانوثانية. يُقبل نوع الملف العادي وبتات الأذونات فقط.
+
+تعيد `stat64` (338) و`fstat64` (339) و`lstat64` (340) سجل LP64 نفسه من 144 بايت على ARM64/x64. تشترك مع open في حل المسارات وتحترم dup/close دون تخصيص FD أو تغيير الموضع. تكون rdev والحشو والحقول المحجوزة صفراً. المشاهدات ثابتة: لا يحدّث read الأوقات ولا يغيّر mode إذن الوصول إلى الدليل. تبقى البيانات المفقودة وحالة الأدلة/التدفقات والروابط الرمزية وstat القديم وstat-at والأمن الموسع غير مدعومة. تسبق أخطاء المسار/FD فحص مؤشر الإخراج؛ يُرفض الإخراج القابل للكتابة جزئياً قبل أي كتابة. يقارن الاختبار الأصلي كل بايت بملف حقيقي وتخطيط SDK، ويتحقق البرنامج المؤلف نفسه من الاستدعاءات الثلاثة.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
+  "device":1,"inode":"18364758544493064720","mode":33188,"link_count":1,
+  "uid":1000,"gid":1000,"size":10,"block_size":4096,"blocks":8,
+  "flags":0,"generation":0,
+  "access_time":{"seconds":-1,"nanoseconds":1},
+  "modification_time":{"seconds":2,"nanoseconds":3},
+  "change_time":{"seconds":4,"nanoseconds":5},
+  "birth_time":{"seconds":6,"nanoseconds":7}
+}}]}}
+```
+
+[XNU stat.h](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/stat.h)
+
+### تحقق البيانات الوصفية والخطوات التالية (2026-10-05)
+
+بعد stat64: عدد التسجيلات الفريدة 409؛ نجح 193 وتُخطي 216 دون فشل. نُفذت حالات ARM64 HVF الإلزامية 54/54 وخمسة تراكيب Unicorn. نجحت مقارنة SDK والسجل الحقيقي، وثمانية برامج أصلية، و36 حالة API/تقارير دون تخطٍ، وخمسة تراكيب Python و66 اختبار أدوات؛ تتداخل الأعداد. لكل حالة أصلية ملف إخراج مستقل لمنع بقاء بايتات قديمة بعد إخراج أقصر. لا توجد أدلة أصلية للإضافات على Intel HVF/KVM/WHP أو iOS مادي.
+
+التالي: تعيين الملفات والأدلة/المسارات النسبية والكتابة المحدودة (صفحات EOF والعمر بعد close وترتيب الأخطاء)، ومشاهدات الوقت/النظام الصريحة وخدمات Mach/الخيوط اللازمة، واعتماديات Mach-O وrebases/binds والتهيئة وTLS. يحتاج Objective-C/Swift وFoundation/UIKit برامج مرجعية أصلية. يحتاج iOS المادي SDK وجهازاً؛ ما زال Intel HVF غير موثق وتبقى Actions الخاصة به معلقة.
+
+
 
 ```sh
 cmake --build build-hvf --target NeverDDarwinProcessTests NeverDProcessPublicTests --parallel 8
@@ -70,7 +98,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 51 على ARM64 أو 34 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
+يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 54 على ARM64 أو 36 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \

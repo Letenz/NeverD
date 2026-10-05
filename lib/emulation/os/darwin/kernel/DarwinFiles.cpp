@@ -8,6 +8,7 @@
 #include "DarwinFiles.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Endian.h"
 
 #include <algorithm>
 
@@ -60,6 +61,18 @@ llvm::Error validateFileOptions(const DarwinFileOptions &Options) {
         Bytes.size() > limits::Bytes - Total - Cost)
       return failure(diagnostic::FileOptionsLimit);
     Total += Cost + Bytes.size();
+  }
+  for (const auto &[Path, M] : Options.Metadata) {
+    auto File = Options.Files.find(Path);
+    if (File == Options.Files.end())
+      return failure(diagnostic::FileMetadataPath);
+    if ((M.Mode & ~FilePermissionMask) != FileRegularMode ||
+        M.Size != File->second.size() || M.Blocks > INT64_MAX ||
+        M.BlockSize > INT32_MAX)
+      return failure(diagnostic::FileMetadataOption);
+    for (auto T : {M.AccessTime, M.ModificationTime, M.ChangeTime, M.BirthTime})
+      if (T.Nanoseconds < 0 || T.Nanoseconds >= 1000000000)
+        return failure(diagnostic::FileMetadataOption);
   }
   return llvm::Error::success();
 }
@@ -128,43 +141,119 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   const uint32_t FD = freeDescriptor();
   if (FD == limit())
     return returned(TooManyFiles, true);
+  auto Resolved = resolvePath(Address);
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Resolved))
+    return unsupported(Result, *Reason);
+  Descriptors.emplace(FD, Descriptor{std::make_shared<Description>(
+                                         std::get<Description>(*Resolved)),
+                                     bool(Flags & OpenCloseOnExec)});
+  return returned(FD);
+}
+
+llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(uint64_t Address) {
+  if (!Options)
+    return diagnostic::FileInputs;
   auto Imported = readPath(Address);
   if (!Imported)
     return Imported.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Imported))
-    return returned(*Error, true);
+    return *Error;
   const auto &Path = std::get<std::string>(*Imported);
   llvm::SmallVector<llvm::StringRef> Parts;
   llvm::StringRef(Path).split(Parts, '/');
   if (Path == "/")
-    return unsupported(Result, diagnostic::FileDirectory);
+    return diagnostic::FileDirectory;
   if (!canonicalPath(Path))
-    return unsupported(Result, diagnostic::FilePathForm);
+    return diagnostic::FilePathForm;
   // Resolve one component at a time: a missing or nondirectory ancestor
   // precedes a too-long later component, just as in the native name lookup.
   std::string Prefix;
   for (auto Part : llvm::ArrayRef<llvm::StringRef>(Parts).drop_front()) {
     if (Part.size() > limits::Name)
-      return returned(NameTooLong, true);
+      return uint32_t(NameTooLong);
     Prefix += '/';
     Prefix.append(Part.data(), Part.size());
     auto File = Options->Files.find(Prefix);
     if (File != Options->Files.end()) {
       if (Prefix.size() != Path.size())
-        return returned(NotDirectory, true);
-      Descriptors.emplace(FD,
-                          Descriptor{std::make_shared<Description>(
-                                         Description{Kind::File, File->second}),
-                                     bool(Flags & OpenCloseOnExec)});
-      return returned(FD);
+        return uint32_t(NotDirectory);
+      auto Metadata = Options->Metadata.find(Path);
+      return Description{
+          Kind::File, File->second, 0,
+          Metadata == Options->Metadata.end() ? nullptr : &Metadata->second};
     }
     const auto Directory = Prefix + '/';
     auto Next = Options->Files.lower_bound(Directory);
     if (Next == Options->Files.end() ||
         !llvm::StringRef(Next->first).starts_with(Directory))
-      return returned(NoEntry, true);
+      return uint32_t(NoEntry);
   }
-  return unsupported(Result, diagnostic::FileDirectory);
+  return diagnostic::FileDirectory;
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
+                     const char *PartialDiagnostic, ProcessResult &Result) {
+  if (Address >= UserLimit)
+    return returned(BadAddress, true);
+  // Copyout failures do not have a portable partial-effects contract. Reject
+  // a writable prefix before publishing any bytes or advancing a cursor.
+  uint64_t Checked = 0;
+  while (Checked < Bytes.size()) {
+    const uint64_t Start = Address + Checked;
+    const uint64_t Size = std::min(Bytes.size() - Checked, 4096 - Start % 4096);
+    if (Start >= UserLimit)
+      return Checked ? unsupported(Result, PartialDiagnostic)
+                     : returned(BadAddress, true);
+    auto Access = Memory.canAccess(Start, Size, Write | UserAccessible);
+    if (!Access)
+      return Access.takeError();
+    if (!*Access)
+      return Checked ? unsupported(Result, PartialDiagnostic)
+                     : returned(BadAddress, true);
+    Checked += Size;
+  }
+  if (auto E = Memory.write(Address, Bytes))
+    return std::move(E);
+  return returned(0);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::status(const Description &File, uint64_t Address,
+                    ProcessResult &Result) {
+  if (!File.Metadata)
+    return unsupported(Result, diagnostic::FileMetadata);
+  std::array<uint8_t, FileStatusSize> Bytes{};
+  auto Put = [&](unsigned Offset, unsigned Width, uint64_t Value) {
+    if (Width == 2)
+      llvm::support::endian::write16le(Bytes.data() + Offset, Value);
+    else if (Width == 4)
+      llvm::support::endian::write32le(Bytes.data() + Offset, Value);
+    else
+      llvm::support::endian::write64le(Bytes.data() + Offset, Value);
+  };
+#define NEVERD_DARWIN_FILE_STATUS(Member, Native, Offset, Width)               \
+  Put(Offset, Width, static_cast<uint64_t>(File.Metadata->Member));
+#include "DarwinFileStatus.def"
+#undef NEVERD_DARWIN_FILE_STATUS
+  return copyout(Address, Bytes, diagnostic::FilePartialStatus, Result);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::statusPath(uint64_t Path, uint64_t Address,
+                        ProcessResult &Result) {
+  auto Resolved = resolvePath(Path);
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Resolved))
+    return unsupported(Result, *Reason);
+  return status(std::get<Description>(*Resolved), Address, Result);
 }
 
 llvm::Expected<std::optional<ServiceResult>>
@@ -184,24 +273,12 @@ DarwinFiles::read(Description &File, uint64_t Address, uint64_t Count,
   Count = std::min(Count, Available);
   if (!Count)
     return returned(0);
-  if (Address >= UserLimit)
-    return returned(BadAddress, true);
-  // Copyout failures inside one filesystem transfer do not have a portable
-  // partial-cursor contract. Reject a writable prefix before any effect.
-  uint64_t Checked = 0;
-  while (Checked < Count) {
-    const uint64_t Start = Address + Checked;
-    const uint64_t Size = std::min(Count - Checked, 4096 - Start % 4096);
-    auto Access = Memory.canAccess(Start, Size, Write | UserAccessible);
-    if (!Access)
-      return Access.takeError();
-    if (Start >= UserLimit || !*Access)
-      return Checked ? unsupported(Result, diagnostic::FilePartialRead)
-                     : returned(BadAddress, true);
-    Checked += Size;
-  }
-  if (auto E = Memory.write(Address, File.Bytes.slice(Offset, Count)))
-    return std::move(E);
+  auto Stored = copyout(Address, File.Bytes.slice(Offset, Count),
+                        diagnostic::FilePartialRead, Result);
+  if (!Stored)
+    return Stored.takeError();
+  if (!*Stored || (**Stored).Error)
+    return Stored;
   if (!Positioned)
     File.Offset += Count;
   return returned(Count);
@@ -254,6 +331,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
   const auto &A = Event.Arguments;
   if (Service == ServiceKind::Open)
     return open(A[0], A[1], Result);
+  if (Service == ServiceKind::Stat64 || Service == ServiceKind::Lstat64)
+    return statusPath(A[0], A[1], Result);
   if ((Service == ServiceKind::Read || Service == ServiceKind::Pread) &&
       A[2] > MaxWriteBytes)
     return returned(InvalidArgument, true);
@@ -263,6 +342,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
   auto &FD = I->second;
   auto &File = *FD.Open;
   switch (Service) {
+  case ServiceKind::Fstat64:
+    return status(File, A[1], Result);
   case ServiceKind::Read:
   case ServiceKind::Pread:
     return read(File, A[1], A[2],

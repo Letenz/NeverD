@@ -44,6 +44,83 @@ static int equal(const char *a, const char *b) {
   }
   return *a == *b;
 }
+static u64 little_integer(const unsigned char *p, unsigned width) {
+  u64 value = 0;
+  for (unsigned i = 0; i != width; ++i)
+    value |= (u64)p[i] << (i * 8);
+  return value;
+}
+/* Independent LP64 stat64 ABI checks; all three calls must describe the same
+ * supplied regular file and must leave the open description's offset alone. */
+static int file_status(const char *path) {
+  unsigned error = 0;
+  unsigned char a[146], b[146];
+  int check = 80;
+#define STATUS_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  a[0] = b[0] = 0xab;
+  a[145] = b[145] = 0xcd;
+  STATUS_EXPECT(call(338, (u64)path, (u64)(a + 1), 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  STATUS_EXPECT(a[0] == 0xab && a[145] == 0xcd);
+  STATUS_EXPECT((little_integer(a + 5, 2) & 0170000) == 0100000);
+  STATUS_EXPECT(little_integer(a + 7, 2) != 0);
+  STATUS_EXPECT(little_integer(a + 97, 8) == 10);
+  STATUS_EXPECT(little_integer(a + 113, 4) > 0);
+  for (unsigned i = 41; i <= 89; i += 16)
+    STATUS_EXPECT(little_integer(a + i, 8) < 1000000000);
+  for (unsigned i = 25; i != 33; ++i)
+    STATUS_EXPECT(a[i] == 0);
+  for (unsigned i = 125; i != 145; ++i)
+    STATUS_EXPECT(a[i] == 0);
+  u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  STATUS_EXPECT(!error);
+  STATUS_EXPECT(call(199, fd, 2, 0, 0, 0, 0, &error) == 2 && !error);
+  u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  STATUS_EXPECT(!error && copy != fd);
+  STATUS_EXPECT(call(6, fd, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  STATUS_EXPECT(call(339, fd, 0, 0, 0, 0, 0, &error) == 9 && error);
+  STATUS_EXPECT(call(339, copy, (u64)(b + 1), 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  for (unsigned i = 0; i != 146; ++i)
+    if (a[i] != b[i])
+      return 130;
+  STATUS_EXPECT(call(199, copy, 0, 1, 0, 0, 0, &error) == 2 && !error);
+  STATUS_EXPECT(call(340, (u64)path, (u64)(b + 1), 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  for (unsigned i = 0; i != 146; ++i)
+    if (a[i] != b[i])
+      return 131;
+  STATUS_EXPECT(call(339, copy, 0, 0, 0, 0, 0, &error) == 14 && error);
+  STATUS_EXPECT(call(338, (u64)path, 0, 0, 0, 0, 0, &error) == 14 && error);
+  STATUS_EXPECT(call(340, (u64) "", 0, 0, 0, 0, 0, &error) == 2 && error);
+  char descendant[1024];
+  unsigned length = 0;
+  while (path[length] && length < 700) {
+    descendant[length] = path[length];
+    ++length;
+  }
+  STATUS_EXPECT(!path[length]);
+  descendant[length] = '/';
+  for (unsigned i = 0; i != 256; ++i)
+    descendant[length + 1 + i] = 'a';
+  descendant[length + 257] = 0;
+  STATUS_EXPECT(call(338, (u64)descendant, 0, 0, 0, 0, 0, &error) == 20 &&
+                error);
+  descendant[length] = '-';
+  descendant[length + 1] = 'x';
+  descendant[length + 2] = 0;
+  STATUS_EXPECT(call(340, (u64)descendant, 0, 0, 0, 0, 0, &error) == 2 &&
+                error);
+  STATUS_EXPECT(call(6, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  STATUS_EXPECT(call(4, 1, (u64) "s", 1, 0, 0, 0, &error) == 1 && !error);
+#undef STATUS_EXPECT
+  return 37;
+}
 #if defined(__aarch64__)
 #define PAGE 16384UL
 #else
@@ -185,6 +262,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "file-status"))
+    return argc < 3 ? 132 : file_status(argv[2]);
   if (equal(argv[1], "output-descriptors"))
     return output_descriptors();
   if (equal(argv[1], "stdin")) {

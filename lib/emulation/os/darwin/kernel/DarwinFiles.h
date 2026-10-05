@@ -1,5 +1,4 @@
-//===- DarwinFiles.h - Darwin open descriptions and file inputs --*- C++
-//-*-===//
+//===- DarwinFiles.h - Darwin file descriptions ----------------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -30,12 +29,14 @@ private:
     Kind Type;
     llvm::ArrayRef<uint8_t> Bytes;
     uint64_t Offset = 0;
+    const DarwinFileMetadata *Metadata = nullptr;
   };
   struct Descriptor {
     std::shared_ptr<Description> Open;
     bool CloseOnExec = false;
   };
   using Pathname = std::variant<std::string, uint32_t>;
+  using Lookup = std::variant<Description, uint32_t, const char *>;
   GuestMemory &Memory;
   const std::optional<DarwinFileOptions> &Options;
   std::map<uint32_t, Descriptor> Descriptors;
@@ -43,8 +44,16 @@ private:
   uint32_t limit() const;
   uint32_t freeDescriptor(uint32_t Minimum = 0) const;
   llvm::Expected<Pathname> readPath(uint64_t Address);
+  llvm::Expected<Lookup> resolvePath(uint64_t Address);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  status(const Description &File, uint64_t Address, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  statusPath(uint64_t Path, uint64_t Address, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
+          const char *PartialDiagnostic, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   read(Description &File, uint64_t Address, uint64_t Count, uint64_t Offset,
        bool Positioned, ProcessResult &Result);

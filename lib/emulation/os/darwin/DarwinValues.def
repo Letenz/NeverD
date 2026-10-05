@@ -34,6 +34,9 @@ NEVERD_DARWIN_VALUE(GetDescriptorFlags, 1)
 NEVERD_DARWIN_VALUE(SetDescriptorFlags, 2)
 NEVERD_DARWIN_VALUE(GetFileFlags, 3)
 NEVERD_DARWIN_VALUE(DuplicateCloseOnExec, 67)
+NEVERD_DARWIN_VALUE(FileStatusSize, 144)
+NEVERD_DARWIN_VALUE(FileRegularMode, 0x8000)
+NEVERD_DARWIN_VALUE(FilePermissionMask, 0x0fff)
 NEVERD_DARWIN_VALUE(MaxWriteBytes, 0x7fffffff)
 NEVERD_DARWIN_VALUE(BadAddress, 14)
 NEVERD_DARWIN_VALUE(InvalidArgument, 22)
@@ -67,6 +70,9 @@ NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
+NEVERD_DARWIN_SERVICE(Stat64, 338, Int)
+NEVERD_DARWIN_SERVICE(Fstat64, 339, Int)
+NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
 NEVERD_DARWIN_SERVICE(Munmap, 73, Int)
 NEVERD_DARWIN_SERVICE(Mprotect, 74, Int)
 NEVERD_DARWIN_SERVICE(Mmap, 197, Wide)
@@ -89,6 +95,14 @@ NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
                         "invalid or conflicting Darwin catalogue path")
 NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
+                        "invalid Darwin regular-file metadata or size")
+NEVERD_DARWIN_DIAGNOSTIC(FileMetadataPath,
+                        "Darwin metadata requires an existing catalogue file")
+NEVERD_DARWIN_DIAGNOSTIC(FileMetadata,
+                        "Darwin file metadata is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FilePartialStatus,
+                        "Darwin stat64 into a partially writable buffer is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(FileOpenFlags,
                         "unsupported Darwin open flags (read-only files only)")
 NEVERD_DARWIN_DIAGNOSTIC(FilePathForm,

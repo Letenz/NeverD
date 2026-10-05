@@ -499,11 +499,21 @@ class ProcessIntegrationTests(unittest.TestCase):
                         session.emulate_process(path, wrong, options)
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
                                            ("stdin", b"\x00\xffx"),
-                                           ("output-descriptors", b"ok")):
+                                           ("output-descriptors", b"ok"),
+                                           ("file-status", b"s")):
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
                             "darwin_files": {"files": [{"path": "/data", "bytes_hex":
-                                                       b"0123456789".hex()}],
+                                                       b"0123456789".hex(), "metadata": {
+                                "device": -123, "inode": "18364758544493064720",
+                                "mode": 33188, "link_count": 3,
+                                "uid": 2309737967, "gid": 4275878552, "size": 10,
+                                "block_size": 4096, "blocks": 8, "flags": 4660,
+                                "generation": 2309737967,
+                                "access_time": {"seconds": "-9223372036854775807", "nanoseconds": 1},
+                                "modification_time": {"seconds": "9223372036854775807", "nanoseconds": 999999999},
+                                "change_time": {"seconds": -3, "nanoseconds": 4},
+                                "birth_time": {"seconds": -5, "nanoseconds": 6}}}],
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])

@@ -1,0 +1,30 @@
+//===- DarwinFileStatus.def - LP64 Darwin stat64 wire layout --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Original ABI description; pinned XNU sys/stat.h is linked in the docs.
+// Both baseline x86-64 and ARM64 use this 144-byte layout. The regular-file
+// device type, padding and reserved fields are zero. No host struct is copied.
+#ifdef NEVERD_DARWIN_FILE_STATUS
+// Model member, native SDK member (oracle only), byte offset, byte width.
+NEVERD_DARWIN_FILE_STATUS(Device, st_dev, 0, 4)
+NEVERD_DARWIN_FILE_STATUS(Mode, st_mode, 4, 2)
+NEVERD_DARWIN_FILE_STATUS(LinkCount, st_nlink, 6, 2)
+NEVERD_DARWIN_FILE_STATUS(Inode, st_ino, 8, 8)
+NEVERD_DARWIN_FILE_STATUS(UID, st_uid, 16, 4)
+NEVERD_DARWIN_FILE_STATUS(GID, st_gid, 20, 4)
+NEVERD_DARWIN_FILE_STATUS(AccessTime.Seconds, st_atimespec.tv_sec, 32, 8)
+NEVERD_DARWIN_FILE_STATUS(AccessTime.Nanoseconds, st_atimespec.tv_nsec, 40, 8)
+NEVERD_DARWIN_FILE_STATUS(ModificationTime.Seconds, st_mtimespec.tv_sec, 48, 8)
+NEVERD_DARWIN_FILE_STATUS(ModificationTime.Nanoseconds, st_mtimespec.tv_nsec, 56, 8)
+NEVERD_DARWIN_FILE_STATUS(ChangeTime.Seconds, st_ctimespec.tv_sec, 64, 8)
+NEVERD_DARWIN_FILE_STATUS(ChangeTime.Nanoseconds, st_ctimespec.tv_nsec, 72, 8)
+NEVERD_DARWIN_FILE_STATUS(BirthTime.Seconds, st_birthtimespec.tv_sec, 80, 8)
+NEVERD_DARWIN_FILE_STATUS(BirthTime.Nanoseconds, st_birthtimespec.tv_nsec, 88, 8)
+NEVERD_DARWIN_FILE_STATUS(Size, st_size, 96, 8)
+NEVERD_DARWIN_FILE_STATUS(Blocks, st_blocks, 104, 8)
+NEVERD_DARWIN_FILE_STATUS(BlockSize, st_blksize, 112, 4)
+NEVERD_DARWIN_FILE_STATUS(Flags, st_flags, 116, 4)
+NEVERD_DARWIN_FILE_STATUS(Generation, st_gen, 120, 4)
+#endif

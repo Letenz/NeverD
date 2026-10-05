@@ -3,10 +3,13 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinFileTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 
 #include "neverd/emulation/AddressSpace.h"
+
+#include "llvm/ADT/StringExtras.h"
 
 namespace neverd::emulation::darwin_model {
 namespace {
@@ -236,6 +239,132 @@ TEST_P(DarwinFileTest, UnsupportedOperationsDoNotPretendToBeMissingFiles) {
   EXPECT_EQ(Result.Diagnostic, diagnostic::FileInputs);
   Options.emplace();
   error(ServiceKind::Open, {Base}, 2);
+}
+
+TEST_P(DarwinFileTest, Stat64PreservesAllFieldsPaddingAndDescriptorOffsets) {
+  Options->Metadata["/data"] = darwin_test::metadata(6);
+  // Independently specified little-endian LP64 record, including the rdev,
+  // alignment gap and all reserved bytes. Also checked against the native SDK.
+  const auto Expected = llvm::fromHex(
+      "85ffffffa48103001032547698badcfeefcdab8998badcfe0000000000000000"
+      "01000000000000800100000000000000ffffffffffffff7fffc99a3b00000000"
+      "fdffffffffffffff0400000000000000fbffffffffffffff0600000000000000"
+      "060000000000000008000000000000000010000034120000efcdab8900000000"
+      "00000000000000000000000000000000");
+  const uint64_t Buffer = Base + Page - 7;
+  auto FD = ok(ServiceKind::Open, {Base});
+  auto Copy = ok(ServiceKind::Dup, {FD});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 2, 0}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  for (auto Kind :
+       {ServiceKind::Stat64, ServiceKind::Lstat64, ServiceKind::Fstat64}) {
+    ASSERT_FALSE(bool(Space->writeInteger(Buffer - 1, 0xaa, 1)));
+    ASSERT_FALSE(bool(Space->writeInteger(Buffer + 144, 0xbb, 1)));
+    EXPECT_EQ(ok(Kind, {Kind == ServiceKind::Fstat64 ? Copy : Base, Buffer}),
+              0u);
+    std::array<uint8_t, 144> Bytes;
+    ASSERT_FALSE(bool(Space->read(Buffer, Bytes)));
+    EXPECT_EQ(llvm::toHex(llvm::ArrayRef<uint8_t>(Bytes)),
+              llvm::toHex(Expected));
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer - 1, 1)), 0xaau);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer + 144, 1)), 0xbbu);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 2u);
+  }
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), FD);
+}
+
+TEST_P(DarwinFileTest, Stat64FailureOrderAndPartialOutputHaveNoSideEffects) {
+  Options->Metadata["/data"] = darwin_test::metadata(6);
+  auto FD = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::Fstat64, {99, 0}, 9);
+  error(ServiceKind::Stat64, {0, 0}, 14);
+  path("/absent");
+  error(ServiceKind::Stat64, {Base, 0}, 2);
+  path("/data/child");
+  error(ServiceKind::Lstat64, {Base, 0}, 20);
+  path("/data");
+  Options->DescriptorLimit = 4;
+  error(ServiceKind::Open, {Base}, 24);
+  EXPECT_EQ(ok(ServiceKind::Stat64, {Base, Base + Page}), 0u);
+  for (auto Kind :
+       {ServiceKind::Stat64, ServiceKind::Lstat64, ServiceKind::Fstat64}) {
+    const uint64_t Source = Kind == ServiceKind::Fstat64 ? FD : Base;
+    error(Kind, {Source, 0}, 14);
+    error(Kind, {Source, UINT64_MAX}, 14);
+    const auto End = Base + Page * 2 - 8;
+    ASSERT_FALSE(bool(Space->writeInteger(End, 0xaabbccddeeff0011, 8)));
+    EXPECT_FALSE(invoke(Kind, {Source, End}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FilePartialStatus);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(End, 8)), 0xaabbccddeeff0011u);
+  }
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+  ASSERT_FALSE(bool(Space->protect(Base + Page, Page, Read | UserAccessible)));
+  error(ServiceKind::Fstat64, {FD, Base + Page}, 14);
+}
+
+TEST_P(DarwinFileTest, UnknownMetadataAndDirectoriesAreNotFabricated) {
+  auto FD = ok(ServiceKind::Open, {Base});
+  for (auto Kind :
+       {ServiceKind::Stat64, ServiceKind::Lstat64, ServiceKind::Fstat64}) {
+    EXPECT_FALSE(
+        invoke(Kind, {Kind == ServiceKind::Fstat64 ? FD : Base, Base + Page}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMetadata);
+  }
+  for (auto FD : {0u, 1u, 2u}) {
+    EXPECT_FALSE(invoke(ServiceKind::Fstat64, {FD, Base + Page}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMetadata);
+  }
+  path("/");
+  EXPECT_FALSE(invoke(ServiceKind::Stat64, {Base, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileDirectory);
+  Options.reset();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  EXPECT_FALSE(invoke(ServiceKind::Lstat64, {Base, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileInputs);
+}
+
+TEST(DarwinFileOptions,
+     MetadataAdmissionRejectsUnknownPathsAndIncoherentValues) {
+  DarwinFileOptions O;
+  O.Files["/data"] = std::vector<uint8_t>(10);
+  O.Metadata["/missing"] = darwin_test::metadata();
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileMetadataPath);
+  O.Metadata.clear();
+  auto &M = O.Metadata["/data"];
+  for (unsigned Case = 0; Case != 8; ++Case) {
+    M = darwin_test::metadata();
+    switch (Case) {
+    case 0:
+      M.Mode = 0040644;
+      break;
+    case 1:
+      M.Size = 9;
+      break;
+    case 2:
+      M.BlockSize = uint32_t(INT32_MAX) + 1;
+      break;
+    case 3:
+      M.Blocks = uint64_t(INT64_MAX) + 1;
+      break;
+    case 4:
+      M.AccessTime.Nanoseconds = -1;
+      break;
+    case 5:
+      M.ModificationTime.Nanoseconds = 1000000000;
+      break;
+    case 6:
+      M.ChangeTime.Nanoseconds = -1;
+      break;
+    case 7:
+      M.BirthTime.Nanoseconds = 1000000000;
+      break;
+    }
+    EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+              diagnostic::FileMetadataOption);
+  }
+  M = darwin_test::metadata();
+  ASSERT_FALSE(bool(validateFileOptions(O)));
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));

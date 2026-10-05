@@ -152,13 +152,50 @@ touch the destination; invalid writable addresses return EFAULT. A partially
 writable destination stops before copying or advancing the cursor, because
 partial filesystem copyout effects are outside this model. Seek supports
 SET/CUR/END, preserving the cursor on negative-position or overflow errors.
-Relative/noncanonical paths, directory opens, writable files, stat metadata,
+Relative/noncanonical paths, directory opens, writable files, legacy stat metadata,
 file-backed mmap, sparse-file seeks and other fcntl operations remain unsupported.
 Path prefixes describe implicit directories; a regular file used as an ancestor
 returns ENOTDIR. The ABI is grounded in XNU's
 [read path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c),
 [open/seek path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_syscalls.c)
 and [descriptor operations](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_descrip.c).
+
+## Explicit file metadata
+
+A file entry may additionally contain `metadata`. When present, every field
+shown below is required. Decimal strings preserve full-width integers; numeric
+JSON is limited to exactly represented integers within ±(2^53−1). Device IDs
+are signed 32-bit; mode and link count are unsigned 16-bit; inode is unsigned
+64-bit; UID, GID, flags and generation are unsigned 32-bit. `size` must match
+`bytes_hex`, blocks fit signed 64-bit, and block size fits nonnegative signed
+32-bit. Times use signed 64-bit seconds and nanoseconds in [0, 999999999].
+Only regular-file mode bits plus permissions are admitted.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
+  "device":1,"inode":"18364758544493064720","mode":33188,"link_count":1,
+  "uid":1000,"gid":1000,"size":10,"block_size":4096,"blocks":8,
+  "flags":0,"generation":0,
+  "access_time":{"seconds":-1,"nanoseconds":1},
+  "modification_time":{"seconds":2,"nanoseconds":3},
+  "change_time":{"seconds":4,"nanoseconds":5},
+  "birth_time":{"seconds":6,"nanoseconds":7}
+}}]}}
+```
+
+`stat64` (338), `fstat64` (339) and `lstat64` (340) return one 144-byte LP64
+record on ARM64 and x64. Path queries share `open`'s component resolver, while
+FD queries follow descriptor duplication and closure. The regular-file rdev,
+padding and reserved fields are zero. Metadata is a fixed caller observation:
+reads do not change timestamps, and mode bits do not change catalogue access.
+Missing metadata, directory/stream status, symbolic links, legacy stat layouts
+and stat-at/extended-security variants remain unsupported. Missing paths and
+bad descriptors precede output-pointer checks; partial output stops before any
+bytes are written. Status queries neither allocate FDs nor change cursors.
+The ABI is described by XNU's [stat records](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/stat.h).
+The native test compares all record bytes with a real filesystem observation
+and checks offsets and widths against the macOS SDK. The authored raw-call
+fixture independently checks all three services against the native kernel.
 
 ## Verification
 
@@ -189,7 +226,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 51 cases on ARM64, or 34 on x64.
+on each platform supported by the host ISA: 54 cases on ARM64, or 36 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -202,7 +239,8 @@ the same authored object with an isolated host file containing the guest's
 exact bytes. Descriptor replacement/redirect cases also run on the host.
 Memory-only tests cover both OS page sizes, denied and partial copyout,
 configuration admission, absent/empty input and FD exhaustion. Public C/CLI
-and Python checks cover file, nocancel, binary stdin and output redirection
+and Python checks cover file, nocancel, binary stdin, output redirection and
+stat64 observations.
 on every platform/ISA combination. This native reference is required
 by the HVF gate; it does not establish native iOS execution.
 The independent [native kernel workflow](../.github/workflows/darwin-kernel-reference.yml)
@@ -227,6 +265,29 @@ also accepts a single `kvm` or `whp` selection for focused reruns. It
 requires actual virtualization and `ld64.lld`; unavailable hardware or fixture
 tools fail explicitly. The result validates the bounded guest OS model and
 shared CPU contracts, not Intel HVF or native iOS hardware.
+
+### Metadata verification, 2026-10-05
+
+After adding stat64, the Release gate reconciled 409 unique registrations:
+193 passed, 216 skipped and zero failed. All 54 required ARM64 HVF outcomes
+ran, and Unicorn covered all five guest combinations. Native SDK layout and
+full-record comparisons passed, along with all eight original macOS programs,
+36 public/report cases without skips, Python on all five combinations and
+66 evidence-runner tests. Counts overlap. The native harness now uses a separate
+output file per case, fixing stale trailing bytes after shorter outputs.
+These additions still have no native Intel HVF/KVM/WHP or physical iOS evidence.
+
+### Remaining environment work
+
+1. Extend the file model with private file-backed mappings, directory/relative
+   path operations and carefully bounded writable state. Acceptance must cover
+   EOF pages, mapping lifetime after close, shared cursors and error ordering.
+2. Add explicit time/system observations and required Mach/thread services,
+   then Mach-O dependency loading, rebases/binds, initializers and TLS. Validate
+   small real executables at each boundary before admitting general libraries.
+3. Add Objective-C/Swift and Foundation/UIKit behavior with executable native
+   references. Physical iOS comparison needs an iOS SDK and device environment;
+   Intel HVF remains unvalidated and its Actions workflows remain suspended.
 
 ### File services verification, 2026-10-05
 

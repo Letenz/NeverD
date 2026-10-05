@@ -4,6 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
+#include "os/darwin/kernel/DarwinFiles.h"
+
+#include "neverd/emulation/AddressSpace.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
@@ -17,9 +20,70 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#if defined(__APPLE__)
+#include <sys/stat.h>
+#endif
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, Stat64WireRecordMatchesHostSDKAndFilesystemObservation) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "Darwin SDK and native filesystem observation require macOS";
+#else
+  using namespace darwin_model;
+  struct stat Native{};
+  ASSERT_EQ(sizeof(Native), 144u);
+#define NEVERD_DARWIN_FILE_STATUS(Member, Host, Offset, Width)                 \
+  EXPECT_EQ(offsetof(struct stat, Host), Offset##u);                           \
+  EXPECT_EQ(sizeof(Native.Host), Width##u);
+#include "os/darwin/kernel/DarwinFileStatus.def"
+#undef NEVERD_DARWIN_FILE_STATUS
+  EXPECT_EQ(offsetof(struct stat, st_rdev), 24u);
+  EXPECT_EQ(offsetof(struct stat, st_lspare), 124u);
+  EXPECT_EQ(offsetof(struct stat, st_qspare), 128u);
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-darwin-stat", Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Input = (Root / "data").string();
+  {
+    std::ofstream File(Input, std::ios::binary);
+    File << "0123456789";
+    ASSERT_TRUE(File.good());
+  }
+  ASSERT_EQ(::stat(Input.c_str(), &Native), 0);
+  std::optional<DarwinFileOptions> Options(std::in_place);
+  Options->Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  auto &M = Options->Metadata["/data"];
+#define NEVERD_DARWIN_FILE_STATUS(Member, Host, Offset, Width)                 \
+  M.Member = Native.Host;
+#include "os/darwin/kernel/DarwinFileStatus.def"
+#undef NEVERD_DARWIN_FILE_STATUS
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  auto Physical = PhysicalMemory::create(16384);
+  ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+  auto Space = AddressSpace::create(*Physical, 16384);
+  ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+  const uint64_t Base = 0x100000;
+  ASSERT_FALSE(bool((*Space)->map(Base, 4096, Read | Write | UserAccessible)));
+  const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
+  ASSERT_FALSE(bool((*Space)->write(Base, Path)));
+  DarwinFiles Files(**Space, Options);
+  ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn, "native ABI comparison"};
+  auto Returned = Files.handle(
+      ServiceKind::Stat64, {0, 338, {Base, Base + 256}, std::nullopt}, Result);
+  ASSERT_TRUE(bool(Returned)) << llvm::toString(Returned.takeError());
+  ASSERT_TRUE(Returned->has_value()) << Result.Diagnostic;
+  ASSERT_FALSE((**Returned).Error);
+  std::array<uint8_t, 144> Bytes;
+  ASSERT_FALSE(bool((*Space)->read(Base + 256, Bytes)));
+  EXPECT_EQ(llvm::ArrayRef<uint8_t>(Bytes),
+            llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(&Native),
+                                    sizeof(Native)));
+#endif
+}
 TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
 #ifndef NEVERD_DARWIN_NATIVE_ORACLE
 #if defined(__APPLE__)
@@ -53,8 +117,10 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   static_assert(std::size(Cases) != 0);
   for (const auto &Test : Cases) {
     SCOPED_TRACE(Test.Mode);
-    const auto Output = (Root / "stdout").string();
-    const auto Error = (Root / "stderr").string();
+    // ExecuteAndWait does not truncate an existing redirection target on
+    // every host. Keep each observation separate, including shorter outputs.
+    const auto Output = (Root / (std::string(Test.Mode) + ".stdout")).string();
+    const auto Error = (Root / (std::string(Test.Mode) + ".stderr")).string();
     const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                         Error};
     std::string LaunchError;

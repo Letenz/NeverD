@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinFileTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
@@ -141,6 +142,70 @@ TEST(ProcessReport, MalformedDarwinFilesFailBeforeExecution) {
   ASSERT_FALSE(bool(R));
   EXPECT_NE(llvm::toString(R.takeError()).find("file input limits"),
             std::string::npos);
+}
+
+TEST(ProcessReport, DarwinMetadataIntegersAreLosslessAndStrictlyAdmitted) {
+  const auto Original =
+      llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  auto Parse = [&](const llvm::json::Value &Metadata) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
+        llvm::formatv("{0}", Metadata).str() + "}]}}");
+  };
+  auto Good = Parse(Original);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &M = Good->DarwinFiles->Metadata.at("/data");
+  EXPECT_EQ(M.Device, -123);
+  EXPECT_EQ(M.Inode, 0xfedcba9876543210ULL);
+  EXPECT_EQ(M.Mode, 0100644);
+  EXPECT_EQ(M.UID, 0x89abcdefu);
+  EXPECT_EQ(M.GID, 0xfedcba98u);
+  EXPECT_EQ(M.Generation, 0x89abcdefu);
+  EXPECT_EQ(M.AccessTime.Seconds, INT64_MIN + 1);
+  EXPECT_EQ(M.ModificationTime.Seconds, INT64_MAX);
+  EXPECT_EQ(M.ModificationTime.Nanoseconds, 999999999);
+  EXPECT_EQ(M.BirthTime.Seconds, -5);
+  EXPECT_EQ(M.BirthTime.Nanoseconds, 6);
+  const std::pair<llvm::StringRef, llvm::json::Value> Invalid[] = {
+      {"device", uint64_t(2147483648)},
+      {"mode", 65536},
+      {"mode", 0040644},
+      {"link_count", 65536},
+      {"uid", -1},
+      {"gid", uint64_t(4294967296)},
+      {"inode", 9007199254740992.0},
+      {"inode", "18446744073709551616"},
+      {"size", 9},
+      {"blocks", "9223372036854775808"},
+      {"block_size", uint64_t(2147483648)},
+      {"flags", true},
+      {"generation", 1.25},
+      {"birth_time", nullptr},
+      {"unknown", 0}};
+  for (const auto &[Name, Value] : Invalid) {
+    SCOPED_TRACE(Name.str());
+    auto Changed = Original;
+    (*Changed.getAsObject())[Name] = Value;
+    auto Bad = Parse(Changed);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (const auto &[Name, Value] : *Original.getAsObject()) {
+    auto Missing = Original;
+    Missing.getAsObject()->erase(Name);
+    auto Bad = Parse(Missing);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (auto Time :
+       {"access_time", "modification_time", "change_time", "birth_time"})
+    for (auto Number : {-1, 1000000000}) {
+      auto Changed = Original;
+      (*Changed.getAsObject()->getObject(Time))["nanoseconds"] = Number;
+      auto Bad = Parse(Changed);
+      EXPECT_FALSE(bool(Bad));
+      llvm::consumeError(Bad.takeError());
+    }
 }
 
 TEST(ProcessReport, PreservesBinaryOutputRawRegisterBitsAndNullableStatus) {
