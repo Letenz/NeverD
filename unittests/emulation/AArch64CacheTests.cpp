@@ -11,6 +11,7 @@
 #include "llvm/Support/Endian.h"
 
 #include <array>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -24,8 +25,8 @@ struct State {
   std::array<uint64_t, unsigned(AArch64Register::FPSR) + 1> Scalars;
   std::array<RegisterValue, 32> Vectors;
 };
-class AArch64Cache
-    : public testing::TestWithParam<std::tuple<ExecutionBackendKind, bool>> {
+using Parameter = std::tuple<ExecutionBackendKind, bool>;
+class AArch64Cache : public testing::TestWithParam<Parameter> {
 protected:
   std::unique_ptr<ExecutionBackend> CPU;
   std::vector<uint8_t> Original;
@@ -371,6 +372,10 @@ INSTANTIATE_TEST_SUITE_P(
                                      ExecutionBackendKind::KVM,
                                      ExecutionBackendKind::WHP,
                                      ExecutionBackendKind::HVF),
-                     testing::Bool()));
+                     testing::Bool()),
+    [](const testing::TestParamInfo<Parameter> &P) {
+      return std::string(executionBackendName(std::get<0>(P.param))) +
+             (std::get<1>(P.param) ? "User" : "Supervisor");
+    });
 } // namespace
 } // namespace neverd::emulation

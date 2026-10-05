@@ -42,6 +42,7 @@ add_neverd_unittest(NeverDAArch64BTITests
 add_neverd_unittest(NeverDAArch64CacheTests
   AArch64CacheTests.cpp
   TIMEOUT 20
+  NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
 add_neverd_unittest(NeverDAArch64MemoryTests

@@ -30,18 +30,21 @@ NEVERD_NATIVE_HVF_OWNER(NeverDRunControlTests)
 #ifdef NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
     ARM64, "Transports/"
-           "AArch64Cache.GuestStoresUpdateExecutableAliasesAcrossTwoPages/6")
+           "AArch64Cache.GuestStoresUpdateExecutableAliasesAcrossTwoPages/"
+           "hvfSupervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64,
+    "Transports/"
+    "AArch64Cache.GuestStoresUpdateExecutableAliasesAcrossTwoPages/hvfUser")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64,
+    "Transports/"
+    "AArch64Cache.CacheTypeComesFromTheMachineAndOnlyChangesItsDestination/"
+    "hvfSupervisor")
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
     ARM64, "Transports/"
-           "AArch64Cache.GuestStoresUpdateExecutableAliasesAcrossTwoPages/7")
-NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
-    ARM64,
-    "Transports/"
-    "AArch64Cache.CacheTypeComesFromTheMachineAndOnlyChangesItsDestination/6")
-NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
-    ARM64,
-    "Transports/"
-    "AArch64Cache.CacheTypeComesFromTheMachineAndOnlyChangesItsDestination/7")
+           "AArch64Cache."
+           "CacheTypeComesFromTheMachineAndOnlyChangesItsDestination/hvfUser")
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
     ARM64, "HvfExecutor.NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry")
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
