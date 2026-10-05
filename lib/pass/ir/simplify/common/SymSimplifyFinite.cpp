@@ -34,18 +34,23 @@ struct TwoValues {
 
 class WorkBudget {
   size_t Remaining;
+  bool Exceeded = false;
 
 public:
   explicit WorkBudget(size_t Limit) : Remaining(Limit) {}
   bool spend(size_t Amount = 1) {
     if (Amount > Remaining) {
       Remaining = 0;
+      Exceeded = true;
       return false;
     }
     Remaining -= Amount;
     return true;
   }
   bool exhausted() const { return Remaining == 0; }
+  size_t remaining() const { return Remaining; }
+  bool exceeded() const { return Exceeded; }
+  void unfinished() { Exceeded = true; }
 };
 
 bool supportedType(llvm::Type *T) {
@@ -78,7 +83,7 @@ bool supportedInstruction(const llvm::Instruction &I) {
   }
 }
 
-std::optional<TwoValues> anchorValues(llvm::Value *V) {
+std::optional<TwoValues> atomicValues(llvm::Value *V, WorkBudget &Budget) {
   const unsigned Width = V->getType()->getIntegerBitWidth();
   auto Pair = [&](llvm::APInt A, llvm::APInt B) -> std::optional<TwoValues> {
     return TwoValues{V, A, A, B};
@@ -88,6 +93,29 @@ std::optional<TwoValues> anchorValues(llvm::Value *V) {
   const auto *Op = llvm::dyn_cast<llvm::BinaryOperator>(V);
   if (!Op)
     return std::nullopt;
+  // Any one-bit conjunct bounds the complete AND value to {0, mask}.
+  // Keep V itself as the anchor: other operands still affect which value it
+  // has, and retain their poison/undef and observation dependencies. Discovery
+  // never passes through OR, arithmetic or PHIs and never expands the DAG.
+  if (Op->getOpcode() == llvm::Instruction::And) {
+    llvm::SmallVector<llvm::Value *, 8> Work{V};
+    unsigned Visited = 0;
+    while (!Work.empty() && Visited++ < 8) {
+      if (!Budget.spend(1 + Width / 64))
+        return std::nullopt;
+      auto *Term = Work.pop_back_val();
+      if (auto *K = llvm::dyn_cast<llvm::ConstantInt>(Term)) {
+        if (K->getValue().isPowerOf2())
+          return Pair(llvm::APInt(Width, 0), K->getValue());
+      } else if (auto *And = llvm::dyn_cast<llvm::BinaryOperator>(Term)) {
+        if (And->getOpcode() == llvm::Instruction::And) {
+          Work.push_back(And->getOperand(0));
+          Work.push_back(And->getOperand(1));
+        }
+      }
+    }
+    return std::nullopt;
+  }
   auto *Number = llvm::dyn_cast<llvm::ConstantInt>(Op->getOperand(1));
   if (!Number && Op->isCommutative())
     Number = llvm::dyn_cast<llvm::ConstantInt>(Op->getOperand(0));
@@ -95,10 +123,6 @@ std::optional<TwoValues> anchorValues(llvm::Value *V) {
     return std::nullopt;
   const llvm::APInt &Bits = Number->getValue();
   switch (Op->getOpcode()) {
-  case llvm::Instruction::And:
-    if (Bits.isPowerOf2())
-      return Pair(llvm::APInt(Width, 0), Bits);
-    break;
   case llvm::Instruction::Or:
     if ((~Bits).isPowerOf2())
       return Pair(Bits, llvm::APInt::getAllOnes(Width));
@@ -115,6 +139,80 @@ std::optional<TwoValues> anchorValues(llvm::Value *V) {
     break;
   }
   return std::nullopt;
+}
+
+std::optional<TwoValues> anchorValues(llvm::Value *V, WorkBudget &Budget) {
+  if (V->getType()->getIntegerBitWidth() == 1 ||
+      !llvm::isa<llvm::PHINode, llvm::SelectInst>(V))
+    return atomicValues(V, Budget);
+  // Merge edges only copy selected values. Bound every producer before
+  // admitting the union, including backedges; conditions remain dependencies
+  // of the original SSA anchor and are checked by seed's stability walk.
+  constexpr unsigned MaxNodes = 32, MaxEdges = 64;
+  llvm::SmallVector<llvm::Value *, MaxNodes> Nodes{V};
+  llvm::DenseMap<llvm::Value *, unsigned> Indices{{V, 0}};
+  llvm::SmallVector<std::pair<unsigned, unsigned>, MaxEdges> Edges;
+  llvm::SmallVector<unsigned, MaxNodes> Anchored;
+  llvm::SmallVector<llvm::APInt, 2> Values;
+  const auto Width = V->getType()->getIntegerBitWidth();
+  auto Record = [&](const llvm::APInt &Value) {
+    if (llvm::is_contained(Values, Value))
+      return true;
+    if (Values.size() == 2)
+      return false;
+    Values.push_back(Value);
+    return true;
+  };
+  auto Add = [&](unsigned From, llvm::Value *Value) {
+    if (!Budget.spend() || Edges.size() == MaxEdges)
+      return false;
+    auto It = Indices.find(Value);
+    if (It == Indices.end()) {
+      if (Nodes.size() == MaxNodes)
+        return false;
+      It = Indices.try_emplace(Value, Nodes.size()).first;
+      Nodes.push_back(Value);
+    }
+    Edges.emplace_back(From, It->second);
+    return true;
+  };
+  for (unsigned N = 0; N != Nodes.size(); ++N) {
+    if (!Budget.spend(1 + Width / 64))
+      return std::nullopt;
+    auto *Current = Nodes[N];
+    if (auto *Phi = llvm::dyn_cast<llvm::PHINode>(Current)) {
+      for (auto &Input : Phi->incoming_values())
+        if (!Add(N, Input))
+          return std::nullopt;
+    } else if (auto *Select = llvm::dyn_cast<llvm::SelectInst>(Current)) {
+      if (!Add(N, Select->getTrueValue()) || !Add(N, Select->getFalseValue()))
+        return std::nullopt;
+    } else if (auto *K = llvm::dyn_cast<llvm::ConstantInt>(Current)) {
+      if (!Record(K->getValue()))
+        return std::nullopt;
+      Anchored.push_back(N);
+    } else {
+      auto Pair = atomicValues(Current, Budget);
+      if (!Pair || !Record(Pair->First) || !Record(Pair->Second))
+        return std::nullopt;
+      Anchored.push_back(N);
+    }
+  }
+  // Every cyclic copy component must be connected to an admitted producer.
+  // A seed elsewhere in the graph cannot certify an unanchored component.
+  for (unsigned N = 0; N != Anchored.size(); ++N)
+    for (auto [Parent, Child] : Edges) {
+      if (!Budget.spend())
+        return std::nullopt;
+      if (Child == Anchored[N] && !llvm::is_contained(Anchored, Parent))
+        Anchored.push_back(Parent);
+    }
+  // A singleton table would erase the observation's poison dependence.
+  if (Anchored.size() != Nodes.size() || Values.size() != 2)
+    return std::nullopt;
+  if (Values[1].ult(Values[0]))
+    std::swap(Values[0], Values[1]);
+  return TwoValues{V, Values[0], Values[0], Values[1]};
 }
 
 // Constant folding alone may legally refine poison. Here every enumerated
@@ -212,7 +310,7 @@ class SliceAnalysis {
   llvm::DenseMap<llvm::Value *, bool> AnchorSafety;
 
   std::optional<TwoValues> seed(llvm::Value *V) {
-    auto Result = anchorValues(V);
+    auto Result = anchorValues(V, Budget);
     if (!Result)
       return std::nullopt;
     if (auto It = AnchorSafety.find(V); It != AnchorSafety.end())
@@ -392,25 +490,33 @@ unsigned removableInstructions(llvm::Instruction *Root, llvm::Value *Anchor,
 
 } // namespace
 
-unsigned simplifyFiniteValueSlices(llvm::Function &F,
-                                   const SymSimplifyOptions &Opts) {
+SymFiniteValueSimplifyResult
+SymSimplifyPass::simplifyFiniteValues(llvm::Function &F,
+                                      SymSimplifyOptions Opts) {
+  if (!Opts.MaxFiniteValueWork || F.hasFnAttribute(kObfuscatedFnAttr))
+    return {};
   WorkBudget Budget(Opts.MaxFiniteValueWork);
-  if (Budget.exhausted())
-    return 0;
+  unsigned Rewrites = 0;
+  auto Result = [&] {
+    return SymFiniteValueSimplifyResult{
+        Rewrites, Opts.MaxFiniteValueWork - Budget.remaining(),
+        Budget.exceeded()};
+  };
   llvm::SmallVector<llvm::WeakTrackingVH, 64> Roots;
   for (llvm::Instruction &I : llvm::instructions(F)) {
     if (!Budget.spend())
-      return 0;
+      return Result();
     if (supportedInstruction(I) && !I.use_empty())
       Roots.push_back(&I);
   }
   SliceAnalysis Analysis(F.getDataLayout(), Budget);
-  unsigned Rewrites = 0;
   // Visit consumers first so a complete composed slice can disappear at once.
   // The enclosing semantic fixed point will revisit any newly exposed slice.
   for (llvm::WeakTrackingVH &Handle : llvm::reverse(Roots)) {
-    if (Budget.exhausted())
+    if (Budget.exhausted()) {
+      Budget.unfinished();
       break;
+    }
     auto *Root = llvm::dyn_cast_or_null<llvm::Instruction>(Handle);
     if (!Root || Root->use_empty())
       continue;
@@ -420,7 +526,11 @@ unsigned simplifyFiniteValueSlices(llvm::Function &F,
     if (!P || !P->Anchor || P->Anchor == Root || P->First == P->Second)
       continue;
     const unsigned Removable = removableInstructions(Root, P->Anchor, Budget);
-    if (Budget.exhausted() || Removable < Opts.MinInstructionsSaved)
+    if (Budget.exhausted()) {
+      Budget.unfinished();
+      break;
+    }
+    if (Removable < Opts.MinInstructionsSaved)
       continue;
     llvm::SmallVector<llvm::Instruction *, 4> Created;
     llvm::IRBuilder<llvm::ConstantFolder, llvm::IRBuilderCallbackInserter> B(
@@ -452,7 +562,12 @@ unsigned simplifyFiniteValueSlices(llvm::Function &F,
     llvm::RecursivelyDeleteTriviallyDeadInstructions(Root);
     ++Rewrites;
   }
-  return Rewrites;
+  return Result();
+}
+
+unsigned simplifyFiniteValueSlices(llvm::Function &F,
+                                   const SymSimplifyOptions &Opts) {
+  return SymSimplifyPass::simplifyFiniteValues(F, Opts).Rewrites;
 }
 
 } // namespace neverd

@@ -188,6 +188,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
+  AndroidFileTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
   AndroidFinalizerTests.cpp

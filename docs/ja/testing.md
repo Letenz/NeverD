@@ -102,6 +102,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `NeverDLLVMScalarLoopRecoveryTests` は前置処理と前駆状態、ゼロ回経路、自己バックエッジの先頭判定、アフィン状態、周回時の等値判定、余分な更新による poison、高位データ差、不対応の入力契約を検査します。累積予算の厳密値と一つ不足した値で原子的拒否を確認します。独立した算術オラクルで元と復元後の LLVM を O0/O2 で実行し、全バイト制御入力を検査します。ネイティブ ABI 復元や既定 C 出力の証明ではありません。
 
+同じターゲットは `recoverLLVMScalarSource` も検証します。探索前の準備、ループ変更なしの整理、未使用の全幅状態、死んだオーバーフロー・exact シフト・除算・assume の義務、未対応の副作用、正確な予算と一単位不足の累積予算、継続上限を扱います。独立した算術オラクルで元と準備後の LLVM を O0/O2 で実行し、全バイト制御値と決定的な全幅状態を検査します。成功・拒否のどちらでも元の関数と親モジュールを変更しません。
+
 マスクの回帰は交換されたオペランド、ゼロのフィールド、入力の上位ビット、全データ証明失敗後の代案、全バックエッジ、周回・オーバーフローの拒否、32件を超えるバッチ、ちょうど／一つ不足する予算での原子的拒否を扱います。独立した LLVM と生成 C の算術オラクルを O0/O2 で実行し、幅の復元との組合せを確認します。自己等価テストは完全な制御領域、poison/undef・未対応契約の拒否、非停止、局所上限、正確な作業量計上を保ち、同じ関数を変更した後に過去の結果を再利用しません。これはスカラー LLVM の検証であり、ネイティブ ABI の認証ではありません。
 
 共有マスク包含テストは全バイト入力ペアを網羅し、非連続マスクと128ビットまでの幅、未知・上位ビットの保持、項数・幅上限外でのノード増加制限を確認します。二つのバックエッジを持つシンボリックループは、マスク付き XOR 漸化式を独立した閉形式に対して証明します。制御依存テストは正規化後のシフト量の格納幅を計上し、ちょうど／一つ不足する予算と広い値の保守的処理を維持します。
@@ -122,6 +124,10 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `LLVMScalarAssume*` は完全なループ領域、最終分区の失敗、到達不能と到達済みの偽条件、全バイト入力で累積する定義性、正確・1不足の予算、IR 変更、未対応の呼び出し契約を検査します。4 つのターゲット triple で共有モデルを検証し、8,192 回の O0/O2 呼び出しを独立した符号なし oracle と比較します。状態モデルのテストも同じ義務とオペランドバンドルの拒否を検査します。
 
+`LLVMScalarProjection.*` は入れ子フィールド、ビット範囲、未使用引数の保持、複数の戻り、後退辺、未選択演算の overflow/shift/assume 義務、最終分区の失敗、非停止、未知の契約、入力変更、正確・1不足の予算を検査します。4種類のターゲットで共有意味論を確認します。`LLVMScalarProjectionCompiled.*` は LLVM 配列ブリッジを介した元の集約と投影結果を、O0/O2 で独立した符号なし算術と比較します。`SymExpr.RightShift*` はバイト対を全探索し、符号拡張、桁上がり、保持上位ビット、完全なシフト量と探索制限を検査します。
+
+`NeverDLLVMScalarStateProjectionTests` は重複・非整列ウィンドウ、8/16/32/64ビットセル、ループ、入口マスク、ソース変更、状態範囲、poison保持、外部メモリ拒否、正確/不足予算を検証します。元のメモリ関数とLLVM集約ブリッジをO0/O2で独立したバイト/算術oracleと172,032回比較し、スカラー証明は別に検証します。`SymKnownBits.*` は全バイト対と128ビット、異なる因子、拡大マスク、ラップする和、予算境界を検査します。`LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` はO0/O2で条件の単一評価とbundle拒否を検査します。
+
 ループメタデータの回帰テストは、全制御分区と正確・1不足の予算で計数ループを独立した式と比較します。大きな値やゼロの剥離履歴でも誤った結果、非終了、poison を隠せません。API で不正なメタデータを構築し、LLVM アセンブリ解析とは別にインポーターの拒否を検証します。機械状態テストでは状態への副作用と入力制限を保持します。
 
 初期化契約の回帰テストは、部分・分離バイト範囲、固定別名、分岐の両側、各リターン、ループ初回の読み取り、ループ内の書き込み後の読み取りを検証します。先行読み取り、書き込み不足、ゲスト書き込み、未知の別名、特殊メモリアクセス、オブジェクト外範囲、入力／作業予算の枯渇は失敗しなければなりません。出力専用状態ワードを持つ独立した C 例を O1/O2 でコンパイルし、正確な LLVM 属性を保持したまま新たなネイティブから LLVM への合成証明を検証します。
@@ -137,6 +143,10 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -1046,6 +1056,10 @@ CPU アフィニティー、新規プロセス、ウォームキャッシュ、R
 ## モジュール式 MBA 簡約
 
 `SymSimplifyFinite.*` は 8〜512 ビットの完全な二値域、共有使用の費用計算、対応するすべての poison 生成注釈、独立した volatile 読み出しと freeze、明示的 undef/poison、深い反復走査、予算、難読化属性を検証します。元の IR と簡約後の IR を O0/O2 で実行し、全バイト入力とランダムな全幅入力を独立した期待値と比較します。翻訳オブジェクトのテストでは、有限値予算が異なる場合にキャッシュ識別子も異なることを要求します。
+
+合流値域テストは8–512ビットの入れ子select、菱形PHI、コピー循環を扱い、競合する後退辺、未定義条件、生成元のない成分、独立したPHI/freeze観測、フラグ付き生成元の保持、ノード・辺・作業量の厳密な境界も検証します。O0/O2の実行オラクルは全バイト入力対を網羅し、全幅オペランドを変化させて選択、合流、有界状態ループを検証します。
+
+二値テストは 8–512 ビットの入れ子の論理積マスク、オペランド交換、OR/undef の拒否、深い探索の上限、独立した作業計数と難読化マーク、最初の書換えに必要な正確な予算境界も検証します。実行オラクルは全バイト入力対を網羅し、無関係な 64 ビットデータを変化させ、元と簡約後の IR を O0/O2 で比較します。
 
 `SymSimplifyPredicates.*` は 4 ビットのオフセット・符号・入力を全数検査し、真偽区間の合成と非連続集合を確認して、独立したバイト幅・全幅の oracle を O0/O2 で実行します。poison 注釈、合流点の未定義入力、独立した読み取り/freeze、保持するループ PHI、共有用途の利益、累積予算、多数の用途、再帰上限、難読化印を扱います。翻訳オブジェクトの両キャッシュキーで条件解析予算を区別します。
 

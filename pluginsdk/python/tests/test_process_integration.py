@@ -16,6 +16,45 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_memory_files_share_descriptors_with_guest_threads(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for optimization in ("O0", "O2"):
+            for entry in ("files_sequence", "files_faults", "files_bionic"):
+                with self.subTest(optimization=optimization, entry=entry):
+                    options = {
+                        "backend": "unicorn", "instruction_quantum": 31,
+                        "linux_files": {"files": [{"path": "/fixture/data", "bytes_hex": "00ff410a805a"}]},
+                        "android": {"entry_symbol": entry, "initialize": False, "thread_limit": 2},
+                    }
+                    result = session.emulate_process(
+                        str(Path(fixtures) / f"files-{optimization}-relr.so"),
+                        "android-aarch64-api28-v1", json.dumps(options))
+                    self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+                    self.assertEqual(result["return_value"], "0")
+                    if entry == "files_bionic":
+                        reads = [e for e in result["android"]["native_calls"]
+                                 if e["name"] == "read" and e["thread_id"] == 1001]
+                        self.assertEqual(len(reads), 1)
+                        self.assertEqual(reads[0]["arguments"][0], "3")
+                        self.assertEqual(reads[0]["result"], "2")
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_android_guest_threads_keep_identity_and_named_imports(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

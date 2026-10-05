@@ -96,6 +96,86 @@ TEST(SymExpr, ShiftsByConstantsBecomeProductsSoSumsCanCollectThem) {
   EXPECT_EQ(Ctx.mkLShr(X, Ctx.mkConst(W32, 99)), Ctx.mkZero(W32));
 }
 
+TEST(SymExpr, RightShiftDiscardsOnlyNeutralBitwiseWindows) {
+  for (unsigned Width : {8U, 16U, 32U, 64U, 128U}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    const unsigned Half = Width / 2;
+    auto X = C.mkVar("x", Half), Y = C.mkVar("y", Half);
+    auto High = C.mkShl(C.mkZExt(X, Width), C.mkConst(Width, Half));
+    auto Low = C.mkZExt(Y, Width);
+    auto Count = C.mkConst(128, Half);
+    for (auto Packed : {C.mkOr(High, Low), C.mkXor(High, Low)})
+      EXPECT_EQ(C.mkExtract(C.mkLShr(Packed, Count), 0, Half), X);
+    auto Neutral =
+        C.mkOr(Low, C.mkConst(llvm::APInt::getHighBitsSet(Width, Half)));
+    EXPECT_EQ(C.mkExtract(C.mkLShr(C.mkAnd(High, Neutral), Count), 0, Half), X);
+    // Several discarded terms may jointly cover more than one machine word.
+    auto Narrow = C.mkVar("narrow", 1);
+    auto Whole = C.mkVar("whole", Width);
+    EXPECT_EQ(
+        C.mkLShr(C.mkOr(Whole, C.mkZExt(Narrow, Width)), C.mkConst(Width, 1)),
+        C.mkLShr(Whole, C.mkConst(Width, 1)));
+  }
+}
+
+TEST(SymExpr, RightShiftWindowFoldsMatchIndependentByteArithmetic) {
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  for (unsigned Shift = 1; Shift < 8; ++Shift) {
+    const unsigned Mask = (1U << Shift) - 1;
+    auto Low = C.mkAnd(Y, C.mkConst(8, Mask));
+    auto HighOnes = C.mkOr(Y, C.mkConst(8, 255U ^ Mask));
+    auto Count = C.mkConst(8, Shift);
+    const SymRef Results[] = {C.mkLShr(C.mkOr(X, Low), Count),
+                              C.mkLShr(C.mkXor(X, Low), Count),
+                              C.mkLShr(C.mkAnd(X, HighOnes), Count)};
+    for (auto R : Results)
+      EXPECT_EQ(R, C.mkLShr(X, Count));
+    // Addition can carry out of the discarded bits; a partly retained OR
+    // operand, a sign extension and a variable shift cannot be dropped.
+    const SymRef Unchanged[] = {
+        C.mkLShr(C.mkAdd(X, Low), Count),
+        C.mkLShr(C.mkOr(X, C.mkAnd(Y, C.mkConst(8, Mask | (1U << Shift)))),
+                 Count),
+        C.mkLShr(C.mkOr(X, C.mkSExt(C.mkExtract(Y, 0, 4), 8)), Count),
+        C.mkLShr(C.mkOr(X, Low), Y)};
+    for (unsigned A = 0; A < 256; ++A)
+      for (unsigned B = 0; B < 256; ++B) {
+        uint64_t Values[] = {A, B};
+        for (auto R : Results)
+          ASSERT_EQ(C.evalU64(R, Values), A >> Shift);
+        const unsigned SignedNibble = (B & 8) ? (B & 15) | 240 : B & 15;
+        const unsigned Expected[] = {
+            ((A + (B & Mask)) & 255) >> Shift,
+            (A | (B & (Mask | (1U << Shift)))) >> Shift,
+            (A | SignedNibble) >> Shift, B >= 8 ? 0 : (A | (B & Mask)) >> B};
+        for (unsigned I = 0; I < std::size(Unchanged); ++I)
+          ASSERT_EQ(C.evalU64(Unchanged[I], Values), Expected[I]);
+      }
+  }
+}
+
+TEST(SymExpr, RightShiftWindowDiscoveryIsBoundedAndKeepsFullCounts) {
+  SymContext C;
+  auto X = C.mkVar("x", 64);
+  llvm::SmallVector<SymRef, 10> Terms{X};
+  for (unsigned I = 0; I < 8; ++I)
+    Terms.push_back(C.mkZExt(C.mkFreshVar(8), 64));
+  auto Many = C.mkOr(Terms);
+  auto Count = C.mkConst(64, 32);
+  auto Result = C.mkLShr(Many, Count);
+  EXPECT_EQ(C.op(Result), SymOp::LShr);
+  EXPECT_EQ(C.operand(Result, 0), Many);
+  Terms.pop_back();
+  EXPECT_EQ(C.mkLShr(C.mkOr(Terms), Count), C.mkLShr(X, Count));
+  auto Wide = C.mkOr(C.mkVar("wide", 256), C.mkZExt(C.mkVar("low", 8), 256));
+  EXPECT_EQ(C.operand(C.mkLShr(Wide, C.mkConst(256, 128)), 0), Wide);
+  EXPECT_EQ(C.mkLShr(Many, C.mkConst(llvm::APInt::getOneBitSet(128, 80))),
+            C.mkZero(64));
+  EXPECT_EQ(C.mkLShr(Many, C.mkZero(128)), Many);
+}
+
 TEST(SymExpr, XorClearsBitsForcedByTheSameOrMask) {
   for (unsigned Width : {1u, 3u, 8u, 32u, 64u, 128u, 256u}) {
     SCOPED_TRACE(Width);

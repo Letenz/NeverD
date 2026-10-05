@@ -105,6 +105,8 @@ Les régressions de phase initiale couvrent deux ou trois boucles successives r�
 
 `NeverDLLVMScalarLoopRecoveryTests` couvre préfixes, états des prédécesseurs, chemins à zéro itération, boucles sur elles-mêmes, états affines, égalité après bouclage arithmétique, poison d'une mise à jour supplémentaire, bits de données hauts et contrats refusés. Des budgets exacts ou réduits d'une unité vérifient le refus atomique. Des oracles arithmétiques indépendants exécutent les LLVM original et reconstruit à O0/O2 pour toutes les entrées de contrôle sur un octet. Cela ne prouve ni récupération de l'ABI native ni sortie C par défaut.
 
+La même cible vérifie aussi `recoverLLVMScalarSource` : préparation avant recherche, nettoyage seul, état inutilisé de pleine largeur, obligations mortes de débordement, décalage exact, division et assume, effets refusés, budgets cumulés exacts ou réduits d’une unité et continuation bornée. Des oracles arithmétiques indépendants exécutent les LLVM original et préparé à O0/O2 pour tous les contrôles d’un octet et des états déterministes de pleine largeur. Source et module parent restent intacts en cas de succès comme de refus.
+
 Les régressions des masques couvrent les opérandes permutés, les champs nuls, les bits hauts d’entrée conservés, une alternative après échec sur les données complètes, tous les arcs de retour, le refus des rebouclages/débordements, plus de 32 propositions et les budgets exacts ou inférieurs d’une unité. Des oracles arithmétiques LLVM et C indépendants à O0/O2 vérifient la composition avec la réduction de largeur. Les requêtes réflexives conservent les domaines complets, le refus de poison/undef et des contrats non pris en charge, la non-terminaison, les plafonds locaux et la comptabilité exacte ; modifier la même fonction invalide le résultat antérieur. Cette couverture LLVM scalaire ne certifie pas l’ABI native.
 
 Les tests de confinement des masques épuisent toutes les paires d’octets, couvrent les masques non contigus et les largeurs jusqu’à 128 bits, préservent les bits inconnus/hauts et bornent la croissance des nœuds au-delà des plafonds. Une boucle symbolique à deux arcs de retour doit prouver sa récurrence XOR masquée contre une forme fermée indépendante. La découverte des dépendances facture le stockage normalisé des décalages tout en gardant les budgets exacts/courts et le repli conservateur pour les valeurs larges.
@@ -125,6 +127,10 @@ Les régressions supplémentaires couvrent les derniers indices étroits avec re
 
 `LLVMScalarAssume*` vérifie les domaines complets de boucle, les échecs de la dernière partition, les conditions fausses inaccessibles ou atteintes, la définissabilité cumulative pour toutes les entrées d’un octet, les budgets exacts ou réduits d’une unité, les modifications d’IR et les contrats d’appel non pris en charge. Quatre triples cibles exercent le modèle partagé ; 8 192 appels O0/O2 sont comparés à un oracle non signé indépendant. La suite du modèle d’état vérifie séparément la même obligation et le refus des bundles d’opérandes.
 
+`LLVMScalarProjection.*` couvre champs imbriqués, fenêtres, arguments inutilisés conservés, retours multiples, arêtes arrière, obligations overflow/shift/assume non sélectionnées, échec de dernière partition, non-terminaison, contrats inconnus, entrée modifiée et budgets exacts/insuffisants d’une unité. Quatre triplets testent la sémantique partagée. `LLVMScalarProjectionCompiled.*` compare l’agrégat original via un pont tableau LLVM et les projections à une arithmétique non signée indépendante en O0/O2. `SymExpr.RightShift*` épuise les paires d’octets et vérifie extension signée, retenues, bits hauts conservés, comptes complets et limites de recherche.
+
+`NeverDLLVMScalarStateProjectionTests` couvre fenêtres superposées/non alignées, cellules 8/16/32/64 bits, boucles, masques, modifications de source, plages de statut, poison conservé, mémoire externe et budgets exacts/insuffisants. Les corps mémoire et ponts agrégés LLVM effectuent 172 032 comparaisons O0/O2 avec des oracles indépendants ; les preuves scalaires restent distinctes. `SymKnownBits.*` épuise les paires d’octets et vérifie 128 bits, facteurs différents, masques élargis, sommes débordantes et budgets. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` vérifie l’évaluation unique à O0/O2 et le refus des bundles.
+
 Les régressions de métadonnées de boucle comparent des boucles comptées à une formule indépendante sur toutes les partitions de contrôle et avec des budgets exacts ou réduits d’une unité. Un historique de peeling grand ou nul ne masque ni résultat erroné, ni non-terminaison, ni poison. Des métadonnées mal formées construites par API vérifient le refus de l’importateur séparément de l’analyse d’assemblage LLVM ; les tests d’état machine préservent les effets d’état et les limites d’entrée.
 
 Les régressions couvrent les plages partielles et séparées, les alias fixes, les deux branches, chaque retour, les lectures à la première itération et les écritures précédant les lectures dans une boucle. Lecture avant écriture, écriture manquante, écriture invitée, alias inconnu, accès spécial, plage hors objet et épuisement des budgets doivent échouer. Un exemple C indépendant qui écrit un mot d’état sans le lire est compilé à O1/O2 ; il conserve les attributs LLVM exacts et passe une nouvelle preuve composée du natif vers LLVM.
@@ -140,6 +146,10 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -1161,6 +1171,10 @@ Le workflow manuel `Mobile Swift String ABI Evidence` compile des sondes Swift f
 ## Simplification MBA modulaire
 
 `SymSimplifyFinite.*` couvre les domaines complets à deux valeurs de 8 à 512 bits, le coût des usages partagés, toutes les annotations prises en charge pouvant produire poison, les lectures volatile et freeze indépendants, undef/poison explicites, les parcours itératifs profonds, les budgets et la marque d’obfuscation. Les IR original et simplifié sont exécutés à O0/O2 face à un oracle indépendant pour tous les octets et des entrées aléatoires de pleine largeur. Les tests d’objets traduits exigent des identités de cache distinctes pour des budgets de valeurs finies distincts.
+
+Les tests de domaines fusionnés couvrent selects imbriqués, PHI en losange et cycles de copie sur 8–512 bits ; retours conflictuels, conditions indéfinies, composantes sans origine, observations PHI/freeze indépendantes et producteurs annotés conservés ; ainsi que les limites exactes de nœuds, arêtes et travail. Les oracles O0/O2 parcourent toutes les paires d’octets et varient les opérandes pleine largeur pour les sélections, jonctions et boucles d’état bornées.
+
+Les tests à deux valeurs couvrent aussi les masques de conjonctions imbriquées sur 8–512 bits, les opérandes permutés, le refus OR/undef, la profondeur bornée, le comptage autonome, le marquage d’obfuscation et le budget exact de la première réécriture. Les oracles exécutent toutes les paires d’octets et font varier les autres données sur 64 bits, en comparant IR original et simplifié à O0/O2.
 
 `SymSimplifyPredicates.*` énumère exhaustivement décalages, signes et entrées sur quatre bits, vérifie les compositions booléennes et ensembles disjoints, puis exécute des oracles indépendants sur un octet et pleine largeur à O0/O2. Il couvre annotations poison, entrées indéfinies cachées aux jointures, lectures/freezes indépendants, PHI de boucle conservés, rentabilité des usages partagés, travail cumulé, nombreux usages, limites de récursion et marque d’obfuscation. Les deux clés de cache distinguent les budgets d’analyse des prédicats.
 

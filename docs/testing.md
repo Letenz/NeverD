@@ -40,6 +40,10 @@ prebuilt-LLVM guidance.
 
 `SymSimplifyFinite.*` covers complete two-valued slices at widths from 8 to 512 bits, shared-use profitability, every supported poison-generating annotation, independent volatile reads and freezes, explicit undef/poison, deep iterative traversal, budgets and the obfuscation stamp. Original and simplified IR execute against an independent oracle over every byte input and randomized full-width inputs at O0/O2. Translation-object tests require distinct cache identities for distinct finite-value budgets.
 
+Merge-domain tests cover nested selects, diamond PHIs and copy cycles at 8–512 bits; conflicting backedges, undefined conditions, unanchored components, independent PHI/freeze observations and retained flagged producers; and exact node, edge and work boundaries. O0/O2 runtime oracles exhaust every byte-input pair and vary full-width operands for selections, joins and bounded state loops.
+
+The finite-value tests additionally cover nested conjunction masks at 8–512 bits, commuted operands, OR/undef refusal, bounded deep discovery, standalone work/stamp policy and the exact first-rewrite budget boundary. Runtime oracles exhaust all byte-input pairs and vary unrelated 64-bit data, comparing original and simplified IR at O0/O2.
+
 `SymSimplifyPredicates.*` exhausts four-bit offsets, signs and inputs, checks Boolean interval composition and disconnected sets, and executes independent byte/full-width oracles at O0/O2. It covers poison annotations, hidden undefined join inputs, independent reads/freezes, retained loop PHIs, shared-use profitability, cumulative work, high fan-out, recursion limits and the obfuscation stamp. Translation-object tests distinguish predicate budgets in both cache keys.
 
 `SymExpr.*` checks constant non-low windows with exhaustive four-bit inputs and masks, wide carriers, nested structural operations, mixed known/unknown byte reassembly and arithmetic carry counterexamples. Budget regressions combine a wide node with the recursion boundary and reject copying an oversized constant. Unknown windows must remain symbolic without expanding the expression DAG. `SymState.*` also distinguishes derived scalar constants from literal-only region facts in both byte orders, without growing the DAG or changing complete stored words.
@@ -386,6 +390,8 @@ Leading-phase regressions cover two and three sequential loops reusing one count
 
 `NeverDLLVMScalarLoopRecoveryTests` covers prefix and predecessor-carrier recovery, zero-trip alternatives, self-latch rotation, affine states, wrapping equality fallback, extra-update poison, differing high data bits and unsupported input contracts. Exact/short cumulative budgets check atomic refusal. Independent arithmetic oracles execute original and recovered LLVM at O0/O2, including all byte control inputs. These tests do not establish native ABI recovery or default C output.
 
+The same target also checks `recoverLLVMScalarSource`: preparation before loop search, cleanup without loop changes, full-width unused state, dead overflow/exact-shift/division and assume obligations, unsupported effects, exact/one-short cumulative budgets and bounded continuation. Independent arithmetic oracles execute original and prepared LLVM at O0/O2 for every byte control and deterministic full-width state. Source and parent module must remain unchanged on success and refusal.
+
 Mask regressions cover commuted operands, zero fields, retained high input bits, a screened alternative after full-data failure, every backedge, wrap/overflow rejection, batches larger than 32 and exact/short atomic budgets. Independent LLVM and emitted-C arithmetic oracles at O0/O2 check composition with width recovery. Self-query regressions retain complete control domains, poison/undef and unsupported-contract rejection, nontermination, local ceilings and exact/short work accounting; editing the same function invalidates any earlier outcome. These checks remain scalar LLVM coverage, not native ABI certification.
 
 Shared mask-containment tests exhaust every byte-input pair, cover noncontiguous masks and widths through 128 bits, retain unknown/high bits, and bound node growth beyond the fan-in/width ceilings. A symbolic loop with two backedges must prove its masked-XOR recurrence against an independent closed form. Control-discovery tests charge normalized shift-count storage while preserving exact/short budgets and the wide-value fallback.
@@ -406,6 +412,10 @@ Additional loop regressions cover narrow wrapped last indices, separate body/lat
 
 `LLVMScalarAssume*` checks complete loop domains, last-partition failures, unreachable versus reached false conditions, sticky definedness across all byte inputs, exact/short budgets, changed IR and unsupported call contracts. Four target triples exercise shared modeling; 8,192 O0/O2 calls check an independent unsigned oracle. The state-model suite independently checks the same obligation and operand-bundle rejection.
 
+`LLVMScalarProjection.*` covers nested fields, bit windows, retained unused arguments, multiple returns, backedges, unselected overflow/shift/assume obligations, last-partition failures, nontermination, unknown contracts, changed input and exact/short budgets. Four target triples exercise shared semantics. `LLVMScalarProjectionCompiled.*` compares the original aggregate through an LLVM array bridge and projected windows against independent unsigned arithmetic at O0/O2. `SymExpr.RightShift*` exhausts byte pairs and checks sign extension, carries, retained high bits, full counts and bounded discovery.
+
+`NeverDLLVMScalarStateProjectionTests` covers overlapping and unaligned windows, all 8/16/32/64-bit cells, loops, entry masks, changed sources, status ranges, retained poison, external-memory refusals and exact/short budgets. Original memory bodies and LLVM aggregate bridges execute 172,032 O0/O2 comparisons against independent byte/arithmetic oracles. Scalar proofs remain separate. `SymKnownBits.*` exhausts byte pairs and checks 128-bit, changed-factor, wider-mask, wrapping-sum and budget boundaries. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` checks single predicate evaluation at O0/O2 and explicit bundle refusal.
+
 Loop-metadata regressions compare counted loops with an independent formula across all control partitions and exact/short budgets. Large or zero peeling-history counts cannot hide wrong results, nontermination or poison. API-constructed malformed metadata exercises importer rejection separately from LLVM assembly parsing; machine-state tests retain state effects and input limits.
 
 Initialization-contract regressions cover partial and separated byte ranges, fixed aliases, both branch arms, every return, first-iteration loop reads, and stores before loop reads. Read-before-write, missing writes, guest writes, unknown aliases, special memory accesses, out-of-object ranges and exhausted input/work budgets must fail. An independent output-only C fixture compiled at O1/O2 retains the exact LLVM attributes and passes fresh native-to-LLVM composition.
@@ -421,6 +431,10 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -2560,3 +2574,9 @@ build-release/bin/NeverDByteCellScalarizationTests
 ```
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` checks 48-level block, loop, switch and exception bodies with an independent interpreter over entered and bypassed paths. A generous runtime bound catches repeated recursive traversal. This is structured HighIR coverage; whole-image method recovery still requires its separate complete inventory and dependency checks.
+
+`AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
+
+The file fixture also takes an imported function’s address while calling it directly. `CallableImportEvidenceBelongsToTheExactSymbol` checks GOT-before-PLT binding across ordinary/APS2/RELR inputs, removes the matching call-slot evidence, changes the declaration to object/function types, and verifies one thunk per admitted symbol. Existing thread-address imports exercise the same linker rule.
+
+Memory-file reads cover empty ranges at the user limit and original-count signed overflow before transfer clamping or EOF. Raw calls and Bionic check address-error precedence, unchanged cursors and errno across failures and successful empty reads.

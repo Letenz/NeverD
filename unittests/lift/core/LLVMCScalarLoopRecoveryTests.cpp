@@ -249,8 +249,8 @@ TEST(LLVMCScalarLoopRecovery, PredicateConstructionBudgetIsSharedAndAtomic) {
     if (!Module)
       return false;
     const auto Before = text(*Module);
-    neverd::analysis::LLVMScalarLoopRecoveryLimits Limits;
-    Limits.MaxConstructionWork = Work;
+    neverd::analysis::LLVMScalarSourceRecoveryLimits Limits;
+    Limits.Search.MaxConstructionWork = Work;
     const auto Changed =
         neverd::llvmc::recoverScalarLoops(*Module, nullptr, Limits);
     if (!Changed)
@@ -260,8 +260,8 @@ TEST(LLVMCScalarLoopRecovery, PredicateConstructionBudgetIsSharedAndAtomic) {
   // Find the publication boundary without fixing an implementation work
   // count. Every unsuccessful run must preserve the complete original body.
   uint64_t Low = 0;
-  uint64_t High =
-      neverd::analysis::LLVMScalarLoopRecoveryLimits().MaxConstructionWork;
+  uint64_t High = neverd::analysis::LLVMScalarSourceRecoveryLimits()
+                      .Search.MaxConstructionWork;
   ASSERT_TRUE(Attempt(High));
   while (High - Low > 1) {
     const auto Middle = Low + (High - Low) / 2;
@@ -282,8 +282,8 @@ TEST(LLVMCScalarLoopRecovery, PredicateConstructionBudgetIsSharedAndAtomic) {
   std::string Before;
   llvm::raw_string_ostream Stream(Before);
   Untouched->print(Stream);
-  neverd::analysis::LLVMScalarLoopRecoveryLimits Limits;
-  Limits.MaxConstructionWork = High;
+  neverd::analysis::LLVMScalarSourceRecoveryLimits Limits;
+  Limits.Search.MaxConstructionWork = High;
   EXPECT_EQ(neverd::llvmc::recoverScalarLoops(*Module, nullptr, Limits), 1U);
   std::string After;
   llvm::raw_string_ostream AfterStream(After);
@@ -449,25 +449,25 @@ TEST(LLVMCScalarLoopRecovery, RefusedBudgetsKeepCompleteBodiesAndDeclarations) {
     auto Module = parse(Prefix, Context);
     ASSERT_TRUE(Module);
     const auto Before = text(*Module);
-    neverd::analysis::LLVMScalarLoopRecoveryLimits Limits;
+    neverd::analysis::LLVMScalarSourceRecoveryLimits Limits;
     switch (Kind) {
     case 0:
-      Limits.MaxConstructionWork = 0;
+      Limits.Search.MaxConstructionWork = 0;
       break;
     case 1:
-      Limits.MaxProofWork = 1;
+      Limits.Search.MaxProofWork = 1;
       break;
     case 2:
-      Limits.MaxCandidates = 0;
+      Limits.Search.MaxCandidates = 0;
       break;
     case 3:
-      Limits.MaxTransforms = 0;
+      Limits.Search.MaxTransforms = 0;
       break;
     case 4:
-      Limits.Proof.MaxWork = 0;
+      Limits.Search.Proof.MaxWork = 0;
       break;
     case 5:
-      Limits.MaxCandidates = 1;
+      Limits.Search.MaxCandidates = 1;
       break;
     }
     EXPECT_EQ(neverd::llvmc::recoverScalarLoops(*Module, nullptr, Limits), 0U);
@@ -618,10 +618,10 @@ TEST(LLVMCScalarLoopRecovery, SharedTransformBudgetCannotRestartPerFunction) {
   ASSERT_TRUE(Module);
   auto *SecondFunction = Module->getFunction("second");
   auto *First = Module->getFunction("accumulate");
-  neverd::analysis::LLVMScalarLoopRecoveryLimits Limits;
+  neverd::analysis::LLVMScalarSourceRecoveryLimits Limits;
   // This allows the first search but not its required continuation after
   // cleanup. Neither that partial result nor the next function may publish.
-  Limits.MaxTransforms = 1;
+  Limits.Search.MaxTransforms = 1;
   const auto Before = text(*Module);
   EXPECT_EQ(neverd::llvmc::recoverScalarLoops(*Module, nullptr, Limits), 0U);
   EXPECT_EQ(text(*Module), Before);

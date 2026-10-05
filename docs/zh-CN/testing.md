@@ -99,6 +99,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `NeverDLLVMScalarLoopRecoveryTests` 覆盖前缀和前驱携带值重构、零次循环分支、自回边循环判断前移、仿射状态、回绕时的等式退路、额外更新的 poison、高位数据差异及不支持的输入契约。精确/少一累计预算检查原子拒绝；独立算术 oracle 在 O0/O2 执行原始与恢复 LLVM，覆盖全部字节控制输入。这些测试不代表原生 ABI 恢复或默认短 C 输出已完成。
 
+同一测试目标还覆盖 `recoverLLVMScalarSource`：搜索前准备、仅清理而无循环变换、全位宽未使用状态、死代码中的溢出/精确移位/除法及 assume 义务、不支持的副作用、精确/少一累计预算和有界继续。独立算术 oracle 在 O0/O2 执行原始与准备后的 LLVM，覆盖所有字节控制值及确定性全位宽状态。成功或拒绝都必须保持源函数及其父模块不变。
+
 掩码回归覆盖交换操作数、零字段、保留输入高位、完整数据证明失败后的替代值、所有回边、回绕/溢出拒绝、超过32项的批次以及精确/少一预算下的原子拒绝。独立 LLVM 与生成 C 的算术预期在 O0/O2 下检查其与位宽恢复的组合。自等价回归保留完整控制域、poison/undef 与不支持约束的拒绝、非终止、局部上限和精确/少一工作计费；修改同一函数后，旧结果不再有效。这些仍是标量 LLVM 覆盖，不是原生 ABI 认证。
 
 共享掩码包含关系测试穷举全部字节输入对，覆盖非连续掩码和最高128位字，保留未知位/高位，并约束超出项数和位宽上限时的节点增长。带两条回边的符号循环必须相对独立闭式表达式证明掩码 XOR 递推。控制依赖测试按规范化后的移位量存储计费，并保留精确/少一预算和宽值保守退路。
@@ -119,6 +121,10 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `LLVMScalarAssume*` 检查完整循环域、最后分区失败、不可达与已到达的假条件、全部字节输入上的累积定义性、精确/少一预算、IR 修改和不支持的调用契约。四个目标 triple 验证共享建模；8,192 次 O0/O2 调用对照独立无符号 oracle。状态模型测试另行检查相同义务及操作数 bundle 拒绝。
 
+`LLVMScalarProjection.*` 覆盖嵌套字段、位窗口、未使用参数保留、多返回、回边、未选中运算的溢出/移位/assume 义务、最后分区失败、非终止、未知契约、输入修改和精确/少一预算。四个目标三元组验证共享语义。`LLVMScalarProjectionCompiled.*` 通过 LLVM 数组桥接原始聚合，与投影窗口及独立无符号算术在 O0/O2 下对照。`SymExpr.RightShift*` 穷举字节对，检查符号扩展、进位、保留高位、完整计数及有界发现。
+
+`NeverDLLVMScalarStateProjectionTests` 覆盖重叠及非对齐窗口、8/16/32/64 位单元、循环、入口掩码、源修改、状态范围、保留的 poison、外部内存拒绝及精确/少一预算。原内存函数与 LLVM 聚合桥在 O0/O2 下对独立字节/算术 oracle 执行 172,032 次比较；标量证明另行检查。`SymKnownBits.*` 穷举字节对，检查 128 位、不同因子、扩大掩码、回绕求和及预算边界。`LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` 检查 O0/O2 的条件单次求值及 bundle 显式拒绝。
+
 循环元数据回归测试在全部控制分区及精确/少一预算下，将计数循环与独立公式比较。过大或为零的剥离历史计数不能掩盖错误结果、不终止或 poison。通过 API 构造的畸形元数据单独验证导入器拒绝行为，避免与 LLVM 汇编解析混淆；机器状态测试保留状态副作用及输入限制。
 
 初始化契约回归覆盖部分及分离的字节范围、固定别名、两个分支、每个返回点、循环首轮读取和循环内先写后读。先读后写、漏写、客体写入、未知别名、特殊内存访问、对象外范围，以及输入／工作预算耗尽，都必须失败。独立的仅输出状态字 C 用例在 O1/O2 编译后保留精确 LLVM 属性，并通过全新的原生到 LLVM 组合证明。
@@ -134,6 +140,10 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -954,6 +964,10 @@ python3 scripts/benchmark_mobile_references.py \
 ## 模块化 MBA 简化
 
 `SymSimplifyFinite.*` 覆盖 8 至 512 位的完整两值域片段、共享用途下的收益计算、所有支持的可产生 poison 的注解、独立易失读取和 freeze、显式 undef/poison、深层迭代遍历、预算及混淆标记。原始与化简后的 IR 在 O0/O2 下执行，对全部字节输入和随机全宽输入与独立判定程序比较。翻译对象测试要求不同有限值预算具有不同缓存身份。
+
+合并值域测试覆盖 8–512 位嵌套选择、菱形 PHI 和复制循环；冲突回边、未定义条件、无来源分量、独立 PHI/freeze 观测及带标记产生节点的保留；以及精确的节点、边和工作量边界。O0/O2 运行 oracle 穷尽所有字节输入对，并改变完整位宽的操作数，验证选择、汇合及有界状态循环。
+
+两值测试还覆盖 8–512 位嵌套合取掩码、操作数交换、OR/undef 拒绝、有界深层发现、独立工作计费与混淆标记策略，以及首次改写的精确预算边界。运行 oracle 穷尽所有字节输入对，并改变无关的 64 位数据，在 O0/O2 对照原始和化简 IR。
 
 `SymSimplifyPredicates.*` 穷举四位偏移、符号和输入，检查布尔区间组合与不连续集合，并在 O0/O2 运行独立的字节及全位宽 oracle。覆盖 poison 注解、合流点隐藏的未定义输入、独立读取/freeze、保留的循环 PHI、共享用途收益、累计预算、高扇出、递归上限和混淆标记。翻译对象测试要求两种缓存键都区分条件分析预算。
 

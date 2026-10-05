@@ -573,6 +573,52 @@ TEST_F(ProcessPublic, AndroidFormattingKeepsDynamicNamesAcrossSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "files-O2-relr.so")
+          .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Entry : {"files_sequence", "files_faults", "files_bionic"}) {
+    SCOPED_TRACE(Entry);
+    llvm::json::Object Request{
+        {"backend", "unicorn"},
+        {"instruction_quantum", 31},
+        {"android", llvm::json::Object{{"entry_symbol", Entry},
+                                       {"initialize", false},
+                                       {"thread_limit", 2}}},
+        {"linux_files",
+         llvm::json::Object{{"files", llvm::json::Array{llvm::json::Object{
+                                          {"path", "/fixture/data"},
+                                          {"bytes_hex", "00ff410a805a"}}}}}}};
+    auto Options = jsonText(std::move(Request));
+    auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::cantFail(llvm::json::parse(Text));
+    EXPECT_EQ(Report.getAsObject()->getString(field::Stop), "returned");
+    EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
+                         test::shellQuote(Path) +
+                         " --profile=" + AndroidNativeAArch64 +
+                         " --options=" + test::shellQuote(Options) +
+                         test::redirectStdout(Output) + test::silenceStderr();
+    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+              process_cli::Success);
+    auto Bytes = llvm::MemoryBuffer::getFile(Output);
+    ASSERT_TRUE(bool(Bytes));
+    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Report);
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidLocalMemoryInputMatchesSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

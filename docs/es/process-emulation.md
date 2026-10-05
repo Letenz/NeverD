@@ -95,6 +95,26 @@ Se aceptan los identificadores estáticos 0–9 y 11. Cada reloj es independient
 
 `clock_gettime`, `gettimeofday` y `time` de x64 comparten estas entradas. La falta de valores, los relojes dinámicos o las escrituras parciales no modeladas provocan una parada explícita; las escrituras terminadas se conservan. No se modelan ajustes, suspensión ni relojes de dispositivos reales. El [contrato completo de los relojes](../process-emulation.md#explicit-guest-clocks) detalla el orden de escritura, los errores y los punteros.
 
+<a id="explicit-memory-files"></a>
+
+<!-- i18n-section: linux-files -->
+
+## Archivos explícitos en memoria
+
+`linux_files` proporciona a Linux ELF64 y Android un catálogo cerrado de archivos inmutables. El arreglo obligatorio `files` puede estar vacío; cada entrada contiene solo la ruta absoluta canónica `path` y los bytes `bytes_hex`. No se consultan archivos del host ni contenido `/proc` implícito. Sin la opción los servicios no están modelados; las rutas ausentes devuelven `ENOENT`.
+
+```json
+{"linux_files":{"files":[
+  {"path":"/fixture/data","bytes_hex":"00ff410a805a"}],
+  "descriptor_limit":256}}
+```
+
+Cada apertura tiene su cursor; Bionic, `syscall`, trampas e hilos invitados comparten los descriptores. Cerrar permite reutilizar el menor número libre. Se admiten `open/openat` de solo lectura, `read/close`, `lseek` ordinario, `O_CLOEXEC` y el `O_LARGEFILE` de la arquitectura. Solo Bionic convierte errno. Los fallos de lectura conservan el prefijo copiado. stdin no tiene contenido predeterminado; rutas relativas, directorios, escrituras y enlaces siguen excluidos.
+
+C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
+
+Una lectura de longitud cero puede comenzar en el límite del espacio de usuario. Tras validar el rango de direcciones original, si la posición del archivo más la longitud solicitada supera `INT64_MAX`, se devuelve `EINVAL` incluso en EOF, sin modificar el cursor.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Perfil Windows PE64

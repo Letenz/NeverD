@@ -1,5 +1,7 @@
 #include "../../lib/loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../../lib/sdk/capi/ObjCSourceProjection.h"
 #include "../../lib/sdk/capi/SourceSwiftOpaqueValueProjection.h"
+#include "../../lib/sdk/capi/SourceSwiftValueConstructorProjection.h"
 #include "../lift/core/ImmutableNativeCallFixture.h"
 #include "gtest/gtest.h"
 
@@ -562,4 +564,162 @@ TEST(SwiftOpaqueValueConsumer, StructuredPublicationRejectsEditedEvidence) {
         sdk::SourceSwiftOpaqueValueProjectionValidator(F.Image, F.Result)
             .valid(Bound.Function));
   }
+}
+
+namespace {
+HighStmt opaqueScanLeaf(ExprPtr Value, bool Call = false) {
+  HighStmt Statement;
+  Statement.Kind = Call ? StmtKind::Call : StmtKind::Return;
+  if (Call)
+    Statement.CallExpr = std::move(Value);
+  else
+    Statement.RetVal = std::move(Value);
+  return Statement;
+}
+} // namespace
+
+TEST(SwiftOpaqueValueConsumer, ExceptionOnlyBodiesHaveNoOpaqueProofObligation) {
+  BinaryImage Image;
+  PipelineResult Result;
+  sdk::SourceSwiftOpaqueValueProjectionValidator Validator(Image, Result);
+  sdk::SourceSwiftValueConstructorProjectionValidator Constructors(Image,
+                                                                   Result);
+  for (const auto Kind :
+       {StmtKind::SEHTry, StmtKind::CxxTry, StmtKind::ItaniumTry}) {
+    for (unsigned Shape = 0; Shape < 3; ++Shape) {
+      SCOPED_TRACE(static_cast<unsigned>(Kind));
+      SCOPED_TRACE(Shape);
+      HighFunc Function;
+      Function.Entry = Entry;
+      HighStmt Region;
+      Region.Kind = Kind;
+      Region.Body.push_back(opaqueScanLeaf(HighExpr::makeConst(1, 4)));
+      if (Shape != 1)
+        Region.EHClauses.emplace_back();
+      if (Shape != 0)
+        Region.EHClauseBodies.push_back(
+            {opaqueScanLeaf(HighExpr::makeConst(2, 4))});
+      Function.Body.push_back(std::move(Region));
+      EXPECT_TRUE(Validator.valid(Function));
+      EXPECT_TRUE(Constructors.valid(Function));
+      SourceFunctionTypeHint Signature;
+      Signature.ReturnType = NdType::makeInt(4);
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Signature, Arch::AArch64, Error));
+      const auto Diagnostics =
+          sdk::sourceBodyDiagnostics(Function, Signature, nullptr);
+      EXPECT_TRUE(std::any_of(Diagnostics.Items.begin(),
+                              Diagnostics.Items.end(), [](const auto &Item) {
+                                return Item.Issue ==
+                                       sdk::SourceProjectionIssue::Exception;
+                              }));
+    }
+  }
+}
+
+TEST(SwiftOpaqueValueConsumer, OpaqueMarkersInExceptionArmsRemainUnsupported) {
+  BinaryImage Image;
+  PipelineResult Result;
+  sdk::SourceSwiftOpaqueValueProjectionValidator Validator(Image, Result);
+  for (unsigned Shape = 0; Shape < 8; ++Shape) {
+    SCOPED_TRACE(Shape);
+    HighFunc Function;
+    Function.Entry = Entry;
+    auto Call = HighExpr::makeCall("opaque", Copy, {});
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->SwiftOpaqueValue = {Entry, {0x1010, 1, NdOp::CALL, Copy}};
+    Call->SourceCallHint = Hint;
+    HighStmt Nested;
+    Nested.Kind = StmtKind::Block;
+    switch (Shape) {
+    case 0:
+      Nested.Body.push_back(opaqueScanLeaf(Call, true));
+      break;
+    case 1:
+      Nested.ElseBody.push_back(opaqueScanLeaf(Call, true));
+      break;
+    case 2:
+      Nested.DefaultBody.push_back(opaqueScanLeaf(Call, true));
+      break;
+    case 3:
+      Nested.Cases.emplace_back();
+      Nested.Cases.back().Body.push_back(opaqueScanLeaf(Call, true));
+      break;
+    case 4:
+      Nested.EHClauseBodies.push_back({opaqueScanLeaf(Call, true)});
+      break;
+    case 5:
+      Nested.Cond = Call;
+      break;
+    case 6:
+      Nested.CallExpr = HighExpr::makeCall("indirect", 0, {});
+      Nested.CallExpr->IsIndirectCall = true;
+      Nested.CallExpr->IndirectTarget = Call;
+      break;
+    case 7:
+      Call->Kind = ExprKind::Undef;
+      Nested.Val = Call;
+      break;
+    }
+    HighStmt Region;
+    Region.Kind = StmtKind::ItaniumTry;
+    Region.EHClauseBodies.push_back({std::move(Nested)});
+    Function.Body.push_back(std::move(Region));
+    EXPECT_FALSE(Validator.valid(Function));
+    Hint->SwiftOpaqueValue.reset();
+    Hint->SwiftValueConstructor = {Entry, {0x1010, 1, NdOp::CALL, Copy}};
+    EXPECT_FALSE(
+        sdk::SourceSwiftValueConstructorProjectionValidator(Image, Result)
+            .valid(Function));
+  }
+}
+
+TEST(SwiftOpaqueValueConsumer, UnrelatedExceptionArmsDoNotExtendOpaqueReplay) {
+  Fixture F;
+  std::string Error;
+  auto EntryHint = inferFixture(F, Error);
+  ASSERT_TRUE(EntryHint) << Error;
+  F.EntrySignature = *EntryHint;
+  F.rerun();
+  auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty());
+  sdk::SourceSwiftOpaqueValueProjectionValidator Validator(F.Image, F.Result);
+  ASSERT_TRUE(Validator.valid(Bound.Function));
+  HighStmt Region;
+  Region.Kind = StmtKind::ItaniumTry;
+  Region.EHClauseBodies.push_back({});
+  Bound.Function.Body.push_back(std::move(Region));
+  EXPECT_FALSE(Validator.valid(Bound.Function));
+}
+
+TEST(SwiftOpaqueValueConsumer, EmptyOccurrenceScansStillFailOnExhaustedBounds) {
+  BinaryImage Image;
+  PipelineResult Result;
+  sdk::SourceSwiftOpaqueValueProjectionValidator Validator(Image, Result);
+  HighFunc Function;
+  Function.Entry = Entry;
+  HighStmt Region;
+  Region.Kind = StmtKind::ItaniumTry;
+  for (unsigned I = 0; I < 70; ++I) {
+    HighStmt Parent;
+    Parent.Kind = StmtKind::ItaniumTry;
+    Parent.EHClauseBodies.push_back({std::move(Region)});
+    Region = std::move(Parent);
+  }
+  Function.Body.push_back(std::move(Region));
+  EXPECT_FALSE(Validator.valid(Function));
+  EXPECT_FALSE(
+      sdk::SourceSwiftValueConstructorProjectionValidator(Image, Result)
+          .valid(Function));
+  Function.Body.clear();
+  auto Cycle = HighExpr::makeConst(0, 8);
+  Cycle->Operands.push_back(Cycle);
+  Region = HighStmt{};
+  Region.EHClauseBodies.push_back({opaqueScanLeaf(Cycle)});
+  Function.Body.push_back(std::move(Region));
+  EXPECT_FALSE(Validator.valid(Function));
+  EXPECT_FALSE(
+      sdk::SourceSwiftValueConstructorProjectionValidator(Image, Result)
+          .valid(Function));
+  Cycle->Operands.clear();
 }

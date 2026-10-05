@@ -104,6 +104,8 @@ Le regressioni della fase iniziale coprono due e tre cicli sequenziali che riuti
 
 `NeverDLLVMScalarLoopRecoveryTests` copre prefissi, stati dei predecessori, percorsi a zero iterazioni, auto-retroarchi, stati affini, uguaglianza con riavvolgimento modulare, poison da aggiornamenti extra, bit alti e contratti rifiutati. Budget cumulativi esatti o inferiori di un'unità verificano il rifiuto atomico. Oracoli aritmetici indipendenti eseguono LLVM originale e ricostruito a O0/O2 con tutti gli ingressi di controllo a un byte. Non certificano il recupero dell'ABI nativa né l'uscita C predefinita.
 
+Lo stesso target verifica anche `recoverLLVMScalarSource`: preparazione prima della ricerca, sola pulizia, stato inutilizzato a piena larghezza, obblighi morti di overflow, shift exact, divisione e assume, effetti non supportati, budget cumulativi esatti o inferiori di un’unità e prosecuzione limitata. Oracoli aritmetici indipendenti eseguono LLVM originale e preparato a O0/O2 per tutti i controlli di un byte e stati deterministici a piena larghezza. Sorgente e modulo padre restano invariati sia nel successo sia nel rifiuto.
+
 Le regressioni delle maschere coprono operandi scambiati, campi nulli, bit alti d’ingresso conservati, alternative dopo il fallimento sui dati completi, tutti gli archi di ritorno, rifiuto di wraparound/overflow, gruppi oltre 32 elementi e budget esatti o inferiori di uno con rifiuto atomico. Oracoli aritmetici indipendenti LLVM e C a O0/O2 verificano la composizione con il recupero della larghezza. Le verifiche riflessive mantengono domini completi, rifiuto di poison/undef e contratti non supportati, mancata terminazione, limiti locali e conteggio esatto; modificare la stessa funzione invalida l’esito precedente. Questa copertura LLVM scalare non certifica l’ABI nativa.
 
 I test di contenimento delle maschere esauriscono tutte le coppie di byte, coprono maschere non contigue e larghezze fino a 128 bit, preservano bit sconosciuti/alti e limitano la crescita dei nodi oltre le soglie. Un ciclo simbolico con due archi di ritorno deve provare la ricorrenza XOR mascherata rispetto a una forma chiusa indipendente. I test delle dipendenze conteggiano la memoria normalizzata del conteggio di shift, mantenendo budget esatti/ridotti e il ripiego conservativo per valori larghi.
@@ -124,6 +126,10 @@ Le regressioni aggiuntive coprono ultimi indici stretti con riavvolgimento, bloc
 
 `LLVMScalarAssume*` verifica domini completi dei cicli, errori nell’ultima partizione, condizioni false irraggiungibili o raggiunte, definitezza cumulativa per tutti gli ingressi di un byte, budget esatti o inferiori di un’unità, modifiche IR e contratti di chiamata non supportati. Quattro triple di destinazione esercitano il modello condiviso; 8.192 chiamate O0/O2 sono confrontate con un oracolo indipendente senza segno. La suite del modello di stato verifica separatamente lo stesso obbligo e il rifiuto dei bundle di operandi.
 
+`LLVMScalarProjection.*` copre campi annidati, finestre, argomenti inutilizzati conservati, ritorni multipli, archi di ritorno, obblighi overflow/shift/assume non selezionati, errore nell’ultima partizione, non terminazione, contratti sconosciuti, ingressi modificati e budget esatti/insufficienti di uno. Quattro triple verificano la semantica condivisa. `LLVMScalarProjectionCompiled.*` confronta l’aggregato originale tramite un ponte array LLVM e le proiezioni con aritmetica senza segno indipendente a O0/O2. `SymExpr.RightShift*` esaurisce le coppie di byte e verifica estensione del segno, riporti, bit alti conservati, conteggi completi e limiti di ricerca.
+
+`NeverDLLVMScalarStateProjectionTests` verifica finestre sovrapposte/non allineate, celle da 8/16/32/64 bit, cicli, maschere, modifiche del sorgente, intervalli di stato, poison mantenuto, memoria esterna e budget esatti/insufficienti. Corpi di memoria e bridge aggregati LLVM eseguono 172.032 confronti O0/O2 con oracoli indipendenti; le prove scalari restano separate. `SymKnownBits.*` esaurisce le coppie di byte e verifica 128 bit, fattori diversi, maschere ampliate, somme con overflow e budget. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` controlla valutazione singola a O0/O2 e rifiuto dei bundle.
+
 Le regressioni dei metadati confrontano cicli contati con una formula indipendente su tutte le partizioni di controllo, con budget esatti o inferiori di un’unità. Contatori di peeling grandi o nulli non nascondono risultati errati, mancata terminazione o poison. Metadati malformati costruiti tramite API verificano il rifiuto dell’importatore separatamente dal parsing assembly LLVM; i test dello stato macchina preservano effetti di stato e limiti di ingresso.
 
 Le regressioni coprono intervalli parziali e separati, alias fissi, entrambi i rami, ogni ritorno, letture alla prima iterazione e scritture prima delle letture nei cicli. Letture prima della scrittura, scritture mancanti o guest, alias sconosciuti, accessi speciali, intervalli fuori oggetto e budget esauriti devono fallire. Un esempio C indipendente con una parola di stato solo in uscita viene compilato a O1/O2, conserva gli attributi LLVM esatti e supera una nuova prova composta dal codice nativo a LLVM.
@@ -139,6 +145,10 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -1142,6 +1152,10 @@ Il workflow manuale `Mobile Swift String ABI Evidence` compila sonde Swift fisse
 ## Semplificazione MBA modulare
 
 `SymSimplifyFinite.*` verifica domini completi a due valori da 8 a 512 bit, i costi degli usi condivisi, tutte le annotazioni supportate che possono generare poison, letture volatile e freeze indipendenti, undef/poison espliciti, visite iterative profonde, budget e marcatura di offuscamento. IR originale e semplificato vengono eseguiti a O0/O2 contro un oracolo indipendente per tutti i valori di byte e ingressi casuali a larghezza piena. I test degli oggetti tradotti richiedono identità di cache diverse per budget di valori finiti diversi.
+
+I test dei domini uniti coprono select annidati, PHI a diamante e cicli di copia a 8–512 bit; ritorni in conflitto, condizioni indefinite, componenti senza origine, osservazioni PHI/freeze indipendenti e produttori annotati conservati; oltre ai limiti esatti di nodi, archi e lavoro. Gli oracoli O0/O2 percorrono tutte le coppie di byte e variano operandi a larghezza completa per selezioni, unioni e cicli di stato limitati.
+
+I test a due valori coprono anche maschere di congiunzioni annidate a 8–512 bit, operandi scambiati, rifiuto OR/undef, profondità limitata, conteggio autonomo, marcatura di offuscamento e budget esatto della prima riscrittura. Gli oracoli percorrono tutte le coppie di byte e variano dati estranei a 64 bit, confrontando IR originale e semplificato a O0/O2.
 
 `SymSimplifyPredicates.*` enumera esaustivamente offset, segni e ingressi a quattro bit, verifica composizioni booleane di intervalli e insiemi disconnessi ed esegue oracoli indipendenti a un byte e larghezza completa a O0/O2. Copre annotazioni poison, ingressi indefiniti nascosti alle confluenze, letture/freeze indipendenti, PHI di ciclo conservati, convenienza degli usi condivisi, lavoro cumulativo, molti usi, limiti di ricorsione e marca di offuscamento. Entrambe le chiavi della cache distinguono i budget dell’analisi dei predicati.
 

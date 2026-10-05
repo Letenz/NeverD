@@ -105,6 +105,8 @@ Regressionen der vorderen Phase prüfen zwei und drei aufeinanderfolgende Schlei
 
 `NeverDLLVMScalarLoopRecoveryTests` prüft Präfixe und Vorgängerzustände, Nulliterationspfade, Selbst-Rückkanten, affine Zustände, Gleichheit bei Überlauf, Poison durch zusätzliche Updates, hohe Datenbits und abgelehnte Eingabeverträge. Exakte und um eins gekürzte kumulative Budgets prüfen atomare Ablehnung. Unabhängige arithmetische Orakel führen ursprüngliches und rekonstruiertes LLVM bei O0/O2 für sämtliche Byte-Steuereingaben aus. Das bestätigt weder native ABI-Rekonstruktion noch standardmäßige C-Ausgabe.
 
+Dasselbe Ziel prüft auch `recoverLLVMScalarSource`: Vorbereitung vor der Suche, reine Bereinigung, unbenutzten Zustand voller Breite, tote Überlauf-, Exact-Shift-, Divisions- und Assume-Pflichten, nicht unterstützte Effekte, exakte und um eins zu kleine kumulative Budgets sowie begrenzte Fortsetzung. Unabhängige arithmetische Orakel führen ursprüngliches und vorbereitetes LLVM bei O0/O2 für alle Byte-Steuerwerte und deterministische Zustände voller Breite aus. Quelle und Elternmodul bleiben bei Erfolg und Ablehnung unverändert.
+
 Maskentests prüfen vertauschte Operanden, Nullfelder, erhaltene hohe Eingabebits, Alternativen nach gescheitertem Vollbeweis, alle Rückkanten, abgelehntes Wraparound/Überlaufen, mehr als 32 Vorschläge sowie exakte und um eins zu kleine atomare Budgets. Unabhängige LLVM- und C-Arithmetikorakel bei O0/O2 prüfen das Zusammenspiel mit der Breitenrekonstruktion. Selbstabfragen behalten vollständige Steuerdomänen, Ablehnung von poison/undef und nicht unterstützten Verträgen, Nichtterminierung, lokale Grenzen und genaue Arbeitszählung bei. Änderungen am selben Funktionsobjekt machen frühere Ergebnisse ungültig. Dies ist skalare LLVM-Abdeckung, keine Zertifizierung der nativen ABI.
 
 Maskeneinschlusstests prüfen alle Byte-Eingabepaare, nicht zusammenhängende Masken, Breiten bis 128 Bit, erhaltene unbekannte/hohe Bits und begrenztes Knotenwachstum jenseits der Term- und Breitengrenzen. Eine symbolische Schleife mit zwei Rückkanten muss ihre maskierte XOR-Rekurrenz gegen eine unabhängige geschlossene Form beweisen. Abhängigkeitstests zählen die normalisierte Speicherung von Schiebezählern und behalten exakte/knappe Budgets sowie den konservativen Rückfall für breite Werte bei.
@@ -125,6 +127,10 @@ Zusätzliche Schleifentests decken schmale überlaufende Endindizes, getrennte B
 
 `LLVMScalarAssume*` prüft vollständige Schleifenbereiche, Fehler in der letzten Partition, unerreichbare und erreichte falsche Bedingungen, kumulierte Definiertheit für alle Byte-Eingaben, exakte und um eins zu kleine Budgets, IR-Änderungen und nicht unterstützte Aufrufverträge. Vier Ziel-Triples prüfen das gemeinsame Modell; 8.192 O0/O2-Aufrufe werden mit einem unabhängigen vorzeichenlosen Orakel verglichen. Die Zustandsmodell-Suite prüft dieselbe Verpflichtung und die Ablehnung von Operanden-Bundles separat.
 
+`LLVMScalarProjection.*` prüft verschachtelte Felder, Bitfenster, erhaltene ungenutzte Argumente, mehrere Rückgaben, Rückkanten, nicht ausgewählte overflow/shift/assume-Bedingungen, Fehler der letzten Partition, Nichtterminierung, unbekannte Verträge, geänderte Eingaben und exakte/um eins zu kleine Budgets. Vier Zieltripel testen die gemeinsame Semantik. `LLVMScalarProjectionCompiled.*` vergleicht das Originalaggregat über eine LLVM-Array-Brücke und projizierte Fenster mit unabhängiger vorzeichenloser Arithmetik bei O0/O2. `SymExpr.RightShift*` erschöpft Bytepaare und prüft Vorzeichenerweiterung, Überträge, erhaltene hohe Bits, vollständige Zähler und Suchgrenzen.
+
+`NeverDLLVMScalarStateProjectionTests` prüft überlappende/unausgerichtete Fenster, 8/16/32/64-Bit-Zellen, Schleifen, Eingangsmasken, Quelländerungen, Statusbereiche, erhaltenes Poison, externen Speicher und exakte/knappe Budgets. Speicheroriginale und LLVM-Aggregatbrücken führen 172.032 O0/O2-Vergleiche mit unabhängigen Byte-/Arithmetikorakeln aus; skalare Beweise bleiben getrennt. `SymKnownBits.*` erschöpft Bytepaare und prüft 128 Bit, andere Faktoren, erweiterte Masken, überlaufende Summen und Budgets. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` prüft einmalige Auswertung bei O0/O2 und Bundle-Ablehnung.
+
 Schleifenmetadaten-Regressionen vergleichen Zählschleifen mit einer unabhängigen Formel über alle Kontrollpartitionen bei exakten und um eins zu kleinen Budgets. Große oder nullwertige Peeling-Zähler können falsche Ergebnisse, Nichtterminierung oder poison nicht verdecken. Per API erzeugte fehlerhafte Metadaten prüfen die Importer-Ablehnung getrennt vom LLVM-Assembly-Parser; Maschinenzustandstests erhalten Zustandseffekte und Eingabegrenzen.
 
 Initialisierungsregressionen prüfen partielle und getrennte Bytebereiche, feste Aliasse, beide Zweige, jede Rückkehr, Lesezugriffe der ersten Iteration und Schreiben vor Lesen in Schleifen. Lesen vor Schreiben, fehlende Schreibzugriffe, Gastspeicherungen, unbekannte Aliasse, spezielle Speicherzugriffe, Bereiche außerhalb des Objekts und erschöpfte Budgets müssen scheitern. Ein unabhängiges C-Beispiel mit einem nur geschriebenen Zustandswort wird mit O1/O2 kompiliert, behält die exakten LLVM-Attribute und besteht eine neue kombinierte Prüfung von nativem Code zu LLVM.
@@ -140,6 +146,10 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -1162,6 +1172,10 @@ Der manuelle Workflow `Mobile Swift String ABI Evidence` kompiliert feste Swift-
 ## Modulare MBA-Vereinfachung
 
 `SymSimplifyFinite.*` prüft vollständige Bereiche mit zwei Werten von 8 bis 512 Bit, die Kosten geteilter Nutzungen, alle unterstützten poison-erzeugenden Annotationen, unabhängige volatile-Lesezugriffe und freeze-Werte, explizites undef/poison, tiefe iterative Durchläufe, Budgets und die Verschleierungsmarkierung. Ursprüngliche und vereinfachte IR laufen bei O0/O2 gegen eine unabhängige Referenz für alle Byte-Eingaben und zufällige Eingaben voller Breite. Übersetzungsobjekttests verlangen unterschiedliche Cache-Identitäten für unterschiedliche Budgets endlicher Werte.
+
+Merge-Domänentests prüfen verschachtelte Selects, rautenförmige PHIs und Kopierzyklen mit 8–512 Bit; widersprüchliche Rückkanten, undefinierte Bedingungen, Komponenten ohne Ursprung, unabhängige PHI/freeze-Beobachtungen und erhaltene markierte Erzeuger; außerdem genaue Knoten-, Kanten- und Arbeitsgrenzen. O0/O2-Laufzeitorakel prüfen alle Byte-Paare und variieren Operanden voller Breite für Auswahl, Zusammenführung und begrenzte Zustandschleifen.
+
+Die Zweiwerttests prüfen zusätzlich verschachtelte Konjunktionsmasken mit 8–512 Bit, vertauschte Operanden, OR/undef-Ablehnung, begrenzte tiefe Suche, eigenständige Arbeitszählung und Obfuskationsmarkierung sowie die genaue Budgetgrenze der ersten Änderung. Laufzeitorakel prüfen sämtliche Byte-Eingabepaare und variieren unabhängige 64-Bit-Daten; ursprüngliches und vereinfachtes IR werden bei O0/O2 verglichen.
 
 `SymSimplifyPredicates.*` prüft Vierbit-Offsets, Vorzeichen und Eingaben vollständig, testet boolesche Intervallverknüpfungen sowie getrennte Mengen und führt unabhängige Byte- und Vollbreiten-Orakel bei O0/O2 aus. Abgedeckt sind poison-Annotationen, verborgene undef-Eingaben an Zusammenführungen, unabhängige Lese-/freeze-Werte, erhaltene Schleifen-PHIs, gemeinsame Nutzungen, kumulatives Budget, hoher Fan-out, Rekursionsgrenzen und Obfuskationsmarkierung. Beide Cache-Schlüssel unterscheiden Prädikatanalysebudgets.
 

@@ -78,7 +78,7 @@ llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size) {
       {0, Mapped, linux_model::ProtRead | linux_model::ProtWrite,
        linux_model::MapPrivate | linux_model::MapAnonymous, UINT64_MAX, 0},
       std::nullopt};
-  auto Address = Memory.handle(linux_model::ServiceKind::Mmap, Event, Result);
+  auto Address = Kernel.handle(linux_model::ServiceKind::Mmap, Event);
   if (!Address)
     return Address.takeError();
   if (!*Address)
@@ -99,8 +99,7 @@ llvm::Error Bionic::release(uint64_t Address) {
     return failure(diagnostic::AllocationOwnership);
   ProcessServiceEvent Event{
       0, 0, {Address, I->second.MappedSize, 0, 0, 0, 0}, std::nullopt};
-  auto Returned =
-      Memory.handle(linux_model::ServiceKind::Munmap, Event, Result);
+  auto Returned = Kernel.handle(linux_model::ServiceKind::Munmap, Event);
   if (!Returned)
     return Returned.takeError();
   if (!*Returned || **Returned)
@@ -503,11 +502,8 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
                 Event.Arguments.begin());
     // Raw Linux service semantics are shared. Bionic alone owns errno/-1.
     auto *Thread = Threads ? Threads->kernel() : nullptr;
-    auto Returned =
-        Kind ? linux_model::handleService(CPU, Memory, *Kind, Event, Layout,
-                                          Options, Result, Thread)
-             : linux_model::handleService(CPU, Memory, Event, Layout, Options,
-                                          Result, Thread);
+    auto Returned = Kind ? Kernel.handle(*Kind, Event, Thread)
+                         : Kernel.handle(Event, Thread);
     if (!Returned)
       return Returned.takeError();
     if (!*Returned)

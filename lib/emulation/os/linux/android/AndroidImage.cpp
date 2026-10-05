@@ -8,6 +8,7 @@
 #include "neverd/emulation/ImageMapping.h"
 #include "neverd/loader/BinaryImageModel.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
@@ -81,9 +82,15 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
       return std::move(E);
   }
   std::map<std::string, uint64_t> Imported;
+  // A JUMP_SLOT binds a NOTYPE import as a function for this entire image.
+  // Its GOT/address relocations must use the same thunk even when processed
+  // first. A name alone or an unrelated symbol's call slot is not evidence.
+  llvm::SmallDenseSet<uint32_t> FunctionImports;
+  for (const auto &Rel : Facts->Relocations)
+    if (Rel.Type == R_AARCH64_JUMP_SLOT)
+      FunctionImports.insert(Rel.Symbol);
   bool NeedsStdio = false;
-  auto Symbol = [&](uint32_t Index,
-                    uint32_t RelType) -> llvm::Expected<uint64_t> {
+  auto Symbol = [&](uint32_t Index) -> llvm::Expected<uint64_t> {
     if (!Index)
       return uint64_t(0);
     const auto &S = Facts->Symbols[Index];
@@ -101,7 +108,7 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
     if (S.Name == symbol::StackGuard)
       return GuardAddress;
     if (Type != STT_FUNC &&
-        !(Type == STT_NOTYPE && RelType == R_AARCH64_JUMP_SLOT))
+        !(Type == STT_NOTYPE && FunctionImports.contains(Index)))
       return failure(diagnostic::ImportedDataPrefix + S.Name);
     auto [I, New] =
         Imported.emplace(S.Name, ThunkBase + 8 * (Imported.size() + 1));
@@ -129,7 +136,7 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
     }
     auto Base = Rel.Type == R_AARCH64_RELATIVE
                     ? llvm::Expected<uint64_t>(Native.LoadBias)
-                    : Symbol(Rel.Symbol, Rel.Type);
+                    : Symbol(Rel.Symbol);
     if (!Base)
       return Base.takeError();
     if (auto E = put64(Space, *Dest, *Base + Addend))
