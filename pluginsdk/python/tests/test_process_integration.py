@@ -16,6 +16,48 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_integer_scanning_preserves_provider_and_output(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for mode, name in enumerate(("sscanf", "vsscanf")):
+            for closed in (0, 1):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": "scan_dynamic", "initialize": False,
+                    "arguments": [0x180000000, closed, mode],
+                    "memory": [{"address": 0x180000000, "size": 4096}],
+                    "read_memory": [{"address": 0x180000000, "size": 16}],
+                    "libraries": {"libscan-model.so": [name]},
+                }}
+                result = session.emulate_process(str(Path(fixtures) / "scan-O2-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service" if closed else "returned",
+                                 result["diagnostic"])
+                calls = result["android"]["native_calls"]
+                lookup = next(c for c in calls if c["name"] == "dlsym")
+                call = next(c for c in calls if c["name"] == name)
+                self.assertEqual(lookup["symbol"], name)
+                self.assertEqual(call["library"], "libscan-model.so")
+                self.assertEqual(call["pc"], lookup["result"])
+                self.assertEqual(call["result"], None if closed else "1")
+                memory = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+                self.assertEqual(memory, bytes(16) if closed else bytes([15]) + bytes(15))
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_android_fortified_search_preserves_names_bounds_and_errno(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

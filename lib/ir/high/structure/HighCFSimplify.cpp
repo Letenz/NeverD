@@ -1162,6 +1162,91 @@ static bool hasLooseBreakOrContinue(const std::vector<HighStmt> &Stmts,
   return false;
 }
 
+bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body) {
+  std::map<va_t, unsigned> Uses, Starts;
+  std::function<void(const std::vector<HighStmt> &)> Count =
+      [&](const std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          const HighStmt &S = L[I];
+          if (S.Kind == StmtKind::Goto)
+            ++Uses[S.GotoTarget];
+          if (S.Addr != 0 && S.Addr != InvalidVA &&
+              (I == 0 || L[I - 1].Addr != S.Addr))
+            ++Starts[S.Addr];
+          Count(S.Body);
+          Count(S.ElseBody);
+          for (const auto &C : S.Cases)
+            Count(C.Body);
+          Count(S.DefaultBody);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            Count(ClauseBody);
+        }
+      };
+  Count(Body);
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+        for (size_t I = 0; I < L.size(); ++I) {
+          const HighStmt &Arm = L[I];
+          if (Arm.Kind != StmtKind::If || !Arm.Cond || !Arm.ElseBody.empty() ||
+              Arm.Body.size() < 2 || Arm.Body.back().Kind != StmtKind::Goto)
+            continue;
+          const va_t X = Arm.Body.back().GotoTarget;
+          if (Starts[X] != 1)
+            continue;
+          size_t K = I;
+          while (K > 0 &&
+                 !(L[K - 1].Addr == X && (K == 1 || L[K - 2].Addr != X)))
+            --K;
+          if (K == 0)
+            continue;
+          --K;
+          std::vector<HighStmt> LoopBody(L.begin() + K, L.begin() + I + 1);
+          if (hasLooseBreakOrContinue(LoopBody))
+            continue;
+          // A jump carrying an entered label keeps it as an empty block.
+          std::vector<HighStmt> &Tail = LoopBody.back().Body;
+          HighStmt &Jump = Tail.back();
+          if (Jump.Addr != 0 && Jump.Addr != InvalidVA && Uses[Jump.Addr] &&
+              Tail[Tail.size() - 2].Addr != Jump.Addr) {
+            HighStmt Anchor;
+            Anchor.Kind = StmtKind::Block;
+            Anchor.Addr = Jump.Addr;
+            Jump = std::move(Anchor);
+          } else {
+            Tail.pop_back();
+          }
+          HighStmt Next;
+          Next.Kind = StmtKind::Continue;
+          Tail.push_back(std::move(Next));
+          HighStmt Leave;
+          Leave.Kind = StmtKind::Break;
+          LoopBody.push_back(std::move(Leave));
+          HighStmt Loop;
+          Loop.Kind = StmtKind::While;
+          Loop.Cond = HighExpr::makeConst(1, 1);
+          Loop.LoopHeaderAddr = X;
+          Loop.Body = std::move(LoopBody);
+          --Uses[X];
+          L.erase(L.begin() + K, L.begin() + I + 1);
+          L.insert(L.begin() + K, std::move(Loop));
+          I = K;
+          Changed = true;
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
 /// True when \p Stmts contains a continue that would restart a loop wrapped
 /// around it. Only a nested loop owns a continue.
 static bool hasLooseContinue(const std::vector<HighStmt> &Stmts) {
