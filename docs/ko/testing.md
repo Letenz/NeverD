@@ -1309,3 +1309,5 @@ build-release/bin/NeverDByteMemoryForwardingTests
 cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
 build-release/bin/NeverDByteCellScalarizationTests
 ```
+
+`AndroidMutexTests.cpp`는 독립 O0/O2 및 일반/APS2/RELR 픽스처로 세 종류의 mutex, 여러 대기자, 재경합, 최종 재귀 해제, errno, 원래 이벤트, 무효 메모리, 교착과 누적 명령 한도를 검사합니다. Unicorn 및 사용 가능한 KVM/WHP/HVF에서 실행하고 불가능한 백엔드는 명시적으로 건너뜁니다. Android 실기기나 병렬 SMP 동등성을 뜻하지 않습니다.

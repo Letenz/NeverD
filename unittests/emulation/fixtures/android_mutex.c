@@ -238,3 +238,134 @@ u64 mutex_readonly_tail(mutex_object *object) {
     return 99;
   return pthread_mutex_lock(object);
 }
+
+extern int pthread_create(u64 *, const void *, void *(*)(void *), void *);
+extern int pthread_join(u64, void **);
+
+static mutex_object *waiting_mutex;
+static volatile u64 ready_waiters[3];
+static volatile u64 acquired_waiters[3];
+static u64 *wait_output;
+
+static unsigned mutex_state(void) {
+  return (unsigned)*(volatile int *)&waiting_mutex->opaque[0] & 0xffff;
+}
+
+static void delay_waiter(void) {
+  for (unsigned i = 0; i < 200; ++i)
+    __asm__ volatile("nop");
+}
+
+static void *mutex_waiter(void *argument) {
+  u64 index = (u64)argument;
+  *__errno() = 71 + index;
+  if (pthread_mutex_trylock(waiting_mutex) != 16)
+    return (void *)1;
+  ready_waiters[index] = 1;
+  if (pthread_mutex_lock(waiting_mutex))
+    return (void *)2;
+  acquired_waiters[index] = 1;
+  wait_output[8 + index] = mutex_state();
+  wait_output[16 + index] = gettid();
+  wait_output[24 + index] = *__errno();
+  wait_output[32] += 1;
+  delay_waiter();
+  if (pthread_mutex_unlock(waiting_mutex))
+    return (void *)3;
+  return (void *)(10 + index);
+}
+
+u64 mutex_waiters(unsigned char *buffer, u64 type, u64 shared, u64 barge) {
+  waiting_mutex = (mutex_object *)buffer;
+  wait_output = (u64 *)(buffer + 256);
+  mutex_attr attr = type | (shared ? 0x10 : 0);
+  u64 threads[3];
+  *__errno() = 77;
+  if (pthread_mutex_init(waiting_mutex, &attr) ||
+      pthread_mutex_lock(waiting_mutex))
+    return 1;
+  if (type == 1 && pthread_mutex_lock(waiting_mutex))
+    return 2;
+  for (u64 i = 0; i < 3; ++i)
+    if (pthread_create(&threads[i], 0, mutex_waiter, (void *)i))
+      return 3;
+  while (!ready_waiters[0] || !ready_waiters[1] || !ready_waiters[2] ||
+         (mutex_state() & 3) != 2)
+    __asm__ volatile("nop");
+  delay_waiter();
+  wait_output[0] = mutex_state();
+  if (type == 1) {
+    if (pthread_mutex_unlock(waiting_mutex))
+      return 4;
+    delay_waiter();
+    if (acquired_waiters[0] || acquired_waiters[1] || acquired_waiters[2])
+      return 5;
+    wait_output[1] = mutex_state();
+  }
+  if (pthread_mutex_unlock(waiting_mutex))
+    return 6;
+  if (barge) {
+    if (pthread_mutex_lock(waiting_mutex))
+      return 7;
+    wait_output[5] = mutex_state();
+    // Force an awakened competitor to retry while we still own the lock.
+    while (
+        (mutex_state() & 3) != 2 &&
+        (!acquired_waiters[0] || !acquired_waiters[1] || !acquired_waiters[2]))
+      __asm__ volatile("nop");
+    wait_output[2] = mutex_state();
+    if (pthread_mutex_unlock(waiting_mutex))
+      return 8;
+  }
+  for (u64 i = 0; i < 3; ++i) {
+    void *result = 0;
+    if (pthread_join(threads[i], &result) || result != (void *)(10 + i))
+      return 9;
+  }
+  wait_output[3] = mutex_state();
+  wait_output[4] = *__errno();
+  return wait_output[32] == 3 ? 0 : 10;
+}
+
+static void *single_mutex_waiter(void *argument) {
+  volatile u64 *out = argument;
+  out[2] = gettid();
+  out[0] = 1;
+  int result = pthread_mutex_lock(waiting_mutex);
+  out[1] = 1;
+  return (void *)(u64)result;
+}
+
+u64 mutex_wait_failure(unsigned char *buffer, u64 mode) {
+  waiting_mutex = (mutex_object *)buffer;
+  u64 thread;
+  mutex_attr attr = mode == 6 ? 1 : 0;
+  if (pthread_mutex_init(waiting_mutex, &attr) ||
+      pthread_mutex_lock(waiting_mutex) ||
+      pthread_create(&thread, 0, single_mutex_waiter, buffer + 4096))
+    return 1;
+  while ((mutex_state() & 3) != 2)
+    __asm__ volatile("nop");
+  if (mode == 4) // Join while still owning the lock: no runnable thread.
+    return pthread_join(thread, 0);
+  if (mode == 5) // A runnable owner can still exhaust the shared budget.
+    for (;;)
+      __asm__ volatile("nop");
+  if (pthread_mutex_unlock(waiting_mutex))
+    return 2;
+  // A large instruction quantum keeps release and invalidation together.
+  if (mode < 2) {
+    if (mprotect(buffer, 4096, mode ? 0 : 1))
+      return 3;
+  } else if (mode == 2) {
+    if (pthread_mutex_destroy(waiting_mutex))
+      return 4;
+  } else if (mode == 6) {
+    // A suspended caller cannot already own the lock on resumption.
+    waiting_mutex->opaque[0] = 0x4001;
+    waiting_mutex->opaque[1] = ((volatile u64 *)(buffer + 4096))[2];
+  } else {
+    waiting_mutex->opaque[0] = 0x4000;
+  }
+  return pthread_join(thread, 0);
+}

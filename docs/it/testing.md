@@ -1415,3 +1415,5 @@ build-release/bin/NeverDByteMemoryForwardingTests
 cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
 build-release/bin/NeverDByteCellScalarizationTests
 ```
+
+`AndroidMutexTests.cpp` verifica con programmi indipendenti O0/O2 e formati normale/APS2/RELR tre tipi di mutex, più attese, nuova contesa, rilascio ricorsivo finale, errno, eventi, memoria invalidata, deadlock e limiti cumulativi. I casi girano su Unicorn e KVM/WHP/HVF disponibili; gli altri sono saltati esplicitamente. Non dimostrano equivalenza con dispositivi Android o SMP parallelo.

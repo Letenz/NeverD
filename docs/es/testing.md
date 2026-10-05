@@ -1420,3 +1420,5 @@ build-release/bin/NeverDByteMemoryForwardingTests
 cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
 build-release/bin/NeverDByteCellScalarizationTests
 ```
+
+`AndroidMutexTests.cpp` usa programas independientes O0/O2 y empaquetado normal/APS2/RELR para tres tipos de mutex, varios participantes, nueva contención, liberación recursiva final, errno, eventos, memoria invalidada, interbloqueos y límites acumulados. Los casos se ejecutan en Unicorn y KVM/WHP/HVF disponibles; los demás se omiten explícitamente. No prueban equivalencia con dispositivos Android ni SMP paralelo.

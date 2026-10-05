@@ -1,5 +1,4 @@
-//===- AndroidInternal.h - Android native environment boundaries -*- C++
-//-*-===//
+//===- AndroidInternal.h - Android environment boundaries ------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -100,6 +99,7 @@ public:
   bool timedOut() const { return Expired; }
   BionicResult invoke(NativeCallEvent &Call);
   BionicResult finishCallback(const GuestCallback &Callback);
+  BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
 
 private:
   ExecutionBackend &CPU;
@@ -145,7 +145,17 @@ private:
   llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
   class StringFormatter;
   BionicResult format(const NativeCallEvent &Call);
-  llvm::Expected<std::optional<uint64_t>> mutex(const NativeCallEvent &Call);
+  class Mutex;
+  BionicResult mutex(const NativeCallEvent &Call);
+  BionicResult mutexAttributes(const NativeCallEvent &Call);
+  BionicResult initializeMutex(const NativeCallEvent &Call);
+  std::optional<BionicValue> unsupportedMutex(llvm::StringRef Name,
+                                              llvm::StringRef Reason);
+  llvm::Error mutexAccess(uint64_t Address, unsigned Size, unsigned Permissions,
+                          unsigned Alignment);
+  llvm::Expected<uint64_t> readMutexWord(uint64_t Address, unsigned Size,
+                                         unsigned Alignment);
+  llvm::Error writeMutexWord(uint64_t Address, unsigned Size, uint64_t Value);
 };
 llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                         const ProcessOptions &Options);
