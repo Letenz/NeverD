@@ -33,7 +33,7 @@ FetchContent_Declare(neverd_docking
 FetchContent_MakeAvailable(neverd_docking)
 
 add_library(neverd_gui_core STATIC EngineClient.cpp QueryService.cpp PageModel.cpp
-  PaneController.cpp PaneRegistry.cpp Workbench.cpp
+  PaneController.cpp PaneRegistry.cpp Workbench.cpp LibraryCodeView.cpp
   mcp/McpConnectionManager.cpp mcp/GuiSessionBroker.cpp)
 target_include_directories(neverd_gui_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(neverd_gui_core PUBLIC cxx_std_20)
@@ -139,6 +139,11 @@ if(BUILD_TESTING)
   endif()
   qt_add_executable(neverd-gui-text-position-tests
     tests/TextPanePositionTests.cpp NativeCodeHighlighter.cpp)
+  qt_add_executable(neverd-gui-library-view-tests tests/LibraryCodeViewTests.cpp)
+  target_link_libraries(neverd-gui-library-view-tests PRIVATE neverd_gui_core Qt6::Test)
+  add_test(NAME NeverDGuiLibraryView COMMAND neverd-gui-library-view-tests)
+  set_tests_properties(NeverDGuiLibraryView PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
   target_link_libraries(neverd-gui-text-position-tests PRIVATE
     neverd_gui_core Qt6::Quick Qt6::QuickControls2 Qt6::Test)
   target_compile_definitions(neverd-gui-text-position-tests PRIVATE

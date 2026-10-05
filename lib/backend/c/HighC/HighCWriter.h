@@ -15,6 +15,7 @@
 #define NEVERD_LIB_BACKEND_C_HIGHC_HIGHCWRITER_H
 
 #include "../CIdentifier.h"
+#include "../CSourceRecorder.h"
 #include "../FloatConversion.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -82,10 +83,11 @@ public:
                                                 const TypeRef &Source);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
-              const std::unordered_set<std::string_view> *SharedNames = nullptr)
+              const std::unordered_set<std::string_view> *SharedNames = nullptr,
+              CSourceRecorder *Recorder = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
-        SharedImageFunctionNames(SharedNames) {}
+        SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -188,6 +190,7 @@ public:
 
   //--- Expression rendering (HighCExprWriter.cpp) ---
   std::string exprStr(const HighExpr &Expr, int ParentPrec = 0);
+  std::string exprStrImpl(const HighExpr &Expr, int ParentPrec);
   /// Operands of the integer operator being printed. A string literal among
   /// them is an array in C and prints as its integer address instead.
   std::set<const HighExpr *> LiteralAddressOperands;
@@ -527,6 +530,7 @@ public:
   bool InferredVoid = false;
   TypeRef FuncReturnType;
   const HighFunc *CurrentFunc = nullptr;
+  CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;
   bool PrintedIndirectReturn = false;

@@ -177,6 +177,16 @@ struct TypeSym {
   TypeRef Type;
 };
 
+/// A pointer-to-record parameter located in a physical register at the exact
+/// function entry. This is identity evidence only, never a callable ABI or a
+/// license to access/replace the record. Providers must authenticate the image,
+/// complete qualified record identity, byte size and concrete entry location.
+struct AuthenticatedRecordParameter {
+  uint64_t Register = 0;
+  std::string QualifiedType;
+  uint32_t ObjectBytes = 0;
+};
+
 class DebugContext {
 public:
   virtual ~DebugContext() = default;
@@ -209,6 +219,11 @@ public:
   /// loaded image.  PDB, MAP, mismatched companions, and legacy providers are
   /// untrusted by default even when they remain useful for names and lines.
   virtual bool hasAuthenticatedObjectExtents() const { return false; }
+
+  virtual std::vector<AuthenticatedRecordParameter>
+  resolveAuthenticatedRecordParameters(va_t) const {
+    return {};
+  }
 
   /// Resolve the unique object containing \p Offset at one concrete machine
   /// instruction.  The returned variable retains its declared base in

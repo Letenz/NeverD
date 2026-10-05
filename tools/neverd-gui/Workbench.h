@@ -174,6 +174,7 @@ public:
   Q_INVOKABLE void undo();
   Q_INVOKABLE void redo();
   Q_INVOKABLE void importContributions(const QUrl &url);
+  Q_INVOKABLE void loadSignatures(const QUrl &url);
   Q_INVOKABLE void unloadContributions(const QString &nameSpace);
   Q_INVOKABLE void runContribution(const QString &id);
   void externalQuery(const QString &id, const QString &operation,

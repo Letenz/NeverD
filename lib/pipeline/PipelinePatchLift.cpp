@@ -14,6 +14,7 @@
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedABIPass.h"
@@ -610,18 +611,23 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                    !requiresSerialLLVMEmission(Result.MedFuncs, Img);
 
   if (UseShards) {
-    LLVMEmissionResult Emission =
-        emitLLVMSharded(Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img,
-                        Img.Format, Opts.NoOpt, Workers);
+    LLVMEmissionResult Emission = emitLLVMSharded(
+        Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.Format, Opts.NoOpt,
+        Workers, !Result.LibraryRecognitions.empty());
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
     Result.LLVMVerifierFailed = Emission.LLVMVerifierFailed;
     Result.LlvmModule = std::move(Emission.Module);
+    Result.LLVMSources = std::move(Emission.Sources);
     if (!Result.LlvmModule) {
       Result.Error = std::move(Emission.Error);
       return false;
     }
   } else {
     MedLLVMEmitter MedEmitter;
+    if (!Result.LibraryRecognitions.empty()) {
+      Result.LLVMSources = std::make_shared<LLVMSourceMap>();
+      MedEmitter.setSourceMap(Result.LLVMSources.get());
+    }
     // A recovered machine wrapper uses fixed guest addresses. The original
     // image remains available to recovery proofs and reports, but must not
     // authorize source globals or rebased LOAD/STORE addresses. This recovery
@@ -652,6 +658,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
     if (!Opts.NoOpt) {
       OptimizationOptions Options;
+      Options.SourceMap = Result.LLVMSources.get();
       Options.Conservative = Opts.PatchMode;
       OptimizationResult Optimization =
           optimizeModule(*Result.LlvmModule, Options);

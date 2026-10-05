@@ -14,6 +14,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
+#include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/evm/analysis/EVMAnalyzer.h"
@@ -232,7 +233,8 @@ std::string missingHighFunctionReason(const PipelineResult &Result,
 }
 } // namespace
 
-const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
+static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
+                                  CSourceMap *SourceMap) {
   auto *S = toSession(Sess);
   S->clearError();
 
@@ -298,10 +300,19 @@ const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.Format;
   Opts.Image = &S->Img;
+  if (SourceMap) {
+    SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
+    SourceMap->HighSources = &S->PipeResult.HighSources;
+    Opts.SourceMap = SourceMap;
+  }
   HighCEmitter Emitter;
   Emitter.emit(Single, OS, Opts, S->Dbg.get());
 
   return dupStr(Out);
+}
+
+const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
+  return decompileHighC(Sess, FuncEntry, nullptr);
 }
 
 const char *neverd_decompile_llvm(neverd_session_t Sess,
@@ -309,8 +320,8 @@ const char *neverd_decompile_llvm(neverd_session_t Sess,
   return neverd_decompile_llvm_ex(Sess, FuncEntry, 0);
 }
 
-const char *neverd_decompile_llvm_ex(neverd_session_t Sess,
-                                     neverd_va_t FuncEntry, int NoOpt) {
+static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
+                                  int NoOpt, CSourceMap *SourceMap) {
   auto *S = toSession(Sess);
   S->clearError();
 
@@ -353,10 +364,148 @@ const char *neverd_decompile_llvm_ex(neverd_session_t Sess,
   CEmitterOptions Opts;
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.Format;
+  if (SourceMap) {
+    SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
+    SourceMap->LLVMSources = S->PipeResult.LLVMSources.get();
+    Opts.SourceMap = SourceMap;
+  }
   LLVMCEmitter Emitter;
   Emitter.emit(*S->PipeResult.LlvmModule, OS, Opts, S->Dbg.get(), &S->Img, LF);
   return dupStr(Out);
 }
+
+const char *neverd_decompile_llvm_ex(neverd_session_t Sess,
+                                     neverd_va_t FuncEntry, int NoOpt) {
+  return decompileLlvmC(Sess, FuncEntry, NoOpt, nullptr);
+}
+
+namespace {
+
+llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
+                              llvm::StringRef Stage, size_t Offset,
+                              size_t Limit) {
+  auto &S = *toSession(Sess);
+  CSourceMap Map;
+  const char *Raw = Stage == "c" ? decompileHighC(Sess, Entry, &Map)
+                                 : decompileLlvmC(Sess, Entry, 0, &Map);
+  std::unique_ptr<const char, decltype(&neverd_free_string)> Owned(
+      Raw, neverd_free_string);
+  if (!Raw || !S.LastError.empty())
+    throw std::runtime_error(S.LastError.empty() ? "source emission failed"
+                                                 : S.LastError);
+  llvm::StringRef Full(Raw);
+  if (Full.size() > 32 * 1024 * 1024 || !llvm::json::isUTF8(Full))
+    throw std::length_error("source view exceeds the UTF-8/32 MiB budget");
+  llvm::json::Array Regions;
+  for (const auto &Region : Map.Regions) {
+    const auto &Match = (*Map.Recognitions)[Region.Recognition];
+    if (Match.Function != Entry)
+      continue;
+    std::string ID = vaHex(Entry) + ':' + Match.Pack + ':' + Match.Rule;
+    if (Match.ResultOccurrence)
+      ID += ':' + vaHex(Match.ResultOccurrence->Address) + '.' +
+            std::to_string(Match.ResultOccurrence->Sequence);
+    const char *Scope = Match.Scope == sigs::LibraryFeatureScope::WholeFunction
+                            ? "whole-function"
+                        : Match.Scope == sigs::LibraryFeatureScope::InlineRegion
+                            ? "inline-region"
+                            : "inline-expression";
+    llvm::json::Object Item{
+        {"id", ID},
+        {"function", vaHex(Entry)},
+        {"scope", Scope},
+        {"family", Match.Family},
+        {"operation", Match.Operation},
+        {"display_name", Match.DisplayName},
+        {"linkage_name", Match.LinkageName},
+        {"receiver_type", Match.ReceiverType},
+        {"identity_evidence", Match.IdentityEvidence},
+        {"pack_id", Match.Pack},
+        {"pack_sha256", Match.PackSHA256},
+        {"profile_sha256", Match.ProfileSHA256},
+        {"evidence_sha256", Match.EvidenceSHA256},
+        {"rule_id", Match.Rule},
+        {"rule_revision", Match.RuleRevision},
+        {"source_origin", Match.SourceOrigin},
+        {"source_revision", Match.SourceRevision},
+        {"isolated", Match.Isolated},
+        {"foldable", Region.Mapped && Match.Isolated},
+        {"mapping_status", Region.Mapped ? "mapped" : "unknown"}};
+    llvm::json::Array Occurrences;
+    for (const auto &Origin : Match.Occurrences)
+      Occurrences.push_back(llvm::json::Object{
+          {"address", vaHex(Origin.Address)}, {"origin_seq", Origin.Sequence}});
+    Item["occurrences"] = std::move(Occurrences);
+    llvm::json::Array Spans;
+    for (const auto &Span : Region.Spans)
+      Spans.push_back(
+          llvm::json::Object{{"begin_byte", static_cast<int64_t>(Span.Begin)},
+                             {"end_byte", static_cast<int64_t>(Span.End)}});
+    Item["spans"] = std::move(Spans);
+    Regions.push_back(std::move(Item));
+  }
+  std::string Text;
+  llvm::json::Array Rows;
+  size_t Total = 0, Start = 0, ByteOffset = Full.size();
+  while (Start < Full.size()) {
+    const size_t Newline = Full.find('\n', Start);
+    const size_t End =
+        Newline == llvm::StringRef::npos ? Full.size() : Newline + 1;
+    if (Total >= Offset && Total - Offset < Limit) {
+      if (Text.empty())
+        ByteOffset = Start;
+      if (End - Start > 2 * 1024 * 1024 - Text.size())
+        throw std::length_error(
+            "source page exceeds 2 MiB; request fewer lines");
+      Text.append(Full.data() + Start, End - Start);
+      std::set<va_t> Origins;
+      for (const auto &Region : Map.Regions) {
+        const auto &Match = (*Map.Recognitions)[Region.Recognition];
+        if (Match.Function != Entry || !Region.Mapped)
+          continue;
+        for (const auto &Span : Region.Spans)
+          if (Span.Begin < End && Start < Span.End)
+            for (const auto &Origin : Match.Occurrences)
+              Origins.insert(Origin.Address);
+      }
+      llvm::json::Array Addresses;
+      for (va_t Address : Origins)
+        Addresses.push_back(vaHex(Address));
+      Rows.push_back(llvm::json::Object{
+          {"line", static_cast<int64_t>(Total)},
+          {"object_id",
+           (Stage + ":" + vaHex(Entry) + ":line:" + std::to_string(Total))
+               .str()},
+          {"kind", "source"},
+          {"mapping_status", Origins.empty() ? "unmapped" : "library_region"},
+          {"addresses", std::move(Addresses)}});
+    }
+    ++Total;
+    Start = End;
+  }
+  const size_t End = std::min(Offset, Total) + Rows.size();
+  llvm::json::Object Page{
+      {"schema_version", 1},
+      {"address", vaHex(Entry)},
+      {"representation", Stage},
+      {"mapping_status", "library_regions"},
+      {"provenance_complete", false},
+      {"text", std::move(Text)},
+      {"rows", std::move(Rows)},
+      {"library_regions", std::move(Regions)},
+      {"offset", static_cast<int64_t>(Offset)},
+      {"byte_offset", static_cast<int64_t>(ByteOffset)},
+      {"total_lines", static_cast<int64_t>(Total)},
+      {"complete", End == Total},
+      {"recognition_budget_exhausted",
+       S.PipeResult.LibraryRecognitionBudgetExhausted.contains(Entry)}};
+  Page["next_offset"] = End == Total
+                            ? llvm::json::Value(nullptr)
+                            : llvm::json::Value(static_cast<int64_t>(End));
+  return Page;
+}
+
+} // namespace
 
 // ===--------------------------------------------------------------------===//
 // Multi-stage IR
@@ -438,6 +587,14 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
     Result["address"] = vaHex(FuncEntry);
     Result["representation"] = Stage;
     Result["rows"] = llvm::json::Array();
+    if (Stage == "c" || Stage == "llvmc") {
+      if (S->Img.Arch == Arch::EVM || S->Img.Arch == Arch::SBF) {
+        Result["mapping_status"] = "unsupported_architecture";
+        return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
+      }
+      auto Page = sourcePage(Sess, FuncEntry, Stage, Offset, Limit);
+      return dupStr(jsonToString(llvm::json::Value(std::move(Page))));
+    }
     if (Stage != "low" && Stage != "med") {
       Result["mapping_status"] = "unsupported_representation";
       return dupStr(jsonToString(llvm::json::Value(std::move(Result))));

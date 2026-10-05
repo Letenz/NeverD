@@ -105,6 +105,10 @@ public:
   llvm::Error loadFeaturePack(const std::filesystem::path &Path);
   /// Replace only the feature packs, as one transaction. Dir is features/rules.
   llvm::Error loadFeatureDirectory(const std::filesystem::path &Dir);
+  /// Load the selected legacy tree and features/rules as one transaction.
+  /// An absent feature directory means this tree has no structural rules.
+  llvm::Error loadForImage(const BinaryImage &Image,
+                           const std::filesystem::path &Root);
   const std::map<std::string, LibraryFeaturePack> &featurePacks() const {
     return FeaturePacks;
   }

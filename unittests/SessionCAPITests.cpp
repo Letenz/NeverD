@@ -2438,12 +2438,94 @@ TEST_F(SessionCAPITest,
   EXPECT_EQ(VM.getString("mapping_status"), "unsupported_architecture");
   EXPECT_TRUE(VM.getArray("rows")->empty());
   EXPECT_FALSE(VM.getString("text"));
-  for (const char *Stage : {"c", "high", "llvm"}) {
+  for (const char *Stage : {"high", "llvm"}) {
     auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
     EXPECT_EQ(Unsupported.getString("mapping_status"),
               "unsupported_representation");
     EXPECT_TRUE(Unsupported.getArray("rows")->empty());
   }
+  for (const char *Stage : {"c", "llvmc"}) {
+    auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
+    EXPECT_EQ(Unsupported.getString("mapping_status"),
+              "unsupported_architecture");
+    EXPECT_TRUE(Unsupported.getArray("rows")->empty());
+  }
+}
+
+TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
+  const auto Path =
+      (std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o")
+          .string();
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  int Index = neverd_func_find_by_name(Session, "_nd_vector_u32_data_inline");
+  if (Index < 0)
+    Index = neverd_func_find_by_name(Session, "nd_vector_u32_data_inline");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  auto Before = takeView(neverd_ir_view_json(Session, Entry, "c", 0, 2048));
+  ASSERT_NE(Before.getArray("library_regions"), nullptr);
+  EXPECT_TRUE(Before.getArray("library_regions")->empty());
+  const auto Rule = (std::filesystem::path(NEVERD_LIBRARY_FEATURE_DIR) /
+                     "libcxx-23git-arm64-macos-abi1-alternate-clang22.json")
+                        .string();
+  ASSERT_GE(neverd_apply_signature_file(Session, Rule.c_str()), 0)
+      << takeString(neverd_last_error(Session));
+  for (const char *Stage : {"c", "llvmc"}) {
+    SCOPED_TRACE(Stage);
+    const std::string Original = takeString(
+        std::strcmp(Stage, "c") == 0 ? neverd_decompile(Session, Entry)
+                                     : neverd_decompile_llvm(Session, Entry));
+    ASSERT_FALSE(Original.empty()) << takeString(neverd_last_error(Session));
+    std::string Assembled;
+    size_t Offset = 0;
+    std::string RegionID;
+    for (;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      ASSERT_EQ(Page.getString("mapping_status"), "library_regions");
+      EXPECT_EQ(Page.getInteger("byte_offset"), Assembled.size());
+      ASSERT_TRUE(Page.getString("text"));
+      Assembled += Page.getString("text")->str();
+      const auto *Regions = Page.getArray("library_regions");
+      ASSERT_NE(Regions, nullptr);
+      ASSERT_EQ(Regions->size(), 1u);
+      const auto *Region = Regions->front().getAsObject();
+      ASSERT_NE(Region, nullptr);
+      EXPECT_EQ(Region->getString("rule_id"), "libcxx.vector-u32.data");
+      EXPECT_EQ(Region->getString("scope"), "inline-expression");
+      EXPECT_EQ(Region->getString("linkage_name"), "");
+      EXPECT_EQ(Region->getBoolean("foldable"), true);
+      ASSERT_TRUE(Region->getString("id"));
+      if (RegionID.empty())
+        RegionID = Region->getString("id")->str();
+      EXPECT_EQ(Region->getString("id"), RegionID);
+      ASSERT_NE(Region->getArray("occurrences"), nullptr);
+      EXPECT_FALSE(Region->getArray("occurrences")->empty());
+      ASSERT_NE(Region->getArray("spans"), nullptr);
+      EXPECT_FALSE(Region->getArray("spans")->empty());
+      if (Page.getBoolean("complete").value_or(false))
+        break;
+      ASSERT_TRUE(Page.getInteger("next_offset"));
+      Offset = *Page.getInteger("next_offset");
+      ASSERT_LT(Offset, 10000u);
+    }
+    EXPECT_EQ(Assembled, Original);
+  }
+  std::filesystem::create_directories(Directory / "features" / "rules");
+  const auto BadRule = write("features/rules/broken.json", "{}");
+  EXPECT_EQ(neverd_apply_signature_file(Session, BadRule.c_str()), -1);
+  auto Preserved = takeView(neverd_ir_view_json(Session, Entry, "c", 0, 2048));
+  ASSERT_NE(Preserved.getArray("library_regions"), nullptr);
+  EXPECT_EQ(Preserved.getArray("library_regions")->size(), 1u);
+  const auto EmptyRoot = Directory / "empty-signature-tree";
+  std::filesystem::create_directories(EmptyRoot);
+  ASSERT_GE(neverd_auto_apply_signatures(Session, EmptyRoot.string().c_str()),
+            0);
+  auto Withdrawn = takeView(neverd_ir_view_json(Session, Entry, "c", 0, 2048));
+  ASSERT_NE(Withdrawn.getArray("library_regions"), nullptr);
+  EXPECT_TRUE(Withdrawn.getArray("library_regions")->empty());
+  EXPECT_EQ(Withdrawn.getString("text"), Before.getString("text"));
 }
 
 TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {

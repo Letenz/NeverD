@@ -18,6 +18,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/evm/EVMIR.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/high/HighSourceMap.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
@@ -49,8 +50,14 @@ namespace neverd {
 class PipelineTestPeer;
 
 class Decoder;
+class LLVMSourceMap;
 
 struct PipelineOptions {
+  /// Read-only library presentation rules. These never supply a source ABI,
+  /// rewrite a body, or authorize a runtime model. The snapshot must outlive
+  /// run(); nullptr retains the existing analysis without annotations.
+  const std::map<std::string, sigs::LibraryFeaturePack> *LibraryFeatures =
+      nullptr;
   /// Experimental source recovery of one interpreter entry. Requires exactly
   /// one OnlyFunctionEntries element; never authorizes binary patching.
   std::optional<analysis::SpecializationOptions> InterpreterSpecialization;
@@ -200,6 +207,10 @@ struct PipelineResult {
   std::map<va_t, int> CallVariadicFrom;
   std::vector<MedFunc> MedFuncs;
   std::vector<HighFunc> HighFuncs;
+  std::vector<sigs::LibraryRecognition> LibraryRecognitions;
+  std::set<va_t> LibraryRecognitionBudgetExhausted;
+  HighSourceMap HighSources;
+  std::shared_ptr<LLVMSourceMap> LLVMSources;
   std::unique_ptr<llvm::Module> LlvmModule;
   std::unique_ptr<evm::EVMProgram> EVM;
   std::unique_ptr<sbf::SBFProgram> SBF;
@@ -410,6 +421,8 @@ public:
   /// LLVMLevel exactly and injects Semantic at the pipeline's early and late
   /// scalar extension points.  Conservative mode ignores both fields.
   struct OptimizationOptions {
+    /// Optional sidecar to rebind transactionally with a committed clone.
+    LLVMSourceMap *SourceMap = nullptr;
     bool Conservative = false;
     OptStrength Strength = OptStrength::Deep;
     llvm::OptimizationLevel LLVMLevel = llvm::OptimizationLevel::O2;
@@ -455,7 +468,8 @@ public:
   /// incomplete native exception contract, promote only the emitter's
   /// temporary allocas. Invalid LLVM IR and a failed fallback remain
   /// unchanged. Both C routes use this policy.
-  static OptimizationResult optimizeOrPromoteModule(llvm::Module &Mod);
+  static OptimizationResult
+  optimizeOrPromoteModule(llvm::Module &Mod, LLVMSourceMap *Sources = nullptr);
 
   /// Promote the emitter's temporary allocas to SSA registers. This
   /// canonicalization runs under NoOpt without value-changing passes. Native
@@ -505,6 +519,9 @@ private:
   void buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
                   PipelineResult &Result);
 
+  void recognizeLibraries(const BinaryImage &Img, const PipelineOptions &Opts,
+                          PipelineResult &Result, DebugContext *Dbg);
+
   /// Shortcut path: MedIR -> LLVM IR (skip HighIR).
   bool runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                         const PipelineOptions &Opts, PipelineResult &Result);
@@ -536,7 +553,7 @@ private:
                   Arch TheArch,
                   const std::vector<std::pair<va_t, std::string>> &Imports,
                   const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt,
-                  unsigned NumThreads);
+                  unsigned NumThreads, bool RecordSources = false);
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

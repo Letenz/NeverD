@@ -104,7 +104,8 @@ substring match; original non-ASCII bytes are preserved.
 | `disasm` | `{address,limit:128}`; limit 1–512 instructions. Returns `{items,address,next_address:hex|null,complete}`. Rows `{address,size,bytes,mnemonic,operands,comment}` may include backend decode status. `next_address` is computed from the last decoded instruction's size, with overflow checks. A full page's successor is a continuation candidate; an empty following page means decoding ended. |
 | `bytes` | `{address,size:256}`; size 1–65536. Returns `{address,encoding:"hex",data,bytes_read,requested_size,mapping_status,next_address}`. Status is `mapped`, `partial`, or `unmapped_or_unmaterialized`. The legacy C ABI cannot distinguish BSS from unmapped bytes. Initial v1 carries bounded hex data in JSON, not separate binary attachments. |
 | `analyze` | Computes the synchronous full-image pipeline once, publishes a new revision, invalidates adapter caches, and returns metadata. No function-level incremental analysis or cooperative cancellation is claimed. |
-| `decompile` | `{address,representation:"c",offset:0,limit:512}`; representation `c/low/med/high/llvm`, line limit 1–2048. Triggers full analysis when needed. Returns `{address,representation,text,offset,total_lines,next_offset,complete,mapping_status,provenance_complete,rows,project_id,revision}`. Native Low/Med use the optional bounded C ABI page API when present; other views retain one legacy function representation up to 32 MiB. A wire code page is capped at 2 MiB. See instruction mapping below. |
+| `signatures_load` | `{path,mode:"file"}` loads one `.pat` or library feature `.json`; `mode:"auto"` selects from a signature tree including `features/rules`. Returns `{loaded:true,byte_matches}` and advances the analysis revision. Invalid packs preserve the previous evidence and revision. Available on read-only images; it does not write annotations or the binary. |
+| `decompile` | `{address,representation:"c",offset:0,limit:512}`; representation `c/llvmc/low/med/high/llvm`, line limit 1–2048. Triggers analysis when needed. Returns `{address,representation,text,offset,total_lines,next_offset,complete,mapping_status,provenance_complete,rows,project_id,revision}`. Native Low/Med/C/LLVMC use the optional bounded C ABI page API when present; other views retain one legacy function representation up to 32 MiB. C pages may also carry `byte_offset,library_regions,recognition_budget_exhausted`. A wire code page is capped at 2 MiB. See source mapping below. |
 | `cfg` | `{address}`. Triggers analysis, returns `{name?,entry?,nodes,edges,complete:true}`. Nodes have `{id:string,start,end,insn_count,disasm:[string],address:start,label:start,lines:disasm}`; edges `{from:string,to:string|null,type}`. More than 500 nodes or 2000 edges returns `budget_exceeded`, with no partial graph. |
 | `cfg_summary` | `{address}`. Builds one immutable graph snapshot on the executor; returns counts, bounds and an opaque `layout_revision`, without node/edge arrays. Up to 20000 nodes / 100000 edges. See viewport contract below. |
 | `cfg_viewport` | `{address,layout_revision,x,y,width,height,scale:1,node_offset:0,edge_offset:0}`. Queries the current snapshot's spatial indexes; returns at most 256 nodes and 512 edges. No engine call or relayout per pan. A missing/mismatched snapshot returns `stale_layout`. |
@@ -124,10 +125,10 @@ substring match; original non-ASCII bytes are preserved.
 | `contribution_unregister` | `{namespace}`. Removes that namespace and returns the new listing. The built-in `neverd` namespace is reserved. |
 | `contribution_execute` | `{id,address?:hex}`. Executes that registered, whitelisted read-only query, replacing its exact `${address}` token with the supplied address or image entry. Returns `{contribution_id,operation,result}`. Arbitrary query/payload overrides are not supported. |
 
-## IR instruction mapping
+## IR and C source mapping
 
 A worker linked to an engine exporting the additive `neverd_ir_view_json`
-operation uses its native Low/Med pages directly. The symbol is resolved from the
+operation uses its native Low/Med/C/LLVMC pages directly. The symbol is resolved from the
 already loaded engine; older matching engines remain usable with
 `mapping_status:"unavailable_engine_api"`. Native mapped pages contain
 `mapping_status:"instruction_anchors"`, `provenance_complete:false`, and rows
@@ -145,8 +146,8 @@ IR rows for an instruction address. It does not claim a complete set of all
 instructions contributing to an expression after propagation or transformation.
 
 Headers, block labels and successor rows are `unmapped`; PHIs and synthetic Med
-operations are `synthetic`. Those rows have empty address arrays. C, High and
-LLVM mappings are `unsupported_representation`; VM Low/Med mappings are
+operations are `synthetic`. Those rows have empty address arrays. High and
+LLVM mappings are `unsupported_representation`; VM mappings are
 `unsupported_architecture`. Their text remains available through the existing
 backend, with empty mapping rows. No source address is guessed from textual line
 numbers, names, or the location of another representation's row.
@@ -158,6 +159,26 @@ formats the function on the executor to count lines but retains only the bounded
 selected page; it does not maintain a full mapping index or provide reverse
 lookup across unloaded pages. IDs include stage/function/block, operation slot,
 address and retained sequence and are stable only within the analysis revision.
+
+Native C and LLVMC pages use `mapping_status:"library_regions"` and
+`provenance_complete:false`. Their text is the ordinary, fully expanded C;
+`byte_offset` locates the page in that full UTF-8 document. Each region includes
+`id,function,scope,family,operation,display_name,linkage_name,receiver_type`,
+`identity_evidence,rule_id,rule_revision,pack_id,pack_sha256,profile_sha256`,
+`evidence_sha256,source_origin,source_revision,isolated,foldable,mapping_status`,
+`occurrences:[{address,origin_seq}]` and `spans:[{begin_byte,end_byte}]`.
+Spans are half-open byte offsets in the full C document, not page-relative
+character positions. Region metadata repeats on every page. Source provenance
+describes the rule, not the exact library version used by the target.
+
+Only a `mapped`, `isolated`, `foldable` region with all spans inside the loaded
+text may collapse. Unknown, overlapping or partial regions remain expanded.
+Rows intersecting a mapped span carry `mapping_status:"library_region"` and
+the region's instruction addresses; other C rows are unmapped. A region may
+map to several disjoint spans, without hiding intervening text. Clients retain
+the full source for copying and export and retire folds on revision changes.
+`recognition_budget_exhausted:true` reports a bounded analysis that published
+no matches; it never authorizes a partial guessed region.
 
 ## CFG viewport contract
 

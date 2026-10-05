@@ -18,6 +18,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/CodeGen.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/decode/Decoder.h"
@@ -92,6 +93,7 @@ struct Session {
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
   PipelineResult PipeResult;
   bool PipeRan = false;
+  uint64_t PipelineFeatureGeneration = 0;
   std::optional<bool> LlvmModuleNoOpt;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
@@ -229,6 +231,7 @@ struct Session {
   void clearError() { LastError.clear(); }
 
   void applyAnalysisOptions(PipelineOptions &Opts) const {
+    Opts.LibraryFeatures = &SigDB.featurePacks();
     Opts.EVMFork = EVMFork;
     Opts.EVMStrict = EVMStrict;
     Opts.SBFVersion = SBFVersion;
@@ -322,6 +325,8 @@ struct Session {
       setError("no binary loaded");
       return false;
     }
+    if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
+      clearPipeline();
     if (!PipeRan) {
       LLVMCtx = std::make_unique<llvm::LLVMContext>();
       PipelineOptions Opts;
@@ -331,6 +336,7 @@ struct Session {
       // context to the pipeline also carries source locations, declared sizes,
       // and parameter names into the IR.
       PipeResult = ThePipeline.run(Img, *LLVMCtx, Opts, Dbg.get());
+      PipelineFeatureGeneration = SigDB.featureGeneration();
       PipeRan = true;
     }
     if (!PipeResult.Success)
@@ -393,6 +399,8 @@ struct Session {
   }
 
   bool ensureLlvmModule(bool NoOpt = false) {
+    if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
+      clearPipeline();
     if (PipeResult.LlvmModule &&
         (!LlvmModuleNoOpt || *LlvmModuleNoOpt == NoOpt))
       return true;
@@ -435,6 +443,11 @@ struct Session {
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
+    std::shared_ptr<LLVMSourceMap> Sources;
+    if (!PipeResult.LibraryRecognitions.empty()) {
+      Sources = std::make_shared<LLVMSourceMap>();
+      Emitter.setSourceMap(Sources.get());
+    }
     auto Candidate =
         Emitter.emit(PipeResult.MedFuncs, *LLVMCtx, "neverd_output", Img.Arch,
                      ImportMap, &Img, Img.Format);
@@ -454,7 +467,7 @@ struct Session {
       Pipeline::promoteScaffoldingAllocas(*Candidate);
     } else {
       const OptimizationResult Optimization =
-          Pipeline::optimizeOrPromoteModule(*Candidate);
+          Pipeline::optimizeOrPromoteModule(*Candidate, Sources.get());
       if (Optimization.Stop == OptimizationStopReason::VerificationFailed) {
         setError(std::string("native LLVM optimization failed: ") +
                  optimizationStopReasonName(Optimization.Stop));
@@ -469,6 +482,7 @@ struct Session {
       return false;
     }
     PipeResult.LlvmModule = std::move(Candidate);
+    PipeResult.LLVMSources = std::move(Sources);
     LlvmModuleNoOpt = NoOpt;
     return true;
   }

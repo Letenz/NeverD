@@ -1,4 +1,5 @@
 add_neverd_component_library(NeverDIRMed
+  MedLibraryRecognition.cpp
   abi/MedABIPass.cpp
   abi/MedABIPassSupport.cpp
   abi/MedCallingConv.cpp

@@ -14,6 +14,7 @@
 #include "neverd/Common.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/pass/ir/HelloWorldPass.h"
 #include "neverd/pass/ir/obf/BitMaskingPass.h"
 #include "neverd/pass/ir/obf/BogusControlFlowPass.h"
@@ -588,7 +589,15 @@ Pipeline::optimizeModule(llvm::Module &Mod,
   }
 
   const auto InputHash = llvm::StructuralHash(Mod, /*DetailedHash=*/true);
-  std::unique_ptr<llvm::Module> Candidate = llvm::CloneModule(Mod);
+  llvm::ValueToValueMapTy SourceValues;
+  std::unique_ptr<llvm::Module> Candidate =
+      llvm::CloneModule(Mod, SourceValues);
+  std::optional<LLVMSourceMap> CandidateSources;
+  if (Options.SourceMap) {
+    CandidateSources = *Options.SourceMap;
+    CandidateSources->remap(
+        [&](llvm::Value *V) { return SourceValues.lookup(V); });
+  }
   Result = runOptimizationPipeline(*Candidate, Options);
   if (llvm::verifyModule(*Candidate)) {
     Result.Changed = false;
@@ -623,19 +632,31 @@ Pipeline::optimizeModule(llvm::Module &Mod,
   }
 
   Result.Changed = true;
+  if (CandidateSources)
+    *Options.SourceMap = std::move(*CandidateSources);
   Mod = std::move(*Candidate);
   return Result;
 }
 
-OptimizationResult Pipeline::optimizeOrPromoteModule(llvm::Module &Mod) {
+OptimizationResult Pipeline::optimizeOrPromoteModule(llvm::Module &Mod,
+                                                     LLVMSourceMap *Sources) {
   OptimizationOptions Options;
+  Options.SourceMap = Sources;
   OptimizationResult Result = optimizeModule(Mod, Options);
   if (Result.Stop != OptimizationStopReason::InputInvalid ||
       llvm::verifyModule(Mod))
     return Result;
 
   const auto InputHash = llvm::StructuralHash(Mod, /*DetailedHash=*/true);
-  std::unique_ptr<llvm::Module> Candidate = llvm::CloneModule(Mod);
+  llvm::ValueToValueMapTy SourceValues;
+  std::unique_ptr<llvm::Module> Candidate =
+      llvm::CloneModule(Mod, SourceValues);
+  std::optional<LLVMSourceMap> CandidateSources;
+  if (Sources) {
+    CandidateSources = *Sources;
+    CandidateSources->remap(
+        [&](llvm::Value *V) { return SourceValues.lookup(V); });
+  }
   promoteScaffoldingAllocas(*Candidate);
   if (llvm::verifyModule(*Candidate)) {
     Result.Stop = OptimizationStopReason::VerificationFailed;
@@ -645,6 +666,8 @@ OptimizationResult Pipeline::optimizeOrPromoteModule(llvm::Module &Mod) {
       snapshotModule(*Candidate) == snapshotModule(Mod))
     return Result;
 
+  if (CandidateSources)
+    *Sources = std::move(*CandidateSources);
   Mod = std::move(*Candidate);
   Result.Changed = true;
   return Result;

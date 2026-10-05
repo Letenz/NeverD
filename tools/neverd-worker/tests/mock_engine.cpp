@@ -7,6 +7,7 @@
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
 #include "neverd/sdk/NeverDCAPISession.h"
+#include "neverd/sdk/NeverDCAPISigs.h"
 
 #include <chrono>
 #include <cstdio>
@@ -73,6 +74,17 @@ int neverd_session_load(neverd_session_t s, const char *path) {
 }
 int neverd_session_is_loaded(neverd_session_t s) {
   return !session(s)->path.empty();
+}
+int neverd_apply_signature_file(neverd_session_t s, const char *path) {
+  session(s)->error.clear();
+  if (!std::ifstream(path)) {
+    session(s)->error = "mock signature file is missing";
+    return -1;
+  }
+  return 0;
+}
+int neverd_auto_apply_signatures(neverd_session_t s, const char *path) {
+  return neverd_apply_signature_file(s, path);
 }
 int neverd_session_analyze(neverd_session_t) {
   std::puts("python-style print during analysis");
@@ -191,6 +203,13 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
   session(s)->error.clear();
+  // This mock deliberately represents an older page API that maps Low/Med
+  // only. C requests must exercise the worker's legacy fallback.
+  if (std::string(representation) != "low" &&
+      std::string(representation) != "med")
+    return copy(Json{{"mapping_status", "unsupported_representation"},
+                     {"rows", Json::array()}}
+                    .dump());
   Json rows = Json::array();
   std::string text;
   const auto end =

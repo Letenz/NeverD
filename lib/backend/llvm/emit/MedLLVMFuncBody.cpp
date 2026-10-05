@@ -21,6 +21,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -293,6 +294,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   auto *LLVMFunc = declareFunc(Func);
   emitExceptionMetadata(Func, *LLVMFunc);
   CurFunc = LLVMFunc;
+  if (SourceMap)
+    SourceMap->Functions[Func.Entry] = LLVMFunc;
   VarAllocs.clear();
   CallSiteAddrs.clear();
   ParamArgs.clear();

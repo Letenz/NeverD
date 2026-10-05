@@ -19,6 +19,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include <functional>
 #include <map>
 #include <set>
 #include <tuple>
@@ -150,6 +151,14 @@ public:
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
 
+  /// Observe expression creation without adding metadata to either IR. The
+  /// observer must keep weak references: later transformations can replace an
+  /// expression, and an expired reference must not map a recycled address.
+  void setExpressionObserver(
+      std::function<void(const MedOp &, const ExprPtr &)> Observer) {
+    ExpressionObserver = std::move(Observer);
+  }
+
   void setFuncNames(const std::map<va_t, std::string> *Names) {
     FuncNames = Names;
   }
@@ -184,6 +193,7 @@ private:
   void ensureTrailingReturn(HighFunc &Func, const MedFunc &Med);
 
   ExprPtr medOpToExpr(const MedOp &Op);
+  ExprPtr medOpToExprImpl(const MedOp &Op);
   ExprPtr medvarToExpr(const MedVar &V);
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
@@ -307,6 +317,7 @@ private:
   std::map<std::tuple<int, int, int>, const MedOp *> EntryOffsetDefs;
   const MedFunc *EntryOffsetDefsFor = nullptr;
   const BinaryImage *Image = nullptr;
+  std::function<void(const MedOp &, const ExprPtr &)> ExpressionObserver;
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;

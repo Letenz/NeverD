@@ -150,25 +150,11 @@ int neverd_auto_apply_signatures(neverd_session_t Sess,
     return -1;
   S->clearError();
 
-  const std::optional<std::filesystem::path> Directory =
-      sigs::SignatureDB::treeDirectory(S->Img);
-  if (!Directory)
+  if (!sigs::SignatureDB::treeDirectory(S->Img))
     return 0;
-  const std::filesystem::path SigPath =
-      std::filesystem::path(SigBaseDir) / *Directory;
-
-  if (!std::filesystem::exists(SigPath))
-    return 0;
-
-  auto Files = sigs::SignatureDB::listDirectory(SigPath);
-  if (!Files) {
-    S->setError(llvm::toString(Files.takeError()));
-    return -1;
-  }
   auto Entries = findSignatureEntries(*S);
   useSignatureCache(*S);
-  auto Err = S->SigDB.loadFiles(
-      sigs::SignatureDB::selectForImage(S->Img, std::move(*Files)));
+  auto Err = S->SigDB.loadForImage(S->Img, SigBaseDir);
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
     return -1;

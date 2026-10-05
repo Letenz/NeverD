@@ -165,6 +165,7 @@ Json hello() {
             "disasm",
             "bytes",
             "decompile",
+            "signatures_load",
             "cfg",
             "cfg_summary",
             "cfg_viewport",

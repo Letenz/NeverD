@@ -183,6 +183,10 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   // Weight each function by its MedIR op count so the heaviest structurings
   // start first and the tail stays balanced (see parallelForEachWeighted).
   std::vector<uint64_t> Weight(Total, 1);
+  std::vector<HighSourceMap> Sources(Total);
+  std::set<va_t> RecognizedFunctions;
+  for (const auto &Match : Result.LibraryRecognitions)
+    RecognizedFunctions.insert(Match.Function);
   for (size_t I = 0; I < Total; ++I) {
     uint64_t W = 1;
     for (const auto &B : Result.MedFuncs[I].Blocks)
@@ -197,6 +201,13 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     Local.setResolvedCalleeNames(&ResolvedCalleeNames);
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
+      Local.setExpressionObserver({});
+      if (RecognizedFunctions.contains(MF.Entry))
+        Local.setExpressionObserver(
+            [&, FI](const MedOp &Op, const ExprPtr &Expr) {
+              Sources[FI].push_back(
+                  {Result.MedFuncs[FI].Entry, {Op.Addr, Op.OriginSeq}, Expr});
+            });
       auto keepIdentity = [&] {
         HighFunc &HF = Pending[FI];
         HF.Name = MF.Name;
@@ -269,6 +280,10 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     }
   });
   Result.HighFuncs = std::move(Pending);
+  for (auto &Source : Sources)
+    for (auto &Observation : Source)
+      if (!Observation.Expression.expired())
+        Result.HighSources.push_back(std::move(Observation));
 }
 
 } // namespace neverd

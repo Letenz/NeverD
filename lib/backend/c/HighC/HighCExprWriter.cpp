@@ -2690,6 +2690,14 @@ bool HighCWriter::isNamedFrameMemory(const HighExpr &E) const {
 }
 
 std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
+  std::string Text = exprStrImpl(E, ParentPrec);
+  return SourceRecorder && CurrentFunc
+             ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                          std::move(Text))
+             : Text;
+}
+
+std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec) {
   static thread_local int Depth = 0;
   struct Guard {
     int &D;

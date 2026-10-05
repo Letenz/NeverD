@@ -3259,3 +3259,35 @@ target_include_directories(NeverDLLVMCIntrinsicSemanticTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )
+
+# The feature repository retains compiler-produced objects and their manifests.
+# Use those objects, rather than a hand-written stand-in for a standard library.
+set(_library_feature_dir "${CMAKE_CURRENT_BINARY_DIR}/library-features/libcxx")
+set(_library_feature_archive
+  "${CMAKE_SOURCE_DIR}/signatures/features/evidence/libcxx-23git-arm64-macos-abi1-alternate-clang22.tar.gz")
+add_custom_command(
+  OUTPUT "${_library_feature_dir}/accessors-inline.o"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${_library_feature_dir}"
+  COMMAND ${CMAKE_COMMAND} -E chdir "${_library_feature_dir}"
+    ${CMAKE_COMMAND} -E tar xzf "${_library_feature_archive}"
+  DEPENDS "${_library_feature_archive}"
+  VERBATIM)
+add_custom_target(neverd-library-feature-fixtures
+  DEPENDS "${_library_feature_dir}/accessors-inline.o")
+add_neverd_unittest(NeverDLibraryRecognitionTests
+  core/LibraryRecognitionTests.cpp
+  LINK_COMPONENTS Pipeline Sigs)
+add_dependencies(NeverDLibraryRecognitionTests neverd-library-feature-fixtures)
+target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
+  NEVERD_LIBRARY_FEATURE_DIR="${CMAKE_SOURCE_DIR}/signatures/features/rules"
+  NEVERD_LIBRARY_FIXTURE_DIR="${_library_feature_dir}")
+
+if(TARGET neverd-worker AND Python3_Interpreter_FOUND)
+  add_test(NAME NeverDWorkerLibraryFeatures
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/neverd-worker/tests/library_features_test.py"
+      "$<TARGET_FILE:neverd-worker>"
+      "${_library_feature_dir}/accessors-inline.o"
+      "${CMAKE_SOURCE_DIR}/signatures/features/rules/libcxx-23git-arm64-macos-abi1-alternate-clang22.json")
+  set_tests_properties(NeverDWorkerLibraryFeatures PROPERTIES TIMEOUT 60 LABELS "unit;library-recognition;worker")
+endif()

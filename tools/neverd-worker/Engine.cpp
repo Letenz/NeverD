@@ -7,6 +7,7 @@
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
+#include "neverd/sdk/NeverDCAPISigs.h"
 #include "neverd/support/ProjectWriteLock.h"
 
 #include <algorithm>
@@ -412,6 +413,24 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     return result;
   }
   requireLoaded();
+  if (operation == "signatures_load") {
+    const auto path = stringField(p, "path", {}, 32768);
+    const auto mode = stringField(p, "mode", "file", 16);
+    if (path.empty() || (mode != "file" && mode != "auto"))
+      throw Error("invalid_request",
+                  "A signature path and file/auto mode are required");
+    const int matches =
+        mode == "auto" ? neverd_auto_apply_signatures(session_, path.c_str())
+                       : neverd_apply_signature_file(session_, path.c_str());
+    if (matches < 0)
+      throw Error("signature_load_failed", error());
+    // This changes analysis evidence only. It is also available on a read-only
+    // image and never stages a sidecar edit or modifies the binary.
+    analyzed_ = false;
+    invalidate();
+    ++revision_;
+    return {{"loaded", true}, {"byte_matches", matches}};
+  }
   if (operation == "metadata")
     return metadata();
   if (operation == "history") {
@@ -779,7 +798,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error("invalid_request", "limit must be at least 1");
     analyze();
     std::string mappingStatus = "unsupported_representation";
-    if (representation == "low" || representation == "med") {
+    if (representation == "low" || representation == "med" ||
+        representation == "c" || representation == "llvmc") {
       if (const auto view = irViewFunction()) {
         auto result = backendJson(
             view(session_, address, representation.c_str(), offset, limit),

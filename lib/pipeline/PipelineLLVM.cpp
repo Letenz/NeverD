@@ -12,6 +12,7 @@
 #include "PipelineLLVMDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -48,6 +49,67 @@
 namespace neverd {
 
 namespace {
+
+/// Coordinates are valid only across serialization of this exact module.
+/// They are discarded immediately after parsing its bitcode; transforms and
+/// linking use weak LLVM handles again, never stale instruction ordinals.
+struct SerializedSources {
+  std::map<va_t, std::string> Functions;
+  struct Observation {
+    va_t Entry;
+    sigs::LibraryOccurrence Occurrence;
+    std::string Function;
+    size_t Instruction;
+  };
+  std::vector<Observation> Observations;
+};
+
+SerializedSources serializeSources(const LLVMSourceMap &Sources,
+                                   const llvm::Module &Module) {
+  SerializedSources Result;
+  std::map<const llvm::Instruction *, size_t> Ordinals;
+  for (const auto &Function : Module) {
+    size_t Index = 0;
+    for (const auto &Block : Function)
+      for (const auto &Instruction : Block)
+        Ordinals[&Instruction] = Index++;
+  }
+  for (const auto &[Entry, Handle] : Sources.Functions)
+    if (auto *Function = llvm::dyn_cast_or_null<llvm::Function>(Handle);
+        Function && Function->getParent() == &Module)
+      Result.Functions.emplace(Entry, Function->getName().str());
+  for (const auto &Source : Sources.Observations) {
+    auto *Instruction = llvm::dyn_cast_or_null<llvm::Instruction>(Source.Value);
+    auto Found = Ordinals.find(Instruction);
+    if (!Instruction || Found == Ordinals.end())
+      continue;
+    Result.Observations.push_back({Source.Function, Source.Occurrence,
+                                   Instruction->getFunction()->getName().str(),
+                                   Found->second});
+  }
+  return Result;
+}
+
+void restoreSources(const SerializedSources &Sources, llvm::Module &Module,
+                    LLVMSourceMap &Result) {
+  std::map<std::string, std::vector<llvm::Instruction *>> Instructions;
+  for (auto &Function : Module) {
+    auto &At = Instructions[Function.getName().str()];
+    for (auto &Block : Function)
+      for (auto &Instruction : Block)
+        At.push_back(&Instruction);
+  }
+  for (const auto &[Entry, Name] : Sources.Functions)
+    if (auto *Function = Module.getFunction(Name))
+      Result.Functions[Entry] = Function;
+  for (const auto &Source : Sources.Observations) {
+    auto Function = Instructions.find(Source.Function);
+    if (Function != Instructions.end() &&
+        Source.Instruction < Function->second.size())
+      Result.Observations.push_back({Source.Entry, Source.Occurrence,
+                                     Function->second[Source.Instruction]});
+  }
+}
 
 bool isFatalOptimizationStop(OptimizationStopReason Stop) {
   return Stop == OptimizationStopReason::InputInvalid ||
@@ -163,7 +225,8 @@ pipeline_detail::planLLVMEmissionShards(const std::vector<MedFunc> &Funcs,
 Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
     const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx, Arch TheArch,
     const std::vector<std::pair<va_t, std::string>> &Imports,
-    const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt, unsigned NumThreads) {
+    const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt, unsigned NumThreads,
+    bool RecordSources) {
   const size_t N = Funcs.size();
   NumThreads = std::max(
       1u, std::min<unsigned>(NumThreads, static_cast<unsigned>(N ? N : 1)));
@@ -175,6 +238,10 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
       Mask[I] = (ShardPlan.ShardOf[I] == S);
     MedLLVMEmitter Emitter;
     LLVMEmissionResult Result;
+    if (RecordSources) {
+      Result.Sources = std::make_shared<LLVMSourceMap>();
+      Emitter.setSourceMap(Result.Sources.get());
+    }
     Result.Module = Emitter.emit(Funcs, ShardCtx, "neverd_output", TheArch,
                                  Imports, &Img, Fmt,
                                  /*MergeableGlobals=*/true, &Mask);
@@ -198,6 +265,7 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
   NumThreads = std::max(1u, std::min(NumThreads, NumShards));
   struct ShardResult {
     std::string Bitcode;
+    std::optional<SerializedSources> Sources;
     uint64_t UnhandledValueIntrinsics = 0;
     bool LLVMVerifierFailed = false;
     std::string Error;
@@ -260,7 +328,8 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
         }
         if (!NoOpt) {
           ShardPhase = "optimization";
-          OptimizationResult Optimization = optimizeOrPromoteModule(*M);
+          OptimizationResult Optimization =
+              optimizeOrPromoteModule(*M, Emission.Sources.get());
           if (Optimization.Stop == OptimizationStopReason::InputInvalid) {
             // The shard was verified above. A blocking native EH contract
             // keeps value-changing passes off this module; the shared helper
@@ -283,6 +352,8 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
           return;
         }
         ShardPhase = "serialization";
+        if (Emission.Sources)
+          Shard.Sources = serializeSources(*Emission.Sources, *M);
         llvm::raw_string_ostream Stream(Shard.Bitcode);
         llvm::WriteBitcodeToFile(*M, Stream);
         if (Shard.Bitcode.empty())
@@ -340,6 +411,11 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
         return Result;
       }
       Phase = "shard " + std::to_string(S) + " linking";
+      if (Shards[S].Sources) {
+        if (!Result.Sources)
+          Result.Sources = std::make_shared<LLVMSourceMap>();
+        restoreSources(*Shards[S].Sources, **Module, *Result.Sources);
+      }
       if (Linker.linkInModule(std::move(*Module))) {
         Result.Error = "LLVM " + Phase + " failed";
         return Result;

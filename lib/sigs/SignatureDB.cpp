@@ -716,6 +716,38 @@ void SignatureDB::clearMatches() {
   MatchModules.clear();
 }
 
+llvm::Error SignatureDB::loadForImage(const BinaryImage &Image,
+                                      const std::filesystem::path &Root) {
+  SignatureDB Features;
+  std::error_code EC;
+  const auto FeatureDirectory = Root / "features" / "rules";
+  if (std::filesystem::exists(FeatureDirectory, EC)) {
+    if (auto Error = Features.loadFeatureDirectory(FeatureDirectory))
+      return Error;
+  }
+  if (EC)
+    return llvm::createStringError(EC,
+                                   "cannot inspect library feature directory");
+  std::vector<std::filesystem::path> Files;
+  if (auto Relative = treeDirectory(Image)) {
+    const auto Directory = Root / *Relative;
+    if (std::filesystem::exists(Directory, EC)) {
+      auto Listed = listDirectory(Directory);
+      if (!Listed)
+        return Listed.takeError();
+      Files = selectForImage(Image, std::move(*Listed));
+    }
+    if (EC)
+      return llvm::createStringError(
+          EC, "cannot inspect legacy signature directory");
+  }
+  if (auto Error = loadFiles(Files))
+    return Error;
+  FeaturePacks = std::move(Features.FeaturePacks);
+  ++FeatureGeneration;
+  return llvm::Error::success();
+}
+
 namespace {
 
 enum class ReferenceVerdict { Unknown, Confirmed, Contradicted };

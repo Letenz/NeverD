@@ -16,6 +16,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -77,6 +78,22 @@ std::optional<FunctionSym> debugFunction(DebugContext *Dbg, va_t Entry) {
   if (!Dbg)
     return std::nullopt;
   return Dbg->resolveFunction(Entry);
+}
+
+// A debug record's byte size alone does not describe a C type. Keep the
+// recovered machine parameter when its pointer target has no printable name
+// or validated fields; receiver identity evidence is independent of this
+// presentation choice.
+bool hasUnsupportedAnonymousPointee(TypeRef Type) {
+  if (!Type || Type->Kind != NdTypeKind::Ptr)
+    return false;
+  for (unsigned Depth = 0; Type && Depth < 64; ++Depth) {
+    if (Type->Kind != NdTypeKind::Ptr)
+      return Type->Kind == NdTypeKind::Struct && Type->SourceName.empty() &&
+             sourceAggregateMembers(Type).empty();
+    Type = Type->Pointee;
+  }
+  return true;
 }
 
 bool isWindowsLanguagePersonality(ExceptionPersonality Personality) {
@@ -4844,8 +4861,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
         if (DI < DebugFn->Params.size()) {
-          if (DebugFn->Params[DI].second)
-            Ty = DebugFn->Params[DI].second;
+          if (const TypeRef &DebugType = DebugFn->Params[DI].second;
+              DebugType && !hasUnsupportedAnonymousPointee(DebugType))
+            Ty = cDisplayType(DebugType);
           if (!DebugFn->Params[DI].first.empty())
             Name = DebugFn->Params[DI].first;
         }
