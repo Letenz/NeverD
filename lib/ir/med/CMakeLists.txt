@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDIRMed
   MedLibraryRecognition.cpp
+  MedComLibraryRecognition.cpp
   abi/MedABIPass.cpp
   abi/MedABIPassSupport.cpp
   abi/MedCallingConv.cpp
@@ -37,4 +38,5 @@ add_neverd_component_library(NeverDIRMed
   LINK_COMPONENTS
   IR
   Loader
+  Sigs
 )

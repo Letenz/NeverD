@@ -459,12 +459,14 @@ public:
   /// widening cast so `>> 32` is not applied to a 32-bit C operand.
   std::string logicalShiftLhs(const llvm::Instruction &Shift, std::string LHS);
   std::string condStr(const llvm::Value *V);
+  std::string condStrImpl(const llvm::Value *V);
   /// Value tested by the x86 `ZF || SF` pattern. `condStr` prints it as
   /// `value <= 0`. Null for every other `or`.
   const llvm::Value *jleZeroCore(const llvm::BinaryOperator *BO);
   /// Swapped relational text for a skip that prints the false body.
   /// Empty when the condition is not one compare, so the caller keeps `!`.
   std::optional<std::string> invertedRelationalText(const llvm::Value *V);
+  std::optional<std::string> invertedRelationalTextImpl(const llvm::Value *V);
   uint16_t llvmAccessSize(const llvm::Type *Ty) const;
   void noteAllocaStore(const llvm::AllocaInst *Slot, const llvm::Value *Stored);
   void discoverSyntheticFrame(llvm::Function &Fn);

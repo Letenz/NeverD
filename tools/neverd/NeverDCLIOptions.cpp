@@ -742,7 +742,7 @@ cl::opt<bool>
                cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
                cl::sub(HeadersCmd), cl::sub(EntryPointsCmd),
                cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(AuditCmd),
-               cl::sub(HuntCmd), cl::sub(MobileCmd));
+               cl::sub(HuntCmd), cl::sub(MobileCmd), cl::sub(DecompileCmd));
 
 //===----------------------------------------------------------------------===//
 // Plugins-specific options

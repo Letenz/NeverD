@@ -135,14 +135,16 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 /// operations remain unmapped. Unsupported representations/architectures return
 /// an explicit mapping_status with empty rows and no text. Errors return NULL
 /// and set neverd_last_error. C source pages add library_regions with rule and
-/// identity evidence, precise original occurrences, foldable and spans. Span
-/// begin_byte/end_byte are half-open UTF-8 byte offsets in the complete source;
-/// byte_offset locates this page in it. An unknown mapping stays unfolded.
-/// Source text is always complete code, identical to the legacy C emitter.
-/// The page text is capped at 2 MiB; Low/Med retain no whole IR string for
-/// paging, while C renders one bounded function (at most 32 MiB).
-/// Object IDs are stable for a fixed analysis
-/// snapshot, not across revisions. Free the result with neverd_free_string().
+/// identity evidence, precise original occurrences, foldable and spans.
+/// Optional function_identity shares raw/display/linkage names with
+/// neverd_resolve_addr; original direct-call regions add callee and
+/// callee_identity. Span begin_byte/end_byte are half-open UTF-8 byte offsets
+/// in the complete source; byte_offset locates this page in it. An unknown
+/// mapping stays unfolded. Source text is always complete code, identical to
+/// the legacy C emitter. The page text is capped at 2 MiB; Low/Med retain no
+/// whole IR string for paging, while C renders one bounded function (at most 32
+/// MiB). Object IDs are stable for a fixed analysis snapshot, not across
+/// revisions. Free the result with neverd_free_string().
 NEVERD_API const char *neverd_ir_view_json(neverd_session_t Sess,
                                            neverd_va_t FuncEntry,
                                            const char *Representation,

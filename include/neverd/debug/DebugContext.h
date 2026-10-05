@@ -225,6 +225,13 @@ public:
     return {};
   }
 
+  /// An authenticated pointer-to-record return declaration. Its register is
+  /// the ABI result carrier, not an inferred receiver or parameter location.
+  virtual std::optional<AuthenticatedRecordParameter>
+  resolveAuthenticatedRecordReturn(va_t) const {
+    return std::nullopt;
+  }
+
   /// Resolve the unique object containing \p Offset at one concrete machine
   /// instruction.  The returned variable retains its declared base in
   /// VariableSym::StackOffset so consumers can compute an interior pointer's

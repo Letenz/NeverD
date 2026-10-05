@@ -21,6 +21,7 @@ class Value;
 } // namespace llvm
 
 namespace neverd {
+struct HighStmt;
 
 /// Delimiters belong only to a second, private render. They describe emission
 /// events, not a search for a printed expression. Publication requires removing
@@ -34,6 +35,7 @@ public:
   std::string expression(va_t Function, const HighExpr &Expr, std::string Text);
   std::string expression(const llvm::Instruction &Value, std::string Text);
   std::optional<size_t> instruction(const llvm::Instruction &Value);
+  std::optional<size_t> statement(va_t Function, const HighStmt &Stmt);
   std::optional<size_t> function(va_t Entry);
   std::optional<size_t> function(const llvm::Function &Function);
   std::string begin(size_t Event) const;
@@ -49,7 +51,8 @@ private:
     std::vector<sigs::LibraryOccurrence> Coverage;
   };
   std::vector<Event> Events;
-  std::map<std::pair<va_t, const HighExpr *>, size_t> HighRegions;
+  std::map<std::pair<va_t, const HighExpr *>, Event> HighRegions;
+  std::map<std::pair<va_t, va_t>, Event> HighStores;
   std::map<const llvm::Function *, va_t> LLVMFunctions;
   std::map<const llvm::Value *, Event> LLVMRegions;
 };

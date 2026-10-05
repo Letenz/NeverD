@@ -217,7 +217,8 @@ private:
   QueryService queries_;
   QObject workspaceReads_;
   PaneRegistry panes_;
-  PageModel functions_{{"name", "address", "size"}};
+  PageModel functions_{{"name", "address", "size", "display_name",
+                        "linkage_name", "recognition_state"}};
   QTimer filterTimer_;
   QString workerPath_, filePath_, pendingFile_, error_, status_, log_,
       language_ = "en";

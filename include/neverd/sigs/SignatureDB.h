@@ -14,6 +14,7 @@
 #define NEVERD_SIGS_SIGNATUREDB_H
 
 #include "neverd/sigs/LibraryFeature.h"
+#include "neverd/sigs/LibraryRecognition.h"
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/Signature.h"
 #include "neverd/sigs/SignatureCache.h"
@@ -113,6 +114,14 @@ public:
     return FeaturePacks;
   }
   uint64_t featureGeneration() const { return FeatureGeneration; }
+  /// Byte features share the existing matching and reference/ambiguity engine.
+  /// The caller independently authenticates each candidate's identity first.
+  using FeatureIdentityVerifier = std::function<std::string(
+      const LibraryFeaturePack &, const LibraryFeatureRule &, va_t)>;
+  std::vector<LibraryRecognition>
+  recognizeFeatureBytes(const BinaryImage &Image,
+                        llvm::ArrayRef<uint64_t> Entries,
+                        const FeatureIdentityVerifier &Identity) const;
 
   /// Apply loaded signatures against a binary image.
   /// Matches are stored internally and can be queried with matches().
@@ -254,6 +263,12 @@ private:
   /// The library a module was loaded from, by its index in \ref Modules.
   const std::string &libraryNameOf(size_t ModuleIndex) const;
 };
+
+std::vector<LibraryRecognition> recognizeLibraryFeatureBytes(
+    const BinaryImage &Image,
+    const std::map<std::string, LibraryFeaturePack> &Packs,
+    llvm::ArrayRef<uint64_t> Entries,
+    const SignatureDB::FeatureIdentityVerifier &Identity);
 
 } // namespace sigs
 } // namespace neverd

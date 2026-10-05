@@ -3291,3 +3291,79 @@ if(TARGET neverd-worker AND Python3_Interpreter_FOUND)
       "${CMAKE_SOURCE_DIR}/signatures/features/rules/libcxx-23git-arm64-macos-abi1-alternate-clang22.json")
   set_tests_properties(NeverDWorkerLibraryFeatures PROPERTIES TIMEOUT 60 LABELS "unit;library-recognition;worker")
 endif()
+
+if(TARGET neverd AND Python3_Interpreter_FOUND AND CLANG_EXEC)
+  add_test(NAME NeverDLibraryFeatureCLI
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/library_cli_test.py"
+      "$<TARGET_FILE:neverd>"
+      "${_library_feature_dir}/accessors-inline.o"
+      "${CMAKE_SOURCE_DIR}/signatures/features/rules/libcxx-23git-arm64-macos-abi1-alternate-clang22.json"
+      "${CLANG_EXEC}")
+  set_tests_properties(NeverDLibraryFeatureCLI PROPERTIES
+    TIMEOUT 120 LABELS "unit;library-recognition;cli")
+endif()
+
+# Link the original MSVC /Z7 objects locally so their CodeView locations can be
+# authenticated to an actual PE/PDB pair on every host with lld-link. The ATL
+# fixtures are analysis-only: unresolved platform calls are never executed.
+if(LLD_LINK_EXEC AND CLANG_EXEC)
+  set(_library_msvc_dir "${CMAKE_CURRENT_BINARY_DIR}/library-features/msvc")
+  set(_library_msvc_archive "${CMAKE_SOURCE_DIR}/signatures/features/evidence/msvc-14.44.35207-x64-release.tar.gz")
+  add_custom_command(
+    OUTPUT "${_library_msvc_dir}/accessors-inline.obj"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_library_msvc_dir}"
+    COMMAND ${CMAKE_COMMAND} -E chdir "${_library_msvc_dir}"
+      ${CMAKE_COMMAND} -E tar xzf "${_library_msvc_archive}"
+    DEPENDS "${_library_msvc_archive}" VERBATIM)
+  add_custom_command(
+    OUTPUT "${_library_msvc_dir}/link-storage.obj"
+    COMMAND "${CLANG_EXEC}" -target x86_64-pc-windows-msvc -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/library_link_storage.c"
+      -o "${_library_msvc_dir}/link-storage.obj"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/library_link_storage.c"
+      "${_library_msvc_dir}/accessors-inline.obj" VERBATIM)
+  set(_library_msvc_outputs)
+  # A real import thunk lets the PE loader authenticate the exception
+  # personality without a Windows runtime implementation on the build host.
+  foreach(_runtime vcruntime vcruntime_base)
+    add_custom_command(
+      OUTPUT "${_library_msvc_dir}/${_runtime}.lib"
+      COMMAND "${LLD_LINK_EXEC}" /lib /machine:x64
+        "/def:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/library_${_runtime}.def"
+        "/out:${_library_msvc_dir}/${_runtime}.lib"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/library_${_runtime}.def"
+        "${_library_msvc_dir}/accessors-inline.obj" VERBATIM)
+  endforeach()
+  foreach(_profile accessors-inline accessors-negative-configuration atl_string-inline atl_com-inline)
+    add_custom_command(
+      OUTPUT "${_library_msvc_dir}/${_profile}.dll" "${_library_msvc_dir}/${_profile}.pdb"
+      COMMAND "${LLD_LINK_EXEC}" /dll /noentry /nodefaultlib /force:unresolved
+        /opt:noref /opt:noicf /debug:full "/out:${_profile}.dll" "/pdb:${_profile}.pdb" "${_profile}.obj" link-storage.obj vcruntime.lib vcruntime_base.lib
+      WORKING_DIRECTORY "${_library_msvc_dir}"
+      DEPENDS "${_library_msvc_dir}/accessors-inline.obj" "${_library_msvc_dir}/link-storage.obj" "${_library_msvc_dir}/vcruntime.lib" "${_library_msvc_dir}/vcruntime_base.lib" VERBATIM)
+    list(APPEND _library_msvc_outputs "${_library_msvc_dir}/${_profile}.dll")
+  endforeach()
+  add_custom_target(neverd-library-msvc-fixtures DEPENDS ${_library_msvc_outputs})
+  target_sources(NeverDLibraryRecognitionTests PRIVATE core/MsvcLibraryRecognitionTests.cpp)
+  add_dependencies(NeverDLibraryRecognitionTests neverd-library-msvc-fixtures)
+  target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
+    NEVERD_LIBRARY_MSVC_FIXTURE_DIR="${_library_msvc_dir}")
+else()
+  message(STATUS "MSVC library consumer fixtures skipped: lld-link unavailable")
+endif()
+
+set(_library_libc_dir "${CMAKE_CURRENT_BINARY_DIR}/library-features/musl")
+set(_library_libc_archive "${CMAKE_SOURCE_DIR}/signatures/features/evidence/musl-1.2.5-x64-clang22-memory.tar.gz")
+add_custom_command(
+  OUTPUT "${_library_libc_dir}/library-memory.elf" "${_library_libc_dir}/library-memory.truth.json"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${_library_libc_dir}"
+  COMMAND ${CMAKE_COMMAND} -E chdir "${_library_libc_dir}"
+    ${CMAKE_COMMAND} -E tar xzf "${_library_libc_archive}"
+  DEPENDS "${_library_libc_archive}" VERBATIM)
+add_custom_target(neverd-library-libc-fixtures
+  DEPENDS "${_library_libc_dir}/library-memory.elf" "${_library_libc_dir}/library-memory.truth.json")
+target_sources(NeverDLibraryRecognitionTests PRIVATE core/LibcLibraryRecognitionTests.cpp)
+add_dependencies(NeverDLibraryRecognitionTests neverd-library-libc-fixtures)
+target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
+  NEVERD_LIBRARY_LIBC_FIXTURE_DIR="${_library_libc_dir}")

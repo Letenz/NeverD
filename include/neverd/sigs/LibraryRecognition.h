@@ -43,12 +43,30 @@ struct LibraryRecognition {
   std::string SourceOrigin;
   std::string SourceRevision;
   LibraryFeatureScope Scope = LibraryFeatureScope::InlineExpression;
+  /// Original direct target for a call-site annotation. Inline regions never
+  /// receive a callee identity.
+  std::optional<va_t> Callee;
   std::vector<LibraryOccurrence> Occurrences;
   /// Exact result-producing occurrence for expression projection.
   std::optional<LibraryOccurrence> ResultOccurrence;
   /// Structural region isolation is separate from final source-map coverage.
   bool Isolated = false;
+  /// A predicate may be consumed in its complemented form. This is explicit
+  /// presentation evidence, not permission to negate the original expression.
+  bool ResultInverted = false;
+  bool ResultIsCondition = false;
+  /// Fully checked byte extent, present only for byte-pattern evidence.
+  uint32_t ByteLength = 0;
 };
+
+/// Settle overlapping evidence for one function, independent of producer and
+/// load order. Exhaustion clears the transaction and returns false.
+bool finalizeLibraryRecognitions(std::vector<LibraryRecognition> &Matches,
+                                 size_t &Work);
+
+LibraryRecognition describeLibraryRecognition(va_t Function,
+                                              const LibraryFeaturePack &Pack,
+                                              const LibraryFeatureRule &Rule);
 
 } // namespace neverd::sigs
 

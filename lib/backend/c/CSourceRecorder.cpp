@@ -9,6 +9,7 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/ir/high/HighIR.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 
@@ -36,44 +37,89 @@ void CSourceRecorder::prepareHighSources() {
   using Key = std::pair<va_t, const HighExpr *>;
   std::map<Key, std::set<sigs::LibraryOccurrence>> Origins;
   std::map<Key, std::shared_ptr<const HighExpr>> Alive;
-  for (const auto &Source : *Map.HighSources)
+  std::map<std::pair<va_t, va_t>, std::set<sigs::LibraryOccurrence>> Stores;
+  std::set<std::pair<va_t, va_t>> AmbiguousStores;
+  std::set<Key> Ambiguous;
+  size_t Work = 250000;
+  for (const auto &Source : *Map.HighSources) {
+    if (Source.Kind == HighSourceKind::Store) {
+      Stores[{Source.Function, Source.Occurrence.Address}].insert(
+          Source.Occurrence);
+      continue;
+    }
     if (auto Expr = Source.Expression.lock()) {
       Key K{Source.Function, Expr.get()};
       Origins[K].insert(Source.Occurrence);
       Alive[K] = std::move(Expr);
     }
+  }
   for (size_t I = 0; I < Map.Recognitions->size(); ++I) {
     const auto &Match = (*Map.Recognitions)[I];
-    if (!Match.Isolated || !Match.ResultOccurrence ||
-        Match.Scope != sigs::LibraryFeatureScope::InlineExpression)
+    if (!Match.Isolated ||
+        Match.Scope == sigs::LibraryFeatureScope::WholeFunction)
       continue;
+    for (const auto &[K, Origins] : Stores) {
+      if (K.first != Match.Function || Origins.size() != 1 ||
+          !std::binary_search(Match.Occurrences.begin(),
+                              Match.Occurrences.end(), *Origins.begin()))
+        continue;
+      const auto [At, Added] =
+          HighStores.emplace(K, Event{I, {*Origins.begin()}});
+      if (!Added && At->second.Region != I)
+        AmbiguousStores.insert(K);
+    }
+    std::map<Key, Event> Candidates;
+    std::set<Key> Children;
     for (const auto &[K, Expr] : Alive) {
       if (K.first != Match.Function ||
-          !Origins[K].contains(*Match.ResultOccurrence))
+          !llvm::any_of(Origins[K], [&](const auto &O) {
+            return std::binary_search(Match.Occurrences.begin(),
+                                      Match.Occurrences.end(), O);
+          }))
         continue;
       std::set<sigs::LibraryOccurrence> Covered;
       std::set<const HighExpr *> Seen;
       std::vector<const HighExpr *> Pending{Expr.get()};
       size_t Budget = 4096;
       while (!Pending.empty() && Budget) {
+        if (!Work) {
+          HighRegions.clear();
+          HighStores.clear();
+          return;
+        }
+        --Work;
         --Budget;
-        const HighExpr *Current = Pending.back();
+        const auto *Current = Pending.back();
         Pending.pop_back();
         if (!Seen.insert(Current).second)
           continue;
-        if (auto At = Origins.find({Match.Function, Current});
-            At != Origins.end())
+        if (Current != Expr.get())
+          Children.insert({K.first, Current});
+        if (auto At = Origins.find({K.first, Current}); At != Origins.end())
           Covered.insert(At->second.begin(), At->second.end());
-        for (const auto &Child : Current->Operands)
-          if (Child)
-            Pending.push_back(Child.get());
+        Current->forEachChildExpr(
+            [&](const auto &Child) { Pending.push_back(Child.get()); });
       }
-      if (Pending.empty() &&
-          std::includes(Covered.begin(), Covered.end(),
-                        Match.Occurrences.begin(), Match.Occurrences.end()))
-        HighRegions.emplace(K, I);
+      if (!Pending.empty())
+        continue;
+      std::vector<sigs::LibraryOccurrence> Coverage;
+      std::set_intersection(Covered.begin(), Covered.end(),
+                            Match.Occurrences.begin(), Match.Occurrences.end(),
+                            std::back_inserter(Coverage));
+      if (!Coverage.empty())
+        Candidates.emplace(K, Event{I, std::move(Coverage)});
     }
+    for (auto &[K, E] : Candidates)
+      if (!Children.contains(K)) {
+        const auto [At, Added] = HighRegions.emplace(K, std::move(E));
+        if (!Added && At->second.Region != I)
+          Ambiguous.insert(K);
+      }
   }
+  for (const auto &K : Ambiguous)
+    HighRegions.erase(K);
+  for (const auto &K : AmbiguousStores)
+    HighStores.erase(K);
 }
 
 void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
@@ -83,6 +129,7 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
   if (!Map.Recognitions)
     return;
   std::set<const llvm::Value *> Ambiguous;
+  size_t Work = 250000;
   for (const auto &Observation : Sources.Observations) {
     auto *Instruction =
         llvm::dyn_cast_or_null<llvm::Instruction>(Observation.Value);
@@ -93,9 +140,14 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
         Function->second != Observation.Function)
       continue;
     for (size_t I = 0; I < Map.Recognitions->size(); ++I) {
+      if (!Work) {
+        LLVMRegions.clear();
+        return;
+      }
+      --Work;
       const auto &Match = (*Map.Recognitions)[I];
       if (Match.Function != Observation.Function || !Match.Isolated ||
-          Match.Scope != sigs::LibraryFeatureScope::InlineExpression ||
+          Match.Scope == sigs::LibraryFeatureScope::WholeFunction ||
           !std::binary_search(Match.Occurrences.begin(),
                               Match.Occurrences.end(), Observation.Occurrence))
         continue;
@@ -107,6 +159,50 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
     }
   }
   for (const auto *Value : Ambiguous)
+    LLVMRegions.erase(Value);
+  // Prefer the outer event when it already carries every origin of a pure
+  // child. Nested delimiters must not interfere with the emitter's cast and
+  // condition spelling; memory operations remain independent boundaries.
+  for (auto &[Value, E] : LLVMRegions) {
+    (void)Value;
+    std::sort(E.Coverage.begin(), E.Coverage.end());
+    E.Coverage.erase(std::unique(E.Coverage.begin(), E.Coverage.end()),
+                     E.Coverage.end());
+  }
+  std::set<const llvm::Value *> Nested;
+  for (const auto &[Value, Parent] : LLVMRegions) {
+    const auto *I = llvm::dyn_cast<llvm::Instruction>(Value);
+    if (!I)
+      continue;
+    std::vector<const llvm::Instruction *> Pending;
+    for (const auto &Operand : I->operands())
+      if (auto *Child = llvm::dyn_cast<llvm::Instruction>(Operand))
+        Pending.push_back(Child);
+    std::set<const llvm::Instruction *> Seen;
+    while (!Pending.empty()) {
+      if (!Work) {
+        LLVMRegions.clear();
+        return;
+      }
+      --Work;
+      const auto *Child = Pending.back();
+      Pending.pop_back();
+      if (!Seen.insert(Child).second || Child->getParent() != I->getParent() ||
+          (!Child->isBinaryOp() && !Child->isCast() &&
+           !llvm::isa<llvm::CmpInst, llvm::SelectInst, llvm::GetElementPtrInst>(
+               Child)))
+        continue;
+      if (auto At = LLVMRegions.find(Child);
+          At != LLVMRegions.end() && At->second.Region == Parent.Region &&
+          std::includes(Parent.Coverage.begin(), Parent.Coverage.end(),
+                        At->second.Coverage.begin(), At->second.Coverage.end()))
+        Nested.insert(Child);
+      for (const auto &Operand : Child->operands())
+        if (auto *Next = llvm::dyn_cast<llvm::Instruction>(Operand))
+          Pending.push_back(Next);
+    }
+  }
+  for (const auto *Value : Nested)
     LLVMRegions.erase(Value);
 }
 
@@ -129,7 +225,7 @@ std::string CSourceRecorder::expression(va_t Function, const HighExpr &Expr,
   auto It = HighRegions.find({Function, &Expr});
   if (It == HighRegions.end())
     return Text;
-  size_t Event = event(It->second, (*Map.Recognitions)[It->second].Occurrences);
+  size_t Event = event(It->second.Region, It->second.Coverage);
   return begin(Event) + Text + end(Event);
 }
 
@@ -156,6 +252,16 @@ CSourceRecorder::instruction(const llvm::Instruction &Value) {
   return I == LLVMRegions.end() ? std::nullopt
                                 : std::optional<size_t>(event(
                                       I->second.Region, I->second.Coverage));
+}
+
+std::optional<size_t> CSourceRecorder::statement(va_t Function,
+                                                 const HighStmt &Stmt) {
+  if (Stmt.Kind != StmtKind::Store)
+    return std::nullopt;
+  const auto At = HighStores.find({Function, Stmt.Addr});
+  return At == HighStores.end()
+             ? std::nullopt
+             : std::optional(event(At->second.Region, At->second.Coverage));
 }
 
 std::string CSourceRecorder::expression(const llvm::Instruction &Value,

@@ -613,7 +613,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   if (UseShards) {
     LLVMEmissionResult Emission = emitLLVMSharded(
         Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.Format, Opts.NoOpt,
-        Workers, !Result.LibraryRecognitions.empty());
+        Workers, !Result.LibraryRecognitions.empty(),
+        Result.LibraryRecognitions);
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
     Result.LLVMVerifierFailed = Emission.LLVMVerifierFailed;
     Result.LlvmModule = std::move(Emission.Module);
@@ -639,6 +640,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                         ImportMap, EmissionImage, Img.Format);
     Result.BackendUnhandledValueIntrinsics =
         MedEmitter.unhandledValueIntrinsicCount();
+    if (Result.LLVMSources)
+      Result.LLVMSources->preserveExpressionOrigins(Result.LibraryRecognitions);
 
     if (!Result.LlvmModule) {
       Result.Error = "LLVM emission failed";
@@ -676,6 +679,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       // ~80K-instruction single block that is pathological for LLVM codegen and
       // times out under parallel test load.
       promoteScaffoldingAllocas(*Result.LlvmModule);
+      if (Result.LLVMSources)
+        Result.LLVMSources->refreshExpressionOrigins();
     }
   }
 

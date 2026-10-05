@@ -226,7 +226,7 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
     const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx, Arch TheArch,
     const std::vector<std::pair<va_t, std::string>> &Imports,
     const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt, unsigned NumThreads,
-    bool RecordSources) {
+    bool RecordSources, llvm::ArrayRef<sigs::LibraryRecognition> Recognitions) {
   const size_t N = Funcs.size();
   NumThreads = std::max(
       1u, std::min<unsigned>(NumThreads, static_cast<unsigned>(N ? N : 1)));
@@ -246,6 +246,8 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
                                  Imports, &Img, Fmt,
                                  /*MergeableGlobals=*/true, &Mask);
     Result.UnhandledValueIntrinsics = Emitter.unhandledValueIntrinsicCount();
+    if (Result.Sources)
+      Result.Sources->preserveExpressionOrigins(Recognitions);
     return Result;
   };
   return runLLVMShardPipeline(Funcs, Ctx, ShardPlan.NumShards, NumThreads,
@@ -342,6 +344,8 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
         } else {
           ShardPhase = "canonicalization";
           promoteScaffoldingAllocas(*M);
+          if (Emission.Sources)
+            Emission.Sources->refreshExpressionOrigins();
         }
         ShardPhase = "post-optimization verification";
         std::string FinalVerifyError;
@@ -398,6 +402,7 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
     auto Linked = std::make_unique<llvm::Module>("neverd_output", Ctx);
     llvm::Linker Linker(*Linked);
     unsigned LinkedShards = 0;
+    std::map<va_t, std::string> LinkedFunctionNames;
     for (unsigned S = 0; S < NumShards; ++S) {
       std::string ShardBC = std::move(Shards[S].Bitcode);
       Shards[S].Bitcode.clear();
@@ -415,6 +420,8 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
         if (!Result.Sources)
           Result.Sources = std::make_shared<LLVMSourceMap>();
         restoreSources(*Shards[S].Sources, **Module, *Result.Sources);
+        LinkedFunctionNames.insert(Shards[S].Sources->Functions.begin(),
+                                   Shards[S].Sources->Functions.end());
       }
       if (Linker.linkInModule(std::move(*Module))) {
         Result.Error = "LLVM " + Phase + " failed";
@@ -426,6 +433,12 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
       Result.Error = "LLVM shard linking failed: incomplete module";
       return Result;
     }
+    // The linker may move a body into an existing declaration and delete its
+    // old Function without RAUW. Rebind the explicitly serialized entry/name
+    // pairs after this exact link, before any further transformation.
+    if (Result.Sources)
+      for (const auto &[Entry, Name] : LinkedFunctionNames)
+        Result.Sources->Functions[Entry] = Linked->getFunction(Name);
     Phase = "function ordering";
 
     // Restore the original (address-order) function layout.  Sharding + link

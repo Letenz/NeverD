@@ -3433,6 +3433,14 @@ HighCWriter::copyForwardSource(const HighExpr &E) const {
 }
 
 std::string HighCWriter::condStr(const HighExpr &E) {
+  std::string Text = condStrImpl(E);
+  return SourceRecorder && CurrentFunc
+             ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                          std::move(Text))
+             : Text;
+}
+
+std::string HighCWriter::condStrImpl(const HighExpr &E) {
   const HighExpr *Cur = forwardedExpr(&E);
   Cur = unwrapIntegerView(Cur);
   auto IsZeroLike = [this](const ExprPtr &Op) {
@@ -3659,6 +3667,14 @@ HighCWriter::preferGreaterIfElseCond(const HighExpr &E) {
 }
 
 std::string HighCWriter::invertCondStr(const HighExpr &E) {
+  std::string Text = invertCondStrImpl(E);
+  return SourceRecorder && CurrentFunc
+             ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                          std::move(Text))
+             : Text;
+}
+
+std::string HighCWriter::invertCondStrImpl(const HighExpr &E) {
   const HighExpr *Cur = forwardedExpr(&E);
   Cur = unwrapIntegerView(Cur);
   if (!Cur)

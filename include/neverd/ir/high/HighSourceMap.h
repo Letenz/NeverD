@@ -15,6 +15,7 @@
 namespace neverd {
 
 struct HighExpr;
+enum class HighSourceKind { Expression, Store };
 
 /// An expression produced from one concrete MedIR occurrence. Weak ownership
 /// deliberately loses a mapping when a transformation replaces the expression.
@@ -24,6 +25,9 @@ struct HighSourceObservation {
   va_t Function = 0;
   sigs::LibraryOccurrence Occurrence;
   std::weak_ptr<const HighExpr> Expression;
+  /// Stores retain their original HighStmt address across structuring. More
+  /// than one store occurrence at that address makes the mapping ambiguous.
+  HighSourceKind Kind = HighSourceKind::Expression;
 };
 
 using HighSourceMap = std::vector<HighSourceObservation>;

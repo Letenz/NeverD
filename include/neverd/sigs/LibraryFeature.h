@@ -43,6 +43,8 @@ enum class LibraryFeatureScope : uint8_t {
   WholeFunction = 1,
   InlineExpression = 2,
   InlineRegion = 4,
+  /// Runtime annotation of an existing call; never admitted in a rule pack.
+  CallSite = 8,
 };
 
 enum class LibraryFeatureIdentity : uint8_t {

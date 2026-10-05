@@ -157,6 +157,21 @@ int neverd_func_find_by_name(neverd_session_t s, const char *name) {
   }
   return -1;
 }
+const char *neverd_resolve_addr(neverd_session_t s, neverd_va_t address) {
+  const auto index = neverd_func_find_by_addr(s, address);
+  if (index < 0)
+    return nullptr;
+  const auto *raw = neverd_func_name(s, index);
+  const std::string name(raw);
+  neverd_free_string(raw);
+  return copy(Json{
+      {"type", "function"},
+      {"addr", hexAddress(address)},
+      {"name", name},
+      {"display_name", name},
+      {"linkage_name",
+       name}}.dump());
+}
 int neverd_read_bytes(neverd_session_t, neverd_va_t address,
                       unsigned char *buffer, int size) {
   if (address < Base || address - Base >= 9600)

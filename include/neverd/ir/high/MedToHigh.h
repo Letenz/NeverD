@@ -158,6 +158,14 @@ public:
       std::function<void(const MedOp &, const ExprPtr &)> Observer) {
     ExpressionObserver = std::move(Observer);
   }
+  void setExpressionCloneObserver(
+      std::function<void(const ExprPtr &, const ExprPtr &)> Observer) {
+    ExpressionCloneObserver = std::move(Observer);
+  }
+  void setStatementObserver(
+      std::function<void(const MedOp &, const HighStmt &)> Observer) {
+    StatementObserver = std::move(Observer);
+  }
 
   void setFuncNames(const std::map<va_t, std::string> *Names) {
     FuncNames = Names;
@@ -318,6 +326,8 @@ private:
   const MedFunc *EntryOffsetDefsFor = nullptr;
   const BinaryImage *Image = nullptr;
   std::function<void(const MedOp &, const ExprPtr &)> ExpressionObserver;
+  std::function<void(const ExprPtr &, const ExprPtr &)> ExpressionCloneObserver;
+  std::function<void(const MedOp &, const HighStmt &)> StatementObserver;
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;

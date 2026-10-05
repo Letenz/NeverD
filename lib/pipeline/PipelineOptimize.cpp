@@ -492,6 +492,8 @@ runOptimizationPipeline(llvm::Module &Mod,
       llvm::createModuleToFunctionPassAdaptor(std::move(Prefix)));
   llvm::PreservedAnalyses PrefixPA = PrefixPipeline.run(Mod, MAM);
   Result->Changed |= !PrefixPA.areAllPreserved();
+  if (Options.SourceMap)
+    Options.SourceMap->refreshExpressionOrigins();
 
   // The emitter's per-temp allocas first need promotion; only then do its
   // native stack-address expressions expose a constant frame displacement.
@@ -598,7 +600,9 @@ Pipeline::optimizeModule(llvm::Module &Mod,
     CandidateSources->remap(
         [&](llvm::Value *V) { return SourceValues.lookup(V); });
   }
-  Result = runOptimizationPipeline(*Candidate, Options);
+  auto CandidateOptions = Options;
+  CandidateOptions.SourceMap = CandidateSources ? &*CandidateSources : nullptr;
+  Result = runOptimizationPipeline(*Candidate, CandidateOptions);
   if (llvm::verifyModule(*Candidate)) {
     Result.Changed = false;
     Result.Stop = OptimizationStopReason::VerificationFailed;
@@ -658,6 +662,8 @@ OptimizationResult Pipeline::optimizeOrPromoteModule(llvm::Module &Mod,
         [&](llvm::Value *V) { return SourceValues.lookup(V); });
   }
   promoteScaffoldingAllocas(*Candidate);
+  if (CandidateSources)
+    CandidateSources->refreshExpressionOrigins();
   if (llvm::verifyModule(*Candidate)) {
     Result.Stop = OptimizationStopReason::VerificationFailed;
     return Result;

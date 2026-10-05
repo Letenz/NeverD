@@ -30,6 +30,10 @@ def run(worker, fixture, pack):
                 page = reply["payload"]
                 assert page["byte_offset"] == len(source.encode())
                 source += page["text"]
+                shown = page["function_identity"]
+                listed = next(f for f in client.call("functions", {"limit": 512})["payload"]["items"] if f["address"] == address)
+                for key in ("name", "display_name", "linkage_name", "name_origin", "library_annotations"):
+                    assert shown[key] == listed[key], (key, shown, listed)
                 regions = page["library_regions"]
                 assert len(regions) == 1, regions
                 region = regions[0]
@@ -45,6 +49,11 @@ def run(worker, fixture, pack):
                 offset = page["next_offset"]
             if stage == "c":
                 assert source == before["payload"]["text"]
+        members = client.call("functions", {"filter": "std::__1::", "limit": 512})["payload"]["items"]
+        supported = [f for f in members if any(a["scope"] == "whole-function" for a in f["library_annotations"])]
+        assert len(supported) == 16, supported
+        assert len({f["display_name"] for f in supported}) == 16
+        assert all(f["name"] == f["linkage_name"] and f["name_origin"] == "stated" for f in supported)
         with tempfile.TemporaryDirectory(prefix="neverd-features-") as directory:
             invalid = Path(directory) / "broken.json"
             invalid.write_text("{}")

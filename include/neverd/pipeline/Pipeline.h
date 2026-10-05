@@ -208,6 +208,8 @@ struct PipelineResult {
   std::vector<MedFunc> MedFuncs;
   std::vector<HighFunc> HighFuncs;
   std::vector<sigs::LibraryRecognition> LibraryRecognitions;
+  /// Includes analyzed functions with no match, for cheap identity queries.
+  std::map<va_t, std::vector<size_t>> LibraryRecognitionsByFunction;
   std::set<va_t> LibraryRecognitionBudgetExhausted;
   HighSourceMap HighSources;
   std::shared_ptr<LLVMSourceMap> LLVMSources;
@@ -553,7 +555,8 @@ private:
                   Arch TheArch,
                   const std::vector<std::pair<va_t, std::string>> &Imports,
                   const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt,
-                  unsigned NumThreads, bool RecordSources = false);
+                  unsigned NumThreads, bool RecordSources = false,
+                  llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {});
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

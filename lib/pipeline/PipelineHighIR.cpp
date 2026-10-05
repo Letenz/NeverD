@@ -202,12 +202,97 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
       Local.setExpressionObserver({});
-      if (RecognizedFunctions.contains(MF.Entry))
+      Local.setExpressionCloneObserver({});
+      Local.setStatementObserver({});
+      std::map<const HighExpr *, std::vector<size_t>> SourceIndex;
+      bool SourceOverflow = false;
+      size_t SourceWork = 250000;
+      std::vector<const sigs::LibraryRecognition *> SourceRegions;
+      for (const auto &R : Result.LibraryRecognitions)
+        if (R.Function == MF.Entry && R.Isolated &&
+            R.Scope != sigs::LibraryFeatureScope::WholeFunction)
+          SourceRegions.push_back(&R);
+      auto Append = [&](sigs::LibraryOccurrence Occurrence, const ExprPtr &Expr,
+                        HighSourceKind Kind = HighSourceKind::Expression) {
+        if (SourceOverflow)
+          return;
+        if (Sources[FI].size() >= 100000) {
+          Sources[FI].clear();
+          SourceIndex.clear();
+          SourceOverflow = true;
+          return;
+        }
+        if (Expr)
+          SourceIndex[Expr.get()].push_back(Sources[FI].size());
+        Sources[FI].push_back({MF.Entry, Occurrence, Expr, Kind});
+      };
+      auto Observe = [&](sigs::LibraryOccurrence Occurrence,
+                         const ExprPtr &Expr) {
+        Append(Occurrence, Expr);
+        for (const auto *R : SourceRegions) {
+          auto Contains = [&](const auto &O) {
+            return std::binary_search(R->Occurrences.begin(),
+                                      R->Occurrences.end(), O);
+          };
+          if (!Contains(Occurrence))
+            continue;
+          std::set<sigs::LibraryOccurrence> Origins;
+          std::set<const HighExpr *> Seen;
+          std::vector<ExprPtr> Pending;
+          Expr->forEachChildExpr([&](const auto &E) { Pending.push_back(E); });
+          while (!Pending.empty()) {
+            if (!SourceWork || SourceOverflow) {
+              Sources[FI].clear();
+              SourceIndex.clear();
+              SourceOverflow = true;
+              return;
+            }
+            --SourceWork;
+            auto E = Pending.back();
+            Pending.pop_back();
+            if (!E || !Seen.insert(E.get()).second ||
+                (E->Kind != ExprKind::BinOp && E->Kind != ExprKind::UnaryOp &&
+                 E->Kind != ExprKind::Cast && E->Kind != ExprKind::BitCast &&
+                 E->Kind != ExprKind::Addr))
+              continue;
+            if (auto At = SourceIndex.find(E.get()); At != SourceIndex.end())
+              for (size_t I : At->second) {
+                const auto &S = Sources[FI][I];
+                if (S.Expression.lock() == E && Contains(S.Occurrence))
+                  Origins.insert(S.Occurrence);
+              }
+            Pending.insert(Pending.end(), E->Operands.begin(),
+                           E->Operands.end());
+          }
+          for (auto O : Origins)
+            if (O != Occurrence)
+              Append(O, Expr);
+        }
+      };
+      if (RecognizedFunctions.contains(MF.Entry)) {
+        Local.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
+          if (S.Kind == StmtKind::Store)
+            Append({Op.Addr, Op.OriginSeq}, {}, HighSourceKind::Store);
+        });
         Local.setExpressionObserver(
             [&, FI](const MedOp &Op, const ExprPtr &Expr) {
-              Sources[FI].push_back(
-                  {Result.MedFuncs[FI].Entry, {Op.Addr, Op.OriginSeq}, Expr});
+              Observe({Op.Addr, Op.OriginSeq}, Expr);
             });
+        Local.setExpressionCloneObserver(
+            [&](const ExprPtr &From, const ExprPtr &To) {
+              auto At = SourceIndex.find(From.get());
+              if (At == SourceIndex.end())
+                return;
+              const auto Indices = At->second;
+              for (size_t I : Indices) {
+                if (SourceOverflow)
+                  break;
+                const auto &S = Sources[FI][I];
+                if (S.Expression.lock() == From)
+                  Observe(S.Occurrence, To);
+              }
+            });
+      }
       auto keepIdentity = [&] {
         HighFunc &HF = Pending[FI];
         HF.Name = MF.Name;
@@ -256,6 +341,24 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
           Local.setJumpTables({});
         Pending[FI] = Local.convert(MF, Img.Arch);
         auto &HF = Pending[FI];
+        // Structuring may invert or simplify an If condition. Its statement
+        // retains the original branch address even when the expression root
+        // changes; bind only an unambiguous original branch at that address.
+        if (RecognizedFunctions.contains(MF.Entry)) {
+          std::map<va_t, std::vector<sigs::LibraryOccurrence>> Branches;
+          for (const auto &B : MF.Blocks)
+            for (const auto &Op : B.Ops)
+              if (!Op.Dead && Op.Opcode == NdOp::COND_BR &&
+                  Op.Addr != InvalidVA && Op.OriginSeq >= 0)
+                Branches[Op.Addr].push_back({Op.Addr, Op.OriginSeq});
+          walkStmts(HF.Body, [&](const HighStmt &S) {
+            if (!S.Cond)
+              return;
+            auto At = Branches.find(S.Addr);
+            if (At != Branches.end() && At->second.size() == 1)
+              Observe(At->second.front(), S.Cond);
+          });
+        }
         HF.OriginalSize = MF.OriginalSize;
         HF.DebugName = MF.DebugName;
         HF.SourceFile = MF.SourceFile;
@@ -282,7 +385,8 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   Result.HighFuncs = std::move(Pending);
   for (auto &Source : Sources)
     for (auto &Observation : Source)
-      if (!Observation.Expression.expired())
+      if (Observation.Kind == HighSourceKind::Store ||
+          !Observation.Expression.expired())
         Result.HighSources.push_back(std::move(Observation));
 }
 

@@ -1121,6 +1121,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         Val = Builder.CreatePtrToInt(Sym, Val->getType());
     }
     auto *SI = Builder.CreateStore(Val, Ptr);
+    if (SourceMap && Op.Addr != InvalidVA && Op.OriginSeq >= 0)
+      SourceMap->Observations.push_back(
+          {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, SI});
     SI->setAlignment(llvm::Align(1));
     if (Op.MemoryOrdering != NdMemoryOrdering::None) {
       if (Op.MemoryOrdering == NdMemoryOrdering::Acquire ||

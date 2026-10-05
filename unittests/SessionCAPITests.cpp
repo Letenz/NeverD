@@ -2538,6 +2538,68 @@ TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {
   EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
 }
 
+TEST_F(SessionCAPITest,
+       LibraryIdentityIsSharedAndDoesNotReplaceUserOrLinkageNames) {
+  const auto Input = Directory / "library-identity.o";
+  std::filesystem::copy_file(std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) /
+                                 "accessors-inline.o",
+                             Input);
+  ASSERT_EQ(neverd_session_load(Session, Input.string().c_str()), 1);
+  const auto Pack = (std::filesystem::path(NEVERD_LIBRARY_FEATURE_DIR) /
+                     "libcxx-23git-arm64-macos-abi1-alternate-clang22.json")
+                        .string();
+  ASSERT_GE(neverd_apply_signature_file(Session, Pack.c_str()), 0);
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Graph = takeView(neverd_callgraph_json(Session));
+  const auto *Nodes = Graph.getArray("nodes");
+  ASSERT_NE(Nodes, nullptr);
+  unsigned Checked = 0;
+  std::set<std::string> Displays;
+  for (const auto &Node : *Nodes) {
+    const auto *N = Node.getAsObject();
+    ASSERT_NE(N, nullptr);
+    const auto *Identity = N->getObject("identity");
+    ASSERT_NE(Identity, nullptr);
+    const auto *Annotations = Identity->getArray("library_annotations");
+    ASSERT_NE(Annotations, nullptr);
+    bool Whole = false;
+    for (const auto &A : *Annotations)
+      Whole |= A.getAsObject()->getString("scope") == "whole-function";
+    if (!Whole)
+      continue;
+    uint64_t Entry;
+    ASSERT_TRUE(N->getString("addr"));
+    ASSERT_FALSE(N->getString("addr")->getAsInteger(0, Entry));
+    auto Resolved = takeView(neverd_resolve_addr(Session, Entry));
+    const std::string Raw = Resolved.getString("name")->str();
+    EXPECT_EQ(Resolved.getString("name_origin"), "stated");
+    EXPECT_EQ(Resolved.getString("linkage_name"), Raw);
+    EXPECT_EQ(Resolved.getString("display_name"), N->getString("display_name"));
+    EXPECT_NE(Resolved.getString("display_name")->find("::"),
+              llvm::StringRef::npos);
+    Displays.insert(Resolved.getString("display_name")->str());
+    for (const char *Route : {"c", "llvmc"}) {
+      auto Page = takeView(neverd_ir_view_json(Session, Entry, Route, 0, 2048));
+      const auto *SourceIdentity = Page.getObject("function_identity");
+      ASSERT_NE(SourceIdentity, nullptr);
+      EXPECT_EQ(SourceIdentity->getString("display_name"),
+                Resolved.getString("display_name"));
+      EXPECT_EQ(SourceIdentity->getString("linkage_name"), Raw);
+    }
+    const auto User = "chosen_" + std::to_string(Checked++);
+    ASSERT_EQ(neverd_rename_func(Session, Raw.c_str(), User.c_str()), 0);
+    auto Renamed = takeView(neverd_resolve_addr(Session, Entry));
+    EXPECT_EQ(Renamed.getString("name"), User);
+    EXPECT_EQ(Renamed.getString("display_name"), User);
+    EXPECT_EQ(Renamed.getString("linkage_name"), Raw);
+    EXPECT_EQ(Renamed.getString("name_origin"), "user");
+    EXPECT_FALSE(Renamed.getArray("library_annotations")->empty());
+  }
+  EXPECT_EQ(Checked, 16u);
+  EXPECT_EQ(Displays.size(), Checked);
+}
+
 TEST_F(SessionCAPITest, IRViewPreservesEscapedLoaderNames) {
   const std::string Name = std::string("entry_") + '\xff';
   const std::string Expected = "entry_\\xFF";

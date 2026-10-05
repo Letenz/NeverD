@@ -1,0 +1,4 @@
+LIBRARY VCRUNTIME140.dll
+EXPORTS
+  __std_terminate
+  _CxxThrowException

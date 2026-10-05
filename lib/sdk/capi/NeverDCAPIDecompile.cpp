@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "LibraryPresentation.h"
 #include "SessionImpl.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -393,6 +394,7 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
   if (!Raw || !S.LastError.empty())
     throw std::runtime_error(S.LastError.empty() ? "source emission failed"
                                                  : S.LastError);
+  (void)S.synchronizeFunctions();
   llvm::StringRef Full(Raw);
   if (Full.size() > 32 * 1024 * 1024 || !llvm::json::isUTF8(Full))
     throw std::length_error("source view exceeds the UTF-8/32 MiB budget");
@@ -405,37 +407,13 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
     if (Match.ResultOccurrence)
       ID += ':' + vaHex(Match.ResultOccurrence->Address) + '.' +
             std::to_string(Match.ResultOccurrence->Sequence);
-    const char *Scope = Match.Scope == sigs::LibraryFeatureScope::WholeFunction
-                            ? "whole-function"
-                        : Match.Scope == sigs::LibraryFeatureScope::InlineRegion
-                            ? "inline-region"
-                            : "inline-expression";
-    llvm::json::Object Item{
-        {"id", ID},
-        {"function", vaHex(Entry)},
-        {"scope", Scope},
-        {"family", Match.Family},
-        {"operation", Match.Operation},
-        {"display_name", Match.DisplayName},
-        {"linkage_name", Match.LinkageName},
-        {"receiver_type", Match.ReceiverType},
-        {"identity_evidence", Match.IdentityEvidence},
-        {"pack_id", Match.Pack},
-        {"pack_sha256", Match.PackSHA256},
-        {"profile_sha256", Match.ProfileSHA256},
-        {"evidence_sha256", Match.EvidenceSHA256},
-        {"rule_id", Match.Rule},
-        {"rule_revision", Match.RuleRevision},
-        {"source_origin", Match.SourceOrigin},
-        {"source_revision", Match.SourceRevision},
-        {"isolated", Match.Isolated},
-        {"foldable", Region.Mapped && Match.Isolated},
-        {"mapping_status", Region.Mapped ? "mapped" : "unknown"}};
-    llvm::json::Array Occurrences;
-    for (const auto &Origin : Match.Occurrences)
-      Occurrences.push_back(llvm::json::Object{
-          {"address", vaHex(Origin.Address)}, {"origin_seq", Origin.Sequence}});
-    Item["occurrences"] = std::move(Occurrences);
+    auto Item = libraryRecognitionJSON(Match);
+    Item["id"] = ID;
+    Item["function"] = vaHex(Entry);
+    Item["foldable"] = Region.Mapped && Match.Isolated;
+    Item["mapping_status"] = Region.Mapped ? "mapped" : "unknown";
+    if (Match.Callee)
+      Item["callee_identity"] = S.functionIdentity(*Match.Callee);
     llvm::json::Array Spans;
     for (const auto &Span : Region.Spans)
       Spans.push_back(
@@ -493,6 +471,7 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
       {"text", std::move(Text)},
       {"rows", std::move(Rows)},
       {"library_regions", std::move(Regions)},
+      {"function_identity", S.functionIdentity(Entry)},
       {"offset", static_cast<int64_t>(Offset)},
       {"byte_offset", static_cast<int64_t>(ByteOffset)},
       {"total_lines", static_cast<int64_t>(Total)},

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "LibrarySourceTest.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CSourceMap.h"
@@ -238,6 +239,41 @@ TEST_F(LibraryRecognitionTest, CompiledStringSSOAccessorsMatchBothCharacters) {
   }
 }
 
+TEST_F(LibraryRecognitionTest,
+       CompiledInlineAccessorsHaveAuthenticatedReceivers) {
+  const auto Path =
+      std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o";
+  auto Debug = DWARFDebugContext::load(Path, Image.Format,
+                                       DWARFLoadTrust::InImage, Image.Raw);
+  ASSERT_TRUE(Debug);
+  for (const auto &Rule : DB.featurePacks().at(Libcxx).Rules) {
+    SCOPED_TRACE(Rule.Id);
+    std::string Wrapper = "_nd_" + Rule.Id.substr(7) + "_inline";
+    std::replace(Wrapper.begin(), Wrapper.end(), '-', '_');
+    std::replace(Wrapper.begin(), Wrapper.end(), '.', '_');
+    if (auto At = Wrapper.find("wchar"); At != std::string::npos)
+      Wrapper.replace(At, 5, "wide");
+    const auto *Symbol = Image.findSymbol(Wrapper);
+    ASSERT_NE(Symbol, nullptr);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.DumpMed = true;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries.insert(Symbol->Addr);
+    Options.LibraryFeatures = &DB.featurePacks();
+    auto Result = Pipeline().run(Image, Context, Options, Debug.get());
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    auto I = llvm::find_if(Result.LibraryRecognitions,
+                           [&](const auto &R) { return R.Rule == Rule.Id; });
+    EXPECT_NE(I, Result.LibraryRecognitions.end())
+        << body(Result.MedFuncs.front());
+    if (I != Result.LibraryRecognitions.end()) {
+      EXPECT_EQ(I->Scope, LibraryFeatureScope::InlineExpression);
+      EXPECT_TRUE(I->LinkageName.empty());
+    }
+  }
+}
+
 TEST_F(LibraryRecognitionTest, SSOTagSignLayoutAndCapacityNearMissesAbstain) {
   for (llvm::StringRef Operation : {"size", "data", "capacity"}) {
     SCOPED_TRACE(Operation.str());
@@ -370,6 +406,22 @@ TEST_F(LibraryRecognitionTest, HighCMapsOriginalWholeAndInlineText) {
         EXPECT_EQ(Mapped.substr(Span.Begin, Span.End - Span.Begin).find('^'),
                   std::string::npos);
     }
+  }
+}
+
+TEST_F(LibraryRecognitionTest, InlineAccessorsMapBothSourceRoutes) {
+  const auto Path =
+      std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o";
+  auto Debug = DWARFDebugContext::load(Path, Image.Format,
+                                       DWARFLoadTrust::InImage, Image.Raw);
+  ASSERT_TRUE(Debug);
+  for (const auto &Rule : DB.featurePacks().begin()->second.Rules) {
+    std::string Wrapper = "_nd_" + Rule.Id.substr(7) + "_inline";
+    std::replace(Wrapper.begin(), Wrapper.end(), '-', '_');
+    std::replace(Wrapper.begin(), Wrapper.end(), '.', '_');
+    if (auto At = Wrapper.find("wchar"); At != std::string::npos)
+      Wrapper.replace(At, 5, "wide");
+    verifyLibrarySource(Image, Debug.get(), DB, Wrapper, Rule.Id);
   }
 }
 

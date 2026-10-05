@@ -349,6 +349,9 @@ struct Session {
   /// their existing eager analysis contract. All public function-oriented APIs
   /// consume this single session view.
   bool synchronizeFunctions();
+  /// Presentation-only snapshot. Raw names remain the semantic identity;
+  /// metadata queries never force native function analysis.
+  llvm::json::Object functionIdentity(va_t Entry) const;
 
   const LowFunc *findLowFunc(va_t Addr) const {
     for (const auto &F : PipeResult.LowFuncs)
@@ -451,6 +454,8 @@ struct Session {
     auto Candidate =
         Emitter.emit(PipeResult.MedFuncs, *LLVMCtx, "neverd_output", Img.Arch,
                      ImportMap, &Img, Img.Format);
+    if (Sources)
+      Sources->preserveExpressionOrigins(PipeResult.LibraryRecognitions);
     if (!Candidate) {
       setError("native LLVM emission failed");
       return false;
@@ -465,6 +470,8 @@ struct Session {
     }
     if (NoOpt) {
       Pipeline::promoteScaffoldingAllocas(*Candidate);
+      if (Sources)
+        Sources->refreshExpressionOrigins();
     } else {
       const OptimizationResult Optimization =
           Pipeline::optimizeOrPromoteModule(*Candidate, Sources.get());

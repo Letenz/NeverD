@@ -194,7 +194,7 @@ if(BUILD_TESTING)
   endif()
   # These are console test runners, even though they exercise Qt GUI objects.
   # Keep their diagnostics connected to CTest's stdout on Windows.
-  foreach(_neverd_gui_test IN ITEMS neverd-gui-tests neverd-gui-graph-tests
+  foreach(_neverd_gui_test IN ITEMS neverd-gui-tests neverd-gui-graph-tests neverd-gui-library-view-tests
       neverd-gui-text-position-tests neverd-gui-query-tests neverd-gui-independent-pane-tests neverd-gui-page-tests neverd-mcp-qt-tests
       neverd-gui-language-tests neverd-gui-focus-tests neverd-gui-pane-tests)
     if(TARGET ${_neverd_gui_test})

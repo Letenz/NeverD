@@ -35,6 +35,15 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Library feature recognition reads the shared MedIR boundary before the source
+routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
+MedIR analyses prove typed expressions and bounded COM ownership sequences.
+`PipelineLibraryRecognition` combines this evidence without changing names,
+operands, bodies or ABI contracts. The session publishes one display identity
+for lists, call sites and source pages. HighIR/LLVM source observations are
+sidecars: complete surviving mappings can authorize reversible UI folds, while
+ordinary C and export remain fully expanded. See [library recognition](library-recognition.md).
+
 Both source routes apply the same module-wide return modeling before recovering
 call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve

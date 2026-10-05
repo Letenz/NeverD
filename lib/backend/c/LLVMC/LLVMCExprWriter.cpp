@@ -2006,6 +2006,15 @@ const llvm::Value *LLVMCWriter::jleZeroCore(const llvm::BinaryOperator *BO) {
 
 std::optional<std::string>
 LLVMCWriter::invertedRelationalText(const llvm::Value *V) {
+  auto Text = invertedRelationalTextImpl(V);
+  const auto *I = llvm::dyn_cast_or_null<llvm::Instruction>(V);
+  if (Text && SourceRecorder && I)
+    *Text = SourceRecorder->expression(*I, std::move(*Text));
+  return Text;
+}
+
+std::optional<std::string>
+LLVMCWriter::invertedRelationalTextImpl(const llvm::Value *V) {
   std::set<const llvm::Value *> Seen;
   while (V && Seen.insert(V).second) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
@@ -2060,6 +2069,21 @@ LLVMCWriter::invertedRelationalText(const llvm::Value *V) {
 }
 
 std::string LLVMCWriter::condStr(const llvm::Value *V) {
+  auto Text = condStrImpl(V);
+  const auto *I = llvm::dyn_cast_or_null<llvm::Instruction>(V);
+  // Branch structuring can remove an outer Boolean negation. Leave its
+  // delimiters outside the event so that private markers do not change the
+  // ordinary simplification or get sliced by it.
+  if (SourceRecorder && I && llvm::StringRef(Text).starts_with("!(") &&
+      Text.back() == ')')
+    return "!(" +
+           SourceRecorder->expression(*I, Text.substr(2, Text.size() - 3)) +
+           ")";
+  return SourceRecorder && I ? SourceRecorder->expression(*I, std::move(Text))
+                             : Text;
+}
+
+std::string LLVMCWriter::condStrImpl(const llvm::Value *V) {
   if (auto Text = scalarConditionText(V))
     return *Text;
   std::set<const llvm::Value *> Seen;
@@ -2323,10 +2347,13 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
     for (const llvm::Instruction *I : Chain)
       if (!MaterializedExpressions.count(I))
         Analysis.Inlinable.insert(I);
-  if (Off == 0)
-    return "(**(void ***)(" + ObjStr + "))";
-  return "(*(void **)((uintptr_t)(*(void **)(" + ObjStr + ")) + " +
-         std::to_string(Off) + "))";
+  std::string Text = Off == 0 ? "(**(void ***)(" + ObjStr + "))"
+                              : "(*(void **)((uintptr_t)(*(void **)(" + ObjStr +
+                                    ")) + " + std::to_string(Off) + "))";
+  if (SourceRecorder && !MarkChain)
+    for (const auto *I : Chain)
+      Text = SourceRecorder->expression(*I, std::move(Text));
+  return Text;
 }
 
 void LLVMCWriter::markIndirectCalleeChains(llvm::Function &Fn) {

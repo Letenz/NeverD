@@ -159,6 +159,7 @@ public:
 
   //--- Statement rendering (HighCStmtWriter.cpp) ---
   void writeStmt(const HighStmt &Stmt, int Indent);
+  void writeStmtImpl(const HighStmt &Stmt, int Indent);
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
                   size_t End = static_cast<size_t>(-1));
@@ -321,6 +322,8 @@ public:
   std::string unwrapCastVar(const HighExpr &E);
   std::string invertCondStr(const HighExpr &E);
   std::string condStr(const HighExpr &E);
+  std::string condStrImpl(const HighExpr &E);
+  std::string invertCondStrImpl(const HighExpr &E);
   /// `!(a <= b && a != b)` is `a >= b`. When both IfElse arms print, Hex-Rays
   /// prefers `if (b > a) else-arm else then-arm`.
   std::optional<std::string> preferGreaterIfElseCond(const HighExpr &E);

@@ -195,11 +195,11 @@ void PaneController::navigateTo(const QString &query, int historyTarget) {
               return;
             }
             const auto payload = response["payload"].toObject();
-            PaneLocation location{payload["address"].toString(),
-                                  payload["function_address"].toString(),
-                                  payload["name"].toString(),
-                                  payload["comment"].toString(),
-                                  payload["comment"].isString()};
+            PaneLocation location{
+                payload["address"].toString(),
+                payload["function_address"].toString(),
+                payload["display_name"].toString(payload["name"].toString()),
+                payload["comment"].toString(), payload["comment"].isString()};
             if (!validAddress(location.address) ||
                 (!location.functionAddress.isEmpty() &&
                  !validAddress(location.functionAddress))) {
@@ -715,7 +715,9 @@ void PaneController::loadSelectionDetail() {
               }
               if (guard->location_.functionAddress ==
                   payload["function_address"].toString())
-                guard->location_.functionName = payload["name"].toString();
+                guard->location_.functionName =
+                    payload["display_name"].toString(
+                        payload["name"].toString());
             }
           }
         }
