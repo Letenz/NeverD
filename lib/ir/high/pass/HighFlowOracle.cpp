@@ -222,6 +222,15 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
     return;
   }
 
+  // A block of nothing but empty blocks and removed statements is a group
+  // of labels; it runs nothing of its own.
+  std::function<bool(const HighStmt &)> RunsNothing = [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Nop)
+      return true;
+    return S.Kind == StmtKind::Block &&
+           std::all_of(S.Body.begin(), S.Body.end(), RunsNothing);
+  };
+
   // Jumps and empty label anchors run nothing of a block of their own, and
   // a loop test may run at the loop's latch while carrying one address.  An
   // if tests in the block of its branch: when it merges the tests of several
@@ -248,7 +257,7 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
     case StmtKind::Switch:
       return -1;
     case StmtKind::Block:
-      if (S->Body.empty())
+      if (RunsNothing(*S))
         return -1;
       break;
     default:
