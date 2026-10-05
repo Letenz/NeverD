@@ -17,6 +17,7 @@ NEVERD_BACKEND_FAULT_KIND(InvalidMemoryRange, "invalid_memory_range")
 NEVERD_BACKEND_FAULT_KIND(InvalidInstruction, "invalid_instruction")
 NEVERD_BACKEND_FAULT_KIND(Interrupt, "interrupt")
 NEVERD_BACKEND_FAULT_KIND(UnhandledException, "unhandled_exception")
+NEVERD_BACKEND_FAULT_KIND(Alignment, "alignment")
 #endif
 
 #ifdef NEVERD_BACKEND_FAULT_CAUSE

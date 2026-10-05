@@ -18,6 +18,7 @@
 #include "../../core/MemoryLayout.h"
 #include "../../core/MemoryProjection.h"
 #include "UnicornArchitecture.h"
+#include "UnicornExclusive.h"
 #include "UnicornMemory.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -91,6 +92,9 @@ struct UnicornBackend::Impl {
   std::vector<uc_hook> HookHandles;
   std::optional<BackendFault> FirstFault;
   std::optional<BackendFault> RecoverableFault;
+  std::shared_ptr<RAMReservation> Exclusive;
+  std::string InstructionFailure;
+  bool InstructionRejected = false;
   uint64_t InstructionPC = 0;
   bool Timeout = false;
   bool CallbackFailed = false;
@@ -289,6 +293,22 @@ struct UnicornBackend::Impl {
   void retain(BackendFault Fault) noexcept {
     if (!FirstFault)
       FirstFault = Fault;
+    Exclusive.reset();
+  }
+
+  llvm::Error exclusiveFault(BackendFault Fault) {
+    if (Hooks.RecoverableFault && Hooks.RecoverableFault(Fault)) {
+      Exclusive.reset();
+      RecoverableFault = Fault;
+      uc_emu_stop(Engine);
+      return llvm::Error::success();
+    }
+    retain(Fault);
+    if (Fault.Address && Fault.Size && Fault.Access && Hooks.Fault)
+      Hooks.Fault(*Fault.Address, *Fault.Size,
+                  backendAccessKindName(*Fault.Access));
+    uc_emu_stop(Engine);
+    return diagnostic::error(diagnostic::MemoryAccess);
   }
 
   void memoryFault(BackendFaultKind Kind, BackendAccessKind Access,
@@ -313,6 +333,38 @@ struct UnicornBackend::Impl {
     S.invoke([&] {
       if (S.Hooks.Instruction)
         S.Hooks.Instruction(Address, Size);
+      if (S.Architecture != GuestArchitecture::AArch64 || S.effectsStopped() ||
+          S.RecoverableFault)
+        return;
+      auto E = executeUnicornExclusive(
+          S.Engine, Address, *S.Memory, S.Exclusive,
+          {S.Hooks, [&] { return S.effectsStopped() || S.RecoverableFault; },
+           [&](BackendFault Fault) { return S.exclusiveFault(Fault); },
+           [&](uint64_t At, uint64_t Count,
+               unsigned Permissions) -> llvm::Error {
+             if (auto F = S.Memory->firstAccessFailure(At, Count, Permissions))
+               return S.exclusiveFault({F->Kind, Address, F->Address, F->Size,
+                                        Permissions == Read
+                                            ? BackendAccessKind::Read
+                                            : BackendAccessKind::Write});
+             return llvm::Error::success();
+           },
+           Write, AArch64ExclusiveAlignment::Natural},
+          registerID);
+      if (E) {
+        S.InstructionRejected = E.isA<UnsupportedExecutionError>();
+        if (!S.FirstFault) {
+          S.CallbackFailed = !S.InstructionRejected;
+          S.retain({S.InstructionRejected
+                        ? BackendFaultKind::InvalidInstruction
+                        : BackendFaultKind::UnhandledException,
+                    Address});
+          if (S.InstructionRejected && S.Hooks.InvalidInstruction)
+            S.Hooks.InvalidInstruction();
+        }
+        S.InstructionFailure = llvm::toString(std::move(E));
+        uc_emu_stop(S.Engine);
+      }
     });
   }
   static void write(uc_engine *, uc_mem_type, uint64_t Address, int Size,
@@ -326,6 +378,9 @@ struct UnicornBackend::Impl {
         return;
       if (S.Hooks.Write)
         S.Hooks.Write(Address, Size, uint64_t(Value));
+      if (S.Architecture == GuestArchitecture::AArch64 && Size > 0 &&
+          !S.effectsStopped() && !S.RecoverableFault)
+        observeUnicornRAMWrite(*S.Memory, Address, Size);
     });
   }
   static void read(uc_engine *, uc_mem_type, uint64_t Address, int Size,
@@ -366,6 +421,7 @@ struct UnicornBackend::Impl {
     S.invoke([&] {
       if (!S.effectsStopped() && S.Hooks.RecoverableFault &&
           S.Hooks.RecoverableFault(Fault)) {
+        S.Exclusive.reset();
         S.RecoverableFault = Fault;
         uc_emu_stop(S.Engine);
       }
@@ -396,6 +452,7 @@ struct UnicornBackend::Impl {
         S.RecoverableFault = Fault;
     });
     if (S.RecoverableFault) {
+      S.Exclusive.reset();
       uc_emu_stop(S.Engine);
       return;
     }
@@ -420,6 +477,7 @@ struct UnicornBackend::Impl {
 
 struct UnicornContext final : BackendContext::Storage {
   uc_context *Context = nullptr;
+  std::shared_ptr<RAMReservation> Exclusive;
 
   ~UnicornContext() override {
     if (Context)
@@ -497,8 +555,11 @@ llvm::Error
 UnicornBackend::bindAddressSpace(std::shared_ptr<AddressSpace> Space) {
   if (auto E = State->mutableState())
     return E;
-  return State->Memory->bind(
-      std::move(Space), [](uint64_t, uint64_t) { return true; }, true);
+  if (auto E = State->Memory->bind(
+          std::move(Space), [](uint64_t, uint64_t) { return true; }, true))
+    return E;
+  State->Exclusive.reset();
+  return llvm::Error::success();
 }
 llvm::Error UnicornBackend::map(uint64_t Address, uint64_t Size,
                                 unsigned Permissions) {
@@ -753,11 +814,12 @@ llvm::Error UnicornBackend::saveContext(BackendContext &Context) {
       State->RecoverableFault)
     return failure(unicornDiagnostic::CannotSaveAFaultedCPUInstance);
   contextStorage(Context)->Space = addressSpace();
-  return check(
-      uc_context_save(
-          State->Engine,
-          static_cast<UnicornContext &>(*contextStorage(Context)).Context),
-      unicornDiagnostic::SaveCPUContext);
+  auto &Saved = static_cast<UnicornContext &>(*contextStorage(Context));
+  if (auto E = check(uc_context_save(State->Engine, Saved.Context),
+                     unicornDiagnostic::SaveCPUContext))
+    return E;
+  Saved.Exclusive = State->Exclusive;
+  return llvm::Error::success();
 }
 
 llvm::Error UnicornBackend::restoreContext(const BackendContext &Context) {
@@ -783,6 +845,8 @@ llvm::Error UnicornBackend::restoreContext(const BackendContext &Context) {
           unicornDiagnostic::RestoreCPUContext))
     return E;
   State->InstructionPC = State->currentPC();
+  State->Exclusive =
+      static_cast<const UnicornContext &>(*contextStorage(Context)).Exclusive;
   State->Timeout = false;
   return llvm::Error::success();
 }
@@ -830,6 +894,7 @@ llvm::Expected<ExecutionExit> UnicornBackend::runUntilExit(uint64_t PC,
                             .Recoverable = State->RecoverableFault,
                             .DeviceFailed = State->MMIOFailed,
                             .BackendFailed = CallbackFailed,
+                            .InstructionRejected = State->InstructionRejected,
                             .StopRequested = State->StopRequested,
                             .DeadlineReached = State->Timeout});
 }
@@ -848,7 +913,10 @@ llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
   auto Limit = makeExecutionDeadline(TimeoutMicroseconds);
   if (!Limit)
     return Limit.takeError();
-  if (auto E = State->Memory->beginRun())
+  if (auto E = State->Memory->beginRun(State->Architecture ==
+                                               GuestArchitecture::AArch64
+                                           ? RAMWriteTracking::Declared
+                                           : RAMWriteTracking::Opaque))
     return E;
   auto Release = llvm::scope_exit([&] { State->Memory->endRun(); });
   if (auto E = State->synchronize())
@@ -866,6 +934,8 @@ llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
   uc_err Status =
       uc_emu_start(State->Engine, PC, UINT64_MAX, TimeoutMicroseconds, 0);
   State->Running = false;
+  if (!State->InstructionFailure.empty())
+    return failure(State->InstructionFailure);
   if (auto E = State->deviceError())
     return E;
   if (State->RecoverableFault) {

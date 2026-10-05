@@ -20,6 +20,9 @@ struct MemoryRegistration {
   uint8_t *Backing;
   uint64_t Size;
 };
+/// Opaque execution can write RAM without publishing an instruction footprint.
+/// Declared execution invalidates reservations at each committed write instead.
+enum class RAMWriteTracking { Opaque, Declared };
 /// Owns only private monitor/page-table storage. AddressSpace is the mapping
 /// authority; physical allocations are shared and retained by every projection.
 class MemoryProjection {
@@ -43,8 +46,21 @@ public:
   llvm::Error bind(std::shared_ptr<AddressSpace> Next,
                    llvm::function_ref<bool(uint64_t, uint64_t)> Valid,
                    bool AllowDevices = false);
-  llvm::Error beginRun();
+  llvm::Error beginRun(RAMWriteTracking Tracking = RAMWriteTracking::Opaque);
   void endRun();
+  /// Establish/test a reservation under a declared physical execution lease.
+  /// The ISA selects a power-of-two granule within one physical page and owns
+  /// instruction permissions, alignment, local monitor lifetime and status.
+  /// Matching requires the same operand width within the reserved physical
+  /// granule; the original byte offset is not a second address-identity test.
+  llvm::Expected<std::shared_ptr<RAMReservation>>
+  reserveRAM(uint64_t Address, uint64_t Size, uint64_t Granule);
+  llvm::Expected<bool>
+  reservationMatches(const std::shared_ptr<RAMReservation> &Reservation,
+                     uint64_t Address, uint64_t Size) const;
+  /// Publish an already validated physical write under the execution lease.
+  /// Do not call for temporary processor writes or transaction rollback.
+  void recordRAMWrite(uint64_t Physical, uint64_t Size);
   llvm::Error map(uint64_t A, uint64_t N, unsigned P) {
     return Space->map(A, N, P);
   }
@@ -107,6 +123,7 @@ private:
   std::weak_ptr<AddressSpace> ProjectedSpace;
   // Keep old allocations pinned until the transport retires the old mapping.
   std::map<uint64_t, Page> ProjectedPages;
+  RAMWriteTracking WriteTracking = RAMWriteTracking::Opaque;
 };
 } // namespace neverd::emulation
 #endif

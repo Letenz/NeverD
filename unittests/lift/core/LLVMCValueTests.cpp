@@ -674,8 +674,8 @@ int main(void) {
       auto *Frame = B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 64));
       Frame->setAlignment(llvm::Align(16));
       auto *Data = B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(32));
-      // The aligned destination remains external, so it tests the raw typed
-      // store path rather than the byte-backing memcpy path.
+      // Cover both aligned external storage and an unaligned byte backing;
+      // neither proves a C effective type for these pointer-bit stores.
       llvm::Value *Slot =
           Alignment == 8 ? static_cast<llvm::Value *>(Function->getArg(1))
                          : B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(3));

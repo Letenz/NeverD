@@ -146,9 +146,11 @@ llvm::Error RAMTransaction::read(uint64_t Address,
 llvm::Error RAMTransaction::commit() {
   if (State != Phase::Staged)
     return diagnostic::error(diagnostic::RAMTransactionPhase);
-  for (const auto &S : Slices)
+  for (const auto &S : Slices) {
+    Memory.recordRAMWrite(S.Physical, S.After.size());
     std::memcpy(Memory.physicalPointer(S.Physical), S.After.data(),
                 S.After.size());
+  }
   State = Phase::Committed;
   return llvm::Error::success();
 }

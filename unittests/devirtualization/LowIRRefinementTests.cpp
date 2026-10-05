@@ -1365,6 +1365,88 @@ TEST(LowIRLoopPlanPairing, FrameInputsAndWritesRemainObservable) {
   loopRefused(loopCheck(A, Wrong, *Plan), Status::Different);
 }
 
+Program zeroPaddedFrameLoop(uint16_t Bytes, llvm::endianness Order,
+                            uint64_t Step = 3) {
+  Program P;
+  P.frame();
+  P.Contract.ByteOrder = Order;
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction(
+      {op(NdOp::INT_ADD, r(40), {r(32), n(-8)}),
+       op(NdOp::INT_ADD, r(48),
+          {r(40), n(Order == llvm::endianness::little ? 0 : 8 - Bytes)}),
+       op(NdOp::INT_ADD, r(56),
+          {r(40), n(Order == llvm::endianness::little ? Bytes : 0)}),
+       op(NdOp::STORE, {}, {r(40), n(0)}), op(NdOp::COPY, r(8), {r(16)}),
+       op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(1, 0x200, {2, 3});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(2, 0x300, {1});
+  P.instruction({op(NdOp::LOAD, NdVar::tmp(0, Bytes), {r(48)}),
+                 op(NdOp::INT_ADD, NdVar::tmp(8, Bytes),
+                    {NdVar::tmp(0, Bytes), n(Step, Bytes)}),
+                 op(NdOp::STORE, {}, {r(48), NdVar::tmp(8, Bytes)}),
+                 op(NdOp::STORE, {}, {r(56), n(0, 8 - Bytes)}),
+                 op(NdOp::INT_SUB, r(8), {r(8), n(1)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(3, 0x400);
+  P.instruction({op(NdOp::LOAD, r(0), {r(40)})});
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopInference, NarrowFrameUpdatesKeepTheirExplicitZeroPadding) {
+  for (uint16_t Bytes : {1, 2, 3, 4, 7})
+    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+      SCOPED_TRACE(Bytes);
+      SCOPED_TRACE(Order == llvm::endianness::little);
+      const auto P = zeroPaddedFrameLoop(Bytes, Order);
+      const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+      ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+      const auto Proof = loopCheck(P, P, *R.Plan);
+      ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+      loopRefused(loopCheck(P, zeroPaddedFrameLoop(Bytes, Order, 5), *R.Plan),
+                  Status::Different);
+      auto WrongPadding = P;
+      WrongPadding.Function.Blocks[2].Ops[3].Inputs[1] = n(1, 8 - Bytes);
+      loopRefused(loopCheck(P, WrongPadding, *R.Plan), Status::Different);
+    }
+}
+
+TEST(LowIRLoopInference, ZeroPaddedFrameInferenceAndProofKeepSeparateBudgets) {
+  const auto P = zeroPaddedFrameLoop(3, llvm::endianness::big);
+  const auto Good = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  LowIRLoopInferenceLimits Exact;
+  Exact.Execution.MaxOperations = Good.Operations;
+  Exact.Execution.MaxSolverQueries = Good.SolverQueries;
+  Exact.MaxWideningRounds = Good.WideningRounds;
+  const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract, Exact);
+  ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+  for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    auto Short = Exact;
+    if (Kind == 0)
+      --Short.Execution.MaxOperations;
+    if (Kind == 1)
+      --Short.Execution.MaxSolverQueries;
+    if (Kind == 2)
+      --Short.MaxWideningRounds;
+    const auto Refused =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Short);
+    EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+        << Refused.Diagnostic;
+    EXPECT_FALSE(Refused.Plan);
+  }
+  const auto Proof = loopCheck(P, P, *R.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  LowIRRefinementLimits Limit;
+  Limit.Execution.MaxSolverQueries = Proof.SolverQueries;
+  ASSERT_TRUE(loopCheck(P, P, *R.Plan, Limit).proved());
+  --Limit.Execution.MaxSolverQueries;
+  loopRefused(loopCheck(P, P, *R.Plan, Limit), Status::BudgetExceeded);
+}
+
 TEST(LowIRLoopInference, AscendingCountersSpillsAndEarlyReturns) {
   for (uint16_t Bytes : {4, 8}) {
     for (bool EarlyReturn : {false, true}) {
