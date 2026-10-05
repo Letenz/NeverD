@@ -199,6 +199,29 @@ TEST(BinaryLowIRRefinement, SplitAlignedFrameStoresKeepTheFullStateRelation) {
   refused(P.check(Recovery.Residual), Status::Different);
 }
 
+TEST(BinaryLowIRRefinement, RepeatedFeasibilityKeepsCandidateStateChecks) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  auto &Code = P.Image.Segments.front();
+  Code.Data.insert(Code.Data.end() - 1, 128, 0x90);
+  Code.Size = Code.FileSz = Code.Data.size();
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  bool Changed = false;
+  for (auto &B : Recovery.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+          O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+          O.NumInputs == 1 && O.Inputs[0].isConst() &&
+          O.Inputs[0].Offset == 7) {
+        O.Inputs[0].Offset = 9;
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(P.check(Recovery.Residual), Status::Different);
+}
+
 TEST(BinaryLowIRRefinement, EntryAlignmentUsesTheOriginalSymbolicStack) {
   Program P({0x48, 0x89, 0xe0, 0xc3}); // mov rax,rsp; ret.
   auto Recovery = P.recover();

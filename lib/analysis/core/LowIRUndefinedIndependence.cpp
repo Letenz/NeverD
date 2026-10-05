@@ -363,6 +363,10 @@ class Checker {
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  // One completed model-free query in this immutable DAG and fixed solver
+  // configuration. No model, incomplete answer or cross-context fact escapes.
+  SymRef LastCompletedQuery;
+  solver::SatResult LastCompletedAnswer = solver::SatResult::Invalid;
   RefinementSession *Refinement = nullptr;
   bool CandidateExecution = false;
   SpecializationProvider *ReadProvider = nullptr;
@@ -451,6 +455,8 @@ class Checker {
 
   solver::SatResult query(SymRef Predicate) {
     nodes();
+    if (Predicate && Predicate == LastCompletedQuery)
+      return LastCompletedAnswer;
     if (Result.SolverQueries >= Limits.MaxSolverQueries)
       fail(Status::BudgetExceeded, "solver-query budget exhausted");
     ++Result.SolverQueries;
@@ -460,6 +466,8 @@ class Checker {
       fail(Status::BudgetExceeded, "relational solver budget exhausted");
     if (Answer == solver::SatResult::Invalid)
       fail(Status::Invalid, "invalid relational solver query");
+    LastCompletedQuery = Predicate;
+    LastCompletedAnswer = Answer;
     return Answer;
   }
 
