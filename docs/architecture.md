@@ -1368,13 +1368,15 @@ lifecycle state remain in `KernelFramework`. Windows dispatcher and registry
 calls resolve operation and argument count together from their API inventories;
 DMA admission and execution share the selected operation descriptor.
 
-The execution-state, executive spin-lock and interrupt API inventories bind
+The execution-state, executive spin-lock, interrupt and PoFx API inventories bind
 argument counts, IRQL ceilings and typed operations together. `KernelModel`
 performs shared call admission before invoking those operations. IRQL pairing,
 thread APC regions, executive lock ownership and interrupt registration live in
 their respective implementation files; WDF spin locks call the same executive
-lock operations. Splitting dispatch does not transfer ownership of execution,
-thread or callback state out of the model.
+lock operations. PoFx registration decoding, component operations and callback
+continuations have separate files; their shared admission preserves timer
+processing and driver/framework ownership checks. Splitting dispatch does not
+transfer ownership of execution, thread or callback state out of the model.
 
 `os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
 

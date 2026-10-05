@@ -653,10 +653,11 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Operation;
 #include "KernelInterruptAPIs.def"
 #undef NEVERD_KERNEL_INTERRUPT_API
-#define NEVERD_KERNEL_POFX_API(Symbol, Arity, IRQL) case KernelAPIKind::Symbol:
+#define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL, Operation)                   \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
 #include "KernelPoFxAPIs.def"
 #undef NEVERD_KERNEL_POFX_API
-    return callPoFxAPI(Name, A);
   case KernelAPIKind::MmMapIoSpace:
   case KernelAPIKind::MmMapIoSpaceEx:
     return MMIO.map(A[0], A[1], uint32_t(A[2]),

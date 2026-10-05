@@ -936,6 +936,11 @@ competing release-variant, saved-IRQL and corrupted-storage errors through publi
 kernel call admission. Failed releases preserve ownership, storage and IRQL;
 repairing the word permits a valid release with unspecified upper argument bits.
 
+PoFx call routing also preserves live-handle and framework-ownership admission
+before component-index or flag errors. `KernelPoFxAPI` and
+`KernelFrameworkPoFxBridge` check those competing failures alongside blocking
+continuations, callback completion, registration lifetime and component hints.
+
 `AndroidFinalizerTests.cpp` runs independent C ABI callers at O0/O2 with ordinary,
 APS2 and RELR relocations. It checks constructor registrations, exact callback
 order and arguments, DSO filtering, duplicate and NULL registrations, recursive

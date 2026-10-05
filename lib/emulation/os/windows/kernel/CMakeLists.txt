@@ -24,7 +24,9 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelDriverIRPRequests.cpp
   KernelPoFx.cpp
   KernelModelPoFx.cpp
+  KernelModelPoFxCalls.cpp
   KernelModelPoFxPolicy.cpp
+  KernelModelPoFxRegistration.cpp
   KernelFrameworkControl.cpp
   KernelFrameworkDeviceInitCalls.cpp
   KernelFrameworkDeviceCalls.cpp

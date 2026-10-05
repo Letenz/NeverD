@@ -502,6 +502,8 @@ TEST_F(KernelPoFxAPI, BlockingCallbacksStayOnTheCallingThreadAndWaitForReturn) {
 TEST_F(KernelPoFxAPI,
        FlagsAndComponentFailuresDoNotConsumeActivationReferences) {
   startIdle();
+  reject(Model->call("PoFxActivateComponent", {0, UINT32_MAX, 4}),
+         "live PoFx handle");
   reject(Model->call("PoFxActivateComponent",
                      {Handle, 0, pofx::FlagBlocking | pofx::FlagAsyncOnly}),
          "invalid flags");

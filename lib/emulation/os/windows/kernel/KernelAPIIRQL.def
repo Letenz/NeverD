@@ -236,7 +236,7 @@ NEVERD_KERNEL_IRQL_API(IoCancelIrp, Dispatch)
 NEVERD_KERNEL_IRQL_API(KeGetCurrentIrql, Any)
 
 // Component power APIs share their exact IRQL contract with the export table.
-#define NEVERD_KERNEL_POFX_API(Name, Arity, Maximum)                           \
+#define NEVERD_KERNEL_POFX_API(Name, Arity, Maximum, Operation)                \
   NEVERD_KERNEL_IRQL_API(Name, Maximum)
 #include "KernelPoFxAPIs.def"
 #undef NEVERD_KERNEL_POFX_API

@@ -258,8 +258,32 @@ private:
   };
   std::map<uint64_t, BlockingPoFxOperation> BlockingPoFx;
   llvm::Error waitForPoFxOperation(uint64_t Thread);
-  llvm::Expected<uint64_t> callPoFxAPI(llvm::StringRef Name,
-                                       llvm::ArrayRef<uint64_t> Arguments);
+  enum class PoFxHandleAccess { DriverOwned, AnyOwner };
+  enum class PoFxCondition { Active, Idle };
+  llvm::Error preparePoFxOperation(uint64_t Handle, PoFxHandleAccess Access);
+  llvm::Expected<uint64_t> finishPoFxOperation(llvm::Error Error);
+  llvm::Expected<uint64_t> registerPoFxDevice(uint64_t Object, uint64_t Record,
+                                              uint64_t Output);
+  llvm::Expected<uint64_t> unregisterPoFxDevice(uint64_t Handle);
+  llvm::Expected<uint64_t> startPoFxPowerManagement(uint64_t Handle);
+  llvm::Expected<uint64_t> changePoFxComponent(uint64_t Handle, uint32_t Index,
+                                               uint32_t Flags,
+                                               PoFxCondition Condition);
+  llvm::Expected<uint64_t> completePoFxIdleCondition(uint64_t Handle,
+                                                     uint32_t Index);
+  llvm::Expected<uint64_t> completePoFxIdleState(uint64_t Handle,
+                                                 uint32_t Index);
+  llvm::Expected<uint64_t> completePoFxPowerNotRequired(uint64_t Handle);
+  llvm::Expected<uint64_t> reportPoFxDevicePoweredOn(uint64_t Handle);
+  llvm::Expected<uint64_t>
+  setPoFxComponentLatency(uint64_t Handle, uint32_t Index, uint64_t Latency);
+  llvm::Expected<uint64_t> setPoFxComponentResidency(uint64_t Handle,
+                                                     uint32_t Index,
+                                                     uint64_t Residency);
+  llvm::Expected<uint64_t> setPoFxComponentWake(uint64_t Handle, uint32_t Index,
+                                                bool Wake);
+  llvm::Expected<uint64_t> setPoFxDeviceIdleTimeout(uint64_t Handle,
+                                                    uint64_t Timeout);
   llvm::Expected<KernelPoFx::Registration>
   readPoFxRegistration(uint64_t PDO, uint64_t Address);
   llvm::Error queuePoFxCallbacks();
