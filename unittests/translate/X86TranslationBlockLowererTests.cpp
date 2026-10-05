@@ -1623,6 +1623,20 @@ TEST(X86TranslationBlockLowerer,
   expectLogicTruth(Immediate, 0, std::numeric_limits<uint64_t>::max(),
                    ReferenceLogic::Or);
 
+  const std::vector<uint8_t> OrNegativeImm32 = immediateArithmeticBlock(
+      0x8040201008040201ULL,
+      std::array<uint8_t, 7>{0x48, 0x81, 0xc8, 0xff, 0xff, 0xff, 0xff});
+  expectLogicTruth(OrNegativeImm32, 0x8040201008040201ULL,
+                   std::numeric_limits<uint64_t>::max(), ReferenceLogic::Or);
+
+  for (const std::vector<uint8_t> Encoding :
+       {std::vector<uint8_t>{0x48, 0x83, 0xe0, 0x00},
+        std::vector<uint8_t>{0x48, 0x81, 0xe0, 0x00, 0x00, 0x00, 0x00}}) {
+    const auto AndZero =
+        immediateArithmeticBlock(0x8040201008040201ULL, Encoding);
+    expectLogicTruth(AndZero, 0x8040201008040201ULL, 0, ReferenceLogic::And);
+  }
+
   const std::vector<uint8_t> AndSame = registerArithmeticBlock(
       0x8040201008040201ULL, 0x9999999999999999ULL,
       std::array<uint8_t, 3>{0x48, 0x21, 0xc0}); // and rax, rax
