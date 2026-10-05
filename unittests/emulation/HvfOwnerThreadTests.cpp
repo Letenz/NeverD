@@ -8,6 +8,7 @@
 #include "gtest/gtest.h"
 
 #include <atomic>
+#include <chrono>
 #include <future>
 #include <memory>
 #include <new>
