@@ -34,6 +34,9 @@ constexpr FPCase FloatingCases[] = {
 class AArch64SIMD
     : public testing::TestWithParam<std::tuple<ExecutionBackendKind, bool>> {
 protected:
+  static constexpr unsigned ScalarCount = unsigned(AArch64Register::FPSR) + 1;
+  using ScalarState = std::array<uint64_t, ScalarCount>;
+  using VectorState = std::array<RegisterValue, LastVector + 1>;
   std::unique_ptr<ExecutionBackend> CPU;
   void SetUp() override {
     const bool User = std::get<1>(GetParam());
@@ -71,6 +74,18 @@ protected:
     llvm::cantFail(CPU->writeRegister(
         vectorRegister(GuestArchitecture::AArch64, Index), Value));
   }
+  ScalarState scalars() {
+    ScalarState State;
+    for (unsigned Index = 0; Index < State.size(); ++Index)
+      State[Index] = llvm::cantFail(CPU->reg(AArch64Register(Index)));
+    return State;
+  }
+  VectorState vectors() {
+    VectorState State;
+    for (unsigned Index = 0; Index < State.size(); ++Index)
+      State[Index] = vector(Index);
+    return State;
+  }
   ExecutionExit run(uint32_t Word) {
     uint8_t Bytes[WordBytes];
     llvm::support::endian::write32le(Bytes, Word);
@@ -90,13 +105,14 @@ protected:
               Code + sizeof(uint32_t));
   }
   void expectRejected(uint32_t Word) {
-    const auto Before = vector(LastVector);
+    auto ScalarBefore = scalars();
+    const auto VectorBefore = vectors();
+    ScalarBefore[unsigned(AArch64Register::PC)] = Code;
     const auto Exit = run(Word);
     EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation)
         << Exit.Diagnostic;
-    EXPECT_EQ(vector(LastVector), Before);
-    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::NZCV)), InitialNZCV);
-    EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::PC)), Code);
+    EXPECT_EQ(vectors(), VectorBefore);
+    EXPECT_EQ(scalars(), ScalarBefore);
   }
   void expectWrappedPairRejected(uint32_t Word, unsigned Width) {
     llvm::cantFail(CPU->map(LastPage, PageSize, Read | Write | UserAccessible));
@@ -157,6 +173,89 @@ TEST_P(AArch64SIMD, IntegerDuplicationFillsBothLanes) {
   llvm::cantFail(CPU->setReg(AArch64Register::X0, InitialScalar));
   ASSERT_NO_FATAL_FAILURE(expectSuccess(run(DuplicateInteger)));
   EXPECT_EQ(vector(LastVector), (RegisterValue{InitialScalar, InitialScalar}));
+}
+TEST_P(AArch64SIMD, CMHIProducesUnsignedElementMasksAndPreservesOtherState) {
+  struct Comparison {
+    const char *Name;
+    uint32_t Word;
+    unsigned Bits, Elements, Destination, Left, Right;
+  };
+  constexpr Comparison Cases[] = {
+#define NEVERD_AARCH64_CMHI_CASE(Name, Word, Bits, Count, Dest, Left, Right)   \
+  {#Name, Word, Bits, Count, Dest, Left, Right},
+#include "AArch64CMHICases.def"
+#undef NEVERD_AARCH64_CMHI_CASE
+  };
+  struct Operands {
+    RegisterValue Left, Right;
+  };
+  constexpr Operands Inputs[] = {
+      {{0x80ff7f000102ff80ULL, 0xffffffff00000001ULL},
+       {0x7fff80000102fe80ULL, 0x7fffffff00000002ULL}},
+      {{UINT64_MAX, 0x8000000000000000ULL}, {0, 0x7fffffffffffffffULL}},
+      {{0, 0x7fffffffffffffffULL}, {UINT64_MAX, 0x8000000000000000ULL}},
+      {{0x8877665544332211ULL, 0xfedcba9876543210ULL},
+       {0x8877665544332211ULL, 0xfedcba9876543210ULL}},
+  };
+  for (unsigned Index = 0; Index <= unsigned(AArch64Register::X30); ++Index)
+    llvm::cantFail(
+        CPU->setReg(AArch64Register(Index), 0xabcdef0000000000ULL + Index));
+  for (auto Register :
+       {AArch64Register::TPIDR_EL0, AArch64Register::TPIDRRO_EL0,
+        AArch64Register::TPIDR_EL1})
+    llvm::cantFail(
+        CPU->setReg(Register, 0x1234567800000000ULL + unsigned(Register)));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPCR,
+                             DefaultNaN | FlushToZero | (1u << RoundingShift)));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPSR, InitialFPSR));
+  std::array<uint8_t, 64> StackBefore;
+  StackBefore.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, StackBefore));
+
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    for (const auto &Input : Inputs) {
+      for (unsigned Index = 0; Index <= LastVector; ++Index)
+        vector(Index, {InitialVectorLow + Index, InitialVectorHigh - Index});
+      vector(1, Input.Left);
+      vector(2, Input.Right);
+      auto ExpectedVectors = vectors();
+      auto ExpectedScalars = scalars();
+      ExpectedScalars[unsigned(AArch64Register::PC)] = Code + sizeof(uint32_t);
+      const auto Left = ExpectedVectors[Case.Left];
+      const auto Right = ExpectedVectors[Case.Right];
+      const uint64_t Mask =
+          Case.Bits == 64 ? UINT64_MAX : (uint64_t(1) << Case.Bits) - 1;
+      RegisterValue Expected{};
+      for (unsigned Element = 0; Element < Case.Elements; ++Element) {
+        const unsigned Word = Element * Case.Bits / 64;
+        const unsigned Shift = Element * Case.Bits % 64;
+        const uint64_t A = (Left[Word] >> Shift) & Mask;
+        const uint64_t B = (Right[Word] >> Shift) & Mask;
+        if (A > B)
+          Expected[Word] |= Mask << Shift;
+      }
+      ExpectedVectors[Case.Destination] = Expected;
+      ASSERT_NO_FATAL_FAILURE(expectSuccess(run(Case.Word)));
+      EXPECT_EQ(vectors(), ExpectedVectors);
+      EXPECT_EQ(scalars(), ExpectedScalars);
+      std::array<uint8_t, 64> StackAfter;
+      llvm::cantFail(CPU->snapshotBacking(Stack, StackAfter));
+      EXPECT_EQ(StackAfter, StackBefore);
+    }
+  }
+}
+TEST_P(AArch64SIMD, CMHIReservedSingleLaneVectorIsRejected) {
+  expectRejected(0x2ee2343f);
+}
+TEST_P(AArch64SIMD, CMHIReservedScalarByteIsRejected) {
+  expectRejected(0x7e22343f);
+}
+TEST_P(AArch64SIMD, CMHIReservedScalarHalfIsRejected) {
+  expectRejected(0x7e62343f);
+}
+TEST_P(AArch64SIMD, CMHIReservedScalarWordIsRejected) {
+  expectRejected(0x7ea2343f);
 }
 TEST_P(AArch64SIMD, ScalarFloatingResultsRoundingAndStatusMatchIEEEBits) {
   for (const auto &Case : FloatingCases) {

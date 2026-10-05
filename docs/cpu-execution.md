@@ -370,6 +370,13 @@ WHP captures the x87/SSE metadata from `WhpXsaveRegisters.def` in the same `WHvG
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+The checked SIMD subset includes scalar-D and fixed-width vector `CMHI`
+unsigned comparisons. Each element produces an all-ones or zero mask; narrow
+and scalar results clear the unused high destination bits. Independently
+assembled tests cover all baseline arrangements, overlapping registers, equal
+operands and reserved encodings, and compare the complete scalar/vector state
+on available transports. See Arm's [Neon comparison reference](https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#greater-than).
+
 The checked EL0/EL1 ARM64 contracts keep all `SCTLR_EL1` pointer-authentication
 key enables clear. `AArch64PAuthHints.def` admits only the twelve HINT-space
 IA/IB signing/authentication words using x16/x17, zero or SP. They execute
