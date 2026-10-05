@@ -286,7 +286,12 @@ llvm::Error GuestThreads::prepareJoin(const Join &Pending) {
 }
 
 BionicResult GuestThreads::resumeWait(Bionic &LibC) {
-  const auto &Operation = current().Waiting->Operation;
+  const auto &Pending = *current().Waiting;
+  assert(Pending.Request && "scheduled wait has no suspended service");
+  // Resumption can fail before another guest instruction executes. Attribute
+  // that stop to this service, not the previous thread's last instruction.
+  Result.PC = Pending.Request->PC;
+  const auto &Operation = Pending.Operation;
   if (const auto *M = std::get_if<Mutex>(&Operation))
     return LibC.resumeMutex(M->Address, M->Attributes);
   if (const auto *J = std::get_if<Join>(&Operation)) {

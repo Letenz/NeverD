@@ -298,6 +298,7 @@ TEST_P(AndroidMutex, WokenLocksRevalidateStateAndPermissionsBeforeCompletion) {
       if (Call.Name == "pthread_mutex_lock" && Call.ThreadID == 1001u) {
         ++Pending;
         EXPECT_FALSE(Call.Result);
+        EXPECT_EQ(R.PC, Call.PC);
       }
     EXPECT_EQ(Pending, 1u);
     ASSERT_EQ(R.NativeThreads.size(), 2u);
