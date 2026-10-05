@@ -78,7 +78,9 @@ KVM/WHP는 비공개 `FXSAVE64` 실행으로 `MXCSR_MASK`를 탐색하고 부호
 
 `PAUSE`(`F3 90`)는 네이티브 `driver-strict`를 포함하여 KVM/WHP와 checked Unicorn의 공통 x64 머신 경계를 통해 실행됩니다. `X64PauseTests.cpp`는 전체 상태 보존, 실행 전 중지, 컨텍스트 복원, 잘못된 `LOCK` 거부, 스핀 루프의 시간 제한과 재개를 검증합니다. 이 프로세서 힌트는 게스트 스레드를 스케줄링하거나 특정 지연을 보장하지 않습니다.
 
-`PUSHFQ`(`9C`)와 16비트 `PUSHF`(`66 9C`)는 `driver-strict`를 포함한 네이티브 KVM/WHP 및 checked Unicorn에서 실행됩니다. 공유 ISA 계층은 RAM 트랜잭션을 커밋하기 전에 스택 이미지에서 내부 단일 단계 실행용 TF를 제거합니다. 암시적 스택 주소에는 전체 RSP를 사용하며 접두사 순서가 피연산자 너비를 결정합니다. 전체 범위 권한 검사, 관찰자 중지, 오류 재시도는 원자성을 유지합니다. `POPF/POPFQ`는 아직 지원하지 않습니다. `X64PushFlagsTests.cpp`는 허용된 플래그 조합 256개와 인코딩 9개, 페이지 경계를 넘는 별칭, 사용자 권한, 취소 및 컨텍스트 복원을 검사합니다.
+`PUSHFQ`(`9C`)와 16비트 `PUSHF`(`66 9C`)는 `driver-strict`를 포함한 네이티브 KVM/WHP 및 checked Unicorn에서 실행됩니다. 공유 ISA 계층은 RAM 트랜잭션을 커밋하기 전에 스택 이미지에서 내부 단일 단계 실행용 TF를 제거합니다. 암시적 스택 주소에는 전체 RSP를 사용하며 접두사 순서가 피연산자 너비를 결정합니다. 전체 범위 권한 검사, 관찰자 중지, 오류 재시도는 원자성을 유지합니다. `X64PushFlagsTests.cpp`는 허용된 플래그 조합 256개와 인코딩 9개, 페이지 경계를 넘는 별칭, 사용자 권한, 취소 및 컨텍스트 복원을 검사합니다.
+
+`POPFQ`(`9D`)와 16비트 `POPF`(`66 9D`)는 공유 x64 ISA 계층에서 플래그를 복원하며 KVM, WHP, checked Unicorn 및 `driver-strict`에 적용됩니다. 프로파일의 IOPL은 0으로 고정되므로 CPL0은 IF를 바꿀 수 있고 CPL3은 IF와 IOPL을 유지합니다. 예약 비트와 VM/VIF/VIP는 무시하며 RF는 지웁니다. 게스트 TF, NT, AC, ID 또는 CPL0 IOPL의 유효한 변경은 아직 지원하지 않으며 상태 공개 전에 명시적으로 실패합니다. 전체 스택을 읽은 뒤 FLAGS/RSP/RIP를 원자적으로 갱신하고, 전체 RSP와 유효한 접두사 순서로 피연산자를 결정합니다. 스택은 읽기 전용이거나 실행 메모리의 별칭일 수 있습니다. 공유 계층에서 완료하므로 전송 계층의 내부 TF가 지워지지 않습니다. `X64PopFlagsTests.cpp`는 독립적인 네이티브 CPL3 명령 비교와 모든 입력 비트, 오류, 관찰자, 후속 네이티브 실행을 검사합니다.
 
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 

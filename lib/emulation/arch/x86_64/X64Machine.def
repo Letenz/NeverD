@@ -53,7 +53,16 @@ NEVERD_X64_MACHINE_VALUE(ArithmeticFlags, CarryFlag | ParityFlag |
                                               AuxiliaryFlag | ZeroFlag |
                                               SignFlag | OverflowFlag)
 NEVERD_X64_MACHINE_VALUE(TrapFlag, 0x100)
+NEVERD_X64_MACHINE_VALUE(InterruptFlag, 0x200)
+NEVERD_X64_MACHINE_VALUE(IOPrivilegeFlags, 0x3000)
+NEVERD_X64_MACHINE_VALUE(NestedTaskFlag, 0x4000)
 NEVERD_X64_MACHINE_VALUE(ResumeFlag, 0x10000)
+NEVERD_X64_MACHINE_VALUE(AlignmentFlag, 0x40000)
+NEVERD_X64_MACHINE_VALUE(IdentificationFlag, 0x200000)
+NEVERD_X64_MACHINE_VALUE(PopWordFlags, ArithmeticFlags | DirectionFlag |
+                                           TrapFlag | NestedTaskFlag)
+NEVERD_X64_MACHINE_VALUE(PopQwordFlags,
+                         PopWordFlags | AlignmentFlag | IdentificationFlag)
 NEVERD_X64_MACHINE_VALUE(ReservedFlag, 0x2)
 NEVERD_X64_MACHINE_VALUE(AllowedFlags, 0xed7)
 NEVERD_X64_MACHINE_VALUE(DebugVector, 1)

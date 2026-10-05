@@ -186,6 +186,13 @@ bool isAtomic(unsigned Instruction) {
     return false;
   }
 }
+unsigned flagsStackWidth(const cs_x86 &X) {
+  // The decoder identity retains 66H even when a later REX.W selects 64
+  // bits. Both PUSHF and POPF use the effective prefixes for their footprint.
+  return X.prefix[2] == X86_PREFIX_OPSIZE && !(X.rex & x64::RexW)
+             ? x64::HalfWordBytes
+             : x64::WordBytes;
+}
 } // namespace
 bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
   return x64::canonicalRange(A, N);
@@ -528,18 +535,17 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   }
   uint64_t SP = CPU.reg(X64Register::SP);
   const bool PushFlags = I.id == X86_INS_PUSHF || I.id == X86_INS_PUSHFQ;
-  if (PushFlags) {
+  const bool PopFlags = I.id == X86_INS_POPF || I.id == X86_INS_POPFQ;
+  if (PushFlags || PopFlags) {
     if (X.op_count)
       return llvm::make_error<UnsupportedExecutionError>();
-    // Capstone's PUSHF identity retains 66H even when a later REX.W selects
-    // 64 bits. Derive the write footprint from the effective prefixes.
-    const unsigned Size =
-        X.prefix[2] == X86_PREFIX_OPSIZE && !(X.rex & x64::RexW)
-            ? x64::HalfWordBytes
-            : x64::WordBytes;
+    const unsigned Size = flagsStackWidth(X);
     // Long mode always uses RSP for the implicit stack, even with 67H or
     // a segment override. Public flags exclude VM, RF and transport TF.
-    Accesses.push_back({SP - Size, Size, Write, CPU.reg(X64Register::FLAGS)});
+    if (PushFlags)
+      Accesses.push_back({SP - Size, Size, Write, CPU.reg(X64Register::FLAGS)});
+    else
+      Accesses.push_back({SP, Size, Read, 0});
   }
   if (I.id == X86_INS_PUSH || I.id == X86_INS_CALL) {
     uint64_t V = I.address + I.size;
@@ -636,6 +642,37 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (DeviceAccess)
     return deviceTransfer(I, DeviceAccess->Address, DeviceAccess->Size,
                           DeviceAccess->Permission, DeviceAccess->Value);
+  if (PopFlags) {
+    const unsigned Size = Accesses.back().Size;
+    auto Value = readInteger(SP, Size);
+    if (!Value)
+      return Value.takeError();
+    uint64_t Mask =
+        Size == x64::HalfWordBytes ? x64::PopWordFlags : x64::PopQwordFlags;
+    // Intel SDM POPF: IOPL changes only at CPL0. The checked profiles keep
+    // IOPL zero, so CPL3 cannot change IF. Reserved bits, VM, VIF and VIP
+    // remain unchanged; RF clears independently of the stack image.
+    if (!UserMode)
+      Mask |= x64::InterruptFlag | x64::IOPrivilegeFlags;
+    const uint64_t Flags =
+        ((CPU.reg(X64Register::FLAGS) & ~Mask) | (*Value & Mask)) &
+        ~x64::ResumeFlag;
+    // Validate the effective result, not ignored input bits. Guest TF and
+    // other unmodeled control flags cannot silently enter the CPU contract.
+    if (Flags & ~x64::AllowedFlags)
+      return llvm::make_error<UnsupportedExecutionError>();
+    if (StopRequested || FirstFault)
+      return llvm::Error::success();
+    // Native POPF could clear the transport's private TF and run beyond this
+    // boundary. Complete the ISA transition under the physical read lease,
+    // without patching the stack (which can be read-only or alias code).
+    auto Next = CPU;
+    Next.reg(X64Register::FLAGS) = Flags;
+    Next.reg(X64Register::SP) += Size;
+    Next.reg(X64Register::PC) += I.size;
+    CPU = Next;
+    return llvm::Error::success();
+  }
   auto Root = buildX64PageTables(*Memory, UserMode,
                                  Machine->requiresExceptionMonitor());
   if (!Root)

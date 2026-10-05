@@ -28,6 +28,134 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PopFlagsOracle.OriginalUserInstructionsDetermineFlagsAndStackWidth")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.AdmittedFlagsAndImplicitStackWidths/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.AdmittedFlagsAndImplicitStackWidths/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.AdmittedFlagsAndImplicitStackWidths/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.EveryStackBitRespectsPrivilegeAndControlAdmission/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.EveryStackBitRespectsPrivilegeAndControlAdmission/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.EveryStackBitRespectsPrivilegeAndControlAdmission/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ObserversStopBeforeFlagsAndResumeSavedContext/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ObserversStopBeforeFlagsAndResumeSavedContext/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ObserversStopBeforeFlagsAndResumeSavedContext/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.CrossPageFaultPrecedesControlAdmissionAndAllowsRepair/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.CrossPageFaultPrecedesControlAdmissionAndAllowsRepair/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.CrossPageFaultPrecedesControlAdmissionAndAllowsRepair/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ReadOnlyAliasesConsumeExactOperandWithoutWrites/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ReadOnlyAliasesConsumeExactOperandWithoutWrites/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ReadOnlyAliasesConsumeExactOperandWithoutWrites/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.UserModeCannotReadSupervisorStack/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.UserModeCannotReadSupervisorStack/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.UserModeCannotReadSupervisorStack/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.ObserverFailurePreservesCompleteState/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.ObserverFailurePreservesCompleteState/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.ObserverFailurePreservesCompleteState/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.NoncanonicalAndWrappedStackHaveNoEffects/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.NoncanonicalAndWrappedStackHaveNoEffects/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.NoncanonicalAndWrappedStackHaveNoEffects/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ExecutableStackAliasPreservesInstructionBytes/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ExecutableStackAliasPreservesInstructionBytes/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.ExecutableStackAliasPreservesInstructionBytes/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.DeviceStacksRejectWithoutCallbacks/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.DeviceStacksRejectWithoutCallbacks/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.DeviceStacksRejectWithoutCallbacks/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.NativeContinuationKeepsEveryInstructionBoundary/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.NativeContinuationKeepsEveryInstructionBoundary/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64PopFlags.NativeContinuationKeepsEveryInstructionBoundary/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.LockedFormsRejectBeforeStackObservations/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.LockedFormsRejectBeforeStackObservations/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PopFlags.LockedFormsRejectBeforeStackObservations/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PushFlags.ArchitecturalFlagsAndImplicitStackWidths/"
     "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -91,13 +219,13 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PushFlags.NoncanonicalAndWrappedStackHaveNoEffects/"
     "{backend}Driver")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64PushFlags.LockedAndPopFlagsStayUnsupported/"
+    "ExplicitBackends/X64PushFlags.LockedFlagsStayUnsupported/"
     "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64PushFlags.LockedAndPopFlagsStayUnsupported/"
+    "ExplicitBackends/X64PushFlags.LockedFlagsStayUnsupported/"
     "{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64PushFlags.LockedAndPopFlagsStayUnsupported/"
+    "ExplicitBackends/X64PushFlags.LockedFlagsStayUnsupported/"
     "{backend}Driver")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}Supervisor")
