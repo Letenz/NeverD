@@ -14505,6 +14505,54 @@ TEST(ObjCCallHints, IOSCoreImageCropKeepsExactProviderAndRecordABI) {
   EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, "imageByCroppingToRect:"));
 }
 
+TEST(ObjCCallHints, CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier) {
+  constexpr auto Module =
+      "/System/Library/Frameworks/CoreImage.framework/CoreImage";
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {Module};
+  const auto Hint =
+      objcSelectorSourceTypeHint(Image, "imageByApplyingTransform:");
+  ASSERT_TRUE(Hint);
+  ASSERT_EQ(Hint->Parameters.size(), 3U);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+  const auto &Transform = Hint->Parameters[2];
+  ASSERT_TRUE(Transform.Type);
+  EXPECT_EQ(Transform.Type->Kind, NdTypeKind::Struct);
+  EXPECT_EQ(Transform.Type->Size, 48U);
+  EXPECT_TRUE(Transform.IndirectByValue);
+  EXPECT_TRUE(Transform.Components.empty());
+  EXPECT_EQ(Transform.Location.Kind, SourceABICarrierKind::IntegerRegister);
+  EXPECT_EQ(Transform.Location.RegisterOffset, a64reg::X2);
+  EXPECT_EQ(Transform.Location.ValueBytes, 8U);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+  const auto Factory = objcSelectorSourceTypeHint(Image, "imageWithCGImage:");
+  ASSERT_TRUE(Factory);
+  EXPECT_EQ(Factory->ReturnType->Kind, NdTypeKind::Ptr);
+  for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.DynInfo.NeededLibs.clear();
+    if (Mutation == 1)
+      Changed.DynInfo.NeededLibs = {"/tmp/CoreImage.framework/CoreImage"};
+    if (Mutation == 2)
+      Changed.Arch = Arch::X64;
+    if (Mutation == 3) {
+      ObjCMethod Conflict;
+      Conflict.ClassName = "Other";
+      Conflict.Selector = "imageByApplyingTransform:";
+      Conflict.TypeEncoding = "v24@0:8@16";
+      Conflict.TypeHint =
+          parseObjCMethodEncoding(Conflict.Selector, Conflict.TypeEncoding);
+      Changed.ObjCMethods.push_back(Conflict);
+    }
+    EXPECT_FALSE(
+        objcSelectorSourceTypeHint(Changed, "imageByApplyingTransform:"));
+  }
+}
+
 TEST(ObjCCallHints, IOSScaleUsesObservedFloatingResultToRejectConflicts) {
   auto Image = image(Arch::AArch64);
   Image.ObjCMethods.clear();
@@ -16014,4 +16062,46 @@ TEST(ObjCCallHints, SDImageCacheFastEnumerationQualifiesCompletion) {
       buildObjCSourceCallHints(Image, OverwrittenState);
   EXPECT_FALSE(OverwrittenHints.count(0x1230) &&
                OverwrittenHints.at(0x1230).Receiver);
+}
+
+TEST(ObjCCallHints, CurrentMethodEncodingMustAgreeWithCachedDeclaration) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  ObjCMethod Method;
+  Method.Implementation = 0x1000;
+  Method.Selector = "apply:a:b:c:d:e:";
+  Method.TypeEncoding = "@64@0:8d16d24d32d40d48d56";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  Image.ObjCMethods = {Method};
+  const auto Original = objcMethodSourceTypeHint(Image, Method.Implementation);
+  ASSERT_TRUE(Original);
+  for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+    auto Changed = Image;
+    auto &M = Changed.ObjCMethods.front();
+    if (Mutation == 0)
+      M.TypeEncoding = "@16@0:8";
+    if (Mutation == 1)
+      M.Selector = "apply:";
+    if (Mutation == 2)
+      M.TypeEncoding = "invalid";
+    if (Mutation == 3)
+      M.TypeHint->Parameters.back().Type = NdType::makeInt(8);
+    EXPECT_FALSE(objcMethodSourceTypeHint(Changed, Method.Implementation));
+  }
+  // Source parameter names are not part of the encoding. Keep explicit names
+  // without allowing a changed type, role or carrier to pass as a rename.
+  Image.ObjCMethods.front().TypeHint->Parameters.front().Name = "explicit_self";
+  const auto Named = objcMethodSourceTypeHint(Image, Method.Implementation);
+  ASSERT_TRUE(Named);
+  EXPECT_EQ(Named->Parameters.front().Name, "explicit_self");
+  Image.ObjCMethods.front().TypeHint->Parameters.front().Name = "objc_self";
+  // Explicit declaration-only clients retain their existing contract.
+  Image.ObjCMethods.front().TypeEncoding.clear();
+  const auto DeclarationOnly =
+      objcMethodSourceTypeHint(Image, Method.Implementation);
+  ASSERT_TRUE(DeclarationOnly);
+  EXPECT_TRUE(equalSourceABIs(*Original, *DeclarationOnly));
 }

@@ -1,0 +1,10 @@
+//===- AndroidSysconf.def - Supported Android sysconf selectors -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ANDROID_SYSCONF
+// Android 9 defines distinct names for these equivalent page-size queries.
+NEVERD_ANDROID_SYSCONF(PageSize, 0x0027)
+NEVERD_ANDROID_SYSCONF(PageSizeAlias, 0x0028)
+#endif

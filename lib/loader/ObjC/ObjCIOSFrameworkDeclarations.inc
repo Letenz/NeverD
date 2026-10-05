@@ -21,6 +21,10 @@
 {"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "featuresInImage:options:", "@32@0:8@16@24", nullptr},
 {"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "filterWithName:", "@24@0:8@16", nullptr},
 {"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "imageByCroppingToRect:", "@48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16", nullptr},
+// Apple Clang arm64 SDK client IR and canonical iOS declarations agree on
+// the six-double record, passed through a private copy in X2.
+{"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "imageByApplyingTransform:", "@64@0:8{CGAffineTransform=dddddd}16", nullptr},
+{"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "imageWithCGImage:", "@24@0:8^{CGImage=}16", nullptr},
 {"CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "outputImage", "@16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "CGColor", "^{CGColor=}16@0:8", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "CGImage", "^{CGImage=}16@0:8", nullptr},

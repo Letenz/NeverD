@@ -767,6 +767,23 @@ objcMethodSourceTypeHint(const BinaryImage &Image, va_t Entry) {
     std::string Diagnostic;
     if (!assignDarwinObjCSourceABI(Hint, Image.Arch, Diagnostic))
       return std::nullopt;
+    // A loader cache cannot authenticate a changed current declaration.
+    // Synthetic clients may supply only TypeHint; when encoding is present,
+    // its complete selector/ABI must still agree with that cached value.
+    if (!Method.TypeEncoding.empty()) {
+      auto Declared =
+          parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+      if (!Declared ||
+          !assignDarwinObjCSourceABI(*Declared, Image.Arch, Diagnostic) ||
+          Hint.Parameters.size() != Declared->Parameters.size())
+        return std::nullopt;
+      // Encodings carry positions and types, not source parameter names.
+      for (size_t I = 0; I < Hint.Parameters.size(); ++I)
+        Declared->Parameters[I].Name = Hint.Parameters[I].Name;
+      if (!equalSourceABIs(Hint, *Declared))
+        return std::nullopt;
+      Hint = std::move(*Declared);
+    }
     if (Result && !equalSourceABIs(*Result, Hint))
       return std::nullopt;
     Result = std::move(Hint);
