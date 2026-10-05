@@ -34,6 +34,23 @@ NEVERD_LINUX_VALUE(ResourceBusy, 16)
 NEVERD_LINUX_VALUE(Deadlock, 35)
 NEVERD_LINUX_VALUE(TryAgain, 11)
 NEVERD_LINUX_VALUE(NoSuchProcess, 3)
+NEVERD_LINUX_VALUE(NoEntry, 2)
+NEVERD_LINUX_VALUE(NotDirectory, 20)
+NEVERD_LINUX_VALUE(TooManyFiles, 24)
+NEVERD_LINUX_VALUE(IllegalSeek, 29)
+NEVERD_LINUX_VALUE(NameTooLong, 36)
+NEVERD_LINUX_VALUE(FileDescriptorLimit, 4096)
+NEVERD_LINUX_VALUE(FileCountLimit, 256)
+NEVERD_LINUX_VALUE(FileByteLimit, 16 * 1024 * 1024)
+NEVERD_LINUX_VALUE(FilePathLimit, 4096)
+NEVERD_LINUX_VALUE(FileNameLimit, 255)
+NEVERD_LINUX_VALUE(OpenCloseOnExec, 02000000)
+NEVERD_LINUX_VALUE(OpenLargeFileX64, 00100000)
+NEVERD_LINUX_VALUE(OpenLargeFileARM64, 0400000)
+NEVERD_LINUX_VALUE(SeekSet, 0)
+NEVERD_LINUX_VALUE(SeekCurrent, 1)
+NEVERD_LINUX_VALUE(SeekEnd, 2)
+NEVERD_LINUX_VALUE(SeekHole, 4)
 NEVERD_LINUX_VALUE(MmapBase, 0x100000000ULL)
 NEVERD_LINUX_VALUE(MapPrivate, 0x02)
 NEVERD_LINUX_VALUE(MapAnonymous, 0x20)
@@ -45,6 +62,7 @@ NEVERD_LINUX_VALUE(AdviceUnmergeable, 13)
 NEVERD_LINUX_VALUE(ExitMask, 0xff)
 #endif
 #ifdef NEVERD_LINUX_X64_SERVICE
+NEVERD_LINUX_X64_SERVICE(Open, 2, 3)
 NEVERD_LINUX_X64_SERVICE(ArchPrctl, 158, 2)
 NEVERD_LINUX_X64_SERVICE(Time, 201, 1)
 #endif
@@ -90,6 +108,10 @@ NEVERD_LINUX_AUX(NULL, 0, 0)
 #endif
 #ifdef NEVERD_LINUX_SERVICE
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
+NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
+NEVERD_LINUX_SERVICE(Read, 0, 63, 3)
+NEVERD_LINUX_SERVICE(Close, 3, 57, 1)
+NEVERD_LINUX_SERVICE(Lseek, 8, 62, 3)
 NEVERD_LINUX_SERVICE(Write, 1, 64, 3)
 NEVERD_LINUX_SERVICE(WriteV, 20, 66, 3)
 NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
@@ -124,6 +146,22 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(Audit, 0x6ffffefc)
 NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #endif
 #ifdef NEVERD_LINUX_DIAGNOSTIC
+NEVERD_LINUX_DIAGNOSTIC(
+    FileOptionsLimit, "linux_files exceeds its catalogue or descriptor limits")
+NEVERD_LINUX_DIAGNOSTIC(
+    FileOptionPath,
+    "linux_files requires distinct canonical absolute file paths")
+NEVERD_LINUX_DIAGNOSTIC(
+    FileInputsMissing, "Linux file services require explicit linux_files input")
+NEVERD_LINUX_DIAGNOSTIC(FileOpenFlags,
+                        "unsupported Linux memory-file open flags")
+NEVERD_LINUX_DIAGNOSTIC(FilePathForm, "unsupported Linux memory-file path form")
+NEVERD_LINUX_DIAGNOSTIC(FileDirectory,
+                        "Linux memory-file directory opens are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileInputStream,
+                        "Linux standard input has no explicit input model")
+NEVERD_LINUX_DIAGNOSTIC(
+    FileSeekMode, "Linux memory-file SEEK_DATA and SEEK_HOLE are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(AndroidOptions,
                         "Android options require the Android native profile")
 NEVERD_LINUX_DIAGNOSTIC(

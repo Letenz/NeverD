@@ -7,7 +7,7 @@
 
 #include "../../../core/ExecutionDeadline.h"
 #include "../../../runtime/RuntimeValues.h"
-#include "../kernel/LinuxMemory.h"
+#include "../kernel/LinuxServices.h"
 
 #include "neverd/emulation/AddressSpace.h"
 #include "neverd/emulation/ExecutionSession.h"
@@ -107,9 +107,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (!Session)
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
-  LinuxMemory Memory(**Space, Layout->Memory, InitialBreak, Options);
   ProcessResult Result{ProcessProfile::LinuxELF64, Layout->Architecture,
                        Backend->Kind, Backend->Reason};
+  LinuxServices Kernel(CPU, Layout->Memory, InitialBreak, Options, Result);
   Result.Entry = Result.PC = Plan->Entry;
   auto RuntimeFailure = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;
@@ -166,8 +166,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       break;
     }
     Result.Services.push_back(*Event);
-    auto Returned =
-        handleService(CPU, Memory, *Event, Layout->Memory, Options, Result);
+    auto Returned = Kernel.handle(*Event);
     if (!Returned) {
       RuntimeFailure(Returned.takeError());
       break;

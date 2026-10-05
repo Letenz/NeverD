@@ -12,7 +12,7 @@ It loads real ELF segments, constructs
 the initial stack, resumes instruction quanta and handles explicit Linux
 system-call requests. It is a freestanding process model, not a full Linux
 distribution or a promise to run arbitrary libc binaries. Dynamic linking,
-signals, threads, file systems and unsupported services fail
+signals, Linux process threads, general file systems and unsupported services fail
 explicitly. The [Android native profile](android-native-emulation.md),
 `android-aarch64-api28-v1`, separately supports bounded API 28 ARM64 shared-library
 function calls and Bionic models. The Windows PE64 process profile is described
@@ -80,6 +80,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `output_limit` | 1048576 | Combined captured stdout/stderr bytes |
 | `instruction_quantum` | 1024 | Admission interval before yielding to the runtime |
 | `linux_time` | Absent | Explicit fixed clock observations for Linux ELF64 and Android native workloads |
+| `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
 
 `schema_version` is 1. Results include profile, architecture, selected backend
 and its selection reason, `stop_reason`, nullable `exit_status`, diagnostic,
@@ -256,6 +257,66 @@ remain written. Mixed accessibility within a single 8-byte store or 16-byte
 timespec copy stops before that operation because architecture-specific partial
 fault writes are not modeled. Adjustment, resolution queries, scheduling,
 sleep and real device clocks remain unsupported.
+
+<!-- i18n-section: linux-files -->
+
+## Explicit memory files
+
+`linux_files` supplies immutable file bytes to Linux ELF64 and Android native
+workloads. C++ uses `ProcessOptions::LinuxFiles`; C, Python and CLI share this
+strict JSON contract:
+
+```json
+{"linux_files":{"files":[
+  {"path":"/fixture/data","bytes_hex":"00ff410a805a"}],
+  "descriptor_limit":256}}
+```
+
+`files` is required and may be empty. Every entry has exactly `path` and
+`bytes_hex`; empty bytes describe an empty file. Paths must be distinct,
+absolute and canonical, with no NUL, empty, `.` or `..` components or trailing
+slash. Paths have fewer than 4096 bytes and components at most 255 bytes.
+A file cannot be another file's parent directory. The catalogue holds at most
+256 files and 16 MiB total content and NUL-terminated path bytes. The existing
+64 KiB JSON request ceiling also applies. `descriptor_limit` defaults to 256,
+accepts 3–4096, and is the exclusive descriptor ceiling, including 0, 1 and 2.
+Other process profiles reject these options before loading an image.
+
+The catalogue is closed: absent paths return `ENOENT`. No host file, process
+command line, environment or implicit `/proc` content is consulted. Without
+`linux_files`, file services remain unsupported. Supplied bytes are explicit
+workload facts; naming a proc path does not model procfs or its dynamic content.
+
+Raw x64 `open`, x64/ARM64 `openat`, `read`, `close` and `lseek` share one
+process-owned descriptor table. Android `open`, `open64`, `openat`, `openat64`,
+`read`, `close`, `lseek`, `lseek64` and `syscall` use that same state, including
+across guest threads. Bionic alone maps kernel errors to `-1` and thread-local
+`errno`; success preserves errno. Absolute paths ignore `dirfd`; mode is unused
+without creation. Opens admit only `O_RDONLY`, optional `O_CLOEXEC` and the
+architecture's `O_LARGEFILE`. Other flags, relative/noncanonical paths,
+directory opens, writes/creation, symlinks, duplication and descriptor-control
+operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
+no observable transition in this subset.
+
+Each open starts an independent cursor and chooses the lowest unused
+nonnegative descriptor. Exhaustion returns `EMFILE` after pathname import;
+close releases the descriptor. Slots 0–2 initially reserve unknown stdin and
+the existing captured stdout/stderr streams. Closing those slots enables
+ordinary file reuse; writes through a closed slot or read-only file return
+`EBADF`. Reading stdin remains unsupported; it is never assumed to be empty.
+Descriptors, open flags and seek modes consume their low 32 bits.
+
+Reads validate the original user range before the page-aligned Linux transfer
+cap or EOF, copy only available bytes, and advance by exactly the copied
+prefix. A later inaccessible page preserves that prefix; a fault before any
+byte returns `EFAULT`. Empty reads and EOF do not probe payload mappings.
+Ordinary `SEEK_SET`, `SEEK_CUR` and `SEEK_END` keep a signed 64-bit nonnegative
+cursor, permit seeking beyond EOF, and reject negative/overflowing positions
+without changing it. `SEEK_DATA` and `SEEK_HOLE` remain unsupported. These are
+bounded memory-file semantics based on Linux's [open lifecycle](https://github.com/torvalds/linux/blob/v6.6/fs/open.c),
+[read/seek contracts](https://github.com/torvalds/linux/blob/v6.6/fs/read_write.c)
+and [AArch64 flags](https://github.com/torvalds/linux/blob/v6.6/arch/arm64/include/uapi/asm/fcntl.h),
+not general filesystem compatibility.
 
 <!-- i18n-section: windows-pe64 -->
 

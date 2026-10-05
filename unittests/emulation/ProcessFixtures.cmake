@@ -84,17 +84,19 @@ foreach(_process_arch X64 AArch64)
     VERBATIM)
   list(APPEND _process_outputs "${_process_base}-output.elf")
   foreach(_optimization O0 O2)
-    set(_time_base "${_process_base}-time-${_optimization}")
-    add_custom_command(OUTPUT "${_time_base}.elf" "${_time_base}.o"
-      COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_process_target}"
-        -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
-        -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
-        -fno-asynchronous-unwind-tables "-${_optimization}" -c
-        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/linux_time.c" -o "${_time_base}.o"
-      COMMAND "${NEVERD_PROCESS_LLD}" -static -e _start -z max-page-size=4096
-        --build-id=none "${_time_base}.o" "${_process_base}-entry.o" -o "${_time_base}.elf"
-      DEPENDS "${_process_base}.elf" fixtures/linux_time.c VERBATIM)
-    list(APPEND _process_outputs "${_time_base}.elf")
+    foreach(_file_kind time files)
+      set(_service_base "${_process_base}-${_file_kind}-${_optimization}")
+      add_custom_command(OUTPUT "${_service_base}.elf" "${_service_base}.o"
+        COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_process_target}"
+          -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+          -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+          -fno-asynchronous-unwind-tables "-${_optimization}" -c
+          "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/linux_${_file_kind}.c" -o "${_service_base}.o"
+        COMMAND "${NEVERD_PROCESS_LLD}" -static -e _start -z max-page-size=4096
+          --build-id=none "${_service_base}.o" "${_process_base}-entry.o" -o "${_service_base}.elf"
+        DEPENDS "${_process_base}.elf" "fixtures/linux_${_file_kind}.c" VERBATIM)
+      list(APPEND _process_outputs "${_service_base}.elf")
+    endforeach()
   endforeach()
 endforeach()
 add_custom_target(NeverDProcessFixtures DEPENDS ${_process_outputs})

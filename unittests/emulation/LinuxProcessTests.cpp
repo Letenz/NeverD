@@ -149,6 +149,25 @@ TEST_P(LinuxProcess, ExplicitClocksPreserve64BitWireLayoutsOnBothISAs) {
     }
   }
 }
+
+TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
+  Options.LinuxFiles.emplace();
+  Options.LinuxFiles->Files["/fixture/data"] = {0,    0xff, 0x41,
+                                                0x0a, 0x80, 0x5a};
+  for (const char *Optimization : {"O0", "O2"}) {
+    auto FilePath = Path.parent_path() /
+                    (Path.stem().string() + "-files-" + Optimization + ".elf");
+    for (char Mode : {'s', 'f', 'c'}) {
+      SCOPED_TRACE(testing::Message() << Optimization << ':' << Mode);
+      Options.Arguments = {"files", std::string(1, Mode)};
+      Options.LinuxFiles->DescriptorLimit = Mode == 'c' ? 4 : 256;
+      auto R = emulateProcess(FilePath, ProcessProfile::LinuxELF64, Options);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 0u);
+    }
+  }
+}
 TEST_P(LinuxProcess, TimeFaultsPreserveKernelErrnosAndOrderedWrites) {
   Options.LinuxTime.emplace();
   Options.LinuxTime->Clocks[0] = {4294967297, 987654321};

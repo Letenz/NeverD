@@ -99,6 +99,24 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 
 `clock_gettime`、`gettimeofday` 和 x64 的 `time` 共用这些输入。缺失输入、动态时钟和未建模的部分写入会明确停止；已完成的写入不会回滚。不模拟调时、休眠或真实设备时钟。字段顺序、错误码和指针语义详见[完整时钟契约](../process-emulation.md#explicit-guest-clocks)。
 
+<a id="explicit-memory-files"></a>
+
+<!-- i18n-section: linux-files -->
+
+## 显式内存文件
+
+`linux_files` 为 Linux ELF64 与 Android 提供封闭的只读文件目录；C++ 使用 `ProcessOptions::LinuxFiles`。`files` 必填且可为空，每项仅含规范绝对路径 `path` 和二进制 `bytes_hex`。不读取宿主文件，也不推断进程命令行或 `/proc` 内容。缺失目录选项时文件服务仍明确停止；目录中未列出的路径返回 `ENOENT`。
+
+```json
+{"linux_files":{"files":[
+  {"path":"/fixture/data","bytes_hex":"00ff410a805a"}],
+  "descriptor_limit":256}}
+```
+
+每次打开建立独立游标，所有 guest 线程、Bionic、`syscall` 与原始陷阱共用描述符表；关闭释放最低可用编号。0–2 初始保留 stdin/stdout/stderr，stdin 没有默认内容。支持只读 `open/openat`、`read/close` 和普通 `lseek`，可选 `O_CLOEXEC` 及架构对应的 `O_LARGEFILE`。Bionic 单独处理 errno。读取故障保留已复制前缀，EOF 不探测目标映射；相对路径、目录、写入、链接和未知形式仍不支持。
+
+`descriptor_limit`: 3–4096 (256). `files`: ≤ 256. `path`: < 4096 bytes; component ≤ 255 bytes. Total bytes + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Complete contract / 完整约定](../process-emulation.md#explicit-memory-files).
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 配置
