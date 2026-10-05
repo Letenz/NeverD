@@ -20,8 +20,7 @@ shared RAM aliases, and CPU-only contexts. Scalar memory arithmetic, naturally
 aligned locked arithmetic, SETcc and `BT/BTS/BTR/BTC` retain read/write checks;
 native execution owns their flags. Legacy SSE/SSE2 moves, logical operations,
 MOVLHPS/MOVHLPS and masked scalar CVTTSS2SI/CVTTSD2SI/SUBSS/SUBSD are admitted.
-All sixteen XMM registers and MXCSR survive entry and context restoration;
-unmasked SIMD exceptions, x87, AVX and unlisted operations remain rejected.
+All sixteen XMM registers and MXCSR survive entry and context restoration. Unmasked SIMD faults require native KVM/WHP `precise_simd_exceptions`.
 Full-width XMM stores offer two ordered eight-byte write observations before
 either word changes. Ordinary RAM operands may cross mapped pages, including
 aliases of nonconsecutive physical pages. The whole operand must pass permission
@@ -58,7 +57,7 @@ the FP/SSE presence bits. The older FPU register interface is insufficient for
 this state contract. See the [KVM API](https://docs.kernel.org/virt/kvm/api.html)
 and [WHP register API](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/funcs/whvvirtualprocessordatatypes).
 
-Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. This does not admit unmasked exceptions, x87 or AVX.
+Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects.
 
 ```bash
 build-release/bin/neverd emulate-driver path/to/driver.sys \
@@ -1036,6 +1035,8 @@ fields are validated after every filter; mutating them remains unsupported.
 Continuing a modeled API raise remains unsupported. Callback identity
 inherits the parent thread, process and user-access authority without giving
 an unrelated worker access to the requesting process.
+
+Native x64 KVM/WHP delivers actual `#XM` faults to driver C SEH through `X64SIMDException`. Hardware-fault `CONTEXT` records preserve XMM0–15 and MXCSR. Filters, exception-unwind finally callbacks and selected handlers run with MXCSR `0x1f80` and DF cleared. A negative filter can edit XMM registers and top-level `CONTEXT.MxCsr`, masked by the guest CPU profile, before retrying the original instruction; `FltSave.MxCsr` does not control kernel restoration. Modeled API raises retain integer/control records; x87/AVX context edits remain unsupported.
 
 Nested filter exceptions retain a linked `EXCEPTION_RECORD` and revisit the
 suspended protected scopes; collided finally unwinding resumes after the

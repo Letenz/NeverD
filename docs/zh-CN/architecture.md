@@ -532,6 +532,8 @@ Windows 模型还管理独立的非分页池 MDL；描述符释放不会释放�
 
 `KernelGuestException` 是携带 32 位状态码的类型化 API 结果，与模型错误及后端故障独立。`DriverImage` 保留加载器已有的首选基址异常元数据；`X64SEH` 在该元数据上通过受检地址转换和栈读取，生成纯且有界的 x64 版本 1 C catch-all 转移计划。它跨普通辅助栈帧恢复受支持的非易失 GPR 保存值，选择真实来宾处理器；遇到过滤器／finally、GS／C++ 异常处理例程、链式或不完整记录、序言及 XMM 恢复时明确拒绝。`DriverSession` 仅在正常 API 停止点提交已验证寄存器计划，保持 API 跟踪结果为 null，并在同一执行中继续处理器。它不会清除已锁存的后端故障，也不会展开到其他回调的栈。该边界支持 ExRaiseStatus／ExRaiseAccessViolation／ExRaiseDatatypeMisalignment；用户探测、锁定用户缓冲区及 CPU 故障恢复仍是独立的后续工作。
 
+`X64SEH` 将可选内核 SSE 上下文与虚拟展开游标分别保存，`DriverSession` 区分故障恢复与处理器控制状态。参见[驱动模拟](driver-emulation.md)。
+
 
 ## 异常重写边界
 

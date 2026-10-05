@@ -696,7 +696,9 @@ X64SEH::encodeRecords(const Exception &Raised, uint64_t Storage) {
   Write(seh::ExceptionPointersOffset + seh::PointerSize,
         Storage + seh::ContextOffset, seh::PointerSize);
   Write(seh::ContextOffset + seh::ContextFlagsOffset,
-        seh::ContextIntegerControl, 4);
+        seh::ContextIntegerControl |
+            (Raised.Registers.SSE ? seh::ContextFloatingPoint : 0),
+        4);
   Write(seh::ContextOffset + seh::ContextCSOffset, Raised.Registers.CS, 2);
   Write(seh::ContextOffset + seh::ContextSSOffset, Raised.Registers.SS, 2);
   Write(seh::ContextOffset + seh::ContextEFlagsOffset, Raised.Registers.Flags,
@@ -707,6 +709,21 @@ X64SEH::encodeRecords(const Exception &Raised, uint64_t Storage) {
           Raised.Registers.GPR[I], seh::PointerSize);
   Write(seh::ContextOffset + seh::ContextPCOffset, Raised.Registers.PC,
         seh::PointerSize);
+  if (const auto &SSE = Raised.Registers.SSE) {
+    Write(seh::ContextOffset + seh::ContextMXCSROffset, SSE->MXCSR, 4);
+    Write(seh::ContextOffset + seh::ContextFXMXCSROffset, SSE->MXCSR, 4);
+    for (size_t I = 0; I < seh::FirstNonvolatileXmm + seh::NonvolatileXmmCount;
+         ++I) {
+      const auto &Xmm =
+          I < seh::FirstNonvolatileXmm
+              ? SSE->VolatileXmm[I]
+              : Raised.Registers.Xmm[I - seh::FirstNonvolatileXmm];
+      for (size_t Word = 0; Word < Xmm.size(); ++Word)
+        Write(seh::ContextOffset + seh::ContextXmmOffset + I * seh::XmmSize +
+                  Word * seh::PointerSize,
+              Xmm[Word], seh::PointerSize);
+    }
+  }
   return Bytes;
 }
 
@@ -743,11 +760,32 @@ X64SEH::validateRecords(llvm::ArrayRef<uint8_t> Records,
   Result.Flags = Read(seh::ContextOffset + seh::ContextEFlagsOffset, 4);
   if ((Result.Flags ^ Raised.Registers.Flags) & ~seh::MutableEFlags)
     return invalid(seh::text::ContinuationChangesUnsupportedControlFlags);
+  if (auto &SSE = Result.SSE) {
+    // The kernel restores the top-level MXCSR, masked by its processor profile.
+    // FltSave.MxCsr is an observation slot, not another restoration authority.
+    SSE->MXCSR =
+        Read(seh::ContextOffset + seh::ContextMXCSROffset, 4) & SSE->MXCSRMask;
+    for (size_t I = 0; I < seh::FirstNonvolatileXmm + seh::NonvolatileXmmCount;
+         ++I) {
+      auto &Xmm = I < seh::FirstNonvolatileXmm
+                      ? SSE->VolatileXmm[I]
+                      : Result.Xmm[I - seh::FirstNonvolatileXmm];
+      for (size_t Word = 0; Word < Xmm.size(); ++Word)
+        Xmm[Word] = Read(seh::ContextOffset + seh::ContextXmmOffset +
+                             I * seh::XmmSize + Word * seh::PointerSize,
+                         seh::PointerSize);
+    }
+  }
   Exception Updated = Raised;
   Updated.Registers = Result;
   auto Allowed = encodeRecords(Updated, Storage);
   if (!Allowed)
     return Allowed.takeError();
+  if (Result.SSE)
+    for (auto Offset : {seh::ContextMXCSROffset, seh::ContextFXMXCSROffset})
+      std::copy_n(Records.begin() + seh::ContextOffset + Offset,
+                  sizeof(uint32_t),
+                  Allowed->begin() + seh::ContextOffset + Offset);
   if (!std::equal(Records.begin(), Records.end(), Allowed->begin()))
     return invalid(
         seh::text::ContinuationChangesUnsupportedExceptionContextFields);

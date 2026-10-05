@@ -14,6 +14,8 @@
 NEVERD_KERNEL_EXCEPTION_VALUE(StatusAccessViolation, 0xc0000005U)
 NEVERD_KERNEL_EXCEPTION_VALUE(StatusDatatypeMisalignment, 0x80000002U)
 NEVERD_KERNEL_EXCEPTION_VALUE(StatusIntegerDivideByZero, 0xc0000094U)
+NEVERD_KERNEL_EXCEPTION_VALUE(HandlerMXCSR, 0x1f80)
+NEVERD_KERNEL_EXCEPTION_VALUE(DirectionFlag, 0x400)
 #endif
 #ifdef NEVERD_KERNEL_X64_EXCEPTION
 NEVERD_KERNEL_X64_EXCEPTION(0, StatusIntegerDivideByZero)
@@ -21,4 +23,7 @@ NEVERD_KERNEL_X64_EXCEPTION(0, StatusIntegerDivideByZero)
 #ifdef NEVERD_KERNEL_EXCEPTION_DIAGNOSTIC
 NEVERD_KERNEL_EXCEPTION_DIAGNOSTIC(
     LostRecoverableContext, "recoverable guest exception lost its CPU context")
+NEVERD_KERNEL_EXCEPTION_DIAGNOSTIC(
+    UnsupportedSIMDContinuation,
+    "kernel continuation requires precise SIMD exception support")
 #endif

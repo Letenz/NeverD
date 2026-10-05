@@ -558,6 +558,8 @@ Das alte `WdfRequestMarkCancelable` nutzt bei bereits abgebrochenem IRP einen ve
 
 `KernelGuestException` ist ein typisiertes API-Ergebnis mit einem 32-Bit-Status, getrennt von Modell- und Backendfehlern. `DriverImage` bewahrt die vorhandenen Ausnahme-Metadaten des Loaders mit ihrer bevorzugten Basisadresse. `X64SEH` erstellt darüber einen reinen, begrenzten x64-V1-C-Catch-all-Transferplan mit geprüfter Adressübersetzung und Stacklesezugriffen. Er stellt unterstützte nichtflüchtige GPR-Sicherungen über gewöhnliche Hilfsframes wieder her und wählt den tatsächlichen Gast-Handler. Angetroffene Filter/finally, GS-/C++-Persönlichkeiten, Verkettungen, unvollständige Datensätze, Prologe und XMM-Wiederherstellung werden abgewiesen. `DriverSession` übernimmt den validierten Registerplan nur an einem fehlerfreien API-Stopp, lässt API-Trace-Ergebnisse null und setzt den Handler in derselben Ausführung fort. Der gespeicherte Backendfehler wird nie gelöscht, und es wird nie in einen anderen Callback-Stack abgewickelt. Diese Grenze unterstützt ExRaiseStatus/ExRaiseAccessViolation/ExRaiseDatatypeMisalignment; Benutzerprobes, gesperrte Benutzerpuffer und Wiederherstellung nach CPU-Fehlern bleiben separate Arbeiten.
 
+`X64SEH` hält optionalen Kernel-SSE-Kontext getrennt vom virtuellen Unwind-Zeiger; `DriverSession` trennt Fehlerwiederherstellung und Handler-Steuerzustand. Siehe [Treiberemulation](driver-emulation.md).
+
 
 ## Grenzen der Ausnahmeumschreibung
 

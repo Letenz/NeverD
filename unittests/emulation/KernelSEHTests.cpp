@@ -4,8 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "fixtures/driver_seh_test.h"
 #include "gtest/gtest.h"
 #include "os/windows/exception/X64SEH.h"
+
+#include "llvm/Support/Endian.h"
 
 #include <algorithm>
 #include <map>
@@ -944,6 +947,121 @@ TEST_F(DriverKernelSEH,
     }
     EXPECT_EQ(*Bytes, Before);
   }
+}
+
+static void addKernelSSE(X64SEH::Context &Context) {
+  auto &SSE = Context.SSE.emplace(X64SEH::SSEContext{});
+  SSE.MXCSR = SehSIMDDefault;
+  SSE.MXCSRMask = SehSIMDControlMask;
+  for (size_t I = 0; I < SehSIMDRegisterCount; ++I) {
+    auto &Register = I < SehSIMDVolatileCount
+                         ? SSE.VolatileXmm[I]
+                         : Context.Xmm[I - SehSIMDVolatileCount];
+    Register = {SehSIMDSeed + I, SehSIMDSeed - I};
+  }
+}
+
+TEST_F(DriverKernelSEH, KernelSSERecordsCaptureAllXmmAndPreserveFaultControls) {
+  addKernelSSE(Caller);
+  X64SEH::Exception Raised{Caller, Code, 0, Caller.PC, {}};
+  auto Bytes = X64SEH::encodeRecords(Raised, SehSIMDStorage);
+  ASSERT_TRUE(bool(Bytes)) << llvm::toString(Bytes.takeError());
+  const auto *Context = Bytes->data() + seh::ContextOffset;
+  EXPECT_EQ(llvm::support::endian::read32le(Context + seh::ContextFlagsOffset),
+            uint32_t(SehSIMDContextFlags));
+  for (auto Offset : {SehSIMDContextMXCSR, SehSIMDContextFXMXCSR})
+    EXPECT_EQ(llvm::support::endian::read32le(Context + Offset),
+              uint32_t(SehSIMDDefault));
+  for (size_t I = 0; I < SehSIMDRegisterCount; ++I) {
+    const auto *Register = Context + SehSIMDContextXmm + I * seh::XmmSize;
+    EXPECT_EQ(llvm::support::endian::read64le(Register), SehSIMDSeed + I);
+    EXPECT_EQ(llvm::support::endian::read64le(Register + seh::PointerSize),
+              SehSIMDSeed - I);
+  }
+  const auto Before = *Bytes;
+  auto Restored = planner().continuation(*Bytes, Raised, SehSIMDStorage,
+                                         {StackBase, StackSize});
+  ASSERT_TRUE(bool(Restored)) << llvm::toString(Restored.takeError());
+  ASSERT_TRUE(Restored->SSE);
+  EXPECT_EQ(Restored->SSE->MXCSR, Caller.SSE->MXCSR);
+  EXPECT_EQ(Restored->SSE->VolatileXmm, Caller.SSE->VolatileXmm);
+  EXPECT_EQ(Restored->Xmm, Caller.Xmm);
+  EXPECT_EQ(*Bytes, Before);
+}
+
+TEST_F(DriverKernelSEH,
+       KernelSSEContinuationUsesTopLevelControlsAndAllRegisters) {
+  addKernelSSE(Caller);
+  X64SEH::Exception Raised{Caller, Code, 0, Caller.PC, {}};
+  auto Bytes = X64SEH::encodeRecords(Raised, SehSIMDStorage);
+  ASSERT_TRUE(bool(Bytes)) << llvm::toString(Bytes.takeError());
+  auto *Context = Bytes->data() + seh::ContextOffset;
+  llvm::support::endian::write32le(Context + SehSIMDContextMXCSR,
+                                   SehSIMDDefault | SehSIMDReserved);
+  llvm::support::endian::write32le(Context + SehSIMDContextFXMXCSR,
+                                   SehSIMDIgnoredFX);
+  for (size_t I = 0; I < SehSIMDRegisterCount; ++I) {
+    auto *Register = Context + SehSIMDContextXmm + I * seh::XmmSize;
+    llvm::support::endian::write64le(Register, SehSIMDSeed - I);
+    llvm::support::endian::write64le(Register + seh::PointerSize,
+                                     SehSIMDSeed + I);
+  }
+  const auto Before = *Bytes;
+  auto Restored = planner().continuation(*Bytes, Raised, SehSIMDStorage,
+                                         {StackBase, StackSize});
+  ASSERT_TRUE(bool(Restored)) << llvm::toString(Restored.takeError());
+  ASSERT_TRUE(Restored->SSE);
+  EXPECT_EQ(Restored->SSE->MXCSR, uint32_t(SehSIMDDefault));
+  for (size_t I = 0; I < SehSIMDRegisterCount; ++I) {
+    const auto &Register = I < SehSIMDVolatileCount
+                               ? Restored->SSE->VolatileXmm[I]
+                               : Restored->Xmm[I - SehSIMDVolatileCount];
+    EXPECT_EQ(Register[0], SehSIMDSeed - I);
+    EXPECT_EQ(Register[1], SehSIMDSeed + I);
+  }
+  EXPECT_EQ(*Bytes, Before);
+  EXPECT_EQ(Caller.SSE->MXCSR, uint32_t(SehSIMDDefault));
+  EXPECT_EQ(Caller.Xmm, Raised.Registers.Xmm);
+}
+
+TEST_F(DriverKernelSEH, KernelSSEFilterEditsPreserveUnwindAndRejectX87) {
+  auto &F = handler();
+  F.SEH->Scopes.front().Kind = SEHScopeKind::Filter;
+  F.SEH->Scopes.front().FilterOrFinallyVA = Base + secondary::FilterRVA;
+  F.SEH->Scopes.push_back(F.SEH->Scopes.front());
+  addKernelSSE(Caller);
+  X64SEH::Exception Raised{Caller, Code, 0, Caller.PC, {}};
+  auto Planner = planner();
+  auto State = Planner.begin(Code, Caller, {StackBase, StackSize});
+  auto First = Planner.advance(State);
+  ASSERT_TRUE(bool(First)) << llvm::toString(First.takeError());
+  auto Bytes = X64SEH::encodeRecords(Raised, SehSIMDStorage);
+  ASSERT_TRUE(bool(Bytes)) << llvm::toString(Bytes.takeError());
+  (*Bytes)[seh::ContextOffset + SehSIMDContextXmm] ^= 1;
+  (*Bytes)[seh::ContextOffset + SehSIMDContextFX] ^= 1;
+  for (int32_t Disposition : {-1, 0, 1}) {
+    auto Invalid = Planner.finishFilter(State, Disposition, *Bytes, Raised,
+                                        SehSIMDStorage);
+    ASSERT_FALSE(bool(Invalid));
+    EXPECT_NE(
+        llvm::toString(Invalid.takeError())
+            .find(seh::text::
+                      ContinuationChangesUnsupportedExceptionContextFields),
+        std::string::npos);
+  }
+  (*Bytes)[seh::ContextOffset + SehSIMDContextFX] ^= 1;
+  const auto Before = *Bytes;
+  auto Next = Planner.finishFilter(State, 0, *Bytes, Raised, SehSIMDStorage);
+  ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
+  EXPECT_EQ(Next->Kind, X64SEH::ActionKind::Filter);
+  EXPECT_EQ(Next->State.Registers.Xmm, Caller.Xmm);
+  ASSERT_TRUE(Next->State.Registers.SSE);
+  EXPECT_EQ(Next->State.Registers.SSE->VolatileXmm, Caller.SSE->VolatileXmm);
+  auto Continued =
+      Planner.finishFilter(State, -1, *Bytes, Raised, SehSIMDStorage);
+  ASSERT_TRUE(bool(Continued)) << llvm::toString(Continued.takeError());
+  EXPECT_EQ(Continued->Kind, X64SEH::ActionKind::ContinueExecution);
+  EXPECT_EQ(*Bytes, Before);
 }
 
 TEST_F(DriverKernelSEH,

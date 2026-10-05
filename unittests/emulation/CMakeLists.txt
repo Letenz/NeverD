@@ -1133,6 +1133,7 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_user_mapping_definitions})
 add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
+  DriverSIMDSEHTests.cpp
   KernelSEHTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS Emulation)

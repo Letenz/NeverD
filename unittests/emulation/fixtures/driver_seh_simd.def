@@ -1,0 +1,137 @@
+//===- driver_seh_simd.def - Original kernel SSE exception contracts -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_SEH_SIMD_VALUE
+NEVERD_SEH_SIMD_VALUE(SehSIMDMarker, '-')
+NEVERD_SEH_SIMD_VALUE(SehSIMDModeCharacters, 2)
+NEVERD_SEH_SIMD_VALUE(SehSIMDDefault, 0x1f80)
+NEVERD_SEH_SIMD_VALUE(SehSIMDSticky, 0x3f)
+NEVERD_SEH_SIMD_VALUE(SehSIMDMaskShift, 7)
+NEVERD_SEH_SIMD_VALUE(SehSIMDOne, 0x3f800000)
+NEVERD_SEH_SIMD_VALUE(SehSIMDTwo, 0x40000000)
+NEVERD_SEH_SIMD_VALUE(SehSIMDReserved, 0xffff0000U)
+NEVERD_SEH_SIMD_VALUE(SehSIMDIgnoredFX, 0xdeadbeefU)
+NEVERD_SEH_SIMD_VALUE(SehSIMDDirection, 0x400)
+NEVERD_SEH_SIMD_VALUE(SehSIMDTrap, 0x100)
+NEVERD_SEH_SIMD_VALUE(SehSIMDProbeBytes, 3)
+NEVERD_SEH_SIMD_VALUE(SehSIMDProbeCenter, 1)
+NEVERD_SEH_SIMD_VALUE(SehSIMDBefore, 1)
+NEVERD_SEH_SIMD_VALUE(SehSIMDFinally, 2)
+NEVERD_SEH_SIMD_VALUE(SehSIMDHandler, 3)
+NEVERD_SEH_SIMD_VALUE(SehSIMDDivide, 0)
+NEVERD_SEH_SIMD_VALUE(SehSIMDAdd, 1)
+NEVERD_SEH_SIMD_VALUE(SehSIMDMultiply, 2)
+NEVERD_SEH_SIMD_VALUE(SehSIMDRegisterCount, 16)
+NEVERD_SEH_SIMD_VALUE(SehSIMDParameterCount, 2)
+NEVERD_SEH_SIMD_VALUE(SehSIMDRegisterWords, 2)
+NEVERD_SEH_SIMD_VALUE(SehSIMDVolatileCount, 6)
+NEVERD_SEH_SIMD_VALUE(SehSIMDContextSize, 1232)
+NEVERD_SEH_SIMD_VALUE(SehSIMDContextMXCSR, 52)
+NEVERD_SEH_SIMD_VALUE(SehSIMDContextFX, 256)
+NEVERD_SEH_SIMD_VALUE(SehSIMDContextFXMXCSR, 280)
+NEVERD_SEH_SIMD_VALUE(SehSIMDContextXmm, 416)
+NEVERD_SEH_SIMD_VALUE(SehSIMDContextFlags, 0x10000b)
+NEVERD_SEH_SIMD_VALUE(SehSIMDControlMask, 0xffff)
+#endif
+#ifdef NEVERD_SEH_SIMD_WIDE_VALUE
+NEVERD_SEH_SIMD_WIDE_VALUE(SehSIMDSeed, 0x1234567887654321ULL)
+NEVERD_SEH_SIMD_WIDE_VALUE(SehSIMDHighLane, 0x7654321000000000ULL)
+NEVERD_SEH_SIMD_WIDE_VALUE(SehSIMDBase, 0x180000000ULL)
+NEVERD_SEH_SIMD_WIDE_VALUE(SehSIMDRebased, 0x190000000ULL)
+NEVERD_SEH_SIMD_WIDE_VALUE(SehSIMDStorage, 0x80000000ULL)
+#endif
+#ifdef NEVERD_SEH_SIMD_MODE
+NEVERD_SEH_SIMD_MODE(Handle, '0')
+NEVERD_SEH_SIMD_MODE(MaskRetry, '1')
+NEVERD_SEH_SIMD_MODE(OperandRetry, '2')
+NEVERD_SEH_SIMD_MODE(Constant, '3')
+NEVERD_SEH_SIMD_MODE(RejectX87, '4')
+#endif
+#ifdef NEVERD_SEH_SIMD_CASE
+// Operation, unmasked condition, operands, retained/masked status, masked
+// result and Windows status. Arithmetic facts come from original x64 probes;
+// the Windows kernel classifier was checked independently of the OS model.
+NEVERD_SEH_SIMD_CASE(Invalid, SehSIMDDivide, 1, 0, 0, 1, 1, 0xffc00000,
+                     0xc0000090)
+NEVERD_SEH_SIMD_CASE(Denormal, SehSIMDAdd, 2, 1, 0, 2, 2, 1, 0xc0000090)
+NEVERD_SEH_SIMD_CASE(Zero, SehSIMDDivide, 4, 0x3f800000, 0, 4, 4, 0x7f800000,
+                     0xc000008e)
+NEVERD_SEH_SIMD_CASE(Overflow, SehSIMDMultiply, 8, 0x7f7fffff, 0x7f7fffff, 0x28,
+                     0x28, 0x7f800000, 0xc0000091)
+NEVERD_SEH_SIMD_CASE(Underflow, SehSIMDMultiply, 16, 0x00800000, 0x00800000,
+                     0x10, 0x30, 0, 0xc0000093)
+NEVERD_SEH_SIMD_CASE(ExactTiny, SehSIMDMultiply, 16, 0x00800000, 0x3f000000,
+                     0x10, 0, 0x00400000, 0xc0000093)
+NEVERD_SEH_SIMD_CASE(ExactOverflow, SehSIMDMultiply, 8, 0x7f7fffff, 0x40000000,
+                     0x08, 0x28, 0x7f800000, 0xc0000091)
+NEVERD_SEH_SIMD_CASE(Precision, SehSIMDDivide, 32, 0x3f800000, 0x40400000, 0x20,
+                     0x20, 0x3eaaaaab, 0xc000008f)
+#endif
+#ifdef NEVERD_SEH_SIMD_TEXT
+NEVERD_SEH_SIMD_TEXT(SehSIMDService, "NeverDSEH")
+NEVERD_SEH_SIMD_TEXT(SehSIMDDriverSuffix, "_driver_")
+NEVERD_SEH_SIMD_TEXT(SehSIMDCheckedSuffix, "_checked_")
+NEVERD_SEH_SIMD_TEXT(SehSIMDFilterMessage,
+                     "WDM SEH: SIMD filter code=%08lx mode=%c\n")
+NEVERD_SEH_SIMD_TEXT(SehSIMDFinallyMessage,
+                     "WDM SEH: SIMD finally abnormal=%u\n")
+NEVERD_SEH_SIMD_TEXT(SehSIMDCompleteMessage,
+                     "WDM SEH: SIMD verified case=%lu\n")
+NEVERD_SEH_SIMD_TEXT(SehSIMDFailure, "WDM SEH: failure")
+NEVERD_SEH_SIMD_TEXT(SehSIMDMissing, "original WDK SEH fixture unavailable")
+#endif
+#ifndef NEVERD_SEH_SIMD_EXECUTE
+#define NEVERD_SEH_SIMD_SETUP                                                  \
+  "movdqu %[Seed], %%xmm0\n\t"                                                 \
+  "movdqa %%xmm0, %%xmm1\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm2\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm3\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm4\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm5\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm6\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm7\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm8\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm9\n\t"                                                  \
+  "movdqa %%xmm0, %%xmm10\n\t"                                                 \
+  "movdqa %%xmm0, %%xmm11\n\t"                                                 \
+  "movdqa %%xmm0, %%xmm12\n\t"                                                 \
+  "movdqa %%xmm0, %%xmm13\n\t"                                                 \
+  "movdqa %%xmm0, %%xmm14\n\t"                                                 \
+  "movdqa %%xmm0, %%xmm15\n\t"                                                 \
+  "movdqu %[Left], %%xmm0\n\t"                                                 \
+  "movdqu %[Right], %%xmm1\n\t"                                                \
+  "ldmxcsr %[Control]\n\t"                                                     \
+  "std\n\t"
+#define NEVERD_SEH_SIMD_DIVIDE "divss %%xmm1, %%xmm0\n\t"
+#define NEVERD_SEH_SIMD_ADD "addss %%xmm1, %%xmm0\n\t"
+#define NEVERD_SEH_SIMD_MULTIPLY "mulss %%xmm1, %%xmm0\n\t"
+#define NEVERD_SEH_SIMD_CAPTURE                                                \
+  "movsb\n\t"                                                                  \
+  "cld\n\t"                                                                    \
+  "stmxcsr %[After]\n\t"                                                       \
+  "movdqu %%xmm0, %[Result]\n\t"                                               \
+  "movdqu %%xmm5, %[Volatile]\n\t"                                             \
+  "movdqu %%xmm15, %[Nonvolatile]\n\t"                                         \
+  "ldmxcsr %[Default]\n\t"
+#define NEVERD_SEH_SIMD_EXECUTE(Operation)                                     \
+  __asm__ volatile(                                                            \
+      NEVERD_SEH_SIMD_SETUP Operation NEVERD_SEH_SIMD_CAPTURE                  \
+      : [Result] "=m"(SimdResult), [After] "=m"(SimdAfter),                    \
+        [Source] "+S"(SourceCursor), [Destination] "+D"(DestinationCursor),    \
+        [Volatile] "=m"(SimdVolatile), [Nonvolatile] "=m"(SimdNonvolatile)     \
+      : [Seed] "m"(Seed), [Left] "m"(Left), [Right] "m"(Right),                \
+        [Control] "m"(Control), [Default] "m"(Default)                         \
+      : "memory", "cc", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5",        \
+        "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13",    \
+        "xmm14", "xmm15")
+#define NEVERD_SEH_SIMD_LIVE                                                   \
+  "stmxcsr %[Control]\n\t"                                                     \
+  "movsb\n\t"                                                                  \
+  "cld\n\t"
+#define NEVERD_SEH_SIMD_CLOBBER                                                \
+  "pxor %%xmm0, %%xmm0\n\t"                                                    \
+  "pxor %%xmm1, %%xmm1\n\t"                                                    \
+  "pxor %%xmm5, %%xmm5\n\t"
+#endif

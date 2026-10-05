@@ -66,6 +66,8 @@ checked user x64는 접두사 없는 정확한 `SYSCALL` 인코딩만 가로채�
 
 마스킹된 x64 명령 설명은 이식 가능한 기준입니다. KVM/WHP는 `driver-strict`, `checked-x64-v1`, `checked-user-x64-v1`에 `precise_simd_exceptions`를 추가합니다. 네이티브 시작 검증이 정확한 `#XM`과 두 재시도를 확인한 뒤에만 마스크 해제 MXCSR 쓰기, `LDMXCSR`, Windows `CONTEXT` 복원을 허용합니다. `ExecutionProfiles.def`가 선택을 관리하고 `supportsSIMDExceptions`가 결정된 인스턴스 기능을 제공합니다. checked Unicorn은 계속 마스크를 요구하며 ARM64 및 HVF의 예외 기능은 확장하지 않습니다.
 
+네이티브 x64 KVM/WHP는 실제 `#XM`을 `X64SIMDException`을 통해 드라이버 C SEH로 전달합니다. 하드웨어 오류의 `CONTEXT`는 XMM0–15와 MXCSR를 보존합니다. 필터, 예외 언와인드 finally 콜백과 선택된 핸들러는 MXCSR `0x1f80`, DF 해제 상태에서 실행됩니다. 음수 필터는 XMM과 최상위 `CONTEXT.MxCsr`를 수정한 후 원래 명령을 재시도할 수 있습니다. 후자에는 게스트 CPU 마스크가 적용되며 `FltSave.MxCsr`는 커널 복원을 제어하지 않습니다. 모델 API 예외는 정수/제어 레코드를 유지하며 x87/AVX 컨텍스트 수정은 계속 거부됩니다.
+
 checked x64는 제한된 legacy SSE/SSE2 이동·논리 연산, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`를 허용합니다. MXCSR는 누적 상태, 반올림, FTZ를 보존하며 이식 가능한 실행은 마스크되지 않은 예외를 거부합니다. KVM/WHP는 16개 XMM 레지스터 전체와 MXCSR를 동기화합니다. 목록에 없는 인코딩과 operand 조합은 허용되지 않습니다.
 
 checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. x87, AVX는 허용하지 않습니다.
