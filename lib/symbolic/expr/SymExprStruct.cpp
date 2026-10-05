@@ -265,8 +265,16 @@ SymRef SymContext::mkConcat(llvm::ArrayRef<SymRef> Ops) {
     return Ops[0];
 
   // Concatenation is associative but not commutative, so flatten in order.
+  // Copy handles before materializing zero prefixes: callers may pass a view
+  // into the operand arena, which interning can grow.
+  llvm::SmallVector<SymRef, 8> Inputs(Ops.begin(), Ops.end());
   llvm::SmallVector<SymRef, 8> Flat;
-  for (SymRef R : Ops) {
+  for (SymRef R : Inputs) {
+    if (op(R) == SymOp::ZExt) {
+      const auto Inner = operand(R, 0);
+      Flat.push_back(mkZero(width(R) - width(Inner)));
+      R = Inner;
+    }
     if (op(R) == SymOp::Concat) {
       llvm::ArrayRef<SymRef> Sub = operands(R);
       Flat.append(Sub.begin(), Sub.end());
@@ -358,6 +366,11 @@ SymRef SymContext::mkConcat(llvm::ArrayRef<SymRef> Ops) {
   uint32_t W = 0;
   for (SymRef R : Merged)
     W += width(R);
+  // Byte stores can explicitly clear a word's upper bytes. Reconstruct the
+  // same value as a zero extension, including after concatenation grouping,
+  // so consumers do not depend on how those zero bits were written.
+  if (isConst(Merged.front()) && constValue(Merged.front()).isZero())
+    return mkZExt(mkConcat(llvm::ArrayRef<SymRef>(Merged).drop_front()), W);
   return intern(SymOp::Concat, W, Merged, 0);
 }
 
