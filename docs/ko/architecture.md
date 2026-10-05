@@ -1289,3 +1289,5 @@ CoreImage SDK의 강한 선언은 `imageWithCGImage:`와 `imageByApplyingTransfo
 동일한 프레임 효과 소유 계층은 정확한 강한 `CGRectApplyAffineTransform` 브리지를 별도로 처리합니다. 초기화된 48바이트 변환은 논리 매개변수 1로 x0에 전달되며 사각형과 결과는 d0–d3을 사용합니다. 허용된 입력 쓰기는 복사를 무효화하므로 후속 소비 전에 완전히 다시 초기화해야 합니다. 간접 결과 쓰기 권한은 부여하지 않습니다. Objective-C 복사 발견과 네이티브 프레임 검증 모두 HFA 및 간접 결과에 이 소유 계층을 사용합니다.
 
 `AuthenticatedSourceFrameLoads`는 `swiftMetadataAccessorSourceCallHint`를 통해 메타데이터 접근자 호출을 통과할 수 있다. 두 선언 경로는 기존 컴파일러 증거 표, 정확한 강한 링크 provider, 완전한 Swift 요청 및 메타데이터 응답 ABI를 재사용한다. 두 레지스터 응답과 일반적인 휘발성 레지스터 변경 규칙을 유지하며, 비공개 spill에는 공유 도달 바이트 증명을 계속 요구한다. 값 레이아웃, witness 메모리 효과, 프레임 차용 또는 동적 스택 할당 모델을 제공하지 않는다.
+
+`AArch64ExclusiveInstructions.def`는 독점 명령 인코딩의 허용 기준을 소유하고 `CheckedAArch64Exclusive`는 물리 실행 잠금 안에서 레지스터와 모니터 상태를 갱신합니다. `RAMReservation`은 할당 식별성을 유지하며 호스트 쓰기, 보존 뷰, `RAMTransaction`, 문자열 명령 및 `ENTER` 오류 전 부분 저장의 커밋 통지를 받습니다. 임시 쓰기와 롤백은 예약을 무효화하지 않습니다. 쓰기 범위를 알 수 없는 실행은 기존 예약을 무효화하고, 범위를 선언하는 실행은 실제 커밋 범위를 추적합니다. 게스트 오류, 서비스 트랩, 주소 공간 바인딩은 로컬 모니터를 비웁니다. 기존 `LDAR[B/H]`와 `STLR[B/H]`는 자연 정렬 RAM 계약에 따라 백엔드에서 실행됩니다.

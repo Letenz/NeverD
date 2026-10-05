@@ -48,6 +48,7 @@ foreach(_arch X64 AArch64)
       "${_base}.obj" "${_base}-kernel32.lib" "${_base}-ntdll.lib" "/out:${_base}.exe"
     DEPENDS fixtures/windows_process.c fixtures/WindowsProcessCases.def
             fixtures/windows_wide_atomic.inc
+            fixtures/aarch64_exclusive.inc AArch64ExclusiveCases.def
       fixtures/WindowsMemoryCases.def fixtures/WindowsMemoryFixture.inc
       "${_windows_fixture_dir}/kernel32.def" "${_windows_fixture_dir}/ntdll.def"
     VERBATIM)

@@ -203,3 +203,5 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 `hvf` · Hypervisor.framework · Apple Silicon → ARM64 · Intel Mac → x86-64.
 
 [配置、签名与硬件验证](macos-hvf.md)
+
+checked ARM64 支持 8/16/32/64 位 `LDXR/STXR`、32/64 位寄存器对 `LDXP/STXP`、相应的 acquire/release 形式及 `CLREX`。KVM、WHP 和 checked Unicorn 共用 ISA 层的独占监视器，以 16 字节物理范围记录保留状态，传输层单步退出不会破坏循环进展。已提交的写入即使没有改变字节，也会使保留状态失效；别名和保留视图写入遵循同一规则。停止保留尚未发布的状态，快照不能撤销期间发生的写入。未对齐访问产生 `alignment` 故障；即使监视器已失效，也先检查对齐和权限，再决定条件存储是否成功。该配置仍不包含 MMIO、可选 LSE 原子指令或并行 SMP。

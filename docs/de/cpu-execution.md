@@ -203,3 +203,5 @@ Geprüftes Unicorn verwendet `MachineRunControl`: Ein Zeitrahmen umfasst ARM64-P
 `hvf` · Hypervisor.framework · Apple Silicon → ARM64 · Intel Mac → x86-64.
 
 [Setup, signing and native hardware validation (English)](../macos-hvf.md)
+
+Checked ARM64 unterstützt `LDXR/STXR` mit 8/16/32/64 Bit, Registerpaare `LDXP/STXP` mit 32/64 Bit, Acquire/Release-Varianten und `CLREX`. KVM, WHP und Checked Unicorn teilen einen ISA-Monitor mit physischen Reservierungsgranulen von 16 Byte; Einzelschritt-Ausstiege verhindern keinen Schleifenfortschritt. Bestätigte Schreibzugriffe invalidieren Reservierungen auch bei unveränderten Bytes, einschließlich Aliasen und gehaltenen Sichten. Stopps bewahren unveröffentlichte Zustände; Snapshots können zwischenzeitliche Schreibzugriffe nicht zurücknehmen. Fehlende Ausrichtung erzeugt `alignment`. Ausrichtung und Rechte werden vor dem Ergebnis des bedingten Speicherns geprüft, auch bei ungültiger Reservierung. MMIO, optionale LSE-Atomics und paralleles SMP bleiben ausgeschlossen.

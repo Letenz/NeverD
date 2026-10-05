@@ -8,6 +8,7 @@ add_neverd_component_library(NeverDEmulationCore
   core/AddressSpace.cpp
   core/MemoryProjection.cpp
   core/RAMTransaction.cpp
+  core/RAMReservation.cpp
   core/MemoryView.cpp
   LLVM_COMPONENTS Support)
 
@@ -21,11 +22,13 @@ add_neverd_component_library(NeverDEmulationArch
   arch/aarch64/AArch64State.cpp
   arch/aarch64/AArch64MachineProbe.cpp
   arch/aarch64/AArch64InstructionEffects.cpp
+  arch/aarch64/AArch64Exclusive.cpp
   arch/x86_64/CheckedX64Backend.cpp
   arch/x86_64/CheckedX64Memory.cpp
   arch/x86_64/CheckedX64Stack.cpp
   arch/x86_64/CheckedX64Frame.cpp
   arch/aarch64/CheckedAArch64Backend.cpp
+  arch/aarch64/CheckedAArch64Exclusive.cpp
   LINK_COMPONENTS EmulationCore
   LLVM_COMPONENTS Support)
 

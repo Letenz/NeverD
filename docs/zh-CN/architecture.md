@@ -1302,3 +1302,5 @@ CoreImage 的强 SDK 声明保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 同一栈效果证明层单独认证精确的强 `CGRectApplyAffineTransform` 桥接：48 字节已初始化变换是经 x0 传递的逻辑参数 1，矩形及结果则占用 d0–d3。允许的输入改写会使副本失效，后续消费者必须先获得新的完整初始化；此调用不获得间接结果写入权限。Objective-C 副本发现和原生栈验证对四浮点 HFA 返回及间接返回都查询同一证明层。
 
 `AuthenticatedSourceFrameLoads` 可通过 `swiftMetadataAccessorSourceCallHint` 跨越元数据访问器调用。两条声明路径复用已有的编译器证据表、准确的强链接 provider，以及完整的 Swift 请求和元数据响应 ABI。双寄存器响应与通常的易失寄存器破坏规则保持完整；私有 spill 仍须通过共享的到达字节证明。这不提供值布局、见证内存效应、栈借用或动态栈分配模型。
+
+`AArch64ExclusiveInstructions.def` 统一定义独占指令的编码准入；`CheckedAArch64Exclusive` 在物理执行锁内完成寄存器及监视器状态转换。`RAMReservation` 保留分配身份，接收主机写入、保留视图、`RAMTransaction`、字符串指令及 `ENTER` 故障前部分写入的提交通知。临时写入和回滚不会使保留状态失效。不声明写入范围的执行会使已有保留状态失效；声明范围的执行按实际提交范围跟踪。客户机故障、服务陷阱和地址空间绑定会清除本地监视器。原始 `LDAR[B/H]` 和 `STLR[B/H]` 仍通过后端执行，并保留自然对齐 RAM 契约。

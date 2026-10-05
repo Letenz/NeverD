@@ -203,3 +203,5 @@ neverd cpu-capabilities \
 `hvf` · Hypervisor.framework · Apple Silicon → ARM64 · Intel Mac → x86-64.
 
 [Setup, signing and native hardware validation (English)](../macos-hvf.md)
+
+يدعم ARM64 checked تعليمات `LDXR/STXR` بعرض 8/16/32/64 بت، وأزواج `LDXP/STXP` بعرض 32/64 بت، وصيغ acquire/release و`CLREX`. تشترك KVM وWHP وUnicorn checked في مراقب على مستوى ISA يتتبع حجوزات مادية بحجم 16 بايت؛ ولا تمنع مخارج التنفيذ خطوة بخطوة تقدّم الحلقات. تُبطل الكتابات المعتمدة الحجز حتى إن بقيت البايتات كما هي، بما يشمل الأسماء البديلة والعروض المحتفظ بها. يحفظ الإيقاف الحالة غير المنشورة، ولا تلغي اللقطات الكتابات اللاحقة. ينتج عدم المحاذاة خطأ `alignment`. تُفحص المحاذاة والصلاحيات قبل تقرير نجاح التخزين المشروط حتى عند انتهاء الحجز. لا يشمل هذا الملف MMIO أو تعليمات LSE الذرية الاختيارية أو SMP المتوازي.

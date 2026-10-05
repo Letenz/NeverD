@@ -203,3 +203,5 @@ Unicorn vérifié utilise `MachineRunControl` : une seule allocation couvre main
 `hvf` · Hypervisor.framework · Apple Silicon → ARM64 · Intel Mac → x86-64.
 
 [Setup, signing and native hardware validation (English)](../macos-hvf.md)
+
+ARM64 checked prend en charge `LDXR/STXR` sur 8/16/32/64 bits, les paires `LDXP/STXP` sur 32/64 bits, leurs variantes acquire/release et `CLREX`. KVM, WHP et Unicorn checked partagent un moniteur ISA à granularité physique de 16 octets ; les sorties de pas à pas ne bloquent pas les boucles. Toute écriture validée invalide la réservation, même à valeur identique, y compris via les alias et vues conservées. Un arrêt conserve les effets non publiés ; un instantané ne peut annuler les écritures intervenues. Un défaut d’alignement produit `alignment`. Alignement et permissions sont vérifiés avant le résultat du stockage conditionnel, même sans réservation valide. MMIO, les atomiques LSE optionnelles et SMP parallèle restent hors profil.

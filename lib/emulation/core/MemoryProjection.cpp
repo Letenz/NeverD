@@ -8,6 +8,9 @@
 #include "ExecutionDiagnostics.h"
 #include "MemoryLayout.h"
 
+#include "llvm/Support/MathExtras.h"
+
+#include <algorithm>
 #include <cassert>
 
 namespace neverd::emulation {
@@ -96,7 +99,7 @@ MemoryProjection::bind(std::shared_ptr<AddressSpace> Next,
   Space = std::move(Next);
   return llvm::Error::success();
 }
-llvm::Error MemoryProjection::beginRun() {
+llvm::Error MemoryProjection::beginRun(RAMWriteTracking Tracking) {
   auto &RAM = *Space->State->Memory->State;
   if (!RAM.Mutex.try_lock())
     return diagnostic::error(diagnostic::Running);
@@ -105,12 +108,62 @@ llvm::Error MemoryProjection::beginRun() {
     return diagnostic::error(diagnostic::Running);
   }
   RAM.Running = true;
+  WriteTracking = Tracking;
+  if (Tracking == RAMWriteTracking::Opaque)
+    RAM.invalidateReservations();
   return llvm::Error::success();
 }
 void MemoryProjection::endRun() {
   auto &RAM = *Space->State->Memory->State;
+  if (WriteTracking == RAMWriteTracking::Opaque)
+    RAM.invalidateReservations();
   RAM.Running = false;
   RAM.Mutex.unlock();
+}
+llvm::Expected<std::shared_ptr<RAMReservation>>
+MemoryProjection::reserveRAM(uint64_t Address, uint64_t Size,
+                             uint64_t Granule) {
+  auto Lease = executionLock();
+  if (!Lease)
+    return Lease.takeError();
+  if (WriteTracking != RAMWriteTracking::Declared)
+    return diagnostic::error(diagnostic::RAMReservationTracking);
+  if (!llvm::isPowerOf2_64(Granule) || Granule > memory::PageSize || !Size ||
+      Size > Granule || Address % Granule > Granule - Size)
+    return diagnostic::error(diagnostic::RAMReservationRange);
+  auto Bytes = Space->pinBacking(Address, Size);
+  if (!Bytes)
+    return Bytes.takeError();
+  const uint64_t Offset = Address % memory::PageSize;
+  const uint64_t Physical = mappings().at(Address - Offset).Physical + Offset;
+  auto R = std::make_shared<RAMReservation>(RAMReservation{
+      std::move(*Bytes), Physical, Physical & ~(Granule - 1), Granule});
+  auto &Reservations = Space->State->Memory->State->Reservations;
+  std::erase_if(Reservations, [](const auto &R) { return R.expired(); });
+  Reservations.push_back(R);
+  return R;
+}
+llvm::Expected<bool>
+MemoryProjection::reservationMatches(const std::shared_ptr<RAMReservation> &R,
+                                     uint64_t Address, uint64_t Size) const {
+  auto Lease = executionLock();
+  if (!Lease)
+    return Lease.takeError();
+  if (WriteTracking != RAMWriteTracking::Declared)
+    return diagnostic::error(diagnostic::RAMReservationTracking);
+  if (!R || R->Bytes.physicalMemory() != Space->physicalMemory() || !R->Valid ||
+      Size != R->Bytes.size())
+    return false;
+  const uint64_t Offset = Address % memory::PageSize;
+  const auto P = mappings().find(Address - Offset);
+  return P != mappings().end() && !P->second.IO &&
+         Size <= memory::PageSize - Offset &&
+         P->second.Physical + Offset == R->Physical;
+}
+void MemoryProjection::recordRAMWrite(uint64_t Physical, uint64_t Size) {
+  auto &RAM = *Space->State->Memory->State;
+  assert(RAM.Running && diagnostic::RAMTransactionLease);
+  RAM.invalidateReservations(Physical, Size);
 }
 std::optional<MemoryAccessFailure>
 MemoryProjection::firstAccessFailure(uint64_t A, uint64_t N, unsigned P) const {

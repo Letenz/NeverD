@@ -1312,3 +1312,5 @@ CoreImage SDK の強い宣言は、`imageWithCGImage:` と `imageByApplyingTrans
 同じフレーム効果の所有層が、正確な強い `CGRectApplyAffineTransform` ブリッジを別途検証します。初期化済み 48 バイトの変換は論理パラメータ 1 として x0 に入り、矩形と結果は d0–d3 を使います。許容される入力書き込みでコピーを無効化するため、後続の使用には再初期化が必要です。間接結果への書き込みは認めません。Objective-C コピー検出とネイティブフレーム検証は、HFA と間接結果の双方でこの所有層を参照します。
 
 `AuthenticatedSourceFrameLoads` は `swiftMetadataAccessorSourceCallHint` を通じてメタデータアクセサの呼び出しを越えられる。両方の宣言経路は既存のコンパイラ証拠表、正確な強リンクの provider、完全な Swift 要求・メタデータ応答 ABI を再利用する。2 レジスタの応答と通常の揮発レジスタ破壊規則を維持し、私有 spill には共有の到達バイト証明を引き続き要求する。値レイアウト、witness のメモリ効果、フレーム借用、動的スタック割り当てのモデルは与えない。
+
+`AArch64ExclusiveInstructions.def` が排他命令のエンコーディングを管理し、`CheckedAArch64Exclusive` が物理実行ロック内でレジスタとモニターを更新します。`RAMReservation` は割り当ての同一性を保持し、ホスト、保持ビュー、`RAMTransaction`、文字列命令、障害前の `ENTER` 部分ストアからコミット通知を受けます。一時書き込みとロールバックは予約を無効化しません。書き込み範囲が不明な実行は既存予約を無効化し、範囲を宣言する実行は実際のコミットを追跡します。ゲスト障害、サービス・トラップ、アドレス空間の結び直しはローカルモニターを消去します。元の `LDAR[B/H]` と `STLR[B/H]` は、自然整列 RAM の契約のままバックエンドで実行します。

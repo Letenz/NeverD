@@ -203,3 +203,5 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 `hvf` · Hypervisor.framework · Apple Silicon → ARM64 · Intel Mac → x86-64.
 
 [Setup, signing and native hardware validation (English)](../macos-hvf.md)
+
+checked ARM64 は 8/16/32/64 ビットの `LDXR/STXR`、32/64 ビットのレジスタ対 `LDXP/STXP`、acquire/release 形式、`CLREX` をサポートします。KVM、WHP、checked Unicorn は ISA 層の排他モニターを共有し、16 バイトの物理範囲で予約を管理します。転送層のシングルステップ終了でループの進行を妨げません。同じ値の書き込みも、エイリアスや保持ビューを含め、コミット時に予約を無効化します。停止は未公開状態を保ち、スナップショットは途中の書き込みを取り消せません。非整列アクセスは `alignment` 障害になります。予約が失効していても、条件付きストアの判定前に整列と権限を検査します。MMIO、オプションの LSE アトミック命令、並列 SMP は対象外です。

@@ -35,6 +35,9 @@ namespace win = windows_process;
 #if defined(EXCEPTION_SOFTWARE_ORIGINATE)
 static_assert(SoftwareOriginate == EXCEPTION_SOFTWARE_ORIGINATE);
 #endif
+#if defined(EXCEPTION_DATATYPE_MISALIGNMENT)
+static_assert(DatatypeMisalignment == EXCEPTION_DATATYPE_MISALIGNMENT);
+#endif
 namespace x64_context {
 #define NEVERD_VEH_CONTEXT_X64(Name, Value) constexpr uint64_t Name = Value;
 #include "fixtures/WindowsExceptionCases.def"
@@ -45,6 +48,50 @@ namespace arm_context {
 #include "fixtures/WindowsExceptionCases.def"
 #undef NEVERD_VEH_CONTEXT_ARM64
 } // namespace arm_context
+TEST(WindowsExclusiveAlignment, OnlyCompleteArchitecturalFaultsAreTranslated) {
+  const BackendFault Fault{BackendFaultKind::Alignment,
+                           win::value::GateBase,
+                           FaultAddress,
+                           sizeof(uint64_t),
+                           BackendAccessKind::Read,
+                           std::nullopt,
+                           std::nullopt,
+                           BackendFaultCause::OperandAlignment};
+  auto Translate = [](const BackendFault &F) {
+    return win::ExceptionDispatcher::exception(GuestArchitecture::AArch64, F);
+  };
+  for (auto Access : {BackendAccessKind::Read, BackendAccessKind::Write}) {
+    auto F = Fault;
+    F.Access = Access;
+    auto Exception = Translate(F);
+    ASSERT_TRUE(Exception);
+    EXPECT_EQ(Exception->Code, DatatypeMisalignment);
+    EXPECT_EQ(Exception->Address, Fault.PC);
+    EXPECT_TRUE(Exception->Arguments.empty());
+  }
+  EXPECT_FALSE(
+      win::ExceptionDispatcher::exception(GuestArchitecture::X64, Fault));
+  auto F = Fault;
+  F.Size = 0;
+  EXPECT_FALSE(Translate(F));
+  F.Size = sizeof(uint64_t) - 1;
+  EXPECT_FALSE(Translate(F));
+  F = Fault;
+  F.Address = FaultAddress & ~(sizeof(uint64_t) - 1);
+  EXPECT_FALSE(Translate(F));
+  F = Fault;
+  F.Cause.reset();
+  EXPECT_FALSE(Translate(F));
+  F = Fault;
+  F.Access = BackendAccessKind::Execute;
+  EXPECT_FALSE(Translate(F));
+  F = Fault;
+  F.ErrorCode = 0;
+  EXPECT_FALSE(Translate(F));
+  F = Fault;
+  F.Interrupt = 0;
+  EXPECT_FALSE(Translate(F));
+}
 #if defined(_WIN32) && defined(_M_X64)
 static_assert(sizeof(CONTEXT) == x64_context::ContextSize);
 static_assert(offsetof(CONTEXT, Rip) == x64_context::ContextPC);
