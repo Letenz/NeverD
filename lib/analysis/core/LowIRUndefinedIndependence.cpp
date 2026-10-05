@@ -4113,11 +4113,11 @@ class LoopPlanInference {
     auto &Bounds = RelationBounds[ActiveCutpoint];
     auto &Values = RelationBoundValues[ActiveCutpoint];
     const auto OldSize = Bounds.size();
+    // A represented word can still supply a fixed prefix bound, or retain a
+    // bound lane while other bits change. Discovery does not assert that the
+    // current location equals its prefix; each consumer proves its own fact.
     for (const auto &L : locations()) {
-      if (std::any_of(
-              words().begin(), words().end(),
-              [&](const auto &W) { return sameLocation(W.Location, L); }) ||
-          std::any_of(Bounds.begin(), Bounds.end(),
+      if (std::any_of(Bounds.begin(), Bounds.end(),
                       [&](const auto &B) { return sameLocation(B, L); }))
         continue;
       const auto V = read(Prefix, L);

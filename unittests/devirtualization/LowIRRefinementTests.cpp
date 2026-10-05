@@ -2318,11 +2318,14 @@ TEST(LowIRLoopInference, AlternativeLoopsReachBothPrefixesWithinSharedBudgets) {
   }
 }
 
-Program projectedCounterLoops(
-    uint16_t Bytes, bool Ascending, unsigned Step = 1, bool Guarded = true,
-    LowIRLoopSpace Space = LowIRLoopSpace::Register, bool EqualityExit = false,
-    unsigned BoundStep = 0, bool PadBounds = false, bool ZeroInitialize = false,
-    bool CachedExit = false, bool OrderedExit = false) {
+Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
+                              bool Guarded = true,
+                              LowIRLoopSpace Space = LowIRLoopSpace::Register,
+                              bool EqualityExit = false, unsigned BoundStep = 0,
+                              bool PadBounds = false,
+                              bool ZeroInitialize = false,
+                              bool CachedExit = false, bool OrderedExit = false,
+                              bool MutableBounds = false) {
   Program P;
   const uint64_t Mask = (uint64_t{1} << (Bytes * 8)) - 1;
   if (Space == LowIRLoopSpace::Frame)
@@ -2374,6 +2377,10 @@ Program projectedCounterLoops(
   P.instruction({op(NdOp::INT_ZEXT, r(64), {r(112, Bytes)}),
                  op(NdOp::INT_ZEXT, r(72), {r(120, Bytes)}),
                  op(NdOp::COPY, r(0), {n(0)})});
+  // The raw input must not stand in for the derived prefix bound.
+  if (MutableBounds)
+    P.instruction({op(NdOp::INT_XOR, r(64), {r(64), n((Mask + 1) / 2)}),
+                   op(NdOp::INT_XOR, r(72), {r(72), n((Mask + 1) / 2)})});
   if (PadBounds)
     P.instruction({op(NdOp::INT_AND, NdVar::tmp(0, 8), {r(160), n(~Mask)}),
                    op(NdOp::INT_OR, r(64), {r(64), NdVar::tmp(0, 8)}),
@@ -2411,6 +2418,10 @@ Program projectedCounterLoops(
     if (BoundStep)
       P.instruction({op(NdOp::INT_ADD, r(64 + 8 * Level),
                         {r(64 + 8 * Level), n(BoundStep)})});
+    // Preserve the comparison lane while changing the full observed word.
+    if (MutableBounds)
+      P.instruction({op(NdOp::INT_ADD, r(64 + 8 * Level),
+                        {r(64 + 8 * Level), n(Mask + 1)})});
     CacheExit(Level);
   };
   Header(1, 0x200, 0x700, 6, 0);
@@ -2640,29 +2651,45 @@ TEST(LowIRLoopInference, OrderedComparisonBitsProveBothExitEncodings) {
         }
 }
 
-void checkComparisonNontermination(bool OrderedExit) {
+void checkComparisonNontermination(bool OrderedExit,
+                                   bool MutableBounds = false) {
   const auto Space = LowIRLoopSpace::FunctionTemporary;
   const auto P = projectedCounterLoops(1, true, 1, true, Space, true, 0, true,
-                                       true, true, OrderedExit);
+                                       true, true, OrderedExit, MutableBounds);
   const std::vector<va_t> Cuts{0x200, 0x400};
   const auto Good =
       inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
   ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  unsigned Case = 0;
   for (const auto &Bad :
        {projectedCounterLoops(1, true, 0, true, Space, true, 0, true, true,
-                              true, OrderedExit),
+                              true, OrderedExit, MutableBounds),
         projectedCounterLoops(1, true, 2, true, Space, true, 0, true, true,
-                              true, OrderedExit),
-        projectedCounterLoops(1, true, 1, true, Space, true, 1, true, true,
-                              true, OrderedExit),
+                              true, OrderedExit, MutableBounds),
         projectedCounterLoops(1, true, 1, false, Space, true, 0, true, true,
-                              true, OrderedExit)}) {
+                              true, OrderedExit, MutableBounds)}) {
+    SCOPED_TRACE(OrderedExit);
+    SCOPED_TRACE(MutableBounds);
+    SCOPED_TRACE(Case++);
     const auto Refused =
         inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract, {}, Cuts);
     EXPECT_FALSE(Refused.inferred());
     EXPECT_FALSE(Refused.Plan);
     loopRefused(loopCheck(Bad, Bad, *Good.Plan), Status::Different);
   }
+  const auto Moving =
+      projectedCounterLoops(1, true, 1, true, Space, true, 1, true, true, true,
+                            OrderedExit, MutableBounds);
+  if (!OrderedExit) {
+    // Equal increments keep a nonzero difference and can skip equality forever.
+    const auto Refused = inferLowIRLoopRefinementPlan(
+        Moving.Function, Moving.Contract, {}, Cuts);
+    EXPECT_FALSE(Refused.inferred());
+    EXPECT_FALSE(Refused.Plan);
+  }
+  // An unsigned-order exit can terminate when the moving bound wraps. Either
+  // way it cannot reuse a template proved for the unchanged lower bound.
+  loopRefused(loopCheck(Moving, Moving, *Good.Plan), Status::Different);
 }
 
 TEST(LowIRLoopInference, ProjectedComparisonBitsRejectNonterminatingUpdates) {
@@ -2673,10 +2700,11 @@ TEST(LowIRLoopInference, OrderedComparisonBitsRejectNonterminatingUpdates) {
   checkComparisonNontermination(true);
 }
 
-void checkComparisonObservations(bool OrderedExit) {
+void checkComparisonObservations(bool OrderedExit, bool MutableBounds = false) {
   for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
-    auto P = projectedCounterLoops(3, true, 1, true, LowIRLoopSpace::Frame,
-                                   true, 0, true, true, true, OrderedExit);
+    auto P =
+        projectedCounterLoops(3, true, 1, true, LowIRLoopSpace::Frame, true, 0,
+                              true, true, true, OrderedExit, MutableBounds);
     P.Contract.ByteOrder = Order;
     P.Contract.ReturnRegisters.push_back({64, 8});
     P.Contract.ReturnRegisters.push_back({72, 8});
@@ -2685,6 +2713,15 @@ void checkComparisonObservations(bool OrderedExit) {
     ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
     const auto Proof = loopCheck(P, P, *Good.Plan);
     ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    if (MutableBounds) {
+      auto WrongUpperUpdate = P;
+      for (auto &B : WrongUpperUpdate.Function.Blocks)
+        for (auto &O : B.Ops)
+          if (O.Opcode == NdOp::INT_ADD && O.Output == r(72))
+            O.Inputs[1] = n(uint64_t{1} << 25);
+      loopRefused(loopCheck(P, WrongUpperUpdate, *Good.Plan),
+                  Status::Different);
+    }
     auto UpperBoundBytes = P;
     for (auto &O : UpperBoundBytes.Function.Blocks.front().Ops)
       if (O.Opcode == NdOp::INT_AND && O.Inputs[0] == r(160))
@@ -2764,10 +2801,12 @@ TEST(LowIRLoopInference, LateCounterBoundsKeepFullStateObservations) {
 void checkProjectedCounterBudgets(bool EqualityExit,
                                   bool ZeroInitialize = false,
                                   bool CachedExit = false,
-                                  bool OrderedExit = false) {
+                                  bool OrderedExit = false,
+                                  bool MutableBounds = false) {
   const auto P = projectedCounterLoops(
-      1, true, 1, true, LowIRLoopSpace::Register, EqualityExit, 0, CachedExit,
-      ZeroInitialize, CachedExit, OrderedExit);
+      1, true, 1, true, LowIRLoopSpace::Register, EqualityExit, 0,
+      CachedExit || MutableBounds, ZeroInitialize, CachedExit, OrderedExit,
+      MutableBounds);
   const std::vector<va_t> Cuts = CachedExit ? std::vector<va_t>{0x200, 0x400}
                                             : std::vector<va_t>{0x300, 0x500};
   const auto Good =
@@ -2836,6 +2875,61 @@ TEST(LowIRLoopInference, ProjectedComparisonBitsKeepIndependentBudgets) {
 
 TEST(LowIRLoopInference, OrderedComparisonBitsKeepIndependentBudgets) {
   checkProjectedCounterBudgets(true, true, true, true);
+}
+
+TEST(LowIRLoopInference, MutablePrefixBoundsKeepReferencedLanes) {
+  for (uint16_t Bytes : {1, 3, 4})
+    for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
+                       LowIRLoopSpace::FunctionTemporary})
+      for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+        for (bool Cached : {false, true}) {
+          SCOPED_TRACE(Bytes);
+          SCOPED_TRACE(static_cast<unsigned>(Space));
+          SCOPED_TRACE(static_cast<unsigned>(Order));
+          SCOPED_TRACE(Cached);
+          auto P = projectedCounterLoops(Bytes, true, 1, true, Space, true, 0,
+                                         true, true, Cached, false, true);
+          P.Contract.ByteOrder = Order;
+          const std::vector<va_t> Cuts = Cached
+                                             ? std::vector<va_t>{0x200, 0x400}
+                                             : std::vector<va_t>{0x300, 0x500};
+          const auto R =
+              inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+          ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+          const auto Proof = loopCheck(P, P, *R.Plan);
+          ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+        }
+}
+
+TEST(LowIRLoopInference, MutablePrefixBoundsRejectNonterminatingUpdates) {
+  for (bool Ordered : {false, true})
+    checkComparisonNontermination(Ordered, true);
+}
+
+TEST(LowIRLoopInference, MutablePrefixBoundsProveTerminatingMovingOrder) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    auto P = projectedCounterLoops(1, true, 1, true,
+                                   LowIRLoopSpace::FunctionTemporary, true, 1,
+                                   true, true, true, true, true);
+    P.Contract.ByteOrder = Order;
+    const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract, {},
+                                                {0x200, 0x400});
+    ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+    // Counter and bound advance together. The unsigned order exit becomes
+    // true at the bound's wrap, within 255 steps for every initial byte.
+    const auto Proof = loopCheck(P, P, *R.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  }
+}
+
+TEST(LowIRLoopInference, MutablePrefixBoundsPreserveFullStateAndCache) {
+  for (bool Ordered : {false, true})
+    checkComparisonObservations(Ordered, true);
+}
+
+TEST(LowIRLoopInference, MutablePrefixBoundsKeepIndependentBudgets) {
+  for (bool Cached : {false, true})
+    checkProjectedCounterBudgets(true, true, Cached, false, true);
 }
 
 struct CachedComparisonOptions {
