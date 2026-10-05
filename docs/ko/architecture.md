@@ -1283,3 +1283,5 @@ CoreImage SDK의 강한 선언은 `imageWithCGImage:`와 `imageByApplyingTransfo
 `darwinMatrixSourceFrameEffects`는 링크된 Darwin ARM64 이미지의 정확한 강한 가져오기 `CGAffineTransformMakeRotation`과 `CGAffineTransformConcat`도 인증합니다. 현재 SDK 선언은 x8을 통해 포인터가 없는 48바이트 결과 전체를 쓰는 것을 증명합니다. Concat은 x0/x1을 통한 초기화된 48바이트 비공개 입력 두 개를 요구하며, 두 입력에 대한 쓰기를 보수적으로 허용하므로 호출 후 내용을 무효화합니다. 공통 프레임 분석은 경계, 저장된 레지스터와 후속 초기화를 검사합니다. CoreImage 게시에는 여전히 전체 본문의 독립적인 재구축이 필요합니다. 다른 레코드 생성 함수나 스택 block 호출에는 이 계약의 효과를 부여하지 않습니다.
 
 동일한 프레임 효과 소유 계층은 정확한 강한 `CGRectApplyAffineTransform` 브리지를 별도로 처리합니다. 초기화된 48바이트 변환은 논리 매개변수 1로 x0에 전달되며 사각형과 결과는 d0–d3을 사용합니다. 허용된 입력 쓰기는 복사를 무효화하므로 후속 소비 전에 완전히 다시 초기화해야 합니다. 간접 결과 쓰기 권한은 부여하지 않습니다. Objective-C 복사 발견과 네이티브 프레임 검증 모두 HFA 및 간접 결과에 이 소유 계층을 사용합니다.
+
+`AuthenticatedSourceFrameLoads`는 `swiftMetadataAccessorSourceCallHint`를 통해 메타데이터 접근자 호출을 통과할 수 있다. 두 선언 경로는 기존 컴파일러 증거 표, 정확한 강한 링크 provider, 완전한 Swift 요청 및 메타데이터 응답 ABI를 재사용한다. 두 레지스터 응답과 일반적인 휘발성 레지스터 변경 규칙을 유지하며, 비공개 spill에는 공유 도달 바이트 증명을 계속 요구한다. 값 레이아웃, witness 메모리 효과, 프레임 차용 또는 동적 스택 할당 모델을 제공하지 않는다.

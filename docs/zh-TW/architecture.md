@@ -1234,3 +1234,5 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 `darwinMatrixSourceFrameEffects` 也驗證已連結 Darwin ARM64 中精確的強匯入 `CGAffineTransformMakeRotation` 和 `CGAffineTransformConcat`。目前 SDK 宣告證明它們經 x8 寫入完整、不含指標的 48 位元組結果。Concat 要求經 x0/x1 傳入兩個已初始化的 48 位元組私有輸入，保守地允許改寫兩者，並在呼叫後使其內容失效。共用堆疊框架分析檢查所有範圍、儲存暫存器及後續初始化；CoreImage 發布仍須獨立重建完整函式本體。其他記錄產生函式及堆疊 block 呼叫不會繼承此契約的效果。
 
 同一堆疊效果證明層單獨驗證精確的強 `CGRectApplyAffineTransform` 橋接：48 位元組已初始化變換是經 x0 傳遞的邏輯參數 1，矩形及結果則佔用 d0–d3。允許的輸入改寫會使副本失效，後續使用者必須先取得新的完整初始化；此呼叫不取得間接結果寫入權限。Objective-C 副本發現與原生堆疊驗證對四浮點 HFA 回傳及間接回傳都查詢同一證明層。
+
+`AuthenticatedSourceFrameLoads` 可透過 `swiftMetadataAccessorSourceCallHint` 跨越中繼資料存取器呼叫。兩條宣告路徑重用既有的編譯器證據表、準確的強連結 provider，以及完整的 Swift 請求與中繼資料回應 ABI。雙暫存器回應與一般的易失暫存器破壞規則保持完整；私有 spill 仍須通過共用的到達位元組證明。這不提供值配置、見證記憶體效應、堆疊借用或動態堆疊配置模型。

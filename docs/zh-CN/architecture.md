@@ -1296,3 +1296,5 @@ CoreImage 的强 SDK 声明保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 `darwinMatrixSourceFrameEffects` 还认证已链接 Darwin ARM64 中精确的强导入 `CGAffineTransformMakeRotation` 和 `CGAffineTransformConcat`。当前 SDK 声明证明它们经 x8 写入完整、不含指针的 48 字节结果。Concat 要求经 x0/x1 传入两个已初始化的 48 字节私有输入，保守地允许改写二者，并在调用后使其内容失效。共享栈帧分析检查所有范围、保存寄存器和后续初始化；CoreImage 发布仍须独立重建完整函数体。其他记录生产函数及栈 block 调用不会继承此契约的效果。
 
 同一栈效果证明层单独认证精确的强 `CGRectApplyAffineTransform` 桥接：48 字节已初始化变换是经 x0 传递的逻辑参数 1，矩形及结果则占用 d0–d3。允许的输入改写会使副本失效，后续消费者必须先获得新的完整初始化；此调用不获得间接结果写入权限。Objective-C 副本发现和原生栈验证对四浮点 HFA 返回及间接返回都查询同一证明层。
+
+`AuthenticatedSourceFrameLoads` 可通过 `swiftMetadataAccessorSourceCallHint` 跨越元数据访问器调用。两条声明路径复用已有的编译器证据表、准确的强链接 provider，以及完整的 Swift 请求和元数据响应 ABI。双寄存器响应与通常的易失寄存器破坏规则保持完整；私有 spill 仍须通过共享的到达字节证明。这不提供值布局、见证内存效应、栈借用或动态栈分配模型。

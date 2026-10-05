@@ -1306,3 +1306,5 @@ CoreImage SDK の強い宣言は、`imageWithCGImage:` と `imageByApplyingTrans
 `darwinMatrixSourceFrameEffects` は、リンク済み Darwin ARM64 イメージの正確な強いインポート `CGAffineTransformMakeRotation` と `CGAffineTransformConcat` も認証します。現在の SDK 宣言により、x8 経由でポインタを含まない 48 バイトの結果全体を書き込むことを証明します。Concat は x0/x1 経由の初期化済み 48 バイト私有入力を二つ必要とし、両方への書き込みを保守的に許容するため、呼び出し後は内容を無効化します。共通フレーム解析は境界、保存レジスタ、その後の初期化を検証します。CoreImage の公開には引き続き本体全体の独立した再構築が必要です。他のレコード生成関数やスタック上の block 呼び出しには、この契約の効果を適用しません。
 
 同じフレーム効果の所有層が、正確な強い `CGRectApplyAffineTransform` ブリッジを別途検証します。初期化済み 48 バイトの変換は論理パラメータ 1 として x0 に入り、矩形と結果は d0–d3 を使います。許容される入力書き込みでコピーを無効化するため、後続の使用には再初期化が必要です。間接結果への書き込みは認めません。Objective-C コピー検出とネイティブフレーム検証は、HFA と間接結果の双方でこの所有層を参照します。
+
+`AuthenticatedSourceFrameLoads` は `swiftMetadataAccessorSourceCallHint` を通じてメタデータアクセサの呼び出しを越えられる。両方の宣言経路は既存のコンパイラ証拠表、正確な強リンクの provider、完全な Swift 要求・メタデータ応答 ABI を再利用する。2 レジスタの応答と通常の揮発レジスタ破壊規則を維持し、私有 spill には共有の到達バイト証明を引き続き要求する。値レイアウト、witness のメモリ効果、フレーム借用、動的スタック割り当てのモデルは与えない。

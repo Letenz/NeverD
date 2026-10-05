@@ -28,6 +28,23 @@ inline void frameWitnessFixture(immutable_native_call_test::Fixture &F) {
     throw std::runtime_error(Error);
   F.run();
 }
+
+inline void
+metadataFrameWitnessFixture(immutable_native_call_test::Fixture &F) {
+  frameWitnessFixture(F);
+  // Request complete Foundation.URL metadata after spilling the caller's
+  // unrelated VWT. The response is unused; this tests the call barrier and
+  // makes no assumption about either value's layout or witness effects.
+  F.word(10, 0xd2800000); // mov x0, #0
+  F.Image.ImportPtrSlots[0x2000] = "_$s10Foundation3URLVMa";
+  F.Image.DyldBindSlots[0x2000] = {
+      "_$s10Foundation3URLVMa", 0,
+      "/System/Library/Frameworks/Foundation.framework/Foundation", false};
+  std::string Error;
+  if (!assignDarwinScalarSourceABI(F.EntrySignature, Arch::AArch64, Error))
+    throw std::runtime_error(Error);
+  F.run();
+}
 } // namespace swift_witness_frame_test
 
 #endif
