@@ -433,7 +433,25 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #undef NEVERD_RESOURCE_FLAGS_CASE
 #undef NEVERD_RESOURCE_FLAGS_VALUE
 
+#define NEVERD_RESOURCE_STATUS_CASE(Name, InputFlags, InputAX, ExpectedFlags,  \
+                                    ExpectedAX, Assembly)                      \
+  static BOOLEAN CheckStatus##Name(VOID) {                                     \
+    ULONG64 Before, Observed, AX = InputAX;                                    \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), "+a"(AX)                \
+                     : "r"((ULONG64)InputFlags)                                \
+                     : "memory", "cc");                                        \
+    return Observed == ExpectedFlags && AX == ExpectedAX;                      \
+  }
+#include "driver_resource_flags.def"
+#undef NEVERD_RESOURCE_STATUS_CASE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_STATUS_CASE(Name, ...)                                 \
+  if (!CheckStatus##Name())                                                    \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_flags.def"
+#undef NEVERD_RESOURCE_STATUS_CASE
 #define NEVERD_RESOURCE_FLAGS_CASE(Name, Assembly)                             \
   if (!CheckFlags##Name())                                                     \
     return STATUS_UNSUCCESSFUL;

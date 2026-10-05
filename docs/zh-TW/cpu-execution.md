@@ -84,6 +84,8 @@ KVM/WHP 透過私有 `FXSAVE64` 執行探測 `MXCSR_MASK`，並以帶正負號�
 
 `POPFQ`（`9D`）與 16 位元 `POPF`（`66 9D`）由共用 x64 ISA 層還原旗標，適用於 KVM、WHP、checked Unicorn 及 `driver-strict`。在設定固定 IOPL 為零的條件下，CPL0 可修改 IF；CPL3 保持 IF 和 IOPL。保留位元及 VM/VIF/VIP 被忽略，RF 清零。有效修改客體 TF、NT、AC、ID 或 CPL0 IOPL 仍不支援，會在發布狀態前明確失敗。完整堆疊讀取先於 FLAGS/RSP/RIP 的原子更新；運算元使用完整 RSP，有效前綴順序決定寬度。堆疊可以唯讀或與可執行記憶體互為別名。共用層完成指令，避免清除傳輸層的內部 TF。`X64PopFlagsTests.cpp` 包含獨立的原生 CPL3 指令對照，檢查每個輸入位元、錯誤、觀察器及後續原生執行。
 
+checked x64 接納 `CLC/STC/CMC` 和 `LAHF/SAHF`。進位指令由傳輸層執行；AH 轉換由 KVM、WHP 和 checked Unicorn 共用一處 ISA 實作，包括原生 `driver-strict`。LAHF 將五個狀態旗標及固定位元寫入 AH；SAHF 只修改 CF/PF/AF/ZF/SF。OF/IF/DF 及未選取的暫存器保持不變。被忽略的前綴，包括所有 REX 值，仍使用隱含 AH。`X64StatusFlagsTests.cpp` 檢查主機原始指令、完整狀態、取消及繼續執行。本修正適用於 checked 設定；可攜式 legacy Unicorn 仍沿用其上游指令行為。
+
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。

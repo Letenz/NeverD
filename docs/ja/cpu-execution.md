@@ -84,6 +84,8 @@ KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付�
 
 `POPFQ`（`9D`）と16ビット `POPF`（`66 9D`）は共有 x64 ISA 層でフラグを復元し、KVM、WHP、checked Unicorn、`driver-strict` に適用されます。プロファイルの IOPL はゼロに固定され、CPL0 は IF を変更でき、CPL3 は IF と IOPL を保持します。予約ビットと VM/VIF/VIP は無視され、RF はクリアされます。ゲスト TF、NT、AC、ID、または CPL0 IOPL の有効な変更は未対応で、状態公開前に明示的に失敗します。スタック全体の読み取り後に FLAGS/RSP/RIP を原子的に更新し、完全な RSP と有効なプレフィックス順序からオペランドを決めます。スタックは読み取り専用でも実行メモリの別名でも構いません。共有層で完了するため転送層の内部 TF を消去しません。`X64PopFlagsTests.cpp` は独立したネイティブ CPL3 命令との比較、全入力ビット、障害、オブザーバー、後続のネイティブ実行を検査します。
 
+checked x64 は `CLC/STC/CMC` と `LAHF/SAHF` を受け入れます。キャリー命令は転送層で実行し、AH 転送は KVM、WHP、checked Unicorn、ネイティブ `driver-strict` で共通の ISA 処理を使います。LAHF は5つの状態フラグと固定ビットを AH に書き、SAHF は CF/PF/AF/ZF/SF のみ変更します。OF/IF/DF と他のレジスタは保持します。全 REX 値を含む無視されるプレフィックスでも暗黙の AH を使います。`X64StatusFlagsTests.cpp` は元のホスト命令、全状態、キャンセル、継続を検証します。修正は checked プロファイルが対象で、移植可能な legacy Unicorn は上流の命令動作を維持します。
+
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
 `X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。

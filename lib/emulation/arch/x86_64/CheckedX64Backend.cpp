@@ -405,6 +405,29 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       (X.op_count != 1 || (X.operands[0].size != x64::DWordBytes &&
                            X.operands[0].size != x64::WordBytes)))
     return llvm::make_error<UnsupportedExecutionError>();
+  if (I.id == X86_INS_LAHF || I.id == X86_INS_SAHF) {
+    if (X.op_count)
+      return llvm::make_error<UnsupportedExecutionError>();
+    // AH remains the implicit operand even with REX. Complete this small
+    // register transfer in the ISA owner so a software transport cannot
+    // reinterpret it as an explicit byte register and select SPL instead.
+    auto Next = CPU;
+    const uint64_t AX = CPU.reg(X64Register::AX);
+    const uint64_t Flags = CPU.reg(X64Register::FLAGS);
+    if (I.id == X86_INS_LAHF)
+      Next.reg(X64Register::AX) =
+          (AX & ~x64::AccumulatorHighByteMask) |
+          (((Flags & x64::StatusByteFlags) | x64::ReservedFlag)
+           << x64::AccumulatorHighByteShift);
+    else
+      Next.reg(X64Register::FLAGS) =
+          (Flags & ~x64::StatusByteFlags) |
+          ((AX >> x64::AccumulatorHighByteShift) & x64::StatusByteFlags);
+    Next.reg(X64Register::PC) += I.size;
+    if (!StopRequested && !FirstFault)
+      CPU = Next;
+    return llvm::Error::success();
+  }
   struct Access {
     uint64_t Address;
     unsigned Size, Permission;
