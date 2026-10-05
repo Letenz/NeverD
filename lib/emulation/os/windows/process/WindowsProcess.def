@@ -125,6 +125,9 @@ NEVERD_WINDOWS_PROCESS_TEXT(
     Access, "Windows API argument is not accessible user memory")
 NEVERD_WINDOWS_PROCESS_TEXT(Return, "invalid Windows call return frame")
 NEVERD_WINDOWS_PROCESS_TEXT(CPUExit, "unexpected user CPU exit")
+NEVERD_WINDOWS_PROCESS_TEXT(
+    Contract, "the Windows process profile cannot honor this execution "
+              "contract for the image's instruction set")
 NEVERD_WINDOWS_PROCESS_TEXT(Output, "Windows process output limit exceeded")
 NEVERD_WINDOWS_PROCESS_TEXT(Kernel32, "kernel32.dll")
 NEVERD_WINDOWS_PROCESS_TEXT(KernelBase, "kernelbase.dll")

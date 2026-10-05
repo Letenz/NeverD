@@ -66,8 +66,9 @@ public:
 
 protected:
   CheckedBackend(unsigned MaxInstructionBytes, unsigned InstructionAlignment,
-                 bool UserMode)
-      : UserMode(UserMode), InstructionBytes(MaxInstructionBytes),
+                 bool UserMode, bool Direct = false)
+      : UserMode(UserMode), Direct(Direct),
+        InstructionBytes(MaxInstructionBytes),
         InstructionAlignment(InstructionAlignment) {}
   llvm::Error initializeDecoder(cs_arch, cs_mode);
   virtual bool canonicalRange(uint64_t, uint64_t) const = 0;
@@ -76,6 +77,10 @@ protected:
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;
   virtual void onGuestException() {}
+  /// A direct contract admits nothing. The transport runs guest code until
+  /// the processor raises an event, which this call publishes as a pending
+  /// service request or a fault before it returns.
+  virtual llvm::Error executeDirect();
   virtual std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const = 0;
   /// Context capture may occur in an instruction observer, but no mutation or
@@ -89,6 +94,7 @@ protected:
     return P | (UserMode ? UserAccessible : 0);
   }
   const bool UserMode;
+  const bool Direct;
   std::unique_ptr<MemoryProjection> Memory;
   BackendHooks Hooks;
   csh Decoder = 0;

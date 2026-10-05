@@ -293,6 +293,42 @@ TEST_P(WindowsProcess, GuardPagesRequireExplicitExceptionSupport) {
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
   EXPECT_FALSE(R.ExitStatus);
 }
+// The direct user contract runs the same program on the hardware transport
+// between architectural events instead of single-stepping it. Its observable
+// result must equal the checked contract's, and nothing is single-stepped. A
+// transport without a free-running entry reports the contract unsupported
+// rather than running it under a different, wrong meaning.
+TEST_P(WindowsProcess, DirectUserContractMatchesCheckedOrIsUnsupported) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << "the direct user contract is x64 only";
+  const auto Checked = run();
+  ASSERT_EQ(Checked.Stop, ProcessStopReason::Exited) << Checked.Diagnostic;
+
+  Options.Contract = ExecutionContract::DirectUserX64;
+  auto Direct = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+  ASSERT_TRUE(bool(Direct)) << llvm::toString(Direct.takeError());
+  const bool Native = GetParam().Backend == ExecutionBackendKind::KVM ||
+                      GetParam().Backend == ExecutionBackendKind::WHP;
+  if (!Native) {
+    EXPECT_EQ(Direct->Stop, ProcessStopReason::CPUFailure)
+        << Direct->Diagnostic;
+    EXPECT_FALSE(Direct->ExitStatus);
+    return;
+  }
+  EXPECT_EQ(Direct->Stop, ProcessStopReason::Exited) << Direct->Diagnostic;
+  EXPECT_EQ(Direct->ExitStatus, Checked.ExitStatus);
+  EXPECT_EQ(Direct->StandardOutput, Checked.StandardOutput);
+  EXPECT_EQ(Direct->StandardError, Checked.StandardError);
+  // A direct run admits nothing and single-steps nothing.
+  EXPECT_EQ(Direct->Instructions, 0u);
+  // The service boundary is identical: the same Windows calls are observed in
+  // the same order, so the OS model sits above the contract, not inside it.
+  ASSERT_EQ(Direct->NativeCalls.size(), Checked.NativeCalls.size());
+  for (size_t I = 0; I < Direct->NativeCalls.size(); ++I) {
+    EXPECT_EQ(Direct->NativeCalls[I].Module, Checked.NativeCalls[I].Module);
+    EXPECT_EQ(Direct->NativeCalls[I].Name, Checked.NativeCalls[I].Name);
+  }
+}
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, WindowsProcess,
                          testing::ValuesIn(Profiles),
                          [](const auto &Info) { return Info.param.Name; });

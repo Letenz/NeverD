@@ -128,6 +128,16 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
       Options.Backend = *Backend;
       continue;
     }
+    if (Name == field::Contract) {
+      auto Text = V.getAsString();
+      if (!Text)
+        return invalid(field::FieldType, Name);
+      auto Contract = parseExecutionContract(*Text);
+      if (!Contract)
+        return Contract.takeError();
+      Options.Contract = *Contract;
+      continue;
+    }
 #define NEVERD_PROCESS_OPTION_NUMBER(ID, Text, Member)                         \
   if (Name == field::ID) {                                                     \
     auto Number = V.getAsUINT64();                                             \
