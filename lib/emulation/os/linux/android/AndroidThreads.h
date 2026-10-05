@@ -47,11 +47,13 @@ public:
   bool onceActive(uint64_t Control) const;
   BionicResult waitOnce(uint64_t Control);
   void completeOnce(uint64_t Control);
+  void waitMutex(uint64_t Address, uint16_t Attributes);
+  void wakeMutex(uint64_t Address);
   void suspend(const ServiceRequest &Request, size_t Event);
   llvm::Error finish(uint64_t Value, uint32_t ExitStatus = 0);
   /// Round robin, including the current thread if it is the only runnable
   /// owner. False classifies all-finished or a wait cycle in Result.
-  llvm::Expected<bool> schedule();
+  llvm::Expected<bool> schedule(Bionic &LibC);
   void report();
 
 private:
@@ -64,8 +66,13 @@ private:
     uint64_t Control;
     bool Ready = false;
   };
+  struct Mutex {
+    uint64_t Address;
+    uint16_t Attributes;
+    bool Ready = false;
+  };
   struct Wait {
-    std::variant<Join, Once> Operation;
+    std::variant<Join, Once, Mutex> Operation;
     std::optional<ServiceRequest> Request;
     size_t Event = 0;
   };
@@ -94,7 +101,11 @@ private:
   llvm::Error retire(size_t Index);
   std::optional<size_t> onceOwner(uint64_t Control) const;
   bool ready(const Wait &Pending) const;
-  llvm::Error completeWait(Thread &Waiter);
+  std::optional<size_t> nextRunnable() const;
+  llvm::Error switchTo(size_t Next);
+  llvm::Error prepareJoin(const Join &Pending);
+  BionicResult resumeWait(Bionic &LibC);
+  llvm::Error completeWait(uint64_t Value);
   BionicResult create(const NativeCallEvent &Call);
   BionicResult unsupported(llvm::StringRef Reason);
 };

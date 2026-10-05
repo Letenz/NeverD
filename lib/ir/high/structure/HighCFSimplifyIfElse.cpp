@@ -2636,12 +2636,13 @@ static bool destHasRealUse(const std::vector<HighStmt> &Body, size_t Skip,
   return true;
 }
 
-static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
+static bool dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
                                       const ExprPtr &Pred, const MedFunc *Med) {
   // This local cleanup recognizes Win64 predicate copies. Other ABIs need a
   // function-wide reaching-use proof before a nested assignment can be dropped.
   if (Med && Med->CC != CallingConv::Win64)
-    return;
+    return false;
+  bool Changed = false;
   std::optional<bool> ExternalExit;
   size_t I = End;
   while (I > 0) {
@@ -2652,6 +2653,7 @@ static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
                         Body[I].CallExpr->CallTarget) &&
         !isFunctionJumpTarget(Body[I].Addr, Body)) {
       Body.erase(Body.begin() + static_cast<long>(I));
+      Changed = true;
       if (End > I)
         --End;
       continue;
@@ -2678,10 +2680,12 @@ static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
           Anchor.Kind = StmtKind::Block;
           Anchor.Addr = Body[I].Addr;
           Body[I] = std::move(Anchor);
+          Changed = true;
           continue;
         }
         if (!Entered) {
           Body.erase(Body.begin() + static_cast<long>(I));
+          Changed = true;
           if (End > I)
             --End;
           continue;
@@ -2694,6 +2698,7 @@ static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
       continue;
     break;
   }
+  return Changed;
 }
 
 static std::optional<ExprPtr>
@@ -3901,7 +3906,8 @@ bool sinkJoinDefaultsLate(HighFunc &Func) {
 //===----------------------------------------------------------------------===//
 
 static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
-                                const MedFunc *Med);
+                                const MedFunc *Med,
+                                bool ChildrenStructured = false);
 
 static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
                                    const std::set<va_t> &Targets) {
@@ -4458,7 +4464,7 @@ static void structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
     for (auto &Clause : S.EHClauseBodies)
       structureIfElseNested(Clause, MaxPasses, Med);
   }
-  structureIfElseList(Stmts, MaxPasses, Med);
+  structureIfElseList(Stmts, MaxPasses, Med, true);
 }
 
 void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
@@ -4481,12 +4487,13 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
 }
 
 static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
-                                const MedFunc *Med) {
+                                const MedFunc *Med, bool ChildrenStructured) {
   const char *Detail = std::getenv("NEVERD_HIGHIR_DETAIL");
   const bool WantDetail = Detail && Detail[0] == '1' && Detail[1] == '\0';
   auto T0 = std::chrono::steady_clock::now();
   AddrMap AM;
   bool Changed = true;
+  bool NestedChanged = false;
   int Pass = 0;
   // The default-assignment sink models Win64 register joins. Keep other
   // calling conventions explicit until their incoming paths are proven.
@@ -4926,7 +4933,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             } else {
               Inner.Cond = std::move(*Rest);
               Stmt.Body[InnerI] = std::move(Inner);
-              dropUnusedTrailingAssigns(Stmt.Body, InnerI, PredForDce, Med);
+              NestedChanged |=
+                  dropUnusedTrailingAssigns(Stmt.Body, InnerI, PredForDce, Med);
             }
             Changed = true;
           } else if (!SideEffectPrefix && (InnerI == 0 || FoldPrefix) &&
@@ -4951,7 +4959,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             if (DidCompose)
               Inner.Cond = OriginalInnerCond;
             Stmt.Body[InnerI] = std::move(Inner);
-            dropUnusedTrailingAssigns(Stmt.Body, InnerI, PredForDce, Med);
+            NestedChanged |=
+                dropUnusedTrailingAssigns(Stmt.Body, InnerI, PredForDce, Med);
           }
         } else {
           ExprPtr PredForDce =
@@ -4960,7 +4969,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             auto Rest =
                 peelInnerAgainstOuter(Stmt, static_cast<size_t>(I), Body, J);
             if (!Rest) {
-              dropUnusedTrailingAssigns(Stmt.Body, J, PredForDce, Med);
+              NestedChanged |=
+                  dropUnusedTrailingAssigns(Stmt.Body, J, PredForDce, Med);
               ++J;
               continue;
             }
@@ -4979,12 +4989,14 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                   break;
                 }
               }
-              dropUnusedTrailingAssigns(Stmt.Body, DropAt, PredForDce, Med);
+              NestedChanged |=
+                  dropUnusedTrailingAssigns(Stmt.Body, DropAt, PredForDce, Med);
             } else if (isConstTrue(*Rest)) {
               ++J;
             } else {
               Stmt.Body[J].Cond = std::move(*Rest);
-              dropUnusedTrailingAssigns(Stmt.Body, J, PredForDce, Med);
+              NestedChanged |=
+                  dropUnusedTrailingAssigns(Stmt.Body, J, PredForDce, Med);
               ++J;
             }
             Changed = true;
@@ -4992,7 +5004,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
           for (size_t J = 0; J < Stmt.Body.size(); ++J) {
             if (Stmt.Body[J].Kind == StmtKind::If ||
                 Stmt.Body[J].Kind == StmtKind::IfElse)
-              dropUnusedTrailingAssigns(Stmt.Body, J, PredForDce, Med);
+              NestedChanged |=
+                  dropUnusedTrailingAssigns(Stmt.Body, J, PredForDce, Med);
           }
         }
       }
@@ -5520,13 +5533,14 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
 
       Changed = true;
     }
+    NestedChanged |= Changed;
   }
   {
     std::set<va_t> Targets = gotoTargets(Body);
     if (IfElseFunctionTargets)
       Targets.insert(IfElseFunctionTargets->begin(),
                      IfElseFunctionTargets->end());
-    dropDuplicateSkipGotos(Body, Targets);
+    NestedChanged |= dropDuplicateSkipGotos(Body, Targets);
   }
   for (size_t I = 0; I < Body.size(); ++I) {
     HighStmt &S = Body[I];
@@ -5535,17 +5549,21 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
     ExprPtr Pred = outerCondFromSiblings(Body, I, S.Cond);
     for (size_t J = 0; J < S.Body.size(); ++J)
       if (S.Body[J].Kind == StmtKind::If || S.Body[J].Kind == StmtKind::IfElse)
-        dropUnusedTrailingAssigns(S.Body, J, Pred, Med);
+        NestedChanged |= dropUnusedTrailingAssigns(S.Body, J, Pred, Med);
   }
-  for (HighStmt &S : Body) {
-    structureIfElseNested(S.Body, limits::kIfElseNestedArmPasses, Med);
-    structureIfElseNested(S.ElseBody, limits::kIfElseNestedArmPasses, Med);
-    for (auto &C : S.Cases)
-      structureIfElseNested(C.Body, limits::kIfElseNestedArmPasses, Med);
-    structureIfElseNested(S.DefaultBody, limits::kIfElseNestedArmPasses, Med);
-    for (auto &Clause : S.EHClauseBodies)
-      structureIfElseNested(Clause, limits::kIfElseNestedArmPasses, Med);
-  }
+  // The normal bottom-up traversal already checked every child. Visiting them
+  // again after a stable list doubles work at each nesting level. Only newly
+  // assembled arms or a list rewrite need another descendant pass.
+  if (!ChildrenStructured || NestedChanged)
+    for (HighStmt &S : Body) {
+      structureIfElseNested(S.Body, limits::kIfElseNestedArmPasses, Med);
+      structureIfElseNested(S.ElseBody, limits::kIfElseNestedArmPasses, Med);
+      for (auto &C : S.Cases)
+        structureIfElseNested(C.Body, limits::kIfElseNestedArmPasses, Med);
+      structureIfElseNested(S.DefaultBody, limits::kIfElseNestedArmPasses, Med);
+      for (auto &Clause : S.EHClauseBodies)
+        structureIfElseNested(Clause, limits::kIfElseNestedArmPasses, Med);
+    }
   if (WantDetail) {
     auto Ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                   std::chrono::steady_clock::now() - T0)

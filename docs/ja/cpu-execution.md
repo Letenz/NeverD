@@ -76,9 +76,13 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付き非正規化数の演算で DAZ 能力を検証します。checked Unicorn はソフトウェアのマスクを提供します。`supportedControlBits` は CPU 固有の不変マスクを返し、FX/XSAVE、スナップショット、Windows CONTEXT が同じ能力を使用します。checked `LDMXCSR/STMXCSR` は m32 全体の RAM 権限を確認し、障害や観測コールバックの中止時には状態を保持します。予約ビットのロードは #GP、移植可能な実行では非マスク SIMD 例外を拒否します。`X64MXCSRTests.cpp` は制御と再試行を検証し、`X64DAZData` は許可された全 28 種の SSE 演算を実機の元命令と比較し、DAZ、丸め、FTZ を確認します。HVF の DAZ 対応は拡張しません。
 
+ネイティブ x64 の起動検証は、転送層のコールドスタート準備と全プローブ手順に単一の `5 s` 予算を使用します。ゲスト実行予算は独立です。初期化の中断時には命令段階、`stop_requested`、`deadline_reached` を報告し、中断型と転送層の診断を保持します。再試行や検証未完了の CPU の受け入れは行いません。
+
 `PAUSE`（`F3 90`）は、ネイティブの `driver-strict` を含む KVM/WHP と checked Unicorn で、共通の x64 マシン境界を通して実行されます。`X64PauseTests.cpp` は全状態の保持、実行前の停止、コンテキストの復元、不正な `LOCK` の拒否、スピンループの期限切れと再開を検証します。このプロセッサヒントはゲストスレッドをスケジュールせず、特定の遅延も保証しません。
 
-`PUSHFQ`（`9C`）と16ビットの `PUSHF`（`66 9C`）は、`driver-strict` を含むネイティブ KVM/WHP と checked Unicorn で実行されます。共有 ISA 層は RAM トランザクションの確定前に、スタックに保存された内部の単一ステップ用 TF を除去します。暗黙のスタックアドレスには RSP 全体を使用し、プレフィックスの順序がオペランド幅を決めます。全範囲の権限検査、オブザーバーによる停止、障害後の再試行は原子性を保持します。`POPF/POPFQ` は未対応です。`X64PushFlagsTests.cpp` は許可された全256通りのフラグ、9種類のエンコード、ページ境界をまたぐエイリアス、ユーザー権限、中断、コンテキスト復元を検査します。
+`PUSHFQ`（`9C`）と16ビットの `PUSHF`（`66 9C`）は、`driver-strict` を含むネイティブ KVM/WHP と checked Unicorn で実行されます。共有 ISA 層は RAM トランザクションの確定前に、スタックに保存された内部の単一ステップ用 TF を除去します。暗黙のスタックアドレスには RSP 全体を使用し、プレフィックスの順序がオペランド幅を決めます。全範囲の権限検査、オブザーバーによる停止、障害後の再試行は原子性を保持します。`X64PushFlagsTests.cpp` は許可された全256通りのフラグ、9種類のエンコード、ページ境界をまたぐエイリアス、ユーザー権限、中断、コンテキスト復元を検査します。
+
+`POPFQ`（`9D`）と16ビット `POPF`（`66 9D`）は共有 x64 ISA 層でフラグを復元し、KVM、WHP、checked Unicorn、`driver-strict` に適用されます。プロファイルの IOPL はゼロに固定され、CPL0 は IF を変更でき、CPL3 は IF と IOPL を保持します。予約ビットと VM/VIF/VIP は無視され、RF はクリアされます。ゲスト TF、NT、AC、ID、または CPL0 IOPL の有効な変更は未対応で、状態公開前に明示的に失敗します。スタック全体の読み取り後に FLAGS/RSP/RIP を原子的に更新し、完全な RSP と有効なプレフィックス順序からオペランドを決めます。スタックは読み取り専用でも実行メモリの別名でも構いません。共有層で完了するため転送層の内部 TF を消去しません。`X64PopFlagsTests.cpp` は独立したネイティブ CPL3 命令との比較、全入力ビット、障害、オブザーバー、後続のネイティブ実行を検査します。
 
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 

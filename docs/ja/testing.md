@@ -1167,7 +1167,11 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 921 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 1162 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `921 CPU + 224 WHP + 17 SEH = 1162`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 959 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 1200 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `959 CPU + 224 WHP + 17 SEH = 1200`.
+
+`InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
+
+`X64PopFlagsTests.cpp` は両権限と `driver-strict` で、256通りの許可フラグと2種類の初期状態、9種類のエンコード、全64入力ビット、読み取り専用・実行可能別名、ページ境界の障害と修復、オブザーバーの中断・失敗、デバイススタックの拒否、後続のネイティブ命令境界を検査します。`X64PopFlagsOracle` は x64 ホストで原命令を独立実行し、CPL3/IOPL0 と正確なスタック消費を確認します。`driver_resource_flags.def` により元の WDK リソースドライバーが両オペランド幅でフラグの設定・クリア・復元を行います。整数・制御・x87・SSE の完全な状態を保持しますが、ゲスト TF/NT/AC/ID や ARM64 ネイティブ実行の証明ではありません。
 
 `DriverSIMDSEHTests.cpp` は八種類の元の SSE 障害を四種類の対応済み処置と x87 変更の拒否、二つのネイティブ契約、通常/CFG WDK イメージ、二つのロード先で実行します。バックエンドごとの十結果と、カーネル SSE レコードの純粋な三検査が必須です。`driver_seh_simd.def` がケースとモードを定義し、非同期アンワインド表が障害ヘルパーを記述します。Microsoft カーネル 10.0.26100.9549 の命令経路を分離実行して、107,744 件の分類と 8,192 件の復元を独立に確認しました。これは完全な Windows カーネルでのドライバー実行ではなく、ARM64 ネイティブ KVM/WHP も未検証です。
 
@@ -1315,3 +1319,7 @@ build-release/bin/NeverDByteMemoryForwardingTests
 cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
 build-release/bin/NeverDByteCellScalarizationTests
 ```
+
+`AndroidMutexTests.cpp` は独立した O0/O2、通常/APS2/RELR フィクスチャで三種類の mutex、複数待機者、起床後の再競合、再帰の最終解放、errno、イベントの同一性、無効メモリ、デッドロック、累積命令上限を検査します。Unicorn と利用可能な KVM/WHP/HVF で実行し、利用不能なバックエンドは明示的にスキップします。Android 実機や並列 SMP の同値性は示しません。
+
+`HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` は独立したインタープリターで、48 段のブロック、ループ、switch、例外本体に入る経路と迂回する経路を検査します。余裕のある実行時間上限で重複再帰走査を検出します。対象は構造化 HighIR であり、イメージ全体のメソッド復元には別途完全な一覧と依存関係の検証が必要です。

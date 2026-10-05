@@ -414,7 +414,31 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #include "driver_resource_strings.def"
 #undef NEVERD_RESOURCE_COMPARE_CASE
 
+#define NEVERD_RESOURCE_FLAGS_VALUE(Name, Value) enum { Name = Value };
+#define NEVERD_RESOURCE_FLAGS_CASE(Name, Assembly)                             \
+  static BOOLEAN CheckFlags##Name(VOID) {                                      \
+    const ULONG64 Inputs[] = {ClearFlags, SetFlags};                           \
+    for (unsigned Index = 0; Index < RTL_NUMBER_OF(Inputs); ++Index) {         \
+      ULONG64 Before, Observed;                                                \
+      __asm__ volatile(Assembly                                                \
+                       : "=&r"(Before), "=&r"(Observed)                        \
+                       : "r"(Inputs[Index])                                    \
+                       : "memory", "cc");                                      \
+      if (Observed != Inputs[Index])                                           \
+        return FALSE;                                                          \
+    }                                                                          \
+    return TRUE;                                                               \
+  }
+#include "driver_resource_flags.def"
+#undef NEVERD_RESOURCE_FLAGS_CASE
+#undef NEVERD_RESOURCE_FLAGS_VALUE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_FLAGS_CASE(Name, Assembly)                             \
+  if (!CheckFlags##Name())                                                     \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_flags.def"
+#undef NEVERD_RESOURCE_FLAGS_CASE
 #define NEVERD_RESOURCE_COMPARE_CASE(Name, ...)                                \
   if (!CheckComparison##Name())                                                \
     return STATUS_UNSUCCESSFUL;

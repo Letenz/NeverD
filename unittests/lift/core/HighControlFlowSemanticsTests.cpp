@@ -17,6 +17,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <chrono>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -1614,6 +1615,45 @@ TEST(HighControlFlowSemantics, SharedNestedTailKeepsPhiEdgesWithoutGrowth) {
     EXPECT_EQ(execute(F, 0), 28u);
     EXPECT_EQ(execute(F, 1), 24u);
     EXPECT_LE(statementCount(F), Before);
+  }
+}
+
+TEST(HighControlFlowSemantics, DeepStableContainersPreserveEveryReturnPath) {
+  // Stable trees must not require an exponential number of child traversals.
+  // The independent interpreter checks both entered and bypassed paths; the
+  // generous time limit distinguishes duplicate recursion from runner noise.
+  for (auto Kind :
+       {StmtKind::Block, StmtKind::While, StmtKind::Switch, StmtKind::SEHTry}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    HighStmt Leaf = result(0x2000, local(0));
+    for (unsigned Depth = 0; Depth < 48; ++Depth) {
+      HighStmt Parent;
+      Parent.Kind = Kind;
+      Parent.Addr = 0x1000 + 4 * Depth;
+      if (Kind == StmtKind::While)
+        Parent.Cond = local(0);
+      if (Kind == StmtKind::Switch) {
+        Parent.SwitchExpr = local(0);
+        Parent.Cases.push_back({1, {std::move(Leaf)}});
+        Parent.DefaultBody = {
+            result(0x3000 + 4 * Depth, HighExpr::makeConst(19, 8))};
+      } else {
+        Parent.Body.push_back(std::move(Leaf));
+      }
+      Leaf = std::move(Parent);
+    }
+    HighFunc F;
+    F.Body = {Leaf, result(0x4000, HighExpr::makeConst(99, 8))};
+    std::vector<std::optional<uint64_t>> Before;
+    for (uint64_t Input : {0u, 1u, 2u, 255u})
+      Before.push_back(execute(F, Input));
+    const auto Started = std::chrono::steady_clock::now();
+    structureIfElse(F, 10);
+    EXPECT_LT(std::chrono::steady_clock::now() - Started,
+              std::chrono::seconds(5));
+    size_t Index = 0;
+    for (uint64_t Input : {0u, 1u, 2u, 255u})
+      EXPECT_EQ(execute(F, Input), Before[Index++]);
   }
 }
 

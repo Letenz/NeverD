@@ -76,9 +76,13 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 KVM/WHP 通过私有 `FXSAVE64` 执行探测 `MXCSR_MASK`，并用有符号次正规数的算术验证所宣告的 DAZ 能力。checked Unicorn 提供软件掩码。`supportedControlBits` 返回 CPU 的不可变掩码；FX/XSAVE、快照和 Windows CONTEXT 使用同一能力。checked `LDMXCSR/STMXCSR` 精确访问 m32，检查完整 RAM 范围，并在故障或观察回调取消时保留状态。加载保留位触发 #GP；可移植执行仍拒绝未屏蔽 SIMD 异常。`X64MXCSRTests.cpp` 检查控制值与重试；`X64DAZData` 用原始本机指令对照全部 28 种已准入 SSE 算术形式，覆盖 DAZ、舍入和 FTZ。这不扩展 HVF 的 DAZ 支持。
 
+原生 x64 启动验证共用一个 `5 s` 预算，涵盖传输层冷启动准备及全部探测步骤；客体执行预算独立。初始化中断会报告指令阶段、`stop_requested` 和 `deadline_reached`，保留中断类型及底层传输诊断，不重试或接受未完成验证的 CPU。
+
 `PAUSE`（`F3 90`）通过共享 x64 机器边界在 KVM/WHP 和受限 Unicorn 上执行，包括原生 `driver-strict`。`X64PauseTests.cpp` 验证完整状态保留、执行前停止、上下文恢复、非法 `LOCK` 拒绝，以及自旋循环的超时和恢复。这条处理器提示指令不负责客户线程调度，也不保证具体延迟。
 
-`PUSHFQ`（`9C`）和 16 位 `PUSHF`（`66 9C`）通过原生 KVM/WHP 及 checked Unicorn 执行，包括 `driver-strict`。共享 ISA 层在 RAM 事务提交前从压栈结果中移除内部单步 TF。隐式栈寻址使用完整 RSP，前缀顺序决定操作数宽度。完整范围权限检查、观察器停止和故障重试保持原子性。`POPF/POPFQ` 仍不支持。`X64PushFlagsTests.cpp` 覆盖全部 256 种允许的标志组合、九种编码、跨页别名、用户权限、中止及上下文恢复。
+`PUSHFQ`（`9C`）和 16 位 `PUSHF`（`66 9C`）通过原生 KVM/WHP 及 checked Unicorn 执行，包括 `driver-strict`。共享 ISA 层在 RAM 事务提交前从压栈结果中移除内部单步 TF。隐式栈寻址使用完整 RSP，前缀顺序决定操作数宽度。完整范围权限检查、观察器停止和故障重试保持原子性。`X64PushFlagsTests.cpp` 覆盖全部 256 种允许的标志组合、九种编码、跨页别名、用户权限、中止及上下文恢复。
+
+`POPFQ`（`9D`）与 16 位 `POPF`（`66 9D`）由共享 x64 ISA 层恢复标志，适用于 KVM、WHP、checked Unicorn 及 `driver-strict`。在配置固定 IOPL 为零的条件下，CPL0 可修改 IF；CPL3 保持 IF 和 IOPL。保留位及 VM/VIF/VIP 被忽略，RF 清零。有效修改客体 TF、NT、AC、ID 或 CPL0 IOPL 仍不支持，会在发布状态前明确失败。完整栈读取先于 FLAGS/RSP/RIP 的原子更新；操作数使用完整 RSP，有效前缀顺序决定宽度。栈可以只读或与可执行内存互为别名。共享层完成指令，避免清除传输层的内部 TF。`X64PopFlagsTests.cpp` 包含独立的原生 CPL3 指令对照，检查每个输入位、故障、观察器及后续原生执行。
 
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 

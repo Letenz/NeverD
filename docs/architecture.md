@@ -1531,8 +1531,12 @@ memory. Attribute interpretation, lock state, recursive depth and ownership
 belong to this one model; static imports and named dynamic calls share it.
 The Linux service model supplies TID and errno constants. Complete affected
 write spans are validated before a transition, and no host lock or parallel
-object registry substitutes for guest bytes. Scheduling and priority
-inheritance remain explicit unsupported boundaries.
+object registry substitutes for guest bytes. `GuestThreads` owns suspended
+requests, wake selection and complete CPU contexts. It delegates each resumed
+mutex acquisition to Bionic, retaining the original event across repeated
+waits. Selection, context switching, wait resumption and result publication
+have separate helpers; wake never publishes a successful lock. Priority
+inheritance and external-process scheduling remain unsupported.
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
@@ -3192,3 +3196,7 @@ The Swift once callback declaration has one shared ABI owner: C `void(void *)`. 
 Complete static array addresses retain their address provenance through integer addition/subtraction and dynamic loads; equal scalar immediates remain scalar. Immutable machine replay uses the canonical decoder’s terminal-trap classification without granting a memory-effect or source-semantics contract. Only the Boolean proof owner opts into decoder matching; frame-effect and receiver consumers continue to exclude opaque exits.
 
 The Boolean-result proof preserves literal-byte evidence through instruction-local COPY snapshots used by AArch64 arithmetic flags. Nonliteral overwrites invalidate the affected bytes, a new instruction clears the evidence, and differing inputs still taint the complete flag result.
+
+Native Swift callers keep their complete machine ABI when a parameter is used only as an ignored once context. After checking all current bodies, source projection propagates this local proof independently of function-address order. The callee must have an authenticated erased once parameter with no remaining use, and each caller must retain a currently bound direct call. Replacing a scalar local read requires complete inspection of every definition and copy dependency; missing definitions, calls, loads, intrinsic outputs, ordered memory and exhausted budgets prevent the rewrite. Shared liveness removes only the newly dead pure definitions; other observable uses remain. Current producer receipts and the complete caller body are checked again. Every native dependency remains in the closure graph, so a locally valid caller with an unrecovered descendant still cannot be published.
+
+If/else structuring visits existing child lists before rewriting their parent. A stable parent no longer repeats that complete descendant traversal. Newly assembled arms and changed lists still receive the bounded nested pass, including changes made by predicate cleanup and preserved branch labels. Statement-list and nested-arm limits, rewrite ownership checks, ABI restrictions and current source publication gates remain unchanged. This traversal policy applies equally to block, loop, switch and exception bodies.

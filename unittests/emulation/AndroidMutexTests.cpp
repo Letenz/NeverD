@@ -11,13 +11,15 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <array>
 #include <tuple>
 
 namespace neverd::emulation {
 namespace {
 constexpr uint64_t Buffer = 0x20000000;
-class AndroidMutex : public testing::TestWithParam<const char *> {
+class AndroidMutex : public testing::TestWithParam<
+                         std::tuple<const char *, ExecutionBackendKind>> {
 protected:
   std::filesystem::path Path;
   ProcessOptions Options;
@@ -26,8 +28,8 @@ protected:
     GTEST_SKIP() << "Clang and ld.lld Android fixtures unavailable";
 #else
     Path = std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
-           (std::string(GetParam()) + ".so");
-    Options.Backend = ExecutionBackendKind::Unicorn;
+           (std::string(std::get<0>(GetParam())) + ".so");
+    Options.Backend = std::get<1>(GetParam());
     ExecutionConfiguration Configuration;
     Configuration.Backend = Options.Backend;
     Configuration.Architecture = GuestArchitecture::AArch64;
@@ -65,6 +67,7 @@ protected:
     EXPECT_EQ(R.ReturnValue, Value);
     EXPECT_FALSE(R.ExitStatus);
   }
+  void checkWaiters(unsigned Type);
   std::vector<uint8_t> object(uint16_t State, uint32_t Owner) {
     std::vector<uint8_t> Bytes(512, 0xa5);
     llvm::support::endian::write16le(Bytes.data(), State);
@@ -217,10 +220,144 @@ TEST_P(AndroidMutex, DynamicNamesKeepProviderIdentityAndClosedCallsFail) {
   EXPECT_EQ(R.NativeCalls.back().Name, "pthread_mutex_lock");
   EXPECT_FALSE(R.NativeCalls.back().Result);
 }
-INSTANTIATE_TEST_SUITE_P(OptimizationAndPacking, AndroidMutex,
-                         testing::Values("mutex-O0-none", "mutex-O0-android",
-                                         "mutex-O0-relr", "mutex-O2-none",
-                                         "mutex-O2-android", "mutex-O2-relr"));
+void AndroidMutex::checkWaiters(unsigned Type) {
+  Options.Android->ThreadLimit = 4;
+  Options.Android->ReadMemory = {{Buffer, 1024}};
+  Options.Limits.Instructions = 300000;
+  for (unsigned Shared = 0; Shared != 2; ++Shared) {
+    SCOPED_TRACE(testing::Message() << "type=" << Type << " shared=" << Shared);
+    // The large quantum exercises an unlocker acquiring again before its
+    // woken competitor runs. Short quanta exercise suspension in callers.
+    for (uint64_t Quantum : {7u, 37u, 4093u}) {
+      SCOPED_TRACE(Quantum);
+      Options.InstructionQuantum = Quantum;
+      auto R = run("mutex_waiters", {Buffer, Type, Shared, 1});
+      returned(R, 0);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      const auto &Bytes = R.MemorySnapshots[0].Bytes;
+      auto Word = [&](unsigned I) {
+        return llvm::support::endian::read64le(Bytes.data() + 256 + I * 8);
+      };
+      const uint16_t Base = Type * 0x4000 + Shared * 0x2000;
+      EXPECT_EQ(Word(0), Base + (Type == 1 ? 6u : 2u));
+      if (Type == 1)
+        EXPECT_EQ(Word(1), Base + 2u);
+      EXPECT_EQ(Word(3), Base);
+      EXPECT_EQ(Word(4), 77u);
+      EXPECT_EQ(Word(32), 3u);
+      if (Quantum == 4093) {
+        EXPECT_EQ(Word(5), Base + 1u);
+        EXPECT_EQ(Word(2), Base + 2u);
+      }
+      for (unsigned I = 0; I < 3; ++I) {
+        EXPECT_EQ(Word(8 + I), Base + 2u) << I;
+        EXPECT_EQ(Word(16 + I), 1001u + I) << I;
+        EXPECT_EQ(Word(24 + I), 71u + I) << I;
+      }
+      unsigned Locks = 0, Tries = 0;
+      for (const auto &Call : R.NativeCalls) {
+        if (Call.Name == "pthread_mutex_lock") {
+          ++Locks;
+          EXPECT_EQ(Call.Result, 0u);
+        } else if (Call.Name == "pthread_mutex_trylock") {
+          ++Tries;
+          EXPECT_EQ(Call.Result, 16u);
+        }
+      }
+      EXPECT_EQ(Locks, Type == 1 ? 6u : 5u);
+      EXPECT_EQ(Tries, 3u);
+      ASSERT_EQ(R.NativeThreads.size(), 4u);
+      for (const auto &T : R.NativeThreads) {
+        EXPECT_TRUE(T.Finished);
+        EXPECT_FALSE(T.Waiting);
+      }
+    }
+  }
+}
+
+TEST_P(AndroidMutex, NormalWaitersRetryAfterWakeWithoutDuplicatingCalls) {
+  checkWaiters(0);
+}
+TEST_P(AndroidMutex, RecursiveWaitersWakeOnlyAfterFinalRelease) {
+  checkWaiters(1);
+}
+TEST_P(AndroidMutex, ErrorCheckingWaitersAcquireWithTheirOwnIdentity) {
+  checkWaiters(2);
+}
+
+TEST_P(AndroidMutex, WokenLocksRevalidateStateAndPermissionsBeforeCompletion) {
+  Options.Android->ThreadLimit = 2;
+  Options.Android->ReadMemory = {{Buffer + 4096, 16}};
+  Options.InstructionQuantum = 4093;
+  for (unsigned Mode : {0u, 1u, 2u, 3u, 6u}) {
+    SCOPED_TRACE(Mode);
+    auto R = run("mutex_wait_failure", {Buffer, Mode});
+    EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure) << R.Diagnostic;
+    unsigned Pending = 0;
+    for (const auto &Call : R.NativeCalls)
+      if (Call.Name == "pthread_mutex_lock" && Call.ThreadID == 1001u) {
+        ++Pending;
+        EXPECT_FALSE(Call.Result);
+        EXPECT_EQ(R.PC, Call.PC);
+      }
+    EXPECT_EQ(Pending, 1u);
+    ASSERT_EQ(R.NativeThreads.size(), 2u);
+    EXPECT_TRUE(R.NativeThreads[1].Waiting);
+    EXPECT_FALSE(R.NativeThreads[1].Finished);
+  }
+}
+
+TEST_P(AndroidMutex, DeadlockAndBudgetStopsLeaveWaitersIncomplete) {
+  Options.Android->ThreadLimit = 2;
+  Options.InstructionQuantum = 7;
+  Options.Limits.Instructions = 5000;
+  for (unsigned Mode : {4u, 5u}) {
+    auto R = run("mutex_wait_failure", {Buffer, Mode});
+    EXPECT_EQ(R.Stop, Mode == 4 ? ProcessStopReason::UnsupportedService
+                                : ProcessStopReason::InstructionLimit)
+        << R.Diagnostic;
+    if (Mode == 5)
+      EXPECT_EQ(R.Instructions, Options.Limits.Instructions);
+    ASSERT_EQ(R.NativeThreads.size(), 2u);
+    EXPECT_TRUE(R.NativeThreads[1].Waiting);
+    unsigned Pending = 0;
+    for (const auto &Call : R.NativeCalls)
+      if (Call.Name == "pthread_mutex_lock" && Call.ThreadID == 1001u) {
+        ++Pending;
+        EXPECT_FALSE(Call.Result);
+      }
+    EXPECT_EQ(Pending, 1u);
+  }
+}
+
+TEST_P(AndroidMutex, NonzeroFutexPaddingCannotInventASleepingWaiter) {
+  Options.Android->ThreadLimit = 2;
+  const auto Before = object(1, 0);
+  Options.Android->Memory[0].Bytes = Before;
+  auto R = run("mutex_object_call", {Buffer, 0, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+  ASSERT_EQ(R.NativeCalls.size(), 1u);
+  EXPECT_FALSE(R.NativeCalls[0].Result);
+  ASSERT_EQ(R.NativeThreads.size(), 1u);
+  EXPECT_FALSE(R.NativeThreads[0].Waiting);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    OptimizationPackingAndBackend, AndroidMutex,
+    testing::Combine(testing::Values("mutex-O0-none", "mutex-O0-android",
+                                     "mutex-O0-relr", "mutex-O2-none",
+                                     "mutex-O2-android", "mutex-O2-relr"),
+                     testing::Values(ExecutionBackendKind::Unicorn,
+                                     ExecutionBackendKind::KVM,
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF)),
+    [](const testing::TestParamInfo<AndroidMutex::ParamType> &Info) {
+      std::string Name = std::get<0>(Info.param);
+      std::replace(Name.begin(), Name.end(), '-', '_');
+      return Name + "_" + executionBackendName(std::get<1>(Info.param));
+    });
 
 TEST(AndroidMutexMemory, PermissionFailureCannotPublishHalfAnOwnedState) {
   ExecutionConfiguration Configuration;
