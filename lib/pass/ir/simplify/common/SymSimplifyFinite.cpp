@@ -83,7 +83,7 @@ bool supportedInstruction(const llvm::Instruction &I) {
   }
 }
 
-std::optional<TwoValues> anchorValues(llvm::Value *V, WorkBudget &Budget) {
+std::optional<TwoValues> atomicValues(llvm::Value *V, WorkBudget &Budget) {
   const unsigned Width = V->getType()->getIntegerBitWidth();
   auto Pair = [&](llvm::APInt A, llvm::APInt B) -> std::optional<TwoValues> {
     return TwoValues{V, A, A, B};
@@ -139,6 +139,80 @@ std::optional<TwoValues> anchorValues(llvm::Value *V, WorkBudget &Budget) {
     break;
   }
   return std::nullopt;
+}
+
+std::optional<TwoValues> anchorValues(llvm::Value *V, WorkBudget &Budget) {
+  if (V->getType()->getIntegerBitWidth() == 1 ||
+      !llvm::isa<llvm::PHINode, llvm::SelectInst>(V))
+    return atomicValues(V, Budget);
+  // Merge edges only copy selected values. Bound every producer before
+  // admitting the union, including backedges; conditions remain dependencies
+  // of the original SSA anchor and are checked by seed's stability walk.
+  constexpr unsigned MaxNodes = 32, MaxEdges = 64;
+  llvm::SmallVector<llvm::Value *, MaxNodes> Nodes{V};
+  llvm::DenseMap<llvm::Value *, unsigned> Indices{{V, 0}};
+  llvm::SmallVector<std::pair<unsigned, unsigned>, MaxEdges> Edges;
+  llvm::SmallVector<unsigned, MaxNodes> Anchored;
+  llvm::SmallVector<llvm::APInt, 2> Values;
+  const auto Width = V->getType()->getIntegerBitWidth();
+  auto Record = [&](const llvm::APInt &Value) {
+    if (llvm::is_contained(Values, Value))
+      return true;
+    if (Values.size() == 2)
+      return false;
+    Values.push_back(Value);
+    return true;
+  };
+  auto Add = [&](unsigned From, llvm::Value *Value) {
+    if (!Budget.spend() || Edges.size() == MaxEdges)
+      return false;
+    auto It = Indices.find(Value);
+    if (It == Indices.end()) {
+      if (Nodes.size() == MaxNodes)
+        return false;
+      It = Indices.try_emplace(Value, Nodes.size()).first;
+      Nodes.push_back(Value);
+    }
+    Edges.emplace_back(From, It->second);
+    return true;
+  };
+  for (unsigned N = 0; N != Nodes.size(); ++N) {
+    if (!Budget.spend(1 + Width / 64))
+      return std::nullopt;
+    auto *Current = Nodes[N];
+    if (auto *Phi = llvm::dyn_cast<llvm::PHINode>(Current)) {
+      for (auto &Input : Phi->incoming_values())
+        if (!Add(N, Input))
+          return std::nullopt;
+    } else if (auto *Select = llvm::dyn_cast<llvm::SelectInst>(Current)) {
+      if (!Add(N, Select->getTrueValue()) || !Add(N, Select->getFalseValue()))
+        return std::nullopt;
+    } else if (auto *K = llvm::dyn_cast<llvm::ConstantInt>(Current)) {
+      if (!Record(K->getValue()))
+        return std::nullopt;
+      Anchored.push_back(N);
+    } else {
+      auto Pair = atomicValues(Current, Budget);
+      if (!Pair || !Record(Pair->First) || !Record(Pair->Second))
+        return std::nullopt;
+      Anchored.push_back(N);
+    }
+  }
+  // Every cyclic copy component must be connected to an admitted producer.
+  // A seed elsewhere in the graph cannot certify an unanchored component.
+  for (unsigned N = 0; N != Anchored.size(); ++N)
+    for (auto [Parent, Child] : Edges) {
+      if (!Budget.spend())
+        return std::nullopt;
+      if (Child == Anchored[N] && !llvm::is_contained(Anchored, Parent))
+        Anchored.push_back(Parent);
+    }
+  // A singleton table would erase the observation's poison dependence.
+  if (Anchored.size() != Nodes.size() || Values.size() != 2)
+    return std::nullopt;
+  if (Values[1].ult(Values[0]))
+    std::swap(Values[0], Values[1]);
+  return TwoValues{V, Values[0], Values[0], Values[1]};
 }
 
 // Constant folding alone may legally refine poison. Here every enumerated

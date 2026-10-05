@@ -40,6 +40,8 @@ prebuilt-LLVM guidance.
 
 `SymSimplifyFinite.*` covers complete two-valued slices at widths from 8 to 512 bits, shared-use profitability, every supported poison-generating annotation, independent volatile reads and freezes, explicit undef/poison, deep iterative traversal, budgets and the obfuscation stamp. Original and simplified IR execute against an independent oracle over every byte input and randomized full-width inputs at O0/O2. Translation-object tests require distinct cache identities for distinct finite-value budgets.
 
+Merge-domain tests cover nested selects, diamond PHIs and copy cycles at 8–512 bits; conflicting backedges, undefined conditions, unanchored components, independent PHI/freeze observations and retained flagged producers; and exact node, edge and work boundaries. O0/O2 runtime oracles exhaust every byte-input pair and vary full-width operands for selections, joins and bounded state loops.
+
 The finite-value tests additionally cover nested conjunction masks at 8–512 bits, commuted operands, OR/undef refusal, bounded deep discovery, standalone work/stamp policy and the exact first-rewrite budget boundary. Runtime oracles exhaust all byte-input pairs and vary unrelated 64-bit data, comparing original and simplified IR at O0/O2.
 
 `SymSimplifyPredicates.*` exhausts four-bit offsets, signs and inputs, checks Boolean interval composition and disconnected sets, and executes independent byte/full-width oracles at O0/O2. It covers poison annotations, hidden undefined join inputs, independent reads/freezes, retained loop PHIs, shared-use profitability, cumulative work, high fan-out, recursion limits and the obfuscation stamp. Translation-object tests distinguish predicate budgets in both cache keys.
