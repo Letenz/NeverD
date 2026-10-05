@@ -151,6 +151,28 @@ TEST_P(LinuxProcess, ExplicitClocksPreserve64BitWireLayoutsOnBothISAs) {
   }
 }
 
+TEST_P(LinuxProcess, ResidencyErrorsPreserveTheVectorAndMappedQueriesStop) {
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto Fixture = Path.parent_path() /
+                         (Path.stem().string() + "-residency-" + Opt + ".elf");
+    Options.Arguments = {"residency", "n"};
+    auto R = llvm::cantFail(
+        emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    EXPECT_EQ(R.StandardOutput, std::string(32, char(0xa5)));
+    Options.Arguments[1] = "m";
+    R = llvm::cantFail(
+        emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(R.Diagnostic.find("page residency"), std::string::npos);
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_EQ(R.Services.back().Number,
+              GetParam().ISA == GuestArchitecture::X64 ? 27u : 232u);
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
+
 TEST_P(LinuxProcess, SignalActionsShareExactLP64StateAndCopyFailureOrdering) {
   for (const char *Opt : {"O0", "O2"}) {
     SCOPED_TRACE(Opt);

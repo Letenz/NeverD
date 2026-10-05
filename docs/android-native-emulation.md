@@ -48,10 +48,21 @@ supply extension of narrow values. Top-level Linux `arguments` and
 Memory regions are explicit page-aligned address/size pairs. Initial
 `bytes_hex` are followed by zeros. They are readable/writable; `executable`
 defaults to false. Overlaps and reserved runtime addresses are rejected.
-`read_memory` snapshots must fit the output budget and initially readable
-memory. A snapshot that becomes unreadable fails explicitly. Terminal CPU or
-model faults do not produce snapshots. No host addresses are exposed as guest
+`read_memory` snapshots must fit the output budget and, by default, initially
+readable memory. Each read can explicitly set `require_mapped_at_entry: false`
+to observe memory allocated during the workload. The setting only defers the
+mapping check; it does not create memory, retain freed mappings, or change guest
+allocation and execution. Size, overflow and output-budget checks still apply
+before execution, and the complete range must be readable at the final stop.
+A snapshot that is unmapped or unreadable then fails explicitly. Terminal CPU
+or model faults do not trigger snapshots. No host addresses are exposed as guest
 memory.
+If a final read fails after earlier reads completed, those earlier snapshots
+remain in the report alongside the failure.
+
+```json
+{"address":"0x24000000","size":64,"require_mapped_at_entry":false}
+```
 
 For input larger than the 64 KiB options JSON limit, supply `path` instead of
 `bytes_hex` in a `memory` region. C++ callers set `NativeMemoryRegion::File`.
@@ -142,6 +153,12 @@ The supported Bionic subset is:
   [wrapper](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sigaction.cpp)
   and [reserved mask](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/private/sigrtmin.h).
   Registering an action does not enable signal delivery or execute its handler.
+- `mincore`, for the shared Linux validation, empty-range and unmapped-first-page
+  subset. Direct imports, variadic `syscall` and raw SVC share the same error
+  priority and leave the output vector untouched. Only Bionic converts negative
+  kernel errors to `-1` and errno; success preserves errno. Mapped-page residency
+  remains an explicit unsupported observation; guest backing memory does not
+  justify inventing residency bits. See the [Linux contract](process-emulation.md).
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.

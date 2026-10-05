@@ -1536,6 +1536,16 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+`NativeMemoryRead::RequireMappedAtEntry` defaults to true. An explicit false
+permits observing mappings created during execution without adding memory or
+changing the allocator. Android preparation still accounts for every requested
+byte, and the existing final snapshot path checks current permissions. Terminal
+CPU/model faults retain their diagnostics without attempting observation reads.
+`LinuxResidency.cpp` owns bounded `mincore` validation within `LinuxMemory`.
+It uses `AddressSpace` mapping facts for first-page holes and does not maintain
+a second map or equate allocated backing storage with Linux page residency.
+Linux memory dispatch selects each operation before applying its own argument
+policy; raw and Bionic calls share that decision.
 `AndroidMemory` owns copies of caller-specified regular files into explicit
 guest regions before CPU creation. JSON parsing only records the path; C++,
 C, CLI and Python share region memory accounting, bounded file reads and

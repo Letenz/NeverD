@@ -28,6 +28,10 @@ struct NativeMemoryRegion {
 };
 struct NativeMemoryRead {
   uint64_t Address = 0, Size = 0;
+  /// Require a readable mapping before guest execution. False permits memory
+  /// allocated during the call; the complete range must be readable at the
+  /// final resumable stop. Neither setting creates or preserves mappings.
+  bool RequireMappedAtEntry = true;
 };
 struct NativeMemorySnapshot {
   uint64_t Address;

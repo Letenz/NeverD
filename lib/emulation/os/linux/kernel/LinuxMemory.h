@@ -45,6 +45,8 @@ private:
   llvm::Expected<uint64_t> protect(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> unmap(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> advise(const ProcessServiceEvent &Event);
+  llvm::Expected<std::optional<uint64_t>>
+  residency(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<uint64_t> setBreak(uint64_t Address);
 };
 } // namespace neverd::emulation::linux_model
