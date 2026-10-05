@@ -57,6 +57,8 @@ NEVERD_X64_MACHINE_VALUE(StatusByteFlags, CarryFlag | ParityFlag |
                                               SignFlag)
 NEVERD_X64_MACHINE_VALUE(AccumulatorHighByteShift, 8)
 NEVERD_X64_MACHINE_VALUE(AccumulatorHighByteMask, 0xff00)
+NEVERD_X64_MACHINE_VALUE(ShiftCountMask, 0x1f)
+NEVERD_X64_MACHINE_VALUE(WideShiftCountMask, 0x3f)
 NEVERD_X64_MACHINE_VALUE(TrapFlag, 0x100)
 NEVERD_X64_MACHINE_VALUE(InterruptFlag, 0x200)
 NEVERD_X64_MACHINE_VALUE(IOPrivilegeFlags, 0x3000)
