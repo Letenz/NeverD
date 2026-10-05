@@ -74,6 +74,8 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 KVM/WHP 通过私有 `FXSAVE64` 执行探测 `MXCSR_MASK`，并用有符号次正规数的算术验证所宣告的 DAZ 能力。checked Unicorn 提供软件掩码。`supportedControlBits` 返回 CPU 的不可变掩码；FX/XSAVE、快照和 Windows CONTEXT 使用同一能力。checked `LDMXCSR/STMXCSR` 精确访问 m32，检查完整 RAM 范围，并在故障或观察回调取消时保留状态。加载保留位触发 #GP；可移植执行仍拒绝未屏蔽 SIMD 异常。`X64MXCSRTests.cpp` 检查控制值与重试；`X64DAZData` 用原始本机指令对照全部 28 种已准入 SSE 算术形式，覆盖 DAZ、舍入和 FTZ。这不扩展 HVF 的 DAZ 支持。
 
+`PAUSE`（`F3 90`）通过共享 x64 机器边界在 KVM/WHP 和受限 Unicorn 上执行，包括原生 `driver-strict`。`X64PauseTests.cpp` 验证完整状态保留、执行前停止、上下文恢复、非法 `LOCK` 拒绝，以及自旋循环的超时和恢复。这条处理器提示指令不负责客户线程调度，也不保证具体延迟。
+
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。

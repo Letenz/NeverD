@@ -28,6 +28,24 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SIMDCapability.RequirementsAreNativeBackendAndContractQualified")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Native/WindowsSIMDExecution.ActualFaultExecutesGuestHandlersAndRetries/{backend}")

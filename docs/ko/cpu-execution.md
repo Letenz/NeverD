@@ -74,6 +74,8 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 KVM/WHP는 비공개 `FXSAVE64` 실행으로 `MXCSR_MASK`를 탐색하고 부호 있는 비정규 입력의 산술로 DAZ 기능을 검증합니다. checked Unicorn은 소프트웨어 마스크를 제공합니다. `supportedControlBits`는 CPU의 불변 마스크를 반환하며 FX/XSAVE, 스냅샷, Windows CONTEXT가 이를 공유합니다. checked `LDMXCSR/STMXCSR`는 정확히 m32의 전체 RAM 권한을 검사하고 오류나 관찰 콜백 취소 시 상태를 보존합니다. 예약 비트 로드는 #GP를 발생시키며 이식 가능한 실행은 마스크되지 않은 SIMD 예외를 거부합니다. `X64MXCSRTests.cpp`는 제어와 재시도를 검사하고 `X64DAZData`는 허용된 SSE 산술 28종을 원본 호스트 명령과 비교하여 DAZ, 반올림, FTZ를 검증합니다. HVF의 DAZ 지원은 확장하지 않습니다.
 
+`PAUSE`(`F3 90`)는 네이티브 `driver-strict`를 포함하여 KVM/WHP와 checked Unicorn의 공통 x64 머신 경계를 통해 실행됩니다. `X64PauseTests.cpp`는 전체 상태 보존, 실행 전 중지, 컨텍스트 복원, 잘못된 `LOCK` 거부, 스핀 루프의 시간 제한과 재개를 검증합니다. 이 프로세서 힌트는 게스트 스레드를 스케줄링하거나 특정 지연을 보장하지 않습니다.
+
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
 `X64PackedShiftInstructions.def`는 legacy SSE2 패킹 시프트 열 종류를 허용합니다. 요소 시프트의 횟수는 imm8 또는 XMM/정렬된 m128이며 바이트 시프트는 imm8만 허용합니다. 가변 횟수는 부호 없는 하위 64비트를 사용하고 스칼라 횟수 마스킹을 하지 않으며 상위 64비트는 무시합니다. 횟수가 0이거나 범위를 넘어도 메모리 피연산자는 16바이트 전체를 읽어야 합니다. FLAGS와 MXCSR은 유지되며 MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
