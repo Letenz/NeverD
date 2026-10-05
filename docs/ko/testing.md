@@ -1339,3 +1339,11 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp`는 독립 O0/O2 및 일반/APS2/RELR 픽스처로 세 종류의 mutex, 여러 대기자, 재경합, 최종 재귀 해제, errno, 원래 이벤트, 무효 메모리, 교착과 누적 명령 한도를 검사합니다. Unicorn 및 사용 가능한 KVM/WHP/HVF에서 실행하고 불가능한 백엔드는 명시적으로 건너뜁니다. Android 실기기나 병렬 SMP 동등성을 뜻하지 않습니다.
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath`는 독립 인터프리터로 48단계 블록, 루프, switch 및 예외 본문의 진입 및 우회 경로를 검사합니다. 넉넉한 실행 시간 한도로 중복 재귀 순회를 감지합니다. 구조화된 HighIR 검사이며 전체 이미지의 메서드 복원에는 별도의 완전한 목록과 의존성 검사가 필요합니다.
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs`는 retain 호출이 결합되거나 분리된 ARM64/x64 thunk를 검사합니다. `EarlyOnceCopyReturnsRequireTheSameCompleteTail`은 저장 변경, retain 누락·순서 변경, 순서가 지정된 로드, 반환 값 변경 및 외부 진입을 거부합니다. `IgnoredNestedReturnCopiesDoNotObserveOnceContext`는 void 콜백의 실행 가능한 두 종료 경로와 투영 후 소스 흐름을 검사합니다.
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner`는 주소가 중첩 블록에 다시 나타날 때 진입 경로와 우회 경로를 독립 인터프리터로 비교합니다. `ReturnTailCopyIncludesTheFirstChildOfItsLabel`은 부모와 첫 자식이 주소를 공유하는 유효한 사례 및 대입을 보존합니다. 이 집중 검사는 전체 메서드와 네이티브 의존성 비교를 대신하지 않습니다.
+
+`JumpTailCopyKeepsTheOuterLabelOwner`는 점프 꼬리에도 같은 소유 규칙을 검사합니다.
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors`는 조기 반환과 once 호출 사이의 빈 명령 앵커를 검사하며 그 사이의 호출이나 저장을 거부합니다.

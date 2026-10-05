@@ -1257,3 +1257,11 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp` 用独立 O0/O2、普通/APS2/RELR 夹具覆盖三类 mutex、多等待者、唤醒后再次竞争、递归最终释放、errno、原始事件、失效内存、死锁和累计指令限额。Unicorn 及可用 KVM/WHP/HVF 执行相同用例；不可用后端明确跳过。这些证据不表示 Android 真机或并行 SMP 等价。
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` 使用独立解释器检查 48 层块、循环、switch 和异常体的进入及跳过路径，并以宽松的运行时间上限捕获重复递归遍历。这是结构化 HighIR 覆盖；全镜像方法恢复仍需独立完成清单与依赖检查。
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` 覆盖 ARM64/x64 中合并或分离 retain 调用的 thunk。`EarlyOnceCopyReturnsRequireTheSameCompleteTail` 拒绝改变存储、缺少或重排 retain、有序加载、改变返回值及外部入口。`IgnoredNestedReturnCopiesDoNotObserveOnceContext` 检查 void 回调的两条可行退出路径，并在投影后重新验证源码控制流。
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` 使用独立解释器，对比同一地址在嵌套块中再次出现时进入与绕过该块的路径。`ReturnTailCopyIncludesTheFirstChildOfItsLabel` 保留合法的父语句与第一个子语句共享地址的情况及其赋值。这些定向检查不能替代完整方法与原生依赖比较。
+
+`JumpTailCopyKeepsTheOuterLabelOwner` 检查跳转尾部的同一归属规则。
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 检查提前返回与 once 调用之间的空指令锚点，并拒绝其间的调用或存储。
