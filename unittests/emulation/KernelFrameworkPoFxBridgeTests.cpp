@@ -245,9 +245,12 @@ TEST_F(KernelFrameworkPoFxBridge,
        {"PoFxStartDevicePowerManagement", "PoFxUnregisterDevice",
         "PoFxReportDevicePoweredOn", "PoFxCompleteDevicePowerNotRequired"})
     reject(Model->call(Name, {Handle}), "owned by the framework");
-  for (const auto Name : {"PoFxActivateComponent", "PoFxIdleComponent"})
+  for (const auto Name : {"PoFxActivateComponent", "PoFxIdleComponent"}) {
     reject(Model->call(Name, {Handle, 0, pofx::FlagAsyncOnly}),
            "owned by the framework");
+    reject(Model->call(Name, {Handle, UINT32_MAX, 4}),
+           "owned by the framework");
+  }
   reject(Model->call("PoFxSetDeviceIdleTimeout", {Handle, 0}),
          "owned by the framework");
   for (bool Write : {false, true}) {
