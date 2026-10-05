@@ -6099,6 +6099,54 @@ TEST(HighControlFlowSemantics, TailThatCannotFaultEntersExceptProtection) {
   }
 }
 
+TEST(HighControlFlowSemantics, TailRunningOutOfAnExceptTryIsCopiedInside) {
+  // __try { if (x & 1) { v = 1; goto out; } v = 2; out: w = 5; }
+  // __except (1) { v = 9; }  return v;
+  // The tail at out runs off the protected body into `return v`, which
+  // cannot fault, so a copy of both runs the same inside the __try.  A
+  // load after the try could fault into the handler there, and a __finally
+  // would run around the copy, so neither gets one.
+  enum class Variant { ExceptOnly, Finally, Load };
+  auto Build = [](Variant Kind) {
+    HighStmt Leave;
+    Leave.Kind = StmtKind::If;
+    Leave.Addr = 0x1000;
+    Leave.Cond =
+        HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+    Leave.Body = {assign(0x1004, 1, 1), jump(0x1008, 0x1010)};
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.Addr = 0x1000;
+    Try.EHRange = {0x1000, 0x1014};
+    Try.Body = {Leave, assign(0x100c, 1, 2), assign(0x1010, 2, 5)};
+    HighEHClause Clause;
+    Clause.Kind = Kind == Variant::Finally ? HighEHClauseKind::SEHFinally
+                                           : HighEHClauseKind::SEHExcept;
+    Clause.HandlerVA = 0x1018;
+    Try.EHClauses = {Clause};
+    Try.EHClauseBodies = {{assign(0x1018, 1, 9)}};
+    HighStmt Tail = result(0x1020, local(1));
+    if (Kind == Variant::Load)
+      Tail.RetVal =
+          HighExpr::makeLoad(HighExpr::makeConst(0x100, 8), NdType::makeInt(8));
+    HighFunc F;
+    F.Body = {Try, Tail};
+    return F;
+  };
+  for (Variant Kind : {Variant::ExceptOnly, Variant::Finally, Variant::Load}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    HighFunc F = Build(Kind);
+    duplicateSmallReturnTails(F.Body);
+    size_t Jumps = 0;
+    walkStmts(F.Body.front().Body,
+              [&](const HighStmt &S) { Jumps += S.Kind == StmtKind::Goto; });
+    EXPECT_EQ(Jumps, Kind == Variant::ExceptOnly ? 0u : 1u);
+    if (Kind == Variant::ExceptOnly)
+      for (uint64_t X : {0, 1})
+        EXPECT_EQ(execute(F, X), X & 1 ? 1u : 2u) << X;
+  }
+}
+
 TEST(HighControlFlowSemantics, JumpToWhatFollowsATryBecomesAnElseArm) {
   // __try { if (x & 1) { v = 1; goto out; } v = 2; } __except (1) { v = 9; }
   // out: return v;

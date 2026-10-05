@@ -1028,23 +1028,35 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
               Tails.emplace(Label, std::move(*Tail));
               TailContexts.emplace(Label, Ctx);
             }
-          // Falling off an if/else arm or block continues after it.
+          // Falling off an if/else arm or block continues after it, and so
+          // does falling off the protected body or a handler of a try with
+          // only __except clauses.  Copied back into the protected body, what
+          // runs after the try would run under its handlers, so the body
+          // continues into it only when it cannot fault.
           std::optional<std::vector<HighStmt>> After;
           const StmtKind K = Stmts[I].Kind;
+          const bool ExceptOnly =
+              K == StmtKind::SEHTry && !Stmts[I].EHClauses.empty() &&
+              llvm::all_of(Stmts[I].EHClauses, [](const HighEHClause &Clause) {
+                return Clause.Kind == HighEHClauseKind::SEHExcept;
+              });
           if (K == StmtKind::If || K == StmtKind::IfElse ||
-              K == StmtKind::Block)
+              K == StmtKind::Block || ExceptOnly)
             After = I + 1 < Stmts.size()
                         ? TailAt(Stmts, I + 1, Cont, Ctx)
                         : (Cont ? std::optional(*Cont) : std::nullopt);
           const std::vector<HighStmt> *ChildCont = After ? &*After : nullptr;
-          Collect(Stmts[I].Body, ChildCont, Stmts[I].Addr,
+          const std::vector<HighStmt> *BodyCont =
+              ExceptOnly && ChildCont && tailMayFault(*ChildCont) ? nullptr
+                                                                  : ChildCont;
+          Collect(Stmts[I].Body, BodyCont, Stmts[I].Addr,
                   bodyTryContext(Ctx, Stmts[I]));
           Collect(Stmts[I].ElseBody, ChildCont, 0, Ctx);
           for (auto &C : Stmts[I].Cases)
             Collect(C.Body, nullptr, 0, Ctx);
           Collect(Stmts[I].DefaultBody, nullptr, 0, Ctx);
           for (auto &ClauseBody : Stmts[I].EHClauseBodies)
-            Collect(ClauseBody, nullptr, 0, Ctx);
+            Collect(ClauseBody, ExceptOnly ? ChildCont : nullptr, 0, Ctx);
         }
       };
   // A composed tail needs its epilogue's tail first; the epilogue usually
