@@ -15,6 +15,8 @@ NEVERD_SEH_SIMD_VALUE(SehSIMDReserved, 0xffff0000U)
 NEVERD_SEH_SIMD_VALUE(SehSIMDIgnoredFX, 0xdeadbeefU)
 NEVERD_SEH_SIMD_VALUE(SehSIMDDirection, 0x400)
 NEVERD_SEH_SIMD_VALUE(SehSIMDTrap, 0x100)
+NEVERD_SEH_SIMD_VALUE(SehSIMDProbeBytes, 3)
+NEVERD_SEH_SIMD_VALUE(SehSIMDProbeCenter, 1)
 NEVERD_SEH_SIMD_VALUE(SehSIMDBefore, 1)
 NEVERD_SEH_SIMD_VALUE(SehSIMDFinally, 2)
 NEVERD_SEH_SIMD_VALUE(SehSIMDHandler, 3)
@@ -106,8 +108,7 @@ NEVERD_SEH_SIMD_TEXT(SehSIMDMissing, "original WDK SEH fixture unavailable")
 #define NEVERD_SEH_SIMD_ADD "addss %%xmm1, %%xmm0\n\t"
 #define NEVERD_SEH_SIMD_MULTIPLY "mulss %%xmm1, %%xmm0\n\t"
 #define NEVERD_SEH_SIMD_CAPTURE                                                \
-  "pushfq\n\t"                                                                 \
-  "popq %[Flags]\n\t"                                                          \
+  "movsb\n\t"                                                                  \
   "cld\n\t"                                                                    \
   "stmxcsr %[After]\n\t"                                                       \
   "movdqu %%xmm0, %[Result]\n\t"                                               \
@@ -115,19 +116,20 @@ NEVERD_SEH_SIMD_TEXT(SehSIMDMissing, "original WDK SEH fixture unavailable")
   "movdqu %%xmm15, %[Nonvolatile]\n\t"                                         \
   "ldmxcsr %[Default]\n\t"
 #define NEVERD_SEH_SIMD_EXECUTE(Operation)                                     \
-  __asm__ volatile(NEVERD_SEH_SIMD_SETUP Operation NEVERD_SEH_SIMD_CAPTURE     \
-                   : [Result] "=m"(SimdResult), [After] "=m"(SimdAfter),       \
-                     [Flags] "=&r"(SimdFlags), [Volatile] "=m"(SimdVolatile),  \
-                     [Nonvolatile] "=m"(SimdNonvolatile)                       \
-                   : [Seed] "m"(Seed), [Left] "m"(Left), [Right] "m"(Right),   \
-                     [Control] "m"(Control), [Default] "m"(Default)            \
-                   : "cc", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5",     \
-                     "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11",         \
-                     "xmm12", "xmm13", "xmm14", "xmm15")
+  __asm__ volatile(                                                            \
+      NEVERD_SEH_SIMD_SETUP Operation NEVERD_SEH_SIMD_CAPTURE                  \
+      : [Result] "=m"(SimdResult), [After] "=m"(SimdAfter),                    \
+        [Source] "+S"(SourceCursor), [Destination] "+D"(DestinationCursor),    \
+        [Volatile] "=m"(SimdVolatile), [Nonvolatile] "=m"(SimdNonvolatile)     \
+      : [Seed] "m"(Seed), [Left] "m"(Left), [Right] "m"(Right),                \
+        [Control] "m"(Control), [Default] "m"(Default)                         \
+      : "memory", "cc", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5",        \
+        "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13",    \
+        "xmm14", "xmm15")
 #define NEVERD_SEH_SIMD_LIVE                                                   \
-  "stmxcsr %0\n\t"                                                             \
-  "pushfq\n\t"                                                                 \
-  "popq %1\n\t"
+  "stmxcsr %[Control]\n\t"                                                     \
+  "movsb\n\t"                                                                  \
+  "cld\n\t"
 #define NEVERD_SEH_SIMD_CLOBBER                                                \
   "pxor %%xmm0, %%xmm0\n\t"                                                    \
   "pxor %%xmm1, %%xmm1\n\t"                                                    \

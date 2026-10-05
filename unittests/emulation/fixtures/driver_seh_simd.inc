@@ -26,6 +26,20 @@ static ULONG64 SimdNonvolatile[SehSIMDRegisterWords];
 static ULONG SimdAfter;
 static ULONG64 SimdFlags;
 
+static ULONG64 SimdLiveControls(PULONG MXCSR) {
+  UCHAR Source[SehSIMDProbeBytes] = {0};
+  UCHAR Destination[SehSIMDProbeBytes] = {0};
+  const UCHAR *SourceCursor = Source + SehSIMDProbeCenter;
+  UCHAR *DestinationCursor = Destination + SehSIMDProbeCenter;
+  // Observe DF through the actual string index update, then restore the C ABI.
+  __asm__ volatile(NEVERD_SEH_SIMD_LIVE
+                   : [Control] "=m"(*MXCSR), [Source] "+S"(SourceCursor),
+                     [Destination] "+D"(DestinationCursor)
+                   :
+                   : "memory", "cc");
+  return SourceCursor == Source ? SehSIMDDirection : 0;
+}
+
 __declspec(noinline) static VOID SimdInstruction(VOID) {
   const ULONG64 Seed[SehSIMDRegisterWords] = {SehSIMDSeed, SehSIMDSeed};
   const ULONG64 Left[SehSIMDRegisterWords] = {SehSIMDHighLane | SimdCase->Left,
@@ -34,6 +48,10 @@ __declspec(noinline) static VOID SimdInstruction(VOID) {
       SehSIMDHighLane | SimdCase->Right, SehSIMDSeed};
   const ULONG Control = SehSIMDDefault & ~(SimdCase->Bit << SehSIMDMaskShift);
   const ULONG Default = SehSIMDDefault;
+  UCHAR Source[SehSIMDProbeBytes] = {0};
+  UCHAR Destination[SehSIMDProbeBytes] = {0};
+  const UCHAR *SourceCursor = Source + SehSIMDProbeCenter;
+  UCHAR *DestinationCursor = Destination + SehSIMDProbeCenter;
   switch (SimdCase->Operation) {
   case SehSIMDDivide:
     NEVERD_SEH_SIMD_EXECUTE(NEVERD_SEH_SIMD_DIVIDE);
@@ -45,6 +63,7 @@ __declspec(noinline) static VOID SimdInstruction(VOID) {
     NEVERD_SEH_SIMD_EXECUTE(NEVERD_SEH_SIMD_MULTIPLY);
     break;
   }
+  SimdFlags = SourceCursor == Source ? SehSIMDDirection : 0;
 }
 
 static LONG SimdFilter(PEXCEPTION_POINTERS Pointers) {
@@ -54,8 +73,7 @@ static LONG SimdFilter(PEXCEPTION_POINTERS Pointers) {
       (SehSIMDDefault & ~(SimdCase->Bit << SehSIMDMaskShift)) |
       SimdCase->Status;
   ULONG LiveMXCSR = 0;
-  ULONG64 LiveFlags = 0;
-  __asm__ volatile(NEVERD_SEH_SIMD_LIVE : "=m"(LiveMXCSR), "=r"(LiveFlags));
+  const ULONG64 LiveFlags = SimdLiveControls(&LiveMXCSR);
   SimdValid =
       Stage == SehSIMDBefore && LiveMXCSR == SehSIMDDefault &&
       !(LiveFlags & SehSIMDDirection) &&
@@ -104,8 +122,7 @@ __declspec(noinline) static VOID SimdWithFinally(VOID) {
     SimdInstruction();
   } __finally {
     ULONG LiveMXCSR = 0;
-    ULONG64 LiveFlags = 0;
-    __asm__ volatile(NEVERD_SEH_SIMD_LIVE : "=m"(LiveMXCSR), "=r"(LiveFlags));
+    const ULONG64 LiveFlags = SimdLiveControls(&LiveMXCSR);
     SimdValid = SimdValid && LiveMXCSR == SehSIMDDefault &&
                 !(LiveFlags & SehSIMDDirection) &&
                 (AbnormalTermination() == (Mode == SehSIMDHandle));
@@ -156,8 +173,7 @@ __declspec(noinline) static NTSTATUS ProcessorSIMD(VOID) {
       }
     } else {
       ULONG LiveMXCSR = 0;
-      ULONG64 LiveFlags = 0;
-      __asm__ volatile(NEVERD_SEH_SIMD_LIVE : "=m"(LiveMXCSR), "=r"(LiveFlags));
+      const ULONG64 LiveFlags = SimdLiveControls(&LiveMXCSR);
       REQUIRE(Stage == SehSIMDHandler && LiveMXCSR == SehSIMDDefault);
       REQUIRE(!(LiveFlags & SehSIMDDirection));
     }
