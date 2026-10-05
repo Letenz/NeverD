@@ -85,6 +85,9 @@ void recoverSwitchStatements(HighFunc &Func);
 /// True when control never reaches the statement after \p S: a return,
 /// jump, noreturn call or endless loop.
 bool highStmtEndsItsBlock(const HighStmt &S);
+/// Whether running \p S itself, not the statements nested in it, may raise
+/// an exception: only integer and boolean work on registers cannot.
+bool highStmtMayFault(const HighStmt &S);
 void cleanupGuardBeforeSwitch(HighFunc &Func);
 
 /// Fold if(cond){goto} patterns into if/else trees, up to \p MaxPasses
