@@ -658,6 +658,99 @@ static TryContext bodyTryContext(const TryContext &Outer, const HighStmt &S) {
   return Inner;
 }
 
+/// Whether evaluating \p E may raise an exception.  Only integer and boolean
+/// arithmetic on registers and constants cannot: a load may fault, a
+/// division may trap, a call may do anything, and floating point stays out
+/// of the claim.
+static bool exprMayFault(const HighExpr *E) {
+  if (!E)
+    return false;
+  if (E->MemoryOrdering != NdMemoryOrdering::None ||
+      E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return true;
+  switch (E->Kind) {
+  case ExprKind::Var:
+  case ExprKind::Phi:
+  case ExprKind::Const:
+  case ExprKind::Undef:
+  case ExprKind::Addr:
+    break;
+  case ExprKind::BinOp:
+  case ExprKind::UnaryOp:
+  case ExprKind::Cast:
+  case ExprKind::BitCast:
+    switch (E->Op) {
+    case NdOp::NOP:
+    case NdOp::COPY:
+    case NdOp::CAST:
+    case NdOp::INT_ADD:
+    case NdOp::INT_SUB:
+    case NdOp::INT_AND:
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR:
+    case NdOp::INT_LEFT:
+    case NdOp::INT_RIGHT:
+    case NdOp::INT_ASHR:
+    case NdOp::INT_MULT:
+    case NdOp::INT_EQUAL:
+    case NdOp::INT_NOTEQUAL:
+    case NdOp::INT_LESS:
+    case NdOp::INT_SLESS:
+    case NdOp::INT_LESSEQUAL:
+    case NdOp::INT_SLESSEQUAL:
+    case NdOp::INT_ZEXT:
+    case NdOp::INT_SEXT:
+    case NdOp::INT_NEGATE:
+    case NdOp::INT_NOT:
+    case NdOp::INT_NEG2:
+    case NdOp::BOOL_AND:
+    case NdOp::BOOL_OR:
+    case NdOp::BOOL_XOR:
+    case NdOp::BOOL_NOT:
+    case NdOp::CONCAT:
+    case NdOp::SUBBYTES:
+    case NdOp::SELECT:
+      break;
+    default:
+      return true;
+    }
+    break;
+  default:
+    return true;
+  }
+  for (const auto &Operand : E->Operands)
+    if (exprMayFault(Operand.get()))
+      return true;
+  return false;
+}
+
+/// Whether running \p Tail may raise an exception.
+static bool tailMayFault(const std::vector<HighStmt> &Tail) {
+  for (const HighStmt &S : Tail) {
+    switch (S.Kind) {
+    case StmtKind::Nop:
+      continue;
+    case StmtKind::Block:
+      if (!S.Body.empty())
+        return true;
+      continue;
+    case StmtKind::Assign:
+      if (!S.Dst ||
+          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi) ||
+          exprMayFault(S.Val.get()))
+        return true;
+      continue;
+    case StmtKind::Return:
+      if (exprMayFault(S.RetVal.get()))
+        return true;
+      continue;
+    default:
+      return true;
+    }
+  }
+  return false;
+}
+
 /// `goto L` where L starts a few pure assignments and a return (typically
 /// `result = 1; return result;` shared through an epilogue), or a call that
 /// never returns such as the fail-fast trap, becomes a copy of those
@@ -971,13 +1064,39 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
   }
   if (Tails.empty())
     return false;
+  // A tail that cannot raise an exception runs the same in any protection
+  // made only of __except clauses: no handler can catch it, and none runs
+  // on the way out of the try the way a __finally would.
+  std::set<TryContext::value_type> ExceptOnly;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::SEHTry && !S.EHClauses.empty() &&
+        std::all_of(S.EHClauses.begin(), S.EHClauses.end(),
+                    [](const HighEHClause &Clause) {
+                      return Clause.Kind == HighEHClauseKind::SEHExcept;
+                    }))
+      ExceptOnly.emplace(S.Kind, S.EHRange.Begin, S.EHRange.End);
+  });
+  auto SameProtection = [&](const TryContext &A, const TryContext &B,
+                            const std::vector<HighStmt> &Tail) {
+    if (A == B)
+      return true;
+    size_t Shared = 0;
+    while (Shared < A.size() && Shared < B.size() && A[Shared] == B[Shared])
+      ++Shared;
+    for (const TryContext *Ctx : {&A, &B})
+      for (size_t K = Shared; K < Ctx->size(); ++K)
+        if (!ExceptOnly.count((*Ctx)[K]))
+          return false;
+    return !tailMayFault(Tail);
+  };
   bool Changed = false;
   std::function<void(std::vector<HighStmt> &, const TryContext &)> Rewrite =
       [&](std::vector<HighStmt> &Stmts, const TryContext &Ctx) {
         for (size_t I = 0; I < Stmts.size(); ++I) {
           if (Stmts[I].Kind == StmtKind::Goto) {
             auto It = Tails.find(Stmts[I].GotoTarget);
-            if (It != Tails.end() && TailContexts.at(It->first) == Ctx) {
+            if (It != Tails.end() &&
+                SameProtection(TailContexts.at(It->first), Ctx, It->second)) {
               std::vector<HighStmt> Copy = It->second;
               // The copies are not jump targets; keep the label unique.
               const va_t Site = Stmts[I].Addr;
