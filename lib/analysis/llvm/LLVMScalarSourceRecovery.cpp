@@ -57,11 +57,15 @@ CleanupStatus cleanCandidate(Module &M,
     if (F.isDeclaration())
       continue;
     SymSimplifyOptions Options;
+    Options.MaxFiniteValueWork =
+        std::min<uint64_t>(65536, Remaining.MaxConstructionWork);
+    const auto Finite = SymSimplifyPass::simplifyFiniteValues(F, Options);
+    Remaining.MaxConstructionWork -= Finite.Work;
     Options.MaxPredicateWork =
         std::min<uint64_t>(65536, Remaining.MaxConstructionWork);
     const auto R = SymSimplifyPass::simplifyPredicates(F, Options);
     Remaining.MaxConstructionWork -= R.Work;
-    if (R.Rewrites) {
+    if (Finite.Rewrites || R.Rewrites) {
       Functions.invalidate(F, PreservedAnalyses::none());
       Changed = true;
     }
