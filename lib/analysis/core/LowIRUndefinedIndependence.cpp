@@ -1447,12 +1447,23 @@ class Checker {
             equal(P.Predicate, Left.branchCondition(), Right.branchCondition(),
                   "branch predicate");
             const auto Condition = ordinary(Left.branchCondition());
-            nativeTargets(P, Left.branchTarget(),
-                          Ctx.mkAnd(P.Predicate, Condition));
-            const auto Other = Ctx.mkAnd(P.Predicate, Ctx.mkNot(Condition));
-            scheduleNative(
-                std::move(P),
-                NativeInstructions.at(B.StartAddr).Fallthrough.Address, Other);
+            const auto Incoming = P.Predicate;
+            const auto Taken = Ctx.mkAnd(Incoming, Condition);
+            const auto Other = Ctx.mkAnd(Incoming, Ctx.mkNot(Condition));
+            const auto Fallthrough =
+                NativeInstructions.at(B.StartAddr).Fallthrough.Address;
+            // A completed UNSAT proof for one edge proves that its complement
+            // covers the incoming domain. Keep that domain without making
+            // later queries reprove this branch fact. Unknown still refuses,
+            // and two feasible edges retain their distinct predicates.
+            if (query(Taken) == solver::SatResult::Unsat) {
+              scheduleNative(std::move(P), Fallthrough, Incoming);
+            } else if (query(Other) == solver::SatResult::Unsat) {
+              nativeTargets(std::move(P), Left.branchTarget(), Incoming);
+            } else {
+              nativeTargets(P, Left.branchTarget(), Taken);
+              scheduleNative(std::move(P), Fallthrough, Other);
+            }
           } else {
             const auto Predicate = P.Predicate;
             nativeTargets(std::move(P), Left.branchTarget(), Predicate);
