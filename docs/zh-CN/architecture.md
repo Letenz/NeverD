@@ -1276,3 +1276,5 @@ Swift CoreGraphics 的 `CGContext.move(to:)` 和 `addLine(to:)` 保留原始导�
 共享 Swift 类方法声明也接受完整的 arm64 实例类型 `void(CGContext, CGRect, swiftself)`：普通绘图上下文位于 x0，矩形位于 d0–d3，接收者位于 x20。公开和私有成员复用同一声明；Objective-C 包装入口、类型变化、特化后缀及 x86_64 均不在此契约内。接收者发现、机器码/MedIR 校验和源码发布保留实际的逻辑 self 参数，并重新核对已注册类身份。绘图上下文不能替代 self。声明恢复不授予帧效果、所有权、依赖闭包或发布权限。
 
 CoreImage 的强 SDK 声明保留 `imageWithCGImage:` 和 `imageByApplyingTransform:` 的 `CIImage` 结果类型。后者区分由六个 double 构成的逻辑 `CGAffineTransform`，以及 ARM64 x2 中指向 48 字节私有副本的物理指针。Objective-C 方法只有在当前元数据认证入口 ABI、共享帧分析对照不可变机器码和 LowIR 证明全部初始化、到达路径、中间效果及后续使用后，才能绑定该副本。发布时独立通过标准流水线重建有界依赖组，将保存的 HighIR、MedIR 重放和完整发布函数体与新结果逐一比较；保存的参数值不能认证自身。其他生命周期或虚调用凭据仍需独立集成。HighC 只执行一次 memcpy 快照，转换为逻辑 SDK 记录。此消费者仅支持 ARM64；未支持的提供方、弱导入、过期声明和未经证明的副本存储均被拒绝。
+
+`darwinMatrixSourceFrameEffects` 还认证已链接 Darwin ARM64 中精确的强导入 `CGAffineTransformMakeRotation` 和 `CGAffineTransformConcat`。当前 SDK 声明证明它们经 x8 写入完整、不含指针的 48 字节结果。Concat 要求经 x0/x1 传入两个已初始化的 48 字节私有输入，保守地允许改写二者，并在调用后使其内容失效。共享栈帧分析检查所有范围、保存寄存器和后续初始化；CoreImage 发布仍须独立重建完整函数体。其他记录生产函数及栈 block 调用不会继承此契约的效果。
