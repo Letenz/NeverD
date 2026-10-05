@@ -28,6 +28,80 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64StatusFlagsOracle.OriginalInstructionsPreserveEveryUnselectedBit")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.CarryInstructionsPreserveAllOtherFlagsAndRegisters/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.CarryInstructionsPreserveAllOtherFlagsAndRegisters/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.CarryInstructionsPreserveAllOtherFlagsAndRegisters/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.LAHFReadsOnlyStatusBitsIntoAH/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.LAHFReadsOnlyStatusBitsIntoAH/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.LAHFReadsOnlyStatusBitsIntoAH/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.SAHFRestoresOnlyDefinedStatusBits/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.SAHFRestoresOnlyDefinedStatusBits/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.SAHFRestoresOnlyDefinedStatusBits/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.IgnoredPrefixesKeepImplicitAHAndCarry/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.IgnoredPrefixesKeepImplicitAHAndCarry/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.IgnoredPrefixesKeepImplicitAHAndCarry/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.InstructionStopRestoresContextAndNativeContinuation/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.InstructionStopRestoresContextAndNativeContinuation/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.InstructionStopRestoresContextAndNativeContinuation/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.InstructionObserverFailurePreservesCompleteState/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.InstructionObserverFailurePreservesCompleteState/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64StatusFlags.InstructionObserverFailurePreservesCompleteState/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.LockedFormsRejectWithoutEffects/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.LockedFormsRejectWithoutEffects/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64StatusFlags.LockedFormsRejectWithoutEffects/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64MachineProbe.InterruptionRetainsPhaseCauseDeadlineAndLease")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64PopFlagsOracle.OriginalUserInstructionsDetermineFlagsAndStackWidth")
