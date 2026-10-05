@@ -8,6 +8,7 @@
 
 #include "neverd/emulation/CPU.h"
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -23,7 +24,6 @@ namespace mutex_abi {
 namespace {
 using namespace mutex_abi;
 enum class LockMode { Blocking, Try, Resumed };
-std::optional<BionicValue> value(uint64_t Value) { return BionicValue(Value); }
 } // namespace
 
 llvm::Error Bionic::mutexAccess(uint64_t Address, unsigned Size,
@@ -57,37 +57,41 @@ std::optional<BionicValue> Bionic::unsupportedMutex(llvm::StringRef Name,
   return std::optional<BionicValue>();
 }
 
+BionicResult Bionic::resetMutexAttribute(const NativeCallEvent &Call,
+                                         uint64_t Value) {
+  const uint64_t Address = Call.Arguments[0];
+  if (auto E = mutexAccess(Address, AttributeBytes, Write, AttributeBytes))
+    return std::move(E);
+  if (auto E = writeMutexWord(Address, AttributeBytes, Value))
+    return std::move(E);
+  return value(0);
+}
+
+BionicResult Bionic::initializeMutexAttribute(const NativeCallEvent &Call) {
+  return resetMutexAttribute(Call, 0);
+}
+
+BionicResult Bionic::destroyMutexAttribute(const NativeCallEvent &Call) {
+  return resetMutexAttribute(Call, UINT64_MAX);
+}
+
 BionicResult Bionic::mutexAttributes(const NativeCallEvent &Call) {
+  struct Field {
+    unsigned Mask, Shift, Maximum;
+    bool Setter;
+  };
+  static const llvm::StringMap<Field> Fields{
+#define NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL(Name, Text, Mask, Shift, Maximum,  \
+                                            Setter)                            \
+  {Text, {Mask, Shift, Maximum, Setter}},
+#include "AndroidMutex.def"
+#undef NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL
+  };
+  auto I = Fields.find(Call.Name);
+  if (I == Fields.end())
+    return unsupportedMutex(Call.Name, diagnostic::MutexAttributeOperation);
+  const auto [Mask, Shift, Maximum, Setter] = I->second;
   const auto &A = Call.Arguments;
-  const llvm::StringRef Name(Call.Name);
-  if (Name == symbol::MutexAttrInit || Name == symbol::MutexAttrDestroy) {
-    if (auto E = mutexAccess(A[0], AttributeBytes, Write, AttributeBytes))
-      return std::move(E);
-    if (auto E = writeMutexWord(A[0], AttributeBytes,
-                                Name == symbol::MutexAttrInit ? 0 : UINT64_MAX))
-      return std::move(E);
-    return value(0);
-  }
-  const bool Setter = (Name == symbol::MutexAttrSetType ||
-                       Name == symbol::MutexAttrSetPShared ||
-                       Name == symbol::MutexAttrSetProtocol);
-  unsigned Mask = 0, Shift = 0, Maximum = 0;
-  if (Name == symbol::MutexAttrGetType || Name == symbol::MutexAttrSetType) {
-    Mask = AttributeType;
-    Maximum = ErrorChecking;
-  } else if (Name == symbol::MutexAttrGetPShared ||
-             Name == symbol::MutexAttrSetPShared) {
-    Mask = AttributeShared;
-    Shift = 4;
-    Maximum = 1;
-  } else if (Name == symbol::MutexAttrGetProtocol ||
-             Name == symbol::MutexAttrSetProtocol) {
-    Mask = AttributeProtocol;
-    Shift = 5;
-    Maximum = 1;
-  } else {
-    return unsupportedMutex(Name, diagnostic::MutexAttributeOperation);
-  }
   const uint32_t Argument = static_cast<uint32_t>(A[1]);
   // Bionic validates an int setter argument before dereferencing attr.
   if (Setter && Argument > Maximum)
@@ -165,6 +169,8 @@ public:
   uint16_t attributes() const { return State & ~(Counter | LockState); }
   llvm::Expected<bool> load(llvm::StringRef Operation);
   BionicResult lock(LockMode Mode);
+  BionicResult lock() { return lock(LockMode::Blocking); }
+  BionicResult tryLock() { return lock(LockMode::Try); }
   BionicResult unlock();
   BionicResult destroy();
 };
@@ -297,26 +303,22 @@ BionicResult Bionic::Mutex::destroy() {
 }
 
 BionicResult Bionic::mutex(const NativeCallEvent &Call) {
-  const llvm::StringRef Name(Call.Name);
-  if (Name.starts_with(symbol::PthreadMutexAttrPrefix))
-    return mutexAttributes(Call);
-  if (Name == symbol::MutexInit)
-    return initializeMutex(Call);
-  if (Name != symbol::MutexLock && Name != symbol::MutexTryLock &&
-      Name != symbol::MutexUnlock && Name != symbol::MutexDestroy)
-    return unsupportedMutex(Name, diagnostic::MutexOperation);
+  using Handler = BionicResult (Mutex::*)();
+  static const llvm::StringMap<Handler> Handlers{
+#define NEVERD_ANDROID_MUTEX_CALL(Name, Text, Method) {Text, &Mutex::Method},
+#include "AndroidMutex.def"
+#undef NEVERD_ANDROID_MUTEX_CALL
+  };
+  auto I = Handlers.find(Call.Name);
+  if (I == Handlers.end())
+    return unsupportedMutex(Call.Name, diagnostic::MutexOperation);
   Mutex Object(*this, Call.Arguments[0]);
-  auto Loaded = Object.load(Name);
+  auto Loaded = Object.load(Call.Name);
   if (!Loaded)
     return Loaded.takeError();
   if (!*Loaded)
     return std::optional<BionicValue>();
-  if (Name == symbol::MutexDestroy)
-    return Object.destroy();
-  if (Name == symbol::MutexUnlock)
-    return Object.unlock();
-  return Object.lock(Name == symbol::MutexTryLock ? LockMode::Try
-                                                  : LockMode::Blocking);
+  return (Object.*I->second)();
 }
 
 BionicResult Bionic::resumeMutex(uint64_t Address, uint16_t Attributes) {

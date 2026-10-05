@@ -15,6 +15,7 @@ NEVERD_ANDROID_DIAGNOSTIC(
 NEVERD_ANDROID_DIAGNOSTIC(
     ThreadAttributes,
     "unsupported thread flags, explicit stack or scheduling policy")
+NEVERD_ANDROID_DIAGNOSTIC(ThreadOperation, "unmodeled guest thread operation")
 NEVERD_ANDROID_DIAGNOSTIC(ThreadHandle, "invalid or retired pthread_t")
 NEVERD_ANDROID_DIAGNOSTIC(
     ThreadDeadlock, "no runnable guest thread; pending waits cannot complete")
@@ -75,7 +76,6 @@ NEVERD_ANDROID_DIAGNOSTIC(
     LibrarySymbolAbsent, "symbol is absent from the explicit library catalogue")
 NEVERD_ANDROID_DIAGNOSTIC(LibraryReferences,
                           "dynamic library handle has no outstanding opens")
-NEVERD_ANDROID_DIAGNOSTIC(DlfcnDispatch, "invalid dlfcn model dispatch")
 NEVERD_ANDROID_DIAGNOSTIC(OnceControlAlignment,
                           "unaligned pthread_once control")
 NEVERD_ANDROID_DIAGNOSTIC(OnceInProgress,
