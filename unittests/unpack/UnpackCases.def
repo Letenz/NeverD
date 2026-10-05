@@ -1,0 +1,127 @@
+//===- UnpackCases.def - Unpacking fixtures and expectations --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Each packed fixture names the original it was made from. Expectations are
+// read out of that original at test time, never restated here.
+#ifdef NEVERD_UNPACK_TEST_FIXTURE
+NEVERD_UNPACK_TEST_FIXTURE(PlainNRV2B, "plain.upx-nrv2b.exe", "plain.exe")
+NEVERD_UNPACK_TEST_FIXTURE(PlainNRV2D, "plain.upx-nrv2d.exe", "plain.exe")
+NEVERD_UNPACK_TEST_FIXTURE(PlainNRV2E, "plain.upx-nrv2e.exe", "plain.exe")
+NEVERD_UNPACK_TEST_FIXTURE(PlainLZMA, "plain.upx-lzma.exe", "plain.exe")
+NEVERD_UNPACK_TEST_FIXTURE(Runtime, "crt.upx.exe", "crt.exe")
+#endif
+
+// Test names spell backends as the native CPU inventory does.
+#ifdef NEVERD_UNPACK_TEST_BACKEND
+NEVERD_UNPACK_TEST_BACKEND(Unicorn, Unicorn)
+NEVERD_UNPACK_TEST_BACKEND(Kvm, KVM)
+NEVERD_UNPACK_TEST_BACKEND(Whp, WHP)
+#endif
+
+#ifdef NEVERD_UNPACK_TEST_TEXT
+NEVERD_UNPACK_TEST_TEXT(Plain, "plain.exe")
+NEVERD_UNPACK_TEST_TEXT(PlainPacked, "plain.upx-nrv2e.exe")
+NEVERD_UNPACK_TEST_TEXT(RuntimeOriginal, "crt.exe")
+NEVERD_UNPACK_TEST_TEXT(RuntimePacked, "crt.upx.exe")
+NEVERD_UNPACK_TEST_TEXT(PackedSection, "UPX0")
+NEVERD_UNPACK_TEST_TEXT(RenamedSection, "TEXT")
+NEVERD_UNPACK_TEST_TEXT(PackMagic, "UPX!")
+NEVERD_UNPACK_TEST_TEXT(MetadataSection, ".neverd")
+NEVERD_UNPACK_TEST_TEXT(KernelModule, "kernel32.dll")
+NEVERD_UNPACK_TEST_TEXT(StopObserver, "observer")
+NEVERD_UNPACK_TEST_TEXT(StopExited, "exited")
+NEVERD_UNPACK_TEST_TEXT(StopInstructionLimit, "instruction_limit")
+NEVERD_UNPACK_TEST_TEXT(StopUnsupportedService, "unsupported_service")
+NEVERD_UNPACK_TEST_TEXT(UnknownOption, "{\"unknown\":1}")
+NEVERD_UNPACK_TEST_TEXT(ZeroTransfer, "{\"transfer\":0}")
+NEVERD_UNPACK_TEST_TEXT(SecondTransfer,
+                        "{\"transfer\":2,\"instruction_limit\":77}")
+NEVERD_UNPACK_TEST_TEXT(StrictWindows,
+                        "{\"windows\":{\"defer_unmodeled\":false}}")
+NEVERD_UNPACK_TEST_TEXT(TinyLimitOptions, "{\"instruction_limit\":1000}")
+NEVERD_UNPACK_TEST_TEXT(FirstOutput, "first.exe")
+NEVERD_UNPACK_TEST_TEXT(SecondOutput, "second.exe")
+NEVERD_UNPACK_TEST_TEXT(StandardOutput, "report.json")
+NEVERD_UNPACK_TEST_TEXT(Missing, "missing.exe")
+NEVERD_UNPACK_TEST_TEXT(Unavailable, "unavailable")
+NEVERD_UNPACK_TEST_TEXT(OrdinalPrefix, "#")
+NEVERD_UNPACK_TEST_TEXT(FixtureBufferName, "fixture")
+NEVERD_UNPACK_TEST_TEXT(NotPE32Plus, "not a PE32+ image")
+NEVERD_UNPACK_TEST_TEXT(SupportedFormat, "pe64")
+NEVERD_UNPACK_TEST_TEXT(ProcessProfile, "windows-pe64-v1")
+NEVERD_UNPACK_TEST_TEXT(X64Architecture, "x86_64")
+NEVERD_UNPACK_TEST_TEXT(ReportOutput, "out.exe")
+NEVERD_UNPACK_TEST_TEXT(ScratchPrefix, "neverd-unpack")
+NEVERD_UNPACK_TEST_TEXT(FixtureSeparator, "_")
+NEVERD_UNPACK_TEST_TEXT(BackendUnavailable, "backend unavailable on this host")
+NEVERD_UNPACK_TEST_TEXT(SingleBackend,
+                        "fewer than two backends are available on this host")
+NEVERD_UNPACK_TEST_TEXT(NoBackend, "no backend is available on this host")
+#endif
+
+// The wire names consumers depend on, restated here on purpose: a renamed
+// enumerator must fail a test rather than follow the library's own table.
+#ifdef NEVERD_UNPACK_TEST_NAME
+NEVERD_UNPACK_TEST_NAME(formatKindName(FormatKind::PE64), "pe64")
+NEVERD_UNPACK_TEST_NAME(packerKindName(PackerKind::UPX), "upx")
+NEVERD_UNPACK_TEST_NAME(packerKindName(PackerKind::Unidentified),
+                        "unidentified")
+NEVERD_UNPACK_TEST_NAME(packerEvidenceName(PackerEvidence::UPXSectionNames),
+                        "upx_section_names")
+NEVERD_UNPACK_TEST_NAME(packerEvidenceName(PackerEvidence::UPXPackHeader),
+                        "upx_pack_header")
+NEVERD_UNPACK_TEST_NAME(packerEvidenceName(PackerEvidence::UPXEntryStub),
+                        "upx_entry_stub")
+NEVERD_UNPACK_TEST_NAME(unpackOutcomeName(UnpackOutcome::Unpacked), "unpacked")
+NEVERD_UNPACK_TEST_NAME(unpackOutcomeName(UnpackOutcome::NoEntry), "no_entry")
+NEVERD_UNPACK_TEST_NAME(entrySourceName(EntrySource::Transfer), "transfer")
+NEVERD_UNPACK_TEST_NAME(entrySourceName(EntrySource::Stub), "stub")
+NEVERD_UNPACK_TEST_NAME(importOriginName(ImportOrigin::Static), "static")
+NEVERD_UNPACK_TEST_NAME(importOriginName(ImportOrigin::Runtime), "runtime")
+#endif
+
+// Report members a consumer reads, restated for the same reason.
+#ifdef NEVERD_UNPACK_TEST_KEY
+NEVERD_UNPACK_TEST_KEY(SchemaVersion, "schema_version")
+NEVERD_UNPACK_TEST_KEY(Format, "format")
+NEVERD_UNPACK_TEST_KEY(Outcome, "outcome")
+NEVERD_UNPACK_TEST_KEY(Architecture, "architecture")
+NEVERD_UNPACK_TEST_KEY(EntrySource, "entry_source")
+NEVERD_UNPACK_TEST_KEY(EntryRVA, "entry_rva")
+NEVERD_UNPACK_TEST_KEY(Packer, "packer")
+NEVERD_UNPACK_TEST_KEY(Kind, "kind")
+NEVERD_UNPACK_TEST_KEY(Evidence, "evidence")
+NEVERD_UNPACK_TEST_KEY(Transfers, "transfers")
+NEVERD_UNPACK_TEST_KEY(Imports, "imports")
+NEVERD_UNPACK_TEST_KEY(Sections, "sections")
+NEVERD_UNPACK_TEST_KEY(Output, "output")
+NEVERD_UNPACK_TEST_KEY(Path, "path")
+NEVERD_UNPACK_TEST_KEY(Size, "size")
+NEVERD_UNPACK_TEST_KEY(SHA256, "sha256")
+NEVERD_UNPACK_TEST_KEY(Execution, "execution")
+NEVERD_UNPACK_TEST_KEY(Profile, "profile")
+NEVERD_UNPACK_TEST_KEY(StopReason, "stop_reason")
+#endif
+
+#ifdef NEVERD_UNPACK_TEST_BYTES
+NEVERD_UNPACK_TEST_BYTES(ELFMagic, 0x7f, 'E', 'L', 'F')
+#endif
+
+#ifdef NEVERD_UNPACK_TEST_VALUE
+// Far below any stub's work, so the run ends inside the stub.
+NEVERD_UNPACK_TEST_VALUE(TinyInstructionLimit, 1000)
+NEVERD_UNPACK_TEST_VALUE(RequestedInstructionLimit, 77)
+NEVERD_UNPACK_TEST_VALUE(SectionHeaderBytes, 40)
+NEVERD_UNPACK_TEST_VALUE(PointerBytes, 8)
+NEVERD_UNPACK_TEST_VALUE(HintBytes, 2)
+NEVERD_UNPACK_TEST_VALUE(TruncatedBytes, 64)
+NEVERD_UNPACK_TEST_VALUE(SchemaVersion, 1)
+NEVERD_UNPACK_TEST_VALUE(DigestCharacters, 64)
+NEVERD_UNPACK_TEST_VALUE(MachineARM64, 0xaa64)
+// The address field of a section header, and an aligned address no image of
+// the fixtures reaches.
+NEVERD_UNPACK_TEST_VALUE(SectionAddressOffset, 12)
+NEVERD_UNPACK_TEST_VALUE(OutsideImageAddress, 0x10000000)
+#endif

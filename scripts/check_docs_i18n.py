@@ -708,6 +708,13 @@ MEMORY_SAFETY_REQUIRED_TOKENS = (
     "neverd_session_audit_json",
     "neverd_session_hunt_json",
 )
+UNPACK_REQUIRED_TOKENS = (
+    "neverd unpack",
+    "neverd_unpack_json",
+    "Session.unpack",
+    "windows-pe64-v1",
+    "NeverDUnpackExecutionTests",
+)
 ENGLISH_DOCS = (
     Path("README.md"),
     Path("CONTRIBUTING.md"),
@@ -722,6 +729,7 @@ ENGLISH_DOCS = (
     Path("docs/emulation.md"),
     Path("docs/cpu-execution.md"),
     Path("docs/process-emulation.md"),
+    Path("docs/unpack.md"),
     Path("docs/solver.md"),
     Path("docs/windows-exception-reconstruction.md"),
     *(Path(f"docs/{stem}.md") for stem in GUIDE_STEMS),
@@ -757,6 +765,7 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
         Path(f"docs/{locale}/solver.md"),
         Path(f"docs/{locale}/mobile.md"),
         *(Path(f"docs/{locale}/{stem}.md") for stem in MACOS_GUIDE_STEMS),
+        Path(f"docs/{locale}/unpack.md"),
     )
 
 
@@ -3047,14 +3056,15 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
     require_tokens(Path("README.md"), ("docs/android.md", "docs/ios.md", "neverd mobile"), errors, view)
     require_tokens(
         Path("docs/README.md"),
-        ("android.md", "ios.md", "cpu-execution.md", "process-emulation.md", "solver.md"),
+        ("android.md", "ios.md", "cpu-execution.md", "process-emulation.md",
+         "unpack.md", "solver.md"),
         errors,
         view,
     )
 
     selector_tokens = {
         stem: (f"{stem}.md", *(f"{locale}/{stem}.md" for locale in LOCALES))
-        for stem in (*GUIDE_STEMS, "cpu-execution", "process-emulation", "solver")
+        for stem in (*GUIDE_STEMS, "cpu-execution", "process-emulation", "solver", "unpack")
     }
     for stem in GUIDE_STEMS:
         guide = Path(f"docs/{stem}.md")
@@ -3097,6 +3107,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
                 "--synthesize",
             ),
         ),
+        ("unpack", UNPACK_REQUIRED_TOKENS),
     ):
         guide = Path(f"docs/{stem}.md")
         require_tokens(guide, (*selector_tokens[stem], *tokens), errors, view)
@@ -3135,6 +3146,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
             _mobile_overview,
             _hvf_guide,
             _darwin_guide,
+            unpack_guide,
         ) = localized_paths(locale)
         require_tokens(
             _interpreter_guide,
@@ -3145,7 +3157,8 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
         )
         require_tokens(
             index,
-            ("interpreter-recovery.md", "cpu-execution.md", "process-emulation.md", "solver.md"),
+            ("interpreter-recovery.md", "cpu-execution.md", "process-emulation.md",
+             "unpack.md", "solver.md"),
             errors,
             view,
         )
@@ -3186,6 +3199,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
                     "--synthesize",
                 ),
             ),
+            ("unpack", unpack_guide, UNPACK_REQUIRED_TOKENS),
         ):
             localized_selector_tokens = (
                 f"../{stem}.md",

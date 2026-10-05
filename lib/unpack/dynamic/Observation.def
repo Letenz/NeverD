@@ -1,0 +1,37 @@
+//===- Observation.def - How an image is observed as a guest process ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// What judging a transfer needs to know about an instruction set: the stack
+// pointer register and the longest instruction in bytes. A transfer is the
+// program's entry when the stack pointer has returned to its value at process
+// entry, and its target is compared over the longest instruction so that
+// data stored beside existing code is not mistaken for new code.
+#ifdef NEVERD_UNPACK_ARCHITECTURE
+NEVERD_UNPACK_ARCHITECTURE(X64, X64SP, 15)
+NEVERD_UNPACK_ARCHITECTURE(AArch64, AArch64SP, 4)
+#endif
+
+// The guest process profile that executes images of one container and
+// instruction set. A pair without a row cannot be observed and is rejected
+// before execution.
+#ifdef NEVERD_UNPACK_PLATFORM
+NEVERD_UNPACK_PLATFORM(PE64, X64, WindowsPE64)
+NEVERD_UNPACK_PLATFORM(PE64, AArch64, WindowsPE64)
+#endif
+
+#ifdef NEVERD_UNPACK_OBSERVATION_TEXT
+NEVERD_UNPACK_OBSERVATION_TEXT(
+    NoArchitecture, "transfers cannot be judged on this instruction set: ")
+NEVERD_UNPACK_OBSERVATION_TEXT(
+    NoPlatform, "no guest process profile observes this container and "
+                "instruction set: ")
+NEVERD_UNPACK_OBSERVATION_TEXT(PlatformSeparator, " for ")
+NEVERD_UNPACK_OBSERVATION_TEXT(
+    MainImage, "the observed process does not contain the input image")
+NEVERD_UNPACK_OBSERVATION_TEXT(
+    WatchOutside, "an execution watch fired outside the observed image")
+NEVERD_UNPACK_OBSERVATION_TEXT(
+    TransferLimit, "transfers into generated code exceed the unpacking limit")
+#endif
