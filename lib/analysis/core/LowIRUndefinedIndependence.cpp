@@ -102,7 +102,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(13); // Certificate semantic schema, independent of report formatting.
+  Number(14); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.DeferNativeConditionalEdges);
@@ -278,6 +278,7 @@ struct TerminalState {
   SymRef Predicate, SystemFlags, ReturnOperand;
   std::set<uint64_t> Written;
   int Cutpoint = -1;
+  std::set<uint64_t> DefinedFunctionTemporaries{};
 };
 
 struct LoopPrefix {
@@ -441,7 +442,8 @@ class Checker {
                            P.LeftSystemFlags,
                            {},
                            std::move(P.Written),
-                           static_cast<int>(I)});
+                           static_cast<int>(I),
+                           std::move(P.DefinedFunctionTemporaries)});
       ++(CandidateExecution ? Refinement->CandidateCutpoints
                             : Refinement->OriginalCutpoints);
       if (Refinement->PrefixSearchCutpoint >= 0)
@@ -1440,7 +1442,8 @@ class Checker {
             Returns.push_back(
                 {std::move(P.Left), P.Predicate, P.LeftSystemFlags,
                  Original.NumInputs ? Left.branchTarget() : SymRef{},
-                 std::move(P.Written)});
+                 std::move(P.Written), -1,
+                 std::move(P.DefinedFunctionTemporaries)});
             ++(CandidateExecution ? Refinement->CandidatePathCount
                                   : Refinement->OriginalPathCount);
           }
@@ -1619,11 +1622,6 @@ class Checker {
         fail(Status::Invalid, llvm::toString(std::move(Error)));
       for (const auto &Range : Function->FunctionTemporaries)
         checkScratch(NdVar::tmp(Range.Offset, Range.Bytes));
-      // Cutpoint states currently bind registers and frame bytes only. A
-      // lifetime declaration cannot supply an unproved inductive value.
-      if (inductive() && !Function->FunctionTemporaries.empty())
-        fail(Status::Unsupported,
-             "function temporaries require finite execution, not loop cuts");
       for (va_t Root : Function->ModuleAnalysisRoots)
         if (Root != Function->Entry)
           fail(Status::Unsupported,
@@ -1997,6 +1995,18 @@ private:
 
   void loopStateEqual(SymRef Predicate, TerminalState &Actual,
                       TerminalState &Expected, llvm::StringRef Side) {
+    // A lifetime declaration never initializes storage. Only real prefix
+    // definitions survive a cut, and every arrival must retain their exact
+    // values. Templates currently have no temporary assignments or inputs.
+    if (Actual.DefinedFunctionTemporaries !=
+        Expected.DefinedFunctionTemporaries)
+      fail(Status::Dependent,
+           (Side + " loop function-temporary definedness differs").str());
+    for (uint64_t Byte : Actual.DefinedFunctionTemporaries)
+      equal(
+          Predicate, Actual.State.read(SymSpace::Temporary, Byte, 1),
+          Expected.State.read(SymSpace::Temporary, Byte, 1),
+          (Side + " loop function-temporary byte " + llvm::Twine(Byte)).str());
     // Unassigned state starts at the same entry snapshot. Every program
     // register write and every template assignment enters RegisterBytes, so
     // later-discovered untouched registers are still identical by construction.
@@ -2356,6 +2366,7 @@ public:
                                                : Refinement->OriginalStart;
         if (Start) {
           Entry.Left = Entry.Right = Start->State;
+          Entry.DefinedFunctionTemporaries = Start->DefinedFunctionTemporaries;
           Entry.LeftSystemFlags = Entry.RightSystemFlags = Start->SystemFlags;
           Entry.Predicate = Predicate = Start->Predicate;
           Entry.SkipCutpoint = true;

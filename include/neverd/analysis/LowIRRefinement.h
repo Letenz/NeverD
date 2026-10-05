@@ -99,6 +99,9 @@ struct LowIRLoopCutpoint {
   /// by a separate bounded replay from the real entry. That replay establishes
   /// only a feasible paired witness; complete entry/transition coverage is
   /// still required. No abstract state is invented for an unreached cut.
+  /// Defined function-temporary bytes retain this prefix's fixed expressions.
+  /// Every arrival checks their definedness and values; declarations alone
+  /// provide no initial state, and temporary induction inputs are unsupported.
   bool UseEntryPrefix = false;
   std::vector<LowIRLoopInput> Inputs;
   std::vector<LowOp> Expressions;
