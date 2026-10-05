@@ -19,6 +19,8 @@ struct InterpreterEntryAlignment {
   uint32_t Alignment = 1;
   uint32_t Residue = 0;
 
+  bool operator==(const InterpreterEntryAlignment &) const = default;
+
   bool valid() const {
     return Alignment && !(Alignment & (Alignment - 1)) && Residue < Alignment;
   }

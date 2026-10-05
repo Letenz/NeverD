@@ -40,6 +40,8 @@ struct InterpreterLLVMRefinementModels {
 /// that profile's allowed packed-flag domain; other state words are unchanged.
 /// The mandatory contract observes all 17 words, actual status, definedness
 /// and written frame bytes, and preserves RSP, the return slot and definedness.
+/// An optional frame-entry congruence restricts the same raw RSP input on both
+/// sides, without changing its value or granting memory/ABI facts.
 /// Frame must be rooted at the raw RSP state word (offset 32, eight bytes).
 /// This API only prepares inputs for untrusted loop proposals; it proves
 /// nothing. Mutating returned models cannot change what the checker verifies.
@@ -86,8 +88,8 @@ struct InterpreterLLVMRefinementResult {
 /// externally supplied models, receipts nor hashes can authorize success.
 /// All observations and preservation obligations are mandatory. Native entry
 /// constants and image exclusions remain in the native receipt; the source
-/// relation covers the larger arbitrary-GPR/canonical-flags domain using the
-/// same caller frame and exclusions. Extra native restrictions therefore
+/// relation covers arbitrary GPRs and canonical flags within the same caller
+/// frame, exclusions and optional entry congruence. Extra native restrictions
 /// cannot weaken the source relation. Plans never add entry assumptions.
 ///
 /// Requires the explicit normal, nonfaulting, CET-disabled UserX64NoFaultV1
