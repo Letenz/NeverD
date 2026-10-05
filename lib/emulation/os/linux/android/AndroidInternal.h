@@ -144,8 +144,11 @@ private:
   BionicResult finalize(uint64_t DSO);
   llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
   llvm::Expected<uint64_t> findCharacter(const NativeCallEvent &Call);
+  class ArgumentReader;
   class StringFormatter;
   BionicResult format(const NativeCallEvent &Call);
+  class IntegerScanner;
+  BionicResult scan(const NativeCallEvent &Call);
   class Mutex;
   BionicResult mutex(const NativeCallEvent &Call);
   BionicResult mutexAttributes(const NativeCallEvent &Call);

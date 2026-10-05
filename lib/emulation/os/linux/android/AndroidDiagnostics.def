@@ -197,13 +197,21 @@ NEVERD_ANDROID_DIAGNOSTIC(MemoryInputChanged,
 NEVERD_ANDROID_DIAGNOSTIC(MemoryInputIO, "memory input file I/O failed: ")
 NEVERD_ANDROID_DIAGNOSTIC(MemoryInputDeadline,
                           "memory input preparation deadline expired")
+NEVERD_ANDROID_DIAGNOSTIC(ArgumentInputLimit,
+                          "variadic arguments exceed memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(ScanFormat, "unsupported integer scan format")
+NEVERD_ANDROID_DIAGNOSTIC(ScanLimit, "integer scan exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(ScanOverflow,
+                          "integer scan conversion overflow is unmodeled")
+NEVERD_ANDROID_DIAGNOSTIC(
+    ScanAlias, "scan destination aliases input, format or argument storage")
 NEVERD_ANDROID_DIAGNOSTIC(FormatInputLimit,
                           "formatting input exceeds memory limit")
-NEVERD_ANDROID_DIAGNOSTIC(FormatRegisterSaveArea,
+NEVERD_ANDROID_DIAGNOSTIC(ArgumentRegisterSaveArea,
                           "invalid AAPCS64 register save area")
-NEVERD_ANDROID_DIAGNOSTIC(FormatCallStackAlignment,
+NEVERD_ANDROID_DIAGNOSTIC(ArgumentCallStackAlignment,
                           "unaligned AAPCS64 call stack")
-NEVERD_ANDROID_DIAGNOSTIC(FormatArgumentStack, "invalid AAPCS64 argument stack")
+NEVERD_ANDROID_DIAGNOSTIC(ArgumentStack, "invalid AAPCS64 argument stack")
 NEVERD_ANDROID_DIAGNOSTIC(FormatStringOverflow,
                           "formatting string address overflow")
 NEVERD_ANDROID_DIAGNOSTIC(FormatWidthPrecision,
@@ -225,8 +233,8 @@ NEVERD_ANDROID_DIAGNOSTIC(FormatConversion,
                           "positional, floating-point, wide text and %n)")
 NEVERD_ANDROID_DIAGNOSTIC(
     FormatCapacity, "snprintf capacity exceeds the supported INT_MAX bound")
-NEVERD_ANDROID_DIAGNOSTIC(FormatVAListAlignment, "unaligned AAPCS64 va_list")
-NEVERD_ANDROID_DIAGNOSTIC(FormatRegisterOffset,
+NEVERD_ANDROID_DIAGNOSTIC(ArgumentVAListAlignment, "unaligned AAPCS64 va_list")
+NEVERD_ANDROID_DIAGNOSTIC(ArgumentRegisterOffset,
                           "invalid AAPCS64 general register offset")
 #endif
 

@@ -2339,6 +2339,15 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidScanningTests.cpp` uses independently compiled O0/O2 callers with
+ordinary, APS2 and RELR relocations. It checks integer widths, register/stack
+arguments, `va_copy`, explicit save areas, matching versus input failures,
+field widths, prefix rollback, numeric buffer limits, suppression, `%n`,
+destination aliases, thread errno and dynamic provider lifetime. Full memory
+comparisons cover canaries and refusals. Formatting regressions exercise the
+same GP argument reader. These tests establish the bounded Android model;
+they do not establish behavior on an Android device.
+
 `AndroidSearchTests.cpp` executes independently compiled character-search
 callers at O0/O2 with ordinary, APS2 and RELR relocations on each available
 ARM64 backend. It checks first/last matches, NUL and unsigned characters,
