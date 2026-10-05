@@ -110,3 +110,7 @@ the feature repository's original compiler outputs, exercise all five profiles,
 and check near misses, conflicting candidates, naming priority, unchanged IR,
 both source routes, optimized/unoptimized LLVMC and reversible source mapping.
 Data validation and engine validation remain separate recorded results.
+The feature repository's [consumer receipt](https://github.com/NeverSight/signatures/blob/c64a088bb107abbb3bdcc04fc1b69230badce7a3/features/consumer-tests.md)
+records the tested engine revision, exact counts, baseline failures and skipped
+coverage. A passing profile matrix does not imply a green full-repository test
+aggregate or support for an untested runtime configuration.
