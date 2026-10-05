@@ -1954,6 +1954,81 @@ TEST(ObjCBlockSources, DeclaredConsumerRequiresExactImportAndCallbackABI) {
       }
 }
 
+TEST(ObjCBlockSources,
+     NonescapingFrameLiteralsRequireCompatibleIsaAndConsumer) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool GlobalIsa : {false, true})
+      for (uint32_t StorageFlags :
+           {0u, 1u << 23, 1u << 28, (1u << 23) | (1u << 28)})
+        for (const auto *Name : {"dispatch_sync", "dispatch_async"}) {
+          SCOPED_TRACE(testing::Message()
+                       << GlobalIsa << ':' << StorageFlags << ':' << Name);
+          SourceFixture F(true, Architecture);
+          F.Image.ImportPtrSlots[F.StackIsa] =
+              GlobalIsa ? "__NSConcreteGlobalBlock" : "__NSConcreteStackBlock";
+          constexpr va_t FlagsPool = 0x2600, Slot = 0x2800;
+          F.put64(FlagsPool, 0xc0000000 | StorageFlags);
+          // Nonescaping captures are retained by the constructor itself;
+          // their descriptor has strong fields without copy/dispose helpers.
+          if (StorageFlags == ((1u << 23) | (1u << 28))) {
+            F.put64(F.Descriptor + 24, 0x100);
+            F.caller().Body[4].StoreVal =
+                parameter(0, NdType::makePtr(NdType::makeVoid()));
+          }
+          F.caller().Body[1].StoreVal = HighExpr::makeLoad(
+              HighExpr::makeConst(FlagsPool, 8), NdType::makeInt(8));
+          const std::string Import = std::string("_") + Name;
+          F.Image.ImportPtrSlots[Slot] = Import;
+          F.Image.DyldBindSlots[Slot] = {
+              Import, 0, "/usr/lib/system/libdispatch.dylib", false};
+          const auto Binding = darwinRuntimeSourceCallHint(F.Image, Slot);
+          const auto Contract = darwinBlockParameterContract(F.Image, Slot, 1);
+          ASSERT_TRUE(Binding);
+          ASSERT_TRUE(Contract);
+          F.string(F.Signature, "v8@?0");
+          auto &Invoke = F.Result.HighFuncs[0];
+          Invoke.SourceTypeHint = Contract->Signature;
+          Invoke.ReturnType = NdType::makeVoid();
+          Invoke.Params.resize(1);
+          Invoke.Body = {ret(nullptr)};
+          auto Call = HighExpr::makeCall(
+              Name, 0,
+              {parameter(0, F.caller().Params[0].Type), frame(F.Image, -48)});
+          Call->Type = NdType::makeVoid();
+          Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Binding);
+          F.caller().Body.back() = ret(Call);
+          F.caller().ReturnType = NdType::makeVoid();
+          F.caller().SourceTypeHint->ReturnType = NdType::makeVoid();
+          const bool NoEscape = StorageFlags == ((1u << 23) | (1u << 28));
+          const bool Expected =
+              (!GlobalIsa && StorageFlags == 0) ||
+              (NoEscape && std::string(Name) == "dispatch_sync");
+          const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+          EXPECT_EQ(Plan.StackBlocks.count(F.Caller), Expected ? 1u : 0u);
+          const auto Bound = bindObjCBlockSourceReferences(F.caller(), F.Image,
+                                                           Plan, F.functions());
+          EXPECT_EQ(Bound.Limitation.empty(), Expected) << Bound.Limitation;
+          if (Expected) {
+            const auto &Block = Plan.StackBlocks.at(F.Caller).front();
+            EXPECT_EQ(Block.FrameOffset, -48);
+            EXPECT_EQ(Block.HeaderConstants.size(), 1u);
+          }
+        }
+}
+
+TEST(ObjCBlockSources, NonescapingFrameCopyDoesNotProduceOwnedStorage) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    OwnedSourceFixture F(Architecture);
+    F.Image.ImportPtrSlots[F.StackIsa] = "__NSConcreteGlobalBlock";
+    F.put64(F.Flags, 0xd2800000);
+    const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    EXPECT_TRUE(Plan.StackBlocks.empty());
+    ASSERT_EQ(Plan.Rejections.count(F.Caller), 1u);
+    EXPECT_NE(Plan.Rejections.at(F.Caller).find("cannot acquire owned storage"),
+              std::string::npos);
+  }
+}
+
 TEST(ObjCBlockSources, DispatchConsumersCopyOnlyAuthenticatedBlockArguments) {
   constexpr std::pair<const char *, unsigned> Consumers[] = {
       {"dispatch_after", 2},

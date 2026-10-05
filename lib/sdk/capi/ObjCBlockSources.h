@@ -76,6 +76,8 @@ using Identity = objc_projection_detail::LocalIdentity;
 using CallKind = SourceCallTypeHint::Kind;
 constexpr uint64_t StrongObjectFieldFlag = 3;
 constexpr uint64_t StrongBlockFieldFlag = 7;
+constexpr uint32_t BlockNoEscape = 1u << 23;
+constexpr uint32_t BlockGlobal = 1u << 28;
 struct Invalid : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
@@ -145,7 +147,8 @@ inline bool validDescriptor(const ObjCBlockDescriptor &D) {
     return R.StorageKind == ObjCBlockCaptureRange::Kind::NonObjectBytes ||
            R.StorageKind == ObjCBlockCaptureRange::Kind::Unretained ||
            (R.StorageKind == ObjCBlockCaptureRange::Kind::Strong &&
-            D.CopyHelper);
+            (D.CopyHelper || (D.Flags & (BlockGlobal | BlockNoEscape)) ==
+                                 (BlockGlobal | BlockNoEscape)));
   });
 }
 inline bool sameDescriptor(const ObjCBlockDescriptor &A,
@@ -1272,14 +1275,21 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
     auto Constructed = [&](int64_t Base) -> ObjCStackBlockSource {
       const auto Isa = Word(Base), Invoke = Word(Base + 16),
                  Descriptor = Word(Base + 24);
-      if (Isa.K != Value::Isa || Isa.Name != "_NSConcreteStackBlock" ||
-          Invoke.K != Value::Number || !Image.isCodeAddress(Invoke.Bits) ||
-          Descriptor.K != Value::Number || !Isa.Producer || !Invoke.Producer ||
-          !Descriptor.Producer || Integer(Base + 12, 4) != 0)
+      if (Isa.K != Value::Isa || Invoke.K != Value::Number ||
+          !Image.isCodeAddress(Invoke.Bits) || Descriptor.K != Value::Number ||
+          !Isa.Producer || !Invoke.Producer || !Descriptor.Producer ||
+          Integer(Base + 12, 4) != 0)
         throw Invalid("block literal header has no complete "
                       "stack/invoke/descriptor identity");
       const auto Flags = static_cast<uint32_t>(Integer(Base + 8, 4));
-      if ((Flags & (1u << 28)) && !(Flags & (1u << 23)))
+      // A captured noescape literal occupies the caller's frame but uses
+      // the global runtime class: copying it returns the original address.
+      // Both compatibility flags must agree with that class/storage pair.
+      if ((Isa.Name == "_NSConcreteGlobalBlock" &&
+           (Flags & (BlockGlobal | BlockNoEscape)) !=
+               (BlockGlobal | BlockNoEscape)) ||
+          ((Flags & BlockGlobal) && !(Flags & BlockNoEscape)) ||
+          ((Flags & BlockNoEscape) && !(Flags & BlockGlobal)))
         throw Invalid(
             "stack block concrete class disagrees with its storage flags");
       std::string Error;
@@ -1407,8 +1417,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         // A complete literal can be live before its first consumer. Observe
         // its current construction without publishing a consumer or ABI.
         for (const auto &[Byte, Stored] : Memory)
-          if (!Stored.Index && Stored.Width == 8 && Stored.V.K == Value::Isa &&
-              Stored.V.Name == "_NSConcreteStackBlock")
+          if (!Stored.Index && Stored.Width == 8 && Stored.V.K == Value::Isa)
             LiveRanges[Byte] = Constructed(Byte).Descriptor.LiteralSize;
         for (const auto &[Base, Bytes] : LiveRanges)
           if (Offset < Base + static_cast<int64_t>(Bytes) &&
@@ -1438,8 +1447,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         if (Parameter != 0 || !Binding ||
             Binding->CallKind != CallKind::ObjCSuper2 ||
             Binding->TargetName != "objc_msgSendSuper2" ||
-            E.CallTarget != "objc_msgSendSuper2" ||
-            !CallBound(E) ||
+            E.CallTarget != "objc_msgSendSuper2" || !CallBound(E) ||
             !frameRange(Function, Offset, 16))
           return false;
         const auto InBlock = [&](int64_t Byte) {
@@ -1481,8 +1489,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         const auto Header = Memory.find(Arguments[I].Offset);
         const bool ExactBlockBase =
             Header != Memory.end() && Header->second.Index == 0 &&
-            Header->second.Width == 8 && Header->second.V.K == Value::Isa &&
-            Header->second.V.Name == "_NSConcreteStackBlock";
+            Header->second.Width == 8 && Header->second.V.K == Value::Isa;
         if (!ExactBlockBase) {
           if ((EnumerationBorrow && (I == 2 || I == 3)) ||
               BorrowsDisjointSuperRecord(I, Arguments[I].Offset) ||
@@ -1511,22 +1518,32 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
               Binding->TargetName == "_Block_copy")) &&
             CallBound(E);
         std::optional<SourceFunctionTypeHint> Consumer;
+        bool ConsumerCopies = false;
         if (Binding && Binding->CallKind == CallKind::DarwinRuntimeCall) {
           const auto Contract =
               darwinBlockParameterContract(Image, Binding->TargetAddress, I);
-          if (Contract)
+          if (Contract) {
             Consumer = Contract->Signature;
+            ConsumerCopies = Contract->Storage ==
+                             DarwinBlockParameterContract::Lifetime::Copied;
+          }
         } else if (Binding && Binding->CallKind == CallKind::ObjCMessage) {
           const auto Contract = objcBlockParameterContract(Image, *Binding, I);
-          if (Contract)
+          if (Contract) {
             Consumer = Contract->Signature;
+            ConsumerCopies = Contract->Storage ==
+                             ObjCBlockParameterContract::Lifetime::Copied;
+          }
         }
         const bool CallbackMatches =
             Consumer && Block.Descriptor.InvokeTypeHint &&
             objc_projection_detail::sameHint(*Block.Descriptor.InvokeTypeHint,
                                              *Consumer);
-        const bool DeclaredConsumer =
-            CallbackMatches && CallBound(E);
+        const bool DeclaredConsumer = CallbackMatches && CallBound(E);
+        if ((Block.Descriptor.Flags & BlockNoEscape) &&
+            (Runtime || (DeclaredConsumer && ConsumerCopies)))
+          throw Invalid("nonescaping stack block cannot acquire owned storage "
+                        "through a copying consumer");
         if (!Direct && !Runtime && !DeclaredConsumer &&
             (!Binding || Binding->CallKind != CallKind::Native ||
              E.IsIndirectCall ||
@@ -1640,8 +1657,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         break;
       case StmtKind::Store: {
         auto Address = State.eval(S.StoreAddr), V = State.eval(S.StoreVal);
-        Current.SawIsa |=
-            V.K == Value::Isa && V.Name == "_NSConcreteStackBlock";
+        Current.SawIsa |= V.K == Value::Isa;
         SawIsa |= Current.SawIsa;
         if (Address.K != Value::Frame) {
           if (V.K == Value::Frame)
