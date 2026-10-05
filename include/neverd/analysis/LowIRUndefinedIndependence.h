@@ -93,6 +93,12 @@ struct LowIRIndependenceContract {
   /// Each entry still requires its own complete boundary and semantic
   /// evidence. Static LowIR and inductive loop APIs reject this option.
   bool AllowOverlappingNativeInstructions = false;
+  /// Finite native proofs only. Collect conditional successors only after
+  /// their existing paired-control and feasibility checks. Every feasible
+  /// destination still needs complete byte and semantic evidence; skipped
+  /// arms have no instruction-inventory claim. The default eagerly audits
+  /// both arms. Static LowIR and inductive loop APIs reject this option.
+  bool DeferNativeConditionalEdges = false;
 };
 
 struct LowIRIndependenceLimits {

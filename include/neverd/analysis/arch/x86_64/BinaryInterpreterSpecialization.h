@@ -62,7 +62,11 @@ struct BinaryUndefinedIndependenceResult {
   bool proved() const { return Proof.proved() && Certificate.has_value(); }
 };
 
-/// Collect both arms of original direct branches before feasibility pruning.
+/// By default collect both arms of original direct branches before pruning.
+/// The explicit finite-only DeferNativeConditionalEdges contract instead
+/// collects conditional successors after paired-control equality and their
+/// feasibility checks. An infeasible arm has no instruction-inventory claim;
+/// every feasible arrival retains all byte, semantic and resource checks.
 /// Physical near calls capture their target before pushing the continuation;
 /// internal returns load their actual stack target. Indirect control requires
 /// paired target independence and a complete bounded target set. Every feasible
@@ -86,7 +90,7 @@ struct BinaryUndefinedIndependenceResult {
 /// restored on every outer return, before the final native return-address pop.
 /// CALL fallthrough is a stored return value, not a collection edge. Internal
 /// RET destinations are collected only after complete target enumeration;
-/// direct call targets and both direct conditional arms retain eager audits.
+/// direct call targets retain eager audits; conditional arms do so by default.
 /// Skipped inline bytes have no instruction-evidence claim. Every feasible
 /// destination must still decode, lift and meet the full proof contract.
 /// Entry constants, byte order, X64FlagsProfile and optional frame-entry

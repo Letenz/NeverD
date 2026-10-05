@@ -182,6 +182,112 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     DeferredConditionalEdgesSkipOnlyInfeasibleInstructionInventories) {
+  for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
+           // Dead taken edge outside the image.
+           {0x39, 0xc0, 0x75, 0x40, 0xb8, 7, 0, 0, 0, 0xc3},
+           // Dead taken edge to bytes that cannot decode in long mode.
+           {0x39, 0xc0, 0x75, 6, 0xb8, 7, 0, 0, 0, 0xc3, 0x16},
+           // Dead fallthrough; only the taken edge is executable code.
+           {0x39, 0xc0, 0x74, 2, 0x16, 0x06, 0xb8, 7, 0, 0, 0, 0xc3}}) {
+    Program P({});
+    P.Image.Segments.front().Data = Bytes;
+    P.append({});
+    expectRefusal(P, Status::Unsupported);
+    P.Contract.DeferNativeConditionalEdges = true;
+    const auto Good = P.check();
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_EQ(Good.Certificate->Instructions.size(), 4U);
+    EXPECT_TRUE(Good.Certificate->LowIR.Contract.DeferNativeConditionalEdges);
+    EXPECT_TRUE(Good.Certificate->LowIR.NativeAuditBoundaries.empty());
+    const auto Recovered = P.recover();
+    EXPECT_TRUE(Recovered.Independence.proved());
+    EXPECT_TRUE(Recovered.Recovery.complete()) << Recovered.Recovery.Diagnostic;
+    // Reverse the branch: exactly the same missing/invalid bytes are reached.
+    P.Image.Segments.front().Data[2] ^= 1;
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredConditionalEdgesRequireSymbolicPathAndArbitraryControlProofs) {
+  // ECX > 7 returns. On the other path ECX > 9 cannot reach the bad byte.
+  Program P({0x83, 0xf9, 7, 0x77, 5, 0x83, 0xf9, 9, 0x77, 6, 0xb8, 7, 0, 0, 0,
+             0xc3, 0x16});
+  P.Contract.DeferNativeConditionalEdges = true;
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.Paths, 2U);
+  P.Image.Segments.front().Data[7] = 3;
+  expectRefusal(P, Status::Unsupported);
+  // An architecture-arbitrary OF must not choose which arm is collected.
+  Program Arbitrary({0x0f, 0xa3, 0xc8, 0x70, 6, 0xb8, 7, 0, 0, 0, 0xc3, 0x16});
+  Arbitrary.flagsProfile();
+  Arbitrary.Contract.DeferNativeConditionalEdges = true;
+  expectRefusal(Arbitrary, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredConditionalEdgesKeepExactBudgetsAndAllFeasibleArms) {
+  Program P({0x83, 0xf9, 7, 0x77, 5, 0x83, 0xf9, 9, 0x77, 6, 0xb8, 7, 0, 0, 0,
+             0xc3, 0x16});
+  P.Contract.DeferNativeConditionalEdges = true;
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  for (unsigned Kind = 0; Kind != 4; ++Kind) {
+    SCOPED_TRACE(Kind);
+    LowIRIndependenceLimits Limits;
+    switch (Kind) {
+    case 0:
+      Limits.MaxInstructions = Good.Proof.Instructions;
+      break;
+    case 1:
+      Limits.MaxOperations = Good.Proof.Operations;
+      break;
+    case 2:
+      Limits.MaxBlockVisits = Good.Proof.BlockVisits;
+      break;
+    case 3:
+      Limits.MaxSolverQueries = Good.Proof.SolverQueries;
+      break;
+    }
+    ASSERT_TRUE(P.check(Limits).proved());
+    switch (Kind) {
+    case 0:
+      --Limits.MaxInstructions;
+      break;
+    case 1:
+      --Limits.MaxOperations;
+      break;
+    case 2:
+      --Limits.MaxBlockVisits;
+      break;
+    case 3:
+      --Limits.MaxSolverQueries;
+      break;
+    }
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+  }
+  Program Cycle({0x39, 0xc0, 0x74, 0xfc});
+  Cycle.Contract.DeferNativeConditionalEdges = true;
+  LowIRIndependenceLimits Limits;
+  Limits.MaxPaths = 12;
+  expectRefusal(Cycle, Status::BudgetExceeded, Limits);
+  // Either side may be selected by an ordinary input. No successful return
+  // may hide the other side's trap, missing mapping or invalid instruction.
+  for (const auto &Bad :
+       std::vector<std::vector<uint8_t>>{{0xcc}, {0x16}, {0xe9, 0, 1, 0, 0}}) {
+    Program Mixed({0x85, 0xc9, 0x74, 6, 0xb8, 7, 0, 0, 0, 0xc3});
+    auto &Data = Mixed.Image.Segments.front().Data;
+    Data.insert(Data.end(), Bad.begin(), Bad.end());
+    Mixed.append({});
+    Mixed.Contract.DeferNativeConditionalEdges = true;
+    expectRefusal(Mixed, Bad.front() == 0xcc ? Status::ContractViolation
+                                             : Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      StraightLineCertificateOwnsExactBytesAndFallbackMetadata) {
   // mov eax,7; ret. The optional memory-call route declines both instructions.
   Program P({0xb8, 7, 0, 0, 0, 0xc3});
