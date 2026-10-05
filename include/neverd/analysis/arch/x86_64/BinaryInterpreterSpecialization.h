@@ -171,9 +171,10 @@ struct BinaryAutomaticLowIRRefinementResult {
   bool proved() const { return Refinement.proved(); }
 };
 
-/// Infer loop proof hints from a complete recovery, select unique native
-/// origins for its candidate cutpoints, then independently check the complete
-/// native/candidate relation. Recovery metadata and inferred hints are
+/// Infer loop proof hints from a complete recovery with uniquely mapped
+/// residual origins. Repeated native addresses need literal-bit selectors
+/// proved over the complete candidate templates. Independently check the
+/// complete native/candidate relation. Recovery metadata and inferred hints are
 /// untrusted; only Refinement's certificate establishes the relation. Search
 /// and proof budgets are separate and explicit. Neither stage certifies C.
 BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(

@@ -791,21 +791,19 @@ BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
            "native refinement requires an explicit canonical flags profile");
     return Result;
   }
-  std::map<va_t, unsigned> NativeCounts, ResidualCounts;
+  std::map<va_t, unsigned> ResidualCounts;
   std::map<va_t, va_t> Origins;
   for (const auto &Origin : Recovery.Origins) {
-    ++NativeCounts[Origin.NativeInstruction.Address];
     ++ResidualCounts[Origin.ResidualAddress];
     Origins[Origin.ResidualAddress] = Origin.NativeInstruction.Address;
   }
-  std::vector<va_t> Eligible;
+  std::vector<detail::NativeLoopCutpointOrigin> Eligible;
   for (const auto &B : Recovery.Residual.Blocks)
-    if (ResidualCounts[B.StartAddr] == 1 &&
-        NativeCounts[Origins[B.StartAddr]] == 1)
-      Eligible.push_back(B.StartAddr);
+    if (ResidualCounts[B.StartAddr] == 1)
+      Eligible.push_back({B.StartAddr, Origins.at(B.StartAddr)});
   if (Eligible.empty()) {
     Refuse(LowIRLoopInferenceStatus::Unsupported,
-           "loop inference has no unique native cutpoint origins");
+           "loop inference has no uniquely mapped residual cutpoint origins");
     return Result;
   }
   ImageProvider Provider(Image, Options);
