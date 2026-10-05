@@ -15,8 +15,20 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverKernelSEH.OverlappingHandlerRetainsTargetValidationAndCanRetry")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverKernelSEH.FinallyRespectsRawScopeEndAtHandlerTarget")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.KernelSSERecordsCaptureAllXmmAndPreserveFaultControls")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.KernelSSEContinuationUsesTopLevelControlsAndAllRegisters")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.KernelSSEFilterEditsPreserveUnwindAndRejectX87")
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_CASES
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/{backend}_driver_",
+    "unittests/emulation/fixtures/driver_seh_simd.def", "NEVERD_SEH_SIMD_MODE")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/{backend}_checked_",
+    "unittests/emulation/fixtures/driver_seh_simd.def", "NEVERD_SEH_SIMD_MODE")
 // Fixed images intentionally reject rebasing before guest entry. These
 // outcomes are required as well as the original-address execution outcomes.
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(

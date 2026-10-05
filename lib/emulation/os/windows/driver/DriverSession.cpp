@@ -11,9 +11,11 @@
 
 #include "neverd/emulation/DriverSession.h"
 
+#include "../../../arch/x86_64/X64Exception.h"
 #include "../../../core/ExecutionDiagnostics.h"
 #include "../../../runtime/RuntimeValues.h"
 #include "../exception/X64SEH.h"
+#include "../exception/X64SIMDException.h"
 #include "../kernel/KernelException.h"
 #include "../kernel/KernelExportRegistry.h"
 #include "../kernel/KernelModel.h"
@@ -405,7 +407,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   Hooks.RecoverableFault = [&](const BackendFault &Fault) {
     if (!Stopped && Fault.Kind == BackendFaultKind::Interrupt &&
         Fault.Interrupt &&
-        exceptions::kernelX64ExceptionStatus(*Fault.Interrupt))
+        (exceptions::kernelX64ExceptionStatus(*Fault.Interrupt) ||
+         (CPU.supportsSIMDExceptions() &&
+          *Fault.Interrupt == unsigned(x64::ExceptionVector::SIMD))))
       return true;
     return !Stopped && Fault.Address && Fault.Size && Fault.Access &&
            (*Fault.Access == BackendAccessKind::Read ||
@@ -527,7 +531,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       return std::move(E);
     return Frame;
   };
-  auto CaptureRegisters = [&](uint64_t PC) -> llvm::Expected<X64SEH::Context> {
+  auto CaptureRegisters = [&](uint64_t PC,
+                              bool CaptureSSE =
+                                  false) -> llvm::Expected<X64SEH::Context> {
     X64SEH::Context Registers;
     static_assert(unsigned(X64Register::AX) == 0 &&
                   unsigned(X64Register::SP) == 4 &&
@@ -557,16 +563,51 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     Registers.CS = *CS;
     Registers.SS = *SS;
     Registers.PC = PC;
+    if (CaptureSSE) {
+      auto MXCSR = CPU.reg(X64Register::MXCSR);
+      if (!MXCSR)
+        return MXCSR.takeError();
+      auto Mask = CPU.supportedControlBits(CPURegister::X64MXCSR);
+      if (!Mask)
+        return Mask.takeError();
+      auto &SSE = Registers.SSE.emplace(X64SEH::SSEContext{});
+      SSE.MXCSR = *MXCSR;
+      SSE.MXCSRMask = (*Mask)[0];
+      for (size_t I = 0; I < SSE.VolatileXmm.size(); ++I) {
+        auto Value = CPU.xmm(I);
+        if (!Value)
+          return Value.takeError();
+        SSE.VolatileXmm[I] = *Value;
+      }
+    }
     return Registers;
   };
   auto ApplyRegisters = [&](const X64SEH::Context &Registers) -> llvm::Error {
+    if (Registers.SSE && !CPU.supportsSIMDExceptions() &&
+        (Registers.SSE->MXCSR & exceptions::HandlerMXCSR) !=
+            exceptions::HandlerMXCSR)
+      return failure(exceptions::UnsupportedSIMDContinuation);
     for (size_t I = 0; I < Registers.GPR.size(); ++I)
       if (auto E = CPU.setReg(static_cast<X64Register>(I), Registers.GPR[I]))
         return E;
     for (size_t I = 0; I < Registers.Xmm.size(); ++I)
       if (auto E = CPU.setXmm(seh::FirstNonvolatileXmm + I, Registers.Xmm[I]))
         return E;
+    if (const auto &SSE = Registers.SSE) {
+      for (size_t I = 0; I < SSE->VolatileXmm.size(); ++I)
+        if (auto E = CPU.setXmm(I, SSE->VolatileXmm[I]))
+          return E;
+      if (auto E = CPU.setReg(X64Register::MXCSR, SSE->MXCSR))
+        return E;
+    }
     return CPU.setReg(X64Register::FLAGS, Registers.Flags);
+  };
+  auto ApplyHandlerRegisters = [&](X64SEH::Context Registers) -> llvm::Error {
+    if (Registers.SSE) {
+      Registers.SSE->MXCSR = exceptions::HandlerMXCSR;
+      Registers.Flags &= ~exceptions::DirectionFlag;
+    }
+    return ApplyRegisters(Registers);
   };
   auto BeginException =
       [&](Execution &Frame, X64SEH::Exception Raised, uint64_t ControlPC,
@@ -608,7 +649,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                      llvm::utohexstr(Raised.Code));
     if (Next->Kind == X64SEH::ActionKind::Handler &&
         Next->Bounds.Base == Frame.Base) {
-      if (auto E = ApplyRegisters(Next->State.Registers))
+      if (auto E = ApplyHandlerRegisters(Next->State.Registers))
         return std::move(E);
       return std::optional<uint64_t>{Next->State.HandlerPC};
     }
@@ -746,9 +787,14 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             Fault->Kind == BackendFaultKind::Interrupt && Fault->Interrupt
                 ? exceptions::kernelX64ExceptionStatus(*Fault->Interrupt)
                 : std::nullopt;
-        if (CPU.fault() || (!Status && (!Fault->Address || !Fault->Access)))
+        const bool SIMDFault =
+            Fault->Kind == BackendFaultKind::Interrupt && Fault->Interrupt &&
+            *Fault->Interrupt == unsigned(x64::ExceptionVector::SIMD) &&
+            CPU.supportsSIMDExceptions();
+        if (CPU.fault() ||
+            (!Status && !SIMDFault && (!Fault->Address || !Fault->Access)))
           return failure(exceptions::LostRecoverableContext);
-        auto Registers = CaptureRegisters(Fault->PC);
+        auto Registers = CaptureRegisters(Fault->PC, true);
         if (!Registers)
           return Registers.takeError();
         X64SEH::Exception Raised{
@@ -757,7 +803,15 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             0,
             Fault->PC,
             {}};
-        if (!Status)
+        if (SIMDFault) {
+          auto SIMD =
+              windows_exception::x64SIMDException(Registers->SSE->MXCSR);
+          if (!SIMD)
+            return failure(exceptions::LostRecoverableContext);
+          Raised.Code = SIMD->Code;
+          Raised.Parameters.assign(SIMD->Parameters.begin(),
+                                   SIMD->Parameters.end());
+        } else if (!Status)
           Raised.Parameters = {
               *Fault->Access == BackendAccessKind::Write ? 1ULL : 0ULL,
               *Fault->Address};
@@ -1041,7 +1095,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     };
     auto CommitException = [&](X64SEH::Context Registers,
                                const BackendContext &Original,
-                               uint64_t DestinationBase) -> llvm::Error {
+                               uint64_t DestinationBase,
+                               bool ContinueExecution = false) -> llvm::Error {
       const Execution *Destination = Current.get();
       while (Destination && Destination->Base != DestinationBase) {
         if (!Destination->ExceptionCallback)
@@ -1052,7 +1107,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         return failure(session_diagnostic::MissingExceptionStack);
       if (auto E = CPU.restoreContext(Original))
         return E;
-      if (auto E = ApplyRegisters(Registers))
+      if (auto E = ContinueExecution ? ApplyRegisters(Registers)
+                                     : ApplyHandlerRegisters(Registers))
         return E;
       auto Context = CPU.saveContext();
       if (!Context)
@@ -1080,7 +1136,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       auto &State = *Parent.Exception;
       if (auto E = CPU.restoreContext(*State.Original))
         return E;
-      if (auto E = ApplyRegisters(State.Next.State.Registers))
+      if (auto E = ApplyHandlerRegisters(State.Next.State.Registers))
         return E;
       const uint64_t Storage = Child.Base + Child.Size - seh::RecordsSize;
       State.Raised.Flags = State.Next.ExceptionFlags;
@@ -1276,8 +1332,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                 Next->Kind == X64SEH::ActionKind::ContinueExecution
                     ? Parent.Base
                     : Next->Bounds.Base;
-            if (auto E = CommitException(Registers, *State.Original,
-                                         DestinationBase)) {
+            if (auto E = CommitException(
+                    Registers, *State.Original, DestinationBase,
+                    Next->Kind == X64SEH::ActionKind::ContinueExecution)) {
               ModelFailure(std::move(E));
               return llvm::Error::success();
             }

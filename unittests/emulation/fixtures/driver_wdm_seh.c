@@ -857,6 +857,8 @@ __declspec(noinline) static NTSTATUS ProcessorDivision(VOID) {
   return STATUS_SUCCESS;
 }
 
+#include "driver_seh_simd.inc"
+
 static DRIVER_UNLOAD Unload;
 static VOID Unload(PDRIVER_OBJECT DriverObject) {
   if (DriverObject->DeviceObject)
@@ -875,6 +877,17 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
         RegistryPath->Length >= SehDivideModeCharacters * sizeof(WCHAR) &&
         RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) -
                              SehDivideModeCharacters] == SehDivideModeMarker;
+    if (RegistryPath->Length >= SehSIMDModeCharacters * sizeof(WCHAR) &&
+        RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) -
+                             SehSIMDModeCharacters] == SehSIMDMarker) {
+      switch (Last) {
+#define NEVERD_SEH_SIMD_MODE(Name, Value) case SehSIMD##Name:
+#include "driver_seh_simd.def"
+#undef NEVERD_SEH_SIMD_MODE
+        Mode = (CHAR)Last;
+        break;
+      }
+    }
     if ((Last >= 'A' && Last <= 'Z') || Last == SehXmmUnwind ||
         Last == SehChainedUnwind || Last == SehPrologueUnwind ||
         Last == SehGSCookie || Last == SehGSAlignedCookie ||
@@ -887,6 +900,11 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
       Mode = (CHAR)Last;
   }
   switch (Mode) {
+#define NEVERD_SEH_SIMD_MODE(Name, Value) case SehSIMD##Name:
+#include "driver_seh_simd.def"
+#undef NEVERD_SEH_SIMD_MODE
+    Test = ProcessorSIMD;
+    break;
   case SehDivideZero:
   case SehDivideOverflow:
   case SehDivideContinue:

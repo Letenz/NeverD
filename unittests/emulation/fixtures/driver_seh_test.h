@@ -47,4 +47,14 @@ enum {
 #define NEVERD_SEH_CPU_TEXT(Name, Text) static const char Name[] = Text;
 #include "driver_seh_cpu.def"
 #undef NEVERD_SEH_CPU_TEXT
+enum {
+#define NEVERD_SEH_SIMD_VALUE(Name, Value) Name = Value,
+#define NEVERD_SEH_SIMD_MODE(Name, Value) SehSIMD##Name = Value,
+#include "driver_seh_simd.def"
+#undef NEVERD_SEH_SIMD_MODE
+#undef NEVERD_SEH_SIMD_VALUE
+};
+#define NEVERD_SEH_SIMD_TEXT(Name, Text) static const char Name[] = Text;
+#include "driver_seh_simd.def"
+#undef NEVERD_SEH_SIMD_TEXT
 #endif
