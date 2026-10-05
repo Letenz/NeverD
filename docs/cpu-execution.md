@@ -72,6 +72,8 @@ Checked x64 executes `SHLD/SHRD` with 16/32/64-bit destinations and imm8 or CL c
 
 `X64ScalarShiftInstructions.def` owns the 8/16/32/64-bit destination effects of `SHL/SHR/SAR`, `ROL/ROR` and `RCL/RCR`. Register and RAM forms accept implicit 1, imm8 or CL counts, including masked-zero counts and SAL aliases. RAM writes pass through permission checks, result observers and the shared transaction; stops and callback errors restore CPU and memory. KVM, WHP and checked Unicorn use this same boundary. LOCK and MMIO forms remain unsupported.
 
+`X64LoopInstructions.def` admits `LOOP/LOOPE/LOOPNE` through the existing processor transport. Address size selects RCX or zero-extended ECX; `66H` and REX.W do not narrow the 64-bit target, and FLAGS remain unchanged. KVM, WHP and checked Unicorn share admission. LOCK and REP prefixes reject before effects, including prefixes omitted by decoder metadata.
+
 `X64PackedIntegerInstructions.def` admits 45 legacy SSE2 packed integer operations: wrapping and saturating addition/subtraction, comparisons, multiplication, averages, extrema, byte differences, packing and unpacking. XMM and aligned 128-bit RAM sources share the existing checked path on KVM, WHP and Unicorn. FLAGS and MXCSR remain unchanged; faults or observer cancellation preserve state. MMX, VEX/EVEX and device operands remain excluded.
 
 `X64PackedShiftInstructions.def` admits ten legacy SSE2 packed shifts. Lane shifts accept imm8 or XMM/aligned m128 counts; byte shifts accept imm8 only. Variable counts use the unsigned low 64 bits without scalar count masking; the high 64 bits are ignored. Memory operands still require a complete 16-byte read for zero or oversized counts. FLAGS and MXCSR remain unchanged; MMX, VEX/EVEX and device operands remain excluded.

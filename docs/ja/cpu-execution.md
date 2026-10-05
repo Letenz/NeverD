@@ -90,6 +90,8 @@ checked x64 は KVM、WHP、Unicorn で `SHLD/SHRD` の16/32/64ビット宛先�
 
 `X64ScalarShiftInstructions.def` が `SHL/SHR/SAR`、`ROL/ROR`、`RCL/RCR` の 8/16/32/64 ビット宛先への作用を定義します。レジスタ形式と RAM 形式は暗黙の 1、imm8、CL によるカウントに対応し、マスク後にゼロとなるカウントと SAL 別名も含みます。RAM 書き込みは権限検査、結果観測コールバック、共有トランザクションを経由し、停止やコールバックエラーでは CPU とメモリを復元します。KVM、WHP、Unicorn の検査モードはこの境界を共有します。LOCK と MMIO 形式は引き続き未対応です。
 
+`X64LoopInstructions.def` は既存のプロセッサ実行経路で `LOOP/LOOPE/LOOPNE` を許可します。アドレスサイズが RCX またはゼロ拡張される ECX を選び、`66H` と REX.W は 64 ビットの分岐先を切り詰めず、FLAGS も変えません。KVM、WHP、チェック付き Unicorn は同じ許可規則を使います。デコーダのメタデータから省略された場合も、LOCK と REP のプレフィックスは副作用の前に拒否します。
+
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
 `X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。
