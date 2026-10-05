@@ -307,6 +307,54 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     StraightLineLengthDoesNotRepeatTheSameFeasibilityProof) {
+  Program Short({0xb8, 7, 0, 0, 0, 0xc3}); // MOV EAX,7; RET.
+  const auto Reference = Short.check();
+  ASSERT_TRUE(Reference.proved()) << Reference.Proof.Diagnostic;
+  Program Long({0xb8, 7, 0, 0, 0});
+  for (unsigned I = 0; I != 128; ++I)
+    Long.append({0x90});
+  Long.append({0xc3});
+  LowIRIndependenceLimits Limits;
+  Limits.MaxSolverQueries = Reference.Proof.SolverQueries;
+  const auto Good = Long.check(Limits);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.Instructions, 130U);
+  EXPECT_EQ(Good.Certificate->Instructions.size(), 130U);
+  EXPECT_EQ(Good.Proof.SolverQueries, Reference.Proof.SolverQueries);
+  ASSERT_GT(Limits.MaxSolverQueries, 0U);
+  --Limits.MaxSolverQueries;
+  expectRefusal(Long, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxInstructions = 129;
+  expectRefusal(Long, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     RepeatedFeasibilityDoesNotMergeBranchesOrEntryDomains) {
+  // TEST EDI,EDI; JE trap; MOV EAX,7; RET; trap: UD2.
+  Program P({0x85, 0xff, 0x74, 6, 0xb8, 7, 0, 0, 0, 0xc3, 0x0f, 0x0b});
+  P.Contract.DeferNativeConditionalEdges = true;
+  const auto Input = NdVar::reg(x86reg::RDI, 8);
+  for (uint64_t Value : {1, 0, 2}) {
+    P.Options.EntryConstants = {{Input, Value}};
+    P.Contract.EntryConstants = {{Input, Value}};
+    if (Value) {
+      const auto R = P.check();
+      ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+    } else {
+      expectRefusal(P, Status::ContractViolation);
+    }
+  }
+  P.Options.EntryConstants.clear();
+  P.Contract.EntryConstants.clear();
+  expectRefusal(P, Status::ContractViolation);
+  LowIRIndependenceLimits Limits;
+  Limits.Solver.Blast.MaxGates = 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      StraightLineCertificateOwnsExactBytesAndFallbackMetadata) {
   // mov eax,7; ret. The optional memory-call route declines both instructions.
   Program P({0xb8, 7, 0, 0, 0, 0xc3});
