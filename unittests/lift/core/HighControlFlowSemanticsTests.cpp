@@ -6266,6 +6266,78 @@ TEST(HighControlFlowSemantics, JumpBackFromNestedArmsBecomesALoop) {
   }
 }
 
+TEST(HighControlFlowSemantics, LoopJumpsBecomeBreakAndContinue) {
+  // v = x; while (1) { X: v = v + 1; if (v & 1) goto X; if (v & 4) goto Out;
+  // v = v + 2; } Out: return v;
+  // The jump to the top of the always-true loop is `continue` and the jump
+  // to what follows it is `break`.  Inside a switch, `break` would only
+  // leave the switch, so a jump out of the loop from a case stays.
+  auto Build = [](bool InSwitch) {
+    auto Add = [](va_t Address, uint64_t N) {
+      HighStmt S;
+      S.Kind = StmtKind::Assign;
+      S.Addr = Address;
+      S.Dst = local(1);
+      S.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                                  HighExpr::makeConst(N, 8));
+      return S;
+    };
+    auto Test = [](va_t Address, uint64_t Bit, va_t Target) {
+      HighStmt S;
+      S.Kind = StmtKind::If;
+      S.Addr = Address;
+      S.Cond = HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                   HighExpr::makeConst(Bit, 8));
+      S.Body = {jump(Address + 4, Target)};
+      return S;
+    };
+    HighStmt Init;
+    Init.Kind = StmtKind::Assign;
+    Init.Addr = 0x0ff0;
+    Init.Dst = local(1);
+    Init.Val = local(0);
+    HighStmt Leave = Test(0x1010, 4, 0x1030);
+    if (InSwitch) {
+      HighStmt Dispatch;
+      Dispatch.Kind = StmtKind::Switch;
+      Dispatch.Addr = 0x1010;
+      Dispatch.SwitchExpr = HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                                HighExpr::makeConst(4, 8));
+      Dispatch.Cases = {{4, {jump(0x1014, 0x1030)}}};
+      Leave = Dispatch;
+    }
+    HighStmt Loop;
+    Loop.Kind = StmtKind::While;
+    Loop.Cond = HighExpr::makeConst(1, 1);
+    Loop.Body = {Add(0x1000, 1), Test(0x1008, 1, 0x1000), Leave,
+                 Add(0x1020, 2)};
+    HighFunc F;
+    F.Body = {Init, Loop, result(0x1030, local(1))};
+    return F;
+  };
+  for (bool InSwitch : {false, true}) {
+    SCOPED_TRACE(InSwitch);
+    HighFunc F = Build(InSwitch);
+    EXPECT_TRUE(loopJumpsAsBreakAndContinue(F.Body));
+    size_t Jumps = 0;
+    walkStmts(F.Body,
+              [&](const HighStmt &S) { Jumps += S.Kind == StmtKind::Goto; });
+    EXPECT_EQ(Jumps, InSwitch ? 1u : 0u);
+    for (uint64_t X = 0; X < 8; ++X) {
+      uint64_t V = X;
+      while (true) {
+        ++V;
+        if (V & 1)
+          continue;
+        if (V & 4)
+          break;
+        V += 2;
+      }
+      EXPECT_EQ(execute(F, X), V) << X;
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, JumpToWhatFollowsATryBecomesAnElseArm) {
   // __try { if (x & 1) { v = 1; goto out; } v = 2; } __except (1) { v = 9; }
   // out: return v;

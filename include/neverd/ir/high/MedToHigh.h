@@ -132,6 +132,11 @@ bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body);
 /// statement and the region holds no loose break or continue.
 bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body);
 
+/// Jumps inside a loop that leave it for the statement after it become
+/// `break`, and jumps to a while loop's test, or to the top of an always-true
+/// loop's body, become `continue`; each target starts exactly one statement.
+bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body);
+
 /// Once the other rewrites have settled: `if (c) goto L;` followed by an if
 /// whose then arm opens with L becomes `if (c || b)`, and one whose else arm
 /// opens with L becomes `if (!c && b)`.  L must start exactly one statement,
