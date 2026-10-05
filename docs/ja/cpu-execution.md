@@ -66,6 +66,8 @@ request は pending のまま実行、CPU 変更、空間 binding、context capt
 
 例外をマスクした x64 命令の説明は移植可能な基準です。KVM/WHP は `driver-strict`、`checked-x64-v1`、`checked-user-x64-v1` に `precise_simd_exceptions` を追加します。ネイティブ起動検証が正確な `#XM` と両方の再試行を確認してから、非マスク MXCSR 書き込み、`LDMXCSR`、Windows `CONTEXT` 復元を許可します。選択は `ExecutionProfiles.def` が管理し、`supportsSIMDExceptions` が実際のインスタンス能力を示します。checked Unicorn はマスクを要求し、ARM64 と HVF の例外能力は変更しません。
 
+ネイティブ x64 KVM/WHP は実際の `#XM` を `X64SIMDException` 経由でドライバーの C SEH に渡します。ハードウェア例外の `CONTEXT` は XMM0–15 と MXCSR を保持します。フィルター、例外アンワインド中の finally、選択されたハンドラーは MXCSR `0x1f80` と DF クリアで実行されます。負のフィルターは XMM と最上位の `CONTEXT.MxCsr` を変更して元の命令を再試行できます。後者にはゲスト CPU のマスクを適用し、`FltSave.MxCsr` はカーネル復元に使用しません。モデル API の例外は整数/制御レコードを維持し、x87/AVX コンテキスト変更は引き続き拒否します。
+
 checked x64 は限定された legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS`、mask 付き scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD` を許可します。MXCSR は sticky status、rounding、FTZ を保持し、移植可能な実行では unmasked exception を拒否します。KVM/WHP は16個すべての XMM register と MXCSR を同期します。列挙されていない encoding/operand は許可されません。
 
 checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。x87、AVX は許可しません。

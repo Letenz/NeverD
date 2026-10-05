@@ -144,7 +144,18 @@ class WDKDriverFixtureTests(unittest.TestCase):
             "DriverKernelSEH.OverlappingScopeStillHasAnExclusiveEnd",
             "DriverKernelSEH.OverlappingHandlerRetainsTargetValidationAndCanRetry",
             "DriverKernelSEH.FinallyRespectsRawScopeEndAtHandlerTarget",
+            "DriverKernelSEH.KernelSSERecordsCaptureAllXmmAndPreserveFaultControls",
+            "DriverKernelSEH.KernelSSEContinuationUsesTopLevelControlsAndAllRegisters",
+            "DriverKernelSEH.KernelSSEFilterEditsPreserveUnwindAndRejectX87",
         }
+        modes = {"Handle", "MaskRetry", "OperandRetry", "Constant", "RejectX87"}
+        for contract in ("driver", "checked"):
+            seh_required.update(
+                "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/"
+                f"whp_{contract}_{mode}" for mode in modes
+            )
+        arguments = {row[0]: row[1:] for row in inventory["ARGUMENTS"]}
+        self.assertIn("-fasynchronous-unwind-tables", arguments["seh_compile"])
         self.assertTrue(seh_required <= required)
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
                          + len(seh_required))

@@ -472,6 +472,8 @@ Windows 모델은 독립적인 비페이지 풀 MDL도 관리하며, 설명자�
 
 `KernelGuestException`은 32비트 상태를 담은 형식화된 API 결과이며 모델 오류 및 백엔드 오류와 구별됩니다. `DriverImage`는 로더의 기존 기본 주소 기반 예외 메타데이터를 보존합니다. `X64SEH`는 검증된 주소 변환과 스택 읽기로 해당 메타데이터에 대해 순수하고 제한된 x64 V1 C catch-all 전환 계획을 만듭니다. 일반 헬퍼 프레임을 거쳐 지원하는 비휘발성 GPR 저장값을 복원하고 실제 게스트 처리기를 선택합니다. 경로에서 만나는 필터／finally, GS／C++ 성격 처리기, 체인, 불완전한 레코드, 프롤로그 및 XMM 복원은 거부합니다. `DriverSession`은 정상 API 중지 경계에서만 검증된 레지스터 계획을 적용하며 API 추적 결과를 null로 두고 같은 실행 안에서 처리기를 재개합니다. 보존된 백엔드 오류를 지우거나 다른 콜백 스택까지 해제하지 않습니다. 이 경계는 ExRaiseStatus／ExRaiseAccessViolation／ExRaiseDatatypeMisalignment를 지원합니다. 사용자 접근 검사, 잠긴 사용자 버퍼와 CPU 오류 복구는 별도 작업으로 남습니다.
 
+`X64SEH`는 선택적 커널 SSE 컨텍스트를 가상 언와인드 커서와 별도로 보존하고, `DriverSession`은 오류 복원과 핸들러 제어 상태를 구분합니다. [드라이버 에뮬레이션](driver-emulation.md)을 참조하세요.
+
 
 ## 예외 재작성 경계
 

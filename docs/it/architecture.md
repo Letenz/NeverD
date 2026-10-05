@@ -555,6 +555,8 @@ Il precedente `WdfRequestMarkCancelable` usa un `GuestCall` annidato nella conti
 
 `KernelGuestException` è un esito API tipizzato che trasporta uno stato a 32 bit, distinto dagli errori del modello e dai fault del backend. `DriverImage` conserva i metadati delle eccezioni già forniti dal loader rispetto alla base preferita. `X64SEH` prepara su tali metadati un trasferimento puro e limitato verso un gestore C universale x64 versione uno, verificando traduzione degli indirizzi e letture dello stack. Ripristina i registri generali non volatili salvati supportati attraversando normali frame ausiliari e seleziona il vero gestore guest; rifiuta filtri/finally incontrati, personalità GS/C++, catene, record incompleti, prologhi e ripristino XMM. `DriverSession` applica il piano di registri validato solo durante una pausa API priva di fault, mantiene nulli i risultati nella traccia API e riprende il gestore nella stessa esecuzione. Non cancella mai il fault conservato dal backend e non svolge lo stack entrando in quello di un altro callback. Questo perimetro supporta ExRaiseStatus/ExRaiseAccessViolation/ExRaiseDatatypeMisalignment; probing utente, buffer utente bloccati e recupero dei fault CPU restano lavori separati.
 
+`X64SEH` mantiene il contesto SSE kernel opzionale separato dal cursore di unwind; `DriverSession` distingue ripristino del fault e controlli del gestore. Vedere [emulazione dei driver](driver-emulation.md).
+
 
 ## Confini della riscrittura delle eccezioni
 

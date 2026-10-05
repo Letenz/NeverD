@@ -29,6 +29,8 @@ select a contract's fixed profile; explicit unsupported values fail.
 
 The masked x64 instruction descriptions are the portable baseline. KVM/WHP add `precise_simd_exceptions` to `driver-strict`, `checked-x64-v1` and `checked-user-x64-v1`: the native startup probe verifies a precise `#XM` and both retries before enabling unmasked MXCSR writes, `LDMXCSR` and Windows `CONTEXT` restoration. `ExecutionProfiles.def` owns selection; `supportsSIMDExceptions` exposes the resolved instance capability. Checked Unicorn remains masked; ARM64 and HVF gain no exception capability here.
 
+Native x64 KVM/WHP delivers actual `#XM` faults to driver C SEH through `X64SIMDException`. Hardware-fault `CONTEXT` records preserve XMM0–15 and MXCSR. Filters, exception-unwind finally callbacks and selected handlers run with MXCSR `0x1f80` and DF cleared. A negative filter can edit XMM registers and top-level `CONTEXT.MxCsr`, masked by the guest CPU profile, before retrying the original instruction; `FltSave.MxCsr` does not control kernel restoration. Modeled API raises retain integer/control records; x87/AVX context edits remain unsupported.
+
 `driver-strict` accepts x64 with backend-qualified capabilities; `software-cpu-v1` accepts x64 and ARM64.
 `checked-x64-v1` and `checked-aarch64-v1` require their named architecture
 and execute at supervisor privilege. `checked-user-x64-v1` and
