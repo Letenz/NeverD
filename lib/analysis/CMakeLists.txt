@@ -28,6 +28,7 @@ add_neverd_component_library(NeverDLLVMInterpreterModel
 add_neverd_component_library(NeverDLLVMScalarLoopRecovery
   llvm/LLVMScalarLoopRecovery.cpp
   llvm/LLVMScalarSourceRecovery.cpp
+  llvm/LLVMScalarLoopPredicates.cpp
   llvm/LLVMScalarLoopUnpeeling.cpp
   llvm/LLVMScalarLoopRegions.cpp
   llvm/LLVMScalarLoopAffine.cpp
