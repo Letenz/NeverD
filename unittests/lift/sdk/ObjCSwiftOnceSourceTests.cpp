@@ -1947,7 +1947,9 @@ TEST(SwiftOnceSources, NestedContextPhiKeepsEveryOtherObservation) {
       break;
     case 1:
       Outer.ReturnType = F.Context->Type;
-      Outer.Body.back().RetVal = F.Context;
+      // A void callback ignores a pure result register, but evaluating a
+      // memory read through that register still observes the context.
+      Outer.Body.back().RetVal = HighExpr::makeLoad(F.Context, F.Context->Type);
       break;
     case 2: {
       HighStmt Branch;
@@ -4072,6 +4074,223 @@ struct CopyOnceFixture : OnceFixture {
                      {Caller.Name, Caller.Entry, 0, true}};
   }
 };
+
+TEST(SwiftOnceSources, ObjCThunkRootsShareTheNestedCallbackProof) {
+  ObjCThunkFixture F(Arch::AArch64);
+  NestedCallbackFixture Nested;
+  auto Root = Nested.Pipeline.HighFuncs[1];
+  Root.Entry = F.Pipeline.HighFuncs[1].Entry;
+  Root.Name = F.Pipeline.HighFuncs[1].Name;
+  F.Pipeline.HighFuncs[1] = Root;
+  F.Pipeline.HighFuncs.push_back(Nested.Pipeline.HighFuncs.back());
+  F.Image.Symbols.push_back(
+      {"_$s4Test4leaf_Wz", Nested.NestedPredicate, 8, false});
+  F.Image.Symbols.push_back({"_$s4Test4leaf_WZ", Nested.LeafAddress, 0, true});
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.ObjCThunks.count(F.ThunkAddress), 1U);
+  ASSERT_EQ(Plan.NestedCallbacks.count(Root.Entry), 1U);
+  ASSERT_EQ(Plan.CallbackHints.count(Root.Entry), 1U);
+  ASSERT_EQ(Plan.CallbackHints.count(Nested.LeafAddress), 1U);
+  const auto Projected =
+      projectSwiftOnceNestedCallbacks(F.Image, Plan, F.functions());
+  ASSERT_EQ(Projected.count(Root.Entry), 1U);
+  auto Functions = F.functions();
+  Functions[Root.Entry] = &Projected.at(Root.Entry).Function;
+  auto Bound = bindSwiftOnceSourceReferences(F.Pipeline.HighFuncs[0], F.Image,
+                                             Plan, Functions);
+  ASSERT_EQ(Bound.SwiftOnceObjCThunks.count(F.ThunkAddress), 1U);
+  EXPECT_TRUE(finalizeSwiftOnceObjCThunkProjection(Bound.Function, Plan));
+
+  auto &Leaf = F.Pipeline.HighFuncs.back();
+  MedVar Context;
+  Context.Kind = MedVar::Param;
+  Context.Id = 0;
+  Context.Size = 8;
+  HighStmt Observe;
+  Observe.Kind = StmtKind::Store;
+  Observe.StoreAddr = HighExpr::makeConst(0x2010, 8);
+  Observe.StoreVal =
+      HighExpr::makeVar(Context, NdType::makePtr(NdType::makeVoid()));
+  Leaf.Body.insert(Leaf.Body.begin(), Observe);
+  EXPECT_TRUE(
+      projectSwiftOnceNestedCallbacks(F.Image, Plan, F.functions()).empty());
+  const auto Changed = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  EXPECT_FALSE(Changed.CallbackHints.count(Root.Entry));
+  EXPECT_TRUE(Changed.CallbackAnalysisRoots.count(Root.Entry));
+}
+
+TEST(SwiftOnceSources, EarlyReturnsKeepExactObjCOnceThunkProofs) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool SeparateRetain : {false, true}) {
+      for (bool AnchorBeforeOnce : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(SeparateRetain);
+        SCOPED_TRACE(AnchorBeforeOnce);
+        ObjCThunkFixture F(Architecture, SeparateRetain);
+        auto &Thunk = F.Pipeline.HighFuncs[0];
+        auto Guard = Thunk.Body[1];
+        auto Invoke = Guard.Body[SeparateRetain ? 1 : 0];
+        Guard.Cond = std::make_shared<HighExpr>(*Guard.Cond);
+        Guard.Cond->Op = NdOp::INT_EQUAL;
+        Guard.Body.assign(Thunk.Body.begin() + 3, Thunk.Body.end());
+        Thunk.Body[1] = Guard;
+        Thunk.Body.insert(Thunk.Body.begin() + 2, Invoke);
+        if (AnchorBeforeOnce) {
+          HighStmt Anchor;
+          Anchor.Kind = StmtKind::Block;
+          Thunk.Body.insert(Thunk.Body.begin() + 2, Anchor);
+        }
+        const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+        ASSERT_EQ(Plan.ObjCThunks.count(Thunk.Entry), 1U);
+        ASSERT_EQ(Plan.CallbackHints.count(F.InitializerAddress), 1U);
+        auto Bound =
+            bindSwiftOnceSourceReferences(Thunk, F.Image, Plan, F.functions());
+        EXPECT_EQ(Bound.SwiftOnceObjCThunks.count(Thunk.Entry), 1U);
+        ASSERT_TRUE(finalizeSwiftOnceObjCThunkProjection(Bound.Function, Plan));
+        EXPECT_EQ(Bound.Function.Body.size(), Thunk.Body.size());
+        EXPECT_EQ(Bound.Function.Body[1].Body.size(), Guard.Body.size());
+        EXPECT_TRUE(analyzeHighSourceFlow(Bound.Function, true).Items.empty());
+        EXPECT_EQ(Thunk.Params.size(), 3U);
+        EXPECT_FALSE(Thunk.SourceTypeHint);
+      }
+    }
+  }
+}
+
+TEST(SwiftOnceSources, EarlyStringGetterReturnsKeepOnlyInertOnceAnchors) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Variant = 0; Variant < 4; ++Variant) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Variant);
+      StringOnceFixture F(Architecture);
+      auto &Getter = F.Pipeline.HighFuncs[0];
+      HighStmt Guard;
+      Guard.Kind = StmtKind::If;
+      Guard.Cond = HighExpr::makeBinop(
+          NdOp::INT_EQUAL,
+          HighExpr::makeBinop(NdOp::INT_ADD, Getter.Body[0].Val,
+                              HighExpr::makeConst(1, 8)),
+          HighExpr::makeConst(0, 8));
+      Guard.Body = {Getter.Body.back()};
+      HighStmt Anchor;
+      Anchor.Kind = Variant == 1 ? StmtKind::Nop : StmtKind::Block;
+      Anchor.Addr = 0x1020;
+      if (Variant == 2) {
+        Anchor.Kind = StmtKind::Call;
+        Anchor.CallExpr = HighExpr::makeCall("effect", 0x10f0, {});
+      } else if (Variant == 3) {
+        HighStmt Store;
+        Store.Kind = StmtKind::Store;
+        Store.StoreAddr = HighExpr::makeConst(0x2010, 8);
+        Store.StoreVal = HighExpr::makeConst(9, 8);
+        Anchor.Body = {Store};
+      }
+      Getter.Body[0] = Guard;
+      Getter.Body.insert(Getter.Body.begin() + 1, Anchor);
+      const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+      if (Variant >= 2) {
+        EXPECT_FALSE(Plan.Getters.count(Getter.Entry));
+        continue;
+      }
+      ASSERT_EQ(Plan.Getters.count(Getter.Entry), 1U);
+      const auto Bound = bindSwiftOnceSourceReferences(
+          F.Pipeline.HighFuncs[2], F.Image, Plan, F.functions());
+      EXPECT_EQ(Bound.Dependencies, std::set<va_t>{0x1080});
+      EXPECT_EQ(Bound.LocalStorageExtents,
+                (std::map<va_t, uint64_t>{{0x2000, 8}, {0x2020, 16}}));
+      EXPECT_EQ(Getter.Body[1].Kind, Anchor.Kind);
+      EXPECT_EQ(Getter.Body[0].Body.back().RetVal, F.Bridge);
+    }
+}
+
+TEST(SwiftOnceSources, EarlyOnceCopyReturnsRequireTheSameCompleteTail) {
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    CopyOnceFixture F;
+    auto &Helper = F.Pipeline.HighFuncs[0];
+    auto Guard = Helper.Body[1];
+    const auto Invoke = Guard.Body.front();
+    Guard.Cond = std::make_shared<HighExpr>(*Guard.Cond);
+    Guard.Cond->Op = NdOp::INT_EQUAL;
+    Guard.Body.assign(Helper.Body.begin() + 2, Helper.Body.end());
+    Helper.Body[1] = Guard;
+    Helper.Body.insert(Helper.Body.begin() + 2, Invoke);
+    auto &Early = Helper.Body[1].Body;
+    if (Mutation == 1)
+      Early[1].StoreAddr = HighExpr::makeConst(0x2010, 8);
+    else if (Mutation == 2)
+      Early.erase(Early.begin() + 2);
+    else if (Mutation == 3)
+      std::swap(Early[1], Early[2]);
+    else if (Mutation == 4) {
+      Early[0].Val = std::make_shared<HighExpr>(*Early[0].Val);
+      Early[0].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+    } else if (Mutation == 5)
+      Early.back().RetVal = HighExpr::makeConst(7, 8);
+    else if (Mutation == 6) {
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      Jump.GotoTarget = 0x1040;
+      Early[0].Addr = 0x1040;
+      Helper.Body.insert(Helper.Body.begin(), Jump);
+    }
+    const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+    if (Mutation) {
+      EXPECT_FALSE(Plan.Copies.count(Helper.Entry));
+      continue;
+    }
+    ASSERT_EQ(Plan.Copies.count(Helper.Entry), 1U);
+    const auto Bound = bindSwiftOnceSourceReferences(
+        F.Pipeline.HighFuncs[2], F.Image, Plan, F.functions());
+    EXPECT_EQ(Bound.Dependencies, std::set<va_t>{0x1080});
+    EXPECT_EQ(Bound.LocalStorageExtents.size(), 3U);
+    EXPECT_EQ(Helper.Body[1].Body.size(), 4U);
+    EXPECT_EQ(Helper.Body[3].Val.get(), F.SourceLoad.get());
+  }
+}
+
+TEST(SwiftOnceSources, IgnoredNestedReturnCopiesDoNotObserveOnceContext) {
+  NestedCallbackFixture F;
+  F.Image.Symbols.push_back({"_return_choice", 0x2018, 8, false});
+  auto &Outer = F.Pipeline.HighFuncs[1];
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = 55;
+  V.Size = 8;
+  auto Local = HighExpr::makeVar(V, NdType::makeInt(8));
+  HighStmt Copy;
+  Copy.Kind = StmtKind::Assign;
+  Copy.IsPhiCopy = true;
+  Copy.Dst = Local;
+  Copy.Val = F.NestedOnce->Operands[2];
+  auto Return = Outer.Body.back();
+  Return.RetVal = Local;
+  HighStmt Early;
+  Early.Kind = StmtKind::If;
+  Early.Cond = HighExpr::makeLoad(
+      HighExpr::makeConst(0x2018, 8, ConstantAddressProvenance::DataAddress),
+      NdType::makeInt(8));
+  Early.Body = {Copy, Return};
+  Outer.Body.back() = Return;
+  Outer.Body.insert(Outer.Body.end() - 1, Copy);
+  Outer.Body.insert(Outer.Body.begin() + 2, Early);
+  Outer.ReturnType = NdType::makeInt(8);
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.NestedCallbacks.count(Outer.Entry), 1U);
+  auto Projection =
+      projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions());
+  ASSERT_TRUE(Projection);
+  size_t Returns = 0;
+  walkStmts(Projection->Function.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Return) {
+      ++Returns;
+      EXPECT_FALSE(S.RetVal);
+    }
+  });
+  EXPECT_EQ(Returns, 2U);
+  EXPECT_TRUE(analyzeHighSourceFlow(Projection->Function, true).Items.empty());
+  EXPECT_TRUE(Outer.Body.back().RetVal);
+}
 
 TEST(SwiftOnceSources, CopyContractKeepsLoadStoreAndRetainEffects) {
   CopyOnceFixture F;

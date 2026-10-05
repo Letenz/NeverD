@@ -1372,3 +1372,13 @@ build-release/bin/NeverDByteCellScalarizationTests
 تختبر `AndroidMutexTests.cpp` ببرامج مستقلة O0/O2 وتغليف عادي/APS2/RELR ثلاثة أنواع mutex، وعدة منتظرين، والمنافسة المتكررة، والتحرير النهائي للقفل المتكرر، وerrno، والأحداث، والذاكرة غير الصالحة، والتعطل المتبادل وحد التعليمات التراكمي. تعمل الحالات على Unicorn وKVM/WHP/HVF المتاحة مع تخطٍّ صريح لغير المتاح. لا تثبت هذه النتائج التكافؤ مع جهاز Android أو SMP متوازٍ.
 
 يفحص `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` أجسام الكتل والحلقات وswitch والاستثناءات ذات 48 مستوى باستخدام مفسّر مستقل على المسارات التي تدخلها والتي تتجاوزها. يكشف حد زمني واسع تكرار الاجتياز العودي. يخص هذا الاختبار HighIR المهيكل؛ وتظل استعادة طرق الصورة كاملة بحاجة إلى فحوص مستقلة وكاملة للقائمة والتبعيات.
+
+يفحص `SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` حالات ARM64/x64 ذات استدعاءات retain المدمجة أو المنفصلة. يرفض `EarlyOnceCopyReturnsRequireTheSameCompleteTail` التخزين المعدل و retain المفقود أو المعاد ترتيبه والتحميل المرتب والنتائج المعدلة والمداخل الخارجية. يفحص `IgnoredNestedReturnCopiesDoNotObserveOnceContext` مخرجي callback الممكنين ذي النتيجة void ويعيد فحص تدفق المصدر بعد الإسقاط.
+
+يقارن `HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` مسارات الدخول والتجاوز بمفسر مستقل عند تكرار عنوان داخل كتلة متداخلة. يحافظ `ReturnTailCopyIncludesTheFirstChildOfItsLabel` على الحالة الصحيحة للأب وأول عبارة فرعية وعلى عملية الإسناد. لا تحل هذه الفحوص المحددة محل المقارنات الكاملة للطرق والتبعيات الأصلية.
+
+يفحص `JumpTailCopyKeepsTheOuterLabelOwner` قاعدة الملكية نفسها لذيول القفز.
+
+يفحص `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` نقاط ارتساء التعليمات الفارغة بين الإرجاع المبكر واستدعاء once، ويرفض الاستدعاءات أو التخزين بينهما.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` يفحص برهان الجذر المشترك والرفض بعد أن تبدأ عقدة ورقية بملاحظة سياقها.

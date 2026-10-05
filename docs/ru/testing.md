@@ -1417,3 +1417,13 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp` проверяет независимыми программами O0/O2 с обычной/APS2/RELR упаковкой три типа mutex, нескольких ожидающих, повторную конкуренцию, последнее рекурсивное освобождение, errno, события, недоступную память, взаимоблокировки и общий лимит инструкций. Используются Unicorn и доступные KVM/WHP/HVF; остальные явно пропускаются. Это не доказывает эквивалентность устройству Android или параллельному SMP.
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` проверяет 48 уровней блоков, циклов, switch и обработчиков исключений независимым интерпретатором на выполняемых и обходящих путях. Достаточно широкий предел времени выявляет повторные рекурсивные обходы. Это покрытие структурированного HighIR; восстановление методов всего образа по-прежнему требует отдельных полных проверок перечня и зависимостей.
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` проверяет ARM64/x64 thunk с совмещёнными или раздельными вызовами retain. `EarlyOnceCopyReturnsRequireTheSameCompleteTail` отклоняет изменённые записи, отсутствующие или переставленные retain, упорядоченные загрузки, изменённые результаты и внешние входы. `IgnoredNestedReturnCopiesDoNotObserveOnceContext` проверяет оба возможных выхода void-callback и поток исходного кода после проекции.
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` сравнивает пути входа и обхода независимым интерпретатором, когда адрес повторяется во вложенном блоке. `ReturnTailCopyIncludesTheFirstChildOfItsLabel` сохраняет допустимое совпадение адресов родителя и первого ребёнка вместе с присваиванием. Эти целевые проверки не заменяют полное сравнение методов и нативных зависимостей.
+
+`JumpTailCopyKeepsTheOuterLabelOwner` проверяет то же правило владельца для хвостов перехода.
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` проверяет пустые якоря инструкций между ранним возвратом и вызовом once и отклоняет промежуточные вызовы или записи.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` проверяет общее доказательство корня и отказ после того, как лист начинает наблюдать свой контекст.

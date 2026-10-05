@@ -1445,3 +1445,13 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp` verifica con programmi indipendenti O0/O2 e formati normale/APS2/RELR tre tipi di mutex, più attese, nuova contesa, rilascio ricorsivo finale, errno, eventi, memoria invalidata, deadlock e limiti cumulativi. I casi girano su Unicorn e KVM/WHP/HVF disponibili; gli altri sono saltati esplicitamente. Non dimostrano equivalenza con dispositivi Android o SMP parallelo.
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` verifica 48 livelli di blocchi, cicli, switch ed eccezioni con un interprete indipendente, sui percorsi eseguiti e aggirati. Un limite temporale ampio rileva le visite ricorsive ripetute. La copertura riguarda HighIR strutturato; il recupero dei metodi dell’intera immagine richiede ancora controlli completi e separati di inventario e dipendenze.
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` copre i thunk ARM64/x64 con chiamate retain combinate o separate. `EarlyOnceCopyReturnsRequireTheSameCompleteTail` rifiuta scritture modificate, retain mancanti o riordinati, caricamenti ordinati, risultati cambiati e ingressi esterni. `IgnoredNestedReturnCopiesDoNotObserveOnceContext` verifica entrambe le uscite possibili di un callback void e il flusso sorgente dopo la proiezione.
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` confronta percorsi di ingresso e aggiramento con un interprete indipendente quando un indirizzo ricorre in un blocco annidato. `ReturnTailCopyIncludesTheFirstChildOfItsLabel` conserva il caso valido del padre e del primo figlio con la relativa assegnazione. Questi controlli mirati non sostituiscono i confronti completi di metodi e dipendenze native.
+
+`JumpTailCopyKeepsTheOuterLabelOwner` verifica la stessa regola di appartenenza per le code di salto.
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` verifica gli ancoraggi vuoti tra il ritorno anticipato e la chiamata once, rifiutando chiamate o scritture intermedie.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` verifica la prova condivisa della radice e il rifiuto quando una foglia inizia a osservare il proprio contesto.

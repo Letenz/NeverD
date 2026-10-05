@@ -1450,3 +1450,13 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp` usa programas independientes O0/O2 y empaquetado normal/APS2/RELR para tres tipos de mutex, varios participantes, nueva contención, liberación recursiva final, errno, eventos, memoria invalidada, interbloqueos y límites acumulados. Los casos se ejecutan en Unicorn y KVM/WHP/HVF disponibles; los demás se omiten explícitamente. No prueban equivalencia con dispositivos Android ni SMP paralelo.
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` comprueba 48 niveles de bloques, bucles, switch y excepciones mediante un intérprete independiente, tanto en rutas recorridas como omitidas. Un límite de tiempo amplio detecta recorridos recursivos repetidos. La cobertura corresponde a HighIR estructurado; recuperar los métodos de toda la imagen sigue exigiendo comprobaciones completas e independientes del inventario y las dependencias.
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` cubre thunks ARM64/x64 con llamadas retain combinadas o separadas. `EarlyOnceCopyReturnsRequireTheSameCompleteTail` rechaza escrituras modificadas, retain ausentes o reordenados, cargas ordenadas, resultados cambiados y entradas externas. `IgnoredNestedReturnCopiesDoNotObserveOnceContext` comprueba las dos salidas factibles de un callback void y el flujo fuente tras la proyección.
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` compara rutas de entrada y desvío mediante un intérprete independiente cuando una dirección reaparece en un bloque anidado. `ReturnTailCopyIncludesTheFirstChildOfItsLabel` conserva el caso válido del padre y su primer hijo, junto con la asignación. Estas pruebas específicas no sustituyen las comparaciones completas de métodos y dependencias nativas.
+
+`JumpTailCopyKeepsTheOuterLabelOwner` comprueba la misma regla de pertenencia para los tramos de salto.
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` comprueba los anclajes vacíos entre el retorno anticipado y la llamada once, y rechaza las llamadas o escrituras intermedias.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` comprueba la prueba compartida de la raíz y el rechazo cuando una hoja empieza a observar su contexto.

@@ -2597,3 +2597,13 @@ changing their shared fixed-copy or lossless integer helpers.
 The file fixture also takes an imported function’s address while calling it directly. `CallableImportEvidenceBelongsToTheExactSymbol` checks GOT-before-PLT binding across ordinary/APS2/RELR inputs, removes the matching call-slot evidence, changes the declaration to object/function types, and verifies one thunk per admitted symbol. Existing thread-address imports exercise the same linker rule.
 
 Memory-file reads cover empty ranges at the user limit and original-count signed overflow before transfer clamping or EOF. Raw calls and Bionic check address-error precedence, unchanged cursors and errno across failures and successful empty reads.
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` covers ARM64/x64 thunks with combined or separate retain calls. `EarlyOnceCopyReturnsRequireTheSameCompleteTail` rejects changed stores, missing or reordered retains, ordered loads, changed results and external entries. `IgnoredNestedReturnCopiesDoNotObserveOnceContext` checks both feasible void callback exits and repeats source-flow validation after projection.
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` compares entered and bypassed paths with an independent interpreter when an address recurs inside a nested block. `ReturnTailCopyIncludesTheFirstChildOfItsLabel` keeps the valid parent/first-child case and its assignment. These focused checks do not replace complete method and native dependency comparisons.
+
+`JumpTailCopyKeepsTheOuterLabelOwner` checks the same ownership rule for jump tails.
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` checks empty instruction anchors between the early return and once call, and rejects intervening calls or stores.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` checks the shared root proof and rejection after a leaf starts observing its context.

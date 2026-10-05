@@ -1464,3 +1464,13 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp` utilise des programmes indépendants O0/O2, ordinaires/APS2/RELR, pour les trois types de mutex, plusieurs attentes, la reprise de contention, la libération récursive finale, errno, les événements, la mémoire invalidée, les interblocages et le budget cumulé. Les cas tournent sur Unicorn et les KVM/WHP/HVF disponibles ; les autres sont explicitement ignorés. Cela ne prouve pas l’équivalence avec un appareil Android ou un SMP parallèle.
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` vérifie 48 niveaux de blocs, boucles, switch et exceptions avec un interpréteur indépendant, sur les chemins empruntés et contournés. Une limite de durée généreuse détecte les parcours récursifs répétés. Cette couverture concerne le HighIR structuré ; la restauration des méthodes de l’image entière exige toujours ses propres contrôles complets d’inventaire et de dépendances.
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` couvre les thunks ARM64/x64 avec des appels retain combinés ou séparés. `EarlyOnceCopyReturnsRequireTheSameCompleteTail` refuse les écritures modifiées, les retain absents ou réordonnés, les lectures ordonnées, les résultats modifiés et les entrées externes. `IgnoredNestedReturnCopiesDoNotObserveOnceContext` vérifie les deux sorties réalisables d'un callback void et le flot source après projection.
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` compare les chemins d'entrée et de contournement avec un interpréteur indépendant lorsqu'une adresse réapparaît dans un bloc imbriqué. `ReturnTailCopyIncludesTheFirstChildOfItsLabel` préserve le cas valide du parent et du premier enfant, ainsi que son affectation. Ces contrôles ciblés ne remplacent pas les comparaisons complètes des méthodes et dépendances natives.
+
+`JumpTailCopyKeepsTheOuterLabelOwner` vérifie la même règle d'appartenance pour les fins de saut.
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` vérifie les ancres d'instruction vides entre le retour anticipé et l'appel once, et refuse les appels ou écritures intermédiaires.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` vérifie la preuve commune de la racine et le refus lorsqu’une feuille commence à observer son contexte.

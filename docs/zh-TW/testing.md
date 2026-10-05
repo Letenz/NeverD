@@ -1295,3 +1295,13 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp` 使用獨立 O0/O2、一般/APS2/RELR 夾具測試三種 mutex、多等待者、喚醒後重新競爭、遞迴最終釋放、errno、原始事件、失效記憶體、死結及累計指令限制。相同案例於 Unicorn 與可用的 KVM/WHP/HVF 執行；不可用後端明確略過，不宣稱 Android 實機或平行 SMP 等價。
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` 使用獨立直譯器檢查 48 層區塊、迴圈、switch 和例外本體的進入及略過路徑，並以寬鬆的執行時間上限捕捉重複遞迴遍歷。這是結構化 HighIR 覆蓋；全映像方法恢復仍須獨立完成清單與相依性檢查。
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` 涵蓋 ARM64/x64 中合併或分離 retain 呼叫的 thunk。`EarlyOnceCopyReturnsRequireTheSameCompleteTail` 拒絕變更儲存、缺少或重新排序 retain、有序載入、變更返回值及外部入口。`IgnoredNestedReturnCopiesDoNotObserveOnceContext` 檢查 void 回呼的兩條可行退出路徑，並在投影後重新驗證原始碼控制流程。
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` 使用獨立解譯器，比較同一位址在巢狀區塊中再次出現時進入與略過該區塊的路徑。`ReturnTailCopyIncludesTheFirstChildOfItsLabel` 保留合法的父陳述式與第一個子陳述式共用位址的情況及其指派。這些針對性檢查不能取代完整方法與原生相依性比較。
+
+`JumpTailCopyKeepsTheOuterLabelOwner` 檢查跳轉尾部的相同歸屬規則。
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 檢查提前返回與 once 呼叫之間的空指令錨點，並拒絕其間的呼叫或儲存。
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 檢查共用根節點證明，並在葉節點開始觀察上下文後拒絕舊計畫。
