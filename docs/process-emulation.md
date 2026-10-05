@@ -310,6 +310,9 @@ Reads validate the original user range before the page-aligned Linux transfer
 cap or EOF, copy only available bytes, and advance by exactly the copied
 prefix. A later inaccessible page preserves that prefix; a fault before any
 byte returns `EFAULT`. Empty reads and EOF do not probe payload mappings.
+A zero-length user range may start exactly at the user limit. After validating
+that range, a file position plus the original count above `INT64_MAX` returns
+`EINVAL`, including at EOF; neither failure advances the cursor.
 Ordinary `SEEK_SET`, `SEEK_CUR` and `SEEK_END` keep a signed 64-bit nonnegative
 cursor, permit seeking beyond EOF, and reject negative/overflowing positions
 without changing it. `SEEK_DATA` and `SEEK_HOLE` remain unsupported. These are

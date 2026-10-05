@@ -113,6 +113,8 @@ Cada apertura tiene su cursor; Bionic, `syscall`, trampas e hilos invitados comp
 
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
+Una lectura de longitud cero puede comenzar en el límite del espacio de usuario. Tras validar el rango de direcciones original, si la posición del archivo más la longitud solicitada supera `INT64_MAX`, se devuelve `EINVAL` incluso en EOF, sin modificar el cursor.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Perfil Windows PE64

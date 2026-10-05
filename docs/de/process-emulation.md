@@ -113,6 +113,8 @@ Jedes Öffnen hat einen eigenen Cursor; Bionic, `syscall`, rohe Traps und Gastth
 
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
+Ein Lesezugriff der Länge null darf an der Grenze des Benutzeradressraums beginnen. Nach Prüfung des ursprünglichen Adressbereichs führt eine Dateiposition plus ursprünglicher Anforderungslänge oberhalb von `INT64_MAX` auch bei EOF zu `EINVAL`; der Cursor bleibt unverändert.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows-PE64-Profil
