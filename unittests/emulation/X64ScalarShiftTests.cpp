@@ -74,7 +74,9 @@ unsigned effectiveCount(const Shift &S, unsigned Raw) {
 }
 uint64_t definedFlags(const Shift &S, unsigned Raw) {
   const unsigned N = count(S, Raw);
-  if (!N || (throughCarry(S) && !effectiveCount(S, Raw)))
+  // A whole carry-ring rotation can preserve the value and CF while leaving
+  // OF undefined. Only a zero masked count guarantees every flag is unchanged.
+  if (!N)
     return UINT64_MAX;
   uint64_t Undefined = N == 1 ? 0 : Overflow;
   if (!rotates(S)) {

@@ -90,6 +90,8 @@ checked x64 通过 KVM、WHP 和 Unicorn 执行 `SHLD/SHRD`，支持 16/32/64 �
 
 `X64ScalarShiftInstructions.def` 统一定义 `SHL/SHR/SAR`、`ROL/ROR` 和 `RCL/RCR` 的 8/16/32/64 位目的操作数效果。寄存器和 RAM 形式支持隐含的 1、imm8 或 CL 计数，包括掩码后为零的计数及 SAL 别名。RAM 写入经过权限检查、结果观察回调和共享事务；停止或回调错误会恢复 CPU 与内存。KVM、WHP 和 Unicorn 检查模式共用此边界。LOCK 与 MMIO 形式仍不受支持。
 
+`X64LoopInstructions.def` 通过处理器传输执行 `LOOP/LOOPE/LOOPNE`。地址宽度选择 RCX 或零扩展的 ECX，FLAGS 保持不变。目标宽度遵循 CPU 模型：Intel 在长模式忽略 `66H`，AMD 保留其 16 位覆盖，REX.W 优先。原生 KVM/WHP 使用宿主处理器，Unicorn 使用默认 Intel Haswell 模型。共享准入规则在产生效果前拒绝 LOCK 和 REP，包括解码元数据省略的前缀。
+
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。

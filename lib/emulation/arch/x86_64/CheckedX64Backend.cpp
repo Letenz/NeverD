@@ -94,6 +94,31 @@ bool admitsScalarShiftOperands(const cs_x86 &X) {
            uint64_t(Count.imm) <= UINT8_MAX) ||
           (Count.type == X86_OP_REG && Count.reg == X86_REG_CL));
 }
+bool isLoop(unsigned Instruction) {
+  switch (Instruction) {
+#define NEVERD_X64_LOOP_INSTRUCTION(Name)                                      \
+  case X86_INS_##Name:                                                         \
+    return true;
+#include "X64LoopInstructions.def"
+#undef NEVERD_X64_LOOP_INSTRUCTION
+  default:
+    return false;
+  }
+}
+bool admitsLoopOperands(const cs_insn &I) {
+  const auto &X = I.detail->x86;
+  if (X.op_count != 1 || X.operands[0].type != X86_OP_IMM ||
+      X.encoding.imm_size != x64::ByteBytes || I.size < x64::ShortBranchBytes)
+    return false;
+  // Capstone omits ignored REP prefixes from LOOP's normalized metadata.
+  // Keep checked admission explicit, without mistaking a displacement byte
+  // for a prefix or changing how the processor handles 66H, 67H and REX.
+  for (uint8_t Prefix : llvm::ArrayRef(I.bytes, I.size - x64::ShortBranchBytes))
+    if (Prefix == X86_PREFIX_LOCK || Prefix == X86_PREFIX_REP ||
+        Prefix == X86_PREFIX_REPNE)
+      return false;
+  return true;
+}
 std::optional<bool> condition(unsigned Instruction, uint64_t Flags) {
   const bool Carry = Flags & x64::CarryFlag;
   const bool Parity = Flags & x64::ParityFlag;
@@ -433,6 +458,10 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
   const bool Atomic = isAtomic(I.id);
+  // Address size selects RCX/ECX. The processor model owns 66H target width,
+  // the decrement, unchanged flags and the signed rel8 displacement.
+  if (isLoop(I.id) && !admitsLoopOperands(I))
+    return llvm::make_error<UnsupportedExecutionError>();
   const bool ScalarShift = isScalarShift(I.id);
   if (ScalarShift && !admitsScalarShiftOperands(X))
     return llvm::make_error<UnsupportedExecutionError>();

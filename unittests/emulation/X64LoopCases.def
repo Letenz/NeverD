@@ -1,0 +1,122 @@
+//===- X64LoopCases.def - Original counted branch encodings
+//----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_LOOP_VALUE
+NEVERD_LOOP_VALUE(Limit, 1024 * 1024)
+NEVERD_LOOP_VALUE(Page, 4096)
+NEVERD_LOOP_VALUE(Code, 0x10000)
+NEVERD_LOOP_VALUE(LowCode, 0)
+NEVERD_LOOP_VALUE(HighCode, 0x100010000ULL)
+NEVERD_LOOP_VALUE(Data, 0x20000)
+NEVERD_LOOP_VALUE(EntryOffset, 1024)
+NEVERD_LOOP_VALUE(Timeout, 1'000'000)
+NEVERD_LOOP_VALUE(ZeroFlag, 0x40)
+NEVERD_LOOP_VALUE(SetFlags, 0xed7)
+NEVERD_LOOP_VALUE(ClearFlags, 2)
+NEVERD_LOOP_VALUE(Seed, 0x1234567887654321ULL)
+NEVERD_LOOP_VALUE(Source, 0xfedcba9876543210ULL)
+NEVERD_LOOP_VALUE(Fill, 0xa5)
+NEVERD_LOOP_VALUE(Nop, 0x90)
+NEVERD_LOOP_VALUE(Lock, 0xf0)
+NEVERD_LOOP_VALUE(Rep, 0xf3)
+NEVERD_LOOP_VALUE(Repne, 0xf2)
+NEVERD_LOOP_VALUE(AMDVendorEBX, 0x68747541)
+NEVERD_LOOP_VALUE(AMDVendorEDX, 0x69746e65)
+NEVERD_LOOP_VALUE(AMDVendorECX, 0x444d4163)
+NEVERD_LOOP_VALUE(Displacement, 16)
+NEVERD_LOOP_VALUE(MXCSR, 0x5fa5)
+NEVERD_LOOP_VALUE(FPCW, 0xb7f)
+NEVERD_LOOP_VALUE(FPSW, 0x1800)
+NEVERD_LOOP_VALUE(VectorCount, 16)
+NEVERD_LOOP_VALUE(FPCount, 8)
+NEVERD_LOOP_VALUE(FPHigh, 0x3fff)
+NEVERD_LOOP_VALUE(FiniteCount, 3)
+#endif
+#ifdef NEVERD_LOOP_TEXT
+NEVERD_LOOP_TEXT(ObserverFailure, "counted-branch observer failed")
+NEVERD_LOOP_TEXT(OracleUnavailable,
+                 "the counted-branch native oracle requires x64")
+NEVERD_LOOP_TEXT(OracleExecuted, "original host branch executions: ")
+NEVERD_LOOP_TEXT(OracleGuestOnly,
+                 "; low-target forms checked in guest memory: ")
+#endif
+#ifdef NEVERD_LOOP_CASE
+// Name, ZF condition, counter32, effective 16-bit operand size, original bytes.
+NEVERD_LOOP_CASE(LOOP64, 0, false, false, 0xe2)
+NEVERD_LOOP_CASE(LOOP64Operand16, 0, false, true, 0x66, 0xe2)
+NEVERD_LOOP_CASE(LOOP64Operand16RexW, 0, false, false, 0x66, 0x48, 0xe2)
+NEVERD_LOOP_CASE(LOOP64RexB, 0, false, false, 0x41, 0xe2)
+NEVERD_LOOP_CASE(LOOP32, 0, true, false, 0x67, 0xe2)
+NEVERD_LOOP_CASE(LOOP32Operand16, 0, true, true, 0x66, 0x67, 0xe2)
+NEVERD_LOOP_CASE(LOOP32Operand16RexW, 0, true, false, 0x66, 0x67, 0x48, 0xe2)
+NEVERD_LOOP_CASE(LOOPE64, 1, false, false, 0xe1)
+NEVERD_LOOP_CASE(LOOPE64Operand16, 1, false, true, 0x66, 0xe1)
+NEVERD_LOOP_CASE(LOOPE64Operand16RexW, 1, false, false, 0x66, 0x48, 0xe1)
+NEVERD_LOOP_CASE(LOOPE64RexB, 1, false, false, 0x41, 0xe1)
+NEVERD_LOOP_CASE(LOOPE32, 1, true, false, 0x67, 0xe1)
+NEVERD_LOOP_CASE(LOOPE32Operand16, 1, true, true, 0x66, 0x67, 0xe1)
+NEVERD_LOOP_CASE(LOOPE32Operand16RexW, 1, true, false, 0x66, 0x67, 0x48, 0xe1)
+NEVERD_LOOP_CASE(LOOPNE64, -1, false, false, 0xe0)
+NEVERD_LOOP_CASE(LOOPNE64Operand16, -1, false, true, 0x66, 0xe0)
+NEVERD_LOOP_CASE(LOOPNE64Operand16RexW, -1, false, false, 0x66, 0x48, 0xe0)
+NEVERD_LOOP_CASE(LOOPNE64RexB, -1, false, false, 0x41, 0xe0)
+NEVERD_LOOP_CASE(LOOPNE32, -1, true, false, 0x67, 0xe0)
+NEVERD_LOOP_CASE(LOOPNE32Operand16, -1, true, true, 0x66, 0x67, 0xe0)
+NEVERD_LOOP_CASE(LOOPNE32Operand16RexW, -1, true, false, 0x66, 0x67, 0x48, 0xe0)
+#endif
+#ifdef NEVERD_LOOP_COUNT
+NEVERD_LOOP_COUNT(0)
+NEVERD_LOOP_COUNT(1)
+NEVERD_LOOP_COUNT(2)
+NEVERD_LOOP_COUNT(0xffff)
+NEVERD_LOOP_COUNT(0x10000)
+NEVERD_LOOP_COUNT(0x10001)
+NEVERD_LOOP_COUNT(0xffffffff)
+NEVERD_LOOP_COUNT(0x100000000ULL)
+NEVERD_LOOP_COUNT(0x100000001ULL)
+NEVERD_LOOP_COUNT(0x100000002ULL)
+NEVERD_LOOP_COUNT(Source)
+NEVERD_LOOP_COUNT(UINT64_MAX)
+#endif
+#ifdef NEVERD_LOOP_FLAGS
+NEVERD_LOOP_FLAGS(ClearFlags)
+NEVERD_LOOP_FLAGS(ClearFlags | ZeroFlag)
+NEVERD_LOOP_FLAGS(SetFlags & ~ZeroFlag)
+NEVERD_LOOP_FLAGS(SetFlags)
+#endif
+#ifdef NEVERD_LOOP_DISPLACEMENT
+NEVERD_LOOP_DISPLACEMENT(-128)
+NEVERD_LOOP_DISPLACEMENT(-16)
+NEVERD_LOOP_DISPLACEMENT(-14)
+NEVERD_LOOP_DISPLACEMENT(-13)
+NEVERD_LOOP_DISPLACEMENT(0)
+NEVERD_LOOP_DISPLACEMENT(16)
+NEVERD_LOOP_DISPLACEMENT(127)
+#endif
+#ifdef NEVERD_LOOP_BYTES
+NEVERD_LOOP_BYTES(OraclePrefix, 0x53, 0x9c)
+NEVERD_LOOP_BYTES(SysVArgument, 0x48, 0x89, 0xfb)
+NEVERD_LOOP_BYTES(Win64Argument, 0x48, 0x89, 0xcb)
+// Packet: input count, installed FLAGS, output count, output FLAGS, taken.
+NEVERD_LOOP_BYTES(OracleLoad, 0x48, 0x8b, 0x0b, 0xff, 0x73, 0x08, 0x9d, 0x9c,
+                  0x8f, 0x43, 0x08)
+// Both paths use MOV/JMP so they preserve every input flag.
+NEVERD_LOOP_BYTES(OracleFalse, 0x48, 0xc7, 0x43, 0x20, 0, 0, 0, 0)
+NEVERD_LOOP_BYTES(OracleSkipTrue, 0xeb, 0x08)
+NEVERD_LOOP_BYTES(OracleTrue, 0x48, 0xc7, 0x43, 0x20, 1, 0, 0, 0)
+NEVERD_LOOP_BYTES(OracleSave, 0x48, 0x89, 0x4b, 0x10, 0x9c, 0x8f, 0x43, 0x18,
+                  0x9d, 0x5b, 0xc3)
+#endif
+#ifdef NEVERD_LOOP_BACKEND
+NEVERD_LOOP_BACKEND(kvmSupervisor, KVM, CheckedX64)
+NEVERD_LOOP_BACKEND(kvmUser, KVM, CheckedUserX64)
+NEVERD_LOOP_BACKEND(kvmDriver, KVM, Legacy)
+NEVERD_LOOP_BACKEND(whpSupervisor, WHP, CheckedX64)
+NEVERD_LOOP_BACKEND(whpUser, WHP, CheckedUserX64)
+NEVERD_LOOP_BACKEND(whpDriver, WHP, Legacy)
+NEVERD_LOOP_BACKEND(unicornSupervisor, Unicorn, CheckedX64)
+NEVERD_LOOP_BACKEND(unicornUser, Unicorn, CheckedUserX64)
+#endif
