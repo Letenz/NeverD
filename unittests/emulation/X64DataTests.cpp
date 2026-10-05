@@ -539,7 +539,7 @@ TEST_P(X64Data,
     EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::MXCSR)),
               InitialMXCSR | Rounding | InvalidStatus | PrecisionStatus);
   }
-  const auto Kind = std::get<0>(parameter());
+  const auto Kind = std::get<0>(GetParam());
   const bool Precise =
       Kind == ExecutionBackendKind::KVM || Kind == ExecutionBackendKind::WHP;
   const uint64_t Before = llvm::cantFail(CPU->reg(X64Register::MXCSR));
