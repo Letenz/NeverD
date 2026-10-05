@@ -28,6 +28,20 @@ static_assert(probe::FloatingDestination < XmmCount &&
               probe::VectorDestination < XmmCount &&
               probe::VectorSource < XmmCount);
 
+llvm::Error annotateInterruption(llvm::Error Error, llvm::StringRef Step) {
+  return llvm::handleErrors(
+      std::move(Error), [&](const MachineInterruptedError &Interrupted) {
+        std::string Detail;
+        llvm::raw_string_ostream OS(Detail);
+        Interrupted.log(OS);
+        return llvm::make_error<MachineInterruptedError>(
+            llvm::formatv(probe::Interrupted, Step, Interrupted.stopRequested(),
+                          Interrupted.deadlineReached(), OS.str())
+                .str(),
+            Interrupted.stopRequested(), Interrupted.deadlineReached());
+      });
+}
+
 llvm::Error stateMismatch(llvm::StringRef Instruction,
                           const X64MachineState &Expected,
                           const X64MachineState &Observed) {
@@ -122,9 +136,18 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
   const MachineRunControl Control{
       std::chrono::steady_clock::now() +
       std::chrono::microseconds(x64::probe::TimeoutMicroseconds)};
+  auto CheckDeadline = [&](llvm::StringRef Step) -> llvm::Error {
+    if (!Control.interrupted())
+      return llvm::Error::success();
+    return annotateInterruption(diagnostic::interrupted(probe::State, Control),
+                                Step);
+  };
+  auto Step = [&](llvm::StringRef Name) {
+    return annotateInterruption(Machine.step(State, *Root, Control), Name);
+  };
   for (const auto &Instruction : x64::probe::Program) {
-    if (Control.interrupted())
-      return diagnostic::interrupted(x64::probe::State, Control);
+    if (auto E = CheckDeadline(Instruction.Name))
+      return E;
     auto Expected = State;
     Expected.reg(X64Register::PC) += Instruction.Code.size();
     switch (Instruction.Kind) {
@@ -162,12 +185,12 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
       Expected.reg(X64Register::R11) = x64::probe::CR8;
       break;
     }
-    if (auto E = Machine.step(State, *Root, Control))
+    if (auto E = Step(Instruction.Name))
       return E;
     if (State != Expected)
       return stateMismatch(Instruction.Name, Expected, State);
-    if (Control.interrupted())
-      return diagnostic::interrupted(x64::probe::State, Control);
+    if (auto E = CheckDeadline(Instruction.Name))
+      return E;
   }
   if (SIMDExceptions) {
     auto *Code = Memory.data() + gateway::CodeGPA + probe::CodeOffset;
@@ -182,9 +205,9 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
         probe::FloatHalfULP;
     auto Expected = State;
     bool Trapped = false;
-    if (Control.interrupted())
-      return diagnostic::interrupted(probe::State, Control);
-    auto E = Machine.step(State, *Root, Control);
+    if (auto E = CheckDeadline(probe::SIMDName))
+      return E;
+    auto E = Step(probe::SIMDName);
     if (auto Remaining = llvm::handleErrors(
             std::move(E), [&](const X64ExceptionError &Fault) {
               Trapped =
@@ -207,15 +230,15 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
         State.MXCSR |= InitialMXCSR;
       auto Retried = State;
       Retried.reg(X64Register::PC) += sizeof(probe::FloatingAdd);
-      if (Control.interrupted())
-        return diagnostic::interrupted(probe::State, Control);
-      if (auto E = Machine.step(State, *Root, Control))
+      if (auto E = CheckDeadline(probe::SIMDName))
+        return E;
+      if (auto E = Step(probe::SIMDName))
         return E;
       if (State != Retried)
         return stateMismatch(probe::SIMDName, Retried, State);
     }
-    if (Control.interrupted())
-      return diagnostic::interrupted(probe::State, Control);
+    if (auto E = CheckDeadline(probe::SIMDName))
+      return E;
   }
   if (!MXCSRMask)
     return llvm::Error::success();
@@ -226,19 +249,19 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
   State.reg(X64Register::R11) = Base + probe::FXOffset;
   auto Run = [&](llvm::StringRef Name,
                  llvm::ArrayRef<uint8_t> Bytes) -> llvm::Error {
-    if (Control.interrupted())
-      return diagnostic::interrupted(probe::State, Control);
+    if (auto E = CheckDeadline(Name))
+      return E;
     auto *Code = Memory.data() + gateway::CodeGPA + probe::CodeOffset;
     std::memcpy(Code, Bytes.data(), Bytes.size());
     State.reg(X64Register::PC) = Base + PageSize + probe::CodeOffset;
     auto Expected = State;
     Expected.reg(X64Register::PC) += Bytes.size();
-    if (auto E = Machine.step(State, *Root, Control))
+    if (auto E = Step(Name))
       return E;
     if (State != Expected)
       return stateMismatch(Name, Expected, State);
-    if (Control.interrupted())
-      return diagnostic::interrupted(probe::State, Control);
+    if (auto E = CheckDeadline(Name))
+      return E;
     return llvm::Error::success();
   };
   constexpr uint8_t Save[] = {

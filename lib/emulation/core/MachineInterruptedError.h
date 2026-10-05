@@ -6,7 +6,10 @@
 #ifndef NEVERD_EMULATION_CORE_MACHINEINTERRUPTEDERROR_H
 #define NEVERD_EMULATION_CORE_MACHINEINTERRUPTEDERROR_H
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
+
+#include <string>
 
 namespace neverd::emulation {
 /// An acknowledged interruption has no publishable CPU/RAM progress. It is
@@ -15,8 +18,8 @@ class MachineInterruptedError final
     : public llvm::ErrorInfo<MachineInterruptedError> {
 public:
   static inline char ID = 0;
-  MachineInterruptedError(const char *Text, bool Stopped, bool Expired)
-      : Text(Text), Stopped(Stopped), Expired(Expired) {}
+  MachineInterruptedError(llvm::StringRef Text, bool Stopped, bool Expired)
+      : Text(Text.str()), Stopped(Stopped), Expired(Expired) {}
   bool stopRequested() const { return Stopped; }
   bool deadlineReached() const { return Expired; }
   void log(llvm::raw_ostream &OS) const override { OS << Text; }
@@ -25,7 +28,7 @@ public:
   }
 
 private:
-  const char *Text;
+  std::string Text;
   bool Stopped, Expired;
 };
 } // namespace neverd::emulation

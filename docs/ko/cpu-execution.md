@@ -76,6 +76,8 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 KVM/WHP는 비공개 `FXSAVE64` 실행으로 `MXCSR_MASK`를 탐색하고 부호 있는 비정규 입력의 산술로 DAZ 기능을 검증합니다. checked Unicorn은 소프트웨어 마스크를 제공합니다. `supportedControlBits`는 CPU의 불변 마스크를 반환하며 FX/XSAVE, 스냅샷, Windows CONTEXT가 이를 공유합니다. checked `LDMXCSR/STMXCSR`는 정확히 m32의 전체 RAM 권한을 검사하고 오류나 관찰 콜백 취소 시 상태를 보존합니다. 예약 비트 로드는 #GP를 발생시키며 이식 가능한 실행은 마스크되지 않은 SIMD 예외를 거부합니다. `X64MXCSRTests.cpp`는 제어와 재시도를 검사하고 `X64DAZData`는 허용된 SSE 산술 28종을 원본 호스트 명령과 비교하여 DAZ, 반올림, FTZ를 검증합니다. HVF의 DAZ 지원은 확장하지 않습니다.
 
+네이티브 x64 시작 검증은 전송 계층의 콜드 스타트 준비와 모든 탐색 단계에 하나의 `5 s` 예산을 사용합니다. 게스트 실행 예산은 독립적입니다. 초기화 중단은 명령 단계, `stop_requested`, `deadline_reached`를 보고하며 중단 타입과 원래 전송 진단을 유지합니다. 재시도하거나 검증이 끝나지 않은 CPU를 허용하지 않습니다.
+
 `PAUSE`(`F3 90`)는 네이티브 `driver-strict`를 포함하여 KVM/WHP와 checked Unicorn의 공통 x64 머신 경계를 통해 실행됩니다. `X64PauseTests.cpp`는 전체 상태 보존, 실행 전 중지, 컨텍스트 복원, 잘못된 `LOCK` 거부, 스핀 루프의 시간 제한과 재개를 검증합니다. 이 프로세서 힌트는 게스트 스레드를 스케줄링하거나 특정 지연을 보장하지 않습니다.
 
 `PUSHFQ`(`9C`)와 16비트 `PUSHF`(`66 9C`)는 `driver-strict`를 포함한 네이티브 KVM/WHP 및 checked Unicorn에서 실행됩니다. 공유 ISA 계층은 RAM 트랜잭션을 커밋하기 전에 스택 이미지에서 내부 단일 단계 실행용 TF를 제거합니다. 암시적 스택 주소에는 전체 RSP를 사용하며 접두사 순서가 피연산자 너비를 결정합니다. 전체 범위 권한 검사, 관찰자 중지, 오류 재시도는 원자성을 유지합니다. `X64PushFlagsTests.cpp`는 허용된 플래그 조합 256개와 인코딩 9개, 페이지 경계를 넘는 별칭, 사용자 권한, 취소 및 컨텍스트 복원을 검사합니다.
