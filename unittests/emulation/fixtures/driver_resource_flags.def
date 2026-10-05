@@ -1,0 +1,19 @@
+//===- driver_resource_flags.def - Original WDK flag stack probes --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_FLAGS_VALUE
+NEVERD_RESOURCE_FLAGS_VALUE(SetFlags, 0xed7)
+NEVERD_RESOURCE_FLAGS_VALUE(ClearFlags, 2)
+#endif
+#ifdef NEVERD_RESOURCE_FLAGS_CASE
+// Capture the caller, install the input, capture the result, restore caller.
+// DF and IF never escape the original assembly block into compiled C.
+NEVERD_RESOURCE_FLAGS_CASE(Qword,
+                           "pushfq; popq %0; pushq %2; popfq; pushfq; popq %1; "
+                           "pushq %0; popfq")
+NEVERD_RESOURCE_FLAGS_CASE(Word, "pushfq; popq %0; pushq %2; popfw; "
+                                 "leaq 6(%%rsp), %%rsp; pushfq; popq %1; "
+                                 "pushq %0; popfq")
+#endif

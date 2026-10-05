@@ -1,0 +1,93 @@
+//===- X64PopFlagsCases.def - Independent stack flag restoration cases ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_POP_FLAGS_VALUE
+NEVERD_POP_FLAGS_VALUE(Limit, 1024 * 1024)
+NEVERD_POP_FLAGS_VALUE(Page, 4096)
+NEVERD_POP_FLAGS_VALUE(Code, 0x10000)
+NEVERD_POP_FLAGS_VALUE(Data, 0x100020000ULL)
+NEVERD_POP_FLAGS_VALUE(Alias, 0x200040000ULL)
+NEVERD_POP_FLAGS_VALUE(DeviceAddress, 0x300040000ULL)
+NEVERD_POP_FLAGS_VALUE(Timeout, 1'000'000)
+NEVERD_POP_FLAGS_VALUE(Flags, 0xed7)
+NEVERD_POP_FLAGS_VALUE(Reserved, 2)
+NEVERD_POP_FLAGS_VALUE(Trap, 0x100)
+NEVERD_POP_FLAGS_VALUE(Interrupt, 0x200)
+NEVERD_POP_FLAGS_VALUE(IOPL, 0x3000)
+NEVERD_POP_FLAGS_VALUE(UserPrivilege, 3)
+NEVERD_POP_FLAGS_VALUE(UserWordMask, 0x4dd5)
+NEVERD_POP_FLAGS_VALUE(SupervisorWordMask, 0x7fd5)
+NEVERD_POP_FLAGS_VALUE(WideMask, 0x240000)
+NEVERD_POP_FLAGS_VALUE(UserAdmittedMask, 0xcd5)
+NEVERD_POP_FLAGS_VALUE(Seed, 0x1234567887654321ULL)
+NEVERD_POP_FLAGS_VALUE(Fill, 0xa5)
+NEVERD_POP_FLAGS_VALUE(Nop, 0x90)
+NEVERD_POP_FLAGS_VALUE(MXCSR, 0x5fa5)
+NEVERD_POP_FLAGS_VALUE(FPCW, 0xb7f)
+NEVERD_POP_FLAGS_VALUE(FPSW, 0x1800)
+NEVERD_POP_FLAGS_VALUE(VectorCount, 16)
+NEVERD_POP_FLAGS_VALUE(Noncanonical, 0x800000000000ULL)
+NEVERD_POP_FLAGS_VALUE(GuestValue, 0x202)
+// Reserved bits plus VM/RF/VIF/VIP; these cannot affect either privilege.
+NEVERD_POP_FLAGS_VALUE(IgnoredImage, 0xffffffffffdb802aULL)
+#endif
+#ifdef NEVERD_POP_FLAGS_TEXT
+NEVERD_POP_FLAGS_TEXT(ObserverFailure, "pop flags read observer failed")
+NEVERD_POP_FLAGS_TEXT(OracleUnavailable,
+                      "the independent POPF oracle requires an x64 host")
+#endif
+#ifdef NEVERD_POP_FLAGS_BIT
+NEVERD_POP_FLAGS_BIT(0x1)
+NEVERD_POP_FLAGS_BIT(0x4)
+NEVERD_POP_FLAGS_BIT(0x10)
+NEVERD_POP_FLAGS_BIT(0x40)
+NEVERD_POP_FLAGS_BIT(0x80)
+NEVERD_POP_FLAGS_BIT(0x200)
+NEVERD_POP_FLAGS_BIT(0x400)
+NEVERD_POP_FLAGS_BIT(0x800)
+#endif
+#ifdef NEVERD_POP_FLAGS_INSTRUCTION
+NEVERD_POP_FLAGS_INSTRUCTION(Qword, 8, 0x9d)
+NEVERD_POP_FLAGS_INSTRUCTION(Word, 2, 0x66, 0x9d)
+NEVERD_POP_FLAGS_INSTRUCTION(AddressQword, 8, 0x67, 0x9d)
+NEVERD_POP_FLAGS_INSTRUCTION(AddressWord, 2, 0x67, 0x66, 0x9d)
+NEVERD_POP_FLAGS_INSTRUCTION(SegmentQword, 8, 0x64, 0x9d)
+NEVERD_POP_FLAGS_INSTRUCTION(SegmentWord, 2, 0x65, 0x66, 0x9d)
+NEVERD_POP_FLAGS_INSTRUCTION(RexQword, 8, 0x48, 0x9d)
+NEVERD_POP_FLAGS_INSTRUCTION(RexAfterSize, 8, 0x66, 0x48, 0x9d)
+NEVERD_POP_FLAGS_INSTRUCTION(SizeAfterRex, 2, 0x48, 0x66, 0x9d)
+#endif
+#ifdef NEVERD_POP_FLAGS_REJECTED
+NEVERD_POP_FLAGS_REJECTED(LockedQword, 0xf0, 0x9d)
+NEVERD_POP_FLAGS_REJECTED(LockedWord, 0xf0, 0x66, 0x9d)
+#endif
+#ifdef NEVERD_POP_FLAGS_BYTES
+// Original instructions, independently assembled. Only volatile registers are
+// used. The host's flags and stack are restored before returning to C++.
+NEVERD_POP_FLAGS_BYTES(SysVArgument, 0x49, 0x89, 0xfb)
+NEVERD_POP_FLAGS_BYTES(Win64Argument, 0x49, 0x89, 0xcb)
+// Save host flags/CS, install initial flags, capture them, push input, save
+// RSP.
+NEVERD_POP_FLAGS_BYTES(OracleBefore, 0x9c, 0x41, 0x5a, 0x4d, 0x89, 0x53, 0x20,
+                       0x66, 0x8c, 0xc8, 0x48, 0x0f, 0xb7, 0xc0, 0x49, 0x89,
+                       0x43, 0x30, 0x41, 0xff, 0x73, 0x08, 0x9d, 0x9c, 0x41,
+                       0x8f, 0x43, 0x28, 0x41, 0xff, 0x33, 0x49, 0x89, 0xe1)
+// Capture flags and consumed stack bytes, restore RSP and host flags, return.
+NEVERD_POP_FLAGS_BYTES(OracleAfter, 0x9c, 0x41, 0x8f, 0x43, 0x10, 0x48, 0x89,
+                       0xe0, 0x4c, 0x29, 0xc8, 0x49, 0x89, 0x43, 0x18, 0x49,
+                       0x8d, 0x61, 0x08, 0x41, 0x52, 0x9d, 0xc3)
+// POPFQ; MOV qword [RCX], RAX; PUSHFQ; NOP.
+NEVERD_POP_FLAGS_BYTES(Continuation, 0x9d, 0x48, 0x89, 0x01, 0x9c, 0x90)
+#endif
+#ifdef NEVERD_POP_FLAGS_BACKEND
+NEVERD_POP_FLAGS_BACKEND(kvmSupervisor, KVM, CheckedX64)
+NEVERD_POP_FLAGS_BACKEND(kvmUser, KVM, CheckedUserX64)
+NEVERD_POP_FLAGS_BACKEND(kvmDriver, KVM, Legacy)
+NEVERD_POP_FLAGS_BACKEND(whpSupervisor, WHP, CheckedX64)
+NEVERD_POP_FLAGS_BACKEND(whpUser, WHP, CheckedUserX64)
+NEVERD_POP_FLAGS_BACKEND(whpDriver, WHP, Legacy)
+NEVERD_POP_FLAGS_BACKEND(unicornSupervisor, Unicorn, CheckedX64)
+NEVERD_POP_FLAGS_BACKEND(unicornUser, Unicorn, CheckedUserX64)
+#endif
