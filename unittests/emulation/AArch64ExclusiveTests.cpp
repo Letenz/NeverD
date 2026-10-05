@@ -36,6 +36,11 @@ constexpr ExclusiveCase Cases[] = {
 #undef NEVERD_EXCLUSIVE_CASE
 };
 using Parameter = std::tuple<ExecutionBackendKind, bool, ExclusiveCase>;
+void PrintTo(const Parameter &P, std::ostream *OS) {
+  *OS << executionBackendName(std::get<0>(P))
+      << (std::get<1>(P) ? UserProfile : SupervisorProfile)
+      << std::get<2>(P).Name;
+}
 class AArch64Exclusive : public testing::TestWithParam<Parameter> {
 protected:
   std::unique_ptr<ExecutionBackend> CPU;

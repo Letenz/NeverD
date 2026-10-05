@@ -84,6 +84,7 @@ def main() -> None:
         result = subprocess.run(command, cwd=output, capture_output=True, timeout=timeout, check=False)
         (output / (name + ".stdout")).write_bytes(result.stdout)
         (output / (name + ".stderr")).write_bytes(result.stderr)
+        report[name + "_returncode"] = result.returncode
         result.check_returncode()
         return result
 

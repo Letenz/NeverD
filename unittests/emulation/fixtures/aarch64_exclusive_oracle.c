@@ -37,11 +37,18 @@ __declspec(dllimport) unsigned RemoveVectoredExceptionHandler(void *);
 static ExclusiveWord FaultSite, ResumeSite, Observation[FieldCount];
 static unsigned Faults;
 
+static void fail(unsigned Site, ExclusiveWord First, ExclusiveWord Second) {
+  ExclusiveWord Values[] = {Site, First, Second};
+  unsigned Written;
+  WriteFile(GetStdHandle(StderrSelector), Values, sizeof(Values), &Written, 0);
+  ExitProcess(FailureStatus);
+}
+
 static unsigned alignmentHandler(NativePointers *P) {
   ExclusiveWord *PC = (ExclusiveWord *)(P->Context + ContextPCOffset);
   if (*PC != FaultSite || (ExclusiveWord)P->Record->Address != FaultSite ||
       ++Faults != 1 || P->Record->Count > MaxParameters)
-    ExitProcess(FailureStatus);
+    fail(SiteHandler, *PC, P->Record->Code);
   Observation[FieldCode] = P->Record->Code;
   Observation[FieldFlags] = P->Record->Flags;
   Observation[FieldParameterCount] = P->Record->Count;
@@ -86,9 +93,11 @@ static void emit(const void *Data, unsigned Size) {
                        [low_seed] "r"(ExclusiveInitial),                       \
                        [status_seed] "r"(ExclusiveUpdated)                     \
                      : "x0", "x1", "x2", "x3", "x4", "memory");                \
-    if (Faults != 1 || Low != ExclusiveInitial || Status != ExclusiveUpdated)  \
-      ExitProcess(FailureStatus);                                              \
     emit(Observation, sizeof(Observation));                                    \
+    if (Faults != 1)                                                           \
+      fail(SiteNoFault, Faults, Low);                                          \
+    if (Low != ExclusiveInitial || Status != ExclusiveUpdated)                 \
+      fail(SiteResult, Low, Status);                                           \
   }
 #include "../AArch64ExclusiveCases.def"
 #undef NEVERD_EXCLUSIVE_CASE
@@ -106,13 +115,13 @@ void entry(void) {
       ExitProcess(FailureStatus);
   void *Handler = AddVectoredExceptionHandler(1, alignmentHandler);
   if (!Handler)
-    ExitProcess(FailureStatus);
+    fail(SiteRegistration, 0, 0);
   unsigned Index = 0;
 #define NEVERD_EXCLUSIVE_CASE(Name, Load, Store, Width, Count)                 \
   alignment##Name(Index++);
 #include "../AArch64ExclusiveCases.def"
 #undef NEVERD_EXCLUSIVE_CASE
   if (!RemoveVectoredExceptionHandler(Handler))
-    ExitProcess(FailureStatus);
+    fail(SiteRetirement, 0, 0);
   ExitProcess(0);
 }

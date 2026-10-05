@@ -221,8 +221,13 @@ TEST_F(RAMReservations, RejectsForeignOwnersInvalidRangesAndMissingLeases) {
   EXPECT_EQ(Foreign.get(), diagnostic::Running);
 }
 
-class RAMReservationWriters
-    : public testing::TestWithParam<ExecutionBackendKind> {};
+struct WriterProfile {
+  ExecutionBackendKind Backend;
+};
+void PrintTo(const WriterProfile &P, std::ostream *OS) {
+  *OS << executionBackendName(P.Backend);
+}
+class RAMReservationWriters : public testing::TestWithParam<WriterProfile> {};
 
 TEST_P(RAMReservationWriters,
        ScalarStringAndFaultingFrameWritesPublishInterference) {
@@ -235,9 +240,9 @@ TEST_P(RAMReservationWriters,
       llvm::cantFail(
           Space->map(Code, memory::PageSize, Read | Write | Execute));
       llvm::cantFail(Space->write(Code, Bytes));
-      auto Created =
-          createExecutionBackend(GetParam(), ExecutionContract::CheckedX64,
-                                 Space, GuestArchitecture::X64);
+      auto Created = createExecutionBackend(GetParam().Backend,
+                                            ExecutionContract::CheckedX64,
+                                            Space, GuestArchitecture::X64);
       if (!Created) {
         auto E = Created.takeError();
         bool Unavailable = E.isA<BackendUnavailableError>();
@@ -282,10 +287,11 @@ TEST_P(RAMReservationWriters,
 
 INSTANTIATE_TEST_SUITE_P(
     Transports, RAMReservationWriters,
-    testing::Values(ExecutionBackendKind::Unicorn, ExecutionBackendKind::KVM,
-                    ExecutionBackendKind::WHP),
-    [](const testing::TestParamInfo<ExecutionBackendKind> &P) {
-      return executionBackendName(P.param);
+    testing::Values(WriterProfile{ExecutionBackendKind::Unicorn},
+                    WriterProfile{ExecutionBackendKind::KVM},
+                    WriterProfile{ExecutionBackendKind::WHP}),
+    [](const testing::TestParamInfo<WriterProfile> &P) {
+      return executionBackendName(P.param.Backend);
     });
 } // namespace
 } // namespace neverd::emulation
