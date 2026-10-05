@@ -46,6 +46,7 @@ NEVERD_LINUX_VALUE(FilePathLimit, 4096)
 NEVERD_LINUX_VALUE(FileNameLimit, 255)
 NEVERD_LINUX_VALUE(FileRegularMode, 0100000)
 NEVERD_LINUX_VALUE(FilePermissionMask, 07777)
+NEVERD_LINUX_VALUE(FileAccessMask, 7)
 NEVERD_LINUX_VALUE(FileStatusSizeARM64, 128)
 NEVERD_LINUX_VALUE(FileStatusSizeX64, 144)
 NEVERD_LINUX_VALUE(OpenCloseOnExec, 02000000)
@@ -67,6 +68,7 @@ NEVERD_LINUX_VALUE(ExitMask, 0xff)
 #endif
 #ifdef NEVERD_LINUX_X64_SERVICE
 NEVERD_LINUX_X64_SERVICE(Open, 2, 3)
+NEVERD_LINUX_X64_SERVICE(Access, 21, 2)
 NEVERD_LINUX_X64_SERVICE(ArchPrctl, 158, 2)
 NEVERD_LINUX_X64_SERVICE(Time, 201, 1)
 #endif
@@ -113,6 +115,7 @@ NEVERD_LINUX_AUX(NULL, 0, 0)
 #ifdef NEVERD_LINUX_SERVICE
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
+NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
 NEVERD_LINUX_SERVICE(Read, 0, 63, 3)
 NEVERD_LINUX_SERVICE(Close, 3, 57, 1)
 NEVERD_LINUX_SERVICE(Lseek, 8, 62, 3)
@@ -161,6 +164,8 @@ NEVERD_LINUX_DIAGNOSTIC(
 NEVERD_LINUX_DIAGNOSTIC(FileOpenFlags,
                         "unsupported Linux memory-file open flags")
 NEVERD_LINUX_DIAGNOSTIC(FilePathForm, "unsupported Linux memory-file path form")
+NEVERD_LINUX_DIAGNOSTIC(FileAccessMode,
+                        "Linux memory-file permission checks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileDirectory,
                         "Linux memory-file directory opens are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileInputStream,

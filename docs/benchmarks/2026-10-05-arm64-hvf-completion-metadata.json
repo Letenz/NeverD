@@ -1,0 +1,711 @@
+{
+  "decision": "Retain the original request scheduling; neither candidate establishes a reliable general benefit on this shared host. Keep the two required request-lifetime regressions. No Intel native validation or Actions.",
+  "baseline_source_commit": "24b020353c5026a962165ef6344e019f325543d5",
+  "retained_source_commit": "a63d57e6ad2136268622660f2861238a1e30bdbc",
+  "baseline_binary_sha256": "e2b45881404bbb8bf62aae203603d53e9cb863fdf992ed79e1657ca8cc751374",
+  "compiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: arm64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
+  "host": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+  "submodules": "-8e5a123f3835ea902a888085852ca2e7cb7d6f0d signatures\n 3db8bd6d3b0bece9916d1208e7ff739e006165de third_party/capstone (remotes/origin/HEAD)\n-cc7be19969b7dc6c309e67619630ccc90ef46d9f third_party/llvm-project\n-2dd37d6fe77a064b61ee44aab9409fd4a1758c06 third_party/unicorn\n-071a867fc0ab620d6f01b1a4251807044f4d6cbd unittests/corpus\n",
+  "cmake_cache_sha256": "9013f3516593fbd5abc0c0e424cc09eee4c6a902227cb8659bc911fd0090b739",
+  "configuration": {
+    "CMAKE_BUILD_TYPE": "Release",
+    "NEVERD_BUILD_SHARED": "OFF",
+    "NEVERD_EMULATION_BACKEND_HVF": "ON",
+    "NEVERD_EMULATION_BACKEND_UNICORN": "OFF",
+    "NEVERD_ENABLE_CPU_EMULATION": "ON",
+    "NEVERD_ENABLE_DRIVER_EMULATION": "OFF",
+    "NEVERD_ENABLE_SEMANTIC_TESTS": "OFF",
+    "NEVERD_LLVM_PREBUILT_TAG": "neverd-llvm-v23.0.0-r3"
+  },
+  "raw_comparisons": {
+    "atomic": {
+      "file": "2026-10-05-arm64-hvf-completion-atomic.json",
+      "sha256": "4d61979e32c6d3fbbd8e448aabd1c03209dbfc089cc5501d01d33c50bb987343"
+    },
+    "blocking": {
+      "file": "2026-10-05-arm64-hvf-completion-blocking.json",
+      "sha256": "6e542dbb9b5ba9571b1f98d943897125d5049584fc28c0975e69993b388b8adf"
+    }
+  },
+  "summaries": {
+    "atomic": {
+      "source_commit": "0f21a3b81",
+      "raw_sha256": "4d61979e32c6d3fbbd8e448aabd1c03209dbfc089cc5501d01d33c50bb987343",
+      "median_paired_baseline_over_candidate": {
+        "initialization": 0.938516052027671,
+        "integer": 0.9406775895759764,
+        "branch": 0.9195128336106375,
+        "memory": 0.8804391298756455,
+        "tls_call": 0.9059558264032996,
+        "two_cpu_switch": 0.9917864341693201
+      },
+      "candidate_faster_pairs": {
+        "initialization": 6,
+        "integer": 5,
+        "branch": 2,
+        "memory": 2,
+        "tls_call": 2,
+        "two_cpu_switch": 5
+      },
+      "child_cpu_median_seconds": {
+        "baseline": 1.1697209999999991,
+        "candidate": 1.7622500000000008
+      }
+    },
+    "blocking": {
+      "source_commit": "764661385",
+      "raw_sha256": "6e542dbb9b5ba9571b1f98d943897125d5049584fc28c0975e69993b388b8adf",
+      "median_paired_baseline_over_candidate": {
+        "initialization": 1.0574834565212745,
+        "integer": 1.0077934439670913,
+        "branch": 1.0002523919646187,
+        "memory": 0.8854004301841405,
+        "tls_call": 1.1513489694072025,
+        "two_cpu_switch": 1.1689929058797666
+      },
+      "candidate_faster_pairs": {
+        "initialization": 9,
+        "integer": 9,
+        "branch": 8,
+        "memory": 6,
+        "tls_call": 9,
+        "two_cpu_switch": 11
+      },
+      "child_cpu_median_seconds": {
+        "baseline": 1.589395999999998,
+        "candidate": 1.5082939999999994
+      }
+    }
+  },
+  "atomic_preflight_incident": {
+    "observed_compiler_processes": {
+      "ninja": 2,
+      "cmake": 2,
+      "clang": 0,
+      "clang++": 0,
+      "cc1": 0,
+      "ld": 0
+    },
+    "issue": "The local shell sequence continued to the benchmark after its preflight assertion failed. Measurement-start metadata was not written. This attempt is not clean-host acceptance evidence. Raw timings and CPU usage are retained; do not attribute a causal regression.",
+    "next_control": "Launch the benchmark inside the preflight Python process only after its conditions succeed; preserve rejected preflights."
+  },
+  "blocking_measurement_start": {
+    "utc": "2026-10-05T08:13:47.666347+00:00",
+    "compiler_processes": {
+      "ninja": 1,
+      "cmake": 1,
+      "clang": 4,
+      "clang++": 0,
+      "cc1": 0,
+      "ld": 0
+    },
+    "load": [
+      22.01708984375,
+      19.0029296875,
+      17.224609375
+    ],
+    "scope": "Explicit recorded shared-load measurement, not clean-host acceptance. Compiler counts are saved before each timed child. Other workloads may bias comparisons."
+  },
+  "rejected_preflights": [
+    {
+      "utc": "2026-10-05T08:05:54.584956+00:00",
+      "compiler_processes": {
+        "ninja": 1,
+        "cmake": 1,
+        "clang": 3,
+        "clang++": 0,
+        "cc1": 0,
+        "ld": 0
+      },
+      "load": [
+        15.79150390625,
+        16.44921875,
+        16.47021484375
+      ],
+      "scope": "Shared interactive host. This check only excludes compiler processes observed at start; it does not establish an isolated host."
+    },
+    {
+      "utc": "2026-10-05T08:16:21.379596+00:00",
+      "compiler_processes": {
+        "ninja": 1,
+        "cmake": 1,
+        "clang": 4,
+        "clang++": 0,
+        "cc1": 0,
+        "ld": 0
+      },
+      "load": [
+        19.0791015625,
+        19.7294921875,
+        17.875
+      ],
+      "scope": "Shared interactive host; no compiler processes observed at start."
+    }
+  ],
+  "diagnostic_phases": {
+    "owner": {
+      "count": 84296,
+      "inclusive_ns": 931839467,
+      "mean_us": 11.054373481541235
+    },
+    "prepare": {
+      "count": 84268,
+      "inclusive_ns": 56702340,
+      "mean_us": 0.6728810461859781
+    },
+    "capture": {
+      "count": 84268,
+      "inclusive_ns": 66106562,
+      "mean_us": 0.7844800161389851
+    },
+    "native": {
+      "count": 168536,
+      "inclusive_ns": 311184832,
+      "mean_us": 1.8463997721555039
+    },
+    "run": {
+      "count": 168536,
+      "inclusive_ns": 830809879,
+      "mean_us": 4.929569225566052
+    },
+    "submit": {
+      "count": 84296,
+      "inclusive_ns": 1552811365,
+      "mean_us": 18.420937707601784
+    }
+  },
+  "diagnostic_scope": "Local-only instrumentation on baseline 24b020353, 84268 checked steps and 168536 native entries. Inclusive timers nest; do not sum them. Submit minus owner includes handoff and a few lifecycle operations, not a direct kernel scheduling measurement. Instrumented elapsed times are not normal performance results.",
+  "instrumentation_source": {
+    "phase-profile.h": "#pragma once\n#include <chrono>\n#include <cstdio>\n#include <cstdint>\nnamespace hvf_phase_profile {\nenum Phase { Submit, Owner, Prepare, Capture, Native, Run, Count };\nstruct Record { uint64_t Count = 0, Ns = 0; };\nstruct Totals {\n  Record Records[Count]{};\n  ~Totals() {\n    const char *Names[] = {\"submit\", \"owner\", \"prepare\", \"capture\", \"native\", \"run\"};\n    for (unsigned I = 0; I < Count; ++I)\n      if (Records[I].Count)\n        std::fprintf(stderr, \"{\\\"diagnostic_phase\\\":\\\"%s\\\",\\\"count\\\":%llu,\\\"inclusive_ns\\\":%llu}\\n\", Names[I], (unsigned long long)Records[I].Count, (unsigned long long)Records[I].Ns);\n  }\n};\ninline thread_local Totals Values;\nstruct Scope {\n  using Clock = std::chrono::steady_clock;\n  Phase Value;\n  Clock::time_point Begin;\n  explicit Scope(Phase Value) : Value(Value), Begin(Clock::now()) {}\n  ~Scope() {\n    auto &R = Values.Records[Value];\n    ++R.Count;\n    R.Ns += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - Begin).count();\n  }\n};\n}\n",
+    "instrumentation.patch": "diff --git a/lib/emulation/backends/hvf/HvfAArch64Machine.cpp b/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\nindex e2f3b410f..e2be94ef8 100644\n--- a/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\n+++ b/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\n@@ -1,3 +1,4 @@\n+#include \"/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/phase-profile.h\"\n //===- HvfAArch64Machine.cpp - Native ARM64 instruction transport ----===//\n //\n // NeverD Decompiler\n@@ -66,6 +67,7 @@ public:\n     }\n   }\n   llvm::Error prepare(const AArch64MachineState &State) {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Prepare);\n     using namespace aarch64;\n     // Debug exits are routed to EL2, where PSTATE.D cannot mask them. Disable\n     // software stepping for the immutable maintenance stub, then restore it\n@@ -114,6 +116,7 @@ public:\n     return set(HV_REG_PC, MaintenanceEntryGPA);\n   }\n   llvm::Error capture(AArch64MachineState &State) {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Capture);\n     return captureAArch64State(\n         State, [&](AArch64Register R) { return scalar(R, State.UserMode); },\n         [&](unsigned N) -> llvm::Expected<RegisterValue> {\ndiff --git a/lib/emulation/backends/hvf/HvfExecutor.cpp b/lib/emulation/backends/hvf/HvfExecutor.cpp\nindex 92808c158..f85904610 100644\n--- a/lib/emulation/backends/hvf/HvfExecutor.cpp\n+++ b/lib/emulation/backends/hvf/HvfExecutor.cpp\n@@ -1,3 +1,4 @@\n+#include \"/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/phase-profile.h\"\n //===- HvfExecutor.cpp - Serialized native execution on macOS --------===//\n //\n // NeverD Decompiler\n@@ -181,6 +182,7 @@ llvm::Error Executor::submit(Action Run, const MachineRunControl *Control) {\n   } else {\n     Gate.lock();\n   }\n+  hvf_phase_profile::Scope Profile(hvf_phase_profile::Submit);\n   Request Work{Run};\n   std::unique_lock Lock(Mutex);\n   Pending = &Work;\n@@ -196,7 +198,10 @@ void Executor::work() {\n       return;\n     auto *Work = Pending;\n     Lock.unlock();\n-    auto Result = Work->Run(*this);\n+    auto Result = [&] {\n+      hvf_phase_profile::Scope Profile(hvf_phase_profile::Owner);\n+      return Work->Run(*this);\n+    }();\n     Lock.lock();\n     Work->Result = std::move(Result);\n     Pending = nullptr;\n@@ -362,12 +367,14 @@ void Executor::detach(const void *Identity) {\n   }));\n }\n llvm::Error Executor::run(MachineRunControl Control, Completion Complete) {\n+  hvf_phase_profile::Scope Profile(hvf_phase_profile::Run);\n   if (!CPUCreated)\n     if (auto E = createCPU())\n       return E;\n #if defined(__arm64__)\n   Deadline->Cancel.Status.store(HV_SUCCESS);\n   auto Entry = Deadline->Timer.invoke(Control, [&]() noexcept {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Native);\n     return hv_vcpu_run(CPU);\n   });\n   llvm::Error Result = llvm::Error::success();\n",
+    "instrumented.stderr": "{\"diagnostic_phase\":\"owner\",\"count\":21,\"inclusive_ns\":1985002}\n{\"diagnostic_phase\":\"prepare\",\"count\":18,\"inclusive_ns\":27413}\n{\"diagnostic_phase\":\"capture\",\"count\":18,\"inclusive_ns\":30166}\n{\"diagnostic_phase\":\"native\",\"count\":36,\"inclusive_ns\":83542}\n{\"diagnostic_phase\":\"run\",\"count\":36,\"inclusive_ns\":230126}\n{\"diagnostic_phase\":\"owner\",\"count\":21,\"inclusive_ns\":375793}\n{\"diagnostic_phase\":\"prepare\",\"count\":18,\"inclusive_ns\":13000}\n{\"diagnostic_phase\":\"capture\",\"count\":18,\"inclusive_ns\":13916}\n{\"diagnostic_phase\":\"native\",\"count\":36,\"inclusive_ns\":71875}\n{\"diagnostic_phase\":\"run\",\"count\":36,\"inclusive_ns\":201293}\n{\"diagnostic_phase\":\"owner\",\"count\":21,\"inclusive_ns\":349997}\n{\"diagnostic_phase\":\"prepare\",\"count\":18,\"inclusive_ns\":12541}\n{\"diagnostic_phase\":\"capture\",\"count\":18,\"inclusive_ns\":14042}\n{\"diagnostic_phase\":\"native\",\"count\":36,\"inclusive_ns\":72503}\n{\"diagnostic_phase\":\"run\",\"count\":36,\"inclusive_ns\":214872}\n{\"diagnostic_phase\":\"owner\",\"count\":21,\"inclusive_ns\":307542}\n{\"diagnostic_phase\":\"prepare\",\"count\":18,\"inclusive_ns\":11834}\n{\"diagnostic_phase\":\"capture\",\"count\":18,\"inclusive_ns\":14126}\n{\"diagnostic_phase\":\"native\",\"count\":36,\"inclusive_ns\":69339}\n{\"diagnostic_phase\":\"run\",\"count\":36,\"inclusive_ns\":165790}\n{\"diagnostic_phase\":\"owner\",\"count\":12029,\"inclusive_ns\":124137999}\n{\"diagnostic_phase\":\"prepare\",\"count\":12026,\"inclusive_ns\":7989193}\n{\"diagnostic_phase\":\"capture\",\"count\":12026,\"inclusive_ns\":9157142}\n{\"diagnostic_phase\":\"native\",\"count\":24052,\"inclusive_ns\":41987033}\n{\"diagnostic_phase\":\"run\",\"count\":24052,\"inclusive_ns\":113271636}\n{\"diagnostic_phase\":\"owner\",\"count\":22033,\"inclusive_ns\":225744824}\n{\"diagnostic_phase\":\"prepare\",\"count\":22030,\"inclusive_ns\":14830822}\n{\"diagnostic_phase\":\"capture\",\"count\":22030,\"inclusive_ns\":18024441}\n{\"diagnostic_phase\":\"native\",\"count\":44060,\"inclusive_ns\":77246161}\n{\"diagnostic_phase\":\"run\",\"count\":44060,\"inclusive_ns\":205541176}\n{\"diagnostic_phase\":\"owner\",\"count\":20029,\"inclusive_ns\":215128786}\n{\"diagnostic_phase\":\"prepare\",\"count\":20026,\"inclusive_ns\":13441696}\n{\"diagnostic_phase\":\"capture\",\"count\":20026,\"inclusive_ns\":15343298}\n{\"diagnostic_phase\":\"native\",\"count\":40052,\"inclusive_ns\":70596354}\n{\"diagnostic_phase\":\"run\",\"count\":40052,\"inclusive_ns\":196953945}\n{\"diagnostic_phase\":\"owner\",\"count\":28033,\"inclusive_ns\":303301149}\n{\"diagnostic_phase\":\"prepare\",\"count\":28030,\"inclusive_ns\":18950504}\n{\"diagnostic_phase\":\"capture\",\"count\":28030,\"inclusive_ns\":21845338}\n{\"diagnostic_phase\":\"native\",\"count\":56060,\"inclusive_ns\":100379237}\n{\"diagnostic_phase\":\"run\",\"count\":56060,\"inclusive_ns\":277644863}\n{\"diagnostic_phase\":\"owner\",\"count\":2088,\"inclusive_ns\":60508375}\n{\"diagnostic_phase\":\"prepare\",\"count\":2084,\"inclusive_ns\":1425337}\n{\"diagnostic_phase\":\"capture\",\"count\":2084,\"inclusive_ns\":1664093}\n{\"diagnostic_phase\":\"native\",\"count\":4168,\"inclusive_ns\":20678788}\n{\"diagnostic_phase\":\"run\",\"count\":4168,\"inclusive_ns\":36586178}\n{\"diagnostic_phase\":\"submit\",\"count\":84296,\"inclusive_ns\":1552811365}\n"
+  },
+  "benchmark_driver_source": {
+    "benchmark_cpu_usage.py": "#!/usr/bin/env python3\n\"\"\"Alternate two checked-CPU benchmark executables and retain every sample.\n\nUse preserved, statically linked NeverD CPU executables for before/after tests.\nLabels describe the caller's source provenance; SHA-256 identifies actual binaries.\nThis measures one host and these workloads, not a general performance ranking.\n\"\"\"\n\nimport argparse\nimport datetime\nimport hashlib\nimport json\nimport os\nimport resource\nfrom pathlib import Path\nimport platform\nimport statistics\nimport subprocess\nimport sys\nimport time\n\n\nWORKLOADS = {\n    \"initialization\": 0,\n    \"integer\": 3002,\n    \"branch\": 5503,\n    \"memory\": 5002,\n    \"tls_call\": 7003,\n    \"two_cpu_switch\": 512,\n}\n\n\ndef sha256(path):\n    with path.open(\"rb\") as source:\n        return hashlib.file_digest(source, \"sha256\").hexdigest()\n\n\ndef command_output(command):\n    try:\n        result = subprocess.run(command, text=True, capture_output=True, timeout=30)\n        return {\"command\": command, \"returncode\": result.returncode,\n                \"stdout\": result.stdout, \"stderr\": result.stderr}\n    except (OSError, subprocess.TimeoutExpired) as error:\n        return {\"command\": command, \"error\": str(error)}\n\n\ndef validate(text, backend):\n    rows = [json.loads(line) for line in text.splitlines()]\n    expected = {(name, warmup) for name in WORKLOADS for warmup in (False, True)}\n    observed = set()\n    for row in rows:\n        key = (row[\"workload\"], row[\"warmup\"])\n        if (key not in expected or key in observed\n                or row[\"schema_version\"] != 1\n                or row[\"architecture\"] != \"aarch64\" or row[\"contract\"] != \"checked\"\n                or row[\"backend\"] != backend\n                or row[\"guest_instructions\"] != WORKLOADS[key[0]]\n                or type(row[\"elapsed_ns\"]) is not int or row[\"elapsed_ns\"] <= 0\n                or type(row[\"warmup\"]) is not bool\n                or row[\"sample\"] != (0 if row[\"warmup\"] else 1)):\n            raise ValueError(f\"unexpected benchmark row: {row}\")\n        observed.add(key)\n    if observed != expected:\n        raise ValueError(\"benchmark did not report the complete workload set\")\n    return rows\n\n\ndef summarize(runs, pairs):\n    summary = {}\n    for workload in WORKLOADS:\n        samples = {side: [next(row[\"elapsed_ns\"] for row in run[\"rows\"]\n                              if row[\"workload\"] == workload and not row[\"warmup\"])\n                          for run in runs if run[\"side\"] == side]\n                   for side in (\"baseline\", \"candidate\")}\n        if any(len(values) != pairs for values in samples.values()):\n            raise ValueError(\"incomplete comparison\")\n        stats = {side: {\"median_ns\": statistics.median(values),\n                        \"min_ns\": min(values), \"max_ns\": max(values),\n                        \"samples_ns\": values}\n                 for side, values in samples.items()}\n        ratios = [before / after for before, after in\n                  zip(samples[\"baseline\"], samples[\"candidate\"], strict=True)]\n        stats[\"paired_speedup\"] = ratios\n        stats[\"median_paired_speedup\"] = statistics.median(ratios)\n        summary[workload] = stats\n    return summary\n\n\ndef main():\n    parser = argparse.ArgumentParser(description=__doc__)\n    for side in (\"baseline\", \"candidate\"):\n        parser.add_argument(f\"--{side}\", type=Path, required=True)\n        parser.add_argument(f\"--{side}-label\", required=True)\n        parser.add_argument(f\"--{side}-backend\", choices=(\"hvf\", \"unicorn\"), default=\"hvf\")\n    parser.add_argument(\"--pairs\", type=int, default=9)\n    parser.add_argument(\"--output\", type=Path, required=True)\n    args = parser.parse_args()\n    if os.environ.get(\"DYLD_INSERT_LIBRARIES\") or os.environ.get(\"LD_PRELOAD\"):\n        parser.error(\"remove library injection before measuring uninstrumented timings\")\n    if not 1 <= args.pairs <= 1000:\n        parser.error(\"--pairs must be between 1 and 1000\")\n    if args.output.exists():\n        parser.error(\"--output already exists; preserve it and choose a new path\")\n    args.output.parent.mkdir(parents=True, exist_ok=True)\n    report = {\"schema_version\": 1, \"complete\": False,\n              \"started_utc\": datetime.datetime.now(datetime.timezone.utc).isoformat(),\n              \"host\": {\"platform\": platform.platform(), \"machine\": platform.machine(),\n                       \"cpu_count\": os.cpu_count()},\n              \"driver_sha256\": sha256(Path(__file__)),\n              \"pairs\": args.pairs, \"binaries\": {}, \"runs\": []}\n    for side in (\"baseline\", \"candidate\"):\n        path = getattr(args, side).resolve(strict=True)\n        report[\"binaries\"][side] = {\n            \"path\": str(path), \"sha256\": sha256(path),\n            \"caller_source_label\": getattr(args, f\"{side}_label\"),\n            \"backend\": getattr(args, f\"{side}_backend\"),\n        }\n        if sys.platform == \"darwin\":\n            report[\"binaries\"][side][\"dynamic_dependencies\"] = command_output([\"otool\", \"-L\", str(path)])\n    if sys.platform == \"darwin\":\n        report[\"host\"][\"macos\"] = command_output([\"sw_vers\"])\n        report[\"host\"][\"cpu\"] = command_output([\"sysctl\", \"-n\", \"machdep.cpu.brand_string\"])\n    try:\n        for pair in range(args.pairs):\n            order = (\"baseline\", \"candidate\") if pair % 2 == 0 else (\"candidate\", \"baseline\")\n            for side in order:\n                binary = report[\"binaries\"][side]\n                if sha256(Path(binary[\"path\"])) != binary[\"sha256\"]:\n                    raise ValueError(f\"{side} executable changed during measurement\")\n                command = [binary[\"path\"], \"--backend\", binary[\"backend\"],\n                           \"--samples\", \"1\", \"--warmup\", \"1\"]\n                run = {\"pair\": pair, \"side\": side, \"command\": command,\n                       \"load_before\": os.getloadavg() if hasattr(os, \"getloadavg\") else None}\n                report[\"runs\"].append(run)\n                before_usage = resource.getrusage(resource.RUSAGE_CHILDREN)\n                start = time.monotonic_ns()\n                result = subprocess.run(command, capture_output=True, text=True, timeout=180)\n                after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)\n                run[\"child_cpu_seconds\"] = {\"user\":after_usage.ru_utime-before_usage.ru_utime, \"system\":after_usage.ru_stime-before_usage.ru_stime}\n                run.update(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr,\n                           process_elapsed_ns=time.monotonic_ns() - start,\n                           load_after=os.getloadavg() if hasattr(os, \"getloadavg\") else None)\n                if result.returncode:\n                    raise RuntimeError(f\"{side} benchmark failed: {result.stderr}\")\n                run[\"rows\"] = validate(result.stdout, binary[\"backend\"])\n                args.output.write_text(json.dumps(report, indent=2) + \"\\n\")\n                print(f\"pair {pair + 1}/{args.pairs}: {side} passed\", flush=True)\n        report[\"summary\"] = summarize(report[\"runs\"], args.pairs)\n        report[\"complete\"] = True\n    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:\n        report[\"error\"] = str(error)\n    finally:\n        args.output.write_text(json.dumps(report, indent=2) + \"\\n\")\n    if not report[\"complete\"]:\n        print(report[\"error\"], file=sys.stderr)\n        return 1\n    for name, stats in report[\"summary\"].items():\n        print(f\"{name}: median paired speedup {stats['median_paired_speedup']:.3f}x\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+    "benchmark_cpu_shared.py": "#!/usr/bin/env python3\n\"\"\"Alternate two checked-CPU benchmark executables and retain every sample.\n\nUse preserved, statically linked NeverD CPU executables for before/after tests.\nLabels describe the caller's source provenance; SHA-256 identifies actual binaries.\nThis measures one host and these workloads, not a general performance ranking.\n\"\"\"\n\nimport argparse\nimport datetime\nimport hashlib\nimport json\nimport os\nimport resource\nfrom pathlib import Path\nimport platform\nimport statistics\nimport subprocess\nimport sys\nimport time\n\n\nWORKLOADS = {\n    \"initialization\": 0,\n    \"integer\": 3002,\n    \"branch\": 5503,\n    \"memory\": 5002,\n    \"tls_call\": 7003,\n    \"two_cpu_switch\": 512,\n}\n\n\ndef sha256(path):\n    with path.open(\"rb\") as source:\n        return hashlib.file_digest(source, \"sha256\").hexdigest()\n\n\ndef command_output(command):\n    try:\n        result = subprocess.run(command, text=True, capture_output=True, timeout=30)\n        return {\"command\": command, \"returncode\": result.returncode,\n                \"stdout\": result.stdout, \"stderr\": result.stderr}\n    except (OSError, subprocess.TimeoutExpired) as error:\n        return {\"command\": command, \"error\": str(error)}\n\n\ndef validate(text, backend):\n    rows = [json.loads(line) for line in text.splitlines()]\n    expected = {(name, warmup) for name in WORKLOADS for warmup in (False, True)}\n    observed = set()\n    for row in rows:\n        key = (row[\"workload\"], row[\"warmup\"])\n        if (key not in expected or key in observed\n                or row[\"schema_version\"] != 1\n                or row[\"architecture\"] != \"aarch64\" or row[\"contract\"] != \"checked\"\n                or row[\"backend\"] != backend\n                or row[\"guest_instructions\"] != WORKLOADS[key[0]]\n                or type(row[\"elapsed_ns\"]) is not int or row[\"elapsed_ns\"] <= 0\n                or type(row[\"warmup\"]) is not bool\n                or row[\"sample\"] != (0 if row[\"warmup\"] else 1)):\n            raise ValueError(f\"unexpected benchmark row: {row}\")\n        observed.add(key)\n    if observed != expected:\n        raise ValueError(\"benchmark did not report the complete workload set\")\n    return rows\n\n\ndef summarize(runs, pairs):\n    summary = {}\n    for workload in WORKLOADS:\n        samples = {side: [next(row[\"elapsed_ns\"] for row in run[\"rows\"]\n                              if row[\"workload\"] == workload and not row[\"warmup\"])\n                          for run in runs if run[\"side\"] == side]\n                   for side in (\"baseline\", \"candidate\")}\n        if any(len(values) != pairs for values in samples.values()):\n            raise ValueError(\"incomplete comparison\")\n        stats = {side: {\"median_ns\": statistics.median(values),\n                        \"min_ns\": min(values), \"max_ns\": max(values),\n                        \"samples_ns\": values}\n                 for side, values in samples.items()}\n        ratios = [before / after for before, after in\n                  zip(samples[\"baseline\"], samples[\"candidate\"], strict=True)]\n        stats[\"paired_speedup\"] = ratios\n        stats[\"median_paired_speedup\"] = statistics.median(ratios)\n        summary[workload] = stats\n    return summary\n\n\ndef main():\n    parser = argparse.ArgumentParser(description=__doc__)\n    for side in (\"baseline\", \"candidate\"):\n        parser.add_argument(f\"--{side}\", type=Path, required=True)\n        parser.add_argument(f\"--{side}-label\", required=True)\n        parser.add_argument(f\"--{side}-backend\", choices=(\"hvf\", \"unicorn\"), default=\"hvf\")\n    parser.add_argument(\"--pairs\", type=int, default=9)\n    parser.add_argument(\"--output\", type=Path, required=True)\n    args = parser.parse_args()\n    if os.environ.get(\"DYLD_INSERT_LIBRARIES\") or os.environ.get(\"LD_PRELOAD\"):\n        parser.error(\"remove library injection before measuring uninstrumented timings\")\n    if not 1 <= args.pairs <= 1000:\n        parser.error(\"--pairs must be between 1 and 1000\")\n    if args.output.exists():\n        parser.error(\"--output already exists; preserve it and choose a new path\")\n    args.output.parent.mkdir(parents=True, exist_ok=True)\n    report = {\"schema_version\": 1, \"complete\": False,\n              \"started_utc\": datetime.datetime.now(datetime.timezone.utc).isoformat(),\n              \"host\": {\"platform\": platform.platform(), \"machine\": platform.machine(),\n                       \"cpu_count\": os.cpu_count()},\n              \"driver_sha256\": sha256(Path(__file__)),\n              \"pairs\": args.pairs, \"binaries\": {}, \"runs\": []}\n    for side in (\"baseline\", \"candidate\"):\n        path = getattr(args, side).resolve(strict=True)\n        report[\"binaries\"][side] = {\n            \"path\": str(path), \"sha256\": sha256(path),\n            \"caller_source_label\": getattr(args, f\"{side}_label\"),\n            \"backend\": getattr(args, f\"{side}_backend\"),\n        }\n        if sys.platform == \"darwin\":\n            report[\"binaries\"][side][\"dynamic_dependencies\"] = command_output([\"otool\", \"-L\", str(path)])\n    if sys.platform == \"darwin\":\n        report[\"host\"][\"macos\"] = command_output([\"sw_vers\"])\n        report[\"host\"][\"cpu\"] = command_output([\"sysctl\", \"-n\", \"machdep.cpu.brand_string\"])\n    try:\n        for pair in range(args.pairs):\n            order = (\"baseline\", \"candidate\") if pair % 2 == 0 else (\"candidate\", \"baseline\")\n            for side in order:\n                binary = report[\"binaries\"][side]\n                if sha256(Path(binary[\"path\"])) != binary[\"sha256\"]:\n                    raise ValueError(f\"{side} executable changed during measurement\")\n                command = [binary[\"path\"], \"--backend\", binary[\"backend\"],\n                           \"--samples\", \"1\", \"--warmup\", \"1\"]\n                run = {\"pair\": pair, \"side\": side, \"command\": command,\n                       \"load_before\": os.getloadavg() if hasattr(os, \"getloadavg\") else None}\n                report[\"runs\"].append(run)\n                run[\"compiler_processes_before\"] = {name: len(subprocess.run([\"pgrep\", \"-x\", name], capture_output=True, text=True).stdout.splitlines()) for name in (\"ninja\", \"cmake\", \"clang\", \"clang++\", \"cc1\", \"ld\")}\n                before_usage = resource.getrusage(resource.RUSAGE_CHILDREN)\n                start = time.monotonic_ns()\n                result = subprocess.run(command, capture_output=True, text=True, timeout=180)\n                after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)\n                run[\"child_cpu_seconds\"] = {\"user\":after_usage.ru_utime-before_usage.ru_utime, \"system\":after_usage.ru_stime-before_usage.ru_stime}\n                run.update(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr,\n                           process_elapsed_ns=time.monotonic_ns() - start,\n                           load_after=os.getloadavg() if hasattr(os, \"getloadavg\") else None)\n                if result.returncode:\n                    raise RuntimeError(f\"{side} benchmark failed: {result.stderr}\")\n                run[\"rows\"] = validate(result.stdout, binary[\"backend\"])\n                args.output.write_text(json.dumps(report, indent=2) + \"\\n\")\n                print(f\"pair {pair + 1}/{args.pairs}: {side} passed\", flush=True)\n        report[\"summary\"] = summarize(report[\"runs\"], args.pairs)\n        report[\"complete\"] = True\n    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:\n        report[\"error\"] = str(error)\n    finally:\n        args.output.write_text(json.dumps(report, indent=2) + \"\\n\")\n    if not report[\"complete\"]:\n        print(report[\"error\"], file=sys.stderr)\n        return 1\n    for name, stats in report[\"summary\"].items():\n        print(f\"{name}: median paired speedup {stats['median_paired_speedup']:.3f}x\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+    "run_blocking_measurement.py": "import datetime, json, os, subprocess, sys\nfrom pathlib import Path\nb=Path(__file__).resolve().parent\nroot=b.parent.parent\ncompilers={name:len(subprocess.run(['pgrep','-x',name],capture_output=True,text=True).stdout.splitlines()) for name in ('ninja','cmake','clang','clang++','cc1','ld')}\nstart={'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'compiler_processes':compilers,'load':os.getloadavg(),'scope':'Explicit recorded shared-load measurement, not clean-host acceptance. Compiler counts are saved before each timed child. Other workloads may bias comparisons.' if '--record-shared-load' in sys.argv else 'Shared interactive host; no compiler processes observed at start.'}\n(b/('blocking-preflight-'+str(__import__('time').time_ns())+'.json')).write_text(json.dumps(start,indent=2)+'\\n')\nif any(compilers.values()) and '--record-shared-load' not in sys.argv:\n print('Preflight rejected; benchmark not started:',compilers)\n raise SystemExit(2)\nif (b/'blocking-measurement-start.json').exists():\n raise SystemExit('Preserve existing measurement start')\n(b/'blocking-measurement-start.json').write_text(json.dumps(start,indent=2)+'\\n')\ncommand=[sys.executable,str(b/'benchmark_cpu_shared.py'),'--baseline',str(b/'baseline'),'--baseline-label','24b020353','--candidate',str(b/'blocking-candidate'),'--candidate-label','764661385','--pairs','15','--output',str(b/'blocking-comparison.json')]\nwith (b/'blocking-comparison.log').open('x') as log:\n result=subprocess.run(command,cwd=root,stdout=log,stderr=subprocess.STDOUT)\nraise SystemExit(result.returncode)\n"
+  },
+  "candidate_validation": {
+    "atomic": {
+      "source_commit": "0f21a3b81b79e36d67dca8c45af3b1aa7d38fee6",
+      "raw_file_count": 4151,
+      "profiles": {
+        "transport": {
+          "owners": 1,
+          "methods": 29,
+          "registered": 29,
+          "counts": {
+            "passed": 29
+          },
+          "required_passed": 17,
+          "all_children_exited_zero_and_reaped": true,
+          "required_missing_or_skipped": []
+        },
+        "cpu": {
+          "owners": 22,
+          "methods": 973,
+          "registered": 14127,
+          "counts": {
+            "passed": 1434,
+            "skipped": 12693
+          },
+          "required_passed": 29,
+          "all_children_exited_zero_and_reaped": true,
+          "required_missing_or_skipped": []
+        },
+        "darwin": {
+          "owners": 1,
+          "methods": 32,
+          "registered": 286,
+          "counts": {
+            "passed": 65,
+            "skipped": 221
+          },
+          "required_passed": 39,
+          "all_children_exited_zero_and_reaped": true,
+          "required_missing_or_skipped": []
+        }
+      }
+    },
+    "blocking": {
+      "source_commit": "764661385e8980ec94c5b600eff8cc88efa2543e",
+      "raw_file_count": 4151,
+      "profiles": {
+        "transport": {
+          "owners": 1,
+          "methods": 29,
+          "registered": 29,
+          "counts": {
+            "passed": 29
+          },
+          "required_passed": 17,
+          "all_children_exited_zero_and_reaped": true,
+          "required_missing_or_skipped": []
+        },
+        "cpu": {
+          "owners": 22,
+          "methods": 973,
+          "registered": 14127,
+          "counts": {
+            "passed": 1434,
+            "skipped": 12693
+          },
+          "required_passed": 29,
+          "all_children_exited_zero_and_reaped": true,
+          "required_missing_or_skipped": []
+        },
+        "darwin": {
+          "owners": 1,
+          "methods": 32,
+          "registered": 286,
+          "counts": {
+            "passed": 65,
+            "skipped": 221
+          },
+          "required_passed": 39,
+          "all_children_exited_zero_and_reaped": true,
+          "required_missing_or_skipped": []
+        }
+      }
+    }
+  },
+  "candidate_recovery": {
+    "atomic": {
+      "source_commit": "0f21a3b81b79e36d67dca8c45af3b1aa7d38fee6",
+      "results": [
+        {
+          "name": "HvfExecutor.NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry",
+          "completed_repetitions": 1000,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry",
+              "--gtest_repeat=1000",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "46b05c6ca35caaa75777e59af5e9eb58543aa0a52be5d620e1706c63e22bd801"
+        },
+        {
+          "name": "HvfExecutor.MaintenanceFaultsDoNotPublishAndAllowRetry",
+          "completed_repetitions": 1000,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.MaintenanceFaultsDoNotPublishAndAllowRetry",
+              "--gtest_repeat=1000",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "e8f2fd213595bd36d41327cbc9dfd8ee54231342d41a806a29f57d19857a8b2a"
+        },
+        {
+          "name": "HvfExecutor.MaintenanceCancellationDoesNotPublishAndAllowsCodeRewrite",
+          "completed_repetitions": 1000,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.MaintenanceCancellationDoesNotPublishAndAllowsCodeRewrite",
+              "--gtest_repeat=1000",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "8577ab9e317e1e17725fde78035d607f3b47bfdd4ff63252d53421267056cd43"
+        }
+      ]
+    },
+    "blocking": {
+      "source_commit": "764661385e8980ec94c5b600eff8cc88efa2543e",
+      "results": [
+        {
+          "name": "HvfExecutor.NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry",
+          "completed_repetitions": 1000,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry",
+              "--gtest_repeat=1000",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "5806fd2898b67857fe2634adb24649a2e900e72f7eb8af14b5698d81e0416c18"
+        },
+        {
+          "name": "HvfExecutor.MaintenanceFaultsDoNotPublishAndAllowRetry",
+          "completed_repetitions": 1000,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.MaintenanceFaultsDoNotPublishAndAllowRetry",
+              "--gtest_repeat=1000",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "412d8e6cb895962a387eebb258a5a6b080ec4bb3129079c74b21ca8af2ced0c2"
+        },
+        {
+          "name": "HvfExecutor.MaintenanceCancellationDoesNotPublishAndAllowsCodeRewrite",
+          "completed_repetitions": 1000,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.MaintenanceCancellationDoesNotPublishAndAllowsCodeRewrite",
+              "--gtest_repeat=1000",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "ceeaddd628955396d19d33829b8d10791026500e400c2b9ef522ec545b8be46f"
+        }
+      ]
+    }
+  },
+  "candidate_completion": {
+    "atomic": {
+      "source_commit": "0f21a3b81b79e36d67dca8c45af3b1aa7d38fee6",
+      "results": [
+        {
+          "name": "HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
+          "completed_repetitions": 100,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
+              "--gtest_repeat=100",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "602c2aebf6e917bfc2c34dcdbe6824a74baff902fe09d8e2dbabc8fc24c4d330"
+        },
+        {
+          "name": "HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
+          "completed_repetitions": 100,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
+              "--gtest_repeat=100",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "ad4437615509a25973f45e4abb294fa8c5d00fc6711ddfd1e1f0334e530ff336"
+        }
+      ]
+    },
+    "blocking": {
+      "source_commit": "764661385e8980ec94c5b600eff8cc88efa2543e",
+      "results": [
+        {
+          "name": "HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
+          "completed_repetitions": 100,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
+              "--gtest_repeat=100",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "6fc19ca69a17d239b8258fe93738926fa12ab982a03452268c95553f65143617"
+        },
+        {
+          "name": "HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
+          "completed_repetitions": 100,
+          "native_result": {
+            "command": [
+              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "--gtest_filter=HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
+              "--gtest_repeat=100",
+              "--gtest_break_on_failure"
+            ],
+            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "timeout_seconds": 300,
+            "status": 0,
+            "timed_out": false,
+            "child_retired": true,
+            "test_environment": {},
+            "native_requirements": {
+              "NEVERD_REQUIRE_HVF": "1"
+            }
+          },
+          "output_sha256": "cdea157e38259674b7b2606b976431190a4140696a79a4c520bbb452dce49fe1"
+        }
+      ]
+    }
+  },
+  "retained_validation": {
+    "source_commit": "a63d57e6ad2136268622660f2861238a1e30bdbc",
+    "raw_file_count": 4031,
+    "profiles": {
+      "cpu": {
+        "owners": 22,
+        "methods": 973,
+        "registered": 14127,
+        "counts": {
+          "passed": 1434,
+          "skipped": 12693
+        },
+        "required_passed": 29,
+        "all_children_exited_zero_and_reaped": true,
+        "required_missing_or_skipped": []
+      },
+      "darwin": {
+        "owners": 1,
+        "methods": 32,
+        "registered": 286,
+        "counts": {
+          "passed": 65,
+          "skipped": 221
+        },
+        "required_passed": 39,
+        "all_children_exited_zero_and_reaped": true,
+        "required_missing_or_skipped": []
+      }
+    }
+  },
+  "retained_completion": {
+    "source_commit": "a63d57e6ad2136268622660f2861238a1e30bdbc",
+    "results": [
+      {
+        "name": "HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
+        "completed_repetitions": 100,
+        "native_result": {
+          "command": [
+            "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+            "--gtest_filter=HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
+            "--gtest_repeat=100",
+            "--gtest_break_on_failure"
+          ],
+          "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+          "timeout_seconds": 300,
+          "status": 0,
+          "timed_out": false,
+          "child_retired": true,
+          "test_environment": {},
+          "native_requirements": {
+            "NEVERD_REQUIRE_HVF": "1"
+          }
+        },
+        "output_sha256": "69c5f9bd1f3791f0bd2ef77e3e4f39a781ccfed6b80cfe6690061263289a265e"
+      },
+      {
+        "name": "HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
+        "completed_repetitions": 100,
+        "native_result": {
+          "command": [
+            "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+            "--gtest_filter=HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
+            "--gtest_repeat=100",
+            "--gtest_break_on_failure"
+          ],
+          "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+          "timeout_seconds": 300,
+          "status": 0,
+          "timed_out": false,
+          "child_retired": true,
+          "test_environment": {},
+          "native_requirements": {
+            "NEVERD_REQUIRE_HVF": "1"
+          }
+        },
+        "output_sha256": "0fe53a2261a6d1061cae270678c538cc7f0552f11ac770f6d72783b60c4fe094"
+      }
+    ]
+  },
+  "candidate_syntax_checks": [
+    {
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/c++",
+        "-Werror=unguarded-availability-new",
+        "-target",
+        "arm64-apple-macos11",
+        "-fsyntax-only",
+        "-DNEVERD_EMULATION_HVF=1",
+        "-D__STDC_CONSTANT_MACROS",
+        "-D__STDC_FORMAT_MACROS",
+        "-D__STDC_LIMIT_MACROS",
+        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/include",
+        "-I/Users/gmh/.cache/neverd-llvm/neverd-llvm-v23.0.0-r3/arm64/neverd-llvm-macos-arm64/include",
+        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/third_party/capstone/include",
+        "-F/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks",
+        "-O3",
+        "-DNDEBUG",
+        "-std=gnu++20",
+        "-isysroot",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
+        "-fPIC",
+        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/lib/emulation/backends/hvf/HvfExecutor.cpp"
+      ],
+      "exit_code": 0,
+      "source_sha256": "0adf6b0a937d52d1b92748ba5450e02031a44e69ba5f198e7a0449433a636d1c",
+      "scope": "syntax-only compilation targeting macOS 11; no Intel native execution"
+    },
+    {
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/c++",
+        "-Werror=unguarded-availability-new",
+        "-target",
+        "arm64-apple-macos11",
+        "-fsyntax-only",
+        "-DNEVERD_EMULATION_HVF=1",
+        "-D__STDC_CONSTANT_MACROS",
+        "-D__STDC_FORMAT_MACROS",
+        "-D__STDC_LIMIT_MACROS",
+        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/include",
+        "-I/Users/gmh/.cache/neverd-llvm/neverd-llvm-v23.0.0-r3/arm64/neverd-llvm-macos-arm64/include",
+        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/third_party/capstone/include",
+        "-F/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks",
+        "-O3",
+        "-DNDEBUG",
+        "-std=gnu++20",
+        "-isysroot",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
+        "-fPIC",
+        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/lib/emulation/backends/hvf/HvfAArch64Machine.cpp"
+      ],
+      "exit_code": 0,
+      "source_sha256": "c72075ab8f64cfdc0ef14935d12cff74f9940cd0250fbdaaaf1a05e349e5810d",
+      "scope": "syntax-only compilation targeting macOS 11; no Intel native execution"
+    },
+    {
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/c++",
+        "-Werror=unguarded-availability-new",
+        "-target",
+        "x86_64-apple-macos11",
+        "-fsyntax-only",
+        "-DNEVERD_EMULATION_HVF=1",
+        "-D__STDC_CONSTANT_MACROS",
+        "-D__STDC_FORMAT_MACROS",
+        "-D__STDC_LIMIT_MACROS",
+        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/include",
+        "-I/Users/gmh/.cache/neverd-llvm/neverd-llvm-v23.0.0-r3/arm64/neverd-llvm-macos-arm64/include",
+        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/third_party/capstone/include",
+        "-F/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks",
+        "-O3",
+        "-DNDEBUG",
+        "-std=gnu++20",
+        "-isysroot",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
+        "-fPIC",
+        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/lib/emulation/backends/hvf/HvfExecutor.cpp"
+      ],
+      "exit_code": 0,
+      "source_sha256": "0adf6b0a937d52d1b92748ba5450e02031a44e69ba5f198e7a0449433a636d1c",
+      "scope": "syntax-only compilation targeting macOS 11; no Intel native execution"
+    },
+    {
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/c++",
+        "-Werror=unguarded-availability-new",
+        "-target",
+        "x86_64-apple-macos11",
+        "-fsyntax-only",
+        "-DNEVERD_EMULATION_HVF=1",
+        "-D__STDC_CONSTANT_MACROS",
+        "-D__STDC_FORMAT_MACROS",
+        "-D__STDC_LIMIT_MACROS",
+        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/include",
+        "-I/Users/gmh/.cache/neverd-llvm/neverd-llvm-v23.0.0-r3/arm64/neverd-llvm-macos-arm64/include",
+        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/third_party/capstone/include",
+        "-F/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks",
+        "-O3",
+        "-DNDEBUG",
+        "-std=gnu++20",
+        "-isysroot",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
+        "-fPIC",
+        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/lib/emulation/backends/hvf/HvfX64Machine.cpp"
+      ],
+      "exit_code": 0,
+      "source_sha256": "8a74c560b2fe891a7fe2c50a8df2ddac840c38c24e35e7e563091b0f654b61d0",
+      "scope": "syntax-only compilation targeting macOS 11; no Intel native execution"
+    }
+  ],
+  "scope": "One shared Apple M4 Max, macOS 15.6.1. Other builds/applications can bias timings; no causal performance regression or universal ranking is established. Child CPU medians cover the complete process, including warmups/setup/verification, not one workload. Inventories overlap and skipped coverage is not passing. Original runtime is restored exactly; the final required CPU/Darwin inventory and completion stress were rerun independently. Candidate 3x1000 recovery evidence is associated with each candidate, not the retained source.",
+  "rejected_preflight_annotation": {
+    "record_utc": "2026-10-05T08:16:21.379596+00:00",
+    "field": "rejected_preflights[1].scope",
+    "correction": "The original scope label was generated before the compiler-process check and incorrectly says that no compiler processes were observed. The recorded counts (ninja=1, cmake=1, clang=4) caused this preflight to reject the confirmation attempt; no confirmation benchmark was launched. The original record is preserved verbatim, and its scope label must not be interpreted as an accepted preflight or a clean-host observation."
+  }
+}

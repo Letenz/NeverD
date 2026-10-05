@@ -43,6 +43,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   switch (Kind) {
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
+  case ServiceKind::Access:
+  case ServiceKind::FaccessAt:
   case ServiceKind::Read:
   case ServiceKind::Close:
   case ServiceKind::Lseek:

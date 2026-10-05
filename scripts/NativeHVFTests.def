@@ -134,5 +134,9 @@ NEVERD_NATIVE_HVF_REQUIRED_TEST(
 NEVERD_NATIVE_HVF_REQUIRED_TEST(
     "HvfExecutor.OneOwnerThreadAndCancelledQueueAdmissionAllowsRetry")
 NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
+    "HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns")
+NEVERD_NATIVE_HVF_REQUIRED_TEST(
     "HvfExecutor.PartialMappingFailureRetiresBorrowedBacking")
 #endif
