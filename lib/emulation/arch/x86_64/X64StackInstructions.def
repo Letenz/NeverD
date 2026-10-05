@@ -1,0 +1,7 @@
+//===- X64StackInstructions.def - Ordinary stack transfers --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_X64_STACK_INSTRUCTION(PUSH, true)
+NEVERD_X64_STACK_INSTRUCTION(POP, false)

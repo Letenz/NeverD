@@ -493,7 +493,49 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #undef NEVERD_RESOURCE_LOOP_CASE
 #undef NEVERD_RESOURCE_LOOP_VALUE
 
+#define NEVERD_RESOURCE_BRANCH_CASE(Name, InputFlags, Assembly)                \
+  static BOOLEAN CheckBranch##Name(VOID) {                                     \
+    ULONG64 Before, Observed;                                                  \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed)                          \
+                     : "r"((ULONG64)InputFlags)                                \
+                     : "memory", "cc");                                        \
+    return Observed == InputFlags;                                             \
+  }
+#include "driver_resource_branch.def"
+#undef NEVERD_RESOURCE_BRANCH_CASE
+
+#define NEVERD_RESOURCE_STACK_VALUE(Name, Value)                               \
+  static const ULONG64 Name = Value;
+#include "driver_resource_stack.def"
+#undef NEVERD_RESOURCE_STACK_VALUE
+#define NEVERD_RESOURCE_STACK_CASE(Name, ExpectedRegister, ExpectedMemory,     \
+                                   Assembly)                                   \
+  static BOOLEAN CheckStack##Name(VOID) {                                      \
+    ULONG64 Before, Observed, Value = StackOutput;                             \
+    ULONG64 Source = StackInput, Destination = StackOutput;                    \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), "+&r"(Value)            \
+                     : "r"(Source), "r"(&Source), "r"(&Destination)            \
+                     : "memory", "cc");                                        \
+    return Before == Observed && Value == ExpectedRegister &&                  \
+           Destination == ExpectedMemory && Source == StackInput;              \
+  }
+#include "driver_resource_stack.def"
+#undef NEVERD_RESOURCE_STACK_CASE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_STACK_CASE(Name, ...)                                  \
+  if (!CheckStack##Name())                                                     \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_stack.def"
+#undef NEVERD_RESOURCE_STACK_CASE
+#define NEVERD_RESOURCE_BRANCH_CASE(Name, ...)                                 \
+  if (!CheckBranch##Name())                                                    \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_branch.def"
+#undef NEVERD_RESOURCE_BRANCH_CASE
+
 #define NEVERD_RESOURCE_LOOP_CASE(Name, ...)                                   \
   if (!CheckLoop##Name())                                                      \
     return STATUS_UNSUCCESSFUL;
