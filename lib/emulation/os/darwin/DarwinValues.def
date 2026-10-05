@@ -22,6 +22,18 @@ NEVERD_DARWIN_VALUE(ParentID, 1)
 NEVERD_DARWIN_VALUE(UserID, 1000)
 NEVERD_DARWIN_VALUE(GroupID, 1000)
 NEVERD_DARWIN_VALUE(BadDescriptor, 9)
+NEVERD_DARWIN_VALUE(NoEntry, 2)
+NEVERD_DARWIN_VALUE(NotDirectory, 20)
+NEVERD_DARWIN_VALUE(TooManyFiles, 24)
+NEVERD_DARWIN_VALUE(IllegalSeek, 29)
+NEVERD_DARWIN_VALUE(NameTooLong, 63)
+NEVERD_DARWIN_VALUE(Overflow, 84)
+NEVERD_DARWIN_VALUE(OpenCloseOnExec, 0x01000000)
+NEVERD_DARWIN_VALUE(DuplicateFD, 0)
+NEVERD_DARWIN_VALUE(GetDescriptorFlags, 1)
+NEVERD_DARWIN_VALUE(SetDescriptorFlags, 2)
+NEVERD_DARWIN_VALUE(GetFileFlags, 3)
+NEVERD_DARWIN_VALUE(DuplicateCloseOnExec, 67)
 NEVERD_DARWIN_VALUE(MaxWriteBytes, 0x7fffffff)
 NEVERD_DARWIN_VALUE(BadAddress, 14)
 NEVERD_DARWIN_VALUE(InvalidArgument, 22)
@@ -40,19 +52,53 @@ NEVERD_DARWIN_TEXT(ExecutablePathPrefix, "executable_path=")
 #endif
 #ifdef NEVERD_DARWIN_SERVICE
 NEVERD_DARWIN_SERVICE(Exit, 1, None)
+NEVERD_DARWIN_SERVICE(Read, 3, Wide)
 NEVERD_DARWIN_SERVICE(Write, 4, Wide)
+NEVERD_DARWIN_SERVICE(Open, 5, Int)
+NEVERD_DARWIN_SERVICE(Close, 6, Int)
 NEVERD_DARWIN_SERVICE(GetPID, 20, Int)
 NEVERD_DARWIN_SERVICE(GetUID, 24, UInt)
 NEVERD_DARWIN_SERVICE(GetEUID, 25, UInt)
 NEVERD_DARWIN_SERVICE(GetPPID, 39, Int)
+NEVERD_DARWIN_SERVICE(Dup, 41, Int)
 NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
 NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
+NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
+NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
+NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
+NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
 NEVERD_DARWIN_SERVICE(Munmap, 73, Int)
 NEVERD_DARWIN_SERVICE(Mprotect, 74, Int)
 NEVERD_DARWIN_SERVICE(Mmap, 197, Wide)
 #endif
 
+// Cancellation is outside this single-thread profile; both entry numbers
+// share the exact same service owner and retain the original report number.
+#ifdef NEVERD_DARWIN_SERVICE_ALIAS
+NEVERD_DARWIN_SERVICE_ALIAS(Read, 396)
+NEVERD_DARWIN_SERVICE_ALIAS(Write, 397)
+NEVERD_DARWIN_SERVICE_ALIAS(Open, 398)
+NEVERD_DARWIN_SERVICE_ALIAS(Close, 399)
+NEVERD_DARWIN_SERVICE_ALIAS(Fcntl, 406)
+NEVERD_DARWIN_SERVICE_ALIAS(Pread, 414)
+#endif
+
 #ifdef NEVERD_DARWIN_DIAGNOSTIC
+NEVERD_DARWIN_DIAGNOSTIC(FileOptionsLimit, "invalid Darwin file input limits")
+NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
+                        "invalid or conflicting Darwin catalogue path")
+NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileOpenFlags,
+                        "unsupported Darwin open flags (read-only files only)")
+NEVERD_DARWIN_DIAGNOSTIC(FilePathForm,
+                        "unsupported Darwin path (canonical absolute paths only)")
+NEVERD_DARWIN_DIAGNOSTIC(FileDirectory,
+                        "Darwin directory descriptors are not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(FileControl, "unsupported Darwin fcntl command")
+NEVERD_DARWIN_DIAGNOSTIC(FileSeek, "unsupported Darwin data/hole seek")
+NEVERD_DARWIN_DIAGNOSTIC(FilePartialRead,
+                        "Darwin read into a partially writable buffer is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(
     MemoryMode, "unsupported Darwin memory mode (only private anonymous "
                 "data mappings; no JIT, file or private-gate mutation)")

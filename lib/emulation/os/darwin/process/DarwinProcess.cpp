@@ -7,6 +7,7 @@
 
 #include "../../../core/ExecutionDeadline.h"
 #include "../../../runtime/RuntimeValues.h"
+#include "../kernel/DarwinFiles.h"
 #include "../kernel/DarwinMemory.h"
 
 #include "neverd/emulation/ExecutionSession.h"
@@ -118,6 +119,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
   DarwinMemory Memory(**Space, Image->Memory, Options);
+  DarwinFiles Files(CPU, Options.DarwinFiles);
   ProcessResult Result{Profile.Profile, Image->Architecture, Backend->Kind,
                        Backend->Reason};
   Result.Entry = Result.PC = Image->Plan.Entry;
@@ -194,7 +196,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       break;
     }
     Result.Services.push_back(*Event);
-    auto Returned = handleService(CPU, Memory, *Event, Options, Result);
+    auto Returned = handleService(CPU, Memory, Files, *Event, Options, Result);
     if (!Returned) {
       RuntimeFailure(Returned.takeError());
       break;

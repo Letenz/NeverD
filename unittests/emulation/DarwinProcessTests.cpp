@@ -119,6 +119,61 @@ TEST_P(DarwinProcess, MainReturnAndBSDExitHaveRealStatus) {
     EXPECT_EQ(Result->ExitStatus, 37);
   }
 }
+TEST_P(DarwinProcess,
+       FilesShareOffsetsAcrossDupAndKeepPositionedReadsIndependent) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.Arguments[2] = "/data";
+  for (auto Mode : {"files", "files-nocancel"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput, "f");
+    ASSERT_FALSE(Result->Services.empty());
+    EXPECT_EQ(Result->Services.front().Number,
+              (GetParam().ISA == GuestArchitecture::X64 ? 0x2000000u : 0u) +
+                  (Mode == llvm::StringRef("files") ? 5u : 398u));
+    EXPECT_EQ(Result->Services.front().Error, false);
+  }
+}
+TEST_P(DarwinProcess, FiniteStandardInputRetainsBinaryBytesAndSharedCursor) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->StandardInput = {0, 0xff, 'x'};
+  auto Result = run("stdin");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, std::string("\0\xffx", 3));
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+TEST_P(DarwinProcess, OutputDescriptorsCanBeClosedReusedAndRedirected) {
+  auto Result = run("output-descriptors");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "ok");
+  EXPECT_TRUE(Result->StandardError.empty());
+  Options.OutputLimit = 1;
+  Result = run("output-descriptors");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, ProcessStopReason::OutputLimit);
+  EXPECT_EQ(Result->StandardOutput, "o");
+}
+TEST_P(DarwinProcess, MissingFileAndInputConfigurationStopWithoutHostAccess) {
+  for (auto Mode : {"files", "stdin"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(Result->Stop, ProcessStopReason::UnsupportedService);
+    ASSERT_FALSE(Result->Services.empty());
+    EXPECT_FALSE(Result->Services.back().Result);
+    EXPECT_FALSE(Result->Services.back().Error);
+    EXPECT_TRUE(Result->StandardOutput.empty());
+  }
+}
 TEST_P(DarwinProcess, PartialCopyRetainsEFAULTAndSubsequentWriteRecovers) {
   auto Result = run("partial");
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());

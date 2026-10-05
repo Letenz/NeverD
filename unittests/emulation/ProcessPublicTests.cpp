@@ -386,6 +386,58 @@ TEST_F(ProcessPublic, DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic,
+       DarwinFilesPreserveBytesAndDescriptorResultsAcrossSDKAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
+    SCOPED_TRACE(File);
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+    for (const auto &[Mode, Expected] :
+         {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
+          std::pair{"stdin", "00ff78"},
+          std::pair{"output-descriptors", "6f6b"}}) {
+      SCOPED_TRACE(Mode);
+      const std::string Options =
+          std::string(
+              R"({"backend":"unicorn","darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32},"arguments":["guest",")") +
+          Mode + R"(","/data"]})";
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+      EXPECT_EQ(Report->getAsObject()->getString(field::Stop), "exited");
+      EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
+      EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+      const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
+                           process_cli::Command + " " + test::shellQuote(Path) +
+                           " --" + process_cli::ProfileOption + "=" + Profile +
+                           " --" + process_cli::OptionsOption + "=" +
+                           test::shellQuote(Options) +
+                           test::redirectStdout(Output) + test::silenceStderr();
+      EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+                process_cli::GuestFailure);
+      auto Buffer = llvm::MemoryBuffer::getFile(Output);
+      ASSERT_TRUE(bool(Buffer));
+      EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
+                *Report);
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

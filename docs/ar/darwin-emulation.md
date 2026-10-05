@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: b3b4285b341fef4afed8cfe49f7fe8396536b9e63f924d14402ec7d0d3eb0b01 -->
+<!-- i18n-source: 813c9673241230afbb295a950aab1e14478b4bd4fe9de2d2f2e27b6fbe34f588 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -39,15 +39,29 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 يستخدم ARM64 السجلات X16 وX0–X5 والتعليمة `svc #0x80`؛ ويستخدم x64 فئة BSD وهي `0x02000000` والسجلات RAX وRDI/RSI/RDX/R10/R8/R9. يمحو النجاح carry، بينما يضبطه الخطأ ويعيد errno موجباً. يمحو ARM64 السجل X1؛ ويمحو x64 السجل RDX عند النجاح ويحافظ عليه عند الخطأ. تغييرات سجلات SYSCALL صريحة. يعبّر التقرير عن خطأ BSD بواسطة `result` و`error=true`؛ ولا تملك الطلبات التي لا تعود أو غير المدعومة هذين الحقلين. تتبع القواعد مسارات XNU لـ [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c) و[x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)، دون تضمين شيفرة Apple.
 
-الخدمات هي `exit` و`write` و`getpid` و`getppid` و`getuid` و`geteuid` و`getgid` و`getegid` و`mmap` و`mprotect` و`munmap`. قيم PID/UID/GID هي 1000، وPPID هو 1. يلتقط الواصفان 1 و2 البايتات بما فيها NUL وغير UTF8؛ وتعيد الواصفات الأخرى EBADF. تُحفظ البايتات المنسوخة جزئياً لكن خطأ الوصول اللاحق يبقى EFAULT. طول أكبر من `INT_MAX` يعيد EINVAL قبل فحص الواصف أو المؤشر أو الميزانية، وفق [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
+الخدمات هي `exit` و`write` و`getpid` و`getppid` و`getuid` و`geteuid` و`getgid` و`getegid` و`mmap` و`mprotect` و`munmap`. قيم PID/UID/GID هي 1000، وPPID هو 1. يلتقط الواصفان 1 و2 البايتات بما فيها NUL وغير UTF8؛ وتعيد الواصفات المغلقة أو المخصصة للقراءة EBADF. تُحفظ البايتات المنسوخة جزئياً لكن خطأ الوصول اللاحق يبقى EFAULT. طول أكبر من `INT_MAX` يعيد EINVAL قبل فحص الواصف أو المؤشر أو الميزانية، وفق [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
 
 تدعم الذاكرة تعيينات بيانات خاصة مجهولة المصدر مع `flags=0x1002` وواصف -1 وإزاحة صفر. تُقرّب الأطوال وتلميحات العناوين غير الثابتة إلى أعلى وفق صفحة النظام. إذا كان التلميح مشغولاً يُبحث أولاً باتجاه العناوين الأعلى ثم يُرجع إلى الموضع الافتراضي. يعيد mmap الخام القديم ذو الطول صفر القيمة صفر دون تخصيص؛ ولا يشمل العقد `MAP_UNIX03`. تتطلب unmap/protect عنواناً محاذياً. تُدعم NONE/READ/WRITE ويستلزم WRITE صلاحية READ. تملك كل صفحة نظام ذاكرتها الفعلية؛ يحرر unmap الجزئي ميزانيتها وتكون الصفحات الجديدة صفراً. يترك فشل protect عبر فجوة أو خارج الصلاحيات القصوى كامل النطاق دون تغيير. المرجع: [خدمات VM في XNU](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-تعيينات الملفات/المشاركة/الثابتة/JIT والذاكرة المجهولة القابلة للتنفيذ وMach traps واستدعاءات النظام غير المباشرة والخيوط والإشارات والملفات/الشبكة وdyld وبيئات Objective-C/Swift وFoundation/UIKit خارج العقد وتوقف التنفيذ صراحةً. هذا ليس نظام Apple كاملاً ولا تطبيق iOS Simulator.
+تعيينات الملفات/المشاركة/الثابتة/JIT والذاكرة المجهولة القابلة للتنفيذ وMach traps واستدعاءات النظام غير المباشرة والخيوط والإشارات وملفات المضيف/الشبكة وdyld وبيئات Objective-C/Swift وFoundation/UIKit خارج العقد وتوقف التنفيذ صراحةً. هذا ليس نظام Apple كاملاً ولا تطبيق iOS Simulator.
 
 ## التحقق
 
 تُنتج عينات C المكتوبة للمشروع باستخدام Clang و`ld64.lld` دون Apple SDK أو ملفات ثنائية احتكارية. تغطي خمس تركيبات للمنصة/ISA، وسجلات Mach-O المعطوبة، وصفحات 4/16 KiB، والتحرير الجزئي عند امتلاء الميزانية. يقارن `NeverDProcessPublicTests` واجهتَي C API وCLI؛ ويتيح `NEVERD_TEST_LIBNEVERD` و`NEVERD_TEST_DARWIN_FIXTURES` التركيبات الخمس نفسها في Python.
+
+## الملفات والواصفات الصريحة
+
+يوفر `darwin_files` للملفات التعريفية الثلاثة فهرساً مغلقاً لملفات للقراءة فقط. يحتوي الحقل الإلزامي `files` على `path` ضيف مطلق وقياسي و`bytes_hex` بالنظام الست عشري. يحدد `stdin_hex` الاختياري إدخالاً محدوداً؛ غيابه يعني إدخالاً مجهولاً ويوقف القراءة غير الصفرية، والسلسلة الفارغة تعني EOF. يتوقف open عند غياب الفهرس، بينما يعيد الفهرس الفارغ الصريح ENOENT. لا تُستخدم ملفات المضيف أو إدخاله.
+
+الخدمات الجديدة هي `open` و`read` و`pread` و`lseek` و`close` و`dup` و`dup2` و`fcntl`، مع مداخل nocancel لـ read/write/open/close/fcntl/pread. تدعم O_RDONLY/O_CLOEXEC وF_DUPFD وF_DUPFD_CLOEXEC وF_GETFD وF_SETFD وF_GETFL. لكل open مستقل موضعه؛ تتشارك النسخ الموضع مع أعلام close-on-exec منفصلة. لا يغير pread الموضع. يؤثر إغلاق أو استبدال 0/1/2 على العمليات اللاحقة، وتحتفظ نسخة الإخراج بوجهتها وميزانيتها.
+
+الحدود: 256 ملفاً، و16 MiB لمجموع المسارات/NUL/الملفات/الإدخال، ومسار أقصر من 1024 بايت ومكونات حتى 255 بايت. `descriptor_limit` سقف حصري بين 3 و4096 وافتراضيه 256؛ يبقى JSON محدوداً بـ64 KiB. تُرفض الخيارات غير الصالحة قبل التحميل. تعيد read الأكبر من INT_MAX الخطأ EINVAL قبل فحص FD؛ لا يلمس EOF الوجهة ويعيد العنوان غير الصالح EFAULT. يتوقف المخزن القابل للكتابة جزئياً قبل النسخ أو تغيير الموضع. تحفظ أخطاء SET/CUR/END الموضع. المسارات النسبية وفتح الأدلة والكتابة وstat وتعيين الملفات وseek المتناثر وبقية fcntl غير مدعومة. استخدام ملف كسلف لمسار يعيد ENOTDIR. يُقارن الكائن نفسه بنواة macOS الأصلية؛ وتغطي C/CLI/Python خمسة تراكيب للضيف، دون إثبات على جهاز iOS.
+
+تحقق Release بتاريخ 2026-10-05: عدد التسجيلات 381، نجح 177 وتُخطي 204 دون فشل، ونُفذت الحالات الإلزامية ARM64 HVF كلها 51/51. نجحت أيضاً سبعة برامج macOS أصلية و35 اختبار C/CLI وتقارير وخمسة تراكيب Python و66 اختباراً لسكربتات التحقق. الأعداد متداخلة. لا توجد أدلة أصلية Intel HVF/KVM/WHP للخدمات الجديدة؛ يبقى Intel HVF غير متحقق منه وتظل Actions معلقة. لا يتوفر SDK iOS أو مقارنة مع جهاز فعلي.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
+```
 
 ```sh
 cmake --build build-hvf --target NeverDDarwinProcessTests NeverDProcessPublicTests --parallel 8
@@ -56,7 +70,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 39 على ARM64 أو 26 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
+يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 51 على ARM64 أو 34 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \

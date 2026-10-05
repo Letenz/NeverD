@@ -49,6 +49,129 @@ static int equal(const char *a, const char *b) {
 #else
 #define PAGE 4096UL
 #endif
+/* The same raw-call object runs in the guest and against the native kernel.
+ * The harness supplies a regular file containing exactly 0123456789. */
+static int file_calls(const char *path, unsigned nocancel) {
+  const u64 open_call = nocancel ? 398 : 5;
+  const u64 read_call = nocancel ? 396 : 3;
+  const u64 pread_call = nocancel ? 414 : 153;
+  const u64 close_call = nocancel ? 399 : 6;
+  const u64 fcntl_call = nocancel ? 406 : 92;
+  unsigned error = 0;
+  unsigned char bytes[8];
+  int check = 140;
+#define FILE_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 fd = call(open_call, (u64)path, 0x1000000, 0, 0, 0, 0, &error);
+  FILE_EXPECT(!error);
+  char descendant[1024];
+  unsigned length = 0;
+  while (path[length] && length < 700) {
+    descendant[length] = path[length];
+    ++length;
+  }
+  FILE_EXPECT(!path[length]);
+  descendant[length] = '/';
+  for (unsigned i = 0; i != 256; ++i)
+    descendant[length + 1 + i] = 'a';
+  descendant[length + 257] = 0;
+  FILE_EXPECT(call(open_call, (u64)descendant, 0, 0, 0, 0, 0, &error) == 20 &&
+              error);
+  const char missing[] = "-missing/";
+  for (unsigned i = 0; i != 9; ++i)
+    descendant[length + i] = missing[i];
+  for (unsigned i = 0; i != 256; ++i)
+    descendant[length + 9 + i] = 'a';
+  descendant[length + 265] = 0;
+  FILE_EXPECT(call(open_call, (u64)descendant, 0, 0, 0, 0, 0, &error) == 2 &&
+              error);
+  FILE_EXPECT(call(fcntl_call, fd, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  FILE_EXPECT(call(fcntl_call, fd, 3, 0, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(read_call, fd, (u64)bytes, 2, 0, 0, 0, &error) == 2 &&
+              !error && bytes[0] == '0' && bytes[1] == '1');
+  u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  FILE_EXPECT(!error && copy != fd);
+  FILE_EXPECT(call(fcntl_call, copy, 1, 0, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(read_call, copy, (u64)bytes, 2, 0, 0, 0, &error) == 2 &&
+              !error && bytes[0] == '2' && bytes[1] == '3');
+  FILE_EXPECT(call(199, fd, 0, 1, 0, 0, 0, &error) == 4 && !error);
+  FILE_EXPECT(call(pread_call, copy, (u64)bytes, 4, 8, 0, 0, &error) == 2 &&
+              !error && bytes[0] == '8' && bytes[1] == '9');
+  FILE_EXPECT(call(199, fd, 0, 1, 0, 0, 0, &error) == 4 && !error);
+  u64 other = call(open_call, (u64)path, 0, 0, 0, 0, 0, &error);
+  FILE_EXPECT(!error && other != fd && other != copy);
+  FILE_EXPECT(call(read_call, other, (u64)bytes, 1, 0, 0, 0, &error) == 1 &&
+              !error && bytes[0] == '0');
+  FILE_EXPECT(call(90, fd, other, 0, 0, 0, 0, &error) == other && !error);
+  FILE_EXPECT(call(read_call, other, (u64)bytes, 1, 0, 0, 0, &error) == 1 &&
+              !error && bytes[0] == '4');
+  FILE_EXPECT(call(close_call, fd, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(read_call, fd, (u64)bytes, 1, 0, 0, 0, &error) == 9 &&
+              error);
+  FILE_EXPECT(call(read_call, other, (u64)bytes, 1, 0, 0, 0, &error) == 1 &&
+              !error && bytes[0] == '5');
+  FILE_EXPECT(call(fcntl_call, other, 2, 3, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(90, other, other, 0, 0, 0, 0, &error) == other && !error);
+  FILE_EXPECT(call(fcntl_call, other, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  FILE_EXPECT(call(fcntl_call, other, 67, 15, 0, 0, 0, &error) == 15 && !error);
+  FILE_EXPECT(call(fcntl_call, 15, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  FILE_EXPECT(call(fcntl_call, other, 0, 15, 0, 0, 0, &error) == 16 && !error);
+  FILE_EXPECT(call(fcntl_call, 16, 1, 0, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(read_call, 16, (u64)bytes, 1, 0, 0, 0, &error) == 1 &&
+              !error && bytes[0] == '6');
+  FILE_EXPECT(call(199, 15, 0, 1, 0, 0, 0, &error) == 7 && !error);
+  FILE_EXPECT(call(199, 15, (u64)-8, 1, 0, 0, 0, &error) == 22 && error);
+  FILE_EXPECT(call(199, 15, 0, 1, 0, 0, 0, &error) == 7 && !error);
+  FILE_EXPECT(call(199, 15, 0x7fffffffffffffffUL, 0, 0, 0, 0, &error) ==
+                  0x7fffffffffffffffUL &&
+              !error);
+  FILE_EXPECT(call(199, 15, 1, 1, 0, 0, 0, &error) == 84 && error);
+  FILE_EXPECT(call(pread_call, other, 0, 0, (u64)-1, 0, 0, &error) == 22 &&
+              error);
+  FILE_EXPECT(call(read_call, other, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(read_call, 99, 0, 0x80000000UL, 0, 0, 0, &error) == 22 &&
+              error);
+  FILE_EXPECT(call(read_call, 99, 0, 1, 0, 0, 0, &error) == 9 && error);
+  FILE_EXPECT(call(199, 15, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(read_call, other, 0, 1, 0, 0, 0, &error) == 14 && error);
+  FILE_EXPECT(call(199, 15, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(read_call, other | (1UL << 32), (u64)bytes, 1, 0, 0, 0,
+                   &error) == 1 &&
+              !error && bytes[0] == '0');
+  FILE_EXPECT(call(close_call, other, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(close_call, other, 0, 0, 0, 0, 0, &error) == 9 && error);
+  FILE_EXPECT(call(close_call, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(close_call, 15, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  FILE_EXPECT(call(close_call, 16, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  bytes[0] = 'f';
+  FILE_EXPECT(call(nocancel ? 397 : 4, 1, (u64)bytes, 1, 0, 0, 0, &error) ==
+                  1 &&
+              !error);
+#undef FILE_EXPECT
+  return 37;
+}
+
+static int output_descriptors(void) {
+  unsigned error;
+  const char text[] = "ok";
+  u64 fd = call(41, 1, 0, 0, 0, 0, 0, &error);
+  if (error || call(6, 1, 0, 0, 0, 0, 0, &error) || error)
+    return 201;
+  if (call(4, 1, (u64)text, 1, 0, 0, 0, &error) != 9 || !error)
+    return 202;
+  if (call(90, fd, 2, 0, 0, 0, 0, &error) != 2 || error ||
+      call(4, 2, (u64)text, 1, 0, 0, 0, &error) != 1 || error)
+    return 203;
+  if (call(6, fd, 0, 0, 0, 0, 0, &error) || error ||
+      call(90, 2, 1, 0, 0, 0, 0, &error) != 1 || error ||
+      call(397, 1, (u64)(text + 1), 1, 0, 0, 0, &error) != 1 || error)
+    return 204;
+  return 37;
+}
 static volatile unsigned char reclaimable[PAGE * 2]
     __attribute__((aligned(PAGE)));
 #ifdef DARWIN_THREAD_ENTRY
@@ -59,6 +182,24 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
+    return argc < 3 ? 139
+                    : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "output-descriptors"))
+    return output_descriptors();
+  if (equal(argv[1], "stdin")) {
+    unsigned char bytes[4];
+    u64 fd = call(41, 0, 0, 0, 0, 0, 0, &error);
+    if (error || call(3, fd, (u64)bytes, 2, 0, 0, 0, &error) != 2 || error ||
+        bytes[0] != 0 || bytes[1] != 255)
+      return 205;
+    if (call(396, 0, (u64)(bytes + 2), 2, 0, 0, 0, &error) != 1 || error ||
+        bytes[2] != 'x' || call(3, fd, 0, 1, 0, 0, 0, &error) || error)
+      return 206;
+    if (call(4, 1, (u64)bytes, 3, 0, 0, 0, &error) != 3 || error)
+      return 207;
+    return 37;
+  }
   if (equal(argv[1], "loop"))
     for (;;)
       ++bss;

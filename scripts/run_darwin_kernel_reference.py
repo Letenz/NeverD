@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import re
 import subprocess
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,10 +45,17 @@ def native_architecture(expected: str) -> str:
 
 
 def execute_cases(program: Path, cases: list[tuple[str, int, bytes]]) -> list[dict]:
+    with tempfile.TemporaryDirectory(prefix="neverd-darwin-files-") as directory:
+        input_file = Path(directory) / "data"
+        input_file.write_bytes(b"0123456789")
+        return _execute_cases(program, cases, input_file)
+
+
+def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_file: Path) -> list[dict]:
     results = []
     for mode, status, output in cases:
         try:
-            result = subprocess.run([str(program), mode], capture_output=True, timeout=5)
+            result = subprocess.run([str(program), mode, str(input_file)], capture_output=True, timeout=5)
             results.append({
                 "mode": mode, "exit_status": result.returncode,
                 "stdout_hex": result.stdout.hex(), "stderr_hex": result.stderr.hex(),

@@ -7,6 +7,7 @@
 #define NEVERD_EMULATION_PROCESSSESSION_H
 
 #include "neverd/emulation/AndroidNative.h"
+#include "neverd/emulation/DarwinFileOptions.h"
 #include "neverd/emulation/ExecutionBackend.h"
 #include "neverd/emulation/ExecutionBudget.h"
 #include "neverd/emulation/ExecutionExit.h"
@@ -53,6 +54,7 @@ struct ProcessOptions {
   std::optional<WindowsProcessOptions> Windows;
   std::optional<LinuxTimeOptions> LinuxTime;
   std::optional<LinuxFileOptions> LinuxFiles;
+  std::optional<DarwinFileOptions> DarwinFiles;
 };
 
 struct ProcessServiceEvent {

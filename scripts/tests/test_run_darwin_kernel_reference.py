@@ -59,6 +59,21 @@ class DarwinKernelReferenceTests(unittest.TestCase):
         self.assertEqual(results[-1]["error"], "timeout")
         self.assertEqual(results[-1]["stdout_hex"], b"partial".hex())
 
+    def test_native_file_cases_receive_real_isolated_input_bytes(self):
+        paths = []
+        def execute(command, **kwargs):
+            path = Path(command[2])
+            paths.append(path)
+            self.assertTrue(path.is_absolute())
+            self.assertEqual(path.read_bytes(), b"0123456789")
+            return subprocess.CompletedProcess(command, 37, b"f", b"")
+        with mock.patch.object(reference.subprocess, "run", side_effect=execute):
+            results = reference.execute_cases(
+                Path("native"), [("files", 37, b"f"), ("files-nocancel", 37, b"f")])
+        self.assertTrue(all(result["passed"] for result in results))
+        self.assertEqual(paths[0], paths[1])
+        self.assertFalse(paths[0].exists())
+
 
 if __name__ == "__main__":
     unittest.main()

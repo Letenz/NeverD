@@ -24,6 +24,8 @@ NEVERD_PROCESS_REPORT_FIELD(Path, "path")
 NEVERD_PROCESS_REPORT_FIELD(Android, "android")
 NEVERD_PROCESS_REPORT_FIELD(LinuxTime, "linux_time")
 NEVERD_PROCESS_REPORT_FIELD(LinuxFiles, "linux_files")
+NEVERD_PROCESS_REPORT_FIELD(DarwinFiles, "darwin_files")
+NEVERD_PROCESS_REPORT_FIELD(StandardInput, "stdin_hex")
 NEVERD_PROCESS_REPORT_FIELD(Files, "files")
 NEVERD_PROCESS_REPORT_FIELD(DescriptorLimit, "descriptor_limit")
 NEVERD_PROCESS_REPORT_FIELD(FileMetadata, "metadata")
@@ -114,6 +116,9 @@ NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
 NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 65536)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_TEXT
+NEVERD_PROCESS_REPORT_TEXT(DarwinFilesOptions, "invalid darwin_files option: ")
+NEVERD_PROCESS_REPORT_TEXT(DarwinFilesProfile,
+                          "darwin_files requires a macOS or iOS profile")
 NEVERD_PROCESS_REPORT_TEXT(LinuxFilesOptions, "invalid linux_files option: ")
 NEVERD_PROCESS_REPORT_TEXT(
     LinuxFilesProfile,
@@ -158,7 +163,7 @@ NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
 NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
 NEVERD_PROCESS_CLI_STRING(
     OptionsHelp, "Options JSON: backend, resource limits, "
-                 "arguments/environment, Linux clocks/files, Android native "
+                 "arguments/environment, Linux clocks/files, Darwin files, Android native "
                  "or Windows module options")
 NEVERD_PROCESS_CLI_STRING(OptionsValue, "json")
 #endif

@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinFiles.h"
 #include "DarwinMemory.h"
 
 #include "neverd/emulation/CPU.h"
@@ -26,20 +27,26 @@ std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
 #define NEVERD_DARWIN_SERVICE(Name, Code, ReturnType)                          \
   if (Number == Code)                                                          \
     return ServiceKind::Name;
+#define NEVERD_DARWIN_SERVICE_ALIAS(Name, Code)                                \
+  if (Number == Code)                                                          \
+    return ServiceKind::Name;
 #include "../DarwinValues.def"
+#undef NEVERD_DARWIN_SERVICE_ALIAS
 #undef NEVERD_DARWIN_SERVICE
   return std::nullopt;
 }
 llvm::Expected<std::optional<ServiceResult>>
-writeOutput(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
-            const ProcessOptions &Options, ProcessResult &Result) {
+writeOutput(ExecutionBackend &CPU, DarwinFiles &Files,
+            const ProcessServiceEvent &Event, const ProcessOptions &Options,
+            ProcessResult &Result) {
   const uint32_t FD = Event.Arguments[0];
   const uint64_t Address = Event.Arguments[1], Count = Event.Arguments[2];
   // XNU write_internal validates nbyte before descriptor lookup or copying.
   // An invalid request cannot consume the output allowance or publish bytes.
   if (Count > MaxWriteBytes)
     return std::optional<ServiceResult>({InvalidArgument, true});
-  if (FD != 1 && FD != 2)
+  auto Sink = Files.outputSink(FD);
+  if (!Sink)
     return std::optional<ServiceResult>({BadDescriptor, true});
   if (!Count)
     return std::optional<ServiceResult>({0, false});
@@ -72,7 +79,7 @@ writeOutput(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
                                      reinterpret_cast<uint8_t *>(Bytes.data()),
                                      Bytes.size())))
     return std::move(E);
-  (FD == 1 ? Result.StandardOutput : Result.StandardError).append(Bytes);
+  (*Sink == 1 ? Result.StandardOutput : Result.StandardError).append(Bytes);
   // XNU's write path retains EFAULT after a partial copy; unlike interruption
   // errors, it does not convert that error into a successful short write.
   return std::optional<ServiceResult>(Readable == Count
@@ -124,7 +131,7 @@ llvm::Error returnService(ExecutionBackend &CPU, const ServiceRequest &Request,
 }
 
 llvm::Expected<std::optional<ServiceResult>>
-handleService(ExecutionBackend &CPU, DarwinMemory &Memory,
+handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
               const ProcessServiceEvent &Event, const ProcessOptions &Options,
               ProcessResult &Result) {
   auto Kind = serviceKind(CPU.architecture(), Event.Number);
@@ -140,7 +147,16 @@ handleService(ExecutionBackend &CPU, DarwinMemory &Memory,
     Result.ExitStatus = Event.Arguments[0] & 0xff;
     return std::optional<ServiceResult>();
   case ServiceKind::Write:
-    return writeOutput(CPU, Event, Options, Result);
+    return writeOutput(CPU, Files, Event, Options, Result);
+  case ServiceKind::Read:
+  case ServiceKind::Pread:
+  case ServiceKind::Open:
+  case ServiceKind::Close:
+  case ServiceKind::Lseek:
+  case ServiceKind::Dup:
+  case ServiceKind::Dup2:
+  case ServiceKind::Fcntl:
+    return Files.handle(*Kind, Event, Result);
   case ServiceKind::GetPID:
     return std::optional<ServiceResult>({ProcessID, false});
   case ServiceKind::GetPPID:

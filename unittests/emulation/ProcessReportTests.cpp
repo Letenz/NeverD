@@ -76,6 +76,72 @@ TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
   EXPECT_FALSE(bool(Large));
   EXPECT_EQ(llvm::toString(Large.takeError()), field::TooLarge);
 }
+TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
+  auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/data","bytes_hex":"00FF78"}],"stdin_hex":"00ff",
+    "descriptor_limit":32}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->DarwinFiles);
+  EXPECT_EQ(O->DarwinFiles->Files.at("/data"),
+            (std::vector<uint8_t>{0, 255, 'x'}));
+  ASSERT_TRUE(O->DarwinFiles->StandardInput);
+  EXPECT_EQ(*O->DarwinFiles->StandardInput, (std::vector<uint8_t>{0, 255}));
+  EXPECT_EQ(O->DarwinFiles->DescriptorLimit, 32u);
+  for (auto P : {ProcessProfile::LinuxELF64, ProcessProfile::WindowsPE64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinFilesProfile);
+  }
+  O->DarwinFiles->Files["/data/child"] = {};
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("catalogue path"),
+              std::string::npos);
+  }
+  auto Empty = processOptionsFromJSON(R"({"darwin_files":{"files":[]}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_FALSE(Empty->DarwinFiles->StandardInput);
+  auto EOFInput =
+      processOptionsFromJSON(R"({"darwin_files":{"files":[],"stdin_hex":""}})");
+  ASSERT_TRUE(bool(EOFInput)) << llvm::toString(EOFInput.takeError());
+  ASSERT_TRUE(EOFInput->DarwinFiles->StandardInput);
+  EXPECT_TRUE(EOFInput->DarwinFiles->StandardInput->empty());
+}
+TEST(ProcessReport, MalformedDarwinFilesFailBeforeExecution) {
+  for (
+      const char *Bad :
+      {"null", "[]", "{}", R"({"files":{}})", R"({"files":[],"unknown":1})",
+       R"({"files":[],"descriptor_limit":2})",
+       R"({"files":[],"descriptor_limit":4097})",
+       R"({"files":[],"descriptor_limit":4294967296})",
+       R"({"files":[],"descriptor_limit":3.5})",
+       R"({"files":[],"stdin_hex":null})", R"({"files":[],"stdin_hex":"0"})",
+       R"({"files":[],"stdin_hex":"zz"})",
+       R"({"files":[{"path":"/x","bytes_hex":"00","extra":1}]})",
+       R"({"files":[{"path":"x","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x\u0000","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x/../y","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x/","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x","bytes_hex":""},{"path":"/x","bytes_hex":"00"}]})",
+       R"({"files":[{"path":"/x","bytes_hex":""},{"path":"/x/y","bytes_hex":""}]})"}) {
+    SCOPED_TRACE(Bad);
+    auto O =
+        processOptionsFromJSON(std::string("{\"darwin_files\":") + Bad + '}');
+    EXPECT_FALSE(bool(O));
+    llvm::consumeError(O.takeError());
+  }
+  ProcessOptions O;
+  O.DarwinFiles.emplace();
+  O.DarwinFiles->StandardInput =
+      std::vector<uint8_t>(darwin_file_limits::Bytes + 1);
+  auto R = emulateProcess("missing", ProcessProfile::MacOSMachO64, O);
+  ASSERT_FALSE(bool(R));
+  EXPECT_NE(llvm::toString(R.takeError()).find("file input limits"),
+            std::string::npos);
+}
 
 TEST(ProcessReport, PreservesBinaryOutputRawRegisterBitsAndNullableStatus) {
   ProcessResult Result{ProcessProfile::LinuxELF64,

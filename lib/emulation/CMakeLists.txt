@@ -84,6 +84,7 @@ add_subdirectory(os/darwin)
 add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
+  runtime/ProcessDarwinFilesJSON.cpp
   runtime/ProcessLinuxTimeJSON.cpp
   runtime/ProcessLinuxFilesJSON.cpp
   runtime/ProcessAndroidJSON.cpp

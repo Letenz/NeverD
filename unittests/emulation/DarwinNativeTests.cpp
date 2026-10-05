@@ -13,6 +13,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <optional>
 #include <string>
@@ -33,6 +34,12 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   const std::filesystem::path Root(Temporary.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const std::string Program = NEVERD_DARWIN_NATIVE_ORACLE;
+  const auto Input = (Root / "data").string();
+  {
+    std::ofstream File(Input, std::ios::binary);
+    File << "0123456789";
+    ASSERT_TRUE(File.good());
+  }
   struct Case {
     const char *Mode;
     int Status;
@@ -53,7 +60,7 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
     std::string LaunchError;
     bool ExecutionFailed = false;
     const auto Status = llvm::sys::ExecuteAndWait(
-        Program, {Program, Test.Mode}, std::nullopt, Redirects, 5, 0,
+        Program, {Program, Test.Mode, Input}, std::nullopt, Redirects, 5, 0,
         &LaunchError, &ExecutionFailed);
     ASSERT_FALSE(ExecutionFailed) << LaunchError;
     auto Out = llvm::MemoryBuffer::getFile(Output);

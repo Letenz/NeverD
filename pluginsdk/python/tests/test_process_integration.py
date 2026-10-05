@@ -497,6 +497,19 @@ class ProcessIntegrationTests(unittest.TestCase):
                     wrong = "macos-macho64-v1" if profile == "ios" else "ios-macho64-v1"
                     with self.assertRaises(NeverDError):
                         session.emulate_process(path, wrong, options)
+                    for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
+                                           ("stdin", b"\x00\xffx"),
+                                           ("output-descriptors", b"ok")):
+                        file_options = json.dumps({
+                            "backend": "unicorn", "arguments": ["guest", mode, "/data"],
+                            "darwin_files": {"files": [{"path": "/data", "bytes_hex":
+                                                       b"0123456789".hex()}],
+                                             "stdin_hex": "00ff78", "descriptor_limit": 32}})
+                        result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
+                        self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                        self.assertEqual(result["exit_status"], 37, mode)
+                        self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
+                        self.assertEqual(result["stderr_hex"], "")
 
     def test_both_architectures_execute_and_retain_binary_output(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")

@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3b4285b341fef4afed8cfe49f7fe8396536b9e63f924d14402ec7d0d3eb0b01 -->
+<!-- i18n-source: 813c9673241230afbb295a950aab1e14478b4bd4fe9de2d2f2e27b6fbe34f588 -->
 
 [← Оглавление документации](README.md)
 
@@ -39,15 +39,29 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 ARM64 использует X16, X0–X5 и `svc #0x80`; x64 — BSD-класс `0x02000000`, RAX и RDI/RSI/RDX/R10/R8/R9. Успех очищает carry, ошибка устанавливает его и возвращает положительный errno. ARM64 очищает X1; x64 очищает RDX при успехе и сохраняет при ошибке. Изменяемые SYSCALL регистры заданы явно. Отчёт обозначает BSD-ошибку через `result` и `error=true`; у невозвращающих или неподдерживаемых запросов этих полей нет. Правила основаны на XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c) и [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c), без включения кода Apple.
 
-Поддерживаются `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`. PID/UID/GID равны 1000, PPID равен 1. Дескрипторы 1 и 2 принимают байты, включая NUL и не-UTF8; остальные возвращают EBADF. Частичная копия сохраняет прочитанные байты, но последующая ошибка остаётся EFAULT. Длина свыше `INT_MAX` даёт EINVAL до проверки дескриптора, указателя и бюджета: [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
+Поддерживаются `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`. PID/UID/GID равны 1000, PPID равен 1. Дескрипторы 1 и 2 принимают байты, включая NUL и не-UTF8; закрытые дескрипторы и дескрипторы только для чтения возвращают EBADF. Частичная копия сохраняет прочитанные байты, но последующая ошибка остаётся EFAULT. Длина свыше `INT_MAX` даёт EINVAL до проверки дескриптора, указателя и бюджета: [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
 
 Разрешены приватные анонимные отображения данных: `flags=0x1002`, дескриптор -1 и смещение ноль. Длины и нефиксированные подсказки адреса округляются вверх до страницы ОС. Занятая подсказка запускает поиск вверх, затем возврат к стандартному размещению. Исторический сырой mmap нулевой длины возвращает ноль без выделения; `MAP_UNIX03` исключён. Unmap/protect требуют выровненный адрес. Поддерживаются NONE/READ/WRITE, причём WRITE подразумевает READ. Каждая страница ОС владеет физической памятью: частичный unmap освобождает бюджет, новые страницы обнуляются. Protect через дыру или сверх максимальных прав сохраняет весь диапазон неизменным. Источник: [VM-службы XNU](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-Файловые/общие/фиксированные/JIT-отображения, исполняемая анонимная память, Mach traps, косвенные syscalls, потоки, сигналы, файлы/сеть, dyld, среды Objective-C/Swift и Foundation/UIKit исключены и явно останавливают выполнение. Это не полная ОС Apple и не приложение iOS Simulator.
+Файловые/общие/фиксированные/JIT-отображения, исполняемая анонимная память, Mach traps, косвенные syscalls, потоки, сигналы, файлы хоста/сеть, dyld, среды Objective-C/Swift и Foundation/UIKit исключены и явно останавливают выполнение. Это не полная ОС Apple и не приложение iOS Simulator.
 
 ## Проверка
 
 Собственные C-образцы собираются Clang и `ld64.lld` без Apple SDK и проприетарных файлов. Они покрывают пять сочетаний платформы/ISA, некорректные записи Mach-O, страницы 4/16 KiB и частичное освобождение при полном бюджете. `NeverDProcessPublicTests` сравнивает C API/CLI; `NEVERD_TEST_LIBNEVERD` и `NEVERD_TEST_DARWIN_FIXTURES` включают те же пять сочетаний в Python.
+
+## Явные файлы и дескрипторы
+
+`darwin_files` предоставляет трём профилям замкнутый каталог файлов только для чтения. Обязательный `files` содержит канонический абсолютный гостевой `path` и шестнадцатеричные `bytes_hex`. Необязательный `stdin_hex` задаёт конечный поток: отсутствие означает неизвестный ввод и останавливает ненулевое чтение, пустая строка означает EOF. Без каталога open останавливается; явно пустой каталог возвращает ENOENT. Файлы и ввод хоста не используются.
+
+Добавлены `open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl` и nocancel-входы read/write/open/close/fcntl/pread. Поддерживаются O_RDONLY/O_CLOEXEC и F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL. Независимые open имеют отдельные позиции; dup разделяет позицию, но сохраняет отдельные флаги close-on-exec. pread позицию не меняет. Закрытие/замена 0/1/2 влияет на следующий I/O, дубликат вывода сохраняет приёмник и бюджет.
+
+Пределы: 256 файлов, 16 MiB суммарно для путей/NUL/файлов/ввода, путь короче 1024 байт, компонент до 255 байт. `descriptor_limit` — исключительная верхняя граница 3–4096, по умолчанию 256; JSON ограничен 64 KiB. Неверная конфигурация отклоняется до загрузки. read свыше INT_MAX даёт EINVAL до поиска FD; EOF не касается буфера, неверный адрес даёт EFAULT. Частично доступный для записи буфер останавливает операцию до копии и смены позиции. Ошибки SET/CUR/END сохраняют позицию. Относительные пути, открытие каталогов, запись, stat, файловые отображения, sparse seek и прочие fcntl не поддержаны. Файл как предок пути даёт ENOTDIR. Тот же объект сравнивается с ядром macOS, C/CLI/Python проверяют пять гостевых сочетаний; это не проверка устройства iOS.
+
+Проверка Release от 2026-10-05: 381 регистрация, 177 успешных, 204 пропущенных, ошибок нет; выполнены все 51/51 обязательных ARM64 HVF. Также прошли семь нативных программ macOS, 35 публичных проверок C/CLI/отчётов, пять гостевых сочетаний Python и 66 тестов проверяющих скриптов. Счётчики пересекаются. Для новых файловых служб нет нативных доказательств Intel HVF/KVM/WHP; Intel HVF остаётся непроверенным, его Actions приостановлены. SDK iOS и сравнение с устройством отсутствуют.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
+```
 
 ```sh
 cmake --build build-hvf --target NeverDDarwinProcessTests NeverDProcessPublicTests --parallel 8
@@ -56,7 +70,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-Отдельная проверка требует все 39 нативных ARM64 или 26 x64 случаев, включая `LC_MAIN` и `LC_UNIXTHREAD` на каждой платформе. Отсутствующие/пропущенные обязательные случаи или отсутствие `ld64.lld` означают провал.
+Отдельная проверка требует все 51 нативных ARM64 или 34 x64 случаев, включая `LC_MAIN` и `LC_UNIXTHREAD` на каждой платформе. Отсутствующие/пропущенные обязательные случаи или отсутствие `ld64.lld` означают провал.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \

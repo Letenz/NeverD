@@ -90,11 +90,12 @@ return clobbers are explicit. These rules come from the XNU
 and [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)
 entry paths; no Apple implementation code is incorporated.
 
-The service inventory is `exit`, `write`, `getpid`, `getppid`, `getuid`,
+The core service inventory is `exit`, `write`, `getpid`, `getppid`, `getuid`,
 `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect` and `munmap`. PID, UID and
 GID are deterministically 1000, and parent PID is 1. Output descriptors 1 and
-2 are captured byte sinks, including NUL and non-UTF8 bytes; other descriptors
-return EBADF. A partial readable prefix is captured, but a subsequent copy
+2 are initially captured byte sinks, including NUL and non-UTF8 bytes. Their
+duplicates retain the original sink; writes through closed or read-only
+descriptors return EBADF. A partial readable prefix is captured, but a subsequent copy
 fault retains EFAULT, consistent with XNU's
 [write error propagation](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
 The raw write length is limited to `INT_MAX`; larger requests return EINVAL
@@ -113,10 +114,51 @@ leaves the complete range unchanged. The rules are grounded in XNU's
 [BSD VM services](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
 File/shared/fixed/JIT mappings, executable anonymous mappings, Mach traps,
-indirect system calls, threads, signals, filesystem/network services, dyld
+indirect system calls, threads, signals, host filesystem/network access, dyld
 linking, Objective-C/Swift runtime and Foundation/UIKit are outside this
 profile. They stop explicitly. This is neither a full Apple OS compatibility
 layer nor the iOS Simulator application.
+
+## Explicit file inputs and descriptors
+
+`darwin_files` adds a closed catalogue of immutable regular files to all three
+profiles. `files` is required; each entry has a canonical absolute guest `path`
+and hexadecimal `bytes_hex`. Optional `stdin_hex` supplies a finite input stream:
+omitted input is unknown and stops on a nonzero read; an empty string is EOF.
+Neither guest paths nor standard input consult the host. Missing catalogue
+configuration stops `open`; an explicit empty catalogue returns ENOENT.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
+```
+
+The additional services are `open`, `read`, `pread`, `lseek`, `close`, `dup`,
+`dup2` and `fcntl`. The `read`, `write`, `open`, `close`, `fcntl` and `pread`
+nocancel entries use the same owners. `open` supports O_RDONLY and O_CLOEXEC.
+`fcntl` supports F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD and F_GETFL.
+Separate opens have independent cursors; duplicated descriptors share a cursor
+but have independent close-on-exec flags. `pread` never changes the cursor.
+Closing/replacing descriptors 0, 1 or 2 affects subsequent I/O, and a duplicated
+output descriptor keeps its capture sink and the shared output budget.
+
+Configuration allows at most 256 files, 16 MiB of combined path/NUL/file/input
+bytes, paths shorter than 1024 bytes and components of at most 255 bytes.
+`descriptor_limit` is an exclusive ceiling from 3 to 4096, default 256.
+JSON retains the existing 64 KiB request limit. Invalid configuration is rejected
+before image loading, including a file that is another file's ancestor.
+
+Raw read lengths above INT_MAX return EINVAL before FD lookup. EOF does not
+touch the destination; invalid writable addresses return EFAULT. A partially
+writable destination stops before copying or advancing the cursor, because
+partial filesystem copyout effects are outside this model. Seek supports
+SET/CUR/END, preserving the cursor on negative-position or overflow errors.
+Relative/noncanonical paths, directory opens, writable files, stat metadata,
+file-backed mmap, sparse-file seeks and other fcntl operations remain unsupported.
+Path prefixes describe implicit directories; a regular file used as an ancestor
+returns ENOTDIR. The ABI is grounded in XNU's
+[read path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c),
+[open/seek path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_syscalls.c)
+and [descriptor operations](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_descrip.c).
 
 ## Verification
 
@@ -140,13 +182,14 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 The native gate requires matching HVF cases to execute, including Darwin
 fixtures; missing `ld64.lld` cannot turn the required suite into a skip. Each
 transport must be verified on its own host; the results below distinguish
-Apple Silicon HVF, Intel HVF, Linux KVM and Windows WHP. All required Darwin
-workloads have passed on their respective matching hosts. Intel's broader
-CPU inventory remains a separate acceptance requirement. See the
+Apple Silicon HVF, Intel HVF, Linux KVM and Windows WHP. The historical Darwin
+inventories below passed on their respective matching hosts. Those results do
+not validate subsequently added file services on Intel HVF, KVM or WHP. Intel
+HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 39 cases on ARM64, or 26 on x64.
+on each platform supported by the host ISA: 51 cases on ARM64, or 34 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -154,7 +197,13 @@ On a native macOS build, `DarwinNativeTests.cpp` also runs the same authored
 object against the host kernel. A separate host executable links libSystem
 only for dyld's real main handoff; guest images remain import-free. Return,
 exit, memory protection/reuse and oversized-write error ordering must match
-the fixture's exit status and exact output. This native reference is required
+the fixture's exit status and exact output. The file and nocancel cases reuse
+the same authored object with an isolated host file containing the guest's
+exact bytes. Descriptor replacement/redirect cases also run on the host.
+Memory-only tests cover both OS page sizes, denied and partial copyout,
+configuration admission, absent/empty input and FD exhaustion. Public C/CLI
+and Python checks cover file, nocancel, binary stdin and output redirection
+on every platform/ISA combination. This native reference is required
 by the HVF gate; it does not establish native iOS execution.
 The independent [native kernel workflow](../.github/workflows/darwin-kernel-reference.yml)
 runs these same cases on both Intel and Apple Silicon macOS without building
@@ -178,6 +227,18 @@ also accepts a single `kvm` or `whp` selection for focused reruns. It
 requires actual virtualization and `ld64.lld`; unavailable hardware or fixture
 tools fail explicitly. The result validates the bounded guest OS model and
 shared CPU contracts, not Intel HVF or native iOS hardware.
+
+### File services verification, 2026-10-05
+
+The Release Darwin gate on Apple Silicon, with HVF and Unicorn enabled,
+reconciled 381 registrations: 177 passed, 204 skipped and zero failed. All
+51 required ARM64 HVF workloads executed. The software backend exercised
+all five platform/ISA combinations. The seven original native macOS cases,
+35 process-report/public C/CLI tests, Python's five Darwin combinations and
+66 evidence-runner tests passed. Counts overlap and must not be added.
+The new file services have no native Intel HVF, KVM or WHP evidence; earlier
+results below refer to their recorded inventories. The host lacks an iOS SDK,
+and neither guest execution nor macOS references establish iOS device results.
 
 ### Local verification, 2026-10-03
 
