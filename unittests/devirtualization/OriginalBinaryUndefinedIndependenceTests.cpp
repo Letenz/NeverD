@@ -331,35 +331,62 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     LiteralTransfersReuseIncomingFeasibility) {
+  Program Short({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto Reference = Short.check();
+  ASSERT_TRUE(Reference.proved()) << Reference.Proof.Diagnostic;
+  Program Long({});
+  for (unsigned I = 0; I != 128; ++I)
+    Long.append({0xe9, 0, 0, 0, 0}); // JMP next instruction.
+  Long.append({0xb8, 7, 0, 0, 0, 0xc3});
+  LowIRIndependenceLimits Limits;
+  Limits.MaxSolverQueries = Reference.Proof.SolverQueries;
+  const auto Good = Long.check(Limits);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.Paths, 1U);
+  EXPECT_EQ(Good.Proof.Instructions, 130U);
+  EXPECT_EQ(Good.Certificate->Instructions.size(), 130U);
+  ASSERT_GT(Good.Proof.SolverQueries, 0U);
+  Limits.MaxSolverQueries = Good.Proof.SolverQueries - 1;
+  expectRefusal(Long, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxInstructions = 129;
+  expectRefusal(Long, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxIndirectTargets = 0;
+  expectRefusal(Long, Status::Invalid, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      CompleteSingletonTargetsKeepTheIncomingDomain) {
-  const auto Make = [](bool Indirect) {
+  constexpr unsigned Transfers = 32;
+  const auto Make = [](unsigned Count) {
     Program P({});
     P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
-    for (unsigned I = 0; I != 32; ++I) {
+    for (unsigned I = 0; I != Count; ++I) {
       const auto Next = Entry + P.Image.Segments.front().Data.size() + 19;
       // LEA RAX,[RSP+bias]; AND EAX,15; ADD RAX,next-residue;
-      // JMP RAX (three unreachable padding bytes), or JMP next.
+      // JMP RAX (three unreachable padding bytes).
       const uint8_t Bias = I + 1;
       P.append({0x48, 0x8d, 0x44, 0x24, Bias, 0x83, 0xe0, 15, 0x48, 0x05});
       P.immediate(Next - ((8 + Bias) & 15));
-      if (Indirect)
-        P.append({0xff, 0xe0, 0x90, 0x90, 0x90});
-      else
-        P.append({0xe9, 0, 0, 0, 0});
+      P.append({0xff, 0xe0, 0x90, 0x90, 0x90});
     }
     P.append({0xb8, 7, 0, 0, 0, 0xc3});
     return P;
   };
-  const auto Reference = Make(false).check();
+  const auto Reference = Make(0).check();
   ASSERT_TRUE(Reference.proved()) << Reference.Proof.Diagnostic;
-  const auto Indirect = Make(true);
+  const auto Indirect = Make(Transfers);
   LowIRIndependenceLimits Limits;
   Limits.MaxIndirectTargets = 1;
-  Limits.MaxSolverQueries = Reference.Proof.SolverQueries;
+  // Each symbolic transfer needs one model and one completed exclusion query.
+  Limits.MaxSolverQueries = Reference.Proof.SolverQueries + 2 * Transfers;
   const auto Good = Indirect.check(Limits);
   ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
   EXPECT_EQ(Good.Proof.Paths, 1U);
-  EXPECT_EQ(Good.Proof.Instructions, Reference.Proof.Instructions);
+  EXPECT_EQ(Good.Proof.Instructions,
+            Reference.Proof.Instructions + 4 * Transfers);
   EXPECT_EQ(Good.Certificate->Instructions.size(), 130U);
   ASSERT_GT(Good.Proof.SolverQueries, 0U);
   Limits.MaxSolverQueries = Good.Proof.SolverQueries - 1;

@@ -1130,11 +1130,17 @@ class Checker {
   void nativeTargets(Path P, SymRef Value, SymRef Predicate) {
     if (!Value || Ctx.width(Value) != 64)
       fail(Status::Invalid, "native control target must be a 64-bit address");
+    const auto Target = ordinary(Value);
+    // A structural constant has no other possible destination. Scheduling
+    // still proves feasibility and audits the actual mapped instruction.
+    if (const auto Constant = Ctx.asConst(Target)) {
+      scheduleNative(std::move(P), Constant->getZExtValue(), Predicate);
+      return;
+    }
     uint64_t Queries = Result.SolverQueries;
     const auto Values = detail::enumerateFiniteValues(
-        Ctx, Predicate, {ordinary(Value)}, Limits.MaxIndirectTargets,
-        Limits.Solver, Limits.MaxSolverQueries, Limits.MaxSymbolicNodes,
-        Queries);
+        Ctx, Predicate, {Target}, Limits.MaxIndirectTargets, Limits.Solver,
+        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Values.Status != detail::FiniteValueStatus::Complete)
       fail(Values.Status == detail::FiniteValueStatus::Invalid
@@ -1152,7 +1158,7 @@ class Checker {
           Values.Tuples.size() == 1
               ? Predicate
               : Ctx.mkAnd(Predicate,
-                          Ctx.mkEq(ordinary(Value), Ctx.mkConst(64, Tuple[0])));
+                          Ctx.mkEq(Target, Ctx.mkConst(64, Tuple[0])));
       scheduleNative(P, Tuple[0], TargetPredicate);
     }
   }
