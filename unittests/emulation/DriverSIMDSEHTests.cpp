@@ -80,6 +80,8 @@ TEST_P(DriverSIMDSEH, OriginalDriverCatchesAndRetriesSSEFaults) {
           std::string(SehSIMDService) + char(SehSIMDMarker) + Parameter.Mode;
       auto Result = emulateDriver(Image, Options);
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      SCOPED_TRACE(Result->PC);
+      SCOPED_TRACE(Result->Diagnostic);
       if (Parameter.Mode == SehSIMDRejectX87) {
         EXPECT_EQ(Result->Stop, DriverStopReason::ModelError);
         EXPECT_NE(Result->Diagnostic.find(
