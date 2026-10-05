@@ -2992,12 +2992,12 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
           if (!Effects)
             return Result;
           static_cast<SourceFrameEffects &>(Contract) = *Effects;
+        } else if (const auto Effects =
+                       darwinMatrixSourceFrameEffects(Image, Binding)) {
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
         } else if (Binding.Signature.ReturnLocation.Kind ==
                    SourceABICarrierKind::IndirectResultPointer) {
-          const auto Effects = darwinMatrixSourceFrameEffects(Image, Binding);
-          if (!Effects)
-            return Result;
-          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+          return Result;
         }
       } else {
         if (!NativeCallees || *Site->StaticTarget == Function.Entry ||

@@ -1017,9 +1017,7 @@ bool hasNativeSourceStateContract(
           return false;
         Contract.ByValueFrameParameters.insert(Binding.ByValueCopy->Parameter);
       }
-      if (StaticRuntime && Binding.CallKind == Kind::DarwinRuntimeCall &&
-          Binding.Signature.ReturnLocation.Kind ==
-              SourceABICarrierKind::IndirectResultPointer) {
+      if (StaticRuntime && Binding.CallKind == Kind::DarwinRuntimeCall) {
         if (const auto Effects = darwinMatrixSourceFrameEffects(Image, Binding))
           static_cast<SourceFrameEffects &>(Contract) = *Effects;
       }
