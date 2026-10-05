@@ -113,6 +113,8 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
+長さ 0 の読み取りはユーザーアドレス範囲の上限から開始できます。元のアドレス範囲を検証した後、ファイル位置と元の要求長の和が `INT64_MAX` を超える場合は、EOF でも `EINVAL` を返し、カーソルを変更しません。
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 プロファイル

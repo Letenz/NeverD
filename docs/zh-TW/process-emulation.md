@@ -113,6 +113,8 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
+零長度讀取的位址可以等於使用者位址範圍的末端。先驗證原始位址範圍，再檢查檔案位置加原始長度是否超過 `INT64_MAX`；超過時即使已到 EOF 也回傳 `EINVAL`，游標保持不變。
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 設定檔

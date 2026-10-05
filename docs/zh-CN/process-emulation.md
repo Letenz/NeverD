@@ -117,6 +117,8 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 
 `descriptor_limit`: 3–4096 (256). `files`: ≤ 256. `path`: < 4096 bytes; component ≤ 255 bytes. Total bytes + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Complete contract / 完整约定](../process-emulation.md#explicit-memory-files).
 
+零长度读取的地址可以等于用户地址范围的末端。先验证原始地址范围，再检查文件位置加原始长度是否超过 `INT64_MAX`；超过时即使已到 EOF 也返回 `EINVAL`，游标保持不变。
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 配置

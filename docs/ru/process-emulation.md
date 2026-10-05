@@ -113,6 +113,8 @@ output = bytes.fromhex(report["stdout_hex"])
 
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
+Чтение нулевой длины может начинаться на границе пользовательского адресного пространства. После проверки исходного диапазона адресов сумма позиции файла и исходной длины запроса, превышающая `INT64_MAX`, приводит к `EINVAL` даже при EOF; позиция не меняется.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Профиль Windows PE64
