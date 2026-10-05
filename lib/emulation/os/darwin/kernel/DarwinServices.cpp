@@ -156,6 +156,10 @@ handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
   case ServiceKind::Read:
   case ServiceKind::Pread:
   case ServiceKind::Open:
+  case ServiceKind::OpenAt:
+  case ServiceKind::Chdir:
+  case ServiceKind::Fchdir:
+  case ServiceKind::FstatAt64:
   case ServiceKind::Close:
   case ServiceKind::Lseek:
   case ServiceKind::Dup:

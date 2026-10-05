@@ -127,7 +127,7 @@ profiles. `files` is required; each entry has a canonical absolute guest `path`
 and hexadecimal `bytes_hex`. Optional `stdin_hex` supplies a finite input stream:
 omitted input is unknown and stops on a nonzero read; an empty string is EOF.
 Neither guest paths nor standard input consult the host. Missing catalogue
-configuration stops `open`; an explicit empty catalogue returns ENOENT.
+configuration stops `open`; an explicit empty catalogue still contains root, while absent paths return ENOENT.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
@@ -135,14 +135,15 @@ configuration stops `open`; an explicit empty catalogue returns ENOENT.
 
 The additional services are `open`, `read`, `pread`, `lseek`, `close`, `dup`,
 `dup2` and `fcntl`. The `read`, `write`, `open`, `close`, `fcntl` and `pread`
-nocancel entries use the same owners. `open` supports O_RDONLY and O_CLOEXEC.
-`fcntl` supports F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD and F_GETFL.
+nocancel entries use the same owners. `open` supports O_RDONLY, O_CLOEXEC and O_DIRECTORY.
+`fcntl` supports F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL and F_GETPATH.
 Separate opens have independent cursors; duplicated descriptors share a cursor
 but have independent close-on-exec flags. `pread` never changes the cursor.
 Closing/replacing descriptors 0, 1 or 2 affects subsequent I/O, and a duplicated
 output descriptor keeps its capture sink and the shared output budget.
 
-Configuration allows at most 256 files, 16 MiB of combined path/NUL/file/input
+Configuration allows at most 256 specified file/directory paths (including
+metadata-only ancestor paths), 16 MiB of combined paths/NUL/file/input/CWD
 bytes, paths shorter than 1024 bytes and components of at most 255 bytes.
 `descriptor_limit` is an exclusive ceiling from 3 to 4096, default 256.
 JSON retains the existing 64 KiB request limit. Invalid configuration is rejected
@@ -153,13 +154,53 @@ touch the destination; invalid writable addresses return EFAULT. A partially
 writable destination stops before copying or advancing the cursor, because
 partial filesystem copyout effects are outside this model. Seek supports
 SET/CUR/END, preserving the cursor on negative-position or overflow errors.
-Relative/noncanonical paths, directory opens, writable files, legacy stat metadata,
-sparse-file seeks and other fcntl operations remain unsupported.
+Directory enumeration, writable files, legacy stat metadata, sparse-file seeks
+and other fcntl operations remain unsupported.
 Path prefixes describe implicit directories; a regular file used as an ancestor
 returns ENOTDIR. The ABI is grounded in XNU's
 [read path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c),
 [open/seek path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_syscalls.c)
 and [descriptor operations](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_descrip.c).
+
+## Directories and relative paths
+
+Optional `directories` entries contain a canonical absolute `path` and optional
+complete `metadata`. Root and ancestors are implicit; empty directories can be
+explicit. Metadata may describe root or an implicit ancestor, but never creates
+a missing path. Directory mode is `0x4000` plus permissions; its `size` is an
+explicit observation in [0, INT64_MAX]. Missing size or timestamps are not inferred.
+`working_directory` must name an existing canonical directory. Omitting it leaves
+CWD unknown; it never inherits the host directory.
+
+`openat` (463), `openat_nocancel` (464), `chdir` (12), `fchdir` (13) and
+`fstatat64` (470) share the `DarwinFiles` component walker with open and stat64.
+Relative paths use the directory FD or `AT_FDCWD=-2`. Absolute paths ignore the
+FD. Repeated separators, `.`, `..` and trailing slashes retain ancestor checks:
+`/file/..` returns ENOTDIR and `/missing/..` returns ENOENT. Failed CWD changes
+preserve the previous directory; closing, reusing or replacing its original FD
+does not change CWD. `F_GETPATH=50` copies the canonical path and NUL, including
+through duplicated descriptors, with no writes after the terminator.
+
+Directory read/pread returns EISDIR, even for zero length; a negative positioned
+offset takes EINVAL precedence. SET/CUR seek uses a shared cursor; END requires
+explicit metadata. Directory mmap returns EINVAL. `fstatat64` accepts zero,
+`AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800`, and
+`AT_FDONLY=0x400` (ignore the pathname entirely). Invalid flag bits return EINVAL;
+`AT_REALDEV=0x200` stops because real-device metadata is unmodeled. Stream path
+and directory identities remain unknown. Permission bits are observations,
+not an access-control model; directory enumeration and mutations remain unsupported.
+
+The original `directories` workload compares these services with the native
+macOS kernel and all five guest combinations; native stat records cover both
+files and directories. Intel HVF Actions remains suspended. ABI references:
+[XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c),
+[XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
+
+Directory validation (2026-10-05, Release): 467 registered Darwin cases, 227 passed, 240 skipped, zero failed; all 60/60 required ARM64 HVF cases executed. The 10 native macOS workloads, 37 public C/CLI/report tests without skips, five Python guest combinations and 66 evidence-runner tests passed. Counts overlap. Evidence: `build-hvf-arm64/darwin-directory-verified-evidence/`. Other native transports and physical iOS remain unvalidated for this increment.
+
+```json
+{"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
+```
 
 ## Private file mappings
 
@@ -200,7 +241,7 @@ are signed 32-bit; mode and link count are unsigned 16-bit; inode is unsigned
 64-bit; UID, GID, flags and generation are unsigned 32-bit. `size` must match
 `bytes_hex`, blocks fit signed 64-bit, and block size fits nonnegative signed
 32-bit. Times use signed 64-bit seconds and nanoseconds in [0, 999999999].
-Only regular-file mode bits plus permissions are admitted.
+The mode must match the catalogue kind, with optional permission bits.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -219,8 +260,8 @@ record on ARM64 and x64. Path queries share `open`'s component resolver, while
 FD queries follow descriptor duplication and closure. The regular-file rdev,
 padding and reserved fields are zero. Metadata is a fixed caller observation:
 reads do not change timestamps, and mode bits do not change catalogue access.
-Missing metadata, directory/stream status, symbolic links, legacy stat layouts
-and stat-at/extended-security variants remain unsupported. Missing paths and
+Missing metadata, stream status, symbolic links, legacy stat layouts and
+extended-security variants remain unsupported. Missing paths and
 bad descriptors precede output-pointer checks; partial output stops before any
 bytes are written. Status queries neither allocate FDs nor change cursors.
 The ABI is described by XNU's [stat records](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/stat.h).
@@ -257,7 +298,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 57 cases on ARM64, or 38 on x64.
+on each platform supported by the host ISA: 60 cases on ARM64, or 40 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -323,7 +364,7 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 
 ### Remaining environment work
 
-1. Extend the file model with directory/relative paths, bounded writable state,
+1. Extend the file model with directory enumeration, bounded writable state,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
 2. Add explicit time/system observations and required Mach/thread services,

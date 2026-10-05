@@ -500,7 +500,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
                                            ("stdin", b"\x00\xffx"),
                                            ("output-descriptors", b"ok"),
-                                           ("file-status", b"s"), ("file-mapping", b"m")):
+                                           ("file-status", b"s"), ("file-mapping", b"m"),
+                                           ("directories", b"d")):
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
                             "darwin_files": {"files": [{"path": "/data", "bytes_hex":
@@ -514,6 +515,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                                 "modification_time": {"seconds": "9223372036854775807", "nanoseconds": 999999999},
                                 "change_time": {"seconds": -3, "nanoseconds": 4},
                                 "birth_time": {"seconds": -5, "nanoseconds": 6}}}],
+                                             "directories": [{"path": "/empty"}],
+                                             "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])

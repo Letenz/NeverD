@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: adbd03b9316f8ea1f40f8be5f361cd5014048848e2ba6cffebb64faa36f86156 -->
+<!-- i18n-source: 2ad5b9e4d32165a7e7d460cc2290a5cd1bd7718c03cc6573e1fd3b5967d1d4d6 -->
 
 [← Index de la documentation](README.md)
 
@@ -55,13 +55,30 @@ Les fixtures C originales sont produites par Clang et `ld64.lld`, sans SDK Apple
 
 Les services ajoutés sont `open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl`, avec les entrées nocancel de read/write/open/close/fcntl/pread. O_RDONLY/O_CLOEXEC et F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL sont pris en charge. Chaque open a sa position ; les duplications partagent la position mais gardent leurs propres indicateurs close-on-exec. pread ne déplace pas la position. Fermer ou remplacer 0/1/2 affecte les I/O suivantes ; une sortie dupliquée conserve sa destination et son budget.
 
-Limites : 256 fichiers, 16 MiB cumulés pour chemins/NUL/fichiers/entrée, chemins de moins de 1024 octets et composants de 255 octets maximum. `descriptor_limit` est un plafond exclusif de 3–4096, défaut 256 ; JSON reste limité à 64 KiB. Les options invalides échouent avant chargement. read au-delà de INT_MAX donne EINVAL avant recherche du FD ; EOF ne touche pas la destination, une adresse invalide donne EFAULT. Un tampon partiellement inscriptible arrête avant copie ou changement de position. Les erreurs SET/CUR/END conservent la position. Chemins relatifs, ouverture de répertoires, écriture, ancien stat, seek creux et autres fcntl restent exclus. Un fichier utilisé comme ancêtre donne ENOTDIR. Le même objet est comparé au noyau macOS ; C/CLI/Python couvrent cinq combinaisons invitées, sans preuve sur appareil iOS.
+Limites : 256 fichiers, 16 MiB cumulés pour chemins/NUL/fichiers/entrée, chemins de moins de 1024 octets et composants de 255 octets maximum. `descriptor_limit` est un plafond exclusif de 3–4096, défaut 256 ; JSON reste limité à 64 KiB. Les options invalides échouent avant chargement. read au-delà de INT_MAX donne EINVAL avant recherche du FD ; EOF ne touche pas la destination, une adresse invalide donne EFAULT. Un tampon partiellement inscriptible arrête avant copie ou changement de position. Les erreurs SET/CUR/END conservent la position. Écriture, ancien stat, seek creux et autres fcntl restent exclus. Un fichier utilisé comme ancêtre donne ENOTDIR. Le même objet est comparé au noyau macOS ; C/CLI/Python couvrent cinq combinaisons invitées, sans preuve sur appareil iOS.
 
 Vérification Release du 2026-10-05 : 381 inscriptions, 177 réussites, 204 ignorées, aucun échec, et 51/51 cas ARM64 HVF obligatoires exécutés. Sept programmes macOS natifs, 35 tests publics C/CLI/rapports, cinq combinaisons Python et 66 tests du vérificateur ont également réussi. Les comptes se recoupent. Les nouveaux services n’ont pas de preuve native Intel HVF/KVM/WHP ; Intel HVF reste non validé et ses Actions suspendues. Le SDK iOS et la comparaison sur appareil manquent.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## Répertoires et chemins relatifs
+
+`directories` accepte des entrées `path` absolues canoniques, éventuellement avec `metadata` complet, y compris des répertoires vides. Racine et ancêtres sont implicites ; les métadonnées ne créent aucun chemin absent. Mode : `0x4000` plus permissions ; size : observation explicite dans [0, INT64_MAX]. `working_directory` doit désigner un répertoire existant ; son omission laisse CWD inconnu, sans héritage du hôte. Maximum : 256 chemins déclarés, ancêtres avec métadonnées inclus ; chemins/NUL/contenu/entrée/CWD totalisent 16 MiB.
+
+`openat` (463), `openat_nocancel` (464), `chdir` (12), `fchdir` (13) et `fstatat64` (470) partagent le résolveur. Les chemins relatifs utilisent un FD de répertoire ou `AT_FDCWD=-2` ; les absolus ignorent le FD. Séparateurs répétés, `.`, `..` et slash final contrôlent chaque ancêtre : `/file/..` donne ENOTDIR, `/missing/..` ENOENT. Un échec ou la fermeture, réutilisation ou substitution du FD initial conserve CWD. `F_GETPATH=50` copie chemin canonique et NUL, même après dup, sans toucher la suite.
+
+read/pread de répertoire donne EISDIR même à longueur zéro ; un offset pread négatif donne d’abord EINVAL. SET/CUR partagent le curseur, END exige size explicite ; mmap donne EINVAL. fstatat64 accepte 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800` et `AT_FDONLY=0x400` (chemin ignoré). Bits invalides : EINVAL ; `AT_REALDEV=0x200` reste exclu. Identité des flux inconnue, permissions sans modèle de contrôle d’accès ; énumération et mutations restent à réaliser. Le même `directories` compare le noyau natif et cinq invités ; stat compare fichiers et répertoires réels. Intel HVF Actions reste suspendu.
+
+[XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
+
+Validation des répertoires (2026-10-05, Release) : 467 cas enregistrés, 227 succès, 240 omissions, aucun échec ; 60/60 obligations ARM64 HVF exécutées. Succès pour 10 programmes macOS natifs, 37 tests C/CLI/rapports sans omission, cinq invités Python et 66 tests des outils. Comptes chevauchants. Preuves : `build-hvf-arm64/darwin-directory-verified-evidence/`. Autres transports natifs et iOS physique non validés.
+
+```json
+{"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
+```
+
 
 ## Mappings privés de fichiers
 
@@ -79,9 +96,9 @@ Release Darwin : 438 identités uniques, 210 succès, 228 omissions, aucun éche
 
 ## Métadonnées explicites des fichiers
 
-Une entrée peut ajouter `metadata` ; tous les champs ci-dessous sont alors obligatoires. Les chaînes décimales préservent toute la largeur ; les nombres JSON restent des entiers exacts dans ±(2^53−1). device est signé sur 32 bits, mode/link_count non signés sur 16, inode non signé sur 64, uid/gid/flags/generation non signés sur 32. size doit égaler le nombre d’octets ; blocks tient sur 64 bits signés, block_size sur 32 bits signés non négatifs. Les temps utilisent des secondes signées sur 64 bits et 0–999999999 nanosecondes. Seuls le type fichier ordinaire et les bits de permission sont admis.
+Une entrée peut ajouter `metadata` ; tous les champs ci-dessous sont alors obligatoires. Les chaînes décimales préservent toute la largeur ; les nombres JSON restent des entiers exacts dans ±(2^53−1). device est signé sur 32 bits, mode/link_count non signés sur 16, inode non signé sur 64, uid/gid/flags/generation non signés sur 32. size doit égaler le nombre d’octets ; blocks tient sur 64 bits signés, block_size sur 32 bits signés non négatifs. Les temps utilisent des secondes signées sur 64 bits et 0–999999999 nanosecondes.
 
-`stat64` (338), `fstat64` (339) et `lstat64` (340) produisent le même enregistrement LP64 de 144 octets sur ARM64/x64. Ils partagent la résolution de open, suivent dup/close, sans allouer de FD ni modifier le curseur. rdev, remplissage et réserves sont nuls. Les observations sont fixes : read ne change pas les temps et mode ne modifie pas l’accès au catalogue. Métadonnées absentes, répertoires/flux, liens symboliques, ancien stat, stat-at et sécurité étendue restent exclus. Les erreurs de chemin/FD précèdent le pointeur de sortie ; une sortie partiellement accessible est refusée avant écriture. Le test natif compare tous les octets d’un fichier réel et les offsets du SDK ; le même programme original vérifie les trois appels.
+`stat64` (338), `fstat64` (339) et `lstat64` (340) produisent le même enregistrement LP64 de 144 octets sur ARM64/x64. Ils partagent la résolution de open, suivent dup/close, sans allouer de FD ni modifier le curseur. rdev, remplissage et réserves sont nuls. Les observations sont fixes : read ne change pas les temps et mode ne modifie pas l’accès au catalogue. Métadonnées absentes, flux, liens symboliques, ancien stat, et sécurité étendue restent exclus. Les erreurs de chemin/FD précèdent le pointeur de sortie ; une sortie partiellement accessible est refusée avant écriture. Le test natif compare tous les octets d’un fichier réel et les offsets du SDK ; le même programme original vérifie les trois appels.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -101,7 +118,7 @@ Une entrée peut ajouter `metadata` ; tous les champs ci-dessous sont alors obli
 
 Après stat64 : 409 identités uniques, 193 réussites, 216 omissions, aucun échec ; les 54/54 cas ARM64 HVF obligatoires ont tourné, avec cinq combinaisons Unicorn. Comparaison SDK/enregistrement réel, huit programmes natifs, 36 cas API/rapport sans omission, cinq combinaisons Python et 66 tests des outils réussissent ; les comptes se recouvrent. Chaque cas natif utilise désormais son propre fichier de sortie, supprimant les octets résiduels après une sortie plus courte. Ces ajouts n’ont pas de preuve native Intel HVF/KVM/WHP ou iOS physique.
 
-Suite : mappings partagés et défauts de page EOF, répertoires/chemins relatifs et écritures bornées (pages EOF, durée après close, ordre des erreurs), observations explicites temps/système, services Mach/threads requis, puis dépendances Mach-O, rebases/binds, initialiseurs et TLS. Objective-C/Swift et Foundation/UIKit nécessitent des programmes natifs de référence. iOS physique requiert SDK et appareil ; Intel HVF reste non validé et ses Actions suspendues.
+Suite : mappings partagés et défauts de page EOF, énumération des répertoires et écritures bornées (pages EOF, durée après close, ordre des erreurs), observations explicites temps/système, services Mach/threads requis, puis dépendances Mach-O, rebases/binds, initialiseurs et TLS. Objective-C/Swift et Foundation/UIKit nécessitent des programmes natifs de référence. iOS physique requiert SDK et appareil ; Intel HVF reste non validé et ses Actions suspendues.
 
 
 
@@ -112,7 +129,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La validation indépendante exige chacun des 57 cas natifs ARM64 ou 38 cas x64, dont `LC_MAIN` et `LC_UNIXTHREAD` sur chaque plateforme. Les cas obligatoires absents/ignorés ou un `ld64.lld` manquant font échouer la validation.
+La validation indépendante exige chacun des 60 cas natifs ARM64 ou 40 cas x64, dont `LC_MAIN` et `LC_UNIXTHREAD` sur chaque plateforme. Les cas obligatoires absents/ignorés ou un `ld64.lld` manquant font échouer la validation.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \

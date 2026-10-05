@@ -194,8 +194,8 @@ TEST_P(DarwinFileTest, PathErrorsAndResourceExhaustionDoNotLeakDescriptors) {
   EXPECT_EQ(ok(ServiceKind::Open, {Base}), 3u);
   EXPECT_EQ(ok(ServiceKind::Close, {3}), 0u);
   path("/nested");
-  EXPECT_FALSE(invoke(ServiceKind::Open, {Base}));
-  EXPECT_EQ(Result.Diagnostic, diagnostic::FileDirectory);
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), 3u);
+  EXPECT_EQ(ok(ServiceKind::Close, {3}), 0u);
   for (unsigned I = 0; I != 4; ++I)
     error(ServiceKind::Open, {0}, 14);
   path("");
@@ -223,7 +223,7 @@ TEST_P(DarwinFileTest, PathErrorsAndResourceExhaustionDoNotLeakDescriptors) {
 }
 
 TEST_P(DarwinFileTest, UnsupportedOperationsDoNotPretendToBeMissingFiles) {
-  for (auto Text : {"relative", "/./data", "/data/../data", "//data", "/"}) {
+  for (auto Text : {"relative", "./data", "../data"}) {
     path(Text);
     EXPECT_FALSE(invoke(ServiceKind::Open, {Base}));
     EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
@@ -316,7 +316,7 @@ TEST_P(DarwinFileTest, UnknownMetadataAndDirectoriesAreNotFabricated) {
   }
   path("/");
   EXPECT_FALSE(invoke(ServiceKind::Stat64, {Base, Base + Page}));
-  EXPECT_EQ(Result.Diagnostic, diagnostic::FileDirectory);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMetadata);
   Options.reset();
   Files = std::make_unique<DarwinFiles>(*Space, Options);
   EXPECT_FALSE(invoke(ServiceKind::Lstat64, {Base, Base + Page}));
@@ -365,6 +365,208 @@ TEST(DarwinFileOptions,
   }
   M = darwin_test::metadata();
   ASSERT_FALSE(bool(validateFileOptions(O)));
+}
+
+TEST(DarwinFileOptions, DirectoryAdmissionIncludesImplicitPathsAndCWD) {
+  DarwinFileOptions O;
+  O.Files["/tree/data"] = {};
+  O.Directories = {"/tree", "/tree/empty/deep"};
+  O.WorkingDirectory = "/tree/empty";
+  auto M = darwin_test::metadata(128);
+  M.Mode = 0040755;
+  O.Metadata["/"] = M;
+  O.Metadata["/tree/empty"] = M;
+  ASSERT_FALSE(bool(validateFileOptions(O)));
+  for (auto Bad : {"", "relative", "/tree/data", "/absent", "/tree/../tree"}) {
+    O.WorkingDirectory = Bad;
+    auto E = validateFileOptions(O);
+    EXPECT_TRUE(bool(E)) << Bad;
+    llvm::consumeError(std::move(E));
+  }
+  O.WorkingDirectory = "/";
+  for (auto Bad : {"/tree/data", "/tree/data/child", "/tree/", "relative"}) {
+    O.Directories.insert(Bad);
+    EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+              diagnostic::FileOptionPath);
+    O.Directories.erase(Bad);
+  }
+  O.Metadata["/"].Size = uint64_t(INT64_MAX) + 1;
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileMetadataOption);
+  O.Metadata["/"] = darwin_test::metadata();
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileMetadataOption);
+  O = {};
+  for (unsigned I = 0; I != 255; ++I)
+    O.Directories.insert("/dir" + std::to_string(I));
+  O.Files["/data"] = {};
+  ASSERT_FALSE(bool(validateFileOptions(O)));
+  O.Directories.insert("/extra");
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileOptionsLimit);
+  O = {};
+  O.Files["/data"] = std::vector<uint8_t>(darwin_file_limits::Bytes - 8);
+  O.WorkingDirectory = "/"; // Six path bytes plus two CWD bytes fit exactly.
+  ASSERT_FALSE(bool(validateFileOptions(O)));
+  O.Directories.insert("/");
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileOptionsLimit);
+}
+
+TEST_P(DarwinFileTest, RelativeLookupWalksAncestorsAndPreservesErrorOrder) {
+  Options->Directories.insert("/empty");
+  path("/empty");
+  auto Dir = ok(ServiceKind::Open, {Base, value::OpenDirectory});
+  auto Dup = ok(ServiceKind::Dup, {Dir});
+  path("/data");
+  auto File = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::Open, {Base, value::OpenDirectory}, 20);
+  for (auto Text : {"/data/.", "/data/..", "/data/", "/data//child"}) {
+    path(Text);
+    error(ServiceKind::Open, {Base}, 20);
+  }
+  path("/absent/../data");
+  error(ServiceKind::Open, {Base}, 2);
+  for (auto Text : {"//./data", "/empty/../../data", "/../data"}) {
+    path(Text);
+    auto FD = ok(ServiceKind::OpenAt, {999, Base});
+    EXPECT_EQ(ok(ServiceKind::Read, {FD, Base + Page, 1}), 1u);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'a');
+    ok(ServiceKind::Close, {FD});
+  }
+  path("../data");
+  auto FD = ok(ServiceKind::OpenAt, {Dup, Base});
+  ok(ServiceKind::Close, {FD});
+  error(ServiceKind::OpenAt, {999, Base}, 9);
+  error(ServiceKind::OpenAt, {File, Base}, 20);
+  EXPECT_FALSE(invoke(ServiceKind::OpenAt, {0, Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileDirectoryKind);
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileWorkingDirectory);
+  path("");
+  error(ServiceKind::OpenAt, {999, Base}, 9);
+  error(ServiceKind::OpenAt, {File, Base}, 20);
+  error(ServiceKind::OpenAt, {Dir, Base}, 2);
+  error(ServiceKind::Open, {Base}, 2);
+  error(ServiceKind::OpenAt, {999, 0}, 14);
+  Options->DescriptorLimit = 6;
+  error(ServiceKind::OpenAt, {999, 0}, 24);
+}
+
+TEST_P(DarwinFileTest,
+       WorkingDirectorySurvivesFailuresClosureAndFDReplacement) {
+  Options->Files["/tree/data"] = {'t'};
+  Options->Directories.insert("/empty");
+  Options->WorkingDirectory = "/tree";
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("data");
+  auto File = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Read, {File, Base + Page, 1}), 1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 't');
+  error(ServiceKind::Fchdir, {File}, 20);
+  error(ServiceKind::Fchdir, {999}, 9);
+  path("/missing");
+  error(ServiceKind::Chdir, {Base}, 2);
+  path("/data");
+  error(ServiceKind::Chdir, {Base}, 20);
+  path(".");
+  auto Dir = ok(ServiceKind::Open, {Base});
+  ok(ServiceKind::Fchdir, {Dir});
+  ok(ServiceKind::Close, {Dir});
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), Dir);
+  path("data");
+  auto StillTree = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Read, {StillTree, Base + Page, 1}), 1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 't');
+  path("/empty");
+  auto Empty = ok(ServiceKind::Open, {Base});
+  ok(ServiceKind::Fchdir, {Empty});
+  ok(ServiceKind::Dup2, {File, Empty});
+  path("data");
+  error(ServiceKind::Open, {Base}, 2);
+  path("..");
+  ok(ServiceKind::Chdir, {Base});
+  path("data");
+  auto RootFile = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Read, {RootFile, Base + Page, 1}), 1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'a');
+}
+
+TEST_P(DarwinFileTest, DirectoryMetadataReadAndSeekUseExplicitObservations) {
+  Options->Directories.insert("/empty");
+  auto M = darwin_test::metadata(128);
+  M.Mode = 0040700;
+  Options->Metadata["/empty"] = M;
+  path("/empty");
+  auto Dir = ok(ServiceKind::Open, {Base, value::OpenDirectory});
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {Dir, value::GetFileFlags}), 0u);
+  for (auto Kind : {ServiceKind::Read, ServiceKind::Pread})
+    for (unsigned Count : {0, 1})
+      error(Kind, {Dir, 0, Count}, 21);
+  error(ServiceKind::Pread, {Dir, 0, 0, UINT64_MAX}, 22);
+  EXPECT_EQ(std::get<uint32_t>(Files->mappingSource(Dir)), 22u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dir, 7, 0}), 7u);
+  auto Dup = ok(ServiceKind::Dup, {Dir});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dup, 0, 1}), 7u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dir, 0, 2}), 128u);
+  error(ServiceKind::Lseek, {Dir, UINT64_MAX, 0}, 22);
+  error(ServiceKind::Lseek, {Dir, uint64_t(-129), 1}, 22);
+  error(ServiceKind::Lseek, {Dir, 0, 99}, 22);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dir, INT64_MAX, 0}), uint64_t(INT64_MAX));
+  error(ServiceKind::Lseek, {Dir, 1, 1}, 84);
+  for (unsigned Whence : {3, 4})
+    EXPECT_FALSE(invoke(ServiceKind::Lseek, {Dir, 0, Whence}));
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dir, 0, 1}), uint64_t(INT64_MAX));
+  EXPECT_EQ(ok(ServiceKind::FstatAt64, {Dir, 0, Base + Page, value::AtFDOnly}),
+            0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page + 4, 2)), 0040700u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page + 96, 8)), 128u);
+  path("/");
+  auto Root = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 7, 0}), 7u);
+  EXPECT_FALSE(invoke(ServiceKind::Lseek, {Root, 0, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMetadata);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), 7u);
+}
+
+TEST_P(DarwinFileTest,
+       FstatAtSharesPathOwnerAndGetPathCopiesCanonicalIdentity) {
+  Options->Metadata["/data"] = darwin_test::metadata(6);
+  Options->Directories.insert("/empty");
+  path("/empty");
+  auto Dir = ok(ServiceKind::Open, {Base});
+  path("..//./data");
+  auto File = ok(ServiceKind::OpenAt, {Dir, Base});
+  auto Dup = ok(ServiceKind::Dup, {File});
+  ok(ServiceKind::Close, {File});
+  const auto Buffer = Base + Page;
+  for (auto Flags : {0u, 0x20u, 0x800u, 0x820u}) {
+    EXPECT_EQ(ok(ServiceKind::FstatAt64, {Dir, Base, Buffer, Flags}), 0u);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer + 96, 8)), 6u);
+  }
+  EXPECT_EQ(ok(ServiceKind::FstatAt64, {Dup, 0, Buffer, 0x400}), 0u);
+  error(ServiceKind::FstatAt64, {999, 0, 0, 1}, 22);
+  error(ServiceKind::FstatAt64, {999, 0, 0}, 14);
+  error(ServiceKind::FstatAt64, {999, 0, 0, 0x400}, 9);
+  EXPECT_FALSE(invoke(ServiceKind::FstatAt64, {Dir, Base, Buffer, 0x200}));
+  path("");
+  error(ServiceKind::FstatAt64, {999, Base, 0}, 9);
+  error(ServiceKind::FstatAt64, {Dup, Base, 0}, 20);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::FstatAt64, {999, Base, Buffer}), 0u);
+  ASSERT_FALSE(bool(Space->writeInteger(Buffer, UINT64_MAX, 8)));
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {Dup, 50, Buffer}), 0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer, 8)), 0xffff00617461642fu);
+  error(ServiceKind::Fcntl, {Dup, 50, 0}, 14);
+  error(ServiceKind::Fcntl, {999, 50, 0}, 9);
+  const auto End = Base + Page * 2 - 2;
+  ASSERT_FALSE(bool(Space->writeInteger(End, 0xaaaa, 2)));
+  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {Dup, 50, End}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FilePartialPath);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(End, 2)), 0xaaaau);
+  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {0, 50, Buffer}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FilePathIdentity);
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));

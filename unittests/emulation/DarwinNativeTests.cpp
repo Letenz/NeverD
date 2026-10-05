@@ -143,36 +143,47 @@ TEST(DarwinNative, Stat64WireRecordMatchesHostSDKAndFilesystemObservation) {
     File << "0123456789";
     ASSERT_TRUE(File.good());
   }
-  ASSERT_EQ(::stat(Input.c_str(), &Native), 0);
-  std::optional<DarwinFileOptions> Options(std::in_place);
-  Options->Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
-  auto &M = Options->Metadata["/data"];
+  for (bool Directory : {false, true}) {
+    SCOPED_TRACE(Directory);
+    Native = {};
+    ASSERT_EQ(::stat(Directory ? Root.c_str() : Input.c_str(), &Native), 0);
+    std::optional<DarwinFileOptions> Options(std::in_place);
+    if (Directory)
+      Options->Directories.insert("/data");
+    else
+      Options->Files["/data"] = {'0', '1', '2', '3', '4',
+                                 '5', '6', '7', '8', '9'};
+    auto &M = Options->Metadata["/data"];
 #define NEVERD_DARWIN_FILE_STATUS(Member, Host, Offset, Width)                 \
   M.Member = Native.Host;
 #include "os/darwin/kernel/DarwinFileStatus.def"
 #undef NEVERD_DARWIN_FILE_STATUS
-  ASSERT_FALSE(bool(validateFileOptions(*Options)));
-  auto Physical = PhysicalMemory::create(16384);
-  ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
-  auto Space = AddressSpace::create(*Physical, 16384);
-  ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
-  const uint64_t Base = 0x100000;
-  ASSERT_FALSE(bool((*Space)->map(Base, 4096, Read | Write | UserAccessible)));
-  const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
-  ASSERT_FALSE(bool((*Space)->write(Base, Path)));
-  DarwinFiles Files(**Space, Options);
-  ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
-                       ExecutionBackendKind::Unicorn, "native ABI comparison"};
-  auto Returned = Files.handle(
-      ServiceKind::Stat64, {0, 338, {Base, Base + 256}, std::nullopt}, Result);
-  ASSERT_TRUE(bool(Returned)) << llvm::toString(Returned.takeError());
-  ASSERT_TRUE(Returned->has_value()) << Result.Diagnostic;
-  ASSERT_FALSE((**Returned).Error);
-  std::array<uint8_t, 144> Bytes;
-  ASSERT_FALSE(bool((*Space)->read(Base + 256, Bytes)));
-  EXPECT_EQ(llvm::ArrayRef<uint8_t>(Bytes),
-            llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(&Native),
-                                    sizeof(Native)));
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    auto Physical = PhysicalMemory::create(16384);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, 16384);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    const uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool((*Space)->map(Base, 4096, Read | Write | UserAccessible)));
+    const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
+    ASSERT_FALSE(bool((*Space)->write(Base, Path)));
+    DarwinFiles Files(**Space, Options);
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "native ABI comparison"};
+    auto Returned =
+        Files.handle(ServiceKind::Stat64,
+                     {0, 338, {Base, Base + 256}, std::nullopt}, Result);
+    ASSERT_TRUE(bool(Returned)) << llvm::toString(Returned.takeError());
+    ASSERT_TRUE(Returned->has_value()) << Result.Diagnostic;
+    ASSERT_FALSE((**Returned).Error);
+    std::array<uint8_t, 144> Bytes;
+    ASSERT_FALSE(bool((*Space)->read(Base + 256, Bytes)));
+    EXPECT_EQ(llvm::ArrayRef<uint8_t>(Bytes),
+              llvm::ArrayRef<uint8_t>(
+                  reinterpret_cast<const uint8_t *>(&Native), sizeof(Native)));
+  }
 #endif
 }
 TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
@@ -188,6 +199,7 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
       llvm::sys::fs::createUniqueDirectory("neverd-darwin-native", Temporary));
   const std::filesystem::path Root(Temporary.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  ASSERT_TRUE(std::filesystem::create_directory(Root / "empty"));
   const std::string Program = NEVERD_DARWIN_NATIVE_ORACLE;
   const auto Input = (Root / "data").string();
   {

@@ -55,6 +55,88 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+/* Relative lookup and directory lifetime are compared with the native kernel.
+ * The host harness supplies an isolated parent containing data and empty/. */
+static int directory_calls(const char *path) {
+  unsigned error = 0;
+  int check = 180;
+#define DIRECTORY_EXPECT(expression)                                           \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024], canonical[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  DIRECTORY_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  const char *name = path + last + 1;
+  DIRECTORY_EXPECT(equal(name, "data"));
+  u64 dir = call(463, (u64)-1, (u64)parent, 0x100000, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error);
+  DIRECTORY_EXPECT(call(92, dir, 3, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(92, dir, 50, (u64)canonical, 0, 0, 0, &error) == 0 &&
+                   !error && canonical[0] == '/');
+  DIRECTORY_EXPECT(call(12, (u64)canonical, 0, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 other = call(398, (u64) "empty/../.", 0x100000, 0, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error);
+  DIRECTORY_EXPECT(call(3, dir, 0, 0, 0, 0, 0, &error) == 21 && error);
+  DIRECTORY_EXPECT(call(153, dir, 0, 1, 0, 0, 0, &error) == 21 && error);
+  DIRECTORY_EXPECT(call(153, dir, 0, 0, (u64)-1, 0, 0, &error) == 22 && error);
+  DIRECTORY_EXPECT(call(199, dir, 7, 0, 0, 0, 0, &error) == 7 && !error);
+  DIRECTORY_EXPECT(call(199, dir, (u64)-8, 1, 0, 0, 0, &error) == 22 && error);
+  DIRECTORY_EXPECT(call(199, dir, 0, 1, 0, 0, 0, &error) == 7 && !error);
+  DIRECTORY_EXPECT(call(197, 0, PAGE, 1, 2, dir, 0, &error) == 22 && error);
+  DIRECTORY_EXPECT(call(463, (u64)-1, (u64) "", 0, 0, 0, 0, &error) == 9 &&
+                   error);
+  DIRECTORY_EXPECT(call(463, (u64)-1, 0, 0, 0, 0, 0, &error) == 14 && error);
+  DIRECTORY_EXPECT(call(5, (u64) "data/../data", 0, 0, 0, 0, 0, &error) == 20 &&
+                   error);
+  DIRECTORY_EXPECT(
+      call(5, (u64) "absent/../data", 0, 0, 0, 0, 0, &error) == 2 && error);
+  u64 file = call(464, other, (u64) "empty/../data", 0, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error);
+  DIRECTORY_EXPECT(call(463, file, (u64) "", 0, 0, 0, 0, &error) == 20 &&
+                   error);
+  DIRECTORY_EXPECT(call(13, file, 0, 0, 0, 0, 0, &error) == 20 && error);
+  DIRECTORY_EXPECT(call(12, (u64) "absent", 0, 0, 0, 0, 0, &error) == 2 &&
+                   error);
+  unsigned char a[144], b[144];
+  DIRECTORY_EXPECT(
+      call(470, other, (u64) "./data", (u64)a, 0x20, 0, 0, &error) == 0 &&
+      !error);
+  DIRECTORY_EXPECT(call(470, file, 0, (u64)b, 0x400, 0, 0, &error) == 0 &&
+                   !error);
+  for (unsigned i = 0; i != 144; ++i)
+    if (a[i] != b[i])
+      return 250;
+  DIRECTORY_EXPECT(call(470, (u64)-1, 0, 0, 1, 0, 0, &error) == 22 && error);
+  DIRECTORY_EXPECT(call(13, other, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(6, other, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(90, file, dir, 0, 0, 0, 0, &error) == dir && !error);
+  u64 fresh = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error);
+  unsigned char byte = 0;
+  DIRECTORY_EXPECT(call(3, fresh, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+                   !error && byte == '0');
+  DIRECTORY_EXPECT(call(92, file, 50, (u64)canonical, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error);
+  DIRECTORY_EXPECT(call(92, copy, 50, (u64)parent, 0, 0, 0, &error) == 0 &&
+                   !error);
+  DIRECTORY_EXPECT(equal(canonical, parent));
+  DIRECTORY_EXPECT(call(4, 1, (u64) "d", 1, 0, 0, 0, &error) == 1 && !error);
+#undef DIRECTORY_EXPECT
+  return 37;
+}
 /* The same original raw-call program runs on native macOS and every guest
  * profile. The input is a read-only ten-byte regular file. */
 static int file_mapping(const char *path) {
@@ -321,6 +403,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "directories"))
+    return argc < 3 ? 251 : directory_calls(argv[2]);
   if (equal(argv[1], "file-mapping"))
     return argc < 3 ? 181 : file_mapping(argv[2]);
   if (equal(argv[1], "file-status"))

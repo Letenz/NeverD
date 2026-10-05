@@ -408,13 +408,14 @@ TEST_F(ProcessPublic,
     for (const auto &[Mode, Expected] :
          {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
           std::pair{"stdin", "00ff78"}, std::pair{"output-descriptors", "6f6b"},
-          std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"}}) {
+          std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"},
+          std::pair{"directories", "64"}}) {
       SCOPED_TRACE(Mode);
       const std::string Options =
           std::string(
               R"({"backend":"unicorn","darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)") +
           emulation::darwin_test::MetadataJSON +
-          R"(}],"stdin_hex":"00ff78","descriptor_limit":32},"arguments":["guest",")" +
+          R"(}],"directories":[{"path":"/empty"}],"working_directory":"/empty","stdin_hex":"00ff78","descriptor_limit":32},"arguments":["guest",")" +
           Mode + R"(","/data"]})";
       auto Text = takeString(neverd_emulate_process_json(
           Session, Path.c_str(), Profile, Options.c_str()));

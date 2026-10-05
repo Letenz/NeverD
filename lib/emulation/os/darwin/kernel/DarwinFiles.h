@@ -29,12 +29,13 @@ public:
   MappingSource mappingSource(uint32_t FD) const;
 
 private:
-  enum class Kind { Input, Output, Error, File };
+  enum class Kind { Input, Output, Error, File, Directory };
   struct Description {
     Kind Type;
     llvm::ArrayRef<uint8_t> Bytes;
     uint64_t Offset = 0;
     const DarwinFileMetadata *Metadata = nullptr;
+    std::string Path;
   };
   struct Descriptor {
     std::shared_ptr<Description> Open;
@@ -45,17 +46,21 @@ private:
   GuestMemory &Memory;
   const std::optional<DarwinFileOptions> &Options;
   std::map<uint32_t, Descriptor> Descriptors;
+  std::optional<std::string> CurrentDirectory;
 
   uint32_t limit() const;
   uint32_t freeDescriptor(uint32_t Minimum = 0) const;
   llvm::Expected<Pathname> readPath(uint64_t Address);
-  llvm::Expected<Lookup> resolvePath(uint64_t Address);
-  llvm::Expected<std::optional<ServiceResult>>
-  open(uint64_t Address, uint32_t Flags, ProcessResult &Result);
+  llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD);
+  llvm::Expected<std::optional<ServiceResult>> open(uint64_t Address,
+                                                    uint32_t Flags,
+                                                    uint32_t DirectoryFD,
+                                                    ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
-  statusPath(uint64_t Path, uint64_t Address, ProcessResult &Result);
+  statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
+             ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
           const char *PartialDiagnostic, ProcessResult &Result);

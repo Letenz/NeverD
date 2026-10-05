@@ -105,6 +105,33 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
       if (!Data)
         return Data.takeError();
       Out.StandardInput = std::move(*Data);
+    } else if (Name == field::WorkingDirectory) {
+      auto Path = V.getAsString();
+      if (!Path || Path->size() >= Remaining)
+        return invalid(Name);
+      Remaining -= Path->size() + 1;
+      Out.WorkingDirectory = Path->str();
+    } else if (Name == field::Directories) {
+      const auto *Directories = V.getAsArray();
+      if (!Directories || Directories->size() > darwin_file_limits::Files)
+        return invalid(Name);
+      for (const auto &Directory : *Directories) {
+        const auto *D = Directory.getAsObject();
+        if (!D || (D->size() != 1 && D->size() != 2) ||
+            (D->size() == 2 && !D->get(field::FileMetadata)))
+          return invalid(Name);
+        auto Path = D->getString(field::Path);
+        if (!Path || Path->size() >= Remaining ||
+            !Out.Directories.emplace(Path->str()).second)
+          return invalid(field::Path);
+        Remaining -= Path->size() + 1;
+        if (const auto *M = D->get(field::FileMetadata)) {
+          auto Parsed = metadata(*M);
+          if (!Parsed)
+            return Parsed.takeError();
+          Out.Metadata.emplace(Path->str(), std::move(*Parsed));
+        }
+      }
     } else if (Name == field::Files) {
       const auto *Files = V.getAsArray();
       if (!Files || Files->size() > darwin_file_limits::Files)

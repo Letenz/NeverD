@@ -48,6 +48,7 @@ def execute_cases(program: Path, cases: list[tuple[str, int, bytes]]) -> list[di
     with tempfile.TemporaryDirectory(prefix="neverd-darwin-files-") as directory:
         input_file = Path(directory) / "data"
         input_file.write_bytes(b"0123456789")
+        (Path(directory) / "empty").mkdir()
         return _execute_cases(program, cases, input_file)
 
 

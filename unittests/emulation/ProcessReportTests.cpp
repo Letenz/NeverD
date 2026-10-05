@@ -111,6 +111,42 @@ TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
   ASSERT_TRUE(EOFInput->DarwinFiles->StandardInput);
   EXPECT_TRUE(EOFInput->DarwinFiles->StandardInput->empty());
 }
+TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
+  auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/empty/deep"}],"working_directory":"/empty"}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  EXPECT_EQ(O->DarwinFiles->WorkingDirectory, "/empty");
+  EXPECT_EQ(O->DarwinFiles->Directories,
+            (std::set<std::string>{"/empty/deep"}));
+  auto M = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  (*M.getAsObject())["mode"] = 0040755;
+  (*M.getAsObject())["size"] = "9223372036854775807";
+  auto Directory = processOptionsFromJSON(
+      R"({"darwin_files":{"files":[],"directories":[{"path":"/","metadata":)" +
+      llvm::formatv("{0}", M).str() + R"(}],"working_directory":"/"}})");
+  ASSERT_TRUE(bool(Directory)) << llvm::toString(Directory.takeError());
+  EXPECT_EQ(Directory->DarwinFiles->Metadata.at("/").Size, uint64_t(INT64_MAX));
+  for (
+      auto Bad :
+      {R"({"files":[],"directories":null})",
+       R"({"files":[],"directories":["/empty"]})",
+       R"({"files":[],"directories":[{"path":"/empty","extra":1}]})",
+       R"({"files":[],"directories":[{"path":"/empty"},{"path":"/empty"}]})",
+       R"({"files":[],"directories":[{"path":"/empty/"}]})",
+       R"({"files":[{"path":"/a","bytes_hex":""}],"directories":[{"path":"/a"}]})",
+       R"({"files":[{"path":"/a","bytes_hex":""}],"directories":[{"path":"/a/b"}]})",
+       R"({"files":[],"working_directory":null})",
+       R"({"files":[],"working_directory":""})",
+       R"({"files":[],"working_directory":"relative"})",
+       R"({"files":[],"working_directory":"/missing"})"}) {
+    SCOPED_TRACE(Bad);
+    auto Parsed =
+        processOptionsFromJSON(std::string("{\"darwin_files\":") + Bad + '}');
+    EXPECT_FALSE(bool(Parsed));
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
 TEST(ProcessReport, MalformedDarwinFilesFailBeforeExecution) {
   for (
       const char *Bad :

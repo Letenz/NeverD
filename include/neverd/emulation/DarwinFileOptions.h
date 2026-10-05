@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -27,7 +28,8 @@ struct DarwinFileTime {
   int64_t Nanoseconds = 0;
 };
 
-/// Fixed stat64 observations for a regular file. Size must match its bytes.
+/// Fixed stat64 observations. Regular-file Size must match its bytes; directory
+/// Size is an explicit nonnegative observation, not an entry count.
 /// These observations do not grant or revoke catalogue access, and reads do
 /// not advance timestamps. Unknown metadata is not synthesized from the host.
 struct DarwinFileMetadata {
@@ -57,8 +59,13 @@ struct DarwinFileOptions {
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.
   uint32_t DescriptorLimit = darwin_file_limits::DefaultDescriptors;
-  /// Optional metadata, keyed only by existing Files paths.
+  /// Optional metadata for existing files or directories, including ancestors.
   std::map<std::string, DarwinFileMetadata> Metadata;
+  /// Explicit directories, including empty ones; root and ancestors are
+  /// implicit.
+  std::set<std::string> Directories;
+  /// Absent means unknown, not the host CWD. Must name an existing directory.
+  std::optional<std::string> WorkingDirectory;
 };
 } // namespace neverd::emulation
 #endif

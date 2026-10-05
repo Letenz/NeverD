@@ -16,7 +16,9 @@ namespace neverd::emulation::darwin_model {
 using namespace value;
 namespace {
 namespace limits = darwin_file_limits;
-bool canonicalPath(llvm::StringRef Path) {
+bool canonicalPath(llvm::StringRef Path, bool AllowRoot = false) {
+  if (AllowRoot && Path == "/")
+    return true;
   if (!Path.consume_front("/") || Path.empty() || Path.contains('\0'))
     return false;
   llvm::SmallVector<llvm::StringRef> Parts;
@@ -24,6 +26,22 @@ bool canonicalPath(llvm::StringRef Path) {
   return llvm::all_of(Parts, [](llvm::StringRef Part) {
     return !Part.empty() && Part != "." && Part != "..";
   });
+}
+enum class PathKind { Missing, File, Directory };
+PathKind pathKind(const DarwinFileOptions &Options, const std::string &Path) {
+  if (Options.Files.contains(Path))
+    return PathKind::File;
+  if (Path == "/" || Options.Directories.contains(Path))
+    return PathKind::Directory;
+  const auto Prefix = Path + '/';
+  auto File = Options.Files.lower_bound(Prefix);
+  auto Directory = Options.Directories.lower_bound(Prefix);
+  if ((File != Options.Files.end() &&
+       llvm::StringRef(File->first).starts_with(Prefix)) ||
+      (Directory != Options.Directories.end() &&
+       llvm::StringRef(*Directory).starts_with(Prefix)))
+    return PathKind::Directory;
+  return PathKind::Missing;
 }
 std::optional<ServiceResult> returned(uint64_t Value, bool Error = false) {
   return ServiceResult{Value, Error};
@@ -37,49 +55,74 @@ std::optional<ServiceResult> unsupported(ProcessResult &Result,
 } // namespace
 
 llvm::Error validateFileOptions(const DarwinFileOptions &Options) {
+  uint64_t Entries = Options.Files.size() + Options.Directories.size();
   if (Options.DescriptorLimit < 3 ||
-      Options.DescriptorLimit > limits::Descriptors ||
-      Options.Files.size() > limits::Files)
+      Options.DescriptorLimit > limits::Descriptors || Entries > limits::Files)
     return failure(diagnostic::FileOptionsLimit);
   uint64_t Total = Options.StandardInput ? Options.StandardInput->size() : 0;
   if (Total > limits::Bytes)
     return failure(diagnostic::FileOptionsLimit);
-  for (const auto &[Path, Bytes] : Options.Files) {
-    if (Path.size() >= limits::Path || !canonicalPath(Path))
+  auto PathInput = [&](const std::string &Path, bool Directory,
+                       uint64_t Bytes = 0) -> llvm::Error {
+    if (Path.size() >= limits::Path || !canonicalPath(Path, Directory))
       return failure(diagnostic::FileOptionPath);
     llvm::SmallVector<llvm::StringRef> Parts;
     llvm::StringRef(Path).split(Parts, '/');
     if (llvm::any_of(Parts,
                      [](llvm::StringRef P) { return P.size() > limits::Name; }))
       return failure(diagnostic::FileOptionPath);
+    if (Directory && Options.Files.contains(Path))
+      return failure(diagnostic::FileOptionPath);
     for (size_t I = Path.find('/', 1); I != std::string::npos;
          I = Path.find('/', I + 1))
       if (Options.Files.contains(Path.substr(0, I)))
         return failure(diagnostic::FileOptionPath);
     const uint64_t Cost = Path.size() + 1;
-    if (Cost > limits::Bytes - Total ||
-        Bytes.size() > limits::Bytes - Total - Cost)
+    if (Cost > limits::Bytes - Total || Bytes > limits::Bytes - Total - Cost)
       return failure(diagnostic::FileOptionsLimit);
-    Total += Cost + Bytes.size();
-  }
+    Total += Cost + Bytes;
+    return llvm::Error::success();
+  };
+  for (const auto &[Path, Bytes] : Options.Files)
+    if (auto E = PathInput(Path, false, Bytes.size()))
+      return E;
+  for (const auto &Path : Options.Directories)
+    if (auto E = PathInput(Path, true))
+      return E;
   for (const auto &[Path, M] : Options.Metadata) {
-    auto File = Options.Files.find(Path);
-    if (File == Options.Files.end())
+    const auto Kind = pathKind(Options, Path);
+    if (Kind == PathKind::Missing)
       return failure(diagnostic::FileMetadataPath);
-    if ((M.Mode & ~FilePermissionMask) != FileRegularMode ||
-        M.Size != File->second.size() || M.Blocks > INT64_MAX ||
-        M.BlockSize > INT32_MAX)
+    if (Kind == PathKind::Directory && !Options.Directories.contains(Path)) {
+      if (++Entries > limits::Files)
+        return failure(diagnostic::FileOptionsLimit);
+      if (auto E = PathInput(Path, true))
+        return E;
+    }
+    const auto Mode =
+        Kind == PathKind::File ? FileRegularMode : FileDirectoryMode;
+    if ((M.Mode & ~FilePermissionMask) != Mode || M.Size > INT64_MAX ||
+        (Kind == PathKind::File && M.Size != Options.Files.at(Path).size()) ||
+        M.Blocks > INT64_MAX || M.BlockSize > INT32_MAX)
       return failure(diagnostic::FileMetadataOption);
     for (auto T : {M.AccessTime, M.ModificationTime, M.ChangeTime, M.BirthTime})
       if (T.Nanoseconds < 0 || T.Nanoseconds >= 1000000000)
         return failure(diagnostic::FileMetadataOption);
+  }
+  if (Options.WorkingDirectory) {
+    const auto &Path = *Options.WorkingDirectory;
+    if (pathKind(Options, Path) != PathKind::Directory)
+      return failure(diagnostic::FileWorkingDirectoryOption);
+    if (auto E = PathInput(Path, true))
+      return E;
   }
   return llvm::Error::success();
 }
 
 DarwinFiles::DarwinFiles(GuestMemory &Memory,
                          const std::optional<DarwinFileOptions> &Options)
-    : Memory(Memory), Options(Options) {
+    : Memory(Memory), Options(Options),
+      CurrentDirectory(Options ? Options->WorkingDirectory : std::nullopt) {
   const llvm::ArrayRef<uint8_t> Input =
       Options && Options->StandardInput
           ? llvm::ArrayRef<uint8_t>(*Options->StandardInput)
@@ -124,37 +167,41 @@ llvm::Expected<DarwinFiles::Pathname> DarwinFiles::readPath(uint64_t Address) {
     if (!Byte)
       return Byte.takeError();
     if (!*Byte)
-      return Path.empty() ? Pathname(uint32_t(NoEntry)) : Pathname(Path);
+      return Path;
     Path.push_back(*Byte);
   }
   return uint32_t(NameTooLong);
 }
 
 llvm::Expected<std::optional<ServiceResult>>
-DarwinFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
+DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
+                  ProcessResult &Result) {
   if (!Options)
     return unsupported(Result, diagnostic::FileInputs);
-  if (Flags & ~uint32_t(OpenCloseOnExec))
+  if (Flags & ~uint32_t(OpenCloseOnExec | OpenDirectory))
     return unsupported(Result, diagnostic::FileOpenFlags);
   // XNU reserves the descriptor before resolving the pathname. A failed
   // open does not retain that reservation.
   const uint32_t FD = freeDescriptor();
   if (FD == limit())
     return returned(TooManyFiles, true);
-  auto Resolved = resolvePath(Address);
+  auto Resolved = resolvePath(Address, DirectoryFD);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
     return returned(*Error, true);
   if (auto *Reason = std::get_if<const char *>(&*Resolved))
     return unsupported(Result, *Reason);
-  Descriptors.emplace(FD, Descriptor{std::make_shared<Description>(
-                                         std::get<Description>(*Resolved)),
+  const auto &File = std::get<Description>(*Resolved);
+  if ((Flags & OpenDirectory) && File.Type != Kind::Directory)
+    return returned(NotDirectory, true);
+  Descriptors.emplace(FD, Descriptor{std::make_shared<Description>(File),
                                      bool(Flags & OpenCloseOnExec)});
   return returned(FD);
 }
 
-llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(uint64_t Address) {
+llvm::Expected<DarwinFiles::Lookup>
+DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD) {
   if (!Options)
     return diagnostic::FileInputs;
   auto Imported = readPath(Address);
@@ -163,36 +210,58 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(uint64_t Address) {
   if (auto *Error = std::get_if<uint32_t>(&*Imported))
     return *Error;
   const auto &Path = std::get<std::string>(*Imported);
+  const bool Absolute = llvm::StringRef(Path).starts_with('/');
+  std::string Prefix = "/";
+  if (!Absolute) {
+    if (DirectoryFD != AtCurrentDirectory) {
+      auto FD = Descriptors.find(DirectoryFD);
+      if (FD == Descriptors.end())
+        return uint32_t(BadDescriptor);
+      if (FD->second.Open->Type == Kind::File)
+        return uint32_t(NotDirectory);
+      if (FD->second.Open->Type != Kind::Directory)
+        return diagnostic::FileDirectoryKind;
+      Prefix = FD->second.Open->Path;
+    } else if (!Path.empty()) {
+      if (!CurrentDirectory)
+        return diagnostic::FileWorkingDirectory;
+      Prefix = *CurrentDirectory;
+    }
+  }
+  if (Path.empty())
+    return uint32_t(NoEntry);
   llvm::SmallVector<llvm::StringRef> Parts;
   llvm::StringRef(Path).split(Parts, '/');
-  if (Path == "/")
-    return diagnostic::FileDirectory;
-  if (!canonicalPath(Path))
-    return diagnostic::FilePathForm;
-  // Resolve one component at a time: a missing or nondirectory ancestor
-  // precedes a too-long later component, just as in the native name lookup.
-  std::string Prefix;
-  for (auto Part : llvm::ArrayRef<llvm::StringRef>(Parts).drop_front()) {
+  // Walk before reducing dot components. A missing or regular-file ancestor
+  // wins over later '..', long names and trailing slashes.
+  auto Type = PathKind::Directory;
+  for (auto Part :
+       llvm::ArrayRef<llvm::StringRef>(Parts).drop_front(Absolute)) {
+    if (Type != PathKind::Directory)
+      return uint32_t(NotDirectory);
     if (Part.size() > limits::Name)
       return uint32_t(NameTooLong);
-    Prefix += '/';
-    Prefix.append(Part.data(), Part.size());
-    auto File = Options->Files.find(Prefix);
-    if (File != Options->Files.end()) {
-      if (Prefix.size() != Path.size())
-        return uint32_t(NotDirectory);
-      auto Metadata = Options->Metadata.find(Path);
-      return Description{
-          Kind::File, File->second, 0,
-          Metadata == Options->Metadata.end() ? nullptr : &Metadata->second};
+    if (Part.empty() || Part == ".")
+      continue;
+    if (Part == "..") {
+      Prefix.resize(std::max<size_t>(1, Prefix.rfind('/')));
+    } else {
+      if (Prefix != "/")
+        Prefix += '/';
+      Prefix.append(Part.data(), Part.size());
     }
-    const auto Directory = Prefix + '/';
-    auto Next = Options->Files.lower_bound(Directory);
-    if (Next == Options->Files.end() ||
-        !llvm::StringRef(Next->first).starts_with(Directory))
+    Type = pathKind(*Options, Prefix);
+    if (Type == PathKind::Missing)
       return uint32_t(NoEntry);
   }
-  return diagnostic::FileDirectory;
+  auto Metadata = Options->Metadata.find(Prefix);
+  return Description{
+      Type == PathKind::File ? Kind::File : Kind::Directory,
+      Type == PathKind::File
+          ? llvm::ArrayRef<uint8_t>(Options->Files.at(Prefix))
+          : llvm::ArrayRef<uint8_t>(),
+      0, Metadata == Options->Metadata.end() ? nullptr : &Metadata->second,
+      std::move(Prefix)};
 }
 
 llvm::Expected<std::optional<ServiceResult>>
@@ -244,9 +313,9 @@ DarwinFiles::status(const Description &File, uint64_t Address,
 }
 
 llvm::Expected<std::optional<ServiceResult>>
-DarwinFiles::statusPath(uint64_t Path, uint64_t Address,
+DarwinFiles::statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
                         ProcessResult &Result) {
-  auto Resolved = resolvePath(Path);
+  auto Resolved = resolvePath(Path, DirectoryFD);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -261,10 +330,12 @@ DarwinFiles::read(Description &File, uint64_t Address, uint64_t Count,
                   uint64_t Offset, bool Positioned, ProcessResult &Result) {
   if (File.Type == Kind::Output || File.Type == Kind::Error)
     return returned(BadDescriptor, true);
-  if (Positioned && File.Type != Kind::File)
+  if (Positioned && File.Type == Kind::Input)
     return returned(IllegalSeek, true);
   if (Offset > INT64_MAX)
     return returned(InvalidArgument, true);
+  if (File.Type == Kind::Directory)
+    return returned(IsDirectory, true);
   if (Count && File.Type == Kind::Input &&
       (!Options || !Options->StandardInput))
     return unsupported(Result, diagnostic::FileInput);
@@ -286,7 +357,7 @@ DarwinFiles::read(Description &File, uint64_t Address, uint64_t Count,
 
 ServiceResult DarwinFiles::seek(Description &File, uint64_t Offset,
                                 uint32_t Whence) {
-  if (File.Type != Kind::File)
+  if (File.Type != Kind::File && File.Type != Kind::Directory)
     return {IllegalSeek, true};
   uint64_t Base;
   switch (Whence) {
@@ -297,7 +368,8 @@ ServiceResult DarwinFiles::seek(Description &File, uint64_t Offset,
     Base = File.Offset;
     break;
   case 2:
-    Base = File.Bytes.size();
+    Base =
+        File.Type == Kind::Directory ? File.Metadata->Size : File.Bytes.size();
     break;
   default:
     return {InvalidArgument, true};
@@ -320,6 +392,8 @@ DarwinFiles::MappingSource DarwinFiles::mappingSource(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return uint32_t(BadDescriptor);
+  if (I->second.Open->Type == Kind::Directory)
+    return uint32_t(InvalidArgument);
   if (I->second.Open->Type != Kind::File)
     return diagnostic::MemoryFileKind;
   return I->second.Open->Bytes;
@@ -339,9 +413,35 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                     ProcessResult &Result) {
   const auto &A = Event.Arguments;
   if (Service == ServiceKind::Open)
-    return open(A[0], A[1], Result);
+    return open(A[0], A[1], AtCurrentDirectory, Result);
+  if (Service == ServiceKind::OpenAt)
+    return open(A[1], A[2], A[0], Result);
   if (Service == ServiceKind::Stat64 || Service == ServiceKind::Lstat64)
-    return statusPath(A[0], A[1], Result);
+    return statusPath(A[0], A[1], AtCurrentDirectory, Result);
+  if (Service == ServiceKind::FstatAt64) {
+    const uint32_t Flags = A[3];
+    if (Flags & ~uint32_t(AtNoFollow | AtNoFollowAny | AtFDOnly | AtRealDevice))
+      return returned(InvalidArgument, true);
+    if (Flags & AtRealDevice)
+      return unsupported(Result, diagnostic::FileStatFlags);
+    if (!(Flags & AtFDOnly))
+      return statusPath(A[1], A[2], A[0], Result);
+    // AT_FDONLY ignores the pathname completely, including invalid pointers.
+  }
+  if (Service == ServiceKind::Chdir) {
+    auto Resolved = resolvePath(A[0], AtCurrentDirectory);
+    if (!Resolved)
+      return Resolved.takeError();
+    if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+      return returned(*Error, true);
+    if (auto *Reason = std::get_if<const char *>(&*Resolved))
+      return unsupported(Result, *Reason);
+    const auto &Directory = std::get<Description>(*Resolved);
+    if (Directory.Type != Kind::Directory)
+      return returned(NotDirectory, true);
+    CurrentDirectory = Directory.Path;
+    return returned(0);
+  }
   if ((Service == ServiceKind::Read || Service == ServiceKind::Pread) &&
       A[2] > MaxWriteBytes)
     return returned(InvalidArgument, true);
@@ -353,6 +453,15 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
   switch (Service) {
   case ServiceKind::Fstat64:
     return status(File, A[1], Result);
+  case ServiceKind::FstatAt64:
+    return status(File, A[2], Result);
+  case ServiceKind::Fchdir:
+    if (File.Type == Kind::File)
+      return returned(NotDirectory, true);
+    if (File.Type != Kind::Directory)
+      return unsupported(Result, diagnostic::FileDirectoryKind);
+    CurrentDirectory = File.Path;
+    return returned(0);
   case ServiceKind::Read:
   case ServiceKind::Pread:
     return read(File, A[1], A[2],
@@ -362,8 +471,12 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     Descriptors.erase(I);
     return returned(0);
   case ServiceKind::Lseek:
-    if (File.Type == Kind::File && (uint32_t(A[2]) == 3 || uint32_t(A[2]) == 4))
-      return unsupported(Result, diagnostic::FileSeek);
+    if (File.Type == Kind::File || File.Type == Kind::Directory) {
+      if (uint32_t(A[2]) == 3 || uint32_t(A[2]) == 4)
+        return unsupported(Result, diagnostic::FileSeek);
+      if (File.Type == Kind::Directory && uint32_t(A[2]) == 2 && !File.Metadata)
+        return unsupported(Result, diagnostic::FileMetadata);
+    }
     return std::optional<ServiceResult>(seek(File, A[1], A[2]));
   case ServiceKind::Dup:
     return std::optional<ServiceResult>(duplicate(FD, 0, false));
@@ -388,6 +501,15 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     case SetDescriptorFlags:
       FD.CloseOnExec = A[2] & 1;
       return returned(0);
+    case GetPath: {
+      if (File.Path.empty())
+        return unsupported(Result, diagnostic::FilePathIdentity);
+      return copyout(A[2],
+                     llvm::ArrayRef<uint8_t>(
+                         reinterpret_cast<const uint8_t *>(File.Path.c_str()),
+                         File.Path.size() + 1),
+                     diagnostic::FilePartialPath, Result);
+    }
     case GetFileFlags:
       return returned(
           File.Type == Kind::Output || File.Type == Kind::Error ? 1 : 0);
