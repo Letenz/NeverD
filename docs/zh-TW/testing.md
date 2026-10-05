@@ -123,6 +123,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `LLVMScalarProjection.*` 涵蓋巢狀欄位、位元視窗、未使用參數保留、多個回傳、回邊、未選取運算的溢位/位移/assume 義務、最後分區失敗、不終止、未知契約、輸入修改及精確/少一預算。四種目標三元組驗證共用語意。`LLVMScalarProjectionCompiled.*` 透過 LLVM 陣列橋接原始聚合，與投影視窗及獨立無號算術在 O0/O2 下對照。`SymExpr.RightShift*` 窮舉位元組對，檢查符號延伸、進位、保留高位元、完整計數與有界探索。
 
+`LLVMScalarInputs.*` 檢查有序混合位寬映射、零參數與無名介面、死算術及 assume 的輸入需求、輸出突變、未知契約、包裝拒絕，以及精確/不足的累計預算。證明測試恢復完整原始簽名，不固定省略輸入。`LLVMScalarInputsCompiled.*` 在 O0/O2 執行原始及精簡循環介面，對照獨立無號 oracle，並改變所有省略參數。
+
 `NeverDLLVMScalarStateProjectionTests` 涵蓋重疊與非對齊視窗、8/16/32/64 位元單元、迴圈、入口遮罩、來源修改、狀態範圍、保留 poison、外部記憶體拒絕及精確/少一預算。原記憶體函式與 LLVM 聚合橋在 O0/O2 下對獨立位元組/算術 oracle 執行 172,032 次比較；純量證明另行檢查。`SymKnownBits.*` 窮舉位元組對並檢查 128 位元、不同因子、放寬遮罩、回繞加總及預算邊界。`LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` 驗證 O0/O2 條件單次求值與 bundle 拒絕。
 
 迴圈中繼資料回歸測試在全部控制分區及精確/少一預算下，比較計數迴圈與獨立公式。過大或為零的剝離歷史計數不能掩蓋錯誤結果、不終止或 poison。透過 API 建立的畸形中繼資料單獨驗證匯入器的拒絕行為，避免與 LLVM 組合語言解析混淆；機器狀態測試保留狀態副作用及輸入限制。
@@ -144,6 +146,8 @@ cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --par
 build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

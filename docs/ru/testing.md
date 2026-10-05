@@ -126,6 +126,8 @@ build-release/bin/NeverDX86NoIndexAddressTests
 
 `LLVMScalarProjection.*` проверяет вложенные поля, окна, сохранение неиспользуемых аргументов, несколько возвратов, обратные рёбра, невыбранные обязательства overflow/shift/assume, сбой последнего разбиения, незавершение, неизвестные контракты, изменённый вход и точный/уменьшенный на единицу бюджет. Четыре целевых триплета проверяют общую семантику. `LLVMScalarProjectionCompiled.*` сравнивает исходный агрегат через мост массива LLVM и проекции с независимой беззнаковой арифметикой при O0/O2. `SymExpr.RightShift*` перебирает пары байтов и проверяет знаковое расширение, переносы, сохранённые старшие биты, полные счётчики и ограничения поиска.
 
+`LLVMScalarInputs.*` проверяет упорядоченные соответствия разной разрядности, интерфейсы без аргументов и имён, потребности мёртвой арифметики и assume, изменённые результаты, неизвестные контракты, отказ от упаковки и точные либо недостаточные суммарные бюджеты. Доказательства восстанавливают полную сигнатуру, не фиксируя пропущенные входы. `LLVMScalarInputsCompiled.*` сравнивает исходные и сокращённые циклы с независимым беззнаковым эталоном при O0/O2, меняя все пропущенные аргументы.
+
 `NeverDLLVMScalarStateProjectionTests` проверяет перекрывающиеся/невыровненные окна, ячейки 8/16/32/64 бит, циклы, маски входа, изменения исходника, диапазоны статуса, сохранение poison, отказ для внешней памяти и точные/недостаточные бюджеты. Исходные функции памяти и агрегатные мосты LLVM выполняют 172 032 сравнения O0/O2 с независимыми эталонами; скалярные доказательства проверяются отдельно. `SymKnownBits.*` исчерпывает пары байтов и проверяет 128 бит, другие факторы, расширенные маски, переполнение сумм и бюджеты. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` проверяет однократное вычисление O0/O2 и отказ для bundle.
 
 Регрессионные тесты метаданных сравнивают счётные циклы с независимой формулой во всех разбиениях управления при точном бюджете и бюджете на единицу меньше. Большой или нулевой счётчик peeling не скрывает ошибочные результаты, незавершение или poison. Некорректные метаданные создаются через API для отдельной проверки отказа импортёра, без смешения с разбором LLVM assembly; тесты состояния машины сохраняют эффекты состояния и ограничения входов.
@@ -147,6 +149,8 @@ cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --par
 build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

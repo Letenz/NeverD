@@ -129,6 +129,8 @@ Les régressions supplémentaires couvrent les derniers indices étroits avec re
 
 `LLVMScalarProjection.*` couvre champs imbriqués, fenêtres, arguments inutilisés conservés, retours multiples, arêtes arrière, obligations overflow/shift/assume non sélectionnées, échec de dernière partition, non-terminaison, contrats inconnus, entrée modifiée et budgets exacts/insuffisants d’une unité. Quatre triplets testent la sémantique partagée. `LLVMScalarProjectionCompiled.*` compare l’agrégat original via un pont tableau LLVM et les projections à une arithmétique non signée indépendante en O0/O2. `SymExpr.RightShift*` épuise les paires d’octets et vérifie extension signée, retenues, bits hauts conservés, comptes complets et limites de recherche.
 
+`LLVMScalarInputs.*` vérifie les correspondances ordonnées de largeurs mixtes, les interfaces sans argument ou sans nom, les besoins de l’arithmétique morte et d’assume, les sorties modifiées, contrats inconnus, refus d’agrégats et budgets cumulés exacts ou insuffisants. Les preuves restaurent la signature complète sans fixer les entrées omises. `LLVMScalarInputsCompiled.*` compare les boucles originales et réduites à un oracle non signé indépendant à O0/O2 en variant tous les arguments omis.
+
 `NeverDLLVMScalarStateProjectionTests` couvre fenêtres superposées/non alignées, cellules 8/16/32/64 bits, boucles, masques, modifications de source, plages de statut, poison conservé, mémoire externe et budgets exacts/insuffisants. Les corps mémoire et ponts agrégés LLVM effectuent 172 032 comparaisons O0/O2 avec des oracles indépendants ; les preuves scalaires restent distinctes. `SymKnownBits.*` épuise les paires d’octets et vérifie 128 bits, facteurs différents, masques élargis, sommes débordantes et budgets. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` vérifie l’évaluation unique à O0/O2 et le refus des bundles.
 
 Les régressions de métadonnées de boucle comparent des boucles comptées à une formule indépendante sur toutes les partitions de contrôle et avec des budgets exacts ou réduits d’une unité. Un historique de peeling grand ou nul ne masque ni résultat erroné, ni non-terminaison, ni poison. Des métadonnées mal formées construites par API vérifient le refus de l’importateur séparément de l’analyse d’assemblage LLVM ; les tests d’état machine préservent les effets d’état et les limites d’entrée.
@@ -150,6 +152,8 @@ cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --par
 build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

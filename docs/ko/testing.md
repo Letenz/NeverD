@@ -125,6 +125,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `LLVMScalarProjection.*`는 중첩 필드, 비트 구간, 미사용 인수 보존, 여러 반환, 역방향 간선, 미선택 연산의 overflow/shift/assume 의무, 마지막 분할 실패, 비종료, 알 수 없는 계약, 입력 변경 및 정확/하나 부족 예산을 검사합니다. 네 대상 트리플에서 공유 의미를 확인합니다. `LLVMScalarProjectionCompiled.*`는 LLVM 배열 브리지를 통한 원본 집계와 투영 결과를 O0/O2에서 독립적인 부호 없는 산술과 비교합니다. `SymExpr.RightShift*`는 바이트 쌍을 전수 검사하고 부호 확장, 올림, 보존 상위 비트, 전체 카운트 및 탐색 한도를 확인합니다.
 
+`LLVMScalarInputs.*`는 혼합 폭의 순서 있는 매핑, 인수가 없거나 이름 없는 인터페이스, 죽은 산술과 assume의 입력 요구, 변경된 출력, 알 수 없는 계약, 패키징 거부, 정확하거나 부족한 누적 예산을 검사합니다. 증명 테스트는 생략 입력을 고정하지 않고 전체 원래 시그니처를 복원합니다. `LLVMScalarInputsCompiled.*`는 생략된 모든 인수를 바꾸면서 원래 루프와 축소된 루프를 독립 부호 없는 오라클과 O0/O2에서 비교합니다.
+
 `NeverDLLVMScalarStateProjectionTests`는 중첩·비정렬 창, 8/16/32/64비트 셀, 루프, 진입 마스크, 소스 변경, 상태 범위, poison 유지, 외부 메모리 거부와 정확/부족 예산을 검사합니다. 원본 메모리 함수와 LLVM 집계 브리지를 O0/O2에서 독립 바이트/산술 oracle과 172,032회 비교하며 스칼라 증명은 별도로 확인합니다. `SymKnownBits.*`는 모든 바이트 쌍과 128비트, 다른 인자, 확대 마스크, 순환 합, 예산 경계를 검사합니다. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles`는 O0/O2 조건 단일 평가와 bundle 거부를 검사합니다.
 
 루프 메타데이터 회귀 테스트는 모든 제어 분할과 정확한 예산 및 한 단위 부족한 예산에서 카운트 루프를 독립적인 수식과 비교합니다. 크거나 0인 박리 이력 값으로 잘못된 결과, 비종료 또는 poison을 숨길 수 없습니다. API로 잘못된 메타데이터를 구성하여 LLVM 어셈블리 파싱과 별도로 가져오기 거부를 검사하며, 머신 상태 테스트는 상태 효과와 입력 제한을 유지합니다.
@@ -146,6 +148,8 @@ cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --par
 build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
