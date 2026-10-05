@@ -7,6 +7,8 @@
 #define NEVERD_EMULATION_AARCH64_EXCLUSIVE_H
 #include "AArch64Machine.h"
 
+#include "neverd/emulation/CPU.h"
+
 #include <capstone/capstone.h>
 
 namespace neverd::emulation {
@@ -20,6 +22,24 @@ struct AArch64ExclusiveInstruction {
 /// register overlaps before any memory access or local monitor transition.
 llvm::Expected<std::optional<AArch64ExclusiveInstruction>>
 decodeAArch64Exclusive(const cs_insn &, const AArch64MachineState &);
+llvm::Expected<std::optional<AArch64ExclusiveInstruction>>
+decodeAArch64Exclusive(uint32_t Word, const AArch64MachineState &);
+bool isAArch64Exclusive(uint32_t Word);
+
+struct AArch64ExclusiveAccess {
+  const BackendHooks &Hooks;
+  llvm::function_ref<bool()> Stopped;
+  llvm::function_ref<llvm::Error(BackendFault)> RaiseFault;
+  llvm::function_ref<llvm::Error(uint64_t, uint64_t, unsigned)> CheckAccess;
+  unsigned WritePermissions;
+};
+/// Complete one exclusive instruction under the physical execution lease.
+/// Both software execution and checked transports use this monitor authority.
+llvm::Error executeAArch64Exclusive(const AArch64ExclusiveInstruction &,
+                                    AArch64MachineState &,
+                                    std::shared_ptr<RAMReservation> &,
+                                    MemoryProjection &,
+                                    const AArch64ExclusiveAccess &);
 /// Validate the complete typed alignment outcome before guest OS translation.
 bool isAArch64ExclusiveAlignmentFault(const BackendFault &);
 } // namespace neverd::emulation

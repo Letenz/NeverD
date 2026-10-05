@@ -1177,7 +1177,7 @@ NEVERD_EMULATION_DOC_TOKEN(AArch64ExclusiveCPU, "alignment")
 NEVERD_EMULATION_DOC_PATH(AArch64ExclusiveArchitecture, "docs/architecture.md")
 NEVERD_EMULATION_DOC_PATH(AArch64ExclusiveArchitecture, "docs/{locale}/architecture.md")
 NEVERD_EMULATION_DOC_TOKEN(AArch64ExclusiveArchitecture, "AArch64ExclusiveInstructions.def")
-NEVERD_EMULATION_DOC_TOKEN(AArch64ExclusiveArchitecture, "CheckedAArch64Exclusive")
+NEVERD_EMULATION_DOC_TOKEN(AArch64ExclusiveArchitecture, "AArch64ExclusiveExecution")
 NEVERD_EMULATION_DOC_TOKEN(AArch64ExclusiveArchitecture, "RAMReservation")
 
 NEVERD_EMULATION_DOC_PATH(AArch64ExclusiveTests, "docs/testing.md")

@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "AArch64Exclusive.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -32,8 +33,19 @@ decodeAArch64Exclusive(const cs_insn &I, const AArch64MachineState &CPU) {
   if (I.size != aarch64::InstructionBytes || !I.detail)
     return llvm::make_error<UnsupportedExecutionError>();
   const uint32_t Word = llvm::support::endian::read32le(I.bytes);
+  for (const auto &E : Encodings)
+    if (I.id == E.ID && (Word & E.Mask) == E.Value)
+      return decodeAArch64Exclusive(Word, CPU);
+  return std::nullopt;
+}
+bool isAArch64Exclusive(uint32_t Word) {
+  return llvm::any_of(
+      Encodings, [Word](const auto &E) { return (Word & E.Mask) == E.Value; });
+}
+llvm::Expected<std::optional<AArch64ExclusiveInstruction>>
+decodeAArch64Exclusive(uint32_t Word, const AArch64MachineState &CPU) {
   for (const auto &E : Encodings) {
-    if (I.id != E.ID || (Word & E.Mask) != E.Value)
+    if ((Word & E.Mask) != E.Value)
       continue;
     const unsigned First = Word & RegisterMask;
     const unsigned Second = (Word >> SecondShift) & RegisterMask;

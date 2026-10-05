@@ -23,6 +23,7 @@ add_neverd_component_library(NeverDEmulationArch
   arch/aarch64/AArch64MachineProbe.cpp
   arch/aarch64/AArch64InstructionEffects.cpp
   arch/aarch64/AArch64Exclusive.cpp
+  arch/aarch64/AArch64ExclusiveExecution.cpp
   arch/x86_64/CheckedX64Backend.cpp
   arch/x86_64/CheckedX64Memory.cpp
   arch/x86_64/CheckedX64Stack.cpp
@@ -49,6 +50,7 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     backends/unicorn/UnicornBackend.cpp
     backends/unicorn/UnicornMachine.cpp
     backends/unicorn/UnicornArchitecture.cpp
+    backends/unicorn/UnicornExclusive.cpp
     LINK_COMPONENTS EmulationArch
     LLVM_COMPONENTS Support
     LINK_LIBS unicorn)

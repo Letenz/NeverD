@@ -35,10 +35,16 @@ constexpr ExclusiveCase Cases[] = {
 #include "AArch64ExclusiveCases.def"
 #undef NEVERD_EXCLUSIVE_CASE
 };
-using Parameter = std::tuple<ExecutionBackendKind, bool, ExclusiveCase>;
+using Parameter =
+    std::tuple<ExecutionBackendKind, ExecutionContract, ExclusiveCase>;
+const char *profile(ExecutionContract Contract) {
+  if (Contract == ExecutionContract::Software)
+    return SoftwareProfile;
+  return Contract == ExecutionContract::CheckedUserAArch64 ? UserProfile
+                                                           : SupervisorProfile;
+}
 void PrintTo(const Parameter &P, std::ostream *OS) {
-  *OS << executionBackendName(std::get<0>(P))
-      << (std::get<1>(P) ? UserProfile : SupervisorProfile)
+  *OS << executionBackendName(std::get<0>(P)) << profile(std::get<1>(P))
       << std::get<2>(P).Name;
 }
 class AArch64Exclusive : public testing::TestWithParam<Parameter> {
@@ -46,14 +52,14 @@ protected:
   std::unique_ptr<ExecutionBackend> CPU;
   uint64_t Address = Data;
   const ExclusiveCase &testCase() const { return std::get<2>(GetParam()); }
-  bool user() const { return std::get<1>(GetParam()); }
+  ExecutionContract contract() const { return std::get<1>(GetParam()); }
+  bool user() const {
+    return contract() == ExecutionContract::CheckedUserAArch64;
+  }
   void SetUp() override { initialize(); }
   void initialize() {
-    auto Created =
-        createExecutionBackend(std::get<0>(GetParam()),
-                               user() ? ExecutionContract::CheckedUserAArch64
-                                      : ExecutionContract::CheckedAArch64,
-                               Limit, GuestArchitecture::AArch64);
+    auto Created = createExecutionBackend(std::get<0>(GetParam()), contract(),
+                                          Limit, GuestArchitecture::AArch64);
     if (!Created) {
       auto E = Created.takeError();
       bool Unavailable = E.isA<BackendUnavailableError>();
@@ -69,7 +75,8 @@ protected:
     llvm::cantFail(
         CPU->mapAlias(Alias, Data, PageSize, Read | Write | UserAccessible));
     const uint32_t Words[] = {testCase().Load, testCase().Store, Clear,   Nop,
-                              StoreByte,       ReadWord,         Service, Nop};
+                              StoreByte,       ReadWord,         Service, Nop,
+                              ZeroCacheBlock};
     std::array<uint8_t, sizeof(Words)> Bytes;
     for (unsigned N = 0; N < std::size(Words); ++N)
       llvm::support::endian::write32le(Bytes.data() + N * InstructionBytes,
@@ -191,10 +198,50 @@ TEST_P(AArch64Exclusive,
   EXPECT_EQ(status(), 1u);
   EXPECT_EQ(memory(), Bytes);
   step(0);
+  llvm::cantFail(CPU->writeInteger(Alias, uint8_t(~Bytes[0]), 1));
+  llvm::cantFail(CPU->write(Data, Bytes));
+  input();
+  step(1);
+  EXPECT_EQ(status(),
+            1u); // Restoring identical bytes cannot hide interference.
+  EXPECT_EQ(memory(), Bytes);
+  step(0);
   input();
   llvm::cantFail(CPU->writeInteger(Data + Granule, Initial, WordBytes));
   step(1);
   EXPECT_EQ(status(), 0u);
+}
+
+TEST_P(AArch64Exclusive,
+       CommittedStoresRetireExecutableAliasesWithinTheSameRun) {
+  llvm::cantFail(CPU->unmapAlias(Alias, PageSize));
+  llvm::cantFail(
+      CPU->mapAlias(Alias, Code, PageSize, Read | Write | UserAccessible));
+  const auto Load = testCase().Load, Store = testCase().Store;
+  const uint32_t Words[] = {
+#define NEVERD_EXCLUSIVE_CODE_WORD(Word) Word,
+#include "AArch64ExclusiveCases.def"
+#undef NEVERD_EXCLUSIVE_CODE_WORD
+  };
+  for (unsigned N = 0; N < std::size(Words); ++N)
+    llvm::cantFail(CPU->writeInteger(Code + N * InstructionBytes, Words[N],
+                                     InstructionBytes));
+  llvm::cantFail(CPU->setReg(AArch64Register::X1, Alias + CodeTargetOffset));
+  llvm::cantFail(CPU->setReg(AArch64Register::X6, UpdatedCode));
+  llvm::cantFail(CPU->setReg(AArch64Register::X7, 0));
+  BackendHooks Hooks;
+  Hooks.Instruction = [&](uint64_t PC, uint32_t) {
+    if (PC == Code + CodeEndOffset)
+      CPU->stop();
+  };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+  auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(status(), 0u);
+  EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::X5)), CodeResult);
+  EXPECT_EQ(
+      llvm::cantFail(CPU->readInteger(Code + CodeTargetOffset, WordBytes)),
+      UpdatedCode);
 }
 
 TEST_P(AArch64Exclusive,
@@ -309,6 +356,22 @@ TEST_P(AArch64Exclusive,
   step(3);
   step(1);
   EXPECT_EQ(status(), 0u);
+  if (contract() == ExecutionContract::Software) {
+    step(0);
+    BackendHooks Hooks;
+    Hooks.Write = [&](uint64_t, uint32_t, uint64_t) { CPU->stop(); };
+    auto Exit = run(8, Hooks);
+    ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped);
+    step(1);
+    EXPECT_EQ(status(), 0u);
+    // Bulk zeroing may use an engine fast path; it must still report every
+    // affected reservation granule, including writes of identical zero bytes.
+    step(8);
+    step(0);
+    step(8);
+    step(1);
+    EXPECT_EQ(status(), 1u);
+  }
   if (user()) {
     step(0);
     auto Exit = run(6);
@@ -453,33 +516,39 @@ TEST_P(AArch64Exclusive,
 }
 
 TEST_P(AArch64Exclusive, TwoCPUsCannotBothCommitTheSameReservation) {
-  auto Other = llvm::cantFail(
-      createExecutionBackend(std::get<0>(GetParam()),
-                             user() ? ExecutionContract::CheckedUserAArch64
-                                    : ExecutionContract::CheckedAArch64,
-                             CPU->addressSpace(), GuestArchitecture::AArch64));
-  llvm::cantFail(Other.CPU->setReg(AArch64Register::X1, Alias));
-  auto OtherStep = [&](unsigned Index) {
-    const uint64_t PC = Code + Index * InstructionBytes;
-    BackendHooks Hooks;
-    Hooks.Instruction = [&, PC](uint64_t At, uint32_t) {
-      if (At != PC)
-        Other.CPU->stop();
+  const auto Alternative = contract() == ExecutionContract::Software
+                               ? ExecutionContract::CheckedAArch64
+                               : ExecutionContract::Software;
+  for (auto OtherContract : {contract(), Alternative}) {
+    if (OtherContract != contract() &&
+        std::get<0>(GetParam()) != ExecutionBackendKind::Unicorn)
+      continue;
+    auto Other = llvm::cantFail(createExecutionBackend(
+        std::get<0>(GetParam()), OtherContract, CPU->addressSpace(),
+        GuestArchitecture::AArch64));
+    llvm::cantFail(Other.CPU->setReg(AArch64Register::X1, Alias));
+    auto OtherStep = [&](unsigned Index) {
+      const uint64_t PC = Code + Index * InstructionBytes;
+      BackendHooks Hooks;
+      Hooks.Instruction = [&, PC](uint64_t At, uint32_t) {
+        if (At != PC)
+          Other.CPU->stop();
+      };
+      llvm::cantFail(Other.CPU->installHooks(std::move(Hooks)));
+      auto Exit = llvm::cantFail(Other.CPU->runUntilExit(PC, Timeout));
+      EXPECT_EQ(Exit.Kind, ExecutionExitKind::Stopped);
     };
-    llvm::cantFail(Other.CPU->installHooks(std::move(Hooks)));
-    auto Exit = llvm::cantFail(Other.CPU->runUntilExit(PC, Timeout));
-    EXPECT_EQ(Exit.Kind, ExecutionExitKind::Stopped);
-  };
-  step(0);
-  OtherStep(0);
-  OtherStep(1);
-  EXPECT_EQ(llvm::cantFail(Other.CPU->reg(AArch64Register::X2)), 0u);
-  input();
-  step(1);
-  EXPECT_EQ(status(), 1u);
-  step(0);
-  step(1);
-  EXPECT_EQ(status(), 0u);
+    step(0);
+    OtherStep(0);
+    OtherStep(1);
+    EXPECT_EQ(llvm::cantFail(Other.CPU->reg(AArch64Register::X2)), 0u);
+    input();
+    step(1);
+    EXPECT_EQ(status(), 1u);
+    step(0);
+    step(1);
+    EXPECT_EQ(status(), 0u);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -487,11 +556,21 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
                                      ExecutionBackendKind::KVM,
                                      ExecutionBackendKind::WHP),
-                     testing::Bool(), testing::ValuesIn(Cases)),
+                     testing::Values(ExecutionContract::CheckedAArch64,
+                                     ExecutionContract::CheckedUserAArch64),
+                     testing::ValuesIn(Cases)),
     [](const testing::TestParamInfo<Parameter> &P) {
       return std::string(executionBackendName(std::get<0>(P.param))) +
-             (std::get<1>(P.param) ? UserProfile : SupervisorProfile) +
-             std::get<2>(P.param).Name;
+             profile(std::get<1>(P.param)) + std::get<2>(P.param).Name;
+    });
+INSTANTIATE_TEST_SUITE_P(
+    Software, AArch64Exclusive,
+    testing::Combine(testing::Values(ExecutionBackendKind::Unicorn),
+                     testing::Values(ExecutionContract::Software),
+                     testing::ValuesIn(Cases)),
+    [](const testing::TestParamInfo<Parameter> &P) {
+      return std::string(executionBackendName(std::get<0>(P.param))) +
+             profile(std::get<1>(P.param)) + std::get<2>(P.param).Name;
     });
 } // namespace
 } // namespace neverd::emulation
