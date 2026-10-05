@@ -269,8 +269,8 @@ public:
   std::optional<FunctionSym> debugCallee(const HighExpr &E) const;
   TypeRef expectedDebugCallArgType(const FunctionSym &FS, size_t Index) const;
   TypeRef displayCallArgType(const HighExpr &Call, size_t Index) const;
-  /// Display-only printed arity from TPI/PDB or \ref msvcAtlCallee.
-  /// ATL/STL rows live in MsvcAtlCallees.def; `_ctor` keeps this plus a
+  /// Display-only printed arity from TPI/PDB or \ref msvcCallee.
+  /// MSVC member rows live in MsvcCallees.def; `_ctor` keeps this plus a
   /// pointer/string/fill source and drops leftover register clobbers.
   size_t debugCallArgLimit(const HighExpr &E) const;
   void collectUnknownOnlyNames(const HighFunc &Func);
@@ -396,7 +396,7 @@ public:
   std::optional<std::string> cxxCatchPointerName(const HighExpr &E) const;
   std::optional<std::string> cxxCatchFieldAccess(const HighExpr &Addr) const;
   void collectValueForward(const HighFunc &Func);
-  /// ATL/MSVC ctor returns `this`. Print the call as a statement and reuse
+  /// MSVC ctor returns `this`. Print the call as a statement and reuse
   /// the this operand at later uses instead of a leftover dest temp.
   void aliasCtorReturnThis(const HighFunc &Func);
   void collectUnusedCallStoreAlias(const HighFunc &Func);
@@ -587,7 +587,7 @@ public:
   mutable std::unordered_map<std::string, std::vector<const HighExpr *>>
       AssignedValuesByName;
   mutable bool AssignedValuesIndexed = false;
-  /// Multi-use ATL ctor dests print as the this operand (`&var`), not `v21`.
+  /// Multi-use MSVC ctor dests print as the this operand (`&var`), not `v21`.
   std::map<std::string, const HighExpr *> CtorThisForward;
   /// Assigned call results that stay as temps take a Get* stem (`FontColor`).
   std::map<std::string, std::string> CallResultNames;

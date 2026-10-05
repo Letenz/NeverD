@@ -3378,8 +3378,8 @@ void HighCWriter::aliasCtorReturnThis(const HighFunc &Func) {
     if (S.Val->Kind != ExprKind::Call || S.Val->IntrinsicId != Intrinsic::None)
       return;
     const std::string Callee = callIdentifier(*S.Val);
-    const MsvcAtlCallee *Atl = msvcAtlCallee(Callee);
-    if (!Atl || Atl->Kind != MsvcAtlCalleeKind::Ctor)
+    const MsvcCallee *Msvc = msvcCallee(Callee);
+    if (!Msvc || Msvc->Kind != MsvcCalleeKind::Ctor)
       return;
     if (S.Val->Operands.empty() || !S.Val->Operands[0])
       return;
@@ -3582,8 +3582,8 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
                                         Record->Size ? Record->Size : 8));
         }
       }
-    } else if (const MsvcAtlCallee *Atl = msvcAtlCallee(callIdentifier(*S.Val)))
-      ReturnType = msvcAtlSyntheticReturn(Atl->ReturnKind);
+    } else if (const MsvcCallee *Msvc = msvcCallee(callIdentifier(*S.Val)))
+      ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
     std::string Stem = callResultStem(callIdentifier(*S.Val));
