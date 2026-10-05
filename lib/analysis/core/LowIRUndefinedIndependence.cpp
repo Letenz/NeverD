@@ -2860,6 +2860,7 @@ class LoopPlanInference {
       LowIRLoopLocation Counter, Bound;
       bool Invert;
       uint64_t Mask = 0;
+      bool UnsignedLess = false;
     };
     std::vector<BitRelation> BitRelations;
     std::vector<BitRelation> BitAttempts;
@@ -3289,8 +3290,12 @@ class LoopPlanInference {
           Counter = Expr(NdOp::INT_AND, Counter, Mask, B.Counter.Bytes);
           Bound = Expr(NdOp::INT_AND, Bound, Mask, B.Bound.Bytes);
         }
-        const auto Expected = Expr(
-            B.Invert ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL, Counter, Bound, 1);
+        auto Expected = Expr(B.UnsignedLess ? NdOp::INT_LESS
+                             : B.Invert     ? NdOp::INT_NOTEQUAL
+                                            : NdOp::INT_EQUAL,
+                             Counter, Bound, 1);
+        if (B.UnsignedLess && B.Invert)
+          Expected = Expr(NdOp::INT_EQUAL, Expected, NdVar::scalar(0, 1), 1);
         const auto Shifted = Expr(NdOp::INT_RIGHT, Parameter,
                                   NdVar::scalar(B.Bit, Bytes), Bytes);
         const auto Bit =
@@ -3865,7 +3870,9 @@ class LoopPlanInference {
     auto &Ctx = Session.Context;
     const auto Counter = counterProjection(read(State, B.Counter), B.Mask);
     const auto Bound = counterProjection(read(State, B.Bound), B.Mask);
-    return B.Invert ? Ctx.mkNe(Counter, Bound) : Ctx.mkEq(Counter, Bound);
+    const auto Compared =
+        B.UnsignedLess ? Ctx.mkUlt(Counter, Bound) : Ctx.mkEq(Counter, Bound);
+    return B.Invert ? Ctx.mkNot(Compared) : Compared;
   }
 
   bool seedBitRelations(Word &W,
@@ -3910,32 +3917,35 @@ class LoopPlanInference {
             }
             if (!Depends)
               continue;
-            for (bool Invert : {false, true}) {
-              // Late lanes can add candidates, never retry rejected or pruned
-              // bit/counter/bound/polarity/projection tuples.
-              if (std::any_of(W.BitAttempts.begin(), W.BitAttempts.end(),
-                              [&](const auto &A) {
-                                return A.Bit == Bit && A.Invert == Invert &&
-                                       A.Mask == Mask &&
-                                       sameLocation(A.Counter, C) &&
-                                       sameLocation(A.Bound, L);
-                              }))
-                continue;
-              const Word::BitRelation Relation{Bit, C, L, Invert, Mask};
-              W.BitAttempts.push_back(Relation);
-              bool Holds = true;
-              for (auto &S : Incoming) {
-                if (!entails(
-                        S.Predicate,
-                        Ctx.mkEq(Ctx.mkExtract(read(S, W.Location), Bit, 1),
-                                 bitComparison(S, Relation)))) {
-                  Holds = false;
-                  break;
+            for (bool UnsignedLess : {false, true})
+              for (bool Invert : {false, true}) {
+                // Late lanes can add candidates, never retry rejected or pruned
+                // bit/counter/bound/comparison/polarity/projection tuples.
+                if (std::any_of(W.BitAttempts.begin(), W.BitAttempts.end(),
+                                [&](const auto &A) {
+                                  return A.Bit == Bit && A.Invert == Invert &&
+                                         A.Mask == Mask &&
+                                         A.UnsignedLess == UnsignedLess &&
+                                         sameLocation(A.Counter, C) &&
+                                         sameLocation(A.Bound, L);
+                                }))
+                  continue;
+                const Word::BitRelation Relation{Bit,    C,    L,
+                                                 Invert, Mask, UnsignedLess};
+                W.BitAttempts.push_back(Relation);
+                bool Holds = true;
+                for (auto &S : Incoming) {
+                  if (!entails(
+                          S.Predicate,
+                          Ctx.mkEq(Ctx.mkExtract(read(S, W.Location), Bit, 1),
+                                   bitComparison(S, Relation)))) {
+                    Holds = false;
+                    break;
+                  }
                 }
+                if (Holds)
+                  W.BitRelations.push_back(Relation);
               }
-              if (Holds)
-                W.BitRelations.push_back(Relation);
-            }
           }
         }
     }
