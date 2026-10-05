@@ -70,6 +70,30 @@ bool admitsDoubleShiftOperands(const cs_x86 &X) {
          (Count.type == X86_OP_IMM ||
           (Count.type == X86_OP_REG && Count.reg == X86_REG_CL));
 }
+bool isScalarShift(unsigned Instruction) {
+  switch (Instruction) {
+#define NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(Name)                              \
+  case X86_INS_##Name:                                                         \
+    return true;
+#include "X64ScalarShiftInstructions.def"
+#undef NEVERD_X64_SCALAR_SHIFT_INSTRUCTION
+  default:
+    return false;
+  }
+}
+bool admitsScalarShiftOperands(const cs_x86 &X) {
+  if (X.op_count != 2)
+    return false;
+  const auto &Destination = X.operands[0], &Count = X.operands[1];
+  return (Destination.type == X86_OP_REG || Destination.type == X86_OP_MEM) &&
+         (Destination.size == x64::ByteBytes ||
+          Destination.size == x64::HalfWordBytes ||
+          Destination.size == x64::DWordBytes ||
+          Destination.size == x64::WordBytes) &&
+         ((Count.type == X86_OP_IMM && Count.imm >= 0 &&
+           uint64_t(Count.imm) <= UINT8_MAX) ||
+          (Count.type == X86_OP_REG && Count.reg == X86_REG_CL));
+}
 std::optional<bool> condition(unsigned Instruction, uint64_t Flags) {
   const bool Carry = Flags & x64::CarryFlag;
   const bool Parity = Flags & x64::ParityFlag;
@@ -409,6 +433,9 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
   const bool Atomic = isAtomic(I.id);
+  const bool ScalarShift = isScalarShift(I.id);
+  if (ScalarShift && !admitsScalarShiftOperands(X))
+    return llvm::make_error<UnsupportedExecutionError>();
   const bool DoubleShift = isDoubleShift(I.id);
   if (DoubleShift) {
     if (!admitsDoubleShiftOperands(X))
@@ -552,7 +579,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
         OperandAccess = CS_AC_WRITE;
       else if (updateArity(I.id))
         OperandAccess = CS_AC_READ | CS_AC_WRITE;
-      else if (Atomic || DoubleShift)
+      else if (Atomic || DoubleShift || ScalarShift)
         OperandAccess = CS_AC_READ | CS_AC_WRITE;
     }
     if (OperandAccess == CS_AC_READ)
@@ -577,7 +604,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       if (!Condition)
         return llvm::make_error<UnsupportedExecutionError>();
       Accesses.push_back({A, O.size, Write, uint64_t(*Condition)});
-    } else if ((Atomic || BitWrites || DoubleShift) && N == 0 &&
+    } else if ((Atomic || BitWrites || DoubleShift || ScalarShift) && N == 0 &&
                OperandAccess == (CS_AC_READ | CS_AC_WRITE)) {
       Accesses.push_back({A, O.size, Read, 0});
       Accesses.push_back({A, O.size, Write, 0, std::nullopt, 0, true});

@@ -88,6 +88,8 @@ checked x64는 `CLC/STC/CMC`와 `LAHF/SAHF`를 허용합니다. 캐리 명령은
 
 checked x64는 KVM, WHP, Unicorn에서 16/32/64비트 대상과 imm8/CL 횟수를 사용하는 `SHLD/SHRD`를 실행합니다. 횟수에 아키텍처 마스크를 적용하고, 16비트 형식에서 16을 넘는 미정의 횟수는 효과 전에 거부합니다. RAM은 정확한 폭으로 읽기·쓰기를 검사하며 기존 트랜잭션에서 공개 전에 결과를 관찰합니다. 취소하면 CPU와 메모리를 되돌립니다. LOCK과 장치 피연산자는 지원하지 않습니다.
 
+`X64ScalarShiftInstructions.def`는 `SHL/SHR/SAR`, `ROL/ROR`, `RCL/RCR`의 8/16/32/64비트 대상 효과를 정의합니다. 레지스터 및 RAM 형식은 암시적 1, imm8, CL 횟수를 지원하며 마스킹 후 0인 횟수와 SAL 별칭도 포함합니다. RAM 쓰기는 권한 검사, 결과 관찰 콜백, 공유 트랜잭션을 거칩니다. 중지 또는 콜백 오류가 발생하면 CPU와 메모리를 복원합니다. KVM, WHP, Unicorn 검사 모드는 이 경계를 공유합니다. LOCK 및 MMIO 형식은 아직 지원하지 않습니다.
+
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
 `X64PackedShiftInstructions.def`는 legacy SSE2 패킹 시프트 열 종류를 허용합니다. 요소 시프트의 횟수는 imm8 또는 XMM/정렬된 m128이며 바이트 시프트는 imm8만 허용합니다. 가변 횟수는 부호 없는 하위 64비트를 사용하고 스칼라 횟수 마스킹을 하지 않으며 상위 64비트는 무시합니다. 횟수가 0이거나 범위를 넘어도 메모리 피연산자는 16바이트 전체를 읽어야 합니다. FLAGS와 MXCSR은 유지되며 MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.

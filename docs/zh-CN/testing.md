@@ -1099,7 +1099,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 1126 项 CPU 检查及 17 项 SEH 回归，共有 1367 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `1126 CPU + 224 WHP + 17 SEH = 1367`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 1895 项 CPU 检查及 17 项 SEH 回归，共有 2136 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `1895 CPU + 224 WHP + 17 SEH = 2136`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1108,6 +1108,8 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 `X64StatusFlagsTests.cpp` 检查 `CLC/STC/CMC`、`LAHF/SAHF`、全部 256 个 AH 输入及已接纳的标志组合、所有 REX 前缀、完整 CPU 状态、内存不变性、观察器停止或错误、保存上下文和原生 ADC/存储续行。无效 LOCK 编码无副作用拒绝。独立主机指令判据在验证 CPUID 支持后检查 24 组前缀。原有 WDK 资源驱动覆盖全部五条指令，新增 22 项原生必测结果；不可用的主机或 ISA 组合明确跳过。 可移植 Unicorn 配置运行相同的七项用例；依赖的直接测试覆盖 16/32/64 位 AH 与 LOCK 行为、显式 REX 寄存器，以及长模式缺少特性时的拒绝。
 
 `X64DoubleShiftTests.cpp` 覆盖全部已接纳的 imm8/CL 计数、重叠与扩展寄存器、已定义标志、准确的跨页 RAM 观察、取消、权限/未映射/设备故障、LOCK 与未定义计数拒绝、上下文及原生 ADC 续行。独立主机判据检查 5,184 次原始执行，12 个原有 WDK 驱动探针覆盖寄存器与 RAM 形式。原生门禁新增 145 项必测结果。
+
+`X64ScalarShiftTests.cpp` 检查全部字节计数、两种进位输入、零/全一及带符号操作数、隐含单次形式、AH/SPL 与计数寄存器别名、完整 CPU 状态、精确 RAM 范围、观察回调回滚、故障及上下文续执行。独立原生对照检查 65,536 次执行。WDK 资源驱动加入 72 个原创探针。KVM/WHP 验证门要求此指令族的 769 项结果通过。
 
 `DriverSIMDSEHTests.cpp` 以四种受支持的处置及一次 x87 修改拒绝、两种原生执行契约、普通/CFG WDK 映像及两个加载地址运行八类原始 SSE 故障。十项后端专属结果和三项纯内核 SSE 记录检查均为必测。`driver_seh_simd.def` 统一定义样例与模式；异步展开表覆盖故障辅助函数。微软内核 10.0.26100.9549 提供独立分类与恢复依据：隔离执行了 107,744 组指令路径分类及 8,192 组恢复。这不代表已在完整 Windows 内核中执行驱动；ARM64 原生 KVM/WHP 仍未验证。
 
