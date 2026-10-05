@@ -28,6 +28,7 @@ private:
   enum class Stream { Input, Output, Error };
   struct OpenFile {
     llvm::ArrayRef<uint8_t> Bytes;
+    const LinuxFileMetadata *Metadata = nullptr;
     uint64_t Offset = 0;
   };
   using Descriptor = std::variant<Stream, OpenFile>;
@@ -43,6 +44,8 @@ private:
   llvm::Expected<uint64_t> read(OpenFile &File, uint64_t Address,
                                 uint64_t Size);
   uint64_t seek(OpenFile &File, uint64_t Offset, uint32_t Whence);
+  llvm::Expected<std::optional<uint64_t>>
+  status(const OpenFile &File, uint64_t Address, ProcessResult &Result);
 };
 } // namespace neverd::emulation::linux_model
 #endif

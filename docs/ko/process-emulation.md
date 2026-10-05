@@ -101,7 +101,7 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 ## 명시적 메모리 파일
 
-`linux_files`는 Linux ELF64와 Android에 닫힌 읽기 전용 파일 목록을 제공합니다. 필수 `files`는 비어 있어도 되며 각 항목은 정규 절대 경로 `path`와 바이너리 `bytes_hex`만 포함합니다. 호스트 파일이나 암시적 `/proc` 내용을 읽지 않습니다. 옵션이 없으면 중단하며 목록에 없는 경로는 `ENOENT`를 반환합니다.
+`linux_files`는 Linux ELF64와 Android에 닫힌 읽기 전용 파일 목록을 제공합니다. 필수 `files`는 비어 있어도 되며 각 항목은 정규 절대 경로 `path`와 바이너리 `bytes_hex`를 필수로 포함합니다. 호스트 파일이나 암시적 `/proc` 내용을 읽지 않습니다. 옵션이 없으면 중단하며 목록에 없는 경로는 `ENOENT`를 반환합니다.
 
 ```json
 {"linux_files":{"files":[
@@ -114,6 +114,17 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
 길이가 0인 읽기는 사용자 주소 범위의 끝에서 시작할 수 있습니다. 원래 주소 범위를 검증한 뒤 파일 위치와 원래 요청 길이의 합이 `INT64_MAX`를 초과하면 EOF에서도 `EINVAL`을 반환하며 커서는 바뀌지 않습니다.
+
+각 항목에는 완전한 `metadata`를 추가할 수 있습니다. C++의 `LinuxFileOptions::Metadata`는 이미 존재하는 파일 경로를 키로 사용합니다. `fstat`/`fstat64`와 syscall은 고정 관측값을 공유하며 호스트 속성을 읽거나 내용 길이로 size를 추론하거나 커서를 이동하지 않습니다. 일반 파일과 모든 필수 필드만 허용하며 전체 폭 정수는 십진 문자열을 사용합니다. x64/AArch64는 144/128바이트를 쓰고 rdev와 패딩은 0입니다. 잘못된 설명자는 `EBADF`, 전체가 쓰기 불가능한 출력은 `EFAULT`입니다. 메타데이터 누락, 알 수 없는 표준 스트림, 일부만 쓰기 가능한 출력은 바이트를 바꾸지 않고 중단합니다. 필드와 범위는 연결된 계약을 참조하십시오.
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 

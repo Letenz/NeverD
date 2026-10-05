@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "LinuxTime.h"
 
+#include "LinuxUserMemory.h"
+
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -27,30 +29,21 @@ Reply unsupported(ProcessResult &Result, llvm::StringRef Reason) {
   Result.Diagnostic = Reason.str();
   return std::nullopt;
 }
-// A kernel put_user/copy_to_user may fault after an architecture-dependent
-// partial store. Model complete writes and wholly inaccessible destinations;
-// stop before a mixed-access operation rather than inventing its fault bytes.
 llvm::Expected<Reply> put(ExecutionBackend &CPU, uint64_t Address,
                           llvm::ArrayRef<uint8_t> Bytes,
                           const MemoryLayout &Layout, ProcessResult &Result) {
-  if (Address >= Layout.UserLimit || Bytes.size() > Layout.UserLimit - Address)
+  auto Stored = writeUserMemory(CPU, Layout, Address, Bytes);
+  if (!Stored)
+    return Stored.takeError();
+  switch (*Stored) {
+  case UserWriteResult::Stored:
+    return Reply(0);
+  case UserWriteResult::BadAddress:
     return Reply(0 - BadAddress);
-  auto Writable = CPU.canAccess(Address, Bytes.size(), Write | UserAccessible);
-  if (!Writable)
-    return Writable.takeError();
-  if (!*Writable) {
-    for (size_t I = 0; I < Bytes.size(); ++I) {
-      auto Part = CPU.canAccess(Address + I, 1, Write | UserAccessible);
-      if (!Part)
-        return Part.takeError();
-      if (*Part)
-        return unsupported(Result, TimePartialOutput);
-    }
-    return Reply(0 - BadAddress);
+  case UserWriteResult::MixedAccess:
+    return unsupported(Result, TimePartialOutput);
   }
-  if (auto E = CPU.write(Address, Bytes))
-    return std::move(E);
-  return Reply(0);
+  llvm_unreachable("unknown Linux user-copy outcome");
 }
 llvm::Expected<Reply> putWord(ExecutionBackend &CPU, uint64_t Address,
                               int64_t Word, const MemoryLayout &Layout,
@@ -61,11 +54,14 @@ llvm::Expected<Reply> putWord(ExecutionBackend &CPU, uint64_t Address,
 }
 } // namespace
 
+bool isNormalizedTimespec(const LinuxTimespec &Value) {
+  return Value.Nanoseconds >= 0 && Value.Nanoseconds < 1000000000;
+}
 llvm::Error validateTimeOptions(const LinuxTimeOptions &Options) {
   for (const auto &[ID, Value] : Options.Clocks) {
     if (!knownClock(ID))
       return failure(TimeClockOption);
-    if (Value.Nanoseconds < 0 || Value.Nanoseconds >= 1000000000)
+    if (!isNormalizedTimespec(Value))
       return failure(TimeNanoseconds);
   }
   return llvm::Error::success();

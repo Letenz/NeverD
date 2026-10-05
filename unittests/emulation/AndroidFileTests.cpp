@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 #include "os/linux/android/AndroidInternal.h"
 
@@ -83,6 +84,55 @@ TEST_P(AndroidFiles, ImportsRawTrapsAndOtherThreadsShareTheSameOpenFile) {
   ASSERT_FALSE(R.Services.empty());
   EXPECT_EQ(R.Services.front().Number, 63u);
   EXPECT_EQ(R.Services.front().Result, 1u);
+}
+TEST_P(AndroidFiles, ExplicitStatusPreservesEveryFieldAndDescriptorCursor) {
+  Options.LinuxFiles->Metadata["/fixture/data"] = fileTestMetadata();
+  returned(run("files_status"));
+}
+TEST_P(AndroidFiles, StatusImportsAndThreadsShareObservationsWithPrivateErrno) {
+  Options.LinuxFiles->Metadata["/fixture/data"] = fileTestMetadata();
+  auto R = run("files_status_bionic");
+  returned(R);
+  bool OtherThreadStatus = false;
+  for (const auto &Call : R.NativeCalls)
+    if (Call.Name == "fstat64" && Call.ThreadID == 1001) {
+      EXPECT_EQ(Call.Arguments[0], 3u);
+      EXPECT_EQ(Call.Result, 0u);
+      OtherThreadStatus = true;
+    }
+  EXPECT_TRUE(OtherThreadStatus);
+}
+TEST_P(AndroidFiles, StatusDynamicBindingsRetainProviderIdentityAndLifetime) {
+  Options.LinuxFiles->Metadata["/fixture/data"] = fileTestMetadata();
+  Options.Android->Libraries["libfiles.so"] = {"fstat64"};
+  auto R = run("files_status_dynamic", {0});
+  returned(R);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "fstat64");
+  EXPECT_EQ(R.NativeCalls.back().Library, "libfiles.so");
+  R = run("files_status_dynamic", {1});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidFiles, UnknownStatusAndPartialCopiesHaveNoInventedResult) {
+  constexpr uint64_t Buffer = 0x20000000;
+  const std::vector<uint8_t> Bytes(8192, 0xa5);
+  Options.Android->Memory.push_back({Buffer, 8192, Bytes, false});
+  Options.Android->ReadMemory.push_back({Buffer, 8192});
+  for (unsigned Mode = 0; Mode < 4; ++Mode) {
+    SCOPED_TRACE(Mode);
+    if (Mode)
+      Options.LinuxFiles->Metadata["/fixture/data"] = fileTestMetadata();
+    auto R = run("files_status_unsupported", {Mode, Buffer});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_EQ(R.Services.back().Number, 80u);
+    EXPECT_FALSE(R.Services.back().Result);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots.front().Bytes, Bytes);
+  }
 }
 TEST_P(AndroidFiles, AbsentInputsAndUnmodeledFormsCannotFabricateAResult) {
   for (unsigned Mode = 0; Mode <= 6; ++Mode) {

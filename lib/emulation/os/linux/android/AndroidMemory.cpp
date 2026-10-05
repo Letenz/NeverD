@@ -54,7 +54,7 @@ llvm::Error initializeMemoryRegion(AddressSpace &Space,
   auto File = fs::openNativeFileForRead(Path);
   if (!File)
     return ioFailure(File.takeError());
-  auto Close = llvm::make_scope_exit([&] { fs::closeFile(*File); });
+  auto Close = llvm::scope_exit([&] { fs::closeFile(*File); });
   fs::file_status Opened;
   if (auto E = fs::status(*File, Opened))
     return ioFailure(E);

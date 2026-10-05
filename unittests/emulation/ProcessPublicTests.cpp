@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
+#include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionBackend.h"
@@ -585,7 +586,8 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  for (const char *Entry : {"files_sequence", "files_faults", "files_bionic"}) {
+  for (const char *Entry : {"files_sequence", "files_faults", "files_bionic",
+                            "files_status", "files_status_bionic"}) {
     SCOPED_TRACE(Entry);
     llvm::json::Object Request{
         {"backend", "unicorn"},
@@ -597,6 +599,12 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
          llvm::json::Object{{"files", llvm::json::Array{llvm::json::Object{
                                           {"path", "/fixture/data"},
                                           {"bytes_hex", "00ff410a805a"}}}}}}};
+    if (llvm::StringRef(Entry).starts_with("files_status"))
+      (*Request.getObject("linux_files")
+            ->getArray("files")
+            ->front()
+            .getAsObject())["metadata"] =
+          llvm::cantFail(llvm::json::parse(emulation::FileTestMetadataJSON));
     auto Options = jsonText(std::move(Request));
     auto Text = takeString(neverd_emulate_process_json(
         Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));

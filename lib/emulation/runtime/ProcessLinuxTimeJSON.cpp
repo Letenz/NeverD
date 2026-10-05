@@ -6,10 +6,9 @@
 #include "ProcessLinuxTimeJSON.h"
 
 #include "../os/linux/kernel/LinuxTime.h"
+#include "ProcessJSONInteger.h"
 
 #include "neverd/emulation/ProcessReportFields.h"
-
-#include "llvm/ADT/StringExtras.h"
 
 namespace neverd::emulation {
 namespace {
@@ -20,23 +19,12 @@ llvm::Error invalid(llvm::StringRef Name) {
 }
 llvm::Expected<int64_t> integer(const llvm::json::Value &V,
                                 llvm::StringRef Name, bool Narrow = false) {
-  std::optional<int64_t> Number;
-  if (auto S = V.getAsString()) {
-    auto Digits = *S;
-    Digits.consume_front("-");
-    int64_t N;
-    if (!Digits.empty() && llvm::all_of(Digits, llvm::isDigit) &&
-        !S->getAsInteger(10, N))
-      Number = N;
-  } else if (auto N = V.getAsNumber()) {
-    // Keep numeric JSON safe across C and Python/JavaScript producers. Decimal
-    // strings cover the full signed 64-bit domain without floating rounding.
-    if (*N >= -9007199254740991.0 && *N <= 9007199254740991.0)
-      Number = V.getAsInteger();
-  }
-  if (!Number || (Narrow && (*Number < INT32_MIN || *Number > INT32_MAX)))
-    return invalid(Name);
-  return *Number;
+  if (Narrow) {
+    if (auto Number = process_json::integer<int32_t>(V))
+      return *Number;
+  } else if (auto Number = process_json::integer<int64_t>(V))
+    return *Number;
+  return invalid(Name);
 }
 } // namespace
 llvm::Expected<LinuxTimeOptions>

@@ -101,7 +101,7 @@ Die statischen Uhr-IDs 0–9 und 11 sind zulässig. Jede Uhr ist unabhängig; fe
 
 ## Explizite Speicherdateien
 
-`linux_files` gibt Linux ELF64 und Android einen geschlossenen Katalog unveränderlicher Dateien. Das erforderliche Array `files` darf leer sein; jeder Eintrag enthält nur den kanonischen absoluten Pfad `path` und Binärdaten `bytes_hex`. Hostdateien und implizite `/proc`-Inhalte werden nicht gelesen. Ohne Option bleiben Dateidienste unmodelliert; fehlende Pfade liefern `ENOENT`.
+`linux_files` gibt Linux ELF64 und Android einen geschlossenen Katalog unveränderlicher Dateien. Das erforderliche Array `files` darf leer sein; jeder Eintrag benötigt den kanonischen absoluten Pfad `path` und Binärdaten `bytes_hex`. Hostdateien und implizite `/proc`-Inhalte werden nicht gelesen. Ohne Option bleiben Dateidienste unmodelliert; fehlende Pfade liefern `ENOENT`.
 
 ```json
 {"linux_files":{"files":[
@@ -114,6 +114,17 @@ Jedes Öffnen hat einen eigenen Cursor; Bionic, `syscall`, rohe Traps und Gastth
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
 Ein Lesezugriff der Länge null darf an der Grenze des Benutzeradressraums beginnen. Nach Prüfung des ursprünglichen Adressbereichs führt eine Dateiposition plus ursprünglicher Anforderungslänge oberhalb von `INT64_MAX` auch bei EOF zu `EINVAL`; der Cursor bleibt unverändert.
+
+Ein Eintrag kann vollständige `metadata` enthalten; C++ verwendet `LinuxFileOptions::Metadata` mit bereits vorhandenen Dateipfaden. `fstat`/`fstat64` und syscall teilen feste Beobachtungen, ohne Hostmetadaten, Größenableitung aus Dateibytes oder Cursoränderung. Nur reguläre Dateien und vollständige Felder sind zugelassen; volle Integerbreiten verwenden Dezimalstrings. x64/AArch64 schreiben 144/128 Bytes, rdev und Padding bleiben null. Ungültige Deskriptoren ergeben `EBADF`, vollständig unbeschreibbare Ausgaben `EFAULT`. Fehlende Metadaten, unbekannte Standardstreams und gemischte Schreibrechte stoppen ohne Byteänderung. Felder und Grenzen stehen im verlinkten Vertrag.
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 
