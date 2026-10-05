@@ -140,8 +140,12 @@ BionicResult GuestThreads::create(const NativeCallEvent &Call) {
                           (Threads.size() - 1) * thread_model::ArenaStride;
   const uint64_t MappingBase = Handle + PageSize;
   if (auto E =
-          Space.map(MappingBase, MappingSize, Read | Write | UserAccessible))
-    return std::move(E);
+          Space.map(MappingBase, MappingSize, Read | Write | UserAccessible)) {
+    if (!E.isA<GuestMemoryLimitError>())
+      return std::move(E);
+    llvm::consumeError(std::move(E));
+    return value(linux_model::TryAgain);
+  }
   auto Rollback = llvm::make_scope_exit(
       [&] { llvm::consumeError(Space.unmap(MappingBase, MappingSize)); });
   if (Guard)
