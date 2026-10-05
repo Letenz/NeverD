@@ -86,6 +86,8 @@ KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付�
 
 checked x64 は `CLC/STC/CMC` と `LAHF/SAHF` を受け入れます。キャリー命令は転送層で実行し、AH 転送は KVM、WHP、checked Unicorn、ネイティブ `driver-strict` で共通の ISA 処理を使います。LAHF は5つの状態フラグと固定ビットを AH に書き、SAHF は CF/PF/AF/ZF/SF のみ変更します。OF/IF/DF と他のレジスタは保持します。全 REX 値を含む無視されるプレフィックスでも暗黙の AH を使います。`X64StatusFlagsTests.cpp` は元のホスト命令、全状態、キャンセル、継続を検証します。固定版 Unicorn の変換器も移植可能なプロファイルで REX 下の暗黙の AH を保持し、これら5命令の LOCK 形式を状態変更前に拒否します。
 
+checked x64 は KVM、WHP、Unicorn で `SHLD/SHRD` の16/32/64ビット宛先と imm8/CL カウントを実行します。カウントは ISA のマスクを使い、16ビット形式で16を超える未定義値は副作用前に拒否します。RAM は正確な幅で読み書きを検証し、既存トランザクションで公開前に結果を観測します。キャンセルは CPU とメモリを戻します。LOCK とデバイスオペランドは未対応です。
+
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
 `X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。
