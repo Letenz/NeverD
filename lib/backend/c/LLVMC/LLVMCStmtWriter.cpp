@@ -3408,6 +3408,22 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   std::string Pointer = valueStr(Address);
   if (std::string Image = imageDataCName(Address); !Image.empty())
     Pointer = "&" + Image;
+  else if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Address)) {
+    // Named globals denote C objects, not addresses. An exact type match
+    // permits direct access; differently typed views still copy object bytes.
+    if (Global->getValueType() == Type) {
+      emitIndent(Indent);
+      if (Load)
+        OS << getName(Load) << " = " << Pointer << ";\n";
+      else
+        OS << Pointer << " = "
+           << (Integer ? integerPointerOperandStr(Store->getValueOperand())
+                       : valueStr(Store->getValueOperand()))
+           << ";\n";
+      return true;
+    }
+    Pointer = "&" + Pointer;
+  }
   emitIndent(Indent);
   if (Opts.UseUnalignedPointers) {
     if (auto Alias = c_memory::alias(typeToCLLVM(Type)); !Alias.empty()) {

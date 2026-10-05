@@ -36647,7 +36647,7 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
   EXPECT_TRUE(std::regex_search(
       Source,
       std::regex(
-          R"(uint32_t (\w+) = 11;\s*__builtin_memcpy\(\(void\*\)\(\(\(char\*\)&frame0 \+ 32\)\), &\1, 4\))")))
+          R"(uint32_t (\w+) = 11;\s*__builtin_memcpy\(\(void \*\)\(uintptr_t\)\(\(\(char\*\)&frame0 \+ 32\)\), &\1, 4\))")))
       << Source;
   EXPECT_NE(Source.find("sink_wide(used3)"), std::string::npos) << Source;
 }
