@@ -59,6 +59,8 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelResources.cpp
   KernelInterrupts.cpp
   KernelModelInterrupts.cpp
+  KernelModelInterruptParameters.cpp
+  KernelModelInterruptRegistration.cpp
   KernelModelInterruptEvents.cpp
   KernelResources.cpp
   KernelPhysicalMemory.cpp
@@ -76,6 +78,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelFrameworkSynchronization.cpp
   KernelModelSpinLocks.cpp
   KernelModelIRQL.cpp
+  KernelModelAPC.cpp
   KernelModelCancellation.cpp
   KernelScheduler.cpp
   KernelDispatcher.cpp

@@ -931,6 +931,11 @@ ownership, cancellation, interrupt and power tests exercise the domain handlers;
 execution tests still report unavailable native hosts and optional WDK fixtures
 explicitly.
 
+`DriverKernelModel.SpinLockFailuresPreserveOwnershipAndValidationOrder` checks
+competing release-variant, saved-IRQL and corrupted-storage errors through public
+kernel call admission. Failed releases preserve ownership, storage and IRQL;
+repairing the word permits a valid release with unspecified upper argument bits.
+
 `AndroidFinalizerTests.cpp` runs independent C ABI callers at O0/O2 with ordinary,
 APS2 and RELR relocations. It checks constructor registrations, exact callback
 order and arguments, DSO filtering, duplicate and NULL registrations, recursive

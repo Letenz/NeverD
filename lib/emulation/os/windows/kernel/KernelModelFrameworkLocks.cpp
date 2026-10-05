@@ -7,7 +7,6 @@
 /// dispatcher, with actual thread ownership, APC state and virtual deadlines.
 //===----------------------------------------------------------------------===//
 
-#include "KernelAPINames.h"
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
@@ -31,8 +30,7 @@ void KernelModel::configureFrameworkLockHost() {
       if (auto E = Dispatcher.initializeWaitLock(*Storage))
         return E;
     } else {
-      auto Initialized =
-          callSpinLockAPI(kernel_api::KeInitializeSpinLock, {*Storage});
+      auto Initialized = initializeSpinLock(*Storage);
       if (!Initialized)
         return Initialized.takeError();
     }
@@ -64,8 +62,7 @@ void KernelModel::configureFrameworkLockHost() {
         !CurrentExecution || !CurrentThreadKey)
       return lockError("acquisition requires a live lock and guest thread");
     if (!Waitable) {
-      auto Acquired =
-          callSpinLockAPI(kernel_api::KeAcquireSpinLockRaiseToDpc, {Storage});
+      auto Acquired = acquireSpinLock(Storage, SpinLockMode::Raise);
       if (!Acquired)
         return Acquired.takeError();
       return windows::StatusSuccess;
@@ -112,8 +109,7 @@ void KernelModel::configureFrameworkLockHost() {
       auto Held = ExecutiveSpinLocks.find(Storage);
       if (Held == ExecutiveSpinLocks.end())
         return lockError("spin lock has not been acquired");
-      auto Released = callSpinLockAPI(kernel_api::KeReleaseSpinLock,
-                                      {Storage, Held->second.OldIRQL});
+      auto Released = releaseSpinLock(Storage, Held->second.OldIRQL);
       if (!Released)
         return Released.takeError();
       return llvm::Error::success();

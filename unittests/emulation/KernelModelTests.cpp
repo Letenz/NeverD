@@ -277,6 +277,41 @@ TEST_F(DriverKernelModel, CriticalAndGuardedAPCRegionsPairOnOneThread) {
   success(Model->validateExecutionReturn(profile::StackBase, 0));
 }
 
+TEST_F(DriverKernelModel, SpinLockFailuresPreserveOwnershipAndValidationOrder) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4c4f434b;
+  const uint64_t Lock = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Lock, 0u);
+  invoke("KeInitializeSpinLock", {Lock});
+  EXPECT_EQ(invoke("KeAcquireSpinLockRaiseToDpc", {Lock}), 0u);
+
+  // Simulate corrupted storage independently of the model's write guard.
+  // Release must check its variant and saved IRQL before inspecting the word.
+  success(Memory->writeInteger(Lock, 2, 8));
+  EXPECT_EQ(failure("KeReleaseSpinLockFromDpcLevel", {Lock}),
+            "executive spin lock release variant does not match acquisition");
+  EXPECT_EQ(failure("KeReleaseSpinLock", {Lock, 1}),
+            "executive spin lock release must restore the saved IRQL");
+  EXPECT_EQ(failure("KeReleaseSpinLock", {Lock, 0}),
+            "executive spin lock storage was modified");
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  EXPECT_EQ(integer(Lock), 2u);
+  EXPECT_EQ(invoke("KeTryToAcquireSpinLockAtDpcLevel", {Lock}), 0u);
+
+  success(Memory->writeInteger(Lock, 1, 8));
+  invoke("KeReleaseSpinLock", {Lock, 0xaabbccdd12345600});
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  EXPECT_EQ(integer(Lock), 0u);
+  EXPECT_EQ(failure("KeReleaseSpinLock", {Scratch, 0}),
+            "executive spin lock is not owned by this thread");
+  EXPECT_EQ(failure("KeAcquireSpinLockAtDpcLevel", {Scratch}),
+            "executive spin lock requires kernel storage");
+  EXPECT_EQ(failure("KeAcquireSpinLockAtDpcLevel", {Lock}),
+            "DPC-level spin-lock acquisition requires DISPATCH_LEVEL");
+  success(Model->validateExecutionReturn(profile::StackBase, 0));
+  invoke("ExFreePoolWithTag", {Lock, Tag});
+}
+
 TEST_F(DriverKernelModel, MDLMappingIgnoresUnspecifiedNarrowArgumentHighBits) {
   using namespace windows;
   invoke("IoCreateDevice",
