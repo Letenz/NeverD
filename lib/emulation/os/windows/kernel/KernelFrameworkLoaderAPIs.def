@@ -11,5 +11,5 @@
 ///
 //===----------------------------------------------------------------------===//
 
-NEVERD_FRAMEWORK_LOADER_API(WdfVersionBind, 4)
-NEVERD_FRAMEWORK_LOADER_API(WdfVersionUnbind, 3)
+NEVERD_FRAMEWORK_LOADER_API(WdfVersionBind, 4, bind)
+NEVERD_FRAMEWORK_LOADER_API(WdfVersionUnbind, 3, unbind)

@@ -1341,6 +1341,18 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 
 `os/windows/driver/` owns driver image loading, execution sessions, scenarios, reports and execution policy. `os/windows/kernel/` owns kernel API and object models, including WDM/KMDF, device lifecycle, power policy, memory and scheduling; `KernelModelPowerPolicy.cpp` belongs there. `os/windows/process/` owns user-process startup and services, while `os/windows/exception/` owns shared exception search and unwind. Driver and kernel sources still form `NeverDEmulation`: their existing calls and shared types are not independent library boundaries. Each directory maintains its own `CMakeLists.txt` source list, and public headers remain compatible.
 
+`KernelFrameworkDispatch` resolves each KMDF call from one registration containing
+its argument count, handler and shared IRQL policy. Binding and globals checks
+precede the selected domain handler; interrupt, lock and power calls retain their
+own IRQL checks. `KernelFrameworkCalls` owns the small generic object-call
+handlers. Device initialization, queue transitions, request buffers, cancellation,
+forwarding and completion have directly registered handlers in their owning
+files. Shared admission helpers preserve the distinct rules for active requests,
+retained completed handles and queue-owned requests. Allocation, binding and
+lifecycle state remain in `KernelFramework`. Windows dispatcher and registry
+calls resolve operation and argument count together from their API inventories;
+DMA admission and execution share the selected operation descriptor.
+
 `os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
 
 The Linux kernel component also owns validation and lookup of explicit fixed

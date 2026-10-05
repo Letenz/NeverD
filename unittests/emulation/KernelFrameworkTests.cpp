@@ -81,6 +81,32 @@ TEST_F(DriverKernelFramework, MalformedOutputIsValidatedBeforeAllocating) {
   bind();
 }
 
+TEST_F(DriverKernelFramework, CallAdmissionPreservesValidationOrderAndIRQL) {
+  bind();
+  createDriver();
+  type();
+  attributes(0, Type);
+  const auto Handle = object(Attrs);
+  const auto Create = entry("WdfObjectCreate");
+  const size_t Attempts = AllocationAttempts;
+  expectError(Model.call(Create, {Globals + 8}, 3), "argument count");
+  expectError(Model.call(Create, {Globals + 8, 1, 1}, 3), "globals");
+  expectError(Model.call(Create, {Globals, 1, 1}, 3), "PASSIVE_LEVEL");
+  EXPECT_EQ(AllocationAttempts, Attempts);
+
+  const auto Context = take(Model.call(entry("WdfObjectGetTypedContextWorker"),
+                                       {Globals, Handle, Type}, 15));
+  EXPECT_NE(Context, 0u);
+  EXPECT_EQ(take(Model.call(entry("WdfObjectContextGetObject"),
+                            {Globals, Context}, 15)),
+            Handle);
+  expectError(Model.call(entry("WdfRequestGetInformation"), {Globals, 1}, 2),
+              "invalid or foreign framework request");
+  expectError(Model.call(entry("WdfRequestGetInformation"), {Globals, 1}, 3),
+              "DISPATCH_LEVEL");
+  EXPECT_EQ(AllocationAttempts, Attempts);
+}
+
 TEST_F(DriverKernelFramework, AllocationFailureRollsBackUnpublishedBinding) {
   FailAllocation = 2;
   expectError(loader("WdfVersionBind", {Driver, Registry, Info, GlobalsSlot}),

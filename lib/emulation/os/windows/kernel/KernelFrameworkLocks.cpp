@@ -22,62 +22,73 @@ llvm::Error lockError(const llvm::Twine &Message) {
 }
 } // namespace
 
-llvm::Expected<std::optional<uint64_t>>
-KernelFramework::callLock(llvm::StringRef Name, Binding &B,
-                          llvm::ArrayRef<uint64_t> A, uint8_t IRQL) {
-  const bool Create =
-      Name == api::WdfSpinLockCreate || Name == api::WdfWaitLockCreate;
-  const bool Acquire =
-      Name == api::WdfSpinLockAcquire || Name == api::WdfWaitLockAcquire;
-  const bool Release =
-      Name == api::WdfSpinLockRelease || Name == api::WdfWaitLockRelease;
-  if (!Create && !Acquire && !Release)
-    return std::optional<uint64_t>{};
-  const bool Wait = Name == api::WdfWaitLockCreate ||
-                    Name == api::WdfWaitLockAcquire ||
-                    Name == api::WdfWaitLockRelease;
+llvm::Expected<KernelFramework::Lock *>
+KernelFramework::lockForCall(Binding &B, uint64_t Handle, bool Wait,
+                             uint8_t IRQL) {
   if (IRQL > scheduler::DispatchLevel)
     return lockError("lock operation requires IRQL <= DISPATCH_LEVEL");
-  if (Create) {
-    auto Validation = attributes(A[1], AttributesUse::Object);
-    if (!Validation)
-      return Validation.takeError();
-    if (const auto *Status = std::get_if<uint32_t>(&*Validation))
-      return std::optional<uint64_t>{*Status};
-    const auto &Attrs = std::get<Attributes>(*Validation);
-    if (!LocksHost.Create || !LocksHost.Destroy)
-      return lockError("lock creation host is unavailable");
-    if (auto E = writable(A[2], sizeof(uint64_t)))
-      return E;
-    auto Storage = LocksHost.Create(Wait);
-    if (!Storage)
-      return Storage.takeError();
-    auto Handle = createObject(B.Globals, Attrs, false);
-    if (!Handle)
-      return llvm::joinErrors(Handle.takeError(),
-                              LocksHost.Destroy(*Storage, Wait));
-    Objects.at(*Handle).Kind =
-        Wait ? ObjectKind::WaitLock : ObjectKind::SpinLock;
-    LockObjects.emplace(*Handle, Lock{*Storage, Wait, {}});
-    if (auto E = Memory.writeInteger(A[2], *Handle, sizeof(uint64_t)))
-      return E;
-    return std::optional<uint64_t>{windows::StatusSuccess};
-  }
-  auto Object = Objects.find(A[1]);
-  auto Lock = LockObjects.find(A[1]);
+  auto Object = Objects.find(Handle);
+  auto Entry = LockObjects.find(Handle);
   if (Object == Objects.end() || Object->second.Binding != B.Globals ||
-      Object->second.Deleting || Lock == LockObjects.end() ||
-      Lock->second.Wait != Wait)
+      Object->second.Deleting || Entry == LockObjects.end() ||
+      Entry->second.Wait != Wait)
     return lockError("operation requires a live matching framework lock");
-  if (!Wait && !Lock->second.InterruptUsers.empty())
+  if (!Wait && !Entry->second.InterruptUsers.empty())
     return lockError("an interrupt spin lock requires WdfInterrupt lock APIs");
-  if (Release) {
-    if (!LocksHost.Release)
-      return lockError("lock release host is unavailable");
-    if (auto E = LocksHost.Release(Lock->second.Storage, Wait))
-      return E;
-    return std::optional<uint64_t>{0};
-  }
+  return &Entry->second;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::callLockCreate(llvm::StringRef Name, Binding &B,
+                                llvm::ArrayRef<uint64_t> A, uint8_t IRQL) {
+  if (IRQL > scheduler::DispatchLevel)
+    return lockError("lock operation requires IRQL <= DISPATCH_LEVEL");
+  const bool Wait = Name == api::WdfWaitLockCreate;
+  auto Validation = attributes(A[1], AttributesUse::Object);
+  if (!Validation)
+    return Validation.takeError();
+  if (const auto *Status = std::get_if<uint32_t>(&*Validation))
+    return *Status;
+  const auto &Attrs = std::get<Attributes>(*Validation);
+  if (!LocksHost.Create || !LocksHost.Destroy)
+    return lockError("lock creation host is unavailable");
+  if (auto E = writable(A[2], sizeof(uint64_t)))
+    return E;
+  auto Storage = LocksHost.Create(Wait);
+  if (!Storage)
+    return Storage.takeError();
+  auto Handle = createObject(B.Globals, Attrs, false);
+  if (!Handle)
+    return llvm::joinErrors(Handle.takeError(),
+                            LocksHost.Destroy(*Storage, Wait));
+  Objects.at(*Handle).Kind = Wait ? ObjectKind::WaitLock : ObjectKind::SpinLock;
+  LockObjects.emplace(*Handle, Lock{*Storage, Wait, {}});
+  if (auto E = Memory.writeInteger(A[2], *Handle, sizeof(uint64_t)))
+    return E;
+  return windows::StatusSuccess;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::callLockRelease(llvm::StringRef Name, Binding &B,
+                                 llvm::ArrayRef<uint64_t> A, uint8_t IRQL) {
+  const bool Wait = Name == api::WdfWaitLockRelease;
+  auto Lock = lockForCall(B, A[1], Wait, IRQL);
+  if (!Lock)
+    return Lock.takeError();
+  if (!LocksHost.Release)
+    return lockError("lock release host is unavailable");
+  if (auto E = LocksHost.Release((**Lock).Storage, Wait))
+    return E;
+  return 0;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::callLockAcquire(llvm::StringRef Name, Binding &B,
+                                 llvm::ArrayRef<uint64_t> A, uint8_t IRQL) {
+  const bool Wait = Name == api::WdfWaitLockAcquire;
+  auto Lock = lockForCall(B, A[1], Wait, IRQL);
+  if (!Lock)
+    return Lock.takeError();
   std::optional<int64_t> Timeout;
   if (Wait && A[2]) {
     auto Value = read(A[2], sizeof(int64_t));
@@ -92,10 +103,10 @@ KernelFramework::callLock(llvm::StringRef Name, Binding &B,
                      "DISPATCH_LEVEL for a zero timeout");
   if (!LocksHost.Acquire)
     return lockError("lock acquisition host is unavailable");
-  auto Status = LocksHost.Acquire(Lock->second.Storage, Wait, Timeout);
+  auto Status = LocksHost.Acquire((**Lock).Storage, Wait, Timeout);
   if (!Status)
     return Status.takeError();
-  return std::optional<uint64_t>{*Status};
+  return *Status;
 }
 
 llvm::Error KernelFramework::validateLockDeletion(uint64_t Handle,
