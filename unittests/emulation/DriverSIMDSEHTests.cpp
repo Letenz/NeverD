@@ -53,7 +53,7 @@ TEST_P(DriverSIMDSEH, OriginalDriverCatchesAndRetriesSSEFaults) {
       GTEST_SKIP() << Text;
     FAIL() << Text;
   }
-  ASSERT_TRUE((*CPU)->supportsSIMDExceptions());
+  ASSERT_TRUE(CPU->CPU->supportsSIMDExceptions());
   std::vector<const char *> Images{NEVERD_WDM_SEH_FIXTURE};
 #ifdef NEVERD_WDM_SEH_CFG_FIXTURE
   Images.push_back(NEVERD_WDM_SEH_CFG_FIXTURE);

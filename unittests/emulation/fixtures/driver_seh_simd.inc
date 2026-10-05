@@ -59,7 +59,8 @@ static LONG SimdFilter(PEXCEPTION_POINTERS Pointers) {
   SimdValid =
       Stage == SehSIMDBefore && LiveMXCSR == SehSIMDDefault &&
       !(LiveFlags & SehSIMDDirection) &&
-      Record->ExceptionCode == SimdCase->Code && !Record->ExceptionFlags &&
+      (ULONG)Record->ExceptionCode == SimdCase->Code &&
+      !Record->ExceptionFlags &&
       Record->NumberParameters == SehSIMDParameterCount &&
       Record->ExceptionAddress == (PVOID)(ULONG_PTR)Context->Rip &&
       !Record->ExceptionInformation[0] &&

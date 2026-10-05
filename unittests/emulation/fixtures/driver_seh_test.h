@@ -55,6 +55,9 @@ enum {
 #undef NEVERD_SEH_SIMD_VALUE
 };
 #define NEVERD_SEH_SIMD_TEXT(Name, Text) static const char Name[] = Text;
+#define NEVERD_SEH_SIMD_WIDE_VALUE(Name, Value)                                \
+  static const unsigned long long Name = Value;
 #include "driver_seh_simd.def"
+#undef NEVERD_SEH_SIMD_WIDE_VALUE
 #undef NEVERD_SEH_SIMD_TEXT
 #endif
