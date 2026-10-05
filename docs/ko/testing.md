@@ -199,6 +199,8 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `FrameOffsets.*`, `NativeStackSpecialization.*`, `OriginalBinaryUndefinedIndependence.*`는 정렬 2/4/8/16/32의 모든 나머지, 자유로운 상위 비트, 호출 간 스필, 카운트다운 루프, 별칭 손상, 잘못된 분기, 무관한 큰 마스크, 필요한 분할 확대와 정확한 한도/한 번 부족한 예산을 검사합니다. 별도 네이티브 대조 사례는 경로 조건이 있는 정렬, 내부 부호 없는 반환 정리, 잘못된 정리량 및 접두사 반환을 검사합니다. 이 테스트는 분할 루프의 자동 native-to-LLVM 증명 범위를 확립하지 않습니다.
 
+진입 합동 증명 테스트는 정렬 1/2/4/16의 모든 나머지, 두 루트 레지스터, 자유로운 상위 비트, 잘못된 영역, 모순 상수, 비순환 경계, 제외 구간, 보존과 정확/하나 부족한 쿼리 예산을 검사합니다. 귀납 템플릿은 원래 진입 조건을 유지합니다. 새 네이티브 독립성·관계·LLVM 증명은 불일치 영역과 바뀐 상태 코드를 거부하며 다이제스트는 두 영역을 묶습니다. 독립 작성된 사례이며 ABI나 실행에서 조건을 추측하지 않습니다. 독립 진입 가드 C를 그대로 O1/O2로 컴파일하여 두 나머지에서 실제 네이티브 명령열과의 일치를 증명하며 같은 결과물은 다른 나머지에서 거부되어야 합니다.
+
 레지스터 경우 회귀는 양쪽 바이트 순서, 높은 프레임 기준 주소, 덮어쓰기와 중첩 필드, 후속 간선, 확장된 선행 노드, 네이티브 CALL/RET 및 정확한 예산과 하나 부족한 예산을 검사합니다. 두 C 경로는 O0/O2에서 네 가지 메모리 경우를 모두 실행합니다. 네이티브 정밀화는 두 선택자 값을 각각 고정하여 검사하므로 무제약 입력 증명이 아닙니다. 별도 LLVM 예제는 공유 합류점 앞으로 이동한 거짓 분기가 참 분기 뒤에 실행되지 않음을 PHI 복사와 저장을 포함해 검사합니다.
 
 진입 정렬 회귀는 세부 분할, 모든 허용 나머지, 서로 다른 주소 상위 비트, 마지막 사례 실패 및 정확한 예산과 1 부족을 검사합니다. 두 C 백엔드의 O0/O2 실행에서 접근 불가능한 거부 대상 게스트 주소와 잘못된 플래그로 상태 2 및 모든 상태 바이트 보존을 확인합니다. 모델 의미와 C/Python v5 레이아웃·소유권·이전 및 미래 후행 필드도 검사하며, 바인딩되지 않은 정렬 영역의 네이티브 증명을 거부합니다.
@@ -1292,6 +1294,8 @@ Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 
 `NeverDLLVMCPhiTests`는 O0/O2에서 독립 및 상호 의존 루프 갱신을 실행하며, 0회 반복, 반복 경계와 무작위 전체 비트 폭 초기값을 검사합니다. 가독성 검사는 독립 갱신에 스냅샷 지역 변수가 없고 복합 교환에 필요한 스냅샷만 남도록 요구합니다. 기존 분기, switch, 이동된 분기 본문 및 교환 루프 사례도 선택된 간선과 동시 대입 의미를 검증합니다.
 
+`LLVMCInternalExitRegions`의 독립 테스트 5개는 양 극성, 0회 실행, 종료/회귀 간선의 병렬 교환, 헤더/내부 종료의 네 중첩 조합과 헤더/본문/래치 관찰 순서를 검사합니다. 공유 목적지와 조기 계속은 실행 가능한 대체 출력을 검증하며 앞선 유효 루프가 있어도 부분 구조를 게시하지 않아야 합니다. 전체 모듈과 단일 함수 출력은 일치하고 LLVM은 바뀌지 않습니다. 원본 LLVM과 생성 C를 독립 부호 없는 오라클과 O0/O2에서 294,912회 비교하며 C에 미정의 동작 트랩을 적용합니다.
+
 `NeverDLLVMCPhiTests`는 공통 루프 종료 지점의 서로 다른 후속 PHI 쌍, 관찰 호출 순서, 출력 메모리 및 호출자 IR 보존도 검증합니다. 전체 모듈과 선택 함수의 C를 O0/O2에서 독립 참조 구현과 비교 실행합니다. 다른 종료 비교와 추가 선행 블록은 보수적 처리를 검사합니다.
 
 `NeverDLLVMCPhiTests`는 독립적인 O0/O2 oracle로 여러 역방향 간선의 연산 결합, 관찰 호출 순서, 메모리 수정 호출 전 값 스냅샷, 좁은 정수의 래핑과 부호 확장을 검사합니다. 전체 모듈 및 단일 함수 출력에서 호출자 IR 보존, 간선 불일치, 공유 루트, poison 속성, 미정의 피연산자, 가변 시프트, 제약된 intrinsic, 예외 함수, 예산 부족 시 전체 거부를 확인합니다. 모든 입력 연산이 같을 때만 회전 호출을 합칩니다.
@@ -1357,3 +1361,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors`는 조기 반환과 once 호출 사이의 빈 명령 앵커를 검사하며 그 사이의 호출이나 저장을 거부합니다.
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 는 공유 루트 증명과 리프가 컨텍스트를 관찰하기 시작한 뒤의 거부를 검사합니다.
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers`는 두 아키텍처를 검증하고 변경된 제공자, 약한 가져오기, 저장소 충돌, 오래된 ABI 캐리어를 거부합니다. `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder`는 독립 Swift 캐리어 검증 함수로 O0/O2의 생성 C를 실행하여 부호 있는 0·비정규 수·NaN을 포함한 좌표 비트, 수신자 식별, 호출 순서와 보호 값을 확인합니다. 이 검사는 호출 ABI를 입증하며 상위 메서드의 완전한 복구를 뜻하지 않습니다.
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs`는 비공개 멤버와 거부할 서명을 포함하여 전체 메서드 트리와 정확한 전달 위치를 확인합니다. `SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity`와 `CGRectMethodRejectsChangedEntryAndReceiverParameter`는 파이프라인 및 게시 재검증에서 self 인덱스, 진입점 또는 인자 형식 변경을 거부합니다. 컴파일러 기록은 macOS/Mac Catalyst의 네 타깃을 포함하지만 이 진입 선언은 arm64만 지원합니다. `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits`는 O0/O2에서 생성된 C를 독립적인 Swift 스칼라 전달 참조 구현과 비교하여 네 좌표의 전체 비트 패턴, 구별되는 context/self 포인터, 단일 호출 및 저장 영역 보호를 검증합니다.

@@ -267,7 +267,7 @@ bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
                       ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf));
     }
   const auto Declaration =
-      swiftMangledZeroArgClassMethodSourceABI(Image, Med.Entry);
+      swiftMangledReceiverClassMethodSourceABI(Image, Med.Entry);
   if (!Marked && !Declaration)
     return true;
   if (!Low || Low->Entry != Med.Entry)

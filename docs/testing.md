@@ -488,6 +488,8 @@ Packed-flags tests cover all scalar entry-flag combinations, privilege masks, bo
 
 `FrameOffsets.*`, `NativeStackSpecialization.*` and `OriginalBinaryUndefinedIndependence.*` check all residues for alignments 2/4/8/16/32, free high bits, spills across calls, countdown loops, alias corruption, wrong dispatch, irrelevant wide masks, necessary partition upgrades and exact/one-short budgets. Separate native controls check guarded alignment, internal unsigned return cleanup, incorrect cleanup and prefixed returns. These tests do not establish automatic native-to-LLVM proof coverage for partitioned loops.
 
+Entry-congruence proof tests cover every residue at alignments 1/2/4/16, two distinct root registers, unconstrained higher bits, malformed domains, contradictory entry constants, nonwrapping bounds, exclusion gaps, preservation and exact/one-short query budgets. Inductive loop templates retain the original root predicate. Fresh native independence/refinement and native-to-LLVM checks reject mismatched domains and changed status, while certificate digests bind both domains. These are independently authored fixtures; no alignment is inferred from an ABI or a concrete execution. An independent guarded C function is compiled unchanged at O1/O2 and proved against the actual native instruction sequence under two residues; the same compiled artifacts must fail for a different residue.
+
 Register-case regressions cover both byte orders, high frame roots, overwritten and overlapping fields, later edges, widened predecessors, native CALL/RET and exact/one-short budgets. Both C routes execute all four memory cases at O0/O2. Native refinement checks bind two selector values independently; they are not an unrestricted-input proof. A separate LLVM fixture checks that moving the false arm before a shared join cannot make it execute after the true arm, including PHI copies and stores.
 
 Entry-alignment regressions cover finer partitions, every allowed residue, different high root bits, late failing cases and exact/short budgets. Source checks exercise both C backends at O0/O2 with inaccessible rejected guest addresses and invalid flags: status 2 must preserve all state bytes. Model refinement checks the same rejection semantics; C/Python tests cover v5 layout, ownership and old/future tails. Native proof controls reject unbound alignment domains.
@@ -2569,6 +2571,8 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 
 `NeverDLLVMCPhiTests` executes independent and cross-dependent loop updates at O0/O2 over zero-trip loops, iteration boundaries and randomized full-width seeds. Readability assertions require no snapshot locals for independent updates and only the needed snapshot for compound exchanges. Existing branch, switch, moved-arm and swap-loop cases continue to check the selected edge and simultaneous assignment semantics.
 
+`LLVMCInternalExitRegions` adds five independent tests covering both exit polarities, zero iterations, parallel exit/backedge swaps, all four combinations of nested header/internal exits and ordered header/body/latch observations. Shared-destination exits and early continuations verify executable fallback; a valid earlier loop followed by an unsupported region must publish no partial structure. Whole-module and selected-function output must agree without changing LLVM. Original LLVM and emitted C run against independent unsigned oracles at O0/O2 over 294,912 calls, with undefined-behavior traps on C.
+
 `NeverDLLVMCPhiTests` also checks common loop exits with distinct successor PHI pairs, ordered observer calls, output memory and unchanged caller IR. Whole-module and selected-function C execute against independent O0/O2 oracles. Different exit comparisons and extra arm predecessors exercise conservative handling.
 
 `NeverDLLVMCPhiTests` covers multi-backedge loop-expression factoring with independent O0/O2 oracles, ordered observers, memory snapshots before modifying calls, narrow wrap and signed extension. It checks whole-module and selected-function output without changing caller IR, conflicting edges, shared roots, poison annotations, undefined operands, variable shifts, constrained intrinsics, exception functions and complete budget refusal. Rotate calls must collapse only when every incoming operation agrees.
@@ -2602,6 +2606,15 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
 
+File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
+imports and variadic syscalls, shared catalogue queries from another guest
+thread, private errno, dynamic provider lifetime, implicit directories,
+missing paths, file ancestors, invalid-mode precedence, integer high bits,
+descriptor exhaustion and unchanged cursors. Path imports include empty,
+unmapped, overlong and page-tail strings. Permission checks and noncanonical
+paths remain unsupported. Raw syscall extra registers are ignored; the API 28
+Bionic wrapper rejects nonzero flags.
+
 Status cases use independently declared x64 and AArch64 `stat` structures, checking
 every field, zero padding, canaries, unaligned output, full-width inode/timestamps,
 size independent from bytes and unchanged cursors. Raw/Bionic/variadic calls and
@@ -2624,3 +2637,7 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` checks empty instruction anchors between the early return and once call, and rejects intervening calls or stores.
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` checks the shared root proof and rejection after a leaf starts observing its context.
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` checks both architectures and rejects changed providers, weak imports, conflicting storage and stale ABI carriers. `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` executes generated C at O0/O2 with independent Swift carrier oracles, checking coordinate bits including signed zero, subnormals and NaNs, receiver identity, call order and guards. These checks establish the call ABI, not complete upper-method recovery.
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` checks the complete method tree and exact carriers, including private members and rejected signatures. `SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` and `CGRectMethodRejectsChangedEntryAndReceiverParameter` exercise the pipeline and publication replay, rejecting a changed self index, entry or argument type. Compiler records cover four macOS/Mac Catalyst targets; the supported entry declaration remains arm64 only. `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` executes generated C at O0/O2 against an independent scalar Swift carrier oracle, retaining all four coordinate bit patterns, distinct context/self pointers, one call and storage guards.

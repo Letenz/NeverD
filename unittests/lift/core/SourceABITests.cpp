@@ -633,6 +633,69 @@ TEST(SourceABI, SwiftArm64ScalarFloatUsesIndependentRegisterBank) {
   EXPECT_FALSE(assignDarwinSwiftSourceABI(Unsupported, Arch::AArch64, Error));
 }
 
+TEST(SourceABI, SwiftPointActionRequiresTwoDoublesAndContext) {
+  SourceFunctionTypeHint Hint;
+  Hint.ReturnType = NdType::makeVoid();
+  Hint.Parameters = {{"x", NdType::makeFloat(8)},
+                     {"y", NdType::makeFloat(8)},
+                     {"context", NdType::makePtr(NdType::makeVoid())}};
+  Hint.Parameters[2].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Error;
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    auto Assigned = Hint;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Assigned, Architecture, Error))
+        << Error;
+    ASSERT_TRUE(validateSourceABI(Assigned, Error)) << Error;
+    const auto &Registers = getTargetRegInfo(Architecture);
+    for (size_t I = 0; I != 2; ++I) {
+      EXPECT_EQ(Assigned.Parameters[I].Location.Kind,
+                SourceABICarrierKind::FloatingRegister);
+      EXPECT_EQ(Assigned.Parameters[I].Location.RegisterOffset,
+                Registers.FPParamRegs[I]);
+      EXPECT_EQ(Assigned.Parameters[I].Location.ValueBytes, 8U);
+    }
+    EXPECT_EQ(Assigned.Parameters[2].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      auto Invalid = Assigned;
+      if (Mutation == 0)
+        Invalid.Parameters[1].Location.RegisterOffset =
+            Registers.FPParamRegs[0];
+      if (Mutation == 1)
+        Invalid.Parameters[0].Location.ValueBytes = 4;
+      if (Mutation == 2)
+        Invalid.Parameters[2].Location.RegisterOffset =
+            Registers.IntParamRegs[0];
+      if (Mutation == 3)
+        Invalid.Convention = SourceFunctionTypeHint::ConventionKind::C;
+      EXPECT_FALSE(validateSourceABI(Invalid, Error)) << Mutation;
+    }
+  }
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    auto Unsupported = Hint;
+    if (Mutation == 0)
+      Unsupported.Parameters[0].Type = NdType::makeFloat(4);
+    if (Mutation == 1)
+      Unsupported.Parameters[1].Type = NdType::makeInt(8);
+    if (Mutation == 2)
+      Unsupported.Parameters.pop_back();
+    if (Mutation == 3)
+      Unsupported.Parameters[2].TheRole =
+          SourceParameterTypeHint::Role::Ordinary;
+    if (Mutation == 4)
+      Unsupported.Parameters.push_back({"extra", NdType::makeFloat(8)});
+    if (Mutation == 5)
+      Unsupported.ReturnType = NdType::makeInt(8);
+    if (Mutation == 6)
+      Unsupported.Parameters[2].Type = NdType::makePtr(NdType::makeInt(8));
+    if (Mutation == 7)
+      std::swap(Unsupported.Parameters[0], Unsupported.Parameters[2]);
+    EXPECT_FALSE(assignDarwinSwiftSourceABI(Unsupported, Arch::X64, Error))
+        << Mutation;
+  }
+}
+
 TEST(SourceABI, SwiftArm64FloatCallEmitsExecutableSource) {
   SourceFunctionTypeHint Hint;
   Hint.ReturnType = NdType::makeFloat(8);

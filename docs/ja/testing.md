@@ -200,6 +200,8 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `FrameOffsets.*`、`NativeStackSpecialization.*`、`OriginalBinaryUndefinedIndependence.*` は整列 2/4/8/16/32 の全剰余、自由な上位ビット、呼び出しをまたぐスピル、カウントダウンループ、エイリアス破損、誤分岐、無関係な大マスク、必要な分割拡大、ちょうど／一回不足の予算を検査します。別のネイティブ対照例は経路条件付き整列、内部の符号なし戻り解放、誤解放量、接頭辞付き戻りを検査します。分割ループの自動 native-to-LLVM 証明範囲を確立するテストではありません。
 
+入口合同条件の検査は整列1/2/4/16の全剰余、異なる2ルート、自由な上位ビット、不正条件、矛盾定数、非周回境界、除外の隙間、保存義務、正確/1不足の問い合わせ予算を扱います。帰納テンプレートは元の入口条件を保持します。新規のネイティブ独立性・関係・LLVM 証明は不一致領域と変更ステータスを拒否し、ダイジェストは両領域を束縛します。独立したフィクスチャであり、ABI や実行例から条件を推測しません。 独立した入口ガード付き C をそのまま O1/O2 でコンパイルし、2剰余で実際のネイティブ命令列との一致を証明します。同じ生成物は別の剰余で拒否されます。
+
 レジスターケースの回帰は両エンディアン、上位ビットが異なるフレーム基点、上書きと重複フィールド、後続辺、拡大された先行ノード、ネイティブ CALL/RET、ちょうど十分な予算と一つ不足する予算を扱います。両 C 経路は O0/O2 で四つのメモリーケースを実行します。ネイティブ精密化は二つの選択値を個別に固定する検査で、無制約入力の証明ではありません。独立 LLVM 例は、共有合流点の前へ移動した偽の分岐が真の分岐の後に実行されないことを、PHI コピーとストアを含めて検査します。
 
 入口整列テストは細分化、全許可剰余、異なる上位ビット、最後のケースの失敗、正確な予算と 1 不足を扱います。両 C バックエンドを O0/O2 で実行し、拒否対象のアクセス不能なゲストアドレスと不正フラグでもステータス 2 と全状態バイトの保持を確認します。モデル、C/Python の v5 配置と所有権、旧版と将来の末尾も検証し、未対応の整列領域でネイティブ証明が出ないことを確認します。
@@ -1302,6 +1304,8 @@ Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 
 `NeverDLLVMCPhiTests` は、独立した更新と相互依存する更新を O0/O2 で実行し、反復ゼロ、反復境界、全ビット幅のランダム初期値を検査します。可読性の検査では、独立更新にスナップショット変数がなく、複合交換では必要なものだけ残ることを要求します。既存の分岐、switch、移動した分岐本体、交換ループのテストも、選択された辺と同時代入の意味を検証します。
 
+`LLVMCInternalExitRegions` の独立した5テストは両極性、ゼロ回、終了辺と戻り辺の並列交換、ヘッダー/内部終了の全4入れ子組合せ、ヘッダー/本体/ラッチの観測順を扱います。共有行先と早期継続は実行可能なフォールバックを検査し、先行する有効なループがあっても部分的な構造化を公開させません。モジュール全体と単一関数の出力は一致し LLVM は不変です。元の LLVM と生成 C を独立した符号なしオラクルで O0/O2、294,912回検査し、C には未定義動作トラップを適用します。
+
 `NeverDLLVMCPhiTests` は共通のループ出口について、異なる後続 PHI の組、観測呼び出しの順序、出力メモリ、呼び出し元 IR の不変性も検証します。モジュール全体と指定関数の C を O0/O2 で独立した参照実装と比較します。異なる終了判定と追加の先行ブロックで保守的な処理を確認します。
 
 `NeverDLLVMCPhiTests` は独立した O0/O2 oracle により、複数の後退辺での演算統合、観測呼び出しの順序、メモリ変更呼び出し前のスナップショット、狭い整数の折り返し、符号拡張を検証します。モジュール全体と単一関数の出力で元の IR を維持し、辺の不一致、共有根、poison 注釈、未定義オペランド、可変シフト、制約付き intrinsic、例外関数、予算不足時の完全拒否を確認します。回転呼び出しの統合には全入力演算の一致が必要です。
@@ -1367,3 +1371,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` は早期 return と once 呼び出しの間の空の命令アンカーを検証し、その間の呼び出しやストアを拒否します。
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` は共通ルート証明と、葉がコンテキストを観測し始めた後の拒否を検証します。
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` は両アーキテクチャを検証し、提供元の変更、弱いインポート、ストレージの競合、古い ABI キャリアを拒否します。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` は独立した Swift キャリア検証関数を使い、O0/O2 の生成 C を実行して符号付きゼロ、非正規化数、NaN を含む座標ビット、レシーバーの同一性、呼び出し順序、保護値を確認します。これらは呼び出し ABI の証明であり、上位メソッドの完全な復元を意味しません。
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` は完全なメソッドツリーと正確なキャリアを検証し、非公開メンバーと拒否する署名を含みます。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` と `CGRectMethodRejectsChangedEntryAndReceiverParameter` はパイプラインと公開時の再実行を検証し、self の添字、入口、引数型の変更を拒否します。コンパイラ記録は macOS/Mac Catalyst の 4 ターゲットを含みますが、この入口宣言の対応は arm64 のみです。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` は生成 C を O0/O2 で独立した Swift スカラーキャリア実装と比較し、4 座標すべてのビット列、異なる context/self ポインター、1 回の呼び出し、記憶域の保護を検証します。

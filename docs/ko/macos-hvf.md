@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 86f979db12c7cf8a82eb75814ac41da27557a2d27b76cde302b8bec45d3e46ef -->
+<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
 
 [← 문서 목록](README.md)
 
@@ -49,7 +49,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon은 `-DNEVERD_LLVM_PREBUILT=ON`을 사용할 수 있습니다. [HVF 워크플로](../../.github/workflows/hvf.yml)는 이제 `self-hosted, macOS, ARM64, hvf`만 선택하고 호스트 아키텍처도 확인합니다. LLVM 준비 전에 실제 VM/vCPU 생성과 삭제를 요구합니다. `probe`는 가용성, `transport`는 전송 계층, `darwin`은 모든 일치하는 Darwin 작업, `full`은 전송 계층과 전체 CPU·Darwin 검증을 요구합니다. Intel 선택지는 제거되었으며 아래 Intel 절차는 중단된 과거 절차입니다. 전용 ARM64 runner가 별도로 필요합니다.
 
-전송 계층의 필수 항목은 ARM64 15개, Intel 12개이며 전체 CPU 검증은 각각 27개, 20개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
+전송 계층의 필수 항목은 ARM64 17개, Intel 14개이며 전체 CPU 검증은 각각 29개, 22개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
 
 호스팅 Intel의 `--execution-methods`는 전체 CTest 목록의 모든 매개변수, 플래그, 환경 및 작업 디렉터리를 유지하여 GoogleTest 메서드를 직렬 실행합니다. 알 수 없는 속성은 거부합니다. 메서드 전체 기한은 최대 120초이며 내부 매개변수마다 별도 기한을 적용하지 않습니다. 이후 제한된 시간 안에 프로세스 그룹을 회수합니다. 원본 XML, 이름 대응, 종료 상태를 보존합니다. 시간 초과나 불완전한 XML은 부분 실패를 만들고, 필수 네이티브 항목 누락이나 건너뛰기는 통과할 수 없습니다. 자체 runner는 CTest의 사례별 프로세스와 기한을 유지합니다.
 
@@ -216,3 +216,11 @@ watchdog disarm 이후 알림을 제거한 후보는 정확성 검사를 통과�
 최종 소스 `6c4a5ef1f`는 RunControl 32개, 전송 계층 27/27개, 전체 CPU 목록(통과 1429, 건너뜀 10644, 필수 27/27) 및 Darwin(통과 65, 건너뜀 221, 필수 39/39)을 독립적으로 통과했고 실패는 없었습니다. 네이티브 중단·유지보수 복구 검사 3종도 각각 1000회 연속 통과했으며 자식 프로세스 회수를 확인했습니다. 목록이 겹치므로 합산하지 않습니다. 건너뜀은 비활성화되거나 다른 백엔드·아키텍처에 해당합니다. 제한된 네이티브 ARM64 범위의 검증이며 Intel 실행, 전체 Apple OS 에뮬레이션 또는 성능 순위를 입증하지 않습니다. Intel은 로컬 x86-64 구문 컴파일만 수행했습니다.
 
 [원시 쌍별 표본](../benchmarks/2026-10-05-arm64-hvf-watchdog.json) · [소스와 설정](../benchmarks/2026-10-05-arm64-hvf-watchdog-metadata.json)
+
+## 요청 완료 알림 연구 (2026-10-05)
+
+84,268 ARM64 단계의 진단 계측에서 준비/전체 상태 수집은 평균 0.673/0.784 µs, submit과 owner 누적 시간 차이는 요청당 7.367 µs였습니다. 일부 수명 관리 작업을 포함하므로 순수 커널 스케줄링 시간이 아닙니다. 중첩 구간을 합산하거나 계측 시간을 속도 향상 근거로 쓰지 않습니다. 원자 알림과 별도 차단 조건 변수를 각각 15쌍 비교했습니다. 원자 대기는 이득 없이 프로세스 CPU 시간을 늘렸고, 차단 후보의 초기화·정수·분기·메모리·TLS/호출·두 CPU 전환 기준/후보 중앙값 비율은 1.057, 1.008, 1.000, 0.885, 1.151, 1.169로 일관되지 않았습니다(1 초과가 후보에 유리). 다른 앱과 빌드 부하가 있었습니다. 최초 사전 검사가 빌드를 발견했지만 로컬 shell 연결 오류로 측정이 계속되어 간섭된 연구 자료로만 보존합니다. 수정한 제어기는 빌드 없는 조건의 확인을 거부했고, 차단 비교는 공유 부하를 명시적으로 기록했습니다. 두 실행 변경 모두 철회했습니다.
+
+최종 소스 `a63d57e6a`는 CPU(통과 1434, 건너뜀 12693, 필수 29/29)와 Darwin(통과 65, 건너뜀 221, 필수 39/39)을 별도로 통과했고 실패는 없습니다. 동시 요청의 개별 결과/오류와 수락 후 중단 시 종료 대기를 검증하는 새 필수 회귀 두 개를 각각 100회 통과했으며 첫 검사는 총 100,000건의 요청을 다룹니다. 철회한 후보 각각도 네이티브 복구 세 종류를 각 1000회 통과했지만 최종 소스 증거를 대신하지 않습니다. 목록은 겹치며 건너뜀은 성공이 아닙니다. Intel은 구문 컴파일만 확인했고 실제 Mac 검증이나 Actions 실행은 하지 않았습니다.
+
+[원자 후보 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-atomic.json) · [차단 후보 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-blocking.json) · [출처 및 검증 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-metadata.json)

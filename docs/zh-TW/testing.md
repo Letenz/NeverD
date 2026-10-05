@@ -197,6 +197,8 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `FrameOffsets.*`、`NativeStackSpecialization.*` 與 `OriginalBinaryUndefinedIndependence.*` 檢查 2/4/8/16/32 位元組對齊的全部餘數、自由高位、跨呼叫儲存、倒數迴圈、別名破壞、錯誤分派、無關大遮罩、必要分區升級及恰好／少一次預算。獨立原生控制檢查帶分支約束的對齊、內部無符號返回清理、錯誤清理量與帶前綴返回。這些測試不表示分區迴圈已具備自動原生至 LLVM 的完整證明。
 
+入口同餘證明測試涵蓋對齊1/2/4/16的全部餘數、兩個不同根暫存器、自由高位元、非法定義域、矛盾入口常數、不回繞範圍、排除區間空隙、保存義務和精確/少一查詢預算。迴圈歸納模板保留原入口根條件。重新執行的原生獨立性/關係證明與原生至LLVM檢查拒絕不匹配的定義域及改變的狀態碼，憑證摘要繫結兩側定義域。案例獨立撰寫，不從ABI或單次執行推斷對齊條件。 另將獨立撰寫的帶入口檢查C函式原樣編譯為O1/O2，在兩個餘數下證明與實際原生指令序列一致；同一編譯產物在不同餘數下必須拒絕。
+
 暫存器分區回歸涵蓋大小端、高位框架根、覆寫與重疊欄位、後續邊、擴大的前驅、原生 CALL/RET，以及剛好足夠或少一步的預算。兩種 C 路徑在 O0/O2 執行全部四種記憶體情況。原生細化檢查分別綁定兩個選擇器值，並非無約束輸入證明。獨立 LLVM 案例驗證：將假分支移至共享匯合點之前，不可使它在真分支後繼續執行，並檢查 PHI 複製與儲存。
 
 入口對齊回歸涵蓋更細分區、全部允許餘數、不同高位根位址、最後案例失敗，以及精確與少一預算。兩個 C 後端均在 O0/O2 下以不可存取的被拒客體位址及無效旗標驗證：狀態 2 必須保留全部狀態位元組。模型細化檢查相同拒絕語義；C/Python 測試涵蓋 v5 配置、所有權及舊版與未來尾部。原生證明控制明確拒絕未綁定的對齊域。
@@ -1248,6 +1250,8 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 
 `NeverDLLVMCPhiTests` 在 O0/O2 下執行獨立及交叉相依的迴圈更新，涵蓋零次迴圈、迭代邊界和隨機全位寬初值。可讀性斷言要求獨立更新不產生快照區域變數，複合交換只保留必要快照。既有分支、switch、移動分支體及交換迴圈案例繼續驗證實際選取的邊與同時指定語意。
 
+`LLVMCInternalExitRegions` 新增5個獨立測試，涵蓋兩種退出極性、零次迴圈、退出邊和回邊的平行交換、迴圈頭/內部退出的四種巢狀組合，以及迴圈頭/本體/回邊區塊的觀察順序。共用目標出口和提前繼續路徑驗證可執行回退；有效迴圈之後遇到不支援區域時，不得發布部分結構化結果。整個模組與單函式輸出須一致且不修改 LLVM。原始 LLVM 和產生的 C 在 O0/O2 下與獨立無號 oracle 比對，共294,912次呼叫，C 啟用未定義行為陷阱。
+
 `NeverDLLVMCPhiTests` 也驗證共同迴圈出口的不同後繼 PHI 對、有序觀察呼叫、輸出記憶體及呼叫者 IR 不變。整模組與指定函式的 C 都在 O0/O2 下對照獨立參考實作執行。不同退出判斷與額外分支前驅涵蓋保守處理。
 
 `NeverDLLVMCPhiTests` 使用獨立 O0/O2 oracle 檢查多回邊迴圈運算合併、觀察呼叫順序、修改記憶體的呼叫前之值快照、窄位寬回繞及符號擴展。涵蓋整個模組與單一函式輸出且呼叫端 IR 不變，以及輸入衝突、共用根、poison 標註、未定義運算元、變數位移、受限制 intrinsic、例外函式及預算不足時完整拒絕。只有所有輸入運算一致才可合併旋轉呼叫。
@@ -1313,3 +1317,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 檢查提前返回與 once 呼叫之間的空指令錨點，並拒絕其間的呼叫或儲存。
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 檢查共用根節點證明，並在葉節點開始觀察上下文後拒絕舊計畫。
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 涵蓋兩種架構，並拒絕變更提供者、弱匯入、衝突儲存及過期 ABI 載體。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下執行產生的 C，以獨立 Swift 載體驗證函式檢查座標位元模式（含帶符號零、次正規數與 NaN）、接收者身分、呼叫順序和保護值。這些檢查證明呼叫 ABI，不代表上層方法已完整恢復。
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` 驗證完整方法樹與精確載體，包括私有成員及拒絕的簽章。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` 與 `CGRectMethodRejectsChangedEntryAndReceiverParameter` 涵蓋管線與發布重播，拒絕 self 索引、入口或參數型別的變更。編譯器記錄涵蓋四種 macOS/Mac Catalyst 目標；此入口宣告仍僅支援 arm64。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` 在 O0/O2 下將產生的 C 與獨立 Swift 純量載體參考實作對照，驗證四個座標的完整位元模式、不同的 context/self 指標、單次呼叫與儲存保護。

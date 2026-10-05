@@ -101,7 +101,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(10); // Certificate semantic schema, independent of report formatting.
+  Number(11); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.X64FlagsProfile.has_value());
@@ -202,6 +202,11 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
     for (const auto &R : Contract.Frame->ExcludedAddressRanges) {
       Number(R.Begin);
       Number(R.End);
+    }
+    Number(Contract.Frame->EntryAlignment.has_value());
+    if (Contract.Frame->EntryAlignment) {
+      Number(Contract.Frame->EntryAlignment->Alignment);
+      Number(Contract.Frame->EntryAlignment->Residue);
     }
   }
   Number(Contract.ReturnRegisters.size());
@@ -1611,6 +1616,8 @@ class Checker {
       if (F.RootRegister.Bytes != 8 ||
           !scalar(NdVar::reg(F.RootRegister.Offset, 8)) || F.Begin >= F.End)
         fail(Status::Invalid, "invalid exact frame contract");
+      if (F.EntryAlignment && !F.EntryAlignment->valid())
+        fail(Status::Invalid, "invalid entry frame alignment");
       FrameBytes =
           static_cast<uint64_t>(F.End) - static_cast<uint64_t>(F.Begin);
       if (FrameBytes > Limits.MaxFrameBytes)
@@ -2174,6 +2181,14 @@ public:
           const auto &F = *Contract.Frame;
           EntryRoot =
               Initial.read(SymSpace::Register, F.RootRegister.Offset, 8);
+          if (F.EntryAlignment) {
+            const auto &A = *F.EntryAlignment;
+            Predicate = Ctx.mkAnd(
+                Predicate,
+                Ctx.mkEq(Ctx.mkAnd(EntryRoot, Ctx.mkConst(64, A.Alignment - 1)),
+                         Ctx.mkConst(64, A.Residue)));
+            nodes();
+          }
           Predicate = Ctx.mkAnd(Predicate, detail::nonwrappingFramePredicate(
                                                Ctx, EntryRoot, F.Begin, F.End));
           // The existing root bounds make these the unsigned first and last

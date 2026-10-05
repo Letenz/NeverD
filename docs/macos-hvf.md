@@ -171,8 +171,8 @@ rollback, queue cancellation, native loop interruption and retry. Both ISAs have
 required raw loop interruption and completion-error fixtures. These must observe
 an actual native return; cancellation before entry cannot satisfy the loop test.
 The full profile also requires the Intel CR8 all-register and privilege regression.
-The transport profile requires 15 ARM64 or 12 Intel cases, and the full profile
-requires 27 or 20 respectively. Intel compilation alone does not establish Intel
+The transport profile requires 17 ARM64 or 14 Intel cases, and the full profile
+requires 29 or 22 respectively. Intel compilation alone does not establish Intel
 runtime correctness; its native gate remains required.
 
 Hardware-backed execution is not automatically faster for NeverD's checked
@@ -466,3 +466,11 @@ Removing the notification after watchdog disarm passed correctness checks but di
 The final retained source `6c4a5ef1f` independently passed 32 RunControl tests, 27/27 transport tests, the full CPU inventory (1429 passed, 10644 skipped; 27/27 required) and Darwin (65 passed, 221 skipped; 39/39 required), with zero failures. Each of the three native interruption/maintenance recovery methods also passed 1000 consecutive repetitions with confirmed child retirement. Inventories overlap; do not add their totals. Skips cover disabled or foreign transports/architectures. This establishes bounded native ARM64 coverage, not Intel execution, complete Apple OS emulation or a performance ranking. Intel checks were local x86-64 syntax compilation only.
 
 [Raw paired samples](benchmarks/2026-10-05-arm64-hvf-watchdog.json) · [Source and configuration](benchmarks/2026-10-05-arm64-hvf-watchdog-metadata.json)
+
+## Request-completion research (2026-10-05)
+
+Diagnostic timers over 84,268 checked ARM64 steps measured mean preparation/capture costs of 0.673/0.784 µs; the aggregate submit/owner difference was 7.367 µs per request, including a few lifecycle operations. This localizes handoff cost, not pure kernel scheduling time. Inclusive intervals overlap, and instrumented timings are excluded from speedup comparisons. Two 15-pair comparisons tested atomic completion and a separate blocking response condition. Atomic waiting showed no reliable benefit and higher process CPU time. The blocking candidate produced mixed results: baseline/candidate median ratios were 1.057, 1.008, 1.000, 0.885, 1.151 and 1.169 for initialization, integer, branch, memory, TLS/call and two-CPU switching; above one favors the candidate. Other applications and builds were active. The first atomic preflight detected builds but a local shell sequencing error continued the run; it is retained as noisy research only. The corrected controller rejected confirmation requiring no observed build processes, while the blocking comparison explicitly recorded shared load. Neither runtime candidate is retained.
+
+Final source `a63d57e6a` independently passed the full CPU inventory (1434 passed, 12693 skipped; 29/29 required) and Darwin (65 passed, 221 skipped; 39/39 required), without failures. Two new required regressions cover concurrent borrowed requests with distinct results/errors and retirement after an admitted stop. Each passed 100 repetitions; the first exercised 100,000 request handoffs. The rejected candidates each separately passed three native recovery methods 1000 times. Those logs do not substitute for final-source evidence. Inventories overlap; skips are unexecuted coverage. Intel remains syntax-checked only, without physical-Mac acceptance or Actions.
+
+[Atomic JSON](benchmarks/2026-10-05-arm64-hvf-completion-atomic.json) · [Blocking JSON](benchmarks/2026-10-05-arm64-hvf-completion-blocking.json) · [Metadata JSON](benchmarks/2026-10-05-arm64-hvf-completion-metadata.json)

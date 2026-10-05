@@ -61,7 +61,8 @@ struct BodyProof {
         [&](const ExprPtr &V, unsigned D) {
           if (!Steps)
             return V->Kind == ExprKind::Var && V->Var.Kind == MedVar::Param &&
-                   V->Var.Id == 0 && V->Var.Size == 8 && V->Operands.empty() &&
+                   V->Var.Id == static_cast<int>(Root.SourceParameter) &&
+                   V->Var.Size == 8 && V->Operands.empty() &&
                    !V->SourceCallHint &&
                    !Definitions.count(highSourceLocalIdentity(V->Var)) &&
                    !AddressTaken.count(highSourceLocalIdentity(V->Var));
@@ -256,13 +257,16 @@ inline bool objCNativeSwiftReceiverSourceCallBound(
   const auto Current =
       native_source_detail::currentFunction(Result, Function.Entry);
   const auto Declaration =
-      swiftMangledZeroArgClassMethodSourceABI(Image, Function.Entry);
+      swiftMangledReceiverClassMethodSourceABI(Image, Function.Entry);
   if (!Current || !Declaration ||
       !validateNativeSwiftReceiverBindings(Image, Current->Low,
                                            *Current->Med) ||
-      Function.Params.size() != 1 ||
-      !equalSourceTypes(Function.Params[0].Type,
-                        Declaration->Parameters[0].Type) ||
+      Function.Params.size() != Declaration->Parameters.size() ||
+      !std::equal(Function.Params.begin(), Function.Params.end(),
+                  Declaration->Parameters.begin(),
+                  [](const auto &P, const auto &D) {
+                    return equalSourceTypes(P.Type, D.Type);
+                  }) ||
       !equalSourceABIs(*Function.SourceTypeHint, *Declaration) ||
       !equalSourceABIs(*Current->Med->SourceTypeHint, *Declaration))
     return false;

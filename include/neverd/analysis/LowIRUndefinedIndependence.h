@@ -8,6 +8,7 @@
 #ifndef NEVERD_ANALYSIS_LOWIRUNDEFINEDINDEPENDENCE_H
 #define NEVERD_ANALYSIS_LOWIRUNDEFINEDINDEPENDENCE_H
 
+#include "neverd/analysis/InterpreterEntryAlignment.h"
 #include "neverd/analysis/InterpreterMachineStateProfile.h"
 #include "neverd/ir/low/LowUndefinedEffects.h"
 #include "neverd/solver/BitVectorSolver.h"
@@ -49,6 +50,11 @@ struct LowIRIndependenceFrame {
   /// range. This restricts the symbolic entry root, not just constant roots.
   /// Duplicate and overlapping exclusions are valid redundant constraints.
   std::vector<LowIRIndependenceAddressRange> ExcludedAddressRanges;
+  /// Optional caller-declared congruence of the shared entry root. The proof
+  /// intersects this predicate with bounds, exclusions and entry constants;
+  /// it never rewrites a root to make an incompatible entry satisfy it.
+  /// Absence admits every residue. This supplies no memory or ABI evidence.
+  std::optional<InterpreterEntryAlignment> EntryAlignment;
 };
 
 struct LowIRIndependenceFrameRange {

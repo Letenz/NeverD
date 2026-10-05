@@ -69,6 +69,68 @@ void refused(const BinaryLowIRRefinementResult &Result, Status S) {
   EXPECT_FALSE(Result.Proof.Certificate);
 }
 
+TEST(BinaryLowIRRefinement, EntryAlignmentUsesTheOriginalSymbolicStack) {
+  Program P({0x48, 0x89, 0xe0, 0xc3}); // mov rax,rsp; ret.
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  // OR preserves the declared low bits but cannot discard higher root bits.
+  bool Changed = false;
+  for (auto &Block : Recovery.Residual.Blocks)
+    for (auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::COPY && Op.Output == NdVar::reg(x86reg::RAX, 8) &&
+          Op.Inputs[0] == NdVar::reg(x86reg::RSP, 8)) {
+        Op.Opcode = NdOp::INT_OR;
+        Op.addInput(NdVar::scalar(3, 8));
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(P.check(Recovery.Residual), Status::Different);
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment =
+      InterpreterEntryAlignment{16, 3};
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Certificate->Relation.Contract.Frame->EntryAlignment,
+            P.Options.EntryFrameAlignment);
+  P.Options.EntryFrameAlignment->Residue = 4;
+  P.Contract.Frame->EntryAlignment = P.Options.EntryFrameAlignment;
+  refused(P.check(Recovery.Residual), Status::Different);
+  P.Options.EntryFrameAlignment->Residue = 3;
+  P.Contract.Frame->EntryAlignment = P.Options.EntryFrameAlignment;
+  for (auto &Block : Recovery.Residual.Blocks)
+    for (auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::INT_OR && Op.Output == NdVar::reg(x86reg::RAX, 8))
+        Op.Inputs[1] = NdVar::scalar(35, 8);
+  refused(P.check(Recovery.Residual), Status::Different);
+}
+
+TEST(BinaryLowIRRefinement, EntryAlignmentRequiresMatchingValidContracts) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete());
+  P.Options.EntryFrameAlignment = InterpreterEntryAlignment{16, 3};
+  refused(P.check(Recovery.Residual), Status::Invalid);
+  P.Contract.Frame->EntryAlignment = {16, 4};
+  refused(P.check(Recovery.Residual), Status::Invalid);
+  P.Contract.Frame->EntryAlignment = P.Options.EntryFrameAlignment;
+  ASSERT_TRUE(P.check(Recovery.Residual).proved());
+  const auto Independent =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  ASSERT_TRUE(Independent.proved()) << Independent.Proof.Diagnostic;
+  EXPECT_EQ(Independent.Certificate->LowIR.Contract.Frame->EntryAlignment,
+            P.Options.EntryFrameAlignment);
+  P.Options.EntryFrameAlignment.reset();
+  refused(P.check(Recovery.Residual), Status::Invalid);
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment;
+  P.Options.FrameBaseRegister->Offset = x86reg::RAX;
+  refused(P.check(Recovery.Residual), Status::Invalid);
+  P.Options.FrameBaseRegister.reset();
+  refused(P.check(Recovery.Residual), Status::Invalid);
+  P.Options.FrameBaseRegister = symbolic::SymRegisterRange{x86reg::RSP, 8};
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment =
+      InterpreterEntryAlignment{3, 1};
+  refused(P.check(Recovery.Residual), Status::Invalid);
+}
+
 TEST(BinaryLowIRRefinement, ActualResidualAndOriginalBytesAreBound) {
   Program P({0xb8, 7, 0, 0, 0, 0xc3}); // mov eax,7; ret.
   auto Recovery = P.recover();

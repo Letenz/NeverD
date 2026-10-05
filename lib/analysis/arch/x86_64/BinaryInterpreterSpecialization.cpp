@@ -563,9 +563,16 @@ prepareBinaryRelation(const BinaryImage &Image,
     return Fail(
         Status::Invalid,
         "binary proof requires an accessible entry RSP frame and return slot");
-  if (Options.EntryFrameAlignment)
-    return Fail(Status::Unsupported,
-                "native proof does not support an entry alignment domain");
+  if (Options.EntryFrameAlignment != Contract.Frame->EntryAlignment)
+    return Fail(Status::Invalid,
+                "proof and recovery entry alignment contracts differ");
+  if (Options.EntryFrameAlignment &&
+      (!Options.EntryFrameAlignment->valid() || !Options.FrameBaseRegister ||
+       Options.FrameBaseRegister->Offset != RSP ||
+       Options.FrameBaseRegister->Bytes != 8))
+    return Fail(
+        Status::Invalid,
+        "entry alignment requires a valid RSP recovery root and domain");
   if (Options.ExternalStoresDisjointEntryFrame)
     return Fail(Status::Unsupported,
                 "native proof does not support an external-store frame "

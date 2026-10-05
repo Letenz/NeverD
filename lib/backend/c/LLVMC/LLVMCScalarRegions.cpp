@@ -19,7 +19,7 @@ namespace {
 // block and successor edge is emitted once; the existing instruction and
 // parallel-PHI writers retain their semantics. No IR rewrite is involved.
 struct ScalarRegion {
-  enum class Kind { Block, Edge, If, Loop } K;
+  enum class Kind { Block, Edge, If, Loop, Repeat, Break } K;
   llvm::BasicBlock *Block = nullptr;
   llvm::BasicBlock *Target = nullptr;
   bool Invert = false;
@@ -51,18 +51,39 @@ class ScalarRegionPlan {
 
   bool sequence(llvm::BasicBlock *BB, llvm::BasicBlock *Stop,
                 const llvm::Loop *Scope, std::vector<ScalarRegion> &Into,
-                unsigned Depth) {
+                unsigned Depth, bool StartAtStop = false) {
     if (Depth > 64)
       return false;
-    while (BB && BB != Stop) {
+    bool First = StartAtStop;
+    while (BB && (BB != Stop || First)) {
+      First = false;
       if (++Work > 65536 || (Scope && !Scope->contains(BB)) ||
           !Seen.insert(BB).second)
         return false;
       const llvm::Loop *Loop = Loops.getLoopFor(BB);
       if (Loop && Loop->getHeader() == BB && Loop != Scope) {
         auto *Branch = llvm::dyn_cast<llvm::CondBrInst>(BB->getTerminator());
-        // A header exit gives a direct while loop. Other exits/latches keep
-        // the existing goto projection until a complete region is available.
+        if (Loop->getExitingBlock() != BB) {
+          auto *Exit = Loop->getExitBlock();
+          if (!Exit || !Loop->getExitingBlock() || !Loop->getLoopLatch() ||
+              Loop->getParentLoop() != Scope)
+            return false;
+          ScalarRegion Region{
+              ScalarRegion::Kind::Repeat, BB, Exit, false, {}, {}};
+          Region.Scope = Loop;
+          Region.EntryPred = Loop->getLoopPredecessor();
+          Region.Latch = Loop->getLoopLatch();
+          // The body owns the header's instructions and successor edges too.
+          // Its first visit starts at Stop; only a later backedge ends it.
+          Seen.erase(BB);
+          if (!sequence(BB, BB, Loop, Region.First, Depth + 1, true))
+            return false;
+          Into.push_back(std::move(Region));
+          BB = Exit;
+          continue;
+        }
+        // A header exit retains the direct while/for form. Incomplete or
+        // multi-exit regions keep the existing goto projection.
         if (!Branch || Loop->getExitingBlock() != BB || !Loop->getLoopLatch() ||
             Loop->getParentLoop() != Scope)
           return false;
@@ -100,6 +121,23 @@ class ScalarRegionPlan {
       auto *Branch = llvm::dyn_cast<llvm::CondBrInst>(Term);
       if (!Branch || Branch->getSuccessor(0) == Branch->getSuccessor(1))
         return false;
+      // A repeat region keeps the sole internal exit at its original point.
+      // The taken exit's parallel copies must run before the lexical break.
+      if (Scope && BB == Scope->getExitingBlock()) {
+        const bool TrueBody = Scope->contains(Branch->getSuccessor(0));
+        auto *Body = Branch->getSuccessor(TrueBody ? 0 : 1);
+        auto *Exit = Branch->getSuccessor(TrueBody ? 1 : 0);
+        if (!Scope->contains(Body) || Scope->contains(Exit) ||
+            Exit != Scope->getExitBlock())
+          return false;
+        ScalarRegion Region{
+            ScalarRegion::Kind::Break, BB, Exit, TrueBody, {}, {}};
+        if (!edge(Region.First, BB, Exit) || !edge(Region.Second, BB, Body))
+          return false;
+        Into.push_back(std::move(Region));
+        BB = Body;
+        continue;
+      }
       auto *Node = PostDominators.getNode(BB);
       auto *Join =
           Node && Node->getIDom() ? Node->getIDom()->getBlock() : nullptr;
@@ -562,6 +600,23 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
         Write(Region.Second, Level + 1);
         emitIndent(Level);
         OS << "}\n";
+        break;
+      case ScalarRegion::Kind::Repeat:
+        emitIndent(Level);
+        OS << "while (1) {\n";
+        Write(Region.First, Level + 1);
+        emitIndent(Level);
+        OS << "}\n";
+        break;
+      case ScalarRegion::Kind::Break:
+        emitIndent(Level);
+        OS << "if (" << Condition(Region) << ") {\n";
+        Write(Region.First, Level + 1);
+        emitIndent(Level + 1);
+        OS << "break;\n";
+        emitIndent(Level);
+        OS << "}\n";
+        Write(Region.Second, Level);
         break;
       case ScalarRegion::Kind::Loop: {
         ClearPath();

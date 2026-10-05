@@ -1572,10 +1572,17 @@ objcBlockParameterReceiverTypeHint(const BinaryImage &Image, va_t Invoke,
 std::optional<ObjCReceiverTypeHint>
 objcNativeSwiftSelfTypeHint(const BinaryImage &Image, va_t Entry) {
   const auto Declaration =
-      swiftMangledZeroArgClassMethodDeclaration(Image, Entry);
+      swiftMangledReceiverClassMethodDeclaration(Image, Entry);
   if (!Declaration || llvm::any_of(Image.ObjCMethods, [&](const auto &M) {
         return M.Implementation == Entry;
       }))
+    return std::nullopt;
+  const auto &Parameters = Declaration->Signature.Parameters;
+  const auto Self =
+      std::find_if(Parameters.begin(), Parameters.end(), [](const auto &P) {
+        return P.TheRole == SourceParameterTypeHint::Role::SwiftContext;
+      });
+  if (Self == Parameters.end())
     return std::nullopt;
   const std::string RuntimeName =
       "_TtC" + std::to_string(Declaration->Module.size()) +
@@ -1588,9 +1595,11 @@ objcNativeSwiftSelfTypeHint(const BinaryImage &Image, va_t Entry) {
     if (!Identity || Identity->Module != Declaration->Module ||
         Identity->Name != Declaration->ClassName)
       return std::nullopt;
-    return ObjCReceiverTypeHint{
-        ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf, Entry, RuntimeName,
-        false};
+    auto Receiver =
+        ObjCReceiverTypeHint{ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf,
+                             Entry, RuntimeName, false};
+    Receiver.SourceParameter = std::distance(Parameters.begin(), Self);
+    return Receiver;
   }
   return std::nullopt;
 }
@@ -1601,6 +1610,7 @@ bool validReceiverRoot(const BinaryImage &Image,
   if (!Receiver.Address || Receiver.ClassName.empty() ||
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::MethodParameter &&
        Receiver.Origin != ObjCReceiverTypeHint::OriginKind::BlockParameter &&
+       Receiver.Origin != ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf &&
        Receiver.SourceParameter) ||
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::BlockParameter &&
        (Receiver.BlockDescriptorAddress || Receiver.BlockDescriptorFlags)) ||
@@ -1647,7 +1657,8 @@ bool validReceiverRoot(const BinaryImage &Image,
     if (Receiver.IsClassMethod || !Receiver.OutParameters.empty())
       return false;
     const auto Expected = objcNativeSwiftSelfTypeHint(Image, Receiver.Address);
-    return Expected && Expected->ClassName == Receiver.ClassName;
+    return Expected && Expected->ClassName == Receiver.ClassName &&
+           Expected->SourceParameter == Receiver.SourceParameter;
   }
   case ObjCReceiverTypeHint::OriginKind::MethodEntry: {
     if (!Receiver.OutParameters.empty())
