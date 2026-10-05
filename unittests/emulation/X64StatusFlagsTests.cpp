@@ -378,8 +378,15 @@ TEST_P(X64StatusFlags, LockedFormsRejectWithoutEffects) {
     prepare(I, Seed, Flags, Locked);
     const auto Before = snapshot();
     const auto Exit = run();
-    EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation)
+    const bool Portable = GetParam().Backend == ExecutionBackendKind::Unicorn &&
+                          GetParam().Contract == ExecutionContract::Legacy;
+    EXPECT_EQ(Exit.Kind, Portable ? ExecutionExitKind::GuestFault
+                                  : ExecutionExitKind::UnsupportedOperation)
         << Exit.Diagnostic;
+    ASSERT_TRUE(Exit.Fault);
+    EXPECT_EQ(Exit.Fault->PC, Code);
+    if (Portable)
+      EXPECT_EQ(Exit.Fault->Kind, BackendFaultKind::InvalidInstruction);
     EXPECT_EQ(snapshot(), Before);
     EXPECT_EQ(Reads, 0u);
     EXPECT_EQ(Writes, 0u);
