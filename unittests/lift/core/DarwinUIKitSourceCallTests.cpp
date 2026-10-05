@@ -1497,22 +1497,39 @@ TEST(DarwinIndirectRecordCalls,
 TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
   constexpr auto QuartzCore =
       "/System/Library/Frameworks/QuartzCore.framework/QuartzCore";
+  constexpr auto CoreGraphics =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
   for (const char *Name :
-       {"CATransform3DMakeTranslation", "CATransform3DScale"}) {
+       {"CATransform3DMakeTranslation", "CATransform3DScale",
+        "CGAffineTransformMakeRotation", "CGAffineTransformConcat"}) {
+    SCOPED_TRACE(Name);
+    const bool Affine = llvm::StringRef(Name).starts_with("CGAffine");
+    const auto Provider = Affine ? CoreGraphics : QuartzCore;
     auto Image = image(("_" + std::string(Name)).c_str());
-    Image.DynInfo.NeededLibs = {QuartzCore};
-    Image.DyldBindSlots.at(0x2180).Module = QuartzCore;
+    Image.DynInfo.NeededLibs = {Provider};
+    Image.DyldBindSlots.at(0x2180).Module = Provider;
     auto Binding = darwinRuntimeSourceCallHint(Image, 0x2180);
     ASSERT_TRUE(Binding);
     auto Effects = darwinMatrixSourceFrameEffects(Image, *Binding);
     ASSERT_TRUE(Effects);
     EXPECT_TRUE(Effects->InitializesIndirectResult);
-    EXPECT_EQ(Effects->WritableFrameParameters.size(),
-              std::string(Name) == "CATransform3DScale" ? 1U : 0U);
+    const unsigned Inputs = std::string(Name) == "CGAffineTransformConcat" ? 2U
+                            : std::string(Name) == "CATransform3DScale"    ? 1U
+                                                                           : 0U;
+    EXPECT_EQ(Binding->Signature.ReturnType->Size, Affine ? 48U : 128U);
+    EXPECT_EQ(Binding->Signature.ReturnLocation.RegisterOffset, a64reg::X8);
+    EXPECT_EQ(Effects->WritableFrameParameters.size(), Inputs);
     EXPECT_EQ(Effects->InitializedFrameParameters.size(),
               Effects->WritableFrameParameters.size());
     EXPECT_TRUE(Effects->ReadOnlyFrameParameters.empty());
-    for (unsigned Mutation = 0; Mutation < 18; ++Mutation) {
+    for (unsigned J = 0; J < Inputs; ++J) {
+      EXPECT_EQ(Effects->WritableFrameParameters.at(J), Affine ? 48U : 128U);
+      EXPECT_TRUE(Effects->InitializedFrameParameters.count(J));
+    }
+    EXPECT_TRUE(Effects->ByValueFrameParameters.empty());
+    EXPECT_FALSE(Effects->ReturnFrameOrExternal);
+    EXPECT_FALSE(Effects->Scratch);
+    for (unsigned Mutation = 0; Mutation < 22; ++Mutation) {
       SCOPED_TRACE(Mutation);
       auto I = Image;
       auto B = *Binding;
@@ -1570,6 +1587,20 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
         break;
       case 17:
         ++B.ByteCount;
+        break;
+      case 18:
+        B.Format = SourceCallTypeHint::FormatArguments{};
+        break;
+      case 19:
+        B.NilTerminated = SourceCallTypeHint::NilTerminatedArguments{};
+        break;
+      case 20:
+        I.DyldBindSlots.at(0x2180).Module = Affine ? QuartzCore : CoreGraphics;
+        I.DynInfo.NeededLibs = {I.DyldBindSlots.at(0x2180).Module};
+        break;
+      case 21:
+        B.Signature.ReturnType =
+            NdType::makeStruct({NdType::makePtr(NdType::makeVoid())});
         break;
       }
       EXPECT_FALSE(darwinMatrixSourceFrameEffects(I, B));
