@@ -44,8 +44,8 @@ struct SwiftSDKDeclaration {
 
 // Compiler-observed public Foundation bridge entry points. The compact
 // signature alphabet records only physical scalar carriers: p is a pointer,
-// z is an unsigned word, b is an unsigned byte, I is swift_indirect_result,
-// and C is swift_context.
+// z is an unsigned word, b is an unsigned byte, d is a double,
+// I is swift_indirect_result, and C is swift_context.
 // A parenthesized pair is returned in the two integer result registers;
 // (zpB) is the complete word/pointer/i1 result with a genuine _Bool field.
 constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
@@ -349,6 +349,21 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftCore.dylib", "pzp"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // Swift 6.1.2 arm64 and x86_64 client IR passes CGPoint as two
+    // doubles followed by the CGContext receiver in swiftself. These
+    // actions return void and keep the original imported Swift entry.
+    {"$sSo12CGContextRefa12CoreGraphicsE4move2toySo7CGPointV_tF",
+     "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics|"
+     "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/"
+     "CoreGraphics|"
+     "/usr/lib/swift/libswiftCoreGraphics.dylib",
+     "vddC"},
+    {"$sSo12CGContextRefa12CoreGraphicsE7addLine2toySo7CGPointV_tF",
+     "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics|"
+     "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/"
+     "CoreGraphics|"
+     "/usr/lib/swift/libswiftCoreGraphics.dylib",
+     "vddC"},
     // DispatchQueue.global(qos:) reads the QoSClass value by address and
     // receives the queue metatype in swiftself on both Darwin targets.
     {"$sSo17OS_dispatch_queueC8DispatchE6global3qosAbC0D3QoSV0G6SClassO_tFZ",
@@ -514,6 +529,7 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
 
   const auto Word = NdType::makeInt(8, false);
   const auto Byte = NdType::makeInt(1, false);
+  const auto Double = NdType::makeFloat(8);
   const auto Pointer = NdType::makePtr(NdType::makeVoid());
   auto &Signature = Hint.Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
@@ -564,12 +580,15 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
   for (char Code : Encoding) {
     SourceParameterTypeHint Parameter;
     Parameter.Name = "arg" + std::to_string(Signature.Parameters.size());
-    Parameter.Type = Code == 'z' ? Word : Code == 'b' ? Byte : Pointer;
+    Parameter.Type = Code == 'z'   ? Word
+                     : Code == 'b' ? Byte
+                     : Code == 'd' ? Double
+                                   : Pointer;
     if (Code == 'I')
       Parameter.TheRole = SourceParameterTypeHint::Role::SwiftIndirectResult;
     else if (Code == 'C')
       Parameter.TheRole = SourceParameterTypeHint::Role::SwiftContext;
-    else if (Code != 'p' && Code != 'z' && Code != 'b')
+    else if (Code != 'p' && Code != 'z' && Code != 'b' && Code != 'd')
       return false;
     Signature.Parameters.push_back(std::move(Parameter));
   }

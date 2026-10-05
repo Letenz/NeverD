@@ -1357,3 +1357,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors`는 조기 반환과 once 호출 사이의 빈 명령 앵커를 검사하며 그 사이의 호출이나 저장을 거부합니다.
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 는 공유 루트 증명과 리프가 컨텍스트를 관찰하기 시작한 뒤의 거부를 검사합니다.
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers`는 두 아키텍처를 검증하고 변경된 제공자, 약한 가져오기, 저장소 충돌, 오래된 ABI 캐리어를 거부합니다. `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder`는 독립 Swift 캐리어 검증 함수로 O0/O2의 생성 C를 실행하여 부호 있는 0·비정규 수·NaN을 포함한 좌표 비트, 수신자 식별, 호출 순서와 보호 값을 확인합니다. 이 검사는 호출 ABI를 입증하며 상위 메서드의 완전한 복구를 뜻하지 않습니다.

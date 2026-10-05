@@ -1483,3 +1483,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` prüft leere Anker zwischen früher Rückgabe und once-Aufruf und lehnt dazwischenliegende Aufrufe oder Schreibvorgänge ab.
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` prüft den gemeinsamen Wurzelbeweis und die Ablehnung, sobald ein Blatt seinen Kontext beobachtet.
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` prüft beide Architekturen und weist geänderte Anbieter, schwache Importe, widersprüchlichen Speicher und veraltete ABI-Träger zurück. `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` führt generiertes C bei O0/O2 mit unabhängigen Swift-Trägerprüfungen aus und kontrolliert Koordinatenbits einschließlich vorzeichenbehafteter Null, Subnormalzahlen und NaNs, Empfängeridentität, Aufrufreihenfolge und Schutzwerte. Dies belegt die Aufruf-ABI, nicht die vollständige Wiederherstellung übergeordneter Methoden.
