@@ -103,6 +103,17 @@ target_compile_definitions(NeverDLLVMScalarStateProjectionTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
 )
 
+add_neverd_unittest(NeverDLLVMScalarInputProjectionTests
+  LLVMScalarInputProjectionTests.cpp
+  LINK_COMPONENTS LLVMScalarInputProjection
+  LINK_LIBS LLVMAsmParser LLVMIRReader LLVMTransformUtils
+)
+target_compile_definitions(NeverDLLVMScalarInputProjectionTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
 add_neverd_unittest(NeverDInterpreterLLVMRefinementTests
   InterpreterLLVMRefinementTests.cpp
   InterpreterLLVMRefinementLoopTests.cpp

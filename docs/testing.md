@@ -414,6 +414,8 @@ Additional loop regressions cover narrow wrapped last indices, separate body/lat
 
 `LLVMScalarProjection.*` covers nested fields, bit windows, retained unused arguments, multiple returns, backedges, unselected overflow/shift/assume obligations, last-partition failures, nontermination, unknown contracts, changed input and exact/short budgets. Four target triples exercise shared semantics. `LLVMScalarProjectionCompiled.*` compares the original aggregate through an LLVM array bridge and projected windows against independent unsigned arithmetic at O0/O2. `SymExpr.RightShift*` exhausts byte pairs and checks sign extension, carries, retained high bits, full counts and bounded discovery.
 
+`LLVMScalarInputs.*` checks ordered mixed-width mappings, zero/unnamed interfaces, dead arithmetic and assume demand, mutated outputs, unknown contracts, packaging refusal and exact/short cumulative budgets. Proof tests restore the complete original signature instead of fixing omitted inputs. `LLVMScalarInputsCompiled.*` executes original and reduced loop interfaces against an independent unsigned oracle at O0/O2 while varying all omitted arguments.
+
 `NeverDLLVMScalarStateProjectionTests` covers overlapping and unaligned windows, all 8/16/32/64-bit cells, loops, entry masks, changed sources, status ranges, retained poison, external-memory refusals and exact/short budgets. Original memory bodies and LLVM aggregate bridges execute 172,032 O0/O2 comparisons against independent byte/arithmetic oracles. Scalar proofs remain separate. `SymKnownBits.*` exhausts byte pairs and checks 128-bit, changed-factor, wider-mask, wrapping-sum and budget boundaries. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` checks single predicate evaluation at O0/O2 and explicit bundle refusal.
 
 Loop-metadata regressions compare counted loops with an independent formula across all control partitions and exact/short budgets. Large or zero peeling-history counts cannot hide wrong results, nontermination or poison. API-constructed malformed metadata exercises importer rejection separately from LLVM assembly parsing; machine-state tests retain state effects and input limits.
@@ -435,6 +437,8 @@ cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --par
 build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

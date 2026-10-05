@@ -126,6 +126,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `LLVMScalarProjection.*` は入れ子フィールド、ビット範囲、未使用引数の保持、複数の戻り、後退辺、未選択演算の overflow/shift/assume 義務、最終分区の失敗、非停止、未知の契約、入力変更、正確・1不足の予算を検査します。4種類のターゲットで共有意味論を確認します。`LLVMScalarProjectionCompiled.*` は LLVM 配列ブリッジを介した元の集約と投影結果を、O0/O2 で独立した符号なし算術と比較します。`SymExpr.RightShift*` はバイト対を全探索し、符号拡張、桁上がり、保持上位ビット、完全なシフト量と探索制限を検査します。
 
+`LLVMScalarInputs.*` は混合幅の順序付き対応、引数ゼロ・無名インターフェース、未使用算術と assume の入力要求、出力改変、未知契約、包装の拒否、累積予算の厳密な境界を検査します。証明テストは省略入力を固定せず元の完全なシグネチャを復元します。`LLVMScalarInputsCompiled.*` は省略した全引数を変化させ、元と縮小後のループを独立した符号なしオラクルと O0/O2 で比較します。
+
 `NeverDLLVMScalarStateProjectionTests` は重複・非整列ウィンドウ、8/16/32/64ビットセル、ループ、入口マスク、ソース変更、状態範囲、poison保持、外部メモリ拒否、正確/不足予算を検証します。元のメモリ関数とLLVM集約ブリッジをO0/O2で独立したバイト/算術oracleと172,032回比較し、スカラー証明は別に検証します。`SymKnownBits.*` は全バイト対と128ビット、異なる因子、拡大マスク、ラップする和、予算境界を検査します。`LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` はO0/O2で条件の単一評価とbundle拒否を検査します。
 
 ループメタデータの回帰テストは、全制御分区と正確・1不足の予算で計数ループを独立した式と比較します。大きな値やゼロの剥離履歴でも誤った結果、非終了、poison を隠せません。API で不正なメタデータを構築し、LLVM アセンブリ解析とは別にインポーターの拒否を検証します。機械状態テストでは状態への副作用と入力制限を保持します。
@@ -147,6 +149,8 @@ cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --par
 build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

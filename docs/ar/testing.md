@@ -125,6 +125,8 @@ build-release/bin/NeverDX86NoIndexAddressTests
 
 تغطي `LLVMScalarProjection.*` الحقول المتداخلة والنوافذ والمعاملات غير المستخدمة المحفوظة وتعدد الإرجاع والحواف الخلفية والتزامات overflow/shift/assume غير المختارة وفشل آخر تقسيم وعدم الانتهاء والعقود المجهولة وتغير المدخل والميزانية الدقيقة أو الناقصة بوحدة. تختبر أربعة أهداف الدلالات المشتركة. تقارن `LLVMScalarProjectionCompiled.*` التجميع الأصلي عبر جسر مصفوفة LLVM والإسقاطات بحساب مستقل غير موقع عند O0/O2. تستنفد `SymExpr.RightShift*` أزواج البايتات وتختبر تمديد الإشارة والحمل والبتات العليا المحتفظ بها والعدادات الكاملة وحدود البحث.
 
+تفحص `LLVMScalarInputs.*` خرائط مرتبة بعروض مختلطة وواجهات بلا معاملات أو أسماء واحتياجات الحساب الميت وassume والمخرجات المعدلة والعقود المجهولة ورفض التغليف والميزانيات التراكمية الدقيقة أو الناقصة. تستعيد اختبارات الإثبات التوقيع الكامل دون تثبيت المدخلات المحذوفة. تقارن `LLVMScalarInputsCompiled.*` حلقات الواجهتين الأصلية والمصغّرة بمرجع مستقل غير موقّع عند O0/O2 مع تغيير جميع المعاملات المحذوفة.
+
 تغطي `NeverDLLVMScalarStateProjectionTests` النوافذ المتداخلة وغير المحاذاة، وخلايا 8/16/32/64 بت، والحلقات، والأقنعة، وتغييرات المصدر، وحدود الحالة، وحفظ poison، ورفض الذاكرة الخارجية وحدود الميزانية. تنفذ الدوال الأصلية وجسور تجميع LLVM عدد 172,032 مقارنة O0/O2 مع مراجع مستقلة؛ تفحص البراهين العددية بصورة منفصلة. تستنفد `SymKnownBits.*` أزواج البايتات وتفحص 128 بت والعوامل المختلفة والأقنعة الأوسع والتفاف الجمع والميزانيات. تختبر `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` تقييم الشرط مرة واحدة ورفض bundles.
 
 تقارن اختبارات بيانات الحلقة الوصفية الحلقات المعدودة بصيغة مستقلة عبر جميع أقسام التحكم، بميزانيات دقيقة وأخرى أقل بوحدة. لا تخفي قيم تاريخ التقشير الكبيرة أو الصفرية النتائج الخاطئة أو عدم الانتهاء أو poison. تُنشأ البيانات الوصفية المشوهة عبر API لاختبار رفض المستورد بشكل منفصل عن تحليل تجميع LLVM؛ وتحافظ اختبارات حالة الآلة على تأثيرات الحالة وحدود المدخلات.
@@ -146,6 +148,8 @@ cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --par
 build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

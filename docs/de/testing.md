@@ -129,6 +129,8 @@ Zusätzliche Schleifentests decken schmale überlaufende Endindizes, getrennte B
 
 `LLVMScalarProjection.*` prüft verschachtelte Felder, Bitfenster, erhaltene ungenutzte Argumente, mehrere Rückgaben, Rückkanten, nicht ausgewählte overflow/shift/assume-Bedingungen, Fehler der letzten Partition, Nichtterminierung, unbekannte Verträge, geänderte Eingaben und exakte/um eins zu kleine Budgets. Vier Zieltripel testen die gemeinsame Semantik. `LLVMScalarProjectionCompiled.*` vergleicht das Originalaggregat über eine LLVM-Array-Brücke und projizierte Fenster mit unabhängiger vorzeichenloser Arithmetik bei O0/O2. `SymExpr.RightShift*` erschöpft Bytepaare und prüft Vorzeichenerweiterung, Überträge, erhaltene hohe Bits, vollständige Zähler und Suchgrenzen.
 
+`LLVMScalarInputs.*` prüft geordnete Zuordnungen gemischter Breiten, parameterlose und unbenannte Schnittstellen, Eingabebedarf toter Arithmetik und von assume, veränderte Ausgaben, unbekannte Verträge, Verpackungsablehnung und genaue beziehungsweise zu kleine Gesamtbudgets. Beweise stellen die vollständige Signatur wieder her, ohne ausgelassene Eingaben festzulegen. `LLVMScalarInputsCompiled.*` vergleicht ursprüngliche und reduzierte Schleifen bei O0/O2 mit einem unabhängigen vorzeichenlosen Orakel und variiert alle ausgelassenen Argumente.
+
 `NeverDLLVMScalarStateProjectionTests` prüft überlappende/unausgerichtete Fenster, 8/16/32/64-Bit-Zellen, Schleifen, Eingangsmasken, Quelländerungen, Statusbereiche, erhaltenes Poison, externen Speicher und exakte/knappe Budgets. Speicheroriginale und LLVM-Aggregatbrücken führen 172.032 O0/O2-Vergleiche mit unabhängigen Byte-/Arithmetikorakeln aus; skalare Beweise bleiben getrennt. `SymKnownBits.*` erschöpft Bytepaare und prüft 128 Bit, andere Faktoren, erweiterte Masken, überlaufende Summen und Budgets. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` prüft einmalige Auswertung bei O0/O2 und Bundle-Ablehnung.
 
 Schleifenmetadaten-Regressionen vergleichen Zählschleifen mit einer unabhängigen Formel über alle Kontrollpartitionen bei exakten und um eins zu kleinen Budgets. Große oder nullwertige Peeling-Zähler können falsche Ergebnisse, Nichtterminierung oder poison nicht verdecken. Per API erzeugte fehlerhafte Metadaten prüfen die Importer-Ablehnung getrennt vom LLVM-Assembly-Parser; Maschinenzustandstests erhalten Zustandseffekte und Eingabegrenzen.
@@ -150,6 +152,8 @@ cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --par
 build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
