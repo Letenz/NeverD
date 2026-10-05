@@ -283,6 +283,44 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
             break;
         }
       }
+      if (S.Kind == StmtKind::DoWhile) {
+        // The body runs before the first test; `continue` goes to the test.
+        do {
+          if (!Budget--)
+            throw std::runtime_error(
+                "control-flow oracle exceeded its loop budget");
+          auto R = Run(S.Body);
+          if (R.Return || R.Target)
+            return R;
+          if (R.Break)
+            break;
+        } while (!S.Cond || Value(S.Cond));
+      }
+      if (S.Kind == StmtKind::ExprStmt && S.Val)
+        (void)Value(S.Val);
+      switch (S.Kind) {
+      case StmtKind::Assign:
+      case StmtKind::ExprStmt:
+      case StmtKind::If:
+      case StmtKind::IfElse:
+      case StmtKind::While:
+      case StmtKind::DoWhile:
+      case StmtKind::Switch:
+      case StmtKind::Return:
+      case StmtKind::Goto:
+      case StmtKind::Block:
+      case StmtKind::Store:
+      case StmtKind::Call:
+      case StmtKind::Nop:
+      case StmtKind::Break:
+      case StmtKind::Continue:
+      case StmtKind::SEHTry:
+        break;
+      default:
+        // A statement the oracle cannot run must not pass as a no-op.
+        throw std::runtime_error(
+            "control-flow oracle cannot run this statement kind");
+      }
     }
     return {};
   };
