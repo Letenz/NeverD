@@ -1,10 +1,12 @@
 **اللغات**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](macos-hvf.md)
 
-<!-- i18n-source: 06940e7220c3f05dff76462de7d0fe0199aab6b4aeda2c3e4f418d3441516ccf -->
+<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
 
 [← فهرس الوثائق](README.md)
 
 # التنفيذ الأصلي للمعالج على macOS باستخدام HVF
+
+**حالة التحقق (2026-10-05): لم يُختبر Intel HVF على جهاز Intel Mac فعلي، ولم يكتمل اعتماده.** لم يحقق مستودع Actions الخاص بالمؤسسة ولا المستودع الشخصي تحققًا كاملًا؛ ولا تزال الأعطال وفقدان الاتصال وانتهاء المهلة دون حل. أُوقفت إجراءات Intel HVF في المستودعين، ويختار سير عمل HVF العام ARM64 فقط. تعليمات Intel أدناه مرجع تاريخي وليست طلبًا لاستئناف الاختبارات. الأولوية لصحة التنفيذ وقياس الأداء على ARM64 الأصلي، ثم نقل التغييرات المناسبة إلى Intel مع مراجعة المصدر وفحوص التجميع المتاحة فقط. نتائج ARM64 لا تثبت صحة تشغيل Intel. تُحفظ الأدلة السابقة، ولا يعني هذا الإيقاف أن الأعطال قد أُصلحت.
 
 يستخدم NeverD إطار [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor) بوصفه النظير على macOS لواجهتَي KVM وWHP. يختاره `--backend hvf` صراحةً، بينما يختاره `auto` عندما يسمح عقد التنفيذ بالتشغيل الأصلي وتتطابق مجموعة تعليمات المضيف والضيف: ARM64 على Apple Silicon وx86-64 على Intel Mac. يستخدم `software-cpu-v1` والاختيار التلقائي بين معماريتين مختلفتين Unicorn. يُرفض الملف التنفيذي الذي يعمل مترجماً عبر Rosetta.
 

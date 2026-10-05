@@ -1,10 +1,12 @@
 **Idiomas**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 06940e7220c3f05dff76462de7d0fe0199aab6b4aeda2c3e4f418d3441516ccf -->
+<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
 
 [← Índice de documentación](README.md)
 
 # Ejecución nativa de CPU en macOS (HVF)
+
+**Estado de validación (2026-10-05): Intel HVF no se ha probado en un Mac Intel físico y sigue sin validación completa.** Ni el repositorio Actions de la organización ni el personal lograron la aceptación completa de Intel; siguen sin resolverse los cierres inesperados, las desconexiones y los tiempos de espera agotados. Las Actions de Intel HVF están suspendidas en ambos repositorios y el workflow HVF general solo selecciona ARM64. Las instrucciones Intel que siguen son referencias históricas, no una petición de reanudar pruebas. Se priorizan la corrección y el rendimiento medido en ARM64 nativo; después se trasladarán los cambios aplicables a Intel con revisión del código y las comprobaciones de compilación disponibles. Los resultados ARM64 no validan la ejecución Intel. Se conservan las pruebas existentes; la pausa no implica que los fallos estén corregidos.
 
 NeverD usa [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor) como equivalente de KVM y WHP en macOS. `--backend hvf` lo selecciona explícitamente; `auto` lo usa si el contrato permite ejecución nativa y coinciden las ISA: ARM64 en Apple Silicon y x86-64 en Intel. `software-cpu-v1` y la selección automática entre ISA distintas usan Unicorn. Se rechazan los ejecutables traducidos por Rosetta.
 

@@ -1,10 +1,12 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 06940e7220c3f05dff76462de7d0fe0199aab6b4aeda2c3e4f418d3441516ccf -->
+<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
 
 [← 문서 목록](README.md)
 
 # macOS 네이티브 CPU 실행(HVF)
+
+**검증 상태(2026-10-05): Intel HVF는 실제 Intel Mac에서 테스트되지 않았으며 전체 검증이 완료되지 않았습니다.** 조직 및 개인 Actions 저장소 모두 완전한 Intel 검증 증거를 확보하지 못했고 충돌, 러너 연결 끊김, 시간 초과는 해결되지 않았습니다. 두 저장소의 Intel HVF Actions를 중단했으며 공통 HVF 워크플로는 ARM64만 선택합니다. 아래 Intel 워크플로 지침은 과거 참고 자료이며 테스트 재개 지시가 아닙니다. 네이티브 ARM64의 정확성과 성능 측정을 우선한 뒤 적용 가능한 변경을 Intel에 옮겨 소스 검토와 가능한 컴파일 검사만 수행합니다. ARM64 결과로 Intel 실행을 검증할 수 없습니다. 기존 증거를 보존하며 이번 중단은 장애가 수정되었다는 뜻이 아닙니다.
 
 NeverD는 macOS에서 KVM/WHP에 대응하는 [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor)를 사용합니다. `--backend hvf`는 명시적 선택입니다. `auto`는 네이티브 실행을 허용하는 계약에서 호스트와 게스트 ISA가 일치할 때 HVF를 선택합니다. Apple Silicon에서는 ARM64, Intel Mac에서는 x86-64를 실행합니다. `software-cpu-v1`과 서로 다른 ISA 사이의 자동 선택은 Unicorn을 사용합니다. Rosetta로 변환된 실행 파일은 거부합니다.
 

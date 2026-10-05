@@ -4,6 +4,8 @@
 
 # macOS native CPU execution (HVF)
 
+**Validation status (2026-10-05): Intel HVF has not been tested on a physical Intel Mac and remains unvalidated.** Neither the organization nor the personal Actions repository established complete Intel acceptance; crashes, lost runners and timeouts remain unresolved. Intel HVF Actions are suspended in both repositories, and the general HVF workflow now selects ARM64 only. Intel workflow instructions below are historical references, not a request to resume testing. Development prioritizes correctness and measured performance on native ARM64; applicable changes may then be ported to Intel with source review and available compile checks only. ARM64 results do not validate Intel runtime behavior. Existing Intel evidence is preserved; this pause does not claim the failures are fixed.
+
 NeverD uses Apple's [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor)
 as the macOS counterpart to KVM and WHP. `--backend hvf` selects it explicitly;
 `auto` selects HVF for a matching native host/guest ISA and native-capable

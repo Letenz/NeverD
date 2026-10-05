@@ -1,10 +1,12 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 06940e7220c3f05dff76462de7d0fe0199aab6b4aeda2c3e4f418d3441516ccf -->
+<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
 
 [← 文档索引](README.md)
 
 # macOS 原生 CPU 后端（HVF）
+
+**验证状态（2026-10-05）：Intel HVF 尚未经过 Intel Mac 实体机测试，仍未完成验收。** 组织和个人 Actions 仓库都未取得完整的 Intel 验收证据；崩溃、失联和超时仍未解决。两个仓库的 Intel HVF Actions 均已暂停，通用 HVF 工作流只选择 ARM64。下文 Intel 工作流操作说明仅作历史参考，不表示恢复测试。后续优先在原生 ARM64 上验证正确性并测量性能，再将适用改动同步至 Intel，只做源码审查和可用的编译检查。ARM64 结果不能证明 Intel 运行正确；既有 Intel 证据保留，此次暂停不代表故障已修复。
 
 NeverD 使用 Apple 的 Hypervisor.framework，后端名为 `hvf`，对应 Linux 的 KVM 和 Windows 的 WHP。按本机架构执行：Apple Silicon 使用 ARM64，Intel Mac 使用 x86-64。对支持原生执行的契约，`auto` 在主客体架构匹配时选择 HVF；跨架构以及 `software-cpu-v1` 契约继续使用 Unicorn。Rosetta 下的翻译进程会明确拒绝初始化，应改用原生 arm64 构建。
 

@@ -1,10 +1,12 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 06940e7220c3f05dff76462de7d0fe0199aab6b4aeda2c3e4f418d3441516ccf -->
+<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
 
 [← ドキュメント一覧](README.md)
 
 # macOS のネイティブ CPU 実行（HVF）
+
+**検証状況（2026-10-05）：Intel HVF は実機の Intel Mac で未テストであり、受け入れ検証は未完了です。** 組織と個人の Actions リポジトリのいずれでも完全な検証には至らず、クラッシュ、ランナーとの通信断、タイムアウトは未解決です。両リポジトリの Intel HVF Actions を停止し、共通 HVF ワークフローは ARM64 のみを選択します。以下の Intel ワークフローの手順は過去の参考資料であり、再開を指示するものではありません。ネイティブ ARM64 の正確性と性能測定を優先し、その後、適用可能な変更を Intel に移植してソースレビューと利用可能なコンパイル確認のみを行います。ARM64 の結果は Intel の実行を保証しません。既存の証拠は保存し、停止を障害修正とは扱いません。
 
 NeverD は macOS の KVM/WHP 相当として [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor) を使用します。`--backend hvf` は明示的な選択です。`auto` はネイティブ実行可能な契約でホストとゲストの ISA が一致するときに HVF を選びます。Apple Silicon では ARM64、Intel Mac では x86-64 を実行します。`software-cpu-v1` と異なる ISA 間の自動選択は Unicorn を使用します。Rosetta で変換された実行ファイルは拒否します。
 
