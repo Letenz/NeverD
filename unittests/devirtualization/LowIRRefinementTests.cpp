@@ -788,6 +788,220 @@ TEST(LowIRLoopInference, FixedFunctionTemporaryPrefixIsChecked) {
               Status::Different);
 }
 
+TEST(LowIRLoopInference, ChangingFunctionTemporaryStateIsInferred) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (uint16_t Bytes : {uint16_t{1}, uint16_t{3}, uint16_t{8}}) {
+      auto P = savedInputLoop(67, Bytes);
+      P.Contract.ByteOrder = Order;
+      const auto Inferred =
+          inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+      ASSERT_TRUE(Inferred.inferred()) << Bytes << ": " << Inferred.Diagnostic;
+      const auto Proof = loopCheck(P, P, *Inferred.Plan);
+      ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+      EXPECT_GT(Proof.RankingChecks, 0U);
+      EXPECT_LT(Proof.Instructions, 32U);
+    }
+}
+
+LowIRLoopRefinementPlan changingTemporaryPlan(uint64_t Original,
+                                              uint64_t Candidate) {
+  auto Plan = wordLoopPlan();
+  auto &Cut = Plan.Cutpoints[0];
+  Cut.UseEntryPrefix = true;
+  const LowIRLoopLocation Left{LowIRLoopSpace::FunctionTemporary, Original, 8};
+  const LowIRLoopLocation Right{LowIRLoopSpace::FunctionTemporary, Candidate,
+                                8};
+  Cut.Inputs.push_back({LowIRLoopSide::Original, Left, NdVar::tmp(16, 8)});
+  Cut.OriginalState.push_back({Left, NdVar::tmp(16, 8)});
+  Cut.CandidateState.push_back({Right, NdVar::tmp(16, 8)});
+  return Plan;
+}
+
+TEST(LowIRLoopRefinement, FunctionTemporaryParametersKeepSeparateSideStorage) {
+  const auto A = savedInputLoop(67, 3), B = savedInputLoop(131, 3);
+  const auto Plan = changingTemporaryPlan(67, 131);
+  const auto Good = loopCheck(A, B, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  EXPECT_GT(Good.RankingChecks, 0U);
+  loopRefused(loopCheck(A, savedInputLoop(131, 8), Plan), Status::Different);
+
+  auto Missing = Plan;
+  Missing.Cutpoints[0].CandidateState.pop_back();
+  loopRefused(loopCheck(A, B, Missing), Status::Different);
+  auto WrongSide = Plan;
+  WrongSide.Cutpoints[0].Inputs.back().Side = LowIRLoopSide::Candidate;
+  loopRefused(loopCheck(A, B, WrongSide), Status::Invalid);
+
+  const auto Left = changingTemporaryPlan(67, 67);
+  const auto Right = changingTemporaryPlan(131, 131);
+  LowIRLoopCutpointPair Pair;
+  Pair.OriginalAddress = Pair.CandidateAddress = 0x200;
+  Pair.SharedInputs = {{regLocation(0), regLocation(0)},
+                       {regLocation(8), regLocation(8)},
+                       {{LowIRLoopSpace::FunctionTemporary, 67, 8},
+                        {LowIRLoopSpace::FunctionTemporary, 131, 8}}};
+  auto Paired = pairLowIRLoopRefinementPlans(Left, Right, {Pair});
+  ASSERT_TRUE(bool(Paired)) << llvm::toString(Paired.takeError());
+  ASSERT_TRUE(loopCheck(A, B, *Paired).proved());
+  loopRefused(loopCheck(A, savedInputLoop(131, 1), *Paired), Status::Different);
+}
+
+TEST(LowIRLoopRefinement, FunctionTemporaryTemplateCannotInventDefinedBytes) {
+  auto P = savedInputLoop(67, 3);
+  const auto Plan = changingTemporaryPlan(67, 67);
+  for (unsigned Case = 0; Case != 7; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Bad = Plan;
+    auto &Cut = Bad.Cutpoints[0];
+    switch (Case) {
+    case 0:
+      Cut.UseEntryPrefix = false;
+      break;
+    case 1:
+      Cut.Inputs.back().Side = LowIRLoopSide::Entry;
+      break;
+    case 2:
+      Cut.Inputs.back().Location.Offset = 68; // crosses the declared range
+      break;
+    case 3:
+      Cut.Inputs.back().Location.Offset = UINT64_MAX - 3;
+      break;
+    case 4:
+      Cut.OriginalState.back().Location.Offset = 66;
+      break;
+    case 5:
+      Cut.CandidateState.back().Location.Offset = 75;
+      break;
+    case 6:
+      Cut.Inputs.back().Location.Bytes = 0;
+      break;
+    }
+    loopRefused(loopCheck(P, P, Bad), Status::Invalid);
+  }
+  // Declared but uninitialized bytes cannot be created by an assignment or
+  // supplied as a prefix input, even when the body never reads them.
+  P.Function.FunctionTemporaries.push_back({83, 8});
+  const LowIRLoopLocation Unbound{LowIRLoopSpace::FunctionTemporary, 83, 8};
+  auto Invented = Plan;
+  Invented.Cutpoints[0].CandidateState.push_back({Unbound, n(0)});
+  loopRefused(loopCheck(P, P, Invented), Status::Invalid);
+  for (auto Side :
+       {LowIRLoopSide::OriginalPrefix, LowIRLoopSide::CandidatePrefix}) {
+    auto Uninitialized = Plan;
+    Uninitialized.Cutpoints[0].Inputs.push_back(
+        {Side, Unbound, NdVar::tmp(24, 8)});
+    loopRefused(loopCheck(P, P, Uninitialized), Status::Invalid);
+  }
+}
+
+TEST(LowIRLoopRefinement, FunctionTemporaryInputsMustProjectFromAssignedState) {
+  auto P = savedInputLoop(67, 3);
+  P.Contract.EntryConstants = {{r(16), 0}};
+  auto Plan = changingTemporaryPlan(67, 67);
+  ASSERT_TRUE(loopCheck(P, P, Plan).proved());
+  for (auto Side : {LowIRLoopSide::Original, LowIRLoopSide::Candidate}) {
+    auto Bad = Plan;
+    auto &Cut = Bad.Cutpoints[0];
+    Cut.Inputs.back().Side = Side;
+    auto &Assignments = Side == LowIRLoopSide::Original ? Cut.OriginalState
+                                                        : Cut.CandidateState;
+    Assignments.back().Value = n(0);
+    const auto Proof = loopCheck(P, P, Bad);
+    loopRefused(Proof, Status::Different);
+    EXPECT_NE(Proof.Diagnostic.find("parameter projection"), std::string::npos);
+  }
+}
+
+Program temporaryCounterLoop(uint16_t Bytes) {
+  Program P;
+  constexpr uint64_t Offset = 67;
+  const auto Count = NdVar::tmp(Offset, Bytes);
+  P.Function.FunctionTemporaries = {{Offset, 12}};
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}),
+                 op(NdOp::COPY, Count, {r(16, Bytes)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(1, 0x200, {2, 3});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {Count, n(0, Bytes)}),
+                 op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(2, 0x300, {1});
+  P.instruction({op(NdOp::INT_ADD, r(0), {r(0), n(1)}),
+                 op(NdOp::INT_SUB, Count, {Count, n(1, Bytes)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(3, 0x400);
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopInference, PartiallyDefinedFunctionTemporarySuppliesTheRank) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (uint16_t Bytes : {uint16_t{1}, uint16_t{3}, uint16_t{8}}) {
+      auto P = temporaryCounterLoop(Bytes);
+      P.Contract.ByteOrder = Order;
+      const auto Inferred =
+          inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+      ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+      bool Bound = false;
+      for (const auto &Cut : Inferred.Plan->Cutpoints)
+        for (const auto &Input : Cut.Inputs)
+          if (Input.Location.Space == LowIRLoopSpace::FunctionTemporary) {
+            EXPECT_EQ(Input.Location.Offset, 67U);
+            EXPECT_EQ(Input.Location.Bytes, Bytes);
+            Bound = true;
+          }
+      EXPECT_TRUE(Bound);
+      const auto Proof = loopCheck(P, P, *Inferred.Plan);
+      ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+      EXPECT_GT(Proof.RankingChecks, 0U);
+      auto OtherLifetime = P;
+      OtherLifetime.Function.FunctionTemporaries[0].Bytes = Bytes;
+      const auto Other =
+          loopCheck(OtherLifetime, OtherLifetime, *Inferred.Plan);
+      ASSERT_TRUE(Other.proved()) << Other.Diagnostic;
+      EXPECT_NE(Other.Certificate->InputDigest, Proof.Certificate->InputDigest);
+    }
+}
+
+TEST(LowIRLoopInference, FunctionTemporaryParametersKeepIndependentBudgets) {
+  const auto P = temporaryCounterLoop(3);
+  const auto Good = inferLowIRLoopRefinementPlan(P.Function, P.Contract);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  LowIRLoopInferenceLimits Inference;
+  Inference.Execution.MaxOperations = Good.Operations;
+  Inference.Execution.MaxSolverQueries = Good.SolverQueries;
+  Inference.MaxWideningRounds = Good.WideningRounds;
+  ASSERT_TRUE(inferLowIRLoopRefinementPlan(P.Function, P.Contract, Inference)
+                  .inferred());
+  for (bool Queries : {false, true}) {
+    auto Short = Inference;
+    if (Queries)
+      --Short.Execution.MaxSolverQueries;
+    else
+      --Short.Execution.MaxOperations;
+    const auto Rejected =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Short);
+    EXPECT_EQ(Rejected.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+    EXPECT_FALSE(Rejected.Plan);
+  }
+  const auto Proof = loopCheck(P, P, *Good.Plan);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxOperations = Proof.Operations;
+  Limits.Execution.MaxSolverQueries = Proof.SolverQueries;
+  Limits.Execution.MaxObservations = Proof.Observations;
+  ASSERT_TRUE(loopCheck(P, P, *Good.Plan, Limits).proved());
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    auto Short = Limits;
+    if (Case == 0)
+      --Short.Execution.MaxOperations;
+    else if (Case == 1)
+      --Short.Execution.MaxSolverQueries;
+    else
+      --Short.Execution.MaxObservations;
+    loopRefused(loopCheck(P, P, *Good.Plan, Short), Status::BudgetExceeded);
+  }
+}
+
 TEST(LowIRLoopRefinement, UnusedFunctionTemporariesDoNotInventCutpointState) {
   auto A = wordLoop(), B = wordLoop();
   B.Function.FunctionTemporaries = {{64, 8}};

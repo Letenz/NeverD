@@ -102,7 +102,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(15); // Certificate semantic schema, independent of report formatting.
+  Number(16); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.DeferNativeConditionalEdges);
@@ -332,6 +332,7 @@ struct RefinementSession {
   bool NativeFinite = false;
   uint64_t NativeInputOperations = 0, NativeInputEffects = 0;
   uint64_t NativeInputBytes = 0;
+  const LowFunc *Original = nullptr;
 };
 
 class Checker {
@@ -1761,7 +1762,8 @@ public:
                "loop template metadata budget exhausted");
         Metadata += Count;
       };
-      const auto Location = [&](const LowIRLoopLocation &L) {
+      const auto Location = [&](const LowIRLoopLocation &L, LowIRLoopSide Side,
+                                bool UseEntryPrefix) {
         if (!L.Bytes || L.Bytes > 8)
           fail(Status::Invalid, "invalid loop location width");
         switch (L.Space) {
@@ -1781,6 +1783,22 @@ public:
           if (!Contract.X64FlagsProfile || L.Offset || L.Bytes != 8)
             fail(Status::Invalid, "invalid loop system-flags location");
           break;
+        case LowIRLoopSpace::FunctionTemporary: {
+          if (!UseEntryPrefix || Side == LowIRLoopSide::Entry)
+            fail(Status::Invalid,
+                 "loop function-temporary state requires a checked prefix");
+          if (!scalar(NdVar::tmp(L.Offset, L.Bytes)))
+            fail(Status::Invalid, "invalid loop function-temporary location");
+          const auto *F = Side == LowIRLoopSide::Candidate ||
+                                  Side == LowIRLoopSide::CandidatePrefix
+                              ? &Refinement->Candidate
+                              : Refinement->Original;
+          for (uint16_t I = 0; I != L.Bytes; ++I)
+            if (!F || !F->isFunctionTemporaryByte(L.Offset + I))
+              fail(Status::Invalid, "loop function-temporary location is not "
+                                    "declared on its side");
+          break;
+        }
         default:
           fail(Status::Invalid, "unknown loop location space");
         }
@@ -1813,7 +1831,7 @@ public:
               !C.UseEntryPrefix)
             fail(Status::Invalid,
                  "loop prefix input requires a checked prefix");
-          Location(I.Location);
+          Location(I.Location, I.Side, C.UseEntryPrefix);
           if (!I.Temporary.isTemp() || !scalar(I.Temporary) ||
               I.Temporary.Size != I.Location.Bytes)
             fail(Status::Invalid, "invalid loop input binding");
@@ -1840,7 +1858,10 @@ public:
         for (const auto *Assignments : {&C.OriginalState, &C.CandidateState}) {
           std::set<std::pair<LowIRLoopSpace, uint64_t>> Bound;
           for (const auto &A : *Assignments) {
-            Location(A.Location);
+            Location(A.Location,
+                     Assignments == &C.OriginalState ? LowIRLoopSide::Original
+                                                     : LowIRLoopSide::Candidate,
+                     C.UseEntryPrefix);
             Operand(A.Value);
             if (A.Value.Size != A.Location.Bytes)
               fail(Status::Invalid, "loop assignment width mismatch");
@@ -1879,6 +1900,10 @@ private:
           L.Bytes);
     case LowIRLoopSpace::SystemFlags:
       return State.SystemFlags;
+    case LowIRLoopSpace::FunctionTemporary:
+      checkTemporary(NdVar::tmp(L.Offset, L.Bytes),
+                     State.DefinedFunctionTemporaries);
+      return State.State.read(SymSpace::Temporary, L.Offset, L.Bytes);
     }
     fail(Status::Invalid, "unknown loop location space");
   }
@@ -1977,6 +2002,13 @@ private:
             case LowIRLoopSpace::SystemFlags:
               State.SystemFlags = Value;
               break;
+            case LowIRLoopSpace::FunctionTemporary:
+              // A template replaces values in real prefix storage. It cannot
+              // turn a lifetime declaration into an initialization fact.
+              checkTemporary(NdVar::tmp(A.Location.Offset, A.Location.Bytes),
+                             State.DefinedFunctionTemporaries);
+              State.State.write(SymSpace::Temporary, A.Location.Offset, Value);
+              break;
             }
             nodes();
           }
@@ -2000,8 +2032,8 @@ private:
   void loopStateEqual(SymRef Predicate, TerminalState &Actual,
                       TerminalState &Expected, llvm::StringRef Side) {
     // A lifetime declaration never initializes storage. Only real prefix
-    // definitions survive a cut, and every arrival must retain their exact
-    // values. Templates currently have no temporary assignments or inputs.
+    // definitions survive a cut. Every arrival retains exactly those defined
+    // bytes and matches the fixed or explicitly assigned template values.
     if (Actual.DefinedFunctionTemporaries !=
         Expected.DefinedFunctionTemporaries)
       fail(Status::Dependent,
@@ -2685,6 +2717,7 @@ LowIRRefinementResult runRefinement(
     LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
     const LowIRLoopRefinementPlan *LoopPlan = nullptr) {
   RefinementSession Session{{}, {}, Candidate, Witness, Limits};
+  Session.Original = Original;
   Session.LoopPlan = LoopPlan;
   Session.NativeFinite = Provider && !LoopPlan;
   const auto Finish = [&](bool Success) {
@@ -3039,6 +3072,20 @@ class LoopPlanInference {
       }
     if (Contract.X64FlagsProfile)
       Locations.push_back({LowIRLoopSpace::SystemFlags, 0, 8});
+    // Only real prefix definitions may become parameters. Missing bytes stay
+    // missing even when their declared lifetime spans the loop. Group adjacent
+    // defined bytes without rounding into an undefined or undeclared byte.
+    const auto &Defined = Session.LoopPrefixes[ActiveCutpoint]
+                              ->Candidate.DefinedFunctionTemporaries;
+    for (auto It = Defined.begin(); It != Defined.end();) {
+      const uint64_t Offset = *It++;
+      uint16_t Bytes = 1;
+      while (Bytes != 8 && It != Defined.end() && *It == Offset + Bytes) {
+        ++Bytes;
+        ++It;
+      }
+      Locations.push_back({LowIRLoopSpace::FunctionTemporary, Offset, Bytes});
+    }
     return Locations;
   }
 
@@ -4533,6 +4580,7 @@ public:
         Plan.Cutpoints[ActiveCutpoint].CandidateAddress = F.Entry;
     Plan.Cutpoints[ActiveCutpoint].Rank = {NdVar::scalar(0, 8)};
     Session.LoopPlan = &Plan;
+    Session.Original = &F;
     Session.LoopPrefixes.resize(1);
   }
 
