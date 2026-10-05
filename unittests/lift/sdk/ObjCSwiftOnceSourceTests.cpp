@@ -157,6 +157,58 @@ struct OnceFixture {
   }
 };
 
+struct IgnoredNativeContextFixture : OnceFixture {
+  TypeRef Pointer = NdType::makePtr(NdType::makeVoid());
+  SwiftOnceSourcePlan Plan;
+  std::map<va_t, const HighFunc *> Functions;
+  std::map<va_t, std::set<size_t>> Proof;
+  HighFunc Caller;
+  MedVar Local;
+
+  explicit IgnoredNativeContextFixture(Arch Architecture)
+      : OnceFixture(Architecture) {
+    Pipeline.HighFuncs.resize(2);
+    Once->Operands[0] =
+        HighExpr::makeConst(0x2000, 8, ConstantAddressProvenance::DataAddress);
+    Once->Operands[1] =
+        HighExpr::makeConst(0x1080, 8, ConstantAddressProvenance::CodeAddress);
+    auto &Callee = Pipeline.HighFuncs[0];
+    Callee.Body.erase(Callee.Body.begin());
+    Plan = discoverSwiftOnceSources(Image, Pipeline);
+    Functions = functions();
+    const auto Bound =
+        bindSwiftOnceSourceReferences(Callee, Image, Plan, Functions);
+    EXPECT_EQ(Bound.ErasedSwiftOnceContextParameters, std::set<size_t>{0});
+    EXPECT_TRUE(swift_once_source_detail::projectedOnceContextUnused(
+        Bound.Function, 0));
+    Proof[Callee.Entry] = Bound.ErasedSwiftOnceContextParameters;
+    Caller.Entry = 0x10c0;
+    Caller.Name = "ignored_native_context_caller";
+    Caller.ReturnType = Pointer;
+    Local.Kind = MedVar::Reg;
+    Local.Id = 50000;
+    Local.Size = 8;
+    HighStmt Definition;
+    Definition.Kind = StmtKind::Assign;
+    Definition.Dst = HighExpr::makeVar(Local, Pointer);
+    Definition.Val = HighExpr::makeUndef(8);
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    auto Other = HighExpr::makeConst(0, 8);
+    Other->Type = Pointer;
+    Return.RetVal = HighExpr::makeCall(Callee.Name, Callee.Entry,
+                                       {Definition.Dst, Other, Other});
+    Return.RetVal->Type = Pointer;
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->CallKind = SourceCallTypeHint::Kind::Native;
+    Hint->TargetAddress = Callee.Entry;
+    Hint->TargetName = Callee.Name;
+    Hint->Signature = *Callee.SourceTypeHint;
+    Return.RetVal->SourceCallHint = std::move(Hint);
+    Caller.Body = {Definition, Return};
+  }
+};
+
 struct StringOnceFixture : OnceFixture {
   ExprPtr Bridge;
   explicit StringOnceFixture(Arch Architecture) : OnceFixture(Architecture) {
@@ -1043,6 +1095,166 @@ TEST(SwiftOnceSources, ClosedIgnoredContextMayFillOnlyUnknownCallerInput) {
           .RetVal->Operands[0]
           ->Kind,
       ExprKind::Call);
+}
+
+TEST(SwiftOnceSources, IgnoredNativeLocalContextKeepsOriginalABI) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto Kind : {ExprKind::Var, ExprKind::Phi}) {
+      IgnoredNativeContextFixture F(Architecture);
+      auto &Original = F.Caller.Body.back().RetVal;
+      Original->Operands[0] =
+          std::make_shared<HighExpr>(*Original->Operands[0]);
+      Original->Operands[0]->Kind = Kind;
+      size_t Filled = 99;
+      auto Bound = bindSwiftOnceSourceReferences(
+          F.Caller, F.Image, F.Plan, F.Functions, &F.Proof, &Filled);
+      EXPECT_EQ(Filled, 1U);
+      eliminateUnusedValues(Bound.Function.Body);
+      ASSERT_EQ(Bound.Function.Body.size(), 1U);
+      const auto &Call = Bound.Function.Body.back().RetVal;
+      ASSERT_EQ(Call->Operands.size(), 3U);
+      EXPECT_EQ(Call->Operands[0]->Kind, ExprKind::Const);
+      EXPECT_EQ(Call->Operands[0]->ConstVal, 0U);
+      EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, F.Functions));
+      EXPECT_TRUE(objc_projection_detail::sameHint(
+          Call->SourceCallHint->Signature,
+          *F.Pipeline.HighFuncs[0].SourceTypeHint));
+      EXPECT_EQ(F.Pipeline.HighFuncs[0].Params.size(), 3U);
+      EXPECT_EQ(F.Caller.Body.front().Val->Kind, ExprKind::Undef);
+      EXPECT_EQ(Original->Operands[0]->Kind, Kind);
+      const auto Unbound = bindSwiftOnceSourceReferences(
+          F.Caller, F.Image, F.Plan, F.Functions, nullptr, &Filled);
+      EXPECT_EQ(Filled, 0U);
+      EXPECT_EQ(Unbound.Function.Body.back().RetVal->Operands[0]->Kind, Kind);
+    }
+  }
+}
+
+TEST(SwiftOnceSources, IgnoredNativeContextChecksEveryBranchAndCopyProducer) {
+  for (unsigned Variant = 0; Variant < 5; ++Variant) {
+    SCOPED_TRACE(Variant);
+    IgnoredNativeContextFixture F(Arch::AArch64);
+    auto Other = F.Local;
+    ++Other.Id;
+    HighStmt Copy = F.Caller.Body.front();
+    Copy.Dst = HighExpr::makeVar(Other, F.Pointer);
+    Copy.Val = F.Caller.Body.front().Dst;
+    auto Alternate = F.Caller.Body.front();
+    Alternate.Val = HighExpr::makeConst(0, 8);
+    Alternate.Val->Type = F.Pointer;
+    if (Variant == 1)
+      Alternate.Val = HighExpr::makeLoad(Alternate.Val, F.Pointer);
+    else if (Variant == 2) {
+      Alternate.Val = HighExpr::makeCall("effect", 0x10f0, {});
+      Alternate.Val->Type = F.Pointer;
+    } else if (Variant == 3) {
+      Alternate.Val = std::make_shared<HighExpr>(*Alternate.Val);
+      Alternate.Val->IntrinsicOutputs.push_back(F.Local);
+    } else if (Variant == 4) {
+      F.Caller.Body.front().Val = Copy.Dst;
+      Alternate.Val = Copy.Dst;
+    }
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Cond = HighExpr::makeConst(1, 1);
+    Branch.Body = {F.Caller.Body.front()};
+    Branch.ElseBody = {Alternate};
+    auto Return = F.Caller.Body.back();
+    Return.RetVal = std::make_shared<HighExpr>(*Return.RetVal);
+    Return.RetVal->Operands[0] = Copy.Dst;
+    F.Caller.Body = {Branch, Copy, Return};
+    size_t Filled = 0;
+    auto Bound = bindSwiftOnceSourceReferences(F.Caller, F.Image, F.Plan,
+                                               F.Functions, &F.Proof, &Filled);
+    const bool Pure = Variant == 0 || Variant == 4;
+    EXPECT_EQ(Filled, Pure ? 1U : 0U);
+    eliminateUnusedValues(Bound.Function.Body);
+    const auto &Context = Bound.Function.Body.back().RetVal->Operands[0];
+    EXPECT_EQ(Context->Kind, Pure ? ExprKind::Const : ExprKind::Var);
+    if (!Pure) {
+      ASSERT_EQ(Bound.Function.Body.size(), 3U);
+      ASSERT_EQ(Bound.Function.Body[0].ElseBody.size(), 1U);
+      EXPECT_EQ(Bound.Function.Body[0].ElseBody[0].Val->Kind,
+                Alternate.Val->Kind);
+    }
+  }
+}
+
+TEST(SwiftOnceSources, IgnoredNativeContextKeepsOtherObservableLocalUses) {
+  for (unsigned Variant = 0; Variant < 3; ++Variant) {
+    IgnoredNativeContextFixture F(Arch::AArch64);
+    HighStmt Observe;
+    if (Variant == 0) {
+      Observe.Kind = StmtKind::Store;
+      Observe.StoreAddr = HighExpr::makeConst(0x2010, 8);
+      Observe.StoreVal = F.Caller.Body.front().Dst;
+    } else if (Variant == 1) {
+      Observe.Kind = StmtKind::If;
+      Observe.Cond = F.Caller.Body.front().Dst;
+    } else {
+      Observe.Kind = StmtKind::Call;
+      Observe.CallExpr = HighExpr::makeCall({}, 0, {});
+      Observe.CallExpr->IsIndirectCall = true;
+      Observe.CallExpr->IndirectTarget = F.Caller.Body.front().Dst;
+    }
+    F.Caller.Body.insert(F.Caller.Body.begin() + 1, Observe);
+    size_t Filled = 0;
+    auto Bound = bindSwiftOnceSourceReferences(F.Caller, F.Image, F.Plan,
+                                               F.Functions, &F.Proof, &Filled);
+    EXPECT_EQ(Filled, 1U);
+    eliminateUnusedValues(Bound.Function.Body);
+    ASSERT_EQ(Bound.Function.Body.size(), 3U);
+    EXPECT_EQ(Bound.Function.Body.front().Val->Kind, ExprKind::Undef);
+    EXPECT_EQ(Bound.Function.Body[1].Kind, Observe.Kind);
+  }
+}
+
+TEST(SwiftOnceSources, IgnoredNativeContextRejectsIncompleteOrChangedInputs) {
+  for (unsigned Variant = 0; Variant < 10; ++Variant) {
+    SCOPED_TRACE(Variant);
+    IgnoredNativeContextFixture F(Arch::AArch64);
+    auto &Context = F.Caller.Body.back().RetVal->Operands[0];
+    Context = std::make_shared<HighExpr>(*Context);
+    if (Variant == 0)
+      F.Caller.Body.erase(F.Caller.Body.begin());
+    else if (Variant == 1) {
+      Context->Var.Kind = MedVar::Param;
+    } else if (Variant == 2) {
+      Context->Type = NdType::makeInt(4);
+      Context->Var.Size = 4;
+    } else if (Variant == 3) {
+      Context->MemoryOrdering = NdMemoryOrdering::Acquire;
+    } else if (Variant == 4) {
+      Context->IndirectTarget = HighExpr::makeConst(0, 8);
+    } else if (Variant == 5) {
+      Context->IntrinsicOutputs.push_back(F.Local);
+    } else if (Variant == 6) {
+      auto Changed = std::make_shared<SourceCallTypeHint>(
+          *F.Caller.Body.back().RetVal->SourceCallHint);
+      Changed->Signature.Parameters.pop_back();
+      F.Caller.Body.back().RetVal->SourceCallHint = std::move(Changed);
+    } else if (Variant == 7) {
+      F.Caller.Body.front().Val.reset();
+    } else if (Variant == 8) {
+      F.Proof.begin()->second = {3};
+    } else {
+      for (unsigned I = 0; I < 1025; ++I) {
+        auto Definition = F.Caller.Body.front();
+        auto Next = F.Local;
+        Next.Id += I + 1;
+        Definition.Dst = HighExpr::makeVar(Next, F.Pointer);
+        Definition.Val = F.Caller.Body.back().RetVal->Operands[0];
+        F.Caller.Body.insert(F.Caller.Body.end() - 1, Definition);
+        F.Caller.Body.back().RetVal->Operands[0] = Definition.Dst;
+      }
+    }
+    size_t Filled = 99;
+    const auto Bound = bindSwiftOnceSourceReferences(
+        F.Caller, F.Image, F.Plan, F.Functions, &F.Proof, &Filled);
+    EXPECT_EQ(Filled, 0U);
+    EXPECT_NE(Bound.Function.Body.back().RetVal->Operands[0]->Kind,
+              ExprKind::Const);
+  }
 }
 
 TEST(SwiftOnceSources, GenericNativeOnceCallsRequireIndependentLeafEvidence) {

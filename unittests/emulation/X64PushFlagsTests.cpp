@@ -279,7 +279,7 @@ TEST_P(X64PushFlags, NoncanonicalAndWrappedStackHaveNoEffects) {
   }
 }
 
-TEST_P(X64PushFlags, LockedAndPopFlagsStayUnsupported) {
+TEST_P(X64PushFlags, LockedFlagsStayUnsupported) {
   for (llvm::ArrayRef<uint8_t> Bytes : {
 #define NEVERD_PUSH_FLAGS_REJECTED(Name, ...) llvm::ArrayRef<uint8_t>(Name),
 #include "X64PushFlagsCases.def"

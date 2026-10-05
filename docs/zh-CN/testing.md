@@ -1075,7 +1075,9 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 921 项 CPU 检查及 17 项 SEH 回归，共有 1162 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `921 CPU + 224 WHP + 17 SEH = 1162`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 958 项 CPU 检查及 17 项 SEH 回归，共有 1199 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `958 CPU + 224 WHP + 17 SEH = 1199`.
+
+`X64PopFlagsTests.cpp` 检查两种权限及 `driver-strict`：全部 256 种允许的标志输入与两种初态、九种编码、全部 64 个输入位、只读和可执行别名、跨页故障与修复、观察器中止及失败、设备栈拒绝和后续原生指令边界。`X64PopFlagsOracle` 在 x64 主机独立执行原始指令，核验 CPL3/IOPL0 和精确栈消耗。`driver_resource_flags.def` 使原 WDK 资源驱动通过两种操作数宽度设置、清除并恢复标志。测试保留完整整数、控制、x87、SSE 状态，不代表支持客体 TF/NT/AC/ID 或已有 ARM64 原生执行证据。
 
 `DriverSIMDSEHTests.cpp` 以四种受支持的处置及一次 x87 修改拒绝、两种原生执行契约、普通/CFG WDK 映像及两个加载地址运行八类原始 SSE 故障。十项后端专属结果和三项纯内核 SSE 记录检查均为必测。`driver_seh_simd.def` 统一定义样例与模式；异步展开表覆盖故障辅助函数。微软内核 10.0.26100.9549 提供独立分类与恢复依据：隔离执行了 107,744 组指令路径分类及 8,192 组恢复。这不代表已在完整 Windows 内核中执行驱动；ARM64 原生 KVM/WHP 仍未验证。
 
