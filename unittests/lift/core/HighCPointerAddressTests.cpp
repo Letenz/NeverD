@@ -15258,6 +15258,8 @@ TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
   const auto NameSp = ColorName.find_last_of(" \t");
   if (NameSp != std::string::npos)
     ColorName = ColorName.substr(NameSp + 1);
+  EXPECT_NE(Source.find("color_mem = " + ColorName + ";"), std::string::npos)
+      << Source;
   const std::string Reload = "= " + ColorName + ";";
   size_t At = BodyAt;
   int Reloads = 0;
@@ -15272,7 +15274,8 @@ TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
     bool Plain = !Lhs.empty();
     for (unsigned char Ch : Lhs)
       Plain = Plain && (std::isalnum(Ch) || Ch == '_');
-    if (Plain &&
+    // The observable global store is not a redundant local copy.
+    if (Plain && Lhs != "color_mem" &&
         Source.find("= " + Lhs, At + Reload.size()) != std::string::npos)
       ++Reloads;
     At += Reload.size();
