@@ -3,13 +3,13 @@ import copy
 import struct
 import unittest
 
-from scripts.check_aarch64_atomics import contract, required_records, validate_observations
+from scripts.check_aarch64_atomics import contract, group_digests, required_records, validate_observations
 
 
 class AtomicEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.values, self.fields, _, scenarios = contract()
-        self.specification = (self.values, self.fields, [("SwapByte", "Swap", 1, 1)],
+        self.specification = (self.values, self.fields, [("Swap8Relaxed", "Swap", 1, 1)],
                               [scenarios[0], scenarios[3]])
         v = self.values
         before = [v["Operand"], v["InitialStatus"], v["Operand"], v["Initial"], 0x8000]
@@ -36,6 +36,16 @@ class AtomicEvidenceTests(unittest.TestCase):
 
     def test_complete_results_and_write_fault_are_accepted(self):
         self.assertEqual(len(validate_observations(self.encode(self.rows), self.specification)), 2)
+
+    def test_unreadable_operand_reports_read_before_write(self):
+        values, fields, cases, scenarios = self.specification
+        scenarios = [scenarios[0], ("NoAccess", 0, values["PageNoAccess"], 0, 0)]
+        specification = values, fields, cases, scenarios
+        rows = copy.deepcopy(self.rows)
+        with self.assertRaises(ValueError):
+            validate_observations(self.encode(rows), specification)
+        rows[1]["Parameter0"] = 0
+        self.assertEqual(len(validate_observations(self.encode(rows), specification)), 2)
 
     def test_missing_extra_reordered_and_duplicate_records_are_rejected(self):
         for rows in [[], self.rows[:1], self.rows + self.rows[:1], self.rows[::-1],
@@ -76,6 +86,23 @@ class AtomicEvidenceTests(unittest.TestCase):
         self.assertEqual(len({name for name, *_ in cases}), 168)
         self.assertEqual(len(required), len({(index, scenario) for index, scenario, *_ in required}))
         self.assertEqual({index for index, *_ in required}, set(range(len(cases))))
+
+    def test_digest_removes_only_placement_and_retains_real_state(self):
+        expected = group_digests(validate_observations(self.encode(self.rows), self.specification))
+        moved = copy.deepcopy(self.rows)
+        for row in moved:
+            for field in ["MemoryBase", "Return4"]:
+                row[field] += 0x100000
+            row["AtomicPC"] += 0x200000
+            if row["Faults"]:
+                for field in ["Context4", "Parameter1"]:
+                    row[field] += 0x100000
+                for field in ["ContextPC", "ExceptionPC"]:
+                    row[field] += 0x200000
+        observations = validate_observations(self.encode(moved), self.specification)
+        self.assertEqual(group_digests(observations), expected)
+        observations[0]["record"]["Return2"] ^= 1
+        self.assertNotEqual(group_digests(observations), expected)
 
 
 if __name__ == "__main__":

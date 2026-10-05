@@ -1,17 +1,14 @@
-//===- AArch64AtomicExecution.cpp - Commit LSE effects under a RAM lease
-//---===//
+//===- AArch64AtomicExecution.cpp - Shared LSE completion -----------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../core/RAMTransaction.h"
 #include "AArch64Atomic.h"
 
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <climits>
-#include <cstring>
 
 namespace neverd::emulation {
 llvm::Error executeAArch64Atomic(const AArch64AtomicInstruction &I,
@@ -34,11 +31,14 @@ llvm::Error executeAArch64Atomic(const AArch64AtomicInstruction &I,
     Access.Hooks.Read(I.Address, Size);
   if (Access.Stopped())
     return llvm::Error::success();
-  // Every CAS checks write permission, including a comparison mismatch.
-  if (auto E = Access.CheckAccess(I.Address, Size, Read | Write))
-    return E;
-  if (Access.Stopped())
-    return llvm::Error::success();
+  // Native ARM64 distinguishes an unreadable operand from an unwritable
+  // destination. Every CAS checks both, including a comparison mismatch.
+  for (unsigned Permission : {Read, Write}) {
+    if (auto E = Access.CheckAccess(I.Address, Size, Permission))
+      return E;
+    if (Access.Stopped())
+      return llvm::Error::success();
+  }
   std::array<uint8_t, aarch64::AtomicAlignmentGranule> Bytes{};
   if (auto E =
           Memory.read(I.Address, llvm::MutableArrayRef(Bytes).take_front(Size)))
@@ -107,31 +107,12 @@ llvm::Error executeAArch64Atomic(const AArch64AtomicInstruction &I,
     if (Result != aarch64::GPRCount)
       Next.Registers[Result] = Old;
   }
-  if (Access.Hooks.Write)
-    for (unsigned Offset = 0; Offset < Size; Offset += aarch64::WordBytes) {
-      const unsigned Count =
-          std::min<unsigned>(Size - Offset, aarch64::WordBytes);
-      uint64_t Value = 0;
-      for (unsigned B = 0; B < Count; ++B)
-        Value |= uint64_t(Bytes[Offset + B]) << (B * CHAR_BIT);
-      Access.Hooks.Write(I.Address + Offset, Count, Value);
-      if (Access.Stopped())
-        return llvm::Error::success();
-    }
-  const RAMWriteRange Range{I.Address, Size};
-  auto Transaction =
-      RAMTransaction::create(Memory, Range, Size, Access.WritePermissions);
-  if (!Transaction)
-    return Transaction.takeError();
-  std::memcpy(Memory.physicalPointer(Page->second.Physical +
-                                     I.Address % memory::PageSize),
-              Bytes.data(), Size);
-  if (auto E = (*Transaction)->stage())
-    return E;
-  if (Access.Stopped())
+  auto Committed = commitAArch64AtomicWrite(
+      I.Address, llvm::ArrayRef(Bytes).take_front(Size), Memory, Access);
+  if (!Committed)
+    return Committed.takeError();
+  if (!*Committed)
     return llvm::Error::success();
-  if (auto E = (*Transaction)->commit())
-    return E;
   CPU = Next;
   return llvm::Error::success();
 }

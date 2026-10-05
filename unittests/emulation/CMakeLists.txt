@@ -229,6 +229,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsExceptionTests.cpp
   WindowsAlignmentProcessTests.cpp
   WindowsExclusiveProcessTests.cpp
+  WindowsAtomicProcessTests.cpp
   WindowsSIMDMappingTests.cpp
   WindowsSIMDExecutionTests.cpp
   WindowsContinuationTests.cpp

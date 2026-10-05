@@ -113,7 +113,8 @@ def validate_observations(data: bytes, specification=None) -> list[dict]:
                     or settings[1] == 0 and settings[2] == values["PageReadWrite"]):
                 raise ValueError("inconsistent original ARM64 atomic fault context")
             if row["Code"] == values["AccessViolation"]:
-                if (row["ParameterCount"] != 2 or row["Parameter0"] != 1
+                write = settings[2] != values["PageNoAccess"]
+                if (row["ParameterCount"] != 2 or row["Parameter0"] != write
                         or not before[4] <= row["Parameter1"] < before[4] + case[2] * case[3]):
                     raise ValueError("inconsistent original ARM64 atomic access violation")
             elif row["ParameterCount"]:
@@ -131,6 +132,27 @@ def validate_observations(data: bytes, specification=None) -> list[dict]:
             raise ValueError("incorrect original ARM64 atomic result or memory footprint")
         observed.append({"case": case[0], "scenario": settings[0], "record": row})
     return observed
+
+
+def group_digests(observations: list[dict]) -> list[tuple[str, int, str]]:
+    """Remove only placement, retaining ordering, operands, faults and RAM."""
+    values, fields, cases, _ = contract()
+    kinds = {name: kind for name, kind, *_ in cases}
+    groups = {}
+    for observation in observations:
+        kind = kinds[observation["case"]]
+        row = dict(observation["record"])
+        row["Return4"] -= row["MemoryBase"]
+        if row["Faults"]:
+            row["Context4"] -= row["MemoryBase"]
+        if row["Code"] == values["AccessViolation"]:
+            row["Parameter1"] -= row["MemoryBase"]
+        for field in ("MemoryBase", "AtomicPC", "ExceptionPC", "ContextPC"):
+            row[field] = 0
+        count, digest = groups.setdefault(kind, [0, hashlib.sha256()])
+        digest.update(struct.pack("<" + "Q" * len(fields), *(row[field] for field in fields)))
+        groups[kind][0] = count + 1
+    return [(kind, count, digest.hexdigest()) for kind, (count, digest) in groups.items()]
 
 
 def main():
@@ -199,6 +221,7 @@ def main():
         if result.stderr:
             raise ValueError("unexpected native atomic diagnostic output")
         report["observations"] = validate_observations(result.stdout)
+        report["group_digests"] = group_digests(report["observations"])
         report["native_observed"] = True
         report["status"] = "passed"
     finally:

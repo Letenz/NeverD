@@ -3,12 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "../../core/RAMTransaction.h"
 #include "AArch64Exclusive.h"
 
-#include <algorithm>
 #include <climits>
-#include <cstring>
 
 namespace neverd::emulation {
 llvm::Error executeAArch64Exclusive(const AArch64ExclusiveInstruction &I,
@@ -88,33 +85,12 @@ llvm::Error executeAArch64Exclusive(const AArch64ExclusiveInstruction &I,
       for (unsigned B = 0; B < I.Width; ++B)
         Bytes[N * I.Width + B] = uint8_t(Value >> (B * CHAR_BIT));
     }
-    if (Hooks.Write)
-      for (unsigned Offset = 0; Offset < Size; Offset += aarch64::WordBytes) {
-        const unsigned Count =
-            std::min<unsigned>(Size - Offset, aarch64::WordBytes);
-        uint64_t Value = 0;
-        for (unsigned B = 0; B < Count; ++B)
-          Value |= uint64_t(Bytes[Offset + B]) << (B * CHAR_BIT);
-        Hooks.Write(I.Address + Offset, Count, Value);
-        if (Access.Stopped())
-          return llvm::Error::success();
-      }
-    const RAMWriteRange Range{I.Address, Size};
-    auto Transaction =
-        RAMTransaction::create(Memory, Range, Size, Access.WritePermissions);
-    if (!Transaction)
-      return Transaction.takeError();
-    const auto &Page =
-        Memory.mappings().at(I.Address & ~(memory::PageSize - 1));
-    std::memcpy(
-        Memory.physicalPointer(Page.Physical + I.Address % memory::PageSize),
-        Bytes.data(), Size);
-    if (auto E = (*Transaction)->stage())
-      return E;
-    if (Access.Stopped())
+    auto Committed = commitAArch64AtomicWrite(
+        I.Address, llvm::ArrayRef(Bytes).take_front(Size), Memory, Access);
+    if (!Committed)
+      return Committed.takeError();
+    if (!*Committed)
       return llvm::Error::success();
-    if (auto E = (*Transaction)->commit())
-      return E;
   }
   if (!*Matches && Access.Stopped())
     return llvm::Error::success();

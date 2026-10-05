@@ -25,5 +25,12 @@ struct AArch64AtomicAccess {
 };
 /// Validate the complete typed alignment outcome before guest OS translation.
 bool isAArch64AtomicAlignmentFault(const BackendFault &);
+/// Observe and commit one validated, aligned RAM operand. False means that a
+/// stop discarded the unpublished write; the caller must retain CPU/monitor
+/// state. Both LSE and exclusive stores use this physical commit authority.
+llvm::Expected<bool> commitAArch64AtomicWrite(uint64_t Address,
+                                              llvm::ArrayRef<uint8_t> Bytes,
+                                              MemoryProjection &,
+                                              const AArch64AtomicAccess &);
 } // namespace neverd::emulation
 #endif

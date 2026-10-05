@@ -19,9 +19,12 @@ namespace neverd::emulation {
 namespace {
 #define NEVERD_ATOMIC_VALUE(Name, Value) constexpr uint64_t Name = Value;
 #define NEVERD_ATOMIC_TEXT(Name, Value) constexpr char Name[] = Value;
+#define NEVERD_ATOMIC_CODE_VALUE NEVERD_ATOMIC_VALUE
 #include "AArch64AtomicCases.def"
+#include "AArch64AtomicCode.def"
 #undef NEVERD_ATOMIC_VALUE
 #undef NEVERD_ATOMIC_TEXT
+#undef NEVERD_ATOMIC_CODE_VALUE
 enum class Family {
 #define NEVERD_ATOMIC_FAMILY(Name) Name,
 #include "AArch64AtomicCases.def"
@@ -350,7 +353,9 @@ TEST_P(AArch64Atomic, AlignmentAndWritePermissionsPrecedeAnyCommit) {
                                       : BackendFaultKind::Protection);
           EXPECT_EQ(F.Address, Address);
           EXPECT_EQ(F.Size, C.size());
-          EXPECT_EQ(F.Access, BackendAccessKind::Write);
+          EXPECT_EQ(F.Access, !Unaligned && !Permissions
+                                  ? BackendAccessKind::Read
+                                  : BackendAccessKind::Write);
           EXPECT_EQ(F.PC, Code);
           return true;
         };
@@ -508,8 +513,8 @@ TEST_P(AArch64Atomic, OddPairRegisterEncodingIsRejectedBeforeAnyAccess) {
 
 TEST_P(AArch64Atomic,
        FlagTransfersPreserveReservedBitsAndZeroRegisterSemantics) {
-  for (unsigned Flags = 0; Flags <= Granule - 1; ++Flags) {
-    const uint64_t Value = Flags * (FlagsMask / (Granule - 1));
+  for (uint64_t Value = 0; Value <= FlagsMask;
+       Value += FlagsMask & ~(FlagsMask - 1)) {
     // All reserved input bits must be ignored by MSR; MRS zeroes them.
     llvm::cantFail(CPU->setReg(AArch64Register::X0, Value | ~FlagsMask));
     instruction(WriteNZCV);
@@ -527,6 +532,57 @@ TEST_P(AArch64Atomic,
     EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::NZCV)), 0u);
     EXPECT_EQ(registers(), Registers);
   }
+}
+
+TEST_P(AArch64Atomic, CommittedWritesRetireExecutableAliasesWithinTheSameRun) {
+  const struct {
+    Family Kind;
+    uint64_t Source, Result;
+  } Patches[] = {
+#define NEVERD_ATOMIC_CODE_SOURCE(Kind, Source, Result)                        \
+  {Family::Kind, Source, Result},
+#include "AArch64AtomicCode.def"
+#undef NEVERD_ATOMIC_CODE_SOURCE
+  };
+  llvm::cantFail(CPU->unmapAlias(Alias, PageBytes));
+  llvm::cantFail(
+      CPU->mapAlias(Alias, Code, PageBytes, Read | Write | UserAccessible));
+  for (const auto &Patch : Patches)
+    for (const auto &C : Cases) {
+      if (!selected(C) || C.Kind != Patch.Kind)
+        continue;
+      SCOPED_TRACE(C.Name);
+      input(C);
+      const auto AtomicWord = C.Word;
+      const uint32_t Words[] = {
+#define NEVERD_ATOMIC_CODE_WORD(Word) Word,
+#include "AArch64AtomicCode.def"
+#undef NEVERD_ATOMIC_CODE_WORD
+      };
+      for (unsigned N = 0; N < std::size(Words); ++N)
+        llvm::cantFail(CPU->writeInteger(Code + N * InstructionBytes, Words[N],
+                                         InstructionBytes));
+      const uint64_t Target = Alias + CodeTargetOffset;
+      const auto Low = llvm::cantFail(CPU->readInteger(Target, C.Width));
+      const auto High =
+          llvm::cantFail(CPU->readInteger(Target + C.Width, C.Width));
+      llvm::cantFail(
+          CPU->setReg(AArch64Register::X0, C.compare() ? Low : Patch.Source));
+      llvm::cantFail(CPU->setReg(AArch64Register::X1, High));
+      llvm::cantFail(CPU->setReg(AArch64Register::X2, Patch.Source));
+      llvm::cantFail(CPU->setReg(AArch64Register::X3, High));
+      llvm::cantFail(CPU->setReg(AArch64Register::X4, Target));
+      BackendHooks Hooks;
+      Hooks.Instruction = [&](uint64_t PC, uint32_t) {
+        if (PC == Code + CodeEndOffset)
+          CPU->stop();
+      };
+      llvm::cantFail(CPU->installHooks(Hooks));
+      auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+      ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+      EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::X5)), Patch.Result);
+      EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::NZCV)), InitialFlags);
+    }
 }
 INSTANTIATE_TEST_SUITE_P(Backends, AArch64Atomic,
                          testing::Combine(testing::ValuesIn(Profiles),
