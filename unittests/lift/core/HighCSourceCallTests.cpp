@@ -4294,3 +4294,79 @@ int main(void) {
   for (const auto Optimization : {"-O0", "-O2"})
     compileAndRun(Program, {Optimization});
 }
+
+TEST(HighCSourceCalls,
+     SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  const auto Architecture = Arch::AArch64;
+#else
+  const auto Architecture = Arch::X64;
+#endif
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Double = NdType::makeFloat(8);
+  HighFunc F;
+  F.Name = "recovered_point_actions";
+  F.ReturnType = NdType::makeVoid();
+  F.Params = {{"x", Double}, {"y", Double}, {"context", Pointer}};
+  for (const char *Name :
+       {"_$sSo12CGContextRefa12CoreGraphicsE4move2toySo7CGPointV_tF",
+        "_$sSo12CGContextRefa12CoreGraphicsE7addLine2toySo7CGPointV_tF"}) {
+    auto Image = runtime_function_address_test::image(Architecture);
+    const auto Slot = runtime_function_address_test::Slot;
+    Image.ImportPtrSlots[Slot] = Name;
+    Image.DyldBindSlots[Slot] = {
+        Name, 0,
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+        false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, Slot);
+    ASSERT_TRUE(Hint);
+    auto Call = call(
+        *Hint, F.ReturnType,
+        {parameter(0, Double), parameter(1, Double), parameter(2, Pointer)});
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    HighStmt Statement;
+    Statement.Kind = StmtKind::ExprStmt;
+    Statement.Val = Call;
+    F.Body.push_back(std::move(Statement));
+  }
+  const auto Source = emit({F}, true, Architecture);
+  ASSERT_NE(Source.find("swiftcall"), std::string::npos);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  const auto Program = Source + R"(
+struct PointState { unsigned calls; uint64_t bits[2][2]; };
+static void capture_point(double x,double y,struct PointState *s,unsigned index) {
+  if(s->calls!=index) __builtin_trap();
+  __builtin_memcpy(&s->bits[index][0],&x,8);
+  __builtin_memcpy(&s->bits[index][1],&y,8);
+  ++s->calls;
+}
+void __attribute__((swiftcall)) move_oracle(double,double,
+    struct PointState *__attribute__((swift_context)))
+    __asm__("_$sSo12CGContextRefa12CoreGraphicsE4move2toySo7CGPointV_tF");
+void __attribute__((swiftcall)) move_oracle(double x,double y,
+    struct PointState *s __attribute__((swift_context))) {capture_point(x,y,s,0);}
+void __attribute__((swiftcall)) line_oracle(double,double,
+    struct PointState *__attribute__((swift_context)))
+    __asm__("_$sSo12CGContextRefa12CoreGraphicsE7addLine2toySo7CGPointV_tF");
+void __attribute__((swiftcall)) line_oracle(double x,double y,
+    struct PointState *s __attribute__((swift_context))) {capture_point(x,y,s,1);}
+int main(void) {
+  const uint64_t values[]={0,0x8000000000000000ULL,1,0x8000000000000001ULL,
+    0x3ff0000000000000ULL,0xbff012345678abcdULL,0x7ff0000000000000ULL,
+    0xfff0000000000000ULL,0x7ff812345678abcdULL,0x7ff012345678abcdULL};
+  for(unsigned i=0;i<sizeof(values)/sizeof(values[0]);++i)
+    for(unsigned j=0;j<sizeof(values)/sizeof(values[0]);++j) {
+      struct {uint64_t guard;struct PointState s;uint64_t tail;} box={0};
+      box.guard=0xabcdef0123456789ULL;box.tail=0x123456789abcdef0ULL;
+      double x,y;__builtin_memcpy(&x,values+i,8);__builtin_memcpy(&y,values+j,8);
+      recovered_point_actions(x,y,&box.s);
+      if(box.s.calls!=2||box.guard!=0xabcdef0123456789ULL||box.tail!=0x123456789abcdef0ULL)return 1;
+      for(unsigned k=0;k<2;++k)
+        if(box.s.bits[k][0]!=values[i]||box.s.bits[k][1]!=values[j])return 2;
+    }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
+}

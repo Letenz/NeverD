@@ -177,6 +177,7 @@ add_dependencies(NeverDInterpreterMachineStateTests neverd)
 add_neverd_unittest(NeverDLLVMScalarLoopRecoveryTests
   LLVMScalarLoopRecoveryTests.cpp
   LLVMScalarLoopPredicateTests.cpp
+  LLVMScalarLoopBoundTests.cpp
   LLVMScalarSourceRecoveryTests.cpp
   LLVMScalarLoopMaskTests.cpp
   LINK_COMPONENTS LLVMScalarLoopRecovery

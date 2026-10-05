@@ -394,6 +394,8 @@ Leading-phase regressions cover two and three sequential loops reusing one count
 
 Loop-predicate regressions cover 8/16/32/64-bit carriers, swapped orderings and branch polarities, signed/unsigned widening, distinct external seeds, conflicting entry observations, multiple backedges, hidden symbolic-data counterexamples, refused truncation, original poison/nontermination, and atomic construction/proof/candidate/transform limits. Independent unsigned oracles compare original and recovered LLVM at O0/O2 over 458,752 calls with undefined-behavior traps. Source and parent module remain unchanged.
 
+Exit-bound regressions cover modular guards at 8/16/32/64 bits, descending steps, both polarities, zero trips, shared exits, wrong neighboring bounds that agree only on zero data, unreachable step boundaries, oversized slices, poison, unavailable same-width leaves and atomic budgets. Forty unused arguments before a live prefix seed must not displace it from the bounded search. Independent unsigned O0/O2 oracles execute original and recovered LLVM over 458,752 calls with undefined-behavior traps.
+
 The same target also checks `recoverLLVMScalarSource`: preparation before loop search, cleanup without loop changes, full-width unused state, dead overflow/exact-shift/division and assume obligations, unsupported effects, exact/one-short cumulative budgets and bounded continuation. Independent arithmetic oracles execute original and prepared LLVM at O0/O2 for every byte control and deterministic full-width state. Source and parent module must remain unchanged on success and refusal.
 
 Source-preparation guard tests cover annotated modular identities, equivalent expressions in distinct predecessors, retained differing branch values, original overflow/exact-shift/truncation/extension refusals, and exact/short cumulative budgets. Independent unsigned oracles compare original and prepared bodies at O0/O2 over 131,072 calls with undefined-behavior traps. Standalone predicate rejection rules remain covered by the existing semantic-pass tests.
@@ -2565,6 +2567,8 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 
 `NeverDLLVMCPhiTests` executes independent and cross-dependent loop updates at O0/O2 over zero-trip loops, iteration boundaries and randomized full-width seeds. Readability assertions require no snapshot locals for independent updates and only the needed snapshot for compound exchanges. Existing branch, switch, moved-arm and swap-loop cases continue to check the selected edge and simultaneous assignment semantics.
 
+`LLVMCInternalExitRegions` adds five independent tests covering both exit polarities, zero iterations, parallel exit/backedge swaps, all four combinations of nested header/internal exits and ordered header/body/latch observations. Shared-destination exits and early continuations verify executable fallback; a valid earlier loop followed by an unsupported region must publish no partial structure. Whole-module and selected-function output must agree without changing LLVM. Original LLVM and emitted C run against independent unsigned oracles at O0/O2 over 294,912 calls, with undefined-behavior traps on C.
+
 `NeverDLLVMCPhiTests` also checks common loop exits with distinct successor PHI pairs, ordered observer calls, output memory and unchanged caller IR. Whole-module and selected-function C execute against independent O0/O2 oracles. Different exit comparisons and extra arm predecessors exercise conservative handling.
 
 `NeverDLLVMCPhiTests` covers multi-backedge loop-expression factoring with independent O0/O2 oracles, ordered observers, memory snapshots before modifying calls, narrow wrap and signed extension. It checks whole-module and selected-function output without changing caller IR, conflicting edges, shared roots, poison annotations, undefined operands, variable shifts, constrained intrinsics, exception functions and complete budget refusal. Rotate calls must collapse only when every incoming operation agrees.
@@ -2598,6 +2602,15 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
 
+File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
+imports and variadic syscalls, shared catalogue queries from another guest
+thread, private errno, dynamic provider lifetime, implicit directories,
+missing paths, file ancestors, invalid-mode precedence, integer high bits,
+descriptor exhaustion and unchanged cursors. Path imports include empty,
+unmapped, overlong and page-tail strings. Permission checks and noncanonical
+paths remain unsupported. Raw syscall extra registers are ignored; the API 28
+Bionic wrapper rejects nonzero flags.
+
 Status cases use independently declared x64 and AArch64 `stat` structures, checking
 every field, zero padding, canaries, unaligned output, full-width inode/timestamps,
 size independent from bytes and unchanged cursors. Raw/Bionic/variadic calls and
@@ -2620,3 +2633,5 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` checks empty instruction anchors between the early return and once call, and rejects intervening calls or stores.
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` checks the shared root proof and rejection after a leaf starts observing its context.
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` checks both architectures and rejects changed providers, weak imports, conflicting storage and stale ABI carriers. `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` executes generated C at O0/O2 with independent Swift carrier oracles, checking coordinate bits including signed zero, subnormals and NaNs, receiver identity, call order and guards. These checks establish the call ABI, not complete upper-method recovery.

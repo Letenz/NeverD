@@ -103,6 +103,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 循环谓词回归覆盖 8/16/32/64 位 PHI、交换比较操作数与分支极性、有符号/无符号扩展、不同外部初值、冲突入口观察、多回边、隐藏符号数据反例、截断拒绝、原始 poison/不终止及构造/证明/候选/转换限制的原子拒绝。独立无符号 oracle 在 O0/O2 对照原始与恢复后的 LLVM，共 458,752 次调用并启用未定义行为陷阱；源函数及父模块保持不变。
 
+退出边界回归覆盖8/16/32/64位模运算条件、递减步长、两种极性、零次循环、共享出口、仅零数据一致的错误相邻边界、步长无法到达的边界、超限切片、poison、缺少同宽叶节点及原子预算拒绝。有效前缀初值前的40个未使用参数不得挤占有界搜索位置。独立无符号 oracle 在 O0/O2 执行原始与恢复后的 LLVM，共458,752次调用并启用未定义行为陷阱。
+
 同一测试目标还覆盖 `recoverLLVMScalarSource`：搜索前准备、仅清理而无循环变换、全位宽未使用状态、死代码中的溢出/精确移位/除法及 assume 义务、不支持的副作用、精确/少一累计预算和有界继续。独立算术 oracle 在 O0/O2 执行原始与准备后的 LLVM，覆盖所有字节控制值及确定性全位宽状态。成功或拒绝都必须保持源函数及其父模块不变。
 
 源准备守卫测试覆盖带注解的模恒等式、不同前驱中的等价表达式、不同分支值保留、原始溢出/exact 移位/截断/扩展拒绝及精确/不足累计预算。独立无符号 oracle 在 O0/O2 对照原始与准备后的函数体，共131,072次调用并开启未定义行为陷阱。已有语义 pass 测试继续覆盖独立谓词的拒绝规则。
@@ -1206,6 +1208,8 @@ Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 
 `NeverDLLVMCPhiTests` 在 O0/O2 下运行独立及交叉依赖的循环更新，覆盖零次循环、迭代边界和随机全位宽初值。可读性断言要求独立更新不产生快照局部变量，复合交换只保留必要快照。已有分支、switch、移动分支体及交换循环用例继续验证实际选中的边与同时赋值语义。
 
+`LLVMCInternalExitRegions` 新增5个独立测试，覆盖两种退出极性、零次循环、退出边和回边的并行交换、循环头/内部退出的四种嵌套组合，以及循环头/循环体/回边块的观察顺序。共享目标出口和提前继续路径验证可执行回退；有效循环之后遇到不支持区域时，不得发布部分结构化结果。整模块与单函数输出须一致且不修改 LLVM。原始 LLVM 和生成 C 在 O0/O2 下与独立无符号 oracle 对照执行，共294,912次调用，C 启用未定义行为陷阱。
+
 `NeverDLLVMCPhiTests` 还验证共同循环出口的不同后继 PHI 对、有序观察调用、输出内存及调用者 IR 不变。整模块与指定函数的 C 均在 O0/O2 下对照独立参考实现执行。不同退出判断及额外分支前驱覆盖保守处理。
 
 `NeverDLLVMCPhiTests` 用独立 O0/O2 oracle 检查多回边循环表达式合并、观察调用顺序、修改内存的调用之前的值快照、窄位宽回绕和符号扩展。覆盖整模块与单函数输出且调用方 IR 不变，以及入边冲突、共享根、poison 标注、未定义操作数、变量移位、受约束 intrinsic、异常函数和预算不足时完整拒绝。只有所有入边运算一致，旋转调用才可合并。
@@ -1271,3 +1275,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 检查提前返回与 once 调用之间的空指令锚点，并拒绝其间的调用或存储。
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 检查共享根节点证明，并在叶节点开始观察上下文后拒绝旧计划。
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 覆盖两种架构，并拒绝变更提供方、弱导入、冲突存储及陈旧 ABI 载体。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下执行生成的 C，使用独立 Swift 载体验证函数检查坐标位模式（包括有符号零、次正规数和 NaN）、接收者身份、调用顺序和保护值。这些检查证明调用 ABI，不代表上层方法已完整恢复。

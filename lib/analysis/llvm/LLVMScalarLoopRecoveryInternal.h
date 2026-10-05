@@ -89,6 +89,8 @@ bool proposeReplacements(Search &S, llvm::Function &F,
 
 bool predicates(Search &S, llvm::Function &F, llvm::DominatorTree &DT,
                 llvm::LoopInfo &LI);
+bool bounds(Search &S, llvm::Function &F, llvm::DominatorTree &DT,
+            llvm::LoopInfo &LI);
 bool unpeel(Search &S, llvm::Function &F, llvm::DominatorTree &DT,
             llvm::LoopInfo &LI);
 bool zeroTrip(Search &S, llvm::Function &F, llvm::DominatorTree &DT,

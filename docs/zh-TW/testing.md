@@ -103,6 +103,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 迴圈述詞回歸涵蓋 8/16/32/64 位元 PHI、交換比較運算元與分支極性、有號/無號擴展、不同外部初值、衝突入口觀察、多回邊、隱藏符號資料反例、截斷拒絕、原始 poison/不終止及構造/證明/候選/轉換限制的原子拒絕。獨立無號 oracle 在 O0/O2 對照原始與恢復後的 LLVM，共 458,752 次呼叫並啟用未定義行為陷阱；來源函式及父模組保持不變。
 
+退出邊界回歸涵蓋8/16/32/64位元模運算條件、遞減步長、兩種極性、零次迴圈、共享出口、僅零資料一致的錯誤相鄰邊界、步長無法到達的邊界、超限切片、poison、缺少同寬葉節點及原子預算拒絕。有效前綴初值前的40個未使用參數不得擠占有界搜尋位置。獨立無號 oracle 在 O0/O2 執行原始與恢復後的 LLVM，共458,752次呼叫並啟用未定義行為陷阱。
+
 同一測試目標也涵蓋 `recoverLLVMScalarSource`：搜尋前準備、僅清理而無迴圈變換、全位寬未使用狀態、死碼中的溢位/精確位移/除法及 assume 義務、不支援的副作用、精確/少一累計預算與有界繼續。獨立算術 oracle 在 O0/O2 執行原始與準備後的 LLVM，涵蓋所有位元組控制值及確定性全位寬狀態。成功或拒絕都必須保持來源函式及其父模組不變。
 
 來源準備守衛測試涵蓋帶註解的模恆等式、不同前驅中的等價運算式、不同分支值保留、原始溢位/exact 位移/截斷/擴展拒絕及精確/不足累計預算。獨立無號 oracle 在 O0/O2 對照原始與準備後的函式本體，共131,072次呼叫並啟用未定義行為陷阱。既有語義 pass 測試繼續涵蓋獨立述詞的拒絕規則。
@@ -1244,6 +1246,8 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 
 `NeverDLLVMCPhiTests` 在 O0/O2 下執行獨立及交叉相依的迴圈更新，涵蓋零次迴圈、迭代邊界和隨機全位寬初值。可讀性斷言要求獨立更新不產生快照區域變數，複合交換只保留必要快照。既有分支、switch、移動分支體及交換迴圈案例繼續驗證實際選取的邊與同時指定語意。
 
+`LLVMCInternalExitRegions` 新增5個獨立測試，涵蓋兩種退出極性、零次迴圈、退出邊和回邊的平行交換、迴圈頭/內部退出的四種巢狀組合，以及迴圈頭/本體/回邊區塊的觀察順序。共用目標出口和提前繼續路徑驗證可執行回退；有效迴圈之後遇到不支援區域時，不得發布部分結構化結果。整個模組與單函式輸出須一致且不修改 LLVM。原始 LLVM 和產生的 C 在 O0/O2 下與獨立無號 oracle 比對，共294,912次呼叫，C 啟用未定義行為陷阱。
+
 `NeverDLLVMCPhiTests` 也驗證共同迴圈出口的不同後繼 PHI 對、有序觀察呼叫、輸出記憶體及呼叫者 IR 不變。整模組與指定函式的 C 都在 O0/O2 下對照獨立參考實作執行。不同退出判斷與額外分支前驅涵蓋保守處理。
 
 `NeverDLLVMCPhiTests` 使用獨立 O0/O2 oracle 檢查多回邊迴圈運算合併、觀察呼叫順序、修改記憶體的呼叫前之值快照、窄位寬回繞及符號擴展。涵蓋整個模組與單一函式輸出且呼叫端 IR 不變，以及輸入衝突、共用根、poison 標註、未定義運算元、變數位移、受限制 intrinsic、例外函式及預算不足時完整拒絕。只有所有輸入運算一致才可合併旋轉呼叫。
@@ -1309,3 +1313,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 檢查提前返回與 once 呼叫之間的空指令錨點，並拒絕其間的呼叫或儲存。
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 檢查共用根節點證明，並在葉節點開始觀察上下文後拒絕舊計畫。
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 涵蓋兩種架構，並拒絕變更提供者、弱匯入、衝突儲存及過期 ABI 載體。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下執行產生的 C，以獨立 Swift 載體驗證函式檢查座標位元模式（含帶符號零、次正規數與 NaN）、接收者身分、呼叫順序和保護值。這些檢查證明呼叫 ABI，不代表上層方法已完整恢復。
