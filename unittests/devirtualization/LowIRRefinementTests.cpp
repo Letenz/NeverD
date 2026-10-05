@@ -2318,13 +2318,11 @@ TEST(LowIRLoopInference, AlternativeLoopsReachBothPrefixesWithinSharedBudgets) {
   }
 }
 
-Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
-                              bool Guarded = true,
-                              LowIRLoopSpace Space = LowIRLoopSpace::Register,
-                              bool EqualityExit = false, unsigned BoundStep = 0,
-                              bool PadBounds = false,
-                              bool ZeroInitialize = false,
-                              bool CachedExit = false) {
+Program projectedCounterLoops(
+    uint16_t Bytes, bool Ascending, unsigned Step = 1, bool Guarded = true,
+    LowIRLoopSpace Space = LowIRLoopSpace::Register, bool EqualityExit = false,
+    unsigned BoundStep = 0, bool PadBounds = false, bool ZeroInitialize = false,
+    bool CachedExit = false, bool OrderedExit = false) {
   Program P;
   const uint64_t Mask = (uint64_t{1} << (Bytes * 8)) - 1;
   if (Space == LowIRLoopSpace::Frame)
@@ -2358,8 +2356,10 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
           {Address(Level), Read(Level),
            op(NdOp::SUBBYTES, NdVar::tmp(16, Bytes), {NdVar::tmp(8, 8), n(0)}),
            op(NdOp::SUBBYTES, NdVar::tmp(24, Bytes), {r(64 + 8 * Level), n(0)}),
-           op(NdOp::INT_EQUAL, r(176 + 8 * Level, 1),
-              {NdVar::tmp(16, Bytes), NdVar::tmp(24, Bytes)})});
+           op(OrderedExit ? NdOp::INT_LESSEQUAL : NdOp::INT_EQUAL,
+              r(176 + 8 * Level, 1),
+              {NdVar::tmp(OrderedExit ? 24 : 16, Bytes),
+               NdVar::tmp(OrderedExit ? 16 : 24, Bytes)})});
   };
   const auto Initialize = [&](unsigned Level) {
     P.instruction({Address(Level),
@@ -2592,22 +2592,71 @@ TEST(LowIRLoopInference, ProjectedComparisonBitsProveNarrowEqualityHeaders) {
         }
 }
 
-TEST(LowIRLoopInference, ProjectedComparisonBitsRejectNonterminatingUpdates) {
+void complementCachedExit(Program &P) {
+  for (auto &B : P.Function.Blocks)
+    for (auto &O : B.Ops) {
+      if (O.Opcode == NdOp::INT_LESSEQUAL &&
+          (O.Output == r(176, 1) || O.Output == r(184, 1))) {
+        O.Opcode = NdOp::INT_LESS;
+        std::swap(O.Inputs[0], O.Inputs[1]);
+      } else if (O.Opcode == NdOp::COPY && O.Output == NdVar::tmp(32, 1) &&
+                 (O.Inputs[0] == r(176, 1) || O.Inputs[0] == r(184, 1))) {
+        O.Opcode = NdOp::INT_EQUAL;
+        O.NumInputs = 2;
+        O.Inputs[1] = n(0, 1);
+      }
+    }
+  // Rebind the newly constructed fixture after changing its Boolean encoding.
+  for (auto &Record : P.Records) {
+    const auto &B = *std::find_if(
+        P.Function.Blocks.begin(), P.Function.Blocks.end(),
+        [&](const auto &Block) { return Block.Id == Record.BlockId; });
+    Record.Effects.OperationDigest =
+        lowUndefinedOperationDigest(llvm::ArrayRef<LowOp>(B.Ops).slice(
+            Record.Boundary.FirstOp, Record.Boundary.OpCount));
+  }
+}
+
+TEST(LowIRLoopInference, OrderedComparisonBitsProveBothExitEncodings) {
+  for (uint16_t Bytes : {1, 3, 4})
+    for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
+                       LowIRLoopSpace::FunctionTemporary})
+      for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+        for (bool Complement : {false, true}) {
+          SCOPED_TRACE(Bytes);
+          SCOPED_TRACE(static_cast<unsigned>(Space));
+          SCOPED_TRACE(static_cast<unsigned>(Order));
+          SCOPED_TRACE(Complement);
+          auto P = projectedCounterLoops(Bytes, true, 1, true, Space, true, 0,
+                                         true, true, true, true);
+          P.Contract.ByteOrder = Order;
+          if (Complement)
+            complementCachedExit(P);
+          const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract,
+                                                      {}, {0x200, 0x400});
+          ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+          const auto Proof = loopCheck(P, P, *R.Plan);
+          ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+        }
+}
+
+void checkComparisonNontermination(bool OrderedExit) {
   const auto Space = LowIRLoopSpace::FunctionTemporary;
-  const auto P =
-      projectedCounterLoops(1, true, 1, true, Space, true, 0, true, true, true);
+  const auto P = projectedCounterLoops(1, true, 1, true, Space, true, 0, true,
+                                       true, true, OrderedExit);
   const std::vector<va_t> Cuts{0x200, 0x400};
   const auto Good =
       inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
   ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
-  for (const auto &Bad : {projectedCounterLoops(1, true, 0, true, Space, true,
-                                                0, true, true, true),
-                          projectedCounterLoops(1, true, 2, true, Space, true,
-                                                0, true, true, true),
-                          projectedCounterLoops(1, true, 1, true, Space, true,
-                                                1, true, true, true),
-                          projectedCounterLoops(1, true, 1, false, Space, true,
-                                                0, true, true, true)}) {
+  for (const auto &Bad :
+       {projectedCounterLoops(1, true, 0, true, Space, true, 0, true, true,
+                              true, OrderedExit),
+        projectedCounterLoops(1, true, 2, true, Space, true, 0, true, true,
+                              true, OrderedExit),
+        projectedCounterLoops(1, true, 1, true, Space, true, 1, true, true,
+                              true, OrderedExit),
+        projectedCounterLoops(1, true, 1, false, Space, true, 0, true, true,
+                              true, OrderedExit)}) {
     const auto Refused =
         inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract, {}, Cuts);
     EXPECT_FALSE(Refused.inferred());
@@ -2616,10 +2665,18 @@ TEST(LowIRLoopInference, ProjectedComparisonBitsRejectNonterminatingUpdates) {
   }
 }
 
-TEST(LowIRLoopInference, ProjectedComparisonBitsPreserveFullStateAndCache) {
+TEST(LowIRLoopInference, ProjectedComparisonBitsRejectNonterminatingUpdates) {
+  checkComparisonNontermination(false);
+}
+
+TEST(LowIRLoopInference, OrderedComparisonBitsRejectNonterminatingUpdates) {
+  checkComparisonNontermination(true);
+}
+
+void checkComparisonObservations(bool OrderedExit) {
   for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
     auto P = projectedCounterLoops(3, true, 1, true, LowIRLoopSpace::Frame,
-                                   true, 0, true, true, true);
+                                   true, 0, true, true, true, OrderedExit);
     P.Contract.ByteOrder = Order;
     P.Contract.ReturnRegisters.push_back({64, 8});
     P.Contract.ReturnRegisters.push_back({72, 8});
@@ -2642,10 +2699,19 @@ TEST(LowIRLoopInference, ProjectedComparisonBitsPreserveFullStateAndCache) {
     auto WrongCache = P;
     for (auto &B : WrongCache.Function.Blocks)
       for (auto &O : B.Ops)
-        if (O.Opcode == NdOp::INT_EQUAL && O.Output == r(184, 1))
-          O.Opcode = NdOp::INT_NOTEQUAL;
+        if (O.Opcode == (OrderedExit ? NdOp::INT_LESSEQUAL : NdOp::INT_EQUAL) &&
+            O.Output == r(184, 1))
+          O.Opcode = OrderedExit ? NdOp::INT_LESS : NdOp::INT_NOTEQUAL;
     loopRefused(loopCheck(P, WrongCache, *Good.Plan), Status::Different);
   }
+}
+
+TEST(LowIRLoopInference, ProjectedComparisonBitsPreserveFullStateAndCache) {
+  checkComparisonObservations(false);
+}
+
+TEST(LowIRLoopInference, OrderedComparisonBitsPreserveFullStateAndCache) {
+  checkComparisonObservations(true);
 }
 
 TEST(LowIRLoopInference, LateCounterBoundsCannotRestoreRejectedRelations) {
@@ -2697,10 +2763,11 @@ TEST(LowIRLoopInference, LateCounterBoundsKeepFullStateObservations) {
 
 void checkProjectedCounterBudgets(bool EqualityExit,
                                   bool ZeroInitialize = false,
-                                  bool CachedExit = false) {
+                                  bool CachedExit = false,
+                                  bool OrderedExit = false) {
   const auto P = projectedCounterLoops(
       1, true, 1, true, LowIRLoopSpace::Register, EqualityExit, 0, CachedExit,
-      ZeroInitialize, CachedExit);
+      ZeroInitialize, CachedExit, OrderedExit);
   const std::vector<va_t> Cuts = CachedExit ? std::vector<va_t>{0x200, 0x400}
                                             : std::vector<va_t>{0x300, 0x500};
   const auto Good =
@@ -2765,6 +2832,10 @@ TEST(LowIRLoopInference, LateCounterBoundsKeepIndependentBudgets) {
 
 TEST(LowIRLoopInference, ProjectedComparisonBitsKeepIndependentBudgets) {
   checkProjectedCounterBudgets(true, true, true);
+}
+
+TEST(LowIRLoopInference, OrderedComparisonBitsKeepIndependentBudgets) {
+  checkProjectedCounterBudgets(true, true, true, true);
 }
 
 struct CachedComparisonOptions {
