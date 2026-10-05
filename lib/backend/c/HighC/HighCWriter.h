@@ -185,6 +185,10 @@ public:
   void decideTryExits(const std::vector<HighStmt> &Stmts,
                       const std::vector<va_t> &Continuation,
                       std::set<std::pair<va_t, va_t>> &Kept);
+  /// Labels where the try Stmts[Index] falls through that print right after
+  /// it: no statement printed earlier, the try included, starts them.
+  std::vector<va_t> tryLeaveTargets(const std::vector<HighStmt> &Stmts,
+                                    size_t Index) const;
 
   //--- Expression rendering (HighCExprWriter.cpp) ---
   std::string exprStr(const HighExpr &Expr, int ParentPrec = 0);
@@ -464,6 +468,11 @@ public:
   std::map<va_t, unsigned> GotoTargetUses;
   /// (address, target) of try-body gotos left out as fall-through exits.
   std::set<std::pair<va_t, va_t>> FallthroughTryExits;
+  /// While the protected body of a __try prints: the labels where that try
+  /// falls through.  A goto there leaves the body as `__leave` does.
+  std::vector<va_t> LeaveTargets;
+  /// tryLeaveTargets of the try statement writeStmts is about to print.
+  std::vector<va_t> NextTryLeaveTargets;
   /// Labels already printed in the current function; C allows each once.
   std::set<va_t> EmittedLabels;
   bool HasCIntrinsics = false;
