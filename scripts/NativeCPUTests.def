@@ -28,6 +28,8 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64MachineProbe.InterruptionRetainsPhaseCauseDeadlineAndLease")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64PopFlagsOracle.OriginalUserInstructionsDetermineFlagsAndStackWidth")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PopFlags.AdmittedFlagsAndImplicitStackWidths/"

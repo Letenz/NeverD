@@ -76,6 +76,8 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 KVM/WHP 透過私有 `FXSAVE64` 執行探測 `MXCSR_MASK`，並以帶正負號的次正規數算術驗證宣告的 DAZ 能力。checked Unicorn 提供軟體遮罩。`supportedControlBits` 回傳 CPU 的不可變遮罩；FX/XSAVE、快照與 Windows CONTEXT 使用相同能力。checked `LDMXCSR/STMXCSR` 精確存取 m32，檢查完整 RAM 範圍，並在故障或觀察回呼取消時保留狀態。載入保留位觸發 #GP；可攜執行仍拒絕未遮罩 SIMD 例外。`X64MXCSRTests.cpp` 檢查控制值與重試；`X64DAZData` 以原始主機指令對照全部 28 種已准入 SSE 算術形式，涵蓋 DAZ、捨入與 FTZ。此變更不擴展 HVF 的 DAZ 支援。
 
+原生 x64 啟動驗證共用一個 `5 s` 預算，涵蓋傳輸層冷啟動準備及全部探測步驟；客體執行預算獨立。初始化中斷會回報指令階段、`stop_requested` 和 `deadline_reached`，保留中斷類型及底層傳輸診斷，不重試或接受未完成驗證的 CPU。
+
 `PAUSE`（`F3 90`）透過共用 x64 機器介面在 KVM/WHP 和受限 Unicorn 上執行，包括原生 `driver-strict`。`X64PauseTests.cpp` 驗證完整狀態保留、執行前停止、上下文還原、非法 `LOCK` 拒絕，以及自旋迴圈的逾時和恢復。這條處理器提示指令不負責客體執行緒排程，也不保證特定延遲。
 
 `PUSHFQ`（`9C`）與 16 位元 `PUSHF`（`66 9C`）透過原生 KVM/WHP 及 checked Unicorn 執行，包括 `driver-strict`。共用 ISA 層在 RAM 交易提交前從入棧結果移除內部單步 TF。隱式堆疊定址使用完整 RSP，前綴順序決定運算元寬度。完整範圍權限檢查、觀察器停止及故障重試維持原子性。`X64PushFlagsTests.cpp` 涵蓋全部 256 種允許的旗標組合、九種編碼、跨頁別名、使用者權限、中止及上下文還原。

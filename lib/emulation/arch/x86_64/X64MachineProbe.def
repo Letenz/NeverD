@@ -4,7 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_X64_PROBE_VALUE
-NEVERD_X64_PROBE_VALUE(TimeoutMicroseconds, 1'000'000)
+// Allow cold native initialization on shared hosts under one bounded
+// validation deadline, separate from guest run budgets.
+NEVERD_X64_PROBE_VALUE(TimeoutMicroseconds, 5'000'000)
 NEVERD_X64_PROBE_VALUE(ScalarSeed, 0x1122334455667700ULL)
 NEVERD_X64_PROBE_VALUE(ScalarStride, 0x101)
 NEVERD_X64_PROBE_VALUE(VectorLowSeed, 0x0123456789abcdefULL)
@@ -46,6 +48,9 @@ NEVERD_X64_PROBE_VALUE(FP80High, 0x3fff)
 #endif
 #ifdef NEVERD_X64_PROBE_TEXT
 NEVERD_X64_PROBE_TEXT(State, "incorrect x64 native initialization state")
+NEVERD_X64_PROBE_TEXT(Interrupted,
+                      "x64 native initialization interrupted during {0} "
+                      "(stop_requested={1}, deadline_reached={2}): {3}")
 NEVERD_X64_PROBE_TEXT(StateMismatch, "{0} after {1}: {2}")
 NEVERD_X64_PROBE_TEXT(FieldMismatch, "{0}: expected {1:x}, observed {2:x}")
 NEVERD_X64_PROBE_TEXT(FieldSeparator, "; ")
