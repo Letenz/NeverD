@@ -1365,3 +1365,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` は早期 return と once 呼び出しの間の空の命令アンカーを検証し、その間の呼び出しやストアを拒否します。
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` は共通ルート証明と、葉がコンテキストを観測し始めた後の拒否を検証します。
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` は両アーキテクチャを検証し、提供元の変更、弱いインポート、ストレージの競合、古い ABI キャリアを拒否します。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` は独立した Swift キャリア検証関数を使い、O0/O2 の生成 C を実行して符号付きゼロ、非正規化数、NaN を含む座標ビット、レシーバーの同一性、呼び出し順序、保護値を確認します。これらは呼び出し ABI の証明であり、上位メソッドの完全な復元を意味しません。

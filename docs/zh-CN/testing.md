@@ -1273,3 +1273,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 检查提前返回与 once 调用之间的空指令锚点，并拒绝其间的调用或存储。
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 检查共享根节点证明，并在叶节点开始观察上下文后拒绝旧计划。
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 覆盖两种架构，并拒绝变更提供方、弱导入、冲突存储及陈旧 ABI 载体。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下执行生成的 C，使用独立 Swift 载体验证函数检查坐标位模式（包括有符号零、次正规数和 NaN）、接收者身份、调用顺序和保护值。这些检查证明调用 ABI，不代表上层方法已完整恢复。

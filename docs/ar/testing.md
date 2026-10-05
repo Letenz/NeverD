@@ -1388,3 +1388,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 يفحص `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` نقاط ارتساء التعليمات الفارغة بين الإرجاع المبكر واستدعاء once، ويرفض الاستدعاءات أو التخزين بينهما.
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` يفحص برهان الجذر المشترك والرفض بعد أن تبدأ عقدة ورقية بملاحظة سياقها.
+
+يتحقق `SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` من المعماريتين ويرفض تغيّر المزوّد والاستيرادات الضعيفة وتعارض التخزين وناقلات ABI القديمة. ينفذ `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` كود C المولّد عند O0/O2 باستخدام تحقق مستقل من ناقلات Swift، لفحص بتات الإحداثيات بما فيها الصفر الموقّع والأعداد دون الطبيعية وNaN، وهوية المستقبِل وترتيب الاستدعاء وقيم الحماية. تثبت هذه الفحوص ABI الاستدعاء، ولا تثبت الاستعادة الكاملة للطرق العليا.

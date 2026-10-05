@@ -2622,3 +2622,5 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` checks empty instruction anchors between the early return and once call, and rejects intervening calls or stores.
 
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` checks the shared root proof and rejection after a leaf starts observing its context.
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` checks both architectures and rejects changed providers, weak imports, conflicting storage and stale ABI carriers. `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` executes generated C at O0/O2 with independent Swift carrier oracles, checking coordinate bits including signed zero, subnormals and NaNs, receiver identity, call order and guards. These checks establish the call ABI, not complete upper-method recovery.
