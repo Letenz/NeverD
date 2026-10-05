@@ -502,7 +502,11 @@ __declspec(noinline) static NTSTATUS FilteredRaise(VOID) {
   return STATUS_SUCCESS;
 }
 
-__declspec(noinline) static VOID FinallyHelper(VOID) {
+__declspec(noinline) static VOID FinallyHelper(BOOLEAN Raise) {
+  // Keep an exercised normal return. A provably nonreturning call may share
+  // its EndLabel + 1 scope with the landing pad and suppress target cleanup.
+  if (!Raise)
+    return;
   volatile ULONG Local = 0xabc;
   __try {
     ExRaiseAccessViolation();
@@ -529,8 +533,7 @@ __declspec(noinline) static NTSTATUS FinallyPaths(VOID) {
   Stage = Mode == SehNormalFinally ? 61 : 60;
   __try {
     __try {
-      if (Mode != SehNormalFinally)
-        FinallyHelper();
+      FinallyHelper(Mode != SehNormalFinally);
     } __finally {
       if (Local != 71 || AbnormalTermination() != (Mode != SehNormalFinally) ||
           Stage != (ULONG)(Mode == SehNormalFinally ? 61 : 62)) {

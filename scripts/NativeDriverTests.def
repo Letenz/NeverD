@@ -24,10 +24,12 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_CASES
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
-    "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/{backend}_driver_",
+    "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/"
+    "{backend}_driver_",
     "unittests/emulation/fixtures/driver_seh_simd.def", "NEVERD_SEH_SIMD_MODE")
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
-    "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/{backend}_checked_",
+    "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/"
+    "{backend}_checked_",
     "unittests/emulation/fixtures/driver_seh_simd.def", "NEVERD_SEH_SIMD_MODE")
 // Fixed images intentionally reject rebasing before guest entry. These
 // outcomes are required as well as the original-address execution outcomes.
