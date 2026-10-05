@@ -443,7 +443,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "869 CPU + 224 WHP + 4 SEH = 1097")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "888 CPU + 224 WHP + 4 SEH = 1116")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1006,3 +1006,12 @@ NEVERD_EMULATION_DOC_PATH(WindowsSIMDMapping, "docs/{locale}/architecture.md")
 NEVERD_EMULATION_DOC_TOKEN(WindowsSIMDMapping, "X64SIMDException")
 NEVERD_EMULATION_DOC_TOKEN(WindowsSIMDMapping, "#XM")
 NEVERD_EMULATION_DOC_TOKEN(WindowsSIMDMapping, "MXCSR")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(NativeSIMDExecution, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(NativeSIMDExecution, "docs/{locale}/cpu-execution.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(NativeSIMDExecution, "precise_simd_exceptions")
+NEVERD_EMULATION_DOC_TOKEN(NativeSIMDExecution, "supportsSIMDExceptions")
+#endif

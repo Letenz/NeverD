@@ -67,11 +67,15 @@ static_assert(offsetof(CONTEXT, Fpcr) == arm_context::ContextControl);
 struct Case {
   const char *Name, *Argument, *Expected;
   bool X64Only;
+  ExecutionFeature Required = ExecutionFeature::None;
 };
 constexpr Case Cases[] = {
 #define NEVERD_VEH_CASE(Name, Argument, Expected, X64Only)                     \
   {#Name, Argument, Expected, X64Only},
+#define NEVERD_VEH_SIMD_CASE(Name, Argument, Expected)                         \
+  {#Name, Argument, Expected, true, ExecutionFeature::SIMDExceptions},
 #include "fixtures/WindowsExceptionCases.def"
+#undef NEVERD_VEH_SIMD_CASE
 #undef NEVERD_VEH_CASE
 };
 struct Profile {
@@ -123,8 +127,11 @@ protected:
   }
 };
 TEST_P(WindowsExceptions, ExecutesOriginalExceptionScenarios) {
+  const auto Caps = llvm::cantFail(executionCapabilities(
+      Config.Contract, Config.Architecture, Config.Backend));
   for (const auto &C : Cases) {
-    if (C.X64Only && GetParam().ISA != GuestArchitecture::X64)
+    if ((C.X64Only && GetParam().ISA != GuestArchitecture::X64) ||
+        !Caps.supports(C.Required))
       continue;
     SCOPED_TRACE(C.Name);
     Options.Arguments = {ProgramFile, C.Argument};
@@ -139,14 +146,25 @@ TEST_P(WindowsExceptions, ExecutesOriginalExceptionScenarios) {
 TEST_P(WindowsExceptions, RejectsUnsupportedDispatchAndInvalidContinuations) {
   struct Negative {
     const char *Argument, *Diagnostic;
+    ExecutionFeature NativeContinuation = ExecutionFeature::None;
   };
   const Negative Cases[] = {
 #define NEVERD_VEH_NEGATIVE(Argument, Diagnostic)                              \
   {Argument, win::text::Diagnostic},
+#define NEVERD_VEH_SIMD_CASE(Name, Argument, Expected)                         \
+  {Argument, win::text::ExceptionContext, ExecutionFeature::SIMDExceptions},
 #include "fixtures/WindowsExceptionCases.def"
+#undef NEVERD_VEH_SIMD_CASE
 #undef NEVERD_VEH_NEGATIVE
   };
+  const auto Caps = llvm::cantFail(executionCapabilities(
+      Config.Contract, Config.Architecture, Config.Backend));
   for (const auto &C : Cases) {
+    // A native success is asserted in ExecutesOriginalExceptionScenarios and
+    // in the original Windows executable oracle, never silently omitted.
+    if (C.NativeContinuation != ExecutionFeature::None &&
+        Caps.supports(C.NativeContinuation))
+      continue;
     SCOPED_TRACE(C.Argument);
     Options.Arguments = {ProgramFile, C.Argument};
     auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);

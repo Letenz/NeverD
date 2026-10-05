@@ -28,6 +28,12 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SIMDCapability.RequirementsAreNativeBackendAndContractQualified")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/WindowsSIMDExecution.ActualFaultExecutesGuestHandlersAndRetries/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/X64MXCSRProbe.SIMDDeliveryAndRetryAreRequiredBeforePublication/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsSIMDMapping.NativeObservationsDetermineStatusAndParameters")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsSIMDMapping.RequiresConsistentX64FaultAndControl")
@@ -1991,8 +1997,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.LoadsAndStoresUseExac
 NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.LoadsAndStoresUseExactlyFourBytesAcrossPageBoundaries/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ObserversStopOrThrowBeforeEffectsAndRetry/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ObserversStopOrThrowBeforeEffectsAndRetry/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ReservedBitsFaultAndUnmaskedValuesRemainUnsupported/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ReservedBitsFaultAndUnmaskedValuesRemainUnsupported/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ReservedBitsFaultAndUnmaskedValuesFollowCapability/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ReservedBitsFaultAndUnmaskedValuesFollowCapability/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.MissingPageAndDeniedStoresCannotPublishPartialEffects/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.MissingPageAndDeniedStoresCannotPublishPartialEffects/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.GuestLoadedDAZChangesArithmeticAndSurvivesContextSwitch/{backend}Supervisor")
@@ -2551,5 +2557,11 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/{backend}User_",
+    "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Native/X64CheckedSIMDException.PublicFaultStateAndBothRetriesAreArchitectural/{backend}Supervisor_",
+    "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Native/X64CheckedSIMDException.PublicFaultStateAndBothRetriesAreArchitectural/{backend}User_",
     "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
 #endif

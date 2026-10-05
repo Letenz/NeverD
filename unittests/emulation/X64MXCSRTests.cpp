@@ -99,9 +99,17 @@ TEST_P(X64MXCSR, CapabilityAndRegisterWritesAreAtomic) {
   for (const auto V : {RegisterValue{Initial | Reserved, 0},
                        RegisterValue{Initial, 1}, RegisterValue{0, 0}}) {
     auto E = CPU->writeRegister(CPURegister::X64MXCSR, V);
-    EXPECT_TRUE(bool(E));
-    llvm::consumeError(std::move(E));
-    EXPECT_EQ(state(), Before);
+    if (!V[0] && !V[1] && CPU->supportsSIMDExceptions()) {
+      ASSERT_EQ(llvm::toString(std::move(E)), "");
+      auto Expected = Before;
+      Expected[CPURegister::X64MXCSR] = V;
+      EXPECT_EQ(state(), Expected);
+      llvm::cantFail(CPU->setReg(X64Register::MXCSR, Value));
+    } else {
+      EXPECT_TRUE(bool(E));
+      llvm::consumeError(std::move(E));
+      EXPECT_EQ(state(), Before);
+    }
   }
   auto Saved = llvm::cantFail(CPU->saveContext());
   llvm::cantFail(CPU->setReg(X64Register::MXCSR, Initial));
@@ -189,7 +197,7 @@ TEST_P(X64MXCSR, ObserversStopOrThrowBeforeEffectsAndRetry) {
                 Loading ? Value : Initial);
     }
 }
-TEST_P(X64MXCSR, ReservedBitsFaultAndUnmaskedValuesRemainUnsupported) {
+TEST_P(X64MXCSR, ReservedBitsFaultAndUnmaskedValuesFollowCapability) {
   for (const auto Value : {Initial | Reserved, uint64_t(0)}) {
     SetUp();
     ASSERT_TRUE(CPU);
@@ -197,6 +205,14 @@ TEST_P(X64MXCSR, ReservedBitsFaultAndUnmaskedValuesRemainUnsupported) {
     llvm::cantFail(CPU->writeInteger(Data, Value, Word));
     const auto Before = state();
     auto E = run(Load);
+    if (!Value && CPU->supportsSIMDExceptions()) {
+      EXPECT_EQ(E.Kind, ExecutionExitKind::Stopped) << E.Diagnostic;
+      auto Expected = Before;
+      Expected[CPURegister::X64MXCSR] = {Value, 0};
+      Expected[CPURegister::X64PC] = {Code + sizeof(Load), 0};
+      EXPECT_EQ(state(), Expected);
+      continue;
+    }
     EXPECT_EQ(E.Kind, Value ? ExecutionExitKind::GuestTrap
                             : ExecutionExitKind::UnsupportedOperation)
         << E.Diagnostic;

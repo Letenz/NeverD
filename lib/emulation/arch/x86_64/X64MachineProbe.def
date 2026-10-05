@@ -16,6 +16,8 @@ NEVERD_X64_PROBE_VALUE(TLSOffset, gateway::IDTOffset +
                                       gateway::VectorCount * gateway::GateBytes)
 NEVERD_X64_PROBE_VALUE(FXOffset, TLSOffset + 2 * WordBytes)
 NEVERD_X64_PROBE_VALUE(DAZMXCSR, 0x1fc4)
+// Precision unmasked, every old sticky status already set.
+NEVERD_X64_PROBE_VALUE(UnmaskedMXCSR, 0x0fbf)
 NEVERD_X64_PROBE_VALUE(NegativeZero, 0x80000000)
 NEVERD_X64_PROBE_VALUE(NegativeSubnormal, 0x80000001)
 NEVERD_X64_PROBE_VALUE(FSValue, 0x13579bdf2468ace0ULL)
@@ -53,6 +55,9 @@ NEVERD_X64_PROBE_TEXT(FPName, "FP")
 NEVERD_X64_PROBE_TEXT(MXCSRMaskFailure, "invalid native MXCSR mask: {0:x}")
 NEVERD_X64_PROBE_TEXT(SaveName, "FXSAVE64")
 NEVERD_X64_PROBE_TEXT(DAZName, "DAZ ADDSS")
+NEVERD_X64_PROBE_TEXT(SIMDName, "unmasked ADDSS")
+NEVERD_X64_PROBE_TEXT(SIMDFault,
+                      "native x64 did not deliver a precise SIMD exception")
 #endif
 #ifdef NEVERD_X64_PROBE_FIELD
 NEVERD_X64_PROBE_FIELD(UserMode)

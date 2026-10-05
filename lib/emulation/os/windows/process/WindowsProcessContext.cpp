@@ -286,7 +286,8 @@ llvm::Error restoreUserContext(ExecutionBackend &CPU,
     if (!Mask)
       return Mask.takeError();
     if (State.MXCSR != MXCSR || (MXCSR & ~(*Mask)[0]) ||
-        (MXCSR & x64::InitialMXCSR) != x64::InitialMXCSR)
+        (!CPU.supportsSIMDExceptions() &&
+         (MXCSR & x64::InitialMXCSR) != x64::InitialMXCSR))
       return failure(text::ExceptionContext);
     std::vector<uint8_t> Canonical(x64::fp::LegacyBytes);
     if (auto E = encodeX64FXState(State, Canonical, (*Mask)[0]))

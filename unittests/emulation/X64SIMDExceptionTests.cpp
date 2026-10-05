@@ -12,6 +12,8 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Endian.h"
 
+#include <map>
+
 namespace neverd::emulation {
 namespace {
 #define NEVERD_SIMD_VALUE(Name, Value) constexpr uint64_t Name = Value;
@@ -59,6 +61,165 @@ std::vector<Parameter> parameters() {
       Result.push_back({B, O});
   return Result;
 }
+
+TEST(X64SIMDCapability, RequirementsAreNativeBackendAndContractQualified) {
+  for (auto Kind : {ExecutionBackendKind::Unicorn, ExecutionBackendKind::KVM,
+                    ExecutionBackendKind::WHP, ExecutionBackendKind::HVF})
+    for (auto Contract :
+         {ExecutionContract::Legacy, ExecutionContract::CheckedX64,
+          ExecutionContract::CheckedUserX64}) {
+      const bool Expected = Kind == ExecutionBackendKind::KVM ||
+                            Kind == ExecutionBackendKind::WHP;
+      auto Caps = llvm::cantFail(
+          executionCapabilities(Contract, GuestArchitecture::X64, Kind));
+      EXPECT_EQ(Caps.supports(ExecutionFeature::SIMDExceptions), Expected);
+      EXPECT_FALSE(llvm::cantFail(
+                       executionCapabilities(Contract, GuestArchitecture::X64))
+                       .supports(ExecutionFeature::SIMDExceptions));
+      ExecutionConfiguration Config;
+      Config.Backend = Kind;
+      Config.Contract = Contract;
+      Config.RequiredFeatures = ExecutionFeature::SIMDExceptions;
+      auto Resolved = resolveExecutionConfiguration(Config);
+      EXPECT_EQ(bool(Resolved), Expected);
+      if (!Resolved)
+        llvm::consumeError(Resolved.takeError());
+    }
+  for (auto Kind : {ExecutionBackendKind::Unicorn, ExecutionBackendKind::KVM,
+                    ExecutionBackendKind::WHP})
+    for (auto Contract : {ExecutionContract::CheckedAArch64,
+                          ExecutionContract::CheckedUserAArch64})
+      EXPECT_FALSE(
+          llvm::cantFail(
+              executionCapabilities(Contract, GuestArchitecture::AArch64, Kind))
+              .supports(ExecutionFeature::SIMDExceptions));
+}
+
+class X64CheckedSIMDException : public testing::TestWithParam<Parameter> {};
+
+TEST_P(X64CheckedSIMDException,
+       PublicFaultStateAndBothRetriesAreArchitectural) {
+  const auto &P = GetParam();
+  const auto &O = P.Instruction;
+  for (bool Legacy : {false, true}) {
+    if (Legacy && P.Transport.User)
+      continue;
+    auto Created = createExecutionBackend(
+        P.Transport.Kind,
+        Legacy             ? ExecutionContract::Legacy
+        : P.Transport.User ? ExecutionContract::CheckedUserX64
+                           : ExecutionContract::CheckedX64,
+        Limit);
+    if (!Created) {
+      auto E = Created.takeError();
+      const bool Unavailable = E.isA<BackendUnavailableError>();
+      const auto Reason = llvm::toString(std::move(E));
+      if (Unavailable)
+        GTEST_SKIP() << Reason;
+      FAIL() << Reason;
+    }
+    auto &CPU = *Created->CPU;
+    ASSERT_TRUE(CPU.supportsSIMDExceptions());
+    llvm::cantFail(
+        CPU.map(Code, Page, Read | Write | Execute | UserAccessible));
+    llvm::cantFail(CPU.map(Data, Page, Read | Write | UserAccessible));
+    auto Snapshot = [&] {
+      std::map<CPURegister, RegisterValue> State;
+      for (unsigned R = unsigned(CPURegister::X64AX);
+           R <= unsigned(CPURegister::X64FP7); ++R)
+        if (registerMatches(CPURegister(R), GuestArchitecture::X64))
+          State[CPURegister(R)] =
+              llvm::cantFail(CPU.readRegister(CPURegister(R)));
+      return State;
+    };
+    for (bool FromMemory : {false, true})
+      for (auto Previous : {uint64_t(0), Sticky}) {
+        SCOPED_TRACE(Legacy);
+        SCOPED_TRACE(FromMemory);
+        SCOPED_TRACE(Previous);
+        auto Bytes = O.Bytes;
+        if (FromMemory)
+          Bytes.back() = MemoryOperand;
+        llvm::cantFail(CPU.write(Code, Bytes));
+        const uint8_t Stop = Nop;
+        llvm::cantFail(CPU.write(Code + Bytes.size(), {&Stop, 1}));
+        const uint64_t Control =
+            (DefaultMXCSR & ~(O.Status << MaskShift)) | Previous;
+        llvm::cantFail(CPU.setReg(X64Register::MXCSR, Control));
+        llvm::cantFail(CPU.setReg(X64Register::PC, Code));
+        llvm::cantFail(CPU.setReg(X64Register::FLAGS, Flags));
+        llvm::cantFail(CPU.setReg(X64Register::CX, Data));
+        llvm::cantFail(CPU.setReg(X64Register::SP, Data + HalfPage));
+        for (unsigned N = 0; N < x64::XmmCount; ++N)
+          llvm::cantFail(CPU.setXmm(N, {Sentinel + N, Sentinel - N}));
+        llvm::cantFail(CPU.setXmm(
+            0, {(Sentinel & ~uint64_t(UINT32_MAX)) | O.Left, Sentinel}));
+        llvm::cantFail(CPU.setXmm(
+            1, {(Sentinel & ~uint64_t(UINT32_MAX)) | O.Right, Sentinel}));
+        std::vector<uint8_t> RAM(Page, Fill), After(Page);
+        llvm::support::endian::write32le(RAM.data(), O.Right);
+        llvm::cantFail(CPU.write(Data, RAM));
+        unsigned Faults = 0;
+        BackendHooks H;
+        H.Instruction = [&](uint64_t PC, uint32_t) {
+          if (PC == Code + Bytes.size())
+            CPU.stop();
+        };
+        H.RecoverableFault = [&](const BackendFault &F) {
+          ++Faults;
+          EXPECT_EQ(F.PC, Code);
+          EXPECT_EQ(F.Interrupt, Vector);
+          EXPECT_FALSE(F.ErrorCode);
+          EXPECT_FALSE(F.Address);
+          return true;
+        };
+        llvm::cantFail(CPU.installHooks(H));
+        auto Expected = Snapshot();
+        auto Exit = llvm::cantFail(CPU.runUntilExit(Code, Timeout));
+        ASSERT_EQ(Exit.Kind, ExecutionExitKind::RecoverableFault)
+            << Exit.Diagnostic;
+        ASSERT_TRUE(CPU.takeRecoverableFault());
+        EXPECT_EQ(Faults, 1u);
+        Expected[CPURegister::X64MXCSR][0] |= O.FaultStatus;
+        EXPECT_EQ(Snapshot(), Expected);
+        llvm::cantFail(CPU.read(Data, After));
+        EXPECT_EQ(After, RAM);
+        auto FaultState = llvm::cantFail(CPU.saveContext());
+        for (bool Repair : {false, true}) {
+          llvm::cantFail(CPU.restoreContext(*FaultState));
+          auto Result = Expected;
+          if (Repair) {
+            Result[CPURegister::X64V0][0] =
+                (Sentinel & ~uint64_t(UINT32_MAX)) | One;
+            Result[CPURegister::X64V1][0] = Result[CPURegister::X64V0][0];
+            llvm::cantFail(CPU.setXmm(0, Result[CPURegister::X64V0]));
+            llvm::cantFail(CPU.setXmm(1, Result[CPURegister::X64V1]));
+            llvm::support::endian::write32le(RAM.data(), One);
+            llvm::cantFail(CPU.write(Data, RAM));
+          } else {
+            Result[CPURegister::X64MXCSR][0] |= DefaultMXCSR;
+            llvm::cantFail(CPU.setReg(X64Register::MXCSR,
+                                      Result[CPURegister::X64MXCSR][0]));
+            Result[CPURegister::X64MXCSR][0] |= O.MaskedStatus;
+          }
+          Result[CPURegister::X64V0][0] =
+              (Sentinel & ~uint64_t(UINT32_MAX)) |
+              (Repair ? O.RepairedResult : O.MaskedResult);
+          Result[CPURegister::X64PC][0] += Bytes.size();
+          Exit = llvm::cantFail(CPU.runUntilExit(Code, Timeout));
+          ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+          EXPECT_EQ(Faults, 1u);
+          EXPECT_EQ(Snapshot(), Result);
+          llvm::cantFail(CPU.read(Data, After));
+          EXPECT_EQ(After, RAM);
+        }
+      }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(Native, X64CheckedSIMDException,
+                         testing::ValuesIn(parameters()),
+                         [](const auto &Info) { return Info.param.name(); });
 
 // Bypass checked admission intentionally: the native transport must retain
 // precise hardware fault state before an architecture or OS can resume it.

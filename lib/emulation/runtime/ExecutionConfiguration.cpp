@@ -148,9 +148,17 @@ executionCapabilities(ExecutionContract Contract,
       Backend != ExecutionBackendKind::HVF)
     return diagnostic::error(diagnostic::BackendName);
   if (auto Native = nativeProfile(Contract, Architecture))
-    return *Native;
+    *Capabilities = *Native;
   if (!Capabilities->SupportsNativeExecution)
     return diagnostic::error(diagnostic::Contract);
+#define NEVERD_BACKEND_EXECUTION_FEATURE(BackendID, ISA, ContractID,           \
+                                         FeatureID)                            \
+  if (Backend == ExecutionBackendKind::BackendID &&                            \
+      Architecture == GuestArchitecture::ISA &&                                \
+      Contract == ExecutionContract::ContractID)                               \
+    Capabilities->Features |= Feature::FeatureID;
+#include "ExecutionProfiles.def"
+#undef NEVERD_BACKEND_EXECUTION_FEATURE
   return Capabilities;
 }
 

@@ -5,8 +5,9 @@
 //===----------------------------------------------------------------------===//
 // Name, memory width, alignment, move/store, complete operand form, first
 // 64-bit store lane. High-half moves preview lane 1; full stores start at 0.
-// Floating-point operations retain masked MXCSR status/control.
-// MMX, VEX/EVEX and unmasked FP exceptions remain outside this contract.
+// Floating-point operations retain MXCSR status/control. Unmasked execution
+// requires the resolved precise SIMD exception capability.
+// MMX and VEX/EVEX remain outside this contract.
 // String MOVSD has separate operand admission and restart semantics.
 // IntegerSource selects m32/m64 through its complete operand rule.
 NEVERD_X64_VECTOR_INSTRUCTION(MOVD, 4, 1, true, GeneralMove, 0)

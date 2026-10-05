@@ -25,6 +25,7 @@ NEVERD_SIMD_VALUE(FPTag, 0xff)
 NEVERD_SIMD_VALUE(FPStatus, 0x1800)
 NEVERD_SIMD_VALUE(FPSignificand, 0x8000000000000000ULL)
 NEVERD_SIMD_VALUE(FPExponent, 0x3fff)
+NEVERD_SIMD_VALUE(Nop, 0x90)
 #endif
 #ifdef NEVERD_SIMD_CASE
 // Scalar SSE cases verified against original x64 host instructions. Fields:

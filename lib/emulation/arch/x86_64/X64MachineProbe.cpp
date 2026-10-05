@@ -68,7 +68,7 @@ llvm::Error stateMismatch(llvm::StringRef Instruction,
 } // namespace
 
 llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
-                             uint32_t *MXCSRMask) {
+                             uint32_t *MXCSRMask, bool SIMDExceptions) {
   if (auto E = Memory.beginRun())
     return E;
   auto Release = llvm::scope_exit([&] { Memory.endRun(); });
@@ -168,6 +168,54 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
       return stateMismatch(Instruction.Name, Expected, State);
     if (Control.interrupted())
       return diagnostic::interrupted(x64::probe::State, Control);
+  }
+  if (SIMDExceptions) {
+    auto *Code = Memory.data() + gateway::CodeGPA + probe::CodeOffset;
+    std::memcpy(Code, probe::FloatingAdd, sizeof(probe::FloatingAdd));
+    State.reg(X64Register::PC) = Base + PageSize + probe::CodeOffset;
+    State.MXCSR = probe::UnmaskedMXCSR;
+    State.Xmm[probe::FloatingDestination][0] =
+        (State.Xmm[probe::FloatingDestination][0] & ~probe::FloatMask) |
+        probe::FloatOne;
+    State.Xmm[probe::FloatingSource][0] =
+        (State.Xmm[probe::FloatingSource][0] & ~probe::FloatMask) |
+        probe::FloatHalfULP;
+    auto Expected = State;
+    bool Trapped = false;
+    if (Control.interrupted())
+      return diagnostic::interrupted(probe::State, Control);
+    auto E = Machine.step(State, *Root, Control);
+    if (auto Remaining = llvm::handleErrors(
+            std::move(E), [&](const X64ExceptionError &Fault) {
+              Trapped =
+                  Fault.exception().Vector == unsigned(ExceptionVector::SIMD) &&
+                  !Fault.exception().ErrorCode &&
+                  !Fault.exception().FaultAddress;
+            }))
+      return Remaining;
+    if (!Trapped)
+      return diagnostic::error(probe::SIMDFault);
+    if (State != Expected)
+      return stateMismatch(probe::SIMDName, Expected, State);
+    // The masked tie rounds to the unchanged 1.0 destination. The old sticky
+    // status must also survive an exact retry with precision still unmasked.
+    for (bool Repair : {false, true}) {
+      State = Expected;
+      if (Repair)
+        State.Xmm[probe::FloatingSource][0] &= ~probe::FloatMask;
+      else
+        State.MXCSR |= InitialMXCSR;
+      auto Retried = State;
+      Retried.reg(X64Register::PC) += sizeof(probe::FloatingAdd);
+      if (Control.interrupted())
+        return diagnostic::interrupted(probe::State, Control);
+      if (auto E = Machine.step(State, *Root, Control))
+        return E;
+      if (State != Retried)
+        return stateMismatch(probe::SIMDName, Retried, State);
+    }
+    if (Control.interrupted())
+      return diagnostic::interrupted(probe::State, Control);
   }
   if (!MXCSRMask)
     return llvm::Error::success();

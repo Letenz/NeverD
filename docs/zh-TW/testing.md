@@ -275,7 +275,7 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
-`X64SIMDExceptionTests.cpp` 繞過 checked 准入層，在兩個特權層級驗證 KVM/WHP 的原生 `#XM` 傳遞。`X64SIMDExceptionCases.def` 中八個原始案例涵蓋六類例外，包括精確的次正規結果及無界指數下精度精確的溢位。暫存器與 RAM 形式發生例外時，除規定的 MXCSR 狀態外，完整 GPR、XMM、x87、FLAGS、FS/GS 與客體記憶體皆保持不變。屏蔽例外後重試原指令；保留黏滯狀態並修復運算元，驗證舊旗標不會再次觸發例外。這些必要的底層測試尚未在 checked 執行中開放未屏蔽 SIMD，也不構成 Windows 例外代碼映射的證據。
+`X64SIMDExceptionTests.cpp` 繞過 checked 准入層，在兩個特權層級驗證 KVM/WHP 的原生 `#XM` 傳遞。`X64SIMDExceptionCases.def` 中八個原始案例涵蓋六類例外，包括精確的次正規結果及無界指數下精度精確的溢位。暫存器與 RAM 形式發生例外時，除規定的 MXCSR 狀態外，完整 GPR、XMM、x87、FLAGS、FS/GS 與客體記憶體皆保持不變。屏蔽例外後重試原指令；保留黏滯狀態並修復運算元，驗證舊旗標不會再次觸發例外。 公共 checked 與驅動契約也執行這些原始故障及重試案例。`WindowsSIMDExecutionTests.cpp` 執行真實原生例外、客體 VEH/VCH 指令，以及跳過、遮罩後重試或修復運算元後繼續，分別檢查處理器入口控制狀態與保存的上下文。啟動反例會拒絕缺失例外、錯誤向量及目的暫存器遭修改的結果，不發布能力。
 
 `check_windows_simd.py` 根據 `WindowsSIMDCases.def` 與純量案例清單建置獨立的原創 Windows x64 程式。6,144 組觀察涵蓋暫存器/RAM 運算元、全部例外遮罩組合、清零或全部設置的黏滯狀態，以及跳過、遮罩後重試、修復運算元且保持遮罩位元不變後重試三條路徑。組合語言入口分別記錄 VEH/VCH 的即時 MXCSR、x87 控制狀態與保存的 `CONTEXT`。測試在還原主機狀態前檢查精確故障 PC、狀態保持、修復後的上下文與重試結果；CI 保留原始記錄與原始碼雜湊。`--build-only` 僅證明編譯成功。這些觀察不啟用 checked 模式下未遮罩的 SIMD，也不代表 ARM64 原生執行。
 
@@ -1111,7 +1111,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 869 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 1097 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `869 CPU + 224 WHP + 4 SEH = 1097`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 888 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 1116 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `888 CPU + 224 WHP + 4 SEH = 1116`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 

@@ -18,10 +18,12 @@ class CheckedX64Backend final : public CheckedBackend {
 public:
   static llvm::Expected<std::unique_ptr<ExecutionBackend>>
   create(std::unique_ptr<MemoryProjection> Memory,
-         std::unique_ptr<X64Machine> Machine, bool UserMode = false);
+         std::unique_ptr<X64Machine> Machine, bool UserMode = false,
+         bool SIMDExceptions = false);
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
+  bool supportsSIMDExceptions() const override { return SIMDExceptions; }
   llvm::Expected<RegisterValue>
       supportedControlBits(CPURegister) const override;
   llvm::Expected<RegisterValue> readRegister(CPURegister) override;
@@ -34,8 +36,13 @@ public:
   bool hasDeviceError() const override { return DeviceFailed; }
 
 private:
-  CheckedX64Backend(bool UserMode)
-      : CheckedBackend(x64::MaxInstructionBytes, 1, UserMode) {}
+  CheckedX64Backend(bool UserMode, bool SIMDExceptions)
+      : CheckedBackend(x64::MaxInstructionBytes, 1, UserMode),
+        SIMDExceptions(SIMDExceptions) {}
+  bool permitsMXCSR(uint64_t Value) const {
+    return supportsSIMDExceptions() ||
+           (Value & x64::InitialMXCSR) == x64::InitialMXCSR;
+  }
   bool canonicalRange(uint64_t, uint64_t) const override;
   bool supportsDeviceMappings() const override { return !UserMode; }
   uint64_t programCounter() const override { return CPU.reg(X64Register::PC); }
@@ -75,6 +82,7 @@ private:
   }
   std::unique_ptr<X64Machine> Machine;
   X64MachineState CPU;
+  const bool SIMDExceptions;
   bool DeviceFailed = false;
 };
 } // namespace neverd::emulation

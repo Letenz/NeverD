@@ -49,7 +49,10 @@ constexpr size_t programBytes() {
 /// When requested, discover MXCSR_MASK using original FXSAVE64 execution and
 /// verify advertised DAZ numerically. Publish the mask only after all checks;
 /// its architectural zero-mask fallback does not advertise DAZ.
+/// SIMDExceptions also requires an authentic #XM and both masked and operand
+/// repair retries before publishing any discovered capability.
 llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
-                             uint32_t *MXCSRMask = nullptr);
+                             uint32_t *MXCSRMask = nullptr,
+                             bool SIMDExceptions = false);
 } // namespace neverd::emulation
 #endif
