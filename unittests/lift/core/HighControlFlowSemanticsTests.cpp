@@ -17,6 +17,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <chrono>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -282,6 +283,44 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
           if (R.Break)
             break;
         }
+      }
+      if (S.Kind == StmtKind::DoWhile) {
+        // The body runs before the first test; `continue` goes to the test.
+        do {
+          if (!Budget--)
+            throw std::runtime_error(
+                "control-flow oracle exceeded its loop budget");
+          auto R = Run(S.Body);
+          if (R.Return || R.Target)
+            return R;
+          if (R.Break)
+            break;
+        } while (!S.Cond || Value(S.Cond));
+      }
+      if (S.Kind == StmtKind::ExprStmt && S.Val)
+        (void)Value(S.Val);
+      switch (S.Kind) {
+      case StmtKind::Assign:
+      case StmtKind::ExprStmt:
+      case StmtKind::If:
+      case StmtKind::IfElse:
+      case StmtKind::While:
+      case StmtKind::DoWhile:
+      case StmtKind::Switch:
+      case StmtKind::Return:
+      case StmtKind::Goto:
+      case StmtKind::Block:
+      case StmtKind::Store:
+      case StmtKind::Call:
+      case StmtKind::Nop:
+      case StmtKind::Break:
+      case StmtKind::Continue:
+      case StmtKind::SEHTry:
+        break;
+      default:
+        // A statement the oracle cannot run must not pass as a no-op.
+        throw std::runtime_error(
+            "control-flow oracle cannot run this statement kind");
       }
     }
     return {};
@@ -1576,6 +1615,45 @@ TEST(HighControlFlowSemantics, SharedNestedTailKeepsPhiEdgesWithoutGrowth) {
     EXPECT_EQ(execute(F, 0), 28u);
     EXPECT_EQ(execute(F, 1), 24u);
     EXPECT_LE(statementCount(F), Before);
+  }
+}
+
+TEST(HighControlFlowSemantics, DeepStableContainersPreserveEveryReturnPath) {
+  // Stable trees must not require an exponential number of child traversals.
+  // The independent interpreter checks both entered and bypassed paths; the
+  // generous time limit distinguishes duplicate recursion from runner noise.
+  for (auto Kind :
+       {StmtKind::Block, StmtKind::While, StmtKind::Switch, StmtKind::SEHTry}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    HighStmt Leaf = result(0x2000, local(0));
+    for (unsigned Depth = 0; Depth < 48; ++Depth) {
+      HighStmt Parent;
+      Parent.Kind = Kind;
+      Parent.Addr = 0x1000 + 4 * Depth;
+      if (Kind == StmtKind::While)
+        Parent.Cond = local(0);
+      if (Kind == StmtKind::Switch) {
+        Parent.SwitchExpr = local(0);
+        Parent.Cases.push_back({1, {std::move(Leaf)}});
+        Parent.DefaultBody = {
+            result(0x3000 + 4 * Depth, HighExpr::makeConst(19, 8))};
+      } else {
+        Parent.Body.push_back(std::move(Leaf));
+      }
+      Leaf = std::move(Parent);
+    }
+    HighFunc F;
+    F.Body = {Leaf, result(0x4000, HighExpr::makeConst(99, 8))};
+    std::vector<std::optional<uint64_t>> Before;
+    for (uint64_t Input : {0u, 1u, 2u, 255u})
+      Before.push_back(execute(F, Input));
+    const auto Started = std::chrono::steady_clock::now();
+    structureIfElse(F, 10);
+    EXPECT_LT(std::chrono::steady_clock::now() - Started,
+              std::chrono::seconds(5));
+    size_t Index = 0;
+    for (uint64_t Input : {0u, 1u, 2u, 255u})
+      EXPECT_EQ(execute(F, Input), Before[Index++]);
   }
 }
 
@@ -3665,6 +3743,43 @@ TEST(HighControlFlowSemantics, ArmJumpPastStatementsBecomesStructured) {
               [&](const HighStmt &S) { Gotos += S.Kind == StmtKind::Goto; });
     EXPECT_EQ(Gotos, 0u);
   }
+}
+
+TEST(HighControlFlowSemantics, ArmJumpPastALoopItAloneEntersBecomesStructured) {
+  // v = 0; if (x & 1) { v = 1; } else { v = 3; goto Y; }
+  // X: v = v + 10; if (v < 25) goto X;  Y: return v;
+  // Only the skipped statements jump to X, so they move into the then arm
+  // with their loop, and the else arm's jump goes away.
+  auto Plus10 = assign(0x1010, 1, 0);
+  Plus10.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(10, 8));
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1)};
+  Arms.ElseBody = {assign(0x1008, 1, 3), jump(0x100c, 0x1030)};
+  auto Again = conditional(0x1014, 0x1010);
+  Again.Cond =
+      HighExpr::makeBinop(NdOp::INT_LESS, local(1), HighExpr::makeConst(25, 8));
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1030;
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 0),    Arms, Plus10, Again, Label,
+            result(0x1034, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t { return X & 1 ? 31 : 3; };
+  for (uint64_t X : {0, 1})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+  for (uint64_t X : {0, 1})
+    EXPECT_EQ(execute(F, X), Expected(X)) << X;
+  size_t Exits = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Exits += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1030;
+  });
+  EXPECT_EQ(Exits, 0u);
 }
 
 TEST(HighControlFlowSemantics, EnteredDoWhileKeepsItsShape) {
@@ -5899,6 +6014,54 @@ TEST(HighControlFlowSemantics, ElseJumpPastAStatementWithoutAddressStays) {
   invertSkipGotos(F);
   for (uint64_t X : {0, 1, 2, 4})
     EXPECT_EQ(execute(F, X), Expected(X)) << X;
+}
+
+TEST(HighControlFlowSemantics, TailThatCannotFaultEntersExceptProtection) {
+  // __try { if (x & 1) { v = 1; goto out; } } __except (1) { v = 0;
+  // return v; }  v = 2;  out: return v;
+  // Returning v cannot fault, so a copy inside the __try runs the same; a
+  // __finally would run around the copy instead of after the jump, and a
+  // load could fault into the handler, so neither gets the copy.
+  enum class Variant { ExceptOnly, Finally, Load };
+  auto Build = [](Variant Kind) {
+    HighStmt Leave;
+    Leave.Kind = StmtKind::If;
+    Leave.Addr = 0x1000;
+    Leave.Cond =
+        HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+    Leave.Body = {assign(0x1004, 1, 1), jump(0x1008, 0x1020)};
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.Addr = 0x1000;
+    Try.EHRange = {0x1000, 0x100c};
+    Try.Body = {Leave};
+    HighEHClause Clause;
+    Clause.Kind = Kind == Variant::Finally ? HighEHClauseKind::SEHFinally
+                                           : HighEHClauseKind::SEHExcept;
+    Clause.HandlerVA = 0x1010;
+    Try.EHClauses = {Clause};
+    Try.EHClauseBodies = {{assign(0x1010, 1, 0), result(0x1014, local(1))}};
+    HighStmt Tail = result(0x1020, local(1));
+    if (Kind == Variant::Load)
+      Tail.RetVal =
+          HighExpr::makeLoad(HighExpr::makeConst(0x100, 8), NdType::makeInt(8));
+    HighFunc F;
+    F.Body = {Try, assign(0x1018, 1, 2), Tail};
+    return F;
+  };
+  for (Variant Kind : {Variant::ExceptOnly, Variant::Finally, Variant::Load}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    HighFunc F = Build(Kind);
+    duplicateSmallReturnTails(F.Body);
+    const std::vector<HighStmt> &Protected = F.Body.front().Body;
+    size_t Jumps = 0;
+    walkStmts(Protected,
+              [&](const HighStmt &S) { Jumps += S.Kind == StmtKind::Goto; });
+    EXPECT_EQ(Jumps, Kind == Variant::ExceptOnly ? 0u : 1u);
+    if (Kind == Variant::ExceptOnly)
+      for (uint64_t X : {0, 1})
+        EXPECT_EQ(execute(F, X), X & 1 ? 1u : 2u) << X;
+  }
 }
 
 TEST(HighControlFlowSemantics, TailCopiesStayInTheirTryProtection) {

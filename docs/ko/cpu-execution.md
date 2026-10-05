@@ -84,6 +84,8 @@ KVM/WHP는 비공개 `FXSAVE64` 실행으로 `MXCSR_MASK`를 탐색하고 부호
 
 `POPFQ`(`9D`)와 16비트 `POPF`(`66 9D`)는 공유 x64 ISA 계층에서 플래그를 복원하며 KVM, WHP, checked Unicorn 및 `driver-strict`에 적용됩니다. 프로파일의 IOPL은 0으로 고정되므로 CPL0은 IF를 바꿀 수 있고 CPL3은 IF와 IOPL을 유지합니다. 예약 비트와 VM/VIF/VIP는 무시하며 RF는 지웁니다. 게스트 TF, NT, AC, ID 또는 CPL0 IOPL의 유효한 변경은 아직 지원하지 않으며 상태 공개 전에 명시적으로 실패합니다. 전체 스택을 읽은 뒤 FLAGS/RSP/RIP를 원자적으로 갱신하고, 전체 RSP와 유효한 접두사 순서로 피연산자를 결정합니다. 스택은 읽기 전용이거나 실행 메모리의 별칭일 수 있습니다. 공유 계층에서 완료하므로 전송 계층의 내부 TF가 지워지지 않습니다. `X64PopFlagsTests.cpp`는 독립적인 네이티브 CPL3 명령 비교와 모든 입력 비트, 오류, 관찰자, 후속 네이티브 실행을 검사합니다.
 
+checked x64는 `CLC/STC/CMC`와 `LAHF/SAHF`를 허용합니다. 캐리 명령은 전송 계층에서 실행하고 AH 전송은 KVM, WHP, checked Unicorn 및 네이티브 `driver-strict`에서 하나의 ISA 구현을 공유합니다. LAHF는 다섯 상태 플래그와 고정 비트를 AH에 쓰며 SAHF는 CF/PF/AF/ZF/SF만 변경합니다. OF/IF/DF와 다른 레지스터는 유지됩니다. 모든 REX 값을 포함해 무시되는 접두사도 암시적 AH를 사용합니다. `X64StatusFlagsTests.cpp`는 원본 호스트 명령, 전체 상태, 취소와 재개를 검사합니다. 이 수정은 checked 프로필에 적용되며 이식 가능한 legacy Unicorn은 업스트림 명령 동작을 유지합니다.
+
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
 `X64PackedShiftInstructions.def`는 legacy SSE2 패킹 시프트 열 종류를 허용합니다. 요소 시프트의 횟수는 imm8 또는 XMM/정렬된 m128이며 바이트 시프트는 imm8만 허용합니다. 가변 횟수는 부호 없는 하위 64비트를 사용하고 스칼라 횟수 마스킹을 하지 않으며 상위 64비트는 무시합니다. 횟수가 0이거나 범위를 넘어도 메모리 피연산자는 16바이트 전체를 읽어야 합니다. FLAGS와 MXCSR은 유지되며 MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
