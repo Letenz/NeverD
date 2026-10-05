@@ -405,19 +405,9 @@ Admission does not enable guarded-page branch-target checking, interpret GNU
 BTI properties as enforcement, or advertise the BTI hardware capability to a
 guest OS. Unlisted HINTs and system-control writes remain unsupported.
 
-Checked ARM64 admits the baseline no-offset `LDAR`, `LDARB`, `LDARH`, `STLR`,
-`STLRB` and `STLRH` encodings for naturally aligned ordinary RAM. The ISA owner
-declares the exact 1/2/4/8-byte read or write before the original instruction
-executes through the transport. Zero-register operands still access memory;
-narrow loads clear the remaining destination bits. Permission faults and
-observer stops preserve the full CPU and RAM state. Misalignment, exclusive
-operations, RCpc, limited ordering and optional pre-indexed release encodings
-remain unsupported before effects. The physical execution lease and sequential
-RAM commits preserve ordering within this cooperative single-CPU contract;
-this does not model parallel SMP or an exclusive monitor. The fixed machine
-disables SP alignment traps, so SP bases require only the admitted data
-alignment. See Arm's [instruction definitions](https://documentation-service.arm.com/static/67e40f3398aa3c3b6eea6a85)
-and [memory ordering guide](https://developer.arm.com/documentation/102336/0100/Load-Acquire-and-Store-Release-instructions).
+The original baseline `LDAR`, `LDARB`, `LDARH`, `STLR`, `STLRB` and `STLRH` execute through the selected transport on naturally aligned ordinary RAM. Their narrow loads zero-extend; invalid alignment and optional ordered encodings remain unsupported.
+
+Checked ARM64 supports 8/16/32/64-bit `LDXR/STXR`, 32/64-bit register pairs `LDXP/STXP`, their acquire/release variants, and `CLREX`. A shared ISA monitor models 16-byte physical reservation granules for KVM, WHP and checked Unicorn; transport single-step exits do not destroy loop progress. Committed writes invalidate reservations even when bytes remain unchanged, including writes through aliases and retained views. Stops preserve unpublished state; snapshots cannot undo intervening writes. Checked exclusives use FEAT_LSE2 alignment: unaligned operands within one 16-byte aligned block execute; crossing that block raises an `alignment` fault. Equal-width stores match the reserved physical granule. Alignment and permissions are checked before conditional-store success, including when the monitor has expired. MMIO, optional LSE atomics and parallel SMP remain outside this profile. ARM64 Unicorn also uses this monitor in the `Software` contract, including mixed software/checked CPUs sharing physical RAM. See the [Arm instruction definitions](https://documentation-service.arm.com/static/67e40f3398aa3c3b6eea6a85). Unicorn’s `Software` profile retains its engine’s natural-alignment model.
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 

@@ -7,6 +7,7 @@
 
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/RAMTransaction.h"
+#include "AArch64Exclusive.h"
 #include "AArch64InstructionEffects.h"
 
 #include "llvm/Support/Endian.h"
@@ -71,6 +72,7 @@ CheckedAArch64Backend::saveContext() {
   S->Owner = Identity;
   S->Space = addressSpace();
   S->CPU = CPU;
+  S->Exclusive = Exclusive;
   return makeContext(std::move(S));
 }
 llvm::Error CheckedAArch64Backend::saveContext(BackendContext &C) {
@@ -82,6 +84,7 @@ llvm::Error CheckedAArch64Backend::saveContext(BackendContext &C) {
     return E;
   contextStorage(C)->Space = addressSpace();
   static_cast<SavedState &>(*contextStorage(C)).CPU = CPU;
+  static_cast<SavedState &>(*contextStorage(C)).Exclusive = Exclusive;
   return llvm::Error::success();
 }
 llvm::Error CheckedAArch64Backend::restoreContext(const BackendContext &C) {
@@ -94,7 +97,15 @@ llvm::Error CheckedAArch64Backend::restoreContext(const BackendContext &C) {
   if (contextStorage(C)->Space.lock() != addressSpace())
     return error(diagnostic::ContextSpace);
   CPU = static_cast<const SavedState &>(*contextStorage(C)).CPU;
+  Exclusive = static_cast<const SavedState &>(*contextStorage(C)).Exclusive;
   TimedOut = false;
+  return llvm::Error::success();
+}
+llvm::Error
+CheckedAArch64Backend::bindAddressSpace(std::shared_ptr<AddressSpace> Space) {
+  if (auto E = CheckedBackend::bindAddressSpace(std::move(Space)))
+    return E;
+  Exclusive.reset();
   return llvm::Error::success();
 }
 std::optional<ServiceRequest>
@@ -113,6 +124,11 @@ CheckedAArch64Backend::decodeServiceRequest(const cs_insn &I) const {
 }
 
 llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
+  auto ExclusiveInstruction = decodeAArch64Exclusive(I, CPU);
+  if (!ExclusiveInstruction)
+    return ExclusiveInstruction.takeError();
+  if (*ExclusiveInstruction)
+    return executeExclusive(**ExclusiveInstruction);
   auto Effects = getAArch64InstructionEffects(I, CPU);
   if (!Effects)
     return Effects.takeError();

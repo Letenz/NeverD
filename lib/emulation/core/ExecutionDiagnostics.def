@@ -154,3 +154,7 @@ NEVERD_EXECUTION_DIAGNOSTIC(RAMTransactionBudget,
                             "RAM effects exceed the instruction staging budget")
 NEVERD_EXECUTION_DIAGNOSTIC(RAMTransactionPhase,
                             "RAM effect transaction is in the wrong phase")
+NEVERD_EXECUTION_DIAGNOSTIC(RAMReservationTracking,
+                            "RAM reservations require declared write tracking")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    RAMReservationRange, "RAM reservation must fit in one power-of-two granule")

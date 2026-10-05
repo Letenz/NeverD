@@ -389,6 +389,7 @@ llvm::Error AddressSpace::writeWithPermissions(uint64_t Address,
         std::min<uint64_t>(Bytes.size(), memory::PageSize - Offset);
     auto *Backing = static_cast<uint8_t *>(RAM.Backing.base()) + Page.Physical -
                     memory::ProjectionReserve + Offset;
+    RAM.invalidateReservations(Page.Physical + Offset, Count);
     std::memcpy(Backing, Bytes.data(), Count);
     Bytes = Bytes.drop_front(Count);
     Address += Count;
