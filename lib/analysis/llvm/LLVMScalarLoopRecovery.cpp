@@ -46,12 +46,7 @@ public:
 };
 } // namespace
 
-bool Search::clone(Function &F, Candidate &C, bool Probe,
-                   unsigned MaxInternalWidth) {
-  if (!Probe && Result.Candidates >= Limits.MaxCandidates)
-    Exhausted = true;
-  if (!charge(size(F)))
-    return false;
+static void initializeClone(const Function &F, Candidate &C) {
   C.Module = std::make_unique<Module>("scalar.loop.recovery", F.getContext());
   C.Module->setDataLayout(F.getParent()->getDataLayout());
   C.Module->setTargetTriple(F.getParent()->getTargetTriple());
@@ -78,6 +73,22 @@ bool Search::clone(Function &F, Candidate &C, bool Probe,
         Copy->copyAttributesFrom(Callee);
         C.Values[Callee] = Copy;
       }
+}
+
+void cloneScalarFunction(const Function &F, Candidate &C) {
+  initializeClone(F, C);
+  SmallVector<ReturnInst *, 8> Returns;
+  CloneFunctionInto(C.Function, &F, C.Values,
+                    CloneFunctionChangeType::DifferentModule, Returns);
+}
+
+bool Search::clone(Function &F, Candidate &C, bool Probe,
+                   unsigned MaxInternalWidth) {
+  if (!Probe && Result.Candidates >= Limits.MaxCandidates)
+    Exhausted = true;
+  if (!charge(size(F)))
+    return false;
+  initializeClone(F, C);
   if (MaxInternalWidth) {
     if (!charge(size(F)))
       return false;
