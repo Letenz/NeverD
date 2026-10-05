@@ -2,6 +2,10 @@ target_sources(NeverDEmulation PRIVATE
   KernelExportRegistry.cpp
   KernelException.cpp
   KernelFramework.cpp
+  KernelFrameworkDispatch.cpp
+  KernelFrameworkInterruptCalls.cpp
+  KernelFrameworkPowerPolicyCalls.cpp
+  KernelFrameworkCalls.cpp
   KernelFrameworkInterrupts.cpp
   KernelFrameworkLocks.cpp
   KernelModelFrameworkLocks.cpp
@@ -22,9 +26,19 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelPoFx.cpp
   KernelModelPoFxPolicy.cpp
   KernelFrameworkControl.cpp
+  KernelFrameworkDeviceInitCalls.cpp
+  KernelFrameworkDeviceCalls.cpp
+  KernelFrameworkQueueCalls.cpp
+  KernelFrameworkQueueState.cpp
+  KernelFrameworkQueueRequests.cpp
   KernelFrameworkFiles.cpp
   KernelFrameworkQueue.cpp
   KernelFrameworkRequests.cpp
+  KernelFrameworkRequestBufferCalls.cpp
+  KernelFrameworkRequestQueueCalls.cpp
+  KernelFrameworkRequestCancellationCalls.cpp
+  KernelFrameworkRequestSendCalls.cpp
+  KernelFrameworkRequestCalls.cpp
   KernelFrameworkRequestAccessors.cpp
   KernelModelFramework.cpp
   KernelModelFrameworkRequests.cpp

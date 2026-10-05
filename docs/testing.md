@@ -855,6 +855,15 @@ Dispatch refactors also require the Android, Linux, Darwin, process API and
 execution session/configuration suites, preserving complete reports across the
 public surfaces and available backends.
 
+`DriverKernelFramework.CallAdmissionPreservesValidationOrderAndIRQL` checks
+competing argument, globals, IRQL and object failures, preserves allocation state
+on rejection, and executes the unrestricted context accessors. Windows call
+routing changes require the complete driver, public driver API, native driver and
+guard metadata suites with driver emulation enabled. Request lifetime, queue
+ownership, cancellation, interrupt and power tests exercise the domain handlers;
+execution tests still report unavailable native hosts and optional WDK fixtures
+explicitly.
+
 `AndroidFinalizerTests.cpp` runs independent C ABI callers at O0/O2 with ordinary,
 APS2 and RELR relocations. It checks constructor registrations, exact callback
 order and arguments, DSO filtering, duplicate and NULL registrations, recursive

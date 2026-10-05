@@ -21,13 +21,10 @@ llvm::Error frameworkPoFxError(const llvm::Twine &Text) {
 }
 } // namespace
 
-llvm::Expected<std::optional<uint64_t>>
-KernelFramework::callPoFxSettings(llvm::StringRef Name, Binding &B,
+llvm::Expected<uint64_t>
+KernelFramework::callPoFxSettings(llvm::StringRef, Binding &B,
                                   llvm::ArrayRef<uint64_t> A, uint8_t IRQL) {
   using namespace framework;
-  using Result = std::optional<uint64_t>;
-  if (Name != api::WdfDeviceWdmAssignPowerFrameworkSettings)
-    return Result{};
   if (IRQL)
     return frameworkPoFxError("settings require PASSIVE_LEVEL");
   auto Object = Objects.find(A[1]);
@@ -37,7 +34,7 @@ KernelFramework::callPoFxSettings(llvm::StringRef Name, Binding &B,
     return frameworkPoFxError("settings require the binding's live PnP device");
   auto &D = Device->second;
   if (!D.PowerPolicyOwner)
-    return Result{QueueInvalidDeviceRequest};
+    return QueueInvalidDeviceRequest;
   if (!D.Policy.Idle || !D.Policy.Idle->systemManaged())
     return frameworkPoFxError(
         "settings require previously assigned managed idle policy");
@@ -57,7 +54,7 @@ KernelFramework::callPoFxSettings(llvm::StringRef Name, Binding &B,
   if (!Size)
     return Size.takeError();
   if (*Size != PoFxSettingsSize)
-    return Result{InfoLengthMismatch};
+    return InfoLengthMismatch;
   KernelFrameworkPoFxSettings Settings;
   uint64_t ComponentAddress = 0, Flags = 0;
   struct Field {
@@ -84,7 +81,7 @@ KernelFramework::callPoFxSettings(llvm::StringRef Name, Binding &B,
   if (!Directed)
     return Directed.takeError();
   if (*Directed > power_policy::UseDefault)
-    return Result{windows::StatusInvalidParameter};
+    return windows::StatusInvalidParameter;
   if (*Directed != power_policy::False || Flags)
     return frameworkPoFxError(
         "directed power and power-relation flags require an explicit provider");
@@ -100,7 +97,7 @@ KernelFramework::callPoFxSettings(llvm::StringRef Name, Binding &B,
   if (auto E = PowerFrameworkHost.Validate(D.Wdm, Settings))
     return E;
   D.PoFxSettings = std::move(Settings);
-  return Result{windows::StatusSuccess};
+  return windows::StatusSuccess;
 }
 
 llvm::Expected<bool> KernelFramework::advancePoFxLifecycle(uint64_t Token) {
