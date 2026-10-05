@@ -26,7 +26,10 @@ struct LLVMScalarSourceRecoveryResult : LLVMScalarLoopRecoveryResult {
 /// loops. Prove preparation and the exact final body against the complete
 /// original, including dead operations, poison, assumes and input contracts.
 /// Every input stays symbolic outside the proved source control partitions.
-/// Cleanup is a proposal, never an assumption of compiler correctness.
+/// Cleanup is a proposal, never an assumption of compiler correctness. It
+/// includes LLVM common-expression hoisting and charged removal of instruction
+/// poison flags in the private clone. Original annotations remain mandatory
+/// proof obligations; argument/call contracts and assumes are not relaxed.
 ///
 /// Construction, cleanup rounds, candidate, transformation and proof budgets
 /// are cumulative. LLVM passes/cloning/verifiers are trusted bulk operations;
