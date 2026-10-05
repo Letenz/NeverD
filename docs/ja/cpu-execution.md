@@ -74,6 +74,8 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付き非正規化数の演算で DAZ 能力を検証します。checked Unicorn はソフトウェアのマスクを提供します。`supportedControlBits` は CPU 固有の不変マスクを返し、FX/XSAVE、スナップショット、Windows CONTEXT が同じ能力を使用します。checked `LDMXCSR/STMXCSR` は m32 全体の RAM 権限を確認し、障害や観測コールバックの中止時には状態を保持します。予約ビットのロードは #GP、移植可能な実行では非マスク SIMD 例外を拒否します。`X64MXCSRTests.cpp` は制御と再試行を検証し、`X64DAZData` は許可された全 28 種の SSE 演算を実機の元命令と比較し、DAZ、丸め、FTZ を確認します。HVF の DAZ 対応は拡張しません。
 
+`PAUSE`（`F3 90`）は、ネイティブの `driver-strict` を含む KVM/WHP と checked Unicorn で、共通の x64 マシン境界を通して実行されます。`X64PauseTests.cpp` は全状態の保持、実行前の停止、コンテキストの復元、不正な `LOCK` の拒否、スピンループの期限切れと再開を検証します。このプロセッサヒントはゲストスレッドをスケジュールせず、特定の遅延も保証しません。
+
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
 `X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。

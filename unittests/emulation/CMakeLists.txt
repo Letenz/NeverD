@@ -120,6 +120,7 @@ add_neverd_unittest(NeverDThreadPointerTests
 
 add_neverd_unittest(NeverDX64IntegerTests
   X64IntegerTests.cpp
+  X64PauseTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
