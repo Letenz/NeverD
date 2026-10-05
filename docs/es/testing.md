@@ -104,6 +104,8 @@ Las regresiones de fase inicial cubren dos y tres bucles secuenciales que reutil
 
 `NeverDLLVMScalarLoopRecoveryTests` cubre prefijos, estados de predecesores, alternativas de cero iteraciones, bucles sobre sí mismos, estados afines, igualdad con desbordamiento modular, poison por actualizaciones extra, bits altos y contratos rechazados. Los presupuestos exactos o reducidos en una unidad comprueban el rechazo atómico. Oráculos aritméticos independientes ejecutan el LLVM original y recuperado a O0/O2 con todas las entradas de control de un byte. No certifican recuperación de ABI nativa ni salida C predeterminada.
 
+El mismo objetivo comprueba `recoverLLVMScalarSource`: preparación previa, limpieza sin cambios de bucle, estado sin usar de ancho completo, obligaciones muertas de desbordamiento, desplazamiento exacto, división y assume, efectos no admitidos, presupuestos acumulativos exactos o una unidad menores y continuación acotada. Oráculos aritméticos independientes ejecutan el LLVM original y preparado a O0/O2 para todos los controles de un byte y estados deterministas de ancho completo. La fuente y el módulo padre permanecen intactos tanto al aceptar como al rechazar.
+
 Las regresiones de máscaras cubren operandos conmutados, campos cero, bits altos de entrada conservados, alternativas tras un fallo con datos completos, todas las aristas de retorno, rechazo por vuelta modular/desbordamiento, lotes mayores de 32 y presupuestos exactos o una unidad menores con rechazo atómico. Oráculos aritméticos independientes de LLVM y C a O0/O2 comprueban la composición con la recuperación de anchura. Las consultas reflexivas conservan dominios completos, rechazo de poison/undef y contratos no admitidos, no terminación, límites locales y contabilidad exacta; modificar la misma función invalida el resultado anterior. Son pruebas de LLVM escalar, no certificación de ABI nativa.
 
 Las pruebas de inclusión de máscaras agotan todas las parejas de bytes, cubren máscaras no contiguas y anchuras hasta 128 bits, conservan bits desconocidos/altos y limitan el crecimiento de nodos fuera de los límites. Un bucle simbólico con dos aristas de retorno debe demostrar su recurrencia XOR enmascarada frente a una forma cerrada independiente. Las pruebas de dependencias contabilizan el almacenamiento normalizado del desplazamiento conservando presupuestos exactos/cortos y la alternativa conservadora para valores anchos.
@@ -124,6 +126,10 @@ Las regresiones adicionales cubren últimos índices estrechos con desbordamient
 
 `LLVMScalarAssume*` comprueba dominios completos de bucle, fallos en la última partición, condiciones falsas inalcanzables o alcanzadas, obligaciones acumuladas para todas las entradas de un byte, presupuestos exactos o con una unidad menos, cambios de IR y contratos de llamada no admitidos. Cuatro triples de destino ejercitan el modelo compartido; 8.192 llamadas O0/O2 se comparan con un oráculo independiente sin signo. La suite del modelo de estado comprueba por separado la misma obligación y el rechazo de paquetes de operandos.
 
+`LLVMScalarProjection.*` cubre campos anidados, ventanas, argumentos sin uso conservados, múltiples retornos, aristas de retorno, obligaciones overflow/shift/assume no seleccionadas, fallo en la última partición, no terminación, contratos desconocidos, entradas modificadas y presupuestos exactos/una unidad cortos. Cuatro tripletas ejercitan la semántica compartida. `LLVMScalarProjectionCompiled.*` compara el agregado original mediante un puente de arreglos LLVM y las proyecciones con aritmética sin signo independiente en O0/O2. `SymExpr.RightShift*` agota pares de bytes y comprueba extensión de signo, acarreos, bits altos conservados, recuentos completos y límites de búsqueda.
+
+`NeverDLLVMScalarStateProjectionTests` cubre ventanas solapadas/no alineadas, celdas de 8/16/32/64 bits, bucles, máscaras, cambios de fuente, rangos de estado, poison conservado, memoria externa y presupuestos exactos/insuficientes. Cuerpos de memoria y puentes de agregados LLVM realizan 172.032 comparaciones O0/O2 con oráculos independientes; las pruebas escalares se comprueban aparte. `SymKnownBits.*` agota pares de bytes y verifica 128 bits, factores distintos, máscaras ampliadas, sumas con desbordamiento y presupuestos. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` comprueba evaluación única en O0/O2 y rechazo de bundles.
+
 Las regresiones de metadatos comparan bucles contados con una fórmula independiente en todas las particiones de control y con presupuestos exactos o reducidos en una unidad. Un historial de peeling grande o nulo no oculta resultados incorrectos, no terminación ni poison. Los metadatos mal formados construidos mediante API comprueban el rechazo del importador por separado del análisis de ensamblador LLVM; las pruebas de estado de máquina conservan los efectos de estado y los límites de entrada.
 
 Las regresiones cubren rangos parciales y separados, alias fijos, ambas ramas, cada retorno, lecturas en la primera iteración y escrituras antes de lecturas en bucles. Deben fallar las lecturas antes de escribir, escrituras ausentes o invitadas, alias desconocidos, accesos especiales, rangos fuera del objeto y presupuestos agotados. Un ejemplo C independiente con una palabra de estado solo de salida se compila a O1/O2, conserva los atributos LLVM exactos y supera una nueva prueba compuesta de código nativo a LLVM.
@@ -139,6 +145,10 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -1147,6 +1157,8 @@ El flujo manual `Mobile Swift String ABI Evidence` compila pruebas fijas de igua
 ## Simplificación MBA modular
 
 `SymSimplifyFinite.*` cubre dominios completos de dos valores entre 8 y 512 bits, el coste de usos compartidos, todas las anotaciones admitidas que pueden generar poison, lecturas volatile y freeze independientes, undef/poison explícitos, recorridos iterativos profundos, presupuestos y la marca de ofuscación. El IR original y el simplificado se ejecutan a O0/O2 frente a un oráculo independiente para todos los valores de byte y entradas aleatorias de ancho completo. Los tests de objetos traducidos exigen identidades de caché distintas para presupuestos de valores finitos distintos.
+
+Las pruebas de dos valores añaden máscaras de conjunciones anidadas de 8–512 bits, operandos permutados, rechazo de OR/undef, profundidad acotada, contabilización independiente, marca de ofuscación y presupuesto exacto de la primera reescritura. Los oráculos recorren todos los pares de bytes y varían datos ajenos de 64 bits, comparando IR original y simplificado a O0/O2.
 
 `SymSimplifyPredicates.*` enumera exhaustivamente desplazamientos, signos y entradas de cuatro bits, comprueba composición booleana de intervalos y conjuntos desconectados, y ejecuta oráculos independientes de un byte y ancho completo a O0/O2. Cubre anotaciones poison, entradas indefinidas ocultas en uniones, lecturas/freezes independientes, PHI de bucle conservados, rentabilidad de usos compartidos, trabajo acumulado, muchos usos, límites de recursión y marca de ofuscación. Ambas claves de caché distinguen los presupuestos del análisis de predicados.
 

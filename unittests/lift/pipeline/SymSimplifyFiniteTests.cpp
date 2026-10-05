@@ -13,6 +13,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
@@ -89,6 +90,31 @@ llvm::Function *encoded(llvm::Module &M, unsigned Width, llvm::StringRef Name,
   return F;
 }
 
+llvm::Function *nested(llvm::Module &M, unsigned Width, llvm::StringRef Name,
+                       unsigned Kind = 0) {
+  auto &C = M.getContext();
+  auto *T = llvm::IntegerType::get(C, Width);
+  auto *FT = llvm::FunctionType::get(llvm::Type::getInt32Ty(C), {T, T}, false);
+  auto *F =
+      llvm::Function::Create(FT, llvm::Function::ExternalLinkage, Name, M);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+  auto K = [&](uint64_t V) { return llvm::ConstantInt::get(T, V); };
+  auto *Masked = B.CreateAnd(F->getArg(0), K(4));
+  llvm::Value *Other = F->getArg(1);
+  if (Kind == 3)
+    Other = llvm::UndefValue::get(T);
+  llvm::Value *Anchor = Kind == 2   ? B.CreateOr(Masked, Other, "anchor")
+                        : Kind == 1 ? B.CreateAnd(Other, Masked, "anchor")
+                                    : B.CreateAnd(Masked, Other, "anchor");
+  auto *V = B.CreateLShr(Anchor, K(2), "", true);
+  V = B.CreateNSWSub(K(3), V);
+  V = B.CreateMul(V, K(5), "", true, true);
+  V = B.CreateXor(V, K(9));
+  V = B.CreateICmpEQ(V, K(3));
+  B.CreateRet(B.CreateZExt(V, B.getInt32Ty()));
+  return F;
+}
+
 std::unique_ptr<llvm::Module> parse(llvm::LLVMContext &C,
                                     llvm::StringRef Body) {
   llvm::SMDiagnostic E;
@@ -119,6 +145,95 @@ TEST(SymSimplifyFinite, RecoversConditionsAndValuesAtEveryIntegerWidth) {
         EXPECT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
         EXPECT_EQ(SymSimplifyPass::simplify(*F, finiteOnly()), 0u) << print(*F);
       }
+}
+
+TEST(SymSimplifyFinite, NestedConjunctionRetainsItsCompleteAnchor) {
+  for (unsigned Width : {8U, 32U, 64U, 128U, 512U})
+    for (unsigned Kind : {0U, 1U}) {
+      SCOPED_TRACE(::testing::Message() << Width << ":" << Kind);
+      llvm::LLVMContext C;
+      llvm::Module M("nested", C);
+      auto *F = nested(M, Width, "f", Kind);
+      auto *Anchor = llvm::cast<llvm::Instruction>(
+          F->getValueSymbolTable()->lookup("anchor"));
+      llvm::ValueToValueMapTy Map;
+      auto *Copy = llvm::CloneFunction(F, Map);
+      auto R = SymSimplifyPass::simplifyFiniteValues(*F);
+      ASSERT_GT(R.Rewrites, 0U) << print(*F);
+      EXPECT_GT(R.Work, 0U);
+      EXPECT_FALSE(R.WorkLimitExceeded);
+      EXPECT_FALSE(Anchor->use_empty());
+      EXPECT_EQ(Anchor->getOpcode(), llvm::Instruction::And);
+      EXPECT_GT(SymSimplifyPass::simplify(*Copy, finiteOnly()), 0U);
+      EXPECT_EQ(count(*F), count(*Copy));
+      EXPECT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+    }
+}
+
+TEST(SymSimplifyFinite, ConjunctionDiscoveryCannotCrossOrOrUndef) {
+  for (unsigned Kind : {2U, 3U}) {
+    llvm::LLVMContext C;
+    llvm::Module M("refused", C);
+    auto *F = nested(M, 64, "f", Kind);
+    auto Before = print(*F);
+    auto R = SymSimplifyPass::simplifyFiniteValues(*F);
+    EXPECT_EQ(R.Rewrites, 0U);
+    EXPECT_EQ(print(*F), Before);
+  }
+}
+
+TEST(SymSimplifyFinite, DeepConjunctionDiscoveryRemainsBounded) {
+  llvm::LLVMContext C;
+  llvm::Module M("deep-conjunction", C);
+  auto *F = nested(M, 64, "f");
+  auto *Anchor =
+      llvm::cast<llvm::Instruction>(F->getValueSymbolTable()->lookup("anchor"));
+  llvm::IRBuilder<> B(Anchor);
+  llvm::Value *Deep = Anchor->getOperand(0);
+  for (unsigned N = 0; N < 12; ++N)
+    Deep = B.CreateAnd(Deep, F->getArg(1));
+  Anchor->setOperand(0, Deep);
+  auto Before = print(*F);
+  auto R = SymSimplifyPass::simplifyFiniteValues(*F);
+  EXPECT_EQ(R.Rewrites, 0U);
+  EXPECT_EQ(print(*F), Before);
+}
+
+TEST(SymSimplifyFinite, StandaloneWorkIsBoundedAndStampAware) {
+  auto Attempt = [](size_t Budget, bool Stamped = false) {
+    llvm::LLVMContext C;
+    llvm::Module M("nested-budget", C);
+    auto *F = nested(M, 64, "f");
+    if (Stamped)
+      F->addFnAttr(kObfuscatedFnAttr);
+    auto Before = print(*F);
+    auto Opts = finiteOnly();
+    Opts.MaxFiniteValueWork = Budget;
+    auto R = SymSimplifyPass::simplifyFiniteValues(*F, Opts);
+    EXPECT_LE(R.Work, Budget);
+    if (!R.Rewrites)
+      EXPECT_EQ(print(*F), Before);
+    EXPECT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+    return R;
+  };
+  const auto Baseline = Attempt(65536);
+  ASSERT_GT(Baseline.Rewrites, 0U);
+  EXPECT_FALSE(Baseline.WorkLimitExceeded);
+  EXPECT_EQ(Attempt(0).Work, 0U);
+  EXPECT_EQ(Attempt(65536, true).Work, 0U);
+  size_t Low = 0, High = Baseline.Work;
+  ASSERT_GT(Attempt(High).Rewrites, 0U);
+  while (High - Low > 1) {
+    const auto Middle = Low + (High - Low) / 2;
+    if (Attempt(Middle).Rewrites)
+      High = Middle;
+    else
+      Low = Middle;
+  }
+  const auto Short = Attempt(High - 1);
+  EXPECT_EQ(Short.Rewrites, 0U);
+  EXPECT_TRUE(Short.WorkLimitExceeded);
+  EXPECT_GT(Attempt(High).Rewrites, 0U);
 }
 
 TEST(SymSimplifyFinite, DoesNotSpendTheSameSavingsTwiceForSharedUses) {
@@ -338,6 +453,13 @@ TEST(SymSimplifyFinite, RuntimeChecksBothValuesAndAllUnrelatedInputBits) {
       Copy->setName("simplified" + Suffix);
       ASSERT_GT(SymSimplifyPass::simplify(*Copy, finiteOnly()), 0u);
     }
+  for (unsigned Width : {8U, 64U}) {
+    auto *F = nested(M, Width, "nested_original" + std::to_string(Width));
+    llvm::ValueToValueMapTy Map;
+    auto *Copy = llvm::CloneFunction(F, Map);
+    Copy->setName("nested_simplified" + std::to_string(Width));
+    ASSERT_GT(SymSimplifyPass::simplifyFiniteValues(*Copy).Rewrites, 0U);
+  }
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -372,6 +494,10 @@ TEST(SymSimplifyFinite, RuntimeChecksBothValuesAndAllUnrelatedInputBits) {
         OS << "extern uint32_t original" << Width << "_" << Seed << "(uint"
            << Width << "_t), simplified" << Width << "_" << Seed << "(uint"
            << Width << "_t);\n";
+    for (unsigned Width : {8U, 64U})
+      OS << "extern uint32_t nested_original" << Width << "(uint" << Width
+         << "_t, uint" << Width << "_t), nested_simplified" << Width << "(uint"
+         << Width << "_t, uint" << Width << "_t);\n";
     auto Checks = [&](unsigned Width) {
       for (unsigned Seed = 0; Seed != 5; ++Seed) {
         const std::string Suffix =
@@ -394,6 +520,16 @@ TEST(SymSimplifyFinite, RuntimeChecksBothValuesAndAllUnrelatedInputBits) {
 )";
     Checks(64);
     OS << R"(
+  }
+  for (unsigned k = 0; k < 65536u + 4096u; ++k) {
+    r ^= r << 13; r ^= r >> 7; r ^= r << 17;
+    uint64_t x = k < 65536u ? (r & ~UINT64_C(255)) | (k & 255u) : r;
+    r ^= r << 13; r ^= r >> 7; r ^= r << 17;
+    uint64_t y = k < 65536u ? (r & ~UINT64_C(255)) | (k >> 8) : r;
+    unsigned answer = (x & y & 4u) != 0;
+    if (nested_original8(x, y) != answer || nested_simplified8(x, y) != answer ||
+        nested_original64(x, y) != answer || nested_simplified64(x, y) != answer)
+      return 6;
   }
   return 0;
 })";

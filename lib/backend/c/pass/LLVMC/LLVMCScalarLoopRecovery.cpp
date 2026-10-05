@@ -7,14 +7,10 @@
 #include "LLVMCScalarLoopRecovery.h"
 
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
-#include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Verifier.h"
-#include "llvm/Passes/PassBuilder.h"
-#include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 namespace neverd::llvmc {
@@ -51,70 +47,6 @@ bool hasScalarLoop(Function &F, uint64_t &ScanWork) {
   DominatorTree DT(F);
   LoopInfo Loops(DT);
   return !Loops.empty();
-}
-
-bool cleanCandidate(Module &M,
-                    analysis::LLVMScalarLoopRecoveryLimits &Remaining) {
-  if (!Remaining.MaxConstructionWork)
-    return false;
-  LoopAnalysisManager Loops;
-  FunctionAnalysisManager Functions;
-  CGSCCAnalysisManager CallGraph;
-  ModuleAnalysisManager Modules;
-  PassBuilder Passes;
-  Passes.registerModuleAnalyses(Modules);
-  Passes.registerCGSCCAnalyses(CallGraph);
-  Passes.registerFunctionAnalyses(Functions);
-  Passes.registerLoopAnalyses(Loops);
-  Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
-  ModulePassManager Pipeline;
-  if (auto Error = Passes.parsePassPipeline(Pipeline, "function(early-cse)")) {
-    consumeError(std::move(Error));
-    return false;
-  }
-  FunctionPassManager Combine;
-  Combine.addPass(InstCombinePass(
-      InstCombineOptions().setMaxIterations(32).setVerifyFixpoint(true)));
-  Pipeline.addPass(createModuleToFunctionPassAdaptor(std::move(Combine)));
-  if (auto Error = Passes.parsePassPipeline(
-          Pipeline, "function(reassociate,gvn,sccp,adce,simplifycfg)")) {
-    consumeError(std::move(Error));
-    return false;
-  }
-  Pipeline.run(M, Modules);
-  bool Changed = false;
-  for (auto &F : M) {
-    if (!Remaining.MaxConstructionWork)
-      return false;
-    --Remaining.MaxConstructionWork;
-    if (F.isDeclaration())
-      continue;
-    SymSimplifyOptions Options;
-    Options.MaxPredicateWork =
-        std::min<uint64_t>(65536, Remaining.MaxConstructionWork);
-    const auto R = SymSimplifyPass::simplifyPredicates(F, Options);
-    Remaining.MaxConstructionWork -= R.Work;
-    if (R.Rewrites) {
-      Functions.invalidate(F, PreservedAnalyses::none());
-      Changed = true;
-    }
-  }
-  if (Changed) {
-    // Recovery can expose a new predicate after the ordinary semantic pass.
-    // InstCombine first reveals its scalar boundary; LICM then makes an
-    // invariant boundary available outside the loop for the next search.
-    // CSE gives equivalent counter updates one SSA identity again.
-    // The final complete-source proof remains mandatory after all cleanup.
-    ModulePassManager Finish;
-    if (auto Error = Passes.parsePassPipeline(
-            Finish, "function(instcombine,loop-mssa(licm),instcombine,"
-                    "early-cse,simplifycfg)")) {
-      consumeError(std::move(Error));
-      return false;
-    }
-    Finish.run(M, Modules);
-  }
-  return !verifyModule(M);
 }
 
 bool publish(Function &Destination, Function &Candidate) {
@@ -167,13 +99,14 @@ bool publish(Function &Destination, Function &Candidate) {
 
 unsigned
 recoverScalarLoops(llvm::Module &Module, const llvm::Function *Only,
-                   const analysis::LLVMScalarLoopRecoveryLimits &Limits) {
+                   const analysis::LLVMScalarSourceRecoveryLimits &Limits) {
   using namespace llvm;
   using namespace analysis;
   if (Module.getNamedMetadata(windows_eh_md::FunctionTable))
     return 0;
   auto Remaining = Limits;
-  uint64_t ScanWork = std::min<uint64_t>(65536, Limits.MaxConstructionWork);
+  uint64_t ScanWork =
+      std::min<uint64_t>(65536, Limits.Search.MaxConstructionWork);
   SmallVector<Function *, 16> Functions;
   if (Only) {
     if (Only->getParent() != &Module)
@@ -189,60 +122,20 @@ recoverScalarLoops(llvm::Module &Module, const llvm::Function *Only,
   }
   unsigned Changed = 0;
   for (auto *F : Functions) {
-    if (!ScanWork || !Remaining.MaxConstructionWork ||
-        !Remaining.MaxProofWork || !Remaining.MaxCandidates ||
-        !Remaining.MaxTransforms)
+    if (!ScanWork || !Remaining.Search.MaxConstructionWork ||
+        !Remaining.Search.MaxProofWork || !Remaining.Search.MaxCandidates ||
+        !Remaining.Search.MaxTransforms || !Remaining.MaxCleanupRounds)
       break;
     if (!hasScalarLoop(*F, ScanWork))
       continue;
-    std::unique_ptr<llvm::Module> Recovered;
-    const Function *Input = F;
-    bool Refused = false;
-    // Cleanup can expose a shared zero-trip exit after prefix recovery. Give
-    // the shared search another opportunity without resetting its budgets.
-    // Never publish an intermediate body if a later search is exhausted.
-    while (true) {
-      if (!Remaining.MaxConstructionWork || !Remaining.MaxProofWork ||
-          !Remaining.MaxCandidates || !Remaining.MaxTransforms) {
-        Refused = true;
-        break;
-      }
-      auto R = recoverLLVMScalarLoops(*Input, Remaining);
-      Remaining.MaxConstructionWork -= R.ConstructionWork;
-      Remaining.MaxProofWork -= R.ProofWork;
-      Remaining.MaxCandidates -= R.Candidates;
-      Remaining.MaxTransforms -= R.ProvedTransforms;
-      if (R.Status == LLVMScalarLoopRecoveryStatus::BudgetExceeded) {
-        Refused = true;
-        break;
-      }
-      if (R.Status != LLVMScalarLoopRecoveryStatus::Recovered)
-        break;
-      if (!cleanCandidate(*R.Module, Remaining)) {
-        Refused = true;
-        break;
-      }
-      Recovered = std::move(R.Module);
-      Input = Recovered->getFunction(F->getName());
-      if (!Input) {
-        Refused = true;
-        break;
-      }
-    }
-    if (Refused || !Recovered || !Remaining.MaxProofWork)
-      continue;
-    auto *Candidate = Recovered->getFunction(F->getName());
-    if (!Candidate)
-      continue;
-    // Cleanup may change shape or definedness. Prove the exact body that will
-    // be published, against the complete original function, not just against
-    // a partially accepted search state.
-    auto ProofLimits = Limits.Proof;
-    ProofLimits.MaxWork = std::min(ProofLimits.MaxWork, Remaining.MaxProofWork);
-    auto Proof = checkLLVMScalarEquivalence(*F, *Candidate, ProofLimits);
-    Remaining.MaxProofWork -= Proof.Work;
-    if (Proof.Status == LLVMScalarEquivalenceStatus::Proved &&
-        publish(*F, *Candidate))
+    auto R = recoverLLVMScalarSource(*F, Remaining);
+    Remaining.Search.MaxConstructionWork -= R.ConstructionWork;
+    Remaining.Search.MaxProofWork -= R.ProofWork;
+    Remaining.Search.MaxCandidates -= R.Candidates;
+    Remaining.Search.MaxTransforms -= R.ProvedTransforms;
+    Remaining.MaxCleanupRounds -= R.CleanupRounds;
+    if (R.Status == LLVMScalarLoopRecoveryStatus::Recovered &&
+        publish(*F, *R.Module->getFunction(F->getName())))
       ++Changed;
   }
   return Changed;

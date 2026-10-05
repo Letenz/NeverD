@@ -101,6 +101,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `NeverDLLVMScalarLoopRecoveryTests`는 접두 계산과 이전 블록 상태 복원, 0회 반복 분기, 자체 역방향 간선의 머리 조건, 아핀 상태, 래핑 시 동등 비교, 추가 갱신의 poison, 상위 데이터 비트 차이와 미지원 입력 계약을 검사합니다. 정확한 누적 예산과 한 단위 부족한 예산으로 원자적 거부를 확인합니다. 독립 산술 오라클은 모든 바이트 제어 입력에 대해 원본과 복원 LLVM을 O0/O2에서 실행합니다. 네이티브 ABI 복원이나 기본 C 출력의 증거는 아닙니다.
 
+같은 대상은 `recoverLLVMScalarSource`도 검사합니다. 탐색 전 준비, 루프 변경 없는 정리, 사용하지 않는 전체 비트 폭 상태, 죽은 코드의 오버플로·exact 시프트·나눗셈·assume 의무, 지원하지 않는 부작용, 정확한 누적 예산과 한 단위 부족한 예산, 제한된 후속 처리를 다룹니다. 독립 산술 오라클이 모든 바이트 제어값과 결정적 전체 비트 폭 상태에 대해 원본 및 준비된 LLVM을 O0/O2로 실행합니다. 성공과 거부 모두 원본 함수와 상위 모듈을 보존해야 합니다.
+
 마스크 회귀는 교환된 피연산자, 0 필드, 입력 상위 비트 보존, 전체 데이터 증명 실패 후 대안, 모든 역방향 간선, 래핑/오버플로 거부, 32개를 넘는 배치와 정확한/하나 부족한 예산의 원자적 거부를 다룹니다. 독립 LLVM 및 생성 C 산술 오라클을 O0/O2로 실행하여 비트 폭 복원과의 조합을 검사합니다. 자기 동등성 회귀는 전체 제어 영역, poison/undef 및 미지원 계약 거부, 비종료, 지역 상한과 정확한 작업량 계산을 유지하며 같은 함수를 수정하면 이전 결과를 재사용하지 않습니다. 이 검사는 스칼라 LLVM 범위이며 네이티브 ABI 인증은 아닙니다.
 
 공유 마스크 포함 관계 테스트는 모든 바이트 입력 쌍, 비연속 마스크, 최대 128비트 폭, 미지/상위 비트 보존과 항 수·폭 상한 밖의 노드 증가 제한을 검사합니다. 역방향 간선 두 개를 가진 기호 루프의 마스크 XOR 점화식은 독립 폐쇄형 식과 증명되어야 합니다. 제어 의존성 테스트는 정규화된 시프트 양의 저장 폭을 계산하면서 정확한/하나 부족한 예산 및 넓은 값의 보수적 처리를 유지합니다.
@@ -121,6 +123,10 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `LLVMScalarAssume*`는 전체 루프 영역, 마지막 분할 실패, 도달 불가능한 거짓 조건과 실제 도달한 거짓 조건, 모든 바이트 입력에서 누적되는 정의성, 정확한 예산과 한 단위 부족한 예산, IR 변경 및 지원하지 않는 호출 계약을 검사합니다. 네 가지 대상 triple로 공유 모델을 확인하고, 8,192회의 O0/O2 호출을 독립적인 부호 없는 oracle과 비교합니다. 상태 모델 테스트도 동일한 의무와 피연산자 번들 거부를 별도로 확인합니다.
 
+`LLVMScalarProjection.*`는 중첩 필드, 비트 구간, 미사용 인수 보존, 여러 반환, 역방향 간선, 미선택 연산의 overflow/shift/assume 의무, 마지막 분할 실패, 비종료, 알 수 없는 계약, 입력 변경 및 정확/하나 부족 예산을 검사합니다. 네 대상 트리플에서 공유 의미를 확인합니다. `LLVMScalarProjectionCompiled.*`는 LLVM 배열 브리지를 통한 원본 집계와 투영 결과를 O0/O2에서 독립적인 부호 없는 산술과 비교합니다. `SymExpr.RightShift*`는 바이트 쌍을 전수 검사하고 부호 확장, 올림, 보존 상위 비트, 전체 카운트 및 탐색 한도를 확인합니다.
+
+`NeverDLLVMScalarStateProjectionTests`는 중첩·비정렬 창, 8/16/32/64비트 셀, 루프, 진입 마스크, 소스 변경, 상태 범위, poison 유지, 외부 메모리 거부와 정확/부족 예산을 검사합니다. 원본 메모리 함수와 LLVM 집계 브리지를 O0/O2에서 독립 바이트/산술 oracle과 172,032회 비교하며 스칼라 증명은 별도로 확인합니다. `SymKnownBits.*`는 모든 바이트 쌍과 128비트, 다른 인자, 확대 마스크, 순환 합, 예산 경계를 검사합니다. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles`는 O0/O2 조건 단일 평가와 bundle 거부를 검사합니다.
+
 루프 메타데이터 회귀 테스트는 모든 제어 분할과 정확한 예산 및 한 단위 부족한 예산에서 카운트 루프를 독립적인 수식과 비교합니다. 크거나 0인 박리 이력 값으로 잘못된 결과, 비종료 또는 poison을 숨길 수 없습니다. API로 잘못된 메타데이터를 구성하여 LLVM 어셈블리 파싱과 별도로 가져오기 거부를 검사하며, 머신 상태 테스트는 상태 효과와 입력 제한을 유지합니다.
 
 초기화 계약 회귀는 부분 및 분리된 바이트 범위, 고정 별칭, 양쪽 분기, 모든 반환, 첫 반복의 읽기와 반복 안의 저장 후 읽기를 검사합니다. 저장 전 읽기, 누락된 저장, 게스트 저장, 알 수 없는 별칭, 특수 메모리 접근, 객체 밖 범위와 입력/작업 예산 소진은 실패해야 합니다. 출력 전용 상태 워드를 쓰는 독립 C 예제를 O1/O2로 컴파일해 정확한 LLVM 속성을 유지한 채 새로운 네이티브→LLVM 조합 증명을 통과하는지 확인합니다.
@@ -136,6 +142,10 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -1036,6 +1046,8 @@ CPU 선호도, 새 프로세스, 따뜻한 캐시 및 RSS 조건이 적용됩니
 ## 모듈식 MBA 단순화
 
 `SymSimplifyFinite.*`는 8~512비트의 완전한 두 값 영역, 공유 사용의 비용 계산, 지원하는 모든 poison 생성 주석, 독립적인 volatile 읽기와 freeze, 명시적 undef/poison, 깊은 반복 순회, 예산과 난독화 표시를 검사합니다. 원본 및 단순화된 IR을 O0/O2에서 실행하여 모든 바이트 입력과 무작위 전체 폭 입력을 독립 판정 결과와 비교합니다. 변환 객체 테스트는 유한 값 예산이 다르면 캐시 식별도 달라야 함을 검사합니다.
+
+두 값 테스트는 8–512비트 중첩 논리곱 마스크, 피연산자 교환, OR/undef 거부, 깊은 탐색 한도, 독립 작업량 및 난독화 표시 정책, 최초 변환의 정확한 예산 경계도 검사합니다. 실행 오라클은 모든 바이트 입력 쌍을 확인하고 무관한 64비트 데이터를 바꾸며 원본과 단순화 IR을 O0/O2로 비교합니다.
 
 `SymSimplifyPredicates.*`는 4비트 오프셋, 부호와 입력을 전수 검사하고 불리언 구간 조합과 불연속 집합을 확인하며 O0/O2에서 독립적인 바이트/전체 폭 oracle을 실행합니다. poison 주석, 합류점의 숨은 미정의 입력, 독립 읽기/freeze, 보존된 루프 PHI, 공유 사용의 이득, 누적 예산, 높은 팬아웃, 재귀 제한과 난독화 표시를 다룹니다. 변환 객체 테스트는 두 캐시 키 모두에서 조건 분석 예산을 구별합니다.
 
