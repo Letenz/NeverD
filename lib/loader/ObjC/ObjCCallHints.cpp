@@ -2884,13 +2884,23 @@ objcSuperSourceFrameEffects(const BinaryImage &Image,
              : std::nullopt;
 }
 
+static bool isCoreImageTransformValueCall(const SourceCallTypeHint &Hint) {
+  return !Hint.NativeSwiftReceiver &&
+         Hint.Selector == "imageByApplyingTransform:" &&
+         Hint.Signature.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK &&
+         Hint.Signature.ReturnType &&
+         Hint.Signature.ReturnType->Kind == NdTypeKind::Ptr;
+}
+
 bool isObjCByValueCopyHint(const SourceCallTypeHint &Hint, va_t FunctionEntry,
                            Arch Architecture) {
   std::string Error;
-  if (!Hint.ByValueCopy || !Hint.NativeSwiftReceiver || !Hint.Receiver ||
-      Hint.Receiver->Origin !=
-          ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf ||
-      Hint.Receiver->Address != FunctionEntry ||
+  const bool Swift = Hint.NativeSwiftReceiver && Hint.Receiver &&
+                     Hint.Receiver->Origin ==
+                         ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf &&
+                     Hint.Receiver->Address == FunctionEntry;
+  const bool ImageTransform = isCoreImageTransformValueCall(Hint);
+  if (!Hint.ByValueCopy || (!Swift && !ImageTransform) ||
       Hint.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
       Hint.TargetName != "objc_msgSend" || Hint.Selector.empty() ||
       Hint.WeakImport || Hint.DoesNotReturn || Hint.Format ||
@@ -2899,20 +2909,20 @@ bool isObjCByValueCopyHint(const SourceCallTypeHint &Hint, va_t FunctionEntry,
       !validateSourceABI(Hint.Signature, Error) ||
       Hint.Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
       !Hint.Signature.ReturnType ||
-      Hint.Signature.ReturnType->Kind != NdTypeKind::Void ||
+      (Swift && Hint.Signature.ReturnType->Kind != NdTypeKind::Void) ||
       Hint.Signature.Parameters.size() != 3)
     return false;
   const auto &Copy = *Hint.ByValueCopy;
   const auto &Parameter = Hint.Signature.Parameters[2];
   return Copy.FunctionEntry == FunctionEntry &&
-         Copy.Site == *Hint.NativeSwiftReceiver &&
+         (!Swift || Copy.Site == *Hint.NativeSwiftReceiver) &&
          Copy.Site.Opcode == NdOp::CALL && Copy.Site.StaticTarget &&
          Copy.Site.StaticTarget == Hint.TargetAddress && Copy.Parameter == 2 &&
          Parameter.IndirectByValue && Parameter.Type &&
          Parameter.Type->Kind == NdTypeKind::Struct &&
          Parameter.Type->Size == Copy.Bytes &&
-         (Copy.Bytes == 48 || Copy.Bytes == 128) && Copy.FrameOffset % 8 == 0 &&
-         Copy.FrameOffset >= -(1 << 20) &&
+         (Copy.Bytes == 48 || (Swift && Copy.Bytes == 128)) &&
+         Copy.FrameOffset % 8 == 0 && Copy.FrameOffset >= -(1 << 20) &&
          Copy.FrameOffset <= -static_cast<int64_t>(Copy.Bytes) &&
          Parameter.Location.Kind == SourceABICarrierKind::IntegerRegister &&
          Parameter.Location.RegisterOffset == a64reg::X2 &&
@@ -2937,8 +2947,9 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
       Result.emplace(Address, Hint);
   if (!NeedsCopies || Image.Arch != Arch::AArch64)
     return Result;
-  const auto Entry =
-      swiftMangledReceiverClassMethodSourceABI(Image, Function.Entry);
+  auto Entry = swiftMangledReceiverClassMethodSourceABI(Image, Function.Entry);
+  if (!Entry)
+    Entry = objcMethodSourceTypeHint(Image, Function.Entry);
   size_t Budget = 262144;
   if (!Entry || !immutableNativeFrameMachineMatches(Image, Function, Budget))
     return Result;
@@ -2966,11 +2977,13 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
         if (Binding.DoesNotReturn || Binding.WeakImport)
           return Result;
         if (hasIndirectSourceParameters(Binding.Signature)) {
-          if (!Binding.NativeSwiftReceiver ||
+          const bool ImageTransform = isCoreImageTransformValueCall(Binding);
+          if ((!Binding.NativeSwiftReceiver && !ImageTransform) ||
               Binding.Signature.Parameters.size() != 3 ||
               !Binding.Signature.Parameters[2].IndirectByValue ||
               !Binding.Signature.ReturnType ||
-              Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
+              (!ImageTransform &&
+               Binding.Signature.ReturnType->Kind != NdTypeKind::Void) ||
               ++Count > 8)
             return Result;
           Contract.ByValueFrameParameters.insert(2);
@@ -3001,16 +3014,22 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
         return Result;
     }
   for (auto &[Address, Hint] : Candidates) {
-    if (!hasIndirectSourceParameters(Hint.Signature) ||
-        !Hint.NativeSwiftReceiver)
+    if (!hasIndirectSourceParameters(Hint.Signature))
       continue;
-    const auto Copies = sourceFrameByValueCopies(
-        Function, Image.Arch, Calls, *Hint.NativeSwiftReceiver, *Entry);
+    std::optional<SourceCallOccurrenceKey> Site = Hint.NativeSwiftReceiver;
+    if (!Site)
+      for (const auto &[Key, Contract] : Calls)
+        if (Key.Instruction == Address)
+          Site = Key;
+    if (!Site)
+      continue;
+    const auto Copies =
+        sourceFrameByValueCopies(Function, Image.Arch, Calls, *Site, *Entry);
     if (!Copies || Copies->size() != 1 || Copies->front().Parameter != 2)
       continue;
     const auto &Copy = Copies->front();
     Hint.ByValueCopy = SourceCallTypeHint::ByValueCopyStorage{
-        Function.Entry, *Hint.NativeSwiftReceiver, 2, Copy.FrameOffset,
+        Function.Entry, *Site, 2, Copy.FrameOffset,
         static_cast<uint32_t>(Copy.Bytes)};
     if (isObjCByValueCopyHint(Hint, Function.Entry, Image.Arch))
       Result.emplace(Address, std::move(Hint));

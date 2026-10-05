@@ -143,6 +143,14 @@ The supported Bionic subset is:
   catalogue entries share this behavior; provider lifetime rules still apply.
   See the pinned Android 9
   [Bionic implementation](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/getpagesize.cpp).
+- `sysconf`, for Android's `_SC_PAGESIZE` (`0x27`) and `_SC_PAGE_SIZE` (`0x28`)
+  selectors. Both return the same guest page size as `getpagesize`, mappings
+  and allocation rounding, without changing errno. The selector uses its
+  declared 32-bit `int` width. Other selectors stop as unsupported, including
+  invalid names; the model does not substitute host limits or invent errno
+  responses. Direct and dynamic calls share provider lifetime checks. Android
+  9 defines [distinct selector numbers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/include/bits/sysconf.h)
+  and [one page-size result](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sysconf.cpp).
 - `__system_property_get`, backed only by the explicit property dictionary.
   Missing properties return length zero and write NUL; values must fit 91 bytes
   plus NUL. Host properties are never inherited.

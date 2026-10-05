@@ -1,8 +1,10 @@
 #include "../../../lib/loader/MachO/ImmutableNativeFrame.h"
 #include "../../../lib/loader/Swift/SwiftMangledClassMethodABI.h"
 #include "../../../lib/loader/Swift/SwiftMangledValueConstructorABI.h"
+#include "../../../lib/sdk/capi/ObjCByValueCopySources.h"
 #include "../../../lib/sdk/capi/ObjCNativeSwiftReceiverSources.h"
 #include "../../../lib/sdk/capi/SourceSwiftValueConstructorProjection.h"
+#include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -204,6 +206,298 @@ struct FieldFixture {
     return Result;
   }
 };
+
+struct ObjCImageCopyFixture : FieldFixture {
+  static constexpr va_t CopyCall = Entry + 28;
+  ObjCImageCopyFixture() {
+    Image.Symbols.clear();
+    Image.ObjCClasses.resize(1);
+    auto &Owner = Image.ObjCClasses.front();
+    Owner.Name = "ImageOwner";
+    Owner.SuperclassAddress = 0;
+    Owner.SuperclassName = "CIImage";
+    Owner.Ivars.clear();
+    Image.DynInfo.NeededLibs.push_back(
+        "/System/Library/Frameworks/CoreImage.framework/CoreImage");
+    text(0x3660, "imageByApplyingTransform:");
+    Image.ObjCSourceReferences[0x3600].Name = "imageByApplyingTransform:";
+    const uint32_t Words[] = {
+        0xd10143ff, 0xa9047bfd, 0x910103fd, // 80-byte frame, save FP/LR.
+        0x6d0007e0, 0x6d010fe2, 0x6d0217e4, // Six incoming doubles, 48 bytes.
+        0x910003e2, 0x94000079,             // Pass the private copy in X2.
+        0xa9447bfd, 0x910143ff, 0xd65f03c0};
+    for (unsigned I = 0; I < std::size(Words); ++I)
+      u32(Entry + I * 4, Words[I]);
+    Image.Symbols.push_back({"image_copy", Entry, sizeof(Words), true});
+    ObjCMethod Method;
+    Method.ClassName = Owner.Name;
+    Method.ClassAddress = Owner.Address;
+    Method.MetadataAddress = 0x3800;
+    Method.Implementation = Entry;
+    Method.Selector = "apply:a:b:c:d:e:";
+    Method.TypeEncoding = "@64@0:8d16d24d32d40d48d56";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    Image.ObjCMethods = {Method};
+  }
+  void run() {
+    PipelineOptions O;
+    O.EmitDumpOutput = false;
+    O.OnlyFunctionEntries = {Entry};
+    const auto ABI = objcMethodSourceTypeHint(Image, Entry);
+    ASSERT_TRUE(ABI);
+    O.SourceTypeHints.emplace(Entry, *ABI);
+    Result = Pipeline().run(Image, Context, O);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+  }
+  static ExprPtr copyCall(const HighFunc &F) {
+    ExprPtr Result;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (E && E->SourceCallHint && E->SourceCallHint->ByValueCopy)
+          Result = E;
+      });
+    });
+    return Result;
+  }
+};
+
+TEST(ObjCImageValueCopy, OriginalFrameAndCompleteBodyAuthorizePublication) {
+  ObjCImageCopyFixture F;
+  F.run();
+  ASSERT_TRUE(F.low());
+  const auto Hints = buildObjCSourceCallHints(F.Image, *F.low());
+  ASSERT_TRUE(Hints.count(F.CopyCall));
+  ASSERT_TRUE(Hints.at(F.CopyCall).ByValueCopy);
+  EXPECT_FALSE(Hints.at(F.CopyCall).NativeSwiftReceiver);
+  EXPECT_EQ(Hints.at(F.CopyCall).ByValueCopy->Bytes, 48U);
+  auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+  const auto Call = F.copyCall(Bound.Function);
+  ASSERT_TRUE(Call);
+  const auto Current =
+      sdk::native_source_detail::currentFunction(F.Result, F.Entry);
+  ASSERT_TRUE(Current);
+  EXPECT_TRUE(validateObjCByValueCopyBindings(F.Image, F.low(), *Current->Med));
+  unsigned Calls = 0, ResultAssignments = 0;
+  for (const auto &B : Current->Med->Blocks)
+    for (const auto &Op : B.Ops)
+      if (Op.Addr == F.CopyCall) {
+        Calls += Op.Opcode == NdOp::CALL;
+        ResultAssignments += Op.Opcode == NdOp::COPY;
+      }
+  EXPECT_EQ(Calls, 1U);
+  EXPECT_NE(ResultAssignments, 0U);
+  EXPECT_FALSE(sdk::objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
+                                        &Bound.Function));
+  EXPECT_TRUE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                  Bound.Function, {}));
+}
+
+TEST(ObjCImageValueCopy, GeneratedCExecutesAgainstIndependentPhysicalCopyABI) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "The six-double indirect CoreImage ABI requires arm64";
+#else
+  ObjCImageCopyFixture F;
+  F.run();
+  ASSERT_TRUE(F.high());
+  const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+  const auto Call = F.copyCall(Bound.Function);
+  ASSERT_TRUE(Call);
+  ASSERT_TRUE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                  Bound.Function, {}));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.EmitComments = false;
+  ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+  ASSERT_NE(Source.find("__builtin_memcpy"), std::string::npos);
+  // The callee accepts the compiler-observed physical X2 pointer. It does
+  // not repeat the emitter's logical CGAffineTransform declaration.
+  const auto Program = Source + R"(
+struct CopyState { unsigned calls; uint64_t bits[6]; uint64_t result; };
+static unsigned selectors;
+static uint64_t selector_token;
+SEL sel_registerName(const char *name) {
+  if (__builtin_strcmp(name,"imageByApplyingTransform:")) __builtin_trap();
+  ++selectors; return (SEL)&selector_token;
+}
+#ifdef __APPLE__
+#define COPY_DISPATCH_SYMBOL "_objc_msgSend"
+#else
+#define COPY_DISPATCH_SYMBOL "objc_msgSend"
+#endif
+void *copy_oracle(void *,void *,unsigned char *) __asm__(COPY_DISPATCH_SYMBOL);
+void *copy_oracle(void *receiver,void *selector,unsigned char *copy) {
+  struct CopyState *s=receiver;
+  if(selector!=&selector_token||!copy) __builtin_trap();
+  ++s->calls;__builtin_memcpy(s->bits,copy,48);
+  // A legal write to disposable by-value storage cannot change caller inputs.
+  __builtin_memset(copy,0xa5,48);
+  s->result=0x93ace0142785bf62ULL;return &s->result;
+}
+int main(void) {
+  const uint64_t patterns[]={0,0x8000000000000000ULL,1,0x8000000000000001ULL,
+    0x3ff0000000000000ULL,0xbff012345678abcdULL,0x7ff0000000000000ULL,
+    0xfff0000000000000ULL,0x7ff812345678abcdULL,0x7ff012345678abcdULL};
+  for(unsigned i=0;i<1000;++i) {
+    struct {uint64_t guard;double values[6];uint64_t tail;} input={0};
+    struct {uint64_t guard;struct CopyState s;uint64_t tail;} output={0};
+    uint64_t expected[6];
+    input.guard=output.guard=0x123456789abcdef0ULL;
+    input.tail=output.tail=0xfedcba9876543210ULL;
+    for(unsigned j=0;j<6;++j) {
+      expected[j]=patterns[(i/(j+1)+j*3)%10];
+      __builtin_memcpy(input.values+j,expected+j,8);
+    }
+    void *result=image_copy(&output.s,(void *)(uintptr_t)0x777,
+      input.values[0],input.values[1],input.values[2],input.values[3],
+      input.values[4],input.values[5]);
+    if(result!=&output.s.result||output.s.result!=0x93ace0142785bf62ULL||
+       output.s.calls!=1||selectors!=i+1)return 1;
+    if(__builtin_memcmp(output.s.bits,expected,48)||
+       __builtin_memcmp(input.values,expected,48))return 2;
+    if(input.guard!=0x123456789abcdef0ULL||output.guard!=input.guard||
+       input.tail!=0xfedcba9876543210ULL||output.tail!=input.tail)return 3;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    source_call_execution_test::compileAndRun(Program, {Optimization});
+  }
+#endif
+}
+
+TEST(ObjCImageValueCopy, RejectsChangedCopyCallBodyAndCurrentImage) {
+  for (unsigned Mutation = 0; Mutation < 24; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ObjCImageCopyFixture F;
+    F.run();
+    auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+    const auto Call = F.copyCall(Bound.Function);
+    ASSERT_TRUE(Call);
+    ASSERT_TRUE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                    Bound.Function, {}));
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+    Call->SourceCallHint = Hint;
+    if (Mutation == 0)
+      Hint->ByValueCopy.reset();
+    if (Mutation == 1)
+      Hint->ByValueCopy->FrameOffset += 8;
+    if (Mutation == 2)
+      Hint->ByValueCopy->Bytes = 40;
+    if (Mutation == 3)
+      ++Hint->ByValueCopy->Site.Sequence;
+    if (Mutation == 4)
+      Call->Operands[2] = Call->Operands[0];
+    if (Mutation == 5)
+      Call->Operands[0] = HighExpr::makeConst(0, 8);
+    if (Mutation == 6)
+      Bound.Function.FrameSize += 16;
+    if (Mutation == 7)
+      Hint->WeakImport = true;
+    if (Mutation == 8) {
+      for (auto &S : Bound.Function.Body)
+        if (S.Kind == StmtKind::Store) {
+          S.StoreVal = HighExpr::makeConst(0, S.StoreVal->Type->Size);
+          break;
+        }
+    }
+    if (Mutation == 9) {
+      auto Store =
+          std::find_if(Bound.Function.Body.begin(), Bound.Function.Body.end(),
+                       [](const auto &S) { return S.Kind == StmtKind::Store; });
+      ASSERT_NE(Store, Bound.Function.Body.end());
+      Bound.Function.Body.erase(Store);
+    }
+    if (Mutation == 10)
+      F.u32(F.Entry + 20, 0xd503201f);
+    if (Mutation == 11)
+      F.Image.DynInfo.NeededLibs.pop_back();
+    if (Mutation == 12)
+      F.Image.ObjCMethods[0].TypeEncoding = "@16@0:8";
+    if (Mutation == 13) {
+      for (auto &M : F.Result.MedFuncs)
+        for (auto &B : M.Blocks)
+          for (auto &Op : B.Ops)
+            if (Op.SourceCallHint && Op.SourceCallHint->ByValueCopy) {
+              auto H = std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+              H->ByValueCopy->FrameOffset += 8;
+              Op.SourceCallHint = H;
+            }
+    }
+    if (Mutation == 14 || Mutation == 15 || Mutation == 16) {
+      for (auto &M : F.Result.MedFuncs)
+        for (auto &B : M.Blocks)
+          for (auto &Op : B.Ops) {
+            if (Mutation == 14 && Op.Addr == F.CopyCall &&
+                Op.Opcode == NdOp::COPY)
+              Op.SourceCallHint = Hint;
+            if (Op.SourceCallHint && Op.SourceCallHint->ByValueCopy &&
+                Op.Opcode == NdOp::CALL) {
+              if (Mutation == 15)
+                Op.SourceCallHint.reset();
+              if (Mutation == 16)
+                Op.Inputs[3] = MedVar::makeConst(0x7000, 8);
+            }
+          }
+    }
+    if (Mutation == 17)
+      Hint->TargetAddress += 4;
+    if (Mutation == 18)
+      Hint->ByValueCopy->Parameter = 1;
+    if (Mutation == 19)
+      Bound.Function.DoesNotReturn = true;
+    if (Mutation == 20)
+      Bound.Function.Params.back().Type = NdType::makeInt(8);
+    if (Mutation == 21) {
+      auto Copy =
+          std::find_if(Bound.Function.Body.begin(), Bound.Function.Body.end(),
+                       [&](const auto &S) { return S.Addr == F.CopyCall; });
+      ASSERT_NE(Copy, Bound.Function.Body.end());
+      Bound.Function.Body.push_back(*Copy);
+    }
+    if (Mutation == 22 || Mutation == 23) {
+      // Edit both saved representations consistently: only independent current
+      // machine replay can reject this, rather than replaying the edit itself.
+      for (auto &M : F.Result.MedFuncs) {
+        if (M.Entry != F.Entry)
+          continue;
+        bool Changed = false;
+        for (auto &B : M.Blocks)
+          for (auto &Op : B.Ops) {
+            if (Mutation == 22 && Op.SourceCallHint &&
+                Op.SourceCallHint->ByValueCopy) {
+              Op.Inputs[3] = MedVar::makeConst(0x7000, 8);
+              Changed = true;
+            }
+            if (Mutation == 23 && Op.Opcode == NdOp::STORE &&
+                Op.NumInputs == 2) {
+              Op.Inputs[1] = MedVar::makeConst(0, Op.Inputs[1].Size);
+              Changed = true;
+              break;
+            }
+          }
+        ASSERT_TRUE(Changed);
+        MedToHighConverter Converter;
+        Converter.setBinaryImage(&F.Image);
+        for (auto &H : F.Result.HighFuncs)
+          if (H.Entry == F.Entry)
+            H = Converter.convert(M, F.Image.Arch);
+      }
+      Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+      auto Edited = F.copyCall(Bound.Function);
+      ASSERT_TRUE(Edited);
+      EXPECT_FALSE(sdk::objCByValueCopySourceCallBound(
+          *Edited, F.Image, F.Result, Bound.Function, {}));
+      continue;
+    }
+    EXPECT_FALSE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                     Bound.Function, {}));
+  }
+}
 
 struct SwiftRuntimeRootFixture : FieldFixture {
   static constexpr const char *Provider = "/usr/lib/swift/libswiftCore.dylib";

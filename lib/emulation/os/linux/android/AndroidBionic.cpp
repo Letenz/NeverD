@@ -347,6 +347,17 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
     return Value(tlsAddress() + ErrnoAddress - TLSAddress);
   if (Name == symbol::GetPageSize)
     return Value(PageSize);
+  if (Name == symbol::Sysconf) {
+    // sysconf takes int, independent of unspecified upper GP argument bits.
+    switch (static_cast<SysconfName>(static_cast<uint32_t>(A[0]))) {
+    case SysconfName::PageSize:
+    case SysconfName::PageSizeAlias:
+      return Value(PageSize);
+    }
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = diagnostic::SysconfSelector;
+    return std::optional<BionicValue>();
+  }
   if (Name == symbol::Time) {
     auto Now =
         linux_model::clockValue(linux_model::ClockRealtime, Options, Result);

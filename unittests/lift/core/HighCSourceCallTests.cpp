@@ -3,6 +3,7 @@
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "CFunctionParameterCallFixture.h"
 #include "RuntimeFunctionAddressFixture.h"
+#include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -92,61 +93,7 @@ std::string emit(const std::vector<HighFunc> &Functions, bool Includes = true,
   return Result;
 }
 
-void compileAndRun(const std::string &Source,
-                   llvm::ArrayRef<llvm::StringRef> ExtraArguments = {}) {
-#ifdef NEVERD_TEST_CLANG
-  const std::string Compiler = NEVERD_TEST_CLANG;
-#else
-  auto Program = llvm::sys::findProgramByName("clang");
-  ASSERT_TRUE(bool(Program)) << "clang is required";
-  const std::string Compiler = *Program;
-#endif
-  llvm::SmallString<128> SourcePath, BinaryPath, ErrorPath;
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-source-call", "c",
-                                                  SourcePath));
-  llvm::FileRemover RemoveSource(SourcePath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-source-call", "exe",
-                                                  BinaryPath));
-  llvm::FileRemover RemoveBinary(BinaryPath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-source-call", "err",
-                                                  ErrorPath));
-  llvm::FileRemover RemoveError(ErrorPath);
-  std::error_code EC;
-  {
-    llvm::raw_fd_ostream OS(SourcePath, EC);
-    ASSERT_FALSE(EC);
-    OS << Source;
-  }
-  const std::optional<llvm::StringRef> Redirects[] = {
-      std::nullopt, std::nullopt, ErrorPath.str()};
-  llvm::SmallVector<llvm::StringRef, 12> Arguments{
-      Compiler,
-      "-std=c11",
-      "-O1",
-      "-fno-inline",
-      "-fblocks",
-      "-Werror=implicit-function-declaration",
-      "-Werror=return-type",
-      SourcePath,
-      "-o",
-      BinaryPath};
-  Arguments.append(ExtraArguments.begin(), ExtraArguments.end());
-  std::string Error;
-  const int Compiled = llvm::sys::ExecuteAndWait(
-      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
-  auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
-  ASSERT_EQ(Compiled, 0) << Error
-                         << (Errors ? (*Errors)->getBuffer().str() : "") << "\n"
-                         << Source;
-  const int Ran = llvm::sys::ExecuteAndWait(
-      BinaryPath, {BinaryPath}, std::nullopt, Redirects, 30, 0, &Error);
-  const auto RuntimeErrors = llvm::MemoryBuffer::getFile(ErrorPath);
-  ASSERT_EQ(Ran, 0) << Error
-                    << (RuntimeErrors ? (*RuntimeErrors)->getBuffer().str()
-                                      : "")
-                    << "\n"
-                    << Source;
-}
+using source_call_execution_test::compileAndRun;
 
 MedFunc savedFloatingRecord(unsigned Calls, bool ReplaceFirst = false,
                             bool ReadUpper = false) {

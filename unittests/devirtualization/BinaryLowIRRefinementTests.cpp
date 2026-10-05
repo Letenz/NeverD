@@ -455,6 +455,45 @@ TEST(BinaryLowIRRefinement, XaddHasNoFreshBitsAndRejectsAlteredDefinedOutputs) {
   }
 }
 
+TEST(BinaryLowIRRefinement, MemoryXaddBindsSumAddressSourceAndFlags) {
+  // LEA RCX,[RSP-16]; XADD [RCX],ECX; RET. Writing ECX zero-extends RCX,
+  // while the memory update must use the complete original address.
+  Program P({0x48, 0x8d, 0x4c, 0x24, 0xf0, 0x0f, 0xc1, 0x09, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  for (auto W : {Witness::LiftedBits, Witness::ZeroBits}) {
+    const auto Good = P.check(Recovery.Residual, W);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_TRUE(Good.Certificate->Relation.Producers.empty());
+  }
+  for (unsigned Field = 0; Field != 4; ++Field) {
+    auto Changed = Recovery.Residual;
+    bool Found = false;
+    for (auto &Block : Changed.Blocks)
+      for (auto &Op : Block.Ops) {
+        if (Found)
+          continue;
+        if (Field < 2 && Op.Opcode == NdOp::STORE) {
+          if (Field == 0)
+            Op.Inputs[1] = NdVar::scalar(0, Op.Inputs[1].Size);
+          else
+            Op.Inputs[0] = NdVar::reg(x86reg::RSP, 8);
+          Found = true;
+        } else if ((Field == 2 && Op.Output.isReg() &&
+                    Op.Output.Offset == x86reg::RCX && Op.Output.Size == 4) ||
+                   (Field == 3 && Op.Output == NdVar::reg(x86reg::CF, 1))) {
+          Op.Opcode = NdOp::COPY;
+          Op.NumInputs = 1;
+          Op.Inputs[0] = NdVar::scalar(0, Op.Output.Size);
+          Found = true;
+        }
+      }
+    ASSERT_TRUE(Found) << Field;
+    const auto Bad = P.check(Changed);
+    refused(Bad, Field == 1 ? Status::ContractViolation : Status::Different);
+  }
+}
+
 TEST(BinaryLowIRRefinement, CompatibilityShiftUsesTheSameSelectedValueWitness) {
   Program P(
       {0xd3, 0xf0, 0x9c, 0x5a, 0xc3}); // SAL /6 EAX,CL; PUSHFQ; POP RDX; RET.
