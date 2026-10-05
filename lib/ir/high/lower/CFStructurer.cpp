@@ -456,6 +456,20 @@ static std::optional<int> fallThroughOf(const MedFunc &Med,
   return std::nullopt;
 }
 
+/// Whether \p EH describes regions that structureExceptionRegions wraps by
+/// address, so the blocks must stay in address order.  A frame that only
+/// unwinds -- the plain stack-cookie check, or a personality NeverD does not
+/// know and so reads no table for -- has nothing to wrap.
+static bool hasExceptionRegions(const ExceptionFunction &EH) {
+  if (EH.PersonalityVA == 0)
+    return false;
+  const bool UnwindOnly =
+      (EH.Personality == ExceptionPersonality::Unknown ||
+       EH.Personality == ExceptionPersonality::GSHandlerCheck) &&
+      (!EH.SEH || EH.SEH->Scopes.empty()) && !EH.Cxx && !EH.Itanium;
+  return !UnwindOnly;
+}
+
 std::vector<int> highBlockLayout(const MedFunc &Med,
                                  const std::set<int> &Dispatched) {
   const int Count = static_cast<int>(Med.Blocks.size());
@@ -464,7 +478,7 @@ std::vector<int> highBlockLayout(const MedFunc &Med,
     AddressOrder[I] = I;
   if (Count < 3 ||
       Count > static_cast<int>(limits::kMaxStructurableMedBlocks) ||
-      (Med.ExceptionMetadata && Med.ExceptionMetadata->PersonalityVA != 0))
+      (Med.ExceptionMetadata && hasExceptionRegions(*Med.ExceptionMetadata)))
     return AddressOrder;
   for (int I = 0; I < Count; ++I) {
     const MedBlock &Block = Med.Blocks[I];

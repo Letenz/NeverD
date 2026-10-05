@@ -101,7 +101,7 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## ملفات صريحة في الذاكرة
 
-يوفر `linux_files` دليلاً مغلقاً لملفات ثابتة في Linux ELF64 وAndroid. المصفوفة `files` مطلوبة ويمكن أن تكون فارغة؛ يحتوي كل عنصر فقط على المسار المطلق القانوني `path` والبايتات `bytes_hex`. لا تُقرأ ملفات المضيف أو محتويات `/proc` الضمنية. من دون الخيار تبقى خدمات الملفات غير ممثلة؛ ويعيد المسار الغائب `ENOENT`.
+يوفر `linux_files` دليلاً مغلقاً لملفات ثابتة في Linux ELF64 وAndroid. المصفوفة `files` مطلوبة ويمكن أن تكون فارغة؛ يجب أن يحتوي كل عنصر على المسار المطلق القانوني `path` والبايتات `bytes_hex`. لا تُقرأ ملفات المضيف أو محتويات `/proc` الضمنية. من دون الخيار تبقى خدمات الملفات غير ممثلة؛ ويعيد المسار الغائب `ENOENT`.
 
 ```json
 {"linux_files":{"files":[
@@ -114,6 +114,17 @@ output = bytes.fromhex(report["stdout_hex"])
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
 يمكن أن تبدأ قراءة بطول صفر عند حد فضاء عناوين المستخدم. بعد التحقق من نطاق العناوين الأصلي، إذا تجاوز مجموع موضع الملف وطول الطلب الأصلي `INT64_MAX`، تُعاد `EINVAL` حتى عند EOF، ولا يتغير موضع القراءة.
+
+يمكن إضافة `metadata` كاملة لكل عنصر؛ يستخدم C++ الحقل `LinuxFileOptions::Metadata` بمفاتيح لمسارات موجودة. تشترك `fstat`/`fstat64` وsyscall في ملاحظات ثابتة من دون قراءة بيانات المضيف أو استنتاج size من طول المحتوى أو تغيير الموضع. تُقبل الملفات العادية والحقول الكاملة فقط، وتستخدم الأعداد كاملة العرض سلاسل عشرية. تكتب x64/AArch64 عدد 144/128 بايت مع تصفير rdev والحشو. يعيد الواصف غير الصالح `EBADF` والإخراج غير القابل للكتابة بالكامل `EFAULT`. تؤدي البيانات الناقصة والتدفقات القياسية المجهولة والإخراج القابل للكتابة جزئياً إلى توقف صريح من دون تغيير البايتات. الحقول والحدود موضحة في العقد المرتبط.
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 

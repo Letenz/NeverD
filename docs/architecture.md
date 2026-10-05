@@ -922,6 +922,8 @@ Logical right shifts can also discard immediate AND/OR/XOR terms proved neutral 
 
 `recoverLLVMScalarSource` composes preparation with loop search in `NeverDLLVMScalarLoopRecovery`. Bounded LLVM and predicate cleanup first proposes a private body, then complete-original equivalence authorizes searching it. Continued recovery/cleanup requires proof of the exact final body against the original. Boundary queries have a separate work ceiling; all queries share one total proof budget. Cleanup rounds and search budgets are cumulative, and exhaustion returns no partial module. InstCombine has explicit iteration bounds; reaching a fixpoint is not a prerequisite for a proved proposal. LLVMC only discovers eligible functions and publishes the shared result. Signatures and native ABI claims are unchanged.
 
+Source preparation also proposes LLVM common-expression hoisting and removes instruction poison flags in its private clone before predicate discovery. The flag scan is charged per instruction. Original flags and dead operations remain obligations in the complete-original proof; argument/call contracts and assumes are not relaxed. The standalone predicate pass retains its conservative treatment of annotated arithmetic. No candidate is published merely because LLVM cleanup or flag removal succeeded.
+
 Scalar equivalence keeps intermediate data writes symbolic. Control and definedness still normalize their demanded DAGs; final return comparison first checks identity and bounded facts, then normalizes only the demanded return DAGs if needed. Every source operation executes, including dead arithmetic and annotations. Both executions, normalization and the final retry share the same cumulative budget and local ceilings. This changes query scheduling, not input domains, proof obligations or loop-search limits.
 
 `SymSimplifyPass::simplifyFiniteValues` exposes the existing exact two-valued phase with charged work. An AND may inherit a one-bit constant mask through at most eight conjunction terms; the complete root SSA value remains the anchor, including other operands and poison dependencies. Conjunction discovery never crosses OR, arithmetic or PHIs. Scalar source preparation runs this phase before modular predicates under the same cumulative construction budget. Incomplete slices provide no facts; complete-original proofs still authorize publication. Object pipeline schema 15 binds the changed shared optimizer recipe.
@@ -3220,6 +3222,13 @@ Native Swift callers keep their complete machine ABI when a parameter is used on
 If/else structuring visits existing child lists before rewriting their parent. A stable parent no longer repeats that complete descendant traversal. Newly assembled arms and changed lists still receive the bounded nested pass, including changes made by predicate cleanup and preserved branch labels. Statement-list and nested-arm limits, rewrite ownership checks, ABI restrictions and current source publication gates remain unchanged. This traversal policy applies equally to block, loop, switch and exception bodies.
 
 `LinuxServices` owns one workload's Linux memory service state and file descriptor table. Linux process traps and Android Bionic wrappers share this instance; thread identity is supplied at each service boundary. `LinuxMemory` retains mapping ownership, while `LinuxFiles` owns immutable catalogue descriptions, open cursors and descriptor lifetime. Bionic alone owns errno conversion. Explicit `LinuxFileOptions` and strict JSON validation share one Linux contract; neither catalogue lookup nor guest file I/O reaches the host filesystem. Unsupported inputs do not acquire default file contents.
+
+`LinuxFiles` also borrows explicit per-path `LinuxFileMetadata` observations;
+status does not derive identity or size from the byte vector. `LinuxFileStatus.def`
+owns the x64/AArch64 stat field layouts, and `LinuxUserMemory` owns the typed
+fixed-copy outcome shared by status and time services. `ProcessJSONInteger.h`
+owns lossless observation integer parsing. Android translates the ABI and
+errno at its boundary without duplicating these decisions.
 
 Android linking classifies each undefined symbol from its declared type and the complete relocation inventory. An exact-symbol `JUMP_SLOT` establishes a `STT_NOTYPE` function binding for its address/GOT relocations too, independent of relocation order. Explicit object types and untyped address-only imports remain rejected; a matching name or another symbol’s call slot supplies no evidence.
 

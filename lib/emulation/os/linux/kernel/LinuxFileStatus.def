@@ -1,0 +1,24 @@
+//===- LinuxFileStatus.def - Linux stat wire layouts --------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_LINUX_FILE_STATUS
+// Metadata member, AArch64 offset/width, x86-64 offset/width.
+// Regular-file rdev and ABI padding are zero; neither comes from the host.
+NEVERD_LINUX_FILE_STATUS(Device, 0, 8, 0, 8)
+NEVERD_LINUX_FILE_STATUS(Inode, 8, 8, 8, 8)
+NEVERD_LINUX_FILE_STATUS(Mode, 16, 4, 24, 4)
+NEVERD_LINUX_FILE_STATUS(LinkCount, 20, 4, 16, 8)
+NEVERD_LINUX_FILE_STATUS(UID, 24, 4, 28, 4)
+NEVERD_LINUX_FILE_STATUS(GID, 28, 4, 32, 4)
+NEVERD_LINUX_FILE_STATUS(Size, 48, 8, 48, 8)
+NEVERD_LINUX_FILE_STATUS(BlockSize, 56, 4, 56, 8)
+NEVERD_LINUX_FILE_STATUS(Blocks, 64, 8, 64, 8)
+NEVERD_LINUX_FILE_STATUS(AccessTime.Seconds, 72, 8, 72, 8)
+NEVERD_LINUX_FILE_STATUS(AccessTime.Nanoseconds, 80, 8, 80, 8)
+NEVERD_LINUX_FILE_STATUS(ModificationTime.Seconds, 88, 8, 88, 8)
+NEVERD_LINUX_FILE_STATUS(ModificationTime.Nanoseconds, 96, 8, 96, 8)
+NEVERD_LINUX_FILE_STATUS(ChangeTime.Seconds, 104, 8, 104, 8)
+NEVERD_LINUX_FILE_STATUS(ChangeTime.Nanoseconds, 112, 8, 112, 8)
+#endif

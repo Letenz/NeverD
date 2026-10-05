@@ -101,7 +101,7 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 ## 明示的なメモリファイル
 
-`linux_files` は Linux ELF64 と Android に閉じた読み取り専用ファイル一覧を提供します。必須の `files` は空でもよく、各要素は正規の絶対パス `path` とバイナリの `bytes_hex` のみです。ホストファイルや暗黙の `/proc` 内容は読みません。未指定なら停止し、一覧にないパスは `ENOENT` を返します。
+`linux_files` は Linux ELF64 と Android に閉じた読み取り専用ファイル一覧を提供します。必須の `files` は空でもよく、各要素は正規の絶対パス `path` とバイナリの `bytes_hex` が必須です。ホストファイルや暗黙の `/proc` 内容は読みません。未指定なら停止し、一覧にないパスは `ENOENT` を返します。
 
 ```json
 {"linux_files":{"files":[
@@ -114,6 +114,17 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
 長さ 0 の読み取りはユーザーアドレス範囲の上限から開始できます。元のアドレス範囲を検証した後、ファイル位置と元の要求長の和が `INT64_MAX` を超える場合は、EOF でも `EINVAL` を返し、カーソルを変更しません。
+
+各要素には完全な `metadata` を指定できます。C++ の `LinuxFileOptions::Metadata` は既存のファイルパスをキーとします。`fstat`/`fstat64` と syscall は固定観測値を共有し、ホストの属性を読まず、size を内容長から推測せず、位置も変更しません。通常ファイルと全必須フィールドのみを受け入れ、全幅整数は十進文字列で指定します。x64/AArch64 は 144/128 バイトを書き込み、rdev と padding はゼロです。無効な記述子は `EBADF`、全域が書き込み不可なら `EFAULT`。観測値の欠落、未知の標準ストリーム、部分的に書き込み可能な出力は、元のバイトを保って停止します。フィールドと範囲はリンク先の契約を参照してください。
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 

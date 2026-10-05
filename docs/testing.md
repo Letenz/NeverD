@@ -394,6 +394,8 @@ Leading-phase regressions cover two and three sequential loops reusing one count
 
 The same target also checks `recoverLLVMScalarSource`: preparation before loop search, cleanup without loop changes, full-width unused state, dead overflow/exact-shift/division and assume obligations, unsupported effects, exact/one-short cumulative budgets and bounded continuation. Independent arithmetic oracles execute original and prepared LLVM at O0/O2 for every byte control and deterministic full-width state. Source and parent module must remain unchanged on success and refusal.
 
+Source-preparation guard tests cover annotated modular identities, equivalent expressions in distinct predecessors, retained differing branch values, original overflow/exact-shift/truncation/extension refusals, and exact/short cumulative budgets. Independent unsigned oracles compare original and prepared bodies at O0/O2 over 131,072 calls with undefined-behavior traps. Standalone predicate rejection rules remain covered by the existing semantic-pass tests.
+
 Mask regressions cover commuted operands, zero fields, retained high input bits, a screened alternative after full-data failure, every backedge, wrap/overflow rejection, batches larger than 32 and exact/short atomic budgets. Independent LLVM and emitted-C arithmetic oracles at O0/O2 check composition with width recovery. Self-query regressions retain complete control domains, poison/undef and unsupported-contract rejection, nontermination, local ceilings and exact/short work accounting; editing the same function invalidates any earlier outcome. These checks remain scalar LLVM coverage, not native ABI certification.
 
 Shared mask-containment tests exhaust every byte-input pair, cover noncontiguous masks and widths through 128 bits, retain unknown/high bits, and bound node growth beyond the fan-in/width ceilings. A symbolic loop with two backedges must prove its masked-XOR recurrence against an independent closed form. Control-discovery tests charge normalized shift-count storage while preserving exact/short budgets and the wide-value fallback.
@@ -2582,6 +2584,15 @@ build-release/bin/NeverDByteCellScalarizationTests
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` checks 48-level block, loop, switch and exception bodies with an independent interpreter over entered and bypassed paths. A generous runtime bound catches repeated recursive traversal. This is structured HighIR coverage; whole-image method recovery still requires its separate complete inventory and dependency checks.
 
 `AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
+
+Status cases use independently declared x64 and AArch64 `stat` structures, checking
+every field, zero padding, canaries, unaligned output, full-width inode/timestamps,
+size independent from bytes and unchanged cursors. Raw/Bionic/variadic calls and
+another guest thread share observations while keeping errno private. Unknown
+metadata, stream identity, both mixed-access directions and closed dynamic
+providers remain incomplete; rejected copies preserve the entire backing buffer.
+C++ and JSON inputs share range/path validation. Run the clock cases as well when
+changing their shared fixed-copy or lossless integer helpers.
 
 The file fixture also takes an imported function’s address while calling it directly. `CallableImportEvidenceBelongsToTheExactSymbol` checks GOT-before-PLT binding across ordinary/APS2/RELR inputs, removes the matching call-slot evidence, changes the declaration to object/function types, and verifies one thunk per admitted symbol. Existing thread-address imports exercise the same linker rule.
 

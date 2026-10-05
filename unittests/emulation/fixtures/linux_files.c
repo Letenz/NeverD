@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 typedef unsigned long U64;
 typedef long I64;
+typedef unsigned int U32;
 #if defined(__aarch64__)
 static const U64 UserLimit = 0x0001000000000000UL;
 enum {
@@ -12,6 +13,7 @@ enum {
   Read = 63,
   Close = 57,
   Seek = 62,
+  Fstat = 80,
   Write = 64,
   Protect = 226,
   Exit = 93,
@@ -24,6 +26,7 @@ enum {
   Read = 0,
   Close = 3,
   Seek = 8,
+  Fstat = 5,
   Write = 1,
   Protect = 10,
   Exit = 60,
@@ -162,6 +165,113 @@ U64 files_capacity(void) {
   return 0;
 }
 
+struct FileTime {
+  I64 Seconds;
+  U64 Nanoseconds;
+};
+struct FileStatus {
+  U64 Device, Inode;
+#if defined(__aarch64__)
+  U32 Mode, Links, UID, GID;
+  U64 RDevice, Pad1;
+  I64 Size;
+  int BlockSize, Pad2;
+#else
+  U64 Links;
+  U32 Mode, UID, GID, Pad1;
+  U64 RDevice;
+  I64 Size, BlockSize;
+#endif
+  I64 Blocks;
+  struct FileTime Access, Modification, Change;
+#if defined(__aarch64__)
+  U32 Reserved[2];
+#else
+  U64 Reserved[3];
+#endif
+};
+#if defined(__aarch64__)
+_Static_assert(sizeof(struct FileStatus) == 128, "AArch64 stat ABI");
+#else
+_Static_assert(sizeof(struct FileStatus) == 144, "x64 stat ABI");
+#endif
+_Static_assert(__builtin_offsetof(struct FileStatus, BlockSize) == 56,
+               "stat block-size offset");
+
+// Keep independent field observations scalar under both optimization levels.
+static U64 verify_status(const volatile struct FileStatus *S) {
+  CHECK(S->Device, 0xfe12cd34UL);
+  CHECK(S->Inode, 0xfedcba9876543210UL);
+  CHECK(S->Mode, 0100644);
+  CHECK(S->Links, 0x89abcdefUL);
+  CHECK(S->UID, 0x87654321UL);
+  CHECK(S->GID, 0xfedcba98UL);
+  CHECK(S->RDevice, 0);
+  CHECK(S->Pad1, 0);
+#if defined(__aarch64__)
+  CHECK(S->Pad2, 0);
+#endif
+  CHECK(S->Size, 0); // Explicit metadata is independent of readable bytes.
+  CHECK(S->BlockSize, 16384);
+  CHECK(S->Blocks, 0x1234567890UL);
+  CHECK(S->Access.Seconds, -0x7fffffffffffffffL);
+  CHECK(S->Access.Nanoseconds, 123456789);
+  CHECK(S->Modification.Seconds, 4294967297L);
+  CHECK(S->Modification.Nanoseconds, 987654321);
+  CHECK(S->Change.Seconds, 0x7fffffffffffffffL);
+  CHECK(S->Change.Nanoseconds, 999999999);
+  for (unsigned I = 0; I < sizeof(S->Reserved) / sizeof(S->Reserved[0]); ++I)
+    CHECK(S->Reserved[I], 0);
+  return 0;
+}
+
+U64 files_status(void) {
+  struct {
+    U64 Before;
+    struct FileStatus Status;
+    U64 After;
+  } Out;
+  volatile unsigned char *Bytes = (volatile unsigned char *)&Out;
+  for (unsigned I = 0; I < sizeof(Out); ++I)
+    Bytes[I] = 0xa5;
+  U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(raw(Fstat, F | 0xabcdef0000000000UL, (U64)&Out.Status, 0, 0), 0);
+  CHECK(verify_status(&Out.Status), 0);
+  CHECK(Out.Before, 0xa5a5a5a5a5a5a5a5UL);
+  CHECK(Out.After, 0xa5a5a5a5a5a5a5a5UL);
+  CHECK(raw(Seek, F, 0, 1, 0), 1);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(Pages[0], 0xff);
+  CHECK(raw(Fstat, F, (U64)Pages + 1, 0, 0), 0);
+  for (unsigned I = 0; I < sizeof(Out.Status); ++I)
+    CHECK(((volatile unsigned char *)Pages)[I + 1],
+          ((volatile unsigned char *)&Out.Status)[I]);
+  CHECK(raw(Fstat, F, 1, 0, 0), (U64)-14);
+  CHECK(raw(Fstat, F, UserLimit - sizeof(Out.Status) + 1, 0, 0), (U64)-14);
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 1, 0), 0);
+  CHECK(raw(Fstat, F, (U64)Pages + 4096, 0, 0), (U64)-14);
+  CHECK(raw(Seek, F, 0, 1, 0), 2);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(Fstat, F, (U64)-1, 0, 0), (U64)-9);
+  CHECK(raw(Close, 1, 0, 0, 0), 0);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), 1);
+  CHECK(raw(Fstat, 1, (U64)&Out.Status, 0, 0), 0);
+  CHECK(verify_status(&Out.Status), 0);
+  return 0;
+}
+
+U64 files_status_unsupported(U64 Mode, U64 Buffer) {
+  if (Mode == 1)
+    return raw(Fstat, 1, Buffer, 0, 0);
+  U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
+  if (Mode == 0)
+    return raw(Fstat, F, Buffer, 0, 0);
+  CHECK(raw(Protect, Buffer + (Mode == 2 ? 4096 : 0), 4096, 1, 0), 0);
+  return raw(Fstat, F, Buffer + 4096 - 64, 0, 0);
+}
+
 U64 files_unsupported(U64 Mode) {
   if (Mode == 0)
     return raw(OpenAt, (U64)-100, (U64)Path, 0, 0);
@@ -188,6 +298,8 @@ extern I64 read(int, void *, U64);
 extern int close(int);
 extern I64 lseek(int, I64, int);
 extern I64 lseek64(int, I64, int);
+extern int fstat(int, struct FileStatus *);
+extern int fstat64(int, struct FileStatus *);
 extern I64 syscall(I64, ...);
 extern int *__errno(void);
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
@@ -244,6 +356,64 @@ U64 files_bionic(void) {
   return 0;
 }
 
+static void *status_reader(void *Arg) {
+  struct FileStatus Status;
+  *__errno() = 82;
+  if (fstat64((U64)Arg, &Status) || verify_status(&Status) ||
+      *__errno() != 82 || fstat(-1, &Status) != -1 || *__errno() != 9)
+    return (void *)1;
+  return 0;
+}
+
+U64 files_status_bionic(void) {
+  struct FileStatus Status;
+  *__errno() = 73;
+  int F = open(Path, 0);
+  CHECK(F, 3);
+  CHECK(read(F, Pages, 1), 1);
+  CHECK(fstat(F, &Status), 0);
+  CHECK(verify_status(&Status), 0);
+  CHECK(*__errno(), 73);
+  CHECK(syscall(80L, (U64)F | 0x1234567800000000UL, &Status), 0);
+  CHECK(verify_status(&Status), 0);
+  CHECK(*__errno(), 73);
+  U64 Thread;
+  void *Value = (void *)1;
+  CHECK(pthread_create(&Thread, 0, status_reader, (void *)(U64)F), 0);
+  CHECK(pthread_join(Thread, &Value), 0);
+  CHECK((U64)Value, 0);
+  CHECK(*__errno(), 73);
+  CHECK(lseek(F, 0, 1), 1);
+  CHECK(fstat64(F, (struct FileStatus *)1), -1);
+  CHECK(*__errno(), 14);
+  CHECK(fstat(F, &Status), 0);
+  CHECK(*__errno(), 14);
+  CHECK(verify_status(&Status), 0);
+  CHECK(close(F), 0);
+  CHECK(fstat(F, (struct FileStatus *)1), -1);
+  CHECK(*__errno(), 9);
+  CHECK(open(Path, 0), F);
+  CHECK(fstat64(F, &Status), 0);
+  CHECK(verify_status(&Status), 0);
+  return 0;
+}
+
+U64 files_status_dynamic(U64 Closed) {
+  struct FileStatus Status;
+  int F = open(Path, 0);
+  CHECK(F, 3);
+  void *Library = dlopen("libfiles.so", 2);
+  if (!Library)
+    return 99;
+  int (*StatusCall)(int, struct FileStatus *) = dlsym(Library, "fstat64");
+  if (!StatusCall)
+    return 98;
+  if (Closed)
+    CHECK(dlclose(Library), 0);
+  CHECK(StatusCall(F, &Status), 0);
+  return verify_status(&Status);
+}
+
 U64 files_dynamic(U64 Closed) {
   void *Library = dlopen("libfiles.so", 2);
   if (!Library)
@@ -263,6 +433,7 @@ void process_main(U64 *Stack) {
   U64 Status = Mode == 's'   ? files_sequence()
                : Mode == 'f' ? files_faults()
                : Mode == 'c' ? files_capacity()
+               : Mode == 't' ? files_status()
                              : files_unsupported(Mode - '0');
   raw(Exit, Status, 0, 0, 0);
   __builtin_trap();
