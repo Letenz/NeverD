@@ -355,6 +355,64 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     RepeatedAlignedAccessesReuseTheCompleteFrameOffsetProof) {
+  const auto Make = [](unsigned Loads) {
+    Program P({0x48, 0x8d, 0x54, 0x24, 0xbf, 0x80, 0xe2, 0xf0, 0x48, 0x8d, 0x7a,
+               9, 0x89, 0x0f});
+    P.Contract.Frame->Begin = -128;
+    P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+    for (unsigned I = 0; I != Loads; ++I)
+      P.append({0x8b, 0x07}); // MOV EAX,[RDI].
+    P.append({0xc3});
+    return P;
+  };
+  const auto Short = Make(1).check();
+  ASSERT_TRUE(Short.proved()) << Short.Proof.Diagnostic;
+  const auto Long = Make(64);
+  LowIRIndependenceLimits Limits;
+  Limits.MaxSolverQueries = Short.Proof.SolverQueries;
+  const auto Good = Long.check(Limits);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.Instructions, 69U);
+  EXPECT_EQ(Good.Certificate->Instructions.size(), 69U);
+  EXPECT_EQ(Good.Proof.SolverQueries, Short.Proof.SolverQueries);
+  ASSERT_GT(Limits.MaxSolverQueries, 0U);
+  --Limits.MaxSolverQueries;
+  expectRefusal(Long, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ReusedFrameProofDoesNotHideAChangedOutOfFrameAddress) {
+  // The first aligned store is RSP-63; adding 128 puts the second outside
+  // the frame under the same path predicate.
+  Program P({0x48, 0x8d, 0x54, 0x24, 0xbf, 0x80, 0xe2, 0xf0,
+             0x48, 0x8d, 0x7a, 9,    0x89, 0x0f, 0x48, 0x81,
+             0xc7, 0x80, 0,    0,    0,    0x89, 0x0f, 0xc3});
+  P.Contract.Frame->Begin = -128;
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+  expectRefusal(P, Status::Unsupported);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     ReusedFrameProofKeepsDistinctIncomingPredicates) {
+  // Form one aligned pointer, then branch on the entry stack's low bits.
+  // The residue-8 fallthrough stores and returns before the pending taken
+  // path, whose same address still has several possible frame offsets.
+  Program P({0x48, 0x8d, 0x54, 0x24, 0xbf, 0x80, 0xe2, 0xf0,
+             0x48, 0x8d, 0x7a, 9,    0x48, 0x89, 0xe0, 0x83,
+             0xe0, 15,   0x83, 0xf8, 8,    0x75, 32});
+  for (unsigned I = 0; I != 32; ++I)
+    P.append({0x90});
+  P.append({0x89, 0x0f, 0xc3});
+  P.Contract.Frame->Begin = -128;
+  const auto R = P.check();
+  EXPECT_EQ(R.Proof.Status, Status::Unsupported) << R.Proof.Diagnostic;
+  EXPECT_EQ(R.Proof.Paths, 1U);
+  EXPECT_FALSE(R.proved());
+  EXPECT_FALSE(R.Certificate);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      StraightLineCertificateOwnsExactBytesAndFallbackMetadata) {
   // mov eax,7; ret. The optional memory-call route declines both instructions.
   Program P({0xb8, 7, 0, 0, 0, 0xc3});

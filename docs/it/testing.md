@@ -210,6 +210,8 @@ I test coprono tutte le combinazioni dei flag scalari iniziali, maschere di priv
 
 `FrameOffsets.*`, `NativeStackSpecialization.*` e `OriginalBinaryUndefinedIndependence.*` verificano tutti i resti degli allineamenti 2/4/8/16/32, bit alti liberi, salvataggi fra chiamate, cicli di conto alla rovescia, corruzione tramite alias, selezioni errate, grandi maschere irrilevanti, ampliamenti necessari e budget esatti o inferiori di uno. Controlli nativi separati verificano allineamento condizionato, pulizia interna senza segno, pulizia errata e ritorni con prefissi. Questi test non stabiliscono la copertura automatica native-to-LLVM dei cicli partizionati.
 
+Le regressioni native coprono 64 letture allineate con il budget di una lettura, budget inferiore di uno, indirizzi modificati fuori frame e lo stesso indirizzo con predicati diversi dopo il ritorno di un percorso. Restano richiesti i test di mutazione di stato, chiavi e capacità.
+
 Le regressioni di fattibilità ripetuta mantengono tutte le 130 istruzioni native con il budget di query di due istruzioni lineari. Rifiutano budget di query/istruzioni inferiori di uno, trap raggiungibili dopo modifiche a rami o domini d’ingresso, esaurimento delle porte del solver e stati candidati modificati.
 
 Le regressioni coprono 558 combinazioni di larghezza, allineamento, residuo e bias con un budget di porte insufficiente per sottrarre radici complete. Verificano porzioni con sorgenti/bias diversi, maschere sparse non vincolate, riporti e overflow modulari, maschere annidate ed esaurimento di nodi/query. I test nativi verificano store tramite puntatori parzialmente allineati e rifiutano allineamento assente, accessi fuori frame e valori memorizzati alterati nel raffinamento completo.
