@@ -238,7 +238,7 @@ class Executor {
     return Value;
   }
 
-  Ref normalizeDecision(Ref Root) {
+  Ref normalizeValue(Ref Root) {
     llvm::SmallVector<std::pair<Ref, bool>, 64> Pending;
     Work.spend();
     Pending.push_back({Root, false});
@@ -287,7 +287,7 @@ class Executor {
   Evaluation decision(Ref R) {
     auto Value = fold(R);
     if (!C.isConst(Value))
-      Value = normalizeDecision(Value);
+      Value = normalizeValue(Value);
     checkNodes();
     if (C.isConst(Value))
       return {Value, {}};
@@ -316,6 +316,17 @@ public:
     auto Equality = C.mkEq(A, B);
     checkNodes();
     auto K = constantWindow(Equality, 0, 1);
+    if (K)
+      return K->isOne();
+    // Try exact identity and the bounded equality query before normalizing
+    // data. Rebuild only the demanded return DAGs; every source operation
+    // and definedness/control obligation has already executed below.
+    auto Left = normalizeValue(A), Right = normalizeValue(B);
+    if (Left == Right)
+      return true;
+    auto NormalizedEquality = C.mkEq(Left, Right);
+    checkNodes();
+    K = constantWindow(NormalizedEquality, 0, 1);
     return K && K->isOne();
   }
 
@@ -329,7 +340,7 @@ public:
   }
 
   Evaluation run(const LLVMScalarFunctionModel &Model,
-                 llvm::ArrayRef<Ref> Arguments, bool CompareReturn = true) {
+                 llvm::ArrayRef<Ref> Arguments) {
     sym::SymState State(C);
     sym::SymExec Exec(C, State);
     for (unsigned N = 0; N < Arguments.size(); ++N) {
@@ -358,18 +369,12 @@ public:
         checkNodes();
         if (Step == sym::StepResult::Unmodelled || Exec.unmodelledCount())
           throw Failure{Status::Unsupported, "unmodeled scalar operation"};
-        if (Step == sym::StepResult::Continue) {
-          // A reflexive query needs no normalized data return. Its control
-          // and definedness are still folded on demand below, after executing
-          // every operation and checking the same node/input ceilings.
-          if (CompareReturn && (O.Output.isReg() || O.Output.isTemp())) {
-            auto V = fold(Exec.operandValue(O.Output));
-            State.write(O.Output.isReg() ? sym::SymSpace::Register
-                                         : sym::SymSpace::Temporary,
-                        O.Output.Offset, V);
-          }
+        // Keep symbolic intermediate values intact. Eagerly trying to fold
+        // every write repeatedly walks growing data DAGs, including values
+        // that cannot affect an observation. Control, definedness and final
+        // equality normalize their demanded values within this same budget.
+        if (Step == sym::StepResult::Continue)
           continue;
-        }
         if (Step == sym::StepResult::Return) {
           auto Definedness = decision(State.read(
               sym::SymSpace::Register, LLVMInterpreterDefinednessOffset, 1));
@@ -379,8 +384,7 @@ public:
           if (!K->isZero())
             throw Failure{Status::Unproved,
                           "executed source operation is not defined"};
-          auto Value =
-              CompareReturn ? fold(Exec.branchTarget()) : Exec.branchTarget();
+          auto Value = Exec.branchTarget();
           checkNodes();
           return {Value, {}};
         }
@@ -485,7 +489,7 @@ checkLLVMScalarEquivalence(const llvm::Function &Original,
                            Context.mkConst(Value)));
         }
         Executor Exec(Context, Work, Limits, Inputs);
-        auto L = Exec.run(*Left, Args, Right.has_value());
+        auto L = Exec.run(*Left, Args);
         Evaluation R;
         if (L.Needed.empty())
           R = Right ? Exec.run(*Right, Args) : Evaluation{L.Value, {}};

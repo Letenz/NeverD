@@ -1559,4 +1559,53 @@ TEST(LLVMCIntrinsicSemantics, X87OperandsShareOverlappingImageByteArray) {
 #endif
 }
 
+TEST(LLVMCIntrinsicSemantics, AssumeEvaluatesItsConditionAndRefusesBundles) {
+  for (bool Bundle : {false, true}) {
+    llvm::LLVMContext Context;
+    llvm::Module M("assume-condition", Context);
+    M.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> B(Context);
+    auto *Pointer = B.getPtrTy();
+    auto *Predicate = llvm::Function::Create(
+        llvm::FunctionType::get(B.getInt1Ty(), {B.getInt32Ty(), Pointer},
+                                false),
+        llvm::GlobalValue::ExternalLinkage, "predicate", M);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Predicate));
+    auto *Count = B.CreateLoad(B.getInt32Ty(), Predicate->getArg(1));
+    B.CreateStore(B.CreateAdd(Count, B.getInt32(1)), Predicate->getArg(1));
+    B.CreateRet(B.CreateICmpULT(Predicate->getArg(0), B.getInt32(16)));
+    auto *F = llvm::Function::Create(
+        llvm::FunctionType::get(B.getInt32Ty(), {B.getInt32Ty(), Pointer},
+                                false),
+        llvm::GlobalValue::ExternalLinkage, "assuming", M);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+    auto *Condition = B.CreateCall(Predicate, {F->getArg(0), F->getArg(1)});
+    if (Bundle)
+      B.CreateAssumption({llvm::OperandBundleDef("nonnull", F->getArg(1))});
+    else
+      B.CreateAssumption(Condition);
+    B.CreateRet(B.CreateAdd(F->getArg(0), B.getInt32(9)));
+    if (Bundle) {
+      std::string Text;
+      llvm::raw_string_ostream OS(Text);
+      EXPECT_THROW(LLVMCEmitter().emit(M, OS, {}), std::runtime_error);
+      continue;
+    }
+    const auto Text = emit(M);
+    EXPECT_NE(Text.find("__builtin_unreachable()"), std::string::npos) << Text;
+    EXPECT_EQ(Text.find("llvm_x2E_assume"), std::string::npos) << Text;
+    const auto Program =
+        "#include <stdint.h>\n#include <stdbool.h>\n" + Text + R"(
+int main(void) {
+ uint32_t calls=0;
+ for (uint32_t x=0;x<16;++x)
+   if (assuming(x,&calls)!=x+9 || calls!=x+1) return 1;
+ return 0;
+}
+)";
+    for (const char *Level : {"-O0", "-O2"})
+      compileAndCheck(Program, false, {}, Level, true);
+  }
+}
+
 } // namespace

@@ -129,6 +129,8 @@ add_neverd_unittest(NeverDX64IntegerTests
   X64PauseTests.cpp
   X64PushFlagsTests.cpp
   X64PopFlagsTests.cpp
+  X64StatusFlagsTests.cpp
+  X64DoubleShiftTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
@@ -186,6 +188,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
+  AndroidFileTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
   AndroidFinalizerTests.cpp

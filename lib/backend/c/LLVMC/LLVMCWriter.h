@@ -469,10 +469,10 @@ public:
   std::optional<FunctionSym> debugCallee(const llvm::CallBase &Call) const;
   bool looksLikeHiddenSretOperand(const llvm::Value *Arg) const;
   std::string printedCalleeName(const llvm::CallBase &Call) const;
-  /// ATL ctor/dtor that returns `this` and whose result is unread. A store into
-  /// an alloca that nothing loads does not count. Print the call as a statement
-  /// in a non-void function too.
-  bool unreadAtlThisReturn(const llvm::CallBase &Call) const;
+  /// MSVC ctor/dtor that returns `this` and whose result is unread. A store
+  /// into an alloca that nothing loads does not count. Print the call as a
+  /// statement in a non-void function too.
+  bool unreadMsvcThisReturn(const llvm::CallBase &Call) const;
   unsigned printedCallArgLimit(const llvm::CallBase &Call,
                                llvm::StringRef CalleeName) const;
   bool isTrailingLiveInCopy(const llvm::Value *V) const;

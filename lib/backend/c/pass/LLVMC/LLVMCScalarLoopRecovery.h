@@ -8,7 +8,7 @@
 #ifndef NEVERD_LLVMCSCALARLOOPRECOVERY_H
 #define NEVERD_LLVMCSCALARLOOPRECOVERY_H
 
-#include "neverd/analysis/LLVMScalarLoopRecovery.h"
+#include "neverd/analysis/LLVMScalarSourceRecovery.h"
 
 namespace neverd::llvmc {
 
@@ -17,7 +17,7 @@ namespace neverd::llvmc {
 /// exhausted functions retain their complete original bodies.
 unsigned
 recoverScalarLoops(llvm::Module &Module, const llvm::Function *Only = nullptr,
-                   const analysis::LLVMScalarLoopRecoveryLimits &Limits = {});
+                   const analysis::LLVMScalarSourceRecoveryLimits &Limits = {});
 
 } // namespace neverd::llvmc
 #endif

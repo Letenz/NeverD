@@ -1,0 +1,8 @@
+//===- X64DoubleShiftInstructions.def - Scalar double-precision shifts
+//-----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_X64_DOUBLE_SHIFT_INSTRUCTION(SHLD)
+NEVERD_X64_DOUBLE_SHIFT_INSTRUCTION(SHRD)

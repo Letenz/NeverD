@@ -15,7 +15,7 @@
 #ifndef NEVERD_LIB_BACKEND_C_CIDENTIFIER_H
 #define NEVERD_LIB_BACKEND_C_CIDENTIFIER_H
 
-#include "neverd/backend/c/MsvcAtlCallee.h"
+#include "neverd/backend/c/MsvcCallee.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -115,7 +115,7 @@ inline std::string msvcTemplateSpecialMemberStem(llvm::StringRef Raw) {
   Raw = stripImportSymbolPrefix(Raw);
   if (!Raw.consume_front("??") || Raw.empty())
     return {};
-  const char *Suffix = msvcAtlSpecialMemberStem(Raw.front());
+  const char *Suffix = msvcSpecialMemberStem(Raw.front());
   if (!Suffix)
     return {};
   Raw = Raw.drop_front();
@@ -173,7 +173,7 @@ inline std::string msvcDecorationStem(llvm::StringRef Raw) {
   }
   const char *Suffix = nullptr;
   if (SpecialMember && !Raw.empty()) {
-    Suffix = msvcAtlSpecialMemberStem(Raw.front());
+    Suffix = msvcSpecialMemberStem(Raw.front());
     if (Suffix)
       Raw = Raw.drop_front();
   }

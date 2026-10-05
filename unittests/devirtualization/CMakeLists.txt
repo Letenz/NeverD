@@ -70,12 +70,46 @@ add_neverd_unittest(NeverDLLVMScalarEquivalenceTests
   LLVMScalarAssumeTests.cpp
   LLVMScalarEquivalenceTests.cpp
   LLVMScalarDecisionTests.cpp
+  LLVMScalarDemandTests.cpp
   LLVMScalarModelTests.cpp
   LLVMScalarCompileTests.cpp
   LINK_COMPONENTS LLVMInterpreterModel
   LINK_LIBS LLVMAsmParser LLVMIRReader
 )
 target_compile_definitions(NeverDLLVMScalarEquivalenceTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
+add_neverd_unittest(NeverDLLVMScalarResultProjectionTests
+  LLVMScalarResultProjectionTests.cpp
+  LINK_COMPONENTS LLVMScalarResultProjection
+  LINK_LIBS LLVMAsmParser LLVMIRReader
+)
+target_compile_definitions(NeverDLLVMScalarResultProjectionTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
+add_neverd_unittest(NeverDLLVMScalarStateProjectionTests
+  LLVMScalarStateProjectionTests.cpp
+  LINK_COMPONENTS LLVMScalarStateProjection
+  LINK_LIBS LLVMAsmParser LLVMIRReader
+)
+target_compile_definitions(NeverDLLVMScalarStateProjectionTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
+add_neverd_unittest(NeverDLLVMScalarInputProjectionTests
+  LLVMScalarInputProjectionTests.cpp
+  LINK_COMPONENTS LLVMScalarInputProjection
+  LINK_LIBS LLVMAsmParser LLVMIRReader LLVMTransformUtils
+)
+target_compile_definitions(NeverDLLVMScalarInputProjectionTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"
   NEVERD_BINARY="$<TARGET_FILE:neverd>"
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
@@ -142,6 +176,7 @@ add_dependencies(NeverDInterpreterMachineStateTests neverd)
 
 add_neverd_unittest(NeverDLLVMScalarLoopRecoveryTests
   LLVMScalarLoopRecoveryTests.cpp
+  LLVMScalarSourceRecoveryTests.cpp
   LLVMScalarLoopMaskTests.cpp
   LINK_COMPONENTS LLVMScalarLoopRecovery
   LINK_LIBS LLVMAsmParser LLVMIRReader

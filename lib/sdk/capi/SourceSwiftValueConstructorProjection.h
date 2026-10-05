@@ -6,6 +6,7 @@
 #include "ObjCNativeDependencies.h"
 #include "ObjCSourceBindings.h"
 #include "SourceExpressionIdentity.h"
+#include "SourceReceiptOccurrences.h"
 
 #include "neverd/ir/high/MedToHigh.h"
 
@@ -240,36 +241,8 @@ inline bool sameBody(const HighFunc &E, const HighFunc &A,
 }
 inline std::optional<std::set<SourceCallOccurrenceKey>>
 occurrences(const HighFunc &F) {
-  std::set<SourceCallOccurrenceKey> Sites;
-  size_t Budget = 100000;
-  bool Invalid = false;
-  // The shared bounded structural walk below also rejects exception clauses.
-  const auto Walk = [&](const ExprPtr &E, const ExprPtr &) {
-    std::vector<ExprPtr> Pending{E};
-    while (!Pending.empty() && Budget) {
-      --Budget;
-      auto V = Pending.back();
-      Pending.pop_back();
-      if (!V)
-        continue;
-      if (V->SourceCallHint && V->SourceCallHint->SwiftValueConstructor) {
-        const auto &R = *V->SourceCallHint->SwiftValueConstructor;
-        Invalid |= V->Kind != ExprKind::Call || V->IsIndirectCall ||
-                   V->IndirectTarget || R.FunctionEntry != F.Entry ||
-                   !Sites.insert(R.Site).second;
-      }
-      V->forEachChildExpr([&](const ExprPtr &C) {
-        if (Pending.size() >= Budget)
-          Budget = 0;
-        else
-          Pending.push_back(C);
-      });
-    }
-    return Budget != 0;
-  };
-  if (!sameStructuredSourceBody(F, F, Walk, Budget) || Invalid)
-    return std::nullopt;
-  return Sites;
+  return ordinarySourceReceiptOccurrences(
+      F, &SourceCallTypeHint::SwiftValueConstructor);
 }
 } // namespace swift_value_constructor_detail
 

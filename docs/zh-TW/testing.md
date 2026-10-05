@@ -95,9 +95,13 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `LLVMScalarDecision.*` 涵蓋深層精確位移/擴展約束、常數分支決策、兩條迴圈回邊、保留高資料位元、末端未定義操作、不終止、已檢查函式的後續修改，以及精確/少一/局部預算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 將獨立撰寫的單回邊和雙回邊遞推與無號 C oracle 在 O0/O2 下比較，共 32,768 次呼叫。這些是純量模型檢查，不代表原生 ABI 或完整二進位還原涵蓋。
 
+`LLVMScalarDemand.*` 在固定工作預算內證明不同的非線性迴圈函式本體，保留全部16個控制分區及自由高位輸入，拒絕最後分區的輸出或定義性失敗，並檢查精確/不足的工作預算及節點上限。`LLVMScalarDemandCompiled.*` 在 O0/O2 對照獨立無號算術 oracle，共執行262,144次呼叫。測試驗證查詢時機，不刪除來源操作或縮小輸入域。
+
 `SymKnownBitsTests` 以全部位元組輸入對及任意精度邊界值檢查事實，涵蓋擴展恆等關係、不回繞加法、不同來源及全定義位移語意。亦檢查精確/少一預算、快取命中計費、儲存上限、獨立上下文、深度、運算元數量與不支援的位寬。`SymExprExtensionTests` 檢查常數高位元與完整位移計數。純量等價回歸在證明值域約束時保留符號資料，拒絕最後分區差異及已執行的 poison，並以精確/少一預算核驗完整證明計費。 `SymMBAExtensionTests` 在關閉取樣驗證時要求推導證據，檢查全部位元組輸入對，並保留有號、窄進位、位元反相及工作量耗盡的邊界。
 
 `NeverDLLVMScalarLoopRecoveryTests` 涵蓋前綴與前驅攜帶值重構、零次迴圈分支、自回邊迴圈判斷前移、仿射狀態、回繞時的等式退路、額外更新的 poison、高位元資料差異及不支援的輸入契約。精確／少一累計預算檢查原子拒絕；獨立算術 oracle 在 O0/O2 執行原始與恢復 LLVM，涵蓋全部位元組控制輸入。這些測試不代表原生 ABI 恢復或預設短 C 輸出已完成。
+
+同一測試目標也涵蓋 `recoverLLVMScalarSource`：搜尋前準備、僅清理而無迴圈變換、全位寬未使用狀態、死碼中的溢位/精確位移/除法及 assume 義務、不支援的副作用、精確/少一累計預算與有界繼續。獨立算術 oracle 在 O0/O2 執行原始與準備後的 LLVM，涵蓋所有位元組控制值及確定性全位寬狀態。成功或拒絕都必須保持來源函式及其父模組不變。
 
 遮罩回歸涵蓋交換運算元、零欄位、保留輸入高位元、完整資料證明失敗後的替代值、所有回邊、回繞／溢位拒絕、超過32項的批次，以及精確／少一預算下的原子拒絕。獨立 LLVM 與產生 C 的算術預期在 O0/O2 下檢查其與位寬恢復的組合。自等價回歸保留完整控制域、poison/undef 與不支援約束的拒絕、非終止、局部上限和精確／少一工作計費；修改同一函式後，舊結果不再有效。這些仍是純量 LLVM 覆蓋，不是原生 ABI 認證。
 
@@ -119,6 +123,12 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `LLVMScalarAssume*` 檢查完整迴圈域、最後分區失敗、不可達與已到達的假條件、全部位元組輸入上的累積定義性、精確/少一預算、IR 修改及不支援的呼叫契約。四個目標 triple 驗證共享建模；8,192 次 O0/O2 呼叫對照獨立無號 oracle。狀態模型測試另行檢查相同義務及運算元 bundle 拒絕。
 
+`LLVMScalarProjection.*` 涵蓋巢狀欄位、位元視窗、未使用參數保留、多個回傳、回邊、未選取運算的溢位/位移/assume 義務、最後分區失敗、不終止、未知契約、輸入修改及精確/少一預算。四種目標三元組驗證共用語意。`LLVMScalarProjectionCompiled.*` 透過 LLVM 陣列橋接原始聚合，與投影視窗及獨立無號算術在 O0/O2 下對照。`SymExpr.RightShift*` 窮舉位元組對，檢查符號延伸、進位、保留高位元、完整計數與有界探索。
+
+`LLVMScalarInputs.*` 檢查有序混合位寬映射、零參數與無名介面、死算術及 assume 的輸入需求、輸出突變、未知契約、包裝拒絕，以及精確/不足的累計預算。證明測試恢復完整原始簽名，不固定省略輸入。`LLVMScalarInputsCompiled.*` 在 O0/O2 執行原始及精簡循環介面，對照獨立無號 oracle，並改變所有省略參數。
+
+`NeverDLLVMScalarStateProjectionTests` 涵蓋重疊與非對齊視窗、8/16/32/64 位元單元、迴圈、入口遮罩、來源修改、狀態範圍、保留 poison、外部記憶體拒絕及精確/少一預算。原記憶體函式與 LLVM 聚合橋在 O0/O2 下對獨立位元組/算術 oracle 執行 172,032 次比較；純量證明另行檢查。`SymKnownBits.*` 窮舉位元組對並檢查 128 位元、不同因子、放寬遮罩、回繞加總及預算邊界。`LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` 驗證 O0/O2 條件單次求值與 bundle 拒絕。
+
 迴圈中繼資料回歸測試在全部控制分區及精確/少一預算下，比較計數迴圈與獨立公式。過大或為零的剝離歷史計數不能掩蓋錯誤結果、不終止或 poison。透過 API 建立的畸形中繼資料單獨驗證匯入器的拒絕行為，避免與 LLVM 組合語言解析混淆；機器狀態測試保留狀態副作用及輸入限制。
 
 初始化契約回歸涵蓋部分及分離的位元組範圍、固定別名、兩個分支、每個返回點、迴圈首輪讀取與迴圈內先寫後讀。先讀後寫、漏寫、客體寫入、未知別名、特殊記憶體存取、物件外範圍，以及輸入／工作預算耗盡，都必須失敗。獨立的僅輸出狀態字 C 案例在 O1/O2 編譯後保留精確 LLVM 屬性，並通過全新的原生到 LLVM 組合證明。
@@ -134,6 +144,12 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -993,6 +1009,10 @@ python3 scripts/benchmark_mobile_references.py \
 
 `SymSimplifyFinite.*` 涵蓋 8 至 512 位元的完整兩值域片段、共用用途下的收益計算、所有支援且可能產生 poison 的註記、獨立 volatile 讀取與 freeze、明確的 undef/poison、深層迭代走訪、預算及混淆標記。原始與簡化後的 IR 在 O0/O2 下執行，針對所有位元組輸入和隨機全寬輸入與獨立判定程式比較。轉譯物件測試要求不同有限值預算具有不同快取識別。
 
+合併值域測試涵蓋 8–512 位元巢狀選擇、菱形 PHI 與複製循環；衝突回邊、未定義條件、無來源分量、獨立 PHI/freeze 觀測及帶標記產生節點的保留；以及精確的節點、邊與工作量邊界。O0/O2 執行 oracle 窮盡所有位元組輸入對，並改變完整位寬的運算元，驗證選擇、匯合及有界狀態循環。
+
+兩值測試亦涵蓋 8–512 位元巢狀合取遮罩、運算元交換、OR/undef 拒絕、有界深層發現、獨立工作計費與混淆標記策略，以及首次改寫的精確預算邊界。執行 oracle 窮盡所有位元組輸入對，並改變無關的 64 位元資料，在 O0/O2 對照原始與化簡 IR。
+
 `SymSimplifyPredicates.*` 窮舉四位元偏移、符號和輸入，檢查布林區間組合與不連續集合，並在 O0/O2 執行獨立的位元組及全寬 oracle。涵蓋 poison 註記、合流點隱藏的未定義輸入、獨立讀取/freeze、保留的迴圈 PHI、共享用途收益、累計預算、高扇出、遞迴上限和混淆標記。轉譯物件測試要求兩種快取鍵都區分條件分析預算。
 
 `SymExpr.*` 以四位元輸入與遮罩的窮舉檢查非低位常數窗口，並涵蓋寬承載、巢狀結構操作、已知與未知位元組混合重組及算術進位反例。預算回歸將寬節點放在遞迴邊界，並拒絕複製超出預算的寬常數。未知窗口必須維持符號形式，且不得擴展運算式 DAG。 `SymState.*` 也在兩種位元組序下區分純量推導常數與區域字面常數，確保不增加 DAG 節點、不改變完整儲存值。
@@ -1113,11 +1133,15 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 959 項 CPU 檢查及 17 項 SEH 回歸，共有 1200 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `959 CPU + 224 WHP + 17 SEH = 1200`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 1126 項 CPU 檢查及 17 項 SEH 回歸，共有 1367 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `1126 CPU + 224 WHP + 17 SEH = 1367`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
 `X64PopFlagsTests.cpp` 檢查兩種權限及 `driver-strict`：全部 256 種允許的旗標輸入與兩種初態、九種編碼、全部 64 個輸入位元、唯讀和可執行別名、跨頁錯誤與修復、觀察器中止及失敗、裝置堆疊拒絕和後續原生指令邊界。`X64PopFlagsOracle` 在 x64 主機獨立執行原始指令，核驗 CPL3/IOPL0 和精確堆疊消耗。`driver_resource_flags.def` 使原 WDK 資源驅動透過兩種運算元寬度設定、清除並還原旗標。測試保留完整整數、控制、x87、SSE 狀態，不代表支援客體 TF/NT/AC/ID 或已有 ARM64 原生執行證據。
+
+`X64StatusFlagsTests.cpp` 檢查 `CLC/STC/CMC`、`LAHF/SAHF`、全部 256 個 AH 輸入及已接納的旗標組合、所有 REX 前綴、完整 CPU 狀態、記憶體不變性、觀察器停止或錯誤、儲存上下文和原生 ADC/儲存續行。無效 LOCK 編碼無副作用拒絕。獨立主機指令判據在驗證 CPUID 支援後檢查 24 組前綴。原有 WDK 資源驅動涵蓋全部五條指令，新增 22 項原生必測結果；不可用的主機或 ISA 組合明確跳過。 可攜式 Unicorn 設定執行相同的七項案例；相依項的直接測試涵蓋 16/32/64 位元 AH 與 LOCK 行為、明確指定的 REX 暫存器，以及長模式缺少特性時的拒絕。
+
+`X64DoubleShiftTests.cpp` 涵蓋全部已接納的 imm8/CL 計數、重疊與擴充暫存器、已定義旗標、精確的跨頁 RAM 觀察、取消、權限/未映射/裝置故障、LOCK 與未定義計數拒絕、上下文及原生 ADC 續行。獨立主機判據檢查 5,184 次原始執行，12 個原有 WDK 驅動探針涵蓋暫存器與 RAM 形式。原生檢查新增 145 項必測結果。
 
 `DriverSIMDSEHTests.cpp` 以四種受支援的處置及一次 x87 修改拒絕、兩種原生執行契約、一般/CFG WDK 映像及兩個載入位址執行八類原始 SSE 故障。十項後端專屬結果與三項純核心 SSE 記錄檢查均為必測。`driver_seh_simd.def` 統一定義樣例與模式；非同步展開表涵蓋故障輔助函式。微軟核心 10.0.26100.9549 提供獨立分類與還原依據：隔離執行了 107,744 組指令路徑分類及 8,192 組還原。這不代表已在完整 Windows 核心中執行驅動程式；ARM64 原生 KVM/WHP 仍未驗證。
 

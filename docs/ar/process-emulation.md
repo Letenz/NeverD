@@ -95,6 +95,26 @@ output = bytes.fromhex(report["stdout_hex"])
 
 تتشارك `clock_gettime` و`gettimeofday` واستدعاء `time` على x64 هذه المدخلات. تؤدي القيم المفقودة والساعات الديناميكية والكتابات الجزئية غير الممثلة إلى توقف صريح، مع الاحتفاظ بالكتابات المكتملة. لا تُحاكى تعديلات الوقت أو النوم أو ساعات الأجهزة الفعلية. يوضّح [عقد الساعات الكامل](../process-emulation.md#explicit-guest-clocks) ترتيب الكتابة والأخطاء ودلالات المؤشرات.
 
+<a id="explicit-memory-files"></a>
+
+<!-- i18n-section: linux-files -->
+
+## ملفات صريحة في الذاكرة
+
+يوفر `linux_files` دليلاً مغلقاً لملفات ثابتة في Linux ELF64 وAndroid. المصفوفة `files` مطلوبة ويمكن أن تكون فارغة؛ يحتوي كل عنصر فقط على المسار المطلق القانوني `path` والبايتات `bytes_hex`. لا تُقرأ ملفات المضيف أو محتويات `/proc` الضمنية. من دون الخيار تبقى خدمات الملفات غير ممثلة؛ ويعيد المسار الغائب `ENOENT`.
+
+```json
+{"linux_files":{"files":[
+  {"path":"/fixture/data","bytes_hex":"00ff410a805a"}],
+  "descriptor_limit":256}}
+```
+
+لكل فتح موضع مستقل، وتشترك Bionic و`syscall` والمصائد وخيوط الضيف في الواصفات. يسمح الإغلاق بإعادة استخدام أصغر رقم متاح. يُدعم `open/openat` للقراءة فقط و`read/close` و`lseek` العادي مع `O_CLOEXEC` و`O_LARGEFILE` الخاص بالمعمارية. يحول Bionic وحده errno. يحتفظ فشل القراءة بالبادئة المنسوخة. لا يوجد محتوى افتراضي لـ stdin؛ وتبقى المسارات النسبية والأدلة والكتابة والروابط غير مدعومة.
+
+C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
+
+يمكن أن تبدأ قراءة بطول صفر عند حد فضاء عناوين المستخدم. بعد التحقق من نطاق العناوين الأصلي، إذا تجاوز مجموع موضع الملف وطول الطلب الأصلي `INT64_MAX`، تُعاد `EINVAL` حتى عند EOF، ولا يتغير موضع القراءة.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## ملف Windows PE64

@@ -127,6 +127,14 @@ struct SymPredicateSimplifyResult {
   bool WorkLimitExceeded = false;
 };
 
+/// Derivation work for exact two-valued integer slices alone. Completed
+/// rewrites retain their anchor and all of its original definedness behavior.
+struct SymFiniteValueSimplifyResult {
+  unsigned Rewrites = 0;
+  size_t Work = 0;
+  bool WorkLimitExceeded = false;
+};
+
 /// What a rewrite has to be worth before it is made.
 ///
 /// The defaults are the policy the optimization pipeline wants: an expression
@@ -224,6 +232,13 @@ struct SymSimplifyPass : public llvm::PassInfoMixin<SymSimplifyPass> {
   /// disposition without combining unlike work counters.
   static SymSimplifyResult simplifyWithResult(llvm::Function &F,
                                               SymSimplifyOptions Opts = {});
+
+  /// Run only the exact two-valued phase, with the same input, poison,
+  /// profitability and obfuscation-stamp policy as the full pass. No MBA
+  /// synthesis or solver queries run. MaxFiniteValueWork == 0 disables it;
+  /// incomplete slices stay unchanged and only completed rewrites count.
+  static SymFiniteValueSimplifyResult
+  simplifyFiniteValues(llvm::Function &F, SymSimplifyOptions Opts = {});
 
   /// Run only the existing exact modular predicate phase. This entry shares
   /// its poison/input, profitability and obfuscation-stamp policy with the

@@ -15,7 +15,7 @@
 #include "LLVMCWriter.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
-#include "neverd/backend/c/MsvcAtlCallee.h"
+#include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/libc/LibCNames.h"
@@ -588,8 +588,8 @@ bool LLVMCWriter::sameSlotDestructorBetween(
     const auto *Other = llvm::dyn_cast<llvm::CallBase>(&I);
     if (!Other || Other == &Call)
       return false;
-    const MsvcAtlCallee *Atl = msvcAtlCallee(printedCalleeName(*Other));
-    if (!Atl || Atl->Kind != MsvcAtlCalleeKind::Dtor)
+    const MsvcCallee *Msvc = msvcCallee(printedCalleeName(*Other));
+    if (!Msvc || Msvc->Kind != MsvcCalleeKind::Dtor)
       return false;
     llvm::SmallVector<SlotMention, 2> DtorSlots;
     llvm::SmallPtrSet<const llvm::Value *, 8> DtorSeen;
@@ -668,8 +668,8 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
       const std::string Name = printedCalleeName(*Call);
       if (isMsvcCxxThrowCallName(Name))
         continue;
-      if (const MsvcAtlCallee *Atl = msvcAtlCallee(Name))
-        if (Atl->Kind == MsvcAtlCalleeKind::Ctor)
+      if (const MsvcCallee *Msvc = msvcCallee(Name))
+        if (Msvc->Kind == MsvcCalleeKind::Ctor)
           continue;
 
       llvm::SmallPtrSet<const llvm::Instruction *, 32> Seen;
@@ -2620,11 +2620,11 @@ bool LLVMCWriter::isResultParamValue(const llvm::Value *V) const {
 unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
                                           llvm::StringRef CalleeName) const {
   const unsigned Have = Call.arg_size();
-  const MsvcAtlCallee *Atl = msvcAtlCallee(CalleeName);
+  const MsvcCallee *Msvc = msvcCallee(CalleeName);
   auto Clamp = [&](size_t Limit) {
     return static_cast<unsigned>(std::min(Limit, static_cast<size_t>(Have)));
   };
-  if (Atl && Atl->Kind == MsvcAtlCalleeKind::Format && Have >= 2) {
+  if (Msvc && Msvc->Kind == MsvcCalleeKind::Format && Have >= 2) {
     if (auto VA = imageDataVA(Call.getArgOperand(1))) {
       if (auto Lit = imageStringLiteral(Img, *VA, /*AllowEmpty=*/false)) {
         llvm::StringRef Body = *Lit;
@@ -2671,7 +2671,7 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
     // Copy/string ctors pass the source as an integer address (`lea rdx`).
     // That is not an LLVM pointer and not a constant, so CtorDrop was
     // treating `&name` / the name/value join as a leftover clobber.
-    if (Atl && Atl->Kind == MsvcAtlCalleeKind::Ctor && I == 1) {
+    if (Msvc && Msvc->Kind == MsvcCalleeKind::Ctor && I == 1) {
       std::set<const llvm::Value *> Seen;
       auto addressShaped = [&](auto &&self, const llvm::Value *V,
                                int Depth) -> bool {
@@ -2707,7 +2707,7 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
     // A pointer-encoded class return may be a real RAX pointer rather than
     // an indirect result. With no debug parameters, live integer machine
     // arguments do not establish a hidden result address.
-    if (Have != 0 && !Atl && FS->Params.empty() &&
+    if (Have != 0 && !Msvc && FS->Params.empty() &&
         isMsvcPointerEncodedClassReturn(FS->ReturnType) &&
         !looksLikeHiddenSretOperand(Call.getArgOperand(0)))
       return 0;
@@ -2721,17 +2721,17 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
       Limit = FS->Params.size() + 1;
     else
       Limit = FS->Params.size();
-    if (Limit == 0 && Atl && Atl->Kind == MsvcAtlCalleeKind::Dtor)
-      Limit = Atl->MaxArgs;
+    if (Limit == 0 && Msvc && Msvc->Kind == MsvcCalleeKind::Dtor)
+      Limit = Msvc->MaxArgs;
     if (Limit > 0) {
-      if (Atl && Atl->ArityKind == MsvcAtlArityKind::Keep)
+      if (Msvc && Msvc->ArityKind == MsvcArityKind::Keep)
         return Have;
       // Ctor overloads share one C stem. Keep recovered wchar/copy extras
-      // the same way ATL CtorDrop does; do not cap them to a 1-param
+      // the same way MSVC CtorDrop does; do not cap them to a 1-param
       // default-ctor FunctionSym.
-      if (Atl && Atl->ArityKind == MsvcAtlArityKind::CtorDrop)
+      if (Msvc && Msvc->ArityKind == MsvcArityKind::CtorDrop)
         return static_cast<unsigned>(
-            msvcAtlPrintedArgLimit(*Atl, Have, UnknownAt, KeepExtra));
+            msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra));
       if (Indirect && Member) {
         const unsigned SretIdx = 1;
         if (SretIdx < Have &&
@@ -2739,14 +2739,14 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
           --Limit;
       }
       const unsigned Clamped = Clamp(Limit);
-      if (Atl && Atl->ArityKind == MsvcAtlArityKind::Fixed)
-        return std::min(Clamped, Atl->MaxArgs);
+      if (Msvc && Msvc->ArityKind == MsvcArityKind::Fixed)
+        return std::min(Clamped, Msvc->MaxArgs);
       return Clamped;
     }
   }
-  if (Atl)
+  if (Msvc)
     return static_cast<unsigned>(
-        msvcAtlPrintedArgLimit(*Atl, Have, UnknownAt, KeepExtra));
+        msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra));
   if (auto Arity = libc::libcArity(CalleeName.str());
       Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
     return Clamp(static_cast<size_t>(Arity->IntArgs));
@@ -2811,10 +2811,10 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
     }
     if (Name.empty())
       return {};
-    if (const MsvcAtlCallee *Atl = msvcAtlCallee(Name)) {
-      if (Index == 0 || msvcAtlTypesCallArgAsPointer(*Atl, Index) ||
-          (Atl->Kind == MsvcAtlCalleeKind::Ctor && Index == 1)) {
-        TypeRef Ty = cDisplayType(msvcAtlSyntheticThis(Name, *Atl));
+    if (const MsvcCallee *Msvc = msvcCallee(Name)) {
+      if (Index == 0 || msvcTypesCallArgAsPointer(*Msvc, Index) ||
+          (Msvc->Kind == MsvcCalleeKind::Ctor && Index == 1)) {
+        TypeRef Ty = cDisplayType(msvcSyntheticThis(Name, *Msvc));
         if (isNamedPointerDisplay(Ty))
           return Ty;
       }
@@ -7673,8 +7673,8 @@ LLVMCWriter::sharedReturnEpilogue(const llvm::BasicBlock *Tail) {
   if (Calls != 1 || !Call)
     return nullptr;
   const std::string Name = printedCalleeName(*Call);
-  const MsvcAtlCallee *Atl = msvcAtlCallee(Name);
-  if (!Atl || Atl->Kind != MsvcAtlCalleeKind::Dtor)
+  const MsvcCallee *Msvc = msvcCallee(Name);
+  if (!Msvc || Msvc->Kind != MsvcCalleeKind::Dtor)
     return nullptr;
   unsigned Preds = 0;
   for (const llvm::BasicBlock *Pred : llvm::predecessors(Tail)) {
@@ -8152,7 +8152,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         }
         if (auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
           if (callDoesNotReturn(*CB) || !ctorThisAddress(*CB).empty() ||
-              unreadAtlThisReturn(*CB))
+              unreadMsvcThisReturn(*CB))
             continue;
         }
         if (InferredVoid) {

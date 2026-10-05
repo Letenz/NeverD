@@ -95,9 +95,13 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `LLVMScalarDecision.*` 覆盖深层精确移位/扩展约束、常量分支决策、两条循环回边、保留高数据位、末端未定义操作、不终止、已检查函数的后续修改，以及精确/少一/局部预算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 将独立编写的单回边和双回边递推与无符号 C oracle 在 O0/O2 下比较，共 32,768 次调用。这些是标量模型检查，不代表原生 ABI 或完整二进制还原覆盖。
 
+`LLVMScalarDemand.*` 在固定工作预算内证明不同的非线性循环函数体，保留全部16个控制分区及自由高位输入，拒绝最后分区的输出或定义性失败，并检查精确/不足的工作预算和节点上限。`LLVMScalarDemandCompiled.*` 在 O0/O2 对照独立无符号算术 oracle，共运行262,144次调用。测试验证查询时机，不删除源操作或缩小输入域。
+
 `SymKnownBitsTests` 以全部字节输入对和任意精度边界值检查事实，涵盖扩展恒等关系、不回绕加法、不同来源及全定义移位语义。还检查精确/少一预算、缓存命中计费、存储上限、独立上下文、深度、操作数数量与不支持的位宽。`SymExprExtensionTests` 检查常量高位及完整移位计数。标量等价回归在证明值域约束时保留符号数据，拒绝最后分区差异及已执行的 poison，并以精确/少一预算核验完整证明计费。 `SymMBAExtensionTests` 在关闭采样验证时要求推导证据，检查全部字节输入对，并保留有符号、窄进位、按位取反及工作量耗尽的边界。
 
 `NeverDLLVMScalarLoopRecoveryTests` 覆盖前缀和前驱携带值重构、零次循环分支、自回边循环判断前移、仿射状态、回绕时的等式退路、额外更新的 poison、高位数据差异及不支持的输入契约。精确/少一累计预算检查原子拒绝；独立算术 oracle 在 O0/O2 执行原始与恢复 LLVM，覆盖全部字节控制输入。这些测试不代表原生 ABI 恢复或默认短 C 输出已完成。
+
+同一测试目标还覆盖 `recoverLLVMScalarSource`：搜索前准备、仅清理而无循环变换、全位宽未使用状态、死代码中的溢出/精确移位/除法及 assume 义务、不支持的副作用、精确/少一累计预算和有界继续。独立算术 oracle 在 O0/O2 执行原始与准备后的 LLVM，覆盖所有字节控制值及确定性全位宽状态。成功或拒绝都必须保持源函数及其父模块不变。
 
 掩码回归覆盖交换操作数、零字段、保留输入高位、完整数据证明失败后的替代值、所有回边、回绕/溢出拒绝、超过32项的批次以及精确/少一预算下的原子拒绝。独立 LLVM 与生成 C 的算术预期在 O0/O2 下检查其与位宽恢复的组合。自等价回归保留完整控制域、poison/undef 与不支持约束的拒绝、非终止、局部上限和精确/少一工作计费；修改同一函数后，旧结果不再有效。这些仍是标量 LLVM 覆盖，不是原生 ABI 认证。
 
@@ -119,6 +123,12 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `LLVMScalarAssume*` 检查完整循环域、最后分区失败、不可达与已到达的假条件、全部字节输入上的累积定义性、精确/少一预算、IR 修改和不支持的调用契约。四个目标 triple 验证共享建模；8,192 次 O0/O2 调用对照独立无符号 oracle。状态模型测试另行检查相同义务及操作数 bundle 拒绝。
 
+`LLVMScalarProjection.*` 覆盖嵌套字段、位窗口、未使用参数保留、多返回、回边、未选中运算的溢出/移位/assume 义务、最后分区失败、非终止、未知契约、输入修改和精确/少一预算。四个目标三元组验证共享语义。`LLVMScalarProjectionCompiled.*` 通过 LLVM 数组桥接原始聚合，与投影窗口及独立无符号算术在 O0/O2 下对照。`SymExpr.RightShift*` 穷举字节对，检查符号扩展、进位、保留高位、完整计数及有界发现。
+
+`LLVMScalarInputs.*` 检查有序混合位宽映射、零参数及无名接口、死算术与 assume 的输入需求、输出突变、未知契约、包装拒绝，以及精确/不足的累计预算。证明测试恢复完整原始签名，不固定省略输入。`LLVMScalarInputsCompiled.*` 在 O0/O2 运行原始及精简循环接口，对照独立无符号 oracle，并改变所有省略参数。
+
+`NeverDLLVMScalarStateProjectionTests` 覆盖重叠及非对齐窗口、8/16/32/64 位单元、循环、入口掩码、源修改、状态范围、保留的 poison、外部内存拒绝及精确/少一预算。原内存函数与 LLVM 聚合桥在 O0/O2 下对独立字节/算术 oracle 执行 172,032 次比较；标量证明另行检查。`SymKnownBits.*` 穷举字节对，检查 128 位、不同因子、扩大掩码、回绕求和及预算边界。`LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` 检查 O0/O2 的条件单次求值及 bundle 显式拒绝。
+
 循环元数据回归测试在全部控制分区及精确/少一预算下，将计数循环与独立公式比较。过大或为零的剥离历史计数不能掩盖错误结果、不终止或 poison。通过 API 构造的畸形元数据单独验证导入器拒绝行为，避免与 LLVM 汇编解析混淆；机器状态测试保留状态副作用及输入限制。
 
 初始化契约回归覆盖部分及分离的字节范围、固定别名、两个分支、每个返回点、循环首轮读取和循环内先写后读。先读后写、漏写、客体写入、未知别名、特殊内存访问、对象外范围，以及输入／工作预算耗尽，都必须失败。独立的仅输出状态字 C 用例在 O1/O2 编译后保留精确 LLVM 属性，并通过全新的原生到 LLVM 组合证明。
@@ -134,6 +144,12 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
+cmake --build build-release --target NeverDLLVMScalarInputProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarInputProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
@@ -955,6 +971,10 @@ python3 scripts/benchmark_mobile_references.py \
 
 `SymSimplifyFinite.*` 覆盖 8 至 512 位的完整两值域片段、共享用途下的收益计算、所有支持的可产生 poison 的注解、独立易失读取和 freeze、显式 undef/poison、深层迭代遍历、预算及混淆标记。原始与化简后的 IR 在 O0/O2 下执行，对全部字节输入和随机全宽输入与独立判定程序比较。翻译对象测试要求不同有限值预算具有不同缓存身份。
 
+合并值域测试覆盖 8–512 位嵌套选择、菱形 PHI 和复制循环；冲突回边、未定义条件、无来源分量、独立 PHI/freeze 观测及带标记产生节点的保留；以及精确的节点、边和工作量边界。O0/O2 运行 oracle 穷尽所有字节输入对，并改变完整位宽的操作数，验证选择、汇合及有界状态循环。
+
+两值测试还覆盖 8–512 位嵌套合取掩码、操作数交换、OR/undef 拒绝、有界深层发现、独立工作计费与混淆标记策略，以及首次改写的精确预算边界。运行 oracle 穷尽所有字节输入对，并改变无关的 64 位数据，在 O0/O2 对照原始和化简 IR。
+
 `SymSimplifyPredicates.*` 穷举四位偏移、符号和输入，检查布尔区间组合与不连续集合，并在 O0/O2 运行独立的字节及全位宽 oracle。覆盖 poison 注解、合流点隐藏的未定义输入、独立读取/freeze、保留的循环 PHI、共享用途收益、累计预算、高扇出、递归上限和混淆标记。翻译对象测试要求两种缓存键都区分条件分析预算。
 
 `SymExpr.*` 用四位输入与掩码的穷举检查非低位常量窗口，并覆盖宽承载、嵌套结构操作、已知与未知字节混合重组及算术进位反例。预算回归把宽节点放在递归边界，并拒绝复制超出预算的宽常量。未知窗口必须保持符号形式，且不能扩展表达式 DAG。 `SymState.*` 还在两种端序下区分标量推导常量和区域字面常量，确保不增加 DAG 节点、不改变完整存储值。
@@ -1075,11 +1095,15 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 959 项 CPU 检查及 17 项 SEH 回归，共有 1200 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `959 CPU + 224 WHP + 17 SEH = 1200`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 1126 项 CPU 检查及 17 项 SEH 回归，共有 1367 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `1126 CPU + 224 WHP + 17 SEH = 1367`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
 `X64PopFlagsTests.cpp` 检查两种权限及 `driver-strict`：全部 256 种允许的标志输入与两种初态、九种编码、全部 64 个输入位、只读和可执行别名、跨页故障与修复、观察器中止及失败、设备栈拒绝和后续原生指令边界。`X64PopFlagsOracle` 在 x64 主机独立执行原始指令，核验 CPL3/IOPL0 和精确栈消耗。`driver_resource_flags.def` 使原 WDK 资源驱动通过两种操作数宽度设置、清除并恢复标志。测试保留完整整数、控制、x87、SSE 状态，不代表支持客体 TF/NT/AC/ID 或已有 ARM64 原生执行证据。
+
+`X64StatusFlagsTests.cpp` 检查 `CLC/STC/CMC`、`LAHF/SAHF`、全部 256 个 AH 输入及已接纳的标志组合、所有 REX 前缀、完整 CPU 状态、内存不变性、观察器停止或错误、保存上下文和原生 ADC/存储续行。无效 LOCK 编码无副作用拒绝。独立主机指令判据在验证 CPUID 支持后检查 24 组前缀。原有 WDK 资源驱动覆盖全部五条指令，新增 22 项原生必测结果；不可用的主机或 ISA 组合明确跳过。 可移植 Unicorn 配置运行相同的七项用例；依赖的直接测试覆盖 16/32/64 位 AH 与 LOCK 行为、显式 REX 寄存器，以及长模式缺少特性时的拒绝。
+
+`X64DoubleShiftTests.cpp` 覆盖全部已接纳的 imm8/CL 计数、重叠与扩展寄存器、已定义标志、准确的跨页 RAM 观察、取消、权限/未映射/设备故障、LOCK 与未定义计数拒绝、上下文及原生 ADC 续行。独立主机判据检查 5,184 次原始执行，12 个原有 WDK 驱动探针覆盖寄存器与 RAM 形式。原生门禁新增 145 项必测结果。
 
 `DriverSIMDSEHTests.cpp` 以四种受支持的处置及一次 x87 修改拒绝、两种原生执行契约、普通/CFG WDK 映像及两个加载地址运行八类原始 SSE 故障。十项后端专属结果和三项纯内核 SSE 记录检查均为必测。`driver_seh_simd.def` 统一定义样例与模式；异步展开表覆盖故障辅助函数。微软内核 10.0.26100.9549 提供独立分类与恢复依据：隔离执行了 107,744 组指令路径分类及 8,192 组恢复。这不代表已在完整 Windows 内核中执行驱动；ARM64 原生 KVM/WHP 仍未验证。
 
