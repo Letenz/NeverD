@@ -2984,8 +2984,8 @@ class LoopPlanInference {
                 Ctx.mkExtract(After, Offset + Width, Total - Offset - Width));
   }
 
-  // A zero mask denotes the existing full/zero-extended recurrence. A proper
-  // preserved lane also supplies its endpoint mask for invariant proposals.
+  // A zero mask denotes a full-width recurrence. Narrow zero-extended updates
+  // and preserved lanes supply their endpoint mask for guards and ranks.
   std::optional<uint64_t> unitStepLane(SymRef Before, SymRef After,
                                        uint16_t Bytes, bool Increment) {
     auto &Ctx = Session.Context;
@@ -2997,7 +2997,7 @@ class LoopPlanInference {
       const auto Expected = Ctx.mkZExtOrTrunc(Ctx.mkAdd(Input, Step), Total);
       checker().nodes();
       if (After == Expected)
-        return 0;
+        return Width == Total ? 0 : (UINT64_MAX >> (64 - Width));
     }
     for (unsigned Width = Total - 8; Width; Width -= 8)
       for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
@@ -4253,6 +4253,7 @@ class LoopPlanInference {
   struct Counter {
     LowIRLoopLocation Location;
     bool Complement;
+    uint64_t Mask = 0;
   };
   struct Phases {
     std::vector<std::vector<uint64_t>> Between;
@@ -4290,12 +4291,14 @@ class LoopPlanInference {
   }
 
   SymRef counterValue(TerminalState &State, const Counter &Rank) {
-    const auto Value = read(State, Rank.Location);
-    return Rank.Complement
-               ? Session.Context.mkXor(
-                     Value, Session.Context.mkConst(Rank.Location.Bytes * 8,
-                                                    ones(Rank.Location.Bytes)))
-               : Value;
+    auto &Ctx = Session.Context;
+    auto Value = read(State, Rank.Location);
+    const auto Mask =
+        Ctx.mkConst(Rank.Location.Bytes * 8,
+                    Rank.Mask ? Rank.Mask : ones(Rank.Location.Bytes));
+    if (Rank.Mask)
+      Value = Ctx.mkAnd(Value, Mask);
+    return Rank.Complement ? Ctx.mkXor(Value, Mask) : Value;
   }
 
   SymRef tupleLess(Edge &E, llvm::ArrayRef<Counter> Ranks, const Phases &Phase,
@@ -4388,13 +4391,24 @@ class LoopPlanInference {
           Cut.Inputs.push_back(
               {LowIRLoopSide::OriginalPrefix, R.Location, Value});
         }
+        if (R.Mask) {
+          LowOp Op;
+          Op.Opcode = NdOp::INT_AND;
+          Op.Output = NdVar::tmp(Next, R.Location.Bytes);
+          Next += 8;
+          Op.addInput(Value);
+          Op.addInput(NdVar::scalar(R.Mask, R.Location.Bytes));
+          Cut.Expressions.push_back(Op);
+          Value = Op.Output;
+        }
         if (R.Complement) {
           LowOp Op;
           Op.Opcode = NdOp::INT_XOR;
           Op.Output = NdVar::tmp(Next, R.Location.Bytes);
           Next += 8;
           Op.addInput(Value);
-          Op.addInput(NdVar::scalar(ones(R.Location.Bytes), R.Location.Bytes));
+          Op.addInput(NdVar::scalar(R.Mask ? R.Mask : ones(R.Location.Bytes),
+                                    R.Location.Bytes));
           Cut.Expressions.push_back(Op);
           Value = Op.Output;
         }
@@ -4417,18 +4431,31 @@ class LoopPlanInference {
 
   TupleRankSearch makeTupleSearch(std::vector<Edge> &Edges) {
     TupleRankSearch Search;
+    std::vector<Counter> Projected;
     for (const auto &Location : locations()) {
       const auto Before = Search.Candidates.size();
       for (bool Complement : {false, true}) {
         bool Unit = false;
-        for (auto &E : Edges)
-          Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
+        std::set<uint64_t> Masks;
+        for (auto &E : Edges) {
+          const auto Mask =
+              unitStepLane(read(E.Before, Location), read(E.After, Location),
                            Location.Bytes, Complement);
+          Unit |= Mask.has_value();
+          if (Mask && *Mask)
+            Masks.insert(*Mask);
+        }
         if (Unit)
           Search.Candidates.push_back({Location, Complement});
+        for (uint64_t Mask : Masks)
+          Projected.push_back({Location, Complement, Mask});
       }
       Search.MaxSize += Search.Candidates.size() != Before;
     }
+    // Preserve whole-word proposal priority. A projection is only a guess:
+    // every transition must still decrease under the complete stable domain.
+    Search.Candidates.insert(Search.Candidates.end(), Projected.begin(),
+                             Projected.end());
     return Search;
   }
 
