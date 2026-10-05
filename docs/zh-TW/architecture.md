@@ -1241,4 +1241,4 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 
 `AuthenticatedSourceFrameLoads` 可透過 `swiftMetadataAccessorSourceCallHint` 跨越中繼資料存取器呼叫。兩條宣告路徑重用既有的編譯器證據表、準確的強連結 provider，以及完整的 Swift 請求與中繼資料回應 ABI。雙暫存器回應與一般的易失暫存器破壞規則保持完整；私有 spill 仍須通過共用的到達位元組證明。這不提供值配置、見證記憶體效應、堆疊借用或動態堆疊配置模型。
 
-`AArch64ExclusiveInstructions.def` 統一定義獨佔指令的編碼准入；`AArch64ExclusiveExecution` 在實體執行鎖內完成暫存器與監視器狀態轉換。`RAMReservation` 保留配置身分，接收主機寫入、保留檢視、`RAMTransaction`、字串指令及 `ENTER` 錯誤前部分寫入的提交通知。暫時寫入及回復不會使保留狀態失效。未宣告寫入範圍的執行會使既有保留狀態失效；已宣告範圍的執行按實際提交範圍追蹤。客體錯誤、服務陷阱及位址空間綁定會清除本地監視器。原始 `LDAR[B/H]` 與 `STLR[B/H]` 仍透過後端執行，保留自然對齊 RAM 契約。 Unicorn 軟體適配層在觀察回呼允許寫入後，透過寫入前掛鉤保守地使保留狀態失效；獨佔儲存完成後，會先清除所有可執行別名的翻譯快取，再繼續同一次執行。
+`AArch64ExclusiveInstructions.def` 統一定義獨佔指令的編碼准入；`AArch64ExclusiveExecution` 在實體執行鎖內完成暫存器與監視器狀態轉換。`RAMReservation` 保留配置身分，接收主機寫入、保留檢視、`RAMTransaction`、字串指令及 `ENTER` 錯誤前部分寫入的提交通知。暫時寫入及回復不會使保留狀態失效。未宣告寫入範圍的執行會使既有保留狀態失效；已宣告範圍的執行按實際提交範圍追蹤。客體錯誤、服務陷阱及位址空間綁定會清除本地監視器。原始 `LDAR[B/H]` 與 `STLR[B/H]` 仍透過後端執行，保留自然對齊 RAM 契約。 Unicorn 軟體適配層在觀察回呼允許寫入後，透過寫入前掛鉤保守地使保留狀態失效；獨佔儲存完成後，會先清除所有可執行別名的翻譯快取，再繼續同一次執行。 `AArch64ExclusiveAccess` 選擇對齊策略：checked 設定採用 FEAT_LSE2，軟體 Unicorn 保留引擎的特性模型；保留狀態依相同運算元寬度與實體粒度比對。

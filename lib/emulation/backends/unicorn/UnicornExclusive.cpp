@@ -47,17 +47,18 @@ executeUnicornExclusive(uc_engine *Engine, uint64_t PC,
   if (Next.reg(AArch64Register::PC) == PC)
     return llvm::Error::success();
   if (I.Kind == AArch64ExclusiveInstruction::Operation::Store) {
-    const auto Physical =
-        Memory.mappings().at(I.Address & ~(memory::PageSize - 1)).Physical;
+    auto Target = Memory.mappings().find(I.Address & ~(memory::PageSize - 1));
     // Completion writes the shared backing directly. Every executable alias
     // must retire its translated blocks before a same-run branch reaches it.
-    for (const auto &[Address, Page] : Memory.mappings())
-      if (Page.Physical == Physical && (Page.Permissions & Execute))
-        if (auto Status = uc_ctl_remove_cache(Engine, Address,
-                                              Address + memory::PageSize - 1);
-            Status != UC_ERR_OK)
-          return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                         uc_strerror(Status));
+    if (Target != Memory.mappings().end())
+      for (const auto &[Address, Page] : Memory.mappings())
+        if (Page.Physical == Target->second.Physical &&
+            (Page.Permissions & Execute))
+          if (auto Status = uc_ctl_remove_cache(Engine, Address,
+                                                Address + memory::PageSize - 1);
+              Status != UC_ERR_OK)
+            return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                           uc_strerror(Status));
   }
   // Publish an already committed instruction even if cancellation raced with
   // the commit. Writing PC makes Unicorn discard this original instruction.

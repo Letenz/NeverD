@@ -349,7 +349,7 @@ struct UnicornBackend::Impl {
                                             : BackendAccessKind::Write});
              return llvm::Error::success();
            },
-           Write},
+           Write, AArch64ExclusiveAlignment::Natural},
           registerID);
       if (E) {
         S.InstructionRejected = E.isA<UnsupportedExecutionError>();

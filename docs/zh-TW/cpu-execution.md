@@ -204,4 +204,4 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 [Setup, signing and native hardware validation (English)](../macos-hvf.md)
 
-checked ARM64 支援 8/16/32/64 位元 `LDXR/STXR`、32/64 位元暫存器對 `LDXP/STXP`、對應的 acquire/release 形式及 `CLREX`。KVM、WHP 與 checked Unicorn 共用 ISA 層的獨佔監視器，以 16 位元組實體範圍記錄保留狀態，傳輸層單步退出不會破壞迴圈進展。已提交的寫入即使未改變位元組，也會使保留狀態失效；別名及保留檢視的寫入遵循相同規則。停止保留尚未發布的狀態，快照無法撤銷期間的寫入。未對齊存取產生 `alignment` 錯誤；即使監視器已失效，也先檢查對齊及權限，再決定條件儲存是否成功。此設定仍不包含 MMIO、可選 LSE 原子指令或平行 SMP。 ARM64 Unicorn 的 `Software` 契約也使用此監視器，包括軟體與 checked CPU 共用實體 RAM 的情況。
+checked ARM64 支援 8/16/32/64 位元 `LDXR/STXR`、32/64 位元暫存器對 `LDXP/STXP`、對應的 acquire/release 形式及 `CLREX`。KVM、WHP 與 checked Unicorn 共用 ISA 層的獨佔監視器，以 16 位元組實體範圍記錄保留狀態，傳輸層單步退出不會破壞迴圈進展。已提交的寫入即使未改變位元組，也會使保留狀態失效；別名及保留檢視的寫入遵循相同規則。停止保留尚未發布的狀態，快照無法撤銷期間的寫入。checked 獨佔指令採用 FEAT_LSE2 對齊規則：運算元可在同一個 16 位元組對齊區塊內未對齊存取，跨越該區塊才產生 `alignment` 錯誤。同寬條件儲存依保留的實體粒度比對；即使監視器已失效，也先檢查對齊及權限，再決定條件儲存是否成功。此設定仍不包含 MMIO、可選 LSE 原子指令或平行 SMP。 ARM64 Unicorn 的 `Software` 契約也使用此監視器，包括軟體與 checked CPU 共用實體 RAM 的情況。 Unicorn 的 `Software` 設定保留引擎的自然對齊模型。

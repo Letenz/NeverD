@@ -16,6 +16,6 @@ CheckedAArch64Backend::executeExclusive(const AArch64ExclusiveInstruction &I) {
        [&](uint64_t Address, uint64_t Size, unsigned Permissions) {
          return access(Address, Size, Permissions, true, true);
        },
-       executionPermissions(Write)});
+       executionPermissions(Write), AArch64ExclusiveAlignment::LSE2});
 }
 } // namespace neverd::emulation

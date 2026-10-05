@@ -51,6 +51,8 @@ public:
   /// Establish/test a reservation under a declared physical execution lease.
   /// The ISA selects a power-of-two granule within one physical page and owns
   /// instruction permissions, alignment, local monitor lifetime and status.
+  /// Matching requires the same operand width within the reserved physical
+  /// granule; the original byte offset is not a second address-identity test.
   llvm::Expected<std::shared_ptr<RAMReservation>>
   reserveRAM(uint64_t Address, uint64_t Size, uint64_t Granule);
   llvm::Expected<bool>

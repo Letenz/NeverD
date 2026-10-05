@@ -54,6 +54,21 @@ foreach(_arch X64 AArch64)
     VERBATIM)
   list(APPEND _windows_outputs "${_base}.exe")
 endforeach()
+set(_exclusive_base "${_windows_fixture_dir}/aarch64-exclusive")
+add_custom_command(OUTPUT "${_exclusive_base}.exe" "${_exclusive_base}.obj"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-pc-windows-msvc
+    -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+    -fno-vectorize -fno-slp-vectorize -O1 -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/aarch64_exclusive_oracle.c"
+    -o "${_exclusive_base}.obj"
+  COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /entry:entry /subsystem:console
+    /machine:arm64 /timestamp:0 "${_exclusive_base}.obj"
+    "${_windows_fixture_dir}/AArch64-kernel32.lib" "/out:${_exclusive_base}.exe"
+  DEPENDS fixtures/aarch64_exclusive_oracle.c fixtures/aarch64_exclusive.inc
+    fixtures/AArch64ExclusiveOracle.def AArch64ExclusiveCases.def
+    "${_windows_fixture_dir}/AArch64-kernel32.lib"
+  VERBATIM)
+list(APPEND _windows_outputs "${_exclusive_base}.exe")
 add_custom_target(NeverDWindowsProcessFixtures DEPENDS ${_windows_outputs})
 foreach(_owner NeverDWindowsProcessTests NeverDProcessPublicTests)
   if(TARGET ${_owner})

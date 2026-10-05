@@ -181,6 +181,98 @@ TEST_P(AArch64Exclusive, FailedStoreHasNoDataObservationAndConsumesTheMonitor) {
 }
 
 TEST_P(AArch64Exclusive,
+       UnalignedOperandsWithinOneQuantityMatchPhysicalGranulesAndRetry) {
+  for (unsigned Offset = 0; Offset <= Granule - testCase().size(); ++Offset) {
+    SCOPED_TRACE(Offset);
+    if (contract() == ExecutionContract::Software && Offset % testCase().size())
+      continue;
+    for (bool AlignedLoad : {false, true}) {
+      const auto Before = memory();
+      const unsigned LoadOffset = AlignedLoad ? 0 : Offset;
+      llvm::cantFail(CPU->setReg(AArch64Register::X1, Data + LoadOffset));
+      step(0);
+      for (unsigned N = 0; N < testCase().Count; ++N) {
+        uint64_t Expected = 0;
+        for (unsigned B = 0; B < testCase().Width; ++B)
+          Expected |= uint64_t(Before[LoadOffset + N * testCase().Width + B])
+                      << (B * CHAR_BIT);
+        EXPECT_EQ(llvm::cantFail(
+                      CPU->reg(N ? AArch64Register::X3 : AArch64Register::X0)),
+                  Expected);
+      }
+      input();
+      llvm::cantFail(CPU->setReg(AArch64Register::X1, Alias + Offset));
+      BackendHooks Hooks;
+      Hooks.Write = [&](uint64_t Address, uint32_t, uint64_t) {
+        EXPECT_EQ(Address, Alias + Offset);
+        CPU->stop();
+      };
+      auto Exit = run(1, Hooks);
+      EXPECT_EQ(Exit.Kind, ExecutionExitKind::Stopped);
+      EXPECT_EQ(status(), InitialStatus);
+      EXPECT_EQ(memory(), Before);
+      step(1);
+      EXPECT_EQ(status(), 0u);
+      auto Expected = Before;
+      for (unsigned N = 0; N < testCase().size(); ++N)
+        Expected[Offset + N] =
+            uint8_t((N < testCase().Width ? Updated : Initial) >>
+                    ((N % testCase().Width) * CHAR_BIT));
+      EXPECT_EQ(memory(), Expected);
+    }
+  }
+}
+
+TEST_P(AArch64Exclusive,
+       FailedMonitorChecksAlignmentAndPermissionsBeforeConditionalFailure) {
+  for (bool Stale : {false, true}) {
+    for (bool Mapped : {false, true}) {
+      llvm::cantFail(CPU->setReg(AArch64Register::X1, Data));
+      if (Stale)
+        step(0);
+      const auto Before = memory();
+      llvm::cantFail(CPU->write(Data, Before));
+      llvm::cantFail(CPU->protect(Data, PageSize, 0));
+      const uint64_t Base = Mapped ? Data : Data + PageSize;
+      llvm::cantFail(CPU->setReg(AArch64Register::X1, Base));
+      input();
+      BackendHooks Hooks;
+      Hooks.Read = [&](uint64_t, uint32_t) { ADD_FAILURE(); };
+      Hooks.Write = [&](uint64_t, uint32_t, uint64_t) { ADD_FAILURE(); };
+      Hooks.RecoverableFault = [&](const BackendFault &Fault) {
+        EXPECT_EQ(Fault.Kind, Mapped ? BackendFaultKind::Protection
+                                     : BackendFaultKind::UnmappedMemory);
+        EXPECT_EQ(Fault.Address, Base);
+        return true;
+      };
+      auto Fault = run(1, Hooks);
+      EXPECT_EQ(Fault.Kind, ExecutionExitKind::RecoverableFault);
+      ASSERT_TRUE(CPU->takeRecoverableFault());
+      EXPECT_EQ(status(), InitialStatus);
+      EXPECT_EQ(memory(), Before);
+      if (testCase().size() > 1) {
+        llvm::cantFail(CPU->setReg(AArch64Register::X1, Base + Granule - 1));
+        input();
+        Hooks.RecoverableFault = [&](const BackendFault &Fault) {
+          EXPECT_EQ(Fault.Kind, BackendFaultKind::Alignment);
+          EXPECT_EQ(Fault.Address, Base + Granule - 1);
+          return true;
+        };
+        auto Exit = run(1, Hooks);
+        EXPECT_EQ(Exit.Kind, ExecutionExitKind::RecoverableFault);
+        ASSERT_TRUE(CPU->takeRecoverableFault());
+        EXPECT_EQ(status(), InitialStatus);
+      }
+      llvm::cantFail(
+          CPU->protect(Data, PageSize, Read | Write | UserAccessible));
+      llvm::cantFail(CPU->setReg(AArch64Register::X1, Data));
+      step(1);
+      EXPECT_EQ(status(), 1u);
+    }
+  }
+}
+
+TEST_P(AArch64Exclusive,
        AliasesMatchPhysicalBytesAndSameValueWritesInvalidate) {
   step(0);
   input();
@@ -296,12 +388,15 @@ TEST_P(AArch64Exclusive,
     input();
     const auto Before = memory();
     if (testCase().size() > 1) {
-      llvm::cantFail(CPU->setReg(AArch64Register::X1, Data + 1));
+      const uint64_t Unaligned = contract() == ExecutionContract::Software
+                                     ? Data + 1
+                                     : Data + Granule - testCase().size() + 1;
+      llvm::cantFail(CPU->setReg(AArch64Register::X1, Unaligned));
       BackendHooks Hooks;
       Hooks.RecoverableFault = [&](const BackendFault &F) {
         EXPECT_EQ(F.Kind, BackendFaultKind::Alignment);
         EXPECT_EQ(F.Cause, BackendFaultCause::OperandAlignment);
-        EXPECT_EQ(F.Address, Data + 1);
+        EXPECT_EQ(F.Address, Unaligned);
         EXPECT_EQ(F.Size, testCase().size());
         EXPECT_EQ(F.Access,
                   Load ? BackendAccessKind::Read : BackendAccessKind::Write);

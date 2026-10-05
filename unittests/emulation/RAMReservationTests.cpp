@@ -64,7 +64,12 @@ TEST_F(RAMReservations,
   auto R = reserve();
   EXPECT_TRUE(matches(R));
   EXPECT_TRUE(matches(R, Alias));
-  EXPECT_FALSE(matches(R, Data + WordBytes));
+  for (uint64_t Offset = 0; Offset <= PairBytes - WordBytes; ++Offset) {
+    EXPECT_TRUE(matches(R, Data + Offset));
+    EXPECT_TRUE(matches(R, Alias + Offset));
+  }
+  EXPECT_FALSE(matches(R, Data + WordBytes + 1));
+  EXPECT_FALSE(matches(R, Data + PairBytes));
   EXPECT_FALSE(matches(R, Data, PairBytes));
   llvm::cantFail(Space->protect(Data, memory::PageSize, 0));
   EXPECT_TRUE(matches(R)); // Permission admission belongs to the instruction.

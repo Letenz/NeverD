@@ -1359,4 +1359,4 @@ build-release/bin/NeverDByteCellScalarizationTests
 `FrameMetadataAccessorUsesCurrentCatalogAndABI` 檢查共用中繼資料宣告、兩個回應載體和目前框架見證的發布。`FrameMetadataAccessorRejectsChangedImportAndBytes` 拒絕弱匯入、provider/名稱/addend 變更、私有位址請求、部分 spill、錯誤重新載入及原始呼叫變更。原始 ARM64 與產生 C 的見證 oracle 也會實際呼叫 Foundation URL 中繼資料存取器：兩個分支均在 O0/O2 下執行 2048 組，檢查動態見證選擇、完整輸出位元組、輸入保持、呼叫次數和保護字。這些檢查不證明動態堆疊配置或見證記憶體效應。
 
 `AArch64ExclusiveTests.cpp` 涵蓋標量與成對寬度、acquire/release 形式、暫存器重疊、別名、對齊及權限錯誤、快照、觀察回呼取消或失敗，以及雙 CPU 競爭。`RAMReservationTests.cpp` 涵蓋相同值寫入、ABA、配置重用、回復，以及 KVM/Unicorn 字串和 `ENTER` 寫入的干擾。原始 ARM64 Windows 行程範例執行獨佔迴圈；`scripts/check_aarch64_exclusives.py` 在 Windows ARM64 CI 執行原始指令並保存對齊例外記錄。原生指令證據不代表已驗證 ARM64 KVM/WHP 後端執行；不可用設定仍明確列為略過。 相同的獨佔指令案例也涵蓋軟體 Unicorn、跨契約干擾、同值及 ABA 寫入、同次執行中的可執行別名，以及 `DC ZVA` 寫入與觀察回呼取消。
- `windows-alignment-oracle.yml` 也執行 ARM64 探針：1,320 筆觀察記錄涵蓋所有未對齊偏移、四種讀寫序列，以及可寫、唯讀、不可存取和跨頁記憶體。探針保留完整位寬的暫存器測試值，並記錄錯誤前已提交的部分寫入。
+ `windows-alignment-oracle.yml` 也執行 ARM64 探針：1,320 筆觀察記錄涵蓋所有未對齊偏移、四種讀寫序列，以及可寫、唯讀、不可存取和跨頁記憶體。探針保留完整位寬的暫存器測試值，並記錄錯誤前已提交的部分寫入。 `WindowsExclusiveProcessTests.cpp` 將 1,320 筆原始 Windows ARM64 觀察結果與 `WindowsExclusiveNative.def` 的原生摘要核對，保留暫存器值、例外中繼資料及 RAM 效果，只正規化程式碼與資料的放置位址。

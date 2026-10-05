@@ -25,6 +25,11 @@ decodeAArch64Exclusive(const cs_insn &, const AArch64MachineState &);
 llvm::Expected<std::optional<AArch64ExclusiveInstruction>>
 decodeAArch64Exclusive(uint32_t Word, const AArch64MachineState &);
 bool isAArch64Exclusive(uint32_t Word);
+enum class AArch64ExclusiveAlignment { Natural, LSE2 };
+/// FEAT_LSE2 accepts an exclusive operand within one 16-byte aligned quantity.
+/// Size must be a decoded exclusive operand width, including register pairs.
+bool isAArch64ExclusiveAligned(uint64_t Address, uint64_t Size,
+                               AArch64ExclusiveAlignment);
 
 struct AArch64ExclusiveAccess {
   const BackendHooks &Hooks;
@@ -32,6 +37,7 @@ struct AArch64ExclusiveAccess {
   llvm::function_ref<llvm::Error(BackendFault)> RaiseFault;
   llvm::function_ref<llvm::Error(uint64_t, uint64_t, unsigned)> CheckAccess;
   unsigned WritePermissions;
+  AArch64ExclusiveAlignment Alignment;
 };
 /// Complete one exclusive instruction under the physical execution lease.
 /// Both software execution and checked transports use this monitor authority.

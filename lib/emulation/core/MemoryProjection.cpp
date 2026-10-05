@@ -136,8 +136,8 @@ MemoryProjection::reserveRAM(uint64_t Address, uint64_t Size,
     return Bytes.takeError();
   const uint64_t Offset = Address % memory::PageSize;
   const uint64_t Physical = mappings().at(Address - Offset).Physical + Offset;
-  auto R = std::make_shared<RAMReservation>(RAMReservation{
-      std::move(*Bytes), Physical, Physical & ~(Granule - 1), Granule});
+  auto R = std::make_shared<RAMReservation>(
+      RAMReservation{std::move(*Bytes), Physical & ~(Granule - 1), Granule});
   auto &Reservations = Space->State->Memory->State->Reservations;
   std::erase_if(Reservations, [](const auto &R) { return R.expired(); });
   Reservations.push_back(R);
@@ -156,9 +156,11 @@ MemoryProjection::reservationMatches(const std::shared_ptr<RAMReservation> &R,
     return false;
   const uint64_t Offset = Address % memory::PageSize;
   const auto P = mappings().find(Address - Offset);
-  return P != mappings().end() && !P->second.IO &&
-         Size <= memory::PageSize - Offset &&
-         P->second.Physical + Offset == R->Physical;
+  if (P == mappings().end() || P->second.IO || Size > memory::PageSize - Offset)
+    return false;
+  const uint64_t Physical = P->second.Physical + Offset;
+  return Physical >= R->Granule &&
+         Physical - R->Granule <= R->GranuleSize - Size;
 }
 void MemoryProjection::recordRAMWrite(uint64_t Physical, uint64_t Size) {
   auto &RAM = *Space->State->Memory->State;

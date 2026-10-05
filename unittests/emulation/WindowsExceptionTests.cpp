@@ -51,7 +51,7 @@ namespace arm_context {
 TEST(WindowsExclusiveAlignment, OnlyCompleteArchitecturalFaultsAreTranslated) {
   const BackendFault Fault{BackendFaultKind::Alignment,
                            win::value::GateBase,
-                           FaultAddress,
+                           ExclusiveFaultAddress,
                            sizeof(uint64_t),
                            BackendAccessKind::Read,
                            std::nullopt,

@@ -19,7 +19,7 @@ namespace neverd::emulation {
 /// alive prevents allocation reuse from making an old reservation match.
 struct RAMReservation {
   MemoryView Bytes;
-  uint64_t Physical, Granule, GranuleSize;
+  uint64_t Granule, GranuleSize;
   bool Valid = true;
 };
 struct PhysicalMemory::Impl {
