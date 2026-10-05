@@ -21,6 +21,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
+#include <iterator>
 
 namespace neverd {
 
@@ -261,6 +262,7 @@ int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
   // Detail-independent profile normalization must agree with the full decode
   // path.  Operand-aware id fixups remain exclusive to decodeOne.
   fixupDecodedInsnId(InsnBuf);
+  fixupX86DisplacementDetail(InsnBuf);
   Out.Addr = InsnBuf->address;
   Out.Size = static_cast<uint16_t>(InsnBuf->size);
   Out.Id = InsnBuf->id;
@@ -420,12 +422,63 @@ void Decoder::fixupDecodedInsn(cs_insn *I) const {
   if (!I)
     return;
   fixupDecodedInsnId(I);
+  fixupX86DisplacementDetail(I);
   if (X86)
     X86Lifter::fixupDecodedInsn(I);
   else if (AArch64)
     AArch64Lifter::fixupDecodedInsn(I);
   else if (ARM)
     ARMLifter::fixupDecodedInsn(I);
+}
+
+void Decoder::fixupX86DisplacementDetail(cs_insn *I) const {
+  // The bundled decoder can initialize long-mode displacementSize from the
+  // operand-size override, although ModRM still consumes a complete disp32.
+  // Correct that metadata once, before relocation ownership and form audits
+  // consume it. Do not reinterpret genuine i386 disp16, moffs, compressed
+  // disp8 or an instruction decoded without populated operand detail.
+  if (TargetArch != Arch::X64 || !Detail || !Text || !I || !I->detail ||
+      !I->size || I->size > 15)
+    return;
+  auto &X = I->detail->x86;
+  auto &E = X.encoding;
+  if (E.disp_size != 2 || X.prefix[2] != 0x66 ||
+      (X.addr_size != 4 && X.addr_size != 8) || !E.modrm_offset ||
+      E.modrm_offset >= I->size || X.op_count > std::size(X.operands))
+    return;
+  const uint8_t ModRM = I->bytes[E.modrm_offset];
+  const unsigned Mod = ModRM >> 6, RM = ModRM & 7;
+  if (X.modrm != ModRM || Mod == 3 || Mod == 1)
+    return;
+  size_t Cursor = E.modrm_offset + 1;
+  bool HasDisp32 = Mod == 2 || RM == 5;
+  if (RM == 4) {
+    if (Cursor >= I->size || X.sib != I->bytes[Cursor])
+      return;
+    HasDisp32 = Mod == 2 || (I->bytes[Cursor] & 7) == 5;
+    ++Cursor;
+  }
+  if (!HasDisp32 || E.disp_offset != Cursor || Cursor + 4 > I->size)
+    return;
+  const size_t End = Cursor + 4;
+  if (E.imm_size ? E.imm_offset != End || End + E.imm_size != I->size
+                 : E.imm_offset != 0 || End != I->size)
+    return;
+  uint32_t Bits = 0;
+  for (unsigned N = 0; N != 4; ++N)
+    Bits |= uint32_t{I->bytes[Cursor + N]} << (N * 8);
+  const int64_t Displacement = static_cast<int32_t>(Bits);
+  if (X.disp != Displacement)
+    return;
+  bool HasMemory = false;
+  for (unsigned N = 0; N != X.op_count; ++N)
+    if (X.operands[N].type == X86_OP_MEM) {
+      if (X.operands[N].mem.disp != Displacement)
+        return;
+      HasMemory = true;
+    }
+  if (HasMemory)
+    E.disp_size = 4;
 }
 
 void Decoder::fixupDecodedInsnId(cs_insn *I) const {

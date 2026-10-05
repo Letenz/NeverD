@@ -69,6 +69,26 @@ void refused(const BinaryLowIRRefinementResult &Result, Status S) {
   EXPECT_FALSE(Result.Proof.Certificate);
 }
 
+TEST(BinaryLowIRRefinement,
+     Disp32WordShiftChecksTheCompleteRecoveredCandidate) {
+  Program P({0x48, 0x89, 0x4c, 0x24, 0xf8, 0x66, 0xc1, 0xa4, 0x24, 0xf8,
+             0xff, 0xff, 0xff, 3,    0x0f, 0xb7, 0x44, 0x24, 0xf8, 0xc3});
+  auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  const auto Good = P.check(R.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  bool Changed = false;
+  for (auto &B : R.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if (O.Opcode == NdOp::INT_LEFT && O.Output.Size == 2 &&
+          O.NumInputs == 2 && O.Inputs[1] == NdVar::scalar(3, 2)) {
+        O.Inputs[1] = NdVar::scalar(2, 2);
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(P.check(R.Residual), Status::Different);
+}
+
 TEST(BinaryLowIRRefinement, EntryAlignmentUsesTheOriginalSymbolicStack) {
   Program P({0x48, 0x89, 0xe0, 0xc3}); // mov rax,rsp; ret.
   auto Recovery = P.recover();
