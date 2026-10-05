@@ -50,7 +50,14 @@ enum class LowIRRefinementScope : uint8_t {
   InductiveNativeToLowIRLoops,
 };
 
-enum class LowIRLoopSpace : uint8_t { Register, Frame, SystemFlags };
+enum class LowIRLoopSpace : uint8_t {
+  Register,
+  Frame,
+  SystemFlags,
+  /// Declared storage on the selected LowIR side, defined by a checked prefix.
+  /// Native state and the shared function entry have no such storage.
+  FunctionTemporary,
+};
 enum class LowIRLoopSide : uint8_t {
   Entry,
   Original,
@@ -63,8 +70,9 @@ enum class LowIRLoopSide : uint8_t {
 
 struct LowIRLoopLocation {
   LowIRLoopSpace Space = LowIRLoopSpace::Register;
-  /// Register byte offset; for Frame, the two's-complement entry-root offset.
-  /// SystemFlags requires Offset == 0 and Bytes == 8 and a native profile.
+  /// Register or function-temporary byte offset; for Frame, the
+  /// two's-complement entry-root offset. SystemFlags requires Offset == 0 and
+  /// Bytes == 8 and a native profile.
   uint64_t Offset = 0;
   uint16_t Bytes = 0;
 };
@@ -99,9 +107,11 @@ struct LowIRLoopCutpoint {
   /// by a separate bounded replay from the real entry. That replay establishes
   /// only a feasible paired witness; complete entry/transition coverage is
   /// still required. No abstract state is invented for an unreached cut.
-  /// Defined function-temporary bytes retain this prefix's fixed expressions.
-  /// Every arrival checks their definedness and values; declarations alone
-  /// provide no initial state, and temporary induction inputs are unsupported.
+  /// Defined function-temporary bytes retain this prefix's expressions unless
+  /// explicitly assigned. Temporary inputs and assignments require declared,
+  /// prefix-defined bytes on their own side; they cannot initialize storage.
+  /// Every arrival checks exact definedness and all values, and arbitrary
+  /// temporary inputs must pass the same projection checks as other state.
   bool UseEntryPrefix = false;
   std::vector<LowIRLoopInput> Inputs;
   std::vector<LowOp> Expressions;

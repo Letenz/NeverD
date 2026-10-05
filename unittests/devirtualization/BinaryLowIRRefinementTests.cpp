@@ -1072,6 +1072,114 @@ TEST(BinaryLowIRLoopRefinement, CandidateTemporaryRetainsItsRealEntryValue) {
   refused(Check(), Status::Invalid);
 }
 
+TEST(BinaryLowIRLoopInference, ChangingTemporaryStateBelongsOnlyToCandidate) {
+  // nop; top: jrcxz done; add rax,rcx; lea rcx,[rcx-1]; jmp top; done: ret.
+  // The candidate maintains an additional private counter. Its changing bits
+  // still need an exact template, even though the native program has no slot.
+  Program P({0x90, 0xe3, 9, 0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb,
+             0xf5, 0xc3});
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  constexpr uint64_t Saved = uint64_t{1} << 60;
+  Recovery.Residual.FunctionTemporaries = {{Saved, 8}};
+  unsigned Initialized = 0, Updated = 0;
+  for (auto &B : Recovery.Residual.Blocks) {
+    auto Previous = B.Ops;
+    B.Ops.clear();
+    for (auto &Boundary : B.InstructionBoundaries) {
+      const auto Origin = std::find_if(
+          Recovery.Origins.begin(), Recovery.Origins.end(),
+          [&](const auto &O) { return O.ResidualAddress == Boundary.Address; });
+      const auto Begin = Boundary.FirstOp;
+      Boundary.FirstOp = B.Ops.size();
+      B.Ops.insert(B.Ops.end(), Previous.begin() + Begin,
+                   Previous.begin() + Begin + Boundary.OpCount);
+      if (Origin == Recovery.Origins.end())
+        continue; // keep synthetic recovery control boundaries unchanged
+      const auto Native = Origin->NativeInstruction.Address;
+      if (Native != Entry && Native != Entry + 6)
+        continue;
+      LowOp Update;
+      Update.Addr = Boundary.Address;
+      Update.Seq = Boundary.OpCount++;
+      if (Native == Entry) {
+        Update.Opcode = NdOp::COPY;
+        Update.Output = NdVar::tmp(Saved, 8);
+        Update.addInput(NdVar::scalar(0, 8));
+        ++Initialized;
+      } else {
+        Update.Opcode = NdOp::INT_ADD;
+        Update.Output = NdVar::tmp(Saved, 3);
+        Update.addInput(Update.Output);
+        Update.addInput(NdVar::scalar(1, 3));
+        ++Updated;
+      }
+      B.Ops.push_back(Update);
+    }
+  }
+  ASSERT_GT(Initialized, 0U);
+  ASSERT_GT(Updated, 0U);
+  const auto Good = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Good.Inference.inferred()) << Good.Inference.Diagnostic;
+  ASSERT_TRUE(Good.proved()) << Good.Refinement.Proof.Diagnostic;
+  EXPECT_EQ(Good.Refinement.Certificate->Relation.Scope,
+            LowIRRefinementScope::InductiveNativeToLowIRLoops);
+  auto Plan = *Good.Inference.Plan;
+  bool Parameter = false;
+  for (const auto &Cut : Plan.Cutpoints) {
+    for (const auto &Input : Cut.Inputs)
+      if (Input.Location.Space == LowIRLoopSpace::FunctionTemporary) {
+        EXPECT_TRUE(Input.Side == LowIRLoopSide::Candidate ||
+                    Input.Side == LowIRLoopSide::CandidatePrefix);
+        Parameter |= Input.Side == LowIRLoopSide::Candidate;
+      }
+    for (const auto &Assignment : Cut.OriginalState)
+      EXPECT_NE(Assignment.Location.Space, LowIRLoopSpace::FunctionTemporary);
+  }
+  EXPECT_TRUE(Parameter);
+  const auto Check = [&](const LowIRLoopRefinementPlan &Proposal) {
+    return checkBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Proposal);
+  };
+  // Fixed prefix reads use the same candidate-only namespace, whether or not
+  // this particular inference heuristic retains a fixed-bit predicate.
+  for (auto &Cut : Plan.Cutpoints) {
+    uint64_t Next = 0;
+    for (const auto &Input : Cut.Inputs)
+      Next = std::max(Next, Input.Temporary.Offset + Input.Temporary.Size);
+    for (const auto &Expression : Cut.Expressions)
+      Next = std::max(Next, Expression.Output.Offset + Expression.Output.Size);
+    Cut.Inputs.push_back({LowIRLoopSide::CandidatePrefix,
+                          {LowIRLoopSpace::FunctionTemporary, Saved, 8},
+                          NdVar::tmp(Next, 8)});
+  }
+  ASSERT_TRUE(Check(Plan).proved());
+  for (bool Input : {false, true}) {
+    auto Bad = Plan;
+    for (auto &Cut : Bad.Cutpoints) {
+      if (Input) {
+        for (auto &I : Cut.Inputs)
+          if (I.Location.Space == LowIRLoopSpace::FunctionTemporary)
+            I.Side = LowIRLoopSide::Original;
+      } else {
+        for (const auto &Assignment : Cut.CandidateState)
+          if (Assignment.Location.Space == LowIRLoopSpace::FunctionTemporary)
+            Cut.OriginalState.push_back(Assignment);
+      }
+    }
+    refused(Check(Bad), Status::Invalid);
+  }
+  auto Missing = Plan;
+  for (auto &Cut : Missing.Cutpoints)
+    std::erase_if(Cut.CandidateState, [](const auto &A) {
+      return A.Location.Space == LowIRLoopSpace::FunctionTemporary;
+    });
+  refused(Check(Missing), Status::Different);
+  P.Image.Segments[0].Data[9] = 0xfe; // the original now decrements by two
+  refused(Check(Plan), Status::Different);
+}
+
 TEST(BinaryLowIRLoopRefinement, NativeCollectionChecksEveryInductionDomain) {
   for (bool Deferred : {false, true}) {
     SCOPED_TRACE(Deferred);

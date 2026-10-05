@@ -819,8 +819,23 @@ BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
     Refuse(Result.Inference.Status, Result.Inference.Diagnostic);
     return Result;
   }
-  for (auto &Cut : Result.Inference.Plan->Cutpoints)
+  for (auto &Cut : Result.Inference.Plan->Cutpoints) {
     Cut.OriginalAddress = Origins.at(Cut.CandidateAddress);
+    // Recovery introduces function-local storage only in the candidate.
+    // Keep its parameters and projection obligations on that side instead of
+    // inventing corresponding native temporaries. The complete checker must
+    // still prove the proposed machine-state relation on every arrival.
+    for (auto &Input : Cut.Inputs)
+      if (Input.Location.Space == LowIRLoopSpace::FunctionTemporary) {
+        if (Input.Side == LowIRLoopSide::Original)
+          Input.Side = LowIRLoopSide::Candidate;
+        else if (Input.Side == LowIRLoopSide::OriginalPrefix)
+          Input.Side = LowIRLoopSide::CandidatePrefix;
+      }
+    std::erase_if(Cut.OriginalState, [](const auto &Assignment) {
+      return Assignment.Location.Space == LowIRLoopSpace::FunctionTemporary;
+    });
+  }
   Result.Refinement = checkBinaryLowIRLoopRefinement(
       Image, Entry, Options, Recovery.Residual, Contract,
       *Result.Inference.Plan, Witness, ProofLimits);
