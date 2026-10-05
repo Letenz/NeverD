@@ -1,0 +1,26 @@
+//===- driver_resource_branch.def - Original WDK branch width probes ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_BRANCH_CASE
+#define NEVERD_RESOURCE_BRANCH_CODE(Instruction)                               \
+  "pushfq\n\tpopq %q0\n\tpushq %q2\n\tpopfq\n\t" Instruction                   \
+  "\n\tpushfq\n\tpopq %q1\n\tpushq %q0\n\tpopfq"
+// These branches are deliberately not taken. AMD consumes a rel16 and then
+// executes two NOPs; Intel consumes the same bytes as its rel32. Both paths
+// reach the same flag capture without a low-address branch in driver code.
+NEVERD_RESOURCE_BRANCH_CASE(
+    OperandJO, 0x202,
+    NEVERD_RESOURCE_BRANCH_CODE(".byte 0x66,0x0f,0x80,0,0,0x90,0x90"))
+NEVERD_RESOURCE_BRANCH_CASE(
+    OperandJNO, 0xa02,
+    NEVERD_RESOURCE_BRANCH_CODE(".byte 0x66,0x0f,0x81,0,0,0x90,0x90"))
+NEVERD_RESOURCE_BRANCH_CASE(
+    OperandAddressJE, 0x202,
+    NEVERD_RESOURCE_BRANCH_CODE(".byte 0x66,0x67,0x0f,0x84,0,0,0x90,0x90"))
+NEVERD_RESOURCE_BRANCH_CASE(
+    OperandRexJO, 0x202,
+    NEVERD_RESOURCE_BRANCH_CODE(".byte 0x66,0x48,0x0f,0x80,0,0,0,0"))
+#undef NEVERD_RESOURCE_BRANCH_CODE
+#endif

@@ -187,7 +187,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   uint64_t ActiveStackBase = 0;
   uint64_t ActiveStackSize = 0;
   WindowsX64ExecutionPolicy Policy;
-  if (auto E = Policy.initialize())
+  const auto BranchModel = CPU.x64BranchModel();
+  if (!BranchModel)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   diagnostic::BranchModel);
+  if (auto E = Policy.initialize(*BranchModel))
     return std::move(E);
   bool Stopped = false;
   std::optional<uint64_t> InvocationReturn;

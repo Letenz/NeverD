@@ -188,6 +188,55 @@ TEST_P(X64MXCSRProbe, ZeroMaskUsesBaselineAndRejectedProbesPublishNothing) {
   EXPECT_EQ(Mask, MaskSentinel);
   EXPECT_EQ(llvm::toString(Memory->mutableMemory()), "");
 }
+class X64BranchProbe : public X64ProbeExecution {};
+class BranchTransport : public OriginalTransport {
+public:
+  using OriginalTransport::OriginalTransport;
+  std::optional<unsigned> CorruptAt;
+  llvm::Error step(X64MachineState &State, uint64_t Root,
+                   MachineRunControl Control) override {
+    const auto Index = Entries;
+    if (auto E = OriginalTransport::step(State, Root, Control))
+      return E;
+    if (CorruptAt == Index)
+      State.reg(X64Register::AX) ^= CorruptBit;
+    return llvm::Error::success();
+  }
+};
+TEST_P(X64BranchProbe, OriginalBranchesDiscoverOneImmutableDecoderModel) {
+  BranchTransport Original(*Machine, *Memory);
+  const auto Expected = Machine->branchModel();
+  auto Model = Expected == X64BranchModel::Intel ? X64BranchModel::AMD
+                                                 : X64BranchModel::Intel;
+  auto E = verifyX64Machine(Original, *Memory, nullptr, false, &Model);
+  ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+  EXPECT_EQ(Model, Expected);
+  EXPECT_EQ(Original.Entries,
+            std::size(x64::probe::Program) + BranchProbeCount);
+  EXPECT_EQ(llvm::toString(Memory->mutableMemory()), "");
+}
+TEST_P(X64BranchProbe, BranchStateFailureCannotPublishTheDiscoveredModel) {
+  const auto Sentinel = Machine->branchModel() == X64BranchModel::Intel
+                            ? X64BranchModel::AMD
+                            : X64BranchModel::Intel;
+  for (unsigned I = 0; I < BranchProbeCount; ++I) {
+    BranchTransport Original(*Machine, *Memory);
+    Original.CorruptAt = std::size(x64::probe::Program) + I;
+    auto Model = Sentinel;
+    auto E = verifyX64Machine(Original, *Memory, nullptr, false, &Model);
+    ASSERT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(Model, Sentinel);
+    EXPECT_EQ(Original.Entries, *Original.CorruptAt + 1);
+    EXPECT_EQ(llvm::toString(Memory->mutableMemory()), "");
+  }
+}
+INSTANTIATE_TEST_SUITE_P(
+    Native, X64BranchProbe,
+    testing::Values(ProbeBackend{ExecutionBackendKind::KVM},
+                    ProbeBackend{ExecutionBackendKind::WHP}),
+    [](const auto &Info) { return executionBackendName(Info.param.Backend); });
+
 INSTANTIATE_TEST_SUITE_P(
     Native, X64MXCSRProbe,
     testing::Values(ProbeBackend{ExecutionBackendKind::KVM},
