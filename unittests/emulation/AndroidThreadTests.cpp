@@ -261,6 +261,24 @@ TEST_P(AndroidThread, DynamicNamesAndProviderLifetimeUseTheSameThreadModel) {
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
   EXPECT_EQ(R.NativeThreads.size(), 1u);
 }
+TEST_P(AndroidThread, NullTIDQueryReturnsMinusOneWithoutChangingErrno) {
+  Options.Android->Libraries["libthread-model.so"] = {"pthread_gettid_np"};
+  for (uint64_t Mode : {0u, 1u}) {
+    auto R = run("threads_null_tid", Mode);
+    returned(R, 0);
+    EXPECT_EQ(word(R, 0), uint64_t(UINT32_MAX));
+    EXPECT_EQ(word(R, 1), 91u);
+    unsigned Queries = 0;
+    for (const auto &Call : R.NativeCalls)
+      if (Call.Name == "pthread_gettid_np") {
+        ++Queries;
+        EXPECT_EQ(Call.Arguments[0], 0u);
+        EXPECT_EQ(Call.Result, uint64_t(UINT32_MAX));
+        EXPECT_EQ(Call.Library, Mode ? "libthread-model.so" : "");
+      }
+    EXPECT_EQ(Queries, 1u);
+  }
+}
 TEST_P(AndroidThread, LimitsRemainSharedAcrossSuspensionsAndTraceAttribution) {
   Options.Limits.Instructions = 300;
   auto R = run("threads_identity");

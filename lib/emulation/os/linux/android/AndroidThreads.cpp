@@ -300,7 +300,8 @@ BionicResult GuestThreads::invoke(const NativeCallEvent &Call) {
   if (Name == symbol::ThreadJoin && A[0] == current().Report.Handle)
     return value(linux_model::Deadlock);
   if (!A[0])
-    return value(linux_model::NoSuchProcess);
+    return value(Name == symbol::ThreadGetTID ? uint64_t(UINT32_MAX)
+                                             : linux_model::NoSuchProcess);
   size_t Index = 0;
   while (Index < Threads.size() && (Threads[Index].Report.Handle != A[0] ||
                                     Threads[Index].Report.Retired))
