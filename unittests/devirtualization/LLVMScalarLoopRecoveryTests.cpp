@@ -6,6 +6,8 @@
 #include "../lift/NeverDLiftFixture.h"
 #include "LLVMScalarLoopRecoveryTest.h"
 
+#include "llvm/IR/IRBuilder.h"
+
 #include <cstring>
 
 namespace neverd::analysis::scalar_test {
@@ -1022,8 +1024,9 @@ TEST_F(LLVMScalarLoopCompiled, OriginalAndRecoveredMatchIndependentOracles) {
         << Recovered.Diagnostic;
     auto Harness = tmpFile("oracle.c");
     std::ofstream(Harness)
-        << "#include <stdint.h>\nextern " << Case.Type << " f(" << Case.Type
-        << ", uint8_t);\nint main(void) {\n"
+        << "#include <stdint.h>\n"
+           "extern uint32_t oracle_entry(uint32_t, uint32_t);\n"
+           "int main(void) {\n"
            "uint32_t random = 0xffffffffu;\n"
            "for (unsigned n = 0; n < 256; ++n) {\n"
            "for (unsigned sample = 0; sample < 96; ++sample) {\n"
@@ -1032,10 +1035,26 @@ TEST_F(LLVMScalarLoopCompiled, OriginalAndRecoveredMatchIndependentOracles) {
            "random;\n"
         << Case.Type << " expected = (" << Case.Type << ")(" << Case.Oracle
         << ");\n"
-        << "if (f((" << Case.Type
-        << ")x, (uint8_t)n) != expected) return 1;\n"
+        << "if (oracle_entry(x, n) != expected) return 1;\n"
            "}} return 0; }\n";
     for (auto *M : {Input.Module.get(), Recovered.Module.get()}) {
+      SCOPED_TRACE(M == Input.Module.get() ? "original" : "recovered");
+      // The modeled function has LLVM integer semantics, without the C ABI's
+      // narrow argument/result extension attributes. Bridge through full-width
+      // carriers so the native oracle does not assume undefined upper bits.
+      auto *F = M->getFunction("f");
+      auto *I32 = llvm::Type::getInt32Ty(M->getContext());
+      auto *Wrapper = llvm::Function::Create(
+          llvm::FunctionType::get(I32, {I32, I32}, false),
+          llvm::GlobalValue::ExternalLinkage, "oracle_entry", *M);
+      llvm::IRBuilder<> Builder(
+          llvm::BasicBlock::Create(M->getContext(), "entry", Wrapper));
+      auto *X = Builder.CreateZExtOrTrunc(Wrapper->getArg(0),
+                                          F->getArg(0)->getType());
+      auto *N = Builder.CreateZExtOrTrunc(Wrapper->getArg(1),
+                                          F->getArg(1)->getType());
+      Builder.CreateRet(
+          Builder.CreateZExtOrTrunc(Builder.CreateCall(F, {X, N}), I32));
       auto IR = tmpFile("value.ll");
       std::ofstream(IR) << text(*M);
       for (const char *Level : {"-O0", "-O2"}) {

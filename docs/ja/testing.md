@@ -1435,4 +1435,4 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 
 `ObjCSuperGetterSources` は 4 キャリアの CGRect getter、10 種の公開情報改変の拒否、同じ機械語本体を使う Boolean/CGRect 呼出元を検証します。O0 と O2 の実行比較で、正確な戻り値ビット（負のゼロ、無限大、NaN ペイロードを含む）、受信者とクラスの同一性、メタデータ呼出後のセレクタ読込みを確認します。Apple ARM64 は元のコンパイラ thunk と生成 C の両方を実行し、他のホストはネイティブのレコード ABI で生成 C を実行します。
 
-`ObjCMergedSetterSources.CGRect*` は四つの値キャリア、helper・入口・layout stub の全命令、および現在の import、selector、宣言、フレーム証拠、公開箇所の変更を検査する。O0/O2 の実行 oracle は Apple ARM64 上で生成 C と元の39命令の ARM64 本体を比較し、符号付きゼロ、無限大、NaN payload のビット、元の receiver と retain 後の receiver、superclass metadata、先行呼び出し後の selector ロード、ARC 順序、カウンタのラップ、隣接領域のガードを確認する。他のホストでは固有の record ABI で生成 C を実行する。限定 WMF 入口の改善には独立した全件メソッド・ネイティブ状態比較が必要である。 `CurrentSelectorEncodingChecksMethodsAndProtocols` は古い型、selector、encoding を拒否し、宣言のみのクライアントと明示的なソース名を維持する。
+`LowIRLoopInference` は、初期上位ビットが任意の 8・24・32 ビットカウンタ射影、増加・減少、レジスタ、フレーム、関数一時領域、両バイト順を検査する。完全な自己証明は成功し、結果の変更、停滞、狭幅の周回、等値終了条件の飛び越しは拒否する。操作、クエリ、経路、順位候補、拡幅の予算は必要量ちょうどで成功し、1 少ないと失敗する。最終証明の操作、クエリ、観測予算は別途検査する。

@@ -283,6 +283,14 @@ evaluateJumpTableGuardPrimitive(NdOp Opcode, uint16_t OutputSize,
                                 llvm::ArrayRef<uint64_t> Inputs,
                                 llvm::ArrayRef<uint16_t> InputSizes);
 
+/// Fold a guard with possibly unknown operands. Boolean operators consume
+/// nonzero truth, so a known false AND / true OR fixes the result even when
+/// the other operand is unknown. No unknown value acquires a numeric identity.
+std::optional<uint64_t> evaluateJumpTableGuardPartialPrimitive(
+    NdOp Opcode, uint16_t OutputSize,
+    llvm::ArrayRef<std::optional<uint64_t>> Inputs,
+    llvm::ArrayRef<uint16_t> InputSizes);
+
 /// Translate one integer LowIR operation to the shared symbolic bit-vector
 /// semantics used by complete-domain jump-table proofs.  Inputs are coerced
 /// exactly as the production emitter coerces them; unsupported or

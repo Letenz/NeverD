@@ -301,6 +301,57 @@ TEST(ObjCCallHints, ExactMethodForwardingSuppliesMissingSelectorDeclaration) {
   EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1200));
 }
 
+TEST(ObjCCallHints,
+     IntegerForwardingPreservesDeclaredFloatingAndRecordArguments) {
+  for (const auto &[Selector, Encoding, WrapperEncoding] :
+       {std::tuple{"setOpacity:", "v20@0:8f16", "v28@0:8f16@20"},
+        std::tuple{"setPosition:", "v32@0:8{CGPoint=dd}16",
+                   "v40@0:8{CGPoint=dd}16@32"},
+        std::tuple{"setMeasurement:", "v24@0:8d16", "v32@0:8d16@24"}}) {
+    SCOPED_TRACE(Selector);
+    auto Image = image();
+    Image.ObjCMethods.clear();
+    Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+    if (llvm::StringRef(Selector) == "setMeasurement:") {
+      ObjCMethod Declaration;
+      Declaration.ClassName = "MeasuredObject";
+      Declaration.Selector = Selector;
+      Declaration.TypeHint = parseObjCMethodEncoding(Selector, Encoding);
+      ASSERT_TRUE(Declaration.TypeHint);
+      Image.ObjCMethods.push_back(std::move(Declaration));
+    }
+    ObjCMethod Wrapper;
+    Wrapper.ClassName = "Forwarder";
+    Wrapper.Selector = "forward:to:";
+    Wrapper.Implementation = 0x1200;
+    Wrapper.TypeHint =
+        parseObjCMethodEncoding(Wrapper.Selector, WrapperEncoding);
+    ASSERT_TRUE(Wrapper.TypeHint);
+    Image.ObjCMethods.push_back(std::move(Wrapper));
+    const auto Declared = objcSelectorSourceTypeHint(Image, Selector);
+    ASSERT_TRUE(Declared);
+
+    // The receiver is moved from x2 to x0; x2 still contains that object.
+    // The forwarded value lives in v0 (and v1 for CGPoint), so treating x2
+    // as the selector argument would invent a conflicting pointer signature.
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    auto Function = caller();
+    Function.Blocks[0].Ops = {
+        operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                  {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x11fc),
+        operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                  {NdVar::cst(0x1100, 8)}, 0x1200),
+        operation(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 8)}, 0x1204)};
+    const auto Hints = buildObjCSourceCallHints(Image, Function);
+    ASSERT_TRUE(Hints.count(0x1200));
+    const auto &Hint = Hints.at(0x1200);
+    EXPECT_TRUE(equalSourceABIs(Hint.Signature, *Declared));
+    EXPECT_FALSE(Hint.SelectorForwardingUse);
+  }
+}
+
 TEST(ObjCCallHints, FrameworkProvidersRequireExactActivationAndAgreement) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = image(Architecture);
@@ -15071,6 +15122,28 @@ TEST(ObjCCallHints, PrivateFrameSelectorSurvivesADeclaredCall) {
     ASSERT_EQ(Med.CallInfos.size(), 2U);
     EXPECT_TRUE(Med.CallInfos.back().SourceCallHint);
   }
+}
+
+TEST(ObjCCallHints,
+     PrivateFrameSelectorRequiresDisjointDeclaredFrameArguments) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const unsigned EscapedOffset : {0U, 16U, 23U, 24U, 32U}) {
+      SCOPED_TRACE(EscapedOffset);
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2200] = "_objc_storeStrong";
+      auto Function = frameSelectorCaller(Architecture);
+      auto &Ops = Function.Blocks.front().Ops;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      Ops.insert(Ops.begin() + 5,
+                 operation(NdOp::INT_ADD, NdVar::reg(TRI.IntParamRegs[0], 8),
+                           {NdVar::reg(TRI.FramePointer, 8),
+                            NdVar::cst(EscapedOffset, 8)},
+                           0x1230));
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      // The selector occupies [frame + 16, frame + 24). An authenticated
+      // pointer argument above it cannot reach this private spill.
+      EXPECT_EQ(Hints.count(0x1250), EscapedOffset >= 24 ? 1U : 0U);
+    }
 }
 
 TEST(ObjCCallHints, IndirectMessageResultsRequireNilStorageModeling) {

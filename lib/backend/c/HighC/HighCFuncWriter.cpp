@@ -4733,6 +4733,11 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   };
   WalkFrameUses(Func.Body, false);
   FrameStorageActive = NeedsFrameStorage;
+  // Rebuilt storage has the host's pointer width. A target-width integer
+  // temporary would truncate its address when 32-bit source is recompiled
+  // on a 64-bit host. Keep certified aliases on that same byte backing.
+  if (NeedsFrameStorage && getTargetRegInfo(Opts.TheArch).PointerSize == 4)
+    ProjectFrameAliasesIntoStorage = true;
   if (NeedsFrameStorage || !Analysis.StoreFwd.empty()) {
     // Integer store-to-load forwarding and named C locals are exclusive.
     // Mixing them leaves later loads on `frame_base` after the seed `arg0`

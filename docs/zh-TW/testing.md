@@ -1381,4 +1381,4 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 
 `ObjCSuperGetterSources` 涵蓋四載體 CGRect getter、十項發布變更拒絕案例，以及布林/CGRect 呼叫者共用機器碼的情況。O0、O2 執行驗證檢查精確回傳位元（含負零、無窮及 NaN 酬載）、接收者/類別身分和中繼資料呼叫之後的選擇子載入。Apple ARM64 同時執行原始編譯器 thunk 和產生的 C；其他平台使用本機紀錄 ABI 執行產生的 C。
 
-`ObjCMergedSetterSources.CGRect*` 涵蓋四個值載體、helper/呼叫入口/版面 stub 的每條指令，以及目前匯入、selector、宣告、框架證據與發布出現位置的變更。O0/O2 執行 oracle 在 Apple ARM64 上比對產生的 C 與原始 39 條 ARM64 指令，檢查負零、無窮與 NaN payload 的位元模式，原始與 retained receiver 身分、superclass metadata、先前呼叫之後的 selector 載入、ARC 順序、計數器回繞與相鄰儲存保護。其他主機以本身的 record ABI 執行產生的 C。WMF 限定入口的增益仍需獨立的全量方法與原生狀態比對。 `CurrentSelectorEncodingChecksMethodsAndProtocols` 拒絕過期型別、selector 或編碼，同時保留僅提供宣告的用戶端與明確原始碼名稱。
+`LowIRLoopInference` 涵蓋帶任意初始高位的 8、24、32 位計數器投影、遞增及遞減、暫存器、堆疊框架、函式暫存值和兩種位元組序。完整自證明通過，結果變化、停滯、窄位寬回繞及跳過相等退出條件均遭拒絕。操作、查詢、路徑、排名候選及拓寬預算在精確上限通過，少一單位失敗；最終證明的操作、查詢及觀察預算分別檢查。

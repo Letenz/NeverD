@@ -1425,4 +1425,4 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 
 `ObjCSuperGetterSources`는 네 캐리어 CGRect getter, 열 가지 게시 정보 변조 거부, 같은 기계 본문을 공유하는 Boolean/CGRect 호출자를 검사합니다. O0와 O2 실행 비교는 정확한 반환 비트(음의 영, 무한대, NaN 페이로드 포함), 수신자/클래스 식별, 메타데이터 호출 후 선택자 로드를 확인합니다. Apple ARM64는 원래 컴파일러 thunk와 생성 C를 함께 실행하고, 다른 호스트는 네이티브 레코드 ABI로 생성 C를 실행합니다.
 
-`ObjCMergedSetterSources.CGRect*`는 네 개의 값 전달 위치, helper/진입점/layout stub의 모든 명령과 현재 import, selector, 선언, 프레임 증거 및 게시 발생 위치의 변경을 검사한다. O0/O2 실행 oracle은 Apple ARM64에서 생성 C와 원래 39개 ARM64 명령을 비교한다. 부호 있는 0, 무한대, NaN payload 비트, 원본과 retained receiver 식별, superclass metadata, 앞선 호출 이후의 selector 로드, ARC 순서, 카운터 순환 및 인접 저장 영역 보호를 확인한다. 다른 호스트에서는 해당 record ABI로 생성 C를 실행한다. 제한된 WMF 진입점의 개선에는 독립적인 전체 메서드 및 네이티브 상태 비교가 여전히 필요하다. `CurrentSelectorEncodingChecksMethodsAndProtocols`는 오래된 타입, selector 또는 encoding을 거부하면서 선언 전용 클라이언트와 명시적 소스 이름을 유지한다.
+`LowIRLoopInference`는 임의의 초기 상위 비트를 가진 8·24·32비트 카운터 투영, 증가와 감소, 레지스터, 프레임, 함수 임시 저장소와 두 바이트 순서를 검사한다. 완전한 자기 증명은 통과하고 결과 변경, 정체, 좁은 폭의 순환과 동등 종료 조건 건너뛰기는 거부한다. 연산, 질의, 경로, 순위 후보와 확장 예산은 정확한 한도에서 통과하고 하나 부족하면 실패한다. 최종 증명의 연산, 질의와 관측 예산은 따로 검사한다.

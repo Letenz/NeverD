@@ -1253,4 +1253,4 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 
 共用父類 getter 投影也支援目前 Darwin ARM64 `CGRect` 宣告的四個 double 回傳載體。它獨立核對完整的 15 條機器指令、類別存取器、呼叫者選擇子槽和全域一致的方法 ABI。同一機器入口的布林與 CGRect 回傳使用不同的原始碼輔助函式。發布時重新檢查目前呼叫者 ABI、回傳型別、陳述式位置及提供者；不接納間接結果儲存。 宣告形狀統一由 `ObjCSourceDeclarations` 提供，原始碼投影與 HighC 輸出器共同重用。
 
-合併的 CGRect setter 透過 `ObjCSourceDeclarations` 共用規範的方法與 helper 宣告，四個 double 載體仍屬於一個邏輯參數。原始碼恢復獨立驗證完整的 39 條指令、5 條指令的呼叫入口、目前類別 accessor、superclass ABI、強 ARC 匯入與不可變的 `setNeedsLayout` selector stub。產生的 C 保持以下順序：metadata → 新鮮 superclass selector → retain → superclass 派送 → 64 位元計數器回繞更新 → 新鮮版面 selector → 版面請求 → release。發布時重新檢查完整目前 ABI、邏輯參數身分、敘述出現位置、selector 儲存格與 provider；此契約不授權其他聚合形狀、間接結果、虛擬表配置或框架效果。 方法入口與全域 selector 宣告共用同一個目前編碼與快取驗證器，協定宣告亦適用。
+觀測到的零擴展單位更新保留其窄位域遮罩。多切點推斷僅在檢查所有已保存的具體到達狀態及目前輸入狀態後，才提出位域端點排除約束；拓寬會永久移除失敗約束。元組搜尋在既有整字候選之後加入遮罩計數器，只對選定位元取反。整個字仍作為狀態參數並接受觀察，排名投影不捨棄高位元組。每條轉移必須在完整穩定述詞下下降，最終檢查器使用獨立預算重新證明入口覆蓋、完整狀態及終止性。
