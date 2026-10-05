@@ -308,7 +308,7 @@ TEST_F(KernelPoFxPoweredDownAPI, StartedDeviceMustBePhysicallyPoweredOn) {
 
 TEST_F(KernelPoFxAPI,
        CentralDispatchDeclaresTheCompleteSupportedArgumentCounts) {
-#define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL)                              \
+#define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL, Operation)                   \
   EXPECT_EQ(KernelModel::argumentCount(#Name), Arity);
 #include "os/windows/kernel/KernelPoFxAPIs.def"
 #undef NEVERD_KERNEL_POFX_API
@@ -502,6 +502,8 @@ TEST_F(KernelPoFxAPI, BlockingCallbacksStayOnTheCallingThreadAndWaitForReturn) {
 TEST_F(KernelPoFxAPI,
        FlagsAndComponentFailuresDoNotConsumeActivationReferences) {
   startIdle();
+  reject(Model->call("PoFxActivateComponent", {0, UINT32_MAX, 4}),
+         "live PoFx handle");
   reject(Model->call("PoFxActivateComponent",
                      {Handle, 0, pofx::FlagBlocking | pofx::FlagAsyncOnly}),
          "invalid flags");

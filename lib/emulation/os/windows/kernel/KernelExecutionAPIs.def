@@ -1,0 +1,29 @@
+//===- KernelExecutionAPIs.def - IRQL and APC API contracts ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Argument counts, IRQL ceilings and typed operations for execution state.
+/// The model owns direction, pairing and thread-local APC state checks.
+///
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-keraiseirqltodpclevel
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kelowerirql
+NEVERD_KERNEL_EXECUTION_API(KfRaiseIrql, 1, Any, raiseIRQL(uint8_t(A[0])))
+NEVERD_KERNEL_EXECUTION_API(KeLowerIrql, 1, Any, lowerIRQL(uint8_t(A[0])))
+
+// https://learn.microsoft.com/windows-hardware/drivers/kernel/disabling-apcs
+NEVERD_KERNEL_EXECUTION_API(KeEnterCriticalRegion, 0, APC,
+                            enterApcRegion(ApcRegionKind::Critical))
+NEVERD_KERNEL_EXECUTION_API(KeLeaveCriticalRegion, 0, APC,
+                            leaveApcRegion(ApcRegionKind::Critical))
+NEVERD_KERNEL_EXECUTION_API(KeEnterGuardedRegion, 0, APC,
+                            enterApcRegion(ApcRegionKind::Guarded))
+NEVERD_KERNEL_EXECUTION_API(KeLeaveGuardedRegion, 0, APC,
+                            leaveApcRegion(ApcRegionKind::Guarded))
+NEVERD_KERNEL_EXECUTION_API(KeAreApcsDisabled, 0, Dispatch, apcsDisabled())
+NEVERD_KERNEL_EXECUTION_API(KeAreAllApcsDisabled, 0, Dispatch,
+                            allApcsDisabled())
