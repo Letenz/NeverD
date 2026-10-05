@@ -85,6 +85,7 @@ NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
 NEVERD_DARWIN_SERVICE(Stat64, 338, Int)
 NEVERD_DARWIN_SERVICE(Fstat64, 339, Int)
 NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
+NEVERD_DARWIN_SERVICE(GetDirEntries64, 344, Wide)
 NEVERD_DARWIN_SERVICE(OpenAt, 463, Int)
 NEVERD_DARWIN_SERVICE(FstatAt64, 470, Int)
 NEVERD_DARWIN_SERVICE(Munmap, 73, Int)
@@ -134,6 +135,19 @@ NEVERD_DARWIN_DIAGNOSTIC(FileStatFlags,
 NEVERD_DARWIN_DIAGNOSTIC(
     FilePartialPath,
     "Darwin F_GETPATH into a partially writable buffer is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryContents,
+                         "Darwin directory contents are not configured")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryContentsOption,
+                         "invalid or incoherent Darwin directory contents")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryPosition,
+                         "Darwin directory position is not in the snapshot")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryPartialData,
+                         "Darwin directory record buffer is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryPartialPosition,
+    "Darwin directory position buffer is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryPartialFlags,
+                         "Darwin directory flags buffer is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(FileControl, "unsupported Darwin fcntl command")
 NEVERD_DARWIN_DIAGNOSTIC(FileSeek, "unsupported Darwin data/hole seek")
 NEVERD_DARWIN_DIAGNOSTIC(

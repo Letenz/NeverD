@@ -67,6 +67,9 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   read(Description &File, uint64_t Address, uint64_t Count, uint64_t Offset,
        bool Positioned, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  directory(Description &File, uint64_t Address, uint64_t Count,
+            uint64_t Position, ProcessResult &Result);
   ServiceResult seek(Description &File, uint64_t Offset, uint32_t Whence);
   ServiceResult duplicate(const Descriptor &Source, uint32_t Minimum,
                           bool CloseOnExec);

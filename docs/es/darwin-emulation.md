@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2ad5b9e4d32165a7e7d460cc2290a5cd1bd7718c03cc6573e1fd3b5967d1d4d6 -->
+<!-- i18n-source: e6d2ea5c79823e0881de4fbdb33b27672ef1858ba61ddd1ad54e1477b2e20d85 -->
 
 [← Índice de documentación](README.md)
 
@@ -69,7 +69,7 @@ Verificación Release de 2026-10-05: 381 registros, 177 aprobados, 204 omitidos,
 
 `openat` (463), `openat_nocancel` (464), `chdir` (12), `fchdir` (13) y `fstatat64` (470) comparten resolución. Las rutas relativas usan FD de directorio o `AT_FDCWD=-2`; las absolutas ignoran FD. Separadores repetidos, `.`, `..` y barra final verifican cada antecesor: `/file/..` da ENOTDIR, `/missing/..` ENOENT. Los fallos y cerrar, reutilizar o sustituir el FD original conservan CWD. `F_GETPATH=50` copia ruta canónica y NUL incluso tras dup, sin tocar bytes posteriores.
 
-read/pread de directorio da EISDIR aun con longitud cero; un offset pread negativo devuelve primero EINVAL. SET/CUR comparten cursor, END exige size explícito; mmap da EINVAL. fstatat64 acepta 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800` y `AT_FDONLY=0x400` (ignora la ruta). Bits inválidos dan EINVAL; `AT_REALDEV=0x200` sigue excluido. Identidades de flujos desconocidas, permisos sin control de acceso; enumeración y mutación quedan pendientes. El mismo `directories` compara el núcleo nativo y cinco invitados; stat contrasta archivos y directorios reales. Intel HVF Actions sigue suspendido.
+read/pread de directorio da EISDIR aun con longitud cero; un offset pread negativo devuelve primero EINVAL. SET/CUR comparten cursor, END exige size explícito; mmap da EINVAL. fstatat64 acepta 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800` y `AT_FDONLY=0x400` (ignora la ruta). Bits inválidos dan EINVAL; `AT_REALDEV=0x200` sigue excluido. Identidades de flujos desconocidas, permisos sin control de acceso; mutación queda pendiente. El mismo `directories` compara el núcleo nativo y cinco invitados; stat contrasta archivos y directorios reales. Intel HVF Actions sigue suspendido.
 
 [XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
 
@@ -78,6 +78,31 @@ Validación de directorios (2026-10-05, Release): 467 registros, 227 aprobados, 
 ```json
 {"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
 ```
+
+## Instantáneas explícitas de directorio
+
+`getdirentries64` (344) recorre el `contents` inmutable opcional de una entrada `directories` existente; C++ usa `DarwinFileOptions::DirectoryContents`. `entries` incluye en orden explícito todos los hijos directos, `.` y `..`. Sin instantánea, incluso un directorio vacío sigue desconocido. No crea rutas ni stat ni consulta al anfitrión.
+
+Cada entrada exige `name`, `inode` no nulo, `type` (0 desconocido, 4 directorio, 8 archivo), `next_offset` y `seek_offset`. El tipo coincide con la ruta; el inode de la misma ruta resuelta coincide entre instantáneas y metadatos. `next_offset` es positivo, único en ese directorio y <=INT64_MAX, sin orden creciente obligatorio; cero rebobina. `seek_offset` es una observación d_seekoff separada de 64 bits sin signo y admite ceros repetidos. Los enteros usan las cadenas decimales sin pérdida de stat.
+
+`contents.minimum_buffer_size` exige un mínimo de carga de 1–128 MiB, incluido EOF. El `minimum_buffer_size` opcional por entrada (predeterminado 0) limita llamadas que empiezan allí. El ejemplo observa APFS: 64 bytes para los dos puntos iniciales, 1 en EOF; otras posiciones deben alojar un registro entero. LP64 usa alineación de ocho bytes y tamaño `roundUp(25 + nameBytes, 8)`. Máximo 4096 entradas en total; sus bytes cuentan en 16 MiB. Las rutas ancestrales declaradas solo por metadatos/instantánea cuentan una vez en las 256 rutas. JSON conserva 64 KiB.
+
+Open independientes tienen cursores propios, dup los comparte. Solo cero o valores suministrados permiten continuar; una posición desconocida detiene explícitamente. Cada llamada devuelve el máximo prefijo de registros completos. Longitud >=1024 reserva los cuatro últimos bytes solicitados para EOF (1 al final, 0 en otro caso); solo la carga se limita a 128 MiB. La dirección conserva la aritmética original sin signo, incluido el desbordamiento. Orden: datos, avance del cursor, posición anterior, indicadores. Un EFAULT posterior conserva efectos previos; EOF omite la copia vacía. Una copia individual parcialmente escribible se detiene antes de esa copia, conservando los efectos anteriores.
+
+`directory-entries` compara campos, dup/rebobinado, lecturas pequeñas, EOF y orden de copias con macOS. Otro test compara todos los bytes nativos capturados, con nombres largos, y el diseño SDK. Los cookies fijos no reproducen generaciones dinámicas APFS. El antiguo `getdirentries` (196), mutaciones, otros transportes nativos e iOS físico quedan fuera de esta validación.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
+  "minimum_buffer_size":1,"entries":[
+    {"name":".","inode":41,"type":4,"next_offset":11,"seek_offset":0,"minimum_buffer_size":64},
+    {"name":"..","inode":41,"type":4,"next_offset":22,"seek_offset":0},
+    {"name":"empty","inode":42,"type":4,"next_offset":7,"seek_offset":0},
+    {"name":"data","inode":73,"type":8,"next_offset":99,"seek_offset":0}]}}]}}
+```
+
+[XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
+
+Validación de enumeración (2026-10-05, Release): 498 casos Darwin, 246 aprobados, 252 omitidos por backend no disponible, cero fallos; 63/63 casos ARM64 HVF obligatorios ejecutados. Pasaron 11 programas macOS nativos, 38 controles C/CLI/informes sin omisiones, cinco combinaciones Python con ocho escenarios de archivos cada una y 66 tests de herramientas. Los conteos se superponen. Evidencia: `build-hvf-arm64/darwin-dirents-verified-evidence/`. Intel HVF Actions sigue suspendido; otros transportes nativos e iOS físico no están validados.
 
 
 ## Mapeos privados de archivos
@@ -118,7 +143,7 @@ Cada archivo puede incluir `metadata`; todos los campos siguientes son obligator
 
 Con stat64: 409 registros únicos, 193 aprobados, 216 omitidos, ningún fallo; se ejecutaron 54/54 casos ARM64 HVF obligatorios y cinco combinaciones Unicorn. Pasaron la comparación SDK/registro real, ocho programas nativos, 36 casos API/informe sin omisiones, cinco combinaciones Python y 66 pruebas de herramientas; los recuentos se solapan. Cada caso nativo tiene su propio archivo de salida, evitando residuos tras salidas más cortas. Los añadidos carecen de evidencia nativa Intel HVF/KVM/WHP o iOS físico.
 
-Después: mapeos compartidos y fallos de página EOF, enumeración de directorios y escritura acotada (páginas EOF, duración tras close, orden de errores), observaciones explícitas de tiempo/sistema, servicios Mach/hilos necesarios y dependencias Mach-O, rebases/binds, inicialización y TLS. Objective-C/Swift y Foundation/UIKit requieren programas nativos de referencia. iOS físico necesita SDK y dispositivo; Intel HVF sigue sin validar y sus Actions suspendidas.
+Después: mapeos compartidos y fallos de página EOF, escritura acotada (páginas EOF, duración tras close, orden de errores), observaciones explícitas de tiempo/sistema, servicios Mach/hilos necesarios y dependencias Mach-O, rebases/binds, inicialización y TLS. Objective-C/Swift y Foundation/UIKit requieren programas nativos de referencia. iOS físico necesita SDK y dispositivo; Intel HVF sigue sin validar y sus Actions suspendidas.
 
 
 

@@ -19,6 +19,55 @@ llvm::Error invalid(llvm::StringRef Name) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  field::DarwinFilesOptions + Name);
 }
+llvm::Expected<DarwinDirectoryContents>
+directoryContents(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object || Object->size() != 2)
+    return invalid(field::DirectoryContents);
+  const auto *Entries = Object->getArray(field::DirectoryEntries);
+  const auto *Minimum = Object->get(field::DirectoryMinimumBuffer);
+  auto Limit =
+      Minimum ? process_json::integer<uint32_t>(*Minimum) : std::nullopt;
+  if (!Entries || !Limit ||
+      Entries->size() > darwin_file_limits::DirectoryEntries)
+    return invalid(field::DirectoryContents);
+  DarwinDirectoryContents Out;
+  Out.MinimumBufferSize = *Limit;
+  for (const auto &Value : *Entries) {
+    const auto *Entry = Value.getAsObject();
+    if (!Entry || (Entry->size() != 5 && Entry->size() != 6) ||
+        (Entry->size() == 6 && !Entry->get(field::DirectoryMinimumBuffer)))
+      return invalid(field::DirectoryEntries);
+    const auto Name = Entry->getString(field::Name);
+    if (!Name)
+      return invalid(field::Name);
+    DarwinDirectoryEntry E;
+    E.Name = Name->str();
+    auto Number = [&](llvm::StringRef Key, auto &Destination) -> llvm::Error {
+      const auto *V = Entry->get(Key);
+      using T = std::remove_reference_t<decltype(Destination)>;
+      auto N = V ? process_json::integer<T>(*V) : std::nullopt;
+      if (!N)
+        return invalid(Key);
+      Destination = *N;
+      return llvm::Error::success();
+    };
+    if (auto Error = Number(field::FileInode, E.Inode))
+      return Error;
+    if (auto Error = Number(field::DirectoryType, E.Type))
+      return Error;
+    if (auto Error = Number(field::DirectoryNextOffset, E.NextOffset))
+      return Error;
+    if (auto Error = Number(field::DirectorySeekOffset, E.SeekOffset))
+      return Error;
+    if (Entry->get(field::DirectoryMinimumBuffer))
+      if (auto Error =
+              Number(field::DirectoryMinimumBuffer, E.MinimumBufferSize))
+        return Error;
+    Out.Entries.push_back(std::move(E));
+  }
+  return Out;
+}
 llvm::Expected<DarwinFileMetadata> metadata(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
   if (!Object || Object->size() != 15)
@@ -117,14 +166,21 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       for (const auto &Directory : *Directories) {
         const auto *D = Directory.getAsObject();
-        if (!D || (D->size() != 1 && D->size() != 2) ||
-            (D->size() == 2 && !D->get(field::FileMetadata)))
+        if (!D ||
+            D->size() != 1 + unsigned(bool(D->get(field::FileMetadata))) +
+                             unsigned(bool(D->get(field::DirectoryContents))))
           return invalid(Name);
         auto Path = D->getString(field::Path);
         if (!Path || Path->size() >= Remaining ||
             !Out.Directories.emplace(Path->str()).second)
           return invalid(field::Path);
         Remaining -= Path->size() + 1;
+        if (const auto *C = D->get(field::DirectoryContents)) {
+          auto Parsed = directoryContents(*C);
+          if (!Parsed)
+            return Parsed.takeError();
+          Out.DirectoryContents.emplace(Path->str(), std::move(*Parsed));
+        }
         if (const auto *M = D->get(field::FileMetadata)) {
           auto Parsed = metadata(*M);
           if (!Parsed)

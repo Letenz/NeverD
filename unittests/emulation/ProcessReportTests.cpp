@@ -147,6 +147,44 @@ TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
   }
 }
 
+TEST(ProcessReport, DarwinDirectorySnapshotsHaveStrictLosslessWireFields) {
+  const auto Original =
+      llvm::cantFail(llvm::json::parse(darwin_test::DirectoryContentsJSON));
+  auto Parse = [&](const llvm::json::Value &Contents) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[{"path":"/data","bytes_hex":""}],"directories":[{"path":"/empty"},{"path":"/","contents":)" +
+        llvm::formatv("{0}", Contents).str() + "}]}}");
+  };
+  auto Good = Parse(Original);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->DirectoryContents.at("/").Entries[3].Inode,
+            0xfedcba9876543210ULL);
+  for (auto Field : {"inode", "type", "next_offset", "seek_offset", "name"}) {
+    auto V = Original;
+    auto *Entries = V.getAsObject()->getArray("entries");
+    (*Entries)[0].getAsObject()->erase(Field);
+    auto Bad = Parse(V);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (const char *BadValue : {"null", "[]", "-1", "1.5", "9007199254740992",
+                               "\"18446744073709551616\""}) {
+    auto V = Original;
+    (*V.getAsObject()->getArray("entries"))[3].getAsObject()->operator[](
+        "inode") = llvm::cantFail(llvm::json::parse(BadValue));
+    auto Bad = Parse(V);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (auto Text :
+       {"null", "[]", "{}", R"({"entries":[],"minimum_buffer_size":0})",
+        R"({"entries":[],"minimum_buffer_size":1,"unknown":0})"}) {
+    auto Bad = Parse(llvm::cantFail(llvm::json::parse(Text)));
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+}
+
 TEST(ProcessReport, MalformedDarwinFilesFailBeforeExecution) {
   for (
       const char *Bad :

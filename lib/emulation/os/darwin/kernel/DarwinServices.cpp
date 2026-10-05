@@ -160,6 +160,7 @@ handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
   case ServiceKind::Chdir:
   case ServiceKind::Fchdir:
   case ServiceKind::FstatAt64:
+  case ServiceKind::GetDirEntries64:
   case ServiceKind::Close:
   case ServiceKind::Lseek:
   case ServiceKind::Dup:

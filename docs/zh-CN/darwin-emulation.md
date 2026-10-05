@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2ad5b9e4d32165a7e7d460cc2290a5cd1bd7718c03cc6573e1fd3b5967d1d4d6 -->
+<!-- i18n-source: e6d2ea5c79823e0881de4fbdb33b27672ef1858ba61ddd1ad54e1477b2e20d85 -->
 
 [← 文档索引](README.md)
 
@@ -77,7 +77,7 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 
 `openat` (463)、`openat_nocancel` (464)、`chdir` (12)、`fchdir` (13)、`fstatat64` (470) 与 open/stat64 共用解析器。相对路径使用目录 FD 或 `AT_FDCWD=-2`，绝对路径忽略 FD。重复分隔符、`.`、`..` 和末尾斜杠逐级检查：`/file/..` 为 ENOTDIR，`/missing/..` 为 ENOENT。失败保留 CWD，关闭、复用或覆盖原目录 FD 不改变 CWD。`F_GETPATH=50` 在复制描述符上仍返回规范路径和 NUL，终止符之后不写入。
 
-目录 read/pread 即使零长度也返回 EISDIR，负 pread 偏移先返回 EINVAL。SET/CUR 共用游标，END 需要显式 size；目录 mmap 返回 EINVAL。fstatat64 支持 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（完全忽略路径）。非法位返回 EINVAL；`AT_REALDEV=0x200` 明确不支持。流的路径和目录身份未知，权限不是访问控制模型；目录枚举与写入仍待实现。同一 `directories` 程序对照原生内核及五种 guest，原生 stat 逐字节比对文件和目录。Intel HVF Actions 保持暂停。
+目录 read/pread 即使零长度也返回 EISDIR，负 pread 偏移先返回 EINVAL。SET/CUR 共用游标，END 需要显式 size；目录 mmap 返回 EINVAL。fstatat64 支持 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（完全忽略路径）。非法位返回 EINVAL；`AT_REALDEV=0x200` 明确不支持。流的路径和目录身份未知，权限不是访问控制模型；目录写入仍待实现。同一 `directories` 程序对照原生内核及五种 guest，原生 stat 逐字节比对文件和目录。Intel HVF Actions 保持暂停。
 
 [XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
 
@@ -86,6 +86,31 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 ```json
 {"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
 ```
+
+## 显式目录快照
+
+`getdirentries64` (344) 枚举已有 `directories` 条目的可选只读 `contents`；C++ 使用 `DarwinFileOptions::DirectoryContents`。`entries` 必须按明确顺序完整列出 `.`、`..` 和所有直接子项。即使空目录，缺少快照仍表示未知；快照不创建路径或 stat 元数据，也不查询宿主文件。
+
+每项必填 `name`、非零 `inode`、`type`（0 未知、4 目录、8 普通文件）、`next_offset`、`seek_offset`。类型必须匹配路径；相同解析路径的 inode 必须与其他快照及元数据一致。`next_offset` 是目录内唯一、非零、不超过 INT64_MAX 的游标标记，无需递增；零表示回绕到开头。`seek_offset` 是独立的无符号 64 位 d_seekoff 观察值，可重复为零。整数沿用 stat 元数据的无损十进制字符串规则。
+
+`contents.minimum_buffer_size` 必填，表示包括 EOF 在内的有效载荷下限，范围为 1–128 MiB。条目可另设 `minimum_buffer_size`（默认 0），约束从该项开始的读取。示例记录 APFS 开头两个点条目至少需要 64 字节、EOF 只需 1 字节的观察；其他位置至少容纳一个完整记录。LP64 记录按 8 字节对齐，长度为 `roundUp(25 + nameBytes, 8)`。全部快照最多 4096 项，编码字节计入 16 MiB 输入预算；仅元数据/快照声明的祖先路径去重后计入 256 路径上限，JSON 仍限 64 KiB。
+
+独立 open 使用独立游标，dup 共享游标；仅零和声明的标记可恢复遍历，未知位置明确停止。每次返回能容纳的最大完整记录前缀。长度 >=1024 时，原请求末尾四字节为 EOF 标志（到末尾为 1，否则 0），仅记录载荷截断到 128 MiB；标志地址保留原无符号长度及回绕运算。顺序为写数据、移动游标、写读取前位置、写标志。后续 EFAULT 保留此前效果；EOF 不访问空数据缓冲区。单次复制仅部分可写时，在该次复制前明确停止，保留此前复制和游标效果。
+
+同一 `directory-entries` 程序对照原生 macOS 的记录字段、dup/回绕、小块读取、EOF 与复制顺序；独立测试按 SDK 布局逐字节核对捕获的原生记录和长文件名。快照标记在回绕后保持固定，不模拟 APFS 每次回绕时变化的游标值。旧 `getdirentries` (196)、目录写入、其他原生后端和 iOS 真机尚未纳入验收。
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
+  "minimum_buffer_size":1,"entries":[
+    {"name":".","inode":41,"type":4,"next_offset":11,"seek_offset":0,"minimum_buffer_size":64},
+    {"name":"..","inode":41,"type":4,"next_offset":22,"seek_offset":0},
+    {"name":"empty","inode":42,"type":4,"next_offset":7,"seek_offset":0},
+    {"name":"data","inode":73,"type":8,"next_offset":99,"seek_offset":0}]}}]}}
+```
+
+[XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
+
+目录枚举验收（2026-10-05，Release）：Darwin 共 498 项，246 通过、252 项因后端不可用跳过、零失败；ARM64 HVF 必需项 63/63 实际执行。11 个原生 macOS 程序、38 项公共 C/CLI/报告（无跳过）、Python 五种来宾组合各八种文件场景和 66 项验收脚本通过，计数有重叠。证据：`build-hvf-arm64/darwin-dirents-verified-evidence/`。Intel HVF Actions 保持暂停；其他原生后端和 iOS 真机未验收。
 
 
 ## 私有文件映射
@@ -126,7 +151,7 @@ Release Darwin 门禁核对 438 个唯一登记项：210 通过、228 跳过、�
 
 加入 stat64 后的 Release 验收共 409 个唯一登记项：193 通过、216 跳过、零失败；54/54 项 ARM64 HVF 必需测试实际执行，Unicorn 覆盖五种来宾组合。SDK 布局与真实文件整条记录对比、8 个原生 macOS 程序、36 个公共接口/报告测试（无跳过）、Python 五种组合和 66 个验收脚本测试均通过，计数有重叠。原生测试改为每例独立输出文件，修复短输出残留旧尾字节的问题。新增能力仍无 Intel HVF/KVM/WHP 或 iOS 真机证据。
 
-后续优先顺序：先补共享映射与 EOF 缺页、目录枚举和有界写入，验证 EOF 页、close 后映射寿命与错误顺序；再补显式时间/系统信息、必要 Mach/线程服务和 Mach-O 依赖、重定位/绑定、初始化/TLS；最后通过真实程序推进 Objective-C/Swift 与 Foundation/UIKit。iOS 真机对照需要 SDK 和设备环境；Intel HVF 尚未验证，Actions 继续暂停。
+后续优先顺序：先补共享映射与 EOF 缺页、有界写入，验证 EOF 页、close 后映射寿命与错误顺序；再补显式时间/系统信息、必要 Mach/线程服务和 Mach-O 依赖、重定位/绑定、初始化/TLS；最后通过真实程序推进 Objective-C/Swift 与 Foundation/UIKit。iOS 真机对照需要 SDK 和设备环境；Intel HVF 尚未验证，Actions 继续暂停。
 
 
 

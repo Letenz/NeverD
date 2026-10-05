@@ -11,17 +11,20 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
 #include <string>
 #if defined(__APPLE__)
+#include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -29,6 +32,9 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+// The raw LP64 entry point exported by libsystem_kernel; the public legacy
+// getdirentries declaration is unavailable with the 64-bit-inode SDK ABI.
+extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 #endif
 
 namespace neverd::emulation {
@@ -186,6 +192,108 @@ TEST(DarwinNative, Stat64WireRecordMatchesHostSDKAndFilesystemObservation) {
   }
 #endif
 }
+TEST(DarwinNative, DirectoryRecordsMatchHostSDKAndCapturedFilesystemBytes) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "Darwin directory records require the macOS SDK and kernel";
+#else
+  using namespace darwin_model;
+  EXPECT_EQ(sizeof(struct dirent), 1048u);
+  EXPECT_EQ(offsetof(struct dirent, d_ino), 0u);
+  EXPECT_EQ(offsetof(struct dirent, d_seekoff), 8u);
+  EXPECT_EQ(offsetof(struct dirent, d_reclen), 16u);
+  EXPECT_EQ(offsetof(struct dirent, d_namlen), 18u);
+  EXPECT_EQ(offsetof(struct dirent, d_type), 20u);
+  EXPECT_EQ(offsetof(struct dirent, d_name), 21u);
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-darwin-dirents", Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  ASSERT_TRUE(std::filesystem::create_directory(Root / "empty"));
+  std::optional<DarwinFileOptions> Options(std::in_place);
+  Options->Directories.insert("/captured/empty");
+  for (const auto &Name :
+       {std::string("data"), std::string("abcdefgh"), std::string(255, 'q')}) {
+    std::ofstream File(Root / Name, std::ios::binary);
+    ASSERT_TRUE(File.good());
+    Options->Files["/captured/" + Name] = {};
+  }
+  const int NativeFD = ::open(Root.c_str(), O_RDONLY | O_DIRECTORY);
+  ASSERT_GE(NativeFD, 0);
+  auto Close = llvm::scope_exit([&] { ::close(NativeFD); });
+  std::vector<uint8_t> NativeBytes(4096, 0xa5);
+  off_t Initial = -1;
+  const auto Count = __getdirentries64(NativeFD, NativeBytes.data(),
+                                       NativeBytes.size(), &Initial);
+  ASSERT_GT(Count, 0);
+  ASSERT_LT(size_t(Count), NativeBytes.size() - 4);
+  ASSERT_EQ(Initial, 0);
+  const auto Terminal = ::lseek(NativeFD, 0, SEEK_CUR);
+  ASSERT_GT(Terminal, 0);
+  auto &Contents = Options->DirectoryContents["/captured"];
+  Contents.MinimumBufferSize = 1;
+  for (size_t Offset = 0; Offset < size_t(Count);) {
+    ASSERT_GE(size_t(Count) - Offset, 21u);
+    struct dirent Record{};
+    std::memcpy(&Record, NativeBytes.data() + Offset, 21);
+    ASSERT_GT(Record.d_reclen, 21u + Record.d_namlen);
+    ASSERT_LE(Record.d_reclen, sizeof(Record));
+    ASSERT_LE(Record.d_reclen, size_t(Count) - Offset);
+    std::memcpy(&Record, NativeBytes.data() + Offset, Record.d_reclen);
+    // This test observes the full batch endpoint. Intermediate cookies are
+    // explicit test inputs; it does not claim they equal APFS's private values.
+    Contents.Entries.push_back(
+        {std::string(Record.d_name, Record.d_namlen), Record.d_ino,
+         Record.d_type, uint64_t(Terminal) + Contents.Entries.size() + 1,
+         Record.d_seekoff});
+    Offset += Record.d_reclen;
+  }
+  ASSERT_EQ(Contents.Entries.size(), 6u);
+  Contents.Entries.front().MinimumBufferSize = 64;
+  Contents.Entries.back().NextOffset = Terminal;
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  auto Physical = PhysicalMemory::create(16384);
+  ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+  auto Space = AddressSpace::create(*Physical, 16384);
+  ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+  const uint64_t Base = 0x100000, Buffer = Base + 256, Position = Base + 8192;
+  ASSERT_FALSE(bool((*Space)->map(Base, 16384, Read | Write | UserAccessible)));
+  const uint8_t Path[] = {'/', 'c', 'a', 'p', 't', 'u', 'r', 'e', 'd', 0};
+  ASSERT_FALSE(bool((*Space)->write(Base, Path)));
+  std::vector<uint8_t> Observed(NativeBytes.size(), 0xa5);
+  ASSERT_FALSE(bool((*Space)->write(Buffer, Observed)));
+  DarwinFiles Files(**Space, Options);
+  ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       "native directory ABI comparison"};
+  auto Opened = Files.handle(ServiceKind::Open,
+                             {0, 5, {Base, O_DIRECTORY}, std::nullopt}, Result);
+  ASSERT_TRUE(bool(Opened)) << llvm::toString(Opened.takeError());
+  ASSERT_TRUE(Opened->has_value()) << Result.Diagnostic;
+  ASSERT_FALSE((**Opened).Error);
+  const auto FD = (**Opened).Value;
+  auto Read = Files.handle(
+      ServiceKind::GetDirEntries64,
+      {0, 344, {FD, Buffer, NativeBytes.size(), Position}, std::nullopt},
+      Result);
+  ASSERT_TRUE(bool(Read)) << llvm::toString(Read.takeError());
+  ASSERT_TRUE(Read->has_value()) << Result.Diagnostic;
+  ASSERT_FALSE((**Read).Error);
+  EXPECT_EQ((**Read).Value, uint64_t(Count));
+  ASSERT_FALSE(bool((*Space)->read(Buffer, Observed)));
+  EXPECT_EQ(Observed, NativeBytes);
+  std::array<uint8_t, 8> PositionBytes;
+  ASSERT_FALSE(bool((*Space)->read(Position, PositionBytes)));
+  EXPECT_EQ(llvm::support::endian::read64le(PositionBytes.data()),
+            uint64_t(Initial));
+  auto Seek = Files.handle(ServiceKind::Lseek,
+                           {0, 199, {FD, 0, SEEK_CUR}, std::nullopt}, Result);
+  ASSERT_TRUE(bool(Seek)) << llvm::toString(Seek.takeError());
+  ASSERT_TRUE(Seek->has_value());
+  ASSERT_FALSE((**Seek).Error);
+  EXPECT_EQ((**Seek).Value, uint64_t(Terminal));
+#endif
+}
 TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
 #ifndef NEVERD_DARWIN_NATIVE_ORACLE
 #if defined(__APPLE__)
@@ -199,9 +307,10 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
       llvm::sys::fs::createUniqueDirectory("neverd-darwin-native", Temporary));
   const std::filesystem::path Root(Temporary.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
-  ASSERT_TRUE(std::filesystem::create_directory(Root / "empty"));
+  ASSERT_TRUE(
+      std::filesystem::create_directories(Root / "catalogue" / "empty"));
   const std::string Program = NEVERD_DARWIN_NATIVE_ORACLE;
-  const auto Input = (Root / "data").string();
+  const auto Input = (Root / "catalogue" / "data").string();
   {
     std::ofstream File(Input, std::ios::binary);
     File << "0123456789";

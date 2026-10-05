@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 2ad5b9e4d32165a7e7d460cc2290a5cd1bd7718c03cc6573e1fd3b5967d1d4d6 -->
+<!-- i18n-source: e6d2ea5c79823e0881de4fbdb33b27672ef1858ba61ddd1ad54e1477b2e20d85 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -69,7 +69,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 تشترك `openat` (463) و`openat_nocancel` (464) و`chdir` (12) و`fchdir` (13) و`fstatat64` (470) في حل المسار. تستخدم المسارات النسبية FD دليل أو `AT_FDCWD=-2`، وتتجاهل المطلقة FD. تفحص الفواصل المتكررة و`.` و`..` والشرطة النهائية كل سلف: `/file/..` يعيد ENOTDIR و`/missing/..` يعيد ENOENT. تحفظ الأخطاء وإغلاق FD الأصلي أو إعادة استخدامه أو استبداله CWD. ينسخ `F_GETPATH=50` المسار القياسي وNUL حتى عبر dup، دون تغيير البايتات التالية.
 
-يعيد read/pread للدليل EISDIR حتى للطول صفر؛ وتسبق إزاحة pread السالبة بخطأ EINVAL. يشترك SET/CUR في الموضع ويتطلب END حجماً صريحاً؛ يعيد mmap الخطأ EINVAL. يقبل fstatat64 الصفر و`AT_SYMLINK_NOFOLLOW=0x20` و`AT_SYMLINK_NOFOLLOW_ANY=0x800` و`AT_FDONLY=0x400` (تجاهل المسار). البتات غير الصالحة تعيد EINVAL و`AT_REALDEV=0x200` غير مدعوم. هوية التدفقات مجهولة، والأذونات ليست نموذج تحكم بالوصول؛ التعداد والتعديلات ما زالت ناقصة. يقارن برنامج `directories` نفسه النواة الأصلية وخمسة ضيوف؛ ويقارن stat ملفات وأدلة حقيقية. تبقى Intel HVF Actions معلقة.
+يعيد read/pread للدليل EISDIR حتى للطول صفر؛ وتسبق إزاحة pread السالبة بخطأ EINVAL. يشترك SET/CUR في الموضع ويتطلب END حجماً صريحاً؛ يعيد mmap الخطأ EINVAL. يقبل fstatat64 الصفر و`AT_SYMLINK_NOFOLLOW=0x20` و`AT_SYMLINK_NOFOLLOW_ANY=0x800` و`AT_FDONLY=0x400` (تجاهل المسار). البتات غير الصالحة تعيد EINVAL و`AT_REALDEV=0x200` غير مدعوم. هوية التدفقات مجهولة، والأذونات ليست نموذج تحكم بالوصول؛ التعديلات ما زالت ناقصة. يقارن برنامج `directories` نفسه النواة الأصلية وخمسة ضيوف؛ ويقارن stat ملفات وأدلة حقيقية. تبقى Intel HVF Actions معلقة.
 
 [XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
 
@@ -78,6 +78,31 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 ```json
 {"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
 ```
+
+## لقطات الأدلة الصريحة
+
+يعدد `getdirentries64` (344) لقطة `contents` الاختيارية الثابتة لعنصر `directories` موجود؛ يستخدم C++ الحقل `DarwinFileOptions::DirectoryContents`. يجب أن تتضمن `entries` بترتيب صريح جميع الأبناء المباشرين و`.` و`..`. يبقى الدليل مجهول المحتوى دون لقطة حتى لو كان فارغاً. لا تنشئ اللقطة مسارات أو stat ولا تستعلم عن المضيف.
+
+تتطلب كل مدخلة `name` و`inode` غير صفري و`type` (0 مجهول، 4 دليل، 8 ملف) و`next_offset` و`seek_offset`. يجب تطابق النوع مع المسار واتساق inode للمسار المحلول نفسه بين اللقطات والبيانات الوصفية. يكون `next_offset` موجباً وفريداً داخل الدليل و<=INT64_MAX، دون شرط التصاعد؛ الصفر يعيد البداية. `seek_offset` مشاهدة d_seekoff مستقلة من 64 بت غير موقعة وتسمح بتكرار الصفر. تتبع الأعداد قواعد سلاسل stat العشرية دون فقد.
+
+يحدد `contents.minimum_buffer_size` الإلزامي الحد الأدنى للحمولة 1–128 MiB، حتى عند EOF. يضيف `minimum_buffer_size` الاختياري للمدخلة (افتراضياً 0) قيداً عند البدء منها. يسجل المثال مشاهدة APFS: 64 بايت لزوج النقطتين الأول، و1 عند EOF؛ وفي المواقع الأخرى يجب استيعاب سجل كامل. محاذاة LP64 ثمانية بايت وحجم السجل `roundUp(25 + nameBytes, 8)`. الحد الإجمالي 4096 مدخلة؛ تدخل بايتات السجلات في ميزانية 16 MiB. تحسب مسارات الأسلاف المعلنة بالبيانات/اللقطة فقط مرة واحدة ضمن 256 مساراً. يبقى JSON محدوداً بـ64 KiB.
+
+لكل open مستقل موضعه ويشترك dup في الموضع. تستأنف القراءة من الصفر أو القيم المعلنة فقط؛ يتوقف الموضع المجهول صراحة. يعاد أكبر بادئة من السجلات الكاملة التي تتسع. عند طول >=1024 تحجز آخر أربعة بايتات مطلوبة لعلم EOF (1 في النهاية وإلا 0)؛ تقيد الحمولة فقط بـ128 MiB. يحافظ عنوان العلم على الحساب الأصلي غير الموقع بما فيه الالتفاف. الترتيب: البيانات، تقدم الموضع، نسخ الموضع السابق، ثم الأعلام. يحفظ EFAULT المتأخر الآثار السابقة؛ يتجاوز EOF نسخ البيانات الفارغة. تتوقف النسخة المنفردة القابلة للكتابة جزئياً قبل تلك النسخة مع حفظ الآثار السابقة.
+
+يقارن `directory-entries` الحقول وdup/الإرجاع والقراءات الصغيرة وEOF وترتيب النسخ مع macOS. يقارن اختبار مستقل جميع بايتات السجلات الأصلية الملتقطة، بما فيها الأسماء الطويلة، مع SDK. لا تعيد القيم الثابتة أجيال APFS الديناميكية. تبقى `getdirentries` القديمة (196) والتعديلات والنواقل الأصلية الأخرى وiOS المادي خارج هذا التحقق.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
+  "minimum_buffer_size":1,"entries":[
+    {"name":".","inode":41,"type":4,"next_offset":11,"seek_offset":0,"minimum_buffer_size":64},
+    {"name":"..","inode":41,"type":4,"next_offset":22,"seek_offset":0},
+    {"name":"empty","inode":42,"type":4,"next_offset":7,"seek_offset":0},
+    {"name":"data","inode":73,"type":8,"next_offset":99,"seek_offset":0}]}}]}}
+```
+
+[XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
+
+تحقق التعداد (2026-10-05، Release): 498 حالة Darwin، نجحت 246 وتجاوزت 252 بسبب غياب الخلفية، بلا إخفاق؛ نُفذت جميع حالات ARM64 HVF المطلوبة 63/63. نجحت 11 برنامج macOS أصلياً و38 فحص C/CLI/تقارير دون تجاوز، وخمس تركيبات Python بكل منها ثمانية سيناريوهات ملفات، و66 اختبار أدوات. تتداخل الأعداد. الأدلة: `build-hvf-arm64/darwin-dirents-verified-evidence/`. تبقى Intel HVF Actions معلقة؛ النواقل الأصلية الأخرى وiOS المادي غير متحقق منها.
 
 
 ## تعيينات الملفات الخاصة
@@ -118,7 +143,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 بعد stat64: عدد التسجيلات الفريدة 409؛ نجح 193 وتُخطي 216 دون فشل. نُفذت حالات ARM64 HVF الإلزامية 54/54 وخمسة تراكيب Unicorn. نجحت مقارنة SDK والسجل الحقيقي، وثمانية برامج أصلية، و36 حالة API/تقارير دون تخطٍ، وخمسة تراكيب Python و66 اختبار أدوات؛ تتداخل الأعداد. لكل حالة أصلية ملف إخراج مستقل لمنع بقاء بايتات قديمة بعد إخراج أقصر. لا توجد أدلة أصلية للإضافات على Intel HVF/KVM/WHP أو iOS مادي.
 
-التالي: التعيينات المشتركة وأخطاء صفحات EOF وتعداد الأدلة والكتابة المحدودة (صفحات EOF والعمر بعد close وترتيب الأخطاء)، ومشاهدات الوقت/النظام الصريحة وخدمات Mach/الخيوط اللازمة، واعتماديات Mach-O وrebases/binds والتهيئة وTLS. يحتاج Objective-C/Swift وFoundation/UIKit برامج مرجعية أصلية. يحتاج iOS المادي SDK وجهازاً؛ ما زال Intel HVF غير موثق وتبقى Actions الخاصة به معلقة.
+التالي: التعيينات المشتركة وأخطاء صفحات EOF والكتابة المحدودة (صفحات EOF والعمر بعد close وترتيب الأخطاء)، ومشاهدات الوقت/النظام الصريحة وخدمات Mach/الخيوط اللازمة، واعتماديات Mach-O وrebases/binds والتهيئة وTLS. يحتاج Objective-C/Swift وFoundation/UIKit برامج مرجعية أصلية. يحتاج iOS المادي SDK وجهازاً؛ ما زال Intel HVF غير موثق وتبقى Actions الخاصة به معلقة.
 
 
 

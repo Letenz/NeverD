@@ -143,8 +143,8 @@ Closing/replacing descriptors 0, 1 or 2 affects subsequent I/O, and a duplicated
 output descriptor keeps its capture sink and the shared output budget.
 
 Configuration allows at most 256 specified file/directory paths (including
-metadata-only ancestor paths), 16 MiB of combined paths/NUL/file/input/CWD
-bytes, paths shorter than 1024 bytes and components of at most 255 bytes.
+metadata/contents-only ancestor paths), 16 MiB of combined paths/NUL/file/input/CWD
+and encoded directory-record bytes, paths shorter than 1024 bytes and components of at most 255 bytes.
 `descriptor_limit` is an exclusive ceiling from 3 to 4096, default 256.
 JSON retains the existing 64 KiB request limit. Invalid configuration is rejected
 before image loading, including a file that is another file's ancestor.
@@ -154,7 +154,7 @@ touch the destination; invalid writable addresses return EFAULT. A partially
 writable destination stops before copying or advancing the cursor, because
 partial filesystem copyout effects are outside this model. Seek supports
 SET/CUR/END, preserving the cursor on negative-position or overflow errors.
-Directory enumeration, writable files, legacy stat metadata, sparse-file seeks
+Writable files, legacy stat metadata, sparse-file seeks
 and other fcntl operations remain unsupported.
 Path prefixes describe implicit directories; a regular file used as an ancestor
 returns ENOTDIR. The ABI is grounded in XNU's
@@ -188,7 +188,7 @@ explicit metadata. Directory mmap returns EINVAL. `fstatat64` accepts zero,
 `AT_FDONLY=0x400` (ignore the pathname entirely). Invalid flag bits return EINVAL;
 `AT_REALDEV=0x200` stops because real-device metadata is unmodeled. Stream path
 and directory identities remain unknown. Permission bits are observations,
-not an access-control model; directory enumeration and mutations remain unsupported.
+not an access-control model; directory mutations remain unsupported.
 
 The original `directories` workload compares these services with the native
 macOS kernel and all five guest combinations; native stat records cover both
@@ -201,6 +201,62 @@ Directory validation (2026-10-05, Release): 467 registered Darwin cases, 227 pas
 ```json
 {"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
 ```
+
+## Explicit directory snapshots
+
+`getdirentries64` (344) enumerates an optional immutable `contents` snapshot on
+an existing `directories` entry. C++ uses `DarwinFileOptions::DirectoryContents`.
+Supply the complete ordered `entries`, including `.` and `..` and every immediate
+catalogue child. Missing snapshots remain unknown, even for an empty directory.
+Snapshots create neither paths nor stat metadata and never consult host files.
+
+Each entry requires `name`, nonzero `inode`, `type` (0 unknown, 4 directory,
+8 regular file), `next_offset` and `seek_offset`. Type must agree with the path;
+inodes must agree for the same resolved path across snapshots and metadata.
+`next_offset` is a nonzero cookie up to INT64_MAX, unique within that directory,
+with no ascending-order requirement. Zero rewinds. `seek_offset` is the separate
+unsigned 64-bit d_seekoff observation; duplicate zero values are valid. Integer
+fields use the same lossless decimal-string rules as stat metadata.
+
+`contents.minimum_buffer_size` is a required positive payload minimum up to
+128 MiB, including at EOF. An entry's optional `minimum_buffer_size` (default 0)
+adds a constraint when a call starts at that entry. The example records the
+observed APFS minimum of 64 bytes for the initial dot pair, then 1 byte at EOF;
+other positions must fit at least one complete record. Records use the native
+LP64 layout and eight-byte alignment, with size `roundUp(25 + nameBytes, 8)`.
+At most 4096 records are admitted across all snapshots. Encoded records join
+the 16 MiB input budget; metadata/contents-only ancestor paths count once toward
+the 256-path limit. The 64 KiB JSON request limit still applies.
+
+Independent opens have independent cursors; dup shares them. Enumeration resumes
+at zero or a supplied cookie; unknown positions stop explicitly. Each call emits
+a maximal whole-record prefix. Counts >=1024 reserve the last four requested
+bytes for EOF flags (1 at EOF, 0 otherwise); only the record payload is capped at
+128 MiB. The suffix address retains original unsigned count arithmetic, including
+wrap. Data is copied first, the cursor advances, the pre-read position is copied,
+then flags are written. Later EFAULT preserves earlier effects; EOF skips the
+empty data copy. A partially writable individual copy stops unsupported before
+that copy, retaining any preceding copies and cursor effects.
+
+The original `directory-entries` workload compares record fields, dup/rewind,
+small reads, EOF and copy ordering with the native macOS kernel. A separate test
+compares captured native record bytes, including long names, against the SDK
+layout. Snapshot cookies remain fixed on rewind; this does not reproduce APFS's
+dynamic cookie generations. Legacy `getdirentries` (196), writable directories,
+other native transports and physical iOS remain outside this acceptance.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
+  "minimum_buffer_size":1,"entries":[
+    {"name":".","inode":41,"type":4,"next_offset":11,"seek_offset":0,"minimum_buffer_size":64},
+    {"name":"..","inode":41,"type":4,"next_offset":22,"seek_offset":0},
+    {"name":"empty","inode":42,"type":4,"next_offset":7,"seek_offset":0},
+    {"name":"data","inode":73,"type":8,"next_offset":99,"seek_offset":0}]}}]}}
+```
+
+[XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
+
+Enumeration validation (2026-10-05, Release): 498 Darwin registrations, 246 passed, 252 unavailable-backend skips, zero failures; all 63/63 required ARM64 HVF cases executed. All 11 original native macOS workloads, 38 public C/CLI/report checks without skips, five Python guest combinations with eight file workloads, and 66 runner tests passed. Counts overlap. Evidence: `build-hvf-arm64/darwin-dirents-verified-evidence/`. Intel HVF Actions remain suspended; other native transports and physical iOS are unvalidated.
 
 ## Private file mappings
 
@@ -364,7 +420,7 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 
 ### Remaining environment work
 
-1. Extend the file model with directory enumeration, bounded writable state,
+1. Extend the file model with bounded writable state,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
 2. Add explicit time/system observations and required Mach/thread services,

@@ -26,6 +26,19 @@ inline DarwinFileMetadata metadata(uint64_t Size = 10) {
           {-3, 4},
           {-5, 6}};
 }
+inline DarwinDirectoryContents directoryContents() {
+  return {{{".", 41, 4, 11, 0, 64},
+           {"..", 41, 4, 22, 0},
+           {"empty", 42, 4, 7, 0},
+           {"data", 0xfedcba9876543210ULL, 8, 99, 0}},
+          1};
+}
+inline constexpr char DirectoryContentsJSON[] = R"({
+  "minimum_buffer_size":1,"entries":[
+    {"name":".","inode":41,"type":4,"next_offset":11,"seek_offset":0,"minimum_buffer_size":64},
+    {"name":"..","inode":41,"type":4,"next_offset":22,"seek_offset":0},
+    {"name":"empty","inode":42,"type":4,"next_offset":7,"seek_offset":0},
+    {"name":"data","inode":"18364758544493064720","type":8,"next_offset":99,"seek_offset":0}]})";
 inline constexpr char MetadataJSON[] = R"({
   "device":-123,"inode":"18364758544493064720","mode":33188,
   "link_count":3,"uid":2309737967,"gid":4275878552,"size":10,

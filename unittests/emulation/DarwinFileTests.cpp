@@ -569,6 +569,293 @@ TEST_P(DarwinFileTest,
   EXPECT_EQ(Result.Diagnostic, diagnostic::FilePathIdentity);
 }
 
+TEST_P(DarwinFileTest,
+       DirectoryRecordsPreserveLayoutCookiesAndIndependentOpens) {
+  Options->Directories.insert("/empty");
+  Options->DirectoryContents["/"] = darwin_test::directoryContents();
+  Options->DirectoryContents["/"].Entries[2].SeekOffset = UINT64_MAX;
+  path("/");
+  const auto A = ok(ServiceKind::Open, {Base});
+  const auto B = ok(ServiceKind::Dup, {A});
+  const auto C = ok(ServiceKind::Open, {Base});
+  const auto Buffer = Base + 256, Position = Base + 2048;
+  error(ServiceKind::GetDirEntries64, {A, Buffer, 63, Position}, 22);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {A, Buffer, 64, Position}), 64u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 22u);
+  // Independent explicit wire bytes, including native tail padding.
+  const auto Expected = llvm::fromHex(
+      "2900000000000000000000000000000020000100042e00000000000000000000"
+      "2900000000000000000000000000000020000200042e2e000000000000000000");
+  std::array<uint8_t, 64> Records;
+  ASSERT_FALSE(bool(Space->read(Buffer, Records)));
+  EXPECT_EQ(llvm::toHex(Records), llvm::toHex(Expected));
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {B, Buffer, 32, Position}), 32u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer + 8, 8)), UINT64_MAX);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 22u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}),
+            7u); // Cookies need not increase.
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {B, Buffer, 32, Position}), 32u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer, 8)),
+            0xfedcba9876543210ULL);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 99u);
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {B, 0, 1, Position}), 0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 99u);
+  error(ServiceKind::GetDirEntries64, {B, 0, 0, Position}, 22);
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {C, Buffer, 128, Position}), 128u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 0u);
+  ok(ServiceKind::Lseek, {B, 0, 0});
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {B, Buffer, 128, Position}), 128u);
+  ok(ServiceKind::Lseek, {B, 88, 0});
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {B, Buffer, 128, Position}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryPosition);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 88u);
+}
+
+TEST_P(DarwinFileTest, DirectoryEOFAndExtendedFlagsRespectOriginalBufferEnd) {
+  Options->Directories.insert("/empty");
+  Options->DirectoryContents["/"] = darwin_test::directoryContents();
+  path("/");
+  auto FD = ok(ServiceKind::Open, {Base});
+  const auto Buffer = Base + 256, Position = Base + 2048;
+  for (uint64_t Count : {1023, 1024, 4096}) {
+    ok(ServiceKind::Lseek, {FD, 0, 0});
+    ASSERT_FALSE(bool(Space->writeInteger(Buffer + Count - 4, 0xaaaaaaaa, 4)));
+    EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {FD, Buffer, Count, Position}),
+              128u);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer + Count - 4, 4)),
+              Count < 1024 ? 0xaaaaaaaau : 1u);
+  }
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {FD, 0, 64, Position}), 0u);
+  error(ServiceKind::GetDirEntries64, {FD, 0, 1024, Position}, 14);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 99u);
+  // Count is capped for record payload, but its unsigned suffix address wraps.
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  ASSERT_FALSE(bool(Space->writeInteger(Buffer - 5, 0xaaaaaaaa, 4)));
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {FD, Buffer, UINT64_MAX, Position}),
+      128u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer - 5, 4)), 1u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 99u);
+  // Extended output must explicitly clear EOF when a whole-record batch is
+  // shorter than the remaining snapshot. The next call resumes at its cookie.
+  for (unsigned I = 0; I != 4; ++I) {
+    std::string Name(255, 'x');
+    Name.back() = 'a' + I;
+    Options->Files['/' + Name] = {};
+    Options->DirectoryContents["/"].Entries.push_back(
+        {Name, 50 + I, 8, 100 + I, 0});
+  }
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {FD, Buffer, 1024, Position}),
+            968u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer + 1020, 4)), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 102u);
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {FD, Buffer, 1024, Position}),
+            280u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 102u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer + 1020, 4)), 1u);
+}
+
+TEST_P(DarwinFileTest, DirectoryCopyPhasesRetainEarlierEffectsAndAliasInOrder) {
+  Options->Directories.insert("/empty");
+  Options->DirectoryContents["/"] = darwin_test::directoryContents();
+  path("/");
+  auto FD = ok(ServiceKind::Open, {Base});
+  const auto Buffer = Base + 256, Position = Base + 2048;
+  error(ServiceKind::GetDirEntries64, {999, 0, 0, 0}, 9);
+  error(ServiceKind::GetDirEntries64, {FD, 0, 128, Position}, 14);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+  error(ServiceKind::GetDirEntries64, {FD, Buffer, 1024, 0}, 14);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer, 8)), 41u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 99u);
+  // A failing suffix occurs after data, offset advancement and position copy.
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  ASSERT_FALSE(bool(Space->writeInteger(Position, 0xaaaaaaaa, 8)));
+  error(ServiceKind::GetDirEntries64, {FD, Buffer, Page * 4, Position}, 14);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 99u);
+  // With overlapping outputs, position overwrites data and flags overwrite it
+  // last.
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {FD, Buffer, 128, Buffer}), 128u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Buffer, 8)), 0u);
+  const auto Suffix = Buffer + 1020;
+  EXPECT_EQ(ok(ServiceKind::GetDirEntries64, {FD, Buffer, 1024, Suffix}), 0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Suffix, 8)), 1u);
+  const auto End = Base + Page * 2 - 4;
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  ASSERT_FALSE(bool(Space->writeInteger(End, 0xbbbbbbbb, 4)));
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64, {FD, End, 128, Position}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryPartialData);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(End, 4)), 0xbbbbbbbbu);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64, {FD, Buffer, 128, End}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryPartialPosition);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 99u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(End, 4)), 0xbbbbbbbbu);
+  // Position succeeded before an individually partial extended-flag copy.
+  const auto PartialCount = Base + Page * 2 - 2 - Buffer + 4;
+  ok(ServiceKind::Lseek, {FD, 0, 0});
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {FD, Buffer, PartialCount, Position}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryPartialFlags);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Position, 8)), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 99u);
+}
+
+TEST_P(DarwinFileTest, DirectoryLongRecordsAndMissingObservationsStayExplicit) {
+  auto File = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::GetDirEntries64, {File, 0, 0, 0}, 22);
+  path("/");
+  auto Dir = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {Dir, Base + 256, 1024, Base + 2048}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryContents);
+  Options->Directories.insert("/empty");
+  const std::string Name(255, 'x');
+  Options->Files['/' + Name] = {};
+  auto &C = Options->DirectoryContents["/"];
+  C = darwin_test::directoryContents();
+  C.Entries.push_back({Name, 43, 8, 100, 0});
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {Dir, Base + 256, 128, Base + 2048}),
+      128u);
+  error(ServiceKind::GetDirEntries64, {Dir, Base + 256, 279, Base + 2048}, 22);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dir, 0, 1}), 99u);
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {Dir, Base + 256, 280, Base + 2048}),
+      280u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256 + 16, 2)), 280u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256 + 18, 2)), 255u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256 + 276, 4)), 0u);
+}
+
+TEST(DarwinFileOptions,
+     DirectorySnapshotAdmissionRejectsIncoherentObservations) {
+  DarwinFileOptions Original;
+  Original.Files["/data"] = {};
+  Original.Directories.insert("/empty");
+  Original.DirectoryContents["/"] = darwin_test::directoryContents();
+  Original.DirectoryContents["/empty"] = {
+      {{".", 42, 4, 11, 0}, {"..", 41, 4, 22, 0}}, 1};
+  ASSERT_FALSE(bool(
+      validateFileOptions(Original))); // Cookies are local to each directory.
+  for (unsigned Case = 0; Case != 17; ++Case) {
+    auto O = Original;
+    auto &C = O.DirectoryContents["/"];
+    switch (Case) {
+    case 0:
+      C.MinimumBufferSize = 0;
+      break;
+    case 1:
+      C.MinimumBufferSize = 128 * 1024 * 1024 + 1;
+      break;
+    case 2:
+      C.Entries[0].Inode = 0;
+      break;
+    case 3:
+      C.Entries[0].NextOffset = 0;
+      break;
+    case 4:
+      C.Entries[0].NextOffset = uint64_t(INT64_MAX) + 1;
+      break;
+    case 5:
+      C.Entries[0].NextOffset = C.Entries[1].NextOffset;
+      break;
+    case 6:
+      C.Entries[0].Type = 8;
+      break;
+    case 7:
+      C.Entries[2].Type = 10;
+      break;
+    case 8:
+      C.Entries[1].Name = ".";
+      break;
+    case 9:
+      C.Entries[2].Name = "absent";
+      break;
+    case 10:
+      C.Entries[2].Name = "empty/child";
+      break;
+    case 11:
+      C.Entries[2].Name = std::string(256, 'a');
+      break;
+    case 12:
+      C.Entries[2].Name = std::string("bad\0name", 8);
+      break;
+    case 13:
+      C.Entries[0].Inode = 43;
+      break; // Root . and .. name the same object.
+    case 14:
+      O.DirectoryContents["/empty"].Entries[0].Inode = 43;
+      break;
+    case 15:
+      C.Entries.pop_back();
+      break;
+    case 16:
+      C.Entries[0].MinimumBufferSize = UINT32_MAX;
+      break;
+    }
+    SCOPED_TRACE(Case);
+    EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+              diagnostic::DirectoryContentsOption);
+  }
+  auto O = Original;
+  O.Metadata["/data"] = darwin_test::metadata(0);
+  ASSERT_FALSE(bool(validateFileOptions(O)));
+  ++O.Metadata["/data"].Inode;
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::DirectoryContentsOption);
+  O = Original;
+  O.DirectoryContents["/"].Entries[2].Type = 0;
+  O.DirectoryContents["/"].Entries[2].SeekOffset = UINT64_MAX;
+  ASSERT_FALSE(bool(validateFileOptions(O)));
+  for (auto Bad : {"/data", "/absent", "relative"}) {
+    O.DirectoryContents[Bad] = {};
+    EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+              diagnostic::DirectoryContentsOption);
+    O.DirectoryContents.erase(Bad);
+  }
+}
+
+TEST(DarwinFileOptions, DirectorySnapshotBoundsDeduplicateMetadataPaths) {
+  DarwinFileOptions O;
+  for (unsigned I = 0; I != 254; ++I)
+    O.Directories.insert("/dir" + std::to_string(I));
+  O.Files["/tree/data"] = {};
+  auto M = darwin_test::metadata(128);
+  M.Mode = 0040755;
+  M.Inode = 41;
+  O.Metadata["/tree"] = M;
+  auto &C = O.DirectoryContents["/tree"];
+  C = {{{".", 41, 4, 1, 0}, {"..", 40, 4, 2, 0}, {"data", 42, 8, 3, 0}}, 1};
+  ASSERT_FALSE(
+      bool(validateFileOptions(O))); // 255 nodes + shared implicit /tree = 256.
+  O.Directories.insert("/extra");
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileOptionsLimit);
+  O = {};
+  O.Directories.insert("/empty");
+  O.Files["/data"] = std::vector<uint8_t>(darwin_file_limits::Bytes - 143);
+  O.DirectoryContents["/"] = darwin_test::directoryContents();
+  // /data NUL=6, /empty NUL=7, implicit root key=2, four records=128.
+  ASSERT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/data"].push_back(0);
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileOptionsLimit);
+  O = {};
+  O.DirectoryContents["/"] = {};
+  O.DirectoryContents["/"].MinimumBufferSize = 1;
+  O.DirectoryContents["/"].Entries.resize(darwin_file_limits::DirectoryEntries +
+                                          1);
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileOptionsLimit);
+}
+
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));
 } // namespace
 } // namespace neverd::emulation::darwin_model

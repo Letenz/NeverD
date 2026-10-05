@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2ad5b9e4d32165a7e7d460cc2290a5cd1bd7718c03cc6573e1fd3b5967d1d4d6 -->
+<!-- i18n-source: e6d2ea5c79823e0881de4fbdb33b27672ef1858ba61ddd1ad54e1477b2e20d85 -->
 
 [← 文件索引](README.md)
 
@@ -69,7 +69,7 @@ ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別 `0x02000000`�
 
 `openat` (463)、`openat_nocancel` (464)、`chdir` (12)、`fchdir` (13)、`fstatat64` (470) 共用解析器。相對路徑使用目錄 FD 或 `AT_FDCWD=-2`，絕對路徑忽略 FD。重複斜線、`.`、`..` 及尾端斜線保留祖先檢查：`/file/..` 為 ENOTDIR，`/missing/..` 為 ENOENT。失敗及原 FD 的關閉、重用或替換不改變 CWD。`F_GETPATH=50` 回傳規範路徑和 NUL，包含複製描述元，不寫入終止符後方。
 
-目錄 read/pread 即使零長度亦為 EISDIR，負 pread 偏移優先 EINVAL。SET/CUR 共用游標，END 需要明確 size；目錄 mmap 為 EINVAL。fstatat64 支援 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（忽略路徑）；非法位為 EINVAL，`AT_REALDEV=0x200` 未支援。串流身份未知，權限不是存取控制模型；列舉與寫入仍待完成。`directories` 程式對照原生與五種客體，stat 比對真實檔案及目錄。Intel HVF Actions 保持暫停。
+目錄 read/pread 即使零長度亦為 EISDIR，負 pread 偏移優先 EINVAL。SET/CUR 共用游標，END 需要明確 size；目錄 mmap 為 EINVAL。fstatat64 支援 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（忽略路徑）；非法位為 EINVAL，`AT_REALDEV=0x200` 未支援。串流身份未知，權限不是存取控制模型；寫入仍待完成。`directories` 程式對照原生與五種客體，stat 比對真實檔案及目錄。Intel HVF Actions 保持暫停。
 
 [XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
 
@@ -78,6 +78,31 @@ ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別 `0x02000000`�
 ```json
 {"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
 ```
+
+## 明確目錄快照
+
+`getdirentries64` (344) 列舉既有 `directories` 項目的可選唯讀 `contents`；C++ 使用 `DarwinFileOptions::DirectoryContents`。`entries` 必須依明確順序完整列出 `.`、`..` 和所有直接子項。空目錄缺少快照仍表示未知；快照不建立路徑或 stat 中繼資料，也不查詢宿主檔案。
+
+每項必填 `name`、非零 `inode`、`type`（0 未知、4 目錄、8 一般檔案）、`next_offset`、`seek_offset`。類型必須符合路徑；相同解析路徑的 inode 必須與其他快照及中繼資料一致。`next_offset` 是目錄內唯一、非零、不超過 INT64_MAX 的游標標記，不必遞增；零表示回到開頭。`seek_offset` 是獨立的無符號 64 位 d_seekoff 觀察值，可重複為零。整數沿用 stat 的無損十進位字串規則。
+
+`contents.minimum_buffer_size` 必填，表示包括 EOF 的載荷下限，範圍 1–128 MiB。項目可另設 `minimum_buffer_size`（預設 0），約束從該項開始的讀取。範例記錄 APFS 起始兩個點項至少需 64 位元組、EOF 只需 1 位元組；其他位置至少容納完整記錄。LP64 記錄按 8 位元組對齊，大小為 `roundUp(25 + nameBytes, 8)`。所有快照最多 4096 項，編碼位元組計入 16 MiB 預算；僅中繼資料/快照宣告的祖先路徑去重後計入 256 路徑上限；JSON 仍限 64 KiB。
+
+獨立 open 有獨立游標，dup 共用；只接受零或宣告的標記，未知位置明確停止。每次回傳能容納的最大完整記錄前綴。長度 >=1024 時，原請求末四位元組為 EOF 旗標（末尾 1，否則 0），僅記錄載荷限制為 128 MiB；旗標位址保留原無符號長度及回繞。順序是複製資料、移動游標、複製讀取前位置、寫旗標。後續 EFAULT 保留已完成效果；EOF 不複製空資料。單次複製僅部分可寫時，在該次複製前明確停止，保留先前效果。
+
+同一 `directory-entries` 對照原生 macOS 的記錄、dup/回繞、小塊讀取、EOF 和複製順序；獨立測試依 SDK 逐位元組核對捕獲記錄及長檔名。快照標記回繞後不變，不模擬 APFS 動態世代。舊 `getdirentries` (196)、目錄寫入、其他原生後端及 iOS 實機尚未納入驗收。
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
+  "minimum_buffer_size":1,"entries":[
+    {"name":".","inode":41,"type":4,"next_offset":11,"seek_offset":0,"minimum_buffer_size":64},
+    {"name":"..","inode":41,"type":4,"next_offset":22,"seek_offset":0},
+    {"name":"empty","inode":42,"type":4,"next_offset":7,"seek_offset":0},
+    {"name":"data","inode":73,"type":8,"next_offset":99,"seek_offset":0}]}}]}}
+```
+
+[XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
+
+目錄列舉驗收（2026-10-05，Release）：Darwin 共 498 項，246 通過、252 項因後端不可用跳過、零失敗；ARM64 HVF 必需項 63/63 執行。11 個原生 macOS 程式、38 項公共 C/CLI/報告（無跳過）、Python 五種客體组合各八種檔案情境及 66 項驗收腳本通過，計數重疊。證據：`build-hvf-arm64/darwin-dirents-verified-evidence/`。Intel HVF Actions 保持暫停；其他原生後端和 iOS 實機未驗收。
 
 
 ## 私有檔案映射
@@ -118,7 +143,7 @@ Release Darwin：438 個唯一登記項，210 通過、228 跳過、零失敗；
 
 stat64 的 Release 驗收共 409 個唯一項目：193 通過、216 跳過、零失敗；54/54 個 ARM64 HVF 必需項目執行，Unicorn 涵蓋五種客體組合。SDK 配置及真實檔案完整記錄比對、8 個原生程式、36 個公共介面/報告測試（無跳過）、Python 五種組合和 66 個驗收腳本測試均通過，計數有重疊。原生測試每例使用獨立輸出檔案，修復短輸出殘留舊尾端位元組的問題。新增功能仍無 Intel HVF/KVM/WHP 或 iOS 真機證據。
 
-後續依序補共享映射與 EOF 缺頁、目錄列舉及有界寫入（驗證 EOF 頁、close 後映射壽命與錯誤順序），顯式時間/系統資訊、必要 Mach/執行緒服務、Mach-O 相依性與重定位/繫結、初始化/TLS，再以原生程式推進 Objective-C/Swift 與 Foundation/UIKit。iOS 真機比對需要 SDK 與設備；Intel HVF 尚未驗證，Actions 繼續暫停。
+後續依序補共享映射與 EOF 缺頁、有界寫入（驗證 EOF 頁、close 後映射壽命與錯誤順序），顯式時間/系統資訊、必要 Mach/執行緒服務、Mach-O 相依性與重定位/繫結、初始化/TLS，再以原生程式推進 Objective-C/Swift 與 Foundation/UIKit。iOS 真機比對需要 SDK 與設備；Intel HVF 尚未驗證，Actions 繼續暫停。
 
 
 

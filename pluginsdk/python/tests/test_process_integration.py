@@ -501,7 +501,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("stdin", b"\x00\xffx"),
                                            ("output-descriptors", b"ok"),
                                            ("file-status", b"s"), ("file-mapping", b"m"),
-                                           ("directories", b"d")):
+                                           ("directories", b"d"), ("directory-entries", b"e")):
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
                             "darwin_files": {"files": [{"path": "/data", "bytes_hex":
@@ -515,7 +515,19 @@ class ProcessIntegrationTests(unittest.TestCase):
                                 "modification_time": {"seconds": "9223372036854775807", "nanoseconds": 999999999},
                                 "change_time": {"seconds": -3, "nanoseconds": 4},
                                 "birth_time": {"seconds": -5, "nanoseconds": 6}}}],
-                                             "directories": [{"path": "/empty"}],
+                                             "directories": [{"path": "/empty"}, {
+                                                 "path": "/", "contents": {
+                                                     "minimum_buffer_size": 1,
+                                                     "entries": [
+                                                         {"name": ".", "inode": 41, "type": 4,
+                                                          "next_offset": 11, "seek_offset": 0,
+                                                          "minimum_buffer_size": 64},
+                                                         {"name": "..", "inode": 41, "type": 4,
+                                                          "next_offset": 22, "seek_offset": 0},
+                                                         {"name": "empty", "inode": 42, "type": 4,
+                                                          "next_offset": 7, "seek_offset": 0},
+                                                         {"name": "data", "inode": "18364758544493064720",
+                                                          "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)

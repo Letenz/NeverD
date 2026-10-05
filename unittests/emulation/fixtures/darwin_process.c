@@ -55,6 +55,132 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+/* Inspect bounded records independently from the model's serializer. The
+ * input directory contains only data and empty, in filesystem-defined order. */
+static unsigned directory_names(const unsigned char *bytes, u64 size,
+                                u64 file_inode) {
+  unsigned seen = 0;
+  for (u64 offset = 0; offset != size;) {
+    if (size - offset < 32)
+      return 0;
+    const unsigned char *record = bytes + offset;
+    u64 length = little_integer(record + 16, 2);
+    u64 name_length = little_integer(record + 18, 2);
+    if (length != 32 || name_length > 5 || !little_integer(record, 8) ||
+        little_integer(record + 8, 8))
+      return 0;
+    for (u64 i = 21 + name_length; i != length; ++i)
+      if (record[i])
+        return 0;
+    unsigned bit = equal((const char *)record + 21, ".")       ? 1
+                   : equal((const char *)record + 21, "..")    ? 2
+                   : equal((const char *)record + 21, "empty") ? 4
+                   : equal((const char *)record + 21, "data")  ? 8
+                                                               : 0;
+    if (!bit || (seen & bit) || record[20] != (bit == 8 ? 8 : 4) ||
+        (bit == 8 && little_integer(record, 8) != file_inode))
+      return 0;
+    seen |= bit;
+    offset += length;
+  }
+  return seen;
+}
+static int directory_entries(const char *path) {
+  unsigned error = 0;
+  int check = 40;
+#define ENTRY_EXPECT(expression)                                               \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  ENTRY_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  unsigned char bytes[1040], status[144];
+  u64 position = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  ENTRY_EXPECT(!error);
+  ENTRY_EXPECT(call(339, file, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 inode = little_integer(status + 8, 8);
+  ENTRY_EXPECT(
+      call(344, file, (u64)bytes, 1024, (u64)&position, 0, 0, &error) == 22 &&
+      error);
+  ENTRY_EXPECT(call(344, 999, 0, 0, 0, 0, 0, &error) == 9 && error);
+  u64 dir = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  ENTRY_EXPECT(!error);
+  ENTRY_EXPECT(call(344, dir, (u64)bytes, 63, (u64)&position, 0, 0, &error) ==
+                   22 &&
+               error);
+  ENTRY_EXPECT(call(344, dir, 0, 64, (u64)&position, 0, 0, &error) == 14 &&
+               error);
+  ENTRY_EXPECT(call(199, dir, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  u64 independent = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  ENTRY_EXPECT(!error);
+  ENTRY_EXPECT(call(344, dir, (u64)bytes, 64, (u64)&position, 0, 0, &error) ==
+                   64 &&
+               !error && position == 0);
+  ENTRY_EXPECT(directory_names(bytes, 64, inode) == 3);
+  u64 copy = call(41, dir, 0, 0, 0, 0, 0, &error);
+  ENTRY_EXPECT(!error);
+  ENTRY_EXPECT(call(6, dir, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  unsigned seen = 3;
+  for (unsigned i = 0; i != 2; ++i) {
+    u64 before = call(199, copy, 0, 1, 0, 0, 0, &error);
+    ENTRY_EXPECT(!error && before);
+    ENTRY_EXPECT(
+        call(344, copy, (u64)bytes, 32, (u64)&position, 0, 0, &error) == 32 &&
+        !error && position == before);
+    unsigned bit = directory_names(bytes, 32, inode);
+    ENTRY_EXPECT((bit == 4 || bit == 8) && !(seen & bit));
+    seen |= bit;
+  }
+  ENTRY_EXPECT(seen == 15);
+  u64 terminal = call(199, copy, 0, 1, 0, 0, 0, &error);
+  ENTRY_EXPECT(!error && terminal);
+  ENTRY_EXPECT(call(344, copy, 0, 1, (u64)&position, 0, 0, &error) == 0 &&
+               !error && position == terminal);
+  ENTRY_EXPECT(call(344, copy, 0, 0, (u64)&position, 0, 0, &error) == 22 &&
+               error);
+  for (unsigned i = 0; i != sizeof(bytes); ++i)
+    bytes[i] = 0xa5;
+  ENTRY_EXPECT(call(344, independent, (u64)bytes, 1024, (u64)&position, 0, 0,
+                    &error) == 128 &&
+               !error && position == 0);
+  ENTRY_EXPECT(directory_names(bytes, 128, inode) == 15 && bytes[128] == 0xa5 &&
+               little_integer(bytes + 1020, 4) == 1 && bytes[1024] == 0xa5);
+  ENTRY_EXPECT(call(199, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENTRY_EXPECT(call(344, copy, (u64)bytes, 1024, 0, 0, 0, &error) == 14 &&
+               error);
+  ENTRY_EXPECT(directory_names(bytes, 128, inode) == 15);
+  ENTRY_EXPECT(call(344, copy, 0, 1, (u64)&position, 0, 0, &error) == 0 &&
+               !error && position);
+  ENTRY_EXPECT(call(199, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  /* A huge unsigned count wraps the flags address to zero. The data and
+   * position copies still precede that fault; no huge allocation is needed. */
+  ENTRY_EXPECT(call(344, copy, (u64)bytes, 4 - (u64)bytes, (u64)&position, 0, 0,
+                    &error) == 14 &&
+               error && position == 0);
+  ENTRY_EXPECT(directory_names(bytes, 128, inode) == 15);
+  ENTRY_EXPECT(call(344, copy, 0, 1, (u64)&position, 0, 0, &error) == 0 &&
+               !error && position);
+  ENTRY_EXPECT(call(199, copy, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ENTRY_EXPECT(call(344, copy, (u64)(bytes + 16), (u64)-1, (u64)&position, 0, 0,
+                    &error) == 128 &&
+               !error && position == 0);
+  ENTRY_EXPECT(directory_names(bytes + 16, 128, inode) == 15 &&
+               little_integer(bytes + 11, 4) == 1);
+  ENTRY_EXPECT(call(4, 1, (u64) "e", 1, 0, 0, 0, &error) == 1 && !error);
+#undef ENTRY_EXPECT
+  return 37;
+}
 /* Relative lookup and directory lifetime are compared with the native kernel.
  * The host harness supplies an isolated parent containing data and empty/. */
 static int directory_calls(const char *path) {
@@ -403,6 +529,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "directory-entries"))
+    return argc < 3 ? 251 : directory_entries(argv[2]);
   if (equal(argv[1], "directories"))
     return argc < 3 ? 251 : directory_calls(argv[2]);
   if (equal(argv[1], "file-mapping"))

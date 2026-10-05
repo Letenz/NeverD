@@ -7,6 +7,8 @@
 // from docs/darwin-emulation.md. No host descriptors or filesystem calls.
 #include "DarwinFiles.h"
 
+#include "DarwinDirectory.h"
+
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Endian.h"
 
@@ -108,6 +110,64 @@ llvm::Error validateFileOptions(const DarwinFileOptions &Options) {
     for (auto T : {M.AccessTime, M.ModificationTime, M.ChangeTime, M.BirthTime})
       if (T.Nanoseconds < 0 || T.Nanoseconds >= 1000000000)
         return failure(diagnostic::FileMetadataOption);
+  }
+  uint64_t DirectoryRecords = 0;
+  std::map<std::string, uint64_t> Inodes;
+  for (const auto &[Path, Metadata] : Options.Metadata)
+    Inodes.emplace(Path, Metadata.Inode);
+  for (const auto &[Path, Contents] : Options.DirectoryContents) {
+    if (pathKind(Options, Path) != PathKind::Directory)
+      return failure(diagnostic::DirectoryContentsOption);
+    if (!Options.Directories.contains(Path) &&
+        !Options.Metadata.contains(Path)) {
+      if (++Entries > limits::Files)
+        return failure(diagnostic::FileOptionsLimit);
+      if (auto E = PathInput(Path, true))
+        return E;
+    }
+    if (Contents.MinimumBufferSize == 0 ||
+        Contents.MinimumBufferSize > DirectoryPayloadLimit)
+      return failure(diagnostic::DirectoryContentsOption);
+    if (Contents.Entries.size() > limits::DirectoryEntries - DirectoryRecords)
+      return failure(diagnostic::FileOptionsLimit);
+    DirectoryRecords += Contents.Entries.size();
+    const std::string Prefix = Path == "/" ? "/" : Path + '/';
+    std::set<std::string> Children = {".", ".."};
+    auto Child = [&](llvm::StringRef Other) {
+      if (Other.consume_front(Prefix) && !Other.empty())
+        Children.insert(Other.take_front(Other.find('/')).str());
+    };
+    for (const auto &[File, Bytes] : Options.Files)
+      Child(File);
+    for (const auto &Directory : Options.Directories)
+      Child(Directory);
+    std::set<uint64_t> Cookies;
+    for (const auto &Entry : Contents.Entries) {
+      if (Entry.Name.empty() || Entry.Name.size() > limits::Name ||
+          llvm::StringRef(Entry.Name).contains('/') ||
+          llvm::StringRef(Entry.Name).contains('\0') ||
+          !Children.erase(Entry.Name) || !Entry.Inode || !Entry.NextOffset ||
+          Entry.NextOffset > INT64_MAX ||
+          !Cookies.insert(Entry.NextOffset).second ||
+          Entry.MinimumBufferSize > DirectoryPayloadLimit)
+        return failure(diagnostic::DirectoryContentsOption);
+      std::string Target = Entry.Name == "." ? Path : Prefix + Entry.Name;
+      if (Entry.Name == "..")
+        Target = Path.substr(0, std::max<size_t>(1, Path.rfind('/')));
+      const auto Kind = pathKind(Options, Target);
+      const uint8_t Type = Kind == PathKind::File ? 8 : 4;
+      if (Kind == PathKind::Missing || (Entry.Type && Entry.Type != Type))
+        return failure(diagnostic::DirectoryContentsOption);
+      auto [Known, Inserted] = Inodes.emplace(Target, Entry.Inode);
+      if (!Inserted && Known->second != Entry.Inode)
+        return failure(diagnostic::DirectoryContentsOption);
+      const uint64_t Cost = directoryRecordSize(Entry.Name.size());
+      if (Cost > limits::Bytes - Total)
+        return failure(diagnostic::FileOptionsLimit);
+      Total += Cost;
+    }
+    if (!Children.empty())
+      return failure(diagnostic::DirectoryContentsOption);
   }
   if (Options.WorkingDirectory) {
     const auto &Path = *Options.WorkingDirectory;
@@ -453,6 +513,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
   switch (Service) {
   case ServiceKind::Fstat64:
     return status(File, A[1], Result);
+  case ServiceKind::GetDirEntries64:
+    return directory(File, A[1], A[2], A[3], Result);
   case ServiceKind::FstatAt64:
     return status(File, A[2], Result);
   case ServiceKind::Fchdir:
