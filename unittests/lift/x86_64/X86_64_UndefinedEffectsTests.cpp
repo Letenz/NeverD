@@ -260,13 +260,15 @@ TEST_F(X86UndefinedEffects, CompatibilityShiftAliasDoesNotRelabelOtherGroups) {
 
 TEST_F(X86UndefinedEffects, XaddUnauditedFormsClearAllPartialEvidence) {
   const InstructionCase Cases[] = {
-      {"memory XADD", {0x0f, 0xc1, 0x08}},
+      {"segmented memory XADD", {0x64, 0x0f, 0xc1, 0x08}},
       {"LOCK memory XADD", {0xf0, 0x0f, 0xc1, 0x08}},
       {"LOCK register XADD", {0xf0, 0x0f, 0xc1, 0xc8}},
       {"REP XADD", {0xf3, 0x0f, 0xc1, 0xc8}},
       {"REPNZ XADD", {0xf2, 0x0f, 0xc1, 0xc8}},
       {"duplicate operand prefix", {0x66, 0x66, 0x0f, 0xc1, 0xc8}},
       {"duplicate REX", {0x48, 0x48, 0x0f, 0xc1, 0xc8}},
+      {"duplicate memory address prefix", {0x67, 0x67, 0x0f, 0xc1, 0x08}},
+      {"legacy prefix after REX", {0x48, 0x66, 0x0f, 0xc1, 0x08}},
       {"unused REX.X", {0x42, 0x0f, 0xc1, 0xc8}},
       {"address prefix", {0x67, 0x0f, 0xc1, 0xc8}},
       {"segment prefix", {0x64, 0x0f, 0xc1, 0xc8}},
@@ -351,6 +353,84 @@ TEST_F(X86UndefinedEffects, XaddChangedEncodingAndOperandsRemainUnaudited) {
     std::vector<LowOp> Ops;
     auto Effects = staleEffects();
     Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+    expectCleared(Effects);
+  }
+}
+
+TEST_F(X86UndefinedEffects, MemoryXaddChangedAddressDetailsRemainUnaudited) {
+  for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    DecodedInsn Insn{};
+    // XADD word [R13 + R10 * 2 - 157],R8W.
+    ASSERT_TRUE(decode(
+        {0x66, 0x47, 0x0f, 0xc1, 0x84, 0x55, 0x63, 0xff, 0xff, 0xff}, Insn));
+    auto &X = Insn.Raw->detail->x86;
+    switch (Mutation) {
+    case 0:
+      X.operands[0].mem.base = X86_REG_R12;
+      break;
+    case 1:
+      X.operands[0].mem.index = X86_REG_R11;
+      break;
+    case 2:
+      X.operands[0].mem.scale = 4;
+      break;
+    case 3:
+      ++X.operands[0].mem.disp;
+      break;
+    case 4:
+      X.operands[0].mem.segment = X86_REG_FS;
+      break;
+    case 5:
+      X.operands[0].size = 4;
+      break;
+    case 6:
+      X.operands[1].reg = X86_REG_R9W;
+      break;
+    case 7:
+      X.operands[1].size = 4;
+      break;
+    case 8:
+      X.addr_size = 4;
+      break;
+    case 9:
+      X.encoding.disp_offset = 5;
+      break;
+    case 10:
+      X.encoding.disp_size = 2;
+      break;
+    case 11:
+      X.encoding.imm_size = 1;
+      break;
+    case 12:
+      X.encoding.modrm_offset = 3;
+      break;
+    case 13:
+      X.sib ^= 0x40;
+      break;
+    case 14:
+      X.modrm ^= 1;
+      break;
+    case 15:
+      Insn.Raw->bytes[5] ^= 0x40;
+      break;
+    case 16:
+      Insn.Raw->bytes[6] ^= 1;
+      break;
+    case 17:
+      ++X.disp;
+      break;
+    case 18:
+      --Insn.Raw->size;
+      break;
+    case 19:
+      X.prefix[3] = 0x67;
+      break;
+    }
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
     EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
     expectCleared(Effects);
   }

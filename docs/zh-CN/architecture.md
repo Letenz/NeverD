@@ -277,7 +277,7 @@ LLVM 模型负责验证 `initializes` 参数契约，复用状态指针投影，
 
 传统 ROL/ROR 仅在体系结构掩码后的计数大于一时产生新的任意 OF 位；随后对字节或字宽取模不改变此条件。零计数保留标志。以寄存器为位基址的 BT/BTS/BTR/BTC 产生四个相互独立的任意位（OF/SF/AF/PF），CF 有明确定义，ZF/DF 保持不变。审计精确的寄存器及 imm8 编码；内存位串、LOCK、APX 和带进位旋转不在此次新增范围内。效应在核心指令完成后生效，请求或不请求元数据时生成的 LowIR 相同。参见 [Intel 位测试参考](https://cdrdv2-public.intel.com/929353/253666-093-sdm-vol-2a.pdf)和[旋转参考](https://cdrdv2-public.intel.com/929354/253667-093-sdm-vol-2b.pdf)。
 
-传统寄存器 XADD 也具有精确的 8/16/32/64 位编码审计：定义 CF/PF/AF/ZF/SF/OF，保留 DF，不产生新的任意位。两个交换寄存器均遵循体系结构的部分写入及 32 位零扩展规则。内存/LOCK 和 APX XADD 仍未审计。[Intel 兼容规则](https://cdrdv2-public.intel.com/929360/253669-093-sdm-vol-3b.pdf) 将 C0/C1/D0/D1/D2/D3 的 Group 2 `/6` 视为 SAL/SHL `/4`，复用相同的计数守卫及未定义标志。参见 [XADD 参考](https://cdrdv2-public.intel.com/929356/334569-093-sdm-vol-2d.pdf)。
+传统寄存器 XADD 也具有精确的 8/16/32/64 位编码审计：定义 CF/PF/AF/ZF/SF/OF，保留 DF，不产生新的任意位。两个交换寄存器均遵循体系结构的部分写入及 32 位零扩展规则。无段前缀、无 LOCK 的内存 XADD 已覆盖相同运算宽度，并精确检查 ModRM/SIB、源寄存器、位移及 16/32/64 位地址细节。加载和存储共用入口有效地址，包含源寄存器与地址重叠的情况；标志计算使用原始操作数。LOCK、带段前缀及 APX 内存形式仍未审计。[Intel 兼容规则](https://cdrdv2-public.intel.com/929360/253669-093-sdm-vol-3b.pdf) 将 C0/C1/D0/D1/D2/D3 的 Group 2 `/6` 视为 SAL/SHL `/4`，复用相同的计数守卫及未定义标志。参见 [XADD 参考](https://cdrdv2-public.intel.com/929356/334569-093-sdm-vol-2d.pdf)。
 
 原生不可变读取还支持经过完整穷举证明的有限地址集合，由 `MaxImmutableLoadAddresses` 限制。枚举前必须证明两次执行的地址相等；每个候选都必须具备不可变字节、映射证据及与可写栈帧分离的证明，读取值保留对输入选择的依赖。候选缺失、可写或重定位数据、枚举预算耗尽都会拒绝证书。证书绑定读取见证与地址上限；动态栈帧偏移和任意外部内存仍不支持。
 

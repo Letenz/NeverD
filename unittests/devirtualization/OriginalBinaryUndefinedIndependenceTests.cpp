@@ -279,7 +279,7 @@ TEST(OriginalBinaryUndefinedIndependence,
 TEST(OriginalBinaryUndefinedIndependence,
      UnreachableUnauditedBoundariesRequireOptInAndRetainExactReceipts) {
   for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
-           {0xd1, 0xd0}, {0x0f, 0xc1, 0x08}, {0xf3, 0xa4}}) {
+           {0xd1, 0xd0}, {0xf0, 0x0f, 0xc1, 0x08}, {0xf3, 0xa4}}) {
     // CMP EAX,EAX; JNE boundary; MOV EAX,7; RET; boundary: body; RET.
     Program P({0x39, 0xc0, 0x75, 6, 0xb8, 7, 0, 0, 0, 0xc3});
     P.Image.Segments.front().Data.insert(P.Image.Segments.front().Data.end(),
@@ -396,6 +396,42 @@ TEST(OriginalBinaryUndefinedIndependence,
   // not turn an earlier arbitrary OF input into an independent result.
   Program Earlier({0x0f, 0xa3, 0xca, 0x0f, 0x90, 0xc0, 0x0f, 0xb6, 0xc0, 0x0f,
                    0xc1, 0xc8, 0xc3});
+  Earlier.flagsProfile();
+  expectRefusal(Earlier, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     MemoryXaddKeepsDefinedFrameUpdatesAndEarlierDependencies) {
+  for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
+           {0x0f, 0xc0, 0x44, 0x24, 0xf0},
+           {0x66, 0x0f, 0xc1, 0x44, 0x24, 0xf0},
+           {0x0f, 0xc1, 0x84, 0x24, 0xf0, 0xff, 0xff, 0xff},
+           {0x4c, 0x0f, 0xc1, 0x6c, 0x24, 0xf0}}) {
+    Program P({});
+    P.flagsProfile();
+    P.Image.Segments.front().Data = Bytes;
+    P.append({0xc3});
+    for (unsigned I = 1; I != 16; ++I)
+      P.Contract.ReturnRegisters.push_back({I * 8, 8});
+    for (auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                      x86reg::SF, x86reg::DF, x86reg::OF})
+      P.Contract.ReturnRegisters.push_back({Flag, 1});
+    LowIRIndependenceLimits Limits;
+    Limits.MaxProducers = 0;
+    const auto Good = P.check(Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_TRUE(Good.Certificate->Instructions.front()
+                    .UndefinedEffects.Effects.empty());
+    EXPECT_TRUE(P.recover(Limits).Recovery.complete());
+    Limits.MaxOperations = Good.Proof.Operations;
+    ASSERT_TRUE(P.check(Limits).proved());
+    --Limits.MaxOperations;
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+  }
+  // An arbitrary earlier OF flows through AL into the observed frame sum,
+  // even though XADD overwrites AL and defines all arithmetic flags itself.
+  Program Earlier(
+      {0x0f, 0xa3, 0xca, 0x0f, 0x90, 0xc0, 0x0f, 0xc0, 0x44, 0x24, 0xf0, 0xc3});
   Earlier.flagsProfile();
   expectRefusal(Earlier, Status::Dependent);
 }

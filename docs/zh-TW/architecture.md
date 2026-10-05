@@ -178,7 +178,7 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 傳統 ROL/ROR 僅在架構遮罩後的計數大於一時產生新的任意 OF 位；隨後對位元組或字寬取模不改變此條件。零計數保留旗標。以暫存器為位元基底的 BT/BTS/BTR/BTC 產生四個相互獨立的任意位（OF/SF/AF/PF），CF 有明確定義，ZF/DF 保持不變。稽核精確的暫存器及 imm8 編碼；記憶體位元串、LOCK、APX 和帶進位旋轉不在此次新增範圍內。效應在核心指令完成後生效，要求或不要求中繼資料時生成的 LowIR 相同。參見 [Intel 位元測試參考](https://cdrdv2-public.intel.com/929353/253666-093-sdm-vol-2a.pdf)與[旋轉參考](https://cdrdv2-public.intel.com/929354/253667-093-sdm-vol-2b.pdf)。
 
-傳統暫存器 XADD 也具有精確的 8/16/32/64 位元編碼審計：定義 CF/PF/AF/ZF/SF/OF，保留 DF，不產生新的任意位元。兩個交換暫存器皆遵循架構的部分寫入及 32 位元零擴充規則。記憶體/LOCK 與 APX XADD 仍未審計。[Intel 相容規則](https://cdrdv2-public.intel.com/929360/253669-093-sdm-vol-3b.pdf) 將 C0/C1/D0/D1/D2/D3 的 Group 2 `/6` 視為 SAL/SHL `/4`，重用相同的計數守衛與未定義旗標。參見 [XADD 參考](https://cdrdv2-public.intel.com/929356/334569-093-sdm-vol-2d.pdf)。
+傳統暫存器 XADD 也具有精確的 8/16/32/64 位元編碼審計：定義 CF/PF/AF/ZF/SF/OF，保留 DF，不產生新的任意位元。兩個交換暫存器皆遵循架構的部分寫入及 32 位元零擴充規則。無區段前綴、無 LOCK 的記憶體 XADD 已涵蓋相同運算寬度，並精確檢查 ModRM/SIB、來源暫存器、位移及 16/32/64 位元位址細節。載入和儲存共用入口有效位址，包含來源暫存器與位址重疊；旗標計算使用原始運算元。LOCK、帶區段前綴及 APX 記憶體形式仍未審計。[Intel 相容規則](https://cdrdv2-public.intel.com/929360/253669-093-sdm-vol-3b.pdf) 將 C0/C1/D0/D1/D2/D3 的 Group 2 `/6` 視為 SAL/SHL `/4`，重用相同的計數守衛與未定義旗標。參見 [XADD 參考](https://cdrdv2-public.intel.com/929356/334569-093-sdm-vol-2d.pdf)。
 
 原生不可變讀取也支援經完整窮舉證明的有限位址集合，由 `MaxImmutableLoadAddresses` 限制。列舉前必須證明兩次執行的位址相等；每個候選都須具備不可變位元組、映射證據及與可寫堆疊框架分離的證明，讀取值保留對輸入選擇的依賴。候選缺失、可寫或重定位資料、列舉預算耗盡皆拒絕憑證。憑證綁定位址上限與讀取見證；動態堆疊偏移和任意外部記憶體仍不支援。
 
