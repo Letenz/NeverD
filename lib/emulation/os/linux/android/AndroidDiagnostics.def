@@ -106,6 +106,8 @@ NEVERD_ANDROID_DIAGNOSTIC(ThreadAttributeOperation,
 NEVERD_ANDROID_DIAGNOSTIC(MutexPriorityInheritance,
                           "priority inheritance requires kernel mutex support")
 NEVERD_ANDROID_DIAGNOSTIC(MutexState, "invalid pthread mutex state")
+NEVERD_ANDROID_DIAGNOSTIC(MutexWaitState,
+                          "pthread mutex attributes changed while waiting")
 NEVERD_ANDROID_DIAGNOSTIC(MutexBlocking,
                           "blocking lock requires thread scheduling")
 NEVERD_ANDROID_DIAGNOSTIC(MutexWake,
@@ -225,3 +227,6 @@ NEVERD_ANDROID_DIAGNOSTIC(FormatVAListAlignment, "unaligned AAPCS64 va_list")
 NEVERD_ANDROID_DIAGNOSTIC(FormatRegisterOffset,
                           "invalid AAPCS64 general register offset")
 #endif
+
+NEVERD_ANDROID_DIAGNOSTIC(MutexWaitPadding,
+                          "nonzero mutex futex padding requires a retry loop")

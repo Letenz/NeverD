@@ -233,9 +233,11 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   };
   while (true) {
     if (Threads.enabled() && (NeedSchedule || !QuantumRemaining)) {
-      auto Ready = Threads.schedule();
+      auto Ready = Threads.schedule(LibC);
       if (!Ready) {
         RuntimeFailure(Ready.takeError());
+        if (LibC.timedOut())
+          Result.Stop = ProcessStopReason::Timeout;
         break;
       }
       if (!*Ready)

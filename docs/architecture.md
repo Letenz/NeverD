@@ -1531,8 +1531,12 @@ memory. Attribute interpretation, lock state, recursive depth and ownership
 belong to this one model; static imports and named dynamic calls share it.
 The Linux service model supplies TID and errno constants. Complete affected
 write spans are validated before a transition, and no host lock or parallel
-object registry substitutes for guest bytes. Scheduling and priority
-inheritance remain explicit unsupported boundaries.
+object registry substitutes for guest bytes. `GuestThreads` owns suspended
+requests, wake selection and complete CPU contexts. It delegates each resumed
+mutex acquisition to Bionic, retaining the original event across repeated
+waits. Selection, context switching, wait resumption and result publication
+have separate helpers; wake never publishes a successful lock. Priority
+inheritance and external-process scheduling remain unsupported.
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;

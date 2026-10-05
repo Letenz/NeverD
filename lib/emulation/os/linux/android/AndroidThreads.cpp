@@ -241,44 +241,84 @@ void GuestThreads::completeOnce(uint64_t Control) {
         if (Once->Owner == Current && Once->Control == Control)
           Once->Ready = true;
 }
+void GuestThreads::waitMutex(uint64_t Address, uint16_t Attributes) {
+  auto &Waiting = current().Waiting;
+  if (Waiting) {
+    auto &Mutex = std::get<GuestThreads::Mutex>(Waiting->Operation);
+    assert(Mutex.Address == Address && Mutex.Attributes == Attributes);
+    // A wake does not grant ownership. Preserve the suspended request and
+    // its event when another thread acquires the lock before this one runs.
+    Mutex.Ready = false;
+    return;
+  }
+  Waiting = Wait{Mutex{Address, Attributes}, std::nullopt};
+}
+
+void GuestThreads::wakeMutex(uint64_t Address) {
+  // FUTEX_WAKE(1) has no guest ordering guarantee. Choose one sleeper in the
+  // same deterministic round-robin order used to schedule runnable threads.
+  for (size_t Offset = 1; Offset <= Threads.size(); ++Offset) {
+    auto &Waiting = Threads[(Current + Offset) % Threads.size()].Waiting;
+    if (!Waiting)
+      continue;
+    auto *Mutex = std::get_if<GuestThreads::Mutex>(&Waiting->Operation);
+    if (Mutex && Mutex->Address == Address && !Mutex->Ready) {
+      Mutex->Ready = true;
+      return;
+    }
+  }
+}
+
 bool GuestThreads::ready(const Wait &Pending) const {
   if (const auto *J = std::get_if<Join>(&Pending.Operation))
     return Threads[J->Target].Report.Finished;
-  return std::get<Once>(Pending.Operation).Ready;
+  if (const auto *O = std::get_if<Once>(&Pending.Operation))
+    return O->Ready;
+  return std::get<Mutex>(Pending.Operation).Ready;
 }
-llvm::Error GuestThreads::completeWait(Thread &Waiter) {
-  const auto Pending = *Waiter.Waiting;
-  const auto *J = std::get_if<Join>(&Pending.Operation);
-  // Recheck memory after suspension: another guest may have unmapped or
-  // changed it. Failure never invents a completed import or releases a target.
-  if (J) {
-    const auto &Target = Threads[J->Target];
-    if (J->Output) {
-      if (auto E = access(J->Output, 8, Write))
-        return E;
-      if (auto E = put64(J->Output, *Target.Report.ReturnValue))
-        return E;
-    }
-  } else {
-    const auto &Once = std::get<GuestThreads::Once>(Pending.Operation);
-    if (auto E = access(Once.Control, once_abi::ControlBytes, Read,
-                        once_abi::ControlBytes))
-      return E;
-    uint8_t Bytes[once_abi::ControlBytes];
-    if (auto E = CPU.read(Once.Control, Bytes))
-      return E;
-    if (llvm::support::endian::read32le(Bytes) != once_abi::Complete)
-      return failure(diagnostic::OnceWaitControl);
+
+llvm::Error GuestThreads::prepareJoin(const Join &Pending) {
+  if (!Pending.Output)
+    return llvm::Error::success();
+  if (auto E = access(Pending.Output, 8, Write))
+    return E;
+  return put64(Pending.Output, *Threads[Pending.Target].Report.ReturnValue);
+}
+
+BionicResult GuestThreads::resumeWait(Bionic &LibC) {
+  const auto &Operation = current().Waiting->Operation;
+  if (const auto *M = std::get_if<Mutex>(&Operation))
+    return LibC.resumeMutex(M->Address, M->Attributes);
+  if (const auto *J = std::get_if<Join>(&Operation)) {
+    if (auto E = prepareJoin(*J))
+      return std::move(E);
+    return value(0);
   }
+  const auto &Once = std::get<GuestThreads::Once>(Operation);
+  // Recheck memory after suspension: a different thread may have unmapped
+  // or modified it. Failure must leave the original import incomplete.
+  if (auto E = access(Once.Control, once_abi::ControlBytes, Read,
+                      once_abi::ControlBytes))
+    return std::move(E);
+  uint8_t Bytes[once_abi::ControlBytes];
+  if (auto E = CPU.read(Once.Control, Bytes))
+    return std::move(E);
+  if (llvm::support::endian::read32le(Bytes) != once_abi::Complete)
+    return failure(diagnostic::OnceWaitControl);
+  return value(0);
+}
+
+llvm::Error GuestThreads::completeWait(uint64_t Value) {
+  const auto &Pending = *current().Waiting;
   if (Pending.Request) {
-    if (auto E = linux_model::returnService(CPU, *Pending.Request, 0))
+    if (auto E = linux_model::returnService(CPU, *Pending.Request, Value))
       return E;
-    Result.NativeCalls[Pending.Event].Result = 0;
+    Result.NativeCalls[Pending.Event].Result = Value;
   }
-  if (J)
+  if (const auto *J = std::get_if<Join>(&Pending.Operation))
     if (auto E = retire(J->Target))
       return E;
-  Waiter.Waiting.reset();
+  current().Waiting.reset();
   return llvm::Error::success();
 }
 BionicResult GuestThreads::invoke(const NativeCallEvent &Call) {
@@ -336,7 +376,9 @@ BionicResult GuestThreads::invoke(const NativeCallEvent &Call) {
   Target.Joiner = Current;
   current().Waiting = Wait{Join{Index, A[1]}, std::nullopt};
   if (Target.Report.Finished) {
-    if (auto E = completeWait(current()))
+    if (auto E = prepareJoin(std::get<Join>(current().Waiting->Operation)))
+      return std::move(E);
+    if (auto E = completeWait(0))
       return std::move(E);
     return value(0);
   }
@@ -356,53 +398,67 @@ llvm::Error GuestThreads::finish(uint64_t Value, uint32_t ExitStatus) {
     return retire(Current);
   return llvm::Error::success();
 }
-llvm::Expected<bool> GuestThreads::schedule() {
-  size_t Next = Current;
-  bool Found = false, Live = false;
+std::optional<size_t> GuestThreads::nextRunnable() const {
   for (size_t Offset = 1; Offset <= Threads.size(); ++Offset) {
     size_t Candidate = (Current + Offset) % Threads.size();
     const auto &T = Threads[Candidate];
-    if (T.Report.Finished)
-      continue;
-    Live = true;
-    if (T.Waiting && !ready(*T.Waiting))
-      continue;
-    Next = Candidate;
-    Found = true;
-    break;
+    if (!T.Report.Finished && (!T.Waiting || ready(*T.Waiting)))
+      return Candidate;
   }
-  if (!Found) {
-    if (Live) {
+  return std::nullopt;
+}
+
+llvm::Error GuestThreads::switchTo(size_t Next) {
+  if (Next == Current)
+    return llvm::Error::success();
+  if (!current().Report.Finished) {
+    if (current().Context) {
+      if (auto E = CPU.saveContext(*current().Context))
+        return E;
+    } else {
+      auto Saved = CPU.saveContext();
+      if (!Saved)
+        return Saved.takeError();
+      current().Context = std::move(*Saved);
+    }
+  }
+  if (auto E = CPU.restoreContext(*Threads[Next].Context))
+    return E;
+  Current = Next;
+  return llvm::Error::success();
+}
+
+llvm::Expected<bool> GuestThreads::schedule(Bionic &LibC) {
+  while (auto Next = nextRunnable()) {
+    if (auto E = switchTo(*Next))
+      return std::move(E);
+    if (!current().Waiting)
+      return true;
+    auto Resumed = resumeWait(LibC);
+    if (!Resumed)
+      return Resumed.takeError();
+    if (!*Resumed)
+      return false;
+    if (std::holds_alternative<GuestThreadWait>(**Resumed))
+      continue;
+    if (auto E = completeWait(std::get<uint64_t>(**Resumed)))
+      return std::move(E);
+    return true;
+  }
+  for (const auto &T : Threads) {
+    if (!T.Report.Finished) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = diagnostic::ThreadDeadlock;
-    } else if (Result.ReturnValue)
-      Result.Stop = ProcessStopReason::Returned;
-    else {
-      Result.Stop = ProcessStopReason::Exited;
-      Result.ExitStatus = LastExitStatus;
+      return false;
     }
-    return false;
   }
-  if (Next != Current) {
-    if (!current().Report.Finished) {
-      if (current().Context) {
-        if (auto E = CPU.saveContext(*current().Context))
-          return std::move(E);
-      } else {
-        auto Saved = CPU.saveContext();
-        if (!Saved)
-          return Saved.takeError();
-        current().Context = std::move(*Saved);
-      }
-    }
-    if (auto E = CPU.restoreContext(*Threads[Next].Context))
-      return std::move(E);
-    Current = Next;
+  if (Result.ReturnValue)
+    Result.Stop = ProcessStopReason::Returned;
+  else {
+    Result.Stop = ProcessStopReason::Exited;
+    Result.ExitStatus = LastExitStatus;
   }
-  if (current().Waiting)
-    if (auto E = completeWait(current()))
-      return std::move(E);
-  return true;
+  return false;
 }
 void GuestThreads::report() {
   if (!enabled())

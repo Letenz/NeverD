@@ -2379,17 +2379,22 @@ process exit, instruction/report limits, guard faults and rejected state.
 Repeated software reports must match exactly. Available ARM64 HVF execution
 is compared separately with Unicorn; unavailable transport is an explicit
 skip. C API/CLI and Python checks preserve thread attribution and dynamically
-resolved API names. These tests do not establish concurrent SMP, blocking
-mutex/once behavior, or native Android device equivalence.
+resolved API names. These tests do not establish concurrent SMP or native
+Android device equivalence.
 
 Independent mutex fixtures run at O0/O2 with ordinary, APS2 and RELR packing.
 They check eight-byte attributes, four-byte getter outputs, complete 40-byte
 initialization, overlapping attributes, static initializers, all three lock
 types, errno preservation, recursive exhaustion, foreign owners, dynamic
-provider names and explicit unsupported contention. Cross-page tests retain
-unused read-only bytes and reject a denied owner write without publishing
-half a state transition. These are API 28 model checks, not native Android
-device or concurrent-thread equivalence evidence.
+provider names and explicit contention stops without scheduling. With
+scheduling enabled they check three waiting threads, shared/private state,
+recursive final release, unlocker reacquisition, a woken contender waiting
+again, original event identity, TLS errno, deadlock, and instruction limits.
+Destroyed/changed objects and revoked permissions are rechecked on resume.
+Cross-page tests retain unused read-only bytes and reject a denied owner
+write without publishing half a transition. Cases run on Unicorn and
+available KVM/WHP/HVF transports, with unavailable hosts reported as skips.
+These are API 28 model checks, not native Android device or SMP equivalence.
 
 Linux regression tests guard the shared kernel-service boundary. Native KVM
 and WHP cells may be unavailable on the host; report their skips separately.
