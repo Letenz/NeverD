@@ -7,6 +7,7 @@
 
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/RAMTransaction.h"
+#include "X64Decoder.h"
 #include "X64Exception.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -23,6 +24,17 @@
 namespace neverd::emulation {
 using diagnostic::error;
 namespace {
+std::optional<bool> stackDirection(unsigned Instruction) {
+  switch (Instruction) {
+#define NEVERD_X64_STACK_INSTRUCTION(Name, Push)                               \
+  case X86_INS_##Name:                                                         \
+    return Push;
+#include "X64StackInstructions.def"
+#undef NEVERD_X64_STACK_INSTRUCTION
+  default:
+    return std::nullopt;
+  }
+}
 enum class BitAccess { Read, Update };
 std::optional<BitAccess> bitAccess(unsigned Instruction) {
   switch (Instruction) {
@@ -283,7 +295,8 @@ CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
   B->CPU.UserMode = UserMode;
   if (auto E = B->Memory->validateMappings(x64::canonicalRange, !UserMode))
     return E;
-  if (auto E = B->initializeDecoder(CS_ARCH_X86, CS_MODE_64))
+  if (auto E = B->initializeDecoder(
+          CS_ARCH_X86, x64::decoderMode(B->Machine->branchModel())))
     return E;
   B->CPU.reg(X64Register::FLAGS) = x64::InitialFlags;
   B->CPU.reg(X64Register::CS) =
@@ -525,14 +538,6 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       CPU = Next;
     return llvm::Error::success();
   }
-  struct Access {
-    uint64_t Address;
-    unsigned Size, Permission;
-    uint64_t Value;
-    std::optional<unsigned> Update = std::nullopt;
-    uint64_t High = 0;
-    bool Deferred = false;
-  };
   std::vector<Access> Accesses;
   auto Value = [&](const cs_x86_op &O) -> llvm::Expected<uint64_t> {
     if (O.type == X86_OP_IMM)
@@ -541,7 +546,11 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       return operandRegister(O.reg);
     return llvm::make_error<UnsupportedExecutionError>();
   };
-  for (unsigned N = 0; N < X.op_count; ++N) {
+  const auto StackPush = stackDirection(I.id);
+  if (StackPush)
+    if (auto E = prepareStack(I, *StackPush, Accesses))
+      return E;
+  for (unsigned N = 0; !StackPush && N < X.op_count; ++N) {
     const auto &O = X.operands[N];
     if (O.type == X86_OP_REG && !(Vector && isXmm(O.reg))) {
       auto V = operandRegister(O.reg);
@@ -550,22 +559,9 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     }
     if (O.type != X86_OP_MEM || I.id == X86_INS_LEA || I.id == X86_INS_NOP)
       continue;
-    if (O.size > (Vector ? x64::VectorBytes : x64::WordBytes) || !O.size ||
-        (O.mem.segment != X86_REG_INVALID && O.mem.segment != X86_REG_DS &&
-         O.mem.segment != X86_REG_SS && O.mem.segment != X86_REG_ES &&
-         O.mem.segment != X86_REG_GS && O.mem.segment != X86_REG_FS))
+    if (O.size > (Vector ? x64::VectorBytes : x64::WordBytes) || !O.size)
       return llvm::make_error<UnsupportedExecutionError>();
-    auto B = operandRegister(O.mem.base), Index = operandRegister(O.mem.index);
-    if (!B) {
-      if (!Index)
-        llvm::consumeError(Index.takeError());
-      return B.takeError();
-    }
-    if (!Index)
-      return Index.takeError();
-    uint64_t A = *B + *Index * O.mem.scale + O.mem.disp;
-    if (O.mem.base == X86_REG_RIP || O.mem.base == X86_REG_EIP)
-      A += I.size;
+    uint64_t ExtraOffset = 0;
     if (Bit && X.operands[1].type == X86_OP_REG) {
       auto Offset = operandRegister(X.operands[1].reg);
       if (!Offset)
@@ -576,14 +572,12 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       // division also handles negative indices; an immediate stays within
       // the base word. Address-size wrapping precedes the segment base.
       const int64_t Words = Signed / Bits - (Signed % Bits < 0);
-      A += uint64_t(Words) * O.size;
+      ExtraOffset = uint64_t(Words) * O.size;
     }
-    if (X.addr_size == x64::DWordBytes)
-      A = uint32_t(A);
-    if (O.mem.segment == X86_REG_GS)
-      A += CPU.GSBase;
-    if (O.mem.segment == X86_REG_FS)
-      A += CPU.FSBase;
+    auto Address = operandAddress(I, O, ExtraOffset);
+    if (!Address)
+      return Address.takeError();
+    const uint64_t A = *Address;
     if ((Locked || I.id == X86_INS_XCHG) && A % O.size)
       return llvm::make_error<UnsupportedExecutionError>();
     // Aligned SSE raises #GP(0) before any page lookup or data observation.
@@ -667,25 +661,11 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     else
       Accesses.push_back({SP, Size, Read, 0});
   }
-  if (I.id == X86_INS_PUSH || I.id == X86_INS_CALL) {
-    uint64_t V = I.address + I.size;
-    if (I.id == X86_INS_PUSH) {
-      if (X.op_count != 1 || X.operands[0].size != x64::WordBytes)
-        return llvm::make_error<UnsupportedExecutionError>();
-      auto Source = Value(X.operands[0]);
-      if (!Source)
-        return Source.takeError();
-      V = *Source;
-    }
-    Accesses.push_back({SP - x64::WordBytes, x64::WordBytes, Write, V});
-  }
-  if (I.id == X86_INS_POP || I.id == X86_INS_RET) {
-    if (I.id == X86_INS_POP &&
-        (X.op_count != 1 || X.operands[0].type != X86_OP_REG ||
-         X.operands[0].size != x64::WordBytes))
-      return llvm::make_error<UnsupportedExecutionError>();
+  if (I.id == X86_INS_CALL)
+    Accesses.push_back(
+        {SP - x64::WordBytes, x64::WordBytes, Write, I.address + I.size});
+  if (I.id == X86_INS_RET)
     Accesses.push_back({SP, x64::WordBytes, Read, 0});
-  }
   // RAM operands may cross pages with unrelated physical owners. Validate
   // their whole extent before native execution; a synchronous fault cannot
   // publish a prefix store. Device transfers remain indivisible and cannot

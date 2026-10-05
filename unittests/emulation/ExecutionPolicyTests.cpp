@@ -46,6 +46,20 @@ protected:
   }
 };
 
+TEST(DriverBranchPolicy, RelativeExtentsFollowTheSelectedCPUModel) {
+#define NEVERD_BRANCH_POLICY(Model, Address, ...)                              \
+  {                                                                            \
+    constexpr uint8_t Bytes[] = {__VA_ARGS__};                                 \
+    WindowsX64ExecutionPolicy Selected;                                        \
+    llvm::cantFail(Selected.initialize(X64BranchModel::Model));                \
+    auto Result = Selected.inspect(Bytes, Address);                            \
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());           \
+    EXPECT_FALSE(*Result);                                                     \
+  }
+#include "X64BranchCases.def"
+#undef NEVERD_BRANCH_POLICY
+}
+
 TEST_F(DriverExecutionPolicy, RejectsFSAndGSImplicitXLATMemory) {
   rejectsThreadAccess({0x64, 0xd7});
   rejectsThreadAccess({0x65, 0xd7});

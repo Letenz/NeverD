@@ -51,8 +51,11 @@ constexpr size_t programBytes() {
 /// its architectural zero-mask fallback does not advertise DAZ.
 /// SIMDExceptions also requires an authentic #XM and both masked and operand
 /// repair retries before publishing any discovered capability.
+/// BranchModel measures non-taken 66H branches and verifies REX.W precedence
+/// before publishing the decoder policy. No branch enters low guest memory.
 llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
                              uint32_t *MXCSRMask = nullptr,
-                             bool SIMDExceptions = false);
+                             bool SIMDExceptions = false,
+                             X64BranchModel *BranchModel = nullptr);
 } // namespace neverd::emulation
 #endif

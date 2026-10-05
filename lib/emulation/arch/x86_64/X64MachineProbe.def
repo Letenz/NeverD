@@ -45,6 +45,7 @@ NEVERD_X64_PROBE_VALUE(FPTag, UINT8_MAX)
 NEVERD_X64_PROBE_VALUE(FPOpcode, 0x127)
 NEVERD_X64_PROBE_VALUE(FP80Base, 0x8000000000000000ULL)
 NEVERD_X64_PROBE_VALUE(FP80High, 0x3fff)
+NEVERD_X64_PROBE_VALUE(BranchWidthDifference, DWordBytes - HalfWordBytes)
 #endif
 #ifdef NEVERD_X64_PROBE_TEXT
 NEVERD_X64_PROBE_TEXT(State, "incorrect x64 native initialization state")
@@ -63,6 +64,18 @@ NEVERD_X64_PROBE_TEXT(DAZName, "DAZ ADDSS")
 NEVERD_X64_PROBE_TEXT(SIMDName, "unmasked ADDSS")
 NEVERD_X64_PROBE_TEXT(SIMDFault,
                       "native x64 did not deliver a precise SIMD exception")
+NEVERD_X64_PROBE_TEXT(BranchModelFailure,
+                      "native x64 relative-branch model is inconsistent")
+#endif
+#ifdef NEVERD_X64_PROBE_BRANCH
+// Non-taken branches distinguish immediate lengths without a low-address jump.
+NEVERD_X64_PROBE_BRANCH(OperandJO, 0, true, 0x66, 0x0f, 0x80, 0, 0, 0, 0)
+NEVERD_X64_PROBE_BRANCH(OperandJNO, OverflowFlag, true, 0x66, 0x0f, 0x81, 0, 0,
+                        0, 0)
+NEVERD_X64_PROBE_BRANCH(OperandAddressJE, 0, true, 0x66, 0x67, 0x0f, 0x84, 0, 0,
+                        0, 0)
+NEVERD_X64_PROBE_BRANCH(OperandRexJO, 0, false, 0x66, 0x48, 0x0f, 0x80, 0, 0, 0,
+                        0)
 #endif
 #ifdef NEVERD_X64_PROBE_FIELD
 NEVERD_X64_PROBE_FIELD(UserMode)

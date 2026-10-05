@@ -680,6 +680,10 @@ ARM64 KVM/WHP/HVF 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 
 
 x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다.
 
+`ExecutionBackend::x64BranchModel()`은 불변 상대 분기 계약을 공개하며 전체 CPUID 식별 정보를 뜻하지 않습니다. `X64MachineProbe.def`는 KVM/WHP 머신 공개 전에 기존 메모리 임대와 마감 시간을 적용하여 비공개 영역의 비선택 분기로 동작을 측정합니다. 검사 실행과 Windows 드라이버 정책은 같은 x64 디코더 모드를 사용하며 OS 코드는 호스트 제조사로 모델을 추측하지 않습니다. 프로브 실패 시 모델을 공개하지 않습니다.
+
+`CheckedX64Stack.cpp`가 스택 전송의 접근 순서와 폭을 담당합니다. 공유 `operandAddress`는 일반 및 스택 피연산자의 RIP 상대 주소, 32비트 순환 및 FS/GS 기준 주소를 계산합니다. 프로세서가 원래 명령을 실행하고 지연된 쓰기 관찰자는 실제 결과를 확인한 뒤 공유 RAM 트랜잭션이 효과를 게시합니다.
+
 공유 XSAVE 디코더는 표준 형식과 압축 형식의 SSE 초기 상태를 구분합니다. XSTATE_BV[1]이 0이면 두 형식 모두 XMM을 초기화하지만 표준 형식은 MXCSR을 읽고 검증하며 압축 형식은 MXCSR을 초기화합니다. `X64XsaveCases.def`는 독립적인 데이터 배치와 직접 작성한 호스트 XRSTOR 프로그램을 제공합니다. `X64XsaveTests.cpp`는 거부 시 상태의 원자성을 확인하고 호출자의 FP/SSE 상태를 보존하면서 두 형식을 실제 호스트 실행과 비교합니다. 호스트 아키텍처나 필요한 명령 기능을 사용할 수 없으면 명시적으로 건너뜁니다.
 
 `X64FPState.def`는 압축 AVX, AVX-512, CET_U/CET_S, AMX 전송 배치와 구성 요소의 64바이트 정렬을 선언합니다. 존재하는 확장 데이터는 모두 0인 초기 상태여야 하며, 없는 구성 요소의 데이터와 정렬 패딩은 상태를 정의하지 않습니다. 배치 비트가 오프셋을 결정하고 알 수 없는 배치, 초기 상태가 아닌 데이터, 잘못된 길이는 공개 전에 실패합니다. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState`, `InitialWideComponentsDoNotHideFPState`가 872바이트와 10752바이트 WHP 패킷을 검증합니다. 이 전송 지원은 해당 확장 명령 실행을 허용하지 않습니다.

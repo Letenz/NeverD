@@ -13,6 +13,7 @@
 #define NEVERD_EMULATION_WINDOWS_X64EXECUTIONPOLICY_H
 
 #include "neverd/emulation/Registers.h"
+#include "neverd/emulation/X64BranchModel.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Error.h"
@@ -30,7 +31,7 @@ public:
   WindowsX64ExecutionPolicy &
   operator=(const WindowsX64ExecutionPolicy &) = delete;
   ~WindowsX64ExecutionPolicy();
-  llvm::Error initialize();
+  llvm::Error initialize(X64BranchModel Model = X64BranchModel::Intel);
   struct Action {
     enum class Kind { ReadIRQL, ReadCurrentThread };
     Kind Source;

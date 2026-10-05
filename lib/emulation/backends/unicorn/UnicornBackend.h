@@ -59,6 +59,11 @@ public:
   llvm::Error fetch(uint64_t Address,
                     llvm::MutableArrayRef<uint8_t> Bytes) override;
   GuestArchitecture architecture() const override;
+  std::optional<X64BranchModel> x64BranchModel() const override {
+    if (architecture() == GuestArchitecture::X64)
+      return X64BranchModel::Intel;
+    return std::nullopt;
+  }
   llvm::Expected<RegisterValue>
       supportedControlBits(CPURegister) const override;
   llvm::Expected<RegisterValue> readRegister(CPURegister Register) override;

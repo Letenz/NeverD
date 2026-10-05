@@ -12,6 +12,7 @@
 
 #include "WindowsX64ExecutionPolicy.h"
 
+#include "../../../arch/x86_64/X64Decoder.h"
 #include "../kernel/WindowsKernelLayout.h"
 
 #include "llvm/Support/Error.h"
@@ -36,8 +37,8 @@ WindowsX64ExecutionPolicy::~WindowsX64ExecutionPolicy() {
   if (Handle)
     cs_close(&Handle);
 }
-llvm::Error WindowsX64ExecutionPolicy::initialize() {
-  if (cs_open(CS_ARCH_X86, CS_MODE_64, &Handle) != CS_ERR_OK ||
+llvm::Error WindowsX64ExecutionPolicy::initialize(X64BranchModel Model) {
+  if (cs_open(CS_ARCH_X86, x64::decoderMode(Model), &Handle) != CS_ERR_OK ||
       cs_option(Handle, CS_OPT_DETAIL, CS_OPT_ON) != CS_ERR_OK)
     return failure(policy::Initialize);
   return llvm::Error::success();

@@ -82,7 +82,8 @@ llvm::Error stateMismatch(llvm::StringRef Instruction,
 } // namespace
 
 llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
-                             uint32_t *MXCSRMask, bool SIMDExceptions) {
+                             uint32_t *MXCSRMask, bool SIMDExceptions,
+                             X64BranchModel *BranchModel) {
   if (auto E = Memory.beginRun())
     return E;
   auto Release = llvm::scope_exit([&] { Memory.endRun(); });
@@ -192,6 +193,44 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
     if (auto E = CheckDeadline(Instruction.Name))
       return E;
   }
+  std::optional<X64BranchModel> ObservedBranchModel;
+  if (BranchModel) {
+    auto Probe = [&](llvm::StringRef Name, uint64_t Flags, bool CanNarrow,
+                     llvm::ArrayRef<uint8_t> Bytes) -> llvm::Error {
+      if (auto E = CheckDeadline(Name))
+        return E;
+      auto *Code = Memory.data() + gateway::CodeGPA + probe::CodeOffset;
+      std::memcpy(Code, Bytes.data(), Bytes.size());
+      State.reg(X64Register::PC) = Base + PageSize + probe::CodeOffset;
+      State.reg(X64Register::FLAGS) = InitialFlags | Flags;
+      auto Expected = State;
+      Expected.reg(X64Register::PC) += Bytes.size();
+      if (auto E = Step(Name))
+        return E;
+      if (!ObservedBranchModel) {
+        if (State.reg(X64Register::PC) == Expected.reg(X64Register::PC))
+          ObservedBranchModel = X64BranchModel::Intel;
+        else if (State.reg(X64Register::PC) ==
+                 Expected.reg(X64Register::PC) - probe::BranchWidthDifference)
+          ObservedBranchModel = X64BranchModel::AMD;
+        else
+          return diagnostic::error(probe::BranchModelFailure);
+      }
+      if (CanNarrow && *ObservedBranchModel == X64BranchModel::AMD)
+        Expected.reg(X64Register::PC) -= probe::BranchWidthDifference;
+      if (State != Expected)
+        return stateMismatch(Name, Expected, State);
+      return CheckDeadline(Name);
+    };
+#define NEVERD_X64_PROBE_BRANCH(Name, Flags, CanNarrow, ...)                   \
+  {                                                                            \
+    constexpr uint8_t Bytes[] = {__VA_ARGS__};                                 \
+    if (auto E = Probe(#Name, Flags, CanNarrow, Bytes))                        \
+      return E;                                                                \
+  }
+#include "X64MachineProbe.def"
+#undef NEVERD_X64_PROBE_BRANCH
+  }
   if (SIMDExceptions) {
     auto *Code = Memory.data() + gateway::CodeGPA + probe::CodeOffset;
     std::memcpy(Code, probe::FloatingAdd, sizeof(probe::FloatingAdd));
@@ -240,8 +279,11 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
     if (auto E = CheckDeadline(probe::SIMDName))
       return E;
   }
-  if (!MXCSRMask)
+  if (!MXCSRMask) {
+    if (BranchModel)
+      *BranchModel = *ObservedBranchModel;
     return llvm::Error::success();
+  }
   static_assert(probe::FXOffset % probe::StackAlignment == 0);
   static_assert(probe::FXOffset + fp::LegacyBytes <= PageSize);
   auto *Saved = Memory.data() + gateway::DataGPA + probe::FXOffset;
@@ -293,6 +335,8 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
       return E;
   }
   *MXCSRMask = Mask;
+  if (BranchModel)
+    *BranchModel = *ObservedBranchModel;
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

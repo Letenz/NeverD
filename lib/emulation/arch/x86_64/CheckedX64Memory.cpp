@@ -13,6 +13,36 @@
 #include <climits>
 
 namespace neverd::emulation {
+llvm::Expected<uint64_t>
+CheckedX64Backend::operandAddress(const cs_insn &I, const cs_x86_op &O,
+                                  uint64_t Offset) const {
+  const auto &X = I.detail->x86;
+  if (O.type != X86_OP_MEM ||
+      (X.addr_size != x64::DWordBytes && X.addr_size != x64::WordBytes) ||
+      (O.mem.segment != X86_REG_INVALID && O.mem.segment != X86_REG_DS &&
+       O.mem.segment != X86_REG_SS && O.mem.segment != X86_REG_ES &&
+       O.mem.segment != X86_REG_GS && O.mem.segment != X86_REG_FS))
+    return llvm::make_error<UnsupportedExecutionError>();
+  auto Base = operandRegister(O.mem.base);
+  auto Index = operandRegister(O.mem.index);
+  if (!Base) {
+    if (!Index)
+      llvm::consumeError(Index.takeError());
+    return Base.takeError();
+  }
+  if (!Index)
+    return Index.takeError();
+  uint64_t Address = *Base + *Index * O.mem.scale + O.mem.disp + Offset;
+  if (O.mem.base == X86_REG_RIP || O.mem.base == X86_REG_EIP)
+    Address += I.size;
+  if (X.addr_size == x64::DWordBytes)
+    Address = uint32_t(Address);
+  if (O.mem.segment == X86_REG_GS)
+    Address += CPU.GSBase;
+  if (O.mem.segment == X86_REG_FS)
+    Address += CPU.FSBase;
+  return Address;
+}
 llvm::Error CheckedX64Backend::mapMMIO(uint64_t A, uint64_t N,
                                        GuestMMIOCallbacks Callbacks) {
   if (auto E = mutableMemory())
