@@ -146,7 +146,7 @@ BionicResult GuestThreads::create(const NativeCallEvent &Call) {
     llvm::consumeError(std::move(E));
     return value(linux_model::TryAgain);
   }
-  auto Rollback = llvm::make_scope_exit(
+  auto Rollback = llvm::scope_exit(
       [&] { llvm::consumeError(Space.unmap(MappingBase, MappingSize)); });
   if (Guard)
     if (auto E = Space.protect(MappingBase, Guard, 0))
@@ -350,7 +350,7 @@ BionicResult GuestThreads::invoke(const NativeCallEvent &Call) {
     return value(linux_model::Deadlock);
   if (!A[0])
     return value(Name == symbol::ThreadGetTID ? uint64_t(UINT32_MAX)
-                                             : linux_model::NoSuchProcess);
+                                              : linux_model::NoSuchProcess);
   size_t Index = 0;
   while (Index < Threads.size() && (Threads[Index].Report.Handle != A[0] ||
                                     Threads[Index].Report.Retired))

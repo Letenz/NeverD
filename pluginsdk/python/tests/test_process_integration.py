@@ -35,13 +35,27 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.addCleanup(host.call, "neverd_session_destroy", handle)
         session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
         for optimization in ("O0", "O2"):
-            for entry in ("files_sequence", "files_faults", "files_bionic"):
+            for entry in ("files_sequence", "files_faults", "files_bionic",
+                          "files_status", "files_status_bionic"):
                 with self.subTest(optimization=optimization, entry=entry):
                     options = {
                         "backend": "unicorn", "instruction_quantum": 31,
                         "linux_files": {"files": [{"path": "/fixture/data", "bytes_hex": "00ff410a805a"}]},
                         "android": {"entry_symbol": entry, "initialize": False, "thread_limit": 2},
                     }
+                    if entry.startswith("files_status"):
+                        options["linux_files"]["files"][0]["metadata"] = {
+                            "device": 0xfe12cd34, "inode": str(0xfedcba9876543210),
+                            "mode": 0o100644, "link_count": 0x89abcdef,
+                            "uid": 0x87654321, "gid": 0xfedcba98, "size": 0,
+                            "block_size": 16384, "blocks": 0x1234567890,
+                            "access_time": {"seconds": str(-0x7fffffffffffffff),
+                                            "nanoseconds": 123456789},
+                            "modification_time": {"seconds": 4294967297,
+                                                  "nanoseconds": 987654321},
+                            "change_time": {"seconds": str(0x7fffffffffffffff),
+                                            "nanoseconds": 999999999},
+                        }
                     result = session.emulate_process(
                         str(Path(fixtures) / f"files-{optimization}-relr.so"),
                         "android-aarch64-api28-v1", json.dumps(options))
@@ -53,6 +67,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                         self.assertEqual(len(reads), 1)
                         self.assertEqual(reads[0]["arguments"][0], "3")
                         self.assertEqual(reads[0]["result"], "2")
+                    if entry == "files_status_bionic":
+                        calls = [e for e in result["android"]["native_calls"]
+                                 if e["name"] == "fstat64" and e["thread_id"] == 1001]
+                        self.assertEqual(len(calls), 1)
+                        self.assertEqual(calls[0]["arguments"][0], "3")
+                        self.assertEqual(calls[0]["result"], "0")
                     self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
     def test_android_guest_threads_keep_identity_and_named_imports(self) -> None:

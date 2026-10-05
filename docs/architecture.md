@@ -3221,6 +3221,13 @@ If/else structuring visits existing child lists before rewriting their parent. A
 
 `LinuxServices` owns one workload's Linux memory service state and file descriptor table. Linux process traps and Android Bionic wrappers share this instance; thread identity is supplied at each service boundary. `LinuxMemory` retains mapping ownership, while `LinuxFiles` owns immutable catalogue descriptions, open cursors and descriptor lifetime. Bionic alone owns errno conversion. Explicit `LinuxFileOptions` and strict JSON validation share one Linux contract; neither catalogue lookup nor guest file I/O reaches the host filesystem. Unsupported inputs do not acquire default file contents.
 
+`LinuxFiles` also borrows explicit per-path `LinuxFileMetadata` observations;
+status does not derive identity or size from the byte vector. `LinuxFileStatus.def`
+owns the x64/AArch64 stat field layouts, and `LinuxUserMemory` owns the typed
+fixed-copy outcome shared by status and time services. `ProcessJSONInteger.h`
+owns lossless observation integer parsing. Android translates the ABI and
+errno at its boundary without duplicating these decisions.
+
 Android linking classifies each undefined symbol from its declared type and the complete relocation inventory. An exact-symbol `JUMP_SLOT` establishes a `STT_NOTYPE` function binding for its address/GOT relocations too, independent of relocation order. Explicit object types and untyped address-only imports remain rejected; a matching name or another symbol’s call slot supplies no evidence.
 
 Swift opaque-value and value-constructor publication validators share one bounded scan of every statement body, including exception arms, for current occurrence receipts. A body without receipts owned by a validator has no obligation under that validator; the ordinary exception and call-binding gates still decide whether it can be published. Bodies combining a relevant receipt with exception arms remain unsupported by these consumers. Hidden or malformed receipts, duplicate evaluations and exhausted depth or work bounds are rejected. A successful empty scan grants no exception or lifetime authority.

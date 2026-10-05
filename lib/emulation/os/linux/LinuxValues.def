@@ -44,6 +44,10 @@ NEVERD_LINUX_VALUE(FileCountLimit, 256)
 NEVERD_LINUX_VALUE(FileByteLimit, 16 * 1024 * 1024)
 NEVERD_LINUX_VALUE(FilePathLimit, 4096)
 NEVERD_LINUX_VALUE(FileNameLimit, 255)
+NEVERD_LINUX_VALUE(FileRegularMode, 0100000)
+NEVERD_LINUX_VALUE(FilePermissionMask, 07777)
+NEVERD_LINUX_VALUE(FileStatusSizeARM64, 128)
+NEVERD_LINUX_VALUE(FileStatusSizeX64, 144)
 NEVERD_LINUX_VALUE(OpenCloseOnExec, 02000000)
 NEVERD_LINUX_VALUE(OpenLargeFileX64, 00100000)
 NEVERD_LINUX_VALUE(OpenLargeFileARM64, 0400000)
@@ -112,6 +116,7 @@ NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
 NEVERD_LINUX_SERVICE(Read, 0, 63, 3)
 NEVERD_LINUX_SERVICE(Close, 3, 57, 1)
 NEVERD_LINUX_SERVICE(Lseek, 8, 62, 3)
+NEVERD_LINUX_SERVICE(Fstat, 5, 80, 2)
 NEVERD_LINUX_SERVICE(Write, 1, 64, 3)
 NEVERD_LINUX_SERVICE(WriteV, 20, 66, 3)
 NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
@@ -160,6 +165,15 @@ NEVERD_LINUX_DIAGNOSTIC(FileDirectory,
                         "Linux memory-file directory opens are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileInputStream,
                         "Linux standard input has no explicit input model")
+NEVERD_LINUX_DIAGNOSTIC(
+    FileMetadataOption,
+    "linux_files metadata requires bounded regular-file observations")
+NEVERD_LINUX_DIAGNOSTIC(FileMetadataPath,
+                        "linux_files metadata path must name a catalogue file")
+NEVERD_LINUX_DIAGNOSTIC(FileStatusMissing,
+                        "Linux file status requires explicit file metadata")
+NEVERD_LINUX_DIAGNOSTIC(FileStatusPartialOutput,
+                        "partial Linux file-status output fault is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(
     FileSeekMode, "Linux memory-file SEEK_DATA and SEEK_HOLE are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(AndroidOptions,

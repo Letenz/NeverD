@@ -3,12 +3,14 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 
 namespace neverd::emulation {
@@ -267,6 +269,142 @@ TEST(ProcessReport, MalformedMemoryFileCataloguesFailBeforeExecution) {
   ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
   EXPECT_TRUE(Empty->LinuxFiles->Files.empty());
   EXPECT_EQ(Empty->LinuxFiles->DescriptorLimit, 256u);
+}
+
+llvm::json::Value fileMetadata() {
+  return llvm::cantFail(llvm::json::parse(R"({
+    "device":4294967295,"inode":"18446744073709551615","mode":33279,
+    "link_count":4294967295,"uid":4294967295,"gid":4294967295,
+    "size":"9223372036854775807","block_size":2147483647,
+    "blocks":"9223372036854775807",
+    "access_time":{"seconds":"-9223372036854775808","nanoseconds":0},
+    "modification_time":{"seconds":"9223372036854775807","nanoseconds":999999999},
+    "change_time":{"seconds":-1,"nanoseconds":1}})"));
+}
+llvm::Expected<ProcessOptions> fileOptions(llvm::json::Value Metadata) {
+  llvm::json::Object File{{"path", "/fixture/data"},
+                          {"bytes_hex", "00ff"},
+                          {"metadata", std::move(Metadata)}};
+  llvm::json::Object Options{
+      {"linux_files",
+       llvm::json::Object{{"files", llvm::json::Array{std::move(File)}}}}};
+  return processOptionsFromJSON(
+      llvm::formatv("{0}", llvm::json::Value(std::move(Options))).str());
+}
+
+TEST(ProcessReport, FileMetadataPreservesFullWidthObservations) {
+  auto O = fileOptions(fileMetadata());
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  const auto &M = O->LinuxFiles->Metadata.at("/fixture/data");
+  EXPECT_EQ(M.Device, UINT32_MAX);
+  EXPECT_EQ(M.Inode, UINT64_MAX);
+  EXPECT_EQ(M.Mode, 0100777u);
+  EXPECT_EQ(M.LinkCount, UINT32_MAX);
+  EXPECT_EQ(M.UID, UINT32_MAX);
+  EXPECT_EQ(M.GID, UINT32_MAX);
+  EXPECT_EQ(M.Size, uint64_t(INT64_MAX));
+  EXPECT_EQ(M.BlockSize, uint32_t(INT32_MAX));
+  EXPECT_EQ(M.Blocks, uint64_t(INT64_MAX));
+  EXPECT_EQ(M.AccessTime.Seconds, INT64_MIN);
+  EXPECT_EQ(M.AccessTime.Nanoseconds, 0);
+  EXPECT_EQ(M.ModificationTime.Seconds, INT64_MAX);
+  EXPECT_EQ(M.ModificationTime.Nanoseconds, 999999999);
+  EXPECT_EQ(M.ChangeTime.Seconds, -1);
+  EXPECT_EQ(M.ChangeTime.Nanoseconds, 1);
+}
+
+TEST(ProcessReport, IncompleteAndMalformedFileMetadataFailsBeforeExecution) {
+  auto Reject = [](llvm::json::Value Value) {
+    auto O = fileOptions(std::move(Value));
+    EXPECT_FALSE(bool(O));
+    EXPECT_NE(llvm::toString(O.takeError()).find("linux_files"),
+              std::string::npos);
+  };
+  for (const char *Text : {"null", "[]", "{}", "false", "0"})
+    Reject(llvm::cantFail(llvm::json::parse(Text)));
+  auto Good = fileMetadata();
+  for (const auto &[Name, Value] : *Good.getAsObject()) {
+    SCOPED_TRACE(Name.str());
+    auto Missing = Good;
+    Missing.getAsObject()->erase(Name);
+    Reject(std::move(Missing));
+    auto Bad = Good;
+    (*Bad.getAsObject())[Name] = nullptr;
+    Reject(std::move(Bad));
+  }
+  auto Extra = Good;
+  (*Extra.getAsObject())["unknown"] = 0;
+  Reject(std::move(Extra));
+  for (const char *Name : {"device", "inode", "mode", "link_count", "uid",
+                           "gid", "size", "block_size", "blocks"}) {
+    for (const char *Text :
+         {"-1", "1.5", "true", "\"\"", "\"+1\"", "\"-1\"", "\" 1\"", "\"0x1\"",
+          "\"18446744073709551616\"", "9007199254740992"}) {
+      SCOPED_TRACE(testing::Message() << Name << ':' << Text);
+      auto Bad = Good;
+      (*Bad.getAsObject())[Name] = llvm::cantFail(llvm::json::parse(Text));
+      Reject(std::move(Bad));
+    }
+  }
+  for (const auto &[Name, Text] : {std::pair{"device", "4294967296"},
+                                   {"link_count", "4294967296"},
+                                   {"uid", "4294967296"},
+                                   {"gid", "4294967296"},
+                                   {"mode", "16877"},
+                                   {"mode", "98304"},
+                                   {"block_size", "2147483648"},
+                                   {"size", "\"9223372036854775808\""},
+                                   {"blocks", "\"9223372036854775808\""}}) {
+    SCOPED_TRACE(testing::Message() << Name << ':' << Text);
+    auto Bad = Good;
+    (*Bad.getAsObject())[Name] = llvm::cantFail(llvm::json::parse(Text));
+    Reject(std::move(Bad));
+  }
+  for (const char *Name : {"access_time", "modification_time", "change_time"})
+    for (const char *Text :
+         {R"({"seconds":0})", R"({"seconds":0,"nanoseconds":0,"extra":0})",
+          R"({"seconds":0,"nanoseconds":-1})",
+          R"({"seconds":0,"nanoseconds":1000000000})",
+          R"({"seconds":"9223372036854775808","nanoseconds":0})",
+          R"({"seconds":"-9223372036854775809","nanoseconds":0})",
+          R"({"seconds":1.5,"nanoseconds":0})",
+          R"({"seconds":9007199254740992,"nanoseconds":0})"}) {
+      SCOPED_TRACE(testing::Message() << Name << ':' << Text);
+      auto Bad = Good;
+      (*Bad.getAsObject())[Name] = llvm::cantFail(llvm::json::parse(Text));
+      Reject(std::move(Bad));
+    }
+}
+
+TEST(ProcessReport, DirectFileMetadataUsesTheSameValidationBoundary) {
+  for (unsigned Mode = 0; Mode < 12; ++Mode) {
+    SCOPED_TRACE(Mode);
+    ProcessOptions Options;
+    Options.LinuxFiles.emplace();
+    auto &Files = *Options.LinuxFiles;
+    Files.Files["/fixture/data"] = {1};
+    auto &M = Files.Metadata[Mode ? "/fixture/data" : "/absent"];
+    M = fileTestMetadata();
+    if (Mode == 1)
+      M.Mode = 0040755;
+    if (Mode == 2)
+      M.Mode |= 0x10000;
+    if (Mode == 3)
+      M.Size = UINT64_MAX;
+    if (Mode == 4)
+      M.Blocks = UINT64_MAX;
+    if (Mode == 5)
+      M.BlockSize = uint32_t(INT32_MAX) + 1;
+    if (Mode >= 6) {
+      LinuxTimespec *Times[] = {&M.AccessTime, &M.ModificationTime,
+                                &M.ChangeTime};
+      Times[(Mode - 6) / 2]->Nanoseconds = Mode % 2 ? 1000000000 : -1;
+    }
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, Options);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
 }
 } // namespace
 } // namespace neverd::emulation
