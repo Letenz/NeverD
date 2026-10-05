@@ -13,7 +13,6 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <Hypervisor/Hypervisor.h>
-#include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -85,9 +84,7 @@ private:
   std::string Failure;
   std::timed_mutex Admission;
   std::mutex Mutex;
-  std::condition_variable Changed;
-  // The owner may notify after the submitter has retired its borrowed Request.
-  std::atomic<bool> Completed{false};
+  std::condition_variable Changed, Completed;
   Request *Pending = nullptr;
   bool Shutdown = false;
 #if defined(__arm64__)

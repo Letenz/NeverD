@@ -95,6 +95,7 @@ llvm::Error unavailable(const char *Operation, hv_return_t Status) {
 struct Executor::Request {
   Action Run;
   llvm::Error Result = llvm::Error::success();
+  bool Done = false;
 };
 struct Executor::RunControl {
 #if defined(__arm64__)
@@ -181,15 +182,10 @@ llvm::Error Executor::submit(Action Run, const MachineRunControl *Control) {
     Gate.lock();
   }
   Request Work{Run};
-  {
-    std::lock_guard Lock(Mutex);
-    Completed.store(false, std::memory_order_relaxed);
-    Pending = &Work;
-  }
+  std::unique_lock Lock(Mutex);
+  Pending = &Work;
   Changed.notify_one();
-  // Admission serializes reset/publication through result consumption. Once
-  // published, borrowed work must retire even if its control is cancelled.
-  Completed.wait(false, std::memory_order_acquire);
+  Completed.wait(Lock, [&] { return Work.Done; });
   return std::move(Work.Result);
 }
 void Executor::work() {
@@ -199,13 +195,15 @@ void Executor::work() {
     if (Shutdown)
       return;
     auto *Work = Pending;
-    Pending = nullptr;
     Lock.unlock();
     auto Result = Work->Run(*this);
+    Lock.lock();
     Work->Result = std::move(Result);
-    // This is the last Request access: the submitter can destroy it as soon
-    // as completion is visible. The notification object belongs to Executor.
-    Completed.store(true, std::memory_order_release);
+    Pending = nullptr;
+    Work->Done = true;
+    // Do not access Work after unlocking: the submitter may retire it before
+    // notification. A distinct response condition cannot wake this owner.
+    Lock.unlock();
     Completed.notify_one();
     Lock.lock();
   }
