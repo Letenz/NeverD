@@ -1246,3 +1246,5 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 `objcNonEscapingBlockSourceFrameEffects` 透過共用的 `sourceFrameCallArgumentStorage` 查詢認證堆疊上 block 的同步借用。它重播原始機器指令、目前接收者與派發、強匯入、完整標頭與描述符、回呼 ABI 和到達位元組。描述符限定可寫範圍，填充位元組不因此取得初始化證明；擷取欄位型別與回呼本體仍須獨立驗證。循環中的不確定觀察和私有堆疊位址擷取會被拒絕，相依性只使用已完成的證明輪次。
 
 來源建構重用發布階段的當前機器指令與完整 Low/Med/High 重放，認證與 block 分離的一次性值副本。最終發布獨立證明 block 建構和擷取生命週期，再比較 block 投影及一般參照繫結後的整個本體。不同寬度的私有向量讀取僅保留所有到達路徑均已初始化、且不含指標身分的純量位元組；可寫借用會清除舊初始化事實。 常量字串仍由既有參照證明層認證；block/副本證明不能授權弱匯入的常量物件。
+
+共用父類 getter 投影也支援目前 Darwin ARM64 `CGRect` 宣告的四個 double 回傳載體。它獨立核對完整的 15 條機器指令、類別存取器、呼叫者選擇子槽和全域一致的方法 ABI。同一機器入口的布林與 CGRect 回傳使用不同的原始碼輔助函式。發布時重新檢查目前呼叫者 ABI、回傳型別、陳述式位置及提供者；不接納間接結果儲存。 宣告形狀統一由 `ObjCSourceDeclarations` 提供，原始碼投影與 HighC 輸出器共同重用。
