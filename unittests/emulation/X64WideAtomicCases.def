@@ -1,0 +1,90 @@
+//===- X64WideAtomicCases.def - Original wide compare-exchange probes -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WIDE_ATOMIC_VALUE
+NEVERD_WIDE_ATOMIC_VALUE(Limit, 1024 * 1024)
+NEVERD_WIDE_ATOMIC_VALUE(Page, 4096)
+NEVERD_WIDE_ATOMIC_VALUE(Code, 0x10000)
+NEVERD_WIDE_ATOMIC_VALUE(Data, 0x20000)
+NEVERD_WIDE_ATOMIC_VALUE(Alias, 0x40000)
+NEVERD_WIDE_ATOMIC_VALUE(Segment, 0x10000)
+NEVERD_WIDE_ATOMIC_VALUE(Device, 0x80000)
+NEVERD_WIDE_ATOMIC_VALUE(AddressHigh, 0xa5a5a5a500000000ULL)
+NEVERD_WIDE_ATOMIC_VALUE(OriginalLow, 0x123456789abcdef0ULL)
+NEVERD_WIDE_ATOMIC_VALUE(OriginalHigh, 0x76543210fedcba98ULL)
+NEVERD_WIDE_ATOMIC_VALUE(ExchangeLow, 0x1122334455667788ULL)
+NEVERD_WIDE_ATOMIC_VALUE(ExchangeHigh, 0x99aabbccddeeff00ULL)
+NEVERD_WIDE_ATOMIC_VALUE(Flags, 0xed7)
+NEVERD_WIDE_ATOMIC_VALUE(ZeroFlag, 0x40)
+NEVERD_WIDE_ATOMIC_VALUE(Nop, 0x90)
+NEVERD_WIDE_ATOMIC_VALUE(Lock, 0xf0)
+NEVERD_WIDE_ATOMIC_VALUE(FS, 0x64)
+NEVERD_WIDE_ATOMIC_VALUE(GS, 0x65)
+NEVERD_WIDE_ATOMIC_VALUE(AddressPrefix, 0x67)
+NEVERD_WIDE_ATOMIC_VALUE(Word, 8)
+NEVERD_WIDE_ATOMIC_VALUE(Wide, 16)
+NEVERD_WIDE_ATOMIC_VALUE(HalfBits, 32)
+NEVERD_WIDE_ATOMIC_VALUE(ByteBits, 8)
+NEVERD_WIDE_ATOMIC_VALUE(Timeout, 1000000)
+NEVERD_WIDE_ATOMIC_VALUE(GeneralProtection, 13)
+NEVERD_WIDE_ATOMIC_VALUE(PageFault, 14)
+NEVERD_WIDE_ATOMIC_VALUE(WriteFault, 2)
+NEVERD_WIDE_ATOMIC_VALUE(CPUIDLeaf, 1)
+NEVERD_WIDE_ATOMIC_VALUE(CX16Feature, 1 << 13)
+NEVERD_WIDE_ATOMIC_VALUE(PacketWords, 6)
+NEVERD_WIDE_ATOMIC_VALUE(GuardBytes, 16)
+NEVERD_WIDE_ATOMIC_VALUE(GuardValue, 0x5a)
+#endif
+#ifdef NEVERD_WIDE_ATOMIC_TEXT
+NEVERD_WIDE_ATOMIC_TEXT(
+    OracleUnavailable,
+    "wide compare-exchange oracle requires x64 with CMPXCHG16B")
+NEVERD_WIDE_ATOMIC_TEXT(ObserverFailure,
+                        "wide compare-exchange observer failed")
+#endif
+#ifdef NEVERD_WIDE_ATOMIC_BACKEND
+NEVERD_WIDE_ATOMIC_BACKEND(kvmSupervisor, KVM, CheckedX64)
+NEVERD_WIDE_ATOMIC_BACKEND(kvmUser, KVM, CheckedUserX64)
+NEVERD_WIDE_ATOMIC_BACKEND(kvmDriver, KVM, Legacy)
+NEVERD_WIDE_ATOMIC_BACKEND(whpSupervisor, WHP, CheckedX64)
+NEVERD_WIDE_ATOMIC_BACKEND(whpUser, WHP, CheckedUserX64)
+NEVERD_WIDE_ATOMIC_BACKEND(whpDriver, WHP, Legacy)
+NEVERD_WIDE_ATOMIC_BACKEND(unicornSupervisor, Unicorn, CheckedX64)
+NEVERD_WIDE_ATOMIC_BACKEND(unicornUser, Unicorn, CheckedUserX64)
+#endif
+#ifdef NEVERD_WIDE_ATOMIC_CASE
+// Memory operand is [RSI]. The effective REX.W selects the complete pair width.
+NEVERD_WIDE_ATOMIC_CASE(Compare64, 8, false, 0x0f, 0xc7, 0x0e)
+NEVERD_WIDE_ATOMIC_CASE(Locked64, 8, true, 0xf0, 0x0f, 0xc7, 0x0e)
+NEVERD_WIDE_ATOMIC_CASE(Operand64, 8, false, 0x66, 0x0f, 0xc7, 0x0e)
+NEVERD_WIDE_ATOMIC_CASE(Compare128, 16, false, 0x48, 0x0f, 0xc7, 0x0e)
+NEVERD_WIDE_ATOMIC_CASE(Locked128, 16, true, 0xf0, 0x48, 0x0f, 0xc7, 0x0e)
+NEVERD_WIDE_ATOMIC_CASE(OperandBeforeRex128, 16, false, 0x66, 0x48, 0x0f, 0xc7,
+                        0x0e)
+NEVERD_WIDE_ATOMIC_CASE(OperandAfterRex64, 8, false, 0x48, 0x66, 0x0f, 0xc7,
+                        0x0e)
+NEVERD_WIDE_ATOMIC_CASE(OperandBeforeLockRex128, 16, true, 0x66, 0xf0, 0x48,
+                        0x0f, 0xc7, 0x0e)
+#endif
+#ifdef NEVERD_WIDE_ATOMIC_BYTES
+// Packet: RAX, RDX, RBX, RCX, RFLAGS, operand address. Preserve host
+// nonvolatile registers and flags; the instruction executes unchanged from the
+// case above.
+NEVERD_WIDE_ATOMIC_BYTES(OraclePrefix, 0x53, 0x56, 0x41, 0x54, 0x9c)
+NEVERD_WIDE_ATOMIC_BYTES(SysVArgument, 0x49, 0x89, 0xfc)
+NEVERD_WIDE_ATOMIC_BYTES(Win64Argument, 0x49, 0x89, 0xcc)
+NEVERD_WIDE_ATOMIC_BYTES(OracleLoad, 0x49, 0x8b, 0x04, 0x24, 0x49, 0x8b, 0x54,
+                         0x24, 0x08, 0x49, 0x8b, 0x5c, 0x24, 0x10, 0x49, 0x8b,
+                         0x4c, 0x24, 0x18, 0x41, 0xff, 0x74, 0x24, 0x20, 0x9d,
+                         0x49, 0x8b, 0x74, 0x24, 0x28)
+NEVERD_WIDE_ATOMIC_BYTES(OracleSave, 0x49, 0x89, 0x04, 0x24, 0x49, 0x89, 0x54,
+                         0x24, 0x08, 0x49, 0x89, 0x5c, 0x24, 0x10, 0x49, 0x89,
+                         0x4c, 0x24, 0x18, 0x9c, 0x41, 0x8f, 0x44, 0x24, 0x20,
+                         0x9d, 0x41, 0x5c, 0x5e, 0x5b, 0xc3)
+#endif
+#ifdef NEVERD_WIDE_ATOMIC_REJECTED_PREFIX
+NEVERD_WIDE_ATOMIC_REJECTED_PREFIX(0xf2)
+NEVERD_WIDE_ATOMIC_REJECTED_PREFIX(0xf3)
+#endif

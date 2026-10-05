@@ -545,7 +545,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "--with-drivers")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
-NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "4569 CPU + 224 WHP + 17 SEH = 4810")
+NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "4825 CPU + 224 WHP + 17 SEH = 5066")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1151,3 +1151,18 @@ NEVERD_EMULATION_DOC_TOKEN(FrameEntryTests, "882")
 NEVERD_EMULATION_DOC_TOKEN(FrameEntryTests, "84")
 NEVERD_EMULATION_DOC_TOKEN(FrameEntryTests, "508")
 NEVERD_EMULATION_DOC_TOKEN(FrameEntryTests, "507")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WideAtomic, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WideAtomic, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WideAtomic, "docs/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(WideAtomic, "docs/{locale}/cpu-execution.md")
+NEVERD_EMULATION_DOC_PATH(WideAtomic, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WideAtomic, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WideAtomic, "CMPXCHG8B")
+NEVERD_EMULATION_DOC_TOKEN(WideAtomic, "CMPXCHG16B")
+NEVERD_EMULATION_DOC_TOKEN(WideAtomic, "X64WideAtomicTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(WideAtomic, "_InterlockedCompareExchange128")
+#endif

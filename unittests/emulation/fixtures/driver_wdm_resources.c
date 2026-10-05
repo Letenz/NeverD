@@ -559,7 +559,30 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #include "driver_resource_frame_entry.def"
 #undef NEVERD_RESOURCE_FRAME_ENTRY_CASE
 
+#include "windows_wide_atomic.inc"
+
+static BOOLEAN CheckWideAtomicIntrinsic(VOID) {
+  volatile WideAtomicPair Value = {WideAtomicOriginalLow,
+                                   WideAtomicOriginalHigh};
+  WideAtomicPair Compare = {WideAtomicOriginalLow, WideAtomicOriginalHigh};
+  if (!_InterlockedCompareExchange128(
+          (volatile __int64 *)&Value, WideAtomicExchangeHigh,
+          WideAtomicExchangeLow, (__int64 *)&Compare))
+    return FALSE;
+  if (Value.Low != WideAtomicExchangeLow ||
+      Value.High != WideAtomicExchangeHigh)
+    return FALSE;
+  if (_InterlockedCompareExchange128(
+          (volatile __int64 *)&Value, WideAtomicOriginalHigh,
+          WideAtomicOriginalLow, (__int64 *)&Compare))
+    return FALSE;
+  return Compare.Low == WideAtomicExchangeLow &&
+         Compare.High == WideAtomicExchangeHigh;
+}
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+  if (!checkWideAtomic() || !CheckWideAtomicIntrinsic())
+    return STATUS_UNSUCCESSFUL;
 #define NEVERD_RESOURCE_FRAME_ENTRY_CASE(Name, ...)                            \
   if (!CheckFrameEntry##Name())                                                \
     return STATUS_UNSUCCESSFUL;

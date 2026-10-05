@@ -120,6 +120,8 @@ stores use the same RAM authority. Devices, unknown footprints and parallel
 hardware SMP remain outside this transaction. CPU snapshots do not undo already
 committed RAM.
 
+`CMPXCHG8B` and `CMPXCHG16B` execute their original encodings on KVM, WHP and checked Unicorn in driver and user profiles. Successful and failed comparisons both require read/write access; faults are classified as writes. `CMPXCHG16B` checks 16-byte alignment before memory access and reports `#GP(0)`. Its two result observations share one RAM transaction: stopping or throwing in either publishes no registers or RAM. Unlocked `CMPXCHG8B` may cross pages; locked operands retain the natural-alignment contract. `X64WideAtomicTests.cpp` compares original host results and direct native faults, aliases, prefixes, address rules, repair and cancellation. Original Windows driver and ring3 PE fixtures exercise both widths; the WDK fixture also executes `_InterlockedCompareExchange128`. The CPU model must support `CMPXCHG16B`.
+
 x64 contexts also preserve the complete x87 state: control/status, TOP,
 physical nonempty tags, opcode, instruction/data pointers and eight physical
 80-bit payloads. `FP0`–`FP7` use `RegisterValue`; scalar access rejects them

@@ -161,7 +161,7 @@ def build(output: Path, cache: Path, clang: str, linker: str) -> None:
     sources = ROOT / "unittests/emulation/fixtures"
     builds = []
     cache_lines = []
-    for name, filename, library, debug, exceptions in inventory["FIXTURE"]:
+    for name, filename, library, debug, profile in inventory["FIXTURE"]:
         source = sources / filename
         for guard in (False, True):
             identity = "NEVERD_" + name + ("_CFG" if guard else "") + "_FIXTURE"
@@ -177,9 +177,9 @@ def build(output: Path, cache: Path, clang: str, linker: str) -> None:
             if guard:
                 cc += arguments["cfg_compile"]
                 ld += arguments["cfg_link"]
-            if exceptions:
-                cc += arguments[exceptions + "_compile"]
-                ld += arguments.get(exceptions + "_link", [])
+            if profile:
+                cc += arguments[profile + "_compile"]
+                ld += arguments.get(profile + "_link", [])
             for phase, command in (("compile", cc), ("link", ld)):
                 with stem.with_suffix("." + phase + ".log").open("w") as log:
                     subprocess.run(command, check=True, stdout=log,

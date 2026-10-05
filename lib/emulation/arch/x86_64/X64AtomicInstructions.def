@@ -1,8 +1,11 @@
-//===- X64AtomicInstructions.def - Bounded scalar exchange effects --------===//
+//===- X64AtomicInstructions.def - Bounded exchange footprints ------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-NEVERD_X64_ATOMIC_INSTRUCTION(XCHG)
-NEVERD_X64_ATOMIC_INSTRUCTION(XADD)
-NEVERD_X64_ATOMIC_INSTRUCTION(CMPXCHG)
+// Name, implicit pair width in bytes (zero for explicit scalar operands).
+NEVERD_X64_ATOMIC_INSTRUCTION(XCHG, 0)
+NEVERD_X64_ATOMIC_INSTRUCTION(XADD, 0)
+NEVERD_X64_ATOMIC_INSTRUCTION(CMPXCHG, 0)
+NEVERD_X64_ATOMIC_INSTRUCTION(CMPXCHG8B, 8)
+NEVERD_X64_ATOMIC_INSTRUCTION(CMPXCHG16B, 16)

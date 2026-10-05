@@ -96,7 +96,7 @@ llvm::Error CheckedBackend::access(uint64_t A, uint64_t N, unsigned P,
   if (auto Failure = Memory->firstAccessFailure(
           A, N, Guest ? executionPermissions(P) : P)) {
     auto Access = P == Execute ? BackendAccessKind::Execute
-                  : P == Write ? BackendAccessKind::Write
+                  : P & Write  ? BackendAccessKind::Write
                                : BackendAccessKind::Read;
     BackendFault F{Failure->Kind, programCounter(), Failure->Address,
                    Failure->Size, Access,           std::nullopt};
