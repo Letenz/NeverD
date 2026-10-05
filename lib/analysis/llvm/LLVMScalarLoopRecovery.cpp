@@ -290,7 +290,7 @@ LLVMScalarLoopRecoveryResult Search::run() {
       ProbeSource = std::move(Probe.Module);
     }
   }
-  for (unsigned Phase = 0; Phase < 8 && !stopped(); ++Phase) {
+  for (unsigned Phase = 0; Phase < 9 && !stopped(); ++Phase) {
     while (!stopped()) {
       if (Result.ProvedTransforms >= Limits.MaxTransforms) {
         Exhausted = true;
@@ -308,24 +308,27 @@ LLVMScalarLoopRecoveryResult Search::run() {
           Changed = predicates(*this, F, DT, LI);
           break;
         case 1:
-          Changed = unpeel(*this, F, DT, LI);
+          Changed = bounds(*this, F, DT, LI);
           break;
         case 2:
-          Changed = zeroTrip(*this, F, DT, LI);
+          Changed = unpeel(*this, F, DT, LI);
           break;
         case 3:
-          Changed = rotate(*this, F, LI);
+          Changed = zeroTrip(*this, F, DT, LI);
           break;
         case 4:
-          Changed = affine(*this, F, LI);
+          Changed = rotate(*this, F, LI);
           break;
         case 5:
-          Changed = seeds(*this, F, DT, LI);
+          Changed = affine(*this, F, LI);
           break;
         case 6:
-          Changed = widths(*this, F, LI);
+          Changed = seeds(*this, F, DT, LI);
           break;
         case 7:
+          Changed = widths(*this, F, LI);
+          break;
+        case 8:
           Changed = masks(*this, F, LI);
           break;
         }

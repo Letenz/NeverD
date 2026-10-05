@@ -47,6 +47,9 @@ struct LLVMScalarLoopRecoveryResult {
 /// Boolean header carriers may propose comparisons with an integer carrier
 /// when every external entry matches its seed and dominating invariant bound.
 /// Entry agreement is discovery only; all actual backedges still need proof.
+/// Complex exit tests may nominate an invariant boundary from their bounded
+/// dependency slice, or either one-step neighbor of a constant-step carrier.
+/// These proposals supply no range, divisibility or termination assumption.
 /// Every accepted change must pass complete scalar equivalence against the
 /// original function, using the shared model and SymExec. No original-source
 /// template, native address or external solver participates. Unsupported or
