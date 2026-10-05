@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
+<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
 
 [← Índice de documentación](README.md)
 
@@ -37,13 +37,13 @@ Dylibs externas, imports, rebases/chained fixups, constructores/destructores, se
 
 ## Servicios Darwin
 
-ARM64 usa X16, X0–X5 y `svc #0x80`; x64 usa la clase BSD `0x02000000`, RAX y RDI/RSI/RDX/R10/R8/R9. El éxito limpia carry; el error lo activa y devuelve errno positivo. ARM64 limpia X1; x64 limpia RDX al tener éxito y lo conserva ante error. Los cambios de registros de SYSCALL son explícitos. El informe usa `result` y `error=true` para errores BSD; las solicitudes sin retorno o no admitidas carecen de ambos campos. Las reglas proceden de XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c) y [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c), sin incorporar código Apple.
+Las llamadas BSD en ARM64 usan X16, X0–X5 y `svc #0x80`; x64 usa la clase BSD `0x02000000`, RAX y RDI/RSI/RDX/R10/R8/R9. El éxito limpia carry; el error lo activa y devuelve errno positivo. ARM64 limpia X1; x64 limpia RDX al tener éxito y lo conserva ante error. Los cambios de registros de SYSCALL son explícitos. El informe usa `result` y `error=true` para errores BSD; las solicitudes sin retorno o no admitidas carecen de ambos campos. Las reglas proceden de XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c) y [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c), sin incorporar código Apple.
 
 Servicios: `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`. PID/UID/GID valen 1000 y PPID vale 1. Los descriptores 1 y 2 capturan bytes, incluidos NUL y no UTF8; los cerrados o de solo lectura devuelven EBADF. Una copia parcial conserva los bytes leídos, pero el fallo posterior sigue siendo EFAULT. Una longitud superior a `INT_MAX` devuelve EINVAL antes de comprobar descriptor, puntero o presupuesto: [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
 
 Se permiten mapeos privados anónimos de datos con `flags=0x1002`, descriptor -1 y offset cero. Longitudes y sugerencias no fijas se redondean hacia arriba a la página OS. Si una sugerencia está ocupada, se busca hacia arriba antes de volver a la ubicación predeterminada. El mmap histórico sin envolver de longitud cero devuelve cero sin asignar; `MAP_UNIX03` se admite y rechaza longitud cero con EINVAL. Unmap/protect requieren dirección alineada. Se admiten NONE/READ/WRITE, con WRITE implicando READ. Cada página OS posee su memoria física: un unmap parcial libera presupuesto y las páginas nuevas quedan a cero. Un protect que atraviese un hueco o supere permisos máximos deja intacto todo el rango. Fuente: [servicios VM de XNU](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-Quedan excluidos mapeos compartidos/fijos/JIT o anónimos ejecutables, traps Mach, syscalls indirectas, hilos, señales, archivos del host/red, dyld, runtimes Objective-C/Swift y Foundation/UIKit. Su uso detiene explícitamente la ejecución. No es un OS Apple completo ni la aplicación iOS Simulator.
+Quedan excluidos mapeos compartidos/fijos/JIT o anónimos ejecutables, otros traps Mach, syscalls indirectas, hilos, señales, archivos del host/red, dyld, runtimes Objective-C/Swift y Foundation/UIKit. Su uso detiene explícitamente la ejecución. No es un OS Apple completo ni la aplicación iOS Simulator.
 
 ## Verificación
 
@@ -154,7 +154,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La validación independiente exige los 66 casos nativos ARM64 o 44 x64, con `LC_MAIN` y `LC_UNIXTHREAD` en cada plataforma. Casos obligatorios ausentes/omitidos o falta de `ld64.lld` producen fallo.
+La validación independiente exige los 69 casos nativos ARM64 o 46 x64, con `LC_MAIN` y `LC_UNIXTHREAD` en cada plataforma. Casos obligatorios ausentes/omitidos o falta de `ld64.lld` producen fallo.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -186,7 +186,7 @@ Cada registro proporcionado exige todos sus miembros. `seconds` es de 32 bits si
 
 El `timeval` LP64 ocupa 16 bytes: segundos extendidos con ceros en 0, microsegundos de 32 bits en 8 y cuatro bytes cero en 12. La zona tiene dos campos de 32 bits con signo y los ticks ocho bytes. La hora civil y absoluta se muestrean juntas inicialmente; toda observación solicitada debe existir antes de copiar o comprobar punteros. Luego se copian timeval, timezone y absolute ticks. Una zona ausente o un EFAULT posterior conserva las escrituras anteriores; los alias siguen ese orden. Una salida individual parcialmente escribible detiene la operación antes de esa copia y conserva las previas. Todos los punteros nulos funcionan sin configuración; consultas selectivas solo exigen los valores solicitados.
 
-El programa original `time` comprueba el comportamiento nativo; `time-values` emite los 32 bytes configurados mediante C/CLI/Python en las cinco combinaciones invitadas. Un oráculo SDK compara cada byte con tres salidas capturadas en una sola llamada nativa directa. Quedan pendientes relojes que avanzan, conversión, contadores commpage, temporizadores y relojes Mach, además de dyld, hilos, Objective-C/Swift y Foundation/UIKit. Intel HVF Actions sigue suspendido; no se añade validación nativa Intel ni de iOS físico.
+El programa original `time` comprueba el comportamiento nativo; `time-values` emite los 32 bytes configurados mediante C/CLI/Python en las cinco combinaciones invitadas. Un oráculo SDK compara cada byte con tres salidas capturadas en una sola llamada nativa directa. Quedan pendientes relojes que avanzan, conversión, contadores commpage, temporizadores y objetos de reloj Mach/IPC, además de dyld, hilos, Objective-C/Swift y Foundation/UIKit. Intel HVF Actions sigue suspendido; no se añade validación nativa Intel ni de iOS físico.
 
 ```json
 {"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
@@ -195,3 +195,23 @@ El programa original `time` comprueba el comportamiento nativo; `time-values` em
 [XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
 
 Validación temporal (2026-10-06, Release): 538 casos Darwin, 274 aprobados, 264 omitidos por backend no disponible, sin fallos; ejecutados los 66/66 casos ARM64 HVF obligatorios. Pasan los 12 programas nativos macOS y la comparación SDK de una sola muestra. C/CLI/informes: 43/43, sin omisiones. Python pasa en cinco combinaciones, incluidos los bytes temporales exactos y ocho modos de archivos existentes. Pasan los 66 tests de herramientas, localización, capacidades y formato. Recuentos superpuestos. Evidencias: `build-hvf-arm64/darwin-time-verified-evidence/`, `darwin-time-native-first/`, `darwin-time-public.xml`.
+
+## Tiempo Mach y convenciones de retorno
+
+`darwin_time.timebase` aporta `numerator` y `denominator`, enteros de 32 bits sin signo y distintos de cero. La razón se conserva sin reducir ni convertir. `mach_timebase_info_trap`, índice 89, usa ARM64 X16=-89 o x64 RAX=0x01000059. Escribe ocho bytes little-endian (numerador, denominador) y devuelve cero, incluso con una dirección de salida totalmente inválida. Una salida parcialmente escribible detiene antes de copiar; los errores del transporte se propagan. La ausencia de configuración detiene antes de comprobar el puntero, incluso nulo.
+
+ARM64 X16=-3 y X16=-4 devuelven los 64 bits sin signo de `mach_absolute_time` y `mach_continuous_time`. Cada llamada solo necesita su propio valor; el cero explícito es válido. Las entradas nativas x64 correspondientes generan EXC_SYSCALL y no están admitidas. Siguen pendientes relojes que avanzan, commpage, temporizadores y objetos de reloj Mach/IPC.
+
+La resolución usa los 32 bits bajos del número; el informe conserva los 64 originales. Los negativos ARM64 eligen Mach; x64 usa 0x01000000 para Mach y 0x02000000 para BSD. BSD 3/4 siguen siendo read/write; números desconocidos y clases ajenas detienen. La entrada resuelta determina el retorno: Mach conserva flags y X1/RDX, BSD mantiene sus reglas carry; x64 sigue actualizando RCX/R11. Los informes Mach incluyen `result` y omiten `error`, incluso con carry inicial activo.
+
+`mach-time` compara flags, resultado secundario, bits altos, punteros inválidos y transiciones BSD con el núcleo ARM64 nativo. `mach-timebase-values` verifica bytes exactos en cinco invitados, `mach-clock-values` en ARM64; el SDK comprueba estructura y razón capturada. Intel HVF Actions sigue suspendido; pruebas de software y sintaxis x64 no validan Intel nativo ni iOS físico.
+
+```json
+{"darwin_time":{"timebase":{"numerator":125,"denominator":3},"mach_absolute_time":"18364758544493064720","mach_continuous_time":"18446744073709551615"}}
+```
+
+[XNU clock traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/clock.c), [ARM64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [ARM64 special traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/sleh.c), [x64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/x86_64/idt64.s).
+
+Validación Mach (2026-10-06, Release): 569 casos Darwin, 293 aprobados, 276 omitidos por backend no disponible, cero fallos; se ejecutaron los 69/69 obligatorios ARM64 HVF. La ejecución final aprobó 13 programas nativos y dos oráculos temporales SDK. C/CLI/report: 100/100 sin omisiones; Python cubrió cinco invitados. Las comparaciones públicas se aíslan por plataforma y escenario con presupuesto invitado explícito de 10 segundos; valores predeterminados y regresiones de plazo siguen iguales. Los recuentos se solapan.
+
+Los primeros arranques nativos excedieron el límite existente de 5 segundos: medición independiente de 6.056 segundos y 0.010 al reutilizar. El mismo binario aprobó después 13 casos bajo el límite original; se conservan los fallos. La verificación secuencial separada aprobó tras los tiempos agotados bajo carga. Evidencias: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`, del árbol previo al commit. ARM64 MRS/MSR NZCV siguen pendientes; el test usa instrucciones enteras para los cuatro flags. Persisten esa carencia CPU, archivos escribibles, información del sistema, dyld/runtimes/frameworks e iOS físico.

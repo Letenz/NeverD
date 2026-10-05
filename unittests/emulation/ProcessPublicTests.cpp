@@ -388,8 +388,43 @@ TEST_F(ProcessPublic, DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI) {
 #endif
 }
 
-TEST_F(ProcessPublic,
-       DarwinInputsPreserveBytesAndServiceResultsAcrossSDKAndCLI) {
+struct DarwinPublicCase {
+  const char *File, *Profile, *Mode, *Expected;
+};
+void PrintTo(const DarwinPublicCase &Case, std::ostream *OS) {
+  *OS << Case.File << '/' << Case.Mode;
+}
+std::vector<DarwinPublicCase> darwinPublicCases() {
+  std::vector<DarwinPublicCase> Cases;
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}})
+    for (const auto &[Mode, Expected] :
+         {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
+          std::pair{"stdin", "00ff78"}, std::pair{"output-descriptors", "6f6b"},
+          std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"},
+          std::pair{"directories", "64"}, std::pair{"directory-entries", "65"},
+          std::pair{"time-values", emulation::darwin_test::TimeHex},
+          std::pair{"mach-time", "68"},
+          std::pair{"mach-timebase-values",
+                    emulation::darwin_test::TimebaseHex},
+          std::pair{"mach-clock-values",
+                    emulation::darwin_test::MachClockHex}}) {
+      const bool X64 = llvm::StringRef(File).ends_with("x86_64");
+      if (X64 && llvm::StringRef(Mode) == "mach-clock-values")
+        continue;
+      Cases.push_back({File, Profile, Mode, Expected});
+    }
+  return Cases;
+}
+class DarwinInputsPublic
+    : public ProcessPublic,
+      public testing::WithParamInterface<DarwinPublicCase> {};
+
+TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
 #ifndef NEVERD_DARWIN_FIXTURE_DIR
   GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
 #else
@@ -398,54 +433,71 @@ TEST_F(ProcessPublic,
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  for (const auto &[File, Profile] :
-       {std::pair{"macos-arm64", MacOSMachO64},
-        std::pair{"macos-x86_64", MacOSMachO64},
-        std::pair{"ios-arm64", IOSMachO64},
-        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
-        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
-    SCOPED_TRACE(File);
-    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
-    for (const auto &[Mode, Expected] :
-         {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
-          std::pair{"stdin", "00ff78"}, std::pair{"output-descriptors", "6f6b"},
-          std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"},
-          std::pair{"directories", "64"}, std::pair{"directory-entries", "65"},
-          std::pair{"time-values", emulation::darwin_test::TimeHex}}) {
-      SCOPED_TRACE(Mode);
-      const std::string Options =
-          std::string(R"({"backend":"unicorn","darwin_time":)") +
-          emulation::darwin_test::TimeJSON +
-          R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
-          emulation::darwin_test::MetadataJSON +
-          R"(}],"directories":[{"path":"/","contents":)" +
-          emulation::darwin_test::DirectoryContentsJSON +
-          R"(},{"path":"/empty"}],"working_directory":"/empty","stdin_hex":"00ff78","descriptor_limit":32},"arguments":["guest",")" +
-          Mode + R"(","/data"]})";
-      auto Text = takeString(neverd_emulate_process_json(
-          Session, Path.c_str(), Profile, Options.c_str()));
-      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
-      auto Report = llvm::json::parse(Text);
-      ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
-      EXPECT_EQ(Report->getAsObject()->getString(field::Stop), "exited");
-      EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
-      EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
-      const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
-                           process_cli::Command + " " + test::shellQuote(Path) +
-                           " --" + process_cli::ProfileOption + "=" + Profile +
-                           " --" + process_cli::OptionsOption + "=" +
-                           test::shellQuote(Options) +
-                           test::redirectStdout(Output) + test::silenceStderr();
-      EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
-                process_cli::GuestFailure);
-      auto Buffer = llvm::MemoryBuffer::getFile(Output);
-      ASSERT_TRUE(bool(Buffer));
-      EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
-                *Report);
+  const auto &[File, Profile, Mode, Expected] = GetParam();
+  const bool X64 = llvm::StringRef(File).ends_with("x86_64");
+  SCOPED_TRACE(File);
+  Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+  SCOPED_TRACE(Mode);
+  // This is a byte/ABI comparison. A separate process suite tests deadline
+  // expiry; allow scheduling headroom here without changing product defaults.
+  const std::string Options =
+      std::string(
+          R"({"backend":"unicorn","timeout_microseconds":10000000,"darwin_time":)") +
+      emulation::darwin_test::TimeJSON +
+      R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
+      emulation::darwin_test::MetadataJSON +
+      R"(}],"directories":[{"path":"/","contents":)" +
+      emulation::darwin_test::DirectoryContentsJSON +
+      R"(},{"path":"/empty"}],"working_directory":"/empty","stdin_hex":"00ff78","descriptor_limit":32},"arguments":["guest",")" +
+      Mode + R"(","/data"]})";
+  auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
+                                                     Profile, Options.c_str()));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  auto Report = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+  EXPECT_EQ(Report->getAsObject()->getString(field::Stop), "exited");
+  EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
+  EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (llvm::StringRef(Mode).starts_with("mach-")) {
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    const bool Clocks = llvm::StringRef(Mode) == "mach-clock-values";
+    ASSERT_GE(Services->size(), Clocks ? 3u : 13u);
+    for (unsigned I = 0; I != (Clocks ? 2u : 12u); ++I)
+      EXPECT_EQ((*Services)[I].getAsObject()->get(field::Error), nullptr);
+    EXPECT_EQ(Services->back().getAsObject()->getBoolean(field::Error), false);
+    if (Clocks) {
+      EXPECT_EQ((*Services)[0].getAsObject()->getString(field::Result),
+                "fedcba9876543210");
+      EXPECT_EQ((*Services)[1].getAsObject()->getString(field::Result),
+                "ffffffffffffffff");
+    } else {
+      EXPECT_EQ((*Services)[5].getAsObject()->getString(field::Number),
+                X64 ? "1234567801000059" : "12345678ffffffa7");
     }
   }
+  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
+                       process_cli::Command + " " + test::shellQuote(Path) +
+                       " --" + process_cli::ProfileOption + "=" + Profile +
+                       " --" + process_cli::OptionsOption + "=" +
+                       test::shellQuote(Options) +
+                       test::redirectStdout(Output) + test::silenceStderr();
+  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+            process_cli::GuestFailure);
+  auto Buffer = llvm::MemoryBuffer::getFile(Output);
+  ASSERT_TRUE(bool(Buffer));
+  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), *Report);
 #endif
 }
+INSTANTIATE_TEST_SUITE_P(
+    Platforms, DarwinInputsPublic, testing::ValuesIn(darwinPublicCases()),
+    [](const testing::TestParamInfo<DarwinPublicCase> &Info) {
+      std::string Name = std::string(Info.param.File) + "_" + Info.param.Mode;
+      for (char &C : Name)
+        if (C == '-')
+          C = '_';
+      return Name;
+    });
 
 TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR

@@ -28,7 +28,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 The existing [process C, Python and CLI APIs](process-emulation.md#cli-and-sdk)
 share this implementation and the same limits and report schema. Returning
-Darwin services add an `error` Boolean to their records: a positive errno in
+BSD services add an `error` Boolean to their records: a positive errno in
 `result` with `error=true` represents BSD carry, not a Linux negative result.
 Nonreturning or unsupported requests have no result or error field.
 
@@ -81,7 +81,7 @@ of AMFI or entitlement policy.
 
 ## Darwin services
 
-ARM64 uses X16, X0–X5 and `svc #0x80`; x64 uses the BSD class `0x02000000`
+BSD calls on ARM64 use X16, X0–X5 and `svc #0x80`; x64 uses the BSD class `0x02000000`
 with RAX and RDI/RSI/RDX/R10/R8/R9. Successful calls clear carry and supply the
 documented scalar result; errors set carry and return positive errno. ARM64
 clears X1; x64 clears RDX on success and preserves it on error. X64 SYSCALL
@@ -114,7 +114,7 @@ from current rights. A failed protect across a hole or maximum-rights boundary
 leaves the complete range unchanged. The rules are grounded in XNU's
 [BSD VM services](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-Shared/fixed/JIT mappings, executable mappings, Mach traps,
+Shared/fixed/JIT mappings, executable mappings, other Mach traps,
 indirect system calls, threads, signals, host filesystem/network access, dyld
 linking, Objective-C/Swift runtime and Foundation/UIKit are outside this
 profile. They stop explicitly. This is neither a full Apple OS compatibility
@@ -354,7 +354,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 66 cases on ARM64, or 44 on x64.
+on each platform supported by the host ISA: 69 cases on ARM64, or 46 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -564,7 +564,7 @@ Every member of a supplied record is required. `seconds` is unsigned 32 bits, `m
 
 The LP64 `timeval` is 16 bytes: zero-extended seconds at offset 0, 32-bit microseconds at 8, and four zero padding bytes at 12. The timezone is two signed 32-bit fields; ticks occupy eight bytes. Requested calendar and absolute values form one initial sample, so both requested observations must exist before any output copy or pointer check. Copies then occur in order: timeval, timezone, absolute ticks. Missing timezone is detected at its phase, preserving an earlier timeval write. A later EFAULT also preserves earlier writes, and aliases follow the same order. An individually partially writable output stops unsupported before that copy, retaining prior copies. All-null arguments succeed without configuration; selective queries require only requested values.
 
-The original `time` workload checks native behavior; guest `time-values` emits the exact configured 32 bytes through C/CLI/Python on all five guest combinations. A separate SDK oracle compares every byte against three outputs captured in one raw native call. These fixed observations do not implement advancing clocks, clock conversion, commpage counters, timers or Mach clock services. Dyld, threads, Objective-C/Swift and Foundation/UIKit remain separate environment work. Intel HVF Actions remain suspended; this adds no native Intel or physical iOS acceptance.
+The original `time` workload checks native behavior; guest `time-values` emits the exact configured 32 bytes through C/CLI/Python on all five guest combinations. A separate SDK oracle compares every byte against three outputs captured in one raw native call. These fixed observations do not implement advancing clocks, clock conversion, commpage counters, timers or Mach clock objects/IPC. Dyld, threads, Objective-C/Swift and Foundation/UIKit remain separate environment work. Intel HVF Actions remain suspended; this adds no native Intel or physical iOS acceptance.
 
 ```json
 {"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
@@ -573,3 +573,23 @@ The original `time` workload checks native behavior; guest `time-values` emits t
 [XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
 
 Time validation (2026-10-06, Release): 538 Darwin registrations, 274 passed, 264 unavailable-backend skips, zero failures; all 66/66 required ARM64 HVF cases executed. All 12 original native macOS workloads and the independent single-sample SDK byte comparison passed. Public C/CLI/report: 43/43, no skips. Python passed all five guest combinations, including exact time bytes and the eight existing file modes. All 66 runner tests, localization, capability and format checks passed. Counts overlap. Evidence: `build-hvf-arm64/darwin-time-verified-evidence/`, `darwin-time-native-first/` and `darwin-time-public.xml`.
+
+## Mach time and return conventions
+
+`darwin_time.timebase` supplies `numerator` and `denominator`, both nonzero unsigned 32-bit integers. The exact ratio is retained, without reduction or conversion. Mach `mach_timebase_info_trap` uses index 89: ARM64 X16=-89 or x64 RAX=0x01000059. It writes eight little-endian bytes (numerator, denominator) and returns zero. As in XNU, a wholly invalid output address still returns zero; an individually partially writable output stops before copying because its prefix effects remain unmodeled. Transport failures propagate. Missing timebase configuration stops before pointer checks, including a null pointer.
+
+ARM64 special traps X16=-3 and X16=-4 return the complete unsigned 64-bit `mach_absolute_time` and `mach_continuous_time` observations. Each requires only its own value; explicit zero is valid. These slots are unsupported on x64, where the corresponding native Mach table entries raise EXC_SYSCALL. This does not implement advancing clocks, commpage counters, timers or Mach clock objects/IPC.
+
+Service lookup uses only the low 32 bits of the number register; reports retain all original 64 bits. ARM64 negative numbers select Mach; x64 uses Mach class 0x01000000 and BSD class 0x02000000. Namespaces remain distinct, including BSD read/write numbers 3/4. Unknown numbers and foreign classes stop explicitly. The resolved binding owns the return convention: Mach preserves incoming flags and X1/RDX, while BSD retains its documented carry/secondary rules. X64 still updates RCX/R11 for SYSCALL return. Returning Mach records contain `result` and omit `error`, even when incoming carry is set.
+
+The original `mach-time` workload compares flag/secondary preservation, high number bits, invalid pointers and transitions back to BSD against the ARM64 host kernel. `mach-timebase-values` emits exact configured bytes on all five guest combinations; `mach-clock-values` does so on ARM64. An independent SDK oracle checks layout and a captured native ratio. Intel HVF Actions remain suspended; x64 software tests and syntax checks do not establish native Intel or physical iOS acceptance.
+
+```json
+{"darwin_time":{"timebase":{"numerator":125,"denominator":3},"mach_absolute_time":"18364758544493064720","mach_continuous_time":"18446744073709551615"}}
+```
+
+[XNU clock traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/clock.c), [ARM64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [ARM64 special traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/sleh.c), [x64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/x86_64/idt64.s).
+
+Mach validation (2026-10-06, Release): 569 unique Darwin registrations, 293 passed, 276 unavailable-backend skips, zero failures; all 69/69 required ARM64 HVF cases executed. All 13 native workloads and both time SDK oracles passed in the final run. Public C/CLI/report: 100/100, no skips; Python covered all five guest combinations. Public comparisons run separately by platform and workload with an explicit 10-second guest budget; product defaults and deadline regressions are unchanged. Counts overlap.
+
+Initial cold native launches exceeded the existing five-second reference limit: one independently measured 6.056 seconds, then 0.010 seconds on reuse. The unchanged native binary subsequently passed all 13 cases under the original limit; failed summaries remain retained. Separate serial verification passed after earlier wall-clock timeouts under host load. Evidence: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`. Evidence describes the pre-commit working tree. ARM64 MRS/MSR NZCV remain outside the checked CPU contract; this fixture sets and reads all four flags with integer instructions. That CPU gap, writable files, system information, dyld/runtime/frameworks and physical iOS remain open.

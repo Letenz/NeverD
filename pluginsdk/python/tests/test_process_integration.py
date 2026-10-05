@@ -504,13 +504,21 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("directories", b"d"), ("directory-entries", b"e"),
                                            ("time-values", bytes.fromhex(
                                                "674523f100000000f1fb090000000000"
-                                               "20feffffffffffff1032547698badcfe"))):
+                                               "20feffffffffffff1032547698badcfe")),
+                                           ("mach-time", b"h"),
+                                           ("mach-timebase-values", bytes.fromhex("674523f1795634e2")),
+                                           ("mach-clock-values", bytes.fromhex(
+                                               "1032547698badcfeffffffffffffffff"))):
+                        if architecture == "x86_64" and mode == "mach-clock-values":
+                            continue
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
                             "darwin_time": {
                                 "time_of_day": {"seconds": 4045620583, "microseconds": 654321},
                                 "timezone": {"minutes_west": -480, "dst_time": -1},
-                                "mach_absolute_time": "18364758544493064720"},
+                                "mach_absolute_time": "18364758544493064720",
+                                "mach_continuous_time": "18446744073709551615",
+                                "timebase": {"numerator": 4045620583, "denominator": 3795080825}},
                             "darwin_files": {"files": [{"path": "/data", "bytes_hex":
                                                        b"0123456789".hex(), "metadata": {
                                 "device": -123, "inode": "18364758544493064720",
@@ -538,10 +546,22 @@ class ProcessIntegrationTests(unittest.TestCase):
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
-                        self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                        self.assertEqual(result["stop_reason"], "exited", f"{mode}: {result['diagnostic']}")
                         self.assertEqual(result["exit_status"], 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if mode.startswith("mach-"):
+                            services = result["services"]
+                            clocks = mode == "mach-clock-values"
+                            for service in services[:2 if clocks else 12]:
+                                self.assertNotIn("error", service)
+                            self.assertIs(services[-1]["error"], False)
+                            if clocks:
+                                self.assertEqual(services[0]["result"], "fedcba9876543210")
+                                self.assertEqual(services[1]["result"], "ffffffffffffffff")
+                            else:
+                                self.assertEqual(services[5]["number"], "1234567801000059"
+                                                 if architecture == "x86_64" else "12345678ffffffa7")
 
     def test_both_architectures_execute_and_retain_binary_output(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")

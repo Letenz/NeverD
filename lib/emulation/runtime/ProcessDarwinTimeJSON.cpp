@@ -47,11 +47,25 @@ darwinTimeOptionsFromJSON(const llvm::json::Value &Value) {
       if (!West || !DST)
         return invalid(Name);
       Out.Timezone = {*West, *DST};
-    } else if (Name == field::MachAbsoluteTime) {
+    } else if (Name == field::Timebase) {
+      const auto *T = V.getAsObject();
+      if (!T || T->size() != 2 || !T->get(field::Numerator) ||
+          !T->get(field::Denominator))
+        return invalid(Name);
+      auto Numerator =
+          process_json::integer<uint32_t>(*T->get(field::Numerator));
+      auto Denominator =
+          process_json::integer<uint32_t>(*T->get(field::Denominator));
+      if (!Numerator || !Denominator)
+        return invalid(Name);
+      Out.Timebase = {*Numerator, *Denominator};
+    } else if (Name == field::MachAbsoluteTime ||
+               Name == field::MachContinuousTime) {
       auto T = process_json::integer<uint64_t>(V);
       if (!T)
         return invalid(Name);
-      Out.MachAbsoluteTime = *T;
+      (Name == field::MachAbsoluteTime ? Out.MachAbsoluteTime
+                                       : Out.MachContinuousTime) = *T;
     } else {
       return invalid(Name);
     }

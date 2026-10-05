@@ -204,7 +204,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (!*Returned)
       break;
     Result.Services.back().Result = (**Returned).Value;
-    Result.Services.back().Error = (**Returned).Error;
+    if ((**Returned).Convention == ServiceConvention::BSD)
+      Result.Services.back().Error = (**Returned).Error;
     if (auto E = returnService(CPU, *Request, **Returned)) {
       RuntimeFailure(std::move(E));
       break;

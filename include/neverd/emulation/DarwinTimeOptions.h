@@ -19,6 +19,10 @@ struct DarwinTimezone {
   int32_t MinutesWest = 0;
   int32_t DSTTime = 0;
 };
+struct DarwinTimebase {
+  uint32_t Numerator = 0;
+  uint32_t Denominator = 0;
+};
 /// Fixed observations. Absence is unknown; explicit zero is a value. No host
 /// clocks, timezone, automatic advancement or tick-to-time conversion is used.
 /// Requested calendar and absolute values form one sample, before user copies.
@@ -26,6 +30,9 @@ struct DarwinTimeOptions {
   std::optional<DarwinTimeOfDay> TimeOfDay;
   std::optional<DarwinTimezone> Timezone;
   std::optional<uint64_t> MachAbsoluteTime;
+  /// Both ratio fields must be nonzero. The supplied ratio is not reduced.
+  std::optional<DarwinTimebase> Timebase;
+  std::optional<uint64_t> MachContinuousTime;
 };
 } // namespace neverd::emulation
 #endif

@@ -15,6 +15,7 @@ NEVERD_DARWIN_VALUE(MmapBase, 0x1000000000ULL)
 NEVERD_DARWIN_VALUE(PageSizeX64, 4096)
 NEVERD_DARWIN_VALUE(PageSizeARM64, 16384)
 NEVERD_DARWIN_VALUE(BSDClass, 0x02000000)
+NEVERD_DARWIN_VALUE(MachClass, 0x01000000)
 NEVERD_DARWIN_VALUE(SVCImmediate, 0x80)
 NEVERD_DARWIN_VALUE(CarryARM64, 0x20000000)
 NEVERD_DARWIN_VALUE(ProcessID, 1000)
@@ -94,6 +95,14 @@ NEVERD_DARWIN_SERVICE(Mprotect, 74, Int)
 NEVERD_DARWIN_SERVICE(Mmap, 197, Wide)
 #endif
 
+// Positive trap indices. ARM64 encodes their negative low-32-bit value;
+// x64 uses the Mach syscall class. Fast ARM64 clocks have no x64 trap slot.
+#ifdef NEVERD_DARWIN_MACH_SERVICE
+NEVERD_DARWIN_MACH_SERVICE(TimebaseInfo, 89, false)
+NEVERD_DARWIN_MACH_SERVICE(AbsoluteTime, 3, true)
+NEVERD_DARWIN_MACH_SERVICE(ContinuousTime, 4, true)
+#endif
+
 // Cancellation is outside this single-thread profile; both entry numbers
 // share the exact same service owner and retain the original report number.
 #ifdef NEVERD_DARWIN_SERVICE_ALIAS
@@ -107,6 +116,14 @@ NEVERD_DARWIN_SERVICE_ALIAS(OpenAt, 464)
 #endif
 
 #ifdef NEVERD_DARWIN_DIAGNOSTIC
+NEVERD_DARWIN_DIAGNOSTIC(
+    TimebaseRatio, "Darwin timebase numerator and denominator must be nonzero")
+NEVERD_DARWIN_DIAGNOSTIC(TimebaseMissing, "Darwin timebase is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimeContinuousMissing,
+                         "Darwin mach_continuous_time is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimebasePartialOutput,
+                         "Darwin timebase output buffer is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(TimeServiceKind, "invalid Darwin Mach time service")
 NEVERD_DARWIN_DIAGNOSTIC(TimeMicroseconds,
                          "Darwin time microseconds must be below 1000000")
 NEVERD_DARWIN_DIAGNOSTIC(TimeOfDayMissing,

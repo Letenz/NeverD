@@ -50,6 +50,12 @@ protected:
     EXPECT_TRUE(bool(Out)) << (Out ? "" : llvm::toString(Out.takeError()));
     return Out ? *Out : std::nullopt;
   }
+  std::optional<ServiceResult> mach(ServiceKind Kind, uint64_t Address = 0) {
+    auto Out = machTimeService(*Space, Kind, {0, 0, {Address}, std::nullopt},
+                               Options, Result);
+    EXPECT_TRUE(bool(Out)) << (Out ? "" : llvm::toString(Out.takeError()));
+    return Out ? *Out : std::nullopt;
+  }
   void ok(uint64_t TV, uint64_t TZ, uint64_t Ticks) {
     auto Out = invoke(TV, TZ, Ticks);
     ASSERT_TRUE(Out) << Result.Diagnostic;
@@ -203,6 +209,135 @@ TEST(DarwinTimeOptions, RejectsInvalidMicroseconds) {
     Options.TimeOfDay = DarwinTimeOfDay{0, Invalid};
     EXPECT_EQ(llvm::toString(validateTimeOptions(Options)),
               diagnostic::TimeMicroseconds);
+  }
+}
+
+TEST_P(DarwinTimeTest, MachTimebasePreservesExactRatioAndUnalignedCanaries) {
+  auto Out = mach(ServiceKind::TimebaseInfo, Base + 1);
+  ASSERT_TRUE(Out) << Result.Diagnostic;
+  EXPECT_EQ(Out->Value, 0u);
+  EXPECT_EQ(bytes(Base + 1, 8), llvm::fromHex(darwin_test::TimebaseHex));
+  EXPECT_EQ(bytes(Base, 1), std::string(1, '\xa5'));
+  EXPECT_EQ(bytes(Base + 9, 7), std::string(7, '\xa5'));
+  Options->Timebase = {250, 6};
+  ASSERT_TRUE(mach(ServiceKind::TimebaseInfo, Base));
+  EXPECT_EQ(bytes(Base, 8), llvm::fromHex("fa00000006000000"));
+  Options->Timebase = {UINT32_MAX, UINT32_MAX};
+  ASSERT_TRUE(mach(ServiceKind::TimebaseInfo, Base + 4093));
+  EXPECT_EQ(bytes(Base + 4093, 8), std::string(8, '\xff'));
+}
+
+TEST_P(DarwinTimeTest, MachTimebaseIgnoresWholeCopyFaultsButNotUnknownInputs) {
+  for (auto Bad : {uint64_t(0), uint64_t(1), value::UserLimit, UINT64_MAX}) {
+    auto Out = mach(ServiceKind::TimebaseInfo, Bad);
+    ASSERT_TRUE(Out) << Result.Diagnostic;
+    EXPECT_EQ(Out->Value, 0u);
+    EXPECT_FALSE(Out->Error);
+    EXPECT_EQ(bytes(Base, 8), std::string(8, '\xa5'));
+  }
+  for (auto Permissions :
+       {unsigned(Read | UserAccessible), unsigned(Read | Write)}) {
+    ASSERT_FALSE(bool(Space->protect(Base + Page, Page, Permissions)));
+    auto Out = mach(ServiceKind::TimebaseInfo, Base + Page);
+    ASSERT_TRUE(Out) << Result.Diagnostic;
+    EXPECT_EQ(Out->Value, 0u);
+    ASSERT_FALSE(
+        bool(Space->protect(Base + Page, Page, Read | Write | UserAccessible)));
+    EXPECT_EQ(bytes(Base + Page, 8), std::string(8, '\xa5'));
+  }
+  Options->Timebase.reset();
+  for (auto Address : {Base, uint64_t(0), UINT64_MAX}) {
+    EXPECT_FALSE(mach(ServiceKind::TimebaseInfo, Address));
+    EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Result.Diagnostic, diagnostic::TimebaseMissing);
+  }
+  Options.reset();
+  EXPECT_FALSE(mach(ServiceKind::TimebaseInfo, Base));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::TimebaseMissing);
+}
+
+TEST_P(DarwinTimeTest, MachTimebasePartialCopyStopsBeforePublishingAPrefix) {
+  const uint64_t End = Base + Page * 2 - 4;
+  EXPECT_FALSE(mach(ServiceKind::TimebaseInfo, End));
+  EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::TimebasePartialOutput);
+  EXPECT_EQ(bytes(End, 4), std::string(4, '\xa5'));
+}
+
+TEST_P(DarwinTimeTest, MachClocksNeedOnlyTheirOwnObservationAndKeepAllBits) {
+  for (auto Kind : {ServiceKind::AbsoluteTime, ServiceKind::ContinuousTime}) {
+    Options.emplace();
+    auto &Ticks = Kind == ServiceKind::AbsoluteTime
+                      ? Options->MachAbsoluteTime
+                      : Options->MachContinuousTime;
+    for (auto Value : {uint64_t(0), UINT64_MAX}) {
+      Ticks = Value;
+      auto Out = mach(Kind, UINT64_MAX);
+      ASSERT_TRUE(Out) << Result.Diagnostic;
+      EXPECT_EQ(Out->Value, Value);
+      EXPECT_EQ(bytes(Base, 8), std::string(8, '\xa5'));
+    }
+    Ticks.reset();
+    EXPECT_FALSE(mach(Kind));
+    EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Result.Diagnostic, Kind == ServiceKind::AbsoluteTime
+                                     ? diagnostic::TimeAbsoluteMissing
+                                     : diagnostic::TimeContinuousMissing);
+  }
+}
+
+TEST(DarwinTimeOptions, TimebaseRequiresTwoNonzeroUnsignedFields) {
+  DarwinTimeOptions Options;
+  for (auto Ratio :
+       {DarwinTimebase{0, 1}, DarwinTimebase{1, 0}, DarwinTimebase{0, 0}}) {
+    Options.Timebase = Ratio;
+    EXPECT_EQ(llvm::toString(validateTimeOptions(Options)),
+              diagnostic::TimebaseRatio);
+  }
+  Options.Timebase = {UINT32_MAX, UINT32_MAX};
+  EXPECT_FALSE(bool(validateTimeOptions(Options)));
+}
+
+// A transport failure is not a guest EFAULT and cannot be discarded by Mach.
+class FailingTimeMemory : public GuestMemory {
+public:
+  bool FailPreflight;
+  unsigned Writes = 0;
+  explicit FailingTimeMemory(bool FailPreflight)
+      : FailPreflight(FailPreflight) {}
+  llvm::Error map(uint64_t, uint64_t, unsigned) override {
+    return failure("unexpected map");
+  }
+  llvm::Error protect(uint64_t, uint64_t, unsigned) override {
+    return failure("unexpected protect");
+  }
+  llvm::Error read(uint64_t, llvm::MutableArrayRef<uint8_t>) override {
+    return failure("unexpected read");
+  }
+  llvm::Error write(uint64_t, llvm::ArrayRef<uint8_t>) override {
+    ++Writes;
+    return failure("transport write failed");
+  }
+  llvm::Expected<bool> canAccess(uint64_t, uint64_t, unsigned) const override {
+    if (FailPreflight)
+      return failure("transport preflight failed");
+    return true;
+  }
+};
+TEST(DarwinTimeOptions, MachTimebasePropagatesTransportFailures) {
+  for (bool Preflight : {true, false}) {
+    FailingTimeMemory Memory(Preflight);
+    ProcessResult Result{ProcessProfile::MacOSMachO64,
+                         GuestArchitecture::AArch64,
+                         ExecutionBackendKind::Unicorn, "failure test"};
+    auto Out = machTimeService(Memory, ServiceKind::TimebaseInfo,
+                               {0, 0, {0x100000}, std::nullopt},
+                               darwin_test::timeOptions(), Result);
+    ASSERT_FALSE(bool(Out));
+    EXPECT_EQ(llvm::toString(Out.takeError()),
+              Preflight ? "transport preflight failed"
+                        : "transport write failed");
+    EXPECT_EQ(Memory.Writes, Preflight ? 0u : 1u);
   }
 }
 

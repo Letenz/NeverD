@@ -27,6 +27,7 @@
 #if defined(__APPLE__)
 #include <dirent.h>
 #include <fcntl.h>
+#include <mach/mach_time.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -41,6 +42,43 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, MachTimebaseMatchesSDKLayoutAndCapturedRatio) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "Native Darwin timebase capture requires macOS";
+#else
+  EXPECT_EQ(sizeof(mach_timebase_info_data_t), 8u);
+  EXPECT_EQ(offsetof(mach_timebase_info_data_t, numer), 0u);
+  EXPECT_EQ(offsetof(mach_timebase_info_data_t, denom), 4u);
+  EXPECT_EQ(sizeof(mach_timebase_info_data_t{}.numer), 4u);
+  EXPECT_EQ(sizeof(mach_timebase_info_data_t{}.denom), 4u);
+  mach_timebase_info_data_t Native;
+  ASSERT_EQ(::mach_timebase_info(&Native), 0);
+  ASSERT_NE(Native.numer, 0u);
+  ASSERT_NE(Native.denom, 0u);
+  DarwinTimeOptions Options;
+  Options.Timebase = {Native.numer, Native.denom};
+  auto Physical = PhysicalMemory::create(4096);
+  ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+  auto Space = AddressSpace::create(*Physical, 4096);
+  ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+  constexpr uint64_t Base = 0x100000;
+  ASSERT_FALSE(bool((*Space)->map(Base, 4096, Read | Write | UserAccessible)));
+  std::array<uint8_t, 10> Expected, Encoded;
+  Expected.fill(0xa5);
+  ASSERT_FALSE(bool((*Space)->write(Base, Expected)));
+  std::memcpy(Expected.data() + 1, &Native, sizeof(Native));
+  ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn, "native timebase oracle"};
+  auto Stored = darwin_model::machTimeService(
+      **Space, darwin_model::ServiceKind::TimebaseInfo,
+      {0, 0, {Base + 1}, std::nullopt}, Options, Result);
+  ASSERT_TRUE(bool(Stored)) << llvm::toString(Stored.takeError());
+  ASSERT_TRUE(*Stored) << Result.Diagnostic;
+  EXPECT_EQ((**Stored).Value, 0u);
+  ASSERT_FALSE(bool((*Space)->read(Base, Encoded)));
+  EXPECT_EQ(Encoded, Expected);
+#endif
+}
 TEST(DarwinNative, TimeOutputsMatchSDKLayoutAndOneCapturedRawSample) {
 #if !defined(__APPLE__) || (!defined(__aarch64__) && !defined(__x86_64__))
   GTEST_SKIP() << "Native Darwin time capture requires macOS ARM64 or x86_64";

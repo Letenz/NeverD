@@ -16,6 +16,9 @@ namespace neverd::emulation::darwin_model {
 llvm::Error validateTimeOptions(const DarwinTimeOptions &Options) {
   if (Options.TimeOfDay && Options.TimeOfDay->Microseconds >= 1000000)
     return failure(diagnostic::TimeMicroseconds);
+  if (Options.Timebase &&
+      (!Options.Timebase->Numerator || !Options.Timebase->Denominator))
+    return failure(diagnostic::TimebaseRatio);
   return llvm::Error::success();
 }
 llvm::Expected<std::optional<ServiceResult>>
@@ -65,5 +68,43 @@ timeService(GuestMemory &Memory, const ProcessServiceEvent &Event,
                           Result);
   }
   return std::optional<ServiceResult>({0, false});
+}
+
+llvm::Expected<std::optional<ServiceResult>> machTimeService(
+    GuestMemory &Memory, ServiceKind Kind, const ProcessServiceEvent &Event,
+    const std::optional<DarwinTimeOptions> &Options, ProcessResult &Result) {
+  auto Unknown = [&](const char *Reason) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = Reason;
+    return std::optional<ServiceResult>();
+  };
+  switch (Kind) {
+  case ServiceKind::AbsoluteTime:
+    if (!Options || !Options->MachAbsoluteTime)
+      return Unknown(diagnostic::TimeAbsoluteMissing);
+    return std::optional<ServiceResult>({*Options->MachAbsoluteTime});
+  case ServiceKind::ContinuousTime:
+    if (!Options || !Options->MachContinuousTime)
+      return Unknown(diagnostic::TimeContinuousMissing);
+    return std::optional<ServiceResult>({*Options->MachContinuousTime});
+  case ServiceKind::TimebaseInfo: {
+    if (!Options || !Options->Timebase)
+      return Unknown(diagnostic::TimebaseMissing);
+    std::array<uint8_t, 8> Bytes;
+    llvm::support::endian::write32le(Bytes.data(),
+                                     Options->Timebase->Numerator);
+    llvm::support::endian::write32le(Bytes.data() + 4,
+                                     Options->Timebase->Denominator);
+    auto Stored = copyUserMemory(Memory, Event.Arguments[0], Bytes,
+                                 diagnostic::TimebasePartialOutput, Result);
+    if (!Stored || !*Stored)
+      return Stored;
+    // This trap discards copyout's errno. Infrastructure errors and unknown
+    // partial effects above must still propagate rather than report success.
+    return std::optional<ServiceResult>({0});
+  }
+  default:
+    return failure(diagnostic::TimeServiceKind);
+  }
 }
 } // namespace neverd::emulation::darwin_model

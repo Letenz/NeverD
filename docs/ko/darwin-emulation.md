@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
+<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
 
 [← 문서 목록](README.md)
 
@@ -37,13 +37,13 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 ## Darwin 서비스
 
-ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x02000000`, RAX, RDI/RSI/RDX/R10/R8/R9를 사용합니다. 성공 시 carry를 지우고 오류 시 carry와 양수 errno를 반환합니다. ARM64는 X1을 지우고 x64는 성공 시 RDX를 지우며 오류 시 보존합니다. SYSCALL의 레지스터 변경은 명시적입니다. 보고서의 `result`와 `error=true`는 BSD 오류를 나타내며 반환하지 않거나 미지원인 요청에는 두 필드가 없습니다. XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c)와 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)의 규칙을 따르며 Apple 구현 코드를 포함하지 않습니다.
+BSD 호출에서 ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x02000000`, RAX, RDI/RSI/RDX/R10/R8/R9를 사용합니다. 성공 시 carry를 지우고 오류 시 carry와 양수 errno를 반환합니다. ARM64는 X1을 지우고 x64는 성공 시 RDX를 지우며 오류 시 보존합니다. SYSCALL의 레지스터 변경은 명시적입니다. 보고서의 `result`와 `error=true`는 BSD 오류를 나타내며 반환하지 않거나 미지원인 요청에는 두 필드가 없습니다. XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c)와 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)의 규칙을 따르며 Apple 구현 코드를 포함하지 않습니다.
 
 지원 서비스는 `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`입니다. PID/UID/GID는 1000, PPID는 1입니다. 설명자 1과 2는 NUL과 비 UTF8을 포함한 바이트를 캡처하고 닫혔거나 읽기 전용인 설명자는 EBADF를 반환합니다. 부분 복사된 바이트는 유지하지만 이후 오류는 EFAULT로 남습니다. 길이가 `INT_MAX`를 넘으면 설명자, 포인터, 예산을 검사하기 전에 EINVAL을 반환합니다. 근거는 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)입니다.
 
 메모리 서비스는 `flags=0x1002`, 설명자 -1, 오프셋 0의 전용 익명 데이터 매핑을 지원합니다. 길이와 고정되지 않은 주소 힌트는 OS 페이지로 올림합니다. 점유된 힌트는 높은 주소부터 검색한 뒤 기본 배치로 돌아갑니다. 기존 raw mmap은 길이 0에서 할당 없이 0을 반환하며 `MAP_UNIX03`을 지원하며 길이 0은 EINVAL입니다. Unmap/protect는 정렬된 주소를 요구합니다. NONE/READ/WRITE를 지원하고 WRITE는 READ를 포함합니다. 물리 메모리는 OS 페이지별로 소유하므로 부분 해제는 예산을 반환하고 새 페이지는 0으로 채워집니다. 빈 구간이나 최대 권한을 넘는 protect가 실패하면 전체 범위를 변경하지 않습니다. 출처: [XNU VM 서비스](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-공유/고정/JIT 매핑, 실행 가능한 익명 메모리, Mach trap, 간접 syscall, 스레드, 신호, 호스트 파일/네트워크, dyld, Objective-C/Swift runtime, Foundation/UIKit은 지원하지 않으며 명시적으로 중지합니다. 전체 Apple OS나 iOS Simulator 애플리케이션이 아닙니다.
+공유/고정/JIT 매핑, 실행 가능한 익명 메모리, 기타 Mach trap, 간접 syscall, 스레드, 신호, 호스트 파일/네트워크, dyld, Objective-C/Swift runtime, Foundation/UIKit은 지원하지 않으며 명시적으로 중지합니다. 전체 Apple OS나 iOS Simulator 애플리케이션이 아닙니다.
 
 ## 검증
 
@@ -154,7 +154,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 66개 또는 x64 44개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 69개 또는 x64 46개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -186,7 +186,7 @@ Unicorn을 켠 C API/CLI는 138개 통과, 156개 건너뜀, 실패 0개입니�
 
 LP64 `timeval`은 16바이트입니다. 오프셋 0에는 0 확장 초, 8에는 32비트 마이크로초, 12에는 4바이트 0 패딩이 있습니다. 시간대는 부호 있는 32비트 필드 둘이며 tick은 8바이트입니다. 달력 시간과 절대 시간은 먼저 함께 관측하므로 요청한 두 관측값이 복사나 포인터 검사 전에 있어야 합니다. 이후 timeval, timezone, absolute ticks 순서로 씁니다. 시간대 누락과 뒤따르는 EFAULT는 앞선 쓰기를 유지하며 겹치는 주소도 같은 순서입니다. 개별 출력이 일부만 쓰기 가능하면 해당 복사 전에 미지원으로 중지하고 앞선 복사는 유지합니다. 포인터가 모두 null이면 설정 없이 성공하며 선택적 조회는 요청한 값만 필요합니다.
 
-직접 작성한 `time` 작업으로 네이티브 동작을 확인하고, `time-values`는 다섯 게스트 조합의 C/CLI/Python에서 설정한 32바이트를 정확히 출력합니다. 별도 SDK 비교는 한 번의 네이티브 raw 호출에서 세 출력을 얻어 모든 바이트를 비교합니다. 진행하는 시계, 변환, commpage 카운터, 타이머, Mach 시계는 포함하지 않습니다. dyld, 스레드, Objective-C/Swift, Foundation/UIKit은 남은 작업입니다. Intel HVF Actions는 중단 상태이며 네이티브 Intel이나 실제 iOS 기기 검증을 추가하지 않습니다.
+직접 작성한 `time` 작업으로 네이티브 동작을 확인하고, `time-values`는 다섯 게스트 조합의 C/CLI/Python에서 설정한 32바이트를 정확히 출력합니다. 별도 SDK 비교는 한 번의 네이티브 raw 호출에서 세 출력을 얻어 모든 바이트를 비교합니다. 진행하는 시계, 변환, commpage 카운터, 타이머, Mach 시계 객체/IPC는 포함하지 않습니다. dyld, 스레드, Objective-C/Swift, Foundation/UIKit은 남은 작업입니다. Intel HVF Actions는 중단 상태이며 네이티브 Intel이나 실제 iOS 기기 검증을 추가하지 않습니다.
 
 ```json
 {"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
@@ -195,3 +195,23 @@ LP64 `timeval`은 16바이트입니다. 오프셋 0에는 0 확장 초, 8에는 
 [XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
 
 시간 검증(2026-10-06, Release): Darwin 등록 538개 중 274개 통과, 사용 불가 백엔드로 264개 건너뜀, 실패 없음. 필수 ARM64 HVF 66/66개를 모두 실행했습니다. 원본 네이티브 macOS 작업 12개와 단일 표본 SDK 바이트 비교도 통과했습니다. 공개 C/CLI/보고서 43/43개 통과, 건너뜀 없음. Python은 정확한 시간 바이트 및 기존 파일 모드 8개를 포함한 다섯 게스트 조합에서 통과했습니다. 실행기 66개, 현지화, 기능 목록, 서식 검사도 통과했습니다. 집계는 중복됩니다. 증거: `build-hvf-arm64/darwin-time-verified-evidence/`, `darwin-time-native-first/`, `darwin-time-public.xml`.
+
+## Mach 시간과 반환 규약
+
+`darwin_time.timebase`의 `numerator`와 `denominator`는 0이 아닌 부호 없는 32비트 값이며 약분하거나 변환하지 않습니다. `mach_timebase_info_trap` 번호 89는 ARM64 X16=-89 또는 x64 RAX=0x01000059입니다. 분자와 분모를 리틀 엔디언 8바이트로 쓰고 0을 반환합니다. 완전히 잘못된 출력 주소도 0을 반환하지만 일부만 쓸 수 있으면 복사 전에 중지하고 전송 자체의 오류는 전파합니다. timebase가 없으면 null을 포함한 포인터 검사보다 먼저 중지합니다.
+
+ARM64 X16=-3과 X16=-4는 `mach_absolute_time`과 `mach_continuous_time`의 부호 없는 64비트 전체를 반환합니다. 각각 자기 관측값만 필요하며 명시적 0도 유효합니다. x64의 해당 네이티브 표 항목은 EXC_SYSCALL을 발생시키므로 지원하지 않습니다. 시간 진행, commpage, 타이머, Mach 시계 객체/IPC는 미구현입니다.
+
+분기는 번호의 하위 32비트만 사용하고 보고서는 원래 64비트를 보존합니다. ARM64 음수는 Mach, x64 Mach 클래스는 0x01000000, BSD는 0x02000000입니다. BSD 3/4는 read/write이며 알 수 없는 번호와 외부 클래스는 중지합니다. 해석된 바인딩이 반환 규약을 결정합니다. Mach는 플래그와 X1/RDX를 보존하고 BSD는 기존 carry 규칙을 따르며 x64 RCX/R11 갱신은 유지합니다. Mach 보고서는 입력 carry와 관계없이 `result`를 포함하고 `error`를 생략합니다.
+
+`mach-time`은 ARM64 네이티브에서 플래그, 보조 결과, 번호 상위 비트, 잘못된 포인터와 BSD 전환을 비교합니다. `mach-timebase-values`는 다섯 게스트, `mach-clock-values`는 ARM64에서 정확한 바이트를 확인하고 SDK는 배치와 관측 비율을 검증합니다. Intel HVF Actions는 중단 상태입니다. x64 소프트웨어 및 구문 검사는 네이티브 Intel이나 실제 iOS 검증을 의미하지 않습니다.
+
+```json
+{"darwin_time":{"timebase":{"numerator":125,"denominator":3},"mach_absolute_time":"18364758544493064720","mach_continuous_time":"18446744073709551615"}}
+```
+
+[XNU clock traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/clock.c), [ARM64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [ARM64 special traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/sleh.c), [x64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/x86_64/idt64.s).
+
+Mach 검증(2026-10-06, Release): Darwin 569개 중 성공 293, 사용 불가 백엔드 건너뛰기 276, 실패 0이며 필수 ARM64 HVF 69/69를 실행했습니다. 최종 실행에서 네이티브 13개 작업과 시간 SDK 비교 2개가 통과했습니다. 공개 C/CLI/report는 100/100, 건너뛰기 없음이며 Python은 다섯 게스트를 검증했습니다. 공개 비교는 플랫폼과 작업별로 분리하고 명시적인 10초 게스트 예산을 사용합니다. 제품 기본값과 기한 회귀는 유지합니다. 집계는 중복됩니다.
+
+처음 네이티브 실행은 기존 5초 제한을 넘었으며 별도 측정은 6.056초, 재사용은 0.010초였습니다. 같은 바이너리는 원래 제한에서 13개 모두 통과했고 실패 기록을 보존합니다. 호스트 부하 중 시간 초과 후 별도 순차 검증은 통과했습니다. 증거: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`. 커밋 전 작업 트리입니다. ARM64 MRS/MSR NZCV는 미지원이라 테스트는 정수 명령으로 네 플래그를 설정·읽습니다. 이 CPU 항목, 쓰기 파일, 시스템 정보, dyld/런타임/프레임워크, 실제 iOS 검증은 남아 있습니다.

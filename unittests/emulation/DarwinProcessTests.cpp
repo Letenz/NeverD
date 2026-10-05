@@ -220,6 +220,81 @@ TEST_P(DarwinProcess, ExplicitTimeObservationsPreserveBytesErrorsAndCopyOrder) {
     EXPECT_EQ(Result->Services.front().Error, false);
   }
 }
+TEST_P(DarwinProcess, MachTimePreservesReturnStateAndExplicitObservations) {
+  auto Missing = run("mach-time");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Missing->Diagnostic, "Darwin timebase is not configured");
+  const bool X64 = GetParam().ISA == GuestArchitecture::X64;
+  const uint64_t Timebase = X64 ? 0x01000059ULL : uint64_t(-89);
+  Options.DarwinTime = darwin_test::timeOptions();
+  for (auto Mode : {"mach-time", "mach-timebase-values"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput,
+              Mode == llvm::StringRef("mach-time")
+                  ? "h"
+                  : llvm::fromHex(darwin_test::TimebaseHex));
+    ASSERT_GE(Result->Services.size(), 13u);
+    for (size_t I = 0; I != 12; ++I) {
+      EXPECT_EQ(Result->Services[I].Result, 0u);
+      EXPECT_FALSE(Result->Services[I].Error.has_value());
+    }
+    EXPECT_EQ(Result->Services[0].Number, Timebase);
+    EXPECT_EQ(Result->Services[4].Number, uint32_t(Timebase));
+    EXPECT_EQ(Result->Services[5].Number,
+              0x1234567800000000ULL | uint32_t(Timebase));
+    EXPECT_EQ(Result->Services.back().Error, false); // BSD write
+    if (Mode == llvm::StringRef("mach-time")) {
+      EXPECT_EQ(Result->Services[12].Result, 1000u);
+      EXPECT_EQ(Result->Services[13].Number,
+                X64 ? 0x1234567802000014ULL : 0x1234567800000014ULL);
+      EXPECT_EQ(Result->Services[13].Error, false);
+      EXPECT_EQ(Result->Services[14].Error, true); // BSD read(999)
+      EXPECT_EQ(Result->Services[15].Error, true); // BSD write(999)
+    }
+  }
+  auto Clocks = run("mach-clock-values");
+  ASSERT_TRUE(bool(Clocks)) << llvm::toString(Clocks.takeError());
+  if (X64) {
+    EXPECT_EQ(Clocks->Stop, ProcessStopReason::UnsupportedService);
+  } else {
+    ASSERT_EQ(Clocks->Stop, ProcessStopReason::Exited) << Clocks->Diagnostic;
+    EXPECT_EQ(Clocks->ExitStatus, 37);
+    EXPECT_EQ(Clocks->StandardOutput, llvm::fromHex(darwin_test::MachClockHex));
+    ASSERT_EQ(Clocks->Services.size(), 3u);
+    EXPECT_EQ(Clocks->Services[0].Result, 0xfedcba9876543210ULL);
+    EXPECT_EQ(Clocks->Services[1].Result, UINT64_MAX);
+    EXPECT_FALSE(Clocks->Services[0].Error);
+    EXPECT_FALSE(Clocks->Services[1].Error);
+  }
+  for (auto Mode : {"mach-absolute", "mach-continuous"}) {
+    SCOPED_TRACE(Mode);
+    Options.DarwinTime.emplace();
+    for (bool Configured : {false, true}) {
+      if (Configured) {
+        if (Mode == llvm::StringRef("mach-absolute"))
+          Options.DarwinTime->MachAbsoluteTime = 0;
+        else
+          Options.DarwinTime->MachContinuousTime = 0;
+      }
+      auto Result = run(Mode);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      if (X64 || !Configured) {
+        EXPECT_EQ(Result->Stop, ProcessStopReason::UnsupportedService);
+        EXPECT_TRUE(Result->StandardOutput.empty());
+      } else {
+        EXPECT_EQ(Result->Stop, ProcessStopReason::Exited)
+            << Result->Diagnostic;
+        EXPECT_EQ(Result->ExitStatus, 37);
+        EXPECT_EQ(Result->StandardOutput, std::string(8, '\0'));
+      }
+    }
+  }
+}
 TEST_P(DarwinProcess, FiniteStandardInputRetainsBinaryBytesAndSharedCursor) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->StandardInput = {0, 0xff, 'x'};
@@ -345,7 +420,9 @@ TEST_P(DarwinProcess, FaultAndReadOnlyStoreRemainCPUFailures) {
   }
 }
 TEST_P(DarwinProcess, UnknownBSDMachAndForeignTrapFailExplicitly) {
-  for (auto Mode : {"unknown", "mach", "badtrap"}) {
+  Options.DarwinTime = darwin_test::timeOptions();
+  for (auto Mode : {"unknown", "mach", "badtrap", "mach-int32-min",
+                    "mach-wrong-class", "mach-foreign-class"}) {
     SCOPED_TRACE(Mode);
     auto Result = run(Mode);
     ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());

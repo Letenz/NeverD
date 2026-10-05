@@ -55,6 +55,157 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+/* Raw Mach calls have a distinct return ABI. Record flags and live argument
+ * carriers directly, without a libSystem wrapper or a BSD carry adapter. */
+struct mach_observation {
+  u64 value, flags, second, third;
+};
+static u64 mach_number(unsigned index) {
+#if defined(__aarch64__)
+  return (u64) - (long)index;
+#else
+  return 0x01000000UL | index;
+#endif
+}
+static u64 mach_flags(unsigned carry) {
+#if defined(__aarch64__)
+  return carry ? 0x70000000UL : 0x90000000UL;
+#else
+  return 0x882UL | carry;
+#endif
+}
+static struct mach_observation raw_trap(u64 number, u64 pointer, u64 flags) {
+#if defined(__aarch64__)
+  register u64 x0 __asm__("x0") = pointer;
+  register u64 x1 __asm__("x1") = 0x1122334455667788UL;
+  register u64 x2 __asm__("x2") = 0x8877665544332211UL;
+  register u64 x16 __asm__("x16") = number;
+  const u64 seed =
+      (flags & 0x20000000UL) ? 0x8000000000000000UL : 0x4000000000000001UL;
+  u64 negative, zero, carry, overflow;
+  // Integer instructions seed/read all four flags without requiring the
+  // separate MRS/MSR NZCV system-register surface in the checked CPU profile.
+  __asm__ volatile("adds xzr, %8, %8\n\tsvc #0x80\n\t"
+                   "cset %4, mi\n\tcset %5, eq\n\tcset %6, cs\n\tcset %7, vs"
+                   : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x16), "=&r"(negative),
+                     "=&r"(zero), "=&r"(carry), "=&r"(overflow)
+                   : "r"(seed)
+                   : "cc", "memory");
+  return (struct mach_observation){
+      x0, (negative << 31) | (zero << 30) | (carry << 29) | (overflow << 28),
+      x1, x2};
+#else
+  u64 result = number, second = 0x1122334455667788UL;
+  u64 third = 0x8877665544332211UL, after;
+  // Keep temporary flag pushes below the compiler's 128-byte red zone.
+  // LEA leaves the flags untouched, and every asm operand is a register.
+  __asm__ volatile("leaq -128(%%rsp), %%rsp\n\tpushq %5\n\tpopfq\n\t"
+                   "syscall\n\tpushfq\n\tpopq %3\n\tleaq 128(%%rsp), %%rsp"
+                   : "+a"(result), "+d"(second), "+S"(third), "=&r"(after)
+                   : "D"(pointer), "r"(flags)
+                   : "rcx", "r11", "cc", "memory");
+  return (struct mach_observation){result, after, second, third};
+#endif
+}
+static int preserved_flags(struct mach_observation value, u64 expected) {
+#if defined(__aarch64__)
+  return value.flags == expected;
+#else
+  return (value.flags & 0x8d5) == (expected & 0x8d5);
+#endif
+}
+static int preserved_mach(struct mach_observation value, unsigned carry) {
+  return preserved_flags(value, mach_flags(carry)) &&
+         value.second == 0x1122334455667788UL &&
+         value.third == 0x8877665544332211UL;
+}
+static int mach_timebase(int emit_values) {
+  unsigned char bytes[10];
+  unsigned error;
+  for (unsigned i = 0; i != sizeof(bytes); ++i)
+    bytes[i] = 0xa5;
+  int check = 50;
+#define MACH_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  for (unsigned carry = 0; carry != 2; ++carry) {
+    const u64 number = mach_number(89);
+    struct mach_observation value =
+        raw_trap(number, (u64)(bytes + 1), mach_flags(carry));
+    MACH_EXPECT(!value.value && preserved_mach(value, carry));
+    MACH_EXPECT(little_integer(bytes + 1, 4) && little_integer(bytes + 5, 4) &&
+                bytes[0] == 0xa5 && bytes[9] == 0xa5);
+    const u64 pointers[] = {0, 1, (u64)-1};
+    for (unsigned i = 0; i != 3; ++i) {
+      value = raw_trap(number, pointers[i], mach_flags(carry));
+      MACH_EXPECT(!value.value && preserved_mach(value, carry));
+    }
+    const u64 numbers[] = {number & 0xffffffffUL,
+                           (number & 0xffffffffUL) | 0x1234567800000000UL};
+    for (unsigned i = 0; i != 2; ++i) {
+      value = raw_trap(numbers[i], (u64)(bytes + 1), mach_flags(carry));
+      MACH_EXPECT(!value.value && preserved_mach(value, carry));
+    }
+  }
+  if (!emit_values) {
+    u64 pid = call(20, 0, 0, 0, 0, 0, 0, &error);
+    MACH_EXPECT(!error && !secondary);
+#if defined(__aarch64__)
+    const u64 bsd_pid = 20;
+    const u64 carry_mask = 0x20000000UL;
+#else
+    const u64 bsd_pid = 0x02000014;
+    const u64 carry_mask = 1;
+#endif
+    struct mach_observation value =
+        raw_trap(bsd_pid | 0x1234567800000000UL, 0, mach_flags(1));
+    MACH_EXPECT(value.value == pid && !value.second &&
+                preserved_flags(value, mach_flags(1) & ~carry_mask) &&
+                value.third == 0x8877665544332211UL);
+    // Positive ARM64 3/4 and x64 BSD-class 3/4 remain read/write, not clocks.
+    MACH_EXPECT(call(3, 999, 0, 0, 0, 0, 0, &error) == 9 && error);
+    MACH_EXPECT(call(4, 999, 0, 0, 0, 0, 0, &error) == 9 && error);
+#if defined(__aarch64__)
+    for (unsigned index = 3; index != 5; ++index)
+      for (unsigned carry = 0; carry != 2; ++carry) {
+        value = raw_trap(mach_number(index), 0, mach_flags(carry));
+        MACH_EXPECT(preserved_mach(value, carry));
+        value =
+            raw_trap((mach_number(index) & 0xffffffffUL) | 0x1234567800000000UL,
+                     0, mach_flags(carry));
+        MACH_EXPECT(preserved_mach(value, carry));
+      }
+#endif
+  }
+  const char marker = 'h';
+  u64 length = emit_values ? 8 : 1;
+  MACH_EXPECT(call(4, 1, emit_values ? (u64)(bytes + 1) : (u64)&marker, length,
+                   0, 0, 0, &error) == length &&
+              !error);
+#undef MACH_EXPECT
+  return 37;
+}
+/* Slot 3/4 is invalid on native x64. Only the ARM64 native workload calls
+ * them; x64 guest tests require an explicit unsupported-service stop. */
+static int mach_clocks(unsigned selection) {
+  u64 ticks[2];
+  unsigned count = 0, error;
+  for (unsigned index = 3; index != 5; ++index) {
+    if (selection && index != selection + 2)
+      continue;
+    struct mach_observation value =
+        raw_trap(mach_number(index), (u64)-1, mach_flags(1));
+    if (!preserved_mach(value, 1))
+      return 70;
+    ticks[count++] = value.value;
+  }
+  u64 size = count * sizeof(u64);
+  return call(4, 1, (u64)ticks, size, 0, 0, 0, &error) == size && !error ? 37
+                                                                         : 71;
+}
 static int valid_timeval(const unsigned char *p) {
   return little_integer(p, 8) <= 0xffffffffUL &&
          little_integer(p + 8, 4) < 1000000 && !little_integer(p + 12, 4);
@@ -611,6 +762,27 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return call(116, 0, 0, 0, 0, 0, 0, &error) || error || secondary ? 51 : 37;
   if (equal(argv[1], "time") || equal(argv[1], "time-values"))
     return time_calls(equal(argv[1], "time-values"));
+  if (equal(argv[1], "mach-time") || equal(argv[1], "mach-timebase-values"))
+    return mach_timebase(equal(argv[1], "mach-timebase-values"));
+  if (equal(argv[1], "mach-clock-values"))
+    return mach_clocks(0);
+  if (equal(argv[1], "mach-absolute"))
+    return mach_clocks(1);
+  if (equal(argv[1], "mach-continuous"))
+    return mach_clocks(2);
+  if (equal(argv[1], "mach-int32-min"))
+    return (int)raw_trap(0x80000000UL, 0, mach_flags(1)).value;
+  if (equal(argv[1], "mach-wrong-class"))
+    return (int)raw_trap(0x03000059UL, 0, mach_flags(1)).value;
+  if (equal(argv[1], "mach-foreign-class"))
+    return (int)raw_trap(
+#if defined(__aarch64__)
+               0x01000059UL,
+#else
+               (u64)-89,
+#endif
+               0, mach_flags(1))
+        .value;
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));

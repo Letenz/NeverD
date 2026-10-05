@@ -14,5 +14,8 @@ llvm::Expected<std::optional<ServiceResult>>
 timeService(GuestMemory &Memory, const ProcessServiceEvent &Event,
             const std::optional<DarwinTimeOptions> &Options,
             ProcessResult &Result);
+llvm::Expected<std::optional<ServiceResult>> machTimeService(
+    GuestMemory &Memory, ServiceKind Kind, const ProcessServiceEvent &Event,
+    const std::optional<DarwinTimeOptions> &Options, ProcessResult &Result);
 } // namespace neverd::emulation::darwin_model
 #endif

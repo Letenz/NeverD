@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
+<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
 
 [← 文件索引](README.md)
 
@@ -37,13 +37,13 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 ## Darwin 服務
 
-ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別 `0x02000000`、RAX 及 RDI/RSI/RDX/R10/R8/R9。成功清除 carry，失敗設定 carry 並返回正 errno。ARM64 清除 X1；x64 成功清除 RDX、失敗保留 RDX。SYSCALL 的暫存器改寫明確定義。報告以 `result` 與 `error=true` 表達 BSD 錯誤；不返回或不支援的請求沒有這兩個欄位。規則依據 XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c) 與 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)，未納入 Apple 實作程式碼。
+BSD 呼叫在 ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別 `0x02000000`、RAX 及 RDI/RSI/RDX/R10/R8/R9。成功清除 carry，失敗設定 carry 並返回正 errno。ARM64 清除 X1；x64 成功清除 RDX、失敗保留 RDX。SYSCALL 的暫存器改寫明確定義。報告以 `result` 與 `error=true` 表達 BSD 錯誤；不返回或不支援的請求沒有這兩個欄位。規則依據 XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c) 與 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)，未納入 Apple 實作程式碼。
 
 服務包含 `exit`、`write`、`getpid`、`getppid`、`getuid`、`geteuid`、`getgid`、`getegid`、`mmap`、`mprotect`、`munmap`。PID/UID/GID 固定為 1000，PPID 為 1。描述元 1、2 擷取原始位元組，包含 NUL 與非 UTF8；關閉或唯讀描述元返回 EBADF。部分複製已取得的資料會保留，但後續錯誤仍為 EFAULT。長度超過 `INT_MAX` 時，先返回 EINVAL，再談描述元、指標或預算檢查，依據 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)。
 
 記憶體服務支援私有匿名資料映射：`flags=0x1002`、描述元 -1、offset 零。長度及非固定提示位址向上取整至 OS 頁；提示已占用時先向上搜尋，再回到預設配置區。舊式原始 mmap 零長度返回零且不配置；`MAP_UNIX03` 已支援，零長度返回 EINVAL。Unmap/protect 位址必須對齊。支援 NONE/READ/WRITE，WRITE 隱含 READ。每個 OS 頁獨立持有實體記憶體，部分解除映射可釋放預算，新頁面清零。Protect 跨空洞或超過最大權限時，整個範圍維持原狀。來源：[XNU VM 服務](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c)。
 
-共享／固定／JIT 映射、匿名可執行映射、Mach trap、間接系統呼叫、執行緒、訊號、宿主檔案／網路、dyld、Objective-C/Swift runtime 和 Foundation/UIKit 均不支援，會明確停止。這不是完整 Apple OS，也不是 iOS Simulator 應用程式。
+共享／固定／JIT 映射、匿名可執行映射、其他 Mach trap、間接系統呼叫、執行緒、訊號、宿主檔案／網路、dyld、Objective-C/Swift runtime 和 Foundation/UIKit 均不支援，會明確停止。這不是完整 Apple OS，也不是 iOS Simulator 應用程式。
 
 ## 驗證
 
@@ -154,7 +154,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 66 項或 x64 44 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 69 項或 x64 46 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -186,7 +186,7 @@ Linux 使用 `kvm`、Windows 使用 `whp`。[Darwin 工作流程](../../.github/
 
 LP64 `timeval` 為 16 位元組：偏移 0 是零擴展秒數，偏移 8 是 32 位微秒，偏移 12 的四位元組填充為零。時區是兩個有號 32 位欄位，tick 佔八位元組。日曆與絕對時間先聯合取樣，因此請求的兩種觀察值必須在任何複製或指標檢查前存在。接著依序寫入 timeval、timezone、absolute ticks。時區缺失在自身階段停止，保留先前的 timeval；後續 EFAULT 也保留先前寫入，重疊位址依相同順序處理。單次輸出僅部分可寫時，在該次複製前明確停止，保留更早的複製。三個空指標無須設定即可成功；選擇性查詢只要求所請求的值。
 
-原創 `time` 工作負載核對原生行為；來賓 `time-values` 在五種來賓組合的 C/CLI/Python 路徑輸出設定的精確 32 位元組。獨立 SDK 對照從一次原生 raw 呼叫擷取三輸出，再逐位元組比較。此功能不包含時鐘推進、tick 換算、commpage 計數器、計時器或 Mach 時鐘服務；dyld、執行緒、Objective-C/Swift 和 Foundation/UIKit 仍待完善。Intel HVF Actions 維持暫停，本輪不增加原生 Intel 或實體 iOS 驗收結論。
+原創 `time` 工作負載核對原生行為；來賓 `time-values` 在五種來賓組合的 C/CLI/Python 路徑輸出設定的精確 32 位元組。獨立 SDK 對照從一次原生 raw 呼叫擷取三輸出，再逐位元組比較。此功能不包含時鐘推進、tick 換算、commpage 計數器、計時器或 Mach 時鐘物件/IPC；dyld、執行緒、Objective-C/Swift 和 Foundation/UIKit 仍待完善。Intel HVF Actions 維持暫停，本輪不增加原生 Intel 或實體 iOS 驗收結論。
 
 ```json
 {"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
@@ -195,3 +195,23 @@ LP64 `timeval` 為 16 位元組：偏移 0 是零擴展秒數，偏移 8 是 32 
 [XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
 
 時間驗證（2026-10-06，Release）：538 項 Darwin 註冊測試，274 項通過、264 項因後端不可用跳過，零失敗；66/66 項必要 ARM64 HVF 測試全部執行。12 個原創原生 macOS 工作負載及單次取樣的 SDK 位元組對照通過。公共 C/CLI/報告為 43/43，無跳過。Python 五種來賓組合通過，包含精確時間位元組與原有八種檔案情境。66 項執行器測試、本地化、能力清單與格式檢查通過。計數重疊。證據：`build-hvf-arm64/darwin-time-verified-evidence/`、`darwin-time-native-first/`、`darwin-time-public.xml`。
+
+## Mach 時間與返回約定
+
+`darwin_time.timebase` 提供非零無符號 32 位 `numerator` 和 `denominator`；比例原樣保留，不約分或換算。`mach_timebase_info_trap` 索引 89 對應 ARM64 X16=-89 或 x64 RAX=0x01000059，寫入小端分子、分母共八位元組並返回零。完全無效的輸出位址仍返回零；部分可寫輸出在複製前停止，底層傳輸錯誤繼續傳播。缺少 timebase 時在指標檢查前停止，包含空指標。
+
+ARM64 X16=-3、X16=-4 返回完整無符號 64 位 `mach_absolute_time`、`mach_continuous_time`。各自僅需對應觀測值，明確的零有效。x64 對應原生表項會觸發 EXC_SYSCALL，模型明確拒絕。時鐘推進、commpage、計時器及 Mach 時鐘物件/IPC 尚未實作。
+
+分派僅用編號低 32 位，報告保留原始 64 位。ARM64 負數選擇 Mach；x64 Mach 類別為 0x01000000，BSD 為 0x02000000。BSD 3/4 仍為 read/write；未知編號及外來類別停止。綁定統一決定返回約定：Mach 保留旗標與 X1/RDX，BSD 保留既有 carry 規則；x64 仍更新 RCX/R11。Mach 記錄含 `result` 並省略 `error`，即使輸入 carry 已設定。
+
+原創 `mach-time` 對照 ARM64 原生旗標、次結果、高位編號、無效指標與 BSD 切換。`mach-timebase-values` 在五種來賓輸出精確位元組，`mach-clock-values` 在 ARM64 驗證完整 tick；SDK 另驗證配置與原生比例。Intel HVF Actions 維持暫停，x64 軟體與語法檢查不構成原生 Intel 或實體 iOS 驗收。
+
+```json
+{"darwin_time":{"timebase":{"numerator":125,"denominator":3},"mach_absolute_time":"18364758544493064720","mach_continuous_time":"18446744073709551615"}}
+```
+
+[XNU clock traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/clock.c), [ARM64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [ARM64 special traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/sleh.c), [x64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/x86_64/idt64.s).
+
+Mach 驗證（2026-10-06，Release）：Darwin 569 項中 293 通過、276 項後端不可用而跳過、零失敗；ARM64 HVF 必需 69/69 全部執行。最終通過 13 個原生工作負載及兩個時間 SDK 對照。公開 C/CLI/report 為 100/100、無跳過；Python 覆蓋五種來賓。公開比較依平台與場景獨立執行，明確給予 10 秒來賓預算，產品預設與超時回歸不變。計數重疊。
+
+首次原生啟動曾超過既有 5 秒門限，測得 6.056 秒，復用後為 0.010 秒；同一二進位檔隨後在原門限通過 13 項，保留失敗記錄。宿主負載下的超時經獨立串行複核通過。證據：`build-hvf-arm64/darwin-mach-time-final-evidence/`、`darwin-mach-time-native-recheck/existing-binary-recheck.json`、`darwin-mach-time-public-accepted.xml`，描述提交前工作樹。ARM64 MRS/MSR NZCV 仍未支援；測試以整數指令讀寫四個旗標。此 CPU 缺口、可寫檔案、系統資訊、dyld/執行環境/框架及實體 iOS 仍待完成。

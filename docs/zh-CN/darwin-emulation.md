@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
+<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
 
 [← 文档索引](README.md)
 
@@ -33,7 +33,7 @@ ARM64 使用 16 KiB OS 页，x64 使用 4 KiB；CPU 页表仍以 4 KiB 为基础
 Mach-O 文件尾页保留同页原始字节，后续完整虚拟页清零。初始数据、栈和匿名页都按
 OS 页独立持有物理内存，因此部分解除映射能释放预算，重新分配的页面保持清零。
 
-系统调用遵循 Darwin ABI。ARM64 从 X16 读取服务号，x64 使用 BSD 类别前缀；
+BSD 系统调用遵循 Darwin ABI。ARM64 从 X16 读取服务号，x64 使用 BSD 类别前缀；
 错误返回正 errno 并置 carry。JSON 中的 `error` 字段区分错误和值相同的成功结果。
 不会复用 Linux 的负 errno。内存保护跨空洞或最大权限边界失败时，整段原权限保持不变。
 部分 `write` 复制的字节会保留，后续访存错误仍返回 EFAULT。
@@ -167,7 +167,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 66 项，x64 的 macOS 和 Simulator 共 44 项。
+ARM64 三个平台共 69 项，x64 的 macOS 和 Simulator 共 46 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -286,7 +286,7 @@ SHA-256 已与 GitHub 摘要核对。跳过项包括仅适用于 macOS 的内核
 
 LP64 `timeval` 占 16 字节：偏移 0 是零扩展的秒数，偏移 8 是 32 位微秒，偏移 12 的四字节填充为零。时区是两个有符号 32 位字段，tick 占八字节。日历时间和绝对时间先联合采样，因此被请求的两种观察值必须在任何复制或指针检查前都存在。随后依次写入 timeval、timezone、absolute ticks。时区缺失在自己的阶段停止，保留已写入的 timeval；后续 EFAULT 同样保留此前写入，重叠地址遵循相同顺序。单次输出仅部分可写时，在该次复制前明确停止，保留更早的复制。三个空指针无需配置即可成功；选择性查询仅要求所请求的值。
 
-原始 `time` 工作负载核对原生行为；来宾 `time-values` 在五种来宾组合的 C/CLI/Python 路径输出配置的精确 32 字节。独立 SDK 对照从一次原生 raw 调用采集三输出，再逐字节比较。这不包含自动推进时钟、tick 换算、commpage 计数器、定时器或 Mach 时钟服务；dyld、线程、Objective-C/Swift 和 Foundation/UIKit 仍需完善。Intel HVF Actions 保持暂停，本轮不增加原生 Intel 或实体 iOS 验收结论。
+原始 `time` 工作负载核对原生行为；来宾 `time-values` 在五种来宾组合的 C/CLI/Python 路径输出配置的精确 32 字节。独立 SDK 对照从一次原生 raw 调用采集三输出，再逐字节比较。这不包含自动推进时钟、tick 换算、commpage 计数器、定时器或 Mach 时钟对象/IPC；dyld、线程、Objective-C/Swift 和 Foundation/UIKit 仍需完善。Intel HVF Actions 保持暂停，本轮不增加原生 Intel 或实体 iOS 验收结论。
 
 ```json
 {"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
@@ -295,3 +295,23 @@ LP64 `timeval` 占 16 字节：偏移 0 是零扩展的秒数，偏移 8 是 32 
 [XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
 
 时间验证（2026-10-06，Release）：538 项 Darwin 注册测试，274 项通过、264 项因后端不可用跳过，零失败；66/66 项必需 ARM64 HVF 测试全部执行。12 个原始原生 macOS 工作负载及单次采样的 SDK 字节对照通过。公共 C/CLI/报告为 43/43，无跳过。Python 的五种来宾组合通过，包括精确时间字节及原有八种文件场景。66 项运行器测试、本地化、能力清单和格式检查通过。计数有重叠。证据：`build-hvf-arm64/darwin-time-verified-evidence/`、`darwin-time-native-first/`、`darwin-time-public.xml`。
+
+## Mach 时间与返回约定
+
+`darwin_time.timebase` 显式提供 `numerator` 和 `denominator`，均为非零无符号 32 位数；比例原样保留，不约分或换算。`mach_timebase_info_trap` 的索引为 89：ARM64 的 X16=-89，x64 的 RAX=0x01000059。输出为小端分子、分母共八字节，返回零。与 XNU 一致，完全无效的输出地址也返回零；部分可写输出在复制前明确停止，因为尚未建模其前缀写入。底层传输错误继续传播。缺少 timebase 时先停止，再检查指针，空指针也一样。
+
+ARM64 特殊调用 X16=-3、X16=-4 分别返回完整无符号 64 位 `mach_absolute_time`、`mach_continuous_time`。各自只需要对应观测值，显式零有效。x64 的对应 Mach 表项会在原生内核触发 EXC_SYSCALL，因此模型明确拒绝。这不实现自动推进、commpage、定时器或 Mach 时钟对象/IPC。
+
+服务分派只使用编号寄存器的低 32 位，报告保留原始 64 位。ARM64 负数选择 Mach；x64 的 Mach 类别为 0x01000000，BSD 类别为 0x02000000。命名空间独立，BSD 3/4 仍为 read/write；未知编号和其他架构的类别明确停止。解析后的绑定统一拥有返回约定：Mach 保留标志位和 X1/RDX，BSD 仍遵循 carry 和次结果规则；x64 仍更新 SYSCALL 返回所需的 RCX/R11。Mach 返回记录含 `result`，始终省略 `error`，即使输入 carry 已置位。
+
+原始 `mach-time` 工作负载对照 ARM64 原生内核的标志位、次结果、高位编号、坏指针和 BSD 切换。`mach-timebase-values` 在五种来宾组合输出精确配置字节，`mach-clock-values` 在 ARM64 验证完整 tick；独立 SDK 对照验证布局和原生比例。Intel HVF Actions 继续暂停；x64 软件测试及语法检查不代表原生 Intel 或实体 iOS 验收。
+
+```json
+{"darwin_time":{"timebase":{"numerator":125,"denominator":3},"mach_absolute_time":"18364758544493064720","mach_continuous_time":"18446744073709551615"}}
+```
+
+[XNU clock traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/clock.c), [ARM64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [ARM64 special traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/sleh.c), [x64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/x86_64/idt64.s).
+
+Mach 验证（2026-10-06，Release）：569 项唯一 Darwin 注册，293 通过、276 项后端不可用而跳过、零失败；69/69 项必需 ARM64 HVF 全部执行。最终运行通过全部 13 个原生工作负载及两个时间 SDK 对照。公开 C/CLI/report 为 100/100、无跳过；Python 覆盖五种来宾组合。公开接口比较按平台和场景独立运行，显式给出 10 秒来宾预算；产品默认值和超时回归保持不变。计数有重叠。
+
+早期原生程序首次启动超过已有 5 秒门限：独立测得首次 6.056 秒、复用后 0.010 秒。同一二进制随后在原门限下通过 13 项，失败记录保留。宿主负载下的墙钟超时经独立串行复核通过。证据：`build-hvf-arm64/darwin-mach-time-final-evidence/`、`darwin-mach-time-native-recheck/existing-binary-recheck.json`、`darwin-mach-time-public-accepted.xml`，记录的是提交前工作树。ARM64 MRS/MSR NZCV 尚未纳入受检查 CPU 契约，测试用整数指令设置并读取四个标志位。这项 CPU 缺口，以及可写文件、系统信息、dyld/运行时/框架、实体 iOS 仍待完成。

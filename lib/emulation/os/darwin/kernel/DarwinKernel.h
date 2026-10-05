@@ -35,13 +35,18 @@ struct MemoryLayout {
   uint64_t PageSize, MinimumAddress;
   std::vector<MaximumProtection> Maximum;
 };
+enum class ServiceConvention { BSD, Mach };
 struct ServiceResult {
   uint64_t Value;
   bool Error = false;
+  /// The resolved binding owns the return convention and report semantics.
+  ServiceConvention Convention = ServiceConvention::BSD;
 };
 enum class ServiceKind {
 #define NEVERD_DARWIN_SERVICE(Name, Number, ReturnType) Name,
+#define NEVERD_DARWIN_MACH_SERVICE(Name, Number, ARM64Only) Name,
 #include "../DarwinValues.def"
+#undef NEVERD_DARWIN_MACH_SERVICE
 #undef NEVERD_DARWIN_SERVICE
 };
 class DarwinMemory;
