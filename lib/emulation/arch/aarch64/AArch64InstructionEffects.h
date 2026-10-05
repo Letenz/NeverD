@@ -15,6 +15,9 @@ struct AArch64MemoryAccess {
   uint64_t Address;
   RegisterValue Value;
   unsigned Size, Permission;
+  // Cache maintenance requires an accessible address, not a data load/store.
+  // Its admission preflight must not manufacture memory observer events.
+  bool CacheMaintenance = false;
 };
 /// Validate one checked instruction and describe its complete RAM footprint.
 /// The ISA owns encodings and register views; this query has no guest effects.

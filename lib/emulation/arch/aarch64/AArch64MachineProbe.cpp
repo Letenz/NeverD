@@ -35,6 +35,7 @@ llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
   State.reg(AArch64Register::SP) =
       aarch64::EntryGPA + memory::PageSize - probe::StackAlignment;
   State.reg(AArch64Register::PC) = aarch64::ProbePC;
+  State.reg(AArch64Register::X28) = aarch64::ProbePC;
   State.reg(AArch64Register::NZCV) = probe::NZCV;
   State.reg(AArch64Register::FPCR) = probe::FPCR;
   State.reg(AArch64Register::FPSR) = probe::FPSR;
@@ -59,6 +60,15 @@ llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
     case aarch64::probe::Step::CallTarget:
     case aarch64::probe::Step::JumpTarget:
     case aarch64::probe::Step::CallOrJumpTarget:
+    case aarch64::probe::Step::CacheType:
+    case aarch64::probe::Step::CleanData:
+    case aarch64::probe::Step::DataBarrier:
+    case aarch64::probe::Step::InvalidateInstruction:
+    case aarch64::probe::Step::InstructionDataBarrier:
+    case aarch64::probe::Step::InstructionBarrier:
+      break;
+    case aarch64::probe::Step::CacheTypeAgain:
+      Expected.reg(AArch64Register::X27) = State.reg(AArch64Register::X26);
       break;
     case aarch64::probe::Step::FloatingAdd:
       Expected.Vectors[probe::ResultVector] = {probe::FloatRoundedUp, 0};
@@ -71,6 +81,13 @@ llvm::Error verifyAArch64Machine(AArch64Machine &Machine,
     }
     if (auto E = Machine.step(State, Control))
       return E;
+    if (Instruction.Kind == aarch64::probe::Step::CacheType) {
+      // CTR is an observation of the selected virtual CPU. Only its read
+      // destination may vary; a nonexecuting transport retains the seed.
+      if (State.reg(AArch64Register::X26) == Expected.reg(AArch64Register::X26))
+        return diagnostic::error(diagnostic::ArmState);
+      Expected.reg(AArch64Register::X26) = State.reg(AArch64Register::X26);
+    }
     if (State.UserMode != Expected.UserMode ||
         State.Registers != Expected.Registers ||
         State.Vectors != Expected.Vectors)
