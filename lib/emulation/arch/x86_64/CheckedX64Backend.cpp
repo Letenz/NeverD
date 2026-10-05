@@ -527,6 +527,20 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       return llvm::make_error<UnsupportedExecutionError>();
   }
   uint64_t SP = CPU.reg(X64Register::SP);
+  const bool PushFlags = I.id == X86_INS_PUSHF || I.id == X86_INS_PUSHFQ;
+  if (PushFlags) {
+    if (X.op_count)
+      return llvm::make_error<UnsupportedExecutionError>();
+    // Capstone's PUSHF identity retains 66H even when a later REX.W selects
+    // 64 bits. Derive the write footprint from the effective prefixes.
+    const unsigned Size =
+        X.prefix[2] == X86_PREFIX_OPSIZE && !(X.rex & x64::RexW)
+            ? x64::HalfWordBytes
+            : x64::WordBytes;
+    // Long mode always uses RSP for the implicit stack, even with 67H or
+    // a segment override. Public flags exclude VM, RF and transport TF.
+    Accesses.push_back({SP - Size, Size, Write, CPU.reg(X64Register::FLAGS)});
+  }
   if (I.id == X86_INS_PUSH || I.id == X86_INS_CALL) {
     uint64_t V = I.address + I.size;
     if (I.id == X86_INS_PUSH) {
@@ -649,6 +663,18 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       Fault.ErrorCode = E.exception().ErrorCode;
       return raiseFault(Fault, true);
     });
+  }
+  if (PushFlags) {
+    // Native single stepping may expose its private TF in the stack image.
+    // Publish the admitted architectural flags under the existing RAM lease
+    // and transaction; cancellation still rolls back every written byte.
+    const auto &A = Accesses.back();
+    for (unsigned N = 0; N < A.Size; ++N) {
+      const uint64_t Address = A.Address + N;
+      const auto &P = Memory->mappings().at(Address & ~(x64::PageSize - 1));
+      *Memory->physicalPointer(P.Physical + Address % x64::PageSize) =
+          uint8_t(A.Value >> (N * CHAR_BIT));
+    }
   }
   if (auto E = (*Transaction)->stage())
     return E;

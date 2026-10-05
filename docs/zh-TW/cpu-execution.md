@@ -78,6 +78,8 @@ KVM/WHP 透過私有 `FXSAVE64` 執行探測 `MXCSR_MASK`，並以帶正負號�
 
 `PAUSE`（`F3 90`）透過共用 x64 機器介面在 KVM/WHP 和受限 Unicorn 上執行，包括原生 `driver-strict`。`X64PauseTests.cpp` 驗證完整狀態保留、執行前停止、上下文還原、非法 `LOCK` 拒絕，以及自旋迴圈的逾時和恢復。這條處理器提示指令不負責客體執行緒排程，也不保證特定延遲。
 
+`PUSHFQ`（`9C`）與 16 位元 `PUSHF`（`66 9C`）透過原生 KVM/WHP 及 checked Unicorn 執行，包括 `driver-strict`。共用 ISA 層在 RAM 交易提交前從入棧結果移除內部單步 TF。隱式堆疊定址使用完整 RSP，前綴順序決定運算元寬度。完整範圍權限檢查、觀察器停止及故障重試維持原子性。`POPF/POPFQ` 仍不支援。`X64PushFlagsTests.cpp` 涵蓋全部 256 種允許的旗標組合、九種編碼、跨頁別名、使用者權限、中止及上下文還原。
+
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。

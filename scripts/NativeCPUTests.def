@@ -28,6 +28,78 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ArchitecturalFlagsAndImplicitStackWidths/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ArchitecturalFlagsAndImplicitStackWidths/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ArchitecturalFlagsAndImplicitStackWidths/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ObserversStopBeforeStackAndRegisterEffects/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ObserversStopBeforeStackAndRegisterEffects/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ObserversStopBeforeStackAndRegisterEffects/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.CrossPageFaultCanResumeWithoutPartialPush/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.CrossPageFaultCanResumeWithoutPartialPush/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.CrossPageFaultCanResumeWithoutPartialPush/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ReadOnlyStackFaultPreservesContext/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ReadOnlyStackFaultPreservesContext/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.ReadOnlyStackFaultPreservesContext/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.UserModeCannotWriteSupervisorStack/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.UserModeCannotWriteSupervisorStack/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.UserModeCannotWriteSupervisorStack/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.AliasedCrossPageStackPublishesCompleteImage/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.AliasedCrossPageStackPublishesCompleteImage/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.AliasedCrossPageStackPublishesCompleteImage/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.NoncanonicalAndWrappedStackHaveNoEffects/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.NoncanonicalAndWrappedStackHaveNoEffects/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.NoncanonicalAndWrappedStackHaveNoEffects/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.LockedAndPopFlagsStayUnsupported/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.LockedAndPopFlagsStayUnsupported/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PushFlags.LockedAndPopFlagsStayUnsupported/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}User")
