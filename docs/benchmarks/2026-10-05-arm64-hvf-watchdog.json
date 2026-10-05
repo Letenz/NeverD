@@ -1,5 +1,6 @@
 {
-  "publication_note": "Absolute checkout and LLVM cache prefixes were replaced with <repository> and <llvm-cache>; all measurements, binary hashes and other evidence are unchanged.",
+  "publication_note": "Absolute checkout/cache prefixes were replaced with <repository>/<llvm-cache>. Measurements and original hashes are unchanged; original_evidence_sha256 identifies the unnormalized bytes.",
+  "original_evidence_sha256": "5a7fa9c41f39c3da9a45829b49662d623bb84f66eb8d40edea4477d7050d4740",
   "schema_version": 1,
   "complete": true,
   "started_utc": "2026-10-05T06:08:32.682442+00:00",

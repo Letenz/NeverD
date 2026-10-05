@@ -1,4 +1,5 @@
 {
+  "published_evidence": {"path": "2026-10-05-arm64-hvf-watchdog.json", "sha256": "8b05695e8e66d74919cc7b6952d634f58886031ebe185ba0c5d130d276e45fbb", "note": "Path-normalized publication; existing evidence hashes refer to the original bytes."},
   "decision": "Retain the existing disarm notification. This candidate did not establish a reliable benefit. The noisy shared-host measurements do not isolate a causal performance regression.",
   "candidate_source_commit": "19f73298ac2318f4489814644d0436c5157abc31",
   "baseline_runtime_source_commit": "0bc27331b364997cb2edc827b38e04769765744b",

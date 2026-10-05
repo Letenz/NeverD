@@ -1,5 +1,6 @@
 {
-  "publication_note": "Absolute checkout and LLVM cache prefixes were replaced with <repository> and <llvm-cache>; all measurements, binary hashes and other evidence are unchanged.",
+  "publication_note": "Absolute checkout/cache prefixes were replaced with <repository>/<llvm-cache>. Measurements and original hashes are unchanged; original_evidence_sha256 identifies the unnormalized bytes.",
+  "original_evidence_sha256": "2537960358442e437f8b7d7e865560c2dc6b6d7935e2118865cb9cd1177f7e68",
   "decision": "Retain the original request scheduling; neither candidate establishes a reliable general benefit on this shared host. Keep the two required request-lifetime regressions. No Intel native validation or Actions.",
   "baseline_source_commit": "24b020353c5026a962165ef6344e019f325543d5",
   "retained_source_commit": "a63d57e6ad2136268622660f2861238a1e30bdbc",
@@ -21,10 +22,14 @@
   "raw_comparisons": {
     "atomic": {
       "file": "2026-10-05-arm64-hvf-completion-atomic.json",
+      "published_path": "2026-10-05-arm64-hvf-completion-atomic.json",
+      "published_sha256": "97f4bc43aa57e932d15b05ddafd53f7358f799c28d4fc966b540b5170b7e331c",
       "sha256": "4d61979e32c6d3fbbd8e448aabd1c03209dbfc089cc5501d01d33c50bb987343"
     },
     "blocking": {
       "file": "2026-10-05-arm64-hvf-completion-blocking.json",
+      "published_path": "2026-10-05-arm64-hvf-completion-blocking.json",
+      "published_sha256": "69b4bd9bc6bd3781f85ba52a667123f29f2cd4db89057f3a9ff6c87693ac7348",
       "sha256": "6e542dbb9b5ba9571b1f98d943897125d5049584fc28c0975e69993b388b8adf"
     }
   },
