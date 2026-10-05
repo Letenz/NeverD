@@ -1,0 +1,31 @@
+//===- AArch64CMHICases.def - Independently assembled unsigned compares --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Name, instruction word, element bits/count, destination, left and right.
+// Each word was independently assembled for the baseline AArch64 ISA.
+// cmhi v31.8b, v1.8b, v2.8b
+NEVERD_AARCH64_CMHI_CASE(Bytes64, 0x2e22343f, 8, 8, 31, 1, 2)
+// cmhi v31.16b, v1.16b, v2.16b
+NEVERD_AARCH64_CMHI_CASE(Bytes128, 0x6e22343f, 8, 16, 31, 1, 2)
+// cmhi v31.4h, v1.4h, v2.4h
+NEVERD_AARCH64_CMHI_CASE(Halves64, 0x2e62343f, 16, 4, 31, 1, 2)
+// cmhi v31.8h, v1.8h, v2.8h
+NEVERD_AARCH64_CMHI_CASE(Halves128, 0x6e62343f, 16, 8, 31, 1, 2)
+// cmhi v31.2s, v1.2s, v2.2s
+NEVERD_AARCH64_CMHI_CASE(Words64, 0x2ea2343f, 32, 2, 31, 1, 2)
+// cmhi v31.4s, v1.4s, v2.4s
+NEVERD_AARCH64_CMHI_CASE(Words128, 0x6ea2343f, 32, 4, 31, 1, 2)
+// cmhi v31.2d, v1.2d, v2.2d
+NEVERD_AARCH64_CMHI_CASE(DoubleWords, 0x6ee2343f, 64, 2, 31, 1, 2)
+// cmhi d31, d1, d2
+NEVERD_AARCH64_CMHI_CASE(Scalar, 0x7ee2343f, 64, 1, 31, 1, 2)
+// cmhi v1.16b, v1.16b, v2.16b
+NEVERD_AARCH64_CMHI_CASE(AliasLeft, 0x6e223421, 8, 16, 1, 1, 2)
+// cmhi v2.16b, v1.16b, v2.16b
+NEVERD_AARCH64_CMHI_CASE(AliasRight, 0x6e223422, 8, 16, 2, 1, 2)
+// cmhi v31.16b, v1.16b, v1.16b
+NEVERD_AARCH64_CMHI_CASE(EqualSource, 0x6e21343f, 8, 16, 31, 1, 1)
+// cmhi v31.16b, v2.16b, v1.16b
+NEVERD_AARCH64_CMHI_CASE(Reverse, 0x6e21345f, 8, 16, 31, 2, 1)

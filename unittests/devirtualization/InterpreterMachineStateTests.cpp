@@ -841,6 +841,71 @@ int main(void) {
 )");
 }
 
+TEST_F(InterpreterMachineSourceTest, FunctionTemporarySurvivesSourceLowering) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "machine source execution requires clang";
+  const auto Snapshot = NdVar::tmp(64, 8);
+  auto F =
+      function({{operation(NdOp::COPY, Snapshot, {NdVar::reg(x86reg::RCX, 8)})},
+                {operation(NdOp::COPY, NdVar::reg(x86reg::RCX, 8),
+                           {NdVar::scalar(0, 8)})},
+                {operation(NdOp::COPY, NdVar::reg(x86reg::RAX, 8), {Snapshot})},
+                {operation(NdOp::RETURN, {}, {})}});
+  F.FunctionTemporaries = {{64, 8}};
+  // Put the capture and its consumers in separate blocks.
+  auto &Entry = F.Blocks.front();
+  LowBlock Exit;
+  Exit.Id = 1;
+  Exit.StartAddr = Entry.InstructionBoundaries[1].Address;
+  Exit.EndAddr = Entry.EndAddr;
+  Exit.Preds = {0};
+  Exit.Ops.assign(Entry.Ops.begin() + 1, Entry.Ops.end());
+  Exit.InstructionBoundaries.assign(Entry.InstructionBoundaries.begin() + 1,
+                                    Entry.InstructionBoundaries.end());
+  for (auto &Boundary : Exit.InstructionBoundaries)
+    --Boundary.FirstOp;
+  Entry.Ops.resize(1);
+  Entry.InstructionBoundaries.resize(1);
+  Entry.EndAddr = Exit.StartAddr;
+  Entry.Succs = {1};
+  F.Blocks.push_back(std::move(Exit));
+  roundTrip(F, R"(
+#include <stdint.h>
+int main(void) {
+  uint64_t seed = UINT64_C(0x8123456789abcdef);
+  for (unsigned k = 0; k != 256; ++k) {
+    uint64_t state[17], expected[17];
+    for (unsigned i = 0; i != 16; ++i) {
+      seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+      state[i] = expected[i] = seed;
+    }
+    state[16] = expected[16] = 2;
+    expected[0] = state[1]; expected[1] = 0;
+    if (generic_machine_source(MACHINE_ARG(state))) return 1;
+    for (unsigned i = 0; i != 17; ++i)
+      if (state[i] != expected[i]) return 2;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(InterpreterMachineStateTest, FunctionTemporaryByteAliasesRefuseSource) {
+  for (auto Value : {NdVar::tmp(64, 4), NdVar::tmp(68, 4), NdVar::tmp(60, 8)}) {
+    auto F = function(
+        {{operation(NdOp::COPY, Value, {NdVar::scalar(7, Value.Size)})},
+         {operation(NdOp::RETURN, {}, {})}});
+    F.FunctionTemporaries = {{64, 8}};
+    auto Source = wrapInterpreterMachineStateX64(F, BinaryFormat::ELF);
+    ASSERT_FALSE(bool(Source));
+    EXPECT_NE(llvm::toString(Source.takeError()).find("without byte aliases"),
+              std::string::npos);
+    // The byte-addressed proof model retains the exact partial write.
+    auto Model = modelInterpreterMachineStateX64(F);
+    ASSERT_TRUE(bool(Model)) << llvm::toString(Model.takeError());
+  }
+}
+
 TEST_F(InterpreterMachineSourceTest, EveryGPRLaneSurvivesSyntheticRemapping) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "machine source execution requires clang";

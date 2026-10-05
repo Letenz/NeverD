@@ -23,6 +23,8 @@ add_neverd_component_library(NeverDEmulationArch
   arch/aarch64/AArch64InstructionEffects.cpp
   arch/x86_64/CheckedX64Backend.cpp
   arch/x86_64/CheckedX64Memory.cpp
+  arch/x86_64/CheckedX64Stack.cpp
+  arch/x86_64/CheckedX64Frame.cpp
   arch/aarch64/CheckedAArch64Backend.cpp
   LINK_COMPONENTS EmulationCore
   LLVM_COMPONENTS Support)

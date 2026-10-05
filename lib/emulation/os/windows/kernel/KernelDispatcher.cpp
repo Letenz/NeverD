@@ -27,6 +27,8 @@
 
 #include "neverd/emulation/GuestMemory.h"
 
+#include "llvm/ADT/StringMap.h"
+
 #include <algorithm>
 #include <limits>
 
@@ -38,6 +40,22 @@ enum class API {
 #include "KernelDispatcherAPIs.def"
 #undef NEVERD_KERNEL_DISPATCHER_API
 };
+
+struct APIDescriptor {
+  API Function;
+  unsigned ArgumentCount;
+};
+
+const APIDescriptor *lookupAPI(llvm::StringRef Name) {
+  static const llvm::StringMap<APIDescriptor> APIs{
+#define NEVERD_KERNEL_DISPATCHER_API(Name, Count) {#Name, {API::Name, Count}},
+#include "KernelDispatcherAPIs.def"
+#undef NEVERD_KERNEL_DISPATCHER_API
+  };
+  auto I = APIs.find(Name);
+  return I == APIs.end() ? nullptr : &I->second;
+}
+
 llvm::Error dispatcherError(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
 }
@@ -61,11 +79,8 @@ llvm::Error KernelDispatcher::configure(uint64_t NewOwner, uint64_t NewThread) {
 }
 
 std::optional<unsigned> KernelDispatcher::argumentCount(llvm::StringRef Name) {
-#define NEVERD_KERNEL_DISPATCHER_API(Symbol, Count)                            \
-  if (Name == #Symbol)                                                         \
-    return Count;
-#include "KernelDispatcherAPIs.def"
-#undef NEVERD_KERNEL_DISPATCHER_API
+  if (const auto *Descriptor = lookupAPI(Name))
+    return Descriptor->ArgumentCount;
   return std::nullopt;
 }
 
@@ -312,17 +327,12 @@ llvm::Expected<uint64_t> KernelDispatcher::call(llvm::StringRef Name,
                                                 llvm::ArrayRef<uint64_t> Args,
                                                 uint8_t CurrentIRQL,
                                                 uint64_t Execution) {
-  const auto Count = argumentCount(Name);
-  if (!Count || Args.size() != *Count)
+  const auto *Descriptor = lookupAPI(Name);
+  if (!Descriptor || Args.size() != Descriptor->ArgumentCount)
     return dispatcherError("unknown dispatcher API or invalid argument count");
   if (!Owner)
     return dispatcherError("dispatcher has not been configured");
-  API Function = API::Unknown;
-#define NEVERD_KERNEL_DISPATCHER_API(Symbol, Count)                            \
-  if (Name == #Symbol)                                                         \
-    Function = API::Symbol;
-#include "KernelDispatcherAPIs.def"
-#undef NEVERD_KERNEL_DISPATCHER_API
+  const API Function = Descriptor->Function;
   const bool AnyIRQL = Function == API::KeInitializeDpc ||
                        Function == API::KeInsertQueueDpc ||
                        Function == API::KeRemoveQueueDpc ||

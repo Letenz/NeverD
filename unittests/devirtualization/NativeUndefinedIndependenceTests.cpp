@@ -226,6 +226,59 @@ LowIRIndependenceContract contract() {
   return Result;
 }
 
+TEST(NativeUndefinedIndependence,
+     DeferredConditionalEdgesNeverFetchDeadEvidenceOrTrustReachedMetadata) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    NativeProvider Provider;
+    Provider.conditional(0x100, 0x200, false);
+    Provider.ret(0x102);
+    Provider.ret(0x200);
+    auto &Bad = Provider.Instructions.at(0x200);
+    switch (Mutation) {
+    case 0:
+      Bad.NativeBytes.clear();
+      break;
+    case 1:
+      Bad.UndefinedEffects.OperationDigest = "stale";
+      break;
+    case 2:
+      ++Bad.Origin.Address;
+      break;
+    case 3:
+      ++Bad.Origin.OpCount;
+      break;
+    case 4:
+      Bad.UndefinedEffects.Coverage = LowUndefinedCoverage::Missing;
+      break;
+    case 5:
+      Bad.NativeStackControl = SpecializationNativeStackControl::None;
+      break;
+    }
+    auto C = contract();
+    C.DeferNativeConditionalEdges = true;
+    const auto Check = [&] {
+      return detail::checkNativeUndefinedIndependence(Provider, {0x100}, C, {});
+    };
+    const auto Good = Check();
+    ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+    EXPECT_FALSE(Provider.Fetches.count(0x200));
+    EXPECT_EQ(Good.Instructions.size(), 2U);
+    Provider.conditional(0x100, 0x200, true);
+    const auto Reached = Check();
+    EXPECT_FALSE(Reached.Proof.proved());
+    EXPECT_FALSE(Reached.Proof.Certificate);
+    EXPECT_TRUE(Reached.Instructions.empty());
+    EXPECT_EQ(Provider.Fetches.at(0x200), 1U);
+    // The actually executed conditional itself always needs valid evidence.
+    Provider.conditional(0x100, 0x200, false);
+    Provider.Instructions.at(0x100).UndefinedEffects.OperationDigest = "stale";
+    const auto Branch = Check();
+    EXPECT_EQ(Branch.Proof.Status, LowIRIndependenceStatus::Invalid);
+    EXPECT_FALSE(Branch.Proof.Certificate);
+  }
+}
+
 TEST(NativeUndefinedIndependence, OverlappingIndirectEntriesChargeEveryByte) {
   NativeProvider Provider;
   Provider.indirect(0x100, 0x101);

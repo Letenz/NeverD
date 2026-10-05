@@ -74,6 +74,14 @@ Checked x64 executes `SHLD/SHRD` with 16/32/64-bit destinations and imm8 or CL c
 
 `X64LoopInstructions.def` admits `LOOP/LOOPE/LOOPNE` through the processor transport. Address size selects RCX or zero-extended ECX, and FLAGS remain unchanged. Target width follows the CPU model: Intel ignores `66H` in long mode; AMD retains its 16-bit override, with REX.W taking precedence. Native KVM/WHP use the host processor; Unicorn uses its default Intel Haswell model. Shared admission rejects LOCK and REP before effects, even when decoder metadata omits them.
 
+`X64BranchModel` keeps relative `JMP/Jcc` decoding consistent with execution. Native KVM/WHP measure non-taken `66H` branches and REX.W precedence during bounded startup; checked Unicorn uses its Intel model. The immutable result selects the decoder for both instruction observers and Windows driver policy. Intel retains rel32 near branches and full-width targets in long mode; AMD honors its 16-bit override. Incomplete instruction bytes fail before observers or CPU entry.
+
+`X64StackInstructions.def` admits 16/64-bit `PUSH/POP` with general registers and ordinary RAM, plus immediate PUSH on KVM, WHP and checked Unicorn, including `driver-strict`. PUSH reads its source before decrementing RSP; POP computes an RSP/ESP-based destination after incrementing it. Address-size wrapping applies only to the explicit operand. Whole-span permissions, ordered observations and one RAM transaction preserve CPU and memory on faults, cancellation or callback errors. LOCK and device operands remain unsupported.
+
+KVM, WHP and checked Unicorn also admit 16/64-bit `LEAVE`. It reads the saved frame through full RBP, including with `67H`, and preserves unselected RBP bits in the 16-bit form. Faults or cancelled reads retain the original RSP and CPU context. LOCK, REP and device frames remain unsupported.
+
+KVM, WHP and checked Unicorn admit 16/64-bit `ENTER`, with unsigned 16-bit allocation and nesting modulo 32. Full RSP/RBP and effective prefix order determine the accesses. On a guest fault, completed stack stores remain visible while RSP, RBP and PC retain their entry values. The final stack check validates write permission over the operand width without storing data. LOCK, REP, APX prefixes and device frames remain unsupported.
+
 `X64PackedIntegerInstructions.def` admits 45 legacy SSE2 packed integer operations: wrapping and saturating addition/subtraction, comparisons, multiplication, averages, extrema, byte differences, packing and unpacking. XMM and aligned 128-bit RAM sources share the existing checked path on KVM, WHP and Unicorn. FLAGS and MXCSR remain unchanged; faults or observer cancellation preserve state. MMX, VEX/EVEX and device operands remain excluded.
 
 `X64PackedShiftInstructions.def` admits ten legacy SSE2 packed shifts. Lane shifts accept imm8 or XMM/aligned m128 counts; byte shifts accept imm8 only. Variable counts use the unsigned low 64 bits without scalar count masking; the high 64 bits are ignored. Memory operands still require a complete 16-byte read for zero or oversized counts. FLAGS and MXCSR remain unchanged; MMX, VEX/EVEX and device operands remain excluded.
@@ -363,6 +371,13 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 WHP captures the x87/SSE metadata from `WhpXsaveRegisters.def` in the same `WHvGetVirtualProcessorRegisters` call as the ordinary registers. The stopped vCPU remains under one partition lease. Complete XSAVE capture and all metadata consistency checks still precede publication; this removes one host API call per step, without a measured throughput claim.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+
+The checked SIMD subset includes scalar-D and fixed-width vector `CMHI`
+unsigned comparisons. Each element produces an all-ones or zero mask; narrow
+and scalar results clear the unused high destination bits. Independently
+assembled tests cover all baseline arrangements, overlapping registers, equal
+operands and reserved encodings, and compare the complete scalar/vector state
+on available transports. See Arm's [Neon comparison reference](https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#greater-than).
 
 The checked EL0/EL1 ARM64 contracts keep all `SCTLR_EL1` pointer-authentication
 key enables clear. `AArch64PAuthHints.def` admits only the twelve HINT-space

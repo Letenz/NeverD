@@ -10,6 +10,7 @@
 #include "../arch/x86_64/NativeStackControl.h"
 #include "../arch/x86_64/X64Recovery.h"
 #include "../arch/x86_64/X64UserFlags.h"
+#include "FiniteQueryCache.h"
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
@@ -101,9 +102,10 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(11); // Certificate semantic schema, independent of report formatting.
+  Number(13); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
+  Number(Contract.DeferNativeConditionalEdges);
   Number(Contract.X64FlagsProfile.has_value());
   if (Contract.X64FlagsProfile) {
     Number(static_cast<unsigned>(*Contract.X64FlagsProfile));
@@ -136,6 +138,11 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
     Hash.update(Receipt.OperationDigest);
   }
   Number(F.Entry);
+  Number(F.FunctionTemporaries.size());
+  for (const auto &Range : F.FunctionTemporaries) {
+    Number(Range.Offset);
+    Number(Range.Bytes);
+  }
   Number(F.ModuleAnalysisRoots.size());
   for (va_t Root : F.ModuleAnalysisRoots)
     Number(Root);
@@ -358,10 +365,17 @@ class Checker {
   int NextNativeBlock = 0;
   const LowIRIndependenceContract &Contract;
   const LowIRIndependenceLimits &Limits;
+  // The existing cache bounds key construction and retained complete domains
+  // in words, using the same capacity convention as recovery.
+  detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes};
   LowIRIndependenceResult OwnedResult;
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  // One completed model-free query in this immutable DAG and fixed solver
+  // configuration. No model, incomplete answer or cross-context fact escapes.
+  SymRef LastCompletedQuery;
+  solver::SatResult LastCompletedAnswer = solver::SatResult::Invalid;
   RefinementSession *Refinement = nullptr;
   bool CandidateExecution = false;
   SpecializationProvider *ReadProvider = nullptr;
@@ -387,6 +401,7 @@ class Checker {
     va_t NativeAddress = 0;
     SymRef LeftSystemFlags, RightSystemFlags;
     bool SkipCutpoint = false;
+    std::set<uint64_t> DefinedFunctionTemporaries;
   };
   std::deque<Path> Pending;
 
@@ -450,6 +465,8 @@ class Checker {
 
   solver::SatResult query(SymRef Predicate) {
     nodes();
+    if (Predicate && Predicate == LastCompletedQuery)
+      return LastCompletedAnswer;
     if (Result.SolverQueries >= Limits.MaxSolverQueries)
       fail(Status::BudgetExceeded, "solver-query budget exhausted");
     ++Result.SolverQueries;
@@ -459,6 +476,8 @@ class Checker {
       fail(Status::BudgetExceeded, "relational solver budget exhausted");
     if (Answer == solver::SatResult::Invalid)
       fail(Status::Invalid, "invalid relational solver query");
+    LastCompletedQuery = Predicate;
+    LastCompletedAnswer = Answer;
     return Answer;
   }
 
@@ -517,7 +536,8 @@ class Checker {
     uint64_t Queries = Result.SolverQueries;
     const auto Offset = detail::proveFrameOffset(
         Ctx, Predicate, Value, EntryRoot, Limits.Solver,
-        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
+        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries,
+        &FrameProofs);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Offset.Status == detail::FrameOffsetStatus::Invalid)
       fail(Status::Invalid, "invalid frame-offset proof");
@@ -542,10 +562,13 @@ class Checker {
       fail(Status::Invalid, "input temporary overlaps proof memory scratch");
   }
 
-  void define(const NdVar &V, std::set<uint64_t> &Defined) {
+  void define(const NdVar &V, std::set<uint64_t> &Defined, Path *P = nullptr) {
     if (V.isTemp())
-      for (uint16_t I = 0; I != V.Size; ++I)
+      for (uint16_t I = 0; I != V.Size; ++I) {
         Defined.insert(V.Offset + I);
+        if (P && Function && Function->isFunctionTemporaryByte(V.Offset + I))
+          P->DefinedFunctionTemporaries.insert(V.Offset + I);
+      }
   }
 
   bool flagIntrinsic(Path &P, const LowOp &Original,
@@ -691,7 +714,7 @@ class Checker {
     };
     Apply(P.Left, U, LeftWhen);
     Apply(P.Right, V, RightWhen);
-    define(Effect.Output, Defined);
+    define(Effect.Output, Defined, &P);
     nodes();
   }
 
@@ -969,14 +992,20 @@ class Checker {
               Op.Opcode == NdOp::COND_BR) {
             if (!Op.NumInputs || !Op.Inputs[0].isConst())
               fail(Status::Invalid, "direct control target is not constant");
-            Successors.push_back(Op.Inputs[0].Offset);
+            if (Op.Opcode != NdOp::COND_BR ||
+                !Contract.DeferNativeConditionalEdges)
+              Successors.push_back(Op.Inputs[0].Offset);
           }
           // A physical call only transfers to its callee. Its fallthrough is
           // the pushed return value, not a control edge: a callee may modify
           // or discard that slot. scheduleNative collects every actual RET
           // destination after complete target enumeration, under the same
           // evidence and resource checks as any other reached instruction.
-          if (Op.Opcode == NdOp::COND_BR)
+          // The opt-in finite mode collects both conditional arms through
+          // scheduleNative only after paired control equality and feasibility.
+          // No bytes, boundary or semantics are asserted for a skipped arm.
+          if (Op.Opcode == NdOp::COND_BR &&
+              !Contract.DeferNativeConditionalEdges)
             Successors.push_back(Insn.Fallthrough.Address);
         }
       }
@@ -1204,7 +1233,9 @@ class Checker {
       NativeBlock = prepareNative(P, NativeEffects);
     const auto &B = NativeBlock ? *NativeBlock : *Blocks.at(P.BlockId);
     Result.BlockId = B.Id;
-    P.Ancestors.insert(B.Id);
+    // Only static independence uses ancestry to reject a reachable cycle.
+    if (!Provider && !Refinement)
+      P.Ancestors.insert(B.Id);
     if (!B.ExceptionalSuccs.empty() || !B.ExceptionalPreds.empty())
       fail(Status::Unsupported, "exceptional control flow is unsupported");
     SymExec Left(Ctx, P.Left), Right(Ctx, P.Right);
@@ -1242,7 +1273,10 @@ class Checker {
         fail(Status::Unsupported,
              "unsupported architectural undefined effects: " +
                  Description.Diagnostic);
-      std::set<uint64_t> Defined;
+      // Function-local storage starts unbound. Only bytes actually defined on
+      // this path survive an instruction boundary; native lifter temporaries
+      // retain their original instruction-local lifetime.
+      std::set<uint64_t> Defined = P.DefinedFunctionTemporaries;
       std::multimap<uint64_t, const LowUndefinedEffect *> Events;
       for (const auto &Effect : Description.Effects)
         Events.emplace(Effect.AfterOp, &Effect);
@@ -1268,7 +1302,7 @@ class Checker {
           fail(Status::Unsupported,
                "ordered or nondefault memory is unsupported");
         if (flagIntrinsic(P, Original, Description, Defined)) {
-          define(Original.Output, Defined);
+          define(Original.Output, Defined, &P);
           Apply(I + 1);
           nodes();
           continue;
@@ -1355,7 +1389,7 @@ class Checker {
             Right.opaqueOperationCount() != RO || Left.callHavocCount() ||
             Right.callHavocCount())
           fail(Status::Unsupported, "symbolic execution lost exact semantics");
-        define(Original.Output, Defined);
+        define(Original.Output, Defined, &P);
         Apply(I + 1);
         nodes();
         if (LF == StepResult::Continue)
@@ -1471,6 +1505,9 @@ class Checker {
     if (Contract.AllowOverlappingNativeInstructions && !FiniteNative)
       fail(Status::Unsupported,
            "overlapping instructions require the finite native proof API");
+    if (Contract.DeferNativeConditionalEdges && !FiniteNative)
+      fail(Status::Unsupported,
+           "deferred conditional edges require the finite native proof API");
     if (Contract.X64FlagsProfile) {
       if (!Provider && !CandidateExecution)
         fail(Status::Unsupported, "flags profiles require the native API");
@@ -1498,6 +1535,7 @@ class Checker {
     uint64_t InputEdges = 0;
     if ((Function &&
          (Function->Blocks.size() > Limits.MaxBlockVisits ||
+          Function->FunctionTemporaries.size() > Limits.MaxInstructions ||
           Function->ModuleAnalysisRoots.size() > Limits.MaxBlockVisits ||
           Function->OrdinaryModuleAnalysisRoots.size() >
               Limits.MaxBlockVisits)) ||
@@ -1555,6 +1593,13 @@ class Checker {
       if (auto Error = validateLowInstructionBoundaries(
               *Function, LowInstructionBoundaryRequirement::Required))
         fail(Status::Invalid, llvm::toString(std::move(Error)));
+      for (const auto &Range : Function->FunctionTemporaries)
+        checkScratch(NdVar::tmp(Range.Offset, Range.Bytes));
+      // Cutpoint states currently bind registers and frame bytes only. A
+      // lifetime declaration cannot supply an unproved inductive value.
+      if (inductive() && !Function->FunctionTemporaries.empty())
+        fail(Status::Unsupported,
+             "function temporaries require finite execution, not loop cuts");
       for (va_t Root : Function->ModuleAnalysisRoots)
         if (Root != Function->Entry)
           fail(Status::Unsupported,
@@ -2616,6 +2661,12 @@ LowIRRefinementResult runRefinement(
     Session.Statistics.Status = Status::Unsupported;
     Session.Statistics.Diagnostic =
         "overlapping instructions require the finite native proof API";
+    return Finish(false);
+  }
+  if (Contract.DeferNativeConditionalEdges && !Session.NativeFinite) {
+    Session.Statistics.Status = Status::Unsupported;
+    Session.Statistics.Diagnostic =
+        "deferred conditional edges require the finite native proof API";
     return Finish(false);
   }
   if (Witness != LowIRRefinementWitness::LiftedBits &&
@@ -4461,6 +4512,9 @@ public:
       if (Contract.AllowOverlappingNativeInstructions)
         stop(Status::Unsupported,
              "overlapping instructions are unsupported by loop inference");
+      if (Contract.DeferNativeConditionalEdges)
+        stop(Status::Unsupported,
+             "deferred conditional edges are unsupported by loop inference");
       if (!prepareCandidateRecords(Session, Records) ||
           !checker().validateInput())
         throw Stop{};

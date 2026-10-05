@@ -315,6 +315,13 @@ u64 dynamic_unknown(void) {
   length_fn function = (length_fn)dlsym(h, "unmodeled_fixture_export");
   return function("input");
 }
+u64 dynamic_dispatch(const char *name, u64 after_close) {
+  void *h = dlopen("libfixture.so", 2);
+  length_fn function = (length_fn)dlsym(h, name);
+  if (after_close)
+    dlclose(h);
+  return function((const char *)1);
+}
 u64 dynamic_closed(void) {
   void *h = dlopen("libfixture.so", 2);
   length_fn function = (length_fn)dlsym(h, "strlen");

@@ -92,6 +92,14 @@ checked x64 は KVM、WHP、Unicorn で `SHLD/SHRD` の16/32/64ビット宛先�
 
 `X64LoopInstructions.def` はプロセッサ実行経路で `LOOP/LOOPE/LOOPNE` を許可します。アドレスサイズは RCX またはゼロ拡張される ECX を選び、FLAGS は変わりません。分岐先の幅は CPU モデルに従い、長モードの Intel は `66H` を無視し、AMD は 16 ビットへの変更を保持します。REX.W が優先します。ネイティブ KVM/WHP はホスト CPU、Unicorn は既定の Intel Haswell モデルを使います。共有の許可規則は、デコーダが省略した場合も LOCK と REP を副作用の前に拒否します。
 
+`X64BranchModel` は相対 `JMP/Jcc` のデコードを実行と一致させます。ネイティブ KVM/WHP は時間制限付きの初期化で、不成立の `66H` 分岐と REX.W の優先順位を測定します。チェック付き Unicorn は Intel モデルを使います。不変の結果を命令オブザーバーと Windows ドライバーポリシーの双方に適用します。ロングモードの Intel は近分岐の rel32 と完全な宛先幅を保ち、AMD は 16 ビットの上書きを反映します。命令バイトが不足すれば、オブザーバーや CPU の実行前に失敗します。
+
+`X64StackInstructions.def` は KVM、WHP、チェック付き Unicorn（`driver-strict` を含む）で、汎用レジスターと通常 RAM を使う 16/64 ビットの `PUSH/POP`、および即値 PUSH を許可します。PUSH は RSP を減らす前にソースを読み、POP は RSP を増やした後で RSP/ESP ベースの宛先を計算します。アドレス幅の切り詰めは明示オペランドだけに適用します。全範囲の権限検査、順序付き観察、単一 RAM トランザクションにより、障害・取消・コールバックエラーで CPU とメモリーが部分更新されることを防ぎます。LOCK とデバイスオペランドは未対応です。
+
+KVM、WHP、checked Unicorn は 16/64 ビットの `LEAVE` も受け入れます。`67H` があっても RBP 全体で保存済みフレームを読み、16 ビット形式では RBP の対象外ビットを保持します。フォールトや読み出し取消時は元の RSP と CPU コンテキストを保持します。LOCK、REP、デバイス上のフレームは未対応です。
+
+KVM、WHP、checked Unicorn は 16/64 ビットの `ENTER` を扱います。割り当て量は符号なし 16 ビット、ネスト値は 32 を法として解釈し、完全な RSP/RBP と有効なプレフィックス順序を使います。ゲストフォルトでは完了済みのスタック書き込みを保持し、RSP、RBP、PC は入口値のままです。最終スタック検査はオペランド幅全体の書き込み権限を調べ、データは書き込みません。LOCK、REP、APX プレフィックスとデバイスフレームは未対応です。
+
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
 `X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。

@@ -25,6 +25,8 @@ NEVERD_EXECUTION_DIAGNOSTIC(Register,
 NEVERD_EXECUTION_DIAGNOSTIC(FPState, "invalid x64 floating-point state buffer")
 NEVERD_EXECUTION_DIAGNOSTIC(Decode,
                             "cannot initialize guest instruction decoder")
+NEVERD_EXECUTION_DIAGNOSTIC(BranchModel,
+                            "unknown x64 relative-branch decoding model")
 NEVERD_EXECUTION_DIAGNOSTIC(
     Instruction, "instruction is outside the checked execution contract")
 NEVERD_EXECUTION_DIAGNOSTIC(Callback, "exception in execution observer")

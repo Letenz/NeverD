@@ -92,6 +92,14 @@ checked x64는 KVM, WHP, Unicorn에서 16/32/64비트 대상과 imm8/CL 횟수�
 
 `X64LoopInstructions.def`는 프로세서 실행 경로에서 `LOOP/LOOPE/LOOPNE`를 허용합니다. 주소 크기는 RCX 또는 0으로 확장되는 ECX를 선택하며 FLAGS는 유지됩니다. 대상 너비는 CPU 모델을 따릅니다. 긴 모드의 Intel은 `66H`를 무시하고 AMD는 16비트 재정의를 유지하며 REX.W가 우선합니다. 네이티브 KVM/WHP는 호스트 CPU를, Unicorn은 기본 Intel Haswell 모델을 사용합니다. 공유 허용 규칙은 디코더가 생략한 경우에도 LOCK과 REP를 부작용 전에 거부합니다.
 
+`X64BranchModel`은 상대 `JMP/Jcc` 디코딩을 실행과 일치시킵니다. 네이티브 KVM/WHP는 시간 제한이 있는 초기화에서 실행되지 않는 `66H` 분기와 REX.W 우선순위를 측정합니다. 검사 모드 Unicorn은 Intel 모델을 사용합니다. 불변 결과는 명령 관찰자와 Windows 드라이버 정책의 디코더를 함께 선택합니다. 긴 모드에서 Intel은 근거리 분기의 rel32와 전체 대상 폭을 유지하고 AMD는 16비트 재정의를 따릅니다. 명령 바이트가 불완전하면 관찰자나 CPU 진입 전에 실패합니다.
+
+`X64StackInstructions.def`는 KVM, WHP, 검사 모드 Unicorn(`driver-strict` 포함)에서 범용 레지스터와 일반 RAM을 사용하는 16/64비트 `PUSH/POP` 및 즉시 값 PUSH을 허용합니다. PUSH는 RSP 감소 전에 소스를 읽고 POP은 RSP 증가 후 RSP/ESP 기반 목적지를 계산합니다. 주소 폭 잘림은 명시적 피연산자에만 적용됩니다. 전체 범위 권한 검사, 순서 있는 관찰 및 단일 RAM 트랜잭션은 오류, 취소, 콜백 실패 시 CPU와 메모리의 부분 갱신을 막습니다. LOCK 및 장치 피연산자는 지원하지 않습니다.
+
+KVM, WHP, checked Unicorn은 16/64비트 `LEAVE`도 지원합니다. `67H`가 있어도 RBP 전체로 저장된 프레임을 읽고, 16비트 형식에서는 선택되지 않은 RBP 비트를 유지합니다. 폴트나 읽기 취소 시 원래 RSP와 CPU 컨텍스트를 유지합니다. LOCK, REP, 장치 프레임은 지원하지 않습니다.
+
+KVM, WHP 및 checked Unicorn은 16/64비트 `ENTER`를 지원합니다. 할당량은 부호 없는 16비트로, 중첩 수준은 32로 나눈 나머지로 해석하며 전체 RSP/RBP와 유효한 접두사 순서를 사용합니다. 게스트 오류 시 완료된 스택 저장은 유지되고 RSP, RBP, PC는 진입 값을 유지합니다. 마지막 스택 검사는 피연산자 폭 전체의 쓰기 권한만 확인하며 데이터를 저장하지 않습니다. LOCK, REP, APX 접두사와 장치 프레임은 지원하지 않습니다.
+
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
 `X64PackedShiftInstructions.def`는 legacy SSE2 패킹 시프트 열 종류를 허용합니다. 요소 시프트의 횟수는 imm8 또는 XMM/정렬된 m128이며 바이트 시프트는 imm8만 허용합니다. 가변 횟수는 부호 없는 하위 64비트를 사용하고 스칼라 횟수 마스킹을 하지 않으며 상위 64비트는 무시합니다. 횟수가 0이거나 범위를 넘어도 메모리 피연산자는 16바이트 전체를 읽어야 합니다. FLAGS와 MXCSR은 유지되며 MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.

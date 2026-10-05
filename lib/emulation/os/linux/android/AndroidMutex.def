@@ -27,6 +27,33 @@ NEVERD_ANDROID_MUTEX_VALUE(Unlocked, 0)
 NEVERD_ANDROID_MUTEX_VALUE(Locked, 1)
 NEVERD_ANDROID_MUTEX_VALUE(Contended, 2)
 NEVERD_ANDROID_MUTEX_VALUE(Destroyed, 0xffff)
+NEVERD_ANDROID_MUTEX_VALUE(FutexBytes, 4)
 #endif
 
-NEVERD_ANDROID_MUTEX_VALUE(FutexBytes, 4)
+#ifdef NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL
+NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL(MutexAttrGetType,
+                                    "pthread_mutexattr_gettype", AttributeType,
+                                    0, ErrorChecking, false)
+NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL(MutexAttrSetType,
+                                    "pthread_mutexattr_settype", AttributeType,
+                                    0, ErrorChecking, true)
+NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL(MutexAttrGetPShared,
+                                    "pthread_mutexattr_getpshared",
+                                    AttributeShared, 4, 1, false)
+NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL(MutexAttrSetPShared,
+                                    "pthread_mutexattr_setpshared",
+                                    AttributeShared, 4, 1, true)
+NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL(MutexAttrGetProtocol,
+                                    "pthread_mutexattr_getprotocol",
+                                    AttributeProtocol, 5, 1, false)
+NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL(MutexAttrSetProtocol,
+                                    "pthread_mutexattr_setprotocol",
+                                    AttributeProtocol, 5, 1, true)
+#endif
+
+#ifdef NEVERD_ANDROID_MUTEX_CALL
+NEVERD_ANDROID_MUTEX_CALL(MutexDestroy, "pthread_mutex_destroy", destroy)
+NEVERD_ANDROID_MUTEX_CALL(MutexLock, "pthread_mutex_lock", lock)
+NEVERD_ANDROID_MUTEX_CALL(MutexTryLock, "pthread_mutex_trylock", tryLock)
+NEVERD_ANDROID_MUTEX_CALL(MutexUnlock, "pthread_mutex_unlock", unlock)
+#endif

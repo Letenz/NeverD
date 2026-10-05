@@ -25,6 +25,8 @@ public:
   // Private startup execution discovers and verifies this mask before return.
   uint32_t MXCSRMask = x64::fp::ArchitecturalMXCSRMask;
   uint32_t mxcsrMask() const override { return MXCSRMask; }
+  X64BranchModel BranchModel = X64BranchModel::Intel;
+  X64BranchModel branchModel() const override { return BranchModel; }
   explicit WhpMachine(MemoryProjection &Memory)
       : Binding([&Memory] { return createWhpX64Partition(Memory); }) {}
   llvm::Error step(X64MachineState &State, uint64_t Root,
@@ -130,7 +132,8 @@ createWhpX64Partition(MemoryProjection &Memory) {
 llvm::Expected<std::unique_ptr<X64Machine>>
 createWhpMachine(MemoryProjection &Memory) {
   auto M = std::make_unique<WhpMachine>(Memory);
-  if (auto E = verifyX64Machine(*M, Memory, &M->MXCSRMask, true))
+  if (auto E =
+          verifyX64Machine(*M, Memory, &M->MXCSRMask, true, &M->BranchModel))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }

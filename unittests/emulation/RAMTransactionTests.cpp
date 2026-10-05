@@ -348,6 +348,88 @@ TEST(RAMFaultDelivery, OSSeesRestoredRAMAndArchitecturalExceptionStatus) {
   EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, WordBytes)), BeforeWord);
 }
 
+TEST(RAMFrameEntry, TransportFailureCancellationAndExceptionsRollback) {
+  for (unsigned Outcome = 0; Outcome != 3; ++Outcome) {
+    InjectedEffects Effects;
+    auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+    Effects.Memory = Memory.get();
+    auto CPU = llvm::cantFail(CheckedX64Backend::create(
+        std::move(Memory), std::make_unique<WritingX64Machine>(Effects)));
+    llvm::cantFail(CPU->map(Code, memory::PageSize, Read | Write | Execute));
+    llvm::cantFail(CPU->map(Data, memory::PageSize, Read | Write));
+    llvm::cantFail(CPU->write(Code, EnterX64));
+    llvm::cantFail(CPU->writeInteger(Data, BeforeWord, WordBytes));
+    llvm::cantFail(CPU->setReg(X64Register::AX, InitialAccumulator));
+    llvm::cantFail(CPU->setReg(X64Register::SP, Data + WordBytes));
+    llvm::cantFail(CPU->setReg(X64Register::BP, Data + PairBytes));
+    Effects.Finish = [&]() -> llvm::Error {
+      if (!Outcome)
+        return diagnostic::error(diagnostic::KvmRun);
+      if (Outcome == 1) {
+        CPU->stop();
+        return llvm::Error::success();
+      }
+      throw std::runtime_error(diagnostic::KvmRun);
+    };
+    const auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+    EXPECT_EQ(Exit.Kind, Outcome == 1 ? ExecutionExitKind::Stopped
+                                      : ExecutionExitKind::BackendFailure);
+    EXPECT_EQ(Effects.Entries, 1u);
+    std::array<uint8_t, WordBytes> Bytes{};
+    llvm::cantFail(CPU->snapshotBacking(Data, Bytes));
+    for (auto Byte : Bytes)
+      EXPECT_EQ(Byte, BeforeByte);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::AX)), InitialAccumulator);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::BP)), Data + PairBytes);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::SP)), Data + WordBytes);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code);
+  }
+}
+
+class FaultingEnterMachine final : public X64Machine {
+public:
+  explicit FaultingEnterMachine(InjectedEffects &Effects) : Effects(Effects) {}
+  llvm::Error step(X64MachineState &, uint64_t, MachineRunControl) override {
+    Effects.write();
+    return llvm::make_error<X64ExceptionError>(X64Exception{
+        unsigned(x64::ExceptionVector::PageFault), std::nullopt, Data});
+  }
+
+private:
+  InjectedEffects &Effects;
+};
+TEST(RAMFrameEntry, ProcessorFaultPreservesItsCompletedRAMBeforeOSDelivery) {
+  InjectedEffects Effects;
+  auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+  Effects.Memory = Memory.get();
+  auto CPU = llvm::cantFail(CheckedX64Backend::create(
+      std::move(Memory), std::make_unique<FaultingEnterMachine>(Effects)));
+  llvm::cantFail(CPU->map(Code, memory::PageSize, Read | Write | Execute));
+  llvm::cantFail(CPU->map(Data, memory::PageSize, Read | Write));
+  llvm::cantFail(CPU->write(Code, EnterX64));
+  llvm::cantFail(CPU->writeInteger(Data, BeforeWord, WordBytes));
+  llvm::cantFail(CPU->setReg(X64Register::SP, Data + WordBytes));
+  llvm::cantFail(CPU->setReg(X64Register::BP, Data + PairBytes));
+  unsigned Delivered = 0;
+  BackendHooks H;
+  H.RecoverableFault = [&](const BackendFault &F) {
+    ++Delivered;
+    EXPECT_EQ(F.Interrupt, unsigned(x64::ExceptionVector::PageFault));
+    EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, WordBytes)), AfterWord);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::BP)), Data + PairBytes);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::SP)), Data + WordBytes);
+    EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code);
+    return true;
+  };
+  llvm::cantFail(CPU->installHooks(std::move(H)));
+  const auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  EXPECT_EQ(Exit.Kind, ExecutionExitKind::RecoverableFault);
+  EXPECT_EQ(Effects.Entries, 1u);
+  EXPECT_EQ(Delivered, 1u);
+  ASSERT_TRUE(CPU->takeRecoverableFault());
+  EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, WordBytes)), AfterWord);
+}
+
 INSTANTIATE_TEST_SUITE_P(Architectures, RAMMachineFailure,
                          testing::Values(GuestArchitecture::X64,
                                          GuestArchitecture::AArch64));

@@ -232,7 +232,8 @@ bool stmtHasCoveredCall(const HighStmt &Stmt, const AddressSet &Range) {
   return Found;
 }
 
-bool armHasCoveredCall(const std::vector<HighStmt> &Arm, const AddressSet &Range) {
+bool armHasCoveredCall(const std::vector<HighStmt> &Arm,
+                       const AddressSet &Range) {
   for (const HighStmt &S : Arm)
     if (stmtHasCoveredCall(S, Range))
       return true;
@@ -337,8 +338,7 @@ bool extractAddressSlice(std::vector<HighStmt> &Statements,
       SeenParts |= Parts;
       AfterCall = true;
     }
-    if (FirstCall && LastCall && !Hole &&
-        (SeenParts & (SeenParts - 1)) != 0 &&
+    if (FirstCall && LastCall && !Hole && (SeenParts & (SeenParts - 1)) != 0 &&
         (*FirstCall != *LastCall ||
          isCoverDiamondIfElse(Statements[*FirstCall], Range))) {
       bool SpanOk = true;
@@ -363,13 +363,20 @@ bool extractAddressSlice(std::vector<HighStmt> &Statements,
 
   // `structureIfElse` often nests a cleanup IP range inside `if` / `else`.
   // A crossing parent is not unstructured; the contiguous slice is inner.
+  // A try the range holds is never such a parent: placing the range in its
+  // body would nest the two the wrong way round, so an exception would
+  // reach their handlers in the wrong order.
   for (HighStmt &Stmt : Statements) {
     auto Recurse = [&](std::vector<HighStmt> &Child) {
       return !Child.empty() &&
              extractAddressSlice(Child, Range, FunctionRange, Body, InsertAt,
                                  /*IncludeFunctionEdgeUnknown=*/false, Host);
     };
-    if (Recurse(Stmt.Body) || Recurse(Stmt.ElseBody) ||
+    const bool HeldTry =
+        (Stmt.Kind == StmtKind::SEHTry || Stmt.Kind == StmtKind::CxxTry ||
+         Stmt.Kind == StmtKind::ItaniumTry) &&
+        Stmt.EHRange.isValid() && Range.contains(Stmt.EHRange);
+    if ((!HeldTry && Recurse(Stmt.Body)) || Recurse(Stmt.ElseBody) ||
         Recurse(Stmt.DefaultBody))
       return true;
     for (SwitchCase &Case : Stmt.Cases)
@@ -406,8 +413,7 @@ struct RegionCandidate {
 bool cxxStateOnUnwindChain(const CxxExceptionInfo &Cxx, int32_t Current,
                            int32_t Target) {
   unsigned Guard = 0;
-  const unsigned Limit =
-      static_cast<unsigned>(Cxx.UnwindMap.size()) + 1;
+  const unsigned Limit = static_cast<unsigned>(Cxx.UnwindMap.size()) + 1;
   while (Current >= 0 && Guard++ < Limit) {
     if (static_cast<size_t>(Current) >= Cxx.UnwindMap.size())
       return false;
@@ -488,8 +494,7 @@ void addSEHCandidates(const ExceptionFunction &EH, Arch TargetArch,
   for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
     const std::optional<ExceptionAddressRange> SemanticRange =
         getSemanticSEHGuardedRange(Scope, TargetArch, EH);
-    if (Scope.ParseStatus != ExceptionParseStatus::Complete ||
-        !SemanticRange) {
+    if (Scope.ParseStatus != ExceptionParseStatus::Complete || !SemanticRange) {
       ++Rejected;
       continue;
     }
@@ -569,10 +574,9 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
       ++Rejected;
       continue;
     }
-    std::sort(Iv.begin(), Iv.end(),
-              [](const Interval &A, const Interval &B) {
-                return A.Begin < B.Begin;
-              });
+    std::sort(Iv.begin(), Iv.end(), [](const Interval &A, const Interval &B) {
+      return A.Begin < B.Begin;
+    });
     ExceptionAddressRange Range{Iv.front().Begin, Iv.front().End};
     bool Contiguous = true;
     for (size_t K = 1; K < Iv.size(); ++K) {
@@ -610,8 +614,8 @@ void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
     return;
   const CxxExceptionInfo &Cxx = *EH.Cxx;
   for (const CxxTryBlock &Try : Cxx.TryBlocks) {
-    const ExceptionAddressRange Range =
-        primaryCxxTryRange(codeRangesForStates(EH, Cxx, Try.TryLow, Try.TryHigh));
+    const ExceptionAddressRange Range = primaryCxxTryRange(
+        codeRangesForStates(EH, Cxx, Try.TryLow, Try.TryHigh));
     if (!Range.isValid()) {
       ++Rejected;
       continue;
@@ -739,8 +743,7 @@ void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
     Clause.UnwindActionKind = Action.Kind;
     Clause.UnwindObjectOffset = Action.ObjectOffset;
 
-    const auto Key =
-        std::make_pair(Ranges.front().Begin, Ranges.front().End);
+    const auto Key = std::make_pair(Ranges.front().Begin, Ranges.front().End);
     if (const auto It = ByRange.find(Key); It != ByRange.end()) {
       Candidates[It->second].Clauses.push_back(std::move(Clause));
       Candidates[It->second].TryHigh = State;
@@ -1177,10 +1180,17 @@ std::optional<va_t> windowsClauseBodyTarget(const HighEHClause &Clause) {
   return std::nullopt;
 }
 
+/// The native block at \p Target when it can leave the function body: one
+/// block that only the exception dispatcher enters.  It may not overlap a
+/// guarded range, except that with \p TryRange (the Windows SEH try the block
+/// becomes a clause body of) every SEH range must hold both the block and the
+/// try, or neither: a clause body is guarded by the trys around its statement,
+/// so the block keeps exactly the protection it had.
 std::optional<ExceptionAddressRange>
 uniqueHandlerBlockRange(const MedFunc &Med, const ExceptionFunction &EH,
                         va_t Target,
-                        const std::vector<RegionCandidate> &ProtectedRegions) {
+                        const std::vector<RegionCandidate> &ProtectedRegions,
+                        const ExceptionAddressRange *TryRange = nullptr) {
   if (Target == 0 || Target == InvalidVA)
     return std::nullopt;
 
@@ -1201,11 +1211,17 @@ uniqueHandlerBlockRange(const MedFunc &Med, const ExceptionFunction &EH,
   ExceptionAddressRange Range{Match->StartAddr, Match->EndAddr};
   if (!Range.isValid() || !EH.ownsCode(Range))
     return std::nullopt;
-  if (std::any_of(ProtectedRegions.begin(), ProtectedRegions.end(),
-                  [&](const RegionCandidate &Candidate) {
-                    return Range.overlaps(Candidate.Range);
-                  }))
-    return std::nullopt;
+  for (const RegionCandidate &Candidate : ProtectedRegions) {
+    const bool SameGuard = TryRange && Candidate.Kind == StmtKind::SEHTry &&
+                           Candidate.Cover.empty();
+    // The try's own range and its split parts hold its body, never a clause.
+    const bool AroundTry = SameGuard && Candidate.Range.contains(*TryRange) &&
+                           (Candidate.Range.Begin != TryRange->Begin ||
+                            Candidate.Range.End != TryRange->End);
+    if (AroundTry ? !Candidate.Range.contains(Range)
+                  : Range.overlaps(Candidate.Range))
+      return std::nullopt;
+  }
   return Range;
 }
 
@@ -1227,9 +1243,9 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     addItaniumCandidates(EH, Candidates, Rejected);
   } else {
     Rejected += EH.SEH ? static_cast<unsigned>(EH.SEH->Scopes.size()) : 0;
-    Rejected +=
-        EH.Registration ? static_cast<unsigned>(EH.Registration->Scopes.size())
-                        : 0;
+    Rejected += EH.Registration
+                    ? static_cast<unsigned>(EH.Registration->Scopes.size())
+                    : 0;
     Rejected += EH.Cxx ? static_cast<unsigned>(EH.Cxx->TryBlocks.size()) : 0;
     Rejected +=
         EH.Itanium ? static_cast<unsigned>(EH.Itanium->CallSites.size()) : 0;
@@ -1247,8 +1263,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
                                             A.Range.Begin, A.Range.End,
                                             A.Kind) <
                             std::make_tuple(B.Range.size(), Span(B),
-                                            B.Range.Begin, B.Range.End,
-                                            B.Kind);
+                                            B.Range.Begin, B.Range.End, B.Kind);
                    });
 
   // Several native try-map records may share one code interval (for example,
@@ -1451,7 +1466,9 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
       if (!Target || WindowsTargetUses[*Target] - JoinedParts != 1)
         continue;
       std::optional<ExceptionAddressRange> HandlerRange =
-          uniqueHandlerBlockRange(Med, EH, *Target, Candidates);
+          uniqueHandlerBlockRange(
+              Med, EH, *Target, Candidates,
+              Candidate.Kind == StmtKind::SEHTry ? &Candidate.Range : nullptr);
       if (!HandlerRange)
         continue;
       size_t HandlerAt = 0;

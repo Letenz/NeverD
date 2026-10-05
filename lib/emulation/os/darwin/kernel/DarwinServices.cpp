@@ -24,15 +24,20 @@ std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
       return std::nullopt;
     Number -= BSDClass;
   }
-#define NEVERD_DARWIN_SERVICE(Name, Code, ReturnType)                          \
-  if (Number == Code)                                                          \
-    return ServiceKind::Name;
-#define NEVERD_DARWIN_SERVICE_ALIAS(Name, Code)                                \
-  if (Number == Code)                                                          \
-    return ServiceKind::Name;
+  struct Binding {
+    uint64_t Number;
+    ServiceKind Kind;
+  };
+  static constexpr Binding Bindings[] = {
+#define NEVERD_DARWIN_SERVICE(Name, Code, ReturnType) {Code, ServiceKind::Name},
+#define NEVERD_DARWIN_SERVICE_ALIAS(Name, Code) {Code, ServiceKind::Name},
 #include "../DarwinValues.def"
 #undef NEVERD_DARWIN_SERVICE_ALIAS
 #undef NEVERD_DARWIN_SERVICE
+  };
+  for (const auto &Entry : Bindings)
+    if (Entry.Number == Number)
+      return Entry.Kind;
   return std::nullopt;
 }
 llvm::Expected<std::optional<ServiceResult>>

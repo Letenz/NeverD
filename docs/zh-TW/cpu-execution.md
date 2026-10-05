@@ -92,6 +92,14 @@ checked x64 透過 KVM、WHP 和 Unicorn 執行 `SHLD/SHRD`，支援 16/32/64 �
 
 `X64LoopInstructions.def` 透過處理器傳輸執行 `LOOP/LOOPE/LOOPNE`。位址寬度選擇 RCX 或零擴充的 ECX，FLAGS 保持不變。目標寬度遵循 CPU 模型：Intel 在長模式忽略 `66H`，AMD 保留其 16 位元覆寫，REX.W 優先。原生 KVM/WHP 使用主機處理器，Unicorn 使用預設 Intel Haswell 模型。共用准入規則在產生效果前拒絕 LOCK 和 REP，包括解碼中繼資料省略的前綴。
 
+`X64BranchModel` 讓相對 `JMP/Jcc` 的解碼與執行一致。原生 KVM/WHP 在有時間上限的初始化中，透過不跳躍的 `66H` 分支和 REX.W 優先序探針確定規則；Unicorn 檢查模式使用其 Intel 模型。不可變結果同時決定指令觀察器和 Windows 驅動策略的解碼模式。Intel 在長模式下保留 rel32 近分支和完整目標寬度；AMD 遵守其 16 位元覆寫規則。指令位元組不完整時，在觀察器或 CPU 執行前失敗。
+
+`X64StackInstructions.def` 在 KVM、WHP 和 checked Unicorn（含 `driver-strict`）中支援通用暫存器、一般 RAM 的 16/64 位元 `PUSH/POP` 及立即值 PUSH。PUSH 先讀取來源，再減少 RSP；POP 先增加 RSP，再計算使用 RSP/ESP 的目的位址。位址寬度截斷只適用於顯式運算元。完整範圍權限檢查、有序觀察回呼和單次 RAM 交易確保故障、取消或回呼錯誤時不會部分更新 CPU 與記憶體。LOCK 和裝置運算元仍不支援。
+
+KVM、WHP 與 checked Unicorn 也支援 16/64 位元 `LEAVE`。它始終透過完整 RBP 讀取儲存的堆疊框架，包括帶 `67H` 的情況；16 位元形式保留 RBP 未選取的位元。發生錯誤或取消讀取時保留原始 RSP 與 CPU 上下文。LOCK、REP 與裝置堆疊框架仍不支援。
+
+KVM、WHP 與 checked Unicorn 支援 16/64 位元 `ENTER`，配置量按無號 16 位元解讀，巢狀層級取模 32。存取使用完整 RSP/RBP，並遵循有效前綴順序。客體故障會保留已完成的堆疊寫入，RSP、RBP 與 PC 則維持入口值。最終堆疊檢查涵蓋整個運算元寬度的寫入權限，但不寫入資料。LOCK、REP、APX 前綴及裝置堆疊框架仍不支援。
+
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。

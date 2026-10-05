@@ -59,7 +59,8 @@ size_t findEdgeCopy(const std::string &Source, const std::string &Destination,
     const auto NameStart = Source.find_last_of(" \n", At - 1);
     if (NameStart == std::string::npos)
       continue;
-    const std::string Temporary = Source.substr(NameStart + 1, At - NameStart - 1);
+    const std::string Temporary =
+        Source.substr(NameStart + 1, At - NameStart - 1);
     const auto Copy = Source.find(Destination + " = " + Temporary + ";", At);
     const auto BlockEnd = Source.find('}', At);
     if (Copy != std::string::npos && Copy < BlockEnd)
@@ -994,8 +995,8 @@ TEST(COFFExceptionIR, LLVMCAllocaLoadStoreUsesNamedLocalsAndAddressOf) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-alloca", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
-  llvm::FunctionType *Type = llvm::FunctionType::get(
-      llvm::PointerType::getUnqual(Context), false);
+  llvm::FunctionType *Type =
+      llvm::FunctionType::get(llvm::PointerType::getUnqual(Context), false);
   llvm::Function *Function = llvm::Function::Create(
       Type, llvm::GlobalValue::ExternalLinkage, "slot_addr", Module);
   llvm::IRBuilder<> Builder(
@@ -1027,7 +1028,8 @@ TEST(COFFExceptionIR, LLVMCCatchSwitchRendersExceptSyntax) {
       VoidType, llvm::GlobalValue::ExternalLinkage, "seh_try_fn", Module);
   Function->setPersonalityFn(Personality);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Dispatch =
       llvm::BasicBlock::Create(Context, "dispatch", Function);
   llvm::BasicBlock *Pad = llvm::BasicBlock::Create(Context, "pad", Function);
@@ -1043,8 +1045,8 @@ TEST(COFFExceptionIR, LLVMCCatchSwitchRendersExceptSyntax) {
   Switch->addHandler(Pad);
   llvm::IRBuilder<> PadBuilder(Pad);
   llvm::CatchPadInst *CatchPad = PadBuilder.CreateCatchPad(
-      Switch, {llvm::ConstantPointerNull::get(
-                   llvm::PointerType::getUnqual(Context))});
+      Switch,
+      {llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(Context))});
   PadBuilder.CreateCatchRet(CatchPad, Handler);
   llvm::IRBuilder<> HandlerBuilder(Handler);
   HandlerBuilder.CreateRetVoid();
@@ -1072,16 +1074,17 @@ TEST(COFFExceptionIR, LLVMCWrapUsesRecoveredSEHFilter) {
   llvm::Function *Personality = llvm::Function::Create(
       PersonalityType, llvm::GlobalValue::ExternalLinkage,
       "__C_specific_handler", Module);
-  llvm::FunctionType *FilterType = llvm::FunctionType::get(
-      llvm::Type::getInt32Ty(Context),
-      {llvm::PointerType::getUnqual(Context)}, false);
+  llvm::FunctionType *FilterType =
+      llvm::FunctionType::get(llvm::Type::getInt32Ty(Context),
+                              {llvm::PointerType::getUnqual(Context)}, false);
   llvm::Function *Filter = llvm::Function::Create(
       FilterType, llvm::GlobalValue::ExternalLinkage, "probe_filter", Module);
   llvm::Function *Function = llvm::Function::Create(
       VoidType, llvm::GlobalValue::ExternalLinkage, "seh_try_fn", Module);
   Function->setPersonalityFn(Personality);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Dispatch =
       llvm::BasicBlock::Create(Context, "dispatch", Function);
   llvm::BasicBlock *Pad = llvm::BasicBlock::Create(Context, "pad", Function);
@@ -1102,8 +1105,9 @@ TEST(COFFExceptionIR, LLVMCWrapUsesRecoveredSEHFilter) {
   HandlerBuilder.CreateRetVoid();
 
   std::string Source = emitLLVMC(Module);
-  EXPECT_NE(Source.find("} __except (probe_filter(GetExceptionInformation())) {"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("} __except (probe_filter(GetExceptionInformation())) {"),
+      std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("} __except (EXCEPTION_EXECUTE_HANDLER)"),
             std::string::npos)
@@ -1125,7 +1129,8 @@ TEST(COFFExceptionIR, LLVMCNestsFinallyInsideExceptWrap) {
       VoidType, llvm::GlobalValue::ExternalLinkage, "nested_seh", Module);
   Function->setPersonalityFn(Personality);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Dispatch =
       llvm::BasicBlock::Create(Context, "dispatch", Function);
   llvm::BasicBlock *Pad = llvm::BasicBlock::Create(Context, "pad", Function);
@@ -1142,12 +1147,12 @@ TEST(COFFExceptionIR, LLVMCNestsFinallyInsideExceptWrap) {
   Switch->addHandler(Pad);
   llvm::IRBuilder<> PadBuilder(Pad);
   llvm::CatchPadInst *CatchPad = PadBuilder.CreateCatchPad(
-      Switch, {llvm::ConstantPointerNull::get(
-                   llvm::PointerType::getUnqual(Context))});
+      Switch,
+      {llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(Context))});
   PadBuilder.CreateCatchRet(CatchPad, Cont);
   llvm::IRBuilder<> FinallyBuilder(Finally);
-  llvm::CleanupPadInst *Cleanup = FinallyBuilder.CreateCleanupPad(
-      llvm::ConstantTokenNone::get(Context));
+  llvm::CleanupPadInst *Cleanup =
+      FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
   FinallyBuilder.CreateCleanupRet(Cleanup, Cont);
   llvm::IRBuilder<> ContBuilder(Cont);
   ContBuilder.CreateRetVoid();
@@ -1184,7 +1189,8 @@ TEST(COFFExceptionIR, LLVMCExceptWrapContainsHandlerBody) {
       Module, I32, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
       llvm::ConstantInt::get(I32, 0), "ProbeSink");
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Dispatch =
       llvm::BasicBlock::Create(Context, "dispatch", Function);
   llvm::BasicBlock *Pad = llvm::BasicBlock::Create(Context, "pad", Function);
@@ -1201,8 +1207,8 @@ TEST(COFFExceptionIR, LLVMCExceptWrapContainsHandlerBody) {
   Switch->addHandler(Pad);
   llvm::IRBuilder<> PadBuilder(Pad);
   llvm::CatchPadInst *CatchPad = PadBuilder.CreateCatchPad(
-      Switch, {llvm::ConstantPointerNull::get(
-                   llvm::PointerType::getUnqual(Context))});
+      Switch,
+      {llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(Context))});
   PadBuilder.CreateCatchRet(CatchPad, Handler);
   llvm::IRBuilder<> HandlerBuilder(Handler);
   HandlerBuilder.CreateStore(llvm::ConstantInt::get(I32, 41), Sink);
@@ -1216,7 +1222,8 @@ TEST(COFFExceptionIR, LLVMCExceptWrapContainsHandlerBody) {
   EXPECT_NE(ExceptAt, std::string::npos) << Source;
   EXPECT_NE(StoreAt, std::string::npos) << Source;
   EXPECT_LT(ExceptAt, StoreAt) << Source;
-  EXPECT_EQ(Source.find("/* recovered handler labels remain in the protected body */"),
+  EXPECT_EQ(Source.find(
+                "/* recovered handler labels remain in the protected body */"),
             std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("/* __except"), std::string::npos) << Source;
@@ -1237,7 +1244,8 @@ TEST(COFFExceptionIR, LLVMCExceptContinuationFollowsHandler) {
       VoidType, llvm::GlobalValue::ExternalLinkage, "seh_except_cont", Module);
   Function->setPersonalityFn(Personality);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Dispatch =
       llvm::BasicBlock::Create(Context, "dispatch", Function);
   llvm::BasicBlock *Pad = llvm::BasicBlock::Create(Context, "pad", Function);
@@ -1258,8 +1266,8 @@ TEST(COFFExceptionIR, LLVMCExceptContinuationFollowsHandler) {
   Switch->addHandler(Pad);
   llvm::IRBuilder<> PadBuilder(Pad);
   llvm::CatchPadInst *CatchPad = PadBuilder.CreateCatchPad(
-      Switch, {llvm::ConstantPointerNull::get(
-                   llvm::PointerType::getUnqual(Context))});
+      Switch,
+      {llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(Context))});
   PadBuilder.CreateCatchRet(CatchPad, Handler);
   llvm::IRBuilder<> HandlerBuilder(Handler);
   HandlerBuilder.CreateCall(Handle);
@@ -1406,7 +1414,8 @@ TEST(COFFExceptionIR, LLVMCProjectsInternalInvokePhiBridgeCopy) {
       llvm::GlobalValue::ExternalLinkage, "seh_internal_phi_bridge", Module);
   Function->setPersonalityFn(Personality);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
   llvm::BasicBlock *Inside =
       llvm::BasicBlock::Create(Context, "inside", Function);
@@ -1419,11 +1428,11 @@ TEST(COFFExceptionIR, LLVMCProjectsInternalInvokePhiBridgeCopy) {
   llvm::BasicBlock *Handler =
       llvm::BasicBlock::Create(Context, "handler", Function);
   llvm::Function *ExitStep = llvm::Function::Create(
-      llvm::FunctionType::get(Void, false),
-      llvm::GlobalValue::ExternalLinkage, "exit_step", Module);
+      llvm::FunctionType::get(Void, false), llvm::GlobalValue::ExternalLinkage,
+      "exit_step", Module);
   llvm::Function *InsideStep = llvm::Function::Create(
-      llvm::FunctionType::get(Void, false),
-      llvm::GlobalValue::ExternalLinkage, "inside_step", Module);
+      llvm::FunctionType::get(Void, false), llvm::GlobalValue::ExternalLinkage,
+      "inside_step", Module);
   llvm::Function *Consume = llvm::Function::Create(
       llvm::FunctionType::get(Void, {I32}, false),
       llvm::GlobalValue::ExternalLinkage, "consume_step", Module);
@@ -1487,12 +1496,15 @@ TEST(COFFExceptionIR, LLVMCProjectsFallbackAdjacentInvokePhiBridgeCopy) {
       llvm::FunctionType::get(I32, /*isVarArg=*/true),
       llvm::GlobalValue::ExternalLinkage, "__C_specific_handler", Module);
   llvm::Function *Function = llvm::Function::Create(
-      llvm::FunctionType::get(Void, {llvm::Type::getInt1Ty(Context),
-                                    llvm::Type::getInt1Ty(Context)}, false),
+      llvm::FunctionType::get(
+          Void,
+          {llvm::Type::getInt1Ty(Context), llvm::Type::getInt1Ty(Context)},
+          false),
       llvm::GlobalValue::ExternalLinkage, "seh_fallback_phi_bridge", Module);
   Function->setPersonalityFn(Personality);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
   llvm::BasicBlock *Inside =
       llvm::BasicBlock::Create(Context, "inside", Function);
@@ -1511,11 +1523,11 @@ TEST(COFFExceptionIR, LLVMCProjectsFallbackAdjacentInvokePhiBridgeCopy) {
   Gate->moveBefore(Inside);
   EarlyReturn->moveBefore(Join);
   llvm::Function *ExitStep = llvm::Function::Create(
-      llvm::FunctionType::get(Void, false),
-      llvm::GlobalValue::ExternalLinkage, "exit_step", Module);
+      llvm::FunctionType::get(Void, false), llvm::GlobalValue::ExternalLinkage,
+      "exit_step", Module);
   llvm::Function *InsideStep = llvm::Function::Create(
-      llvm::FunctionType::get(Void, false),
-      llvm::GlobalValue::ExternalLinkage, "inside_step", Module);
+      llvm::FunctionType::get(Void, false), llvm::GlobalValue::ExternalLinkage,
+      "inside_step", Module);
   llvm::Function *Consume = llvm::Function::Create(
       llvm::FunctionType::get(Void, {I32}, false),
       llvm::GlobalValue::ExternalLinkage, "consume_step", Module);
@@ -1589,7 +1601,8 @@ TEST(COFFExceptionIR, LLVMCProjectsAddressPhiThroughInlinedExpression) {
   Function->setPersonalityFn(Personality);
   Function->getArg(0)->setName("normal_address");
   Function->getArg(1)->setName("handler_address");
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
   llvm::BasicBlock *Dispatch =
       llvm::BasicBlock::Create(Context, "dispatch", Function);
@@ -1597,17 +1610,18 @@ TEST(COFFExceptionIR, LLVMCProjectsAddressPhiThroughInlinedExpression) {
   llvm::BasicBlock *Handler =
       llvm::BasicBlock::Create(Context, "handler", Function);
   llvm::Function *Step = llvm::Function::Create(
-      llvm::FunctionType::get(Void, false),
-      llvm::GlobalValue::ExternalLinkage, "may_raise", Module);
+      llvm::FunctionType::get(Void, false), llvm::GlobalValue::ExternalLinkage,
+      "may_raise", Module);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateInvoke(Step, Join, Dispatch);
   llvm::IRBuilder<> JoinBuilder(Join);
   llvm::PHINode *Address = JoinBuilder.CreatePHI(I64, 2, "address");
   Address->addIncoming(Function->getArg(0), Entry);
   Address->addIncoming(Function->getArg(1), Handler);
-  llvm::Value *Offset = JoinBuilder.CreateAdd(Address, JoinBuilder.getInt64(32));
-  llvm::Value *Pointer = JoinBuilder.CreateIntToPtr(
-      Offset, llvm::PointerType::getUnqual(Context));
+  llvm::Value *Offset =
+      JoinBuilder.CreateAdd(Address, JoinBuilder.getInt64(32));
+  llvm::Value *Pointer =
+      JoinBuilder.CreateIntToPtr(Offset, llvm::PointerType::getUnqual(Context));
   JoinBuilder.CreateRet(JoinBuilder.CreateLoad(I32, Pointer));
   llvm::IRBuilder<> DispatchBuilder(Dispatch);
   llvm::CatchSwitchInst *Switch = DispatchBuilder.CreateCatchSwitch(
@@ -1635,9 +1649,10 @@ TEST(COFFExceptionIR, LLVMCProjectsAddressPhiThroughInlinedExpression) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
         "void may_raise(void);\n";
-    CompilerResult Syntax = runCCompiler(
-        Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
-                           "-std=c11", "-fsyntax-only", "-Werror=uninitialized"});
+    CompilerResult Syntax =
+        runCCompiler(Prelude + Source,
+                     {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
+                      "-std=c11", "-fsyntax-only", "-Werror=uninitialized"});
     EXPECT_EQ(Syntax.ExitCode, 0) << Syntax.Error << "\n" << Source;
   }
 }
@@ -1672,8 +1687,8 @@ TEST(COFFExceptionIR, LLVMCProjectsInvokeNormalEdgesWithHandlerPhiCopy) {
   llvm::BasicBlock *Handler =
       llvm::BasicBlock::Create(Context, "handler", Function);
   llvm::Function *ExitStep = llvm::Function::Create(
-      llvm::FunctionType::get(I32, false),
-      llvm::GlobalValue::ExternalLinkage, "exit_step", Module);
+      llvm::FunctionType::get(I32, false), llvm::GlobalValue::ExternalLinkage,
+      "exit_step", Module);
   llvm::Function *InsideStep = llvm::Function::Create(
       VoidType, llvm::GlobalValue::ExternalLinkage, "inside_step", Module);
   llvm::Function *AfterStep = llvm::Function::Create(
@@ -1730,9 +1745,9 @@ TEST(COFFExceptionIR, LLVMCProjectsInvokeNormalEdgesWithHandlerPhiCopy) {
   ASSERT_NE(InvokeCopyValueEnd, std::string::npos) << Source;
   EXPECT_NE(Source.substr(InvokeCopyNameEnd + 3,
                           InvokeCopyValueEnd - InvokeCopyNameEnd - 3),
-            "99") << Source;
-  const auto HandlerCopyAt =
-      findEdgeCopy(Source, JoinedName, "99", ExceptAt);
+            "99")
+      << Source;
+  const auto HandlerCopyAt = findEdgeCopy(Source, JoinedName, "99", ExceptAt);
   ASSERT_NE(HandlerCopyAt, std::string::npos) << Source;
   EXPECT_LT(ExitAt, ExitGotoAt) << Source;
   EXPECT_LT(InvokeCopyAt, ExitGotoAt) << Source;
@@ -1818,7 +1833,8 @@ TEST(COFFExceptionIR, LLVMCProjectsBothConstantPhiCopiesAfterExcept) {
   const auto NameEnd = Source.find(" = ", NormalCopyAt);
   ASSERT_NE(NameEnd, std::string::npos) << Source;
   ASSERT_LT(NameEnd, ExceptAt) << Source;
-  const std::string JoinedName = Source.substr(NormalCopyAt, NameEnd - NormalCopyAt);
+  const std::string JoinedName =
+      Source.substr(NormalCopyAt, NameEnd - NormalCopyAt);
   const auto NormalValueAt = findEdgeCopy(Source, JoinedName, "7", ExitAt);
   ASSERT_NE(NormalValueAt, std::string::npos) << Source;
   EXPECT_LT(NormalValueAt, ExceptAt) << Source;
@@ -1826,7 +1842,8 @@ TEST(COFFExceptionIR, LLVMCProjectsBothConstantPhiCopiesAfterExcept) {
   ASSERT_NE(HandlerCopyAt, std::string::npos) << Source;
   EXPECT_LT(HandlerCopyAt, AfterAt) << Source;
   EXPECT_NE(Source.find("after_step(" + JoinedName + ");", AfterAt),
-            std::string::npos) << Source;
+            std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("goto L_join;", ExitAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
@@ -1886,9 +1903,8 @@ TEST(COFFExceptionIR, LLVMCFallbackProjectsInvokeNormalEdgesInsideTry) {
   llvm::IRBuilder<> InsideBuilder(Inside);
   InsideBuilder.CreateInvoke(InsideStep, Exit, Dispatch);
   llvm::IRBuilder<> DoneBuilder(Done);
-  DoneBuilder.CreateCall(
-      Dtor, {llvm::ConstantPointerNull::get(
-                llvm::PointerType::getUnqual(Context))});
+  DoneBuilder.CreateCall(Dtor, {llvm::ConstantPointerNull::get(
+                                   llvm::PointerType::getUnqual(Context))});
   DoneBuilder.CreateRetVoid();
   llvm::IRBuilder<> JoinBuilder(Join);
   JoinBuilder.CreateCall(AfterStep);
@@ -1929,8 +1945,7 @@ TEST(COFFExceptionIR, LLVMCFallbackProjectsInvokeNormalEdgesInsideTry) {
   EXPECT_NE(Source.find("L_join:", BodyAt), std::string::npos) << Source;
   const auto HandlerDtorAt = Source.find("object_dtor(", ExceptAt);
   EXPECT_NE(HandlerDtorAt, std::string::npos) << Source;
-  EXPECT_EQ(Source.find("goto L_done;", ExceptAt), std::string::npos)
-      << Source;
+  EXPECT_EQ(Source.find("goto L_done;", ExceptAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
@@ -1961,7 +1976,8 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
-  llvm::BasicBlock *Other = llvm::BasicBlock::Create(Context, "other", Function);
+  llvm::BasicBlock *Other =
+      llvm::BasicBlock::Create(Context, "other", Function);
   llvm::BasicBlock *Inside =
       llvm::BasicBlock::Create(Context, "inside", Function);
   llvm::BasicBlock *Done = llvm::BasicBlock::Create(Context, "done", Function);
@@ -1987,9 +2003,8 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   llvm::IRBuilder<> InsideBuilder(Inside);
   InsideBuilder.CreateInvoke(InsideStep, Exit, Dispatch);
   llvm::IRBuilder<> DoneBuilder(Done);
-  DoneBuilder.CreateCall(
-      Dtor, {llvm::ConstantPointerNull::get(
-                llvm::PointerType::getUnqual(Context))});
+  DoneBuilder.CreateCall(Dtor, {llvm::ConstantPointerNull::get(
+                                   llvm::PointerType::getUnqual(Context))});
   DoneBuilder.CreateRetVoid();
   llvm::IRBuilder<> DispatchBuilder(Dispatch);
   llvm::CatchSwitchInst *Switch = DispatchBuilder.CreateCatchSwitch(
@@ -2019,12 +2034,9 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   EXPECT_EQ(Source.find("\nL_done:\n", LabelAt + 1), std::string::npos)
       << Source;
   EXPECT_LT(ExitGotoAt, LabelAt) << Source;
-  EXPECT_NE(Source.find("object_dtor(", LabelAt), std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find("object_dtor(", ExceptAt), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("goto L_done;", ExceptAt), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("object_dtor(", LabelAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("object_dtor(", ExceptAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("goto L_done;", ExceptAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
@@ -2047,8 +2059,8 @@ TEST(COFFExceptionIR, LLVMCFallbackRejectsHandlerJumpIntoTry) {
       llvm::FunctionType::get(I32, /*isVarArg=*/true),
       llvm::GlobalValue::ExternalLinkage, "__C_specific_handler", Module);
   llvm::Function *Function = llvm::Function::Create(
-      llvm::FunctionType::get(Void, false),
-      llvm::GlobalValue::ExternalLinkage, "seh_illegal_entry", Module);
+      llvm::FunctionType::get(Void, false), llvm::GlobalValue::ExternalLinkage,
+      "seh_illegal_entry", Module);
   Function->setPersonalityFn(Personality);
 
   llvm::BasicBlock *Entry =
@@ -2061,8 +2073,8 @@ TEST(COFFExceptionIR, LLVMCFallbackRejectsHandlerJumpIntoTry) {
   llvm::BasicBlock *Handler =
       llvm::BasicBlock::Create(Context, "handler", Function);
   llvm::Function *ExitStep = llvm::Function::Create(
-      llvm::FunctionType::get(I32, false),
-      llvm::GlobalValue::ExternalLinkage, "exit_step", Module);
+      llvm::FunctionType::get(I32, false), llvm::GlobalValue::ExternalLinkage,
+      "exit_step", Module);
   llvm::Function *AfterStep = llvm::Function::Create(
       llvm::FunctionType::get(Void, {I32}, false),
       llvm::GlobalValue::ExternalLinkage, "after_step", Module);
@@ -2111,7 +2123,8 @@ TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
       VoidType, llvm::GlobalValue::ExternalLinkage, "seh_finally_fn", Module);
   Function->setPersonalityFn(Personality);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Finally =
       llvm::BasicBlock::Create(Context, "finally", Function);
   llvm::BasicBlock *Cont = llvm::BasicBlock::Create(Context, "cont", Function);
@@ -2122,8 +2135,8 @@ TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
       VoidType, llvm::GlobalValue::ExternalLinkage, "run_finally", Module);
   EntryBuilder.CreateInvoke(Helper, Cont, Finally);
   llvm::IRBuilder<> FinallyBuilder(Finally);
-  llvm::CleanupPadInst *Cleanup = FinallyBuilder.CreateCleanupPad(
-      llvm::ConstantTokenNone::get(Context));
+  llvm::CleanupPadInst *Cleanup =
+      FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
   FinallyBuilder.CreateCall(CleanupFn);
   FinallyBuilder.CreateCleanupRet(Cleanup, Cont);
   llvm::IRBuilder<> ContBuilder(Cont);
@@ -2135,7 +2148,8 @@ TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
   EXPECT_NE(FinallyAt, std::string::npos) << Source;
   EXPECT_NE(CallAt, std::string::npos) << Source;
   EXPECT_LT(FinallyAt, CallAt) << Source;
-  EXPECT_EQ(Source.find("/* recovered handler labels remain in the protected body */"),
+  EXPECT_EQ(Source.find(
+                "/* recovered handler labels remain in the protected body */"),
             std::string::npos)
       << Source;
 }
@@ -2152,8 +2166,7 @@ TEST(COFFExceptionIR, LLVMCFinallyContinuationFollowsCleanup) {
       PersonalityType, llvm::GlobalValue::ExternalLinkage,
       "__C_specific_handler", Module);
   llvm::Function *Function = llvm::Function::Create(
-      VoidType, llvm::GlobalValue::ExternalLinkage, "seh_finally_cont",
-      Module);
+      VoidType, llvm::GlobalValue::ExternalLinkage, "seh_finally_cont", Module);
   Function->setPersonalityFn(Personality);
 
   llvm::BasicBlock *Entry =
@@ -2170,8 +2183,8 @@ TEST(COFFExceptionIR, LLVMCFinallyContinuationFollowsCleanup) {
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateInvoke(Raise, Cont, Finally);
   llvm::IRBuilder<> FinallyBuilder(Finally);
-  llvm::CleanupPadInst *Cleanup = FinallyBuilder.CreateCleanupPad(
-      llvm::ConstantTokenNone::get(Context));
+  llvm::CleanupPadInst *Cleanup =
+      FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
   FinallyBuilder.CreateCall(CleanupFn);
   FinallyBuilder.CreateCleanupRet(Cleanup, Cont);
   llvm::IRBuilder<> ContBuilder(Cont);
@@ -2308,11 +2321,12 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
   llvm::PHINode *State = AfterOuterBuilder.CreatePHI(I32, 2, "state");
   State->addIncoming(AfterOuterBuilder.getInt32(7), EndOuter);
   State->addIncoming(AfterOuterBuilder.getInt32(99), Handler);
-  llvm::Value *Offset = AfterOuterBuilder.CreateAdd(
-      Address, AfterOuterBuilder.getInt64(36));
+  llvm::Value *Offset =
+      AfterOuterBuilder.CreateAdd(Address, AfterOuterBuilder.getInt64(36));
   llvm::Value *Pointer = AfterOuterBuilder.CreateIntToPtr(
       Offset, llvm::PointerType::getUnqual(Context));
-  AfterOuterBuilder.CreateStore(AfterOuterBuilder.CreateLoad(I32, Pointer), Sink);
+  AfterOuterBuilder.CreateStore(AfterOuterBuilder.CreateLoad(I32, Pointer),
+                                Sink);
   AfterOuterBuilder.CreateCall(RecordState, {State});
   AfterOuterBuilder.CreateRetVoid();
 
@@ -2322,16 +2336,16 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
   Switch->addHandler(CatchPad);
   llvm::IRBuilder<> PadBuilder(CatchPad);
   llvm::CatchPadInst *Catch = PadBuilder.CreateCatchPad(
-      Switch, {llvm::ConstantPointerNull::get(
-                   llvm::PointerType::getUnqual(Context))});
+      Switch,
+      {llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(Context))});
   PadBuilder.CreateCatchRet(Catch, Handler);
   llvm::IRBuilder<> HandlerBuilder(Handler);
   HandlerBuilder.CreateStore(llvm::ConstantInt::get(I32, 41), Sink);
   HandlerBuilder.CreateBr(AfterOuter);
 
   llvm::IRBuilder<> FinallyBuilder(FinallyDispatch);
-  llvm::CleanupPadInst *Cleanup = FinallyBuilder.CreateCleanupPad(
-      llvm::ConstantTokenNone::get(Context));
+  llvm::CleanupPadInst *Cleanup =
+      FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
   FinallyBuilder.CreateCall(RunFinally);
   FinallyBuilder.CreateCleanupRet(Cleanup, CatchDispatch);
 
@@ -2406,9 +2420,10 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
         "void arm_region(void);\nvoid may_raise(void);\n"
         "void outer_step(void);\nvoid run_finally(void);\n"
         "void record_state(uint32_t);\n";
-    CompilerResult Syntax = runCCompiler(
-        Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
-                           "-std=c11", "-fsyntax-only", "-Werror=uninitialized"});
+    CompilerResult Syntax =
+        runCCompiler(Prelude + Source,
+                     {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
+                      "-std=c11", "-fsyntax-only", "-Werror=uninitialized"});
     EXPECT_EQ(Syntax.ExitCode, 0) << Syntax.Error << "\n" << Source;
   }
 }
@@ -2428,7 +2443,8 @@ TEST(COFFExceptionIR, LLVMCCxxCleanupWrapContainsDestructor) {
       VoidType, llvm::GlobalValue::ExternalLinkage, "cxx_dtor_fn", Module);
   Function->setPersonalityFn(Personality);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *CleanupBB =
       llvm::BasicBlock::Create(Context, "cleanup", Function);
   llvm::BasicBlock *Cont = llvm::BasicBlock::Create(Context, "cont", Function);
@@ -2439,8 +2455,8 @@ TEST(COFFExceptionIR, LLVMCCxxCleanupWrapContainsDestructor) {
       VoidType, llvm::GlobalValue::ExternalLinkage, "release_string", Module);
   EntryBuilder.CreateInvoke(Helper, Cont, CleanupBB);
   llvm::IRBuilder<> CleanupBuilder(CleanupBB);
-  llvm::CleanupPadInst *Cleanup = CleanupBuilder.CreateCleanupPad(
-      llvm::ConstantTokenNone::get(Context));
+  llvm::CleanupPadInst *Cleanup =
+      CleanupBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
   CleanupBuilder.CreateCall(Dtor);
   CleanupBuilder.CreateCleanupRet(Cleanup, nullptr);
   llvm::IRBuilder<> ContBuilder(Cont);
@@ -2464,14 +2480,14 @@ TEST(COFFExceptionIR, LLVMCUnwindOnlyAttachmentOmitsFakeTryWrap) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
   llvm::Function *Function = llvm::Function::Create(
       VoidType, llvm::GlobalValue::ExternalLinkage, "unwind_only", Module);
-  Function->setMetadata(windows_eh_md::FunctionAttachment,
-                        llvm::MDNode::get(Context, llvm::MDString::get(
-                                                       Context, "unwind")));
+  Function->setMetadata(
+      windows_eh_md::FunctionAttachment,
+      llvm::MDNode::get(Context, llvm::MDString::get(Context, "unwind")));
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Function *Helper = llvm::Function::Create(
-      VoidType, llvm::GlobalValue::ExternalLinkage, "unwind_only_helper",
-      Module);
+  llvm::Function *Helper =
+      llvm::Function::Create(VoidType, llvm::GlobalValue::ExternalLinkage,
+                             "unwind_only_helper", Module);
   Builder.CreateCall(Helper);
   Builder.CreateRetVoid();
 
@@ -2497,9 +2513,9 @@ TEST(COFFExceptionIR, LLVMCAnalysisOnlyCxxUsesUnwindCleanupWrap) {
   llvm::Function *Function = llvm::Function::Create(
       VoidType, llvm::GlobalValue::ExternalLinkage, "cleanup_only", Module);
   Function->setPersonalityFn(Personality);
-  Function->setMetadata(windows_eh_md::FunctionAttachment,
-                        llvm::MDNode::get(Context, llvm::MDString::get(
-                                                       Context, "fh3")));
+  Function->setMetadata(
+      windows_eh_md::FunctionAttachment,
+      llvm::MDNode::get(Context, llvm::MDString::get(Context, "fh3")));
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Function *Helper = llvm::Function::Create(
@@ -2620,8 +2636,7 @@ TEST(COFFExceptionIR,
   EXPECT_EQ(Source.find("llvmc_varargs(...)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("nd_for"), std::string::npos) << Source;
   EXPECT_NE(Source.find("collision_x2D_name()"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("collision_x2D_name_2()"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("collision_x2D_name_2()"), std::string::npos) << Source;
 
   EXPECT_NE(Source.find("nd_for"), std::string::npos) << Source;
 }
@@ -2845,8 +2860,7 @@ TEST(COFFExceptionIR, StructuresReducibleSEHAndCxxRegionsInHighIR) {
 TEST(COFFExceptionIR, CleanupOnlyCxxStatesBecomeCxxTryNotSEH) {
   constexpr va_t FunctionVA = 0x140001000;
   constexpr va_t ActionVA = FunctionVA + 0x20;
-  MedFunc Func =
-      makeWindowsHandlerFixture("cleanup_only_cxx", 0x14000f000);
+  MedFunc Func = makeWindowsHandlerFixture("cleanup_only_cxx", 0x14000f000);
   ExceptionFunction EH;
   EH.CodeRange = {FunctionVA, FunctionVA + 0x40};
   EH.ParseStatus = ExceptionParseStatus::Complete;
@@ -3090,12 +3104,10 @@ TEST(COFFExceptionIR, CleanupOnlyParentLiveRangeWrapsChildFragments) {
   EH.Cxx = std::move(Cxx);
   Med.ExceptionMetadata = std::move(EH);
 
-  std::map<va_t, std::string> Names{{0x140002000, "before"},
-                                    {0x140002010, "outer_a"},
-                                    {0x140002020, "inner_work"},
-                                    {0x140002030, "outer_b"},
-                                    {0x14000F000, "dtor_outer"},
-                                    {0x14000F100, "dtor_inner"}};
+  std::map<va_t, std::string> Names{
+      {0x140002000, "before"},     {0x140002010, "outer_a"},
+      {0x140002020, "inner_work"}, {0x140002030, "outer_b"},
+      {0x14000F000, "dtor_outer"}, {0x14000F100, "dtor_inner"}};
   MedToHighConverter Converter;
   Converter.setFuncNames(&Names);
   HighFunc High = Converter.convert(Med, Arch::X64);
@@ -3229,9 +3241,8 @@ TEST(COFFExceptionIR, CleanupOnlyLiveRangeWrapsIfWhoseCondIsPreviousIp) {
   Cxx.UnwindMap = {{-1, 0}};
   Cxx.UnwindMap[0].ActionVA = ActionVA;
   Cxx.UnwindMap[0].Kind = CxxUnwindAction::ActionKind::Direct;
-  Cxx.IPMap = {{FunctionVA, -1},
-               {FunctionVA + 0x20, 0},
-               {FunctionVA + 0x50, -1}};
+  Cxx.IPMap = {
+      {FunctionVA, -1}, {FunctionVA + 0x20, 0}, {FunctionVA + 0x50, -1}};
   ASSERT_TRUE(Cxx.hasValidStateGraph());
   EH.Cxx = std::move(Cxx);
   Med.ExceptionMetadata = std::move(EH);
@@ -3500,9 +3511,7 @@ TEST(COFFExceptionIR, NestsCxxTriesThatShareIpInterval) {
   CxxExceptionInfo Cxx;
   Cxx.MaxState = 4;
   Cxx.UnwindMap = {{-1, 0}, {0, 0}, {0, 0}, {-1, 0}};
-  Cxx.IPMap = {{Func.Entry, -1},
-               {Func.Entry + 4, 1},
-               {Func.Entry + 0x18, -1}};
+  Cxx.IPMap = {{Func.Entry, -1}, {Func.Entry + 4, 1}, {Func.Entry + 0x18, -1}};
   CxxTryBlock Inner;
   Inner.TryLow = 1;
   Inner.TryHigh = 1;
@@ -3573,12 +3582,9 @@ TEST(COFFExceptionIR, StructuresOuterCxxTrySplitByNegativeIpState) {
   CxxExceptionInfo Cxx;
   Cxx.MaxState = 4;
   Cxx.UnwindMap = {{-1, 0}, {0, 0}, {0, 0}, {-1, 0}};
-  Cxx.IPMap = {{Func.Entry, -1},
-               {Func.Entry + 4, 0},
-               {Func.Entry + 0x10, 2},
-               {Func.Entry + 0x30, 0},
-               {Func.Entry + 0x40, -1},
-               {Func.Entry + 0x44, 0}};
+  Cxx.IPMap = {{Func.Entry, -1},        {Func.Entry + 4, 0},
+               {Func.Entry + 0x10, 2},  {Func.Entry + 0x30, 0},
+               {Func.Entry + 0x40, -1}, {Func.Entry + 0x44, 0}};
   CxxTryBlock Inner;
   Inner.TryLow = 2;
   Inner.TryHigh = 2;
@@ -3679,6 +3685,202 @@ TEST(COFFExceptionIR, StructuresSingleBlockSEHHandlerBody) {
   EXPECT_EQ(Source.find("goto L_140001020"), std::string::npos);
   EXPECT_EQ(Source.find("native handler target @"), std::string::npos);
   EXPECT_EQ(Source.find("sub_140009000();", Marker + 1), std::string::npos);
+}
+
+namespace {
+
+/// Blocks of a nested SEH frame: \p Specs lists, per block, its start and end,
+/// the call it makes (0 for none), whether it returns, and where it branches
+/// (0 to fall into the next block, or nowhere when it returns).
+struct NestedSEHBlockSpec {
+  va_t Start;
+  va_t End;
+  va_t Callee;
+  bool Returns;
+  va_t BranchTo;
+};
+
+MedFunc makeNestedSEHFixture(llvm::StringRef Name,
+                             llvm::ArrayRef<NestedSEHBlockSpec> Specs,
+                             llvm::ArrayRef<SEHScopeRecord> Scopes,
+                             va_t CodeEnd) {
+  MedFunc Func;
+  Func.Entry = Specs.front().Start;
+  Func.Name = Name.str();
+  Func.ReturnType = NdType::makeVoid();
+  auto IndexAt = [&](va_t Start) {
+    for (size_t I = 0; I < Specs.size(); ++I)
+      if (Specs[I].Start == Start)
+        return static_cast<int>(I);
+    ADD_FAILURE() << "no block starts at " << Start;
+    return -1;
+  };
+  for (size_t I = 0; I < Specs.size(); ++I) {
+    MedBlock Block;
+    Block.Id = static_cast<int>(I);
+    Block.StartAddr = Specs[I].Start;
+    Block.EndAddr = Specs[I].End;
+    if (Specs[I].Callee) {
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = Specs[I].Start + 4;
+      Call.addInput(MedVar::makeConst(Specs[I].Callee, 8));
+      Block.Ops.push_back(std::move(Call));
+    }
+    if (Specs[I].Returns) {
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Specs[I].End - 1;
+      Block.Ops.push_back(std::move(Return));
+    } else if (Specs[I].BranchTo) {
+      MedOp Branch;
+      Branch.Opcode = NdOp::BRANCH;
+      Branch.Addr = Specs[I].End - 2;
+      Branch.addInput(MedVar::makeConst(Specs[I].BranchTo, 8));
+      Block.Ops.push_back(std::move(Branch));
+      Block.Succs = {IndexAt(Specs[I].BranchTo)};
+    } else {
+      Block.Succs = {static_cast<int>(I + 1)};
+    }
+    Func.Blocks.push_back(std::move(Block));
+  }
+  for (const MedBlock &Block : Func.Blocks)
+    for (int Succ : Block.Succs)
+      Func.Blocks[Succ].Preds.push_back(Block.Id);
+
+  ExceptionFunction EH;
+  EH.CodeRange = {Func.Entry, CodeEnd};
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  SEHExceptionInfo SEH;
+  SEH.Scopes.assign(Scopes.begin(), Scopes.end());
+  EH.SEH = std::move(SEH);
+  Func.ExceptionMetadata = std::move(EH);
+  return Func;
+}
+
+SEHScopeRecord catchAllScope(va_t Begin, va_t End, va_t HandlerVA) {
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {Begin, End};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = HandlerVA;
+  return Scope;
+}
+
+} // namespace
+
+TEST(COFFExceptionIR, NestedSEHHandlerInsideTheOuterRangeBecomesItsClause) {
+  // __try { __try { A(); } __except (1) { H(); } B(); } __except (1) { G(); }
+  // MSVC lays the inner handler out inside the outer range; the inner body
+  // jumps over it.  Both the handler and the inner try are guarded by the
+  // outer range alone, so the handler is the inner clause body.
+  constexpr va_t F = 0x140001000;
+  const NestedSEHBlockSpec Specs[] = {
+      {F, F + 0x10, 0x140008000, false, F + 0x30},
+      {F + 0x20, F + 0x30, 0x140009000, false, F + 0x30},
+      {F + 0x30, F + 0x38, 0x14000A000, false, 0},
+      {F + 0x38, F + 0x40, 0x14000C000, false, 0},
+      {F + 0x40, F + 0x41, 0, true, 0},
+      {F + 0x50, F + 0x60, 0x14000B000, false, F + 0x40}};
+  const SEHScopeRecord Scopes[] = {catchAllScope(F, F + 0x10, F + 0x20),
+                                   catchAllScope(F, F + 0x40, F + 0x50)};
+  MedFunc Func = makeNestedSEHFixture("nested_seh_inline_handler", Specs,
+                                      Scopes, F + 0x60);
+
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+  ASSERT_EQ(High.StructuredExceptionRegions, 2u);
+  ASSERT_EQ(High.UnstructuredExceptionRegions, 0u);
+  const HighStmt *Inner = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &Stmt) {
+    if (Stmt.Kind == StmtKind::SEHTry && Stmt.EHRange.End == F + 0x10)
+      Inner = &Stmt;
+  });
+  ASSERT_NE(Inner, nullptr);
+  ASSERT_EQ(Inner->EHClauseBodies.size(), 1u);
+  size_t InClause = 0;
+  walkStmts(Inner->EHClauseBodies.front(),
+            [&](const HighStmt &Stmt) { InClause += Stmt.Addr == F + 0x24; });
+  EXPECT_EQ(InClause, 1u);
+
+  const std::string Source = emitHighC({High});
+  const size_t InnerExcept = Source.find("__except");
+  ASSERT_NE(InnerExcept, std::string::npos) << Source;
+  const size_t Handler = Source.find("sub_140009000();", InnerExcept);
+  ASSERT_NE(Handler, std::string::npos) << Source;
+  EXPECT_LT(Handler, Source.find("__except", InnerExcept + 1)) << Source;
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, SEHHandlerOutsideAnOuterRangeStaysOutOfTheInnerClause) {
+  // The inner try sits in the outer range but its handler was laid out past
+  // it, so the outer __except does not guard the handler.  As the inner
+  // clause body it would be guarded by the outer __try, so it stays where it
+  // is and the clause jumps to it.
+  constexpr va_t F = 0x140001000;
+  const NestedSEHBlockSpec Specs[] = {
+      {F, F + 0x10, 0x140008000, false, 0},
+      {F + 0x10, F + 0x20, 0x14000A000, false, 0},
+      {F + 0x20, F + 0x21, 0, true, 0},
+      {F + 0x30, F + 0x40, 0x140009000, true, 0},
+      {F + 0x50, F + 0x60, 0x14000B000, true, 0}};
+  const SEHScopeRecord Scopes[] = {catchAllScope(F, F + 0x10, F + 0x30),
+                                   catchAllScope(F, F + 0x20, F + 0x50)};
+  MedFunc Func = makeNestedSEHFixture("nested_seh_distant_handler", Specs,
+                                      Scopes, F + 0x60);
+
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+  ASSERT_EQ(High.StructuredExceptionRegions, 2u);
+  const HighStmt *Outer = nullptr;
+  for (const HighStmt &Stmt : High.Body)
+    if (Stmt.Kind == StmtKind::SEHTry && Stmt.EHRange.End == F + 0x20)
+      Outer = &Stmt;
+  ASSERT_NE(Outer, nullptr);
+  size_t Guarded = 0;
+  walkStmts(Outer->Body,
+            [&](const HighStmt &Stmt) { Guarded += Stmt.Addr == F + 0x34; });
+  EXPECT_EQ(Guarded, 0u);
+  size_t Anywhere = 0;
+  walkStmts(High.Body,
+            [&](const HighStmt &Stmt) { Anywhere += Stmt.Addr == F + 0x34; });
+  EXPECT_EQ(Anywhere, 1u);
+}
+
+TEST(COFFExceptionIR, OuterSEHRangeIsNeverNestedInsideTheTryItHolds) {
+  // The inner handler runs into a copy of the tail and sits after the
+  // return, so the outer range's statements are not one slice.  The inner
+  // try's body is: wrapping the outer try there would make the inner
+  // handler the second one an exception reaches instead of the first.
+  constexpr va_t F = 0x140001000;
+  const NestedSEHBlockSpec Specs[] = {
+      {F, F + 0x10, 0x140008000, false, F + 0x30},
+      {F + 0x20, F + 0x30, 0x140009000, false, 0},
+      {F + 0x30, F + 0x40, 0x14000A000, false, 0},
+      {F + 0x40, F + 0x41, 0, true, 0},
+      {F + 0x50, F + 0x60, 0x14000B000, false, F + 0x40}};
+  const SEHScopeRecord Scopes[] = {catchAllScope(F, F + 0x10, F + 0x20),
+                                   catchAllScope(F, F + 0x40, F + 0x50)};
+  MedFunc Func = makeNestedSEHFixture("nested_seh_scattered_outer", Specs,
+                                      Scopes, F + 0x60);
+
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+  EXPECT_EQ(High.StructuredExceptionRegions + High.UnstructuredExceptionRegions,
+            2u);
+  std::function<void(const std::vector<HighStmt> &, const HighStmt *)> Check =
+      [&](const std::vector<HighStmt> &List, const HighStmt *Outer) {
+        for (const HighStmt &Stmt : List) {
+          const bool IsTry = Stmt.Kind == StmtKind::SEHTry;
+          if (IsTry && Outer)
+            EXPECT_TRUE(Outer->EHRange.contains(Stmt.EHRange))
+                << "try over [" << Stmt.EHRange.Begin << ", "
+                << Stmt.EHRange.End << ") nested in one over ["
+                << Outer->EHRange.Begin << ", " << Outer->EHRange.End << ")";
+          Check(Stmt.Body, IsTry ? &Stmt : Outer);
+          Check(Stmt.ElseBody, Outer);
+          for (const auto &ClauseBody : Stmt.EHClauseBodies)
+            Check(ClauseBody, nullptr);
+        }
+      };
+  Check(High.Body, nullptr);
 }
 
 TEST(COFFExceptionIR, KeepsSEHHandlerPlacedAfterReturn) {
@@ -4693,7 +4895,8 @@ TEST(COFFExceptionIR, ExceptHandlerSeesTheEstablishedFrame) {
   // rebasing twice named an unwritten local instead.
   EXPECT_EQ(Source.find("arg1"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
-  EXPECT_TRUE(std::regex_search(Source, std::regex(R"(= (\(uintptr_t\))?arg0;)")))
+  EXPECT_TRUE(
+      std::regex_search(Source, std::regex(R"(= (\(uintptr_t\))?arg0;)")))
       << Source;
 }
 

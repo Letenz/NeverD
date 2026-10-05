@@ -18,6 +18,8 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
+#include "neverd/loader/Swift/SwiftRuntimeCalls.h"
+#include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
@@ -15946,6 +15948,100 @@ TEST(SwiftValueWitnessCalls, NonreturningRegisterWitnessNeedsNoFrameReceipt) {
                   .valid(*F.high()));
 }
 
+TEST(SwiftValueWitnessCalls, FrameMetadataAccessorUsesCurrentCatalogAndABI) {
+  immutable_native_call_test::Fixture F;
+  swift_witness_frame_test::metadataFrameWitnessFixture(F);
+  ASSERT_TRUE(F.low());
+  ASSERT_TRUE(F.med());
+  ASSERT_TRUE(F.high());
+  const auto Metadata = swiftMetadataAccessorSourceCallHint(F.Image, 0x2000);
+  const auto General = swiftRuntimeSourceCallHint(F.Image, 0x2000);
+  ASSERT_TRUE(Metadata);
+  ASSERT_TRUE(General);
+  EXPECT_TRUE(equalSourceABIs(Metadata->Signature, General->Signature));
+  EXPECT_EQ(Metadata->TargetName, "$s10Foundation3URLVMa");
+  EXPECT_EQ(Metadata->Signature.Origin,
+            SourceFunctionTypeHint::OriginKind::SwiftSDK);
+  ASSERT_EQ(Metadata->Signature.ReturnComponents.size(), 2U);
+  EXPECT_EQ(Metadata->Signature.ReturnComponents[0].RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Metadata->Signature.ReturnComponents[1].RegisterOffset, a64reg::X1);
+  ASSERT_EQ(Metadata->Signature.Parameters.size(), 1U);
+  EXPECT_EQ(Metadata->Signature.Parameters[0].Location.RegisterOffset,
+            a64reg::X0);
+  EXPECT_TRUE(validateSwiftWitnessFrameBindings(F.Image, F.low(), *F.med()));
+  EXPECT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(*F.high()));
+  const auto Hints = buildSwiftValueWitnessCallHints(F.Image, *F.low());
+  ASSERT_EQ(Hints.size(), 1U);
+  EXPECT_TRUE(Hints.begin()->second.SwiftWitnessFrame);
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  auto Bound =
+      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                  .valid(Bound.Function));
+}
+
+TEST(SwiftValueWitnessCalls,
+     FrameMetadataAccessorRejectsChangedImportAndBytes) {
+  for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    immutable_native_call_test::Fixture F;
+    swift_witness_frame_test::metadataFrameWitnessFixture(F);
+    ASSERT_TRUE(F.high());
+    const auto SavedMed = *F.med();
+    const auto SavedHigh = *F.high();
+    auto &Bind = F.Image.DyldBindSlots.at(0x2000);
+    switch (Mutation) {
+    case 0:
+      Bind.WeakImport = true;
+      break;
+    case 1:
+      Bind.Module = "/tmp/Foundation";
+      break;
+    case 2:
+      Bind.Name = "_$s10Foundation4DateVMa";
+      break;
+    case 3:
+      Bind.Addend = 8;
+      break;
+    case 4:
+      F.Image.ImportPtrSlots[0x2000] = "_$s10Foundation4DateVMa";
+      break;
+    case 5:
+      F.Image.ImportPtrSlots[0x2000] = "_objc_retain";
+      Bind.Name = "_objc_retain";
+      Bind.Module = "/usr/lib/libobjc.A.dylib";
+      F.word(10, 0x910003e0); // Escaping frame argument is still rejected.
+      F.run();
+      break;
+    case 6:
+      F.word(10, 0x910003e0); // Request cannot contain this private address.
+      F.run();
+      break;
+    case 7:
+      F.word(9, 0xb90023e8); // Partial VWT spill.
+      F.run();
+      break;
+    case 8:
+      F.word(14, 0xf94017e8); // Reload another frame cell.
+      F.run();
+      break;
+    case 9:
+      F.word(11, 0xd63f0100); // Saved LowIR still names the direct veneer.
+      break;
+    }
+    if (Mutation <= 5)
+      EXPECT_FALSE(swiftMetadataAccessorSourceCallHint(F.Image, 0x2000));
+    EXPECT_TRUE(buildSwiftValueWitnessCallHints(F.Image, *F.low()).empty());
+    EXPECT_FALSE(validateSwiftWitnessFrameBindings(F.Image, F.low(), SavedMed));
+    EXPECT_FALSE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                     .valid(SavedHigh));
+  }
+}
+
 TEST(SwiftValueWitnessCalls, PublicationReplaysCurrentFrameOccurrence) {
   immutable_native_call_test::Fixture F;
   swift_witness_frame_test::frameWitnessFixture(F);
@@ -16119,55 +16215,67 @@ TEST(SwiftValueWitnessCalls,
 TEST(SwiftValueWitnessCalls, GeneratedFrameWitnessSourceMatchesOriginalARM64) {
 #if defined(NEVERD_TEST_CLANG) && defined(__APPLE__) && defined(__aarch64__)
   using namespace immutable_native_call_test;
-  immutable_native_call_test::Fixture F;
-  swift_witness_frame_test::frameWitnessFixture(F);
-  ASSERT_TRUE(F.high());
-  std::map<va_t, const HighFunc *> Functions;
-  for (const auto &Function : F.Result.HighFuncs)
-    Functions.emplace(Function.Entry, &Function);
-  auto Bound =
-      bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
-  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
-  elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
-  ASSERT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
-                  .valid(Bound.Function));
-  const auto Audit =
-      std::find_if(F.Result.FunctionAudits.begin(),
-                   F.Result.FunctionAudits.end(), [](const auto &A) {
-                     return A.Entry == immutable_native_call_test::Entry;
-                   });
-  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
-  const auto Allowed = [&](const HighExpr &E) {
-    return objcSourceCallBound(E, F.Image, Functions, nullptr, nullptr,
-                               &Bound.Function);
-  };
-  const auto Limitation = sourceBodyLimitation(
-      Bound.Function, *Bound.Function.SourceTypeHint, &*Audit, Allowed);
-  ASSERT_TRUE(Limitation.empty()) << Limitation;
-  CEmitterOptions Options;
-  Options.TheArch = Arch::AArch64;
-  std::string Source;
-  llvm::raw_string_ostream OS(Source);
-  ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
-  llvm::SmallString<128> Directory;
-  ASSERT_FALSE(
-      llvm::sys::fs::createUniqueDirectory("neverd-witness-frame", Directory));
-  const std::filesystem::path Work(Directory.str().str());
-  struct Cleanup {
-    std::filesystem::path Work;
-    ~Cleanup() {
-      std::error_code E;
-      std::filesystem::remove_all(Work, E);
-    }
-  } Cleanup{Work};
-  const auto Path = (Work / "witness.c").string();
-  std::ofstream(Path) << Source << R"(
+  for (bool MetadataAccessor : {false, true}) {
+    SCOPED_TRACE(MetadataAccessor);
+    immutable_native_call_test::Fixture F;
+    if (MetadataAccessor)
+      swift_witness_frame_test::metadataFrameWitnessFixture(F);
+    else
+      swift_witness_frame_test::frameWitnessFixture(F);
+    ASSERT_TRUE(F.high());
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &Function : F.Result.HighFuncs)
+      Functions.emplace(Function.Entry, &Function);
+    auto Bound =
+        bindObjCSourceReferences(*F.high(), F.Image, nullptr, &Functions);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    elimUnreadPrivateFrameStores(Bound.Function, F.Image.Arch);
+    ASSERT_TRUE(SourceSwiftWitnessFrameProjectionValidator(F.Image, F.Result)
+                    .valid(Bound.Function));
+    const auto Audit =
+        std::find_if(F.Result.FunctionAudits.begin(),
+                     F.Result.FunctionAudits.end(), [](const auto &A) {
+                       return A.Entry == immutable_native_call_test::Entry;
+                     });
+    ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+    const auto Allowed = [&](const HighExpr &E) {
+      return objcSourceCallBound(E, F.Image, Functions, nullptr, nullptr,
+                                 &Bound.Function);
+    };
+    const auto Limitation = sourceBodyLimitation(
+        Bound.Function, *Bound.Function.SourceTypeHint, &*Audit, Allowed);
+    ASSERT_TRUE(Limitation.empty()) << Limitation;
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+    llvm::SmallString<128> Directory;
+    ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-witness-frame",
+                                                      Directory));
+    const std::filesystem::path Work(Directory.str().str());
+    struct Cleanup {
+      std::filesystem::path Work;
+      ~Cleanup() {
+        std::error_code E;
+        std::filesystem::remove_all(Work, E);
+      }
+    } Cleanup{Work};
+    const auto Path = (Work / "witness.c").string();
+    std::ofstream(Path) << "#define TEST_METADATA " << MetadataAccessor << "\n"
+                        << Source << R"(
 #include <stdio.h>
 extern void *original_witness(void *,void *,void *,uint64_t,void *);
 __asm__(".text\n.p2align 2\n.globl _original_witness\n_original_witness:\n"
         ".long 0xa9bb53f3,0xa9015bf5,0xa9047bfd,0xaa0003f3,0xaa0103f4\n"
-        ".long 0xaa0203f5,0x92401476,0x910006d6,0xf85f82a8,0xf90013e8,0xaa0403e0\n"
+        ".long 0xaa0203f5,0x92401476,0x910006d6,0xf85f82a8,0xf90013e8\n"
+#if TEST_METADATA
+        ".long 0xd2800000\n"
+        "bl _$s10Foundation3URLVMa\n"
+#else
+        ".long 0xaa0403e0\n"
         "bl _objc_release\n"
+#endif
         ".long 0xf10006d6,0x54ffffe1,0xf94013e8,0xf9400908\n"
         ".long 0xaa1303e0,0xaa1403e1,0xaa1503e2,0xd63f0100\n"
         ".long 0xa9447bfd,0xa9415bf5,0xa8c553f3,0xd65f03c0\n");
@@ -16185,7 +16293,8 @@ static void * __attribute__((swiftcall)) copy_b(void *d,void *s,void *m) {
 }
 int main(void) {
   const uint32_t words[]={0xa9bb53f3,0xa9015bf5,0xa9047bfd,0xaa0003f3,0xaa0103f4,
-    0xaa0203f5,0x92401476,0x910006d6,0xf85f82a8,0xf90013e8,0xaa0403e0,0x94000035,
+    0xaa0203f5,0x92401476,0x910006d6,0xf85f82a8,0xf90013e8,
+    TEST_METADATA?0xd2800000:0xaa0403e0,0x94000035,
     0xf10006d6,0x54ffffe1,0xf94013e8,0xf9400908,0xaa1303e0,0xaa1403e1,
     0xaa1503e2,0xd63f0100,0xa9447bfd,0xa9415bf5,0xa8c553f3,0xd65f03c0};
   const uint32_t *machine=(const uint32_t*)(uintptr_t)original_witness;
@@ -16211,13 +16320,15 @@ int main(void) {
   return 0;
 }
 )";
-  for (const auto *Level : {"-O0", "-O2"}) {
-    SCOPED_TRACE(Level);
-    const auto Output = (Work / (std::string("witness") + Level)).string();
-    const std::vector<llvm::StringRef> Args{NEVERD_TEST_CLANG, Level, Path,
-                                            "-lobjc",          "-o",  Output};
-    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
-    EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0) << Source;
+    for (const auto *Level : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Level);
+      const auto Output = (Work / (std::string("witness") + Level)).string();
+      const std::vector<llvm::StringRef> Args{
+          NEVERD_TEST_CLANG, Level,        Path, "-lobjc",
+          "-framework",      "Foundation", "-o", Output};
+      ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_TEST_CLANG, Args), 0);
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(Output, {Output}), 0) << Source;
+    }
   }
 #else
   GTEST_SKIP() << "Original ARM64 comparison requires Apple ARM64 and Clang";

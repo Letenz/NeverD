@@ -1,0 +1,37 @@
+//===- driver_resource_stack.def - Original WDK stack transfer probes ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_STACK_VALUE
+NEVERD_RESOURCE_STACK_VALUE(StackInput, 0x1122334455667788ULL)
+NEVERD_RESOURCE_STACK_VALUE(StackOutput, 0xaabbccddeeff0011ULL)
+#endif
+#ifdef NEVERD_RESOURCE_STACK_CASE
+#define NEVERD_RESOURCE_STACK_CODE(Instruction)                                \
+  "pushfq\n\tpopq %q0\n\t" Instruction "\n\tpushfq\n\tpopq %q1"
+// Each sequence balances RSP before leaving the asm. Memory addresses stay
+// in explicit registers while the stack moves, and all instructions retain
+// the incoming flags. POP's RSP-based destination must use the increment.
+NEVERD_RESOURCE_STACK_CASE(WordRegister, 0xaabbccddeeff7788ULL, StackOutput,
+                           NEVERD_RESOURCE_STACK_CODE("pushw %w3\n\tpopw %w2"))
+NEVERD_RESOURCE_STACK_CASE(
+    Memory64, StackOutput, StackInput,
+    NEVERD_RESOURCE_STACK_CODE("pushq (%q4)\n\tpopq (%q5)"))
+NEVERD_RESOURCE_STACK_CASE(
+    Memory16, StackOutput, 0xaabbccddeeff7788ULL,
+    NEVERD_RESOURCE_STACK_CODE("pushw (%q4)\n\tpopw (%q5)"))
+NEVERD_RESOURCE_STACK_CASE(
+    PopStack64, StackInput, StackOutput,
+    NEVERD_RESOURCE_STACK_CODE(
+        "pushq %q2\n\tpushq %q3\n\tpopq (%%rsp)\n\tpopq %q2"))
+NEVERD_RESOURCE_STACK_CASE(
+    PopStack16, 0xaabbccddeeff7788ULL, StackOutput,
+    NEVERD_RESOURCE_STACK_CODE(
+        "pushw %w2\n\tpushw %w3\n\tpopw (%%rsp)\n\tpopw %w2"))
+NEVERD_RESOURCE_STACK_CASE(
+    PushStack64, StackInput, StackOutput,
+    NEVERD_RESOURCE_STACK_CODE(
+        "pushq %q3\n\tpushq (%%rsp)\n\tpopq %q2\n\tleaq 8(%%rsp), %%rsp"))
+#undef NEVERD_RESOURCE_STACK_CODE
+#endif

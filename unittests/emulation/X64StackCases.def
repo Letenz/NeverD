@@ -1,0 +1,146 @@
+//===- X64StackCases.def - Original x64 stack transfer encodings --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_STACK_VALUE
+NEVERD_STACK_VALUE(Limit, 1024 * 1024)
+NEVERD_STACK_VALUE(Page, 4096)
+NEVERD_STACK_VALUE(Code, 0x10000)
+NEVERD_STACK_VALUE(Data, 0x20000)
+NEVERD_STACK_VALUE(TLS, 0x30000)
+NEVERD_STACK_VALUE(Stack, 0x40000)
+NEVERD_STACK_VALUE(Alias, 0x60000)
+NEVERD_STACK_VALUE(High, 0x100000000ULL)
+NEVERD_STACK_VALUE(Offset, 1024)
+NEVERD_STACK_VALUE(Index, 8)
+NEVERD_STACK_VALUE(IndexScale, 2)
+NEVERD_STACK_VALUE(IndexOffset, 16)
+NEVERD_STACK_VALUE(IPOffset, 64)
+NEVERD_STACK_VALUE(ByteBits, 8)
+NEVERD_STACK_VALUE(WordBytes, 8)
+NEVERD_STACK_VALUE(Flags, 0xed7)
+NEVERD_STACK_VALUE(Seed, 0x1122334455667788ULL)
+NEVERD_STACK_VALUE(Fill, 0xa5)
+NEVERD_STACK_VALUE(Nop, 0x90)
+NEVERD_STACK_VALUE(Lock, 0xf0)
+NEVERD_STACK_VALUE(Timeout, 1'000'000)
+NEVERD_STACK_VALUE(MXCSR, 0x5fa5)
+NEVERD_STACK_VALUE(FPCW, 0xb7f)
+NEVERD_STACK_VALUE(FPSW, 0x1800)
+NEVERD_STACK_VALUE(FPHigh, 0x3fff)
+NEVERD_STACK_VALUE(VectorCount, 16)
+NEVERD_STACK_VALUE(FPCount, 8)
+NEVERD_STACK_VALUE(OracleAlignment, 16)
+NEVERD_STACK_VALUE(OracleFields, 6)
+NEVERD_STACK_VALUE(OracleWords, 12)
+#endif
+#ifdef NEVERD_STACK_TEXT
+NEVERD_STACK_TEXT(ObserverFailure, "stack transfer observer failed")
+NEVERD_STACK_TEXT(OracleUnavailable, "the stack transfer oracle requires x64")
+NEVERD_STACK_TEXT(OracleExecuted, "original host stack transfers: ")
+NEVERD_STACK_TEXT(OracleGuestOnly, "; TLS or low-address guest cases: ")
+#endif
+#ifdef NEVERD_STACK_ORACLE_REGISTER
+NEVERD_STACK_ORACLE_REGISTER(AX, 0)
+NEVERD_STACK_ORACLE_REGISTER(BX, 1)
+NEVERD_STACK_ORACLE_REGISTER(CX, 2)
+NEVERD_STACK_ORACLE_REGISTER(R12, 3)
+NEVERD_STACK_ORACLE_REGISTER(SP, 4)
+NEVERD_STACK_ORACLE_REGISTER(FLAGS, 5)
+#endif
+#ifdef NEVERD_STACK_ORACLE_BYTES
+// R10 keeps the packet and R11 keeps the caller's stack across the tested POP.
+NEVERD_STACK_ORACLE_BYTES(OraclePrefix, 0x53, 0x41, 0x54, 0x9c, 0x49, 0x89,
+                          0xe3)
+NEVERD_STACK_ORACLE_BYTES(SysVArgument, 0x49, 0x89, 0xfa)
+NEVERD_STACK_ORACLE_BYTES(Win64Argument, 0x49, 0x89, 0xca)
+NEVERD_STACK_ORACLE_BYTES(OracleLoad, 0x41, 0xff, 0x72, 0x28, 0x9d, 0x49, 0x8b,
+                          0x02, 0x49, 0x8b, 0x5a, 0x08, 0x49, 0x8b, 0x4a, 0x10,
+                          0x4d, 0x8b, 0x62, 0x18, 0x49, 0x8b, 0x62, 0x20)
+NEVERD_STACK_ORACLE_BYTES(OracleSave, 0x49, 0x89, 0x42, 0x30, 0x49, 0x89, 0x5a,
+                          0x38, 0x49, 0x89, 0x4a, 0x40, 0x4d, 0x89, 0x62, 0x48,
+                          0x49, 0x89, 0x62, 0x50, 0x4c, 0x89, 0xdc, 0x9c, 0x41,
+                          0x8f, 0x42, 0x58, 0x9d, 0x41, 0x5c, 0x5b, 0xc3)
+#endif
+#ifdef NEVERD_STACK_BACKEND
+NEVERD_STACK_BACKEND(kvmSupervisor, KVM, CheckedX64)
+NEVERD_STACK_BACKEND(kvmUser, KVM, CheckedUserX64)
+NEVERD_STACK_BACKEND(kvmDriver, KVM, Legacy)
+NEVERD_STACK_BACKEND(whpSupervisor, WHP, CheckedX64)
+NEVERD_STACK_BACKEND(whpUser, WHP, CheckedUserX64)
+NEVERD_STACK_BACKEND(whpDriver, WHP, Legacy)
+NEVERD_STACK_BACKEND(unicornSupervisor, Unicorn, CheckedX64)
+NEVERD_STACK_BACKEND(unicornUser, Unicorn, CheckedUserX64)
+#endif
+#ifdef NEVERD_STACK_CASE
+// Name, push, width, operand kind, full register, address rule, immediate,
+// bytes.
+NEVERD_STACK_CASE(PushAX64, true, 8, Register, X64AX, Base, 0, 0x50)
+NEVERD_STACK_CASE(PushAX16, true, 2, Register, X64AX, Base, 0, 0x66, 0x50)
+NEVERD_STACK_CASE(PushSP64, true, 8, Register, X64SP, Base, 0, 0x54)
+NEVERD_STACK_CASE(PushSP16, true, 2, Register, X64SP, Base, 0, 0x66, 0x54)
+NEVERD_STACK_CASE(PushR1264, true, 8, Register, X64R12, Base, 0, 0x41, 0x54)
+NEVERD_STACK_CASE(PushR1216, true, 2, Register, X64R12, Base, 0, 0x66, 0x41,
+                  0x54)
+NEVERD_STACK_CASE(PushRexW, true, 8, Register, X64AX, Base, 0, 0x66, 0x48, 0x50)
+NEVERD_STACK_CASE(PushOperandAfterRex, true, 2, Register, X64AX, Base, 0, 0x48,
+                  0x66, 0x50)
+NEVERD_STACK_CASE(PushImm8, true, 8, Immediate, X64AX, Base, -128, 0x6a, 0x80)
+NEVERD_STACK_CASE(PushImm8Word, true, 2, Immediate, X64AX, Base, -128, 0x66,
+                  0x6a, 0x80)
+NEVERD_STACK_CASE(PushImm16, true, 2, Immediate, X64AX, Base, 0xabcd, 0x66,
+                  0x68, 0xcd, 0xab)
+NEVERD_STACK_CASE(PushImm32, true, 8, Immediate, X64AX, Base, -2147483647, 0x68,
+                  0x01, 0x00, 0x00, 0x80)
+NEVERD_STACK_CASE(PushMemory64, true, 8, Memory, X64AX, Base, 0, 0xff, 0x33)
+NEVERD_STACK_CASE(PushMemory16, true, 2, Memory, X64AX, Base, 0, 0x66, 0xff,
+                  0x33)
+NEVERD_STACK_CASE(PushStack64, true, 8, Memory, X64AX, Stack, 0, 0xff, 0x34,
+                  0x24)
+NEVERD_STACK_CASE(PushStack16, true, 2, Memory, X64AX, Stack, 0, 0x66, 0xff,
+                  0x34, 0x24)
+NEVERD_STACK_CASE(PushStackPrevious16, true, 2, Memory, X64AX, Previous, 0,
+                  0x66, 0xff, 0x74, 0x24, 0xfe)
+NEVERD_STACK_CASE(PushAddress32, true, 8, Memory, X64AX, Address32, 0, 0x67,
+                  0xff, 0x33)
+NEVERD_STACK_CASE(PushStackAddress32, true, 8, Memory, X64AX, StackAddress32, 0,
+                  0x67, 0xff, 0x34, 0x24)
+NEVERD_STACK_CASE(PushFS64, true, 8, Memory, X64AX, FS, 0, 0x64, 0xff, 0x33)
+NEVERD_STACK_CASE(PushGS16, true, 2, Memory, X64AX, GS, 0, 0x65, 0x66, 0xff,
+                  0x33)
+NEVERD_STACK_CASE(PopAX64, false, 8, Register, X64AX, Base, 0, 0x58)
+NEVERD_STACK_CASE(PopAX16, false, 2, Register, X64AX, Base, 0, 0x66, 0x58)
+NEVERD_STACK_CASE(PopSP64, false, 8, Register, X64SP, Base, 0, 0x5c)
+NEVERD_STACK_CASE(PopSP16, false, 2, Register, X64SP, Base, 0, 0x66, 0x5c)
+NEVERD_STACK_CASE(PopR1264, false, 8, Register, X64R12, Base, 0, 0x41, 0x5c)
+NEVERD_STACK_CASE(PopR1216, false, 2, Register, X64R12, Base, 0, 0x66, 0x41,
+                  0x5c)
+NEVERD_STACK_CASE(PopRexW, false, 8, Register, X64AX, Base, 0, 0x66, 0x48, 0x58)
+NEVERD_STACK_CASE(PopOperandAfterRex, false, 2, Register, X64AX, Base, 0, 0x48,
+                  0x66, 0x58)
+NEVERD_STACK_CASE(PopMemory64, false, 8, Memory, X64AX, Base, 0, 0x8f, 0x03)
+NEVERD_STACK_CASE(PopMemory16, false, 2, Memory, X64AX, Base, 0, 0x66, 0x8f,
+                  0x03)
+NEVERD_STACK_CASE(PopStack64, false, 8, Memory, X64AX, Stack, 0, 0x8f, 0x04,
+                  0x24)
+NEVERD_STACK_CASE(PopStack16, false, 2, Memory, X64AX, Stack, 0, 0x66, 0x8f,
+                  0x04, 0x24)
+NEVERD_STACK_CASE(PopStackPrevious64, false, 8, Memory, X64AX, Previous, 0,
+                  0x8f, 0x44, 0x24, 0xf8)
+NEVERD_STACK_CASE(PopStackOverlap16, false, 2, Memory, X64AX, Overlap, 0, 0x66,
+                  0x8f, 0x44, 0x24, 0xff)
+NEVERD_STACK_CASE(PopStackIndex64, false, 8, Memory, X64AX, Indexed, 0, 0x8f,
+                  0x44, 0x4c, 0x10)
+NEVERD_STACK_CASE(PopExtendedBase64, false, 8, Memory, X64AX, Extended, 0, 0x41,
+                  0x8f, 0x04, 0x24)
+NEVERD_STACK_CASE(PopAddress32, false, 8, Memory, X64AX, Address32, 0, 0x67,
+                  0x8f, 0x03)
+NEVERD_STACK_CASE(PopStackAddress32, false, 8, Memory, X64AX, StackAddress32, 0,
+                  0x67, 0x8f, 0x04, 0x24)
+NEVERD_STACK_CASE(PopIP64, false, 8, Memory, X64AX, IP, 0, 0x8f, 0x05, 0x40, 0,
+                  0, 0)
+NEVERD_STACK_CASE(PopFS64, false, 8, Memory, X64AX, FS, 0, 0x64, 0x8f, 0x03)
+NEVERD_STACK_CASE(PopGS16, false, 2, Memory, X64AX, GS, 0, 0x65, 0x66, 0x8f,
+                  0x03)
+#endif

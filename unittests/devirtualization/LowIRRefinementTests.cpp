@@ -238,6 +238,25 @@ TEST(LowIRRefinement, NativeOverlapOptionRejectsStaticAndLoopAPIs) {
   EXPECT_FALSE(Inference.Plan);
 }
 
+TEST(LowIRRefinement, DeferredNativeEdgesRejectStaticAndLoopAPIs) {
+  Program A, B;
+  A.instruction({op(NdOp::COPY, r(0), {n(7)})});
+  A.finish();
+  B.instruction({op(NdOp::COPY, r(0), {n(7)})});
+  B.finish();
+  expect(A, B, Status::Proved);
+  A.Contract.DeferNativeConditionalEdges = true;
+  expect(A, B, Status::Unsupported);
+  const auto Loop = checkLowIRLoopRefinement(A.Function, A.Records, B.Function,
+                                             A.Contract, {});
+  EXPECT_EQ(Loop.Status, Status::Unsupported) << Loop.Diagnostic;
+  EXPECT_FALSE(Loop.Certificate);
+  const auto Inference = inferLowIRLoopRefinementPlan(B.Function, A.Contract);
+  EXPECT_EQ(Inference.Status, LowIRLoopInferenceStatus::Unsupported)
+      << Inference.Diagnostic;
+  EXPECT_FALSE(Inference.Plan);
+}
+
 TEST(LowIRRefinement, ExplicitWitnessDoesNotBecomeIndependence) {
   Program A, B, Zero;
   auto &Effect = A.instruction({op(NdOp::COPY, r(0), {r(8)})});
@@ -424,6 +443,127 @@ TEST(LowIRRefinement, LiftedWitnessCannotReadAnUnboundTemporary) {
   expect(B, A, Status::Invalid);
 }
 
+TEST(LowIRRefinement, FunctionTemporaryNeedsEveryByteAndBindsItsLifetime) {
+  Program A, B;
+  A.instruction({op(NdOp::COPY, r(0), {n(0x2211)})});
+  A.finish();
+  B.instruction({op(NdOp::COPY, NdVar::tmp(64, 2), {n(0x2211, 2)}),
+                 op(NdOp::COPY, NdVar::tmp(66, 6), {n(0, 6)})});
+  B.instruction({op(NdOp::COPY, r(0), {NdVar::tmp(64, 8)})});
+  B.finish();
+  expect(A, B,
+         Status::Invalid); // Ordinary temporaries do not cross instructions.
+  B.Function.FunctionTemporaries = {{64, 8}};
+  const auto Good = A.check(B);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  expect(B, A, Status::Proved);
+  B.Function.FunctionTemporaries.push_back({80, 8});
+  const auto OtherScope = A.check(B);
+  ASSERT_TRUE(OtherScope.proved()) << OtherScope.Diagnostic;
+  EXPECT_NE(Good.Certificate->CandidateDigest,
+            OtherScope.Certificate->CandidateDigest);
+  B.Function.FunctionTemporaries = {{64, 2}};
+  expect(A, B, Status::Invalid); // The other six bytes expire at the boundary.
+  B.Function.FunctionTemporaries = {{64, 8}};
+  auto &High = B.Function.Blocks.front().Ops[1];
+  High.Inputs[0] = n(1, 6);
+  expect(A, B, Status::Different);
+  High = op(NdOp::NOP);
+  High.Addr = B.Function.Blocks.front().StartAddr;
+  High.Seq = 1;
+  expect(A, B,
+         Status::Invalid); // Declaration does not initialize the high bytes.
+}
+
+TEST(LowIRRefinement, FunctionTemporaryDefinitionsArePathLocal) {
+  Program A, B;
+  A.instruction({op(NdOp::COPY, r(0), {n(7)})});
+  A.finish();
+  B.Function.FunctionTemporaries = {{64, 8}};
+  B.Function.Blocks.front().Succs = {1, 2};
+  B.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x200), NdVar::tmp(0, 1)})});
+  B.block(1, 0x200, {3});
+  B.instruction({op(NdOp::COPY, NdVar::tmp(64, 8), {n(7)}),
+                 op(NdOp::BRANCH, {}, {n(0x400)})});
+  B.block(2, 0x300, {3});
+  B.instruction({op(NdOp::NOP), op(NdOp::BRANCH, {}, {n(0x400)})});
+  B.block(3, 0x400);
+  B.instruction({op(NdOp::COPY, r(0), {NdVar::tmp(64, 8)})});
+  B.finish();
+  expect(A, B, Status::Invalid);
+  auto &Missing = B.Function.Blocks[2].Ops.front();
+  Missing.Opcode = NdOp::COPY;
+  Missing.Output = NdVar::tmp(64, 8);
+  Missing.addInput(n(7));
+  expect(A, B, Status::Proved);
+  Missing.Inputs[0] = n(9);
+  expect(A, B, Status::Different);
+  Missing.Inputs[0] = n(7);
+  expect(A, B,
+         Status::Proved); // A new invocation must not reuse a prior result.
+}
+
+TEST(LowIRRefinement, FunctionTemporaryRangesAreBoundedAndValidated) {
+  Program P;
+  P.finish();
+  for (const auto &Ranges :
+       std::vector<std::vector<LowFunctionTemporary>>{{{0, 0}},
+                                                      {{UINT64_MAX, 2}},
+                                                      {{8, 8}, {0, 8}},
+                                                      {{0, 8}, {7, 8}},
+                                                      {{0, 8}, {0, 8}},
+                                                      {{UINT64_MAX - 7, 8}}}) {
+    auto Bad = P;
+    Bad.Function.FunctionTemporaries = Ranges;
+    expect(P, Bad, Status::Invalid);
+  }
+  auto Large = P;
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxInstructions = 2;
+  Large.Function.FunctionTemporaries = {{0, 8}, {8, 8}, {16, 8}};
+  expect(P, Large, Status::BudgetExceeded, Witness::LiftedBits, Limits);
+  Large.Function.FunctionTemporaries.pop_back();
+  expect(P, Large, Status::Proved, Witness::LiftedBits, Limits);
+}
+
+TEST(LowIRRefinement, FunctionTemporaryFiniteLoopUsesLatestDefinition) {
+  const auto Loop = [](bool Temporary) {
+    Program P;
+    const auto Value = Temporary ? NdVar::tmp(64, 8) : r(0);
+    if (Temporary)
+      P.Function.FunctionTemporaries = {{64, 8}};
+    P.Contract.ReturnRegisters.push_back({8, 8});
+    P.Function.Blocks.front().Succs = {1};
+    P.instruction({op(NdOp::INT_AND, r(8), {r(8), n(1)}),
+                   op(NdOp::INT_ADD, r(8), {r(8), n(1)}),
+                   op(NdOp::COPY, Value, {n(0)}),
+                   op(NdOp::BRANCH, {}, {n(0x200)})});
+    P.block(1, 0x200, {1, 2});
+    P.instruction({op(NdOp::INT_ADD, Value, {Value, n(3)}),
+                   op(NdOp::INT_SUB, r(8), {r(8), n(1)}),
+                   op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                   op(NdOp::COND_BR, {}, {n(0x300), NdVar::tmp(0, 1)})});
+    P.block(2, 0x300);
+    if (Temporary)
+      P.instruction({op(NdOp::COPY, r(0), {Value})});
+    P.finish();
+    return P;
+  };
+  const auto A = Loop(false);
+  auto B = Loop(true);
+  expect(A, B, Status::Proved);
+  B.Function.Blocks[1].Ops.front().Inputs[1] = n(4);
+  expect(A, B, Status::Different);
+  B.Function.Blocks[1].Ops.front().Inputs[1] = n(3);
+  auto &Seed = B.Function.Blocks.front().Ops[2];
+  Seed.Opcode = NdOp::NOP;
+  Seed.Output = {};
+  Seed.NumInputs = 0;
+  expect(A, B,
+         Status::Invalid); // A backedge write cannot define the first use.
+}
+
 TEST(LowIRRefinement, BudgetsCoverBothExecutionsAndFinalRelation) {
   Program A;
   A.instruction({op(NdOp::COPY, r(0), {n(2)})});
@@ -550,6 +690,19 @@ TEST(LowIRLoopRefinement, ArbitraryWordCountWithDifferentBody) {
   const auto Finite = A.check(B);
   EXPECT_FALSE(Finite.proved());
   EXPECT_EQ(Finite.Status, Status::BudgetExceeded);
+}
+
+TEST(LowIRLoopRefinement, FunctionTemporariesDoNotInventCutpointState) {
+  auto A = wordLoop(), B = wordLoop();
+  B.Function.FunctionTemporaries = {{64, 8}};
+  loopRefused(loopCheck(A, B, wordLoopPlan()), Status::Unsupported);
+  const auto Inferred = inferLowIRLoopRefinementPlan(B.Function, B.Contract);
+  EXPECT_EQ(Inferred.Status, LowIRLoopInferenceStatus::Unsupported)
+      << Inferred.Diagnostic;
+  EXPECT_FALSE(Inferred.inferred());
+  // The finite checker can still enumerate complete bounded executions.
+  A.Contract.EntryConstants = {{r(16), 2}};
+  expect(A, B, Status::Proved);
 }
 
 TEST(LowIRLoopRefinement, EntryAlignmentSurvivesEntryAndInductionTemplates) {

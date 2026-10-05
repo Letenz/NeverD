@@ -436,6 +436,101 @@ TEST_F(X86UndefinedEffects, MemoryXaddChangedAddressDetailsRemainUnaudited) {
   }
 }
 
+TEST_F(X86UndefinedEffects, DoubleShiftUnauditedFormsClearPartialEvidence) {
+  const InstructionCase Cases[] = {
+      {"memory SHLD", {0x0f, 0xa5, 0x08}},
+      {"memory SHRD", {0x66, 0x0f, 0xac, 0x08, 17}},
+      {"LOCK", {0xf0, 0x0f, 0xa5, 0xc8}},
+      {"REP", {0xf3, 0x0f, 0xad, 0xc8}},
+      {"duplicate operand prefix", {0x66, 0x66, 0x0f, 0xa5, 0xc8}},
+      {"duplicate REX", {0x48, 0x48, 0x0f, 0xad, 0xc8}},
+      {"unused REX.X", {0x42, 0x0f, 0xa5, 0xc8}},
+      {"address prefix", {0x67, 0x0f, 0xad, 0xc8}},
+      {"segment prefix", {0x64, 0x0f, 0xa5, 0xc8}},
+      {"REX2", {0xd5, 0x08, 0x0f, 0xa5, 0xc8}},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    DecodedInsn Insn{};
+    if (!decode(Case.Bytes, Insn))
+      continue;
+    std::vector<LowOp> Ops;
+    auto Effects = staleEffects();
+    Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+    EXPECT_NE(Effects.Coverage, LowUndefinedCoverage::Complete);
+    expectCleared(Effects);
+  }
+}
+
+TEST_F(X86UndefinedEffects, DoubleShiftChangedFormsDoNotPublishDraftEffects) {
+  for (bool Immediate : {false, true})
+    for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << Immediate << '/' << Mutation);
+      DecodedInsn Insn{};
+      auto Bytes = std::vector<uint8_t>{0x66, 0x0f,
+                                        uint8_t(Immediate ? 0xa4 : 0xa5), 0xc8};
+      if (Immediate)
+        Bytes.push_back(17);
+      ASSERT_TRUE(decode(Bytes, Insn));
+      auto &X = Insn.Raw->detail->x86;
+      switch (Mutation) {
+      case 0:
+        X.operands[0].reg = X86_REG_DX;
+        break;
+      case 1:
+        X.operands[1].reg = X86_REG_DX;
+        break;
+      case 2:
+        X.operands[0].size = 4;
+        break;
+      case 3:
+        X.operands[1].size = 4;
+        break;
+      case 4:
+        X.operands[2].size = 2;
+        break;
+      case 5:
+        if (Immediate)
+          X.operands[2].imm = 16;
+        else
+          X.operands[2].reg = X86_REG_DL;
+        break;
+      case 6:
+        Insn.Raw->id = X86_INS_SHRD;
+        break;
+      case 7:
+        X.opcode[1] ^= 8;
+        break;
+      case 8:
+        X.modrm ^= 1;
+        break;
+      case 9:
+        X.encoding.modrm_offset = 1;
+        break;
+      case 10:
+        X.prefix[2] = 0;
+        break;
+      case 11:
+        X.rex = 0x48;
+        break;
+      case 12:
+        X.encoding.imm_offset = Immediate ? 3 : 1;
+        break;
+      case 13:
+        X.encoding.disp_size = 1;
+        break;
+      case 14:
+        X.op_count = 2;
+        break;
+      }
+      std::vector<LowOp> Ops;
+      auto Effects = staleEffects();
+      ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
+      EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+      expectCleared(Effects);
+    }
+}
+
 TEST_F(X86UndefinedEffects, BitAndRotateAuditBoundariesClearPartialEvidence) {
   const InstructionCase Cases[] = {
       {"memory bit base", {0x0f, 0xb3, 0x08}},

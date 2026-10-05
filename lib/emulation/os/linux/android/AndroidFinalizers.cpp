@@ -48,4 +48,8 @@ BionicResult Bionic::finishCallback(const GuestCallback &Callback) {
   }
   return finalize(std::get<FinalizeCallback>(Callback.Continuation).DSO);
 }
+BionicResult Bionic::finalizeCall(const NativeCallEvent &Call) {
+  return finalize(Call.Arguments[0]);
+}
+
 } // namespace neverd::emulation::android_model
