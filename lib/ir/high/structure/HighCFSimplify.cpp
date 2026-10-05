@@ -2939,11 +2939,13 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         }
       }
       // T2e: `if (c) { A } else { B; goto Y; } S...; Y:` runs S only after A,
-      // so S moves to the end of A's arm.  S must hold no entered label: a
-      // jump into the arm would be legal C but no clearer, and a labelled
-      // tail left in place can still be copied to each of its jumps.  Y must
-      // be the one statement starting its address, since a label resolves to
-      // the first statement printed there.
+      // so S moves to the end of A's arm.  A label in S may be entered only
+      // from inside S, so the move takes its jumps along: a jump into the arm
+      // would be legal C but no clearer, and a labelled tail left in place
+      // can still be copied to each of its jumps.  Y and every label in S
+      // must be the one statement starting its address, since a label
+      // resolves to the first statement printed there and S now prints
+      // before B.
       if (L[I].Kind == StmtKind::IfElse && L[I].Cond &&
           !L[I].ElseBody.empty() &&
           L[I].ElseBody.back().Kind == StmtKind::Goto &&
@@ -2952,28 +2954,35 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         size_t J = I + 1;
         while (J < L.size() && !(L[J].Addr == Y && labelStart(L, J)))
           ++J;
-        std::function<bool(const std::vector<HighStmt> &, size_t, size_t)>
-            Unentered = [&](const std::vector<HighStmt> &List, size_t From,
-                            size_t To) {
+        // The labels S starts and the jumps inside S to each address.
+        std::vector<va_t> Labels;
+        std::map<va_t, unsigned> Inside;
+        std::function<void(const std::vector<HighStmt> &, size_t, size_t)>
+            Scan = [&](const std::vector<HighStmt> &List, size_t From,
+                       size_t To) {
               for (size_t K = From; K < To; ++K) {
                 const HighStmt &S = List[K];
                 if (labelStart(List, K))
-                  return false;
+                  Labels.push_back(S.Addr);
+                if (S.Kind == StmtKind::Goto)
+                  ++Inside[S.GotoTarget];
                 for (const auto *Inner : {&S.Body, &S.ElseBody, &S.DefaultBody})
-                  if (!Unentered(*Inner, 0, Inner->size()))
-                    return false;
+                  Scan(*Inner, 0, Inner->size());
                 for (const auto &C : S.Cases)
-                  if (!Unentered(C.Body, 0, C.Body.size()))
-                    return false;
+                  Scan(C.Body, 0, C.Body.size());
                 for (const auto &ClauseBody : S.EHClauseBodies)
-                  if (!Unentered(ClauseBody, 0, ClauseBody.size()))
-                    return false;
+                  Scan(ClauseBody, 0, ClauseBody.size());
               }
-              return true;
             };
+        bool SelfContained = J < L.size();
+        if (SelfContained) {
+          Scan(L, I + 1, J);
+          for (va_t Label : Labels)
+            SelfContained &=
+                AddressStarts[Label] == 1 && usesOf(Label) == Inside[Label];
+        }
         if (J < L.size() && J > I + 1 && AddressStarts[Y] == 1 &&
-            (!isTerminator(L[J - 1]) || SpliceRegions) &&
-            Unentered(L, I + 1, J)) {
+            (!isTerminator(L[J - 1]) || SpliceRegions) && SelfContained) {
           popGoto(L[I].ElseBody);
           --Uses[Y];
           L[I].Body.insert(L[I].Body.end(),

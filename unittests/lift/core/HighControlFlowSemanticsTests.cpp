@@ -3705,6 +3705,43 @@ TEST(HighControlFlowSemantics, ArmJumpPastStatementsBecomesStructured) {
   }
 }
 
+TEST(HighControlFlowSemantics, ArmJumpPastALoopItAloneEntersBecomesStructured) {
+  // v = 0; if (x & 1) { v = 1; } else { v = 3; goto Y; }
+  // X: v = v + 10; if (v < 25) goto X;  Y: return v;
+  // Only the skipped statements jump to X, so they move into the then arm
+  // with their loop, and the else arm's jump goes away.
+  auto Plus10 = assign(0x1010, 1, 0);
+  Plus10.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(10, 8));
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Arms.Body = {assign(0x1004, 1, 1)};
+  Arms.ElseBody = {assign(0x1008, 1, 3), jump(0x100c, 0x1030)};
+  auto Again = conditional(0x1014, 0x1010);
+  Again.Cond =
+      HighExpr::makeBinop(NdOp::INT_LESS, local(1), HighExpr::makeConst(25, 8));
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1030;
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 0),    Arms, Plus10, Again, Label,
+            result(0x1034, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t { return X & 1 ? 31 : 3; };
+  for (uint64_t X : {0, 1})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+  for (uint64_t X : {0, 1})
+    EXPECT_EQ(execute(F, X), Expected(X)) << X;
+  size_t Exits = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Exits += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1030;
+  });
+  EXPECT_EQ(Exits, 0u);
+}
+
 TEST(HighControlFlowSemantics, EnteredDoWhileKeepsItsShape) {
   // `goto X; Top: do { y = y + 1; X: } while (y != 3); if (x) goto Top;`
   // The jump to Top runs the body before the test; `while (y != 3)` would
