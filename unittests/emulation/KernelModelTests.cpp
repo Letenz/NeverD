@@ -302,9 +302,9 @@ TEST_F(DriverKernelModel, SpinLockFailuresPreserveOwnershipAndValidationOrder) {
   invoke("KeReleaseSpinLock", {Lock, 0xaabbccdd12345600});
   EXPECT_EQ(Model->currentIRQL(), 0u);
   EXPECT_EQ(integer(Lock), 0u);
-  EXPECT_EQ(failure("KeReleaseSpinLock", {Scratch, 0}),
+  EXPECT_EQ(failure("KeReleaseSpinLock", {profile::UserArenaBase, 0}),
             "executive spin lock is not owned by this thread");
-  EXPECT_EQ(failure("KeAcquireSpinLockAtDpcLevel", {Scratch}),
+  EXPECT_EQ(failure("KeAcquireSpinLockAtDpcLevel", {profile::UserArenaBase}),
             "executive spin lock requires kernel storage");
   EXPECT_EQ(failure("KeAcquireSpinLockAtDpcLevel", {Lock}),
             "DPC-level spin-lock acquisition requires DISPATCH_LEVEL");
