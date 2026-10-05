@@ -282,6 +282,8 @@ struct SpecializationResult {
 /// unsupported instruction guards are refused.
 /// Every temporary read must have a complete definition in the same lifted
 /// native instruction; temporary offsets may be reused by later instructions.
+/// A residual multi-target dispatch snapshots a temporary target into an
+/// explicit function-local temporary before crossing instruction boundaries.
 /// Flag snapshots are treated as unknown values for proof and may not certify
 /// an external pointer or finite target on their own. A PUSHFQ snapshot needs
 /// prior definitions for every modelled flag unless ExplicitMachineState

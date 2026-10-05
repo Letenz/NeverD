@@ -777,6 +777,7 @@ private:
   static constexpr uint64_t NativeCallTargetTemp = DispatchTemp + 32;
   static constexpr uint64_t FrameAddressTemp = DispatchTemp + 40;
   static constexpr uint64_t FrameValueTemp = DispatchTemp + 48;
+  static constexpr uint64_t DispatchTargetTemp = DispatchTemp + 56;
 };
 
 std::optional<uint64_t> Specializer::frameOffset(SymContext &Ctx,
@@ -2003,10 +2004,23 @@ bool Specializer::emitTargets(Node &Draft,
   int Head = Destinations.back().second;
   // Dispatch reads the retained target operand. No expression mentioning an
   // old or overwritten physical register is re-serialized into the program.
+  NdVar Target = Original.Inputs[0];
+  if (Destinations.size() > 1 && Target.isTemp()) {
+    if (Result.EvaluatedOperations >= Options.MaxOperations)
+      return fail(SpecializationStatus::BudgetExceeded,
+                  "finite dispatch snapshot operation budget exhausted");
+    ++Result.EvaluatedOperations;
+    LowOp Snapshot;
+    Snapshot.Opcode = NdOp::COPY;
+    Snapshot.Output = NdVar::tmp(DispatchTargetTemp, Target.Size);
+    Snapshot.addInput(Target);
+    Draft.Block.Ops.push_back(Snapshot);
+    Target = Snapshot.Output;
+  }
   for (size_t I = Destinations.size() - 1; I > 0; --I) {
-    Head = addDispatchNode(Instruction.Origin, Original.Inputs[0],
-                           Destinations[I - 1].first,
-                           Destinations[I - 1].second, Head);
+    Head =
+        addDispatchNode(Instruction.Origin, Target, Destinations[I - 1].first,
+                        Destinations[I - 1].second, Head);
     if (Head < 0)
       return false;
   }
@@ -3171,10 +3185,14 @@ bool Specializer::publish() {
     Block.Preds.clear();
     for (int &Successor : Block.Succs)
       Successor = Remap.at(Successor);
-    for (LowOp &Op : Block.Ops)
+    for (LowOp &Op : Block.Ops) {
+      if (Op.Output.isTemp() && Op.Output.Offset == DispatchTargetTemp &&
+          Function.FunctionTemporaries.empty())
+        Function.FunctionTemporaries.push_back({DispatchTargetTemp, 8});
       if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR)
         Op.Inputs[0] =
             NdVar::cst(Labels.at(static_cast<int>(Op.Inputs[0].Offset)), 8);
+    }
     va_t InstructionLabel = Block.StartAddr;
     for (const NativeSlice &Slice : Nodes[Id].Slices) {
       const va_t Address = InstructionLabel++;

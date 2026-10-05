@@ -165,7 +165,15 @@ std::optional<uint64_t> execute(const LowFunc &Function,
   for (unsigned Step = 0; Step < 10000; ++Step) {
     const auto &Block = Function.Blocks.at(BlockId);
     int Next = -1;
+    std::optional<va_t> Instruction;
     for (const auto &Op : Block.Ops) {
+      if (Instruction != Op.Addr) {
+        std::erase_if(Bytes, [&](const auto &Entry) {
+          return Entry.first.first == VnodeSpace::TEMP &&
+                 !Function.isFunctionTemporaryByte(Entry.first.second);
+        });
+        Instruction = Op.Addr;
+      }
       const auto A = [&] { return read(Op.Inputs[0]); };
       const auto B = [&] { return read(Op.Inputs[1]); };
       switch (Op.Opcode) {
@@ -386,6 +394,36 @@ TEST(InterpreterSpecialization, FiniteTargetBudgetAndUnknownArmFailClosed) {
   Result = specializeInterpreter(P, {0x100});
   EXPECT_EQ(Result.Status, SpecializationStatus::UnresolvedControl);
   EXPECT_TRUE(Result.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, TemporaryDispatchSnapshotsAreChargedAndScoped) {
+  Provider P;
+  const auto Target = NdVar::tmp(0, 8);
+  P.add(0x100, {op(NdOp::INT_AND, Target, {reg(8), constant(3)}),
+                op(NdOp::INT_LEFT, Target, {Target, constant(4)}),
+                op(NdOp::INT_ADD, Target, {Target, constant(0x200)}),
+                op(NdOp::COPY, reg(8), {constant(99)}),
+                op(NdOp::INDIR_BR, {}, {Target})});
+  for (uint64_t I = 0; I != 4; ++I)
+    P.add(0x200 + I * 16, {op(NdOp::COPY, reg(0), {constant(I)}), ret()});
+  const auto Good = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  for (uint64_t I = 0; I != 256; ++I) {
+    EXPECT_EQ(execute(Good.Residual, {{8, I}}), I & 3);
+    EXPECT_EQ(execute(Good.Residual, {{8, UINT64_MAX - I}}),
+              (UINT64_MAX - I) & 3);
+  }
+  auto Unbound = Good.Residual;
+  Unbound.FunctionTemporaries.clear();
+  EXPECT_FALSE(execute(Unbound, {{8, 0}}));
+  SpecializationOptions Exact;
+  Exact.MaxOperations = Good.EvaluatedOperations;
+  const auto Again = specializeInterpreter(P, {0x100}, Exact);
+  ASSERT_TRUE(Again.complete()) << Again.Diagnostic;
+  --Exact.MaxOperations;
+  const auto Short = specializeInterpreter(P, {0x100}, Exact);
+  EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_TRUE(Short.Residual.Blocks.empty());
 }
 
 TEST(InterpreterSpecialization, ImmutableReadHonorsConfiguredByteOrder) {

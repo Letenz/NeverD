@@ -22,6 +22,7 @@
 #include "llvm/Support/Error.h"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <set>
@@ -1035,6 +1036,11 @@ struct LowCxxContinuationExitEvidence {
   }
 };
 
+struct LowFunctionTemporary {
+  uint64_t Offset = 0;
+  uint16_t Bytes = 0;
+};
+
 struct LowFunc {
   va_t Entry = 0;
   uint64_t OriginalSize = 0;
@@ -1044,6 +1050,22 @@ struct LowFunc {
   uint32_t SourceLine = 0;
   std::vector<LowBlock> Blocks;
   std::vector<JumpTable> JumpTables;
+  /// Explicit byte ranges of function-local temporaries, sorted by offset
+  /// and nonoverlapping. These values start unbound and require a reaching
+  /// definition on every executed path. They may cross instruction/block
+  /// boundaries; all other temporary definitions are instruction-local.
+  /// This declares lifetime, never an entry value or an initialization fact.
+  std::vector<LowFunctionTemporary> FunctionTemporaries;
+
+  bool isFunctionTemporaryByte(uint64_t Offset) const {
+    const auto It = std::upper_bound(
+        FunctionTemporaries.begin(), FunctionTemporaries.end(), Offset,
+        [](uint64_t Byte, const LowFunctionTemporary &Range) {
+          return Byte < Range.Offset;
+        });
+    return It != FunctionTemporaries.begin() &&
+           Offset - std::prev(It)->Offset < std::prev(It)->Bytes;
+  }
   /// Final CFG roots which independently seed this function's published
   /// blocks: the real entry/exception roots, unsuppressed relocation roots,
   /// and reachable address-taken code roots.  Module-wide evidence analysis

@@ -69,6 +69,72 @@ void refused(const BinaryLowIRRefinementResult &Result, Status S) {
   EXPECT_FALSE(Result.Proof.Certificate);
 }
 
+TEST(BinaryLowIRRefinement, MemoryIndirectDispatchKeepsTargetSnapshot) {
+  // AND ECX,3; LEA RAX,[RIP+table]; JMP [RAX+RCX*8]; four return arms.
+  Program P({0x83, 0xe1, 3, 0x48, 0x8d, 0x05, 27,   0, 0, 0, 0xff, 0x24, 0xc8,
+             0xb8, 7,    0, 0,    0,    0xc3, 0xb8, 9, 0, 0, 0,    0xc3, 0xb8,
+             11,   0,    0, 0,    0xc3, 0xb8, 13,   0, 0, 0, 0xc3});
+  auto &Code = P.Image.Segments.front();
+  ASSERT_EQ(Code.Data.size(), 37U);
+  for (uint64_t Target : {Entry + 13, Entry + 19, Entry + 25, Entry + 31})
+    for (unsigned I = 0; I != 8; ++I)
+      Code.Data.push_back(static_cast<uint8_t>(Target >> (I * 8)));
+  Code.Size = Code.FileSz = Code.Data.size();
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.OriginalPaths, 4U);
+  EXPECT_EQ(Good.Proof.CandidatePaths, 4U);
+  auto Changed = Recovery.Residual;
+  ASSERT_EQ(Changed.FunctionTemporaries.size(), 1U);
+  bool Mutated = false;
+  for (auto &B : Changed.Blocks)
+    for (auto &O : B.Ops)
+      if (O.Opcode == NdOp::COPY && O.Output.isTemp() &&
+          O.Output.Offset == Changed.FunctionTemporaries[0].Offset) {
+        O.Inputs[0] = NdVar::scalar(Entry + 13, 8);
+        Mutated = true;
+      }
+  ASSERT_TRUE(Mutated);
+  refused(P.check(Changed), Status::Different);
+  Changed = Recovery.Residual;
+  Changed.FunctionTemporaries.clear();
+  refused(P.check(Changed), Status::Invalid);
+}
+
+TEST(BinaryLowIRRefinement, FiniteReturnDispatchKeepsPreCleanupTarget) {
+  // Reserve a cleanup slot and call a helper. It replaces its return slot
+  // with one of four arms, then RET 8 restores the outer stack pointer.
+  Program P({0x48, 0x83, 0xec, 8,    0xe8, 24,   0,    0,    0,    0xb8,
+             7,    0,    0,    0,    0xc3, 0xb8, 9,    0,    0,    0,
+             0xc3, 0xb8, 11,   0,    0,    0,    0xc3, 0xb8, 13,   0,
+             0,    0,    0xc3, 0x83, 0xe1, 3,    0x48, 0x8d, 0x05, 0xde,
+             0xff, 0xff, 0xff, 0x48, 0x8d, 0x0c, 0x49, 0x48, 0x8d, 0x04,
+             0x48, 0x48, 0x89, 0x04, 0x24, 0xc2, 8,    0});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.OriginalPaths, 4U);
+  EXPECT_EQ(Good.Proof.CandidatePaths, 4U);
+}
+
+TEST(BinaryLowIRRefinement, FiniteMemoryCallKeepsOverwrittenTargetSlot) {
+  // Select a callee into [RSP-8]. CALL reads it before pushing the return
+  // address into that same slot, so a later reload is not a target snapshot.
+  Program P({0x83, 0xe1, 1,    0x48, 0x8d, 0x05, 18,   0,    0,    0,
+             0x48, 0x8d, 0x0c, 0x49, 0x48, 0x8d, 0x04, 0x48, 0x48, 0x89,
+             0x44, 0x24, 0xf8, 0xff, 0x54, 0x24, 0xf8, 0xc3, 0xb8, 7,
+             0,    0,    0,    0xc3, 0xb8, 9,    0,    0,    0,    0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.OriginalPaths, 2U);
+  EXPECT_EQ(Good.Proof.CandidatePaths, 2U);
+}
+
 TEST(BinaryLowIRRefinement,
      Disp32WordShiftChecksTheCompleteRecoveredCandidate) {
   Program P({0x48, 0x89, 0x4c, 0x24, 0xf8, 0x66, 0xc1, 0xa4, 0x24, 0xf8,
