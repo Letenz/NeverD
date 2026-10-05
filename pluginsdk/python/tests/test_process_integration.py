@@ -503,6 +503,9 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("sparse-file-seek", b"s"),
                                            ("unlinked-file", b"u"),
                                            ("created-file", b"c"),
+                                           ("created-file-metadata", b"q"),
+                                           ("virtual-created-metadata", bytes.fromhex(
+                                               "85ffffffe88100001132547698badcfee803000098badcfe0000000000000000edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000f9ffffffffffffff15cd5b0700000000edffffffffffffffb168de3a00000000082000000000000008000000000000000020000000000000efcdab890000000000000000000000000000000000000000")),
                                            ("virtual-file-metadata", bytes.fromhex(
                                                "85ffffffa48101001032547698badcfeefcdab8998badcfe0000000000000000"
                                                "01000000000000800100000000000000f9ffffffffffffff15cd5b0700000000"
@@ -557,19 +560,32 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
-                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file"):
+                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata"):
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]
                             writable_file["writable"] = True
                             writable_file["metadata"]["flags"] = 0
-                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file"):
+                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata"):
                                 writable_file["metadata"]["link_count"] = 1
                                 writable_file["mutation_policy"] = {
                                     "allocation_unit": 4096,
                                     "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}
-                            if mode in ("unlinked-file", "created-file"):
+                            if mode in ("unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata"):
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/")["mutable"] = True
+                            if mode in ("created-file-metadata", "virtual-created-metadata"):
+                                files = writable_options["darwin_files"]
+                                files["umask"] = 0o27
+                                files["creation_policy"] = {
+                                    "first_inode": "18364758544493064721",
+                                    "block_size": 8192, "generation": 2309737967,
+                                    "creation_time": {"seconds": -19, "nanoseconds": 987654321},
+                                    "mutation_policy": {"allocation_unit": 4096,
+                                                        "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}}
+                                parent = dict(writable_file["metadata"], inode=41, mode=0o40755,
+                                              flags=0, link_count=1, size=0, blocks=0)
+                                next(d for d in files["directories"]
+                                     if d["path"] == "/")["metadata"] = parent
                             file_options = json.dumps(writable_options)
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"], "exited", f"{mode}: {result['diagnostic']}")

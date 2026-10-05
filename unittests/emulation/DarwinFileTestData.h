@@ -34,6 +34,26 @@ inline DarwinFileMetadata mutationMetadata(uint64_t Size = 10) {
   return M;
 }
 inline constexpr DarwinFileMutationPolicy MutationPolicy{4096, {-7, 123456789}};
+inline DarwinFileMetadata creationParentMetadata() {
+  auto M = mutationMetadata(0);
+  M.Mode = 0040755;
+  M.Inode = 41;
+  return M;
+}
+inline constexpr DarwinFileCreationPolicy CreationPolicy{
+    0xfedcba9876543211ULL, 8192, 0x89abcdef, {-19, 987654321}, MutationPolicy};
+inline constexpr char CreationPolicyJSON[] = R"({
+  "first_inode":"18364758544493064721","block_size":8192,
+  "generation":2309737967,
+  "creation_time":{"seconds":-19,"nanoseconds":987654321},
+  "mutation_policy":{"allocation_unit":4096,
+    "mutation_time":{"seconds":-7,"nanoseconds":123456789}}})";
+inline constexpr char CreationMetadataHex[] =
+    "85ffffffe88100001132547698badcfee803000098badcfe0000000000000000"
+    "edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000"
+    "f9ffffffffffffff15cd5b0700000000edffffffffffffffb168de3a00000000"
+    "082000000000000008000000000000000020000000000000efcdab8900000000"
+    "00000000000000000000000000000000";
 inline constexpr char MutationPolicyJSON[] = R"({"allocation_unit":4096,
   "mutation_time":{"seconds":-7,"nanoseconds":123456789}})";
 inline constexpr char MutationMetadataHex[] =

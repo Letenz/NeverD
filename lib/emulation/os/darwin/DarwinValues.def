@@ -91,6 +91,7 @@ NEVERD_DARWIN_SERVICE(Write, 4, Wide)
 NEVERD_DARWIN_SERVICE(Open, 5, Int)
 NEVERD_DARWIN_SERVICE(Close, 6, Int)
 NEVERD_DARWIN_SERVICE(Unlink, 10, Int)
+NEVERD_DARWIN_SERVICE(Umask, 60, Int)
 NEVERD_DARWIN_SERVICE(Chdir, 12, Int)
 NEVERD_DARWIN_SERVICE(Fchdir, 13, Int)
 NEVERD_DARWIN_SERVICE(GetPID, 20, Int)
@@ -200,6 +201,14 @@ NEVERD_DARWIN_DIAGNOSTIC(
     "Darwin creation exceeds the file entry, path or storage budget")
 NEVERD_DARWIN_DIAGNOSTIC(FileMutationLimit,
                          "Darwin mutation exceeds the file storage budget")
+NEVERD_DARWIN_DIAGNOSTIC(FileCreationPolicy,
+                         "invalid Darwin virtual file creation policy")
+NEVERD_DARWIN_DIAGNOSTIC(FileCreationParent,
+                         "Darwin creation requires explicit parent metadata")
+NEVERD_DARWIN_DIAGNOSTIC(FileCreationInode,
+                         "Darwin creation inode sequence is exhausted")
+NEVERD_DARWIN_DIAGNOSTIC(FileUmask, "Darwin initial umask is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileUmaskOption, "invalid Darwin initial umask")
 NEVERD_DARWIN_DIAGNOSTIC(FileMutatedMetadata,
                          "Darwin post-mutation file metadata is unknown")
 NEVERD_DARWIN_DIAGNOSTIC(

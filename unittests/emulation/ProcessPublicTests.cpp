@@ -403,16 +403,24 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
         std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
         std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}})
     for (const auto &[Mode, Expected] :
-         {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
+         {std::pair{"files", "66"},
+          std::pair{"files-nocancel", "66"},
           std::pair{"writable-files", "303030303665"},
           std::pair{"writable-files-nocancel", "303030303665"},
           std::pair{"virtual-file-metadata",
                     emulation::darwin_test::MutationMetadataHex},
-          std::pair{"sparse-file-seek", "73"}, std::pair{"unlinked-file", "75"},
-          std::pair{"created-file", "63"}, std::pair{"stdin", "00ff78"},
+          std::pair{"sparse-file-seek", "73"},
+          std::pair{"unlinked-file", "75"},
+          std::pair{"created-file", "63"},
+          std::pair{"created-file-metadata", "71"},
+          std::pair{"virtual-created-metadata",
+                    emulation::darwin_test::CreationMetadataHex},
+          std::pair{"stdin", "00ff78"},
           std::pair{"output-descriptors", "6f6b"},
-          std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"},
-          std::pair{"directories", "64"}, std::pair{"directory-entries", "65"},
+          std::pair{"file-status", "73"},
+          std::pair{"file-mapping", "6d"},
+          std::pair{"directories", "64"},
+          std::pair{"directory-entries", "65"},
           std::pair{"time-values", emulation::darwin_test::TimeHex},
           std::pair{"mach-time", "68"},
           std::pair{"mach-timebase-values",
@@ -460,7 +468,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       llvm::StringRef(Mode) == "virtual-file-metadata" ||
       llvm::StringRef(Mode) == "sparse-file-seek" ||
       llvm::StringRef(Mode) == "unlinked-file" ||
-      llvm::StringRef(Mode) == "created-file") {
+      llvm::StringRef(Mode) == "created-file" ||
+      llvm::StringRef(Mode) == "created-file-metadata" ||
+      llvm::StringRef(Mode) == "virtual-created-metadata") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *File = Input.getAsObject()
                      ->getObject(field::DarwinFiles)
@@ -472,18 +482,41 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     if (llvm::StringRef(Mode) == "virtual-file-metadata" ||
         llvm::StringRef(Mode) == "sparse-file-seek" ||
         llvm::StringRef(Mode) == "unlinked-file" ||
-        llvm::StringRef(Mode) == "created-file") {
+        llvm::StringRef(Mode) == "created-file" ||
+        llvm::StringRef(Mode) == "created-file-metadata" ||
+        llvm::StringRef(Mode) == "virtual-created-metadata") {
       (*File->getObject(field::FileMetadata))[field::FileLinkCount] = 1;
       (*File)[field::FileMutationPolicy] = llvm::cantFail(
           llvm::json::parse(emulation::darwin_test::MutationPolicyJSON));
     }
     if (llvm::StringRef(Mode) == "unlinked-file" ||
-        llvm::StringRef(Mode) == "created-file")
+        llvm::StringRef(Mode) == "created-file" ||
+        llvm::StringRef(Mode) == "created-file-metadata" ||
+        llvm::StringRef(Mode) == "virtual-created-metadata")
       (*Input.getAsObject()
             ->getObject(field::DarwinFiles)
             ->getArray(field::Directories)
             ->front()
             .getAsObject())[field::DirectoryMutable] = true;
+    if (llvm::StringRef(Mode) == "created-file-metadata" ||
+        llvm::StringRef(Mode) == "virtual-created-metadata") {
+      auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+      (*Files)[field::FileUmask] = 0027;
+      (*Files)[field::FileCreationPolicy] = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::CreationPolicyJSON));
+      auto Parent = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::MetadataJSON));
+      auto *M = Parent.getAsObject();
+      (*M)[field::FileInode] = 41;
+      (*M)[field::FileMode] = 0040755;
+      (*M)[field::FileFlags] = 0;
+      (*M)[field::FileLinkCount] = 1;
+      (*M)[field::Size] = 0;
+      (*M)[field::FileBlocks] = 0;
+      (*Files->getArray(field::Directories)
+            ->front()
+            .getAsObject())[field::FileMetadata] = std::move(Parent);
+    }
     Options = llvm::formatv("{0}", Input).str();
   }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),

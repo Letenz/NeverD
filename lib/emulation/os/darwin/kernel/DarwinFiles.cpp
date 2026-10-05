@@ -62,8 +62,18 @@ struct FileFootprint {
   uint64_t Bytes;
   uint32_t Entries;
 };
+bool validTime(const DarwinFileTime &Time) {
+  return Time.Nanoseconds >= 0 && Time.Nanoseconds < 1000000000;
+}
+bool validMutationPolicy(const DarwinFileMutationPolicy &Policy) {
+  const auto Unit = Policy.AllocationUnit;
+  return Unit >= 512 && Unit <= limits::Bytes && !(Unit & (Unit - 1)) &&
+         validTime(Policy.Time);
+}
 llvm::Expected<FileFootprint>
 fileOptionsFootprint(const DarwinFileOptions &Options) {
+  if (Options.InitialUmask && *Options.InitialUmask > 07777)
+    return failure(diagnostic::FileUmaskOption);
   uint64_t Entries = Options.Files.size() + Options.Directories.size();
   if (Options.DescriptorLimit < 3 ||
       Options.DescriptorLimit > limits::Descriptors || Entries > limits::Files)
@@ -115,7 +125,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
         M.Blocks > INT64_MAX || M.BlockSize > INT32_MAX)
       return failure(diagnostic::FileMetadataOption);
     for (auto T : {M.AccessTime, M.ModificationTime, M.ChangeTime, M.BirthTime})
-      if (T.Nanoseconds < 0 || T.Nanoseconds >= 1000000000)
+      if (!validTime(T))
         return failure(diagnostic::FileMetadataOption);
   }
   uint64_t DirectoryRecords = 0;
@@ -239,9 +249,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     const auto Metadata = Options.Metadata.find(Path);
     const uint64_t Unit = Policy.AllocationUnit;
     if (!Options.WritableFiles.contains(Path) ||
-        Metadata == Options.Metadata.end() || Unit < 512 ||
-        Unit > limits::Bytes || (Unit & (Unit - 1)) ||
-        Policy.Time.Nanoseconds < 0 || Policy.Time.Nanoseconds >= 1000000000)
+        Metadata == Options.Metadata.end() || !validMutationPolicy(Policy))
       return failure(diagnostic::FileMutationPolicy);
     const auto &M = Metadata->second;
     if ((M.Mode & ~0777) != FileRegularMode || M.Flags || M.LinkCount != 1 ||
@@ -249,6 +257,20 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       return failure(diagnostic::FileMutationPolicy);
     if (auto E = PathInput(Path, false))
       return E;
+  }
+  if (Options.CreationPolicy) {
+    const auto &Policy = *Options.CreationPolicy;
+    if (Options.MutableDirectories.empty() || !Policy.FirstInode ||
+        !Policy.BlockSize || Policy.BlockSize > INT32_MAX ||
+        !Options.InitialUmask || !validTime(Policy.Time) ||
+        !validMutationPolicy(Policy.Mutation) ||
+        llvm::any_of(Inodes, [&](const auto &I) {
+          return I.second >= Policy.FirstInode;
+        }))
+      return failure(diagnostic::FileCreationPolicy);
+    for (const auto &Path : Options.MutableDirectories)
+      if (!Options.Metadata.contains(Path))
+        return failure(diagnostic::FileCreationParent);
   }
   return FileFootprint{Total, uint32_t(Entries)};
 }
@@ -300,6 +322,11 @@ void DarwinFiles::recordWrite(uint32_t FD) {
 void DarwinFiles::initializeNamespace() {
   if (NamespaceReady)
     return;
+  if (Options->CreationPolicy) {
+    NextCreatedInode = Options->CreationPolicy->FirstInode;
+  }
+  if (Options->InitialUmask)
+    CurrentUmask = *Options->InitialUmask;
   for (const auto &[Path, Bytes] : Options->Files) {
     auto Node = std::make_shared<Contents>();
     Node->Initial = Bytes;
@@ -360,7 +387,7 @@ llvm::Expected<DarwinFiles::Pathname> DarwinFiles::readPath(uint64_t Address) {
 
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
-                  ProcessResult &Result) {
+                  uint32_t Mode, ProcessResult &Result) {
   if (!Options)
     return unsupported(Result, diagnostic::FileInputs);
   if ((Flags & OpenAccessMask) == OpenAccessMask)
@@ -387,7 +414,7 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   if (!Created && (Flags & OpenCreate) && (Flags & OpenExclusive))
     return returned(FileExists, true);
   if (Created) {
-    auto Made = create(File, Result);
+    auto Made = create(File, Mode, Result);
     if (!Made || !*Made || (**Made).Error)
       return Made;
   }
@@ -569,7 +596,7 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD,
 }
 
 llvm::Expected<std::optional<ServiceResult>>
-DarwinFiles::create(Description &File, ProcessResult &Result) {
+DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
   const auto Parent = parentPath(File.Path);
   if (!Options->MutableDirectories.contains(Parent))
     return unsupported(Result, diagnostic::DirectoryNotMutable);
@@ -580,15 +607,38 @@ DarwinFiles::create(Description &File, ProcessResult &Result) {
       FixedEntries + Nodes.size() + Unlinked.size() >= limits::Files ||
       Charge > limits::Bytes - *StorageUsed)
     return unsupported(Result, diagnostic::FileCreationLimit);
+  if (Options->CreationPolicy && !NextCreatedInode)
+    return unsupported(Result, diagnostic::FileCreationInode);
   auto Node = std::make_shared<Contents>();
   Node->Writable = true;
   Node->PathCharge = Charge;
+  if (Options->CreationPolicy) {
+    const auto &Policy = *Options->CreationPolicy;
+    // Namespace changes invalidate the parent's complete stat observation,
+    // but cannot change these supplied device/group fields.
+    const auto &ParentMetadata = Options->Metadata.at(Parent);
+    auto &M = Node->CurrentMetadata.emplace();
+    M.Device = ParentMetadata.Device;
+    M.GID = ParentMetadata.GID;
+    M.UID = UserID;
+    M.Inode = NextCreatedInode;
+    M.Mode = FileRegularMode | (Mode & 0777 & ~CurrentUmask);
+    M.LinkCount = 1;
+    M.BlockSize = Policy.BlockSize;
+    M.Generation = Policy.Generation;
+    M.AccessTime = M.ModificationTime = M.ChangeTime = M.BirthTime =
+        Policy.Time;
+    Node->Policy = &Policy.Mutation;
+  }
   // A new object never inherits an old observation/policy at the same name.
   File.Type = Kind::File;
   File.File = Node;
   *StorageUsed += Charge;
   Nodes.emplace(File.Path, std::move(Node));
   ChangedDirectories.insert(Parent);
+  if (Options->CreationPolicy)
+    NextCreatedInode =
+        NextCreatedInode == UINT64_MAX ? 0 : NextCreatedInode + 1;
   return returned(0);
 }
 
@@ -828,10 +878,18 @@ llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                     ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  if (Service == ServiceKind::Umask) {
+    if (!Options || !Options->InitialUmask)
+      return unsupported(Result, diagnostic::FileUmask);
+    initializeNamespace();
+    const auto Previous = CurrentUmask;
+    CurrentUmask = A[0] & 07777;
+    return returned(Previous);
+  }
   if (Service == ServiceKind::Open)
-    return open(A[0], A[1], AtCurrentDirectory, Result);
+    return open(A[0], A[1], AtCurrentDirectory, A[2], Result);
   if (Service == ServiceKind::OpenAt)
-    return open(A[1], A[2], A[0], Result);
+    return open(A[1], A[2], A[0], A[3], Result);
   if (Service == ServiceKind::Unlink)
     return unlink(A[0], AtCurrentDirectory, Result);
   if (Service == ServiceKind::UnlinkAt) {

@@ -618,6 +618,104 @@ static int file_status(const char *path) {
   return 37;
 }
 /* Existing-file mutations execute unchanged against the native BSD ABI. */
+/* Creation metadata uses native ownership/mode rules. Exact virtual inode,
+ * timestamps and allocation records are emitted only in the policy mode. */
+static int created_file_metadata(const char *path, int virtual_record) {
+  unsigned error;
+  int check = 80;
+#define CREATE_META_EXPECT(expression)                                         \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 saved_mask = call(60, 07027, 0, 0, 0, 0, 0, &error);
+  CREATE_META_EXPECT(!error && saved_mask <= 07777);
+  CREATE_META_EXPECT(call(60, (u64)-1, 0, 0, 0, 0, 0, &error) == 07027 &&
+                     !error);
+  CREATE_META_EXPECT(
+      call(60, 0x1234567800000017UL, 0, 0, 0, 0, 0, &error) == 07777 && !error);
+  char parent[1024];
+  unsigned size = 0, slash = 0;
+  while (path[size]) {
+    parent[size] = path[size];
+    if (path[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  u64 directory = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  CREATE_META_EXPECT(!error);
+  unsigned char parent_status[144], original_status[144], status[144],
+      fresh[144];
+  CREATE_META_EXPECT(
+      call(339, directory, (u64)parent_status, 0, 0, 0, 0, &error) == 0 &&
+      !error);
+  u64 original = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  CREATE_META_EXPECT(!error);
+  CREATE_META_EXPECT(
+      call(339, original, (u64)original_status, 0, 0, 0, 0, &error) == 0 &&
+      !error);
+  CREATE_META_EXPECT(call(10, (u64)path, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 a = call(398, (u64)path, 0xe02, 0x12345678ffff0fffUL, 0, 0, 0, &error);
+  CREATE_META_EXPECT(!error);
+  CREATE_META_EXPECT(call(339, a, (u64)status, 0, 0, 0, 0, &error) == 0 &&
+                     !error);
+  u64 uid = call(25, 0, 0, 0, 0, 0, 0, &error);
+  CREATE_META_EXPECT(!error && little_integer(status + 16, 4) == uid);
+  CREATE_META_EXPECT(little_integer(status, 4) ==
+                     little_integer(parent_status, 4));
+  CREATE_META_EXPECT(little_integer(status + 20, 4) ==
+                     little_integer(parent_status + 20, 4));
+  CREATE_META_EXPECT(little_integer(status + 4, 2) == 0100750 &&
+                     little_integer(status + 6, 2) == 1 &&
+                     little_integer(status + 96, 8) == 0 &&
+                     little_integer(status + 104, 8) == 0);
+  u64 inode = little_integer(status + 8, 8);
+  CREATE_META_EXPECT(inode && inode != little_integer(original_status + 8, 8));
+  CREATE_META_EXPECT(call(92, a, 3, 0, 0, 0, 0, &error) == 2 && !error);
+  CREATE_META_EXPECT(call(154, a, (u64) "x", 1, 4096, 0, 0, &error) == 1 &&
+                     !error);
+  CREATE_META_EXPECT(call(201, a, 8200, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  CREATE_META_EXPECT(!error);
+  CREATE_META_EXPECT(call(10, (u64)path, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  CREATE_META_EXPECT(call(339, d, (u64)status, 0, 0, 0, 0, &error) == 0 &&
+                     !error);
+  CREATE_META_EXPECT(little_integer(status + 8, 8) == inode &&
+                     little_integer(status + 6, 2) == 0 &&
+                     little_integer(status + 96, 8) == 8200 &&
+                     little_integer(status + 104, 8) > 0);
+  CREATE_META_EXPECT(call(60, 0022, 0, 0, 0, 0, 0, &error) == 0027 && !error);
+  u64 b =
+      call(463, directory, (u64)(path + slash + 1), 0xa00, 0666, 0, 0, &error);
+  CREATE_META_EXPECT(!error);
+  CREATE_META_EXPECT(call(339, b, (u64)fresh, 0, 0, 0, 0, &error) == 0 &&
+                     !error);
+  CREATE_META_EXPECT(little_integer(fresh + 8, 8) != inode &&
+                     little_integer(fresh + 4, 2) == 0100644 &&
+                     little_integer(fresh + 6, 2) == 1 &&
+                     little_integer(fresh + 96, 8) == 0);
+  CREATE_META_EXPECT(little_integer(fresh + 20, 4) ==
+                     little_integer(parent_status + 20, 4));
+  CREATE_META_EXPECT(call(60, saved_mask, 0, 0, 0, 0, 0, &error) == 0022 &&
+                     !error);
+  CREATE_META_EXPECT(call(10, (u64)path, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 fds[] = {original, a, b, d, directory};
+  for (unsigned i = 0; i != 5; ++i)
+    CREATE_META_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  if (virtual_record) {
+    CREATE_META_EXPECT(call(4, 1, (u64)status, sizeof(status), 0, 0, 0,
+                            &error) == sizeof(status) &&
+                       !error);
+  } else {
+    CREATE_META_EXPECT(call(4, 1, (u64) "q", 1, 0, 0, 0, &error) == 1 &&
+                       !error);
+  }
+#undef CREATE_META_EXPECT
+  return 37;
+}
+
 /* Original native/guest creation and same-name object lifetime comparison. */
 static int created_file(const char *path) {
   unsigned error;
@@ -1182,6 +1280,11 @@ int main(int argc, char **argv, char **envp, char **apple) {
 #endif
                0, mach_flags(1))
         .value;
+  if (equal(argv[1], "created-file-metadata") ||
+      equal(argv[1], "virtual-created-metadata"))
+    return argc < 3 ? 79
+                    : created_file_metadata(
+                          argv[2], equal(argv[1], "virtual-created-metadata"));
   if (equal(argv[1], "created-file"))
     return argc < 3 ? 79 : created_file(argv[2]);
   if (equal(argv[1], "unlinked-file"))

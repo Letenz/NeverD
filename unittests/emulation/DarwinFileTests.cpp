@@ -100,6 +100,13 @@ protected:
     Options->Metadata["/data"].Blocks = Unit / 512;
     Options->MutationPolicies["/data"] = {Unit, {-7, 123456789}};
   }
+  void creationPolicy(uint64_t First = darwin_test::CreationPolicy.FirstInode) {
+    Options->MutableDirectories.insert("/");
+    Options->Metadata["/"] = darwin_test::creationParentMetadata();
+    Options->InitialUmask = 0027;
+    Options->CreationPolicy = darwin_test::CreationPolicy;
+    Options->CreationPolicy->FirstInode = First;
+  }
   std::array<uint8_t, 144> status(uint64_t FD) {
     EXPECT_EQ(ok(ServiceKind::Fstat64, {FD, Base + 256}), 0u);
     std::array<uint8_t, 144> Bytes;
@@ -107,6 +114,241 @@ protected:
     return Bytes;
   }
 };
+
+TEST_P(DarwinFileTest, UmaskKeepsAllPermissionBitsWithoutCreationAuthority) {
+  EXPECT_FALSE(invoke(ServiceKind::Umask, {0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileUmask);
+  Options->InitialUmask = 0027;
+  EXPECT_EQ(ok(ServiceKind::Umask, {0x12345678000001edULL}), 0027u);
+  EXPECT_EQ(ok(ServiceKind::Umask, {07000}), 0755u);
+  const auto A = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Umask, {UINT64_MAX}), 07000u);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Umask, {0}), 07777u);
+  EXPECT_EQ(ok(ServiceKind::Umask, {0022}), 0u);
+  EXPECT_EQ(*Options->InitialUmask, 0027u);
+  EXPECT_FALSE(Options->CreationPolicy);
+  path("/new");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x200}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+}
+
+TEST_P(DarwinFileTest, CreationMetadataOwnsIdentityAndUsesCurrentUmask) {
+  creationPolicy();
+  EXPECT_EQ(ok(ServiceKind::Umask, {07027}), 0027u);
+  path("/");
+  const auto Parent = ok(ServiceKind::Open, {Base});
+  path("new");
+  const auto A =
+      ok(ServiceKind::OpenAt, {Parent, Base, 0xe02, 0x1234567800000fffULL});
+  auto Bytes = status(A);
+  EXPECT_EQ(llvm::support::endian::read32le(Bytes.data()), uint32_t(-123));
+  EXPECT_EQ(llvm::support::endian::read16le(Bytes.data() + 4), 0100750u);
+  EXPECT_EQ(llvm::support::endian::read16le(Bytes.data() + 6), 1u);
+  EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + 8),
+            0xfedcba9876543211ULL);
+  EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + 16), 1000u);
+  EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + 20), 0xfedcba98u);
+  EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + 96), 0u);
+  EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + 104), 0u);
+  EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + 112), 8192u);
+  EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + 116), 0u);
+  EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + 120), 0x89abcdefu);
+  for (unsigned Offset : {32u, 48u, 64u, 80u}) {
+    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + Offset),
+              uint64_t(-19));
+    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + Offset + 8),
+              987654321u);
+  }
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 2u);
+  error(ServiceKind::Lseek, {A, 0, 4}, 6);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Parent, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(ok(ServiceKind::Umask, {07777}), 07027u);
+  path("second");
+  const auto B = ok(ServiceKind::OpenAt, {Parent, Base, 0x202, 07777});
+  const auto Second = status(B);
+  EXPECT_EQ(llvm::support::endian::read16le(Second.data() + 4), 0100000u);
+  EXPECT_EQ(llvm::support::endian::read64le(Second.data() + 8),
+            0xfedcba9876543212ULL);
+  EXPECT_EQ(llvm::support::endian::read32le(Second.data() + 20), 0xfedcba98u);
+  EXPECT_EQ(status(A), Bytes);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Parent, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(Options->CreationPolicy->FirstInode, 0xfedcba9876543211ULL);
+  EXPECT_EQ(*Options->InitialUmask, 0027u);
+}
+
+TEST_P(DarwinFileTest, CreationPolicySharesSparseMutationAndUnlinkState) {
+  creationPolicy();
+  path("/new");
+  const auto A = ok(ServiceKind::Open, {Base, 0x202, 0666});
+  const auto B = ok(ServiceKind::Open, {Base});
+  const auto D = ok(ServiceKind::Dup, {A});
+  const auto Initial = status(A);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, 8193}), 0u);
+  auto Expected = Initial;
+  llvm::support::endian::write64le(Expected.data() + 96, 8193);
+  for (unsigned Offset : {48u, 64u}) {
+    llvm::support::endian::write64le(Expected.data() + Offset, uint64_t(-7));
+    llvm::support::endian::write64le(Expected.data() + Offset + 8, 123456789);
+  }
+  EXPECT_EQ(status(B), Expected);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 3}), 0u);
+  error(ServiceKind::Lseek, {B, 0, 4}, 6);
+  path("x", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {D, Base + 128, 1, 4096}), 1u);
+  llvm::support::endian::write64le(Expected.data() + 104, 8);
+  EXPECT_EQ(status(B), Expected);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 4}), 4096u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 4096, 3}), 8192u);
+  auto Lease = Files->mappingSource(A);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  llvm::support::endian::write16le(Expected.data() + 6, 0);
+  EXPECT_EQ(status(D), Expected);
+  const auto Fresh = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  EXPECT_EQ(llvm::support::endian::read64le(status(Fresh).data() + 8),
+            0xfedcba9876543212ULL);
+  EXPECT_EQ(ok(ServiceKind::Write, {Fresh, Base + 128, 1}), 1u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {A, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  Lease = uint32_t(0);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {D, 0}), 0u);
+  llvm::support::endian::write64le(Expected.data() + 96, 0);
+  llvm::support::endian::write64le(Expected.data() + 104, 0);
+  EXPECT_EQ(status(B), Expected);
+  error(ServiceKind::Write, {Fresh, UINT64_MAX, 1}, 14);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {Fresh, Base + 128, 1, 0}), 1u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Fresh, Base + 256}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_FALSE(invoke(ServiceKind::Lseek, {Fresh, 0, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileSeek);
+}
+
+TEST_P(DarwinFileTest, CreationInodesAreGlobalAndParentFieldsStayIndependent) {
+  creationPolicy();
+  Options->Directories.insert("/parent");
+  Options->MutableDirectories.insert("/parent");
+  auto Other = darwin_test::creationParentMetadata();
+  Other.Device = 456;
+  Other.GID = 123;
+  Other.Inode = 42;
+  Options->Metadata["/parent"] = Other;
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  path("/parent");
+  const auto Parent = ok(ServiceKind::Open, {Base});
+  const auto ParentBefore = status(Parent);
+  const char *Names[] = {"/one", "/parent/two", "/three"};
+  for (unsigned I = 0; I != 3; ++I) {
+    path(Names[I]);
+    const auto A = ok(ServiceKind::Open, {Base, 0x202, 0600});
+    const auto Bytes = status(A);
+    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + 8),
+              darwin_test::CreationPolicy.FirstInode + I);
+    EXPECT_EQ(llvm::support::endian::read32le(Bytes.data()),
+              I == 1 ? 456u : uint32_t(-123));
+    EXPECT_EQ(llvm::support::endian::read32le(Bytes.data() + 20),
+              I == 1 ? 123u : 0xfedcba98u);
+    EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Root, UINT64_MAX}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+    if (!I)
+      EXPECT_EQ(status(Parent), ParentBefore);
+    else {
+      EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Parent, UINT64_MAX}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+    }
+    EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  }
+}
+
+TEST_P(DarwinFileTest, CreationUnlinkBeforeFirstWriteKeepsOwnedMetadata) {
+  creationPolicy();
+  path("/new");
+  const auto A = ok(ServiceKind::Open, {Base, 0x202, 0755});
+  auto Expected = status(A);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  llvm::support::endian::write16le(Expected.data() + 6, 0);
+  llvm::support::endian::write64le(Expected.data() + 64, uint64_t(-7));
+  llvm::support::endian::write64le(Expected.data() + 72, 123456789);
+  EXPECT_EQ(status(A), Expected);
+  path("x", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {A, Base + 128, 1, 4096}), 1u);
+  llvm::support::endian::write64le(Expected.data() + 48, uint64_t(-7));
+  llvm::support::endian::write64le(Expected.data() + 56, 123456789);
+  llvm::support::endian::write64le(Expected.data() + 96, 4097);
+  llvm::support::endian::write64le(Expected.data() + 104, 8);
+  EXPECT_EQ(status(A), Expected);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, 8193}), 0u);
+  llvm::support::endian::write64le(Expected.data() + 96, 8193);
+  EXPECT_EQ(status(A), Expected);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 4}), 4096u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 4096, 3}), 8192u);
+  error(ServiceKind::Open, {Base}, 2);
+}
+
+TEST_P(DarwinFileTest, CreationBudgetRefusalsPreserveInodeAndParentMetadata) {
+  creationPolicy();
+  Options->WritableFiles.insert("/data");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  path("/");
+  const auto Parent = ok(ServiceKind::Open, {Base});
+  const auto Before = status(Parent);
+  // Data path/reference and parent metadata/grant cost 16 bytes.
+  const auto Capacity = darwin_file_limits::Bytes - 16;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 4}), 0u);
+  path("new");
+  EXPECT_FALSE(invoke(ServiceKind::OpenAt, {Parent, Base, 0xa02, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  EXPECT_EQ(status(Parent), Before);
+  error(ServiceKind::OpenAt, {Parent, Base}, 2);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 5}), 0u);
+  const auto A = ok(ServiceKind::OpenAt, {Parent, Base, 0xa02, 0600});
+  EXPECT_EQ(llvm::support::endian::read64le(status(A).data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+}
+
+TEST_P(DarwinFileTest, CreationEntryRefusalsDoNotConsumeInodeSequence) {
+  creationPolicy();
+  Options->Files.clear();
+  for (unsigned I = 0; I != 255; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  path("/new");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  path("/f0");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/new");
+  const auto A = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  EXPECT_EQ(llvm::support::endian::read64le(status(A).data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+}
+
+TEST_P(DarwinFileTest, CreationInodesNeverRecycleAfterExhaustionOrFailedOpens) {
+  creationPolicy(UINT64_MAX);
+  Options->DescriptorLimit = 4;
+  error(ServiceKind::Open, {Base, 0xe02, 0600}, 17);
+  const auto Original = ok(ServiceKind::Open, {Base});
+  path("/new");
+  error(ServiceKind::Open, {Base, 0x202, 0600}, 24);
+  EXPECT_EQ(ok(ServiceKind::Close, {Original}), 0u);
+  error(ServiceKind::Open, {UINT64_MAX, 0x202}, 14);
+  const auto A = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  EXPECT_EQ(llvm::support::endian::read64le(status(A).data() + 8), UINT64_MAX);
+  EXPECT_EQ(ok(ServiceKind::Umask, {0}), 0027u);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  const auto B = ok(ServiceKind::Open, {Base, 0x200, 0777});
+  EXPECT_EQ(llvm::support::endian::read64le(status(B).data() + 8), UINT64_MAX);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {B}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Umask, {0022}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationInode);
+  error(ServiceKind::Open, {Base}, 2);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Open, {Base, 0x200}), Original);
+  EXPECT_EQ(Options->CreationPolicy->FirstInode, UINT64_MAX);
+}
 
 TEST_P(DarwinFileTest, CreateDistinguishesNewTruncateAndDescriptionFlags) {
   Options->MutableDirectories.insert("/");
@@ -989,6 +1231,78 @@ TEST_P(DarwinFileTest,
   }
 }
 
+TEST(DarwinFileOptions, CreationPolicyRequiresExplicitParentsAndFreshIdentity) {
+  DarwinFileOptions Good;
+  Good.MutableDirectories.insert("/");
+  Good.Metadata["/"] = darwin_test::creationParentMetadata();
+  Good.InitialUmask = 07777;
+  Good.CreationPolicy = darwin_test::CreationPolicy;
+  ASSERT_FALSE(bool(validateFileOptions(Good)));
+  for (unsigned Case = 0; Case != 14; ++Case) {
+    SCOPED_TRACE(Case);
+    auto O = Good;
+    auto &P = *O.CreationPolicy;
+    switch (Case) {
+    case 0:
+      O.MutableDirectories.clear();
+      break;
+    case 1:
+      O.InitialUmask.reset();
+      break;
+    case 2:
+      O.InitialUmask = 010000;
+      break;
+    case 3:
+      O.Metadata.clear();
+      break;
+    case 4:
+      P.FirstInode = 0;
+      break;
+    case 5:
+      P.FirstInode = 41;
+      break;
+    case 6:
+      P.BlockSize = 0;
+      break;
+    case 7:
+      P.BlockSize = uint32_t(INT32_MAX) + 1;
+      break;
+    case 8:
+      P.Time.Nanoseconds = -1;
+      break;
+    case 9:
+      P.Time.Nanoseconds = 1000000000;
+      break;
+    case 10:
+      P.Mutation.AllocationUnit = 513;
+      break;
+    case 11:
+      P.Mutation.Time.Nanoseconds = -1;
+      break;
+    case 12:
+      O.Directories.insert("/empty");
+      O.MutableDirectories.insert("/empty");
+      break;
+    case 13:
+      O.Files["/data"] = {};
+      O.Directories.insert("/empty");
+      O.DirectoryContents["/"] = darwin_test::directoryContents();
+      P.FirstInode = 0xfedcba9876543210ULL;
+      break;
+    }
+    auto Rejected = validateFileOptions(O);
+    EXPECT_TRUE(bool(Rejected));
+    llvm::consumeError(std::move(Rejected));
+  }
+  Good.CreationPolicy->FirstInode = UINT64_MAX;
+  Good.CreationPolicy->Time = {INT64_MIN, 999999999};
+  Good.CreationPolicy->Mutation.Time = {INT64_MAX, 0};
+  ASSERT_FALSE(bool(validateFileOptions(Good)));
+  Good.Metadata["/"].Inode = UINT64_MAX;
+  EXPECT_EQ(llvm::toString(validateFileOptions(Good)),
+            diagnostic::FileCreationPolicy);
+}
+
 TEST(DarwinFileOptions, MutationPolicyAdmitsOnlyExplicitCoherentMetadata) {
   DarwinFileOptions Good;
   Good.Files["/data"] = std::vector<uint8_t>(10);
@@ -1214,6 +1528,18 @@ public:
     return Memory.canAccess(A, S, P);
   }
 };
+
+TEST_P(DarwinFileTest, UmaskNeedsNeitherGuestMemoryNorAvailableDescriptors) {
+  Options->InitialUmask = 0027;
+  Options->DescriptorLimit = 3;
+  FailingFileInput Input(*Space);
+  Input.FailAccess = Input.FailRead = true;
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  EXPECT_EQ(ok(ServiceKind::Umask, {07000, UINT64_MAX}), 0027u);
+  error(ServiceKind::Open, {UINT64_MAX}, 24);
+  EXPECT_EQ(ok(ServiceKind::Umask, {0022, UINT64_MAX}), 07000u);
+  EXPECT_EQ(*Options->InitialUmask, 0027u);
+}
 
 TEST_P(DarwinFileTest, CreatePathFailuresPreserveMissingNameAndDescriptor) {
   Options->MutableDirectories.insert("/");

@@ -155,6 +155,41 @@ llvm::Expected<std::vector<uint8_t>> bytes(const llvm::json::Value &Value,
   const auto Data = llvm::fromHex(*Hex);
   return std::vector<uint8_t>(Data.begin(), Data.end());
 }
+llvm::Expected<DarwinFileCreationPolicy>
+creationPolicy(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object || Object->size() != 5)
+    return invalid(field::FileCreationPolicy);
+  DarwinFileCreationPolicy Out;
+  auto Number = [&](llvm::StringRef Name, auto &Destination) -> llvm::Error {
+    const auto *V = Object->get(Name);
+    using T = std::remove_reference_t<decltype(Destination)>;
+    auto N = V ? process_json::integer<T>(*V) : std::nullopt;
+    if (!N)
+      return invalid(Name);
+    Destination = *N;
+    return llvm::Error::success();
+  };
+  if (auto E = Number(field::FileFirstInode, Out.FirstInode))
+    return E;
+  if (auto E = Number(field::FileBlockSize, Out.BlockSize))
+    return E;
+  if (auto E = Number(field::FileGeneration, Out.Generation))
+    return E;
+  auto Time =
+      fileTime(Object->get(field::FileCreationTime), field::FileCreationTime);
+  if (!Time)
+    return Time.takeError();
+  Out.Time = *Time;
+  const auto *Mutation = Object->get(field::FileMutationPolicy);
+  if (!Mutation)
+    return invalid(field::FileMutationPolicy);
+  auto Parsed = mutationPolicy(*Mutation);
+  if (!Parsed)
+    return Parsed.takeError();
+  Out.Mutation = *Parsed;
+  return Out;
+}
 } // namespace
 
 llvm::Expected<DarwinFileOptions>
@@ -182,6 +217,16 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       Remaining -= Path->size() + 1;
       Out.WorkingDirectory = Path->str();
+    } else if (Name == field::FileUmask) {
+      auto Mask = process_json::integer<uint16_t>(V);
+      if (!Mask)
+        return invalid(Name);
+      Out.InitialUmask = *Mask;
+    } else if (Name == field::FileCreationPolicy) {
+      auto Parsed = creationPolicy(V);
+      if (!Parsed)
+        return Parsed.takeError();
+      Out.CreationPolicy = *Parsed;
     } else if (Name == field::Directories) {
       const auto *Directories = V.getAsArray();
       if (!Directories || Directories->size() > darwin_file_limits::Files)

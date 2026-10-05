@@ -81,6 +81,8 @@ private:
   std::vector<std::shared_ptr<Contents>> Unlinked;
   std::set<std::string> ChangedDirectories;
   bool NamespaceReady = false;
+  uint64_t NextCreatedInode = 0;
+  uint16_t CurrentUmask = 0;
   std::optional<uint64_t> StorageUsed;
   uint32_t FixedEntries = 0;
   std::optional<std::string> CurrentDirectory;
@@ -93,10 +95,9 @@ private:
   llvm::Expected<Pathname> readPath(uint64_t Address);
   llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
                                      bool AllowMissing = false);
-  llvm::Expected<std::optional<ServiceResult>> open(uint64_t Address,
-                                                    uint32_t Flags,
-                                                    uint32_t DirectoryFD,
-                                                    ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
+       ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
@@ -104,8 +105,8 @@ private:
              ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
-  llvm::Expected<std::optional<ServiceResult>> create(Description &File,
-                                                      ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  create(Description &File, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
           const char *PartialDiagnostic, ProcessResult &Result);

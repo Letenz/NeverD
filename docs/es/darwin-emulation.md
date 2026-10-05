@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 868e3a532347e28dedc1fc91cdb30d0b59a7a017afd6e52c53aa3344d055195e -->
+<!-- i18n-source: 71f1445e8040ae70a58f6f21c2049f8f451f3d23b1a2fa7fefc86478bc5712bd -->
 
 [← Índice de documentación](README.md)
 
@@ -75,7 +75,7 @@ La entrada parcialmente legible se detiene antes de efectos. EFAULT completo con
 
 DarwinMemory mantiene reservas hasta el último unmap, incluso PROT_NONE y FD cerrados; las mutaciones paran mientras existan. Fallos y mmap antiguo de longitud cero no retienen reservas. Nuevos mapas ven bytes actuales. O_WRONLY con READ/WRITE da EACCES; PROT_NONE puede ganar lectura/escritura mediante mprotect.
 
-Programas originales normal/nocancel comparan el kernel nativo; pruebas 4K/16K y C/CLI/Python cubren cinco combinaciones. Metadatos de creación, borrar directorios, renombrar, enlaces físicos, metadatos del sistema de archivos nativo, coherencia de mapas y SIGBUS EOF siguen pendientes. El entorno completo, dispositivos iOS e Intel HVF no están validados; Actions Intel permanece suspendido.
+Programas originales normal/nocancel comparan el kernel nativo; pruebas 4K/16K y C/CLI/Python cubren cinco combinaciones. Aplicación de permisos, borrar directorios, renombrar, enlaces físicos, metadatos del sistema de archivos nativo, coherencia de mapas y SIGBUS EOF siguen pendientes. El entorno completo, dispositivos iOS e Intel HVF no están validados; Actions Intel permanece suspendido.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -113,7 +113,7 @@ Sin política, para directorios o tras EFAULT completo con asignación desconoci
 
 `unlink(10)` / `unlinkat(472)` eliminan nombres regulares existentes. unlinkat acepta los32 bits bajos 0 o `0x800`; bits desconocidos dan EINVAL antes de ruta/FD y otros modos de borrado conocidos siguen sin soporte. Resolución común: ENOENT, ENOTDIR tras archivo con `/`, EPERM en directorio ordinario, EBUSY en raíz. Se verificaron nativamente finales `.`/`..`.
 
-FD/dup/aperturas independientes previos conservan datos, cursores y flags; F_GETPATH devuelve la ruta anterior capturada. Nuevas aperturas fallan, padres implícitos y CWD permanecen. La autorización de escritura pertenece al objeto; close/dup2/la siguiente mutación recuperan sus bytes actuales sólo tras el último descriptor y mapa. Los costes iniciales de rutas permanecen; metadatos de creación, renombrado, enlaces físicos y borrado de directorios siguen pendientes.
+FD/dup/aperturas independientes previos conservan datos, cursores y flags; F_GETPATH devuelve la ruta anterior capturada. Nuevas aperturas fallan, padres implícitos y CWD permanecen. La autorización de escritura pertenece al objeto; close/dup2/la siguiente mutación recuperan sus bytes actuales sólo tras el último descriptor y mapa. Los costes iniciales de rutas permanecen; aplicación de permisos, renombrado, enlaces físicos y borrado de directorios siguen pendientes.
 
 stat/readdir/SEEK_END del padre quedan desconocidos para todo FD/ruta y paran antes de copiar o mover cursores. read/pread mantienen EISDIR; SET/CUR/F_GETPATH/fchdir/resolución relativa continúan. La política conocida establece nlink=0 y ctime fijo; posteriores escrituras no restauran nlink=1. Sin política/tras EFAULT, metadatos desconocidos. Los fallos preservan estado. `unlinked-file` compara reglas nativas de nombre/FD; tiempos e invalidación son reglas explícitas del modelo.
 
@@ -125,13 +125,30 @@ stat/readdir/SEEK_END del padre quedan desconocidos para todo FD/ruta y paran an
 
 ## Crear archivos normales
 
-O_CREAT=0x200 crea un archivo vacío bajo un padre directo explícitamente mutable mediante open/openat normal o nocancel. El objeto nuevo permite escritura; los existentes conservan su autorización WritableFiles. Un FD de lectura puede crear pero no escribir. No se inventan credenciales, umask, inode o stat ni se heredan metadata/mutation_policy del objeto anterior con igual nombre; stat64 y búsqueda dispersa siguen desconocidos.
+O_CREAT=0x200 crea un archivo vacío bajo un padre directo explícitamente mutable mediante open/openat normal o nocancel. El objeto nuevo permite escritura; los existentes conservan su autorización WritableFiles. Un FD de lectura puede crear pero no escribir. Sin política de creación explícita, stat64 y búsqueda dispersa siguen desconocidos. Nunca se heredan metadata/mutation_policy del objeto anterior con igual nombre.
 
 O_EXCL=0x800 con O_CREAT devuelve EEXIST para archivos/directorios existentes antes de truncar; solo no tiene efecto. O_CREAT de lectura abre directorios existentes. Orden: modo inválido, capacidad FD, EINVAL por O_CREAT|O_DIRECTORY, ruta. Solo se crea el último componente original ausente; ancestros ausentes y sufijos `/`, `//`, `/.`, `/..` dan ENOENT. O_CREAT|O_TRUNC nuevo no marca FWASWRITTEN; truncar uno existente sí.
 
-Solo insertar invalida las observaciones del padre. Objetos nuevos/antiguos homónimos mantienen datos, FD, metadatos y mapas independientes. Las 256 entradas incluyen elementos iniciales no archivo y objetos vivos; rutas canónicas/NUL dinámicas y bytes actuales cuentan en 16 MiB. Tras unlink, el último FD/mapa libera costes dinámicos; los iniciales permanecen. Agotar presupuesto o llegar a 1024 bytes de ruta canónica detiene explícitamente sin inventar ENOSPC o errno de ruta nativo ni publicar nombre/FD. created-file compara macOS nativo y cinco perfiles; pruebas 4K/16K verifican límites. Quedan metadatos de creación, renombrado, enlaces y mutación de directorios.
+Solo insertar invalida las observaciones del padre. Objetos nuevos/antiguos homónimos mantienen datos, FD, metadatos y mapas independientes. Las 256 entradas incluyen elementos iniciales no archivo y objetos vivos; rutas canónicas/NUL dinámicas y bytes actuales cuentan en 16 MiB. Tras unlink, el último FD/mapa libera costes dinámicos; los iniciales permanecen. Agotar presupuesto o llegar a 1024 bytes de ruta canónica detiene explícitamente sin inventar ENOSPC o errno de ruta nativo ni publicar nombre/FD. created-file compara macOS nativo y cinco perfiles; pruebas 4K/16K verifican límites. Quedan aplicación de permisos, renombrado, enlaces y mutación de directorios.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+## Metadatos de creación explícitos y umask del proceso
+
+El `darwin_files.umask` opcional (C++ `InitialUmask`) declara la máscara inicial entre 0 y 07777 octal, independientemente del permiso de creación. `umask(60)` devuelve la anterior y guarda los bits bajos 07777, sin acceder a memoria invitada ni necesitar un FD libre. Omitirla significa desconocida, sin inferir valores del host o predeterminados. Se inicializa una sola vez y los cambios afectan únicamente a futuras creaciones, sin modificar la entrada. El ejemplo usa 18 decimal, equivalente a 0022 octal.
+
+El `darwin_files.creation_policy` opcional (C++ `CreationPolicy`) aporta metadatos completos a objetos nuevos. Su objeto estricto contiene exactamente `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy`; tiempos y política de mutación usan los formatos existentes. Exige umask explícita, al menos un padre mutable y metadata completa de todos los padres autorizados. block_size está en 1..INT32_MAX, generation es uint32; la unidad de asignación es una potencia de dos entre 512 y 16 MiB, independiente del bloque/página VM, y los nanosegundos están en [0,1000000000). first_inode es uint64 positivo mayor que todos los inode de stat/instantáneas, incluso de otros dispositivos. Las cadenas decimales conservan enteros fuera del rango exacto de JSON.
+
+Solo insertar un objeto nuevo con éxito consume la secuencia global inode. UINT64_MAX la agota permanentemente; close/unlink/reutilización de nombre/umask/consultas no la reinician. Los rechazos por exclusividad, FD, ruta, entradas o bytes no publican nombre/FD ni avanzan el contador; O_CREAT existente no consume ninguno. stat64 nuevo hereda device/GID del padre directo, UID=1000 del usuario efectivo fijo invitado, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1 y size/blocks/flags=0. Bloque, generation y cuatro tiempos iniciales fijos proceden de la política. Tras invalidar stat/enumeración completos del padre se conservan device/GID, sin restaurar el registro completo.
+
+Cada nodo posee metadatos/asignación propios, sin heredar el antiguo homónimo. write/truncate/unlink comparten la política y preservan inode/mode/birthtime y nlink=0 tras unlink; EFAULT completo conserva el estado permanentemente desconocido. No hay efecto retroactivo en nodos existentes. `created-file-metadata` compara permisos, máscara devuelta, UID efectivo, dispositivo/grupo padre y vida nativa en cinco perfiles; `virtual-created-metadata` compara aparte los 144 bytes. Los cuatro tiempos nativos pueden diferir. Tiempo fijo/asignación dispersa son reglas virtuales; aplicación de permisos, cambio de credenciales, ACL y comportamiento APFS nativo siguen pendientes.
+
+```json
+{"darwin_files":{"files":[],"umask":18}}
+```
+
+[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
 
 ## Directorios y rutas relativas
 
@@ -224,7 +241,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La validación independiente exige los 84 casos nativos ARM64 o 56 x64, con `LC_MAIN` y `LC_UNIXTHREAD` en cada plataforma. Casos obligatorios ausentes/omitidos o falta de `ld64.lld` producen fallo.
+La validación independiente exige los 87 casos nativos ARM64 o 58 x64, con `LC_MAIN` y `LC_UNIXTHREAD` en cada plataforma. Casos obligatorios ausentes/omitidos o falta de `ld64.lld` producen fallo.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -317,3 +334,9 @@ Validación unlink (2026-10-06): Release Darwin708 casos,384 aprobados,324 omiti
 Release Darwin:748 casos,412 aprobados,336 omitidos por backend ausente, cero fallos;84 requisitos ARM64 HVF ejecutados. Dirigidos162:150 aprobados/12 omitidos. C/CLI/informes133/133 (Darwin88), Python5 perfiles9.982s, nativos18/18, runners66/66 aprobados. ARM64 rechazó correctamente las rebases de la tabla de punteros del test inicial; bytes internos la corrigieron sin relajar el cargador. Se conservan fallos/binarios iniciales; inventario esperado27→28. Revisión independiente sin bloqueos, incluida preservación del padre ante límite de capacidad. Cuentas solapadas y plazos iguales. CI completa/iOS físico separados; Actions Intel HVF suspendido.
 
 `build-hvf-arm64/create-validation-summary.json`, `create-darwin-evidence/`, `create-focused.xml`, `create-public.xml`, `create-native-final/`, `create-initial-evidence/`.
+
+### Validación de metadatos de creación, 2026-10-06
+
+Release Darwin: 787 registros, 439 aprobados, 348 omitidos por backend no disponible, cero fallos; ejecutados los 87 ARM64 HVF obligatorios. Específicos: 139/151 aprobados, 12 omitidos. C/CLI/informe: 145/145, incluidos 98 contrastes de entrada Darwin; método Python sin cambios, cinco perfiles en 12.211 segundos. Nativos 19/19 y verificadores 66/66 aprobados. Revisión independiente sin bloqueos; nuevos casos cubren device/GID de distintos padres y secuencia inode global, unlink antes de escribir, umask sin FD libre/entrada utilizable. Recuentos solapados, plazos intactos, sin repetición por fallo. Tiempos fijos de creación/mutación y asignación son política virtual. GitHub CI completa e iOS físico se validan aparte; Intel HVF Actions suspendido.
+
+`build-hvf-arm64/creation-metadata-validation-summary.json`, `creation-metadata-darwin-evidence/`, `creation-metadata-focused.xml`, `creation-metadata-public.xml`, `creation-metadata-native/`.

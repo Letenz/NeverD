@@ -178,6 +178,83 @@ TEST(ProcessReport, DarwinMutationPolicyIsExplicitStrictAndLossless) {
   llvm::consumeError(Incoherent.takeError());
 }
 
+TEST(ProcessReport, DarwinUmaskIsIndependentExplicitAndStrict) {
+  for (auto Mask : {"0", "4095", "\"4095\""}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"umask":)") + Mask + "}}");
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_TRUE(Parsed->DarwinFiles->InitialUmask);
+    EXPECT_FALSE(Parsed->DarwinFiles->CreationPolicy);
+    EXPECT_TRUE(Parsed->DarwinFiles->MutableDirectories.empty());
+  }
+  for (auto Mask : {"null", "true", "[]", "{}", "4096", "65536", "-1", "0.5",
+                    "\"4095x\""}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"umask":)") + Mask + "}}");
+    EXPECT_FALSE(bool(Parsed)) << Mask;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinCreationPolicyIsStrictAndPreservesUnsignedInodes) {
+  auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  auto *M = Parent.getAsObject();
+  (*M)["inode"] = 41;
+  (*M)["mode"] = 0040755;
+  (*M)["flags"] = 0;
+  (*M)["size"] = 0;
+  (*M)["blocks"] = 0;
+  auto Parse = [&](llvm::StringRef Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"umask":23,"directories":[{"path":"/","mutable":true,"metadata":)" +
+        llvm::formatv("{0}", Parent).str() + R"(}],"creation_policy":)" +
+        Policy.str() + "}}");
+  };
+  auto Good = Parse(darwin_test::CreationPolicyJSON);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &P = *Good->DarwinFiles->CreationPolicy;
+  EXPECT_EQ(P.FirstInode, 0xfedcba9876543211ULL);
+  EXPECT_EQ(P.BlockSize, 8192u);
+  EXPECT_EQ(P.Generation, 0x89abcdefu);
+  EXPECT_EQ(P.Time.Seconds, -19);
+  EXPECT_EQ(P.Time.Nanoseconds, 987654321);
+  EXPECT_EQ(P.Mutation.AllocationUnit, 4096u);
+  EXPECT_EQ(P.Mutation.Time.Seconds, -7);
+  for (auto Key : {"first_inode", "block_size", "generation", "creation_time",
+                   "mutation_policy"}) {
+    auto Value =
+        llvm::cantFail(llvm::json::parse(darwin_test::CreationPolicyJSON));
+    Value.getAsObject()->erase(Key);
+    auto Missing = Parse(llvm::formatv("{0}", Value).str());
+    EXPECT_FALSE(bool(Missing)) << Key;
+    llvm::consumeError(Missing.takeError());
+    (*Value.getAsObject())[Key] = nullptr;
+    auto Null = Parse(llvm::formatv("{0}", Value).str());
+    EXPECT_FALSE(bool(Null)) << Key;
+    llvm::consumeError(Null.takeError());
+  }
+  for (auto Key : {"first_inode", "block_size", "generation"}) {
+    for (auto Bad : {"true", "1.5", "-1", "\"18446744073709551616\""}) {
+      auto Value =
+          llvm::cantFail(llvm::json::parse(darwin_test::CreationPolicyJSON));
+      (*Value.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      auto Parsed = Parse(llvm::formatv("{0}", Value).str());
+      EXPECT_FALSE(bool(Parsed)) << Key << ':' << Bad;
+      llvm::consumeError(Parsed.takeError());
+    }
+  }
+  auto Value =
+      llvm::cantFail(llvm::json::parse(darwin_test::CreationPolicyJSON));
+  (*Value.getAsObject())["first_inode"] = "18446744073709551615";
+  auto Last = Parse(llvm::formatv("{0}", Value).str());
+  ASSERT_TRUE(bool(Last)) << llvm::toString(Last.takeError());
+  EXPECT_EQ(Last->DarwinFiles->CreationPolicy->FirstInode, UINT64_MAX);
+  (*Value.getAsObject())["unknown"] = 0;
+  auto Extra = Parse(llvm::formatv("{0}", Value).str());
+  EXPECT_FALSE(bool(Extra));
+  llvm::consumeError(Extra.takeError());
+}
+
 TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
   auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[],
     "directories":[{"path":"/empty/deep"}],"working_directory":"/empty"}})");

@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 868e3a532347e28dedc1fc91cdb30d0b59a7a017afd6e52c53aa3344d055195e -->
+<!-- i18n-source: 71f1445e8040ae70a58f6f21c2049f8f451f3d23b1a2fa7fefc86478bc5712bd -->
 
 [← 문서 목록](README.md)
 
@@ -75,7 +75,7 @@ F_SETFL은 O_APPEND만 바꾸고 접근 모드, close-on-exec, FWASWRITTEN을 �
 
 DarwinMemory의 모든 매핑 구간을 unmap하기 전에는 변경을 거부하며 PROT_NONE과 닫힌 FD도 포함합니다. 실패/구형 0 길이 매핑은 임대를 남기지 않습니다. 새 매핑은 현재 바이트를 봅니다. O_WRONLY의 READ/WRITE mmap은 EACCES, PROT_NONE은 성공하고 mprotect로 읽기/쓰기를 부여할 수 있습니다.
 
-원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 생성 메타데이터/디렉터리 삭제/이름 변경/하드링크, 실제 파일 시스템 메타데이터 갱신, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
+원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 권한 강제 검사/디렉터리 삭제/이름 변경/하드링크, 실제 파일 시스템 메타데이터 갱신, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -113,7 +113,7 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 
 `unlink(10)` / `unlinkat(472)`는 기존 일반 이름을 제거합니다. unlinkat 하위32비트는 0 또는 `0x800`만 지원합니다. 알 수 없는 비트는 경로/FD보다 먼저 EINVAL; 디렉터리 제거 등 알려진 다른 모드는 미지원입니다. 공통 경로 해석으로 ENOENT, 파일 뒤 슬래시 ENOTDIR, 일반 디렉터리 EPERM, 루트 EBUSY를 보존하며 네이티브로 마지막 `.`/`..`도 검사했습니다.
 
-기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 생성 메타데이터·이름 변경·하드링크·디렉터리 제거는 남아 있습니다.
+기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 권한 강제 검사·이름 변경·하드링크·디렉터리 제거는 남아 있습니다.
 
 부모 stat/readdir/SEEK_END는 구·신 FD 및 경로 모두에서 무효화되어 복사/커서 변경 전에 중지합니다. read/pread의 EISDIR와 SET/CUR/F_GETPATH/fchdir/상대 조회는 유지됩니다. 알려진 변경 정책은 nlink=0 및 고정 ctime만 적용하며 후속 쓰기도 nlink=1을 복구하지 않습니다. 정책 없음/EFAULT 뒤 메타데이터는 미상입니다. 실패는 상태를 보존하고 원본 `unlinked-file`은 네이티브 이름/FD 동작을 비교합니다. 정책 시간과 부모 무효화는 명시적 모델 규칙입니다.
 
@@ -125,13 +125,30 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 
 ## 일반 파일 생성
 
-O_CREAT=0x200은 명시적 mutable 부모 바로 아래 빈 파일을 만듭니다. 일반/nocancel open·openat이 공유합니다. 새 객체는 쓰기 가능하고 기존 객체는 WritableFiles를 유지합니다. 읽기 전용 FD도 생성할 수 있으나 쓸 수 없습니다. 자격 증명·umask·inode·stat을 추측하거나 같은 이름의 옛 metadata/mutation_policy를 상속하지 않습니다. stat64와 희소 탐색은 미상입니다.
+O_CREAT=0x200은 명시적 mutable 부모 바로 아래 빈 파일을 만듭니다. 일반/nocancel open·openat이 공유합니다. 새 객체는 쓰기 가능하고 기존 객체는 WritableFiles를 유지합니다. 읽기 전용 FD도 생성할 수 있으나 쓸 수 없습니다. 생성 정책이 없으면 stat64와 희소 탐색은 미상입니다. 새 객체는 같은 이름의 옛 metadata/mutation_policy를 상속하지 않습니다.
 
 O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전 EEXIST를 반환하며 O_EXCL만으로는 효과가 없습니다. 기존 디렉터리의 읽기 전용 O_CREAT은 성공합니다. 잘못된 접근 모드→FD 여유→O_CREAT|O_DIRECTORY의 EINVAL→경로 순서입니다. 원래 경로의 마지막 누락 요소만 생성하고 누락 조상 및 끝 `/`, `//`, `/.`, `/..`는 ENOENT입니다. 새 O_CREAT|O_TRUNC는 FWASWRITTEN을 설정하지 않지만 기존 파일 자르기는 설정합니다.
 
-실제 삽입만 부모 관측을 무효화하며 같은 이름의 새/옛 데이터·FD·메타데이터·매핑 수명은 독립적입니다. 256개 제한에는 초기 비파일 항목과 살아 있는 파일 객체가 포함됩니다. 새 정규 경로/NUL과 현재 바이트는 16 MiB에 포함하고 삭제 후 마지막 FD/매핑 해제 때 동적 비용을 회수합니다. 초기 비용은 유지합니다. 예산 또는 1024바이트 정규 경로 한계는 명시적으로 중단하며 ENOSPC나 네이티브 경로 오류를 만들지 않습니다. 실패는 이름/FD를 남기지 않습니다. created-file 네이티브/다섯 프로필, 4K/16K 경계 테스트가 계약을 검사합니다. 생성 메타데이터·이름 변경·링크·디렉터리 변경은 남아 있습니다.
+실제 삽입만 부모 관측을 무효화하며 같은 이름의 새/옛 데이터·FD·메타데이터·매핑 수명은 독립적입니다. 256개 제한에는 초기 비파일 항목과 살아 있는 파일 객체가 포함됩니다. 새 정규 경로/NUL과 현재 바이트는 16 MiB에 포함하고 삭제 후 마지막 FD/매핑 해제 때 동적 비용을 회수합니다. 초기 비용은 유지합니다. 예산 또는 1024바이트 정규 경로 한계는 명시적으로 중단하며 ENOSPC나 네이티브 경로 오류를 만들지 않습니다. 실패는 이름/FD를 남기지 않습니다. created-file 네이티브/다섯 프로필, 4K/16K 경계 테스트가 계약을 검사합니다. 권한 강제 검사·이름 변경·링크·디렉터리 변경은 남아 있습니다.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+## 명시적 생성 메타데이터와 프로세스 umask
+
+선택적 `darwin_files.umask`(C++ `InitialUmask`)는 초기 마스크를 8진수 0..07777로 지정하며 생성 권한과 독립적입니다. `umask(60)`은 이전 마스크를 반환하고 입력의 하위 07777 비트를 저장합니다. 게스트 메모리나 빈 FD가 필요하지 않습니다. 생략은 미상이며 호스트 값이나 기본값을 추측하지 않습니다. 한 번만 초기화하고 이후 생성에만 영향을 주며 호출자 입력은 바꾸지 않습니다. 아래 10진수 18은 8진수 0022입니다.
+
+선택적 `darwin_files.creation_policy`(C++ `CreationPolicy`)는 새 객체에 완전한 메타데이터를 제공합니다. 엄격한 객체는 `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy` 다섯 필드만 포함하며 시간과 변경 정책은 기존 형식을 사용합니다. 명시적 umask, 하나 이상의 mutable 부모와 모든 해당 부모의 완전한 metadata가 필요합니다. block_size는 1..INT32_MAX, generation은 uint32입니다. 할당 단위는 512..16 MiB 범위의 2의 거듭제곱이며 블록 크기/VM 페이지와 독립적이고 나노초는 [0,1000000000)입니다. first_inode는 0이 아닌 uint64로 다른 장치를 포함한 모든 stat/스냅샷 inode보다 커야 합니다. JSON의 정확한 정수 범위를 넘으면 10진수 문자열을 사용합니다.
+
+성공한 새 삽입만 전역 inode 순서를 진행합니다. UINT64_MAX 사용 후 영구 소진되며 close/unlink/이름 재사용/umask/이후 조회로 초기화되지 않습니다. 배타·FD·경로·항목·바이트 예산 실패는 이름/FD/번호 증가를 남기지 않고 기존 O_CREAT도 번호를 쓰지 않습니다. 새 stat64는 직계 부모 device/GID, 고정 게스트 유효 UID 1000, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1, size/blocks/flags=0을 사용합니다. 블록 크기, generation, 네 초기 고정 시간은 정책에서 얻습니다. 부모 전체 stat/열거가 무효화되어도 불변 device/GID를 쓸 수 있지만 전체 기록은 복원하지 않습니다.
+
+새 노드는 자체 메타데이터/할당 상태를 가지며 옛 동명 객체를 상속하지 않습니다. write/truncate/unlink는 변경 정책을 공유하고 inode/mode/birthtime과 삭제 후 nlink=0을 보존합니다. 전체 EFAULT 후 영구 미상 상태는 유지하며 기존 노드에 소급 적용하지 않습니다. `created-file-metadata`는 다섯 구성에서 네이티브 권한, 이전 마스크, 유효 UID, 부모 장치/그룹과 수명을 비교하고 `virtual-created-metadata`는 144바이트 전체 기록을 별도로 비교합니다. 네이티브의 네 시간은 같지 않을 수 있습니다. 고정 시간/희소 할당은 가상 규칙이며 권한 강제 검사, 자격 증명 전환, ACL, 네이티브 APFS 동작은 아직 지원하지 않습니다.
+
+```json
+{"darwin_files":{"files":[],"umask":18}}
+```
+
+[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
 
 ## 디렉터리와 상대 경로
 
@@ -224,7 +241,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 84개 또는 x64 56개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 87개 또는 x64 58개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -317,3 +334,9 @@ unlink 검증(2026-10-06): Release Darwin 708개 중 384개 통과, 사용 불�
 Release Darwin 748개: 412 통과, 백엔드 부재 336 건너뜀, 실패 없음. 필수 ARM64 HVF 84개 실행. 집중162개:150 통과/12 건너뜀. C/CLI/보고133/133(Darwin88), Python5구성9.982초, 원본 네이티브18/18, runner66/66 통과. 초기 ARM64는 테스트 포인터 표의 재배치를 올바르게 거절했고 인라인 바이트로 고쳐 통과했습니다. 로더 허용 범위를 바꾸지 않았고 최초 실패와 바이너리는 보존합니다. runner 예상 목록27→28 갱신. 부모 관측을 보존하는 용량 실패도 검사했고 독립 검토에 남은 차단 사항이 없습니다. 수치는 중복되며 시간 제한은 그대로입니다. 전체 CI·iOS 실기기는 별도, Intel HVF Actions는 중지 상태입니다.
 
 `build-hvf-arm64/create-validation-summary.json`, `create-darwin-evidence/`, `create-focused.xml`, `create-public.xml`, `create-native-final/`, `create-initial-evidence/`.
+
+### 생성 메타데이터 검증, 2026-10-06
+
+Release Darwin 등록 787개: 439개 통과, 백엔드 사용 불가 348개 건너뜀, 실패 0개. 필수 ARM64 HVF 87개 모두 실행. 집중 151개 중 139개 통과, 12개 건너뜀. 공개 C/CLI/보고서 145/145(Darwin 입력 비교 98개), 변경 없는 Python 메서드 다섯 구성 12.211초 통과. 네이티브 19/19, 검증 스크립트 66/66 통과. 독립 검토에서 차단 사항 없음. 서로 다른 부모 device/GID와 전역 inode, 첫 쓰기 전 unlink, FD/입력이 없는 umask를 추가 검증했습니다. 집계 중복, 제한 시간 유지, 실패 재실행 불필요. 고정 생성/변경 시간과 할당은 가상 정책입니다. 전체 GitHub CI와 실제 iOS 검증은 별도이며 Intel HVF Actions는 중지 상태입니다.
+
+`build-hvf-arm64/creation-metadata-validation-summary.json`, `creation-metadata-darwin-evidence/`, `creation-metadata-focused.xml`, `creation-metadata-public.xml`, `creation-metadata-native/`.

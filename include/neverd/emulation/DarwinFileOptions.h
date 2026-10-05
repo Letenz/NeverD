@@ -65,6 +65,21 @@ struct DarwinFileMutationPolicy {
   DarwinFileTime Time;
 };
 
+/// Opt-in metadata for new regular files in the explicit virtual filesystem.
+/// Every mutable parent must have metadata; its Device/GID remain unchanged
+/// by namespace mutations. UID is the profile's effective guest user ID.
+/// This supplies neither permission enforcement nor native APFS observations.
+struct DarwinFileCreationPolicy {
+  /// Nonzero and greater than every supplied stat/directory inode. Successful
+  /// creations advance this global sequence; UINT64_MAX exhausts it forever.
+  uint64_t FirstInode = 0;
+  uint32_t BlockSize = 0;
+  uint32_t Generation = 0;
+  /// Fixed initial atime/mtime/ctime/birthtime, not a host-clock sample.
+  DarwinFileTime Time;
+  DarwinFileMutationPolicy Mutation;
+};
+
 /// One observed directory record. NextOffset is the enumeration cursor after
 /// this entry, distinct from the optional d_seekoff observation. Cookies are
 /// local to a snapshot and need not increase; zero is reserved for rewind.
@@ -116,8 +131,14 @@ struct DarwinFileOptions {
   /// Newly created objects have writable contents; existing objects retain
   /// their separate WritableFiles authority. Namespace changes invalidate
   /// the parent's observed metadata and directory snapshot. New objects have
-  /// no implicit metadata, mutation policy, credentials or umask observation.
+  /// unknown metadata unless CreationPolicy is supplied.
   std::set<std::string> MutableDirectories;
+  /// Optional virtual creation metadata; requires InitialUmask. Never applies
+  /// to existing objects or reads any host environment. Input stays unchanged.
+  std::optional<DarwinFileCreationPolicy> CreationPolicy;
+  /// Initial process mask, including all 07777 bits returned by Darwin umask.
+  /// Independent of creation authority. Absence is unknown, not a host default.
+  std::optional<uint16_t> InitialUmask;
 };
 } // namespace neverd::emulation
 #endif
