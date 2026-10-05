@@ -115,6 +115,11 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body);
 bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body);
 /// Run the join-default sink of structureIfElse again on the late tree.
 bool sinkJoinDefaultsLate(HighFunc &Func);
+
+/// Once the other rewrites have settled: `if (c) { T; goto L; } S...` ending
+/// a list whose fall-through is L, such as a __try body or an __except
+/// handler followed by L, becomes `if (c) { T } else { S... }`.
+bool elseArmsForFallthroughJumps(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

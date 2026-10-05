@@ -4152,6 +4152,77 @@ static bool sameFallthroughLabel(va_t Target, va_t Fallthrough) {
   return Target == Fallthrough;
 }
 
+/// How many statements of the function being simplified start \p Addr, or
+/// 0 when no function is installed.
+static unsigned functionStartCount(va_t Addr) {
+  if (!IfElseFunctionBody || !Addr || Addr == InvalidVA)
+    return 0;
+  unsigned Count = 0;
+  std::function<void(const std::vector<HighStmt> &)> Visit =
+      [&](const std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          const HighStmt &S = L[I];
+          if (S.Addr == Addr && (I == 0 || L[I - 1].Addr != Addr))
+            ++Count;
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (const auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+      };
+  Visit(*IfElseFunctionBody);
+  return Count;
+}
+
+/// `if (c) { T; goto L; } S...` ending a list that falls through into L:
+/// S runs only when c is false, and falling off the list reaches L as the
+/// jump does, so S becomes the else arm.  L must start exactly one
+/// statement, or the jump might resolve elsewhere.
+static bool moveRestToElseAtFallthrough(std::vector<HighStmt> &Body,
+                                        va_t FallthroughTarget, size_t I) {
+  HighStmt &Stmt = Body[I];
+  if (Stmt.Kind != StmtKind::If || !Stmt.Cond || !Stmt.ElseBody.empty() ||
+      Stmt.Body.empty() || Stmt.Body.back().Kind != StmtKind::Goto)
+    return false;
+  const va_t Target = Stmt.Body.back().GotoTarget;
+  if (!sameFallthroughLabel(Target, FallthroughTarget) ||
+      nextNonNopIndex(Body, I + 1) >= Body.size())
+    return false;
+  AddrMap AM;
+  AM.rebuild(Body);
+  if (findTargetIndex(AM, Target) != SIZE_MAX ||
+      functionStartCount(Target) != 1)
+    return false;
+  // A jump carrying an entered label keeps it as an empty block.
+  HighStmt &Jump = Stmt.Body.back();
+  const bool Entered = (Stmt.Body.size() == 1 ||
+                        Stmt.Body[Stmt.Body.size() - 2].Addr != Jump.Addr) &&
+                       Jump.Addr && Jump.Addr != InvalidVA &&
+                       gotoTargets(*IfElseFunctionBody).count(Jump.Addr);
+  if (Entered) {
+    HighStmt Anchor;
+    Anchor.Kind = StmtKind::Block;
+    Anchor.Addr = Jump.Addr;
+    Jump = std::move(Anchor);
+  } else {
+    Stmt.Body.pop_back();
+  }
+  Stmt.Kind = StmtKind::IfElse;
+  Stmt.ElseBody.assign(std::make_move_iterator(Body.begin() + I + 1),
+                       std::make_move_iterator(Body.end()));
+  Body.erase(Body.begin() + I + 1, Body.end());
+  if (Stmt.Body.empty()) {
+    Stmt.Kind = StmtKind::If;
+    Stmt.Cond = invertHighCond(Stmt.Cond);
+    Stmt.Body = std::move(Stmt.ElseBody);
+    Stmt.ElseBody.clear();
+  }
+  return true;
+}
+
 /// `if (c) { T } else { copies; goto L; } L:` can fall through after the
 /// copies. A nested last IfElse may fall through the parent into L
 /// (`FallthroughTarget`). A distant L stays an else-goto.
@@ -4216,6 +4287,54 @@ static void flattenElseGotoNextLabelNested(std::vector<HighStmt> &Body,
       flattenElseGotoNextLabelNested(Clause, 0);
   }
   flattenElseGotoNextLabel(Body, FallthroughTarget);
+}
+
+/// What runs after each statement list for moveRestToElseAtFallthrough: the
+/// statement after an if/else, block or try once an arm or the protected
+/// body falls off its end, and the same after an __except handler.  A loop
+/// body, a case, and a __finally (which returns to the unwinder when it runs
+/// for an exception) continue nowhere fixed.
+static bool elseArmsForFallthroughJumpsIn(std::vector<HighStmt> &Body,
+                                          va_t FallthroughTarget) {
+  bool Changed = false;
+  for (size_t I = 0; I < Body.size(); ++I) {
+    HighStmt &S = Body[I];
+    va_t ChildFall = FallthroughTarget;
+    if (I + 1 < Body.size()) {
+      const size_t NextI = nextNonNopIndex(Body, I + 1);
+      ChildFall = AddrMap::entryAddress(Body[I + 1]);
+      if (!ChildFall)
+        ChildFall = NextI < Body.size() ? AddrMap::entryAddress(Body[NextI])
+                                        : FallthroughTarget;
+    }
+    const bool Loop = S.Kind == StmtKind::While ||
+                      S.Kind == StmtKind::DoWhile || S.Kind == StmtKind::For;
+    Changed |= elseArmsForFallthroughJumpsIn(S.Body, Loop ? 0 : ChildFall);
+    Changed |= elseArmsForFallthroughJumpsIn(S.ElseBody, ChildFall);
+    Changed |= elseArmsForFallthroughJumpsIn(S.DefaultBody, 0);
+    for (auto &C : S.Cases)
+      Changed |= elseArmsForFallthroughJumpsIn(C.Body, 0);
+    for (size_t K = 0; K < S.EHClauseBodies.size(); ++K) {
+      const bool Except = S.Kind == StmtKind::SEHTry &&
+                          K < S.EHClauses.size() &&
+                          S.EHClauses[K].Kind == HighEHClauseKind::SEHExcept;
+      Changed |= elseArmsForFallthroughJumpsIn(S.EHClauseBodies[K],
+                                               Except ? ChildFall : 0);
+    }
+  }
+  for (size_t I = 0; I < Body.size(); ++I)
+    Changed |= moveRestToElseAtFallthrough(Body, FallthroughTarget, I);
+  return Changed;
+}
+
+bool elseArmsForFallthroughJumps(HighFunc &Func) {
+  const std::vector<HighStmt> *SavedBody = IfElseFunctionBody;
+  IfElseFunctionBody = &Func.Body;
+  struct RestoreBody {
+    const std::vector<HighStmt> *Saved;
+    ~RestoreBody() { IfElseFunctionBody = Saved; }
+  } Restore{SavedBody};
+  return elseArmsForFallthroughJumpsIn(Func.Body, 0);
 }
 
 /// `if (c) { work; goto Join; } elsework; Join:` is if/else when elsework is
