@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: eeedd26ea2815c20d7ead685d9a09a0d33a8a608373ac2d15d2f8c0af573fd69 -->
+<!-- i18n-source: 1a4ddb03cfd74e6e25517305645ca55b6e7c05565203ef35e718b2f2368bd92b -->
 
 [← 文档索引](README.md)
 
@@ -300,3 +300,7 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 省略额外 host kick 的对照仍在两个 runner 上失联：macOS 15 运行 `37221649736`、macOS 26 运行 `37221651593` 均有 GitHub 失联注记。源码 `023a4a68d` 保留三个恢复回合、重试及每轮 VM/vCPU 重建，生产 `lib` 与旧诊断源码 `7dd7342ec` 完全一致。34/15 个产物摘要均已核验；连续日志前缀证明 778/779、300/301 轮完成/开始，并保存 779/300 个已终止整行的线程 join 后省略标记；省略标记可能属于尚未完成的一轮。两次均缺少最终原生结果和回收记录，最后保存的标记不能定位故障。省略这个调用不足以避免本次观察到的失联，仍不能确定根因或宣称当前 `dev` 通过验收。[保存的证据](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。
 
 有限定时器的 vCPU 重建对照在 macOS 15（`37226727488`）与 macOS 26（`37226729664`）均通过 1000/1000 轮，使用未改动的源码 `7dd7342ec`、控制器 `4e80b1394` 和工作流 `7f5d6fc89`。每次保留一个 VM 和 owner，共创建 1001 代 vCPU，最后未执行 guest 的一代也已回收。每组 28 个产物摘要、有序原生调用记录、1000 次新鲜定时器/写入证据、每轮两个 MTF 观测、原始预算、原生/控制器/上传器零退出码及子进程回收均已核对。macOS 26 保留了两次 guest 尚未推进的定时器切片，随后在原预算内取得要求的写入证据。控制器耗时约 26/35 秒，与此前保留会话的恢复对照约 254/283 秒的执行量不同。这些结果尚未解决 runner 失联，也不代表当前 `dev` 或完整 Intel CPU/Darwin 验收通过。[已核验证据](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。
+
+配对的有限定时器 VM 重建对照也在两个托管 runner 上失联：macOS 15 [37250462574](https://github.com/gmh5225/test_mac_intel/actions/runs/37250462574) 和 macOS 26 [37250464732](https://github.com/gmh5225/test_mac_intel/actions/runs/37250464732)，均有 GitHub 明确的通信丢失注释。源码 `7dd7342ec`、辅助程序 `4e80b1394` 和工作流 `7f5d6fc89` 与成功的仅重建 vCPU 对照相同。16/28 个工件摘要全部验证通过。连续前缀证明完成/启动了 742/743 与 796/797 轮；严格有限调用审计只覆盖完整的 742/796 轮，包括每轮新鲜的定时器/内存写入见证和两类 MTF 观察。未完成后缀原样保留，不计入验证。两组均缺少最终原生退出与退役记录，最后保存的标记不能定位故障。没有原始测试刻意取消的恢复轮次，失联仍然发生；初始化与重试仍使用 `Executor::run`。这不证明根因，也不构成当前 `dev` 或完整 Intel CPU/Darwin 验收。[保留证据](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。
+
+2026-10-05 的 ARM64 复验使用干净源码 [90643c3d4](https://github.com/NeverSight/NeverD/commit/90643c3d47aec683953fe8a911397922816125d9)、macOS 15.6.1 和独立 Release 构建，启用 HVF、关闭 Unicorn。完整 CPU 清单执行了 906 个串行测试方法：1,406 项通过、9,979 项跳过、零失败，23 项必需原生用例全部通过。单独的 Darwin 清单为 65 项通过、221 项跳过、零失败，39 项必需原生用例全部通过。原始 XML、清单标识、子进程零退出码及回收记录已独立核对。三个取消、故障与重试方法各在同一进程中连续通过 1,000 轮。跳过代表未执行覆盖；有重叠的清单不能相加。证据保存在 `build-hvf-native/native-evidence-audit.json` 和 `build-hvf-native/recovery-stress/`。这不构成 Intel 验收、iOS 真机对照或新的性能结论。
