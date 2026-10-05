@@ -8,7 +8,6 @@
 #include "../../core/CheckedBackend.h"
 #include "AArch64Machine.h"
 namespace neverd::emulation {
-struct AArch64ExclusiveInstruction;
 class CheckedAArch64Backend final : public CheckedBackend {
 public:
   static llvm::Expected<std::unique_ptr<ExecutionBackend>>
@@ -40,7 +39,7 @@ private:
     CPU.reg(AArch64Register::PC) = PC;
   }
   llvm::Error execute(const cs_insn &) override;
-  llvm::Error executeExclusive(const AArch64ExclusiveInstruction &);
+  llvm::Expected<bool> executeAtomic(const cs_insn &);
   void onGuestException() override { Exclusive.reset(); }
   std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const override;

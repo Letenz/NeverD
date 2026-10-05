@@ -1,10 +1,12 @@
-//===- UnicornExclusive.cpp - Shared ARM64 exclusive instruction bridge --===//
+//===- UnicornAArch64Atomic.cpp - Shared ARM64 atomic instruction bridge
+//---===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "UnicornExclusive.h"
+#include "UnicornAArch64Atomic.h"
 
+#include "../../arch/aarch64/AArch64Atomic.h"
 #include "../../core/ExecutionDiagnostics.h"
 
 #include "llvm/Support/Endian.h"
@@ -13,16 +15,16 @@
 
 namespace neverd::emulation {
 llvm::Error
-executeUnicornExclusive(uc_engine *Engine, uint64_t PC,
-                        MemoryProjection &Memory,
-                        std::shared_ptr<RAMReservation> &Exclusive,
-                        const AArch64ExclusiveAccess &Access,
-                        llvm::function_ref<int(CPURegister)> RegisterID) {
+executeUnicornAArch64Atomic(uc_engine *Engine, uint64_t PC,
+                            MemoryProjection &Memory,
+                            std::shared_ptr<RAMReservation> &Exclusive,
+                            const AArch64AtomicAccess &Access,
+                            llvm::function_ref<int(CPURegister)> RegisterID) {
   std::array<uint8_t, aarch64::InstructionBytes> Bytes;
   if (auto E = Memory.read(PC, Bytes, Execute))
     return E;
   const uint32_t Word = llvm::support::endian::read32le(Bytes.data());
-  if (!isAArch64Exclusive(Word))
+  if (!isAArch64Exclusive(Word) && !isAArch64Atomic(Word))
     return llvm::Error::success();
   AArch64MachineState Before;
   for (unsigned R = 0; R <= aarch64::GPRCount; ++R) {
@@ -32,22 +34,30 @@ executeUnicornExclusive(uc_engine *Engine, uint64_t PC,
       return diagnostic::error(diagnostic::UnicornReadRegister);
   }
   Before.reg(AArch64Register::PC) = PC;
-  auto Decoded = decodeAArch64Exclusive(Word, Before);
-  if (!Decoded)
-    return Decoded.takeError();
-  const auto &I = **Decoded;
-  if (I.Kind != AArch64ExclusiveInstruction::Operation::Clear) {
-    auto Page = Memory.mappings().find(I.Address & ~(memory::PageSize - 1));
+  auto Local = decodeAArch64Exclusive(Word, Before);
+  if (!Local)
+    return Local.takeError();
+  auto Atomic = decodeAArch64Atomic(Word, Before);
+  if (!Atomic)
+    return Atomic.takeError();
+  const uint64_t Address = *Atomic ? (**Atomic).Address : (**Local).Address;
+  const bool Clear =
+      *Local && (**Local).Kind == AArch64ExclusiveInstruction::Operation::Clear;
+  if (!Clear) {
+    auto Page = Memory.mappings().find(Address & ~(memory::PageSize - 1));
     if (Page != Memory.mappings().end() && Page->second.IO)
       return llvm::make_error<UnsupportedExecutionError>();
   }
   auto Next = Before;
-  if (auto E = executeAArch64Exclusive(I, Next, Exclusive, Memory, Access))
+  if (auto E = *Atomic ? executeAArch64Atomic(**Atomic, Next, Memory, Access)
+                       : executeAArch64Exclusive(**Local, Next, Exclusive,
+                                                 Memory, Access))
     return E;
   if (Next.reg(AArch64Register::PC) == PC)
     return llvm::Error::success();
-  if (I.Kind == AArch64ExclusiveInstruction::Operation::Store) {
-    auto Target = Memory.mappings().find(I.Address & ~(memory::PageSize - 1));
+  if (*Atomic ||
+      (**Local).Kind == AArch64ExclusiveInstruction::Operation::Store) {
+    auto Target = Memory.mappings().find(Address & ~(memory::PageSize - 1));
     // Completion writes the shared backing directly. Every executable alias
     // must retire its translated blocks before a same-run branch reaches it.
     if (Target != Memory.mappings().end())

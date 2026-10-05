@@ -7,7 +7,6 @@
 
 #include "../../core/ExecutionDiagnostics.h"
 #include "../../core/RAMTransaction.h"
-#include "AArch64Exclusive.h"
 #include "AArch64InstructionEffects.h"
 
 #include "llvm/Support/Endian.h"
@@ -124,11 +123,11 @@ CheckedAArch64Backend::decodeServiceRequest(const cs_insn &I) const {
 }
 
 llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
-  auto ExclusiveInstruction = decodeAArch64Exclusive(I, CPU);
-  if (!ExclusiveInstruction)
-    return ExclusiveInstruction.takeError();
-  if (*ExclusiveInstruction)
-    return executeExclusive(**ExclusiveInstruction);
+  auto Atomic = executeAtomic(I);
+  if (!Atomic)
+    return Atomic.takeError();
+  if (*Atomic)
+    return llvm::Error::success();
   auto Effects = getAArch64InstructionEffects(I, CPU);
   if (!Effects)
     return Effects.takeError();

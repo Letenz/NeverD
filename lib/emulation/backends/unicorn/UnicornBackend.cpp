@@ -17,8 +17,8 @@
 #include "../../core/ExecutionExitBuilder.h"
 #include "../../core/MemoryLayout.h"
 #include "../../core/MemoryProjection.h"
+#include "UnicornAArch64Atomic.h"
 #include "UnicornArchitecture.h"
-#include "UnicornExclusive.h"
 #include "UnicornMemory.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -296,7 +296,7 @@ struct UnicornBackend::Impl {
     Exclusive.reset();
   }
 
-  llvm::Error exclusiveFault(BackendFault Fault) {
+  llvm::Error atomicFault(BackendFault Fault) {
     if (Hooks.RecoverableFault && Hooks.RecoverableFault(Fault)) {
       Exclusive.reset();
       RecoverableFault = Fault;
@@ -336,20 +336,20 @@ struct UnicornBackend::Impl {
       if (S.Architecture != GuestArchitecture::AArch64 || S.effectsStopped() ||
           S.RecoverableFault)
         return;
-      auto E = executeUnicornExclusive(
+      auto E = executeUnicornAArch64Atomic(
           S.Engine, Address, *S.Memory, S.Exclusive,
           {S.Hooks, [&] { return S.effectsStopped() || S.RecoverableFault; },
-           [&](BackendFault Fault) { return S.exclusiveFault(Fault); },
+           [&](BackendFault Fault) { return S.atomicFault(Fault); },
            [&](uint64_t At, uint64_t Count,
                unsigned Permissions) -> llvm::Error {
              if (auto F = S.Memory->firstAccessFailure(At, Count, Permissions))
-               return S.exclusiveFault({F->Kind, Address, F->Address, F->Size,
-                                        Permissions == Read
-                                            ? BackendAccessKind::Read
-                                            : BackendAccessKind::Write});
+               return S.atomicFault({F->Kind, Address, F->Address, F->Size,
+                                     Permissions == Read
+                                         ? BackendAccessKind::Read
+                                         : BackendAccessKind::Write});
              return llvm::Error::success();
            },
-           Write, AArch64ExclusiveAlignment::Natural},
+           Write, AArch64AtomicAlignment::Natural},
           registerID);
       if (E) {
         S.InstructionRejected = E.isA<UnsupportedExecutionError>();

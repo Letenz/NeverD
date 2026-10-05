@@ -69,6 +69,21 @@ add_custom_command(OUTPUT "${_exclusive_base}.exe" "${_exclusive_base}.obj"
     "${_windows_fixture_dir}/AArch64-kernel32.lib"
   VERBATIM)
 list(APPEND _windows_outputs "${_exclusive_base}.exe")
+set(_atomic_base "${_windows_fixture_dir}/aarch64-atomic")
+add_custom_command(OUTPUT "${_atomic_base}.exe" "${_atomic_base}.obj"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-pc-windows-msvc
+    -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+    -fno-vectorize -fno-slp-vectorize -O1 -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/aarch64_atomic_oracle.c"
+    -o "${_atomic_base}.obj"
+  COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /entry:entry /subsystem:console
+    /machine:arm64 /timestamp:0 "${_atomic_base}.obj"
+    "${_windows_fixture_dir}/AArch64-kernel32.lib" "/out:${_atomic_base}.exe"
+  DEPENDS fixtures/aarch64_atomic_oracle.c fixtures/aarch64_atomic.inc
+    fixtures/AArch64AtomicOracle.def AArch64AtomicCases.def
+    "${_windows_fixture_dir}/AArch64-kernel32.lib"
+  VERBATIM)
+list(APPEND _windows_outputs "${_atomic_base}.exe")
 add_custom_target(NeverDWindowsProcessFixtures DEPENDS ${_windows_outputs})
 foreach(_owner NeverDWindowsProcessTests NeverDProcessPublicTests)
   if(TARGET ${_owner})

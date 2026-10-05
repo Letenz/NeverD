@@ -1305,7 +1305,9 @@ CoreImage 的强 SDK 声明保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 
 `AuthenticatedSourceFrameLoads` 可通过 `swiftMetadataAccessorSourceCallHint` 跨越元数据访问器调用。两条声明路径复用已有的编译器证据表、准确的强链接 provider，以及完整的 Swift 请求和元数据响应 ABI。双寄存器响应与通常的易失寄存器破坏规则保持完整；私有 spill 仍须通过共享的到达字节证明。这不提供值布局、见证内存效应、栈借用或动态栈分配模型。
 
-`AArch64ExclusiveInstructions.def` 统一定义独占指令的编码准入；`AArch64ExclusiveExecution` 在物理执行锁内完成寄存器及监视器状态转换。`RAMReservation` 保留分配身份，接收主机写入、保留视图、`RAMTransaction`、字符串指令及 `ENTER` 故障前部分写入的提交通知。临时写入和回滚不会使保留状态失效。不声明写入范围的执行会使已有保留状态失效；声明范围的执行按实际提交范围跟踪。客户机故障、服务陷阱和地址空间绑定会清除本地监视器。原始 `LDAR[B/H]` 和 `STLR[B/H]` 仍通过后端执行，并保留自然对齐 RAM 契约。 Unicorn 软件适配层在观察回调允许写入后，通过写入前钩子保守地使保留状态失效；独占存储完成后，会先清除所有可执行别名的翻译缓存，再继续同一次执行。 `AArch64ExclusiveAccess` 选择对齐策略：checked 配置采用 FEAT_LSE2，软件 Unicorn 保留引擎的特性模型；预约按相同操作数宽度及物理粒度匹配。
+`AArch64ExclusiveInstructions.def` 统一定义独占指令的编码准入；`AArch64ExclusiveExecution` 在物理执行锁内完成寄存器及监视器状态转换。`RAMReservation` 保留分配身份，接收主机写入、保留视图、`RAMTransaction`、字符串指令及 `ENTER` 故障前部分写入的提交通知。临时写入和回滚不会使保留状态失效。不声明写入范围的执行会使已有保留状态失效；声明范围的执行按实际提交范围跟踪。客户机故障、服务陷阱和地址空间绑定会清除本地监视器。原始 `LDAR[B/H]` 和 `STLR[B/H]` 仍通过后端执行，并保留自然对齐 RAM 契约。 Unicorn 软件适配层在观察回调允许写入后，通过写入前钩子保守地使保留状态失效；独占存储完成后，会先清除所有可执行别名的翻译缓存，再继续同一次执行。 `AArch64AtomicAccess` 选择对齐策略：checked 配置采用 FEAT_LSE2，软件 Unicorn 保留引擎的特性模型；预约按相同操作数宽度及物理粒度匹配。
+
+`AArch64AtomicInstructions.def` 负责 LSE 指令准入，`AArch64AtomicExecution` 负责原子完成，`AArch64AtomicMemory` 与独占指令共用对齐和类型化故障规则。checked 传输和 Unicorn 软件桥接共用这些实现。
 
 `objcNonEscapingBlockSourceFrameEffects` 通过共享的 `sourceFrameCallArgumentStorage` 查询认证栈上 block 的同步借用。它重放原始机器指令、当前接收者与派发、强导入、完整头部与描述符、回调 ABI 和到达字节。描述符限定可写范围，填充字节不因此获得初始化证明；捕获字段类型与回调本体仍须独立验证。循环中的不确定观察和私有栈地址捕获会被拒绝，依赖只使用已完成的证明轮次。
 
