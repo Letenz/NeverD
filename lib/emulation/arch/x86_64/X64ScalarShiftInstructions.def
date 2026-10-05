@@ -1,0 +1,16 @@
+//===- X64ScalarShiftInstructions.def - Scalar shift and rotate effects ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// All memory destinations are read/write operands, including masked-zero
+// counts. Decoder access metadata is advisory; the processor supplies the
+// written value and flags under the shared RAM transaction.
+NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(SHL)
+NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(SAL)
+NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(SHR)
+NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(SAR)
+NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(ROL)
+NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(ROR)
+NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(RCL)
+NEVERD_X64_SCALAR_SHIFT_INSTRUCTION(RCR)
