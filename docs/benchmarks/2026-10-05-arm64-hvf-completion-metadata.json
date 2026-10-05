@@ -20,17 +20,17 @@
   "raw_comparisons": {
     "atomic": {
       "file": "2026-10-05-arm64-hvf-completion-atomic.json",
-      "sha256": "4d61979e32c6d3fbbd8e448aabd1c03209dbfc089cc5501d01d33c50bb987343"
+      "sha256": "07734b4529224c73768e976548163e83c21434fec0470360f5bc31591cbda2a7"
     },
     "blocking": {
       "file": "2026-10-05-arm64-hvf-completion-blocking.json",
-      "sha256": "6e542dbb9b5ba9571b1f98d943897125d5049584fc28c0975e69993b388b8adf"
+      "sha256": "eb7d5b7271f112bb48f9c100216d90e7beb0c417bfb50053e5c899efe1374d18"
     }
   },
   "summaries": {
     "atomic": {
       "source_commit": "0f21a3b81",
-      "raw_sha256": "4d61979e32c6d3fbbd8e448aabd1c03209dbfc089cc5501d01d33c50bb987343",
+      "raw_sha256": "07734b4529224c73768e976548163e83c21434fec0470360f5bc31591cbda2a7",
       "median_paired_baseline_over_candidate": {
         "initialization": 0.938516052027671,
         "integer": 0.9406775895759764,
@@ -54,7 +54,7 @@
     },
     "blocking": {
       "source_commit": "764661385",
-      "raw_sha256": "6e542dbb9b5ba9571b1f98d943897125d5049584fc28c0975e69993b388b8adf",
+      "raw_sha256": "eb7d5b7271f112bb48f9c100216d90e7beb0c417bfb50053e5c899efe1374d18",
       "median_paired_baseline_over_candidate": {
         "initialization": 1.0574834565212745,
         "integer": 1.0077934439670913,
@@ -177,7 +177,7 @@
   "diagnostic_scope": "Local-only instrumentation on baseline 24b020353, 84268 checked steps and 168536 native entries. Inclusive timers nest; do not sum them. Submit minus owner includes handoff and a few lifecycle operations, not a direct kernel scheduling measurement. Instrumented elapsed times are not normal performance results.",
   "instrumentation_source": {
     "phase-profile.h": "#pragma once\n#include <chrono>\n#include <cstdio>\n#include <cstdint>\nnamespace hvf_phase_profile {\nenum Phase { Submit, Owner, Prepare, Capture, Native, Run, Count };\nstruct Record { uint64_t Count = 0, Ns = 0; };\nstruct Totals {\n  Record Records[Count]{};\n  ~Totals() {\n    const char *Names[] = {\"submit\", \"owner\", \"prepare\", \"capture\", \"native\", \"run\"};\n    for (unsigned I = 0; I < Count; ++I)\n      if (Records[I].Count)\n        std::fprintf(stderr, \"{\\\"diagnostic_phase\\\":\\\"%s\\\",\\\"count\\\":%llu,\\\"inclusive_ns\\\":%llu}\\n\", Names[I], (unsigned long long)Records[I].Count, (unsigned long long)Records[I].Ns);\n  }\n};\ninline thread_local Totals Values;\nstruct Scope {\n  using Clock = std::chrono::steady_clock;\n  Phase Value;\n  Clock::time_point Begin;\n  explicit Scope(Phase Value) : Value(Value), Begin(Clock::now()) {}\n  ~Scope() {\n    auto &R = Values.Records[Value];\n    ++R.Count;\n    R.Ns += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - Begin).count();\n  }\n};\n}\n",
-    "instrumentation.patch": "diff --git a/lib/emulation/backends/hvf/HvfAArch64Machine.cpp b/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\nindex e2f3b410f..e2be94ef8 100644\n--- a/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\n+++ b/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\n@@ -1,3 +1,4 @@\n+#include \"/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/phase-profile.h\"\n //===- HvfAArch64Machine.cpp - Native ARM64 instruction transport ----===//\n //\n // NeverD Decompiler\n@@ -66,6 +67,7 @@ public:\n     }\n   }\n   llvm::Error prepare(const AArch64MachineState &State) {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Prepare);\n     using namespace aarch64;\n     // Debug exits are routed to EL2, where PSTATE.D cannot mask them. Disable\n     // software stepping for the immutable maintenance stub, then restore it\n@@ -114,6 +116,7 @@ public:\n     return set(HV_REG_PC, MaintenanceEntryGPA);\n   }\n   llvm::Error capture(AArch64MachineState &State) {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Capture);\n     return captureAArch64State(\n         State, [&](AArch64Register R) { return scalar(R, State.UserMode); },\n         [&](unsigned N) -> llvm::Expected<RegisterValue> {\ndiff --git a/lib/emulation/backends/hvf/HvfExecutor.cpp b/lib/emulation/backends/hvf/HvfExecutor.cpp\nindex 92808c158..f85904610 100644\n--- a/lib/emulation/backends/hvf/HvfExecutor.cpp\n+++ b/lib/emulation/backends/hvf/HvfExecutor.cpp\n@@ -1,3 +1,4 @@\n+#include \"/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/phase-profile.h\"\n //===- HvfExecutor.cpp - Serialized native execution on macOS --------===//\n //\n // NeverD Decompiler\n@@ -181,6 +182,7 @@ llvm::Error Executor::submit(Action Run, const MachineRunControl *Control) {\n   } else {\n     Gate.lock();\n   }\n+  hvf_phase_profile::Scope Profile(hvf_phase_profile::Submit);\n   Request Work{Run};\n   std::unique_lock Lock(Mutex);\n   Pending = &Work;\n@@ -196,7 +198,10 @@ void Executor::work() {\n       return;\n     auto *Work = Pending;\n     Lock.unlock();\n-    auto Result = Work->Run(*this);\n+    auto Result = [&] {\n+      hvf_phase_profile::Scope Profile(hvf_phase_profile::Owner);\n+      return Work->Run(*this);\n+    }();\n     Lock.lock();\n     Work->Result = std::move(Result);\n     Pending = nullptr;\n@@ -362,12 +367,14 @@ void Executor::detach(const void *Identity) {\n   }));\n }\n llvm::Error Executor::run(MachineRunControl Control, Completion Complete) {\n+  hvf_phase_profile::Scope Profile(hvf_phase_profile::Run);\n   if (!CPUCreated)\n     if (auto E = createCPU())\n       return E;\n #if defined(__arm64__)\n   Deadline->Cancel.Status.store(HV_SUCCESS);\n   auto Entry = Deadline->Timer.invoke(Control, [&]() noexcept {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Native);\n     return hv_vcpu_run(CPU);\n   });\n   llvm::Error Result = llvm::Error::success();\n",
+    "instrumentation.patch": "diff --git a/lib/emulation/backends/hvf/HvfAArch64Machine.cpp b/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\nindex e2f3b410f..e2be94ef8 100644\n--- a/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\n+++ b/lib/emulation/backends/hvf/HvfAArch64Machine.cpp\n@@ -1,3 +1,4 @@\n+#include \"${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/phase-profile.h\"\n //===- HvfAArch64Machine.cpp - Native ARM64 instruction transport ----===//\n //\n // NeverD Decompiler\n@@ -66,6 +67,7 @@ public:\n     }\n   }\n   llvm::Error prepare(const AArch64MachineState &State) {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Prepare);\n     using namespace aarch64;\n     // Debug exits are routed to EL2, where PSTATE.D cannot mask them. Disable\n     // software stepping for the immutable maintenance stub, then restore it\n@@ -114,6 +116,7 @@ public:\n     return set(HV_REG_PC, MaintenanceEntryGPA);\n   }\n   llvm::Error capture(AArch64MachineState &State) {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Capture);\n     return captureAArch64State(\n         State, [&](AArch64Register R) { return scalar(R, State.UserMode); },\n         [&](unsigned N) -> llvm::Expected<RegisterValue> {\ndiff --git a/lib/emulation/backends/hvf/HvfExecutor.cpp b/lib/emulation/backends/hvf/HvfExecutor.cpp\nindex 92808c158..f85904610 100644\n--- a/lib/emulation/backends/hvf/HvfExecutor.cpp\n+++ b/lib/emulation/backends/hvf/HvfExecutor.cpp\n@@ -1,3 +1,4 @@\n+#include \"${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/phase-profile.h\"\n //===- HvfExecutor.cpp - Serialized native execution on macOS --------===//\n //\n // NeverD Decompiler\n@@ -181,6 +182,7 @@ llvm::Error Executor::submit(Action Run, const MachineRunControl *Control) {\n   } else {\n     Gate.lock();\n   }\n+  hvf_phase_profile::Scope Profile(hvf_phase_profile::Submit);\n   Request Work{Run};\n   std::unique_lock Lock(Mutex);\n   Pending = &Work;\n@@ -196,7 +198,10 @@ void Executor::work() {\n       return;\n     auto *Work = Pending;\n     Lock.unlock();\n-    auto Result = Work->Run(*this);\n+    auto Result = [&] {\n+      hvf_phase_profile::Scope Profile(hvf_phase_profile::Owner);\n+      return Work->Run(*this);\n+    }();\n     Lock.lock();\n     Work->Result = std::move(Result);\n     Pending = nullptr;\n@@ -362,12 +367,14 @@ void Executor::detach(const void *Identity) {\n   }));\n }\n llvm::Error Executor::run(MachineRunControl Control, Completion Complete) {\n+  hvf_phase_profile::Scope Profile(hvf_phase_profile::Run);\n   if (!CPUCreated)\n     if (auto E = createCPU())\n       return E;\n #if defined(__arm64__)\n   Deadline->Cancel.Status.store(HV_SUCCESS);\n   auto Entry = Deadline->Timer.invoke(Control, [&]() noexcept {\n+    hvf_phase_profile::Scope Profile(hvf_phase_profile::Native);\n     return hv_vcpu_run(CPU);\n   });\n   llvm::Error Result = llvm::Error::success();\n",
     "instrumented.stderr": "{\"diagnostic_phase\":\"owner\",\"count\":21,\"inclusive_ns\":1985002}\n{\"diagnostic_phase\":\"prepare\",\"count\":18,\"inclusive_ns\":27413}\n{\"diagnostic_phase\":\"capture\",\"count\":18,\"inclusive_ns\":30166}\n{\"diagnostic_phase\":\"native\",\"count\":36,\"inclusive_ns\":83542}\n{\"diagnostic_phase\":\"run\",\"count\":36,\"inclusive_ns\":230126}\n{\"diagnostic_phase\":\"owner\",\"count\":21,\"inclusive_ns\":375793}\n{\"diagnostic_phase\":\"prepare\",\"count\":18,\"inclusive_ns\":13000}\n{\"diagnostic_phase\":\"capture\",\"count\":18,\"inclusive_ns\":13916}\n{\"diagnostic_phase\":\"native\",\"count\":36,\"inclusive_ns\":71875}\n{\"diagnostic_phase\":\"run\",\"count\":36,\"inclusive_ns\":201293}\n{\"diagnostic_phase\":\"owner\",\"count\":21,\"inclusive_ns\":349997}\n{\"diagnostic_phase\":\"prepare\",\"count\":18,\"inclusive_ns\":12541}\n{\"diagnostic_phase\":\"capture\",\"count\":18,\"inclusive_ns\":14042}\n{\"diagnostic_phase\":\"native\",\"count\":36,\"inclusive_ns\":72503}\n{\"diagnostic_phase\":\"run\",\"count\":36,\"inclusive_ns\":214872}\n{\"diagnostic_phase\":\"owner\",\"count\":21,\"inclusive_ns\":307542}\n{\"diagnostic_phase\":\"prepare\",\"count\":18,\"inclusive_ns\":11834}\n{\"diagnostic_phase\":\"capture\",\"count\":18,\"inclusive_ns\":14126}\n{\"diagnostic_phase\":\"native\",\"count\":36,\"inclusive_ns\":69339}\n{\"diagnostic_phase\":\"run\",\"count\":36,\"inclusive_ns\":165790}\n{\"diagnostic_phase\":\"owner\",\"count\":12029,\"inclusive_ns\":124137999}\n{\"diagnostic_phase\":\"prepare\",\"count\":12026,\"inclusive_ns\":7989193}\n{\"diagnostic_phase\":\"capture\",\"count\":12026,\"inclusive_ns\":9157142}\n{\"diagnostic_phase\":\"native\",\"count\":24052,\"inclusive_ns\":41987033}\n{\"diagnostic_phase\":\"run\",\"count\":24052,\"inclusive_ns\":113271636}\n{\"diagnostic_phase\":\"owner\",\"count\":22033,\"inclusive_ns\":225744824}\n{\"diagnostic_phase\":\"prepare\",\"count\":22030,\"inclusive_ns\":14830822}\n{\"diagnostic_phase\":\"capture\",\"count\":22030,\"inclusive_ns\":18024441}\n{\"diagnostic_phase\":\"native\",\"count\":44060,\"inclusive_ns\":77246161}\n{\"diagnostic_phase\":\"run\",\"count\":44060,\"inclusive_ns\":205541176}\n{\"diagnostic_phase\":\"owner\",\"count\":20029,\"inclusive_ns\":215128786}\n{\"diagnostic_phase\":\"prepare\",\"count\":20026,\"inclusive_ns\":13441696}\n{\"diagnostic_phase\":\"capture\",\"count\":20026,\"inclusive_ns\":15343298}\n{\"diagnostic_phase\":\"native\",\"count\":40052,\"inclusive_ns\":70596354}\n{\"diagnostic_phase\":\"run\",\"count\":40052,\"inclusive_ns\":196953945}\n{\"diagnostic_phase\":\"owner\",\"count\":28033,\"inclusive_ns\":303301149}\n{\"diagnostic_phase\":\"prepare\",\"count\":28030,\"inclusive_ns\":18950504}\n{\"diagnostic_phase\":\"capture\",\"count\":28030,\"inclusive_ns\":21845338}\n{\"diagnostic_phase\":\"native\",\"count\":56060,\"inclusive_ns\":100379237}\n{\"diagnostic_phase\":\"run\",\"count\":56060,\"inclusive_ns\":277644863}\n{\"diagnostic_phase\":\"owner\",\"count\":2088,\"inclusive_ns\":60508375}\n{\"diagnostic_phase\":\"prepare\",\"count\":2084,\"inclusive_ns\":1425337}\n{\"diagnostic_phase\":\"capture\",\"count\":2084,\"inclusive_ns\":1664093}\n{\"diagnostic_phase\":\"native\",\"count\":4168,\"inclusive_ns\":20678788}\n{\"diagnostic_phase\":\"run\",\"count\":4168,\"inclusive_ns\":36586178}\n{\"diagnostic_phase\":\"submit\",\"count\":84296,\"inclusive_ns\":1552811365}\n"
   },
   "benchmark_driver_source": {
@@ -278,12 +278,12 @@
           "completed_repetitions": 1000,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry",
               "--gtest_repeat=1000",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -300,12 +300,12 @@
           "completed_repetitions": 1000,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.MaintenanceFaultsDoNotPublishAndAllowRetry",
               "--gtest_repeat=1000",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -322,12 +322,12 @@
           "completed_repetitions": 1000,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.MaintenanceCancellationDoesNotPublishAndAllowsCodeRewrite",
               "--gtest_repeat=1000",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -349,12 +349,12 @@
           "completed_repetitions": 1000,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.NativeLoopDeadlineAndStopRetireInterruptsBeforeRetry",
               "--gtest_repeat=1000",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -371,12 +371,12 @@
           "completed_repetitions": 1000,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.MaintenanceFaultsDoNotPublishAndAllowRetry",
               "--gtest_repeat=1000",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -393,12 +393,12 @@
           "completed_repetitions": 1000,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.MaintenanceCancellationDoesNotPublishAndAllowsCodeRewrite",
               "--gtest_repeat=1000",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -422,12 +422,12 @@
           "completed_repetitions": 100,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
               "--gtest_repeat=100",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -444,12 +444,12 @@
           "completed_repetitions": 100,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
               "--gtest_repeat=100",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -471,12 +471,12 @@
           "completed_repetitions": 100,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
               "--gtest_repeat=100",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -493,12 +493,12 @@
           "completed_repetitions": 100,
           "native_result": {
             "command": [
-              "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+              "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
               "--gtest_filter=HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
               "--gtest_repeat=100",
               "--gtest_break_on_failure"
             ],
-            "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+            "working_directory": "${BENCHMARK_WORKSPACE}",
             "timeout_seconds": 300,
             "status": 0,
             "timed_out": false,
@@ -551,12 +551,12 @@
         "completed_repetitions": 100,
         "native_result": {
           "command": [
-            "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+            "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
             "--gtest_filter=HvfExecutor.ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors",
             "--gtest_repeat=100",
             "--gtest_break_on_failure"
           ],
-          "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+          "working_directory": "${BENCHMARK_WORKSPACE}",
           "timeout_seconds": 300,
           "status": 0,
           "timed_out": false,
@@ -573,12 +573,12 @@
         "completed_repetitions": 100,
         "native_result": {
           "command": [
-            "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/bin/NeverDHvfTests",
+            "${BENCHMARK_WORKSPACE}/build-hvf-arm64/bin/NeverDHvfTests",
             "--gtest_filter=HvfExecutor.AdmittedRequestRetiresBeforeCancellationReturns",
             "--gtest_repeat=100",
             "--gtest_break_on_failure"
           ],
-          "working_directory": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD",
+          "working_directory": "${BENCHMARK_WORKSPACE}",
           "timeout_seconds": 300,
           "status": 0,
           "timed_out": false,
@@ -604,9 +604,9 @@
         "-D__STDC_CONSTANT_MACROS",
         "-D__STDC_FORMAT_MACROS",
         "-D__STDC_LIMIT_MACROS",
-        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/include",
-        "-I/Users/gmh/.cache/neverd-llvm/neverd-llvm-v23.0.0-r3/arm64/neverd-llvm-macos-arm64/include",
-        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/third_party/capstone/include",
+        "-I${BENCHMARK_WORKSPACE}/include",
+        "-I${LLVM_PREFIX}/include",
+        "-I${BENCHMARK_WORKSPACE}/third_party/capstone/include",
         "-F/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks",
         "-O3",
         "-DNDEBUG",
@@ -614,7 +614,7 @@
         "-isysroot",
         "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
         "-fPIC",
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/lib/emulation/backends/hvf/HvfExecutor.cpp"
+        "${BENCHMARK_WORKSPACE}/lib/emulation/backends/hvf/HvfExecutor.cpp"
       ],
       "exit_code": 0,
       "source_sha256": "0adf6b0a937d52d1b92748ba5450e02031a44e69ba5f198e7a0449433a636d1c",
@@ -631,9 +631,9 @@
         "-D__STDC_CONSTANT_MACROS",
         "-D__STDC_FORMAT_MACROS",
         "-D__STDC_LIMIT_MACROS",
-        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/include",
-        "-I/Users/gmh/.cache/neverd-llvm/neverd-llvm-v23.0.0-r3/arm64/neverd-llvm-macos-arm64/include",
-        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/third_party/capstone/include",
+        "-I${BENCHMARK_WORKSPACE}/include",
+        "-I${LLVM_PREFIX}/include",
+        "-I${BENCHMARK_WORKSPACE}/third_party/capstone/include",
         "-F/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks",
         "-O3",
         "-DNDEBUG",
@@ -641,7 +641,7 @@
         "-isysroot",
         "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
         "-fPIC",
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/lib/emulation/backends/hvf/HvfAArch64Machine.cpp"
+        "${BENCHMARK_WORKSPACE}/lib/emulation/backends/hvf/HvfAArch64Machine.cpp"
       ],
       "exit_code": 0,
       "source_sha256": "c72075ab8f64cfdc0ef14935d12cff74f9940cd0250fbdaaaf1a05e349e5810d",
@@ -658,9 +658,9 @@
         "-D__STDC_CONSTANT_MACROS",
         "-D__STDC_FORMAT_MACROS",
         "-D__STDC_LIMIT_MACROS",
-        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/include",
-        "-I/Users/gmh/.cache/neverd-llvm/neverd-llvm-v23.0.0-r3/arm64/neverd-llvm-macos-arm64/include",
-        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/third_party/capstone/include",
+        "-I${BENCHMARK_WORKSPACE}/include",
+        "-I${LLVM_PREFIX}/include",
+        "-I${BENCHMARK_WORKSPACE}/third_party/capstone/include",
         "-F/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks",
         "-O3",
         "-DNDEBUG",
@@ -668,7 +668,7 @@
         "-isysroot",
         "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
         "-fPIC",
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/lib/emulation/backends/hvf/HvfExecutor.cpp"
+        "${BENCHMARK_WORKSPACE}/lib/emulation/backends/hvf/HvfExecutor.cpp"
       ],
       "exit_code": 0,
       "source_sha256": "0adf6b0a937d52d1b92748ba5450e02031a44e69ba5f198e7a0449433a636d1c",
@@ -685,9 +685,9 @@
         "-D__STDC_CONSTANT_MACROS",
         "-D__STDC_FORMAT_MACROS",
         "-D__STDC_LIMIT_MACROS",
-        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/include",
-        "-I/Users/gmh/.cache/neverd-llvm/neverd-llvm-v23.0.0-r3/arm64/neverd-llvm-macos-arm64/include",
-        "-I/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/third_party/capstone/include",
+        "-I${BENCHMARK_WORKSPACE}/include",
+        "-I${LLVM_PREFIX}/include",
+        "-I${BENCHMARK_WORKSPACE}/third_party/capstone/include",
         "-F/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks",
         "-O3",
         "-DNDEBUG",
@@ -695,7 +695,7 @@
         "-isysroot",
         "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
         "-fPIC",
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/lib/emulation/backends/hvf/HvfX64Machine.cpp"
+        "${BENCHMARK_WORKSPACE}/lib/emulation/backends/hvf/HvfX64Machine.cpp"
       ],
       "exit_code": 0,
       "source_sha256": "8a74c560b2fe891a7fe2c50a8df2ddac840c38c24e35e7e563091b0f654b61d0",
@@ -707,5 +707,17 @@
     "record_utc": "2026-10-05T08:16:21.379596+00:00",
     "field": "rejected_preflights[1].scope",
     "correction": "The original scope label was generated before the compiler-process check and incorrectly says that no compiler processes were observed. The recorded counts (ninja=1, cmake=1, clang=4) caused this preflight to reject the confirmation attempt; no confirmation benchmark was launched. The original record is preserved verbatim, and its scope label must not be interpreted as an accepted preflight or a clean-host observation."
+  },
+  "publication_path_redaction": {
+    "description": "Private workspace and LLVM installation prefixes are replaced consistently in paths, commands and captured output. Measurements, binary hashes, source revisions and test results are unchanged. Comparison hashes above identify the published files; the original file hashes below identify the unredacted records.",
+    "placeholders": {
+      "${BENCHMARK_WORKSPACE}": "Original benchmark checkout root",
+      "${LLVM_PREFIX}": "Original NeverD LLVM r3 arm64 installation root"
+    },
+    "original_file_sha256": {
+      "2026-10-05-arm64-hvf-completion-atomic.json": "4d61979e32c6d3fbbd8e448aabd1c03209dbfc089cc5501d01d33c50bb987343",
+      "2026-10-05-arm64-hvf-completion-blocking.json": "6e542dbb9b5ba9571b1f98d943897125d5049584fc28c0975e69993b388b8adf",
+      "2026-10-05-arm64-hvf-completion-metadata.json": "2537960358442e437f8b7d7e865560c2dc6b6d7935e2118865cb9cd1177f7e68"
+    }
   }
 }

@@ -559,6 +559,19 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
         Param.Size = Op.Output.Size > 0 ? Op.Output.Size : 4;
         Param.RegOff = kNoParamReg;
         Param.TheArch = TargetArch;
+        if (Param.Size == 8) {
+          // An eight-byte load spans two four-byte ABI parameters. Encode
+          // that composition in MedIR so both source routes retain the high
+          // word and agree about which incoming slots are actually used.
+          Param.Size = 4;
+          MedVar High = Param;
+          ++High.Id;
+          Op.Opcode = NdOp::CONCAT;
+          Op.Inputs[0] = High;
+          Op.Inputs[1] = Param;
+          Op.NumInputs = 2;
+          continue;
+        }
         Op.Opcode = NdOp::COPY;
         Op.Inputs[0] = Param;
         Op.NumInputs = 1;

@@ -391,6 +391,37 @@ class ReviewedRunnerHistoryTests(unittest.TestCase):
         self.assertIn("private-path", findings[0])
 
 
+class ReviewedBenchmarkRedactionTests(unittest.TestCase):
+    PATH = 'docs/benchmarks/2026-10-05-arm64-hvf-completion-atomic.json'
+    REMOVED = 'ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120'
+    LINE = '      "path": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",'
+
+    def test_only_reviewed_commit_path_and_line_are_exempt(self) -> None:
+        self.assertEqual(provenance._scan_text(
+            self.PATH, self.LINE, provenance.RULES,
+            history_commit=self.REMOVED), [])
+        cases = (
+            (self.PATH, self.LINE, None),
+            (self.PATH, self.LINE, "0" * 40),
+            (self.PATH, self.LINE, self.REMOVED[:12]),
+            ("docs/benchmarks/other.json", self.LINE, self.REMOVED),
+            (self.PATH, self.LINE + " extra", self.REMOVED),
+            (self.PATH, self.LINE.lstrip(), self.REMOVED),
+        )
+        for path, line, commit in cases:
+            with self.subTest(path=path, line=line, commit=commit):
+                self.assertEqual(len(provenance._scan_text(
+                    path, line, provenance.RULES,
+                    history_commit=commit)), 1)
+
+    def test_external_policy_still_applies_to_redacted_history(self) -> None:
+        rule = ProvenanceScanTests.term_rule("private-path", "baseline")
+        findings = provenance._scan_text(
+            self.PATH, self.LINE, (*provenance.RULES, rule),
+            history_commit=self.REMOVED)
+        self.assertEqual(len(findings), 1)
+
+
 class ReviewedFpremHistoryTests(unittest.TestCase):
     PATH = "unittests/semantic/x86/X86_X87TranscendentalRTTests.cpp"
     REMOVED = "4fa1b1f9b384a24335828131150b285667c2d7cc"

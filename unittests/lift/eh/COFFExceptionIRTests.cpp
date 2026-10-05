@@ -2257,6 +2257,55 @@ TEST(COFFExceptionIR, LLVMCFinallyContinuationFollowsCleanup) {
       << Source;
 }
 
+TEST(COFFExceptionIR, LLVMCRejectsCleanupReturnIntoOrdinaryContinuation) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-seh-finally-cont", Context);
+  Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+  llvm::Type *Void = llvm::Type::getVoidTy(Context);
+  llvm::FunctionType *VoidType = llvm::FunctionType::get(Void, false);
+  llvm::FunctionType *PersonalityType = llvm::FunctionType::get(
+      llvm::Type::getInt32Ty(Context), /*isVarArg=*/true);
+  llvm::Function *Personality = llvm::Function::Create(
+      PersonalityType, llvm::GlobalValue::ExternalLinkage,
+      "__C_specific_handler", Module);
+  llvm::Function *Function = llvm::Function::Create(
+      VoidType, llvm::GlobalValue::ExternalLinkage, "seh_finally_cont", Module);
+  Function->setPersonalityFn(Personality);
+
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Finally =
+      llvm::BasicBlock::Create(Context, "finally", Function);
+  llvm::BasicBlock *Cont = llvm::BasicBlock::Create(Context, "cont", Function);
+  llvm::Function *Raise = llvm::Function::Create(
+      VoidType, llvm::GlobalValue::ExternalLinkage, "may_raise", Module);
+  llvm::Function *CleanupFn = llvm::Function::Create(
+      VoidType, llvm::GlobalValue::ExternalLinkage, "run_finally", Module);
+  llvm::Function *After = llvm::Function::Create(
+      VoidType, llvm::GlobalValue::ExternalLinkage, "after_step", Module);
+  llvm::IRBuilder<> EntryBuilder(Entry);
+  EntryBuilder.CreateInvoke(Raise, Cont, Finally);
+  llvm::IRBuilder<> FinallyBuilder(Finally);
+  llvm::CleanupPadInst *Cleanup =
+      FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+  FinallyBuilder.CreateCall(CleanupFn);
+  FinallyBuilder.CreateCleanupRet(Cleanup, Cont);
+  llvm::IRBuilder<> ContBuilder(Cont);
+  ContBuilder.CreateCall(After);
+  ContBuilder.CreateRetVoid();
+
+  // cleanupret transfers an exception to an EH pad or unwinds to the caller;
+  // an ordinary continuation is not a legal exceptional successor.
+  EXPECT_TRUE(llvm::verifyFunction(*Function, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  EXPECT_FALSE(LLVMCEmitter().emit(Module, OS, Options));
+  EXPECT_TRUE(Source.empty());
+}
+
 TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-seh-nested-bodies", Context);

@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "LLVMCFrameLayout.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -816,6 +817,16 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
               asAllocaPointer(LI->getPointerOperand())) {
         if (const auto *Stored = allocaStoredValueBefore(LI))
           return Self(Self, Stored);
+        // A block-local forwarding index cannot answer a cross-block load.
+        // Only collapse such a load when every incoming path initialized the
+        // exact slot and all of its stores establish the same bit pattern.
+        if (allocaLoadHasReachingStore(LI)) {
+          if (auto Known = OmittedAllocaImmediates.find(Slot);
+              Known != OmittedAllocaImmediates.end())
+            return Known->second;
+          if (auto Common = uniqueAllocaImmediate(Slot))
+            return Common;
+        }
       }
       if (auto VA = imageDataVA(LI->getPointerOperand())) {
         const auto *Ty = LI->getType();
@@ -1067,32 +1078,9 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
   const llvm::Module *Mod = CurMod ? CurMod : Fn.getParent();
   if (!Mod)
     return;
-  const llvm::DataLayout &DL = Mod->getDataLayout();
-  for (const llvm::User *U : SyntheticFrame->users()) {
-    const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(U);
-    if (!GEP)
-      continue;
-    llvm::APInt Acc(64, 0);
-    if (!GEP->accumulateConstantOffset(DL, Acc))
-      continue;
-    const uint64_t Off = Acc.getZExtValue();
-    const auto *GEPInst = llvm::dyn_cast<llvm::Instruction>(U);
-    if (GEPInst && GEPInst->getName() == "frame_end") {
-      FrameBaseOffset = Off;
-      break;
-    }
-    for (const llvm::User *GU : GEP->users()) {
-      if (const auto *P2I = llvm::dyn_cast<llvm::PtrToIntInst>(GU)) {
-        if (P2I->getName() == "rsp_init" ||
-            P2I->getName().starts_with("rsp_init")) {
-          FrameBaseOffset = Off;
-          break;
-        }
-      }
-    }
-    if (FrameBaseOffset)
-      break;
-  }
+  FrameBaseOffset =
+      llvmc::syntheticFrameBaseOffset(*SyntheticFrame, Mod->getDataLayout())
+          .value_or(0);
   SpLocalOwner.clear();
   SpLocalNameCandidates.clear();
   SpLocalAmbiguousNames.clear();
@@ -1508,7 +1496,7 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
     ~DepthGuard() { --D; }
   } Guard(PeelDepth);
   const bool Nested = PeelDepth > 1;
-  while (V && Seen.insert(V).second) {
+  while (V && Seen.size() < 64 && Seen.insert(V).second) {
     if (const auto *I2P = llvm::dyn_cast<llvm::IntToPtrInst>(V)) {
       V = I2P->getOperand(0);
       continue;
@@ -1586,7 +1574,8 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
           if (Off != 0 && isFrameFieldValueHome(Slot))
             break;
         }
-        if (const llvm::Value *Stored = allocaStoredValueBefore(LI);
+        if (const llvm::Value *Stored =
+                allocaStoredValueBefore(LI, /*BoundExpansion=*/false);
             Stored && Stored != V) {
           V = Stored;
           continue;
@@ -1707,7 +1696,7 @@ const llvm::Value *peelMulScale(
   if (!V || !Scale)
     return nullptr;
   std::set<const llvm::Value *> Seen;
-  while (V && Seen.insert(V).second) {
+  while (V && Seen.size() < 64 && Seen.insert(V).second) {
     if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(V)) {
       if (const llvm::Value *Inner = losslessIntegerView(
               Cast, NormalizedBoolean(Cast->getOperand(0)))) {
@@ -1750,7 +1739,7 @@ LLVMCWriter::typedIndexAccess(const llvm::Value *Ptr) {
     return std::nullopt;
   const llvm::Value *Addr = Ptr;
   std::set<const llvm::Value *> Seen;
-  while (Addr && Seen.insert(Addr).second) {
+  while (Addr && Seen.size() < 64 && Seen.insert(Addr).second) {
     if (const auto *I2P = llvm::dyn_cast<llvm::IntToPtrInst>(Addr)) {
       Addr = I2P->getOperand(0);
       continue;
@@ -1758,7 +1747,8 @@ LLVMCWriter::typedIndexAccess(const llvm::Value *Ptr) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Addr)) {
       if (const llvm::AllocaInst *Slot =
               asAllocaPointer(LI->getPointerOperand())) {
-        if (const auto *Stored = allocaStoredValueBefore(LI);
+        if (const auto *Stored =
+                allocaStoredValueBefore(LI, /*BoundExpansion=*/false);
             Stored && Stored != Addr) {
           Addr = Stored;
           continue;
@@ -1774,7 +1764,7 @@ LLVMCWriter::typedIndexAccess(const llvm::Value *Ptr) {
   const llvm::Value *Index = nullptr;
   auto AsSlot = [this](const llvm::Value *V) { return asAllocaPointer(V); };
   auto StoredOf = [this](const llvm::LoadInst *LI) {
-    return allocaStoredValueBefore(LI);
+    return allocaStoredValueBefore(LI, /*BoundExpansion=*/false);
   };
   auto NormalizedBoolean = [this](const llvm::Value *V) {
     return isNormalizedBoolean(V);
@@ -2106,56 +2096,50 @@ std::string LLVMCWriter::condStrImpl(const llvm::Value *V) {
           BO->getOpcode() == llvm::Instruction::And) {
         const llvm::Value *LHS = peelIntegerView(BO->getOperand(0));
         const llvm::Value *RHS = peelIntegerView(BO->getOperand(1));
-        // Only the exact unsigned relation (!carry && !zero) is "above".
-        // Decode each Boolean's polarity before matching subtraction-to-zero;
-        // the positive carry conjunction has entirely different semantics.
-        struct Relation {
-          llvm::CmpInst::Predicate Pred;
-          const llvm::Value *Left;
-          const llvm::Value *Right;
-        };
-        auto RelationOf =
-            [&](const llvm::Value *Value) -> std::optional<Relation> {
-          bool Invert = false;
-          for (unsigned Step = 0; Step < 8; ++Step) {
-            Value = peelIntegerView(Value);
-            const auto *Cmp = llvm::dyn_cast<llvm::ICmpInst>(Value);
-            if (!Cmp || !Analysis.Inlinable.count(Cmp) ||
-                MaterializedExpressions.count(Cmp))
-              return std::nullopt;
-            const auto *Zero =
-                llvm::dyn_cast<llvm::ConstantInt>(Cmp->getOperand(1));
-            if (Cmp->isEquality() && Zero && Zero->isZero() &&
-                isNormalizedBoolean(Cmp->getOperand(0))) {
-              Invert ^= Cmp->getPredicate() == llvm::CmpInst::ICMP_EQ;
-              Value = Cmp->getOperand(0);
-              continue;
-            }
-            auto Pred =
-                Invert ? Cmp->getInversePredicate() : Cmp->getPredicate();
-            const llvm::Value *L = Cmp->getOperand(0), *R = Cmp->getOperand(1);
-            if (Cmp->isEquality() && Zero && Zero->isZero()) {
-              const auto *Sub = llvm::dyn_cast<llvm::BinaryOperator>(L);
-              if (Sub && Sub->getOpcode() == llvm::Instruction::Sub) {
-                L = Sub->getOperand(0);
-                R = Sub->getOperand(1);
-              }
-            }
-            return Relation{Pred, L, R};
-          }
-          return std::nullopt;
-        };
         if (BO->getOpcode() == llvm::Instruction::And) {
-          auto A = RelationOf(LHS), B = RelationOf(RHS);
-          if (A && B) {
-            if (A->Pred == llvm::CmpInst::ICMP_NE)
-              std::swap(A, B);
-            if (A->Pred == llvm::CmpInst::ICMP_UGE &&
-                B->Pred == llvm::CmpInst::ICMP_NE && A->Left == B->Left &&
-                A->Right == B->Right)
-              return unsignedCompareOperand(A->Left, valueStr(A->Left)) +
-                     " > " +
-                     unsignedCompareOperand(A->Right, valueStr(A->Right));
+          auto NegatedCompare = [&](const llvm::Value *Value) {
+            const auto *Outer = llvm::dyn_cast<llvm::ICmpInst>(Value);
+            if (!Outer || Outer->getPredicate() != llvm::CmpInst::ICMP_EQ)
+              return static_cast<const llvm::ICmpInst *>(nullptr);
+            for (unsigned I = 0; I != 2; ++I)
+              if (const auto *Zero =
+                      llvm::dyn_cast<llvm::ConstantInt>(Outer->getOperand(I));
+                  Zero && Zero->isZero() &&
+                  isNormalizedBoolean(Outer->getOperand(1 - I)))
+                return llvm::dyn_cast<llvm::ICmpInst>(
+                    peelIntegerView(Outer->getOperand(1 - I)));
+            return static_cast<const llvm::ICmpInst *>(nullptr);
+          };
+          const auto *Less = NegatedCompare(LHS);
+          const auto *Equal = NegatedCompare(RHS);
+          if (Less && Equal && Less->getPredicate() == llvm::CmpInst::ICMP_EQ)
+            std::swap(Less, Equal);
+          if (Less && Equal &&
+              Less->getPredicate() == llvm::CmpInst::ICMP_ULT &&
+              Equal->getPredicate() == llvm::CmpInst::ICMP_EQ &&
+              Less->getOperand(0)->getType()->isIntegerTy()) {
+            const auto *A = Less->getOperand(0);
+            const auto *B = Less->getOperand(1);
+            bool SameOperands =
+                (Equal->getOperand(0) == A && Equal->getOperand(1) == B) ||
+                (Equal->getOperand(0) == B && Equal->getOperand(1) == A);
+            for (unsigned I = 0; I != 2; ++I) {
+              const auto *Zero =
+                  llvm::dyn_cast<llvm::ConstantInt>(Equal->getOperand(I));
+              const auto *Sub = llvm::dyn_cast<llvm::BinaryOperator>(
+                  Equal->getOperand(1 - I));
+              if (Zero && Zero->isZero() && Sub &&
+                  Sub->getOpcode() == llvm::Instruction::Sub &&
+                  Sub->getType() == A->getType())
+                SameOperands |=
+                    (Sub->getOperand(0) == A && Sub->getOperand(1) == B) ||
+                    (Sub->getOperand(0) == B && Sub->getOperand(1) == A);
+            }
+            // Only !ULT && !EQ over the same-width values proves UGT. In
+            // particular, ULT && !EQ and mixed-width subtractions do not.
+            if (SameOperands)
+              return unsignedCompareOperand(A, valueStr(A)) + " > " +
+                     unsignedCompareOperand(B, valueStr(B));
           }
         }
         // Keep the Boolean operands' actual polarity. Recognizing only the
@@ -2577,6 +2561,8 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (const llvm::AllocaInst *Slot =
             asAllocaPointer(LI->getPointerOperand())) {
+      if (Slot == PhiTailSlot && PhiTailIncoming)
+        return valueStr(PhiTailIncoming, PointerSpelling);
       if (joinFieldDefaultText(Slot))
         return getName(const_cast<llvm::AllocaInst *>(Slot));
       if (isJoinCallArgAlloca(Slot) && Slot != PhiTailSlot)
@@ -2802,31 +2788,25 @@ std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
 
 bool LLVMCWriter::operandIsUnsignedWidth(const llvm::Value *V,
                                          unsigned Bits) const {
-  if (!V || Bits < 8 || Bits % 8 != 0 || Bits > 128)
+  if (!V || Bits == 0 || Bits % 8 != 0 || Bits > 128)
     return false;
+  // Without a debug signature, integer parameters use the exact unsigned
+  // carrier from typeToCLLVM. Named debug enums and pointer views need their
+  // own evidence and must not inherit this assumption.
+  if (llvm::isa<llvm::Argument>(V) && !DebugFn &&
+      V->getType()->isIntegerTy(Bits))
+    return true;
   const llvm::Value *Cur = peelIntegerView(V);
-  if (!Cur || !Cur->getType()->isIntegerTy(Bits))
+  const auto *LI = llvm::dyn_cast_or_null<llvm::LoadInst>(Cur);
+  if (!LI)
     return false;
   const auto Width = static_cast<uint16_t>(Bits / 8);
-  auto IsUnsigned = [&](const TypeRef &Ty) {
-    return Ty && Ty->Kind == NdTypeKind::Int && !Ty->IsSigned && !Ty->IsEnum &&
-           Ty->Size == Width;
-  };
-  if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Cur)) {
-    if (DebugFn && Arg->getArgNo() < DebugFn->Params.size())
-      return IsUnsigned(DebugFn->Params[Arg->getArgNo()].second);
-    return true; // The unannotated LLVM parameter uses uintN_t.
-  }
-  if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Cur)) {
-    if (auto Acc = typedRecordAccess(LI->getPointerOperand(), Width))
-      return IsUnsigned(Acc->Type);
-  }
-  if (auto Ty = typeOfValue(Cur))
-    return IsUnsigned(Ty);
-  // A retained scalar instruction has its declared LLVM carrier. Expressions
-  // and display aliases need their own proof and cannot use this shortcut.
-  return MaterializedExpressions.count(Cur) && !ValueTexts.count(Cur) &&
-         !SelectUseText.count(llvm::dyn_cast<llvm::LoadInst>(Cur));
+  auto Acc = typedRecordAccess(LI->getPointerOperand(), Width);
+  if (!Acc || !Acc->Type || Acc->Type->Kind != NdTypeKind::Int)
+    return false;
+  if (Acc->Type->IsSigned || Acc->Type->IsEnum)
+    return false;
+  return Acc->Type->Size == Width;
 }
 
 std::string LLVMCWriter::unsignedCompareOperand(const llvm::Value *V,
@@ -2841,8 +2821,10 @@ std::string LLVMCWriter::unsignedCompareOperand(const llvm::Value *V,
     return castStr(llvm::Instruction::Trunc, Text, V->getType(), V->getType());
   if (Bits && operandIsUnsignedWidth(V, Bits))
     return Text;
-  if (const auto *C = llvm::dyn_cast_or_null<llvm::ConstantInt>(V);
-      C && !C->isNegative() && C->getValue().getActiveBits() < 32)
+  // The other operand is normalized separately. A nonnegative literal keeps
+  // the same value under the usual conversions to that unsigned carrier.
+  if (const auto *Constant = llvm::dyn_cast_or_null<llvm::ConstantInt>(V);
+      Constant && !Constant->isNegative())
     return Text;
   if (Bits > 32) {
     const std::string Cast = "(" + typeToCLLVM(V->getType()) + ")";
@@ -3159,25 +3141,20 @@ std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
         L = SourceAtDest(Bin->getOperand(0));
         R = SourceAtDest(Bin->getOperand(1));
       }
-      if (L && R && (DestW == 32 || DestW == 64 || DestW == 128)) {
-        if (operandIsUnsignedWidth(L, DestW) &&
-            operandIsUnsignedWidth(R, DestW)) {
-          const char *Token = Op == llvm::Instruction::Add   ? " + "
-                              : Op == llvm::Instruction::Sub ? " - "
-                                                             : " * ";
-          return "(" + valueStr(L) + Token + valueStr(R) + ")";
-        }
+      const char *Token = Op == llvm::Instruction::Add   ? " + "
+                          : Op == llvm::Instruction::Sub ? " - "
+                                                         : " * ";
+      if (L && R && (DestW == 32 || DestW == 64 || DestW == 128) &&
+          operandIsUnsignedWidth(L, DestW) && operandIsUnsignedWidth(R, DestW))
+        return "(" + valueStr(L) + Token + valueStr(R) + ")";
+      if (L && R && (DestW == 32 || DestW == 64 || DestW == 128))
         return "(" + binopStr(Op, valueStr(L), valueStr(R), Trunc->getType()) +
                ")";
-      }
       if (L && R) {
         llvm::Type *CarrierTy = BinW >= 32
                                     ? Bin->getType()
                                     : llvm::Type::getInt32Ty(Bin->getContext());
         const std::string Carrier = "(" + typeToCLLVM(CarrierTy) + ")";
-        const char *Token = Op == llvm::Instruction::Add   ? " + "
-                            : Op == llvm::Instruction::Sub ? " - "
-                                                           : " * ";
         return castStr(llvm::Instruction::Trunc,
                        Carrier + valueStr(L) + Token + Carrier + valueStr(R),
                        CarrierTy, Trunc->getType());

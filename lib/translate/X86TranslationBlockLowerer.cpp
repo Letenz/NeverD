@@ -1357,6 +1357,24 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
                      Operation.NumInputs == 1 &&
                      Operation.Inputs[0] == NdVar::scalar(0, sizeof(uint64_t));
             });
+        const bool ConstantResult =
+            X86.operands[1].type == X86_OP_IMM &&
+            ((Instruction.Id == X86_INS_AND && X86.operands[1].imm == 0) ||
+             (Instruction.Id == X86_INS_OR && X86.operands[1].imm == -1));
+        const size_t ConstantWrites =
+            ConstantResult
+                ? llvm::count_if(InstructionOps,
+                                 [&](const LowOp &Operation) {
+                                   return Operation.Opcode == NdOp::COPY &&
+                                          Operation.Output == Destination &&
+                                          Operation.NumInputs == 1 &&
+                                          Operation.Inputs[0] ==
+                                              NdVar::scalar(
+                                                  static_cast<uint64_t>(
+                                                      X86.operands[1].imm),
+                                                  sizeof(uint64_t));
+                                 })
+                : 0;
         // `and r, r` is the identity, written back explicitly so a 32-bit
         // form still zero-extends its register.
         const size_t IdentityWrites =
@@ -1380,7 +1398,9 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
               return Operation.Output == NdVar::reg(x86reg::AF, 1);
             });
         const bool HasCanonicalResult =
-            (Instruction.Id == X86_INS_XOR && SameRegister)
+            ConstantResult ? DestinationWrites == 1 && ConstantWrites == 1 &&
+                                 LogicOperations == 0
+            : (Instruction.Id == X86_INS_XOR && SameRegister)
                 ? DestinationWrites == 1 && ZeroingWrites == 1 &&
                       LogicOperations == 0
             : (Instruction.Id == X86_INS_AND && SameRegister)
@@ -1395,6 +1415,7 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
                  << DestinationWrites
                  << ", logic operations=" << LogicOperations
                  << ", zeroing writes=" << ZeroingWrites
+                 << ", constant writes=" << ConstantWrites
                  << ", identity writes=" << IdentityWrites
                  << ", flag writes complete=" << HasAllFlagWrites
                  << ", AF preserved=" << HasNoAFWrite;

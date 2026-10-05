@@ -21,6 +21,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,24 @@ using neverd::cli::sanitizer_publication::SuccessDisposition;
 
 static bool hasRuntimeFixtureCompiler() {
   return !llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty();
+}
+
+static void expectOnlyLoadProgress(llvm::StringRef Error,
+                                   const fs::path &Input) {
+  // Human-readable patch commands report loader progress on stderr. Keep
+  // rejecting diagnostics without treating those progress records as errors.
+  const std::string Loading = "Loading " + Input.filename().string() + "...";
+  const std::regex Debug(R"(^Loading debug symbols [0-9]+/[0-9]+( \(.*\))?$)");
+  while (!Error.empty()) {
+    const auto End = Error.find_first_of("\r\n");
+    const auto Line = Error.take_front(End).trim();
+    Error = End == llvm::StringRef::npos ? llvm::StringRef()
+                                         : Error.drop_front(End + 1);
+    if (Line.empty() || Line == Loading || Line == "Reading image..." ||
+        Line == "Loaded")
+      continue;
+    EXPECT_TRUE(std::regex_match(Line.str(), Debug)) << Line.str();
+  }
 }
 
 static neverd_sanitize_result_v1
@@ -1204,7 +1223,7 @@ TEST_F(RuntimeSanitizerCLI,
             neverd::test::shellQuote(runtimeFixtureBinary().string()));
     ASSERT_EQ(Sanitized.ExitCode, 0)
         << Sanitized.StandardOutput << Sanitized.StandardError;
-    EXPECT_TRUE(Sanitized.StandardError.empty());
+    expectOnlyLoadProgress(Sanitized.StandardError, runtimeFixtureBinary());
     EXPECT_NE(Sanitized.StandardOutput.find("guarded sites: 1"),
               std::string::npos);
     EXPECT_NE(Sanitized.StandardOutput.find("unsupported sites: 0"),
@@ -1259,7 +1278,7 @@ TEST_F(RuntimeSanitizerCLI,
           neverd::test::shellQuote(Source.string()));
   ASSERT_EQ(Sanitized.ExitCode, 0)
       << Sanitized.StandardOutput << Sanitized.StandardError;
-  EXPECT_TRUE(Sanitized.StandardError.empty());
+  expectOnlyLoadProgress(Sanitized.StandardError, Source);
   EXPECT_EQ(Sanitized.StandardOutput.find("Patched binary written"),
             std::string::npos);
   EXPECT_NE(Sanitized.StandardOutput.find("Existing binary authenticated at"),

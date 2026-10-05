@@ -648,7 +648,10 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
             Pointer = Store->getPointerOperand();
         }
         const auto *Slot = Pointer ? asAllocaPointer(Pointer) : nullptr;
-        if (!Slot || allocaAddressTaken(Slot) || instructionIsPrinted(*Cur))
+        if (!Slot || allocaAddressTaken(Slot))
+          return false;
+        if (instructionIsPrinted(*Cur) &&
+            !(llvm::isa<llvm::StoreInst>(Cur) && !allocaHasLoad(Slot)))
           return false;
       }
       Cur = Cur->getNextNode();
@@ -2175,19 +2178,10 @@ void LLVMCWriter::collectOmittedInlinedImmediates(llvm::Function &Fn) {
         }
         if (!AllImm || !HasStore || !Common)
           continue;
-        // All stores agreeing does not prove that every read is initialized.
-        // Omit the storage only when the reaching-definition index also
-        // proves the same immediate at each load's original program point.
-        for (const llvm::User *U : AI->users()) {
-          if (const auto *L = llvm::dyn_cast<llvm::LoadInst>(U)) {
-            auto Imm = foldImmediate(L);
-            if (!Imm || *Imm != *Common) {
-              AllImm = false;
-              break;
-            }
-          }
-        }
-        if (!AllImm)
+        if (llvm::any_of(AI->users(), [&](const llvm::User *U) {
+              const auto *Load = llvm::dyn_cast<llvm::LoadInst>(U);
+              return Load && !allocaLoadHasReachingStore(Load);
+            }))
           continue;
         OmittedAllocaImmediates[AI] = *Common;
         AllocaImmediates[AI] = *Common;
@@ -2269,7 +2263,10 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   UnknownPlaceholderCache.clear();
   LocalLoadValuesFor = nullptr;
   LocalLoadValues.clear();
+  LocalReachingValues.clear();
   ExactLocalLoadSlots.clear();
+  InitializedAllocaLoads.clear();
+  CrossBlockLoadValues.clear();
   KilledEntryZeroCache.clear();
   AllocaAddressTakenCache.clear();
   UniqueImmediateUsers.clear();
@@ -2316,6 +2313,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   EHFallthroughLabelCandidates.clear();
   OmitCleanupRetTo.clear();
   PhiTailSlot = nullptr;
+  PhiTailIncoming = nullptr;
 
   if (auto VAOr = rewrite_source::getOriginalVA(Fn)) {
     if (*VAOr && **VAOr)
@@ -3945,10 +3943,6 @@ LLVMCWriter::uniqueAllocaImmediate(const llvm::AllocaInst *Slot) const {
         while (Val && Seen.insert(Val).second) {
           if (const auto *Fr = llvm::dyn_cast<llvm::FreezeInst>(Val)) {
             Val = Fr->getOperand(0);
-            continue;
-          }
-          if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Val)) {
-            Val = Cast->getOperand(0);
             continue;
           }
           break;
@@ -7764,8 +7758,12 @@ LLVMCWriter::phiFedCallTail(const llvm::BasicBlock *Tail) {
     bool Stored = false;
     for (const llvm::Instruction &Inst : *Pred) {
       const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
-      if (SI && asAllocaPointer(SI->getPointerOperand()) == Slot)
+      if (SI && asAllocaPointer(SI->getPointerOperand()) == Slot) {
+        if (!SI->isSimple() || SI->getPointerOperand() != Slot ||
+            SI->getValueOperand()->getType() != Slot->getAllocatedType())
+          return nullptr;
         Stored = true;
+      }
     }
     if (!Stored)
       return nullptr;
@@ -7963,27 +7961,25 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
         }
       }
     }
-    if (Call && Slot) {
-      // phiFedCallTail proves that each direct predecessor writes this exact
-      // home. Specialization must use that edge's last store, not a mutable
-      // printer cache (nor the unspecialized load in the shared tail).
-      const llvm::Value *Incoming = nullptr;
-      for (const auto &I : *CurFrom)
-        if (const auto *S = llvm::dyn_cast<llvm::StoreInst>(&I);
-            S && asAllocaPointer(S->getPointerOperand()) == Slot)
-          Incoming = S->getValueOperand();
-      assert(Incoming && "proven call tail has no edge store");
-      const auto SavedSelects = SelectUseText;
-      for (const auto &I : *Tail)
-        if (const auto *L = llvm::dyn_cast<llvm::LoadInst>(&I);
-            L && asAllocaPointer(L->getPointerOperand()) == Slot)
-          SelectUseText[L] = valueStr(Incoming);
-      InlineCache.clear();
+    // Specialization owns this predecessor's final store, not the printer's
+    // most recently visited block. Keep that edge value explicit while the
+    // shared call is emitted here.
+    const llvm::Value *Incoming = nullptr;
+    if (Slot)
+      for (const auto &Instruction : llvm::reverse(*CurFrom))
+        if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Instruction);
+            Store && Store->getPointerOperand() == Slot) {
+          if (Store->isSimple() &&
+              Store->getValueOperand()->getType() == Slot->getAllocatedType())
+            Incoming = Store->getValueOperand();
+          break;
+        }
+    if (Call && Slot && Incoming) {
       PhiTailSlot = Slot;
+      PhiTailIncoming = Incoming;
       writeInstruction(const_cast<llvm::CallInst &>(*Call), Indent);
       PhiTailSlot = nullptr;
-      SelectUseText = SavedSelects;
-      InlineCache.clear();
+      PhiTailIncoming = nullptr;
       FoldedLocalNames.push_back(getName(Slot));
       InlinedFallthroughBlocks.insert(Tail);
       ReferencedBlocks.erase(Tail);

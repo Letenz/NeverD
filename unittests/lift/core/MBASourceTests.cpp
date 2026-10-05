@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../MachOThumbFixture.h"
 #include "../NeverDLiftFixture.h"
 
 #include "llvm/Support/JSON.h"
@@ -1394,10 +1395,11 @@ TEST_P(MBAMachOThumbOnlySubtypeSourceTest,
       tmpFile(std::string("macho-thumb-only-") + Case.Name + ".o");
   const auto Compiled =
       exec(NEVERD_TEST_CLANG,
-           {"-target", Case.Triple, "-c",
-            (fs::path(TEST_SOURCE_DIR) / "core" / Case.Fixture).string(), "-o",
-            Object.string()});
+           {"-target", neverd::test::thumbFixtureAssemblerTriple(Case.Fixture),
+            "-c", (fs::path(TEST_SOURCE_DIR) / "core" / Case.Fixture).string(),
+            "-o", Object.string()});
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  ASSERT_TRUE(neverd::test::setThumbFixtureSubtype(Object, Case.Triple));
 
   const auto Output = tmpFile("macho-thumb-only.c");
   std::vector<std::string> Args{"decompile", "--no-debug"};
