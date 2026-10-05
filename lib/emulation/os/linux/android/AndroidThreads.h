@@ -106,6 +106,22 @@ private:
   llvm::Error prepareJoin(const Join &Pending);
   BionicResult resumeWait(Bionic &LibC);
   llvm::Error completeWait(uint64_t Value);
+  static std::optional<BionicValue> value(uint64_t Value) {
+    return BionicValue(Value);
+  }
+  static std::array<uint8_t, thread_attribute_abi::ObjectBytes>
+  defaultAttributes();
+  static void
+  stackAttributes(std::array<uint8_t, thread_attribute_abi::ObjectBytes> &Bytes,
+                  const NativeThreadSnapshot &Thread);
+  llvm::Expected<size_t> findHandle(uint64_t Handle) const;
+  BionicResult self(const NativeCallEvent &Call);
+  BionicResult equal(const NativeCallEvent &Call);
+  BionicResult exit(const NativeCallEvent &Call);
+  BionicResult getTID(const NativeCallEvent &Call);
+  BionicResult getAttributes(const NativeCallEvent &Call);
+  BionicResult detach(const NativeCallEvent &Call);
+  BionicResult join(const NativeCallEvent &Call);
   BionicResult create(const NativeCallEvent &Call);
   BionicResult unsupported(llvm::StringRef Reason);
 };

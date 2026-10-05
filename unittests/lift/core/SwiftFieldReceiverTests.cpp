@@ -263,12 +263,14 @@ struct ObjCImageCopyFixture : FieldFixture {
 };
 
 struct ObjCAffineImageCopyFixture : ObjCImageCopyFixture {
-  static constexpr va_t ProducerSlot = 0x3680;
+  static constexpr va_t ProducerSlot = 0x3680, RectSlot = 0x36a0;
   bool Concat;
   va_t ProducerCall, ImageCall;
+  va_t FirstProducerCall = InvalidVA, RectCall = InvalidVA;
   std::string ProducerName, FunctionName;
   std::vector<uint32_t> Words;
-  explicit ObjCAffineImageCopyFixture(bool Concat) : Concat(Concat) {
+  explicit ObjCAffineImageCopyFixture(bool Concat, bool RectBorrow = false)
+      : Concat(Concat) {
     ProducerName =
         Concat ? "CGAffineTransformConcat" : "CGAffineTransformMakeRotation";
     FunctionName = Concat ? "affine_concat" : "affine_rotation";
@@ -282,7 +284,30 @@ struct ObjCAffineImageCopyFixture : ObjCImageCopyFixture {
     for (unsigned I = 0; I < std::size(Stub); ++I)
       u32(0x1400 + I * 4, Stub[I]);
     Image.RuntimeFunctionAddrs.insert(0x1400);
-    if (Concat) {
+    if (RectBorrow) {
+      EXPECT_FALSE(Concat);
+      FunctionName = "affine_rect_rotation";
+      Image.ImportPtrSlots[RectSlot] = "_CGRectApplyAffineTransform";
+      Image.DyldBindSlots[RectSlot] = {"_CGRectApplyAffineTransform", 0,
+                                       Provider, false};
+      const uint32_t RectStub[] = {0xd0000010, 0xf9435210, 0xd61f0200};
+      for (unsigned I = 0; I < std::size(RectStub); ++I)
+        u32(0x1450 + I * 4, RectStub[I]);
+      Image.RuntimeFunctionAddrs.insert(0x1450);
+      // CGRect consumes the first complete result through x0 and returns
+      // d0-d3. The second rotation must reinitialize the permitted input
+      // writes before CoreImage consumes it. Saved d8 retains the angle.
+      Words = {0xd101c3ff, 0xa9067bfd, 0x910183fd, 0xa90453f3, 0xfd001be8,
+               0xaa0003f3, 0x1e604008, 0x910003e8, 0x940000b8, 0x910003e0,
+               0x6f00e400, 0x6f00e401, 0x1e6e1002, 0x1e6e1003, 0x940000c6,
+               0x910003e8, 0x1e604100, 0x940000af, 0xaa1303e0, 0x910003e2,
+               0x9400006c, 0xfd401be8, 0xa94453f3, 0xa9467bfd, 0x9101c3ff,
+               0xd65f03c0};
+      FirstProducerCall = Entry + 32;
+      RectCall = Entry + 56;
+      ProducerCall = Entry + 68;
+      ImageCall = Entry + 80;
+    } else if (Concat) {
       // Two initialized 48-byte inputs, a distinct 48-byte result, then
       // saved x19/x20 and FP/LR in the final 32 bytes of the 176-byte frame.
       Words = {0xd102c3ff, 0xa90a7bfd, 0x910283fd, 0xa90953f3, 0xaa0003f3,
@@ -312,6 +337,87 @@ struct ObjCAffineImageCopyFixture : ObjCImageCopyFixture {
         parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
   }
 };
+
+TEST(ObjCAffineImageValueCopy, CGRectInputUsesTheSameCurrentFrameOwner) {
+  ObjCAffineImageCopyFixture F(false, true);
+  F.run();
+  const auto Hints = buildObjCSourceCallHints(F.Image, *F.low());
+  ASSERT_TRUE(Hints.count(F.RectCall));
+  const auto Effects =
+      darwinMatrixSourceFrameEffects(F.Image, Hints.at(F.RectCall));
+  ASSERT_TRUE(Effects);
+  EXPECT_FALSE(Effects->InitializesIndirectResult);
+  EXPECT_EQ(Effects->WritableFrameParameters,
+            (std::map<size_t, size_t>{{1, 48}}));
+  EXPECT_EQ(Effects->InitializedFrameParameters, (std::set<size_t>{1}));
+  EXPECT_TRUE(Effects->ReadOnlyFrameParameters.empty());
+  ASSERT_TRUE(Hints.count(F.ImageCall));
+  ASSERT_TRUE(Hints.at(F.ImageCall).ByValueCopy);
+  EXPECT_EQ(Hints.at(F.ImageCall).ByValueCopy->FrameOffset, -112);
+  const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+  const auto Call = F.copyCall(Bound.Function);
+  ASSERT_TRUE(Call);
+  EXPECT_TRUE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                  Bound.Function, {}));
+}
+
+TEST(ObjCAffineImageValueCopy, CGRectBorrowRejectsExpiredInputsAndChangedABI) {
+  for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ObjCAffineImageCopyFixture F(false, true);
+    F.run();
+    const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+    const auto Call = F.copyCall(Bound.Function);
+    ASSERT_TRUE(Call);
+    ASSERT_TRUE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                    Bound.Function, {}));
+    switch (Mutation) {
+    case 0:
+      F.Image.DyldBindSlots.at(F.RectSlot).WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots.at(F.RectSlot).Module =
+          "/System/Library/Frameworks/UIKit.framework/UIKit";
+      break;
+    case 2:
+      F.Image.ConflictingImportStorageSlots.insert(F.RectSlot);
+      break;
+    case 3:
+      F.u32(F.ProducerCall, 0xd503201f); // Consumed bytes need a new producer.
+      break;
+    case 4:
+      F.u32(F.FirstProducerCall,
+            0xd503201f); // Borrow itself needs initialized input.
+      break;
+    case 5:
+      F.u32(F.Entry + 36, 0x910143e0); // Input extends outside the live frame.
+      break;
+    case 6:
+    case 7:
+      for (auto &M : F.Result.MedFuncs)
+        for (auto &B : M.Blocks)
+          for (auto &Op : B.Ops)
+            if (Op.Opcode == NdOp::CALL && Op.Addr == F.RectCall) {
+              ASSERT_TRUE(Op.SourceCallHint);
+              auto H = std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+              if (Mutation == 6)
+                H->Signature.Parameters[1].Location.RegisterOffset = a64reg::X1;
+              else
+                H->Signature.ReturnComponents[0].Kind =
+                    SourceABICarrierKind::IntegerRegister;
+              Op.SourceCallHint = H;
+            }
+      break;
+    }
+    EXPECT_FALSE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                     Bound.Function, {}));
+    if (Mutation < 6) {
+      F.run();
+      const auto Hints = buildObjCSourceCallHints(F.Image, *F.low());
+      EXPECT_FALSE(Hints.count(F.ImageCall));
+    }
+  }
+}
 
 TEST(ObjCAffineImageValueCopy, CurrentProducerInitializesThePublishedCopy) {
   for (bool Concat : {false, true}) {
@@ -430,9 +536,10 @@ TEST(ObjCAffineImageValueCopy, GeneratedCMatchesOriginalMachineAndSDKResults) {
 #if !defined(__APPLE__) || !defined(__aarch64__)
   GTEST_SKIP() << "Native CoreGraphics SDK execution requires Apple arm64";
 #else
-  for (bool Concat : {false, true}) {
-    SCOPED_TRACE(Concat);
-    ObjCAffineImageCopyFixture F(Concat);
+  for (unsigned Variant = 0; Variant < 3; ++Variant) {
+    SCOPED_TRACE(Variant);
+    const bool Concat = Variant == 1;
+    ObjCAffineImageCopyFixture F(Concat, Variant == 2);
     F.run();
     const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
     const auto Call = F.copyCall(Bound.Function);
@@ -482,8 +589,10 @@ __attribute__((naked,noinline)) void *original_affine(void *receiver,void *cmd,
        << "  __asm__(\n";
     for (unsigned I = 0; I < F.Words.size(); ++I) {
       const auto Address = F.Entry + 4 * I;
-      if (Address == F.ProducerCall)
+      if (Address == F.ProducerCall || Address == F.FirstProducerCall)
         OS << "    \"bl _" << F.ProducerName << "\\n\"\n";
+      else if (Address == F.RectCall)
+        OS << "    \"bl _CGRectApplyAffineTransform\\n\"\n";
       else if (Address == F.ImageCall)
         OS << "    \"bl _original_message\\n\"\n";
       else

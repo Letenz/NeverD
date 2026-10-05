@@ -707,6 +707,8 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `CheckedX64Stack.cpp` がスタック転送のアクセス順序と幅を管理します。共通の `operandAddress` は通常およびスタックオペランドの RIP 相対アドレス、32 ビット折り返し、FS/GS ベースを計算します。プロセッサーが原命令を実行し、遅延書き込み観察はその結果を取得してから、共通 RAM トランザクションが効果を公開します。
 
+`LEAVE` の暗黙 RAM 読み出しは元の RBP 全体を使い、実効オペランドサイズに従って 16/64 ビットを読みます。アドレスサイズやセグメントのプレフィックスは読み出し先を変えません。共有層が範囲全体を検証してから、プロセッサが元の命令で RSP と RBP を更新します。アクセス拒否や読み出しオブザーバーの停止・失敗時は開始時の状態全体を保持します。
+
 共有 XSAVE デコーダーは標準形式と圧縮形式の SSE 初期状態を区別します。XSTATE_BV[1] が 0 の場合、どちらも XMM を初期化しますが、標準形式は MXCSR を読み取り検証し、圧縮形式は MXCSR を初期化します。`X64XsaveCases.def` は独立したデータ配置と独自のホスト XRSTOR プログラムを提供します。`X64XsaveTests.cpp` は拒否時の状態の原子性を検証し、呼び出し元の FP/SSE 状態を保存しながら、両形式を実ホストの実行結果と比較します。ホストのアーキテクチャーや必要な命令機能が利用できなければ明示的にスキップします。
 
 `X64FPState.def` は圧縮 AVX、AVX-512、CET_U/CET_S、AMX の転送配置と成分の 64 バイト境界を宣言します。存在する拡張成分は全ゼロの初期状態に限り、欠落成分のデータと境界調整領域は状態を定義しません。配置ビットがオフセットを決め、未知の配置、非初期値、不正な長さは公開前に失敗します。`CompactedOffsetsFollowLayoutRatherThanPresentBits`、`WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`、`InitialCETComponentsDoNotHideFPState`、`InitialWideComponentsDoNotHideFPState` は 872 バイトと 10752 バイトの WHP パケットを検証します。これらの拡張命令の実行を許可するものではありません。
@@ -1298,3 +1300,5 @@ Swift CoreGraphics の `CGContext.move(to:)` と `addLine(to:)` は元のイン�
 CoreImage SDK の強い宣言は、`imageWithCGImage:` と `imageByApplyingTransform:` の `CIImage` 戻り値を保持する。後者は論理上の 6 個の double からなる `CGAffineTransform` と、ARM64 の x2 に渡す 48 バイトの専用コピーへの物理ポインターを区別する。Objective-C メソッドがこのコピーを結び付けるには、現在のメタデータによる入口 ABI の認証と、共有フレーム解析による全初期化・到達経路・途中の効果・後続使用の不変な機械語／LowIR に対する証明が必要である。公開時には限定した依存グループを正規パイプラインで独立に再構築し、保存済み HighIR、MedIR の再変換、公開対象の関数本体全体を新しい結果と比較する。保存済み引数値で自身を認証できない。別の寿命や仮想呼び出しの証明には個別の統合が必要である。HighC は論理 SDK レコードへ memcpy を一度だけ行う。この実装は ARM64 のみを対象とし、未対応プロバイダー、弱いインポート、古い宣言、未証明のコピー領域は拒否する。
 
 `darwinMatrixSourceFrameEffects` は、リンク済み Darwin ARM64 イメージの正確な強いインポート `CGAffineTransformMakeRotation` と `CGAffineTransformConcat` も認証します。現在の SDK 宣言により、x8 経由でポインタを含まない 48 バイトの結果全体を書き込むことを証明します。Concat は x0/x1 経由の初期化済み 48 バイト私有入力を二つ必要とし、両方への書き込みを保守的に許容するため、呼び出し後は内容を無効化します。共通フレーム解析は境界、保存レジスタ、その後の初期化を検証します。CoreImage の公開には引き続き本体全体の独立した再構築が必要です。他のレコード生成関数やスタック上の block 呼び出しには、この契約の効果を適用しません。
+
+同じフレーム効果の所有層が、正確な強い `CGRectApplyAffineTransform` ブリッジを別途検証します。初期化済み 48 バイトの変換は論理パラメータ 1 として x0 に入り、矩形と結果は d0–d3 を使います。許容される入力書き込みでコピーを無効化するため、後続の使用には再初期化が必要です。間接結果への書き込みは認めません。Objective-C コピー検出とネイティブフレーム検証は、HFA と間接結果の双方でこの所有層を参照します。

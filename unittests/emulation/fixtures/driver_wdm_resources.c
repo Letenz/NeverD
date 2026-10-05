@@ -524,7 +524,30 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #include "driver_resource_stack.def"
 #undef NEVERD_RESOURCE_STACK_CASE
 
+#define NEVERD_RESOURCE_FRAME_EXIT_VALUE(Name, Value)                          \
+  static const ULONG64 Name = Value;
+#include "driver_resource_frame_exit.def"
+#undef NEVERD_RESOURCE_FRAME_EXIT_VALUE
+#define NEVERD_RESOURCE_FRAME_EXIT_CASE(Name, Width, Mask, Assembly)           \
+  static BOOLEAN CheckFrameExit##Name(VOID) {                                  \
+    ULONG64 Before, Observed, Value, Frame, Stack;                             \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), "=&r"(Value),           \
+                       "=&r"(Frame), "=&r"(Stack)                              \
+                     : "r"(FrameInput)                                         \
+                     : "rbp", "r11", "memory", "cc");                          \
+    return Before == Observed && Stack == Frame + Width &&                     \
+           Value == ((Frame & ~Mask) | (FrameInput & Mask));                   \
+  }
+#include "driver_resource_frame_exit.def"
+#undef NEVERD_RESOURCE_FRAME_EXIT_CASE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_FRAME_EXIT_CASE(Name, ...)                             \
+  if (!CheckFrameExit##Name())                                                 \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_frame_exit.def"
+#undef NEVERD_RESOURCE_FRAME_EXIT_CASE
 #define NEVERD_RESOURCE_STACK_CASE(Name, ...)                                  \
   if (!CheckStack##Name())                                                     \
     return STATUS_UNSUCCESSFUL;

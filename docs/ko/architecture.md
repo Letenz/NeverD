@@ -688,6 +688,8 @@ x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `
 
 `CheckedX64Stack.cpp`가 스택 전송의 접근 순서와 폭을 담당합니다. 공유 `operandAddress`는 일반 및 스택 피연산자의 RIP 상대 주소, 32비트 순환 및 FS/GS 기준 주소를 계산합니다. 프로세서가 원래 명령을 실행하고 지연된 쓰기 관찰자는 실제 결과를 확인한 뒤 공유 RAM 트랜잭션이 효과를 게시합니다.
 
+`LEAVE`의 암시적 RAM 읽기는 원래 RBP 전체와 유효한 16/64비트 피연산자 크기를 사용합니다. 주소 크기 및 세그먼트 접두사는 이 읽기 주소를 바꾸지 않습니다. 공통 계층이 전체 범위를 검증한 뒤 프로세서가 원래 명령으로 RSP와 RBP를 갱신합니다. 접근 거부나 읽기 관찰자의 중단·실패 시 진입 상태 전체를 유지합니다.
+
 공유 XSAVE 디코더는 표준 형식과 압축 형식의 SSE 초기 상태를 구분합니다. XSTATE_BV[1]이 0이면 두 형식 모두 XMM을 초기화하지만 표준 형식은 MXCSR을 읽고 검증하며 압축 형식은 MXCSR을 초기화합니다. `X64XsaveCases.def`는 독립적인 데이터 배치와 직접 작성한 호스트 XRSTOR 프로그램을 제공합니다. `X64XsaveTests.cpp`는 거부 시 상태의 원자성을 확인하고 호출자의 FP/SSE 상태를 보존하면서 두 형식을 실제 호스트 실행과 비교합니다. 호스트 아키텍처나 필요한 명령 기능을 사용할 수 없으면 명시적으로 건너뜁니다.
 
 `X64FPState.def`는 압축 AVX, AVX-512, CET_U/CET_S, AMX 전송 배치와 구성 요소의 64바이트 정렬을 선언합니다. 존재하는 확장 데이터는 모두 0인 초기 상태여야 하며, 없는 구성 요소의 데이터와 정렬 패딩은 상태를 정의하지 않습니다. 배치 비트가 오프셋을 결정하고 알 수 없는 배치, 초기 상태가 아닌 데이터, 잘못된 길이는 공개 전에 실패합니다. `CompactedOffsetsFollowLayoutRatherThanPresentBits`, `WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`, `InitialCETComponentsDoNotHideFPState`, `InitialWideComponentsDoNotHideFPState`가 872바이트와 10752바이트 WHP 패킷을 검증합니다. 이 전송 지원은 해당 확장 명령 실행을 허용하지 않습니다.
@@ -1275,3 +1277,5 @@ Swift CoreGraphics의 `CGContext.move(to:)`와 `addLine(to:)`는 원래 가져�
 CoreImage SDK의 강한 선언은 `imageWithCGImage:`와 `imageByApplyingTransform:`의 `CIImage` 결과를 유지한다. 후자는 double 6개로 구성된 논리적 `CGAffineTransform`과 ARM64에서 x2로 전달되는 48바이트 전용 복사본의 물리적 포인터를 구분한다. Objective-C 메서드가 이 복사본을 바인딩하려면 현재 메타데이터가 진입 ABI를 인증하고 공유 프레임 분석이 모든 초기화, 도달 경로, 중간 효과와 이후 사용을 불변 기계 코드 및 LowIR에 대해 증명해야 한다. 게시 시 제한된 의존성 그룹을 정규 파이프라인으로 독립적으로 다시 구성하고 저장된 HighIR, MedIR 재변환 및 게시할 함수 본문 전체를 새 결과와 비교한다. 저장된 인수 값이 스스로를 인증할 수 없다. 다른 수명 또는 가상 호출 증명에는 별도 통합이 필요하다. HighC는 논리적 SDK 레코드에 memcpy 스냅샷을 한 번만 수행한다. 이 구현은 ARM64만 지원하며 지원하지 않는 제공자, 약한 임포트, 오래된 선언과 증명되지 않은 복사 저장 영역은 거부한다.
 
 `darwinMatrixSourceFrameEffects`는 링크된 Darwin ARM64 이미지의 정확한 강한 가져오기 `CGAffineTransformMakeRotation`과 `CGAffineTransformConcat`도 인증합니다. 현재 SDK 선언은 x8을 통해 포인터가 없는 48바이트 결과 전체를 쓰는 것을 증명합니다. Concat은 x0/x1을 통한 초기화된 48바이트 비공개 입력 두 개를 요구하며, 두 입력에 대한 쓰기를 보수적으로 허용하므로 호출 후 내용을 무효화합니다. 공통 프레임 분석은 경계, 저장된 레지스터와 후속 초기화를 검사합니다. CoreImage 게시에는 여전히 전체 본문의 독립적인 재구축이 필요합니다. 다른 레코드 생성 함수나 스택 block 호출에는 이 계약의 효과를 부여하지 않습니다.
+
+동일한 프레임 효과 소유 계층은 정확한 강한 `CGRectApplyAffineTransform` 브리지를 별도로 처리합니다. 초기화된 48바이트 변환은 논리 매개변수 1로 x0에 전달되며 사각형과 결과는 d0–d3을 사용합니다. 허용된 입력 쓰기는 복사를 무효화하므로 후속 소비 전에 완전히 다시 초기화해야 합니다. 간접 결과 쓰기 권한은 부여하지 않습니다. Objective-C 복사 발견과 네이티브 프레임 검증 모두 HFA 및 간접 결과에 이 소유 계층을 사용합니다.

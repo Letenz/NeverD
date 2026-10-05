@@ -1207,7 +1207,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 3683 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 3924 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `3683 CPU + 224 WHP + 17 SEH = 3924`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4062 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 4303 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4062 CPU + 224 WHP + 17 SEH = 4303`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1224,6 +1224,8 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 `X64BranchTests.cpp` は全 16 Jcc 条件と相対 JMP、9 種のプレフィックス、短・近形式、4 GiB を超える符号付き相対宛先、完全な CPU/RAM 状態、オブザーバーの停止・エラー、ページ境界デコード、宛先フェッチ障害、コンテキスト復元を検証します。独立した Intel ホスト参照は 9,792 回の原命令実行を行い、AMD の低位宛先形式はゲスト内で検証します。両デコードモデルで完全・切断バイトを確認し、ネイティブプローブでは失敗時の非公開も検証します。4 個の独自 WDK リソースプローブがドライバーポリシーを検証します。KVM/WHP の各ゲートに 274 件の必須結果を追加します。AMD ソフトウェアモデルの検証はネイティブ AMD や ARM64 の実行証拠ではありません。
 
 `X64StackTests.cpp` は九つのテスト群で 42 種の符号化を検証し、幅、アドレス、全状態、観察順序、取消、権限、ページ境界、物理エイリアス、障害修復、デバイス拒否、コンテキスト復元を確認します。独立ホスト参照が原命令を実行し、六つの WDK リソースプローブがドライバー経路を検証します。KVM/WHP の各ネイティブゲートに 1135 件の必須結果を追加します。利用できない実行基盤は、その必須ネイティブゲート以外では明示的にスキップします。
+
+`X64FrameExitTests.cpp` は 14 種類の `LEAVE` エンコード、実効プレフィックス順、RBP 全体でのアドレス指定、全レジスタ状態、読み取り専用エイリアス、ページをまたぐフレームのフォールトと修復、権限、オブザーバー、不正アドレス、デバイス拒否、コンテキスト再実行を検証します。独立ホストオラクルが元の命令を 42 回実行し、5 個の WDK リソースプローブがドライバー実行を検証します。両ネイティブゲートにそれぞれ 379 件の必須結果を追加します。
 
 `DriverSIMDSEHTests.cpp` は八種類の元の SSE 障害を四種類の対応済み処置と x87 変更の拒否、二つのネイティブ契約、通常/CFG WDK イメージ、二つのロード先で実行します。バックエンドごとの十結果と、カーネル SSE レコードの純粋な三検査が必須です。`driver_seh_simd.def` がケースとモードを定義し、非同期アンワインド表が障害ヘルパーを記述します。Microsoft カーネル 10.0.26100.9549 の命令経路を分離実行して、107,744 件の分類と 8,192 件の復元を独立に確認しました。これは完全な Windows カーネルでのドライバー実行ではなく、ARM64 ネイティブ KVM/WHP も未検証です。
 
@@ -1399,3 +1401,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` は、現在の空でないメソッド符号化またはセレクターと異なるキャッシュ ABI を拒否する。宣言のみを提供するクライアントの従来の契約は維持する。
 
 `DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` は四つの行列・アフィン生成関数と、拒否すべき 22 種類の契約変更を検証します。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` は SDK 結果が CoreImage のコピーおよび公開用の独立再構築まで届くことを証明します。`RejectsWrongProducerFrameAndSavedIR` は各生成関数の 12 種類の変更を検証し、入力書き込み不足、フレーム外の結果、不正な提供元・ABI キャリア、消費済み Concat 入力の再使用を拒否します。`GeneratedCMatchesOriginalMachineAndSDKResults` は Apple ARM64 の O0/O2 で未変更の生成 C と元の ARM64 命令語をネイティブ CoreGraphics に対して実行します。各関数 1000 ケースで、結果の全 48 バイト、二つの入力、セレクタ・受信者の識別、一度の呼び出し、戻り値、私有コピーへの書き込み、境界ガードを比較します。他のホストではこの SDK 実行テストをスキップします。
+
+`MatrixFrameEffectsRequireExactCurrentContract` は CGRect 消費関数と拒否すべき 22 種類の変更も検証します。`ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` は回転 → CGRect 借用 → 回転による再初期化 → CoreImage 公開を検証します。`CGRectBorrowRejectsExpiredInputsAndChangedABI` は初期化、範囲、インポート、キャリアの八つの変更を拒否します。`GeneratedCMatchesOriginalMachineAndSDKResults` はこの全体を O0/O2、1000 ケースで元の命令語とネイティブ SDK に対して実行し、保存した角度、結果の全 48 バイト、オブジェクト、境界ガードを比較します。

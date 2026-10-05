@@ -1197,7 +1197,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 3683개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 3924개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `3683 CPU + 224 WHP + 17 SEH = 3924`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4062개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 4303개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4062 CPU + 224 WHP + 17 SEH = 4303`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1214,6 +1214,8 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 `X64BranchTests.cpp`는 16개 Jcc 조건과 상대 JMP, 9개 접두사 조합, 짧은/근거리 형식, 4 GiB 이상의 부호 있는 상대 대상, 전체 CPU/RAM 상태, 관찰자 중단/오류, 페이지 경계 디코딩, 대상 명령 인출 오류 및 컨텍스트 복원을 확인합니다. 독립 Intel 호스트 기준은 원래 명령을 9,792회 실행하며 AMD 낮은 대상 형식은 게스트에서 검사합니다. 두 디코더 모델 모두 완전/잘린 바이트를 검사하고 네이티브 프로브는 실패 시 결과 비공개를 확인합니다. 독자적인 WDK 리소스 프로브 4개가 드라이버 정책을 검사합니다. KVM/WHP 게이트마다 필수 결과 274개를 추가합니다. AMD 소프트웨어 모델 검증은 네이티브 AMD 또는 ARM64 실행 증거가 아닙니다.
 
 `X64StackTests.cpp`는 9개 테스트군으로 42개 인코딩을 다루며 폭, 주소, 전체 상태, 관찰 순서, 취소, 권한, 페이지 경계, 물리 별칭, 오류 복구, 장치 거부 및 컨텍스트 복원을 검사합니다. 독립 호스트 기준은 원래 명령을 실행하고 WDK 리소스 프로브 6개는 드라이버 경로를 검증합니다. KVM/WHP 네이티브 게이트마다 필수 결과 1135개를 추가합니다. 사용할 수 없는 실행기는 해당 필수 네이티브 게이트 밖에서 명시적으로 건너뜁니다.
+
+`X64FrameExitTests.cpp`는 14개 `LEAVE` 인코딩, 유효 접두사 순서, 전체 RBP 주소 지정, 전체 레지스터 상태, 읽기 전용 별칭, 페이지 경계 프레임 폴트와 복구, 권한, 관찰자, 잘못된 주소, 장치 거부 및 컨텍스트 재실행을 검사합니다. 독립 호스트 오라클이 원래 명령을 42회 실행하고 WDK 리소스 프로브 5개가 드라이버 실행을 검증합니다. 두 네이티브 게이트에 각각 필수 결과 379개를 추가합니다.
 
 `DriverSIMDSEHTests.cpp`는 원본 SSE 오류 여덟 종류를 지원되는 네 처분과 x87 수정 거부, 두 네이티브 계약, 일반/CFG WDK 이미지, 두 로드 주소로 실행합니다. 백엔드별 열 결과와 순수 커널 SSE 레코드 검사 세 개가 필수입니다. `driver_seh_simd.def`가 사례와 모드를 정의하고 비동기 언와인드 테이블이 오류 헬퍼를 포함합니다. Microsoft 커널 10.0.26100.9549의 명령 경로를 격리 실행하여 107,744개 분류와 8,192개 복원을 독립적으로 검증했습니다. 이는 전체 Windows 커널에서 드라이버를 실행한 증거가 아니며 ARM64 네이티브 KVM/WHP도 미검증입니다.
 
@@ -1389,3 +1391,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration`는 현재의 비어 있지 않은 메서드 인코딩 또는 선택자와 다른 캐시 ABI를 거부한다. 선언만 제공하는 클라이언트의 기존 계약은 유지한다.
 
 `DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract`는 네 행렬·아핀 생성 함수와 거부해야 하는 계약 변경 22개를 검사합니다. `ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy`는 SDK 결과가 CoreImage 복사와 게시용 독립 재구축에 도달함을 증명합니다. `RejectsWrongProducerFrameAndSavedIR`는 생성 함수마다 12개 변경을 검사하며 입력 쓰기 누락, 프레임 밖 결과, 잘못된 공급자·ABI 전달 위치 및 소비된 Concat 입력 재사용을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 Apple ARM64의 O0/O2에서 변경하지 않은 생성 C와 원본 ARM64 명령어를 네이티브 CoreGraphics로 실행합니다. 함수마다 1000개 사례로 결과의 모든 48바이트, 두 입력, 선택자·수신자 식별, 한 번의 호출, 반환 객체, 비공개 복사 쓰기 및 경계 보호값을 비교합니다. 다른 호스트는 이 네이티브 SDK 실행 테스트를 건너뜁니다.
+
+`MatrixFrameEffectsRequireExactCurrentContract`는 CGRect 소비 함수와 거부해야 하는 변경 22개도 검사합니다. `ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner`는 회전 → CGRect 대여 → 회전 재초기화 → CoreImage 게시를 검증합니다. `CGRectBorrowRejectsExpiredInputsAndChangedABI`는 초기화, 범위, 가져오기, 전달 위치에 대한 여덟 변경을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 전체 순서를 O0/O2에서 1000개 사례로 원본 명령어 및 네이티브 SDK와 실행하여 저장된 각도, 결과의 모든 48바이트, 객체 및 경계 보호값을 비교합니다.

@@ -272,9 +272,9 @@ bool isAtomic(unsigned Instruction) {
     return false;
   }
 }
-unsigned flagsStackWidth(const cs_x86 &X) {
+unsigned implicitStackWidth(const cs_x86 &X) {
   // The decoder identity retains 66H even when a later REX.W selects 64
-  // bits. Both PUSHF and POPF use the effective prefixes for their footprint.
+  // bits. PUSHF, POPF and LEAVE use the effective operand-size prefix.
   return X.prefix[2] == X86_PREFIX_OPSIZE && !(X.rex & x64::RexW)
              ? x64::HalfWordBytes
              : x64::WordBytes;
@@ -653,7 +653,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (PushFlags || PopFlags) {
     if (X.op_count)
       return llvm::make_error<UnsupportedExecutionError>();
-    const unsigned Size = flagsStackWidth(X);
+    const unsigned Size = implicitStackWidth(X);
     // Long mode always uses RSP for the implicit stack, even with 67H or
     // a segment override. Public flags exclude VM, RF and transport TF.
     if (PushFlags)
@@ -666,6 +666,21 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
         {SP - x64::WordBytes, x64::WordBytes, Write, I.address + I.size});
   if (I.id == X86_INS_RET)
     Accesses.push_back({SP, x64::WordBytes, Read, 0});
+  if (I.id == X86_INS_LEAVE) {
+    // LEAVE has no explicit operands. Inspect its bytes because the decoder
+    // may omit ignored REP prefixes from normalized metadata.
+    if (X.op_count ||
+        llvm::any_of(llvm::ArrayRef(I.bytes, I.size), [](uint8_t B) {
+          return B == X86_PREFIX_LOCK || B == X86_PREFIX_REP ||
+                 B == X86_PREFIX_REPNE;
+        }))
+      return llvm::make_error<UnsupportedExecutionError>();
+    // In long mode the implicit stack address is the original full RBP,
+    // independent of 67H, segment overrides and the old RSP. Preflight the
+    // complete read before the processor publishes either RSP or RBP.
+    Accesses.push_back(
+        {CPU.reg(X64Register::BP), implicitStackWidth(X), Read, 0});
+  }
   // RAM operands may cross pages with unrelated physical owners. Validate
   // their whole extent before native execution; a synchronous fault cannot
   // publish a prefix store. Device transfers remain indivisible and cannot

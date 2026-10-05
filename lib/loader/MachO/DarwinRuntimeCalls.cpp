@@ -122,8 +122,9 @@ uint16_t darwinIndirectAffineTransformInputBytes(Arch Architecture,
 std::optional<SourceFrameEffects>
 darwinMatrixSourceFrameEffects(const BinaryImage &Image,
                                const SourceCallTypeHint &Binding) {
+  const bool Rect = Binding.TargetName == "CGRectApplyAffineTransform";
   const bool Affine = Binding.TargetName == "CGAffineTransformMakeRotation" ||
-                      Binding.TargetName == "CGAffineTransformConcat";
+                      Binding.TargetName == "CGAffineTransformConcat" || Rect;
   const bool Matrix = Binding.TargetName == "CATransform3DMakeTranslation" ||
                       Binding.TargetName == "CATransform3DScale";
   if (Image.Arch != Arch::AArch64 ||
@@ -158,16 +159,17 @@ darwinMatrixSourceFrameEffects(const BinaryImage &Image,
   // return does not acquire this definite-write contract. Physical by-value
   // input pointers may be written, so invalidate each complete private copy.
   SourceFrameEffects Effects;
-  Effects.InitializesIndirectResult = true;
+  Effects.InitializesIndirectResult = !Rect;
   if (Binding.TargetName == "CATransform3DScale" ||
-      Binding.TargetName == "CGAffineTransformConcat") {
+      Binding.TargetName == "CGAffineTransformConcat" || Rect) {
     const auto Bytes =
         darwinIndirectAffineTransformInputBytes(Image.Arch, Binding.TargetName);
     if (Bytes != (Matrix ? 128 : 48))
       return std::nullopt;
-    Effects.WritableFrameParameters.emplace(0, Bytes);
-    Effects.InitializedFrameParameters.insert(0);
-    if (Affine) {
+    const unsigned FirstInput = Rect ? 1 : 0;
+    Effects.WritableFrameParameters.emplace(FirstInput, Bytes);
+    Effects.InitializedFrameParameters.insert(FirstInput);
+    if (Binding.TargetName == "CGAffineTransformConcat") {
       Effects.WritableFrameParameters.emplace(1, Bytes);
       Effects.InitializedFrameParameters.insert(1);
     }

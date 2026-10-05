@@ -139,16 +139,45 @@ private:
   llvm::Expected<uint64_t> allocate(uint64_t Size);
   llvm::Error release(uint64_t Address);
   llvm::Error setErrno(uint32_t Value);
-  llvm::Expected<uint64_t> linkerError(llvm::StringRef Message,
-                                       uint64_t ReturnValue = 0);
-  BionicResult dlfcn(NativeCallEvent &Call);
+  BionicResult linkerError(llvm::StringRef Message, uint64_t ReturnValue = 0);
+  static std::optional<BionicValue> value(uint64_t Value) {
+    return BionicValue(Value);
+  }
+  BionicResult unsupportedLinking(llvm::StringRef Detail);
+  BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
+                          const NativeCallEvent &Call);
+  BionicResult openLibrary(NativeCallEvent &Call);
+  BionicResult lookupSymbol(NativeCallEvent &Call);
+  BionicResult closeLibrary(NativeCallEvent &Call);
+  BionicResult getLinkerError(NativeCallEvent &Call);
+  BionicResult unsupportedImport(const NativeCallEvent &Call);
+  BionicResult failCall(const NativeCallEvent &Call);
+  BionicResult malloc(const NativeCallEvent &Call);
+  BionicResult calloc(const NativeCallEvent &Call);
+  BionicResult realloc(const NativeCallEvent &Call);
+  BionicResult free(const NativeCallEvent &Call);
+  BionicResult copyMemory(const NativeCallEvent &Call);
+  BionicResult setMemory(const NativeCallEvent &Call);
+  BionicResult compareMemory(const NativeCallEvent &Call);
+  BionicResult stringLength(const NativeCallEvent &Call);
+  BionicResult compareString(const NativeCallEvent &Call);
+  BionicResult getErrno(const NativeCallEvent &Call);
+  BionicResult getPageSize(const NativeCallEvent &Call);
+  BionicResult getAPILevel(const NativeCallEvent &Call);
+  BionicResult queryConfiguration(const NativeCallEvent &Call);
+  BionicResult getTime(const NativeCallEvent &Call);
+  BionicResult getProperty(const NativeCallEvent &Call);
+  BionicResult syscall(const NativeCallEvent &Call);
+  BionicResult threadCall(const NativeCallEvent &Call);
+  BionicResult finalizeCall(const NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
+  class ThreadAttributes;
   BionicResult threadAttributes(const NativeCallEvent &Call);
   llvm::Error finishOnce(const OnceCallback &Callback);
   BionicResult registerExit(const NativeCallEvent &Call);
   BionicResult finalize(uint64_t DSO);
-  llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
-  llvm::Expected<uint64_t> findCharacter(const NativeCallEvent &Call);
+  BionicResult tokenize(const NativeCallEvent &Call);
+  BionicResult findCharacter(const NativeCallEvent &Call);
   class ArgumentReader;
   class StringFormatter;
   BionicResult format(const NativeCallEvent &Call);
@@ -156,6 +185,9 @@ private:
   BionicResult scan(const NativeCallEvent &Call);
   class Mutex;
   BionicResult mutex(const NativeCallEvent &Call);
+  BionicResult resetMutexAttribute(const NativeCallEvent &Call, uint64_t Value);
+  BionicResult initializeMutexAttribute(const NativeCallEvent &Call);
+  BionicResult destroyMutexAttribute(const NativeCallEvent &Call);
   BionicResult mutexAttributes(const NativeCallEvent &Call);
   BionicResult initializeMutex(const NativeCallEvent &Call);
   std::optional<BionicValue> unsupportedMutex(llvm::StringRef Name,

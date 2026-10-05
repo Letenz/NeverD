@@ -1349,8 +1349,14 @@ The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
 
-Android's `AndroidSymbols.def` and `AndroidDiagnostics.def` own Bionic symbol
-spellings and native-model diagnostics. Kernel wrapper bindings stay in
+Android's `AndroidSymbols.def` owns Bionic symbol spellings and handler bindings;
+`AndroidDiagnostics.def` owns native-model diagnostics. The entry point validates
+TLS and provider lifetime before resolving an exact handler or a diagnostic
+family fallback. Allocation, memory, strings, queries, dynamic linking, once
+callbacks and kernel wrappers live in separate implementation files. Thread
+calls and scheduling also have separate files, sharing `GuestThreads` state.
+Attribute and mutex registrations come from their respective ABI inventories;
+their per-call views borrow the existing Bionic state. Kernel bindings stay in
 `AndroidKernelServices.def`; Linux clock diagnostics and process wire text stay
 with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
@@ -1909,6 +1915,8 @@ Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private 
 `ExecutionBackend::x64BranchModel()` publishes one immutable relative-branch contract, not a complete CPUID identity. `X64MachineProbe.def` measures KVM/WHP behavior before machine publication, using private non-taken instructions under the existing memory lease and deadline. The shared x64 decoder mode is consumed by checked execution and Windows driver policy; OS code does not infer the model from the host vendor. Failed probes publish no model.
 
 `CheckedX64Stack.cpp` owns stack-transfer access order and widths. The shared `operandAddress` computes RIP-relative addresses, 32-bit wrapping and FS/GS bases for ordinary and stack operands. The processor executes the original instruction; deferred write observations use its result before the shared RAM transaction publishes any effects.
+
+`LEAVE` uses the original full RBP for its implicit RAM read and the effective 16/64-bit operand size. Address-size and segment prefixes do not redirect that read. The shared layer validates the whole span before the original processor instruction updates RSP and RBP; refused accesses and stopped or failed read observers retain the complete entry state.
 
 The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller’s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.
 
@@ -3277,3 +3285,5 @@ The shared Swift class-method declaration also admits the complete arm64 instanc
 The strong CoreImage SDK declarations retain the `CIImage` result of `imageWithCGImage:` and `imageByApplyingTransform:`. The latter has a logical six-double `CGAffineTransform` and an ARM64 physical pointer in x2 to a 48-byte private copy. An Objective-C method can bind this copy only after its current metadata authenticates the entry ABI and the shared frame owner proves every initializer, reaching path, intervening effect and later use against immutable machine/LowIR. Publication independently rebuilds a bounded dependency group through the canonical pipeline and compares the complete saved HighIR, MedIR replay and published body with that fresh result; saved argument values cannot authenticate themselves. Other lifetime or virtual receipts need separate integration. HighC takes one memcpy snapshot into the logical SDK record. This consumer remains ARM64-only; unsupported providers, weak imports, stale declarations and unproved copy storage fail closed.
 
 `darwinMatrixSourceFrameEffects` also authenticates the exact strong `CGAffineTransformMakeRotation` and `CGAffineTransformConcat` imports on linked Darwin ARM64. Their current SDK declarations certify a complete pointer-free 48-byte result through x8. Concat requires two initialized 48-byte private inputs through x0/x1 and conservatively permits writes to both; their contents are invalidated after the call. The shared frame owner checks all bounds, saved registers and subsequent initialization. CoreImage publication still requires fresh complete-body replay. Other record producers and stack block calls receive no effects from this contract.
+
+The same frame-effect owner handles the exact strong `CGRectApplyAffineTransform` bridge separately: its initialized 48-byte transform is logical parameter 1 carried in x0, while the rectangle/result occupy d0–d3. Permitted input writes invalidate the copy; a later consumer needs a new definite initialization. No indirect-result write is granted. Both Objective-C copy discovery and native frame validation consult this owner for HFA and indirect results.

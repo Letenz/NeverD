@@ -642,6 +642,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `CheckedX64Stack.cpp` 負責堆疊傳輸的存取順序與寬度。共用的 `operandAddress` 為一般及堆疊運算元計算 RIP 相對位址、32 位元截斷與 FS/GS 基底。處理器執行原始指令；延遲寫入觀察器讀取實際結果，再由共用 RAM 交易統一發布效果。
 
+`LEAVE` 透過原始完整 RBP 讀取隱含 RAM 運算元，寬度由有效的 16/64 位元運算元前綴決定。位址寬度與區段前綴不會改變該讀取位址。共用層先驗證完整範圍，再由處理器執行原始指令並更新 RSP、RBP；存取遭拒、讀取觀察器停止或失敗時，保留完整的進入狀態。
+
 共用 XSAVE 解碼器區分標準格式與壓縮格式的 SSE 初始狀態。XSTATE_BV[1] 清零時，兩種格式都初始化 XMM 暫存器；標準格式仍讀取並驗證 MXCSR，壓縮格式才初始化 MXCSR。`X64XsaveCases.def` 提供獨立的資料配置和原創主機 XRSTOR 程式。`X64XsaveTests.cpp` 檢查拒絕狀態的原子性，並以真實主機執行對照兩種格式，同時保留呼叫端 FP/SSE 狀態。主機架構或所需指令功能不可用時，對照測試明確略過。
 
 `X64FPState.def` 宣告壓縮 AVX、AVX-512、CET_U/CET_S 和 AMX 傳輸配置，包括元件的 64 位元組對齊。存在的擴充資料必須符合架構的全零初始狀態；缺席元件資料與對齊填補不定義狀態。偏移由配置位元決定，未知配置、非初始資料或錯誤長度會在發布前失敗。`CompactedOffsetsFollowLayoutRatherThanPresentBits`、`WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`、`InitialCETComponentsDoNotHideFPState` 和 `InitialWideComponentsDoNotHideFPState` 涵蓋 872 及 10752 位元組 WHP 封包。這項傳輸支援不准入上述擴充指令。
@@ -1226,3 +1228,5 @@ Swift CoreGraphics 的 `CGContext.move(to:)` 和 `addLine(to:)` 保留原始匯�
 CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransform:` 的 `CIImage` 結果型別。後者區分由六個 double 組成的邏輯 `CGAffineTransform`，以及 ARM64 x2 中指向 48 位元組私有副本的實體指標。Objective-C 方法只有在目前中繼資料認證入口 ABI、共用框架分析對照不可變機器碼與 LowIR 證明全部初始化、到達路徑、中間效果及後續使用後，才能繫結該副本。發布時獨立透過標準管線重建有界相依群組，將儲存的 HighIR、MedIR 重播及完整發布函式本體與新結果逐一比較；儲存的參數值不能認證自身。其他生命週期或虛擬呼叫憑據仍需獨立整合。HighC 僅執行一次 memcpy 快照，轉換為邏輯 SDK 記錄。此消費者僅支援 ARM64；未支援的提供方、弱匯入、過期宣告與未經證明的副本儲存均被拒絕。
 
 `darwinMatrixSourceFrameEffects` 也驗證已連結 Darwin ARM64 中精確的強匯入 `CGAffineTransformMakeRotation` 和 `CGAffineTransformConcat`。目前 SDK 宣告證明它們經 x8 寫入完整、不含指標的 48 位元組結果。Concat 要求經 x0/x1 傳入兩個已初始化的 48 位元組私有輸入，保守地允許改寫兩者，並在呼叫後使其內容失效。共用堆疊框架分析檢查所有範圍、儲存暫存器及後續初始化；CoreImage 發布仍須獨立重建完整函式本體。其他記錄產生函式及堆疊 block 呼叫不會繼承此契約的效果。
+
+同一堆疊效果證明層單獨驗證精確的強 `CGRectApplyAffineTransform` 橋接：48 位元組已初始化變換是經 x0 傳遞的邏輯參數 1，矩形及結果則佔用 d0–d3。允許的輸入改寫會使副本失效，後續使用者必須先取得新的完整初始化；此呼叫不取得間接結果寫入權限。Objective-C 副本發現與原生堆疊驗證對四浮點 HFA 回傳及間接回傳都查詢同一證明層。
