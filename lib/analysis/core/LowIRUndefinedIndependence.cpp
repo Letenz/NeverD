@@ -2849,7 +2849,11 @@ class LoopPlanInference {
     };
     std::vector<LaneGuard> LaneGuards, LaneAttempts;
     std::vector<Bound> CounterBounds;
-    std::vector<uint64_t> CounterBoundAttempts;
+    struct BoundAttempt {
+      LowIRLoopLocation Location;
+      uint64_t Mask;
+    };
+    std::vector<BoundAttempt> CounterBoundAttempts;
     std::vector<LowIRLoopLocation> Equalities;
     struct BitRelation {
       unsigned Bit;
@@ -2873,6 +2877,8 @@ class LoopPlanInference {
   };
   std::vector<LaneCounter> LaneCounters;
   std::vector<std::vector<LowIRLoopLocation>> RelationBounds;
+  std::set<SymRef> RelationPredicates;
+  std::vector<std::set<SymRef>> RelationBoundValues;
   std::vector<std::vector<TerminalState>> RelationArrivals;
   std::vector<std::map<SymRef, llvm::SmallVector<uint32_t, 16>>>
       RelationVariables;
@@ -3914,8 +3920,7 @@ class LoopPlanInference {
     return Mask ? Ctx.mkAnd(Value, Ctx.mkConst(Ctx.width(Value), Mask)) : Value;
   }
 
-  bool seedCounterBounds(Word &W,
-                         llvm::ArrayRef<TerminalState> NewIncoming = {}) {
+  bool seedCounterBounds(Word &W) {
     if (RelationArrivals[ActiveCutpoint].empty() ||
         std::none_of(
             RelationCounters.begin(), RelationCounters.end(),
@@ -3923,24 +3928,26 @@ class LoopPlanInference {
       return false;
     auto &Ctx = Session.Context;
     auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
-    auto Incoming = RelationArrivals[ActiveCutpoint];
-    Incoming.insert(Incoming.end(), NewIncoming.begin(), NewIncoming.end());
+    // A newly discovered relation may be needed to constrain the source
+    // template itself. Seed only from the saved concrete arrivals, then force
+    // a fresh general transition round before accepting the template.
+    auto &Incoming = RelationArrivals[ActiveCutpoint];
     const auto OldSize = W.CounterBounds.size();
     std::vector<uint64_t> Masks{0};
     for (const auto &C : LaneCounters)
       if (sameLocation(W.Location, C.Location))
         Masks.push_back(C.Guard.Mask);
     for (uint64_t Mask : Masks) {
-      if (std::find(W.CounterBoundAttempts.begin(),
-                    W.CounterBoundAttempts.end(),
-                    Mask) != W.CounterBoundAttempts.end())
-        continue;
-      // A later transition can reveal a new lane. Never retry a rejected or
-      // pruned projection using only the narrower, later induction domain.
-      W.CounterBoundAttempts.push_back(Mask);
       for (const auto &L : RelationBounds[ActiveCutpoint]) {
-        if (L.Bytes != W.Location.Bytes)
+        if (L.Bytes != W.Location.Bytes ||
+            std::any_of(W.CounterBoundAttempts.begin(),
+                        W.CounterBoundAttempts.end(), [&](const auto &A) {
+                          return A.Mask == Mask && sameLocation(A.Location, L);
+                        }))
           continue;
+        // New lanes can reveal new bound sources. Each location/projection
+        // pair is tried once, including pairs whose bounds were pruned.
+        W.CounterBoundAttempts.push_back({L, Mask});
         const auto Limit = counterProjection(read(Prefix, L), Mask);
         for (bool Lower : {false, true})
           for (bool Strict : {false, true}) {
@@ -4067,13 +4074,47 @@ class LoopPlanInference {
     return Changed;
   }
 
+  bool discoverRelationBounds() {
+    auto &Ctx = Session.Context;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    auto &Bounds = RelationBounds[ActiveCutpoint];
+    auto &Values = RelationBoundValues[ActiveCutpoint];
+    const auto OldSize = Bounds.size();
+    for (const auto &L : locations()) {
+      if (std::any_of(
+              words().begin(), words().end(),
+              [&](const auto &W) { return sameLocation(W.Location, L); }) ||
+          std::any_of(Bounds.begin(), Bounds.end(),
+                      [&](const auto &B) { return sameLocation(B, L); }))
+        continue;
+      const auto V = read(Prefix, L);
+      if (Ctx.isConst(V))
+        continue;
+      auto Referenced = RelationPredicates.count(V) ? V : SymRef{};
+      // Retain the whole prefix location even when the exit condition reads
+      // only a lane. Constant initialization can hide that lane until a later
+      // general transition; use the same saved predicate evidence then.
+      for (const auto &C : LaneCounters) {
+        if (Referenced || C.Location.Bytes != L.Bytes)
+          continue;
+        const auto Part = Ctx.mkExtract(V, std::countr_zero(C.Guard.Mask),
+                                        std::popcount(C.Guard.Mask));
+        checker().nodes();
+        if (RelationPredicates.count(Part))
+          Referenced = Part;
+      }
+      if (Referenced && Values.insert(Referenced).second)
+        Bounds.push_back(L);
+    }
+    return Bounds.size() != OldSize;
+  }
+
   // Seed unsigned bounds and copies only from concrete reachable witnesses.
   // A bound can be an unchanged input used by an equality exit. A cached
   // operand can equal a current counter or bound. These remain untrusted
   // predicates, pruned by widening and independently proved after inference.
   void seedCounterRelations(std::vector<Edge> &Edges) {
     auto &Ctx = Session.Context;
-    const auto Locations = locations();
     findNewCounters(Edges);
     const auto &Counters = RelationCounters;
     std::vector<SymRef> Pending;
@@ -4083,11 +4124,10 @@ class LoopPlanInference {
       Pending.push_back(S.Predicate);
     for (const auto &P : Session.LoopPrefixes)
       Pending.push_back(P->Predicate);
-    std::set<SymRef> Seen;
     while (!Pending.empty()) {
       const auto Ref = Pending.back();
       Pending.pop_back();
-      if (!Seen.insert(Ref).second)
+      if (!RelationPredicates.insert(Ref).second)
         continue;
       if (++Result.PredicateNodes > Limits.Execution.MaxSymbolicNodes)
         stop(Status::BudgetExceeded,
@@ -4112,33 +4152,7 @@ class LoopPlanInference {
       for (const auto &E : Edges)
         if (E.After.Cutpoint == static_cast<int>(I))
           Incoming.push_back(E.After);
-      std::vector<LowIRLoopLocation> Bounds;
-      std::set<SymRef> Values;
-      for (const auto &L : Locations) {
-        if (std::any_of(words().begin(), words().end(), [&](const auto &W) {
-              return sameLocation(W.Location, L);
-            }))
-          continue;
-        const auto V = read(Prefix, L);
-        if (Ctx.isConst(V))
-          continue;
-        auto Referenced = Seen.count(V) ? V : SymRef{};
-        // The condition may read only the counter's active lane from a
-        // wider bound word. Keep the whole prefix location, not an assumed
-        // zero extension of the compared subword.
-        for (const auto &C : LaneCounters) {
-          if (Referenced || C.Location.Bytes != L.Bytes)
-            continue;
-          const auto Part = Ctx.mkExtract(V, std::countr_zero(C.Guard.Mask),
-                                          std::popcount(C.Guard.Mask));
-          checker().nodes();
-          if (Seen.count(Part))
-            Referenced = Part;
-        }
-        if (Referenced && Values.insert(Referenced).second)
-          Bounds.push_back(L);
-      }
-      RelationBounds[I] = Bounds;
+      discoverRelationBounds();
       RelationArrivals[I] = Incoming;
       for (auto &W : words())
         seedBitRelations(W);
@@ -4158,7 +4172,8 @@ class LoopPlanInference {
     auto &Ctx = Session.Context;
     // An outer counter's first step may be hidden until an inner cut widens.
     // Discovery supplies candidates only; all predicates and ranks are proved.
-    bool Changed = findNewCounters(Edges);
+    const bool NewCounters = findNewCounters(Edges);
+    bool Changed = NewCounters;
     for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
       ActiveCutpoint = I;
       auto &Prefix = Session.LoopPrefixes[I]->Candidate;
@@ -4192,6 +4207,8 @@ class LoopPlanInference {
           }
       for (size_t J = OldSize; J != words().size(); ++J)
         initializePrefixBounds(words()[J]);
+      if (NewCounters && !RelationArrivals[I].empty())
+        Changed |= discoverRelationBounds();
       Changed |= seedWordCopies(Incoming);
       for (auto &W : words()) {
         const auto Initial = read(Prefix, W.Location);
@@ -4284,7 +4301,7 @@ class LoopPlanInference {
                          });
                    }) != 0;
         Changed |= seedLaneGuards(W, Incoming);
-        Changed |= seedCounterBounds(W, Incoming);
+        Changed |= seedCounterBounds(W);
         Changed |= seedBitRelations(W, Incoming);
       }
     }
@@ -4563,6 +4580,8 @@ class LoopPlanInference {
     RelationCounters.clear();
     LaneCounters.clear();
     RelationBounds.assign(Cuts.size(), {});
+    RelationPredicates.clear();
+    RelationBoundValues.assign(Cuts.size(), {});
     RelationArrivals.assign(Cuts.size(), {});
     RelationVariables.assign(Cuts.size(), {});
     Plan.Cutpoints.assign(Cuts.size(), {});

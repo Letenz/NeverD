@@ -2322,7 +2322,8 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
                               bool Guarded = true,
                               LowIRLoopSpace Space = LowIRLoopSpace::Register,
                               bool EqualityExit = false, unsigned BoundStep = 0,
-                              bool PadBounds = false) {
+                              bool PadBounds = false,
+                              bool ZeroInitialize = false) {
   Program P;
   const uint64_t Mask = (uint64_t{1} << (Bytes * 8)) - 1;
   if (Space == LowIRLoopSpace::Frame)
@@ -2351,12 +2352,12 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
                : op(NdOp::COPY, Counter(Level), {Value});
   };
   const auto Initialize = [&](unsigned Level) {
-    P.instruction(
-        {Address(Level),
-         op(NdOp::INT_AND, NdVar::tmp(8, 8), {r(96 + 8 * Level), n(~Mask)}),
-         op(NdOp::INT_OR, NdVar::tmp(16, 8),
-            {NdVar::tmp(8, 8), Ascending ? n(0) : r(64 + 8 * Level)}),
-         Write(Level, NdVar::tmp(16, 8))});
+    P.instruction({Address(Level),
+                   op(NdOp::INT_AND, NdVar::tmp(8, 8),
+                      {r(96 + 8 * Level), n(ZeroInitialize ? 0 : ~Mask)}),
+                   op(NdOp::INT_OR, NdVar::tmp(16, 8),
+                      {NdVar::tmp(8, 8), Ascending ? n(0) : r(64 + 8 * Level)}),
+                   Write(Level, NdVar::tmp(16, 8))});
   };
   P.Function.Blocks[0].Succs = {1};
   P.instruction({op(NdOp::INT_ZEXT, r(64), {r(112, Bytes)}),
@@ -2495,6 +2496,27 @@ TEST(LowIRLoopInference, ProjectedBoundsProveNarrowEqualityExits) {
       }
 }
 
+TEST(LowIRLoopInference, LateCounterLanesRefreshEqualityBounds) {
+  for (uint16_t Bytes : {1, 3, 4})
+    for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
+                       LowIRLoopSpace::FunctionTemporary})
+      for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+        for (bool PadBounds : {false, true}) {
+          SCOPED_TRACE(Bytes);
+          SCOPED_TRACE(static_cast<unsigned>(Space));
+          SCOPED_TRACE(static_cast<unsigned>(Order));
+          SCOPED_TRACE(PadBounds);
+          auto P = projectedCounterLoops(Bytes, true, 1, true, Space, true, 0,
+                                         PadBounds, true);
+          P.Contract.ByteOrder = Order;
+          const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract,
+                                                      {}, {0x300, 0x500});
+          ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+          const auto Proof = loopCheck(P, P, *R.Plan);
+          ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+        }
+}
+
 TEST(LowIRLoopInference, ProjectedBoundsCannotHideChangedBoundsOrWraparound) {
   const auto Space = LowIRLoopSpace::Frame;
   const auto P = projectedCounterLoops(1, true, 1, true, Space, true);
@@ -2535,9 +2557,58 @@ TEST(LowIRLoopInference, ProjectedBoundsKeepUnselectedInputObservations) {
   }
 }
 
-void checkProjectedCounterBudgets(bool EqualityExit) {
-  const auto P = projectedCounterLoops(1, true, 1, true,
-                                       LowIRLoopSpace::Register, EqualityExit);
+TEST(LowIRLoopInference, LateCounterBoundsCannotRestoreRejectedRelations) {
+  const auto Space = LowIRLoopSpace::FunctionTemporary;
+  const auto P =
+      projectedCounterLoops(1, true, 1, true, Space, true, 0, true, true);
+  const std::vector<va_t> Cuts{0x300, 0x500};
+  const auto Good =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  for (const auto &Bad :
+       {projectedCounterLoops(1, true, 0, true, Space, true, 0, true, true),
+        projectedCounterLoops(1, true, 2, true, Space, true, 0, true, true),
+        projectedCounterLoops(1, true, 1, true, Space, true, 1, true, true),
+        projectedCounterLoops(1, true, 1, false, Space, true, 0, true, true)}) {
+    const auto Refused =
+        inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract, {}, Cuts);
+    EXPECT_FALSE(Refused.inferred());
+    EXPECT_FALSE(Refused.Plan);
+    loopRefused(loopCheck(Bad, Bad, *Good.Plan), Status::Different);
+  }
+}
+
+TEST(LowIRLoopInference, LateCounterBoundsKeepFullStateObservations) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    auto P = projectedCounterLoops(3, true, 1, true, LowIRLoopSpace::Frame,
+                                   true, 0, true, true);
+    P.Contract.ByteOrder = Order;
+    P.Contract.ReturnRegisters.push_back({64, 8});
+    P.Contract.ReturnRegisters.push_back({72, 8});
+    const auto Good = inferLowIRLoopRefinementPlan(P.Function, P.Contract, {},
+                                                   {0x300, 0x500});
+    ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+    const auto Proof = loopCheck(P, P, *Good.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    auto Wrong = P;
+    for (auto &O : Wrong.Function.Blocks.front().Ops)
+      if (O.Opcode == NdOp::INT_AND && O.Inputs[0] == r(160))
+        O.Inputs[1] = n(0);
+    loopRefused(loopCheck(P, Wrong, *Good.Plan), Status::Different);
+    auto UpperCounterBytes = P;
+    for (auto &B : UpperCounterBytes.Function.Blocks)
+      for (auto &O : B.Ops)
+        if (O.Opcode == NdOp::INT_ZEXT && O.Output == NdVar::tmp(32, 8))
+          O.Opcode = NdOp::INT_SEXT;
+    loopRefused(loopCheck(P, UpperCounterBytes, *Good.Plan), Status::Different);
+  }
+}
+
+void checkProjectedCounterBudgets(bool EqualityExit,
+                                  bool ZeroInitialize = false) {
+  const auto P =
+      projectedCounterLoops(1, true, 1, true, LowIRLoopSpace::Register,
+                            EqualityExit, 0, false, ZeroInitialize);
   const std::vector<va_t> Cuts{0x300, 0x500};
   const auto Good =
       inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
@@ -2593,6 +2664,10 @@ TEST(LowIRLoopInference, ProjectedRanksKeepIndependentBudgets) {
 
 TEST(LowIRLoopInference, ProjectedBoundsKeepIndependentBudgets) {
   checkProjectedCounterBudgets(true);
+}
+
+TEST(LowIRLoopInference, LateCounterBoundsKeepIndependentBudgets) {
+  checkProjectedCounterBudgets(true, true);
 }
 
 struct CachedComparisonOptions {
