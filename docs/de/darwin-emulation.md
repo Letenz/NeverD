@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
+<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -214,4 +214,12 @@ Die Auflösung verwendet nur die unteren 32 Nummernbits; der Bericht behält all
 
 Mach-Prüfung (2026-10-06, Release): 569 Darwin-Fälle, 293 bestanden, 276 wegen fehlendem Backend übersprungen, null Fehler; alle 69/69 ARM64-HVF-Pflichtfälle ausgeführt. Im letzten Lauf bestanden 13 native Programme und beide Zeit-SDK-Orakel. C/CLI/report: 100/100 ohne Überspringen; Python deckt fünf Gäste ab. Öffentliche Vergleiche laufen getrennt je Plattform und Szenario mit explizitem Gastbudget von 10 Sekunden; Produktvorgaben und Deadline-Regressionen bleiben unverändert. Zahlen überschneiden sich.
 
-Erste native Starts überschritten die bestehende Fünfsekundengrenze: unabhängig gemessene 6.056 Sekunden, danach 0.010 bei Wiederverwendung. Dasselbe Programm bestand anschließend 13 Fälle mit der ursprünglichen Grenze; Fehlerberichte bleiben erhalten. Nach Zeitüberschreitungen unter Hostlast bestand die getrennte serielle Prüfung. Belege: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`; Arbeitsbaum vor dem Commit. ARM64 MRS/MSR NZCV fehlen noch; der Test setzt und liest vier Flags mit Ganzzahlbefehlen. Diese CPU-Lücke, beschreibbare Dateien, Systeminformationen, dyld/Laufzeiten/Frameworks und physisches iOS bleiben offen.
+Erste native Starts überschritten die bestehende Fünfsekundengrenze: unabhängig gemessene 6.056 Sekunden, danach 0.010 bei Wiederverwendung. Dasselbe Programm bestand anschließend 13 Fälle mit der ursprünglichen Grenze; Fehlerberichte bleiben erhalten. Nach Zeitüberschreitungen unter Hostlast bestand die getrennte serielle Prüfung. Belege: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`; Arbeitsbaum vor dem Commit. In jener Revision fehlten ARM64 MRS/MSR NZCV im checked-Vertrag; der Test beobachtete die Flags daher mit Ganzzahlbefehlen. Die folgende Änderung schließt diese CPU-Lücke.
+
+## ARM64-Bedingungsflagregister
+
+Der gemeinsame checked-ARM64-Vertrag lässt die exakten Codierungen `MRS Xt, NZCV` und `MSR NZCV, Xt` in EL0/EL1 zu. Lesen liefert nur Bits 31–28; Schreiben übernimmt diese vier Eingabebits und ignoriert alle anderen. Lesen nach `XZR` verwirft das Ergebnis; Schreiben aus `XZR` löscht die Flags, ohne SP zu lesen. Jedes Backend führt die Originalbefehle aus. Host-Setter-Prüfungen und FPCR/FPSR-Grenzen bleiben unverändert; benachbarte, nicht aufgeführte Systemregister bleiben unzulässig.
+
+`NeverDAArch64NZCVTests` vergleicht alle Flagkombinationen mit Hostbefehlen und prüft vollständigen Skalar-/Vektorzustand, Speicher, Registergrenzen, Beobachterstopp/-fehler, Kontextwiederherstellung und gemeinsame Befehlsbudgets. ARM64 `mach-time` verwendet jetzt echte MSR/MRS um SVC und prüft Mach-Erhaltung sowie den Übergang zu BSD. Native HVF-Anforderungen enthalten alle sechs Methoden in beiden Privilegstufen und das Host-Orakel. ARM64 KVM/WHP und physisches iOS bleiben ungeprüft. Beschreibbare Dateien, Systeminformationen, fortschreitende Uhren, Mach IPC/Threads, dyld/Laufzeiten/Frameworks und Geräteabnahme bleiben weitere Umgebungsarbeit.
+
+[Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).

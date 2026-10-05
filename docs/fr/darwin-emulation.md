@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
+<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
 
 [← Index de la documentation](README.md)
 
@@ -214,4 +214,12 @@ La résolution utilise les 32 bits bas du numéro ; le rapport conserve les 64 b
 
 Validation Mach (2026-10-06, Release) : 569 cas Darwin, 293 réussis, 276 ignorés pour backend indisponible, aucun échec ; 69/69 cas ARM64 HVF obligatoires exécutés. Les 13 programmes natifs et les deux oracles temporels SDK ont réussi lors du passage final. C/CLI/report : 100/100 sans omission ; Python couvre cinq invités. Les comparaisons publiques sont isolées par plateforme et scénario, avec un budget invité explicite de 10 secondes ; valeurs produit et régressions de délai restent inchangées. Les comptes se recoupent.
 
-Les premiers démarrages natifs dépassaient la limite existante de 5 secondes : mesure indépendante de 6.056 secondes, puis 0.010 à la réutilisation. Le même binaire a ensuite réussi les 13 cas sous la limite originale ; les échecs sont conservés. La vérification séquentielle séparée a réussi après des délais dépassés sous charge hôte. Preuves : `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`, sur l’arbre avant commit. ARM64 MRS/MSR NZCV reste absent ; le test utilise des instructions entières pour les quatre flags. Cette lacune CPU, fichiers modifiables, informations système, dyld/runtimes/frameworks et iOS physique restent ouverts.
+Les premiers démarrages natifs dépassaient la limite existante de 5 secondes : mesure indépendante de 6.056 secondes, puis 0.010 à la réutilisation. Le même binaire a ensuite réussi les 13 cas sous la limite originale ; les échecs sont conservés. La vérification séquentielle séparée a réussi après des délais dépassés sous charge hôte. Preuves : `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`, sur l’arbre avant commit. À cette révision, ARM64 MRS/MSR NZCV étaient absents du contrat checked ; le test observait donc les flags avec des instructions entières. Le changement ci-dessous comble cette lacune CPU.
+
+## Registre des flags de condition ARM64
+
+Le contrat ARM64 checked partagé admet les encodages exacts `MRS Xt, NZCV` et `MSR NZCV, Xt` en EL0/EL1. La lecture ne renvoie que les bits 31–28 ; l’écriture sélectionne ces quatre bits d’entrée et ignore les autres. Lire vers `XZR` abandonne le résultat ; écrire depuis `XZR` efface les flags sans lire SP. Chaque backend exécute les instructions originales. La validation du setter hôte et les limites FPCR/FPSR restent inchangées ; les registres système voisins non déclarés restent non pris en charge.
+
+`NeverDAArch64NZCVTests` compare toutes les combinaisons aux instructions hôtes et vérifie l’état scalaire/vectoriel complet, la mémoire, les registres limites, l’arrêt/l’échec des observateurs, la reprise du contexte et les budgets partagés. ARM64 `mach-time` utilise désormais de vrais MSR/MRS autour de SVC pour vérifier la conservation Mach et la transition vers BSD. Les exigences HVF natives comprennent les six méthodes aux deux privilèges et l’oracle hôte. ARM64 KVM/WHP et iOS physique restent non validés. Fichiers modifiables, informations système, horloges progressives, Mach IPC/threads, dyld/runtimes/frameworks et validation sur appareil restent à réaliser.
+
+[Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).

@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
+<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
 
 [← 문서 목록](README.md)
 
@@ -214,4 +214,12 @@ ARM64 X16=-3과 X16=-4는 `mach_absolute_time`과 `mach_continuous_time`의 부�
 
 Mach 검증(2026-10-06, Release): Darwin 569개 중 성공 293, 사용 불가 백엔드 건너뛰기 276, 실패 0이며 필수 ARM64 HVF 69/69를 실행했습니다. 최종 실행에서 네이티브 13개 작업과 시간 SDK 비교 2개가 통과했습니다. 공개 C/CLI/report는 100/100, 건너뛰기 없음이며 Python은 다섯 게스트를 검증했습니다. 공개 비교는 플랫폼과 작업별로 분리하고 명시적인 10초 게스트 예산을 사용합니다. 제품 기본값과 기한 회귀는 유지합니다. 집계는 중복됩니다.
 
-처음 네이티브 실행은 기존 5초 제한을 넘었으며 별도 측정은 6.056초, 재사용은 0.010초였습니다. 같은 바이너리는 원래 제한에서 13개 모두 통과했고 실패 기록을 보존합니다. 호스트 부하 중 시간 초과 후 별도 순차 검증은 통과했습니다. 증거: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`. 커밋 전 작업 트리입니다. ARM64 MRS/MSR NZCV는 미지원이라 테스트는 정수 명령으로 네 플래그를 설정·읽습니다. 이 CPU 항목, 쓰기 파일, 시스템 정보, dyld/런타임/프레임워크, 실제 iOS 검증은 남아 있습니다.
+처음 네이티브 실행은 기존 5초 제한을 넘었으며 별도 측정은 6.056초, 재사용은 0.010초였습니다. 같은 바이너리는 원래 제한에서 13개 모두 통과했고 실패 기록을 보존합니다. 호스트 부하 중 시간 초과 후 별도 순차 검증은 통과했습니다. 증거: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`. 커밋 전 작업 트리입니다. 당시 ARM64 MRS/MSR NZCV는 미지원이어서 정수 명령으로 플래그를 관찰했습니다. 아래 변경으로 이 CPU 공백을 해소합니다.
+
+## ARM64 조건 플래그 레지스터
+
+공유 checked ARM64 계약은 EL0/EL1에서 정확한 `MRS Xt, NZCV` 및 `MSR NZCV, Xt` 인코딩을 허용합니다. 읽기는 비트 31–28만 반환하고 쓰기는 입력의 그 네 비트만 사용하며 나머지는 무시합니다. `XZR`로 읽으면 결과를 버리고 `XZR`에서 쓰면 SP를 읽지 않고 네 플래그를 지웁니다. 각 백엔드는 원래 명령을 실행합니다. 호스트 레지스터 설정 검증과 FPCR/FPSR 제한은 유지하며 인접한 미등록 시스템 레지스터는 계속 미지원입니다.
+
+`NeverDAArch64NZCVTests`는 모든 플래그 조합을 호스트 명령과 비교하고 전체 스칼라/벡터 상태, 메모리, 레지스터 경계, 관찰자 중지/실패, 컨텍스트 복원 재시도와 공유 명령 예산을 검사합니다. ARM64 `mach-time`은 SVC 전후에 실제 MSR/MRS를 사용하여 Mach 플래그 보존과 BSD 전환을 확인합니다. 네이티브 HVF 필수 항목은 두 권한의 여섯 메서드 및 호스트 비교를 포함합니다. ARM64 KVM/WHP와 실제 iOS는 미검증입니다. 쓰기 파일, 시스템 정보, 진행하는 시계, Mach IPC/스레드, dyld/런타임/프레임워크 및 기기 검증은 후속 환경 작업입니다.
+
+[Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).

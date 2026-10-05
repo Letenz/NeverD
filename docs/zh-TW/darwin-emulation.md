@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
+<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
 
 [← 文件索引](README.md)
 
@@ -214,4 +214,12 @@ ARM64 X16=-3、X16=-4 返回完整無符號 64 位 `mach_absolute_time`、`mach_
 
 Mach 驗證（2026-10-06，Release）：Darwin 569 項中 293 通過、276 項後端不可用而跳過、零失敗；ARM64 HVF 必需 69/69 全部執行。最終通過 13 個原生工作負載及兩個時間 SDK 對照。公開 C/CLI/report 為 100/100、無跳過；Python 覆蓋五種來賓。公開比較依平台與場景獨立執行，明確給予 10 秒來賓預算，產品預設與超時回歸不變。計數重疊。
 
-首次原生啟動曾超過既有 5 秒門限，測得 6.056 秒，復用後為 0.010 秒；同一二進位檔隨後在原門限通過 13 項，保留失敗記錄。宿主負載下的超時經獨立串行複核通過。證據：`build-hvf-arm64/darwin-mach-time-final-evidence/`、`darwin-mach-time-native-recheck/existing-binary-recheck.json`、`darwin-mach-time-public-accepted.xml`，描述提交前工作樹。ARM64 MRS/MSR NZCV 仍未支援；測試以整數指令讀寫四個旗標。此 CPU 缺口、可寫檔案、系統資訊、dyld/執行環境/框架及實體 iOS 仍待完成。
+首次原生啟動曾超過既有 5 秒門限，測得 6.056 秒，復用後為 0.010 秒；同一二進位檔隨後在原門限通過 13 項，保留失敗記錄。宿主負載下的超時經獨立串行複核通過。證據：`build-hvf-arm64/darwin-mach-time-final-evidence/`、`darwin-mach-time-native-recheck/existing-binary-recheck.json`、`darwin-mach-time-public-accepted.xml`，描述提交前工作樹。當時 ARM64 MRS/MSR NZCV 尚未納入受檢查 CPU 契約，因此測試以整數指令觀察旗標。下述增量已補上這項 CPU 缺口。
+
+## ARM64 條件旗標暫存器
+
+共用的受檢查 ARM64 契約在 EL0、EL1 接受精確的 `MRS Xt, NZCV` 與 `MSR NZCV, Xt` 編碼。讀取只回傳第 31–28 位元；寫入只取輸入的這四位，其餘忽略。讀至 `XZR` 會丟棄結果；由 `XZR` 寫入會清除四個旗標，不會讀取 SP。各後端執行原始指令。宿主暫存器設定介面的驗證、FPCR/FPSR 的限制策略不變；鄰近且未列出的系統暫存器仍明確不支援。
+
+`NeverDAArch64NZCVTests` 將全部旗標組合與宿主原始指令對照，並檢查完整純量/向量狀態、記憶體、暫存器邊界、觀察器停止/失敗、還原上下文重試及共用指令預算。ARM64 `mach-time` 現在以真實 MSR/MRS 包圍 SVC，涵蓋 Mach 旗標保持及返回 BSD 的切換。原生 HVF 必要項包含兩種權限下的六個方法與宿主對照。ARM64 KVM/WHP、實體 iOS 尚未驗證。可寫檔案、系統資訊、推進時鐘、Mach IPC/執行緒、dyld/執行環境/框架及裝置驗收仍待完成。
+
+[Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).

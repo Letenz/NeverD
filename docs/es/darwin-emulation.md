@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
+<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
 
 [← Índice de documentación](README.md)
 
@@ -214,4 +214,12 @@ La resolución usa los 32 bits bajos del número; el informe conserva los 64 ori
 
 Validación Mach (2026-10-06, Release): 569 casos Darwin, 293 aprobados, 276 omitidos por backend no disponible, cero fallos; se ejecutaron los 69/69 obligatorios ARM64 HVF. La ejecución final aprobó 13 programas nativos y dos oráculos temporales SDK. C/CLI/report: 100/100 sin omisiones; Python cubrió cinco invitados. Las comparaciones públicas se aíslan por plataforma y escenario con presupuesto invitado explícito de 10 segundos; valores predeterminados y regresiones de plazo siguen iguales. Los recuentos se solapan.
 
-Los primeros arranques nativos excedieron el límite existente de 5 segundos: medición independiente de 6.056 segundos y 0.010 al reutilizar. El mismo binario aprobó después 13 casos bajo el límite original; se conservan los fallos. La verificación secuencial separada aprobó tras los tiempos agotados bajo carga. Evidencias: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`, del árbol previo al commit. ARM64 MRS/MSR NZCV siguen pendientes; el test usa instrucciones enteras para los cuatro flags. Persisten esa carencia CPU, archivos escribibles, información del sistema, dyld/runtimes/frameworks e iOS físico.
+Los primeros arranques nativos excedieron el límite existente de 5 segundos: medición independiente de 6.056 segundos y 0.010 al reutilizar. El mismo binario aprobó después 13 casos bajo el límite original; se conservan los fallos. La verificación secuencial separada aprobó tras los tiempos agotados bajo carga. Evidencias: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`, del árbol previo al commit. En esa revisión, ARM64 MRS/MSR NZCV no formaban parte del contrato checked; el test observaba los flags con instrucciones enteras. El cambio siguiente resuelve esa carencia de CPU.
+
+## Registro de flags de condición ARM64
+
+El contrato ARM64 checked compartido admite las codificaciones exactas `MRS Xt, NZCV` y `MSR NZCV, Xt` en EL0/EL1. Las lecturas devuelven solo los bits 31–28; las escrituras toman esos cuatro bits de entrada e ignoran los demás. Leer hacia `XZR` descarta el resultado; escribir desde `XZR` borra los flags sin leer SP. Cada backend ejecuta las instrucciones originales. La validación del setter del host y los límites FPCR/FPSR no cambian; los registros de sistema vecinos no declarados siguen sin admitirse.
+
+`NeverDAArch64NZCVTests` compara todas las combinaciones con instrucciones del host y verifica estado escalar/vectorial completo, memoria, registros límite, parada/fallo del observador, restauración del contexto y presupuestos compartidos. ARM64 `mach-time` usa ahora MSR/MRS reales alrededor de SVC para comprobar la conservación Mach y la transición a BSD. Los requisitos HVF nativos incluyen seis métodos en ambos privilegios y el oráculo del host. ARM64 KVM/WHP e iOS físico siguen sin validar. Quedan archivos escribibles, información del sistema, relojes que avanzan, Mach IPC/hilos, dyld/runtimes/frameworks y aceptación en dispositivos.
+
+[Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).

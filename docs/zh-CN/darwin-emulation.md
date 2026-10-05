@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 41b69637eb61adb006df941e3612df0726c8573ac4f5d79cb9f052de1ce96817 -->
+<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
 
 [← 文档索引](README.md)
 
@@ -314,4 +314,12 @@ ARM64 特殊调用 X16=-3、X16=-4 分别返回完整无符号 64 位 `mach_abso
 
 Mach 验证（2026-10-06，Release）：569 项唯一 Darwin 注册，293 通过、276 项后端不可用而跳过、零失败；69/69 项必需 ARM64 HVF 全部执行。最终运行通过全部 13 个原生工作负载及两个时间 SDK 对照。公开 C/CLI/report 为 100/100、无跳过；Python 覆盖五种来宾组合。公开接口比较按平台和场景独立运行，显式给出 10 秒来宾预算；产品默认值和超时回归保持不变。计数有重叠。
 
-早期原生程序首次启动超过已有 5 秒门限：独立测得首次 6.056 秒、复用后 0.010 秒。同一二进制随后在原门限下通过 13 项，失败记录保留。宿主负载下的墙钟超时经独立串行复核通过。证据：`build-hvf-arm64/darwin-mach-time-final-evidence/`、`darwin-mach-time-native-recheck/existing-binary-recheck.json`、`darwin-mach-time-public-accepted.xml`，记录的是提交前工作树。ARM64 MRS/MSR NZCV 尚未纳入受检查 CPU 契约，测试用整数指令设置并读取四个标志位。这项 CPU 缺口，以及可写文件、系统信息、dyld/运行时/框架、实体 iOS 仍待完成。
+早期原生程序首次启动超过已有 5 秒门限：独立测得首次 6.056 秒、复用后 0.010 秒。同一二进制随后在原门限下通过 13 项，失败记录保留。宿主负载下的墙钟超时经独立串行复核通过。证据：`build-hvf-arm64/darwin-mach-time-final-evidence/`、`darwin-mach-time-native-recheck/existing-binary-recheck.json`、`darwin-mach-time-public-accepted.xml`，记录的是提交前工作树。当时 ARM64 MRS/MSR NZCV 尚未纳入受检查 CPU 契约，因此测试用整数指令观察标志。下述增量已补上这项 CPU 缺口。
+
+## ARM64 条件标志寄存器
+
+共享的受检查 ARM64 契约在 EL0、EL1 准入精确的 `MRS Xt, NZCV` 和 `MSR NZCV, Xt` 编码。读取只返回第 31–28 位；写入只取输入的这四位，其余位忽略。读到 `XZR` 会丢弃结果；从 `XZR` 写入会清空四个标志，不会读取 SP。各后端执行原始指令。宿主寄存器设置接口的验证、FPCR/FPSR 的受限策略保持不变；邻近且未列出的系统寄存器仍明确不支持。
+
+`NeverDAArch64NZCVTests` 将全部标志组合与宿主原始指令对照，并检查完整标量/向量状态、内存、寄存器边界、观察器停止/失败、上下文恢复重试及共享指令预算。ARM64 `mach-time` 测试现在以真实 MSR/MRS 包围 SVC，覆盖 Mach 标志保持及返回 BSD 的切换。原生 HVF 必需项包含两种特权下的六个方法和宿主对照。ARM64 KVM/WHP、实体 iOS 尚未验证。可写文件、系统信息、推进时钟、Mach IPC/线程、dyld/运行时/框架及设备验收仍是后续环境工作。
+
+[Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).

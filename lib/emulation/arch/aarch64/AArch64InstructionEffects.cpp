@@ -199,9 +199,11 @@ getAArch64InstructionEffects(const cs_insn &I,
         (I.id == AARCH64_INS_MRS && isReadCacheType(Word)) ||
         (I.id == AARCH64_INS_MSR && isWriteThreadPointer(Word)) ||
         (I.id == AARCH64_INS_MRS &&
-         (isReadFPControl(Word) || isReadFPStatus(Word))) ||
+         (isReadConditionFlags(Word) || isReadFPControl(Word) ||
+          isReadFPStatus(Word))) ||
         (I.id == AARCH64_INS_MSR &&
-         (isWriteFPControl(Word) || isWriteFPStatus(Word)))))
+         (isWriteConditionFlags(Word) || isWriteFPControl(Word) ||
+          isWriteFPStatus(Word)))))
     return llvm::make_error<UnsupportedExecutionError>();
   const auto Source = Word & RegisterMask;
   if (Kind == CacheMaintenance) {
@@ -227,6 +229,8 @@ getAArch64InstructionEffects(const cs_insn &I,
   if (UsesFloatingState &&
       (State.reg(AArch64Register::FPCR) & ~aarch64::AllowedFPCR))
     return llvm::make_error<UnsupportedExecutionError>();
+  // MSR NZCV selects only source bits31:28. Its other input bits are ignored
+  // by the original instruction, unlike this bounded FP control contract.
   if (Kind == System && I.id == AARCH64_INS_MSR &&
       Source != aarch64::GPRCount &&
       ((isWriteFPControl(Word) &&

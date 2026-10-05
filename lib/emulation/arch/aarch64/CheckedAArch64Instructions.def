@@ -149,9 +149,11 @@ NEVERD_AARCH64_INSTRUCTION(ST3, StructureMemory)
 NEVERD_AARCH64_INSTRUCTION(ST4, StructureMemory)
 #endif
 #ifdef NEVERD_AARCH64_ENCODING
-// MRS/MSR TPIDR_EL0, Xt. Only the general-register field is variable.
+// Exact admitted system registers. Only the general-register field varies.
 NEVERD_AARCH64_ENCODING(ReadThreadPointer, 0xffffffe0, 0xd53bd040)
 NEVERD_AARCH64_ENCODING(WriteThreadPointer, 0xffffffe0, 0xd51bd040)
+NEVERD_AARCH64_ENCODING(ReadConditionFlags, 0xffffffe0, 0xd53b4200)
+NEVERD_AARCH64_ENCODING(WriteConditionFlags, 0xffffffe0, 0xd51b4200)
 NEVERD_AARCH64_ENCODING(ReadFPControl, 0xffffffe0, 0xd53b4400)
 NEVERD_AARCH64_ENCODING(WriteFPControl, 0xffffffe0, 0xd51b4400)
 NEVERD_AARCH64_ENCODING(ReadFPStatus, 0xffffffe0, 0xd53b4420)

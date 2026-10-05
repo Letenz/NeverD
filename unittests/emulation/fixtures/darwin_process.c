@@ -80,20 +80,12 @@ static struct mach_observation raw_trap(u64 number, u64 pointer, u64 flags) {
   register u64 x1 __asm__("x1") = 0x1122334455667788UL;
   register u64 x2 __asm__("x2") = 0x8877665544332211UL;
   register u64 x16 __asm__("x16") = number;
-  const u64 seed =
-      (flags & 0x20000000UL) ? 0x8000000000000000UL : 0x4000000000000001UL;
-  u64 negative, zero, carry, overflow;
-  // Integer instructions seed/read all four flags without requiring the
-  // separate MRS/MSR NZCV system-register surface in the checked CPU profile.
-  __asm__ volatile("adds xzr, %8, %8\n\tsvc #0x80\n\t"
-                   "cset %4, mi\n\tcset %5, eq\n\tcset %6, cs\n\tcset %7, vs"
-                   : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x16), "=&r"(negative),
-                     "=&r"(zero), "=&r"(carry), "=&r"(overflow)
-                   : "r"(seed)
+  u64 after;
+  __asm__ volatile("msr nzcv, %5\n\tsvc #0x80\n\tmrs %4, nzcv"
+                   : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x16), "=&r"(after)
+                   : "r"(flags)
                    : "cc", "memory");
-  return (struct mach_observation){
-      x0, (negative << 31) | (zero << 30) | (carry << 29) | (overflow << 28),
-      x1, x2};
+  return (struct mach_observation){x0, after, x1, x2};
 #else
   u64 result = number, second = 0x1122334455667788UL;
   u64 third = 0x8877665544332211UL, after;
