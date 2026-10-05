@@ -2859,6 +2859,7 @@ class LoopPlanInference {
       unsigned Bit;
       LowIRLoopLocation Counter, Bound;
       bool Invert;
+      uint64_t Mask = 0;
     };
     std::vector<BitRelation> BitRelations;
     std::vector<BitRelation> BitAttempts;
@@ -3282,9 +3283,14 @@ class LoopPlanInference {
         return Value;
       };
       for (const auto &B : W.BitRelations) {
-        const auto Expected =
-            Expr(B.Invert ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL,
-                 ValueAt(B.Counter), ValueAt(B.Bound), 1);
+        auto Counter = ValueAt(B.Counter), Bound = ValueAt(B.Bound);
+        if (B.Mask) {
+          const auto Mask = NdVar::scalar(B.Mask, B.Counter.Bytes);
+          Counter = Expr(NdOp::INT_AND, Counter, Mask, B.Counter.Bytes);
+          Bound = Expr(NdOp::INT_AND, Bound, Mask, B.Bound.Bytes);
+        }
+        const auto Expected = Expr(
+            B.Invert ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL, Counter, Bound, 1);
         const auto Shifted = Expr(NdOp::INT_RIGHT, Parameter,
                                   NdVar::scalar(B.Bit, Bytes), Bytes);
         const auto Bit =
@@ -3846,6 +3852,22 @@ class LoopPlanInference {
     return It->second;
   }
 
+  std::vector<uint64_t> counterMasks(const LowIRLoopLocation &Location) {
+    std::vector<uint64_t> Masks{0};
+    for (const auto &C : LaneCounters)
+      if (sameLocation(Location, C.Location) &&
+          std::find(Masks.begin(), Masks.end(), C.Guard.Mask) == Masks.end())
+        Masks.push_back(C.Guard.Mask);
+    return Masks;
+  }
+
+  SymRef bitComparison(TerminalState &State, const Word::BitRelation &B) {
+    auto &Ctx = Session.Context;
+    const auto Counter = counterProjection(read(State, B.Counter), B.Mask);
+    const auto Bound = counterProjection(read(State, B.Bound), B.Mask);
+    return B.Invert ? Ctx.mkNe(Counter, Bound) : Ctx.mkEq(Counter, Bound);
+  }
+
   bool seedBitRelations(Word &W,
                         llvm::ArrayRef<TerminalState> NewIncoming = {}) {
     if (RelationArrivals[ActiveCutpoint].empty() ||
@@ -3855,62 +3877,67 @@ class LoopPlanInference {
     auto Incoming = RelationArrivals[ActiveCutpoint];
     Incoming.insert(Incoming.end(), NewIncoming.begin(), NewIncoming.end());
     const auto OldSize = W.BitRelations.size();
-    // A cached field can first vary only after another cut generalizes. Its
-    // initializer can also be constant-folded under an entry guard. Use any
-    // incoming expression for the dependency filter, then prove the relation
-    // on every saved concrete arrival and every current incoming state.
+    // A cache may first vary after another cut generalizes. Use any saved or
+    // current arrival to discover its dependency, including only the observed
+    // lane of a wider bound. Every arrival must then prove the same comparison.
     for (unsigned Bit = 0; Bit != W.Location.Bytes * 8; ++Bit) {
-      const auto Mask = uint64_t{1} << Bit;
-      if (W.FixedMask & Mask)
+      if (W.FixedMask & (uint64_t{1} << Bit))
         continue;
-      for (const auto &L : RelationBounds[ActiveCutpoint]) {
-        bool Depends = false;
-        for (auto &S : Incoming) {
-          const auto Initial = Ctx.mkExtract(read(S, W.Location), Bit, 1);
-          if (Ctx.isConst(Initial))
-            continue;
-          const auto &BoundVars = relationVars(read(S, L));
-          if (BoundVars.empty())
-            continue;
-          const auto &Vars = relationVars(Initial);
-          if (std::includes(Vars.begin(), Vars.end(), BoundVars.begin(),
-                            BoundVars.end())) {
-            Depends = true;
-            break;
-          }
-        }
-        if (!Depends)
-          continue;
+      for (const auto &L : RelationBounds[ActiveCutpoint])
         for (const auto &C : RelationCounters) {
           if (C.Bytes != L.Bytes)
             continue;
-          for (bool Invert : {false, true}) {
-            // A later transition can reveal another comparison for this bit.
-            // Never retry a tuple whose relation was rejected or pruned.
-            if (std::any_of(W.BitAttempts.begin(), W.BitAttempts.end(),
-                            [&](const auto &A) {
-                              return A.Bit == Bit && A.Invert == Invert &&
-                                     sameLocation(A.Counter, C) &&
-                                     sameLocation(A.Bound, L);
-                            }))
-              continue;
-            W.BitAttempts.push_back({Bit, C, L, Invert});
-            bool Holds = true;
+          for (uint64_t Mask : counterMasks(C)) {
+            bool Depends = false;
             for (auto &S : Incoming) {
-              const auto A = read(S, C), B = read(S, L);
-              const auto Expected = Invert ? Ctx.mkNe(A, B) : Ctx.mkEq(A, B);
-              if (!entails(S.Predicate,
-                           Ctx.mkEq(Ctx.mkExtract(read(S, W.Location), Bit, 1),
-                                    Expected))) {
-                Holds = false;
+              const auto Initial = Ctx.mkExtract(read(S, W.Location), Bit, 1);
+              if (Ctx.isConst(Initial))
+                continue;
+              auto Bound = read(S, L);
+              if (Mask)
+                Bound = Ctx.mkExtract(Bound, std::countr_zero(Mask),
+                                      std::popcount(Mask));
+              checker().nodes();
+              const auto &BoundVars = relationVars(Bound);
+              if (BoundVars.empty())
+                continue;
+              const auto &Vars = relationVars(Initial);
+              if (std::includes(Vars.begin(), Vars.end(), BoundVars.begin(),
+                                BoundVars.end())) {
+                Depends = true;
                 break;
               }
             }
-            if (Holds)
-              W.BitRelations.push_back({Bit, C, L, Invert});
+            if (!Depends)
+              continue;
+            for (bool Invert : {false, true}) {
+              // Late lanes can add candidates, never retry rejected or pruned
+              // bit/counter/bound/polarity/projection tuples.
+              if (std::any_of(W.BitAttempts.begin(), W.BitAttempts.end(),
+                              [&](const auto &A) {
+                                return A.Bit == Bit && A.Invert == Invert &&
+                                       A.Mask == Mask &&
+                                       sameLocation(A.Counter, C) &&
+                                       sameLocation(A.Bound, L);
+                              }))
+                continue;
+              const Word::BitRelation Relation{Bit, C, L, Invert, Mask};
+              W.BitAttempts.push_back(Relation);
+              bool Holds = true;
+              for (auto &S : Incoming) {
+                if (!entails(
+                        S.Predicate,
+                        Ctx.mkEq(Ctx.mkExtract(read(S, W.Location), Bit, 1),
+                                 bitComparison(S, Relation)))) {
+                  Holds = false;
+                  break;
+                }
+              }
+              if (Holds)
+                W.BitRelations.push_back(Relation);
+            }
           }
         }
-      }
     }
     return OldSize != W.BitRelations.size();
   }
@@ -3933,11 +3960,7 @@ class LoopPlanInference {
     // a fresh general transition round before accepting the template.
     auto &Incoming = RelationArrivals[ActiveCutpoint];
     const auto OldSize = W.CounterBounds.size();
-    std::vector<uint64_t> Masks{0};
-    for (const auto &C : LaneCounters)
-      if (sameLocation(W.Location, C.Location))
-        Masks.push_back(C.Guard.Mask);
-    for (uint64_t Mask : Masks) {
+    for (uint64_t Mask : counterMasks(W.Location)) {
       for (const auto &L : RelationBounds[ActiveCutpoint]) {
         if (L.Bytes != W.Location.Bytes ||
             std::any_of(W.CounterBoundAttempts.begin(),
@@ -4262,9 +4285,7 @@ class LoopPlanInference {
         }
         Changed |= std::erase_if(W.BitRelations, [&](const auto &B) {
                      for (auto &S : Incoming) {
-                       const auto A = read(S, B.Counter), Z = read(S, B.Bound);
-                       const auto Expected =
-                           B.Invert ? Ctx.mkNe(A, Z) : Ctx.mkEq(A, Z);
+                       const auto Expected = bitComparison(S, B);
                        if (!entails(S.Predicate,
                                     Ctx.mkEq(Ctx.mkExtract(read(S, W.Location),
                                                            B.Bit, 1),
