@@ -102,7 +102,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(14); // Certificate semantic schema, independent of report formatting.
+  Number(15); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.DeferNativeConditionalEdges);
@@ -1003,7 +1003,7 @@ class Checker {
           // or discard that slot. scheduleNative collects every actual RET
           // destination after complete target enumeration, under the same
           // evidence and resource checks as any other reached instruction.
-          // The opt-in finite mode collects both conditional arms through
+          // The opt-in policy collects both conditional arms through
           // scheduleNative only after paired control equality and feasibility.
           // No bytes, boundary or semantics are asserted for a skipped arm.
           if (Op.Opcode == NdOp::COND_BR &&
@@ -1521,20 +1521,24 @@ class Checker {
   }
 
   void validate() {
+    // Both inductive segments and finite executions use the same native
+    // collector. Candidate inference needs an actual image reader as well;
+    // semantic LowIR labels alone cannot authorize native collection policy.
+    const bool Native = Provider || (CandidateExecution && ReadProvider);
     const bool FiniteNative =
         (Provider || (CandidateExecution && ReadProvider && Refinement &&
                       Refinement->NativeFinite)) &&
         (!Refinement || (Refinement->NativeFinite && !Refinement->LoopPlan &&
                          Refinement->PrefixSearchCutpoint < 0));
-    if (Contract.RetainUnauditedNativeBoundaries && !FiniteNative)
+    if (Contract.RetainUnauditedNativeBoundaries && !Native)
       fail(Status::Unsupported,
-           "unaudited boundaries require the finite native proof API");
+           "unaudited boundaries require a native proof provider");
     if (Contract.AllowOverlappingNativeInstructions && !FiniteNative)
       fail(Status::Unsupported,
            "overlapping instructions require the finite native proof API");
-    if (Contract.DeferNativeConditionalEdges && !FiniteNative)
+    if (Contract.DeferNativeConditionalEdges && !Native)
       fail(Status::Unsupported,
-           "deferred conditional edges require the finite native proof API");
+           "deferred conditional edges require a native proof provider");
     if (Contract.X64FlagsProfile) {
       if (!Provider && !CandidateExecution)
         fail(Status::Unsupported, "flags profiles require the native API");
@@ -2686,10 +2690,10 @@ LowIRRefinementResult runRefinement(
   const auto Finish = [&](bool Success) {
     return refinementResult(Session, Contract, Provider != nullptr, Success);
   };
-  if (Contract.RetainUnauditedNativeBoundaries && !Session.NativeFinite) {
+  if (Contract.RetainUnauditedNativeBoundaries && !Provider) {
     Session.Statistics.Status = Status::Unsupported;
     Session.Statistics.Diagnostic =
-        "unaudited boundaries require the finite native proof API";
+        "unaudited boundaries require a native proof provider";
     return Finish(false);
   }
   if (Contract.AllowOverlappingNativeInstructions && !Session.NativeFinite) {
@@ -2698,10 +2702,10 @@ LowIRRefinementResult runRefinement(
         "overlapping instructions require the finite native proof API";
     return Finish(false);
   }
-  if (Contract.DeferNativeConditionalEdges && !Session.NativeFinite) {
+  if (Contract.DeferNativeConditionalEdges && !Provider) {
     Session.Statistics.Status = Status::Unsupported;
     Session.Statistics.Diagnostic =
-        "deferred conditional edges require the finite native proof API";
+        "deferred conditional edges require a native proof provider";
     return Finish(false);
   }
   if (Witness != LowIRRefinementWitness::LiftedBits &&
@@ -4541,13 +4545,13 @@ public:
     const bool FilterBranches =
         Family == detail::LowIRLoopCutFamily::FilteredBranchArms;
     try {
-      if (Contract.RetainUnauditedNativeBoundaries)
+      if (Contract.RetainUnauditedNativeBoundaries && !ReadProvider)
         stop(Status::Unsupported,
              "unaudited boundaries are unsupported by loop inference");
       if (Contract.AllowOverlappingNativeInstructions)
         stop(Status::Unsupported,
              "overlapping instructions are unsupported by loop inference");
-      if (Contract.DeferNativeConditionalEdges)
+      if (Contract.DeferNativeConditionalEdges && !ReadProvider)
         stop(Status::Unsupported,
              "deferred conditional edges are unsupported by loop inference");
       if (!prepareCandidateRecords(Session, Records) ||

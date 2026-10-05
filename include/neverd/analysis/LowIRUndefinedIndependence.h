@@ -82,22 +82,24 @@ struct LowIRIndependenceContract {
   std::vector<LowIRIndependenceFrameRange> PreservedFrameRanges;
   bool ObserveWrittenFrameBytes = true;
   llvm::endianness ByteOrder = llvm::endianness::little;
-  /// Native finite proofs only. Retain strictly lifted instructions with
+  /// Native proofs only. Retain strictly lifted instructions with
   /// Missing effect coverage as explicit refusal boundaries. Success requires
   /// proving them unreachable; reaching one never executes its LowIR. Static
-  /// LowIR and loop proof/inference APIs reject this option. In selected-value
-  /// refinement, unreachability is relative to the declared witness.
+  /// LowIR APIs without a native provider reject this option. Every inductive
+  /// segment rechecks unreachability over its complete domain. In selected-
+  /// value refinement, unreachability is relative to the declared witness.
   bool RetainUnauditedNativeBoundaries = false;
   /// Finite native proofs only. Different instruction entry addresses may
   /// cover the same immutable bytes when every overlapping byte agrees.
   /// Each entry still requires its own complete boundary and semantic
   /// evidence. Static LowIR and inductive loop APIs reject this option.
   bool AllowOverlappingNativeInstructions = false;
-  /// Finite native proofs only. Collect conditional successors only after
+  /// Native proofs only. Collect conditional successors only after
   /// their existing paired-control and feasibility checks. Every feasible
   /// destination still needs complete byte and semantic evidence; skipped
   /// arms have no instruction-inventory claim. The default eagerly audits
-  /// both arms. Static LowIR and inductive loop APIs reject this option.
+  /// both arms. Every inductive segment checks its entire domain. Static
+  /// LowIR APIs without a native provider reject this option.
   bool DeferNativeConditionalEdges = false;
 };
 

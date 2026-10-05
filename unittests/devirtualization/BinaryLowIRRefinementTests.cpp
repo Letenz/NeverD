@@ -341,7 +341,7 @@ TEST(BinaryLowIRRefinement, DeferredEdgesRespectSelectedUndefinedWitness) {
   EXPECT_FALSE(Independent.Certificate);
 }
 
-TEST(BinaryLowIRRefinement, DeferredEdgePolicyBindsDigestsAndRejectsLoops) {
+TEST(BinaryLowIRRefinement, DeferredEdgePolicyKeepsDigestsAndPlanValidation) {
   Program P({0xb8, 7, 0, 0, 0, 0xc3});
   const auto Recovery = P.recover();
   ASSERT_TRUE(Recovery.complete());
@@ -355,9 +355,11 @@ TEST(BinaryLowIRRefinement, DeferredEdgePolicyBindsDigestsAndRejectsLoops) {
   EXPECT_NE(Strict.Certificate->Relation.InputDigest,
             Deferred.Certificate->Relation.InputDigest);
   EXPECT_NE(Strict.Certificate->InputDigest, Deferred.Certificate->InputDigest);
-  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
-                                         Recovery.Residual, P.Contract, {}),
-          Status::Unsupported);
+  const auto Loop = checkBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery.Residual, P.Contract, {});
+  refused(Loop, Status::Invalid);
+  EXPECT_NE(Loop.Proof.Diagnostic.find("nonempty cutpoint plan"),
+            std::string::npos);
   const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
       P.Image, Entry, P.Options, Recovery, P.Contract);
   EXPECT_EQ(Inferred.Inference.Status, LowIRLoopInferenceStatus::Unsupported);
@@ -684,7 +686,7 @@ TEST(BinaryLowIRRefinement, BoundaryUnreachabilityIsRelativeToSelectedWitness) {
   EXPECT_FALSE(Independent.Certificate);
 }
 
-TEST(BinaryLowIRRefinement, UnauditedBoundaryOptionIsRejectedByLoopAPIs) {
+TEST(BinaryLowIRRefinement, BoundaryPolicyKeepsDigestsAndPlanValidation) {
   Program P({0xb8, 7, 0, 0, 0, 0xc3});
   const auto Recovery = P.recover();
   ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
@@ -700,9 +702,11 @@ TEST(BinaryLowIRRefinement, UnauditedBoundaryOptionIsRejectedByLoopAPIs) {
             Finite.Certificate->Relation.InputDigest);
   EXPECT_NE(Strict.Certificate->InputDigest, Finite.Certificate->InputDigest);
   LowIRLoopRefinementPlan Plan;
-  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
-                                         Recovery.Residual, P.Contract, Plan),
-          Status::Unsupported);
+  const auto Loop = checkBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Plan);
+  refused(Loop, Status::Invalid);
+  EXPECT_NE(Loop.Proof.Diagnostic.find("nonempty cutpoint plan"),
+            std::string::npos);
   const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
       P.Image, Entry, P.Options, Recovery, P.Contract);
   EXPECT_EQ(Inferred.Inference.Status, LowIRLoopInferenceStatus::Unsupported);
@@ -1066,6 +1070,109 @@ TEST(BinaryLowIRLoopRefinement, CandidateTemporaryRetainsItsRealEntryValue) {
   Candidate.Blocks.back().Ops.front().Inputs[0] = NdVar::reg(x86reg::RDX, 8);
   Candidate.FunctionTemporaries.clear();
   refused(Check(), Status::Invalid);
+}
+
+TEST(BinaryLowIRLoopRefinement, NativeCollectionChecksEveryInductionDomain) {
+  for (bool Deferred : {false, true}) {
+    SCOPED_TRACE(Deferred);
+    // top: jrcxz done; test rcx,rcx; jne body; bad: RCL EDX,1;
+    // body: add rax,rcx; lea rcx,[rcx-1]; jmp top; done: ret.
+    Program P({0xe3, 16, 0x48, 0x85, 0xc9, 0x75, 2, 0xd1, 0xd2, 0x48, 0x01,
+               0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xee, 0xc3});
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    if (Deferred) {
+      // The candidate is an untrusted hint. Mutate the native dead arm after
+      // recovery: neither invalid byte may be collected by the proof.
+      P.Image.Segments[0].Data[7] = 0x16;
+      P.Image.Segments[0].Data[8] = 0x06;
+    }
+    LowIRLoopCutpoint Cut;
+    Cut.OriginalAddress = Entry;
+    Cut.UseEntryPrefix = true;
+    unsigned Mappings = 0;
+    for (const auto &Origin : Recovery.Origins)
+      if (Origin.NativeInstruction.Address == Entry) {
+        Cut.CandidateAddress = Origin.ResidualAddress;
+        ++Mappings;
+      }
+    ASSERT_EQ(Mappings, 1U);
+    const auto Parameter = [&](uint64_t Offset, uint16_t Bytes) {
+      const auto T = NdVar::tmp(Cut.Inputs.size() * 8, Bytes);
+      const LowIRLoopLocation L{LowIRLoopSpace::Register, Offset, Bytes};
+      Cut.Inputs.push_back({LowIRLoopSide::Original, L, T});
+      Cut.OriginalState.push_back({L, T});
+      Cut.CandidateState.push_back({L, T});
+      return T;
+    };
+    Parameter(x86reg::RAX, 8);
+    Cut.Rank = {Parameter(x86reg::RCX, 8)};
+    for (auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                      x86reg::SF, x86reg::OF})
+      Parameter(Flag, 1);
+    const LowIRLoopRefinementPlan Plan{{Cut}};
+    const auto Check = [&](const LowIRRefinementLimits &Limits = {}) {
+      return checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                            Recovery.Residual, P.Contract, Plan,
+                                            Witness::LiftedBits, Limits);
+    };
+    refused(Check(), Status::Unsupported);
+    P.Contract.DeferNativeConditionalEdges = Deferred;
+    P.Contract.RetainUnauditedNativeBoundaries = !Deferred;
+    const auto Good = Check();
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_EQ(Good.Certificate->Relation.Scope,
+              LowIRRefinementScope::InductiveNativeToLowIRLoops);
+    EXPECT_EQ(Good.Proof.RankingChecks, 1U);
+    EXPECT_LT(Good.Proof.Instructions, 32U);
+    EXPECT_EQ(Good.Certificate->Relation.NativeAuditBoundaries.size(),
+              Deferred ? 0U : 1U);
+    const auto Automatic = inferAndCheckBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery, P.Contract);
+    ASSERT_TRUE(Automatic.Inference.inferred())
+        << Automatic.Inference.Diagnostic;
+    ASSERT_TRUE(Automatic.proved()) << Automatic.Refinement.Proof.Diagnostic;
+    const auto OtherWitness = checkBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Plan,
+        Witness::ZeroBits);
+    ASSERT_TRUE(OtherWitness.proved()) << OtherWitness.Proof.Diagnostic;
+    if (Deferred) {
+      P.Contract.RetainUnauditedNativeBoundaries = true;
+      const auto Combined = Check();
+      ASSERT_TRUE(Combined.proved()) << Combined.Proof.Diagnostic;
+      EXPECT_TRUE(Combined.Certificate->Relation.NativeAuditBoundaries.empty());
+      EXPECT_NE(Good.Certificate->InputDigest,
+                Combined.Certificate->InputDigest);
+      P.Contract.RetainUnauditedNativeBoundaries = false;
+    }
+    if (!Deferred) {
+      EXPECT_EQ(
+          Good.Certificate->Relation.NativeAuditBoundaries[0].Boundary.Address,
+          Entry + 7);
+      P.Image.Segments[0].Data[8] = 0xda; // Dead RCR, still bound to the proof.
+      const auto Changed = Check();
+      ASSERT_TRUE(Changed.proved()) << Changed.Proof.Diagnostic;
+      EXPECT_NE(Good.Certificate->InputDigest,
+                Changed.Certificate->InputDigest);
+      EXPECT_NE(Good.Certificate->Relation.OriginalDigest,
+                Changed.Certificate->Relation.OriginalDigest);
+      P.Image.Segments[0].Data[8] = 0xd2;
+    }
+    LowIRRefinementLimits Short;
+    Short.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+    ASSERT_TRUE(Check(Short).proved());
+    Short.Execution.MaxSolverQueries = Good.Proof.SolverQueries - 1;
+    refused(Check(Short), Status::BudgetExceeded);
+    Short = {};
+    Short.Execution.MaxInstructions = Good.Proof.Instructions - 1;
+    refused(Check(Short), Status::BudgetExceeded);
+    P.Image.Segments[0].Data[5] = 0x74; // JE makes the bad arm feasible.
+    refused(Check(), Status::Unsupported);
+    P.Image.Segments[0].Data[5] = 0x75;
+    P.Image.Segments[0].Data[15] =
+        0xfe; // A wrong rank update is still checked.
+    refused(Check(), Status::Different);
+  }
 }
 
 TEST(BinaryLowIRLoopRefinement, PhysicalCallsAndEarlierStackWrites) {
