@@ -254,6 +254,25 @@ TEST_P(X64Atomic, MissingWritePermissionDoesNotInventAResultObservation) {
   EXPECT_EQ(llvm::support::endian::read64le(Bytes.data()), Original);
 }
 
+TEST_P(X64Atomic, MissingOperandReportsWriteAccessBeforeAnyResult) {
+  const uint64_t Accumulator = matchingAccumulator(false);
+  seed(Accumulator);
+  llvm::cantFail(CPU->addressSpace()->unmap(Data, memory::PageSize));
+  unsigned Writes = 0;
+  BackendHooks Hooks;
+  Hooks.Write = [&](uint64_t, unsigned, uint64_t) { ++Writes; };
+  Hooks.RecoverableFault = [](const BackendFault &) { return true; };
+  EXPECT_EQ(run(std::move(Hooks)).Kind, ExecutionExitKind::RecoverableFault);
+  const auto Fault = CPU->takeRecoverableFault();
+  ASSERT_TRUE(Fault);
+  EXPECT_EQ(Fault->Kind, BackendFaultKind::UnmappedMemory);
+  EXPECT_EQ(Fault->Access, BackendAccessKind::Write);
+  EXPECT_EQ(Fault->Address, Data);
+  EXPECT_EQ(Writes, 0u);
+  EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::AX)), Accumulator);
+  EXPECT_EQ(llvm::cantFail(CPU->readInteger(Alias, WordBytes)), Original);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Transports, X64Atomic,
     testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,

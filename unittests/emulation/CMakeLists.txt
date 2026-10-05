@@ -114,6 +114,7 @@ target_include_directories(NeverDX64MemoryUpdateTests PRIVATE
 add_neverd_unittest(NeverDRAMTransactionTests
   RAMTransactionTests.cpp
   X64AtomicTests.cpp
+  X64WideAtomicTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDRAMTransactionTests PRIVATE
