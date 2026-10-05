@@ -6368,9 +6368,18 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             resolveOperand(Block, I, Def.Inputs[2], Depth + 1);
         const ResolverResult Condition =
             resolvePredicate(Block, I, Def.Inputs[0], Depth + 1);
+        if (Condition.Kind == ResolverResultKind::Value && Condition.Value &&
+            Condition.Value->K == ResolverValueExpr::Kind::Constant &&
+            Condition.Value->Provenance == ConstantAddressProvenance::Scalar) {
+          const auto &Chosen =
+              Condition.Value->Constant ? TrueValue : FalseValue;
+          if (Chosen.Kind == ResolverResultKind::Value && Chosen.Value &&
+              Chosen.Value->Size == Def.Output.Size)
+            Full = Chosen.Value;
+        }
         TrueValue = constrainOnCondition(TrueValue, Condition, true);
         FalseValue = constrainOnCondition(FalseValue, Condition, false);
-        if (TrueValue.Kind == ResolverResultKind::Value &&
+        if (!Full && TrueValue.Kind == ResolverResultKind::Value &&
             FalseValue.Kind == ResolverResultKind::Value) {
           ResolverRootKey MergeRoot;
           if (!makeResolverRootKey(MergeRoot, "Q",
@@ -6479,7 +6488,28 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           Result = resolverInvalid();
           break;
         }
-        if (!Dependencies.empty())
+        // Architectural division guards use byte-sized predicates. Fold
+        // those exact scalar facts before a SELECT transports its arm; keep
+        // other transforms on the ordinary symbolic path.
+        if (Def.Output.Size == 1 && Dependencies.size() == 2 &&
+            consumeEvidence(24)) {
+          std::vector<std::optional<uint64_t>> Constants;
+          std::vector<uint16_t> Sizes;
+          for (const auto &Input : Dependencies) {
+            Constants.push_back(Input->K == ResolverValueExpr::Kind::Constant &&
+                                        Input->Provenance ==
+                                            ConstantAddressProvenance::Scalar
+                                    ? std::optional<uint64_t>(Input->Constant)
+                                    : std::nullopt);
+            Sizes.push_back(Input->Size);
+          }
+          if (const auto Folded = evaluateJumpTableGuardPartialPrimitive(
+                  Def.Opcode, Def.Output.Size, Constants, Sizes))
+            Full = budgetedResolverConstant(*Folded, Def.Output.Size,
+                                            ConstantAddressProvenance::Scalar,
+                                            InvalidVA, consumeEvidence);
+        }
+        if (!Full && !Dependencies.empty())
           Full =
               namedResolverTransform(Def.Output.Size, "T",
                                      {static_cast<unsigned>(Def.Opcode),
