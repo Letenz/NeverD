@@ -1514,10 +1514,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // valid C, unless the name is already an ordinary identifier.
   std::set<std::string> DeclaredSyntheticRecords;
   auto DeclareSyntheticThis = [&](llvm::StringRef Identifier) {
-    const MsvcAtlCallee *Atl = msvcAtlCallee(Identifier);
-    if (!Atl)
+    const MsvcCallee *Msvc = msvcCallee(Identifier);
+    if (!Msvc)
       return;
-    const TypeRef This = msvcAtlSyntheticThis(Identifier, *Atl);
+    const TypeRef This = msvcSyntheticThis(Identifier, *Msvc);
     if (!This || This->Kind != NdTypeKind::Ptr || !This->Pointee ||
         This->Pointee->Kind != NdTypeKind::Struct || This->Pointee->IsEnum)
       return;
@@ -1690,7 +1690,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         OS << " __attribute__((noreturn))";
       OS << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name) &&
-               msvcAtlCallee(Identifier)) {
+               msvcCallee(Identifier)) {
       DeclareSyntheticThis(Identifier);
       OS << debugExternPrototype(FunctionSym{}, Identifier) << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {

@@ -11,7 +11,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
-#include "neverd/backend/c/MsvcAtlCallee.h"
+#include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/debug/PDBLoader.h"
@@ -21134,27 +21134,27 @@ TEST(HighCPointerAddresses, CtorSyntheticPrototypeAllowsExtraArgs) {
       << Source;
 }
 
-TEST(HighCPointerAddresses, MsvcAtlCalleeTableOwnsExactAndSuffixNames) {
-  EXPECT_NE(msvcAtlCallee("IsEmpty"), nullptr);
-  EXPECT_NE(msvcAtlCallee("GetLength"), nullptr);
-  EXPECT_NE(msvcAtlCallee("GetManager"), nullptr);
-  EXPECT_NE(msvcAtlCallee("CStringT_dtor"), nullptr);
-  EXPECT_NE(msvcAtlCallee("CStringT_ctor"), nullptr);
-  EXPECT_NE(msvcAtlSyntheticPrototype("CStringT_ctor",
-                                      *msvcAtlCallee("CStringT_ctor"), true)
+TEST(HighCPointerAddresses, MsvcCalleeTableOwnsExactAndSuffixNames) {
+  EXPECT_NE(msvcCallee("IsEmpty"), nullptr);
+  EXPECT_NE(msvcCallee("GetLength"), nullptr);
+  EXPECT_NE(msvcCallee("GetManager"), nullptr);
+  EXPECT_NE(msvcCallee("CStringT_dtor"), nullptr);
+  EXPECT_NE(msvcCallee("CStringT_ctor"), nullptr);
+  EXPECT_NE(msvcSyntheticPrototype("CStringT_ctor",
+                                   *msvcCallee("CStringT_ctor"), true)
                 .find("CStringT* this, ..."),
             std::string::npos);
-  EXPECT_NE(msvcAtlCallee("CStringT_assign"), nullptr);
-  EXPECT_NE(msvcAtlCallee("CSimpleStringT_cstr"), nullptr);
-  EXPECT_NE(msvcAtlCallee("Format"), nullptr);
-  EXPECT_NE(msvcAtlCallee("Concatenate"), nullptr);
-  EXPECT_NE(msvcAtlCallee("Foo::~Foo"), nullptr);
-  EXPECT_EQ(msvcAtlCallee("LookupTextW"), nullptr);
-  EXPECT_STREQ(msvcAtlSpecialMemberStem('0'), "ctor");
-  EXPECT_STREQ(msvcAtlSpecialMemberStem('1'), "dtor");
-  EXPECT_STREQ(msvcAtlSpecialMemberStem('4'), "assign");
-  EXPECT_STREQ(msvcAtlSpecialMemberStem('B'), "cstr");
-  EXPECT_EQ(msvcAtlSpecialMemberStem('2'), nullptr);
+  EXPECT_NE(msvcCallee("CStringT_assign"), nullptr);
+  EXPECT_NE(msvcCallee("CSimpleStringT_cstr"), nullptr);
+  EXPECT_NE(msvcCallee("Format"), nullptr);
+  EXPECT_NE(msvcCallee("Concatenate"), nullptr);
+  EXPECT_NE(msvcCallee("Foo::~Foo"), nullptr);
+  EXPECT_EQ(msvcCallee("LookupTextW"), nullptr);
+  EXPECT_STREQ(msvcSpecialMemberStem('0'), "ctor");
+  EXPECT_STREQ(msvcSpecialMemberStem('1'), "dtor");
+  EXPECT_STREQ(msvcSpecialMemberStem('4'), "assign");
+  EXPECT_STREQ(msvcSpecialMemberStem('B'), "cstr");
+  EXPECT_EQ(msvcSpecialMemberStem('2'), nullptr);
 }
 
 TEST(HighCPointerAddresses, SingleQuestionMarkNameIsNotASpecialMember) {

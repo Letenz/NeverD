@@ -14,7 +14,7 @@
 
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
-#include "neverd/backend/c/MsvcAtlCallee.h"
+#include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -3187,10 +3187,10 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
   return std::string(Op) + "(" + Ptr + ", " + Val + ", " + Ord + ")";
 }
 
-bool LLVMCWriter::unreadAtlThisReturn(const llvm::CallBase &Call) const {
-  const MsvcAtlCallee *Atl = msvcAtlCallee(printedCalleeName(Call));
-  if (!Atl || (Atl->Kind != MsvcAtlCalleeKind::Ctor &&
-               Atl->Kind != MsvcAtlCalleeKind::Dtor))
+bool LLVMCWriter::unreadMsvcThisReturn(const llvm::CallBase &Call) const {
+  const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call));
+  if (!Msvc || (Msvc->Kind != MsvcCalleeKind::Ctor &&
+                Msvc->Kind != MsvcCalleeKind::Dtor))
     return false;
   const auto *CI = llvm::dyn_cast<llvm::CallInst>(&Call);
   if (!CI)
@@ -3216,8 +3216,8 @@ bool LLVMCWriter::unreadAtlThisReturn(const llvm::CallBase &Call) const {
 std::string LLVMCWriter::ctorThisAddress(const llvm::CallBase &Call) {
   if (Call.arg_empty())
     return {};
-  const MsvcAtlCallee *Atl = msvcAtlCallee(printedCalleeName(Call));
-  if (!Atl || Atl->Kind != MsvcAtlCalleeKind::Ctor)
+  const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call));
+  if (!Msvc || Msvc->Kind != MsvcCalleeKind::Ctor)
     return {};
   const std::string Addr = valueStr(Call.getArgOperand(0));
   if (!Addr.starts_with("&"))

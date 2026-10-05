@@ -1832,13 +1832,13 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             if (auto FS = debugCallee(*Call))
               ReturnType = FS->ReturnType;
             if (!ReturnType)
-              if (const MsvcAtlCallee *Atl =
-                      msvcAtlCallee(printedCalleeName(*Call))) {
-                if (Atl->ReturnKind == MsvcAtlReturnKind::WCharPtr)
+              if (const MsvcCallee *Msvc =
+                      msvcCallee(printedCalleeName(*Call))) {
+                if (Msvc->ReturnKind == MsvcReturnKind::WCharPtr)
                   ReturnType = NdType::makePtr(NdType::makeInt(2, false));
-                else if (Atl->ReturnKind == MsvcAtlReturnKind::VoidPtr)
+                else if (Msvc->ReturnKind == MsvcReturnKind::VoidPtr)
                   ReturnType = NdType::makePtr();
-                else if (Atl->ReturnKind == MsvcAtlReturnKind::Int32)
+                else if (Msvc->ReturnKind == MsvcReturnKind::Int32)
                   ReturnType = NdType::makeInt(4, true);
               }
             if (!ReturnType && Call->getType()->isPointerTy())
@@ -3921,7 +3921,7 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   }
   if (ResultLive && !ctorThisAddress(Call).empty())
     ResultLive = false;
-  if (ResultLive && unreadAtlThisReturn(Call))
+  if (ResultLive && unreadMsvcThisReturn(Call))
     ResultLive = false;
   if (ResultLive)
     OS << Name << " = ";
@@ -4438,8 +4438,8 @@ std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
     if (Slot != PhiTailSlot)
       return getName(Slot);
   }
-  if (const MsvcAtlCallee *Atl = msvcAtlCallee(printedCalleeName(Call))) {
-    const TypeRef Expected = msvcAtlExpectedCallArgType(*Atl, ArgIdx);
+  if (const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call))) {
+    const TypeRef Expected = msvcExpectedCallArgType(*Msvc, ArgIdx);
     if (Expected && Expected->Kind == NdTypeKind::Int) {
       const llvm::Value *Inner = peelIntegerView(Arg);
       if (Inner && Inner != Arg)
