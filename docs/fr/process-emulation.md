@@ -95,6 +95,24 @@ Les identifiants statiques 0–9 et 11 sont acceptés. Chaque horloge est indép
 
 `clock_gettime`, `gettimeofday` et `time` sur x64 partagent ces entrées. Une entrée absente, une horloge dynamique ou une écriture partielle non modélisée provoque un arrêt explicite ; les écritures terminées sont conservées. Réglage du temps, sommeil et horloges matérielles restent non pris en charge. Voir le [contrat complet des horloges](../process-emulation.md#explicit-guest-clocks) pour l’ordre des écritures, les erreurs et les pointeurs.
 
+<a id="explicit-memory-files"></a>
+
+<!-- i18n-section: linux-files -->
+
+## Fichiers explicites en mémoire
+
+`linux_files` fournit un catalogue fermé de fichiers immuables à Linux ELF64 et Android. Le tableau obligatoire `files` peut être vide ; chaque entrée contient seulement un chemin absolu canonique `path` et les octets `bytes_hex`. Aucun fichier hôte ni contenu `/proc` implicite n’est consulté. Sans option, les services restent non modélisés ; un chemin absent renvoie `ENOENT`.
+
+```json
+{"linux_files":{"files":[
+  {"path":"/fixture/data","bytes_hex":"00ff410a805a"}],
+  "descriptor_limit":256}}
+```
+
+Chaque ouverture possède son curseur ; Bionic, `syscall`, les traps et les threads invités partagent les descripteurs. La fermeture libère le plus petit numéro réutilisable. Sont admis `open/openat` en lecture seule, `read/close`, `lseek` ordinaire, `O_CLOEXEC` et le `O_LARGEFILE` de l’architecture. Bionic seul convertit errno. Un défaut de lecture conserve le préfixe copié. stdin n’a aucun contenu par défaut ; chemins relatifs, répertoires, écritures et liens restent exclus.
+
+C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Profil Windows PE64

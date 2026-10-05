@@ -4,7 +4,7 @@
 AArch64 shared library using NeverD's CPU, address space, AAPCS64 call frames,
 execution sessions, and Linux syscall models. This is a bounded native analysis
 environment, with explicit inputs and observable failures. It does not boot an
-Android system or supply ART, JNI, Binder, signals, a filesystem, or a
+Android system or supply ART, JNI, Binder, signals, a general filesystem, or a
 network. It never calls host functions to satisfy a guest import.
 
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`. The host transport is selected
@@ -183,6 +183,12 @@ The supported Bionic subset is:
   bits and does not update TLS errno.
   `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
   for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
+- `open`/`open64`, `openat`/`openat64`, `read`, `close` and `lseek`/`lseek64`
+  use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
+  Raw traps, imported calls and guest threads share descriptors and cursors;
+  only Bionic converts negative errors into `-1` and TLS errno. No host files or
+  implicit proc data are visible. File writes, directory/relative opens and
+  unmodeled flags stop explicitly.
 - `syscall(number, ...)` uses the same Linux service table and effects. The
   AArch64 wrapper takes the number from x0 and six arguments from x1–x6;
   x7 is unused. It preserves full-width results and applies Bionic's -1/errno

@@ -500,22 +500,21 @@ TEST(AndroidThreadMemory, CapacityRefusalKeepsInputsAndGenericMappingFailures) {
     ASSERT_EQ(llvm::toString(Space.map(
                   Buffer, Page, Read | Write | Execute | UserAccessible)),
               "");
-    ASSERT_EQ(llvm::toString(Space.map(
-                  Buffer + Page, Page, Read | Write | UserAccessible)),
+    ASSERT_EQ(llvm::toString(Space.map(Buffer + Page, Page,
+                                       Read | Write | UserAccessible)),
               "");
     ASSERT_EQ(llvm::toString(Space.map(android_model::TLSAddress, Page,
-                                      Read | Write | UserAccessible)),
+                                       Read | Write | UserAccessible)),
               "");
     ASSERT_EQ(llvm::toString(CPU.writeInteger(Buffer, Sentinel, 8)), "");
     ASSERT_EQ(llvm::toString(CPU.writeInteger(android_model::TLSAddress,
-                                             android_model::TLSAddress, 8)),
+                                              android_model::TLSAddress, 8)),
               "");
-    ASSERT_EQ(llvm::toString(
-                  CPU.writeInteger(android_model::ErrnoAddress, 91, 4)),
-              "");
-    ASSERT_EQ(llvm::toString(CPU.writeRegister(
-                  CPURegister::AArch64TPIDR_EL0,
-                  {android_model::TLSAddress, 0})),
+    ASSERT_EQ(
+        llvm::toString(CPU.writeInteger(android_model::ErrnoAddress, 91, 4)),
+        "");
+    ASSERT_EQ(llvm::toString(CPU.writeRegister(CPURegister::AArch64TPIDR_EL0,
+                                               {android_model::TLSAddress, 0})),
               "");
     ProcessOptions Options;
     Options.MemoryLimit = MemoryLimit;
@@ -550,9 +549,9 @@ TEST(AndroidThreadMemory, CapacityRefusalKeepsInputsAndGenericMappingFailures) {
       llvm::consumeError(std::move(E));
     } else {
       // A slot collision is a generic mapping error, not capacity exhaustion.
-      ASSERT_EQ(llvm::toString(Space.map(
-                    android_model::thread_model::ArenaBase + Page, Page,
-                    Read | Write | UserAccessible)),
+      ASSERT_EQ(llvm::toString(
+                    Space.map(android_model::thread_model::ArenaBase + Page,
+                              Page, Read | Write | UserAccessible)),
                 "");
     }
     ASSERT_GE(MemoryLimit - Space.mappedBytes(), ChildBytes);
@@ -560,11 +559,12 @@ TEST(AndroidThreadMemory, CapacityRefusalKeepsInputsAndGenericMappingFailures) {
                    Allocated = RAM->allocatedBytes(),
                    Generation = Space.mappingGeneration();
     const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, Page};
-    linux_model::LinuxMemory Memory(Space, Layout, Buffer + 2 * Page, Options);
+    linux_model::LinuxServices Kernel(CPU, Layout, Buffer + 2 * Page, Options,
+                                      Result);
     auto Budget = ExecutionBudget::create(Options.Limits);
     ASSERT_TRUE(bool(Budget)) << llvm::toString(Budget.takeError());
     const android_model::LinkedImage Linked{};
-    android_model::Bionic Model(CPU, Memory, Layout, Options, Result, **Budget,
+    android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, **Budget,
                                 Linked, &Threads);
     NativeCallEvent Call{};
     Call.Name = "pthread_create";

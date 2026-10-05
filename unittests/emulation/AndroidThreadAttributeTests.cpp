@@ -324,15 +324,16 @@ TEST(AndroidThreadAttributeMemory,
   ProcessOptions Options;
   Options.Android.emplace();
   const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
-  linux_model::LinuxMemory Memory(Space, Layout, Buffer + 8192, Options);
   ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
                        GuestArchitecture::AArch64,
                        ExecutionBackendKind::Unicorn,
                        {}};
+  linux_model::LinuxServices Kernel(CPU, Layout, Buffer + 8192, Options,
+                                    Result);
   auto Budget = ExecutionBudget::create(Options.Limits);
   ASSERT_TRUE(bool(Budget)) << llvm::toString(Budget.takeError());
   const android_model::LinkedImage Linked{};
-  android_model::Bionic Model(CPU, Memory, Layout, Options, Result, **Budget,
+  android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, **Budget,
                               Linked);
   for (const char *Name :
        {"pthread_attr_init", "pthread_attr_destroy", "pthread_attr_getstack"}) {

@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_ANDROIDINTERNAL_H
 #define NEVERD_EMULATION_ANDROIDINTERNAL_H
-#include "../kernel/LinuxMemory.h"
+#include "../kernel/LinuxServices.h"
 
 #include "neverd/emulation/AndroidNative.h"
 #include "neverd/emulation/IntegerABI.h"
@@ -90,11 +90,11 @@ using BionicResult = llvm::Expected<std::optional<BionicValue>>;
 class GuestThreads;
 class Bionic {
 public:
-  Bionic(ExecutionBackend &CPU, linux_model::LinuxMemory &Memory,
+  Bionic(ExecutionBackend &CPU, linux_model::LinuxServices &Kernel,
          const linux_model::MemoryLayout &Layout, const ProcessOptions &Options,
          ProcessResult &Result, ExecutionBudget &Budget,
          const LinkedImage &Linked, GuestThreads *Threads = nullptr)
-      : CPU(CPU), Memory(Memory), Layout(Layout), Options(Options),
+      : CPU(CPU), Kernel(Kernel), Layout(Layout), Options(Options),
         Result(Result), Budget(Budget), Linked(Linked), Threads(Threads) {}
   bool timedOut() const { return Expired; }
   BionicResult invoke(NativeCallEvent &Call);
@@ -103,7 +103,7 @@ public:
 
 private:
   ExecutionBackend &CPU;
-  linux_model::LinuxMemory &Memory;
+  linux_model::LinuxServices &Kernel;
   const linux_model::MemoryLayout &Layout;
   const ProcessOptions &Options;
   ProcessResult &Result;

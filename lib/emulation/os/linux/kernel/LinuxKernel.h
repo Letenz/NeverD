@@ -26,7 +26,6 @@ enum class ServiceKind {
 #undef NEVERD_LINUX_X64_SERVICE
 #undef NEVERD_LINUX_SERVICE
 };
-class LinuxMemory;
 /// Address policy shared by ELF processes and Android native workloads.
 struct MemoryLayout {
   uint64_t UserLimit, PageSize;
@@ -55,16 +54,5 @@ llvm::Error returnService(ExecutionBackend &CPU, const ServiceRequest &Request,
 llvm::Expected<std::optional<uint64_t>>
 archPrctl(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
           const MemoryLayout &Layout, ProcessResult &Result);
-llvm::Expected<std::optional<uint64_t>>
-handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
-              const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-              const ProcessOptions &Options, ProcessResult &Result,
-              ThreadContext *Thread = nullptr);
-/// Named entry for libc wrappers; syscall numbering stays in serviceABI policy.
-llvm::Expected<std::optional<uint64_t>>
-handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
-              const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-              const ProcessOptions &Options, ProcessResult &Result,
-              ThreadContext *Thread = nullptr);
 } // namespace neverd::emulation::linux_model
 #endif

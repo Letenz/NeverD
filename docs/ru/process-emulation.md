@@ -95,6 +95,24 @@ output = bytes.fromhex(report["stdout_hex"])
 
 `clock_gettime`, `gettimeofday` и x64-вызов `time` используют общие входные значения. При отсутствии входных данных, динамических часах или немоделируемой частичной записи выполнение явно останавливается; завершённые записи сохраняются. Коррекция времени, сон и часы реального устройства не моделируются. Порядок записи, ошибки и указатели описаны в [полном контракте часов](../process-emulation.md#explicit-guest-clocks).
 
+<a id="explicit-memory-files"></a>
+
+<!-- i18n-section: linux-files -->
+
+## Явные файлы в памяти
+
+`linux_files` задаёт закрытый каталог неизменяемых файлов для Linux ELF64 и Android. Обязательный массив `files` может быть пустым; запись содержит только канонический абсолютный `path` и двоичные `bytes_hex`. Файлы хоста и неявные данные `/proc` не читаются. Без опции файловые службы не моделируются; отсутствующий путь возвращает `ENOENT`.
+
+```json
+{"linux_files":{"files":[
+  {"path":"/fixture/data","bytes_hex":"00ff410a805a"}],
+  "descriptor_limit":256}}
+```
+
+Каждое открытие имеет отдельную позицию; Bionic, `syscall`, ловушки и гостевые потоки используют общие дескрипторы. Закрытие освобождает минимальный номер для повторного использования. Поддерживаются `open/openat` только для чтения, `read/close`, обычный `lseek`, `O_CLOEXEC` и архитектурный `O_LARGEFILE`. Только Bionic преобразует errno. Ошибка чтения сохраняет скопированный префикс. Содержимое stdin не задано; относительные пути, каталоги, запись и ссылки исключены.
+
+C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Профиль Windows PE64

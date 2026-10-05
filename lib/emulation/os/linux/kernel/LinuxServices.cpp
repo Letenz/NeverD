@@ -3,7 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "LinuxMemory.h"
+#include "LinuxServices.h"
+
 #include "LinuxTime.h"
 
 #include "neverd/emulation/CPU.h"
@@ -27,25 +28,25 @@ std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
 } // namespace
 
 llvm::Expected<std::optional<uint64_t>>
-handleService(ExecutionBackend &CPU, LinuxMemory &Memory,
-              const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-              const ProcessOptions &Options, ProcessResult &Result,
-              ThreadContext *Thread) {
+LinuxServices::handle(const ProcessServiceEvent &Event, ThreadContext *Thread) {
   auto Kind = serviceKind(CPU.architecture(), Event.Number);
   if (!Kind) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = llvm::formatv(Service, Event.Number).str();
     return std::optional<uint64_t>();
   }
-  return handleService(CPU, Memory, *Kind, Event, Layout, Options, Result,
-                       Thread);
+  return handle(*Kind, Event, Thread);
 }
 llvm::Expected<std::optional<uint64_t>>
-handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
-              const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-              const ProcessOptions &Options, ProcessResult &Result,
-              ThreadContext *Thread) {
+LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
+                      ThreadContext *Thread) {
   switch (Kind) {
+  case ServiceKind::Open:
+  case ServiceKind::OpenAt:
+  case ServiceKind::Read:
+  case ServiceKind::Close:
+  case ServiceKind::Lseek:
+    return Files.handle(Kind, Event, Result);
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:
   case ServiceKind::ClockGetTime:
@@ -80,6 +81,8 @@ handleService(ExecutionBackend &CPU, LinuxMemory &Memory, ServiceKind Kind,
     return archPrctl(CPU, Event, Layout, Result);
   case ServiceKind::Write:
   case ServiceKind::WriteV:
+    if (Options.LinuxFiles && !Files.isOutput(Event.Arguments[0]))
+      return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
     return writeOutput(CPU, Kind, Event, Layout, Options, Result);
   }
   llvm_unreachable("unhandled Linux service kind");

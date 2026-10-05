@@ -6,6 +6,7 @@
 #include "neverd/emulation/ProcessReport.h"
 
 #include "ProcessAndroidJSON.h"
+#include "ProcessLinuxFilesJSON.h"
 #include "ProcessLinuxTimeJSON.h"
 #include "ProcessWindowsJSON.h"
 
@@ -57,6 +58,13 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
   ProcessOptions Options;
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
+    if (Name == field::LinuxFiles) {
+      auto Files = linuxFileOptionsFromJSON(V);
+      if (!Files)
+        return Files.takeError();
+      Options.LinuxFiles = std::move(*Files);
+      continue;
+    }
     if (Name == field::LinuxTime) {
       auto Time = linuxTimeOptionsFromJSON(V);
       if (!Time)
