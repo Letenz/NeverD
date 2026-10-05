@@ -1503,7 +1503,9 @@ add_dependencies(NeverDNativePointerRelocationBoundaryTests neverd)
 
 add_neverd_unittest(NeverDMBASourceTests
   core/MBASourceTests.cpp
+  LINK_LIBS LLVMSupport
 )
+target_include_directories(NeverDMBASourceTests PRIVATE ${LLVM_INCLUDE_DIRS})
 add_neverd_unittest(NeverDMedStackAlignmentTests
   core/MedStackAlignmentTests.cpp
   LINK_COMPONENTS IRMed
