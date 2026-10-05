@@ -7,12 +7,20 @@
 #include "aarch64_exclusive.inc"
 
 #define NEVERD_EXCLUSIVE_ORACLE_VALUE(Name, Value) enum { Name = Value };
+#define NEVERD_EXCLUSIVE_ORACLE_WIDE(Name, Value)                              \
+  static const ExclusiveWord Name = Value;
 #include "AArch64ExclusiveOracle.def"
+#undef NEVERD_EXCLUSIVE_ORACLE_WIDE
 #undef NEVERD_EXCLUSIVE_ORACLE_VALUE
 __declspec(dllimport) void ExitProcess(unsigned);
 __declspec(dllimport) void *GetStdHandle(unsigned);
 __declspec(dllimport) int WriteFile(void *, const void *, unsigned, unsigned *,
                                     void *);
+__declspec(dllimport) void *VirtualAlloc(void *, ExclusiveWord, unsigned,
+                                         unsigned);
+__declspec(dllimport) int VirtualFree(void *, ExclusiveWord, unsigned);
+__declspec(dllimport) int VirtualProtect(void *, ExclusiveWord, unsigned,
+                                         unsigned *);
 
 enum {
 #define NEVERD_EXCLUSIVE_ORACLE_FIELD(Name) Field##Name,
@@ -35,6 +43,7 @@ __declspec(dllimport) void *
 AddVectoredExceptionHandler(unsigned, unsigned (*)(NativePointers *));
 __declspec(dllimport) unsigned RemoveVectoredExceptionHandler(void *);
 static ExclusiveWord LoadSite, StoreSite, ResumeSite, Observation[FieldCount];
+static unsigned char *Pages;
 
 static void fail(unsigned Site, ExclusiveWord First, ExclusiveWord Second) {
   ExclusiveWord Values[] = {Site, First, Second};
@@ -60,6 +69,7 @@ static unsigned alignmentHandler(NativePointers *P) {
   Observation[FieldContextLow] = GPR[0];
   Observation[FieldContextHigh] = GPR[3];
   Observation[FieldContextStatus] = GPR[2];
+  Observation[FieldContextAddress] = GPR[1];
   for (unsigned I = 0; I != P->Record->Count; ++I)
     Observation[FieldParameter0 + I] = P->Record->Parameters[I];
   *PC = ResumeSite;
@@ -74,16 +84,30 @@ static void emit(const void *Data, unsigned Size) {
 }
 
 #define NEVERD_EXCLUSIVE_CASE(Name, Load, Store, Width, Count)                 \
-  static void alignment##Name(unsigned Index, unsigned Offset,                 \
-                              unsigned Mode) {                                 \
-    ExclusiveWord Memory[MemoryWordCount]                                      \
-        __attribute__((aligned(16))) = {ExclusiveInitial, ExclusiveUpdated,    \
-                                        ExclusiveInitial, ExclusiveUpdated};   \
+  static void alignment##Name(unsigned Index, unsigned Offset, unsigned Mode,  \
+                              unsigned Scenario) {                             \
+    const int Split = Scenario >= SplitReadOnlyMemory;                         \
+    ExclusiveWord *Memory =                                                    \
+        (ExclusiveWord *)(Pages + (Split ? PageBytes - WindowAlignment : 0));  \
+    const unsigned BaseOffset = Split ? WindowAlignment - Width * Count : 0;   \
+    for (unsigned I = 0; I != MemoryWordCount; ++I)                            \
+      Memory[I] = I % 2 ? ExclusiveUpdated : ExclusiveInitial;                 \
     for (unsigned I = 0; I != FieldCount; ++I)                                 \
       Observation[I] = 0;                                                      \
     Observation[FieldCaseIndex] = Index;                                       \
     Observation[FieldOffset] = Offset;                                         \
     Observation[FieldMode] = Mode;                                             \
+    Observation[FieldMemoryScenario] = Scenario;                               \
+    Observation[FieldMemoryBase] = (ExclusiveWord)Memory;                      \
+    void *Protected = Pages + (Split ? PageBytes : 0);                         \
+    unsigned OldProtection;                                                    \
+    const unsigned Protection =                                                \
+        Scenario == NoAccessMemory || Scenario == SplitNoAccessMemory          \
+            ? PageNoAccess                                                     \
+            : PageReadOnly;                                                    \
+    if (Scenario != ReadWriteMemory &&                                         \
+        !VirtualProtect(Protected, PageBytes, Protection, &OldProtection))     \
+      fail(SiteProtection, Scenario, Mode);                                    \
     ExclusiveWord LoadedLow = ExclusiveInitial, LoadedHigh = ExclusiveUpdated; \
     ExclusiveWord Low, High, Status;                                           \
     __asm__ volatile(                                                          \
@@ -104,9 +128,9 @@ static void emit(const void *Data, unsigned Size) {
           [low] "=&r"(Low), [high] "=&r"(High), [status] "=&r"(Status)         \
         : [load_site] "r"(&LoadSite), [store_site] "r"(&StoreSite),            \
           [resume] "r"(&ResumeSite),                                           \
-          [load_address] "r"((unsigned char *)Memory +                         \
+          [load_address] "r"((unsigned char *)Memory + BaseOffset +            \
                              (Mode == AlignedLoadStore ? 0 : Offset)),         \
-          [store_address] "r"((unsigned char *)Memory + Offset),               \
+          [store_address] "r"((unsigned char *)Memory + BaseOffset + Offset),  \
           [load_enabled] "r"((ExclusiveWord)(Mode != StoreOnly)),              \
           [store_enabled] "r"((ExclusiveWord)(Mode != LoadOnly)),              \
           [initial] "r"(ExclusiveInitial), [updated] "r"(ExclusiveUpdated),    \
@@ -119,6 +143,9 @@ static void emit(const void *Data, unsigned Size) {
     Observation[FieldReturnLow] = Low;                                         \
     Observation[FieldReturnHigh] = High;                                       \
     Observation[FieldReturnStatus] = Status;                                   \
+    if (Scenario != ReadWriteMemory &&                                         \
+        !VirtualProtect(Protected, PageBytes, PageReadWrite, &OldProtection))  \
+      fail(SiteProtection, Scenario, Mode);                                    \
     for (unsigned I = 0; I != MemoryWordCount; ++I)                            \
       Observation[FieldAfter0 + I] = Memory[I];                                \
     emit(Observation, sizeof(Observation));                                    \
@@ -140,15 +167,21 @@ void entry(void) {
   void *Handler = AddVectoredExceptionHandler(1, alignmentHandler);
   if (!Handler)
     fail(SiteRegistration, 0, 0);
+  Pages = VirtualAlloc(0, PageBytes * 2, MemoryCommitReserve, PageReadWrite);
+  if (!Pages)
+    fail(SiteAllocation, 0, 0);
   unsigned Index = 0;
 #define NEVERD_EXCLUSIVE_CASE(Name, Load, Store, Width, Count)                 \
   for (unsigned Offset = 1; Offset < Width * Count; ++Offset)                  \
     for (unsigned Mode = 0; Mode < ModeCount; ++Mode)                          \
-      alignment##Name(Index, Offset, Mode);                                    \
+      for (unsigned Scenario = 0; Scenario < MemoryScenarioCount; ++Scenario)  \
+        alignment##Name(Index, Offset, Mode, Scenario);                        \
   ++Index;
 #include "../AArch64ExclusiveCases.def"
 #undef NEVERD_EXCLUSIVE_CASE
   if (!RemoveVectoredExceptionHandler(Handler))
     fail(SiteRetirement, 0, 0);
+  if (!VirtualFree(Pages, 0, MemoryRelease))
+    fail(SiteAllocation, 0, 0);
   ExitProcess(0);
 }

@@ -30,7 +30,7 @@ def validate_observations(data: bytes, cases: list[str]) -> list[dict]:
 
 def oracle_values() -> dict[str, int]:
     return {name: int(value.removesuffix("ULL"), 0) for name, value in re.findall(
-        r"NEVERD_EXCLUSIVE_ORACLE_VALUE\((\w+), (\w+)\)", DEFINITION.read_text(encoding="utf-8"))}
+        r"NEVERD_EXCLUSIVE_ORACLE_(?:VALUE|WIDE)\((\w+), (\w+)\)", DEFINITION.read_text(encoding="utf-8"))}
 
 
 def validate_alignment_observations(data: bytes, cases: list[tuple[str, int, int]],
@@ -38,19 +38,26 @@ def validate_alignment_observations(data: bytes, cases: list[tuple[str, int, int
                                     status: int) -> list[dict]:
     values = oracle_values()
     record = struct.Struct("<" + "Q" * len(fields))
-    required = [(index, name, width, count, offset, mode)
+    required = [(index, name, width, count, offset, mode, scenario)
                 for index, (name, width, count) in enumerate(cases)
                 for offset in range(1, width * count)
-                for mode in range(values["ModeCount"])]
+                for mode in range(values["ModeCount"])
+                for scenario in range(values["MemoryScenarioCount"])]
     if not fields or len(set(fields)) != len(fields) or len(data) != len(required) * record.size:
         raise ValueError("incomplete original ARM64 alignment observations")
     observations = []
     original = struct.pack("<QQQQ", initial, updated, initial, updated)
     maximum = values["MaxParameters"]
     for expected, words in zip(required, record.iter_unpack(data), strict=True):
-        index, name, width, count, offset, mode = expected
+        index, name, width, count, offset, mode, scenario = expected
         row = dict(zip(fields, words))
-        if ((row["CaseIndex"], row["Offset"], row["Mode"]) != (index, offset, mode)
+        split = scenario >= values["SplitReadOnlyMemory"]
+        base_offset = values["WindowAlignment"] - width * count if split else 0
+        store_offset = base_offset + offset
+        load_offset = base_offset if mode == values["AlignedLoadStore"] else store_offset
+        if ((row["CaseIndex"], row["Offset"], row["Mode"], row["MemoryScenario"])
+                != (index, offset, mode, scenario)
+                or not row["MemoryBase"] or row["MemoryBase"] % values["WindowAlignment"]
                 or row["Faults"] not in (0, 1) or row["FaultStage"] not in (0, 1)
                 or not row["LoadPC"] or not row["StorePC"]
                 or row["LoadPC"] == row["StorePC"]
@@ -68,18 +75,23 @@ def validate_alignment_observations(data: bytes, cases: list[tuple[str, int, int
             if (not row["Code"] or row["FaultPC"] != pc or row["ExceptionPC"] != pc
                     or row["ContextPC"] != pc or row["ContextLow"] != low
                     or row["ContextHigh"] != high or row["ContextStatus"] != status
+                    or row["ContextAddress"] != row["MemoryBase"] +
+                        (store_offset if store_fault else load_offset)
                     or (load_fault and mode == values["StoreOnly"])
                     or (store_fault and mode == values["LoadOnly"])):
                 raise ValueError("inconsistent original ARM64 fault context")
         elif any(row[field] for field in ["Code", "Flags", "ParameterCount", "FaultPC",
                                           "ExceptionPC", "ContextPC", "ContextLow",
-                                          "ContextHigh", "ContextStatus", "FaultStage"]):
+                                          "ContextHigh", "ContextStatus", "ContextAddress", "FaultStage"]):
             raise ValueError("exception metadata without an original ARM64 fault")
         loaded = [initial, updated]
         if mode != values["StoreOnly"] and not load_fault:
-            begin = 0 if mode == values["AlignedLoadStore"] else offset
+            if (scenario == values["NoAccessMemory"]
+                    or (scenario == values["SplitNoAccessMemory"]
+                        and mode != values["AlignedLoadStore"])):
+                raise ValueError("an original ARM64 load bypassed inaccessible RAM")
             for part in range(count):
-                at = begin + part * width
+                at = load_offset + part * width
                 loaded[part] = int.from_bytes(original[at:at + width], "little")
         if [row["LoadedLow"], row["LoadedHigh"]] != loaded:
             raise ValueError("incorrect original ARM64 exclusive load")
@@ -90,13 +102,27 @@ def validate_alignment_observations(data: bytes, cases: list[tuple[str, int, int
                 or (result != status if fault or not store else result not in (0, 1))):
             raise ValueError("incorrect original ARM64 exclusive return state")
         after = bytearray(original)
-        if store and not fault and result == 0:
+        if store:
             source = updated.to_bytes(8, "little")[:width]
             if count == 2:
                 source += initial.to_bytes(8, "little")[:width]
-            after[offset:offset + len(source)] = source
+        if store and not fault and result == 0:
+            if scenario != values["ReadWriteMemory"]:
+                raise ValueError("an original ARM64 store bypassed unwritable RAM")
+            after[store_offset:store_offset + len(source)] = source
         actual = struct.pack("<QQQQ", *(row[f"After{i}"] for i in range(values["MemoryWordCount"])))
-        if actual != after:
+        # A kernel fixup could commit a prefix before its later access fails.
+        # Preserve that observation, but never accept writes outside the
+        # instruction's writable operand bytes or values it did not supply.
+        prefix = (max(0, values["WindowAlignment"] - store_offset) if split
+                  else len(source) if scenario == values["ReadWriteMemory"] and store else 0)
+        allowed_prefix = False
+        if store_fault:
+            for length in range(prefix + 1):
+                partial = bytearray(original)
+                partial[store_offset:store_offset + length] = source[:length]
+                allowed_prefix |= actual == partial
+        if actual != after and not allowed_prefix:
             raise ValueError("incorrect original ARM64 exclusive store footprint")
         observations.append({"case": name, "record": row})
     return observations
@@ -111,7 +137,7 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     definition = DEFINITION.read_text(encoding="utf-8")
     settings = dict(re.findall(r'NEVERD_EXCLUSIVE_ORACLE_TEXT\((\w+), "([^"]+)"\)', definition))
-    values = dict(re.findall(r"NEVERD_EXCLUSIVE_ORACLE_VALUE\((\w+), (\w+)\)", definition))
+    values = dict(re.findall(r"NEVERD_EXCLUSIVE_ORACLE_(?:VALUE|WIDE)\((\w+), (\w+)\)", definition))
     apis = re.findall(r"NEVERD_EXCLUSIVE_ORACLE_API\((\w+)\)", definition)
     case_text = CASES.read_text(encoding="utf-8")
     cases = re.findall(r"^NEVERD_EXCLUSIVE_CASE\((\w+),[^\n]+, (\d+), (\d+)\)$", case_text, re.M)
