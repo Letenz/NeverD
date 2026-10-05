@@ -70,6 +70,62 @@ TEST_P(AndroidFiles, ExhaustionHasNoOpenSideEffectsAndCloseReleasesCapacity) {
   Options.LinuxFiles->DescriptorLimit = 4;
   returned(run("files_capacity"));
 }
+TEST_P(AndroidFiles, ExistenceQueriesPreserveDescriptorCapacityAndCursors) {
+  Options.LinuxFiles->DescriptorLimit = 4;
+  returned(run("files_access"));
+}
+TEST_P(AndroidFiles, ExistenceQueriesImportOnlyTheTerminatedUserPath) {
+  returned(run("files_access_faults"));
+}
+TEST_P(AndroidFiles, EmptyCatalogueContainsOnlyTheRootDirectory) {
+  Options.LinuxFiles->Files.clear();
+  Options.LinuxFiles->DescriptorLimit = 3;
+  returned(run("files_access_empty"));
+}
+TEST_P(AndroidFiles, AccessImportsAndThreadsShareTheCatalogueWithPrivateErrno) {
+  auto R = run("files_access_bionic");
+  returned(R);
+  bool OtherThreadAccess = false;
+  for (const auto &Call : R.NativeCalls)
+    if (Call.Name == "access" && Call.ThreadID == 1001) {
+      EXPECT_EQ(Call.Result, 0u);
+      OtherThreadAccess = true;
+    }
+  EXPECT_TRUE(OtherThreadAccess);
+}
+TEST_P(AndroidFiles, AccessRequiresExplicitInputsAndDoesNotInferPermissions) {
+  for (unsigned Mode = 0; Mode < 8; ++Mode) {
+    SCOPED_TRACE(Mode);
+    if (!Mode)
+      Options.LinuxFiles.reset();
+    else if (!Options.LinuxFiles) {
+      Options.LinuxFiles.emplace();
+      Options.LinuxFiles->Files["/fixture/data"] = {};
+      Options.LinuxFiles->Metadata["/fixture/data"] = fileTestMetadata();
+    }
+    auto R = run("files_access_unsupported", {Mode});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_EQ(R.Services.back().Number, 48u);
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
+TEST_P(AndroidFiles, AccessDynamicBindingsRetainProviderIdentityAndLifetime) {
+  Options.Android->Libraries["libfiles.so"] = {"access", "faccessat"};
+  for (unsigned At = 0; At < 2; ++At) {
+    SCOPED_TRACE(At);
+    auto R = run("files_access_dynamic", {0, At});
+    returned(R);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, At ? "faccessat" : "access");
+    EXPECT_EQ(R.NativeCalls.back().Library, "libfiles.so");
+    R = run("files_access_dynamic", {1, At});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+  }
+}
 TEST_P(AndroidFiles, ImportsRawTrapsAndOtherThreadsShareTheSameOpenFile) {
   auto R = run("files_bionic");
   returned(R);
@@ -84,6 +140,59 @@ TEST_P(AndroidFiles, ImportsRawTrapsAndOtherThreadsShareTheSameOpenFile) {
   ASSERT_FALSE(R.Services.empty());
   EXPECT_EQ(R.Services.front().Number, 63u);
   EXPECT_EQ(R.Services.front().Result, 1u);
+}
+TEST_P(AndroidFiles, DirectoryLookupErrorsPreserveTheCatalogueAndOpenCursors) {
+  Options.LinuxFiles->DescriptorLimit = 4;
+  returned(run("files_directory_errors"));
+}
+TEST_P(AndroidFiles, DirectoryCreationRequiresMoreThanAnExistingParent) {
+  for (unsigned Mode = 0; Mode < 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    if (!Mode)
+      Options.LinuxFiles.reset();
+    else if (!Options.LinuxFiles) {
+      Options.LinuxFiles.emplace();
+      Options.LinuxFiles->Files["/fixture/data"] = {};
+    }
+    auto R = run("files_directory_unsupported", {Mode});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_EQ(R.Services.back().Number, 34u);
+    EXPECT_FALSE(R.Services.back().Result);
+    if (Mode == 1 || Mode == 2)
+      EXPECT_NE(R.Diagnostic.find("directory creation"), std::string::npos);
+  }
+}
+TEST_P(AndroidFiles, DirectoryImportsKeepEachThreadsErrnoPrivate) {
+  auto R = run("files_directory_bionic");
+  returned(R);
+  bool OtherThreadCall = false;
+  for (const auto &Call : R.NativeCalls)
+    if (Call.Name == "mkdir" && Call.ThreadID == 1001) {
+      EXPECT_EQ(Call.Result, UINT64_MAX);
+      OtherThreadCall = true;
+    }
+  EXPECT_TRUE(OtherThreadCall);
+}
+TEST_P(AndroidFiles,
+       DirectoryDynamicBindingsRetainProviderIdentityAndLifetime) {
+  Options.Android->Libraries["libfiles.so"] = {"mkdir", "mkdirat"};
+  for (unsigned At = 0; At < 2; ++At) {
+    SCOPED_TRACE(At);
+    const char *Name = At ? "mkdirat" : "mkdir";
+    auto R = run("files_directory_dynamic", {0, At});
+    returned(R);
+    auto Call = llvm::find_if(R.NativeCalls,
+                              [&](const auto &C) { return C.Name == Name; });
+    ASSERT_NE(Call, R.NativeCalls.end());
+    EXPECT_EQ(Call->Result, UINT64_MAX);
+    EXPECT_EQ(Call->Library, "libfiles.so");
+    R = run("files_directory_dynamic", {1, At});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+  }
 }
 TEST_P(AndroidFiles, ExplicitStatusPreservesEveryFieldAndDescriptorCursor) {
   Options.LinuxFiles->Metadata["/fixture/data"] = fileTestMetadata();

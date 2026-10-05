@@ -13,7 +13,7 @@
 #include <array>
 
 namespace neverd::emulation::android_model {
-llvm::Expected<uint64_t> Bionic::findCharacter(const NativeCallEvent &Call) {
+BionicResult Bionic::findCharacter(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   llvm::StringRef Name(Call.Name);
   bool Fortified = Name == symbol::StrchrChk || Name == symbol::StrrchrChk;
@@ -33,18 +33,18 @@ llvm::Expected<uint64_t> Bionic::findCharacter(const NativeCallEvent &Call) {
       return C.takeError();
     if (*C == Character) {
       if (!FindLast)
-        return Address;
+        return value(Address);
       Match = Address;
     }
     if (!*C)
-      return Match;
+      return value(Match);
   }
   if (Fortified && Bound <= Options.MemoryLimit)
     return failure(diagnostic::FortifyReadPrefix + Name);
   return failure(diagnostic::StringScanLimit);
 }
 
-llvm::Expected<uint64_t> Bionic::tokenize(const NativeCallEvent &Call) {
+BionicResult Bionic::tokenize(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   uint64_t Input = A[0];
   if (A[2] % 8)
@@ -58,7 +58,7 @@ llvm::Expected<uint64_t> Bionic::tokenize(const NativeCallEvent &Call) {
     Input = llvm::support::endian::read64le(Saved);
     // API 28 leaves an exhausted context untouched, without reading delim.
     if (!Input)
-      return uint64_t(0);
+      return value(0);
   }
   auto Delimiters = string(A[1]);
   if (!Delimiters)
@@ -93,11 +93,67 @@ llvm::Expected<uint64_t> Bionic::tokenize(const NativeCallEvent &Call) {
           return std::move(E);
       if (auto E = CPU.write(A[2], Saved))
         return std::move(E);
-      return Token.value_or(0);
+      return value(Token.value_or(0));
     }
     if (!Separators[*C] && !Token)
       Token = Address;
   }
   return failure(diagnostic::TokenScanLimit);
 }
+llvm::Expected<std::string> Bionic::string(uint64_t Address) {
+  std::string Text;
+  for (uint64_t I = 0; I < Options.MemoryLimit && Address <= UINT64_MAX - I;
+       ++I) {
+    auto V = byte(Address + I);
+    if (!V)
+      return V.takeError();
+    if (!*V)
+      return Text;
+    Text.push_back(*V);
+  }
+  return failure(diagnostic::UnterminatedString);
+}
+BionicResult Bionic::stringLength(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  llvm::StringRef Name(Call.Name);
+  uint64_t Bound = Name == symbol::Strnlen ? std::min(A[1], Options.MemoryLimit)
+                                           : Options.MemoryLimit;
+  for (uint64_t I = 0; I < Bound; ++I) {
+    if (A[0] > UINT64_MAX - I)
+      return failure(diagnostic::StringAddressOverflow);
+    auto V = byte(A[0] + I);
+    if (!V)
+      return V.takeError();
+    if (!*V)
+      return value(I);
+  }
+  if (Name == symbol::Strnlen && Bound == A[1])
+    return value(Bound);
+  return failure(diagnostic::StringScanLimit);
+}
+
+BionicResult Bionic::compareString(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  llvm::StringRef Name(Call.Name);
+  uint64_t Bound = Name == symbol::Strncmp ? std::min(A[2], Options.MemoryLimit)
+                                           : Options.MemoryLimit;
+  for (uint64_t I = 0; I < Bound; ++I) {
+    if (A[0] > UINT64_MAX - I || A[1] > UINT64_MAX - I)
+      return failure(diagnostic::StringAddressOverflow);
+    auto Left = byte(A[0] + I);
+    if (!Left)
+      return Left.takeError();
+    auto Right = byte(A[1] + I);
+    if (!Right)
+      return Right.takeError();
+    if (*Left != *Right)
+      return value(static_cast<uint32_t>(int(*Left) - int(*Right)));
+    if (!*Left)
+      return value(0);
+  }
+  if (Name == symbol::Strncmp && Bound == A[2])
+    return value(0);
+  return failure(diagnostic::StringCompareLimit);
+}
+
 } // namespace neverd::emulation::android_model

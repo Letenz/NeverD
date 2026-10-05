@@ -122,11 +122,15 @@ uint16_t darwinIndirectAffineTransformInputBytes(Arch Architecture,
 std::optional<SourceFrameEffects>
 darwinMatrixSourceFrameEffects(const BinaryImage &Image,
                                const SourceCallTypeHint &Binding) {
+  const bool Rect = Binding.TargetName == "CGRectApplyAffineTransform";
+  const bool Affine = Binding.TargetName == "CGAffineTransformMakeRotation" ||
+                      Binding.TargetName == "CGAffineTransformConcat" || Rect;
+  const bool Matrix = Binding.TargetName == "CATransform3DMakeTranslation" ||
+                      Binding.TargetName == "CATransform3DScale";
   if (Image.Arch != Arch::AArch64 ||
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall ||
-      (Binding.TargetName != "CATransform3DMakeTranslation" &&
-       Binding.TargetName != "CATransform3DScale") ||
-      Binding.WeakImport || Binding.DoesNotReturn)
+      (!Affine && !Matrix) || Binding.WeakImport || Binding.DoesNotReturn ||
+      Binding.Format || Binding.NilTerminated)
     return std::nullopt;
   const auto Expected =
       darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
@@ -138,27 +142,37 @@ darwinMatrixSourceFrameEffects(const BinaryImage &Image,
       !equalSourceABIs(Expected->Signature, Binding.Signature) ||
       Bind == Image.DyldBindSlots.end() || Bind->second.WeakImport ||
       !darwinExportModuleMatches(
-          "/System/Library/Frameworks/QuartzCore.framework/QuartzCore|"
-          "/System/Library/Frameworks/QuartzCore.framework/Versions/A/"
-          "QuartzCore",
+          Affine ? "/System/Library/Frameworks/CoreGraphics.framework/"
+                   "CoreGraphics|/System/Library/Frameworks/CoreGraphics."
+                   "framework/Versions/A/CoreGraphics"
+                 : "/System/Library/Frameworks/QuartzCore.framework/QuartzCore|"
+                   "/System/Library/Frameworks/QuartzCore.framework/Versions/A/"
+                   "QuartzCore",
           Bind->second.Module) ||
       std::find(Image.DynInfo.NeededLibs.begin(),
                 Image.DynInfo.NeededLibs.end(),
                 Bind->second.Module) == Image.DynInfo.NeededLibs.end())
     return std::nullopt;
-  // CATransform3D.h and the matrix operations define all sixteen CGFloat
-  // fields, with no padding or pointer contents on Darwin arm64. The existing
-  // exact declaration/bridge owns the physical ABI; no arbitrary record
-  // return acquires this definite-write contract.
+  // The exact SDK operations define every double in their six- or sixteen-
+  // field records, with no padding or pointer contents on Darwin arm64. The
+  // current declaration/bridge owns the physical ABI; an arbitrary record
+  // return does not acquire this definite-write contract. Physical by-value
+  // input pointers may be written, so invalidate each complete private copy.
   SourceFrameEffects Effects;
-  Effects.InitializesIndirectResult = true;
-  if (Binding.TargetName == "CATransform3DScale") {
+  Effects.InitializesIndirectResult = !Rect;
+  if (Binding.TargetName == "CATransform3DScale" ||
+      Binding.TargetName == "CGAffineTransformConcat" || Rect) {
     const auto Bytes =
         darwinIndirectAffineTransformInputBytes(Image.Arch, Binding.TargetName);
-    if (Bytes != 128)
+    if (Bytes != (Matrix ? 128 : 48))
       return std::nullopt;
-    Effects.WritableFrameParameters.emplace(0, Bytes);
-    Effects.InitializedFrameParameters.insert(0);
+    const unsigned FirstInput = Rect ? 1 : 0;
+    Effects.WritableFrameParameters.emplace(FirstInput, Bytes);
+    Effects.InitializedFrameParameters.insert(FirstInput);
+    if (Binding.TargetName == "CGAffineTransformConcat") {
+      Effects.WritableFrameParameters.emplace(1, Bytes);
+      Effects.InitializedFrameParameters.insert(1);
+    }
   }
   return sourceFrameEffectsMatchABI(Effects, Binding.Signature)
              ? std::optional(Effects)

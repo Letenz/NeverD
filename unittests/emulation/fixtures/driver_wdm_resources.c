@@ -475,7 +475,95 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #include "driver_resource_scalar_shift.def"
 #undef NEVERD_RESOURCE_SCALAR_SHIFT_CASE
 
+#define NEVERD_RESOURCE_LOOP_VALUE(Name, Value)                                \
+  static const ULONG64 Name = Value;
+#define NEVERD_RESOURCE_LOOP_CASE(Name, InputFlags, ExpectedCount,             \
+                                  ExpectedTaken, Assembly)                     \
+  static BOOLEAN CheckLoop##Name(VOID) {                                       \
+    ULONG64 Before, Observed, Taken, Count = LoopInput;                        \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), "=&r"(Taken),           \
+                       "+c"(Count)                                             \
+                     : "r"((ULONG64)InputFlags)                                \
+                     : "memory", "cc");                                        \
+    return Count == ExpectedCount && Taken == ExpectedTaken &&                 \
+           Observed == InputFlags;                                             \
+  }
+#include "driver_resource_loop.def"
+#undef NEVERD_RESOURCE_LOOP_CASE
+#undef NEVERD_RESOURCE_LOOP_VALUE
+
+#define NEVERD_RESOURCE_BRANCH_CASE(Name, InputFlags, Assembly)                \
+  static BOOLEAN CheckBranch##Name(VOID) {                                     \
+    ULONG64 Before, Observed;                                                  \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed)                          \
+                     : "r"((ULONG64)InputFlags)                                \
+                     : "memory", "cc");                                        \
+    return Observed == InputFlags;                                             \
+  }
+#include "driver_resource_branch.def"
+#undef NEVERD_RESOURCE_BRANCH_CASE
+
+#define NEVERD_RESOURCE_STACK_VALUE(Name, Value)                               \
+  static const ULONG64 Name = Value;
+#include "driver_resource_stack.def"
+#undef NEVERD_RESOURCE_STACK_VALUE
+#define NEVERD_RESOURCE_STACK_CASE(Name, ExpectedRegister, ExpectedMemory,     \
+                                   Assembly)                                   \
+  static BOOLEAN CheckStack##Name(VOID) {                                      \
+    ULONG64 Before, Observed, Value = StackOutput;                             \
+    ULONG64 Source = StackInput, Destination = StackOutput;                    \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), "+&r"(Value)            \
+                     : "r"(Source), "r"(&Source), "r"(&Destination)            \
+                     : "memory", "cc");                                        \
+    return Before == Observed && Value == ExpectedRegister &&                  \
+           Destination == ExpectedMemory && Source == StackInput;              \
+  }
+#include "driver_resource_stack.def"
+#undef NEVERD_RESOURCE_STACK_CASE
+
+#define NEVERD_RESOURCE_FRAME_EXIT_VALUE(Name, Value)                          \
+  static const ULONG64 Name = Value;
+#include "driver_resource_frame_exit.def"
+#undef NEVERD_RESOURCE_FRAME_EXIT_VALUE
+#define NEVERD_RESOURCE_FRAME_EXIT_CASE(Name, Width, Mask, Assembly)           \
+  static BOOLEAN CheckFrameExit##Name(VOID) {                                  \
+    ULONG64 Before, Observed, Value, Frame, Stack;                             \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), "=&r"(Value),           \
+                       "=&r"(Frame), "=&r"(Stack)                              \
+                     : "r"(FrameInput)                                         \
+                     : "rbp", "r11", "memory", "cc");                          \
+    return Before == Observed && Stack == Frame + Width &&                     \
+           Value == ((Frame & ~Mask) | (FrameInput & Mask));                   \
+  }
+#include "driver_resource_frame_exit.def"
+#undef NEVERD_RESOURCE_FRAME_EXIT_CASE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_FRAME_EXIT_CASE(Name, ...)                             \
+  if (!CheckFrameExit##Name())                                                 \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_frame_exit.def"
+#undef NEVERD_RESOURCE_FRAME_EXIT_CASE
+#define NEVERD_RESOURCE_STACK_CASE(Name, ...)                                  \
+  if (!CheckStack##Name())                                                     \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_stack.def"
+#undef NEVERD_RESOURCE_STACK_CASE
+#define NEVERD_RESOURCE_BRANCH_CASE(Name, ...)                                 \
+  if (!CheckBranch##Name())                                                    \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_branch.def"
+#undef NEVERD_RESOURCE_BRANCH_CASE
+
+#define NEVERD_RESOURCE_LOOP_CASE(Name, ...)                                   \
+  if (!CheckLoop##Name())                                                      \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_loop.def"
+#undef NEVERD_RESOURCE_LOOP_CASE
 #define NEVERD_RESOURCE_SCALAR_SHIFT_CASE(Name, ...)                           \
   if (!CheckScalarShift##Name())                                               \
     return STATUS_UNSUCCESSFUL;

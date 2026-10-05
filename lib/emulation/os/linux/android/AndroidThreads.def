@@ -11,3 +11,14 @@ NEVERD_ANDROID_THREAD_VALUE(ArenaStride, 64 * 1024 * 1024)
 NEVERD_ANDROID_THREAD_VALUE(IdentityOffset, 8)
 NEVERD_ANDROID_THREAD_VALUE(ReportBytes, 128)
 #endif
+
+#ifdef NEVERD_ANDROID_THREAD_CALL
+NEVERD_ANDROID_THREAD_CALL(ThreadCreate, "pthread_create", create)
+NEVERD_ANDROID_THREAD_CALL(ThreadJoin, "pthread_join", join)
+NEVERD_ANDROID_THREAD_CALL(ThreadDetach, "pthread_detach", detach)
+NEVERD_ANDROID_THREAD_CALL(ThreadSelf, "pthread_self", self)
+NEVERD_ANDROID_THREAD_CALL(ThreadEqual, "pthread_equal", equal)
+NEVERD_ANDROID_THREAD_CALL(ThreadExit, "pthread_exit", exit)
+NEVERD_ANDROID_THREAD_CALL(ThreadGetAttr, "pthread_getattr_np", getAttributes)
+NEVERD_ANDROID_THREAD_CALL(ThreadGetTID, "pthread_gettid_np", getTID)
+#endif

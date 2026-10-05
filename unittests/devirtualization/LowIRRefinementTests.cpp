@@ -102,6 +102,88 @@ void expect(const Program &Original, const Program &Candidate, Status S,
   EXPECT_EQ(Result.Certificate.has_value(), S == Status::Proved);
 }
 
+TEST(LowIRRefinement, EntryAlignmentConstrainsOnlyTheDeclaredRootBits) {
+  for (uint64_t Root : {32, 80})
+    for (uint32_t Alignment : {1, 2, 4, 16})
+      for (uint32_t Residue = 0; Residue != Alignment; ++Residue) {
+        SCOPED_TRACE(Root);
+        SCOPED_TRACE(Alignment);
+        SCOPED_TRACE(Residue);
+        Program A, B;
+        A.Contract.Frame = LowIRIndependenceFrame{{Root, 8}, -16, 8};
+        A.Contract.Frame->EntryAlignment = {Alignment, Residue};
+        A.instruction({op(NdOp::INT_AND, r(0), {r(Root), n(Alignment - 1)})});
+        A.finish();
+        B.instruction({op(NdOp::COPY, r(0), {n(Residue)})});
+        B.finish();
+        expect(A, B, Status::Proved);
+        // No bit above the declared mask becomes a constant.
+        B.Function.Blocks[0].Ops[0].Inputs[0] = r(Root);
+        expect(A, B, Status::Different);
+        B.Function.Blocks[0].Ops[0].Inputs[0] = n(Residue);
+        A.Contract.Frame->EntryAlignment.reset();
+        expect(A, B, Alignment == 1 ? Status::Proved : Status::Different);
+      }
+}
+
+TEST(LowIRRefinement, EntryAlignmentIntersectsConstantsBoundsAndExclusions) {
+  Program A, B;
+  A.frame();
+  A.finish();
+  B.finish();
+  for (auto Invalid : {InterpreterEntryAlignment{0, 0}, {3, 1}, {4, 4}}) {
+    A.Contract.Frame->EntryAlignment = Invalid;
+    expect(A, B, Status::Invalid);
+  }
+  A.Contract.Frame->EntryAlignment = {16, 3};
+  A.Contract.EntryConstants = {{r(32), 0x2003}};
+  expect(A, B, Status::Proved);
+  A.Contract.EntryConstants[0].Value = 0x2004;
+  expect(A, B, Status::InfeasibleEntry);
+  A.Contract.EntryConstants[0].Value = 3;
+  expect(A, B, Status::InfeasibleEntry); // Negative frame bytes wrap.
+  A.Contract.EntryConstants.clear();
+  // Only root 0x2010 fits the exact 24-byte gap, and it is not residue 3.
+  A.Contract.Frame->ExcludedAddressRanges = {{0, 0x2000}, {0x2018, UINT64_MAX}};
+  expect(A, B, Status::InfeasibleEntry);
+  A.Contract.Frame->EntryAlignment->Residue = 0;
+  expect(A, B, Status::Proved);
+}
+
+TEST(LowIRRefinement, EntryAlignmentBindsReceiptsBudgetsAndPreservation) {
+  Program A, B;
+  A.frame();
+  A.finish();
+  B.finish();
+  auto Previous = A.check(B);
+  ASSERT_TRUE(Previous.proved());
+  for (auto Domain :
+       {InterpreterEntryAlignment{1, 0}, {16, 3}, {16, 4}, {32, 4}}) {
+    A.Contract.Frame->EntryAlignment = Domain;
+    auto Good = A.check(B);
+    ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+    EXPECT_NE(Previous.Certificate->InputDigest, Good.Certificate->InputDigest);
+    EXPECT_EQ(Good.Certificate->Contract.Frame->EntryAlignment, Domain);
+    Previous = std::move(Good);
+  }
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxSolverQueries = Previous.SolverQueries;
+  expect(A, B, Status::Proved, Witness::LiftedBits, Limits);
+  ASSERT_GT(Limits.Execution.MaxSolverQueries, 0U);
+  --Limits.Execution.MaxSolverQueries;
+  expect(A, B, Status::BudgetExceeded, Witness::LiftedBits, Limits);
+  Limits = {};
+  Limits.Execution.MaxSymbolicNodes = 0;
+  expect(A, B, Status::BudgetExceeded, Witness::LiftedBits, Limits);
+  Program Changed;
+  Changed.frame();
+  Changed.Contract.Frame->EntryAlignment = {16, 3};
+  Changed.Contract.PreservedRegisters = {{32, 8}};
+  Changed.instruction({op(NdOp::INT_ADD, r(32), {r(32), n(16)})});
+  Changed.finish();
+  expect(Changed, Changed, Status::ContractViolation);
+}
+
 TEST(LowIRRefinement, DefinedRewriteAndWrongCandidate) {
   Program A, B;
   A.instruction({op(NdOp::INT_ADD, r(0), {r(8), r(16)})});
@@ -145,6 +227,25 @@ TEST(LowIRRefinement, NativeOverlapOptionRejectsStaticAndLoopAPIs) {
   B.finish();
   expect(A, B, Status::Proved);
   A.Contract.AllowOverlappingNativeInstructions = true;
+  expect(A, B, Status::Unsupported);
+  const auto Loop = checkLowIRLoopRefinement(A.Function, A.Records, B.Function,
+                                             A.Contract, {});
+  EXPECT_EQ(Loop.Status, Status::Unsupported) << Loop.Diagnostic;
+  EXPECT_FALSE(Loop.Certificate);
+  const auto Inference = inferLowIRLoopRefinementPlan(B.Function, A.Contract);
+  EXPECT_EQ(Inference.Status, LowIRLoopInferenceStatus::Unsupported)
+      << Inference.Diagnostic;
+  EXPECT_FALSE(Inference.Plan);
+}
+
+TEST(LowIRRefinement, DeferredNativeEdgesRejectStaticAndLoopAPIs) {
+  Program A, B;
+  A.instruction({op(NdOp::COPY, r(0), {n(7)})});
+  A.finish();
+  B.instruction({op(NdOp::COPY, r(0), {n(7)})});
+  B.finish();
+  expect(A, B, Status::Proved);
+  A.Contract.DeferNativeConditionalEdges = true;
   expect(A, B, Status::Unsupported);
   const auto Loop = checkLowIRLoopRefinement(A.Function, A.Records, B.Function,
                                              A.Contract, {});
@@ -468,6 +569,33 @@ TEST(LowIRLoopRefinement, ArbitraryWordCountWithDifferentBody) {
   const auto Finite = A.check(B);
   EXPECT_FALSE(Finite.proved());
   EXPECT_EQ(Finite.Status, Status::BudgetExceeded);
+}
+
+TEST(LowIRLoopRefinement, EntryAlignmentSurvivesEntryAndInductionTemplates) {
+  auto A = wordLoop(), B = wordLoop(1, true);
+  A.frame();
+  A.Contract.Frame->EntryAlignment = {16, 3};
+  // Replace the final instruction, keeping complete instruction sidecars.
+  for (auto *P : {&A, &B}) {
+    auto &Exit = P->Function.Blocks.back();
+    Exit.Ops.clear();
+    Exit.InstructionBoundaries.clear();
+    Exit.EndAddr = Exit.StartAddr;
+    P->Records.pop_back();
+    P->instruction(
+        {op(NdOp::INT_AND, NdVar::tmp(0, 8), {P == &A ? r(32) : n(3), n(15)}),
+         op(NdOp::INT_ADD, r(0), {r(0), NdVar::tmp(0, 8)}),
+         op(NdOp::RETURN, {}, {r(0)})});
+  }
+  const auto Plan = wordLoopPlan();
+  const auto Good = loopCheck(A, B, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  EXPECT_EQ(Good.Certificate->Contract.Frame->EntryAlignment,
+            A.Contract.Frame->EntryAlignment);
+  A.Contract.Frame->EntryAlignment->Residue = 4;
+  loopRefused(loopCheck(A, B, Plan), Status::Different);
+  A.Contract.Frame->EntryAlignment.reset();
+  loopRefused(loopCheck(A, B, Plan), Status::Different);
 }
 
 TEST(LowIRLoopInference, CountAndAccumulatorNeedNoHandwrittenTemplate) {

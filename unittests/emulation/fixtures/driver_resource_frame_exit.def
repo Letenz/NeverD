@@ -1,0 +1,32 @@
+//===- driver_resource_frame_exit.def - Original WDK frame exit probes --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_FRAME_EXIT_VALUE
+NEVERD_RESOURCE_FRAME_EXIT_VALUE(FrameInput, 0x1122334455667788ULL)
+#endif
+#ifdef NEVERD_RESOURCE_FRAME_EXIT_CASE
+// Save the caller's frame, form a separate saved-BP slot, and move RSP below
+// it. Capture both LEAVE results before restoring the caller's RSP and RBP.
+#define NEVERD_RESOURCE_FRAME_EXIT_CODE(Instruction)                           \
+  "pushfq\n\tpopq %q0\n\tpushq %%rbp\n\tmovq %%rsp, %%r11\n\t"                 \
+  "pushq %q5\n\tmovq %%rsp, %%rbp\n\tmovq %%rbp, %q3\n\t"                      \
+  "leaq -32(%%rsp), %%rsp\n\t" Instruction                                     \
+  "\n\tmovq %%rbp, %q2\n\tmovq %%rsp, %q4\n\tmovq %%r11, %%rsp\n\t"            \
+  "popq %%rbp\n\tpushfq\n\tpopq %q1"
+NEVERD_RESOURCE_FRAME_EXIT_CASE(Qword, 8, 0xffffffffffffffffULL,
+                                NEVERD_RESOURCE_FRAME_EXIT_CODE("leave"))
+NEVERD_RESOURCE_FRAME_EXIT_CASE(
+    Word, 2, 0xffffULL, NEVERD_RESOURCE_FRAME_EXIT_CODE(".byte 0x66,0xc9"))
+NEVERD_RESOURCE_FRAME_EXIT_CASE(
+    AddressWord, 2, 0xffffULL,
+    NEVERD_RESOURCE_FRAME_EXIT_CODE(".byte 0x67,0x66,0xc9"))
+NEVERD_RESOURCE_FRAME_EXIT_CASE(
+    RexAfterOperand, 8, 0xffffffffffffffffULL,
+    NEVERD_RESOURCE_FRAME_EXIT_CODE(".byte 0x66,0x48,0xc9"))
+NEVERD_RESOURCE_FRAME_EXIT_CASE(
+    OperandAfterRex, 2, 0xffffULL,
+    NEVERD_RESOURCE_FRAME_EXIT_CODE(".byte 0x48,0x66,0xc9"))
+#undef NEVERD_RESOURCE_FRAME_EXIT_CODE
+#endif

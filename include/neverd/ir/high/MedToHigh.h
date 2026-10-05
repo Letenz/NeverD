@@ -121,6 +121,11 @@ bool sinkJoinDefaultsLate(HighFunc &Func);
 /// a list whose fall-through is L, such as a __try body or an __except
 /// handler followed by L, becomes `if (c) { T } else { S... }`.
 bool elseArmsForFallthroughJumps(HighFunc &Func);
+
+/// Once the other rewrites have settled: `X: S...; if (c) { T...; goto X; }`
+/// becomes `while (1) { S...; if (c) { T...; continue; } break; }`, where X
+/// starts exactly one statement and S and T hold no loose break or continue.
+bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

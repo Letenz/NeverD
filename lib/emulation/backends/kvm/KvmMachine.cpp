@@ -78,6 +78,8 @@ public:
   // Private startup execution discovers and verifies this mask before return.
   uint32_t MXCSRMask = x64::fp::ArchitecturalMXCSRMask;
   uint32_t mxcsrMask() const override { return MXCSRMask; }
+  X64BranchModel BranchModel = X64BranchModel::Intel;
+  X64BranchModel branchModel() const override { return BranchModel; }
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
   void initializeSynchronizedRegisters() {
     const int Supported = ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_SYNC_REGS);
@@ -274,7 +276,8 @@ createKvmMachine(MemoryProjection &Memory) {
     return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                    BackendAvailability::MissingCapability);
   M->initializeSynchronizedRegisters();
-  if (auto E = verifyX64Machine(*M, Memory, &M->MXCSRMask, true))
+  if (auto E =
+          verifyX64Machine(*M, Memory, &M->MXCSRMask, true, &M->BranchModel))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }

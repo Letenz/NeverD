@@ -510,21 +510,35 @@ build-release/bin/NeverDLowIRRefinementTests
 
 The following behavior uses the default strict audit contract. `NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
 
+Physical-return regressions cover direct and indirect calls that skip invalid inline bytes, feasible bad continuations, complete target enumeration and exact/short budgets. Full-state refinement rejects altered results. Independently compiled C at O1/O2 must also preserve the complete frame write; matching return values cannot hide a changed return-slot byte.
+
 Explicit native-overlap tests check actual x64 branches into immediate operands, both feasible branch outcomes and indirect return entries inside earlier instructions. Synthetic provider tests check contained overlaps in both collection orders, conflicting bytes on an untaken direct arm, code/read consistency in both orders and candidate reads. Exact and short byte budgets count duplicate overlap bytes across indirect transfers. Changed branch results, static or loop use, and contradictory evidence must refuse certificates; enabling the option or changing its limit changes the digests.
 
-Opt-in audit-boundary tests cover dead RCL, memory XADD and REP MOVS, symbolic path contradictions, arbitrary-controlled branches and exact refusals on entry, indirect, CALL and RET arrivals. They check independent access to a reachable suffix, candidate/native address collisions, malformed or partial evidence, resource exhaustion, static/loop API rejection and all three refinement digest layers. Changing an unreachable instruction or enabling the option with no retained boundaries changes the certificate digests. These tests establish the declared finite proof scope, not semantics for the unaudited instructions.
+Opt-in audit-boundary tests cover dead RCL, LOCK memory XADD and REP MOVS, symbolic path contradictions, arbitrary-controlled branches and exact refusals on entry, indirect, CALL and RET arrivals. They check independent access to a reachable suffix, candidate/native address collisions, malformed or partial evidence, resource exhaustion, static/loop API rejection and all three refinement digest layers. Changing an unreachable instruction or enabling the option with no retained boundaries changes the certificate digests. These tests establish the declared finite proof scope, not semantics for the unaudited instructions.
 
 Packed-flags tests cover all scalar entry-flag combinations, privilege masks, both-execution TF/AC guards, distinct undefined producers, correlated copies, native calls, sibling state, mandatory final system-state observation, malformed evidence and charged resource limits. Finite loops must exhaust every feasible input path; a safe sibling cannot hide an infinite or truncated path. RDSSPD/RDSSPQ checks cover all 16 general-purpose registers and both widths, unchanged high bits, retained `Missing` evidence and rejection of forged projections. Machine-state tests compare both C routes at O0/O2 with undefined-behavior traps against an independent user-mode flags oracle and check sticky profile failure. INCSSPD/INCSSPQ tests cover both widths and every general-purpose register, unreachable-boundary retention, feasible traps after a completed sibling, zero operands and forged trap evidence.
+
+`NeverDX86DecodeDetailTests` covers all three decode routes, both x64 address widths, signed displacement boundaries, mandatory prefixes, genuine i386 disp16, moffs, truncation and detail-free reuse. Exact relocation occurrences bind; wrong widths, offsets and values do not. Native independence and refinement tests additionally retain full frame writes, reject observed arbitrary flags and reject an altered shift candidate.
 
 `NeverDX86UndefinedEffectsTests` checks undefined-bit metadata, defined/preserved flags and stale-certificate refusal. `NeverDX86CarryArithmeticFlagTests` checks ADC/SBB auxiliary carry for register and memory forms against an arithmetic oracle. `NeverDX86LogicIdentityTests` checks that AND with identical operands still clears bits 63:32 of the enclosing 64-bit register for a 32-bit destination in 64-bit mode while preserving unwritten bits for narrower writes.
 
 `X86RotateUndefinedEffects.*` covers every raw count, operand width, CL overlap, high-byte alias and memory destination against a scalar arithmetic oracle. `X86BitTestUndefinedEffects.*` covers register/immediate indexes, source/destination overlap, extended registers, defined flags and upper-register writes. Metadata controls reject changed operands, encodings and unsupported forms. Native proofs distinguish correlated reads from independent fresh flags, enforce exact/short producer budgets and reject observable undefined overflow. Full-state refinement checks accept the selected witness and reject zero-bit witnesses or altered candidates.
 
-`X86XaddAudit.*` checks all 65,536 byte operand pairs, wider flag boundaries, register/high-byte overlap, both writebacks, REX byte-width limits and whole-register preservation against an unsigned arithmetic oracle. Native checks require zero new fresh bits without losing earlier dependencies; both witnesses accept unchanged XADD, while altered sum, exchanged source or defined flag outputs refuse. The `/6` alias uses the complete shift-count matrix, with changed group/decoded-ID controls rejecting semantic relabeling.
+`X86XaddAudit.*` checks all 65,536 byte operand pairs, wider flag boundaries, register/high-byte overlap, both writebacks, REX byte-width limits and whole-register preservation against an unsigned arithmetic oracle. Native checks require zero new fresh bits without losing earlier dependencies; both witnesses accept unchanged XADD, while altered sum, exchanged source or defined flag outputs refuse. The `/6` alias uses the complete shift-count matrix, with changed group/decoded-ID controls rejecting semantic relabeling. Memory tests additionally exhaust byte pairs and cover address overrides, extensions, IP-relative and i386 16-bit addressing, signed displacements, surrounding bytes and stale detail refusals. Full-frame native checks retain earlier arbitrary dependencies and exact/short limits; altered store addresses violate the return-slot contract.
+
+`X86DoubleShiftUndefinedEffects.*` checks every raw byte count at 16/32/64-bit widths against independent single-bit transfers, including source/destination/CL aliases and exact producer guards. Native checks isolate flags after discarding RAX, distinguish count 16 from 17, retain earlier dependencies and enforce exact/short budgets. Full-state relations reject changed defined slices and a zero-bit witness; arbitrary low words never authorize clearing defined upper bits. Malformed forms publish no partial evidence.
+
+`*Deferred*` cases exercise dead taken edges, dead fallthrough, missing or malformed code, symbolic contradictory guards, arbitrary control, selected witnesses and full-state mutations. Synthetic providers verify that dead successors are never fetched and reached malformed metadata still refuses. Exact/short instruction, operation, visit and query limits, feasible bad alternatives and nonterminating cycles cannot certify prefixes. Policy changes alter certificate digests, and static/loop APIs reject the option.
 
 `NeverDPEFixedImageTests` uses independently constructed PE files to check relocated instructions and immutable data, import write footprints, malformed headers/tables, aliases and changed provenance. Native-to-LowIR and exact LLVM proofs accept matching candidates and reject changed results, status or native bytes. Preparation exhaustion remains distinct and permits an explicit retry with larger limits; ordinary loading also accepts a valid 40000-record relocation table beyond the default analysis budget.
 
 `FrameOffsets.*`, `NativeStackSpecialization.*` and `OriginalBinaryUndefinedIndependence.*` check all residues for alignments 2/4/8/16/32, free high bits, spills across calls, countdown loops, alias corruption, wrong dispatch, irrelevant wide masks, necessary partition upgrades and exact/one-short budgets. Separate native controls check guarded alignment, internal unsigned return cleanup, incorrect cleanup and prefixed returns. These tests do not establish automatic native-to-LLVM proof coverage for partitioned loops.
+
+Frame-offset regressions cover 558 split-width/alignment/residue/bias combinations under a gate budget too small for whole-root subtraction, mismatched slice roots and biases, unconstrained sparse masks, modular carries and wraparound, nested masks and node/query exhaustion. Native tests verify exact stores through partially aligned pointers, reject missing alignment and out-of-frame accesses, and reject modified store values in full-state refinement.
+
+Repeated-feasibility regressions retain all 130 native instructions while using the same query budget as a two-instruction straight line, reject one-short query/instruction budgets, keep feasible traps across changed branches and entry domains, refuse exhausted solver gates and reject modified candidate state.
+
+Entry-congruence proof tests cover every residue at alignments 1/2/4/16, two distinct root registers, unconstrained higher bits, malformed domains, contradictory entry constants, nonwrapping bounds, exclusion gaps, preservation and exact/one-short query budgets. Inductive loop templates retain the original root predicate. Fresh native independence/refinement and native-to-LLVM checks reject mismatched domains and changed status, while certificate digests bind both domains. These are independently authored fixtures; no alignment is inferred from an ABI or a concrete execution. An independent guarded C function is compiled unchanged at O1/O2 and proved against the actual native instruction sequence under two residues; the same compiled artifacts must fail for a different residue.
 
 Register-case regressions cover both byte orders, high frame roots, overwritten and overlapping fields, later edges, widened predecessors, native CALL/RET and exact/one-short budgets. Both C routes execute all four memory cases at O0/O2. Native refinement checks bind two selector values independently; they are not an unrestricted-input proof. A separate LLVM fixture checks that moving the false arm before a shared join cannot make it execute after the true arm, including PHI copies and stores.
 
@@ -872,6 +886,23 @@ processes to establish independent store-fault behavior. Other native-oracle
 hosts skip explicitly; backend cells distinguish unavailable execution.
 
 ## Process emulation checks
+
+`AndroidNative.FamilyFallbacksPreserveDiagnosticsAndProviderPrecedence` checks
+unknown pthread attribute and mutex members, disabled thread calls and generic
+unknown imports through real dynamic lookups. The same calls after library close
+must report the inactive provider before interpreting their invalid arguments.
+Dispatch refactors also require the Android, Linux, Darwin, process API and
+execution session/configuration suites, preserving complete reports across the
+public surfaces and available backends.
+
+`DriverKernelFramework.CallAdmissionPreservesValidationOrderAndIRQL` checks
+competing argument, globals, IRQL and object failures, preserves allocation state
+on rejection, and executes the unrestricted context accessors. Windows call
+routing changes require the complete driver, public driver API, native driver and
+guard metadata suites with driver emulation enabled. Request lifetime, queue
+ownership, cancellation, interrupt and power tests exercise the domain handlers;
+execution tests still report unavailable native hosts and optional WDK fixtures
+explicitly.
 
 `AndroidFinalizerTests.cpp` runs independent C ABI callers at O0/O2 with ordinary,
 APS2 and RELR relocations. It checks constructor registrations, exact callback
@@ -2308,7 +2339,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 46 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 1895 CPU checks and 17 SEH regressions, 2136 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `1895 CPU + 224 WHP + 17 SEH = 2136`.
+`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 4062 CPU checks and 17 SEH regressions, 4303 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `4062 CPU + 224 WHP + 17 SEH = 4303`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -2318,7 +2349,15 @@ With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDri
 
 `X64DoubleShiftTests.cpp` covers every admitted imm8/CL count, aliased and extended registers, defined flags, exact cross-page RAM observations, cancellation, permission/unmapped/device faults, rejected LOCK/undefined counts, contexts and native ADC continuation. An independent host oracle checks 5,184 original executions. Twelve original WDK probes cover register and RAM forms. The native gate adds 145 mandatory outcomes.
 
-`X64ScalarShiftTests.cpp` checks all byte counts, both carry inputs, zero/all-one and signed operands, implicit-one forms, AH/SPL and count-register aliases, full CPU state, exact RAM spans, observer rollback, faults and context continuation. An independent native oracle checks 65,536 executions. The WDK resource driver adds 72 original probes. The KVM/WHP gate requires 769 outcomes for this family.
+`X64ScalarShiftTests.cpp` checks all byte counts, both carry inputs, zero/all-one and signed operands, implicit-one forms, AH/SPL and count-register aliases, full CPU state, exact RAM spans, observer rollback, faults and context continuation. An independent native oracle checks 65,536 executions. The WDK resource driver adds 72 original probes. The KVM/WHP gate requires 769 outcomes for this family. Only a zero masked count guarantees that all flags are preserved. A nonzero full `RCL/RCR` carry-ring rotation preserves the operand and CF but leaves OF undefined; the oracle excludes only that undefined bit.
+
+`X64LoopTests.cpp` covers 21 original encodings, wrapping counters, signed targets above 4 GiB, unchanged full CPU/RAM state, observer cancellation, split instruction backing, target-fetch faults and context restoration. Incomplete instruction bytes reject before execution; a fault fetching the branch target retains the retired counter and PC. The WDK resource driver adds 12 original probes. KVM/WHP require 379 outcomes for this family across supervisor, user and driver contracts. The original-host oracle runs up to 1,008 cases and reports its count. Taken AMD `66H` branches target low memory reserved by the host OS, so those forms run in the guest matrix with explicitly mapped low targets instead. Intel and AMD target widths, including REX.W precedence, are checked separately.
+
+`X64BranchTests.cpp` checks all 16 Jcc conditions and relative JMP, nine prefix sequences, short/near forms, signed targets above 4 GiB, complete CPU/RAM state, observer stops/errors, split-page decoding, target-fetch faults and context restoration. The independent Intel-host oracle executes 9,792 original instructions; AMD low-target forms stay in guest tests. Both decoder models have complete/truncated-byte tests, and native probes test publication failure. Four original WDK resource probes exercise driver policy. This adds 274 mandatory outcomes per KVM/WHP gate. AMD software-model coverage does not establish native AMD or ARM64 execution.
+
+`X64StackTests.cpp` covers 42 encodings across nine families: widths, addressing, complete state, ordered observers, cancellation, permissions, split pages, physical aliases, fault repair, device rejection and context restoration. An independent host oracle checks original instructions; six WDK resource probes exercise the driver path. The native KVM/WHP gates each add 1135 mandatory outcomes. Unavailable transports remain explicit skips outside their required native gate.
+
+`X64FrameExitTests.cpp` covers 14 `LEAVE` encodings, effective prefix order, full RBP addressing, complete register state, read-only aliases, split-frame faults and repair, privilege checks, observers, invalid addresses, device rejection and context replay. An independent host oracle executes 42 original instructions; five WDK resource probes check driver execution. Both native gates add 379 mandatory outcomes.
 
 `DriverSIMDSEHTests.cpp` runs eight original SSE fault cases through four supported dispositions plus an x87-edit rejection, both native contracts, normal/CFG WDK images and two load addresses. Ten backend-specific outcomes and three pure kernel SSE record checks are mandatory. `driver_seh_simd.def` owns fixtures and modes; asynchronous unwind tables cover the faulting helper. Microsoft kernel 10.0.26100.9549 supplied independent classification and restoration evidence: 107,744 isolated instruction-path classifications and 8,192 restorations. These observations are not live Windows kernel-driver execution; ARM64 native KVM/WHP remains unverified.
 
@@ -2368,6 +2407,21 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 `WhpStateTransferCases.def` also covers every partial prefix of the combined 32-register capture and conflicts in all seven metadata fields. Both XSAVE API generations must preserve caller state and force a complete retry. The same suite checks one register read per step and recovers omitted XSAVE metadata from that read.
 
 ### Android native workloads
+
+`AndroidNativeTests.cpp` compares both Android `sysconf` page-size selectors
+with `getpagesize`, page-aligned allocation and its final valid byte. Compiled
+callers check selector width, errno, dynamic provider lifetime and explicit
+refusal of other configuration queries. Host page sizes and limits are not
+used as an oracle.
+
+`AndroidScanningTests.cpp` uses independently compiled O0/O2 callers with
+ordinary, APS2 and RELR relocations. It checks integer widths, register/stack
+arguments, `va_copy`, explicit save areas, matching versus input failures,
+field widths, prefix rollback, numeric buffer limits, suppression, `%n`,
+destination aliases, thread errno and dynamic provider lifetime. Full memory
+comparisons cover canaries and refusals. Formatting regressions exercise the
+same GP argument reader. These tests establish the bounded Android model;
+they do not establish behavior on an Android device.
 
 `AndroidSearchTests.cpp` executes independently compiled character-search
 callers at O0/O2 with ordinary, APS2 and RELR relocations on each available
@@ -2605,6 +2659,8 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 
 `NeverDLLVMCPhiTests` executes independent and cross-dependent loop updates at O0/O2 over zero-trip loops, iteration boundaries and randomized full-width seeds. Readability assertions require no snapshot locals for independent updates and only the needed snapshot for compound exchanges. Existing branch, switch, moved-arm and swap-loop cases continue to check the selected edge and simultaneous assignment semantics.
 
+`LLVMCInternalExitRegions` adds five independent tests covering both exit polarities, zero iterations, parallel exit/backedge swaps, all four combinations of nested header/internal exits and ordered header/body/latch observations. Shared-destination exits and early continuations verify executable fallback; a valid earlier loop followed by an unsupported region must publish no partial structure. Whole-module and selected-function output must agree without changing LLVM. Original LLVM and emitted C run against independent unsigned oracles at O0/O2 over 294,912 calls, with undefined-behavior traps on C.
+
 `NeverDLLVMCPhiTests` also checks common loop exits with distinct successor PHI pairs, ordered observer calls, output memory and unchanged caller IR. Whole-module and selected-function C execute against independent O0/O2 oracles. Different exit comparisons and extra arm predecessors exercise conservative handling.
 
 `NeverDLLVMCPhiTests` covers multi-backedge loop-expression factoring with independent O0/O2 oracles, ordered observers, memory snapshots before modifying calls, narrow wrap and signed extension. It checks whole-module and selected-function output without changing caller IR, conflicting edges, shared roots, poison annotations, undefined operands, variable shifts, constrained intrinsics, exception functions and complete budget refusal. Rotate calls must collapse only when every incoming operation agrees.
@@ -2638,6 +2694,21 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
 
+File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
+imports and variadic syscalls, shared catalogue queries from another guest
+thread, private errno, dynamic provider lifetime, implicit directories,
+missing paths, file ancestors, invalid-mode precedence, integer high bits,
+descriptor exhaustion and unchanged cursors. Path imports include empty,
+unmapped, overlong and page-tail strings. Permission checks and noncanonical
+paths remain unsupported. Raw syscall extra registers are ignored; the API 28
+Bionic wrapper rejects nonzero flags.
+
+Directory cases cover existing files/root/prefix directories, missing parents,
+file ancestors, pathname faults, descriptor exhaustion and unchanged cursors
+through raw x64/AArch64 traps, named Bionic calls and variadic syscalls. Existing
+parents with absent targets remain unsupported. Independent guest threads
+retain private errno, and dynamic providers retain identity and lifetime.
+
 Status cases use independently declared x64 and AArch64 `stat` structures, checking
 every field, zero padding, canaries, unaligned output, full-width inode/timestamps,
 size independent from bytes and unchanged cursors. Raw/Bionic/variadic calls and
@@ -2662,3 +2733,15 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` checks the shared root proof and rejection after a leaf starts observing its context.
 
 `SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` checks both architectures and rejects changed providers, weak imports, conflicting storage and stale ABI carriers. `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` executes generated C at O0/O2 with independent Swift carrier oracles, checking coordinate bits including signed zero, subnormals and NaNs, receiver identity, call order and guards. These checks establish the call ABI, not complete upper-method recovery.
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` checks the complete method tree and exact carriers, including private members and rejected signatures. `SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` and `CGRectMethodRejectsChangedEntryAndReceiverParameter` exercise the pipeline and publication replay, rejecting a changed self index, entry or argument type. Compiler records cover four macOS/Mac Catalyst targets; the supported entry declaration remains arm64 only. `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` executes generated C at O0/O2 against an independent scalar Swift carrier oracle, retaining all four coordinate bit patterns, distinct context/self pointers, one call and storage guards.
+
+`NeverDLowInstructionBoundaryTests` runs the LowIR instruction-provenance suite independently of the aggregate lift fixtures. `BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` checks both aligned ADD and post-indexed LDP stack releases, including a link-register restore performed in the caller; the original RET X30 and shared entry remain independently represented. `BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` rejects another return register, BR X30, missing or unaligned release, narrow restores, interior entries, fixups, writable or ambiguous mappings, relocatable input and another format. Decoding a shared tail does not prove a native ABI: missing caller saves or allocation still fail the existing frame proof.
+
+`ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` checks the CoreImage provider, CIImage factory, complete 48-byte logical record and x2 pointer, rejecting missing or wrong providers, x86_64 and conflicting declarations. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` retains the original call independently of result assignments at the same machine address. `RejectsChangedCopyCallBodyAndCurrentImage` rejects 24 edits to receipts, arguments, stores, frames, metadata, imports, duplicate calls and saved IR, including consistent edits to both MedIR and HighIR. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI` executes unchanged generated C at O0/O2 on ARM64 against a callee accepting the independently compiler-observed x2 pointer, checking all six floating bit patterns, selector/receiver identity, one evaluation, returned object, legal copy writes, unchanged inputs and boundary guards. Other hosts skip this physical ABI execution test.
+
+`ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` rejects a cached ABI that disagrees with the current nonempty method encoding or selector; declaration-only clients retain their existing contract.
+
+`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` covers all four matrix/affine producers and 22 rejected contract mutations. `ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` proves the SDK result reaches the CoreImage copy and independent publication replay. `RejectsWrongProducerFrameAndSavedIR` checks 12 mutations per producer, including missing input writes, out-of-frame results, wrong providers/carriers and reuse of a consumed concat input. `GeneratedCMatchesOriginalMachineAndSDKResults` executes the unchanged generated C and original ARM64 fixture words against native CoreGraphics at O0/O2 on Apple ARM64: 1000 cases per producer compare all 48 result bytes, two input records, selector/receiver identity, one call, returned objects, private-copy writes and boundary guards. Other hosts skip this native SDK execution test.
+
+`MatrixFrameEffectsRequireExactCurrentContract` also checks the CGRect consumer and its 22 rejected mutations. `ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` verifies rotation → CGRect borrow → rotation reinitialization → CoreImage publication. `CGRectBorrowRejectsExpiredInputsAndChangedABI` rejects eight edits to initialization, input bounds, imports and carriers. `GeneratedCMatchesOriginalMachineAndSDKResults` additionally executes this full sequence at O0/O2 for 1000 cases against the original fixture words and native SDK, checking saved angle, all 48 final bytes, objects and guards.

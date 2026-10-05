@@ -1,0 +1,7 @@
+//===- X64BranchModels.def - Relative-branch decoding models -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_X64_BRANCH_MODEL(Intel, CS_MODE_X86_INTEL)
+NEVERD_X64_BRANCH_MODEL(AMD, CS_MODE_X86_AMD)

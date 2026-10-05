@@ -1744,6 +1744,98 @@ TEST(NativeSourceHints, ZeroArgClassInitializerUsesSwiftSelf) {
       sdk::swiftMangledZeroArgClassInitializerSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints,
+     CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  const std::string Public =
+      "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefa_"
+      "So6CGRectVtF";
+  const std::string Private = "_$s3WMF12TimelineViewC16drawVerticalLine33_"
+                              "CCCFBA6168377C4D3BACC0F9F7AE2E61LL2in4rectySo12C"
+                              "GContextRefa_So6CGRectVtF";
+  for (const auto &Name : {Public, Private}) {
+    Image.Symbols = {{Name, 0x1000, 0, true}};
+    const auto Declaration =
+        swiftMangledCGContextCGRectClassMethodDeclaration(Image, 0x1000);
+    ASSERT_TRUE(Declaration) << Name;
+    const auto &Hint = Declaration->Signature;
+    EXPECT_EQ(Declaration->Module, Name == Public ? "RectMethodABI" : "WMF");
+    EXPECT_EQ(Declaration->ClassName,
+              Name == Public ? "DrawingOwner" : "TimelineView");
+    EXPECT_EQ(Hint.Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+    EXPECT_EQ(Hint.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Hint.Parameters.size(), 3U);
+    EXPECT_EQ(Hint.Parameters[0].Location.RegisterOffset, a64reg::X0);
+    ASSERT_EQ(Hint.Parameters[1].Components.size(), 4U);
+    EXPECT_EQ(Hint.Parameters[1].Type->Size, 32U);
+    for (size_t I = 0; I != 4; ++I) {
+      EXPECT_EQ(Hint.Parameters[1].Components[I].RegisterOffset, a64reg::V(I));
+      EXPECT_EQ(Hint.Parameters[1].Components[I].ValueBytes, 8U);
+    }
+    EXPECT_EQ(Hint.Parameters[2].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Hint.Parameters[2].Location.RegisterOffset, a64reg::X20);
+    std::string Error;
+    EXPECT_TRUE(validateSourceABI(Hint, Error)) << Error;
+    const auto Shared = swiftMangledReceiverClassMethodSourceABI(Image, 0x1000);
+    ASSERT_TRUE(Shared);
+    EXPECT_TRUE(equalSourceABIs(*Shared, Hint));
+  }
+  Image.Symbols = {{Public, 0x1000, 0, true}};
+  for (const char *Name :
+       {"_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefa_"
+        "So6CGRectVtFTo",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefa_"
+        "So6CGRectVtFTf4d_n",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefa_"
+        "So6CGRectVtFZ",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectSbSo12CGContextRefa_"
+        "So6CGRectVtF",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo6CGRectV_"
+        "So12CGContextRefatF",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefa_"
+        "So7CGPointVtF",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefaSg_"
+        "So6CGRectVtF",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefC_"
+        "So6CGRectVtF",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo10CGImageRefa_"
+        "So6CGRectVtF",
+        "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefa_"
+        "So6CGRectVztF",
+        "_$s13RectMethodABI12DrawingOwnerV4draw2in4rectySo12CGContextRefa_"
+        "So6CGRectVtF"}) {
+    auto Wrong = Image;
+    Wrong.Symbols[0].Name = Name;
+    EXPECT_FALSE(swiftMangledCGContextCGRectClassMethodSourceABI(Wrong, 0x1000))
+        << Name;
+  }
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    auto Wrong = Image;
+    if (Case == 0)
+      Wrong.Arch = Arch::X64;
+    if (Case == 1)
+      Wrong.Format = BinaryFormat::ELF;
+    if (Case == 2)
+      Wrong.IsRelocatable = true;
+    if (Case == 3)
+      Wrong.Symbols.push_back({"_conflict", 0x1000, 0, true});
+    if (Case == 4)
+      Wrong.Segments[0].Flags = SegmentFlags::Readable;
+    EXPECT_FALSE(swiftMangledCGContextCGRectClassMethodSourceABI(Wrong, 0x1000))
+        << Case;
+  }
+}
+
 TEST(NativeSourceHints, CGRectClassInitializerUsesFourFPLanesAndSwiftSelf) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;

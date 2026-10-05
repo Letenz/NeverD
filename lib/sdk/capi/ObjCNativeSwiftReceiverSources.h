@@ -61,7 +61,8 @@ struct BodyProof {
         [&](const ExprPtr &V, unsigned D) {
           if (!Steps)
             return V->Kind == ExprKind::Var && V->Var.Kind == MedVar::Param &&
-                   V->Var.Id == 0 && V->Var.Size == 8 && V->Operands.empty() &&
+                   V->Var.Id == static_cast<int>(Root.SourceParameter) &&
+                   V->Var.Size == 8 && V->Operands.empty() &&
                    !V->SourceCallHint &&
                    !Definitions.count(highSourceLocalIdentity(V->Var)) &&
                    !AddressTaken.count(highSourceLocalIdentity(V->Var));
@@ -178,7 +179,7 @@ struct BodyProof {
         },
         Budget);
   }
-  std::optional<Calls> calls() {
+  std::optional<Calls> calls(bool ValueCopies = false) {
     const auto Flow = analyzeHighSourceFlow(Function, false);
     const auto Graph = buildHighSourceFlowGraph(Function);
     if (!Flow.Complete || !Flow.Items.empty() || !Graph.Diagnostics.Complete ||
@@ -216,7 +217,17 @@ struct BodyProof {
       Address |= E->Kind == ExprKind::Addr;
       if (Address && E->Kind == ExprKind::Var)
         AddressTaken.insert(highSourceLocalIdentity(E->Var));
-      if (E->SourceCallHint && E->SourceCallHint->NativeSwiftReceiver) {
+      if (ValueCopies && E->SourceCallHint && E->SourceCallHint->ByValueCopy &&
+          !E->SourceCallHint->NativeSwiftReceiver) {
+        const auto &B = *E->SourceCallHint;
+        if (E->Kind != ExprKind::Call || E->IsIndirectCall ||
+            !isObjCByValueCopyHint(B, Function.Entry, Image.Arch) ||
+            E->CallAddr != B.ByValueCopy->Site.StaticTarget ||
+            B.TargetAddress != E->CallAddr ||
+            !Result.emplace(B.ByValueCopy->Site, E.get()).second)
+          return std::nullopt;
+      } else if (!ValueCopies && E->SourceCallHint &&
+                 E->SourceCallHint->NativeSwiftReceiver) {
         const auto &B = *E->SourceCallHint;
         if (E->Kind != ExprKind::Call || E->IsIndirectCall || !B.Receiver ||
             B.Receiver->Origin !=
@@ -232,11 +243,13 @@ struct BodyProof {
           [&](const ExprPtr &Child) { Pending.emplace_back(Child, Address); });
     }
     for (const auto &[Site, Call] : Result)
-      if (Call->Operands.empty() ||
-          !objcReceiverTypeHintValid(Image, *Call->SourceCallHint->Receiver) ||
-          !receiver(Call->Operands[0], *Call->SourceCallHint->Receiver,
-                    Call->SourceCallHint->Receiver->Steps.size()))
-        return std::nullopt;
+      if (!ValueCopies)
+        if (Call->Operands.empty() ||
+            !objcReceiverTypeHintValid(Image,
+                                       *Call->SourceCallHint->Receiver) ||
+            !receiver(Call->Operands[0], *Call->SourceCallHint->Receiver,
+                      Call->SourceCallHint->Receiver->Steps.size()))
+          return std::nullopt;
     return Result;
   }
 };
@@ -256,13 +269,16 @@ inline bool objCNativeSwiftReceiverSourceCallBound(
   const auto Current =
       native_source_detail::currentFunction(Result, Function.Entry);
   const auto Declaration =
-      swiftMangledZeroArgClassMethodSourceABI(Image, Function.Entry);
+      swiftMangledReceiverClassMethodSourceABI(Image, Function.Entry);
   if (!Current || !Declaration ||
       !validateNativeSwiftReceiverBindings(Image, Current->Low,
                                            *Current->Med) ||
-      Function.Params.size() != 1 ||
-      !equalSourceTypes(Function.Params[0].Type,
-                        Declaration->Parameters[0].Type) ||
+      Function.Params.size() != Declaration->Parameters.size() ||
+      !std::equal(Function.Params.begin(), Function.Params.end(),
+                  Declaration->Parameters.begin(),
+                  [](const auto &P, const auto &D) {
+                    return equalSourceTypes(P.Type, D.Type);
+                  }) ||
       !equalSourceABIs(*Function.SourceTypeHint, *Declaration) ||
       !equalSourceABIs(*Current->Med->SourceTypeHint, *Declaration))
     return false;

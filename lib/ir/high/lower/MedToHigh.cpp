@@ -1076,6 +1076,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   // that the flow check below sees the body that is printed.
   invertSkipGotos(Func);
   elseArmsForFallthroughJumps(Func);
+  loopsForArmsJumpingBack(Func.Body);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

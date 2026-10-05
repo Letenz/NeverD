@@ -95,6 +95,265 @@ void expectRefusal(const Program &P, Status Expected,
   EXPECT_TRUE(Gated.Recovery.Residual.Blocks.empty());
 }
 
+Program skippedContinuation(bool Indirect) {
+  // CALL helper; invalid long-mode bytes; MOV EAX,7; RET.
+  // helper: ADD qword [RSP],2; RET. An indirect variant computes its target
+  // with LEA before CALL RDX. Neither physical return reaches the inline data.
+  if (Indirect)
+    return Program({0x48, 0x8d, 0x15, 10,   0,    0, 0,   0xff,
+                    0xd2, 0x16, 0x06, 0xb8, 7,    0, 0,   0,
+                    0xc3, 0x48, 0x83, 0x04, 0x24, 2, 0xc3});
+  return Program({0xe8, 8, 0, 0, 0, 0x16, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0x48,
+                  0x83, 0x04, 0x24, 2, 0xc3});
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PhysicalReturnsCollectOnlyTheirActualDestinations) {
+  for (bool Indirect : {false, true}) {
+    auto P = skippedContinuation(Indirect);
+    const auto R = P.recover();
+    ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+    EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+    const auto &Insns = R.Independence.Certificate->Instructions;
+    EXPECT_EQ(Insns.size(), Indirect ? 6U : 5U);
+    const auto Continuation = Entry + (Indirect ? 9 : 5);
+    EXPECT_FALSE(std::any_of(Insns.begin(), Insns.end(), [&](const auto &I) {
+      return I.Origin.Address >= Continuation &&
+             I.Origin.Address < Continuation + 2;
+    }));
+    EXPECT_EQ(std::count_if(Insns.begin(), Insns.end(),
+                            [](const auto &I) {
+                              return I.NativeStackControl ==
+                                     SpecializationNativeStackControl::Return;
+                            }),
+              2);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FeasibleCallContinuationsStillRequireCompleteInstructions) {
+  for (bool Indirect : {false, true}) {
+    auto P = skippedContinuation(Indirect);
+    auto &Bytes = P.Image.Segments.front().Data;
+    Bytes[Bytes.size() - 2] = 0; // Return to the original inline bytes.
+    expectRefusal(P, Status::Unsupported);
+    EXPECT_EQ(P.check().Proof.InstructionAddress, Entry + (Indirect ? 9 : 5));
+  }
+  // One feasible helper arm skips the data; ECX == 0 returns into it.
+  Program Mixed({0xe8, 8,    0,    0,    0, 0x16, 0x06, 0xb8, 7,    0, 0,   0,
+                 0xc3, 0x85, 0xc9, 0x74, 5, 0x48, 0x83, 0x04, 0x24, 2, 0xc3});
+  expectRefusal(Mixed, Status::Unsupported);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredCallContinuationsKeepCompleteTargetEnumeration) {
+  // helper: AND ECX,1; SHL ECX,1; ADD [RSP],RCX; RET. The real return set
+  // contains both the valid continuation and the invalid original address.
+  Program P({0xe8, 8,    0,    0, 0,    0x16, 0x06, 0xb8, 7,    0,    0,   0,
+             0xc3, 0x83, 0xe1, 1, 0xd1, 0xe1, 0x48, 0x01, 0x0c, 0x24, 0xc3});
+  expectRefusal(P, Status::Unsupported);
+  LowIRIndependenceLimits Limits;
+  Limits.MaxIndirectTargets = 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredCallContinuationsNeverCertifyBudgetedPrefixes) {
+  auto P = skippedContinuation(false);
+  P.Contract.PreservedRegisters = {{x86reg::RSP, 8}};
+  P.Contract.PreservedFrameRanges = {{0, 8}};
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  LowIRIndependenceLimits Limits;
+  Limits.MaxInstructions = Good.Proof.Instructions;
+  ASSERT_TRUE(P.check(Limits).proved());
+  --Limits.MaxInstructions;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxBlockVisits = Good.Proof.BlockVisits - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxSolverQueries = Good.Proof.SolverQueries - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Program Cycle({0xe8, 1, 0, 0, 0, 0x16, 0xeb, 0xfe});
+  Limits = {};
+  Limits.MaxPaths = 12;
+  expectRefusal(Cycle, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredConditionalEdgesSkipOnlyInfeasibleInstructionInventories) {
+  for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
+           // Dead taken edge outside the image.
+           {0x39, 0xc0, 0x75, 0x40, 0xb8, 7, 0, 0, 0, 0xc3},
+           // Dead taken edge to bytes that cannot decode in long mode.
+           {0x39, 0xc0, 0x75, 6, 0xb8, 7, 0, 0, 0, 0xc3, 0x16},
+           // Dead fallthrough; only the taken edge is executable code.
+           {0x39, 0xc0, 0x74, 2, 0x16, 0x06, 0xb8, 7, 0, 0, 0, 0xc3}}) {
+    Program P({});
+    P.Image.Segments.front().Data = Bytes;
+    P.append({});
+    expectRefusal(P, Status::Unsupported);
+    P.Contract.DeferNativeConditionalEdges = true;
+    const auto Good = P.check();
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_EQ(Good.Certificate->Instructions.size(), 4U);
+    EXPECT_TRUE(Good.Certificate->LowIR.Contract.DeferNativeConditionalEdges);
+    EXPECT_TRUE(Good.Certificate->LowIR.NativeAuditBoundaries.empty());
+    const auto Recovered = P.recover();
+    EXPECT_TRUE(Recovered.Independence.proved());
+    EXPECT_TRUE(Recovered.Recovery.complete()) << Recovered.Recovery.Diagnostic;
+    // Reverse the branch: exactly the same missing/invalid bytes are reached.
+    P.Image.Segments.front().Data[2] ^= 1;
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredConditionalEdgesRequireSymbolicPathAndArbitraryControlProofs) {
+  // ECX > 7 returns. On the other path ECX > 9 cannot reach the bad byte.
+  Program P({0x83, 0xf9, 7, 0x77, 5, 0x83, 0xf9, 9, 0x77, 6, 0xb8, 7, 0, 0, 0,
+             0xc3, 0x16});
+  P.Contract.DeferNativeConditionalEdges = true;
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.Paths, 2U);
+  P.Image.Segments.front().Data[7] = 3;
+  expectRefusal(P, Status::Unsupported);
+  // An architecture-arbitrary OF must not choose which arm is collected.
+  Program Arbitrary({0x0f, 0xa3, 0xc8, 0x70, 6, 0xb8, 7, 0, 0, 0, 0xc3, 0x16});
+  Arbitrary.flagsProfile();
+  Arbitrary.Contract.DeferNativeConditionalEdges = true;
+  expectRefusal(Arbitrary, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredConditionalEdgesKeepExactBudgetsAndAllFeasibleArms) {
+  Program P({0x83, 0xf9, 7, 0x77, 5, 0x83, 0xf9, 9, 0x77, 6, 0xb8, 7, 0, 0, 0,
+             0xc3, 0x16});
+  P.Contract.DeferNativeConditionalEdges = true;
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  for (unsigned Kind = 0; Kind != 4; ++Kind) {
+    SCOPED_TRACE(Kind);
+    LowIRIndependenceLimits Limits;
+    switch (Kind) {
+    case 0:
+      Limits.MaxInstructions = Good.Proof.Instructions;
+      break;
+    case 1:
+      Limits.MaxOperations = Good.Proof.Operations;
+      break;
+    case 2:
+      Limits.MaxBlockVisits = Good.Proof.BlockVisits;
+      break;
+    case 3:
+      Limits.MaxSolverQueries = Good.Proof.SolverQueries;
+      break;
+    }
+    ASSERT_TRUE(P.check(Limits).proved());
+    switch (Kind) {
+    case 0:
+      --Limits.MaxInstructions;
+      break;
+    case 1:
+      --Limits.MaxOperations;
+      break;
+    case 2:
+      --Limits.MaxBlockVisits;
+      break;
+    case 3:
+      --Limits.MaxSolverQueries;
+      break;
+    }
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+  }
+  Program Cycle({0x39, 0xc0, 0x74, 0xfc});
+  Cycle.Contract.DeferNativeConditionalEdges = true;
+  LowIRIndependenceLimits Limits;
+  Limits.MaxPaths = 12;
+  expectRefusal(Cycle, Status::BudgetExceeded, Limits);
+  // Either side may be selected by an ordinary input. No successful return
+  // may hide the other side's trap, missing mapping or invalid instruction.
+  for (const auto &Bad :
+       std::vector<std::vector<uint8_t>>{{0xcc}, {0x16}, {0xe9, 0, 1, 0, 0}}) {
+    Program Mixed({0x85, 0xc9, 0x74, 6, 0xb8, 7, 0, 0, 0, 0xc3});
+    auto &Data = Mixed.Image.Segments.front().Data;
+    Data.insert(Data.end(), Bad.begin(), Bad.end());
+    Mixed.append({});
+    Mixed.Contract.DeferNativeConditionalEdges = true;
+    expectRefusal(Mixed, Bad.front() == 0xcc ? Status::ContractViolation
+                                             : Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     SplitAlignedPointerPreservesFrameAccessAndStoredInput) {
+  // LEA RDX,[RSP-65]; AND DL,0xf0; LEA RDI,[RDX+9];
+  // MOV [RDI],ECX; MOV EAX,[RDI]; RET. At residue 8 the access is RSP-63.
+  Program P({0x48, 0x8d, 0x54, 0x24, 0xbf, 0x80, 0xe2, 0xf0, 0x48, 0x8d, 0x7a,
+             9, 0x89, 0x0f, 0x8b, 0x07, 0xc3});
+  P.Contract.Frame->Begin = -128;
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  // The exact offset is still subject to the declared frame boundary.
+  P.Contract.Frame->Begin = -62;
+  expectRefusal(P, Status::Unsupported);
+  P.Contract.Frame->Begin = -128;
+  P.Options.EntryFrameAlignment.reset();
+  P.Contract.Frame->EntryAlignment.reset();
+  expectRefusal(P, Status::Unsupported);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     StraightLineLengthDoesNotRepeatTheSameFeasibilityProof) {
+  Program Short({0xb8, 7, 0, 0, 0, 0xc3}); // MOV EAX,7; RET.
+  const auto Reference = Short.check();
+  ASSERT_TRUE(Reference.proved()) << Reference.Proof.Diagnostic;
+  Program Long({0xb8, 7, 0, 0, 0});
+  for (unsigned I = 0; I != 128; ++I)
+    Long.append({0x90});
+  Long.append({0xc3});
+  LowIRIndependenceLimits Limits;
+  Limits.MaxSolverQueries = Reference.Proof.SolverQueries;
+  const auto Good = Long.check(Limits);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.Instructions, 130U);
+  EXPECT_EQ(Good.Certificate->Instructions.size(), 130U);
+  EXPECT_EQ(Good.Proof.SolverQueries, Reference.Proof.SolverQueries);
+  ASSERT_GT(Limits.MaxSolverQueries, 0U);
+  --Limits.MaxSolverQueries;
+  expectRefusal(Long, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxInstructions = 129;
+  expectRefusal(Long, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     RepeatedFeasibilityDoesNotMergeBranchesOrEntryDomains) {
+  // TEST EDI,EDI; JE trap; MOV EAX,7; RET; trap: UD2.
+  Program P({0x85, 0xff, 0x74, 6, 0xb8, 7, 0, 0, 0, 0xc3, 0x0f, 0x0b});
+  P.Contract.DeferNativeConditionalEdges = true;
+  const auto Input = NdVar::reg(x86reg::RDI, 8);
+  for (uint64_t Value : {1, 0, 2}) {
+    P.Options.EntryConstants = {{Input, Value}};
+    P.Contract.EntryConstants = {{Input, Value}};
+    if (Value) {
+      const auto R = P.check();
+      ASSERT_TRUE(R.proved()) << R.Proof.Diagnostic;
+    } else {
+      expectRefusal(P, Status::ContractViolation);
+    }
+  }
+  P.Options.EntryConstants.clear();
+  P.Contract.EntryConstants.clear();
+  expectRefusal(P, Status::ContractViolation);
+  LowIRIndependenceLimits Limits;
+  Limits.Solver.Blast.MaxGates = 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
 TEST(OriginalBinaryUndefinedIndependence,
      StraightLineCertificateOwnsExactBytesAndFallbackMetadata) {
   // mov eax,7; ret. The optional memory-call route declines both instructions.
@@ -121,6 +380,23 @@ TEST(OriginalBinaryUndefinedIndependence,
   // Mutating the image cannot mutate the certificate's retained byte storage.
   P.Image.Segments[0].Data[1] = 9;
   EXPECT_EQ(Certificate.Instructions[0].NativeBytes[1], 7);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     Disp32WordShiftKeepsMemoryAndUndefinedFlagObligations) {
+  // MOV [RSP-8],RCX; SHL word [RSP-8],3 using disp32; MOVZX EAX,[RSP-8]; RET.
+  // The full frame write remains observed; arbitrary AF is initially dead.
+  Program P({0x48, 0x89, 0x4c, 0x24, 0xf8, 0x66, 0xc1, 0xa4, 0x24, 0xf8,
+             0xff, 0xff, 0xff, 3,    0x0f, 0xb7, 0x44, 0x24, 0xf8, 0xc3});
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Certificate->Instructions.size(), 4U);
+  const auto &Shift = Good.Certificate->Instructions[1];
+  EXPECT_EQ(Shift.Origin.Address, Entry + 5);
+  EXPECT_EQ(Shift.UndefinedEffects.Coverage, LowUndefinedCoverage::Complete);
+  EXPECT_EQ(Shift.UndefinedEffects.Effects.size(), 2U);
+  P.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+  expectRefusal(P, Status::Dependent);
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
@@ -176,7 +452,7 @@ TEST(OriginalBinaryUndefinedIndependence,
 TEST(OriginalBinaryUndefinedIndependence,
      UnreachableUnauditedBoundariesRequireOptInAndRetainExactReceipts) {
   for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
-           {0xd1, 0xd0}, {0x0f, 0xc1, 0x08}, {0xf3, 0xa4}}) {
+           {0xd1, 0xd0}, {0xf0, 0x0f, 0xc1, 0x08}, {0xf3, 0xa4}}) {
     // CMP EAX,EAX; JNE boundary; MOV EAX,7; RET; boundary: body; RET.
     Program P({0x39, 0xc0, 0x75, 6, 0xb8, 7, 0, 0, 0, 0xc3});
     P.Image.Segments.front().Data.insert(P.Image.Segments.front().Data.end(),
@@ -293,6 +569,120 @@ TEST(OriginalBinaryUndefinedIndependence,
   // not turn an earlier arbitrary OF input into an independent result.
   Program Earlier({0x0f, 0xa3, 0xca, 0x0f, 0x90, 0xc0, 0x0f, 0xb6, 0xc0, 0x0f,
                    0xc1, 0xc8, 0xc3});
+  Earlier.flagsProfile();
+  expectRefusal(Earlier, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     MemoryXaddKeepsDefinedFrameUpdatesAndEarlierDependencies) {
+  for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
+           {0x0f, 0xc0, 0x44, 0x24, 0xf0},
+           {0x66, 0x0f, 0xc1, 0x44, 0x24, 0xf0},
+           {0x0f, 0xc1, 0x84, 0x24, 0xf0, 0xff, 0xff, 0xff},
+           {0x4c, 0x0f, 0xc1, 0x6c, 0x24, 0xf0}}) {
+    Program P({});
+    P.flagsProfile();
+    P.Image.Segments.front().Data = Bytes;
+    P.append({0xc3});
+    for (unsigned I = 1; I != 16; ++I)
+      P.Contract.ReturnRegisters.push_back({I * 8, 8});
+    for (auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                      x86reg::SF, x86reg::DF, x86reg::OF})
+      P.Contract.ReturnRegisters.push_back({Flag, 1});
+    LowIRIndependenceLimits Limits;
+    Limits.MaxProducers = 0;
+    const auto Good = P.check(Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_TRUE(Good.Certificate->Instructions.front()
+                    .UndefinedEffects.Effects.empty());
+    EXPECT_TRUE(P.recover(Limits).Recovery.complete());
+    Limits.MaxOperations = Good.Proof.Operations;
+    ASSERT_TRUE(P.check(Limits).proved());
+    --Limits.MaxOperations;
+    expectRefusal(P, Status::BudgetExceeded, Limits);
+  }
+  // An arbitrary earlier OF flows through AL into the observed frame sum,
+  // even though XADD overwrites AL and defines all arithmetic flags itself.
+  Program Earlier(
+      {0x0f, 0xa3, 0xca, 0x0f, 0x90, 0xc0, 0x0f, 0xc0, 0x44, 0x24, 0xf0, 0xc3});
+  Earlier.flagsProfile();
+  expectRefusal(Earlier, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DoubleShiftResultAndFlagDomainsUseExactCountThresholds) {
+  for (bool Right : {false, true})
+    for (unsigned Width : {2U, 4U, 8U})
+      for (uint8_t Raw : {0, 1, 2, 15, 16, 17, 31, 32, 63, 64, 255}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Right << '/' << Width << '/' << unsigned(Raw));
+        Program P({});
+        P.flagsProfile();
+        if (Width == 2)
+          P.append({0x66});
+        if (Width == 8)
+          P.append({0x48});
+        P.append({0x0f, uint8_t(Right ? 0xac : 0xa4), 0xd0, Raw, 0xc3});
+        const unsigned Count = Raw & (Width == 8 ? 63 : 31);
+        const bool BadResult = Count > Width * 8;
+        if (BadResult)
+          expectRefusal(P, Status::Dependent);
+        else {
+          const auto Good = P.recover();
+          ASSERT_TRUE(Good.Independence.proved())
+              << Good.Independence.Proof.Diagnostic;
+          EXPECT_TRUE(Good.Recovery.complete()) << Good.Recovery.Diagnostic;
+        }
+        // RET's LowIR operand observes RAX even if the explicit register
+        // contract only names a flag. Discard AX without changing flags.
+        auto FlagsOnly = P;
+        FlagsOnly.Image.Segments.front().Data.pop_back();
+        FlagsOnly.append({0xb8, 0, 0, 0, 0, 0xc3});
+        for (auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                          x86reg::SF, x86reg::DF, x86reg::OF}) {
+          FlagsOnly.Contract.ReturnRegisters = {{Flag, 1}};
+          const bool Arbitrary = Flag == x86reg::DF   ? false
+                                 : Flag == x86reg::AF ? Count != 0
+                                 : Flag == x86reg::OF ? Count > 1
+                                                      : BadResult;
+          const auto R = FlagsOnly.check();
+          EXPECT_EQ(R.Proof.Status,
+                    Arbitrary ? Status::Dependent : Status::Proved)
+              << Flag << '/' << R.Proof.Diagnostic;
+          EXPECT_EQ(bool(R.Certificate), !Arbitrary);
+        }
+      }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DoubleShiftSavedCountAndDiscardedOutputsRespectProofBudgets) {
+  // A symbolic word result may be arbitrary. Discarding AX is sufficient
+  // only while none of the newly undefined arithmetic flags are observed.
+  Program P({0x66, 0x0f, 0xa5, 0xd0, 0xb8, 7, 0, 0, 0, 0xc3});
+  P.flagsProfile();
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(
+      Good.Certificate->Instructions.front().UndefinedEffects.Effects.size(),
+      7U);
+  LowIRIndependenceLimits Limits;
+  Limits.MaxProducers = Good.Proof.Producers;
+  Limits.MaxOperations = Good.Proof.Operations;
+  ASSERT_TRUE(P.check(Limits).proved());
+  --Limits.MaxProducers;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits.MaxProducers = Good.Proof.Producers;
+  --Limits.MaxOperations;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  P.Contract.ReturnRegisters.push_back({x86reg::CF, 1});
+  expectRefusal(P, Status::Dependent);
+  // CL aliases the result, but the audit condition uses its entry snapshot.
+  Program Aliased({0x66, 0x0f, 0xa5, 0xd1, 0xc3});
+  Aliased.flagsProfile();
+  Aliased.Contract.ReturnRegisters = {{x86reg::RCX, 2}};
+  expectRefusal(Aliased, Status::Dependent);
+  Program Earlier(
+      {0x0f, 0xa3, 0xca, 0x0f, 0x90, 0xc0, 0x0f, 0xa4, 0xd0, 1, 0xc3});
   Earlier.flagsProfile();
   expectRefusal(Earlier, Status::Dependent);
 }
@@ -654,14 +1044,15 @@ TEST(OriginalBinaryUndefinedIndependence,
 TEST(OriginalBinaryUndefinedIndependence,
      DiscardedCallContinuationCanContainATrap) {
   // call helper; int3; helper: add rsp,8; mov eax,7; ret. The real native
-  // stack determines the outer return; the call continuation stays evidence.
+  // stack determines the outer return; the discarded continuation is not an
+  // instruction edge and carries no claim about the skipped byte.
   Program P(
       {0xe8, 1, 0, 0, 0, 0xcc, 0x48, 0x83, 0xc4, 8, 0xb8, 7, 0, 0, 0, 0xc3});
   const auto R = P.recover();
   ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
   EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
   EXPECT_EQ(R.Independence.Proof.Paths, 1U);
-  EXPECT_TRUE(
+  EXPECT_FALSE(
       std::any_of(R.Independence.Certificate->Instructions.begin(),
                   R.Independence.Certificate->Instructions.end(),
                   [](const auto &I) { return I.Origin.Address == Entry + 5; }));

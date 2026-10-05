@@ -1,4 +1,10 @@
 // clang-format off
+// Original CoreImage SDK AST declares CIImage's owner, factory and result
+// class. Apple Clang arm64 client IR and canonical iOS method encodings agree
+// on CGAffineTransform's six doubles and indirect value argument in X2.
+ND_OBJC_OWNER("CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "class", "CIImage", "", "C:NSObject|P:NSSecureCoding|P:NSCopying", nullptr)
+ND_OBJC_MEMBER("CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "class", "CIImage", "", true, "imageWithCGImage:", "@24@0:8^{CGImage=}16", "CIImage", false, nullptr, "", false)
+ND_OBJC_MEMBER("CoreImage", "/System/Library/Frameworks/CoreImage.framework/CoreImage", "class", "CIImage", "", false, "imageByApplyingTransform:", "@64@0:8{CGAffineTransform=dddddd}16", "CIImage", false, nullptr, "", false)
 // Bounded public UIKit receiver facts. The UIImage and renderer declarations
 // were observed in both Xcode 26.5 arm64 iPhoneOS and iPhoneSimulator Clang
 // ASTs; other owners carry their own evidence below. These are receiver

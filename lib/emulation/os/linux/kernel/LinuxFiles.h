@@ -26,6 +26,9 @@ public:
 
 private:
   enum class Stream { Input, Output, Error };
+  enum class PathKind { File, Directory, Missing, NotDirectory };
+  // A pathname import can fail with guest errno independently of backend I/O.
+  using Pathname = std::variant<std::string, uint32_t>;
   struct OpenFile {
     llvm::ArrayRef<uint8_t> Bytes;
     const LinuxFileMetadata *Metadata = nullptr;
@@ -39,6 +42,12 @@ private:
   std::map<uint32_t, Descriptor> Descriptors{
       {0, Stream::Input}, {1, Stream::Output}, {2, Stream::Error}};
 
+  llvm::Expected<Pathname> readPath(uint64_t Address);
+  PathKind lookupPath(const std::string &Path) const;
+  llvm::Expected<std::optional<uint64_t>>
+  access(uint64_t Address, uint32_t Mode, ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>> makeDirectory(uint64_t Address,
+                                                        ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> open(uint64_t Address, uint32_t Flags,
                                                ProcessResult &Result);
   llvm::Expected<uint64_t> read(OpenFile &File, uint64_t Address,

@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <capstone/capstone.h>
+#include <vector>
 
 namespace neverd::emulation {
 class CheckedX64Backend final : public CheckedBackend {
@@ -24,6 +25,9 @@ public:
     return GuestArchitecture::X64;
   }
   bool supportsSIMDExceptions() const override { return SIMDExceptions; }
+  std::optional<X64BranchModel> x64BranchModel() const override {
+    return Machine->branchModel();
+  }
   llvm::Expected<RegisterValue>
       supportedControlBits(CPURegister) const override;
   llvm::Expected<RegisterValue> readRegister(CPURegister) override;
@@ -59,6 +63,18 @@ private:
   std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const override;
   llvm::Expected<uint64_t> operandRegister(unsigned Register) const;
+  llvm::Expected<uint64_t> operandAddress(const cs_insn &, const cs_x86_op &,
+                                          uint64_t Offset = 0) const;
+  struct Access {
+    uint64_t Address;
+    unsigned Size, Permission;
+    uint64_t Value;
+    std::optional<unsigned> Update = std::nullopt;
+    uint64_t High = 0;
+    bool Deferred = false;
+  };
+  llvm::Error prepareStack(const cs_insn &, bool Push,
+                           std::vector<Access> &) const;
   void setOperandRegister(unsigned Register, uint64_t Value);
   std::shared_ptr<MemoryProjection::Device> deviceAt(uint64_t Address) const;
   llvm::Error validateDevice(const MemoryProjection::Device &, uint64_t,

@@ -1,0 +1,41 @@
+//===- driver_resource_loop.def - Original WDK counted branch probes
+//-------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_LOOP_VALUE
+NEVERD_RESOURCE_LOOP_VALUE(LoopInput, 0x100000002ULL)
+#endif
+#ifdef NEVERD_RESOURCE_LOOP_CASE
+#define NEVERD_RESOURCE_LOOP_CODE(Instruction)                                 \
+  "pushfq\n\tpopq %q0\n\tpushq %q4\n\tpopfq\n\t" Instruction                   \
+  " 1f\n\tmovq $0, %q2\n\tjmp 2f\n\t1: movq $1, %q2\n\t"                       \
+  "2: pushfq\n\tpopq %q1\n\tpushq %q0\n\tpopfq"
+// Use the shared 64-bit branch form in high-address native driver code.
+NEVERD_RESOURCE_LOOP_CASE(LOOP64Set, SetFlags, 0x100000001ULL, 1,
+                          NEVERD_RESOURCE_LOOP_CODE("loop"))
+NEVERD_RESOURCE_LOOP_CASE(LOOP64Clear, ClearFlags, 0x100000001ULL, 1,
+                          NEVERD_RESOURCE_LOOP_CODE("loop"))
+NEVERD_RESOURCE_LOOP_CASE(LOOP32Set, SetFlags, 1, 1,
+                          NEVERD_RESOURCE_LOOP_CODE("addr32 loop"))
+NEVERD_RESOURCE_LOOP_CASE(LOOP32Clear, ClearFlags, 1, 1,
+                          NEVERD_RESOURCE_LOOP_CODE("addr32 loop"))
+NEVERD_RESOURCE_LOOP_CASE(LOOPE64Set, SetFlags, 0x100000001ULL, 1,
+                          NEVERD_RESOURCE_LOOP_CODE("loope"))
+NEVERD_RESOURCE_LOOP_CASE(LOOPE64Clear, ClearFlags, 0x100000001ULL, 0,
+                          NEVERD_RESOURCE_LOOP_CODE("loope"))
+NEVERD_RESOURCE_LOOP_CASE(LOOPE32Set, SetFlags, 1, 1,
+                          NEVERD_RESOURCE_LOOP_CODE("addr32 loope"))
+NEVERD_RESOURCE_LOOP_CASE(LOOPE32Clear, ClearFlags, 1, 0,
+                          NEVERD_RESOURCE_LOOP_CODE("addr32 loope"))
+NEVERD_RESOURCE_LOOP_CASE(LOOPNE64Set, SetFlags, 0x100000001ULL, 0,
+                          NEVERD_RESOURCE_LOOP_CODE("loopne"))
+NEVERD_RESOURCE_LOOP_CASE(LOOPNE64Clear, ClearFlags, 0x100000001ULL, 1,
+                          NEVERD_RESOURCE_LOOP_CODE("loopne"))
+NEVERD_RESOURCE_LOOP_CASE(LOOPNE32Set, SetFlags, 1, 0,
+                          NEVERD_RESOURCE_LOOP_CODE("addr32 loopne"))
+NEVERD_RESOURCE_LOOP_CASE(LOOPNE32Clear, ClearFlags, 1, 1,
+                          NEVERD_RESOURCE_LOOP_CODE("addr32 loopne"))
+#undef NEVERD_RESOURCE_LOOP_CODE
+#endif

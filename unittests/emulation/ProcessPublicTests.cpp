@@ -586,8 +586,11 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  for (const char *Entry : {"files_sequence", "files_faults", "files_bionic",
-                            "files_status", "files_status_bionic"}) {
+  for (const char *Entry :
+       {"files_sequence", "files_faults", "files_bionic", "files_status",
+        "files_status_bionic", "files_access", "files_access_faults",
+        "files_access_bionic", "files_directory_errors",
+        "files_directory_bionic"}) {
     SCOPED_TRACE(Entry);
     llvm::json::Object Request{
         {"backend", "unicorn"},
@@ -605,6 +608,9 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
             ->front()
             .getAsObject())["metadata"] =
           llvm::cantFail(llvm::json::parse(emulation::FileTestMetadataJSON));
+    if (llvm::StringRef(Entry) == "files_access" ||
+        llvm::StringRef(Entry) == "files_directory_errors")
+      (*Request.getObject("linux_files"))["descriptor_limit"] = 4;
     auto Options = jsonText(std::move(Request));
     auto Text = takeString(neverd_emulate_process_json(
         Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));

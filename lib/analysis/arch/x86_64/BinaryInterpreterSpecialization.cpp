@@ -563,9 +563,16 @@ prepareBinaryRelation(const BinaryImage &Image,
     return Fail(
         Status::Invalid,
         "binary proof requires an accessible entry RSP frame and return slot");
-  if (Options.EntryFrameAlignment)
-    return Fail(Status::Unsupported,
-                "native proof does not support an entry alignment domain");
+  if (Options.EntryFrameAlignment != Contract.Frame->EntryAlignment)
+    return Fail(Status::Invalid,
+                "proof and recovery entry alignment contracts differ");
+  if (Options.EntryFrameAlignment &&
+      (!Options.EntryFrameAlignment->valid() || !Options.FrameBaseRegister ||
+       Options.FrameBaseRegister->Offset != RSP ||
+       Options.FrameBaseRegister->Bytes != 8))
+    return Fail(
+        Status::Invalid,
+        "entry alignment requires a valid RSP recovery root and domain");
   if (Options.ExternalStoresDisjointEntryFrame)
     return Fail(Status::Unsupported,
                 "native proof does not support an external-store frame "
@@ -675,6 +682,12 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
         "overlapping instructions are unsupported by native loop proofs";
     return Result;
   }
+  if (LoopPlan && Contract.DeferNativeConditionalEdges) {
+    Result.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Proof.Diagnostic =
+        "deferred conditional edges are unsupported by native loop proofs";
+    return Result;
+  }
   if (!Options.X64FlagsProfile) {
     Result.Proof.Status = LowIRRefinementStatus::Unsupported;
     Result.Proof.Diagnostic =
@@ -765,6 +778,12 @@ BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
   if (Contract.AllowOverlappingNativeInstructions) {
     Refuse(LowIRLoopInferenceStatus::Unsupported,
            "overlapping instructions are unsupported by native loop inference");
+    return Result;
+  }
+  if (Contract.DeferNativeConditionalEdges) {
+    Refuse(
+        LowIRLoopInferenceStatus::Unsupported,
+        "deferred conditional edges are unsupported by native loop inference");
     return Result;
   }
   if (!Recovery.complete()) {

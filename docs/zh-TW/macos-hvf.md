@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 86f979db12c7cf8a82eb75814ac41da27557a2d27b76cde302b8bec45d3e46ef -->
+<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
 
 [← 文件索引](README.md)
 
@@ -49,7 +49,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon 可使用 `-DNEVERD_LLVM_PREBUILT=ON`。[HVF 工作流程](../../.github/workflows/hvf.yml) 現在只選擇 `self-hosted, macOS, ARM64, hvf`，並核對宿主架構。準備 LLVM 前必須實際建立與銷毀 VM/vCPU。`probe` 只檢查可用性，`transport` 驗證傳輸層，`darwin` 要求所有相符的 Darwin 工作負載，`full` 要求傳輸層、完整 CPU 與 Darwin 驗收。Intel 選項已移除；下文相關流程為已暫停的歷史操作。仍需自行提供專用 ARM64 runner。
 
-傳輸層要求 ARM64 15 項、Intel 12 項；完整 CPU 門檻分別為 27、20 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
+傳輸層要求 ARM64 17 項、Intel 14 項；完整 CPU 門檻分別為 29、22 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
 
 託管 Intel 的 `--execution-methods` 從完整 CTest 清單取得所有參數、旗標、環境及工作目錄，以獨立行程循序執行各 GoogleTest 方法，拒絕未知屬性。方法總期限最多 120 秒，方法內不另套用逐參數期限；逾時後有界回收行程群組。原始 XML、名稱對應與退出狀態均保留。逾時或 XML 不完整會產生部分失敗；必需原生項缺失或跳過都不能通過。自託管仍採用 CTest 逐案例行程及期限。
 
@@ -216,3 +216,11 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 最終保留的原始碼 `6c4a5ef1f` 已獨立通過 32 項 RunControl、27/27 傳輸測試、完整 CPU 清單（1429 通過、10644 跳過，27/27 必需項）與 Darwin（65 通過、221 跳過，39/39 必需項），零失敗。三項原生中斷/維護復原方法也各連續通過 1000 次，且確認子行程已回收。清單互有重疊，不能相加；跳過項屬停用或異構後端/架構。這只證明有邊界的原生 ARM64 覆蓋，不代表 Intel 執行、完整 Apple OS 模擬或效能排名。Intel 僅做本機 x86-64 語法編譯。
 
 [原始配對樣本](../benchmarks/2026-10-05-arm64-hvf-watchdog.json) · [原始碼與設定](../benchmarks/2026-10-05-arm64-hvf-watchdog-metadata.json)
+
+## 請求完成通知研究（2026-10-05）
+
+84,268 條 ARM64 檢查執行指令的插樁資料顯示，準備／完整擷取平均為 0.673／0.784 微秒；提交與 owner 執行差值平均每請求 7.367 微秒，包含少量生命週期操作，並非純核心排程時間。區間重疊，不可相加，也不作提速依據。原子通知與獨立阻塞條件變數各測量 15 組配對。原子等待沒有收益且增加程序 CPU 時間；阻塞候選的初始化、整數、分支、記憶體、TLS／呼叫、雙 CPU 切換基線／候選中位比分別為 1.057、1.008、1.000、0.885、1.151、1.169，大於 1 有利於候選，結果不一致。其他應用及編譯造成干擾。首輪前置檢查失敗後，本機 shell 串聯錯誤仍啟動測量，僅保留為受干擾研究。修正後的控制器拒絕無編譯條件的確認嘗試；阻塞配對明確記錄共享負載。兩個執行時方案均撤回。
+
+最終原始碼 `a63d57e6a` 獨立通過 CPU（1434 通過、12693 跳過，必需 29/29）及 Darwin（65 通過、221 跳過，必需 39/39），零失敗。新增必需回歸驗證並行借用請求的獨立結果／錯誤，以及已進入請求停止後的退役等待；各通過 100 次，前者共 100,000 次請求交接。兩個撤回候選分別通過三組各 1000 次原生復原，不能代替最終版本證據。清單重疊，跳過不算通過。Intel 僅作語法編譯，未經實體 Mac 驗收，不執行 Actions。
+
+[原子候選 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-atomic.json) · [阻塞候選 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-blocking.json) · [來源與驗證 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-metadata.json)

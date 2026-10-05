@@ -36,11 +36,11 @@
 namespace neverd::emulation {
 namespace framework {
 namespace api {
-#define NEVERD_FRAMEWORK_API(Name, Arity)                                      \
+#define NEVERD_FRAMEWORK_API(Name, Arity, Handler, Policy)                     \
   constexpr llvm::StringLiteral Name = #Name;
 #include "KernelFrameworkAPIs.def"
 #undef NEVERD_FRAMEWORK_API
-#define NEVERD_FRAMEWORK_LOADER_API(Name, Arity)                               \
+#define NEVERD_FRAMEWORK_LOADER_API(Name, Arity, Handler)                      \
   constexpr llvm::StringLiteral Name = #Name;
 #include "KernelFrameworkLoaderAPIs.def"
 #undef NEVERD_FRAMEWORK_LOADER_API
@@ -517,9 +517,7 @@ private:
     std::set<uint64_t> InterruptUsers;
   };
   std::map<uint64_t, Lock> LockObjects;
-  llvm::Expected<std::optional<uint64_t>>
-  callLock(llvm::StringRef Name, Binding &B, llvm::ArrayRef<uint64_t> Arguments,
-           uint8_t IRQL);
+
   llvm::Error validateLockDeletion(uint64_t Handle, uint64_t Root) const;
   llvm::Error destroyFrameworkLock(uint64_t Handle);
   llvm::Expected<std::optional<uint64_t>> releaseInterruptLock(uint64_t Handle);
@@ -696,9 +694,9 @@ private:
   std::map<uint64_t, uint64_t> ReadyQueueCallbacks;
   PowerPolicyHost PowerHost;
   PoFxHost PowerFrameworkHost;
-  llvm::Expected<std::optional<uint64_t>>
-  callPoFxSettings(llvm::StringRef Name, Binding &B, llvm::ArrayRef<uint64_t> A,
-                   uint8_t IRQL);
+  llvm::Expected<uint64_t> callPoFxSettings(llvm::StringRef Name, Binding &B,
+                                            llvm::ArrayRef<uint64_t> A,
+                                            uint8_t IRQL);
   llvm::Expected<bool> advancePoFxLifecycle(uint64_t Token);
   llvm::Expected<bool> canUnregisterPoFx(uint64_t Device) const;
   llvm::Error unregisterPoFx(uint64_t Device);
@@ -717,9 +715,7 @@ private:
                                      PowerPolicyHost::RequestMode Mode);
   llvm::Error restartIdleTimer(uint64_t Device);
   llvm::Error beginIdlePowerDown(uint64_t Device);
-  llvm::Expected<std::optional<uint64_t>>
-  callPowerPolicy(llvm::StringRef Name, Binding &B, llvm::ArrayRef<uint64_t> A,
-                  uint8_t IRQL);
+
   enum class PnpPhase {
 #define NEVERD_POWER_POLICY_CALLBACK(Name, Index, Result) Name,
 #include "KernelPowerPolicyCallbacks.def"
@@ -809,9 +805,7 @@ private:
                                    bool RetainInactive = false);
   llvm::Expected<uint64_t> createInterrupt(Binding &B,
                                            llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<std::optional<uint64_t>>
-  callInterrupt(llvm::StringRef Name, Binding &B,
-                llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+
   llvm::Expected<std::optional<uint64_t>>
   finishInterruptCallback(uint64_t Token, uint64_t Result);
   llvm::Error prepareInterruptCall(uint64_t Token, uint64_t Handle,
@@ -847,21 +841,314 @@ private:
   llvm::Expected<uint64_t> addContext(Object &O, const Attributes &A);
   llvm::Expected<uint64_t> createDriver(Binding &B,
                                         llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<std::optional<uint64_t>>
-  callControl(llvm::StringRef Name, Binding &B,
-              llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<std::optional<uint64_t>>
-  callFile(llvm::StringRef Name, Binding &B,
-           llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<std::optional<uint64_t>>
-  callQueue(llvm::StringRef Name, Binding &B,
-            llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<std::optional<uint64_t>>
-  callRequest(llvm::StringRef Name, Binding &B,
-              llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<std::optional<uint64_t>>
-  callRequestAccessors(llvm::StringRef Name, Binding &B,
-                       llvm::ArrayRef<uint64_t> Arguments);
+
+  enum class RequestOwner { Driver, Any };
+  llvm::Expected<Request *>
+  requestForCall(Binding &B, uint64_t Handle,
+                 RequestOwner Owner = RequestOwner::Driver);
+  llvm::Expected<RequestView> requestViewForCall(const Request &R);
+  llvm::Expected<uint64_t>
+  callRequestMemoryBuffer(llvm::StringRef Name, Binding &B,
+                          llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestStopAcknowledge(llvm::StringRef Name, Binding &B,
+                             llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestForward(llvm::StringRef Name, Binding &B,
+                     llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestMarkCancelable(llvm::StringRef Name, Binding &B,
+                            llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestUnmarkCancelable(llvm::StringRef Name, Binding &B,
+                              llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestIsCanceled(llvm::StringRef Name, Binding &B,
+                        llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callRequestFormat(llvm::StringRef Name, Binding &B,
+                                             llvm::ArrayRef<uint64_t> Arguments,
+                                             uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestSetCompletionRoutine(llvm::StringRef Name, Binding &B,
+                                  llvm::ArrayRef<uint64_t> Arguments,
+                                  uint8_t IRQL);
+  llvm::Expected<uint64_t> callRequestSend(llvm::StringRef Name, Binding &B,
+                                           llvm::ArrayRef<uint64_t> Arguments,
+                                           uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestGetStatus(llvm::StringRef Name, Binding &B,
+                       llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestGetCompletionParams(llvm::StringRef Name, Binding &B,
+                                 llvm::ArrayRef<uint64_t> Arguments,
+                                 uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestComplete(llvm::StringRef Name, Binding &B,
+                      llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestRetrieveMemory(llvm::StringRef Name, Binding &B,
+                            llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestRetrieveUnsafeBuffer(llvm::StringRef Name, Binding &B,
+                                  llvm::ArrayRef<uint64_t> Arguments,
+                                  uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestProbeBuffer(llvm::StringRef Name, Binding &B,
+                         llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestGetParameters(llvm::StringRef Name, Binding &B,
+                           llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestRetrieveBuffer(llvm::StringRef Name, Binding &B,
+                            llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+
+  llvm::Expected<DeviceInit *> deviceInitForCall(Binding &B, uint64_t Handle);
+  llvm::Expected<Device *> deviceForCall(Binding &B, uint64_t Handle);
+  llvm::Expected<Object *> queueObjectForCall(Binding &B, uint64_t Handle,
+                                              ObjectKind Kind);
+  llvm::Expected<Queue *> queueForCall(Binding &B, uint64_t Handle);
+  llvm::Expected<Device *> queueDeviceForCall(Binding &B, uint64_t Handle);
+  bool fileBelongsToQueue(Binding &B, uint64_t File, const Queue &Q) const;
+  llvm::Expected<std::deque<uint64_t>::iterator>
+  findPendingFile(Binding &B, uint64_t QueueHandle, Queue &Q,
+                  std::deque<uint64_t>::iterator Begin, uint64_t File);
+  llvm::Expected<uint64_t>
+  retrievePending(Binding &B, uint64_t QueueHandle, Queue &Q,
+                  std::deque<uint64_t>::iterator Position, uint64_t Output);
+  llvm::Expected<uint64_t>
+  callDeviceInitFree(llvm::StringRef Name, Binding &B,
+                     llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceInitAssignName(llvm::StringRef Name, Binding &B,
+                           llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceInitSetDeviceType(llvm::StringRef Name, Binding &B,
+                              llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceInitSetExclusive(llvm::StringRef Name, Binding &B,
+                             llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceInitSetCallerContext(llvm::StringRef Name, Binding &B,
+                                 llvm::ArrayRef<uint64_t> Arguments,
+                                 uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceInitSetPowerPolicyOwner(llvm::StringRef Name, Binding &B,
+                                    llvm::ArrayRef<uint64_t> Arguments,
+                                    uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceInitSetPnpCallbacks(llvm::StringRef Name, Binding &B,
+                                llvm::ArrayRef<uint64_t> Arguments,
+                                uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceInitSetIoType(llvm::StringRef Name, Binding &B,
+                          llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callFdoInitGetPhysicalDevice(llvm::StringRef Name, Binding &B,
+                               llvm::ArrayRef<uint64_t> Arguments,
+                               uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callFdoInitSetFilter(llvm::StringRef Name, Binding &B,
+                       llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callControlDeviceInitAllocate(llvm::StringRef Name, Binding &B,
+                                llvm::ArrayRef<uint64_t> Arguments,
+                                uint8_t IRQL);
+  llvm::Expected<uint64_t> callDeviceCreate(llvm::StringRef Name, Binding &B,
+                                            llvm::ArrayRef<uint64_t> Arguments,
+                                            uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callResourceListQuery(llvm::StringRef Name, Binding &B,
+                        llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callWdmDeviceHandle(llvm::StringRef Name, Binding &B,
+                      llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceEnqueueRequest(llvm::StringRef Name, Binding &B,
+                           llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceGetWdmObject(llvm::StringRef Name, Binding &B,
+                         llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceGetPhysicalDevice(llvm::StringRef Name, Binding &B,
+                              llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceGetDriver(llvm::StringRef Name, Binding &B,
+                      llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceGetIoTarget(llvm::StringRef Name, Binding &B,
+                        llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callControlFinishInitializing(llvm::StringRef Name, Binding &B,
+                                llvm::ArrayRef<uint64_t> Arguments,
+                                uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceCreateSymbolicLink(llvm::StringRef Name, Binding &B,
+                               llvm::ArrayRef<uint64_t> Arguments,
+                               uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callQueueReadyNotify(llvm::StringRef Name, Binding &B,
+                       llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callQueueGetDevice(llvm::StringRef Name, Binding &B,
+                     llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceGetDefaultQueue(llvm::StringRef Name, Binding &B,
+                            llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDeviceConfigureRequestDispatching(llvm::StringRef Name, Binding &B,
+                                        llvm::ArrayRef<uint64_t> Arguments,
+                                        uint8_t IRQL);
+  llvm::Expected<uint64_t> callQueueStop(llvm::StringRef Name, Binding &B,
+                                         llvm::ArrayRef<uint64_t> Arguments,
+                                         uint8_t IRQL);
+  llvm::Expected<uint64_t> callQueueStart(llvm::StringRef Name, Binding &B,
+                                          llvm::ArrayRef<uint64_t> Arguments,
+                                          uint8_t IRQL);
+  llvm::Expected<uint64_t> callQueueDrain(llvm::StringRef Name, Binding &B,
+                                          llvm::ArrayRef<uint64_t> Arguments,
+                                          uint8_t IRQL);
+  llvm::Expected<uint64_t> callQueuePurge(llvm::StringRef Name, Binding &B,
+                                          llvm::ArrayRef<uint64_t> Arguments,
+                                          uint8_t IRQL);
+  llvm::Expected<uint64_t> callQueueGetState(llvm::StringRef Name, Binding &B,
+                                             llvm::ArrayRef<uint64_t> Arguments,
+                                             uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callQueueFindRequest(llvm::StringRef Name, Binding &B,
+                       llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callQueueRetrieveRequest(llvm::StringRef Name, Binding &B,
+                           llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callQueueCreate(llvm::StringRef Name, Binding &B,
+                                           llvm::ArrayRef<uint64_t> Arguments,
+                                           uint8_t IRQL);
+  llvm::Expected<FileObject *> fileObjectForCall(Binding &B, uint64_t Handle);
+  enum class RequestLifetime { Active, Retained };
+  llvm::Expected<Request *> requestAccessorForCall(Binding &B, uint64_t Handle,
+                                                   RequestLifetime Lifetime);
+  llvm::Expected<uint64_t>
+  callDeviceInitSetFileConfig(llvm::StringRef Name, Binding &B,
+                              llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callFileGetName(llvm::StringRef Name, Binding &B,
+                                           llvm::ArrayRef<uint64_t> Arguments,
+                                           uint8_t IRQL);
+  llvm::Expected<uint64_t> callFileGetDevice(llvm::StringRef Name, Binding &B,
+                                             llvm::ArrayRef<uint64_t> Arguments,
+                                             uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callFileGetWdmObject(llvm::StringRef Name, Binding &B,
+                       llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callFileGetFlags(llvm::StringRef Name, Binding &B,
+                                            llvm::ArrayRef<uint64_t> Arguments,
+                                            uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestGetIoQueue(llvm::StringRef Name, Binding &B,
+                        llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestGetInformation(llvm::StringRef Name, Binding &B,
+                            llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestRetrieveMdl(llvm::StringRef Name, Binding &B,
+                         llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestSetInformation(llvm::StringRef Name, Binding &B,
+                            llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callRequestGetFileObject(llvm::StringRef Name, Binding &B,
+                           llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callRequestGetIrp(llvm::StringRef Name, Binding &B,
+                                             llvm::ArrayRef<uint64_t> Arguments,
+                                             uint8_t IRQL);
+  llvm::Expected<Interrupt *> interruptForCall(Binding &B, uint64_t Handle);
+  llvm::Expected<Lock *> lockForCall(Binding &B, uint64_t Handle, bool Wait,
+                                     uint8_t IRQL);
+  llvm::Expected<Device *> powerPolicyDeviceForCall(Binding &B,
+                                                    uint64_t Handle);
+  llvm::Expected<uint64_t>
+  callInterruptCreate(llvm::StringRef Name, Binding &B,
+                      llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callInterruptGetDevice(llvm::StringRef Name, Binding &B,
+                         llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callInterruptGetWdmObject(llvm::StringRef Name, Binding &B,
+                            llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callInterruptReportActivity(llvm::StringRef Name, Binding &B,
+                              llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callInterruptGetInfo(llvm::StringRef Name, Binding &B,
+                       llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callInterruptQueueDeferred(llvm::StringRef Name, Binding &B,
+                             llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callInterruptLock(llvm::StringRef Name, Binding &B,
+                                             llvm::ArrayRef<uint64_t> Arguments,
+                                             uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callInterruptCallback(llvm::StringRef Name, Binding &B,
+                        llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callLockCreate(llvm::StringRef Name, Binding &B,
+                                          llvm::ArrayRef<uint64_t> Arguments,
+                                          uint8_t IRQL);
+  llvm::Expected<uint64_t> callLockRelease(llvm::StringRef Name, Binding &B,
+                                           llvm::ArrayRef<uint64_t> Arguments,
+                                           uint8_t IRQL);
+  llvm::Expected<uint64_t> callLockAcquire(llvm::StringRef Name, Binding &B,
+                                           llvm::ArrayRef<uint64_t> Arguments,
+                                           uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callPowerPolicyRegister(llvm::StringRef Name, Binding &B,
+                          llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callPowerPolicySettings(llvm::StringRef Name, Binding &B,
+                          llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callPowerPolicyStopIdle(llvm::StringRef Name, Binding &B,
+                          llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callPowerPolicyResumeIdle(llvm::StringRef Name, Binding &B,
+                            llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  struct Routine;
+  static const Routine *
+  lookupRoutine(const KernelExportRegistry::Export &Export);
+  llvm::Expected<Object *> objectForCall(Binding &B, uint64_t Handle);
+  llvm::Expected<uint64_t> callCallbackLock(llvm::StringRef Name, Binding &B,
+                                            llvm::ArrayRef<uint64_t> Arguments,
+                                            uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callWdmDriverHandle(llvm::StringRef Name, Binding &B,
+                      llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callObjectCreate(llvm::StringRef Name, Binding &B,
+                                            llvm::ArrayRef<uint64_t> Arguments,
+                                            uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callObjectFromContext(llvm::StringRef Name, Binding &B,
+                        llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callDriverAccessor(llvm::StringRef Name, Binding &B,
+                     llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callTypedContext(llvm::StringRef Name, Binding &B,
+                                            llvm::ArrayRef<uint64_t> Arguments,
+                                            uint8_t IRQL);
+  llvm::Expected<uint64_t>
+  callAllocateContext(llvm::StringRef Name, Binding &B,
+                      llvm::ArrayRef<uint64_t> Arguments, uint8_t IRQL);
+  llvm::Expected<uint64_t> callReference(llvm::StringRef Name, Binding &B,
+                                         llvm::ArrayRef<uint64_t> Arguments,
+                                         uint8_t IRQL);
+  llvm::Expected<uint64_t> callDereference(llvm::StringRef Name, Binding &B,
+                                           llvm::ArrayRef<uint64_t> Arguments,
+                                           uint8_t IRQL);
+  llvm::Expected<uint64_t> callDelete(llvm::StringRef Name, Binding &B,
+                                      llvm::ArrayRef<uint64_t> Arguments,
+                                      uint8_t IRQL);
+  llvm::Expected<uint64_t> callDriverCreate(llvm::StringRef Name, Binding &B,
+                                            llvm::ArrayRef<uint64_t> Arguments,
+                                            uint8_t IRQL);
+  llvm::Expected<uint64_t> callUnload(llvm::StringRef Name, Binding &B,
+                                      llvm::ArrayRef<uint64_t> Arguments,
+                                      uint8_t IRQL);
   llvm::Expected<std::string> readControlString(uint64_t Address);
   struct DeletionPlan {
     std::vector<Step> Steps;

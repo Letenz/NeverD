@@ -267,7 +267,7 @@ bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
                       ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf));
     }
   const auto Declaration =
-      swiftMangledZeroArgClassMethodSourceABI(Image, Med.Entry);
+      swiftMangledReceiverClassMethodSourceABI(Image, Med.Entry);
   if (!Marked && !Declaration)
     return true;
   if (!Low || Low->Entry != Med.Entry)
@@ -314,6 +314,72 @@ bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
           !Op.Inputs[0].isConst() ||
           Op.Inputs[0].ConstVal !=
               C->second.NativeSwiftReceiver->StaticTarget ||
+          Op.DoesNotReturn || Op.PreservesCallerSaved ||
+          !Seen.insert(Op.Addr).second)
+        return false;
+      const auto Parameters = sourceABIParameters(C->second.Signature);
+      for (size_t I = 0; I < Parameters.size(); ++I)
+        if (Op.Inputs[I + 1].Size != Parameters[I].Location.ValueBytes)
+          return false;
+    }
+  return Seen == Required;
+}
+
+bool validateObjCByValueCopyBindings(const BinaryImage &Image,
+                                     const LowFunc *Low, const MedFunc &Med) {
+  const auto Relevant = [](const SourceCallTypeHint &B) {
+    return B.ByValueCopy && !B.NativeSwiftReceiver;
+  };
+  bool Marked = false;
+  size_t Budget = 100000;
+  for (const auto &B : Med.Blocks)
+    for (const auto &Op : B.Ops) {
+      if (!Budget--)
+        return false;
+      Marked |= Op.SourceCallHint && Relevant(*Op.SourceCallHint);
+    }
+  const auto Declaration = objcMethodSourceTypeHint(Image, Med.Entry);
+  if (!Marked && !Declaration)
+    return true;
+  if (!Low || Low->Entry != Med.Entry)
+    return !Marked;
+  const auto Callees = boundNativeBooleanCallees(Med);
+  const auto Current =
+      buildObjCSourceCallHints(Image, *Low, nullptr, nullptr, &Callees);
+  std::set<va_t> Required, Seen;
+  for (const auto &[Address, Binding] : Current)
+    if (Relevant(Binding))
+      Required.insert(Address);
+  if (!Marked && Required.empty())
+    return true;
+  if (!Declaration || !Med.SourceTypeHint || !Med.SourceParametersBound ||
+      !equalSourceABIs(*Declaration, *Med.SourceTypeHint))
+    return false;
+  for (const auto &B : Med.Blocks)
+    for (const auto &Op : B.Ops) {
+      if (!Budget--)
+        return false;
+      const bool Copy = Op.SourceCallHint && Relevant(*Op.SourceCallHint);
+      // A call's result copies retain its instruction address in MedIR.
+      // Only the original call owns a copy receipt; a receipt on a non-call
+      // remains invalid rather than authorizing that result assignment.
+      if (!Copy && Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      if (!Copy && !Required.count(Op.Addr))
+        continue;
+      const auto C = Current.find(Op.Addr);
+      if (!Copy || C == Current.end() || !Relevant(C->second) ||
+          !isObjCByValueCopyHint(C->second, Med.Entry, Image.Arch) ||
+          Op.SourceCallHint->ByValueCopy != C->second.ByValueCopy ||
+          Op.SourceCallHint->Receiver != C->second.Receiver ||
+          Op.SourceCallHint->Selector != C->second.Selector ||
+          Op.SourceCallHint->TargetAddress != C->second.TargetAddress ||
+          !equalSourceABIs(Op.SourceCallHint->Signature, C->second.Signature) ||
+          Op.Opcode != NdOp::CALL ||
+          Op.OriginSeq != C->second.ByValueCopy->Site.Sequence ||
+          Op.NumInputs != sourceABIParameters(C->second.Signature).size() + 1 ||
+          !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].ConstVal != C->second.ByValueCopy->Site.StaticTarget ||
           Op.DoesNotReturn || Op.PreservesCallerSaved ||
           !Seen.insert(Op.Addr).second)
         return false;
@@ -757,7 +823,8 @@ bool hasNativeSourceStateContract(
       !validateSwiftOpaqueValueBindings(Image, Low, Med, Callees) ||
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med) ||
-      !validateNativeSwiftReceiverBindings(Image, Low, Med))
+      !validateNativeSwiftReceiverBindings(Image, Low, Med) ||
+      !validateObjCByValueCopyBindings(Image, Low, Med))
     return false;
   if (!validateSourceRegisterCopies(Image, *Low, Med.RegisterCopyProjections) ||
       (TerminalContext && !Med.RegisterCopyProjections.empty()))
@@ -950,9 +1017,7 @@ bool hasNativeSourceStateContract(
           return false;
         Contract.ByValueFrameParameters.insert(Binding.ByValueCopy->Parameter);
       }
-      if (StaticRuntime && Binding.CallKind == Kind::DarwinRuntimeCall &&
-          Binding.Signature.ReturnLocation.Kind ==
-              SourceABICarrierKind::IndirectResultPointer) {
+      if (StaticRuntime && Binding.CallKind == Kind::DarwinRuntimeCall) {
         if (const auto Effects = darwinMatrixSourceFrameEffects(Image, Binding))
           static_cast<SourceFrameEffects &>(Contract) = *Effects;
       }
@@ -1675,6 +1740,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
     return Reject("Swift witness frame proof is no longer valid");
   if (!validateNativeSwiftReceiverBindings(Image, Low, Med))
     return Reject("native Swift receiver proof is no longer valid");
+  if (!validateObjCByValueCopyBindings(Image, Low, Med))
+    return Reject("Objective-C value copy proof is no longer valid");
   if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
       Image.IsRelocatable ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||

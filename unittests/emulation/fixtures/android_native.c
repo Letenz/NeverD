@@ -12,6 +12,7 @@ extern void *realloc(void *, u64);
 extern void free(void *);
 extern int *__errno(void);
 extern int getpagesize(void);
+extern long sysconf(int);
 extern int madvise(void *, u64, int);
 extern long syscall(long, ...);
 extern int __system_property_get(const char *, char *);
@@ -80,6 +81,22 @@ u64 page_size(unsigned int *out) {
   out[1] = *__errno();
   return out[0];
 }
+u64 page_queries(u64 *out) {
+  *__errno() = 77;
+  out[0] = getpagesize();
+  out[1] = sysconf(0x27);
+  out[2] = sysconf(0x28);
+  out[3] = *__errno();
+  unsigned char *page = (unsigned char *)malloc(out[2]);
+  if (!page)
+    return 1;
+  page[out[2] - 1] = 0x5a;
+  out[4] = (u64)page % out[2];
+  out[5] = page[out[2] - 1];
+  free(page);
+  return 0;
+}
+u64 page_query(u64 name) { return sysconf((int)name); }
 u64 memory_advice(u64 *out, u64 address, u64 length, u64 advice, u64 route) {
   *__errno() = 77;
   u64 result;
@@ -173,6 +190,23 @@ extern int dlclose(void *);
 extern char *dlerror(void);
 typedef u64 (*length_fn)(const char *);
 typedef unsigned int (*identity_fn)(void);
+
+u64 dynamic_page_query(u64 *out, u64 after_close, u64 name) {
+  *__errno() = 77;
+  void *handle = dlopen("libpages.so", 2);
+  if (!handle)
+    return 100;
+  long (*query)(int) = (long (*)(int))dlsym(handle, "sysconf");
+  if (!query)
+    return 101;
+  out[0] = query((int)name);
+  out[1] = *__errno();
+  if (dlclose(handle))
+    return 102;
+  if (after_close)
+    out[2] = query((int)name);
+  return 0;
+}
 
 u64 dynamic_page_size(unsigned int *out, u64 after_close) {
   *__errno() = 77;
@@ -280,6 +314,13 @@ u64 dynamic_unknown(void) {
   void *h = dlopen("libfixture.so", 2);
   length_fn function = (length_fn)dlsym(h, "unmodeled_fixture_export");
   return function("input");
+}
+u64 dynamic_dispatch(const char *name, u64 after_close) {
+  void *h = dlopen("libfixture.so", 2);
+  length_fn function = (length_fn)dlsym(h, name);
+  if (after_close)
+    dlclose(h);
+  return function((const char *)1);
 }
 u64 dynamic_closed(void) {
   void *h = dlopen("libfixture.so", 2);

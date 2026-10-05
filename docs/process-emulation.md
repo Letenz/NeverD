@@ -298,6 +298,20 @@ directory opens, writes/creation, symlinks, duplication and descriptor-control
 operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
 no observable transition in this subset.
 
+Existence queries use the same pathname import and closed catalogue. Raw x64
+`access` (21), x64/ARM64 `faccessat` (269/48), and Android `access`/`faccessat`
+support `F_OK`: files, their ancestor directories and `/` exist; missing paths
+return `ENOENT`, and a file used as an ancestor returns `ENOTDIR`. The explicit
+catalogue admits traversal of its directory prefixes; it supplies no general
+directory permission model. Queries allocate no descriptor and preserve all
+cursors, including when the descriptor table is full. Invalid low 32-bit mode
+bits return `EINVAL` before pathname access. `R_OK`, `W_OK` and `X_OK` on an
+existing entry remain unsupported: observed metadata does not establish
+credentials, ACLs or mount policy. Raw `faccessat` consumes three arguments;
+the [API 28 Bionic wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/faccessat.cpp)
+rejects nonzero flags with `EINVAL` before entering the kernel. The kernel
+validation order follows [Linux access](https://github.com/torvalds/linux/blob/v4.9/fs/open.c).
+
 Each open starts an independent cursor and chooses the lowest unused
 nonnegative descriptor. Exhaustion returns `EMFILE` after pathname import;
 close releases the descriptor. Slots 0–2 initially reserve unknown stdin and
@@ -305,6 +319,16 @@ the existing captured stdout/stderr streams. Closing those slots enables
 ordinary file reuse; writes through a closed slot or read-only file return
 `EBADF`. Reading stdin remains unsupported; it is never assumed to be empty.
 Descriptors, open flags and seek modes consume their low 32 bits.
+
+Directory creation supports only failures already determined by pathname
+lookup. Raw x64 `mkdir` (83), x64/ARM64 `mkdirat` (258/34), and Android
+`mkdir`/`mkdirat` share the catalogue: a missing parent returns `ENOENT`, a file
+ancestor returns `ENOTDIR`, and an existing file or directory returns `EEXIST`.
+They preserve the catalogue, descriptors and cursors. An absent final name
+under an existing directory remains unsupported; mode, umask, write permission
+and successful creation have no invented defaults. The boundary follows
+[Linux parent and final-component lookup](https://github.com/torvalds/linux/blob/v4.9/fs/namei.c)
+and the [API 28 Bionic wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/mkdir.cpp).
 
 Reads validate the original user range before the page-aligned Linux transfer
 cap or EOF, copy only available bytes, and advance by exactly the copied

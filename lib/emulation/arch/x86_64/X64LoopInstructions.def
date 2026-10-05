@@ -1,0 +1,9 @@
+//===- X64LoopInstructions.def - Counted short branches
+//--------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_X64_LOOP_INSTRUCTION(LOOP)
+NEVERD_X64_LOOP_INSTRUCTION(LOOPE)
+NEVERD_X64_LOOP_INSTRUCTION(LOOPNE)

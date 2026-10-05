@@ -132,8 +132,14 @@ add_neverd_unittest(NeverDX64IntegerTests
   X64StatusFlagsTests.cpp
   X64DoubleShiftTests.cpp
   X64ScalarShiftTests.cpp
+  X64LoopTests.cpp
+  X64BranchTests.cpp
+  X64StackTests.cpp
+  X64FrameExitTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDX64IntegerTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDX64ExceptionTests
   X64ExceptionTests.cpp
@@ -193,6 +199,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidFileTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
+  AndroidScanningTests.cpp
   AndroidFinalizerTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS EmulationProcess)

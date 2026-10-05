@@ -77,8 +77,79 @@ TEST(InterpreterLLVMRefinement, EntryAlignmentCannotCertifyAnUnboundDomain) {
   ASSERT_TRUE(R.complete()) << R.Diagnostic;
   const auto Proof = P.check(R.Residual, constantResult());
   rejected(Proof, Stage::Native);
-  EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
+  EXPECT_EQ(Proof.Native.Proof.Status, Status::Invalid);
   EXPECT_NE(Proof.Diagnostic.find("entry alignment"), std::string::npos);
+}
+
+TEST(InterpreterLLVMRefinement, EntryAlignmentBindsBothFreshProofDomains) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete());
+  auto Previous = P.check(Recovery.Residual, constantResult());
+  ASSERT_TRUE(Previous.proved());
+  for (auto Domain : {InterpreterEntryAlignment{1, 0}, {16, 3}, {16, 4}}) {
+    P.Options.EntryFrameAlignment = P.Frame.EntryAlignment = Domain;
+    Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    auto Good = P.check(Recovery.Residual, constantResult());
+    ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+    EXPECT_EQ(Good.Native.Certificate->Relation.Contract.Frame->EntryAlignment,
+              Domain);
+    EXPECT_EQ(Good.LLVM.Certificate->Contract.Frame->EntryAlignment, Domain);
+    EXPECT_NE(Previous.Native.Certificate->InputDigest,
+              Good.Native.Certificate->InputDigest);
+    EXPECT_NE(Previous.LLVM.Certificate->InputDigest,
+              Good.LLVM.Certificate->InputDigest);
+    EXPECT_NE(Previous.Certificate->InputDigest, Good.Certificate->InputDigest);
+    Previous = std::move(Good);
+  }
+  P.Options.EntryFrameAlignment.reset();
+  rejected(P.check(Recovery.Residual, constantResult()), Stage::Native);
+}
+
+TEST(InterpreterLLVMRefinement, EntryAlignmentKeepsHighBitsAndActualStatus) {
+  Program P({0x48, 0x89, 0xe0, 0xc3}); // mov rax,rsp; ret.
+  P.Options.EntryFrameAlignment = P.Frame.EntryAlignment =
+      InterpreterEntryAlignment{16, 3};
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete());
+  const auto Body = R"(
+    %spword = getelementptr i8, ptr %state, i64 32
+    %sp = load i64, ptr %spword, align 8
+    %low = and i64 %sp, 15
+    %allowed = icmp eq i64 %low, 3
+    store i64 %sp, ptr %state, align 8
+    %status = select i1 %allowed, i64 0, i64 2
+    ret i64 %status
+  )";
+  const auto Good = P.check(Recovery.Residual, module(Body));
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  P.Options.EntryFrameAlignment->Residue = 4;
+  P.Frame.EntryAlignment = P.Options.EntryFrameAlignment;
+  auto Bad = P.check(Recovery.Residual, module(Body));
+  rejected(Bad, Stage::LLVM);
+  EXPECT_TRUE(Bad.Native.proved());
+  EXPECT_EQ(Bad.LLVM.Status, Status::Different);
+  P.Options.EntryFrameAlignment.reset();
+  P.Frame.EntryAlignment.reset();
+  rejected(P.check(Recovery.Residual, module(Body)), Stage::LLVM);
+  P.Options.EntryFrameAlignment = P.Frame.EntryAlignment =
+      InterpreterEntryAlignment{16, 3};
+  auto Wrong = std::string(Body);
+  Wrong.replace(Wrong.find("store i64 %sp,"), 14, "store i64 %low,");
+  rejected(P.check(Recovery.Residual, module(Wrong)), Stage::LLVM);
+  for (bool Native : {false, true}) {
+    InterpreterLLVMRefinementLimits Limits;
+    (Native ? Limits.NativeProof : Limits.LLVMProof)
+        .Execution.MaxSolverQueries = 0;
+    const auto Exhausted = P.check(Recovery.Residual, module(Body), Limits);
+    rejected(Exhausted, Native ? Stage::Native : Stage::LLVM);
+    EXPECT_EQ(Native ? Exhausted.Native.Proof.Status : Exhausted.LLVM.Status,
+              Status::BudgetExceeded);
+  }
+  P.Options.EntryFrameAlignment = P.Frame.EntryAlignment =
+      InterpreterEntryAlignment{3, 1};
+  rejected(P.check(Recovery.Residual, module(Body)), Stage::Preparation);
 }
 
 TEST(InterpreterLLVMRefinement, CompleteProofBindsMandatoryObservations) {

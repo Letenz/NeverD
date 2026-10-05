@@ -767,6 +767,23 @@ objcMethodSourceTypeHint(const BinaryImage &Image, va_t Entry) {
     std::string Diagnostic;
     if (!assignDarwinObjCSourceABI(Hint, Image.Arch, Diagnostic))
       return std::nullopt;
+    // A loader cache cannot authenticate a changed current declaration.
+    // Synthetic clients may supply only TypeHint; when encoding is present,
+    // its complete selector/ABI must still agree with that cached value.
+    if (!Method.TypeEncoding.empty()) {
+      auto Declared =
+          parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+      if (!Declared ||
+          !assignDarwinObjCSourceABI(*Declared, Image.Arch, Diagnostic) ||
+          Hint.Parameters.size() != Declared->Parameters.size())
+        return std::nullopt;
+      // Encodings carry positions and types, not source parameter names.
+      for (size_t I = 0; I < Hint.Parameters.size(); ++I)
+        Declared->Parameters[I].Name = Hint.Parameters[I].Name;
+      if (!equalSourceABIs(Hint, *Declared))
+        return std::nullopt;
+      Hint = std::move(*Declared);
+    }
     if (Result && !equalSourceABIs(*Result, Hint))
       return std::nullopt;
     Result = std::move(Hint);
@@ -1572,10 +1589,17 @@ objcBlockParameterReceiverTypeHint(const BinaryImage &Image, va_t Invoke,
 std::optional<ObjCReceiverTypeHint>
 objcNativeSwiftSelfTypeHint(const BinaryImage &Image, va_t Entry) {
   const auto Declaration =
-      swiftMangledZeroArgClassMethodDeclaration(Image, Entry);
+      swiftMangledReceiverClassMethodDeclaration(Image, Entry);
   if (!Declaration || llvm::any_of(Image.ObjCMethods, [&](const auto &M) {
         return M.Implementation == Entry;
       }))
+    return std::nullopt;
+  const auto &Parameters = Declaration->Signature.Parameters;
+  const auto Self =
+      std::find_if(Parameters.begin(), Parameters.end(), [](const auto &P) {
+        return P.TheRole == SourceParameterTypeHint::Role::SwiftContext;
+      });
+  if (Self == Parameters.end())
     return std::nullopt;
   const std::string RuntimeName =
       "_TtC" + std::to_string(Declaration->Module.size()) +
@@ -1588,9 +1612,11 @@ objcNativeSwiftSelfTypeHint(const BinaryImage &Image, va_t Entry) {
     if (!Identity || Identity->Module != Declaration->Module ||
         Identity->Name != Declaration->ClassName)
       return std::nullopt;
-    return ObjCReceiverTypeHint{
-        ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf, Entry, RuntimeName,
-        false};
+    auto Receiver =
+        ObjCReceiverTypeHint{ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf,
+                             Entry, RuntimeName, false};
+    Receiver.SourceParameter = std::distance(Parameters.begin(), Self);
+    return Receiver;
   }
   return std::nullopt;
 }
@@ -1601,6 +1627,7 @@ bool validReceiverRoot(const BinaryImage &Image,
   if (!Receiver.Address || Receiver.ClassName.empty() ||
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::MethodParameter &&
        Receiver.Origin != ObjCReceiverTypeHint::OriginKind::BlockParameter &&
+       Receiver.Origin != ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf &&
        Receiver.SourceParameter) ||
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::BlockParameter &&
        (Receiver.BlockDescriptorAddress || Receiver.BlockDescriptorFlags)) ||
@@ -1647,7 +1674,8 @@ bool validReceiverRoot(const BinaryImage &Image,
     if (Receiver.IsClassMethod || !Receiver.OutParameters.empty())
       return false;
     const auto Expected = objcNativeSwiftSelfTypeHint(Image, Receiver.Address);
-    return Expected && Expected->ClassName == Receiver.ClassName;
+    return Expected && Expected->ClassName == Receiver.ClassName &&
+           Expected->SourceParameter == Receiver.SourceParameter;
   }
   case ObjCReceiverTypeHint::OriginKind::MethodEntry: {
     if (!Receiver.OutParameters.empty())

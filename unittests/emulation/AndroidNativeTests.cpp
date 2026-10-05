@@ -310,6 +310,74 @@ TEST_P(AndroidNative, PageSizeUsesGuestLayoutAndPreservesErrno) {
   EXPECT_TRUE(Call->Library.empty());
   EXPECT_TRUE(R.Services.empty());
 }
+TEST_P(AndroidNative, SysconfPageAliasesShareGuestLayoutAndAllocationSize) {
+  auto R = run("page_queries", {Buffer});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  std::vector<uint8_t> Expected(64);
+  const uint64_t Values[] = {4096, 4096, 4096, 77, 0, 0x5a};
+  for (unsigned I = 0; I < std::size(Values); ++I)
+    llvm::support::endian::write64le(Expected.data() + I * 8, Values[I]);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  unsigned Queries = 0;
+  for (const auto &Call : R.NativeCalls)
+    if (Call.Name == "sysconf") {
+      EXPECT_EQ(Call.Arguments[0], 0x27u + Queries);
+      EXPECT_EQ(Call.Result, 4096u);
+      EXPECT_TRUE(Call.Library.empty());
+      ++Queries;
+    }
+  EXPECT_EQ(Queries, 2u);
+  for (uint64_t Name :
+       {0x27ULL, 0x28ULL, 0xfedcba9800000027ULL, 0xfedcba9800000028ULL}) {
+    SCOPED_TRACE(Name);
+    returned(run("page_query", {Name}), 4096);
+  }
+}
+TEST_P(AndroidNative, UnmodeledSysconfNamesDoNotFabricateHostConfiguration) {
+  for (uint64_t Name : {0ULL, 0x60ULL, 0xffffffffULL}) {
+    auto R = run("page_query", {Name});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_NE(R.Diagnostic.find("sysconf selector"), std::string::npos);
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, "sysconf");
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(64));
+  }
+}
+TEST_P(AndroidNative, DynamicSysconfKeepsNamesErrnoAndProviderLifetime) {
+  Options.Android->Libraries["libpages.so"] = {"sysconf"};
+  for (unsigned Name : {0x27, 0x28}) {
+    SCOPED_TRACE(Name);
+    auto R = run("dynamic_page_query", {Buffer, 0, Name});
+    returned(R, 0);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    std::vector<uint8_t> Expected(64);
+    llvm::support::endian::write64le(Expected.data(), 4096);
+    llvm::support::endian::write64le(Expected.data() + 8, 77);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    auto Lookup = llvm::find_if(R.NativeCalls, [](const auto &E) {
+      return E.Name == "dlsym" && E.Symbol == "sysconf";
+    });
+    ASSERT_NE(Lookup, R.NativeCalls.end());
+    auto Call = llvm::find_if(
+        R.NativeCalls, [](const auto &E) { return E.Name == "sysconf"; });
+    ASSERT_NE(Call, R.NativeCalls.end());
+    EXPECT_EQ(Call->PC, Lookup->Result);
+    EXPECT_EQ(Call->Library, "libpages.so");
+    EXPECT_EQ(Call->Result, 4096u);
+    R = run("dynamic_page_query", {Buffer, 1, Name});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, "sysconf");
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  }
+}
 TEST_P(AndroidNative, DynamicPageSizeRetainsNamesAndProviderLifetime) {
   returned(run("dynamic_page_size", {Buffer, 0}), 100);
   Options.Android->Libraries["libpages.so"] = {};
@@ -775,6 +843,47 @@ TEST_P(AndroidNative, DynamicUnknownAndClosedFunctionsStopWithTheirNames) {
   EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
   EXPECT_EQ(R.NativeCalls.back().Name, "strlen");
 }
+TEST_P(AndroidNative, FamilyFallbacksPreserveDiagnosticsAndProviderPrecedence) {
+  struct Case {
+    const char *Name;
+    const char *Diagnostic;
+  };
+  const Case Cases[] = {
+      {"pthread_attr_unmodeled",
+       "pthread_attr_unmodeled: unmodeled thread attribute operation"},
+      {"pthread_mutexattr_unmodeled",
+       "pthread_mutexattr_unmodeled: unmodeled mutex attribute operation"},
+      {"pthread_mutex_unmodeled",
+       "pthread_mutex_unmodeled: unmodeled mutex operation"},
+      {"pthread_mutexextra", "pthread_mutexextra: unmodeled mutex operation"},
+      {"pthread_self", "unmodeled Android import: pthread_self"},
+      {"unmodeled_fixture_export",
+       "unmodeled Android import: unmodeled_fixture_export"}};
+  Options.Android->ThreadLimit = 1;
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Name);
+    llvm::StringRef Name(C.Name);
+    auto &Bytes = Options.Android->Memory[0].Bytes;
+    Bytes.assign(Name.bytes_begin(), Name.bytes_end());
+    Bytes.push_back(0);
+    Options.Android->Libraries["libfixture.so"] = {C.Name};
+    for (uint64_t Closed : {0, 1}) {
+      SCOPED_TRACE(Closed);
+      auto R = run("dynamic_dispatch", {Buffer, Closed});
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(R.Diagnostic,
+                Closed
+                    ? "call through an inactive dynamic library: libfixture.so"
+                    : C.Diagnostic);
+      EXPECT_FALSE(R.ReturnValue);
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Name, C.Name);
+      EXPECT_EQ(R.NativeCalls.back().Library, "libfixture.so");
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+    }
+  }
+}
+
 TEST_P(AndroidNative, DynamicScopesAndInvalidPointersAreNotGuessed) {
   Options.Android->Libraries["libfixture.so"] = {"strlen"};
   for (uint64_t Scope : {uint64_t(0), UINT64_MAX}) {

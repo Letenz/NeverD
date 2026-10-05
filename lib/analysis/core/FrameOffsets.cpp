@@ -8,9 +8,85 @@
 
 #include "ControlDiscovery.h"
 
+#include <optional>
+#include <utility>
+
 namespace neverd::analysis::detail {
 
 using namespace symbolic;
+
+namespace {
+
+std::optional<std::pair<SymRef, llvm::APInt>>
+constantOperand(const SymContext &Ctx, SymRef Value, SymOp Op) {
+  if (Ctx.op(Value) != Op || Ctx.numOperands(Value) != 2)
+    return std::nullopt;
+  for (unsigned I = 0; I != 2; ++I) {
+    const auto C = Ctx.operand(Value, I);
+    if (const auto Number = Ctx.asConst(C))
+      return std::pair{Ctx.operand(Value, 1 - I), *Number};
+  }
+  return std::nullopt;
+}
+
+// Derive Value - Root without subtracting two full-width copies of Root.
+// These are modular identities, independent of the path predicate. In
+// particular, (X & Mask) - Root == (X - Root) - (X & ~Mask). Alignment then
+// projects only the removed low bits; the solver still proves their complete
+// domain under the original predicate. No residue or feasibility is assumed.
+// Only binary constant operations and one split are inspected per level. The
+// fixed depth bounds inspection; the caller charges every created DAG node.
+std::optional<SymRef> relativeRemainder(SymContext &Ctx, SymRef Value,
+                                        SymRef Root, unsigned Depth) {
+  if (!Depth || Ctx.width(Value) != 64)
+    return std::nullopt;
+  if (Value == Root)
+    return Ctx.mkZero(64);
+  if (const auto Add = constantOperand(Ctx, Value, SymOp::Add)) {
+    if (const auto Inner = relativeRemainder(Ctx, Add->first, Root, Depth - 1))
+      return Ctx.mkAdd(*Inner, Ctx.mkConst(Add->second));
+    return std::nullopt;
+  }
+  const auto Masked = [&](SymRef Base,
+                          const llvm::APInt &Mask) -> std::optional<SymRef> {
+    const auto Inner = relativeRemainder(Ctx, Base, Root, Depth - 1);
+    if (!Inner)
+      return std::nullopt;
+    const auto RemovedMask = ~Mask;
+    const auto Bits = RemovedMask.getActiveBits();
+    if (!Bits)
+      return Inner;
+    const auto Removed = Ctx.mkAnd(Ctx.mkExtract(Base, 0, Bits),
+                                   Ctx.mkConst(RemovedMask.zextOrTrunc(Bits)));
+    return Ctx.mkSub(*Inner, Ctx.mkZExtOrTrunc(Removed, 64));
+  };
+  if (const auto And = constantOperand(Ctx, Value, SymOp::And))
+    return Masked(And->first, And->second);
+  if (Ctx.op(Value) != SymOp::Concat || Ctx.numOperands(Value) != 2)
+    return std::nullopt;
+  const auto High = Ctx.operand(Value, 0), Low = Ctx.operand(Value, 1);
+  const auto Bits = Ctx.width(Low);
+  if (!Bits || Bits >= 64 || Ctx.width(High) != 64 - Bits ||
+      Ctx.op(High) != SymOp::Extract || Ctx.numOperands(High) != 1 ||
+      Ctx.node(High).Aux != Bits)
+    return std::nullopt;
+  const auto Base = Ctx.operand(High, 0);
+  if (Ctx.width(Base) != 64)
+    return std::nullopt;
+  const auto HighMask = ~llvm::APInt::getLowBitsSet(64, Bits);
+  if (Ctx.isConstZero(Low))
+    return Masked(Base, HighMask);
+  if (const auto And = constantOperand(Ctx, Low, SymOp::And)) {
+    // mkExtract applies the same narrow arithmetic canonicalization that the
+    // original partial-register expression used. Different roots or biases
+    // must never be stitched together merely because their widths agree.
+    if (And->first == Ctx.mkExtract(Base, 0, Bits))
+      return Masked(Base, HighMask | And->second.zext(64));
+  }
+  return std::nullopt;
+}
+
+} // namespace
 
 FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
                              SymRef Root, solver::SolverOptions Settings,
@@ -27,7 +103,8 @@ FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
     return {FrameOffsetStatus::Infeasible};
   if (const auto Offset = frameRelativeOffset(Ctx, Value, Root))
     return {FrameOffsetStatus::Exact, *Offset};
-  const SymRef Difference = Ctx.mkSub(Value, Root);
+  const auto Remainder = relativeRemainder(Ctx, Value, Root, 16);
+  const SymRef Difference = Remainder ? *Remainder : Ctx.mkSub(Value, Root);
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
   if (const auto Constant = Ctx.asConst(Difference))

@@ -13,16 +13,30 @@
 namespace neverd::emulation::linux_model {
 namespace {
 std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
+  struct Binding {
+    uint64_t Number;
+    ServiceKind Kind;
+  };
+  static constexpr Binding X64[] = {
 #define NEVERD_LINUX_SERVICE(Name, X64Number, ARMNumber, Count)                \
-  if (Number == (ISA == GuestArchitecture::X64 ? X64Number : ARMNumber))       \
-    return ServiceKind::Name;
-#include "../LinuxValues.def"
-#undef NEVERD_LINUX_SERVICE
-#define NEVERD_LINUX_X64_SERVICE(Name, Value, Count)                           \
-  if (ISA == GuestArchitecture::X64 && Number == Value)                        \
-    return ServiceKind::Name;
+  {X64Number, ServiceKind::Name},
+#define NEVERD_LINUX_X64_SERVICE(Name, Code, Count) {Code, ServiceKind::Name},
 #include "../LinuxValues.def"
 #undef NEVERD_LINUX_X64_SERVICE
+#undef NEVERD_LINUX_SERVICE
+  };
+  static constexpr Binding ARM[] = {
+#define NEVERD_LINUX_SERVICE(Name, X64Number, ARMNumber, Count)                \
+  {ARMNumber, ServiceKind::Name},
+#include "../LinuxValues.def"
+#undef NEVERD_LINUX_SERVICE
+  };
+  llvm::ArrayRef<Binding> Bindings = ISA == GuestArchitecture::X64
+                                         ? llvm::ArrayRef<Binding>(X64)
+                                         : llvm::ArrayRef<Binding>(ARM);
+  for (const auto &Entry : Bindings)
+    if (Entry.Number == Number)
+      return Entry.Kind;
   return std::nullopt;
 }
 } // namespace
@@ -43,6 +57,10 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   switch (Kind) {
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
+  case ServiceKind::Access:
+  case ServiceKind::FaccessAt:
+  case ServiceKind::Mkdir:
+  case ServiceKind::MkdirAt:
   case ServiceKind::Read:
   case ServiceKind::Close:
   case ServiceKind::Lseek:
