@@ -363,13 +363,20 @@ bool extractAddressSlice(std::vector<HighStmt> &Statements,
 
   // `structureIfElse` often nests a cleanup IP range inside `if` / `else`.
   // A crossing parent is not unstructured; the contiguous slice is inner.
+  // A try the range holds is never such a parent: placing the range in its
+  // body would nest the two the wrong way round, so an exception would
+  // reach their handlers in the wrong order.
   for (HighStmt &Stmt : Statements) {
     auto Recurse = [&](std::vector<HighStmt> &Child) {
       return !Child.empty() &&
              extractAddressSlice(Child, Range, FunctionRange, Body, InsertAt,
                                  /*IncludeFunctionEdgeUnknown=*/false, Host);
     };
-    if (Recurse(Stmt.Body) || Recurse(Stmt.ElseBody) ||
+    const bool HeldTry =
+        (Stmt.Kind == StmtKind::SEHTry || Stmt.Kind == StmtKind::CxxTry ||
+         Stmt.Kind == StmtKind::ItaniumTry) &&
+        Stmt.EHRange.isValid() && Range.contains(Stmt.EHRange);
+    if ((!HeldTry && Recurse(Stmt.Body)) || Recurse(Stmt.ElseBody) ||
         Recurse(Stmt.DefaultBody))
       return true;
     for (SwitchCase &Case : Stmt.Cases)

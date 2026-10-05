@@ -3845,6 +3845,44 @@ TEST(COFFExceptionIR, SEHHandlerOutsideAnOuterRangeStaysOutOfTheInnerClause) {
   EXPECT_EQ(Anywhere, 1u);
 }
 
+TEST(COFFExceptionIR, OuterSEHRangeIsNeverNestedInsideTheTryItHolds) {
+  // The inner handler runs into a copy of the tail and sits after the
+  // return, so the outer range's statements are not one slice.  The inner
+  // try's body is: wrapping the outer try there would make the inner
+  // handler the second one an exception reaches instead of the first.
+  constexpr va_t F = 0x140001000;
+  const NestedSEHBlockSpec Specs[] = {
+      {F, F + 0x10, 0x140008000, false, F + 0x30},
+      {F + 0x20, F + 0x30, 0x140009000, false, 0},
+      {F + 0x30, F + 0x40, 0x14000A000, false, 0},
+      {F + 0x40, F + 0x41, 0, true, 0},
+      {F + 0x50, F + 0x60, 0x14000B000, false, F + 0x40}};
+  const SEHScopeRecord Scopes[] = {catchAllScope(F, F + 0x10, F + 0x20),
+                                   catchAllScope(F, F + 0x40, F + 0x50)};
+  MedFunc Func = makeNestedSEHFixture("nested_seh_scattered_outer", Specs,
+                                      Scopes, F + 0x60);
+
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+  EXPECT_EQ(High.StructuredExceptionRegions + High.UnstructuredExceptionRegions,
+            2u);
+  std::function<void(const std::vector<HighStmt> &, const HighStmt *)> Check =
+      [&](const std::vector<HighStmt> &List, const HighStmt *Outer) {
+        for (const HighStmt &Stmt : List) {
+          const bool IsTry = Stmt.Kind == StmtKind::SEHTry;
+          if (IsTry && Outer)
+            EXPECT_TRUE(Outer->EHRange.contains(Stmt.EHRange))
+                << "try over [" << Stmt.EHRange.Begin << ", "
+                << Stmt.EHRange.End << ") nested in one over ["
+                << Outer->EHRange.Begin << ", " << Outer->EHRange.End << ")";
+          Check(Stmt.Body, IsTry ? &Stmt : Outer);
+          Check(Stmt.ElseBody, Outer);
+          for (const auto &ClauseBody : Stmt.EHClauseBodies)
+            Check(ClauseBody, nullptr);
+        }
+      };
+  Check(High.Body, nullptr);
+}
+
 TEST(COFFExceptionIR, KeepsSEHHandlerPlacedAfterReturn) {
   // IovBuildAsynchronousFsdRequest: the __except handler follows the return
   // and its first instruction leaves no statement.  Only the exception
