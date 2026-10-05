@@ -96,6 +96,8 @@ checked x64 通过 KVM、WHP 和 Unicorn 执行 `SHLD/SHRD`，支持 16/32/64 �
 
 `X64StackInstructions.def` 在 KVM、WHP 和 checked Unicorn（含 `driver-strict`）中支持通用寄存器、普通 RAM 的 16/64 位 `PUSH/POP` 及立即数 PUSH。PUSH 先读取源操作数，再减小 RSP；POP 先增加 RSP，再计算使用 RSP/ESP 的目标地址。地址宽度截断只作用于显式操作数。完整范围权限检查、有序观察回调和单次 RAM 事务确保故障、取消或回调错误时 CPU 与内存不被部分更新。LOCK 和设备操作数仍不支持。
 
+KVM、WHP 和 checked Unicorn 也支持 16/64 位 `LEAVE`。它始终通过完整 RBP 读取保存的栈帧，包括带 `67H` 的情况；16 位形式保留 RBP 未选中的位。故障或读取取消时保留原始 RSP 和 CPU 上下文。LOCK、REP 和设备栈帧仍不支持。
+
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。

@@ -705,6 +705,8 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `CheckedX64Stack.cpp` がスタック転送のアクセス順序と幅を管理します。共通の `operandAddress` は通常およびスタックオペランドの RIP 相対アドレス、32 ビット折り返し、FS/GS ベースを計算します。プロセッサーが原命令を実行し、遅延書き込み観察はその結果を取得してから、共通 RAM トランザクションが効果を公開します。
 
+`LEAVE` の暗黙 RAM 読み出しは元の RBP 全体を使い、実効オペランドサイズに従って 16/64 ビットを読みます。アドレスサイズやセグメントのプレフィックスは読み出し先を変えません。共有層が範囲全体を検証してから、プロセッサが元の命令で RSP と RBP を更新します。アクセス拒否や読み出しオブザーバーの停止・失敗時は開始時の状態全体を保持します。
+
 共有 XSAVE デコーダーは標準形式と圧縮形式の SSE 初期状態を区別します。XSTATE_BV[1] が 0 の場合、どちらも XMM を初期化しますが、標準形式は MXCSR を読み取り検証し、圧縮形式は MXCSR を初期化します。`X64XsaveCases.def` は独立したデータ配置と独自のホスト XRSTOR プログラムを提供します。`X64XsaveTests.cpp` は拒否時の状態の原子性を検証し、呼び出し元の FP/SSE 状態を保存しながら、両形式を実ホストの実行結果と比較します。ホストのアーキテクチャーや必要な命令機能が利用できなければ明示的にスキップします。
 
 `X64FPState.def` は圧縮 AVX、AVX-512、CET_U/CET_S、AMX の転送配置と成分の 64 バイト境界を宣言します。存在する拡張成分は全ゼロの初期状態に限り、欠落成分のデータと境界調整領域は状態を定義しません。配置ビットがオフセットを決め、未知の配置、非初期値、不正な長さは公開前に失敗します。`CompactedOffsetsFollowLayoutRatherThanPresentBits`、`WideLayoutIgnoresAbsentComponentsAndAlignmentPadding`、`InitialCETComponentsDoNotHideFPState`、`InitialWideComponentsDoNotHideFPState` は 872 バイトと 10752 バイトの WHP パケットを検証します。これらの拡張命令の実行を許可するものではありません。
