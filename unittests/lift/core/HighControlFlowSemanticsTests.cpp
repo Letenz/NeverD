@@ -7759,6 +7759,21 @@ TEST(HighControlFlowSemantics, BlockLayoutFollowsForwardEdgesUnlessUnsure) {
   Handled.ExceptionMetadata.emplace();
   Handled.ExceptionMetadata->PersonalityVA = 0x5000;
   EXPECT_EQ(highBlockLayout(Handled, {}), (std::vector<int>{0, 1, 2, 3}));
+  Handled.ExceptionMetadata->Personality =
+      ExceptionPersonality::CSpecificHandler;
+  Handled.ExceptionMetadata->SEH.emplace();
+  Handled.ExceptionMetadata->SEH->Scopes.push_back({{0x1100, 0x1140}});
+  EXPECT_EQ(highBlockLayout(Handled, {}), (std::vector<int>{0, 1, 2, 3}));
+  // A frame that only unwinds has no region to keep: the stack-cookie check,
+  // or a personality with no table NeverD reads.
+  for (ExceptionPersonality Kind :
+       {ExceptionPersonality::GSHandlerCheck, ExceptionPersonality::Unknown}) {
+    MedFunc Unwinds = M;
+    Unwinds.ExceptionMetadata.emplace();
+    Unwinds.ExceptionMetadata->PersonalityVA = 0x5000;
+    Unwinds.ExceptionMetadata->Personality = Kind;
+    EXPECT_EQ(highBlockLayout(Unwinds, {}), (std::vector<int>{0, 1, 3, 2}));
+  }
   // So does a block whose fall-through successor is unknown.
   MedFunc Unknown = M;
   Unknown.Blocks[1].Ops.back().Inputs[0] = MedVar::makeConst(0x7000, 8);
