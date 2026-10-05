@@ -638,29 +638,26 @@ llvm::Expected<uint64_t> KernelModel::call(
     if (auto E = unstackDetachProcess(A[0]))
       return E;
     return 0;
-  case KernelAPIKind::KfRaiseIrql:
-  case KernelAPIKind::KeLowerIrql:
-    return callIRQLAPI(Name, A);
-  case KernelAPIKind::KeEnterCriticalRegion:
-  case KernelAPIKind::KeLeaveCriticalRegion:
-  case KernelAPIKind::KeEnterGuardedRegion:
-  case KernelAPIKind::KeLeaveGuardedRegion:
-  case KernelAPIKind::KeAreApcsDisabled:
-  case KernelAPIKind::KeAreAllApcsDisabled:
-    return callApcStateAPI(Name);
-#define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL) case KernelAPIKind::Name:
+#define NEVERD_KERNEL_EXECUTION_API(Name, Arity, IRQL, Operation)              \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelExecutionAPIs.def"
+#undef NEVERD_KERNEL_EXECUTION_API
+#define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL, Operation)               \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
-    return callSpinLockAPI(Name, A);
-#define NEVERD_KERNEL_INTERRUPT_API(Symbol, Arity, IRQL)                       \
-  case KernelAPIKind::Symbol:
+#define NEVERD_KERNEL_INTERRUPT_API(Name, Arity, IRQL, Operation)              \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
 #include "KernelInterruptAPIs.def"
 #undef NEVERD_KERNEL_INTERRUPT_API
-    return callInterruptAPI(Name, A);
-#define NEVERD_KERNEL_POFX_API(Symbol, Arity, IRQL) case KernelAPIKind::Symbol:
+#define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL, Operation)                   \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
 #include "KernelPoFxAPIs.def"
 #undef NEVERD_KERNEL_POFX_API
-    return callPoFxAPI(Name, A);
   case KernelAPIKind::MmMapIoSpace:
   case KernelAPIKind::MmMapIoSpaceEx:
     return MMIO.map(A[0], A[1], uint32_t(A[2]),
