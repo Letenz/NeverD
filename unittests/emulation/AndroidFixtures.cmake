@@ -137,22 +137,24 @@ foreach(_optimization O0 O2)
   endforeach()
 endforeach()
 foreach(_optimization O0 O2)
-  set(_format_object "${_android_fixture_dir}/format-${_optimization}.o")
-  add_custom_command(OUTPUT "${_format_object}"
-    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
-      -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
-      -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
-      -fno-asynchronous-unwind-tables "-${_optimization}" -c
-      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_format.c" -o "${_format_object}"
-    DEPENDS fixtures/android_format.c VERBATIM)
-  foreach(_packing none android relr)
-    set(_format_file "${_android_fixture_dir}/format-${_optimization}-${_packing}.so")
-    add_custom_command(OUTPUT "${_format_file}"
-      COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
-        --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
-        "${_format_object}" -o "${_format_file}"
-      DEPENDS "${_format_object}" VERBATIM)
-    list(APPEND _android_outputs "${_format_file}")
+  foreach(_string_kind format scan)
+    set(_string_object "${_android_fixture_dir}/${_string_kind}-${_optimization}.o")
+    add_custom_command(OUTPUT "${_string_object}"
+      COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
+        -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
+        -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+        -fno-asynchronous-unwind-tables "-${_optimization}" -c
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_${_string_kind}.c" -o "${_string_object}"
+      DEPENDS fixtures/android_${_string_kind}.c VERBATIM)
+    foreach(_packing none android relr)
+      set(_string_file "${_android_fixture_dir}/${_string_kind}-${_optimization}-${_packing}.so")
+      add_custom_command(OUTPUT "${_string_file}"
+        COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
+          --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
+          "${_string_object}" -o "${_string_file}"
+        DEPENDS "${_string_object}" VERBATIM)
+      list(APPEND _android_outputs "${_string_file}")
+    endforeach()
   endforeach()
 endforeach()
 foreach(_optimization O0 O2)
