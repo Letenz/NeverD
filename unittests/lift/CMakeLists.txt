@@ -861,9 +861,15 @@ add_neverd_unittest(NeverDX86CarryArithmeticFlagTests
 add_neverd_unittest(NeverDX86UndefinedEffectsTests
   x86_64/X86_64_UndefinedEffectsTests.cpp
   x86_64/X86_64_ShiftUndefinedEffectsTests.cpp
+  x86_64/X86_64_DoubleShiftUndefinedEffectsTests.cpp
   x86_64/X86_64_BitTestUndefinedEffectsTests.cpp
   x86_64/X86_64_XaddAuditTests.cpp
   LINK_COMPONENTS Decode Lift Loader Symbolic
+)
+
+add_neverd_unittest(NeverDX86DecodeDetailTests
+  x86_64/X86_64_DisplacementDetailTests.cpp
+  LINK_COMPONENTS Decode Lift Loader
 )
 
 add_neverd_unittest(NeverDX86LogicIdentityTests
@@ -1080,6 +1086,17 @@ if(MSVC)
   target_compile_options(NeverDLiftTests PRIVATE /bigobj)
   target_compile_options(NeverDObjCSourceCallTests PRIVATE /bigobj)
 endif()
+
+# Run instruction provenance and shared entry/frame checks without the full
+# aggregate lift fixture inventory.
+add_neverd_unittest(NeverDLowInstructionBoundaryTests
+  core/LowInstructionBoundaryTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDLowInstructionBoundaryTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDLowInstructionBoundaryTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.

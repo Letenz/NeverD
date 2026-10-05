@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86DoubleShiftUndefined.h"
 #include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
 #include "X86ShiftUndefined.h"
@@ -580,6 +581,8 @@ bool liftCoreShift(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     }
     if (MemDst)
       S.storeToMem(X86.operands[BaseIndex], Result);
+    if (!ApxDouble.Present && X86.operands[0].type == X86_OP_REG)
+      doubleshiftundefined::record(S, Cnt, DstW);
     break;
   }
   case X86_INS_SHRD: {
@@ -649,6 +652,8 @@ bool liftCoreShift(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     }
     if (MemDst)
       S.storeToMem(X86.operands[BaseIndex], Result);
+    if (!ApxDouble.Present && X86.operands[0].type == X86_OP_REG)
+      doubleshiftundefined::record(S, Cnt, DstW);
     break;
   }
 

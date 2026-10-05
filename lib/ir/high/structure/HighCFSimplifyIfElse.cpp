@@ -3905,7 +3905,7 @@ bool sinkJoinDefaultsLate(HighFunc &Func) {
 // structureIfElse — fold if(cond){goto} patterns into if/else trees
 //===----------------------------------------------------------------------===//
 
-static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
+static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                                 const MedFunc *Med,
                                 bool ChildrenStructured = false);
 
@@ -4572,18 +4572,24 @@ static void inlineSmallExclusiveJoinNested(std::vector<HighStmt> &Body,
   inlineSmallExclusiveJoin(Body, Root);
 }
 
-static void structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
+/// Structures \p Stmts bottom-up; true when anything in it changed.
+static bool structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
                                   const MedFunc *Med) {
+  bool ChildrenChanged = false;
   for (HighStmt &S : Stmts) {
-    structureIfElseNested(S.Body, MaxPasses, Med);
-    structureIfElseNested(S.ElseBody, MaxPasses, Med);
+    ChildrenChanged |= structureIfElseNested(S.Body, MaxPasses, Med);
+    ChildrenChanged |= structureIfElseNested(S.ElseBody, MaxPasses, Med);
     for (auto &C : S.Cases)
-      structureIfElseNested(C.Body, MaxPasses, Med);
-    structureIfElseNested(S.DefaultBody, MaxPasses, Med);
+      ChildrenChanged |= structureIfElseNested(C.Body, MaxPasses, Med);
+    ChildrenChanged |= structureIfElseNested(S.DefaultBody, MaxPasses, Med);
     for (auto &Clause : S.EHClauseBodies)
-      structureIfElseNested(Clause, MaxPasses, Med);
+      ChildrenChanged |= structureIfElseNested(Clause, MaxPasses, Med);
   }
-  structureIfElseList(Stmts, MaxPasses, Med, true);
+  // A child list gets few passes per visit, so one that just changed may
+  // have more to do: it is visited again after this list.
+  return structureIfElseList(Stmts, MaxPasses, Med,
+                             /*ChildrenStructured=*/!ChildrenChanged) ||
+         ChildrenChanged;
 }
 
 void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
@@ -4605,7 +4611,7 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
   IfElseReadOutside = SavedReadOutside;
 }
 
-static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
+static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                                 const MedFunc *Med, bool ChildrenStructured) {
   const char *Detail = std::getenv("NEVERD_HIGHIR_DETAIL");
   const bool WantDetail = Detail && Detail[0] == '1' && Detail[1] == '\0';
@@ -5670,18 +5676,24 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       if (S.Body[J].Kind == StmtKind::If || S.Body[J].Kind == StmtKind::IfElse)
         NestedChanged |= dropUnusedTrailingAssigns(S.Body, J, Pred, Med);
   }
-  // The normal bottom-up traversal already checked every child. Visiting them
-  // again after a stable list doubles work at each nesting level. Only newly
-  // assembled arms or a list rewrite need another descendant pass.
+  // The bottom-up traversal already visited every child.  Visiting them
+  // again doubles work at each nesting level, so it happens only when they
+  // may have more to do: a child that changed on its last visit, newly
+  // assembled arms, or a rewrite of this list.
   if (!ChildrenStructured || NestedChanged)
     for (HighStmt &S : Body) {
-      structureIfElseNested(S.Body, limits::kIfElseNestedArmPasses, Med);
-      structureIfElseNested(S.ElseBody, limits::kIfElseNestedArmPasses, Med);
+      NestedChanged |=
+          structureIfElseNested(S.Body, limits::kIfElseNestedArmPasses, Med);
+      NestedChanged |= structureIfElseNested(
+          S.ElseBody, limits::kIfElseNestedArmPasses, Med);
       for (auto &C : S.Cases)
-        structureIfElseNested(C.Body, limits::kIfElseNestedArmPasses, Med);
-      structureIfElseNested(S.DefaultBody, limits::kIfElseNestedArmPasses, Med);
+        NestedChanged |=
+            structureIfElseNested(C.Body, limits::kIfElseNestedArmPasses, Med);
+      NestedChanged |= structureIfElseNested(
+          S.DefaultBody, limits::kIfElseNestedArmPasses, Med);
       for (auto &Clause : S.EHClauseBodies)
-        structureIfElseNested(Clause, limits::kIfElseNestedArmPasses, Med);
+        NestedChanged |=
+            structureIfElseNested(Clause, limits::kIfElseNestedArmPasses, Med);
     }
   if (WantDetail) {
     auto Ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -5692,6 +5704,7 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                     << " passes=" << Pass << " cap=" << MaxPasses
                     << " ms=" << Ms << "\n";
   }
+  return NestedChanged;
 }
 
 } // namespace neverd

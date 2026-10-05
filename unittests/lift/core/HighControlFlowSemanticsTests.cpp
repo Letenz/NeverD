@@ -3782,6 +3782,41 @@ TEST(HighControlFlowSemantics, ArmJumpPastALoopItAloneEntersBecomesStructured) {
   EXPECT_EQ(Exits, 0u);
 }
 
+TEST(HighControlFlowSemantics, ArmJumpingBackAfterWorkBecomesALoop) {
+  // v = x; X: v = v + 1; if (v < 5) { v = v + 1; goto X; }  return v;
+  auto Bump = [](va_t Address) {
+    auto S = assign(Address, 1, 0);
+    S.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(1, 8));
+    return S;
+  };
+  auto Start = assign(0x0ffc, 1, 0);
+  Start.Val = local(0);
+  HighStmt Again;
+  Again.Kind = StmtKind::If;
+  Again.Addr = 0x1004;
+  Again.Cond =
+      HighExpr::makeBinop(NdOp::INT_LESS, local(1), HighExpr::makeConst(5, 8));
+  Again.Body = {Bump(0x1008), jump(0x100c, 0x1000)};
+  HighFunc F;
+  F.Body = {Start, Bump(0x1000), Again, result(0x1010, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    uint64_t V = X + 1;
+    while (V < 5)
+      V += 2;
+    return V;
+  };
+  for (uint64_t X : {0, 3, 10})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  loopsForArmsJumpingBack(F.Body);
+  for (uint64_t X : {0, 3, 10})
+    EXPECT_EQ(execute(F, X), Expected(X)) << X;
+  size_t Jumps = 0;
+  walkStmts(F.Body,
+            [&](const HighStmt &S) { Jumps += S.Kind == StmtKind::Goto; });
+  EXPECT_EQ(Jumps, 0u);
+}
+
 TEST(HighControlFlowSemantics, EnteredDoWhileKeepsItsShape) {
   // `goto X; Top: do { y = y + 1; X: } while (y != 3); if (x) goto Top;`
   // The jump to Top runs the body before the test; `while (y != 3)` would

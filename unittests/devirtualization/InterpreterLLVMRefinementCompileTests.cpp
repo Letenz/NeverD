@@ -8,6 +8,53 @@
 
 namespace neverd::analysis::llvm_refinement_test {
 class CompiledLLVMRefinement : public NeverDLiftTest {};
+
+TEST_F(CompiledLLVMRefinement, PhysicalReturnsBindCompiledFrameWrites) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  // CALL helper; two invalid bytes; MOV EAX,7; RET.
+  // helper: LEA RAX,[continuation]; MOV [RSP],RAX; RET. No flag changes.
+  Program P({0xe8, 8,    0,    0,    0,    0x16, 0x06, 0xb8, 7,
+             0,    0,    0,    0xc3, 0x48, 0x8d, 0x05, 0xf3, 0xff,
+             0xff, 0xff, 0x48, 0x89, 0x04, 0x24, 0xc3});
+  P.Options.EntryFrameBounds =
+      SpecializationEntryFrameBounds{P.Frame.Begin, P.Frame.End};
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  const auto C = tmpFile("return-state.c"), IR = tmpFile("return-state.ll");
+  for (bool WrongFrame : {false, true}) {
+    std::ofstream(C) << "typedef unsigned long long word;\n"
+                        "word model(word *state) {\n"
+                        " word slot = "
+                     << (WrongFrame ? 0x1006 : 0x1007)
+                     << ";\n"
+                        " __builtin_memcpy((void *)(state[4] - 8), &slot, 8);\n"
+                        " state[0] = 7;\n"
+                        " return 0;\n}\n";
+    for (const char *Optimization : {"-O1", "-O2"}) {
+      SCOPED_TRACE(WrongFrame);
+      SCOPED_TRACE(Optimization);
+      const auto Built =
+          exec(NEVERD_TEST_CLANG,
+               {"-target", "x86_64-unknown-linux-gnu", "-std=c11", Optimization,
+                "-fno-vectorize", "-fno-slp-vectorize", "-S", "-emit-llvm",
+                C.string(), "-o", IR.string()});
+      ASSERT_TRUE(Built.ok()) << Built.err;
+      std::ifstream Input(IR, std::ios::binary);
+      const std::string Text{std::istreambuf_iterator<char>(Input),
+                             std::istreambuf_iterator<char>()};
+      const auto Proof = P.check(R.Residual, Text);
+      ASSERT_TRUE(Proof.Native.proved()) << Proof.Native.Proof.Diagnostic;
+      if (WrongFrame) {
+        rejected(Proof, Stage::LLVM);
+        EXPECT_EQ(Proof.LLVM.Status, Status::Different);
+      } else {
+        EXPECT_TRUE(Proof.proved()) << Proof.Diagnostic;
+      }
+    }
+  }
+}
+
 TEST_F(CompiledLLVMRefinement, EntryAlignmentValidatesExactCompiledC) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "Configured Clang is unavailable";

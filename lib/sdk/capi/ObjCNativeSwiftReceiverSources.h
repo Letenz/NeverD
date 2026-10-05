@@ -179,7 +179,7 @@ struct BodyProof {
         },
         Budget);
   }
-  std::optional<Calls> calls() {
+  std::optional<Calls> calls(bool ValueCopies = false) {
     const auto Flow = analyzeHighSourceFlow(Function, false);
     const auto Graph = buildHighSourceFlowGraph(Function);
     if (!Flow.Complete || !Flow.Items.empty() || !Graph.Diagnostics.Complete ||
@@ -217,7 +217,17 @@ struct BodyProof {
       Address |= E->Kind == ExprKind::Addr;
       if (Address && E->Kind == ExprKind::Var)
         AddressTaken.insert(highSourceLocalIdentity(E->Var));
-      if (E->SourceCallHint && E->SourceCallHint->NativeSwiftReceiver) {
+      if (ValueCopies && E->SourceCallHint && E->SourceCallHint->ByValueCopy &&
+          !E->SourceCallHint->NativeSwiftReceiver) {
+        const auto &B = *E->SourceCallHint;
+        if (E->Kind != ExprKind::Call || E->IsIndirectCall ||
+            !isObjCByValueCopyHint(B, Function.Entry, Image.Arch) ||
+            E->CallAddr != B.ByValueCopy->Site.StaticTarget ||
+            B.TargetAddress != E->CallAddr ||
+            !Result.emplace(B.ByValueCopy->Site, E.get()).second)
+          return std::nullopt;
+      } else if (!ValueCopies && E->SourceCallHint &&
+                 E->SourceCallHint->NativeSwiftReceiver) {
         const auto &B = *E->SourceCallHint;
         if (E->Kind != ExprKind::Call || E->IsIndirectCall || !B.Receiver ||
             B.Receiver->Origin !=
@@ -233,11 +243,13 @@ struct BodyProof {
           [&](const ExprPtr &Child) { Pending.emplace_back(Child, Address); });
     }
     for (const auto &[Site, Call] : Result)
-      if (Call->Operands.empty() ||
-          !objcReceiverTypeHintValid(Image, *Call->SourceCallHint->Receiver) ||
-          !receiver(Call->Operands[0], *Call->SourceCallHint->Receiver,
-                    Call->SourceCallHint->Receiver->Steps.size()))
-        return std::nullopt;
+      if (!ValueCopies)
+        if (Call->Operands.empty() ||
+            !objcReceiverTypeHintValid(Image,
+                                       *Call->SourceCallHint->Receiver) ||
+            !receiver(Call->Operands[0], *Call->SourceCallHint->Receiver,
+                      Call->SourceCallHint->Receiver->Steps.size()))
+          return std::nullopt;
     return Result;
   }
 };

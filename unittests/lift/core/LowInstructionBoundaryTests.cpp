@@ -849,16 +849,117 @@ TEST(LowInstructionBoundary, BackwardSharedEpilogueRejectsUnprovenBoundaries) {
   }
 }
 
+TEST(LowInstructionBoundary,
+     BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame) {
+  for (unsigned Form = 0; Form < 3; ++Form) {
+    SCOPED_TRACE(Form);
+    BackwardEpilogueFixture F;
+    F.word(F.Tail + 12, 0xd65f03c0); // ret x30, no external call.
+    if (Form == 1) {
+      F.word(F.Tail, 0xa8c17bfd); // ldp x29, x30, [sp], #16
+      F.word(F.Tail + 4, 0xd65f03c0);
+      for (va_t Root : {F.Entry, F.Entry + 0x40}) {
+        F.word(Root, 0xa9bf7bfd); // stp x29, x30, [sp, #-16]!
+        F.word(Root + 4, 0x910003fd);
+        F.word(Root + 8, F.branch(Root + 8, F.Tail));
+      }
+    }
+    if (Form == 2) {
+      F.word(F.Tail, 0xa9414ff4);     // ldp x20, x19, [sp, #16]
+      F.word(F.Tail + 4, 0xa8c357f6); // ldp x22, x21, [sp], #48
+      F.word(F.Tail + 8, 0xd65f03c0);
+      for (va_t Root : {F.Entry, F.Entry + 0x40}) {
+        F.word(Root, 0xa9bd57f6); // stp x22, x21, [sp, #-48]!
+        F.word(Root + 4, 0xa9014ff4);
+        F.word(Root + 8, 0xa9027bfd);
+        F.word(Root + 12, 0xa9427bfd); // x29/x30 restored in caller.
+      }
+    }
+    F.Image.Imports.clear(); // A physical return needs no import declaration.
+    for (va_t Root : {F.Entry, F.Entry + 0x40}) {
+      const auto Function = F.build(Root);
+      ASSERT_EQ(Function.Blocks.size(), 2U);
+      EXPECT_EQ(Function.Blocks.front().StartAddr, Root);
+      EXPECT_EQ(Function.computedSize(), Form == 1 ? 12U : 20U);
+      EXPECT_EQ(Function.DecodedInstructionCount, Form == 0   ? 9U
+                                                  : Form == 1 ? 5U
+                                                              : 8U);
+      EXPECT_TRUE(F.restores(Function));
+      const auto *Tail = findBlock(Function, F.Tail);
+      ASSERT_NE(Tail, nullptr);
+      ASSERT_EQ(Tail->InstructionBoundaries.size(), Form == 0   ? 4U
+                                                    : Form == 1 ? 2U
+                                                                : 3U);
+      const auto &Return = Tail->InstructionBoundaries.back();
+      EXPECT_EQ(Return.Control, LowInstructionControl::Return);
+      EXPECT_EQ(Return.Address, F.Tail + (Form == 0 ? 12 : Form == 1 ? 4 : 8));
+      EXPECT_FALSE(static_cast<bool>(validateLowInstructionBoundaries(
+          Function, LowInstructionBoundaryRequirement::Required)));
+    }
+    EXPECT_FALSE(F.restores(F.build(F.Tail)));
+    F.word(F.Entry, 0xd503201f); // The shared bytes cannot prove an allocation.
+    const auto MissingFrame = F.build();
+    EXPECT_NE(findBlock(MissingFrame, F.Tail), nullptr);
+    EXPECT_FALSE(F.restores(MissingFrame));
+  }
+}
+
+TEST(LowInstructionBoundary,
+     BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership) {
+  for (unsigned Mutation = 0; Mutation < 13; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    BackwardEpilogueFixture F;
+    F.word(F.Tail + 12, 0xd65f03c0);
+    if (Mutation == 0)
+      F.word(F.Tail + 12, 0xd65f0260); // RET x19 has another return target.
+    if (Mutation == 1)
+      F.word(F.Tail + 12, 0xd61f03c0); // BR x30 is not this return shape.
+    if (Mutation == 2)
+      F.word(F.Tail + 8, 0xd65f03c0); // Return before releasing the stack.
+    if (Mutation == 3)
+      F.word(F.Tail, 0x29414ff4); // Narrow restores.
+    if (Mutation == 4)
+      F.word(F.Tail + 8, 0x910023ff); // Unaligned stack release.
+    if (Mutation == 5)
+      F.Entries.insert(F.Tail + 12);
+    if (Mutation == 6)
+      F.Image.RuntimeFunctionAddrs.insert(F.Tail + 12);
+    if (Mutation == 7)
+      F.Image.Symbols.push_back(Symbol::makeFunc(F.Tail + 12));
+    if (Mutation == 8)
+      F.Image.CodePtrRelocSlots.insert(F.Tail + 12);
+    if (Mutation == 9)
+      F.Image.Segments[0].Flags =
+          F.Image.Segments[0].Flags | SegmentFlags::Writable;
+    if (Mutation == 10)
+      F.Image.Sections.push_back(F.Image.Sections.front());
+    if (Mutation == 11)
+      F.Image.IsRelocatable = true;
+    if (Mutation == 12)
+      F.Image.Format = BinaryFormat::ELF;
+    const auto Function = F.build();
+    EXPECT_EQ(Function.DecodedInstructionCount, 5U);
+    EXPECT_EQ(Function.Blocks.size(), 1U);
+    EXPECT_EQ(Function.computedSize(), 20U);
+    EXPECT_FALSE(F.restores(Function));
+  }
+}
+
 TEST(LowInstructionBoundary, BackwardSharedEpilogueDoesNotChangeBL) {
-  BackwardEpilogueFixture F;
-  F.word(F.Entry + 16, F.branch(F.Entry + 16, F.Tail, true));
-  const auto Function = F.build();
-  EXPECT_EQ(Function.Blocks.size(), 1U);
-  EXPECT_EQ(Function.DecodedInstructionCount, 6U);
-  EXPECT_EQ(findBlock(Function, F.Tail), nullptr);
-  EXPECT_FALSE(F.restores(Function));
-  EXPECT_FALSE(readImmutableImageBytes(F.Image, F.Tail, 16));
-  EXPECT_TRUE(readImmutableCodeBytes(F.Image, F.Tail, 16));
+  for (bool Return : {false, true}) {
+    SCOPED_TRACE(Return);
+    BackwardEpilogueFixture F;
+    if (Return)
+      F.word(F.Tail + 12, 0xd65f03c0);
+    F.word(F.Entry + 16, F.branch(F.Entry + 16, F.Tail, true));
+    const auto Function = F.build();
+    EXPECT_EQ(Function.Blocks.size(), 1U);
+    EXPECT_EQ(Function.DecodedInstructionCount, 6U);
+    EXPECT_EQ(findBlock(Function, F.Tail), nullptr);
+    EXPECT_FALSE(F.restores(Function));
+    EXPECT_FALSE(readImmutableImageBytes(F.Image, F.Tail, 16));
+    EXPECT_TRUE(readImmutableCodeBytes(F.Image, F.Tail, 16));
+  }
 }
 
 TEST(LowInstructionBoundary, BackwardSharedEpilogueKeepsPostIndexedRestore) {

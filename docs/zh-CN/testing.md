@@ -181,17 +181,23 @@ build-release/bin/NeverDLowIRRefinementTests
 
 以下行为采用默认的严格审计契约。`NeverDOriginalBinaryUndefinedIndependenceTests` 使用独立编写、固定映射的 x64 字节，验证物理原生 CALL/RET、改写的返回目标、有限间接目标全集和不可变加载。同一测试目标还检查直接分支完整收集、精确字节／效果／映射／读取见证绑定、外层返回时入口 RSP 及返回地址槽保持，以及栈帧与映像分离前提的可满足性。缺失或重叠指令、不符合精确陷阱和显式环境投影规则的未审计分支、不终止或超预算的循环、不完整目标枚举、执行配置／契约不符和预算耗尽均须拒绝，且不产生证书或残余代码。成功要求每条可行原生路径完整结束。此可选门禁不认证循环不变量、异常分派、启用 CET 的执行或原生代码到 C 的等价性；普通恢复仍独立可用。该目标还检查严格提升的 `INT3`/`UD2` 终止边界及其完整字节、操作摘要绑定。未定义输出附属元数据的 `Missing` 必须保持不变；仅经符号执行证明不可达的陷阱可进入证书，任意可行陷阱路径都须返回 `ContractViolation`，且无证书、无残余代码。不建模陷阱后的顺序执行或异常恢复，不使用 `codeFollowsTrap`，静态 LowIR API 的支持范围保持不变。
 
+物理返回回归覆盖直接和间接调用跳过无效内联字节、可达的错误返回位置、完整目标枚举及恰好和不足的预算。完整状态关系拒绝被改动的结果；独立 C 经 O1/O2 编译后也必须保留完整帧写入，返回值相同不能掩盖返回槽字节变化。
+
 显式原生交叠测试覆盖真实 x64 跳入立即数的分支、两个可行分支的结果，以及位于先前指令内部的间接返回入口。合成提供器测试覆盖两种收集顺序的包含式交叠、未执行直接分支上的冲突字节、两种顺序的代码／读取一致性及候选读取。精确和不足的字节预算按间接转移累计计入重复交叠字节。分支结果改变、静态或循环接口使用及证据矛盾均必须拒绝证书；启用选项或改变额度会改变摘要。
 
-拒绝边界的显式启用测试覆盖不可达的 RCL、内存 XADD 和 REP MOVS、符号路径矛盾、任意值控制的分支，以及入口、间接跳转、CALL 和 RET 到达时的精确拒绝。测试还检查可达后缀的独立入口、候选与原生地址重合、格式错误或不完整的证据、资源耗尽、静态/循环接口拒绝，以及精化证明的三层摘要绑定。修改不可达指令，或在无保留边界时切换选项，都会改变证书摘要。这些测试验证声明的有限证明范围，不证明未审计指令的语义。
+拒绝边界的显式启用测试覆盖不可达的 RCL、LOCK 内存 XADD 和 REP MOVS、符号路径矛盾、任意值控制的分支，以及入口、间接跳转、CALL 和 RET 到达时的精确拒绝。测试还检查可达后缀的独立入口、候选与原生地址重合、格式错误或不完整的证据、资源耗尽、静态/循环接口拒绝，以及精化证明的三层摘要绑定。修改不可达指令，或在无保留边界时切换选项，都会改变证书摘要。这些测试验证声明的有限证明范围，不证明未审计指令的语义。
 
 打包标志测试覆盖全部标量入口标志组合、特权掩码、两次执行的 TF/AC 条件、不同未定义产生点、相关副本、原生调用、兄弟路径状态、强制最终系统状态观察、畸形证据及资源计费。有限循环必须结束每条可行输入路径；安全分支不能掩盖无限或截断路径。RDSSPD/RDSSPQ 检查覆盖 16 个通用寄存器和两种宽度、高位保持、保留 `Missing` 证据及伪造投影拒绝。机器状态测试在两个 C 后端的 O0/O2 下开启未定义行为陷阱，与独立用户态标志位预言机比较，并检查环境失败状态不会被后续操作清除。 INCSSPD/INCSSPQ 测试覆盖两种宽度和全部通用寄存器、不可达边界保留、安全兄弟路径完成后的可行陷阱、零操作数及伪造陷阱证据。
+
+`NeverDX86DecodeDetailTests` 覆盖三种解码入口、两种 x64 地址宽度、有符号位移边界、强制前缀、真正的 i386 disp16、moffs、截断输入及无详细信息的重复使用。仅精确的重定位字段可绑定，错误宽度、偏移或数值均不能绑定。原生独立性及关系证明测试还保留完整帧写入，拒绝可观察的任意标志位及被修改的移位候选。
 
 `NeverDX86UndefinedEffectsTests` 检查未定义位元数据、已定义／保留标志及过期证书拒绝。`NeverDX86CarryArithmeticFlagTests` 用算术参考实现检查寄存器和内存形式 ADC/SBB 的辅助进位。`NeverDX86LogicIdentityTests` 检查相同操作数的 AND 在 64 位模式下写入 32 位目标时，仍清零其所属 64 位寄存器的位 63:32，同时保留窄位宽写入未覆盖的位。
 
 `X86RotateUndefinedEffects.*` 用标量算术基准覆盖全部原始计数、操作数宽度、CL 重叠、高字节别名及内存目的操作数。`X86BitTestUndefinedEffects.*` 覆盖寄存器/立即数索引、源与目的重叠、扩展寄存器、已定义标志和寄存器高位写入。元数据反例拒绝被修改的操作数、编码及不支持的形式。原生证明区分同一任意位的关联读取与不同任意位，检查恰好及不足的生产者预算，并拒绝可观察的未定义溢出位。完整状态细化检查接受选定见证，拒绝零位见证或被篡改的候选。
 
-`X86XaddAudit.*` 通过无符号算术基准检查全部 65,536 对字节输入、更宽位宽的标志边界、寄存器/高字节重叠、两次写回、REX 字节宽度限制和完整寄存器保留。原生检查要求不产生新的任意位，同时保留先前的依赖；两种见证均接受未修改的 XADD，篡改和、交换源值或已定义标志则被拒绝。`/6` 别名使用完整移位计数矩阵，并通过修改组号/解码 ID 的反例拒绝语义错配。
+`X86XaddAudit.*` 通过无符号算术基准检查全部 65,536 对字节输入、更宽位宽的标志边界、寄存器/高字节重叠、两次写回、REX 字节宽度限制和完整寄存器保留。原生检查要求不产生新的任意位，同时保留先前的依赖；两种见证均接受未修改的 XADD，篡改和、交换源值或已定义标志则被拒绝。`/6` 别名使用完整移位计数矩阵，并通过修改组号/解码 ID 的反例拒绝语义错配。 内存测试还穷举字节输入对，覆盖地址覆盖前缀、扩展、IP 相对及 i386 16 位寻址、有符号位移、相邻字节和过期解码细节的拒绝。完整帧原生检查保留先前任意值依赖及精确／不足预算检查；篡改存储地址会违反返回槽契约。
+
+`X86DoubleShiftUndefinedEffects.*` 以独立的逐位转移基准检查 16/32/64 位运算的全部原始字节计数，覆盖源／目的／CL 重叠及精确生成守卫。原生检查先丢弃 RAX 再隔离标志，区分计数 16 与 17，保留先前依赖并执行精确／不足预算检查。完整状态关系拒绝被修改的有定义部分及全零位见证；低字未定义不允许清除有定义的高位。畸形形式不发布部分证据。
 
 `NeverDPEFixedImageTests` 使用独立构造的 PE 文件，检查带重定位的指令与不可变数据、导入写入范围、畸形头部／表、别名和来源信息篡改。原生到 LowIR 及精确 LLVM 证明接受匹配候选，拒绝结果、状态或原始字节被修改的候选。准备预算耗尽保持独立分类，允许显式提高限额后重试；普通加载也接受含 40000 条有效重定位记录、超过默认分析预算的文件。
 
@@ -1287,3 +1293,9 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 覆盖两种架构，并拒绝变更提供方、弱导入、冲突存储及陈旧 ABI 载体。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下执行生成的 C，使用独立 Swift 载体验证函数检查坐标位模式（包括有符号零、次正规数和 NaN）、接收者身份、调用顺序和保护值。这些检查证明调用 ABI，不代表上层方法已完整恢复。
 
 `NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` 校验完整方法树和精确载体，包括私有成员及被拒绝的签名。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` 与 `CGRectMethodRejectsChangedEntryAndReceiverParameter` 覆盖流水线和发布重放，拒绝 self 索引、入口或参数类型的变化。编译器记录涵盖四种 macOS/Mac Catalyst 目标；此入口声明仍仅支持 arm64。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` 在 O0/O2 下将生成 C 与独立的 Swift 标量载体参考实现对照，验证四个坐标的全部位模式、不同的 context/self 指针、单次调用和存储保护。
+
+`NeverDLowInstructionBoundaryTests` 可独立运行 LowIR 指令来源测试，无需构建聚合提升测试的全部夹具。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` 验证对齐 ADD 和后索引 LDP 栈释放，包括由调用方恢复链接寄存器的情形；原始 RET X30 与共享入口仍独立保留。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` 拒绝其他返回寄存器、BR X30、缺失或未对齐的释放、窄恢复、内部入口、修正、可写或歧义映射、可重定位输入及其他格式。解码共享尾部不能证明原生 ABI：缺失调用方保存或分配仍会使现有帧证明失败。
+
+`ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 检查 CoreImage 提供方、CIImage 工厂、完整 48 字节逻辑记录及 x2 指针，拒绝缺失或错误的提供方、x86_64 和冲突声明。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 区分原始调用与沿用同一机器地址的结果赋值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒绝 24 类凭据、参数、存储、帧、元数据、导入、重复调用及保存 IR 的修改，包括同时一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 执行未经修改的生成 C，对照独立从编译器观察到的 x2 指针接收函数，检查六个浮点位模式、选择器与接收者身份、单次求值、返回对象、合法副本写入、输入不变性和边界保护。其他主机跳过此物理 ABI 执行测试。
+
+`ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` 拒绝与当前非空方法编码或选择器不一致的缓存 ABI；仅提供显式类型声明的客户端保留原有约定。

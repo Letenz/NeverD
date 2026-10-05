@@ -127,6 +127,7 @@ The supported Bionic subset is:
   process cursor supplies state; `strtok` remains unsupported.
 - `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, for the bounded integer and
   byte-string formatting subset described below.
+- `sscanf`, `vsscanf`, for bounded integer scanning as described below.
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
@@ -142,6 +143,14 @@ The supported Bionic subset is:
   catalogue entries share this behavior; provider lifetime rules still apply.
   See the pinned Android 9
   [Bionic implementation](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/getpagesize.cpp).
+- `sysconf`, for Android's `_SC_PAGESIZE` (`0x27`) and `_SC_PAGE_SIZE` (`0x28`)
+  selectors. Both return the same guest page size as `getpagesize`, mappings
+  and allocation rounding, without changing errno. The selector uses its
+  declared 32-bit `int` width. Other selectors stop as unsupported, including
+  invalid names; the model does not substitute host limits or invent errno
+  responses. Direct and dynamic calls share provider lifetime checks. Android
+  9 defines [distinct selector numbers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/include/bits/sysconf.h)
+  and [one page-size result](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sysconf.cpp).
 - `__system_property_get`, backed only by the explicit property dictionary.
   Missing properties return length zero and write NUL; values must fit 91 bytes
   plus NUL. Host properties are never inherited.
@@ -263,6 +272,36 @@ The independently authored implementation and compiled O0/O2 callers follow
 [AAPCS64's variadic layout](https://github.com/ARM-software/abi-aa/blob/2025Q1/aapcs64/aapcs64.rst#the-va_list-type),
 Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp)
 and [conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp).
+
+### Integer scanning
+
+`sscanf` and `vsscanf` share the formatting model's GP argument reader and
+Android LP64 `va_list` rules. The scanner accepts `d i o u x X p n`, literal
+characters, `%%`, ASCII whitespace, assignment suppression, decimal field
+widths, and `hh h l ll j z t q` integer lengths. Android's `D` and `O` aliases
+use `long`. `%n` records consumed input bytes without increasing the assignment
+count. Suppression and widths on `%n`, and lengths on `%p`, are unsupported.
+
+The input is a bounded NUL-terminated guest byte string. A numeric field consumes
+at most 512 bytes, including its sign and radix prefix. An incomplete `0x`
+prefix consumes only the zero (and optional sign). Matching failures return the
+assignment count; input exhaustion returns EOF when no assignment has occurred.
+Earlier assignments survive either normal failure. Destination widths and
+truncation follow Android LP64, and successful conversions preserve thread errno.
+
+Floating-point, character/string/scanset conversions, allocation, positional
+arguments, malformed formats, and 64-bit conversion overflow stop explicitly.
+Output that aliases input, format, or consumed argument storage also stops;
+destinations may alias each other and are written in conversion order. All
+formats, consumed pointers, and supported conversions are checked before
+publishing writes. Invalid memory and unsupported calls do not publish partial
+assignments or a successful return. This does not model libc's fault or overflow
+side effects. Direct imports and dynamic symbols share implementation and
+provider lifetime checks. Host scanf functions are never called.
+
+The independently authored scanner follows Android 9's
+[integer scanning behavior](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/stdio/vfscanf.cpp)
+and [string input setup](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/vsscanf.c).
 
 ### Explicit dynamic symbol catalogue
 

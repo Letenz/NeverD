@@ -2,7 +2,9 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidImage.cpp
   AndroidBionic.cpp
   AndroidStrings.cpp
+  AndroidArguments.cpp
   AndroidFormatting.cpp
+  AndroidScanning.cpp
   AndroidMutex.cpp
   AndroidThreadAttributes.cpp
   AndroidThreads.cpp
