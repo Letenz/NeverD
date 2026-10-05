@@ -2836,6 +2836,7 @@ class LoopPlanInference {
     struct Bound {
       LowIRLoopLocation Location;
       bool Lower, Strict;
+      uint64_t Mask = 0;
     };
     LowIRLoopLocation Location;
     uint64_t FixedMask;
@@ -2848,7 +2849,7 @@ class LoopPlanInference {
     };
     std::vector<LaneGuard> LaneGuards, LaneAttempts;
     std::vector<Bound> CounterBounds;
-    bool CounterBoundsSeeded = false;
+    std::vector<uint64_t> CounterBoundAttempts;
     std::vector<LowIRLoopLocation> Equalities;
     struct BitRelation {
       unsigned Bit;
@@ -3292,12 +3293,18 @@ class LoopPlanInference {
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
       }
       for (const auto &B : W.CounterBounds) {
-        const auto Limit = Temp(Bytes);
+        auto Limit = Temp(Bytes);
         Cut.Inputs.push_back(
             {LowIRLoopSide::OriginalPrefix, B.Location, Limit});
+        auto Value = Parameter;
+        if (B.Mask) {
+          const auto Mask = NdVar::scalar(B.Mask, Bytes);
+          Value = Expr(NdOp::INT_AND, Value, Mask, Bytes);
+          Limit = Expr(NdOp::INT_AND, Limit, Mask, Bytes);
+        }
         const auto Guard =
             Expr(B.Strict ? NdOp::INT_LESS : NdOp::INT_LESSEQUAL,
-                 B.Lower ? Limit : Parameter, B.Lower ? Parameter : Limit, 1);
+                 B.Lower ? Limit : Value, B.Lower ? Value : Limit, 1);
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
       }
       for (bool Maximum : {false, true}) {
@@ -3902,39 +3909,56 @@ class LoopPlanInference {
     return OldSize != W.BitRelations.size();
   }
 
+  SymRef counterProjection(SymRef Value, uint64_t Mask) {
+    auto &Ctx = Session.Context;
+    return Mask ? Ctx.mkAnd(Value, Ctx.mkConst(Ctx.width(Value), Mask)) : Value;
+  }
+
   bool seedCounterBounds(Word &W,
                          llvm::ArrayRef<TerminalState> NewIncoming = {}) {
-    if (W.CounterBoundsSeeded || RelationArrivals[ActiveCutpoint].empty() ||
+    if (RelationArrivals[ActiveCutpoint].empty() ||
         std::none_of(
             RelationCounters.begin(), RelationCounters.end(),
             [&](const auto &L) { return sameLocation(W.Location, L); }))
       return false;
-    W.CounterBoundsSeeded = true;
     auto &Ctx = Session.Context;
     auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
     auto Incoming = RelationArrivals[ActiveCutpoint];
     Incoming.insert(Incoming.end(), NewIncoming.begin(), NewIncoming.end());
     const auto OldSize = W.CounterBounds.size();
-    for (const auto &L : RelationBounds[ActiveCutpoint]) {
-      if (L.Bytes != W.Location.Bytes)
+    std::vector<uint64_t> Masks{0};
+    for (const auto &C : LaneCounters)
+      if (sameLocation(W.Location, C.Location))
+        Masks.push_back(C.Guard.Mask);
+    for (uint64_t Mask : Masks) {
+      if (std::find(W.CounterBoundAttempts.begin(),
+                    W.CounterBoundAttempts.end(),
+                    Mask) != W.CounterBoundAttempts.end())
         continue;
-      const auto Limit = read(Prefix, L);
-      for (bool Lower : {false, true})
-        for (bool Strict : {false, true}) {
-          bool Holds = true;
-          for (auto &S : Incoming) {
-            const auto Value = read(S, W.Location);
-            const auto A = Lower ? Limit : Value;
-            const auto B = Lower ? Value : Limit;
-            if (!entails(S.Predicate,
-                         Strict ? Ctx.mkUlt(A, B) : Ctx.mkUle(A, B))) {
-              Holds = false;
-              break;
+      // A later transition can reveal a new lane. Never retry a rejected or
+      // pruned projection using only the narrower, later induction domain.
+      W.CounterBoundAttempts.push_back(Mask);
+      for (const auto &L : RelationBounds[ActiveCutpoint]) {
+        if (L.Bytes != W.Location.Bytes)
+          continue;
+        const auto Limit = counterProjection(read(Prefix, L), Mask);
+        for (bool Lower : {false, true})
+          for (bool Strict : {false, true}) {
+            bool Holds = true;
+            for (auto &S : Incoming) {
+              const auto Value = counterProjection(read(S, W.Location), Mask);
+              const auto A = Lower ? Limit : Value;
+              const auto B = Lower ? Value : Limit;
+              if (!entails(S.Predicate,
+                           Strict ? Ctx.mkUlt(A, B) : Ctx.mkUle(A, B))) {
+                Holds = false;
+                break;
+              }
             }
+            if (Holds)
+              W.CounterBounds.push_back({L, Lower, Strict, Mask});
           }
-          if (Holds)
-            W.CounterBounds.push_back({L, Lower, Strict});
-        }
+      }
     }
     return OldSize != W.CounterBounds.size();
   }
@@ -4096,7 +4120,22 @@ class LoopPlanInference {
             }))
           continue;
         const auto V = read(Prefix, L);
-        if (!Ctx.isConst(V) && Seen.count(V) && Values.insert(V).second)
+        if (Ctx.isConst(V))
+          continue;
+        auto Referenced = Seen.count(V) ? V : SymRef{};
+        // The condition may read only the counter's active lane from a
+        // wider bound word. Keep the whole prefix location, not an assumed
+        // zero extension of the compared subword.
+        for (const auto &C : LaneCounters) {
+          if (Referenced || C.Location.Bytes != L.Bytes)
+            continue;
+          const auto Part = Ctx.mkExtract(V, std::countr_zero(C.Guard.Mask),
+                                          std::popcount(C.Guard.Mask));
+          checker().nodes();
+          if (Seen.count(Part))
+            Referenced = Part;
+        }
+        if (Referenced && Values.insert(Referenced).second)
           Bounds.push_back(L);
       }
       RelationBounds[I] = Bounds;
@@ -4225,9 +4264,11 @@ class LoopPlanInference {
                      return false;
                    }) != 0;
         Changed |= std::erase_if(W.CounterBounds, [&](const auto &B) {
-                     const auto Limit = read(Prefix, B.Location);
+                     const auto Limit =
+                         counterProjection(read(Prefix, B.Location), B.Mask);
                      for (auto &S : Incoming) {
-                       const auto Value = read(S, W.Location);
+                       const auto Value =
+                           counterProjection(read(S, W.Location), B.Mask);
                        const auto A = B.Lower ? Limit : Value;
                        const auto Z = B.Lower ? Value : Limit;
                        if (!entails(S.Predicate, B.Strict ? Ctx.mkUlt(A, Z)
@@ -4292,12 +4333,10 @@ class LoopPlanInference {
 
   SymRef counterValue(TerminalState &State, const Counter &Rank) {
     auto &Ctx = Session.Context;
-    auto Value = read(State, Rank.Location);
+    auto Value = counterProjection(read(State, Rank.Location), Rank.Mask);
     const auto Mask =
         Ctx.mkConst(Rank.Location.Bytes * 8,
                     Rank.Mask ? Rank.Mask : ones(Rank.Location.Bytes));
-    if (Rank.Mask)
-      Value = Ctx.mkAnd(Value, Mask);
     return Rank.Complement ? Ctx.mkXor(Value, Mask) : Value;
   }
 
