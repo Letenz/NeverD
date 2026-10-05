@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: bc2baba6bd0e4cd615bc42742369ed02838fdad6971fbf60c82a3be7ba85623d -->
+<!-- i18n-source: 61bdc370f97cd87f1c914c94d71c46131bcaf43d213e92caf9e553b9445dc63b -->
 
 [← 文件索引](README.md)
 
@@ -202,3 +202,5 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 2026-10-05 的 ARM64 複驗使用乾淨原始碼 [90643c3d4](https://github.com/NeverSight/NeverD/commit/90643c3d47aec683953fe8a911397922816125d9)、macOS 15.6.1 與獨立 Release 建置，啟用 HVF、關閉 Unicorn。完整 CPU 清單執行了 906 個循序測試方法：1,406 項通過、9,979 項略過、零失敗，23 項必要原生案例全部通過。獨立 Darwin 清單為 65 項通過、221 項略過、零失敗，39 項必要原生案例全部通過。原始 XML、清單識別、子行程零結束碼及回收紀錄已獨立核對。三個取消、故障與重試方法各在同一行程內連續通過 1,000 輪。略過代表未執行的覆蓋；重疊清單不能相加。證據保存在 `build-hvf-native/native-evidence-audit.json` 與 `build-hvf-native/recovery-stress/`。這不構成 Intel 驗收、iOS 實機對照或新的效能結論。
 
 新增獨立 16 位元實模式 API 對照，不包含 NeverD 執行器、長模式狀態或受管理 MSR。保留全部 6 次嘗試及 34 份已核對封存檔：首組即時對照中，macOS 15 上傳器 SIGSEGV、原生結果未知，macOS 26 通過；首組取消即時觀測的對照均觸發原預算失敗。舊時間區間包含日誌寫入，原解析器也拒絕 CRCRLF。`ac717e4` 的協定 2 修正 LF 分幀，僅對此控制關閉 PTY 輸出處理，在開始日誌後重查原期限，先擷取狀態再輸出結束日誌。隨後同版本 final-only vCPU 對照：macOS 15 [37259797988](https://github.com/gmh5225/test_mac_intel/actions/runs/37259797988) 完成 1,000 輪、結束碼 0 且已回收；macOS 26 [37259800022](https://github.com/gmh5225/test_mac_intel/actions/runs/37259800022) 完成 571 輪，第 572 輪超出預算，結束碼 1 且清理、回收均已核對。失敗時呼叫前至返回為 2,461,380,098 ns，開始日誌為 5,946 ns，返回後狀態擷取為 4,191 ns。區間已排除日誌寫入，但仍含主機排程，不證明 VM 進入時刻或 HVF 核心故障。本組沒有上傳器失敗或 runner 失聯，2 秒預算未放寬。雙平台 vCPU、VM 重建、原 NeverD 復原及完整 Intel CPU/Darwin 驗收仍未完成；這不是效能比較。[JSON / Actions](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
+
+`fb7a9d2` 的協定 3 計量配對也觸發原預算失敗：macOS 15 [37262095705](https://github.com/gmh5225/test_mac_intel/actions/runs/37262095705) 完成 781 輪，第 782 輪失敗；macOS 26 [37262097389](https://github.com/gmh5225/test_mac_intel/actions/runs/37262097389) 完成 396 輪，第 397 輪失敗。兩組均返回 IRQ 並觀察到新的寫入見證，退出 1，清理與程序回收已核驗；沒有 runner 失聯或上傳器故障。失敗呼叫前至返回約為 2.068/2.002 秒。各自有明確邊界的採樣區間內，Intel HVF 執行計數增加約 2.063/1.996 秒，Darwin 執行緒 CPU 計數增加約 2.068/2.001 秒。讀取位於呼叫、狀態擷取區間之外，採樣寬度與原始計數均保留。巢狀宿主回報的時鐘增加了牆鐘之外的證據，但不能證明實體 guest 執行、排程時長或核心根因。全部 8 次嘗試及 38 份壓縮包已核驗並保留，5 毫秒切片和每輪 2 秒預算未變。雙映像 vCPU、VM 重建與完整 NeverD Intel 驗收仍未完成。[原始證據與計量](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
