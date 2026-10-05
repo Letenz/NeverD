@@ -2602,6 +2602,15 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
 
+File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
+imports and variadic syscalls, shared catalogue queries from another guest
+thread, private errno, dynamic provider lifetime, implicit directories,
+missing paths, file ancestors, invalid-mode precedence, integer high bits,
+descriptor exhaustion and unchanged cursors. Path imports include empty,
+unmapped, overlong and page-tail strings. Permission checks and noncanonical
+paths remain unsupported. Raw syscall extra registers are ignored; the API 28
+Bionic wrapper rejects nonzero flags.
+
 Status cases use independently declared x64 and AArch64 `stat` structures, checking
 every field, zero padding, canaries, unaligned output, full-width inode/timestamps,
 size independent from bytes and unchanged cursors. Raw/Bionic/variadic calls and

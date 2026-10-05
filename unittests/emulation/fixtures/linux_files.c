@@ -9,6 +9,7 @@ typedef unsigned int U32;
 #if defined(__aarch64__)
 static const U64 UserLimit = 0x0001000000000000UL;
 enum {
+  FaccessAt = 48,
   OpenAt = 56,
   Read = 63,
   Close = 57,
@@ -22,6 +23,7 @@ enum {
 #else
 static const U64 UserLimit = 0x0000800000000000UL;
 enum {
+  FaccessAt = 269,
   OpenAt = 257,
   Read = 0,
   Close = 3,
@@ -165,6 +167,73 @@ U64 files_capacity(void) {
   return 0;
 }
 
+U64 files_access(void) {
+  CHECK(raw(FaccessAt, (U64)-1, (U64)Path, 0x1234567800000000UL, 99), 0);
+  CHECK(raw(FaccessAt, (U64)-100, (U64) "/", 0, 0), 0);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture", 0, 0), 0);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/missing", 0, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, (U64) "/absent", 0, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/data/child", 0, 0), (U64)-20);
+  CHECK(raw(FaccessAt, 0, (U64) "/absent", 7, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/data/child", 4, 0), (U64)-20);
+  // Invalid mode precedes pathname access; only its low int bits participate.
+  CHECK(raw(FaccessAt, 0, 1, 8, 0), (U64)-22);
+  CHECK(raw(FaccessAt, 0, 1, 9, 0), (U64)-22);
+  CHECK(raw(FaccessAt, 0, 1, (U64)-1, 0), (U64)-22);
+#if defined(__x86_64__)
+  CHECK(raw(21, (U64)Path, 0, 0, 0), 0);
+  CHECK(raw(21, (U64) "/absent", 0, 0, 0), (U64)-2);
+  CHECK(raw(21, 1, 8, 0, 0), (U64)-22);
+#endif
+  // Existence checks neither allocate a descriptor nor change open cursors.
+  U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), (U64)-24);
+  CHECK(raw(FaccessAt, 0, (U64)Path, 0, 0), 0);
+  CHECK(raw(FaccessAt, 0, (U64) "/absent", 0, 0), (U64)-2);
+  CHECK(raw(Seek, F, 0, 1, 0), 1);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(Pages[0], 0xff);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), F);
+  return 0;
+}
+
+U64 files_access_faults(void) {
+  static U64 UnterminatedPath[512];
+  CHECK(raw(FaccessAt, 0, (U64) "", 0, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, 1, 0, 0), (U64)-14);
+  CHECK(raw(FaccessAt, 0, UserLimit, 0, 0), (U64)-14);
+  CHECK(raw(FaccessAt, 0, (U64)-1, 0, 0), (U64)-14);
+  for (unsigned I = 0; I < sizeof(UnterminatedPath) / sizeof(U64); ++I)
+    UnterminatedPath[I] = 0x7878787878787878UL;
+  CHECK(raw(FaccessAt, 0, (U64)UnterminatedPath, 0, 0), (U64)-36);
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 0, 0), 0);
+  for (unsigned I = 0; I < sizeof(Path); ++I)
+    Pages[4096 - sizeof(Path) + I] = Path[I];
+  CHECK(raw(FaccessAt, 0, (U64)Pages + 4096 - sizeof(Path), 0, 0), 0);
+  Pages[4095] = 'x';
+  CHECK(raw(FaccessAt, 0, (U64)Pages + 4096 - sizeof(Path), 0, 0), (U64)-14);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), 3);
+  return 0;
+}
+
+U64 files_access_empty(void) {
+  CHECK(raw(FaccessAt, 0, (U64) "/", 0, 0), 0);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture", 0, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, (U64)Path, 0, 0), (U64)-2);
+  return 0;
+}
+
+U64 files_access_unsupported(U64 Mode) {
+  static const char *const Paths[] = {Path, "fixture/data", "/fixture//data",
+                                      "/fixture/../data"};
+  const char *Name = Mode < 4 ? Paths[Mode] : Path;
+  U64 Permission = Mode < 4 ? 0 : Mode < 7 ? 1UL << (Mode - 4) : 7;
+  return raw(FaccessAt, (U64)-100, (U64)Name, Permission, 0);
+}
+
 struct FileTime {
   I64 Seconds;
   U64 Nanoseconds;
@@ -300,6 +369,8 @@ extern I64 lseek(int, I64, int);
 extern I64 lseek64(int, I64, int);
 extern int fstat(int, struct FileStatus *);
 extern int fstat64(int, struct FileStatus *);
+extern int access(const char *, int);
+extern int faccessat(int, const char *, int, int);
 extern I64 syscall(I64, ...);
 extern int *__errno(void);
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
@@ -425,6 +496,55 @@ U64 files_dynamic(U64 Closed) {
     CHECK(dlclose(Library), 0);
   return Open(Path, 0);
 }
+
+static void *access_reader(void *Arg) {
+  *__errno() = 82;
+  if (access(Arg, 0) || *__errno() != 82 ||
+      faccessat(-1, "/absent", 0, 0) != -1 || *__errno() != 2)
+    return (void *)1;
+  return 0;
+}
+
+U64 files_access_bionic(void) {
+  *__errno() = 73;
+  CHECK(access(Path, 0), 0);
+  CHECK(*__errno(), 73);
+  CHECK(faccessat(-1, Path, 0, 0), 0);
+  CHECK(*__errno(), 73);
+  CHECK(syscall(48L, -1UL, Path, 0x1234567800000000UL, 99UL), 0);
+  CHECK(*__errno(), 73);
+  U64 Thread;
+  void *Value = (void *)1;
+  CHECK(pthread_create(&Thread, 0, access_reader, (void *)Path), 0);
+  CHECK(pthread_join(Thread, &Value), 0);
+  CHECK((U64)Value, 0);
+  CHECK(*__errno(), 73);
+  CHECK(access("/absent", 0), -1);
+  CHECK(*__errno(), 2);
+  CHECK(faccessat(-1, (const char *)1, 0, 0x100), -1);
+  CHECK(*__errno(), 22);
+  CHECK(faccessat(-1, (const char *)1, 0, 0), -1);
+  CHECK(*__errno(), 14);
+  CHECK(access((const char *)1, 9), -1);
+  CHECK(*__errno(), 22);
+  CHECK(access(Path, 0), 0);
+  CHECK(*__errno(), 22);
+  return 0;
+}
+
+U64 files_access_dynamic(U64 Closed, U64 At) {
+  void *Library = dlopen("libfiles.so", 2);
+  if (!Library)
+    return 99;
+  void *Call = dlsym(Library, At ? "faccessat" : "access");
+  if (!Call)
+    return 98;
+  if (Closed)
+    CHECK(dlclose(Library), 0);
+  if (At)
+    return ((int (*)(int, const char *, int, int))Call)(-1, Path, 0, 0);
+  return ((int (*)(const char *, int))Call)(Path, 0);
+}
 #else
 void process_main(U64 *Stack) {
   if (Stack[0] != 2)
@@ -434,6 +554,8 @@ void process_main(U64 *Stack) {
                : Mode == 'f' ? files_faults()
                : Mode == 'c' ? files_capacity()
                : Mode == 't' ? files_status()
+               : Mode == 'a' ? files_access()
+               : Mode == 'p' ? files_access_faults()
                              : files_unsupported(Mode - '0');
   raw(Exit, Status, 0, 0, 0);
   __builtin_trap();
