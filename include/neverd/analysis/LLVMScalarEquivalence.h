@@ -57,8 +57,11 @@ struct LLVMScalarEquivalenceResult {
 /// A query using the same Function object models and executes it once per
 /// partition, retaining every admission, definedness and termination check.
 /// Unresolved control/definedness decisions receive a bounded bottom-up DAG
-/// normalization before input-bit discovery; this neither replays execution
-/// nor assumes that a source annotation is true.
+/// normalization before input-bit discovery. Intermediate data writes stay
+/// symbolic; final equality first tries identity/bounded facts, then normalizes
+/// the demanded return DAGs. All execution, normalization and retry work shares
+/// one budget. This neither replays execution nor assumes that a source
+/// annotation is true.
 ///
 /// A result other than Proved authorizes no rewrite; Unproved need not mean
 /// inequivalent. Every limit is finite. Unsupported instructions, effects,

@@ -70,6 +70,7 @@ add_neverd_unittest(NeverDLLVMScalarEquivalenceTests
   LLVMScalarAssumeTests.cpp
   LLVMScalarEquivalenceTests.cpp
   LLVMScalarDecisionTests.cpp
+  LLVMScalarDemandTests.cpp
   LLVMScalarModelTests.cpp
   LLVMScalarCompileTests.cpp
   LINK_COMPONENTS LLVMInterpreterModel
