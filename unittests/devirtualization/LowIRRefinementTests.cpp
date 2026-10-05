@@ -2320,7 +2320,9 @@ TEST(LowIRLoopInference, AlternativeLoopsReachBothPrefixesWithinSharedBudgets) {
 
 Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
                               bool Guarded = true,
-                              LowIRLoopSpace Space = LowIRLoopSpace::Register) {
+                              LowIRLoopSpace Space = LowIRLoopSpace::Register,
+                              bool EqualityExit = false, unsigned BoundStep = 0,
+                              bool PadBounds = false) {
   Program P;
   const uint64_t Mask = (uint64_t{1} << (Bytes * 8)) - 1;
   if (Space == LowIRLoopSpace::Frame)
@@ -2360,6 +2362,11 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
   P.instruction({op(NdOp::INT_ZEXT, r(64), {r(112, Bytes)}),
                  op(NdOp::INT_ZEXT, r(72), {r(120, Bytes)}),
                  op(NdOp::COPY, r(0), {n(0)})});
+  if (PadBounds)
+    P.instruction({op(NdOp::INT_AND, NdVar::tmp(0, 8), {r(160), n(~Mask)}),
+                   op(NdOp::INT_OR, r(64), {r(64), NdVar::tmp(0, 8)}),
+                   op(NdOp::INT_AND, NdVar::tmp(8, 8), {r(168), n(~Mask)}),
+                   op(NdOp::INT_OR, r(72), {r(72), NdVar::tmp(8, 8)})});
   Initialize(0);
   Initialize(1);
   P.instruction({op(NdOp::BRANCH, {}, {n(0x200)})});
@@ -2371,7 +2378,8 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
          op(NdOp::SUBBYTES, NdVar::tmp(16, Bytes), {NdVar::tmp(8, 8), n(0)}),
          op(NdOp::SUBBYTES, NdVar::tmp(24, Bytes), {r(64 + 8 * Level), n(0)}),
          Guarded
-             ? op(Ascending ? NdOp::INT_LESSEQUAL : NdOp::INT_EQUAL,
+             ? op(Ascending && !EqualityExit ? NdOp::INT_LESSEQUAL
+                                             : NdOp::INT_EQUAL,
                   NdVar::tmp(32, 1),
                   {Ascending ? NdVar::tmp(24, Bytes) : NdVar::tmp(16, Bytes),
                    Ascending ? NdVar::tmp(16, Bytes) : n(0, Bytes)})
@@ -2386,6 +2394,9 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
             {NdVar::tmp(16, Bytes), n(Step, Bytes)}),
          op(NdOp::INT_ZEXT, NdVar::tmp(32, 8), {NdVar::tmp(24, Bytes)}),
          Write(Level, NdVar::tmp(32, 8))});
+    if (BoundStep)
+      P.instruction({op(NdOp::INT_ADD, r(64 + 8 * Level),
+                        {r(64 + 8 * Level), n(BoundStep)})});
   };
   Header(1, 0x200, 0x700, 6, 0);
   P.block(2, 0x300, {3});
@@ -2466,8 +2477,67 @@ TEST(LowIRLoopInference, ProjectedRanksRejectStutterWrapAndSkippedExits) {
   }
 }
 
-TEST(LowIRLoopInference, ProjectedRanksKeepIndependentBudgets) {
-  const auto P = projectedCounterLoops(1, true);
+TEST(LowIRLoopInference, ProjectedBoundsProveNarrowEqualityExits) {
+  for (uint16_t Bytes : {1, 3, 4})
+    for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
+                       LowIRLoopSpace::FunctionTemporary})
+      for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+        SCOPED_TRACE(Bytes);
+        SCOPED_TRACE(static_cast<unsigned>(Space));
+        SCOPED_TRACE(static_cast<unsigned>(Order));
+        auto P = projectedCounterLoops(Bytes, true, 1, true, Space, true);
+        P.Contract.ByteOrder = Order;
+        const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract, {},
+                                                    {0x300, 0x500});
+        ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+        const auto Proof = loopCheck(P, P, *R.Plan);
+        ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+      }
+}
+
+TEST(LowIRLoopInference, ProjectedBoundsCannotHideChangedBoundsOrWraparound) {
+  const auto Space = LowIRLoopSpace::Frame;
+  const auto P = projectedCounterLoops(1, true, 1, true, Space, true);
+  const std::vector<va_t> Cuts{0x300, 0x500};
+  const auto Good =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  for (const auto &Bad :
+       {projectedCounterLoops(1, true, 0, true, Space, true),
+        projectedCounterLoops(1, true, 2, true, Space, true),
+        projectedCounterLoops(1, true, 1, true, Space, true, 1),
+        projectedCounterLoops(1, true, 1, false, Space, true)}) {
+    const auto Refused =
+        inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract, {}, Cuts);
+    EXPECT_FALSE(Refused.inferred());
+    EXPECT_FALSE(Refused.Plan);
+    loopRefused(loopCheck(Bad, Bad, *Good.Plan), Status::Different);
+  }
+}
+
+TEST(LowIRLoopInference, ProjectedBoundsKeepUnselectedInputObservations) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    auto P = projectedCounterLoops(3, true, 1, true, LowIRLoopSpace::Frame,
+                                   true, 0, true);
+    P.Contract.ByteOrder = Order;
+    P.Contract.ReturnRegisters.push_back({64, 8});
+    P.Contract.ReturnRegisters.push_back({72, 8});
+    const auto Good = inferLowIRLoopRefinementPlan(P.Function, P.Contract, {},
+                                                   {0x300, 0x500});
+    ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+    const auto Proof = loopCheck(P, P, *Good.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    auto Wrong = P;
+    for (auto &O : Wrong.Function.Blocks.front().Ops)
+      if (O.Opcode == NdOp::INT_AND && O.Inputs[0] == r(160))
+        O.Inputs[1] = n(0);
+    loopRefused(loopCheck(P, Wrong, *Good.Plan), Status::Different);
+  }
+}
+
+void checkProjectedCounterBudgets(bool EqualityExit) {
+  const auto P = projectedCounterLoops(1, true, 1, true,
+                                       LowIRLoopSpace::Register, EqualityExit);
   const std::vector<va_t> Cuts{0x300, 0x500};
   const auto Good =
       inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
@@ -2515,6 +2585,14 @@ TEST(LowIRLoopInference, ProjectedRanksKeepIndependentBudgets) {
       --Short.Execution.MaxObservations;
     loopRefused(loopCheck(P, P, *Good.Plan, Short), Status::BudgetExceeded);
   }
+}
+
+TEST(LowIRLoopInference, ProjectedRanksKeepIndependentBudgets) {
+  checkProjectedCounterBudgets(false);
+}
+
+TEST(LowIRLoopInference, ProjectedBoundsKeepIndependentBudgets) {
+  checkProjectedCounterBudgets(true);
 }
 
 struct CachedComparisonOptions {
