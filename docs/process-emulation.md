@@ -79,7 +79,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `stack_size` | 1048576 | Page-aligned stack within the memory budget |
 | `output_limit` | 1048576 | Combined captured stdout/stderr bytes |
 | `instruction_quantum` | 1024 | Admission interval before yielding to the runtime |
-| `linux_time` | Absent | Explicit fixed clock observations for Linux ELF64 and Android native workloads |
+| `linux_time` | Absent | Explicit clock observations and optional idle advancement for Linux ELF64 and Android native workloads |
 | `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 
@@ -259,7 +259,7 @@ guest pointer or mapping request to the host OS.
 
 ## Explicit guest clocks
 
-The optional `linux_time` input supplies fixed observations, shared by raw
+The optional `linux_time` input supplies observations, fixed by default, shared by raw
 Linux services and Android Bionic. It never reads the host clock, advances time
 with instruction execution, or supplies a default epoch. For example:
 
@@ -279,6 +279,28 @@ JSON numbers are accepted within `±9007199254740991`; decimal strings preserve
 the full signed range. Timezone fields are signed 32-bit integers. C++ callers
 use `ProcessOptions::LinuxTime`, with the same value validation. Other process
 profiles reject this option.
+
+`"advance_on_idle": true` explicitly enables relative `nanosleep` on x64 and
+ARM64, including Android's named and variadic wrappers. Only clock IDs 0, 1 and
+7 may be supplied with this policy. Reads share each initial value plus elapsed
+virtual time. A sleeping Android thread retains its original pending service;
+other runnable threads execute first. When all threads are blocked, time advances
+to the earliest sleep deadline. A single-threaded workload advances directly.
+Instruction execution itself does not advance time, so a busy runnable thread
+can leave a sleeper pending until the workload budget expires.
+
+The request is copied before checking nonnegative seconds and normalized
+nanoseconds. Bad input addresses return `EFAULT`; invalid values return `EINVAL`.
+Normal completion leaves the remaining-time pointer and Bionic errno untouched.
+Zero duration returns without advancing. Saturated or overflowing deadlines and
+clock overflow stop explicitly; no partial clock advancement is committed.
+This deterministic policy excludes signal interruption/restart, absolute sleeps,
+timer slack, CPU-time accounting and host scheduling. Disabled policy retains
+an explicit unsupported-service stop for sleep.
+The copy/validation/completion boundary follows Linux's
+[relative nanosleep implementation](https://github.com/torvalds/linux/blob/v6.12/kernel/time/hrtimer.c);
+Android's error conversion follows the API 28
+[AArch64 Bionic wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/arch-arm64/syscalls/nanosleep.S).
 
 `clock_gettime` consumes the low signed 32 bits of its clock ID, returns
 `EINVAL` for invalid positive IDs before accessing the destination, and stops
