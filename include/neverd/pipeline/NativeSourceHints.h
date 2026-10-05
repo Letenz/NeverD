@@ -89,6 +89,10 @@ bool validateSwiftConsumedInputBindings(const BinaryImage &Image,
 bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
                                          const LowFunc *Low,
                                          const MedFunc &Med);
+/// Rebuild SDK message copy storage from the current declared Objective-C
+/// entry, immutable machine body and complete call/frame effects.
+bool validateObjCByValueCopyBindings(const BinaryImage &Image,
+                                     const LowFunc *Low, const MedFunc &Med);
 
 /// Exact direct call targets followed by an observed full-word read of the
 /// second integer return register in the same block. This is a demand, not a

@@ -1291,3 +1291,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 `NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` 校验完整方法树和精确载体，包括私有成员及被拒绝的签名。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` 与 `CGRectMethodRejectsChangedEntryAndReceiverParameter` 覆盖流水线和发布重放，拒绝 self 索引、入口或参数类型的变化。编译器记录涵盖四种 macOS/Mac Catalyst 目标；此入口声明仍仅支持 arm64。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` 在 O0/O2 下将生成 C 与独立的 Swift 标量载体参考实现对照，验证四个坐标的全部位模式、不同的 context/self 指针、单次调用和存储保护。
 
 `NeverDLowInstructionBoundaryTests` 可独立运行 LowIR 指令来源测试，无需构建聚合提升测试的全部夹具。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` 验证对齐 ADD 和后索引 LDP 栈释放，包括由调用方恢复链接寄存器的情形；原始 RET X30 与共享入口仍独立保留。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` 拒绝其他返回寄存器、BR X30、缺失或未对齐的释放、窄恢复、内部入口、修正、可写或歧义映射、可重定位输入及其他格式。解码共享尾部不能证明原生 ABI：缺失调用方保存或分配仍会使现有帧证明失败。
+
+`ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 检查 CoreImage 提供方、CIImage 工厂、完整 48 字节逻辑记录及 x2 指针，拒绝缺失或错误的提供方、x86_64 和冲突声明。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 区分原始调用与沿用同一机器地址的结果赋值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒绝 24 类凭据、参数、存储、帧、元数据、导入、重复调用及保存 IR 的修改，包括同时一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 执行未经修改的生成 C，对照独立从编译器观察到的 x2 指针接收函数，检查六个浮点位模式、选择器与接收者身份、单次求值、返回对象、合法副本写入、输入不变性和边界保护。其他主机跳过此物理 ABI 执行测试。
+
+`ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` 拒绝与当前非空方法编码或选择器不一致的缓存 ABI；仅提供显式类型声明的客户端保留原有约定。
