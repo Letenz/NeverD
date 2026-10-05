@@ -142,7 +142,8 @@ class AlignmentSearch {
     for (const auto &C : Plan.Cutpoints)
       for (size_t Count :
            {C.Inputs.size(), C.Expressions.size(), C.OriginalState.size(),
-            C.CandidateState.size(), C.Rank.size()})
+            C.CandidateState.size(), C.Rank.size(), C.OriginalGuards.size(),
+            C.CandidateGuards.size()})
         if (!metadata(Count, Remaining))
           return false;
     return true;
