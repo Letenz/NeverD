@@ -272,8 +272,8 @@ strict JSON contract:
   "descriptor_limit":256}}
 ```
 
-`files` is required and may be empty. Every entry has exactly `path` and
-`bytes_hex`; empty bytes describe an empty file. Paths must be distinct,
+`files` is required and may be empty. Every entry requires `path` and
+`bytes_hex`, with optional `metadata`; empty bytes describe an empty file. Paths must be distinct,
 absolute and canonical, with no NUL, empty, `.` or `..` components or trailing
 slash. Paths have fewer than 4096 bytes and components at most 255 bytes.
 A file cannot be another file's parent directory. The catalogue holds at most
@@ -289,7 +289,7 @@ workload facts; naming a proc path does not model procfs or its dynamic content.
 
 Raw x64 `open`, x64/ARM64 `openat`, `read`, `close` and `lseek` share one
 process-owned descriptor table. Android `open`, `open64`, `openat`, `openat64`,
-`read`, `close`, `lseek`, `lseek64` and `syscall` use that same state, including
+`read`, `close`, `lseek`, `lseek64`, `fstat`, `fstat64` and `syscall` use that same state, including
 across guest threads. Bionic alone maps kernel errors to `-1` and thread-local
 `errno`; success preserves errno. Absolute paths ignore `dirfd`; mode is unused
 without creation. Opens admit only `O_RDONLY`, optional `O_CLOEXEC` and the
@@ -320,6 +320,50 @@ bounded memory-file semantics based on Linux's [open lifecycle](https://github.c
 [read/seek contracts](https://github.com/torvalds/linux/blob/v6.6/fs/read_write.c)
 and [AArch64 flags](https://github.com/torvalds/linux/blob/v6.6/arch/arm64/include/uapi/asm/fcntl.h),
 not general filesystem compatibility.
+
+File status requires explicit observations. The optional `metadata` object has
+exactly these fields; all are required when the object is present:
+
+| Fields | Admitted values |
+| --- | --- |
+| `device` | Linux encoded unsigned 32-bit device number |
+| `inode` | Unsigned 64-bit integer |
+| `mode` | `S_IFREG` (32768) plus permission/special bits (0–4095) |
+| `link_count`, `uid`, `gid` | Unsigned 32-bit integers |
+| `size`, `blocks` | 0–`INT64_MAX`; blocks are 512-byte units |
+| `block_size` | 0–`INT32_MAX` |
+| `access_time`, `modification_time`, `change_time` | Objects with signed 64-bit `seconds` and `nanoseconds` from 0 to 999999999 |
+
+All observation integers accept decimal strings for their full width. Numeric
+JSON values must be integral and within ±(2^53−1), as for `linux_time`. Unknown
+fields, missing members and invalid ranges fail before execution. C++ stores
+these observations in `LinuxFileOptions::Metadata`, keyed by a path already in
+`Files`; a key without file bytes is rejected. For example, this is an explicit
+virtual-file observation with nonempty bytes and a reported size of zero:
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
+
+These immutable observations do not change access policy or byte-vector read
+and seek behavior, and are never inferred from host metadata. Raw `fstat`
+(x64 5, AArch64 80), Bionic `fstat`/`fstat64` and variadic `syscall` use the same
+descriptor state without advancing its cursor. The ABI structures are 144 bytes
+on x64 and 128 bytes on AArch64, with zero `rdev` and padding for regular files.
+An invalid descriptor returns `EBADF` before accessing the output. A file
+without metadata or a standard stream with unknown identity stops explicitly.
+With known metadata, a wholly inaccessible or out-of-range output returns
+`EFAULT`. Mixed writable/inaccessible output stops without changing bytes;
+architecture-specific partial `copy_to_user` effects are not modeled. This is
+the same fixed-copy policy used by Linux clock services. See the Linux
+[status conversion](https://github.com/torvalds/linux/blob/v6.6/fs/stat.c),
+[AArch64 layout](https://github.com/torvalds/linux/blob/v6.6/include/uapi/asm-generic/stat.h)
+and [x64 layout](https://github.com/torvalds/linux/blob/v6.6/arch/x86/include/uapi/asm/stat.h).
 
 <!-- i18n-section: windows-pe64 -->
 

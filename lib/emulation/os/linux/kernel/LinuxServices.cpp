@@ -46,6 +46,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Read:
   case ServiceKind::Close:
   case ServiceKind::Lseek:
+  case ServiceKind::Fstat:
     return Files.handle(Kind, Event, Result);
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:

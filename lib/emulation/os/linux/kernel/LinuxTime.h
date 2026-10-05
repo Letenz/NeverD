@@ -11,6 +11,7 @@ namespace neverd::emulation::linux_model {
 #define NEVERD_LINUX_CLOCK(Name, ID) inline constexpr int32_t Name = ID;
 #include "../LinuxValues.def"
 #undef NEVERD_LINUX_CLOCK
+bool isNormalizedTimespec(const LinuxTimespec &Value);
 llvm::Error validateTimeOptions(const LinuxTimeOptions &Options);
 /// Missing input stops the workload without inventing a timestamp.
 std::optional<LinuxTimespec>

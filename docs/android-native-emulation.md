@@ -183,12 +183,16 @@ The supported Bionic subset is:
   bits and does not update TLS errno.
   `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
   for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
-- `open`/`open64`, `openat`/`openat64`, `read`, `close` and `lseek`/`lseek64`
+- `open`/`open64`, `openat`/`openat64`, `read`, `close`, `lseek`/`lseek64`
+  and `fstat`/`fstat64`
   use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
   Raw traps, imported calls and guest threads share descriptors and cursors;
   only Bionic converts negative errors into `-1` and TLS errno. No host files or
   implicit proc data are visible. File writes, directory/relative opens and
   unmodeled flags stop explicitly.
+  File status requires complete explicit `metadata`; it writes the 128-byte
+  AArch64 layout and preserves the open cursor. Missing observations and mixed
+  writable/inaccessible outputs stop without invented values or partial bytes.
 - `syscall(number, ...)` uses the same Linux service table and effects. The
   AArch64 wrapper takes the number from x0 and six arguments from x1–x6;
   x7 is unused. It preserves full-width results and applies Bionic's -1/errno

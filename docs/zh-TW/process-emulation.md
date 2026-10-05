@@ -101,7 +101,7 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 
 ## 明確的記憶體檔案
 
-`linux_files` 為 Linux ELF64 與 Android 提供封閉的唯讀檔案目錄。`files` 必填且可為空，每項僅有標準絕對路徑 `path` 與二進位 `bytes_hex`。不讀取主機檔案或推斷 `/proc` 內容。沒有此選項便停止檔案服務；目錄中的缺失路徑回傳 `ENOENT`。
+`linux_files` 為 Linux ELF64 與 Android 提供封閉的唯讀檔案目錄。`files` 必填且可為空，每項必填標準絕對路徑 `path` 與二進位 `bytes_hex`。不讀取主機檔案或推斷 `/proc` 內容。沒有此選項便停止檔案服務；目錄中的缺失路徑回傳 `ENOENT`。
 
 ```json
 {"linux_files":{"files":[
@@ -114,6 +114,17 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
 零長度讀取的位址可以等於使用者位址範圍的末端。先驗證原始位址範圍，再檢查檔案位置加原始長度是否超過 `INT64_MAX`；超過時即使已到 EOF 也回傳 `EINVAL`，游標保持不變。
+
+每項可附完整的 `metadata`；C++ 使用 `LinuxFileOptions::Metadata`，鍵必須是既有檔案路徑。`fstat`/`fstat64` 與 syscall 共用固定觀察值，不讀主機 metadata、不由內容長度推斷 size，也不改變游標。僅接受一般檔案及完整欄位；全寬整數使用十進位字串。x64/AArch64 寫入 144/128 位元組，rdev 與填補為零。無效描述符回傳 `EBADF`，完全不可寫輸出回傳 `EFAULT`；缺失觀察值、未知標準串流或部分可寫輸出明確停止且保留原位元組。欄位及範圍見上方完整約定。
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 
