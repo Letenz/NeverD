@@ -5,6 +5,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/c/LLVMC/LLVMCFrameLayout.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -2417,4 +2418,32 @@ int main(void) {
 )c";
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, FrameBaseOffsetsUseThePointerIndexWidth) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+target datalayout = "e-p:32:32"
+define void @frame_offset() {
+entry:
+  %frame = alloca [64 x i8], align 8
+  %frame_end = getelementptr i8, ptr %frame, i64 4294967328
+  store i8 7, ptr %frame_end
+  ret void
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  const auto &Frame = llvm::cast<llvm::AllocaInst>(
+      Module->getFunction("frame_offset")->getEntryBlock().front());
+  // GEP truncates the index before pointer arithmetic: 2^32 + 32 is 32
+  // in the guest's 32-bit address domain, and outside the frame at 64 bits.
+  EXPECT_EQ(
+      neverd::llvmc::syntheticFrameBaseOffset(Frame, Module->getDataLayout()),
+      32u);
+  EXPECT_FALSE(neverd::llvmc::syntheticFrameBaseOffset(
+      Frame, llvm::DataLayout("e-p:64:64")));
+  EXPECT_FALSE(neverd::llvmc::syntheticFrameBaseOffset(
+      Frame, llvm::DataLayout("e-p:128:128")));
 }

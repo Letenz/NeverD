@@ -43,8 +43,11 @@ syntheticFrameBaseOffset(const llvm::AllocaInst &Frame,
     for (const auto *Use : GEP->users())
       if (const auto *Address = llvm::dyn_cast<llvm::PtrToIntInst>(Use))
         IsBase |= Address->getName().starts_with("rsp_init");
-    llvm::APInt Offset(64, 0);
-    if (!IsBase || !GEP->accumulateConstantOffset(Layout, Offset))
+    const unsigned IndexBits = Layout.getIndexTypeSizeInBits(GEP->getType());
+    if (!IsBase || IndexBits > 64)
+      continue;
+    llvm::APInt Offset(IndexBits, 0);
+    if (!GEP->accumulateConstantOffset(Layout, Offset))
       continue;
     const uint64_t Value = Offset.getZExtValue();
     if (Value > Array->getNumElements() || (Found && *Found != Value))
