@@ -1,7 +1,9 @@
 #include "../../../lib/sdk/capi/ObjCMergedSetterSources.h"
+#include "../core/SourceCallExecution.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/lift/AArch64Regs.h"
 
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"
@@ -19,6 +21,8 @@ struct SetterFixture {
   static constexpr va_t Helper = 0x1100, OtherHelper = 0x1300;
   static constexpr va_t Accessor = 0x1500, Metadata = 0x2800;
   static constexpr va_t Profile = 0x2400, Selector = 0x2500, Mask = 0x2f20;
+  static constexpr va_t LayoutStub = 0x1800, LayoutSelector = 0x2510;
+  static constexpr va_t LayoutImport = 0x4180, LayoutName = 0x4100;
   BinaryImage Image;
   llvm::LLVMContext Context;
   PipelineResult Result;
@@ -54,6 +58,12 @@ struct SetterFixture {
         return F;
     throw std::runtime_error("fixture low function missing");
   }
+  Section &section(va_t Address) {
+    for (auto &S : Image.Sections)
+      if (S.contains(Address))
+        return S;
+    throw std::runtime_error("fixture section missing");
+  }
   void fileHeader() {
     using namespace llvm::MachO;
     auto &Bytes = Image.Segments[0].Data;
@@ -63,7 +73,8 @@ struct SetterFixture {
     Header->filetype = MH_EXECUTE;
     Header->ncmds = 4;
     Header->sizeofcmds = 3 * sizeof(segment_command_64) +
-                         5 * sizeof(section_64) + sizeof(symtab_command);
+                         Image.Sections.size() * sizeof(section_64) +
+                         sizeof(symtab_command);
     size_t Offset = sizeof(*Header);
     for (const auto &S : Image.Segments) {
       auto *C = reinterpret_cast<segment_command_64 *>(Bytes.data() + Offset);
@@ -114,7 +125,7 @@ struct SetterFixture {
       Str += Name.size() + 1;
     }
   }
-  SetterFixture() {
+  explicit SetterFixture(bool Rect = false) {
     Image.Format = BinaryFormat::MachO;
     Image.Arch = Arch::AArch64;
     Image.Bits = Bitness::Bits64;
@@ -203,8 +214,10 @@ struct SetterFixture {
     for (const auto [Entry, Slot, Name] :
          {std::tuple{0x1740, 0x2f00, "_objc_opt_self"},
           std::tuple{0x1760, 0x2f08, "_objc_msgSendSuper2"},
-          std::tuple{0x1780, 0x2f10, "_objc_retain_x22"},
-          std::tuple{0x17a0, 0x2f18, "_objc_release_x22"},
+          std::tuple{0x1780, 0x2f10,
+                     Rect ? "_objc_retain_x21" : "_objc_retain_x22"},
+          std::tuple{0x17a0, 0x2f18,
+                     Rect ? "_objc_release_x21" : "_objc_release_x22"},
           std::tuple{0x17c0, 0x2f28, "_objc_retain"},
           std::tuple{0x17e0, 0x2f30, "_objc_release"}}) {
       word(Entry, 0xb0000010);
@@ -277,6 +290,110 @@ struct SetterFixture {
       const auto Name = "setter_" + std::to_string(E);
       Image.Symbols.push_back({Name, E, 0, true});
       Image.Exports.push_back({Name, 0, E});
+    }
+    if (Rect) {
+      Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+      Image.Sections[0].Size = Image.Sections[0].FileSz = 0x800;
+      Image.Sections[4].Size = Image.Sections[4].FileSz = 0x180;
+      Section Stub = Image.Sections[0];
+      Stub.Name = "__objc_stubs";
+      Stub.VA = Stub.FileOff = LayoutStub;
+      Stub.Size = Stub.FileSz = 20;
+      Image.Sections.push_back(Stub);
+      Section Imports = Image.Sections[4];
+      Imports.Name = "__nl_symbol_ptr";
+      Imports.VA = LayoutImport;
+      Imports.FileOff = 0x3180;
+      Imports.Size = Imports.FileSz = 8;
+      Imports.Type = llvm::MachO::S_NON_LAZY_SYMBOL_POINTERS;
+      Image.Sections.push_back(Imports);
+      Image.ImportPtrSlots[LayoutImport] = "_objc_msgSend";
+      EXPECT_TRUE(Image.recordDyldBindSlot(LayoutImport, "_objc_msgSend", 0,
+                                           "/usr/lib/libobjc.A.dylib", false));
+      pointer(LayoutSelector, LayoutName);
+      Image.DataPtrRelocSlots.insert(LayoutSelector);
+      Image.DataPtrRelocTargetOwners[LayoutSelector] = 0x4000;
+      string(LayoutName, "setNeedsLayout");
+      Image.ObjCSourceReferences[LayoutSelector] = {
+          ObjCSourceReference::Kind::Selector,
+          LayoutSelector,
+          8,
+          "setNeedsLayout",
+          {}};
+      const uint32_t StubWords[] = {
+          0xb0000001, 0xf9400021 | (((LayoutSelector & 4095) / 8) << 10),
+          0xf0000010, 0xf9400210 | (((LayoutImport & 4095) / 8) << 10),
+          0xd61f0200};
+      for (unsigned I = 0; I < std::size(StubWords); ++I)
+        word(LayoutStub + I * 4, StubWords[I]);
+      for (unsigned Variant = 0; Variant != 2; ++Variant) {
+        const va_t R = Variant ? OtherRoot : Root,
+                   H = Variant ? OtherHelper : Helper;
+        word(R, 0xb0000002);
+        word(R + 4, 0x91000042 | (((Selector + Variant * 8) & 4095) << 10));
+        word(R + 8, 0xb0000003);
+        word(R + 12, 0x91000063 | (((Profile + Variant * 8) & 4095) << 10));
+        const uint32_t Words[] = {0xd10183ff,
+                                  0x6d012beb,
+                                  0x6d0223e9,
+                                  0xa90357f6,
+                                  0xa9044ff4,
+                                  0xa9057bfd,
+                                  0x910143fd,
+                                  0xaa0303f3,
+                                  0xaa0203f4,
+                                  0x4ea31c68,
+                                  0x4ea21c49,
+                                  0x4ea11c2a,
+                                  0x4ea01c0b,
+                                  0xaa0003f5,
+                                  branch(H + 56, Accessor),
+                                  0xa90003f5,
+                                  0xf9400294,
+                                  branch(H + 68, 0x1780),
+                                  0xaa0003f5,
+                                  0x910003e0,
+                                  0xaa1403e1,
+                                  0x4eab1d60,
+                                  0x4eaa1d41,
+                                  0x4ea91d22,
+                                  0x4ea81d03,
+                                  branch(H + 100, 0x1760),
+                                  0xf9400268,
+                                  0x91000508,
+                                  0xf9000268,
+                                  0xaa1503e0,
+                                  branch(H + 120, LayoutStub),
+                                  branch(H + 124, 0x17a0),
+                                  0xa9457bfd,
+                                  0xa9444ff4,
+                                  0xa94357f6,
+                                  0x6d4223e9,
+                                  0x6d412beb,
+                                  0x910183ff,
+                                  0xd65f03c0};
+        for (unsigned I = 0; I < std::size(Words); ++I)
+          word(H + I * 4, Words[I]);
+        auto &M = Image.ObjCMethods[Variant];
+        M.Selector = Variant ? "setBounds:" : "setFrame:";
+        M.TypeEncoding = "v48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
+        M.TypeHint = parseObjCMethodEncoding(M.Selector, M.TypeEncoding);
+        std::string Error;
+        EXPECT_TRUE(assignDarwinObjCSourceABI(*M.TypeHint, Image.Arch, Error));
+        Image.ObjCSourceReferences[Selector + Variant * 8].Name = M.Selector;
+      }
+      ObjCMethod Layout = Image.ObjCMethods.front();
+      Layout.Implementation = 0x1600;
+      Layout.Selector = "setNeedsLayout";
+      Layout.TypeEncoding = "v16@0:8";
+      Layout.TypeHint =
+          parseObjCMethodEncoding(Layout.Selector, Layout.TypeEncoding);
+      std::string Error;
+      EXPECT_TRUE(
+          assignDarwinObjCSourceABI(*Layout.TypeHint, Image.Arch, Error));
+      Image.ObjCMethods.push_back(std::move(Layout));
+      std::sort(Image.Sections.begin(), Image.Sections.end(),
+                [](const auto &A, const auto &B) { return A.VA < B.VA; });
     }
     fileHeader();
     PipelineOptions Options;
@@ -530,6 +647,423 @@ TEST(ObjCMergedSetterSources, PublicationRequiresExactParametersAndOneCall) {
     EXPECT_FALSE(objCMergedSetterSourceCallBound(Call, F.Image, Plan, Storage,
                                                  P.Function, Functions));
   }
+}
+
+TEST(ObjCMergedSetterSources,
+     CGRectPreservesFourValueCarriersAndLayoutDispatch) {
+  SetterFixture F(true);
+  const ObjCProfileStorage Storage(F.Image);
+  const auto Plan = discoverObjCMergedSetterSources(F.Image, F.Result, Storage);
+  ASSERT_EQ(Plan.Callers, (std::set<va_t>{F.Root, F.OtherRoot}));
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &H : F.Result.HighFuncs)
+    Functions.emplace(H.Entry, &H);
+  for (const auto Root : Plan.Callers) {
+    const auto C = validatedObjCMergedSetter(F.Image, Plan, Storage, Root);
+    ASSERT_TRUE(C);
+    EXPECT_EQ(C->Helper.Parameters.size(), 5U);
+    ASSERT_EQ(C->Helper.Parameters[2].Components.size(), 4U);
+    EXPECT_EQ(C->Helper.Parameters[2].Type->Size, 32U);
+    for (unsigned I = 0; I != 4; ++I) {
+      const auto &Part = C->Helper.Parameters[2].Components[I];
+      EXPECT_EQ(Part.Kind, SourceABICarrierKind::FloatingRegister);
+      EXPECT_EQ(Part.ValueBytes, 8U);
+      EXPECT_EQ(Part.RegisterOffset, a64reg::V0 + I * 16);
+    }
+    EXPECT_EQ(C->Layout.SelectorReferenceAddress, F.LayoutSelector);
+    auto P = projectObjCMergedSetter(F.high(Root), F.Image, Plan, Storage);
+    ASSERT_TRUE(P.Projected);
+    auto Bound = [&](const HighExpr &E) {
+      return objCMergedSetterSourceCallBound(E, F.Image, Plan, Storage,
+                                             P.Function, Functions);
+    };
+    const auto &Call = *P.Function.Body[0].CallExpr;
+    EXPECT_TRUE(Bound(Call));
+    EXPECT_EQ(Call.Operands[2]->Var.Size, 32U);
+    EXPECT_EQ(Call.Operands[6]->SourceCallHint->CallKind,
+              SourceCallTypeHint::Kind::RuntimeSelectorReferenceAddress);
+    const auto *Audit =
+        objc_super_getter_detail::uniqueEntry(F.Result.FunctionAudits, Root);
+    EXPECT_TRUE(sourceBodyLimitation(P.Function, *P.Function.SourceTypeHint,
+                                     Audit, Bound)
+                    .empty());
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    ASSERT_TRUE(
+        HighCEmitter().emit({P.Function, F.high(F.Accessor)}, OS, Options));
+    EXPECT_EQ(Source.find("native address has no recovered definition"),
+              std::string::npos);
+    EXPECT_NE(Source.find("neverd_objc_merged_setter_"), std::string::npos);
+  }
+  std::set<std::string> Shared;
+  const auto Source = renderObjCMergedSetterHelpers(F.Image, Plan, Storage,
+                                                    Plan.Callers, Shared);
+  EXPECT_NE(Source.find("layout_selector_slot"), std::string::npos);
+  EXPECT_NE(Source.find("objc_msgSend)(retained, layout_selector)"),
+            std::string::npos);
+  EXPECT_EQ(Source.find("swift_context"), std::string::npos);
+}
+
+TEST(ObjCMergedSetterSources, CGRectRejectsEveryChangedMachineInstruction) {
+  for (unsigned I = 0; I != 49; ++I) {
+    SCOPED_TRACE(I);
+    SetterFixture F(true);
+    const ObjCProfileStorage Storage(F.Image);
+    const auto Plan =
+        discoverObjCMergedSetterSources(F.Image, F.Result, Storage);
+    ASSERT_EQ(Plan.Callers.size(), 2U);
+    const va_t Address = I < 39   ? F.Helper + I * 4
+                         : I < 44 ? F.Root + (I - 39) * 4
+                                  : F.LayoutStub + (I - 44) * 4;
+    F.word(Address,
+           llvm::support::endian::read32le(F.Image.readVA(Address, 4)) ^ 1U);
+    EXPECT_FALSE(validatedObjCMergedSetter(F.Image, Plan, Storage, F.Root));
+  }
+}
+
+TEST(ObjCMergedSetterSources, CGRectRechecksCurrentLayoutABIAndFrameEvidence) {
+  for (unsigned I = 0; I != 30; ++I) {
+    SCOPED_TRACE(I);
+    SetterFixture F(true);
+    const ObjCProfileStorage Storage(F.Image);
+    const auto Plan =
+        discoverObjCMergedSetterSources(F.Image, F.Result, Storage);
+    ASSERT_EQ(Plan.Callers.size(), 2U);
+    switch (I) {
+    case 0:
+      F.Image.DyldBindSlots[F.LayoutImport].WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots[F.LayoutImport].Module = "/wrong/provider";
+      break;
+    case 2:
+      F.Image.ObjCSourceReferences[F.LayoutSelector].Name = "layout";
+      break;
+    case 3:
+      F.Image.ObjCSourceReferences[F.LayoutSelector].Size = 4;
+      break;
+    case 4:
+      F.pointer(F.LayoutSelector, 0x4080);
+      break;
+    case 5:
+      F.string(F.LayoutName, "setNeedsDisplay");
+      break;
+    case 6:
+      F.section(F.LayoutImport).Type = llvm::MachO::S_REGULAR;
+      break;
+    case 7:
+      F.Image.DyldBindSlots[0x2f10].WeakImport = true;
+      break;
+    case 8:
+      F.Image.DyldBindSlots[0x2f18].Module = "/wrong/provider";
+      break;
+    case 9:
+      F.Image.DyldBindSlots[0x2f08].Addend = 8;
+      break;
+    case 10:
+      F.high(F.Root).SourceTypeHint->Parameters[2].Components[2].ValueBytes = 4;
+      break;
+    case 11:
+      F.high(F.Root)
+          .SourceTypeHint->Parameters[2]
+          .Components[2]
+          .RegisterOffset += 16;
+      break;
+    case 12:
+      F.high(F.Root).Params[2].Type = NdType::makeFloat(8);
+      break;
+    case 13:
+      F.high(F.Root).SourceTypeHint->Parameters[2].Components.pop_back();
+      break;
+    case 14:
+      F.Image.ObjCClasses[0].InheritanceStatus = "unresolved";
+      break;
+    case 15:
+      F.Image.ObjCClasses[0].Address += 8;
+      break;
+    case 16:
+      F.high(F.Accessor).SourceTypeHint->ReturnLocation.RegisterOffset = 8;
+      break;
+    case 17:
+      F.low(F.Helper).Blocks[0].InstructionBoundaries[1].OpCount = 0;
+      break;
+    case 18:
+      F.low(F.Helper).Blocks[0].Ops[0].Inputs[0].Offset ^= 16;
+      break;
+    case 19:
+      F.Result.MedFuncs.push_back(F.Result.MedFuncs.front());
+      break;
+    case 20:
+      for (auto &A : F.Result.FunctionAudits)
+        if (A.Entry == F.Helper)
+          A.HasLowIR = false;
+      break;
+    case 21:
+      F.section(F.Profile).Flags = SegmentFlags::Readable;
+      break;
+    case 22:
+      F.Image.DataPtrRelocSlots.insert(F.Profile);
+      break;
+    case 23:
+      F.pointer(F.Profile, 1);
+      break;
+    case 24:
+      F.Image.DynInfo.NeededLibs.clear();
+      break;
+    case 25:
+      F.Image.ObjCMethods.back().TypeEncoding = "Q16@0:8";
+      break;
+    case 26:
+      F.Image.ObjCMethods.back().TypeHint->Parameters[1].Type =
+          NdType::makeInt(8);
+      break;
+    case 27:
+      F.section(F.LayoutImport).Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 28:
+      F.Image.DataPtrRelocTargetOwners.erase(F.LayoutSelector);
+      break;
+    case 29:
+      F.Image.DataPtrRelocSlots.erase(F.LayoutSelector);
+      break;
+    }
+    EXPECT_FALSE(validatedObjCMergedSetter(F.Image, Plan, Storage, F.Root));
+    std::set<std::string> Shared;
+    EXPECT_THROW(
+        renderObjCMergedSetterHelpers(F.Image, Plan, Storage, {F.Root}, Shared),
+        std::runtime_error);
+  }
+}
+
+TEST(ObjCMergedSetterSources,
+     CGRectPublicationRechecksLogicalParameterAndLayoutSlot) {
+  for (unsigned I = 0; I != 12; ++I) {
+    SCOPED_TRACE(I);
+    SetterFixture F(true);
+    const ObjCProfileStorage Storage(F.Image);
+    const auto Plan =
+        discoverObjCMergedSetterSources(F.Image, F.Result, Storage);
+    auto P = projectObjCMergedSetter(F.high(F.Root), F.Image, Plan, Storage);
+    ASSERT_TRUE(P.Projected);
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &H : F.Result.HighFuncs)
+      Functions.emplace(H.Entry, &H);
+    auto &Call = *P.Function.Body[0].CallExpr;
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
+    Call.SourceCallHint = Hint;
+    auto Layout =
+        std::make_shared<SourceCallTypeHint>(*Call.Operands[6]->SourceCallHint);
+    Call.Operands[6]->SourceCallHint = Layout;
+    switch (I) {
+    case 0:
+      Call.Operands[2]->Var.Size = 8;
+      break;
+    case 1:
+      Call.Operands[2]->Var.RegOff = 16;
+      break;
+    case 2:
+      Call.Operands[2]->Var.SSAVer = 1;
+      break;
+    case 3:
+      Call.Operands[2]->Var.Id = 0;
+      break;
+    case 4:
+      Hint->Signature.Parameters[2].Components[0].ValueBytes = 4;
+      break;
+    case 5:
+      Hint->Signature.Parameters[2].Components[0].RegisterOffset += 16;
+      break;
+    case 6:
+      Layout->TargetAddress += 8;
+      break;
+    case 7:
+      Layout->CallKind = SourceCallTypeHint::Kind::NativeAddress;
+      break;
+    case 8:
+      P.Function.Body[1].Addr += 4;
+      break;
+    case 9:
+      P.Function.Body.push_back(P.Function.Body.front());
+      break;
+    case 10:
+      Functions.erase(F.Accessor);
+      break;
+    case 11:
+      Call.Operands[2]->Type = NdType::makeInt(8);
+      break;
+    }
+    EXPECT_FALSE(objCMergedSetterSourceCallBound(Call, F.Image, Plan, Storage,
+                                                 P.Function, Functions));
+  }
+}
+
+TEST(ObjCMergedSetterSources, CGRectGeneratedCMatchesOriginalARM64AtO0AndO2) {
+  SetterFixture F(true);
+  const ObjCProfileStorage Storage(F.Image);
+  const auto Plan = discoverObjCMergedSetterSources(F.Image, F.Result, Storage);
+  ASSERT_EQ(Plan.Callers.size(), 2U);
+  std::vector<HighFunc> Functions;
+  for (const auto Root : {F.Root, F.OtherRoot}) {
+    auto P = projectObjCMergedSetter(F.high(Root), F.Image, Plan, Storage);
+    ASSERT_TRUE(P.Projected);
+    P.Function.Name = Root == F.Root ? "projected_frame" : "projected_bounds";
+    Functions.push_back(std::move(P.Function));
+  }
+  auto Provider = F.high(F.Accessor);
+  Provider.Name = "metadata";
+  Functions.push_back(std::move(Provider));
+  std::string Emitted;
+  llvm::raw_string_ostream OS(Emitted);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.Image = &F.Image;
+  ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+  std::set<std::string> Helpers;
+  auto Source = renderObjCMergedSetterHelpers(F.Image, Plan, Storage,
+                                              Plan.Callers, Helpers);
+  const std::string Header = "#include <objc/runtime.h>";
+  const auto Position = Source.find(Header);
+  ASSERT_NE(Position, std::string::npos);
+  Source.replace(Position, Header.size(),
+                 "void *sel_registerName(const char *name);\n");
+  const auto Record =
+      typeToC(F.Image.ObjCMethods[0].TypeHint->Parameters[2].Type);
+  std::set<std::string> StorageNames;
+  std::string Program = "#include <string.h>\n" + Emitted + Source +
+                        Storage.render({F.Profile}, StorageNames);
+  Program += R"C(
+static void *setter_selectors[2], *layout_selector;
+static uint64_t counters[4], expected_count;
+static unsigned variant, trace, bad;
+static const uint64_t bits[4] = {0x3fe0000000000000ULL, 0x8000000000000000ULL,
+                                 0x7ff0000000000000ULL, 0x7ff8000000000011ULL};
+void *sel_registerName(const char *name) {
+  return (void *)(uintptr_t)(!strcmp(name, "setNeedsLayout") ? 0x4440 : 0x2220);
+}
+void *objc_opt_self(void *current_class) {
+  bad |= trace != 0 || current_class != (void *)0x2800;
+  trace = 1;
+  setter_selectors[variant] = (void *)0x2220;
+  return (void *)0x3330;
+}
+void *objc_retain(void *self) {
+  bad |= trace != 1 || self != (void *)0x1110;
+  trace = 2;
+  return (void *)0x1118;
+}
+void objc_release(void *self) {
+  bad |= trace != 4 || self != (void *)0x1118;
+  trace = 5;
+}
+)C";
+  Program +=
+      "void test_super(void *p, void *selector, " + Record + R"C( value) {
+  void *receiver, *current_class;
+  memcpy(&receiver, p, 8);
+  memcpy(&current_class, (const unsigned char *)p + 8, 8);
+  bad |= trace != 2 || receiver != (void *)0x1110 ||
+         current_class != (void *)0x3330 || selector != (void *)0x2220 ||
+         memcmp(&value, bits, 32) || counters[variant + 1] != expected_count;
+  trace = 3;
+  layout_selector = (void *)0x4440;
+}
+void test_layout(void *self, void *selector) {
+  bad |= trace != 3 || self != (void *)0x1118 || selector != (void *)0x4440 ||
+         counters[variant + 1] != expected_count + 1;
+  trace = 4;
+}
+#if defined(__aarch64__) && defined(__APPLE__)
+__asm__(".text\n.p2align 2\n"
+        ".globl _objc_msgSendSuper2\n_objc_msgSendSuper2:\nb _test_super\n"
+        ".globl _objc_msgSend\n_objc_msgSend:\nb _test_layout\n"
+        "Lretain_x21:\nmov x0,x21\nb _objc_retain\n"
+        "Lrelease_x21:\nmov x0,x21\nb _objc_release\n"
+        "Llayout_stub:\nadrp x1,_layout_selector@PAGE\n"
+        "ldr x1,[x1,_layout_selector@PAGEOFF]\nb _test_layout\n"
+)C";
+  for (unsigned V = 0; V != 2; ++V) {
+    Program += "\".globl _original_setter" + std::to_string(V) +
+               "\\n_original_setter" + std::to_string(V) + ":\\n\"\n";
+    const auto SelectorOffset = V ? "+8" : "";
+    const auto CounterOffset = "+" + std::to_string(8 + V * 8);
+    Program += "\"adrp x2,_setter_selectors" + std::string(SelectorOffset) +
+               "@PAGE\\nadd x2,x2,_setter_selectors" + SelectorOffset +
+               "@PAGEOFF\\n\"\n";
+    Program += "\"adrp x3,_counters" + CounterOffset +
+               "@PAGE\\nadd x3,x3,_counters" + CounterOffset +
+               "@PAGEOFF\\n.long 0x14000001\\n\"\n";
+    const va_t H = V ? F.OtherHelper : F.Helper;
+    for (unsigned I = 0; I != 39; ++I) {
+      const char *Target = I == 14   ? "_metadata"
+                           : I == 17 ? "Lretain_x21"
+                           : I == 25 ? "_objc_msgSendSuper2"
+                           : I == 30 ? "Llayout_stub"
+                           : I == 31 ? "Lrelease_x21"
+                                     : nullptr;
+      Program += Target ? std::string("\"bl ") + Target + "\\n\"\n"
+                        : "\".long " +
+                              std::to_string(llvm::support::endian::read32le(
+                                  F.Image.readVA(H + I * 4, 4))) +
+                              "\\n\"\n";
+    }
+  }
+  Program += ");\nvoid original_setter0(void *, void *, " + Record +
+             ");\nvoid original_setter1(void *, void *, " + Record + R"C();
+#else
+void portable_super(void *, void *, )C" +
+             Record + R"C()
+#if defined(__APPLE__)
+__asm__("_objc_msgSendSuper2");
+#else
+__asm__("objc_msgSendSuper2");
+#endif
+void portable_super(void *p, void *s, )C" +
+             Record + R"C( v) { test_super(p,s,v); }
+void portable_layout(void *, void *)
+#if defined(__APPLE__)
+__asm__("_objc_msgSend");
+#else
+__asm__("objc_msgSend");
+#endif
+void portable_layout(void *p, void *s) { test_layout(p,s); }
+#endif
+int main(void) {
+)C";
+  Program += Record + R"C( value; memcpy(&value, bits, 32);
+  for (variant = 0; variant != 2; ++variant) for (unsigned i = 0; i != 32; ++i)
+    for (unsigned original = 0; original != 2; ++original) {
+      trace = bad = 0;
+      expected_count = i % 3 ? UINT64_C(0xabc0000000000000) + i : UINT64_MAX;
+      counters[0] = UINT64_C(0xabcd1234); counters[3] = UINT64_C(0xdcba4321);
+      counters[variant + 1] = expected_count; counters[2 - variant] = 0x5678;
+      setter_selectors[variant] = (void *)0x5550;
+      layout_selector = (void *)0x6660;
+#if defined(__aarch64__) && defined(__APPLE__)
+      if (original) {
+        if (variant) original_setter1((void *)0x1110, (void *)0x7770, value);
+        else original_setter0((void *)0x1110, (void *)0x8880, value);
+      } else
+#else
+      (void)original;
+#endif
+      if (variant) neverd_objc_merged_setter_1020((void *)0x1110, (void *)0x7770,
+          value, &setter_selectors[variant], &counters[1], (void *)metadata,
+          &layout_selector);
+      else neverd_objc_merged_setter_1000((void *)0x1110, (void *)0x8880,
+          value, &setter_selectors[variant], &counters[1], (void *)metadata,
+          &layout_selector);
+      if (bad || trace != 5 || counters[variant + 1] != expected_count + 1 ||
+          counters[2 - variant] != 0x5678 || counters[0] != 0xabcd1234 ||
+          counters[3] != 0xdcba4321 || memcmp(&value, bits, 32)) return 1;
+    }
+  return 0;
+}
+)C";
+  source_call_execution_test::compileAndRun(Program, {"-O0"});
+  source_call_execution_test::compileAndRun(Program, {"-O2"});
 }
 
 TEST(ObjCMergedSetterSources,

@@ -16137,6 +16137,65 @@ TEST(ObjCCallHints, SDImageCacheFastEnumerationQualifiesCompletion) {
                OverwrittenHints.at(0x1230).Receiver);
 }
 
+TEST(ObjCCallHints, CurrentSelectorEncodingChecksMethodsAndProtocols) {
+  for (bool Protocol : {false, true}) {
+    SCOPED_TRACE(Protocol);
+    BinaryImage Image;
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    ObjCMethod Method;
+    Method.Selector = "setNeedsLayout";
+    Method.TypeEncoding = "v16@0:8";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    ObjCProtocolMethod P;
+    P.Selector = Method.Selector;
+    P.TypeEncoding = Method.TypeEncoding;
+    P.TypeHint = Method.TypeHint;
+    if (Protocol) {
+      ObjCProtocol Owner;
+      Owner.Methods.push_back(P);
+      Image.ObjCProtocols.push_back(std::move(Owner));
+    } else {
+      Image.ObjCMethods.push_back(Method);
+    }
+    ASSERT_TRUE(objcSelectorSourceTypeHint(Image, Method.Selector));
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = Image;
+      auto Change = [&](auto &Current) {
+        if (Mutation == 0)
+          Current.TypeEncoding = "Q16@0:8";
+        if (Mutation == 1)
+          Current.Selector = "setNeedsLayout:";
+        if (Mutation == 2)
+          Current.TypeEncoding = "invalid";
+        if (Mutation == 3)
+          Current.TypeHint->Parameters[1].Type = NdType::makeInt(8);
+      };
+      if (Protocol)
+        Change(Changed.ObjCProtocols.front().Methods.front());
+      else
+        Change(Changed.ObjCMethods.front());
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Method.Selector));
+      if (Mutation == 1)
+        EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, "setNeedsLayout:"));
+    }
+    auto DeclarationOnly = [&](auto &Current) {
+      Current.TypeEncoding.clear();
+      Current.TypeHint->Parameters[0].Name = "explicit_receiver";
+    };
+    if (Protocol)
+      DeclarationOnly(Image.ObjCProtocols.front().Methods.front());
+    else
+      DeclarationOnly(Image.ObjCMethods.front());
+    const auto Hint = objcSelectorSourceTypeHint(Image, Method.Selector);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->Parameters[0].Name, "explicit_receiver");
+  }
+}
+
 TEST(ObjCCallHints, CurrentMethodEncodingMustAgreeWithCachedDeclaration) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;

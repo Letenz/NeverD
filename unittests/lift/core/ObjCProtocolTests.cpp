@@ -265,6 +265,9 @@ TEST(ObjCProtocols,
       auto Other = Image.ObjCProtocols.front();
       Other.Methods[0].TypeHint = parseObjCMethodEncoding("measure:", Encoding);
       Image.ObjCProtocols.push_back(Other);
+      // A changed cache must not override the protocol's current encoding.
+      EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+      Image.ObjCProtocols.back().Methods[0].TypeEncoding = Encoding;
       if (Reverse)
         std::reverse(Image.ObjCProtocols.begin(), Image.ObjCProtocols.end());
       const auto Hints = buildObjCSourceCallHints(Image, caller());
