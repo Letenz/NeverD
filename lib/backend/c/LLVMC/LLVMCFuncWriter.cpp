@@ -648,7 +648,10 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
             Pointer = Store->getPointerOperand();
         }
         const auto *Slot = Pointer ? asAllocaPointer(Pointer) : nullptr;
-        if (!Slot || allocaAddressTaken(Slot) || instructionIsPrinted(*Cur))
+        if (!Slot || allocaAddressTaken(Slot))
+          return false;
+        if (instructionIsPrinted(*Cur) &&
+            !(llvm::isa<llvm::StoreInst>(Cur) && !allocaHasLoad(Slot)))
           return false;
       }
       Cur = Cur->getNextNode();
@@ -2168,6 +2171,11 @@ void LLVMCWriter::collectOmittedInlinedImmediates(llvm::Function &Fn) {
         }
         if (!AllImm || !HasStore || !Common)
           continue;
+        if (llvm::any_of(AI->users(), [&](const llvm::User *U) {
+              const auto *Load = llvm::dyn_cast<llvm::LoadInst>(U);
+              return Load && !allocaLoadHasReachingStore(Load);
+            }))
+          continue;
         OmittedAllocaImmediates[AI] = *Common;
         AllocaImmediates[AI] = *Common;
         OmittedInlined.insert(AI);
@@ -2248,7 +2256,10 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   UnknownPlaceholderCache.clear();
   LocalLoadValuesFor = nullptr;
   LocalLoadValues.clear();
+  LocalReachingValues.clear();
   ExactLocalLoadSlots.clear();
+  InitializedAllocaLoads.clear();
+  CrossBlockLoadValues.clear();
   KilledEntryZeroCache.clear();
   AllocaAddressTakenCache.clear();
   UniqueImmediateUsers.clear();
@@ -2295,6 +2306,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   EHFallthroughLabelCandidates.clear();
   OmitCleanupRetTo.clear();
   PhiTailSlot = nullptr;
+  PhiTailIncoming = nullptr;
 
   if (auto VAOr = rewrite_source::getOriginalVA(Fn)) {
     if (*VAOr && **VAOr)
@@ -3916,10 +3928,6 @@ LLVMCWriter::uniqueAllocaImmediate(const llvm::AllocaInst *Slot) const {
         while (Val && Seen.insert(Val).second) {
           if (const auto *Fr = llvm::dyn_cast<llvm::FreezeInst>(Val)) {
             Val = Fr->getOperand(0);
-            continue;
-          }
-          if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Val)) {
-            Val = Cast->getOperand(0);
             continue;
           }
           break;
@@ -7735,8 +7743,12 @@ LLVMCWriter::phiFedCallTail(const llvm::BasicBlock *Tail) {
     bool Stored = false;
     for (const llvm::Instruction &Inst : *Pred) {
       const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
-      if (SI && asAllocaPointer(SI->getPointerOperand()) == Slot)
+      if (SI && asAllocaPointer(SI->getPointerOperand()) == Slot) {
+        if (!SI->isSimple() || SI->getPointerOperand() != Slot ||
+            SI->getValueOperand()->getType() != Slot->getAllocatedType())
+          return nullptr;
         Stored = true;
+      }
     }
     if (!Stored)
       return nullptr;
@@ -7934,10 +7946,25 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
         }
       }
     }
-    if (Call && Slot) {
+    // Specialization owns this predecessor's final store, not the printer's
+    // most recently visited block. Keep that edge value explicit while the
+    // shared call is emitted here.
+    const llvm::Value *Incoming = nullptr;
+    if (Slot)
+      for (const auto &Instruction : llvm::reverse(*CurFrom))
+        if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Instruction);
+            Store && Store->getPointerOperand() == Slot) {
+          if (Store->isSimple() &&
+              Store->getValueOperand()->getType() == Slot->getAllocatedType())
+            Incoming = Store->getValueOperand();
+          break;
+        }
+    if (Call && Slot && Incoming) {
       PhiTailSlot = Slot;
+      PhiTailIncoming = Incoming;
       writeInstruction(const_cast<llvm::CallInst &>(*Call), Indent);
       PhiTailSlot = nullptr;
+      PhiTailIncoming = nullptr;
       FoldedLocalNames.push_back(getName(Slot));
       InlinedFallthroughBlocks.insert(Tail);
       ReferencedBlocks.erase(Tail);

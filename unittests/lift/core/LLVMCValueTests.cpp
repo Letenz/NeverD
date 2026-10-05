@@ -2194,3 +2194,227 @@ TEST(LLVMCScalarExpressions, SharedSelectionKeepsItsMaterializedValue) {
   ASSERT_NE(Select, std::string::npos) << Source;
   EXPECT_EQ(Source.find(" ? ", Select + 1), std::string::npos) << Source;
 }
+
+TEST(LLVMCValues, CrossBlockHomesKeepConditionalAndWidthChangingStores) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+declare void @change_home(ptr)
+define i64 @conditional_home(i32 %flag) {
+entry:
+  %home = alloca i64
+  store i64 0, ptr %home
+  %take = icmp ne i32 %flag, 0
+  br i1 %take, label %set, label %exit
+set:
+  store i64 7, ptr %home
+  br label %exit
+exit:
+  %value = load i64, ptr %home
+  ret i64 %value
+}
+define i64 @narrowed_home(i32 %flag) {
+entry:
+  %home = alloca i64
+  store i64 65535, ptr %home
+  %take = icmp ne i32 %flag, 0
+  br i1 %take, label %narrow, label %exit
+narrow:
+  %old = load i64, ptr %home
+  %byte = trunc i64 %old to i8
+  %wide = zext i8 %byte to i64
+  store i64 %wide, ptr %home
+  br label %exit
+exit:
+  %value = load i64, ptr %home
+  ret i64 %value
+}
+define i64 @escaped_home() {
+entry:
+  %home = alloca i64
+  store i64 7, ptr %home
+  call void @change_home(ptr %home)
+  br label %exit
+exit:
+  %value = load i64, ptr %home
+  ret i64 %value
+}
+define i64 @snapshot_home(ptr %address) {
+entry:
+  %home = alloca i64
+  %old = load i64, ptr %address
+  store i64 %old, ptr %home
+  call void @change_home(ptr %address)
+  br label %exit
+exit:
+  %value = load i64, ptr %home
+  ret i64 %value
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  Source += R"c(
+void change_home(void *address) { *(uint64_t *)address = 9; }
+int main(void) {
+    uint64_t value = 7;
+    return conditional_home(0) != 0 || conditional_home(1) != 7 ||
+           narrowed_home(0) != 65535 || narrowed_home(1) != 255 ||
+           escaped_home() != 9 || snapshot_home(&value) != 7 || value != 9;
+}
+)c";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, PointerFactsKeepObservationWidthAndInterveningWrites) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+declare void @clear_field(ptr)
+define i32 @call_before_branch(ptr %field) {
+entry:
+  %old = load i64, ptr %field
+  %nonzero = icmp ne i64 %old, 0
+  call void @clear_field(ptr %field)
+  br i1 %nonzero, label %retest, label %empty
+retest:
+  %now = load i64, ptr %field
+  %still = icmp ne i64 %now, 0
+  br i1 %still, label %present, label %changed
+present: ret i32 1
+changed: ret i32 2
+empty: ret i32 3
+}
+define i32 @alias_before_retest(ptr %field, ptr %alias) {
+entry:
+  %old = load i64, ptr %field
+  %nonzero = icmp ne i64 %old, 0
+  br i1 %nonzero, label %write, label %empty
+write:
+  store i64 0, ptr %alias
+  br label %retest
+retest:
+  %now = load i64, ptr %field
+  %still = icmp ne i64 %now, 0
+  br i1 %still, label %present, label %changed
+present: ret i32 1
+changed: ret i32 2
+empty: ret i32 3
+}
+define i32 @narrow_home_retest(i64 %input) {
+entry:
+  %home = alloca i64
+  store i64 %input, ptr %home
+  %old = load i64, ptr %home
+  %nonzero = icmp ne i64 %old, 0
+  br i1 %nonzero, label %retest, label %empty
+retest:
+  %now = load i64, ptr %home
+  %byte = trunc i64 %now to i8
+  %still = icmp ne i8 %byte, 0
+  br i1 %still, label %present, label %changed
+present: ret i32 1
+changed: ret i32 2
+empty: ret i32 3
+}
+define i32 @narrow_field_retest(ptr %field) {
+entry:
+  %old = load i64, ptr %field
+  %nonzero = icmp ne i64 %old, 0
+  br i1 %nonzero, label %retest, label %empty
+retest:
+  %now = load i8, ptr %field
+  %still = icmp ne i8 %now, 0
+  br i1 %still, label %present, label %changed
+present: ret i32 1
+changed: ret i32 2
+empty: ret i32 3
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  Source += R"c(
+void clear_field(void *address) { *(uint64_t *)address = 0; }
+int main(void) {
+    const uint64_t inputs[] = {0, 1, 256, 257, UINT64_C(0x8000000000000000)};
+    for (unsigned i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i) {
+        uint64_t value = inputs[i];
+        unsigned changed = value ? 2 : 3;
+        if (call_before_branch(&value) != changed || value != 0) return 1;
+        value = inputs[i];
+        if (alias_before_retest(&value, &value) != changed || value != 0) return 2;
+        value = inputs[i];
+        unsigned narrowed = !value ? 3 : (uint8_t)value ? 1 : 2;
+        if (narrow_home_retest(value) != narrowed) return 3;
+        if (narrow_field_retest(&value) != narrowed) return 4;
+    }
+    return 0;
+}
+)c";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, BulkFrameMemoryKeepsContiguousBackingStorage) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+declare void @llvm.memset.p0.i64(ptr, i8, i64, i1 immarg)
+declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1 immarg)
+declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1 immarg)
+define i64 @bulk_frame(ptr %input, ptr %output, i64 %length) {
+entry:
+  %frame = alloca [64 x i8], align 8
+  %frame_end = getelementptr i8, ptr %frame, i64 64
+  %begin = getelementptr i8, ptr %frame, i64 32
+  %next = getelementptr i8, ptr %begin, i64 4
+  call void @llvm.memset.p0.i64(ptr %begin, i8 90, i64 16, i1 false)
+  store i32 7, ptr %begin, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr %begin, ptr %input, i64 %length, i1 false)
+  call void @llvm.memmove.p0.p0.i64(ptr %next, ptr %begin, i64 12, i1 false)
+  call void @llvm.memcpy.p0.p0.i64(ptr %output, ptr %begin, i64 16, i1 false)
+  %result = load i64, ptr %begin, align 8
+  ret i64 %result
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  Source += R"c(
+int main(void) {
+    unsigned char input[16], output[16], expected[16];
+    for (unsigned i = 0; i != 16; ++i) input[i] = i * 13;
+    for (unsigned length = 0; length <= 16; ++length) {
+        uint32_t seed = 7;
+        uint64_t result;
+        memset(expected, 90, sizeof(expected));
+        memcpy(expected, &seed, sizeof(seed));
+        memcpy(expected, input, length);
+        memmove(expected + 4, expected, 12);
+        memcpy(&result, expected, sizeof(result));
+        if (bulk_frame(input, output, length) != result ||
+            memcmp(output, expected, sizeof(output))) return 1;
+    }
+    return 0;
+}
+)c";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}

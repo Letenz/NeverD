@@ -1068,7 +1068,8 @@ TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::FunctionType *FmtTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {I64, I64, I64, I64}, false);
+      llvm::Type::getVoidTy(Context),
+      {I64, llvm::PointerType::getUnqual(I8), I64, I64}, false);
   llvm::Function *Format = llvm::Function::Create(
       FmtTy, llvm::GlobalValue::ExternalLinkage, "Format", Module);
   llvm::FunctionType *FnTy =
@@ -7753,7 +7754,7 @@ TEST(LLVMCPointerAddresses, NamesWritableNdDataGlobal) {
   EXPECT_EQ(Source.find("dword_"), std::string::npos) << Source;
 }
 
-TEST(LLVMCPointerAddresses, DeclaresAssignedTempsAndUnusedCallResults) {
+TEST(LLVMCPointerAddresses, DeclaresLiveTempsAndPreservesUnusedCallResults) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-locals", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
@@ -7786,11 +7787,9 @@ TEST(LLVMCPointerAddresses, DeclaresAssignedTempsAndUnusedCallResults) {
   OS.flush();
   EXPECT_NE(Source.find("uint32_t t22"), std::string::npos) << Source;
   EXPECT_NE(Source.find("uint64_t v36"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("uint32_t dead_flag"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("dead_flag"), std::string::npos) << Source;
   EXPECT_NE(Source.find("RaiseException"), std::string::npos) << Source;
-  const size_t DeadAssign = Source.find("dead_flag");
-  ASSERT_NE(DeadAssign, std::string::npos) << Source;
-  EXPECT_NE(Source.find(" = ", DeadAssign), std::string::npos) << Source;
+  EXPECT_NE(Source.find("= RaiseException("), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, CallClobberPrintsAsUnknownWithoutName) {
@@ -7961,12 +7960,13 @@ TEST(LLVMCPointerAddresses, JoinPhiMemberLoadKeepsElseZeroAtCall) {
   llvm::PHINode *NKey = Builder.CreatePHI(I64, 2, "R9.2310");
   NKey->addIncoming(Then64, Then);
   NKey->addIncoming(Else64, Else);
-  llvm::Value *Reload = LoadId();
   llvm::Value *Table =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr));
   llvm::Value *Name = Table;
-  Builder.CreateCall(Find,
-                     {Table, Name, llvm::ConstantInt::get(I32, 1), Reload});
+  // The call must consume the merged value. A fresh load here would have
+  // different semantics and must not be replaced merely because of R9's name.
+  Builder.CreateCall(Find, {Table, Name, llvm::ConstantInt::get(I32, 1),
+                            Builder.CreateTrunc(NKey, I32)});
   Builder.CreateRetVoid();
 
   std::string Source;
@@ -8029,6 +8029,9 @@ TEST(LLVMCPointerAddresses, JoinAllocaHomeKeepsElseZeroAtCall) {
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, I32, I32}, false);
   llvm::Function *Find = llvm::Function::Create(
       FindTy, llvm::GlobalValue::ExternalLinkage, "Catalog_Lookup", Module);
+  auto *Observe = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false),
+      llvm::GlobalValue::ExternalLinkage, "observe_key", Module);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function =
@@ -8076,12 +8079,12 @@ TEST(LLVMCPointerAddresses, JoinAllocaHomeKeepsElseZeroAtCall) {
   Builder.CreateBr(Join);
 
   Builder.SetInsertPoint(Join);
-  (void)Builder.CreateLoad(I64, R9, "r9_join");
-  llvm::Value *Reload = LoadId();
+  llvm::Value *JoinLoad = Builder.CreateLoad(I64, R9, "r9_join");
+  Builder.CreateCall(Observe, {JoinLoad});
   llvm::Value *Table =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr));
-  Builder.CreateCall(Find,
-                     {Table, Table, llvm::ConstantInt::get(I32, 1), Reload});
+  Builder.CreateCall(Find, {Table, Table, llvm::ConstantInt::get(I32, 1),
+                            Builder.CreateTrunc(JoinLoad, I32)});
   Builder.CreateRetVoid();
 
   std::string Source;
@@ -11272,9 +11275,8 @@ TEST(LLVMCPointerAddresses, ZeroPastEightByteCallArgumentIsOmitted) {
 }
 
 TEST(LLVMCPointerAddresses, DropsDeclarationWithNoPrintedUse) {
-  // The edge load sees an immediate in the slot, so it is not forwarded and
-  // is declared. A later store of the argument keeps the slot from folding
-  // away. The edge itself is not printed, and the unread multiply stays.
+  // The edge captures zero before the later store. Normalization removes
+  // the unread multiply, and the edge load needs no orphan declaration.
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-orphan-decl", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
@@ -11312,8 +11314,13 @@ TEST(LLVMCPointerAddresses, DropsDeclarationWithNoPrintedUse) {
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
   EXPECT_EQ(Source.find("RAX_5_v"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("dead_flag"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("* 3"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("dead_flag"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("* 3"), std::string::npos) << Source;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + Source + R"c(
+int main(void) {
+    return orphan_decl(0) != 0 || orphan_decl(UINT64_MAX) != 0;
+}
+)c");
 }
 
 TEST(LLVMCPointerAddresses, OmitsNestedPointerTestImpliedByOuter) {
@@ -11512,10 +11519,9 @@ TEST(LLVMCPointerAddresses, OmitsPointerRetestAfterConjunct) {
   EXPECT_EQ(IfCount, 2u) << Source;
 }
 
-TEST(LLVMCPointerAddresses, OmitsReloadedFieldPointerTest) {
-  // An else-if arm tests *(self+8), calls IsKind, then tests that field
-  // again through another address temp. The second test's other edge is
-  // empty. Both IsKind calls stay. The reloaded test does not.
+TEST(LLVMCPointerAddresses, KeepsReloadedFieldPointerTestAfterUnknownCall) {
+  // IsKind can change the field through an alias. Retain the reload and its
+  // null check before making the second call.
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-reloaded-field", Context);
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
@@ -11629,8 +11635,20 @@ TEST(LLVMCPointerAddresses, OmitsReloadedFieldPointerTest) {
   for (size_t Pos = 0; (Pos = Fn.find("if (", Pos)) != std::string::npos;
        Pos += 4)
     ++IfCount;
-  // Field test, first IsKind, second IsKind. The reload is not another if.
-  EXPECT_EQ(IfCount, 3u) << Source;
+  EXPECT_EQ(IfCount, 4u) << Source;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + Source + R"c(
+static uint64_t fields[2];
+static unsigned calls, used, tails;
+uint32_t IsKind(void *value) { ++calls; fields[1] = 0; return value != 0; }
+void use_field(void) { ++used; }
+void other_step(void) { used += 10; }
+void tail_step(void) { ++tails; }
+int main(void) {
+    fields[1] = (uintptr_t)&fields[0];
+    reloaded_field((uintptr_t)fields, 0);
+    return calls != 1 || used != 0 || tails != 1;
+}
+)c");
 }
 
 TEST(LLVMCPointerAddresses, KeepsFieldPointerTestAfterFieldStore) {
@@ -11715,10 +11733,10 @@ TEST(LLVMCPointerAddresses, KeepsFieldPointerTestAfterFieldStore) {
   EXPECT_EQ(IfCount, 2u) << Source;
 }
 
-TEST(LLVMCPointerAddresses, OmitsDeadNullAssignAfterImpliedField) {
-  // A dominating field test already proved the pointer is live. The later
-  // arm reloads it and stores 0 on the null edge. That assign is not printed,
-  // and nothing after the field load stores 0 again.
+TEST(LLVMCPointerAddresses, KeepsConditionalFieldReadAfterUnknownCall) {
+  // The external call can clear the pointer. Keep the null arm and execute
+  // the field load only on the nonnull path, even when it needs a memcpy
+  // statement instead of an inline dereference.
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-dead-null-field", Context);
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
@@ -11765,6 +11783,7 @@ TEST(LLVMCPointerAddresses, OmitsDeadNullAssignAfterImpliedField) {
   auto *Flag2 = Builder.CreateAlloca(I8, nullptr, "ZF2");
   Builder.CreateStore(Function->getArg(0), Self);
   Builder.CreateStore(llvm::ConstantInt::get(I32, 0), ZeroHome);
+  Builder.CreateStore(llvm::ConstantInt::get(I32, 0), Id);
   auto Stage = [&](llvm::AllocaInst *Addr, llvm::AllocaInst *Slot) {
     llvm::Value *Sum = Builder.CreateAdd(Builder.CreateLoad(I64, Self),
                                          llvm::ConstantInt::get(I64, 8));
@@ -11831,8 +11850,33 @@ TEST(LLVMCPointerAddresses, OmitsDeadNullAssignAfterImpliedField) {
   ASSERT_NE(UseAt, std::string::npos) << Source;
   ASSERT_NE(FieldAt, std::string::npos) << Source;
   EXPECT_LT(FieldAt, UseAt) << Source;
-  EXPECT_EQ(Fn.find("= 0;"), std::string::npos) << Source;
+  EXPECT_NE(Fn.find("= 0;"), std::string::npos) << Source;
   EXPECT_NE(Fn.find("if (!(v0))"), std::string::npos) << Source;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + Source + R"c(
+static uint64_t fields[2];
+static struct { uint64_t padding[2]; uint32_t id; } node;
+static unsigned clear_on_call, calls, used, others, tails;
+uint32_t IsKind(void *value) {
+    ++calls;
+    if (clear_on_call) fields[1] = 0;
+    return value != 0;
+}
+void use_id(uint32_t value) { used = value; }
+void other_step(void) { ++others; }
+void tail_step(void) { ++tails; }
+int main(void) {
+    node.id = 88;
+    for (unsigned mode = 0; mode != 3; ++mode) {
+        fields[1] = mode == 2 ? 0 : (uintptr_t)&node;
+        clear_on_call = mode == 1;
+        calls = used = others = tails = 0;
+        dead_null_field((uintptr_t)fields, 0);
+        if (calls != (mode != 2) || used != (mode == 0 ? 88 : 0) ||
+            others != (mode == 2) || tails != 1) return 1;
+    }
+    return 0;
+}
+)c");
 }
 
 TEST(LLVMCPointerAddresses, ForwardsDeadNullFieldIntoCall) {
@@ -12690,7 +12734,9 @@ TEST(LLVMCPointerAddresses, KeepsObservedCopyBridgeBeforeSharedReturn) {
   const auto BodyAt = Source.find("live_copy_return(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   EXPECT_NE(Source.find("observe_copy(", BodyAt), std::string::npos) << Source;
-  EXPECT_NE(Source.find("copy_slot0 =", BodyAt), std::string::npos) << Source;
+  EXPECT_TRUE(std::regex_search(Source.substr(BodyAt),
+                                std::regex(R"(copy_slot[0-9]+ = )")))
+      << Source;
   EXPECT_NE(Source.find("observe_copy(&copy_slot", BodyAt), std::string::npos)
       << Source;
 }
@@ -12820,7 +12866,7 @@ TEST(LLVMCPointerAddresses, KeepsGotoWhenReturnTailHasTwoCalls) {
   EXPECT_LT(LabelAt, AAt) << Source;
 }
 
-TEST(LLVMCPointerAddresses, FoldsNullFieldDiamondIntoUse) {
+TEST(LLVMCPointerAddresses, KeepsNullFieldDiamondWhenReadNeedsStatement) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-null-field-diamond", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
@@ -12870,10 +12916,26 @@ TEST(LLVMCPointerAddresses, FoldsNullFieldDiamondIntoUse) {
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto UseAt = Source.find("use_id(", BodyAt);
   ASSERT_NE(UseAt, std::string::npos) << Source;
-  EXPECT_NE(Source.find("?", UseAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("} else {", BodyAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("= 0;", BodyAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_memcpy", BodyAt), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("} else {", BodyAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("= 0;", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("use_id(", UseAt + 1), std::string::npos) << Source;
+  compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
+                            Source + R"c(
+static uint64_t captured;
+void use_id(uint64_t value) { captured = value; }
+int main(void) {
+    unsigned char storage[24];
+    uint64_t value = UINT64_C(0x8765432101234567);
+    captured = 99;
+    load_id(0);
+    if (captured != 0) return 1;
+    memcpy(storage + 9, &value, sizeof(value));
+    load_id(storage + 1);
+    return captured != value;
+}
+)c");
 }
 
 TEST(LLVMCPointerAddresses, FoldsAssignDiamondIntoIfElse) {
@@ -17314,9 +17376,9 @@ TEST(LLVMCPointerAddresses, KeepsSharedAssignGotoWhenDefaultHasAnotherEntry) {
   llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
   llvm::BasicBlock *Side = llvm::BasicBlock::Create(Context, "side", Function);
   llvm::IRBuilder<> HeadBuilder(Head);
+  auto *Slot = HeadBuilder.CreateAlloca(I64, nullptr, "picked");
   HeadBuilder.CreateCondBr(Function->getArg(2), Side, Entry);
   llvm::IRBuilder<> EntryBuilder(Entry);
-  auto *Slot = EntryBuilder.CreateAlloca(I64, nullptr, "picked");
   EntryBuilder.CreateCondBr(Function->getArg(0), Def, Body);
   llvm::IRBuilder<> BodyBuilder(Body);
   BodyBuilder.CreateCall(Prep);
@@ -18952,6 +19014,9 @@ TEST(LLVMCPointerAddresses, SameTargetSkipGotosKeepsAssignedCall) {
   llvm::FunctionType *KindTy = llvm::FunctionType::get(I64, {I64}, false);
   llvm::Function *Kind = llvm::Function::Create(
       KindTy, llvm::GlobalValue::ExternalLinkage, "IsKind", Module);
+  auto *Observe = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false),
+      llvm::GlobalValue::ExternalLinkage, "observe_kind", Module);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Function = llvm::Function::Create(
@@ -18971,11 +19036,11 @@ TEST(LLVMCPointerAddresses, SameTargetSkipGotosKeepsAssignedCall) {
       Skip, KindBB);
   llvm::IRBuilder<> KindBuilder(KindBB);
   llvm::Value *Call = KindBuilder.CreateCall(Kind, {Function->getArg(0)});
-  KindBuilder.CreateAdd(Call, llvm::ConstantInt::get(I64, 0));
   KindBuilder.CreateCondBr(
       KindBuilder.CreateICmpEQ(Call, llvm::ConstantInt::get(I64, 0)), Skip,
       Work);
   llvm::IRBuilder<> WorkBuilder(Work);
+  WorkBuilder.CreateCall(Observe, {Call});
   WorkBuilder.CreateCall(Taken);
   WorkBuilder.CreateBr(Tail);
   llvm::IRBuilder<> TailBuilder(Tail);
@@ -19378,9 +19443,7 @@ TEST(LLVMCPointerAddresses, InvertedUnsignedBelowOrEqualKeepsUnsignedCompare) {
   OS.flush();
   const auto BodyAt = Source.find("len_unsigned(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
-  EXPECT_NE(Source.find("if ((unsigned)len > (unsigned)0)", BodyAt),
-            std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("if (len > 0)", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("<=", BodyAt), std::string::npos) << Source;
   EXPECT_NE(Source.find("arm_step(", BodyAt), std::string::npos) << Source;
 }
@@ -34688,6 +34751,11 @@ TEST(LLVMCPointerAddresses, NestedAllocaDiamondsFoldAndCyclesTerminate) {
   EXPECT_NE(First.find("return 7;"), std::string::npos) << First;
   EXPECT_NE(First.find("copy_cycle("), std::string::npos) << First;
   EXPECT_EQ(First.find("0 /* unknown */"), std::string::npos) << First;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + First + R"c(
+int main(void) {
+    return shared_diamond(0) != 7 || shared_diamond(1) != 7 || copy_cycle() != 1;
+}
+)c");
 }
 
 TEST(LLVMCPointerAddresses, NamedRecordFieldLoadPrintsArrow) {
@@ -34910,6 +34978,15 @@ TEST(LLVMCPointerAddresses, UnsignedAbovePrintsGreater) {
   EXPECT_NE(Source.find("if (maxCount > cnt)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unsigned"), std::string::npos) << Source;
   EXPECT_EQ(Source.find(" - "), std::string::npos) << Source;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + Source + R"c(
+int main(void) {
+    const uint32_t values[] = {0, 1, 7, 0x7fffffff, 0x80000000, 0xffffffff};
+    for (unsigned i = 0; i != 6; ++i)
+        for (unsigned j = 0; j != 6; ++j)
+            if (above(values[i], values[j]) != (values[i] > values[j])) return 1;
+    return 0;
+}
+)c");
 }
 
 TEST(LLVMCPointerAddresses, NestedMapFieldLoadPrintsBinsPath) {
@@ -35375,7 +35452,7 @@ TEST(LLVMCPointerAddresses, SyntheticFrameRbxSpillIsHidden) {
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, {Ptr}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(Ptr, {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "spill_only", Module);
   llvm::IRBuilder<> Builder(
@@ -36473,8 +36550,10 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
   EXPECT_NE(Source.find("uint8_t frame0[168]"), std::string::npos) << Source;
   EXPECT_NE(Source.find("((char*)&frame0 + 48)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("((char*)&frame0 + 32)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("*(uint32_t*)((char*)&frame0 + 32) = 11;"),
-            std::string::npos)
+  EXPECT_TRUE(std::regex_search(
+      Source,
+      std::regex(
+          R"(uint32_t (\w+) = 11;\s*__builtin_memcpy\(\(void\*\)\(\(\(char\*\)&frame0 \+ 32\)\), &\1, 4\))")))
       << Source;
   EXPECT_NE(Source.find("sink_wide(used3)"), std::string::npos) << Source;
 }
@@ -37547,7 +37626,8 @@ TEST(LLVMCPointerAddresses, TypedMapCursorPrintsHashNextValue) {
   EXPECT_EQ(Source.find("m_ppBins[rdx"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("] == 0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("] + 16"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("->m_nHash == eRecord"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("->m_nHash == (unsigned)eRecord"), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("]->m_nHash"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint32_t*)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("urem ="), std::string::npos) << Source;
@@ -38091,7 +38171,7 @@ TEST(LLVMCPointerAddresses, DivOverflowOrPreservesUnsignedShiftPrecedence) {
   EXPECT_NE(Source.find("if (nBins == 0 || ", BodyAt), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("(uint32_t)(((uint64_t)((uint32_t)(eRecord)) >> 32)) "
-                        ">= (unsigned)nBins)",
+                        ">= nBins)",
                         BodyAt),
             std::string::npos)
       << Source;

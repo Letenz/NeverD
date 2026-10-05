@@ -560,8 +560,13 @@ TEST(COFFExceptionIR,
   llvm::Function *Funclet = llvm::Function::Create(
       VoidType, llvm::GlobalValue::ExternalLinkage, "llvmc_funclet", Module);
   Funclet->setPersonalityFn(Personality);
-  llvm::IRBuilder<> FuncletBuilder(
-      llvm::BasicBlock::Create(Context, "entry", Funclet));
+  auto *FuncletEntry = llvm::BasicBlock::Create(Context, "entry", Funclet);
+  auto *FuncletDone = llvm::BasicBlock::Create(Context, "done", Funclet);
+  auto *FuncletCleanup = llvm::BasicBlock::Create(Context, "cleanup", Funclet);
+  llvm::IRBuilder<> FuncletEntryBuilder(FuncletEntry);
+  FuncletEntryBuilder.CreateInvoke(Attached, FuncletDone, FuncletCleanup);
+  llvm::IRBuilder<>(FuncletDone).CreateRetVoid();
+  llvm::IRBuilder<> FuncletBuilder(FuncletCleanup);
   llvm::CleanupPadInst *Pad = FuncletBuilder.CreateCleanupPad(
       llvm::ConstantTokenNone::get(Context), {});
   FuncletBuilder.CreateCleanupRet(Pad, nullptr);
@@ -1140,7 +1145,7 @@ TEST(COFFExceptionIR, LLVMCNestsFinallyInsideExceptWrap) {
   llvm::IRBuilder<> EntryBuilder(Entry);
   llvm::Function *Helper = llvm::Function::Create(
       VoidType, llvm::GlobalValue::ExternalLinkage, "may_raise", Module);
-  EntryBuilder.CreateInvoke(Helper, Cont, Dispatch);
+  EntryBuilder.CreateInvoke(Helper, Cont, Finally);
   llvm::IRBuilder<> DispatchBuilder(Dispatch);
   llvm::CatchSwitchInst *Switch = DispatchBuilder.CreateCatchSwitch(
       llvm::ConstantTokenNone::get(Context), nullptr, 1);
@@ -1153,7 +1158,7 @@ TEST(COFFExceptionIR, LLVMCNestsFinallyInsideExceptWrap) {
   llvm::IRBuilder<> FinallyBuilder(Finally);
   llvm::CleanupPadInst *Cleanup =
       FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
-  FinallyBuilder.CreateCleanupRet(Cleanup, Cont);
+  FinallyBuilder.CreateCleanupRet(Cleanup, Dispatch);
   llvm::IRBuilder<> ContBuilder(Cont);
   ContBuilder.CreateRetVoid();
 
@@ -2138,7 +2143,7 @@ TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
   llvm::CleanupPadInst *Cleanup =
       FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
   FinallyBuilder.CreateCall(CleanupFn);
-  FinallyBuilder.CreateCleanupRet(Cleanup, Cont);
+  FinallyBuilder.CreateCleanupRet(Cleanup, nullptr);
   llvm::IRBuilder<> ContBuilder(Cont);
   ContBuilder.CreateRetVoid();
 
@@ -2154,7 +2159,7 @@ TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
       << Source;
 }
 
-TEST(COFFExceptionIR, LLVMCFinallyContinuationFollowsCleanup) {
+TEST(COFFExceptionIR, LLVMCRejectsCleanupReturnIntoOrdinaryContinuation) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-seh-finally-cont", Context);
   Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
@@ -2191,47 +2196,16 @@ TEST(COFFExceptionIR, LLVMCFinallyContinuationFollowsCleanup) {
   ContBuilder.CreateCall(After);
   ContBuilder.CreateRetVoid();
 
-  std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_finally_cont(");
-  ASSERT_NE(BodyAt, std::string::npos) << Source;
-  const auto TryAt = Source.find("__try {", BodyAt);
-  const auto RaiseAt = Source.find("may_raise();", BodyAt);
-  const auto FinallyAt = Source.find("} __finally {", BodyAt);
-  const auto RunAt = Source.find("run_finally();", BodyAt);
-  const auto AfterAt = Source.find("after_step();", BodyAt);
-  ASSERT_NE(TryAt, std::string::npos) << Source;
-  ASSERT_NE(RaiseAt, std::string::npos) << Source;
-  ASSERT_NE(FinallyAt, std::string::npos) << Source;
-  ASSERT_NE(RunAt, std::string::npos) << Source;
-  ASSERT_NE(AfterAt, std::string::npos) << Source;
-  const auto FinallyOpen = Source.find('{', FinallyAt);
-  ASSERT_NE(FinallyOpen, std::string::npos) << Source;
-  size_t FinallyClose = std::string::npos;
-  int Depth = 1;
-  for (size_t I = FinallyOpen + 1; I < Source.size(); ++I) {
-    if (Source[I] == '{')
-      ++Depth;
-    else if (Source[I] == '}') {
-      --Depth;
-      if (Depth == 0) {
-        FinallyClose = I;
-        break;
-      }
-    }
-  }
-  ASSERT_NE(FinallyClose, std::string::npos) << Source;
-  EXPECT_LT(TryAt, RaiseAt) << Source;
-  EXPECT_LT(RaiseAt, FinallyAt) << Source;
-  EXPECT_LT(FinallyAt, RunAt) << Source;
-  EXPECT_LT(RunAt, FinallyClose) << Source;
-  EXPECT_LT(FinallyClose, AfterAt) << Source;
-  EXPECT_EQ(Source.find("goto ", BodyAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("run_finally();", RunAt + 1), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("after_step();", AfterAt + 1), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("may_raise();", RaiseAt + 1), std::string::npos)
-      << Source;
+  // cleanupret transfers an exception to an EH pad or unwinds to the caller;
+  // an ordinary continuation is not a legal exceptional successor.
+  EXPECT_TRUE(llvm::verifyFunction(*Function, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  EXPECT_FALSE(LLVMCEmitter().emit(Module, OS, Options));
+  EXPECT_TRUE(Source.empty());
 }
 
 TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
@@ -2557,6 +2531,9 @@ TEST(COFFExceptionIR,
   llvm::Function *Handler = llvm::Function::Create(
       PersonalityType, llvm::GlobalValue::ExternalLinkage, "__CxxFrameHandler4",
       Module);
+  llvm::IRBuilder<> HandlerBuilder(
+      llvm::BasicBlock::Create(Context, "entry", Handler));
+  HandlerBuilder.CreateUnreachable();
   llvm::GlobalAlias *Alias = llvm::GlobalAlias::create(
       llvm::GlobalValue::ExternalLinkage, "opaque_personality", Handler);
   llvm::Function *AliasFunction =
