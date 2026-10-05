@@ -2339,6 +2339,12 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidNativeTests.cpp` compares both Android `sysconf` page-size selectors
+with `getpagesize`, page-aligned allocation and its final valid byte. Compiled
+callers check selector width, errno, dynamic provider lifetime and explicit
+refusal of other configuration queries. Host page sizes and limits are not
+used as an oracle.
+
 `AndroidScanningTests.cpp` uses independently compiled O0/O2 callers with
 ordinary, APS2 and RELR relocations. It checks integer widths, register/stack
 arguments, `va_copy`, explicit save areas, matching versus input failures,
