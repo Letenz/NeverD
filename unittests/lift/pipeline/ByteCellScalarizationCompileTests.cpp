@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../../LLVMHostFixture.h"
 #include "../NeverDLiftFixture.h"
 #include "ByteCellScalarizationTest.h"
 
@@ -18,18 +19,18 @@ TEST_F(ByteCellCompiled, CompleteMemoryAndReturnOracleAtO0AndO2) {
   auto &F = *M->getFunction("f");
   F.setName("before");
   auto Original = tmpFile("before.ll");
-  std::ofstream(Original) << print(*M);
+  std::ofstream(Original) << neverd::test::printHostCompilerFixture(*M);
   ASSERT_EQ(ByteCellScalarizationPass::scalarize(F).Objects, 1u);
   F.setName("after");
   auto After = tmpFile("after.ll");
-  std::ofstream(After) << print(*M);
+  std::ofstream(After) << neverd::test::printHostCompilerFixture(*M);
   Pipeline::OptimizationOptions Options;
   Options.Strength = Pipeline::OptStrength::Deep;
   auto R = Pipeline::optimizeModule(*M, Options);
   ASSERT_NE(R.Stop, OptimizationStopReason::VerificationFailed);
   M->getFunction("after")->setName("optimized");
   auto Optimized = tmpFile("optimized.ll");
-  std::ofstream(Optimized) << print(*M);
+  std::ofstream(Optimized) << neverd::test::printHostCompilerFixture(*M);
   auto Harness = tmpFile("oracle.c");
   std::ofstream(Harness) << R"(
 #include <stdint.h>
@@ -110,7 +111,7 @@ TEST_F(ByteCellCompiled, SharedIRCompilesForFourTargetLayouts) {
     ASSERT_EQ(ByteCellScalarizationPass::scalarize(F).Objects, 1u);
     promote(F);
     auto Input = tmpFile("cells.ll");
-    std::ofstream(Input) << print(*M);
+    std::ofstream(Input) << neverd::test::printHostCompilerFixture(*M);
     auto Built = exec(NEVERD_TEST_CLANG,
                       {"-target", Target.first, "-O2", "-c", Input.string(),
                        "-o", tmpFile("cells.o").string()});

@@ -29,7 +29,7 @@
   "pairs": 15,
   "binaries": {
     "baseline": {
-      "path": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+      "path": "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
       "sha256": "e2b45881404bbb8bf62aae203603d53e9cb863fdf992ed79e1657ca8cc751374",
       "caller_source_label": "24b020353",
       "backend": "hvf",
@@ -37,15 +37,15 @@
         "command": [
           "otool",
           "-L",
-          "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline"
+          "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline"
         ],
         "returncode": 0,
-        "stdout": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline:\n\t/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 210.6.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n",
+        "stdout": "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline:\n\t/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 210.6.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n",
         "stderr": ""
       }
     },
     "candidate": {
-      "path": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+      "path": "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
       "sha256": "643e06c3fb7c000e33be28ffa1f2abcbbba5b8aaa67ca1b773f1a7919544583f",
       "caller_source_label": "764661385",
       "backend": "hvf",
@@ -53,10 +53,10 @@
         "command": [
           "otool",
           "-L",
-          "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate"
+          "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate"
         ],
         "returncode": 0,
-        "stdout": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate:\n\t/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 210.6.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n",
+        "stdout": "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate:\n\t/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 210.6.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n",
         "stderr": ""
       }
     }
@@ -66,7 +66,7 @@
       "pair": 0,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -239,7 +239,7 @@
       "pair": 0,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -412,7 +412,7 @@
       "pair": 1,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -585,7 +585,7 @@
       "pair": 1,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -758,7 +758,7 @@
       "pair": 2,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -931,7 +931,7 @@
       "pair": 2,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -1104,7 +1104,7 @@
       "pair": 3,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -1277,7 +1277,7 @@
       "pair": 3,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -1450,7 +1450,7 @@
       "pair": 4,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -1623,7 +1623,7 @@
       "pair": 4,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -1796,7 +1796,7 @@
       "pair": 5,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -1969,7 +1969,7 @@
       "pair": 5,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -2142,7 +2142,7 @@
       "pair": 6,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -2315,7 +2315,7 @@
       "pair": 6,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -2488,7 +2488,7 @@
       "pair": 7,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -2661,7 +2661,7 @@
       "pair": 7,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -2834,7 +2834,7 @@
       "pair": 8,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -3007,7 +3007,7 @@
       "pair": 8,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -3180,7 +3180,7 @@
       "pair": 9,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -3353,7 +3353,7 @@
       "pair": 9,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -3526,7 +3526,7 @@
       "pair": 10,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -3699,7 +3699,7 @@
       "pair": 10,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -3872,7 +3872,7 @@
       "pair": 11,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -4045,7 +4045,7 @@
       "pair": 11,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -4218,7 +4218,7 @@
       "pair": 12,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -4391,7 +4391,7 @@
       "pair": 12,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -4564,7 +4564,7 @@
       "pair": 13,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",
@@ -4737,7 +4737,7 @@
       "pair": 13,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -4910,7 +4910,7 @@
       "pair": 14,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/baseline",
         "--backend",
         "hvf",
         "--samples",
@@ -5083,7 +5083,7 @@
       "pair": 14,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/blocking-candidate",
+        "${BENCHMARK_WORKSPACE}/build-hvf-arm64/phase-costs/blocking-candidate",
         "--backend",
         "hvf",
         "--samples",

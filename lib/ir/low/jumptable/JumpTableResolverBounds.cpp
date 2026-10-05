@@ -5914,12 +5914,31 @@ bool CFGBuilder::inferBoundsFromModulo(
     if (!D)
       return std::nullopt;
     const LowOp &Op = Ops[*D];
-    if (Op.NumInputs < 1 ||
-        (Op.Opcode != NdOp::COPY && Op.Opcode != NdOp::INT_ZEXT))
+    if (Op.NumInputs < 1)
       return std::nullopt;
-    const std::optional<uint64_t> Input =
-        localConstant(*D - 1, Op.Inputs[0], BlockStart, Depth + 1, Budget);
-    return Input ? std::optional<uint64_t>(*Input & *Mask) : std::nullopt;
+    auto Input = [&](unsigned I) {
+      return localConstant(*D - 1, Op.Inputs[I], BlockStart, Depth + 1, Budget);
+    };
+    if (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) {
+      const auto Constant = Input(0);
+      return Constant ? std::optional<uint64_t>(*Constant & *Mask)
+                      : std::nullopt;
+    }
+    if (Op.Opcode == NdOp::SELECT && Op.NumInputs == 3) {
+      const auto Condition = Input(0);
+      if (!Condition)
+        return std::nullopt;
+      const auto Constant = Input(*Condition ? 1 : 2);
+      return Constant ? std::optional<uint64_t>(*Constant & *Mask)
+                      : std::nullopt;
+    }
+    if (Op.NumInputs != 2 || !Budget.consume(12))
+      return std::nullopt;
+    const std::array<std::optional<uint64_t>, 2> Inputs = {Input(0), Input(1)};
+    const std::array<uint16_t, 2> Sizes = {Op.Inputs[0].Size,
+                                           Op.Inputs[1].Size};
+    return evaluateJumpTableGuardPartialPrimitive(Op.Opcode, Value.Size, Inputs,
+                                                  Sizes);
   };
   auto provesDirectUnsignedRemainder = [&](size_t IndexOccurrence,
                                            uint32_t Bound) {
@@ -6204,7 +6223,7 @@ bool CFGBuilder::inferBoundsFromModulo(
     if (ProposalBudget.exhausted())
       break;
   }
-  auto exactLocalDef = [&](int From, const NdVar &Value,
+  auto exactLocalDef = [&](int From, NdVar Value,
                            va_t BlockStart) -> std::optional<int> {
     for (unsigned Depth = 0; Depth <= limits::kMaxQuasiCopyDepth; ++Depth) {
       const std::optional<int> D =
@@ -6212,6 +6231,22 @@ bool CFGBuilder::inferBoundsFromModulo(
       if (!D)
         return std::nullopt;
       const LowOp &Op = Ops[*D];
+      // Architectural division guards select a safe denominator/result.
+      // Follow only a predicate proven constant at this exact occurrence;
+      // an unknown or rewritten guard cannot authenticate a remainder.
+      if (sameVar(Op.Output, Value) && Op.Opcode == NdOp::SELECT &&
+          Op.NumInputs == 3) {
+        const auto Condition = localConstant(*D - 1, Op.Inputs[0], BlockStart,
+                                             0, StructuralBudget);
+        if (!Condition)
+          return std::nullopt;
+        const auto &Chosen = Op.Inputs[*Condition ? 1 : 2];
+        if (Chosen.Size != Value.Size)
+          return std::nullopt;
+        Value = Chosen;
+        From = *D - 1;
+        continue;
+      }
       if (sameVar(Op.Output, Value))
         return D;
       // AArch64 emits a full X-register zero-extension after every W-register

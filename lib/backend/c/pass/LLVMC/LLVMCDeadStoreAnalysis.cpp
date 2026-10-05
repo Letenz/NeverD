@@ -17,6 +17,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 
@@ -163,11 +164,12 @@ void analyzeDeadFrameStores(LLVMCAnalysisState &State, llvm::Function &Fn) {
       if (const auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
         for (const llvm::Use &U : CB->args()) {
           NoteLive(U.get(), /*ExpandRecord=*/true, CB);
-          if (CB->isInlineAsm() && CB->mayReadOrWriteMemory()) {
-            // A memory asm operand is the start of a possibly dynamic span,
-            // not a scalar home. Splitting its allocation would detach indexed
-            // accesses and can turn REP STOS into an out-of-bounds scalar
-            // write.
+          if (llvm::isa<llvm::MemIntrinsic>(CB) ||
+              (CB->isInlineAsm() && CB->mayReadOrWriteMemory())) {
+            // Bulk memory operations address spans, possibly of dynamic
+            // length. Preserve their backing allocation: naming just the
+            // first scalar would detach interior accesses and can turn a
+            // memset or REP STOS into an out-of-bounds scalar write.
             const FrameAliases Aliases =
                 peelSyntheticFrames(U.get(), Stores, DL);
             State.RawFrameAllocas.insert(Aliases.Frames.begin(),

@@ -292,6 +292,14 @@ TEST_F(DevirtualizationSourceTest,
        RuntimeFlagsRemainLiveAcrossRecoveredFiniteDispatch) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public x64 flag fixture requires clang";
+  std::vector<std::string> HostFlags;
+#if defined(__APPLE__) && defined(__aarch64__)
+  if (!exec("/usr/bin/arch", {"-x86_64", "/usr/bin/true"}).ok())
+    GTEST_SKIP() << "x64 flag execution requires Rosetta on Apple ARM64";
+  HostFlags = {"-arch", "x86_64"};
+#elif !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "x64 flag execution requires an x64 runtime";
+#endif
   const auto Binary = tmpFile("generic-vm-flags.elf");
   const auto Compiled = buildFixture(Binary, "generic_vm_flags.S");
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
@@ -352,12 +360,14 @@ int main(void) {
       const auto Executable =
           tmpFile(std::string("generic-vm-flags-recovered") +
                   neverd::test::executableSuffix());
-      const auto Recompiled =
-          exec(NEVERD_TEST_CLANG,
-               {"-std=c11", Optimization, "-Werror=return-type",
-                "-Werror=implicit-function-declaration", "-fsanitize=undefined",
-                "-fsanitize-trap=undefined", "-I", tmp().string(),
-                Harness.string(), "-o", Executable.string()});
+      auto Args = HostFlags;
+      Args.insert(Args.end(),
+                  {"-std=c11", Optimization, "-Werror=return-type",
+                   "-Werror=implicit-function-declaration",
+                   "-fsanitize=undefined", "-fsanitize-trap=undefined", "-I",
+                   tmp().string(), Harness.string(), "-o",
+                   Executable.string()});
+      const auto Recompiled = exec(NEVERD_TEST_CLANG, Args);
       ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
       const auto Ran = exec(Executable.string(), {});
       EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;

@@ -2378,10 +2378,10 @@ add_custom_command(
   COMMENT "Compiling PIC i386 stack-materialized jump-table fixture")
 list(APPEND TEST_OBJECTS ${stack_cgoto_i386_pic_obj})
 
-# Keep the optimized i386 PIC layout used by the adjacent two-table semantic
-# roundtrip probe: two five-entry GOTOFF runs and two dispatches per run.
+# Keep exact adjacent table ownership probes independent of compiler loop
+# peeling: two five-entry GOTOFF runs and two dispatches per run.
 set(i386_adjacent_twotable_src
-    "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_adjacent_twotable.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_adjacent_gotoff.S")
 set(i386_adjacent_twotable_obj
     "${CMAKE_CURRENT_BINARY_DIR}/test_i386_adjacent_twotable.o")
 add_custom_command(
@@ -2391,7 +2391,7 @@ add_custom_command(
           -fno-asynchronous-unwind-tables -march=pentium4
           ${i386_adjacent_twotable_src} -o ${i386_adjacent_twotable_obj}
   DEPENDS ${i386_adjacent_twotable_src}
-  COMMENT "Compiling optimized adjacent i386 GOTOFF tables")
+  COMMENT "Assembling adjacent i386 GOTOFF tables")
 list(APPEND TEST_OBJECTS ${i386_adjacent_twotable_obj})
 
 # O0 uses an EBP-relative GOT spill across three independent switch loops.
@@ -2409,8 +2409,7 @@ add_custom_command(
   COMMENT "Compiling O0 i386 PIC switch loops with a shared GOT spill")
 list(APPEND TEST_OBJECTS ${i386_three_switch_loops_obj})
 
-# The same public program has three adjacent GOTOFF runs, each with an entry
-# and a loop-back consumer, after optimization.
+# A third adjacent run must join the same all-or-nothing ownership proof.
 set(i386_three_switch_loops_o2_obj
     "${CMAKE_CURRENT_BINARY_DIR}/test_i386_three_switch_loops_o2.o")
 add_custom_command(
@@ -2418,9 +2417,10 @@ add_custom_command(
   COMMAND ${CLANG_EXEC} -target i386-linux-gnu -nostdlib -nostdlibinc -c -O2
           -fno-stack-protector -fno-exceptions -fno-unwind-tables
           -fno-asynchronous-unwind-tables -march=pentium4
-          ${i386_three_switch_loops_src} -o ${i386_three_switch_loops_o2_obj}
-  DEPENDS ${i386_three_switch_loops_src}
-  COMMENT "Compiling optimized three-run i386 GOTOFF tables")
+          -DNEVERD_GOTOFF_THREE_RUNS=1
+          ${i386_adjacent_twotable_src} -o ${i386_three_switch_loops_o2_obj}
+  DEPENDS ${i386_adjacent_twotable_src}
+  COMMENT "Assembling three-run i386 GOTOFF tables")
 list(APPEND TEST_OBJECTS ${i386_three_switch_loops_o2_obj})
 
 set(i386_adjacent_function_pointer_src

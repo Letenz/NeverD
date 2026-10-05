@@ -5,6 +5,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../LLVMHostFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/pass/ir/simplify/ByteMemoryForwardingPass.h"
@@ -663,7 +664,7 @@ TEST(ByteMemoryForwarding,
   {
     llvm::raw_fd_ostream OS(IR, EC);
     ASSERT_FALSE(EC);
-    M->print(OS, nullptr);
+    neverd::test::printHostCompilerFixture(*M, OS);
   }
   {
     llvm::raw_fd_ostream OS(Source, EC);
@@ -940,7 +941,7 @@ TEST(ByteMemoryForwarding, NumericGuardedRuntimePreservesBothOutcomesAndBytes) {
     {
       llvm::raw_fd_ostream OS(IR, EC);
       ASSERT_FALSE(EC);
-      M->print(OS, nullptr);
+      neverd::test::printHostCompilerFixture(*M, OS);
     }
     {
       llvm::raw_fd_ostream OS(Source, EC);
@@ -1117,7 +1118,7 @@ TEST(ByteMemoryForwarding,
     {
       llvm::raw_fd_ostream OS(IR, EC);
       ASSERT_FALSE(EC);
-      M->print(OS, nullptr);
+      neverd::test::printHostCompilerFixture(*M, OS);
     }
     {
       llvm::raw_fd_ostream OS(Source, EC);
@@ -1557,7 +1558,7 @@ TEST(ByteMemoryForwarding, NumericRuntimeChecksReturnAndEntireAliasedBuffer) {
     {
       llvm::raw_fd_ostream OS(IR, EC);
       ASSERT_FALSE(EC);
-      M->print(OS, nullptr);
+      neverd::test::printHostCompilerFixture(*M, OS);
     }
     {
       llvm::raw_fd_ostream OS(Source, EC);
@@ -1746,7 +1747,7 @@ TEST(ByteMemoryForwarding, PureIntrinsicRuntimeRetainsAddressesAndAllBytes) {
   {
     llvm::raw_fd_ostream OS(IR, EC);
     ASSERT_FALSE(EC);
-    M->print(OS, nullptr);
+    neverd::test::printHostCompilerFixture(*M, OS);
   }
   {
     llvm::raw_fd_ostream OS(Source, EC);

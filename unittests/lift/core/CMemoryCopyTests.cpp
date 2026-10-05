@@ -351,6 +351,91 @@ int main(void) {
   }
 }
 
+TEST(CMemoryCopy, LLVMCGlobalAccessesUseObjectStorage) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+target datalayout = "e-p:64:64-i64:64-i128:128"
+@bits = global i64 0, align 8
+@real = global float 0.0, align 4
+@stored_pointer = global ptr null, align 8
+@bytes = global [16 x i8] zeroinitializer, align 8
+define void @write_bits(i64 %value) {
+  store i64 %value, ptr @bits, align 8
+  ret void
+}
+define i64 @read_bits() {
+  %value = load i64, ptr @bits, align 8
+  ret i64 %value
+}
+define void @write_real(float %value) {
+  store float %value, ptr @real, align 4
+  ret void
+}
+define float @read_real() {
+  %value = load float, ptr @real, align 4
+  ret float %value
+}
+define void @write_punned(float %value) {
+  store float %value, ptr @bits, align 4
+  ret void
+}
+define float @read_punned() {
+  %value = load float, ptr @bits, align 4
+  ret float %value
+}
+define void @write_pointer(ptr %value) {
+  store ptr %value, ptr @stored_pointer, align 8
+  ret void
+}
+define ptr @read_pointer() {
+  %value = load ptr, ptr @stored_pointer, align 8
+  ret ptr %value
+}
+define void @write_offset(i32 %value) {
+  %address = getelementptr [16 x i8], ptr @bytes, i64 0, i64 3
+  store i32 %value, ptr %address, align 1
+  ret void
+}
+define i32 @read_offset() {
+  %address = getelementptr [16 x i8], ptr @bytes, i64 0, i64 3
+  %value = load i32, ptr %address, align 1
+  ret i32 %value
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module);
+  const std::string Harness = R"(
+#include <string.h>
+int main(void) {
+  uint64_t expected = UINT64_C(0x9876543212345678);
+  float expected_real = 3.25f;
+  write_bits(expected);
+  if (read_bits() != expected) return 1;
+  write_real(expected_real);
+  if (read_real() != expected_real) return 2;
+  write_punned(expected_real);
+  memcpy(&expected, &expected_real, sizeof(expected_real));
+  if (read_bits() != expected || read_punned() != expected_real) return 3;
+  write_pointer(&expected);
+  if (read_pointer() != &expected) return 4;
+  write_offset(0x12345678);
+  if (read_offset() != 0x12345678) return 5;
+  return 0;
+}
+)";
+  for (bool Unaligned : {false, true}) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.UseUnalignedPointers = Unaligned;
+    ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+    for (llvm::StringRef Optimization : {"-O0", "-O2"})
+      compileAndRun(Source + Harness, Optimization, {}, true);
+  }
+}
+
 TEST(CMemoryCopy, LLVMCReadonlyImageLoadKeepsItsConstantProjection) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;
