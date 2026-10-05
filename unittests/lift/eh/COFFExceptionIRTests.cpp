@@ -561,11 +561,14 @@ TEST(COFFExceptionIR,
       VoidType, llvm::GlobalValue::ExternalLinkage, "llvmc_funclet", Module);
   Funclet->setPersonalityFn(Personality);
   auto *FuncletEntry = llvm::BasicBlock::Create(Context, "entry", Funclet);
-  auto *FuncletDone = llvm::BasicBlock::Create(Context, "done", Funclet);
   auto *FuncletCleanup = llvm::BasicBlock::Create(Context, "cleanup", Funclet);
-  llvm::IRBuilder<> FuncletEntryBuilder(FuncletEntry);
-  FuncletEntryBuilder.CreateInvoke(Attached, FuncletDone, FuncletCleanup);
-  llvm::IRBuilder<>(FuncletDone).CreateRetVoid();
+  auto *FuncletCont = llvm::BasicBlock::Create(Context, "cont", Funclet);
+  auto *FuncletHelper =
+      llvm::Function::Create(VoidType, llvm::GlobalValue::ExternalLinkage,
+                             "may_raise_funclet", Module);
+  llvm::IRBuilder<>(FuncletEntry)
+      .CreateInvoke(FuncletHelper, FuncletCont, FuncletCleanup);
+  llvm::IRBuilder<>(FuncletCont).CreateRetVoid();
   llvm::IRBuilder<> FuncletBuilder(FuncletCleanup);
   llvm::CleanupPadInst *Pad = FuncletBuilder.CreateCleanupPad(
       llvm::ConstantTokenNone::get(Context), {});
@@ -2142,7 +2145,8 @@ TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
   llvm::IRBuilder<> FinallyBuilder(Finally);
   llvm::CleanupPadInst *Cleanup =
       FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
-  FinallyBuilder.CreateCall(CleanupFn);
+  FinallyBuilder.CreateCall(CleanupFn, {},
+                            {llvm::OperandBundleDef("funclet", Cleanup)});
   FinallyBuilder.CreateCleanupRet(Cleanup, nullptr);
   llvm::IRBuilder<> ContBuilder(Cont);
   ContBuilder.CreateRetVoid();
@@ -2156,6 +2160,100 @@ TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
   EXPECT_EQ(Source.find(
                 "/* recovered handler labels remain in the protected body */"),
             std::string::npos)
+      << Source;
+}
+
+TEST(COFFExceptionIR, LLVMCFinallyContinuationFollowsCleanup) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-seh-finally-cont", Context);
+  Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+  llvm::Type *Void = llvm::Type::getVoidTy(Context);
+  llvm::FunctionType *VoidType = llvm::FunctionType::get(Void, false);
+  llvm::FunctionType *PersonalityType = llvm::FunctionType::get(
+      llvm::Type::getInt32Ty(Context), /*isVarArg=*/true);
+  llvm::Function *Personality = llvm::Function::Create(
+      PersonalityType, llvm::GlobalValue::ExternalLinkage,
+      "__C_specific_handler", Module);
+  llvm::Function *Function = llvm::Function::Create(
+      VoidType, llvm::GlobalValue::ExternalLinkage, "seh_finally_cont", Module);
+  Function->setPersonalityFn(Personality);
+
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Body = llvm::BasicBlock::Create(Context, "body", Function);
+  llvm::BasicBlock *End = llvm::BasicBlock::Create(Context, "end", Function);
+  llvm::BasicBlock *Finally =
+      llvm::BasicBlock::Create(Context, "finally", Function);
+  llvm::BasicBlock *Cont = llvm::BasicBlock::Create(Context, "cont", Function);
+  llvm::Function *Raise = llvm::Function::Create(
+      VoidType, llvm::GlobalValue::ExternalLinkage, "may_raise", Module);
+  llvm::Function *CleanupFn = llvm::Function::Create(
+      VoidType, llvm::GlobalValue::ExternalLinkage, "run_finally", Module);
+  llvm::Function *After = llvm::Function::Create(
+      VoidType, llvm::GlobalValue::ExternalLinkage, "after_step", Module);
+  // Range markers carry the normal continuation; cleanupret's destination
+  // is an unwind edge and cannot point to an ordinary continuation block.
+  auto *TryBegin = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_begin);
+  auto *TryEnd = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_end);
+  llvm::IRBuilder<>(Entry).CreateInvoke(TryBegin, Body, Finally);
+  llvm::IRBuilder<>(Body).CreateInvoke(Raise, End, Finally);
+  llvm::IRBuilder<>(End).CreateInvoke(TryEnd, Cont, Finally);
+  llvm::IRBuilder<> FinallyBuilder(Finally);
+  llvm::CleanupPadInst *Cleanup =
+      FinallyBuilder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+  FinallyBuilder.CreateCall(CleanupFn, {},
+                            {llvm::OperandBundleDef("funclet", Cleanup)});
+  FinallyBuilder.CreateCleanupRet(Cleanup, nullptr);
+  llvm::IRBuilder<> ContBuilder(Cont);
+  ContBuilder.CreateCall(After);
+  ContBuilder.CreateRetVoid();
+
+  std::string Source = emitLLVMC(Module);
+  const auto BodyAt = Source.find("seh_finally_cont(");
+  ASSERT_NE(BodyAt, std::string::npos) << Source;
+  const auto TryAt = Source.find("__try {", BodyAt);
+  const auto RaiseAt = Source.find("may_raise();", BodyAt);
+  const auto FinallyAt = Source.find("} __finally {", BodyAt);
+  const auto RunAt = Source.find("run_finally();", BodyAt);
+  const auto AfterAt = Source.find("after_step();", BodyAt);
+  ASSERT_NE(TryAt, std::string::npos) << Source;
+  ASSERT_NE(RaiseAt, std::string::npos) << Source;
+  ASSERT_NE(FinallyAt, std::string::npos) << Source;
+  ASSERT_NE(RunAt, std::string::npos) << Source;
+  ASSERT_NE(AfterAt, std::string::npos) << Source;
+  const auto FinallyOpen = Source.find('{', FinallyAt);
+  ASSERT_NE(FinallyOpen, std::string::npos) << Source;
+  size_t FinallyClose = std::string::npos;
+  int Depth = 1;
+  for (size_t I = FinallyOpen + 1; I < Source.size(); ++I) {
+    if (Source[I] == '{')
+      ++Depth;
+    else if (Source[I] == '}') {
+      --Depth;
+      if (Depth == 0) {
+        FinallyClose = I;
+        break;
+      }
+    }
+  }
+  ASSERT_NE(FinallyClose, std::string::npos) << Source;
+  EXPECT_LT(TryAt, RaiseAt) << Source;
+  EXPECT_LT(RaiseAt, FinallyAt) << Source;
+  EXPECT_LT(FinallyAt, RunAt) << Source;
+  EXPECT_LT(RunAt, FinallyClose) << Source;
+  EXPECT_LT(FinallyClose, AfterAt) << Source;
+  EXPECT_EQ(
+      Source.substr(FinallyOpen, FinallyClose - FinallyOpen).find("return"),
+      std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("goto ", BodyAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("run_finally();", RunAt + 1), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("after_step();", AfterAt + 1), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("may_raise();", RaiseAt + 1), std::string::npos)
       << Source;
 }
 
@@ -2531,8 +2629,12 @@ TEST(COFFExceptionIR,
   llvm::Function *Handler = llvm::Function::Create(
       PersonalityType, llvm::GlobalValue::ExternalLinkage, "__CxxFrameHandler4",
       Module);
+  // LLVM aliases require a definition, even when the personality is only
+  // inspected as metadata. Keep the fixture's body explicitly non-executable.
   llvm::IRBuilder<> HandlerBuilder(
       llvm::BasicBlock::Create(Context, "entry", Handler));
+  HandlerBuilder.CreateCall(
+      llvm::Intrinsic::getOrInsertDeclaration(&Module, llvm::Intrinsic::trap));
   HandlerBuilder.CreateUnreachable();
   llvm::GlobalAlias *Alias = llvm::GlobalAlias::create(
       llvm::GlobalValue::ExternalLinkage, "opaque_personality", Handler);

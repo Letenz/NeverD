@@ -5953,7 +5953,7 @@ void LLVMCWriter::writeCatchSwitch(llvm::CatchSwitchInst &CS, int Indent) {
 
 void LLVMCWriter::writeCleanupRet(llvm::CleanupReturnInst &CR, int Indent) {
   llvm::BasicBlock *Dest = CR.getUnwindDest();
-  if (Dest && OmitCleanupRetTo.count(Dest))
+  if (OmitCleanupRetTo.count(Dest))
     return;
   emitIndent(Indent);
   if (!Dest)

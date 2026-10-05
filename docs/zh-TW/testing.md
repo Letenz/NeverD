@@ -1384,3 +1384,5 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 `LowIRLoopInference` 涵蓋帶任意初始高位的 8、24、32 位計數器投影、遞增及遞減、暫存器、堆疊框架、函式暫存值和兩種位元組序。完整自證明通過，結果變化、停滯、窄位寬回繞及跳過相等退出條件均遭拒絕。操作、查詢、路徑、排名候選及拓寬預算在精確上限通過，少一單位失敗；最終證明的操作、查詢及觀察預算分別檢查。
 
 `ObjCCallHints.SDKRecordData*` 檢查兩種外部記錄、每個 double 的偏移、兩種 Darwin 架構及提供者別名，並涵蓋匯入變更、弱連結、缺少程式庫、修正衝突、可寫儲存及不完整範圍。`python3 -m unittest scripts.tests.test_generate_darwin_record_data_declarations scripts.tests.test_generate_darwin_data_declarations` 檢查設定衝突、替代配置、無效大小/對齊、TLS 與各架構匯出。以固定 SDK、libclang、輸出路徑及 `--check` 執行 `generate_darwin_record_data_declarations.py` 可重現目錄；宣告檢查不證明原生間接結果已初始化，也不建立方法復原。
+
+`LowIRLoopInference.ProjectedBounds*` 涵蓋計數器與邊界高位任意的窄位域等值退出，包含 8、24、32 位、三種儲存位置和兩種位元組序。完整證明拒絕邊界變化、停滯、跳過退出、回繞及被觀察的輸入高位元組變化。推斷與證明預算保持獨立，並檢查精確上限和少一單位的情況。
