@@ -178,7 +178,7 @@ handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
   case ServiceKind::Mmap:
   case ServiceKind::Mprotect:
   case ServiceKind::Munmap:
-    return Memory.handle(*Kind, Event, Result);
+    return Memory.handle(*Kind, Event, Files, Result);
   }
   llvm_unreachable("unknown Darwin service");
 }

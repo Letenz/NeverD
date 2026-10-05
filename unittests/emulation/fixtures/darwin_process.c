@@ -1,5 +1,10 @@
 /* Independently authored freestanding Darwin guest; no Apple SDK/libSystem. */
 typedef unsigned long u64;
+#if defined(__aarch64__)
+#define PAGE 16384UL
+#else
+#define PAGE 4096UL
+#endif
 static volatile u64 data = 0x1234;
 static volatile u64 bss;
 static u64 secondary;
@@ -49,6 +54,65 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
   for (unsigned i = 0; i != width; ++i)
     value |= (u64)p[i] << (i * 8);
   return value;
+}
+/* The same original raw-call program runs on native macOS and every guest
+ * profile. The input is a read-only ten-byte regular file. */
+static int file_mapping(const char *path) {
+  unsigned error = 0;
+  int check = 140;
+#define MAPPING_EXPECT(expression)                                             \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  MAPPING_EXPECT(!error);
+  MAPPING_EXPECT(call(197, 0, 0, 1, 2, (u64)-1, 0, &error) == 9 && error);
+  MAPPING_EXPECT(call(197, 0, 0, 1, 0x40002, (u64)-1, 0, &error) == 22 &&
+                 error);
+  MAPPING_EXPECT(call(197, 0, 1, 1, 0x40002, (u64)-1, 1, &error) == 22 &&
+                 error);
+  MAPPING_EXPECT(call(197, 0, (u64)-1, 1, 2, (u64)-1, 0, &error) == 22 &&
+                 error);
+  MAPPING_EXPECT(call(197, 0, PAGE, 1, 2, (u64)-1, (u64)-PAGE, &error) == 22 &&
+                 error);
+  MAPPING_EXPECT(call(197, 0, 0, 1, 2, fd, 0, &error) == 0 && !error);
+  MAPPING_EXPECT(call(199, fd, 2, 0, 0, 0, 0, &error) == 2 && !error);
+  u64 first = call(197, 0, 1, 3, 2, fd, 0, &error);
+  MAPPING_EXPECT(!error && first && first % PAGE == 0);
+  volatile unsigned char *a = (void *)first;
+  for (unsigned i = 0; i != 10; ++i)
+    if (a[i] != '0' + i)
+      return 180;
+  MAPPING_EXPECT(a[10] == 0 && a[PAGE - 1] == 0);
+  a[0] = 'm';
+  a[PAGE - 1] = 'x';
+  u64 second = call(197, 0, PAGE, 0, 0x40002, fd, 0, &error);
+  MAPPING_EXPECT(!error && second != first && second % PAGE == 0);
+  MAPPING_EXPECT(call(74, second, PAGE, 2, 0, 0, 0, &error) == 0 && !error);
+  volatile unsigned char *b = (void *)second;
+  MAPPING_EXPECT(b[0] == '0' && b[9] == '9' && b[PAGE - 1] == 0);
+  b[0] = 'q';
+  MAPPING_EXPECT(a[0] == 'm');
+  unsigned char original = 0;
+  MAPPING_EXPECT(call(153, fd, (u64)&original, 1, 0, 0, 0, &error) == 1 &&
+                 !error);
+  MAPPING_EXPECT(original == '0');
+  MAPPING_EXPECT(call(199, fd, 0, 1, 0, 0, 0, &error) == 2 && !error);
+  MAPPING_EXPECT(call(6, fd, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  MAPPING_EXPECT(call(197, 0, PAGE, 1, 2, fd, 0, &error) == 9 && error);
+  MAPPING_EXPECT(a[0] == 'm' && a[PAGE - 1] == 'x' && b[0] == 'q');
+  MAPPING_EXPECT(call(73, second, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  MAPPING_EXPECT(a[0] == 'm');
+  MAPPING_EXPECT(call(4, 1, first, 1, 0, 0, 0, &error) == 1 && !error);
+  MAPPING_EXPECT(call(73, first, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 fresh = call(197, first, PAGE, 3, 0x41002, (u64)-1, 0, &error);
+  MAPPING_EXPECT(!error && fresh == first);
+  MAPPING_EXPECT(*(volatile unsigned char *)fresh == 0);
+  MAPPING_EXPECT(call(73, fresh, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+#undef MAPPING_EXPECT
+  return 37;
 }
 /* Independent LP64 stat64 ABI checks; all three calls must describe the same
  * supplied regular file and must leave the open description's offset alone. */
@@ -121,11 +185,6 @@ static int file_status(const char *path) {
 #undef STATUS_EXPECT
   return 37;
 }
-#if defined(__aarch64__)
-#define PAGE 16384UL
-#else
-#define PAGE 4096UL
-#endif
 /* The same raw-call object runs in the guest and against the native kernel.
  * The harness supplies a regular file containing exactly 0123456789. */
 static int file_calls(const char *path, unsigned nocancel) {
@@ -262,6 +321,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "file-mapping"))
+    return argc < 3 ? 181 : file_mapping(argv[2]);
   if (equal(argv[1], "file-status"))
     return argc < 3 ? 132 : file_status(argv[2]);
   if (equal(argv[1], "output-descriptors"))

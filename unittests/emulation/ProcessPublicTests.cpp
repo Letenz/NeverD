@@ -408,7 +408,7 @@ TEST_F(ProcessPublic,
     for (const auto &[Mode, Expected] :
          {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
           std::pair{"stdin", "00ff78"}, std::pair{"output-descriptors", "6f6b"},
-          std::pair{"file-status", "73"}}) {
+          std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"}}) {
       SCOPED_TRACE(Mode);
       const std::string Options =
           std::string(

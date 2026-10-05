@@ -22,6 +22,11 @@ public:
          ProcessResult &Result);
   /// Original capture sink, even when reached through a duplicated FD.
   std::optional<unsigned> outputSink(uint32_t FD) const;
+  /// Immutable regular-file bytes, BSD errno, or an unsupported object kind.
+  /// Looking up a mapping source never changes the open description's cursor.
+  using MappingSource =
+      std::variant<llvm::ArrayRef<uint8_t>, uint32_t, const char *>;
+  MappingSource mappingSource(uint32_t FD) const;
 
 private:
   enum class Kind { Input, Output, Error, File };

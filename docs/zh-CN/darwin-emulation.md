@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3b9d7209329fb16b2966b305f8f5b8500d70521138d9ed32d89eda56e9018d1 -->
+<!-- i18n-source: adbd03b9316f8ea1f40f8be5f361cd5014048848e2ba6cffebb64faa36f86156 -->
 
 [← 文档索引](README.md)
 
@@ -43,7 +43,7 @@ OS 页独立持有物理内存，因此部分解除映射能释放预算，重�
 服务清单为 `exit`、`write`、`getpid`、`getppid`、`getuid`、`geteuid`、`getgid`、
 `getegid`、`mmap`、`mprotect`、`munmap`。PID/UID/GID 固定为 1000，PPID 为 1。
 匿名数据映射要求 `flags=0x1002`、描述符 -1 和零偏移；长度和非固定提示地址向上按 OS 页取整。
-旧式原始 mmap 的零长度请求返回零而不分配内存；`MAP_UNIX03` 不在当前契约内。
+旧式原始 mmap 的零长度请求返回零而不分配内存；`MAP_UNIX03` 已支持，零长度返回 EINVAL。
 Unmap/protect 地址必须对齐；允许 NONE/READ/WRITE，WRITE 隐含 READ，不接受匿名可执行映射。
 
 设备与模拟器的 Mach-O 平台标记必须分别匹配。此版本接受不依赖动态库、重定位、
@@ -63,13 +63,27 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 
 最多 256 个文件；路径及 NUL、文件和输入字节合计最多 16 MiB。路径短于 1024 字节，每个分量最多 255 字节；`descriptor_limit` 为排他上界，取值 3–4096，默认 256。JSON 保留 64 KiB 上限。非法配置及文件/祖先目录冲突在加载镜像前拒绝。
 
-超出 INT_MAX 的读取先返回 EINVAL，再检查描述符；EOF 不访问目标地址，无效目标返回 EFAULT。目标缓冲区只有部分可写时，在写入和移动游标前明确停止。定位支持 SET/CUR/END，负位置和溢出失败保留原游标。相对/非规范路径、目录打开、可写文件、旧版 stat 元数据、文件映射、稀疏定位和其他 fcntl 操作仍未实现。文件作为路径祖先返回 ENOTDIR。文件与 nocancel 程序及输出重定向使用同一份自编目标文件对照原生 macOS；C/CLI/Python 覆盖全部五种来宾组合。这不构成 iOS 真机验证。
+超出 INT_MAX 的读取先返回 EINVAL，再检查描述符；EOF 不访问目标地址，无效目标返回 EFAULT。目标缓冲区只有部分可写时，在写入和移动游标前明确停止。定位支持 SET/CUR/END，负位置和溢出失败保留原游标。相对/非规范路径、目录打开、可写文件、旧版 stat 元数据、稀疏定位和其他 fcntl 操作仍未实现。文件作为路径祖先返回 ENOTDIR。文件与 nocancel 程序及输出重定向使用同一份自编目标文件对照原生 macOS；C/CLI/Python 覆盖全部五种来宾组合。这不构成 iOS 真机验证。
 
 2026-10-05 的 Release Darwin 验收共 381 项：177 通过、204 跳过、零失败，ARM64 HVF 必需项 51/51 实际执行。原生 macOS 7 个程序、公共 C/CLI 与报告 35 项、Python 五种来宾组合和验收脚本 66 项通过，各计数有重叠。新增文件服务尚无 Intel HVF/KVM/WHP 原生证据；Intel HVF 仍未验证且暂停 Actions。当前宿主没有 iOS SDK，也没有 iOS 真机对照。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## 私有文件映射
+
+`mmap` 支持普通目录文件的 `MAP_PRIVATE` 映射：`flags=0x2`，或添加 `MAP_UNIX03` 后使用 `0x40002`，文件偏移必须按 OS 页对齐。映射保留整页内的原文件字节，即使请求长度较短；EOF 尾页剩余字节清零。私有写入仅修改当前映射，不改变原文件、其他映射、固定元数据或共享描述符游标。关闭或复用描述符不影响已有映射。支持只读和 PROT_NONE 的初始内容，以及后续 `mprotect` 加写权限。
+
+文件末尾算术溢出、UNIX03 零长度或未对齐偏移在 FD 查询前返回 EINVAL；坏 FD 在预算检查前返回 EBADF。旧式零长度仍检查 FD，再返回零且不分配。旧式未对齐偏移、流描述符、空文件页及完整越过 EOF 的页，在分配前明确停止。真实 macOS 允许映射完整 EOF 外页面，但访问触发 SIGBUS；当前模型不伪造可读零页或信号投递。共享、固定、可执行及 JIT 映射仍未支持。
+
+`DarwinFiles` 统一解析描述符和字节，`DarwinMemory` 负责分配、权限、预算及回滚。文件仅来自 `darwin_files`。同一 `file-mapping` 程序检查私有写入、close 后寿命、游标、错误顺序与匿名页重用；独立原生对照检查非零文件偏移、整页内容及真实 SIGBUS 边界。
+
+[XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c)
+
+### 私有映射验证（2026-10-05）
+
+Release Darwin 门禁核对 438 个唯一登记项：210 通过、228 跳过、零失败，57/57 个 ARM64 HVF 必需项实际执行；Unicorn 覆盖五种来宾组合。9 个原生 macOS 程序通过，独立原生测试逐字节核对非零偏移的 EOF 尾页，并在隔离子进程确认下一整页触发 SIGBUS。36 项公共接口/报告测试无跳过，Python 覆盖五种组合及 `file-mapping`；66 项验收脚本与 38 项来源检查回归通过。计数有重叠。证据位于 `build-hvf-arm64/darwin-mmap-verified-evidence/`。本轮仍无 Intel HVF/KVM/WHP 或 iOS 真机验收，Intel HVF Actions 保持暂停。
 
 ## 显式文件元数据
 
@@ -95,7 +109,7 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 
 加入 stat64 后的 Release 验收共 409 个唯一登记项：193 通过、216 跳过、零失败；54/54 项 ARM64 HVF 必需测试实际执行，Unicorn 覆盖五种来宾组合。SDK 布局与真实文件整条记录对比、8 个原生 macOS 程序、36 个公共接口/报告测试（无跳过）、Python 五种组合和 66 个验收脚本测试均通过，计数有重叠。原生测试改为每例独立输出文件，修复短输出残留旧尾字节的问题。新增能力仍无 Intel HVF/KVM/WHP 或 iOS 真机证据。
 
-后续优先顺序：先补文件映射、目录/相对路径和有界写入，验证 EOF 页、close 后映射寿命与错误顺序；再补显式时间/系统信息、必要 Mach/线程服务和 Mach-O 依赖、重定位/绑定、初始化/TLS；最后通过真实程序推进 Objective-C/Swift 与 Foundation/UIKit。iOS 真机对照需要 SDK 和设备环境；Intel HVF 尚未验证，Actions 继续暂停。
+后续优先顺序：先补共享映射与 EOF 缺页、目录/相对路径和有界写入，验证 EOF 页、close 后映射寿命与错误顺序；再补显式时间/系统信息、必要 Mach/线程服务和 Mach-O 依赖、重定位/绑定、初始化/TLS；最后通过真实程序推进 Objective-C/Swift 与 Foundation/UIKit。iOS 真机对照需要 SDK 和设备环境；Intel HVF 尚未验证，Actions 继续暂停。
 
 
 
@@ -111,7 +125,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 54 项，x64 的 macOS 和 Simulator 共 36 项。
+ARM64 三个平台共 57 项，x64 的 macOS 和 Simulator 共 38 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3b9d7209329fb16b2966b305f8f5b8500d70521138d9ed32d89eda56e9018d1 -->
+<!-- i18n-source: adbd03b9316f8ea1f40f8be5f361cd5014048848e2ba6cffebb64faa36f86156 -->
 
 [← Índice de documentación](README.md)
 
@@ -41,9 +41,9 @@ ARM64 usa X16, X0–X5 y `svc #0x80`; x64 usa la clase BSD `0x02000000`, RAX y R
 
 Servicios: `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`. PID/UID/GID valen 1000 y PPID vale 1. Los descriptores 1 y 2 capturan bytes, incluidos NUL y no UTF8; los cerrados o de solo lectura devuelven EBADF. Una copia parcial conserva los bytes leídos, pero el fallo posterior sigue siendo EFAULT. Una longitud superior a `INT_MAX` devuelve EINVAL antes de comprobar descriptor, puntero o presupuesto: [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
 
-Se permiten mapeos privados anónimos de datos con `flags=0x1002`, descriptor -1 y offset cero. Longitudes y sugerencias no fijas se redondean hacia arriba a la página OS. Si una sugerencia está ocupada, se busca hacia arriba antes de volver a la ubicación predeterminada. El mmap histórico sin envolver de longitud cero devuelve cero sin asignar; `MAP_UNIX03` queda excluido. Unmap/protect requieren dirección alineada. Se admiten NONE/READ/WRITE, con WRITE implicando READ. Cada página OS posee su memoria física: un unmap parcial libera presupuesto y las páginas nuevas quedan a cero. Un protect que atraviese un hueco o supere permisos máximos deja intacto todo el rango. Fuente: [servicios VM de XNU](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
+Se permiten mapeos privados anónimos de datos con `flags=0x1002`, descriptor -1 y offset cero. Longitudes y sugerencias no fijas se redondean hacia arriba a la página OS. Si una sugerencia está ocupada, se busca hacia arriba antes de volver a la ubicación predeterminada. El mmap histórico sin envolver de longitud cero devuelve cero sin asignar; `MAP_UNIX03` se admite y rechaza longitud cero con EINVAL. Unmap/protect requieren dirección alineada. Se admiten NONE/READ/WRITE, con WRITE implicando READ. Cada página OS posee su memoria física: un unmap parcial libera presupuesto y las páginas nuevas quedan a cero. Un protect que atraviese un hueco o supere permisos máximos deja intacto todo el rango. Fuente: [servicios VM de XNU](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-Quedan excluidos mapeos de archivo/compartidos/fijos/JIT o anónimos ejecutables, traps Mach, syscalls indirectas, hilos, señales, archivos del host/red, dyld, runtimes Objective-C/Swift y Foundation/UIKit. Su uso detiene explícitamente la ejecución. No es un OS Apple completo ni la aplicación iOS Simulator.
+Quedan excluidos mapeos compartidos/fijos/JIT o anónimos ejecutables, traps Mach, syscalls indirectas, hilos, señales, archivos del host/red, dyld, runtimes Objective-C/Swift y Foundation/UIKit. Su uso detiene explícitamente la ejecución. No es un OS Apple completo ni la aplicación iOS Simulator.
 
 ## Verificación
 
@@ -55,13 +55,27 @@ Las muestras C propias se generan con Clang y `ld64.lld`, sin SDK Apple ni binar
 
 Se añaden `open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl` y las entradas nocancel de read/write/open/close/fcntl/pread. Se admiten O_RDONLY/O_CLOEXEC y F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL. Cada open tiene posición independiente; los duplicados comparten posición y conservan flags close-on-exec individuales. pread no cambia la posición. Cerrar o sustituir 0/1/2 afecta a la I/O posterior; duplicar salida conserva destino y presupuesto.
 
-Límites: 256 archivos, 16 MiB totales de rutas/NUL/archivos/entrada, rutas menores de 1024 bytes y componentes de hasta 255. `descriptor_limit` es un techo exclusivo de 3–4096, por defecto 256; JSON conserva 64 KiB. La configuración inválida falla antes de cargar. read superior a INT_MAX devuelve EINVAL antes de consultar FD; EOF no toca el destino y un destino inválido da EFAULT. Un búfer parcialmente escribible detiene la operación antes de copiar o mover la posición. Los errores SET/CUR/END conservan la posición. Rutas relativas, apertura de directorios, escritura, stat antiguo, mapeos de archivo, seek disperso y otros fcntl siguen excluidos. Un archivo como antecesor devuelve ENOTDIR. El mismo objeto se contrasta con macOS nativo y C/CLI/Python cubren cinco combinaciones; no demuestra ejecución en un dispositivo iOS.
+Límites: 256 archivos, 16 MiB totales de rutas/NUL/archivos/entrada, rutas menores de 1024 bytes y componentes de hasta 255. `descriptor_limit` es un techo exclusivo de 3–4096, por defecto 256; JSON conserva 64 KiB. La configuración inválida falla antes de cargar. read superior a INT_MAX devuelve EINVAL antes de consultar FD; EOF no toca el destino y un destino inválido da EFAULT. Un búfer parcialmente escribible detiene la operación antes de copiar o mover la posición. Los errores SET/CUR/END conservan la posición. Rutas relativas, apertura de directorios, escritura, stat antiguo, seek disperso y otros fcntl siguen excluidos. Un archivo como antecesor devuelve ENOTDIR. El mismo objeto se contrasta con macOS nativo y C/CLI/Python cubren cinco combinaciones; no demuestra ejecución en un dispositivo iOS.
 
 Verificación Release de 2026-10-05: 381 registros, 177 aprobados, 204 omitidos, ningún fallo y 51/51 requisitos ARM64 HVF ejecutados. Pasaron también siete programas macOS nativos, 35 pruebas públicas C/CLI/informes, cinco combinaciones Python y 66 pruebas del verificador. Los recuentos se solapan. Los nuevos servicios no tienen evidencia nativa Intel HVF/KVM/WHP; Intel HVF sigue sin validar y sus Actions están suspendidas. Faltan el SDK iOS y la comparación con dispositivos.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## Mapeos privados de archivos
+
+`mmap` acepta archivos regulares del catálogo con `MAP_PRIVATE`: `flags=0x2` o `0x40002` con `MAP_UNIX03` y offset alineado a la página OS. Conserva todos los bytes del archivo dentro de la página aunque la longitud pedida sea menor; el resto de la página final EOF es cero. Las escrituras privadas solo cambian ese mapeo, sin alterar archivo, otros mapeos, metadatos fijos ni cursor compartido. El mapeo sobrevive a close y a reutilizar el FD. Los mapeos de solo lectura y PROT_NONE reciben sus bytes iniciales; `mprotect` puede permitir escritura.
+
+El desbordamiento del final, longitud UNIX03 cero y offset UNIX03 desalineado dan EINVAL antes de buscar FD; un FD inválido da EBADF antes del presupuesto. La longitud histórica cero también verifica el FD. Offsets históricos desalineados, flujos, archivos vacíos y páginas completas más allá de EOF detienen antes de asignar. macOS permite esos mapeos EOF pero el acceso produce SIGBUS; el modelo no inventa páginas cero legibles ni entrega de señales. Mapeos compartidos, fijos, ejecutables y JIT siguen excluidos.
+
+`DarwinFiles` resuelve FD y bytes; `DarwinMemory` gestiona ubicación, permisos, presupuesto y reversión. Los datos vienen solo de `darwin_files`. `file-mapping` verifica copias, close, cursores, errores y reutilización anónima; otra comparación nativa verifica un offset no nulo, la página entera y SIGBUS.
+
+[XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c)
+
+### Verificación de mapeos privados, 2026-10-05
+
+Release Darwin: 438 registros únicos, 210 aprobados, 228 omitidos, cero fallos. Se ejecutaron 57/57 requisitos ARM64 HVF y cinco combinaciones Unicorn. Pasaron nueve programas macOS nativos, la comparación de toda una página con offset no nulo y SIGBUS en un proceso hijo aislado. Los 36 casos API/informe no tuvieron omisiones; Python cubrió cinco combinaciones con `file-mapping`, además de 66 pruebas de herramientas y 38 de procedencia. Los recuentos se solapan. Evidencia: `build-hvf-arm64/darwin-mmap-verified-evidence/`. Sin nueva evidencia Intel HVF/KVM/WHP o iOS físico; Intel HVF Actions sigue suspendido.
 
 ## Metadatos explícitos de archivos
 
@@ -87,7 +101,7 @@ Cada archivo puede incluir `metadata`; todos los campos siguientes son obligator
 
 Con stat64: 409 registros únicos, 193 aprobados, 216 omitidos, ningún fallo; se ejecutaron 54/54 casos ARM64 HVF obligatorios y cinco combinaciones Unicorn. Pasaron la comparación SDK/registro real, ocho programas nativos, 36 casos API/informe sin omisiones, cinco combinaciones Python y 66 pruebas de herramientas; los recuentos se solapan. Cada caso nativo tiene su propio archivo de salida, evitando residuos tras salidas más cortas. Los añadidos carecen de evidencia nativa Intel HVF/KVM/WHP o iOS físico.
 
-Después: mapeos de archivos, directorios/rutas relativas y escritura acotada (páginas EOF, duración tras close, orden de errores), observaciones explícitas de tiempo/sistema, servicios Mach/hilos necesarios y dependencias Mach-O, rebases/binds, inicialización y TLS. Objective-C/Swift y Foundation/UIKit requieren programas nativos de referencia. iOS físico necesita SDK y dispositivo; Intel HVF sigue sin validar y sus Actions suspendidas.
+Después: mapeos compartidos y fallos de página EOF, directorios/rutas relativas y escritura acotada (páginas EOF, duración tras close, orden de errores), observaciones explícitas de tiempo/sistema, servicios Mach/hilos necesarios y dependencias Mach-O, rebases/binds, inicialización y TLS. Objective-C/Swift y Foundation/UIKit requieren programas nativos de referencia. iOS físico necesita SDK y dispositivo; Intel HVF sigue sin validar y sus Actions suspendidas.
 
 
 
@@ -98,7 +112,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La validación independiente exige los 54 casos nativos ARM64 o 36 x64, con `LC_MAIN` y `LC_UNIXTHREAD` en cada plataforma. Casos obligatorios ausentes/omitidos o falta de `ld64.lld` producen fallo.
+La validación independiente exige los 57 casos nativos ARM64 o 38 x64, con `LC_MAIN` y `LC_UNIXTHREAD` en cada plataforma. Casos obligatorios ausentes/omitidos o falta de `ld64.lld` producen fallo.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \

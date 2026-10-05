@@ -105,7 +105,8 @@ Memory services support private anonymous data mappings with descriptor -1
 and offset zero (`flags=0x1002`). Lengths and nonfixed hints round up to the OS
 page size; an occupied hint searches upward before falling back. The raw
 legacy zero-length mmap succeeds with address zero without allocating;
-`MAP_UNIX03` is outside this profile. Unmap/protect addresses must be aligned.
+`MAP_UNIX03` (`0x40000`) additionally permits the standard flag spelling
+and rejects zero length with EINVAL. Unmap/protect addresses must be aligned.
 NONE, READ and WRITE protections are supported, and WRITE
 implies READ. Physical owners are per OS page, so partial unmap releases its
 budget and subsequent mappings are zeroed. Maximum protections are distinct
@@ -113,7 +114,7 @@ from current rights. A failed protect across a hole or maximum-rights boundary
 leaves the complete range unchanged. The rules are grounded in XNU's
 [BSD VM services](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-File/shared/fixed/JIT mappings, executable anonymous mappings, Mach traps,
+Shared/fixed/JIT mappings, executable mappings, Mach traps,
 indirect system calls, threads, signals, host filesystem/network access, dyld
 linking, Objective-C/Swift runtime and Foundation/UIKit are outside this
 profile. They stop explicitly. This is neither a full Apple OS compatibility
@@ -153,12 +154,42 @@ writable destination stops before copying or advancing the cursor, because
 partial filesystem copyout effects are outside this model. Seek supports
 SET/CUR/END, preserving the cursor on negative-position or overflow errors.
 Relative/noncanonical paths, directory opens, writable files, legacy stat metadata,
-file-backed mmap, sparse-file seeks and other fcntl operations remain unsupported.
+sparse-file seeks and other fcntl operations remain unsupported.
 Path prefixes describe implicit directories; a regular file used as an ancestor
 returns ENOTDIR. The ABI is grounded in XNU's
 [read path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c),
 [open/seek path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_syscalls.c)
 and [descriptor operations](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_descrip.c).
+
+## Private file mappings
+
+`mmap` accepts `MAP_PRIVATE` regular catalogue-file mappings (`flags=0x2`
+or `0x40002` with `MAP_UNIX03`). Offsets must be OS-page aligned. The complete
+mapped pages contain the original file bytes, including bytes beyond a short
+requested length; the remaining part of the final EOF page is zero. Private
+writes change only that mapping. Independent mappings, original file bytes,
+fixed metadata and shared descriptor cursors remain independent. Closing or
+reusing the descriptor does not retire an existing mapping. Read-only and
+PROT_NONE mappings are initialized before their guest protections apply;
+`mprotect` can subsequently grant WRITE, which implies READ.
+
+File-end overflow and UNIX03 zero-length/alignment errors return EINVAL before
+FD lookup; an invalid FD returns EBADF before memory-budget admission. Legacy
+zero length still validates the FD and returns address zero without allocating.
+Legacy unaligned offsets, stream descriptors, empty-file pages and any complete
+page beyond EOF stop as unsupported before allocation. Native macOS accepts
+such EOF mappings but faults with SIGBUS on access; this model does not invent
+zero-filled readable pages or claim to deliver that signal. Shared, fixed,
+executable and JIT mappings remain outside the contract.
+
+`DarwinFiles` alone resolves descriptor kind and bytes. `DarwinMemory` owns
+placement, page allocation, maximum protection and rollback; mapping bytes are
+charged to the existing memory limit. All file data comes from `darwin_files`,
+with no host-file passthrough. The independent `file-mapping` workload checks
+private writes, close lifetime, cursor preservation, errors and anonymous page
+reuse. A separate native comparison checks a nonzero file offset, every byte
+of the final page and the real SIGBUS boundary. ABI reference:
+[XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
 
 ## Explicit file metadata
 
@@ -226,7 +257,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 54 cases on ARM64, or 36 on x64.
+on each platform supported by the host ISA: 57 cases on ARM64, or 38 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -277,11 +308,24 @@ full-record comparisons passed, along with all eight original macOS programs,
 output file per case, fixing stale trailing bytes after shorter outputs.
 These additions still have no native Intel HVF/KVM/WHP or physical iOS evidence.
 
+### Private mapping verification, 2026-10-05
+
+The Release Darwin gate reconciled 438 unique registrations: 210 passed,
+228 skipped and zero failed. All 57 required ARM64 HVF cases executed;
+Unicorn covered all five guest platform/ISA combinations. All nine original
+native macOS programs passed. A separate native test compared every byte of
+a nonzero-offset EOF page and confirmed SIGBUS in an isolated child for the
+next complete page. All 36 public/report checks ran without skips, and Python
+executed all five combinations, including `file-mapping`. The 66 evidence-runner
+and 38 provenance regression tests passed. Counts overlap. Evidence is under
+`build-hvf-arm64/darwin-mmap-verified-evidence/`; this adds no Intel HVF/KVM/WHP
+or physical iOS acceptance. Intel HVF Actions remain suspended.
+
 ### Remaining environment work
 
-1. Extend the file model with private file-backed mappings, directory/relative
-   path operations and carefully bounded writable state. Acceptance must cover
-   EOF pages, mapping lifetime after close, shared cursors and error ordering.
+1. Extend the file model with directory/relative paths, bounded writable state,
+   shared mappings and EOF fault delivery. Keep native acceptance for cursor,
+   mapping lifetime and error-order interactions as the supported set grows.
 2. Add explicit time/system observations and required Mach/thread services,
    then Mach-O dependency loading, rebases/binds, initializers and TLS. Validate
    small real executables at each boundary before admitting general libraries.

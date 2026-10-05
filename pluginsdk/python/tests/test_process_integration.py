@@ -500,7 +500,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
                                            ("stdin", b"\x00\xffx"),
                                            ("output-descriptors", b"ok"),
-                                           ("file-status", b"s")):
+                                           ("file-status", b"s"), ("file-mapping", b"m")):
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
                             "darwin_files": {"files": [{"path": "/data", "bytes_hex":

@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3b9d7209329fb16b2966b305f8f5b8500d70521138d9ed32d89eda56e9018d1 -->
+<!-- i18n-source: adbd03b9316f8ea1f40f8be5f361cd5014048848e2ba6cffebb64faa36f86156 -->
 
 [← 文件索引](README.md)
 
@@ -41,9 +41,9 @@ ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別 `0x02000000`�
 
 服務包含 `exit`、`write`、`getpid`、`getppid`、`getuid`、`geteuid`、`getgid`、`getegid`、`mmap`、`mprotect`、`munmap`。PID/UID/GID 固定為 1000，PPID 為 1。描述元 1、2 擷取原始位元組，包含 NUL 與非 UTF8；關閉或唯讀描述元返回 EBADF。部分複製已取得的資料會保留，但後續錯誤仍為 EFAULT。長度超過 `INT_MAX` 時，先返回 EINVAL，再談描述元、指標或預算檢查，依據 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)。
 
-記憶體服務支援私有匿名資料映射：`flags=0x1002`、描述元 -1、offset 零。長度及非固定提示位址向上取整至 OS 頁；提示已占用時先向上搜尋，再回到預設配置區。舊式原始 mmap 零長度返回零且不配置；`MAP_UNIX03` 不在契約內。Unmap/protect 位址必須對齊。支援 NONE/READ/WRITE，WRITE 隱含 READ。每個 OS 頁獨立持有實體記憶體，部分解除映射可釋放預算，新頁面清零。Protect 跨空洞或超過最大權限時，整個範圍維持原狀。來源：[XNU VM 服務](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c)。
+記憶體服務支援私有匿名資料映射：`flags=0x1002`、描述元 -1、offset 零。長度及非固定提示位址向上取整至 OS 頁；提示已占用時先向上搜尋，再回到預設配置區。舊式原始 mmap 零長度返回零且不配置；`MAP_UNIX03` 已支援，零長度返回 EINVAL。Unmap/protect 位址必須對齊。支援 NONE/READ/WRITE，WRITE 隱含 READ。每個 OS 頁獨立持有實體記憶體，部分解除映射可釋放預算，新頁面清零。Protect 跨空洞或超過最大權限時，整個範圍維持原狀。來源：[XNU VM 服務](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c)。
 
-檔案／共享／固定／JIT 映射、匿名可執行映射、Mach trap、間接系統呼叫、執行緒、訊號、宿主檔案／網路、dyld、Objective-C/Swift runtime 和 Foundation/UIKit 均不支援，會明確停止。這不是完整 Apple OS，也不是 iOS Simulator 應用程式。
+共享／固定／JIT 映射、匿名可執行映射、Mach trap、間接系統呼叫、執行緒、訊號、宿主檔案／網路、dyld、Objective-C/Swift runtime 和 Foundation/UIKit 均不支援，會明確停止。這不是完整 Apple OS，也不是 iOS Simulator 應用程式。
 
 ## 驗證
 
@@ -55,13 +55,27 @@ ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別 `0x02000000`�
 
 新增 `open`、`read`、`pread`、`lseek`、`close`、`dup`、`dup2`、`fcntl`；read/write/open/close/fcntl/pread 的 nocancel 入口共用實作。支援 O_RDONLY/O_CLOEXEC 與 F_DUPFD、F_DUPFD_CLOEXEC、F_GETFD、F_SETFD、F_GETFL。獨立開啟有獨立游標，複製描述元共用游標但各自保留 close-on-exec；pread 不移動游標。關閉或替換 0/1/2 會影響後續 I/O，複製輸出仍使用原擷取通道與共享預算。
 
-上限為 256 個檔案、路徑/NUL/檔案/輸入合計 16 MiB、路徑少於 1024 位元組、每個分量最多 255 位元組。`descriptor_limit` 為排他上界 3–4096，預設 256；JSON 仍限 64 KiB。非法設定在載入前拒絕。read 超過 INT_MAX 先返回 EINVAL；EOF 不存取目的位址，無效位址返回 EFAULT。部分可寫緩衝區在任何複製或游標改動前停止。SET/CUR/END 定位失敗保留游標。相對路徑、目錄開啟、寫入檔案、舊版 stat、檔案映射、稀疏定位及其他 fcntl 仍未支援。普通檔案作為祖先返回 ENOTDIR。同一原始目標檔案對照原生 macOS；C/CLI/Python 涵蓋五種客體組合，不代表 iOS 真機驗證。
+上限為 256 個檔案、路徑/NUL/檔案/輸入合計 16 MiB、路徑少於 1024 位元組、每個分量最多 255 位元組。`descriptor_limit` 為排他上界 3–4096，預設 256；JSON 仍限 64 KiB。非法設定在載入前拒絕。read 超過 INT_MAX 先返回 EINVAL；EOF 不存取目的位址，無效位址返回 EFAULT。部分可寫緩衝區在任何複製或游標改動前停止。SET/CUR/END 定位失敗保留游標。相對路徑、目錄開啟、寫入檔案、舊版 stat、稀疏定位及其他 fcntl 仍未支援。普通檔案作為祖先返回 ENOTDIR。同一原始目標檔案對照原生 macOS；C/CLI/Python 涵蓋五種客體組合，不代表 iOS 真機驗證。
 
 2026-10-05 Release Darwin 驗收共 381 項：177 通過、204 跳過、零失敗，ARM64 HVF 必需項 51/51 執行。原生 macOS 7 個程式、公共 C/CLI 與報告 35 項、Python 五種客體組合和驗收腳本 66 項通過，計數有重疊。新增檔案服務尚無 Intel HVF/KVM/WHP 原生證據；Intel HVF 仍未驗證且暫停 Actions。宿主缺少 iOS SDK，也沒有 iOS 真機對照。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## 私有檔案映射
+
+`mmap` 支援一般目錄檔案的 `MAP_PRIVATE` 映射：`flags=0x2`，或加上 `MAP_UNIX03` 的 `0x40002`；偏移必須按 OS 頁對齊。即使要求長度較短，整頁仍保留原始檔案位元組，EOF 尾頁剩餘部分清零。私有寫入不改變原檔、其他映射、固定中繼資料或共用游標。close 或重用描述元後映射仍有效。唯讀與 PROT_NONE 映射也有完整初始內容，可透過 `mprotect` 增加寫入權限。
+
+檔案末尾溢位、UNIX03 零長度或未對齊偏移在 FD 查詢前返回 EINVAL；無效 FD 在預算檢查前返回 EBADF。舊式零長度仍檢查 FD，然後返回零而不配置。舊式未對齊偏移、串流、空檔頁和完整越過 EOF 的頁在配置前明確停止。原生 macOS 允許映射 EOF 外完整頁，但存取會觸發 SIGBUS；模型不偽造零頁或訊號傳遞。共享、固定、可執行與 JIT 映射仍未支援。
+
+`DarwinFiles` 管理描述元和位元組，`DarwinMemory` 管理配置、權限、預算與回滾；資料只來自 `darwin_files`。`file-mapping` 原生/客體程式檢查私有寫入、close 後壽命、游標、錯誤與匿名頁重用；獨立原生測試比對非零偏移、整頁內容與 SIGBUS 邊界。
+
+[XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c)
+
+### 私有映射驗證（2026-10-05）
+
+Release Darwin：438 個唯一登記項，210 通過、228 跳過、零失敗；57/57 個 ARM64 HVF 必需項執行，Unicorn 涵蓋五種客體組合。9 個原生 macOS 程式、非零偏移整頁比對與隔離子程序 SIGBUS 驗證通過。36 項公共介面/報告無跳過，Python 五種組合含 `file-mapping`、66 項驗收腳本和 38 項來源回歸通過，計數重疊。證據：`build-hvf-arm64/darwin-mmap-verified-evidence/`。尚無新增 Intel HVF/KVM/WHP 或 iOS 真機證據；Intel HVF Actions 繼續暫停。
 
 ## 明確的檔案中繼資料
 
@@ -87,7 +101,7 @@ ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別 `0x02000000`�
 
 stat64 的 Release 驗收共 409 個唯一項目：193 通過、216 跳過、零失敗；54/54 個 ARM64 HVF 必需項目執行，Unicorn 涵蓋五種客體組合。SDK 配置及真實檔案完整記錄比對、8 個原生程式、36 個公共介面/報告測試（無跳過）、Python 五種組合和 66 個驗收腳本測試均通過，計數有重疊。原生測試每例使用獨立輸出檔案，修復短輸出殘留舊尾端位元組的問題。新增功能仍無 Intel HVF/KVM/WHP 或 iOS 真機證據。
 
-後續依序補檔案映射、目錄/相對路徑及有界寫入（驗證 EOF 頁、close 後映射壽命與錯誤順序），顯式時間/系統資訊、必要 Mach/執行緒服務、Mach-O 相依性與重定位/繫結、初始化/TLS，再以原生程式推進 Objective-C/Swift 與 Foundation/UIKit。iOS 真機比對需要 SDK 與設備；Intel HVF 尚未驗證，Actions 繼續暫停。
+後續依序補共享映射與 EOF 缺頁、目錄/相對路徑及有界寫入（驗證 EOF 頁、close 後映射壽命與錯誤順序），顯式時間/系統資訊、必要 Mach/執行緒服務、Mach-O 相依性與重定位/繫結、初始化/TLS，再以原生程式推進 Objective-C/Swift 與 Foundation/UIKit。iOS 真機比對需要 SDK 與設備；Intel HVF 尚未驗證，Actions 繼續暫停。
 
 
 
@@ -98,7 +112,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 54 項或 x64 36 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 57 項或 x64 38 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \

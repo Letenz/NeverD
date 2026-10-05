@@ -316,6 +316,15 @@ ServiceResult DarwinFiles::seek(Description &File, uint64_t Offset,
   return {Base, false};
 }
 
+DarwinFiles::MappingSource DarwinFiles::mappingSource(uint32_t FD) const {
+  auto I = Descriptors.find(FD);
+  if (I == Descriptors.end())
+    return uint32_t(BadDescriptor);
+  if (I->second.Open->Type != Kind::File)
+    return diagnostic::MemoryFileKind;
+  return I->second.Open->Bytes;
+}
+
 ServiceResult DarwinFiles::duplicate(const Descriptor &Source, uint32_t Minimum,
                                      bool CloseOnExec) {
   const uint32_t FD = freeDescriptor(Minimum);

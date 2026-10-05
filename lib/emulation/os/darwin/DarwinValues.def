@@ -44,6 +44,7 @@ NEVERD_DARWIN_VALUE(NoMemory, 12)
 NEVERD_DARWIN_VALUE(PermissionDenied, 13)
 NEVERD_DARWIN_VALUE(MapPrivate, 0x2)
 NEVERD_DARWIN_VALUE(MapAnonymous, 0x1000)
+NEVERD_DARWIN_VALUE(MapUnix03, 0x40000)
 NEVERD_DARWIN_VALUE(ProtRead, 1)
 NEVERD_DARWIN_VALUE(ProtWrite, 2)
 NEVERD_DARWIN_VALUE(ProtExecute, 4)
@@ -115,8 +116,16 @@ NEVERD_DARWIN_DIAGNOSTIC(
     FilePartialRead,
     "Darwin read into a partially writable buffer is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(
-    MemoryMode, "unsupported Darwin memory mode (only private anonymous "
-                "data mappings; no JIT, file or private-gate mutation)")
+    MemoryMode,
+    "unsupported Darwin memory mode (only private anonymous or "
+    "catalogue-file data mappings; no JIT or private-gate mutation)")
+NEVERD_DARWIN_DIAGNOSTIC(MemoryFileKind,
+                         "Darwin mapping requires a regular catalogue file")
+NEVERD_DARWIN_DIAGNOSTIC(MemoryFileOffset,
+                         "Darwin legacy unaligned file mapping is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    MemoryFileExtent,
+    "Darwin mapping of complete pages beyond EOF is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(MemoryDevice,
                          "Darwin memory service encountered device memory")
 NEVERD_DARWIN_DIAGNOSTIC(MemoryMaximum,

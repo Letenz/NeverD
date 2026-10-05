@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3b9d7209329fb16b2966b305f8f5b8500d70521138d9ed32d89eda56e9018d1 -->
+<!-- i18n-source: adbd03b9316f8ea1f40f8be5f361cd5014048848e2ba6cffebb64faa36f86156 -->
 
 [← 문서 목록](README.md)
 
@@ -41,9 +41,9 @@ ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x020
 
 지원 서비스는 `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`입니다. PID/UID/GID는 1000, PPID는 1입니다. 설명자 1과 2는 NUL과 비 UTF8을 포함한 바이트를 캡처하고 닫혔거나 읽기 전용인 설명자는 EBADF를 반환합니다. 부분 복사된 바이트는 유지하지만 이후 오류는 EFAULT로 남습니다. 길이가 `INT_MAX`를 넘으면 설명자, 포인터, 예산을 검사하기 전에 EINVAL을 반환합니다. 근거는 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)입니다.
 
-메모리 서비스는 `flags=0x1002`, 설명자 -1, 오프셋 0의 전용 익명 데이터 매핑을 지원합니다. 길이와 고정되지 않은 주소 힌트는 OS 페이지로 올림합니다. 점유된 힌트는 높은 주소부터 검색한 뒤 기본 배치로 돌아갑니다. 기존 raw mmap은 길이 0에서 할당 없이 0을 반환하며 `MAP_UNIX03`은 제외됩니다. Unmap/protect는 정렬된 주소를 요구합니다. NONE/READ/WRITE를 지원하고 WRITE는 READ를 포함합니다. 물리 메모리는 OS 페이지별로 소유하므로 부분 해제는 예산을 반환하고 새 페이지는 0으로 채워집니다. 빈 구간이나 최대 권한을 넘는 protect가 실패하면 전체 범위를 변경하지 않습니다. 출처: [XNU VM 서비스](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
+메모리 서비스는 `flags=0x1002`, 설명자 -1, 오프셋 0의 전용 익명 데이터 매핑을 지원합니다. 길이와 고정되지 않은 주소 힌트는 OS 페이지로 올림합니다. 점유된 힌트는 높은 주소부터 검색한 뒤 기본 배치로 돌아갑니다. 기존 raw mmap은 길이 0에서 할당 없이 0을 반환하며 `MAP_UNIX03`을 지원하며 길이 0은 EINVAL입니다. Unmap/protect는 정렬된 주소를 요구합니다. NONE/READ/WRITE를 지원하고 WRITE는 READ를 포함합니다. 물리 메모리는 OS 페이지별로 소유하므로 부분 해제는 예산을 반환하고 새 페이지는 0으로 채워집니다. 빈 구간이나 최대 권한을 넘는 protect가 실패하면 전체 범위를 변경하지 않습니다. 출처: [XNU VM 서비스](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-파일/공유/고정/JIT 매핑, 실행 가능한 익명 메모리, Mach trap, 간접 syscall, 스레드, 신호, 호스트 파일/네트워크, dyld, Objective-C/Swift runtime, Foundation/UIKit은 지원하지 않으며 명시적으로 중지합니다. 전체 Apple OS나 iOS Simulator 애플리케이션이 아닙니다.
+공유/고정/JIT 매핑, 실행 가능한 익명 메모리, Mach trap, 간접 syscall, 스레드, 신호, 호스트 파일/네트워크, dyld, Objective-C/Swift runtime, Foundation/UIKit은 지원하지 않으며 명시적으로 중지합니다. 전체 Apple OS나 iOS Simulator 애플리케이션이 아닙니다.
 
 ## 검증
 
@@ -55,13 +55,27 @@ ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x020
 
 `open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl`을 추가합니다. read/write/open/close/fcntl/pread의 nocancel도 같은 구현을 사용합니다. O_RDONLY/O_CLOEXEC와 F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL을 지원합니다. 개별 open은 독립 위치를, dup은 공유 위치와 독립 close-on-exec 플래그를 가지며 pread는 위치를 바꾸지 않습니다. 0/1/2의 닫기와 교체는 이후 I/O에 적용되고 복제 출력은 원래 캡처 대상과 예산을 유지합니다.
 
-최대 256개 파일, 경로/NUL/파일/입력 합계 16 MiB, 1024바이트 미만 경로와 255바이트 이하 구성 요소를 허용합니다. 배타적 상한 `descriptor_limit`은 3–4096, 기본 256이며 JSON은 64 KiB입니다. 잘못된 설정은 로드 전에 거부합니다. INT_MAX 초과 읽기는 FD 조회 전에 EINVAL이며 EOF는 목적지에 접근하지 않고 잘못된 목적지는 EFAULT입니다. 일부만 쓰기 가능한 버퍼는 복사와 위치 변경 전에 중지합니다. SET/CUR/END 실패는 위치를 보존합니다. 상대 경로, 디렉터리 열기, 쓰기, 구형 stat, 파일 매핑, 희소 seek와 기타 fcntl은 미지원입니다. 파일을 경로 조상으로 쓰면 ENOTDIR입니다. 같은 오브젝트를 네이티브 macOS와 비교하고 C/CLI/Python으로 다섯 게스트 조합을 검사하며 iOS 실기기 검증은 아닙니다.
+최대 256개 파일, 경로/NUL/파일/입력 합계 16 MiB, 1024바이트 미만 경로와 255바이트 이하 구성 요소를 허용합니다. 배타적 상한 `descriptor_limit`은 3–4096, 기본 256이며 JSON은 64 KiB입니다. 잘못된 설정은 로드 전에 거부합니다. INT_MAX 초과 읽기는 FD 조회 전에 EINVAL이며 EOF는 목적지에 접근하지 않고 잘못된 목적지는 EFAULT입니다. 일부만 쓰기 가능한 버퍼는 복사와 위치 변경 전에 중지합니다. SET/CUR/END 실패는 위치를 보존합니다. 상대 경로, 디렉터리 열기, 쓰기, 구형 stat, 희소 seek와 기타 fcntl은 미지원입니다. 파일을 경로 조상으로 쓰면 ENOTDIR입니다. 같은 오브젝트를 네이티브 macOS와 비교하고 C/CLI/Python으로 다섯 게스트 조합을 검사하며 iOS 실기기 검증은 아닙니다.
 
 2026-10-05 Release 검증은 381개 중 177개 통과, 204개 건너뜀, 실패 0이며 ARM64 HVF 필수 51/51을 실행했습니다. 네이티브 macOS 7개 프로그램, 공개 C/CLI 및 보고서 35개, Python 다섯 게스트 조합과 검증 스크립트 66개도 통과했습니다. 집계는 겹칩니다. 새 파일 서비스의 Intel HVF/KVM/WHP 네이티브 증거는 없으며 Intel HVF는 미검증 상태로 Actions가 중지되어 있습니다. iOS SDK와 실기기 대조도 없습니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## 전용 파일 매핑
+
+`mmap`은 일반 카탈로그 파일의 `MAP_PRIVATE`를 지원합니다. `flags=0x2` 또는 `MAP_UNIX03`을 더한 `0x40002`를 쓰며 오프셋은 OS 페이지에 정렬해야 합니다. 짧은 길이를 요청해도 페이지의 원본 파일 바이트를 유지하고 EOF 마지막 페이지의 나머지는 0으로 채웁니다. 전용 쓰기는 해당 매핑만 변경하며 원본, 다른 매핑, 고정 메타데이터와 공유 커서를 바꾸지 않습니다. close 또는 설명자 재사용 후에도 매핑은 유지됩니다. 읽기 전용과 PROT_NONE도 초기 바이트를 보존하며 `mprotect`로 쓰기를 허용할 수 있습니다.
+
+파일 끝 산술 오버플로, UNIX03의 길이 0 및 미정렬 오프셋은 FD 조회 전 EINVAL, 잘못된 FD는 예산 검사 전 EBADF입니다. 기존 길이 0도 FD를 검사한 뒤 할당 없이 0을 반환합니다. 기존 미정렬 오프셋, 스트림, 빈 파일 페이지, 완전히 EOF 밖인 페이지는 할당 전에 미지원으로 중지합니다. macOS는 EOF 밖 매핑을 허용하지만 접근 시 SIGBUS가 발생하므로 모델은 읽을 수 있는 0 페이지나 신호 전달을 만들지 않습니다. 공유, 고정, 실행 가능, JIT 매핑은 미지원입니다.
+
+`DarwinFiles`는 설명자와 바이트를, `DarwinMemory`는 배치·권한·예산·롤백을 소유합니다. 데이터는 `darwin_files`만 사용합니다. 동일한 `file-mapping` 프로그램으로 전용 쓰기, close 이후 수명, 커서, 오류와 익명 페이지 재사용을 검증합니다. 별도 네이티브 비교는 0이 아닌 파일 오프셋, 전체 페이지와 실제 SIGBUS 경계를 검사합니다.
+
+[XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c)
+
+### 전용 매핑 검증 (2026-10-05)
+
+Release Darwin은 고유 등록 438건 중 210건 통과, 228건 건너뜀, 실패 0건입니다. ARM64 HVF 필수 57/57건을 실행했고 Unicorn은 다섯 게스트 조합을 검증했습니다. 네이티브 macOS 프로그램 9개, 비영 오프셋 전체 페이지 비교와 격리 자식 프로세스의 SIGBUS 검증이 통과했습니다. 공개 API/보고서 36건은 건너뜀 없이 통과했고 Python 다섯 조합의 `file-mapping`, 검증 스크립트 66건과 출처 회귀 38건도 통과했습니다. 집계는 중복됩니다. 증거: `build-hvf-arm64/darwin-mmap-verified-evidence/`. 새 Intel HVF/KVM/WHP 및 iOS 실기기 증거는 없으며 Intel HVF Actions는 중지 상태입니다.
 
 ## 명시적 파일 메타데이터
 
@@ -87,7 +101,7 @@ ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x020
 
 stat64 추가 후 Release 검증은 고유 409건 중 193건 통과, 216건 건너뜀, 실패 0건입니다. ARM64 HVF 필수 54/54건을 실행했고 Unicorn은 다섯 게스트 조합을 검증했습니다. SDK 배치 및 실제 레코드 전체 비교, 네이티브 프로그램 8개, 공개 API/보고서 36건(건너뜀 없음), Python 다섯 조합, 검증 스크립트 66건도 통과했습니다. 집계는 중복됩니다. 네이티브 테스트의 출력 파일을 사례별로 분리해 짧은 출력에 이전 끝 바이트가 남는 문제를 수정했습니다. 추가 기능의 Intel HVF/KVM/WHP 및 iOS 실기기 증거는 없습니다.
 
-다음은 파일 매핑, 디렉터리/상대 경로, 제한된 쓰기(EOF 페이지, close 이후 수명, 오류 순서 검증), 명시적 시간/시스템 정보, 필수 Mach/스레드 서비스, Mach-O 의존성·재배치/바인딩·초기화/TLS 순입니다. 이후 실제 네이티브 프로그램으로 Objective-C/Swift와 Foundation/UIKit을 검증합니다. iOS 실기기는 SDK와 장치가 필요하며 Intel HVF는 미검증이고 Actions는 계속 중지합니다.
+다음은 공유 매핑과 EOF 페이지 오류, 디렉터리/상대 경로, 제한된 쓰기(EOF 페이지, close 이후 수명, 오류 순서 검증), 명시적 시간/시스템 정보, 필수 Mach/스레드 서비스, Mach-O 의존성·재배치/바인딩·초기화/TLS 순입니다. 이후 실제 네이티브 프로그램으로 Objective-C/Swift와 Foundation/UIKit을 검증합니다. iOS 실기기는 SDK와 장치가 필요하며 Intel HVF는 미검증이고 Actions는 계속 중지합니다.
 
 
 
@@ -98,7 +112,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 54개 또는 x64 36개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 57개 또는 x64 38개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
