@@ -1342,3 +1342,5 @@ block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重�
 原生循环关系测试在任意迭代次数下检查延迟条件分支收集和保留未审核拒绝边界。手工及推断方案必须重新检查完整入口域和归纳域；可达的坏分支、被修改的原生更新及查询或指令预算耗尽都拒绝证书。测试绑定被修改的不可达边界字节，保留严格默认值和无效方案拒绝，检查两种见证及组合收集选项，并继续拒绝静态 API 和重叠指令。证书语义模式 16 绑定此准入；普通原生 ABI 和源码组合仍是独立义务。
 
 `ObjCSuperGetterSources` 覆盖四载体 CGRect getter、十项发布变更拒绝用例，以及布尔/CGRect 调用者共用机器代码的情况。O0、O2 执行验证检查精确返回位（含负零、无穷及 NaN 载荷）、接收者/类身份和元数据调用之后的选择子加载。Apple ARM64 同时执行原始编译器 thunk 和生成的 C；其他平台使用本机记录 ABI 执行生成的 C。
+
+`ObjCMergedSetterSources.CGRect*` 覆盖四个值载体、helper/调用入口/布局 stub 的每条指令，以及当前导入、selector、声明、帧证据和发布出现位置的变更。O0/O2 执行 oracle 在 Apple ARM64 上对照生成 C 与原始 39 条 ARM64 指令，检查负零、无穷和 NaN payload 的位模式，原始与 retained receiver 身份、superclass metadata、前序调用之后的 selector 加载、ARC 顺序、计数器回绕和相邻存储保护。其他主机以自身 record ABI 执行生成 C。WMF 限定入口的增益仍需独立的全量方法与原生状态对比。 `CurrentSelectorEncodingChecksMethodsAndProtocols` 拒绝过期类型、selector 或编码，同时保留仅提供声明的客户端及显式源码名称。

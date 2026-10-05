@@ -1380,3 +1380,5 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 原生迴圈關係測試在任意迭代次數下檢查延後條件分支收集及保留未審核拒絕邊界。手動與推斷方案都必須重新檢查完整入口域和歸納域；可達的錯誤分支、修改過的原生更新及查詢或指令預算耗盡都拒絕憑證。測試綁定變更的不可達邊界位元組，保留嚴格預設值與無效方案拒絕，檢查兩種見證及組合收集選項，並繼續拒絕靜態 API 與重疊指令。憑證語意綱要 16 綁定此准入；一般原生 ABI 和原始碼組合仍是獨立義務。
 
 `ObjCSuperGetterSources` 涵蓋四載體 CGRect getter、十項發布變更拒絕案例，以及布林/CGRect 呼叫者共用機器碼的情況。O0、O2 執行驗證檢查精確回傳位元（含負零、無窮及 NaN 酬載）、接收者/類別身分和中繼資料呼叫之後的選擇子載入。Apple ARM64 同時執行原始編譯器 thunk 和產生的 C；其他平台使用本機紀錄 ABI 執行產生的 C。
+
+`ObjCMergedSetterSources.CGRect*` 涵蓋四個值載體、helper/呼叫入口/版面 stub 的每條指令，以及目前匯入、selector、宣告、框架證據與發布出現位置的變更。O0/O2 執行 oracle 在 Apple ARM64 上比對產生的 C 與原始 39 條 ARM64 指令，檢查負零、無窮與 NaN payload 的位元模式，原始與 retained receiver 身分、superclass metadata、先前呼叫之後的 selector 載入、ARC 順序、計數器回繞與相鄰儲存保護。其他主機以本身的 record ABI 執行產生的 C。WMF 限定入口的增益仍需獨立的全量方法與原生狀態比對。 `CurrentSelectorEncodingChecksMethodsAndProtocols` 拒絕過期型別、selector 或編碼，同時保留僅提供宣告的用戶端與明確原始碼名稱。

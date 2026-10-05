@@ -1434,3 +1434,5 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 ネイティブループ関係テストは、任意回数の反復で条件分岐の遅延収集と未監査拒否境界の保持を検査します。手動・推論プランとも入口と帰納領域全体の再検査が必要で、到達可能な不正分岐、変更されたネイティブ更新、問い合わせ・命令予算切れは証明書を拒否します。到達不能境界の変更バイトも束縛し、厳密な既定値と不正プラン拒否、両証人方針、収集オプションの併用、静的 API と重複命令の拒否を検査します。意味スキーマ 16 がこの受理範囲を束縛し、通常のネイティブ ABI とソース合成は別の義務です。
 
 `ObjCSuperGetterSources` は 4 キャリアの CGRect getter、10 種の公開情報改変の拒否、同じ機械語本体を使う Boolean/CGRect 呼出元を検証します。O0 と O2 の実行比較で、正確な戻り値ビット（負のゼロ、無限大、NaN ペイロードを含む）、受信者とクラスの同一性、メタデータ呼出後のセレクタ読込みを確認します。Apple ARM64 は元のコンパイラ thunk と生成 C の両方を実行し、他のホストはネイティブのレコード ABI で生成 C を実行します。
+
+`ObjCMergedSetterSources.CGRect*` は四つの値キャリア、helper・入口・layout stub の全命令、および現在の import、selector、宣言、フレーム証拠、公開箇所の変更を検査する。O0/O2 の実行 oracle は Apple ARM64 上で生成 C と元の39命令の ARM64 本体を比較し、符号付きゼロ、無限大、NaN payload のビット、元の receiver と retain 後の receiver、superclass metadata、先行呼び出し後の selector ロード、ARC 順序、カウンタのラップ、隣接領域のガードを確認する。他のホストでは固有の record ABI で生成 C を実行する。限定 WMF 入口の改善には独立した全件メソッド・ネイティブ状態比較が必要である。 `CurrentSelectorEncodingChecksMethodsAndProtocols` は古い型、selector、encoding を拒否し、宣言のみのクライアントと明示的なソース名を維持する。

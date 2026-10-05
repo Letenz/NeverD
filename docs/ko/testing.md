@@ -1424,3 +1424,5 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 네이티브 루프 관계 테스트는 임의 반복 횟수에서 조건 분기 지연 수집과 미감사 거부 경계 보존을 검사합니다. 수동 및 추론 계획은 전체 진입 영역과 귀납 영역을 다시 검사해야 하며, 도달 가능한 잘못된 분기, 변경된 네이티브 갱신, 질의·명령 예산 소진은 인증서를 거부합니다. 도달 불가능한 경계의 변경 바이트를 바인딩하고 엄격한 기본값과 잘못된 계획 거부, 두 증인 정책, 수집 옵션 조합, 정적 API와 중첩 명령 거부를 확인합니다. 의미 스키마 16가 이 허용 범위를 바인딩하며 일반 네이티브 ABI와 소스 합성은 별도 의무입니다.
 
 `ObjCSuperGetterSources`는 네 캐리어 CGRect getter, 열 가지 게시 정보 변조 거부, 같은 기계 본문을 공유하는 Boolean/CGRect 호출자를 검사합니다. O0와 O2 실행 비교는 정확한 반환 비트(음의 영, 무한대, NaN 페이로드 포함), 수신자/클래스 식별, 메타데이터 호출 후 선택자 로드를 확인합니다. Apple ARM64는 원래 컴파일러 thunk와 생성 C를 함께 실행하고, 다른 호스트는 네이티브 레코드 ABI로 생성 C를 실행합니다.
+
+`ObjCMergedSetterSources.CGRect*`는 네 개의 값 전달 위치, helper/진입점/layout stub의 모든 명령과 현재 import, selector, 선언, 프레임 증거 및 게시 발생 위치의 변경을 검사한다. O0/O2 실행 oracle은 Apple ARM64에서 생성 C와 원래 39개 ARM64 명령을 비교한다. 부호 있는 0, 무한대, NaN payload 비트, 원본과 retained receiver 식별, superclass metadata, 앞선 호출 이후의 selector 로드, ARC 순서, 카운터 순환 및 인접 저장 영역 보호를 확인한다. 다른 호스트에서는 해당 record ABI로 생성 C를 실행한다. 제한된 WMF 진입점의 개선에는 독립적인 전체 메서드 및 네이티브 상태 비교가 여전히 필요하다. `CurrentSelectorEncodingChecksMethodsAndProtocols`는 오래된 타입, selector 또는 encoding을 거부하면서 선언 전용 클라이언트와 명시적 소스 이름을 유지한다.
