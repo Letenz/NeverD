@@ -140,8 +140,12 @@ BionicResult GuestThreads::create(const NativeCallEvent &Call) {
                           (Threads.size() - 1) * thread_model::ArenaStride;
   const uint64_t MappingBase = Handle + PageSize;
   if (auto E =
-          Space.map(MappingBase, MappingSize, Read | Write | UserAccessible))
-    return std::move(E);
+          Space.map(MappingBase, MappingSize, Read | Write | UserAccessible)) {
+    if (!E.isA<GuestMemoryLimitError>())
+      return std::move(E);
+    llvm::consumeError(std::move(E));
+    return value(linux_model::TryAgain);
+  }
   auto Rollback = llvm::make_scope_exit(
       [&] { llvm::consumeError(Space.unmap(MappingBase, MappingSize)); });
   if (Guard)
@@ -345,7 +349,8 @@ BionicResult GuestThreads::invoke(const NativeCallEvent &Call) {
   if (Name == symbol::ThreadJoin && A[0] == current().Report.Handle)
     return value(linux_model::Deadlock);
   if (!A[0])
-    return value(linux_model::NoSuchProcess);
+    return value(Name == symbol::ThreadGetTID ? uint64_t(UINT32_MAX)
+                                             : linux_model::NoSuchProcess);
   size_t Index = 0;
   while (Index < Threads.size() && (Threads[Index].Report.Handle != A[0] ||
                                     Threads[Index].Report.Retired))
