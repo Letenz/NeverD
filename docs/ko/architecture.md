@@ -120,6 +120,16 @@ Objective-C 수신자 정보는 메서드 진입점의 self와 정확한 클래�
 
 이미지나 디버그 투영을 요청하지 않으면 LLVMC가 스칼라 루프 복원을 자동 호출합니다. 제한된 스캔은 함수당 최대 1024개 블록을 허용합니다. 복원과 LLVM 정리는 모듈 공유 예산으로 반복하며 최종 본문을 공유 임포터와 SymExec로 원본 함수에 대해 다시 증명합니다. 출력기 복사본만 변경하고 함수 정체성, 속성, 호출자와 내장 함수 연결을 유지합니다. 기호 충돌, 외부에 보관된 블록 주소, 함수 메타데이터와 예외 매핑은 기존 경로를 유지합니다. 거부 또는 예산 소진 시 중간 함수를 내보내지 않으며 단일 함수 출력은 선택된 대상만 정규화합니다. 네이티브 입력 인터페이스나 메모리 비공개성은 추론하지 않습니다.
 
+스칼라 후보를 증명한 뒤 LLVMC는 `SymSimplifyPass::simplifyPredicates`를 재사용해 새로 드러난 모듈러 산술 조건을 처리합니다. 기존의 정확한 단계는 poison, 입력 안정성 및 개선 효과 검사를 유지하고 유도 작업량을 반환합니다. LLVMC는 이를 누적 구성 예산에 반영하며 호출당 최대 65,536 단위를 허용합니다. 이어서 InstCombine, LICM, CSE가 루프 불변 경계와 동등한 카운터 갱신의 단일 SSA 식별자를 드러내 다음 복원 단계에 전달합니다. IR을 직접 수정하면 캐시된 분석을 무효화합니다. 술어 단계는 솔버를 사용하지 않으며, 원래 함수 전체와의 최종 동등성 증명은 여전히 필수입니다.
+
+`SymKnownBits`는 마스크가 제거하는 모든 비트가 알려진 0이면 원본 값과의 동등성도 증명합니다. 부호 있는 시프트의 왕복은 정확한 원본, 2의 거듭제곱 인수, 전체 시프트 횟수가 일치하고 버리는 비트와 남는 부호 비트가 모두 0 또는 모두 1이어야 합니다. 이 제한된 읽기 전용 관계는 쿼리 작업량을 소비하며 DAG를 확장하거나 데이터를 열거하거나 LLVM의 no-wrap 플래그를 가정하지 않습니다.
+
+`SymKnownBits`는 기저 값이 일치하고 더 큰 곱이 부호 없는 래핑을 일으키지 않음을 증명한 뒤에만 스칼라 배수의 순서를 비교합니다. 하위 워드 곱의 동등성은 모듈러 계수와 인수의 중복 횟수를 모으며, 요청한 비트 폭을 유지하는 확장만 통과합니다. 더 좁은 연산의 오버플로 경계는 그대로 둡니다. 양쪽 유도, 대기 인수, 매칭을 기존 작업량·깊이 예산에 반영하며 분석은 읽기 전용으로 유지됩니다.
+
+공유 LLVM 가져오기는 정규 형식이며 피연산자 번들이 없는 `llvm.assume(i1)` 호출을 허용하고, 해당 위치에 도달하면 조건이 참이어야 한다는 의무를 기존 정의성 상태에 기록합니다. 스칼라 및 머신 상태 증명은 입력 영역을 줄이거나 조건을 이미 증명된 사실로 취급하지 않고 이를 검사합니다. 추가 호출/선언 계약과 undef/poison은 계속 거부하며 입력 IR과 증명 예산을 유지합니다. 이는 네이티브 ABI 인증이 아닙니다.
+
+가져오기는 올바른 형식의 `llvm.loop.peeled.count`를 부호 없는 i32 최적화 이력 카운터로 허용합니다. 반복 횟수 상한, 입력 제한, 종료 또는 정의성의 근거로 사용하지 않습니다. 루프 식별과 속성 피연산자 수를 검사하며 잘못되거나 알 수 없는 속성은 계속 거부합니다. 메타데이터 순회는 기존 예산을 사용합니다.
+
 LLVM 모델이 `initializes` 매개변수 계약의 검증을 담당합니다. 상태 포인터 투영을 재사용하고 일반 스칼라 생성 전에 예산이 제한된 바이트 단위 필수 데이터 흐름 분석을 수행하며, 별도의 값 평가기를 추가하지 않습니다.
 
 `NeverDInterpreterLLVMRefinement`는 네이티브에서 LLVM으로의 증명 조합을 담당합니다. 두 상태 모델과 필수 계약을 재구성하고 권위 있는 프로필에서 진입 전용 플래그 투영을 생성하여 두 전제를 새로 검사합니다. 호출자는 루프 후보를 제시할 수 있지만 모델, 관찰 항목, 증명 기록을 바꿀 수 없습니다. 분석 모델은 실행 그래프와 선언된 루트만 복사하며, 상태 초기화가 반복되는 진입 역방향 간선을 거부합니다.
@@ -960,7 +970,7 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 
 `NeverDEmulationArch`는 ISA, 페이지 테이블과 FP 상태 배치를 소유하며 네이티브 및 Unicorn 전송이 공유합니다. x64 컨텍스트는 x87 제어, 상태, TOP, 물리 태그, 연산 코드, 명령/데이터 포인터와 8개의 80비트 레지스터를 보존합니다. `FP0`–`FP7`은 `RegisterValue`를 사용하고 스칼라 접근은 잘림을 거부합니다. `FPTag`는 물리 비어 있지 않음 비트맵입니다. `NeverDX64FPTests`는 모든 TOP, 정확한 연산의 호스트 FXSAVE/FXRSTOR 비교와 복원을 검사합니다. checked x87 명령 또는 모든 반올림 의미를 입증하지 않으며 없는 네이티브 호스트는 명시적으로 건너뜁니다.
 
-checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
+checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
 
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
@@ -980,7 +990,11 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `CMPSS`, `CMPSD`, `CMPPS`, `CMPPD`는 KVM, WHP, checked Unicorn에서 기존 8개 비교 조건을 실행합니다. 공유 `Source` 규칙은 디코딩된 별칭을 허용하고 예약 제어값은 거부합니다. 스칼라 형식은 상위 레인을 보존하고 m32/m64를 읽으며 벡터 형식은 정렬된 m128을 요구합니다. FLAGS와 기존 MXCSR 상태를 보존하고 활성 레인별 무효·비정규 상태를 누적합니다. Capstone이 명령 계열 ID와 SSE 조건을 소유하여 lifter 내부의 ID 보정을 대체합니다. Unicorn은 각 비교 함수에서 비정규 입력을 분류합니다.
 
-`CVTSS2SD`, `CVTSD2SS`, `CVTPS2PD`, `CVTPD2PS`는 공유 `Source` 규칙으로 기존 SSE 정밀도를 변환합니다. 스칼라 결과는 대상 상위 64/96비트를 보존합니다. 패킹 확장은 m64를 읽어 배정밀도 두 개를 쓰고, 축소는 정렬된 m128을 읽어 단정밀도 두 개를 쓰며 상위 64비트를 지웁니다. KVM, WHP, checked Unicorn의 원본 명령 실행은 FLAGS를 보존하고 반올림 및 FTZ 제어에 따라 마스크된 MXCSR 상태를 누적합니다. Unicorn은 변환 함수에서 활성 비정규 입력을 각각 분류합니다. DAZ, 마스크되지 않은 예외, VEX/EVEX는 제외됩니다.
+`CVTSS2SD`, `CVTSD2SS`, `CVTPS2PD`, `CVTPD2PS`는 공유 `Source` 규칙으로 기존 SSE 정밀도를 변환합니다. 스칼라 결과는 대상 상위 64/96비트를 보존합니다. 패킹 확장은 m64를 읽어 배정밀도 두 개를 쓰고, 축소는 정렬된 m128을 읽어 단정밀도 두 개를 쓰며 상위 64비트를 지웁니다. KVM, WHP, checked Unicorn의 원본 명령 실행은 FLAGS를 보존하고 반올림 및 FTZ 제어에 따라 마스크된 MXCSR 상태를 누적합니다. Unicorn은 변환 함수에서 활성 비정규 입력을 각각 분류합니다. 마스크되지 않은 예외, VEX/EVEX는 제외됩니다.
+
+`CVTDQ2PS`와 `CVTDQ2PD`는 공유 `Source` 규칙으로 부호 있는 32비트 정수를 패킹 변환합니다. 단정밀도는 정렬된 m128과 MXCSR 반올림을 사용하고, 배정밀도는 비정렬도 허용하는 m64를 읽어 정확히 변환합니다. 대상 XMM 전체를 교체하고 FLAGS와 기존 MXCSR 상태를 보존하며 부정확한 단정밀도 결과는 정밀도 상태를 누적합니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. Unicorn은 두 패킹 확장 함수를 식별해 8바이트 읽기를 선택합니다. 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
+
+`CVTPS2DQ`와 `CVTPD2DQ`는 MXCSR 반올림을 사용하며 `CVTTPS2DQ`와 `CVTTPD2DQ`는 0 방향으로 절삭합니다. 공유 `Source` 규칙은 정렬된 m128 또는 XMM 입력을 요구합니다. NaN이나 범위 밖 레인은 signed32 indefinite와 무효 상태를 생성하고 다른 유효한 비정확 레인은 독립적으로 정밀도 상태를 누적합니다. 단정밀도 입력은 정수 네 개를, 배정밀도 입력은 두 개를 생성하고 대상 상위 64비트를 지웁니다. FLAGS와 기존 MXCSR 상태를 보존하며 FTZ는 비정규 입력을 버리지 않습니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
 
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
 
@@ -1049,6 +1063,8 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 `WindowsSystemModules`는 두 ISA에 대해 `ntdll.dll`, `kernelbase.dll`, `kernel32.dll`의 제한된 PE64 모델 이미지를 만듭니다. ASCII `GetModuleHandleA` / `GetModuleHandleW`, `LoadLibraryA` / `LoadLibraryW`, `GetProcAddress`는 매핑된 베이스를 공유하며 PEB/LDR과 `MEM_IMAGE`도 같은 이미지를 나타냅니다. 정적 가져오기, 이름 조회와 게스트 DLL 전달은 동일한 API 게이트와 내보내기 해석기를 사용합니다. 제공자는 고정 상주하고 게스트 초기화 콜백이 없으며 일반 게스트 DLL을 모두 해제한 뒤 진입점 반환을 막지 않습니다. 헤더 또는 내보내기 메타데이터가 바뀌면 조회를 중단합니다. 미지원 시스템 내보내기 이름과 0이 아닌 서수 조회는 명시적으로 중단하며 지원 이름의 대소문자 불일치와 빈 이름은 오류 127, NULL 조회는 87을 반환합니다. 생성 바이트와 주소는 모델 정책이며 Windows DLL 버전별 배치, 네이티브 서수와 제공자 간 별칭은 재구성하지 않습니다. `WindowsSystemTests.cpp`는 자체 x64/ARM64 EXE를 네이티브 Windows와 비교하고 초기 스레드 반환을 독립적으로 8회 관측합니다.
 
 `WindowsProcessExceptions`는 같은 CPU와 프로세스 예산으로 `AddVectoredExceptionHandler`, `RemoveVectoredExceptionHandler`, `RaiseException`을 구현합니다. 순서가 있는 처리기는 등록·삭제, 중첩 예외, 모델 API 호출, DLL 로드와 프로세스 종료를 수행할 수 있습니다. x64/ARM64 데이터 접근 위반과 x64 정수 나눗셈 예외는 게스트의 `CONTEXT` 변경을 검증한 뒤 재개하며 범용 레지스터, SIMD 및 지원 FP 상태를 보존합니다. 소프트웨어 예외는 모델 공급자 내부의 실제 반환 명령으로 재개합니다. 보관된 등록은 128개, 중첩은 16프레임으로 제한합니다. 잘못된 처리 결과, 바뀐 예외 포인터, 미지원 필드와 한도 초과는 명시적으로 실패합니다. ARM64 스택 프레임 기반 SEH/언와인딩, 디버거 전달과 실행/가드 페이지 예외는 미지원입니다. `WindowsExceptionTests.cpp`는 자체 EXE/DLL을 네이티브 Windows와 비교하며 ARM64 KVM/WHP 실기기 증거는 아직 없습니다. 소프트웨어 예외 레코드에는 `EXCEPTION_SOFTWARE_ORIGINATE`(`0x80`)가 포함되며 호출자의 계속 불가 플래그와 별도로 처리됩니다. 원본 Windows 실행 파일은 소프트웨어 및 하드웨어 예외의 정확한 플래그 값을 검증합니다.
+
+`os/windows/exception/X64SIMDException`은 보존된 MXCSR와 네이티브 관측의 우선순위를 사용하여 실제 x64 `#XM`의 Windows 상태 및 매개변수를 분류합니다. 사용자 예외 전달은 일관된 오류 메타데이터를 요구하고 예외 레코드에 `{0, MXCSR}`를 포함합니다. 누적 상태 플래그만으로 오류 발생을 판단하지 않습니다. 마스킹된 x64 명령 설명은 이식 가능한 기준입니다. KVM/WHP는 `driver-strict`, `checked-x64-v1`, `checked-user-x64-v1`에 `precise_simd_exceptions`를 추가합니다. 네이티브 시작 검증이 정확한 `#XM`과 두 재시도를 확인한 뒤에만 마스크 해제 MXCSR 쓰기, `LDMXCSR`, Windows `CONTEXT` 복원을 허용합니다. `ExecutionProfiles.def`가 선택을 관리하고 `supportsSIMDExceptions`가 결정된 인스턴스 기능을 제공합니다. checked Unicorn은 계속 마스크를 요구하며 ARM64 및 HVF의 예외 기능은 확장하지 않습니다.
 
 `AddVectoredContinueHandler`와 `RemoveVectoredContinueHandler`는 독립된 순서 목록을 관리하며 예외 처리기와 최대 128개 보존 등록 제한을 공유합니다. 벡터 예외 처리기가 실행 재개를 수락하면 계속 처리기는 같은 수정 가능한 예외 레코드와 `CONTEXT`를 봅니다. 중첩 예외와 DLL 알림을 포함한 콜백이 끝난 뒤 최종 컨텍스트를 검증합니다. 다른 종류의 처리기 API로 핸들을 제거할 수 없습니다. `WindowsContinuationTests.cpp`는 순서, 조기 종료, 등록 변경, 컨텍스트 복구, 중첩 전달, 로더 콜백과 프로세스 종료를 독자 EXE와 네이티브 Windows로 비교합니다. 검증한 Windows x64 벡터 경로에서는 `EXCEPTION_NONCONTINUABLE`이 설정되어도 재개할 수 있지만 스택 프레임 기반 SEH 동작의 근거는 아닙니다. 네이티브 ARM64 실행은 아직 검증하지 않았습니다.
 

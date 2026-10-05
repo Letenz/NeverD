@@ -2423,6 +2423,27 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     return L[I].Addr != 0 && L[I].Addr != InvalidVA &&
            (I == 0 || L[I - 1].Addr != L[I].Addr) && usesOf(L[I].Addr) != 0;
   };
+  // Statements starting each address anywhere in the tree.  A copied tail
+  // keeps its addresses, so a jump names one statement only when exactly one
+  // starts its target.
+  std::map<va_t, unsigned> AddressStarts;
+  std::function<void(const std::vector<HighStmt> &)> CountStarts =
+      [&](const std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          const HighStmt &S = L[I];
+          if (S.Addr != 0 && S.Addr != InvalidVA &&
+              (I == 0 || L[I - 1].Addr != S.Addr))
+            ++AddressStarts[S.Addr];
+          CountStarts(S.Body);
+          CountStarts(S.ElseBody);
+          for (const auto &C : S.Cases)
+            CountStarts(C.Body);
+          CountStarts(S.DefaultBody);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            CountStarts(ClauseBody);
+        }
+      };
+  CountStarts(Body);
 
   // Reads of each variable anywhere in the function (assignment targets are
   // writes, not reads). An indirect call reads its target like an operand.
@@ -2663,6 +2684,10 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         L[I].Body = std::move(L[I].ElseBody);
         L[I].ElseBody.clear();
       }
+      // `if (c) { A } else {}`  ->  `if (c) { A }`, which the rules below
+      // take for a plain if.
+      if (L[I].Kind == StmtKind::IfElse && L[I].Cond && L[I].ElseBody.empty())
+        L[I].Kind = StmtKind::If;
       // T11: `X: S...; goto X;` -> `while (1) { S... }` and
       // `X: S...; if (c) goto X;` -> `do { S... } while (c);`.
       if (L[I].Kind == StmtKind::Goto || isCondGoto(L[I])) {
@@ -2790,6 +2815,54 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
             L[I].Body = std::move(L[I].ElseBody);
             L[I].ElseBody.clear();
           }
+          Changed = true;
+          continue;
+        }
+      }
+      // T2e: `if (c) { A } else { B; goto Y; } S...; Y:` runs S only after A,
+      // so S moves to the end of A's arm.  S must hold no entered label: a
+      // jump into the arm would be legal C but no clearer, and a labelled
+      // tail left in place can still be copied to each of its jumps.  Y must
+      // be the one statement starting its address, since a label resolves to
+      // the first statement printed there.
+      if (L[I].Kind == StmtKind::IfElse && L[I].Cond &&
+          !L[I].ElseBody.empty() &&
+          L[I].ElseBody.back().Kind == StmtKind::Goto &&
+          (L[I].Body.empty() || !isTerminator(L[I].Body.back()))) {
+        const va_t Y = L[I].ElseBody.back().GotoTarget;
+        size_t J = I + 1;
+        while (J < L.size() && !(L[J].Addr == Y && labelStart(L, J)))
+          ++J;
+        std::function<bool(const std::vector<HighStmt> &, size_t, size_t)>
+            Unentered = [&](const std::vector<HighStmt> &List, size_t From,
+                            size_t To) {
+              for (size_t K = From; K < To; ++K) {
+                const HighStmt &S = List[K];
+                if (labelStart(List, K))
+                  return false;
+                for (const auto *Inner : {&S.Body, &S.ElseBody, &S.DefaultBody})
+                  if (!Unentered(*Inner, 0, Inner->size()))
+                    return false;
+                for (const auto &C : S.Cases)
+                  if (!Unentered(C.Body, 0, C.Body.size()))
+                    return false;
+                for (const auto &ClauseBody : S.EHClauseBodies)
+                  if (!Unentered(ClauseBody, 0, ClauseBody.size()))
+                    return false;
+              }
+              return true;
+            };
+        if (J < L.size() && J > I + 1 && AddressStarts[Y] == 1 &&
+            (!isTerminator(L[J - 1]) || SpliceRegions) &&
+            Unentered(L, I + 1, J)) {
+          popGoto(L[I].ElseBody);
+          --Uses[Y];
+          L[I].Body.insert(L[I].Body.end(),
+                           std::make_move_iterator(L.begin() + I + 1),
+                           std::make_move_iterator(L.begin() + J));
+          L.erase(L.begin() + I + 1, L.begin() + J);
+          if (L[I].ElseBody.empty())
+            L[I].Kind = StmtKind::If;
           Changed = true;
           continue;
         }
@@ -3071,12 +3144,14 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
 
   // T1g: a block entered only by one goto anywhere in the tree, placed after
   // a terminator and ending in one, is spliced in place of that goto.  The
-  // original statements become Nop.  Blocks never cross a __try boundary and
-  // carry no break/continue whose target the move could change.
+  // original statements become Nop.  Blocks never cross the boundary of a
+  // try body or of one of its handlers, which only the exception dispatcher
+  // enters, and carry no break/continue whose target the move could change.
   struct Site {
     std::vector<HighStmt> *List = nullptr;
     size_t Index = 0;
-    const HighStmt *Try = nullptr;
+    /// The innermost try body or handler holding the site.
+    const void *Try = nullptr;
     // Position in a pre-order walk of the tree: program order.
     size_t Order = 0;
     // Every (list, index) enclosing the site, outermost first.
@@ -3141,8 +3216,8 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     // only when exactly one statement starts it.
     std::map<va_t, unsigned> Starts;
     size_t Order = 0;
-    std::function<void(std::vector<HighStmt> &, const HighStmt *)> Collect =
-        [&](std::vector<HighStmt> &L, const HighStmt *Try) {
+    std::function<void(std::vector<HighStmt> &, const void *)> Collect =
+        [&](std::vector<HighStmt> &L, const void *Try) {
           for (size_t I = 0; I < L.size(); ++I) {
             HighStmt &S = L[I];
             ++Order;
@@ -3154,14 +3229,16 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
             if (S.Kind == StmtKind::Goto && usesOf(S.GotoTarget) == 1)
               Gotos.push_back({Site{&L, I, Try, Order, Chain}, S.GotoTarget});
             Chain.push_back({&L, I});
-            const HighStmt *Inner = S.Kind == StmtKind::SEHTry ? &S : Try;
-            Collect(S.Body, Inner);
+            const bool IsTry = S.Kind == StmtKind::SEHTry ||
+                               S.Kind == StmtKind::CxxTry ||
+                               S.Kind == StmtKind::ItaniumTry;
+            Collect(S.Body, IsTry ? static_cast<const void *>(&S) : Try);
             Collect(S.ElseBody, Try);
             for (auto &C : S.Cases)
               Collect(C.Body, Try);
             Collect(S.DefaultBody, Try);
             for (auto &ClauseBody : S.EHClauseBodies)
-              Collect(ClauseBody, Try);
+              Collect(ClauseBody, &ClauseBody);
             Chain.pop_back();
           }
         };

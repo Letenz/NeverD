@@ -7,6 +7,27 @@
 #include "LLVMInterpreterModelInternal.h"
 
 namespace neverd::analysis::llvm_model {
+namespace {
+bool supportedLoopProperty(const llvm::MDNode *Property) {
+  if (!Property || !Property->getNumOperands())
+    return false;
+  auto *Name = llvm::dyn_cast_or_null<llvm::MDString>(Property->getOperand(0));
+  if (!Name)
+    return false;
+  if (Name->getString() == "llvm.loop.mustprogress" ||
+      Name->getString() == "llvm.loop.unroll.disable")
+    return Property->getNumOperands() == 1;
+  if (Name->getString() != "llvm.loop.peeled.count" ||
+      Property->getNumOperands() != 2)
+    return false;
+  // This is an unsigned history counter used by peeling heuristics. It
+  // supplies neither an execution bound nor a definedness/termination fact.
+  auto *Count = llvm::mdconst::dyn_extract_or_null<llvm::ConstantInt>(
+      Property->getOperand(1));
+  return Count && Count->getType()->isIntegerTy(32);
+}
+} // namespace
+
 void Builder::validateContract() {
   llvm::SmallVector<std::pair<unsigned, llvm::MDNode *>, 4> FunctionMetadata;
   F.getAllMetadata(FunctionMetadata);
@@ -48,15 +69,12 @@ void Builder::validateContract() {
             fail("mixed TBAA alias contracts unsupported");
           CommonTBAA = Node;
         } else if (Kind == llvm::LLVMContext::MD_loop && I.isTerminator()) {
+          if (!Node->getNumOperands() || Node->getOperand(0) != Node)
+            fail("unsupported loop metadata identity");
           for (unsigned N = 1; N < Node->getNumOperands(); ++N) {
             auto *Property =
                 llvm::dyn_cast_or_null<llvm::MDNode>(Node->getOperand(N));
-            auto *Name = Property && Property->getNumOperands()
-                             ? llvm::dyn_cast_or_null<llvm::MDString>(
-                                   Property->getOperand(0))
-                             : nullptr;
-            if (!Name || (Name->getString() != "llvm.loop.mustprogress" &&
-                          Name->getString() != "llvm.loop.unroll.disable"))
+            if (!supportedLoopProperty(Property))
               fail("unsupported loop metadata contract");
           }
         } else

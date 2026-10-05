@@ -111,6 +111,16 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDLLVMCScalarLoopRecoveryTests` 檢查預設整模組與單函式輸出、回傳路徑清理後的持續恢復、函式身分和屬性、呼叫繫結、既有及新增內建函式與符號衝突、共用預算、副作用呼叫、缺少輸入定義性、中繼資料、映像投影、外部區塊位址和外來函式選擇。獨立算術與旋轉 oracle 在 O0/O2 下執行產生的 C，並啟用未定義行為陷阱；算術也與獨立編譯的原始 LLVM 對照，涵蓋所有位元組控制輸入、邊界字值及確定性的完整位寬資料。
 
+`SymSimplifyPredicates.*` 也對照獨立階段與完整 pass 的策略、回報工作量、恰好與少一單位預算、停用階段及帶混淆標記的函式。純量原始碼回歸涵蓋 8/32/64 位元算術編碼迴圈終止條件、有號溢位拒絕，以及跨輪次與函式共用的建構限制。發布失敗時保留原 IR；產生的 C 在 O0/O2 下與獨立編譯的原始 LLVM 及算術 oracle 對照執行。
+
+`SymKnownBits.*` 以窮舉位元組配對算術檢查無損遮罩與有號位移往返，涵蓋負值、不同來源、捨棄的未知位元、不符的因子或位移量及寬位移過移。直到 128 位元的檢查保留精確與少一單位的查詢預算，且不新增 DAG 節點。純量決策測試加入不同回邊的正負數更新、來源修改後舊事實及溢位拒絕、保持符號化的高資料位元，以及對獨立無號 oracle 的 16,384 次 O0/O2 呼叫。
+
+`SymKnownBits.*` 也窮舉位元組配對檢查倍數排序與跨位寬乘積，拒絕回繞、錯誤係數或因子重複次數，以及將窄位寬溢位移至更寬的字。直到 128 位元的查詢保留精確與少一單位工作預算，且不新增 DAG 節點。純量測試不列舉資料位元即可證明重複加法及乘法，保留所有迴圈溢位義務，並對獨立 oracle 執行 16,384 次 O0/O2 呼叫。
+
+`LLVMScalarAssume*` 檢查完整迴圈域、最後分區失敗、不可達與已到達的假條件、全部位元組輸入上的累積定義性、精確/少一預算、IR 修改及不支援的呼叫契約。四個目標 triple 驗證共享建模；8,192 次 O0/O2 呼叫對照獨立無號 oracle。狀態模型測試另行檢查相同義務及運算元 bundle 拒絕。
+
+迴圈中繼資料回歸測試在全部控制分區及精確/少一預算下，比較計數迴圈與獨立公式。過大或為零的剝離歷史計數不能掩蓋錯誤結果、不終止或 poison。透過 API 建立的畸形中繼資料單獨驗證匯入器的拒絕行為，避免與 LLVM 組合語言解析混淆；機器狀態測試保留狀態副作用及輸入限制。
+
 初始化契約回歸涵蓋部分及分離的位元組範圍、固定別名、兩個分支、每個返回點、迴圈首輪讀取與迴圈內先寫後讀。先讀後寫、漏寫、客體寫入、未知別名、特殊記憶體存取、物件外範圍，以及輸入／工作預算耗盡，都必須失敗。獨立的僅輸出狀態字 C 案例在 O1/O2 編譯後保留精確 LLVM 屬性，並通過全新的原生到 LLVM 組合證明。
 
 受條件保護的倒數測試涵蓋拒絕本體模板後的重試、任意字長輸入的完整迴圈頭證明、切點與查詢預算的累計計費，以及真實入口契約違規時立即拒絕。
@@ -235,7 +245,7 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 獨立[程序測試套件](process-emulation.md#驗證)會編譯真實 x64/AArch64 ELF fixture。`NeverDLinuxProcessTests` 檢查啟動、program-header 政策、服務續接、二進位輸出、客體錯誤與資源停止。`NeverDProcessPublicTests` 經由 C API/CLI 測試且不變更分析映像。`NeverDExecutionSessionTests` 檢查兩個 CPU 共用記憶體／預算，以及要求／錯誤恰好消耗一次。`NeverDX64MemoryUpdateTests` 檢查記憶體算術、SETcc、BT、XMM/MXCSR、寫入 observer、REP 邊界及預備裝置讀取。`DriverBackendParityTests.cpp` 執行原始與重定位 WDK fixture，並將完整可觀察報告與 Unicorn 比較；缺少映像／後端會明確略過。
 
-checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
+checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。未遮罩例外、x87、AVX 仍未開放。
 
 `X64PackedIntegerTests.cpp` 使用 `X64PackedIntegerCases.def` 中的原始編碼和 180 組固定向量結果，並與原生 x64 編譯器 intrinsic 獨立核對。暫存器與頁尾別名 RAM 案例保留其他 XMM、整數哨兵值、FLAGS、MXCSR 和來源位元組。觀察器停止／失敗與可恢復讀取故障保留狀態，修復後可重試一次。未對齊觸發 `#GP(0)`；MMX、LOCK 與 MMIO 仍在回呼前拒絕。原生 CI 強制執行 WHP 的兩個特權級。
 
@@ -253,11 +263,23 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64SSEComparisonTests.cpp` 使用獨立的 `X64SSEComparisonCases.def` 編碼、`APFloat` 排序及保存/還原宿主 FLAGS 和浮點狀態的原生指令。21 種原始輸入的全部配對涵蓋 NaN/次正規優先級、零、無窮及相鄰值。檢查所有 XMM 配對與別名、MXCSR 黏滯位元、捨入無關性、DF 保留、完整 CPU/RAM 狀態、精確頁尾/跨頁讀取及觀察者取消/重試。兩個權限層級的原生 KVM/WHP 結果均為必測。
 
-`X64SSEPredicateTests.cpp` 使用 `X64SSEPredicateCases.def` 的獨立條件、`X64SSEComparisonCases.def` 的共用原始輸入、`APFloat` 排序及原生指令對照。測試涵蓋全部輸入配對、混合通道例外優先級、純量高位保留、XMM 別名、完整 CPU/RAM 狀態、頁尾/跨頁讀取、對齊優先級及觀察者/故障重試。直接 Capstone 檢查涵蓋全部控制位元組、兩種語法、兩種解碼 API 與 32/64 位元模式。兩個權限層級的原生 KVM/WHP 結果均為必測；保留控制值、VEX/EVEX 與裝置運算元仍排除。
+`X64SSEPredicateTests.cpp` 使用 `X64SSEPredicateCases.def` 的獨立條件、`X64SSEComparisonCases.def` 的共用原始輸入、`APFloat` 排序及原生指令對照。測試涵蓋全部輸入配對、混合通道例外優先級、純量高位保留、XMM 別名、完整 CPU/RAM 狀態、頁尾/跨頁讀取、對齊優先級及觀察者/故障重試。直接 Capstone 檢查涵蓋全部控制位元組、兩種語法、兩種解碼 API 與 32/64 位元模式。兩個權限層級的原生 KVM/WHP 結果均為必測；保留控制值、VEX/EVEX 與裝置運算元仍排除。 數值矩陣按指令及比較條件拆分，捨入與控制矩陣按指令拆分。`NativeCPUTests.def` 仍要求所有原始組合；客體時限及 15 秒 CTest 時限維持不變。編譯期檢查要求每個指令/條件組合恰好出現一次。
 
 `X64SSEPrecisionTests.cpp` 結合獨立的 `X64SSEPrecisionCases.def` 編碼、`APFloat` 精度捨入及原生指令對照。範圍檢查使用無界指數下的捨入，涵蓋定向捨入至有限值的溢位及捨入至正規數的微小結果。測試涵蓋正負號、NaN 載荷、全部捨入/FTZ/黏滯狀態、打包通道聚合、XMM 別名、完整 CPU/RAM 狀態、精確來源寬度、對齊優先級、頁面錯誤及觀察者取消/重試。兩個權限層級的 KVM/WHP 案例均為必測。
 
+`X64PackedFloatTests.cpp` 使用獨立的 `X64PackedFloatCases.def` 編碼、有號 `APFloat` 預期值及原生指令對照。測試涵蓋全部輸入對、整數邊界、精度中點、捨入模式、黏滯狀態與 FTZ，並在兩個權限層級檢查暫存器別名、所有 XMM 組合、完整 CPU/RAM、每種 m64 跨頁位置、精確頁尾、對齊優先級及觀察者/錯誤重試。全部 KVM/WHP 案例均為必測。
+
+`X64PackedFloatIntegerTests.cpp` 結合獨立的 `X64PackedFloatIntegerCases.def` 編碼、共用 `X64FloatIntegerCases.def` 輸入、`APFloat`/`APSInt` 及原生指令。43 個原始輸入的全部組合涵蓋 signed32 邊界、相鄰捨入中點、NaN、無窮及次正規數；獨立通道矩陣分別變化精確、非精確、無效及次正規輸入。測試涵蓋全部捨入/FTZ/黏滯設定、XMM 別名、完整 CPU/RAM、對齊頁尾、對齊優先級與觀察者/錯誤重試。兩個權限層級的 KVM/WHP 均為必測。
+
+`DAZBackends` 為比較、謂詞、純量整數/浮點、封裝整數/浮點及精度轉換矩陣增加啟用 DAZ 的涵蓋。`X64DAZTestSupport.h` 使用獨立的 `APFloat` 輸入正規化，並在執行原生對照指令前檢查宿主的 `MXCSR_MASK`。測試涵蓋帶符號零、次正規數、NaN、混合通道、全部捨入模式、FTZ 與黏滯狀態，同時檢查來源位元組、無關暫存器、FLAGS 及完整 RAM 保持不變。暫存器、別名及頁面邊界運算元保留原有的存取觀察檢查。KVM/WHP 要求兩個特權層級的全部 DAZ 案例及 17 個原始宿主指令對照案例均通過；可攜式執行中不支援的宿主會明確略過。原有停用 DAZ 的案例與逾時限制保持不變。
+
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
+
+`X64SIMDExceptionTests.cpp` 繞過 checked 准入層，在兩個特權層級驗證 KVM/WHP 的原生 `#XM` 傳遞。`X64SIMDExceptionCases.def` 中八個原始案例涵蓋六類例外，包括精確的次正規結果及無界指數下精度精確的溢位。暫存器與 RAM 形式發生例外時，除規定的 MXCSR 狀態外，完整 GPR、XMM、x87、FLAGS、FS/GS 與客體記憶體皆保持不變。屏蔽例外後重試原指令；保留黏滯狀態並修復運算元，驗證舊旗標不會再次觸發例外。 公共 checked 與驅動契約也執行這些原始故障及重試案例。`WindowsSIMDExecutionTests.cpp` 執行真實原生例外、客體 VEH/VCH 指令，以及跳過、遮罩後重試或修復運算元後繼續，分別檢查處理器入口控制狀態與保存的上下文。啟動反例會拒絕缺失例外、錯誤向量及目的暫存器遭修改的結果，不發布能力。
+
+`check_windows_simd.py` 根據 `WindowsSIMDCases.def` 與純量案例清單建置獨立的原創 Windows x64 程式。6,144 組觀察涵蓋暫存器/RAM 運算元、全部例外遮罩組合、清零或全部設置的黏滯狀態，以及跳過、遮罩後重試、修復運算元且保持遮罩位元不變後重試三條路徑。組合語言入口分別記錄 VEH/VCH 的即時 MXCSR、x87 控制狀態與保存的 `CONTEXT`。測試在還原主機狀態前檢查精確故障 PC、狀態保持、修復後的上下文與重試結果；CI 保留原始記錄與原始碼雜湊。`--build-only` 僅證明編譯成功。這些觀察不啟用 checked 模式下未遮罩的 SIMD，也不代表 ARM64 原生執行。
+
+`WindowsSIMDStatusCases.def` 固定了原生 Windows 上觀察到的全部 63 種非空有效狀態組合。`WindowsSIMDMappingTests.cpp` 檢查精確代碼與參數、拒絕不一致的故障及無效控制值，並透過注入故障邊界檢查例外記錄、CONTEXT 中的兩份控制狀態與遮罩例外後的繼續執行。Windows CI 中的原創程式獨立驗證這些固定結果。注入測試不證明 Unicorn 能產生該例外，也不啟用 checked 模式下未遮罩的 SIMD。
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
@@ -1091,7 +1113,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 482 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 710 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `482 CPU + 224 WHP + 4 SEH = 710`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 897 項 CPU 檢查及 4 項共用 SEH 續接回歸，共有 1125 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `897 CPU + 224 WHP + 4 SEH = 1125`.
 
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 

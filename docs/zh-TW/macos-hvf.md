@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 22ba6d21112d256e04570cdee32a639db23035b9abf497605ce33a6065066e12 -->
+<!-- i18n-source: eeedd26ea2815c20d7ead685d9a09a0d33a8a608373ac2d15d2f8c0af573fd69 -->
 
 [← 文件索引](README.md)
 
@@ -194,3 +194,5 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 可重現的補充審計重新核對了執行 `37188627569`（原始碼 `392a9d171`）未修改的原始輸出，全部 1000 輪有限期限探針通過核對。[審計器與 19 項回歸測試](https://github.com/gmh5225/test_mac_intel/tree/d203767/scripts)逐輪關聯呼叫的 begin/end/capture、新鮮記憶體寫入證據與 RIP，檢查首個迴圈的固定預算及其後兩個各自受控的 MTF 觀測，並保留合法的未進入 guest 紀錄，不將它們計為指令進展。這是保存證據的複驗，不是新的原生執行，也不改變既有結果、資源回收要求或 Intel 驗收狀態。
 
 省略額外 host kick 的對照仍在兩個 runner 上失聯：macOS 15 執行 `37221649736`、macOS 26 執行 `37221651593` 均有 GitHub 失聯註記。原始碼 `023a4a68d` 保留三個復原回合、重試及每輪 VM/vCPU 重建，產品 `lib` 與舊診斷原始碼 `7dd7342ec` 完全一致。34/15 個產物雜湊均已驗證；連續紀錄前綴證明 778/779、300/301 輪完成/開始，並保存 779/300 個已換行的執行緒 join 後省略標記；省略標記可能屬於尚未完成的一輪。兩次均缺少最終原生結果與回收紀錄，最後保存的標記無法定位故障。省略此呼叫不足以避免本次觀察到的失聯，仍無法確定根因或宣稱目前 `dev` 通過驗收。[保存的證據](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。
+
+有限計時器的 vCPU 重建對照在 macOS 15（`37226727488`）與 macOS 26（`37226729664`）均通過 1000/1000 輪，使用未修改的原始碼 `7dd7342ec`、控制器 `4e80b1394` 及工作流程 `7f5d6fc89`。每次保留一個 VM 與 owner，共建立 1001 代 vCPU，最後未執行 guest 的一代也已回收。每組 28 個產物摘要、有序原生呼叫紀錄、1000 次新鮮計時器/寫入證據、每輪兩個 MTF 觀測、原始預算、原生/控制器/上傳器零結束碼及子行程回收均已核對。macOS 26 保留了兩次 guest 尚未推進的計時器切片，隨後在原預算內取得要求的寫入證據。控制器耗時約 26/35 秒，與先前保留工作階段的恢復對照約 254/283 秒的執行量不同。這些結果尚未解決 runner 失聯，也不代表目前 `dev` 或完整 Intel CPU/Darwin 驗收通過。[已核對證據](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-04-boundaries)。

@@ -27,7 +27,239 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SIMDCapability.RequirementsAreNativeBackendAndContractQualified")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/WindowsSIMDExecution.ActualFaultExecutesGuestHandlersAndRetries/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/X64MXCSRProbe.SIMDDeliveryAndRetryAreRequiredBeforePublication/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsSIMDMapping.NativeObservationsDetermineStatusAndParameters")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WindowsSIMDMapping.RequiresConsistentX64FaultAndControl")
 // Shared x64 contracts select the explicit native transport at both privileges.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerOracle.CVTPS2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerOracle.CVTTPS2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerOracle.CVTPD2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerOracle.CVTTPD2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPS2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPS2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTPD2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "CVTTPD2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "EveryVectorPairAndAliasedSource/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "EveryVectorPairAndAliasedSource/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "PageEndInputsUseOnlyTheFloatingSourceWidth/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloatInteger."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatOracle.CVTDQ2PSMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatOracle.CVTDQ2PDMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "CVTDQ2PSValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "CVTDQ2PSValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "CVTDQ2PSRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "CVTDQ2PSRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "CVTDQ2PDValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "CVTDQ2PDValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "CVTDQ2PDRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "CVTDQ2PDRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "PackedAlignmentFaultPrecedesMemoryAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "EveryVectorPairAndAliasedSource/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "EveryVectorPairAndAliasedSource/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "ReadObserversStopBeforeConversionAndStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "InstructionObserversStopBeforeRegisterEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "PageEndInputsUseOnlyTheIntegerSourceWidth/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "PageEndInputsUseOnlyTheIntegerSourceWidth/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "UnsupportedFormsRejectBeforeObservations/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "UnsupportedFormsRejectBeforeObservations/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64PackedFloat."
+    "DeviceOperandsRejectBeforeCallbacks/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SSEPrecisionOracle.CVTSS2SDMatchesOriginalInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -144,34 +376,220 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SSEPredicateDecoder.FamilyAndPredicateAreIndependentOfSyntax")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPSSMasksAndStatusPreserveOtherState/{backend}Supervisor")
+    "CMPSSEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPSSMasksAndStatusPreserveOtherState/{backend}User")
+    "CMPSSEQMasksAndStatusPreserveOtherState/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPSDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+    "CMPSSLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPSDMasksAndStatusPreserveOtherState/{backend}User")
+    "CMPSSLTMasksAndStatusPreserveOtherState/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPPSMasksAndStatusPreserveOtherState/{backend}Supervisor")
+    "CMPSSLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPPSMasksAndStatusPreserveOtherState/{backend}User")
+    "CMPSSLEMasksAndStatusPreserveOtherState/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPPDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+    "CMPSSUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "CMPPDMasksAndStatusPreserveOtherState/{backend}User")
+    "CMPSSUNORDMasksAndStatusPreserveOtherState/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "RoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+    "CMPSSNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
-    "RoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+    "CMPSSNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPSDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64SSEPredicate."
+    "CMPPDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPredicate."
     "MixedLanesAccumulateStatusAndScalarsIgnoreUpperInputs/{backend}Supervisor")
@@ -1588,4 +2006,580 @@ NEVERD_NATIVE_CPU_KVM_REQUIRED_CASES(
     "Native/KvmStateTransfer.PublicCPUExceptionOutranksStopDuringCapture/",
     "unittests/emulation/KvmStateTransferCases.def",
     "NEVERD_KVM_STATE_BASE_PARAMETER")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.CapabilityAndRegisterWritesAreAtomic/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.CapabilityAndRegisterWritesAreAtomic/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.LoadsAndStoresUseExactlyFourBytesAcrossPageBoundaries/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.LoadsAndStoresUseExactlyFourBytesAcrossPageBoundaries/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ObserversStopOrThrowBeforeEffectsAndRetry/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ObserversStopOrThrowBeforeEffectsAndRetry/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ReservedBitsFaultAndUnmaskedValuesFollowCapability/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ReservedBitsFaultAndUnmaskedValuesFollowCapability/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.MissingPageAndDeniedStoresCannotPublishPartialEffects/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.MissingPageAndDeniedStoresCannotPublishPartialEffects/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.GuestLoadedDAZChangesArithmeticAndSurvivesContextSwitch/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.GuestLoadedDAZChangesArithmeticAndSurvivesContextSwitch/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Native/X64MXCSRProbe.NativeSaveAndDAZExecutionAuthenticateCapability/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Native/X64MXCSRProbe.ZeroMaskUsesBaselineAndRejectedProbesPublishNothing/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDSSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDSSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDSDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDSDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDPSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDPSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDPDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDPDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBSSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBSSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBSDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBSDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBPSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBPSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBPDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBPDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULSSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULSSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULSDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULSDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULPSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULPSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULPDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULPDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVSSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVSSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVSDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVSDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVPSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVPSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVPDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVPDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTSSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTSSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTSDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTSDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTPSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTPSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTPDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTPDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINSSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINSSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINSDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINSDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINPSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINPSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINPDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINPDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXSSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXSSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXSDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXSDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXPSMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXPSMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXPDMatchesIndependentHostExecution/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXPDMatchesIndependentHostExecution/{backend}User")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+// DAZ numeric and state matrices require original-host and checked execution.
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEComparisonDAZOracle.FlagsAndExceptionPriorityMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateDAZOracle.CMPSSMasksAndStatusMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateDAZOracle.CMPSDMasksAndStatusMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateDAZOracle.CMPPSMasksAndStatusMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPredicateDAZOracle.CMPPDMasksAndStatusMatchOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPrecisionDAZOracle.CVTSS2SDMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPrecisionDAZOracle.CVTSD2SSMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPrecisionDAZOracle.CVTPS2PDMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64SSEPrecisionDAZOracle.CVTPD2PSMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerDAZOracle.CVTPS2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerDAZOracle.CVTTPS2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerDAZOracle.CVTPD2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatIntegerDAZOracle.CVTTPD2DQMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatDAZOracle.CVTDQ2PSMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64PackedFloatDAZOracle.CVTDQ2PDMatchesOriginalInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64FloatIntegerDAZOracle.AllRoundingModesMatchOriginalNativeInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64IntegerFloatDAZOracle.AllRoundingModesMatchOriginalNativeInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "COMISSFlagsAndStatusPreserveSources/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "COMISSFlagsAndStatusPreserveSources/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "COMISDFlagsAndStatusPreserveSources/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "COMISDFlagsAndStatusPreserveSources/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "UCOMISSFlagsAndStatusPreserveSources/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "UCOMISSFlagsAndStatusPreserveSources/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "UCOMISDFlagsAndStatusPreserveSources/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "UCOMISDFlagsAndStatusPreserveSources/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "RoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEComparisonDAZ."
+    "RoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDUNORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDUNORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDNEQMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDNEQMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDNLTMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDNLTMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDNLEMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDNLEMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDORDMasksAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDORDMasksAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSSMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPSDMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPSMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPredicateDAZ."
+    "CMPPDMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTSS2SDValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTSS2SDValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTSS2SDRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTSS2SDRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTSD2SSValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTSD2SSValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTSD2SSRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTSD2SSRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTPS2PDValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTPS2PDValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTPS2PDRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTPS2PDRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTPD2PSValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTPD2PSValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTPD2PSRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64SSEPrecisionDAZ."
+    "CVTPD2PSRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPS2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPS2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPS2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPS2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPS2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPS2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPS2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPS2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPS2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPS2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPS2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPS2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPD2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPD2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPD2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPD2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPD2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTPD2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPD2DQValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPD2DQValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPD2DQRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPD2DQRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPD2DQMixedLanesAccumulateStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatIntegerDAZ."
+    "CVTTPD2DQMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatDAZ."
+    "CVTDQ2PSValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatDAZ."
+    "CVTDQ2PSValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatDAZ."
+    "CVTDQ2PSRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatDAZ."
+    "CVTDQ2PSRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatDAZ."
+    "CVTDQ2PDValuesAndStatusPreserveOtherState/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatDAZ."
+    "CVTDQ2PDValuesAndStatusPreserveOtherState/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatDAZ."
+    "CVTDQ2PDRoundingFlushAndStickyStatus/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64PackedFloatDAZ."
+    "CVTDQ2PDRoundingFlushAndStickyStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64FloatIntegerDAZ."
+    "CVTSS2SIPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64FloatIntegerDAZ."
+    "CVTSS2SIPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64FloatIntegerDAZ."
+    "CVTSD2SIPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64FloatIntegerDAZ."
+    "CVTSD2SIPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64FloatIntegerDAZ."
+    "CVTTSS2SIPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64FloatIntegerDAZ."
+    "CVTTSS2SIPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64FloatIntegerDAZ."
+    "CVTTSD2SIPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64FloatIntegerDAZ."
+    "CVTTSD2SIPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64IntegerFloatDAZ."
+    "CVTSI2SSPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64IntegerFloatDAZ."
+    "CVTSI2SSPreservesStateAcrossRoundingModes/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64IntegerFloatDAZ."
+    "CVTSI2SDPreservesStateAcrossRoundingModes/{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64IntegerFloatDAZ."
+    "CVTSI2SDPreservesStateAcrossRoundingModes/{backend}User")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/{backend}Supervisor_",
+    "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/{backend}User_",
+    "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Native/X64CheckedSIMDException.PublicFaultStateAndBothRetriesAreArchitectural/{backend}Supervisor_",
+    "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Native/X64CheckedSIMDException.PublicFaultStateAndBothRetriesAreArchitectural/{backend}User_",
+    "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
 #endif

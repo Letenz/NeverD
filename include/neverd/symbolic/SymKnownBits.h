@@ -50,11 +50,12 @@ private:
   std::optional<llvm::KnownBits>
   compare(SymRef R, llvm::ArrayRef<llvm::KnownBits> Children,
           unsigned &Remaining, unsigned Depth);
-  std::optional<bool> containsNonwrappingSum(SymRef Sum, SymRef Term,
-                                             unsigned &Remaining,
-                                             unsigned Depth);
+  std::optional<bool> nonwrappingAtLeast(SymRef Sum, SymRef Term,
+                                         unsigned &Remaining, unsigned Depth);
   std::optional<bool> sameLowBits(SymRef A, SymRef B, unsigned Width,
                                   unsigned &Remaining, unsigned Depth);
+  std::optional<bool> sameLowProduct(SymRef A, SymRef B, unsigned Width,
+                                     unsigned &Remaining, unsigned Depth);
 };
 
 } // namespace neverd::symbolic

@@ -41,7 +41,8 @@ NEVERD_EXECUTION_FEATURE(ServiceTraps, 13, "service_traps")
 NEVERD_EXECUTION_FEATURE(ParallelCPUs, 14, "parallel_cpus")
 NEVERD_EXECUTION_FEATURE(TypedExits, 15, "typed_exits")
 NEVERD_EXECUTION_FEATURE(ThreadPointer, 16, "thread_pointer")
+NEVERD_EXECUTION_FEATURE(SIMDExceptions, 17, "precise_simd_exceptions")
 #endif
 #ifdef NEVERD_EXECUTION_FEATURE_LIMIT
-NEVERD_EXECUTION_FEATURE_LIMIT(ThreadPointer)
+NEVERD_EXECUTION_FEATURE_LIMIT(SIMDExceptions)
 #endif

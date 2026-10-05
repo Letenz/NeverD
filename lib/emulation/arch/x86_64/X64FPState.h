@@ -47,16 +47,18 @@ llvm::Error writeX64FPRegister(X64FPState &State, CPURegister Register,
 /// Standard FXSAVE64 legacy area. The ISA owns TOP rotation, 80-bit lanes and
 /// the shared FP/SSE offsets used by the bounded XSAVE codec below.
 llvm::Error encodeX64FXState(const X64MachineState &State,
-                             llvm::MutableArrayRef<uint8_t> Bytes);
+                             llvm::MutableArrayRef<uint8_t> Bytes,
+                             uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask);
 llvm::Error decodeX64FXState(X64MachineState &State,
                              llvm::ArrayRef<uint8_t> Bytes);
 /// Bounded FP/SSE XSAVE profile. Both standard and compacted headers retain
 /// the same legacy slots. Declared compacted extension components are accepted
 /// only in architectural init state; non-initial extensions are unsupported.
-llvm::Error encodeX64XsaveState(const X64MachineState &State,
-                                llvm::MutableArrayRef<uint8_t> Bytes,
-                                bool Compacted = false);
-llvm::Error decodeX64XsaveState(X64MachineState &State,
-                                llvm::ArrayRef<uint8_t> Bytes);
+llvm::Error encodeX64XsaveState(
+    const X64MachineState &State, llvm::MutableArrayRef<uint8_t> Bytes,
+    bool Compacted = false, uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask);
+llvm::Error
+decodeX64XsaveState(X64MachineState &State, llvm::ArrayRef<uint8_t> Bytes,
+                    uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask);
 } // namespace neverd::emulation
 #endif

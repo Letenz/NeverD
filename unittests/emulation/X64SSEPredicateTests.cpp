@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "X64VectorTestSupport.h"
+#include "X64DAZTestSupport.h"
 #include "arch/x86_64/X64Exception.h"
 #include "arch/x86_64/X64Machine.h"
 #include "core/ExecutionDiagnostics.h"
@@ -73,6 +73,24 @@ constexpr auto Comparisons = [] {
       Result[N++] = {Op, P};
   return Result;
 }();
+// Splitting a matrix must neither omit nor repeat an opcode/predicate pair.
+constexpr std::pair<OperationKind, unsigned> ValueCases[] = {
+#define NEVERD_SSE_PREDICATE_TEST(Operation, Condition, Immediate)             \
+  {OperationKind::Operation, Immediate},
+#include "X64SSEPredicateCases.def"
+#undef NEVERD_SSE_PREDICATE_TEST
+};
+static_assert(std::size(ValueCases) == std::size(Comparisons));
+static_assert([] {
+  for (const auto &C : Comparisons) {
+    unsigned Matches = 0;
+    for (const auto &[Kind, Immediate] : ValueCases)
+      Matches += Kind == C.Op.Kind && Immediate == C.P.Immediate;
+    if (Matches != 1)
+      return false;
+  }
+  return true;
+}());
 constexpr uint64_t Roundings[] = {
 #define NEVERD_SSE_COMPARE_ROUND(Name, Bits) Bits,
 #include "X64SSEComparisonCases.def"
@@ -142,10 +160,10 @@ Result reference(const Comparison &C, const Input &I, uint64_t Control) {
   auto Value = A;
   uint64_t Status = 0;
   for (unsigned Lane = 0; Lane < C.Op.Lanes; ++Lane) {
-    const llvm::APFloat Left(Format,
-                             A.extractBits(C.Op.Bits, Lane * C.Op.Bits));
-    const llvm::APFloat Right(Format,
-                              B.extractBits(C.Op.Bits, Lane * C.Op.Bits));
+    const auto Left = daz_test::operand(
+        Format, A.extractBits(C.Op.Bits, Lane * C.Op.Bits), Control);
+    const auto Right = daz_test::operand(
+        Format, B.extractBits(C.Op.Bits, Lane * C.Op.Bits), Control);
     bool Match = false;
     switch (Left.compare(Right)) {
     case llvm::APFloat::cmpEqual:
@@ -248,8 +266,11 @@ TEST(X64SSEPredicateDecoder, FamilyAndPredicateAreIndependentOfSyntax) {
     }
 }
 
-void nativeOracle(OperationKind Kind) {
+void nativeOracle(OperationKind Kind, uint64_t DAZ = 0) {
 #if defined(__x86_64__) || defined(_M_X64)
+  const auto Mask = daz_test::hostMXCSRMask();
+  if (DAZ && !(Mask & DAZ))
+    GTEST_SKIP() << daz_test::HostUnavailable;
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
 #undef NEVERD_FP_BYTES
@@ -314,11 +335,12 @@ void nativeOracle(OperationKind Kind) {
                   Seed.Xmm[N] = {SentinelLow + N, SentinelHigh - N};
                 Seed.Xmm[0] = I.Left;
                 Seed.Xmm[1] = I.Right;
-                Seed.MXCSR = InitialMXCSR | Rounding | Sticky | Flush;
+                Seed.MXCSR = InitialMXCSR | DAZ | Rounding | Sticky | Flush;
                 alignas(x64::fp::RegisterSlotBytes)
                     std::array<uint8_t, x64::fp::LegacyBytes>
                         Before{}, After{}, Host{};
-                ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before)), "");
+                ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before, Mask)),
+                          "");
                 struct alignas(VectorBytes) ArgumentsType {
                   RegisterValue Right;
                   uint64_t Flags;
@@ -344,6 +366,13 @@ void nativeOracle(OperationKind Kind) {
 #define NEVERD_SSE_PREDICATE_OPERATION(Name, ...)                              \
   TEST(X64SSEPredicateOracle, Name##MasksAndStatusMatchOriginalInstructions) { \
     nativeOracle(OperationKind::Name);                                         \
+  }
+#include "X64SSEPredicateCases.def"
+#undef NEVERD_SSE_PREDICATE_OPERATION
+#define NEVERD_SSE_PREDICATE_OPERATION(Name, ...)                              \
+  TEST(X64SSEPredicateDAZOracle,                                               \
+       Name##MasksAndStatusMatchOriginalInstructions) {                        \
+    nativeOracle(OperationKind::Name, daz_test::DenormalsAreZero);             \
   }
 #include "X64SSEPredicateCases.def"
 #undef NEVERD_SSE_PREDICATE_OPERATION
@@ -446,10 +475,12 @@ protected:
     EXPECT_EQ(Reads, unsigned(Memory));
     EXPECT_EQ(Writes, 0u);
   }
-  void compare(OperationKind Kind) {
+  void compare(OperationKind Kind, unsigned Immediate, uint64_t DAZ = 0) {
+    unsigned Matched = 0;
     for (const auto &C : Comparisons) {
-      if (C.Op.Kind != Kind)
+      if (C.Op.Kind != Kind || C.P.Immediate != Immediate)
         continue;
+      ++Matched;
       for (const auto &Left : Inputs)
         for (const auto &Right : Inputs)
           // Exhaust all numeric pairs here; the separate control matrix
@@ -458,7 +489,7 @@ protected:
             SCOPED_TRACE(Left.Name);
             SCOPED_TRACE(Right.Name);
             const auto I = input(C, Left, Right);
-            const auto Control = InitialMXCSR | Sticky;
+            const auto Control = InitialMXCSR | DAZ | Sticky;
             check(C, I, Control);
             ASSERT_FALSE(HasFatalFailure());
             check(C, I, Control, 0, 1, true, Alias + (C.Op.Alignment == 1));
@@ -470,47 +501,68 @@ protected:
             ASSERT_FALSE(HasFatalFailure());
           }
     }
+    EXPECT_EQ(Matched, 1u);
   }
-};
-#define NEVERD_SSE_PREDICATE_OPERATION(Name, ...)                              \
-  TEST_P(X64SSEPredicate, Name##MasksAndStatusPreserveOtherState) {            \
-    compare(OperationKind::Name);                                              \
-  }
-#include "X64SSEPredicateCases.def"
-#undef NEVERD_SSE_PREDICATE_OPERATION
-
-TEST_P(X64SSEPredicate, RoundingModesAndUnrelatedFlagsRemainIndependent) {
-  const std::pair<NumericInput, NumericInput> Pairs[] = {
+  void rounding(OperationKind Kind, uint64_t DAZ = 0) {
+    const std::pair<NumericInput, NumericInput> Pairs[] = {
 #define NEVERD_SSE_COMPARE_PAIR(Left, Right) {Left, Right},
 #include "X64SSEComparisonCases.def"
 #undef NEVERD_SSE_COMPARE_PAIR
-  };
-  for (const auto &C : Comparisons)
-    for (const auto &[Left, Right] : Pairs)
-      for (auto Rounding : Roundings)
-        for (auto InitialFlags : {ClearFlags, Flags, Flags | DirectionFlag})
-          for (auto Sticky : {uint64_t(0), ExistingStatus,
-                              ExistingStatus | InvalidStatus | DenormalStatus})
+    };
+    unsigned Matched = 0;
+    for (const auto &C : Comparisons) {
+      if (C.Op.Kind != Kind)
+        continue;
+      ++Matched;
+      for (const auto &[Left, Right] : Pairs)
+        for (auto Rounding : Roundings)
+          for (auto InitialFlags : {ClearFlags, Flags, Flags | DirectionFlag})
+            for (auto Sticky :
+                 {uint64_t(0), ExistingStatus,
+                  ExistingStatus | InvalidStatus | DenormalStatus})
+              for (auto Flush : {uint64_t(0), FlushToZero})
+                for (bool Memory : {false, true}) {
+                  check(C, input(C, Left, Right),
+                        InitialMXCSR | DAZ | Rounding | Sticky | Flush, 0, 1,
+                        Memory, Data, InitialFlags);
+                  ASSERT_FALSE(HasFatalFailure());
+                }
+    }
+    EXPECT_EQ(Matched, std::size(Predicates));
+  }
+  void mixed(OperationKind Kind, uint64_t DAZ = 0) {
+    for (const auto &C : Comparisons) {
+      if (C.Op.Kind != Kind)
+        continue;
+      for (const auto &I : mixedInputs(C))
+        for (auto Rounding : Roundings)
+          for (auto Sticky : {uint64_t(0), ExistingStatus})
             for (auto Flush : {uint64_t(0), FlushToZero})
               for (bool Memory : {false, true}) {
-                check(C, input(C, Left, Right),
-                      InitialMXCSR | Rounding | Sticky | Flush, 0, 1, Memory,
-                      Data, InitialFlags);
+                check(C, I, InitialMXCSR | DAZ | Rounding | Sticky | Flush, 0,
+                      1, Memory);
                 ASSERT_FALSE(HasFatalFailure());
               }
-}
+    }
+  }
+};
+#define NEVERD_SSE_PREDICATE_TEST(Operation, Condition, Immediate)             \
+  TEST_P(X64SSEPredicate,                                                      \
+         Operation##Condition##MasksAndStatusPreserveOtherState) {             \
+    compare(OperationKind::Operation, Immediate);                              \
+  }
+#define NEVERD_SSE_PREDICATE_OPERATION(Name, ...)                              \
+  TEST_P(X64SSEPredicate,                                                      \
+         Name##RoundingModesAndUnrelatedFlagsRemainIndependent) {              \
+    rounding(OperationKind::Name);                                             \
+  }
+#include "X64SSEPredicateCases.def"
+#undef NEVERD_SSE_PREDICATE_OPERATION
+#undef NEVERD_SSE_PREDICATE_TEST
 
 TEST_P(X64SSEPredicate, MixedLanesAccumulateStatusAndScalarsIgnoreUpperInputs) {
-  for (const auto &C : Comparisons)
-    for (const auto &I : mixedInputs(C))
-      for (auto Rounding : Roundings)
-        for (auto Sticky : {uint64_t(0), ExistingStatus})
-          for (auto Flush : {uint64_t(0), FlushToZero})
-            for (bool Memory : {false, true}) {
-              check(C, I, InitialMXCSR | Rounding | Sticky | Flush, 0, 1,
-                    Memory);
-              ASSERT_FALSE(HasFatalFailure());
-            }
+  for (const auto &Op : Operations)
+    mixed(Op.Kind);
 }
 
 TEST_P(X64SSEPredicate, PackedAlignmentFaultPrecedesMemoryAndStatus) {
@@ -882,6 +934,27 @@ TEST_P(X64SSEPredicate, DeviceOperandsRejectBeforeCallbacks) {
     EXPECT_EQ(backing(), RAM);
   }
 }
+
+using X64SSEPredicateDAZ = daz_test::Fixture<X64SSEPredicate>;
+#define NEVERD_SSE_PREDICATE_TEST(Operation, Condition, Immediate)             \
+  TEST_P(X64SSEPredicateDAZ,                                                   \
+         Operation##Condition##MasksAndStatusPreserveOtherState) {             \
+    compare(OperationKind::Operation, Immediate, daz_test::DenormalsAreZero);  \
+  }
+#define NEVERD_SSE_PREDICATE_OPERATION(Name, ...)                              \
+  TEST_P(X64SSEPredicateDAZ,                                                   \
+         Name##RoundingModesAndUnrelatedFlagsRemainIndependent) {              \
+    rounding(OperationKind::Name, daz_test::DenormalsAreZero);                 \
+  }                                                                            \
+  TEST_P(X64SSEPredicateDAZ, Name##MixedLanesAccumulateStatus) {               \
+    mixed(OperationKind::Name, daz_test::DenormalsAreZero);                    \
+  }
+#include "X64SSEPredicateCases.def"
+#undef NEVERD_SSE_PREDICATE_OPERATION
+#undef NEVERD_SSE_PREDICATE_TEST
+INSTANTIATE_TEST_SUITE_P(DAZBackends, X64SSEPredicateDAZ,
+                         testing::ValuesIn(daz_test::Parameters),
+                         [](const auto &Info) { return Info.param.Name; });
 
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64SSEPredicate,
                          testing::ValuesIn(Parameters),

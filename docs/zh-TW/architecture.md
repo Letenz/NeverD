@@ -118,6 +118,16 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 未請求映像或除錯資訊投影時，LLVMC 現在自動呼叫純量迴圈恢復。有界掃描限制每個函式最多 1024 個區塊。恢復與 LLVM 清理在模組共用預算內反覆執行，最後透過共用匯入器和 SymExec，將最終函式本體對照原始函式重新證明。發布只修改輸出器副本，保留函式身分、屬性、呼叫端和內建函式繫結。符號衝突、外部保留的區塊位址、函式中繼資料及例外映射保留既有路徑；拒絕或預算耗盡時不發布中間函式。單函式輸出只正規化所選目標。這不推導原生輸入介面或記憶體私有性。
 
+純量候選證明通過後，LLVMC 重用 `SymSimplifyPass::simplifyPredicates` 處理新顯露的模算術條件。既有精確階段保留 poison、輸入穩定性與收益檢查，並回報推導工作量；LLVMC 將其計入累計建構預算，每次呼叫最多 65,536 單位。接著 InstCombine、LICM 與 CSE 顯露迴圈不變的邊界，並讓等價的計數器更新共用一個 SSA 身分，再進入下一輪復原。直接修改 IR 後會使快取分析失效。述詞階段不使用求解器，最終仍須證明與完整原函式等價。
+
+`SymKnownBits` 也能證明原值與遮罩副本相等，前提是所有捨棄位元皆已知為零；亦能證明有號位移往返相等，要求來源身分、二的冪因子與完整位移量相符，且捨棄位元與保留的符號位元全為零或全為一。這些有界唯讀關係計入查詢工作量，不擴展 DAG、不列舉資料，也不把 LLVM 無回繞標記當作假設。
+
+`SymKnownBits` 僅在基值相符且證明較大乘積不會無號回繞後，比較純量倍數的大小。低位字乘積相等關係收集模係數，並跨保留所需位寬的擴展檢查因子及其重複次數；更窄的溢位邊界保持不透明。兩側推導、待處理因子與配對均計入既有工作量及深度預算，分析保持唯讀。
+
+共享 LLVM 匯入器接納標準且不帶運算元 bundle 的 `llvm.assume(i1)` 呼叫，將「執行到此處時條件必須為真」記入既有定義性狀態。純量與機器狀態證明檢查此義務，不縮小輸入域，也不將其當成已成立的事實。額外呼叫/宣告契約及 undef/poison 仍被拒絕，輸入 IR 與證明預算保持不變。這不構成原生 ABI 認證。
+
+匯入器接納格式正確的 `llvm.loop.peeled.count`，將其視為無號 i32 最佳化歷史計數器，不用於迴圈次數上限、輸入限制或終止性/定義性事實。迴圈識別與屬性運算元數量皆會檢查；畸形或未知屬性仍不受支援，走訪中繼資料會消耗既有預算。
+
 LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，並在一般純量生成前執行有預算限制的逐位元組必然資料流分析，不引入第二套值求值器。
 
 `NeverDInterpreterLLVMRefinement` 負責組合原生到 LLVM 的證明。它重新建立兩側狀態模型與強制契約，透過權威執行設定產生僅在入口執行的旗標投影，並重新檢查兩個前提。呼叫端可提交迴圈候選方案，但不能替換模型、觀察項或證明憑據。分析模型僅複製可執行圖與宣告入口；入口回邊會遭拒絕，避免重複初始化狀態。
@@ -911,7 +921,7 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 `NeverDEmulationArch` 獨立負責 ISA、頁表及 FP 狀態佈局，原生與 Unicorn 傳輸共用此層。x64 上下文保存 x87 控制、狀態、TOP、實體標籤、操作碼、指令／資料指標及八個 80 位元暫存器。`FP0`–`FP7` 使用 `RegisterValue`，純量存取拒絕截斷；`FPTag` 是實體非空位圖。`NeverDX64FPTests` 涵蓋全部 TOP、精確運算的主機 FXSAVE/FXRSTOR 對照與上下文還原。這不新增 checked x87 指令，也不證明全部捨入語義；缺少原生主機時明確略過。
 
-checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
+checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。未遮罩例外、x87、AVX 仍未開放。
 
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
@@ -931,7 +941,11 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CMPSS`、`CMPSD`、`CMPPS` 和 `CMPPD` 在 KVM、WHP 和 checked Unicorn 上執行八種傳統比較條件。共用 `Source` 規則接納解碼後的條件別名，保留控制值仍不支援。純量形式保留高位通道並讀取 m32/m64，向量形式要求對齊的 m128。FLAGS 與既有 MXCSR 狀態保留，無效及次正規狀態依有效通道累積。Capstone 統一負責指令族 ID 與 SSE 條件，取代僅在 lifter 內修正身分的邏輯；Unicorn 在各比較函式內部分類次正規輸入。
 
-`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 透過共用 `Source` 規則轉換傳統 SSE 精度。純量結果保留目標高 64/96 位元；打包擴寬讀取 m64 並寫入兩個雙精度數，打包縮窄讀取對齊的 m128、寫入兩個單精度數並清零高 64 位元。KVM、WHP 和 checked Unicorn 執行原始指令，保留 FLAGS，並依捨入與 FTZ 控制累積已遮罩例外的 MXCSR 狀態。Unicorn 在轉換函式中逐一分類有效次正規輸入。DAZ、未遮罩例外和 VEX/EVEX 仍不支援。
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 透過共用 `Source` 規則轉換傳統 SSE 精度。純量結果保留目標高 64/96 位元；打包擴寬讀取 m64 並寫入兩個雙精度數，打包縮窄讀取對齊的 m128、寫入兩個單精度數並清零高 64 位元。KVM、WHP 和 checked Unicorn 執行原始指令，保留 FLAGS，並依捨入與 FTZ 控制累積已遮罩例外的 MXCSR 狀態。Unicorn 在轉換函式中逐一分類有效次正規輸入。未遮罩例外和 VEX/EVEX 仍不支援。
+
+`CVTDQ2PS` 和 `CVTDQ2PD` 透過共用 `Source` 規則轉換打包的有號 32 位元整數。單精度讀取對齊的 m128 並使用 MXCSR 捨入；雙精度讀取可未對齊的 m64，結果精確。目標 XMM 全部位元被替換，FLAGS 和既有 MXCSR 狀態保留，非精確單精度結果累積精度狀態。KVM、WHP 和 checked Unicorn 執行原始指令。Unicorn 在選擇八位元組讀取前辨識兩種打包擴寬轉換。未遮罩例外、MMX 和 VEX/EVEX 仍不支援。
+
+`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 捨入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截斷。共用 `Source` 規則要求對齊的 m128 或 XMM 輸入。NaN 或越界通道產生 signed32 indefinite 並設定無效狀態；其他有效但非精確通道獨立累積精度狀態。單精度輸入產生四個整數，雙精度輸入產生兩個並清零目標高 64 位元。FLAGS 和既有 MXCSR 狀態保留；FTZ 不捨棄次正規輸入。KVM、WHP 和 checked Unicorn 執行原始指令。未遮罩例外、MMX 和 VEX/EVEX 仍不支援。
 
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
@@ -1000,6 +1014,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 `WindowsSystemModules` 為兩種 ISA 建立有界的 `ntdll.dll`、`kernelbase.dll` 與 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 和 `GetProcAddress` 共用映射基址；PEB/LDR 與 `MEM_IMAGE` 描述相同映像。靜態匯入、名稱查詢與客體 DLL 轉送使用相同 API 跳板及匯出解析器。提供者固定駐留，不執行客體初始化回呼，普通客體 DLL 全部卸載後不會阻止進入點傳回。標頭或匯出中繼資料改變會停止查詢。未知系統匯出名稱與非零系統序號查詢明確停止；已建模名稱的大小寫不符及空名稱傳回錯誤 127，空指標查詢傳回 87。產生的位元組與位址屬於模型策略，不重建特定 Windows DLL 配置、原生序號或跨提供者別名。`WindowsSystemTests.cpp` 對照原始 x64/ARM64 EXE 與原生 Windows，並獨立觀察八次初始執行緒傳回。
 
 `WindowsProcessExceptions` 在同一 CPU 與程序預算內實作 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序處理器可註冊或移除處理器、觸發巢狀例外、呼叫已建模 API、載入 DLL 及結束程序。x64/ARM64 資料存取例外與 x64 整數除法例外可在驗證客體對 `CONTEXT` 的修改後恢復；一般暫存器、SIMD 與受支援的浮點狀態會保留。軟體例外經模型提供者中的實際返回指令繼續執行。模型最多保留 128 個註冊項、巢狀 16 層。非法處置值、遭修改的例外指標、不支援的內容欄位及超限皆明確失敗。ARM64 以堆疊框架為基礎的 SEH／展開、偵錯器派送及執行／防護頁例外仍不支援。`WindowsExceptionTests.cpp` 將原創 EXE／DLL 情境與原生 Windows 比較；原生 ARM64 KVM/WHP 證據仍待補齊。 軟體例外記錄帶有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），與呼叫者傳入的不可繼續旗標分別處理；原始 Windows 執行檔精確核對軟體例外和硬體例外的旗標值。
+
+`os/windows/exception/X64SIMDException` 依據保留的 MXCSR 與原生觀察到的優先順序，統一負責真實 x64 `#XM` 的 Windows 狀態碼及參數分類。使用者態分發要求故障中繼資料一致，並在例外記錄中包含 `{0, MXCSR}`；僅有黏滯狀態位元不能證明發生了故障。 關於遮罩例外的 x64 指令說明描述可攜基線。KVM/WHP 為 `driver-strict`、`checked-x64-v1` 與 `checked-user-x64-v1` 增加 `precise_simd_exceptions`：原生啟動探針驗證精確 `#XM` 及兩種重試後，才允許未遮罩的 MXCSR 寫入、`LDMXCSR` 與 Windows `CONTEXT` 還原。`ExecutionProfiles.def` 統一負責選擇，`supportsSIMDExceptions` 提供已解析的實例能力。checked Unicorn 仍要求遮罩；本次不擴展 ARM64 或 HVF 的例外能力。
 
 `AddVectoredContinueHandler` 與 `RemoveVectoredContinueHandler` 管理獨立的有序串列，與例外處理器共用最多保留 128 個註冊項的限制。向量例外處理器接受繼續執行後，繼續處理器讀取同一份可修改的例外記錄與 `CONTEXT`；最終內容驗證在這些回呼完成後進行，包含巢狀例外與 DLL 通知。兩類處理器的控制代碼不可交叉移除。`WindowsContinuationTests.cpp` 將順序、提早結束派送、增刪、內容修復、巢狀派送、載入器回呼及程序結束的原創 EXE 案例與原生 Windows 比較。已測 Windows x64 向量處理路徑允許在設定 `EXCEPTION_NONCONTINUABLE` 時繼續執行；這不代表以堆疊框架為基礎的 SEH 行為。原生 ARM64 執行仍未驗證。
 

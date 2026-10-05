@@ -52,7 +52,7 @@ llvm::Error completeX64CR8Read(X64MachineState &State, unsigned GPR,
 /// Native execution of one already admitted instruction. No OS models,
 /// instruction decoding, memory ownership or lifecycle decisions belong here.
 /// The v1 contract admits scalar integer and bounded SSE/SSE2 data operations.
-/// Admitted masked legacy SSE arithmetic and conversions retain MXCSR and the
+/// Admitted legacy SSE arithmetic and conversions retain MXCSR and the
 /// complete legacy FP/SSE state in the CPU context.
 /// Synchronous processor faults return X64ExceptionError with their original
 /// architectural context. Transport failures do not publish partial CPU state.
@@ -63,6 +63,7 @@ class X64Machine {
 public:
   virtual ~X64Machine() = default;
   virtual bool requiresExceptionMonitor() const { return false; }
+  virtual uint32_t mxcsrMask() const { return x64::fp::BaselineMXCSRMask; }
   virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot,
                            MachineRunControl Control) = 0;
 };

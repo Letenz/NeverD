@@ -223,19 +223,25 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
   }
 
   // Jumps and empty label anchors run nothing of a block of their own, and
-  // a test may merge the branches of several blocks (`a || b`) or run at a
-  // loop's latch while carrying one address.
+  // a loop test may run at the loop's latch while carrying one address.  An
+  // if tests in the block of its branch: when it merges the tests of several
+  // blocks (`a || b`) it names the first, and the others keep no statement,
+  // which `Reaches` crosses.  Counting it keeps a block that is only a test
+  // in the check, so that an edge into it can be found missing.
   auto BlockOf = [&](size_t N) -> int {
     const HighStmt *S = G.Nodes[N].Statement;
     if (!S || S->IsPhiCopy || !S->Addr || S->Addr == InvalidVA)
       return -1;
     switch (S->Kind) {
+    case StmtKind::If:
+    case StmtKind::IfElse:
+      if (!S->Cond)
+        return -1;
+      break;
     case StmtKind::Goto:
     case StmtKind::Break:
     case StmtKind::Continue:
     case StmtKind::Nop:
-    case StmtKind::If:
-    case StmtKind::IfElse:
     case StmtKind::While:
     case StmtKind::DoWhile:
     case StmtKind::For:

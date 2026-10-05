@@ -7,6 +7,29 @@
 #include "LLVMInterpreterModelTest.h"
 
 namespace neverd::analysis::llvm_model_test {
+TEST_F(LLVMModel, AssumptionsUseTheSharedStateDefinednessContract) {
+  parse(R"(
+    %x = load i64, ptr %state, align 8
+    %ok = icmp ne i64 %x, 0
+    call void @llvm.assume(i1 %ok)
+    %result = xor i64 %x, 7
+    store i64 %result, ptr %state, align 8
+    ret i64 0
+  )",
+        "declare void @llvm.assume(i1)");
+  ASSERT_TRUE(Module);
+  auto C = llvmInterpreterMachineStateContract();
+  C.EntryConstants.push_back({r(0), 3});
+  Oracle Reference({op(NdOp::INT_XOR, r(0), {r(0), n(7)})});
+  expect(Reference, Status::Proved, C);
+  C.EntryConstants.back().Value = 0;
+  expect(Reference, Status::ContractViolation, C);
+  parse("call void @llvm.assume(i1 true) [\"cold\"()]\nret i64 0",
+        "declare void @llvm.assume(i1)");
+  ASSERT_TRUE(Module);
+  reject("unsupported intrinsic or call contract");
+}
+
 TEST_F(LLVMModel, ArithmeticFlagsAreProvedRatherThanAssumed) {
   struct Case {
     const char *Operation;

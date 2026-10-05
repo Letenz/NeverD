@@ -24,7 +24,8 @@ public:
 
   /// Control already includes preparation and acquisition of the partition.
   llvm::Error step(X64MachineState &State, uint64_t Root,
-                   MachineRunControl Control) {
+                   MachineRunControl Control,
+                   uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask) {
     const bool Reuse = std::exchange(Runnable, false);
     if (auto E = validateX64FPState(State.FP))
       return E;
@@ -33,7 +34,7 @@ public:
       return E;
     if (!Reuse || State.FP != CapturedState.FP ||
         State.MXCSR != CapturedState.MXCSR || State.Xmm != CapturedState.Xmm)
-      if (auto E = Xsave.install(API, Partition, State))
+      if (auto E = Xsave.install(API, Partition, State, MXCSRMask))
         return E;
     WHV_RUN_VP_EXIT_CONTEXT Exit{};
     CapturePacket Actual{};
@@ -57,7 +58,7 @@ public:
       WhpXsaveState::MetadataPacket Metadata{};
       std::copy(Actual.begin() + std::size(Names), Actual.end(),
                 Metadata.begin());
-      if (auto E = Xsave.capture(API, Partition, Next, &Metadata))
+      if (auto E = Xsave.capture(API, Partition, Next, &Metadata, MXCSRMask))
         return E;
       Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
       const unsigned Vector = Exit.VpException.ExceptionType;

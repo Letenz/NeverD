@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "X64VectorTestSupport.h"
+#include "X64DAZTestSupport.h"
 #include "arch/x86_64/X64Exception.h"
 #include "arch/x86_64/X64Machine.h"
 #include "core/ExecutionDiagnostics.h"
@@ -111,7 +111,8 @@ Result reference(const Conversion &C, const Input &I, uint64_t Control) {
   for (unsigned Lane = 0; Lane < C.Lanes; ++Lane) {
     const auto Raw = C.Bits == SingleBits ? I.Right[0] >> (Lane * SingleBits)
                                           : I.Right[Lane];
-    llvm::APFloat Value(SourceFormat, llvm::APInt(C.Bits, Raw));
+    auto Value =
+        daz_test::operand(SourceFormat, llvm::APInt(C.Bits, Raw), Control);
     if (Value.isDenormal())
       Status |= DenormalStatus;
     // x86 detects range after rounding to destination precision with an
@@ -169,8 +170,11 @@ std::vector<uint8_t> instruction(const Conversion &C, unsigned Dest = 0,
   return Bytes;
 }
 
-void nativeOracle(OperationKind Kind) {
+void nativeOracle(OperationKind Kind, uint64_t DAZ = 0) {
 #if defined(__x86_64__) || defined(_M_X64)
+  const auto Mask = daz_test::hostMXCSRMask();
+  if (DAZ && !(Mask & DAZ))
+    GTEST_SKIP() << daz_test::HostUnavailable;
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
 #undef NEVERD_FP_BYTES
@@ -234,12 +238,14 @@ void nativeOracle(OperationKind Kind) {
                       Seed.Xmm[N] = {SentinelLow + N, SentinelHigh - N};
                     Seed.Xmm[0] = I.Left;
                     Seed.Xmm[1] = I.Right;
-                    Seed.MXCSR = InitialMXCSR | R.Control | Sticky | Flush;
+                    Seed.MXCSR =
+                        InitialMXCSR | DAZ | R.Control | Sticky | Flush;
                     alignas(x64::fp::RegisterSlotBytes)
                         std::array<uint8_t, x64::fp::LegacyBytes>
                             Before{}, After{}, Host{};
-                    ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before)),
-                              "");
+                    ASSERT_EQ(
+                        llvm::toString(encodeX64FXState(Seed, Before, Mask)),
+                        "");
                     alignas(x64::fp::RegisterSlotBytes)
                         const std::array<uint64_t, 4>
                             Arguments{I.Right[0], I.Right[1], InitialFlags, 0};
@@ -264,6 +270,12 @@ void nativeOracle(OperationKind Kind) {
 #define NEVERD_SSE_PRECISION_OPERATION(Name, ...)                              \
   TEST(X64SSEPrecisionOracle, Name##MatchesOriginalInstructions) {             \
     nativeOracle(OperationKind::Name);                                         \
+  }
+#include "X64SSEPrecisionCases.def"
+#undef NEVERD_SSE_PRECISION_OPERATION
+#define NEVERD_SSE_PRECISION_OPERATION(Name, ...)                              \
+  TEST(X64SSEPrecisionDAZOracle, Name##MatchesOriginalInstructions) {          \
+    nativeOracle(OperationKind::Name, daz_test::DenormalsAreZero);             \
   }
 #include "X64SSEPrecisionCases.def"
 #undef NEVERD_SSE_PRECISION_OPERATION
@@ -365,7 +377,7 @@ protected:
     EXPECT_EQ(Reads, unsigned(Memory));
     EXPECT_EQ(Writes, 0u);
   }
-  void convert(OperationKind Kind) {
+  void convert(OperationKind Kind, uint64_t DAZ = 0) {
     for (const auto &C : Conversions) {
       if (C.Kind != Kind)
         continue;
@@ -375,13 +387,13 @@ protected:
             for (bool Memory : {false, true}) {
               SCOPED_TRACE(Inputs[L].Name);
               SCOPED_TRACE(Right.Name);
-              check(C, input(C, Inputs[L], Right), InitialMXCSR | Sticky, 0, 1,
-                    Memory, Alias + (C.Alignment == 1));
+              check(C, input(C, Inputs[L], Right), InitialMXCSR | DAZ | Sticky,
+                    0, 1, Memory, Alias + (C.Alignment == 1));
               ASSERT_FALSE(HasFatalFailure());
             }
     }
   }
-  void rounding(OperationKind Kind) {
+  void rounding(OperationKind Kind, uint64_t DAZ = 0) {
     for (const auto &C : Conversions) {
       if (C.Kind != Kind)
         continue;
@@ -395,8 +407,8 @@ protected:
                   SCOPED_TRACE(Negate);
                   const auto I = input(C, Inputs[(N + 1) % std::size(Inputs)],
                                        Inputs[N], Negate);
-                  check(C, I, InitialMXCSR | R.Control | Sticky | Flush, 0, 1,
-                        Memory,
+                  check(C, I, InitialMXCSR | DAZ | R.Control | Sticky | Flush,
+                        0, 1, Memory,
                         Alias + PageSize -
                             (C.Alignment == 1 ? sourceBytes(C) / 2
                                               : sourceBytes(C)),
@@ -774,6 +786,20 @@ TEST_P(X64SSEPrecision, DeviceOperandsRejectBeforeCallbacks) {
     EXPECT_EQ(backing(), RAM);
   }
 }
+
+using X64SSEPrecisionDAZ = daz_test::Fixture<X64SSEPrecision>;
+#define NEVERD_SSE_PRECISION_OPERATION(Name, ...)                              \
+  TEST_P(X64SSEPrecisionDAZ, Name##ValuesAndStatusPreserveOtherState) {        \
+    convert(OperationKind::Name, daz_test::DenormalsAreZero);                  \
+  }                                                                            \
+  TEST_P(X64SSEPrecisionDAZ, Name##RoundingFlushAndStickyStatus) {             \
+    rounding(OperationKind::Name, daz_test::DenormalsAreZero);                 \
+  }
+#include "X64SSEPrecisionCases.def"
+#undef NEVERD_SSE_PRECISION_OPERATION
+INSTANTIATE_TEST_SUITE_P(DAZBackends, X64SSEPrecisionDAZ,
+                         testing::ValuesIn(daz_test::Parameters),
+                         [](const auto &Info) { return Info.param.Name; });
 
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64SSEPrecision,
                          testing::ValuesIn(Parameters),

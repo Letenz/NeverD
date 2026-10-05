@@ -1,0 +1,38 @@
+//===- X64MXCSRCases.def - Independent MXCSR controls --------------------===//
+// NeverD Decompiler
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_MXCSR_VALUE
+NEVERD_MXCSR_VALUE(Limit, 0x1000000)
+NEVERD_MXCSR_VALUE(Code, 0x10000)
+NEVERD_MXCSR_VALUE(Data, 0x20000)
+NEVERD_MXCSR_VALUE(Page, 0x1000)
+NEVERD_MXCSR_VALUE(Timeout, 1000000)
+NEVERD_MXCSR_VALUE(Initial, 0x1f80)
+NEVERD_MXCSR_VALUE(Baseline, 0xffbf)
+NEVERD_MXCSR_VALUE(Complete, 0xffff)
+NEVERD_MXCSR_VALUE(Denormal, 0x2)
+NEVERD_MXCSR_VALUE(DAZ, 0x40)
+NEVERD_MXCSR_VALUE(FTZ, 0x8000)
+NEVERD_MXCSR_VALUE(Sticky, 0x3f)
+NEVERD_MXCSR_VALUE(RoundingStep, 0x2000)
+NEVERD_MXCSR_VALUE(RoundingCount, 4)
+NEVERD_MXCSR_VALUE(Reserved, 0x10000)
+NEVERD_MXCSR_VALUE(Flags, 0x602)
+NEVERD_MXCSR_VALUE(Word, 4)
+NEVERD_MXCSR_VALUE(Nop, 0x90)
+NEVERD_MXCSR_VALUE(Fill, 0xa5)
+NEVERD_MXCSR_VALUE(Sentinel, 0x12345678)
+NEVERD_MXCSR_VALUE(FloatNegativeTiny, 0x80000001)
+NEVERD_MXCSR_VALUE(DoubleNegativeTiny, 0x8000000000000001ULL)
+#endif
+#ifdef NEVERD_MXCSR_CODE
+// m32 [RCX], followed by a separate stop hook at the next instruction.
+NEVERD_MXCSR_CODE(Load, 0x0f, 0xae, 0x11)
+NEVERD_MXCSR_CODE(Store, 0x0f, 0xae, 0x19)
+NEVERD_MXCSR_CODE(Add, 0xf3, 0x0f, 0x58, 0xc1)
+#endif
+#ifdef NEVERD_MXCSR_TEXT
+NEVERD_MXCSR_TEXT(ObserverError, "MXCSR observer failure")
+NEVERD_MXCSR_TEXT(UserSuffix, "User")
+NEVERD_MXCSR_TEXT(SupervisorSuffix, "Supervisor")
+#endif

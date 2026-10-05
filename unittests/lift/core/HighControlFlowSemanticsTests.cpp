@@ -3617,6 +3617,56 @@ TEST(HighControlFlowSemantics, SameArmsMergeOnlyWhenTheyLeave) {
   }
 }
 
+namespace {
+/// if (x & 1) { v = 1; <Then> } else { <Else> }  v = v + 10;  J: return v;
+/// with one arm ending in `goto J`.
+HighFunc armJumpsPastAStatement(bool FromElse) {
+  auto Plus10 = assign(0x1010, 1, 0);
+  Plus10.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(10, 8));
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1000;
+  Arms.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  if (FromElse) {
+    Arms.Body = {assign(0x1004, 1, 1)};
+    Arms.ElseBody = {assign(0x1008, 1, 3), jump(0x100c, 0x1020)};
+  } else {
+    // An if/else whose else arm is empty is a plain if.
+    Arms.Body = {assign(0x1004, 1, 1), jump(0x1008, 0x1020)};
+  }
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1020;
+  HighFunc F;
+  F.Body = {assign(0x0ffc, 1, 0), Arms, Plus10, Label,
+            result(0x1024, local(1))};
+  return F;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, ArmJumpPastStatementsBecomesStructured) {
+  for (bool FromElse : {false, true}) {
+    SCOPED_TRACE(FromElse);
+    HighFunc F = armJumpsPastAStatement(FromElse);
+    auto Expected = [&](uint64_t X) -> uint64_t {
+      if (FromElse)
+        return X & 1 ? 11 : 3;
+      return X & 1 ? 1 : 10;
+    };
+    for (uint64_t X : {0, 1})
+      ASSERT_EQ(execute(F, X), Expected(X));
+    reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+    for (uint64_t X : {0, 1})
+      EXPECT_EQ(execute(F, X), Expected(X)) << X;
+    size_t Gotos = 0;
+    walkStmts(F.Body,
+              [&](const HighStmt &S) { Gotos += S.Kind == StmtKind::Goto; });
+    EXPECT_EQ(Gotos, 0u);
+  }
+}
+
 TEST(HighControlFlowSemantics, EnteredDoWhileKeepsItsShape) {
   // `goto X; Top: do { y = y + 1; X: } while (y != 3); if (x) goto Top;`
   // The jump to Top runs the body before the test; `while (y != 3)` would
@@ -5372,6 +5422,57 @@ ExprPtr loadSlot() {
   return HighExpr::makeLoad(HighExpr::makeConst(0x100, 8), NdType::makeInt(8));
 }
 
+TEST(HighControlFlowSemantics, StoreThroughAnAliasKeepsAFieldRetest) {
+  // p = q = 0x100; p->f = 1; t = p->f; v = 0;
+  // if (t) { q->f = x; if (p->f) v = 7; }  return v;
+  // The store through q may change p->f, so `t` does not imply the second
+  // test; a call that may write memory is the same case.
+  auto PointerTo = [](int Id) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(Id),
+                               HighExpr::makeConst(8, 8));
+  };
+  auto LoadP = [&] {
+    return HighExpr::makeLoad(PointerTo(5), NdType::makeInt(8));
+  };
+  auto Store = [](va_t Address, ExprPtr Pointer, ExprPtr Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Store;
+    S.Addr = Address;
+    S.StoreAddr = std::move(Pointer);
+    S.StoreVal = std::move(Value);
+    return S;
+  };
+  auto Field = assign(0x100c, 2, 0);
+  Field.Val = LoadP();
+  HighStmt Retest;
+  Retest.Kind = StmtKind::If;
+  Retest.Addr = 0x101c;
+  Retest.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, LoadP(),
+                                    HighExpr::makeConst(0, 8));
+  Retest.Body = {assign(0x1020, 1, 7)};
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Addr = 0x1014;
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(2),
+                                   HighExpr::makeConst(0, 8));
+  Guard.Body = {Store(0x1018, PointerTo(6), local(0)), Retest};
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Body = {assign(0x1000, 5, 0x100),
+            assign(0x1004, 6, 0x100),
+            Store(0x1008, PointerTo(5), HighExpr::makeConst(1, 8)),
+            Field,
+            assign(0x1010, 1, 0),
+            Guard,
+            result(0x1030, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t { return X ? 7 : 0; };
+  for (uint64_t X : {0, 1})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  invertSkipGotos(F);
+  for (uint64_t X : {0, 1})
+    EXPECT_EQ(execute(F, X), Expected(X)) << X;
+}
+
 TEST(HighControlFlowSemantics, SkipOverWorkStaysOnTheOuterElsePath) {
   // `*m = 0; w = 0; if (x != 0) { if (x == 2) { w = 1; goto J; } } else
   // { w = 3; } *m = 7; J: return *m + w;` The outer else runs into the store
@@ -5707,6 +5808,97 @@ TEST(HighControlFlowSemantics, JumpOntoARepeatedAddressIsNotAFallthrough) {
   ASSERT_EQ(F.Body[1].Kind, StmtKind::Block);
   EXPECT_EQ(F.Body[1].Addr, 0x1008u);
   EXPECT_TRUE(F.Body[1].Body.empty());
+}
+
+TEST(HighControlFlowSemantics, HandlerReceivesNoBlockFromOutside) {
+  // __try { if (x) goto M; v = 1; } __except (1) { goto L; }  return v;
+  // L: if (x) { M: v = 3; }  v = v + 4;  return v;
+  // L is entered once, from the handler, but its block carries M, which the
+  // protected body enters: moved into the handler, that jump would enter the
+  // __except block, which C forbids.
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.Addr = 0x1000;
+  Try.EHRange = {0x1000, 0x1008};
+  Try.Body = {conditional(0x1000, 0x1028), assign(0x1004, 1, 1)};
+  HighEHClause Clause;
+  Clause.Kind = HighEHClauseKind::SEHExcept;
+  Clause.HandlerVA = 0x1010;
+  Try.EHClauses = {Clause};
+  Try.EHClauseBodies = {{jump(0x1010, 0x1020)}};
+  HighStmt Nested;
+  Nested.Kind = StmtKind::If;
+  Nested.Addr = 0x1020;
+  Nested.Cond = local(0);
+  Nested.Body = {assign(0x1028, 1, 3)};
+  auto Plus4 = assign(0x1030, 1, 0);
+  Plus4.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(4, 8));
+  HighFunc F;
+  F.Body = {Try, result(0x1014, local(1)), Nested, Plus4,
+            result(0x1034, local(1))};
+  reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+  std::set<va_t> InHandler;
+  std::size_t JumpsIn = 0;
+  for (const auto &Handler : F.Body.front().EHClauseBodies)
+    walkStmts(Handler, [&](const HighStmt &S) { InHandler.insert(S.Addr); });
+  walkStmts(F.Body.front().Body, [&](const HighStmt &S) {
+    JumpsIn += S.Kind == StmtKind::Goto && InHandler.count(S.GotoTarget);
+  });
+  EXPECT_EQ(JumpsIn, 0u);
+}
+
+TEST(HighControlFlowSemantics, ElseJumpPastAStatementWithoutAddressStays) {
+  // if (x & 1) { v = 1; }
+  // else {
+  //   if (x & 2) { v = 2; }
+  //   else { if (x & 4) { v = 4; } else { v = 3; goto J; } }
+  //   v = v + 10;
+  // }
+  // J: return v;
+  // The innermost jump skips `v = v + 10`, which has no address; J follows
+  // the outer if, not the middle one the jump's if/else ends.
+  auto Bit = [](uint64_t Mask) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(Mask, 8));
+  };
+  auto Copy = assign(0x1028, 1, 3);
+  Copy.IsPhiCopy = true;
+  HighStmt Inner;
+  Inner.Kind = StmtKind::IfElse;
+  Inner.Addr = 0x1020;
+  Inner.Cond = Bit(4);
+  Inner.Body = {assign(0x1024, 1, 4)};
+  Inner.ElseBody = {Copy, jump(0, 0x1040)};
+  HighStmt Middle;
+  Middle.Kind = StmtKind::IfElse;
+  Middle.Addr = 0x1010;
+  Middle.Cond = Bit(2);
+  Middle.Body = {assign(0x1014, 1, 2)};
+  Middle.ElseBody = {Inner};
+  auto Plus10 = assign(0, 1, 0);
+  Plus10.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(10, 8));
+  HighStmt Outer;
+  Outer.Kind = StmtKind::IfElse;
+  Outer.Addr = 0x1000;
+  Outer.Cond = Bit(1);
+  Outer.Body = {assign(0x1004, 1, 1)};
+  Outer.ElseBody = {Middle, Plus10};
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1040;
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Body = {Outer, Label, result(0x1044, local(1))};
+  auto Expected = [](uint64_t X) -> uint64_t {
+    return X & 1 ? 1 : X & 2 ? 12 : X & 4 ? 14 : 3;
+  };
+  for (uint64_t X : {0, 1, 2, 4})
+    ASSERT_EQ(execute(F, X), Expected(X));
+  invertSkipGotos(F);
+  for (uint64_t X : {0, 1, 2, 4})
+    EXPECT_EQ(execute(F, X), Expected(X)) << X;
 }
 
 TEST(HighControlFlowSemantics, TailCopiesStayInTheirTryProtection) {

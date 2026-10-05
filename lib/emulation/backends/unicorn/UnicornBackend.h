@@ -59,6 +59,8 @@ public:
   llvm::Error fetch(uint64_t Address,
                     llvm::MutableArrayRef<uint8_t> Bytes) override;
   GuestArchitecture architecture() const override;
+  llvm::Expected<RegisterValue>
+      supportedControlBits(CPURegister) const override;
   llvm::Expected<RegisterValue> readRegister(CPURegister Register) override;
   llvm::Error writeRegister(CPURegister Register,
                             const RegisterValue &Value) override;

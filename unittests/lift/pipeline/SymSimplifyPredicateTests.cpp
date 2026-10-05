@@ -393,6 +393,54 @@ TEST(SymSimplifyPredicates, BudgetSavingsAndStampFailuresLeaveIRIntact) {
   EXPECT_EQ(print(*F), Stamped);
 }
 
+TEST(SymSimplifyPredicates, StandalonePhaseReportsExactAndShortDerivationWork) {
+  llvm::LLVMContext C;
+  llvm::Module M("standalone", C);
+  auto *F = encoded(M, 64, "f", 0);
+  const auto Base = SymSimplifyPass::simplifyPredicates(*F);
+  ASSERT_EQ(Base.Rewrites, 1U);
+  ASSERT_GT(Base.Work, 0U);
+  EXPECT_FALSE(Base.WorkLimitExceeded);
+  for (size_t Limit : {size_t(0), Base.Work - 1, Base.Work}) {
+    SCOPED_TRACE(Limit);
+    llvm::Module Copy("bounded", C);
+    auto *Original = encoded(Copy, 64, "f", 0);
+    const auto Before = print(*Original);
+    SymSimplifyOptions Options;
+    Options.MaxPredicateWork = Limit;
+    const auto R = SymSimplifyPass::simplifyPredicates(*Original, Options);
+    EXPECT_EQ(R.Work, Limit);
+    EXPECT_EQ(R.WorkLimitExceeded, Limit != 0 && Limit < Base.Work);
+    if (Limit == Base.Work) {
+      EXPECT_EQ(R.Rewrites, 1U);
+      EXPECT_EQ(print(*Original), print(*F));
+    } else {
+      EXPECT_EQ(R.Rewrites, 0U);
+      EXPECT_EQ(print(*Original), Before);
+    }
+  }
+}
+
+TEST(SymSimplifyPredicates, StandalonePhaseRetainsFullPassPolicy) {
+  llvm::LLVMContext C;
+  llvm::Module Left("left", C), Right("right", C);
+  auto *F = encoded(Left, 32, "f", 4);
+  auto *G = encoded(Right, 32, "f", 4);
+  const auto R = SymSimplifyPass::simplifyPredicates(*F);
+  EXPECT_EQ(R.Rewrites, SymSimplifyPass::simplify(*G, predicatesOnly()));
+  EXPECT_EQ(print(*F), print(*G));
+
+  llvm::Module Policy("policy", C);
+  auto *Stamped = encoded(Policy, 64, "f", 0);
+  Stamped->addFnAttr(kObfuscatedFnAttr);
+  const auto Before = print(*Stamped);
+  const auto Refused = SymSimplifyPass::simplifyPredicates(*Stamped);
+  EXPECT_EQ(Refused.Rewrites, 0U);
+  EXPECT_EQ(Refused.Work, 0U);
+  EXPECT_FALSE(Refused.WorkLimitExceeded);
+  EXPECT_EQ(print(*Stamped), Before);
+}
+
 TEST(SymSimplifyPredicates, DeepAffineGraphsFailClosedWithoutStackGrowth) {
   llvm::LLVMContext C;
   llvm::Module M("depth", C);

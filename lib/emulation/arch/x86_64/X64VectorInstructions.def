@@ -5,8 +5,9 @@
 //===----------------------------------------------------------------------===//
 // Name, memory width, alignment, move/store, complete operand form, first
 // 64-bit store lane. High-half moves preview lane 1; full stores start at 0.
-// Floating-point operations retain masked MXCSR status/control.
-// MMX, VEX/EVEX and unmasked FP exceptions remain outside this contract.
+// Floating-point operations retain MXCSR status/control. Unmasked execution
+// requires the resolved precise SIMD exception capability.
+// MMX and VEX/EVEX remain outside this contract.
 // String MOVSD has separate operand admission and restart semantics.
 // IntegerSource selects m32/m64 through its complete operand rule.
 NEVERD_X64_VECTOR_INSTRUCTION(MOVD, 4, 1, true, GeneralMove, 0)
@@ -59,6 +60,12 @@ NEVERD_X64_VECTOR_INSTRUCTION(CVTSS2SD, 4, 1, false, Source, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(CVTSD2SS, 8, 1, false, Source, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(CVTPS2PD, 8, 1, false, Source, 0)
 NEVERD_X64_VECTOR_INSTRUCTION(CVTPD2PS, 16, 16, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CVTDQ2PS, 16, 16, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CVTDQ2PD, 8, 1, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CVTPS2DQ, 16, 16, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CVTTPS2DQ, 16, 16, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CVTPD2DQ, 16, 16, false, Source, 0)
+NEVERD_X64_VECTOR_INSTRUCTION(CVTTPD2DQ, 16, 16, false, Source, 0)
 // Legacy predicates 0-7 decode to family IDs with two operands and sse_cc.
 // Reserved controls retain an explicit immediate and fail Source admission.
 NEVERD_X64_VECTOR_INSTRUCTION(CMPSS, 4, 1, false, Source, 0)

@@ -90,6 +90,7 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64BitStringTests.cpp
   X64StringTransferTests.cpp
   X64StringComparisonTests.cpp
+  X64MXCSRTests.cpp
   X64DataTests.cpp
   X64PackedIntegerTests.cpp
   X64PackedShiftTests.cpp
@@ -101,6 +102,8 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64SSEComparisonTests.cpp
   X64SSEPredicateTests.cpp
   X64SSEPrecisionTests.cpp
+  X64PackedFloatTests.cpp
+  X64PackedFloatIntegerTests.cpp
   X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
@@ -122,11 +125,13 @@ add_neverd_unittest(NeverDThreadPointerTests
 
 add_neverd_unittest(NeverDX64IntegerTests
   X64IntegerTests.cpp
+  X64PauseTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
 add_neverd_unittest(NeverDX64ExceptionTests
   X64ExceptionTests.cpp
+  X64SIMDExceptionTests.cpp
   X64AlignmentTests.cpp
   X64DivisionTests.cpp
   X64StateTransitionTests.cpp
@@ -200,6 +205,8 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsSystemTests.cpp
   WindowsExceptionTests.cpp
   WindowsAlignmentProcessTests.cpp
+  WindowsSIMDMappingTests.cpp
+  WindowsSIMDExecutionTests.cpp
   WindowsContinuationTests.cpp
   WindowsSEHTests.cpp
   WindowsContextTests.cpp

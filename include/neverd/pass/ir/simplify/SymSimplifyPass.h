@@ -118,6 +118,15 @@ struct SymSimplifyResult {
   std::optional<SymSimplifyCounterexample> Counterexample;
 };
 
+/// Work used by the exact modular predicate phase alone. This is derivation
+/// work (including width-weighted algebra and use traversal), not solver work.
+struct SymPredicateSimplifyResult {
+  unsigned Rewrites = 0;
+  size_t Work = 0;
+  /// A charge exceeded MaxPredicateWork; an exact completed limit is allowed.
+  bool WorkLimitExceeded = false;
+};
+
 /// What a rewrite has to be worth before it is made.
 ///
 /// The defaults are the policy the optimization pipeline wants: an expression
@@ -215,6 +224,14 @@ struct SymSimplifyPass : public llvm::PassInfoMixin<SymSimplifyPass> {
   /// disposition without combining unlike work counters.
   static SymSimplifyResult simplifyWithResult(llvm::Function &F,
                                               SymSimplifyOptions Opts = {});
+
+  /// Run only the existing exact modular predicate phase. This entry shares
+  /// its poison/input, profitability and obfuscation-stamp policy with the
+  /// full pass, without MBA synthesis or solver queries. Completed rewrites
+  /// are retained; budget exhaustion leaves unfinished roots unchanged.
+  /// MaxPredicateWork == 0 disables this phase without spending work.
+  static SymPredicateSimplifyResult
+  simplifyPredicates(llvm::Function &F, SymSimplifyOptions Opts = {});
 
   /// The value \p V always holds, when measuring it says it holds one.
   ///

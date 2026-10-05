@@ -163,6 +163,195 @@ TEST(SymKnownBits, DistributedLowArithmeticRequiresMatchingRootsAndHighBits) {
   }
 }
 
+TEST(SymKnownBits, LosslessProjectionsRetainTheExactSourceAndDiscardedBits) {
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto Sum = C.mkAdd(C.mkAnd(X, C.mkConst(8, 7)), C.mkAnd(Y, C.mkConst(8, 7)));
+  auto Negative = C.mkOr(Sum, C.mkConst(8, 240));
+  auto Roundtrip = [&](SymRef Source, unsigned Left, unsigned Right,
+                       bool Signed) {
+    auto Product = C.mkShl(Source, C.mkConst(16, Left));
+    auto Count = C.mkConst(16, Right);
+    return C.mkEq(Source,
+                  Signed ? C.mkAShr(Product, Count) : C.mkLShr(Product, Count));
+  };
+  llvm::SmallVector<SymRef, 16> Proven{
+      C.mkEq(Sum, C.mkAnd(Sum, C.mkConst(8, 31))), Roundtrip(Sum, 4, 4, false)};
+  for (unsigned Shift = 1; Shift <= 3; ++Shift) {
+    Proven.push_back(Roundtrip(Sum, Shift, Shift, true));
+    Proven.push_back(Roundtrip(Negative, Shift, Shift, true));
+  }
+  SymKnownBits Facts(C);
+  for (auto R : Proven)
+    expectConstant(Facts, R, 1);
+  exhaustiveBytePairs(C, Proven);
+
+  SymRef Unknown[] = {
+      C.mkEq(Sum, C.mkAnd(Sum, C.mkConst(8, 247))),
+      C.mkEq(Y, C.mkAnd(Sum, C.mkConst(8, 31))),
+      Roundtrip(Sum, 4, 4, true),
+      Roundtrip(Negative, 4, 4, true),
+      Roundtrip(Sum, 2, 1, true),
+      Roundtrip(Sum, 3, 259, true),
+      C.mkEq(Sum, C.mkAShr(C.mkMul(Sum, C.mkConst(8, 6)), C.mkConst(8, 1)))};
+  exhaustiveBytePairs(C, Unknown);
+  for (auto R : Unknown) {
+    unsigned Work = 256;
+    auto K = Facts.query(R, Work);
+    ASSERT_TRUE(K);
+    EXPECT_TRUE(K->isUnknown());
+  }
+
+  // An independent integer oracle checks both signed and unsigned roundtrips
+  // for every byte pair, rather than relying only on the symbolic evaluator.
+  for (unsigned A = 0; A < 256; ++A)
+    for (unsigned B = 0; B < 256; ++B) {
+      const unsigned S = (A & 7) + (B & 7);
+      EXPECT_EQ((S & 31), S);
+      EXPECT_EQ(((S << 4) & 255) >> 4, S);
+      for (unsigned K = 1; K <= 3; ++K)
+        for (unsigned V : {S, S | 240}) {
+          const unsigned Shifted = (V << K) & 255;
+          const int Signed = Shifted < 128 ? int(Shifted) : int(Shifted) - 256;
+          // Every shifted value is divisible by 2^K, so division has no
+          // rounding ambiguity and avoids implementation-defined signed >>.
+          EXPECT_EQ(unsigned(Signed / int(1U << K)) & 255, V);
+        }
+    }
+}
+
+TEST(SymKnownBits, ProjectionProofsKeepWidthWorkAndContextLimits) {
+  for (unsigned Width : {8U, 32U, 64U, 128U}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto Sum = C.mkAdd(C.mkAnd(X, C.mkConst(Width, 7)),
+                       C.mkAnd(Y, C.mkConst(Width, 7)));
+    auto Count = C.mkConst(256, Width - 5);
+    auto Roundtrip = C.mkEq(Sum, C.mkAShr(C.mkShl(Sum, Count), Count));
+    const auto Nodes = C.numNodes();
+    unsigned Remaining = 256;
+    SymKnownBits Baseline(C);
+    auto Result = Baseline.query(Roundtrip, Remaining);
+    ASSERT_TRUE(Result);
+    ASSERT_TRUE(Result->isConstant());
+    ASSERT_TRUE(Result->One.isOne());
+    const unsigned Used = 256 - Remaining;
+    ASSERT_GT(Used, 0U);
+    for (unsigned Limit : {0U, Used - 1, Used}) {
+      SymKnownBits Fresh(C);
+      unsigned Budget = Limit;
+      auto K = Fresh.query(Roundtrip, Budget);
+      if (Limit == Used) {
+        ASSERT_TRUE(K);
+        EXPECT_TRUE(K->isConstant() && K->One.isOne());
+      } else {
+        EXPECT_FALSE(K);
+      }
+      EXPECT_EQ(Budget, 0U);
+      EXPECT_EQ(C.numNodes(), Nodes);
+    }
+  }
+}
+
+TEST(SymKnownBits, ScaledOrderingRequiresOneBaseAndNoUnsignedWrap) {
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto Base =
+      C.mkAdd(C.mkAnd(X, C.mkConst(8, 7)), C.mkAnd(Y, C.mkConst(8, 15)));
+  auto Three = C.mkMul(Base, C.mkConst(8, 3));
+  auto Five = C.mkMul(Base, C.mkConst(8, 5));
+  SymRef Proven[] = {C.mkUle(Base, Five), C.mkUle(Three, Five),
+                     C.mkUlt(Five, Three)};
+  exhaustiveBytePairs(C, Proven);
+  SymKnownBits Facts(C);
+  expectConstant(Facts, Proven[0], 1);
+  expectConstant(Facts, Proven[1], 1);
+  expectConstant(Facts, Proven[2], 0);
+  SymRef Unknown[] = {C.mkUle(Three, C.mkMul(Base, C.mkConst(8, 13))),
+                      C.mkUle(Five, Three),
+                      C.mkUle(Three, C.mkMul(Y, C.mkConst(8, 5)))};
+  exhaustiveBytePairs(C, Unknown);
+  for (auto R : Unknown) {
+    unsigned Work = 256;
+    auto K = Facts.query(R, Work);
+    ASSERT_TRUE(K);
+    EXPECT_TRUE(K->isUnknown());
+  }
+}
+
+TEST(SymKnownBits, ModularProductsKeepCoefficientsMultiplicityAndWidth) {
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto A = C.mkAnd(X, C.mkConst(8, 3));
+  auto B = C.mkAnd(Y, C.mkConst(8, 1));
+  auto Inner = C.mkMul({C.mkConst(8, 3), A, B});
+  auto Wide = C.mkMul(C.mkConst(16, 7), C.mkZExt(Inner, 16));
+  auto Narrow = C.mkMul({C.mkConst(8, 21), A, B});
+  SymRef Proven[] = {C.mkEq(Wide, C.mkZExt(Narrow, 16)),
+                     C.mkEq(Wide, C.mkSExt(Narrow, 16))};
+  exhaustiveBytePairs(C, Proven);
+  SymKnownBits Facts(C);
+  for (auto R : Proven)
+    expectConstant(Facts, R, 1);
+  auto Unbounded =
+      C.mkMul(C.mkConst(16, 7), C.mkZExt(C.mkMul(C.mkConst(8, 3), X), 16));
+  SymRef Unknown[] = {
+      C.mkEq(Wide, C.mkZExt(C.mkMul({C.mkConst(8, 21), A, A}), 16)),
+      C.mkEq(Wide, C.mkZExt(C.mkMul({C.mkConst(8, 20), A, B}), 16)),
+      C.mkEq(Unbounded, C.mkZExt(C.mkMul(C.mkConst(8, 21), X), 16)),
+      C.mkEq(Unbounded, C.mkMul(C.mkConst(16, 21), C.mkZExt(X, 16)))};
+  exhaustiveBytePairs(C, Unknown);
+  for (auto R : Unknown) {
+    unsigned Work = 256;
+    auto K = Facts.query(R, Work);
+    ASSERT_TRUE(K);
+    EXPECT_TRUE(K->isUnknown());
+  }
+
+  for (unsigned XValue = 0; XValue < 256; ++XValue)
+    for (unsigned YValue = 0; YValue < 256; ++YValue) {
+      const unsigned Product = (XValue & 3) * (YValue & 1);
+      EXPECT_EQ(7 * ((3 * Product) & 255), (21 * Product) & 255);
+      const unsigned Base = (XValue & 7) + (YValue & 15);
+      EXPECT_LE(3 * Base, 5 * Base);
+      EXPECT_LE(5 * Base, 255U);
+    }
+}
+
+TEST(SymKnownBits, ModularProductQueriesChargeBothSidesAndStayReadOnly) {
+  for (unsigned Width : {16U, 32U, 64U}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width);
+    auto Bounded = C.mkAnd(X, C.mkConst(Width, 3));
+    auto Inner = C.mkMul(C.mkConst(Width, 3), Bounded);
+    auto Product = C.mkMul(C.mkConst(Width * 2, 7), C.mkZExt(Inner, Width * 2));
+    auto Back = C.mkZExt(C.mkMul(C.mkConst(Width, 21), Bounded), Width * 2);
+    auto Root = C.mkEq(Product, Back);
+    const auto Nodes = C.numNodes();
+    SymKnownBits Initial(C);
+    unsigned Work = 256;
+    auto K = Initial.query(Root, Work);
+    ASSERT_TRUE(K);
+    ASSERT_TRUE(K->isConstant() && K->One.isOne());
+    const auto Used = 256 - Work;
+    for (unsigned Budget : {Used - 1, Used}) {
+      SymKnownBits Fresh(C);
+      unsigned Remaining = Budget;
+      const auto Result = Fresh.query(Root, Remaining);
+      if (Budget == Used) {
+        ASSERT_TRUE(Result);
+        EXPECT_TRUE(Result->isConstant() && Result->One.isOne());
+      } else {
+        EXPECT_FALSE(Result);
+      }
+      EXPECT_EQ(Remaining, 0U);
+      EXPECT_EQ(C.numNodes(), Nodes);
+    }
+  }
+}
+
 TEST(SymKnownBits, WideFactsAgreeWithArbitraryPrecisionEvaluation) {
   for (unsigned Width : {1U, 3U, 8U, 31U, 64U, 127U, 128U}) {
     SCOPED_TRACE(Width);

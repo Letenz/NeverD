@@ -140,7 +140,8 @@ llvm::Error checkBackendBuild(ExecutionBackendKind Kind,
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 createCheckedBackend(ExecutionBackendKind Kind,
                      std::shared_ptr<AddressSpace> Space,
-                     GuestArchitecture Architecture, bool UserMode) {
+                     GuestArchitecture Architecture, bool UserMode,
+                     const ExecutionCapabilities &Capabilities) {
   auto Memory = MemoryProjection::create(Space);
   if (!Memory)
     return Memory.takeError();
@@ -158,8 +159,9 @@ createCheckedBackend(ExecutionBackendKind Kind,
             : createUnicornX64Machine(**Memory, UserMode);
     if (!Machine)
       return Machine.takeError();
-    return CheckedX64Backend::create(std::move(*Memory), std::move(*Machine),
-                                     UserMode);
+    return CheckedX64Backend::create(
+        std::move(*Memory), std::move(*Machine), UserMode,
+        Capabilities.supports(ExecutionFeature::SIMDExceptions));
   }
   auto Machine =
       Kind == ExecutionBackendKind::KVM   ? createKvmAArch64Machine(**Memory)
@@ -196,7 +198,8 @@ createExecutionBackend(const ExecutionConfiguration &Configuration,
 #endif
   }
   auto CPU = createCheckedBackend(Kind, std::move(Space), Config.Architecture,
-                                  Config.Privilege == ExecutionPrivilege::User);
+                                  Config.Privilege == ExecutionPrivilege::User,
+                                  Resolved->Capabilities);
   if (!CPU)
     return CPU.takeError();
   return BackendSelection{std::move(*CPU), Kind,

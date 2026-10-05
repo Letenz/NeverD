@@ -67,11 +67,15 @@ static_assert(offsetof(CONTEXT, Fpcr) == arm_context::ContextControl);
 struct Case {
   const char *Name, *Argument, *Expected;
   bool X64Only;
+  ExecutionFeature Required = ExecutionFeature::None;
 };
 constexpr Case Cases[] = {
 #define NEVERD_VEH_CASE(Name, Argument, Expected, X64Only)                     \
   {#Name, Argument, Expected, X64Only},
+#define NEVERD_VEH_SIMD_CASE(Name, Argument, Expected)                         \
+  {#Name, Argument, Expected, true, ExecutionFeature::SIMDExceptions},
 #include "fixtures/WindowsExceptionCases.def"
+#undef NEVERD_VEH_SIMD_CASE
 #undef NEVERD_VEH_CASE
 };
 struct Profile {
@@ -123,8 +127,11 @@ protected:
   }
 };
 TEST_P(WindowsExceptions, ExecutesOriginalExceptionScenarios) {
+  const auto Caps = llvm::cantFail(executionCapabilities(
+      Config.Contract, Config.Architecture, Config.Backend));
   for (const auto &C : Cases) {
-    if (C.X64Only && GetParam().ISA != GuestArchitecture::X64)
+    if ((C.X64Only && GetParam().ISA != GuestArchitecture::X64) ||
+        !Caps.supports(C.Required))
       continue;
     SCOPED_TRACE(C.Name);
     Options.Arguments = {ProgramFile, C.Argument};
@@ -139,14 +146,25 @@ TEST_P(WindowsExceptions, ExecutesOriginalExceptionScenarios) {
 TEST_P(WindowsExceptions, RejectsUnsupportedDispatchAndInvalidContinuations) {
   struct Negative {
     const char *Argument, *Diagnostic;
+    ExecutionFeature NativeContinuation = ExecutionFeature::None;
   };
   const Negative Cases[] = {
 #define NEVERD_VEH_NEGATIVE(Argument, Diagnostic)                              \
   {Argument, win::text::Diagnostic},
+#define NEVERD_VEH_SIMD_CASE(Name, Argument, Expected)                         \
+  {Argument, win::text::ExceptionContext, ExecutionFeature::SIMDExceptions},
 #include "fixtures/WindowsExceptionCases.def"
+#undef NEVERD_VEH_SIMD_CASE
 #undef NEVERD_VEH_NEGATIVE
   };
+  const auto Caps = llvm::cantFail(executionCapabilities(
+      Config.Contract, Config.Architecture, Config.Backend));
   for (const auto &C : Cases) {
+    // A native success is asserted in ExecutesOriginalExceptionScenarios and
+    // in the original Windows executable oracle, never silently omitted.
+    if (C.NativeContinuation != ExecutionFeature::None &&
+        Caps.supports(C.NativeContinuation))
+      continue;
     SCOPED_TRACE(C.Argument);
     Options.Arguments = {ProgramFile, C.Argument};
     auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
@@ -193,15 +211,27 @@ TEST_P(WindowsExceptions, ContextValidationPreservesStoppedCPUAndMemory) {
     llvm::cantFail(
         CPU.writeRegister(vectorRegister(GetParam().ISA, I),
                           {VectorInitialLow + I, VectorInitialHigh - I}));
+  uint64_t Mask = 0;
+  if (X64) {
+    Mask = llvm::cantFail(CPU.supportedControlBits(CPURegister::X64MXCSR))[0];
+    llvm::cantFail(
+        CPU.setReg(X64Register::MXCSR, x64_context::DAZControl & Mask));
+  }
   auto Original = llvm::cantFail(win::captureUserContext(CPU));
+  if (X64)
+    EXPECT_EQ(llvm::support::endian::read32le(Original.data() +
+                                              x64_context::ContextControlMask),
+              Mask);
   auto Snapshot = llvm::cantFail(CPU.saveContext());
   llvm::cantFail(CPU.writeRegister(R, {VectorLow, 0}));
   llvm::cantFail(CPU.writeInteger(StackBase, VectorHigh, sizeof(uint64_t)));
   const auto Before = llvm::cantFail(win::captureUserContext(CPU));
-  const uint64_t InvalidOffsets[] = {
+  std::vector<uint64_t> InvalidOffsets = {
       X64 ? x64_context::ContextFlags : arm_context::ContextFlags,
       X64 ? x64_context::ContextPC : arm_context::ContextPC,
       X64 ? x64_context::ContextSP : arm_context::ContextSP};
+  if (X64)
+    InvalidOffsets.push_back(x64_context::ContextControlMask);
   for (uint64_t Offset : InvalidOffsets) {
     auto Changed = Original;
     llvm::support::endian::write64le(Changed.data() + Offset, 0);
@@ -225,6 +255,9 @@ TEST_P(WindowsExceptions, ContextValidationPreservesStoppedCPUAndMemory) {
       Changed.data() + VectorOffset + sizeof(uint64_t), VectorHigh);
   llvm::cantFail(win::restoreUserContext(CPU, *Snapshot, Original, Changed,
                                          StackBase, win::value::StackTop));
+  if (X64)
+    EXPECT_EQ(llvm::cantFail(CPU.reg(X64Register::MXCSR)),
+              x64_context::DAZControl & Mask);
   EXPECT_EQ(llvm::cantFail(CPU.readRegister(R))[0], VectorInitialLow);
   for (unsigned I = 0; I < VectorCount; ++I) {
     const RegisterValue Expected =

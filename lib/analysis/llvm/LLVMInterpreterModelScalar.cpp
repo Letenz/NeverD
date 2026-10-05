@@ -107,14 +107,18 @@ bool Builder::emitScalar(LowBlock &Out, const llvm::Instruction &I) {
     bool Pop = ID == llvm::Intrinsic::ctpop,
          Add = ID == llvm::Intrinsic::sadd_with_overflow,
          Sub = ID == llvm::Intrinsic::ssub_with_overflow,
-         Funnel = ID == llvm::Intrinsic::fshl || ID == llvm::Intrinsic::fshr;
+         Funnel = ID == llvm::Intrinsic::fshl || ID == llvm::Intrinsic::fshr,
+         Assume = ID == llvm::Intrinsic::assume;
     if (!Callee || !Callee->isDeclaration() ||
-        (!Pop && !Add && !Sub && !Funnel) ||
-        Call->arg_size() != (Funnel ? 3U
-                             : Pop  ? 1U
-                                    : 2U) ||
+        (!Pop && !Add && !Sub && !Funnel && !Assume) ||
+        Call->arg_size() != (Funnel          ? 3U
+                             : Pop || Assume ? 1U
+                                             : 2U) ||
         !Call->getArgOperand(0)->getType()->isIntegerTy() ||
-        (!Funnel && Call->getArgOperand(0)->getType()->isIntegerTy(1)) ||
+        (Assume ? (!Call->getArgOperand(0)->getType()->isIntegerTy(1) ||
+                   !Call->getType()->isVoidTy())
+                : (!Funnel &&
+                   Call->getArgOperand(0)->getType()->isIntegerTy(1))) ||
         Call->getCallingConv() != llvm::CallingConv::C ||
         Call->isMustTailCall() || Call->hasOperandBundles() ||
         Call->hasMetadataOtherThanDebugLoc() ||
@@ -124,15 +128,21 @@ bool Builder::emitScalar(LowBlock &Out, const llvm::Instruction &I) {
                                            Callee->getFunctionType()))
       fail("unsupported intrinsic or call contract");
     for (unsigned N = 0; N < Call->arg_size(); ++N)
-      if (Call->getAttributes().getParamAttrs(N).hasAttributes())
-        fail("unsupported intrinsic argument contract");
+      for (auto A : Call->getAttributes().getParamAttrs(N))
+        if (!(Assume && A.isEnumAttribute() &&
+              A.getKindAsEnum() == llvm::Attribute::NoUndef))
+          fail("unsupported intrinsic argument contract");
     for (auto A : Call->getAttributes().getRetAttrs())
       if (!((A.isEnumAttribute() &&
              A.getKindAsEnum() == llvm::Attribute::NoUndef) ||
             (Pop && !A.isStringAttribute() &&
              A.getKindAsEnum() == llvm::Attribute::Range)))
         fail("unsupported intrinsic return contract");
-    if (Funnel) {
+    if (Assume) {
+      // Reaching false is undefined. Keep it in the shared sticky obligation
+      // byte so neither state nor scalar proofs can discard that execution.
+      requireEqual(Out, value(Call->getArgOperand(0)), num(1, 1));
+    } else if (Funnel) {
       const unsigned Bits = Call->getType()->getIntegerBitWidth();
       auto A = value(Call->getArgOperand(0));
       auto B = value(Call->getArgOperand(1));

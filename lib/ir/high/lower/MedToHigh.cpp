@@ -1068,6 +1068,9 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   coalesceBranchEntryStatements(Func);
   eliminateHighDeadPhiCopies(Func);
   reduceLateGotos(Func);
+  // The last skip-goto inversion runs here rather than in the C emitter, so
+  // that the flow check below sees the body that is printed.
+  invertSkipGotos(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

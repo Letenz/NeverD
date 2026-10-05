@@ -1,0 +1,41 @@
+//===- WindowsSIMDExecutionCases.def - Original guest SIMD continuations --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WINDOWS_SIMD_EXECUTION_VALUE
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(Code, 0x140001000)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(Handler, 0x140001100)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(ContinueHandler, 0x140001200)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(StackPages, 4)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(StackAlignment, 16)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(ContextMXCSROffset, 52)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(ContextFXMXCSROffset, 280)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(ContextPCOffset, 248)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(RecordArgumentsOffset, 32)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(SeedFPCW, 0x0b7f)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(SeedFPSW, 0x1800)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(ModeSkip, 0)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(ModeMask, 1)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(ModeRepair, 2)
+NEVERD_WINDOWS_SIMD_EXECUTION_VALUE(ModeCount, 3)
+#endif
+#ifdef NEVERD_WINDOWS_SIMD_EXECUTION_CODE
+// RDX = EXCEPTION_POINTERS.ContextRecord.
+NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Context, 0x48, 0x8b, 0x51, 0x08)
+// Skip exactly the original four-byte instruction.
+NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Skip, 0x48, 0x83, 0x82, 0xf8, 0, 0, 0, 4)
+// Repair both MXCSR copies; retain all old sticky flags and the original PC.
+NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Mask, 0x81, 0x4a, 0x34, 0x80, 0x1f, 0, 0,
+                                   0x81, 0x8a, 0x18, 0x01, 0, 0, 0x80, 0x1f, 0,
+                                   0)
+// Repair XMM0/XMM1 and RAM to float 1.0. Read the RAM pointer from saved
+// CONTEXT.R8; callback argument registers are volatile.
+NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Repair, 0xc7, 0x82, 0xa0, 0x01, 0, 0, 0, 0,
+                                   0x80, 0x3f, 0xc7, 0x82, 0xb0, 0x01, 0, 0, 0,
+                                   0, 0x80, 0x3f, 0x4c, 0x8b, 0x82, 0xb8, 0, 0,
+                                   0, 0x41, 0xc7, 0x00, 0, 0, 0x80, 0x3f)
+// Deliberately clobber the live destination; return CONTINUE_EXECUTION.
+NEVERD_WINDOWS_SIMD_EXECUTION_CODE(Return, 0x66, 0x0f, 0xef, 0xc0, 0xb8, 0xff,
+                                   0xff, 0xff, 0xff, 0xc3)
+#endif

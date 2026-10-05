@@ -72,6 +72,16 @@ public:
   /// Rebind a stopped CPU to another space backed by the same physical owner.
   /// CPU snapshots remain associated with the space where they were captured.
   virtual llvm::Error bindAddressSpace(std::shared_ptr<AddressSpace> Space) = 0;
+  /// Supported bit positions in a control register for this CPU instance.
+  /// This is immutable capability metadata, not context state or a writable
+  /// register. Individual values still obey the selected execution contract
+  /// (for example, portable checked x64 requires masked SIMD exceptions).
+  /// Registers without an explicit capability contract return an error.
+  virtual llvm::Expected<RegisterValue>
+  supportedControlBits(CPURegister Register) const;
+  /// Precise synchronous SIMD faults in this instance's admitted instruction
+  /// set. OS context restoration must not infer this from writable MXCSR bits.
+  virtual bool supportsSIMDExceptions() const { return false; }
   virtual llvm::Expected<RegisterValue> readRegister(CPURegister Register) = 0;
   virtual llvm::Error writeRegister(CPURegister Register,
                                     const RegisterValue &Value) = 0;

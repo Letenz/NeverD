@@ -10,6 +10,10 @@
 #include <limits>
 
 namespace neverd::emulation {
+llvm::Expected<RegisterValue>
+ExecutionBackend::supportedControlBits(CPURegister) const {
+  return diagnostic::error(diagnostic::Register);
+}
 CPURegister cpuRegister(X64Register R) {
   switch (R) {
 #define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \

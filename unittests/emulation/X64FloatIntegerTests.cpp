@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "X64VectorTestSupport.h"
+#include "X64DAZTestSupport.h"
 #include "arch/x86_64/X64Machine.h"
 #include "core/ExecutionDiagnostics.h"
 
@@ -86,10 +86,10 @@ struct Result {
 };
 Result reference(const Conversion &C, bool Wide, uint64_t Input,
                  const Rounding &R, uint64_t Control) {
-  const llvm::APFloat Value(C.SourceBits == SingleBits
-                                ? llvm::APFloat::IEEEsingle()
-                                : llvm::APFloat::IEEEdouble(),
-                            llvm::APInt(C.SourceBits, Input));
+  const auto Value = daz_test::operand(
+      C.SourceBits == SingleBits ? llvm::APFloat::IEEEsingle()
+                                 : llvm::APFloat::IEEEdouble(),
+      llvm::APInt(C.SourceBits, Input), Control);
   llvm::APSInt Integer(Wide ? DoubleBits : SingleBits, false);
   bool Exact;
   const auto Status = Value.convertToInteger(
@@ -125,8 +125,11 @@ std::vector<uint8_t> instruction(const Conversion &C, bool Wide,
   return Bytes;
 }
 
-TEST(X64FloatIntegerOracle, AllRoundingModesMatchOriginalNativeInstructions) {
+void nativeOracle(uint64_t DAZ) {
 #if defined(__x86_64__) || defined(_M_X64)
+  const auto Mask = daz_test::hostMXCSRMask();
+  if (DAZ && !(Mask & DAZ))
+    GTEST_SKIP() << daz_test::HostUnavailable;
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
 #undef NEVERD_FP_BYTES
@@ -182,11 +185,12 @@ TEST(X64FloatIntegerOracle, AllRoundingModesMatchOriginalNativeInstructions) {
                 for (unsigned N = 0; N < XmmCount; ++N)
                   Seed.Xmm[N] = {SentinelLow + N, SentinelHigh - N};
                 Seed.Xmm[0] = sourceVector(C, Raw);
-                Seed.MXCSR = InitialMXCSR | R.Control | Sticky | Flush;
+                Seed.MXCSR = InitialMXCSR | DAZ | R.Control | Sticky | Flush;
                 alignas(x64::fp::RegisterSlotBytes)
                     std::array<uint8_t, x64::fp::LegacyBytes>
                         Before{}, After{}, Host{};
-                ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before)), "");
+                ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before, Mask)),
+                          "");
                 const auto Integer =
                     Execute(Before.data(), After.data(), Host.data(), &Raw);
                 X64MachineState Actual;
@@ -200,6 +204,14 @@ TEST(X64FloatIntegerOracle, AllRoundingModesMatchOriginalNativeInstructions) {
 #else
   GTEST_SKIP();
 #endif
+}
+
+TEST(X64FloatIntegerOracle, AllRoundingModesMatchOriginalNativeInstructions) {
+  nativeOracle(0);
+}
+TEST(X64FloatIntegerDAZOracle,
+     AllRoundingModesMatchOriginalNativeInstructions) {
+  nativeOracle(daz_test::DenormalsAreZero);
 }
 
 class X64FloatInteger : public X64VectorTest {
@@ -287,20 +299,20 @@ protected:
     EXPECT_EQ(Reads, unsigned(Memory));
     EXPECT_EQ(Writes, 0u);
   }
-  void rounding(const Conversion &C) {
+  void rounding(const Conversion &C, uint64_t DAZ = 0) {
     for (bool Wide : {false, true})
       for (const auto &Input : Inputs)
         for (const auto &R : Roundings)
           for (auto Sticky : {uint64_t(0), ExistingStatus,
                               ExistingStatus | InvalidStatus | PrecisionStatus})
             for (auto Flush : {uint64_t(0), FlushToZero}) {
-              check(C, Wide, inputValue(C, Input), R, Sticky | Flush);
+              check(C, Wide, inputValue(C, Input), R, DAZ | Sticky | Flush);
               ASSERT_FALSE(HasFatalFailure());
-              check(C, Wide, inputValue(C, Input), R, Sticky | Flush, 0, 0,
-                    true, Alias + 1);
+              check(C, Wide, inputValue(C, Input), R, DAZ | Sticky | Flush, 0,
+                    0, true, Alias + 1);
               ASSERT_FALSE(HasFatalFailure());
-              check(C, Wide, inputValue(C, Input), R, Sticky | Flush, 0, 0,
-                    true, Alias + PageSize - sourceBytes(C) / 2);
+              check(C, Wide, inputValue(C, Input), R, DAZ | Sticky | Flush, 0,
+                    0, true, Alias + PageSize - sourceBytes(C) / 2);
               ASSERT_FALSE(HasFatalFailure());
             }
   }
@@ -620,6 +632,18 @@ TEST_P(X64FloatInteger, DeviceOperandsRejectBeforeCallbacks) {
       EXPECT_EQ(backing(), RAM);
     }
 }
+
+using X64FloatIntegerDAZ = daz_test::Fixture<X64FloatInteger>;
+#define NEVERD_FLOAT_INT_OPERATION(Name, Prefix, Opcode, Bits, Truncate)       \
+  TEST_P(X64FloatIntegerDAZ, Name##PreservesStateAcrossRoundingModes) {        \
+    rounding({#Name, Prefix, Opcode, Bits, Truncate},                          \
+             daz_test::DenormalsAreZero);                                      \
+  }
+#include "X64FloatIntegerCases.def"
+#undef NEVERD_FLOAT_INT_OPERATION
+INSTANTIATE_TEST_SUITE_P(DAZBackends, X64FloatIntegerDAZ,
+                         testing::ValuesIn(daz_test::Parameters),
+                         [](const auto &Info) { return Info.param.Name; });
 
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64FloatInteger,
                          testing::ValuesIn(Parameters),

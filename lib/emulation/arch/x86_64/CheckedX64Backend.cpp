@@ -193,8 +193,10 @@ bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
-                          std::unique_ptr<X64Machine> Machine, bool UserMode) {
-  auto B = std::unique_ptr<CheckedX64Backend>(new CheckedX64Backend(UserMode));
+                          std::unique_ptr<X64Machine> Machine, bool UserMode,
+                          bool SIMDExceptions) {
+  auto B = std::unique_ptr<CheckedX64Backend>(
+      new CheckedX64Backend(UserMode, SIMDExceptions));
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
   B->CPU.UserMode = UserMode;
@@ -225,6 +227,12 @@ llvm::Expected<RegisterValue> CheckedX64Backend::readRegister(CPURegister R) {
     return readX64FPRegister(CPU.FP, R);
   return RegisterValue{CPU.Registers[unsigned(R)], 0};
 }
+llvm::Expected<RegisterValue>
+CheckedX64Backend::supportedControlBits(CPURegister R) const {
+  if (R == CPURegister::X64MXCSR)
+    return RegisterValue{Machine->mxcsrMask(), 0};
+  return ExecutionBackend::supportedControlBits(R);
+}
 llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
                                              const RegisterValue &V) {
   if (auto E = mutableMemory())
@@ -234,11 +242,9 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
   if (isX64FPRegister(R))
     return writeX64FPRegister(CPU.FP, R, V);
   if (R == CPURegister::X64MXCSR) {
-    // The current profile has no SIMD exception-delivery gateway or DAZ
-    // capability negotiation. Preserve rounding, FTZ and sticky status while
-    // requiring masked exceptions and rejecting unsupported control bits.
-    if (V[1] || (V[0] & ~x64::AllowedMXCSR) ||
-        (V[0] & x64::InitialMXCSR) != x64::InitialMXCSR)
+    // DAZ is admitted only by the machine's immutable capability contract.
+    // Unmasked execution requires the resolved semantic exception capability.
+    if (V[1] || (V[0] & ~uint64_t(Machine->mxcsrMask())) || !permitsMXCSR(V[0]))
       return error(diagnostic::Register);
     CPU.MXCSR = V[0];
     return llvm::Error::success();
@@ -360,6 +366,12 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   default:
     return llvm::make_error<UnsupportedExecutionError>();
   }
+  const bool LoadMXCSR = I.id == X86_INS_LDMXCSR;
+  const bool StoreMXCSR = I.id == X86_INS_STMXCSR;
+  if ((LoadMXCSR || StoreMXCSR) &&
+      (X.op_count != 1 || X.operands[0].type != X86_OP_MEM ||
+       X.operands[0].size != x64::DWordBytes || X.prefix[2]))
+    return llvm::make_error<UnsupportedExecutionError>();
   const auto Vector = vectorOperation(I.id);
   if (Vector && !admitsVectorOperands(X, *Vector))
     return llvm::make_error<UnsupportedExecutionError>();
@@ -461,7 +473,9 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     // marking them as reads. The architecture owns their actual effects.
     unsigned OperandAccess = O.access;
     if (N == 0) {
-      if (Bit)
+      if (LoadMXCSR || StoreMXCSR)
+        OperandAccess = LoadMXCSR ? CS_AC_READ : CS_AC_WRITE;
+      else if (Bit)
         OperandAccess = BitWrites ? CS_AC_READ | CS_AC_WRITE : CS_AC_READ;
       else if ((Vector && Vector->Move) || condition(I.id, 0))
         OperandAccess = CS_AC_WRITE;
@@ -472,6 +486,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     }
     if (OperandAccess == CS_AC_READ)
       Accesses.push_back({A, O.size, Read, 0});
+    else if (StoreMXCSR)
+      Accesses.push_back({A, O.size, Write, CPU.MXCSR});
     else if (Vector && Vector->Move && OperandAccess == CS_AC_WRITE && N == 0 &&
              X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)) {
       const auto &V = CPU.Xmm[X.operands[1].reg - X86_REG_XMM0];
@@ -587,6 +603,21 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       return E;
     if (StopRequested)
       return llvm::Error::success();
+  }
+  if (LoadMXCSR) {
+    auto Value = readInteger(Accesses.front().Address, x64::DWordBytes);
+    if (!Value)
+      return Value.takeError();
+    // Reserved bits fault before changing MXCSR. An otherwise architectural
+    // value with unmasked exceptions requires precise machine delivery.
+    if (*Value & ~uint64_t(Machine->mxcsrMask())) {
+      BackendFault Fault{BackendFaultKind::Interrupt, I.address};
+      Fault.Interrupt = unsigned(x64::ExceptionVector::GeneralProtection);
+      Fault.ErrorCode = x64::NoSelectorErrorCode;
+      return raiseFault(Fault, true);
+    }
+    if (!permitsMXCSR(*Value))
+      return llvm::make_error<UnsupportedExecutionError>();
   }
   if (DeviceAccess)
     return deviceTransfer(I, DeviceAccess->Address, DeviceAccess->Size,
