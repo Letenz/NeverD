@@ -103,6 +103,7 @@ void parseStubImports(const llvm::object::MachOObjectFile &Obj,
 
       Symbol Sym = Symbol::makeFunc(StubAddr);
       Sym.Name = SymName;
+      Sym.Origin = NameOrigin::Stated;
       Img.Symbols.push_back(std::move(Sym));
 
       LLVM_DEBUG(llvm::dbgs() << "macho: stub 0x" << llvm::utohexstr(StubAddr)

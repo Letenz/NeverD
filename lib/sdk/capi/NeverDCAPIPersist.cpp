@@ -214,12 +214,15 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
   for (auto &F : S->Functions) {
     if (F.Name == OldName) {
       const auto PreviousName = F.Name;
+      const auto PreviousOrigin = F.Origin;
       const auto PreviousRenames = S->Renames;
       S->Renames[F.Entry] = NewName;
       F.Name = NewName;
+      F.Origin = NameOrigin::User;
       if (neverd_renames_save(Sess) != 0) {
         S->Renames = PreviousRenames;
         F.Name = PreviousName;
+        F.Origin = PreviousOrigin;
         return -1;
       }
       return 0;
@@ -281,6 +284,7 @@ int neverd_renames_load(neverd_session_t Sess) {
         F.Name = Original->second;
     }
     S->Renames.clear();
+    S->refreshFunctionNames();
   };
   std::error_code EC;
   const bool Exists = std::filesystem::exists(Path, EC);
@@ -324,6 +328,7 @@ int neverd_renames_load(neverd_session_t Sess) {
     for (auto &F : S->Functions) {
       if (F.Entry == *Addr) {
         F.Name = Renamed->str();
+        F.Origin = NameOrigin::User;
         break;
       }
     }

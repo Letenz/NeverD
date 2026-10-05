@@ -2547,6 +2547,50 @@ TEST_F(SessionCAPITest, SignatureJSONListsTheRoutinesOtherNames) {
                           {"_IO_puts", "__IO_puts_internal"});
 }
 
+TEST_F(SessionCAPITest, SignatureCannotReplaceAStatedHexPlaceholderName) {
+  for (const std::string Name : {"sub_400078", "func_aabb", "entry"}) {
+    SCOPED_TRACE(Name);
+    const auto Input = write(Name + ".elf", makeNamedNativeELF(Name));
+    ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+    ASSERT_EQ(neverd_func_count(Session), 1);
+    const auto Pattern = write(
+        "identity.pat", "B807000000C3 00 0000 0006 :0000 library_guess\n");
+    ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_func_name(Session, 0)), Name);
+    ASSERT_EQ(neverd_rename_func(Session, Name.c_str(), "user_choice"), 0);
+    ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "user_choice");
+    write(Name + ".elf.neverd-renames.json", "[]");
+    ASSERT_EQ(neverd_renames_load(Session), 0);
+    EXPECT_EQ(takeString(neverd_func_name(Session, 0)), Name);
+  }
+}
+
+TEST_F(SessionCAPITest,
+       SignatureIdentitySurvivesDiscoveryAndWithdrawsOnReload) {
+  const auto Input = write("stripped-identity.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Pattern =
+      write("identity.pat", "B807000000C3 00 0000 0006 :0000 library_guess\n");
+  ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_addr(Session, Entry);
+  ASSERT_GE(Index, 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
+  ASSERT_EQ(neverd_rename_func(Session, "library_guess", "user_choice"), 0);
+  write("stripped-identity.elf.neverd-renames.json", "[]");
+  ASSERT_EQ(neverd_renames_load(Session), 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
+  write("identity.pat", "B809000000C3 00 0000 0006 :0000 other_guess\n");
+  ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)),
+            "sub_" + llvm::utohexstr(Entry));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  EXPECT_EQ(neverd_sig_match_count(Session), 0);
+}
+
 TEST_F(SessionCAPITest, SignaturesMatchARoutineOnlyACallReveals) {
   // A stripped program without sections lists no function at all; its entry
   // calls a routine no table names.  Signatures are tried where the

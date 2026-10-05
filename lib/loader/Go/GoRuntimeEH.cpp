@@ -271,8 +271,9 @@ void parseGoExceptions(BinaryImage &Img) {
       auto It = ByEntry.find(S.Addr);
       if (It == ByEntry.end())
         continue;
-      if (llvm::StringRef(S.Name).starts_with(kAutoFuncPrefix)) {
+      if (S.Origin < NameOrigin::Stated) {
         S.Name = It->second->Name;
+        S.Origin = NameOrigin::Stated;
         S.IsFunc = true;
         if (S.Size == 0)
           S.Size = It->second->CodeRange.size();
@@ -285,6 +286,7 @@ void parseGoExceptions(BinaryImage &Img) {
         continue;
       Symbol S = Symbol::makeFunc(G.CodeRange.Begin, G.CodeRange.size());
       S.Name = G.Name;
+      S.Origin = NameOrigin::Stated;
       Img.Symbols.push_back(std::move(S));
     }
   }

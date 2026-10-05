@@ -58,6 +58,10 @@ struct FuncInfo {
   va_t Entry;
   uint64_t Size;
   std::string Name;
+  NameOrigin Origin = NameOrigin::Stated;
+  /// Original identity is never overwritten by a display annotation or rename.
+  std::string LinkageName;
+  NameOrigin LinkageOrigin = NameOrigin::Stated;
 };
 
 struct Session {
@@ -287,9 +291,17 @@ struct Session {
       OriginalNames[Symbol->Addr] = Name;
       if (auto Rename = Renames.find(Symbol->Addr); Rename != Renames.end())
         Name = Rename->second;
-      Functions.push_back({Symbol->Addr, Symbol->Size, std::move(Name)});
+      const NameOrigin Origin =
+          Renames.contains(Symbol->Addr) ? NameOrigin::User : Symbol->Origin;
+      Functions.push_back({Symbol->Addr, Symbol->Size, std::move(Name), Origin,
+                           Symbol->Name, Symbol->Origin});
     }
+    refreshFunctionNames();
   }
+
+  /// Recompute display identity from current evidence. No IR or image names
+  /// are modified, and a failed/withdrawn match cannot leave a stale label.
+  void refreshFunctionNames();
 
   void clearPipeline() {
     PipeResult = {};

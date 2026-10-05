@@ -13,6 +13,7 @@
 #ifndef NEVERD_SIGS_SIGNATUREDB_H
 #define NEVERD_SIGS_SIGNATUREDB_H
 
+#include "neverd/sigs/LibraryFeature.h"
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/Signature.h"
 #include "neverd/sigs/SignatureCache.h"
@@ -98,6 +99,16 @@ public:
   /// synthesize one, and a test can state the exact bytes it means to match.
   llvm::Error loadPatternText(llvm::StringRef Text,
                               llvm::StringRef LibraryName);
+
+  /// Structural and gated-byte rules share this database, but cannot enter
+  /// buildNameMap until their independent identity requirements are proved.
+  llvm::Error loadFeaturePack(const std::filesystem::path &Path);
+  /// Replace only the feature packs, as one transaction. Dir is features/rules.
+  llvm::Error loadFeatureDirectory(const std::filesystem::path &Dir);
+  const std::map<std::string, LibraryFeaturePack> &featurePacks() const {
+    return FeaturePacks;
+  }
+  uint64_t featureGeneration() const { return FeatureGeneration; }
 
   /// Apply loaded signatures against a binary image.
   /// Matches are stored internally and can be queried with matches().
@@ -194,6 +205,8 @@ private:
   std::vector<StoredModule> Modules;
   std::vector<SigSource> LoadedFiles;
   std::vector<SigMatch> Matches;
+  std::map<std::string, LibraryFeaturePack> FeaturePacks;
+  uint64_t FeatureGeneration = 0;
   std::optional<SignatureCache> Cache;
 
   /// The index of \ref Modules, built by \ref index when first needed and
