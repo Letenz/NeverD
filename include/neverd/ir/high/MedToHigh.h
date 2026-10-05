@@ -126,6 +126,23 @@ bool elseArmsForFallthroughJumps(HighFunc &Func);
 /// becomes `while (1) { S...; if (c) { T...; continue; } break; }`, where X
 /// starts exactly one statement and S and T hold no loose break or continue.
 bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body);
+
+/// The same for jumps nested deeper: `X: S...; T` where T holds `goto X`
+/// inside if/else arms, blocks or switch cases becomes `while (1) { S...; T;
+/// break; }` with those jumps turned into `continue`.  X starts exactly one
+/// statement and the region holds no loose break or continue.
+bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body);
+
+/// Jumps inside a loop that leave it for the statement after it become
+/// `break`, and jumps to a while loop's test, or to the top of an always-true
+/// loop's body, become `continue`; each target starts exactly one statement.
+bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body);
+
+/// Once the other rewrites have settled: `if (c) goto L;` followed by an if
+/// whose then arm opens with L becomes `if (c || b)`, and one whose else arm
+/// opens with L becomes `if (!c && b)`.  L must start exactly one statement,
+/// and nothing but the first test may jump to the second if.
+bool mergeJumpsIntoNextIfArms(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

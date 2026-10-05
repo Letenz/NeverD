@@ -1077,6 +1077,9 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   invertSkipGotos(Func);
   elseArmsForFallthroughJumps(Func);
   loopsForArmsJumpingBack(Func.Body);
+  loopsForNestedJumpsBack(Func.Body);
+  loopJumpsAsBreakAndContinue(Func.Body);
+  mergeJumpsIntoNextIfArms(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 
