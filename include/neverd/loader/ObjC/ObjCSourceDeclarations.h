@@ -19,6 +19,15 @@ std::optional<SourceFunctionTypeHint>
 objcSuperGetterHelperSourceDeclaration(Arch Architecture,
                                        const TypeRef &ReturnType);
 
+/// Canonical merged setter shapes. The CGRect variant retains four FP value
+/// carriers and a layout-selector slot; the Boolean variant retains its ISA
+/// mask. Neither declaration establishes the associated machine behavior.
+std::optional<SourceFunctionTypeHint>
+objcMergedSetterSourceDeclaration(Arch Architecture, const TypeRef &ValueType);
+std::optional<SourceFunctionTypeHint>
+objcMergedSetterHelperSourceDeclaration(Arch Architecture,
+                                        const TypeRef &ValueType);
+
 std::optional<ObjCReceiverTypeHint>
 objcNativeSwiftSelfTypeHint(const BinaryImage &Image, va_t Entry);
 
