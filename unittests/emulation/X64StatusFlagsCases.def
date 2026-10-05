@@ -112,4 +112,5 @@ NEVERD_STATUS_FLAGS_BACKEND(whpUser, WHP, CheckedUserX64)
 NEVERD_STATUS_FLAGS_BACKEND(whpDriver, WHP, Legacy)
 NEVERD_STATUS_FLAGS_BACKEND(unicornSupervisor, Unicorn, CheckedX64)
 NEVERD_STATUS_FLAGS_BACKEND(unicornUser, Unicorn, CheckedUserX64)
+NEVERD_STATUS_FLAGS_BACKEND(unicornPortable, Unicorn, Legacy)
 #endif
