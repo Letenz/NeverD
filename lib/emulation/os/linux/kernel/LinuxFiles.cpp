@@ -150,6 +150,35 @@ LinuxFiles::access(uint64_t Address, uint32_t Mode, ProcessResult &Result) {
 }
 
 llvm::Expected<std::optional<uint64_t>>
+LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
+  auto Imported = readPath(Address);
+  if (!Imported)
+    return Imported.takeError();
+  if (const auto *Error = std::get_if<uint32_t>(&*Imported))
+    return std::optional<uint64_t>(uint64_t(0) - *Error);
+  const auto &Path = std::get<std::string>(*Imported);
+  if (Path != "/" && !canonicalPath(Path))
+    return unsupported(Result, FilePathForm);
+
+  // Linux resolves the parent and final component before applying mode,
+  // umask or creation policy. Only these catalogue-derived failures are known.
+  const size_t Slash = Path.rfind('/');
+  const std::string Parent = Slash ? Path.substr(0, Slash) : "/";
+  switch (lookupPath(Parent)) {
+  case PathKind::Missing:
+    return std::optional<uint64_t>(uint64_t(0) - NoEntry);
+  case PathKind::File:
+  case PathKind::NotDirectory:
+    return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
+  case PathKind::Directory:
+    break;
+  }
+  if (lookupPath(Path) != PathKind::Missing)
+    return std::optional<uint64_t>(uint64_t(0) - AlreadyExists);
+  return unsupported(Result, FileDirectoryCreation);
+}
+
+llvm::Expected<std::optional<uint64_t>>
 LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   const uint32_t LargeFile = CPU.architecture() == GuestArchitecture::AArch64
                                  ? OpenLargeFileARM64
@@ -283,6 +312,8 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   if (!Options)
     return unsupported(Result, FileInputsMissing);
   const auto &[A0, A1, A2, A3, A4, A5] = Event.Arguments;
+  if (Kind == ServiceKind::Mkdir || Kind == ServiceKind::MkdirAt)
+    return makeDirectory(Kind == ServiceKind::Mkdir ? A0 : A1, Result);
   if (Kind == ServiceKind::Access || Kind == ServiceKind::FaccessAt)
     // Absolute names ignore dirfd. Raw faccessat has no flags argument.
     return Kind == ServiceKind::Access ? access(A0, A1, Result)

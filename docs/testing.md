@@ -2611,6 +2611,12 @@ unmapped, overlong and page-tail strings. Permission checks and noncanonical
 paths remain unsupported. Raw syscall extra registers are ignored; the API 28
 Bionic wrapper rejects nonzero flags.
 
+Directory cases cover existing files/root/prefix directories, missing parents,
+file ancestors, pathname faults, descriptor exhaustion and unchanged cursors
+through raw x64/AArch64 traps, named Bionic calls and variadic syscalls. Existing
+parents with absent targets remain unsupported. Independent guest threads
+retain private errno, and dynamic providers retain identity and lifetime.
+
 Status cases use independently declared x64 and AArch64 `stat` structures, checking
 every field, zero padding, canaries, unaligned output, full-width inode/timestamps,
 size independent from bytes and unchanged cursors. Raw/Bionic/variadic calls and

@@ -96,14 +96,15 @@ class ProcessIntegrationTests(unittest.TestCase):
         for optimization in ("O0", "O2"):
             for entry in ("files_sequence", "files_faults", "files_bionic",
                           "files_status", "files_status_bionic", "files_access",
-                          "files_access_faults", "files_access_bionic"):
+                          "files_access_faults", "files_access_bionic",
+                          "files_directory_errors", "files_directory_bionic"):
                 with self.subTest(optimization=optimization, entry=entry):
                     options = {
                         "backend": "unicorn", "instruction_quantum": 31,
                         "linux_files": {"files": [{"path": "/fixture/data", "bytes_hex": "00ff410a805a"}]},
                         "android": {"entry_symbol": entry, "initialize": False, "thread_limit": 2},
                     }
-                    if entry == "files_access":
+                    if entry in ("files_access", "files_directory_errors"):
                         options["linux_files"]["descriptor_limit"] = 4
                     if entry.startswith("files_status"):
                         options["linux_files"]["files"][0]["metadata"] = {

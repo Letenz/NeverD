@@ -46,6 +46,8 @@ private:
   PathKind lookupPath(const std::string &Path) const;
   llvm::Expected<std::optional<uint64_t>>
   access(uint64_t Address, uint32_t Mode, ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>> makeDirectory(uint64_t Address,
+                                                        ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> open(uint64_t Address, uint32_t Flags,
                                                ProcessResult &Result);
   llvm::Expected<uint64_t> read(OpenFile &File, uint64_t Address,
