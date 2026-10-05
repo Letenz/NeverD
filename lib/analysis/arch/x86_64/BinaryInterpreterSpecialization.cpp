@@ -682,6 +682,12 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
         "overlapping instructions are unsupported by native loop proofs";
     return Result;
   }
+  if (LoopPlan && Contract.DeferNativeConditionalEdges) {
+    Result.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Proof.Diagnostic =
+        "deferred conditional edges are unsupported by native loop proofs";
+    return Result;
+  }
   if (!Options.X64FlagsProfile) {
     Result.Proof.Status = LowIRRefinementStatus::Unsupported;
     Result.Proof.Diagnostic =
@@ -772,6 +778,12 @@ BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
   if (Contract.AllowOverlappingNativeInstructions) {
     Refuse(LowIRLoopInferenceStatus::Unsupported,
            "overlapping instructions are unsupported by native loop inference");
+    return Result;
+  }
+  if (Contract.DeferNativeConditionalEdges) {
+    Refuse(
+        LowIRLoopInferenceStatus::Unsupported,
+        "deferred conditional edges are unsupported by native loop inference");
     return Result;
   }
   if (!Recovery.complete()) {
