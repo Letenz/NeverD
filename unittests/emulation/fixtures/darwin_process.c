@@ -617,6 +617,106 @@ static int file_status(const char *path) {
 #undef STATUS_EXPECT
   return 37;
 }
+/* Existing-file mutations execute unchanged against the native BSD ABI. */
+static int writable_files(const char *path, unsigned nocancel) {
+  const u64 op = nocancel ? 398 : 5, wr = nocancel ? 397 : 4;
+  const u64 pr = nocancel ? 414 : 153, pw = nocancel ? 415 : 154;
+  const u64 cl = nocancel ? 399 : 6, fc = nocancel ? 406 : 92;
+  unsigned error;
+  unsigned char bytes[16];
+  int check = 50;
+#define MUTATE_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 a = call(op, (u64)path, 0x1000002, 0, 0, 0, 0, &error);
+  MUTATE_EXPECT(!error);
+  u64 b = call(op, (u64)path, 10, 0, 0, 0, 0, &error);
+  MUTATE_EXPECT(!error && b != a);
+  u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  MUTATE_EXPECT(!error && d != a);
+  u64 ro = call(op, (u64)path, 0, 0, 0, 0, 0, &error);
+  MUTATE_EXPECT(!error);
+  MUTATE_EXPECT(call(199, a, 2, 0, 0, 0, 0, &error) == 2 && !error);
+  MUTATE_EXPECT(call(wr, d, (u64) "XY", 2, 0, 0, 0, &error) == 2 && !error);
+  MUTATE_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == 4 && !error);
+  MUTATE_EXPECT(call(pw, b, (u64) "ab", 2, 1, 0, 0, &error) == 2 && !error);
+  MUTATE_EXPECT(call(199, b, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(wr, b, (u64) "Z", 1, 0, 0, 0, &error) == 1 && !error);
+  MUTATE_EXPECT(call(pr, ro, (u64)bytes, 16, 0, 0, 0, &error) == 11 && !error);
+  for (unsigned i = 0; i != 11; ++i)
+    MUTATE_EXPECT(bytes[i] == "0abY456789Z"[i]);
+  MUTATE_EXPECT(call(fc, d, 4, 8, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(fc, a, 3, 0, 0, 0, 0, &error) == 0x1000a && !error);
+  MUTATE_EXPECT(call(fc, a, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  MUTATE_EXPECT(call(fc, d, 1, 0, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(fc, b, 4, 1, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(fc, b, 3, 0, 0, 0, 0, &error) == 0x10002 && !error);
+  MUTATE_EXPECT(call(fc, a, 3, 0, 0, 0, 0, &error) == 0x1000a && !error);
+  MUTATE_EXPECT(call(wr, a, (u64)-1, 0, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == 4 && !error);
+  MUTATE_EXPECT(call(wr, a, (u64)-1, 1, 0, 0, 0, &error) == 14 && error);
+  MUTATE_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == 11 && !error);
+  MUTATE_EXPECT(call(pw, 999, 0, 0, (u64)-1, 0, 0, &error) == 22 && error);
+  MUTATE_EXPECT(call(pw, 999, 0, 0, (u64)-2, 0, 0, &error) == 9 && error);
+  const u64 maximum = 0x7fffffffffffffffUL;
+  MUTATE_EXPECT(call(199, a, maximum, 0, 0, 0, 0, &error) == maximum && !error);
+  MUTATE_EXPECT(call(wr, a, 0, 0, 0, 0, 0, &error) == 27 && error);
+  MUTATE_EXPECT(call(199, a, maximum - 1, 0, 0, 0, 0, &error) == maximum - 1 &&
+                !error);
+  MUTATE_EXPECT(call(wr, d, (u64) "KL", 2, 0, 0, 0, &error) == 1 && !error);
+  MUTATE_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == 12 && !error);
+  MUTATE_EXPECT(call(pw, d, (u64) "QR", 2, 14, 0, 0, &error) == 2 && !error);
+  MUTATE_EXPECT(call(pr, ro, (u64)bytes, 16, 0, 0, 0, &error) == 16 && !error);
+  MUTATE_EXPECT(bytes[11] == 'K' && !bytes[12] && !bytes[13] &&
+                bytes[14] == 'Q' && bytes[15] == 'R');
+  MUTATE_EXPECT(call(201, b, 5, 0, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(201, b, 8, 0, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(pr, ro, (u64)bytes, 16, 0, 0, 0, &error) == 8 && !error);
+  for (unsigned i = 0; i != 8; ++i)
+    MUTATE_EXPECT(bytes[i] == (i < 5 ? "0abY4"[i] : 0));
+  MUTATE_EXPECT(call(199, b, 0, 1, 0, 0, 0, &error) == 11 && !error);
+  MUTATE_EXPECT(call(201, ro, 0, 0, 0, 0, 0, &error) == 22 && error);
+  MUTATE_EXPECT(call(201, 999, (u64)-1, 0, 0, 0, 0, &error) == 22 && error);
+  MUTATE_EXPECT(call(200, 0, (u64)-1, 0, 0, 0, 0, &error) == 22 && error);
+  MUTATE_EXPECT(call(200, (u64)path, 2, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 trunc = call(op, (u64)path, 0x400, 0, 0, 0, 0, &error);
+  MUTATE_EXPECT(!error);
+  MUTATE_EXPECT(call(pr, ro, (u64)bytes, 16, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(cl, trunc, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(pw, b, (u64) "n", 1, 2, 0, 0, &error) == 1 && !error);
+  const u64 fds[] = {a, b, d, ro};
+  for (unsigned i = 0; i != 4; ++i)
+    MUTATE_EXPECT(call(cl, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 wo = call(op, (u64)path, 1, 0, 0, 0, 0, &error);
+  MUTATE_EXPECT(!error);
+  MUTATE_EXPECT(call(3, wo, 0, 0, 0, 0, 0, &error) == 9 && error);
+  MUTATE_EXPECT(call(197, 0, PAGE, 1, 2, wo, 0, &error) == 13 && error);
+  u64 mapped = call(197, 0, PAGE, 0, 2, wo, 0, &error);
+  MUTATE_EXPECT(!error);
+  MUTATE_EXPECT(call(74, mapped, PAGE, 3, 0, 0, 0, &error) == 0 && !error);
+  volatile unsigned char *memory = (volatile unsigned char *)mapped;
+  MUTATE_EXPECT(!memory[0] && !memory[1] && memory[2] == 'n');
+  MUTATE_EXPECT(call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  MUTATE_EXPECT(call(cl, wo, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ro = call(op, (u64)path, 0, 0, 0, 0, 0, &error);
+  MUTATE_EXPECT(!error);
+  MUTATE_EXPECT(call(pr, ro, (u64)bytes, 16, 0, 0, 0, &error) == 3 && !error);
+  MUTATE_EXPECT(!bytes[0] && !bytes[1] && bytes[2] == 'n');
+  unsigned char hex[6];
+  const char digits[] = "0123456789abcdef";
+  for (unsigned i = 0; i != 3; ++i) {
+    hex[i * 2] = digits[bytes[i] >> 4];
+    hex[i * 2 + 1] = digits[bytes[i] & 15];
+  }
+  MUTATE_EXPECT(call(wr, 1, (u64)hex, 6, 0, 0, 0, &error) == 6 && !error);
+  MUTATE_EXPECT(call(cl, ro, 0, 0, 0, 0, 0, &error) == 0 && !error);
+#undef MUTATE_EXPECT
+  return 37;
+}
+
 /* The same raw-call object runs in the guest and against the native kernel.
  * The harness supplies a regular file containing exactly 0123456789. */
 static int file_calls(const char *path, unsigned nocancel) {
@@ -775,6 +875,11 @@ int main(int argc, char **argv, char **envp, char **apple) {
 #endif
                0, mach_flags(1))
         .value;
+  if (equal(argv[1], "writable-files") ||
+      equal(argv[1], "writable-files-nocancel"))
+    return argc < 3 ? 49
+                    : writable_files(argv[2],
+                                     equal(argv[1], "writable-files-nocancel"));
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));

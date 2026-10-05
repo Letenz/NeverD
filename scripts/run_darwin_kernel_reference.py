@@ -47,7 +47,6 @@ def native_architecture(expected: str) -> str:
 def execute_cases(program: Path, cases: list[tuple[str, int, bytes]]) -> list[dict]:
     with tempfile.TemporaryDirectory(prefix="neverd-darwin-files-") as directory:
         input_file = Path(directory) / "data"
-        input_file.write_bytes(b"0123456789")
         (Path(directory) / "empty").mkdir()
         return _execute_cases(program, cases, input_file)
 
@@ -55,6 +54,7 @@ def execute_cases(program: Path, cases: list[tuple[str, int, bytes]]) -> list[di
 def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_file: Path) -> list[dict]:
     results = []
     for mode, status, output in cases:
+        input_file.write_bytes(b"0123456789")
         try:
             result = subprocess.run([str(program), mode, str(input_file)], capture_output=True, timeout=5)
             results.append({

@@ -66,13 +66,18 @@ DarwinMemory::map(const ProcessServiceEvent &E, DarwinFiles &Files,
   if (!Size || *Size > UserLimit)
     return Error(InvalidArgument);
   llvm::ArrayRef<uint8_t> Bytes;
+  std::shared_ptr<const unsigned> FileLease;
   if (!Anonymous) {
     auto Source = Files.mappingSource(uint32_t(FD));
     if (auto *Code = std::get_if<uint32_t>(&Source))
       return Error(*Code);
     if (auto *Diagnostic = std::get_if<const char *>(&Source))
       return Unsupported(*Diagnostic);
-    const auto File = std::get<llvm::ArrayRef<uint8_t>>(Source);
+    const auto &Mapping = std::get<DarwinFiles::Mapping>(Source);
+    if (!Mapping.Readable && (normalizedProtection(Prot) & ProtRead))
+      return Error(PermissionDenied);
+    const auto File = Mapping.Bytes;
+    FileLease = Mapping.Lease;
     // A complete page beyond EOF would fault through the vnode pager. Until
     // that fault model exists, refuse before allocating instead of zeroing it.
     if (Length && (Offset >= File.size() ||
@@ -148,6 +153,10 @@ DarwinMemory::map(const ProcessServiceEvent &E, DarwinFiles &Files,
       return llvm::joinErrors(std::move(CopyError),
                               Space.unmap(Address, *Size));
   Maximum.push_back({Address, *Size, 7});
+  // Private maxprot gains WRITE and EXECUTE before XNU implies READ, even
+  // for a write-only descriptor initially mapped with PROT_NONE.
+  if (FileLease)
+    FileMappings.push_back({Address, *Size, std::move(FileLease)});
   return std::optional<ServiceResult>({Address, false});
 }
 
@@ -230,8 +239,25 @@ DarwinMemory::unmap(const ProcessServiceEvent &E) {
     if (auto Error = Space.unmap(Begin, End - Begin))
       return std::move(Error);
     forgetMaximum(Begin, End - Begin);
+    forgetFileMappings(Begin, End - Begin);
   }
   return ServiceResult{0};
+}
+
+void DarwinMemory::forgetFileMappings(uint64_t Address, uint64_t Size) {
+  std::vector<FileMapping> Kept;
+  for (const auto &R : FileMappings) {
+    if (!overlaps(Address, Size, R.Address, R.Size)) {
+      Kept.push_back(R);
+      continue;
+    }
+    if (R.Address < Address)
+      Kept.push_back({R.Address, Address - R.Address, R.Lease});
+    if (R.Address + R.Size > Address + Size)
+      Kept.push_back(
+          {Address + Size, R.Address + R.Size - Address - Size, R.Lease});
+  }
+  FileMappings = std::move(Kept);
 }
 
 llvm::Expected<std::optional<ServiceResult>>

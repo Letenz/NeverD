@@ -404,6 +404,8 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
         std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}})
     for (const auto &[Mode, Expected] :
          {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
+          std::pair{"writable-files", "303030303665"},
+          std::pair{"writable-files-nocancel", "303030303665"},
           std::pair{"stdin", "00ff78"}, std::pair{"output-descriptors", "6f6b"},
           std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"},
           std::pair{"directories", "64"}, std::pair{"directory-entries", "65"},
@@ -440,7 +442,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   SCOPED_TRACE(Mode);
   // This is a byte/ABI comparison. A separate process suite tests deadline
   // expiry; allow scheduling headroom here without changing product defaults.
-  const std::string Options =
+  std::string Options =
       std::string(
           R"({"backend":"unicorn","timeout_microseconds":10000000,"darwin_time":)") +
       emulation::darwin_test::TimeJSON +
@@ -450,6 +452,17 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       emulation::darwin_test::DirectoryContentsJSON +
       R"(},{"path":"/empty"}],"working_directory":"/empty","stdin_hex":"00ff78","descriptor_limit":32},"arguments":["guest",")" +
       Mode + R"(","/data"]})";
+  if (llvm::StringRef(Mode).starts_with("writable-files")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto *File = Input.getAsObject()
+                     ->getObject(field::DarwinFiles)
+                     ->getArray(field::Files)
+                     ->front()
+                     .getAsObject();
+    (*File)[field::FileWritable] = true;
+    (*File->getObject(field::FileMetadata))[field::FileFlags] = 0;
+    Options = llvm::formatv("{0}", Input).str();
+  }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
                                                      Profile, Options.c_str()));
   ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));

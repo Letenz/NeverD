@@ -32,6 +32,14 @@ NEVERD_DARWIN_VALUE(NameTooLong, 63)
 NEVERD_DARWIN_VALUE(Overflow, 84)
 NEVERD_DARWIN_VALUE(OpenCloseOnExec, 0x01000000)
 NEVERD_DARWIN_VALUE(OpenDirectory, 0x00100000)
+NEVERD_DARWIN_VALUE(OpenAccessMask, 3)
+NEVERD_DARWIN_VALUE(OpenWriteOnly, 1)
+NEVERD_DARWIN_VALUE(OpenReadWrite, 2)
+NEVERD_DARWIN_VALUE(OpenAppend, 8)
+NEVERD_DARWIN_VALUE(OpenTruncate, 0x400)
+NEVERD_DARWIN_VALUE(FileTooLarge, 27)
+NEVERD_DARWIN_VALUE(FileWasWritten, 0x10000)
+NEVERD_DARWIN_VALUE(FileRestrictedFlags, 0x60006)
 NEVERD_DARWIN_VALUE(AtCurrentDirectory, 0xfffffffe)
 NEVERD_DARWIN_VALUE(AtNoFollow, 0x20)
 NEVERD_DARWIN_VALUE(AtRealDevice, 0x200)
@@ -42,6 +50,7 @@ NEVERD_DARWIN_VALUE(DuplicateFD, 0)
 NEVERD_DARWIN_VALUE(GetDescriptorFlags, 1)
 NEVERD_DARWIN_VALUE(SetDescriptorFlags, 2)
 NEVERD_DARWIN_VALUE(GetFileFlags, 3)
+NEVERD_DARWIN_VALUE(SetFileFlags, 4)
 NEVERD_DARWIN_VALUE(DuplicateCloseOnExec, 67)
 NEVERD_DARWIN_VALUE(FileStatusSize, 144)
 NEVERD_DARWIN_VALUE(FileRegularMode, 0x8000)
@@ -82,7 +91,10 @@ NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
+NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
+NEVERD_DARWIN_SERVICE(Truncate, 200, Int)
+NEVERD_DARWIN_SERVICE(Ftruncate, 201, Int)
 NEVERD_DARWIN_SERVICE(Stat64, 338, Int)
 NEVERD_DARWIN_SERVICE(Fstat64, 339, Int)
 NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
@@ -112,6 +124,7 @@ NEVERD_DARWIN_SERVICE_ALIAS(Open, 398)
 NEVERD_DARWIN_SERVICE_ALIAS(Close, 399)
 NEVERD_DARWIN_SERVICE_ALIAS(Fcntl, 406)
 NEVERD_DARWIN_SERVICE_ALIAS(Pread, 414)
+NEVERD_DARWIN_SERVICE_ALIAS(Pwrite, 415)
 NEVERD_DARWIN_SERVICE_ALIAS(OpenAt, 464)
 #endif
 
@@ -146,8 +159,25 @@ NEVERD_DARWIN_DIAGNOSTIC(FileMetadata, "Darwin file metadata is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(
     FilePartialStatus,
     "Darwin stat64 into a partially writable buffer is unsupported")
-NEVERD_DARWIN_DIAGNOSTIC(FileOpenFlags,
-                         "unsupported Darwin open flags (read-only files only)")
+NEVERD_DARWIN_DIAGNOSTIC(FileOpenFlags, "unsupported Darwin open flags")
+NEVERD_DARWIN_DIAGNOSTIC(FileWritableOption,
+                         "Darwin writable path must name a regular file")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileWritableAlias, "Darwin writable file identity aliases are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileWritableFlags,
+    "Darwin writable immutable or append-only file flags are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(FileNotWritable,
+                         "Darwin file write access is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileMutationLimit,
+                         "Darwin mutation exceeds the file storage budget")
+NEVERD_DARWIN_DIAGNOSTIC(FileMutatedMetadata,
+                         "Darwin post-mutation file metadata is unknown")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileMutationMapping,
+    "Darwin mutation with live file mappings is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(FilePartialWrite,
+                         "Darwin file write input is partially readable")
 NEVERD_DARWIN_DIAGNOSTIC(FileWorkingDirectory,
                          "Darwin working directory is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(

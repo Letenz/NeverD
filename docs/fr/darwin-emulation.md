@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
+<!-- i18n-source: e14143fea85825a5b746e8fa74d0d9a439082587fccded15cfa8b43984098ae0 -->
 
 [← Index de la documentation](README.md)
 
@@ -51,17 +51,35 @@ Les fixtures C originales sont produites par Clang et `ld64.lld`, sans SDK Apple
 
 ## Fichiers et descripteurs explicites
 
-`darwin_files` fournit aux trois profils un catalogue fermé de fichiers en lecture seule. Le champ obligatoire `files` contient un `path` invité absolu canonique et des `bytes_hex` hexadécimaux. `stdin_hex` est un flux fini facultatif : absent signifie inconnu et arrête une lecture non vide, une chaîne vide signifie EOF. Sans catalogue open s’arrête ; un catalogue explicitement vide renvoie ENOENT. Aucun fichier ni flux hôte n’est consulté.
+`darwin_files` fournit aux trois profils un catalogue fermé de fichiers initialement en lecture seule. Le champ obligatoire `files` contient un `path` invité absolu canonique et des `bytes_hex` hexadécimaux. `stdin_hex` est un flux fini facultatif : absent signifie inconnu et arrête une lecture non vide, une chaîne vide signifie EOF. Sans catalogue open s’arrête ; un catalogue explicitement vide renvoie ENOENT. Aucun fichier ni flux hôte n’est consulté.
 
 Les services ajoutés sont `open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl`, avec les entrées nocancel de read/write/open/close/fcntl/pread. O_RDONLY/O_CLOEXEC et F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL sont pris en charge. Chaque open a sa position ; les duplications partagent la position mais gardent leurs propres indicateurs close-on-exec. pread ne déplace pas la position. Fermer ou remplacer 0/1/2 affecte les I/O suivantes ; une sortie dupliquée conserve sa destination et son budget.
 
-Limites : 256 fichiers, 16 MiB cumulés pour chemins/NUL/fichiers/entrée, chemins de moins de 1024 octets et composants de 255 octets maximum. `descriptor_limit` est un plafond exclusif de 3–4096, défaut 256 ; JSON reste limité à 64 KiB. Les options invalides échouent avant chargement. read au-delà de INT_MAX donne EINVAL avant recherche du FD ; EOF ne touche pas la destination, une adresse invalide donne EFAULT. Un tampon partiellement inscriptible arrête avant copie ou changement de position. Les erreurs SET/CUR/END conservent la position. Écriture, ancien stat, seek creux et autres fcntl restent exclus. Un fichier utilisé comme ancêtre donne ENOTDIR. Le même objet est comparé au noyau macOS ; C/CLI/Python couvrent cinq combinaisons invitées, sans preuve sur appareil iOS.
+Limites : 256 fichiers, 16 MiB cumulés pour chemins/NUL/fichiers/entrée, chemins de moins de 1024 octets et composants de 255 octets maximum. `descriptor_limit` est un plafond exclusif de 3–4096, défaut 256 ; JSON reste limité à 64 KiB. Les options invalides échouent avant chargement. read au-delà de INT_MAX donne EINVAL avant recherche du FD ; EOF ne touche pas la destination, une adresse invalide donne EFAULT. Un tampon partiellement inscriptible arrête avant copie ou changement de position. Les erreurs SET/CUR/END conservent la position. Ancien stat, seek creux et autres fcntl restent exclus. Un fichier utilisé comme ancêtre donne ENOTDIR. Le même objet est comparé au noyau macOS ; C/CLI/Python couvrent cinq combinaisons invitées, sans preuve sur appareil iOS.
 
 Vérification Release du 2026-10-05 : 381 inscriptions, 177 réussites, 204 ignorées, aucun échec, et 51/51 cas ARM64 HVF obligatoires exécutés. Sept programmes macOS natifs, 35 tests publics C/CLI/rapports, cinq combinaisons Python et 66 tests du vérificateur ont également réussi. Les comptes se recoupent. Les nouveaux services n’ont pas de preuve native Intel HVF/KVM/WHP ; Intel HVF reste non validé et ses Actions suspendues. Le SDK iOS et la comparaison sur appareil manquent.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## Modification des fichiers existants
+
+Le booléen strict `"writable":true` ou `DarwinFileOptions::WritableFiles` autorise les modifications locales au processus. Absent/false conserve la lecture seule ; une autorisation inconnue arrête le service. Aucun fichier hôte ni octet initial fourni n’est modifié. write(4/397), pwrite(154/415), truncate(200), ftruncate(201) et O_TRUNC partagent le contenu ; open garde une position indépendante, dup partage position et état, et le contenu survit au dernier close. L’extension remplit de zéros ; la troncature conserve les positions, même avec O_RDONLY|O_TRUNC.
+
+F_SETFL ne modifie que O_APPEND et conserve accès, close-on-exec et FWASWRITTEN. F_GETFL expose 0x10000 après un transfert non vide, y compris pwrite et la sortie capturée. pwrite ignore append et conserve la position. INT_MAX est vérifié avant FD ; pwrite à -1 donne EINVAL encore plus tôt. INT64_MAX donne EFBIG avant le cas vide ; la longueur est réduite avant de choisir EOF.
+
+Une entrée partiellement lisible arrête avant tout effet. EFAULT intégral conserve les octets, mais append non vide avance à EOF. Une panne du transport ne valide aucun contenu ni position. Écriture non vide, troncature et EFAULT intégral non vide invalident l’observation stat complète ; les requêtes suivantes s’arrêtent avant copie. Une écriture vide la conserve. Les 16 MiB comptent chemins/NUL, entrée, enregistrements, CWD, contenu actuel et références de chemins inscriptibles. Réduire remplace le stockage et récupère la capacité ; entrée initiale et tampon de remplacement borné sont supplémentaires. Alias inode connus et flags immutable/append-only sont refusés.
+
+DarwinMemory garde des baux jusqu’au dernier unmap, même pour PROT_NONE ou après close ; les mutations sont refusées jusque-là. Les échecs et anciens mmap de longueur zéro ne gardent aucun bail. Les nouveaux mappings voient les octets actuels. O_WRONLY avec READ/WRITE donne EACCES ; PROT_NONE peut ensuite gagner lecture/écriture par mprotect.
+
+Les programmes originaux normal/nocancel comparent le noyau natif ; tests 4K/16K et C/CLI/Python couvrent cinq combinaisons. Création, suppression, renommage, liens physiques, métadonnées modifiées, cohérence des mappings et SIGBUS EOF restent incomplets. Ni environnement complet, ni appareil iOS, ni Intel HVF ne sont validés ; les Actions Intel restent suspendues.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
+```
+
+[XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
 
 ## Répertoires et chemins relatifs
 
@@ -223,3 +241,12 @@ Le contrat ARM64 checked partagé admet les encodages exacts `MRS Xt, NZCV` et `
 `NeverDAArch64NZCVTests` compare toutes les combinaisons aux instructions hôtes et vérifie l’état scalaire/vectoriel complet, la mémoire, les registres limites, l’arrêt/l’échec des observateurs, la reprise du contexte et les budgets partagés. ARM64 `mach-time` utilise désormais de vrais MSR/MRS autour de SVC pour vérifier la conservation Mach et la transition vers BSD. Les exigences HVF natives comprennent les six méthodes aux deux privilèges et l’oracle hôte. ARM64 KVM/WHP et iOS physique restent non validés. Fichiers modifiables, informations système, horloges progressives, Mach IPC/threads, dyld/runtimes/frameworks et validation sur appareil restent à réaliser.
 
 [Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).
+
+
+Validation des fichiers modifiables (2026-10-06) : Release Darwin, 610 inscriptions, 322 réussites, 288 ignorées pour backend indisponible, zéro échec ; 72/72 obligations ARM64 HVF exécutées. La vérification finale, avec les nouvelles assertions EFAULT/métadonnées, compte 102 réussites et 12 ignorées sur 114. Les 15 programmes natifs et 111 tests publics C/CLI/rapports passent aussi. Les comptes se recoupent. Le premier essai natif a révélé FWASWRITTEN, corrigé avant réussite ; son échec est conservé. Aucun délai changé. CI GitHub complète et appareil iOS restent séparés ; Actions Intel suspendues.
+
+`build-hvf-arm64/writable-darwin-evidence/` · `writable-native-final/` · `writable-focused-final.xml` · `writable-public.xml`
+
+Python a d’abord dépassé cinq secondes dans trois cas de répertoire ARM64. L’observation sans changer les arguments a réussi les dix nouveaux cas inscriptibles ; un répertoire iOS a expiré à 5,005 s réelles pour 1,263 s CPU. Les trois reprises isolées, même limite, passent en 2,43–3,17 s : 10 941 instructions, sortie65. Charge54–70 pour16 CPU logiques : indice de pression de planification, pas une garantie de latence ; échecs conservés.
+
+La méthode Python finale inchangée a réussi les cinq combinaisons en41,118 s, avec cinq secondes par processus. Les échecs et diagnostics précédents restent séparés.

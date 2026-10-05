@@ -106,6 +106,7 @@ writeOutput(ExecutionBackend &CPU, DarwinFiles &Files,
                                      Bytes.size())))
     return std::move(E);
   (*Sink == 1 ? Result.StandardOutput : Result.StandardError).append(Bytes);
+  Files.recordWrite(FD);
   // XNU's write path retains EFAULT after a partial copy; unlike interruption
   // errors, it does not convert that error into a successful short write.
   return std::optional<ServiceResult>(Readable == Count
@@ -177,7 +178,12 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
     Result.ExitStatus = Event.Arguments[0] & 0xff;
     return std::optional<ServiceResult>();
   case ServiceKind::Write:
-    return writeOutput(CPU, Files, Event, Options, Result);
+    if (Files.outputSink(uint32_t(Event.Arguments[0])))
+      return writeOutput(CPU, Files, Event, Options, Result);
+    return Files.handle(Kind, Event, Result);
+  case ServiceKind::Pwrite:
+  case ServiceKind::Truncate:
+  case ServiceKind::Ftruncate:
   case ServiceKind::Read:
   case ServiceKind::Pread:
   case ServiceKind::Open:

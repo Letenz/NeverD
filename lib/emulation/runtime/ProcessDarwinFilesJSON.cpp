@@ -194,8 +194,9 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       for (const auto &File : *Files) {
         const auto *F = File.getAsObject();
-        if (!F || (F->size() != 2 && F->size() != 3) || !F->get(field::Bytes) ||
-            (F->size() == 3 && !F->get(field::FileMetadata)))
+        if (!F || !F->get(field::Bytes) ||
+            F->size() != 2 + unsigned(bool(F->get(field::FileMetadata))) +
+                             unsigned(bool(F->get(field::FileWritable))))
           return invalid(Name);
         auto Path = F->getString(field::Path);
         if (!Path || Path->size() >= Remaining)
@@ -206,6 +207,13 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           return Data.takeError();
         if (!Out.Files.emplace(Path->str(), std::move(*Data)).second)
           return invalid(field::Path);
+        if (const auto *W = F->get(field::FileWritable)) {
+          auto Writable = W->getAsBoolean();
+          if (!Writable)
+            return invalid(field::FileWritable);
+          if (*Writable)
+            Out.WritableFiles.insert(Path->str());
+        }
         if (const auto *M = F->get(field::FileMetadata)) {
           auto Parsed = metadata(*M);
           if (!Parsed)

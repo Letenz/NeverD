@@ -86,7 +86,255 @@ protected:
     EXPECT_TRUE(Out->Error);
     EXPECT_EQ(Out->Value, Code);
   }
+  void contents(uint64_t FD, llvm::ArrayRef<uint8_t> Expected) {
+    EXPECT_EQ(ok(ServiceKind::Pread, {FD, Base + Page, 64, 0}),
+              Expected.size());
+    std::vector<uint8_t> Bytes(Expected.size());
+    ASSERT_FALSE(bool(Space->read(Base + Page, Bytes)));
+    EXPECT_EQ(Bytes, Expected.vec());
+  }
 };
+
+TEST_P(DarwinFileTest, WritableNodesSurviveSeparateOpensDupAndLastClose) {
+  Options->WritableFiles.insert("/data");
+  const auto Original = Options->Files.at("/data");
+  auto A = ok(ServiceKind::Open, {Base, 2});
+  auto B = ok(ServiceKind::Open, {Base});
+  auto D = ok(ServiceKind::Dup, {A});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 1, 0}), 1u);
+  path("XY", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Write, {D, Base + 128, 2}), 2u);
+  contents(B, {'a', 'X', 'Y', 0xff, 'e', 'f'});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 3u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {A, Base + 128, 2, 8}), 2u);
+  contents(B, {'a', 'X', 'Y', 0xff, 'e', 'f', 0, 0, 'X', 'Y'});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 3u);
+  for (auto FD : {A, B, D})
+    EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  auto Reopened = ok(ServiceKind::Open, {Base});
+  contents(Reopened, {'a', 'X', 'Y', 0xff, 'e', 'f', 0, 0, 'X', 'Y'});
+  EXPECT_EQ(Options->Files.at("/data"), Original);
+}
+
+TEST_P(DarwinFileTest, AppendFlagsAreSharedByDupAndIgnoredByPwrite) {
+  Options->WritableFiles.insert("/data");
+  auto A = ok(ServiceKind::Open, {Base, 0x100000a});
+  auto D = ok(ServiceKind::Dup, {A});
+  auto B = ok(ServiceKind::Open, {Base, 2});
+  path("XY", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 3}), 10u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 4, 0x1000a}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 10u);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {A, Base + 128, 2, 1}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Write, {D, Base + 128, 2}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 8u);
+  contents(B, {'a', 'X', 'Y', 0xff, 'e', 'f', 'X', 'Y'});
+  const auto WrittenFlags = ok(ServiceKind::Fcntl, {D, 3});
+  EXPECT_EQ(WrittenFlags, 0x1000au);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 4, WrittenFlags & ~8u}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 1}), 1u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 4, 8}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 10u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
+  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, 4}));
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
+}
+
+TEST_P(DarwinFileTest, TruncationChangesSharedBytesWithoutMovingCursors) {
+  Options->WritableFiles.insert("/data");
+  auto A = ok(ServiceKind::Open, {Base, 2});
+  auto B = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 5, 0}), 5u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, 3}), 0u);
+  contents(B, {'a', 'b', 0});
+  EXPECT_EQ(ok(ServiceKind::Truncate, {Base, 8}), 0u);
+  contents(B, {'a', 'b', 0, 0, 0, 0, 0, 0});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 5u);
+  auto ReadOnlyTruncate = ok(ServiceKind::Open, {Base, 0x400});
+  contents(B, {});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 5u);
+  error(ServiceKind::Write, {ReadOnlyTruncate, 0, 0}, 9);
+  error(ServiceKind::Ftruncate, {B, 0}, 22);
+  error(ServiceKind::Ftruncate, {999, UINT64_MAX}, 22);
+  error(ServiceKind::Truncate, {0, UINT64_MAX}, 22);
+  path("/");
+  error(ServiceKind::Truncate, {Base, 0}, 21);
+  error(ServiceKind::Open, {Base, 1}, 21);
+  error(ServiceKind::Open, {Base, 3}, 22);
+}
+
+TEST_P(DarwinFileTest, WriteErrorOrderZeroCountsAndClippedAppendMatchNative) {
+  Options->WritableFiles.insert("/data");
+  auto A = ok(ServiceKind::Open, {Base, 2});
+  auto RO = ok(ServiceKind::Open, {Base});
+  auto WO = ok(ServiceKind::Open, {Base, 1});
+  error(ServiceKind::Write, {999, 0, 0x80000000}, 22);
+  error(ServiceKind::Write, {999, 0, 0}, 9);
+  error(ServiceKind::Pwrite, {999, 0, 0, UINT64_MAX}, 22);
+  error(ServiceKind::Pwrite, {999, 0, 0, UINT64_MAX - 1}, 9);
+  error(ServiceKind::Pwrite, {A, 0, 0, UINT64_MAX - 1}, 22);
+  error(ServiceKind::Pwrite, {1, 0, 0, 0}, 29);
+  error(ServiceKind::Write, {RO, 0, 0}, 9);
+  error(ServiceKind::Read, {WO, 0, 0}, 9);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {A, UINT64_MAX, 0, 99}), 0u);
+  error(ServiceKind::Pwrite, {A, 0, 0, INT64_MAX}, 27);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 4, 8}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Write, {A, UINT64_MAX, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 0u);
+  error(ServiceKind::Write, {A, UINT64_MAX, 2}, 14);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 6u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, INT64_MAX, 0}), uint64_t(INT64_MAX));
+  error(ServiceKind::Write, {A, 0, 0}, 27);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, INT64_MAX - 1, 0}),
+            uint64_t(INT64_MAX - 1));
+  path("XY", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Write, {A, Base + 128, 2}), 1u);
+  contents(RO, {'a', 'b', 0, 0xff, 'e', 'f', 'X'});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 7u);
+}
+
+TEST_P(DarwinFileTest, PartialInputRefusesEffectsAndDirtyMetadataIsNotReused) {
+  Options->WritableFiles.insert("/data");
+  auto M = darwin_test::metadata(6);
+  M.Flags = 0;
+  Options->Metadata["/data"] = M;
+  auto A = ok(ServiceKind::Open, {Base, 10});
+  auto B = ok(ServiceKind::Open, {Base});
+  const uint64_t End = Base + Page * 2 - 2;
+  path("X", End);
+  EXPECT_FALSE(invoke(ServiceKind::Write, {A, End, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FilePartialWrite);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 0u);
+  contents(B, {'a', 'b', 0, 0xff, 'e', 'f'});
+  EXPECT_EQ(ok(ServiceKind::Fstat64, {A, Base + 256}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Write, {A, End, 1}), 1u);
+  ASSERT_FALSE(bool(Space->writeInteger(Base + 256, 0x7777, 2)));
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {B, Base + 256}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256, 2)), 0x7777u);
+  ok(ServiceKind::Close, {A});
+  ok(ServiceKind::Close, {B});
+  auto C = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {C, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_FALSE(invoke(ServiceKind::Stat64, {Base, Base + 256}));
+}
+
+TEST_P(DarwinFileTest, FailedAppendInvalidatesMetadataWithoutPublishingBytes) {
+  Options->WritableFiles.insert("/data");
+  auto M = darwin_test::metadata(6);
+  M.Flags = 0;
+  Options->Metadata["/data"] = M;
+  const auto A = ok(ServiceKind::Open, {Base, 10});
+  const auto B = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Write, {A, UINT64_MAX, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fstat64, {B, Base + 256}), 0u);
+  error(ServiceKind::Write, {A, UINT64_MAX, 1}, 14);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 6u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 10u);
+  contents(B, {'a', 'b', 0, 0xff, 'e', 'f'});
+  llvm::cantFail(Space->writeInteger(Base + 256, 0x7777, 2));
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {B, Base + 256}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256, 2)), 0x7777u);
+}
+
+TEST_P(DarwinFileTest, AggregateMutationBudgetIsReclaimedByShrinking) {
+  Options->Files["/other"] = {};
+  Options->WritableFiles = {"/data", "/other"};
+  Options->StandardInput = {1, 2, 3};
+  const uint64_t Capacity = darwin_file_limits::Bytes - 2 * 6 - 2 * 7 - 3;
+  auto A = ok(ServiceKind::Open, {Base, 2});
+  path("/other", Base + 128);
+  auto B = ok(ServiceKind::Open, {Base + 128, 2});
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Capacity}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {B, 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 2}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, 0}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {B, Capacity}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Pwrite, {A, Base, 1, INT64_MAX - 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 2}), 0u);
+}
+
+TEST(DarwinFileOptions, WritableAdmissionRejectsAliasesAndRestrictiveFlags) {
+  DarwinFileOptions O;
+  O.Files["/a"] = {};
+  O.Files["/b"] = {};
+  O.WritableFiles = {"/missing"};
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileWritableOption);
+  O.WritableFiles = {"/a"};
+  auto M = darwin_test::metadata(0);
+  M.Flags = 0;
+  O.Metadata["/a"] = O.Metadata["/b"] = M;
+  EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+            diagnostic::FileWritableAlias);
+  O.Metadata["/b"].Device++;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  for (uint32_t Flags : {2u, 4u, 0x20000u, 0x40000u}) {
+    O.Metadata["/a"].Flags = Flags;
+    EXPECT_EQ(llvm::toString(validateFileOptions(O)),
+              diagnostic::FileWritableFlags);
+  }
+}
+
+class FailingFileInput : public GuestMemory {
+  GuestMemory &Memory;
+
+public:
+  bool FailAccess = false, FailRead = false;
+  explicit FailingFileInput(GuestMemory &Memory) : Memory(Memory) {}
+  llvm::Error map(uint64_t A, uint64_t S, unsigned P) override {
+    return Memory.map(A, S, P);
+  }
+  llvm::Error protect(uint64_t A, uint64_t S, unsigned P) override {
+    return Memory.protect(A, S, P);
+  }
+  llvm::Error read(uint64_t A, llvm::MutableArrayRef<uint8_t> B) override {
+    if (FailRead) {
+      // A transport may fill part of the scratch span before failing.
+      B.front() = 'x';
+      return failure("file input transport failed");
+    }
+    return Memory.read(A, B);
+  }
+  llvm::Error write(uint64_t A, llvm::ArrayRef<uint8_t> B) override {
+    return Memory.write(A, B);
+  }
+  llvm::Expected<bool> canAccess(uint64_t A, uint64_t S,
+                                 unsigned P) const override {
+    if (FailAccess)
+      return failure("file input preflight failed");
+    return Memory.canAccess(A, S, P);
+  }
+};
+
+TEST_P(DarwinFileTest,
+       InputTransportFailuresDoNotCommitContentsOrAppendCursor) {
+  Options->WritableFiles.insert("/data");
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  const auto FD = ok(ServiceKind::Open, {Base, 10});
+  for (bool Preflight : {true, false}) {
+    Input.FailAccess = Preflight;
+    Input.FailRead = !Preflight;
+    auto Failed = Files->handle(ServiceKind::Write,
+                                {0, 4, {FD, Base, 2}, std::nullopt}, Result);
+    ASSERT_FALSE(bool(Failed));
+    EXPECT_EQ(llvm::toString(Failed.takeError()),
+              Preflight ? "file input preflight failed"
+                        : "file input transport failed");
+    Input.FailAccess = Input.FailRead = false;
+    EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+    contents(FD, {'a', 'b', 0, 0xff, 'e', 'f'});
+  }
+}
 
 TEST_P(DarwinFileTest, DupSharesOffsetsButOpenAndPreadDoNot) {
   auto A = ok(ServiceKind::Open, {Base});

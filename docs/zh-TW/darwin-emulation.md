@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
+<!-- i18n-source: e14143fea85825a5b746e8fa74d0d9a439082587fccded15cfa8b43984098ae0 -->
 
 [← 文件索引](README.md)
 
@@ -51,17 +51,35 @@ BSD 呼叫在 ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別
 
 ## 明確的檔案輸入與描述元
 
-`darwin_files` 為三個 Darwin profile 提供封閉唯讀檔案目錄。必要的 `files` 項目包含規範絕對客體 `path` 和十六進位 `bytes_hex`；選用 `stdin_hex` 提供有限輸入流。省略表示未知，非零讀取會停止；空字串表示 EOF。未設定目錄時 open 停止，明確空目錄中缺失的絕對路徑返回 ENOENT，不會存取宿主檔案或輸入。
+`darwin_files` 為三個 Darwin profile 提供封閉的初始唯讀檔案目錄。必要的 `files` 項目包含規範絕對客體 `path` 和十六進位 `bytes_hex`；選用 `stdin_hex` 提供有限輸入流。省略表示未知，非零讀取會停止；空字串表示 EOF。未設定目錄時 open 停止，明確空目錄中缺失的絕對路徑返回 ENOENT，不會存取宿主檔案或輸入。
 
 新增 `open`、`read`、`pread`、`lseek`、`close`、`dup`、`dup2`、`fcntl`；read/write/open/close/fcntl/pread 的 nocancel 入口共用實作。支援 O_RDONLY/O_CLOEXEC 與 F_DUPFD、F_DUPFD_CLOEXEC、F_GETFD、F_SETFD、F_GETFL。獨立開啟有獨立游標，複製描述元共用游標但各自保留 close-on-exec；pread 不移動游標。關閉或替換 0/1/2 會影響後續 I/O，複製輸出仍使用原擷取通道與共享預算。
 
-上限為 256 個檔案、路徑/NUL/檔案/輸入合計 16 MiB、路徑少於 1024 位元組、每個分量最多 255 位元組。`descriptor_limit` 為排他上界 3–4096，預設 256；JSON 仍限 64 KiB。非法設定在載入前拒絕。read 超過 INT_MAX 先返回 EINVAL；EOF 不存取目的位址，無效位址返回 EFAULT。部分可寫緩衝區在任何複製或游標改動前停止。SET/CUR/END 定位失敗保留游標。寫入檔案、舊版 stat、稀疏定位及其他 fcntl 仍未支援。普通檔案作為祖先返回 ENOTDIR。同一原始目標檔案對照原生 macOS；C/CLI/Python 涵蓋五種客體組合，不代表 iOS 真機驗證。
+上限為 256 個檔案、路徑/NUL/檔案/輸入合計 16 MiB、路徑少於 1024 位元組、每個分量最多 255 位元組。`descriptor_limit` 為排他上界 3–4096，預設 256；JSON 仍限 64 KiB。非法設定在載入前拒絕。read 超過 INT_MAX 先返回 EINVAL；EOF 不存取目的位址，無效位址返回 EFAULT。部分可寫緩衝區在任何複製或游標改動前停止。SET/CUR/END 定位失敗保留游標。舊版 stat、稀疏定位及其他 fcntl 仍未支援。普通檔案作為祖先返回 ENOTDIR。同一原始目標檔案對照原生 macOS；C/CLI/Python 涵蓋五種客體組合，不代表 iOS 真機驗證。
 
 2026-10-05 Release Darwin 驗收共 381 項：177 通過、204 跳過、零失敗，ARM64 HVF 必需項 51/51 執行。原生 macOS 7 個程式、公共 C/CLI 與報告 35 項、Python 五種客體組合和驗收腳本 66 項通過，計數有重疊。新增檔案服務尚無 Intel HVF/KVM/WHP 原生證據；Intel HVF 仍未驗證且暫停 Actions。宿主缺少 iOS SDK，也沒有 iOS 真機對照。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## 既有檔案的可寫內容
+
+檔案以嚴格布林值 `"writable":true` 明確允許行程內修改；C++ 使用 `DarwinFileOptions::WritableFiles`。省略或 false 維持唯讀，未知授權停止，不存取宿主或改動輸入。write(4/397)、pwrite(154/415)、truncate(200)、ftruncate(201) 與 O_TRUNC 共用內容節點；各次 open 游標獨立，dup 共用游標與狀態，最後 close 後重開仍保留內容。增長補零，截斷保留游標；O_RDONLY|O_TRUNC 也會截斷。
+
+F_SETFL 只改 O_APPEND 並保留存取模式、close-on-exec 與 FWASWRITTEN；實際傳輸非零位元組後 F_GETFL 顯示 0x10000，包含 pwrite 和輸出擷取。pwrite 忽略 append、不移游標。INT_MAX 長度檢查先於 FD，偏移 -1 的 pwrite 更早返回 EINVAL；INT64_MAX 在零寫之前返回 EFBIG，長度先裁剪再選 EOF。
+
+部分可讀輸入在效果前停止；完整 EFAULT 保留內容，但非空追加會移至 EOF。後端失敗不提交內容或游標。非零寫入、截斷及非零完整 EFAULT 使完整 stat 觀察失效，後續查詢在輸出前停止；零寫不失效。16 MiB 為路徑/NUL、輸入、目錄記錄、CWD、現有內容及可寫路徑引用的合計邏輯預算；縮小替換 backing 並回收容量，原始輸入與一個有界替換緩衝區另計。已知 inode 別名和 immutable/append-only 旗標暫拒絕。
+
+映射租約由 DarwinMemory 持有，全部區間 unmap 前拒絕 write、truncate、O_TRUNC，包含 PROT_NONE 和已 close 的 FD；失敗或舊式零長度映射不留租約。新映射取得目前內容。只寫 FD 的 READ/WRITE mmap 為 EACCES；PROT_NONE 可成功並以 mprotect 取得讀寫權限。
+
+原生一般/nocancel 程式比對位元組、游標、旗標及錯誤順序；單元測試涵蓋 4K/16K，C/CLI/Python 涵蓋五種組合。建立、刪除、改名、硬連結、修改後中繼資料、映射一致性與 EOF SIGBUS 尚缺；完整環境、iOS 實機與 Intel HVF 仍未驗收，Intel Actions 維持暫停。
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
+```
+
+[XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
 
 ## 目錄與相對路徑
 
@@ -223,3 +241,12 @@ Mach 驗證（2026-10-06，Release）：Darwin 569 項中 293 通過、276 項�
 `NeverDAArch64NZCVTests` 將全部旗標組合與宿主原始指令對照，並檢查完整純量/向量狀態、記憶體、暫存器邊界、觀察器停止/失敗、還原上下文重試及共用指令預算。ARM64 `mach-time` 現在以真實 MSR/MRS 包圍 SVC，涵蓋 Mach 旗標保持及返回 BSD 的切換。原生 HVF 必要項包含兩種權限下的六個方法與宿主對照。ARM64 KVM/WHP、實體 iOS 尚未驗證。可寫檔案、系統資訊、推進時鐘、Mach IPC/執行緒、dyld/執行環境/框架及裝置驗收仍待完成。
 
 [Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).
+
+
+可寫檔案驗證（2026-10-06）：Release Darwin 610 項中 322 通過、288 後端不可用而跳過、零失敗；ARM64 HVF 必需項 72/72 執行。最終專項 114 項中 102 通過、12 跳過，包含新增 EFAULT 中繼資料斷言；15 個原生程式與 111 個公共 C/CLI/報告測試全數通過。計數重疊。首次原生用例發現 FWASWRITTEN 遺漏，修復後通過，失敗證據保留。時限未變；完整 GitHub CI 與 iOS 實機仍須另行驗收，Intel Actions 暫停。
+
+`build-hvf-arm64/writable-darwin-evidence/` · `writable-native-final/` · `writable-focused-final.xml` · `writable-public.xml`
+
+Python 首次整組測試的三個 ARM64 目錄案例超時。不改參數的診斷中，可寫案例 10/10 通過，但一個 iOS 目錄呼叫牆鐘 5.005 秒、CPU 1.263 秒後超時。同一 5 秒限制下單獨複驗三者全通過（2.43–3.17 秒、10,941 條指令、輸出 65）。16 邏輯核負載為 54–70，支持排程壓力解釋，不保證延遲穩定；保留原失敗。
+
+最終未改參數的 Python 整組測試涵蓋五種 profile/ISA 並通過，耗時41.118秒；每行程仍限5秒，先前失敗及診斷獨立保留。

@@ -22,20 +22,40 @@ public:
          ProcessResult &Result);
   /// Original capture sink, even when reached through a duplicated FD.
   std::optional<unsigned> outputSink(uint32_t FD) const;
-  /// Immutable regular-file bytes, BSD errno, or an unsupported object kind.
+  void recordWrite(uint32_t FD);
+  struct Mapping {
+    llvm::ArrayRef<uint8_t> Bytes;
+    /// The VM owner retains this lease until every mapped range is unmapped.
+    std::shared_ptr<const unsigned> Lease;
+    bool Readable;
+  };
+  /// Current regular-file bytes, BSD errno, or an unsupported object kind.
   /// Looking up a mapping source never changes the open description's cursor.
-  using MappingSource =
-      std::variant<llvm::ArrayRef<uint8_t>, uint32_t, const char *>;
+  using MappingSource = std::variant<Mapping, uint32_t, const char *>;
   MappingSource mappingSource(uint32_t FD) const;
 
 private:
   enum class Kind { Input, Output, Error, File, Directory };
+  struct Contents {
+    llvm::ArrayRef<uint8_t> Initial;
+    std::optional<std::vector<uint8_t>> Modified;
+    bool MetadataInvalidated = false;
+    std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
+    llvm::ArrayRef<uint8_t> bytes() const {
+      return Modified ? llvm::ArrayRef<uint8_t>(*Modified) : Initial;
+    }
+  };
   struct Description {
     Kind Type;
-    llvm::ArrayRef<uint8_t> Bytes;
+    llvm::ArrayRef<uint8_t> Input;
     uint64_t Offset = 0;
     const DarwinFileMetadata *Metadata = nullptr;
     std::string Path;
+    std::shared_ptr<Contents> File;
+    uint32_t Flags = 0;
+    llvm::ArrayRef<uint8_t> bytes() const {
+      return File ? File->bytes() : Input;
+    }
   };
   struct Descriptor {
     std::shared_ptr<Description> Open;
@@ -46,6 +66,8 @@ private:
   GuestMemory &Memory;
   const std::optional<DarwinFileOptions> &Options;
   std::map<uint32_t, Descriptor> Descriptors;
+  std::map<std::string, std::shared_ptr<Contents>> Nodes;
+  std::optional<uint64_t> StorageUsed;
   std::optional<std::string> CurrentDirectory;
 
   uint32_t limit() const;
@@ -67,6 +89,14 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   read(Description &File, uint64_t Address, uint64_t Count, uint64_t Offset,
        bool Positioned, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  write(Description &File, uint64_t Address, uint64_t Count, uint64_t Offset,
+        bool Positioned, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  resize(Description &File, uint64_t Size, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  admitMutation(const Description &File, uint64_t Size, ProcessResult &Result);
+  void publish(Description &File, std::vector<uint8_t> Bytes);
   llvm::Expected<std::optional<ServiceResult>>
   directory(Description &File, uint64_t Address, uint64_t Count,
             uint64_t Position, ProcessResult &Result);

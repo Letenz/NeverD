@@ -73,7 +73,7 @@ struct DarwinDirectoryContents {
   uint32_t MinimumBufferSize = 0;
 };
 
-/// Closed immutable catalogue, with canonical absolute guest paths. No host
+/// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
 struct DarwinFileOptions {
@@ -91,6 +91,9 @@ struct DarwinFileOptions {
   std::optional<std::string> WorkingDirectory;
   /// Absent snapshots remain unknown, even for an explicit empty directory.
   std::map<std::string, DarwinDirectoryContents> DirectoryContents;
+  /// Explicit mutable regular files. Other catalogue entries stay read-only.
+  /// Mutations are process-local; they never change these input bytes.
+  std::set<std::string> WritableFiles;
 };
 } // namespace neverd::emulation
 #endif

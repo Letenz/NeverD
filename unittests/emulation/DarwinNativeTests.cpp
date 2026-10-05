@@ -429,11 +429,6 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
       std::filesystem::create_directories(Root / "catalogue" / "empty"));
   const std::string Program = NEVERD_DARWIN_NATIVE_ORACLE;
   const auto Input = (Root / "catalogue" / "data").string();
-  {
-    std::ofstream File(Input, std::ios::binary);
-    File << "0123456789";
-    ASSERT_TRUE(File.good());
-  }
   struct Case {
     const char *Mode;
     int Status;
@@ -447,6 +442,11 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   static_assert(std::size(Cases) != 0);
   for (const auto &Test : Cases) {
     SCOPED_TRACE(Test.Mode);
+    {
+      std::ofstream File(Input, std::ios::binary | std::ios::trunc);
+      File << "0123456789";
+      ASSERT_TRUE(File.good());
+    }
     // ExecuteAndWait does not truncate an existing redirection target on
     // every host. Keep each observation separate, including shorter outputs.
     const auto Output = (Root / (std::string(Test.Mode) + ".stdout")).string();

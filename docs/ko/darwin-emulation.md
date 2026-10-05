@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
+<!-- i18n-source: e14143fea85825a5b746e8fa74d0d9a439082587fccded15cfa8b43984098ae0 -->
 
 [← 문서 목록](README.md)
 
@@ -51,17 +51,35 @@ BSD 호출에서 ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD
 
 ## 명시적 파일 입력과 설명자
 
-`darwin_files`는 세 프로필에 닫힌 읽기 전용 파일 목록을 제공합니다. 필수 `files` 항목에는 정규 절대 게스트 `path`와 16진수 `bytes_hex`가 있으며 선택적 `stdin_hex`는 유한 입력입니다. 입력 생략은 알 수 없는 상태로 비영 읽기를 중지하며 빈 문자열은 EOF입니다. 목록 생략 시 open을 중지하고 명시적 빈 목록의 없는 절대 경로는 ENOENT를 반환합니다. 호스트 파일이나 입력을 사용하지 않습니다.
+`darwin_files`는 세 프로필에 기본적으로 읽기 전용인 닫힌 파일 목록을 제공합니다. 필수 `files` 항목에는 정규 절대 게스트 `path`와 16진수 `bytes_hex`가 있으며 선택적 `stdin_hex`는 유한 입력입니다. 입력 생략은 알 수 없는 상태로 비영 읽기를 중지하며 빈 문자열은 EOF입니다. 목록 생략 시 open을 중지하고 명시적 빈 목록의 없는 절대 경로는 ENOENT를 반환합니다. 호스트 파일이나 입력을 사용하지 않습니다.
 
 `open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl`을 추가합니다. read/write/open/close/fcntl/pread의 nocancel도 같은 구현을 사용합니다. O_RDONLY/O_CLOEXEC와 F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL을 지원합니다. 개별 open은 독립 위치를, dup은 공유 위치와 독립 close-on-exec 플래그를 가지며 pread는 위치를 바꾸지 않습니다. 0/1/2의 닫기와 교체는 이후 I/O에 적용되고 복제 출력은 원래 캡처 대상과 예산을 유지합니다.
 
-최대 256개 파일, 경로/NUL/파일/입력 합계 16 MiB, 1024바이트 미만 경로와 255바이트 이하 구성 요소를 허용합니다. 배타적 상한 `descriptor_limit`은 3–4096, 기본 256이며 JSON은 64 KiB입니다. 잘못된 설정은 로드 전에 거부합니다. INT_MAX 초과 읽기는 FD 조회 전에 EINVAL이며 EOF는 목적지에 접근하지 않고 잘못된 목적지는 EFAULT입니다. 일부만 쓰기 가능한 버퍼는 복사와 위치 변경 전에 중지합니다. SET/CUR/END 실패는 위치를 보존합니다. 쓰기, 구형 stat, 희소 seek와 기타 fcntl은 미지원입니다. 파일을 경로 조상으로 쓰면 ENOTDIR입니다. 같은 오브젝트를 네이티브 macOS와 비교하고 C/CLI/Python으로 다섯 게스트 조합을 검사하며 iOS 실기기 검증은 아닙니다.
+최대 256개 파일, 경로/NUL/파일/입력 합계 16 MiB, 1024바이트 미만 경로와 255바이트 이하 구성 요소를 허용합니다. 배타적 상한 `descriptor_limit`은 3–4096, 기본 256이며 JSON은 64 KiB입니다. 잘못된 설정은 로드 전에 거부합니다. INT_MAX 초과 읽기는 FD 조회 전에 EINVAL이며 EOF는 목적지에 접근하지 않고 잘못된 목적지는 EFAULT입니다. 일부만 쓰기 가능한 버퍼는 복사와 위치 변경 전에 중지합니다. SET/CUR/END 실패는 위치를 보존합니다. 구형 stat, 희소 seek와 기타 fcntl은 미지원입니다. 파일을 경로 조상으로 쓰면 ENOTDIR입니다. 같은 오브젝트를 네이티브 macOS와 비교하고 C/CLI/Python으로 다섯 게스트 조합을 검사하며 iOS 실기기 검증은 아닙니다.
 
 2026-10-05 Release 검증은 381개 중 177개 통과, 204개 건너뜀, 실패 0이며 ARM64 HVF 필수 51/51을 실행했습니다. 네이티브 macOS 7개 프로그램, 공개 C/CLI 및 보고서 35개, Python 다섯 게스트 조합과 검증 스크립트 66개도 통과했습니다. 집계는 겹칩니다. 새 파일 서비스의 Intel HVF/KVM/WHP 네이티브 증거는 없으며 Intel HVF는 미검증 상태로 Actions가 중지되어 있습니다. iOS SDK와 실기기 대조도 없습니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## 기존 파일 내용 변경
+
+엄격한 불리언 `"writable":true` 또는 C++ `DarwinFileOptions::WritableFiles`로 프로세스 내 변경을 명시합니다. 생략/false는 읽기 전용이며 알 수 없는 권한은 중지합니다. 호스트나 입력 옵션을 바꾸지 않습니다. write(4/397), pwrite(154/415), truncate(200), ftruncate(201), O_TRUNC는 내용 노드를 공유합니다. 별도 open의 위치는 독립적이고 dup은 위치와 상태를 공유하며 마지막 close 뒤에도 내용이 남습니다. 확장은 0으로 채우고 절단은 위치를 보존하며 O_RDONLY|O_TRUNC도 절단합니다.
+
+F_SETFL은 O_APPEND만 바꾸고 접근 모드, close-on-exec, FWASWRITTEN을 보존합니다. 실제 비영 바이트 전송 뒤 F_GETFL에 0x10000이 나타나며 pwrite와 출력 캡처도 포함합니다. pwrite는 append를 무시하고 위치를 유지합니다. INT_MAX 길이 검사는 FD보다 앞서고 pwrite의 -1은 더 먼저 EINVAL입니다. INT64_MAX는 길이 0보다 먼저 EFBIG이며 길이를 제한한 뒤 EOF를 선택합니다.
+
+일부만 읽을 수 있는 입력은 효과 전에 중지합니다. 전체 EFAULT는 바이트를 보존하지만 비어 있지 않은 append는 위치를 EOF로 옮깁니다. 전송 실패는 내용/위치를 확정하지 않습니다. 비영 쓰기, 절단, 비영 전체 EFAULT는 완전한 stat 관측을 무효화해 후속 stat을 출력 전에 중지하며 0 쓰기는 유지합니다. 16 MiB는 경로/NUL, 입력, 디렉터리 레코드, CWD, 현재 내용 및 쓰기 경로 참조의 합계 논리 예산입니다. 축소 시 backing을 교체해 용량을 회수하고 초기 입력과 제한된 교체 버퍼는 별도입니다. 알려진 inode 별칭 및 immutable/append-only 플래그는 거부합니다.
+
+DarwinMemory의 모든 매핑 구간을 unmap하기 전에는 변경을 거부하며 PROT_NONE과 닫힌 FD도 포함합니다. 실패/구형 0 길이 매핑은 임대를 남기지 않습니다. 새 매핑은 현재 바이트를 봅니다. O_WRONLY의 READ/WRITE mmap은 EACCES, PROT_NONE은 성공하고 mprotect로 읽기/쓰기를 부여할 수 있습니다.
+
+원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 생성/삭제/이름 변경/하드링크, 변경 후 메타데이터, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
+```
+
+[XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
 
 ## 디렉터리와 상대 경로
 
@@ -223,3 +241,12 @@ Mach 검증(2026-10-06, Release): Darwin 569개 중 성공 293, 사용 불가 �
 `NeverDAArch64NZCVTests`는 모든 플래그 조합을 호스트 명령과 비교하고 전체 스칼라/벡터 상태, 메모리, 레지스터 경계, 관찰자 중지/실패, 컨텍스트 복원 재시도와 공유 명령 예산을 검사합니다. ARM64 `mach-time`은 SVC 전후에 실제 MSR/MRS를 사용하여 Mach 플래그 보존과 BSD 전환을 확인합니다. 네이티브 HVF 필수 항목은 두 권한의 여섯 메서드 및 호스트 비교를 포함합니다. ARM64 KVM/WHP와 실제 iOS는 미검증입니다. 쓰기 파일, 시스템 정보, 진행하는 시계, Mach IPC/스레드, dyld/런타임/프레임워크 및 기기 검증은 후속 환경 작업입니다.
 
 [Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).
+
+
+변경 가능한 파일 검증(2026-10-06): Release Darwin 610개 중 322개 통과, 사용 불가 백엔드 288개 건너뜀, 실패 0. ARM64 HVF 필수 72/72를 실행했습니다. 마지막 EFAULT 메타데이터 검사를 포함한 집중 테스트는 114개 중 102개 통과, 12개 건너뜀이며 네이티브 15개 프로그램과 공개 C/CLI/보고서 111개도 통과했습니다. 집계는 겹칩니다. 최초 네이티브 실행이 발견한 FWASWRITTEN 누락을 수정했으며 실패 증거도 보존합니다. 제한 시간은 바꾸지 않았고 전체 GitHub CI 및 iOS 실기기는 별도 검증이 필요합니다. Intel Actions는 중지 상태입니다.
+
+`build-hvf-arm64/writable-darwin-evidence/` · `writable-native-final/` · `writable-focused-final.xml` · `writable-public.xml`
+
+첫 Python 전체 테스트에서 ARM64 디렉터리 세 사례가 시간 초과했습니다. 인수를 바꾸지 않은 진단에서 새 쓰기 10/10은 통과했지만 iOS 한 사례는 경과 5.005초/CPU 1.263초 후 중지했습니다. 동일 5초 제한의 개별 재검사는 세 사례 모두 통과했습니다(2.43–3.17초, 10,941명령, 출력65). 논리 CPU16개에 부하54–70은 스케줄링 압력을 뒷받침하지만 지연 안정성을 보장하지 않으며 최초 실패도 보존합니다.
+
+마지막 변경 없는 Python 통합 메서드는 다섯 구성을 모두 통과했고 총41.118초였습니다. 프로세스별5초 제한은 그대로이며 앞선 실패와 진단 기록도 따로 보존합니다.

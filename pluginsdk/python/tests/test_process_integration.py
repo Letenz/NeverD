@@ -498,6 +498,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                     with self.assertRaises(NeverDError):
                         session.emulate_process(path, wrong, options)
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
+                                           ("writable-files", b"00006e"),
+                                           ("writable-files-nocancel", b"00006e"),
                                            ("stdin", b"\x00\xffx"),
                                            ("output-descriptors", b"ok"),
                                            ("file-status", b"s"), ("file-mapping", b"m"),
@@ -545,6 +547,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
+                        if mode.startswith("writable-files"):
+                            writable_options = json.loads(file_options)
+                            writable_file = writable_options["darwin_files"]["files"][0]
+                            writable_file["writable"] = True
+                            writable_file["metadata"]["flags"] = 0
+                            file_options = json.dumps(writable_options)
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"], "exited", f"{mode}: {result['diagnostic']}")
                         self.assertEqual(result["exit_status"], 37, mode)

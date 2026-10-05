@@ -66,6 +66,7 @@ class DarwinKernelReferenceTests(unittest.TestCase):
             paths.append(path)
             self.assertTrue(path.is_absolute())
             self.assertEqual(path.read_bytes(), b"0123456789")
+            path.write_bytes(b"previous mutation must not leak into next case")
             return subprocess.CompletedProcess(command, 37, b"f", b"")
         with mock.patch.object(reference.subprocess, "run", side_effect=execute):
             results = reference.execute_cases(

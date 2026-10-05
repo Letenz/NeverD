@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21781b6920e7f63dec6efbcc4bc83f255533a7ad1069780a0bc03dc62951cb3f -->
+<!-- i18n-source: e14143fea85825a5b746e8fa74d0d9a439082587fccded15cfa8b43984098ae0 -->
 
 [← 文档索引](README.md)
 
@@ -57,19 +57,37 @@ Python SDK 也通过真实共享库执行五种平台/架构组合。
 
 ## 显式文件输入与描述符
 
-`darwin_files` 为三个 Darwin profile 提供封闭的只读普通文件目录。必填 `files` 的条目包含规范绝对来宾 `path` 和十六进制 `bytes_hex`；可选 `stdin_hex` 提供有限输入流。省略标准输入表示未知，非零读取会明确停止；空字符串表示 EOF。未配置目录时 `open` 停止，显式空目录中的缺失绝对路径返回 ENOENT。不会读取宿主路径或继承宿主输入。
+`darwin_files` 为三个 Darwin profile 提供封闭的初始只读普通文件目录。必填 `files` 的条目包含规范绝对来宾 `path` 和十六进制 `bytes_hex`；可选 `stdin_hex` 提供有限输入流。省略标准输入表示未知，非零读取会明确停止；空字符串表示 EOF。未配置目录时 `open` 停止，显式空目录中的缺失绝对路径返回 ENOENT。不会读取宿主路径或继承宿主输入。
 
 新增 `open`、`read`、`pread`、`lseek`、`close`、`dup`、`dup2`、`fcntl`。read/write/open/close/fcntl/pread 的 nocancel 入口复用同一实现。支持 O_RDONLY/O_CLOEXEC，以及 F_DUPFD、F_DUPFD_CLOEXEC、F_GETFD、F_SETFD、F_GETFL。独立打开有独立游标；复制描述符共享游标，但 close-on-exec 标志独立。`pread` 不移动游标；关闭或替换 0/1/2 会影响后续 I/O，复制输出描述符保留原捕获通道与共享输出预算。
 
 最多 256 个文件；路径及 NUL、文件和输入字节合计最多 16 MiB。路径短于 1024 字节，每个分量最多 255 字节；`descriptor_limit` 为排他上界，取值 3–4096，默认 256。JSON 保留 64 KiB 上限。非法配置及文件/祖先目录冲突在加载镜像前拒绝。
 
-超出 INT_MAX 的读取先返回 EINVAL，再检查描述符；EOF 不访问目标地址，无效目标返回 EFAULT。目标缓冲区只有部分可写时，在写入和移动游标前明确停止。定位支持 SET/CUR/END，负位置和溢出失败保留原游标。可写文件、旧版 stat 元数据、稀疏定位和其他 fcntl 操作仍未实现。文件作为路径祖先返回 ENOTDIR。文件与 nocancel 程序及输出重定向使用同一份自编目标文件对照原生 macOS；C/CLI/Python 覆盖全部五种来宾组合。这不构成 iOS 真机验证。
+超出 INT_MAX 的读取先返回 EINVAL，再检查描述符；EOF 不访问目标地址，无效目标返回 EFAULT。目标缓冲区只有部分可写时，在写入和移动游标前明确停止。定位支持 SET/CUR/END，负位置和溢出失败保留原游标。旧版 stat 元数据、稀疏定位和其他 fcntl 操作仍未实现。文件作为路径祖先返回 ENOTDIR。文件与 nocancel 程序及输出重定向使用同一份自编目标文件对照原生 macOS；C/CLI/Python 覆盖全部五种来宾组合。这不构成 iOS 真机验证。
 
 2026-10-05 的 Release Darwin 验收共 381 项：177 通过、204 跳过、零失败，ARM64 HVF 必需项 51/51 实际执行。原生 macOS 7 个程序、公共 C/CLI 与报告 35 项、Python 五种来宾组合和验收脚本 66 项通过，各计数有重叠。新增文件服务尚无 Intel HVF/KVM/WHP 原生证据；Intel HVF 仍未验证且暂停 Actions。当前宿主没有 iOS SDK，也没有 iOS 真机对照。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
+
+## 已有文件的可写内容
+
+每个文件可用严格布尔值 `"writable":true` 显式允许进程内修改；C++ 使用 `DarwinFileOptions::WritableFiles`。省略或 false 保持只读，未知写授权明确停止，不访问宿主或修改输入选项。write(4/397)、pwrite(154/415)、truncate(200)、ftruncate(201) 和 O_TRUNC 共用文件节点；独立 open 共享字节但游标独立，dup 共享游标与状态，最后 close 后重开仍保留内容。增长补零，截断不移动游标，O_RDONLY|O_TRUNC 也截断。
+
+F_SETFL 只改变 O_APPEND，保留访问模式、close-on-exec 和 FWASWRITTEN；F_GETFL 在实际传输非零字节后暴露 0x10000，包括 pwrite 和输出捕获。pwrite 忽略 append、不移动游标。超 INT_MAX 的长度在 FD 检查前返回 EINVAL，pwrite 偏移 -1 更早返回 EINVAL；INT64_MAX 偏移在零写前返回 EFBIG，长度先裁剪再选择追加位置。
+
+部分可读输入在任何效果前停止；整段 EFAULT 保留字节，非空追加仍把游标移至 EOF。传输后端失败不提交内容或游标。非零成功写、截断和非零整段 EFAULT 都使完整 stat 观察失效，因为失败追加也可能改变时间戳；后续 stat 在输出前明确停止。零写保留元数据。16 MiB 是路径/NUL、输入、目录记录、CWD 与当前文件内容的合计逻辑预算，可写路径引用也计入；缩小替换 backing 并回收容量。调用方原始内容和一个有界替换缓冲区属于额外存储。已知 inode 别名及 immutable/append-only 标志暂拒绝。
+
+DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate 和 O_TRUNC 均停止，包括 PROT_NONE 和 FD 已关闭的映射。失败映射和旧式零长度映射不留租约；新映射读取当前内容。只写 FD 直接请求 READ/WRITE mmap 返回 EACCES，PROT_NONE 可成功并经 mprotect 获得读写权限。
+
+原生 writable-files 与 nocancel 程序比较字节、游标、标志和错误顺序；单元测试覆盖 4K/16K，C/CLI/Python 覆盖五种组合。创建、删除、重命名、硬链接、修改后元数据、映射一致性和 EOF SIGBUS 仍待实现。完整 macOS/iOS 目标尚未完成，iOS 真机与 Intel HVF 仍无验收，Intel Actions 保持暂停。
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
+```
+
+[XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
 
 ## 目录与相对路径
 
@@ -323,3 +341,12 @@ Mach 验证（2026-10-06，Release）：569 项唯一 Darwin 注册，293 通过
 `NeverDAArch64NZCVTests` 将全部标志组合与宿主原始指令对照，并检查完整标量/向量状态、内存、寄存器边界、观察器停止/失败、上下文恢复重试及共享指令预算。ARM64 `mach-time` 测试现在以真实 MSR/MRS 包围 SVC，覆盖 Mach 标志保持及返回 BSD 的切换。原生 HVF 必需项包含两种特权下的六个方法和宿主对照。ARM64 KVM/WHP、实体 iOS 尚未验证。可写文件、系统信息、推进时钟、Mach IPC/线程、dyld/运行时/框架及设备验收仍是后续环境工作。
 
 [Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).
+
+
+可写文件验证（2026-10-06）：Release Darwin 610 项中 322 通过、288 不可用后端跳过、零失败；ARM64 HVF 必需项 72/72 执行。最终专项 114 项中 102 通过、12 跳过，含最后补充的 EFAULT 元数据断言；15 个原生程序与 111 个公共 C/CLI/报告测试全部通过。计数有重叠。首次原生用例发现 FWASWRITTEN 遗漏，已修复并保留失败证据。没有改变时限；GitHub 完整 CI 与 iOS 真机仍需单独验收，Intel Actions 保持暂停。
+
+`build-hvf-arm64/writable-darwin-evidence/` · `writable-native-final/` · `writable-focused-final.xml` · `writable-public.xml`
+
+Python 首次整组测试在三个 ARM64 目录枚举场景超时；不改参数的诊断中，新增可写场景 10/10 通过，但一个 iOS 目录调用墙钟 5.005 秒、CPU 1.263 秒后超时。同一 5 秒限制下单独复验三个 ARM64 场景均通过（2.43–3.17 秒，10,941 条指令，输出 65）。16 逻辑核的宿主负载为 54–70，支持调度压力解释，不代表延迟稳定；原始失败保留。
+
+最终未改参数的 Python 整组测试通过，覆盖五种 profile/ISA，耗时 41.118 秒；每进程仍限 5 秒，前面的失败和诊断记录独立保留。

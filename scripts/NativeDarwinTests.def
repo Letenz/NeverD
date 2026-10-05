@@ -29,6 +29,8 @@ NEVERD_NATIVE_DARWIN_CASE(MainReturnAndBSDExitHaveRealStatus)
 NEVERD_NATIVE_DARWIN_CASE(
     FilesShareOffsetsAcrossDupAndKeepPositionedReadsIndependent)
 NEVERD_NATIVE_DARWIN_CASE(
+    WritableFilesPreserveSharedContentsOffsetsAndNativeErrorOrder)
+NEVERD_NATIVE_DARWIN_CASE(
     Stat64ObservationsPreserveLayoutErrorsAndDescriptorState)
 NEVERD_NATIVE_DARWIN_CASE(
     PrivateFileMappingsRetainCopiesAfterCloseAndPreserveOffsets)

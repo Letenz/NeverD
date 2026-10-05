@@ -122,7 +122,7 @@ layer nor the iOS Simulator application.
 
 ## Explicit file inputs and descriptors
 
-`darwin_files` adds a closed catalogue of immutable regular files to all three
+`darwin_files` adds a closed catalogue of initially read-only regular files to all three
 profiles. `files` is required; each entry has a canonical absolute guest `path`
 and hexadecimal `bytes_hex`. Optional `stdin_hex` supplies a finite input stream:
 omitted input is unknown and stops on a nonzero read; an empty string is EOF.
@@ -133,10 +133,11 @@ configuration stops `open`; an explicit empty catalogue still contains root, whi
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
 ```
 
-The additional services are `open`, `read`, `pread`, `lseek`, `close`, `dup`,
-`dup2` and `fcntl`. The `read`, `write`, `open`, `close`, `fcntl` and `pread`
-nocancel entries use the same owners. `open` supports O_RDONLY, O_CLOEXEC and O_DIRECTORY.
-`fcntl` supports F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL and F_GETPATH.
+The file services include `open`, `read`, `pread`, `write`, `pwrite`, `truncate`,
+`ftruncate`, `lseek`, `close`, `dup`, `dup2` and `fcntl`. The `read`, `write`,
+`open`, `close`, `fcntl`, `pread` and `pwrite` nocancel entries use the same owners.
+`open` supports O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_TRUNC, O_CLOEXEC and O_DIRECTORY.
+`fcntl` supports F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL, bounded F_SETFL and F_GETPATH.
 Separate opens have independent cursors; duplicated descriptors share a cursor
 but have independent close-on-exec flags. `pread` never changes the cursor.
 Closing/replacing descriptors 0, 1 or 2 affects subsequent I/O, and a duplicated
@@ -154,13 +155,73 @@ touch the destination; invalid writable addresses return EFAULT. A partially
 writable destination stops before copying or advancing the cursor, because
 partial filesystem copyout effects are outside this model. Seek supports
 SET/CUR/END, preserving the cursor on negative-position or overflow errors.
-Writable files, legacy stat metadata, sparse-file seeks
-and other fcntl operations remain unsupported.
+Legacy stat metadata, SEEK_DATA/SEEK_HOLE and other fcntl operations remain unsupported.
 Path prefixes describe implicit directories; a regular file used as an ancestor
 returns ENOTDIR. The ABI is grounded in XNU's
 [read path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c),
 [open/seek path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_syscalls.c)
 and [descriptor operations](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_descrip.c).
+
+## Mutable existing files
+
+A file entry can opt into process-local mutation with the strict Boolean
+`"writable": true`; C++ uses `DarwinFileOptions::WritableFiles`. Omission or false
+keeps the initial read-only contract. Unknown write authorization stops explicitly.
+No host file is read or changed, and the caller's initial bytes remain unchanged.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
+```
+
+`write` (4/397), `pwrite` (154/415), `truncate` (200), `ftruncate` (201) and
+O_TRUNC change a shared file node. Separate opens share bytes but retain independent
+cursors; dup shares its open description. Closing the last descriptor does not
+reset the file. Growth zero-fills gaps; truncation preserves every cursor.
+O_RDONLY|O_TRUNC also truncates. F_SETFL changes only O_APPEND, preserves access,
+close-on-exec and the observed FWASWRITTEN bit; unsupported flags stop explicitly.
+F_GETFL exposes FWASWRITTEN=0x10000 after nonzero transferred bytes, including
+positioned writes and captured output. pwrite ignores append and preserves the
+cursor. Count above INT_MAX returns EINVAL before FD lookup; pwrite offset -1
+returns EINVAL even earlier. Offset INT64_MAX returns EFBIG before zero-count
+success; length is clipped at that boundary before append chooses EOF.
+
+Fully readable input commits its bytes and cursor once. A partially readable
+input stops before effects because native prefix writes and extension rollback
+are filesystem-dependent. Whole EFAULT preserves bytes; nonempty append still
+moves its cursor to EOF. Transport failures preserve contents and cursor.
+Successful nonzero writes, truncation and nonzero whole-EFAULT attempts invalidate
+the complete stat observation: native failed append can change mtime/ctime.
+Subsequent stat calls stop as unknown before output instead of returning stale
+size/timestamps/block allocation. Zero writes leave contents and metadata intact.
+
+The aggregate logical storage cap stays 16 MiB: paths/NUL, input, directory
+records, CWD and current file sizes count together; writable path references also
+count. Admission precedes allocation. Shrinking replaces the backing vector and
+reclaims capacity. Caller-owned initial bytes and one bounded replacement buffer
+are additional storage, not claimed to fit within that logical cap. Known writable
+inode aliases and immutable/append-only metadata flags are rejected until their
+semantics are modeled.
+
+Private mappings retain file leases until all their ranges are unmapped, including
+PROT_NONE mappings and mappings whose FDs have closed. Writes and truncation,
+including O_TRUNC, stop before effects while a lease exists; failed or legacy
+zero-length mappings retain no lease. A fresh mapping sees current file bytes.
+O_WRONLY mmap with READ (including normalized WRITE) returns EACCES; PROT_NONE
+is allowed and later mprotect may grant read/write, matching XNU's private
+maximum-permission normalization.
+
+The original `writable-files` and `writable-files-nocancel` workloads compare
+actual bytes, offsets, flags and error order with the native kernel. Unit tests
+cover 4 KiB/16 KiB pages, budget reclamation, backend failure, metadata invalidation
+and mapping lifetime; C/CLI/Python exercise all five profile/ISA combinations.
+Creation, deletion, rename, hard links, post-mutation metadata, coherent vnode/COW
+or shared mappings and EOF SIGBUS remain unfinished. This does not complete the
+macOS/iOS environment or establish physical iOS or Intel HVF verification.
+
+References: [XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c),
+[vnode offsets](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c),
+[file flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h),
+[mmap permissions](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
 
 ## Directories and relative paths
 
@@ -262,7 +323,7 @@ Enumeration validation (2026-10-05, Release): 498 Darwin registrations, 246 pass
 
 `mmap` accepts `MAP_PRIVATE` regular catalogue-file mappings (`flags=0x2`
 or `0x40002` with `MAP_UNIX03`). Offsets must be OS-page aligned. The complete
-mapped pages contain the original file bytes, including bytes beyond a short
+mapped pages contain the current file bytes, including bytes beyond a short
 requested length; the remaining part of the final EOF page is zero. Private
 writes change only that mapping. Independent mappings, original file bytes,
 fixed metadata and shared descriptor cursors remain independent. Closing or
@@ -279,8 +340,9 @@ such EOF mappings but faults with SIGBUS on access; this model does not invent
 zero-filled readable pages or claim to deliver that signal. Shared, fixed,
 executable and JIT mappings remain outside the contract.
 
-`DarwinFiles` alone resolves descriptor kind and bytes. `DarwinMemory` owns
-placement, page allocation, maximum protection and rollback; mapping bytes are
+`DarwinFiles` alone owns shared file contents and resolves descriptor kind and bytes.
+`DarwinMemory` owns placement, page allocation, maximum protection, mapping leases
+and rollback; mapping bytes are
 charged to the existing memory limit. All file data comes from `darwin_files`,
 with no host-file passthrough. The independent `file-mapping` workload checks
 private writes, close lifetime, cursor preservation, errors and anonymous page
@@ -420,7 +482,7 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 
 ### Remaining environment work
 
-1. Extend the file model with bounded writable state,
+1. Extend the bounded writable-file model with namespace mutation,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
 2. Extend fixed time inputs with advancing clocks and system observations,
@@ -601,3 +663,11 @@ The shared checked ARM64 contract admits exact `MRS Xt, NZCV` and `MSR NZCV, Xt`
 `NeverDAArch64NZCVTests` compares all flag combinations against original host instructions and checks complete scalar/vector state, memory, register boundaries, observer stop/failure, saved-context retry and shared instruction budgets. The ARM64 `mach-time` fixture now uses real MSR/MRS around SVC, covering preservation through Mach and transitions to BSD. Native HVF requirements include all six methods at both privileges plus the host oracle. ARM64 KVM/WHP and physical iOS remain unvalidated. Writable files, system information, advancing clocks, Mach IPC/threads, dyld/runtime/frameworks and device acceptance remain separate environment work.
 
 [Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).
+
+## Mutable-file validation (2026-10-06)
+
+The Release Darwin gate passed 322 of 610 registrations, with 288 unavailable-backend skips and no failures; all 72 required ARM64 HVF identities executed. The final focused run passed 102 of 114, with 12 unavailable skips, including the subsequently added EFAULT-metadata assertions. All 15 independent native workloads and 111 public C/CLI/report tests passed. These counts overlap. Evidence is retained in `build-hvf-arm64/writable-darwin-evidence/`, `writable-native-final/`, `writable-focused-final.xml` and `writable-public.xml`. The first native writable run exposed FWASWRITTEN and is retained separately; it was corrected before the passing runs. No deadlines changed. Full GitHub CI and physical iOS remain separate; Intel HVF Actions remain suspended.
+
+Python's initial full integration run timed out in directory enumeration on three ARM64 profiles. An unchanged-argument observation passed all ten new writable scenarios, but one iOS directory call consumed 5.005 seconds wall time for 1.263 seconds CPU time and timed out. Isolated directory rechecks with the same five-second bound then passed all three ARM64 profiles in 2.43–3.17 seconds, each retiring 10,941 instructions and emitting `65`. Host load was 54–70 on 16 logical CPUs. These observations support scheduling pressure; they do not establish stable latency or erase the failed runs. Evidence: `writable-python-observation.json` and `writable-python-directory-recheck.json`.
+
+The final unmodified Python integration method passed all five profile/ISA combinations in 41.118 seconds under the original five-second per-process limit. The earlier failed and diagnostic runs remain separate evidence.

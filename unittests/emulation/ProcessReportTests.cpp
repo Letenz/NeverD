@@ -112,6 +112,23 @@ TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
   ASSERT_TRUE(EOFInput->DarwinFiles->StandardInput);
   EXPECT_TRUE(EOFInput->DarwinFiles->StandardInput->empty());
 }
+TEST(ProcessReport, DarwinWritableFilesRequireExplicitBooleanAdmission) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/a","bytes_hex":"00ff","writable":true},
+    {"path":"/b","bytes_hex":"","writable":false},
+    {"path":"/c","bytes_hex":""}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->WritableFiles, (std::set<std::string>{"/a"}));
+  for (auto Value : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(
+            R"({"darwin_files":{"files":[{"path":"/a","bytes_hex":"","writable":)") +
+        Value + "}]}}");
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+}
+
 TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
   auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[],
     "directories":[{"path":"/empty/deep"}],"working_directory":"/empty"}})");

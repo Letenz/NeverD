@@ -144,6 +144,32 @@ TEST_P(DarwinProcess,
   }
 }
 TEST_P(DarwinProcess,
+       WritableFilesPreserveSharedContentsOffsetsAndNativeErrorOrder) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.Arguments[2] = "/data";
+  for (auto Mode : {"writable-files", "writable-files-nocancel"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput, "00006e");
+    EXPECT_TRUE(Result->StandardError.empty());
+    const uint64_t Class =
+        GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+    const uint64_t Pwrite =
+        Class + (llvm::StringRef(Mode).ends_with("nocancel") ? 415 : 154);
+    unsigned Positioned = 0;
+    for (const auto &Event : Result->Services)
+      if (Event.Number == Pwrite)
+        ++Positioned;
+    EXPECT_EQ(Positioned, 5u);
+  }
+}
+TEST_P(DarwinProcess,
        PrivateFileMappingsRetainCopiesAfterCloseAndPreserveOffsets) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
