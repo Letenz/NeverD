@@ -159,6 +159,7 @@ add_neverd_unittest(NeverDX64IntegerTests
   X64StackTests.cpp
   X64FrameExitTests.cpp
   X64FrameEntryTests.cpp
+  X64ReturnPrefixTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDX64IntegerTests PRIVATE

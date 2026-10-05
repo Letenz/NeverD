@@ -131,6 +131,12 @@ bool admitsLoopOperands(const cs_insn &I) {
       return false;
   return true;
 }
+bool isPrefixedReturn(const cs_insn &I) {
+  // The two-byte near return recommended for branch predictors: the processor
+  // ignores the repeat prefix, so this is exactly the admitted C3 transfer.
+  return I.id == X86_INS_RET && I.size == x64::ShortBranchBytes &&
+         I.bytes[0] == X86_PREFIX_REP && I.bytes[1] == x64::NearReturnOpcode;
+}
 std::optional<bool> condition(unsigned Instruction, uint64_t Flags) {
   const bool Carry = Flags & x64::CarryFlag;
   const bool Parity = Flags & x64::ParityFlag;
@@ -519,7 +525,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       if (Prefix == X86_PREFIX_REP || Prefix == X86_PREFIX_REPNE)
         return llvm::make_error<UnsupportedExecutionError>();
   }
-  if ((X.prefix[0] && !Locked) ||
+  if ((X.prefix[0] && !Locked && !isPrefixedReturn(I)) ||
       (Locked && ((!updateArity(I.id) && !Atomic && !BitWrites) ||
                   X.operands[0].type != X86_OP_MEM)) ||
       (X.addr_size != x64::DWordBytes && X.addr_size != x64::WordBytes) ||
