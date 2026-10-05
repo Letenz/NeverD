@@ -5,6 +5,7 @@
 #include "ObjCNativeCurrentFunction.h"
 #include "ObjCSourceBindings.h"
 #include "SourceExpressionIdentity.h"
+#include "SourceReceiptOccurrences.h"
 
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/Swift/SwiftOpaqueValueEffects.h"
@@ -91,57 +92,8 @@ inline bool sameBody(const HighFunc &E, const HighFunc &A,
 }
 inline std::optional<std::set<SourceCallOccurrenceKey>>
 occurrences(const HighFunc &F) {
-  std::set<SourceCallOccurrenceKey> Sites;
-  bool Invalid = false;
-  size_t Budget = 100000;
-  std::vector<std::pair<const HighStmt *, unsigned>> Statements;
-  const auto Append = [&](const std::vector<HighStmt> &Body, unsigned Depth) {
-    if (Depth >= 64 ||
-        Body.size() > Budget - std::min(Budget, Statements.size())) {
-      Budget = 0;
-      return;
-    }
-    for (const auto &S : Body)
-      Statements.emplace_back(&S, Depth);
-  };
-  Append(F.Body, 0);
-  while (Budget && !Statements.empty()) {
-    --Budget;
-    const auto [Statement, Depth] = Statements.back();
-    Statements.pop_back();
-    const auto &S = *Statement;
-    forEachExpr(S, [&](const ExprPtr &Root) {
-      std::vector<ExprPtr> Pending{Root};
-      while (!Pending.empty() && Budget) {
-        --Budget;
-        auto E = Pending.back();
-        Pending.pop_back();
-        if (!E)
-          continue;
-        if (E->SourceCallHint && E->SourceCallHint->SwiftOpaqueValue) {
-          const auto &H = *E->SourceCallHint;
-          Invalid |= E->Kind != ExprKind::Call || E->IsIndirectCall ||
-                     E->IndirectTarget ||
-                     H.SwiftOpaqueValue->FunctionEntry != F.Entry ||
-                     !Sites.insert(H.SwiftOpaqueValue->Site).second;
-        }
-        E->forEachChildExpr([&](const ExprPtr &C) {
-          if (Pending.size() >= Budget)
-            Budget = 0;
-          else
-            Pending.push_back(C);
-        });
-      }
-    });
-    Append(S.Body, Depth + 1);
-    Append(S.ElseBody, Depth + 1);
-    Append(S.DefaultBody, Depth + 1);
-    for (const auto &Case : S.Cases)
-      Append(Case.Body, Depth + 1);
-    if (!S.EHClauses.empty() || !S.EHClauseBodies.empty())
-      Invalid = true;
-  }
-  return Budget && !Invalid ? std::optional(Sites) : std::nullopt;
+  return ordinarySourceReceiptOccurrences(
+      F, &SourceCallTypeHint::SwiftOpaqueValue);
 }
 } // namespace swift_opaque_value_detail
 
