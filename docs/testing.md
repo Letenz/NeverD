@@ -2376,6 +2376,17 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidSignalTests.cpp` uses independent O0/O2 C declarations with ordinary,
+Android-packed and RELR relocations. It compares full guarded buffers for
+Bionic/kernel layouts, padding, 64-bit observations, signed flags, reserved
+masks, overlapping objects and disposition changes surviving failed copy-out.
+It also covers missing observations, validation order, errno, provider lifetime
+and API 28's indeterminate old output after an error. A direct model case checks
+earlier field stores and retained state after a later user-space pointer fault.
+`LinuxProcessTests` executes original x64/AArch64 syscall fixtures at O0/O2;
+`ProcessReportTests` checks lossless input, malformed entries and profile gates.
+These tests validate action bookkeeping, not signal delivery or handler frames.
+
 `AndroidNativeTests.cpp` compares both Android `sysconf` page-size selectors
 with `getpagesize`, page-aligned allocation and its final valid byte. Compiled
 callers check selector width, errno, dynamic provider lifetime and explicit

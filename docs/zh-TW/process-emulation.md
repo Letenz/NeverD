@@ -76,6 +76,16 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 
 檔案、共享、固定映射，向下成長、大頁、記憶體鎖定、保護鍵、僅執行／僅寫入策略及其他旗標均明確不支援：在發布效果或建立回傳值前停止。支援子集內的一般範圍、長度及對齊錯誤會回傳客體錯誤，允許繼續執行。任何記憶體服務均不會將客體指標或映射請求轉交主機 OS。
 
+`linux_signals` 明確提供程序層級的初始訊號處置。缺少項目表示未知，不代表 `SIG_DFL`；明確的空清單允許在不查詢舊值的情況下安裝新處置。五個欄位均必填，四個動作欄位為無號 64 位元值，超出 JSON 精確整數範圍時使用十進位字串。
+
+```json
+{"linux_signals":{"actions":[
+  {"signal":11,"handler":0,"flags":0,"restorer":0,"mask":0}
+]}}
+```
+
+訊號編號為 1–64。`rt_sigaction` 與 Bionic 共用狀態，結構配置和錯誤順序依各自介面處理。不實作待處理訊號、投遞、處理函式呼叫或執行緒訊號遮罩，也不使用宿主處理函式。參見[完整契約](../process-emulation.md#linux-profile-semantics)。
+
 <a id="windows-pe64-profile"></a>
 
 <!-- i18n-section: linux-clocks -->

@@ -1515,7 +1515,7 @@ through C++, the shared C ABI, Python and `neverd emulate`. It runs actual x64
 and AArch64 freestanding executables with stack/auxv initialization, typed
 system-call continuations and bounded byte output. It supports static TLS and
 self-relocating static PIE, while rejecting an interpreter, external dynamic
-dependencies, signals and thread creation. Those OS semantics remain in
+dependencies, signal delivery and thread creation. Those OS semantics remain in
 `os/linux/process/` and `os/linux/kernel/`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 
@@ -1543,6 +1543,13 @@ event and delegates number resolution to `LinuxServices.cpp`. Named wrappers,
 variadic calls and raw SVC therefore share memory, identity, output and exit
 semantics. Bionic alone owns libc error conversion; wrapper calls retain their
 native import event without inventing another executed service instruction.
+`LinuxSignals` owns one process-wide disposition table initialized by explicit
+`LinuxSignalOptions`. Missing observations remain unknown. Raw `rt_sigaction`
+and Bionic's `AndroidSignals` adapter use the same query/replacement operation;
+the Android adapter owns LP64 field order, reserved-mask filtering and errno.
+The kernel owner installs a new action before copying the old action out, so a
+copy fault does not undo the installation. No CPU backend or SDK interprets a
+handler address, queues a signal or delivers one.
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending
