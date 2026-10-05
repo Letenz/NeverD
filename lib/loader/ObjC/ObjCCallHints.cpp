@@ -463,7 +463,7 @@ std::optional<Value> adjustedFrame(Value Base, uint64_t Amount, bool Subtract) {
 struct CallFacts {
   std::map<Key, Value> Values;
   std::map<std::pair<int64_t, unsigned>, Value> FrameSlots;
-  // Receiver and declared source-parameter identities need less frame
+  // Receiver, selector and declared source-parameter identities need less frame
   // knowledge than block construction does.  A pointer to a higher-addressed
   // frame object cannot reach storage wholly below that object's base through
   // the source ABI without a backwards/out-of-object access.  Keep those
@@ -1397,6 +1397,12 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
       State.FreshNilFrameSlots.clear();
       const bool KnownABI = Signature && Signature->HasExplicitABI;
       if (!KnownABI) {
+        for (auto It = State.TypedFrameSlots.begin();
+             It != State.TypedFrameSlots.end();)
+          if (It->second.TheKind == Value::Kind::Selector)
+            It = State.TypedFrameSlots.erase(It);
+          else
+            ++It;
         State.FastEnumItems.clear();
         for (const auto &[K, V] : Values) {
           const auto &[Space, Offset, Size] = K;
@@ -1474,6 +1480,7 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
         const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
         if (!Stack || Stack->TheKind != Value::Kind::Frame) {
           State.FrameSlots.clear();
+          State.TypedFrameSlots.clear();
         } else {
           // Exclude outgoing argument storage and its alignment padding. The
           // callee may also overwrite everything below the current call SP.
@@ -1483,6 +1490,12 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                It != State.FrameSlots.end();)
             if (It->first.first < Begin)
               It = State.FrameSlots.erase(It);
+            else
+              ++It;
+          for (auto It = State.TypedFrameSlots.begin();
+               It != State.TypedFrameSlots.end();)
+            if (It->first.first < Begin)
+              It = State.TypedFrameSlots.erase(It);
             else
               ++It;
         }
@@ -1963,7 +1976,21 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
               }
             }
           }
-          if (!Qualified && Target->Name == "objc_msgSend") {
+          // Forwarding inference below observes only complete integer
+          // carriers. A declaration using floating registers or aggregate
+          // components already identifies the actual arguments; unrelated
+          // values left in integer registers cannot contradict that ABI.
+          const bool IntegerForwardingABI =
+              !Signature ||
+              std::all_of(Signature->Parameters.begin(),
+                          Signature->Parameters.end(), [](const auto &P) {
+                            return P.Location.Kind ==
+                                       SourceABICarrierKind::IntegerRegister &&
+                                   P.Location.ValueBytes == 8 &&
+                                   P.Components.empty();
+                          });
+          if (!Qualified && IntegerForwardingABI &&
+              Target->Name == "objc_msgSend") {
             const auto Caller = objcMethodSourceTypeHint(Image, Function.Entry);
             const auto SourceParameter =
                 [&](const Value &V) -> std::optional<unsigned> {
@@ -2466,6 +2493,7 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                 std::move(*NilCompatibleDeclaration);
           if (Stored && Size == 8 &&
               (Stored->TheKind == Value::Kind::Receiver ||
+               Stored->TheKind == Value::Kind::Selector ||
                Stored->TheKind == Value::Kind::SourceParameter) &&
               Offset >= static_cast<int64_t>(Stack->Number) &&
               Offset <= -static_cast<int64_t>(Size) &&
