@@ -134,8 +134,10 @@ bool unpeel(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
           // address.
           if (!S.charge(F.arg_size()))
             return false;
+          // Reserve proposal slots for inputs used by the current body. The
+          // original signature and the proof over every input stay unchanged.
           for (auto &A : F.args())
-            if (A.getType() == Slot.Phi->getType() &&
+            if (!A.use_empty() && A.getType() == Slot.Phi->getType() &&
                 Slot.Choices.size() < MaxValues)
               Slot.Choices.push_back(&A);
           if (Slot.Choices.size() < MaxValues)
