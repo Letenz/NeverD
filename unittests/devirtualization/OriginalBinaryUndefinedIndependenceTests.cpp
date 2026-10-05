@@ -124,6 +124,23 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     Disp32WordShiftKeepsMemoryAndUndefinedFlagObligations) {
+  // MOV [RSP-8],RCX; SHL word [RSP-8],3 using disp32; MOVZX EAX,[RSP-8]; RET.
+  // The full frame write remains observed; arbitrary AF is initially dead.
+  Program P({0x48, 0x89, 0x4c, 0x24, 0xf8, 0x66, 0xc1, 0xa4, 0x24, 0xf8,
+             0xff, 0xff, 0xff, 3,    0x0f, 0xb7, 0x44, 0x24, 0xf8, 0xc3});
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Certificate->Instructions.size(), 4U);
+  const auto &Shift = Good.Certificate->Instructions[1];
+  EXPECT_EQ(Shift.Origin.Address, Entry + 5);
+  EXPECT_EQ(Shift.UndefinedEffects.Coverage, LowUndefinedCoverage::Complete);
+  EXPECT_EQ(Shift.UndefinedEffects.Effects.size(), 2U);
+  P.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+  expectRefusal(P, Status::Dependent);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      OverlappingImmediateEntriesRetainBothInstructionInterpretations) {
   // TEST ECX,ECX; JZ second_mov; first_mov: MOV EAX,0x7b8; RET; RET.
   // second_mov starts one byte into first_mov and consumes its RET byte:

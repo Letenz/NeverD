@@ -141,7 +141,8 @@ public:
 
   /// Lightweight decode for classification-only passes (function-entry
   /// verification, size stepping): fills Addr/Size/Id/Raw but skips the
-  /// capstone id fixups that decodeOne performs for the lift path.  Combined
+  /// capstone id fixups that decodeOne performs for the lift path. Encoded
+  /// displacement detail is normalized identically when available. Combined
   /// with setDetail(false) it also skips the expensive per-instruction
   /// operand-detail fill.  Only Size and Id are meaningful when detail is
   /// disabled; targets with operand-aware terminators must leave it enabled.
@@ -260,6 +261,11 @@ private:
   /// Apply instruction-id normalization that does not require operand detail.
   /// Both full and lightweight decode paths use this semantic profile.
   void fixupDecodedInsnId(cs_insn *I) const;
+
+  /// Correct a known long-mode disp32 width misreport only when the complete
+  /// encoded field agrees with the decoded displacement and memory operands.
+  /// Shared by full and lightweight decodes with operand detail enabled.
+  void fixupX86DisplacementDetail(cs_insn *I) const;
 
   /// Correct capstone decode-id quirks on \p I, dispatching to the active
   /// architecture lifter's fixup.
