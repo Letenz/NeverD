@@ -26,12 +26,15 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -1336,6 +1339,36 @@ unsigned statementsStarting(const std::vector<HighStmt> &Stmts, va_t Addr,
 
 } // anonymous namespace
 
+void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage) {
+  if (!std::getenv("NEVERD_HIGH_FLOW_ORACLE"))
+    return;
+  std::vector<const HighStmt *> Trys;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::SEHTry && S.EHIsReducible && S.EHRange.isValid())
+      Trys.push_back(&S);
+  });
+  for (const HighStmt *Try : Trys) {
+    std::set<const HighStmt *> Inside;
+    walkStmts(Try->Body, [&](const HighStmt &S) { Inside.insert(&S); });
+    unsigned Outside = 0;
+    va_t First = 0;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Addr && S.Addr != InvalidVA && Try->EHRange.contains(S.Addr) &&
+          !Inside.count(&S) && highStmtMayFault(S)) {
+        if (!Outside++)
+          First = S.Addr;
+      }
+    });
+    if (Outside)
+      llvm::errs() << "FLOWPROTECT stage=" << Stage << " entry="
+                   << llvm::utohexstr(Func.Entry, /*LowerCase=*/true)
+                   << " try=[" << llvm::utohexstr(Try->EHRange.Begin, true)
+                   << "," << llvm::utohexstr(Try->EHRange.End, true)
+                   << ") outside=" << Outside
+                   << " first=" << llvm::utohexstr(First, true) << "\n";
+  }
+}
+
 void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
                                                    const MedFunc &Med) {
   if (!Func.ExceptionMetadata)
@@ -1828,6 +1861,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     if (Func.UnstructuredExceptionRegions == 0)
       Func.UnstructuredExceptionRegions = 1;
   }
+  reportUnprotectedGuardedCode(Func, "after-exceptions");
   // Invert-skip of `if (c) goto L; work; L:` inside a try body is blocked
   // before wrapping: Med blocks in the try have ExceptionalPreds. After the
   // handler is a clause, the try list is a closed HighIR run.
