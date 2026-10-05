@@ -10,6 +10,7 @@
 #include "../arch/x86_64/NativeStackControl.h"
 #include "../arch/x86_64/X64Recovery.h"
 #include "../arch/x86_64/X64UserFlags.h"
+#include "FiniteQueryCache.h"
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
@@ -359,6 +360,9 @@ class Checker {
   int NextNativeBlock = 0;
   const LowIRIndependenceContract &Contract;
   const LowIRIndependenceLimits &Limits;
+  // The existing cache bounds key construction and retained complete domains
+  // in words, using the same capacity convention as recovery.
+  detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes};
   LowIRIndependenceResult OwnedResult;
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
@@ -526,7 +530,8 @@ class Checker {
     uint64_t Queries = Result.SolverQueries;
     const auto Offset = detail::proveFrameOffset(
         Ctx, Predicate, Value, EntryRoot, Limits.Solver,
-        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
+        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries,
+        &FrameProofs);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Offset.Status == detail::FrameOffsetStatus::Invalid)
       fail(Status::Invalid, "invalid frame-offset proof");
