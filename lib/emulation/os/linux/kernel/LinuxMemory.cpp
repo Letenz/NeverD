@@ -304,42 +304,46 @@ llvm::Expected<uint64_t> LinuxMemory::setBreak(uint64_t Address) {
 llvm::Expected<std::optional<uint64_t>>
 LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
                     ProcessResult &Result) {
-  if (Kind == ServiceKind::Madvise &&
-      uint32_t(Event.Arguments[2]) != AdviceMergeable &&
-      uint32_t(Event.Arguments[2]) != AdviceUnmergeable) {
-    Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic =
-        llvm::formatv(MemoryAdvice, int32_t(Event.Arguments[2])).str();
-    return std::optional<uint64_t>();
-  }
-  if (((Kind == ServiceKind::Mmap || Kind == ServiceKind::Mprotect) &&
-       !supportedProtection(Event.Arguments[2])) ||
-      (Kind == ServiceKind::Mmap &&
-       Event.Arguments[3] != (MapPrivate | MapAnonymous))) {
+  auto UnsupportedProtection = [&]() -> std::optional<uint64_t> {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = llvm::formatv(MemoryOperation, Event.Number,
                                       Event.Arguments[2], Event.Arguments[3])
                             .str();
     return std::optional<uint64_t>();
-  }
-  auto Value = [&]() -> llvm::Expected<uint64_t> {
-    switch (Kind) {
-    case ServiceKind::Mmap:
-      return map(Event);
-    case ServiceKind::Mprotect:
-      return protect(Event);
-    case ServiceKind::Munmap:
-      return unmap(Event);
-    case ServiceKind::Madvise:
-      return advise(Event);
-    case ServiceKind::Brk:
-      return setBreak(Event.Arguments[0]);
-    default:
-      return failure(MemoryState);
+  };
+  auto Reply = [](llvm::Expected<uint64_t> Value)
+      -> llvm::Expected<std::optional<uint64_t>> {
+    if (!Value)
+      return Value.takeError();
+    return std::optional<uint64_t>(*Value);
+  };
+  switch (Kind) {
+  case ServiceKind::Mmap:
+    if (!supportedProtection(Event.Arguments[2]) ||
+        Event.Arguments[3] != (MapPrivate | MapAnonymous))
+      return UnsupportedProtection();
+    return Reply(map(Event));
+  case ServiceKind::Mprotect:
+    if (!supportedProtection(Event.Arguments[2]))
+      return UnsupportedProtection();
+    return Reply(protect(Event));
+  case ServiceKind::Munmap:
+    return Reply(unmap(Event));
+  case ServiceKind::Madvise:
+    if (uint32_t(Event.Arguments[2]) != AdviceMergeable &&
+        uint32_t(Event.Arguments[2]) != AdviceUnmergeable) {
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic =
+          llvm::formatv(MemoryAdvice, int32_t(Event.Arguments[2])).str();
+      return std::optional<uint64_t>();
     }
-  }();
-  if (!Value)
-    return Value.takeError();
-  return std::optional<uint64_t>(*Value);
+    return Reply(advise(Event));
+  case ServiceKind::Mincore:
+    return residency(Event, Result);
+  case ServiceKind::Brk:
+    return Reply(setBreak(Event.Arguments[0]));
+  default:
+    return failure(MemoryState);
+  }
 }
 } // namespace neverd::emulation::linux_model

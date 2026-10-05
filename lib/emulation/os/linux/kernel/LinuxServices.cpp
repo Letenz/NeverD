@@ -96,6 +96,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Mprotect:
   case ServiceKind::Munmap:
   case ServiceKind::Madvise:
+  case ServiceKind::Mincore:
   case ServiceKind::Brk:
     return Memory.handle(Kind, Event, Result);
   case ServiceKind::ArchPrctl:

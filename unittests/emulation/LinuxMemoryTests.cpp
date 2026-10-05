@@ -45,6 +45,44 @@ protected:
   }
 };
 
+TEST_F(LinuxMemory, ResidencyErrorsUseRangesBeforeMappingsAndLeaveMemoryAlone) {
+  ASSERT_EQ(map(PageSize), UnitHint);
+  llvm::cantFail(Space->writeInteger(UnitHint, 0x8877665544332211, 8));
+  const auto Generation = Space->mappingGeneration();
+  const uint64_t Allocated = RAM->allocatedBytes();
+  EXPECT_EQ(call(ServiceKind::Mincore, 1, 0, UINT64_MAX), uint64_t(0) - 22);
+  EXPECT_EQ(call(ServiceKind::Mincore, UserLimit, 1, UINT64_MAX),
+            uint64_t(0) - 12);
+  EXPECT_EQ(call(ServiceKind::Mincore, 0, 1, UserLimit), uint64_t(0) - 14);
+  EXPECT_EQ(call(ServiceKind::Mincore, 0, PageSize + 1, UserLimit - 1),
+            uint64_t(0) - 14);
+  EXPECT_EQ(call(ServiceKind::Mincore, 0, 1, 0), uint64_t(0) - 12);
+  EXPECT_EQ(call(ServiceKind::Mincore, 0, PageSize + 1, UnitHint),
+            uint64_t(0) - 12);
+  EXPECT_EQ(call(ServiceKind::Mincore, 0, 0, 0), 0u);
+  EXPECT_EQ(call(ServiceKind::Mincore, UserLimit, 0, UserLimit), 0u);
+  EXPECT_EQ(call(ServiceKind::Mincore, UserLimit, 0, UserLimit + 1),
+            uint64_t(0) - 14);
+  EXPECT_EQ(Space->mappingGeneration(), Generation);
+  EXPECT_EQ(RAM->allocatedBytes(), Allocated);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 8), 0x8877665544332211);
+}
+
+TEST_F(LinuxMemory,
+       MappedResidencyIsUnknownEvenBeforeAHoleOrWithoutPermissions) {
+  ASSERT_EQ(map(PageSize), UnitHint);
+  for (uint64_t Length : {uint64_t(1), 2 * PageSize}) {
+    EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, Length, 0));
+    EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Report.Diagnostic.find("page residency"), std::string::npos);
+  }
+  ASSERT_EQ(call(ServiceKind::Mprotect, UnitHint, PageSize, 0), 0u);
+  EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, PageSize, 0));
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, 0),
+            uint64_t(0) - 12);
+}
+
 TEST_F(LinuxMemory, RoundedPagesAreZeroAndPartialUnmapReclaimsTheirOwners) {
   ASSERT_EQ(map(RegionPages * PageSize - 1), UnitHint);
   EXPECT_EQ(RAM->allocatedBytes(), RegionPages * PageSize);

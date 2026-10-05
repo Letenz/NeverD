@@ -121,6 +121,7 @@ NEVERD_LINUX_AUX(NULL, 0, 0)
 #endif
 #ifdef NEVERD_LINUX_SERVICE
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
+NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
 NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
@@ -163,6 +164,8 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(Audit, 0x6ffffefc)
 NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #endif
 #ifdef NEVERD_LINUX_DIAGNOSTIC
+NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
+                        "unmodeled Linux page residency observation")
 NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")

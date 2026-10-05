@@ -121,6 +121,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       return std::move(E);
   }
   for (const auto &Read : Native.ReadMemory) {
+    if (!Read.RequireMappedAtEntry)
+      continue;
     auto Accessible = (*Space)->canAccess(Read.Address, Read.Size,
                                           emulation::Read | UserAccessible);
     if (!Accessible)
