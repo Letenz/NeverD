@@ -180,6 +180,25 @@ TEST(BinaryLowIRRefinement, DeferredEdgePolicyBindsDigestsAndRejectsLoops) {
   refused(Inferred.Refinement, Status::Unsupported);
 }
 
+TEST(BinaryLowIRRefinement, SplitAlignedFrameStoresKeepTheFullStateRelation) {
+  Program P({0x48, 0x8d, 0x54, 0x24, 0xbf, 0x80, 0xe2, 0xf0, 0x48, 0x8d, 0x7a,
+             9, 0x89, 0x0f, 0x8b, 0x07, 0xc3});
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  bool Changed = false;
+  for (auto &B : Recovery.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if (O.Opcode == NdOp::STORE && O.NumInputs == 2) {
+        O.Inputs[1] = NdVar::scalar(0, 4);
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(P.check(Recovery.Residual), Status::Different);
+}
+
 TEST(BinaryLowIRRefinement, EntryAlignmentUsesTheOriginalSymbolicStack) {
   Program P({0x48, 0x89, 0xe0, 0xc3}); // mov rax,rsp; ret.
   auto Recovery = P.recover();
