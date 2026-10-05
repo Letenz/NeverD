@@ -14,9 +14,16 @@
 
 #include <array>
 #include <cstring>
+#include <iostream>
 #include <map>
 #include <stdexcept>
 #include <vector>
+
+#if defined(_MSC_VER) && defined(_M_X64)
+#include <intrin.h>
+#elif defined(__x86_64__)
+#include <cpuid.h>
+#endif
 
 namespace neverd::emulation {
 namespace {
@@ -45,12 +52,12 @@ constexpr int Displacements[] = {
 struct Loop {
   const char *Name;
   int Condition;
-  bool Counter32;
+  bool Counter32, Operand16;
   std::vector<uint8_t> Bytes;
 };
 const Loop Loops[] = {
-#define NEVERD_LOOP_CASE(Name, Condition, Counter32, ...)                      \
-  {#Name, Condition, Counter32, {__VA_ARGS__}},
+#define NEVERD_LOOP_CASE(Name, Condition, Counter32, Operand16, ...)           \
+  {#Name, Condition, Counter32, Operand16, {__VA_ARGS__}},
 #include "X64LoopCases.def"
 #undef NEVERD_LOOP_CASE
 };
@@ -66,9 +73,25 @@ bool taken(const Loop &L, uint64_t Count, uint64_t Flags) {
   return remaining(L, Count) &&
          (!L.Condition || bool(Flags & ZeroFlag) == (L.Condition > 0));
 }
+bool nativeAMD() {
+#if defined(_MSC_VER) && defined(_M_X64)
+  int Registers[4];
+  __cpuid(Registers, 0);
+  return uint32_t(Registers[1]) == AMDVendorEBX &&
+         uint32_t(Registers[3]) == AMDVendorEDX &&
+         uint32_t(Registers[2]) == AMDVendorECX;
+#elif defined(__x86_64__)
+  unsigned AX, BX, CX, DX;
+  __cpuid(0, AX, BX, CX, DX);
+  return BX == AMDVendorEBX && DX == AMDVendorEDX && CX == AMDVendorECX;
+#else
+  return false;
+#endif
+}
 
 TEST(X64LoopOracle, CountsFlagsAndBranchesMatchOriginalHostInstructions) {
 #if defined(__x86_64__) || defined(_M_X64)
+  unsigned Executed = 0, GuestOnly = 0;
   for (const auto &L : Loops) {
     std::vector<uint8_t> Bytes;
     auto Append = [&](llvm::ArrayRef<uint8_t> Part) {
@@ -104,13 +127,23 @@ TEST(X64LoopOracle, CountsFlagsAndBranchesMatchOriginalHostInstructions) {
         SCOPED_TRACE(L.Name);
         SCOPED_TRACE(Count);
         SCOPED_TRACE(Before);
+        // Host operating systems reserve the low 64 KiB. AMD's taken 66H
+        // branches target that range, so execute those forms in the mapped
+        // guest matrix below instead of jumping into unmapped host memory.
+        if (nativeAMD() && L.Operand16 && taken(L, Count, Before)) {
+          ++GuestOnly;
+          continue;
+        }
         std::array<uint64_t, 5> Packet{Count, Before};
         Execute(Packet.data());
+        ++Executed;
         ASSERT_EQ(Packet[2], remaining(L, Count));
         ASSERT_EQ(Packet[3], Packet[1]);
         ASSERT_EQ(Packet[4], taken(L, Count, Packet[1]));
       }
   }
+  std::cout << OracleExecuted << Executed << OracleGuestOnly << GuestOnly
+            << '\n';
 #else
   GTEST_SKIP() << OracleUnavailable;
 #endif
@@ -145,6 +178,19 @@ protected:
   uint64_t Entry = Code + EntryOffset;
   unsigned Length = 0;
   const Loop &loop() const { return GetParam().L; }
+  bool narrowTarget() const {
+    // The software transport uses its configured default Intel model;
+    // hardware transports execute the actual host processor's instruction.
+    return GetParam().B.Kind != ExecutionBackendKind::Unicorn && nativeAMD() &&
+           loop().Operand16;
+  }
+  uint64_t target(uint64_t Count, uint64_t Before, int Offset) const {
+    const uint64_t Fallthrough = Entry + Length;
+    if (!taken(loop(), Count, Before))
+      return Fallthrough;
+    const uint64_t Target = Fallthrough + Offset;
+    return narrowTarget() ? uint16_t(Target) : Target;
+  }
   void SetUp() override { initialize(); }
   void initialize() {
     auto B =
@@ -159,7 +205,7 @@ protected:
     }
     CPU = std::move(B->CPU);
     const std::vector<uint8_t> Padding(Page, Nop);
-    for (uint64_t Address : {Code, HighCode}) {
+    for (uint64_t Address : {LowCode, LowCode + Page, Code, HighCode}) {
       llvm::cantFail(
           CPU->map(Address, Page, Read | Write | Execute | UserAccessible));
       llvm::cantFail(CPU->write(Address, Padding));
@@ -237,8 +283,7 @@ TEST_P(X64Loop, CountsFlagsAndSignedTargetsPreserveOtherState) {
           const auto Exit = run(H);
           ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
           State[CPURegister::X64CX][0] = remaining(loop(), Count);
-          State[CPURegister::X64PC][0] =
-              Entry + Length + (taken(loop(), Count, Before) ? Offset : 0);
+          State[CPURegister::X64PC][0] = target(Count, Before, Offset);
           ASSERT_EQ(snapshot(), State);
           ASSERT_EQ(Reads, 0u);
           ASSERT_EQ(Writes, 0u);
@@ -295,7 +340,8 @@ TEST_P(X64Loop, CrossPageDecodeRequiresOnlyCompleteExecutableBytes) {
       if (S == Suffix::Executable) {
         ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
         State[CPURegister::X64CX][0] = FiniteCount - 1;
-        State[CPURegister::X64PC][0] = Entry + Length + Displacement;
+        State[CPURegister::X64PC][0] =
+            target(FiniteCount, activeFlags(), Displacement);
       } else {
         // The shared decoder reports incomplete instructions as unsupported.
         // No counter, flags or PC effects may escape that decode rejection.
@@ -313,22 +359,27 @@ TEST_P(X64Loop, TargetFetchFaultRetainsTheRetiredBranch) {
     initialize();
     if (HasFatalFailure() || IsSkipped())
       return;
-    if (NoExecute)
-      llvm::cantFail(
-          CPU->map(Code + Page, Page, Read | Write | UserAccessible));
     Entry = Code + Page - loop().Bytes.size() - 1;
     prepare(FiniteCount, activeFlags());
+    const uint64_t Target = target(FiniteCount, activeFlags(), Displacement);
+    const uint64_t TargetPage = Target & ~(Page - 1);
+    if (narrowTarget())
+      llvm::cantFail(CPU->addressSpace()->unmap(TargetPage, Page));
+    if (NoExecute)
+      llvm::cantFail(CPU->map(TargetPage, Page, Read | Write | UserAccessible));
     auto State = snapshot();
     const auto RAM = memory();
     const auto Exit = run();
     EXPECT_EQ(Exit.Kind, ExecutionExitKind::GuestFault) << Exit.Diagnostic;
     State[CPURegister::X64CX][0] = FiniteCount - 1;
-    State[CPURegister::X64PC][0] = Code + Page + Displacement;
+    State[CPURegister::X64PC][0] = Target;
     EXPECT_EQ(snapshot(), State);
     EXPECT_EQ(memory(), RAM);
   }
 }
 TEST_P(X64Loop, ContextRestoreAndFiniteSelfLoopsRetainCounterAndFlags) {
+  if (narrowTarget())
+    Entry = LowCode + EntryOffset;
   prepare(FiniteCount, activeFlags(), -int(loop().Bytes.size() + 1));
   auto State = snapshot();
   const auto RAM = memory();

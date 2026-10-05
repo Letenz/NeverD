@@ -90,7 +90,7 @@ checked x64 透過 KVM、WHP 和 Unicorn 執行 `SHLD/SHRD`，支援 16/32/64 �
 
 `X64ScalarShiftInstructions.def` 統一定義 `SHL/SHR/SAR`、`ROL/ROR` 和 `RCL/RCR` 的 8/16/32/64 位元目的運算元效果。暫存器與 RAM 形式支援隱含的 1、imm8 或 CL 計數，包括遮罩後為零的計數及 SAL 別名。RAM 寫入經過權限檢查、結果觀察回呼與共用交易；停止或回呼錯誤會還原 CPU 與記憶體。KVM、WHP 與 Unicorn 檢查模式共用此邊界。LOCK 與 MMIO 形式仍不支援。
 
-`X64LoopInstructions.def` 透過既有處理器傳輸執行 `LOOP/LOOPE/LOOPNE`。位址寬度選擇 RCX 或零擴充的 ECX；`66H` 和 REX.W 不會截斷 64 位元跳躍目標，FLAGS 保持不變。KVM、WHP 與 Unicorn 檢查模式共用准入規則。LOCK、REP 前綴在產生效果前被拒絕，包括解碼中繼資料省略的前綴。
+`X64LoopInstructions.def` 透過處理器傳輸執行 `LOOP/LOOPE/LOOPNE`。位址寬度選擇 RCX 或零擴充的 ECX，FLAGS 保持不變。目標寬度遵循 CPU 模型：Intel 在長模式忽略 `66H`，AMD 保留其 16 位元覆寫，REX.W 優先。原生 KVM/WHP 使用主機處理器，Unicorn 使用預設 Intel Haswell 模型。共用准入規則在產生效果前拒絕 LOCK 和 REP，包括解碼中繼資料省略的前綴。
 
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 

@@ -90,7 +90,7 @@ checked x64는 KVM, WHP, Unicorn에서 16/32/64비트 대상과 imm8/CL 횟수�
 
 `X64ScalarShiftInstructions.def`는 `SHL/SHR/SAR`, `ROL/ROR`, `RCL/RCR`의 8/16/32/64비트 대상 효과를 정의합니다. 레지스터 및 RAM 형식은 암시적 1, imm8, CL 횟수를 지원하며 마스킹 후 0인 횟수와 SAL 별칭도 포함합니다. RAM 쓰기는 권한 검사, 결과 관찰 콜백, 공유 트랜잭션을 거칩니다. 중지 또는 콜백 오류가 발생하면 CPU와 메모리를 복원합니다. KVM, WHP, Unicorn 검사 모드는 이 경계를 공유합니다. LOCK 및 MMIO 형식은 아직 지원하지 않습니다.
 
-`X64LoopInstructions.def`는 기존 프로세서 실행 경로에서 `LOOP/LOOPE/LOOPNE`를 허용합니다. 주소 크기는 RCX 또는 0으로 확장되는 ECX를 선택하며 `66H`와 REX.W는 64비트 분기 대상을 자르지 않고 FLAGS도 유지합니다. KVM, WHP와 검사 모드 Unicorn은 같은 허용 규칙을 사용합니다. 디코더 메타데이터에서 생략된 경우에도 LOCK 및 REP 접두사는 부작용 전에 거부합니다.
+`X64LoopInstructions.def`는 프로세서 실행 경로에서 `LOOP/LOOPE/LOOPNE`를 허용합니다. 주소 크기는 RCX 또는 0으로 확장되는 ECX를 선택하며 FLAGS는 유지됩니다. 대상 너비는 CPU 모델을 따릅니다. 긴 모드의 Intel은 `66H`를 무시하고 AMD는 16비트 재정의를 유지하며 REX.W가 우선합니다. 네이티브 KVM/WHP는 호스트 CPU를, Unicorn은 기본 Intel Haswell 모델을 사용합니다. 공유 허용 규칙은 디코더가 생략한 경우에도 LOCK과 REP를 부작용 전에 거부합니다.
 
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 

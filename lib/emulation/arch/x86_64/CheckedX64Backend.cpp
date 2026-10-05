@@ -458,8 +458,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
   const bool Atomic = isAtomic(I.id);
-  // Address size selects RCX/ECX; operand size never narrows the long-mode
-  // target. The machine owns the decrement, unchanged flags and signed rel8.
+  // Address size selects RCX/ECX. The processor model owns 66H target width,
+  // the decrement, unchanged flags and the signed rel8 displacement.
   if (isLoop(I.id) && !admitsLoopOperands(I))
     return llvm::make_error<UnsupportedExecutionError>();
   const bool ScalarShift = isScalarShift(I.id);
