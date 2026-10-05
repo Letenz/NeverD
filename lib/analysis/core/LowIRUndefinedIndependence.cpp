@@ -1224,7 +1224,9 @@ class Checker {
       NativeBlock = prepareNative(P, NativeEffects);
     const auto &B = NativeBlock ? *NativeBlock : *Blocks.at(P.BlockId);
     Result.BlockId = B.Id;
-    P.Ancestors.insert(B.Id);
+    // Only static independence uses ancestry to reject a reachable cycle.
+    if (!Provider && !Refinement)
+      P.Ancestors.insert(B.Id);
     if (!B.ExceptionalSuccs.empty() || !B.ExceptionalPreds.empty())
       fail(Status::Unsupported, "exceptional control flow is unsupported");
     SymExec Left(Ctx, P.Left), Right(Ctx, P.Right);
