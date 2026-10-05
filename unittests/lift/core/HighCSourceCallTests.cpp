@@ -1,4 +1,5 @@
 #include "../../../lib/loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../../../lib/loader/Swift/SwiftMangledClassMethodABI.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "CFunctionParameterCallFixture.h"
 #include "RuntimeFunctionAddressFixture.h"
@@ -4369,4 +4370,89 @@ int main(void) {
 )";
   for (const auto Optimization : {"-O0", "-O2"})
     compileAndRun(Program, {Optimization});
+}
+
+TEST(HighCSourceCalls,
+     SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "The complete CGRect method entry contract is arm64 only";
+#else
+  auto Image = runtime_function_address_test::image(Arch::AArch64);
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 4;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(4);
+  Image.Segments.push_back(std::move(Text));
+  const std::string Name =
+      "_$s13RectMethodABI12DrawingOwnerC4draw2in4rectySo12CGContextRefa_"
+      "So6CGRectVtF";
+  Image.Symbols.push_back({Name, 0x1000, 0, true});
+  const auto Declaration =
+      swiftMangledCGContextCGRectClassMethodSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Declaration);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Double = NdType::makeFloat(8);
+  HighFunc F;
+  F.Name = "recovered_rect_method";
+  F.ReturnType = NdType::makeVoid();
+  F.Params = {{"context", Pointer}, {"x", Double},      {"y", Double},
+              {"width", Double},    {"height", Double}, {"receiver", Pointer}};
+  SourceCallTypeHint Hint;
+  Hint.TargetName = "rect_carrier";
+  Hint.TargetAddress = 0x1000;
+  Hint.Signature = *Declaration;
+  auto Rectangle =
+      HighExpr::makeRecord(Hint.Signature.Parameters[1].Type,
+                           {parameter(1, Double), parameter(2, Double),
+                            parameter(3, Double), parameter(4, Double)});
+  HighStmt S;
+  S.Kind = StmtKind::ExprStmt;
+  S.Val = call(Hint, F.ReturnType,
+               {parameter(0, Pointer), Rectangle, parameter(5, Pointer)});
+  F.Body = {S};
+  const auto Source = emit({F}, true, Arch::AArch64);
+  ASSERT_NE(Source.find("swift_context"), std::string::npos);
+  // The oracle uses the independently compiler-observed physical scalar
+  // signature, rather than repeating the emitted logical record declaration.
+  const auto Program = Source + R"(
+struct RectState { unsigned calls; void *context; uint64_t bits[4]; };
+#ifdef __APPLE__
+#define RECT_CARRIER_SYMBOL "_rect_carrier"
+#else
+#define RECT_CARRIER_SYMBOL "rect_carrier"
+#endif
+void __attribute__((swiftcall)) rect_oracle(void *,double,double,double,double,
+    struct RectState *__attribute__((swift_context)))
+    __asm__(RECT_CARRIER_SYMBOL);
+void __attribute__((swiftcall)) rect_oracle(void *c,double x,double y,double w,double h,
+    struct RectState *s __attribute__((swift_context))) {
+  ++s->calls;s->context=c;
+  __builtin_memcpy(s->bits+0,&x,8);__builtin_memcpy(s->bits+1,&y,8);
+  __builtin_memcpy(s->bits+2,&w,8);__builtin_memcpy(s->bits+3,&h,8);
+}
+int main(void) {
+  const uint64_t values[]={0,0x8000000000000000ULL,1,0x8000000000000001ULL,
+    0x3ff0000000000000ULL,0xbff012345678abcdULL,0x7ff0000000000000ULL,
+    0xfff0000000000000ULL,0x7ff812345678abcdULL,0x7ff012345678abcdULL};
+  for(unsigned i=0;i<1000;++i) {
+    uint64_t expected[4];double v[4];
+    for(unsigned j=0;j<4;++j) {
+      expected[j]=values[(i/(j+1)+j*3)%10];
+      __builtin_memcpy(v+j,expected+j,8);
+    }
+    struct {uint64_t guard;struct RectState s;uint64_t tail;} box={0};
+    struct {uint64_t a,b;} context={0x0123456789abcdefULL,i};
+    box.guard=0xabcdef0123456789ULL;box.tail=0x123456789abcdef0ULL;
+    recovered_rect_method(&context,v[0],v[1],v[2],v[3],&box.s);
+    if(box.s.calls!=1||box.s.context!=&context||box.guard!=0xabcdef0123456789ULL||
+       box.tail!=0x123456789abcdef0ULL||context.a!=0x0123456789abcdefULL||context.b!=i)return 1;
+    for(unsigned j=0;j<4;++j) if(box.s.bits[j]!=expected[j])return 2;
+  }
+  return 0;
+}
+)";
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Program, {Optimization});
+#endif
 }

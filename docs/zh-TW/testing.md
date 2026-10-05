@@ -1315,3 +1315,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 檢查共用根節點證明，並在葉節點開始觀察上下文後拒絕舊計畫。
 
 `SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 涵蓋兩種架構，並拒絕變更提供者、弱匯入、衝突儲存及過期 ABI 載體。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下執行產生的 C，以獨立 Swift 載體驗證函式檢查座標位元模式（含帶符號零、次正規數與 NaN）、接收者身分、呼叫順序和保護值。這些檢查證明呼叫 ABI，不代表上層方法已完整恢復。
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` 驗證完整方法樹與精確載體，包括私有成員及拒絕的簽章。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` 與 `CGRectMethodRejectsChangedEntryAndReceiverParameter` 涵蓋管線與發布重播，拒絕 self 索引、入口或參數型別的變更。編譯器記錄涵蓋四種 macOS/Mac Catalyst 目標；此入口宣告仍僅支援 arm64。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` 在 O0/O2 下將產生的 C 與獨立 Swift 純量載體參考實作對照，驗證四個座標的完整位元模式、不同的 context/self 指標、單次呼叫與儲存保護。

@@ -1229,11 +1229,13 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
             objcNativeSwiftSelfTypeHint(Image, Function.Entry)) {
       size_t Budget = 262144;
       const auto Signature =
-          swiftMangledZeroArgClassMethodSourceABI(Image, Function.Entry);
+          swiftMangledReceiverClassMethodSourceABI(Image, Function.Entry);
       if (Signature &&
+          Receiver->SourceParameter < Signature->Parameters.size() &&
           immutableNativeFrameMachineMatches(Image, Function, Budget))
         EntryFacts.Values.emplace(
-            key(NdVar::reg(Signature->Parameters[0].Location.RegisterOffset,
+            key(NdVar::reg(Signature->Parameters[Receiver->SourceParameter]
+                               .Location.RegisterOffset,
                            8)),
             Value{Value::Kind::Receiver, 0, {}, *Receiver});
     }
@@ -2936,7 +2938,7 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
   if (!NeedsCopies || Image.Arch != Arch::AArch64)
     return Result;
   const auto Entry =
-      swiftMangledZeroArgClassMethodSourceABI(Image, Function.Entry);
+      swiftMangledReceiverClassMethodSourceABI(Image, Function.Entry);
   size_t Budget = 262144;
   if (!Entry || !immutableNativeFrameMachineMatches(Image, Function, Budget))
     return Result;

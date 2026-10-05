@@ -1264,3 +1264,5 @@ Swift once getter、复制辅助函数及 Objective-C thunk 的提前返回证�
 Objective-C once thunk 根节点与共享 getter 使用同一有界证明，检查当前嵌套初始化器链。每个下游节点须独立证明不观察转发的上下文；普通直接调用仍会排除回调角色。尚未证明的根节点只能提名依赖分析，不能授予回调 ABI 或发布权限。下游发生变化会使旧计划的发布证明失效。
 
 Swift CoreGraphics 的 `CGContext.move(to:)` 和 `addLine(to:)` 保留原始导入的 Swift 入口。Swift 6.1.2 的 arm64 与 x86_64 客户端 IR 均传入两个 double 坐标和随后的 `swiftself`，返回 void。只有精确匹配的强 CoreGraphics 框架或 overlay 库导入获得该声明；调用方、栈帧和发布仍需完整证明。
+
+共享 Swift 类方法声明也接受完整的 arm64 实例类型 `void(CGContext, CGRect, swiftself)`：普通绘图上下文位于 x0，矩形位于 d0–d3，接收者位于 x20。公开和私有成员复用同一声明；Objective-C 包装入口、类型变化、特化后缀及 x86_64 均不在此契约内。接收者发现、机器码/MedIR 校验和源码发布保留实际的逻辑 self 参数，并重新核对已注册类身份。绘图上下文不能替代 self。声明恢复不授予帧效果、所有权、依赖闭包或发布权限。

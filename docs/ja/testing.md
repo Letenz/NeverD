@@ -1369,3 +1369,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` は共通ルート証明と、葉がコンテキストを観測し始めた後の拒否を検証します。
 
 `SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` は両アーキテクチャを検証し、提供元の変更、弱いインポート、ストレージの競合、古い ABI キャリアを拒否します。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` は独立した Swift キャリア検証関数を使い、O0/O2 の生成 C を実行して符号付きゼロ、非正規化数、NaN を含む座標ビット、レシーバーの同一性、呼び出し順序、保護値を確認します。これらは呼び出し ABI の証明であり、上位メソッドの完全な復元を意味しません。
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` は完全なメソッドツリーと正確なキャリアを検証し、非公開メンバーと拒否する署名を含みます。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` と `CGRectMethodRejectsChangedEntryAndReceiverParameter` はパイプラインと公開時の再実行を検証し、self の添字、入口、引数型の変更を拒否します。コンパイラ記録は macOS/Mac Catalyst の 4 ターゲットを含みますが、この入口宣言の対応は arm64 のみです。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` は生成 C を O0/O2 で独立した Swift スカラーキャリア実装と比較し、4 座標すべてのビット列、異なる context/self ポインター、1 回の呼び出し、記憶域の保護を検証します。

@@ -1359,3 +1359,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 는 공유 루트 증명과 리프가 컨텍스트를 관찰하기 시작한 뒤의 거부를 검사합니다.
 
 `SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers`는 두 아키텍처를 검증하고 변경된 제공자, 약한 가져오기, 저장소 충돌, 오래된 ABI 캐리어를 거부합니다. `HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder`는 독립 Swift 캐리어 검증 함수로 O0/O2의 생성 C를 실행하여 부호 있는 0·비정규 수·NaN을 포함한 좌표 비트, 수신자 식별, 호출 순서와 보호 값을 확인합니다. 이 검사는 호출 ABI를 입증하며 상위 메서드의 완전한 복구를 뜻하지 않습니다.
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs`는 비공개 멤버와 거부할 서명을 포함하여 전체 메서드 트리와 정확한 전달 위치를 확인합니다. `SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity`와 `CGRectMethodRejectsChangedEntryAndReceiverParameter`는 파이프라인 및 게시 재검증에서 self 인덱스, 진입점 또는 인자 형식 변경을 거부합니다. 컴파일러 기록은 macOS/Mac Catalyst의 네 타깃을 포함하지만 이 진입 선언은 arm64만 지원합니다. `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits`는 O0/O2에서 생성된 C를 독립적인 Swift 스칼라 전달 참조 구현과 비교하여 네 좌표의 전체 비트 패턴, 구별되는 context/self 포인터, 단일 호출 및 저장 영역 보호를 검증합니다.

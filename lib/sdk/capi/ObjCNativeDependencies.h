@@ -357,6 +357,12 @@ inline size_t inferObjCNativeDependencies(
         ++Added;
         continue;
       }
+      if (auto Mangled = swiftMangledCGContextCGRectClassMethodSourceABI(
+              Image, Target, &FunctionSymbols)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
       if (auto Mangled = swiftMangledUIColorIntAlphaAllocatorSourceABI(
               Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
