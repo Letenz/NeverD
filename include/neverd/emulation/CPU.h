@@ -10,6 +10,7 @@
 #include "neverd/emulation/ExecutionExit.h"
 #include "neverd/emulation/GuestMemory.h"
 #include "neverd/emulation/Registers.h"
+#include "neverd/emulation/X64BranchModel.h"
 
 #include <array>
 #include <functional>
@@ -61,6 +62,11 @@ class ExecutionBackend : public GuestMemory {
 public:
   using XmmValue = RegisterValue;
   virtual GuestArchitecture architecture() const = 0;
+  /// Immutable relative-branch model shared with instruction consumers.
+  /// Non-x64 CPUs and external implementations without this contract omit it.
+  virtual std::optional<X64BranchModel> x64BranchModel() const {
+    return std::nullopt;
+  }
   std::shared_ptr<AddressSpace> addressSpace() const override = 0;
   llvm::Expected<MemoryView> pinBacking(uint64_t, uint64_t) const override;
   llvm::Error validatePinned(const MemoryView &, uint64_t,

@@ -92,6 +92,10 @@ checked x64 通过 KVM、WHP 和 Unicorn 执行 `SHLD/SHRD`，支持 16/32/64 �
 
 `X64LoopInstructions.def` 通过处理器传输执行 `LOOP/LOOPE/LOOPNE`。地址宽度选择 RCX 或零扩展的 ECX，FLAGS 保持不变。目标宽度遵循 CPU 模型：Intel 在长模式忽略 `66H`，AMD 保留其 16 位覆盖，REX.W 优先。原生 KVM/WHP 使用宿主处理器，Unicorn 使用默认 Intel Haswell 模型。共享准入规则在产生效果前拒绝 LOCK 和 REP，包括解码元数据省略的前缀。
 
+`X64BranchModel` 让相对 `JMP/Jcc` 的解码与执行一致。原生 KVM/WHP 在有时间上限的初始化中，通过不跳转的 `66H` 分支和 REX.W 优先级探针确定规则；Unicorn 检查模式使用其 Intel 模型。不可变结果同时决定指令观察器和 Windows 驱动策略的解码模式。Intel 在长模式下保留 rel32 近分支和完整目标宽度；AMD 遵守其 16 位覆盖规则。指令字节不完整时，在观察器或 CPU 执行前失败。
+
+`X64StackInstructions.def` 在 KVM、WHP 和 checked Unicorn（含 `driver-strict`）中支持通用寄存器、普通 RAM 的 16/64 位 `PUSH/POP` 及立即数 PUSH。PUSH 先读取源操作数，再减小 RSP；POP 先增加 RSP，再计算使用 RSP/ESP 的目标地址。地址宽度截断只作用于显式操作数。完整范围权限检查、有序观察回调和单次 RAM 事务确保故障、取消或回调错误时 CPU 与内存不被部分更新。LOCK 和设备操作数仍不支持。
+
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。

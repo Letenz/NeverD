@@ -197,6 +197,10 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `X86XaddAudit.*` 通过无符号算术基准检查全部 65,536 对字节输入、更宽位宽的标志边界、寄存器/高字节重叠、两次写回、REX 字节宽度限制和完整寄存器保留。原生检查要求不产生新的任意位，同时保留先前的依赖；两种见证均接受未修改的 XADD，篡改和、交换源值或已定义标志则被拒绝。`/6` 别名使用完整移位计数矩阵，并通过修改组号/解码 ID 的反例拒绝语义错配。 内存测试还穷举字节输入对，覆盖地址覆盖前缀、扩展、IP 相对及 i386 16 位寻址、有符号位移、相邻字节和过期解码细节的拒绝。完整帧原生检查保留先前任意值依赖及精确／不足预算检查；篡改存储地址会违反返回槽契约。
 
+`X86DoubleShiftUndefinedEffects.*` 以独立的逐位转移基准检查 16/32/64 位运算的全部原始字节计数，覆盖源／目的／CL 重叠及精确生成守卫。原生检查先丢弃 RAX 再隔离标志，区分计数 16 与 17，保留先前依赖并执行精确／不足预算检查。完整状态关系拒绝被修改的有定义部分及全零位见证；低字未定义不允许清除有定义的高位。畸形形式不发布部分证据。
+
+`*Deferred*` 用例覆盖不可达跳转侧与落空侧、缺失或畸形代码、符号矛盾守卫、任意控制、选值见证及完整状态变异。合成提供者验证不会取不可达后继，而可达的畸形元数据仍被拒绝。精确／不足指令、操作、访问及查询预算、可达坏分支和无限循环均不能认证前缀。策略改变会改变证书摘要，静态与循环 API 拒绝该选项。
+
 `NeverDPEFixedImageTests` 使用独立构造的 PE 文件，检查带重定位的指令与不可变数据、导入写入范围、畸形头部／表、别名和来源信息篡改。原生到 LowIR 及精确 LLVM 证明接受匹配候选，拒绝结果、状态或原始字节被修改的候选。准备预算耗尽保持独立分类，允许显式提高限额后重试；普通加载也接受含 40000 条有效重定位记录、超过默认分析预算的文件。
 
 `FrameOffsets.*`、`NativeStackSpecialization.*` 和 `OriginalBinaryUndefinedIndependence.*` 检查 2/4/8/16/32 字节对齐的全部余数、自由高位、跨调用保存、倒计数循环、别名破坏、错误分派、无关大掩码、必要分区升级及恰好／少一次预算。独立原生控制检查带分支约束的对齐、内部无符号返回清理、错误清理量和带前缀返回。这些测试不代表分区循环已具备自动原生到 LLVM 的完整证明。
@@ -1107,7 +1111,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 2274 项 CPU 检查及 17 项 SEH 回归，共有 2515 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `2274 CPU + 224 WHP + 17 SEH = 2515`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 3683 项 CPU 检查及 17 项 SEH 回归，共有 3924 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `3683 CPU + 224 WHP + 17 SEH = 3924`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1120,6 +1124,10 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 `X64ScalarShiftTests.cpp` 检查全部字节计数、两种进位输入、零/全一及带符号操作数、隐含单次形式、AH/SPL 与计数寄存器别名、完整 CPU 状态、精确 RAM 范围、观察回调回滚、故障及上下文续执行。独立原生对照检查 65,536 次执行。WDK 资源驱动加入 72 个原创探针。KVM/WHP 验证门要求此指令族的 769 项结果通过。 只有掩码后计数为零才保证保留全部标志位。非零计数的 `RCL/RCR` 完整进位环绕会保留操作数和 CF，但 OF 未定义；对照仅排除这一未定义位。
 
 `X64LoopTests.cpp` 覆盖 21 种原创编码、计数器回绕、4 GiB 以上的有符号相对目标、完整 CPU/RAM 状态保留、观察回调取消、跨独立映射取指、目标取指错误与上下文恢复。指令字节不完整时在执行前拒绝；目标取指失败则保留已完成分支的计数器和 PC。WDK 资源驱动新增 12 个原创探针。KVM/WHP 在内核、用户和驱动契约下必须通过本指令族的 379 项结果。 原始宿主指令对照最多运行 1,008 个样例并报告次数。AMD 上采用 `66H` 的已跳转分支会访问宿主系统保留的低地址，因此这些形式在显式映射低地址的客户机矩阵中执行。Intel、AMD 的目标宽度及 REX.W 优先级分别验证。
+
+`X64BranchTests.cpp` 检查全部 16 种 Jcc 条件、相对 JMP、九组前缀、短/近形式、4 GiB 以上的有符号相对目标、完整 CPU/RAM 状态、观察器停止与错误、跨页解码、目标取指故障和上下文恢复。独立 Intel 宿主对照执行 9,792 条原始指令；AMD 低地址目标形式留在客体测试中。两种解码模型均测试完整和截断字节，原生探针还检查失败时不发布结果。四个原创 WDK 资源探针覆盖驱动策略。KVM/WHP 验收各增加 274 项必需结果。AMD 软件模型覆盖不代表原生 AMD 或 ARM64 执行证据。
+
+`X64StackTests.cpp` 以九类测试覆盖 42 种编码，检查宽度、寻址、完整状态、观察器顺序、取消、权限、跨页、物理别名、故障修复、设备拒绝和上下文恢复。独立宿主对照执行原始指令，六个 WDK 资源探针覆盖驱动路径。KVM/WHP 原生验收各增加 1135 项必需结果。不可用的后端在其原生强制验收之外仍明确报告跳过。
 
 `DriverSIMDSEHTests.cpp` 以四种受支持的处置及一次 x87 修改拒绝、两种原生执行契约、普通/CFG WDK 映像及两个加载地址运行八类原始 SSE 故障。十项后端专属结果和三项纯内核 SSE 记录检查均为必测。`driver_seh_simd.def` 统一定义样例与模式；异步展开表覆盖故障辅助函数。微软内核 10.0.26100.9549 提供独立分类与恢复依据：隔离执行了 107,744 组指令路径分类及 8,192 组恢复。这不代表已在完整 Windows 内核中执行驱动；ARM64 原生 KVM/WHP 仍未验证。
 
@@ -1293,3 +1301,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 检查 CoreImage 提供方、CIImage 工厂、完整 48 字节逻辑记录及 x2 指针，拒绝缺失或错误的提供方、x86_64 和冲突声明。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 区分原始调用与沿用同一机器地址的结果赋值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒绝 24 类凭据、参数、存储、帧、元数据、导入、重复调用及保存 IR 的修改，包括同时一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 执行未经修改的生成 C，对照独立从编译器观察到的 x2 指针接收函数，检查六个浮点位模式、选择器与接收者身份、单次求值、返回对象、合法副本写入、输入不变性和边界保护。其他主机跳过此物理 ABI 执行测试。
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` 拒绝与当前非空方法编码或选择器不一致的缓存 ABI；仅提供显式类型声明的客户端保留原有约定。
+
+`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` 覆盖四个矩阵/仿射生产函数及 22 种必须拒绝的契约篡改。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` 证明 SDK 结果进入 CoreImage 副本并通过独立发布重建；`RejectsWrongProducerFrameAndSavedIR` 对每个生产函数检查 12 种篡改，包括输入写入缺失、结果越界、错误提供者/ABI 载体和复用已消耗的 Concat 输入。`GeneratedCMatchesOriginalMachineAndSDKResults` 在 Apple ARM64 上以 O0/O2 执行未修改的生成 C 与原始 ARM64 机器字，并调用原生 CoreGraphics：每个函数 1000 组数据对比全部 48 个结果字节、两个输入记录、选择子/接收者身份、单次调用、返回对象、私有副本改写及边界保护值。其他主机跳过此原生 SDK 执行测试。

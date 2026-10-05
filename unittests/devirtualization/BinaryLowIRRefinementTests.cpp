@@ -111,6 +111,75 @@ TEST(BinaryLowIRRefinement, PhysicalReturnDestinationsKeepFullStateRelation) {
   refused(P.check(R.Residual), Status::Different);
 }
 
+TEST(BinaryLowIRRefinement, DeferredConditionalEdgesKeepFullStateRelation) {
+  // CMP EAX,EAX; JE suffix; invalid bytes; suffix: MOV EAX,7; RET.
+  Program P({0x39, 0xc0, 0x74, 2, 0x16, 0x06, 0xb8, 7, 0, 0, 0, 0xc3});
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  refused(P.check(Recovery.Residual), Status::Unsupported);
+  P.Contract.DeferNativeConditionalEdges = true;
+  for (auto W : {Witness::LiftedBits, Witness::ZeroBits}) {
+    const auto Good = P.check(Recovery.Residual, W);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_TRUE(
+        Good.Certificate->Relation.Contract.DeferNativeConditionalEdges);
+    EXPECT_EQ(Good.Certificate->Instructions.size(), 4U);
+    EXPECT_TRUE(Good.Certificate->Relation.NativeAuditBoundaries.empty());
+  }
+  bool Changed = false;
+  for (auto &B : Recovery.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+          O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+          O.NumInputs == 1 && O.Inputs[0] == NdVar::scalar(7, 4)) {
+        O.Inputs[0].Offset = 9;
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(P.check(Recovery.Residual), Status::Different);
+}
+
+TEST(BinaryLowIRRefinement, DeferredEdgesRespectSelectedUndefinedWitness) {
+  // ADD establishes OF=1; BT makes it arbitrary, keeping the old lifted bit.
+  // Only ZeroBits takes JNO into the invalid byte. Independence must refuse.
+  Program P({0xb8, 0xff, 0xff, 0xff, 0x7f, 0x83, 0xc0, 1, 0x0f, 0xa3,
+             0xc8, 0x71, 6,    0xb8, 7,    0,    0,    0, 0xc3, 0x16});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  P.Contract.DeferNativeConditionalEdges = true;
+  const auto Good = P.check(Recovery.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  refused(P.check(Recovery.Residual, Witness::ZeroBits), Status::Unsupported);
+  const auto Independent =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  EXPECT_EQ(Independent.Proof.Status, LowIRIndependenceStatus::Dependent);
+  EXPECT_FALSE(Independent.Certificate);
+}
+
+TEST(BinaryLowIRRefinement, DeferredEdgePolicyBindsDigestsAndRejectsLoops) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete());
+  const auto Strict = P.check(Recovery.Residual);
+  ASSERT_TRUE(Strict.proved());
+  P.Contract.DeferNativeConditionalEdges = true;
+  const auto Deferred = P.check(Recovery.Residual);
+  ASSERT_TRUE(Deferred.proved()) << Deferred.Proof.Diagnostic;
+  EXPECT_NE(Strict.Certificate->Relation.OriginalDigest,
+            Deferred.Certificate->Relation.OriginalDigest);
+  EXPECT_NE(Strict.Certificate->Relation.InputDigest,
+            Deferred.Certificate->Relation.InputDigest);
+  EXPECT_NE(Strict.Certificate->InputDigest, Deferred.Certificate->InputDigest);
+  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                         Recovery.Residual, P.Contract, {}),
+          Status::Unsupported);
+  const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  EXPECT_EQ(Inferred.Inference.Status, LowIRLoopInferenceStatus::Unsupported);
+  EXPECT_FALSE(Inferred.Inference.Plan);
+  refused(Inferred.Refinement, Status::Unsupported);
+}
+
 TEST(BinaryLowIRRefinement, EntryAlignmentUsesTheOriginalSymbolicStack) {
   Program P({0x48, 0x89, 0xe0, 0xc3}); // mov rax,rsp; ret.
   auto Recovery = P.recover();
@@ -492,6 +561,67 @@ TEST(BinaryLowIRRefinement, MemoryXaddBindsSumAddressSourceAndFlags) {
     const auto Bad = P.check(Changed);
     refused(Bad, Field == 1 ? Status::ContractViolation : Status::Different);
   }
+}
+
+TEST(BinaryLowIRRefinement, DoubleShiftWitnessesBindArbitraryAndDefinedSlices) {
+  for (bool Right : {false, true})
+    for (const auto &Prefix :
+         std::vector<std::vector<uint8_t>>{{0x66}, {}, {0x48}}) {
+      Program P({});
+      auto &Code = P.Image.Segments.front();
+      Code.Data = Prefix;
+      // Destination RCX aliases CL; count must remain the entry low byte.
+      Code.Data.insert(Code.Data.end(),
+                       {0x0f, uint8_t(Right ? 0xad : 0xa5), 0xd1, 0xc3});
+      Code.Size = Code.FileSz = Code.Data.size();
+      const auto R = P.recover();
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      const auto Good = P.check(R.Residual);
+      ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+      EXPECT_FALSE(Good.Certificate->Relation.Producers.empty());
+      refused(P.check(R.Residual, Witness::ZeroBits), Status::Different);
+    }
+  Program P({0x66, 0x0f, 0xa4, 0xd0, 16, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  ASSERT_TRUE(P.check(R.Residual).proved());
+  // Count exactly 16 defines the low word and CF.
+  for (unsigned Field = 0; Field != 3; ++Field) {
+    auto Candidate = R.Residual;
+    bool Found = false;
+    for (auto &B : Candidate.Blocks)
+      for (auto &O : B.Ops)
+        if (!Found && (Field == 0   ? O.Output == NdVar::reg(x86reg::RAX, 2)
+                       : Field == 1 ? O.Output == NdVar::reg(x86reg::CF, 1)
+                                    : O.Output == NdVar::reg(x86reg::RAX, 2))) {
+          O.Opcode = NdOp::COPY;
+          O.NumInputs = 1;
+          if (Field == 2)
+            O.Output = NdVar::reg(x86reg::RAX, 8);
+          O.Inputs[0] = NdVar::scalar(0, O.Output.Size);
+          Found = true;
+        }
+    ASSERT_TRUE(Found);
+    refused(P.check(Candidate), Status::Different);
+  }
+  Program Excess({0x66, 0x0f, 0xa4, 0xd0, 17, 0xc3});
+  auto ExcessRecovery = Excess.recover();
+  ASSERT_TRUE(ExcessRecovery.complete()) << ExcessRecovery.Diagnostic;
+  ASSERT_TRUE(Excess.check(ExcessRecovery.Residual).proved());
+  bool Found = false;
+  for (auto &B : ExcessRecovery.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if (O.Output == NdVar::reg(x86reg::RAX, 2)) {
+        // This selected low-word witness is already zero. Clearing the
+        // remaining register bits still changes architecturally defined state.
+        O.Opcode = NdOp::COPY;
+        O.Output = NdVar::reg(x86reg::RAX, 8);
+        O.NumInputs = 1;
+        O.Inputs[0] = NdVar::scalar(0, 8);
+        Found = true;
+      }
+  ASSERT_TRUE(Found);
+  refused(Excess.check(ExcessRecovery.Residual), Status::Different);
 }
 
 TEST(BinaryLowIRRefinement, CompatibilityShiftUsesTheSameSelectedValueWitness) {

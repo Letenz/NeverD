@@ -64,6 +64,7 @@ public:
   virtual ~X64Machine() = default;
   virtual bool requiresExceptionMonitor() const { return false; }
   virtual uint32_t mxcsrMask() const { return x64::fp::BaselineMXCSRMask; }
+  virtual X64BranchModel branchModel() const { return X64BranchModel::Intel; }
   virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot,
                            MachineRunControl Control) = 0;
 };
