@@ -971,8 +971,12 @@ class Checker {
               fail(Status::Invalid, "direct control target is not constant");
             Successors.push_back(Op.Inputs[0].Offset);
           }
-          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-              Op.Opcode == NdOp::COND_BR)
+          // A physical call only transfers to its callee. Its fallthrough is
+          // the pushed return value, not a control edge: a callee may modify
+          // or discard that slot. scheduleNative collects every actual RET
+          // destination after complete target enumeration, under the same
+          // evidence and resource checks as any other reached instruction.
+          if (Op.Opcode == NdOp::COND_BR)
             Successors.push_back(Insn.Fallthrough.Address);
         }
       }

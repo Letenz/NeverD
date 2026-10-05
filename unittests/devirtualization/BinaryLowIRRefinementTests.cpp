@@ -89,6 +89,28 @@ TEST(BinaryLowIRRefinement,
   refused(P.check(R.Residual), Status::Different);
 }
 
+TEST(BinaryLowIRRefinement, PhysicalReturnDestinationsKeepFullStateRelation) {
+  // The helper adjusts its return slot to skip two invalid inline bytes.
+  Program P({0xe8, 8, 0, 0, 0, 0x16, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0x48, 0x83,
+             0x04, 0x24, 2, 0xc3});
+  auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  const auto Good = P.check(R.Residual);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  bool Changed = false;
+  for (auto &B : R.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+          O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+          O.NumInputs == 1 && O.Inputs[0].isConst() &&
+          O.Inputs[0].Offset == 7) {
+        O.Inputs[0].Offset = 9;
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(P.check(R.Residual), Status::Different);
+}
+
 TEST(BinaryLowIRRefinement, EntryAlignmentUsesTheOriginalSymbolicStack) {
   Program P({0x48, 0x89, 0xe0, 0xc3}); // mov rax,rsp; ret.
   auto Recovery = P.recover();
