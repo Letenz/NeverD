@@ -36,6 +36,17 @@ bool sameAssignments(llvm::ArrayRef<LowIRLoopAssignment> A,
   return true;
 }
 
+bool sameGuards(llvm::ArrayRef<LowIRLoopGuard> A,
+                llvm::ArrayRef<LowIRLoopGuard> B) {
+  if (A.size() != B.size())
+    return false;
+  for (size_t I = 0; I != A.size(); ++I)
+    if (key(A[I].Location) != key(B[I].Location) || A[I].Mask != B[I].Mask ||
+        A[I].Value != B[I].Value)
+      return false;
+  return true;
+}
+
 struct Renamer {
   std::map<std::pair<uint64_t, uint16_t>, NdVar> Values;
   std::set<uint64_t> Bytes;
@@ -84,6 +95,8 @@ llvm::Expected<LowIRLoopCutpoint> pairCut(const LowIRLoopCutpoint &A,
   Result.UseEntryPrefix = A.UseEntryPrefix;
   Result.GeneralizeEntryPrefix =
       A.GeneralizeEntryPrefix || B.GeneralizeEntryPrefix;
+  Result.OriginalGuards = A.OriginalGuards;
+  Result.CandidateGuards = B.OriginalGuards;
   uint64_t Next = 0;
   Renamer Left{{}, {}, Next}, Right{{}, {}, Next};
   std::map<LocationKey, NdVar> LeftInputs, RightInputs;
@@ -241,7 +254,8 @@ pairLowIRLoopRefinementPlans(const LowIRLoopRefinementPlan &Original,
     for (const auto &C : Plan.Cutpoints)
       if (!Charge(C.Inputs.size()) || !Charge(C.Expressions.size()) ||
           !Charge(C.OriginalState.size()) || !Charge(C.CandidateState.size()) ||
-          !Charge(C.Rank.size()))
+          !Charge(C.Rank.size()) || !Charge(C.OriginalGuards.size()) ||
+          !Charge(C.CandidateGuards.size()))
         return false;
     return true;
   };
@@ -259,6 +273,7 @@ pairLowIRLoopRefinementPlans(const LowIRLoopRefinementPlan &Original,
     for (const auto &C : Plan.Cutpoints)
       if (C.OriginalAddress != C.CandidateAddress ||
           !sameAssignments(C.OriginalState, C.CandidateState) ||
+          !sameGuards(C.OriginalGuards, C.CandidateGuards) ||
           !Out.emplace(C.OriginalAddress, &C).second)
         return false;
     return true;

@@ -102,7 +102,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(16); // Certificate semantic schema, independent of report formatting.
+  Number(17); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.DeferNativeConditionalEdges);
@@ -420,6 +420,48 @@ class Checker {
       fail(Status::BudgetExceeded, "loop register metadata budget exhausted");
   }
 
+  void validateLoopLocation(const LowIRLoopLocation &L, LowIRLoopSide Side,
+                            bool UseEntryPrefix) {
+    if (!L.Bytes || L.Bytes > 8)
+      fail(Status::Invalid, "invalid loop location width");
+    switch (L.Space) {
+    case LowIRLoopSpace::Register:
+      if (!scalar(NdVar::reg(L.Offset, L.Bytes)))
+        fail(Status::Invalid, "invalid loop register location");
+      trackRegister(NdVar::reg(L.Offset, L.Bytes));
+      break;
+    case LowIRLoopSpace::Frame:
+      if (!Contract.Frame ||
+          std::bit_cast<int64_t>(L.Offset) < Contract.Frame->Begin ||
+          std::bit_cast<int64_t>(L.Offset) >= Contract.Frame->End ||
+          static_cast<uint64_t>(Contract.Frame->End) - L.Offset < L.Bytes)
+        fail(Status::Invalid, "loop location exceeds the certified frame");
+      break;
+    case LowIRLoopSpace::SystemFlags:
+      if (!Contract.X64FlagsProfile || L.Offset || L.Bytes != 8)
+        fail(Status::Invalid, "invalid loop system-flags location");
+      break;
+    case LowIRLoopSpace::FunctionTemporary: {
+      if (!UseEntryPrefix || Side == LowIRLoopSide::Entry)
+        fail(Status::Invalid,
+             "loop function-temporary state requires a checked prefix");
+      if (!scalar(NdVar::tmp(L.Offset, L.Bytes)))
+        fail(Status::Invalid, "invalid loop function-temporary location");
+      const auto *F = Side == LowIRLoopSide::Candidate ||
+                              Side == LowIRLoopSide::CandidatePrefix
+                          ? &Refinement->Candidate
+                          : Refinement->Original;
+      for (uint16_t I = 0; I != L.Bytes; ++I)
+        if (!F || !F->isFunctionTemporaryByte(L.Offset + I))
+          fail(Status::Invalid, "loop function-temporary location is not "
+                                "declared on its side");
+      break;
+    }
+    default:
+      fail(Status::Invalid, "unknown loop location space");
+    }
+  }
+
   bool stopAtCutpoint(Path &P) {
     if (!inductive() || P.SkipCutpoint) {
       P.SkipCutpoint = false;
@@ -428,6 +470,7 @@ class Checker {
     const va_t Address =
         Provider ? P.NativeAddress : Blocks.at(P.BlockId)->StartAddr;
     const auto &Cuts = Refinement->LoopPlan->Cutpoints;
+    SymRef Selected;
     for (size_t I = 0; I != Cuts.size(); ++I) {
       if (Refinement->PrefixSearchCutpoint >= 0 &&
           static_cast<size_t>(Refinement->PrefixSearchCutpoint) != I)
@@ -438,6 +481,37 @@ class Checker {
         continue;
       auto &Endpoints = CandidateExecution ? Refinement->CandidateReturns
                                            : Refinement->OriginalReturns;
+      const auto &Guards =
+          CandidateExecution ? Cuts[I].CandidateGuards : Cuts[I].OriginalGuards;
+      if (!Guards.empty()) {
+        const auto Left = loopGuard(P.Left, P.LeftSystemFlags, Guards);
+        const auto Right = loopGuard(P.Right, P.RightSystemFlags, Guards);
+        equal(P.Predicate, Left, Right, "loop cutpoint selector");
+        if (Selected &&
+            query(Ctx.mkAnd(P.Predicate, Ctx.mkAnd(Selected, Left))) !=
+                solver::SatResult::Unsat)
+          fail(Status::Invalid, "overlapping feasible loop cutpoint selectors");
+        Selected = Selected ? Ctx.mkOr(Selected, Left) : Left;
+        const auto Domain = Ctx.mkAnd(P.Predicate, Left);
+        if (query(Domain) == solver::SatResult::Unsat)
+          continue;
+        if (++ScheduledPaths > Limits.MaxPaths)
+          fail(Status::BudgetExceeded, "loop selector path budget exhausted");
+        Endpoints.push_back({P.Left,
+                             Domain,
+                             P.LeftSystemFlags,
+                             {},
+                             P.Written,
+                             static_cast<int>(I),
+                             P.DefinedFunctionTemporaries});
+        ++(CandidateExecution ? Refinement->CandidateCutpoints
+                              : Refinement->OriginalCutpoints);
+        if (Refinement->PrefixSearchCutpoint >= 0) {
+          Pending.clear();
+          return true;
+        }
+        continue;
+      }
       Endpoints.push_back({std::move(P.Left),
                            P.Predicate,
                            P.LeftSystemFlags,
@@ -450,6 +524,12 @@ class Checker {
       if (Refinement->PrefixSearchCutpoint >= 0)
         Pending.clear();
       return true;
+    }
+    if (Selected) {
+      const auto Unmatched = Ctx.mkAnd(P.Predicate, Ctx.mkNot(Selected));
+      if (query(Unmatched) == solver::SatResult::Unsat)
+        return true;
+      P.Predicate = Unmatched;
     }
     return false;
   }
@@ -1754,7 +1834,7 @@ public:
         fail(Status::Invalid, "loop proof requires a nonempty cutpoint plan");
       if (Cuts.size() > Limits.MaxBlockVisits || Cuts.size() > INT_MAX)
         fail(Status::BudgetExceeded, "loop cutpoint metadata budget exhausted");
-      std::set<va_t> OriginalAddresses, CandidateAddresses;
+      std::map<va_t, bool> OriginalAddresses, CandidateAddresses;
       uint64_t Metadata = 0, Operations = 0;
       const auto Charge = [&](uint64_t Count) {
         if (Count > Limits.MaxInstructions - Metadata)
@@ -1762,54 +1842,40 @@ public:
                "loop template metadata budget exhausted");
         Metadata += Count;
       };
-      const auto Location = [&](const LowIRLoopLocation &L, LowIRLoopSide Side,
-                                bool UseEntryPrefix) {
-        if (!L.Bytes || L.Bytes > 8)
-          fail(Status::Invalid, "invalid loop location width");
-        switch (L.Space) {
-        case LowIRLoopSpace::Register:
-          if (!scalar(NdVar::reg(L.Offset, L.Bytes)))
-            fail(Status::Invalid, "invalid loop register location");
-          trackRegister(NdVar::reg(L.Offset, L.Bytes));
-          break;
-        case LowIRLoopSpace::Frame:
-          if (!Contract.Frame ||
-              std::bit_cast<int64_t>(L.Offset) < Contract.Frame->Begin ||
-              std::bit_cast<int64_t>(L.Offset) >= Contract.Frame->End ||
-              static_cast<uint64_t>(Contract.Frame->End) - L.Offset < L.Bytes)
-            fail(Status::Invalid, "loop location exceeds the certified frame");
-          break;
-        case LowIRLoopSpace::SystemFlags:
-          if (!Contract.X64FlagsProfile || L.Offset || L.Bytes != 8)
-            fail(Status::Invalid, "invalid loop system-flags location");
-          break;
-        case LowIRLoopSpace::FunctionTemporary: {
-          if (!UseEntryPrefix || Side == LowIRLoopSide::Entry)
-            fail(Status::Invalid,
-                 "loop function-temporary state requires a checked prefix");
-          if (!scalar(NdVar::tmp(L.Offset, L.Bytes)))
-            fail(Status::Invalid, "invalid loop function-temporary location");
-          const auto *F = Side == LowIRLoopSide::Candidate ||
-                                  Side == LowIRLoopSide::CandidatePrefix
-                              ? &Refinement->Candidate
-                              : Refinement->Original;
-          for (uint16_t I = 0; I != L.Bytes; ++I)
-            if (!F || !F->isFunctionTemporaryByte(L.Offset + I))
-              fail(Status::Invalid, "loop function-temporary location is not "
-                                    "declared on its side");
-          break;
-        }
-        default:
-          fail(Status::Invalid, "unknown loop location space");
-        }
-      };
       for (const auto &C : Cuts) {
         if (C.GeneralizeEntryPrefix && !C.UseEntryPrefix)
           fail(Status::Invalid,
                "generalized loop template requires a checked prefix");
-        if (!OriginalAddresses.insert(C.OriginalAddress).second ||
-            !CandidateAddresses.insert(C.CandidateAddress).second)
-          fail(Status::Invalid, "duplicate loop cutpoint address");
+        const auto Address = [&](std::map<va_t, bool> &Seen, va_t Value,
+                                 bool Guarded) {
+          const auto [It, Added] = Seen.emplace(Value, Guarded);
+          if (!Added && (!It->second || !Guarded))
+            fail(Status::Invalid,
+                 "duplicate loop cutpoint address without guards");
+        };
+        Address(OriginalAddresses, C.OriginalAddress,
+                !C.OriginalGuards.empty());
+        Address(CandidateAddresses, C.CandidateAddress,
+                !C.CandidateGuards.empty());
+        for (const auto *Guards : {&C.OriginalGuards, &C.CandidateGuards}) {
+          Charge(Guards->size());
+          for (const auto &G : *Guards) {
+            if (G.Location.Space == LowIRLoopSpace::FunctionTemporary)
+              fail(Status::Invalid,
+                   "loop guards cannot read function temporaries");
+            validateLoopLocation(G.Location,
+                                 Guards == &C.OriginalGuards
+                                     ? LowIRLoopSide::Original
+                                     : LowIRLoopSide::Candidate,
+                                 C.UseEntryPrefix);
+            const auto WidthMask =
+                G.Location.Bytes == 8
+                    ? UINT64_MAX
+                    : (uint64_t{1} << (8 * G.Location.Bytes)) - 1;
+            if (!G.Mask || (G.Mask & ~WidthMask) || (G.Value & ~G.Mask))
+              fail(Status::Invalid, "invalid loop guard mask or value");
+          }
+        }
         Charge(C.Inputs.size());
         Charge(C.OriginalState.size());
         Charge(C.CandidateState.size());
@@ -1831,7 +1897,7 @@ public:
               !C.UseEntryPrefix)
             fail(Status::Invalid,
                  "loop prefix input requires a checked prefix");
-          Location(I.Location, I.Side, C.UseEntryPrefix);
+          validateLoopLocation(I.Location, I.Side, C.UseEntryPrefix);
           if (!I.Temporary.isTemp() || !scalar(I.Temporary) ||
               I.Temporary.Size != I.Location.Bytes)
             fail(Status::Invalid, "invalid loop input binding");
@@ -1858,10 +1924,11 @@ public:
         for (const auto *Assignments : {&C.OriginalState, &C.CandidateState}) {
           std::set<std::pair<LowIRLoopSpace, uint64_t>> Bound;
           for (const auto &A : *Assignments) {
-            Location(A.Location,
-                     Assignments == &C.OriginalState ? LowIRLoopSide::Original
-                                                     : LowIRLoopSide::Candidate,
-                     C.UseEntryPrefix);
+            validateLoopLocation(A.Location,
+                                 Assignments == &C.OriginalState
+                                     ? LowIRLoopSide::Original
+                                     : LowIRLoopSide::Candidate,
+                                 C.UseEntryPrefix);
             Operand(A.Value);
             if (A.Value.Size != A.Location.Bytes)
               fail(Status::Invalid, "loop assignment width mismatch");
@@ -1888,24 +1955,50 @@ public:
   }
 
 private:
-  SymRef loopRead(TerminalState &State, const LowIRLoopLocation &L) {
+  SymRef loopRead(SymState &State, SymRef SystemFlags,
+                  const std::set<uint64_t> &DefinedFunctionTemporaries,
+                  const LowIRLoopLocation &L) {
     switch (L.Space) {
     case LowIRLoopSpace::Register:
-      return State.State.read(SymSpace::Register, L.Offset, L.Bytes);
+      return State.read(SymSpace::Register, L.Offset, L.Bytes);
     case LowIRLoopSpace::Frame:
-      return State.State.load(
+      return State.load(
           Ctx.mkAdd(Refinement->MemoryRoot,
                     Ctx.mkConst(64, L.Offset - static_cast<uint64_t>(
                                                    Contract.Frame->Begin))),
           L.Bytes);
     case LowIRLoopSpace::SystemFlags:
-      return State.SystemFlags;
+      return SystemFlags;
     case LowIRLoopSpace::FunctionTemporary:
-      checkTemporary(NdVar::tmp(L.Offset, L.Bytes),
-                     State.DefinedFunctionTemporaries);
-      return State.State.read(SymSpace::Temporary, L.Offset, L.Bytes);
+      checkTemporary(NdVar::tmp(L.Offset, L.Bytes), DefinedFunctionTemporaries);
+      return State.read(SymSpace::Temporary, L.Offset, L.Bytes);
     }
     fail(Status::Invalid, "unknown loop location space");
+  }
+
+  SymRef loopRead(TerminalState &State, const LowIRLoopLocation &L) {
+    return loopRead(State.State, State.SystemFlags,
+                    State.DefinedFunctionTemporaries, L);
+  }
+
+  SymRef loopGuard(SymState &State, SymRef SystemFlags,
+                   llvm::ArrayRef<LowIRLoopGuard> Guards) {
+    auto Predicate = Ctx.mkTrue();
+    for (const auto &G : Guards) {
+      // Mask, equality and conjunction each consume one operation. The shared
+      // reader and node budget also cover entry-relative frame addressing.
+      if (3 > Limits.MaxOperations - Result.Operations)
+        fail(Status::BudgetExceeded, "loop guard execution budget exhausted");
+      Result.Operations += 3;
+      const auto Value = loopRead(State, SystemFlags, {}, G.Location);
+      const auto Masked =
+          Ctx.mkAnd(Value, Ctx.mkConst(G.Location.Bytes * 8, G.Mask));
+      Predicate = Ctx.mkAnd(
+          Predicate,
+          Ctx.mkEq(Masked, Ctx.mkConst(G.Location.Bytes * 8, G.Value)));
+      nodes();
+    }
+    return Predicate;
   }
 
   struct LoopTemplate {
@@ -2070,6 +2163,17 @@ public:
       const auto Predicate = Ctx.mkAnd(Refinement->Predicate, T.Predicate);
       if (query(Predicate) == solver::SatResult::Unsat)
         fail(Status::Invalid, "loop invariant has an empty induction domain");
+      const auto &Cut = Refinement->LoopPlan->Cutpoints[Index];
+      if (!Cut.OriginalGuards.empty())
+        equal(Predicate,
+              loopGuard(T.Original.State, T.Original.SystemFlags,
+                        Cut.OriginalGuards),
+              Ctx.mkTrue(), "original loop starting selector");
+      if (!Cut.CandidateGuards.empty())
+        equal(Predicate,
+              loopGuard(T.Candidate.State, T.Candidate.SystemFlags,
+                        Cut.CandidateGuards),
+              Ctx.mkTrue(), "candidate loop starting selector");
       T.Original.Predicate = T.Candidate.Predicate = Predicate;
       Refinement->OriginalStart = std::move(T.Original);
       Refinement->CandidateStart = std::move(T.Candidate);
@@ -2629,6 +2733,14 @@ refinementResult(RefinementSession &Session,
       Number(Cut.CandidateAddress);
       Number(Cut.UseEntryPrefix);
       Number(Cut.GeneralizeEntryPrefix);
+      for (const auto *Guards : {&Cut.OriginalGuards, &Cut.CandidateGuards}) {
+        Number(Guards->size());
+        for (const auto &Guard : *Guards) {
+          Location(Guard.Location);
+          Number(Guard.Mask);
+          Number(Guard.Value);
+        }
+      }
       Number(Cut.Inputs.size());
       for (const auto &Input : Cut.Inputs) {
         Number(static_cast<unsigned>(Input.Side));
