@@ -673,6 +673,250 @@ void loopRefused(const LowIRRefinementResult &R, Status S) {
   EXPECT_FALSE(R.Certificate);
 }
 
+LowIRLoopRefinementPlan guardedWordLoopPlan(bool Frame = false) {
+  const LowIRLoopLocation Location =
+      Frame ? LowIRLoopLocation{LowIRLoopSpace::Frame, uint64_t(-8), 8}
+            : regLocation(24);
+  LowIRLoopRefinementPlan Plan;
+  for (uint64_t Value : {0, 1}) {
+    auto Cut = wordLoopPlan().Cutpoints.front();
+    Cut.Inputs.push_back({LowIRLoopSide::Entry, Location, NdVar::tmp(16, 8)});
+    Cut.Expressions = {
+        op(NdOp::INT_AND, NdVar::tmp(24, 8), {NdVar::tmp(16, 8), n(1)}),
+        op(NdOp::INT_EQUAL, NdVar::tmp(32, 1), {NdVar::tmp(24, 8), n(Value)})};
+    Cut.Predicate = NdVar::tmp(32, 1);
+    Cut.OriginalGuards = Cut.CandidateGuards = {{Location, 1, Value}};
+    Plan.Cutpoints.push_back(std::move(Cut));
+  }
+  return Plan;
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsSplitRepeatedAddresses) {
+  for (bool Frame : {false, true})
+    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+      auto A = wordLoop(), B = wordLoop(1, true);
+      if (Frame)
+        A.frame();
+      A.Contract.ByteOrder = Order;
+      const auto Plan = guardedWordLoopPlan(Frame);
+      const auto R = loopCheck(A, B, Plan);
+      ASSERT_TRUE(R.proved()) << R.Diagnostic;
+      EXPECT_EQ(R.LoopInitiations, 2U);
+      EXPECT_EQ(R.LoopTransitions, 2U);
+      EXPECT_EQ(R.RankingChecks, 2U);
+      loopRefused(loopCheck(A, wordLoop(2), Plan), Status::Different);
+    }
+}
+
+Program guardedBypassLoop() {
+  Program P;
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(8), {r(16)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(1, 0x200, {2, 5});
+  P.instruction(
+      {op(NdOp::INT_AND, NdVar::tmp(0, 8), {r(24), n(1)}),
+       op(NdOp::INT_NOTEQUAL, NdVar::tmp(8, 1), {NdVar::tmp(0, 8), n(0)}),
+       op(NdOp::COND_BR, {}, {n(0x500), NdVar::tmp(8, 1)})});
+  P.block(2, 0x250, {3, 4});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(3, 0x300, {1});
+  P.instruction({op(NdOp::INT_ADD, r(0), {r(0), r(8)}),
+                 op(NdOp::INT_SUB, r(8), {r(8), n(1)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(4, 0x400);
+  P.finish();
+  P.block(5, 0x500);
+  P.instruction({op(NdOp::COPY, r(0), {n(7)})});
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsExecuteAndCheckUnmatchedDomains) {
+  const auto P = guardedBypassLoop();
+  auto Plan = guardedWordLoopPlan();
+  Plan.Cutpoints.resize(1);
+  const auto Good = loopCheck(P, P, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  EXPECT_EQ(Good.LoopInitiations, 1U);
+  EXPECT_EQ(Good.RankingChecks, 1U);
+  EXPECT_EQ(Good.OriginalPaths, 2U);
+  auto Wrong = P;
+  Wrong.Function.Blocks.back().Ops.front().Inputs[0] = n(8);
+  loopRefused(loopCheck(P, Wrong, Plan), Status::Different);
+  // The missing selector is not a domain restriction. A loop there still
+  // requires coverage, even though the selected domain has a valid rank.
+  const auto Cyclic = wordLoop();
+  LowIRRefinementLimits Short;
+  Short.Execution.MaxBlockVisits = 64;
+  loopRefused(loopCheck(Cyclic, Cyclic, Plan, Short), Status::BudgetExceeded);
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsPreserveSelectorsInUniquePairings) {
+  const auto P = guardedBypassLoop();
+  auto Self = guardedWordLoopPlan();
+  Self.Cutpoints.resize(1);
+  const std::vector<LowIRLoopCutpointPair> Pairs{
+      {0x200,
+       0x200,
+       {{regLocation(0), regLocation(0)}, {regLocation(8), regLocation(8)}}}};
+  // Each input plan has 13 metadata items; the pairing has one cut and two
+  // shared inputs. The selectors remain separate on the resulting sides.
+  auto Paired = pairLowIRLoopRefinementPlans(Self, Self, Pairs, 29);
+  ASSERT_TRUE(static_cast<bool>(Paired)) << llvm::toString(Paired.takeError());
+  EXPECT_EQ(Paired->Cutpoints[0].OriginalGuards.size(), 1U);
+  EXPECT_EQ(Paired->Cutpoints[0].CandidateGuards.size(), 1U);
+  const auto Good = loopCheck(P, P, *Paired);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  auto Short = pairLowIRLoopRefinementPlans(Self, Self, Pairs, 28);
+  EXPECT_FALSE(static_cast<bool>(Short));
+  if (!Short)
+    llvm::consumeError(Short.takeError());
+  Self.Cutpoints[0].CandidateGuards[0].Value = 1;
+  auto Wrong = pairLowIRLoopRefinementPlans(Self, Self, Pairs);
+  EXPECT_FALSE(static_cast<bool>(Wrong));
+  if (!Wrong)
+    llvm::consumeError(Wrong.takeError());
+  Self = guardedWordLoopPlan();
+  auto Ambiguous =
+      pairLowIRLoopRefinementPlans(Self, Self, {Pairs.front(), Pairs.front()});
+  EXPECT_FALSE(static_cast<bool>(Ambiguous));
+  if (!Ambiguous)
+    llvm::consumeError(Ambiguous.takeError());
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsRejectOverlapAndWrongSide) {
+  const auto P = wordLoop();
+  auto Plan = guardedWordLoopPlan();
+  Plan.Cutpoints[1].OriginalGuards = Plan.Cutpoints[0].OriginalGuards;
+  loopRefused(loopCheck(P, P, Plan), Status::Invalid);
+  Plan = guardedWordLoopPlan();
+  std::swap(Plan.Cutpoints[0].CandidateGuards,
+            Plan.Cutpoints[1].CandidateGuards);
+  loopRefused(loopCheck(P, P, Plan), Status::Different);
+  Plan = guardedWordLoopPlan();
+  Plan.Cutpoints[1].OriginalGuards.clear();
+  loopRefused(loopCheck(P, P, Plan), Status::Invalid);
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsRequireTheirStartingSelector) {
+  const auto P = wordLoop();
+  for (bool Prefix : {false, true}) {
+    auto Plan = guardedWordLoopPlan();
+    for (auto &C : Plan.Cutpoints) {
+      C.UseEntryPrefix = C.GeneralizeEntryPrefix = Prefix;
+      C.Predicate = n(1, 1);
+    }
+    const auto R = loopCheck(P, P, Plan);
+    loopRefused(R, Status::Different);
+    EXPECT_NE(R.Diagnostic.find("starting selector"), std::string::npos);
+  }
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsValidateMasksAndLocations) {
+  const auto P = wordLoop();
+  for (const auto &Guard : std::vector<LowIRLoopGuard>{
+           {regLocation(24, 1), 0, 0},
+           {regLocation(24, 1), 0x100, 0},
+           {regLocation(24, 1), 1, 2},
+           {regLocation(24, 0), 1, 0},
+           {regLocation(24, 9), 1, 0},
+           {{LowIRLoopSpace::FunctionTemporary, 24, 8}, 1, 0},
+           {{LowIRLoopSpace::Frame, uint64_t(-8), 8}, 1, 0},
+           {{LowIRLoopSpace::SystemFlags, 0, 8}, 1, 0},
+           {{static_cast<LowIRLoopSpace>(99), 0, 8}, 1, 0}}) {
+    auto Plan = guardedWordLoopPlan();
+    Plan.Cutpoints[0].OriginalGuards = {Guard};
+    loopRefused(loopCheck(P, P, Plan), Status::Invalid);
+  }
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsValidateFrameAndRegisterRanges) {
+  auto P = wordLoop();
+  P.frame();
+  const auto Plan = guardedWordLoopPlan(true);
+  const auto Good = loopCheck(P, P, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  for (auto Bad : {LowIRLoopLocation{LowIRLoopSpace::Frame, uint64_t(-24), 8},
+                   LowIRLoopLocation{LowIRLoopSpace::Frame, 4, 8},
+                   regLocation(UINT64_MAX, 8)}) {
+    auto Wrong = Plan;
+    Wrong.Cutpoints[0].OriginalGuards[0].Location = Bad;
+    loopRefused(loopCheck(P, P, Wrong), Status::Invalid);
+  }
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsRemainRelativeToTheSelectedWitness) {
+  auto P = wordLoop();
+  auto &Entry = P.Function.Blocks.front();
+  Entry.Ops.front().Inputs[0] = n(1);
+  auto &Record = P.Records.front();
+  Record.Effects.OperationDigest =
+      lowUndefinedOperationDigest(llvm::ArrayRef<LowOp>(Entry.Ops).slice(
+          Record.Boundary.FirstOp, Record.Boundary.OpCount));
+  Record.Effects.Effects.push_back({1, r(0), 0, 1, {}});
+  auto Plan = guardedWordLoopPlan();
+  for (unsigned I = 0; I != 2; ++I) {
+    auto &C = Plan.Cutpoints[I];
+    C.Inputs.pop_back();
+    C.Expressions[0].Inputs[0] = NdVar::tmp(0, 8);
+    C.OriginalGuards = C.CandidateGuards = {{regLocation(0), 1, I}};
+  }
+  const auto Good = loopCheck(P, P, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  ASSERT_FALSE(Good.Certificate->Producers.empty());
+  const auto Other = checkLowIRLoopRefinement(
+      P.Function, P.Records, P.Function, P.Contract, Plan, Witness::ZeroBits);
+  loopRefused(Other, Status::Different);
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsCannotDropUnknownDomains) {
+  const auto P = wordLoop();
+  const auto Plan = guardedWordLoopPlan();
+  LowIRRefinementLimits Tiny;
+  Tiny.Execution.Solver.Blast.MaxGates = 1;
+  const auto R = loopCheck(P, P, Plan, Tiny);
+  loopRefused(R, Status::BudgetExceeded);
+  EXPECT_NE(R.Diagnostic.find("solver budget"), std::string::npos);
+  Tiny = {};
+  Tiny.Execution.MaxInstructions = 1;
+  loopRefused(loopCheck(P, P, Plan, Tiny), Status::BudgetExceeded);
+}
+
+TEST(LowIRLoopRefinement, GuardedCutsBindDigestsAndSharedBudgets) {
+  const auto P = wordLoop();
+  auto Plan = guardedWordLoopPlan();
+  const auto Good = loopCheck(P, P, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  for (auto &C : Plan.Cutpoints)
+    C.OriginalGuards.push_back(C.OriginalGuards.front());
+  const auto Duplicate = loopCheck(P, P, Plan);
+  ASSERT_TRUE(Duplicate.proved()) << Duplicate.Diagnostic;
+  EXPECT_NE(Good.Certificate->InputDigest, Duplicate.Certificate->InputDigest);
+  Plan = guardedWordLoopPlan();
+  LowIRRefinementLimits Exact;
+  Exact.Execution.MaxOperations = Good.Operations;
+  Exact.Execution.MaxSolverQueries = Good.SolverQueries;
+  Exact.Execution.MaxObservations = Good.Observations;
+  Exact.MaxTerminalPairs = Good.TerminalPairs;
+  ASSERT_TRUE(loopCheck(P, P, Plan, Exact).proved());
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    auto Short = Exact;
+    if (Case == 0)
+      --Short.Execution.MaxOperations;
+    if (Case == 1)
+      --Short.Execution.MaxSolverQueries;
+    if (Case == 2)
+      --Short.Execution.MaxObservations;
+    if (Case == 3)
+      --Short.MaxTerminalPairs;
+    if (Case == 4)
+      Short.Execution.MaxPaths = 1;
+    loopRefused(loopCheck(P, P, Plan, Short), Status::BudgetExceeded);
+  }
+}
+
 TEST(LowIRLoopRefinement, ArbitraryWordCountWithDifferentBody) {
   const auto A = wordLoop(), B = wordLoop(1, true);
   const auto Plan = wordLoopPlan();

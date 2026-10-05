@@ -88,6 +88,14 @@ struct LowIRLoopAssignment {
   NdVar Value;
 };
 
+/// A current-state selector, not an entry assumption or invariant. Only
+/// Register, entry-root-relative Frame and SystemFlags locations are allowed.
+/// Mask is nonzero and fits the location; Value has no bits outside Mask.
+struct LowIRLoopGuard {
+  LowIRLoopLocation Location;
+  uint64_t Mask = 0, Value = 0;
+};
+
 /// A candidate state template, never an assumed invariant. Start with the real
 /// shared entry state (or the checked prefix selected below), then apply the
 /// assignments separately to each program.
@@ -98,7 +106,8 @@ struct LowIRLoopAssignment {
 /// a canonical byte Boolean. Rank is a nonempty unsigned lexicographic tuple.
 struct LowIRLoopCutpoint {
   /// LowIR block entries, or an original native instruction entry. Each side's
-  /// addresses must be unique. A segment stops before executing its next cut.
+  /// addresses are unique unless every cut sharing one has explicit guards.
+  /// A segment stops before executing its next selected cut.
   va_t OriginalAddress = 0;
   va_t CandidateAddress = 0;
   /// Use the first feasible paired entry-prefix arrival as the template base
@@ -125,6 +134,12 @@ struct LowIRLoopCutpoint {
   /// expanded induction domain must pass projection, coverage, transition,
   /// observation and strict rank checks. A feasible paired prefix is required.
   bool GeneralizeEntryPrefix = false;
+  /// Each side selects this cut when all masked equalities hold on its current
+  /// state. Empty lists select unconditionally. At a shared address, feasible
+  /// selections must be disjoint; unmatched states continue normal execution.
+  /// The reconstructed induction state must prove its own selector before a
+  /// segment starts. Complete entry/transition coverage is still mandatory.
+  std::vector<LowIRLoopGuard> OriginalGuards, CandidateGuards;
 };
 
 struct LowIRLoopRefinementPlan {
@@ -147,8 +162,9 @@ struct LowIRLoopCutpointPair {
 
 /// Combine two independently proposed self-relation plans into one untrusted
 /// original/candidate proposal. Pairings must cover each plan exactly once.
-/// Each input plan uses identical original/candidate addresses and assignments,
-/// Entry/Original/OriginalPrefix inputs, and nonoverlapping temporary
+/// Each input plan uses identical original/candidate addresses, assignments
+/// and guards. Addresses remain unique even when guarded. Inputs use
+/// Entry/Original/OriginalPrefix, with nonoverlapping temporary
 /// definitions with exact-width uses. Prefix policies must agree on
 /// UseEntryPrefix; GeneralizeEntryPrefix is enabled if either proposal requires
 /// it.
@@ -162,7 +178,7 @@ struct LowIRLoopCutpointPair {
 /// including input domain, state/frame equality, coverage, termination and
 /// observation checks. MaxMetadata bounds the total input cuts, bindings,
 /// expressions, assignments, ranking components and requested pairs before
-/// construction allocates copies.
+/// construction allocates copies, including both sides' guard entries.
 llvm::Expected<LowIRLoopRefinementPlan>
 pairLowIRLoopRefinementPlans(const LowIRLoopRefinementPlan &Original,
                              const LowIRLoopRefinementPlan &Candidate,
