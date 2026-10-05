@@ -28,21 +28,76 @@ def validate_observations(data: bytes, cases: list[str]) -> list[dict]:
     return [{"case": case, "passed": True} for case in cases]
 
 
-def validate_alignment_observations(data: bytes, cases: list[tuple[str, int]],
-                                    fields: list[str], initial: int, status: int) -> list[dict]:
+def oracle_values() -> dict[str, int]:
+    return {name: int(value.removesuffix("ULL"), 0) for name, value in re.findall(
+        r"NEVERD_EXCLUSIVE_ORACLE_VALUE\((\w+), (\w+)\)", DEFINITION.read_text(encoding="utf-8"))}
+
+
+def validate_alignment_observations(data: bytes, cases: list[tuple[str, int, int]],
+                                    fields: list[str], initial: int, updated: int,
+                                    status: int) -> list[dict]:
+    values = oracle_values()
     record = struct.Struct("<" + "Q" * len(fields))
-    required = [(index, name) for index, (name, width) in enumerate(cases) if width > 1]
+    required = [(index, name, width, count, offset, mode)
+                for index, (name, width, count) in enumerate(cases)
+                for offset in range(1, width * count)
+                for mode in range(values["ModeCount"])]
     if not fields or len(set(fields)) != len(fields) or len(data) != len(required) * record.size:
         raise ValueError("incomplete original ARM64 alignment observations")
     observations = []
-    for (index, name), words in zip(required, record.iter_unpack(data), strict=True):
+    original = struct.pack("<QQQQ", initial, updated, initial, updated)
+    maximum = values["MaxParameters"]
+    for expected, words in zip(required, record.iter_unpack(data), strict=True):
+        index, name, width, count, offset, mode = expected
         row = dict(zip(fields, words))
-        if (row["CaseIndex"] != index or not row["Code"] or not row["FaultPC"]
-                or row["FaultPC"] != row["ExceptionPC"] or row["FaultPC"] != row["ContextPC"]
-                or row["ContextLow"] != initial or row["ContextStatus"] != status
-                or row["ParameterCount"] > 15
-                or any(row[f"Parameter{i}"] for i in range(row["ParameterCount"], 15))):
-            raise ValueError("inconsistent original ARM64 alignment context")
+        if ((row["CaseIndex"], row["Offset"], row["Mode"]) != (index, offset, mode)
+                or row["Faults"] not in (0, 1) or row["FaultStage"] not in (0, 1)
+                or not row["LoadPC"] or not row["StorePC"]
+                or row["LoadPC"] == row["StorePC"]
+                or row["LoadPC"] % values["InstructionBytes"]
+                or row["StorePC"] % values["InstructionBytes"]
+                or row["ParameterCount"] > maximum
+                or any(row[f"Parameter{i}"] for i in range(row["ParameterCount"], maximum))):
+            raise ValueError("inconsistent original ARM64 alignment identity")
+        fault = bool(row["Faults"])
+        load_fault = fault and not row["FaultStage"]
+        store_fault = fault and bool(row["FaultStage"])
+        if fault:
+            pc = row["StorePC"] if store_fault else row["LoadPC"]
+            low, high = (updated, initial) if store_fault else (initial, updated)
+            if (not row["Code"] or row["FaultPC"] != pc or row["ExceptionPC"] != pc
+                    or row["ContextPC"] != pc or row["ContextLow"] != low
+                    or row["ContextHigh"] != high or row["ContextStatus"] != status
+                    or (load_fault and mode == values["StoreOnly"])
+                    or (store_fault and mode == values["LoadOnly"])):
+                raise ValueError("inconsistent original ARM64 fault context")
+        elif any(row[field] for field in ["Code", "Flags", "ParameterCount", "FaultPC",
+                                          "ExceptionPC", "ContextPC", "ContextLow",
+                                          "ContextHigh", "ContextStatus", "FaultStage"]):
+            raise ValueError("exception metadata without an original ARM64 fault")
+        loaded = [initial, updated]
+        if mode != values["StoreOnly"] and not load_fault:
+            begin = 0 if mode == values["AlignedLoadStore"] else offset
+            for part in range(count):
+                at = begin + part * width
+                loaded[part] = int.from_bytes(original[at:at + width], "little")
+        if [row["LoadedLow"], row["LoadedHigh"]] != loaded:
+            raise ValueError("incorrect original ARM64 exclusive load")
+        store = mode != values["LoadOnly"] and not load_fault
+        returned = [updated, initial] if store else loaded
+        result = row["ReturnStatus"]
+        if ([row["ReturnLow"], row["ReturnHigh"]] != returned
+                or (result != status if fault or not store else result not in (0, 1))):
+            raise ValueError("incorrect original ARM64 exclusive return state")
+        after = bytearray(original)
+        if store and not fault and result == 0:
+            source = updated.to_bytes(8, "little")[:width]
+            if count == 2:
+                source += initial.to_bytes(8, "little")[:width]
+            after[offset:offset + len(source)] = source
+        actual = struct.pack("<QQQQ", *(row[f"After{i}"] for i in range(values["MemoryWordCount"])))
+        if actual != after:
+            raise ValueError("incorrect original ARM64 exclusive store footprint")
         observations.append({"case": name, "record": row})
     return observations
 
@@ -59,8 +114,8 @@ def main() -> None:
     values = dict(re.findall(r"NEVERD_EXCLUSIVE_ORACLE_VALUE\((\w+), (\w+)\)", definition))
     apis = re.findall(r"NEVERD_EXCLUSIVE_ORACLE_API\((\w+)\)", definition)
     case_text = CASES.read_text(encoding="utf-8")
-    cases = re.findall(r"^NEVERD_EXCLUSIVE_CASE\((\w+),[^\n]+, (\d+), \d+\)$", case_text, re.M)
-    cases = [(name, int(width)) for name, width in cases]
+    cases = re.findall(r"^NEVERD_EXCLUSIVE_CASE\((\w+),[^\n]+, (\d+), (\d+)\)$", case_text, re.M)
+    cases = [(name, int(width), int(count)) for name, width, count in cases]
     seeds = dict(re.findall(r"NEVERD_EXCLUSIVE_VALUE\((\w+), (\w+)\)", case_text))
     fields = re.findall(r"NEVERD_EXCLUSIVE_ORACLE_FIELD\((\w+)\)", definition)
     sources = [DEFINITION, CASES, FIXTURES / "aarch64_exclusive.inc",
@@ -118,10 +173,10 @@ def main() -> None:
         if result.stderr:
             raise ValueError("unexpected native exclusive diagnostic output")
         size = len(cases) * 4
-        report["observations"] = validate_observations(result.stdout[:size], [name for name, _ in cases])
+        report["observations"] = validate_observations(result.stdout[:size], [name for name, _, _ in cases])
         report["alignment_observations"] = validate_alignment_observations(
             result.stdout[size:], cases, fields, int(seeds["Initial"].removesuffix("ULL"), 0),
-            int(seeds["Updated"].removesuffix("ULL"), 0))
+            int(seeds["Updated"].removesuffix("ULL"), 0), oracle_values()["StatusSeed"])
         report["native_observed"] = True
         report["status"] = "passed"
     finally:

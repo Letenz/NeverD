@@ -34,8 +34,7 @@ typedef struct {
 __declspec(dllimport) void *
 AddVectoredExceptionHandler(unsigned, unsigned (*)(NativePointers *));
 __declspec(dllimport) unsigned RemoveVectoredExceptionHandler(void *);
-static ExclusiveWord FaultSite, ResumeSite, Observation[FieldCount];
-static unsigned Faults;
+static ExclusiveWord LoadSite, StoreSite, ResumeSite, Observation[FieldCount];
 
 static void fail(unsigned Site, ExclusiveWord First, ExclusiveWord Second) {
   ExclusiveWord Values[] = {Site, First, Second};
@@ -46,17 +45,20 @@ static void fail(unsigned Site, ExclusiveWord First, ExclusiveWord Second) {
 
 static unsigned alignmentHandler(NativePointers *P) {
   ExclusiveWord *PC = (ExclusiveWord *)(P->Context + ContextPCOffset);
-  if (*PC != FaultSite || (ExclusiveWord)P->Record->Address != FaultSite ||
-      ++Faults != 1 || P->Record->Count > MaxParameters)
+  if ((*PC != LoadSite && *PC != StoreSite) ||
+      (ExclusiveWord)P->Record->Address != *PC ||
+      ++Observation[FieldFaults] != 1 || P->Record->Count > MaxParameters)
     fail(SiteHandler, *PC, P->Record->Code);
   Observation[FieldCode] = P->Record->Code;
   Observation[FieldFlags] = P->Record->Flags;
   Observation[FieldParameterCount] = P->Record->Count;
-  Observation[FieldFaultPC] = FaultSite;
+  Observation[FieldFaultPC] = *PC;
+  Observation[FieldFaultStage] = *PC == StoreSite;
   Observation[FieldExceptionPC] = (ExclusiveWord)P->Record->Address;
   Observation[FieldContextPC] = *PC;
   ExclusiveWord *GPR = (ExclusiveWord *)(P->Context + ContextGPROffset);
   Observation[FieldContextLow] = GPR[0];
+  Observation[FieldContextHigh] = GPR[3];
   Observation[FieldContextStatus] = GPR[2];
   for (unsigned I = 0; I != P->Record->Count; ++I)
     Observation[FieldParameter0 + I] = P->Record->Parameters[I];
@@ -72,32 +74,54 @@ static void emit(const void *Data, unsigned Size) {
 }
 
 #define NEVERD_EXCLUSIVE_CASE(Name, Load, Store, Width, Count)                 \
-  static void alignment##Name(unsigned Index) {                                \
-    if (Width == 1)                                                            \
-      return;                                                                  \
-    ExclusivePair Memory = {ExclusiveInitial, ExclusiveUpdated};               \
+  static void alignment##Name(unsigned Index, unsigned Offset,                 \
+                              unsigned Mode) {                                 \
+    ExclusiveWord Memory[MemoryWordCount]                                      \
+        __attribute__((aligned(16))) = {ExclusiveInitial, ExclusiveUpdated,    \
+                                        ExclusiveInitial, ExclusiveUpdated};   \
     for (unsigned I = 0; I != FieldCount; ++I)                                 \
       Observation[I] = 0;                                                      \
     Observation[FieldCaseIndex] = Index;                                       \
-    Faults = 0;                                                                \
-    ExclusiveWord Low, Status;                                                 \
-    __asm__ volatile("adr x4, 1f\n\tstr x4, [%[fault]]\n\t"                    \
-                     "adr x4, 2f\n\tstr x4, [%[resume]]\n\t"                   \
-                     "mov x1, %[address]\n\tmov x0, %[low_seed]\n\t"           \
-                     "mov x2, %[status_seed]\n\t1:\n\t.inst " #Load            \
-                     "\n\t2:\n\t"                                              \
-                     "mov %[low], x0\n\tmov %[status], x2\n\t"                 \
-                     : [low] "=&r"(Low), [status] "=&r"(Status)                \
-                     : [fault] "r"(&FaultSite), [resume] "r"(&ResumeSite),     \
-                       [address] "r"((unsigned char *)&Memory + 1),            \
-                       [low_seed] "r"(ExclusiveInitial),                       \
-                       [status_seed] "r"(ExclusiveUpdated)                     \
-                     : "x0", "x1", "x2", "x3", "x4", "memory");                \
+    Observation[FieldOffset] = Offset;                                         \
+    Observation[FieldMode] = Mode;                                             \
+    ExclusiveWord LoadedLow = ExclusiveInitial, LoadedHigh = ExclusiveUpdated; \
+    ExclusiveWord Low, High, Status;                                           \
+    __asm__ volatile(                                                          \
+        "adr x4, 1f\n\tstr x4, [%[load_site]]\n\t"                             \
+        "adr x4, 4f\n\tstr x4, [%[store_site]]\n\t"                            \
+        "adr x4, 5f\n\tstr x4, [%[resume]]\n\tclrex\n\t"                       \
+        "mov x0, %[initial]\n\tmov x3, %[updated]\n\tmov x2, "                 \
+        "%[status_seed]\n\t"                                                   \
+        "cbz %[load_enabled], 3f\n\tmov x1, %[load_address]\n\t"               \
+        "1:\n\t.inst " #Load "\n\t"                                            \
+        "mov %[loaded_low], x0\n\tmov %[loaded_high], x3\n\t"                  \
+        "3:\n\tcbz %[store_enabled], 5f\n\t"                                   \
+        "mov x0, %[updated]\n\tmov x3, %[initial]\n\tmov x1, "                 \
+        "%[store_address]\n\t"                                                 \
+        "4:\n\t.inst " #Store "\n\t"                                           \
+        "5:\n\tmov %[low], x0\n\tmov %[high], x3\n\tmov %[status], x2\n\t"     \
+        : [loaded_low] "+&r"(LoadedLow), [loaded_high] "+&r"(LoadedHigh),      \
+          [low] "=&r"(Low), [high] "=&r"(High), [status] "=&r"(Status)         \
+        : [load_site] "r"(&LoadSite), [store_site] "r"(&StoreSite),            \
+          [resume] "r"(&ResumeSite),                                           \
+          [load_address] "r"((unsigned char *)Memory +                         \
+                             (Mode == AlignedLoadStore ? 0 : Offset)),         \
+          [store_address] "r"((unsigned char *)Memory + Offset),               \
+          [load_enabled] "r"((ExclusiveWord)(Mode != StoreOnly)),              \
+          [store_enabled] "r"((ExclusiveWord)(Mode != LoadOnly)),              \
+          [initial] "r"(ExclusiveInitial), [updated] "r"(ExclusiveUpdated),    \
+          [status_seed] "r"((ExclusiveWord)StatusSeed)                         \
+        : "x0", "x1", "x2", "x3", "x4", "memory");                             \
+    Observation[FieldLoadPC] = LoadSite;                                       \
+    Observation[FieldStorePC] = StoreSite;                                     \
+    Observation[FieldLoadedLow] = LoadedLow;                                   \
+    Observation[FieldLoadedHigh] = LoadedHigh;                                 \
+    Observation[FieldReturnLow] = Low;                                         \
+    Observation[FieldReturnHigh] = High;                                       \
+    Observation[FieldReturnStatus] = Status;                                   \
+    for (unsigned I = 0; I != MemoryWordCount; ++I)                            \
+      Observation[FieldAfter0 + I] = Memory[I];                                \
     emit(Observation, sizeof(Observation));                                    \
-    if (Faults != 1)                                                           \
-      fail(SiteNoFault, Faults, Low);                                          \
-    if (Low != ExclusiveInitial || Status != ExclusiveUpdated)                 \
-      fail(SiteResult, Low, Status);                                           \
   }
 #include "../AArch64ExclusiveCases.def"
 #undef NEVERD_EXCLUSIVE_CASE
@@ -118,7 +142,10 @@ void entry(void) {
     fail(SiteRegistration, 0, 0);
   unsigned Index = 0;
 #define NEVERD_EXCLUSIVE_CASE(Name, Load, Store, Width, Count)                 \
-  alignment##Name(Index++);
+  for (unsigned Offset = 1; Offset < Width * Count; ++Offset)                  \
+    for (unsigned Mode = 0; Mode < ModeCount; ++Mode)                          \
+      alignment##Name(Index, Offset, Mode);                                    \
+  ++Index;
 #include "../AArch64ExclusiveCases.def"
 #undef NEVERD_EXCLUSIVE_CASE
   if (!RemoveVectoredExceptionHandler(Handler))
