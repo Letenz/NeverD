@@ -1554,6 +1554,243 @@ TEST(LLVMCValues, ConstantsWiderThanTheCarrierAreRejected) {
                std::runtime_error);
 }
 
+TEST(LLVMCValues, GlobalByteViewsUseObjectAddresses) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@global_bits = global i64 0
+define i64 @global_roundtrip(i64 %value) {
+entry:
+  store i64 %value, ptr @global_bits
+  store i16 43981, ptr @global_bits, align 1
+  %after = load i64, ptr @global_bits
+  ret i64 %after
+}
+define i16 @global_low() {
+entry:
+  %low = load i16, ptr @global_bits, align 1
+  ret i16 %low
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module);
+  for (bool Unaligned : {false, true}) {
+    SCOPED_TRACE(Unaligned);
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    Options.UseUnalignedPointers = Unaligned;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+    Source += R"(
+#include <string.h>
+int main(void) {
+  const uint64_t inputs[] = {0, UINT64_MAX, UINT64_C(0x1122334455667788)};
+  for (unsigned i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i) {
+    uint64_t expected = inputs[i];
+    uint16_t low = 0xabcd;
+    memcpy(&expected, &low, sizeof(low));
+    if (global_roundtrip(inputs[i]) != expected || global_low() != low)
+      return 1;
+  }
+  return 0;
+}
+)";
+    for (const char *Optimization : {"-O0", "-O2"})
+      compileAndRun(Source, Optimization, {}, true);
+  }
+}
+
+TEST(LLVMCValues, ReloadedFieldGuardSurvivesAnInterveningCall) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+declare i32 @IsKind(ptr)
+define i32 @reload_guard(i64 %self) {
+entry:
+  %home = alloca i64
+  %first = alloca i64
+  %second = alloca i64
+  store i64 %self, ptr %home
+  %addr1 = add i64 %self, 8
+  %ptr1 = inttoptr i64 %addr1 to ptr
+  %value1 = load i64, ptr %ptr1
+  store i64 %value1, ptr %first
+  %snapshot1 = load i64, ptr %first
+  %zero1 = icmp eq i64 %snapshot1, 0
+  br i1 %zero1, label %done, label %check
+check:
+  %old = load i64, ptr %first
+  %oldptr = inttoptr i64 %old to ptr
+  %kind = call i32 @IsKind(ptr %oldptr)
+  %is_kind = icmp ne i32 %kind, 0
+  br i1 %is_kind, label %retest, label %done
+retest:
+  %base = load i64, ptr %home
+  %addr2 = add i64 %base, 8
+  %ptr2 = inttoptr i64 %addr2 to ptr
+  %value2 = load i64, ptr %ptr2
+  store i64 %value2, ptr %second
+  %snapshot2 = load i64, ptr %second
+  %zero2 = icmp eq i64 %snapshot2, 0
+  br i1 %zero2, label %done, label %again
+again:
+  %new = load i64, ptr %second
+  %newptr = inttoptr i64 %new to ptr
+  %kind2 = call i32 @IsKind(ptr %newptr)
+  ret i32 %kind2
+done:
+  ret i32 0
+}
+define i32 @reload_guard_call_before_test(i64 %self) {
+entry:
+  %address = add i64 %self, 8
+  %pointer = inttoptr i64 %address to ptr
+  %first = load i64, ptr %pointer
+  %oldptr = inttoptr i64 %first to ptr
+  call i32 @IsKind(ptr %oldptr)
+  %nonzero = icmp ne i64 %first, 0
+  br i1 %nonzero, label %retest, label %done
+retest:
+  %second = load i64, ptr %pointer
+  %nonzero2 = icmp ne i64 %second, 0
+  br i1 %nonzero2, label %again, label %done
+again:
+  %newptr = inttoptr i64 %second to ptr
+  %kind = call i32 @IsKind(ptr %newptr)
+  ret i32 %kind
+done:
+  ret i32 0
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  Source += R"(
+static uint64_t object[2];
+static unsigned calls;
+uint32_t IsKind(void *p) {
+  ++calls;
+  object[1] = 0;
+  return p != 0 ? 1 : 17;
+}
+int main(void) {
+  object[1] = 0;
+  if (reload_guard((uintptr_t)object) || calls) return 1;
+  object[1] = (uintptr_t)object;
+  if (reload_guard((uintptr_t)object) || calls != 1) return 2;
+  object[1] = (uintptr_t)object;
+  calls = 0;
+  if (reload_guard_call_before_test((uintptr_t)object) || calls != 1) return 3;
+  return 0;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, SpecializedCallTailUsesTheIncomingObjectOnEachEdge) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+declare void @work_a()
+declare void @work_b()
+declare void @destroy_one(ptr)
+declare void @release_name()
+define void @cleanup_tail(i1 %flag) {
+entry:
+  %slot = alloca ptr
+  %object_a = alloca i64
+  %object_b = alloca i64
+  store i64 11, ptr %object_a
+  store i64 22, ptr %object_b
+  br i1 %flag, label %arm_a, label %arm_b
+arm_a:
+  call void @work_a()
+  store ptr %object_a, ptr %slot
+  br label %tail
+arm_b:
+  call void @work_b()
+  store ptr %object_b, ptr %slot
+  br label %tail
+tail:
+  %selected = load ptr, ptr %slot
+  call void @destroy_one(ptr %selected)
+  br label %epi
+epi:
+  call void @release_name()
+  ret void
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, {}));
+  Source += R"(
+#include <string.h>
+static unsigned events;
+static uint64_t selected;
+void work_a(void) { events = events * 10 + 1; }
+void work_b(void) { events = events * 10 + 2; }
+void destroy_one(void *p) {
+  memcpy(&selected, p, sizeof(selected));
+  events = events * 10 + 3;
+}
+void release_name(void) { events = events * 10 + 4; }
+int main(void) {
+  cleanup_tail(0);
+  if (events != 234 || selected != 22) return 1;
+  events = 0;
+  cleanup_tail(1);
+  if (events != 134 || selected != 11) return 2;
+  return 0;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, ConstantHomesStayInitializedAcrossRepeatedDiamonds) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("constant-home-diamonds", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "constant_diamonds", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Home = B.CreateAlloca(Word);
+  B.CreateStore(B.getInt64(7), Home);
+  for (unsigned I = 0; I < 20; ++I) {
+    auto *Next = B.CreateAlloca(Word);
+    auto *Left = llvm::BasicBlock::Create(Context, "left", Function);
+    auto *Join = llvm::BasicBlock::Create(Context, "join", Function);
+    auto *Right = llvm::BasicBlock::Create(Context, "right", Function);
+    B.CreateCondBr(B.CreateICmpNE(Function->getArg(0), B.getInt64(0)), Left,
+                   Right);
+    for (auto *Arm : {Left, Right}) {
+      B.SetInsertPoint(Arm);
+      B.CreateStore(B.CreateLoad(Word, Home), Next);
+      B.CreateBr(Join);
+    }
+    B.SetInsertPoint(Join);
+    Home = Next;
+  }
+  B.CreateRet(B.CreateLoad(Word, Home));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, OS, {}));
+  Source += "\nint main(void) { return constant_diamonds(0) != 7 || "
+            "constant_diamonds(1) != 7; }\n";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}
+
 } // namespace
 
 TEST(LLVMCValues, ImageStringsRejectOverlappingRelocationStorage) {

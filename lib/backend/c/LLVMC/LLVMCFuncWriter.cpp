@@ -1250,12 +1250,19 @@ void LLVMCWriter::writeEHWrapClose(const EHWrapClause &Clause, int Indent) {
     emitIndent(Indent);
     OS << "}\n";
     break;
-  case EHWrapClause::Kind::SEHFinally:
+  case EHWrapClause::Kind::SEHFinally: {
     OS << "} __finally {\n";
+    // Unwinding to the caller is implicit at the end of a structured finally.
+    // An explicit return here would suppress unwinding and skip continuation.
+    const bool AlreadyOmitted = OmitCleanupRetTo.count(nullptr);
+    OmitCleanupRetTo.insert(nullptr);
     WriteBody();
+    if (!AlreadyOmitted)
+      OmitCleanupRetTo.erase(nullptr);
     emitIndent(Indent);
     OS << "}\n";
     break;
+  }
   case EHWrapClause::Kind::CxxCatch:
     OS << "} catch (" << Clause.Clause << ") {\n";
     WriteBody();
@@ -2168,6 +2175,20 @@ void LLVMCWriter::collectOmittedInlinedImmediates(llvm::Function &Fn) {
         }
         if (!AllImm || !HasStore || !Common)
           continue;
+        // All stores agreeing does not prove that every read is initialized.
+        // Omit the storage only when the reaching-definition index also
+        // proves the same immediate at each load's original program point.
+        for (const llvm::User *U : AI->users()) {
+          if (const auto *L = llvm::dyn_cast<llvm::LoadInst>(U)) {
+            auto Imm = foldImmediate(L);
+            if (!Imm || *Imm != *Common) {
+              AllImm = false;
+              break;
+            }
+          }
+        }
+        if (!AllImm)
+          continue;
         OmittedAllocaImmediates[AI] = *Common;
         AllocaImmediates[AI] = *Common;
         OmittedInlined.insert(AI);
@@ -2378,6 +2399,14 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       if (!Peeled || Peeled->first != SyntheticFrame)
         continue;
       const uint64_t Offset = Peeled->second;
+      // Debug types describe views, not the extent of the machine storage.
+      // A wider access cannot use a separately declared narrow local: even a
+      // memcpy would overrun it. Keep one byte backing allocation for the frame
+      // so calls, overlapping views and wide copies still share all bytes.
+      if (auto Var = debugFrameVariable(static_cast<int64_t>(Offset) -
+                                        static_cast<int64_t>(FrameBaseOffset));
+          Var && Var->Type && Var->Type->Size && Var->Type->Size < Size)
+        Analysis.RawFrameAllocas.insert(SyntheticFrame);
       if (Offset > std::numeric_limits<uint64_t>::max() - Size) {
         OverlappingFrameAccessOffsets.insert(Offset);
         continue;
@@ -7935,9 +7964,26 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
       }
     }
     if (Call && Slot) {
+      // phiFedCallTail proves that each direct predecessor writes this exact
+      // home. Specialization must use that edge's last store, not a mutable
+      // printer cache (nor the unspecialized load in the shared tail).
+      const llvm::Value *Incoming = nullptr;
+      for (const auto &I : *CurFrom)
+        if (const auto *S = llvm::dyn_cast<llvm::StoreInst>(&I);
+            S && asAllocaPointer(S->getPointerOperand()) == Slot)
+          Incoming = S->getValueOperand();
+      assert(Incoming && "proven call tail has no edge store");
+      const auto SavedSelects = SelectUseText;
+      for (const auto &I : *Tail)
+        if (const auto *L = llvm::dyn_cast<llvm::LoadInst>(&I);
+            L && asAllocaPointer(L->getPointerOperand()) == Slot)
+          SelectUseText[L] = valueStr(Incoming);
+      InlineCache.clear();
       PhiTailSlot = Slot;
       writeInstruction(const_cast<llvm::CallInst &>(*Call), Indent);
       PhiTailSlot = nullptr;
+      SelectUseText = SavedSelects;
+      InlineCache.clear();
       FoldedLocalNames.push_back(getName(Slot));
       InlinedFallthroughBlocks.insert(Tail);
       ReferencedBlocks.erase(Tail);
