@@ -124,6 +124,7 @@ darwinMatrixSourceFrameEffects(const BinaryImage &Image,
                                const SourceCallTypeHint &Binding) {
   const bool Rect = Binding.TargetName == "CGRectApplyAffineTransform";
   const bool Affine = Binding.TargetName == "CGAffineTransformMakeRotation" ||
+                      Binding.TargetName == "CGAffineTransformMakeScale" ||
                       Binding.TargetName == "CGAffineTransformConcat" || Rect;
   const bool Matrix = Binding.TargetName == "CATransform3DMakeTranslation" ||
                       Binding.TargetName == "CATransform3DScale";
