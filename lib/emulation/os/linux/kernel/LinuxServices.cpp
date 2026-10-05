@@ -55,6 +55,8 @@ llvm::Expected<std::optional<uint64_t>>
 LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
                       ThreadContext *Thread) {
   switch (Kind) {
+  case ServiceKind::SignalAction:
+    return Signals.handle(CPU, Layout, Event, Result);
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
   case ServiceKind::Access:

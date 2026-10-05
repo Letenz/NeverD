@@ -9,6 +9,7 @@
 #include "../os/darwin/kernel/DarwinFiles.h"
 #include "../os/darwin/process/DarwinProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
+#include "../os/linux/kernel/LinuxSignals.h"
 #include "../os/linux/kernel/LinuxTime.h"
 #include "../os/linux/process/LinuxProcess.h"
 #include "../os/windows/process/WindowsProcess.h"
@@ -58,6 +59,13 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
         Profile != ProcessProfile::IOSSimulatorMachO64)
       return diagnostic::error(process_report::DarwinFilesProfile);
     if (auto E = darwin_model::validateFileOptions(*Options.DarwinFiles))
+      return std::move(E);
+  }
+  if (Options.LinuxSignals) {
+    if (Profile != ProcessProfile::LinuxELF64 &&
+        Profile != ProcessProfile::AndroidNativeAArch64)
+      return diagnostic::error(process_report::LinuxSignalsProfile);
+    if (auto E = linux_model::validateSignalOptions(*Options.LinuxSignals))
       return std::move(E);
   }
   if (Options.LinuxFiles) {

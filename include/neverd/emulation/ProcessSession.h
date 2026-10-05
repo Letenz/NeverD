@@ -12,6 +12,7 @@
 #include "neverd/emulation/ExecutionBudget.h"
 #include "neverd/emulation/ExecutionExit.h"
 #include "neverd/emulation/LinuxFileOptions.h"
+#include "neverd/emulation/LinuxSignalOptions.h"
 #include "neverd/emulation/LinuxTimeOptions.h"
 #include "neverd/emulation/WindowsProcessOptions.h"
 
@@ -54,6 +55,7 @@ struct ProcessOptions {
   std::optional<WindowsProcessOptions> Windows;
   std::optional<LinuxTimeOptions> LinuxTime;
   std::optional<LinuxFileOptions> LinuxFiles;
+  std::optional<LinuxSignalOptions> LinuxSignals;
   std::optional<DarwinFileOptions> DarwinFiles;
 };
 

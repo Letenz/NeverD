@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: e6d2ea5c79823e0881de4fbdb33b27672ef1858ba61ddd1ad54e1477b2e20d85 -->
+<!-- i18n-source: 651fc905db4bb2d62a1036bb6495b60cad23dde9b5e655b4b4ca408294a3d83c -->
 
 [← فهرس الوثائق](README.md)
 
@@ -102,7 +102,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 [XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
 
-تحقق التعداد (2026-10-05، Release): 498 حالة Darwin، نجحت 246 وتجاوزت 252 بسبب غياب الخلفية، بلا إخفاق؛ نُفذت جميع حالات ARM64 HVF المطلوبة 63/63. نجحت 11 برنامج macOS أصلياً و38 فحص C/CLI/تقارير دون تجاوز، وخمس تركيبات Python بكل منها ثمانية سيناريوهات ملفات، و66 اختبار أدوات. تتداخل الأعداد. الأدلة: `build-hvf-arm64/darwin-dirents-verified-evidence/`. تبقى Intel HVF Actions معلقة؛ النواقل الأصلية الأخرى وiOS المادي غير متحقق منها.
+تحقق التعداد (2026-10-05، Release): 498 حالة Darwin، نجحت 246 وتجاوزت 252 بسبب غياب الخلفية، بلا إخفاق؛ نُفذت جميع حالات ARM64 HVF المطلوبة 63/63. نجحت 11 برنامج macOS أصلياً و40 فحص C/CLI/تقارير دون تجاوز، وخمس تركيبات Python بكل منها ثمانية سيناريوهات ملفات، و66 اختبار أدوات. تتداخل الأعداد. الأدلة: `build-hvf-arm64/darwin-dirents-merged-evidence/`. تبقى Intel HVF Actions معلقة؛ النواقل الأصلية الأخرى وiOS المادي غير متحقق منها.
 
 
 ## تعيينات الملفات الخاصة

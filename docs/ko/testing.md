@@ -1114,6 +1114,8 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 
 `RAMTransaction`은 물리 실행 임대 아래에서 명령이 선언한 쓰기 범위의 물리적 합집합만 보관합니다. 결과 관찰자 호출 전에 원래 RAM을 복원하며 취소, 전송 오류, 관찰자 예외는 부분 RAM이나 레지스터를 공개하지 않습니다. CPU 예외는 RAM 복원 후에도 아키텍처 예외 상태를 유지합니다. ARM64 단일·쌍 저장도 같은 계층을 사용합니다. x64는 8/16/32/64비트 `XCHG`, `XADD`, `CMPXCHG`를 실행하며 LOCK 또는 암시적 잠금 형식에는 자연 정렬을 요구합니다. `NeverDRAMTransactionTests`는 호스트 CPU와의 결과 비교, 복원, 별칭, 권한을 검증하며 사용할 수 없는 플랫폼은 명시적으로 건너뜁니다. 장치와 병렬 SMP는 제외되며 CPU 스냅샷은 이미 확정된 RAM을 복원하지 않습니다.
 
+`CMPXCHG8B`와 `CMPXCHG16B`는 KVM, WHP 및 checked Unicorn의 드라이버·사용자 프로필에서 원래 명령을 실행합니다. 비교 성공 여부와 관계없이 읽기와 쓰기 권한이 모두 필요하며, 폴트는 쓰기 접근으로 분류합니다. `CMPXCHG16B`는 메모리 접근 전에 16바이트 정렬을 검사하고 위반 시 `#GP(0)`을 보고합니다. 두 결과 콜백은 하나의 RAM 트랜잭션에 속하므로 어느 쪽에서든 중지하거나 예외가 발생하면 레지스터와 RAM 변경을 공개하지 않습니다. 잠금 없는 `CMPXCHG8B`는 페이지 경계를 넘을 수 있지만 잠금 연산은 자연 정렬이 필요합니다. `X64WideAtomicTests.cpp`는 호스트 원본 명령 결과와 네이티브 폴트, 별칭, 접두사, 주소 계산, 복구 후 재시도와 취소를 검증합니다. 자체 Windows 드라이버와 ring3 PE 픽스처가 두 폭을 실행하며 WDK 픽스처는 `_InterlockedCompareExchange128`도 실행합니다. CPU 모델은 `CMPXCHG16B`를 지원해야 합니다.
+
 ## 전체 x87 상태
 
 `NeverDEmulationArch`는 ISA, 페이지 테이블과 FP 상태 배치를 소유하며 네이티브 및 Unicorn 전송이 공유합니다. x64 컨텍스트는 x87 제어, 상태, TOP, 물리 태그, 연산 코드, 명령/데이터 포인터와 8개의 80비트 레지스터를 보존합니다. `FP0`–`FP7`은 `RegisterValue`를 사용하고 스칼라 접근은 잘림을 거부합니다. `FPTag`는 물리 비어 있지 않음 비트맵입니다. `NeverDX64FPTests`는 모든 TOP, 정확한 연산의 호스트 FXSAVE/FXRSTOR 비교와 복원을 검사합니다. checked x87 명령 또는 모든 반올림 의미를 입증하지 않으며 없는 네이티브 호스트는 명시적으로 건너뜁니다.
@@ -1199,7 +1201,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4569개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 4810개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4569 CPU + 224 WHP + 17 SEH = 4810`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4569개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 4810개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4825 CPU + 224 WHP + 17 SEH = 5066`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1399,3 +1401,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 `MatrixFrameEffectsRequireExactCurrentContract`는 CGRect 소비 함수와 거부해야 하는 변경 22개도 검사합니다. `ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner`는 회전 → CGRect 대여 → 회전 재초기화 → CoreImage 게시를 검증합니다. `CGRectBorrowRejectsExpiredInputsAndChangedABI`는 초기화, 범위, 가져오기, 전달 위치에 대한 여덟 변경을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 전체 순서를 O0/O2에서 1000개 사례로 원본 명령어 및 네이티브 SDK와 실행하여 저장된 각도, 결과의 모든 48바이트, 객체 및 경계 보호값을 비교합니다.
 
 `FrameMetadataAccessorUsesCurrentCatalogAndABI`는 공유 메타데이터 선언, 두 응답 전달 위치 및 현재 프레임 witness 게시를 확인한다. `FrameMetadataAccessorRejectsChangedImportAndBytes`는 약한 가져오기, provider/이름/addend 변경, 비공개 주소 요청, 부분 spill, 잘못된 재로드 및 원래 호출 변경을 거부한다. 원래 ARM64와 생성 C의 witness oracle은 실제 Foundation URL 메타데이터 접근자도 호출한다. 두 분기 모두 O0/O2에서 각각 2048개 사례를 실행하여 동적 witness 선택, 전체 출력 바이트, 입력 보존, 호출 횟수 및 보호 값을 검사한다. 동적 스택 할당이나 witness 메모리 효과를 증명하지 않는다.
+
+구조적으로 상수인 네이티브 대상은 기존 실행 가능성 검사 스케줄러를 직접 사용합니다. 기호 단일 대상은 완전한 열거 뒤에만 입력 술어를 유지합니다. 회귀 테스트는 직선 실행과 같은 질의 예산으로 상수 전송 128회를, 전송당 열거 질의 2회로 계산된 전송 32회를 검증하고, 제약 없는 주소 상위 비트와 분기 영역을 유지합니다. 전체 상태 결과 변경, 정렬 제약 누락, 대상 한도 0, 질의나 명령 예산 부족은 거부합니다. 여러 대상과 불완전한 열거에 대한 기존 거부 검사도 계속 필요합니다.
+
+네이티브 분기는 다른 간선을 배제하는 UNSAT 증명이 완료된 뒤에만 남은 간선에서 입력 영역을 유지합니다. 테스트는 양쪽 방향 각각 32회의 조건부 전송을 솔버 게이트 512개 이내에서 검증하고, 정확한 질의 예산, 1회 부족한 예산, 게이트 소진을 확인합니다. 정렬 변경이나 누락, 비교 반전, 종료 상태 변경은 거부해야 하며, 임의의 미정의 제어와 두 간선이 모두 실행 가능한 경우의 기존 테스트도 계속 필요합니다.

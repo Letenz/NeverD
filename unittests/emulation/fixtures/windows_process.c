@@ -4,6 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 // No Windows headers, CRT or redistributed system binaries are required.
+#if defined(__x86_64__) || defined(_M_X64)
+#include "windows_wide_atomic.inc"
+#endif
 typedef unsigned int DWORD;
 typedef unsigned long long ULONG_PTR;
 typedef unsigned short WCHAR;
@@ -176,6 +179,9 @@ __declspec(allocate(".rdata")) const struct {
 } _tls_used = {&TLSStart, &TLSEnd, &_tls_index, Callbacks, 0, 0};
 
 DWORD entry(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+  require(checkWideAtomic());
+#endif
   const char Mode = mode();
   require(Phase == (Mode == 'm' ? 6 : 2) && ThreadValue == TLSSeed + 2 &&
           ThreadZero == 1);

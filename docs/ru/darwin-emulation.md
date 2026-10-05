@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: e6d2ea5c79823e0881de4fbdb33b27672ef1858ba61ddd1ad54e1477b2e20d85 -->
+<!-- i18n-source: 651fc905db4bb2d62a1036bb6495b60cad23dde9b5e655b4b4ca408294a3d83c -->
 
 [← Оглавление документации](README.md)
 
@@ -102,7 +102,7 @@ read/pread каталога даёт EISDIR даже при нулевой дл�
 
 [XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
 
-Проверка перечисления (2026-10-05, Release): 498 случаев Darwin, 246 прошли, 252 пропущены из-за недоступных бэкендов, ошибок нет; выполнены все 63/63 обязательных ARM64 HVF. Прошли 11 нативных программ macOS, 38 проверок C/CLI/отчётов без пропусков, пять гостевых комбинаций Python с восемью файловыми сценариями каждая и 66 тестов инструментов. Числа пересекаются. Доказательства: `build-hvf-arm64/darwin-dirents-verified-evidence/`. Intel HVF Actions остаётся приостановлен; другие нативные транспорты и физический iOS не подтверждены.
+Проверка перечисления (2026-10-05, Release): 498 случаев Darwin, 246 прошли, 252 пропущены из-за недоступных бэкендов, ошибок нет; выполнены все 63/63 обязательных ARM64 HVF. Прошли 11 нативных программ macOS, 40 проверок C/CLI/отчётов без пропусков, пять гостевых комбинаций Python с восемью файловыми сценариями каждая и 66 тестов инструментов. Числа пересекаются. Доказательства: `build-hvf-arm64/darwin-dirents-merged-evidence/`. Intel HVF Actions остаётся приостановлен; другие нативные транспорты и физический iOS не подтверждены.
 
 
 ## Приватные файловые отображения

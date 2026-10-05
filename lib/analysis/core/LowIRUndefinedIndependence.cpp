@@ -1130,11 +1130,17 @@ class Checker {
   void nativeTargets(Path P, SymRef Value, SymRef Predicate) {
     if (!Value || Ctx.width(Value) != 64)
       fail(Status::Invalid, "native control target must be a 64-bit address");
+    const auto Target = ordinary(Value);
+    // A structural constant has no other possible destination. Scheduling
+    // still proves feasibility and audits the actual mapped instruction.
+    if (const auto Constant = Ctx.asConst(Target)) {
+      scheduleNative(std::move(P), Constant->getZExtValue(), Predicate);
+      return;
+    }
     uint64_t Queries = Result.SolverQueries;
     const auto Values = detail::enumerateFiniteValues(
-        Ctx, Predicate, {ordinary(Value)}, Limits.MaxIndirectTargets,
-        Limits.Solver, Limits.MaxSolverQueries, Limits.MaxSymbolicNodes,
-        Queries);
+        Ctx, Predicate, {Target}, Limits.MaxIndirectTargets, Limits.Solver,
+        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Values.Status != detail::FiniteValueStatus::Complete)
       fail(Values.Status == detail::FiniteValueStatus::Invalid
@@ -1144,9 +1150,16 @@ class Checker {
     for (const auto &Tuple : Values.Tuples) {
       if (Tuple.size() != 1)
         fail(Status::Invalid, "invalid native target tuple");
-      scheduleNative(P, Tuple[0],
-                     Ctx.mkAnd(Predicate, Ctx.mkEq(ordinary(Value),
-                                                   Ctx.mkConst(64, Tuple[0]))));
+      // Complete singleton enumeration already proves this equality over the
+      // entire incoming domain. Retaining it would make later feasibility and
+      // terminal coverage queries prove the same fact again. Multiple targets
+      // still need their separate guards, and Predicate retains branch guards.
+      const auto TargetPredicate =
+          Values.Tuples.size() == 1
+              ? Predicate
+              : Ctx.mkAnd(Predicate,
+                          Ctx.mkEq(Target, Ctx.mkConst(64, Tuple[0])));
+      scheduleNative(P, Tuple[0], TargetPredicate);
     }
   }
 
@@ -1440,12 +1453,23 @@ class Checker {
             equal(P.Predicate, Left.branchCondition(), Right.branchCondition(),
                   "branch predicate");
             const auto Condition = ordinary(Left.branchCondition());
-            nativeTargets(P, Left.branchTarget(),
-                          Ctx.mkAnd(P.Predicate, Condition));
-            const auto Other = Ctx.mkAnd(P.Predicate, Ctx.mkNot(Condition));
-            scheduleNative(
-                std::move(P),
-                NativeInstructions.at(B.StartAddr).Fallthrough.Address, Other);
+            const auto Incoming = P.Predicate;
+            const auto Taken = Ctx.mkAnd(Incoming, Condition);
+            const auto Other = Ctx.mkAnd(Incoming, Ctx.mkNot(Condition));
+            const auto Fallthrough =
+                NativeInstructions.at(B.StartAddr).Fallthrough.Address;
+            // A completed UNSAT proof for one edge proves that its complement
+            // covers the incoming domain. Keep that domain without making
+            // later queries reprove this branch fact. Unknown still refuses,
+            // and two feasible edges retain their distinct predicates.
+            if (query(Taken) == solver::SatResult::Unsat) {
+              scheduleNative(std::move(P), Fallthrough, Incoming);
+            } else if (query(Other) == solver::SatResult::Unsat) {
+              nativeTargets(std::move(P), Left.branchTarget(), Incoming);
+            } else {
+              nativeTargets(P, Left.branchTarget(), Taken);
+              scheduleNative(std::move(P), Fallthrough, Other);
+            }
           } else {
             const auto Predicate = P.Predicate;
             nativeTargets(std::move(P), Left.branchTarget(), Predicate);

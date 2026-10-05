@@ -8,6 +8,7 @@
 #include "ProcessAndroidJSON.h"
 #include "ProcessDarwinFilesJSON.h"
 #include "ProcessLinuxFilesJSON.h"
+#include "ProcessLinuxSignalsJSON.h"
 #include "ProcessLinuxTimeJSON.h"
 #include "ProcessWindowsJSON.h"
 
@@ -64,6 +65,13 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
       if (!Files)
         return Files.takeError();
       Options.DarwinFiles = std::move(*Files);
+      continue;
+    }
+    if (Name == field::LinuxSignals) {
+      auto Signals = linuxSignalOptionsFromJSON(V);
+      if (!Signals)
+        return Signals.takeError();
+      Options.LinuxSignals = std::move(*Signals);
       continue;
     }
     if (Name == field::LinuxFiles) {

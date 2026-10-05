@@ -144,6 +144,7 @@ private:
     return BionicValue(Value);
   }
   BionicResult unsupportedLinking(llvm::StringRef Detail);
+  BionicResult signalAction(const NativeCallEvent &Call);
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
   BionicResult openLibrary(NativeCallEvent &Call);

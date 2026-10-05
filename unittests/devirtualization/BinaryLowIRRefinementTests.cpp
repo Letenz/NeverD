@@ -69,6 +69,125 @@ void refused(const BinaryLowIRRefinementResult &Result, Status S) {
   EXPECT_FALSE(Result.Proof.Certificate);
 }
 
+Program guardedNativeChain(unsigned Count, bool Taken) {
+  Program P({});
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {128, 8};
+  auto &Code = P.Image.Segments.front();
+  const auto Immediate = [&](uint32_t Value) {
+    for (unsigned I = 0; I != 4; ++I)
+      Code.Data.push_back(static_cast<uint8_t>(Value >> (8 * I)));
+  };
+  for (unsigned I = 0; I != Count; ++I) {
+    // LEA RAX,[RSP+bias]; AND EAX,127; CMP EAX,entry-residue+bias.
+    const uint8_t Bias = I + 1, Expected = (8 + Bias) & 127;
+    Code.Data.insert(Code.Data.end(), {0x48, 0x8d, 0x44, 0x24, Bias, 0x83, 0xe0,
+                                       127, 0x83, 0xf8, Expected, 0x0f});
+    Code.Data.push_back(Taken ? 0x84 : 0x85);
+    if (Taken) {
+      Immediate(1); // JE next skips a trapping fallthrough.
+      Code.Data.push_back(0xcc);
+    } else {
+      // JNE trap, after the final MOV EAX,7; RET.
+      Immediate(Count * 17 + 6 - (Code.Data.size() + 4));
+    }
+  }
+  Code.Data.insert(Code.Data.end(), {0xb8, 7, 0, 0, 0, 0xc3, 0xcc});
+  Code.Size = Code.FileSz = Code.Data.size();
+  return P;
+}
+
+TEST(BinaryLowIRRefinement, ProvedNativeBranchChoiceKeepsTheIncomingDomain) {
+  for (bool Taken : {false, true}) {
+    SCOPED_TRACE(Taken);
+    auto P = guardedNativeChain(32, Taken);
+    auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    LowIRRefinementLimits Limits;
+    Limits.Execution.Solver.Blast.MaxGates = 512;
+    const auto Good = P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_EQ(Good.Proof.OriginalPaths, 1U);
+    EXPECT_EQ(Good.Proof.CandidatePaths, 1U);
+    EXPECT_EQ(Good.Proof.TerminalPairs, 1U);
+    ASSERT_GT(Good.Proof.SolverQueries, 0U);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+    ASSERT_TRUE(
+        P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());
+    --Limits.Execution.MaxSolverQueries;
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::BudgetExceeded);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+    Limits.Execution.Solver.Blast.MaxGates = 1;
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::BudgetExceeded);
+    Limits.Execution.Solver.Blast.MaxGates = 512;
+
+    P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {128, 9};
+    refused(P.check(Recovery.Residual), Status::ContractViolation);
+    P.Options.EntryFrameAlignment.reset();
+    P.Contract.Frame->EntryAlignment.reset();
+    refused(P.check(Recovery.Residual), Status::ContractViolation);
+    P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {128, 8};
+    P.Image.Segments.front().Data[10] ^= 1;
+    refused(P.check(Recovery.Residual), Status::ContractViolation);
+    P.Image.Segments.front().Data[10] ^= 1;
+
+    bool Changed = false;
+    for (auto &B : Recovery.Residual.Blocks)
+      for (auto &O : B.Ops)
+        if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+            O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+            O.NumInputs == 1 && O.Inputs[0] == NdVar::scalar(7, 4)) {
+          O.Inputs[0].Offset = 9;
+          Changed = true;
+        }
+    ASSERT_TRUE(Changed);
+    // A different terminal observation must still be checked after coverage.
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::Different);
+  }
+}
+
+TEST(BinaryLowIRRefinement, SingletonTargetsRetainTheirBranchDomains) {
+  // TEST EDI,1; JNZ odd. Each arm computes a distinct singleton target from
+  // the symbolic entry stack, then returns a distinct ECX value.
+  Program P({0xf7, 0xc7, 1, 0, 0, 0, 0x75, 16});
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+  auto &Code = P.Image.Segments.front();
+  for (uint8_t Bias : {1, 2}) {
+    const uint32_t Target = Entry + 40 + (Bias - 1) * 6;
+    const uint32_t Base = Target - (8 + Bias);
+    Code.Data.insert(Code.Data.end(), {0x48, 0x8d, 0x44, 0x24, Bias, 0x83, 0xe0,
+                                       15, 0x48, 0x05});
+    for (unsigned I = 0; I != 4; ++I)
+      Code.Data.push_back(static_cast<uint8_t>(Base >> (8 * I)));
+    Code.Data.insert(Code.Data.end(), {0xff, 0xe0});
+  }
+  Code.Data.insert(Code.Data.end(),
+                   {0xb9, 7, 0, 0, 0, 0xc3, 0xb9, 9, 0, 0, 0, 0xc3});
+  Code.Size = Code.FileSz = Code.Data.size();
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxIndirectTargets = 1;
+  const auto Good = P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.OriginalPaths, 2U);
+  EXPECT_EQ(Good.Proof.CandidatePaths, 2U);
+  bool Changed = false;
+  for (auto &B : Recovery.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+          O.Output.isReg() && O.Output.Offset == x86reg::RCX &&
+          O.NumInputs == 1 && O.Inputs[0] == NdVar::scalar(7, 4)) {
+        O.Inputs[0].Offset = 9;
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+          Status::Different);
+}
+
 TEST(BinaryLowIRRefinement, MemoryIndirectDispatchKeepsTargetSnapshot) {
   // AND ECX,3; LEA RAX,[RIP+table]; JMP [RAX+RCX*8]; four return arms.
   Program P({0x83, 0xe1, 3, 0x48, 0x8d, 0x05, 27,   0, 0, 0, 0xff, 0x24, 0xc8,
