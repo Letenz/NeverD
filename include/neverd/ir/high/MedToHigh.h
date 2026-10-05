@@ -126,6 +126,12 @@ bool elseArmsForFallthroughJumps(HighFunc &Func);
 /// starts exactly one statement and S and T hold no loose break or continue.
 bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body);
 
+/// The same for jumps nested deeper: `X: S...; T` where T holds `goto X`
+/// inside if/else arms, blocks or switch cases becomes `while (1) { S...; T;
+/// break; }` with those jumps turned into `continue`.  X starts exactly one
+/// statement and the region holds no loose break or continue.
+bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body);
+
 /// Once the other rewrites have settled: `if (c) goto L;` followed by an if
 /// whose then arm opens with L becomes `if (c || b)`, and one whose else arm
 /// opens with L becomes `if (!c && b)`.  L must start exactly one statement,

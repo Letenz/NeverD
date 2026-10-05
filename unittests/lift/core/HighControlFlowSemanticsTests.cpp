@@ -6201,6 +6201,71 @@ TEST(HighControlFlowSemantics, JumpIntoTheNextIfArmMergesTheTests) {
   }
 }
 
+TEST(HighControlFlowSemantics, JumpBackFromNestedArmsBecomesALoop) {
+  // v = x; X: v = v + 1; if (v & 1) { if (v & 2) goto X; w = 3; } return v;
+  // becomes `while (1) { v = v + 1; if (v & 1) { if (v & 2) continue; w = 3;
+  // } break; }`.  A loose break in the region would bind to the new loop,
+  // so it keeps the jump.
+  auto Build = [](bool LooseBreak) {
+    auto Bump = [](va_t Address) {
+      HighStmt S;
+      S.Kind = StmtKind::Assign;
+      S.Addr = Address;
+      S.Dst = local(1);
+      S.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                                  HighExpr::makeConst(1, 8));
+      return S;
+    };
+    auto Bit = [](uint64_t B) {
+      return HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                 HighExpr::makeConst(B, 8));
+    };
+    HighStmt Init;
+    Init.Kind = StmtKind::Assign;
+    Init.Addr = 0x0ff0;
+    Init.Dst = local(1);
+    Init.Val = local(0);
+    HighStmt Inner;
+    Inner.Kind = StmtKind::If;
+    Inner.Addr = 0x1008;
+    Inner.Cond = Bit(2);
+    Inner.Body = {jump(0x100c, 0x1000)};
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Addr = 0x1004;
+    Outer.Cond = Bit(1);
+    Outer.Body = {Inner, assign(0x1010, 2, 3)};
+    if (LooseBreak) {
+      HighStmt Leave;
+      Leave.Kind = StmtKind::Break;
+      Outer.Body.push_back(Leave);
+    }
+    HighFunc F;
+    F.Body = {Init, Bump(0x1000), Outer, result(0x1020, local(1))};
+    return F;
+  };
+  for (bool LooseBreak : {false, true}) {
+    SCOPED_TRACE(LooseBreak);
+    HighFunc F = Build(LooseBreak);
+    EXPECT_EQ(loopsForNestedJumpsBack(F.Body), !LooseBreak);
+    size_t Jumps = 0, Loops = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Jumps += S.Kind == StmtKind::Goto;
+      Loops += S.Kind == StmtKind::While;
+    });
+    EXPECT_EQ(Jumps, LooseBreak ? 1u : 0u);
+    EXPECT_EQ(Loops, LooseBreak ? 0u : 1u);
+    if (LooseBreak)
+      continue;
+    for (uint64_t X = 0; X < 8; ++X) {
+      uint64_t V = X + 1;
+      while ((V & 3) == 3)
+        ++V;
+      EXPECT_EQ(execute(F, X), V) << X;
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, JumpToWhatFollowsATryBecomesAnElseArm) {
   // __try { if (x & 1) { v = 1; goto out; } v = 2; } __except (1) { v = 9; }
   // out: return v;

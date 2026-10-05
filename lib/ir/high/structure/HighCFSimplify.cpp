@@ -1259,6 +1259,156 @@ bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body) {
+  std::map<va_t, unsigned> Uses, Starts;
+  std::function<void(const std::vector<HighStmt> &)> Count =
+      [&](const std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          const HighStmt &S = L[I];
+          if (S.Kind == StmtKind::Goto)
+            ++Uses[S.GotoTarget];
+          for (const HighEHClause &Clause : S.EHClauses)
+            ++Uses[Clause.HandlerVA];
+          if (S.Addr != 0 && S.Addr != InvalidVA &&
+              (I == 0 || L[I - 1].Addr != S.Addr))
+            ++Starts[S.Addr];
+          Count(S.Body);
+          Count(S.ElseBody);
+          for (const auto &C : S.Cases)
+            Count(C.Body);
+          Count(S.DefaultBody);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            Count(ClauseBody);
+        }
+      };
+  Count(Body);
+  // Turn the jumps to \p X in \p L into `continue` of a loop around \p L:
+  // those reached through if/else arms, blocks and switch cases, since a
+  // switch owns no continue.  A jump carrying an entered label leaves an
+  // empty block for it.  Returns how many were turned.
+  std::function<unsigned(std::vector<HighStmt> &, va_t)> Jumps =
+      [&](std::vector<HighStmt> &L, va_t X) {
+        unsigned N = 0;
+        for (size_t I = 0; I < L.size(); ++I) {
+          HighStmt &S = L[I];
+          if (S.Kind == StmtKind::Goto && S.GotoTarget == X) {
+            ++N;
+            HighStmt Next;
+            Next.Kind = StmtKind::Continue;
+            if (S.Addr != 0 && S.Addr != InvalidVA && Uses.count(S.Addr) &&
+                (I == 0 || L[I - 1].Addr != S.Addr)) {
+              HighStmt Anchor;
+              Anchor.Kind = StmtKind::Block;
+              Anchor.Addr = S.Addr;
+              S = std::move(Anchor);
+              L.insert(L.begin() + static_cast<ptrdiff_t>(++I),
+                       std::move(Next));
+            } else {
+              S = std::move(Next);
+            }
+            continue;
+          }
+          switch (S.Kind) {
+          case StmtKind::If:
+          case StmtKind::IfElse:
+          case StmtKind::Block:
+            N += Jumps(S.Body, X);
+            N += Jumps(S.ElseBody, X);
+            break;
+          case StmtKind::Switch:
+            for (auto &C : S.Cases)
+              N += Jumps(C.Body, X);
+            N += Jumps(S.DefaultBody, X);
+            break;
+          default:
+            break;
+          }
+        }
+        return N;
+      };
+  // The targets of the jumps Jumps turns in \p S.
+  std::function<void(const HighStmt &, std::set<va_t> &)> Targets =
+      [&](const HighStmt &S, std::set<va_t> &Out) {
+        switch (S.Kind) {
+        case StmtKind::Goto:
+          Out.insert(S.GotoTarget);
+          break;
+        case StmtKind::If:
+        case StmtKind::IfElse:
+        case StmtKind::Block:
+          for (const auto *List : {&S.Body, &S.ElseBody})
+            for (const HighStmt &Child : *List)
+              Targets(Child, Out);
+          break;
+        case StmtKind::Switch:
+          for (const auto &C : S.Cases)
+            for (const HighStmt &Child : C.Body)
+              Targets(Child, Out);
+          for (const HighStmt &Child : S.DefaultBody)
+            Targets(Child, Out);
+          break;
+        default:
+          break;
+        }
+      };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+        std::vector<std::set<va_t>> Reach(L.size());
+        for (size_t I = 0; I < L.size(); ++I)
+          Targets(L[I], Reach[I]);
+        for (size_t K = 0; K < L.size(); ++K) {
+          const va_t X = L[K].Addr;
+          if (X == 0 || X == InvalidVA || (K != 0 && L[K - 1].Addr == X) ||
+              Starts[X] != 1 || !Uses.count(X))
+            continue;
+          // The last statement after the label holding such a jump.
+          size_t Last = K;
+          for (size_t I = K + 1; I < L.size(); ++I)
+            if (Reach[I].count(X))
+              Last = I;
+          if (Last == K)
+            continue;
+          std::vector<HighStmt> LoopBody(L.begin() + K, L.begin() + Last + 1);
+          if (hasLooseBreakOrContinue(LoopBody))
+            continue;
+          // Jumps from the label's own statement onward restart the loop.
+          const unsigned Replaced = Jumps(LoopBody, X);
+          HighStmt Leave;
+          Leave.Kind = StmtKind::Break;
+          LoopBody.push_back(std::move(Leave));
+          HighStmt Loop;
+          Loop.Kind = StmtKind::While;
+          Loop.Cond = HighExpr::makeConst(1, 1);
+          Loop.LoopHeaderAddr = X;
+          Loop.Body = std::move(LoopBody);
+          Uses[X] -= Replaced;
+          if (!Uses[X])
+            Uses.erase(X);
+          L.erase(L.begin() + static_cast<ptrdiff_t>(K),
+                  L.begin() + static_cast<ptrdiff_t>(Last) + 1);
+          L.insert(L.begin() + static_cast<ptrdiff_t>(K), std::move(Loop));
+          Reach.erase(Reach.begin() + static_cast<ptrdiff_t>(K),
+                      Reach.begin() + static_cast<ptrdiff_t>(Last) + 1);
+          Reach.insert(Reach.begin() + static_cast<ptrdiff_t>(K),
+                       std::set<va_t>());
+          Targets(L[K], Reach[K]);
+          Changed = true;
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
 /// True when \p Stmts contains a continue that would restart a loop wrapped
 /// around it. Only a nested loop owns a continue.
 static bool hasLooseContinue(const std::vector<HighStmt> &Stmts) {
