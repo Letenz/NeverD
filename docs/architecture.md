@@ -2966,7 +2966,20 @@ An ordinary ARM64 frame proof can also include an exact `__stack_chk_fail` exit,
 
 LowIR owns exact call occurrence identity: instruction address, operation sequence, opcode and static target. Native state and source result proofs share this identity while retaining separate permissions. An ARM64 single-bit result proof checks every reachable path before treating zeroed bits 63:1 as unobservable; a permitted call clobber does not establish that the callee overwrote those bits. When a difference reaches a call, every volatile general-purpose, vector and flag byte may differ afterward; preserved bytes retain their prior facts. Ordinary calls still need independently established complete ABIs. The separately authenticated Swift comparison candidate records the compiler's raw one-bit result and exact import provider; it does not publish a byte-return declaration or authorize a source projection by itself.
 
-HighC emits ordinary memory stores through byte-copy helpers with the exact value width. Machine addresses do not establish C alignment or effective type. Statement stores, expression stores and assignments through memory all use the same helper path, which evaluates each address and value once and returns the stored value for expression results.
+HighC and LLVMC emit ordinary raw scalar accesses as inline byte copies.
+Machine addresses and LLVM alignment do not establish C effective type.
+Both backends share the copy spelling in `lib/backend/c/UnalignedMemory.h`;
+proven source objects still use typed accesses. Copies use exact-type carriers,
+so narrow loads retain their signed extension and stores retain their conversion
+before copying. HighC can load directly into an exact-type temporary whose
+address is never taken. Other expression loads use a fresh carrier and a comma
+expression at the original evaluation point, preserving conditional, short-circuit
+and loop behavior. Statement stores use scoped carriers; expression stores also
+return the converted value and evaluate address and value once. Fresh carriers
+prevent source/destination overlap in `memcpy`. Atomic, segmented and partial-width
+accesses retain their dedicated semantics; their helpers have type-based names.
+The explicit `--unaligned-pointers` option retains its alias-qualified pointer
+spelling in both backends.
 
 Swift Boolean qualification combines the current Objective-C entry ABI, immutable direct-call bytes, exact strong runtime import and complete LowIR consumer proof. Other calls require freshly catalogued runtime ABIs, a fixed object-returning SDK message with only pointer arguments, a complete eight-instruction class-accessor proof, or an exact strongly imported super call whose complete scalar ABI is revalidated by the shared selector or receiver declaration owner. Native dependencies and super receiver/frame checks remain mandatory at publication. Unproved native or dynamic calls and duplicate occurrences are rejected; these facts alone never publish source or declare a runtime byte-return ABI.
 

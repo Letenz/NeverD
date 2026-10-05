@@ -122,9 +122,9 @@ TEST_F(COFFARMPipeline, HighCLoadLvaluesAndAddressesRemainValidC) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Opts));
   OS.flush();
 
-  EXPECT_NE(C.find("neverd_mem_store_0((uintptr_t)((uintptr_t)arg0), 7);"),
-            std::string::npos)
-      << C;
+  EXPECT_NE(C.find("= (uintptr_t)((uintptr_t)arg0);"), std::string::npos) << C;
+  EXPECT_NE(C.find("= 7;"), std::string::npos) << C;
+  EXPECT_NE(C.find("__builtin_memcpy((void *)"), std::string::npos) << C;
   EXPECT_NE(C.find("return (int32_t *)((uintptr_t)arg0);"), std::string::npos)
       << C;
   EXPECT_EQ(C.find("&neverd_mem_load_"), std::string::npos) << C;
@@ -244,13 +244,17 @@ TEST_F(COFFARMPipeline, HighCForwardingPreservesFrameLvaluesAndAddresses) {
 
   auto Body = cFunctionBody(C, "frame_lvalue_address");
   ASSERT_TRUE(Body.has_value()) << C;
-  const auto FirstStore = Body->find("neverd_mem_store_");
+  const auto FirstStore = Body->find("= 7;");
   ASSERT_NE(FirstStore, std::string::npos) << *Body;
-  const auto SecondStore = Body->find("neverd_mem_store_", FirstStore + 1);
+  const auto SecondStore = Body->find("= 9;", FirstStore + 1);
   ASSERT_NE(SecondStore, std::string::npos) << *Body;
-  EXPECT_NE(Body->substr(FirstStore, SecondStore - FirstStore).find(", 7);"),
-            std::string::npos) << *Body;
-  EXPECT_NE(Body->substr(SecondStore).find(", 9);"), std::string::npos) << *Body;
+  EXPECT_NE(Body->substr(FirstStore, SecondStore - FirstStore)
+                .find("__builtin_memcpy((void *)"),
+            std::string::npos)
+      << *Body;
+  EXPECT_NE(Body->substr(SecondStore).find("__builtin_memcpy((void *)"),
+            std::string::npos)
+      << *Body;
   const auto ReturnAt = Body->find("return ");
   ASSERT_NE(ReturnAt, std::string::npos) << *Body;
   EXPECT_NE(Body->substr(ReturnAt).find("frame_base"), std::string::npos)
@@ -307,8 +311,11 @@ TEST_F(COFFARMPipeline, HighCAddressOfLoadDoesNotDeleteStore) {
 
   auto Body = cFunctionBody(C, "address_preserves_store");
   ASSERT_TRUE(Body.has_value()) << C;
-  EXPECT_NE(Body->find("neverd_mem_store_0((uintptr_t)((uintptr_t)arg0), 7);"),
-            std::string::npos) << *Body;
+  EXPECT_NE(Body->find("= (uintptr_t)((uintptr_t)arg0);"), std::string::npos)
+      << *Body;
+  EXPECT_NE(Body->find("= 7;"), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("__builtin_memcpy((void *)"), std::string::npos)
+      << *Body;
   EXPECT_NE(Body->find("return (int32_t *)((uintptr_t)arg0);"),
             std::string::npos)
       << *Body;

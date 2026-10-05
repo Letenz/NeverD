@@ -170,9 +170,9 @@ void compileAndRunCallOrdering(const std::string &Source) {
 }
 
 std::optional<std::vector<std::string_view>>
-lastCallArguments(std::string_view Source, std::string_view Callee) {
+callArguments(std::string_view Source, std::string_view Callee, bool Last) {
   const std::string Needle = std::string(Callee) + "(";
-  const size_t CallAt = Source.rfind(Needle);
+  const size_t CallAt = Last ? Source.rfind(Needle) : Source.find(Needle);
   if (CallAt == std::string_view::npos)
     return std::nullopt;
   const size_t Open = CallAt + Needle.size() - 1;
@@ -213,6 +213,31 @@ lastCallArguments(std::string_view Source, std::string_view Callee) {
   return std::nullopt;
 }
 
+std::optional<std::vector<std::string_view>>
+lastCallArguments(std::string_view Source, std::string_view Callee) {
+  return callArguments(Source, Callee, true);
+}
+
+std::string_view sourceLineContaining(std::string_view Source,
+                                      std::string_view Needle,
+                                      size_t Start = 0) {
+  const size_t At = Source.find(Needle, Start);
+  if (At == std::string_view::npos)
+    return {};
+  const size_t PreviousLine = Source.rfind('\n', At);
+  const size_t Begin =
+      PreviousLine == std::string_view::npos ? 0 : PreviousLine + 1;
+  const size_t NextLine = Source.find('\n', At);
+  return Source.substr(Begin, NextLine == std::string_view::npos
+                                  ? Source.size() - Begin
+                                  : NextLine - Begin);
+}
+
+std::string normalizeMemoryTemporaries(llvm::StringRef Text) {
+  return std::regex_replace(Text.str(), std::regex("memory_value(_[0-9]+)?"),
+                            "memory_value");
+}
+
 struct PortableStoreCall {
   std::string_view Type;
   std::string_view Address;
@@ -246,17 +271,50 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
                         std::string_view(Value.data(), Value.size())});
     }
   }
+  constexpr std::string_view CopyPrefix =
+      "__builtin_memcpy((void *)(uintptr_t)(";
+  for (size_t At = Source.find(CopyPrefix); At != std::string_view::npos;
+       At = Source.find(CopyPrefix, At + CopyPrefix.size())) {
+    const size_t AddressStart = At + CopyPrefix.size();
+    const size_t AddressEnd = Source.find(')', AddressStart);
+    const auto AddressName =
+        Source.substr(AddressStart, AddressEnd - AddressStart);
+    const size_t ValueStart = Source.find(", &", AddressEnd) + 3;
+    const size_t ValueEnd = Source.find(',', ValueStart);
+    const auto ValueName = Source.substr(ValueStart, ValueEnd - ValueStart);
+    const auto AddressInit = " " + std::string(AddressName) + " = ";
+    const auto ValueInit = " " + std::string(ValueName) + " = ";
+    const size_t AddressDecl = Source.rfind(AddressInit, At);
+    const size_t ValueDecl = Source.rfind(ValueInit, At);
+    if (AddressDecl == std::string_view::npos ||
+        ValueDecl == std::string_view::npos)
+      continue;
+    const size_t TypeStart = Source.rfind('\n', ValueDecl) + 1;
+    const size_t Address = AddressDecl + AddressInit.size();
+    const size_t Value = ValueDecl + ValueInit.size();
+    const auto Type =
+        llvm::StringRef(Source.substr(TypeStart, ValueDecl - TypeStart)).trim();
+    Stores.push_back(
+        {std::string_view(Type.data(), Type.size()),
+         Source.substr(Address, Source.find(';', Address) - Address),
+         Source.substr(Value, Source.find(';', Value) - Value)});
+  }
   return Stores;
+}
+
+bool hasPortableStore(std::string_view Source, std::string_view Type,
+                      std::string_view Address, std::string_view Value) {
+  const auto Stores = portableStoreCalls(Source);
+  return llvm::any_of(Stores, [&](const PortableStoreCall &Store) {
+    return Store.Type == Type &&
+           Store.Address.find(Address) != std::string_view::npos &&
+           Store.Value.find(Value) != std::string_view::npos;
+  });
 }
 
 void expectPortableStore(std::string_view Source, std::string_view Type,
                          std::string_view Address, std::string_view Value) {
-  const auto Stores = portableStoreCalls(Source);
-  EXPECT_TRUE(llvm::any_of(Stores, [&](const PortableStoreCall &Store) {
-    return Store.Type == Type &&
-           Store.Address.find(Address) != std::string_view::npos &&
-           Store.Value.find(Value) != std::string_view::npos;
-  })) << Source;
+  EXPECT_TRUE(hasPortableStore(Source, Type, Address, Value)) << Source;
 }
 
 TEST(HighCPointerAddresses, TypedAndMachineWidthParametersUseByteOffsets) {
@@ -12294,7 +12352,7 @@ TEST(LLVMCPointerAddresses, RecordVisibleRegisterSpillOfZeroIsKept) {
   // field at frame + 80. Without an access bound, zero is observable too.
   const std::regex ZeroStore(
       R"(\{ uint64_t (\w+) = 0;\s*)"
-      R"(__builtin_memcpy\(\(void\*\)\(\(\(char\*\)&frame0 \+ 80\)\), &\1, 8\);\s*\})");
+      R"(__builtin_memcpy\(\(void \*\)\(uintptr_t\)\(\(\(char\*\)&frame0 \+ 80\)\), &\1, 8\);\s*\})");
   std::smatch StoredZero;
   ASSERT_TRUE(std::regex_search(ZeroFn, StoredZero, ZeroStore)) << Source;
   const auto ZeroStoreAt = static_cast<size_t>(StoredZero.position());
@@ -27727,7 +27785,7 @@ TEST(HighCPointerAddresses, WholeSlotXmmCopyForwardsWithoutTemp) {
   EXPECT_EQ(Source.find("t116"), std::string::npos) << Source;
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
-  expectPortableStore(Source, "__int128", "+ 56", "neverd_mem_load_");
+  expectPortableStore(Source, "__int128", "+ 56", "__builtin_memcpy(&");
 }
 
 TEST(HighCPointerAddresses, WholeSlotCopyPropagatesRecordType) {
@@ -27783,7 +27841,7 @@ TEST(HighCPointerAddresses, WholeSlotCopyPropagatesRecordType) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
-  expectPortableStore(Source, "__int128", "- 112", "neverd_mem_load_");
+  expectPortableStore(Source, "__int128", "- 112", "__builtin_memcpy(&");
   EXPECT_EQ(Source.find("t116"), std::string::npos) << Source;
 }
 
@@ -27986,7 +28044,7 @@ TEST(HighCPointerAddresses,
   EXPECT_EQ(Stores[0].Type, "uint32_t") << Source;
   EXPECT_EQ(Stores[0].Value, "0x12345678") << Source;
   EXPECT_EQ(Stores[1].Type, "__int128") << Source;
-  EXPECT_NE(Stores[1].Value.find("neverd_mem_load_"), std::string::npos)
+  EXPECT_NE(Stores[1].Value.find("__builtin_memcpy(&"), std::string::npos)
       << Source;
   EXPECT_EQ(Stores[2].Type, "uint64_t") << Source;
   EXPECT_EQ(Stores[2].Value, "2") << Source;
@@ -30430,8 +30488,8 @@ TEST(HighCPointerAddresses, ExceptArmCapturesTheExceptionCode) {
   const size_t CaptureAt =
       Source.find("exception_code = GetExceptionCode();", ArmAt);
   ASSERT_NE(CaptureAt, std::string::npos) << Source;
-  EXPECT_NE(Source.find("exception_code)", CaptureAt + 1), std::string::npos)
-      << Source;
+  expectPortableStore(std::string_view(Source).substr(CaptureAt), "int32_t",
+                      "+ 8", "exception_code");
   EXPECT_NE(Source.find("exception_code;"), std::string::npos) << Source;
 }
 
@@ -30507,12 +30565,10 @@ TEST(HighCPointerAddresses, NestedExceptArmKeepsTheOuterExceptionCode) {
   const size_t InnerCapture =
       Source.find("exception_code_2 = GetExceptionCode();", OuterCapture);
   ASSERT_NE(InnerCapture, std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ 16), exception_code_2);", InnerCapture),
-            std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find("+ 8), exception_code);", InnerCapture),
-            std::string::npos)
-      << Source;
+  expectPortableStore(std::string_view(Source).substr(InnerCapture), "int32_t",
+                      "+ 16", "exception_code_2");
+  expectPortableStore(std::string_view(Source).substr(InnerCapture), "int32_t",
+                      "+ 8", "exception_code");
   EXPECT_NE(Source.substr(0, OuterArm).find(" exception_code;"),
             std::string::npos)
       << Source;
@@ -33689,7 +33745,9 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   EXPECT_NE(Source.find("(uint64_t)(frame_base) - (uint64_t)(104)"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("(v0) + 112)) == 7)"), std::string::npos) << Source;
+  const auto Condition = sourceLineContaining(Source, "if ((__builtin_memcpy(");
+  EXPECT_NE(Condition.find("(v0) + 112"), std::string_view::npos) << Source;
+  EXPECT_NE(Condition.find(" == 7)"), std::string_view::npos) << Source;
   const auto InnerCtor = lastCallArguments(Source, "sub_140001000");
   ASSERT_TRUE(InnerCtor.has_value()) << Source;
   ASSERT_EQ(InnerCtor->size(), 2u) << Source;
@@ -33707,12 +33765,12 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
       << Source;
   EXPECT_EQ(llvm::StringRef((*OuterCtor)[1]).trim(), "1") << Source;
   expectPortableStore(Source, "uint32_t", "(v0) + 44", "0xFFFFFF9C");
-  EXPECT_NE(Source.find("(uint32_t)neverd_mem_load_"), std::string::npos)
+  EXPECT_NE(Source.find("(uint32_t)(__builtin_memcpy(&"), std::string::npos)
       << Source;
-  const auto ReturnedSlot = lastCallArguments(Source, "neverd_mem_load_0");
+  const auto ReturnedSlot = lastCallArguments(Source, "__builtin_memcpy");
   ASSERT_TRUE(ReturnedSlot.has_value()) << Source;
-  ASSERT_EQ(ReturnedSlot->size(), 1u) << Source;
-  EXPECT_NE((*ReturnedSlot)[0].find("(v0) + 44"), std::string_view::npos)
+  ASSERT_EQ(ReturnedSlot->size(), 3u) << Source;
+  EXPECT_NE((*ReturnedSlot)[1].find("(v0) + 44"), std::string_view::npos)
       << Source;
   EXPECT_EQ(Source.find("t26"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t29 = arg0"), std::string::npos) << Source;
@@ -33907,21 +33965,6 @@ std::string highcOnlyFunction(BinaryImage Img, va_t Entry) {
   return Source;
 }
 
-std::string_view sourceLineContaining(std::string_view Source,
-                                      std::string_view Needle,
-                                      size_t Start = 0) {
-  const size_t At = Source.find(Needle, Start);
-  if (At == std::string_view::npos)
-    return {};
-  const size_t PreviousLine = Source.rfind('\n', At);
-  const size_t Begin =
-      PreviousLine == std::string_view::npos ? 0 : PreviousLine + 1;
-  const size_t NextLine = Source.find('\n', At);
-  return Source.substr(Begin, NextLine == std::string_view::npos
-                                  ? Source.size() - Begin
-                                  : NextLine - Begin);
-}
-
 TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
@@ -33944,9 +33987,12 @@ TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   });
   const size_t Catch = Source.find("catch (const ProbeError &e)");
   ASSERT_NE(Catch, std::string::npos) << Source;
-  const auto Load = sourceLineContaining(Source, "neverd_mem_load_2(", Catch);
+  const auto Load = sourceLineContaining(Source, "__builtin_memcpy(&", Catch);
   const auto Clear = sourceLineContaining(Source, "neverd_di =");
-  const auto Home = sourceLineContaining(Source, ", arg0);");
+  const auto HomeStore = llvm::find_if(
+      Stores, [](const PortableStoreCall &S) { return S.Value == "arg0"; });
+  ASSERT_NE(HomeStore, Stores.end()) << Source;
+  const auto Home = HomeStore->Address;
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Load.empty()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
@@ -33958,10 +34004,14 @@ TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   EXPECT_NE(Store->Address.find("frame_base"), std::string_view::npos)
       << Source;
   EXPECT_NE(Load.find("frame_base"), std::string_view::npos) << Source;
-  const auto LoadArgs = lastCallArguments(Load, "neverd_mem_load_2");
+  const auto LoadArgs = callArguments(Load, "__builtin_memcpy", false);
   ASSERT_TRUE(LoadArgs.has_value()) << Source;
-  ASSERT_EQ(LoadArgs->size(), 1u) << Source;
-  EXPECT_EQ(Store->Address, (*LoadArgs)[0]) << Source;
+  ASSERT_EQ(LoadArgs->size(), 3u) << Source;
+  auto LoadAddress = llvm::StringRef((*LoadArgs)[1]).trim();
+  ASSERT_TRUE(LoadAddress.consume_front("(const void *)")) << Source;
+  EXPECT_EQ(normalizeMemoryTemporaries(Store->Address),
+            normalizeMemoryTemporaries(LoadAddress))
+      << Source;
   EXPECT_NE(Clear.find("frame_base - 72"), std::string_view::npos) << Source;
   EXPECT_NE(Home.find("frame_base + 8"), std::string_view::npos) << Source;
   EXPECT_EQ(Source.find("var_m48"), std::string::npos) << Source;
@@ -33992,9 +34042,12 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   const auto Store = llvm::find_if(Stores, [](const PortableStoreCall &S) {
     return S.Type == "uint8_t" && S.Value == "3";
   });
-  const auto Load = sourceLineContaining(Source, "t38_3 =");
+  const auto Load = sourceLineContaining(Source, "__builtin_memcpy(&t38_3,");
   const auto Clear = sourceLineContaining(Source, "neverd_di =");
-  const auto Home = sourceLineContaining(Source, ", arg0);");
+  const auto HomeStore = llvm::find_if(
+      Stores, [](const PortableStoreCall &S) { return S.Value == "arg0"; });
+  ASSERT_NE(HomeStore, Stores.end()) << Source;
+  const auto Home = HomeStore->Address;
   // The update can remain compound C or be rendered as a portable
   // load/add/store when the value passes through the SEH clause boundary.
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
@@ -34017,17 +34070,14 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   EXPECT_NE(Store->Address.find("frame_base"), std::string_view::npos)
       << Source;
   EXPECT_NE(Load.find("frame_base"), std::string_view::npos) << Source;
-  // The byte load is the outermost helper call on its line; the helper's
-  // index depends on which other memory types the function uses.
-  const std::string LoadLine(Load);
-  std::smatch LoadHelper;
-  ASSERT_TRUE(std::regex_search(LoadLine, LoadHelper,
-                                std::regex(R"(neverd_mem_load_\d+)")))
-      << Source;
-  const auto LoadArgs = lastCallArguments(Load, LoadHelper.str());
+  const auto LoadArgs = callArguments(Load, "__builtin_memcpy", false);
   ASSERT_TRUE(LoadArgs.has_value()) << Source;
-  ASSERT_EQ(LoadArgs->size(), 1u) << Source;
-  EXPECT_EQ(Store->Address, (*LoadArgs)[0]) << Source;
+  ASSERT_EQ(LoadArgs->size(), 3u) << Source;
+  auto LoadAddress = llvm::StringRef((*LoadArgs)[1]).trim();
+  ASSERT_TRUE(LoadAddress.consume_front("(const void *)")) << Source;
+  EXPECT_EQ(normalizeMemoryTemporaries(Store->Address),
+            normalizeMemoryTemporaries(LoadAddress))
+      << Source;
   EXPECT_NE(Clear.find("frame_base - 72"), std::string_view::npos) << Source;
   EXPECT_NE(Home.find("frame_base + 8"), std::string_view::npos) << Source;
   EXPECT_EQ(Source.find("var_m48"), std::string::npos) << Source;
@@ -34502,7 +34552,7 @@ TEST(LLVMCPointerAddresses, NamedImageLoadKeepsAssignWhenStored) {
   const size_t StoreAt = Source.find("s_instance = 0;");
   ASSERT_NE(StoreAt, std::string::npos) << Source;
   const std::regex Load(
-      R"(__builtin_memcpy\(&(\w+), \(const void\*\)\(&s_instance\), 8\);)");
+      R"(__builtin_memcpy\(&(\w+), \(const void \*\)\(uintptr_t\)\(&s_instance\), 8\);)");
   std::smatch Loaded;
   ASSERT_TRUE(std::regex_search(Source, Loaded, Load)) << Source;
   const std::string Captured = Loaded[1];
@@ -34906,7 +34956,7 @@ TEST(LLVMCPointerAddresses, IntegerFieldStorePreservesCallViewAndStoreWidth) {
   OS.flush();
   const std::regex Store(
       R"(\{ uint64_t (\w+) = \(uint64_t\)\(\(uint32_t\)\(GetLength\(this\)\)\);\s*)"
-      R"(__builtin_memcpy\(\(void\*\)\(&this->values_\), &\1, 8\);\s*\})");
+      R"(__builtin_memcpy\(\(void \*\)\(uintptr_t\)\(&this->values_\), &\1, 8\);\s*\})");
   EXPECT_TRUE(std::regex_search(Source, Store)) << Source;
   EXPECT_NE(Source.find("(uint32_t)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(uint64_t)"), std::string::npos) << Source;
@@ -38991,12 +39041,12 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
       // from which that temporary was loaded, before leaving __except. Bind
       // the loaded value, frame address, and captured sum across both copies.
       const std::regex Update(
-          R"(__builtin_memcpy\(&(\w+), \(const void\*\)\((\(\(char\*\)&frame0 \+ [0-9]+\))\), 4\);\s*)"
+          R"(__builtin_memcpy\(&(\w+), \(const void \*\)\(uintptr_t\)\((\(\(char\*\)&frame0 \+ [0-9]+\))\), 4\);\s*)"
           R"(\{ uint32_t (\w+) = \(\1 \+ 20\);\s*)"
-          R"(__builtin_memcpy\(\(void\*\)\(\2\), &\3, 4\);\s*\})");
+          R"(__builtin_memcpy\(\(void \*\)\(uintptr_t\)\(\2\), &\3, 4\);\s*\})");
       if (!std::regex_search(Handler, Update)) {
-        // Optimized IR can prove alignment and retain the direct scalar
-        // accesses. Keep the same load/add/store identity and order checks.
+        // Proven source objects can retain direct scalar accesses. Keep
+        // the same load/add/store identity and order checks.
         const auto AddAt = Handler.find(" + 20);");
         ASSERT_NE(AddAt, std::string::npos) << Source;
         const auto LineStart = Handler.rfind('\n', AddAt) + 1;
@@ -39360,15 +39410,16 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   const size_t NormalCopyAt = Source.find(JoinFrame + " = " + EntryFrame + ";");
   ASSERT_NE(NormalCopyAt, std::string::npos) << Source;
   EXPECT_LT(NormalCopyAt, ExceptAt) << Source;
-  const std::string JoinedLoad =
-      "neverd_mem_load_0((uintptr_t)((uintptr_t)(" + JoinFrame + ") - 28))";
-  EXPECT_NE(HandlerText.find("g_4040C8 = " + JoinedLoad + ";"),
-            std::string::npos)
+  const std::string JoinedAddress =
+      "(uintptr_t)((uintptr_t)(" + JoinFrame + ") - 28)";
+  const auto GlobalStore = sourceLineContaining(HandlerText, "g_4040C8 = ");
+  EXPECT_NE(GlobalStore.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
-  EXPECT_NE(
-      sourceLineContaining(HandlerText, "return (int32_t)").find(JoinedLoad),
-      std::string_view::npos)
+  EXPECT_NE(GlobalStore.find(JoinedAddress), std::string_view::npos) << Source;
+  const auto Return = sourceLineContaining(HandlerText, "return (int32_t)");
+  EXPECT_NE(Return.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
+  EXPECT_NE(Return.find(JoinedAddress), std::string_view::npos) << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   EXPECT_EQ(Source.find(JoinFrame + " = 0;"), std::string::npos) << Source;
   // The retained SSA copy of the exception code must reach the call unchanged.
@@ -39422,7 +39473,7 @@ TEST(HighCPointerAddresses, RsdsPdbNamesFrameSlotsOnSafetyFixture) {
   ASSERT_FALSE(Environment.empty()) << Source;
   expectPortableStore(Source, "int64_t", "+ 40", Environment);
   const auto CaptureAt = Source.find("= getenv(\"PAYLOAD\");");
-  const auto StoreAt = Source.find(", " + Environment + ");", CaptureAt);
+  const auto StoreAt = Source.find("= " + Environment + ";", CaptureAt);
   ASSERT_NE(StoreAt, std::string::npos) << Source;
   EXPECT_LT(CaptureAt, StoreAt);
   EXPECT_LT(StoreAt, Source.rfind("strcpy("));
@@ -40528,7 +40579,7 @@ TEST(HighCPointerAddresses, EntryLoopHeaderKeepsLoopCarriedValue) {
   // The null test comes before the first load.
   const size_t Body = HighC.find("neverd.entry");
   ASSERT_NE(Body, std::string::npos) << HighC;
-  EXPECT_LT(HighC.find("== 0", Body), HighC.find("neverd_mem_load_", Body))
+  EXPECT_LT(HighC.find("== 0", Body), HighC.find("__builtin_memcpy(&", Body))
       << HighC;
   const std::string LLVMC =
       llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
@@ -41587,9 +41638,11 @@ TEST(HighCPointerAddresses, ByteStoreInsideAWiderSlotChangesThatSlot) {
   const bool Interior = std::regex_search(
       HighC,
       std::regex(R"(\(\*\(int8_t \*\)\(\(char \*\)&var_\w+ \+ 2\)\) =)"));
-  const bool FrameBytes = HighC.find("stack_storage[") != std::string::npos &&
-                          HighC.find("+ 10), arg1)") != std::string::npos &&
-                          HighC.find("+ 8));") != std::string::npos;
+  const bool FrameBytes =
+      HighC.find("stack_storage[") != std::string::npos &&
+      hasPortableStore(HighC, "int64_t", "+ 8", "arg0") &&
+      hasPortableStore(HighC, "int8_t", "+ 10", "arg1") &&
+      sourceLineContaining(HighC, "return ").find("+ 8") != std::string::npos;
   EXPECT_TRUE(Interior || FrameBytes) << HighC;
   EXPECT_FALSE(std::regex_search(HighC, std::regex(R"(\bint8_t var_\w+;)")))
       << HighC;
@@ -41616,9 +41669,11 @@ TEST(HighCPointerAddresses, NarrowStoreToAWiderSlotChangesOnlyItsBytes) {
   // and the eight-byte read share.
   const bool Interior =
       std::regex_search(HighC, std::regex(R"(\(\*\(int8_t \*\)&var_\w+\) =)"));
-  const bool FrameBytes = HighC.find("stack_storage[") != std::string::npos &&
-                          HighC.find("+ 8), arg1)") != std::string::npos &&
-                          HighC.find("+ 8));") != std::string::npos;
+  const bool FrameBytes =
+      HighC.find("stack_storage[") != std::string::npos &&
+      hasPortableStore(HighC, "int64_t", "+ 8", "arg0") &&
+      hasPortableStore(HighC, "int8_t", "+ 8", "arg1") &&
+      sourceLineContaining(HighC, "return ").find("+ 8") != std::string::npos;
   EXPECT_TRUE(Interior || FrameBytes) << HighC;
   expectCompilesForMsvc(HighC);
 }
@@ -41646,9 +41701,11 @@ TEST(HighCPointerAddresses, PartlyOverlappingSlotsShareOneStorage) {
       std::regex_search(
           HighC,
           std::regex(R"(\(\*\(int64_t \*\)\(\(char \*\)&var_\w+ \+ 2\)\) =)"));
-  const bool FrameBytes = HighC.find("stack_storage[") != std::string::npos &&
-                          HighC.find("+ 10), arg1)") != std::string::npos &&
-                          HighC.find("+ 8));") != std::string::npos;
+  const bool FrameBytes =
+      HighC.find("stack_storage[") != std::string::npos &&
+      hasPortableStore(HighC, "int64_t", "+ 8", "arg0") &&
+      hasPortableStore(HighC, "int64_t", "+ 10", "arg1") &&
+      sourceLineContaining(HighC, "return ").find("+ 8") != std::string::npos;
   EXPECT_TRUE(Region || FrameBytes) << HighC;
   expectCompilesForMsvc(HighC);
 }
@@ -41829,9 +41886,7 @@ TEST(HighCPointerAddresses, GuardDispatchTargetChosenOnTwoPathsStaysAssigned) {
   EXPECT_EQ(HighC.find("guard_dispatch_icall"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("= arg2;"), std::string::npos) << HighC;
-  EXPECT_TRUE(
-      std::regex_search(HighC, std::regex(R"(= neverd_mem_load_\d+\()")))
-      << HighC;
+  EXPECT_NE(HighC.find("__builtin_memcpy(&"), std::string::npos) << HighC;
 }
 
 TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
@@ -42124,14 +42179,8 @@ TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
   EXPECT_EQ(HighC.find("= __swapgs("), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("= __halt("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__swapgs();"), std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("neverd_mem_store_0((uintptr_t)((uintptr_t)arg1), "
-                       "arg0);"),
-            std::string::npos)
-      << HighC;
-  EXPECT_NE(HighC.find("neverd_mem_store_0((uintptr_t)((uintptr_t)arg1 + 8), "
-                       "arg0);"),
-            std::string::npos)
-      << HighC;
+  expectPortableStore(HighC, "int64_t", "(uintptr_t)arg1)", "arg0");
+  expectPortableStore(HighC, "int64_t", "(uintptr_t)arg1 + 8", "arg0");
 }
 
 TEST(HighCPointerAddresses, MaskedGlobalAddressIsAnIntegerOperand) {
