@@ -185,7 +185,7 @@ llvm::Error Executor::submit(Action Run, const MachineRunControl *Control) {
   std::unique_lock Lock(Mutex);
   Pending = &Work;
   Changed.notify_one();
-  Completed.wait(Lock, [&] { return Work.Done; });
+  Changed.wait(Lock, [&] { return Work.Done; });
   return std::move(Work.Result);
 }
 void Executor::work() {
@@ -201,11 +201,7 @@ void Executor::work() {
     Work->Result = std::move(Result);
     Pending = nullptr;
     Work->Done = true;
-    // Do not access Work after unlocking: the submitter may retire it before
-    // notification. A distinct response condition cannot wake this owner.
-    Lock.unlock();
-    Completed.notify_one();
-    Lock.lock();
+    Changed.notify_all();
   }
 }
 llvm::Error Executor::initialize() {

@@ -84,7 +84,7 @@ private:
   std::string Failure;
   std::timed_mutex Admission;
   std::mutex Mutex;
-  std::condition_variable Changed, Completed;
+  std::condition_variable Changed;
   Request *Pending = nullptr;
   bool Shutdown = false;
 #if defined(__arm64__)
