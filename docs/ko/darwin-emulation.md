@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 651fc905db4bb2d62a1036bb6495b60cad23dde9b5e655b4b4ca408294a3d83c -->
+<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
 
 [← 문서 목록](README.md)
 
@@ -154,7 +154,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 60개 또는 x64 40개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 66개 또는 x64 44개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -177,3 +177,21 @@ Linux에서는 `kvm`, Windows에서는 `whp`를 사용합니다. [Darwin 워크�
 [Intel 실행](https://github.com/NeverSight/NeverD/actions/runs/37106013999)은 CTest 식별자 286개와 프로세스 32개를 원본 XML과 대조했습니다. 건너뛴 234개는 비활성 Unicorn 65개, ARM64 게스트 39개, 다른 호스트 플랫폼 130개입니다. 산출물 `11267489438`의 SHA-256은 `cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`로 검증했습니다. [KVM/WHP](https://github.com/NeverSight/NeverD/actions/runs/37062839703)도 독립 확인했습니다. [커널 참조](https://github.com/NeverSight/NeverD/actions/runs/37064795867)는 ISA마다 4/4 프로그램을 통과했으며 종료 상태 37, 정확한 출력, 빈 stderr를 확인했습니다.
 
 Unicorn을 켠 C API/CLI는 138개 통과, 156개 건너뜀, 실패 0개입니다. Python은 다섯 조합을 다룹니다. 패키지 엔진은 ARM64 CLI 보고서 18개와 일치하고 Mach-O 186개 서명을 검증했습니다. HVF/Unicorn OFF는 38개 통과, 231개 건너뜀이며 Hypervisor.framework를 링크하지 않습니다. 이는 통합 증거로 추가 네이티브 실행 수에 포함하지 않습니다. 전체 Intel CPU는 아직 검증되지 않았습니다. [HVF](macos-hvf.md)와 [상세 기록](../darwin-emulation.md#hosted-native-verification-2026-10-03)을 참고하세요.
+
+## 명시적 시간 관측값
+
+`ProcessOptions::DarwinTime` / `darwin_time`은 모든 Darwin profile에서 raw `gettimeofday` (116)에 고정 관측값을 제공합니다. 세 번째 `mach_absolute_time` 출력도 포함합니다. `time_of_day`, `timezone`, `mach_absolute_time`은 각각 선택 사항이며 생략은 알 수 없음을, 명시적 0은 값을 뜻합니다. 빈 객체는 기본 시계를 만들지 않습니다. 호스트 시계 조회, 시간대 추론, 시간 진행, 절대 tick 변환은 하지 않습니다.
+
+제공하는 레코드는 모든 멤버가 필요합니다. `seconds`는 부호 없는 32비트, `microseconds`는 [0, 999999], `minutes_west` / `dst_time`은 부호 있는 32비트, 절대 tick은 부호 없는 64비트입니다. JSON은 공통 무손실 정수 규칙을 따르며 안전한 정수 범위 밖은 십진 문자열로 전달합니다. 알 수 없는 필드, 범위 초과, Darwin 이외 profile은 이미지 로드 전에 거부됩니다.
+
+LP64 `timeval`은 16바이트입니다. 오프셋 0에는 0 확장 초, 8에는 32비트 마이크로초, 12에는 4바이트 0 패딩이 있습니다. 시간대는 부호 있는 32비트 필드 둘이며 tick은 8바이트입니다. 달력 시간과 절대 시간은 먼저 함께 관측하므로 요청한 두 관측값이 복사나 포인터 검사 전에 있어야 합니다. 이후 timeval, timezone, absolute ticks 순서로 씁니다. 시간대 누락과 뒤따르는 EFAULT는 앞선 쓰기를 유지하며 겹치는 주소도 같은 순서입니다. 개별 출력이 일부만 쓰기 가능하면 해당 복사 전에 미지원으로 중지하고 앞선 복사는 유지합니다. 포인터가 모두 null이면 설정 없이 성공하며 선택적 조회는 요청한 값만 필요합니다.
+
+직접 작성한 `time` 작업으로 네이티브 동작을 확인하고, `time-values`는 다섯 게스트 조합의 C/CLI/Python에서 설정한 32바이트를 정확히 출력합니다. 별도 SDK 비교는 한 번의 네이티브 raw 호출에서 세 출력을 얻어 모든 바이트를 비교합니다. 진행하는 시계, 변환, commpage 카운터, 타이머, Mach 시계는 포함하지 않습니다. dyld, 스레드, Objective-C/Swift, Foundation/UIKit은 남은 작업입니다. Intel HVF Actions는 중단 상태이며 네이티브 Intel이나 실제 iOS 기기 검증을 추가하지 않습니다.
+
+```json
+{"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
+```
+
+[XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
+
+시간 검증(2026-10-06, Release): Darwin 등록 538개 중 274개 통과, 사용 불가 백엔드로 264개 건너뜀, 실패 없음. 필수 ARM64 HVF 66/66개를 모두 실행했습니다. 원본 네이티브 macOS 작업 12개와 단일 표본 SDK 바이트 비교도 통과했습니다. 공개 C/CLI/보고서 43/43개 통과, 건너뜀 없음. Python은 정확한 시간 바이트 및 기존 파일 모드 8개를 포함한 다섯 게스트 조합에서 통과했습니다. 실행기 66개, 현지화, 기능 목록, 서식 검사도 통과했습니다. 집계는 중복됩니다. 증거: `build-hvf-arm64/darwin-time-verified-evidence/`, `darwin-time-native-first/`, `darwin-time-public.xml`.

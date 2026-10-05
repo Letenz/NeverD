@@ -354,7 +354,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 60 cases on ARM64, or 40 on x64.
+on each platform supported by the host ISA: 66 cases on ARM64, or 44 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -423,7 +423,8 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 1. Extend the file model with bounded writable state,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
-2. Add explicit time/system observations and required Mach/thread services,
+2. Extend fixed time inputs with advancing clocks and system observations,
+   and add required Mach/thread services,
    then Mach-O dependency loading, rebases/binds, initializers and TLS. Validate
    small real executables at each boundary before admitting general libraries.
 3. Add Objective-C/Swift and Foundation/UIKit behavior with executable native
@@ -554,3 +555,21 @@ Both clean-source summaries record exit status 37 for `return`, `exit`,
 The artifact digests were verified. This independently checks the original
 workloads' kernel contracts on both ISAs; the emulated executions remain
 covered by the separate HVF/KVM/WHP results above.
+
+## Explicit time observations
+
+`ProcessOptions::DarwinTime` / `darwin_time` supplies fixed observations for raw `gettimeofday` (116), including its third `mach_absolute_time` output, on every Darwin profile. Each of `time_of_day`, `timezone` and `mach_absolute_time` is optional: absence means unknown, while explicit zero is a value. An empty object does not supply default clocks. The model never reads host clocks, infers timezone, advances time or converts absolute ticks.
+
+Every member of a supplied record is required. `seconds` is unsigned 32 bits, `microseconds` is in [0, 999999], and `minutes_west` / `dst_time` are signed 32 bits. Absolute ticks are unsigned 64 bits. JSON uses the shared lossless integer rules: quote decimal values outside the safe JSON integer range. Unknown fields, invalid ranges and use on non-Darwin profiles fail before image loading.
+
+The LP64 `timeval` is 16 bytes: zero-extended seconds at offset 0, 32-bit microseconds at 8, and four zero padding bytes at 12. The timezone is two signed 32-bit fields; ticks occupy eight bytes. Requested calendar and absolute values form one initial sample, so both requested observations must exist before any output copy or pointer check. Copies then occur in order: timeval, timezone, absolute ticks. Missing timezone is detected at its phase, preserving an earlier timeval write. A later EFAULT also preserves earlier writes, and aliases follow the same order. An individually partially writable output stops unsupported before that copy, retaining prior copies. All-null arguments succeed without configuration; selective queries require only requested values.
+
+The original `time` workload checks native behavior; guest `time-values` emits the exact configured 32 bytes through C/CLI/Python on all five guest combinations. A separate SDK oracle compares every byte against three outputs captured in one raw native call. These fixed observations do not implement advancing clocks, clock conversion, commpage counters, timers or Mach clock services. Dyld, threads, Objective-C/Swift and Foundation/UIKit remain separate environment work. Intel HVF Actions remain suspended; this adds no native Intel or physical iOS acceptance.
+
+```json
+{"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
+```
+
+[XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
+
+Time validation (2026-10-06, Release): 538 Darwin registrations, 274 passed, 264 unavailable-backend skips, zero failures; all 66/66 required ARM64 HVF cases executed. All 12 original native macOS workloads and the independent single-sample SDK byte comparison passed. Public C/CLI/report: 43/43, no skips. Python passed all five guest combinations, including exact time bytes and the eight existing file modes. All 66 runner tests, localization, capability and format checks passed. Counts overlap. Evidence: `build-hvf-arm64/darwin-time-verified-evidence/`, `darwin-time-native-first/` and `darwin-time-public.xml`.

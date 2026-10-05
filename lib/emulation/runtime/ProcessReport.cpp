@@ -7,6 +7,7 @@
 
 #include "ProcessAndroidJSON.h"
 #include "ProcessDarwinFilesJSON.h"
+#include "ProcessDarwinTimeJSON.h"
 #include "ProcessLinuxFilesJSON.h"
 #include "ProcessLinuxSignalsJSON.h"
 #include "ProcessLinuxTimeJSON.h"
@@ -60,6 +61,13 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
   ProcessOptions Options;
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
+    if (Name == field::DarwinTime) {
+      auto Time = darwinTimeOptionsFromJSON(V);
+      if (!Time)
+        return Time.takeError();
+      Options.DarwinTime = std::move(*Time);
+      continue;
+    }
     if (Name == field::DarwinFiles) {
       auto Files = darwinFileOptionsFromJSON(V);
       if (!Files)

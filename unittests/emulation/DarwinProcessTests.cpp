@@ -5,12 +5,15 @@
 //===----------------------------------------------------------------------===//
 #include "DarwinFileTestData.h"
 #include "DarwinTestImage.h"
+#include "DarwinTimeTestData.h"
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/darwin/process/DarwinProcess.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessSession.h"
+
+#include "llvm/ADT/StringExtras.h"
 
 namespace neverd::emulation {
 namespace {
@@ -186,6 +189,36 @@ TEST_P(DarwinProcess, DirectoryEnumerationPreservesRecordsCookiesAndCopyOrder) {
   EXPECT_EQ(Result->StandardOutput, "e");
   EXPECT_TRUE(Result->StandardError.empty());
   EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+}
+TEST_P(DarwinProcess, ExplicitTimeObservationsPreserveBytesErrorsAndCopyOrder) {
+  auto Null = run("time-null");
+  ASSERT_TRUE(bool(Null)) << llvm::toString(Null.takeError());
+  EXPECT_EQ(Null->Stop, ProcessStopReason::Exited) << Null->Diagnostic;
+  EXPECT_EQ(Null->ExitStatus, 37);
+  auto Missing = run("time");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_TRUE(Missing->StandardOutput.empty());
+  Options.DarwinTime = darwin_test::timeOptions();
+  for (auto Mode : {"time", "time-values"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput,
+              Mode == llvm::StringRef("time")
+                  ? "t"
+                  : llvm::fromHex(darwin_test::TimeHex));
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+    ASSERT_FALSE(Result->Services.empty());
+    EXPECT_EQ(Result->Services.front().Number,
+              (GetParam().ISA == GuestArchitecture::X64 ? 0x2000000u : 0u) +
+                  116u);
+    EXPECT_EQ(Result->Services.front().Result, 0u);
+    EXPECT_EQ(Result->Services.front().Error, false);
+  }
 }
 TEST_P(DarwinProcess, FiniteStandardInputRetainsBinaryBytesAndSharedCursor) {
   Options.DarwinFiles.emplace();

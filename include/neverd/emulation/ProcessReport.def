@@ -25,6 +25,10 @@ NEVERD_PROCESS_REPORT_FIELD(Android, "android")
 NEVERD_PROCESS_REPORT_FIELD(LinuxTime, "linux_time")
 NEVERD_PROCESS_REPORT_FIELD(LinuxFiles, "linux_files")
 NEVERD_PROCESS_REPORT_FIELD(DarwinFiles, "darwin_files")
+NEVERD_PROCESS_REPORT_FIELD(DarwinTime, "darwin_time")
+NEVERD_PROCESS_REPORT_FIELD(TimeOfDay, "time_of_day")
+NEVERD_PROCESS_REPORT_FIELD(Microseconds, "microseconds")
+NEVERD_PROCESS_REPORT_FIELD(MachAbsoluteTime, "mach_absolute_time")
 NEVERD_PROCESS_REPORT_FIELD(StandardInput, "stdin_hex")
 NEVERD_PROCESS_REPORT_FIELD(LinuxSignals, "linux_signals")
 NEVERD_PROCESS_REPORT_FIELD(SignalActions, "actions")
@@ -134,6 +138,9 @@ NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
 NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 65536)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_TEXT
+NEVERD_PROCESS_REPORT_TEXT(DarwinTimeOptions, "invalid darwin_time option: ")
+NEVERD_PROCESS_REPORT_TEXT(DarwinTimeProfile,
+                           "darwin_time requires a macOS or iOS profile")
 NEVERD_PROCESS_REPORT_TEXT(DarwinFilesOptions, "invalid darwin_files option: ")
 NEVERD_PROCESS_REPORT_TEXT(DarwinFilesProfile,
                            "darwin_files requires a macOS or iOS profile")
@@ -184,11 +191,11 @@ NEVERD_PROCESS_CLI_STRING(
     "ios-simulator-macho64-v1")
 NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
 NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
-NEVERD_PROCESS_CLI_STRING(
-    OptionsHelp,
-    "Options JSON: backend, resource limits, "
-    "arguments/environment, Linux clocks/files, Darwin files, Android native "
-    "or Windows module options")
+NEVERD_PROCESS_CLI_STRING(OptionsHelp,
+                          "Options JSON: backend, resource limits, "
+                          "arguments/environment, Linux clocks/files, Darwin "
+                          "clocks/files, Android native "
+                          "or Windows module options")
 NEVERD_PROCESS_CLI_STRING(OptionsValue, "json")
 #endif
 #ifdef NEVERD_PROCESS_CLI_STATUS

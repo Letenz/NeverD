@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 651fc905db4bb2d62a1036bb6495b60cad23dde9b5e655b4b4ca408294a3d83c -->
+<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
 
 [← 文档索引](README.md)
 
@@ -167,7 +167,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 60 项，x64 的 macOS 和 Simulator 共 40 项。
+ARM64 三个平台共 66 项，x64 的 macOS 和 Simulator 共 44 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -277,3 +277,21 @@ SHA-256 已与 GitHub 摘要核对。跳过项包括仅适用于 macOS 的内核
 两个摘要均记录干净源码，`return`、`exit`、`memory`、`write-length` 都返回 37，
 输出逐字节匹配且 stderr 为空；产物摘要也已核对。这为两种架构的原始工作负载提供
 独立内核语义依据；模拟执行仍由上面的 HVF/KVM/WHP 结果覆盖。
+
+## 显式时间观察值
+
+`ProcessOptions::DarwinTime` / `darwin_time` 为所有 Darwin profile 提供 raw `gettimeofday` (116) 的固定观察值，包括第三个 `mach_absolute_time` 输出。`time_of_day`、`timezone` 和 `mach_absolute_time` 都可省略；省略表示未知，显式零是有效值，空对象不会补默认时钟。模型不读取宿主时钟、不推断时区、不推进时间，也不换算绝对 tick。
+
+提供一个记录时，其全部成员必须齐全。`seconds` 是无符号 32 位，`microseconds` 为 [0, 999999]，`minutes_west` / `dst_time` 为有符号 32 位，绝对 tick 为无符号 64 位。JSON 使用共享的无损整数规则：超出安全整数范围时使用十进制字符串。未知字段、越界值及非 Darwin profile 在加载镜像前拒绝。
+
+LP64 `timeval` 占 16 字节：偏移 0 是零扩展的秒数，偏移 8 是 32 位微秒，偏移 12 的四字节填充为零。时区是两个有符号 32 位字段，tick 占八字节。日历时间和绝对时间先联合采样，因此被请求的两种观察值必须在任何复制或指针检查前都存在。随后依次写入 timeval、timezone、absolute ticks。时区缺失在自己的阶段停止，保留已写入的 timeval；后续 EFAULT 同样保留此前写入，重叠地址遵循相同顺序。单次输出仅部分可写时，在该次复制前明确停止，保留更早的复制。三个空指针无需配置即可成功；选择性查询仅要求所请求的值。
+
+原始 `time` 工作负载核对原生行为；来宾 `time-values` 在五种来宾组合的 C/CLI/Python 路径输出配置的精确 32 字节。独立 SDK 对照从一次原生 raw 调用采集三输出，再逐字节比较。这不包含自动推进时钟、tick 换算、commpage 计数器、定时器或 Mach 时钟服务；dyld、线程、Objective-C/Swift 和 Foundation/UIKit 仍需完善。Intel HVF Actions 保持暂停，本轮不增加原生 Intel 或实体 iOS 验收结论。
+
+```json
+{"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
+```
+
+[XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
+
+时间验证（2026-10-06，Release）：538 项 Darwin 注册测试，274 项通过、264 项因后端不可用跳过，零失败；66/66 项必需 ARM64 HVF 测试全部执行。12 个原始原生 macOS 工作负载及单次采样的 SDK 字节对照通过。公共 C/CLI/报告为 43/43，无跳过。Python 的五种来宾组合通过，包括精确时间字节及原有八种文件场景。66 项运行器测试、本地化、能力清单和格式检查通过。计数有重叠。证据：`build-hvf-arm64/darwin-time-verified-evidence/`、`darwin-time-native-first/`、`darwin-time-public.xml`。

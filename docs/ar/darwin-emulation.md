@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 651fc905db4bb2d62a1036bb6495b60cad23dde9b5e655b4b4ca408294a3d83c -->
+<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -154,7 +154,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 60 على ARM64 أو 40 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
+يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 66 على ARM64 أو 44 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -177,3 +177,21 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 يطابق [تشغيل Intel](https://github.com/NeverSight/NeverD/actions/runs/37106013999) عدد 286 هوية CTest و32 عملية مع XML الأصلي. حالات التخطي البالغ عددها 234 هي 65 حالة Unicorn معطلة و39 ضيف ARM64 و130 منصة مضيفة أخرى. جرى التحقق من SHA-256 للأثر `11267489438` وهو `cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`. تحققت أيضاً نتائج [KVM/WHP](https://github.com/NeverSight/NeverD/actions/runs/37062839703) بصورة مستقلة. نجح [مرجع النواة](https://github.com/NeverSight/NeverD/actions/runs/37064795867) في 4/4 برامج لكل ISA، بحالة خروج 37 وخرج مطابق تماماً وstderr فارغ.
 
 مع Unicorn، نجح 138 فحصاً لـ C API/CLI وتُخطي 156 دون فشل. يغطي Python التركيبات الخمس؛ ويطابق المحرك المعبأ 18 تقرير CLI على ARM64 مع تحقق توقيع 186 صورة Mach-O. عند تعطيل HVF/Unicorn نجح 38 فحصاً وتُخطي 231، دون ربط Hypervisor.framework. هذه أدلة تكامل وليست عمليات تنفيذ أصلية إضافية. ما زال فحص CPU Intel الكامل غير مكتمل؛ انظر [HVF](macos-hvf.md) و[السجل التفصيلي](../darwin-emulation.md#hosted-native-verification-2026-10-03).
+
+## مشاهدات زمنية صريحة
+
+يوفر `ProcessOptions::DarwinTime` / `darwin_time` مشاهدات ثابتة للاستدعاء المباشر `gettimeofday` (116)، بما فيها الخرج الثالث `mach_absolute_time`، لكل ملفات Darwin. الحقول `time_of_day` و`timezone` و`mach_absolute_time` اختيارية؛ الغياب يعني مجهولاً، والصفر الصريح قيمة. الكائن الفارغ لا ينشئ ساعة افتراضية. لا يقرأ النموذج ساعة المضيف ولا يستنتج المنطقة الزمنية ولا يقدّم الزمن أو يحوّل النبضات المطلقة.
+
+كل سجل مقدّم يتطلب جميع أعضائه. `seconds` غير موقّع من 32 بت، و`microseconds` ضمن [0, 999999]، و`minutes_west` / `dst_time` موقّعان من 32 بت، والنبضات غير موقّعة من 64 بت. يستخدم JSON قواعد الأعداد الصحيحة المشتركة بلا فقد؛ القيم خارج المجال الآمن تتطلب سلاسل عشرية. تُرفض الحقول المجهولة والقيم المخالفة وملفات غير Darwin قبل تحميل الصورة.
+
+حجم `timeval` في LP64 هو 16 بايت: ثوانٍ موسعة بالأصفار عند الإزاحة 0، وميكروثوانٍ من 32 بت عند 8، وأربعة أصفار عند 12. المنطقة الزمنية حقلان موقّعان من 32 بت، والنبضات ثمانية بايتات. الزمن التقويمي والمطلق عينة أولية مشتركة؛ يجب توفر كل مشاهدة مطلوبة قبل النسخ أو فحص المؤشرات. ثم تُنسخ timeval وtimezone وabsolute ticks بالترتيب. غياب المنطقة أو EFAULT لاحق يحفظ الكتابات السابقة؛ العناوين المتداخلة تتبع الترتيب نفسه. إذا كان خرج واحد قابلاً للكتابة جزئياً فقط يتوقف قبل نسخه مع حفظ النسخ السابقة. تنجح المؤشرات الفارغة جميعها دون إعداد، والطلبات الانتقائية تحتاج القيم المطلوبة فقط.
+
+يتحقق البرنامج الأصلي `time` من السلوك الأصلي؛ ويصدر `time-values` البايتات المضبوطة الـ32 عبر C/CLI/Python في التركيبات الضيفة الخمس. يقارن مرجع SDK مستقل كل بايت بثلاثة مخارج ملتقطة من استدعاء أصلي مباشر واحد. تبقى الساعات المتقدمة والتحويل وعدادات commpage والمؤقتات وساعات Mach غير منفذة، وكذلك عمل dyld والخيوط وObjective-C/Swift وFoundation/UIKit. تظل Intel HVF Actions معلقة؛ لا تضاف مصادقة أصلية لـIntel أو iOS المادي.
+
+```json
+{"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
+```
+
+[XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
+
+التحقق الزمني (2026-10-06، Release): 538 حالة Darwin، نجحت 274 وتجاوزت 264 لغياب الخلفية، بلا إخفاق؛ نُفذت جميع حالات ARM64 HVF المطلوبة 66/66. نجحت البرامج الأصلية الـ12 لـmacOS ومقارنة بايتات SDK لعينة واحدة. C/CLI/التقارير: 43/43 دون تجاوز. نجح Python في التركيبات الخمس مع بايتات الوقت الدقيقة وأوضاع الملفات الثمانية السابقة. نجحت اختبارات التشغيل الـ66 والتوطين والقدرات والتنسيق. الأعداد متداخلة. الأدلة: `build-hvf-arm64/darwin-time-verified-evidence/` و`darwin-time-native-first/` و`darwin-time-public.xml`.

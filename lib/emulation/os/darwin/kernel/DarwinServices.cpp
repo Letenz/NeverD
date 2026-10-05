@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "DarwinFiles.h"
 #include "DarwinMemory.h"
+#include "DarwinTime.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -147,6 +148,8 @@ handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
     return std::optional<ServiceResult>();
   }
   switch (*Kind) {
+  case ServiceKind::GetTimeOfDay:
+    return timeService(CPU, Event, Options.DarwinTime, Result);
   case ServiceKind::Exit:
     Result.Stop = ProcessStopReason::Exited;
     Result.ExitStatus = Event.Arguments[0] & 0xff;

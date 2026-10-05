@@ -86,6 +86,7 @@ NEVERD_DARWIN_SERVICE(Stat64, 338, Int)
 NEVERD_DARWIN_SERVICE(Fstat64, 339, Int)
 NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
 NEVERD_DARWIN_SERVICE(GetDirEntries64, 344, Wide)
+NEVERD_DARWIN_SERVICE(GetTimeOfDay, 116, Int)
 NEVERD_DARWIN_SERVICE(OpenAt, 463, Int)
 NEVERD_DARWIN_SERVICE(FstatAt64, 470, Int)
 NEVERD_DARWIN_SERVICE(Munmap, 73, Int)
@@ -106,6 +107,15 @@ NEVERD_DARWIN_SERVICE_ALIAS(OpenAt, 464)
 #endif
 
 #ifdef NEVERD_DARWIN_DIAGNOSTIC
+NEVERD_DARWIN_DIAGNOSTIC(TimeMicroseconds,
+                         "Darwin time microseconds must be below 1000000")
+NEVERD_DARWIN_DIAGNOSTIC(TimeOfDayMissing,
+                         "Darwin time_of_day is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimeZoneMissing, "Darwin timezone is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimeAbsoluteMissing,
+                         "Darwin mach_absolute_time is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimePartialOutput,
+                         "Darwin time output buffer is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(FileOptionsLimit, "invalid Darwin file input limits")
 NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
                          "invalid or conflicting Darwin catalogue path")

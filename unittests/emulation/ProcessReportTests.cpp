@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinFileTestData.h"
+#include "DarwinTimeTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
@@ -336,6 +337,99 @@ TEST(ProcessReport, PreservesExplicitWindowsCatalogueAndRejectsOtherProfiles) {
       EXPECT_EQ(llvm::toString(R.takeError()), field::WindowsProfile);
   }
 }
+TEST(ProcessReport, DarwinTimeInputIsLosslessAndRestrictedToDarwinProfiles) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_time\":") +
+                                  darwin_test::TimeJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->DarwinTime);
+  EXPECT_EQ(O->DarwinTime->TimeOfDay->Seconds, 0xf1234567u);
+  EXPECT_EQ(O->DarwinTime->TimeOfDay->Microseconds, 654321u);
+  EXPECT_EQ(O->DarwinTime->Timezone->MinutesWest, -480);
+  EXPECT_EQ(O->DarwinTime->Timezone->DSTTime, -1);
+  EXPECT_EQ(O->DarwinTime->MachAbsoluteTime, 0xfedcba9876543210ULL);
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinTimeProfile);
+  }
+  O->DarwinTime->TimeOfDay->Microseconds = 1000000;
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("microseconds"),
+              std::string::npos);
+  }
+}
+
+TEST(ProcessReport, DarwinTimeDistinguishesMissingZeroAndIntegerBoundaries) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_time":{}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  ASSERT_TRUE(Empty->DarwinTime);
+  EXPECT_FALSE(Empty->DarwinTime->TimeOfDay);
+  EXPECT_FALSE(Empty->DarwinTime->Timezone);
+  EXPECT_FALSE(Empty->DarwinTime->MachAbsoluteTime);
+  auto Zero = processOptionsFromJSON(R"({"darwin_time":{
+    "time_of_day":{"seconds":0,"microseconds":0},
+    "timezone":{"minutes_west":0,"dst_time":0},"mach_absolute_time":0}})");
+  ASSERT_TRUE(bool(Zero)) << llvm::toString(Zero.takeError());
+  EXPECT_EQ(Zero->DarwinTime->TimeOfDay->Seconds, 0u);
+  EXPECT_EQ(Zero->DarwinTime->TimeOfDay->Microseconds, 0u);
+  EXPECT_EQ(Zero->DarwinTime->Timezone->MinutesWest, 0);
+  EXPECT_EQ(Zero->DarwinTime->Timezone->DSTTime, 0);
+  ASSERT_TRUE(Zero->DarwinTime->MachAbsoluteTime);
+  EXPECT_EQ(*Zero->DarwinTime->MachAbsoluteTime, 0u);
+  auto Limits = processOptionsFromJSON(R"({"darwin_time":{
+    "time_of_day":{"seconds":"4294967295","microseconds":999999},
+    "timezone":{"minutes_west":-2147483648,"dst_time":2147483647},
+    "mach_absolute_time":"18446744073709551615"}})");
+  ASSERT_TRUE(bool(Limits)) << llvm::toString(Limits.takeError());
+  EXPECT_EQ(Limits->DarwinTime->TimeOfDay->Seconds, UINT32_MAX);
+  EXPECT_EQ(Limits->DarwinTime->TimeOfDay->Microseconds, 999999u);
+  EXPECT_EQ(Limits->DarwinTime->Timezone->MinutesWest, INT32_MIN);
+  EXPECT_EQ(Limits->DarwinTime->Timezone->DSTTime, INT32_MAX);
+  EXPECT_EQ(Limits->DarwinTime->MachAbsoluteTime, UINT64_MAX);
+}
+
+TEST(ProcessReport, MalformedDarwinTimeIsRejectedBeforeExecution) {
+  for (const char *Bad :
+       {"null",
+        "[]",
+        "true",
+        R"({"unknown":0})",
+        R"({"time_of_day":null})",
+        R"({"time_of_day":[]})",
+        R"({"time_of_day":{}})",
+        R"({"time_of_day":{"seconds":0}})",
+        R"({"time_of_day":{"microseconds":0}})",
+        R"({"time_of_day":{"seconds":0,"microseconds":0,"extra":0}})",
+        R"({"time_of_day":{"seconds":-1,"microseconds":0}})",
+        R"({"time_of_day":{"seconds":4294967296,"microseconds":0}})",
+        R"({"time_of_day":{"seconds":0,"microseconds":-1}})",
+        R"({"time_of_day":{"seconds":0,"microseconds":1000000}})",
+        R"({"time_of_day":{"seconds":0,"microseconds":1.5}})",
+        R"({"timezone":null})",
+        R"({"timezone":{}})",
+        R"({"timezone":{"minutes_west":0}})",
+        R"({"timezone":{"minutes_west":0,"dst_time":0,"extra":0}})",
+        R"({"timezone":{"minutes_west":-2147483649,"dst_time":0}})",
+        R"({"timezone":{"minutes_west":0,"dst_time":2147483648}})",
+        R"({"mach_absolute_time":null})",
+        R"({"mach_absolute_time":true})",
+        R"({"mach_absolute_time":-1})",
+        R"({"mach_absolute_time":9007199254740992})",
+        R"({"mach_absolute_time":"18446744073709551616"})",
+        R"({"mach_absolute_time":"0x1"})",
+        R"({"mach_absolute_time":1.5})"}) {
+    SCOPED_TRACE(Bad);
+    auto R =
+        processOptionsFromJSON(std::string("{\"darwin_time\":") + Bad + "}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+}
+
 TEST(ProcessReport, LinuxClockInputIsLosslessAndRestrictedToLinuxProfiles) {
   auto O = processOptionsFromJSON(R"({"linux_time":{"clocks":[
     {"id":0,"seconds":"-9223372036854775808","nanoseconds":999999999},

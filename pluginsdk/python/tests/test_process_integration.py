@@ -501,9 +501,16 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("stdin", b"\x00\xffx"),
                                            ("output-descriptors", b"ok"),
                                            ("file-status", b"s"), ("file-mapping", b"m"),
-                                           ("directories", b"d"), ("directory-entries", b"e")):
+                                           ("directories", b"d"), ("directory-entries", b"e"),
+                                           ("time-values", bytes.fromhex(
+                                               "674523f100000000f1fb090000000000"
+                                               "20feffffffffffff1032547698badcfe"))):
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
+                            "darwin_time": {
+                                "time_of_day": {"seconds": 4045620583, "microseconds": 654321},
+                                "timezone": {"minutes_west": -480, "dst_time": -1},
+                                "mach_absolute_time": "18364758544493064720"},
                             "darwin_files": {"files": [{"path": "/data", "bytes_hex":
                                                        b"0123456789".hex(), "metadata": {
                                 "device": -123, "inode": "18364758544493064720",

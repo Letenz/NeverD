@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 651fc905db4bb2d62a1036bb6495b60cad23dde9b5e655b4b4ca408294a3d83c -->
+<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
 
 [← 文件索引](README.md)
 
@@ -154,7 +154,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 60 項或 x64 40 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 66 項或 x64 44 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -177,3 +177,21 @@ Linux 使用 `kvm`、Windows 使用 `whp`。[Darwin 工作流程](../../.github/
 [Intel 工作](https://github.com/NeverSight/NeverD/actions/runs/37106013999) 核對 286 個 CTest 身分、32 個行程及原始 XML。234 個跳過項為 65 個停用的 Unicorn、39 個 ARM64 客體、130 個其他宿主平台。產物 `11267489438` 的 SHA-256 已驗證為 `cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`。[KVM/WHP](https://github.com/NeverSight/NeverD/actions/runs/37062839703) 也獨立核驗。[核心對照](https://github.com/NeverSight/NeverD/actions/runs/37064795867) 在兩種 ISA 各通過 4/4 個程式，退出狀態 37、輸出逐位元組一致、stderr 為空。
 
 開啟 Unicorn 的 C API/CLI 檢查為 138 通過、156 跳過、零失敗。Python 涵蓋五種組合；封裝引擎與 18 份 ARM64 CLI 報告相符，186 個 Mach-O 簽章通過。同時關閉 HVF/Unicorn 時，38 項通過、231 項跳過，且不連結 Hypervisor.framework。這些是整合證據，不能增加原生執行計數。Intel 完整 CPU 仍未驗收；詳見 [HVF](macos-hvf.md)及[完整記錄](../darwin-emulation.md#hosted-native-verification-2026-10-03)。
+
+## 明確的時間觀察值
+
+`ProcessOptions::DarwinTime` / `darwin_time` 為所有 Darwin profile 提供 raw `gettimeofday` (116) 的固定觀察值，包含第三個 `mach_absolute_time` 輸出。`time_of_day`、`timezone` 和 `mach_absolute_time` 都可省略；省略代表未知，明確的零是有效值，空物件不會補上預設時鐘。模型不讀取主機時鐘、不推斷時區、不推進時間，也不換算絕對 tick。
+
+提供記錄時必須包含全部成員。`seconds` 是無號 32 位，`microseconds` 為 [0, 999999]，`minutes_west` / `dst_time` 為有號 32 位，絕對 tick 為無號 64 位。JSON 沿用無損整數規則：超出安全整數範圍時使用十進位字串。未知欄位、越界值及非 Darwin profile 在載入映像前拒絕。
+
+LP64 `timeval` 為 16 位元組：偏移 0 是零擴展秒數，偏移 8 是 32 位微秒，偏移 12 的四位元組填充為零。時區是兩個有號 32 位欄位，tick 佔八位元組。日曆與絕對時間先聯合取樣，因此請求的兩種觀察值必須在任何複製或指標檢查前存在。接著依序寫入 timeval、timezone、absolute ticks。時區缺失在自身階段停止，保留先前的 timeval；後續 EFAULT 也保留先前寫入，重疊位址依相同順序處理。單次輸出僅部分可寫時，在該次複製前明確停止，保留更早的複製。三個空指標無須設定即可成功；選擇性查詢只要求所請求的值。
+
+原創 `time` 工作負載核對原生行為；來賓 `time-values` 在五種來賓組合的 C/CLI/Python 路徑輸出設定的精確 32 位元組。獨立 SDK 對照從一次原生 raw 呼叫擷取三輸出，再逐位元組比較。此功能不包含時鐘推進、tick 換算、commpage 計數器、計時器或 Mach 時鐘服務；dyld、執行緒、Objective-C/Swift 和 Foundation/UIKit 仍待完善。Intel HVF Actions 維持暫停，本輪不增加原生 Intel 或實體 iOS 驗收結論。
+
+```json
+{"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
+```
+
+[XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
+
+時間驗證（2026-10-06，Release）：538 項 Darwin 註冊測試，274 項通過、264 項因後端不可用跳過，零失敗；66/66 項必要 ARM64 HVF 測試全部執行。12 個原創原生 macOS 工作負載及單次取樣的 SDK 位元組對照通過。公共 C/CLI/報告為 43/43，無跳過。Python 五種來賓組合通過，包含精確時間位元組與原有八種檔案情境。66 項執行器測試、本地化、能力清單與格式檢查通過。計數重疊。證據：`build-hvf-arm64/darwin-time-verified-evidence/`、`darwin-time-native-first/`、`darwin-time-public.xml`。

@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 651fc905db4bb2d62a1036bb6495b60cad23dde9b5e655b4b4ca408294a3d83c -->
+<!-- i18n-source: 619422a635a0578cd01ed44420388f15cd1896b450f7d5d08bdcf2dfdaf83462 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -154,7 +154,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-Die eigene Workload-Prüfung verlangt alle 60 nativen ARM64- beziehungsweise 40 x64-Fälle, einschließlich `LC_MAIN` und `LC_UNIXTHREAD` auf jeder Plattform. Fehlende/übersprungene Pflichtfälle oder fehlendes `ld64.lld` führen zum Fehlschlag.
+Die eigene Workload-Prüfung verlangt alle 66 nativen ARM64- beziehungsweise 44 x64-Fälle, einschließlich `LC_MAIN` und `LC_UNIXTHREAD` auf jeder Plattform. Fehlende/übersprungene Pflichtfälle oder fehlendes `ld64.lld` führen zum Fehlschlag.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -177,3 +177,21 @@ Stand 2026-10-03; überlappende Zeilen nicht addieren:
 Der [Intel-Lauf](https://github.com/NeverSight/NeverD/actions/runs/37106013999) gleicht 286 CTest-Identitäten und 32 Prozesse mit Original-XML ab. Die 234 übersprungenen Fälle sind 65 deaktivierte Unicorn-Fälle, 39 ARM64-Gäste und 130 andere Hostplattformen. Artefakt `11267489438` hat den verifizierten SHA-256 `cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`. Auch [KVM/WHP](https://github.com/NeverSight/NeverD/actions/runs/37062839703) wurden unabhängig geprüft. Die [Kernelreferenz](https://github.com/NeverSight/NeverD/actions/runs/37064795867) bestand 4/4 Programme auf jeder ISA, mit Status 37, exakter Ausgabe und leerem stderr.
 
 C API/CLI mit Unicorn: 138 bestanden, 156 übersprungen, keine Fehler. Python deckt alle fünf Kombinationen ab. Die Paketengine stimmt mit 18 ARM64-CLI-Berichten überein; 186 Mach-O-Signaturen wurden geprüft. HVF/Unicorn OFF bestand 38 Prüfungen, übersprang 231 und linkte Hypervisor.framework nicht. Das sind Integrationsnachweise, keine zusätzlichen nativen Ausführungen. Die vollständige Intel-CPU-Abnahme bleibt offen; siehe [HVF](macos-hvf.md) und den [ausführlichen Nachweis](../darwin-emulation.md#hosted-native-verification-2026-10-03).
+
+## Explizite Zeitbeobachtungen
+
+`ProcessOptions::DarwinTime` / `darwin_time` liefert feste Beobachtungen für den rohen Aufruf `gettimeofday` (116), einschließlich der dritten Ausgabe `mach_absolute_time`, auf allen Darwin-Profilen. `time_of_day`, `timezone` und `mach_absolute_time` sind jeweils optional: Fehlen bedeutet unbekannt, eine explizite Null ist ein Wert. Ein leeres Objekt erzeugt keine Standarduhr. Das Modell liest keine Hostuhr, leitet keine Zeitzone ab, lässt Zeit nicht fortschreiten und rechnet absolute Ticks nicht um.
+
+Jeder angegebene Datensatz benötigt alle Felder. `seconds` ist vorzeichenlos mit 32 Bit, `microseconds` liegt in [0, 999999], `minutes_west` / `dst_time` sind vorzeichenbehaftet mit 32 Bit, Ticks vorzeichenlos mit 64 Bit. JSON verwendet die gemeinsamen verlustfreien Ganzzahlregeln; außerhalb des sicheren Bereichs sind Dezimalstrings nötig. Unbekannte Felder, ungültige Bereiche und andere Profile werden vor dem Laden abgewiesen.
+
+LP64 `timeval` umfasst 16 Byte: mit Null erweiterte Sekunden bei Offset 0, 32-Bit-Mikrosekunden bei 8 und vier Nullbytes bei 12. Die Zeitzone hat zwei vorzeichenbehaftete 32-Bit-Felder, Ticks acht Byte. Kalender- und Absolutzeit bilden eine gemeinsame erste Messung; alle angeforderten Beobachtungen müssen vor Kopien und Zeigerprüfungen vorhanden sein. Danach folgen timeval, timezone und absolute ticks. Eine fehlende Zeitzone oder ein späterer EFAULT erhält frühere Schreibvorgänge; überlappende Adressen folgen derselben Reihenfolge. Eine nur teilweise beschreibbare Einzelausgabe stoppt vor ihrer Kopie und erhält frühere Kopien. Nur Nullzeiger benötigen keine Konfiguration, selektive Anfragen nur ihre angeforderten Werte.
+
+Das selbst geschriebene Programm `time` prüft natives Verhalten; `time-values` liefert die konfigurierten 32 Byte über C/CLI/Python für alle fünf Gastkombinationen. Ein separates SDK-Orakel vergleicht jedes Byte mit drei Ausgaben eines einzigen nativen Rohaufrufs. Fortschreitende Uhren, Umrechnung, commpage-Zähler, Timer und Mach-Uhren bleiben offen, ebenso dyld, Threads, Objective-C/Swift und Foundation/UIKit. Intel HVF Actions bleibt ausgesetzt; native Intel- und physische iOS-Abnahme wird nicht hinzugefügt.
+
+```json
+{"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
+```
+
+[XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
+
+Zeitprüfung (2026-10-06, Release): 538 Darwin-Fälle, 274 bestanden, 264 wegen fehlender Backends übersprungen, keine Fehler; alle 66/66 vorgeschriebenen ARM64-HVF-Fälle ausgeführt. Die 12 nativen macOS-Programme und der SDK-Bytevergleich eines einzelnen Samples bestehen. C/CLI/Berichte: 43/43 ohne Auslassungen. Python besteht für fünf Gastkombinationen mit exakten Zeitbytes und acht bestehenden Dateimodi. Alle 66 Runner-Tests sowie Übersetzungs-, Fähigkeits- und Formatprüfungen bestehen. Zählungen überschneiden sich. Nachweise: `build-hvf-arm64/darwin-time-verified-evidence/`, `darwin-time-native-first/`, `darwin-time-public.xml`.

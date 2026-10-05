@@ -184,6 +184,7 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinImageTests.cpp
   DarwinMemoryTests.cpp
   DarwinFileTests.cpp
+  DarwinTimeTests.cpp
   DarwinNativeTests.cpp
   TIMEOUT 30
   NO_PRETTY_VALUES

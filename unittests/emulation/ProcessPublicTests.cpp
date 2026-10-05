@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
 #include "DarwinFileTestData.h"
+#include "DarwinTimeTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
@@ -388,7 +389,7 @@ TEST_F(ProcessPublic, DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI) {
 }
 
 TEST_F(ProcessPublic,
-       DarwinFilesPreserveBytesAndDescriptorResultsAcrossSDKAndCLI) {
+       DarwinInputsPreserveBytesAndServiceResultsAcrossSDKAndCLI) {
 #ifndef NEVERD_DARWIN_FIXTURE_DIR
   GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
 #else
@@ -409,12 +410,13 @@ TEST_F(ProcessPublic,
          {std::pair{"files", "66"}, std::pair{"files-nocancel", "66"},
           std::pair{"stdin", "00ff78"}, std::pair{"output-descriptors", "6f6b"},
           std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"},
-          std::pair{"directories", "64"},
-          std::pair{"directory-entries", "65"}}) {
+          std::pair{"directories", "64"}, std::pair{"directory-entries", "65"},
+          std::pair{"time-values", emulation::darwin_test::TimeHex}}) {
       SCOPED_TRACE(Mode);
       const std::string Options =
-          std::string(
-              R"({"backend":"unicorn","darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)") +
+          std::string(R"({"backend":"unicorn","darwin_time":)") +
+          emulation::darwin_test::TimeJSON +
+          R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
           emulation::darwin_test::MetadataJSON +
           R"(}],"directories":[{"path":"/","contents":)" +
           emulation::darwin_test::DirectoryContentsJSON +

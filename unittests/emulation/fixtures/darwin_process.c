@@ -55,6 +55,87 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+static int valid_timeval(const unsigned char *p) {
+  return little_integer(p, 8) <= 0xffffffffUL &&
+         little_integer(p + 8, 4) < 1000000 && !little_integer(p + 12, 4);
+}
+static void time_canaries(unsigned char *bytes) {
+  for (unsigned i = 0; i != 40; ++i)
+    bytes[i] = 0xa5;
+}
+static int time_error_secondary(u64 absolute_pointer) {
+#if defined(__aarch64__)
+  (void)absolute_pointer;
+  return secondary == 0;
+#else
+  return secondary == absolute_pointer;
+#endif
+}
+/* One original workload executes unchanged under the host kernel and model.
+ * Live host clock values may change between calls; only the first tuple is
+ * emitted by time-values for exact caller-supplied guest comparisons. */
+static int time_calls(int emit_values) {
+  unsigned error;
+  unsigned char bytes[40], first[32];
+  unsigned char *tv = bytes + 1, *tz = bytes + 17, *ticks = bytes + 25;
+  int check = 50;
+#define TIME_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  TIME_EXPECT(call(116, 0, 0, 0, 0, 0, 0, &error) == 0 && !error && !secondary);
+  time_canaries(bytes);
+  TIME_EXPECT(call(116, (u64)tv, (u64)tz, (u64)ticks, 0, 0, 0, &error) == 0 &&
+              !error && !secondary);
+  TIME_EXPECT(valid_timeval(tv) && little_integer(ticks, 8) != 0);
+  TIME_EXPECT(bytes[0] == 0xa5 && bytes[33] == 0xa5);
+  for (unsigned i = 0; i != 32; ++i)
+    first[i] = bytes[i + 1];
+  time_canaries(bytes);
+  TIME_EXPECT(call(116, 1, (u64)tz, (u64)ticks, 0, 0, 0, &error) == 14 &&
+              error && time_error_secondary((u64)ticks));
+  TIME_EXPECT(little_integer(tv, 8) == 0xa5a5a5a5a5a5a5a5UL &&
+              little_integer(tz, 8) == 0xa5a5a5a5a5a5a5a5UL &&
+              little_integer(ticks, 8) == 0xa5a5a5a5a5a5a5a5UL);
+  TIME_EXPECT(call(116, (u64)tv, 1, (u64)ticks, 0, 0, 0, &error) == 14 &&
+              error && time_error_secondary((u64)ticks));
+  TIME_EXPECT(valid_timeval(tv) &&
+              little_integer(ticks, 8) == 0xa5a5a5a5a5a5a5a5UL);
+  time_canaries(bytes);
+  TIME_EXPECT(call(116, (u64)tv, (u64)tz, 1, 0, 0, 0, &error) == 14 && error &&
+              time_error_secondary(1));
+  TIME_EXPECT(valid_timeval(tv) &&
+              little_integer(tz, 8) == little_integer(first + 16, 8));
+  time_canaries(bytes);
+  TIME_EXPECT(call(116, 0, (u64)tz, 0, 0, 0, 0, &error) == 0 && !error &&
+              !secondary);
+  TIME_EXPECT(little_integer(tz, 8) == little_integer(first + 16, 8) &&
+              little_integer(tv, 8) == 0xa5a5a5a5a5a5a5a5UL &&
+              little_integer(ticks, 8) == 0xa5a5a5a5a5a5a5a5UL);
+  TIME_EXPECT(call(116, 0, 0, (u64)ticks, 0, 0, 0, &error) == 0 && !error &&
+              !secondary);
+  TIME_EXPECT(little_integer(ticks, 8) != 0 &&
+              little_integer(tv, 8) == 0xa5a5a5a5a5a5a5a5UL);
+  TIME_EXPECT(call(116, (u64)tv, 0, 0, 0, 0, 0, &error) == 0 && !error &&
+              !secondary);
+  TIME_EXPECT(valid_timeval(tv));
+  // A final overlapping absolute write replaces timezone and seconds but
+  // leaves the earlier microseconds and zero timeval padding visible.
+  TIME_EXPECT(call(116, (u64)tv, (u64)tv, (u64)tv, 0, 0, 0, &error) == 0 &&
+              !error && !secondary);
+  TIME_EXPECT(
+      little_integer(tv, 8) != 0 && little_integer(tv + 8, 4) < 1000000 &&
+      !little_integer(tv + 12, 4) && bytes[0] == 0xa5 && bytes[33] == 0xa5);
+  const char marker = 't';
+  u64 length = emit_values ? 32 : 1;
+  TIME_EXPECT(call(4, 1, emit_values ? (u64)first : (u64)&marker, length, 0, 0,
+                   0, &error) == length &&
+              !error);
+#undef TIME_EXPECT
+  return 37;
+}
 /* Inspect bounded records independently from the model's serializer. The
  * input directory contains only data and empty, in filesystem-defined order. */
 static unsigned directory_names(const unsigned char *bytes, u64 size,
@@ -526,6 +607,10 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "time-null"))
+    return call(116, 0, 0, 0, 0, 0, 0, &error) || error || secondary ? 51 : 37;
+  if (equal(argv[1], "time") || equal(argv[1], "time-values"))
+    return time_calls(equal(argv[1], "time-values"));
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));

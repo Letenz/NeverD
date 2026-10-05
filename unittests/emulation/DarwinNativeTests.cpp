@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
+#include "os/darwin/kernel/DarwinTime.h"
 
 #include "neverd/emulation/AddressSpace.h"
 
@@ -30,6 +31,7 @@
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 // The raw LP64 entry point exported by libsystem_kernel; the public legacy
@@ -39,6 +41,84 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, TimeOutputsMatchSDKLayoutAndOneCapturedRawSample) {
+#if !defined(__APPLE__) || (!defined(__aarch64__) && !defined(__x86_64__))
+  GTEST_SKIP() << "Native Darwin time capture requires macOS ARM64 or x86_64";
+#else
+  EXPECT_EQ(sizeof(timeval), 16u);
+  EXPECT_EQ(offsetof(timeval, tv_sec), 0u);
+  EXPECT_EQ(offsetof(timeval, tv_usec), 8u);
+  EXPECT_EQ(sizeof(timeval{}.tv_sec), 8u);
+  EXPECT_EQ(sizeof(timeval{}.tv_usec), 4u);
+  EXPECT_EQ(sizeof(struct timezone), 8u);
+  EXPECT_EQ(offsetof(struct timezone, tz_minuteswest), 0u);
+  EXPECT_EQ(offsetof(struct timezone, tz_dsttime), 4u);
+  std::array<uint8_t, 34> Captured;
+  Captured.fill(0xa5);
+  // Capture the three outputs in one raw invocation. libSystem wrappers do
+  // not provide this three-output contract to callers of gettimeofday.
+#if defined(__aarch64__)
+  register uint64_t X0 __asm__("x0") = uint64_t(Captured.data() + 1);
+  register uint64_t X1 __asm__("x1") = uint64_t(Captured.data() + 17);
+  register uint64_t X2 __asm__("x2") = uint64_t(Captured.data() + 25);
+  register uint64_t X16 __asm__("x16") = 116;
+  unsigned Carry;
+  __asm__ volatile("svc #0x80\n\tcset %w2, cs"
+                   : "+r"(X0), "+r"(X1), "=r"(Carry)
+                   : "r"(X2), "r"(X16)
+                   : "cc", "memory");
+  ASSERT_EQ(Carry, 0u);
+  ASSERT_EQ(X0, 0u);
+  ASSERT_EQ(X1, 0u);
+#else
+  uint64_t RAX = 0x2000074;
+  uint64_t RDX = uint64_t(Captured.data() + 25);
+  unsigned char Carry;
+  __asm__ volatile("syscall\n\tsetc %2"
+                   : "+a"(RAX), "+d"(RDX), "=qm"(Carry)
+                   : "D"(Captured.data() + 1), "S"(Captured.data() + 17)
+                   : "rcx", "r11", "cc", "memory");
+  ASSERT_EQ(Carry, 0u);
+  ASSERT_EQ(RAX, 0u);
+  ASSERT_EQ(RDX, 0u);
+#endif
+  using namespace llvm::support::endian;
+  const uint64_t Seconds = read64le(Captured.data() + 1);
+  ASSERT_LE(Seconds, UINT32_MAX);
+  const uint32_t Microseconds = read32le(Captured.data() + 9);
+  ASSERT_LT(Microseconds, 1000000u);
+  EXPECT_EQ(read32le(Captured.data() + 13), 0u);
+  const uint64_t Ticks = read64le(Captured.data() + 25);
+  ASSERT_NE(Ticks, 0u);
+  EXPECT_EQ(Captured.front(), 0xa5);
+  EXPECT_EQ(Captured.back(), 0xa5);
+  const DarwinTimeOptions Options{
+      DarwinTimeOfDay{uint32_t(Seconds), Microseconds},
+      DarwinTimezone{int32_t(read32le(Captured.data() + 17)),
+                     int32_t(read32le(Captured.data() + 21))},
+      Ticks};
+  auto Physical = PhysicalMemory::create(4096);
+  ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+  auto Space = AddressSpace::create(*Physical, 4096);
+  ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+  constexpr uint64_t Base = 0x100000;
+  ASSERT_FALSE(bool((*Space)->map(Base, 4096, Read | Write | UserAccessible)));
+  std::array<uint8_t, 34> Encoded;
+  Encoded.fill(0xa5);
+  ASSERT_FALSE(bool((*Space)->write(Base, Encoded)));
+  ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn, "native time oracle"};
+  auto Stored = darwin_model::timeService(
+      **Space, {0, 116, {Base + 1, Base + 17, Base + 25}, std::nullopt},
+      Options, Result);
+  ASSERT_TRUE(bool(Stored)) << llvm::toString(Stored.takeError());
+  ASSERT_TRUE(*Stored) << Result.Diagnostic;
+  ASSERT_FALSE((**Stored).Error);
+  ASSERT_FALSE(bool((*Space)->read(Base, Encoded)));
+  EXPECT_EQ(Encoded, Captured);
+#endif
+}
+
 TEST(DarwinNative, PrivateFileOffsetAndTailMatchHostMapping) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "native Darwin file mappings require macOS";

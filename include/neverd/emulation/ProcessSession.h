@@ -8,6 +8,7 @@
 
 #include "neverd/emulation/AndroidNative.h"
 #include "neverd/emulation/DarwinFileOptions.h"
+#include "neverd/emulation/DarwinTimeOptions.h"
 #include "neverd/emulation/ExecutionBackend.h"
 #include "neverd/emulation/ExecutionBudget.h"
 #include "neverd/emulation/ExecutionExit.h"
@@ -57,6 +58,7 @@ struct ProcessOptions {
   std::optional<LinuxFileOptions> LinuxFiles;
   std::optional<LinuxSignalOptions> LinuxSignals;
   std::optional<DarwinFileOptions> DarwinFiles;
+  std::optional<DarwinTimeOptions> DarwinTime;
 };
 
 struct ProcessServiceEvent {
