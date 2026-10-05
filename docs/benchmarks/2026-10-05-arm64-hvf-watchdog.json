@@ -1,4 +1,5 @@
 {
+  "publication_note": "Absolute checkout and LLVM cache prefixes were replaced with <repository> and <llvm-cache>; all measurements, binary hashes and other evidence are unchanged.",
   "schema_version": 1,
   "complete": true,
   "started_utc": "2026-10-05T06:08:32.682442+00:00",
@@ -29,7 +30,7 @@
   "pairs": 15,
   "binaries": {
     "baseline": {
-      "path": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+      "path": "<repository>/build-hvf-arm64/performance/baseline-common-source",
       "sha256": "6eb26725ad6539b295571e1e6f1c6904f68240f5e9d14a8163a5a38581254bc1",
       "caller_source_label": "0bc27331b-runtime-same-config",
       "backend": "hvf",
@@ -37,15 +38,15 @@
         "command": [
           "otool",
           "-L",
-          "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source"
+          "<repository>/build-hvf-arm64/performance/baseline-common-source"
         ],
         "returncode": 0,
-        "stdout": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source:\n\t/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 210.6.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n",
+        "stdout": "<repository>/build-hvf-arm64/performance/baseline-common-source:\n\t/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 210.6.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n",
         "stderr": ""
       }
     },
     "candidate": {
-      "path": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+      "path": "<repository>/build-hvf-arm64/performance/candidate-common-source",
       "sha256": "bd1eaa77a4e6216061eada7a7747bc788df73446c0354c334b224ee00c4353a0",
       "caller_source_label": "19f73298a",
       "backend": "hvf",
@@ -53,10 +54,10 @@
         "command": [
           "otool",
           "-L",
-          "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source"
+          "<repository>/build-hvf-arm64/performance/candidate-common-source"
         ],
         "returncode": 0,
-        "stdout": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source:\n\t/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 210.6.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n",
+        "stdout": "<repository>/build-hvf-arm64/performance/candidate-common-source:\n\t/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 210.6.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n",
         "stderr": ""
       }
     }
@@ -66,7 +67,7 @@
       "pair": 0,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -227,7 +228,7 @@
       "pair": 0,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -388,7 +389,7 @@
       "pair": 1,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -549,7 +550,7 @@
       "pair": 1,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -710,7 +711,7 @@
       "pair": 2,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -871,7 +872,7 @@
       "pair": 2,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -1032,7 +1033,7 @@
       "pair": 3,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -1193,7 +1194,7 @@
       "pair": 3,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -1354,7 +1355,7 @@
       "pair": 4,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -1515,7 +1516,7 @@
       "pair": 4,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -1676,7 +1677,7 @@
       "pair": 5,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -1837,7 +1838,7 @@
       "pair": 5,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -1998,7 +1999,7 @@
       "pair": 6,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -2159,7 +2160,7 @@
       "pair": 6,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -2320,7 +2321,7 @@
       "pair": 7,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -2481,7 +2482,7 @@
       "pair": 7,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -2642,7 +2643,7 @@
       "pair": 8,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -2803,7 +2804,7 @@
       "pair": 8,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -2964,7 +2965,7 @@
       "pair": 9,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -3125,7 +3126,7 @@
       "pair": 9,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -3286,7 +3287,7 @@
       "pair": 10,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -3447,7 +3448,7 @@
       "pair": 10,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -3608,7 +3609,7 @@
       "pair": 11,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -3769,7 +3770,7 @@
       "pair": 11,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -3930,7 +3931,7 @@
       "pair": 12,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -4091,7 +4092,7 @@
       "pair": 12,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -4252,7 +4253,7 @@
       "pair": 13,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -4413,7 +4414,7 @@
       "pair": 13,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -4574,7 +4575,7 @@
       "pair": 14,
       "side": "baseline",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/baseline-common-source",
+        "<repository>/build-hvf-arm64/performance/baseline-common-source",
         "--backend",
         "hvf",
         "--samples",
@@ -4735,7 +4736,7 @@
       "pair": 14,
       "side": "candidate",
       "command": [
-        "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/performance/candidate-common-source",
+        "<repository>/build-hvf-arm64/performance/candidate-common-source",
         "--backend",
         "hvf",
         "--samples",
