@@ -1425,3 +1425,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `JumpTailCopyKeepsTheOuterLabelOwner` проверяет то же правило владельца для хвостов перехода.
 
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` проверяет пустые якоря инструкций между ранним возвратом и вызовом once и отклоняет промежуточные вызовы или записи.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` проверяет общее доказательство корня и отказ после того, как лист начинает наблюдать свой контекст.

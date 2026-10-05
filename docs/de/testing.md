@@ -1473,3 +1473,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `JumpTailCopyKeepsTheOuterLabelOwner` prüft dieselbe Eigentumsregel für Sprungendstücke.
 
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` prüft leere Anker zwischen früher Rückgabe und once-Aufruf und lehnt dazwischenliegende Aufrufe oder Schreibvorgänge ab.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` prüft den gemeinsamen Wurzelbeweis und die Ablehnung, sobald ein Blatt seinen Kontext beobachtet.

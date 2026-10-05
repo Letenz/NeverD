@@ -1303,3 +1303,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `JumpTailCopyKeepsTheOuterLabelOwner` 檢查跳轉尾部的相同歸屬規則。
 
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 檢查提前返回與 once 呼叫之間的空指令錨點，並拒絕其間的呼叫或儲存。
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 檢查共用根節點證明，並在葉節點開始觀察上下文後拒絕舊計畫。

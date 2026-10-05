@@ -1453,3 +1453,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `JumpTailCopyKeepsTheOuterLabelOwner` verifica la stessa regola di appartenenza per le code di salto.
 
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` verifica gli ancoraggi vuoti tra il ritorno anticipato e la chiamata once, rifiutando chiamate o scritture intermedie.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` verifica la prova condivisa della radice e il rifiuto quando una foglia inizia a osservare il proprio contesto.

@@ -1357,3 +1357,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `JumpTailCopyKeepsTheOuterLabelOwner` は jump 末尾にも同じ所有規則を検証します。
 
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` は早期 return と once 呼び出しの間の空の命令アンカーを検証し、その間の呼び出しやストアを拒否します。
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` は共通ルート証明と、葉がコンテキストを観測し始めた後の拒否を検証します。

@@ -2605,3 +2605,5 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 `JumpTailCopyKeepsTheOuterLabelOwner` checks the same ownership rule for jump tails.
 
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` checks empty instruction anchors between the early return and once call, and rejects intervening calls or stores.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` checks the shared root proof and rejection after a leaf starts observing its context.

@@ -4075,6 +4075,50 @@ struct CopyOnceFixture : OnceFixture {
   }
 };
 
+TEST(SwiftOnceSources, ObjCThunkRootsShareTheNestedCallbackProof) {
+  ObjCThunkFixture F(Arch::AArch64);
+  NestedCallbackFixture Nested;
+  auto Root = Nested.Pipeline.HighFuncs[1];
+  Root.Entry = F.Pipeline.HighFuncs[1].Entry;
+  Root.Name = F.Pipeline.HighFuncs[1].Name;
+  F.Pipeline.HighFuncs[1] = Root;
+  F.Pipeline.HighFuncs.push_back(Nested.Pipeline.HighFuncs.back());
+  F.Image.Symbols.push_back(
+      {"_$s4Test4leaf_Wz", Nested.NestedPredicate, 8, false});
+  F.Image.Symbols.push_back({"_$s4Test4leaf_WZ", Nested.LeafAddress, 0, true});
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.ObjCThunks.count(F.ThunkAddress), 1U);
+  ASSERT_EQ(Plan.NestedCallbacks.count(Root.Entry), 1U);
+  ASSERT_EQ(Plan.CallbackHints.count(Root.Entry), 1U);
+  ASSERT_EQ(Plan.CallbackHints.count(Nested.LeafAddress), 1U);
+  const auto Projected =
+      projectSwiftOnceNestedCallbacks(F.Image, Plan, F.functions());
+  ASSERT_EQ(Projected.count(Root.Entry), 1U);
+  auto Functions = F.functions();
+  Functions[Root.Entry] = &Projected.at(Root.Entry).Function;
+  auto Bound = bindSwiftOnceSourceReferences(F.Pipeline.HighFuncs[0], F.Image,
+                                             Plan, Functions);
+  ASSERT_EQ(Bound.SwiftOnceObjCThunks.count(F.ThunkAddress), 1U);
+  EXPECT_TRUE(finalizeSwiftOnceObjCThunkProjection(Bound.Function, Plan));
+
+  auto &Leaf = F.Pipeline.HighFuncs.back();
+  MedVar Context;
+  Context.Kind = MedVar::Param;
+  Context.Id = 0;
+  Context.Size = 8;
+  HighStmt Observe;
+  Observe.Kind = StmtKind::Store;
+  Observe.StoreAddr = HighExpr::makeConst(0x2010, 8);
+  Observe.StoreVal =
+      HighExpr::makeVar(Context, NdType::makePtr(NdType::makeVoid()));
+  Leaf.Body.insert(Leaf.Body.begin(), Observe);
+  EXPECT_TRUE(
+      projectSwiftOnceNestedCallbacks(F.Image, Plan, F.functions()).empty());
+  const auto Changed = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  EXPECT_FALSE(Changed.CallbackHints.count(Root.Entry));
+  EXPECT_TRUE(Changed.CallbackAnalysisRoots.count(Root.Entry));
+}
+
 TEST(SwiftOnceSources, EarlyReturnsKeepExactObjCOnceThunkProofs) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (bool SeparateRetain : {false, true}) {

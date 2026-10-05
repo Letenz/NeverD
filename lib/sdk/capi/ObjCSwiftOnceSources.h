@@ -2412,10 +2412,16 @@ discoverSwiftOnceSources(const BinaryImage &Image,
   for (const auto &[_, Contract] : Plan.ObjCThunks)
     if (const auto Callback = Functions.find(Contract.Initializer);
         Callback != Functions.end() && Callback->second &&
-        !DirectTargets.count(Contract.Initializer) &&
-        ignoresContext(*Callback->second))
-      Plan.CallbackHints.emplace(Contract.Initializer,
-                                 callbackHint(Image.Arch));
+        !DirectTargets.count(Contract.Initializer)) {
+      // The thunk and shared-getter roots have the same callback obligation.
+      // A forwarded context must be proved unused throughout the current
+      // descendant chain before any callback ABI is granted.
+      if (independentCallbackChain(Contract.Initializer, Image, Functions,
+                                   DirectTargets))
+        Plan.CallbackHints.emplace(Contract.Initializer,
+                                   callbackHint(Image.Arch));
+      Plan.CallbackAnalysisRoots.insert(Contract.Initializer);
+    }
   for (const auto &F : Result.HighFuncs) {
     if (!F.SourceTypeHint)
       continue;

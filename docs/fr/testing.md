@@ -1472,3 +1472,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `JumpTailCopyKeepsTheOuterLabelOwner` vérifie la même règle d'appartenance pour les fins de saut.
 
 `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` vérifie les ancres d'instruction vides entre le retour anticipé et l'appel once, et refuse les appels ou écritures intermédiaires.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` vérifie la preuve commune de la racine et le refus lorsqu’une feuille commence à observer son contexte.

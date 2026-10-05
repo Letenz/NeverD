@@ -1380,3 +1380,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 يفحص `JumpTailCopyKeepsTheOuterLabelOwner` قاعدة الملكية نفسها لذيول القفز.
 
 يفحص `EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` نقاط ارتساء التعليمات الفارغة بين الإرجاع المبكر واستدعاء once، ويرفض الاستدعاءات أو التخزين بينهما.
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` يفحص برهان الجذر المشترك والرفض بعد أن تبدأ عقدة ورقية بملاحظة سياقها.
