@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 61bdc370f97cd87f1c914c94d71c46131bcaf43d213e92caf9e553b9445dc63b -->
+<!-- i18n-source: 06940e7220c3f05dff76462de7d0fe0199aab6b4aeda2c3e4f418d3441516ccf -->
 
 [← 文档索引](README.md)
 
@@ -308,3 +308,5 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 新增独立 16 位实模式 API 对照，不包含 NeverD 执行器、长模式状态或托管 MSR。保留全部 6 次尝试及 34 份已核验压缩包：首组实时对照中，macOS 15 上传器 SIGSEGV，原生结果未知，macOS 26 通过；首组取消实时观测的对照均触发原预算失败。旧时间区间包含日志写入，原解析器也拒绝了 CRCRLF。`ac717e4` 的协议 2 修正 LF 分帧，仅对此控制关闭 PTY 输出处理，在开始日志后重查原期限，并先采集状态再输出结束日志。随后同版本 final-only vCPU 对照：macOS 15 [37259797988](https://github.com/gmh5225/test_mac_intel/actions/runs/37259797988) 完成 1,000 轮、退出 0 且已回收；macOS 26 [37259800022](https://github.com/gmh5225/test_mac_intel/actions/runs/37259800022) 完成 571 轮，第 572 轮超出预算，退出 1 且清理、回收均已核验。失败时调用前至返回为 2,461,380,098 ns，开始日志为 5,946 ns，返回后的状态采集为 4,191 ns。该区间已排除日志写入，但仍包含主机调度，不证明 VM 进入时刻或 HVF 内核故障。本组没有上传器失败或 runner 失联，2 秒预算未放宽。双平台 vCPU、VM 重建、原 NeverD 恢复及完整 Intel CPU/Darwin 验收仍未完成；这不是性能比较。[JSON / Actions](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
 
 `fb7a9d2` 的协议 3 计量配对也触发原预算失败：macOS 15 [37262095705](https://github.com/gmh5225/test_mac_intel/actions/runs/37262095705) 完成 781 轮，第 782 轮失败；macOS 26 [37262097389](https://github.com/gmh5225/test_mac_intel/actions/runs/37262097389) 完成 396 轮，第 397 轮失败。两组都返回 IRQ 并观察到新写入见证，退出 1，清理和进程回收已核验；没有 runner 失联或上传器故障。失败调用前至返回约为 2.068/2.002 秒。在各自有明确边界的采样区间内，Intel HVF 执行计数增加约 2.063/1.996 秒，Darwin 线程 CPU 计数增加约 2.068/2.001 秒。读取操作位于调用、状态采集区间之外，采样宽度与原始计数均保留。嵌套宿主报告的这些时钟增加了墙钟之外的证据，但不能证明物理 guest 执行、调度时长或内核根因。全部 8 次尝试及 38 份压缩包已核验并保留，5 毫秒切片和每轮 2 秒预算未变。双镜像 vCPU、VM 重建与完整 NeverD Intel 验收仍未完成。[原始证据与计量](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
+
+`ca8da7d` 的协议 4 HLT 对照两组均以作业取消结束：macOS 15 [37263893167](https://github.com/gmh5225/test_mac_intel/actions/runs/37263893167) 与 macOS 26 [37263895410](https://github.com/gmh5225/test_mac_intel/actions/runs/37263895410)。对应 GitHub check-run 注记确认超过 30 分钟作业上限，没有明确的失联注记。每组仅保留执行前工件，两份可下载工作流日志 ZIP 均无成员。原生启动、完成轮数、HLT 退出、进程退出和回收均未获核验。配置了 5 毫秒切片、每轮 2 秒及进程 600 秒预算，并不能证明超时处理或回收已经执行。此 final-only 对照不能定位阻塞操作或内核根因，也未通过原定时器门槛或完整 Intel 验收。全部 10 次尝试和 40 份原始工件 ZIP 均已保留。离线校验命令核对压缩包摘要、源码版本、进程与预算证据并重算补充分析；11 语言索引将缺失轮数明确标为未知。[证据与复核方法](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
