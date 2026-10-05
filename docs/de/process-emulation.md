@@ -76,6 +76,16 @@ Längen werden auf Seiten aufgerundet. `munmap` toleriert Lücken und wiederholt
 
 Datei-, gemeinsame und feste Mappings, abwärts wachsender Speicher, große Seiten, Speichersperren, Schutzschlüssel, reine Ausführungs-/Schreibrechte und weitere Flags sind ausdrücklich nicht unterstützt. Sie stoppen vor veröffentlichten Effekten oder erfundenen Rückgabewerten. Normale Bereichs-, Längen- und Ausrichtungsfehler innerhalb der unterstützten Teilmenge liefern Gastfehler und erlauben die Fortsetzung. Kein Gastzeiger oder Mapping-Auftrag wird an das Host-OS weitergereicht.
 
+`linux_signals` legt die anfänglichen Signalaktionen für den gesamten Prozess fest. Fehlende Einträge sind unbekannt und bedeuten nicht `SIG_DFL`; eine ausdrücklich leere Liste erlaubt das Setzen ohne Abfrage des Vorgängers. Alle fünf Felder sind erforderlich. Für vorzeichenlose 64-Bit-Werte außerhalb des exakten JSON-Zahlenbereichs dienen Dezimalzeichenfolgen.
+
+```json
+{"linux_signals":{"actions":[
+  {"signal":11,"handler":0,"flags":0,"restorer":0,"mask":0}
+]}}
+```
+
+Die Signalnummern reichen von 1 bis 64. `rt_sigaction` und Bionic teilen denselben Zustand; Strukturaufbau und Fehlerreihenfolge folgen jeweils der Schnittstelle. Wartende Signale, Zustellung, Handleraufrufe und threadbezogene Masken sind nicht implementiert; Host-Handler werden nicht verwendet. Siehe den [vollständigen Vertrag](../process-emulation.md#linux-profile-semantics).
+
 <a id="windows-pe64-profile"></a>
 
 <!-- i18n-section: linux-clocks -->

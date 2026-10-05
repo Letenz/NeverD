@@ -125,6 +125,9 @@ const std::string &SignatureDB::libraryNameOf(size_t ModuleIndex) const {
 llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
   auto Ext = Path.extension().string();
 
+  if (Ext == ".json")
+    return loadFeaturePack(Path);
+
   if (Ext == PatternExtension) {
     SigSource Src;
     Src.Path = Path.string();
@@ -661,13 +664,88 @@ std::unordered_map<uint64_t, std::string> SignatureDB::buildNameMap() const {
 void SignatureDB::clear() {
   Modules.clear();
   LoadedFiles.clear();
+  FeaturePacks.clear();
+  ++FeatureGeneration;
   Index.reset();
   clearMatches();
+}
+
+llvm::Error SignatureDB::loadFeaturePack(const std::filesystem::path &Path) {
+  auto Pack = readLibraryFeaturePack(Path);
+  if (!Pack)
+    return Pack.takeError();
+  const std::string Id = Pack->Id;
+  FeaturePacks.insert_or_assign(Id, std::move(*Pack));
+  ++FeatureGeneration;
+  return llvm::Error::success();
+}
+
+llvm::Error
+SignatureDB::loadFeatureDirectory(const std::filesystem::path &Dir) {
+  std::error_code EC;
+  std::filesystem::directory_iterator I(Dir, EC), End;
+  std::vector<std::filesystem::path> Files;
+  for (; !EC && I != End; I.increment(EC)) {
+    if (I->path().extension() == ".json")
+      Files.push_back(I->path());
+    if (Files.size() > 64)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "library feature pack budget exceeded");
+  }
+  if (EC)
+    return llvm::createStringError(EC, "cannot list library feature directory");
+  std::sort(Files.begin(), Files.end());
+  std::map<std::string, LibraryFeaturePack> NewPacks;
+  for (const auto &File : Files) {
+    auto Pack = readLibraryFeaturePack(File);
+    if (!Pack)
+      return Pack.takeError();
+    const std::string Id = Pack->Id;
+    if (!NewPacks.emplace(Id, std::move(*Pack)).second)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "duplicate library feature pack ID: " +
+                                         Id);
+  }
+  FeaturePacks = std::move(NewPacks);
+  ++FeatureGeneration;
+  return llvm::Error::success();
 }
 
 void SignatureDB::clearMatches() {
   Matches.clear();
   MatchModules.clear();
+}
+
+llvm::Error SignatureDB::loadForImage(const BinaryImage &Image,
+                                      const std::filesystem::path &Root) {
+  SignatureDB Features;
+  std::error_code EC;
+  const auto FeatureDirectory = Root / "features" / "rules";
+  if (std::filesystem::exists(FeatureDirectory, EC)) {
+    if (auto Error = Features.loadFeatureDirectory(FeatureDirectory))
+      return Error;
+  }
+  if (EC)
+    return llvm::createStringError(EC,
+                                   "cannot inspect library feature directory");
+  std::vector<std::filesystem::path> Files;
+  if (auto Relative = treeDirectory(Image)) {
+    const auto Directory = Root / *Relative;
+    if (std::filesystem::exists(Directory, EC)) {
+      auto Listed = listDirectory(Directory);
+      if (!Listed)
+        return Listed.takeError();
+      Files = selectForImage(Image, std::move(*Listed));
+    }
+    if (EC)
+      return llvm::createStringError(
+          EC, "cannot inspect legacy signature directory");
+  }
+  if (auto Error = loadFiles(Files))
+    return Error;
+  FeaturePacks = std::move(Features.FeaturePacks);
+  ++FeatureGeneration;
+  return llvm::Error::success();
 }
 
 namespace {

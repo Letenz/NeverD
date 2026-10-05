@@ -4,7 +4,7 @@
 AArch64 shared library using NeverD's CPU, address space, AAPCS64 call frames,
 execution sessions, and Linux syscall models. This is a bounded native analysis
 environment, with explicit inputs and observable failures. It does not boot an
-Android system or supply ART, JNI, Binder, signals, a general filesystem, or a
+Android system or supply ART, JNI, Binder, signal delivery, a general filesystem, or a
 network. It never calls host functions to satisfy a guest import.
 
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`. The host transport is selected
@@ -48,10 +48,21 @@ supply extension of narrow values. Top-level Linux `arguments` and
 Memory regions are explicit page-aligned address/size pairs. Initial
 `bytes_hex` are followed by zeros. They are readable/writable; `executable`
 defaults to false. Overlaps and reserved runtime addresses are rejected.
-`read_memory` snapshots must fit the output budget and initially readable
-memory. A snapshot that becomes unreadable fails explicitly. Terminal CPU or
-model faults do not produce snapshots. No host addresses are exposed as guest
+`read_memory` snapshots must fit the output budget and, by default, initially
+readable memory. Each read can explicitly set `require_mapped_at_entry: false`
+to observe memory allocated during the workload. The setting only defers the
+mapping check; it does not create memory, retain freed mappings, or change guest
+allocation and execution. Size, overflow and output-budget checks still apply
+before execution, and the complete range must be readable at the final stop.
+A snapshot that is unmapped or unreadable then fails explicitly. Terminal CPU
+or model faults do not trigger snapshots. No host addresses are exposed as guest
 memory.
+If a final read fails after earlier reads completed, those earlier snapshots
+remain in the report alongside the failure.
+
+```json
+{"address":"0x24000000","size":64,"require_mapped_at_entry":false}
+```
 
 For input larger than the 64 KiB options JSON limit, supply `path` instead of
 `bytes_hex` in a `memory` region. C++ callers set `NativeMemoryRegion::File`.
@@ -128,6 +139,26 @@ The supported Bionic subset is:
 - `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, for the bounded integer and
   byte-string formatting subset described below.
 - `sscanf`, `vsscanf`, for bounded integer scanning as described below.
+- `sigaction`, `sigaction64`, sharing process-wide dispositions with raw
+  `rt_sigaction` and the variadic `syscall` wrapper. Initial actions come from
+  the explicit [`linux_signals` input](process-emulation.md). API 28 LP64 has
+  four-byte flags, four untouched padding bytes, then eight-byte handler, mask
+  and restorer fields. New masks omit Bionic's reserved signals 32–35; kernel
+  normalization separately removes SIGKILL/SIGSTOP. Input is captured before
+  output, including overlapping objects. Successful calls preserve errno.
+  Output fields are written in order, preserving padding and completed stores
+  if a later user-space access fails. A failed kernel operation with a non-null
+  old-action pointer stops explicitly: API 28 copies an uninitialized temporary
+  on this path, so the model cannot invent its bytes. See the pinned
+  [wrapper](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sigaction.cpp)
+  and [reserved mask](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/private/sigrtmin.h).
+  Registering an action does not enable signal delivery or execute its handler.
+- `mincore`, for the shared Linux validation, empty-range and unmapped-first-page
+  subset. Direct imports, variadic `syscall` and raw SVC share the same error
+  priority and leave the output vector untouched. Only Bionic converts negative
+  kernel errors to `-1` and errno; success preserves errno. Mapped-page residency
+  remains an explicit unsupported observation; guest backing memory does not
+  justify inventing residency bits. See the [Linux contract](process-emulation.md).
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.

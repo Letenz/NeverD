@@ -7,6 +7,7 @@ add_neverd_component_library(NeverDPipeline
   PipelineFuncDetect.cpp
   PipelineHighIR.cpp
   PipelineLLVM.cpp
+  PipelineLibraryRecognition.cpp
   PipelineLowIR.cpp
   PipelineMedIR.cpp
   PipelineOptimize.cpp

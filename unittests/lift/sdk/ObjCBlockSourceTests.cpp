@@ -182,6 +182,59 @@ HighStmt ret(ExprPtr Value) {
   S.RetVal = Value;
   return S;
 }
+TEST(ObjCBlockSources, MixedWidthFrameCopiesMeetEveryInitializedByte) {
+  using namespace objc_block_source_detail;
+  for (bool Reverse : {false, true}) {
+    BlockFixture Fixture;
+    HighFunc Function;
+    Function.FrameSize = 64;
+    const ObjCBlockSourceContext Source(Fixture.Image);
+    Values Left(Source, Function), Right(Source, Function);
+    Left.storeFrame({Value::Frame, -32}, 8, {});
+    Left.storeFrame({Value::Frame, -24}, 8, {});
+    Right.storeFrame({Value::Frame, -32}, 16, {Value::OpaqueBytes});
+    auto Joined = Reverse ? Right.facts() : Left.facts();
+    Values::merge(Joined, Reverse ? Left.facts() : Right.facts());
+    Left.restore(Joined);
+    auto Load =
+        HighExpr::makeLoad(frame(Fixture.Image, -32), NdType::makeInt(16));
+    EXPECT_EQ(Left.eval(Load).K, Value::OpaqueBytes);
+    EXPECT_FALSE(Left.frameContainsPointerIdentity());
+    Left.forgetFrameRange(-24, 1);
+    EXPECT_EQ(Left.eval(Load).K, Value::Scalar);
+  }
+}
+
+TEST(ObjCBlockSources, FrameCoverageCannotHideMissingBytesOrPointerJoins) {
+  using namespace objc_block_source_detail;
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    BlockFixture Fixture;
+    HighFunc Function;
+    Function.FrameSize = 64;
+    const ObjCBlockSourceContext Source(Fixture.Image);
+    Values Left(Source, Function), Right(Source, Function);
+    Left.storeFrame({Value::Frame, -32}, 16, {Value::OpaqueBytes});
+    Right.storeFrame({Value::Frame, -32}, 8, {});
+    if (Mutation != 0)
+      Right.storeFrame({Value::Frame, -24}, 8,
+                       Mutation == 1 ? Value{} : Value{Value::Context});
+    if (Mutation == 1)
+      Right.forgetFrameRange(-24, 1);
+    if (Mutation == 3)
+      Right.storeFrame({Value::Frame, -24}, 4, {});
+    auto Joined = Left.facts();
+    Values::merge(Joined, Right.facts());
+    Left.restore(Joined);
+    auto Load =
+        HighExpr::makeLoad(frame(Fixture.Image, -32), NdType::makeInt(16));
+    if (Mutation < 2)
+      EXPECT_EQ(Left.eval(Load).K, Value::Scalar);
+    else
+      EXPECT_THROW(Left.eval(Load), Invalid);
+  }
+}
+
 struct SourceFixture : BlockFixture {
   PipelineResult Result;
   static constexpr va_t Caller = 0x1200, Consumer = 0x1300, StackIsa = 0x2500;

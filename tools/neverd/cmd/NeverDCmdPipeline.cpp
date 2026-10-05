@@ -413,6 +413,12 @@ int runDecompile(neverd_session_t Sess) {
 
   const neverd_output_language_t Language = OutputLanguage.getValue();
   const bool DedicatedLanguage = Language != NEVERD_OUTPUT_C;
+  if (JsonOutput &&
+      (ExportFunc.empty() || DedicatedLanguage || Devirtualize || NoOpt)) {
+    WithColor::error() << "--json requires --func with the default HighC or "
+                          "--llvm source view\n";
+    return 1;
+  }
   if (DedicatedLanguage && LlvmRoute) {
     WithColor::error()
         << "--llvm cannot be combined with a dedicated source language\n";
@@ -556,6 +562,61 @@ int runDecompile(neverd_session_t Sess) {
     }
     const uint64_t Entry =
         FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
+    if (JsonOutput) {
+      json::Array Pages;
+      size_t Offset = 0, Bytes = 0;
+      for (;;) {
+        const char *Raw = neverd_ir_view_json(
+            Sess, Entry, LlvmRoute ? "llvmc" : "c", Offset, 2048);
+        if (!Raw) {
+          WithColor::error()
+              << "source view failed: " << takeLastError(Sess) << "\n";
+          return 1;
+        }
+        const size_t Size = StringRef(Raw).size();
+        if (Size > 64 * 1024 * 1024 - Bytes) {
+          neverd_free_string(Raw);
+          WithColor::error()
+              << "JSON source view exceeds the 64 MiB output budget\n";
+          return 1;
+        }
+        Bytes += Size;
+        auto Value = json::parse(Raw);
+        neverd_free_string(Raw);
+        if (!Value || !Value->getAsObject()) {
+          if (!Value)
+            consumeError(Value.takeError());
+          WithColor::error() << "invalid source view response\n";
+          return 1;
+        }
+        auto *Page = Value->getAsObject();
+        const bool Complete = Page->getBoolean("complete").value_or(false);
+        auto Next = Page->getInteger("next_offset");
+        if (!Complete &&
+            (!Next || *Next < 0 || static_cast<size_t>(*Next) <= Offset)) {
+          WithColor::error() << "source view did not advance\n";
+          return 1;
+        }
+        Pages.push_back(std::move(*Value));
+        if (Complete)
+          break;
+        Offset = static_cast<size_t>(*Next);
+      }
+      json::Value Output(
+          json::Object{{"schema_version", 1}, {"pages", std::move(Pages)}});
+      if (OutputFile.empty())
+        outs() << Output << '\n';
+      else {
+        std::error_code EC;
+        raw_fd_ostream OS(OutputFile, EC);
+        if (EC) {
+          WithColor::error() << "cannot open: " << EC.message() << '\n';
+          return 1;
+        }
+        OS << Output << '\n';
+      }
+      return 0;
+    }
     if (Devirtualize) {
       std::vector<const char *> Controls;
       for (const auto &Name : VMControlRegisters)

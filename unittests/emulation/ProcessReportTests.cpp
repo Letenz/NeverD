@@ -194,6 +194,92 @@ TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
   }
 }
 
+TEST(ProcessReport, AndroidSnapshotsRequireInitialMappingsUnlessExplicit) {
+  auto O = processOptionsFromJSON(R"({"android":{"entry_symbol":"inspect",
+    "read_memory":[{"address":4096,"size":64},
+      {"address":8192,"size":64,"require_mapped_at_entry":false},
+      {"address":12288,"size":64,"require_mapped_at_entry":true}]}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->Android);
+  const auto &Reads = O->Android->ReadMemory;
+  ASSERT_EQ(Reads.size(), 3u);
+  EXPECT_TRUE(Reads[0].RequireMappedAtEntry);
+  EXPECT_FALSE(Reads[1].RequireMappedAtEntry);
+  EXPECT_EQ(Reads[1].Address, 8192u);
+  EXPECT_EQ(Reads[1].Size, 64u);
+  EXPECT_TRUE(Reads[2].RequireMappedAtEntry);
+  for (const char *Bad : {"null", "0", "\"false\"", "[]", "{}"}) {
+    auto R = processOptionsFromJSON(
+        std::string(R"({"android":{"entry_symbol":"inspect","read_memory":[
+          {"address":4096,"size":64,"require_mapped_at_entry":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  auto R = processOptionsFromJSON(R"({"android":{"entry_symbol":"inspect",
+    "memory":[{"address":4096,"size":4096,"require_mapped_at_entry":false}]}})");
+  EXPECT_FALSE(bool(R));
+  llvm::consumeError(R.takeError());
+}
+
+TEST(ProcessReport, ExplicitSignalActionsAreLosslessAndLinuxOnly) {
+  auto O = processOptionsFromJSON(R"({"linux_signals":{"actions":[
+    {"signal":11,"handler":"18446744073709551615","flags":"4294967296",
+     "restorer":"9223372036854775808","mask":"9223372036854775809"}]}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxSignals);
+  const auto &Action = O->LinuxSignals->Actions.at(11);
+  EXPECT_EQ(Action.Handler, UINT64_MAX);
+  EXPECT_EQ(Action.Flags, 0x100000000u);
+  EXPECT_EQ(Action.Restorer, 0x8000000000000000);
+  EXPECT_EQ(Action.Mask, 0x8000000000000001);
+  for (auto P :
+       {ProcessProfile::WindowsPE64, ProcessProfile::MacOSMachO64,
+        ProcessProfile::IOSMachO64, ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing.elf", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::LinuxSignalsProfile);
+  }
+  for (const auto &[Signal, Invalid] :
+       std::map<int32_t, LinuxSignalAction>{{0, {}},
+                                            {65, {}},
+                                            {-1, {}},
+                                            {11, {0, 0, 0, 0x100}},
+                                            {9, {1, 0, 0, 0}}}) {
+    O->LinuxSignals->Actions = {{Signal, Invalid}};
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("signal disposition"),
+              std::string::npos);
+  }
+  auto Empty = processOptionsFromJSON(R"({"linux_signals":{"actions":[]}})");
+  ASSERT_TRUE(bool(Empty));
+  ASSERT_TRUE(Empty->LinuxSignals);
+  EXPECT_TRUE(Empty->LinuxSignals->Actions.empty());
+}
+
+TEST(ProcessReport, MalformedSignalActionsFailBeforeExecution) {
+  for (
+      const char *Bad :
+      {"null", "[]", "true", "{}", R"({"actions":{}})",
+       R"({"actions":[],"unknown":0})",
+       R"({"actions":[{"signal":11,"handler":0,"flags":0,"mask":0}]})",
+       R"({"actions":[{"signal":11,"handler":0,"flags":0,"mask":0,"restorer":0,"unknown":0}]})",
+       R"({"actions":[{"signal":11,"handler":0,"flags":0,"mask":0,"restorer":0},{"signal":11,"handler":1,"flags":0,"mask":0,"restorer":0}]})",
+       R"({"actions":[{"signal":4294967296,"handler":0,"flags":0,"mask":0,"restorer":0}]})",
+       R"({"actions":[{"signal":11,"handler":-1,"flags":0,"mask":0,"restorer":0}]})",
+       R"({"actions":[{"signal":11,"handler":9007199254740992,"flags":0,"mask":0,"restorer":0}]})",
+       R"({"actions":[{"signal":11,"handler":"18446744073709551616","flags":0,"mask":0,"restorer":0}]})",
+       R"({"actions":[{"signal":11,"handler":"0x1","flags":0,"mask":0,"restorer":0}]})",
+       R"({"actions":[{"signal":11,"handler":1.5,"flags":0,"mask":0,"restorer":0}]})"}) {
+    SCOPED_TRACE(Bad);
+    auto R =
+        processOptionsFromJSON(std::string("{\"linux_signals\":") + Bad + "}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+}
+
 TEST(ProcessReport, MemoryFileBytesAreExplicitAndRestrictedToLinuxProfiles) {
   auto O = processOptionsFromJSON(R"({"linux_files":{"files":[
     {"path":"/fixture/data","bytes_hex":"00ff410a805A"},

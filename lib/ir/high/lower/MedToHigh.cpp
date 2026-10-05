@@ -660,6 +660,8 @@ ExprPtr MedToHighConverter::forceInlineExpr(const ExprPtr &E) {
     Result->Operands[I] = forceInlineExpr(Result->Operands[I]);
   if (Result->IndirectTarget)
     Result->IndirectTarget = forceInlineExpr(Result->IndirectTarget);
+  if (ExpressionCloneObserver)
+    ExpressionCloneObserver(E, Result);
   return Result;
 }
 
@@ -690,6 +692,8 @@ ExprPtr MedToHighConverter::forceInlineCallTarget(const ExprPtr &E) {
     Result->Operands[I] = forceInlineCallTarget(Result->Operands[I]);
   if (Result->IndirectTarget)
     Result->IndirectTarget = forceInlineCallTarget(Result->IndirectTarget);
+  if (ExpressionCloneObserver)
+    ExpressionCloneObserver(E, Result);
   return Result;
 }
 
@@ -1073,6 +1077,9 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   invertSkipGotos(Func);
   elseArmsForFallthroughJumps(Func);
   loopsForArmsJumpingBack(Func.Body);
+  loopsForNestedJumpsBack(Func.Body);
+  loopJumpsAsBreakAndContinue(Func.Body);
+  mergeJumpsIntoNextIfArms(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

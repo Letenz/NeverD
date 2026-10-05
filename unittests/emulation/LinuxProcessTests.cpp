@@ -151,6 +151,69 @@ TEST_P(LinuxProcess, ExplicitClocksPreserve64BitWireLayoutsOnBothISAs) {
   }
 }
 
+TEST_P(LinuxProcess, ResidencyErrorsPreserveTheVectorAndMappedQueriesStop) {
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto Fixture = Path.parent_path() /
+                         (Path.stem().string() + "-residency-" + Opt + ".elf");
+    Options.Arguments = {"residency", "n"};
+    auto R = llvm::cantFail(
+        emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    EXPECT_EQ(R.StandardOutput, std::string(32, char(0xa5)));
+    Options.Arguments[1] = "m";
+    R = llvm::cantFail(
+        emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(R.Diagnostic.find("page residency"), std::string::npos);
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_EQ(R.Services.back().Number,
+              GetParam().ISA == GuestArchitecture::X64 ? 27u : 232u);
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
+
+TEST_P(LinuxProcess, SignalActionsShareExactLP64StateAndCopyFailureOrdering) {
+  for (const char *Opt : {"O0", "O2"}) {
+    SCOPED_TRACE(Opt);
+    const auto SignalPath = Path.parent_path() /
+                            (Path.stem().string() + "-signals-" + Opt + ".elf");
+    Options.Arguments = {"signals", "n"};
+    Options.LinuxSignals.emplace();
+    Options.LinuxSignals->Actions[11] = {0x8877665544332211, 0x10000004,
+                                         0x123456789abcdef0, 1};
+    auto R = llvm::cantFail(
+        emulateProcess(SignalPath, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    std::string Expected;
+    const uint64_t Words[] = {0x8877665544332211,
+                              0x10000004,
+                              0x123456789abcdef0,
+                              1,
+                              1,
+                              0x10000000,
+                              0x123456789abcdef0,
+                              0xfffffffffffbfeff,
+                              1,
+                              0x10000000,
+                              0x123456789abcdef0,
+                              0xfffffffffffbfeff};
+    for (uint64_t Word : Words)
+      for (unsigned Byte = 0; Byte != 8; ++Byte)
+        Expected.push_back(char(Word >> (8 * Byte)));
+    EXPECT_EQ(R.StandardOutput, Expected);
+
+    Options.Arguments = {"signals", "m"};
+    Options.LinuxSignals.reset();
+    auto Missing = llvm::cantFail(
+        emulateProcess(SignalPath, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(Missing.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Missing.Diagnostic.find("linux_signals"), std::string::npos);
+    EXPECT_FALSE(Missing.Services.back().Result);
+  }
+}
+
 TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
   Options.LinuxFiles.emplace();
   Options.LinuxFiles->Files["/fixture/data"] = {0,    0xff, 0x41,

@@ -72,6 +72,16 @@ std::optional<SourceFrameEffects>
 objcSuperSourceFrameEffects(const BinaryImage &Image,
                             const SourceCallTypeHint &Binding);
 
+/// Rebuild one declared synchronous block borrow from the current machine,
+/// call/receiver, descriptor, callback ABI and reaching frame bytes. The
+/// literal's writable bound does not declare capture field types, initialize
+/// padding or certify the callback body; source publication retains those
+/// independent obligations.
+std::optional<SourceFrameEffects> objcNonEscapingBlockSourceFrameEffects(
+    const BinaryImage &Image, const LowFunc &Function,
+    const SourceCallOccurrenceKey &Site, const SourceCallTypeHint &Binding,
+    const std::map<va_t, SourceFunctionTypeHint> *NativeCallees = nullptr);
+
 /// Check the shape of a copy receipt, not its authority. Current machine and
 /// frame evidence must be rebuilt by buildObjCSourceCallHints at publication.
 bool isObjCByValueCopyHint(const SourceCallTypeHint &Hint, va_t FunctionEntry,

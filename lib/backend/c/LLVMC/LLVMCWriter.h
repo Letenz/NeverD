@@ -15,6 +15,7 @@
 #define NEVERD_LIB_BACKEND_C_LLVMC_LLVMCWRITER_H
 
 #include "../CIdentifier.h"
+#include "../CSourceRecorder.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
@@ -74,9 +75,11 @@ class LLVMCWriter {
 public:
   LLVMCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, const BinaryImage *Img = nullptr,
-              bool GuardAnalysisOnlyFunctions = true)
+              bool GuardAnalysisOnlyFunctions = true,
+              CSourceRecorder *Recorder = nullptr)
       : OS(OS), Opts(Opts), Dbg(Dbg), Img(Img),
-        GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions) {}
+        GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
+        SourceRecorder(Recorder) {}
 
   //--- Module-level (LLVMCEmitter.cpp) ---
   void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
@@ -456,12 +459,14 @@ public:
   /// widening cast so `>> 32` is not applied to a 32-bit C operand.
   std::string logicalShiftLhs(const llvm::Instruction &Shift, std::string LHS);
   std::string condStr(const llvm::Value *V);
+  std::string condStrImpl(const llvm::Value *V);
   /// Value tested by the x86 `ZF || SF` pattern. `condStr` prints it as
   /// `value <= 0`. Null for every other `or`.
   const llvm::Value *jleZeroCore(const llvm::BinaryOperator *BO);
   /// Swapped relational text for a skip that prints the false body.
   /// Empty when the condition is not one compare, so the caller keeps `!`.
   std::optional<std::string> invertedRelationalText(const llvm::Value *V);
+  std::optional<std::string> invertedRelationalTextImpl(const llvm::Value *V);
   uint16_t llvmAccessSize(const llvm::Type *Ty) const;
   void noteAllocaStore(const llvm::AllocaInst *Slot, const llvm::Value *Stored);
   void discoverSyntheticFrame(llvm::Function &Fn);
@@ -516,6 +521,7 @@ public:
   void collectLeftoverNarrowCallStores(llvm::Function &Fn);
   bool storeIsLeftoverHomeUndef(const llvm::StoreInst &SI) const;
   void writeInstruction(llvm::Instruction &Inst, int Indent);
+  void writeInstructionImpl(llvm::Instruction &Inst, int Indent);
   void writeCall(llvm::CallInst &Call, const std::string &Name, int Indent);
   void writeCallLike(llvm::CallBase &Call, const std::string &Name, int Indent);
   /// Join `p ? field : 0` is the PHI dest, not a rematerialized then-arm
@@ -629,6 +635,7 @@ public:
   bool operandIsUnsignedWidth(const llvm::Value *V, unsigned Bits) const;
   std::string unsignedCompareOperand(const llvm::Value *V, std::string Text);
   std::string renderInline(const llvm::Instruction &Inst);
+  std::string renderInlineImpl(const llvm::Instruction &Inst);
   std::string callExpr(const llvm::CallBase &Call);
   std::string atomicRMWText(const llvm::AtomicRMWInst &AI);
   std::string ctorThisAddress(const llvm::CallBase &Call);
@@ -640,6 +647,7 @@ public:
   const BinaryImage *Img;
   const llvm::Module *CurMod = nullptr;
   bool GuardAnalysisOnlyFunctions;
+  CSourceRecorder *SourceRecorder = nullptr;
   const llvm::Function *OnlyFunction = nullptr;
   /// When false, emit recovered statements without a C wrapper so analysis-only
   /// functions can nest the listing inside `#if 0` of the trap stub.

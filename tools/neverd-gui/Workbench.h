@@ -174,6 +174,7 @@ public:
   Q_INVOKABLE void undo();
   Q_INVOKABLE void redo();
   Q_INVOKABLE void importContributions(const QUrl &url);
+  Q_INVOKABLE void loadSignatures(const QUrl &url);
   Q_INVOKABLE void unloadContributions(const QString &nameSpace);
   Q_INVOKABLE void runContribution(const QString &id);
   void externalQuery(const QString &id, const QString &operation,
@@ -216,7 +217,8 @@ private:
   QueryService queries_;
   QObject workspaceReads_;
   PaneRegistry panes_;
-  PageModel functions_{{"name", "address", "size"}};
+  PageModel functions_{{"name", "address", "size", "display_name",
+                        "linkage_name", "recognition_state"}};
   QTimer filterTimer_;
   QString workerPath_, filePath_, pendingFile_, error_, status_, log_,
       language_ = "en";

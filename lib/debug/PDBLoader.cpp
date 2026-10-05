@@ -14,6 +14,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/NdTypes.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 
 #define DEBUG_TYPE "neverd-pdb-loader"
@@ -570,6 +571,11 @@ struct PDBDebugContext::Impl {
   /// Stream offset of each seen `ProcSym`. A later request for a prefix
   /// callee seeks here instead of replaying the CU head.
   mutable std::map<uint32_t, std::map<va_t, uint32_t>> ModuleProcedureOffs;
+  mutable std::mutex RecordParameterMutex;
+  mutable std::set<uint32_t> RecordParameterModules;
+  mutable std::map<va_t, std::vector<AuthenticatedRecordParameter>>
+      RecordParameters;
+  mutable std::map<va_t, AuthenticatedRecordParameter> RecordReturns;
   mutable std::mutex LocalMutex;
   mutable std::mutex PublicMutex;
   mutable std::mutex TypeMutex;
@@ -775,6 +781,9 @@ struct PDBDebugContext::Impl {
     return llvm::Error::success();
   }
 
+  std::optional<AuthenticatedRecordParameter>
+  recordParameter(llvm::codeview::TypeIndex TI, uint64_t Register) const;
+  void loadRecordParameters(uint32_t ModuleIndex) const;
   void ensureGraph(TypeGraph &Graph, bool UseIpi) const;
   void noteRecordFields(const TypeRef &Named,
                         llvm::codeview::TypeIndex FieldList, bool UseIpi) const;
@@ -2215,6 +2224,274 @@ PDBDebugContext::resolveDataObject(va_t Addr) const {
   if (It == PImpl->DataObjects.end() || It->second.Name.empty())
     return std::nullopt;
   return It->second;
+}
+
+// This narrow reader deliberately avoids resolveTpi's display fallbacks. A
+// named, size-less forward declaration is useful in source output but cannot
+// authenticate a library receiver or its configuration.
+std::optional<AuthenticatedRecordParameter>
+PDBDebugContext::Impl::recordParameter(llvm::codeview::TypeIndex TI,
+                                       uint64_t Register) const {
+  using namespace llvm::codeview;
+  bool Pointer = false;
+  std::string ForwardName;
+  for (unsigned Depth = 0; Depth != 32; ++Depth) {
+    auto CV = loadType(Tpi, false, TI);
+    if (!CV)
+      return std::nullopt;
+    if (CV->kind() == TypeLeafKind::LF_MODIFIER) {
+      ModifierRecord M;
+      if (auto Error = TypeDeserializer::deserializeAs(*CV, M)) {
+        llvm::consumeError(std::move(Error));
+        return std::nullopt;
+      }
+      if ((M.Modifiers & ModifierOptions::Volatile) != ModifierOptions::None)
+        return std::nullopt;
+      TI = M.ModifiedType;
+      continue;
+    }
+    if (!Pointer && CV->kind() == TypeLeafKind::LF_POINTER) {
+      PointerRecord P;
+      if (auto Error = TypeDeserializer::deserializeAs(*CV, P)) {
+        llvm::consumeError(std::move(Error));
+        return std::nullopt;
+      }
+      if (P.getSize() != 8 || P.getPointerKind() != PointerKind::Near64 ||
+          (P.getMode() != PointerMode::Pointer &&
+           P.getMode() != PointerMode::LValueReference) ||
+          P.isVolatile())
+        return std::nullopt;
+      Pointer = true;
+      TI = P.ReferentType;
+      continue;
+    }
+    if (!Pointer || (CV->kind() != TypeLeafKind::LF_CLASS &&
+                     CV->kind() != TypeLeafKind::LF_STRUCTURE &&
+                     CV->kind() != TypeLeafKind::LF_INTERFACE))
+      return std::nullopt;
+    ClassRecord C;
+    if (auto Error = TypeDeserializer::deserializeAs(*CV, C)) {
+      llvm::consumeError(std::move(Error));
+      return std::nullopt;
+    }
+    if (C.getName().empty() || C.getName().size() > 8192 ||
+        (!ForwardName.empty() && C.getName() != ForwardName))
+      return std::nullopt;
+    if (C.isForwardRef()) {
+      if (!ForwardName.empty())
+        return std::nullopt;
+      ForwardName = C.getName().str();
+      std::lock_guard<std::mutex> Guard(TypeMutex);
+      if (!Tpi.Valid || !Tpi.Stream)
+        return std::nullopt;
+      auto Full = Tpi.Stream->findFullDeclForForwardRef(TI);
+      if (!Full) {
+        llvm::consumeError(Full.takeError());
+        return std::nullopt;
+      }
+      if (*Full == TI)
+        return std::nullopt;
+      TI = *Full;
+      continue;
+    }
+    if (!C.getSize() || C.getSize() > std::numeric_limits<uint32_t>::max())
+      return std::nullopt;
+    return AuthenticatedRecordParameter{Register, C.getName().str(),
+                                        static_cast<uint32_t>(C.getSize())};
+  }
+  return std::nullopt;
+}
+
+void PDBDebugContext::Impl::loadRecordParameters(uint32_t ModuleIndex) const {
+  using namespace llvm::codeview;
+  if (!RecordParameterModules.insert(ModuleIndex).second || !Native ||
+      !ImageIdentityAuthenticated || CPU != CPUType::X64)
+    return;
+  auto Module = Native->getModuleDebugStream(ModuleIndex);
+  if (!Module) {
+    llvm::consumeError(Module.takeError());
+    return;
+  }
+  // Walk a module once to reject duplicate procedure entries and malformed
+  // tails before publishing any evidence. Neither parameter order nor home
+  // slots establish a physical register location.
+  const auto &Records = Module->getSymbolArray();
+  bool Error = false;
+  auto It = CVSymbolArray::Iterator(Records, Records.getExtractor(),
+                                    Records.skew(), &Error);
+  std::map<va_t, std::vector<AuthenticatedRecordParameter>> Staged;
+  std::set<va_t> Ambiguous;
+  std::map<va_t, AuthenticatedRecordParameter> Returns;
+  va_t Entry = 0;
+  uint32_t End = 0, CodeSize = 0, Nesting = 0;
+  std::optional<TypeIndex> Parameter;
+  size_t Work = 200000;
+  auto Registers =
+      getTargetRegInfo(Arch::X64).integerParamRegs(BinaryFormat::COFF);
+  for (; It != Records.end(); ++It) {
+    if (!Work)
+      return;
+    --Work;
+    const auto Kind = It->kind();
+    if (isProcedureSymbol(Kind)) {
+      if (Entry)
+        return;
+      auto Proc = SymbolDeserializer::deserializeAs<ProcSym>(*It);
+      if (!Proc) {
+        llvm::consumeError(Proc.takeError());
+        return;
+      }
+      Entry = resolveVA(Proc->Segment, Proc->CodeOffset);
+      End = Proc->End;
+      CodeSize = Proc->CodeSize;
+      if (!Entry || !CodeSize || End <= It.offset() ||
+          !Records.isOffsetValid(End))
+        return;
+      if (!Staged.emplace(Entry, std::vector<AuthenticatedRecordParameter>{})
+               .second)
+        Ambiguous.insert(Entry);
+      // Only a direct, ordinary Win64 procedure declaration binds RAX to a
+      // record pointer here. Display fallbacks and member adjustments do not.
+      if (!isProcedureIdSymbol(Kind))
+        if (auto CV = loadType(Tpi, false, Proc->FunctionType);
+            CV && CV->kind() == TypeLeafKind::LF_PROCEDURE) {
+          ProcedureRecord Type;
+          if (auto E = TypeDeserializer::deserializeAs(*CV, Type))
+            llvm::consumeError(std::move(E));
+          else if (Type.CallConv == CallingConvention::NearC)
+            if (auto Return = recordParameter(
+                    Type.ReturnType, getTargetRegInfo(Arch::X64).IntReturnReg))
+              Returns.emplace(Entry, std::move(*Return));
+        }
+      Nesting = 0;
+      Parameter.reset();
+      continue;
+    }
+    if (!Entry)
+      continue;
+    if (It.offset() >= End) {
+      if (It.offset() != End || Kind != SymbolKind::S_END || Nesting)
+        return;
+      Entry = 0;
+      Parameter.reset();
+      continue;
+    }
+    if (Kind == SymbolKind::S_BLOCK32 || Kind == SymbolKind::S_INLINESITE ||
+        Kind == SymbolKind::S_INLINESITE2) {
+      ++Nesting;
+      Parameter.reset();
+      continue;
+    }
+    if (Kind == SymbolKind::S_END || Kind == SymbolKind::S_INLINESITE_END) {
+      if (!Nesting)
+        return;
+      --Nesting;
+      Parameter.reset();
+      continue;
+    }
+    if (Nesting)
+      continue;
+    if (Kind == SymbolKind::S_LOCAL) {
+      Parameter.reset();
+      auto Local = SymbolDeserializer::deserializeAs<LocalSym>(*It);
+      if (!Local) {
+        llvm::consumeError(Local.takeError());
+        return;
+      }
+      if ((Local->Flags & LocalSymFlags::IsParameter) != LocalSymFlags::None)
+        Parameter = Local->Type;
+      continue;
+    }
+    if (Kind != SymbolKind::S_DEFRANGE_REGISTER || !Parameter)
+      continue;
+    auto Range = SymbolDeserializer::deserializeAs<DefRangeRegisterSym>(*It);
+    if (!Range) {
+      llvm::consumeError(Range.takeError());
+      return;
+    }
+    if (resolveVA(Range->Range.ISectStart, Range->Range.OffsetStart) != Entry ||
+        !Range->Range.Range || Range->Range.Range > CodeSize)
+      continue;
+    bool ContainsEntry = true;
+    for (const auto &Gap : Range->Gaps) {
+      if (!Gap.Range ||
+          uint32_t(Gap.GapStartOffset) + Gap.Range > Range->Range.Range)
+        return;
+      if (!Gap.GapStartOffset)
+        ContainsEntry = false;
+    }
+    if (!ContainsEntry)
+      continue;
+    const RegisterId CVRegister =
+        static_cast<RegisterId>(uint16_t(Range->Hdr.Register));
+    unsigned Index;
+    switch (CVRegister) {
+    case RegisterId::RCX:
+      Index = 0;
+      break;
+    case RegisterId::RDX:
+      Index = 1;
+      break;
+    case RegisterId::R8:
+      Index = 2;
+      break;
+    case RegisterId::R9:
+      Index = 3;
+      break;
+    default:
+      continue;
+    }
+    if (Index >= Registers.size())
+      continue;
+    auto Fact = recordParameter(*Parameter, Registers[Index]);
+    if (!Fact)
+      continue;
+    auto &At = Staged[Entry];
+    if (At.size() >= 64)
+      return;
+    const auto Previous = llvm::find_if(
+        At, [&](const auto &P) { return P.Register == Fact->Register; });
+    if (Previous == At.end())
+      At.push_back(std::move(*Fact));
+    else if (Previous->QualifiedType != Fact->QualifiedType ||
+             Previous->ObjectBytes != Fact->ObjectBytes)
+      Ambiguous.insert(Entry);
+  }
+  if (Error || Entry)
+    return;
+  for (auto &[VA, Parameters] : Staged)
+    if (!Ambiguous.contains(VA))
+      RecordParameters.emplace(VA, std::move(Parameters));
+  for (auto &[VA, Return] : Returns)
+    if (!Ambiguous.contains(VA))
+      RecordReturns.emplace(VA, std::move(Return));
+}
+
+std::vector<AuthenticatedRecordParameter>
+PDBDebugContext::resolveAuthenticatedRecordParameters(va_t Addr) const {
+  if (!PImpl || !PImpl->ImageIdentityAuthenticated)
+    return {};
+  const auto Module = PImpl->moduleForVA(Addr);
+  if (!Module)
+    return {};
+  std::lock_guard<std::mutex> Guard(PImpl->RecordParameterMutex);
+  PImpl->loadRecordParameters(*Module);
+  const auto At = PImpl->RecordParameters.find(Addr);
+  return At == PImpl->RecordParameters.end()
+             ? std::vector<AuthenticatedRecordParameter>{}
+             : At->second;
+}
+
+std::optional<AuthenticatedRecordParameter>
+PDBDebugContext::resolveAuthenticatedRecordReturn(va_t Addr) const {
+  // This populates and validates the same complete module transaction.
+  (void)resolveAuthenticatedRecordParameters(Addr);
+  if (!PImpl || !PImpl->ImageIdentityAuthenticated)
+    return std::nullopt;
+  std::lock_guard<std::mutex> Guard(PImpl->RecordParameterMutex);
+  const auto At = PImpl->RecordReturns.find(Addr);
+  return At == PImpl->RecordReturns.end() ? std::nullopt
+                                          : std::optional(At->second);
 }
 
 bool PDBDebugContext::hasInfo() const { return PImpl && PImpl->Loaded; }

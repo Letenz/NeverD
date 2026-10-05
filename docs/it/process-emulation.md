@@ -76,6 +76,16 @@ Le lunghezze sono arrotondate a pagine. `munmap` tollera buchi e rimozioni ripet
 
 Mappature di file, condivise o fisse, crescita verso il basso, pagine enormi, blocco memoria, chiavi di protezione, permessi di sola esecuzione/scrittura e altri flag restano esplicitamente non supportati: arresto prima di pubblicare effetti o inventare un ritorno. Errori ordinari di intervallo, lunghezza e allineamento nel sottoinsieme ammesso restituiscono errori guest e consentono di proseguire. Nessun puntatore o richiesta di mappatura guest viene inoltrato all'OS host.
 
+`linux_signals` fornisce le azioni iniziali dei segnali per l’intero processo. Una voce assente è sconosciuta e non implica `SIG_DFL`; un elenco esplicitamente vuoto consente di installare senza leggere l’azione precedente. Tutti e cinque i campi sono obbligatori; i valori senza segno a 64 bit fuori dall’intervallo esatto di JSON usano stringhe decimali.
+
+```json
+{"linux_signals":{"actions":[
+  {"signal":11,"handler":0,"flags":0,"restorer":0,"mask":0}
+]}}
+```
+
+I numeri dei segnali vanno da 1 a 64. `rt_sigaction` e Bionic condividono lo stato, con layout e ordine degli errori propri di ogni interfaccia. Non sono implementati segnali in attesa, consegna, chiamate ai gestori o maschere per thread; non si usano gestori dell’host. Vedere il [contratto completo](../process-emulation.md#linux-profile-semantics).
+
 <a id="windows-pe64-profile"></a>
 
 <!-- i18n-section: linux-clocks -->

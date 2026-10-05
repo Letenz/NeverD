@@ -66,6 +66,11 @@ NEVERD_LINUX_VALUE(ProtExecute, 0x04)
 NEVERD_LINUX_VALUE(AdviceMergeable, 12)
 NEVERD_LINUX_VALUE(AdviceUnmergeable, 13)
 NEVERD_LINUX_VALUE(ExitMask, 0xff)
+NEVERD_LINUX_VALUE(SignalCount, 64)
+NEVERD_LINUX_VALUE(SignalKill, 9)
+NEVERD_LINUX_VALUE(SignalStop, 19)
+NEVERD_LINUX_VALUE(SignalActionSize, 32)
+NEVERD_LINUX_VALUE(SignalMaskSize, 8)
 #endif
 #ifdef NEVERD_LINUX_X64_SERVICE
 NEVERD_LINUX_X64_SERVICE(Open, 2, 3)
@@ -115,6 +120,8 @@ NEVERD_LINUX_AUX(EXECFN, 31, *ExecutableAddress)
 NEVERD_LINUX_AUX(NULL, 0, 0)
 #endif
 #ifdef NEVERD_LINUX_SERVICE
+NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
+NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
 NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
@@ -157,6 +164,17 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(Audit, 0x6ffffefc)
 NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #endif
 #ifdef NEVERD_LINUX_DIAGNOSTIC
+NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
+                        "unmodeled Linux page residency observation")
+NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
+NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
+                        "signal actions require explicit linux_signals input")
+NEVERD_LINUX_DIAGNOSTIC(SignalActionMissing,
+                        "unmodeled Linux signal disposition: {0}")
+NEVERD_LINUX_DIAGNOSTIC(SignalPartialOutput,
+                        "unmodeled partial Linux signal action output")
+NEVERD_LINUX_DIAGNOSTIC(SignalFlagsUnsupported,
+                        "unmodeled Linux signal action flags")
 NEVERD_LINUX_DIAGNOSTIC(
     FileOptionsLimit, "linux_files exceeds its catalogue or descriptor limits")
 NEVERD_LINUX_DIAGNOSTIC(

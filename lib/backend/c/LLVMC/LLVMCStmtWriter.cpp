@@ -1155,6 +1155,16 @@ bool LLVMCWriter::deadNullAssignBlocks(
 }
 
 void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
+  auto Event =
+      SourceRecorder ? SourceRecorder->instruction(Inst) : std::nullopt;
+  if (Event)
+    OS << SourceRecorder->begin(*Event);
+  writeInstructionImpl(Inst, Indent);
+  if (Event)
+    OS << SourceRecorder->end(*Event);
+}
+
+void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
   // Aggregate SSA values and storage arrays have distinct C declarations but

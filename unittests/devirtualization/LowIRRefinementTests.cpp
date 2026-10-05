@@ -692,14 +692,109 @@ TEST(LowIRLoopRefinement, ArbitraryWordCountWithDifferentBody) {
   EXPECT_EQ(Finite.Status, Status::BudgetExceeded);
 }
 
-TEST(LowIRLoopRefinement, FunctionTemporariesDoNotInventCutpointState) {
+Program savedInputLoop(std::optional<uint64_t> Temporary,
+                       uint16_t ChangedBytes = 0, uint16_t InitialBytes = 8) {
+  Program P;
+  if (Temporary)
+    P.Function.FunctionTemporaries = {{*Temporary, 8}};
+  P.Function.Blocks[0].Succs = {1};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(8), {r(16)})});
+  if (Temporary)
+    P.instruction({op(NdOp::COPY, NdVar::tmp(*Temporary, InitialBytes),
+                      {r(16, InitialBytes)})});
+  P.instruction({op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(1, 0x200, {2, 3});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x400), NdVar::tmp(0, 1)})});
+  P.block(2, 0x300, {1});
+  P.instruction({op(NdOp::INT_ADD, r(0),
+                    {r(0), Temporary ? NdVar::tmp(*Temporary, 8) : r(16)})});
+  if (ChangedBytes)
+    P.instruction(
+        {op(NdOp::INT_ADD, NdVar::tmp(*Temporary, ChangedBytes),
+            {NdVar::tmp(*Temporary, ChangedBytes), n(1, ChangedBytes)})});
+  P.instruction({op(NdOp::INT_SUB, r(8), {r(8), n(1)}),
+                 op(NdOp::BRANCH, {}, {n(0x200)})});
+  P.block(3, 0x400);
+  P.finish();
+  return P;
+}
+
+TEST(LowIRLoopRefinement, CheckedPrefixRetainsFunctionTemporaryBytes) {
+  const auto A = savedInputLoop({});
+  auto B = savedInputLoop(64);
+  auto Plan = wordLoopPlan();
+  Plan.Cutpoints[0].UseEntryPrefix = true;
+  const auto R = loopCheck(A, B, Plan);
+  ASSERT_TRUE(R.proved()) << R.Diagnostic;
+  EXPECT_EQ(R.Certificate->Scope, LowIRRefinementScope::InductiveLowIRLoops);
+  EXPECT_EQ(R.LoopTransitions, 1U);
+  EXPECT_EQ(R.RankingChecks, 1U);
+  EXPECT_LT(R.Instructions, 32U);
+  EXPECT_TRUE(loopCheck(savedInputLoop(128), B, Plan).proved());
+  B.Function.FunctionTemporaries.push_back({80, 8});
+  const auto OtherLifetime = loopCheck(A, B, Plan);
+  ASSERT_TRUE(OtherLifetime.proved()) << OtherLifetime.Diagnostic;
+  EXPECT_NE(R.Certificate->InputDigest, OtherLifetime.Certificate->InputDigest);
+
+  Plan.Cutpoints[0].UseEntryPrefix = false;
+  const auto Missing = loopCheck(A, B, Plan);
+  loopRefused(Missing, Status::Different);
+  EXPECT_NE(Missing.Diagnostic.find("function-temporary definedness"),
+            std::string::npos);
+}
+
+TEST(LowIRLoopRefinement,
+     FunctionTemporaryCutRejectsDriftAndPartialDefinitions) {
+  const auto A = savedInputLoop({});
+  auto Plan = wordLoopPlan();
+  Plan.Cutpoints[0].UseEntryPrefix = true;
+  for (const uint16_t Bytes : {uint16_t{1}, uint16_t{8}}) {
+    const auto R = loopCheck(A, savedInputLoop(64, Bytes), Plan);
+    loopRefused(R, Status::Different);
+    EXPECT_NE(R.Diagnostic.find("loop function-temporary byte"),
+              std::string::npos);
+  }
+  const auto Partial = loopCheck(A, savedInputLoop(64, 0, 4), Plan);
+  loopRefused(Partial, Status::Invalid);
+  EXPECT_NE(Partial.Diagnostic.find("unbound temporary"), std::string::npos);
+}
+
+TEST(LowIRLoopRefinement, FunctionTemporaryPrefixKeepsProofBudgets) {
+  const auto A = savedInputLoop({}), B = savedInputLoop(64);
+  auto Plan = wordLoopPlan();
+  Plan.Cutpoints[0].UseEntryPrefix = true;
+  const auto Good = loopCheck(A, B, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+  ASSERT_GT(Good.Observations, 0U);
+  ASSERT_GT(Good.SolverQueries, 0U);
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxObservations = Good.Observations;
+  Limits.Execution.MaxSolverQueries = Good.SolverQueries;
+  ASSERT_TRUE(loopCheck(A, B, Plan, Limits).proved());
+  --Limits.Execution.MaxObservations;
+  loopRefused(loopCheck(A, B, Plan, Limits), Status::BudgetExceeded);
+  Limits.Execution.MaxObservations = Good.Observations;
+  --Limits.Execution.MaxSolverQueries;
+  loopRefused(loopCheck(A, B, Plan, Limits), Status::BudgetExceeded);
+}
+
+TEST(LowIRLoopInference, FixedFunctionTemporaryPrefixIsChecked) {
+  const auto A = savedInputLoop({}), B = savedInputLoop(64);
+  const auto Inferred = inferLowIRLoopRefinementPlan(B.Function, B.Contract);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  ASSERT_TRUE(loopCheck(A, B, *Inferred.Plan).proved());
+  loopRefused(loopCheck(A, savedInputLoop(64, 1), *Inferred.Plan),
+              Status::Different);
+}
+
+TEST(LowIRLoopRefinement, UnusedFunctionTemporariesDoNotInventCutpointState) {
   auto A = wordLoop(), B = wordLoop();
   B.Function.FunctionTemporaries = {{64, 8}};
-  loopRefused(loopCheck(A, B, wordLoopPlan()), Status::Unsupported);
+  EXPECT_TRUE(loopCheck(A, B, wordLoopPlan()).proved());
   const auto Inferred = inferLowIRLoopRefinementPlan(B.Function, B.Contract);
-  EXPECT_EQ(Inferred.Status, LowIRLoopInferenceStatus::Unsupported)
-      << Inferred.Diagnostic;
-  EXPECT_FALSE(Inferred.inferred());
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  EXPECT_TRUE(loopCheck(A, B, *Inferred.Plan).proved());
   // The finite checker can still enumerate complete bounded executions.
   A.Contract.EntryConstants = {{r(16), 2}};
   expect(A, B, Status::Proved);
@@ -1620,6 +1715,25 @@ TEST(LowIRLoopRefinement, GeneralizedPrefixChecksAllEntryArmsAndFullState) {
     const auto Infinite = joinedEntryLoop(false, false, Step);
     loopRefused(loopCheck(Infinite, Infinite, Plan), Status::Different);
   }
+}
+
+TEST(LowIRLoopRefinement, GeneralizedPrefixChecksFunctionTemporaryDefinedness) {
+  const auto A = joinedEntryLoop();
+  auto B = A;
+  B.Function.FunctionTemporaries = {{64, 8}};
+  // Only one real entry arm defines the byte range. Even when the temporary
+  // is unused, a generalized prefix cannot invent the other arm's definition.
+  auto &Arm = B.Function.Blocks[1];
+  auto Save = op(NdOp::COPY, NdVar::tmp(64, 8), {r(16)});
+  Save.Addr = Arm.StartAddr;
+  Arm.Ops.insert(Arm.Ops.begin(), Save);
+  for (unsigned I = 0; I != Arm.Ops.size(); ++I)
+    Arm.Ops[I].Seq = I;
+  ++Arm.InstructionBoundaries[0].OpCount;
+  const auto Bad = loopCheck(A, B, joinedEntryPlan(true));
+  loopRefused(Bad, Status::Different);
+  EXPECT_NE(Bad.Diagnostic.find("function-temporary definedness"),
+            std::string::npos);
 }
 
 TEST(LowIRLoopRefinement, GeneralizationPolicyIsExplicitAndDigestBound) {

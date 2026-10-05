@@ -135,6 +135,31 @@ sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
                             const NativeSourceCalls &Calls, int BlockId,
                             size_t OperationIndex);
 
+struct SourceFrameStoredByte {
+  bool Initialized = false;
+  std::optional<uint8_t> Constant;
+  std::optional<SourceFrameDefinition> Definition;
+  unsigned DefinitionByte = 0;
+  bool operator==(const SourceFrameStoredByte &) const = default;
+};
+
+struct SourceFrameArgumentStorage {
+  int64_t FrameOffset;
+  std::vector<SourceFrameStoredByte> Bytes;
+  bool operator==(const SourceFrameArgumentStorage &) const = default;
+};
+
+/// Observe bounded private storage immediately before one exact pointer
+/// argument is passed. Reuses the reaching-byte proof; every path must agree
+/// on the frame address and initialized bytes. Definitions remain opaque and
+/// require original-image authentication by their consumer. Uninitialized
+/// bytes have no value evidence. Frame pointers, live opaque values, retained
+/// scratch and cyclic observations are rejected. This grants no call memory
+/// effect, lifetime contract, result layout or source gate.
+std::optional<SourceFrameArgumentStorage> sourceFrameCallArgumentStorage(
+    const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
+    const NativeSourceCallKey &Site, size_t Parameter, size_t Bytes);
+
 struct SourceFrameByValueCopy {
   size_t Parameter;
   int64_t FrameOffset;

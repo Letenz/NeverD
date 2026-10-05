@@ -35,6 +35,15 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Library feature recognition reads the shared MedIR boundary before the source
+routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
+MedIR analyses prove typed expressions and bounded COM ownership sequences.
+`PipelineLibraryRecognition` combines this evidence without changing names,
+operands, bodies or ABI contracts. The session publishes one display identity
+for lists, call sites and source pages. HighIR/LLVM source observations are
+sidecars: complete surviving mappings can authorize reversible UI folds, while
+ordinary C and export remain fully expanded. See [library recognition](library-recognition.md).
+
 Both source routes apply the same module-wide return modeling before recovering
 call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
@@ -878,7 +887,7 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
 
-`LowFunc::FunctionTemporaries` declares sorted, disjoint byte ranges that start unbound. Recovery captures a temporary indirect target once into a reserved function-local slot before finite dispatch crosses instruction boundaries. The shared relation checker retains only bytes actually defined on the current path; ordinary native temporaries still expire at each instruction. Range metadata and snapshot construction remain budgeted, and certificate semantic schema 13 binds these lifetimes. The raw-state model preserves byte semantics; source lowering requires exact whole-slot operands and refuses byte aliases. Inductive loop proof and inference currently reject these declarations because cutpoint states do not bind them. This adds no entry assumption or native ABI certificate.
+`LowFunc::FunctionTemporaries` declares sorted, disjoint byte ranges that start unbound. Recovery captures a temporary indirect target once into a reserved function-local slot before finite dispatch crosses instruction boundaries. The shared relation checker retains only bytes actually defined on the current path; ordinary native temporaries still expire at each instruction. Range metadata and snapshot construction remain budgeted, and certificate semantic schema 15 binds these lifetimes. The raw-state model preserves byte semantics; source lowering requires exact whole-slot operands and refuses byte aliases. Inductive loop checking retains the exact defined-byte set and fixed temporary expressions from a checked entry prefix. Every arrival must match both; declarations cannot initialize storage, and inference proposals still need this complete check. Changing temporary values require a richer loop template and remain unsupported. This adds no entry assumption or native ABI certificate.
 
 `FrameOffsets` owns budgeted singleton proofs of entry-relative displacements. Recovery canonicalizes actual symbolic memory accesses without changing residual address expressions; native checks retain two-execution address equality. Recovery owns exhaustive alignment dispatch and shared retry budgets. Native/LLVM partition-proof aggregation remains separate, unfinished work. `NativeStackControl` owns internal unsigned-16-bit return cleanup; the binary provider authenticates canonical eight-byte-pop encodings.
 
@@ -1000,7 +1009,7 @@ Legacy register XADD also has an exact 8/16/32/64-bit encoding audit: it defines
 
 Legacy register SHLD/SHRD uses an exact encoding audit and the shared masked-count producer checker. Zero count preserves flags; nonzero AF and multi-bit OF are arbitrary. At word width only, counts above 16 also make the low 16-bit result and CF/PF/ZF/SF arbitrary; count 16 remains defined for those outputs. DF and unaffected register bits stay preserved, and 32-bit writes retain zero extension. Memory/APX and unaudited prefixes remain refused. [SHLD/SHRD](https://cdrdv2-public.intel.com/929354/253667-093-sdm-vol-2b.pdf).
 
-The explicit finite-only `DeferNativeConditionalEdges` contract collects conditional successors after paired-control equality and feasibility checks. The default still eagerly audits both arms. Skipped arms have no instruction-inventory claim; every feasible arrival retains byte, mapping, boundary, effect, overlap and budget checks. Unknown solver results never discard an edge. Certificates bind this policy under semantic schema 13. Static LowIR and loop proof/inference APIs reject it; selected-value refinement remains relative to its witness.
+The explicit native `DeferNativeConditionalEdges` contract collects conditional successors after paired-control equality and feasibility checks. The default still eagerly audits both arms. Skipped arms have no instruction-inventory claim; every feasible arrival retains byte, mapping, boundary, effect, overlap and budget checks. Unknown solver results never discard an edge. Certificates bind this policy under semantic schema 15. Static LowIR APIs without a native provider reject it; every inductive segment must check its complete domain; selected-value refinement remains relative to its witness.
 
 Native immutable loads also accept exhaustively proved finite address sets, bounded by `MaxImmutableLoadAddresses`. Two-execution address equality is required before enumeration. Every candidate needs immutable bytes, mapping evidence and separation from the mutable frame; the selected value remains input-dependent. Missing candidates, writable or relocated data and exhausted enumeration refuse a certificate. Read witnesses and the address limit are bound into the certificate. Dynamic frame offsets and arbitrary external memory remain unsupported.
 
@@ -1008,7 +1017,7 @@ The following behavior uses the default strict audit contract. `checkBinaryUndef
 
 Native collection treats a CALL continuation as a stored return value, not an immediate edge. Direct callees and both conditional branch arms keep eager audits; actual RET destinations are collected after complete finite enumeration. Skipped inline bytes carry no instruction-evidence claim. Reached decode failures, traps, incomplete targets, nonterminating cycles and exhausted budgets still prevent certification.
 
-The explicit `RetainUnauditedNativeBoundaries` option adds refusal boundaries to finite native independence and native-to-LowIR refinement. Only strictly decoded and lifted instructions with `Missing` coverage, empty effects and a matching nonempty operation digest qualify. All structural, control, overlap, profile and resource checks remain mandatory. Collection stops only at that boundary’s successors; another edge into the following bytes is still collected. Every feasible arrival refuses before execution; unknown or exhausted solver results prove nothing. Successful certificates bind typed, versioned receipts containing the exact boundary, native-byte digest and operation digest, without changing `Missing` to `Complete`. Uncollected suffixes have no audit claim. Independence covers every arbitrary choice; selected-value refinement establishes unreachability only for its declared witness. Static LowIR, loop proof/inference and exact LLVM APIs do not enable this option.
+The explicit `RetainUnauditedNativeBoundaries` option adds refusal boundaries to finite native independence and finite or inductive native-to-LowIR refinement. Only strictly decoded and lifted instructions with `Missing` coverage, empty effects and a matching nonempty operation digest qualify. All structural, control, overlap, profile and resource checks remain mandatory. Collection stops only at that boundary’s successors; another edge into the following bytes is still collected. Every feasible arrival refuses before execution; unknown or exhausted solver results prove nothing. Successful certificates bind typed, versioned receipts containing the exact boundary, native-byte digest and operation digest, without changing `Missing` to `Complete`. Uncollected suffixes have no audit claim. Independence covers every arbitrary choice; selected-value refinement establishes unreachability only for its declared witness. Static LowIR and exact LLVM APIs do not enable this option. Provider-backed loop proof and inference support it; every segment must prove its refusal boundaries unreachable.
 
 `AllowOverlappingNativeInstructions` is a separate, default-off option for finite native independence and native-to-LowIR refinement. Each entry is decoded and checked independently; intersecting instruction bytes must agree with all earlier instruction and immutable-read evidence, including candidate reads. Candidate LowIR addresses remain labels, not byte evidence. `MaxNativeInstructionBytes` defaults to 1048576 and charges the full size of every newly fetched entry, including repeated overlapping bytes, before comparison. Exhaustion or conflicting bytes refuses a certificate. The option and limit bind the proof digest. Static LowIR, inductive loop proofs and inference reject the option, even with an empty loop plan; the exact LLVM API and CLI retain their existing defaults.
 
@@ -1515,7 +1524,7 @@ through C++, the shared C ABI, Python and `neverd emulate`. It runs actual x64
 and AArch64 freestanding executables with stack/auxv initialization, typed
 system-call continuations and bounded byte output. It supports static TLS and
 self-relocating static PIE, while rejecting an interpreter, external dynamic
-dependencies, signals and thread creation. Those OS semantics remain in
+dependencies, signal delivery and thread creation. Those OS semantics remain in
 `os/linux/process/` and `os/linux/kernel/`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 
@@ -1527,6 +1536,16 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+`NativeMemoryRead::RequireMappedAtEntry` defaults to true. An explicit false
+permits observing mappings created during execution without adding memory or
+changing the allocator. Android preparation still accounts for every requested
+byte, and the existing final snapshot path checks current permissions. Terminal
+CPU/model faults retain their diagnostics without attempting observation reads.
+`LinuxResidency.cpp` owns bounded `mincore` validation within `LinuxMemory`.
+It uses `AddressSpace` mapping facts for first-page holes and does not maintain
+a second map or equate allocated backing storage with Linux page residency.
+Linux memory dispatch selects each operation before applying its own argument
+policy; raw and Bionic calls share that decision.
 `AndroidMemory` owns copies of caller-specified regular files into explicit
 guest regions before CPU creation. JSON parsing only records the path; C++,
 C, CLI and Python share region memory accounting, bounded file reads and
@@ -1543,6 +1562,13 @@ event and delegates number resolution to `LinuxServices.cpp`. Named wrappers,
 variadic calls and raw SVC therefore share memory, identity, output and exit
 semantics. Bionic alone owns libc error conversion; wrapper calls retain their
 native import event without inventing another executed service instruction.
+`LinuxSignals` owns one process-wide disposition table initialized by explicit
+`LinuxSignalOptions`. Missing observations remain unknown. Raw `rt_sigaction`
+and Bionic's `AndroidSignals` adapter use the same query/replacement operation;
+the Android adapter owns LP64 field order, reserved-mask filtering and errno.
+The kernel owner installs a new action before copying the old action out, so a
+copy fault does not undo the installation. No CPU backend or SDK interprets a
+handler address, queues a signal or delivers one.
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending
@@ -3303,3 +3329,7 @@ The strong CoreImage SDK declarations retain the `CIImage` result of `imageWithC
 The same frame-effect owner handles the exact strong `CGRectApplyAffineTransform` bridge separately: its initialized 48-byte transform is logical parameter 1 carried in x0, while the rectangle/result occupy d0–d3. Permitted input writes invalidate the copy; a later consumer needs a new definite initialization. No indirect-result write is granted. Both Objective-C copy discovery and native frame validation consult this owner for HFA and indirect results.
 
 `AuthenticatedSourceFrameLoads` can cross a metadata-accessor call through `swiftMetadataAccessorSourceCallHint`. Both declaration paths reuse the existing compiler-observed catalog, exact strong provider and complete Swift request/metadata-response ABI. The two-register response and normal volatile-register clobbers remain intact; private spills still require the shared reaching-byte proof. This grants no value layout, witness memory effects, frame borrow or dynamic stack-allocation model.
+
+`objcNonEscapingBlockSourceFrameEffects` authenticates synchronous stack-block borrows through the shared `sourceFrameCallArgumentStorage` query. It replays the original machine, current qualified dispatch, strong concrete-block import, complete header and descriptor, callback ABI and reaching bytes. The descriptor supplies a writable bound; padding remains uninitialized evidence and capture field types and callback bodies still require independent source proofs. Cyclic observations and private-frame pointer captures fail closed, and dependencies use completed proof rounds.
+
+Source construction authenticates a disjoint disposable value copy with the same current machine and complete Low/Med/High replay used by publication. Final publication proves the block construction and capture lifetime independently, then compares the whole body after block projection and ordinary reference binding. Mixed-width private vector reads preserve only opaque scalar bytes initialized on every reaching path without pointer identities; writable borrows discard previous initialization facts. Constant strings continue through their existing reference owner; a block/copy proof cannot authorize a weak constant-object import.

@@ -12,7 +12,7 @@ It loads real ELF segments, constructs
 the initial stack, resumes instruction quanta and handles explicit Linux
 system-call requests. It is a freestanding process model, not a full Linux
 distribution or a promise to run arbitrary libc binaries. Dynamic linking,
-signals, Linux process threads, general file systems and unsupported services fail
+signal delivery, Linux process threads, general file systems and unsupported services fail
 explicitly. The [Android native profile](android-native-emulation.md),
 `android-aarch64-api28-v1`, separately supports bounded API 28 ARM64 shared-library
 function calls and Bionic models. The Windows PE64 process profile is described
@@ -81,6 +81,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `instruction_quantum` | 1024 | Admission interval before yielding to the runtime |
 | `linux_time` | Absent | Explicit fixed clock observations for Linux ELF64 and Android native workloads |
 | `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
+| `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 
 `schema_version` is 1. Results include profile, architecture, selected backend
 and its selection reason, `stop_reason`, nullable `exit_status`, diagnostic,
@@ -130,7 +131,8 @@ entropy. HWCAP/HWCAP2 are zero; there is no vDSO. Startup conventions follow the
 
 Implemented calls are `write`, `writev`, `exit`, `exit_group`, `getpid`, `gettid`,
 `getuid`, `geteuid`, `getgid`, `getegid`,
-`mmap`, `mprotect`, `munmap`, `madvise`, `brk`, `gettimeofday` and `clock_gettime`, with
+`mmap`, `mprotect`, `munmap`, `madvise`, `brk`, `gettimeofday`, `clock_gettime` and
+bounded `rt_sigaction`, with
 separate [x64](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)
 and [asm-generic ARM64](https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h)
 numbers. Returning x64 SYSCALL applies its RCX/R11 clobbers as well as RAX and
@@ -139,6 +141,45 @@ stop as `unsupported_service`; they never execute host syscalls.
 Real/effective identity queries agree with the corresponding auxv entries.
 They use the deterministic model identity above; credential-changing services
 such as `setuid` remain unsupported.
+
+`linux_signals` supplies process-wide initial kernel actions. A missing entry
+is unknown; it does not imply `SIG_DFL`. An explicit empty action list enables
+installing actions without observing an unknown predecessor. For example:
+
+```json
+{"linux_signals":{"actions":[
+  {"signal":11,"handler":0,"flags":0,"restorer":0,"mask":0}
+]}}
+```
+
+Signal numbers are 1–64; each entry requires all five fields. The four action
+words are unsigned 64-bit values, with decimal strings for values beyond the
+exact JSON integer range. Duplicate entries, unknown fields, blocked
+SIGKILL/SIGSTOP bits, and nonzero actions for those two signals are rejected.
+Inputs describe the kernel layout: handler, flags, restorer and eight-byte mask.
+They are not read from the host or inferred from a selected native function.
+
+`rt_sigaction` requires `sigsetsize == 8`, copies the new 32-byte LP64 record
+before validating the signal, then observes/replaces the shared disposition.
+It removes SIGKILL/SIGSTOP from new masks. Common Linux action flags are retained,
+including Bionic's sign-extended 32-bit flags; unknown flag extensions stop.
+An invalid old-output pointer returns EFAULT after a successful installation.
+Mixed-access kernel copies stop before unmodeled partial bytes are written.
+These ordered effects follow the [Linux signal implementation](https://android.googlesource.com/kernel/common/+/16a2d602244f/kernel/signal.c).
+There are no queued signals, asynchronous delivery, handler invocation, signal
+frames, `sigreturn`, alternate stacks or per-thread signal-mask operations in
+this contract. CPU faults retain their existing explicit stop behavior.
+
+`mincore` supports ordered validation, zero-length queries and a first queried
+page that is unmapped. Alignment errors return EINVAL before address-range
+checks; an invalid query range returns ENOMEM before vector-range validation.
+The vector consumes one byte per rounded-up page. Numerical vector-range
+errors return EFAULT, but an unmapped vector does not precede ENOMEM for an
+unmapped first query page. These paths do not write the vector. A mapped first
+page, including PROT_NONE, stops explicitly because mapping ownership alone
+does not establish Linux residency. The model does not skip a mapped prefix to
+report a later hole, fabricate resident bits or query the host. This bounded
+ordering follows the [Linux implementation](https://android.googlesource.com/kernel/common/+/16a2d602244f/mm/mincore.c).
 
 Static ELF TLS templates (`PT_TLS`) are validated as loader-owned facts, with
 one template, bounded file/memory extents, alignment congruence and readable
