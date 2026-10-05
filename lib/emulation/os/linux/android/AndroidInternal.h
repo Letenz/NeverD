@@ -27,6 +27,11 @@ namespace diagnostic {
 #undef NEVERD_ANDROID_DIAGNOSTIC
 } // namespace diagnostic
 inline constexpr uint64_t PageSize = 4096;
+enum class SysconfName : uint32_t {
+#define NEVERD_ANDROID_SYSCONF(Name, Value) Name = Value,
+#include "AndroidSysconf.def"
+#undef NEVERD_ANDROID_SYSCONF
+};
 namespace thread_attribute_abi {
 #define NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE(Name, Value)                     \
   inline constexpr unsigned Name = Value;

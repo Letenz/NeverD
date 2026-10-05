@@ -199,6 +199,9 @@ NEVERD_ANDROID_DIAGNOSTIC(MemoryInputDeadline,
                           "memory input preparation deadline expired")
 NEVERD_ANDROID_DIAGNOSTIC(ArgumentInputLimit,
                           "variadic arguments exceed memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(
+    SysconfSelector,
+    "sysconf selector requires an unmodeled configuration query")
 NEVERD_ANDROID_DIAGNOSTIC(ScanFormat, "unsupported integer scan format")
 NEVERD_ANDROID_DIAGNOSTIC(ScanLimit, "integer scan exceeds memory limit")
 NEVERD_ANDROID_DIAGNOSTIC(ScanOverflow,
