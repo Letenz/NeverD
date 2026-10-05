@@ -329,6 +329,13 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
       return R.takeError();
     return Value(*R);
   }
+  if (Name == symbol::Strchr || Name == symbol::Strrchr ||
+      Name == symbol::StrchrChk || Name == symbol::StrrchrChk) {
+    auto R = findCharacter(Call);
+    if (!R)
+      return R.takeError();
+    return Value(*R);
+  }
   if (Name.starts_with(symbol::PthreadMutexPrefix))
     return mutex(Call);
   if (Name == symbol::Snprintf || Name == symbol::Vsnprintf ||
