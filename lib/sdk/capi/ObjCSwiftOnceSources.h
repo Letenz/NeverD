@@ -3,6 +3,7 @@
 
 #include "../../loader/Swift/SwiftOnceCallbackABI.h"
 #include "ObjCSourceBindings.h"
+#include "SourceExpressionIdentity.h"
 
 #include "neverd/pipeline/NativeSourceHints.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -321,6 +322,104 @@ inline bool onceCall(const HighExpr &E, const BinaryImage &Image) {
          objc_binding_detail::runtimeBindingMatches(Hint, *Expected);
 }
 
+// A proof-only common-tail view for an early return created by HighIR tail
+// copying. No statement is rewritten in the current published function.
+// With no jumps, handlers or nested tails, changing
+//   if (c) { T; return; } once(...); T; return;
+// to if (c) {} else once(...); T; return; preserves every evaluated effect.
+// Current
+// use-contract consumers still authenticate the predicate and complete tail.
+inline std::optional<HighFunc> sharedOnceTailView(const HighFunc &Function,
+                                                  const BinaryImage &Image) {
+  if (Function.StructuredExceptionRegions ||
+      Function.UnstructuredExceptionRegions || Function.Body.size() > 32)
+    return std::nullopt;
+  const auto Flat = [](const HighStmt &S) {
+    return S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
+           S.DefaultBody.empty() && S.EHClauses.empty() &&
+           S.EHClauseBodies.empty() && !S.EHIsReducible && !S.EHRange.Begin &&
+           !S.EHRange.End && !S.GotoTarget && !S.LoopHeaderAddr;
+  };
+  const auto Inert = [&](const HighStmt &S) {
+    bool Expression = false;
+    forEachExpr(S, [&](const ExprPtr &E) { Expression |= bool(E); });
+    return Flat(S) && !Expression && !S.IsPhiCopy &&
+           (S.Kind == StmtKind::Nop || S.Kind == StmtKind::Block) &&
+           S.MemoryOrdering == NdMemoryOrdering::None &&
+           S.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  };
+  const auto Tail = [&](const std::vector<HighStmt> &Body,
+                        std::vector<HighStmt> &Out) {
+    if (Body.empty() || Body.size() > 16 ||
+        Body.back().Kind != StmtKind::Return)
+      return false;
+    for (size_t I = 0; I < Body.size(); ++I) {
+      const auto &S = Body[I];
+      if (Inert(S))
+        continue;
+      if (!Flat(S) ||
+          (S.Kind != StmtKind::Assign && S.Kind != StmtKind::Store &&
+           S.Kind != StmtKind::Call && S.Kind != StmtKind::ExprStmt &&
+           !(S.Kind == StmtKind::Return && I + 1 == Body.size())))
+        return false;
+      Out.push_back(S);
+      // These views have no control transfer to a statement address. Tail
+      // copies deliberately receive their jump site's address in HighIR.
+      Out.back().Addr = 0;
+    }
+    return !Out.empty();
+  };
+  for (size_t I = 0; I < 2 && I + 2 < Function.Body.size(); ++I) {
+    if (I && !Flat(Function.Body[0]))
+      break;
+    const auto &Guard = Function.Body[I];
+    size_t InvokeIndex = I + 1;
+    while (InvokeIndex < Function.Body.size() &&
+           Inert(Function.Body[InvokeIndex]))
+      ++InvokeIndex;
+    if (InvokeIndex + 1 >= Function.Body.size())
+      continue;
+    const auto &Invoke = Function.Body[InvokeIndex];
+    if (Guard.Kind != StmtKind::If || !Guard.ElseBody.empty() ||
+        !Guard.Cases.empty() || !Guard.DefaultBody.empty() ||
+        !Guard.EHClauses.empty() || !Guard.EHClauseBodies.empty() ||
+        Guard.EHIsReducible || Guard.EHRange.Begin || Guard.EHRange.End ||
+        Guard.GotoTarget || Guard.LoopHeaderAddr || !Guard.Cond ||
+        Guard.Cond->Kind != ExprKind::BinOp ||
+        (Guard.Cond->Op != NdOp::INT_EQUAL &&
+         Guard.Cond->Op != NdOp::INT_NOTEQUAL) ||
+        Guard.Cond->Operands.size() != 2 || !Flat(Invoke) ||
+        Invoke.Kind != StmtKind::Call || !Invoke.CallExpr ||
+        !onceCall(*Invoke.CallExpr, Image))
+      continue;
+    const std::vector<HighStmt> Continuation(
+        Function.Body.begin() + InvokeIndex + 1, Function.Body.end());
+    HighFunc Early, Shared;
+    if (!Tail(Guard.Body, Early.Body) || !Tail(Continuation, Shared.Body))
+      continue;
+    size_t Budget = 10000;
+    if (!sameStraightLineSourceBody(
+            Early, Shared,
+            [&](const ExprPtr &A, const ExprPtr &B) {
+              return sameSourceExpressionIdentity(*A, *B, Budget);
+            },
+            Budget))
+      continue;
+    const auto Flow = buildHighSourceFlowGraph(Function);
+    if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
+      continue;
+    HighFunc View = Function;
+    auto &Conditional = View.Body[I];
+    Conditional.Kind = StmtKind::IfElse;
+    Conditional.Body.clear();
+    Conditional.ElseBody = {Invoke};
+    View.Body.erase(View.Body.begin() + I + 1,
+                    View.Body.begin() + InvokeIndex + 1);
+    return View;
+  }
+  return std::nullopt;
+}
+
 inline bool dispatchOnceCall(const HighExpr &E, const BinaryImage &Image) {
   if (E.Kind != ExprKind::Call || E.IsIndirectCall || !E.SourceCallHint ||
       E.Operands.size() != 3 || E.IntrinsicId != Intrinsic::None ||
@@ -504,7 +603,9 @@ objcClassMetadataAccessorContract(const HighFunc &F, const BinaryImage &Image) {
 // use of each pointer parameter must be accounted for. The callback receives
 // the predicate as context; binding additionally requires that it ignores it.
 inline std::optional<SwiftOnceGetterContract>
-getterContract(const HighFunc &F, const BinaryImage &Image) {
+getterContract(const HighFunc &Original, const BinaryImage &Image) {
+  const auto Shared = sharedOnceTailView(Original, Image);
+  const auto &F = Shared ? *Shared : Original;
   if (!F.SourceTypeHint ||
       F.SourceTypeHint->Origin !=
           SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
@@ -1056,7 +1157,9 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
 /// initializer ignores that context. A source projection may therefore pass
 /// null and retain only the declared receiver and selector parameters.
 inline std::optional<SwiftOnceObjCThunkContract>
-objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
+objcGetterThunkContract(const HighFunc &Original, const BinaryImage &Image) {
+  const auto Shared = sharedOnceTailView(Original, Image);
+  const auto &F = Shared ? *Shared : Original;
   const ObjCMethod *Method = nullptr;
   for (const auto &Candidate : Image.ObjCMethods) {
     if (Candidate.Implementation != F.Entry)
@@ -1536,6 +1639,26 @@ inline bool discardableCallbackReturn(ExprPtr Value) {
   return Visit(Visit, Value, 0);
 }
 
+// The authenticated void callback role ignores pure result-register views.
+// Clear those uses before shared PHI liveness, so equivalent early returns
+// cannot keep an otherwise unobserved context or unknown register alive.
+// Calls, loads and explicit parameter reads remain observable to this proof.
+inline bool discardPureCallbackResults(HighFunc &Function) {
+  size_t Budget = 100000;
+  bool Complete = true;
+  walkStmts(Function.Body, [&](HighStmt &Statement) {
+    if (!Budget) {
+      Complete = false;
+      return;
+    }
+    --Budget;
+    if (Statement.Kind == StmtKind::Return &&
+        discardableCallbackReturn(Statement.RetVal))
+      Statement.RetVal.reset();
+  });
+  return Complete;
+}
+
 // A once callback's result is ignored, but evaluating that result can still
 // retain an object. Admit this exact runtime call only when its effect can be
 // kept as a separate statement before changing the callback to return void.
@@ -1625,6 +1748,8 @@ onceContextLivenessView(const HighFunc &Function,
     });
   });
   if (!Valid)
+    return std::nullopt;
+  if (!discardPureCallbackResults(View))
     return std::nullopt;
   eliminateHighDeadPhiCopies(View);
   return View;
@@ -1809,7 +1934,9 @@ independentCallbackChain(va_t Root, const BinaryImage &Image,
 // have no use. Native inference alone owns removing that unused entry input.
 // This proof accounts for every remaining parameter and memory/call effect.
 inline std::optional<SwiftOnceCopyContract>
-copyContract(const HighFunc &F, const BinaryImage &Image) {
+copyContract(const HighFunc &Original, const BinaryImage &Image) {
+  const auto Shared = sharedOnceTailView(Original, Image);
+  const auto &F = Shared ? *Shared : Original;
   const auto Plain8 = [](const ExprPtr &E) {
     return E && E->Type && E->Type->Size == 8 &&
            (E->Type->Kind == NdTypeKind::Int ||
@@ -2285,10 +2412,16 @@ discoverSwiftOnceSources(const BinaryImage &Image,
   for (const auto &[_, Contract] : Plan.ObjCThunks)
     if (const auto Callback = Functions.find(Contract.Initializer);
         Callback != Functions.end() && Callback->second &&
-        !DirectTargets.count(Contract.Initializer) &&
-        ignoresContext(*Callback->second))
-      Plan.CallbackHints.emplace(Contract.Initializer,
-                                 callbackHint(Image.Arch));
+        !DirectTargets.count(Contract.Initializer)) {
+      // The thunk and shared-getter roots have the same callback obligation.
+      // A forwarded context must be proved unused throughout the current
+      // descendant chain before any callback ABI is granted.
+      if (independentCallbackChain(Contract.Initializer, Image, Functions,
+                                   DirectTargets))
+        Plan.CallbackHints.emplace(Contract.Initializer,
+                                   callbackHint(Image.Arch));
+      Plan.CallbackAnalysisRoots.insert(Contract.Initializer);
+    }
   for (const auto &F : Result.HighFuncs) {
     if (!F.SourceTypeHint)
       continue;
@@ -3178,6 +3311,8 @@ inline std::optional<ObjCSourceBindingResult> projectSwiftOnceNestedCallback(
       !objc_projection_detail::sameHint(Callback->second, Current->Signature))
     return std::nullopt;
   auto Result = bindSwiftOnceSourceReferences(Function, Image, Plan, Functions);
+  if (!swift_once_source_detail::discardPureCallbackResults(Result.Function))
+    return std::nullopt;
   eliminateHighDeadPhiCopies(Result.Function);
   if (!swift_once_source_detail::ignoresContext(Result.Function))
     return std::nullopt;

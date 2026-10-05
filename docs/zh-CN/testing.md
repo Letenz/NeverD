@@ -101,6 +101,10 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `NeverDLLVMScalarLoopRecoveryTests` 覆盖前缀和前驱携带值重构、零次循环分支、自回边循环判断前移、仿射状态、回绕时的等式退路、额外更新的 poison、高位数据差异及不支持的输入契约。精确/少一累计预算检查原子拒绝；独立算术 oracle 在 O0/O2 执行原始与恢复 LLVM，覆盖全部字节控制输入。这些测试不代表原生 ABI 恢复或默认短 C 输出已完成。
 
+循环谓词回归覆盖 8/16/32/64 位 PHI、交换比较操作数与分支极性、有符号/无符号扩展、不同外部初值、冲突入口观察、多回边、隐藏符号数据反例、截断拒绝、原始 poison/不终止及构造/证明/候选/转换限制的原子拒绝。独立无符号 oracle 在 O0/O2 对照原始与恢复后的 LLVM，共 458,752 次调用并启用未定义行为陷阱；源函数及父模块保持不变。
+
+退出边界回归覆盖8/16/32/64位模运算条件、递减步长、两种极性、零次循环、共享出口、仅零数据一致的错误相邻边界、步长无法到达的边界、超限切片、poison、缺少同宽叶节点及原子预算拒绝。有效前缀初值前的40个未使用参数不得挤占有界搜索位置。独立无符号 oracle 在 O0/O2 执行原始与恢复后的 LLVM，共458,752次调用并启用未定义行为陷阱。
+
 同一测试目标还覆盖 `recoverLLVMScalarSource`：搜索前准备、仅清理而无循环变换、全位宽未使用状态、死代码中的溢出/精确移位/除法及 assume 义务、不支持的副作用、精确/少一累计预算和有界继续。独立算术 oracle 在 O0/O2 执行原始与准备后的 LLVM，覆盖所有字节控制值及确定性全位宽状态。成功或拒绝都必须保持源函数及其父模块不变。
 
 源准备守卫测试覆盖带注解的模恒等式、不同前驱中的等价表达式、不同分支值保留、原始溢出/exact 移位/截断/扩展拒绝及精确/不足累计预算。独立无符号 oracle 在 O0/O2 对照原始与准备后的函数体，共131,072次调用并开启未定义行为陷阱。已有语义 pass 测试继续覆盖独立谓词的拒绝规则。
@@ -177,11 +181,15 @@ build-release/bin/NeverDLowIRRefinementTests
 
 以下行为采用默认的严格审计契约。`NeverDOriginalBinaryUndefinedIndependenceTests` 使用独立编写、固定映射的 x64 字节，验证物理原生 CALL/RET、改写的返回目标、有限间接目标全集和不可变加载。同一测试目标还检查直接分支完整收集、精确字节／效果／映射／读取见证绑定、外层返回时入口 RSP 及返回地址槽保持，以及栈帧与映像分离前提的可满足性。缺失或重叠指令、不符合精确陷阱和显式环境投影规则的未审计分支、不终止或超预算的循环、不完整目标枚举、执行配置／契约不符和预算耗尽均须拒绝，且不产生证书或残余代码。成功要求每条可行原生路径完整结束。此可选门禁不认证循环不变量、异常分派、启用 CET 的执行或原生代码到 C 的等价性；普通恢复仍独立可用。该目标还检查严格提升的 `INT3`/`UD2` 终止边界及其完整字节、操作摘要绑定。未定义输出附属元数据的 `Missing` 必须保持不变；仅经符号执行证明不可达的陷阱可进入证书，任意可行陷阱路径都须返回 `ContractViolation`，且无证书、无残余代码。不建模陷阱后的顺序执行或异常恢复，不使用 `codeFollowsTrap`，静态 LowIR API 的支持范围保持不变。
 
+物理返回回归覆盖直接和间接调用跳过无效内联字节、可达的错误返回位置、完整目标枚举及恰好和不足的预算。完整状态关系拒绝被改动的结果；独立 C 经 O1/O2 编译后也必须保留完整帧写入，返回值相同不能掩盖返回槽字节变化。
+
 显式原生交叠测试覆盖真实 x64 跳入立即数的分支、两个可行分支的结果，以及位于先前指令内部的间接返回入口。合成提供器测试覆盖两种收集顺序的包含式交叠、未执行直接分支上的冲突字节、两种顺序的代码／读取一致性及候选读取。精确和不足的字节预算按间接转移累计计入重复交叠字节。分支结果改变、静态或循环接口使用及证据矛盾均必须拒绝证书；启用选项或改变额度会改变摘要。
 
 拒绝边界的显式启用测试覆盖不可达的 RCL、内存 XADD 和 REP MOVS、符号路径矛盾、任意值控制的分支，以及入口、间接跳转、CALL 和 RET 到达时的精确拒绝。测试还检查可达后缀的独立入口、候选与原生地址重合、格式错误或不完整的证据、资源耗尽、静态/循环接口拒绝，以及精化证明的三层摘要绑定。修改不可达指令，或在无保留边界时切换选项，都会改变证书摘要。这些测试验证声明的有限证明范围，不证明未审计指令的语义。
 
 打包标志测试覆盖全部标量入口标志组合、特权掩码、两次执行的 TF/AC 条件、不同未定义产生点、相关副本、原生调用、兄弟路径状态、强制最终系统状态观察、畸形证据及资源计费。有限循环必须结束每条可行输入路径；安全分支不能掩盖无限或截断路径。RDSSPD/RDSSPQ 检查覆盖 16 个通用寄存器和两种宽度、高位保持、保留 `Missing` 证据及伪造投影拒绝。机器状态测试在两个 C 后端的 O0/O2 下开启未定义行为陷阱，与独立用户态标志位预言机比较，并检查环境失败状态不会被后续操作清除。 INCSSPD/INCSSPQ 测试覆盖两种宽度和全部通用寄存器、不可达边界保留、安全兄弟路径完成后的可行陷阱、零操作数及伪造陷阱证据。
+
+`NeverDX86DecodeDetailTests` 覆盖三种解码入口、两种 x64 地址宽度、有符号位移边界、强制前缀、真正的 i386 disp16、moffs、截断输入及无详细信息的重复使用。仅精确的重定位字段可绑定，错误宽度、偏移或数值均不能绑定。原生独立性及关系证明测试还保留完整帧写入，拒绝可观察的任意标志位及被修改的移位候选。
 
 `NeverDX86UndefinedEffectsTests` 检查未定义位元数据、已定义／保留标志及过期证书拒绝。`NeverDX86CarryArithmeticFlagTests` 用算术参考实现检查寄存器和内存形式 ADC/SBB 的辅助进位。`NeverDX86LogicIdentityTests` 检查相同操作数的 AND 在 64 位模式下写入 32 位目标时，仍清零其所属 64 位寄存器的位 63:32，同时保留窄位宽写入未覆盖的位。
 
@@ -192,6 +200,8 @@ build-release/bin/NeverDLowIRRefinementTests
 `NeverDPEFixedImageTests` 使用独立构造的 PE 文件，检查带重定位的指令与不可变数据、导入写入范围、畸形头部／表、别名和来源信息篡改。原生到 LowIR 及精确 LLVM 证明接受匹配候选，拒绝结果、状态或原始字节被修改的候选。准备预算耗尽保持独立分类，允许显式提高限额后重试；普通加载也接受含 40000 条有效重定位记录、超过默认分析预算的文件。
 
 `FrameOffsets.*`、`NativeStackSpecialization.*` 和 `OriginalBinaryUndefinedIndependence.*` 检查 2/4/8/16/32 字节对齐的全部余数、自由高位、跨调用保存、倒计数循环、别名破坏、错误分派、无关大掩码、必要分区升级及恰好／少一次预算。独立原生控制检查带分支约束的对齐、内部无符号返回清理、错误清理量和带前缀返回。这些测试不代表分区循环已具备自动原生到 LLVM 的完整证明。
+
+入口同余证明测试覆盖对齐1/2/4/16的全部余数、两个不同根寄存器、自由高位、非法域、矛盾入口常量、不回绕范围、排除区间空隙、保存义务和精确/少一查询预算。循环归纳模板保留原入口根条件。重新执行的原生独立性/关系证明和原生至LLVM检查拒绝不匹配的域及改变的状态码，证书摘要绑定两侧域。用例独立编写，不从ABI或一次执行推断对齐条件。 另将独立编写的带入口检查C函数原样编译为O1/O2，在两个余数下证明与实际原生指令序列一致；同一编译产物在不同余数下必须拒绝。
 
 寄存器分区回归覆盖大小端、高位栈帧根、覆盖及重叠字段、后续边、变宽的前驱、原生 CALL/RET 和刚好足够或差一步的预算。两种 C 路线在 O0/O2 执行全部四种内存情况。原生细化检查分别绑定两个选择器值，不构成无约束输入证明。独立 LLVM 用例验证：将假分支移到共享汇合点前，不能导致它在真分支后继续执行，并检查 PHI 复制与存储。
 
@@ -1097,7 +1107,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 1126 项 CPU 检查及 17 项 SEH 回归，共有 1367 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `1126 CPU + 224 WHP + 17 SEH = 1367`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 2274 项 CPU 检查及 17 项 SEH 回归，共有 2515 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `2274 CPU + 224 WHP + 17 SEH = 2515`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1106,6 +1116,10 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 `X64StatusFlagsTests.cpp` 检查 `CLC/STC/CMC`、`LAHF/SAHF`、全部 256 个 AH 输入及已接纳的标志组合、所有 REX 前缀、完整 CPU 状态、内存不变性、观察器停止或错误、保存上下文和原生 ADC/存储续行。无效 LOCK 编码无副作用拒绝。独立主机指令判据在验证 CPUID 支持后检查 24 组前缀。原有 WDK 资源驱动覆盖全部五条指令，新增 22 项原生必测结果；不可用的主机或 ISA 组合明确跳过。 可移植 Unicorn 配置运行相同的七项用例；依赖的直接测试覆盖 16/32/64 位 AH 与 LOCK 行为、显式 REX 寄存器，以及长模式缺少特性时的拒绝。
 
 `X64DoubleShiftTests.cpp` 覆盖全部已接纳的 imm8/CL 计数、重叠与扩展寄存器、已定义标志、准确的跨页 RAM 观察、取消、权限/未映射/设备故障、LOCK 与未定义计数拒绝、上下文及原生 ADC 续行。独立主机判据检查 5,184 次原始执行，12 个原有 WDK 驱动探针覆盖寄存器与 RAM 形式。原生门禁新增 145 项必测结果。
+
+`X64ScalarShiftTests.cpp` 检查全部字节计数、两种进位输入、零/全一及带符号操作数、隐含单次形式、AH/SPL 与计数寄存器别名、完整 CPU 状态、精确 RAM 范围、观察回调回滚、故障及上下文续执行。独立原生对照检查 65,536 次执行。WDK 资源驱动加入 72 个原创探针。KVM/WHP 验证门要求此指令族的 769 项结果通过。 只有掩码后计数为零才保证保留全部标志位。非零计数的 `RCL/RCR` 完整进位环绕会保留操作数和 CF，但 OF 未定义；对照仅排除这一未定义位。
+
+`X64LoopTests.cpp` 覆盖 21 种原创编码、计数器回绕、4 GiB 以上的有符号相对目标、完整 CPU/RAM 状态保留、观察回调取消、跨独立映射取指、目标取指错误与上下文恢复。指令字节不完整时在执行前拒绝；目标取指失败则保留已完成分支的计数器和 PC。WDK 资源驱动新增 12 个原创探针。KVM/WHP 在内核、用户和驱动契约下必须通过本指令族的 379 项结果。 原始宿主指令对照最多运行 1,008 个样例并报告次数。AMD 上采用 `66H` 的已跳转分支会访问宿主系统保留的低地址，因此这些形式在显式映射低地址的客户机矩阵中执行。Intel、AMD 的目标宽度及 REX.W 优先级分别验证。
 
 `DriverSIMDSEHTests.cpp` 以四种受支持的处置及一次 x87 修改拒绝、两种原生执行契约、普通/CFG WDK 映像及两个加载地址运行八类原始 SSE 故障。十项后端专属结果和三项纯内核 SSE 记录检查均为必测。`driver_seh_simd.def` 统一定义样例与模式；异步展开表覆盖故障辅助函数。微软内核 10.0.26100.9549 提供独立分类与恢复依据：隔离执行了 107,744 组指令路径分类及 8,192 组恢复。这不代表已在完整 Windows 内核中执行驱动；ARM64 原生 KVM/WHP 仍未验证。
 
@@ -1202,6 +1216,8 @@ Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 
 `NeverDLLVMCPhiTests` 在 O0/O2 下运行独立及交叉依赖的循环更新，覆盖零次循环、迭代边界和随机全位宽初值。可读性断言要求独立更新不产生快照局部变量，复合交换只保留必要快照。已有分支、switch、移动分支体及交换循环用例继续验证实际选中的边与同时赋值语义。
 
+`LLVMCInternalExitRegions` 新增5个独立测试，覆盖两种退出极性、零次循环、退出边和回边的并行交换、循环头/内部退出的四种嵌套组合，以及循环头/循环体/回边块的观察顺序。共享目标出口和提前继续路径验证可执行回退；有效循环之后遇到不支持区域时，不得发布部分结构化结果。整模块与单函数输出须一致且不修改 LLVM。原始 LLVM 和生成 C 在 O0/O2 下与独立无符号 oracle 对照执行，共294,912次调用，C 启用未定义行为陷阱。
+
 `NeverDLLVMCPhiTests` 还验证共同循环出口的不同后继 PHI 对、有序观察调用、输出内存及调用者 IR 不变。整模块与指定函数的 C 均在 O0/O2 下对照独立参考实现执行。不同退出判断及额外分支前驱覆盖保守处理。
 
 `NeverDLLVMCPhiTests` 用独立 O0/O2 oracle 检查多回边循环表达式合并、观察调用顺序、修改内存的调用之前的值快照、窄位宽回绕和符号扩展。覆盖整模块与单函数输出且调用方 IR 不变，以及入边冲突、共享根、poison 标注、未定义操作数、变量移位、受约束 intrinsic、异常函数和预算不足时完整拒绝。只有所有入边运算一致，旋转调用才可合并。
@@ -1257,3 +1273,19 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp` 用独立 O0/O2、普通/APS2/RELR 夹具覆盖三类 mutex、多等待者、唤醒后再次竞争、递归最终释放、errno、原始事件、失效内存、死锁和累计指令限额。Unicorn 及可用 KVM/WHP/HVF 执行相同用例；不可用后端明确跳过。这些证据不表示 Android 真机或并行 SMP 等价。
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` 使用独立解释器检查 48 层块、循环、switch 和异常体的进入及跳过路径，并以宽松的运行时间上限捕获重复递归遍历。这是结构化 HighIR 覆盖；全镜像方法恢复仍需独立完成清单与依赖检查。
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` 覆盖 ARM64/x64 中合并或分离 retain 调用的 thunk。`EarlyOnceCopyReturnsRequireTheSameCompleteTail` 拒绝改变存储、缺少或重排 retain、有序加载、改变返回值及外部入口。`IgnoredNestedReturnCopiesDoNotObserveOnceContext` 检查 void 回调的两条可行退出路径，并在投影后重新验证源码控制流。
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` 使用独立解释器，对比同一地址在嵌套块中再次出现时进入与绕过该块的路径。`ReturnTailCopyIncludesTheFirstChildOfItsLabel` 保留合法的父语句与第一个子语句共享地址的情况及其赋值。这些定向检查不能替代完整方法与原生依赖比较。
+
+`JumpTailCopyKeepsTheOuterLabelOwner` 检查跳转尾部的同一归属规则。
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 检查提前返回与 once 调用之间的空指令锚点，并拒绝其间的调用或存储。
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 检查共享根节点证明，并在叶节点开始观察上下文后拒绝旧计划。
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 覆盖两种架构，并拒绝变更提供方、弱导入、冲突存储及陈旧 ABI 载体。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下执行生成的 C，使用独立 Swift 载体验证函数检查坐标位模式（包括有符号零、次正规数和 NaN）、接收者身份、调用顺序和保护值。这些检查证明调用 ABI，不代表上层方法已完整恢复。
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` 校验完整方法树和精确载体，包括私有成员及被拒绝的签名。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` 与 `CGRectMethodRejectsChangedEntryAndReceiverParameter` 覆盖流水线和发布重放，拒绝 self 索引、入口或参数类型的变化。编译器记录涵盖四种 macOS/Mac Catalyst 目标；此入口声明仍仅支持 arm64。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` 在 O0/O2 下将生成 C 与独立的 Swift 标量载体参考实现对照，验证四个坐标的全部位模式、不同的 context/self 指针、单次调用和存储保护。
+
+`NeverDLowInstructionBoundaryTests` 可独立运行 LowIR 指令来源测试，无需构建聚合提升测试的全部夹具。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` 验证对齐 ADD 和后索引 LDP 栈释放，包括由调用方恢复链接寄存器的情形；原始 RET X30 与共享入口仍独立保留。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` 拒绝其他返回寄存器、BR X30、缺失或未对齐的释放、窄恢复、内部入口、修正、可写或歧义映射、可重定位输入及其他格式。解码共享尾部不能证明原生 ABI：缺失调用方保存或分配仍会使现有帧证明失败。

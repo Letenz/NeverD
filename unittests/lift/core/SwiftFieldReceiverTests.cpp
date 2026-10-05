@@ -167,7 +167,7 @@ struct FieldFixture {
     PipelineOptions O;
     O.EmitDumpOutput = false;
     O.OnlyFunctionEntries = {Entry};
-    const auto ABI = swiftMangledZeroArgClassMethodSourceABI(Image, Entry);
+    const auto ABI = swiftMangledReceiverClassMethodSourceABI(Image, Entry);
     ASSERT_TRUE(ABI);
     O.SourceTypeHints.emplace(Entry, *ABI);
     Result = Pipeline().run(Image, Context, O);
@@ -859,6 +859,80 @@ TEST(SwiftFieldReceiver, IncompleteRecordDeclarationDoesNotIssueCopyReceipt) {
           EXPECT_FALSE(Op.SourceCallHint);
         }
   EXPECT_EQ(Calls, 1U);
+}
+
+TEST(SwiftFieldReceiver, CGRectMethodSelfKeepsItsLogicalParameterIdentity) {
+  FieldFixture F;
+  F.Image.Symbols[0].Name =
+      "_$s4Demo7DerivedC4draw2in4rectySo12CGContextRefa_So6CGRectVtF";
+  F.run();
+  ASSERT_TRUE(F.high());
+  ASSERT_EQ(F.high()->Params.size(), 3U);
+  const auto Receiver = objcNativeSwiftSelfTypeHint(F.Image, F.Entry);
+  ASSERT_TRUE(Receiver);
+  EXPECT_EQ(Receiver->SourceParameter, 2U);
+  EXPECT_TRUE(objcReceiverTypeHintValid(F.Image, *Receiver));
+  for (unsigned Other : {0U, 1U, 3U}) {
+    auto Wrong = *Receiver;
+    Wrong.SourceParameter = Other;
+    EXPECT_FALSE(objcReceiverTypeHintValid(F.Image, Wrong)) << Other;
+  }
+  auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+  const auto Call = F.call(Bound.Function);
+  ASSERT_TRUE(Call);
+  ASSERT_TRUE(Call->SourceCallHint->Receiver);
+  EXPECT_EQ(Call->SourceCallHint->Receiver->SourceParameter, 2U);
+  EXPECT_TRUE(sdk::objCNativeSwiftReceiverSourceCallBound(
+      *Call, F.Image, F.Result, Bound.Function, {}));
+}
+
+TEST(SwiftFieldReceiver, CGRectMethodRejectsChangedEntryAndReceiverParameter) {
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    SCOPED_TRACE(Case);
+    FieldFixture F;
+    F.Image.Symbols[0].Name =
+        "_$s4Demo7DerivedC4draw2in4rectySo12CGContextRefa_So6CGRectVtF";
+    F.run();
+    ASSERT_TRUE(F.high());
+    auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+    auto Call = F.call(Bound.Function);
+    ASSERT_TRUE(Call);
+    ASSERT_TRUE(sdk::objCNativeSwiftReceiverSourceCallBound(
+        *Call, F.Image, F.Result, Bound.Function, {}));
+    if (Case == 0) {
+      auto Hint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+      Hint->Receiver->SourceParameter = 0;
+      Call->SourceCallHint = Hint;
+    }
+    if (Case == 1) {
+      std::vector<ExprPtr> Pending;
+      walkStmts(Bound.Function.Body, [&](const HighStmt &S) {
+        forEachExpr(S, [&](const auto &E) { Pending.push_back(E); });
+      });
+      unsigned Changed = 0;
+      while (!Pending.empty()) {
+        auto E = Pending.back();
+        Pending.pop_back();
+        if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Param &&
+            E->Var.Id == 2) {
+          E->Var.Id = 0;
+          ++Changed;
+        }
+        E->forEachChildExpr(
+            [&](const auto &Child) { Pending.push_back(Child); });
+      }
+      ASSERT_NE(Changed, 0U);
+    }
+    if (Case == 2)
+      Bound.Function.SourceTypeHint->Parameters[2].Location.RegisterOffset =
+          a64reg::X0;
+    if (Case == 3)
+      F.Image.Symbols[0].Name += "To";
+    if (Case == 4)
+      Bound.Function.Params[1].Type = NdType::makeInt(8);
+    EXPECT_FALSE(sdk::objCNativeSwiftReceiverSourceCallBound(
+        *Call, F.Image, F.Result, Bound.Function, {}));
+  }
 }
 
 TEST(SwiftFieldReceiver, InitializedRecordCopyKeepsLogicalMessageAndPublishes) {

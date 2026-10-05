@@ -95,6 +95,92 @@ void expectRefusal(const Program &P, Status Expected,
   EXPECT_TRUE(Gated.Recovery.Residual.Blocks.empty());
 }
 
+Program skippedContinuation(bool Indirect) {
+  // CALL helper; invalid long-mode bytes; MOV EAX,7; RET.
+  // helper: ADD qword [RSP],2; RET. An indirect variant computes its target
+  // with LEA before CALL RDX. Neither physical return reaches the inline data.
+  if (Indirect)
+    return Program({0x48, 0x8d, 0x15, 10,   0,    0, 0,   0xff,
+                    0xd2, 0x16, 0x06, 0xb8, 7,    0, 0,   0,
+                    0xc3, 0x48, 0x83, 0x04, 0x24, 2, 0xc3});
+  return Program({0xe8, 8, 0, 0, 0, 0x16, 0x06, 0xb8, 7, 0, 0, 0, 0xc3, 0x48,
+                  0x83, 0x04, 0x24, 2, 0xc3});
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     PhysicalReturnsCollectOnlyTheirActualDestinations) {
+  for (bool Indirect : {false, true}) {
+    auto P = skippedContinuation(Indirect);
+    const auto R = P.recover();
+    ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
+    EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
+    const auto &Insns = R.Independence.Certificate->Instructions;
+    EXPECT_EQ(Insns.size(), Indirect ? 6U : 5U);
+    const auto Continuation = Entry + (Indirect ? 9 : 5);
+    EXPECT_FALSE(std::any_of(Insns.begin(), Insns.end(), [&](const auto &I) {
+      return I.Origin.Address >= Continuation &&
+             I.Origin.Address < Continuation + 2;
+    }));
+    EXPECT_EQ(std::count_if(Insns.begin(), Insns.end(),
+                            [](const auto &I) {
+                              return I.NativeStackControl ==
+                                     SpecializationNativeStackControl::Return;
+                            }),
+              2);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FeasibleCallContinuationsStillRequireCompleteInstructions) {
+  for (bool Indirect : {false, true}) {
+    auto P = skippedContinuation(Indirect);
+    auto &Bytes = P.Image.Segments.front().Data;
+    Bytes[Bytes.size() - 2] = 0; // Return to the original inline bytes.
+    expectRefusal(P, Status::Unsupported);
+    EXPECT_EQ(P.check().Proof.InstructionAddress, Entry + (Indirect ? 9 : 5));
+  }
+  // One feasible helper arm skips the data; ECX == 0 returns into it.
+  Program Mixed({0xe8, 8,    0,    0,    0, 0x16, 0x06, 0xb8, 7,    0, 0,   0,
+                 0xc3, 0x85, 0xc9, 0x74, 5, 0x48, 0x83, 0x04, 0x24, 2, 0xc3});
+  expectRefusal(Mixed, Status::Unsupported);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredCallContinuationsKeepCompleteTargetEnumeration) {
+  // helper: AND ECX,1; SHL ECX,1; ADD [RSP],RCX; RET. The real return set
+  // contains both the valid continuation and the invalid original address.
+  Program P({0xe8, 8,    0,    0, 0,    0x16, 0x06, 0xb8, 7,    0,    0,   0,
+             0xc3, 0x83, 0xe1, 1, 0xd1, 0xe1, 0x48, 0x01, 0x0c, 0x24, 0xc3});
+  expectRefusal(P, Status::Unsupported);
+  LowIRIndependenceLimits Limits;
+  Limits.MaxIndirectTargets = 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     DeferredCallContinuationsNeverCertifyBudgetedPrefixes) {
+  auto P = skippedContinuation(false);
+  P.Contract.PreservedRegisters = {{x86reg::RSP, 8}};
+  P.Contract.PreservedFrameRanges = {{0, 8}};
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  LowIRIndependenceLimits Limits;
+  Limits.MaxInstructions = Good.Proof.Instructions;
+  ASSERT_TRUE(P.check(Limits).proved());
+  --Limits.MaxInstructions;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxBlockVisits = Good.Proof.BlockVisits - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Limits = {};
+  Limits.MaxSolverQueries = Good.Proof.SolverQueries - 1;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  Program Cycle({0xe8, 1, 0, 0, 0, 0x16, 0xeb, 0xfe});
+  Limits = {};
+  Limits.MaxPaths = 12;
+  expectRefusal(Cycle, Status::BudgetExceeded, Limits);
+}
+
 TEST(OriginalBinaryUndefinedIndependence,
      StraightLineCertificateOwnsExactBytesAndFallbackMetadata) {
   // mov eax,7; ret. The optional memory-call route declines both instructions.
@@ -121,6 +207,23 @@ TEST(OriginalBinaryUndefinedIndependence,
   // Mutating the image cannot mutate the certificate's retained byte storage.
   P.Image.Segments[0].Data[1] = 9;
   EXPECT_EQ(Certificate.Instructions[0].NativeBytes[1], 7);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     Disp32WordShiftKeepsMemoryAndUndefinedFlagObligations) {
+  // MOV [RSP-8],RCX; SHL word [RSP-8],3 using disp32; MOVZX EAX,[RSP-8]; RET.
+  // The full frame write remains observed; arbitrary AF is initially dead.
+  Program P({0x48, 0x89, 0x4c, 0x24, 0xf8, 0x66, 0xc1, 0xa4, 0x24, 0xf8,
+             0xff, 0xff, 0xff, 3,    0x0f, 0xb7, 0x44, 0x24, 0xf8, 0xc3});
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Certificate->Instructions.size(), 4U);
+  const auto &Shift = Good.Certificate->Instructions[1];
+  EXPECT_EQ(Shift.Origin.Address, Entry + 5);
+  EXPECT_EQ(Shift.UndefinedEffects.Coverage, LowUndefinedCoverage::Complete);
+  EXPECT_EQ(Shift.UndefinedEffects.Effects.size(), 2U);
+  P.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+  expectRefusal(P, Status::Dependent);
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
@@ -654,14 +757,15 @@ TEST(OriginalBinaryUndefinedIndependence,
 TEST(OriginalBinaryUndefinedIndependence,
      DiscardedCallContinuationCanContainATrap) {
   // call helper; int3; helper: add rsp,8; mov eax,7; ret. The real native
-  // stack determines the outer return; the call continuation stays evidence.
+  // stack determines the outer return; the discarded continuation is not an
+  // instruction edge and carries no claim about the skipped byte.
   Program P(
       {0xe8, 1, 0, 0, 0, 0xcc, 0x48, 0x83, 0xc4, 8, 0xb8, 7, 0, 0, 0, 0xc3});
   const auto R = P.recover();
   ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
   EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
   EXPECT_EQ(R.Independence.Proof.Paths, 1U);
-  EXPECT_TRUE(
+  EXPECT_FALSE(
       std::any_of(R.Independence.Certificate->Instructions.begin(),
                   R.Independence.Certificate->Instructions.end(),
                   [](const auto &I) { return I.Origin.Address == Entry + 5; }));

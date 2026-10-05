@@ -8133,3 +8133,86 @@ TEST(HighControlFlowSemantics, NestedExitKeepsOneCallReceiptInSkippedTail) {
         EXPECT_GT(Evaluations, 1U);
     }
 }
+
+TEST(HighControlFlowSemantics, ReturnTailCopyKeepsTheOuterLabelOwner) {
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Name = "nested_label_tail";
+  F.ReturnType = NdType::makeInt(8);
+  HighStmt Outer;
+  Outer.Kind = StmtKind::Block;
+  Outer.Addr = 0x1198;
+  HighStmt Inner = Outer;
+  Inner.Body = {HighStmt{}};
+  Inner.Body.front().Kind = StmtKind::Block;
+  HighStmt Test;
+  Test.Kind = StmtKind::If;
+  Test.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(0, 8));
+  Test.Body = {assign(0, 1, 5), Inner, jump(0, 0x1300)};
+  Outer.Body = {Test, assign(0x1200, 1, 7), jump(0x1204, 0x1300)};
+  HighStmt End;
+  End.Kind = StmtKind::Block;
+  End.Addr = 0x1300;
+  F.Body = {conditional(0x1000, 0x1198), Outer, End, result(0x1304, local(1))};
+  for (uint64_t Input : {0U, 1U, 7U})
+    ASSERT_EQ(execute(F, Input, true), Input ? 7U : 5U);
+  duplicateSmallReturnTails(F.Body);
+  size_t Entries = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Entries += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1198;
+  });
+  EXPECT_EQ(Entries, 1U);
+  for (uint64_t Input : {0U, 1U, 7U})
+    EXPECT_EQ(execute(F, Input, true), Input ? 7U : 5U);
+}
+
+TEST(HighControlFlowSemantics, ReturnTailCopyIncludesTheFirstChildOfItsLabel) {
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Name = "first_child_tail";
+  F.ReturnType = NdType::makeInt(8);
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1100;
+  Label.Body = {assign(0x1100, 1, 23)};
+  F.Body = {jump(0x1000, 0x1100), result(0x1004, HighExpr::makeConst(0, 8)),
+            Label, result(0x1104, local(1))};
+  ASSERT_EQ(execute(F, 0, true), 23U);
+  EXPECT_TRUE(duplicateSmallReturnTails(F.Body));
+  EXPECT_EQ(F.Body.front().Kind, StmtKind::Block);
+  EXPECT_EQ(execute(F, 0, true), 23U);
+}
+
+TEST(HighControlFlowSemantics, JumpTailCopyKeepsTheOuterLabelOwner) {
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Name = "nested_label_jump_tail";
+  F.ReturnType = NdType::makeInt(8);
+  HighStmt Outer;
+  Outer.Kind = StmtKind::Block;
+  Outer.Addr = 0x1198;
+  HighStmt Inner = Outer;
+  Inner.Body = {assign(0, 1, 41)};
+  HighStmt Test;
+  Test.Kind = StmtKind::If;
+  Test.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(0, 8));
+  Test.Body = {assign(0, 1, 5), jump(0, 0x1300), Inner, jump(0, 0x1300)};
+  Outer.Body = {Test, assign(0x1200, 1, 7), jump(0x1204, 0x1300)};
+  HighStmt End;
+  End.Kind = StmtKind::Block;
+  End.Addr = 0x1300;
+  F.Body = {conditional(0x1000, 0x1198), conditional(0x1004, 0x1198), Outer,
+            End, result(0x1304, local(1))};
+  for (uint64_t Input : {0U, 1U, 7U})
+    ASSERT_EQ(execute(F, Input, true), Input ? 7U : 5U);
+  duplicateSmallJumpTails(F.Body);
+  size_t Entries = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Entries += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1198;
+  });
+  EXPECT_EQ(Entries, 2U);
+  for (uint64_t Input : {0U, 1U, 7U})
+    EXPECT_EQ(execute(F, Input, true), Input ? 7U : 5U);
+}

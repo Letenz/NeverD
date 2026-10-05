@@ -1,10 +1,12 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 06940e7220c3f05dff76462de7d0fe0199aab6b4aeda2c3e4f418d3441516ccf -->
+<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
 
 [← 文档索引](README.md)
 
 # macOS 原生 CPU 后端（HVF）
+
+**验证状态（2026-10-05）：Intel HVF 尚未经过 Intel Mac 实体机测试，仍未完成验收。** 组织和个人 Actions 仓库都未取得完整的 Intel 验收证据；崩溃、失联和超时仍未解决。两个仓库的 Intel HVF Actions 均已暂停，通用 HVF 工作流只选择 ARM64。下文 Intel 工作流操作说明仅作历史参考，不表示恢复测试。后续优先在原生 ARM64 上验证正确性并测量性能，再将适用改动同步至 Intel，只做源码审查和可用的编译检查。ARM64 结果不能证明 Intel 运行正确；既有 Intel 证据保留，此次暂停不代表故障已修复。
 
 NeverD 使用 Apple 的 Hypervisor.framework，后端名为 `hvf`，对应 Linux 的 KVM 和 Windows 的 WHP。按本机架构执行：Apple Silicon 使用 ARM64，Intel Mac 使用 x86-64。对支持原生执行的契约，`auto` 在主客体架构匹配时选择 HVF；跨架构以及 `software-cpu-v1` 契约继续使用 Unicorn。Rosetta 下的翻译进程会明确拒绝初始化，应改用原生 arm64 构建。
 
@@ -36,13 +38,14 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 15 项、Intel 12 项；完整门禁分别要求 23 项和 20 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
+门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 17 项、Intel 14 项；完整门禁分别要求 29 项和 22 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
 
-手动工作流默认使用带 `hvf` 标签的自托管宿主，也可选择 `hosted-intel` 尝试
-GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `scripts/probe_hvf_host.c`，
-实际创建和销毁 VM/vCPU，成功后才准备 LLVM。这项可用性探针不执行来宾指令。
-宿主拒绝 HVF 就在此处失败，不能用 runner 名称推断硬件可用。
-CPU 门禁通过后，还必须执行本机架构的全部 Darwin 工作负载。
+[ARM64 HVF 工作流](../../.github/workflows/hvf.yml) 现在只使用带
+`self-hosted, macOS, ARM64, hvf` 标签的宿主，并核对实际架构。先编译、签名并运行
+`scripts/probe_hvf_host.c`，实际创建和销毁 VM/vCPU，成功后才准备 LLVM。
+`probe` 只检查可用性，`transport` 验证传输层，`darwin` 要求全部相符的 Darwin
+工作负载，`full` 要求传输层、完整 CPU 和 Darwin 三项门禁。Intel 宿主和镜像选项
+已移除；下文 Intel 流程只作已暂停的历史操作参考。仍需自行提供专用 ARM64 runner。
 
 GitHub 的[宿主策略](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)
 把 runner 内的嵌套虚拟化列为实验性用途，不保证稳定性、性能或兼容性。
@@ -310,3 +313,19 @@ Action 在执行前上传计划。执行期间保存初始进程标记，每增�
 `fb7a9d2` 的协议 3 计量配对也触发原预算失败：macOS 15 [37262095705](https://github.com/gmh5225/test_mac_intel/actions/runs/37262095705) 完成 781 轮，第 782 轮失败；macOS 26 [37262097389](https://github.com/gmh5225/test_mac_intel/actions/runs/37262097389) 完成 396 轮，第 397 轮失败。两组都返回 IRQ 并观察到新写入见证，退出 1，清理和进程回收已核验；没有 runner 失联或上传器故障。失败调用前至返回约为 2.068/2.002 秒。在各自有明确边界的采样区间内，Intel HVF 执行计数增加约 2.063/1.996 秒，Darwin 线程 CPU 计数增加约 2.068/2.001 秒。读取操作位于调用、状态采集区间之外，采样宽度与原始计数均保留。嵌套宿主报告的这些时钟增加了墙钟之外的证据，但不能证明物理 guest 执行、调度时长或内核根因。全部 8 次尝试及 38 份压缩包已核验并保留，5 毫秒切片和每轮 2 秒预算未变。双镜像 vCPU、VM 重建与完整 NeverD Intel 验收仍未完成。[原始证据与计量](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
 
 `ca8da7d` 的协议 4 HLT 对照两组均以作业取消结束：macOS 15 [37263893167](https://github.com/gmh5225/test_mac_intel/actions/runs/37263893167) 与 macOS 26 [37263895410](https://github.com/gmh5225/test_mac_intel/actions/runs/37263895410)。对应 GitHub check-run 注记确认超过 30 分钟作业上限，没有明确的失联注记。每组仅保留执行前工件，两份可下载工作流日志 ZIP 均无成员。原生启动、完成轮数、HLT 退出、进程退出和回收均未获核验。配置了 5 毫秒切片、每轮 2 秒及进程 600 秒预算，并不能证明超时处理或回收已经执行。此 final-only 对照不能定位阻塞操作或内核根因，也未通过原定时器门槛或完整 Intel 验收。全部 10 次尝试和 40 份原始工件 ZIP 均已保留。离线校验命令核对压缩包摘要、源码版本、进程与预算证据并重算补充分析；11 语言索引将缺失轮数明确标为未知。[证据与复核方法](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
+
+## ARM64 watchdog 优化实验 (2026-10-05)
+
+取消 watchdog 在 disarm 后的通知通过了正确性检查，但未证明可靠的性能收益。使用相同 Release 配置及依赖交替测量 15 组，`initialization`、`integer`、`branch`、`memory`、`tls_call`、`two_cpu_switch` 的基线/候选耗时配对中位比分别为 **0.902、0.897、0.856、1.030、0.912、0.969**；大于 1 才有利于候选。主机上有其他任务编译，样本存在长尾，不能据此认定改动导致性能回退。运行时改动已撤回，保留原通知；新增三项回归覆盖 disarm 后更早期限重启、disarm 后析构，以及局部停止令牌的生命周期结束。
+
+最终保留的源码 `6c4a5ef1f` 已独立通过 32 项 RunControl、27/27 传输测试、完整 CPU 清单（1429 通过、10644 跳过，27/27 必需项）及 Darwin（65 通过、221 跳过，39/39 必需项），零失败。三项原生中断/维护恢复方法也分别连续通过 1000 次，并确认子进程已回收。清单存在重叠，不能相加；跳过项属于禁用或异构后端/架构。这只证明有边界的原生 ARM64 覆盖，不代表 Intel 执行、完整 Apple OS 模拟或性能排名。Intel 仅做本地 x86-64 语法编译。
+
+[原始配对样本](../benchmarks/2026-10-05-arm64-hvf-watchdog.json) · [源码与配置](../benchmarks/2026-10-05-arm64-hvf-watchdog-metadata.json)
+
+## 请求完成通知研究（2026-10-05）
+
+对 84,268 条 ARM64 检查执行指令的插桩测量中，准备和完整采集平均约 0.673/0.784 微秒；提交与 owner 执行总耗时之差平均为每请求 7.367 微秒，含少量生命周期操作，并非纯内核调度时间。区间相互包含，不能相加，也不能用插桩耗时证明提速。分别以 15 组配对比较原子完成通知和独立阻塞响应条件变量。原子等待没有显示收益，进程 CPU 时间还增加；阻塞候选的初始化、整数、分支、内存、TLS/调用、双 CPU 切换基线/候选中位比分别为 1.057、1.008、1.000、0.885、1.151、1.169，大于 1 才有利于候选，结果不一致。宿主有其他应用及编译负载。首轮原子候选的前置检查发现编译，但本地 shell 串联错误使测量继续，该数据仅保留为受干扰研究记录。修正后的控制器拦下了无编译条件下的确认尝试；阻塞配对明确记录共享负载。两个运行时方案均未保留。
+
+最终源码 `a63d57e6a` 独立通过完整 CPU 清单（1434 通过、12693 跳过，29/29 必需项）和 Darwin（65 通过、221 跳过，39/39 必需项），无失败。新增两个必需回归覆盖并发借用请求的独立结果/错误，以及请求进入后遇到停止时等待退役；各连续通过 100 次，前者共检查 100,000 次请求交接。两个已撤回候选分别通过三组各 1000 次原生恢复测试，不能用这些日志替代最终版本证据。清单重叠，跳过项不算通过。Intel 仍仅有语法编译验证，未经实体 Mac 验收，也不运行 Actions。
+
+[原子候选 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-atomic.json) · [阻塞候选 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-blocking.json) · [来源与验证 JSON](../benchmarks/2026-10-05-arm64-hvf-completion-metadata.json)

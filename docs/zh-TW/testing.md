@@ -101,6 +101,10 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDLLVMScalarLoopRecoveryTests` 涵蓋前綴與前驅攜帶值重構、零次迴圈分支、自回邊迴圈判斷前移、仿射狀態、回繞時的等式退路、額外更新的 poison、高位元資料差異及不支援的輸入契約。精確／少一累計預算檢查原子拒絕；獨立算術 oracle 在 O0/O2 執行原始與恢復 LLVM，涵蓋全部位元組控制輸入。這些測試不代表原生 ABI 恢復或預設短 C 輸出已完成。
 
+迴圈述詞回歸涵蓋 8/16/32/64 位元 PHI、交換比較運算元與分支極性、有號/無號擴展、不同外部初值、衝突入口觀察、多回邊、隱藏符號資料反例、截斷拒絕、原始 poison/不終止及構造/證明/候選/轉換限制的原子拒絕。獨立無號 oracle 在 O0/O2 對照原始與恢復後的 LLVM，共 458,752 次呼叫並啟用未定義行為陷阱；來源函式及父模組保持不變。
+
+退出邊界回歸涵蓋8/16/32/64位元模運算條件、遞減步長、兩種極性、零次迴圈、共享出口、僅零資料一致的錯誤相鄰邊界、步長無法到達的邊界、超限切片、poison、缺少同寬葉節點及原子預算拒絕。有效前綴初值前的40個未使用參數不得擠占有界搜尋位置。獨立無號 oracle 在 O0/O2 執行原始與恢復後的 LLVM，共458,752次呼叫並啟用未定義行為陷阱。
+
 同一測試目標也涵蓋 `recoverLLVMScalarSource`：搜尋前準備、僅清理而無迴圈變換、全位寬未使用狀態、死碼中的溢位/精確位移/除法及 assume 義務、不支援的副作用、精確/少一累計預算與有界繼續。獨立算術 oracle 在 O0/O2 執行原始與準備後的 LLVM，涵蓋所有位元組控制值及確定性全位寬狀態。成功或拒絕都必須保持來源函式及其父模組不變。
 
 來源準備守衛測試涵蓋帶註解的模恆等式、不同前驅中的等價運算式、不同分支值保留、原始溢位/exact 位移/截斷/擴展拒絕及精確/不足累計預算。獨立無號 oracle 在 O0/O2 對照原始與準備後的函式本體，共131,072次呼叫並啟用未定義行為陷阱。既有語義 pass 測試繼續涵蓋獨立述詞的拒絕規則。
@@ -177,11 +181,15 @@ build-release/bin/NeverDLowIRRefinementTests
 
 以下行為採用預設的嚴格審計契約。`NeverDOriginalBinaryUndefinedIndependenceTests` 使用獨立撰寫、固定映射的 x64 位元組，驗證實體原生 CALL/RET、改寫的返回目標、有限間接目標全集和不可變載入。同一測試目標也檢查直接分支完整收集、精確位元組／效果／映射／讀取見證綁定、外層返回時入口 RSP 及返回位址槽保持，以及堆疊框架與映像分離前提的可滿足性。缺失或重疊指令、不符合精確陷阱和明確環境投影規則的未審計分支、不終止或超出預算的迴圈、不完整目標列舉、執行設定／契約不符和預算耗盡均須拒絕，且不產生憑證或殘餘程式碼。成功要求每條可行原生路徑完整結束。此選用閘門不認證迴圈不變量、例外分派、啟用 CET 的執行或原生程式碼到 C 的等價性；一般恢復仍獨立可用。該目標也檢查嚴格提升的 `INT3`/`UD2` 終止邊界及其完整位元組、操作摘要綁定。未定義輸出附屬中繼資料的 `Missing` 必須保持不變；僅經符號執行證明不可達的陷阱可進入憑證，任意可行陷阱路徑都須傳回 `ContractViolation`，且無憑證、無殘餘程式碼。不建模陷阱後的循序執行或例外恢復，不使用 `codeFollowsTrap`，靜態 LowIR API 的支援範圍保持不變。
 
+實體返回回歸涵蓋直接及間接呼叫跳過無效行內位元組、可達的錯誤返回位置、完整目標列舉及恰好和不足的預算。完整狀態關係拒絕被改動的結果；獨立 C 經 O1/O2 編譯後也必須保留完整框架寫入，返回值相同不能掩蓋返回槽位元組變化。
+
 顯式原生交疊測試涵蓋真實 x64 跳入立即數的分支、兩個可行分支的結果，以及位於先前指令內部的間接返回入口。合成提供器測試涵蓋兩種收集順序的包含式交疊、未執行直接分支上的衝突位元組、兩種順序的程式碼／讀取一致性及候選讀取。精確和不足的位元組預算按間接轉移累計計入重複交疊位元組。分支結果改變、靜態或循環介面使用及證據矛盾均必須拒絕憑證；啟用選項或改變額度會改變摘要。
 
 拒絕邊界的明確啟用測試涵蓋不可達的 RCL、記憶體 XADD 和 REP MOVS、符號路徑矛盾、任意值控制的分支，以及入口、間接跳躍、CALL 和 RET 抵達時的精確拒絕。測試也檢查可達後綴的獨立入口、候選與原生位址重合、格式錯誤或不完整的證據、資源耗盡、靜態/迴圈介面拒絕，以及精化證明的三層摘要繫結。修改不可達指令，或在無保留邊界時切換選項，都會改變證書摘要。這些測試驗證宣告的有限證明範圍，不證明未審計指令的語義。
 
 封裝旗標測試涵蓋全部純量入口旗標組合、特權遮罩、兩次執行的 TF/AC 條件、不同未定義產生點、相關副本、原生呼叫、兄弟路徑狀態、強制最終系統狀態觀察、畸形證據及資源計費。有限迴圈必須結束每條可行輸入路徑；安全分支不能掩蓋無限或截斷路徑。RDSSPD/RDSSPQ 檢查涵蓋 16 個通用暫存器和兩種寬度、高位元保持、保留 `Missing` 證據及偽造投影拒絕。機器狀態測試在兩個 C 後端的 O0/O2 下啟用未定義行為陷阱，與獨立使用者模式旗標預言機比較，並檢查環境失敗狀態不會被後續操作清除。 INCSSPD/INCSSPQ 測試涵蓋兩種寬度和全部通用暫存器、不可達邊界保留、安全兄弟路徑完成後的可行陷阱、零運算元及偽造陷阱證據。
+
+`NeverDX86DecodeDetailTests` 涵蓋三種解碼入口、兩種 x64 位址寬度、有號位移邊界、必要前綴、真正的 i386 disp16、moffs、截斷輸入及無詳細資訊的重複使用。只有精確的重定位欄位可繫結，錯誤寬度、偏移或數值均不能繫結。原生獨立性及關係證明測試也保留完整框架寫入，拒絕可觀察的任意旗標及被修改的移位候選。
 
 `NeverDX86UndefinedEffectsTests` 檢查未定義位元中繼資料、已定義／保留旗標及過期憑證拒絕。`NeverDX86CarryArithmeticFlagTests` 以算術參考實作檢查暫存器和記憶體形式 ADC/SBB 的輔助進位。`NeverDX86LogicIdentityTests` 檢查相同運算元的 AND 在 64 位元模式下寫入 32 位元目的暫存器時，仍清零其所屬 64 位元暫存器的位元 63:32，同時保留窄位寬寫入未涵蓋的位元。
 
@@ -192,6 +200,8 @@ build-release/bin/NeverDLowIRRefinementTests
 `NeverDPEFixedImageTests` 使用獨立建構的 PE 檔案，檢查含重定位的指令與不可變資料、匯入寫入範圍、畸形標頭／表格、別名及來源資訊竄改。原生到 LowIR 與精確 LLVM 證明接受相符候選，拒絕結果、狀態或原始位元組遭修改的候選。準備預算耗盡維持獨立分類，允許明確提高限額後重試；一般載入也接受含 40000 筆有效重定位記錄、超過預設分析預算的檔案。
 
 `FrameOffsets.*`、`NativeStackSpecialization.*` 與 `OriginalBinaryUndefinedIndependence.*` 檢查 2/4/8/16/32 位元組對齊的全部餘數、自由高位、跨呼叫儲存、倒數迴圈、別名破壞、錯誤分派、無關大遮罩、必要分區升級及恰好／少一次預算。獨立原生控制檢查帶分支約束的對齊、內部無符號返回清理、錯誤清理量與帶前綴返回。這些測試不表示分區迴圈已具備自動原生至 LLVM 的完整證明。
+
+入口同餘證明測試涵蓋對齊1/2/4/16的全部餘數、兩個不同根暫存器、自由高位元、非法定義域、矛盾入口常數、不回繞範圍、排除區間空隙、保存義務和精確/少一查詢預算。迴圈歸納模板保留原入口根條件。重新執行的原生獨立性/關係證明與原生至LLVM檢查拒絕不匹配的定義域及改變的狀態碼，憑證摘要繫結兩側定義域。案例獨立撰寫，不從ABI或單次執行推斷對齊條件。 另將獨立撰寫的帶入口檢查C函式原樣編譯為O1/O2，在兩個餘數下證明與實際原生指令序列一致；同一編譯產物在不同餘數下必須拒絕。
 
 暫存器分區回歸涵蓋大小端、高位框架根、覆寫與重疊欄位、後續邊、擴大的前驅、原生 CALL/RET，以及剛好足夠或少一步的預算。兩種 C 路徑在 O0/O2 執行全部四種記憶體情況。原生細化檢查分別綁定兩個選擇器值，並非無約束輸入證明。獨立 LLVM 案例驗證：將假分支移至共享匯合點之前，不可使它在真分支後繼續執行，並檢查 PHI 複製與儲存。
 
@@ -1135,7 +1145,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 1126 項 CPU 檢查及 17 項 SEH 回歸，共有 1367 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `1126 CPU + 224 WHP + 17 SEH = 1367`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 2274 項 CPU 檢查及 17 項 SEH 回歸，共有 2515 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `2274 CPU + 224 WHP + 17 SEH = 2515`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1144,6 +1154,10 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 `X64StatusFlagsTests.cpp` 檢查 `CLC/STC/CMC`、`LAHF/SAHF`、全部 256 個 AH 輸入及已接納的旗標組合、所有 REX 前綴、完整 CPU 狀態、記憶體不變性、觀察器停止或錯誤、儲存上下文和原生 ADC/儲存續行。無效 LOCK 編碼無副作用拒絕。獨立主機指令判據在驗證 CPUID 支援後檢查 24 組前綴。原有 WDK 資源驅動涵蓋全部五條指令，新增 22 項原生必測結果；不可用的主機或 ISA 組合明確跳過。 可攜式 Unicorn 設定執行相同的七項案例；相依項的直接測試涵蓋 16/32/64 位元 AH 與 LOCK 行為、明確指定的 REX 暫存器，以及長模式缺少特性時的拒絕。
 
 `X64DoubleShiftTests.cpp` 涵蓋全部已接納的 imm8/CL 計數、重疊與擴充暫存器、已定義旗標、精確的跨頁 RAM 觀察、取消、權限/未映射/裝置故障、LOCK 與未定義計數拒絕、上下文及原生 ADC 續行。獨立主機判據檢查 5,184 次原始執行，12 個原有 WDK 驅動探針涵蓋暫存器與 RAM 形式。原生檢查新增 145 項必測結果。
+
+`X64ScalarShiftTests.cpp` 檢查全部位元組計數、兩種進位輸入、零/全一及帶符號運算元、隱含單次形式、AH/SPL 與計數暫存器別名、完整 CPU 狀態、精確 RAM 範圍、觀察回呼回滾、故障及上下文續執行。獨立原生對照檢查 65,536 次執行。WDK 資源驅動加入 72 個原創探針。KVM/WHP 驗證關卡要求此指令族的 769 項結果通過。 只有遮罩後計數為零才保證保留全部旗標。非零計數的 `RCL/RCR` 完整進位環繞會保留運算元和 CF，但 OF 未定義；對照僅排除這個未定義位元。
+
+`X64LoopTests.cpp` 涵蓋 21 種原創編碼、計數器環繞、4 GiB 以上的有號相對目標、完整 CPU/RAM 狀態保留、觀察回呼取消、跨獨立映射取指、目標取指錯誤與情境還原。指令位元組不完整時在執行前拒絕；目標取指失敗則保留已完成分支的計數器和 PC。WDK 資源驅動新增 12 個原創探針。KVM/WHP 在核心、使用者和驅動契約下必須通過本指令族的 379 項結果。 原始主機指令對照最多執行 1,008 個案例並回報次數。AMD 上採用 `66H` 的已跳躍分支會存取主機系統保留的低位址，因此這些形式在明確映射低位址的客體矩陣中執行。Intel、AMD 的目標寬度及 REX.W 優先級分別驗證。
 
 `DriverSIMDSEHTests.cpp` 以四種受支援的處置及一次 x87 修改拒絕、兩種原生執行契約、一般/CFG WDK 映像及兩個載入位址執行八類原始 SSE 故障。十項後端專屬結果與三項純核心 SSE 記錄檢查均為必測。`driver_seh_simd.def` 統一定義樣例與模式；非同步展開表涵蓋故障輔助函式。微軟核心 10.0.26100.9549 提供獨立分類與還原依據：隔離執行了 107,744 組指令路徑分類及 8,192 組還原。這不代表已在完整 Windows 核心中執行驅動程式；ARM64 原生 KVM/WHP 仍未驗證。
 
@@ -1240,6 +1254,8 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 
 `NeverDLLVMCPhiTests` 在 O0/O2 下執行獨立及交叉相依的迴圈更新，涵蓋零次迴圈、迭代邊界和隨機全位寬初值。可讀性斷言要求獨立更新不產生快照區域變數，複合交換只保留必要快照。既有分支、switch、移動分支體及交換迴圈案例繼續驗證實際選取的邊與同時指定語意。
 
+`LLVMCInternalExitRegions` 新增5個獨立測試，涵蓋兩種退出極性、零次迴圈、退出邊和回邊的平行交換、迴圈頭/內部退出的四種巢狀組合，以及迴圈頭/本體/回邊區塊的觀察順序。共用目標出口和提前繼續路徑驗證可執行回退；有效迴圈之後遇到不支援區域時，不得發布部分結構化結果。整個模組與單函式輸出須一致且不修改 LLVM。原始 LLVM 和產生的 C 在 O0/O2 下與獨立無號 oracle 比對，共294,912次呼叫，C 啟用未定義行為陷阱。
+
 `NeverDLLVMCPhiTests` 也驗證共同迴圈出口的不同後繼 PHI 對、有序觀察呼叫、輸出記憶體及呼叫者 IR 不變。整模組與指定函式的 C 都在 O0/O2 下對照獨立參考實作執行。不同退出判斷與額外分支前驅涵蓋保守處理。
 
 `NeverDLLVMCPhiTests` 使用獨立 O0/O2 oracle 檢查多回邊迴圈運算合併、觀察呼叫順序、修改記憶體的呼叫前之值快照、窄位寬回繞及符號擴展。涵蓋整個模組與單一函式輸出且呼叫端 IR 不變，以及輸入衝突、共用根、poison 標註、未定義運算元、變數位移、受限制 intrinsic、例外函式及預算不足時完整拒絕。只有所有輸入運算一致才可合併旋轉呼叫。
@@ -1295,3 +1311,19 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AndroidMutexTests.cpp` 使用獨立 O0/O2、一般/APS2/RELR 夾具測試三種 mutex、多等待者、喚醒後重新競爭、遞迴最終釋放、errno、原始事件、失效記憶體、死結及累計指令限制。相同案例於 Unicorn 與可用的 KVM/WHP/HVF 執行；不可用後端明確略過，不宣稱 Android 實機或平行 SMP 等價。
 
 `HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` 使用獨立直譯器檢查 48 層區塊、迴圈、switch 和例外本體的進入及略過路徑，並以寬鬆的執行時間上限捕捉重複遞迴遍歷。這是結構化 HighIR 覆蓋；全映像方法恢復仍須獨立完成清單與相依性檢查。
+
+`SwiftOnceSources.EarlyReturnsKeepExactObjCOnceThunkProofs` 涵蓋 ARM64/x64 中合併或分離 retain 呼叫的 thunk。`EarlyOnceCopyReturnsRequireTheSameCompleteTail` 拒絕變更儲存、缺少或重新排序 retain、有序載入、變更返回值及外部入口。`IgnoredNestedReturnCopiesDoNotObserveOnceContext` 檢查 void 回呼的兩條可行退出路徑，並在投影後重新驗證原始碼控制流程。
+
+`HighControlFlowSemantics.ReturnTailCopyKeepsTheOuterLabelOwner` 使用獨立解譯器，比較同一位址在巢狀區塊中再次出現時進入與略過該區塊的路徑。`ReturnTailCopyIncludesTheFirstChildOfItsLabel` 保留合法的父陳述式與第一個子陳述式共用位址的情況及其指派。這些針對性檢查不能取代完整方法與原生相依性比較。
+
+`JumpTailCopyKeepsTheOuterLabelOwner` 檢查跳轉尾部的相同歸屬規則。
+
+`EarlyStringGetterReturnsKeepOnlyInertOnceAnchors` 檢查提前返回與 once 呼叫之間的空指令錨點，並拒絕其間的呼叫或儲存。
+
+`SwiftOnceSources.ObjCThunkRootsShareTheNestedCallbackProof` 檢查共用根節點證明，並在葉節點開始觀察上下文後拒絕舊計畫。
+
+`SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 涵蓋兩種架構，並拒絕變更提供者、弱匯入、衝突儲存及過期 ABI 載體。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下執行產生的 C，以獨立 Swift 載體驗證函式檢查座標位元模式（含帶符號零、次正規數與 NaN）、接收者身分、呼叫順序和保護值。這些檢查證明呼叫 ABI，不代表上層方法已完整恢復。
+
+`NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` 驗證完整方法樹與精確載體，包括私有成員及拒絕的簽章。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` 與 `CGRectMethodRejectsChangedEntryAndReceiverParameter` 涵蓋管線與發布重播，拒絕 self 索引、入口或參數型別的變更。編譯器記錄涵蓋四種 macOS/Mac Catalyst 目標；此入口宣告仍僅支援 arm64。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` 在 O0/O2 下將產生的 C 與獨立 Swift 純量載體參考實作對照，驗證四個座標的完整位元模式、不同的 context/self 指標、單次呼叫與儲存保護。
+
+`NeverDLowInstructionBoundaryTests` 可獨立執行 LowIR 指令來源測試，無須建置聚合提升測試的全部夾具。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` 驗證對齊 ADD 與後索引 LDP 堆疊釋放，包括由呼叫端恢復連結暫存器的情形；原始 RET X30 與共用入口仍獨立保留。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` 拒絕其他返回暫存器、BR X30、缺失或未對齊的釋放、窄恢復、內部入口、修正、可寫或歧義映射、可重定位輸入及其他格式。解碼共用尾部不能證明原生 ABI：缺失呼叫端儲存或配置仍會使既有框架證明失敗。

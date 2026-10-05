@@ -16,6 +16,65 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_fortified_search_preserves_names_bounds_and_errno(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        path = str(Path(fixtures) / "search-O2-relr.so")
+        for reverse, name in enumerate(("__strchr_chk", "__strrchr_chk")):
+            options = {
+                "backend": "unicorn", "android": {
+                    "entry_symbol": "search_dynamic", "initialize": False,
+                    "arguments": [0x20000000, 0, reverse],
+                    "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 24}],
+                    "libraries": {"libsearch.so": [name]},
+                },
+            }
+            result = session.emulate_process(path, "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+            self.assertEqual(result["return_value"], "0")
+            calls = result["android"]["native_calls"]
+            lookup = next(c for c in calls if c["name"] == "dlsym")
+            self.assertEqual(lookup["symbol"], name)
+            searches = [c for c in calls if c["name"] == name]
+            self.assertEqual(len(searches), 2)
+            for call in searches:
+                self.assertEqual(call["library"], "libsearch.so")
+                self.assertEqual(call["pc"], lookup["result"])
+            memory = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+            self.assertEqual([int.from_bytes(memory[i:i + 8], "little")
+                              for i in range(0, len(memory), 8)],
+                             [10 if reverse else 4, 15, 733])
+            options["android"]["arguments"][1] = 1
+            closed = session.emulate_process(path, "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(closed["stop_reason"], "unsupported_service")
+            self.assertIsNone(closed["android"]["native_calls"][-1]["result"])
+            options = {"backend": "unicorn", "android": {
+                "entry_symbol": "search_supplied", "initialize": False,
+                "arguments": [1, 58, 0, reverse + 2],
+            }}
+            failed = session.emulate_process(path, "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(failed["stop_reason"], "runtime_failure")
+            self.assertIn("FORTIFY", failed["diagnostic"])
+            self.assertEqual(failed["android"]["native_calls"][-1]["name"], name)
+            self.assertIsNone(failed["android"]["native_calls"][-1]["result"])
+        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_android_memory_files_share_descriptors_with_guest_threads(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
@@ -36,13 +95,17 @@ class ProcessIntegrationTests(unittest.TestCase):
         session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
         for optimization in ("O0", "O2"):
             for entry in ("files_sequence", "files_faults", "files_bionic",
-                          "files_status", "files_status_bionic"):
+                          "files_status", "files_status_bionic", "files_access",
+                          "files_access_faults", "files_access_bionic",
+                          "files_directory_errors", "files_directory_bionic"):
                 with self.subTest(optimization=optimization, entry=entry):
                     options = {
                         "backend": "unicorn", "instruction_quantum": 31,
                         "linux_files": {"files": [{"path": "/fixture/data", "bytes_hex": "00ff410a805a"}]},
                         "android": {"entry_symbol": entry, "initialize": False, "thread_limit": 2},
                     }
+                    if entry in ("files_access", "files_directory_errors"):
+                        options["linux_files"]["descriptor_limit"] = 4
                     if entry.startswith("files_status"):
                         options["linux_files"]["files"][0]["metadata"] = {
                             "device": 0xfe12cd34, "inode": str(0xfedcba9876543210),

@@ -586,8 +586,11 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  for (const char *Entry : {"files_sequence", "files_faults", "files_bionic",
-                            "files_status", "files_status_bionic"}) {
+  for (const char *Entry :
+       {"files_sequence", "files_faults", "files_bionic", "files_status",
+        "files_status_bionic", "files_access", "files_access_faults",
+        "files_access_bionic", "files_directory_errors",
+        "files_directory_bionic"}) {
     SCOPED_TRACE(Entry);
     llvm::json::Object Request{
         {"backend", "unicorn"},
@@ -605,6 +608,9 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
             ->front()
             .getAsObject())["metadata"] =
           llvm::cantFail(llvm::json::parse(emulation::FileTestMetadataJSON));
+    if (llvm::StringRef(Entry) == "files_access" ||
+        llvm::StringRef(Entry) == "files_directory_errors")
+      (*Request.getObject("linux_files"))["descriptor_limit"] = 4;
     auto Options = jsonText(std::move(Request));
     auto Text = takeString(neverd_emulate_process_json(
         Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
@@ -758,6 +764,83 @@ TEST_F(ProcessPublic, AndroidInitializersReturnThroughSDKAndCLI) {
   auto Buffer = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Buffer));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), Parsed);
+#endif
+}
+
+TEST_F(ProcessPublic, AndroidFortifiedSearchReportsMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "search-O2-relr.so")
+          .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (bool Fails : {false, true}) {
+    const std::string Request =
+        Fails
+            ? R"({"backend":"unicorn","android":{"entry_symbol":"search_supplied","initialize":false,"arguments":[1,58,0,2]}})"
+            : R"({"backend":"unicorn","android":{"entry_symbol":"search_dynamic","initialize":false,"arguments":["0x20000000",0,0],"memory":[{"address":"0x20000000","size":4096}],"read_memory":[{"address":"0x20000000","size":24}],"libraries":{"libsearch.so":["__strchr_chk"]}}})";
+    auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+    const auto *Report = Parsed.getAsObject();
+    ASSERT_NE(Report, nullptr);
+    ASSERT_EQ(Report->getString(field::Stop),
+              Fails ? "runtime_failure" : "returned");
+    const auto *Android = Report->getObject(field::Android);
+    ASSERT_NE(Android, nullptr);
+    const auto *Calls = Android->getArray(field::NativeCalls);
+    ASSERT_NE(Calls, nullptr);
+    ASSERT_FALSE(Calls->empty());
+    if (Fails) {
+      EXPECT_NE(Report->getString(field::Diagnostic)->find("FORTIFY"),
+                llvm::StringRef::npos);
+      const auto *Last = Calls->back().getAsObject();
+      EXPECT_EQ(Last->getString(field::Name), "__strchr_chk");
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    } else {
+      EXPECT_EQ(Report->getString(field::ReturnValue), "0");
+      const llvm::json::Object *Lookup = nullptr;
+      unsigned Searches = 0;
+      for (const auto &Event : *Calls) {
+        const auto *Call = Event.getAsObject();
+        if (Call->getString(field::Name) == "dlsym") {
+          Lookup = Call;
+          EXPECT_EQ(Call->getString(field::Symbol), "__strchr_chk");
+        }
+        if (Call->getString(field::Name) == "__strchr_chk") {
+          ASSERT_NE(Lookup, nullptr);
+          EXPECT_EQ(Call->getString(field::Library), "libsearch.so");
+          EXPECT_EQ(Call->getString(field::PC),
+                    Lookup->getString(field::Result));
+          ++Searches;
+        }
+      }
+      EXPECT_EQ(Searches, 2u);
+      const auto *Memory = Android->getArray(field::Memory);
+      ASSERT_NE(Memory, nullptr);
+      ASSERT_EQ(Memory->size(), 1u);
+      EXPECT_EQ((*Memory)[0].getAsObject()->getString(field::Bytes),
+                "04000000000000000f00000000000000dd02000000000000");
+    }
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
+                         test::shellQuote(Path) +
+                         " --profile=" + AndroidNativeAArch64 +
+                         " --options=" + test::shellQuote(Request) +
+                         test::redirectStdout(Output) + test::silenceStderr();
+    EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+              Fails ? process_cli::Incomplete : process_cli::Success);
+    auto Buffer = llvm::MemoryBuffer::getFile(Output);
+    ASSERT_TRUE(bool(Buffer));
+    EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())),
+              Parsed);
+  }
 #endif
 }
 

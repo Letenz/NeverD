@@ -28,6 +28,10 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64LoopOracle.CountsFlagsAndBranchesMatchOriginalHostInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64ScalarShiftOracle.DefinedResultsMatchOriginalHostInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64DoubleShiftOracle.DefinedResultsMatchOriginalHostInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64StatusFlagsOracle.OriginalInstructionsPreserveEveryUnselectedBit")
@@ -2848,6 +2852,201 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.CountsFlagsAndSignedTargetsPreserveOtherState/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.CountsFlagsAndSignedTargetsPreserveOtherState/"
+    "{backend}User_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.CountsFlagsAndSignedTargetsPreserveOtherState/"
+    "{backend}Driver_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.InstructionStopsAndFailuresPrecedeCounterEffects/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.InstructionStopsAndFailuresPrecedeCounterEffects/"
+    "{backend}User_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.InstructionStopsAndFailuresPrecedeCounterEffects/"
+    "{backend}Driver_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64Loop.CrossPageDecodeRequiresOnlyCompleteExecutableBytes/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64Loop.CrossPageDecodeRequiresOnlyCompleteExecutableBytes/"
+    "{backend}User_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64Loop.CrossPageDecodeRequiresOnlyCompleteExecutableBytes/"
+    "{backend}Driver_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.TargetFetchFaultRetainsTheRetiredBranch/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.TargetFetchFaultRetainsTheRetiredBranch/"
+    "{backend}User_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.TargetFetchFaultRetainsTheRetiredBranch/"
+    "{backend}Driver_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64Loop.ContextRestoreAndFiniteSelfLoopsRetainCounterAndFlags/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64Loop.ContextRestoreAndFiniteSelfLoopsRetainCounterAndFlags/"
+    "{backend}User_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64Loop.ContextRestoreAndFiniteSelfLoopsRetainCounterAndFlags/"
+    "{backend}Driver_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.UnsupportedPrefixesRejectBeforeEffects/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.UnsupportedPrefixesRejectBeforeEffects/"
+    "{backend}User_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64Loop.UnsupportedPrefixesRejectBeforeEffects/"
+    "{backend}Driver_",
+    "unittests/emulation/X64LoopCases.def", "NEVERD_LOOP_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.RegisterImmediateCountsMatchDefinedSemantics/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.RegisterImmediateCountsMatchDefinedSemantics/"
+    "{backend}User_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.RegisterImmediateCountsMatchDefinedSemantics/"
+    "{backend}Driver_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64ScalarShift.RegisterCLCountsMatchDefinedSemantics/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64ScalarShift.RegisterCLCountsMatchDefinedSemantics/"
+    "{backend}User_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/X64ScalarShift.RegisterCLCountsMatchDefinedSemantics/"
+    "{backend}Driver_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ImplicitOneAndAliasedRegistersUseOriginalInputs/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ImplicitOneAndAliasedRegistersUseOriginalInputs/"
+    "{backend}User_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ImplicitOneAndAliasedRegistersUseOriginalInputs/"
+    "{backend}Driver_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.MemoryResultsAndObserversUseExactOperandSpans/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.MemoryResultsAndObserversUseExactOperandSpans/"
+    "{backend}User_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.MemoryResultsAndObserversUseExactOperandSpans/"
+    "{backend}Driver_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ReadStopsAndWriteCancellationPreserveState/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ReadStopsAndWriteCancellationPreserveState/"
+    "{backend}User_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ReadStopsAndWriteCancellationPreserveState/"
+    "{backend}Driver_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.MemoryFaultsAndDeviceOperandsPreserveState/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.MemoryFaultsAndDeviceOperandsPreserveState/"
+    "{backend}User_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.MemoryFaultsAndDeviceOperandsPreserveState/"
+    "{backend}Driver_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.LockedFormsRejectBeforeEffects/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.LockedFormsRejectBeforeEffects/"
+    "{backend}User_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.LockedFormsRejectBeforeEffects/"
+    "{backend}Driver_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ContextRestoreAndNativeContinuationPreserveCarry/"
+    "{backend}Supervisor_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ContextRestoreAndNativeContinuationPreserveCarry/"
+    "{backend}User_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "ExplicitBackends/"
+    "X64ScalarShift.ContextRestoreAndNativeContinuationPreserveCarry/"
+    "{backend}Driver_",
+    "unittests/emulation/X64ScalarShiftCases.def", "NEVERD_SCALAR_SHIFT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "ExplicitBackends/"
     "X64DoubleShift.RegisterImmediateCountsMatchDefinedSemantics/"

@@ -84,7 +84,14 @@ struct BinaryUndefinedIndependenceResult {
 /// immutable image. Frame must be rooted at entry RSP and contain [0, 8).
 /// The checker additionally proves entry RSP and the entry return slot are
 /// restored on every outer return, before the final native return-address pop.
-/// Entry constants, byte order and X64FlagsProfile must match Options.
+/// CALL fallthrough is a stored return value, not a collection edge. Internal
+/// RET destinations are collected only after complete target enumeration;
+/// direct call targets and both direct conditional arms retain eager audits.
+/// Skipped inline bytes have no instruction-evidence claim. Every feasible
+/// destination must still decode, lift and meet the full proof contract.
+/// Entry constants, byte order, X64FlagsProfile and optional frame-entry
+/// alignment must match Options. Alignment restricts only the shared entry
+/// root; it does not rewrite its value or supply memory/ABI evidence.
 /// Selecting UserX64NoFaultV1 explicitly enables shared, persistent
 /// PUSHFQ/POPFQ system state, canonical entry flag bits and mandatory final
 /// system-state equality. Every POPFQ must satisfy the TF/AC restriction in

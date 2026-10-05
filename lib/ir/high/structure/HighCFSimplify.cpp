@@ -59,8 +59,7 @@ class LabelStarts {
   void count(const std::vector<HighStmt> &L, va_t Parent) {
     for (size_t I = 0; I < L.size(); ++I) {
       const HighStmt &S = L[I];
-      if (S.Addr != 0 && S.Addr != InvalidVA &&
-          S.Addr != (I == 0 ? Parent : L[I - 1].Addr))
+      if (beginsGroup(L, I, Parent))
         ++Starts[S.Addr];
       if (S.Kind == StmtKind::Goto)
         Entered.insert(S.GotoTarget);
@@ -78,6 +77,13 @@ class LabelStarts {
 
 public:
   explicit LabelStarts(const std::vector<HighStmt> &Body) { count(Body, 0); }
+
+  static bool beginsGroup(const std::vector<HighStmt> &L, size_t I,
+                          va_t Parent) {
+    const va_t Addr = L[I].Addr;
+    return Addr != 0 && Addr != InvalidVA &&
+           Addr != (I == 0 ? Parent : L[I - 1].Addr);
+  }
 
   const std::set<va_t> &entered() const { return Entered; }
 
@@ -775,36 +781,21 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
   for (const auto &[Addr, Count] : Uses)
     Targets.insert(Addr);
   auto Addressed = [](va_t A) { return A != 0 && A != InvalidVA; };
-  // Statements starting each address group: a copy may jump to an address
-  // only when exactly one statement starts it.
-  std::map<va_t, unsigned> Starts;
-  std::function<void(const std::vector<HighStmt> &)> CountStarts =
-      [&](const std::vector<HighStmt> &L) {
-        for (size_t I = 0; I < L.size(); ++I) {
-          if (Addressed(L[I].Addr) && (I == 0 || L[I - 1].Addr != L[I].Addr))
-            ++Starts[L[I].Addr];
-          CountStarts(L[I].Body);
-          CountStarts(L[I].ElseBody);
-          for (const auto &C : L[I].Cases)
-            CountStarts(C.Body);
-          CountStarts(L[I].DefaultBody);
-          for (const auto &ClauseBody : L[I].EHClauseBodies)
-            CountStarts(ClauseBody);
-        }
-      };
-  CountStarts(Body);
+  const LabelStarts Starts(Body);
   // The tail at a label nothing falls into: a few pure assignments, then a
   // forward jump, the next label, or the end of a list whose follow
   // \p After is known; the copy then jumps there.
   std::map<va_t, std::vector<HighStmt>> Tails;
   std::map<va_t, TryContext> TailContexts;
-  std::function<void(const std::vector<HighStmt> &, va_t, const TryContext &)>
-      Collect = [&](const std::vector<HighStmt> &L, va_t After,
+  std::function<void(const std::vector<HighStmt> &, va_t, va_t,
+                     const TryContext &)>
+      Collect = [&](const std::vector<HighStmt> &L, va_t After, va_t Parent,
                     const TryContext &Ctx) {
         for (size_t I = 0; I < L.size(); ++I) {
           const va_t X = L[I].Addr;
           if (!Addressed(X) || Pinned.count(X) || UsesOf(X) < 2 ||
-              (I > 0 && L[I - 1].Addr == X) || Tails.count(X))
+              !Starts.unique(X) || !LabelStarts::beginsGroup(L, I, Parent) ||
+              Tails.count(X))
             continue;
           size_t Before = I;
           while (Before > 0 && isEmptyAnchor(L[Before - 1]) &&
@@ -850,9 +841,8 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
           va_t Next = After;
           if (I + 1 < L.size()) {
             const va_t A = L[I + 1].Addr;
-            auto It = Starts.find(A);
             Next = L[I + 1].Kind != StmtKind::Nop && Addressed(A) &&
-                           A != S.Addr && It != Starts.end() && It->second == 1
+                           A != S.Addr && Starts.unique(A)
                        ? A
                        : 0;
           }
@@ -860,16 +850,16 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
               S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
               S.Kind == StmtKind::Block || S.Kind == StmtKind::Switch;
           const va_t Inner = Arms ? Next : 0;
-          Collect(S.Body, Inner, bodyTryContext(Ctx, S));
-          Collect(S.ElseBody, Inner, Ctx);
+          Collect(S.Body, Inner, S.Addr, bodyTryContext(Ctx, S));
+          Collect(S.ElseBody, Inner, 0, Ctx);
           for (const auto &C : S.Cases)
-            Collect(C.Body, Inner, Ctx);
-          Collect(S.DefaultBody, Inner, Ctx);
+            Collect(C.Body, Inner, 0, Ctx);
+          Collect(S.DefaultBody, Inner, 0, Ctx);
           for (const auto &ClauseBody : S.EHClauseBodies)
-            Collect(ClauseBody, 0, Ctx);
+            Collect(ClauseBody, 0, 0, Ctx);
         }
       };
-  Collect(Body, 0, TryContext());
+  Collect(Body, 0, 0, TryContext());
   if (Tails.empty())
     return false;
   bool Changed = false;
@@ -973,6 +963,7 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
     if (S.Kind == StmtKind::Goto)
       Targets.insert(S.GotoTarget);
   });
+  const LabelStarts Starts(Body);
   std::map<va_t, std::vector<HighStmt>> Tails;
   std::map<va_t, TryContext> TailContexts;
   // The tail that runs from Stmts[I]: a few pure assignments ending in a
@@ -1025,13 +1016,14 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
     return Tail;
   };
   std::function<void(std::vector<HighStmt> &, const std::vector<HighStmt> *,
-                     const TryContext &)>
+                     va_t, const TryContext &)>
       Collect = [&](std::vector<HighStmt> &Stmts,
-                    const std::vector<HighStmt> *Cont, const TryContext &Ctx) {
+                    const std::vector<HighStmt> *Cont, va_t Parent,
+                    const TryContext &Ctx) {
         for (size_t I = 0; I < Stmts.size(); ++I) {
           const va_t Label = Stmts[I].Addr;
-          if (Label != 0 && Label != InvalidVA && !Tails.count(Label) &&
-              (I == 0 || Stmts[I - 1].Addr != Label))
+          if (Starts.unique(Label) && !Tails.count(Label) &&
+              LabelStarts::beginsGroup(Stmts, I, Parent))
             if (auto Tail = TailAt(Stmts, I, Cont, Ctx)) {
               Tails.emplace(Label, std::move(*Tail));
               TailContexts.emplace(Label, Ctx);
@@ -1045,20 +1037,21 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
                         ? TailAt(Stmts, I + 1, Cont, Ctx)
                         : (Cont ? std::optional(*Cont) : std::nullopt);
           const std::vector<HighStmt> *ChildCont = After ? &*After : nullptr;
-          Collect(Stmts[I].Body, ChildCont, bodyTryContext(Ctx, Stmts[I]));
-          Collect(Stmts[I].ElseBody, ChildCont, Ctx);
+          Collect(Stmts[I].Body, ChildCont, Stmts[I].Addr,
+                  bodyTryContext(Ctx, Stmts[I]));
+          Collect(Stmts[I].ElseBody, ChildCont, 0, Ctx);
           for (auto &C : Stmts[I].Cases)
-            Collect(C.Body, nullptr, Ctx);
-          Collect(Stmts[I].DefaultBody, nullptr, Ctx);
+            Collect(C.Body, nullptr, 0, Ctx);
+          Collect(Stmts[I].DefaultBody, nullptr, 0, Ctx);
           for (auto &ClauseBody : Stmts[I].EHClauseBodies)
-            Collect(ClauseBody, nullptr, Ctx);
+            Collect(ClauseBody, nullptr, 0, Ctx);
         }
       };
   // A composed tail needs its epilogue's tail first; the epilogue usually
   // follows the jumps to it, so repeat until no new tail appears.
   for (size_t Round = 0; Round < 4; ++Round) {
     const size_t Before = Tails.size();
-    Collect(Body, nullptr, TryContext());
+    Collect(Body, nullptr, 0, TryContext());
     if (Tails.size() == Before)
       break;
   }

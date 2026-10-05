@@ -329,6 +329,13 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
       return R.takeError();
     return Value(*R);
   }
+  if (Name == symbol::Strchr || Name == symbol::Strrchr ||
+      Name == symbol::StrchrChk || Name == symbol::StrrchrChk) {
+    auto R = findCharacter(Call);
+    if (!R)
+      return R.takeError();
+    return Value(*R);
+  }
   if (Name.starts_with(symbol::PthreadMutexPrefix))
     return mutex(Call);
   if (Name == symbol::Snprintf || Name == symbol::Vsnprintf ||
@@ -495,6 +502,12 @@ BionicResult Bionic::invoke(NativeCallEvent &Call) {
 #undef NEVERD_ANDROID_KERNEL_SERVICE
   const bool IsSyscall = Name == symbol::Syscall;
   if (Kind || IsSyscall) {
+    // API 28 Bionic rejects flags before calling the three-argument syscall.
+    if (Kind == linux_model::ServiceKind::FaccessAt && uint32_t(A[3])) {
+      if (auto E = setErrno(linux_model::InvalidArgument))
+        return std::move(E);
+      return Value(UINT64_MAX);
+    }
     ProcessServiceEvent Event{Call.PC, IsSyscall ? A[0] : 0, {}, std::nullopt};
     // AArch64 Bionic syscall(number, ...) shifts x1..x6 into the six
     // kernel argument registers. The shared Linux table owns the number.

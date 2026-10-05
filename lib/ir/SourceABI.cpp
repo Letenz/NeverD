@@ -170,14 +170,30 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
     return false;
   const auto ReturnMembers = sourceAggregateMembers(Hint.ReturnType);
   const bool MixedResult = mixedSwiftResult(Hint.ReturnType, ReturnMembers);
+  // Swift 6.1.2 CoreGraphics point actions on arm64 and x86_64 have exactly
+  // void(double, double, ptr swiftself). This does not admit arbitrary x86_64
+  // floating signatures, aggregate arguments, or stack-passed FP values.
+  const bool PointAction =
+      Hint.ReturnType->Kind == NdTypeKind::Void &&
+      Hint.Parameters.size() == 3 &&
+      std::all_of(Hint.Parameters.begin(), Hint.Parameters.begin() + 2,
+                  [](const auto &P) {
+                    return P.Type && P.Type->Kind == NdTypeKind::Float &&
+                           P.Type->Size == 8 &&
+                           P.TheRole == SourceParameterTypeHint::Role::Ordinary;
+                  }) &&
+      Hint.Parameters[2].TheRole ==
+          SourceParameterTypeHint::Role::SwiftContext &&
+      equalSourceTypes(Hint.Parameters[2].Type,
+                       NdType::makePtr(NdType::makeVoid()));
   size_t FloatingParameters = 0;
   for (const auto &Parameter : Hint.Parameters) {
     if (Parameter.Type && Parameter.Type->Kind == NdTypeKind::Float) {
-      // The compiler-observed arm64 swiftcc scalar lane is v0..v7. Keep
-      // stack-passed Swift FP values outside this fixed ABI contract.
+      // arm64 scalar lanes are v0..v7. x86_64 admits only the observed mixed
+      // result and point-action shapes, both within its FP register bank.
       if ((Architecture != Arch::AArch64 &&
-           (!MixedResult || Parameter.Type->Size != 8 ||
-            FloatingParameters == 3)) ||
+           ((!MixedResult && !PointAction) || Parameter.Type->Size != 8 ||
+            FloatingParameters == (PointAction ? 2U : 3U))) ||
           Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary ||
           !scalarType(Parameter.Type) ||
           ++FloatingParameters >

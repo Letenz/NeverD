@@ -461,7 +461,49 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #include "driver_resource_double_shift.def"
 #undef NEVERD_RESOURCE_DOUBLE_SHIFT_CASE
 
+#define NEVERD_RESOURCE_SCALAR_SHIFT_CASE(Name, Input, InputFlags, Count,      \
+                                          Expected, ExpectedFlags, Mask,       \
+                                          Assembly, Constraint)                \
+  static BOOLEAN CheckScalarShift##Name(VOID) {                                \
+    ULONG64 Before, Observed, Destination = Input;                             \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), Constraint(Destination) \
+                     : "r"((ULONG64)InputFlags), "c"((ULONG64)Count)           \
+                     : "memory", "cc");                                        \
+    return Destination == Expected && (Observed & Mask) == ExpectedFlags;      \
+  }
+#include "driver_resource_scalar_shift.def"
+#undef NEVERD_RESOURCE_SCALAR_SHIFT_CASE
+
+#define NEVERD_RESOURCE_LOOP_VALUE(Name, Value)                                \
+  static const ULONG64 Name = Value;
+#define NEVERD_RESOURCE_LOOP_CASE(Name, InputFlags, ExpectedCount,             \
+                                  ExpectedTaken, Assembly)                     \
+  static BOOLEAN CheckLoop##Name(VOID) {                                       \
+    ULONG64 Before, Observed, Taken, Count = LoopInput;                        \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), "=&r"(Taken),           \
+                       "+c"(Count)                                             \
+                     : "r"((ULONG64)InputFlags)                                \
+                     : "memory", "cc");                                        \
+    return Count == ExpectedCount && Taken == ExpectedTaken &&                 \
+           Observed == InputFlags;                                             \
+  }
+#include "driver_resource_loop.def"
+#undef NEVERD_RESOURCE_LOOP_CASE
+#undef NEVERD_RESOURCE_LOOP_VALUE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_LOOP_CASE(Name, ...)                                   \
+  if (!CheckLoop##Name())                                                      \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_loop.def"
+#undef NEVERD_RESOURCE_LOOP_CASE
+#define NEVERD_RESOURCE_SCALAR_SHIFT_CASE(Name, ...)                           \
+  if (!CheckScalarShift##Name())                                               \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_scalar_shift.def"
+#undef NEVERD_RESOURCE_SCALAR_SHIFT_CASE
 #define NEVERD_RESOURCE_DOUBLE_SHIFT_CASE(Name, ...)                           \
   if (!CheckDoubleShift##Name())                                               \
     return STATUS_UNSUCCESSFUL;
