@@ -3,14 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "AndroidInternal.h"
-
-#include "neverd/emulation/CPU.h"
-
-#include "llvm/Support/Endian.h"
+#include "AndroidArguments.h"
 
 #include <algorithm>
-#include <array>
 #include <limits>
 
 namespace neverd::emulation::android_model {
@@ -19,7 +14,10 @@ namespace neverd::emulation::android_model {
 class Bionic::StringFormatter {
 public:
   StringFormatter(Bionic &Model, const NativeCallEvent &Call)
-      : Model(Model), Call(Call), Remaining(Model.Options.MemoryLimit) {}
+      : Model(Model), Call(Call), Remaining(Model.Options.MemoryLimit),
+        Bounded(Call.Name == symbol::Snprintf ||
+                Call.Name == symbol::Vsnprintf),
+        Arguments(Model, Call, Bounded ? 3 : 2, Remaining) {}
 
   llvm::Expected<uint64_t> run();
   bool isUnsupported() const { return Unsupported; }
@@ -29,10 +27,9 @@ private:
   const NativeCallEvent &Call;
   uint64_t Remaining, Capacity = 0, Count = 0;
   std::vector<uint8_t> Output;
-  bool Unsupported = false, HasVAList = false, StackLoaded = false;
-  unsigned NextRegister = 0;
-  uint64_t Stack = 0, GRTop = 0;
-  int32_t GROffset = 0;
+  bool Unsupported = false;
+  const bool Bounded;
+  ArgumentReader Arguments;
   static constexpr uint64_t MaxCount = std::numeric_limits<int32_t>::max();
 
   llvm::Error unsupported(llvm::Twine Reason) {
@@ -47,47 +44,11 @@ private:
       return E;
     return Model.CPU.read(Address, Bytes);
   }
-  llvm::Expected<uint64_t> argument(unsigned Size);
   llvm::Expected<std::string> text(uint64_t Address, uint64_t Bound);
   llvm::Error number(llvm::StringRef &Format, uint64_t &Value);
   llvm::Error emit(uint64_t Size, llvm::StringRef Text, char Repeated = 0);
   llvm::Error render(llvm::StringRef Format);
 };
-
-llvm::Expected<uint64_t> Bionic::StringFormatter::argument(unsigned Size) {
-  // All supported conversions use one GP slot. Narrow arguments are promoted
-  // to int; read only their four defined bytes, while advancing by eight.
-  if (!HasVAList && NextRegister < Call.Arguments.size()) {
-    uint64_t V = Call.Arguments[NextRegister++];
-    return Size == 4 ? static_cast<uint32_t>(V) : V;
-  }
-  uint64_t Address;
-  if (HasVAList && GROffset < 0) {
-    const uint64_t Offset = -int64_t(GROffset);
-    if (GRTop % 8 || GRTop < Offset)
-      return failure(diagnostic::FormatRegisterSaveArea);
-    Address = GRTop - Offset;
-    GROffset += 8;
-  } else {
-    if (!StackLoaded) {
-      auto SP = Model.CPU.readRegister(CPURegister::AArch64SP);
-      if (!SP)
-        return SP.takeError();
-      Stack = (*SP)[0];
-      StackLoaded = true;
-      if (Stack % 16)
-        return failure(diagnostic::FormatCallStackAlignment);
-    }
-    if (Stack % 8 || Stack > UINT64_MAX - 8)
-      return failure(diagnostic::FormatArgumentStack);
-    Address = Stack;
-    Stack += 8;
-  }
-  std::array<uint8_t, 8> Bytes{};
-  if (auto E = read(Address, llvm::MutableArrayRef(Bytes).take_front(Size)))
-    return std::move(E);
-  return llvm::support::endian::read64le(Bytes.data());
-}
 
 llvm::Expected<std::string> Bionic::StringFormatter::text(uint64_t Address,
                                                           uint64_t Bound) {
@@ -175,7 +136,7 @@ llvm::Error Bionic::StringFormatter::render(llvm::StringRef Format) {
     uint64_t Width = 0, Precision = 0;
     bool HasPrecision = false;
     if (Format.consume_front("*")) {
-      auto V = argument(4);
+      auto V = Arguments.next(4);
       if (!V)
         return V.takeError();
       int64_t Signed = static_cast<int32_t>(*V);
@@ -189,7 +150,7 @@ llvm::Error Bionic::StringFormatter::render(llvm::StringRef Format) {
     if (Format.consume_front(".")) {
       HasPrecision = true;
       if (Format.consume_front("*")) {
-        auto V = argument(4);
+        auto V = Arguments.next(4);
         if (!V)
           return V.takeError();
         int32_t Signed = static_cast<int32_t>(*V);
@@ -224,7 +185,7 @@ llvm::Error Bionic::StringFormatter::render(llvm::StringRef Format) {
       if (Conversion == '%') {
         Digits = "%";
       } else {
-        auto V = argument(Conversion == 's' ? 8 : 4);
+        auto V = Arguments.next(Conversion == 's' ? 8 : 4);
         if (!V)
           return V.takeError();
         if (Conversion == 'c') {
@@ -250,7 +211,7 @@ llvm::Error Bionic::StringFormatter::render(llvm::StringRef Format) {
                       : Length == Byte          ? 8
                       : Length == Short         ? 16
                                                 : 32;
-      auto V = argument(Bits == 64 ? 8 : 4);
+      auto V = Arguments.next(Bits == 64 ? 8 : 4);
       if (!V)
         return V.takeError();
       const uint64_t Mask = UINT64_MAX >> (64 - Bits);
@@ -311,9 +272,8 @@ llvm::Error Bionic::StringFormatter::render(llvm::StringRef Format) {
 }
 
 llvm::Expected<uint64_t> Bionic::StringFormatter::run() {
-  const bool Bounded =
-      Call.Name == symbol::Snprintf || Call.Name == symbol::Vsnprintf;
-  HasVAList = Call.Name == symbol::Vsnprintf || Call.Name == symbol::Vsprintf;
+  const bool HasVAList =
+      Call.Name == symbol::Vsnprintf || Call.Name == symbol::Vsprintf;
   const auto &A = Call.Arguments;
   Capacity = Bounded ? A[1] : MaxCount + 1;
   // Large n has version-specific FILE counter behavior in Android 9. Do not
@@ -323,24 +283,9 @@ llvm::Expected<uint64_t> Bionic::StringFormatter::run() {
   auto Format = text(A[Bounded ? 2 : 1], UINT64_MAX);
   if (!Format)
     return Format.takeError();
-  NextRegister = Bounded ? 3 : 2;
-  if (HasVAList) {
-    uint64_t Address = A[NextRegister];
-    if (Address % 8)
-      return failure(diagnostic::FormatVAListAlignment);
-    std::array<uint8_t, 32> Bytes{};
-    if (auto E = read(Address, Bytes))
+  if (HasVAList)
+    if (auto E = Arguments.initializeVAList(A[Bounded ? 3 : 2]))
       return std::move(E);
-    Stack = llvm::support::endian::read64le(Bytes.data());
-    GRTop = llvm::support::endian::read64le(Bytes.data() + 8);
-    GROffset = static_cast<int32_t>(
-        llvm::support::endian::read32le(Bytes.data() + 24));
-    if (GROffset < -64 || GROffset % 8)
-      return failure(diagnostic::FormatRegisterOffset);
-    StackLoaded = true;
-    // vr_top/vr_offs are not used by supported conversions. The caller's
-    // by-value va_list copy and both register save areas remain guest-owned.
-  }
   if (auto E = render(*Format))
     return std::move(E);
   if (Capacity) {
