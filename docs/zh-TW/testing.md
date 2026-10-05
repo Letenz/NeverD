@@ -1361,6 +1361,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 `AArch64ExclusiveTests.cpp` 涵蓋標量與成對寬度、acquire/release 形式、暫存器重疊、別名、對齊及權限錯誤、快照、觀察回呼取消或失敗，以及雙 CPU 競爭。`RAMReservationTests.cpp` 涵蓋相同值寫入、ABA、配置重用、回復，以及 KVM/Unicorn 字串和 `ENTER` 寫入的干擾。原始 ARM64 Windows 行程範例執行獨佔迴圈；`scripts/check_aarch64_exclusives.py` 在 Windows ARM64 CI 執行原始指令並保存對齊例外記錄。原生指令證據不代表已驗證 ARM64 KVM/WHP 後端執行；不可用設定仍明確列為略過。 相同的獨佔指令案例也涵蓋軟體 Unicorn、跨契約干擾、同值及 ABA 寫入、同次執行中的可執行別名，以及 `DC ZVA` 寫入與觀察回呼取消。
  `windows-alignment-oracle.yml` 也執行 ARM64 探針：1,320 筆觀察記錄涵蓋所有未對齊偏移、四種讀寫序列，以及可寫、唯讀、不可存取和跨頁記憶體。探針保留完整位寬的暫存器測試值，並記錄錯誤前已提交的部分寫入。 `WindowsExclusiveProcessTests.cpp` 將 1,320 筆原始 Windows ARM64 觀察結果與 `WindowsExclusiveNative.def` 的原生摘要核對，保留暫存器值、例外中繼資料及 RAM 效果，只正規化程式碼與資料的放置位址。
 
+`AArch64AtomicTests.cpp` 涵蓋 168 種獨立組譯的 LSE 編碼、暫存器別名、有符號比較、權限、取消、實體保留狀態與 NZCV 傳輸。`scripts/check_aarch64_atomics.py` 收集 1,100 筆原始 Windows ARM64 紀錄，包含完整運算結果、例外上下文與 RAM 範圍；解析測試拒絕缺失或不一致的證據。原生 KVM/WHP 執行仍需單獨驗證。
+
 結構上已為常數的原生目標直接使用既有的可達性檢查排程。符號單目標只有在窮盡列舉後才重用傳入述詞。迴歸在直線執行的查詢預算內驗證 128 次常數跳轉，並按每次轉移兩次列舉查詢的預算驗證 32 次計算目標跳轉，保留未約束的位址高位元和分支域。完整狀態結果遭修改、缺少對齊約束、目標數量上限為零或查詢與指令預算不足時必須拒絕。多目標和未完成列舉的既有拒絕檢查仍然必要。
 
 只有完成 UNSAT 證明、排除另一條邊後，原生分支才在目前的邊保留傳入域。測試在 512 個求解閘內驗證兩個方向各 32 次條件跳轉，並檢查精確與少一次的查詢預算及求解閘耗盡。修改或移除對齊條件、反轉比較及修改終態都必須拒絕；任意未定義控制和兩條邊皆可達的既有測試仍然必要。

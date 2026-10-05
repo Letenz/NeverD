@@ -14,6 +14,11 @@ on:
       - 'unittests/emulation/AArch64ExclusiveCases.def'
       - 'unittests/emulation/fixtures/aarch64_exclusive*'
       - 'unittests/emulation/fixtures/AArch64ExclusiveOracle.def'
+      - 'scripts/check_aarch64_atomics.py'
+      - 'scripts/tests/test_check_aarch64_atomics.py'
+      - 'unittests/emulation/AArch64AtomicCases.def'
+      - 'unittests/emulation/fixtures/aarch64_atomic*'
+      - 'unittests/emulation/fixtures/AArch64AtomicOracle.def'
   push:
     branches: [dev]
     paths:
@@ -27,6 +32,11 @@ on:
       - 'unittests/emulation/AArch64ExclusiveCases.def'
       - 'unittests/emulation/fixtures/aarch64_exclusive*'
       - 'unittests/emulation/fixtures/AArch64ExclusiveOracle.def'
+      - 'scripts/check_aarch64_atomics.py'
+      - 'scripts/tests/test_check_aarch64_atomics.py'
+      - 'unittests/emulation/AArch64AtomicCases.def'
+      - 'unittests/emulation/fixtures/aarch64_atomic*'
+      - 'unittests/emulation/fixtures/AArch64AtomicOracle.def'
 
 permissions:
   contents: read
@@ -72,6 +82,18 @@ jobs:
         run: python -m unittest scripts.tests.test_check_aarch64_exclusives -v
       - name: Collect original ARM64 alignment and permission observations
         run: python scripts/check_aarch64_exclusives.py --output build-arm64-alignment
+      - name: Verify ARM64 atomic observation integrity rules
+        run: python -m unittest scripts.tests.test_check_aarch64_atomics -v
+      - name: Collect original ARM64 atomic observations
+        run: python scripts/check_aarch64_atomics.py --output build-arm64-atomics
+      - name: Preserve original ARM64 atomic observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-atomics-arm64
+          path: build-arm64-atomics/
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve original ARM64 native observations
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

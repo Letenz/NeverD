@@ -1313,7 +1313,9 @@ CoreImage SDK の強い宣言は、`imageWithCGImage:` と `imageByApplyingTrans
 
 `AuthenticatedSourceFrameLoads` は `swiftMetadataAccessorSourceCallHint` を通じてメタデータアクセサの呼び出しを越えられる。両方の宣言経路は既存のコンパイラ証拠表、正確な強リンクの provider、完全な Swift 要求・メタデータ応答 ABI を再利用する。2 レジスタの応答と通常の揮発レジスタ破壊規則を維持し、私有 spill には共有の到達バイト証明を引き続き要求する。値レイアウト、witness のメモリ効果、フレーム借用、動的スタック割り当てのモデルは与えない。
 
-`AArch64ExclusiveInstructions.def` が排他命令のエンコーディングを管理し、`AArch64ExclusiveExecution` が物理実行ロック内でレジスタとモニターを更新します。`RAMReservation` は割り当ての同一性を保持し、ホスト、保持ビュー、`RAMTransaction`、文字列命令、障害前の `ENTER` 部分ストアからコミット通知を受けます。一時書き込みとロールバックは予約を無効化しません。書き込み範囲が不明な実行は既存予約を無効化し、範囲を宣言する実行は実際のコミットを追跡します。ゲスト障害、サービス・トラップ、アドレス空間の結び直しはローカルモニターを消去します。元の `LDAR[B/H]` と `STLR[B/H]` は、自然整列 RAM の契約のままバックエンドで実行します。 Unicorn のソフトウェアアダプターは観測コールバックが許可した書き込み前フックで予約を保守的に無効化し、排他ストア後は同じ実行を続ける前に全実行可能エイリアスの翻訳キャッシュを破棄します。 `AArch64ExclusiveAccess` が整列方針を選びます。checked は FEAT_LSE2、ソフトウェア Unicorn はエンジンの機能モデルに従い、予約は同じ幅と物理粒度で照合します。
+`AArch64ExclusiveInstructions.def` が排他命令のエンコーディングを管理し、`AArch64ExclusiveExecution` が物理実行ロック内でレジスタとモニターを更新します。`RAMReservation` は割り当ての同一性を保持し、ホスト、保持ビュー、`RAMTransaction`、文字列命令、障害前の `ENTER` 部分ストアからコミット通知を受けます。一時書き込みとロールバックは予約を無効化しません。書き込み範囲が不明な実行は既存予約を無効化し、範囲を宣言する実行は実際のコミットを追跡します。ゲスト障害、サービス・トラップ、アドレス空間の結び直しはローカルモニターを消去します。元の `LDAR[B/H]` と `STLR[B/H]` は、自然整列 RAM の契約のままバックエンドで実行します。 Unicorn のソフトウェアアダプターは観測コールバックが許可した書き込み前フックで予約を保守的に無効化し、排他ストア後は同じ実行を続ける前に全実行可能エイリアスの翻訳キャッシュを破棄します。 `AArch64AtomicAccess` が整列方針を選びます。checked は FEAT_LSE2、ソフトウェア Unicorn はエンジンの機能モデルに従い、予約は同じ幅と物理粒度で照合します。
+
+`AArch64AtomicInstructions.def` が LSE の受け入れ、`AArch64AtomicExecution` が原子的完了を担当します。`AArch64AtomicMemory` は排他命令と整列・型付き障害方針を共有し、checked と Unicorn ソフトウェアブリッジが共用します。
 
 `objcNonEscapingBlockSourceFrameEffects` は共有クエリ `sourceFrameCallArgumentStorage` でスタック block の同期借用を検証する。元の命令、現在の型付きディスパッチ、強い import、完全なヘッダーと記述子、コールバック ABI、到達するバイト情報を再確認する。記述子は書き込み範囲を定めるが、パディングの初期化は保証しない。キャプチャのフィールド型とコールバック本体には独立したソース証明が必要である。循環する観測と非公開フレームへのポインターのキャプチャを拒否し、依存関係には完了した証明ラウンドを使う。
 

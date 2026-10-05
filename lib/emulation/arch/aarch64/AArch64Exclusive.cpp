@@ -7,7 +7,6 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
-#include "llvm/Support/MathExtras.h"
 
 namespace neverd::emulation {
 namespace {
@@ -68,24 +67,5 @@ decodeAArch64Exclusive(uint32_t Word, const AArch64MachineState &CPU) {
                                            : CPU.Registers[Base]};
   }
   return std::nullopt;
-}
-bool isAArch64ExclusiveAligned(uint64_t Address, uint64_t Size,
-                               AArch64ExclusiveAlignment Alignment) {
-  assert(llvm::isPowerOf2_64(Size) &&
-         Size <= aarch64::ExclusiveAlignmentGranule);
-  if (Alignment == AArch64ExclusiveAlignment::Natural)
-    return Address % Size == 0;
-  return Address % aarch64::ExclusiveAlignmentGranule <=
-         aarch64::ExclusiveAlignmentGranule - Size;
-}
-bool isAArch64ExclusiveAlignmentFault(const BackendFault &Fault) {
-  return Fault.Kind == BackendFaultKind::Alignment &&
-         Fault.Cause == BackendFaultCause::OperandAlignment && Fault.Address &&
-         Fault.Size && llvm::isPowerOf2_64(*Fault.Size) &&
-         *Fault.Size <= aarch64::ExclusiveAlignmentGranule &&
-         *Fault.Address % *Fault.Size &&
-         (Fault.Access == BackendAccessKind::Read ||
-          Fault.Access == BackendAccessKind::Write) &&
-         !Fault.Interrupt && !Fault.ErrorCode;
 }
 } // namespace neverd::emulation

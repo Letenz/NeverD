@@ -204,4 +204,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 [配置、签名与硬件验证](macos-hvf.md)
 
-checked ARM64 支持 8/16/32/64 位 `LDXR/STXR`、32/64 位寄存器对 `LDXP/STXP`、相应的 acquire/release 形式及 `CLREX`。KVM、WHP 和 checked Unicorn 共用 ISA 层的独占监视器，以 16 字节物理范围记录保留状态，传输层单步退出不会破坏循环进展。已提交的写入即使没有改变字节，也会使保留状态失效；别名和保留视图写入遵循同一规则。停止保留尚未发布的状态，快照不能撤销期间发生的写入。checked 独占指令采用 FEAT_LSE2 对齐规则：操作数可在同一个 16 字节对齐块内未对齐访问，跨越该块才产生 `alignment` 故障。同宽条件存储按保留的物理粒度匹配；即使监视器已失效，也先检查对齐和权限，再决定条件存储是否成功。该配置仍不包含 MMIO、可选 LSE 原子指令或并行 SMP。 ARM64 Unicorn 的 `Software` 契约也使用此监视器，包括软件和 checked CPU 共用物理 RAM 的情况。 Unicorn 的 `Software` 配置保留引擎的自然对齐模型。
+checked ARM64 支持 8/16/32/64 位 `LDXR/STXR`、32/64 位寄存器对 `LDXP/STXP`、相应的 acquire/release 形式及 `CLREX`。KVM、WHP 和 checked Unicorn 共用 ISA 层的独占监视器，以 16 字节物理范围记录保留状态，传输层单步退出不会破坏循环进展。已提交的写入即使没有改变字节，也会使保留状态失效；别名和保留视图写入遵循同一规则。停止保留尚未发布的状态，快照不能撤销期间发生的写入。checked 独占指令采用 FEAT_LSE2 对齐规则：操作数可在同一个 16 字节对齐块内未对齐访问，跨越该块才产生 `alignment` 故障。同宽条件存储按保留的物理粒度匹配；即使监视器已失效，也先检查对齐和权限，再决定条件存储是否成功。该配置仍不包含 MMIO 或并行 SMP。 ARM64 Unicorn 的 `Software` 契约也使用此监视器，包括软件和 checked CPU 共用物理 RAM 的情况。 Unicorn 的 `Software` 配置保留引擎的自然对齐模型。
+
+
+同一 ISA 层支持 FEAT_LSE `CAS/CASP`、`SWP`、`LDADD/LDCLR/LDEOR/LDSET` 及有符号/无符号 min/max，包括字节、半字、字、双字和 acquire/release 形式。checked 配置采用上述对齐策略，Unicorn `Software` 保留自然对齐。比较按操作数宽度执行，返回的旧值零扩展。CAS 比较失败仍要求写权限，并选择 Arm 允许的旧值回写行为，使物理保留状态失效。回调看到提交前的 CPU/RAM 状态；取消和同步故障不会发布部分原子操作结果。物理执行锁保证协作式 CPU 的顺序，不提供并行 SMP 或 MMIO 原子操作。`MRS/MSR NZCV` 按架构规则传输四个条件标志，正确处理保留位和零寄存器。
