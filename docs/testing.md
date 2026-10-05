@@ -49,12 +49,13 @@ invalidation. The worker fixture exercises actual paged engine responses.
 
 ```sh
 cmake --build build-release --target NeverDLibraryRecognitionTests \
-  NeverDSessionCAPITests NeverDSignatureTests NeverDDebugTests \
+  NeverDSessionCAPITests NeverDSignatureTests NeverDDebugInfoTests NeverDPDBIdentityTests \
   NeverDObjCSourceCallTests NeverDLLVMCValueTests neverd-worker --parallel 4
 build-release/bin/NeverDLibraryRecognitionTests
 build-release/bin/NeverDSessionCAPITests
 build-release/bin/NeverDSignatureTests
-build-release/bin/NeverDDebugTests
+build-release/bin/NeverDDebugInfoTests
+build-release/bin/NeverDPDBIdentityTests
 build-release/bin/NeverDObjCSourceCallTests
 build-release/bin/NeverDLLVMCValueTests
 ctest --test-dir build-release -R '^NeverDWorkerLibraryFeatures$' --output-on-failure

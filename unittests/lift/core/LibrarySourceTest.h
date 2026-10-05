@@ -66,14 +66,15 @@ inline void verifyLibrarySource(const neverd::BinaryImage &Image,
     if (LLVM) {
       ASSERT_TRUE(Result.LlvmModule);
       LLVMCEmitter Emitter;
-      ASSERT_TRUE(Emitter.emit(*Result.LlvmModule, OrdinaryOS, COptions));
+      ASSERT_TRUE(
+          Emitter.emit(*Result.LlvmModule, OrdinaryOS, COptions, Debug));
       COptions.SourceMap = &Map;
-      ASSERT_TRUE(Emitter.emit(*Result.LlvmModule, MappedOS, COptions));
+      ASSERT_TRUE(Emitter.emit(*Result.LlvmModule, MappedOS, COptions, Debug));
     } else {
       HighCEmitter Emitter;
-      ASSERT_TRUE(Emitter.emit(Result.HighFuncs, OrdinaryOS, COptions));
+      ASSERT_TRUE(Emitter.emit(Result.HighFuncs, OrdinaryOS, COptions, Debug));
       COptions.SourceMap = &Map;
-      ASSERT_TRUE(Emitter.emit(Result.HighFuncs, MappedOS, COptions));
+      ASSERT_TRUE(Emitter.emit(Result.HighFuncs, MappedOS, COptions, Debug));
     }
     EXPECT_EQ(Ordinary, Mapped);
     bool Found = false;
@@ -91,7 +92,9 @@ inline void verifyLibrarySource(const neverd::BinaryImage &Image,
         // independent argument. A library fold must leave that work visible.
         if (!CallerArgument.empty())
           EXPECT_EQ(Mapped.substr(Span.Begin, Span.End - Span.Begin)
-                        .find(CallerArgument.str()),
+                        .find(Debug && CallerArgument == "arg1"
+                                  ? "salt"
+                                  : CallerArgument.str()),
                     std::string::npos);
       }
     }

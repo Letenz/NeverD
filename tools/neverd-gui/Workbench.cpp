@@ -1,7 +1,5 @@
 #include "Workbench.h"
 
-#include <algorithm>
-
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDir>
@@ -13,6 +11,7 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QWindow>
+#include <algorithm>
 #include <utility>
 
 Workbench::Workbench(QString workerPath, QObject *parent)

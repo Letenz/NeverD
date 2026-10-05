@@ -583,6 +583,8 @@ public:
   std::set<std::string> JoinPhiNames;
   /// Temps that only carry `this->field` print as the member at each use.
   std::map<std::string, std::string> FieldForward;
+  /// Original load expressions whose field spelling is forwarded at each use.
+  std::map<std::string, const HighExpr *> FieldForwardSources;
   std::map<std::string, TypeRef> FieldForwardTypes;
   std::map<std::string, TypeRef> EnumDestTypes;
   /// Temps used as a named-class pointer arg (`CStringT_dtor(v26)`).

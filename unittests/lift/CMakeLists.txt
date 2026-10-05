@@ -3367,6 +3367,17 @@ if(LLD_LINK_EXEC AND CLANG_EXEC)
   add_dependencies(NeverDLibraryRecognitionTests neverd-library-msvc-fixtures)
   target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
     NEVERD_LIBRARY_MSVC_FIXTURE_DIR="${_library_msvc_dir}")
+  if(TARGET neverd AND Python3_Interpreter_FOUND)
+    add_test(NAME NeverDLibraryFeatureMsvcCLI
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/library_cli_test.py"
+        "$<TARGET_FILE:neverd>"
+        "${_library_msvc_dir}/accessors-inline.dll"
+        "${CMAKE_SOURCE_DIR}/signatures/features/rules/msvc-14.44.35207-x64-release-stl.json"
+        "${CLANG_EXEC}" msvc-names)
+    set_tests_properties(NeverDLibraryFeatureMsvcCLI PROPERTIES
+      TIMEOUT 120 LABELS "unit;library-recognition;cli")
+  endif()
 else()
   message(STATUS "MSVC library consumer fixtures skipped: lld-link unavailable")
 endif()

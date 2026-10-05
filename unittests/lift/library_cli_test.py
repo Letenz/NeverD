@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Compile real template projections and compare CLI identities/source pages."""
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
 
-def run(executable, fixture, pack, compiler):
+def run(executable, fixture, pack, compiler, mode="compile"):
     def cli(command, *args):
         result = subprocess.run(
             [executable, command, fixture, *args],
@@ -32,11 +33,20 @@ def run(executable, fixture, pack, compiler):
             cli("decompile", *route, "-o", str(ordinary))
             cli("decompile", *route, "--sig-file", pack, "-o", str(annotated))
             assert ordinary.read_bytes() == annotated.read_bytes()
-            result = subprocess.run(
-                [compiler, "-fsyntax-only", "-std=c11", str(annotated)],
-                capture_output=True, text=True, timeout=60,
-            )
-            assert result.returncode == 0, result.stderr
+            source = annotated.read_text()
+            identifiers = re.findall(r"^[^\n;{}]*?\b([A-Za-z_][A-Za-z_0-9]*)\([^;\n]*\) \{", source, re.M)
+            assert len(identifiers) == len(set(identifiers)), identifiers
+            if mode == "msvc-names":
+                # PDB projections retain the existing external type contract.
+                # These four template instances share each operation's stem.
+                for stem in ("data", "size", "empty", "capacity"):
+                    assert {stem, *(f"{stem}_{n}" for n in range(2, 5))} <= set(identifiers)
+            else:
+                result = subprocess.run(
+                    [compiler, "-fsyntax-only", "-std=c11", str(annotated)],
+                    capture_output=True, text=True, timeout=60,
+                )
+                assert result.returncode == 0, result.stderr
             cli("decompile", *route, "--func", inline["addr"], "-o", str(ordinary))
             view = json.loads(cli("decompile", *route, "--func", inline["addr"],
                                   "--sig-file", pack, "--json"))
@@ -45,9 +55,9 @@ def run(executable, fixture, pack, compiler):
             for page in view["pages"]:
                 assert page["function_identity"]["display_name"] == inline["display_name"]
                 region = page["library_regions"][0]
-                assert region["rule_id"] == "libcxx.vector-u32.data"
+                assert region["rule_id"].endswith(".vector-u32.data")
                 assert region["foldable"] and region["occurrences"] and region["spans"]
-    print("16 distinct templates: unchanged compilable HighC/LLVMC and paged CLI evidence passed")
+    print(f"16 distinct templates: unchanged HighC/LLVMC, stable C identifiers, paged evidence ({mode}) passed")
 
 
 if __name__ == "__main__":

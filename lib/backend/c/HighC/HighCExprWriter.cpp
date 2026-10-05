@@ -3130,15 +3130,23 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
 
 std::string HighCWriter::printedForwardedVar(const std::string &Name,
                                              int ParentPrec) {
-  if (auto Fwd = FieldForward.find(Name); Fwd != FieldForward.end())
+  if (auto Fwd = FieldForward.find(Name); Fwd != FieldForward.end()) {
+    if (auto Source = FieldForwardSources.find(Name);
+        SourceRecorder && CurrentFunc && Source != FieldForwardSources.end())
+      return SourceRecorder->expression(CurrentFunc->Entry, *Source->second,
+                                        Fwd->second);
     return Fwd->second;
+  }
   if (auto Fwd = ValueForward.find(Name);
       Fwd != ValueForward.end() && Fwd->second) {
     const HighExpr *Inner = peelIntegerViewOps(Fwd->second);
     if (Inner && Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
         Inner->Operands[0]) {
       if (auto Member = typedMemberAccess(*Inner->Operands[0]))
-        return *Member;
+        return SourceRecorder && CurrentFunc
+                   ? SourceRecorder->expression(CurrentFunc->Entry,
+                                                *Fwd->second, *Member)
+                   : *Member;
     }
     return exprStr(*Fwd->second, ParentPrec);
   }

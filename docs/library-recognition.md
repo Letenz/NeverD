@@ -67,7 +67,11 @@ by debug information, symbols, imports/exports and linker MAP data. Recognition
 can annotate these names; only an identity without an authoritative name may
 use a unique whole-function match as its display name. Demangling preserves
 template/overload distinctions. Existing C identifier allocation, prototypes
-and formatting remain in force.
+and formatting remain in force. PDB-informed views can still refer to external
+record types such as `vector` or `basic_string`; loading a recognition pack does
+not generate a replacement STL type library or make those views self-contained
+for compilation. The libc++ scalar projection fixtures compile on both routes;
+MSVC fixtures additionally check unchanged source and template-name collisions.
 
 `neverd_resolve_addr` exposes optional `display_name`, `linkage_name`, name and
 display origins, `recognition_state` and `library_annotations`. Function lists,

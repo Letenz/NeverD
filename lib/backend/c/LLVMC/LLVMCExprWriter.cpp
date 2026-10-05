@@ -2429,7 +2429,8 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     if (auto Acc = frameSlotAccess(LI->getPointerOperand(),
                                    llvmAccessSize(LI->getType()),
                                    /*AddressOf=*/false))
-      return Acc->Text;
+      return SourceRecorder ? SourceRecorder->expression(*LI, Acc->Text)
+                            : Acc->Text;
     if (auto Acc = frameSlotAccess(LI, 0, /*AddressOf=*/true))
       return AddressText(Acc->Text);
   }
@@ -2491,12 +2492,26 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     }
   }
   if (auto Text = ValueTexts.find(V);
-      Text != ValueTexts.end() && !Text->second.empty())
+      Text != ValueTexts.end() && !Text->second.empty()) {
+    // Cached field/index spellings still evaluate the original memory load.
+    // A cached variable name does not: never attribute that reference as an
+    // emitted memory operation.
+    if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V);
+        SourceRecorder && LI) {
+      auto Access = typedRecordAccess(LI->getPointerOperand(),
+                                      llvmAccessSize(LI->getType()));
+      if (!Access)
+        Access = typedIndexAccess(LI->getPointerOperand());
+      if (Access && Access->Text == Text->second)
+        return SourceRecorder->expression(*LI, Text->second);
+    }
     return Text->second;
+  }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
                                      llvmAccessSize(LI->getType())))
-      return Acc->Text;
+      return SourceRecorder ? SourceRecorder->expression(*LI, Acc->Text)
+                            : Acc->Text;
   }
   if (std::string Text = composedReprintText(V); !Text.empty())
     return Text;

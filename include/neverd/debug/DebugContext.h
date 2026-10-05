@@ -26,7 +26,8 @@
 
 namespace neverd {
 
-/// Optional load-time progress.  Image parse and PDB publics must not look idle.
+/// Optional load-time progress.  Image parse and PDB publics must not look
+/// idle.
 struct LoadProgress {
   using Fn = void (*)(void *User, const char *Phase, unsigned long long Done,
                       unsigned long long Total, const char *Detail);
