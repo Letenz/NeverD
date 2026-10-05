@@ -105,7 +105,7 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 
 ## 显式内存文件
 
-`linux_files` 为 Linux ELF64 与 Android 提供封闭的只读文件目录；C++ 使用 `ProcessOptions::LinuxFiles`。`files` 必填且可为空，每项仅含规范绝对路径 `path` 和二进制 `bytes_hex`。不读取宿主文件，也不推断进程命令行或 `/proc` 内容。缺失目录选项时文件服务仍明确停止；目录中未列出的路径返回 `ENOENT`。
+`linux_files` 为 Linux ELF64 与 Android 提供封闭的只读文件目录；C++ 使用 `ProcessOptions::LinuxFiles`。`files` 必填且可为空，每项必填规范绝对路径 `path` 和二进制 `bytes_hex`。不读取宿主文件，也不推断进程命令行或 `/proc` 内容。缺失目录选项时文件服务仍明确停止；目录中未列出的路径返回 `ENOENT`。
 
 ```json
 {"linux_files":{"files":[
@@ -118,6 +118,17 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 `descriptor_limit`: 3–4096 (256). `files`: ≤ 256. `path`: < 4096 bytes; component ≤ 255 bytes. Total bytes + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Complete contract / 完整约定](../process-emulation.md#explicit-memory-files).
 
 零长度读取的地址可以等于用户地址范围的末端。先验证原始地址范围，再检查文件位置加原始长度是否超过 `INT64_MAX`；超过时即使已到 EOF 也返回 `EINVAL`，游标保持不变。
+
+每项还可提供完整的 `metadata`；C++ 用 `LinuxFileOptions::Metadata` 按已有文件路径保存。`fstat`、`fstat64` 和 syscall 共用这些固定观察值，不推断宿主身份或按内容长度生成 size，也不改变游标。元数据必须包含设备、inode、模式、链接数、UID/GID、大小、块大小、块数和三组时间；仅接受普通文件，时间为有符号 64 位秒及规范纳秒。超出 JSON 精确整数范围的值使用十进制字符串。x64/AArch64 分别写入 144/128 字节，rdev 和填充清零；无效描述符为 `EBADF`，完全不可写缓冲区为 `EFAULT`。缺少元数据、未知标准流或部分可写缓冲区明确停止，保留原字节。完整字段与范围见上方约定。
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 

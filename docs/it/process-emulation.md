@@ -101,7 +101,7 @@ Sono ammessi gli identificatori statici 0–9 e 11. Ogni orologio è indipendent
 
 ## File espliciti in memoria
 
-`linux_files` fornisce a Linux ELF64 e Android un catalogo chiuso di file immutabili. L’array obbligatorio `files` può essere vuoto; ogni voce contiene solo il percorso assoluto canonico `path` e i byte `bytes_hex`. Non vengono consultati file host o contenuti `/proc` impliciti. Senza l’opzione i servizi non sono modellati; i percorsi assenti restituiscono `ENOENT`.
+`linux_files` fornisce a Linux ELF64 e Android un catalogo chiuso di file immutabili. L’array obbligatorio `files` può essere vuoto; ogni voce richiede il percorso assoluto canonico `path` e i byte `bytes_hex`. Non vengono consultati file host o contenuti `/proc` impliciti. Senza l’opzione i servizi non sono modellati; i percorsi assenti restituiscono `ENOENT`.
 
 ```json
 {"linux_files":{"files":[
@@ -114,6 +114,17 @@ Ogni apertura ha un cursore indipendente; Bionic, `syscall`, trap e thread guest
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
 Una lettura di lunghezza zero può iniziare al limite dello spazio utente. Dopo la verifica dell’intervallo di indirizzi originale, se la posizione del file più la lunghezza richiesta supera `INT64_MAX`, viene restituito `EINVAL` anche a EOF, senza modificare il cursore.
+
+Ogni voce può fornire `metadata` completi; C++ usa `LinuxFileOptions::Metadata` con percorsi già presenti. `fstat`/`fstat64` e syscall condividono osservazioni fisse senza consultare il sistema host, derivare size dai byte o spostare il cursore. Sono ammessi solo file regolari e campi completi; gli interi a larghezza piena usano stringhe decimali. x64/AArch64 scrivono 144/128 byte con rdev e padding a zero. Un descrittore non valido restituisce `EBADF`, un output interamente inaccessibile `EFAULT`. Metadati mancanti, flussi standard sconosciuti e permessi di scrittura misti arrestano l’esecuzione senza modificare byte. Campi e limiti sono nel contratto collegato.
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 

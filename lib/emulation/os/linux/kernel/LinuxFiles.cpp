@@ -5,7 +5,11 @@
 //===----------------------------------------------------------------------===//
 #include "LinuxFiles.h"
 
+#include "LinuxTime.h"
+#include "LinuxUserMemory.h"
+
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Endian.h"
 
 #include <algorithm>
 #include <cassert>
@@ -49,6 +53,17 @@ llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
         Bytes.size() > FileByteLimit - Total - Cost)
       return failure(FileOptionsLimit);
     Total += Cost + Bytes.size();
+  }
+  for (const auto &[Path, Metadata] : Options.Metadata) {
+    if (!Options.Files.contains(Path))
+      return failure(FileMetadataPath);
+    if ((Metadata.Mode & ~FilePermissionMask) != FileRegularMode ||
+        Metadata.Size > MaxSignedIOSize || Metadata.Blocks > MaxSignedIOSize ||
+        Metadata.BlockSize > INT32_MAX ||
+        !isNormalizedTimespec(Metadata.AccessTime) ||
+        !isNormalizedTimespec(Metadata.ModificationTime) ||
+        !isNormalizedTimespec(Metadata.ChangeTime))
+      return failure(FileMetadataOption);
   }
   return llvm::Error::success();
 }
@@ -114,8 +129,45 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
         return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   }
-  Descriptors.emplace(FD, OpenFile{File->second});
+  auto Metadata = Options->Metadata.find(Path);
+  Descriptors.emplace(FD,
+                      OpenFile{File->second, Metadata == Options->Metadata.end()
+                                                 ? nullptr
+                                                 : &Metadata->second});
   return std::optional<uint64_t>(FD);
+}
+
+llvm::Expected<std::optional<uint64_t>>
+LinuxFiles::status(const OpenFile &File, uint64_t Address,
+                   ProcessResult &Result) {
+  const auto &Metadata = *File.Metadata;
+  const bool X64 = CPU.architecture() == GuestArchitecture::X64;
+  llvm::SmallVector<uint8_t, FileStatusSizeX64> Bytes(
+      X64 ? FileStatusSizeX64 : FileStatusSizeARM64, 0);
+  auto Put = [&](unsigned Offset, unsigned Width, uint64_t Value) {
+    if (Width == 4)
+      llvm::support::endian::write32le(Bytes.data() + Offset, Value);
+    else
+      llvm::support::endian::write64le(Bytes.data() + Offset, Value);
+  };
+#define NEVERD_LINUX_FILE_STATUS(Member, ARMOffset, ARMWidth, X64Offset,       \
+                                 X64Width)                                     \
+  Put(X64 ? X64Offset : ARMOffset, X64 ? X64Width : ARMWidth,                  \
+      static_cast<uint64_t>(Metadata.Member));
+#include "LinuxFileStatus.def"
+#undef NEVERD_LINUX_FILE_STATUS
+  auto Stored = writeUserMemory(CPU, Layout, Address, Bytes);
+  if (!Stored)
+    return Stored.takeError();
+  switch (*Stored) {
+  case UserWriteResult::Stored:
+    return std::optional<uint64_t>(0);
+  case UserWriteResult::BadAddress:
+    return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+  case UserWriteResult::MixedAccess:
+    return unsupported(Result, FileStatusPartialOutput);
+  }
+  llvm_unreachable("unknown Linux user-copy outcome");
 }
 
 llvm::Expected<uint64_t> LinuxFiles::read(OpenFile &File, uint64_t Address,
@@ -192,6 +244,11 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return std::optional<uint64_t>(0);
   }
   auto *File = std::get_if<OpenFile>(&I->second);
+  if (Kind == ServiceKind::Fstat) {
+    if (!File || !File->Metadata)
+      return unsupported(Result, FileStatusMissing);
+    return status(*File, A1, Result);
+  }
   if (Kind == ServiceKind::Read) {
     if (!File) {
       if (std::get<Stream>(I->second) == Stream::Input)

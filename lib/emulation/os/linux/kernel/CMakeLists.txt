@@ -1,6 +1,7 @@
 add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxServices.cpp
   LinuxTime.cpp
+  LinuxUserMemory.cpp
   LinuxOutput.cpp
   LinuxServiceABI.cpp
   LinuxThreadPointer.cpp

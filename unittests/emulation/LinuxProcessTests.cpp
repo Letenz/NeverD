@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
+#include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
@@ -154,10 +155,11 @@ TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
   Options.LinuxFiles.emplace();
   Options.LinuxFiles->Files["/fixture/data"] = {0,    0xff, 0x41,
                                                 0x0a, 0x80, 0x5a};
+  Options.LinuxFiles->Metadata["/fixture/data"] = fileTestMetadata();
   for (const char *Optimization : {"O0", "O2"}) {
     auto FilePath = Path.parent_path() /
                     (Path.stem().string() + "-files-" + Optimization + ".elf");
-    for (char Mode : {'s', 'f', 'c'}) {
+    for (char Mode : {'s', 'f', 'c', 't'}) {
       SCOPED_TRACE(testing::Message() << Optimization << ':' << Mode);
       Options.Arguments = {"files", std::string(1, Mode)};
       Options.LinuxFiles->DescriptorLimit = Mode == 'c' ? 4 : 256;

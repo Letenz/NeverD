@@ -101,7 +101,7 @@ Se aceptan los identificadores estáticos 0–9 y 11. Cada reloj es independient
 
 ## Archivos explícitos en memoria
 
-`linux_files` proporciona a Linux ELF64 y Android un catálogo cerrado de archivos inmutables. El arreglo obligatorio `files` puede estar vacío; cada entrada contiene solo la ruta absoluta canónica `path` y los bytes `bytes_hex`. No se consultan archivos del host ni contenido `/proc` implícito. Sin la opción los servicios no están modelados; las rutas ausentes devuelven `ENOENT`.
+`linux_files` proporciona a Linux ELF64 y Android un catálogo cerrado de archivos inmutables. El arreglo obligatorio `files` puede estar vacío; cada entrada requiere la ruta absoluta canónica `path` y los bytes `bytes_hex`. No se consultan archivos del host ni contenido `/proc` implícito. Sin la opción los servicios no están modelados; las rutas ausentes devuelven `ENOENT`.
 
 ```json
 {"linux_files":{"files":[
@@ -114,6 +114,17 @@ Cada apertura tiene su cursor; Bionic, `syscall`, trampas e hilos invitados comp
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
 Una lectura de longitud cero puede comenzar en el límite del espacio de usuario. Tras validar el rango de direcciones original, si la posición del archivo más la longitud solicitada supera `INT64_MAX`, se devuelve `EINVAL` incluso en EOF, sin modificar el cursor.
+
+Cada entrada puede incluir `metadata` completos; C++ usa `LinuxFileOptions::Metadata` con rutas ya presentes. `fstat`/`fstat64` y syscall comparten observaciones fijas, sin consultar el host, derivar size de los bytes ni mover el cursor. Solo se admiten archivos regulares y campos completos; los enteros de ancho completo usan cadenas decimales. x64/AArch64 escriben 144/128 bytes con rdev y relleno en cero. Un descriptor inválido devuelve `EBADF`; una salida totalmente inaccesible, `EFAULT`. Metadatos ausentes, flujos estándar desconocidos o permisos de escritura mixtos detienen la ejecución sin cambiar bytes. Los campos y límites figuran en el contrato enlazado.
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 

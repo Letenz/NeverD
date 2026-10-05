@@ -101,7 +101,7 @@ Les identifiants statiques 0–9 et 11 sont acceptés. Chaque horloge est indép
 
 ## Fichiers explicites en mémoire
 
-`linux_files` fournit un catalogue fermé de fichiers immuables à Linux ELF64 et Android. Le tableau obligatoire `files` peut être vide ; chaque entrée contient seulement un chemin absolu canonique `path` et les octets `bytes_hex`. Aucun fichier hôte ni contenu `/proc` implicite n’est consulté. Sans option, les services restent non modélisés ; un chemin absent renvoie `ENOENT`.
+`linux_files` fournit un catalogue fermé de fichiers immuables à Linux ELF64 et Android. Le tableau obligatoire `files` peut être vide ; chaque entrée exige un chemin absolu canonique `path` et les octets `bytes_hex`. Aucun fichier hôte ni contenu `/proc` implicite n’est consulté. Sans option, les services restent non modélisés ; un chemin absent renvoie `ENOENT`.
 
 ```json
 {"linux_files":{"files":[
@@ -114,6 +114,17 @@ Chaque ouverture possède son curseur ; Bionic, `syscall`, les traps et les thre
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
 Une lecture de longueur nulle peut commencer à la limite de l’espace utilisateur. Après validation de la plage d’adresses initiale, une position de fichier augmentée de la longueur demandée dépassant `INT64_MAX` renvoie `EINVAL`, même à EOF, sans modifier le curseur.
+
+Une entrée peut fournir des `metadata` complets ; C++ utilise `LinuxFileOptions::Metadata`, indexé par un chemin déjà présent. `fstat`/`fstat64` et syscall partagent des observations fixes, sans lire les métadonnées hôtes, déduire size des octets ou déplacer le curseur. Seuls les fichiers réguliers avec tous les champs sont admis ; les entiers pleine largeur utilisent des chaînes décimales. x64/AArch64 écrivent 144/128 octets, avec rdev et remplissage nuls. Un descripteur invalide donne `EBADF`, une sortie entièrement inaccessible `EFAULT`. Métadonnées absentes, flux standard inconnus et droits d’écriture mixtes arrêtent l’exécution sans modifier les octets. Voir le contrat lié pour les champs et limites.
+
+```json
+{"linux_files":{"files":[{"path":"/fixture/virtual","bytes_hex":"616263",
+  "metadata":{"device":1,"inode":"18446744073709551615","mode":33060,
+    "link_count":1,"uid":1000,"gid":1000,"size":0,"block_size":4096,"blocks":0,
+    "access_time":{"seconds":0,"nanoseconds":0},
+    "modification_time":{"seconds":0,"nanoseconds":0},
+    "change_time":{"seconds":0,"nanoseconds":0}}}]}}
+```
 
 <!-- i18n-section: windows-pe64 -->
 
