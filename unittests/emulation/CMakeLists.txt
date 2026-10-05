@@ -260,6 +260,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsSIMDMappingTests.cpp
   WindowsSIMDExecutionTests.cpp
   WindowsContinuationTests.cpp
+  WindowsDeferredTests.cpp
   WindowsSEHTests.cpp
   WindowsContextTests.cpp
   WindowsNativeTestSupport.cpp
@@ -277,6 +278,7 @@ include(WindowsSystemFixtures.cmake)
 include(WindowsExceptionFixtures.cmake)
 include(WindowsSEHFixtures.cmake)
 include(WindowsContextFixtures.cmake)
+include(WindowsDeferredFixtures.cmake)
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp

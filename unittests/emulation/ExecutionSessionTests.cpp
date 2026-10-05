@@ -221,6 +221,94 @@ TEST_P(RuntimeSession, ZeroQuantumDoesNotConsumeInstructionCredits) {
   EXPECT_EQ(llvm::cantFail(S->run(Code, Quantum)).Kind,
             SessionExitKind::Quantum);
 }
+TEST_P(RuntimeSession, ExecutionWatchStopsBeforeAdmissionAndResumesOnce) {
+  code(CounterX64, CounterARM);
+  const uint64_t Store =
+      Code + (GetParam().ISA == GuestArchitecture::X64 ? StoreOffsetX64
+                                                       : StoreOffsetARM);
+  Budget =
+      llvm::cantFail(ExecutionBudget::create({Instructions, Events, Timeout}));
+  std::vector<uint64_t> Trace;
+  auto S = llvm::cantFail(ExecutionSession::create(
+      std::move(CPU), Budget, {},
+      [&](uint64_t Address, uint32_t) { Trace.push_back(Address); }));
+  llvm::cantFail(S->watchExecution({{Store, 1}}));
+  auto Exit = llvm::cantFail(S->run(Code, Instructions));
+  // The watched instruction was neither observed, charged nor executed.
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, PC), Store);
+  EXPECT_EQ(Budget->instructions(), BeforeStore);
+  EXPECT_EQ(Trace.size(), BeforeStore);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, sizeof(uint64_t))), 0u);
+  // Resuming at the reported address executes it once; the watch, which is
+  // still installed, fires again on the next iteration.
+  Exit = llvm::cantFail(S->run(Store, Instructions));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, PC), Store);
+  EXPECT_EQ(Budget->instructions(), BeforeStore + LoopInstructions);
+  EXPECT_EQ(Trace.size(), Budget->instructions());
+  EXPECT_EQ(Trace[BeforeStore], Store);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, sizeof(uint64_t))), 1u);
+}
+TEST_P(RuntimeSession, OnlyAContinuationAtTheWatchedAddressStepsOverIt) {
+  code(CounterX64, CounterARM);
+  const uint64_t Store =
+      Code + (GetParam().ISA == GuestArchitecture::X64 ? StoreOffsetX64
+                                                       : StoreOffsetARM);
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Store, 1}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, Instructions)).Kind,
+            SessionExitKind::ExecutionWatch);
+  // Restarting the loop is a different continuation: the watch still holds.
+  auto Exit = llvm::cantFail(S->run(Code, Instructions));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, PC), Store);
+  EXPECT_EQ(Budget->instructions(), 2 * BeforeStore);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, sizeof(uint64_t))), 0u);
+  // A quantum that ends first does not consume the watch either.
+  llvm::cantFail(S->watchExecution({}));
+  EXPECT_EQ(llvm::cantFail(S->run(Store, 1)).Kind, SessionExitKind::Quantum);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, sizeof(uint64_t))), 1u);
+}
+TEST_P(RuntimeSession, ExecutionWatchesMergeAndRejectInvalidRanges) {
+  code(CounterX64, CounterARM);
+  auto S = start();
+  for (const ExecutionWatch Invalid :
+       {ExecutionWatch{Code, 0}, ExecutionWatch{UINT64_MAX, 2},
+        ExecutionWatch{0, 0}}) {
+    auto E = S->watchExecution({Invalid});
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  }
+  // The whole address space cannot be stated as one size.
+  auto Everything = S->watchExecution({{0, UINT64_MAX}, {UINT64_MAX, 1}});
+  EXPECT_TRUE(bool(Everything));
+  llvm::consumeError(std::move(Everything));
+  // A rejected set leaves the session unwatched.
+  EXPECT_EQ(llvm::cantFail(S->run(Code, Quantum)).Kind,
+            SessionExitKind::Quantum);
+  // Overlapping, adjacent and unordered ranges are one watch.
+  llvm::cantFail(S->watchExecution({{Code + LoopBytes / 2, LoopBytes / 2},
+                                    {Code, LoopBytes / 2},
+                                    {Code, 1}}));
+  const uint64_t At = reg(*S, PC);
+  auto Exit = llvm::cantFail(S->run(At, Quantum));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, PC), At);
+  EXPECT_EQ(Budget->instructions(), Quantum);
+}
+TEST_P(RuntimeSession, WatchesCannotChangeUnderAPendingContinuation) {
+  code(ServiceX64, ServiceARM);
+  auto S = start();
+  auto Exit = llvm::cantFail(S->run(Code, Quantum));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::ServiceRequest);
+  auto E = S->watchExecution({{Code, 1}});
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  llvm::cantFail(S->takeServiceRequest());
+  llvm::cantFail(S->watchExecution({{Code, 1}}));
+}
 INSTANTIATE_TEST_SUITE_P(Backends, RuntimeSession, testing::ValuesIn(Profiles),
                          [](const testing::TestParamInfo<Profile> &P) {
                            return P.param.Name;

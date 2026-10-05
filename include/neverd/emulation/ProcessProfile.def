@@ -31,6 +31,7 @@ NEVERD_PROCESS_STOP(OutputLimit, "output_limit")
 NEVERD_PROCESS_STOP(UnsupportedService, "unsupported_service")
 NEVERD_PROCESS_STOP(CPUFailure, "cpu_failure")
 NEVERD_PROCESS_STOP(RuntimeFailure, "runtime_failure")
+NEVERD_PROCESS_STOP(Observer, "observer")
 #endif
 
 #ifdef NEVERD_PROCESS_CALL_VALUE

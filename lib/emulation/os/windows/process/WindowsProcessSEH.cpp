@@ -39,6 +39,9 @@ ExceptionDispatcher::raiseNoncontinuable() {
 bool ExceptionDispatcher::hasFrameHandlers() const {
   return Modules && CPU.architecture() == GuestArchitecture::X64 &&
          llvm::any_of(Modules->Modules, [](const auto &M) {
+           // Deferred metadata may declare handlers the loader never saw.
+           if (resident(M) && M.Loaded.ExceptionsDeferred)
+             return true;
            if (!resident(M) || !M.Loaded.Exceptions)
              return false;
            const auto &Info = *M.Loaded.Exceptions;
@@ -102,6 +105,12 @@ ExceptionDispatcher::startUnwind() {
   // one. Do not manufacture a stack walk through metadata-free entry routines.
   if (!hasFrameHandlers())
     return failure(text::ExceptionUnhandled);
+  // An image without loader-owned unwind data cannot be searched or skipped:
+  // treating its frames as leaf functions would invent a stack walk.
+  if (llvm::any_of(Modules->Modules, [](const auto &M) {
+        return resident(M) && M.Loaded.ExceptionsDeferred;
+      }))
+    return failure(text::ExceptionDeferred);
   auto &F = Frames.back();
   const size_t Origin = Frames.size() - 1;
   F.SEH = std::make_unique<Unwind>();
