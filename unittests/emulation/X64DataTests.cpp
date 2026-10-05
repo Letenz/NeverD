@@ -539,7 +539,13 @@ TEST_P(X64Data,
     EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::MXCSR)),
               InitialMXCSR | Rounding | InvalidStatus | PrecisionStatus);
   }
-  EXPECT_NE(llvm::toString(CPU->setReg(X64Register::MXCSR, 0)), "");
+  const auto Kind = std::get<0>(parameter());
+  const bool Precise =
+      Kind == ExecutionBackendKind::KVM || Kind == ExecutionBackendKind::WHP;
+  const uint64_t Before = llvm::cantFail(CPU->reg(X64Register::MXCSR));
+  auto Diagnostic = llvm::toString(CPU->setReg(X64Register::MXCSR, 0));
+  EXPECT_EQ(Diagnostic.empty(), Precise) << Diagnostic;
+  EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::MXCSR)), Precise ? 0 : Before);
 }
 
 TEST_P(X64Data, VectorLoadReadObserverStopsBeforeRegisterChanges) {
