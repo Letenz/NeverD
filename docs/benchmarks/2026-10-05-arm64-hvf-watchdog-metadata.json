@@ -1,0 +1,134 @@
+{
+  "decision": "Retain the existing disarm notification. This candidate did not establish a reliable benefit. The noisy shared-host measurements do not isolate a causal performance regression.",
+  "candidate_source_commit": "19f73298ac2318f4489814644d0436c5157abc31",
+  "baseline_runtime_source_commit": "0bc27331b364997cb2edc827b38e04769765744b",
+  "retained_source_commit": "6c4a5ef1f1ac104843649f8830098eeaaef6217f",
+  "baseline_inverse_patch": "diff --git a/lib/emulation/backends/RunDeadline.h b/lib/emulation/backends/RunDeadline.h\nindex 153c3129f..531f2a3f6 100644\n--- a/lib/emulation/backends/RunDeadline.h\n+++ b/lib/emulation/backends/RunDeadline.h\n@@ -78,8 +78,7 @@ public:\n     std::lock_guard Lock(Mutex);\n     Armed = false;\n     Control.Stop = nullptr;\n-    // The mutex acknowledges an in-flight interrupt. There is no work to wake\n-    // the watchdog for: the next arm or shutdown will notify its old wait.\n+    Changed.notify_one();\n     return CancelIssued;\n   }\n \n",
+  "baseline_build_note": "Same current dependency and build configuration as candidate; only the RunDeadline notification change is reverted for this benchmark. Documentation and test-only differences do not link into the benchmark.",
+  "candidate_source_hashes": {
+    "lib/emulation/backends/RunDeadline.h": "efd059070d91c925d59a54633f883a048e86be125426d24194bedd335d806f2f",
+    "lib/emulation/backends/hvf/HvfExecutor.cpp": "f0c5dac8fb22ba85bad3156758b1a8921e85895f74a3c5709de51cf39d70d78f",
+    "lib/emulation/backends/hvf/HvfAArch64Machine.cpp": "c72075ab8f64cfdc0ef14935d12cff74f9940cd0250fbdaaaf1a05e349e5810d",
+    "unittests/emulation/RunControlTests.cpp": "ab6ad198975ab1f526bb607679cf34ba9154c23b38af0ebf625a0fa61a8adf86",
+    "tools/neverd-bench/cpu-bench.cpp": "1bc3d6fcf227f52382f4594c772c2d4cc004c8d5661d096677b1f48df3901560"
+  },
+  "host": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+  "compiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: arm64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
+  "submodules": "-8e5a123f3835ea902a888085852ca2e7cb7d6f0d signatures\n 3db8bd6d3b0bece9916d1208e7ff739e006165de third_party/capstone (remotes/origin/HEAD)\n-cc7be19969b7dc6c309e67619630ccc90ef46d9f third_party/llvm-project\n-916fe61e61d8552feaaaaedfac352c0a3dfd6c25 third_party/unicorn\n-071a867fc0ab620d6f01b1a4251807044f4d6cbd unittests/corpus\n",
+  "configuration": {
+    "CMAKE_BUILD_TYPE": "Release",
+    "NEVERD_BUILD_SHARED": "OFF",
+    "NEVERD_EMULATION_BACKEND_HVF": "ON",
+    "NEVERD_EMULATION_BACKEND_UNICORN": "OFF",
+    "NEVERD_ENABLE_CPU_EMULATION": "ON",
+    "NEVERD_ENABLE_DRIVER_EMULATION": "OFF",
+    "NEVERD_ENABLE_SEMANTIC_TESTS": "OFF",
+    "NEVERD_LLVM_PREBUILT_TAG": "neverd-llvm-v23.0.0-r3"
+  },
+  "measurement_start": {
+    "utc": "2026-10-05T06:08:32.428811+00:00",
+    "compiler_processes": {
+      "ninja": 2,
+      "cmake": 2,
+      "clang": 3,
+      "clang++": 0,
+      "cc1": 0,
+      "ld": 0
+    },
+    "load": "{ 18.37 17.94 17.68 }\n"
+  },
+  "raw_comparison_sha256": "5a7fa9c41f39c3da9a45829b49662d623bb84f66eb8d40edea4477d7050d4740",
+  "summary": {
+    "initialization": {
+      "median_paired_ratio": 0.901860428136988,
+      "faster_pairs": 6,
+      "pairs": 15,
+      "baseline_ms": {
+        "median": 1.908791,
+        "min": 1.270458,
+        "max": 6.362625
+      },
+      "candidate_ms": {
+        "median": 1.921083,
+        "min": 1.408708,
+        "max": 17.461958
+      }
+    },
+    "integer": {
+      "median_paired_ratio": 0.8968716145708554,
+      "faster_pairs": 5,
+      "pairs": 15,
+      "baseline_ms": {
+        "median": 121.319125,
+        "min": 84.677792,
+        "max": 1304.724333
+      },
+      "candidate_ms": {
+        "median": 126.2705,
+        "min": 95.603916,
+        "max": 167.950458
+      }
+    },
+    "branch": {
+      "median_paired_ratio": 0.8557718147356655,
+      "faster_pairs": 5,
+      "pairs": 15,
+      "baseline_ms": {
+        "median": 207.86875,
+        "min": 164.621542,
+        "max": 3791.257042
+      },
+      "candidate_ms": {
+        "median": 238.728792,
+        "min": 162.891667,
+        "max": 359.137792
+      }
+    },
+    "memory": {
+      "median_paired_ratio": 1.029633847781881,
+      "faster_pairs": 10,
+      "pairs": 15,
+      "baseline_ms": {
+        "median": 200.503,
+        "min": 175.470167,
+        "max": 311.640542
+      },
+      "candidate_ms": {
+        "median": 191.461416,
+        "min": 157.737166,
+        "max": 327.708042
+      }
+    },
+    "tls_call": {
+      "median_paired_ratio": 0.912359529350439,
+      "faster_pairs": 4,
+      "pairs": 15,
+      "baseline_ms": {
+        "median": 284.486208,
+        "min": 217.764875,
+        "max": 343.370333
+      },
+      "candidate_ms": {
+        "median": 321.310833,
+        "min": 209.787958,
+        "max": 468.348083
+      }
+    },
+    "two_cpu_switch": {
+      "median_paired_ratio": 0.9687364966272491,
+      "faster_pairs": 6,
+      "pairs": 15,
+      "baseline_ms": {
+        "median": 39.776042,
+        "min": 29.606416,
+        "max": 43.030792
+      },
+      "candidate_ms": {
+        "median": 39.582625,
+        "min": 28.395959,
+        "max": 92.5735
+      }
+    }
+  },
+  "hardware_scope": "Native ARM64 on one shared Apple Silicon host. No Intel native validation, no Intel Actions, and no universal ranking."
+}

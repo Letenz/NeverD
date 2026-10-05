@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 550b2901128a5e09a45c29f1dc5e127864f6e97712bf90c99e687007ce46c9cf -->
+<!-- i18n-source: 86f979db12c7cf8a82eb75814ac41da27557a2d27b76cde302b8bec45d3e46ef -->
 
 [← ドキュメント一覧](README.md)
 
@@ -49,7 +49,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon は `-DNEVERD_LLVM_PREBUILT=ON` を利用できます。[HVF ワークフロー](../../.github/workflows/hvf.yml) は現在 `self-hosted, macOS, ARM64, hvf` のみを選び、ホストアーキテクチャも確認します。LLVM の準備前に VM/vCPU の実際の作成と破棄を要求します。`probe` は利用可否、`transport` は転送層、`darwin` は対応する全 Darwin ワークロード、`full` は転送層および CPU・Darwin 全体を検証します。Intel の選択肢は削除済みで、以下の Intel 手順は停止された過去の手順です。専用 ARM64 runner は別途必要です。
 
-転送層の必須項目は ARM64 が 15、Intel が 12、完全な CPU 検証はそれぞれ 23、20 です。全状態、特権、権限、ページ境界、エイリアス、CPU 切り替え、ロールバック、キャンセル、再試行を確認します。Intel は大きなビルドの前に CR8 を確認します。成果物に登録一覧、ソースリビジョン、ホスト、結果、各試行を残します。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) はネストした仮想化を実験的と位置付けており、再現可能な受け入れには専用のネイティブ Mac が適しています。
+転送層の必須項目は ARM64 が 15、Intel が 12、完全な CPU 検証はそれぞれ 27、20 です。全状態、特権、権限、ページ境界、エイリアス、CPU 切り替え、ロールバック、キャンセル、再試行を確認します。Intel は大きなビルドの前に CR8 を確認します。成果物に登録一覧、ソースリビジョン、ホスト、結果、各試行を残します。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) はネストした仮想化を実験的と位置付けており、再現可能な受け入れには専用のネイティブ Mac が適しています。
 
 ホスト型 Intel の `--execution-methods` は、完全な CTest 一覧から全パラメーター、フラグ、環境、作業ディレクトリを維持して GoogleTest メソッドを直列実行します。未知のプロパティは拒否します。メソッド全体の期限は最大 120 秒で、各パラメーターに個別の期限は適用しません。その後、期限を設けてプロセスグループを回収します。元の XML、名前対応、終了状態を保存します。タイムアウトや不完全な XML は部分失敗となり、必須ネイティブ項目の欠落やスキップは合格になりません。自己管理 runner は引き続き CTest のケースごとのプロセスと期限を使います。
 
@@ -208,3 +208,11 @@ vCPU のみを毎回再作成する修正済み回復テスト（ソース `7dd7
 `fb7a9d2` のプロトコル 3 計測対照も元の予算を超えました。macOS 15 [37262095705](https://github.com/gmh5225/test_mac_intel/actions/runs/37262095705) は 781 回完了後の 782 回目、macOS 26 [37262097389](https://github.com/gmh5225/test_mac_intel/actions/runs/37262097389) は 396 回完了後の 397 回目に失敗しました。両方とも IRQ と新しい書込みを観測し、終了コード 1、正常な解放と子プロセス回収を確認しました。接続喪失やアップローダー障害はありません。失敗した呼出し前から復帰までは約 2.068/2.002 秒です。個別に囲んだ採取区間で Intel HVF 実行カウンターは約 2.063/1.996 秒、Darwin スレッド CPU は約 2.068/2.001 秒増加しました。読取りは呼出し・状態取得区間外に置き、採取幅と生の値を保存しています。ネストしたホストの報告値は経過時間以外の証拠ですが、物理 guest 実行、スケジューリング時間やカーネルの原因は確定できません。全八試行と検証済み 38 アーカイブを保持し、5 ms スライスと 2 秒予算は変更していません。両環境 vCPU、VM 再生成、NeverD Intel 全体の検証は未完了です。[証拠と計測](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
 
 `ca8da7d` のプロトコル 4 HLT 対照は両ジョブとも取消で終了しました。macOS 15 [37263893167](https://github.com/gmh5225/test_mac_intel/actions/runs/37263893167) と macOS 26 [37263895410](https://github.com/gmh5225/test_mac_intel/actions/runs/37263895410) の対応する GitHub check-run は 30 分のジョブ制限超過を報告し、明示的な接続喪失の注記はありません。各試行には実行前の工件だけが残り、取得した両ログ ZIP は空です。ネイティブ起動、完了回数、HLT 終了、プロセス終了・回収は未確認です。5 ms スライス、2 秒の反復予算、600 秒のプロセス予算の設定は、タイムアウト処理や回収の実行証拠にはなりません。final-only 対照から停止箇所やカーネル原因を特定できず、元のタイマー検証や Intel 全体の検証も未完了です。全 10 試行と元の 40 ZIP を保持しています。オフライン検証はアーカイブ、固定ソース、プロセス・時間予算、補足解析を再確認し、11 言語の索引では欠落回数を不明と表示します。[証拠と再検証](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
+
+## ARM64 watchdog 最適化実験 (2026-10-05)
+
+watchdog の disarm 後の通知を省く候補は正確性検査を通過しましたが、信頼できる性能向上は確認できませんでした。同じ Release 設定と依存関係で 15 組を交互に測定し、`initialization`、`integer`、`branch`、`memory`、`tls_call`、`two_cpu_switch` の基準/候補時間のペア中央値比は **0.902、0.897、0.856、1.030、0.912、0.969** でした。1 より大きい値が候補に有利です。他のコンパイル処理と大きな外れ値があり、変更による性能低下の因果関係は断定できません。実行時の変更は撤回し、通知を維持しました。disarm 後の早い期限への再設定、破棄、スコープ付き停止トークンの寿命を検証する 3 件の回帰テストを追加しました。
+
+最終ソース `6c4a5ef1f` は独立に RunControl 32 件、転送層 27/27 件、CPU 全一覧（成功 1429、スキップ 10644、必須 27/27）と Darwin（成功 65、スキップ 221、必須 39/39）を通過し、失敗はゼロでした。3 種のネイティブ中断・保守復旧テストも各 1000 回連続成功し、子プロセスの終了を確認しました。一覧は重複するため合算できません。スキップは無効なバックエンドや別アーキテクチャ等です。限定されたネイティブ ARM64 の検証であり、Intel 実行、完全な Apple OS エミュレーション、性能順位を保証しません。Intel はローカルの x86-64 構文コンパイルのみです。
+
+[元のペア測定値](../benchmarks/2026-10-05-arm64-hvf-watchdog.json) · [ソースと設定](../benchmarks/2026-10-05-arm64-hvf-watchdog-metadata.json)

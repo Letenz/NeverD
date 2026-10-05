@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 550b2901128a5e09a45c29f1dc5e127864f6e97712bf90c99e687007ce46c9cf -->
+<!-- i18n-source: 86f979db12c7cf8a82eb75814ac41da27557a2d27b76cde302b8bec45d3e46ef -->
 
 [← 文件索引](README.md)
 
@@ -49,7 +49,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 Apple Silicon 可使用 `-DNEVERD_LLVM_PREBUILT=ON`。[HVF 工作流程](../../.github/workflows/hvf.yml) 現在只選擇 `self-hosted, macOS, ARM64, hvf`，並核對宿主架構。準備 LLVM 前必須實際建立與銷毀 VM/vCPU。`probe` 只檢查可用性，`transport` 驗證傳輸層，`darwin` 要求所有相符的 Darwin 工作負載，`full` 要求傳輸層、完整 CPU 與 Darwin 驗收。Intel 選項已移除；下文相關流程為已暫停的歷史操作。仍需自行提供專用 ARM64 runner。
 
-傳輸層要求 ARM64 15 項、Intel 12 項；完整 CPU 門檻分別為 23、20 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
+傳輸層要求 ARM64 15 項、Intel 12 項；完整 CPU 門檻分別為 27、20 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
 
 託管 Intel 的 `--execution-methods` 從完整 CTest 清單取得所有參數、旗標、環境及工作目錄，以獨立行程循序執行各 GoogleTest 方法，拒絕未知屬性。方法總期限最多 120 秒，方法內不另套用逐參數期限；逾時後有界回收行程群組。原始 XML、名稱對應與退出狀態均保留。逾時或 XML 不完整會產生部分失敗；必需原生項缺失或跳過都不能通過。自託管仍採用 CTest 逐案例行程及期限。
 
@@ -208,3 +208,11 @@ Action 在執行前上傳計畫。執行期間保存初始處理程序標記，�
 `fb7a9d2` 的協定 3 計量配對也觸發原預算失敗：macOS 15 [37262095705](https://github.com/gmh5225/test_mac_intel/actions/runs/37262095705) 完成 781 輪，第 782 輪失敗；macOS 26 [37262097389](https://github.com/gmh5225/test_mac_intel/actions/runs/37262097389) 完成 396 輪，第 397 輪失敗。兩組均返回 IRQ 並觀察到新的寫入見證，退出 1，清理與程序回收已核驗；沒有 runner 失聯或上傳器故障。失敗呼叫前至返回約為 2.068/2.002 秒。各自有明確邊界的採樣區間內，Intel HVF 執行計數增加約 2.063/1.996 秒，Darwin 執行緒 CPU 計數增加約 2.068/2.001 秒。讀取位於呼叫、狀態擷取區間之外，採樣寬度與原始計數均保留。巢狀宿主回報的時鐘增加了牆鐘之外的證據，但不能證明實體 guest 執行、排程時長或核心根因。全部 8 次嘗試及 38 份壓縮包已核驗並保留，5 毫秒切片和每輪 2 秒預算未變。雙映像 vCPU、VM 重建與完整 NeverD Intel 驗收仍未完成。[原始證據與計量](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
 
 `ca8da7d` 的協定 4 HLT 對照兩組均以作業取消結束：macOS 15 [37263893167](https://github.com/gmh5225/test_mac_intel/actions/runs/37263893167) 與 macOS 26 [37263895410](https://github.com/gmh5225/test_mac_intel/actions/runs/37263895410)。對應 GitHub check-run 註記確認超過 30 分鐘作業上限，沒有明確的失聯註記。每組僅保留執行前工件，兩份可下載工作流程日誌 ZIP 均無成員。原生啟動、完成輪數、HLT 結束、程序結束與回收均未經核驗。設定了 5 毫秒切片、每輪 2 秒及程序 600 秒預算，並不能證明逾時處理或回收已執行。此 final-only 對照不能定位阻塞操作或核心根因，也未通過原定時器門檻或完整 Intel 驗收。全部 10 次嘗試和 40 份原始工件 ZIP 均已保留。離線校驗命令核對壓縮包摘要、原始碼版本、程序與預算證據並重算補充分析；11 語言索引將缺失輪數明確標為未知。[證據與複核方法](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle)。
+
+## ARM64 watchdog 最佳化實驗 (2026-10-05)
+
+移除 watchdog 在 disarm 後的通知通過了正確性檢查，但未證明可靠的效能收益。使用相同 Release 設定與依賴交替測量 15 組，`initialization`、`integer`、`branch`、`memory`、`tls_call`、`two_cpu_switch` 的基線/候選耗時配對中位比分別為 **0.902、0.897、0.856、1.030、0.912、0.969**；大於 1 才有利於候選。宿主仍有其他編譯工作，樣本存在長尾，不能據此認定變更造成效能退步。執行時變更已撤回，保留原通知；新增三項回歸涵蓋 disarm 後更早期限重啟、disarm 後解構，以及區域停止令牌的生命週期結束。
+
+最終保留的原始碼 `6c4a5ef1f` 已獨立通過 32 項 RunControl、27/27 傳輸測試、完整 CPU 清單（1429 通過、10644 跳過，27/27 必需項）與 Darwin（65 通過、221 跳過，39/39 必需項），零失敗。三項原生中斷/維護復原方法也各連續通過 1000 次，且確認子行程已回收。清單互有重疊，不能相加；跳過項屬停用或異構後端/架構。這只證明有邊界的原生 ARM64 覆蓋，不代表 Intel 執行、完整 Apple OS 模擬或效能排名。Intel 僅做本機 x86-64 語法編譯。
+
+[原始配對樣本](../benchmarks/2026-10-05-arm64-hvf-watchdog.json) · [原始碼與設定](../benchmarks/2026-10-05-arm64-hvf-watchdog-metadata.json)
