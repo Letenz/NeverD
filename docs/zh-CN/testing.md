@@ -121,6 +121,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `LLVMScalarProjection.*` 覆盖嵌套字段、位窗口、未使用参数保留、多返回、回边、未选中运算的溢出/移位/assume 义务、最后分区失败、非终止、未知契约、输入修改和精确/少一预算。四个目标三元组验证共享语义。`LLVMScalarProjectionCompiled.*` 通过 LLVM 数组桥接原始聚合，与投影窗口及独立无符号算术在 O0/O2 下对照。`SymExpr.RightShift*` 穷举字节对，检查符号扩展、进位、保留高位、完整计数及有界发现。
 
+`NeverDLLVMScalarStateProjectionTests` 覆盖重叠及非对齐窗口、8/16/32/64 位单元、循环、入口掩码、源修改、状态范围、保留的 poison、外部内存拒绝及精确/少一预算。原内存函数与 LLVM 聚合桥在 O0/O2 下对独立字节/算术 oracle 执行 172,032 次比较；标量证明另行检查。`SymKnownBits.*` 穷举字节对，检查 128 位、不同因子、扩大掩码、回绕求和及预算边界。`LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` 检查 O0/O2 的条件单次求值及 bundle 显式拒绝。
+
 循环元数据回归测试在全部控制分区及精确/少一预算下，将计数循环与独立公式比较。过大或为零的剥离历史计数不能掩盖错误结果、不终止或 poison。通过 API 构造的畸形元数据单独验证导入器拒绝行为，避免与 LLVM 汇编解析混淆；机器状态测试保留状态副作用及输入限制。
 
 初始化契约回归覆盖部分及分离的字节范围、固定别名、两个分支、每个返回点、循环首轮读取和循环内先写后读。先读后写、漏写、客体写入、未知别名、特殊内存访问、对象外范围，以及输入／工作预算耗尽，都必须失败。独立的仅输出状态字 C 用例在 O1/O2 编译后保留精确 LLVM 属性，并通过全新的原生到 LLVM 组合证明。
@@ -138,6 +140,8 @@ cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel
 build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

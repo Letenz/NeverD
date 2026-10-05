@@ -3956,6 +3956,19 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
 
   if (const auto *Callee = Call.getCalledFunction()) {
     const auto IID = Callee->getIntrinsicID();
+    if (IID == llvm::Intrinsic::assume) {
+      if (!Callee->isDeclaration() || !llvm::isa<llvm::CallInst>(Call) ||
+          Call.arg_size() != 1 ||
+          !Call.getArgOperand(0)->getType()->isIntegerTy(1) ||
+          !Call.getType()->isVoidTy() || Call.hasOperandBundles())
+        throw std::runtime_error("unsupported LLVM assume contract");
+      // The conditional evaluates its predicate once. A compiler builtin
+      // assume can discard side effects when the predicate was inlined here.
+      const std::string Expr = "(" + valueStr(Call.getArgOperand(0)) +
+                               " ? (void)0 : __builtin_unreachable())";
+      RenderingCalls.pop_back();
+      return Expr;
+    }
     if (IID == llvm::Intrinsic::fshl || IID == llvm::Intrinsic::fshr) {
       const auto *Ty = llvm::dyn_cast<llvm::IntegerType>(Call.getType());
       const unsigned Width = Ty ? Ty->getBitWidth() : 0;

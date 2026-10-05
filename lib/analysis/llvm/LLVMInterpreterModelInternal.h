@@ -45,6 +45,23 @@ inline LowOp op(NdOp Code, NdVar Output, std::initializer_list<NdVar> Inputs) {
   return O;
 }
 
+/// One recipe for a violated integer range, shared by the LowIR importer and
+/// LLVM projections that must materialize a disappearing return attribute.
+struct RangeObligation {
+  enum Kind { None, Always, Bounds } Test = None;
+  uint64_t Lower = 0, Upper = 0;
+  bool Wrapped = false;
+};
+inline RangeObligation rangeObligation(const llvm::ConstantRange &Range) {
+  if (Range.isFullSet())
+    return {};
+  if (Range.isEmptySet())
+    return {RangeObligation::Always};
+  return {RangeObligation::Bounds, Range.getLower().getZExtValue(),
+          Range.getUpper().getZExtValue(),
+          Range.getLower().uge(Range.getUpper())};
+}
+
 class Builder {
   const llvm::Function &F;
   const LLVMInterpreterModelLimits &Limits;
@@ -103,6 +120,11 @@ public:
       : F(Function), Limits(Limits), ScalarArguments(ScalarArguments),
         StateBytes(StateBytes) {}
   InterpreterMachineStateModel build();
+  /// Valid only after successful build(). Identities describe this exact input
+  /// function; consumers cannot use them as guest-memory or alias facts.
+  const std::map<const llvm::Value *, int64_t> &statePointerOffsets() const {
+    return StateOffsets;
+  }
 };
 } // namespace neverd::analysis::llvm_model
 #endif

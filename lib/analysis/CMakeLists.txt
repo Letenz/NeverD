@@ -44,6 +44,13 @@ add_neverd_component_library(NeverDLLVMScalarResultProjection
   LLVM_COMPONENTS Core Support TransformUtils
 )
 
+add_neverd_component_library(NeverDLLVMScalarStateProjection
+  arch/x86_64/LLVMScalarStateProjection.cpp
+  llvm/LLVMScalarStateProjection.cpp
+  LINK_COMPONENTS LLVMScalarResultProjection
+  LLVM_COMPONENTS Analysis Core Support TransformUtils
+)
+
 add_neverd_component_library(NeverDInterpreterLLVMRefinement
   arch/x86_64/InterpreterLLVMPreparation.cpp
   arch/x86_64/InterpreterLLVMRefinement.cpp

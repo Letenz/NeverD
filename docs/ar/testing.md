@@ -123,6 +123,8 @@ build-release/bin/NeverDX86NoIndexAddressTests
 
 تغطي `LLVMScalarProjection.*` الحقول المتداخلة والنوافذ والمعاملات غير المستخدمة المحفوظة وتعدد الإرجاع والحواف الخلفية والتزامات overflow/shift/assume غير المختارة وفشل آخر تقسيم وعدم الانتهاء والعقود المجهولة وتغير المدخل والميزانية الدقيقة أو الناقصة بوحدة. تختبر أربعة أهداف الدلالات المشتركة. تقارن `LLVMScalarProjectionCompiled.*` التجميع الأصلي عبر جسر مصفوفة LLVM والإسقاطات بحساب مستقل غير موقع عند O0/O2. تستنفد `SymExpr.RightShift*` أزواج البايتات وتختبر تمديد الإشارة والحمل والبتات العليا المحتفظ بها والعدادات الكاملة وحدود البحث.
 
+تغطي `NeverDLLVMScalarStateProjectionTests` النوافذ المتداخلة وغير المحاذاة، وخلايا 8/16/32/64 بت، والحلقات، والأقنعة، وتغييرات المصدر، وحدود الحالة، وحفظ poison، ورفض الذاكرة الخارجية وحدود الميزانية. تنفذ الدوال الأصلية وجسور تجميع LLVM عدد 172,032 مقارنة O0/O2 مع مراجع مستقلة؛ تفحص البراهين العددية بصورة منفصلة. تستنفد `SymKnownBits.*` أزواج البايتات وتفحص 128 بت والعوامل المختلفة والأقنعة الأوسع والتفاف الجمع والميزانيات. تختبر `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` تقييم الشرط مرة واحدة ورفض bundles.
+
 تقارن اختبارات بيانات الحلقة الوصفية الحلقات المعدودة بصيغة مستقلة عبر جميع أقسام التحكم، بميزانيات دقيقة وأخرى أقل بوحدة. لا تخفي قيم تاريخ التقشير الكبيرة أو الصفرية النتائج الخاطئة أو عدم الانتهاء أو poison. تُنشأ البيانات الوصفية المشوهة عبر API لاختبار رفض المستورد بشكل منفصل عن تحليل تجميع LLVM؛ وتحافظ اختبارات حالة الآلة على تأثيرات الحالة وحدود المدخلات.
 
 تغطي اختبارات التهيئة النطاقات الجزئية والمنفصلة والأسماء البديلة الثابتة وكلا الفرعين وكل عودة وقراءات التكرار الأول والكتابة قبل القراءة داخل الحلقات. يجب أن تفشل القراءة قبل الكتابة والكتابات المفقودة أو كتابات الضيف والأسماء البديلة المجهولة والوصول الخاص والنطاقات خارج الكائن ونفاد الميزانيات. يُترجم مثال C مستقل يكتب كلمة حالة مخصصة للإخراج عند O1/O2، ويحتفظ بسمات LLVM الدقيقة ويجتاز برهاناً مركباً جديداً من الشيفرة الأصلية إلى LLVM.
@@ -140,6 +142,8 @@ cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel
 build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

@@ -127,6 +127,8 @@ Zusätzliche Schleifentests decken schmale überlaufende Endindizes, getrennte B
 
 `LLVMScalarProjection.*` prüft verschachtelte Felder, Bitfenster, erhaltene ungenutzte Argumente, mehrere Rückgaben, Rückkanten, nicht ausgewählte overflow/shift/assume-Bedingungen, Fehler der letzten Partition, Nichtterminierung, unbekannte Verträge, geänderte Eingaben und exakte/um eins zu kleine Budgets. Vier Zieltripel testen die gemeinsame Semantik. `LLVMScalarProjectionCompiled.*` vergleicht das Originalaggregat über eine LLVM-Array-Brücke und projizierte Fenster mit unabhängiger vorzeichenloser Arithmetik bei O0/O2. `SymExpr.RightShift*` erschöpft Bytepaare und prüft Vorzeichenerweiterung, Überträge, erhaltene hohe Bits, vollständige Zähler und Suchgrenzen.
 
+`NeverDLLVMScalarStateProjectionTests` prüft überlappende/unausgerichtete Fenster, 8/16/32/64-Bit-Zellen, Schleifen, Eingangsmasken, Quelländerungen, Statusbereiche, erhaltenes Poison, externen Speicher und exakte/knappe Budgets. Speicheroriginale und LLVM-Aggregatbrücken führen 172.032 O0/O2-Vergleiche mit unabhängigen Byte-/Arithmetikorakeln aus; skalare Beweise bleiben getrennt. `SymKnownBits.*` erschöpft Bytepaare und prüft 128 Bit, andere Faktoren, erweiterte Masken, überlaufende Summen und Budgets. `LLVMCIntrinsicSemantics.AssumeEvaluatesItsConditionAndRefusesBundles` prüft einmalige Auswertung bei O0/O2 und Bundle-Ablehnung.
+
 Schleifenmetadaten-Regressionen vergleichen Zählschleifen mit einer unabhängigen Formel über alle Kontrollpartitionen bei exakten und um eins zu kleinen Budgets. Große oder nullwertige Peeling-Zähler können falsche Ergebnisse, Nichtterminierung oder poison nicht verdecken. Per API erzeugte fehlerhafte Metadaten prüfen die Importer-Ablehnung getrennt vom LLVM-Assembly-Parser; Maschinenzustandstests erhalten Zustandseffekte und Eingabegrenzen.
 
 Initialisierungsregressionen prüfen partielle und getrennte Bytebereiche, feste Aliasse, beide Zweige, jede Rückkehr, Lesezugriffe der ersten Iteration und Schreiben vor Lesen in Schleifen. Lesen vor Schreiben, fehlende Schreibzugriffe, Gastspeicherungen, unbekannte Aliasse, spezielle Speicherzugriffe, Bereiche außerhalb des Objekts und erschöpfte Budgets müssen scheitern. Ein unabhängiges C-Beispiel mit einem nur geschriebenen Zustandswort wird mit O1/O2 kompiliert, behält die exakten LLVM-Attribute und besteht eine neue kombinierte Prüfung von nativem Code zu LLVM.
@@ -144,6 +146,8 @@ cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel
 build-release/bin/NeverDLLVMScalarEquivalenceTests
 cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
 build-release/bin/NeverDLLVMScalarResultProjectionTests
+cmake --build build-release --target NeverDLLVMScalarStateProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarStateProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
