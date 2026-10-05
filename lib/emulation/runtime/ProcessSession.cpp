@@ -8,6 +8,7 @@
 #include "../core/ExecutionDiagnostics.h"
 #include "../os/darwin/process/DarwinProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
+#include "../os/linux/kernel/LinuxSignals.h"
 #include "../os/linux/kernel/LinuxTime.h"
 #include "../os/linux/process/LinuxProcess.h"
 #include "../os/windows/process/WindowsProcess.h"
@@ -51,6 +52,13 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
                                              const ProcessOptions &Options) {
   if (Options.Windows && Profile != ProcessProfile::WindowsPE64)
     return diagnostic::error(process_report::WindowsProfile);
+  if (Options.LinuxSignals) {
+    if (Profile != ProcessProfile::LinuxELF64 &&
+        Profile != ProcessProfile::AndroidNativeAArch64)
+      return diagnostic::error(process_report::LinuxSignalsProfile);
+    if (auto E = linux_model::validateSignalOptions(*Options.LinuxSignals))
+      return std::move(E);
+  }
   if (Options.LinuxFiles) {
     if (Profile != ProcessProfile::LinuxELF64 &&
         Profile != ProcessProfile::AndroidNativeAArch64)

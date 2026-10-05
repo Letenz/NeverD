@@ -7,6 +7,9 @@
 // C++.
 #ifdef NEVERD_ANDROID_DIAGNOSTIC
 NEVERD_ANDROID_DIAGNOSTIC(
+    SignalIndeterminateOutput,
+    "unmodeled Bionic sigaction output after a failed kernel query")
+NEVERD_ANDROID_DIAGNOSTIC(
     ThreadOptions,
     "thread_limit must be 1..256; drain_threads requires more than one")
 NEVERD_ANDROID_DIAGNOSTIC(
