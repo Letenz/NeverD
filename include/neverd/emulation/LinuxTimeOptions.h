@@ -19,12 +19,16 @@ struct LinuxTimezone {
   int32_t MinutesWest = 0;
   int32_t DSTTime = 0;
 };
-/// Fixed observations for Linux ELF64 and Android native workloads. Keys are
-/// Linux clock IDs. Reads do not advance clocks or consult the host. An absent
-/// clock/timezone has no modeled value; zero must be supplied explicitly.
+/// Explicit observations for Linux ELF64 and Android native workloads. Keys
+/// are Linux clock IDs. An absent clock/timezone has no modeled value; zero
+/// must be supplied explicitly. Reads never consult or advance host time.
 struct LinuxTimeOptions {
   std::map<int32_t, LinuxTimespec> Clocks;
   std::optional<LinuxTimezone> Timezone;
+  /// Opt in to relative nanosleep without signals. Time advances to the next
+  /// sleep deadline only when no guest thread can run. Only realtime,
+  /// monotonic and boottime observations may accompany this policy.
+  bool AdvanceOnIdle = false;
 };
 } // namespace neverd::emulation
 #endif

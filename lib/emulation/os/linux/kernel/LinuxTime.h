@@ -13,12 +13,35 @@ namespace neverd::emulation::linux_model {
 #undef NEVERD_LINUX_CLOCK
 bool isNormalizedTimespec(const LinuxTimespec &Value);
 llvm::Error validateTimeOptions(const LinuxTimeOptions &Options);
-/// Missing input stops the workload without inventing a timestamp.
-std::optional<LinuxTimespec>
-clockValue(int32_t ID, const ProcessOptions &Options, ProcessResult &Result);
+bool isKnownClock(int32_t ID);
+
+/// One workload's clock observations and elapsed virtual nanoseconds. Sleep
+/// admission and idle advancement share this owner across every service ABI.
+class LinuxClock {
+public:
+  explicit LinuxClock(const std::optional<LinuxTimeOptions> &Options)
+      : Options(Options) {}
+  bool advancesOnIdle() const { return Options && Options->AdvanceOnIdle; }
+  uint64_t elapsed() const { return Elapsed; }
+  /// Missing input stops the workload without inventing a timestamp.
+  std::optional<LinuxTimespec> read(int32_t ID, ProcessResult &Result) const;
+  std::optional<uint64_t> deadline(const LinuxTimespec &Duration,
+                                   ProcessResult &Result) const;
+  /// Validate all supplied clocks before committing any elapsed time.
+  bool advanceTo(uint64_t Deadline, ProcessResult &Result);
+
+private:
+  const std::optional<LinuxTimeOptions> &Options;
+  uint64_t Elapsed = 0;
+};
 llvm::Expected<std::optional<uint64_t>>
 timeService(ExecutionBackend &CPU, ServiceKind Kind,
             const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-            const ProcessOptions &Options, ProcessResult &Result);
+            const ProcessOptions &Options, LinuxClock &Clock,
+            ProcessResult &Result);
+llvm::Expected<std::optional<uint64_t>>
+sleepService(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
+             const MemoryLayout &Layout, LinuxClock &Clock,
+             ThreadContext *Thread, ProcessResult &Result);
 } // namespace neverd::emulation::linux_model
 #endif

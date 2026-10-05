@@ -914,6 +914,14 @@ hosts skip explicitly; backend cells distinguish unavailable execution.
 
 ## Process emulation checks
 
+`AndroidSleepTests.cpp` compiles independent O0/O2 callers with ordinary, APS2 and
+RELR relocations. It checks raw, named and variadic relative sleeps, complete
+observed bytes, request/remaining aliases, malformed inputs, multiple deadlines,
+saved registers/TLS/errno, join/mutex/once continuations, provider lifetime and
+pending events at instruction limits. `LinuxClockTests.cpp` checks shared elapsed
+time and atomic refusal on clock/deadline overflow. The x64/ARM64 Linux process
+fixtures verify raw sleep errors, unchanged input and both updated clock layouts.
+
 `AndroidNative.FamilyFallbacksPreserveDiagnosticsAndProviderPrecedence` checks
 unknown pthread attribute and mutex members, disabled thread calls and generic
 unknown imports through real dynamic lookups. The same calls after library close

@@ -35,7 +35,12 @@ linuxTimeOptionsFromJSON(const llvm::json::Value &Value) {
   LinuxTimeOptions Out;
   for (const auto &[Key, V] : *Object) {
     llvm::StringRef Name = Key;
-    if (Name == field::Clocks) {
+    if (Name == field::AdvanceOnIdle) {
+      auto Enabled = V.getAsBoolean();
+      if (!Enabled)
+        return invalid(Name);
+      Out.AdvanceOnIdle = *Enabled;
+    } else if (Name == field::Clocks) {
       const auto *Clocks = V.getAsArray();
       if (!Clocks)
         return invalid(Name);

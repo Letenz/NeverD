@@ -41,8 +41,7 @@ BionicResult Bionic::queryConfiguration(const NativeCallEvent &Call) {
 
 BionicResult Bionic::getTime(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
-  auto Now =
-      linux_model::clockValue(linux_model::ClockRealtime, Options, Result);
+  auto Now = Kernel.clock().read(linux_model::ClockRealtime, Result);
   if (!Now)
     return std::optional<BionicValue>();
   // API 28's fallback obtains a timeval, then stores through the caller's
