@@ -78,6 +78,8 @@ KVM/WHP는 비공개 `FXSAVE64` 실행으로 `MXCSR_MASK`를 탐색하고 부호
 
 `PAUSE`(`F3 90`)는 네이티브 `driver-strict`를 포함하여 KVM/WHP와 checked Unicorn의 공통 x64 머신 경계를 통해 실행됩니다. `X64PauseTests.cpp`는 전체 상태 보존, 실행 전 중지, 컨텍스트 복원, 잘못된 `LOCK` 거부, 스핀 루프의 시간 제한과 재개를 검증합니다. 이 프로세서 힌트는 게스트 스레드를 스케줄링하거나 특정 지연을 보장하지 않습니다.
 
+`PUSHFQ`(`9C`)와 16비트 `PUSHF`(`66 9C`)는 `driver-strict`를 포함한 네이티브 KVM/WHP 및 checked Unicorn에서 실행됩니다. 공유 ISA 계층은 RAM 트랜잭션을 커밋하기 전에 스택 이미지에서 내부 단일 단계 실행용 TF를 제거합니다. 암시적 스택 주소에는 전체 RSP를 사용하며 접두사 순서가 피연산자 너비를 결정합니다. 전체 범위 권한 검사, 관찰자 중지, 오류 재시도는 원자성을 유지합니다. `POPF/POPFQ`는 아직 지원하지 않습니다. `X64PushFlagsTests.cpp`는 허용된 플래그 조합 256개와 인코딩 9개, 페이지 경계를 넘는 별칭, 사용자 권한, 취소 및 컨텍스트 복원을 검사합니다.
+
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
 `X64PackedShiftInstructions.def`는 legacy SSE2 패킹 시프트 열 종류를 허용합니다. 요소 시프트의 횟수는 imm8 또는 XMM/정렬된 m128이며 바이트 시프트는 imm8만 허용합니다. 가변 횟수는 부호 없는 하위 64비트를 사용하고 스칼라 횟수 마스킹을 하지 않으며 상위 64비트는 무시합니다. 횟수가 0이거나 범위를 넘어도 메모리 피연산자는 16바이트 전체를 읽어야 합니다. FLAGS와 MXCSR은 유지되며 MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
