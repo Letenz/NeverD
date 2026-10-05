@@ -15,6 +15,11 @@ analysis and comparison output belong outside the repository.
 
 ## Closed in the public SEH corpus
 
+- x86 EH3/EH4 handler roots now recover the proven registration EBP in shared
+  MedIR, using CFGBuilder's exceptional predecessors. Modified frame pointers
+  and other unproven registers remain unspecified; HighC no longer guesses
+  that an incoming EBP equals entry ESP minus four. The public x86 SEH probe
+  keeps normal, handler and continuation accesses on the same frame.
 - Fixed x64 SEH handlers recover their established SP in shared MedIR from
   matching unwind, decoded prologue and converted SP effects. Normal, handler
   and continuation accesses share the same local bytes on both C routes.
@@ -66,9 +71,26 @@ analysis and comparison output belong outside the repository.
   volatile store into shared image storage. Both normal and handler values must
   reach that common sink after `__except`, including optimized PHI copies; a
   separate scalar global at the interior image address is no longer expected.
+- A structured `__finally` omits the cleanup terminator's implicit unwind to
+  caller instead of printing a return that suppresses it. The continuation
+  fixture uses explicit SEH range markers and verifier-valid unwind edges.
 
 ## Closed control-flow regressions
 
+- LLVMC forwards exact private scalar homes through bounded CFG reaching
+  definitions. Joins require agreement from every incoming edge; cycles,
+  missing definitions and excessive expansion keep explicit snapshots. Shared
+  one-call cleanup tails use each edge's actual object. Generated C execution
+  covers mutable homes, repeated diamonds and both cleanup paths.
+- Repeated field tests remain explicit across calls that may write memory,
+  including calls between a load and its first test. Read-only predicates can
+  still use the existing simplification. Debug records narrower than a machine
+  access keep the original frame backing bytes; a 16-byte copy through an
+  8-byte debug view is checked by executing the generated C at O0 and O2.
+- Ordinary scalar globals use their declared C objects for exact accesses.
+  Different-width copies use the object's address, including the optional
+  unaligned-pointer spelling. O0/O2 execution checks full and partial accesses;
+  the SEH corpus keeps handler writes inside their recovered exception arms.
 - LLVMC now invokes bounded scalar loop recovery in its source clone when no
   image/debug projection applies. Search and cleanup repeat under shared
   budgets, and the exact final body is reproved against the original. Function

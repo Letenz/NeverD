@@ -2557,15 +2557,10 @@ std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
           Cur->Var.RegOff == getTargetRegInfo(Opts.TheArch).FramePointer) {
         const int64_t Slot =
             static_cast<int64_t>(getTargetRegInfo(Opts.TheArch).PointerSize);
-        // x86 _except_handler3 re-enters with the established EBP
-        // (`push ebp; mov ebp, esp`), which is entry ESP minus one slot.
-        // Treating that EBP as displacement 0 makes [ebp-0x1c] an adjacent
-        // slot from the try body's `(ESP-4)-0x1c`, and `v = EBP` aliases
-        // poison the join load. Name EBP as that established frame.
-        // This must run before the unassigned-SSA0 heuristic: incoming EBP
-        // is also SSA 0 and would otherwise keep Acc as [ebp-k].
+        // The x86 registration frame is restored explicitly by shared MedIR.
+        // Without that proof an arbitrary incoming EBP is not entry ESP - 4.
         if (Opts.TheArch == Arch::X86)
-          return Acc - Slot;
+          return std::nullopt;
         const int64_t Order[3] = {Acc - Slot, Acc, Acc + Slot};
         for (int64_t Adj : Order)
           if (Slots.count(Adj))

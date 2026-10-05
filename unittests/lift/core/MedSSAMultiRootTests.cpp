@@ -828,6 +828,82 @@ TEST(MedSEHHandlerEntry, ArgumentLiveIntoTheHandlerStaysAParameter) {
   EXPECT_GE(Param->Id, 0) << "rdx is a placeholder, not the read argument";
 }
 
+TEST(MedSEHHandlerEntry, X86RegistrationRestoresOnlyTheProvenFramePointer) {
+  const auto &TRI = getTargetRegInfo(Arch::X86);
+  for (auto Encoding : {ExceptionEncoding::X86ScopeTableEH3,
+                        ExceptionEncoding::X86ScopeTableEH4}) {
+    for (bool WritesFrame : {false, true}) {
+      SCOPED_TRACE(WritesFrame);
+      LowFunc Low;
+      Low.Entry = 0x1000;
+      Low.Name = "x86_registration_frame";
+      Low.Blocks.resize(4);
+      for (unsigned I = 0; I < 4; ++I) {
+        auto &B = Low.Blocks[I];
+        B.Id = I;
+        B.StartAddr = 0x1000 + I * 0x10;
+        B.EndAddr = B.StartAddr + 0x10;
+      }
+      Low.Blocks[0].Succs = {1};
+      Low.Blocks[1].Preds = {0};
+      Low.Blocks[1].Succs = {3};
+      Low.Blocks[2].Succs = {3};
+      Low.Blocks[3].Preds = {1, 2};
+      Low.Blocks[1].ExceptionalSuccs.push_back(
+          {2, 0x1020, ExceptionalEdgeKind::SEHHandler});
+      Low.Blocks[2].ExceptionalPreds.push_back(
+          {1, 0x1020, ExceptionalEdgeKind::SEHHandler});
+      ExceptionFunction EH;
+      EH.CodeRange = {0x1000, 0x1040};
+      EH.Encoding = Encoding;
+      EH.Registration.emplace();
+      Low.ExceptionMetadata = EH;
+      auto Copy = [&](unsigned Block, uint64_t Register, uint64_t Value) {
+        LowOp Op;
+        Op.Addr = Low.Blocks[Block].StartAddr;
+        Op.Opcode = NdOp::COPY;
+        Op.Output = NdVar::reg(Register, 4);
+        Op.addInput(NdVar::scalar(Value, 4));
+        Low.Blocks[Block].Ops.push_back(Op);
+      };
+      Copy(0, TRI.FramePointer, 0x2000);
+      Copy(0, x86reg::RBX, 99);
+      if (WritesFrame)
+        Copy(1, TRI.FramePointer, 0x3000);
+      for (unsigned I = 0; I < 2; ++I) {
+        LowOp Store;
+        Store.Addr = 0x1020 + I;
+        Store.Opcode = NdOp::STORE;
+        Store.addInput(NdVar::cst(0x4000 + I * 4, 4));
+        Store.addInput(NdVar::reg(I ? x86reg::RBX : TRI.FramePointer, 4));
+        Low.Blocks[2].Ops.push_back(Store);
+      }
+      for (unsigned I = 0; I < 4; ++I) {
+        LowOp End;
+        End.Addr = Low.Blocks[I].EndAddr - 1;
+        End.Opcode = I == 3 ? NdOp::RETURN : NdOp::BRANCH;
+        if (I != 3)
+          End.addInput(NdVar::cst(I == 0 ? 0x1010 : 0x1030, 4));
+        Low.Blocks[I].Ops.push_back(End);
+      }
+      auto Med =
+          LowToMedConverter().convert(Low, Arch::X86, BinaryFormat::COFF);
+      ASSERT_TRUE(verifyMedFunc(Med, "x86-registration-frame"));
+      auto Frame = storedValueAt(Med, 0x1020);
+      auto Other = storedValueAt(Med, 0x1021);
+      ASSERT_TRUE(Frame);
+      ASSERT_TRUE(Other);
+      if (WritesFrame)
+        EXPECT_EQ(Frame->Kind, MedVar::Unspecified) << Frame->display();
+      else {
+        EXPECT_TRUE(Frame->isConst()) << Frame->display();
+        EXPECT_EQ(Frame->ConstVal, 0x2000u);
+      }
+      EXPECT_EQ(Other->Kind, MedVar::Unspecified) << Other->display();
+    }
+  }
+}
+
 TEST(MedSEHHandlerEntry, NonvolatileRegisterWrittenInTheRangeIsUnspecified) {
   // mov rdi,rcx inside the protected range; the handler stores rdi. Where
   // the exception struck decides rdi, so the handler cannot know it.

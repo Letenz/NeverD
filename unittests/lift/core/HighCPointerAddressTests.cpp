@@ -43,6 +43,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/ModRef.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -11981,6 +11982,8 @@ TEST(LLVMCPointerAddresses, ForwardsDeadNullFieldIntoCall) {
     llvm::FunctionType *KindTy = llvm::FunctionType::get(I32, {Ptr}, false);
     llvm::Function *IsKind = llvm::Function::Create(
         KindTy, llvm::GlobalValue::ExternalLinkage, "IsKind", Module);
+    // Repeated field tests are implied only across a read-only predicate.
+    IsKind->setMemoryEffects(llvm::MemoryEffects::readOnly());
     llvm::FunctionType *UseTy =
         llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I32}, false);
     llvm::Function *Use = llvm::Function::Create(
@@ -36003,8 +36006,10 @@ TEST(LLVMCPointerAddresses, SPFrameLocalOwnsNameOverStaleFrameProcOffset) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Frame =
       Builder.CreateAlloca(llvm::ArrayType::get(I8, 208), nullptr, "frame");
-  (void)Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 96),
-                                  "frame_end");
+  llvm::Value *FrameEnd = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 96), "frame_end");
+  auto *EntrySP = Builder.CreateAlloca(I64, nullptr, "RSP");
+  Builder.CreateStore(Builder.CreatePtrToInt(FrameEnd, I64), EntrySP);
   llvm::Value *Actual = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 48), "actual");
   llvm::Value *Stale = Builder.CreateInBoundsGEP(
@@ -36091,8 +36096,10 @@ TEST(LLVMCPointerAddresses, WideArgListCopyViewsReusedPtrBoxStorage) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Frame =
       Builder.CreateAlloca(llvm::ArrayType::get(I8, 208), nullptr, "frame");
-  (void)Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 96),
-                                  "frame_end");
+  llvm::Value *FrameEnd = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 96), "frame_end");
+  auto *EntrySP = Builder.CreateAlloca(I64, nullptr, "RSP");
+  Builder.CreateStore(Builder.CreatePtrToInt(FrameEnd, I64), EntrySP);
   llvm::Value *Aux = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 48), "aux");
   llvm::Value *Copy = Builder.CreateInBoundsGEP(
@@ -38661,10 +38668,13 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
       << Source;
   EXPECT_EQ(Source.find("nd_seh_filter_"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v2 ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return (int32_t)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return __builtin_bit_cast(int32_t,"),
+            std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("(int64_t)(uint32_t)(int32_t)"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("return (int32_t)(var_m18 + 1);"), std::string::npos)
+  EXPECT_NE(Source.find("return __builtin_bit_cast(int32_t, var_m18 + 1);"),
+            std::string::npos)
       << Source;
 }
 
@@ -38963,19 +38973,13 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   const size_t ExceptAt = Source.find("} __except");
   expectCapturedSehExceptionCode(Source);
   const size_t RaiseAt = Source.find("RaiseException(");
-  // Both paths write the same four frame bytes. Under-aligned accesses copy
-  // a captured uint32_t rather than dereferencing a typed frame pointer.
-  auto FrameStoreAt = [&](const std::string &Value) -> size_t {
-    const std::regex Store(
-        R"(\{ uint32_t (\w+) = )" + Value +
-        R"(;\s*__builtin_memcpy\(\(void\*\)\(\(\(char\*\)&frame0 \+ 48\)\), &\1, 4\);\s*\})");
-    std::smatch Match;
-    return std::regex_search(Source, Match, Store)
-               ? static_cast<size_t>(Match.position())
-               : std::string::npos;
-  };
-  const size_t SuccessAt = FrameStoreAt("-100");
-  const size_t HandlerAt = FrameStoreAt("41");
+  // The exact four-byte local is shared by both arms and the continuation.
+  const std::string Slot = assignedNameBefore(Source, "= -100;");
+  ASSERT_FALSE(Slot.empty()) << Source;
+  EXPECT_EQ(assignedNameBefore(Source, "= 41;"), Slot) << Source;
+  EXPECT_NE(Source.find("uint32_t " + Slot + ";"), std::string::npos) << Source;
+  const size_t SuccessAt = Source.find(Slot + " = -100;");
+  const size_t HandlerAt = Source.find(Slot + " = 41;");
   ASSERT_NE(TryAt, std::string::npos) << Source;
   ASSERT_NE(ExceptAt, std::string::npos) << Source;
   ASSERT_NE(RaiseAt, std::string::npos) << Source;
@@ -38987,30 +38991,16 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   EXPECT_LT(TryAt, SuccessAt) << Source;
   EXPECT_LT(SuccessAt, ExceptAt) << Source;
   EXPECT_LT(ExceptAt, HandlerAt) << Source;
-  // Both paths use the proven post-prologue stack pointer and the same local.
-  // Their stores must alias the later load through the joined carrier.
-  EXPECT_NE(Source.find("uint8_t frame0["), std::string::npos) << Source;
   const size_t ExceptCloseAt = Source.find("\n    }\n", ExceptAt);
   ASSERT_NE(ExceptCloseAt, std::string::npos) << Source;
   EXPECT_LT(HandlerAt, ExceptCloseAt) << Source;
-  const size_t NormalCarrier =
-      Source.find("= (uintptr_t)((char*)&frame0 + 16);");
-  const size_t HandlerCarrier =
-      Source.find("= (uintptr_t)((char*)&frame0 + 16);", HandlerAt);
-  ASSERT_NE(NormalCarrier, std::string::npos) << Source;
-  ASSERT_NE(HandlerCarrier, std::string::npos) << Source;
-  EXPECT_LT(NormalCarrier, ExceptAt) << Source;
-  EXPECT_GT(HandlerCarrier, ExceptAt) << Source;
-  const size_t CarrierStart = Source.rfind('\n', HandlerCarrier);
-  ASSERT_NE(CarrierStart, std::string::npos) << Source;
-  const std::string Carrier = Source.substr(
-      Source.find_first_not_of(' ', CarrierStart + 1),
-      HandlerCarrier - Source.find_first_not_of(' ', CarrierStart + 1) - 1);
-  const size_t NormalJoinedCarrier =
-      Source.find(Carrier + " = (uintptr_t)((char*)&frame0 + 16);");
-  ASSERT_NE(NormalJoinedCarrier, std::string::npos) << Source;
-  EXPECT_LT(NormalJoinedCarrier, ExceptAt) << Source;
-  EXPECT_NE(Source.find("= " + Carrier + ";"), std::string::npos) << Source;
+  const std::string Continuation = Source.substr(ExceptCloseAt);
+  const auto Sink =
+      capturedVolatileImageStore(Continuation, "g_140005000", 224);
+  ASSERT_TRUE(Sink.has_value()) << Source;
+  EXPECT_EQ(Sink->Value, Slot) << Source;
+  EXPECT_NE(Continuation.find("return (" + Slot + " + 1);"), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("llvm_x2E_seh_x2E_try"), std::string::npos) << Source;
   EXPECT_NE(Source.find("L_seh_catch_pad_0:\n        ;\n"), std::string::npos)
       << Source;
@@ -39279,9 +39269,9 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmOptIsVerifierClean) {
 }
 
 TEST(HighCPointerAddresses, X86ExceptEbpStoreUsesTryResultSlot) {
-  // Try body names Result as (ESP-4)-28. The outlined handler writes
-  // [ebp-28] with incoming EBP, the same established frame, then the join
-  // copies that EBP into the post-try load base.
+  // Try body names Result as (ESP-4)-28. The handler's EBP must have an
+  // explicit restoration from the shared MedIR proof before [ebp-28] can
+  // name the same result or supply the post-try load base.
   const auto I32 = NdType::makeInt(4);
   const auto I32U = NdType::makeInt(4, false);
   HighFunc Func;
@@ -39366,7 +39356,18 @@ TEST(HighCPointerAddresses, X86ExceptEbpStoreUsesTryResultSlot) {
       I32);
   Func.Body.push_back(std::move(Ret));
 
+  const std::string Unrestored = emitFunctions({Func}, Arch::X86);
+  EXPECT_NE(Unrestored.find("unknown register"), std::string::npos)
+      << Unrestored;
+
+  HighStmt RestoreFrame;
+  RestoreFrame.Kind = StmtKind::Assign;
+  RestoreFrame.Dst = HighExpr::makeVar(EBP, I32U);
+  RestoreFrame.Val = HighExpr::makeVar(V0, I32U);
+  auto &Handler = Func.Body[2].EHClauseBodies.front();
+  Handler.insert(Handler.begin(), std::move(RestoreFrame));
   const std::string Source = emitFunctions({Func}, Arch::X86);
+  EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   const std::string TrySlot = assignedNameBefore(Source, "= 0xFFFFFF9C");
   const std::string ExceptSlot = assignedNameBefore(Source, "= 41");
   ASSERT_FALSE(TrySlot.empty()) << Source;
@@ -39475,36 +39476,27 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   });
   ASSERT_NE(Normal, Stores.end()) << Source << "\n" << Blocks << HighDump;
   ASSERT_NE(Handler, Stores.end()) << Source << "\n" << Blocks << HighDump;
-  const std::string EntryFrame =
-      "(int32_t)(uint32_t)((uint32_t)(frame_base) - (uint32_t)(4))";
-  const std::string NormalFrame = assignedNameBefore(Source, "= " + EntryFrame);
-  ASSERT_FALSE(NormalFrame.empty()) << Source;
-  EXPECT_EQ(Normal->Address,
-            "(uintptr_t)((uintptr_t)(" + NormalFrame + ") - 28)")
-      << Source;
-  EXPECT_EQ(Handler->Address, "(uintptr_t)((uintptr_t)((frame_base - 4)) - 28)")
-      << Source;
+  // The recovered frame maps [ebp-28] to entry ESP-32 on every path.
+  // Both stores and the continuation must access those same four bytes.
+  const std::string JoinedAddress = "(frame_base - 32)";
+  EXPECT_EQ(Normal->Address, "(uintptr_t)(" + JoinedAddress + ")") << Source;
+  EXPECT_EQ(Handler->Address, Normal->Address) << Source;
   const size_t ExceptAt = Source.find("} __except (");
   ASSERT_NE(ExceptAt, std::string::npos) << Source;
   const std::string HandlerText = Source.substr(ExceptAt);
-  const std::string JoinFrame =
-      assignedNameBefore(HandlerText, "= (frame_base - 4);");
-  ASSERT_FALSE(JoinFrame.empty()) << Source;
-  const size_t NormalCopyAt = Source.find(JoinFrame + " = " + EntryFrame + ";");
-  ASSERT_NE(NormalCopyAt, std::string::npos) << Source;
-  EXPECT_LT(NormalCopyAt, ExceptAt) << Source;
-  const std::string JoinedAddress =
-      "(uintptr_t)((uintptr_t)(" + JoinFrame + ") - 28)";
+  EXPECT_LT(Source.find("= 0xFFFFFF9C;"), ExceptAt) << Source;
+  EXPECT_GT(Source.find("= 41;"), ExceptAt) << Source;
   const auto GlobalStore = sourceLineContaining(HandlerText, "g_4040C8 = ");
   EXPECT_NE(GlobalStore.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
   EXPECT_NE(GlobalStore.find(JoinedAddress), std::string_view::npos) << Source;
-  const auto Return = sourceLineContaining(HandlerText, "return (int32_t)");
+  const auto Return =
+      sourceLineContaining(HandlerText, "return __builtin_bit_cast(int32_t,");
   EXPECT_NE(Return.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
   EXPECT_NE(Return.find(JoinedAddress), std::string_view::npos) << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find(JoinFrame + " = 0;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
   // The retained SSA copy of the exception code must reach the call unchanged.
   const std::string Code = assignedNameBefore(Source, "= 0xE0421001;");
   ASSERT_FALSE(Code.empty()) << Source;
@@ -39664,12 +39656,18 @@ TEST(LLVMCPointerAddresses, CachedNarrowFrameTypeDoesNotClaimWideLoad) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Frame =
       Builder.CreateAlloca(llvm::ArrayType::get(I8, 96), nullptr, "frame");
-  (void)Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 64),
-                                  "frame_end");
+  llvm::Value *FrameEnd = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 64), "frame_end");
+  auto *EntrySP = Builder.CreateAlloca(I64, nullptr, "RSP");
+  Builder.CreateStore(Builder.CreatePtrToInt(FrameEnd, I64), EntrySP);
   llvm::Value *SourceSlot = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 40), "source_slot");
   llvm::Value *DestSlot = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 24), "dest_slot");
+  Builder.CreateStore(
+      llvm::ConstantInt::get(
+          Context, llvm::APInt(128, "112233445566778899aabbccddeeff00", 16)),
+      SourceSlot);
   Builder.CreateCall(UseNarrow, {SourceSlot});
   Builder.CreateStore(Builder.CreateLoad(I128, SourceSlot), DestSlot);
   Builder.CreateCall(UseWide, {DestSlot});
@@ -39683,9 +39681,29 @@ TEST(LLVMCPointerAddresses, CachedNarrowFrameTypeDoesNotClaimWideLoad) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("PtrBox narrow"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("ArgList packed"), std::string::npos) << Source;
+  // An eight-byte debug view cannot own the sixteen-byte machine access.
+  // Keep the frame backing bytes rather than creating an undersized local.
+  EXPECT_EQ(Source.find("PtrBox narrow"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_memcpy"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("packed = narrow;"), std::string::npos) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+#include <string.h>
+typedef struct { void *p; } PtrBox;
+typedef struct { uint64_t types_; void *values_; } ArgList;
+static int checked;
+void UseNarrow(void *pointer) {
+  uint64_t value = 5;
+  memcpy(pointer, &value, sizeof(value));
+}
+void UseWide(void *pointer) {
+  uint64_t values[2];
+  memcpy(values, pointer, sizeof(values));
+  checked = values[0] == 5 && values[1] == UINT64_C(0x1122334455667788);
+}
+)" + Source + R"(
+int main(void) { copy_wide(); return !checked; }
+)");
 }
 
 TEST(LLVMCPointerAddresses, OverlappingSameNameSPCandidatesKeepSlotsDistinct) {
@@ -39730,8 +39748,10 @@ TEST(LLVMCPointerAddresses, OverlappingSameNameSPCandidatesKeepSlotsDistinct) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Frame =
       Builder.CreateAlloca(llvm::ArrayType::get(I8, 128), nullptr, "frame");
-  (void)Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 96),
-                                  "frame_end");
+  llvm::Value *FrameEnd = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 96), "frame_end");
+  auto *EntrySP = Builder.CreateAlloca(I64, nullptr, "RSP");
+  Builder.CreateStore(Builder.CreatePtrToInt(FrameEnd, I64), EntrySP);
   llvm::Value *First = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 40), "first");
   llvm::Value *Second = Builder.CreateInBoundsGEP(

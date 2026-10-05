@@ -1253,12 +1253,19 @@ void LLVMCWriter::writeEHWrapClose(const EHWrapClause &Clause, int Indent) {
     emitIndent(Indent);
     OS << "}\n";
     break;
-  case EHWrapClause::Kind::SEHFinally:
+  case EHWrapClause::Kind::SEHFinally: {
     OS << "} __finally {\n";
+    // Unwinding to the caller is implicit at the end of a structured finally.
+    // An explicit return here would suppress unwinding and skip continuation.
+    const bool AlreadyOmitted = OmitCleanupRetTo.count(nullptr);
+    OmitCleanupRetTo.insert(nullptr);
     WriteBody();
+    if (!AlreadyOmitted)
+      OmitCleanupRetTo.erase(nullptr);
     emitIndent(Indent);
     OS << "}\n";
     break;
+  }
   case EHWrapClause::Kind::CxxCatch:
     OS << "} catch (" << Clause.Clause << ") {\n";
     WriteBody();
@@ -2390,6 +2397,14 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       if (!Peeled || Peeled->first != SyntheticFrame)
         continue;
       const uint64_t Offset = Peeled->second;
+      // Debug types describe views, not the extent of the machine storage.
+      // A wider access cannot use a separately declared narrow local: even a
+      // memcpy would overrun it. Keep one byte backing allocation for the frame
+      // so calls, overlapping views and wide copies still share all bytes.
+      if (auto Var = debugFrameVariable(static_cast<int64_t>(Offset) -
+                                        static_cast<int64_t>(FrameBaseOffset));
+          Var && Var->Type && Var->Type->Size && Var->Type->Size < Size)
+        Analysis.RawFrameAllocas.insert(SyntheticFrame);
       if (Offset > std::numeric_limits<uint64_t>::max() - Size) {
         OverlappingFrameAccessOffsets.insert(Offset);
         continue;
