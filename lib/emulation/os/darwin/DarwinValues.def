@@ -92,27 +92,28 @@ NEVERD_DARWIN_SERVICE_ALIAS(Pread, 414)
 #ifdef NEVERD_DARWIN_DIAGNOSTIC
 NEVERD_DARWIN_DIAGNOSTIC(FileOptionsLimit, "invalid Darwin file input limits")
 NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
-                        "invalid or conflicting Darwin catalogue path")
+                         "invalid or conflicting Darwin catalogue path")
 NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
-                        "invalid Darwin regular-file metadata or size")
+                         "invalid Darwin regular-file metadata or size")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataPath,
-                        "Darwin metadata requires an existing catalogue file")
-NEVERD_DARWIN_DIAGNOSTIC(FileMetadata,
-                        "Darwin file metadata is not configured")
-NEVERD_DARWIN_DIAGNOSTIC(FilePartialStatus,
-                        "Darwin stat64 into a partially writable buffer is unsupported")
+                         "Darwin metadata requires an existing catalogue file")
+NEVERD_DARWIN_DIAGNOSTIC(FileMetadata, "Darwin file metadata is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePartialStatus,
+    "Darwin stat64 into a partially writable buffer is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(FileOpenFlags,
-                        "unsupported Darwin open flags (read-only files only)")
-NEVERD_DARWIN_DIAGNOSTIC(FilePathForm,
-                        "unsupported Darwin path (canonical absolute paths only)")
+                         "unsupported Darwin open flags (read-only files only)")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePathForm, "unsupported Darwin path (canonical absolute paths only)")
 NEVERD_DARWIN_DIAGNOSTIC(FileDirectory,
-                        "Darwin directory descriptors are not implemented")
+                         "Darwin directory descriptors are not implemented")
 NEVERD_DARWIN_DIAGNOSTIC(FileControl, "unsupported Darwin fcntl command")
 NEVERD_DARWIN_DIAGNOSTIC(FileSeek, "unsupported Darwin data/hole seek")
-NEVERD_DARWIN_DIAGNOSTIC(FilePartialRead,
-                        "Darwin read into a partially writable buffer is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePartialRead,
+    "Darwin read into a partially writable buffer is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(
     MemoryMode, "unsupported Darwin memory mode (only private anonymous "
                 "data mappings; no JIT, file or private-gate mutation)")
