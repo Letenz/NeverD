@@ -121,9 +121,11 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
 llvm::Expected<uint64_t> LinuxFiles::read(OpenFile &File, uint64_t Address,
                                           uint64_t Size) {
   // access_ok checks the original extent, before count clamping or EOF.
-  if (Address >= Layout.UserLimit || Size > Layout.UserLimit - Address)
+  if (Address > Layout.UserLimit || Size > Layout.UserLimit - Address)
     return uint64_t(0) - BadAddress;
-  if (Size > MaxSignedIOSize)
+  // Every cursor is nonnegative. Check the original signed file extent before
+  // either transfer clamping or EOF can reduce the request.
+  if (Size > MaxSignedIOSize - File.Offset)
     return uint64_t(0) - InvalidArgument;
   const uint64_t Available =
       File.Bytes.size() - std::min<uint64_t>(File.Offset, File.Bytes.size());

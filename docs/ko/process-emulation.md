@@ -113,6 +113,8 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
 
+길이가 0인 읽기는 사용자 주소 범위의 끝에서 시작할 수 있습니다. 원래 주소 범위를 검증한 뒤 파일 위치와 원래 요청 길이의 합이 `INT64_MAX`를 초과하면 EOF에서도 `EINVAL`을 반환하며 커서는 바뀌지 않습니다.
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 프로필

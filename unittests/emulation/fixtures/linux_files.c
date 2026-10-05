@@ -6,6 +6,7 @@
 typedef unsigned long U64;
 typedef long I64;
 #if defined(__aarch64__)
+static const U64 UserLimit = 0x0001000000000000UL;
 enum {
   OpenAt = 56,
   Read = 63,
@@ -17,6 +18,7 @@ enum {
   LargeFile = 0400000
 };
 #else
+static const U64 UserLimit = 0x0000800000000000UL;
 enum {
   OpenAt = 257,
   Read = 0,
@@ -82,7 +84,18 @@ U64 files_sequence(void) {
   CHECK(raw(Seek, F, 0, 1, 0), 6);
   CHECK(raw(Seek, F, 0x7fffffffffffffffUL, 0, 0), 0x7fffffffffffffffUL);
   CHECK(raw(Seek, F, 1, 1, 0), (U64)-22);
-  CHECK(raw(Read, F, (U64)Pages, 1, 0), 0);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), (U64)-22);
+  CHECK(raw(Seek, F, 0, 1, 0), 0x7fffffffffffffffUL);
+  CHECK(raw(Read, F, UserLimit, 0, 0), 0);
+  CHECK(raw(Seek, F, (U64)-1, 1, 0), 0x7ffffffffffffffeUL);
+  CHECK(raw(Read, F, 1, 1, 0), 0);
+  CHECK(raw(Read, F, 1, 2, 0), (U64)-22);
+  CHECK(raw(Seek, F, 0, 1, 0), 0x7ffffffffffffffeUL);
+  // Validate the original count before transfer clamping or EOF.
+  CHECK(raw(Seek, F, 0x7fffffff7fffffffUL, 0, 0), 0x7fffffff7fffffffUL);
+  CHECK(raw(Read, F, 1, 0x100000000UL, 0), (U64)-22);
+  CHECK(raw(Read, F, (U64)-1, 0x100000000UL, 0), (U64)-14);
+  CHECK(raw(Seek, F, 0, 1, 0), 0x7fffffff7fffffffUL);
   CHECK(raw(Write, F, 1, 1, 0), (U64)-9);
   CHECK(raw(Close, F | 0x1234567800000000UL, 0, 0, 0), 0);
   CHECK(raw(Close, F, 0, 0, 0), (U64)-9);
@@ -110,6 +123,10 @@ U64 files_faults(void) {
   U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
   CHECK(F, 3);
   CHECK(raw(Read, F, 1, 0, 0), 0);
+  CHECK(raw(Read, F, UserLimit, 0, 0), 0);
+  CHECK(raw(Read, F, UserLimit - 1, 0, 0), 0);
+  CHECK(raw(Read, F, UserLimit + 1, 0, 0), (U64)-14);
+  CHECK(raw(Read, F, UserLimit, 1, 0), (U64)-14);
   CHECK(raw(Read, F, (U64)-1, 0, 0), (U64)-14);
   CHECK(raw(Read, F, (U64)Pages, (U64)-1, 0), (U64)-14);
   CHECK(raw(Read, 1, (U64)-1, 0, 0), (U64)-9);
@@ -208,6 +225,14 @@ U64 files_bionic(void) {
   CHECK(Pages[0], 0);
   CHECK(Pages[1], 0xff);
   CHECK(Pages[2], 0x5a);
+  CHECK(lseek64(F, 0x7fffffffffffffffL, 0), 0x7fffffffffffffffL);
+  CHECK(read(F, Pages, 1), -1);
+  CHECK(*__errno(), 22);
+  CHECK(read(F, (void *)UserLimit, 0), 0);
+  CHECK(*__errno(), 22);
+  CHECK(read(F, (void *)UserLimit, 1), -1);
+  CHECK(*__errno(), 14);
+  CHECK(lseek64(F, 0, 1), 0x7fffffffffffffffL);
   CHECK(close(F), 0);
   CHECK(read(F, Pages, 1), -1);
   CHECK(*__errno(), 9);
