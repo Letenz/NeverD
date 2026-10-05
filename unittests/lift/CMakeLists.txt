@@ -1086,6 +1086,17 @@ if(MSVC)
   target_compile_options(NeverDObjCSourceCallTests PRIVATE /bigobj)
 endif()
 
+# Run instruction provenance and shared entry/frame checks without the full
+# aggregate lift fixture inventory.
+add_neverd_unittest(NeverDLowInstructionBoundaryTests
+  core/LowInstructionBoundaryTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDLowInstructionBoundaryTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDLowInstructionBoundaryTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests

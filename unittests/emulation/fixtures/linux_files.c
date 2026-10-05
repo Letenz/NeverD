@@ -10,6 +10,7 @@ typedef unsigned int U32;
 static const U64 UserLimit = 0x0001000000000000UL;
 enum {
   FaccessAt = 48,
+  MkdirAt = 34,
   OpenAt = 56,
   Read = 63,
   Close = 57,
@@ -24,6 +25,7 @@ enum {
 static const U64 UserLimit = 0x0000800000000000UL;
 enum {
   FaccessAt = 269,
+  MkdirAt = 258,
   OpenAt = 257,
   Read = 0,
   Close = 3,
@@ -234,6 +236,40 @@ U64 files_access_unsupported(U64 Mode) {
   return raw(FaccessAt, (U64)-100, (U64)Name, Permission, 0);
 }
 
+U64 files_directory_errors(void) {
+  CHECK(raw(MkdirAt, (U64)-1, (U64)Path, (U64)-1, 99), (U64)-17);
+  CHECK(raw(MkdirAt, 0, (U64) "/", 0, 0), (U64)-17);
+  CHECK(raw(MkdirAt, 0, (U64) "/fixture", 0777, 0), (U64)-17);
+  CHECK(raw(MkdirAt, 0, (U64) "/missing/child", 0777, 0), (U64)-2);
+  CHECK(raw(MkdirAt, 0, (U64) "/missing/child/deep", 0, 0), (U64)-2);
+  CHECK(raw(MkdirAt, 0, (U64) "/fixture/data/child", 0777, 0), (U64)-20);
+  CHECK(raw(MkdirAt, 0, (U64) "/fixture/data/child/deep", 0, 0), (U64)-20);
+  CHECK(raw(MkdirAt, 0, (U64) "", (U64)-1, 0), (U64)-2);
+  CHECK(raw(MkdirAt, 0, 1, (U64)-1, 0), (U64)-14);
+  CHECK(raw(MkdirAt, 0, UserLimit, 0, 0), (U64)-14);
+#if defined(__x86_64__)
+  CHECK(raw(83, (U64)Path, 0777, 0, 0), (U64)-17);
+  CHECK(raw(83, (U64) "/missing/child", 0777, 0, 0), (U64)-2);
+#endif
+  U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), (U64)-24);
+  CHECK(raw(MkdirAt, 0, (U64)Path, 0777, 0), (U64)-17);
+  CHECK(raw(MkdirAt, 0, (U64) "/missing/child", 0777, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, (U64) "/missing", 0, 0), (U64)-2);
+  CHECK(raw(Seek, F, 0, 1, 0), 1);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), F);
+  return 0;
+}
+
+U64 files_directory_unsupported(U64 Mode) {
+  static const char *const Paths[] = {"/missing/child", "/new", "/fixture/new",
+                                      "relative", "/fixture/../new"};
+  return raw(MkdirAt, (U64)-1, (U64)Paths[Mode], 0777, 0);
+}
+
 struct FileTime {
   I64 Seconds;
   U64 Nanoseconds;
@@ -371,6 +407,8 @@ extern int fstat(int, struct FileStatus *);
 extern int fstat64(int, struct FileStatus *);
 extern int access(const char *, int);
 extern int faccessat(int, const char *, int, int);
+extern int mkdir(const char *, U32);
+extern int mkdirat(int, const char *, U32);
 extern I64 syscall(I64, ...);
 extern int *__errno(void);
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
@@ -545,6 +583,51 @@ U64 files_access_dynamic(U64 Closed, U64 At) {
     return ((int (*)(int, const char *, int, int))Call)(-1, Path, 0, 0);
   return ((int (*)(const char *, int))Call)(Path, 0);
 }
+static void *directory_reader(void *Arg) {
+  *__errno() = 82;
+  if (mkdir(Arg, 0777) != -1 || *__errno() != 17 ||
+      mkdirat(-1, "/missing/child", 0777) != -1 || *__errno() != 2)
+    return (void *)1;
+  return 0;
+}
+
+U64 files_directory_bionic(void) {
+  *__errno() = 73;
+  U64 Thread;
+  void *Value = (void *)1;
+  CHECK(pthread_create(&Thread, 0, directory_reader, (void *)Path), 0);
+  CHECK(pthread_join(Thread, &Value), 0);
+  CHECK((U64)Value, 0);
+  CHECK(*__errno(), 73);
+  CHECK(mkdir(Path, 0777), -1);
+  CHECK(*__errno(), 17);
+  CHECK(mkdirat(-1, "/missing/child", 0777), -1);
+  CHECK(*__errno(), 2);
+  CHECK(syscall(34L, -1UL, "/fixture/data/child", 0777UL), -1);
+  CHECK(*__errno(), 20);
+  CHECK(mkdir((const char *)1, (U32)-1), -1);
+  CHECK(*__errno(), 14);
+  CHECK(access("/fixture", 0), 0);
+  CHECK(*__errno(), 14);
+  return 0;
+}
+
+U64 files_directory_dynamic(U64 Closed, U64 At) {
+  void *Library = dlopen("libfiles.so", 2);
+  if (!Library)
+    return 99;
+  void *Call = dlsym(Library, At ? "mkdirat" : "mkdir");
+  if (!Call)
+    return 98;
+  if (Closed)
+    CHECK(dlclose(Library), 0);
+  if (At)
+    CHECK(((int (*)(int, const char *, U32))Call)(-1, Path, 0777), -1);
+  else
+    CHECK(((int (*)(const char *, U32))Call)(Path, 0777), -1);
+  CHECK(*__errno(), 17);
+  return 0;
+}
 #else
 void process_main(U64 *Stack) {
   if (Stack[0] != 2)
@@ -556,6 +639,7 @@ void process_main(U64 *Stack) {
                : Mode == 't' ? files_status()
                : Mode == 'a' ? files_access()
                : Mode == 'p' ? files_access_faults()
+               : Mode == 'd' ? files_directory_errors()
                              : files_unsupported(Mode - '0');
   raw(Exit, Status, 0, 0, 0);
   __builtin_trap();

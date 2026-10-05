@@ -1143,7 +1143,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 1895 項 CPU 檢查及 17 項 SEH 回歸，共有 2136 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `1895 CPU + 224 WHP + 17 SEH = 2136`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 2274 項 CPU 檢查及 17 項 SEH 回歸，共有 2515 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `2274 CPU + 224 WHP + 17 SEH = 2515`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1153,7 +1153,9 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 `X64DoubleShiftTests.cpp` 涵蓋全部已接納的 imm8/CL 計數、重疊與擴充暫存器、已定義旗標、精確的跨頁 RAM 觀察、取消、權限/未映射/裝置故障、LOCK 與未定義計數拒絕、上下文及原生 ADC 續行。獨立主機判據檢查 5,184 次原始執行，12 個原有 WDK 驅動探針涵蓋暫存器與 RAM 形式。原生檢查新增 145 項必測結果。
 
-`X64ScalarShiftTests.cpp` 檢查全部位元組計數、兩種進位輸入、零/全一及帶符號運算元、隱含單次形式、AH/SPL 與計數暫存器別名、完整 CPU 狀態、精確 RAM 範圍、觀察回呼回滾、故障及上下文續執行。獨立原生對照檢查 65,536 次執行。WDK 資源驅動加入 72 個原創探針。KVM/WHP 驗證關卡要求此指令族的 769 項結果通過。
+`X64ScalarShiftTests.cpp` 檢查全部位元組計數、兩種進位輸入、零/全一及帶符號運算元、隱含單次形式、AH/SPL 與計數暫存器別名、完整 CPU 狀態、精確 RAM 範圍、觀察回呼回滾、故障及上下文續執行。獨立原生對照檢查 65,536 次執行。WDK 資源驅動加入 72 個原創探針。KVM/WHP 驗證關卡要求此指令族的 769 項結果通過。 只有遮罩後計數為零才保證保留全部旗標。非零計數的 `RCL/RCR` 完整進位環繞會保留運算元和 CF，但 OF 未定義；對照僅排除這個未定義位元。
+
+`X64LoopTests.cpp` 涵蓋 21 種原創編碼、計數器環繞、4 GiB 以上的有號相對目標、完整 CPU/RAM 狀態保留、觀察回呼取消、跨獨立映射取指、目標取指錯誤與情境還原。指令位元組不完整時在執行前拒絕；目標取指失敗則保留已完成分支的計數器和 PC。WDK 資源驅動新增 12 個原創探針。KVM/WHP 在核心、使用者和驅動契約下必須通過本指令族的 379 項結果。 原始主機指令對照最多執行 1,008 個案例並回報次數。AMD 上採用 `66H` 的已跳躍分支會存取主機系統保留的低位址，因此這些形式在明確映射低位址的客體矩陣中執行。Intel、AMD 的目標寬度及 REX.W 優先級分別驗證。
 
 `DriverSIMDSEHTests.cpp` 以四種受支援的處置及一次 x87 修改拒絕、兩種原生執行契約、一般/CFG WDK 映像及兩個載入位址執行八類原始 SSE 故障。十項後端專屬結果與三項純核心 SSE 記錄檢查均為必測。`driver_seh_simd.def` 統一定義樣例與模式；非同步展開表涵蓋故障輔助函式。微軟核心 10.0.26100.9549 提供獨立分類與還原依據：隔離執行了 107,744 組指令路徑分類及 8,192 組還原。這不代表已在完整 Windows 核心中執行驅動程式；ARM64 原生 KVM/WHP 仍未驗證。
 
@@ -1321,3 +1323,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` 涵蓋兩種架構，並拒絕變更提供者、弱匯入、衝突儲存及過期 ABI 載體。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` 在 O0/O2 下執行產生的 C，以獨立 Swift 載體驗證函式檢查座標位元模式（含帶符號零、次正規數與 NaN）、接收者身分、呼叫順序和保護值。這些檢查證明呼叫 ABI，不代表上層方法已完整恢復。
 
 `NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` 驗證完整方法樹與精確載體，包括私有成員及拒絕的簽章。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` 與 `CGRectMethodRejectsChangedEntryAndReceiverParameter` 涵蓋管線與發布重播，拒絕 self 索引、入口或參數型別的變更。編譯器記錄涵蓋四種 macOS/Mac Catalyst 目標；此入口宣告仍僅支援 arm64。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` 在 O0/O2 下將產生的 C 與獨立 Swift 純量載體參考實作對照，驗證四個座標的完整位元模式、不同的 context/self 指標、單次呼叫與儲存保護。
+
+`NeverDLowInstructionBoundaryTests` 可獨立執行 LowIR 指令來源測試，無須建置聚合提升測試的全部夾具。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` 驗證對齊 ADD 與後索引 LDP 堆疊釋放，包括由呼叫端恢復連結暫存器的情形；原始 RET X30 與共用入口仍獨立保留。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` 拒絕其他返回暫存器、BR X30、缺失或未對齊的釋放、窄恢復、內部入口、修正、可寫或歧義映射、可重定位輸入及其他格式。解碼共用尾部不能證明原生 ABI：缺失呼叫端儲存或配置仍會使既有框架證明失敗。

@@ -188,6 +188,12 @@ bool isBackwardSharedEpilogue(const BinaryImage &Image, va_t FunctionEntry,
       return false;
     const va_t Address = Target + I * 4;
     const uint32_t Word = readLE<uint32_t>(Bytes->data() + I * 4);
+    // The caller may have restored X30 before branching to this shared tail.
+    // Decoding preserves the physical RET; the complete caller-frame proof
+    // must still establish saved register identities and the restored SP.
+    if (Word == 0xd65f03c0u)
+      return RestoredRegisters && ReleasedStack &&
+             !HasInteriorEntry(Target + Size);
     if (const auto Exit = BranchTarget(Word, Address)) {
       // The existing tail-call owner handles this final external transfer.
       // Never follow another local function, veneer-like guess, or data slot.

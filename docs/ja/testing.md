@@ -1197,7 +1197,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 1895 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 2136 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `1895 CPU + 224 WHP + 17 SEH = 2136`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 2274 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 2515 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `2274 CPU + 224 WHP + 17 SEH = 2515`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1207,7 +1207,9 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `X64DoubleShiftTests.cpp` は全許可 imm8/CL カウント、重複・拡張レジスタ、定義済みフラグ、ページ境界 RAM 観測、キャンセル、権限・未割当・デバイス障害、LOCK・未定義カウント拒否、コンテキストとネイティブ ADC 継続を検証します。独立ホスト検証は5,184回の元命令を実行し、元の WDK ドライバの12プローブがレジスタと RAM 形式を検査します。必須ネイティブ結果は145件増えます。
 
-`X64ScalarShiftTests.cpp` は全バイト値のカウント、両方のキャリー入力、ゼロ・全ビット 1・符号付きオペランド、暗黙の 1、AH/SPL とカウントレジスタの別名、CPU 状態全体、正確な RAM 範囲、観測コールバックのロールバック、フォルト、コンテキスト再開を検査します。独立したネイティブ比較は 65,536 回実行します。WDK リソースドライバには独自のプローブを 72 個追加し、KVM/WHP ゲートはこの命令群の 769 件を必須とします。
+`X64ScalarShiftTests.cpp` は全バイト値のカウント、両方のキャリー入力、ゼロ・全ビット 1・符号付きオペランド、暗黙の 1、AH/SPL とカウントレジスタの別名、CPU 状態全体、正確な RAM 範囲、観測コールバックのロールバック、フォルト、コンテキスト再開を検査します。独立したネイティブ比較は 65,536 回実行します。WDK リソースドライバには独自のプローブを 72 個追加し、KVM/WHP ゲートはこの命令群の 769 件を必須とします。 全フラグの保持を保証するのはマスク後のカウントがゼロの場合だけです。非ゼロの `RCL/RCR` でキャリーを含む一周分を回転するとオペランドと CF は保持されますが OF は未定義であり、比較ではそのビットだけを除外します。
+
+`X64LoopTests.cpp` は独自の 21 エンコーディング、カウンタのラップ、4 GiB を超える符号付き相対分岐先、CPU/RAM 状態全体の保持、観測の取消し、独立したページ間の命令取得、分岐先取得フォルト、コンテキスト復元を検査します。不完全な命令は実行前に拒否し、分岐先取得の失敗では実行済み分岐のカウンタと PC を保持します。WDK リソースドライバは独自の 12 プローブを実行します。KVM/WHP はスーパーバイザ、ユーザー、ドライバ契約でこの命令群の 379 結果を必須とします。 元のホスト命令による比較は最大 1,008 ケースを実行し、件数を報告します。AMD の `66H` 付き分岐が成立するとホスト OS の予約済み低位アドレスを参照するため、その形式は低位の分岐先を明示的にマップしたゲスト行列で実行します。Intel と AMD の分岐先幅および REX.W の優先順位を別々に検証します。
 
 `DriverSIMDSEHTests.cpp` は八種類の元の SSE 障害を四種類の対応済み処置と x87 変更の拒否、二つのネイティブ契約、通常/CFG WDK イメージ、二つのロード先で実行します。バックエンドごとの十結果と、カーネル SSE レコードの純粋な三検査が必須です。`driver_seh_simd.def` がケースとモードを定義し、非同期アンワインド表が障害ヘルパーを記述します。Microsoft カーネル 10.0.26100.9549 の命令経路を分離実行して、107,744 件の分類と 8,192 件の復元を独立に確認しました。これは完全な Windows カーネルでのドライバー実行ではなく、ARM64 ネイティブ KVM/WHP も未検証です。
 
@@ -1375,3 +1377,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SourceABI.SwiftPointActionRequiresTwoDoublesAndContext` / `ObjCCallHints.CoreGraphicsPointActionsKeepSwiftFloatingCarriers` は両アーキテクチャを検証し、提供元の変更、弱いインポート、ストレージの競合、古い ABI キャリアを拒否します。`HighCSourceCalls.SwiftCoreGraphicsPointActionsKeepCoordinatesContextAndOrder` は独立した Swift キャリア検証関数を使い、O0/O2 の生成 C を実行して符号付きゼロ、非正規化数、NaN を含む座標ビット、レシーバーの同一性、呼び出し順序、保護値を確認します。これらは呼び出し ABI の証明であり、上位メソッドの完全な復元を意味しません。
 
 `NativeSourceHints.CGContextCGRectMethodKeepsOrdinaryAndSwiftContextInputs` は完全なメソッドツリーと正確なキャリアを検証し、非公開メンバーと拒否する署名を含みます。`SwiftFieldReceiver.CGRectMethodSelfKeepsItsLogicalParameterIdentity` と `CGRectMethodRejectsChangedEntryAndReceiverParameter` はパイプラインと公開時の再実行を検証し、self の添字、入口、引数型の変更を拒否します。コンパイラ記録は macOS/Mac Catalyst の 4 ターゲットを含みますが、この入口宣言の対応は arm64 のみです。 `HighCSourceCalls.SwiftCGRectMethodKeepsContextReceiverAndAllCoordinateBits` は生成 C を O0/O2 で独立した Swift スカラーキャリア実装と比較し、4 座標すべてのビット列、異なる context/self ポインター、1 回の呼び出し、記憶域の保護を検証します。
+
+`NeverDLowInstructionBoundaryTests` は集約リフトの全フィクスチャを構築せずに LowIR の命令由来テストを実行します。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` は整列した ADD と後置インデックス LDP によるスタック解放、および呼び出し元でリンクレジスタを復元する形を確認し、元の RET X30 と共有入口を独立して保持します。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` は別の戻り先レジスタ、BR X30、欠落または非整列の解放、狭い復元、内部入口、修正情報、書き込み可能または曖昧なマッピング、再配置可能入力、別形式を拒否します。共有末尾のデコードはネイティブ ABI の証明ではなく、呼び出し元の保存や領域確保が欠ければ既存のフレーム証明は失敗します。
