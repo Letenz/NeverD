@@ -25,6 +25,7 @@
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -165,7 +166,12 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
       continue;
     if (OnlyFunction && &Fn != OnlyFunction)
       continue;
+    auto Event = SourceRecorder ? SourceRecorder->function(Fn) : std::nullopt;
+    if (Event)
+      OS << SourceRecorder->begin(*Event);
     writeFunction(Fn);
+    if (Event)
+      OS << SourceRecorder->end(*Event);
     OS << "\n";
   }
 }
@@ -1014,6 +1020,11 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   // tables. LLVM DCE retains volatile/atomic accesses and side-effecting calls.
   llvm::ValueToValueMapTy ValueMap;
   auto Projection = llvm::CloneModule(Mod, ValueMap);
+  std::optional<LLVMSourceMap> Sources;
+  if (Opts.SourceMap && Opts.SourceMap->LLVMSources) {
+    Sources = *Opts.SourceMap->LLVMSources;
+    Sources->remap([&](llvm::Value *Value) { return ValueMap.lookup(Value); });
+  }
   const llvm::Function *ProjectionOnly = nullptr;
   if (Only) {
     ProjectionOnly =
@@ -1100,8 +1111,27 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         }
     }
   }
-  LLVMCWriter W(Out, Opts, Dbg, Img);
-  W.writeModule(*Projection, ProjectionOnly);
+  if (!Opts.SourceMap) {
+    LLVMCWriter W(Out, Opts, Dbg, Img);
+    W.writeModule(*Projection, ProjectionOnly);
+    return true;
+  }
+  std::string Ordinary, Annotated;
+  llvm::raw_string_ostream OrdinaryOS(Ordinary), AnnotatedOS(Annotated);
+  LLVMCWriter Plain(OrdinaryOS, Opts, Dbg, Img);
+  Plain.writeModule(*Projection, ProjectionOnly);
+  CSourceRecorder Recorder(*Opts.SourceMap, Ordinary);
+  try {
+    if (Sources)
+      Recorder.prepareLLVMSources(*Sources);
+    LLVMCWriter Marked(AnnotatedOS, Opts, Dbg, Img, true, &Recorder);
+    Marked.writeModule(*Projection, ProjectionOnly);
+    Recorder.finish(Annotated, Ordinary);
+  } catch (const std::exception &) {
+    // A mapping failure leaves the successful ordinary source intact, with
+    // unknown spans. Errors in the ordinary emission still propagate.
+  }
+  Out << Ordinary;
   return true;
 }
 

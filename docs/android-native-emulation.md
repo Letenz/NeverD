@@ -4,7 +4,7 @@
 AArch64 shared library using NeverD's CPU, address space, AAPCS64 call frames,
 execution sessions, and Linux syscall models. This is a bounded native analysis
 environment, with explicit inputs and observable failures. It does not boot an
-Android system or supply ART, JNI, Binder, signals, a general filesystem, or a
+Android system or supply ART, JNI, Binder, signal delivery, a general filesystem, or a
 network. It never calls host functions to satisfy a guest import.
 
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`. The host transport is selected
@@ -128,6 +128,20 @@ The supported Bionic subset is:
 - `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, for the bounded integer and
   byte-string formatting subset described below.
 - `sscanf`, `vsscanf`, for bounded integer scanning as described below.
+- `sigaction`, `sigaction64`, sharing process-wide dispositions with raw
+  `rt_sigaction` and the variadic `syscall` wrapper. Initial actions come from
+  the explicit [`linux_signals` input](process-emulation.md). API 28 LP64 has
+  four-byte flags, four untouched padding bytes, then eight-byte handler, mask
+  and restorer fields. New masks omit Bionic's reserved signals 32–35; kernel
+  normalization separately removes SIGKILL/SIGSTOP. Input is captured before
+  output, including overlapping objects. Successful calls preserve errno.
+  Output fields are written in order, preserving padding and completed stores
+  if a later user-space access fails. A failed kernel operation with a non-null
+  old-action pointer stops explicitly: API 28 copies an uninitialized temporary
+  on this path, so the model cannot invent its bytes. See the pinned
+  [wrapper](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sigaction.cpp)
+  and [reserved mask](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/private/sigrtmin.h).
+  Registering an action does not enable signal delivery or execute its handler.
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.

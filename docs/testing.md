@@ -36,6 +36,45 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## Library recognition
+
+The feature repository retains the original compiler objects, truth, source
+profiles and digests. `NeverDLibraryRecognitionTests` consumes those archives
+and checks all 59 rules in the five supported libc++/MSVC STL/ATL/musl profiles.
+It includes standalone and inline positives, wrong layouts/types/call slots,
+COM ordering and exception near misses, cross-pack conflicts, budgets, unchanged
+IR and mapped HighC/default LLVMC/NoOpt LLVMC source. `NeverDSessionCAPITests`
+checks shared identities, authoritative names, template distinctions and cache
+invalidation. The worker fixture exercises actual paged engine responses.
+
+```sh
+cmake --build build-release --target NeverDLibraryRecognitionTests \
+  NeverDSessionCAPITests NeverDSignatureTests NeverDDebugInfoTests NeverDPDBIdentityTests \
+  NeverDObjCSourceCallTests NeverDLLVMCValueTests neverd-worker --parallel 4
+build-release/bin/NeverDLibraryRecognitionTests
+build-release/bin/NeverDSessionCAPITests
+build-release/bin/NeverDSignatureTests
+build-release/bin/NeverDDebugInfoTests
+build-release/bin/NeverDPDBIdentityTests
+build-release/bin/NeverDObjCSourceCallTests
+build-release/bin/NeverDLLVMCValueTests
+ctest --test-dir build-release -R '^NeverDWorkerLibraryFeatures$' --output-on-failure
+```
+
+MSVC consumer fixtures require Clang and `lld-link`. CMake links the archived
+`/Z7` objects into a matching PE/PDB pair and creates real runtime import thunks
+from fixture `.def` files. These ATL images are analysis-only: unresolved platform
+calls are retained and never executed. Unsupported native exception rewriting
+does not become supported by recognizing a library operation. Missing linkers
+omit these tests and must be reported as skipped profile coverage.
+
+The optional GUI targets `neverd-gui-library-view-tests` and
+`neverd-gui-text-position-tests` cover fold/unfold, original text copying,
+disjoint regions, page completeness, Unicode positions and revision changes.
+Run the broader `check-neverd` target before review because the source observers
+cross both C backends. Pack schema/probe tests in `signatures/scripts/tests`
+validate data production separately from these engine tests.
+
 ## Modular MBA simplification
 
 `SymSimplifyFinite.*` covers complete two-valued slices at widths from 8 to 512 bits, shared-use profitability, every supported poison-generating annotation, independent volatile reads and freezes, explicit undef/poison, deep iterative traversal, budgets and the obfuscation stamp. Original and simplified IR execute against an independent oracle over every byte input and randomized full-width inputs at O0/O2. Translation-object tests require distinct cache identities for distinct finite-value budgets.
@@ -2375,6 +2414,17 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 `WhpStateTransferCases.def` also covers every partial prefix of the combined 32-register capture and conflicts in all seven metadata fields. Both XSAVE API generations must preserve caller state and force a complete retry. The same suite checks one register read per step and recovers omitted XSAVE metadata from that read.
 
 ### Android native workloads
+
+`AndroidSignalTests.cpp` uses independent O0/O2 C declarations with ordinary,
+Android-packed and RELR relocations. It compares full guarded buffers for
+Bionic/kernel layouts, padding, 64-bit observations, signed flags, reserved
+masks, overlapping objects and disposition changes surviving failed copy-out.
+It also covers missing observations, validation order, errno, provider lifetime
+and API 28's indeterminate old output after an error. A direct model case checks
+earlier field stores and retained state after a later user-space pointer fault.
+`LinuxProcessTests` executes original x64/AArch64 syscall fixtures at O0/O2;
+`ProcessReportTests` checks lossless input, malformed entries and profile gates.
+These tests validate action bookkeeping, not signal delivery or handler frames.
 
 `AndroidNativeTests.cpp` compares both Android `sysconf` page-size selectors
 with `getpagesize`, page-aligned allocation and its final valid byte. Compiled

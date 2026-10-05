@@ -80,6 +80,10 @@ NEVERD_API const char *neverd_callgraph_json(neverd_session_t Sess);
 // Address resolution
 // ===--------------------------------------------------------------------===//
 
+/// Exact functions include optional display_name/linkage_name, name/display
+/// origins, recognition_state and library_annotations. User/stated names keep
+/// precedence. This query does not force native analysis; evidence may be
+/// pending.
 NEVERD_API const char *neverd_resolve_addr(neverd_session_t Sess,
                                            neverd_va_t Addr);
 

@@ -1,6 +1,6 @@
 **Langues**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 2266006a7b377ad4fcf7286e06f099b4964f598b0a7bb518c4da1e0cb68aad8e -->
+<!-- i18n-source: 6a7456cc606f8f98767b33ad15e7c852cd0cb7e1bf8367759b0ad0cc03503470 -->
 
 [← Projet NeverD](project.md)
 
@@ -19,6 +19,7 @@ Les guides anglais se trouvent directement dans `docs/`. Les traductions sont re
 | [Architecture](architecture.md) | Parcours IR, frontières, lifting strict, profondeur de support et points de modification |
 | [Tests](testing.md) | Suites, fixtures générées, allers-retours Unicorn et commandes incrémentales |
 | [Atelier de bureau (anglais)](../gui.md) | Interface Qt Quick facultative, worker séparé, ABI C, annotations et workflows MCP |
+| [Reconnaissance des bibliothèques (anglais)](../library-recognition.md) | Identités STL, ATL/MFC, COM et libc étayées, profils et repliage réversible du code C |
 | [Validation du bureau (anglais)](../gui-qualification.md) | Mesures GUI, limites du packaging et validations de plateforme restantes |
 | [Récupération de sources à partir d’un interpréteur](interpreter-recovery.md) | Spécialisation expérimentale `--devirtualize`, contrôles CLI, contrat d’exécution, preuves et limites; propositions de preuve pour boucles imbriquées; budgets de découverte explicites et API C versionnée; API de preuve exacte du natif vers LLVM |
 | [Reconstruction des exceptions Windows](windows-exception-reconstruction.md) | Matrice de support SEH/C++, contrat IR, règles de patch natif et validation PE |

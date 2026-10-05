@@ -8,6 +8,7 @@
 
 #include "LinuxFiles.h"
 #include "LinuxMemory.h"
+#include "LinuxSignals.h"
 
 namespace neverd::emulation::linux_model {
 
@@ -20,13 +21,19 @@ public:
                 ProcessResult &Result)
       : CPU(CPU), Layout(Layout), Options(Options), Result(Result),
         Memory(*CPU.addressSpace(), Layout, InitialBreak, Options),
-        Files(CPU, Layout, Options.LinuxFiles) {}
+        Files(CPU, Layout, Options.LinuxFiles), Signals(Options.LinuxSignals) {}
 
   llvm::Expected<std::optional<uint64_t>>
   handle(const ProcessServiceEvent &Event, ThreadContext *Thread = nullptr);
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ThreadContext *Thread = nullptr);
+
+  std::optional<SignalActionResult>
+  signalAction(int32_t Signal, const LinuxSignalAction *NewAction,
+               bool ReadOld) {
+    return Signals.action(Signal, NewAction, ReadOld, Result);
+  }
 
 private:
   ExecutionBackend &CPU;
@@ -35,6 +42,7 @@ private:
   ProcessResult &Result;
   LinuxMemory Memory;
   LinuxFiles Files;
+  LinuxSignals Signals;
 };
 
 } // namespace neverd::emulation::linux_model

@@ -660,6 +660,8 @@ ExprPtr MedToHighConverter::forceInlineExpr(const ExprPtr &E) {
     Result->Operands[I] = forceInlineExpr(Result->Operands[I]);
   if (Result->IndirectTarget)
     Result->IndirectTarget = forceInlineExpr(Result->IndirectTarget);
+  if (ExpressionCloneObserver)
+    ExpressionCloneObserver(E, Result);
   return Result;
 }
 
@@ -690,6 +692,8 @@ ExprPtr MedToHighConverter::forceInlineCallTarget(const ExprPtr &E) {
     Result->Operands[I] = forceInlineCallTarget(Result->Operands[I]);
   if (Result->IndirectTarget)
     Result->IndirectTarget = forceInlineCallTarget(Result->IndirectTarget);
+  if (ExpressionCloneObserver)
+    ExpressionCloneObserver(E, Result);
   return Result;
 }
 

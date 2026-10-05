@@ -24,6 +24,13 @@ NEVERD_PROCESS_REPORT_FIELD(Path, "path")
 NEVERD_PROCESS_REPORT_FIELD(Android, "android")
 NEVERD_PROCESS_REPORT_FIELD(LinuxTime, "linux_time")
 NEVERD_PROCESS_REPORT_FIELD(LinuxFiles, "linux_files")
+NEVERD_PROCESS_REPORT_FIELD(LinuxSignals, "linux_signals")
+NEVERD_PROCESS_REPORT_FIELD(SignalActions, "actions")
+NEVERD_PROCESS_REPORT_FIELD(SignalNumber, "signal")
+NEVERD_PROCESS_REPORT_FIELD(SignalHandler, "handler")
+NEVERD_PROCESS_REPORT_FIELD(SignalFlags, "flags")
+NEVERD_PROCESS_REPORT_FIELD(SignalRestorer, "restorer")
+NEVERD_PROCESS_REPORT_FIELD(SignalMask, "mask")
 NEVERD_PROCESS_REPORT_FIELD(Files, "files")
 NEVERD_PROCESS_REPORT_FIELD(DescriptorLimit, "descriptor_limit")
 NEVERD_PROCESS_REPORT_FIELD(FileMetadata, "metadata")
@@ -114,6 +121,11 @@ NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
 NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 65536)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_TEXT
+NEVERD_PROCESS_REPORT_TEXT(LinuxSignalsOptions,
+                           "invalid linux_signals option: ")
+NEVERD_PROCESS_REPORT_TEXT(
+    LinuxSignalsProfile,
+    "linux_signals requires a Linux ELF64 or Android native profile")
 NEVERD_PROCESS_REPORT_TEXT(LinuxFilesOptions, "invalid linux_files option: ")
 NEVERD_PROCESS_REPORT_TEXT(
     LinuxFilesProfile,

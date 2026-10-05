@@ -2080,7 +2080,13 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   for (size_t I = 0; I < Funcs.size(); ++I) {
     if (Funcs[I].Name.empty())
       continue;
+    auto Event = SourceRecorder ? SourceRecorder->function(Funcs[I].Entry)
+                                : std::nullopt;
+    if (Event)
+      OS << SourceRecorder->begin(*Event);
     writeFunction(Funcs[I]);
+    if (Event)
+      OS << SourceRecorder->end(*Event);
     if (I + 1 < Funcs.size())
       OS << "\n";
   }
@@ -2105,14 +2111,36 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
          hasSwiftErrorResult(*Func.SourceTypeHint)))
       throw std::invalid_argument("Indirect record or error-register source "
                                   "entries need a projection proof");
-  std::vector<HighFunc> Working = Funcs;
-  attachCxxFuncletBodies(Working);
-  HighCWriter W(Out, Opts, Dbg, true,
-                Opts.Image && Opts.Image == PreparedImage
-                    ? &PreparedImageFunctionNames
-                    : nullptr);
-  W.prepareFunctionReturns(Working);
-  W.writeAll(Working);
+  auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder) {
+    std::vector<HighFunc> Working = Funcs;
+    attachCxxFuncletBodies(Working);
+    HighCWriter W(OS, Opts, Dbg, true,
+                  Opts.Image && Opts.Image == PreparedImage
+                      ? &PreparedImageFunctionNames
+                      : nullptr,
+                  Recorder);
+    W.prepareFunctionReturns(Working);
+    W.writeAll(Working);
+  };
+  if (!Opts.SourceMap) {
+    Render(Out, nullptr);
+    return true;
+  }
+  std::string Ordinary;
+  llvm::raw_string_ostream OrdinaryOS(Ordinary);
+  Render(OrdinaryOS, nullptr);
+  CSourceRecorder Recorder(*Opts.SourceMap, Ordinary);
+  try {
+    Recorder.prepareHighSources();
+    std::string Annotated;
+    llvm::raw_string_ostream AnnotatedOS(Annotated);
+    Render(AnnotatedOS, &Recorder);
+    Recorder.finish(Annotated, Ordinary);
+  } catch (const std::exception &) {
+    // Mapping is optional. A failed marked rendering cannot invalidate the
+    // ordinary source that was already emitted successfully above.
+  }
+  Out << Ordinary;
   return true;
 }
 

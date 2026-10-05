@@ -7,6 +7,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidMemoryCalls.cpp
   AndroidOnce.cpp
   AndroidQueries.cpp
+  AndroidSignals.cpp
   AndroidStrings.cpp
   AndroidArguments.cpp
   AndroidFormatting.cpp

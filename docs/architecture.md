@@ -35,6 +35,15 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Library feature recognition reads the shared MedIR boundary before the source
+routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
+MedIR analyses prove typed expressions and bounded COM ownership sequences.
+`PipelineLibraryRecognition` combines this evidence without changing names,
+operands, bodies or ABI contracts. The session publishes one display identity
+for lists, call sites and source pages. HighIR/LLVM source observations are
+sidecars: complete surviving mappings can authorize reversible UI folds, while
+ordinary C and export remain fully expanded. See [library recognition](library-recognition.md).
+
 Both source routes apply the same module-wide return modeling before recovering
 call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
@@ -1515,7 +1524,7 @@ through C++, the shared C ABI, Python and `neverd emulate`. It runs actual x64
 and AArch64 freestanding executables with stack/auxv initialization, typed
 system-call continuations and bounded byte output. It supports static TLS and
 self-relocating static PIE, while rejecting an interpreter, external dynamic
-dependencies, signals and thread creation. Those OS semantics remain in
+dependencies, signal delivery and thread creation. Those OS semantics remain in
 `os/linux/process/` and `os/linux/kernel/`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 
@@ -1543,6 +1552,13 @@ event and delegates number resolution to `LinuxServices.cpp`. Named wrappers,
 variadic calls and raw SVC therefore share memory, identity, output and exit
 semantics. Bionic alone owns libc error conversion; wrapper calls retain their
 native import event without inventing another executed service instruction.
+`LinuxSignals` owns one process-wide disposition table initialized by explicit
+`LinuxSignalOptions`. Missing observations remain unknown. Raw `rt_sigaction`
+and Bionic's `AndroidSignals` adapter use the same query/replacement operation;
+the Android adapter owns LP64 field order, reserved-mask filtering and errno.
+The kernel owner installs a new action before copying the old action out, so a
+copy fault does not undo the installation. No CPU backend or SDK interprets a
+handler address, queues a signal or delivers one.
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending

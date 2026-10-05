@@ -21,6 +21,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -293,6 +294,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   auto *LLVMFunc = declareFunc(Func);
   emitExceptionMetadata(Func, *LLVMFunc);
   CurFunc = LLVMFunc;
+  if (SourceMap)
+    SourceMap->Functions[Func.Entry] = LLVMFunc;
   VarAllocs.clear();
   CallSiteAddrs.clear();
   ParamArgs.clear();
@@ -657,6 +660,9 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
             auto *Zero = llvm::ConstantInt::get(Cond->getType(), 0);
             Cond = Builder.CreateICmpNE(Cond, Zero, "cond");
           }
+          if (SourceMap && Op.Addr != InvalidVA && Op.OriginSeq >= 0)
+            SourceMap->Observations.push_back(
+                {Func.Entry, {Op.Addr, Op.OriginSeq}, Cond});
 
           // ARM predication is one decoded instruction represented by a
           // `COND_BR next, !predicate` followed by the same-address effects it

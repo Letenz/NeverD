@@ -55,10 +55,9 @@ inline constexpr llvm::StringLiteral kAutoFuncPrefixEVM("func_");
 /// \sa isSynthesizedFuncName
 enum class NameOrigin { Synthesized, Analysis, Stated, User };
 
-/// True when \p Name is a placeholder NeverD minted for an address nothing
-/// could name, and is therefore free for any better-informed source to
-/// replace.  Guessing sources must check this before overwriting a name; a
-/// symbol table, debug file, or MAP outranks anything inferred from the code.
+/// Recognize the conventional spelling of an unnamed function. This is a
+/// formatting query, not identity evidence: use the producer's NameOrigin
+/// before replacing a name. A symbol table can state sub_1234 verbatim.
 ///
 /// A placeholder is a prefix followed by the hex that identifies it and
 /// nothing else, which is what every mint site produces.  Requiring the exact
@@ -467,12 +466,16 @@ struct Symbol {
   /// the same, so a direct jump to such an address stays inside the jumping
   /// function instead of becoming a tail call.
   bool IsBoundaryGuess = false;
+  /// Set at the producer, independently of the bytes in Name. A linker may
+  /// legitimately publish a symbol spelled sub_1234.
+  NameOrigin Origin = NameOrigin::Stated;
 
   static Symbol makeFunc(va_t Addr, uint64_t Size = 0) {
     Symbol S;
     S.Addr = Addr;
     S.Size = Size;
     S.IsFunc = true;
+    S.Origin = NameOrigin::Synthesized;
     S.Name = (kAutoFuncPrefix + llvm::utohexstr(Addr)).str();
     return S;
   }

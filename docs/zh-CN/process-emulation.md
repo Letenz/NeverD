@@ -80,6 +80,16 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 
 文件、共享、固定映射，向下增长、大页、内存锁定、保护键、仅执行／仅写策略及其他标志都属于明确不支持的服务：在发布效果或构造返回值前停止。已支持子集内的一般范围、长度和对齐错误会返回来宾错误，并允许继续执行。任何内存服务都不会向宿主 OS 转发来宾指针或映射请求。
 
+`linux_signals` 显式提供进程级初始信号处置。缺失项表示未知，不代表 `SIG_DFL`；显式空列表允许在不查询旧值的情况下安装新处置。五个字段均必填，四个动作字段为无符号 64 位值，超出 JSON 精确整数范围时使用十进制字符串。
+
+```json
+{"linux_signals":{"actions":[
+  {"signal":11,"handler":0,"flags":0,"restorer":0,"mask":0}
+]}}
+```
+
+信号编号为 1–64。`rt_sigaction` 与 Bionic 共用状态，结构布局和错误顺序按各自接口处理。不实现待处理信号、投递、处理函数调用或线程信号掩码，也不使用宿主处理函数。参见[完整契约](../process-emulation.md#linux-profile-semantics)。
+
 <a id="windows-pe64-profile"></a>
 
 <!-- i18n-section: linux-clocks -->

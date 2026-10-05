@@ -99,12 +99,28 @@ void writeDotQuoted(raw_ostream &OS, StringRef Text) {
 } // anonymous namespace
 
 int runFuncs(neverd_session_t Sess) {
+  if ((SigAuto || !SigBase.empty() || !SigFile.empty() || !SigDir.empty()) &&
+      !neverd_session_analyze(Sess)) {
+    WithColor::error() << "library analysis failed: " << takeLastError(Sess)
+                       << "\n";
+    return 1;
+  }
   int Count = neverd_func_count(Sess);
+  const auto Identity = [&](int I) {
+    const char *Raw = neverd_resolve_addr(Sess, neverd_func_entry(Sess, I));
+    auto Value = json::parse(Raw ? Raw : "{}");
+    neverd_free_string(Raw);
+    if (Value && Value->getAsObject())
+      return std::move(*Value->getAsObject());
+    if (!Value)
+      consumeError(Value.takeError());
+    return json::Object{};
+  };
   if (JsonOutput) {
     json::Array Funcs;
     for (int I = 0; I < Count; ++I) {
       const char *N = neverd_func_name(Sess, I);
-      json::Object Func;
+      json::Object Func = Identity(I);
       Func["name"] = std::string(N ? N : "");
       Func["addr"] = "0x" + utohexstr(neverd_func_entry(Sess, I));
       Func["size"] = static_cast<int64_t>(neverd_func_size(Sess, I));
@@ -118,9 +134,14 @@ int runFuncs(neverd_session_t Sess) {
     outs() << "  " << std::string(60, '-') << "\n";
     for (int I = 0; I < Count; ++I) {
       const char *N = neverd_func_name(Sess, I);
-      outs() << format(
-          "  0x%-16s %-8u %s\n", utohexstr(neverd_func_entry(Sess, I)).c_str(),
-          static_cast<unsigned>(neverd_func_size(Sess, I)), N ? N : "");
+      const auto Info = Identity(I);
+      const auto Display = Info.getString("display_name");
+      outs() << format("  0x%-16s %-8u %s\n",
+                       utohexstr(neverd_func_entry(Sess, I)).c_str(),
+                       static_cast<unsigned>(neverd_func_size(Sess, I)),
+                       Display ? Display->str().c_str()
+                       : N     ? N
+                               : "");
       neverd_free_string(N);
     }
   }
