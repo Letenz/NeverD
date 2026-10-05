@@ -187,6 +187,42 @@ TEST_P(AndroidSleep,
   }
 }
 
+TEST_P(AndroidSleep, NativeTransportPreservesCompleteSleepAndWaitReports) {
+  std::vector<ExecutionBackendKind> NativeBackends;
+  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,
+                       ExecutionBackendKind::HVF}) {
+    ExecutionConfiguration C;
+    C.Backend = Backend;
+    C.Architecture = GuestArchitecture::AArch64;
+    C.Contract = ExecutionContract::CheckedUserAArch64;
+    auto Probe = probeExecutionBackend(C);
+    ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+    if (Probe->Availability == BackendAvailability::Available)
+      NativeBackends.push_back(Backend);
+  }
+  if (NativeBackends.empty())
+    GTEST_SKIP() << "native AArch64 transports unavailable";
+  Options.Android->ThreadLimit = 4;
+  Options.Android->TraceLimit = 50000;
+  Options.Android->Memory[0].Bytes.assign(8192, 0);
+  for (uint64_t Interleave : {0u, 1u}) {
+    Options.Backend = ExecutionBackendKind::Unicorn;
+    auto Software = run("sleep_workers", {Buffer, Interleave});
+    ASSERT_EQ(Software.Stop, ProcessStopReason::Returned)
+        << Software.Diagnostic;
+    ASSERT_FALSE(Software.TraceTruncated);
+    for (auto Backend : NativeBackends) {
+      Options.Backend = Backend;
+      auto Native = run("sleep_workers", {Buffer, Interleave});
+      ASSERT_EQ(Native.Stop, ProcessStopReason::Returned) << Native.Diagnostic;
+      EXPECT_EQ(Native.SelectedBackend, Backend);
+      Native.SelectedBackend = Software.SelectedBackend;
+      Native.BackendSelectionReason = Software.BackendSelectionReason;
+      EXPECT_EQ(processResultJSON(Native), processResultJSON(Software));
+    }
+  }
+}
+
 TEST_P(AndroidSleep, PolicyOverflowAndProviderLifetimeRefuseBeforeCompletion) {
   request(0, 1);
   Options.LinuxTime->AdvanceOnIdle = false;
