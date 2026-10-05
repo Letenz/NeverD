@@ -197,6 +197,75 @@ TEST_F(HvfExecutor, OneOwnerThreadAndCancelledQueueAdmissionAllowsRetry) {
   EXPECT_EQ(Owner, NextOwner);
   EXPECT_NE(Owner, std::this_thread::get_id());
 }
+TEST_F(HvfExecutor, ConcurrentRequestsRetireBorrowedStateAndReturnOwnErrors) {
+  hvf::Binding Binding(Host, *Memory);
+  std::thread::id Owner;
+  llvm::cantFail(Binding.execute(control(), [&](auto &) -> llvm::Error {
+    Owner = std::this_thread::get_id();
+    return llvm::Error::success();
+  }));
+  constexpr unsigned Callers = 4, Requests = 250;
+  std::array<unsigned, Callers * Requests> Seen{};
+  std::array<std::future<void>, Callers> Workers;
+  std::promise<void> Start;
+  auto Ready = Start.get_future().share();
+  for (unsigned C = 0; C < Callers; ++C)
+    Workers[C] = std::async(std::launch::async, [&, C] {
+      Ready.wait();
+      for (unsigned N = 0; N < Requests; ++N) {
+        const auto Index = C * Requests + N;
+        const auto Payload = "request " + std::to_string(Index);
+        std::string Observed;
+        auto E = Binding.execute(control(), [&](auto &) -> llvm::Error {
+          EXPECT_EQ(std::this_thread::get_id(), Owner);
+          ++Seen[Index];
+          Observed = Payload;
+          if (Index % 7 == 0)
+            return diagnostic::error(Payload.c_str());
+          return llvm::Error::success();
+        });
+        EXPECT_EQ(llvm::toString(std::move(E)), Index % 7 == 0 ? Payload : "");
+        EXPECT_EQ(Observed, Payload);
+      }
+    });
+  Start.set_value();
+  for (auto &Worker : Workers)
+    Worker.get();
+  for (auto Count : Seen)
+    EXPECT_EQ(Count, 1u);
+}
+TEST_F(HvfExecutor, AdmittedRequestRetiresBeforeCancellationReturns) {
+  {
+    hvf::Binding Binding(Host, *Memory);
+    std::promise<void> Entered, Release;
+    auto EnteredFuture = Entered.get_future();
+    auto ReleaseFuture = Release.get_future();
+    std::atomic<bool> Stop{false};
+    auto Caller = std::async(std::launch::async, [&] {
+      const std::string Payload = "admitted request completed";
+      return llvm::toString(Binding.execute(
+          {Clock::time_point::max(), &Stop}, [&](auto &) -> llvm::Error {
+            Entered.set_value();
+            if (ReleaseFuture.wait_for(std::chrono::seconds(2)) !=
+                std::future_status::ready)
+              return diagnostic::error("test owner was not released");
+            return diagnostic::error(Payload.c_str());
+          }));
+    });
+    EXPECT_EQ(EnteredFuture.wait_for(std::chrono::seconds(2)),
+              std::future_status::ready);
+    Stop = true;
+    EXPECT_EQ(Caller.wait_for(std::chrono::milliseconds(20)),
+              std::future_status::timeout);
+    Release.set_value();
+    EXPECT_EQ(Caller.get(), "admitted request completed");
+  }
+  const std::weak_ptr<hvf::Executor> Retired = Host;
+  Host.reset();
+  EXPECT_TRUE(Retired.expired());
+  auto Replacement = hvf::Executor::acquire();
+  EXPECT_TRUE(bool(Replacement)) << llvm::toString(Replacement.takeError());
+}
 TEST_F(HvfExecutor, PartialMappingFailureRetiresBorrowedBacking) {
   auto Registrations = Memory->registrations();
   // Both regions are valid host allocations, but the second GPA overlaps the
