@@ -102,6 +102,119 @@ NativeSourceCalls callsAt(va_t Address, const SourceFunctionTypeHint &Signature,
 }
 } // namespace
 
+TEST(SourceFrameAnalysis, CallStorageKeepsDefinitionsAndPaddingDistinct) {
+  FrameFixture F;
+  auto &Ops = F.Low.Blocks.front().Ops;
+  Ops.insert(Ops.begin() + 7, op(NdOp::COPY, X0, {Slot}, 0x101a));
+  auto ABI = signature();
+  ABI.Parameters[0].Type = NdType::makePtr(NdType::makeVoid());
+  const auto Site = *nativeSourceCallKey(Ops[8]);
+  NativeSourceCallContract Contract;
+  Contract.Signature = &ABI;
+  const NativeSourceCalls Calls{{Site, Contract}};
+  const auto Storage =
+      sourceFrameCallArgumentStorage(F.Low, Arch::AArch64, Calls, Site, 0, 16);
+  ASSERT_TRUE(Storage);
+  EXPECT_EQ(Storage->FrameOffset, -32);
+  ASSERT_EQ(Storage->Bytes.size(), 16U);
+  for (unsigned I = 0; I < 8; ++I) {
+    EXPECT_TRUE(Storage->Bytes[I].Initialized);
+    ASSERT_TRUE(Storage->Bytes[I].Definition);
+    EXPECT_EQ(Storage->Bytes[I].Definition->Instruction, 0x1008U);
+    EXPECT_EQ(Storage->Bytes[I].DefinitionByte, I);
+    EXPECT_FALSE(Storage->Bytes[I].Constant);
+    EXPECT_FALSE(Storage->Bytes[8 + I].Initialized);
+    EXPECT_FALSE(Storage->Bytes[8 + I].Definition);
+    EXPECT_FALSE(Storage->Bytes[8 + I].Constant);
+  }
+  // An observation supplies neither this consumer's borrow permission nor
+  // the enclosing function's restoration/source certificate.
+  EXPECT_FALSE(restoresNativeSourceState(F.Low, Arch::AArch64, Calls));
+}
+
+TEST(SourceFrameAnalysis, CallStorageRejectsEscapesAndChangedOccurrence) {
+  for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    FrameFixture F;
+    auto &Ops = F.Low.Blocks.front().Ops;
+    Ops.insert(Ops.begin() + 7, op(NdOp::COPY, X0, {Slot}, 0x101a));
+    auto ABI = signature();
+    ABI.Parameters[0].Type = NdType::makePtr(NdType::makeVoid());
+    const auto OriginalSite = *nativeSourceCallKey(Ops[8]);
+    auto Site = OriginalSite;
+    NativeSourceCallContract Contract;
+    Contract.Signature = &ABI;
+    NativeSourceCalls Calls{{OriginalSite, Contract}};
+    size_t Parameter = 0, Bytes = 16;
+    switch (Mutation) {
+    case 0:
+      ++Site.Sequence;
+      break;
+    case 1:
+      Parameter = 1;
+      break;
+    case 2:
+      Bytes = 33;
+      break;
+    case 3:
+      Bytes = 4097;
+      break;
+    case 4:
+      ABI.Parameters[0].Type = NdType::makeInt(8);
+      break;
+    case 5:
+      Ops[4].Inputs[1] = SP;
+      break;
+    case 6:
+      Ops[7].Inputs[0] = SP;
+      Ops.insert(Ops.begin() + 8,
+                 op(NdOp::CALL, X0, {NdVar::cst(0x5000, 8)}, 0x101b));
+      Calls.emplace(*nativeSourceCallKey(Ops[8]), Contract);
+      break;
+    case 7:
+      Ops[7].Inputs[0] = NdVar::scalar(0, 8);
+      break;
+    }
+    EXPECT_FALSE(sourceFrameCallArgumentStorage(F.Low, Arch::AArch64, Calls,
+                                                Site, Parameter, Bytes));
+  }
+}
+
+TEST(SourceFrameAnalysis, CallStorageMeetsEveryReachingDefinition) {
+  FrameFixture F;
+  F.diamond();
+  auto &Tail = F.Low.Blocks.back().Ops;
+  Tail.insert(Tail.begin() + 1, op(NdOp::COPY, X0, {Slot}, 0x101a));
+  auto ABI = signature();
+  ABI.Parameters[0].Type = NdType::makePtr(NdType::makeVoid());
+  const auto Site = *nativeSourceCallKey(Tail[2]);
+  NativeSourceCallContract Contract;
+  Contract.Signature = &ABI;
+  const NativeSourceCalls Calls{{Site, Contract}};
+  const auto Original =
+      sourceFrameCallArgumentStorage(F.Low, Arch::AArch64, Calls, Site, 0, 8);
+  ASSERT_TRUE(Original);
+  EXPECT_TRUE(Original->Bytes[0].Definition);
+  F.Low.Blocks[1].Ops.push_back(
+      op(NdOp::STORE, {}, {Slot, NdVar::scalar(0, 4)}, 0x1104));
+  const auto Changed =
+      sourceFrameCallArgumentStorage(F.Low, Arch::AArch64, Calls, Site, 0, 8);
+  ASSERT_TRUE(Changed);
+  for (unsigned I = 0; I < 4; ++I) {
+    EXPECT_TRUE(Changed->Bytes[I].Initialized);
+    EXPECT_FALSE(Changed->Bytes[I].Constant);
+    EXPECT_FALSE(Changed->Bytes[I].Definition);
+  }
+  EXPECT_TRUE(Changed->Bytes[4].Definition);
+  // A suffix backedge participates in the next observation; a first visit
+  // may not seed a block-construction certificate.
+  F.Low.Blocks.back().Ops.pop_back();
+  F.Low.Blocks.back().Succs = {8};
+  F.Low.Blocks[1].Preds.push_back(10);
+  EXPECT_FALSE(
+      sourceFrameCallArgumentStorage(F.Low, Arch::AArch64, Calls, Site, 0, 8));
+}
+
 TEST(SourceFrameAnalysis, VolatileEntryIdentitySurvivesOnlyCompleteSpills) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {

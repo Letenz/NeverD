@@ -1302,3 +1302,7 @@ CoreImage 的强 SDK 声明保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 同一栈效果证明层单独认证精确的强 `CGRectApplyAffineTransform` 桥接：48 字节已初始化变换是经 x0 传递的逻辑参数 1，矩形及结果则占用 d0–d3。允许的输入改写会使副本失效，后续消费者必须先获得新的完整初始化；此调用不获得间接结果写入权限。Objective-C 副本发现和原生栈验证对四浮点 HFA 返回及间接返回都查询同一证明层。
 
 `AuthenticatedSourceFrameLoads` 可通过 `swiftMetadataAccessorSourceCallHint` 跨越元数据访问器调用。两条声明路径复用已有的编译器证据表、准确的强链接 provider，以及完整的 Swift 请求和元数据响应 ABI。双寄存器响应与通常的易失寄存器破坏规则保持完整；私有 spill 仍须通过共享的到达字节证明。这不提供值布局、见证内存效应、栈借用或动态栈分配模型。
+
+`objcNonEscapingBlockSourceFrameEffects` 通过共享的 `sourceFrameCallArgumentStorage` 查询认证栈上 block 的同步借用。它重放原始机器指令、当前接收者与派发、强导入、完整头部与描述符、回调 ABI 和到达字节。描述符限定可写范围，填充字节不因此获得初始化证明；捕获字段类型与回调本体仍须独立验证。循环中的不确定观察和私有栈地址捕获会被拒绝，依赖只使用已完成的证明轮次。
+
+来源构造复用发布阶段的当前机器指令与完整 Low/Med/High 重放，认证与 block 分离的一次性值副本。最终发布独立证明 block 构造和捕获生命周期，再比较 block 投影及普通引用绑定后的整个本体。不同宽度的私有向量读取只保留所有到达路径均已初始化、且不含指针身份的标量字节；可写借用会清除旧初始化事实。 常量字符串继续由既有引用证明层认证；block/副本证明不能授权弱导入的常量对象。
