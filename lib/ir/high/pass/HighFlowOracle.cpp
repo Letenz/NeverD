@@ -34,7 +34,7 @@ namespace {
 
 /// Successors of every statement of a structured body.  Node 0 is the
 /// function exit; a jump reaches the first statement that starts a label at
-/// its target.
+/// its target, and a jump to a do-while enters its body, as C does.
 struct FlowGraph {
   struct Node {
     const HighStmt *Statement = nullptr;
@@ -50,12 +50,26 @@ struct FlowGraph {
     Nodes.emplace_back();
     number(Body, 0);
     Entry = buildList(Body, 0, 0, 0);
+    // Jumps resolve once every do-while knows where its body starts: the
+    // loop's own node is its test, which a jump to its label does not run.
+    for (const auto &[Jump, Target] : PendingJumps) {
+      auto It = LabelAt.find(Target);
+      if (It == LabelAt.end()) {
+        Complete = false;
+        continue;
+      }
+      auto Body = DoWhileBody.find(It->second);
+      Nodes[Jump].Successors = {Body == DoWhileBody.end() ? It->second
+                                                          : Body->second};
+    }
   }
 
 private:
   std::function<bool(const HighStmt &)> EndsPath;
   std::map<const HighStmt *, size_t> NodeOf;
   std::map<va_t, size_t> LabelAt;
+  std::vector<std::pair<size_t, va_t>> PendingJumps;
+  std::map<size_t, size_t> DoWhileBody;
 
   void number(const std::vector<HighStmt> &L, va_t Parent) {
     for (size_t I = 0; I < L.size(); ++I) {
@@ -92,10 +106,7 @@ private:
     size_t Entry = N;
     switch (S.Kind) {
     case StmtKind::Goto:
-      if (auto It = LabelAt.find(S.GotoTarget); It != LabelAt.end())
-        Succ.push_back(It->second);
-      else
-        Complete = false;
+      PendingJumps.push_back({N, S.GotoTarget});
       break;
     case StmtKind::Return:
       Succ.push_back(0);
@@ -121,6 +132,7 @@ private:
       break;
     case StmtKind::DoWhile:
       Entry = buildList(S.Body, N, Next, N);
+      DoWhileBody[N] = Entry;
       Succ = {Entry, Next};
       break;
     case StmtKind::Switch: {
@@ -347,9 +359,68 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
     return ReturnOnly[B] = All;
   };
 
+  // A copy of B's work runs B's statements on A's path although none of
+  // them names B: a tail duplicated over a jump takes the jump's address, so
+  // it reads as A's own work, and work sunk into both arms has no address.
+  // The edge is taken if a path from A runs such a statement equal to B's
+  // first one.
+  auto SameStatement = [](const HighStmt &X, const HighStmt &Y) {
+    auto Eq = [](const ExprPtr &P, const ExprPtr &Q) {
+      return (!P && !Q) || (P && Q && P->structuralEq(*Q));
+    };
+    return X.Kind == Y.Kind && Eq(X.Dst, Y.Dst) && Eq(X.Val, Y.Val) &&
+           Eq(X.CallExpr, Y.CallExpr) && Eq(X.StoreAddr, Y.StoreAddr) &&
+           Eq(X.StoreVal, Y.StoreVal) && Eq(X.RetVal, Y.RetVal);
+  };
+  auto CopiedInto = [&](int A, int B) {
+    const HighStmt *First = nullptr;
+    for (size_t N = 0; N < Count && !First; ++N)
+      if (BlockOf(N) == B)
+        First = G.Nodes[N].Statement;
+    if (!First)
+      return false;
+    for (size_t N = 0; N < Count; ++N) {
+      if (BlockOf(N) != A)
+        continue;
+      std::vector<size_t> Work{N};
+      std::set<size_t> Seen;
+      while (!Work.empty()) {
+        const size_t M = Work.back();
+        Work.pop_back();
+        const int Owner = BlockOf(M);
+        if (!Seen.insert(M).second || (Owner >= 0 && Owner != A))
+          continue;
+        const HighStmt *T = G.Nodes[M].Statement;
+        if (M != N && T && !T->IsPhiCopy && SameStatement(*T, *First))
+          return true;
+        Work.insert(Work.end(), G.Nodes[M].Successors.begin(),
+                    G.Nodes[M].Successors.end());
+      }
+    }
+    return false;
+  };
+  // A pair from A to a block B's successor when B's work was copied onto
+  // A's path.
+  auto ThroughCopy = [&](int A, int To) {
+    auto It = Index.find(A);
+    if (It == Index.end())
+      return false;
+    for (int B : Med.Blocks[It->second].Succs) {
+      auto Bt = Index.find(B);
+      if (Bt == Index.end())
+        continue;
+      const auto &Next = Med.Blocks[Bt->second].Succs;
+      if (std::find(Next.begin(), Next.end(), To) != Next.end() &&
+          CopiedInto(A, B))
+        return true;
+    }
+    return false;
+  };
+
   size_t Extra = 0, Missing = 0;
   for (const auto &[A, B] : Pairs)
-    if (!Edges.count({A, B}) && !Reaches(A, B) && !Ends(A)) {
+    if (!Edges.count({A, B}) && !Reaches(A, B) && !Ends(A) &&
+        !ThroughCopy(A, B)) {
       ++Extra;
       if (Detail)
         std::fprintf(stderr, "FLOWEXTRA %s %llx -> %llx\n", StageName.c_str(),
@@ -357,7 +428,8 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
     }
   for (const auto &[A, B] : Edges)
     if (A != B && Present.count(A) && Present.count(B) &&
-        !Pairs.count({A, B}) && !(ExitFrom.count(A) && Returns(B, 0))) {
+        !Pairs.count({A, B}) && !(ExitFrom.count(A) && Returns(B, 0)) &&
+        !CopiedInto(A, B)) {
       ++Missing;
       if (Detail)
         std::fprintf(stderr, "FLOWMISSING %s %llx -> %llx\n", StageName.c_str(),
