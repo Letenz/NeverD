@@ -599,6 +599,34 @@ ServiceResult DarwinFiles::seek(Description &File, uint64_t Offset,
                                 uint32_t Whence) {
   if (File.Type != Kind::File && File.Type != Kind::Directory)
     return {IllegalSeek, true};
+  if (Whence == SeekHole || Whence == SeekData) {
+    if (Offset > INT64_MAX)
+      return {InvalidArgument, true};
+    const uint64_t Size = File.bytes().size();
+    if (Offset >= Size)
+      return {NoSuchAddress, true};
+    const auto &Node = *File.File;
+    const bool Data = Whence == SeekData;
+    uint64_t Position = Data ? Offset : Size;
+    // Before the first mutation the admitted policy asserts dense allocation.
+    // Afterward, consult the same ledger used for st_blocks; zero bytes alone
+    // do not describe a hole.
+    if (Node.Allocated) {
+      const uint64_t Unit = Node.Policy->AllocationUnit;
+      const unsigned Index = Offset / Unit;
+      if (Node.Allocated->test(Index) == Data) {
+        Position = Offset;
+      } else {
+        const int Next = Data ? Node.Allocated->find_next(Index)
+                              : Node.Allocated->find_next_unset(Index);
+        if (Next < 0 && Data)
+          return {NoSuchAddress, true};
+        Position = Next < 0 ? Size : std::min(Size, uint64_t(Next) * Unit);
+      }
+    }
+    File.Offset = Position;
+    return {Position, false};
+  }
   uint64_t Base;
   switch (Whence) {
   case 0:
@@ -749,8 +777,10 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return returned(0);
   case ServiceKind::Lseek:
     if (File.Type == Kind::File || File.Type == Kind::Directory) {
-      if (uint32_t(A[2]) == 3 || uint32_t(A[2]) == 4)
-        return unsupported(Result, diagnostic::FileSeek);
+      if (uint32_t(A[2]) == SeekHole || uint32_t(A[2]) == SeekData)
+        if (File.Type != Kind::File || !File.File->Policy ||
+            File.File->MetadataInvalidated)
+          return unsupported(Result, diagnostic::FileSeek);
       if (File.Type == Kind::Directory && uint32_t(A[2]) == 2 && !File.Metadata)
         return unsupported(Result, diagnostic::FileMetadata);
     }

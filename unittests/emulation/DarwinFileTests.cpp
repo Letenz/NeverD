@@ -204,6 +204,97 @@ TEST_P(DarwinFileTest, TruncationRecordsOnlyTheParticipatingOpenDescription) {
   }
 }
 
+TEST_P(DarwinFileTest, SparseSeekUsesKnownUnitsAndSharesOnlyTheOpenCursor) {
+  for (uint32_t Unit : {512u, 4096u, 16384u}) {
+    SCOPED_TRACE(Unit);
+    mutationPolicy(Unit);
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    const auto A = ok(ServiceKind::Open, {Base, 2});
+    const auto D = ok(ServiceKind::Dup, {A});
+    const auto B = ok(ServiceKind::Open, {Base});
+    const auto Initial = status(A);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {A, 1, 4}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {D, 2, 0x1234567800000003ULL}), 6u);
+    EXPECT_EQ(status(A), Initial);
+    for (uint64_t Whence : {3u, 4u}) {
+      error(ServiceKind::Lseek, {A, UINT64_MAX, Whence}, 22);
+      error(ServiceKind::Lseek, {A, 6, Whence}, 6);
+      error(ServiceKind::Lseek, {A, INT64_MAX, Whence}, 6);
+      EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 6u);
+    }
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, 0}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Unit * 5 + 3}), 0u);
+    error(ServiceKind::Lseek, {A, 0, 4}, 6);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 6u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {A, 1, 3}), 1u);
+    llvm::cantFail(Space->writeInteger(Base + 128, 0, 2));
+    EXPECT_EQ(ok(ServiceKind::Pwrite, {A, Base + 128, 2, Unit * 2 - 1}), 2u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 4}), Unit);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {D, Unit + 7, 4}), Unit + 7);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {D, Unit - 1, 3}), Unit - 1);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {A, Unit, 3}), Unit * 3);
+    error(ServiceKind::Lseek, {A, Unit * 3, 4}, 6);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), Unit * 3);
+    EXPECT_EQ(ok(ServiceKind::Pwrite, {A, Base + 128, 1, Unit * 5 + 2}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {A, Unit * 3, 4}), Unit * 5);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {D, Unit * 5, 3}), Unit * 5 + 3);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Unit * 2}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Unit * 5 + 3}), 0u);
+    error(ServiceKind::Lseek, {A, Unit * 2, 4}, 6);
+    for (auto FD : {A, B, D})
+      EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+    const auto Reopened = ok(ServiceKind::Open, {Base});
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Reopened, 0, 4}), Unit);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Reopened, Unit, 3}), Unit * 2);
+  }
+}
+
+TEST_P(DarwinFileTest,
+       SparseSeekRequiresKnownAllocationAndPreservesErrorState) {
+  const auto Unknown = ok(ServiceKind::Open, {Base});
+  for (uint64_t Whence : {3u, 4u}) {
+    EXPECT_FALSE(invoke(ServiceKind::Lseek, {Unknown, 0, Whence}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileSeek);
+    error(ServiceKind::Lseek, {999, UINT64_MAX, Whence}, 9);
+    error(ServiceKind::Lseek, {1, UINT64_MAX, Whence}, 29);
+  }
+  mutationPolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = ok(ServiceKind::Open, {Base, 2});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 2, 4}), 2u);
+  error(ServiceKind::Write, {FD, UINT64_MAX, 1}, 14);
+  path("X", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, Base + 128, 1, 0}), 1u);
+  for (uint64_t Whence : {3u, 4u}) {
+    EXPECT_FALSE(invoke(ServiceKind::Lseek, {FD, 0, Whence}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileSeek);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 2u);
+  }
+  path("/");
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::Lseek, {Directory, 0, 3}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileSeek);
+}
+
+TEST_P(DarwinFileTest, SparseSeekEmptyInputAndRejectedGrowthKeepTheirState) {
+  mutationPolicy();
+  Options->Files["/data"].clear();
+  Options->Metadata["/data"].Size = Options->Metadata["/data"].Blocks = 0;
+  const auto FD = ok(ServiceKind::Open, {Base, 2});
+  for (uint64_t Whence : {3u, 4u})
+    error(ServiceKind::Lseek, {FD, 0, Whence}, 6);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {FD, 8193}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {FD, darwin_file_limits::Bytes}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 8192, 3}), 8192u);
+  error(ServiceKind::Lseek, {FD, 8192, 4}, 6);
+  error(ServiceKind::Lseek, {FD, 8193, 3}, 6);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 8192u);
+}
+
 TEST_P(DarwinFileTest, MutationMetadataSharesOneNodeAndPreservesOtherFields) {
   mutationPolicy();
   const auto A = ok(ServiceKind::Open, {Base, 2});

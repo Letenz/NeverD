@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
+<!-- i18n-source: 0c15750a4d37d9fcd687994b7121917b6e51fd427dd03e5831d00ef01cd1fbd5 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -55,7 +55,7 @@ BSD 呼出しの ARM64 は X16、X0–X5 と `svc #0x80`、x64 は BSD クラス
 
 追加サービスは `open`、`read`、`pread`、`lseek`、`close`、`dup`、`dup2`、`fcntl` です。read/write/open/close/fcntl/pread の nocancel 入口も同じ実装を使います。O_RDONLY/O_CLOEXEC と F_DUPFD、F_DUPFD_CLOEXEC、F_GETFD、F_SETFD、F_GETFL を扱います。独立 open は別の位置、dup は共有位置と個別の close-on-exec フラグを持ち、pread は位置を変えません。0/1/2 の close・置換も後続 I/O に反映し、出力の複製は元の捕捉先と予算を保持します。
 
-上限は256ファイル、パス/NUL/内容/入力の合計16 MiB、1024バイト未満のパス、255バイト以下の成分です。排他的上限 `descriptor_limit` は3–4096、既定256、JSON は64 KiBです。不正設定はロード前に拒否します。INT_MAX を超える read は FD 検査前に EINVAL、EOF は宛先に触れず、不正宛先は EFAULT です。部分的に書き込み可能な範囲はコピーや位置変更の前に停止します。SET/CUR/END の失敗は位置を保持します。旧 stat、疎ファイル seek、その他 fcntl は未対応です。ファイルを祖先にすると ENOTDIR です。同じオブジェクトでネイティブ macOS と比較し、C/CLI/Python は5つのゲスト組合せを検証します。iOS 実機の証拠ではありません。
+上限は256ファイル、パス/NUL/内容/入力の合計16 MiB、1024バイト未満のパス、255バイト以下の成分です。排他的上限 `descriptor_limit` は3–4096、既定256、JSON は64 KiBです。不正設定はロード前に拒否します。INT_MAX を超える read は FD 検査前に EINVAL、EOF は宛先に触れず、不正宛先は EFAULT です。部分的に書き込み可能な範囲はコピーや位置変更の前に停止します。SET/CUR/END の失敗は位置を保持します。旧 stat とその他 fcntl は未対応です。ファイルを祖先にすると ENOTDIR です。同じオブジェクトでネイティブ macOS と比較し、C/CLI/Python は5つのゲスト組合せを検証します。iOS 実機の証拠ではありません。
 
 2026-10-05 の Release 検証は381項目中177成功、204スキップ、失敗なしで、ARM64 HVF 必須51/51を実行しました。ネイティブ macOS 7プログラム、公開 C/CLI・レポート35項目、Python の5ゲスト組合せ、検証スクリプト66項目も成功しました。件数は重複します。新しいファイルサービスの Intel HVF/KVM/WHP ネイティブ証拠はありません。Intel HVF は未検証で Actions を停止中です。iOS SDK と実機比較はありません。
 
@@ -97,6 +97,15 @@ allocation_unit、mutation_time、seconds/nanoseconds は必須で、整数は�
 {"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
 ```
 
+
+
+## 疎ファイルの位置指定
+
+通常ファイルに mutation_policy があり割り当てが既知なら、lseek は SEEK_HOLE=3 と SEEK_DATA=4 を受け付け、stat と同じ台帳を参照します。初回変更前はゼロ値も含む密割り当てです。指定種別の単位内なら入力位置、なければ次の一致単位の先頭を返し、終端の穴は EOF です。負値は EINVAL、EOF 以降（空ファイル含む）または後続データなしは ENXIO=6。失敗は位置を保持し、成功はその open 記述と dup のみ変更します。別 open は独立、再 open は現在の割り当てを見ます。メタデータ・フラグ・内容は不変、whence 上位ビットは無視します。
+
+ポリシーなし、ディレクトリ、全体 EFAULT 後の未知割り当ては未対応です。ゼロや拒否された変更から割り当てを推測しません。独自 sparse-file-seek はネイティブ/ゲストでエラー、書いたバイト、EOF、記述の寿命を比較し、前方の FS 固有区間位置は仮定しません。virtual-file-metadata は厳密なポリシー配置を別途検証し、C/CLI/Python は5構成を確認します。
+
+[XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
 ## ディレクトリと相対パス
 
@@ -189,7 +198,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-独立したワークロード検証は ARM64 69 件または x64 46 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
+独立したワークロード検証は ARM64 78 件または x64 52 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -272,3 +281,5 @@ Python の初回全体テストで ARM64 の3ディレクトリ例がタイム�
 メタデータ検証（2026-10-06）：Release単体148件は124成功/24未対応バックエンドskip。全Darwin645件は343成功/300skip/既存ARM64 HVFディレクトリ2件timeout。同条件・元の5秒上限で20件を再検証し8成功/12skip、対象は3.818/3.949秒でした。必須HVF75件すべてに成功観測がありますが初回失敗は保存します。公開C/CLI/レポート117/117（Darwin73）、Python5構成27.359秒、ネイティブ15/15、runner66/66成功。割り当てはAPFS証拠ではありません。期限変更なし、全CI・Intel・iOS実機・完全な環境は未完了です。
 
 `build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
+
+疎ファイル位置検証（2026-10-06）：Release Darwin 671 件中 359 成功、利用不可バックエンド 312 スキップ、失敗ゼロ。必須 ARM64 HVF 78 件をすべて実行し、Unicorn は五つのゲストを検証。対象テストは 147 件中 123 成功、24 スキップ。ネイティブ 16、公開 C/CLI/report 122（Darwin 比較 78）、Python 五構成（12.344 秒）、runner 66 が成功。件数は重複し、期限は変更せず、過去の失敗も保存。証拠：`build-hvf-arm64/sparse-seek-validation-summary.json`。割り当て規則は明示的な仮想ポリシーであり、APFS 同等性ではありません。完全な CI と iOS 実機検証は別途必要で、Intel HVF Actions は停止中です。

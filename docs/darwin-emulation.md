@@ -155,7 +155,7 @@ touch the destination; invalid writable addresses return EFAULT. A partially
 writable destination stops before copying or advancing the cursor, because
 partial filesystem copyout effects are outside this model. Seek supports
 SET/CUR/END, preserving the cursor on negative-position or overflow errors.
-Legacy stat metadata, SEEK_DATA/SEEK_HOLE and other fcntl operations remain unsupported.
+Legacy stat metadata and other fcntl operations remain unsupported.
 Path prefixes describe implicit directories; a regular file used as an ancestor
 returns ENOTDIR. The ABI is grounded in XNU's
 [read path](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c),
@@ -263,6 +263,27 @@ record through all five profiles and C/CLI/Python; its allocation results are po
 tests, not native APFS comparisons. Existing native writable workloads verify the
 kernel flags, cursors and error ordering separately. Namespace changes, native
 filesystem coherence, Mach services and dynamic runtime loading remain unfinished.
+
+## Sparse file positioning
+
+`lseek` accepts `SEEK_HOLE=3` and `SEEK_DATA=4` on regular files with an explicit
+mutation policy whose allocation state is still known. It reads the same unit
+ledger as stat; before the first mutation the admitted initial file is dense,
+including zero-valued bytes. Within the requested kind of unit it returns the
+input offset, otherwise the next matching unit's start. The terminal hole begins
+at EOF. Negative offsets return EINVAL; offsets at or beyond EOF, including an
+empty file, return ENXIO=6 for either mode. No later data also returns ENXIO.
+Errors preserve the cursor; success changes only the open description shared
+by dup. Independent opens keep their own cursors, and reopen sees current allocation.
+Metadata, flags and bytes are unchanged. High whence carrier bits are ignored.
+
+Missing policies, directories and permanently unknown allocation after whole
+EFAULT remain unsupported. No holes are inferred from zero bytes, and rejected
+writes or growth cannot invent allocation. The original `sparse-file-seek` program
+checks native/guest errors, occupied bytes, EOF and descriptor lifetime without
+assuming earlier filesystem-specific extent boundaries. `virtual-file-metadata`
+separately checks exact policy geometry; C/CLI/Python cover all five profiles.
+[XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
 ## Directories and relative paths
 
@@ -458,7 +479,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 69 cases on ARM64, or 46 on x64.
+on each platform supported by the host ISA: 78 cases on ARM64, or 52 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -732,3 +753,7 @@ virtual-policy tests, not APFS observations. Evidence:
 `mutation-metadata-focused.xml`, `mutation-metadata-public.xml`.
 No deadlines changed. Full GitHub CI, native Intel and physical iOS remain separate
 acceptance requirements; the full macOS/iOS goal is still incomplete.
+
+### Sparse-seek verification, 2026-10-06
+
+The Release Darwin gate reconciled 671 registrations: 359 passed, 312 unavailable-backend skips, zero failures. All 78 required ARM64 HVF identities executed; Unicorn covered all five guest profiles. Focused file/memory/sparse-seek coverage passed 123 of 147 with 24 unavailable skips. All 16 original native programs and 122 public C/CLI/report checks passed, including 78 Darwin comparisons. The unmodified Python integration method passed all five profiles in 12.344 seconds. Evidence-runner tests passed 66/66. Counts overlap; no deadlines changed. Evidence: `build-hvf-arm64/sparse-seek-validation-summary.json`, `sparse-seek-darwin-evidence/`, `sparse-seek-native/`, `sparse-seek-focused.xml` and `sparse-seek-public.xml`. Earlier failed runs remain preserved. Allocation geometry is an explicit virtual policy, not APFS equivalence. Full GitHub CI and physical iOS remain separate; Intel HVF Actions stay suspended.

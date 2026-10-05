@@ -618,6 +618,66 @@ static int file_status(const char *path) {
   return 37;
 }
 /* Existing-file mutations execute unchanged against the native BSD ABI. */
+/* Native and guest comparison of sparse-seek boundaries and cursor lifetime.
+ * Earlier data/hole placement is filesystem-specific; only occupied bytes,
+ * dense initial input and EOF have fixed expected positions here. */
+static int sparse_file_seek(const char *path) {
+  unsigned error;
+  int check = 80;
+#define SPARSE_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 a = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
+  SPARSE_EXPECT(!error);
+  u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  SPARSE_EXPECT(!error);
+  u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  SPARSE_EXPECT(!error);
+  SPARSE_EXPECT(call(199, a, 2, 4, 0, 0, 0, &error) == 2 && !error);
+  SPARSE_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == 2 && !error);
+  SPARSE_EXPECT(call(199, b, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  SPARSE_EXPECT(call(199, d, 2, 0x1234567800000003UL, 0, 0, 0, &error) == 10 &&
+                !error);
+  for (unsigned whence = 3; whence != 5; ++whence) {
+    SPARSE_EXPECT(call(199, a, (u64)-1, whence, 0, 0, 0, &error) == 22 &&
+                  error);
+    SPARSE_EXPECT(call(199, a, 10, whence, 0, 0, 0, &error) == 6 && error);
+    SPARSE_EXPECT(call(199, a, 11, whence, 0, 0, 0, &error) == 6 && error);
+    SPARSE_EXPECT(call(199, a, 0x7fffffffffffffffUL, whence, 0, 0, 0, &error) ==
+                      6 &&
+                  error);
+    SPARSE_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == 10 && !error);
+    SPARSE_EXPECT(call(199, 999, (u64)-1, whence, 0, 0, 0, &error) == 9 &&
+                  error);
+  }
+  SPARSE_EXPECT(call(201, a, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  SPARSE_EXPECT(call(199, a, 0, 3, 0, 0, 0, &error) == 6 && error);
+  SPARSE_EXPECT(call(199, a, 0, 4, 0, 0, 0, &error) == 6 && error);
+  SPARSE_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == 10 && !error);
+  SPARSE_EXPECT(call(201, a, 8193, 0, 0, 0, 0, &error) == 0 && !error);
+  SPARSE_EXPECT(call(154, d, (u64) "X", 1, 8192, 0, 0, &error) == 1 && !error);
+  SPARSE_EXPECT(call(199, a, 8192, 4, 0, 0, 0, &error) == 8192 && !error);
+  SPARSE_EXPECT(call(199, d, 8192, 3, 0, 0, 0, &error) == 8193 && !error);
+  u64 found = call(199, a, 0, 4, 0, 0, 0, &error);
+  SPARSE_EXPECT(!error && found <= 8192);
+  SPARSE_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == found && !error);
+  SPARSE_EXPECT(call(199, b, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  const u64 fds[] = {a, b, d};
+  for (unsigned i = 0; i != 3; ++i)
+    SPARSE_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  SPARSE_EXPECT(!error);
+  SPARSE_EXPECT(call(199, b, 8192, 4, 0, 0, 0, &error) == 8192 && !error);
+  SPARSE_EXPECT(call(199, b, 8192, 3, 0, 0, 0, &error) == 8193 && !error);
+  SPARSE_EXPECT(call(6, b, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  SPARSE_EXPECT(call(4, 1, (u64) "s", 1, 0, 0, 0, &error) == 1 && !error);
+#undef SPARSE_EXPECT
+  return 37;
+}
+
 /* Guest-only explicit sparse-unit policy: this does not claim APFS allocation
  * equivalence. Native workloads separately verify the kernel syscall rules. */
 static int virtual_file_metadata(const char *path) {
@@ -644,6 +704,8 @@ static int virtual_file_metadata(const char *path) {
                   !error);
   METADATA_EXPECT(little_integer(changed + 96, 8) == 8193);
   METADATA_EXPECT(little_integer(changed + 104, 8) == 24);
+  METADATA_EXPECT(call(199, a, 6, 4, 0, 0, 0, &error) == 6 && !error);
+  METADATA_EXPECT(call(199, d, 0, 3, 0, 0, 0, &error) == 8193 && !error);
   METADATA_EXPECT(little_integer(changed + 48, 8) == (u64)-7 &&
                   little_integer(changed + 56, 8) == 123456789);
   METADATA_EXPECT(little_integer(changed + 64, 8) == (u64)-7 &&
@@ -658,11 +720,15 @@ static int virtual_file_metadata(const char *path) {
                   !error);
   METADATA_EXPECT(little_integer(current + 96, 8) == 16385);
   METADATA_EXPECT(little_integer(current + 104, 8) == 16);
+  METADATA_EXPECT(call(199, a, 0, 3, 0, 0, 0, &error) == 8192 && !error);
+  METADATA_EXPECT(call(199, a, 8192, 4, 0, 0, 0, &error) == 6 && error);
   METADATA_EXPECT(call(154, a, (u64) "", 1, 16384, 0, 0, &error) == 1 &&
                   !error);
   METADATA_EXPECT(call(339, b, (u64)current, 0, 0, 0, 0, &error) == 0 &&
                   !error);
   METADATA_EXPECT(little_integer(current + 104, 8) == 24);
+  METADATA_EXPECT(call(199, d, 8192, 4, 0, 0, 0, &error) == 16384 && !error);
+  METADATA_EXPECT(call(199, d, 16384, 3, 0, 0, 0, &error) == 16385 && !error);
   METADATA_EXPECT(call(201, d, 0, 0, 0, 0, 0, &error) == 0 && !error);
   const u64 fds[] = {a, b, d};
   for (unsigned i = 0; i != 3; ++i)
@@ -946,6 +1012,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
 #endif
                0, mach_flags(1))
         .value;
+  if (equal(argv[1], "sparse-file-seek"))
+    return argc < 3 ? 79 : sparse_file_seek(argv[2]);
   if (equal(argv[1], "virtual-file-metadata"))
     return argc < 3 ? 79 : virtual_file_metadata(argv[2]);
   if (equal(argv[1], "writable-files") ||

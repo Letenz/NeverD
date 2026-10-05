@@ -500,6 +500,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
                                            ("writable-files", b"00006e"),
                                            ("writable-files-nocancel", b"00006e"),
+                                           ("sparse-file-seek", b"s"),
                                            ("virtual-file-metadata", bytes.fromhex(
                                                "85ffffffa48101001032547698badcfeefcdab8998badcfe0000000000000000"
                                                "01000000000000800100000000000000f9ffffffffffffff15cd5b0700000000"
@@ -554,12 +555,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
-                        if mode.startswith("writable-files") or mode == "virtual-file-metadata":
+                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek"):
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]
                             writable_file["writable"] = True
                             writable_file["metadata"]["flags"] = 0
-                            if mode == "virtual-file-metadata":
+                            if mode in ("virtual-file-metadata", "sparse-file-seek"):
                                 writable_file["metadata"]["link_count"] = 1
                                 writable_file["mutation_policy"] = {
                                     "allocation_unit": 4096,

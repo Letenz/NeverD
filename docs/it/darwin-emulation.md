@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
+<!-- i18n-source: 0c15750a4d37d9fcd687994b7121917b6e51fd427dd03e5831d00ef01cd1fbd5 -->
 
 [← Indice della documentazione](README.md)
 
@@ -55,7 +55,7 @@ Le fixture C originali sono generate con Clang e `ld64.lld`, senza SDK Apple o b
 
 Si aggiungono `open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl` e gli ingressi nocancel di read/write/open/close/fcntl/pread. Sono supportati O_RDONLY/O_CLOEXEC e F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL. Aperture separate hanno posizioni indipendenti; dup condivide la posizione ma mantiene flag close-on-exec distinti. pread non cambia posizione. Chiudere o sostituire 0/1/2 modifica l’I/O successivo; gli output duplicati conservano destinazione e budget.
 
-Limiti: 256 file, 16 MiB complessivi per percorsi/NUL/file/input, percorsi sotto 1024 byte e componenti fino a 255. `descriptor_limit` è un limite esclusivo 3–4096, predefinito 256; JSON resta limitato a 64 KiB. Opzioni invalide falliscono prima del caricamento. read oltre INT_MAX restituisce EINVAL prima del controllo FD; EOF non tocca la destinazione e un indirizzo invalido dà EFAULT. Buffer parzialmente scrivibili arrestano prima di copia o avanzamento. Gli errori SET/CUR/END conservano la posizione. Stat precedente, seek sparsi e altri fcntl restano esclusi. Un file come antenato dà ENOTDIR. Lo stesso oggetto viene confrontato con macOS nativo; C/CLI/Python coprono cinque combinazioni guest, non dispositivi iOS.
+Limiti: 256 file, 16 MiB complessivi per percorsi/NUL/file/input, percorsi sotto 1024 byte e componenti fino a 255. `descriptor_limit` è un limite esclusivo 3–4096, predefinito 256; JSON resta limitato a 64 KiB. Opzioni invalide falliscono prima del caricamento. read oltre INT_MAX restituisce EINVAL prima del controllo FD; EOF non tocca la destinazione e un indirizzo invalido dà EFAULT. Buffer parzialmente scrivibili arrestano prima di copia o avanzamento. Gli errori SET/CUR/END conservano la posizione. Stat precedente e altri fcntl restano esclusi. Un file come antenato dà ENOTDIR. Lo stesso oggetto viene confrontato con macOS nativo; C/CLI/Python coprono cinque combinazioni guest, non dispositivi iOS.
 
 Verifica Release del 2026-10-05: 381 registrazioni, 177 passate, 204 saltate, zero errori e 51/51 casi ARM64 HVF obbligatori eseguiti. Passano anche sette programmi macOS nativi, 35 test pubblici C/CLI/report, cinque combinazioni Python e 66 test del verificatore. I conteggi si sovrappongono. Mancano prove native Intel HVF/KVM/WHP per i nuovi servizi; Intel HVF resta non validato e le sue Actions sospese. Mancano SDK iOS e confronto su dispositivo.
 
@@ -97,6 +97,15 @@ Scritture vuote, rifiuti di budget/mappe, input parziale rifiutato ed errori bac
 {"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
 ```
 
+
+
+## Posizionamento nei file sparsi
+
+Con mutation_policy e allocazione nota, lseek accetta SEEK_HOLE=3 e SEEK_DATA=4 sui file regolari usando lo stesso registro di stat. L’input iniziale è denso anche nei byte zero. In un’unità del tipo richiesto restituisce l’offset dato, altrimenti l’inizio della successiva unità corrispondente. Il buco terminale parte da EOF. Valori negativi danno EINVAL; a/oltre EOF, anche nel file vuoto, o senza dati successivi danno ENXIO=6. Gli errori conservano il cursore; il successo cambia solo la descrizione e i suoi dup. Altri open hanno cursori indipendenti e riaprire vede l’allocazione attuale. Metadati, flag e byte non cambiano; i bit alti di whence sono ignorati.
+
+Senza politica, per directory o dopo EFAULT completo con allocazione ignota il servizio resta escluso. Zeri e modifiche rifiutate non implicano allocazione. sparse-file-seek confronta errori, byte scritti, EOF e vita delle descrizioni native/guest senza assumere precedenti confini del FS. virtual-file-metadata controlla separatamente la geometria esatta della politica; C/CLI/Python coprono cinque profili.
+
+[XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
 ## Directory e percorsi relativi
 
@@ -189,7 +198,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La verifica autonoma richiede tutti i 69 casi nativi ARM64 o 46 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
+La verifica autonoma richiede tutti i 78 casi nativi ARM64 o 52 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -272,3 +281,5 @@ Il metodo Python finale invariato ha superato le cinque combinazioni in41,118 s,
 Verifica metadati (2026-10-06): Release mirato148=124 riusciti/24 saltati. Darwin completo645=343 riusciti/300 saltati/2 timeout nei test directory ARM64 HVF esistenti. Ripetizione identica20=8 riusciti/12 saltati, casi interessati3.818/3.949s entro il limite originale5s. Tutte75 le identità HVF richieste hanno osservazioni riuscite; il primo fallimento resta conservato. C/CLI/report117/117 con73 Darwin, Python cinque profili27.359s, nativo15/15, runner66/66 riusciti. Allocazione virtuale, non prova APFS. Nessun limite cambiato; CI completa, Intel, iOS fisico e ambiente completo restano aperti.
 
 `build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
+
+Verifica del posizionamento sparse (2026-10-06): Release Darwin, 671 casi, 359 superati, 312 saltati per backend indisponibili, nessun errore. Eseguiti tutti i 78 casi ARM64 HVF obbligatori; Unicorn copre cinque profili. Test mirati: 123 superati su 147, 24 saltati. Superati 16 programmi nativi, 122 controlli C/CLI/report (78 confronti Darwin), cinque profili Python (12.344 s) e 66 test del runner. Conteggi sovrapposti, scadenze invariate ed errori precedenti conservati. Evidenze: `build-hvf-arm64/sparse-seek-validation-summary.json`. La geometria segue una politica virtuale esplicita, non equivale ad APFS. CI completa e iOS fisico restano da verificare; Intel HVF Actions resta sospeso.

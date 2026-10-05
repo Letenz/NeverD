@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
+<!-- i18n-source: 0c15750a4d37d9fcd687994b7121917b6e51fd427dd03e5831d00ef01cd1fbd5 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -55,7 +55,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 الخدمات الجديدة هي `open` و`read` و`pread` و`lseek` و`close` و`dup` و`dup2` و`fcntl`، مع مداخل nocancel لـ read/write/open/close/fcntl/pread. تدعم O_RDONLY/O_CLOEXEC وF_DUPFD وF_DUPFD_CLOEXEC وF_GETFD وF_SETFD وF_GETFL. لكل open مستقل موضعه؛ تتشارك النسخ الموضع مع أعلام close-on-exec منفصلة. لا يغير pread الموضع. يؤثر إغلاق أو استبدال 0/1/2 على العمليات اللاحقة، وتحتفظ نسخة الإخراج بوجهتها وميزانيتها.
 
-الحدود: 256 ملفاً، و16 MiB لمجموع المسارات/NUL/الملفات/الإدخال، ومسار أقصر من 1024 بايت ومكونات حتى 255 بايت. `descriptor_limit` سقف حصري بين 3 و4096 وافتراضيه 256؛ يبقى JSON محدوداً بـ64 KiB. تُرفض الخيارات غير الصالحة قبل التحميل. تعيد read الأكبر من INT_MAX الخطأ EINVAL قبل فحص FD؛ لا يلمس EOF الوجهة ويعيد العنوان غير الصالح EFAULT. يتوقف المخزن القابل للكتابة جزئياً قبل النسخ أو تغيير الموضع. تحفظ أخطاء SET/CUR/END الموضع. stat القديم وseek المتناثر وبقية fcntl غير مدعومة. استخدام ملف كسلف لمسار يعيد ENOTDIR. يُقارن الكائن نفسه بنواة macOS الأصلية؛ وتغطي C/CLI/Python خمسة تراكيب للضيف، دون إثبات على جهاز iOS.
+الحدود: 256 ملفاً، و16 MiB لمجموع المسارات/NUL/الملفات/الإدخال، ومسار أقصر من 1024 بايت ومكونات حتى 255 بايت. `descriptor_limit` سقف حصري بين 3 و4096 وافتراضيه 256؛ يبقى JSON محدوداً بـ64 KiB. تُرفض الخيارات غير الصالحة قبل التحميل. تعيد read الأكبر من INT_MAX الخطأ EINVAL قبل فحص FD؛ لا يلمس EOF الوجهة ويعيد العنوان غير الصالح EFAULT. يتوقف المخزن القابل للكتابة جزئياً قبل النسخ أو تغيير الموضع. تحفظ أخطاء SET/CUR/END الموضع. stat القديم وبقية fcntl غير مدعومة. استخدام ملف كسلف لمسار يعيد ENOTDIR. يُقارن الكائن نفسه بنواة macOS الأصلية؛ وتغطي C/CLI/Python خمسة تراكيب للضيف، دون إثبات على جهاز iOS.
 
 تحقق Release بتاريخ 2026-10-05: عدد التسجيلات 381، نجح 177 وتُخطي 204 دون فشل، ونُفذت الحالات الإلزامية ARM64 HVF كلها 51/51. نجحت أيضاً سبعة برامج macOS أصلية و35 اختبار C/CLI وتقارير وخمسة تراكيب Python و66 اختباراً لسكربتات التحقق. الأعداد متداخلة. لا توجد أدلة أصلية Intel HVF/KVM/WHP للخدمات الجديدة؛ يبقى Intel HVF غير متحقق منه وتظل Actions معلقة. لا يتوفر SDK iOS أو مقارنة مع جهاز فعلي.
 
@@ -97,6 +97,15 @@ allocation_unit وmutation_time وseconds/nanoseconds مطلوبة وفق قوا
 {"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
 ```
 
+
+
+## تحديد الموضع في الملفات المتناثرة
+
+عند وجود mutation_policy وحالة تخصيص معروفة يدعم lseek الخيارين SEEK_HOLE=3 وSEEK_DATA=4 للملف العادي مستخدماً سجل stat نفسه. المدخل الأولي كثيف حتى في البايتات الصفرية. يعيد موضع الإدخال إذا كان داخل وحدة من النوع المطلوب، وإلا بداية الوحدة التالية المطابقة؛ تبدأ الفجوة النهائية عند EOF. السالب يعطي EINVAL، وعند/بعد EOF أو الملف الفارغ أو غياب بيانات لاحقة يعطي ENXIO=6. الفشل يحفظ المؤشر والنجاح يغير الوصف ونسخ dup فقط؛ تحتفظ open المستقلة بمؤشراتها وترى إعادة الفتح التخصيص الحالي. لا تتغير البيانات الوصفية والأعلام والبايتات، وتُهمل بتات whence العليا.
+
+يبقى غياب السياسة والأدلة والتخصيص المجهول بعد EFAULT الكامل غير مدعوم. لا تُستنتج تخصيصات من أصفار أو تعديلات مرفوضة. يقارن sparse-file-seek الأصلي أخطاء المضيف/الضيف والبايتات المكتوبة وEOF وعمر الوصف دون افتراض حدود مناطق سابقة خاصة بنظام الملفات. يفحص virtual-file-metadata هندسة السياسة الدقيقة منفصلاً وتغطي C/CLI/Python خمسة تراكيب.
+
+[XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
 ## الأدلة والمسارات النسبية
 
@@ -189,7 +198,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 69 على ARM64 أو 46 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
+يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 78 على ARM64 أو 52 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -272,3 +281,5 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
 تحقق البيانات الوصفية (2026-10-06): اختباراتReleaseالمركزة148=124نجاح/24تخطي. Darwinالكامل645=343نجاح/300تخطي/مهلتان في اختبارات أدلةARM64 HVFالسابقة. إعادة20اختباراً بالشروط نفسها=8نجاح/12تخطي، والحالتان3.818/3.949ثانية ضمن الحد الأصلي5ثوان. لكل75هويةHVFمطلوبة ملاحظة ناجحة، مع حفظ الفشل الأول. C/CLI/التقارير117/117 ومنها73Darwin، وPythonبخمسة ملفات27.359ثانية، والأصلي15/15، وrunner66/66نجحت. التخصيص الافتراضي ليس إثباتAPFS. لم تتغير المهل؛CIالكامل وIntel وأجهزةiOS والبيئة الكاملة ما زالت قيد العمل.
 
 `build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
+
+تحقق الموضع المتناثر (2026-10-06): شملت Release Darwin عدد 671 حالة؛ نجحت 359 وتُخطيت 312 لعدم توفر الخلفية، بلا إخفاقات. نُفذت جميع حالات ARM64 HVF الإلزامية وعددها 78، وغطى Unicorn خمسة ملفات للضيف. الفحوص المركزة: نجحت 123 من 147 وتُخطيت 24. نجحت البرامج الأصلية الستة عشر، و122 فحص C/CLI/report (منها 78 مقارنة Darwin)، وخمسة ملفات Python خلال 12.344 ثانية، و66 اختبار runner. الأعداد متداخلة؛ لم تتغير المهل وحُفظت الإخفاقات السابقة. الدليل: `build-hvf-arm64/sparse-seek-validation-summary.json`. تمثل هندسة التخصيص سياسة افتراضية صريحة وليست تكافؤًا مع APFS. يبقى تحقق CI الكامل وiOS الفعلي منفصلًا، وتظل Intel HVF Actions معلقة.

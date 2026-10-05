@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
+<!-- i18n-source: 0c15750a4d37d9fcd687994b7121917b6e51fd427dd03e5831d00ef01cd1fbd5 -->
 
 [← 文件索引](README.md)
 
@@ -55,7 +55,7 @@ BSD 呼叫在 ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別
 
 新增 `open`、`read`、`pread`、`lseek`、`close`、`dup`、`dup2`、`fcntl`；read/write/open/close/fcntl/pread 的 nocancel 入口共用實作。支援 O_RDONLY/O_CLOEXEC 與 F_DUPFD、F_DUPFD_CLOEXEC、F_GETFD、F_SETFD、F_GETFL。獨立開啟有獨立游標，複製描述元共用游標但各自保留 close-on-exec；pread 不移動游標。關閉或替換 0/1/2 會影響後續 I/O，複製輸出仍使用原擷取通道與共享預算。
 
-上限為 256 個檔案、路徑/NUL/檔案/輸入合計 16 MiB、路徑少於 1024 位元組、每個分量最多 255 位元組。`descriptor_limit` 為排他上界 3–4096，預設 256；JSON 仍限 64 KiB。非法設定在載入前拒絕。read 超過 INT_MAX 先返回 EINVAL；EOF 不存取目的位址，無效位址返回 EFAULT。部分可寫緩衝區在任何複製或游標改動前停止。SET/CUR/END 定位失敗保留游標。舊版 stat、稀疏定位及其他 fcntl 仍未支援。普通檔案作為祖先返回 ENOTDIR。同一原始目標檔案對照原生 macOS；C/CLI/Python 涵蓋五種客體組合，不代表 iOS 真機驗證。
+上限為 256 個檔案、路徑/NUL/檔案/輸入合計 16 MiB、路徑少於 1024 位元組、每個分量最多 255 位元組。`descriptor_limit` 為排他上界 3–4096，預設 256；JSON 仍限 64 KiB。非法設定在載入前拒絕。read 超過 INT_MAX 先返回 EINVAL；EOF 不存取目的位址，無效位址返回 EFAULT。部分可寫緩衝區在任何複製或游標改動前停止。SET/CUR/END 定位失敗保留游標。舊版 stat 及其他 fcntl 仍未支援。普通檔案作為祖先返回 ENOTDIR。同一原始目標檔案對照原生 macOS；C/CLI/Python 涵蓋五種客體組合，不代表 iOS 真機驗證。
 
 2026-10-05 Release Darwin 驗收共 381 項：177 通過、204 跳過、零失敗，ARM64 HVF 必需項 51/51 執行。原生 macOS 7 個程式、公共 C/CLI 與報告 35 項、Python 五種客體組合和驗收腳本 66 項通過，計數有重疊。新增檔案服務尚無 Intel HVF/KVM/WHP 原生證據；Intel HVF 仍未驗證且暫停 Actions。宿主缺少 iOS SDK，也沒有 iOS 真機對照。
 
@@ -97,6 +97,15 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 {"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
 ```
 
+
+
+## 稀疏檔案定位
+
+普通檔案具有 mutation_policy 且分配仍已知時，lseek 支援 SEEK_HOLE=3、SEEK_DATA=4，共用 stat 的分配帳本。首次修改前為明確密集分配，零值不表示洞。位於所求類型內便回傳原偏移，否則回傳下一單位起點；末尾洞從 EOF 開始。負偏移為 EINVAL，位於/超過 EOF（含空檔）或沒有後續資料為 ENXIO=6。失敗保留游標，成功只改目前描述與 dup；獨立 open 不受影響，重開看目前分配。中繼資料、旗標、內容不變，whence 高位忽略。
+
+缺少策略、目錄及完整 EFAULT 後未知分配仍拒絕，不從零值或失敗修改推斷分配。原生/客體 sparse-file-seek 驗證錯誤、已寫位元組、EOF 與描述生命週期，不假設較早區段位置；virtual-file-metadata 驗證精確策略幾何，C/CLI/Python 涵蓋五種組合。
+
+[XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
 ## 目錄與相對路徑
 
@@ -189,7 +198,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 69 項或 x64 46 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 78 項或 x64 52 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -272,3 +281,5 @@ Python 首次整組測試的三個 ARM64 目錄案例超時。不改參數的診
 中繼資料策略驗證（2026-10-06）：Release專項148項為124通過/24跳過。完整Darwin645項為343通過/300跳過/2項既有ARM64 HVF目錄逾時；相同20項與原5秒時限複測為8通過/12跳過，受影響項3.818/3.949秒。75項必需HVF都有通過觀察，首次整輪失敗仍保留。公共C/CLI/報告117/117（Darwin73項）、Python五組27.359秒、原生15/15、runner66/66通過。分配策略非APFS證據；未改時限，完整CI、Intel、iOS實機和完整環境仍待驗收。
 
 `build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
+
+稀疏定位驗證（2026-10-06）：Release Darwin 共 671 項，359 通過、312 項後端不可用而跳過、零失敗；78 項必需 ARM64 HVF 全部執行，Unicorn 覆蓋五種來賓。專項 147 項為 123 通過、24 跳過；16 個原生程式、122 項公共 C/CLI/報告（含 78 項 Darwin 比較）、Python 五組（12.344 秒）和 66 項 runner 全部通過。計數重疊，未改時限，歷史失敗保留。證據：`build-hvf-arm64/sparse-seek-validation-summary.json`。分配幾何屬於明確的虛擬策略，不能視為 APFS 等價；完整 CI 和 iOS 實機仍需驗收，Intel HVF Actions 保持暫停。

@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b7b738f245c491ef7933aee4dbadbed014cab63ea50c51663817203ef3ef421e -->
+<!-- i18n-source: 0c15750a4d37d9fcd687994b7121917b6e51fd427dd03e5831d00ef01cd1fbd5 -->
 
 [← 문서 목록](README.md)
 
@@ -55,7 +55,7 @@ BSD 호출에서 ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD
 
 `open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl`을 추가합니다. read/write/open/close/fcntl/pread의 nocancel도 같은 구현을 사용합니다. O_RDONLY/O_CLOEXEC와 F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL을 지원합니다. 개별 open은 독립 위치를, dup은 공유 위치와 독립 close-on-exec 플래그를 가지며 pread는 위치를 바꾸지 않습니다. 0/1/2의 닫기와 교체는 이후 I/O에 적용되고 복제 출력은 원래 캡처 대상과 예산을 유지합니다.
 
-최대 256개 파일, 경로/NUL/파일/입력 합계 16 MiB, 1024바이트 미만 경로와 255바이트 이하 구성 요소를 허용합니다. 배타적 상한 `descriptor_limit`은 3–4096, 기본 256이며 JSON은 64 KiB입니다. 잘못된 설정은 로드 전에 거부합니다. INT_MAX 초과 읽기는 FD 조회 전에 EINVAL이며 EOF는 목적지에 접근하지 않고 잘못된 목적지는 EFAULT입니다. 일부만 쓰기 가능한 버퍼는 복사와 위치 변경 전에 중지합니다. SET/CUR/END 실패는 위치를 보존합니다. 구형 stat, 희소 seek와 기타 fcntl은 미지원입니다. 파일을 경로 조상으로 쓰면 ENOTDIR입니다. 같은 오브젝트를 네이티브 macOS와 비교하고 C/CLI/Python으로 다섯 게스트 조합을 검사하며 iOS 실기기 검증은 아닙니다.
+최대 256개 파일, 경로/NUL/파일/입력 합계 16 MiB, 1024바이트 미만 경로와 255바이트 이하 구성 요소를 허용합니다. 배타적 상한 `descriptor_limit`은 3–4096, 기본 256이며 JSON은 64 KiB입니다. 잘못된 설정은 로드 전에 거부합니다. INT_MAX 초과 읽기는 FD 조회 전에 EINVAL이며 EOF는 목적지에 접근하지 않고 잘못된 목적지는 EFAULT입니다. 일부만 쓰기 가능한 버퍼는 복사와 위치 변경 전에 중지합니다. SET/CUR/END 실패는 위치를 보존합니다. 구형 stat와 기타 fcntl은 미지원입니다. 파일을 경로 조상으로 쓰면 ENOTDIR입니다. 같은 오브젝트를 네이티브 macOS와 비교하고 C/CLI/Python으로 다섯 게스트 조합을 검사하며 iOS 실기기 검증은 아닙니다.
 
 2026-10-05 Release 검증은 381개 중 177개 통과, 204개 건너뜀, 실패 0이며 ARM64 HVF 필수 51/51을 실행했습니다. 네이티브 macOS 7개 프로그램, 공개 C/CLI 및 보고서 35개, Python 다섯 게스트 조합과 검증 스크립트 66개도 통과했습니다. 집계는 겹칩니다. 새 파일 서비스의 Intel HVF/KVM/WHP 네이티브 증거는 없으며 Intel HVF는 미검증 상태로 Actions가 중지되어 있습니다. iOS SDK와 실기기 대조도 없습니다.
 
@@ -97,6 +97,15 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 {"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
 ```
 
+
+
+## 희소 파일 위치 지정
+
+일반 파일에 mutation_policy가 있고 할당 상태가 알려져 있으면 lseek가 SEEK_HOLE=3, SEEK_DATA=4를 지원하며 stat과 같은 장부를 읽습니다. 첫 변경 전에는 0 값까지 밀집 할당입니다. 원하는 종류의 단위 안에서는 입력 위치, 아니면 다음 일치 단위의 시작을 반환하며 끝 구멍은 EOF입니다. 음수는 EINVAL, EOF 이상(빈 파일 포함) 또는 뒤 데이터 없음은 ENXIO=6입니다. 실패는 커서를 유지하고 성공은 해당 open 설명과 dup만 바꿉니다. 별도 open은 독립적이며 재열기는 현재 할당을 봅니다. 메타데이터/플래그/바이트는 그대로이고 whence 상위 비트는 무시합니다.
+
+정책 없음, 디렉터리, 전체 EFAULT 뒤 알 수 없는 할당은 거부합니다. 0 값이나 거부된 변경으로 할당을 추론하지 않습니다. 자체 sparse-file-seek는 네이티브/게스트의 오류, 쓴 바이트, EOF와 설명 수명을 확인하며 앞선 FS별 구간 위치를 가정하지 않습니다. virtual-file-metadata는 정확한 정책 배치를 별도로 검사하고 C/CLI/Python은 다섯 구성을 검사합니다.
+
+[XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
 ## 디렉터리와 상대 경로
 
@@ -189,7 +198,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 69개 또는 x64 46개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 78개 또는 x64 52개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -272,3 +281,5 @@ Mach 검증(2026-10-06, Release): Darwin 569개 중 성공 293, 사용 불가 �
 메타데이터 검증(2026-10-06): Release 집중148개는124통과/24백엔드skip. 전체Darwin645개는343통과/300skip/기존ARM64 HVF디렉터리2개timeout. 동일한20개와 원래5초 제한 재검사는8통과/12skip, 해당 사례3.818/3.949초. 필수HVF75개 모두 통과 관측이 있으나 최초 실패를 보존합니다. 공개C/CLI/보고117/117(Darwin73), Python5구성27.359초, 네이티브15/15, runner66/66통과. 할당은APFS증거가 아니며 시한을 바꾸지 않았습니다. 전체CI/Intel/iOS실기기/완전한 환경은 미완성입니다.
 
 `build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
+
+희소 파일 위치 검증(2026-10-06): Release Darwin 671개 중 359개 통과, 사용 불가 백엔드 312개 건너뜀, 실패 0개. 필수 ARM64 HVF 78개를 모두 실행했고 Unicorn은 다섯 게스트를 검증했습니다. 집중 검사 147개 중 123개 통과, 24개 건너뜀. 네이티브 16개, 공개 C/CLI/report 122개(Darwin 비교 78개), Python 다섯 구성(12.344초), runner 66개가 통과했습니다. 집계는 중복되며 제한 시간과 과거 실패 기록을 유지합니다. 증거: `build-hvf-arm64/sparse-seek-validation-summary.json`. 할당 규칙은 명시적 가상 정책이며 APFS 동등성을 뜻하지 않습니다. 전체 CI와 실제 iOS 검증은 별도로 필요하고 Intel HVF Actions는 중지 상태입니다.
