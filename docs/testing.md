@@ -36,6 +36,26 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## Inline C memory accesses
+
+`NeverDCMemoryCopyTests` executes HighC and LLVMC output at `-O0` and `-O2`
+with undefined-behavior traps. It checks unaligned byte copies, adjacent-byte
+preservation, aligned accesses with mixed effective types, pointer copies,
+signed narrow loads, expression-store results, single evaluation, guarded and
+short-circuit loads, loop reloads, and temporary-name collisions. It repeats the
+checks with `UseUnalignedPointers`. `HighCIntegerWidths.*`,
+`HighCPointerAddresses.*`, `HighCStoreForwarding.*`, `LLVMCValues.*`, and the
+frame-memory, atomic and segmented-memory suites cover the surrounding paths.
+
+```sh
+cmake --build build-release --target NeverDCMemoryCopyTests \
+  NeverDLLVMCValueTests NeverDLLVMCFrameMemoryTests \
+  NeverDHighCStoreForwardingTests --parallel 4
+ctest --test-dir build-release \
+  -L '^NeverD(CMemoryCopy|LLVMCValue|LLVMCFrameMemory|HighCStoreForwarding)Tests$' \
+  --output-on-failure
+```
+
 ## Library recognition
 
 The feature repository retains the original compiler objects, truth, source

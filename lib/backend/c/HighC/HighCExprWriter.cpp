@@ -2689,15 +2689,17 @@ bool HighCWriter::isNamedFrameMemory(const HighExpr &E) const {
   return false;
 }
 
-std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
-  std::string Text = exprStrImpl(E, ParentPrec);
+std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
+                                 MemoryLoadDestination *Destination) {
+  std::string Text = exprStrImpl(E, ParentPrec, Destination);
   return SourceRecorder && CurrentFunc
              ? SourceRecorder->expression(CurrentFunc->Entry, E,
                                           std::move(Text))
              : Text;
 }
 
-std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec) {
+std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
+                                     MemoryLoadDestination *Destination) {
   static thread_local int Depth = 0;
   struct Guard {
     int &D;
@@ -2836,7 +2838,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec) {
       if (auto VA = constAddress(*E.Operands[0])) {
         if (imageBackingAddress(*VA))
           return memoryLoadExpr(E.Type, addrStr(*E.Operands[0]),
-                                E.MemoryOrdering, E.MemoryAddressSpace, true);
+                                E.MemoryOrdering, E.MemoryAddressSpace, true,
+                                Destination);
       }
     }
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
@@ -2874,7 +2877,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec) {
           equalSourceTypes(AddressType->Pointee, E.Type))
         return "(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))";
     }
-    return memoryLoadExpr(E.Type, Addr, E.MemoryOrdering, E.MemoryAddressSpace);
+    return memoryLoadExpr(E.Type, Addr, E.MemoryOrdering, E.MemoryAddressSpace,
+                          false, Destination);
   }
   case ExprKind::Store: {
     if (E.Operands.size() < 2)

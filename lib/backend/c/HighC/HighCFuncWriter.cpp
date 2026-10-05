@@ -760,6 +760,8 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     DeclaredNames.insert(Name);
     emitIndent(1);
     auto ExplicitTy = ExplicitDeclarations.find(Name);
+    if (ExplicitTy == ExplicitDeclarations.end())
+      DeclaredCTypes.emplace(Name, cDisplayType(Ty));
     OS << (ExplicitTy == ExplicitDeclarations.end()
                ? declarationToC(cDisplayType(Ty), Name)
                : ExplicitTy->second)
@@ -4484,6 +4486,29 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         ParamDisplayNames[static_cast<int>(I)] =
             Identifiers.allocate("arg" + std::to_string(I), "nd_arg");
   }
+  MemoryIdentifiers = GlobalIdentifierAllocator;
+  MemoryTemporaries.clear();
+  AddressTakenNames.clear();
+  DeclaredCTypes.clear();
+  for (const auto &Param : Func.Params)
+    MemoryIdentifiers.allocate(Param.Name);
+  for (const auto &Local : Func.Locals)
+    MemoryIdentifiers.allocate(Local.Name);
+  std::set<const HighExpr *> MemorySeen;
+  std::function<void(const ExprPtr &)> ReserveNames = [&](const ExprPtr &E) {
+    if (!E || !MemorySeen.insert(E.get()).second)
+      return;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi)
+      MemoryIdentifiers.allocate(varName(E->Var));
+    if (E->Kind == ExprKind::Addr && E->Operands.size() == 1 &&
+        E->Operands[0] &&
+        (E->Operands[0]->Kind == ExprKind::Var ||
+         E->Operands[0]->Kind == ExprKind::Phi))
+      AddressTakenNames.insert(varName(E->Operands[0]->Var));
+    E->forEachChildExpr(ReserveNames);
+  };
+  walkStmts(Func.Body,
+            [&](const HighStmt &Stmt) { forEachExpr(Stmt, ReserveNames); });
   IndirectReturnName.clear();
   if (const auto DebugFn = debugFunction(Dbg, Func.Entry);
       !Func.SourceTypeHint && DebugFn &&
@@ -5277,6 +5302,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
        << ";\n";
   }
   emitLocalDecls(Func, ParamNames);
+  for (const auto &Name : DeclaredCNames)
+    MemoryIdentifiers.allocate(Name);
+  for (const auto &[Name, Decl] : DeferredDecls)
+    MemoryIdentifiers.allocate(Name);
+  for (const auto &Name : ParamNames)
+    MemoryIdentifiers.allocate(Name);
 
   // Render the body first: a name the declaration pass expected to be
   // forwarded or dead may still be printed, and it must be declared.
@@ -5288,7 +5319,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     Out.redirect(Saved);
   }
   std::unordered_set<std::string_view> BodyIdents;
-  if (!DeferredDecls.empty()) {
+  if (!DeferredDecls.empty() || !MemoryTemporaries.empty()) {
     auto IsIdent = [](char C) {
       return std::isalnum(static_cast<unsigned char>(C)) || C == '_';
     };
@@ -5313,6 +5344,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
        << ";\n";
   }
   DeferredDecls.clear();
+  for (const auto &[Name, Type] : MemoryTemporaries) {
+    if (!BodyIdents.count(Name))
+      continue;
+    emitIndent(1);
+    OS << Type << " " << Name << ";\n";
+  }
   OS << Body;
   if (EmitFunctionWrapper && !IndirectReturnName.empty() &&
       !PrintedIndirectReturn) {

@@ -516,7 +516,6 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           }
         }
       }
-      emitIndent(Indent);
       std::string Value = exprStr(*Stmt.Val);
       if (Stmt.Dst->Type && Stmt.Val->Type &&
           Stmt.Dst->Type->Kind == NdTypeKind::Int &&
@@ -526,13 +525,12 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       if (Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
         if (auto VA = constAddress(*Stmt.Dst->Operands[0]))
           ExactImageBytes = imageBackingAddress(*VA).has_value();
-      OS << memoryStoreExpr(Stmt.Dst->Type,
-                            addrStr(*Stmt.Dst->Operands[0], 0,
-                                    Stmt.Dst->MemoryAddressSpace ==
-                                        NdMemoryAddressSpace::Default),
-                            Value, Stmt.Dst->MemoryOrdering,
-                            Stmt.Dst->MemoryAddressSpace, ExactImageBytes)
-         << ";\n";
+      writeMemoryStore(Stmt.Dst->Type,
+                       addrStr(*Stmt.Dst->Operands[0], 0,
+                               Stmt.Dst->MemoryAddressSpace ==
+                                   NdMemoryAddressSpace::Default),
+                       Value, Stmt.Dst->MemoryOrdering,
+                       Stmt.Dst->MemoryAddressSpace, ExactImageBytes, Indent);
       break;
     }
     if (Stmt.Dst->Kind == ExprKind::Var &&
@@ -576,10 +574,6 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           break;
         }
       }
-      if (auto Field = scalarRecordFieldDest(DestName, *Stmt.Val))
-        OS << *Field << " = ";
-      else
-        OS << DestName << " = ";
       auto DeclaredType = declaredParamType(Stmt.Dst->Var);
       if (!DeclaredType)
         DeclaredType = Stmt.Dst->Type;
@@ -610,8 +604,27 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           PointerTypeFromCall ? addrStr(*Stmt.Val) : std::string();
       const bool DirectAddress =
           !AddressText.empty() && AddressText.front() == '&';
+      MemoryLoadDestination LoadDestination;
+      const auto DestinationType = DeclaredCTypes.find(DestName);
+      if (Stmt.Val->Kind == ExprKind::Load &&
+          (Stmt.Dst->Var.Kind == MedVar::Temp ||
+           Stmt.Dst->Var.Kind == MedVar::Reg) &&
+          DestName == varName(Stmt.Dst->Var) &&
+          DestinationType != DeclaredCTypes.end() &&
+          !AddressTakenNames.count(DestName) && !isAddressTakenSlot(DestName) &&
+          !scalarRecordFieldDest(DestName, *Stmt.Val) && Stmt.Val->Type &&
+          typeToC(DestinationType->second) == memoryTypeName(Stmt.Val->Type))
+        LoadDestination.Name = DestName;
       const std::string ValueText =
-          DirectAddress ? AddressText : exprStr(*Stmt.Val);
+          DirectAddress ? AddressText : exprStr(*Stmt.Val, 0, &LoadDestination);
+      if (LoadDestination.Written) {
+        OS << ValueText << ";\n";
+        break;
+      }
+      if (auto Field = scalarRecordFieldDest(DestName, *Stmt.Val))
+        OS << *Field << " = ";
+      else
+        OS << DestName << " = ";
       if (DeclaredType && DeclaredType->Kind == NdTypeKind::Ptr) {
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
@@ -786,20 +799,17 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         }
       }
     }
-    emitIndent(Indent);
     bool ExactImageBytes = false;
     if (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto VA = constAddress(*Stmt.StoreAddr))
         ExactImageBytes = imageBackingAddress(*VA).has_value();
-    OS << memoryStoreExpr(
-              Stmt.StoreVal->Type,
-              addrStr(*Stmt.StoreAddr, 0,
-                      Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
-              isUnknownCallOperand(Stmt.StoreVal.get())
-                  ? "0"
-                  : exprStr(*Stmt.StoreVal),
-              Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes)
-       << ";\n";
+    writeMemoryStore(
+        Stmt.StoreVal->Type,
+        addrStr(*Stmt.StoreAddr, 0,
+                Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
+        isUnknownCallOperand(Stmt.StoreVal.get()) ? "0"
+                                                  : exprStr(*Stmt.StoreVal),
+        Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes, Indent);
     break;
   }
 

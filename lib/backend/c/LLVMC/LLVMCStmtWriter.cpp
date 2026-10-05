@@ -3251,29 +3251,23 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
                        Type->isIntegerTy(32) || Type->isIntegerTy(64) ||
                        Type->isIntegerTy(128);
   if (!Integer && !Type->isFloatTy() && !Type->isDoubleTy() &&
-      !Type->isBFloatTy())
+      !Type->isHalfTy() && !Type->isBFloatTy() && !Type->isPointerTy())
     return false;
   const auto &Layout = CurMod->getDataLayout();
-  const auto Alignment = Load ? Load->getAlign() : Store->getAlign();
   const auto Size = Layout.getTypeStoreSize(Type);
   const auto *Address =
       Load ? Load->getPointerOperand() : Store->getPointerOperand();
-  const auto Base = peelPointerOffset(Address);
-  const auto *Alloca =
-      Base ? llvm::dyn_cast<llvm::AllocaInst>(Base->first) : nullptr;
-  const auto *Array =
-      Alloca ? llvm::dyn_cast<llvm::ArrayType>(Alloca->getAllocatedType())
-             : nullptr;
-  const bool ByteBacking = Array && Array->getElementType()->isIntegerTy(8);
-  // The source ABI can allow weaker alignment than the emitted C carrier
-  // (for example i64:32). Its exact object size is a conservative alignment
-  // bound for each native scalar type admitted above.
-  // A byte array also needs representation copies for aligned, overlapping
-  // accesses of different scalar types; alignment alone does not establish
-  // the C effective type of its contents.
-  if (Size.isScalable() ||
-      (!ByteBacking && Alignment.value() >= Size.getFixedValue()))
+  // Proven source objects are projected before reaching this fallback.
+  // LLVM alignment alone does not establish a C effective type, even for an
+  // aligned inttoptr address or overlapping views of a byte array.
+  if (Size.isScalable())
     return false;
+  // Immutable image values have their own projection below. A folded image
+  // address need not have a runtime object in the recompiled program.
+  if (Load && Integer)
+    if (auto VA = imageDataVA(Address))
+      if (foldReadonlyScalar(*VA, Size.getFixedValue()))
+        return false;
   std::string Pointer = valueStr(Address);
   if (std::string Image = imageDataCName(Address); !Image.empty())
     Pointer = "&" + Image;
@@ -3292,8 +3286,9 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
     }
   }
   if (Load) {
-    OS << "__builtin_memcpy(&" << getName(Load) << ", (const void*)(" << Pointer
-       << "), " << Size.getFixedValue() << ");\n";
+    OS << c_memory::loadCopy(getName(Load), Pointer,
+                             std::to_string(Size.getFixedValue()))
+       << ";\n";
   } else {
     const std::string Value = freshVar("memory_value");
     OS << "{ " << typeToCLLVM(Type) << " " << Value << " = "
@@ -3301,8 +3296,9 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
                    : valueStr(Store->getValueOperand()))
        << ";\n";
     emitIndent(Indent + 1);
-    OS << "__builtin_memcpy((void*)(" << Pointer << "), &" << Value << ", "
-       << Size.getFixedValue() << ");\n";
+    OS << c_memory::storeCopy(Pointer, Value,
+                              std::to_string(Size.getFixedValue()))
+       << ";\n";
     emitIndent(Indent);
     OS << "}\n";
   }
