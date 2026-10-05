@@ -22,7 +22,7 @@ NEVERD_KERNEL_API(PoCallDriver, 2, Export)
 NEVERD_KERNEL_API(PoRequestPowerIrp, 6, Export)
 NEVERD_KERNEL_API(PoSetPowerState, 3, Export)
 NEVERD_KERNEL_API(PoStartNextPowerIrp, 1, Export)
-#define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL)                              \
+#define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL, Operation)                   \
   NEVERD_KERNEL_API(Name, Arity, Export)
 #include "KernelPoFxAPIs.def"
 #undef NEVERD_KERNEL_POFX_API
@@ -93,19 +93,15 @@ NEVERD_KERNEL_API(ObReferenceObjectByHandle, 6, Export)
 NEVERD_KERNEL_API(ObfDereferenceObject, 1, Export)
 NEVERD_KERNEL_API(KeStackAttachProcess, 2, Export)
 NEVERD_KERNEL_API(KeUnstackDetachProcess, 1, Export)
-#define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL)                          \
+#define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL, Operation)               \
   NEVERD_KERNEL_API(Name, Arity, Export)
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
 NEVERD_KERNEL_API(KeGetCurrentIrql, 0, Export)
-NEVERD_KERNEL_API(KfRaiseIrql, 1, Export)
-NEVERD_KERNEL_API(KeLowerIrql, 1, Export)
-NEVERD_KERNEL_API(KeEnterCriticalRegion, 0, Export)
-NEVERD_KERNEL_API(KeLeaveCriticalRegion, 0, Export)
-NEVERD_KERNEL_API(KeEnterGuardedRegion, 0, Export)
-NEVERD_KERNEL_API(KeLeaveGuardedRegion, 0, Export)
-NEVERD_KERNEL_API(KeAreApcsDisabled, 0, Export)
-NEVERD_KERNEL_API(KeAreAllApcsDisabled, 0, Export)
+#define NEVERD_KERNEL_EXECUTION_API(Name, Arity, IRQL, Operation)              \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelExecutionAPIs.def"
+#undef NEVERD_KERNEL_EXECUTION_API
 NEVERD_KERNEL_API(IoAllocateWorkItem, 1, Export)
 NEVERD_KERNEL_API(IoQueueWorkItem, 4, Export)
 NEVERD_KERNEL_API(IoFreeWorkItem, 1, Export)
@@ -117,7 +113,7 @@ NEVERD_KERNEL_API(IoCancelIrp, 1, Export)
 NEVERD_KERNEL_API(KeWaitForSingleObject, 5, Export)
 NEVERD_KERNEL_API(KeDelayExecutionThread, 3, Export)
 
-#define NEVERD_KERNEL_INTERRUPT_API(Name, Arity, IRQL)                         \
+#define NEVERD_KERNEL_INTERRUPT_API(Name, Arity, IRQL, Operation)              \
   NEVERD_KERNEL_API(Name, Arity, Export)
 #include "KernelInterruptAPIs.def"
 #undef NEVERD_KERNEL_INTERRUPT_API
