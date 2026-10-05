@@ -6064,6 +6064,70 @@ TEST(HighControlFlowSemantics, TailThatCannotFaultEntersExceptProtection) {
   }
 }
 
+TEST(HighControlFlowSemantics, JumpToWhatFollowsATryBecomesAnElseArm) {
+  // __try { if (x & 1) { v = 1; goto out; } v = 2; } __except (1) { v = 9; }
+  // out: return v;
+  // Falling off the protected body reaches out as the jump does, so the
+  // rest of the body becomes the else arm.  An __except body continues
+  // after the try the same way; a __finally body does not when it runs for
+  // an exception, so its jump stays.
+  enum class Where { Body, Except, Finally };
+  auto Build = [](Where Site) {
+    HighStmt Leave;
+    Leave.Kind = StmtKind::If;
+    Leave.Addr = 0x1000;
+    Leave.Cond =
+        HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+    Leave.Body = {assign(0x1004, 1, 1), jump(0x1008, 0x1030)};
+    std::vector<HighStmt> Jumping = {Leave, assign(0x100c, 1, 2)};
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.Addr = 0x1000;
+    Try.EHRange = {0x1000, 0x1010};
+    HighEHClause Clause;
+    Clause.Kind = Site == Where::Finally ? HighEHClauseKind::SEHFinally
+                                         : HighEHClauseKind::SEHExcept;
+    Clause.HandlerVA = 0x1020;
+    Try.EHClauses = {Clause};
+    if (Site == Where::Body) {
+      Try.Body = Jumping;
+      Try.EHClauseBodies = {{assign(0x1020, 1, 9)}};
+    } else {
+      Try.Body = {assign(0x0ff8, 1, 5)};
+      for (HighStmt &S : Jumping)
+        S.Addr += 0x20;
+      Jumping.front().Body[0].Addr += 0x20;
+      Jumping.front().Body[1].Addr += 0x20;
+      Try.EHClauseBodies = {Jumping};
+    }
+    HighStmt Label;
+    Label.Kind = StmtKind::Block;
+    Label.Addr = 0x1030;
+    HighFunc F;
+    F.Entry = 0x0ff8;
+    F.Body = {Try, Label, result(0x1034, local(1))};
+    return F;
+  };
+  for (Where Site : {Where::Body, Where::Except, Where::Finally}) {
+    SCOPED_TRACE(static_cast<int>(Site));
+    HighFunc F = Build(Site);
+    std::vector<uint64_t> Before;
+    for (uint64_t X : {0, 1})
+      Before.push_back(*execute(F, X));
+    elseArmsForFallthroughJumps(F);
+    for (uint64_t X : {0, 1})
+      EXPECT_EQ(execute(F, X), Before[X]) << X;
+    const HighStmt &Try = F.Body.front();
+    ASSERT_EQ(Try.Kind, StmtKind::SEHTry);
+    const std::vector<HighStmt> &Holder =
+        Site == Where::Body ? Try.Body : Try.EHClauseBodies.front();
+    size_t Jumps = 0;
+    walkStmts(Holder,
+              [&](const HighStmt &S) { Jumps += S.Kind == StmtKind::Goto; });
+    EXPECT_EQ(Jumps, Site == Where::Finally ? 1u : 0u);
+  }
+}
+
 TEST(HighControlFlowSemantics, TailCopiesStayInTheirTryProtection) {
   // __try { v = 5; goto out; } __except (1) { goto out; } return 0;
   // out: observe(); return v;
@@ -7695,6 +7759,21 @@ TEST(HighControlFlowSemantics, BlockLayoutFollowsForwardEdgesUnlessUnsure) {
   Handled.ExceptionMetadata.emplace();
   Handled.ExceptionMetadata->PersonalityVA = 0x5000;
   EXPECT_EQ(highBlockLayout(Handled, {}), (std::vector<int>{0, 1, 2, 3}));
+  Handled.ExceptionMetadata->Personality =
+      ExceptionPersonality::CSpecificHandler;
+  Handled.ExceptionMetadata->SEH.emplace();
+  Handled.ExceptionMetadata->SEH->Scopes.push_back({{0x1100, 0x1140}});
+  EXPECT_EQ(highBlockLayout(Handled, {}), (std::vector<int>{0, 1, 2, 3}));
+  // A frame that only unwinds has no region to keep: the stack-cookie check,
+  // or a personality with no table NeverD reads.
+  for (ExceptionPersonality Kind :
+       {ExceptionPersonality::GSHandlerCheck, ExceptionPersonality::Unknown}) {
+    MedFunc Unwinds = M;
+    Unwinds.ExceptionMetadata.emplace();
+    Unwinds.ExceptionMetadata->PersonalityVA = 0x5000;
+    Unwinds.ExceptionMetadata->Personality = Kind;
+    EXPECT_EQ(highBlockLayout(Unwinds, {}), (std::vector<int>{0, 1, 3, 2}));
+  }
   // So does a block whose fall-through successor is unknown.
   MedFunc Unknown = M;
   Unknown.Blocks[1].Ops.back().Inputs[0] = MedVar::makeConst(0x7000, 8);
