@@ -331,6 +331,48 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     CompleteSingletonTargetsKeepTheIncomingDomain) {
+  const auto Make = [](bool Indirect) {
+    Program P({});
+    P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+    for (unsigned I = 0; I != 32; ++I) {
+      const auto Next = Entry + P.Image.Segments.front().Data.size() + 19;
+      // LEA RAX,[RSP+bias]; AND EAX,15; ADD RAX,next-residue;
+      // JMP RAX (three unreachable padding bytes), or JMP next.
+      const uint8_t Bias = I + 1;
+      P.append({0x48, 0x8d, 0x44, 0x24, Bias, 0x83, 0xe0, 15, 0x48, 0x05});
+      P.immediate(Next - ((8 + Bias) & 15));
+      if (Indirect)
+        P.append({0xff, 0xe0, 0x90, 0x90, 0x90});
+      else
+        P.append({0xe9, 0, 0, 0, 0});
+    }
+    P.append({0xb8, 7, 0, 0, 0, 0xc3});
+    return P;
+  };
+  const auto Reference = Make(false).check();
+  ASSERT_TRUE(Reference.proved()) << Reference.Proof.Diagnostic;
+  const auto Indirect = Make(true);
+  LowIRIndependenceLimits Limits;
+  Limits.MaxIndirectTargets = 1;
+  Limits.MaxSolverQueries = Reference.Proof.SolverQueries;
+  const auto Good = Indirect.check(Limits);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.Paths, 1U);
+  EXPECT_EQ(Good.Proof.Instructions, Reference.Proof.Instructions);
+  EXPECT_EQ(Good.Certificate->Instructions.size(), 130U);
+  ASSERT_GT(Good.Proof.SolverQueries, 0U);
+  Limits.MaxSolverQueries = Good.Proof.SolverQueries - 1;
+  expectRefusal(Indirect, Status::BudgetExceeded, Limits);
+  auto Unconstrained = Indirect;
+  Unconstrained.Options.EntryFrameAlignment.reset();
+  Unconstrained.Contract.Frame->EntryAlignment.reset();
+  Limits = {};
+  Limits.MaxIndirectTargets = 1;
+  expectRefusal(Unconstrained, Status::BudgetExceeded, Limits);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      RepeatedFeasibilityDoesNotMergeBranchesOrEntryDomains) {
   // TEST EDI,EDI; JE trap; MOV EAX,7; RET; trap: UD2.
   Program P({0x85, 0xff, 0x74, 6, 0xb8, 7, 0, 0, 0, 0xc3, 0x0f, 0x0b});

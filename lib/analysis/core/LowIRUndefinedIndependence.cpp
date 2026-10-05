@@ -1144,9 +1144,16 @@ class Checker {
     for (const auto &Tuple : Values.Tuples) {
       if (Tuple.size() != 1)
         fail(Status::Invalid, "invalid native target tuple");
-      scheduleNative(P, Tuple[0],
-                     Ctx.mkAnd(Predicate, Ctx.mkEq(ordinary(Value),
-                                                   Ctx.mkConst(64, Tuple[0]))));
+      // Complete singleton enumeration already proves this equality over the
+      // entire incoming domain. Retaining it would make later feasibility and
+      // terminal coverage queries prove the same fact again. Multiple targets
+      // still need their separate guards, and Predicate retains branch guards.
+      const auto TargetPredicate =
+          Values.Tuples.size() == 1
+              ? Predicate
+              : Ctx.mkAnd(Predicate,
+                          Ctx.mkEq(ordinary(Value), Ctx.mkConst(64, Tuple[0])));
+      scheduleNative(P, Tuple[0], TargetPredicate);
     }
   }
 

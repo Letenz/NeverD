@@ -1411,3 +1411,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `MatrixFrameEffectsRequireExactCurrentContract` は CGRect 消費関数と拒否すべき 22 種類の変更も検証します。`ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` は回転 → CGRect 借用 → 回転による再初期化 → CoreImage 公開を検証します。`CGRectBorrowRejectsExpiredInputsAndChangedABI` は初期化、範囲、インポート、キャリアの八つの変更を拒否します。`GeneratedCMatchesOriginalMachineAndSDKResults` はこの全体を O0/O2、1000 ケースで元の命令語とネイティブ SDK に対して実行し、保存した角度、結果の全 48 バイト、オブジェクト、境界ガードを比較します。
 
 `FrameMetadataAccessorUsesCurrentCatalogAndABI` は共有メタデータ宣言、両応答キャリア、現在のフレーム witness の公開を確認する。`FrameMetadataAccessorRejectsChangedImportAndBytes` は弱いインポート、provider・名前・addend の変更、私有アドレス要求、部分 spill、誤った再ロード、元の呼び出しの変更を拒否する。元の ARM64 と生成 C の witness oracle は実際の Foundation URL メタデータアクセサも呼び出す。両分岐で O0/O2 ごとに 2048 ケースを実行し、動的 witness 選択、全出力バイト、入力保持、呼び出し回数、ガードを検証する。動的スタック割り当てや witness のメモリ効果を証明するものではない。
+
+単一ターゲットのネイティブ転送は、他のターゲットが存在しないことを完全な列挙で証明した後にのみ、入力述語を保持します。回帰テストでは直接転送と同じクエリ予算で 32 回の計算された転送を検証し、アドレス上位ビットの記号性と分岐領域を保持します。完全な状態結果の変更、アラインメント制約の欠如、クエリ予算が 1 回不足する場合は拒否します。複数ターゲットと未完了の列挙に対する既存の拒否検査も引き続き必要です。

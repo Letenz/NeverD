@@ -69,6 +69,46 @@ void refused(const BinaryLowIRRefinementResult &Result, Status S) {
   EXPECT_FALSE(Result.Proof.Certificate);
 }
 
+TEST(BinaryLowIRRefinement, SingletonTargetsRetainTheirBranchDomains) {
+  // TEST EDI,1; JNZ odd. Each arm computes a distinct singleton target from
+  // the symbolic entry stack, then returns a distinct ECX value.
+  Program P({0xf7, 0xc7, 1, 0, 0, 0, 0x75, 16});
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+  auto &Code = P.Image.Segments.front();
+  for (uint8_t Bias : {1, 2}) {
+    const uint32_t Target = Entry + 40 + (Bias - 1) * 6;
+    const uint32_t Base = Target - (8 + Bias);
+    Code.Data.insert(Code.Data.end(), {0x48, 0x8d, 0x44, 0x24, Bias, 0x83, 0xe0,
+                                       15, 0x48, 0x05});
+    for (unsigned I = 0; I != 4; ++I)
+      Code.Data.push_back(static_cast<uint8_t>(Base >> (8 * I)));
+    Code.Data.insert(Code.Data.end(), {0xff, 0xe0});
+  }
+  Code.Data.insert(Code.Data.end(),
+                   {0xb9, 7, 0, 0, 0, 0xc3, 0xb9, 9, 0, 0, 0, 0xc3});
+  Code.Size = Code.FileSz = Code.Data.size();
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  LowIRRefinementLimits Limits;
+  Limits.Execution.MaxIndirectTargets = 1;
+  const auto Good = P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.OriginalPaths, 2U);
+  EXPECT_EQ(Good.Proof.CandidatePaths, 2U);
+  bool Changed = false;
+  for (auto &B : Recovery.Residual.Blocks)
+    for (auto &O : B.Ops)
+      if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+          O.Output.isReg() && O.Output.Offset == x86reg::RCX &&
+          O.NumInputs == 1 && O.Inputs[0] == NdVar::scalar(7, 4)) {
+        O.Inputs[0].Offset = 9;
+        Changed = true;
+      }
+  ASSERT_TRUE(Changed);
+  refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+          Status::Different);
+}
+
 TEST(BinaryLowIRRefinement, MemoryIndirectDispatchKeepsTargetSnapshot) {
   // AND ECX,3; LEA RAX,[RIP+table]; JMP [RAX+RCX*8]; four return arms.
   Program P({0x83, 0xe1, 3, 0x48, 0x8d, 0x05, 27,   0, 0, 0, 0xff, 0x24, 0xc8,
