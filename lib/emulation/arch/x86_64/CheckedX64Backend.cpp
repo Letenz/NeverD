@@ -531,8 +531,12 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (PushFlags) {
     if (X.op_count)
       return llvm::make_error<UnsupportedExecutionError>();
+    // Capstone's PUSHF identity retains 66H even when a later REX.W selects
+    // 64 bits. Derive the write footprint from the effective prefixes.
     const unsigned Size =
-        I.id == X86_INS_PUSHF ? x64::HalfWordBytes : x64::WordBytes;
+        X.prefix[2] == X86_PREFIX_OPSIZE && !(X.rex & x64::RexW)
+            ? x64::HalfWordBytes
+            : x64::WordBytes;
     // Long mode always uses RSP for the implicit stack, even with 67H or
     // a segment override. Public flags exclude VM, RF and transport TF.
     Accesses.push_back({SP - Size, Size, Write, CPU.reg(X64Register::FLAGS)});
