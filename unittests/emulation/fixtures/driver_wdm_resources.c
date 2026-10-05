@@ -461,7 +461,26 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #include "driver_resource_double_shift.def"
 #undef NEVERD_RESOURCE_DOUBLE_SHIFT_CASE
 
+#define NEVERD_RESOURCE_SCALAR_SHIFT_CASE(Name, Input, InputFlags, Count,      \
+                                          Expected, ExpectedFlags, Mask,       \
+                                          Assembly, Constraint)                \
+  static BOOLEAN CheckScalarShift##Name(VOID) {                                \
+    ULONG64 Before, Observed, Destination = Input;                             \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), Constraint(Destination) \
+                     : "r"((ULONG64)InputFlags), "c"((ULONG64)Count)           \
+                     : "memory", "cc");                                        \
+    return Destination == Expected && (Observed & Mask) == ExpectedFlags;      \
+  }
+#include "driver_resource_scalar_shift.def"
+#undef NEVERD_RESOURCE_SCALAR_SHIFT_CASE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_SCALAR_SHIFT_CASE(Name, ...)                           \
+  if (!CheckScalarShift##Name())                                               \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_scalar_shift.def"
+#undef NEVERD_RESOURCE_SCALAR_SHIFT_CASE
 #define NEVERD_RESOURCE_DOUBLE_SHIFT_CASE(Name, ...)                           \
   if (!CheckDoubleShift##Name())                                               \
     return STATUS_UNSUCCESSFUL;

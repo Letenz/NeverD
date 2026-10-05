@@ -1,5 +1,5 @@
-name: Native macOS HVF
-run-name: HVF ${{ inputs.runner == 'hosted-intel' && (inputs.intel-image || 'macos-15-intel') || inputs.runner }} / ${{ inputs.validation || 'full' }} / ${{ inputs.source-ref || github.sha }}${{ inputs.recovery-repetitions == '1000' && ' / 1000 recovery repetitions' || '' }}
+name: Native macOS ARM64 HVF
+run-name: ARM64 HVF / ${{ inputs.validation || 'full' }} / ${{ inputs.source-ref || github.sha }}${{ inputs.recovery-repetitions == '1000' && ' / 1000 recovery repetitions' || '' }}
 on:
   workflow_dispatch:
     inputs:
@@ -7,23 +7,13 @@ on:
         description: Exact forty-character source commit; empty uses this workflow's commit
         type: string
         default: ''
-      runner:
-        description: Native host to validate (hosted Intel must pass the HVF probe)
-        type: choice
-        default: self-hosted
-        options: [self-hosted, hosted-intel]
-      intel-image:
-        description: Hosted Intel image for a controlled host-environment comparison
-        type: choice
-        default: macos-15-intel
-        options: [macos-15-intel, macos-26-intel]
       validation:
         description: Full validation, Darwin workloads, transport tests, or availability only
         type: choice
         default: full
         options: [full, darwin, transport, probe]
       test_parallel:
-        description: CTest concurrency (hosted Intel full/Darwin methods are serial)
+        description: CTest concurrency on the native ARM64 host
         type: choice
         default: '4'
         options: ['4', '1']
@@ -36,31 +26,20 @@ permissions:
   contents: read
 env:
   HVF_SOURCE: ${{ inputs.source-ref || github.sha }}
-  HVF_INTEL_IMAGE: ${{ inputs.intel-image || 'macos-15-intel' }}
   HVF_RECOVERY_REPETITIONS: ${{ inputs.recovery-repetitions || '100' }}
 jobs:
   native-hvf:
-    # Both choices must create a real VM/vCPU before the LLVM build starts.
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        arch: ${{ fromJSON(inputs.runner == 'hosted-intel' && '["X64"]' || '["ARM64","X64"]') }}
-        shard: ${{ fromJSON(inputs.runner == 'hosted-intel' && inputs.validation == 'full' && '[0,1,2,3]' || '[0]') }}
-    runs-on: ${{ fromJSON(inputs.runner == 'hosted-intel' && (inputs.intel-image == 'macos-26-intel' && '["macos-26-intel"]' || '["macos-15-intel"]') || format('["self-hosted","macOS","{0}","hvf"]', matrix.arch)) }}
+    # Intel HVF Actions are suspended; physical Intel Mac validation is pending.
+    runs-on: [self-hosted, macOS, ARM64, hvf]
     timeout-minutes: 180
     env:
       SCCACHE_GHA_ENABLED: 'true'
       HVF_TEST_PARALLEL: ${{ inputs.test_parallel || '4' }}
     steps:
-      - name: Validate immutable source and host image
+      - name: Validate immutable source and repetition count
         shell: bash
         run: |
           [[ "$HVF_SOURCE" =~ ^[0-9a-f]{40}$ ]]
-          case "$HVF_INTEL_IMAGE" in
-            macos-15-intel|macos-26-intel) ;;
-            *) echo "Unsupported hosted Intel image" >&2; exit 1 ;;
-          esac
           case "$HVF_RECOVERY_REPETITIONS" in
             100|1000) ;;
             *) echo "Unsupported recovery repetition count" >&2; exit 1 ;;
@@ -87,11 +66,11 @@ jobs:
       - name: Require native VM and vCPU availability before the transport gate
         shell: bash
         env:
-          EXPECTED_HVF_HOST: '${{ matrix.arch }}'
+          EXPECTED_HVF_HOST: ARM64
         run: |
           case "$EXPECTED_HVF_HOST:$(uname -m)" in
-            ARM64:arm64|X64:x86_64) ;;
-            *) echo "Runner architecture does not match the HVF matrix" >&2; exit 1 ;;
+            ARM64:arm64) ;;
+            *) echo "HVF validation requires a native ARM64 runner" >&2; exit 1 ;;
           esac
           sysctl kern.hv_support
           mkdir -p build-hvf-probe
@@ -114,20 +93,11 @@ jobs:
               print(log.read_text(), end="")
           raise SystemExit(status)
           PYPROBE
-      - name: Install hosted build tools
-        if: inputs.runner == 'hosted-intel' && inputs.validation != 'probe'
-        run: brew install ninja
       - name: Cache unchanged native and pinned LLVM compilation
         if: inputs.validation != 'probe'
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: 'v0.16.0'
-      - name: Install hosted fixture tools
-        if: inputs.runner == 'hosted-intel' && (inputs.validation == 'full' || inputs.validation == 'darwin')
-        run: |
-          brew install llvm lld
-          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
-          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
       - name: Verify fixture tools
         if: inputs.validation == 'full' || inputs.validation == 'darwin'
         run: |
@@ -139,12 +109,6 @@ jobs:
         shell: bash
         run: |
           git submodule update --init --depth 1 third_party/capstone
-          if [[ "$(uname -m)" == "arm64" ]]; then
-            echo "HVF_PREBUILT=ON" >> "$GITHUB_ENV"
-          else
-            git submodule update --init --depth 1 third_party/llvm-project
-            echo "HVF_PREBUILT=OFF" >> "$GITHUB_ENV"
-          fi
       - name: Configure without Unicorn
         if: inputs.validation != 'probe'
         shell: bash
@@ -153,7 +117,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
-            -DNEVERD_LLVM_PREBUILT="$HVF_PREBUILT" \
+            -DNEVERD_LLVM_PREBUILT=ON \
             -DNEVERD_BUILD_SHARED=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DNEVERD_ENABLE_CPU_EMULATION=ON \
             -DNEVERD_ENABLE_DRIVER_EMULATION=OFF \
@@ -183,38 +147,14 @@ jobs:
           --evidence build-hvf/transport-evidence
           --parallel "$HVF_TEST_PARALLEL"
           --require-hvf --hvf-transport-only 2>&1 | tee build-hvf/transport-run.log
-      - name: Build and inventory Intel state and exception tests
-        if: matrix.arch == 'X64' && inputs.validation != 'probe'
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          mkdir -p build-hvf/state-evidence
-          cmake --build build-hvf --target NeverDX64ExceptionTests --parallel 4 2>&1 | tee build-hvf/state-evidence/build.log
-          ctest --test-dir build-hvf/unittests/emulation -L '^NeverDX64ExceptionTests$' --show-only=json-v1 > build-hvf/state-evidence/inventory.json
       - name: Preserve transport and compilation before architectural execution
         if: always() && inputs.validation != 'probe'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hvf-transport-${{ matrix.arch }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          name: hvf-transport-ARM64-attempt-${{ github.run_attempt }}
           path: |
             build-hvf/transport-*.log
             build-hvf/transport-evidence/
-            build-hvf/state-evidence/
-          if-no-files-found: warn
-      - name: Require Intel CR8 registers and privilege faults in isolation
-        if: matrix.arch == 'X64' && inputs.validation != 'probe'
-        timeout-minutes: 2
-        shell: bash
-        env:
-          NEVERD_REQUIRE_HVF: '1'
-        run: |
-          ctest --test-dir build-hvf/unittests/emulation -R '^NativeTransports/X64StateTransition[.]CR8ReadsEveryGPRAndPreservesUserPrivilegeFaults/hvf$' --no-tests=error --output-on-failure --output-junit "$PWD/build-hvf/state-evidence/cr8.xml" --output-log "$PWD/build-hvf/state-evidence/cr8.log"
-      - name: Preserve isolated Intel state result
-        if: always() && matrix.arch == 'X64' && inputs.validation != 'probe'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-cr8-X64-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
-          path: build-hvf/state-evidence/cr8.*
           if-no-files-found: warn
       - name: Build the requested native inventory
         if: inputs.validation == 'full' || inputs.validation == 'darwin'
@@ -241,125 +181,42 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hvf-build-${{ matrix.arch }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          name: hvf-build-ARM64-attempt-${{ github.run_attempt }}
           path: build-hvf/native-build.log
           if-no-files-found: warn
-      - name: Plan every hosted Intel batch before native CPU execution
-        id: cpu-batches
-        if: inputs.validation == 'full' && inputs.runner == 'hosted-intel'
-        env:
-          HVF_JOB: ${{ matrix.shard }}
-        run: >-
-          python3 scripts/prepare_hvf_batches.py --build build-hvf
-          --evidence build-hvf/batch-plans --job "$HVF_JOB"
-          --github-output "$GITHUB_OUTPUT"
-      - name: Preserve the unexecuted batch plans
-        if: always() && inputs.validation == 'full' && inputs.runner == 'hosted-intel'
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-plan-X64-job-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
-          path: build-hvf/batch-plans/
-          if-no-files-found: warn
-      - name: Require hosted Intel execution and preserve each CPU batch
-        if: inputs.validation == 'full' && inputs.runner == 'hosted-intel'
+      - name: Require ARM64 execution and record every result
         timeout-minutes: 30
-        uses: ./.github/actions/hvf-cpu-batches
-        with:
-          shard-count: ${{ steps.cpu-batches.outputs.shard_count }}
-          batch-0: ${{ steps.cpu-batches.outputs.batch_0 }}
-          batch-1: ${{ steps.cpu-batches.outputs.batch_1 }}
-          batch-2: ${{ steps.cpu-batches.outputs.batch_2 }}
-          batch-3: ${{ steps.cpu-batches.outputs.batch_3 }}
-      - name: Preserve unfinished hosted Intel diagnostics after CPU failure or timeout
-        if: always() && inputs.validation == 'full' && inputs.runner == 'hosted-intel'
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          # Diagnostic bundles never match the complete-inventory download glob.
-          name: hvf-cpu-diagnostic-X64-job-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
-          path: build-hvf/native-evidence/
-          if-no-files-found: warn
-      - name: Require self-hosted execution and record every result
-        timeout-minutes: 30
-        if: inputs.validation == 'full' && inputs.runner == 'self-hosted'
+        if: inputs.validation == 'full'
         run: >-
           python3 scripts/run_native_cpu_ci.py --build build-hvf
           --evidence build-hvf/native-evidence --parallel "$HVF_TEST_PARALLEL" --require-hvf
       - name: Preserve CPU evidence before the Darwin workload gate
-        if: always() && inputs.validation == 'full' && inputs.runner == 'self-hosted'
+        if: always() && inputs.validation == 'full'
         timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hvf-cpu-${{ matrix.arch }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          name: hvf-cpu-ARM64-attempt-${{ github.run_attempt }}
           path: build-hvf/native-evidence/
           if-no-files-found: warn
       - name: Require every native Darwin workload
         timeout-minutes: 15
         if: inputs.validation == 'full' || inputs.validation == 'darwin'
         shell: bash
-        env:
-          HVF_EXECUTION_METHODS: ${{ inputs.runner == 'hosted-intel' && '--execution-methods' || '' }}
-        run: |
-          hvf_method_args=()
-          if [[ -n "$HVF_EXECUTION_METHODS" ]]; then
-            hvf_method_args+=("$HVF_EXECUTION_METHODS")
-          fi
-          python3 scripts/run_native_cpu_ci.py --build build-hvf \
-            --evidence build-hvf/darwin-evidence --parallel "$HVF_TEST_PARALLEL" --require-darwin-backend hvf \
-            "${hvf_method_args[@]}"
+        run: >-
+          python3 scripts/run_native_cpu_ci.py --build build-hvf
+          --evidence build-hvf/darwin-evidence --parallel "$HVF_TEST_PARALLEL"
+          --require-darwin-backend hvf
       - name: Preserve hardware evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hvf-${{ matrix.arch }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          name: hvf-ARM64-attempt-${{ github.run_attempt }}
           path: |
             build-hvf-probe/
             build-hvf/transport-*.log
             build-hvf/transport-evidence/
-            build-hvf/state-evidence/
             build-hvf/native-build.log
-            build-hvf/batch-plans/
             build-hvf/native-evidence/
             build-hvf/darwin-evidence/
             build-hvf/unittests/emulation/Testing/Temporary/LastTest*.log*
-          if-no-files-found: warn
-
-  complete-intel-inventory:
-    needs: native-hvf
-    if: always() && inputs.runner == 'hosted-intel' && inputs.validation == 'full'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Validate immutable source identity
-        shell: bash
-        run: '[[ "$HVF_SOURCE" =~ ^[0-9a-f]{40}$ ]]'
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ env.HVF_SOURCE }}
-          persist-credentials: false
-      - name: Verify checked-out source
-        shell: bash
-        run: 'test "$(git rev-parse HEAD)" = "$HVF_SOURCE"'
-      - name: Download this attempt's separate CPU evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: hvf-cpu-X64-shard-*-attempt-${{ github.run_attempt }}
-          path: hvf-shards
-      - name: Reconcile every original CPU result and native requirement
-        run: |
-          shard_count="$(python3 -c 'from scripts.prepare_hvf_batches import SHARD_COUNT; print(SHARD_COUNT)')"
-          python3 scripts/audit_hvf_shards.py --evidence-root hvf-shards \
-            --commit "$HVF_SOURCE" --host x86_64 --shards "$shard_count" \
-            --output hvf-aggregate/summary.json
-      - name: Require transport and independent Darwin gates in every native job
-        env:
-          NATIVE_RESULT: ${{ needs.native-hvf.result }}
-        run: test "$NATIVE_RESULT" = success
-      - name: Preserve complete-inventory audit
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hvf-complete-X64-attempt-${{ github.run_attempt }}
-          path: hvf-aggregate/
           if-no-files-found: warn

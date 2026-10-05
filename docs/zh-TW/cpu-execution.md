@@ -88,6 +88,8 @@ checked x64 接納 `CLC/STC/CMC` 和 `LAHF/SAHF`。進位指令由傳輸層執�
 
 checked x64 透過 KVM、WHP 和 Unicorn 執行 `SHLD/SHRD`，支援 16/32/64 位元目標及 imm8 或 CL 計數。計數採用架構遮罩；16 位元形式遮罩後大於 16 的未定義計數在產生效果前拒絕。RAM 目標依精確寬度檢查讀寫權限，並沿用現有交易：結果觀察器在發布前執行，取消會回復 CPU 與記憶體。LOCK 和裝置運算元仍不支援。
 
+`X64ScalarShiftInstructions.def` 統一定義 `SHL/SHR/SAR`、`ROL/ROR` 和 `RCL/RCR` 的 8/16/32/64 位元目的運算元效果。暫存器與 RAM 形式支援隱含的 1、imm8 或 CL 計數，包括遮罩後為零的計數及 SAL 別名。RAM 寫入經過權限檢查、結果觀察回呼與共用交易；停止或回呼錯誤會還原 CPU 與記憶體。KVM、WHP 與 Unicorn 檢查模式共用此邊界。LOCK 與 MMIO 形式仍不支援。
+
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。

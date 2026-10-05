@@ -1,10 +1,12 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 06940e7220c3f05dff76462de7d0fe0199aab6b4aeda2c3e4f418d3441516ccf -->
+<!-- i18n-source: 86f979db12c7cf8a82eb75814ac41da27557a2d27b76cde302b8bec45d3e46ef -->
 
 [← 문서 목록](README.md)
 
 # macOS 네이티브 CPU 실행(HVF)
+
+**검증 상태(2026-10-05): Intel HVF는 실제 Intel Mac에서 테스트되지 않았으며 전체 검증이 완료되지 않았습니다.** 조직 및 개인 Actions 저장소 모두 완전한 Intel 검증 증거를 확보하지 못했고 충돌, 러너 연결 끊김, 시간 초과는 해결되지 않았습니다. 두 저장소의 Intel HVF Actions를 중단했으며 공통 HVF 워크플로는 ARM64만 선택합니다. 아래 Intel 워크플로 지침은 과거 참고 자료이며 테스트 재개 지시가 아닙니다. 네이티브 ARM64의 정확성과 성능 측정을 우선한 뒤 적용 가능한 변경을 Intel에 옮겨 소스 검토와 가능한 컴파일 검사만 수행합니다. ARM64 결과로 Intel 실행을 검증할 수 없습니다. 기존 증거를 보존하며 이번 중단은 장애가 수정되었다는 뜻이 아닙니다.
 
 NeverD는 macOS에서 KVM/WHP에 대응하는 [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor)를 사용합니다. `--backend hvf`는 명시적 선택입니다. `auto`는 네이티브 실행을 허용하는 계약에서 호스트와 게스트 ISA가 일치할 때 HVF를 선택합니다. Apple Silicon에서는 ARM64, Intel Mac에서는 x86-64를 실행합니다. `software-cpu-v1`과 서로 다른 ISA 사이의 자동 선택은 Unicorn을 사용합니다. Rosetta로 변환된 실행 파일은 거부합니다.
 
@@ -45,9 +47,9 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-Apple Silicon에서는 `-DNEVERD_LLVM_PREBUILT=ON`을 추가할 수 있습니다. Intel은 고정된 LLVM 리비전을 소스에서 빌드합니다. [HVF 워크플로](../../.github/workflows/hvf.yml)는 `self-hosted, macOS, ARM64/X64, hvf`와 `macos-15-intel`의 `hosted-intel`을 지원합니다. 먼저 실제 VM/vCPU 생성과 삭제를 확인합니다. `validation=probe`는 명령 실행의 증거가 아니며, `transport`는 전송 계층만, `darwin`은 일치하는 모든 Darwin 작업을, `full`은 전체 CPU와 Darwin 검증을 모두 요구합니다.
+Apple Silicon은 `-DNEVERD_LLVM_PREBUILT=ON`을 사용할 수 있습니다. [HVF 워크플로](../../.github/workflows/hvf.yml)는 이제 `self-hosted, macOS, ARM64, hvf`만 선택하고 호스트 아키텍처도 확인합니다. LLVM 준비 전에 실제 VM/vCPU 생성과 삭제를 요구합니다. `probe`는 가용성, `transport`는 전송 계층, `darwin`은 모든 일치하는 Darwin 작업, `full`은 전송 계층과 전체 CPU·Darwin 검증을 요구합니다. Intel 선택지는 제거되었으며 아래 Intel 절차는 중단된 과거 절차입니다. 전용 ARM64 runner가 별도로 필요합니다.
 
-전송 계층의 필수 항목은 ARM64 15개, Intel 12개이며 전체 CPU 검증은 각각 23개, 20개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
+전송 계층의 필수 항목은 ARM64 15개, Intel 12개이며 전체 CPU 검증은 각각 27개, 20개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
 
 호스팅 Intel의 `--execution-methods`는 전체 CTest 목록의 모든 매개변수, 플래그, 환경 및 작업 디렉터리를 유지하여 GoogleTest 메서드를 직렬 실행합니다. 알 수 없는 속성은 거부합니다. 메서드 전체 기한은 최대 120초이며 내부 매개변수마다 별도 기한을 적용하지 않습니다. 이후 제한된 시간 안에 프로세스 그룹을 회수합니다. 원본 XML, 이름 대응, 종료 상태를 보존합니다. 시간 초과나 불완전한 XML은 부분 실패를 만들고, 필수 네이티브 항목 누락이나 건너뛰기는 통과할 수 없습니다. 자체 runner는 CTest의 사례별 프로세스와 기한을 유지합니다.
 
@@ -206,3 +208,11 @@ Executor/VM/소유 스레드 세션 전체를 유지한 유한 기한 복구 비
 `fb7a9d2`의 프로토콜 3 계측 대조도 원래 예산을 초과했습니다. macOS 15 [37262095705](https://github.com/gmh5225/test_mac_intel/actions/runs/37262095705)는 781회 완료 후 782회에서, macOS 26 [37262097389](https://github.com/gmh5225/test_mac_intel/actions/runs/37262097389)는 396회 완료 후 397회에서 실패했습니다. 둘 다 IRQ와 새로운 쓰기를 관측하고 코드 1로 종료했으며 정리와 자식 회수를 확인했습니다. runner 연결 손실이나 업로더 실패는 없습니다. 실패한 호출 전부터 반환까지는 약 2.068/2.002초입니다. 개별 경계의 샘플 구간에서 Intel HVF 실행 카운터는 약 2.063/1.996초, Darwin 스레드 CPU는 약 2.068/2.001초 증가했습니다. 읽기는 호출·상태 수집 구간 밖에 두며 샘플 폭과 원시 값을 보존합니다. 중첩 호스트 보고값은 경과 시간 외의 증거를 더하지만 물리 guest 실행, 스케줄링 시간이나 커널 원인을 확정하지 못합니다. 여덟 시도와 검증한 38개 압축 파일을 모두 보존하며 5ms 슬라이스와 2초 예산은 바꾸지 않았습니다. 두 이미지 vCPU, VM 재생성 및 NeverD Intel 전체 검증은 미완료입니다. [증거와 계측](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle).
 
 `ca8da7d`의 프로토콜 4 HLT 대조는 두 작업 모두 취소로 끝났습니다. macOS 15 [37263893167](https://github.com/gmh5225/test_mac_intel/actions/runs/37263893167)와 macOS 26 [37263895410](https://github.com/gmh5225/test_mac_intel/actions/runs/37263895410)의 해당 GitHub check-run은 30분 작업 제한 초과를 보고했으며 명시적인 연결 손실 주석은 없습니다. 각각 실행 전 아티팩트만 남았고 내려받은 두 로그 ZIP은 비어 있습니다. 네이티브 시작, 완료 횟수, HLT 종료, 프로세스 종료와 회수는 검증되지 않았습니다. 5ms 슬라이스, 회당 2초 및 프로세스 600초 예산 설정만으로 시간 초과 처리나 회수 실행을 입증할 수 없습니다. final-only 대조는 차단 위치나 커널 원인을 특정하지 못하며 원래 타이머 검증과 Intel 전체 검증도 미완료입니다. 열 번의 시도와 원본 ZIP 40개를 모두 보존합니다. 오프라인 검증은 압축 파일, 고정 소스, 프로세스와 예산 증거, 보충 분석을 재검사하고 11개 언어 색인은 누락 횟수를 알 수 없음으로 표시합니다. [증거와 재검증](https://github.com/gmh5225/test_mac_intel/tree/main/results/2026-10-05-api-lifecycle).
+
+## ARM64 watchdog 최적화 실험 (2026-10-05)
+
+watchdog disarm 이후 알림을 제거한 후보는 정확성 검사를 통과했으나 신뢰할 만한 성능 이점을 입증하지 못했습니다. 동일한 Release 설정과 의존성으로 15쌍을 교대로 측정했으며 `initialization`, `integer`, `branch`, `memory`, `tls_call`, `two_cpu_switch`의 기준/후보 시간 비율 중앙값은 **0.902, 0.897, 0.856, 1.030, 0.912, 0.969**였습니다. 1보다 커야 후보에 유리합니다. 다른 컴파일 작업과 긴 지연 표본이 있어 변경이 성능 저하를 일으켰다고 단정할 수 없습니다. 실행 변경은 철회하고 기존 알림을 유지했습니다. disarm 후 더 이른 기한으로 재설정, 해제, 지역 중지 토큰 수명을 다루는 회귀 검사 3개를 추가했습니다.
+
+최종 소스 `6c4a5ef1f`는 RunControl 32개, 전송 계층 27/27개, 전체 CPU 목록(통과 1429, 건너뜀 10644, 필수 27/27) 및 Darwin(통과 65, 건너뜀 221, 필수 39/39)을 독립적으로 통과했고 실패는 없었습니다. 네이티브 중단·유지보수 복구 검사 3종도 각각 1000회 연속 통과했으며 자식 프로세스 회수를 확인했습니다. 목록이 겹치므로 합산하지 않습니다. 건너뜀은 비활성화되거나 다른 백엔드·아키텍처에 해당합니다. 제한된 네이티브 ARM64 범위의 검증이며 Intel 실행, 전체 Apple OS 에뮬레이션 또는 성능 순위를 입증하지 않습니다. Intel은 로컬 x86-64 구문 컴파일만 수행했습니다.
+
+[원시 쌍별 표본](../benchmarks/2026-10-05-arm64-hvf-watchdog.json) · [소스와 설정](../benchmarks/2026-10-05-arm64-hvf-watchdog-metadata.json)

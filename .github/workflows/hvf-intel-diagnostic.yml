@@ -38,6 +38,7 @@ permissions:
   contents: read
 jobs:
   native-method:
+    if: ${{ false }} # Intel HVF Actions suspended on 2026-10-05.
     runs-on: ${{ inputs.intel-image == 'macos-26-intel' && 'macos-26-intel' || 'macos-15-intel' }}
     timeout-minutes: 180
     strategy:

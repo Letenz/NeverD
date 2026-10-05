@@ -107,6 +107,15 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `strchr`, `strrchr`, `__strchr_chk`, `__strrchr_chk`, with byte-width character
+  conversion, NUL matches, full-width object extents and unchanged errno. The
+  first search can return before reaching a terminator; reverse search must
+  reach NUL. Fortified calls check the remaining extent before each read.
+  Exhaustion produces a non-returning `runtime_failure` with a Fortify diagnostic,
+  consistent with the model's abort boundary; signal delivery is not modeled.
+  Invalid pointers and memory/deadline limits remain distinct failures. Only
+  visited guest bytes are read, including a match at a readable page's last byte.
+  These rules follow the pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
 - `strtok_r`, scanning guest byte strings and updating the caller's eight-byte,
   aligned save pointer. Delimiters may change between calls; separate contexts
   remain independent. API 28 clears the saved pointer at the final token or an

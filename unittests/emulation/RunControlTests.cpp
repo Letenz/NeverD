@@ -124,6 +124,45 @@ TEST(RunControl, AcknowledgedExpiryDoesNotCancelANewEntry) {
   EXPECT_FALSE(Control.disarm());
 }
 
+TEST(RunControl, DisarmedDistantDeadlineDoesNotDelayEarlierRearm) {
+  InterruptTarget Target;
+  Controller Control(Interrupt{Target});
+  Control.arm({Clock::time_point::max()});
+  EXPECT_FALSE(Target.waitFor(1, Quiet));
+  EXPECT_FALSE(Control.disarm());
+  Control.arm({Clock::now()});
+  EXPECT_TRUE(Target.waitFor(1));
+  EXPECT_TRUE(Control.disarm());
+  const unsigned Acknowledged = Target.count();
+  EXPECT_FALSE(Target.waitFor(Acknowledged + 1, Quiet));
+}
+
+TEST(RunControl, DestructionAfterDisarmDoesNotWaitForTheOldDeadline) {
+  InterruptTarget Target;
+  auto Control = std::make_unique<Controller>(Interrupt{Target});
+  Control->arm({Clock::time_point::max()});
+  EXPECT_FALSE(Target.waitFor(1, Quiet));
+  EXPECT_FALSE(Control->disarm());
+  auto Retire = std::async(std::launch::async, [&] { Control.reset(); });
+  EXPECT_EQ(Retire.wait_for(Wait), std::future_status::ready);
+  Retire.get();
+  EXPECT_EQ(Target.count(), 0u);
+}
+
+TEST(RunControl, DisarmedEntryDoesNotRetainAScopedStopToken) {
+  InterruptTarget Target;
+  Controller Control(Interrupt{Target});
+  {
+    std::atomic<bool> Stop{false};
+    Control.arm({Clock::time_point::max(), &Stop});
+    EXPECT_FALSE(Target.waitFor(1, Quiet));
+    EXPECT_FALSE(Control.disarm());
+    Stop = true;
+  }
+  // Remain idle beyond a polling interval after the token's lifetime ends.
+  EXPECT_FALSE(Target.waitFor(1, Quiet));
+}
+
 TEST(RunControl, DestructionJoinsBeforeTheInterruptTargetCanRetire) {
   InterruptTarget Target;
   auto Control = std::make_unique<Controller>(Interrupt{Target});

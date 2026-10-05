@@ -3,6 +3,10 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+// Validation status (2026-10-05): not tested on a physical Intel Mac.
+// Hosted Actions did not establish full acceptance and are now suspended.
+// ARM64 results and cross-compilation do not validate Intel runtime behavior.
+// Preserve the unresolved crash/timeout evidence; see docs/macos-hvf.md.
 #include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64MachineProbe.h"
 #include "../../core/ExecutionDiagnostics.h"
