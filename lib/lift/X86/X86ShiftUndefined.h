@@ -22,35 +22,40 @@ inline bool isRotate(unsigned Id) {
   return Id == X86_INS_ROL || Id == X86_INS_ROR;
 }
 
-// Intel SDM 093, Vol. 2B, SAL/SAR/SHL/SHR, Flags Affected. Counts here
-// are already masked to five or six bits. SAR keeps a defined carry even
-// when its count exceeds a narrow operand's width. Each threshold describes
-// one fresh bit, not an arbitrary byte or a selected hardware flag value.
+// An instruction table owns the arbitrary output slice and its masked-count
+// threshold. Emission and verification share the saved-count/placement rules.
 struct Rule {
-  unsigned Flag;
+  NdVar Output;
+  unsigned BitCount;
   unsigned MinimumCount;
 };
+// Intel SDM 093, Vol. 2B, SAL/SAR/SHL/SHR, Flags Affected. Counts here
+// are already masked to five or six bits. SAR keeps a defined carry even
+// when its count exceeds a narrow operand's width. Each single-shift threshold
+// describes one fresh bit, not an arbitrary byte or selected hardware value.
 inline auto rules(unsigned Id, unsigned Bytes) {
   // ROL/ROR use the architectural masked count, before any narrow-width
   // modulo. Only OF is fresh for counts above one; every other flag either
   // remains unchanged or has a defined value, including whole rotations.
   if (isRotate(Id))
-    return std::array<Rule, 3>{
-        {{x86reg::AF, 64}, {x86reg::OF, 2}, {x86reg::CF, 64}}};
+    return std::array<Rule, 3>{{{NdVar::reg(x86reg::AF, 1), 1, 64},
+                                {NdVar::reg(x86reg::OF, 1), 1, 2},
+                                {NdVar::reg(x86reg::CF, 1), 1, 64}}};
   return std::array<Rule, 3>{
-      {{x86reg::AF, 1},
-       {x86reg::OF, 2},
-       {x86reg::CF, Id == X86_INS_SAR ? 64 : Bytes * 8}}};
+      {{NdVar::reg(x86reg::AF, 1), 1, 1},
+       {NdVar::reg(x86reg::OF, 1), 1, 2},
+       {NdVar::reg(x86reg::CF, 1), 1, Id == X86_INS_SAR ? 64 : Bytes * 8}}};
 }
 
-inline void record(X86Lifter::LiftState &S, unsigned Id, NdVar Count) {
-  for (const auto &R : rules(Id, Count.Size)) {
+inline void recordRules(X86Lifter::LiftState &S, NdVar Count,
+                        llvm::ArrayRef<Rule> Rules) {
+  for (const auto &R : Rules) {
     // A masked count cannot reach 64; omit impossible producers entirely.
     if (R.MinimumCount > (Count.Size == 8 ? 63u : 31u))
       continue;
     if (Count.isConst()) {
       if (Count.Offset >= R.MinimumCount)
-        S.recordUndefinedBits(NdVar::reg(R.Flag, 1), 0, 1);
+        S.recordUndefinedBits(R.Output, 0, R.BitCount);
       continue;
     }
     const auto Guard = S.makeTemp(1);
@@ -58,31 +63,40 @@ inline void record(X86Lifter::LiftState &S, unsigned Id, NdVar Count) {
     // precedes destination writes, including an overlapping CL/ECX/RCX.
     S.emit(NdOp::INT_LESSEQUAL, Guard,
            {NdVar::scalar(R.MinimumCount, Count.Size), Count});
-    S.recordUndefinedBits(NdVar::reg(R.Flag, 1), 0, 1, Guard);
+    S.recordUndefinedBits(R.Output, 0, R.BitCount, Guard);
   }
+}
+
+inline void record(X86Lifter::LiftState &S, unsigned Id, NdVar Count) {
+  recordRules(S, Count, rules(Id, Count.Size));
+}
+
+inline bool overlaps(NdVar A, NdVar B) {
+  return A.Space == B.Space && A.Size && B.Size &&
+         (A.Offset <= B.Offset ? B.Offset - A.Offset < A.Size
+                               : A.Offset - B.Offset < B.Size);
 }
 
 // Match exact rules and their canonical Boolean guards before publishing a
 // transaction. A mutable register must never stand in for the saved count.
-inline bool matches(unsigned Id, const cs_x86 &X, llvm::ArrayRef<LowOp> Ops,
-                    const LowInstructionUndefinedEffects &Effects) {
-  if (X.op_count != 2)
-    return false;
-  const unsigned Width = X.operands[0].size;
+inline bool matchesRules(unsigned Width, const cs_x86_op &CountOperand,
+                         NdVar CountRegister, llvm::ArrayRef<Rule> Rules,
+                         llvm::ArrayRef<LowOp> Ops,
+                         const LowInstructionUndefinedEffects &Effects) {
   const unsigned Mask = Width == 8 ? 63 : 31;
-  const bool Immediate = X.operands[1].type == X86_OP_IMM;
+  const bool Immediate = CountOperand.type == X86_OP_IMM;
   const uint64_t Count =
-      Immediate ? static_cast<uint64_t>(X.operands[1].imm) & Mask : 0;
+      Immediate ? static_cast<uint64_t>(CountOperand.imm) & Mask : 0;
   size_t Index = 0;
   std::optional<NdVar> SavedCount;
-  for (const auto &R : rules(Id, Width)) {
+  for (const auto &R : Rules) {
     if (R.MinimumCount > Mask || (Immediate && Count < R.MinimumCount))
       continue;
     if (Index == Effects.Effects.size())
       return false;
     const auto &E = Effects.Effects[Index++];
-    if (E.Output != NdVar::reg(R.Flag, 1) || E.BitOffset != 0 ||
-        E.BitCount != 1 || E.AfterOp == 0 || E.AfterOp > Ops.size())
+    if (E.Output != R.Output || E.BitOffset != 0 || E.BitCount != R.BitCount ||
+        E.AfterOp == 0 || E.AfterOp > Ops.size())
       return false;
     if (Immediate) {
       if (E.When)
@@ -103,37 +117,44 @@ inline bool matches(unsigned Id, const cs_x86 &X, llvm::ArrayRef<LowOp> Ops,
       bool FoundCount = false;
       for (size_t I = 0; I < Ops.size(); ++I) {
         const auto &Op = Ops[I];
-        if (Op.Output == *E.When && ++Definitions != 1)
+        if (overlaps(Op.Output, *E.When) &&
+            (Op.Output != *E.When || ++Definitions != 1))
           return false;
-        if (Op.Output != *SavedCount)
+        if (!overlaps(Op.Output, *SavedCount))
           continue;
-        if (FoundCount || I >= E.AfterOp - 1 || Op.Opcode != NdOp::INT_AND ||
-            Op.NumInputs != 2 ||
-            Op.Inputs[0] != NdVar::reg(x86reg::RCX, isRotate(Id) ? 1 : 4) ||
+        if (Op.Output != *SavedCount || FoundCount || I >= E.AfterOp - 1 ||
+            Op.Opcode != NdOp::INT_AND || Op.NumInputs != 2 ||
+            Op.Inputs[0] != CountRegister ||
             Op.Inputs[1] != NdVar::scalar(Mask, Width))
           return false;
         FoundCount = true;
         // Before taking the snapshot, no physical write may alter CL.
         for (const auto &Earlier : Ops.take_front(I))
-          if (Earlier.Output.isReg() && Earlier.Output.Size &&
-              Earlier.Output.Offset <= x86reg::RCX &&
-              Earlier.Output.Offset + Earlier.Output.Size > x86reg::RCX)
+          if (overlaps(Earlier.Output, NdVar::reg(x86reg::RCX, 1)))
             return false;
       }
       if (!FoundCount || Definitions != 1)
         return false;
     }
-    // A producer is placed after the final flag write, never silently killed
-    // or consumed by remaining instruction-local computations.
+    // A producer follows its final architectural write. No remaining
+    // instruction-local computation may consume or kill any overlapping byte.
     for (const auto &Later : Ops.drop_front(E.AfterOp)) {
-      if (Later.Output == E.Output)
+      if (overlaps(Later.Output, E.Output))
         return false;
       for (unsigned I = 0; I < Later.NumInputs; ++I)
-        if (Later.Inputs[I] == E.Output)
+        if (overlaps(Later.Inputs[I], E.Output))
           return false;
     }
   }
   return Index == Effects.Effects.size();
+}
+
+inline bool matches(unsigned Id, const cs_x86 &X, llvm::ArrayRef<LowOp> Ops,
+                    const LowInstructionUndefinedEffects &Effects) {
+  return X.op_count == 2 &&
+         matchesRules(X.operands[0].size, X.operands[1],
+                      NdVar::reg(x86reg::RCX, isRotate(Id) ? 1 : 4),
+                      rules(Id, X.operands[0].size), Ops, Effects);
 }
 
 // Admit documented legacy /0, /1, /4, /5 and /7 encodings and the /6 SAL/SHL

@@ -13,6 +13,7 @@
 #include "neverd/lift/X86Lifter.h"
 
 #include "X86BitTestUndefined.h"
+#include "X86DoubleShiftUndefined.h"
 #include "X86LiftDetail.h"
 #include "X86ShiftUndefined.h"
 #include "X86XaddAudit.h"
@@ -612,6 +613,8 @@ bool hasAuditedUndefinedOutputs(const cs_insn *Insn, Arch TargetArch) {
     return bitundefined::form(Insn, TargetArch);
   if (Insn->id == X86_INS_XADD)
     return xaddaudit::form(Insn, TargetArch);
+  if (doubleshiftundefined::isDoubleShift(Insn->id))
+    return doubleshiftundefined::form(Insn, TargetArch);
   switch (Insn->id) {
   // Arithmetic defines all six arithmetic flags; logic defines five and
   // records AF below. DF is preserved.
@@ -1199,6 +1202,10 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
         : bitundefined::isBitTest(Id)
             ? bitundefined::matches(
                   llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
+                  EffectsDraft)
+        : doubleshiftundefined::isDoubleShift(Id)
+            ? doubleshiftundefined::matches(
+                  X86, llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
                   EffectsDraft)
         : Logic ? HasLogicEffect
                 : EffectsDraft.Effects.empty();
