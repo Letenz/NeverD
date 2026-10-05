@@ -1322,6 +1322,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `AArch64ExclusiveTests.cpp` 覆盖标量及成对宽度、acquire/release 形式、寄存器重叠、别名、对齐与权限故障、快照、观察回调取消或失败以及双 CPU 竞争。`RAMReservationTests.cpp` 覆盖相同值写入、ABA、分配复用、回滚，以及 KVM/Unicorn 字符串和 `ENTER` 写入的干扰。原始 ARM64 Windows 进程样例执行独占循环；`scripts/check_aarch64_exclusives.py` 在 Windows ARM64 CI 上执行原始指令并保存对齐异常记录。原生指令证据不代表已验证 ARM64 KVM/WHP 后端执行；不可用配置仍明确记为跳过。 相同的独占指令用例还覆盖软件 Unicorn、跨契约干扰、同值及 ABA 写入、同次执行中的可执行别名，以及 `DC ZVA` 写入和观察回调取消。
  `windows-alignment-oracle.yml` 也运行 ARM64 探针：1,320 条观察记录覆盖所有未对齐偏移、四种读写序列，以及可写、只读、不可访问和跨页内存。探针保留完整位宽的寄存器测试值，并记录故障前已提交的部分写入。 `WindowsExclusiveProcessTests.cpp` 将 1,320 条原始 Windows ARM64 观察结果与 `WindowsExclusiveNative.def` 中的原生摘要逐项核对，保留寄存器值、异常元数据和 RAM 效果，仅归一化代码与数据的放置地址。
+
 结构上已为常量的原生目标直接使用现有的可达性检查调度。符号单目标只有在穷尽枚举后才复用传入谓词。回归在直线执行的查询预算内验证 128 次常量跳转，并按每次转移两次枚举查询的预算验证 32 次计算目标跳转，保留未约束的地址高位和分支域。完整状态结果被修改、缺少对齐约束、目标数量上限为零或查询与指令预算不足时必须拒绝。多目标和未完成枚举的现有拒绝检查仍然必需。
 
 只有完成 UNSAT 证明、排除另一条边后，原生分支才在当前边保留传入域。测试在 512 个求解门内验证两个方向各 32 次带条件跳转，并检查精确与少一次的查询预算及求解门耗尽。修改或删除对齐条件、反转比较以及修改终态都必须拒绝；任意未定义控制和两条边均可达的现有测试仍然必需。
