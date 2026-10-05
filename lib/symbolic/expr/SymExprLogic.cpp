@@ -53,6 +53,43 @@ SymRef contractZeroExtensions(SymContext &C, SymOp Op,
   return C.mkZExt(Value, Constant.getBitWidth());
 }
 
+// A logical right shift observes only [Amount, Width). Remove bitwise terms
+// that are neutral throughout that window, without distributing the shift or
+// expanding the DAG. A failed or exhausted fact query keeps its operand.
+SymRef removeDiscardedShiftTerms(SymContext &C, SymRef A, unsigned Amount) {
+  const auto Op = C.op(A);
+  const unsigned Width = C.width(A);
+  if ((Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor) ||
+      Width > 128 || C.numOperands(A) > 8)
+    return A;
+  unsigned Work = 256;
+  llvm::SmallVector<SymRef, 8> Kept;
+  for (auto Child : C.operands(A)) {
+    bool Neutral = true;
+    for (unsigned Low = Amount; Low < Width;) {
+      const unsigned Bits = std::min(Width - Low, 64U);
+      auto Value = C.constantWindow(Child, Low, Bits, Work);
+      if (!Value ||
+          (Op == SymOp::And ? !Value->isAllOnes() : !Value->isZero())) {
+        Neutral = false;
+        break;
+      }
+      Low += Bits;
+    }
+    if (!Neutral)
+      Kept.push_back(Child);
+  }
+  if (Kept.size() == C.numOperands(A))
+    return A;
+  if (Kept.empty())
+    return Op == SymOp::And ? C.mkOnes(Width) : C.mkZero(Width);
+  if (Op == SymOp::And)
+    return C.mkAnd(Kept);
+  if (Op == SymOp::Or)
+    return C.mkOr(Kept);
+  return C.mkXor(Kept);
+}
+
 } // namespace
 
 /// Shared shape for And/Or/Xor: flatten the nested same-operator operands,
@@ -469,6 +506,9 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
     // Compare the full unsigned count before canonicalizing its storage
     // width. Equal in-range counts must denote the same shift expression.
     B = mkConst(W, Amt.getZExtValue());
+    A = removeDiscardedShiftTerms(*this, A, Amt.getZExtValue());
+    if (isConst(A))
+      return mkConst(constValue(A).lshr(Amt.getZExtValue()));
     if (op(A) == SymOp::And && operands(A).size() == 2 &&
         isConst(operand(A, 0)) &&
         constValue(operand(A, 0)).countLeadingOnes() >=

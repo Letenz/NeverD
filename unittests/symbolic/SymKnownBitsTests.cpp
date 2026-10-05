@@ -472,3 +472,105 @@ TEST(SymKnownBits, AFullCacheKeepsEarlierFactsAndDoesNotGrow) {
   EXPECT_TRUE(Facts.query(C.mkConst(32, 123), Work));
 }
 } // namespace
+
+TEST(SymKnownBits, FlattenedMasksKeepEveryFactorAndTheOriginalMask) {
+  for (unsigned Width : {8U, 32U, 64U, 128U}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto Top = C.mkConst(llvm::APInt::getSignMask(Width));
+    auto Restricted = C.mkXor(Top, C.mkAnd(Y, Top));
+    auto Source = C.mkAnd(X, Restricted);
+    auto Mask = C.mkConst(llvm::APInt::getHighBitsSet(Width, Width / 2));
+    auto Equal = C.mkEq(Source, C.mkAnd(Mask, Source));
+    const auto Nodes = C.numNodes();
+    unsigned Remaining = 256;
+    SymKnownBits Facts(C);
+    auto K = Facts.query(Equal, Remaining);
+    ASSERT_TRUE(K);
+    ASSERT_TRUE(K->isConstant() && K->One.isOne());
+    const auto Used = 256 - Remaining;
+    for (unsigned Limit : {0U, Used - 1, Used}) {
+      SymKnownBits Fresh(C);
+      unsigned Work = Limit;
+      auto R = Fresh.query(Equal, Work);
+      EXPECT_EQ(bool(R), Limit == Used);
+      EXPECT_EQ(Work, 0U);
+      EXPECT_EQ(C.numNodes(), Nodes);
+    }
+    auto SourceMask = C.mkConst(Width, 1), WiderMask = C.mkConst(Width, 3);
+    SymRef Unknown[] = {
+        C.mkEq(Source, C.mkAnd(Mask, C.mkAnd(Y, Restricted))),
+        C.mkEq(Source, C.mkAnd(C.mkNot(Top), Source)),
+        C.mkEq(C.mkAnd({SourceMask, X, Y}), C.mkAnd({WiderMask, X, Y}))};
+    for (auto R : Unknown) {
+      unsigned Work = 256;
+      auto U = Facts.query(R, Work);
+      ASSERT_TRUE(U);
+      EXPECT_TRUE(U->isUnknown());
+    }
+    if (Width == 8) {
+      exhaustiveBytePairs(C, {Equal});
+      exhaustiveBytePairs(C, Unknown);
+      for (unsigned A = 0; A < 256; ++A)
+        for (unsigned B = 0; B < 256; ++B) {
+          const auto S = A & (128U ^ (B & 128U));
+          EXPECT_EQ(S & 240U, S);
+        }
+    }
+  }
+}
+
+TEST(SymKnownBits, NonwrappingSumIntervalsRetainExactUnsignedEndpoints) {
+  for (unsigned Width : {8U, 32U, 64U, 128U}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    llvm::SmallVector<SymRef, 8> Terms{C.mkConst(Width, 1)};
+    for (unsigned Bit = 0; Bit < 4; ++Bit)
+      Terms.push_back(C.mkZExt(C.mkExtract(Bit & 1 ? X : Y, Bit, 1), Width));
+    auto Sum = C.mkAdd(Terms);
+    auto Six = C.mkConst(Width, 6), Five = C.mkConst(Width, 5);
+    auto EqualBound = C.mkUle(Sum, Five);
+    SymKnownBits Facts(C);
+    expectConstant(Facts, EqualBound, 1);
+    expectConstant(Facts, C.mkUlt(Sum, Six), 1);
+    expectConstant(Facts, C.mkUle(Six, Sum), 0);
+    expectConstant(Facts, C.mkUlt(Five, Sum), 0);
+    expectConstant(Facts, C.mkUle(C.mkConst(Width, 1), Sum), 1);
+    SymRef Unknown[] = {
+        C.mkUlt(Sum, Five), C.mkUle(Five, Sum),
+        C.mkUlt(C.mkAdd(Sum, C.mkConst(llvm::APInt::getAllOnes(Width) - 2)),
+                Five),
+        C.mkUle(C.mkAdd(Sum, C.mkConst(llvm::APInt::getAllOnes(Width) - 2)),
+                Five)};
+    for (auto R : Unknown) {
+      unsigned Work = 256;
+      auto K = Facts.query(R, Work);
+      ASSERT_TRUE(K);
+      EXPECT_TRUE(K->isUnknown());
+    }
+    if (Width == 8) {
+      exhaustiveBytePairs(C, {EqualBound});
+      exhaustiveBytePairs(C, Unknown);
+      for (unsigned A = 0; A < 256; ++A)
+        for (unsigned B = 0; B < 256; ++B)
+          EXPECT_LE(1 + (B & 1) + ((A >> 1) & 1) + ((B >> 2) & 1) +
+                        ((A >> 3) & 1),
+                    5U);
+    }
+    const auto Nodes = C.numNodes();
+    unsigned Remaining = 256;
+    SymKnownBits Baseline(C);
+    ASSERT_TRUE(Baseline.query(EqualBound, Remaining));
+    const auto Used = 256 - Remaining;
+    for (unsigned Limit : {0U, Used - 1, Used}) {
+      SymKnownBits Fresh(C);
+      unsigned Work = Limit;
+      auto K = Fresh.query(EqualBound, Work);
+      EXPECT_EQ(bool(K), Limit == Used);
+      EXPECT_EQ(Work, 0U);
+      EXPECT_EQ(C.numNodes(), Nodes);
+    }
+  }
+}

@@ -29,6 +29,10 @@ struct Candidate {
   template <typename T> T *get(T *V) const { return llvm::cast<T>(map(V)); }
 };
 
+// Call only after the shared scalar importer admits the complete function.
+// The caller owns traversal/construction budgets.
+void cloneScalarFunction(const llvm::Function &F, Candidate &C);
+
 struct Replacement {
   llvm::Instruction *Target;
   llvm::Value *Preferred;

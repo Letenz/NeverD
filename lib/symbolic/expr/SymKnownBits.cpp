@@ -39,15 +39,29 @@ std::optional<bool> losslessProjection(const SymContext &C, SymRef Back,
                                        SymRef Source, const Bits &Facts,
                                        unsigned &Remaining) {
   const unsigned W = C.width(Source);
-  if (C.op(Back) == SymOp::And && C.operands(Back).size() == 2) {
-    if (!spend(Remaining, 2 + words(W)))
+  if (C.op(Back) == SymOp::And) {
+    auto BackTerms = C.operands(Back);
+    auto SourceTerms = C.op(Source) == SymOp::And
+                           ? C.operands(Source)
+                           : llvm::ArrayRef<SymRef>(Source);
+    if (!spend(Remaining, BackTerms.size() + SourceTerms.size() + words(W)))
       return std::nullopt;
-    for (unsigned I = 0; I != 2; ++I) {
-      auto Mask = C.operand(Back, I);
-      if (C.operand(Back, 1 - I) == Source && C.isConst(Mask) &&
-          (Facts.Zero | C.constValue(Mask)).isAllOnes())
-        return true;
+    auto BackMask = llvm::APInt::getAllOnes(W);
+    auto SourceMask = BackMask;
+    if (C.isConst(BackTerms.front())) {
+      BackMask = C.constValue(BackTerms.front());
+      BackTerms = BackTerms.drop_front();
     }
+    if (C.isConst(SourceTerms.front())) {
+      SourceMask = C.constValue(SourceTerms.front());
+      SourceTerms = SourceTerms.drop_front();
+    }
+    // AND canonicalization flattens a masked compound source. Compare all
+    // remaining operands exactly, including multiplicity and existing mask.
+    // A wider replacement mask could expose bits already removed by Source.
+    if (BackTerms == SourceTerms && (BackMask & SourceMask) == BackMask &&
+        (Facts.Zero | BackMask).isAllOnes())
+      return true;
   }
   if (C.op(Back) != SymOp::AShr || !C.isConst(C.operand(Back, 1)))
     return false;
@@ -286,6 +300,48 @@ std::optional<Bits> SymKnownBits::compare(SymRef R,
         return std::nullopt;
       if (*Same)
         Value = true;
+    }
+  }
+  if (!Value && (Op == SymOp::Ult || Op == SymOp::Ule)) {
+    // Known bits cannot retain every interval endpoint (for example, a sum
+    // of four independent Boolean words is at most four, not seven). Sum
+    // the bounds of immediate terms only when their unsigned maximum cannot
+    // wrap. This is a total-operation fact, independent of LLVM annotations.
+    auto Bounds = [&](unsigned Side)
+        -> std::optional<std::pair<llvm::APInt, llvm::APInt>> {
+      auto Coarse =
+          std::pair{Children[Side].getMinValue(), Children[Side].getMaxValue()};
+      if (C.op(Ops[Side]) != SymOp::Add)
+        return Coarse;
+      const unsigned W = C.width(Ops[Side]);
+      llvm::APInt Minimum(W, 0), Maximum(W, 0);
+      for (auto Term : C.operands(Ops[Side])) {
+        if (!spend(Remaining, 2 * words(W)))
+          return std::nullopt;
+        auto K = infer(Term, Remaining, Depth + 2);
+        if (!K)
+          return std::nullopt;
+        bool Overflow = false;
+        Maximum = Maximum.uadd_ov(K->getMaxValue(), Overflow);
+        if (Overflow)
+          return Coarse;
+        Minimum += K->getMinValue();
+      }
+      return std::pair{Minimum, Maximum};
+    };
+    auto A = Bounds(0), B = Bounds(1);
+    if (!A || !B)
+      return std::nullopt;
+    if (Op == SymOp::Ult) {
+      if (A->second.ult(B->first))
+        Value = true;
+      else if (A->first.uge(B->second))
+        Value = false;
+    } else {
+      if (A->second.ule(B->first))
+        Value = true;
+      else if (A->first.ugt(B->second))
+        Value = false;
     }
   }
   if (!Value && (Op == SymOp::Ult || Op == SymOp::Ule)) {

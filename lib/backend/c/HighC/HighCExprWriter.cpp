@@ -648,9 +648,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                               : E.Operands.size();
   std::string S = Name + "(";
   const auto Callee = debugCallee(E);
-  const MsvcAtlCallee *Atl = msvcAtlCallee(Name);
+  const MsvcCallee *Msvc = msvcCallee(Name);
   // A callee printed in this file fixes the count by its signature; otherwise
-  // debug info and ATL knowledge may trim ABI-only extra operands.
+  // debug info and MSVC member knowledge may trim ABI-only extra operands.
   const size_t PrintedArgs =
       Defined && !Defined->SourceTypeHint ? ArgCount : debugCallArgLimit(E);
   for (size_t I = 0; I < PrintedArgs; ++I) {
@@ -687,10 +687,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         continue;
       }
     }
-    if (Atl) {
-      if (const TypeRef Expected = I == 0
-                                       ? msvcAtlSyntheticThis(Name, *Atl)
-                                       : msvcAtlExpectedCallArgType(*Atl, I)) {
+    if (Msvc) {
+      if (const TypeRef Expected = I == 0 ? msvcSyntheticThis(Name, *Msvc)
+                                          : msvcExpectedCallArgType(*Msvc, I)) {
         S += exprStrAsTypedArg(*Op, Expected);
         continue;
       }
@@ -878,8 +877,8 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return {};
   const std::string Name = callIdentifier(E);
-  if (const MsvcAtlCallee *Atl = msvcAtlCallee(Name))
-    return msvcAtlSyntheticReturn(Atl->ReturnKind);
+  if (const MsvcCallee *Msvc = msvcCallee(Name))
+    return msvcSyntheticReturn(Msvc->ReturnKind);
   if (const auto Callee = debugCallee(E))
     return Callee->ReturnType;
   return {};
@@ -891,8 +890,8 @@ bool HighCWriter::knownVoidCall(const HighExpr &E) const {
   // Other special-member rows are declared `void` too, but an MSVC
   // constructor or assignment returns `this`, and so does an ARM32 Itanium
   // destructor: a read of their result is real.
-  if (const MsvcAtlCallee *Atl = msvcAtlCallee(callIdentifier(E)))
-    return Atl->Kind == MsvcAtlCalleeKind::Dtor &&
+  if (const MsvcCallee *Msvc = msvcCallee(callIdentifier(E)))
+    return Msvc->Kind == MsvcCalleeKind::Dtor &&
            isMsvcDestructorName(resolvedCallTarget(E));
   const auto Callee = debugCallee(E);
   return Callee && Callee->ReturnType &&
@@ -1179,7 +1178,7 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
     return Have;
   auto Clamp = [&](size_t Limit) { return std::min(Limit, Have); };
   const std::string Name = callIdentifier(E);
-  const MsvcAtlCallee *Atl = msvcAtlCallee(Name);
+  const MsvcCallee *Msvc = msvcCallee(Name);
   auto UnknownAt = [&](size_t I) {
     return I < Have && isUnknownCallOperand(E.Operands[I].get());
   };
@@ -1196,10 +1195,10 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
       Limit = Callee->Params.size() + 1;
     else
       Limit = Callee->Params.size();
-    if (Limit == 0 && Atl && Atl->Kind == MsvcAtlCalleeKind::Dtor)
-      Limit = Atl->MaxArgs;
+    if (Limit == 0 && Msvc && Msvc->Kind == MsvcCalleeKind::Dtor)
+      Limit = Msvc->MaxArgs;
     if (Limit > 0) {
-      if (Atl && Atl->ArityKind == MsvcAtlArityKind::Keep)
+      if (Msvc && Msvc->ArityKind == MsvcArityKind::Keep)
         return Have;
       if (Indirect &&
           (Member || isMsvcPointerEncodedClassReturn(Callee->ReturnType))) {
@@ -1209,15 +1208,15 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
           --Limit;
       }
       const size_t Clamped = Clamp(Limit);
-      if (Atl && Atl->ArityKind == MsvcAtlArityKind::CtorDrop)
-        return msvcAtlPrintedArgLimit(*Atl, Clamped, UnknownAt, KeepExtra);
-      if (Atl && Atl->ArityKind == MsvcAtlArityKind::Fixed)
-        return std::min(Clamped, static_cast<size_t>(Atl->MaxArgs));
+      if (Msvc && Msvc->ArityKind == MsvcArityKind::CtorDrop)
+        return msvcPrintedArgLimit(*Msvc, Clamped, UnknownAt, KeepExtra);
+      if (Msvc && Msvc->ArityKind == MsvcArityKind::Fixed)
+        return std::min(Clamped, static_cast<size_t>(Msvc->MaxArgs));
       return Clamped;
     }
   }
-  if (Atl)
-    return msvcAtlPrintedArgLimit(*Atl, Have, UnknownAt, KeepExtra);
+  if (Msvc)
+    return msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra);
   if (auto Arity = libc::libcArity(Name);
       Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
     return Clamp(static_cast<size_t>(Arity->IntArgs));
@@ -1250,10 +1249,10 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
   if (auto It = DebugExternSigs.find(Name); It != DebugExternSigs.end())
     if (TypeRef Ty = FromFS(It->second))
       return Ty;
-  if (const MsvcAtlCallee *Atl = msvcAtlCallee(Name)) {
-    if (Index == 0 || msvcAtlTypesCallArgAsPointer(*Atl, Index) ||
-        (Atl->Kind == MsvcAtlCalleeKind::Ctor && Index == 1)) {
-      TypeRef Ty = cDisplayType(msvcAtlSyntheticThis(Name, *Atl));
+  if (const MsvcCallee *Msvc = msvcCallee(Name)) {
+    if (Index == 0 || msvcTypesCallArgAsPointer(*Msvc, Index) ||
+        (Msvc->Kind == MsvcCalleeKind::Ctor && Index == 1)) {
+      TypeRef Ty = cDisplayType(msvcSyntheticThis(Name, *Msvc));
       if (isNamedPointerDisplay(Ty))
         return Ty;
     }
@@ -1452,10 +1451,10 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
   }
   std::string Declarator = Identifier + "(";
   size_t Emitted = 0;
-  const MsvcAtlCallee *Atl = msvcAtlCallee(Identifier);
+  const MsvcCallee *Msvc = msvcCallee(Identifier);
   auto Emit = [&](TypeRef Ty, std::string Name) {
-    if (Atl && Atl->ArityKind == MsvcAtlArityKind::Fixed &&
-        Emitted >= Atl->MaxArgs)
+    if (Msvc && Msvc->ArityKind == MsvcArityKind::Fixed &&
+        Emitted >= Msvc->MaxArgs)
       return;
     Ty = cDisplayType(Ty);
     if (!Ty)
@@ -1485,15 +1484,15 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
     for (const auto &Param : FS.Params)
       Emit(Param.second, Param.first);
   }
-  if (Atl && FS.Params.empty() && !Indirect)
-    return msvcAtlSyntheticPrototype(
-        Identifier, *Atl, Opts.TheArch == Arch::X64 && Atl->FastCall);
-  if (Atl)
-    ReturnType = msvcAtlSyntheticReturn(Atl->ReturnKind);
-  if (Atl && Emitted == 0)
-    Emit(msvcAtlSyntheticThis(Identifier, *Atl), "this");
-  if (Atl && Emitted == 1 && msvcAtlTypesCallArgAsPointer(*Atl, 1))
-    Emit(msvcAtlSyntheticThis(Identifier, *Atl), "src");
+  if (Msvc && FS.Params.empty() && !Indirect)
+    return msvcSyntheticPrototype(Identifier, *Msvc,
+                                  Opts.TheArch == Arch::X64 && Msvc->FastCall);
+  if (Msvc)
+    ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
+  if (Msvc && Emitted == 0)
+    Emit(msvcSyntheticThis(Identifier, *Msvc), "this");
+  if (Msvc && Emitted == 1 && msvcTypesCallArgAsPointer(*Msvc, 1))
+    Emit(msvcSyntheticThis(Identifier, *Msvc), "src");
   // A debug signature without parameters says nothing about them:
   // debugCallArgLimit keeps every recovered argument for such a callee, so
   // `(void)` would reject the call.  Leave the declaration unprototyped.
@@ -1501,7 +1500,7 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
     Declarator += "void";
   std::string Prefix = "extern ";
   if (Opts.TheArch == Arch::X64 &&
-      ((Atl && Atl->FastCall) || Member || Indirect ||
+      ((Msvc && Msvc->FastCall) || Member || Indirect ||
        FS.CallConv == DebugCallConv::Thiscall ||
        FS.CallConv == DebugCallConv::Fastcall))
     Prefix += "__fastcall ";

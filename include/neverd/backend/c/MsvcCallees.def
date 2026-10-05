@@ -1,0 +1,45 @@
+//===- MsvcCallees.def - Shared MSVC display callees -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+// This file intentionally has no include guard.
+//
+// MSVC_CALLEE(ID, MATCH, DECORATION, MATCH_KIND, ARITY_KIND, MAX_ARGS,
+//             RETURN_KIND, CLASS_STEM, FASTCALL)
+//
+// Display-only MSVC members that HighC and LLVMC share. Constructors,
+// destructors, and assignment operators are common C++ rules, including
+// STL and user-defined classes. Library-specific rows live in their own
+// definition files; ATL/MFC string members are in MsvcAtlCallees.def.
+//
+// MATCH_KIND:
+//   Exact              Identifier == MATCH
+//   Suffix             Identifier ends with "_" MATCH
+//   SuffixOrDtorAlias  Suffix, or a demangled `::~` destructor
+//
+// DECORATION: MSVC `??X` member code, or 0 for an ordinary name.
+//
+// ARITY_KIND:
+//   Fixed    clamp printed operands to MAX_ARGS
+//   CtorDrop drop trailing unknown-only operands; keep at least MAX_ARGS
+//   Keep     print every recovered operand (`Format` / `Concatenate`)
+//
+// RETURN_KIND / CLASS_STEM drive the synthetic prototype when TPI has no
+// usable FunctionSym. CLASS_STEM FromMatch peels "_" MATCH; CStringT is
+// the default ATL/MFC string class for exact method names.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef MSVC_CALLEE
+#define MSVC_CALLEE(ID, MATCH, DECORATION, MATCH_KIND, ARITY_KIND, MAX_ARGS,   \
+                    RETURN_KIND, CLASS_STEM, FASTCALL)
+#endif
+
+MSVC_CALLEE(Dtor, "dtor", '1', SuffixOrDtorAlias, Fixed, 1, Void, FromMatch, 1)
+MSVC_CALLEE(Ctor, "ctor", '0', Suffix, CtorDrop, 1, Void, FromMatch, 1)
+MSVC_CALLEE(Assign, "assign", '4', Suffix, Fixed, 2, Void, FromMatch, 1)
+
+#define MSVC_ATL_CALLEE MSVC_CALLEE
+#include "neverd/backend/c/MsvcAtlCallees.def"
+
+#undef MSVC_CALLEE

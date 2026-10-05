@@ -15,20 +15,17 @@ void Builder::requireEqual(LowBlock &Out, NdVar A, NdVar B) {
 }
 void Builder::requireRange(LowBlock &Out, NdVar Value,
                            const llvm::ConstantRange &Range) {
-  if (Range.isFullSet())
+  const auto Guard = rangeObligation(Range);
+  if (Guard.Test == RangeObligation::None)
     return;
-  if (Range.isEmptySet()) {
+  if (Guard.Test == RangeObligation::Always) {
     requireEqual(Out, num(0, 1), num(1, 1));
     return;
   }
   auto Lo = local(1), Hi = local(1), Bad = local(1);
-  emit(Out, op(NdOp::INT_LESS, Lo,
-               {Value, num(Range.getLower().getZExtValue(), Value.Size)}));
-  emit(Out, op(NdOp::INT_LESSEQUAL, Hi,
-               {num(Range.getUpper().getZExtValue(), Value.Size), Value}));
-  emit(Out,
-       op(Range.getLower().uge(Range.getUpper()) ? NdOp::INT_AND : NdOp::INT_OR,
-          Bad, {Lo, Hi}));
+  emit(Out, op(NdOp::INT_LESS, Lo, {Value, num(Guard.Lower, Value.Size)}));
+  emit(Out, op(NdOp::INT_LESSEQUAL, Hi, {num(Guard.Upper, Value.Size), Value}));
+  emit(Out, op(Guard.Wrapped ? NdOp::INT_AND : NdOp::INT_OR, Bad, {Lo, Hi}));
   requireEqual(Out, Bad, num(0, 1));
 }
 bool Builder::emitScalar(LowBlock &Out, const llvm::Instruction &I) {

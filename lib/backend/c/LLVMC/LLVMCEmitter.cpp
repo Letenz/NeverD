@@ -650,9 +650,9 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
 
     if (libc::isKnownFunction(Name))
       continue;
-    if (const MsvcAtlCallee *Atl = msvcAtlCallee(Name)) {
-      OS << msvcAtlSyntheticPrototype(
-                Name, *Atl, Opts.TheArch == Arch::X64 && Atl->FastCall)
+    if (const MsvcCallee *Msvc = msvcCallee(Name)) {
+      OS << msvcSyntheticPrototype(Name, *Msvc,
+                                   Opts.TheArch == Arch::X64 && Msvc->FastCall)
          << ";\n";
       continue;
     }
