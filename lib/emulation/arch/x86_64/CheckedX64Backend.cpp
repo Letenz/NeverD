@@ -272,14 +272,14 @@ bool isAtomic(unsigned Instruction) {
     return false;
   }
 }
-unsigned implicitStackWidth(const cs_x86 &X) {
+} // namespace
+unsigned CheckedX64Backend::implicitStackWidth(const cs_x86 &X) {
   // The decoder identity retains 66H even when a later REX.W selects 64
-  // bits. PUSHF, POPF and LEAVE use the effective operand-size prefix.
+  // bits. PUSHF, POPF, ENTER and LEAVE use the effective operand-size prefix.
   return X.prefix[2] == X86_PREFIX_OPSIZE && !(X.rex & x64::RexW)
              ? x64::HalfWordBytes
              : x64::WordBytes;
 }
-} // namespace
 bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
   return x64::canonicalRange(A, N);
 }
@@ -436,6 +436,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   const auto &X = I.detail->x86;
   if (StringRestart && StringRestart->PC != I.address)
     StringRestart.reset();
+  if (I.id == X86_INS_ENTER)
+    return executeEnter(I);
   // MOVSD and CMPSD share decoder identities with scalar SSE operations.
   // Only their string forms have two implicit memory operands.
   if ((I.id != X86_INS_MOVSD && I.id != X86_INS_CMPSD) ||

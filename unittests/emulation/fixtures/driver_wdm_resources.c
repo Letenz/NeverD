@@ -542,7 +542,29 @@ static void Unload(PDRIVER_OBJECT Driver) {
 #include "driver_resource_frame_exit.def"
 #undef NEVERD_RESOURCE_FRAME_EXIT_CASE
 
+#define NEVERD_RESOURCE_FRAME_ENTRY_CASE(Name, Width, Mask, Allocate, Level,   \
+                                         Assembly)                             \
+  static BOOLEAN CheckFrameEntry##Name(VOID) {                                 \
+    ULONG64 Before, Observed, Frame, OldStack, NewStack, Copied;               \
+    __asm__ volatile(Assembly                                                  \
+                     : "=&r"(Before), "=&r"(Observed), "=&r"(Frame),           \
+                       "=&r"(OldStack), "=&r"(NewStack), "=&r"(Copied)         \
+                     :                                                         \
+                     : "rbp", "r11", "memory", "cc");                          \
+    return Before == Observed &&                                               \
+           NewStack == OldStack - (Level + 1) * Width - Allocate &&            \
+           Frame == ((OldStack & ~Mask) | ((OldStack - Width) & Mask)) &&      \
+           (Copied & Mask) == (OldStack & Mask);                               \
+  }
+#include "driver_resource_frame_entry.def"
+#undef NEVERD_RESOURCE_FRAME_ENTRY_CASE
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT Driver, PUNICODE_STRING Path) {
+#define NEVERD_RESOURCE_FRAME_ENTRY_CASE(Name, ...)                            \
+  if (!CheckFrameEntry##Name())                                                \
+    return STATUS_UNSUCCESSFUL;
+#include "driver_resource_frame_entry.def"
+#undef NEVERD_RESOURCE_FRAME_ENTRY_CASE
 #define NEVERD_RESOURCE_FRAME_EXIT_CASE(Name, ...)                             \
   if (!CheckFrameExit##Name())                                                 \
     return STATUS_UNSUCCESSFUL;

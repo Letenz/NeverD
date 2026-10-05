@@ -1790,7 +1790,7 @@ ordinary RAM writes. The ISA supplies exact footprints; devices and unknown
 effects cannot enter this transaction. Execution holds the physical lease and
 uses a private next CPU state. Staging restores original bytes before result
 observers run; permission failure, stop, callback exception or transport failure
-cannot publish speculative RAM or registers. Architectural CPU exception status
+cannot publish speculative RAM or registers. For instructions with atomic RAM effects, architectural CPU exception status
 remains available to the OS after RAM rollback. CPU snapshots still leave
 previously committed memory unchanged.
 
@@ -1931,6 +1931,8 @@ Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private 
 `CheckedX64Stack.cpp` owns stack-transfer access order and widths. The shared `operandAddress` computes RIP-relative addresses, 32-bit wrapping and FS/GS bases for ordinary and stack operands. The processor executes the original instruction; deferred write observations use its result before the shared RAM transaction publishes any effects.
 
 `LEAVE` uses the original full RBP for its implicit RAM read and the effective 16/64-bit operand size. Address-size and segment prefixes do not redirect that read. The shared layer validates the whole span before the original processor instruction updates RSP and RBP; refused accesses and stopped or failed read observers retain the complete entry state.
+
+`CheckedX64Frame.cpp` owns ordered `ENTER` accesses and a bounded physical-alias overlay for observations and fault-prefix values. Successful execution uses the original processor instruction. A guest fault publishes only preceding completed stores before OS notification; this is an explicit exception to ordinary atomic RAM rollback. Observers see the entry state, and cancellation, observer exceptions or transport failure discard uncommitted effects. Restoring CPU context does not undo already committed stores.
 
 The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller’s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.
 

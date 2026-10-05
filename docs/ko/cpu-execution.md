@@ -98,6 +98,8 @@ checked x64는 KVM, WHP, Unicorn에서 16/32/64비트 대상과 imm8/CL 횟수�
 
 KVM, WHP, checked Unicorn은 16/64비트 `LEAVE`도 지원합니다. `67H`가 있어도 RBP 전체로 저장된 프레임을 읽고, 16비트 형식에서는 선택되지 않은 RBP 비트를 유지합니다. 폴트나 읽기 취소 시 원래 RSP와 CPU 컨텍스트를 유지합니다. LOCK, REP, 장치 프레임은 지원하지 않습니다.
 
+KVM, WHP 및 checked Unicorn은 16/64비트 `ENTER`를 지원합니다. 할당량은 부호 없는 16비트로, 중첩 수준은 32로 나눈 나머지로 해석하며 전체 RSP/RBP와 유효한 접두사 순서를 사용합니다. 게스트 오류 시 완료된 스택 저장은 유지되고 RSP, RBP, PC는 진입 값을 유지합니다. 마지막 스택 검사는 피연산자 폭 전체의 쓰기 권한만 확인하며 데이터를 저장하지 않습니다. LOCK, REP, APX 접두사와 장치 프레임은 지원하지 않습니다.
+
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
 `X64PackedShiftInstructions.def`는 legacy SSE2 패킹 시프트 열 종류를 허용합니다. 요소 시프트의 횟수는 imm8 또는 XMM/정렬된 m128이며 바이트 시프트는 imm8만 허용합니다. 가변 횟수는 부호 없는 하위 64비트를 사용하고 스칼라 횟수 마스킹을 하지 않으며 상위 64비트는 무시합니다. 횟수가 0이거나 범위를 넘어도 메모리 피연산자는 16바이트 전체를 읽어야 합니다. FLAGS와 MXCSR은 유지되며 MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.

@@ -75,6 +75,8 @@ private:
   };
   llvm::Error prepareStack(const cs_insn &, bool Push,
                            std::vector<Access> &) const;
+  static unsigned implicitStackWidth(const cs_x86 &);
+  llvm::Error executeEnter(const cs_insn &);
   void setOperandRegister(unsigned Register, uint64_t Value);
   std::shared_ptr<MemoryProjection::Device> deviceAt(uint64_t Address) const;
   llvm::Error validateDevice(const MemoryProjection::Device &, uint64_t,

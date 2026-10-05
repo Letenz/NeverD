@@ -98,6 +98,8 @@ checked x64 は KVM、WHP、Unicorn で `SHLD/SHRD` の16/32/64ビット宛先�
 
 KVM、WHP、checked Unicorn は 16/64 ビットの `LEAVE` も受け入れます。`67H` があっても RBP 全体で保存済みフレームを読み、16 ビット形式では RBP の対象外ビットを保持します。フォールトや読み出し取消時は元の RSP と CPU コンテキストを保持します。LOCK、REP、デバイス上のフレームは未対応です。
 
+KVM、WHP、checked Unicorn は 16/64 ビットの `ENTER` を扱います。割り当て量は符号なし 16 ビット、ネスト値は 32 を法として解釈し、完全な RSP/RBP と有効なプレフィックス順序を使います。ゲストフォルトでは完了済みのスタック書き込みを保持し、RSP、RBP、PC は入口値のままです。最終スタック検査はオペランド幅全体の書き込み権限を調べ、データは書き込みません。LOCK、REP、APX プレフィックスとデバイスフレームは未対応です。
+
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
 `X64PackedShiftInstructions.def` は十種類の legacy SSE2 パックシフトを受け入れます。要素シフトの回数は imm8 または XMM／整列済み m128、バイトシフトは imm8 のみです。可変回数は符号なし下位 64 ビットを使い、スカラーシフトのマスクを適用せず、上位 64 ビットを無視します。ゼロや範囲外の回数でもメモリから 16 バイト全体を読み取ります。FLAGS と MXCSR は不変で、MMX、VEX/EVEX、デバイスオペランドは対象外です。

@@ -98,6 +98,8 @@ checked x64 透過 KVM、WHP 和 Unicorn 執行 `SHLD/SHRD`，支援 16/32/64 �
 
 KVM、WHP 與 checked Unicorn 也支援 16/64 位元 `LEAVE`。它始終透過完整 RBP 讀取儲存的堆疊框架，包括帶 `67H` 的情況；16 位元形式保留 RBP 未選取的位元。發生錯誤或取消讀取時保留原始 RSP 與 CPU 上下文。LOCK、REP 與裝置堆疊框架仍不支援。
 
+KVM、WHP 與 checked Unicorn 支援 16/64 位元 `ENTER`，配置量按無號 16 位元解讀，巢狀層級取模 32。存取使用完整 RSP/RBP，並遵循有效前綴順序。客體故障會保留已完成的堆疊寫入，RSP、RBP 與 PC 則維持入口值。最終堆疊檢查涵蓋整個運算元寬度的寫入權限，但不寫入資料。LOCK、REP、APX 前綴及裝置堆疊框架仍不支援。
+
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。
