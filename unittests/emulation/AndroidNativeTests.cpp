@@ -843,6 +843,47 @@ TEST_P(AndroidNative, DynamicUnknownAndClosedFunctionsStopWithTheirNames) {
   EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
   EXPECT_EQ(R.NativeCalls.back().Name, "strlen");
 }
+TEST_P(AndroidNative, FamilyFallbacksPreserveDiagnosticsAndProviderPrecedence) {
+  struct Case {
+    const char *Name;
+    const char *Diagnostic;
+  };
+  const Case Cases[] = {
+      {"pthread_attr_unmodeled",
+       "pthread_attr_unmodeled: unmodeled thread attribute operation"},
+      {"pthread_mutexattr_unmodeled",
+       "pthread_mutexattr_unmodeled: unmodeled mutex attribute operation"},
+      {"pthread_mutex_unmodeled",
+       "pthread_mutex_unmodeled: unmodeled mutex operation"},
+      {"pthread_mutexextra", "pthread_mutexextra: unmodeled mutex operation"},
+      {"pthread_self", "unmodeled Android import: pthread_self"},
+      {"unmodeled_fixture_export",
+       "unmodeled Android import: unmodeled_fixture_export"}};
+  Options.Android->ThreadLimit = 1;
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Name);
+    llvm::StringRef Name(C.Name);
+    auto &Bytes = Options.Android->Memory[0].Bytes;
+    Bytes.assign(Name.bytes_begin(), Name.bytes_end());
+    Bytes.push_back(0);
+    Options.Android->Libraries["libfixture.so"] = {C.Name};
+    for (uint64_t Closed : {0, 1}) {
+      SCOPED_TRACE(Closed);
+      auto R = run("dynamic_dispatch", {Buffer, Closed});
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(R.Diagnostic,
+                Closed
+                    ? "call through an inactive dynamic library: libfixture.so"
+                    : C.Diagnostic);
+      EXPECT_FALSE(R.ReturnValue);
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Name, C.Name);
+      EXPECT_EQ(R.NativeCalls.back().Library, "libfixture.so");
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+    }
+  }
+}
+
 TEST_P(AndroidNative, DynamicScopesAndInvalidPointersAreNotGuessed) {
   Options.Android->Libraries["libfixture.so"] = {"strlen"};
   for (uint64_t Scope : {uint64_t(0), UINT64_MAX}) {

@@ -1341,8 +1341,14 @@ The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
 
-Android's `AndroidSymbols.def` and `AndroidDiagnostics.def` own Bionic symbol
-spellings and native-model diagnostics. Kernel wrapper bindings stay in
+Android's `AndroidSymbols.def` owns Bionic symbol spellings and handler bindings;
+`AndroidDiagnostics.def` owns native-model diagnostics. The entry point validates
+TLS and provider lifetime before resolving an exact handler or a diagnostic
+family fallback. Allocation, memory, strings, queries, dynamic linking, once
+callbacks and kernel wrappers live in separate implementation files. Thread
+calls and scheduling also have separate files, sharing `GuestThreads` state.
+Attribute and mutex registrations come from their respective ABI inventories;
+their per-call views borrow the existing Bionic state. Kernel bindings stay in
 `AndroidKernelServices.def`; Linux clock diagnostics and process wire text stay
 with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings

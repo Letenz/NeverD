@@ -841,6 +841,14 @@ hosts skip explicitly; backend cells distinguish unavailable execution.
 
 ## Process emulation checks
 
+`AndroidNative.FamilyFallbacksPreserveDiagnosticsAndProviderPrecedence` checks
+unknown pthread attribute and mutex members, disabled thread calls and generic
+unknown imports through real dynamic lookups. The same calls after library close
+must report the inactive provider before interpreting their invalid arguments.
+Dispatch refactors also require the Android, Linux, Darwin, process API and
+execution session/configuration suites, preserving complete reports across the
+public surfaces and available backends.
+
 `AndroidFinalizerTests.cpp` runs independent C ABI callers at O0/O2 with ordinary,
 APS2 and RELR relocations. It checks constructor registrations, exact callback
 order and arguments, DSO filtering, duplicate and NULL registrations, recursive
