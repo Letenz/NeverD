@@ -1436,3 +1436,5 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 `ObjCSuperGetterSources` は 4 キャリアの CGRect getter、10 種の公開情報改変の拒否、同じ機械語本体を使う Boolean/CGRect 呼出元を検証します。O0 と O2 の実行比較で、正確な戻り値ビット（負のゼロ、無限大、NaN ペイロードを含む）、受信者とクラスの同一性、メタデータ呼出後のセレクタ読込みを確認します。Apple ARM64 は元のコンパイラ thunk と生成 C の両方を実行し、他のホストはネイティブのレコード ABI で生成 C を実行します。
 
 `LowIRLoopInference` は、初期上位ビットが任意の 8・24・32 ビットカウンタ射影、増加・減少、レジスタ、フレーム、関数一時領域、両バイト順を検査する。完全な自己証明は成功し、結果の変更、停滞、狭幅の周回、等値終了条件の飛び越しは拒否する。操作、クエリ、経路、順位候補、拡幅の予算は必要量ちょうどで成功し、1 少ないと失敗する。最終証明の操作、クエリ、観測予算は別途検査する。
+
+`ObjCCallHints.SDKRecordData*` は両外部レコード、各 double のオフセット、Darwin の両アーキテクチャ、提供元の別名に加え、変更されたインポート、弱いリンク、ライブラリ欠落、競合する修正、書込み可能なストレージ、不完全な範囲を検査します。`python3 -m unittest scripts.tests.test_generate_darwin_record_data_declarations scripts.tests.test_generate_darwin_data_declarations` はプロファイルの競合、別のレイアウト、不正なサイズ・整列、TLS、アーキテクチャ別エクスポートを検査します。固定した SDK、libclang、出力先、`--check` を指定して `generate_darwin_record_data_declarations.py` でカタログを再現できます。この宣言検査はネイティブ間接結果の初期化やメソッド復元を証明しません。

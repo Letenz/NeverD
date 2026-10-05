@@ -1426,3 +1426,5 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 `ObjCSuperGetterSources`는 네 캐리어 CGRect getter, 열 가지 게시 정보 변조 거부, 같은 기계 본문을 공유하는 Boolean/CGRect 호출자를 검사합니다. O0와 O2 실행 비교는 정확한 반환 비트(음의 영, 무한대, NaN 페이로드 포함), 수신자/클래스 식별, 메타데이터 호출 후 선택자 로드를 확인합니다. Apple ARM64는 원래 컴파일러 thunk와 생성 C를 함께 실행하고, 다른 호스트는 네이티브 레코드 ABI로 생성 C를 실행합니다.
 
 `LowIRLoopInference`는 임의의 초기 상위 비트를 가진 8·24·32비트 카운터 투영, 증가와 감소, 레지스터, 프레임, 함수 임시 저장소와 두 바이트 순서를 검사한다. 완전한 자기 증명은 통과하고 결과 변경, 정체, 좁은 폭의 순환과 동등 종료 조건 건너뛰기는 거부한다. 연산, 질의, 경로, 순위 후보와 확장 예산은 정확한 한도에서 통과하고 하나 부족하면 실패한다. 최종 증명의 연산, 질의와 관측 예산은 따로 검사한다.
+
+`ObjCCallHints.SDKRecordData*`는 두 외부 레코드, 각 double 오프셋, 두 Darwin 아키텍처와 제공자 별칭뿐 아니라 변경된 가져오기, 약한 연결, 누락된 라이브러리, 충돌하는 수정, 쓰기 가능한 저장소와 불완전한 범위를 검사합니다. `python3 -m unittest scripts.tests.test_generate_darwin_record_data_declarations scripts.tests.test_generate_darwin_data_declarations`는 프로필 충돌, 대체 레이아웃, 잘못된 크기·정렬, TLS와 아키텍처별 내보내기를 검사합니다. 고정된 SDK와 libclang, 출력 경로, `--check`를 지정하여 `generate_darwin_record_data_declarations.py`로 카탈로그를 재현할 수 있습니다. 이 선언 검사는 네이티브 간접 결과의 초기화나 메서드 복원을 증명하지 않습니다.
