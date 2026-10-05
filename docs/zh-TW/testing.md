@@ -1355,3 +1355,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 `MatrixFrameEffectsRequireExactCurrentContract` 也涵蓋 CGRect 使用者及 22 種必須拒絕的竄改。`ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` 驗證「旋轉 → CGRect 借用 → 旋轉重新初始化 → CoreImage 發布」；`CGRectBorrowRejectsExpiredInputsAndChangedABI` 拒絕初始化、輸入範圍、匯入及載體的八種修改。`GeneratedCMatchesOriginalMachineAndSDKResults` 也以 O0/O2、1000 組資料，將此完整順序的產生 C 與原始機器字、原生 SDK 比對，檢查儲存的角度、全部 48 個最終位元組、物件及保護值。
 
 `FrameMetadataAccessorUsesCurrentCatalogAndABI` 檢查共用中繼資料宣告、兩個回應載體和目前框架見證的發布。`FrameMetadataAccessorRejectsChangedImportAndBytes` 拒絕弱匯入、provider/名稱/addend 變更、私有位址請求、部分 spill、錯誤重新載入及原始呼叫變更。原始 ARM64 與產生 C 的見證 oracle 也會實際呼叫 Foundation URL 中繼資料存取器：兩個分支均在 O0/O2 下執行 2048 組，檢查動態見證選擇、完整輸出位元組、輸入保持、呼叫次數和保護字。這些檢查不證明動態堆疊配置或見證記憶體效應。
+
+只有窮盡列舉證明不存在其他目標後，單目標原生跳轉才重用傳入述詞。迴歸使用直接跳轉的查詢預算驗證 32 次計算目標跳轉，保留符號位址高位元和分支域，拒絕完整狀態結果遭修改、缺少對齊約束或查詢預算少一次的情況。多目標和未完成列舉的既有拒絕檢查仍然必要。
