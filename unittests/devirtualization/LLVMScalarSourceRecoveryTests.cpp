@@ -43,6 +43,53 @@ exit:
 }
 )";
 
+constexpr char FlagGuard[] = R"(
+define i32 @f(i32 noundef %x, i32 noundef %n) {
+  %small = and i32 %n, 7
+  %before = add nsw i32 %small, -1
+  %offset = add nuw i32 %small, 2147483646
+  %combined = or i32 %before, %offset
+  %condition = icmp sge i32 %combined, 0
+  %other = add i32 %x, 11
+  %result = select i1 %condition, i32 %x, i32 %other
+  ret i32 %result
+})";
+
+constexpr char SplitGuard[] = R"(
+define i32 @f(i32 noundef %x, i32 noundef %n) {
+entry:
+  %bound = and i32 %n, 7
+  %shift = lshr i32 %n, 4
+  %index = and i32 %shift, 7
+  %bit = and i32 %n, 8
+  %choose = icmp eq i32 %bit, 0
+  br i1 %choose, label %left, label %right
+left:
+  %a = sub i32 %index, %bound
+  %b = add i32 %a, -2147483647
+  %c = and i32 %a, -2147483648
+  %d = and i32 %c, %b
+  %value.left = add i32 %x, 5
+  br label %join
+right:
+  %e = sub i32 %index, %bound
+  %f = add i32 %e, -2147483647
+  %g = and i32 %e, -2147483648
+  %h = and i32 %g, %f
+  %value.right = xor i32 %x, 9
+  br label %join
+join:
+  %flag = phi i32 [%d, %left], [%h, %right]
+  %value = phi i32 [%value.left, %left], [%value.right, %right]
+  %condition = icmp slt i32 %flag, 0
+  br i1 %condition, label %yes, label %no
+yes:
+  ret i32 %value
+no:
+  %other = sub i32 %x, 3
+  ret i32 %other
+})";
+
 LLVMScalarSourceRecoveryResult
 prepare(Source &Input, const LLVMScalarSourceRecoveryLimits &Limits = {}) {
   const auto Before = Input.text();
@@ -173,7 +220,113 @@ TEST(LLVMScalarSourceRecovery, BoundaryAndContinuationLimitsCannotReset) {
   }
 }
 
+TEST(LLVMScalarSourceRecovery, ProvedFlagRemovalExposesModularGuard) {
+  Source Input(FlagGuard);
+  auto R = prepare(Input);
+  ASSERT_TRUE(R.Module) << R.Diagnostic;
+  auto Output = text(*R.Module);
+  EXPECT_EQ(Output.find("2147483646"), std::string::npos);
+  EXPECT_NE(Output.find("icmp eq i32"), std::string::npos);
+  EXPECT_NE(Input.text().find("add nsw"), std::string::npos);
+  EXPECT_NE(Input.text().find("add nuw"), std::string::npos);
+}
+
+TEST(LLVMScalarSourceRecovery, HoistingExposesGuardAcrossDistinctPredecessors) {
+  Source Input(SplitGuard);
+  auto R = prepare(Input);
+  ASSERT_TRUE(R.Module) << R.Diagnostic;
+  auto Output = text(*R.Module);
+  EXPECT_EQ(Output.find("%flag = phi"), std::string::npos);
+  EXPECT_EQ(Output.find("-2147483647"), std::string::npos);
+  EXPECT_NE(Output.find("xor i32 %x, 9"), std::string::npos);
+  EXPECT_NE(Output.find("add i32 %x, 5"), std::string::npos);
+}
+
+TEST(LLVMScalarSourceRecovery, RemovedFlagsStillRejectUndefinedOriginals) {
+  for (const char *Operation :
+       {"%bad = add nuw i32 %x, 1", "%bad = lshr exact i32 %x, 1",
+        "%small.byte = trunc nuw i32 %x to i8",
+        "%positive = zext nneg i32 %x to i64"}) {
+    SCOPED_TRACE(Operation);
+    std::string IR = FlagGuard;
+    replace(IR, "  %small =", std::string(Operation) + "\n  %small =");
+    Source Input(IR);
+    EXPECT_FALSE(prepare(Input).Module);
+  }
+  std::string Overflow = FlagGuard;
+  replace(Overflow, "add nuw i32 %small, 2147483646",
+          "add nsw i32 %small, 2147483646");
+  Source Input(Overflow);
+  EXPECT_FALSE(prepare(Input).Module);
+}
+
+TEST(LLVMScalarSourceRecovery, GuardPreparationRetainsExactCumulativeLimits) {
+  Source Input(FlagGuard);
+  auto Base = prepare(Input);
+  ASSERT_TRUE(Base.Module) << Base.Diagnostic;
+  for (bool Construction : {false, true}) {
+    LLVMScalarSourceRecoveryLimits Limits;
+    auto &Budget = Construction ? Limits.Search.MaxConstructionWork
+                                : Limits.Search.MaxProofWork;
+    Budget = Construction ? Base.ConstructionWork : Base.ProofWork;
+    EXPECT_TRUE(prepare(Input, Limits).Module);
+    --Budget;
+    auto Short = prepare(Input, Limits);
+    EXPECT_EQ(Short.Status, RecoveryStatus::BudgetExceeded);
+    EXPECT_FALSE(Short.Module);
+  }
+}
+
 class LLVMScalarSourceCompiled : public NeverDLiftTest {};
+TEST_F(LLVMScalarSourceCompiled, GuardProposalsMatchIndependentUnsignedOracle) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  for (bool Split : {false, true}) {
+    Source Input(Split ? SplitGuard : FlagGuard);
+    auto R = prepare(Input);
+    ASSERT_TRUE(R.Module) << R.Diagnostic;
+    auto Harness = tmpFile("guard-oracle.c");
+    std::ofstream(Harness)
+        << R"(
+#include <stdint.h>
+extern uint32_t f(uint32_t, uint32_t);
+int main(void) {
+  uint32_t random = 0x196739u;
+  for (unsigned low=0; low<256; ++low) {
+    for (unsigned sample=0; sample<64; ++sample) {
+      random = random*1664525u+1013904223u;
+      uint32_t x = sample==0 ? 0 : sample==1 ? UINT32_MAX : random;
+      uint32_t n = (random & ~255u) | low;
+      uint32_t expected;
+)"
+        << (Split ? R"(
+      uint32_t branch = (n&8u) ? x^9u : x+5u;
+      expected = ((n>>4&7u)+1u)==(n&7u) ? branch : x-3u;
+)"
+                  : "      expected = (n&7u)==1u ? x : x+11u;\n")
+        << R"(
+      if (f(x,n)!=expected) return 1;
+    }
+  }
+  return 0;
+})";
+    for (auto *M : {Input.Module.get(), R.Module.get()}) {
+      auto IR = tmpFile("guard.ll");
+      std::ofstream(IR) << text(*M);
+      for (const char *Level : {"-O0", "-O2"}) {
+        auto Program = tmpFile("guard-oracle");
+        auto Built =
+            exec(NEVERD_TEST_CLANG,
+                 {Level, "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                  IR.string(), Harness.string(), "-o", Program.string()});
+        ASSERT_TRUE(Built.ok()) << Built.err;
+        auto Ran = exec(Program.string(), {});
+        EXPECT_TRUE(Ran.ok()) << Ran.err;
+      }
+    }
+  }
+}
+
 TEST_F(LLVMScalarSourceCompiled, OriginalAndPreparedMatchArithmeticOracle) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "Configured Clang is unavailable";

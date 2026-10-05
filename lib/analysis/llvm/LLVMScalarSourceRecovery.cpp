@@ -44,7 +44,8 @@ CleanupStatus cleanCandidate(Module &M,
       InstCombineOptions().setMaxIterations(32).setVerifyFixpoint(false)));
   Pipeline.addPass(createModuleToFunctionPassAdaptor(std::move(Combine)));
   if (auto Error = Passes.parsePassPipeline(
-          Pipeline, "function(reassociate,gvn,sccp,adce,simplifycfg)")) {
+          Pipeline,
+          "function(reassociate,gvn-hoist,gvn,sccp,adce,simplifycfg)")) {
     consumeError(std::move(Error));
     return CleanupStatus::Unsupported;
   }
@@ -56,6 +57,18 @@ CleanupStatus cleanCandidate(Module &M,
     --Remaining.MaxConstructionWork;
     if (F.isDeclaration())
       continue;
+    // This private cleanup is only a proposal. Removing instruction flags
+    // exposes modular identities that the standalone predicate pass must not
+    // infer through poison-producing annotations. Publication still requires
+    // the complete original's definedness and return proof, including every
+    // removed flag and dead operation. Input/call contracts and assumes stay.
+    for (auto &B : F)
+      for (auto &I : B) {
+        if (!Remaining.MaxConstructionWork)
+          return CleanupStatus::BudgetExceeded;
+        --Remaining.MaxConstructionWork;
+        I.dropPoisonGeneratingFlags();
+      }
     SymSimplifyOptions Options;
     Options.MaxFiniteValueWork =
         std::min<uint64_t>(65536, Remaining.MaxConstructionWork);
