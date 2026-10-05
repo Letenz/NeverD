@@ -63,12 +63,14 @@ NEVERD_WDK_ARGUMENTS("link", "/machine:x64", "/subsystem:native", "/driver",
 NEVERD_WDK_ARGUMENTS("cfg_compile", "-Xclang", "-cfguard")
 NEVERD_WDK_ARGUMENTS("cfg_link", "/guard:cf")
 NEVERD_WDK_ARGUMENTS("async_compile", "-fasync-exceptions")
+// Force the real CMPXCHG16B intrinsic instead of an external libatomic call.
+NEVERD_WDK_ARGUMENTS("wide_atomic_compile", "-mcx16")
 NEVERD_WDK_ARGUMENTS("seh_compile", "-fasync-exceptions",
                      "-fasynchronous-unwind-tables")
 // Preserve COFF symbols used to authenticate the original GS handler assembly.
 NEVERD_WDK_ARGUMENTS("seh_link", "/debug:dwarf")
 
-// Cache stem, original source, entry library, DBG, exception compilation
+// Cache stem, original source, entry library, DBG, additional compilation/link
 // profile. Each row builds normal and active-CFG images at their original
 // sources.
 NEVERD_WDK_FIXTURE("KMDF", "driver_kmdf_lifecycle.c", "KMDF", "0", "")
@@ -85,7 +87,7 @@ NEVERD_WDK_FIXTURE("WDM_REMOVE_LOCK", "driver_wdm_remove_lock.c", "WDM", "0",
                    "")
 NEVERD_WDK_FIXTURE("WDM_REMOVE_LOCK_DBG", "driver_wdm_remove_lock.c", "WDM",
                    "1", "")
-NEVERD_WDK_FIXTURE("WDM_RESOURCE", "driver_wdm_resources.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_RESOURCE", "driver_wdm_resources.c", "WDM", "0", "wide_atomic")
 NEVERD_WDK_FIXTURE("WDM_SEH", "driver_wdm_seh.c", "WDM", "0", "seh")
 NEVERD_WDK_FIXTURE("WDM_STACK", "driver_wdm_stack.c", "WDM", "0", "")
 NEVERD_WDK_FIXTURE("KMDF_LOCK", "driver_kmdf_locks.c", "KMDF", "0", "")
