@@ -64,6 +64,117 @@ TEST(FrameOffsets, ByteStateAndSplitArithmeticPreserveThePhysicalRoot) {
   }
 }
 
+TEST(FrameOffsets, SplitAlignmentProjectsOnlyTheRemovedLowBits) {
+  for (unsigned Split : {8U, 16U, 32U})
+    for (uint64_t Alignment : {2, 4, 8, 16, 32})
+      for (uint64_t Low = 0; Low != Alignment; ++Low)
+        for (uint64_t Bias : {uint64_t{0}, uint64_t{173}, uint64_t{0} - 405}) {
+          SCOPED_TRACE(Split);
+          SCOPED_TRACE(Alignment);
+          SCOPED_TRACE(Low);
+          SCOPED_TRACE(Bias);
+          SymContext Ctx;
+          const auto Root = Ctx.mkVar("stack", 64);
+          const auto Adjusted = Ctx.mkAdd(Root, Ctx.mkConst(64, Bias));
+          const auto Aligned = Ctx.mkConcat(
+              Ctx.mkExtract(Adjusted, Split, 64 - Split),
+              Ctx.mkAnd(Ctx.mkExtract(Adjusted, 0, Split),
+                        Ctx.mkConst(Split, uint64_t{0} - Alignment)));
+          const auto Value = Ctx.mkAdd(Aligned, Ctx.mkConst(64, 27));
+          SpecializationOptions Options;
+          // A low-residue proof fits; bit-blasting a whole 64-bit subtraction
+          // under the same ceiling does not. No high root bits are fixed.
+          Options.MaxSolverGates = 256;
+          uint64_t Queries = 0;
+          const auto R =
+              proveFrameOffset(Ctx, residue(Ctx, Root, Alignment - 1, Low),
+                               Value, Root, Options, Queries);
+          ASSERT_EQ(R.Status, FrameOffsetStatus::Exact);
+          EXPECT_EQ(R.Offset, Bias + 27 - ((Low + Bias) & (Alignment - 1)));
+        }
+}
+
+TEST(FrameOffsets, SplitAlignmentDoesNotMergeDifferentSourcesOrBiases) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("stack", 64);
+  const auto Other = Ctx.mkVar("other", 64);
+  const auto Predicate = residue(Ctx, Root, 15, 8);
+  const auto High = Ctx.mkExtract(Ctx.mkAdd(Root, Ctx.mkConst(64, 128)), 8, 56);
+  for (const auto LowSource : {Root, Other}) {
+    const auto Low =
+        Ctx.mkAnd(Ctx.mkExtract(LowSource, 0, 8), Ctx.mkConst(8, 0xf0));
+    uint64_t Queries = 0;
+    EXPECT_EQ(proveFrameOffset(Ctx, Predicate, Ctx.mkConcat(High, Low), Root,
+                               {}, Queries)
+                  .Status,
+              FrameOffsetStatus::NonUnique);
+  }
+  // A sparse mask removes an unconstrained bit above the declared residue.
+  const auto Sparse = Ctx.mkAnd(Root, Ctx.mkConst(64, ~uint64_t{0x21}));
+  uint64_t Queries = 0;
+  EXPECT_EQ(proveFrameOffset(Ctx, Predicate, Sparse, Root, {}, Queries).Status,
+            FrameOffsetStatus::NonUnique);
+  const auto Aligned = Ctx.mkAnd(Root, Ctx.mkConst(64, -16));
+  EXPECT_EQ(
+      proveFrameOffset(Ctx, Ctx.mkTrue(), Aligned, Root, {}, Queries).Status,
+      FrameOffsetStatus::NonUnique);
+}
+
+TEST(FrameOffsets, NestedMaskedOffsetsPreserveModularCarriesAndWraparound) {
+  for (uint64_t Entry :
+       {uint64_t{0}, uint64_t{1}, uint64_t{15}, uint64_t{16}, uint64_t{127},
+        uint64_t{255}, uint64_t{256}, uint64_t{0x7fffffffffffffff},
+        UINT64_MAX - 255, UINT64_MAX})
+    for (uint64_t Bias : {uint64_t{0}, uint64_t{173}, uint64_t{0} - 405}) {
+      SCOPED_TRACE(Entry);
+      SCOPED_TRACE(Bias);
+      SymContext Ctx;
+      const auto Root = Ctx.mkVar("stack", 64);
+      const auto Adjusted = Ctx.mkAdd(Root, Ctx.mkConst(64, Bias));
+      const auto Split = Ctx.mkConcat(
+          Ctx.mkExtract(Adjusted, 8, 56),
+          Ctx.mkAnd(Ctx.mkExtract(Adjusted, 0, 8), Ctx.mkConst(8, 0xf0)));
+      const auto Value = Ctx.mkAdd(
+          Ctx.mkAnd(Ctx.mkAdd(Split, Ctx.mkConst(64, 7)), Ctx.mkConst(64, -32)),
+          Ctx.mkConst(64, 11));
+      uint64_t Queries = 0;
+      const auto Result =
+          proveFrameOffset(Ctx, Ctx.mkEq(Root, Ctx.mkConst(64, Entry)), Value,
+                           Root, {}, Queries);
+      ASSERT_EQ(Result.Status, FrameOffsetStatus::Exact);
+      const uint64_t First = (Entry + Bias) & ~uint64_t{15};
+      const uint64_t Expected = ((First + 7) & ~uint64_t{31}) + 11;
+      EXPECT_EQ(Result.Offset, Expected - Entry);
+    }
+}
+
+TEST(FrameOffsets, RemainderConstructionAndIncompleteQueriesStayBudgeted) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("stack", 64);
+  const auto Value = Ctx.mkAdd(
+      Ctx.mkAnd(Ctx.mkAdd(Root, Ctx.mkConst(64, 173)), Ctx.mkConst(64, -16)),
+      Ctx.mkConst(64, 27));
+  const auto Predicate = residue(Ctx, Root, 15, 8);
+  SpecializationOptions Options;
+  Options.MaxSymbolicNodes = Ctx.numNodes();
+  uint64_t Queries = 0;
+  EXPECT_EQ(
+      proveFrameOffset(Ctx, Predicate, Value, Root, Options, Queries).Status,
+      FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 0U);
+  Options.MaxSymbolicNodes = 65536;
+  Options.MaxSolverQueries = 1;
+  EXPECT_EQ(
+      proveFrameOffset(Ctx, Predicate, Value, Root, Options, Queries).Status,
+      FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 1U);
+  Options.MaxSolverQueries = 3;
+  EXPECT_EQ(
+      proveFrameOffset(Ctx, Predicate, Value, Root, Options, Queries).Status,
+      FrameOffsetStatus::Exact);
+  EXPECT_EQ(Queries, 3U);
+}
+
 TEST(FrameOffsets, UnpartitionedAndIndependentValuesDoNotInventOffsets) {
   SymContext Ctx;
   const auto Root = Ctx.mkVar("entry", 64);

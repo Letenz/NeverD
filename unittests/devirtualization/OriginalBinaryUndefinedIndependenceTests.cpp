@@ -288,6 +288,25 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     SplitAlignedPointerPreservesFrameAccessAndStoredInput) {
+  // LEA RDX,[RSP-65]; AND DL,0xf0; LEA RDI,[RDX+9];
+  // MOV [RDI],ECX; MOV EAX,[RDI]; RET. At residue 8 the access is RSP-63.
+  Program P({0x48, 0x8d, 0x54, 0x24, 0xbf, 0x80, 0xe2, 0xf0, 0x48, 0x8d, 0x7a,
+             9, 0x89, 0x0f, 0x8b, 0x07, 0xc3});
+  P.Contract.Frame->Begin = -128;
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  // The exact offset is still subject to the declared frame boundary.
+  P.Contract.Frame->Begin = -62;
+  expectRefusal(P, Status::Unsupported);
+  P.Contract.Frame->Begin = -128;
+  P.Options.EntryFrameAlignment.reset();
+  P.Contract.Frame->EntryAlignment.reset();
+  expectRefusal(P, Status::Unsupported);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      StraightLineCertificateOwnsExactBytesAndFallbackMetadata) {
   // mov eax,7; ret. The optional memory-call route declines both instructions.
   Program P({0xb8, 7, 0, 0, 0, 0xc3});
