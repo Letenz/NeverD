@@ -86,6 +86,8 @@ KVM/WHP 透過私有 `FXSAVE64` 執行探測 `MXCSR_MASK`，並以帶正負號�
 
 checked x64 接納 `CLC/STC/CMC` 和 `LAHF/SAHF`。進位指令由傳輸層執行；AH 轉換由 KVM、WHP 和 checked Unicorn 共用一處 ISA 實作，包括原生 `driver-strict`。LAHF 將五個狀態旗標及固定位元寫入 AH；SAHF 只修改 CF/PF/AF/ZF/SF。OF/IF/DF 及未選取的暫存器保持不變。被忽略的前綴，包括所有 REX 值，仍使用隱含 AH。`X64StatusFlagsTests.cpp` 檢查主機原始指令、完整狀態、取消及繼續執行。固定版本的 Unicorn 譯碼器也為可攜式設定保留 REX 下的隱含 AH，並在狀態改變前拒絕這五條指令的 LOCK 形式。
 
+checked x64 透過 KVM、WHP 和 Unicorn 執行 `SHLD/SHRD`，支援 16/32/64 位元目標及 imm8 或 CL 計數。計數採用架構遮罩；16 位元形式遮罩後大於 16 的未定義計數在產生效果前拒絕。RAM 目標依精確寬度檢查讀寫權限，並沿用現有交易：結果觀察器在發布前執行，取消會回復 CPU 與記憶體。LOCK 和裝置運算元仍不支援。
+
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
 `X64PackedShiftInstructions.def` 准入十種 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／對齊的 m128 計數，位元組移位僅接受 imm8。變數計數使用無符號低 64 位元，不按純量移位規則遮罩；高 64 位元不參與計算。即使計數為零或超出位寬，記憶體運算元仍須完整讀取 16 位元組。FLAGS 和 MXCSR 保持不變；MMX、VEX/EVEX 和裝置運算元仍被排除。
