@@ -414,6 +414,10 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   if (auto Error = validateLowInstructionBoundaries(
           Residual, LowInstructionBoundaryRequirement::Required))
     return std::move(Error);
+  for (const auto &Range : Residual.FunctionTemporaries)
+    if (Range.Offset < ScratchEnd &&
+        Range.Offset + Range.Bytes - 1 >= ScratchBase)
+      return invalid("function temporary overlaps wrapper scratch");
 
   const uint64_t ParameterRegister =
       SourceFormat == BinaryFormat::COFF ? x86reg::RCX : x86reg::RDI;
@@ -423,6 +427,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
     // roots. Do not copy unbounded diagnostic/provenance trees or strings.
     Result.Function.Entry = Residual.Entry;
     Result.Function.Blocks = Residual.Blocks;
+    Result.Function.FunctionTemporaries = Residual.FunctionTemporaries;
     Result.Function.ModuleAnalysisRoots = Residual.ModuleAnalysisRoots;
     Result.Function.OrdinaryModuleAnalysisRoots =
         Residual.OrdinaryModuleAnalysisRoots;
@@ -492,6 +497,22 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
                 Value.Offset + Value.Size - 1 >= ScratchBase)
               return invalid(
                   "machine source temporary overlaps wrapper scratch");
+            if (!StateRegisters) {
+              // Low-to-Med names temporary scalars by (offset, width). Byte
+              // aliases have exact semantics in the raw-state proof model,
+              // but cannot silently become independent source variables.
+              const auto &Ranges = Residual.FunctionTemporaries;
+              const auto It = std::lower_bound(
+                  Ranges.begin(), Ranges.end(), Value.Offset,
+                  [](const LowFunctionTemporary &Range, uint64_t Offset) {
+                    return Range.Offset + Range.Bytes - 1 < Offset;
+                  });
+              if (It != Ranges.end() &&
+                  Value.Offset + Value.Size - 1 >= It->Offset &&
+                  (Value.Offset != It->Offset || Value.Size != It->Bytes))
+                return invalid("machine source requires exact function "
+                               "temporary operands, without byte aliases");
+            }
           } else if (!Value.isConst()) {
             return invalid("machine source requires scalar LowIR operands");
           }
@@ -684,6 +705,7 @@ llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
     return true;
   };
   if (!Charge(Residual.Blocks.size()) ||
+      !Charge(Residual.FunctionTemporaries.size()) ||
       !Charge(Residual.ModuleAnalysisRoots.size()) ||
       !Charge(Residual.OrdinaryModuleAnalysisRoots.size()))
     return invalid("machine-state model input budget exhausted");
