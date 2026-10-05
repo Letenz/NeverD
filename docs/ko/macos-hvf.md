@@ -1,6 +1,6 @@
 **언어**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
+<!-- i18n-source: 550b2901128a5e09a45c29f1dc5e127864f6e97712bf90c99e687007ce46c9cf -->
 
 [← 문서 목록](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-Apple Silicon에서는 `-DNEVERD_LLVM_PREBUILT=ON`을 추가할 수 있습니다. Intel은 고정된 LLVM 리비전을 소스에서 빌드합니다. [HVF 워크플로](../../.github/workflows/hvf.yml)는 `self-hosted, macOS, ARM64/X64, hvf`와 `macos-15-intel`의 `hosted-intel`을 지원합니다. 먼저 실제 VM/vCPU 생성과 삭제를 확인합니다. `validation=probe`는 명령 실행의 증거가 아니며, `transport`는 전송 계층만, `darwin`은 일치하는 모든 Darwin 작업을, `full`은 전체 CPU와 Darwin 검증을 모두 요구합니다.
+Apple Silicon은 `-DNEVERD_LLVM_PREBUILT=ON`을 사용할 수 있습니다. [HVF 워크플로](../../.github/workflows/hvf.yml)는 이제 `self-hosted, macOS, ARM64, hvf`만 선택하고 호스트 아키텍처도 확인합니다. LLVM 준비 전에 실제 VM/vCPU 생성과 삭제를 요구합니다. `probe`는 가용성, `transport`는 전송 계층, `darwin`은 모든 일치하는 Darwin 작업, `full`은 전송 계층과 전체 CPU·Darwin 검증을 요구합니다. Intel 선택지는 제거되었으며 아래 Intel 절차는 중단된 과거 절차입니다. 전용 ARM64 runner가 별도로 필요합니다.
 
 전송 계층의 필수 항목은 ARM64 15개, Intel 12개이며 전체 CPU 검증은 각각 23개, 20개입니다. 전체 상태, 특권, 권한, 페이지 경계, 별칭, CPU 전환, 롤백, 취소 및 재시도를 확인합니다. Intel은 큰 빌드 전에 CR8을 검사합니다. 산출물에는 목록, 소스 리비전, 호스트, 결과 및 각 재실행을 보관합니다. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)는 중첩 가상화를 실험적 기능으로 분류하므로 반복 가능한 검증을 위해 전용 네이티브 Mac 경로를 유지하는 것이 좋습니다.
 

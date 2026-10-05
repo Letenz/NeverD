@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
+<!-- i18n-source: 550b2901128a5e09a45c29f1dc5e127864f6e97712bf90c99e687007ce46c9cf -->
 
 [← 文件索引](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-Apple Silicon 可加上 `-DNEVERD_LLVM_PREBUILT=ON`；Intel 從固定版本 LLVM 原始碼建置。[HVF 工作流程](../../.github/workflows/hvf.yml) 支援 `self-hosted, macOS, ARM64/X64, hvf`，也可用 `hosted-intel` 選擇 `macos-15-intel`。先驗證實際建立與銷毀 VM/vCPU。`validation=probe` 不能證明指令執行；`transport` 只驗證傳輸層；`darwin` 要求所有相符的 Darwin 工作負載；`full` 要求 CPU 與 Darwin 兩項完整驗收。
+Apple Silicon 可使用 `-DNEVERD_LLVM_PREBUILT=ON`。[HVF 工作流程](../../.github/workflows/hvf.yml) 現在只選擇 `self-hosted, macOS, ARM64, hvf`，並核對宿主架構。準備 LLVM 前必須實際建立與銷毀 VM/vCPU。`probe` 只檢查可用性，`transport` 驗證傳輸層，`darwin` 要求所有相符的 Darwin 工作負載，`full` 要求傳輸層、完整 CPU 與 Darwin 驗收。Intel 選項已移除；下文相關流程為已暫停的歷史操作。仍需自行提供專用 ARM64 runner。
 
 傳輸層要求 ARM64 15 項、Intel 12 項；完整 CPU 門檻分別為 23、20 個必需項。範圍含完整狀態、權限層級、記憶體權限、跨頁、別名、CPU 切換、回復、取消及重試。Intel 在大型建置前先驗證 CR8。產物保留完整清單、原始碼版本、宿主、結果與各次重跑。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) 將巢狀虛擬化列為實驗性，仍應保留專用原生 Mac 驗收路徑。
 

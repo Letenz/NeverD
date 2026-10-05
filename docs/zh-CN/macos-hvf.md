@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
+<!-- i18n-source: 550b2901128a5e09a45c29f1dc5e127864f6e97712bf90c99e687007ce46c9cf -->
 
 [← 文档索引](README.md)
 
@@ -40,11 +40,12 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
 
 门禁要求 HVF 用例实际通过，不能用全部跳过代替成功；支持关闭 Unicorn 后独立运行。测试包含跨线程调用、多个 CPU 的同地址隔离、权限与跨页访存、完整状态、启动探针对其他 CPU 的影响、部分映射失败回滚、排队取消、两种架构的原生死循环中断及重试。中断用例必须观察到实际原生返回，进入前取消不能算通过。当前 transport 门禁要求 ARM64 15 项、Intel 12 项；完整门禁分别要求 23 项和 20 项，Intel 包含 CR8 全部目标寄存器及权限回归。Intel 的交叉编译只能证明编译通过，仍需 Intel 真机执行门禁。
 
-手动工作流默认使用带 `hvf` 标签的自托管宿主，也可选择 `hosted-intel` 尝试
-GitHub 的 `macos-15-intel`。两种方式都先编译、签名并运行 `scripts/probe_hvf_host.c`，
-实际创建和销毁 VM/vCPU，成功后才准备 LLVM。这项可用性探针不执行来宾指令。
-宿主拒绝 HVF 就在此处失败，不能用 runner 名称推断硬件可用。
-CPU 门禁通过后，还必须执行本机架构的全部 Darwin 工作负载。
+[ARM64 HVF 工作流](../../.github/workflows/hvf.yml) 现在只使用带
+`self-hosted, macOS, ARM64, hvf` 标签的宿主，并核对实际架构。先编译、签名并运行
+`scripts/probe_hvf_host.c`，实际创建和销毁 VM/vCPU，成功后才准备 LLVM。
+`probe` 只检查可用性，`transport` 验证传输层，`darwin` 要求全部相符的 Darwin
+工作负载，`full` 要求传输层、完整 CPU 和 Darwin 三项门禁。Intel 宿主和镜像选项
+已移除；下文 Intel 流程只作已暂停的历史操作参考。仍需自行提供专用 ARM64 runner。
 
 GitHub 的[宿主策略](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)
 把 runner 内的嵌套虚拟化列为实验性用途，不保证稳定性、性能或兼容性。

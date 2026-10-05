@@ -1,6 +1,6 @@
 **اللغات**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](macos-hvf.md)
 
-<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
+<!-- i18n-source: 550b2901128a5e09a45c29f1dc5e127864f6e97712bf90c99e687007ce46c9cf -->
 
 [← فهرس الوثائق](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-يمكن لـ Apple Silicon إضافة `-DNEVERD_LLVM_PREBUILT=ON`؛ أما Intel فيبني مراجعة LLVM المثبّتة من المصدر. يدعم [سير عمل HVF](../../.github/workflows/hvf.yml) المشغلات ذات الوسوم `self-hosted, macOS, ARM64/X64, hvf` وخيار `hosted-intel` على `macos-15-intel`. يشترط أولاً إنشاء VM/vCPU فعليين وتدميرهما. لا يثبت `validation=probe` تنفيذ التعليمات؛ ويفحص `transport` طبقة النقل فقط، ويشترط `darwin` جميع أعباء Darwin المطابقة، ويشترط `full` التحقق الكامل للمعالج وDarwin معاً.
+يمكن لـ Apple Silicon إضافة `-DNEVERD_LLVM_PREBUILT=ON`. يختار [سير عمل HVF](../../.github/workflows/hvf.yml) الآن `self-hosted, macOS, ARM64, hvf` فقط ويتحقق من معمارية المضيف. يشترط إنشاء VM/vCPU فعليين وتدميرهما قبل LLVM. يفحص `probe` التوافر فقط، و`transport` طبقة النقل، و`darwin` جميع أعباء Darwin المطابقة، و`full` فحوص النقل والمعالج وDarwin الكاملة. لم تعد خيارات Intel متاحة؛ إجراءاتها أدناه تاريخية وموقوفة. يلزم توفير مشغّل ARM64 ذاتيًا.
 
 يتطلب النقل 15 حالة على ARM64 أو 12 على Intel؛ ويتطلب فحص المعالج الكامل 23 أو 20 نتيجة إلزامية على الترتيب. تشمل التغطية الحالة الكاملة والامتيازات والصلاحيات وحدود الصفحات والأسماء المستعارة وتبديل المعالجات والتراجع والإلغاء وإعادة المحاولة. يُختبر CR8 على Intel قبل البناء الكبير. تحفظ المخرجات قائمة الحالات ومراجعة المصدر والمضيف والنتائج والمحاولات المنفصلة. تصف [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) المحاكاة الافتراضية المتداخلة بأنها تجريبية؛ لذلك يبقى مسار Mac أصلي مخصص مناسباً للتحقق المتكرر.
 

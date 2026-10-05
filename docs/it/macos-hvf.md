@@ -1,6 +1,6 @@
 **Lingue**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
+<!-- i18n-source: 550b2901128a5e09a45c29f1dc5e127864f6e97712bf90c99e687007ce46c9cf -->
 
 [← Indice della documentazione](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-Apple Silicon può aggiungere `-DNEVERD_LLVM_PREBUILT=ON`; Intel compila la revisione LLVM fissata. Il [workflow HVF](../../.github/workflows/hvf.yml) supporta runner `self-hosted, macOS, ARM64/X64, hvf` e `hosted-intel` su `macos-15-intel`. Verifica prima creazione e distruzione reali di VM/vCPU. `validation=probe` non prova l’esecuzione di istruzioni; `transport` controlla soltanto il trasporto; `darwin` richiede tutti i carichi Darwin compatibili; `full` richiede entrambe le verifiche complete CPU e Darwin.
+Apple Silicon può usare `-DNEVERD_LLVM_PREBUILT=ON`. Il [workflow HVF](../../.github/workflows/hvf.yml) seleziona ora soltanto `self-hosted, macOS, ARM64, hvf` e controlla l’architettura host. Richiede la creazione e distruzione reali di VM/vCPU prima di LLVM. `probe` verifica la disponibilità, `transport` il trasporto, `darwin` tutti i carichi Darwin corrispondenti e `full` il trasporto più la validazione completa CPU e Darwin. Le opzioni Intel sono state rimosse; le procedure Intel successive sono storiche e sospese. Occorre un runner ARM64 dedicato disponibile.
 
 Il trasporto richiede 15 casi ARM64 o 12 Intel; la verifica CPU completa richiede rispettivamente 23 o 20 controlli obbligatori. Copertura: stato completo, privilegi, permessi, attraversamento di pagine, alias, cambio CPU, rollback, annullamento e ripresa. Intel controlla CR8 prima della compilazione estesa. Gli artefatti conservano inventario, revisione, host, risultati e tentativi distinti. [GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) considera sperimentale la virtualizzazione annidata; resta utile un Mac nativo dedicato.
 

@@ -125,15 +125,14 @@ The required inventory includes three native Darwin startup/service fixtures on
 ARM64 (macOS, iOS device and Simulator), or two on Intel (macOS and Simulator).
 Missing registrations and skips fail the gate. Darwin CTest names retain their
 exact GoogleTest identities instead of address-bearing parameter dumps.
-`.github/workflows/hvf.yml` exposes the same manual gate for dedicated native
-`self-hosted, macOS, ARM64/X64, hvf` runners. Its `hosted-intel` selection tries
-GitHub's `macos-15-intel` runner. Both choices first compile and sign
-`scripts/probe_hvf_host.c` and require actual VM/vCPU creation and teardown
-before preparing LLVM. This availability probe does not execute guest code.
-A hosted runner that denies HVF fails at that boundary; its label does not
-establish virtualization support. After the CPU gate, the workflow also
-requires every matching Darwin workload. Dedicated runners are not assumed
-to be provisioned.
+[The ARM64 HVF workflow](../.github/workflows/hvf.yml) runs only on dedicated
+`self-hosted, macOS, ARM64, hvf` runners. It rejects any non-native-ARM64 host,
+then compiles and signs `scripts/probe_hvf_host.c` and requires real VM/vCPU
+creation and teardown before preparing LLVM. The availability probe does not
+execute guest code. `full` requires transport, complete CPU and Darwin gates;
+`transport`, `darwin` and `probe` retain their narrower meanings below. No
+Intel runner or image selection remains. Dedicated runners are not assumed
+to be provisioned. Intel-specific workflow procedures below are historical.
 
 GitHub describes nested virtualization on hosted runners as experimental and
 does not guarantee its stability, performance or compatibility. See its
@@ -149,7 +148,7 @@ gates. `validation=darwin` builds the Darwin owner and requires every matching
 native workload independently of the complete CPU gate. The transport profile
 reuses the full inventory's HVF requirements and
 records `hvf_transport_only=true`; it is not full CPU/process acceptance.
-On Intel, the workflow additionally builds `NeverDX64ExceptionTests` and runs
+The suspended Intel workflow previously built `NeverDX64ExceptionTests` and ran
 its CR8 state/privilege regression before the large dependency build. The full
 CPU gate owns the complete state/exception suite, without a duplicate preflight.
 It uploads transport results and the state inventory before execution, then

@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 346da9c1173dd4d66933f7beb8919b163ec5c272fc1e66ada05a18ad24669b46 -->
+<!-- i18n-source: 550b2901128a5e09a45c29f1dc5e127864f6e97712bf90c99e687007ce46c9cf -->
 
 [← ドキュメント一覧](README.md)
 
@@ -47,7 +47,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf \
   --evidence build-hvf/native-evidence --require-hvf
 ```
 
-Apple Silicon では `-DNEVERD_LLVM_PREBUILT=ON` を追加できます。Intel は固定された LLVM リビジョンをソースからビルドします。[HVF ワークフロー](../../.github/workflows/hvf.yml) は `self-hosted, macOS, ARM64/X64, hvf` および `macos-15-intel` の `hosted-intel` に対応します。最初に VM/vCPU を実際に作成、破棄します。`validation=probe` は命令実行の証拠ではなく、`transport` は転送層のみ、`darwin` は対応する全 Darwin ワークロード、`full` は CPU と Darwin の両方の完全な検証を要求します。
+Apple Silicon は `-DNEVERD_LLVM_PREBUILT=ON` を利用できます。[HVF ワークフロー](../../.github/workflows/hvf.yml) は現在 `self-hosted, macOS, ARM64, hvf` のみを選び、ホストアーキテクチャも確認します。LLVM の準備前に VM/vCPU の実際の作成と破棄を要求します。`probe` は利用可否、`transport` は転送層、`darwin` は対応する全 Darwin ワークロード、`full` は転送層および CPU・Darwin 全体を検証します。Intel の選択肢は削除済みで、以下の Intel 手順は停止された過去の手順です。専用 ARM64 runner は別途必要です。
 
 転送層の必須項目は ARM64 が 15、Intel が 12、完全な CPU 検証はそれぞれ 23、20 です。全状態、特権、権限、ページ境界、エイリアス、CPU 切り替え、ロールバック、キャンセル、再試行を確認します。Intel は大きなビルドの前に CR8 を確認します。成果物に登録一覧、ソースリビジョン、ホスト、結果、各試行を残します。[GitHub](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners) はネストした仮想化を実験的と位置付けており、再現可能な受け入れには専用のネイティブ Mac が適しています。
 
