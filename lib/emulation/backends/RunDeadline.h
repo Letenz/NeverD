@@ -78,8 +78,7 @@ public:
     std::lock_guard Lock(Mutex);
     Armed = false;
     Control.Stop = nullptr;
-    // The mutex acknowledges an in-flight interrupt. There is no work to wake
-    // the watchdog for: the next arm or shutdown will notify its old wait.
+    Changed.notify_one();
     return CancelIssued;
   }
 
