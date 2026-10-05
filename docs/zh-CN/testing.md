@@ -1324,6 +1324,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 只有完成 UNSAT 证明、排除另一条边后，原生分支才在当前边保留传入域。测试在 512 个求解门内验证两个方向各 32 次带条件跳转，并检查精确与少一次的查询预算及求解门耗尽。修改或删除对齐条件、反转比较以及修改终态都必须拒绝；任意未定义控制和两条边均可达的现有测试仍然必需。
 
+位展开缓存与遍历存储仅记录实际到达的表达式节点和变量。`NeverDSolverTests` 检查稀疏的高位编号、增量断言之间的上下文增长、缓存位复用、模型提取和假设切换。无关的宽表达式不会被编码；实际到达的宽度违规、畸形根节点和求解门预算耗尽仍必须拒绝。
+
 `SourceFrameAnalysis.CallStorage*` 覆盖精确调用、到达定义、初始化、填充、逃逸、边界和循环，不授予来源发布权限。`ObjCFrameBlockBorrows.*` 覆盖描述符限定的同步借用，以及 19 种导入、头部、ABI 和机器指令修改。测试保留未证明的填充字节并拒绝未初始化的所有权字段；block 构造、捕获读取及回调依赖闭包仍各自接受发布验证。
 
 block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重叠、回调本体变化、过期机器指令与 IR、脱离本体的调用位置，以及精确投影顺序。`MixedWidthFrameCopiesMeetEveryInitializedByte` 与 `FrameCoverageCannotHideMissingBytesOrPointerJoins` 检查两种合并顺序下的 8/16 字节写入、缺失字节、可写借用失效和部分覆盖后仍保留的指针身份。
