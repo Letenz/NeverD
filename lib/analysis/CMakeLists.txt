@@ -38,6 +38,12 @@ add_neverd_component_library(NeverDLLVMScalarLoopRecovery
   LLVM_COMPONENTS Analysis Core Support TransformUtils
 )
 
+add_neverd_component_library(NeverDLLVMScalarResultProjection
+  llvm/LLVMScalarResultProjection.cpp
+  LINK_COMPONENTS LLVMInterpreterModel
+  LLVM_COMPONENTS Core Support TransformUtils
+)
+
 add_neverd_component_library(NeverDInterpreterLLVMRefinement
   arch/x86_64/InterpreterLLVMPreparation.cpp
   arch/x86_64/InterpreterLLVMRefinement.cpp

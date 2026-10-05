@@ -124,6 +124,8 @@ Las regresiones adicionales cubren últimos índices estrechos con desbordamient
 
 `LLVMScalarAssume*` comprueba dominios completos de bucle, fallos en la última partición, condiciones falsas inalcanzables o alcanzadas, obligaciones acumuladas para todas las entradas de un byte, presupuestos exactos o con una unidad menos, cambios de IR y contratos de llamada no admitidos. Cuatro triples de destino ejercitan el modelo compartido; 8.192 llamadas O0/O2 se comparan con un oráculo independiente sin signo. La suite del modelo de estado comprueba por separado la misma obligación y el rechazo de paquetes de operandos.
 
+`LLVMScalarProjection.*` cubre campos anidados, ventanas, argumentos sin uso conservados, múltiples retornos, aristas de retorno, obligaciones overflow/shift/assume no seleccionadas, fallo en la última partición, no terminación, contratos desconocidos, entradas modificadas y presupuestos exactos/una unidad cortos. Cuatro tripletas ejercitan la semántica compartida. `LLVMScalarProjectionCompiled.*` compara el agregado original mediante un puente de arreglos LLVM y las proyecciones con aritmética sin signo independiente en O0/O2. `SymExpr.RightShift*` agota pares de bytes y comprueba extensión de signo, acarreos, bits altos conservados, recuentos completos y límites de búsqueda.
+
 Las regresiones de metadatos comparan bucles contados con una fórmula independiente en todas las particiones de control y con presupuestos exactos o reducidos en una unidad. Un historial de peeling grande o nulo no oculta resultados incorrectos, no terminación ni poison. Los metadatos mal formados construidos mediante API comprueban el rechazo del importador por separado del análisis de ensamblador LLVM; las pruebas de estado de máquina conservan los efectos de estado y los límites de entrada.
 
 Las regresiones cubren rangos parciales y separados, alias fijos, ambas ramas, cada retorno, lecturas en la primera iteración y escrituras antes de lecturas en bucles. Deben fallar las lecturas antes de escribir, escrituras ausentes o invitadas, alias desconocidos, accesos especiales, rangos fuera del objeto y presupuestos agotados. Un ejemplo C independiente con una palabra de estado solo de salida se compila a O1/O2, conserva los atributos LLVM exactos y supera una nueva prueba compuesta de código nativo a LLVM.
@@ -139,6 +141,8 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

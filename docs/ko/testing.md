@@ -121,6 +121,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `LLVMScalarAssume*`는 전체 루프 영역, 마지막 분할 실패, 도달 불가능한 거짓 조건과 실제 도달한 거짓 조건, 모든 바이트 입력에서 누적되는 정의성, 정확한 예산과 한 단위 부족한 예산, IR 변경 및 지원하지 않는 호출 계약을 검사합니다. 네 가지 대상 triple로 공유 모델을 확인하고, 8,192회의 O0/O2 호출을 독립적인 부호 없는 oracle과 비교합니다. 상태 모델 테스트도 동일한 의무와 피연산자 번들 거부를 별도로 확인합니다.
 
+`LLVMScalarProjection.*`는 중첩 필드, 비트 구간, 미사용 인수 보존, 여러 반환, 역방향 간선, 미선택 연산의 overflow/shift/assume 의무, 마지막 분할 실패, 비종료, 알 수 없는 계약, 입력 변경 및 정확/하나 부족 예산을 검사합니다. 네 대상 트리플에서 공유 의미를 확인합니다. `LLVMScalarProjectionCompiled.*`는 LLVM 배열 브리지를 통한 원본 집계와 투영 결과를 O0/O2에서 독립적인 부호 없는 산술과 비교합니다. `SymExpr.RightShift*`는 바이트 쌍을 전수 검사하고 부호 확장, 올림, 보존 상위 비트, 전체 카운트 및 탐색 한도를 확인합니다.
+
 루프 메타데이터 회귀 테스트는 모든 제어 분할과 정확한 예산 및 한 단위 부족한 예산에서 카운트 루프를 독립적인 수식과 비교합니다. 크거나 0인 박리 이력 값으로 잘못된 결과, 비종료 또는 poison을 숨길 수 없습니다. API로 잘못된 메타데이터를 구성하여 LLVM 어셈블리 파싱과 별도로 가져오기 거부를 검사하며, 머신 상태 테스트는 상태 효과와 입력 제한을 유지합니다.
 
 초기화 계약 회귀는 부분 및 분리된 바이트 범위, 고정 별칭, 양쪽 분기, 모든 반환, 첫 반복의 읽기와 반복 안의 저장 후 읽기를 검사합니다. 저장 전 읽기, 누락된 저장, 게스트 저장, 알 수 없는 별칭, 특수 메모리 접근, 객체 밖 범위와 입력/작업 예산 소진은 실패해야 합니다. 출력 전용 상태 워드를 쓰는 독립 C 예제를 O1/O2로 컴파일해 정확한 LLVM 속성을 유지한 채 새로운 네이티브→LLVM 조합 증명을 통과하는지 확인합니다.
@@ -136,6 +138,8 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

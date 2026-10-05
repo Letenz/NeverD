@@ -125,6 +125,8 @@ Les régressions supplémentaires couvrent les derniers indices étroits avec re
 
 `LLVMScalarAssume*` vérifie les domaines complets de boucle, les échecs de la dernière partition, les conditions fausses inaccessibles ou atteintes, la définissabilité cumulative pour toutes les entrées d’un octet, les budgets exacts ou réduits d’une unité, les modifications d’IR et les contrats d’appel non pris en charge. Quatre triples cibles exercent le modèle partagé ; 8 192 appels O0/O2 sont comparés à un oracle non signé indépendant. La suite du modèle d’état vérifie séparément la même obligation et le refus des bundles d’opérandes.
 
+`LLVMScalarProjection.*` couvre champs imbriqués, fenêtres, arguments inutilisés conservés, retours multiples, arêtes arrière, obligations overflow/shift/assume non sélectionnées, échec de dernière partition, non-terminaison, contrats inconnus, entrée modifiée et budgets exacts/insuffisants d’une unité. Quatre triplets testent la sémantique partagée. `LLVMScalarProjectionCompiled.*` compare l’agrégat original via un pont tableau LLVM et les projections à une arithmétique non signée indépendante en O0/O2. `SymExpr.RightShift*` épuise les paires d’octets et vérifie extension signée, retenues, bits hauts conservés, comptes complets et limites de recherche.
+
 Les régressions de métadonnées de boucle comparent des boucles comptées à une formule indépendante sur toutes les partitions de contrôle et avec des budgets exacts ou réduits d’une unité. Un historique de peeling grand ou nul ne masque ni résultat erroné, ni non-terminaison, ni poison. Des métadonnées mal formées construites par API vérifient le refus de l’importateur séparément de l’analyse d’assemblage LLVM ; les tests d’état machine préservent les effets d’état et les limites d’entrée.
 
 Les régressions couvrent les plages partielles et séparées, les alias fixes, les deux branches, chaque retour, les lectures à la première itération et les écritures précédant les lectures dans une boucle. Lecture avant écriture, écriture manquante, écriture invitée, alias inconnu, accès spécial, plage hors objet et épuisement des budgets doivent échouer. Un exemple C indépendant qui écrit un mot d’état sans le lire est compilé à O1/O2 ; il conserve les attributs LLVM exacts et passe une nouvelle preuve composée du natif vers LLVM.
@@ -140,6 +142,8 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4

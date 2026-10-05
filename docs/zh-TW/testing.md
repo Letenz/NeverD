@@ -119,6 +119,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `LLVMScalarAssume*` 檢查完整迴圈域、最後分區失敗、不可達與已到達的假條件、全部位元組輸入上的累積定義性、精確/少一預算、IR 修改及不支援的呼叫契約。四個目標 triple 驗證共享建模；8,192 次 O0/O2 呼叫對照獨立無號 oracle。狀態模型測試另行檢查相同義務及運算元 bundle 拒絕。
 
+`LLVMScalarProjection.*` 涵蓋巢狀欄位、位元視窗、未使用參數保留、多個回傳、回邊、未選取運算的溢位/位移/assume 義務、最後分區失敗、不終止、未知契約、輸入修改及精確/少一預算。四種目標三元組驗證共用語意。`LLVMScalarProjectionCompiled.*` 透過 LLVM 陣列橋接原始聚合，與投影視窗及獨立無號算術在 O0/O2 下對照。`SymExpr.RightShift*` 窮舉位元組對，檢查符號延伸、進位、保留高位元、完整計數與有界探索。
+
 迴圈中繼資料回歸測試在全部控制分區及精確/少一預算下，比較計數迴圈與獨立公式。過大或為零的剝離歷史計數不能掩蓋錯誤結果、不終止或 poison。透過 API 建立的畸形中繼資料單獨驗證匯入器的拒絕行為，避免與 LLVM 組合語言解析混淆；機器狀態測試保留狀態副作用及輸入限制。
 
 初始化契約回歸涵蓋部分及分離的位元組範圍、固定別名、兩個分支、每個返回點、迴圈首輪讀取與迴圈內先寫後讀。先讀後寫、漏寫、客體寫入、未知別名、特殊記憶體存取、物件外範圍，以及輸入／工作預算耗盡，都必須失敗。獨立的僅輸出狀態字 C 案例在 O1/O2 編譯後保留精確 LLVM 屬性，並通過全新的原生到 LLVM 組合證明。
@@ -134,6 +136,8 @@ cmake --build build-release --target NeverDLLVMScalarLoopRecoveryTests --paralle
 build-release/bin/NeverDLLVMScalarLoopRecoveryTests
 cmake --build build-release --target NeverDLLVMScalarEquivalenceTests --parallel 4
 build-release/bin/NeverDLLVMScalarEquivalenceTests
+cmake --build build-release --target NeverDLLVMScalarResultProjectionTests --parallel 4
+build-release/bin/NeverDLLVMScalarResultProjectionTests
 cmake --build build-release --target NeverDLLVMInterpreterModelTests --parallel 4
 build-release/bin/NeverDLLVMInterpreterModelTests
 cmake --build build-release --target NeverDInterpreterLLVMRefinementTests --parallel 4
