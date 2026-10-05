@@ -11,6 +11,7 @@
 #include "neverd/emulation/DriverSession.h"
 
 #include <algorithm>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,9 @@ struct SIMDParameter {
   char Mode;
   std::string Name;
 };
+void PrintTo(const SIMDParameter &Parameter, std::ostream *Stream) {
+  *Stream << Parameter.Name;
+}
 std::vector<SIMDParameter> parameters() {
   std::vector<SIMDParameter> Result;
   for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP})
