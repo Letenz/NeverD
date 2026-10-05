@@ -1,3 +1,4 @@
+#include "../../../lib/loader/MachO/DarwinSourceDeclarations.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "gtest/gtest.h"
 
@@ -9508,6 +9509,119 @@ TEST(ObjCCallHints, SwiftMetadataAccessorsAndUnknownNominalsAreNotData) {
           Name, 0, "/usr/lib/swift/libswiftCore.dylib", false};
       EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Image, 0x2180)) << Name;
     }
+}
+
+namespace {
+BinaryImage recordDataImage(llvm::StringRef Name,
+                            Arch Architecture = Arch::AArch64) {
+  auto Image = runtimeImage(Name, Architecture);
+  // Record queries require genuine non-executable import storage. The generic
+  // runtime-call fixture intentionally keeps its data in the code segment.
+  Segment Data;
+  Data.VA = 0x2000;
+  Data.FileOff = 0x1000;
+  Data.Size = Data.FileSz = 0x1000;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.assign(Image.Segments[0].Data.begin() + 0x1000,
+                   Image.Segments[0].Data.end());
+  Image.Segments[0].Size = Image.Segments[0].FileSz = 0x1000;
+  Image.Segments[0].Data.resize(0x1000);
+  Image.Segments.push_back(std::move(Data));
+  return Image;
+}
+} // namespace
+
+TEST(ObjCCallHints, SDKRecordDataRetainsCompilerTypeAndExtentWithoutContents) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Versioned : {false, true})
+      for (const auto &[Name, Bytes] :
+           {std::pair{"CGSizeZero", 16U},
+            std::pair{"CGAffineTransformIdentity", 48U}}) {
+        auto Image = recordDataImage("_" + std::string(Name), Architecture);
+        const std::string Provider =
+            std::string("/System/Library/Frameworks/CoreGraphics.framework/") +
+            (Versioned ? "Versions/A/" : "") + "CoreGraphics";
+        Image.DyldBindSlots[0x2180] = {"_" + std::string(Name), 0, Provider,
+                                       false};
+        Image.DynInfo.NeededLibs.push_back(Provider);
+        const auto Type = darwinDeclaredSourceRecordDataType(Image, 0x2180);
+        ASSERT_TRUE(Type) << Name;
+        EXPECT_EQ(Type->Kind, NdTypeKind::Struct);
+        EXPECT_EQ(Type->Size, Bytes);
+        EXPECT_EQ(Type->Alignment, 8U);
+        const auto Members = sourceAggregateMembers(Type);
+        ASSERT_EQ(Members.size(), Bytes / 8);
+        for (size_t I = 0; I < Members.size(); ++I) {
+          EXPECT_EQ(Members[I].ByteOffset, I * 8);
+          EXPECT_EQ(Members[I].Type->Kind, NdTypeKind::Float);
+          EXPECT_EQ(Members[I].Type->Size, 8U);
+        }
+        // Type facts do not replace the address-producing binding or loads.
+        const auto Address = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+        ASSERT_TRUE(Address);
+        EXPECT_EQ(Address->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Address->Signature.ReturnType->Pointee->Kind,
+                  NdTypeKind::Void);
+        EXPECT_EQ(Address->TargetName, Name);
+      }
+}
+
+TEST(ObjCCallHints, SDKRecordDataRechecksCurrentImportProviderAndStorage) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 16; ++Mutation) {
+      auto Image = recordDataImage("_CGSizeZero", Architecture);
+      const std::string Provider =
+          "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+      Image.DyldBindSlots[0x2180] = {"_CGSizeZero", 0, Provider, false};
+      Image.DynInfo.NeededLibs.push_back(Provider);
+      ASSERT_TRUE(darwinDeclaredSourceRecordDataType(Image, 0x2180));
+      if (Mutation == 0)
+        Image.DyldBindSlots.clear();
+      else if (Mutation == 1)
+        Image.DyldBindSlots[0x2180].Module = "/usr/lib/libSystem.B.dylib";
+      else if (Mutation == 2)
+        Image.DyldBindSlots[0x2180].WeakImport = true;
+      else if (Mutation == 3)
+        Image.DyldBindSlots[0x2180].Addend = 4;
+      else if (Mutation == 4)
+        Image.ConflictingImportStorageSlots.insert(0x2180);
+      else if (Mutation == 5)
+        Image.DynInfo.NeededLibs.clear();
+      else if (Mutation == 6)
+        Image.IsRelocatable = true;
+      else if (Mutation == 7)
+        Image.Format = BinaryFormat::ELF;
+      else if (Mutation == 8)
+        Image.Bits = Bitness::Bits32;
+      else if (Mutation == 9)
+        Image.ImportPtrSlots[0x2180] = "_different";
+      else if (Mutation == 10)
+        Image.Sections[1].Flags =
+            Image.Sections[1].Flags | SegmentFlags::Writable;
+      else if (Mutation == 11)
+        Image.Segments[1].Flags =
+            Image.Segments[1].Flags | SegmentFlags::Writable;
+      else if (Mutation == 12)
+        Image.Sections[1].FileSz = 0x180;
+      else if (Mutation == 13)
+        Image.MachOChainedFixupsAmbiguous = true;
+      else if (Mutation == 14)
+        Image.DataPtrRelocSlots.insert(0x2180);
+      else
+        Image.Segments[1].Flags =
+            Image.Segments[1].Flags | SegmentFlags::Executable;
+      EXPECT_FALSE(darwinDeclaredSourceRecordDataType(Image, 0x2180))
+          << Mutation;
+    }
+  for (const char *Name :
+       {"CGSizeZero_suffix", "CGPointZero", "CGAffineTransformMakeScale"}) {
+    auto Image = recordDataImage("_" + std::string(Name));
+    const std::string Provider =
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+    Image.DyldBindSlots[0x2180] = {"_" + std::string(Name), 0, Provider, false};
+    Image.DynInfo.NeededLibs.push_back(Provider);
+    EXPECT_FALSE(darwinDeclaredSourceRecordDataType(Image, 0x2180));
+  }
 }
 
 TEST(ObjCCallHints, SDKDataBindingsRequireExactExportsAndDataDeclarations) {

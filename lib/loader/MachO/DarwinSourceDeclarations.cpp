@@ -7,6 +7,7 @@
 #include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include <algorithm>
 #include <map>
@@ -33,6 +34,21 @@ struct DataDeclaration {
 };
 constexpr DataDeclaration DataDeclarations[] = {
 #include "DarwinSourceDataDeclarations.inc"
+};
+
+struct RecordDataDeclaration {
+  const char *Name;
+  const char *AArch64;
+  uint16_t AArch64Bytes;
+  uint16_t AArch64Alignment;
+  const char *AArch64Modules;
+  const char *X64;
+  uint16_t X64Bytes;
+  uint16_t X64Alignment;
+  const char *X64Modules;
+};
+constexpr RecordDataDeclaration RecordDataDeclarations[] = {
+#include "DarwinSourceRecordDataDeclarations.inc"
 };
 
 using Index =
@@ -134,6 +150,40 @@ bool darwinDeclaredSourceDataObject(const BinaryImage &Image, va_t ImportSlot) {
   return Address && !Address->WeakImport && Bind != Image.DyldBindSlots.end() &&
          darwinDeclaredSourceDataObjectExport(Image.Arch, Bind->second.Name,
                                               Bind->second.Module);
+}
+
+TypeRef darwinDeclaredSourceRecordDataType(const BinaryImage &Image,
+                                           va_t ImportSlot) {
+  auto Import = darwinRuntimeImport(Image, ImportSlot);
+  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+  if (!Import || !Import->consume_front("_") ||
+      Bind == Image.DyldBindSlots.end() ||
+      !isImmutableImageImportSlot(Image, ImportSlot) ||
+      std::find(Image.DynInfo.NeededLibs.begin(),
+                Image.DynInfo.NeededLibs.end(),
+                Bind->second.Module) == Image.DynInfo.NeededLibs.end())
+    return nullptr;
+  const auto D = std::lower_bound(
+      std::begin(RecordDataDeclarations), std::end(RecordDataDeclarations),
+      *Import, [](const RecordDataDeclaration &D, llvm::StringRef Name) {
+        return D.Name < Name;
+      });
+  if (D == std::end(RecordDataDeclarations) || D->Name != *Import)
+    return nullptr;
+  const bool Arm = Image.Arch == Arch::AArch64;
+  const char *Encoding = Arm ? D->AArch64 : D->X64;
+  if (!Encoding ||
+      !darwinExportModuleMatches(Arm ? D->AArch64Modules : D->X64Modules,
+                                 Bind->second.Module))
+    return nullptr;
+  size_t Offset = 0;
+  const auto Type = parseObjCSourceType(Encoding, Offset);
+  if (!Type || Offset != llvm::StringRef(Encoding).size() ||
+      Type->Kind != NdTypeKind::Struct ||
+      Type->Size != (Arm ? D->AArch64Bytes : D->X64Bytes) ||
+      Type->Alignment != (Arm ? D->AArch64Alignment : D->X64Alignment))
+    return nullptr;
+  return Type;
 }
 
 std::optional<SourceCallTypeHint>
