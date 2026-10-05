@@ -45,6 +45,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::OpenAt:
   case ServiceKind::Access:
   case ServiceKind::FaccessAt:
+  case ServiceKind::Mkdir:
+  case ServiceKind::MkdirAt:
   case ServiceKind::Read:
   case ServiceKind::Close:
   case ServiceKind::Lseek:

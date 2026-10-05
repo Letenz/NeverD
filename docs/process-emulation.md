@@ -320,6 +320,16 @@ ordinary file reuse; writes through a closed slot or read-only file return
 `EBADF`. Reading stdin remains unsupported; it is never assumed to be empty.
 Descriptors, open flags and seek modes consume their low 32 bits.
 
+Directory creation supports only failures already determined by pathname
+lookup. Raw x64 `mkdir` (83), x64/ARM64 `mkdirat` (258/34), and Android
+`mkdir`/`mkdirat` share the catalogue: a missing parent returns `ENOENT`, a file
+ancestor returns `ENOTDIR`, and an existing file or directory returns `EEXIST`.
+They preserve the catalogue, descriptors and cursors. An absent final name
+under an existing directory remains unsupported; mode, umask, write permission
+and successful creation have no invented defaults. The boundary follows
+[Linux parent and final-component lookup](https://github.com/torvalds/linux/blob/v4.9/fs/namei.c)
+and the [API 28 Bionic wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/mkdir.cpp).
+
 Reads validate the original user range before the page-aligned Linux transfer
 cap or EOF, copy only available bytes, and advance by exactly the copied
 prefix. A later inaccessible page preserves that prefix; a fault before any
