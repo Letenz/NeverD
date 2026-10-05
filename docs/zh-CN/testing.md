@@ -1229,3 +1229,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 ```
 
 `AndroidMutexTests.cpp` 用独立 O0/O2、普通/APS2/RELR 夹具覆盖三类 mutex、多等待者、唤醒后再次竞争、递归最终释放、errno、原始事件、失效内存、死锁和累计指令限额。Unicorn 及可用 KVM/WHP/HVF 执行相同用例；不可用后端明确跳过。这些证据不表示 Android 真机或并行 SMP 等价。
+
+`HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` 使用独立解释器检查 48 层块、循环、switch 和异常体的进入及跳过路径，并以宽松的运行时间上限捕获重复递归遍历。这是结构化 HighIR 覆盖；全镜像方法恢复仍需独立完成清单与依赖检查。

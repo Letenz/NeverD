@@ -1311,3 +1311,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 ```
 
 `AndroidMutexTests.cpp`는 독립 O0/O2 및 일반/APS2/RELR 픽스처로 세 종류의 mutex, 여러 대기자, 재경합, 최종 재귀 해제, errno, 원래 이벤트, 무효 메모리, 교착과 누적 명령 한도를 검사합니다. Unicorn 및 사용 가능한 KVM/WHP/HVF에서 실행하고 불가능한 백엔드는 명시적으로 건너뜁니다. Android 실기기나 병렬 SMP 동등성을 뜻하지 않습니다.
+
+`HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath`는 독립 인터프리터로 48단계 블록, 루프, switch 및 예외 본문의 진입 및 우회 경로를 검사합니다. 넉넉한 실행 시간 한도로 중복 재귀 순회를 감지합니다. 구조화된 HighIR 검사이며 전체 이미지의 메서드 복원에는 별도의 완전한 목록과 의존성 검사가 필요합니다.

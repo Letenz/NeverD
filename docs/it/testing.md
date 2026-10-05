@@ -1417,3 +1417,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 ```
 
 `AndroidMutexTests.cpp` verifica con programmi indipendenti O0/O2 e formati normale/APS2/RELR tre tipi di mutex, più attese, nuova contesa, rilascio ricorsivo finale, errno, eventi, memoria invalidata, deadlock e limiti cumulativi. I casi girano su Unicorn e KVM/WHP/HVF disponibili; gli altri sono saltati esplicitamente. Non dimostrano equivalenza con dispositivi Android o SMP parallelo.
+
+`HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` verifica 48 livelli di blocchi, cicli, switch ed eccezioni con un interprete indipendente, sui percorsi eseguiti e aggirati. Un limite temporale ampio rileva le visite ricorsive ripetute. La copertura riguarda HighIR strutturato; il recupero dei metodi dell’intera immagine richiede ancora controlli completi e separati di inventario e dipendenze.

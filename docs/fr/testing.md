@@ -1436,3 +1436,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 ```
 
 `AndroidMutexTests.cpp` utilise des programmes indépendants O0/O2, ordinaires/APS2/RELR, pour les trois types de mutex, plusieurs attentes, la reprise de contention, la libération récursive finale, errno, les événements, la mémoire invalidée, les interblocages et le budget cumulé. Les cas tournent sur Unicorn et les KVM/WHP/HVF disponibles ; les autres sont explicitement ignorés. Cela ne prouve pas l’équivalence avec un appareil Android ou un SMP parallèle.
+
+`HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` vérifie 48 niveaux de blocs, boucles, switch et exceptions avec un interpréteur indépendant, sur les chemins empruntés et contournés. Une limite de durée généreuse détecte les parcours récursifs répétés. Cette couverture concerne le HighIR structuré ; la restauration des méthodes de l’image entière exige toujours ses propres contrôles complets d’inventaire et de dépendances.

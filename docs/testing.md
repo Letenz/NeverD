@@ -2554,3 +2554,5 @@ build-release/bin/NeverDByteMemoryForwardingTests
 cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
 build-release/bin/NeverDByteCellScalarizationTests
 ```
+
+`HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` checks 48-level block, loop, switch and exception bodies with an independent interpreter over entered and bypassed paths. A generous runtime bound catches repeated recursive traversal. This is structured HighIR coverage; whole-image method recovery still requires its separate complete inventory and dependency checks.
