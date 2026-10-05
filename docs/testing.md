@@ -2415,6 +2415,23 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidResidencyTests.cpp` compares raw SVC, variadic and named `mincore`
+calls using independent O0/O2 fixtures with ordinary, APS2 and RELR relocations.
+It checks ordered range/alignment errors, empty queries, unchanged output bytes,
+errno and mapped-page refusal. `LinuxMemoryTests.cpp` checks precise user-range
+boundaries, PROT_NONE and a mapped prefix before a hole without changing bytes,
+mapping generation or allocation counts. `LinuxProcessTests.cpp` executes the
+corresponding x64/ARM64 raw syscall callers and verifies the full output vector.
+
+`AndroidSnapshotTests.cpp` uses independent O0/O2 C fixtures with all three
+relocation packings to allocate and fill memory during a native call. It checks
+explicitly deferred snapshots against full byte expectations, preserves the
+default entry-mapping requirement, and exercises unmapping, permission removal,
+unsupported imports, terminal faults, instruction limits and pre-execution
+size/output budgets. The same cases run on every available AArch64 backend.
+`ProcessReportTests.cpp` checks the per-read JSON Boolean and rejects it on
+memory initialization regions.
+
 `AndroidSignalTests.cpp` uses independent O0/O2 C declarations with ordinary,
 Android-packed and RELR relocations. It compares full guarded buffers for
 Bionic/kernel layouts, padding, 64-bit observations, signed flags, reserved

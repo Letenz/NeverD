@@ -131,6 +131,7 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         if (O->get(field::Path) && O->get(field::Bytes))
           return invalid(field::Path);
         NativeMemoryRegion Region;
+        bool RequireMappedAtEntry = true;
         for (const auto &[K, Entry] : *O) {
           llvm::StringRef Field = K;
           if (Field == field::Address || Field == field::Size) {
@@ -138,6 +139,12 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
             if (!N)
               return N.takeError();
             (Field == field::Address ? Region.Address : Region.Size) = *N;
+          } else if (Name == field::ReadMemory &&
+                     Field == field::RequireMappedAtEntry) {
+            auto B = Entry.getAsBoolean();
+            if (!B)
+              return invalid(Field);
+            RequireMappedAtEntry = *B;
           } else if (Name == field::Memory && Field == field::Bytes) {
             auto S = Entry.getAsString();
             if (!S || S->size() % 2 || !llvm::all_of(*S, llvm::isHexDigit))
@@ -163,7 +170,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         if (Name == field::Memory)
           Out.Memory.push_back(std::move(Region));
         else
-          Out.ReadMemory.push_back({Region.Address, Region.Size});
+          Out.ReadMemory.push_back(
+              {Region.Address, Region.Size, RequireMappedAtEntry});
       }
     } else
       return invalid(Name);
