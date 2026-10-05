@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "X64VectorTestSupport.h"
+#include "X64DAZTestSupport.h"
 #include "arch/x86_64/X64Machine.h"
 #include "core/ExecutionDiagnostics.h"
 
@@ -101,8 +101,11 @@ std::vector<uint8_t> instruction(const Conversion &C, bool Wide,
   return Bytes;
 }
 
-TEST(X64IntegerFloatOracle, AllRoundingModesMatchOriginalNativeInstructions) {
+void nativeOracle(uint64_t DAZ) {
 #if defined(__x86_64__) || defined(_M_X64)
+  const auto Mask = daz_test::hostMXCSRMask();
+  if (DAZ && !(Mask & DAZ))
+    GTEST_SKIP() << daz_test::HostUnavailable;
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
 #undef NEVERD_FP_BYTES
@@ -145,11 +148,12 @@ TEST(X64IntegerFloatOracle, AllRoundingModesMatchOriginalNativeInstructions) {
               SCOPED_TRACE(R.Name);
               X64MachineState Seed;
               Seed.Xmm[0] = Destination;
-              Seed.MXCSR = InitialMXCSR | R.Control | Sticky | Flush;
+              Seed.MXCSR = InitialMXCSR | DAZ | R.Control | Sticky | Flush;
               alignas(x64::fp::RegisterSlotBytes)
                   std::array<uint8_t, x64::fp::LegacyBytes>
                       Before{}, After{}, Host{};
-              ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before)), "");
+              ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before, Mask)),
+                        "");
               Execute(Before.data(), After.data(), Host.data(), &Input);
               X64MachineState Actual;
               ASSERT_EQ(llvm::toString(decodeX64FXState(Actual, After)), "");
@@ -162,6 +166,14 @@ TEST(X64IntegerFloatOracle, AllRoundingModesMatchOriginalNativeInstructions) {
 #else
   GTEST_SKIP();
 #endif
+}
+
+TEST(X64IntegerFloatOracle, AllRoundingModesMatchOriginalNativeInstructions) {
+  nativeOracle(0);
+}
+TEST(X64IntegerFloatDAZOracle,
+     AllRoundingModesMatchOriginalNativeInstructions) {
+  nativeOracle(daz_test::DenormalsAreZero);
 }
 
 class X64IntegerFloat : public X64VectorTest {
@@ -248,18 +260,19 @@ protected:
     EXPECT_EQ(Reads, unsigned(Memory));
     EXPECT_EQ(Writes, 0u);
   }
-  void rounding(const Conversion &C) {
+  void rounding(const Conversion &C, uint64_t DAZ = 0) {
     for (bool Wide : {false, true})
       for (auto Input : Inputs)
         for (const auto &R : Roundings)
           for (auto Sticky :
                {uint64_t(0), ExistingStatus, ExistingStatus | PrecisionStatus})
             for (auto Flush : {uint64_t(0), FlushToZero}) {
-              check(C, Wide, Input, R, Sticky | Flush);
+              check(C, Wide, Input, R, DAZ | Sticky | Flush);
               ASSERT_FALSE(HasFatalFailure());
-              check(C, Wide, Input, R, Sticky | Flush, 0, 0, true, Alias + 1);
+              check(C, Wide, Input, R, DAZ | Sticky | Flush, 0, 0, true,
+                    Alias + 1);
               ASSERT_FALSE(HasFatalFailure());
-              check(C, Wide, Input, R, Sticky | Flush, 0, 0, true,
+              check(C, Wide, Input, R, DAZ | Sticky | Flush, 0, 0, true,
                     Alias + PageSize - sourceBytes(Wide) / 2);
               ASSERT_FALSE(HasFatalFailure());
             }
@@ -556,6 +569,17 @@ TEST_P(X64IntegerFloat, DeviceOperandsRejectBeforeCallbacks) {
       EXPECT_EQ(backing(), RAM);
     }
 }
+
+using X64IntegerFloatDAZ = daz_test::Fixture<X64IntegerFloat>;
+#define NEVERD_INT_FLOAT_OPERATION(Name, Prefix, Bits)                         \
+  TEST_P(X64IntegerFloatDAZ, Name##PreservesStateAcrossRoundingModes) {        \
+    rounding({#Name, Prefix, Bits}, daz_test::DenormalsAreZero);               \
+  }
+#include "X64IntegerFloatCases.def"
+#undef NEVERD_INT_FLOAT_OPERATION
+INSTANTIATE_TEST_SUITE_P(DAZBackends, X64IntegerFloatDAZ,
+                         testing::ValuesIn(daz_test::Parameters),
+                         [](const auto &Info) { return Info.param.Name; });
 
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64IntegerFloat,
                          testing::ValuesIn(Parameters),

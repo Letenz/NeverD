@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "X64VectorTestSupport.h"
+#include "X64DAZTestSupport.h"
 #include "arch/x86_64/X64Machine.h"
 #include "core/ExecutionDiagnostics.h"
 
@@ -75,8 +75,10 @@ Result reference(const Comparison &C, const Input &I, uint64_t InitialFlags,
                  uint64_t Control) {
   const auto &Format = C.Bits == SingleBits ? llvm::APFloat::IEEEsingle()
                                             : llvm::APFloat::IEEEdouble();
-  const llvm::APFloat Left(Format, llvm::APInt(C.Bits, I.Left[0]));
-  const llvm::APFloat Right(Format, llvm::APInt(C.Bits, I.Right[0]));
+  const auto Left =
+      daz_test::operand(Format, llvm::APInt(C.Bits, I.Left[0]), Control);
+  const auto Right =
+      daz_test::operand(Format, llvm::APInt(C.Bits, I.Right[0]), Control);
   uint64_t Condition = 0, Status = 0;
   switch (Left.compare(Right)) {
   case llvm::APFloat::cmpEqual:
@@ -117,9 +119,11 @@ std::vector<uint8_t> instruction(const Comparison &C, unsigned Dest = 0,
   return Bytes;
 }
 
-TEST(X64SSEComparisonOracle,
-     FlagsAndExceptionPriorityMatchOriginalInstructions) {
+void nativeOracle(uint64_t DAZ) {
 #if defined(__x86_64__) || defined(_M_X64)
+  const auto Mask = daz_test::hostMXCSRMask();
+  if (DAZ && !(Mask & DAZ))
+    GTEST_SKIP() << daz_test::HostUnavailable;
 #define NEVERD_FP_BYTES(Name, ...) constexpr uint8_t Name[] = {__VA_ARGS__};
 #include "X64FPCases.def"
 #undef NEVERD_FP_BYTES
@@ -179,11 +183,12 @@ TEST(X64SSEComparisonOracle,
                     Seed.Xmm[N] = {SentinelLow + N, SentinelHigh - N};
                   Seed.Xmm[0] = I.Left;
                   Seed.Xmm[1] = I.Right;
-                  Seed.MXCSR = InitialMXCSR | Rounding | Sticky | Flush;
+                  Seed.MXCSR = InitialMXCSR | DAZ | Rounding | Sticky | Flush;
                   alignas(x64::fp::RegisterSlotBytes)
                       std::array<uint8_t, x64::fp::LegacyBytes>
                           Before{}, After{}, Host{};
-                  ASSERT_EQ(llvm::toString(encodeX64FXState(Seed, Before)), "");
+                  ASSERT_EQ(
+                      llvm::toString(encodeX64FXState(Seed, Before, Mask)), "");
                   const std::array<uint64_t, 2> Arguments{I.Right[0],
                                                           InitialFlags};
                   const auto ActualFlags =
@@ -202,6 +207,15 @@ TEST(X64SSEComparisonOracle,
 #else
   GTEST_SKIP();
 #endif
+}
+
+TEST(X64SSEComparisonOracle,
+     FlagsAndExceptionPriorityMatchOriginalInstructions) {
+  nativeOracle(0);
+}
+TEST(X64SSEComparisonDAZOracle,
+     FlagsAndExceptionPriorityMatchOriginalInstructions) {
+  nativeOracle(daz_test::DenormalsAreZero);
 }
 
 class X64SSEComparison : public X64VectorTest {
@@ -297,7 +311,7 @@ protected:
     EXPECT_EQ(Reads, unsigned(Memory));
     EXPECT_EQ(Writes, 0u);
   }
-  void compare(const Comparison &C) {
+  void compare(const Comparison &C, uint64_t DAZ = 0) {
     for (const auto &Left : Inputs)
       for (const auto &Right : Inputs)
         for (auto Sticky : {uint64_t(0), ExistingStatus,
@@ -306,7 +320,7 @@ protected:
             SCOPED_TRACE(Left.Name);
             SCOPED_TRACE(Right.Name);
             const auto I = input(C, Left, Right);
-            const auto Control = InitialMXCSR | Sticky | Flush;
+            const auto Control = InitialMXCSR | DAZ | Sticky | Flush;
             check(C, I, Control);
             ASSERT_FALSE(HasFatalFailure());
             check(C, I, Control, 0, 1, true, Alias + 1);
@@ -315,6 +329,27 @@ protected:
                   Alias + PageSize - sourceBytes(C) / 2);
             ASSERT_FALSE(HasFatalFailure());
           }
+  }
+  void rounding(uint64_t DAZ = 0) {
+    const std::pair<NumericInput, NumericInput> Pairs[] = {
+#define NEVERD_SSE_COMPARE_PAIR(Left, Right) {Left, Right},
+#include "X64SSEComparisonCases.def"
+#undef NEVERD_SSE_COMPARE_PAIR
+    };
+    for (const auto &C : Comparisons)
+      for (const auto &[Left, Right] : Pairs)
+        for (auto Rounding : Roundings)
+          for (auto InitialFlags : {ClearFlags, Flags, Flags | DirectionFlag})
+            for (auto Sticky :
+                 {uint64_t(0), ExistingStatus,
+                  ExistingStatus | InvalidStatus | DenormalStatus})
+              for (auto Flush : {uint64_t(0), FlushToZero})
+                for (bool Memory : {false, true}) {
+                  check(C, input(C, Left, Right),
+                        InitialMXCSR | DAZ | Rounding | Sticky | Flush, 0, 1,
+                        Memory, Data, InitialFlags);
+                  ASSERT_FALSE(HasFatalFailure());
+                }
   }
 };
 #define NEVERD_SSE_COMPARE_OPERATION(Name, Prefix, Opcode, Bits, Quiet)        \
@@ -325,24 +360,7 @@ protected:
 #undef NEVERD_SSE_COMPARE_OPERATION
 
 TEST_P(X64SSEComparison, RoundingModesAndUnrelatedFlagsRemainIndependent) {
-  const std::pair<NumericInput, NumericInput> Pairs[] = {
-#define NEVERD_SSE_COMPARE_PAIR(Left, Right) {Left, Right},
-#include "X64SSEComparisonCases.def"
-#undef NEVERD_SSE_COMPARE_PAIR
-  };
-  for (const auto &C : Comparisons)
-    for (const auto &[Left, Right] : Pairs)
-      for (auto Rounding : Roundings)
-        for (auto InitialFlags : {ClearFlags, Flags, Flags | DirectionFlag})
-          for (auto Sticky : {uint64_t(0), ExistingStatus,
-                              ExistingStatus | InvalidStatus | DenormalStatus})
-            for (auto Flush : {uint64_t(0), FlushToZero})
-              for (bool Memory : {false, true}) {
-                check(C, input(C, Left, Right),
-                      InitialMXCSR | Rounding | Sticky | Flush, 0, 1, Memory,
-                      Data, InitialFlags);
-                ASSERT_FALSE(HasFatalFailure());
-              }
+  rounding();
 }
 
 TEST_P(X64SSEComparison, EveryVectorPairAndAliasedSource) {
@@ -645,6 +663,20 @@ TEST_P(X64SSEComparison, DeviceOperandsRejectBeforeCallbacks) {
     EXPECT_EQ(backing(), RAM);
   }
 }
+
+using X64SSEComparisonDAZ = daz_test::Fixture<X64SSEComparison>;
+#define NEVERD_SSE_COMPARE_OPERATION(Name, Prefix, Opcode, Bits, Quiet)        \
+  TEST_P(X64SSEComparisonDAZ, Name##FlagsAndStatusPreserveSources) {           \
+    compare({#Name, Prefix, Opcode, Bits, Quiet}, daz_test::DenormalsAreZero); \
+  }
+#include "X64SSEComparisonCases.def"
+#undef NEVERD_SSE_COMPARE_OPERATION
+TEST_P(X64SSEComparisonDAZ, RoundingModesAndUnrelatedFlagsRemainIndependent) {
+  rounding(daz_test::DenormalsAreZero);
+}
+INSTANTIATE_TEST_SUITE_P(DAZBackends, X64SSEComparisonDAZ,
+                         testing::ValuesIn(daz_test::Parameters),
+                         [](const auto &Info) { return Info.param.Name; });
 
 INSTANTIATE_TEST_SUITE_P(ExplicitBackends, X64SSEComparison,
                          testing::ValuesIn(Parameters),

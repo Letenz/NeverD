@@ -1,12 +1,11 @@
-//===- AndroidInternal.h - Android native environment boundaries -*- C++
-//-*-===//
+//===- AndroidInternal.h - Android environment boundaries ------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_ANDROIDINTERNAL_H
 #define NEVERD_EMULATION_ANDROIDINTERNAL_H
-#include "../kernel/LinuxMemory.h"
+#include "../kernel/LinuxServices.h"
 
 #include "neverd/emulation/AndroidNative.h"
 #include "neverd/emulation/IntegerABI.h"
@@ -91,19 +90,20 @@ using BionicResult = llvm::Expected<std::optional<BionicValue>>;
 class GuestThreads;
 class Bionic {
 public:
-  Bionic(ExecutionBackend &CPU, linux_model::LinuxMemory &Memory,
+  Bionic(ExecutionBackend &CPU, linux_model::LinuxServices &Kernel,
          const linux_model::MemoryLayout &Layout, const ProcessOptions &Options,
          ProcessResult &Result, ExecutionBudget &Budget,
          const LinkedImage &Linked, GuestThreads *Threads = nullptr)
-      : CPU(CPU), Memory(Memory), Layout(Layout), Options(Options),
+      : CPU(CPU), Kernel(Kernel), Layout(Layout), Options(Options),
         Result(Result), Budget(Budget), Linked(Linked), Threads(Threads) {}
   bool timedOut() const { return Expired; }
   BionicResult invoke(NativeCallEvent &Call);
   BionicResult finishCallback(const GuestCallback &Callback);
+  BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
 
 private:
   ExecutionBackend &CPU;
-  linux_model::LinuxMemory &Memory;
+  linux_model::LinuxServices &Kernel;
   const linux_model::MemoryLayout &Layout;
   const ProcessOptions &Options;
   ProcessResult &Result;
@@ -145,7 +145,17 @@ private:
   llvm::Expected<uint64_t> tokenize(const NativeCallEvent &Call);
   class StringFormatter;
   BionicResult format(const NativeCallEvent &Call);
-  llvm::Expected<std::optional<uint64_t>> mutex(const NativeCallEvent &Call);
+  class Mutex;
+  BionicResult mutex(const NativeCallEvent &Call);
+  BionicResult mutexAttributes(const NativeCallEvent &Call);
+  BionicResult initializeMutex(const NativeCallEvent &Call);
+  std::optional<BionicValue> unsupportedMutex(llvm::StringRef Name,
+                                              llvm::StringRef Reason);
+  llvm::Error mutexAccess(uint64_t Address, unsigned Size, unsigned Permissions,
+                          unsigned Alignment);
+  llvm::Expected<uint64_t> readMutexWord(uint64_t Address, unsigned Size,
+                                         unsigned Alignment);
+  llvm::Error writeMutexWord(uint64_t Address, unsigned Size, uint64_t Value);
 };
 llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                         const ProcessOptions &Options);

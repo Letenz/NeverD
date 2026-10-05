@@ -4,7 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_X64_PROBE_VALUE
-NEVERD_X64_PROBE_VALUE(TimeoutMicroseconds, 1'000'000)
+// Allow cold native initialization on shared hosts under one bounded
+// validation deadline, separate from guest run budgets.
+NEVERD_X64_PROBE_VALUE(TimeoutMicroseconds, 5'000'000)
 NEVERD_X64_PROBE_VALUE(ScalarSeed, 0x1122334455667700ULL)
 NEVERD_X64_PROBE_VALUE(ScalarStride, 0x101)
 NEVERD_X64_PROBE_VALUE(VectorLowSeed, 0x0123456789abcdefULL)
@@ -14,6 +16,12 @@ NEVERD_X64_PROBE_VALUE(StackAlignment, 16)
 NEVERD_X64_PROBE_VALUE(CodeOffset, gateway::VectorCount *gateway::CodeStride)
 NEVERD_X64_PROBE_VALUE(TLSOffset, gateway::IDTOffset +
                                       gateway::VectorCount * gateway::GateBytes)
+NEVERD_X64_PROBE_VALUE(FXOffset, TLSOffset + 2 * WordBytes)
+NEVERD_X64_PROBE_VALUE(DAZMXCSR, 0x1fc4)
+// Precision unmasked, every old sticky status already set.
+NEVERD_X64_PROBE_VALUE(UnmaskedMXCSR, 0x0fbf)
+NEVERD_X64_PROBE_VALUE(NegativeZero, 0x80000000)
+NEVERD_X64_PROBE_VALUE(NegativeSubnormal, 0x80000001)
 NEVERD_X64_PROBE_VALUE(FSValue, 0x13579bdf2468ace0ULL)
 NEVERD_X64_PROBE_VALUE(GSValue, 0xfedcba9876543210ULL)
 NEVERD_X64_PROBE_VALUE(CR8, 3)
@@ -40,12 +48,21 @@ NEVERD_X64_PROBE_VALUE(FP80High, 0x3fff)
 #endif
 #ifdef NEVERD_X64_PROBE_TEXT
 NEVERD_X64_PROBE_TEXT(State, "incorrect x64 native initialization state")
+NEVERD_X64_PROBE_TEXT(Interrupted,
+                      "x64 native initialization interrupted during {0} "
+                      "(stop_requested={1}, deadline_reached={2}): {3}")
 NEVERD_X64_PROBE_TEXT(StateMismatch, "{0} after {1}: {2}")
 NEVERD_X64_PROBE_TEXT(FieldMismatch, "{0}: expected {1:x}, observed {2:x}")
 NEVERD_X64_PROBE_TEXT(FieldSeparator, "; ")
 NEVERD_X64_PROBE_TEXT(IndexedWord, "{0}{1}[{2}]")
 NEVERD_X64_PROBE_TEXT(XmmName, "XMM")
 NEVERD_X64_PROBE_TEXT(FPName, "FP")
+NEVERD_X64_PROBE_TEXT(MXCSRMaskFailure, "invalid native MXCSR mask: {0:x}")
+NEVERD_X64_PROBE_TEXT(SaveName, "FXSAVE64")
+NEVERD_X64_PROBE_TEXT(DAZName, "DAZ ADDSS")
+NEVERD_X64_PROBE_TEXT(SIMDName, "unmasked ADDSS")
+NEVERD_X64_PROBE_TEXT(SIMDFault,
+                      "native x64 did not deliver a precise SIMD exception")
 #endif
 #ifdef NEVERD_X64_PROBE_FIELD
 NEVERD_X64_PROBE_FIELD(UserMode)
@@ -65,4 +82,8 @@ NEVERD_X64_PROBE_INSTRUCTION(ReadGS, 0x65, 0x4c, 0x8b, 0x3c, 0x25, 0, 0, 0, 0)
 NEVERD_X64_PROBE_INSTRUCTION(ReadCS, 0x66, 0x41, 0x8c, 0xcc)
 NEVERD_X64_PROBE_INSTRUCTION(ReadSS, 0x66, 0x41, 0x8c, 0xd5)
 NEVERD_X64_PROBE_INSTRUCTION(ReadCR8, 0x45, 0x0f, 0x20, 0xc3)
+#endif
+#ifdef NEVERD_X64_PROBE_FXSAVE
+// FXSAVE64 [R11], a private startup instruction, not guest admission.
+NEVERD_X64_PROBE_FXSAVE(0x49, 0x0f, 0xae, 0x03)
 #endif

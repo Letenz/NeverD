@@ -63,7 +63,8 @@ NEVERD_WDK_ARGUMENTS("link", "/machine:x64", "/subsystem:native", "/driver",
 NEVERD_WDK_ARGUMENTS("cfg_compile", "-Xclang", "-cfguard")
 NEVERD_WDK_ARGUMENTS("cfg_link", "/guard:cf")
 NEVERD_WDK_ARGUMENTS("async_compile", "-fasync-exceptions")
-NEVERD_WDK_ARGUMENTS("seh_compile", "-fasync-exceptions")
+NEVERD_WDK_ARGUMENTS("seh_compile", "-fasync-exceptions",
+                     "-fasynchronous-unwind-tables")
 // Preserve COFF symbols used to authenticate the original GS handler assembly.
 NEVERD_WDK_ARGUMENTS("seh_link", "/debug:dwarf")
 

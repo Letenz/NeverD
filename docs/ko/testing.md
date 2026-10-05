@@ -257,7 +257,7 @@ ARM64 하드웨어나 hypervisor가 없으면 native coverage skip이며 통과�
 
 [독립 프로세스 테스트](process-emulation.md#검증)는 실제 x64/AArch64 ELF fixture를 빌드합니다. `NeverDLinuxProcessTests`는 시작, 프로그램 헤더 정책, 서비스 이어달리기, 바이너리 출력, 게스트 fault, 자원 중지를 확인합니다. `NeverDProcessPublicTests`는 분석 이미지를 바꾸지 않고 C API/CLI를 확인합니다. `NeverDExecutionSessionTests`는 메모리/예산을 공유하는 CPU 두 개와 요청/fault exactly-once 소비를 검사합니다. `NeverDX64MemoryUpdateTests`는 메모리 산술, SETcc, BT, XMM/MXCSR, 쓰기 observer, REP 경계, 준비된 장치 읽기를 검사합니다. `DriverBackendParityTests.cpp`는 원본/재배치 WDK fixture를 실행하고 관찰 가능한 전체 보고서를 Unicorn과 비교합니다. fixture/backend가 없으면 명시적으로 skip합니다.
 
-checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
+checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
 
 `X64PackedIntegerTests.cpp`는 `X64PackedIntegerCases.def`의 독립 인코딩과 180개 고정 벡터 결과를 네이티브 x64 컴파일러 intrinsic과 별도로 대조합니다. 레지스터 및 페이지 끝의 RAM 별칭 사례는 다른 XMM, 정수 센티널, FLAGS, MXCSR과 소스 바이트를 보존합니다. 관찰자 중지·실패와 복구 가능한 읽기 결함은 상태를 보존하며 복구 후 한 번 재시도합니다. 비정렬은 `#GP(0)`를 발생시키며 MMX, LOCK 및 MMIO는 계속 콜백 전에 거부합니다. 네이티브 CI에서 WHP의 두 권한 수준을 필수로 실행합니다.
 
@@ -283,7 +283,15 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `X64PackedFloatIntegerTests.cpp`는 독립적인 `X64PackedFloatIntegerCases.def` 인코딩, 공유 `X64FloatIntegerCases.def` 입력, `APFloat`/`APSInt`와 원본 네이티브 명령을 결합합니다. 43개 원시 입력의 모든 쌍은 signed32 경계, 중간값의 인접 값, NaN, 무한대와 비정규 수를 다룹니다. 별도 행렬은 각 레인의 정확·비정확·무효·비정규 입력을 독립적으로 바꿉니다. 모든 반올림/FTZ/누적 설정, XMM 별칭, 전체 CPU/RAM, 정렬된 페이지 끝, 정렬 우선순위와 관찰자·결함 재시도를 검사합니다. 두 권한의 KVM/WHP는 필수입니다.
 
+`DAZBackends`는 비교, 조건식, 스칼라 정수/부동소수점, 패킹된 정수/부동소수점 및 정밀도 변환 행렬에 DAZ 활성화 검증을 추가합니다. `X64DAZTestSupport.h`는 독립적인 `APFloat` 입력 정규화를 제공하고 네이티브 기준 명령 실행 전에 호스트의 `MXCSR_MASK`를 확인합니다. 부호 있는 0, 비정규 수, NaN, 혼합 레인, 모든 반올림 모드, FTZ 및 누적 상태를 비교하면서 원본 바이트, 관련 없는 레지스터, FLAGS와 전체 RAM의 보존을 확인합니다. 레지스터, 별칭 및 페이지 경계 피연산자는 기존 접근 관찰 검사를 유지합니다. KVM/WHP는 두 권한 수준의 모든 DAZ 사례와 17개 원본 호스트 명령 기준 사례를 필수로 요구하며, 이식 가능한 실행에서는 지원되지 않는 호스트를 명시적으로 건너뜁니다. 기존 DAZ 비활성화 사례와 시간 제한을 유지합니다.
+
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
+
+`X64SIMDExceptionTests.cpp`는 checked 허용 판정을 우회하여 두 권한 수준에서 KVM/WHP의 네이티브 `#XM` 전달을 검증합니다. `X64SIMDExceptionCases.def`의 원본 사례 여덟 개는 정확한 미소 결과와 지수를 제한하지 않을 때 정밀도가 정확한 오버플로를 포함해 여섯 예외 유형을 다룹니다. 레지스터 및 RAM 형식은 지정된 MXCSR 상태를 제외하고 오류 시 전체 GPR, XMM, x87, FLAGS, FS/GS와 게스트 메모리를 보존합니다. 예외를 마스킹한 뒤 원래 명령을 재시도하며, 누적 상태를 유지한 채 피연산자를 수정해 이전 플래그가 예외를 다시 일으키지 않는지 확인합니다. 공개 checked 및 드라이버 계약도 원래 오류와 재시도 사례를 실행합니다. `WindowsSIMDExecutionTests.cpp`는 실제 네이티브 오류, 게스트 VEH/VCH 명령과 건너뛰기·마스크 후 재시도·피연산자 수정 후 계속 실행을 검증하며, 진입 제어 상태와 저장 컨텍스트를 별도로 확인합니다. 시작 반례는 누락된 오류, 잘못된 벡터와 변경된 목적지를 거부하고 기능을 게시하지 않습니다.
+
+`check_windows_simd.py`는 `WindowsSIMDCases.def`와 스칼라 사례 목록으로 독립적인 자체 Windows x64 실행 파일을 빌드합니다. 6,144개 관측은 레지스터/RAM 피연산자, 모든 예외 마스크 조합, 모두 지우거나 설정한 고정 상태 플래그와 세 경로(건너뛰기, 마스크 후 재시도, 마스크를 유지하며 피연산자 수정 후 재시도)를 다룹니다. 어셈블리 진입점은 저장된 `CONTEXT`와 별도로 실제 VEH/VCH MXCSR 및 x87 제어 상태를 기록합니다. 호스트 상태를 복원하기 전에 정확한 오류 PC, 상태 보존, 수정된 컨텍스트와 재시도 결과를 검증하고 CI는 원시 기록과 소스 해시를 보존합니다. `--build-only`는 컴파일 증거일 뿐입니다. 이 관측은 checked 실행의 마스킹되지 않은 SIMD를 활성화하거나 ARM64 네이티브 실행을 입증하지 않습니다.
+
+`WindowsSIMDStatusCases.def`는 네이티브 Windows에서 관측한 63개 비어 있지 않은 활성 상태 조합을 고정합니다. `WindowsSIMDMappingTests.cpp`는 정확한 코드와 매개변수, 일관되지 않은 오류 및 잘못된 제어 값의 거부를 검증하며 오류 경계를 주입하여 예외 레코드, CONTEXT의 두 제어 값과 마스킹 후 계속 실행을 확인합니다. Windows CI의 자체 프로그램은 고정된 결과를 독립적으로 검증합니다. 주입 테스트는 Unicorn의 예외 전달을 입증하거나 checked 실행의 마스킹되지 않은 SIMD를 활성화하지 않습니다.
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
@@ -1109,6 +1117,8 @@ Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `R
 
 ARM64 KVM/WHP/HVF 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다. 이 프로그램에는 키가 비활성화된 A/B 반환 주소 서명 및 인증과 보호되지 않은 페이지의 네 가지 BTI 명령도 포함됩니다.
 
+프로브는 `MRS CTR_EL0`를 두 번 실행하고 `DC CVAU`, `DSB ISH`, `IC IVAU`, `ISB`를 실행하여 캐시 구성의 안정성과 전체 상태를 확인합니다. Checked EL0/EL1은 원래 명령어, 이름이 있는 기본 DSB 옵션, ISB SY를 허용합니다. CTR은 선택한 가상 CPU에서 읽으며 전송 방식에 따라 다를 수 있습니다. 캐시 대상은 현재 권한으로 읽을 수 있는 일반 RAM이어야 하며 비정렬 주소와 별칭도 허용합니다. 다른 대상은 미지원으로 거부하고 캐시 유지 작업은 데이터 읽기/쓰기 관찰 이벤트를 만들지 않습니다. 투영은 명령 실행의 일관성을 유지하지만 개별 캐시 내용이나 병렬 하드웨어 SMP를 모델링하지 않습니다. `NeverDAArch64CacheTests`는 전체 상태, 읽기 전용 페이지 끝, 거부, 중지, 컨텍스트, 예산 및 페이지를 넘는 RW/RX 별칭을 통한 guest 코드 갱신을 검증합니다. 사용할 수 없는 KVM/WHP 호스트는 명시적으로 건너뜁니다.
+
 x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다.
 
 공유 XSAVE 디코더는 표준 형식과 압축 형식의 SSE 초기 상태를 구분합니다. XSTATE_BV[1]이 0이면 두 형식 모두 XMM을 초기화하지만 표준 형식은 MXCSR을 읽고 검증하며 압축 형식은 MXCSR을 초기화합니다. `X64XsaveCases.def`는 독립적인 데이터 배치와 직접 작성한 호스트 XRSTOR 프로그램을 제공합니다. `X64XsaveTests.cpp`는 거부 시 상태의 원자성을 확인하고 호출자의 FP/SSE 상태를 보존하면서 두 형식을 실제 호스트 실행과 비교합니다. 호스트 아키텍처나 필요한 명령 기능을 사용할 수 없으면 명시적으로 건너뜁니다.
@@ -1159,7 +1169,15 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 290개와 순수 SEH 후속 실행 회귀 검사 4개를 포함하면 필수 결과는 518개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `614 CPU + 224 WHP + 4 SEH = 842`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 897개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 1138개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `981 CPU + 224 WHP + 17 SEH = 1222`.
+
+`InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
+
+`X64PopFlagsTests.cpp`는 두 권한과 `driver-strict`에서 허용된 플래그 입력 256개와 초기 상태 2개, 인코딩 9개, 입력 64비트 전체, 읽기 전용·실행 가능 별칭, 페이지 경계 오류와 복구, 관찰자 중단·실패, 장치 스택 거부, 후속 네이티브 명령 경계를 검사합니다. `X64PopFlagsOracle`은 x64 호스트에서 원본 명령을 독립 실행해 CPL3/IOPL0과 정확한 스택 소비량을 확인합니다. `driver_resource_flags.def`는 원본 WDK 리소스 드라이버가 두 피연산자 폭으로 플래그를 설정·해제·복원하도록 합니다. 전체 정수·제어·x87·SSE 상태를 보존하지만 게스트 TF/NT/AC/ID 지원이나 ARM64 네이티브 실행을 입증하지는 않습니다.
+
+`X64StatusFlagsTests.cpp`는 `CLC/STC/CMC`, `LAHF/SAHF`, AH 입력 256개와 허용 플래그 조합, 모든 REX, 전체 CPU 상태, 메모리 보존, 관찰자 중단·오류, 저장 문맥 및 네이티브 ADC/저장 재개를 검사합니다. 잘못된 LOCK은 부작용 없이 거부합니다. 독립 호스트 명령 검증은 CPUID를 확인한 뒤 접두사 24종을 검사합니다. 원본 WDK 리소스 드라이버가 다섯 명령을 실행하며 필수 네이티브 결과 22개가 추가됩니다. 사용할 수 없는 호스트·ISA는 명시적으로 건너뜁니다. 이식 가능한 Unicorn 프로필도 같은 일곱 사례를 실행합니다. 의존 라이브러리 직접 테스트는 16/32/64비트 AH와 LOCK 동작, 명시적 REX 레지스터, 롱 모드 기능 미지원 거부를 검사합니다.
+
+`DriverSIMDSEHTests.cpp`는 원본 SSE 오류 여덟 종류를 지원되는 네 처분과 x87 수정 거부, 두 네이티브 계약, 일반/CFG WDK 이미지, 두 로드 주소로 실행합니다. 백엔드별 열 결과와 순수 커널 SSE 레코드 검사 세 개가 필수입니다. `driver_seh_simd.def`가 사례와 모드를 정의하고 비동기 언와인드 테이블이 오류 헬퍼를 포함합니다. Microsoft 커널 10.0.26100.9549의 명령 경로를 격리 실행하여 107,744개 분류와 8,192개 복원을 독립적으로 검증했습니다. 이는 전체 Windows 커널에서 드라이버를 실행한 증거가 아니며 ARM64 네이티브 KVM/WHP도 미검증입니다.
 
 C SEH 범위는 끝 주소를 포함하지 않는 반개방 구간입니다. 유효한 `__C_specific_handler` 착지점이 보호 구간 안에 있을 수 있습니다. [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608)은 구간 끝에 `EndLabel + 1`을 기록합니다. Windows OS 모델은 원래 경계를 유지하며 재배치 후에도 실행 가능 여부, 소유 함수, 후속 실행 주소의 일치를 각각 검증합니다. `KernelSEHContinuationCases.def`는 원본 픽스처 배치를 보존하고 `ScopeEndLabelMayOverlapTheHandlerLandingPad`는 상수 처리기와 필터를 검사합니다. 관련 테스트는 끝 주소 제외와 잘못된 대상 거부 후 디스패치 상태를 소비하지 않고 재시도할 수 있음을 확인합니다. 이 순수 모델 검사는 Unicorn을 비활성화한 `NeverDNativeDriverTests`에서도 실행됩니다.
 
@@ -1305,3 +1323,7 @@ build-release/bin/NeverDByteMemoryForwardingTests
 cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
 build-release/bin/NeverDByteCellScalarizationTests
 ```
+
+`AndroidMutexTests.cpp`는 독립 O0/O2 및 일반/APS2/RELR 픽스처로 세 종류의 mutex, 여러 대기자, 재경합, 최종 재귀 해제, errno, 원래 이벤트, 무효 메모리, 교착과 누적 명령 한도를 검사합니다. Unicorn 및 사용 가능한 KVM/WHP/HVF에서 실행하고 불가능한 백엔드는 명시적으로 건너뜁니다. Android 실기기나 병렬 SMP 동등성을 뜻하지 않습니다.
+
+`HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath`는 독립 인터프리터로 48단계 블록, 루프, switch 및 예외 본문의 진입 및 우회 경로를 검사합니다. 넉넉한 실행 시간 한도로 중복 재귀 순회를 감지합니다. 구조화된 HighIR 검사이며 전체 이미지의 메서드 복원에는 별도의 완전한 목록과 의존성 검사가 필요합니다.

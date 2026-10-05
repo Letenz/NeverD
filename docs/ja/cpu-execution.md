@@ -64,11 +64,27 @@ request は pending のまま実行、CPU 変更、空間 binding、context capt
 
 ## x64 拡張と native CPU state
 
-checked x64 は限定された legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS`、mask 付き scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD` を許可します。MXCSR は sticky status、rounding、FTZ を保持し、DAZ と unmasked exception は拒否します。KVM/WHP は16個すべての XMM register と MXCSR を同期します。列挙されていない encoding/operand は許可されません。
+例外をマスクした x64 命令の説明は移植可能な基準です。KVM/WHP は `driver-strict`、`checked-x64-v1`、`checked-user-x64-v1` に `precise_simd_exceptions` を追加します。ネイティブ起動検証が正確な `#XM` と両方の再試行を確認してから、非マスク MXCSR 書き込み、`LDMXCSR`、Windows `CONTEXT` 復元を許可します。選択は `ExecutionProfiles.def` が管理し、`supportsSIMDExceptions` が実際のインスタンス能力を示します。checked Unicorn はマスクを要求し、ARM64 と HVF の例外能力は変更しません。
 
-checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
+ネイティブ x64 KVM/WHP は実際の `#XM` を `X64SIMDException` 経由でドライバーの C SEH に渡します。ハードウェア例外の `CONTEXT` は XMM0–15 と MXCSR を保持します。フィルター、例外アンワインド中の finally、選択されたハンドラーは MXCSR `0x1f80` と DF クリアで実行されます。負のフィルターは XMM と最上位の `CONTEXT.MxCsr` を変更して元の命令を再試行できます。後者にはゲスト CPU のマスクを適用し、`FltSave.MxCsr` はカーネル復元に使用しません。モデル API の例外は整数/制御レコードを維持し、x87/AVX コンテキスト変更は引き続き拒否します。
 
-可搬ソフトウェアプロファイルでは、Unicorn は従来の `MINSS/MINSD/MINPS/MINPD` と `MAXSS/MAXSD/MAXPS/MAXPD` が選択した値に DAZ を適用します。選択された非正規化入力は符号付きゼロになり、NaN ペイロードと既存の MXCSR 状態は保持されます。`test_x86_sse_minmax_daz` はレジスタ、RAM、同一レジスタの形式について、DAZ の有効・無効、全丸めモード、FTZ、累積状態を検証します。checked KVM/WHP プロファイルでは引き続き DAZ を拒否します。
+checked x64 は限定された legacy SSE/SSE2 move/logical、`MOVLHPS`/`MOVHLPS`、mask 付き scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD` を許可します。MXCSR は sticky status、rounding、FTZ を保持し、移植可能な実行では unmasked exception を拒否します。KVM/WHP は16個すべての XMM register と MXCSR を同期します。列挙されていない encoding/operand は許可されません。
+
+checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。x87、AVX は許可しません。
+
+可搬ソフトウェアプロファイルでは、Unicorn は従来の `MINSS/MINSD/MINPS/MINPD` と `MAXSS/MAXSD/MAXPS/MAXPD` が選択した値に DAZ を適用します。選択された非正規化入力は符号付きゼロになり、NaN ペイロードと既存の MXCSR 状態は保持されます。`test_x86_sse_minmax_daz` はレジスタ、RAM、同一レジスタの形式について、DAZ の有効・無効、全丸めモード、FTZ、累積状態を検証します。
+
+KVM/WHP は非公開の `FXSAVE64` 実行で `MXCSR_MASK` を調べ、符号付き非正規化数の演算で DAZ 能力を検証します。checked Unicorn はソフトウェアのマスクを提供します。`supportedControlBits` は CPU 固有の不変マスクを返し、FX/XSAVE、スナップショット、Windows CONTEXT が同じ能力を使用します。checked `LDMXCSR/STMXCSR` は m32 全体の RAM 権限を確認し、障害や観測コールバックの中止時には状態を保持します。予約ビットのロードは #GP、移植可能な実行では非マスク SIMD 例外を拒否します。`X64MXCSRTests.cpp` は制御と再試行を検証し、`X64DAZData` は許可された全 28 種の SSE 演算を実機の元命令と比較し、DAZ、丸め、FTZ を確認します。HVF の DAZ 対応は拡張しません。
+
+ネイティブ x64 の起動検証は、転送層のコールドスタート準備と全プローブ手順に単一の `5 s` 予算を使用します。ゲスト実行予算は独立です。初期化の中断時には命令段階、`stop_requested`、`deadline_reached` を報告し、中断型と転送層の診断を保持します。再試行や検証未完了の CPU の受け入れは行いません。
+
+`PAUSE`（`F3 90`）は、ネイティブの `driver-strict` を含む KVM/WHP と checked Unicorn で、共通の x64 マシン境界を通して実行されます。`X64PauseTests.cpp` は全状態の保持、実行前の停止、コンテキストの復元、不正な `LOCK` の拒否、スピンループの期限切れと再開を検証します。このプロセッサヒントはゲストスレッドをスケジュールせず、特定の遅延も保証しません。
+
+`PUSHFQ`（`9C`）と16ビットの `PUSHF`（`66 9C`）は、`driver-strict` を含むネイティブ KVM/WHP と checked Unicorn で実行されます。共有 ISA 層は RAM トランザクションの確定前に、スタックに保存された内部の単一ステップ用 TF を除去します。暗黙のスタックアドレスには RSP 全体を使用し、プレフィックスの順序がオペランド幅を決めます。全範囲の権限検査、オブザーバーによる停止、障害後の再試行は原子性を保持します。`X64PushFlagsTests.cpp` は許可された全256通りのフラグ、9種類のエンコード、ページ境界をまたぐエイリアス、ユーザー権限、中断、コンテキスト復元を検査します。
+
+`POPFQ`（`9D`）と16ビット `POPF`（`66 9D`）は共有 x64 ISA 層でフラグを復元し、KVM、WHP、checked Unicorn、`driver-strict` に適用されます。プロファイルの IOPL はゼロに固定され、CPL0 は IF を変更でき、CPL3 は IF と IOPL を保持します。予約ビットと VM/VIF/VIP は無視され、RF はクリアされます。ゲスト TF、NT、AC、ID、または CPL0 IOPL の有効な変更は未対応で、状態公開前に明示的に失敗します。スタック全体の読み取り後に FLAGS/RSP/RIP を原子的に更新し、完全な RSP と有効なプレフィックス順序からオペランドを決めます。スタックは読み取り専用でも実行メモリの別名でも構いません。共有層で完了するため転送層の内部 TF を消去しません。`X64PopFlagsTests.cpp` は独立したネイティブ CPL3 命令との比較、全入力ビット、障害、オブザーバー、後続のネイティブ実行を検査します。
+
+checked x64 は `CLC/STC/CMC` と `LAHF/SAHF` を受け入れます。キャリー命令は転送層で実行し、AH 転送は KVM、WHP、checked Unicorn、ネイティブ `driver-strict` で共通の ISA 処理を使います。LAHF は5つの状態フラグと固定ビットを AH に書き、SAHF は CF/PF/AF/ZF/SF のみ変更します。OF/IF/DF と他のレジスタは保持します。全 REX 値を含む無視されるプレフィックスでも暗黙の AH を使います。`X64StatusFlagsTests.cpp` は元のホスト命令、全状態、キャンセル、継続を検証します。固定版 Unicorn の変換器も移植可能なプロファイルで REX 下の暗黙の AH を保持し、これら5命令の LOCK 形式を状態変更前に拒否します。
 
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
@@ -80,7 +96,7 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `MOVLPS`、`MOVHPS`、`MOVLPD`、`MOVHPD` は、アラインメントを要求せず RAM の正確に 8 バイトを転送します。`X64VectorInstructions.def` がストアする半分を宣言し、`X64VectorOperands.def` が XMM/m64 の組を要求します。ロードは残りの 64 ビットを保持し、上位半分のストア監視には上位データを渡します。KVM、WHP、checked Unicorn は全範囲の権限検査と RAM ロールバックを共有します。レジスタ専用の `MOVHLPS`/`MOVLHPS` は固有の意味を維持します。
 
-`CVTSI2SS` と `CVTSI2SD` は MXCSR の丸め規則で符号付き 32/64 ビット整数を変換し、精度状態を保持します。共有の `IntegerSource` 規則は XMM 出力と r32/r64 または m32/m64 入力のみを許可します。従来形式は出力の上位 96/64 ビットを保持し、メモリ検査には整数幅を使います。KVM、WHP、checked Unicorn は元の命令を実行します。非マスク例外、MMX、VEX/EVEX は対象外です。
+`CVTSI2SS` と `CVTSI2SD` は MXCSR の丸め規則で符号付き 32/64 ビット整数を変換し、精度状態を保持します。共有の `IntegerSource` 規則は XMM 出力と r32/r64 または m32/m64 入力のみを許可します。従来形式は出力の上位 96/64 ビットを保持し、メモリ検査には整数幅を使います。KVM、WHP、checked Unicorn は元の命令を実行します。MMX、VEX/EVEX は対象外です。
 
 `CVTSS2SI` と `CVTSD2SI` は共有の `IntegerResult` 規則で MXCSR の丸めに従い符号付き 32/64 ビット整数を生成し、`CVTTSS2SI` と `CVTTSD2SI` は常にゼロ方向へ切り捨てます。例外をマスクした NaN・範囲外変換は整数不定値を返して無効状態を設定し、有効な不正確結果は精度状態を設定します。既存の累積状態、FLAGS、XMM 入力は保持されます。r32 出力は汎用レジスタの上位半分をゼロにします。RAM 読み取り幅は出力幅に関係なく浮動小数点入力幅で決まり、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn に共通の規則です。
 
@@ -88,11 +104,11 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `CMPSS`、`CMPSD`、`CMPPS`、`CMPPD` は KVM、WHP、checked Unicorn で従来の8条件を実行します。共有 `Source` 規則はデコード済み別名を受け入れ、予約値は非対応です。スカラー形式は上位レーンを保持して m32/m64 を読み、パック形式は整列した m128 を要求します。FLAGS と既存 MXCSR 状態を保持し、有効レーンごとに無効・非正規化状態を累積します。Capstone が命令族 ID と SSE 条件を管理し、lifter 内だけの ID 修正を置き換えます。Unicorn は各比較関数内で非正規化入力を分類します。
 
-`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD`、`CVTPD2PS` は共有 `Source` 規則で従来の SSE 精度を変換します。スカラー結果は宛先の上位 64/96 ビットを保持します。パック拡張は m64 から倍精度2要素へ、縮小は整列した m128 から単精度2要素へ変換し上位64ビットをゼロにします。KVM、WHP、checked Unicorn の元の命令実行は FLAGS を保持し、丸めと FTZ に従ってマスクされた MXCSR 状態を累積します。Unicorn は変換関数で有効な非正規化入力を個別に分類します。DAZ、非マスク例外、VEX/EVEX は対象外です。
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD`、`CVTPD2PS` は共有 `Source` 規則で従来の SSE 精度を変換します。スカラー結果は宛先の上位 64/96 ビットを保持します。パック拡張は m64 から倍精度2要素へ、縮小は整列した m128 から単精度2要素へ変換し上位64ビットをゼロにします。KVM、WHP、checked Unicorn の元の命令実行は FLAGS を保持し、丸めと FTZ に従ってマスクされた MXCSR 状態を累積します。Unicorn は変換関数で有効な非正規化入力を個別に分類します。VEX/EVEX は対象外です。
 
-`CVTDQ2PS` と `CVTDQ2PD` は共有 `Source` 規則で符号付き32ビット整数をパック変換します。単精度は整列した m128 と MXCSR の丸めを使用し、倍精度は非整列も可能な m64 を読み正確に変換します。宛先 XMM 全体を置換し、FLAGS と既存の MXCSR 状態を保持し、不正確な単精度結果は精度フラグを蓄積します。KVM、WHP、checked Unicorn は元の命令を実行します。Unicorn は両パック拡張を識別して8バイト読取を選択します。DAZ、非マスク例外、MMX、VEX/EVEX は対象外です。
+`CVTDQ2PS` と `CVTDQ2PD` は共有 `Source` 規則で符号付き32ビット整数をパック変換します。単精度は整列した m128 と MXCSR の丸めを使用し、倍精度は非整列も可能な m64 を読み正確に変換します。宛先 XMM 全体を置換し、FLAGS と既存の MXCSR 状態を保持し、不正確な単精度結果は精度フラグを蓄積します。KVM、WHP、checked Unicorn は元の命令を実行します。Unicorn は両パック拡張を識別して8バイト読取を選択します。MMX、VEX/EVEX は対象外です。
 
-`CVTPS2DQ` と `CVTPD2DQ` は MXCSR の丸めを使用し、`CVTTPS2DQ` と `CVTTPD2DQ` はゼロ方向へ切り捨てます。共有 `Source` 規則は整列した m128 または XMM 入力を要求します。NaN や範囲外のレーンは signed32 indefinite と無効フラグを生成し、他の有効な不正確レーンは独立して精度フラグを加えます。単精度入力は整数4個、倍精度入力は2個となり上位64ビットをクリアします。FLAGS と既存の MXCSR 状態を保持し、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn は元の命令を実行します。DAZ、非マスク例外、MMX、VEX/EVEX は対象外です。
+`CVTPS2DQ` と `CVTPD2DQ` は MXCSR の丸めを使用し、`CVTTPS2DQ` と `CVTTPD2DQ` はゼロ方向へ切り捨てます。共有 `Source` 規則は整列した m128 または XMM 入力を要求します。NaN や範囲外のレーンは signed32 indefinite と無効フラグを生成し、他の有効な不正確レーンは独立して精度フラグを加えます。単精度入力は整数4個、倍精度入力は2個となり上位64ビットをクリアします。FLAGS と既存の MXCSR 状態を保持し、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn は元の命令を実行します。MMX、VEX/EVEX は対象外です。
 
 `X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
 
@@ -119,6 +135,8 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP、HVF は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
 
 ARM64 KVM/WHP/HVF の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。 このプログラムには、鍵を無効にした A/B リターンアドレス署名・認証と、保護されていないページでの4種類の BTI 命令も含まれます。
+
+プローブは `MRS CTR_EL0` を2回実行し、`DC CVAU`、`DSB ISH`、`IC IVAU`、`ISB` とともにキャッシュ構成の安定性と完全な状態を検証します。Checked EL0/EL1 は元の命令、名前付きの基本 DSB オプション、ISB SY を許可します。CTR は選択した仮想 CPU に由来し、転送方式によって異なる場合があります。対象は現在の権限で読み取り可能な通常 RAM に限り、非整列アドレスと別名も許可します。それ以外は未対応として拒否し、保守操作によるデータ読み書きの観測イベントは生成しません。投影は命令実行の整合性を保ちますが、プライベートキャッシュの内容や並列ハードウェア SMP はモデル化しません。`NeverDAArch64CacheTests` は完全な状態、読み取り専用ページ末尾、拒否、停止、コンテキスト、予算、ページ境界をまたぐ RW/RX 別名による guest コード更新を検証します。利用できない KVM/WHP ホストは明示的にスキップします。
 
 x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。
 

@@ -40,4 +40,13 @@ NEVERD_AARCH64_PROBE_INSTRUCTION(BranchTarget, 0xd503241f)
 NEVERD_AARCH64_PROBE_INSTRUCTION(CallTarget, 0xd503245f)
 NEVERD_AARCH64_PROBE_INSTRUCTION(JumpTarget, 0xd503249f)
 NEVERD_AARCH64_PROBE_INSTRUCTION(CallOrJumpTarget, 0xd50324df)
+// Observe the virtual CPU's CTR twice without imposing a host cache geometry.
+NEVERD_AARCH64_PROBE_INSTRUCTION(CacheType, 0xd53b003a)
+NEVERD_AARCH64_PROBE_INSTRUCTION(CacheTypeAgain, 0xd53b003b)
+// X28 addresses this private program; the original maintenance words execute.
+NEVERD_AARCH64_PROBE_INSTRUCTION(CleanData, 0xd50b7b3c)
+NEVERD_AARCH64_PROBE_INSTRUCTION(DataBarrier, 0xd5033b9f)
+NEVERD_AARCH64_PROBE_INSTRUCTION(InvalidateInstruction, 0xd50b753c)
+NEVERD_AARCH64_PROBE_INSTRUCTION(InstructionDataBarrier, 0xd5033b9f)
+NEVERD_AARCH64_PROBE_INSTRUCTION(InstructionBarrier, 0xd5033fdf)
 #endif

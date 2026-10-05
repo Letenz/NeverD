@@ -191,5 +191,82 @@ TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
     llvm::consumeError(R.takeError());
   }
 }
+
+TEST(ProcessReport, MemoryFileBytesAreExplicitAndRestrictedToLinuxProfiles) {
+  auto O = processOptionsFromJSON(R"({"linux_files":{"files":[
+    {"path":"/fixture/data","bytes_hex":"00ff410a805A"},
+    {"path":"/empty","bytes_hex":""}],"descriptor_limit":4}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxFiles);
+  EXPECT_EQ(O->LinuxFiles->DescriptorLimit, 4u);
+  EXPECT_EQ(O->LinuxFiles->Files.at("/fixture/data"),
+            (std::vector<uint8_t>{0, 0xff, 0x41, 0x0a, 0x80, 0x5a}));
+  EXPECT_TRUE(O->LinuxFiles->Files.at("/empty").empty());
+  for (auto P :
+       {ProcessProfile::WindowsPE64, ProcessProfile::MacOSMachO64,
+        ProcessProfile::IOSMachO64, ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing.elf", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::LinuxFilesProfile);
+  }
+  for (unsigned Mode = 0; Mode < 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    O->LinuxFiles.emplace();
+    auto &F = *O->LinuxFiles;
+    if (Mode == 0)
+      F.DescriptorLimit = 2;
+    if (Mode == 1)
+      F.DescriptorLimit = 4097;
+    if (Mode == 2)
+      F.Files["/data"].resize(16 * 1024 * 1024);
+    if (Mode == 3)
+      F.Files["/relative/../bad"] = {};
+    if (Mode == 4)
+      for (unsigned I = 0; I < 257; ++I)
+        F.Files["/file" + std::to_string(I)] = {};
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+}
+
+TEST(ProcessReport, MalformedMemoryFileCataloguesFailBeforeExecution) {
+  for (
+      const char *Bad :
+      {"null",
+       "[]",
+       "{}",
+       R"({"files":null})",
+       R"({"files":[],"host":true})",
+       R"({"files":[],"descriptor_limit":-1})",
+       R"({"files":[],"descriptor_limit":2})",
+       R"({"files":[],"descriptor_limit":4097})",
+       R"({"files":[],"descriptor_limit":4294967296})",
+       R"({"files":[],"descriptor_limit":3.5})",
+       R"({"files":[{"path":"/x"}]})",
+       R"({"files":[{"path":"/x","bytes_hex":"g0"}]})",
+       R"({"files":[{"path":"/x","bytes_hex":"0"}]})",
+       R"({"files":[{"path":"/x","bytes_hex":"","extra":1}]})",
+       R"({"files":[{"path":"/x","bytes_hex":""},{"path":"/x","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x","bytes_hex":""},{"path":"/x/y","bytes_hex":""}]})",
+       R"({"files":[{"path":"relative","bytes_hex":""}]})",
+       R"({"files":[{"path":"/a/../b","bytes_hex":""}]})",
+       R"({"files":[{"path":"/a//b","bytes_hex":""}]})",
+       R"({"files":[{"path":"/a/./b","bytes_hex":""}]})",
+       R"({"files":[{"path":"/a/","bytes_hex":""}]})",
+       R"({"files":[{"path":"/","bytes_hex":""}]})",
+       R"({"files":[{"path":"/a\u0000b","bytes_hex":""}]})"}) {
+    SCOPED_TRACE(Bad);
+    auto R =
+        processOptionsFromJSON(std::string("{\"linux_files\":") + Bad + "}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  auto Empty = processOptionsFromJSON(R"({"linux_files":{"files":[]}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_TRUE(Empty->LinuxFiles->Files.empty());
+  EXPECT_EQ(Empty->LinuxFiles->DescriptorLimit, 256u);
+}
 } // namespace
 } // namespace neverd::emulation

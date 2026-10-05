@@ -1,0 +1,24 @@
+//===- X64DAZCases.def - Independent denormal input controls ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_DAZ_VALUE
+NEVERD_DAZ_VALUE(DenormalsAreZero, 0x40)
+NEVERD_DAZ_VALUE(HostFXBytes, 512)
+NEVERD_DAZ_VALUE(HostFXAlignment, 16)
+NEVERD_DAZ_VALUE(HostMXCSRMaskOffset, 28)
+NEVERD_DAZ_VALUE(BaselineMXCSRMask, 0xffbf)
+#endif
+#ifdef NEVERD_DAZ_BACKEND
+NEVERD_DAZ_BACKEND(kvmSupervisor, KVM, false)
+NEVERD_DAZ_BACKEND(kvmUser, KVM, true)
+NEVERD_DAZ_BACKEND(whpSupervisor, WHP, false)
+NEVERD_DAZ_BACKEND(whpUser, WHP, true)
+NEVERD_DAZ_BACKEND(unicornSupervisor, Unicorn, false)
+NEVERD_DAZ_BACKEND(unicornUser, Unicorn, true)
+#endif
+#ifdef NEVERD_DAZ_TEXT
+NEVERD_DAZ_TEXT(Unavailable, "the execution CPU does not support DAZ")
+NEVERD_DAZ_TEXT(HostUnavailable, "the independent x64 host oracle requires DAZ")
+#endif

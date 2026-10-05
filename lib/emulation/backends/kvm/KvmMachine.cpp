@@ -75,6 +75,9 @@ bool sameFPRegisters(const X64MachineState &L, const X64MachineState &R) {
 }
 class KvmMachine final : public X64Machine, public KvmVM {
 public:
+  // Private startup execution discovers and verifies this mask before return.
+  uint32_t MXCSRMask = x64::fp::ArchitecturalMXCSRMask;
+  uint32_t mxcsrMask() const override { return MXCSRMask; }
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
   void initializeSynchronizedRegisters() {
     const int Supported = ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_SYNC_REGS);
@@ -110,7 +113,8 @@ public:
     const bool InstallFP =
         !WasRunnable || !sameFPRegisters(State, CapturedState);
     if (InstallFP)
-      if (auto E = encodeX64XsaveState(State, {Bytes, sizeof(F.region)}))
+      if (auto E = encodeX64XsaveState(State, {Bytes, sizeof(F.region)}, false,
+                                       MXCSRMask))
         return E;
     auto Prepare = [&]() -> llvm::Error {
       if (WasRunnable && (SynchronizedRegisters & KVM_SYNC_X86_SREGS))
@@ -214,7 +218,8 @@ public:
     };
     auto Next = State;
     auto Complete = [&]() -> llvm::Error {
-      if (auto E = decodeX64XsaveState(Next, {Bytes, sizeof(F.region)}))
+      if (auto E =
+              decodeX64XsaveState(Next, {Bytes, sizeof(F.region)}, MXCSRMask))
         return E;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   Next.reg(X64Register::Name) = R.Field;
@@ -269,7 +274,7 @@ createKvmMachine(MemoryProjection &Memory) {
     return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                    BackendAvailability::MissingCapability);
   M->initializeSynchronizedRegisters();
-  if (auto E = verifyX64Machine(*M, Memory))
+  if (auto E = verifyX64Machine(*M, Memory, &M->MXCSRMask, true))
     return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }

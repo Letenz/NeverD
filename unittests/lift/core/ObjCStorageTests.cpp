@@ -357,6 +357,188 @@ TEST(ObjCStorage, StaticStringPairsRequireTheExactRuntimeConsumer) {
   }
 }
 
+struct StaticStrings : StaticStringPairs {
+  explicit StaticStrings(unsigned Count = 5) : StaticStringPairs(Count) {
+    Image.Symbols[0].Name = "_$s14StorageFixture10DeviceInfoC8prefixes_WZTv_";
+    Image.Symbols[1].Addr = Base + 40 + Count * 16;
+    Image.Symbols.push_back(
+        {"_$s14StorageFixture10DeviceInfoC8prefixes_WZ", 0x3000, 4, true});
+    Segment Code;
+    Code.VA = 0x3000;
+    Code.Size = Code.FileSz = 4;
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Code.Data = {0xc0, 0x03, 0x5f, 0xd6};
+    Image.Segments.push_back(Code);
+    Section Text;
+    Text.Name = "__text";
+    Text.VA = Code.VA;
+    Text.Size = Text.FileSz = Code.Size;
+    Text.Flags = Code.Flags;
+    Text.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+    Image.Sections.push_back(Text);
+  }
+};
+
+TEST(ObjCStorage, StaticOnceStringsShareBaseHeaderAndPayloadIdentity) {
+  for (unsigned Count : {1U, 5U, 32U}) {
+    StaticStrings F(Count);
+    for (unsigned Offset : {0U, 8U, 40U}) {
+      SCOPED_TRACE(Count);
+      SCOPED_TRACE(Offset);
+      auto Function = F.Function;
+      if (Offset == 8)
+        Function.Body[0].RetVal = F.Call;
+      else
+        Function.Body[0].RetVal = HighExpr::makeConst(
+            F.Base + Offset, 8, ConstantAddressProvenance::DataAddress);
+      const auto Bound = sdk::bindObjCSourceReferences(Function, F.Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      EXPECT_EQ(Bound.LocalStorageExtents,
+                (std::map<va_t, uint64_t>{{F.Base, 40 + Count * 16}}));
+      auto Address = Offset == 8 ? Bound.Function.Body[0].RetVal->Operands[1]
+                                 : Bound.Function.Body[0].RetVal;
+      if (Offset) {
+        ASSERT_EQ(Address->Kind, ExprKind::BinOp);
+        EXPECT_EQ(Address->Operands[1]->ConstVal, Offset);
+        Address = Address->Operands[0];
+      }
+      ASSERT_TRUE(Address->SourceCallHint);
+      EXPECT_EQ(Address->SourceCallHint->TargetAddress, F.Base);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Address, F.Image, {}));
+      std::set<std::string> Helpers;
+      const auto Source = sdk::renderObjCLocalStorageHelpers(
+          F.Image, Bound.LocalStorageExtents, Helpers);
+      EXPECT_EQ(Helpers.size(), 1U);
+      EXPECT_NE(Source.find("storage[" + std::to_string(40 + Count * 16) + "]"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST(ObjCStorage, StaticOnceStringsRejectStaleLayoutAndInitializerIdentity) {
+  StaticStrings F;
+  auto Function = F.Function;
+  Function.Body[0].RetVal = HighExpr::makeConst(
+      F.Base + 40, 8, ConstantAddressProvenance::DataAddress);
+  const auto Bound = sdk::bindObjCSourceReferences(Function, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  const auto Helper = Bound.Function.Body[0].RetVal->Operands[0];
+  for (unsigned Mutation = 0; Mutation != 28; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = F.Image;
+    auto *Bytes = Changed.Segments[0].Data.data() + F.Base - 0x1000;
+    if (Mutation < 3)
+      Bytes[Mutation * 8] = 1;
+    if (Mutation == 3)
+      Bytes[24] = 0;
+    if (Mutation == 4)
+      Bytes[32] = 12;
+    if (Mutation == 5)
+      Bytes[40] = 0x80;
+    if (Mutation == 6)
+      Bytes[55] = 0xf2;
+    if (Mutation == 7)
+      Bytes[54] = 1;
+    if (Mutation == 8)
+      Changed.DataPtrRelocSlots.insert(F.Base + 40);
+    if (Mutation == 9)
+      Changed.Symbols[1].Addr += 16;
+    if (Mutation == 10)
+      Changed.Symbols.push_back(Changed.Symbols[1]);
+    if (Mutation == 11)
+      Changed.Symbols.push_back({"_interior", F.Base + 48, 0, false});
+    if (Mutation == 12)
+      Changed.Exports.push_back({"_exported", 0, F.Base + 8});
+    if (Mutation == 13)
+      Changed.Symbols[0].Size = 128;
+    if (Mutation == 14)
+      Changed.Symbols[0].Name = "_ordinary_bytes";
+    if (Mutation == 15)
+      Changed.Symbols[0].Name =
+          "_$s14StorageFixture10DeviceInfoC8prefixes_WZTv0_";
+    if (Mutation == 16)
+      Changed.Symbols[0].Name =
+          "_$s14StorageFixture10DeviceInfoV8prefixes_WZTv_";
+    if (Mutation == 17)
+      Changed.Symbols.pop_back();
+    if (Mutation == 18)
+      Changed.Symbols.back().IsFunc = false;
+    if (Mutation == 19)
+      Changed.Symbols.push_back(Changed.Symbols.back());
+    if (Mutation == 20)
+      Changed.Segments.back().Flags =
+          Changed.Segments.back().Flags | SegmentFlags::Writable;
+    if (Mutation == 21)
+      Changed.Sections[0].Flags = SegmentFlags::Readable;
+    if (Mutation == 22)
+      Changed.MachOChainedFixupsAmbiguous = true;
+    if (Mutation == 23)
+      Changed.Symbols.push_back(Changed.Symbols[0]);
+    if (Mutation == 24)
+      Changed.Symbols.push_back({"code_inside_data", F.Base + 48, 4, true});
+    if (Mutation == 25)
+      Changed.Symbols.push_back({"overlapping", F.Base - 8, 16, false});
+    if (Mutation == 26) {
+      auto Alias = Changed.Symbols[0];
+      Alias.Addr += 256;
+      Changed.Symbols.push_back(Alias);
+    }
+    if (Mutation == 27)
+      Changed.DataPtrRelocSlots.insert(F.Base - 4);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Helper, Changed, {}));
+    const auto Rebound = sdk::bindObjCSourceReferences(Function, Changed);
+    EXPECT_FALSE(Rebound.Limitation.empty());
+    EXPECT_TRUE(Rebound.LocalStorageExtents.empty());
+  }
+}
+
+TEST(ObjCStorage, StaticOnceStringAddressArithmeticKeepsExactProvenance) {
+  for (const auto Opcode : {NdOp::INT_ADD, NdOp::INT_SUB}) {
+    for (bool Memory : {false, true}) {
+      for (const auto Provenance :
+           {ConstantAddressProvenance::Address,
+            ConstantAddressProvenance::DataAddress,
+            ConstantAddressProvenance::Scalar,
+            ConstantAddressProvenance::Unknown,
+            ConstantAddressProvenance::AddressFragment}) {
+        SCOPED_TRACE(static_cast<int>(Opcode));
+        SCOPED_TRACE(Memory);
+        SCOPED_TRACE(static_cast<int>(Provenance));
+        StaticStrings F;
+        const auto Word = NdType::makeInt(8, false);
+        F.Function.ReturnType = Word;
+        F.Function.Params = {{"offset", Word}};
+        MedVar Offset;
+        Offset.Kind = MedVar::Param;
+        Offset.Id = 0;
+        Offset.Size = 8;
+        auto Address = HighExpr::makeBinop(
+            Opcode, HighExpr::makeConst(F.Base, 8, Provenance),
+            HighExpr::makeVar(Offset, Word));
+        F.Function.Body[0].RetVal =
+            Memory ? HighExpr::makeLoad(Address, Word) : Address;
+        const auto Bound = sdk::bindObjCSourceReferences(F.Function, F.Image);
+        const bool Exact = Provenance == ConstantAddressProvenance::Address ||
+                           Provenance == ConstantAddressProvenance::DataAddress;
+        if (!Exact) {
+          EXPECT_TRUE(Bound.LocalStorageExtents.empty());
+          continue;
+        }
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        EXPECT_EQ(Bound.LocalStorageExtents,
+                  (std::map<va_t, uint64_t>{{F.Base, 120}}));
+        const auto Result = Memory ? Bound.Function.Body[0].RetVal->Operands[0]
+                                   : Bound.Function.Body[0].RetVal;
+        ASSERT_EQ(Result->Kind, ExprKind::BinOp);
+        EXPECT_EQ(Result->Op, Opcode);
+        ASSERT_EQ(Result->Operands[0]->Kind, ExprKind::Call);
+        EXPECT_TRUE(
+            sdk::objcSourceCallBound(*Result->Operands[0], F.Image, {}));
+      }
+    }
+  }
+}
+
 TEST(ObjCStorage, NamedReleaseStoresPreserveOrderingAndExactStorage) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (const unsigned Width : {1U, 2U, 4U, 8U}) {

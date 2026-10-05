@@ -684,6 +684,12 @@ llvm::Error UnicornBackend::writeBacking(uint64_t Address,
 GuestArchitecture UnicornBackend::architecture() const {
   return State->Architecture;
 }
+llvm::Expected<RegisterValue>
+UnicornBackend::supportedControlBits(CPURegister R) const {
+  if (architecture() == GuestArchitecture::X64 && R == CPURegister::X64MXCSR)
+    return RegisterValue{x64::fp::ArchitecturalMXCSRMask, 0};
+  return ExecutionBackend::supportedControlBits(R);
+}
 llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
   if (!registerMatches(R, architecture()))
     return diagnostic::error(diagnostic::Register);
@@ -703,6 +709,8 @@ llvm::Error UnicornBackend::writeRegister(CPURegister R,
   if (auto E = State->mutableState())
     return E;
   if (!registerMatches(R, architecture()) || !registerValueFits(R, V))
+    return diagnostic::error(diagnostic::Register);
+  if (R == CPURegister::X64MXCSR && (V[0] & ~x64::fp::ArchitecturalMXCSRMask))
     return diagnostic::error(diagnostic::Register);
   if (isX64FPRegister(R))
     if (auto E = validateX64FPRegister(R, V))

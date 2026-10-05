@@ -1,0 +1,37 @@
+//===- X64PauseCases.def - Spin-wait execution and cancellation ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PAUSE_VALUE
+NEVERD_PAUSE_VALUE(Limit, 1024 * 1024)
+NEVERD_PAUSE_VALUE(Page, 4096)
+NEVERD_PAUSE_VALUE(Code, 0x10000)
+NEVERD_PAUSE_VALUE(Data, 0x20000)
+NEVERD_PAUSE_VALUE(Timeout, 1'000'000)
+NEVERD_PAUSE_VALUE(LoopTimeout, 100'000)
+NEVERD_PAUSE_VALUE(Flags, 0xed7)
+NEVERD_PAUSE_VALUE(MXCSR, 0x5fa5)
+NEVERD_PAUSE_VALUE(FPCW, 0xb7f)
+NEVERD_PAUSE_VALUE(FPSW, 0x1800)
+NEVERD_PAUSE_VALUE(Seed, 0x1234567887654321ULL)
+NEVERD_PAUSE_VALUE(Fill, 0xa5)
+NEVERD_PAUSE_VALUE(VectorCount, 16)
+#endif
+#ifdef NEVERD_PAUSE_BYTES
+NEVERD_PAUSE_BYTES(Pause, 0xf3, 0x90)
+NEVERD_PAUSE_BYTES(Stop, 0x90)
+// PAUSE; JMP back to PAUSE. Neither instruction changes arithmetic flags.
+NEVERD_PAUSE_BYTES(Loop, 0xf3, 0x90, 0xeb, 0xfc)
+NEVERD_PAUSE_BYTES(Locked, 0xf0, 0xf3, 0x90)
+#endif
+#ifdef NEVERD_PAUSE_BACKEND
+NEVERD_PAUSE_BACKEND(kvmSupervisor, KVM, CheckedX64)
+NEVERD_PAUSE_BACKEND(kvmUser, KVM, CheckedUserX64)
+NEVERD_PAUSE_BACKEND(kvmDriver, KVM, Legacy)
+NEVERD_PAUSE_BACKEND(whpSupervisor, WHP, CheckedX64)
+NEVERD_PAUSE_BACKEND(whpUser, WHP, CheckedUserX64)
+NEVERD_PAUSE_BACKEND(whpDriver, WHP, Legacy)
+NEVERD_PAUSE_BACKEND(unicornSupervisor, Unicorn, CheckedX64)
+NEVERD_PAUSE_BACKEND(unicornUser, Unicorn, CheckedUserX64)
+#endif

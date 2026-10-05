@@ -14,11 +14,11 @@ NeverD 的選用驅動程式模擬器執行受支援 x64 WDM 驅動程式的 PE 
 
 `DriverImage.def` 集中宣告嚴格 PE 驗證的大小、對齊限制及診斷文字；指標寬度來自 `DriverProfile.def`。`DriverImage.cpp` 負責驗證與重定位，可接受的映像和錯誤訊息保持不變。
 
-ARM64 主機上的 `checked-x64-v1` 使用 Unicorn 執行 x64 客體。每條指令與記憶體存取都在單步前驗證，並保留 Windows 物件檢查、寫入 observer、RAM 別名及僅保存 CPU 的內容。允許純量記憶體算術、自然對齊的鎖定算術、SETcc 與`BT/BTS/BTR/BTC`，並檢查讀寫權限；旗標由原生執行處理。有限 SIMD 包含舊式 SSE/SSE2 移動與邏輯、`MOVLHPS`/`MOVHLPS` 及帶遮罩的純量轉換／減法。全部 16 個 XMM 暫存器與 MXCSR 都會跨入口和內容還原保存；拒絕未遮罩 SIMD 例外、DAZ、x87、AVX 與未列出的操作。全寬 XMM store 會先依序觸發兩個 8 位元組寫入 observer，再修改任一 word。未對齊的 aligned-vector 形式仍不支援。一般 RAM 運算元可跨越獨立配置或別名映射的頁面；整段權限驗證通過後才寫入，失敗定位到第一個無法存取的位元組。MOVS 保留已完成元素與故障元素的重啟暫存器，不提交部分元素。
+ARM64 主機上的 `checked-x64-v1` 使用 Unicorn 執行 x64 客體。每條指令與記憶體存取都在單步前驗證，並保留 Windows 物件檢查、寫入 observer、RAM 別名及僅保存 CPU 的內容。允許純量記憶體算術、自然對齊的鎖定算術、SETcc 與`BT/BTS/BTR/BTC`，並檢查讀寫權限；旗標由原生執行處理。有限 SIMD 包含舊式 SSE/SSE2 移動與邏輯、`MOVLHPS`/`MOVHLPS` 及帶遮罩的純量轉換／減法。全部 16 個 XMM 暫存器與 MXCSR 跨入口及內容還原保存。未遮罩 SIMD 故障需要原生 KVM/WHP 的 `precise_simd_exceptions` 能力。全寬 XMM store 會先依序觸發兩個 8 位元組寫入 observer，再修改任一 word。未對齊的 aligned-vector 形式仍不支援。一般 RAM 運算元可跨越獨立配置或別名映射的頁面；整段權限驗證通過後才寫入，失敗定位到第一個無法存取的位元組。MOVS 保留已完成元素與故障元素的重啟暫存器，不提交部分元素。
 
 supervisor x64 支援單次對齊的 1/2/4 位元組純量 MMIO 交易；裝置頁不會映射進原生 RAM。MOVS/REP MOVS 每個重新啟動邊界只執行一個元素。裝置來源必須提供無副作用的 prepared read，讓目的地 observer 可在裝置讀取提交前停止。Windows register bank 實作此準備流程；其他裝置會在產生效果前拒絕字串讀取。裝置 RMW、寬 MMIO、連接埠 I/O 仍不支援。要求位元組、裝置狀態及寫入事件分別比較，不依賴 Unicorn 對零計數 REP 額外觸發的終止 hook。KVM 使用標準 XSAVE 介面傳送 XMM/MXCSR 與 FP/SSE presence bits。此 supervisor 契約不提供使用者程序環境；逾時／取消在已准入的有界指令間檢查，不提供通用非同步搶佔，也不會在客體開始後切換後端。內建樣例與可用 WDK 情境會以 normal/CFG 及重定位映像和 Unicorn 比對；語料一致不代表支援任意驅動程式。
 
-checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
+checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。
 
 開關：`NEVERD_EMULATION_BACKEND_KVM`、`NEVERD_EMULATION_BACKEND_WHP`。KVM 需要 `/dev/kvm` 權限；WHP 動態載入系統 DLL。新 C 入口為 `neverd_emulate_driver_backend_json`，v1 ABI 不變。報告記錄後端、契約與選擇原因。
 
@@ -471,6 +471,8 @@ JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`�
 
 例外傳遞使用映像已解碼的 x64 第一版展開表及 `__C_specific_handler` 範圍，執行真正的客體篩選函式、處理常式及展開期間的 `__finally`。篩選結果為零時繼續搜尋，正值選取處理常式，負值要求繼續執行；負值僅能恢復可捕捉的使用者 CPU 訪存例外，且只接受經驗證的 `CONTEXT_INTEGER | CONTEXT_CONTROL` 修改，其餘完整原始 CPU 狀態保持不變。支援一般輔助函式框架展開、已儲存的非揮發性通用暫存器還原、目前堆疊邊界及 `GetExceptionCode()`；正常流程與例外展開的 finally 都執行實際客體程式碼。篩選函式及 finally 繼承父執行的行程／執行緒身分與使用者存取權限，原本無權限的系統工作項不會因此取得權限。處理常式可再次引發例外至支援的外層範圍。支援篩選函式／finally 內巢狀與衝突展開、鏈結 V1 中繼資料、部分前置程式碼、標準尾聲及完整 XMM6–XMM15 還原。例外記錄保留鏈結，已進入的 finally 不會重複執行。C++ 處理機制與不完整中繼資料仍明確拒絕。未捕捉的 API 例外以 `model_error` 停止；其他不屬於可捕捉使用者訪存例外的 CPU 故障仍終止執行。 常數 `EXCEPTION_EXECUTE_HANDLER` 直接選取對應處理常式。只有選取處理常式後，展開才執行離開範圍的 finally；搜尋期間或篩選函式恢復原執行時不執行清理。每次篩選函式返回都驗證 `EXCEPTION_POINTERS`、例外記錄及不支援的 `CONTEXT` 欄位，修改它們會明確失敗。模型 API 引發的例外不能透過負篩選結果恢復。
 
+原生 x64 KVM/WHP 透過 `X64SIMDException` 將實際 `#XM` 故障交給驅動程式 C SEH。硬體故障的 `CONTEXT` 保存 XMM0–15 與 MXCSR。篩選器、例外展開的 finally 回呼及選定處理器以 MXCSR `0x1f80`、清除 DF 的狀態執行。負篩選器可修改 XMM 與頂層 `CONTEXT.MxCsr`（依客體 CPU 遮罩截斷）後重試原指令；`FltSave.MxCsr` 不控制核心還原。模型 API 引發仍保留整數/控制記錄；x87/AVX 內容修改仍明確拒絕。
+
 C SEH 範圍仍使用左閉右開區間。合法的 `__C_specific_handler` 落點可能位於其保護區間內：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 將 `EndLabel + 1` 寫為區間末端。Windows OS 模型保留原始端點，並獨立驗證目標可執行性、所屬函式及續接身分，重定位後亦然。`KernelSEHContinuationCases.def` 保留原始範例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 涵蓋常數處理常式與篩選函式。配套測試驗證末端排除，以及非法目標遭拒後派發狀態仍可重試。這些純模型檢查納入 `NeverDNativeDriverTests`，停用 Unicorn 時仍會執行。
 
 目標展開同樣使用原始範圍末端：若處理常式目標仍在某個 `finally` 的保護區間內，便不會離開該範圍。`FinallyRespectsRawScopeEndAtHandlerTarget` 檢查邊界兩側，並在 Windows x64 上直接對照 `ntdll.dll!__C_specific_handler`。NeverD 不修補編譯器產生的區間。Clang 20/21 建置的原始範例在 `T`、`J` 模式下傳回客體失敗，因為偏移後的末端包含選定目標；Clang 23 建置會執行兩級清理。[LLVM 修改 #144745](https://github.com/llvm/llvm-project/pull/144745) 移除了舊的 `+1` 偏移。這類編譯器相關結果與後端故障分開記錄。
@@ -529,6 +531,8 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM 和 WHP 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
 ARM64 KVM/WHP 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。成功僅驗證這段有界初始化程式；仍需獨立的 ARM64 原生工作負載驗證。 程式亦包含金鑰停用時的 A/B 返回位址簽署與驗證，以及非防護頁面的四種 BTI 指令。
+
+自檢還執行兩次 `MRS CTR_EL0`，以及 `DC CVAU`、`DSB ISH`、`IC IVAU` 和 `ISB`，核對快取幾何資訊穩定及完整狀態。Checked EL0/EL1 接納原始指令、所有具名基線 DSB 選項及 ISB SY。CTR 來自選定虛擬 CPU，不同傳輸可以不同。快取目標必須在目前權限下指向可讀普通 RAM，允許非對齊位址和別名；其他目標明確報未支援。維護操作不產生資料讀寫觀察事件。投影保證指令執行的一致性，不模擬私有快取內容或平行硬體 SMP。`NeverDAArch64CacheTests` 檢查完整狀態、唯讀頁尾、拒絕項、停止、上下文、預算，以及透過跨頁 RW/RX 別名更新 guest 程式碼；不可用的 KVM/WHP 主機明確跳過。
 
 x64 KVM/WHP 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.def`。單一時限涵蓋 NOP、朝正無窮捨入的 FP32 加法、雙通道 SIMD 加法、FS/GS 載入及 CS/SS/CR8 讀取；每一步比較完整的純量、XMM、實體 x87 和控制狀態。x64 與 ARM64 自檢都必須取得實體記憶體的獨占執行租約。`MemoryProjection` 統一保存快取身分（ISA、位址空間、映射世代、權限及監控變體）和各 ISA 已提交的頁表根歷史。建構器在改寫私有位元組前使快取失效；失敗的重建不能重用部分寫入的頁表，呼叫者也不能傳入過期頁表根。這些自檢僅證明有界初始化；ARM64 原生工作負載仍缺少獨立驗證。
 

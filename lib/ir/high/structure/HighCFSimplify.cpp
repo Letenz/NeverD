@@ -658,6 +658,99 @@ static TryContext bodyTryContext(const TryContext &Outer, const HighStmt &S) {
   return Inner;
 }
 
+/// Whether evaluating \p E may raise an exception.  Only integer and boolean
+/// arithmetic on registers and constants cannot: a load may fault, a
+/// division may trap, a call may do anything, and floating point stays out
+/// of the claim.
+static bool exprMayFault(const HighExpr *E) {
+  if (!E)
+    return false;
+  if (E->MemoryOrdering != NdMemoryOrdering::None ||
+      E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return true;
+  switch (E->Kind) {
+  case ExprKind::Var:
+  case ExprKind::Phi:
+  case ExprKind::Const:
+  case ExprKind::Undef:
+  case ExprKind::Addr:
+    break;
+  case ExprKind::BinOp:
+  case ExprKind::UnaryOp:
+  case ExprKind::Cast:
+  case ExprKind::BitCast:
+    switch (E->Op) {
+    case NdOp::NOP:
+    case NdOp::COPY:
+    case NdOp::CAST:
+    case NdOp::INT_ADD:
+    case NdOp::INT_SUB:
+    case NdOp::INT_AND:
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR:
+    case NdOp::INT_LEFT:
+    case NdOp::INT_RIGHT:
+    case NdOp::INT_ASHR:
+    case NdOp::INT_MULT:
+    case NdOp::INT_EQUAL:
+    case NdOp::INT_NOTEQUAL:
+    case NdOp::INT_LESS:
+    case NdOp::INT_SLESS:
+    case NdOp::INT_LESSEQUAL:
+    case NdOp::INT_SLESSEQUAL:
+    case NdOp::INT_ZEXT:
+    case NdOp::INT_SEXT:
+    case NdOp::INT_NEGATE:
+    case NdOp::INT_NOT:
+    case NdOp::INT_NEG2:
+    case NdOp::BOOL_AND:
+    case NdOp::BOOL_OR:
+    case NdOp::BOOL_XOR:
+    case NdOp::BOOL_NOT:
+    case NdOp::CONCAT:
+    case NdOp::SUBBYTES:
+    case NdOp::SELECT:
+      break;
+    default:
+      return true;
+    }
+    break;
+  default:
+    return true;
+  }
+  for (const auto &Operand : E->Operands)
+    if (exprMayFault(Operand.get()))
+      return true;
+  return false;
+}
+
+/// Whether running \p Tail may raise an exception.
+static bool tailMayFault(const std::vector<HighStmt> &Tail) {
+  for (const HighStmt &S : Tail) {
+    switch (S.Kind) {
+    case StmtKind::Nop:
+      continue;
+    case StmtKind::Block:
+      if (!S.Body.empty())
+        return true;
+      continue;
+    case StmtKind::Assign:
+      if (!S.Dst ||
+          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi) ||
+          exprMayFault(S.Val.get()))
+        return true;
+      continue;
+    case StmtKind::Return:
+      if (exprMayFault(S.RetVal.get()))
+        return true;
+      continue;
+    default:
+      return true;
+    }
+  }
+  return false;
+}
+
 /// `goto L` where L starts a few pure assignments and a return (typically
 /// `result = 1; return result;` shared through an epilogue), or a call that
 /// never returns such as the fail-fast trap, becomes a copy of those
@@ -971,13 +1064,39 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
   }
   if (Tails.empty())
     return false;
+  // A tail that cannot raise an exception runs the same in any protection
+  // made only of __except clauses: no handler can catch it, and none runs
+  // on the way out of the try the way a __finally would.
+  std::set<TryContext::value_type> ExceptOnly;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::SEHTry && !S.EHClauses.empty() &&
+        std::all_of(S.EHClauses.begin(), S.EHClauses.end(),
+                    [](const HighEHClause &Clause) {
+                      return Clause.Kind == HighEHClauseKind::SEHExcept;
+                    }))
+      ExceptOnly.emplace(S.Kind, S.EHRange.Begin, S.EHRange.End);
+  });
+  auto SameProtection = [&](const TryContext &A, const TryContext &B,
+                            const std::vector<HighStmt> &Tail) {
+    if (A == B)
+      return true;
+    size_t Shared = 0;
+    while (Shared < A.size() && Shared < B.size() && A[Shared] == B[Shared])
+      ++Shared;
+    for (const TryContext *Ctx : {&A, &B})
+      for (size_t K = Shared; K < Ctx->size(); ++K)
+        if (!ExceptOnly.count((*Ctx)[K]))
+          return false;
+    return !tailMayFault(Tail);
+  };
   bool Changed = false;
   std::function<void(std::vector<HighStmt> &, const TryContext &)> Rewrite =
       [&](std::vector<HighStmt> &Stmts, const TryContext &Ctx) {
         for (size_t I = 0; I < Stmts.size(); ++I) {
           if (Stmts[I].Kind == StmtKind::Goto) {
             auto It = Tails.find(Stmts[I].GotoTarget);
-            if (It != Tails.end() && TailContexts.at(It->first) == Ctx) {
+            if (It != Tails.end() &&
+                SameProtection(TailContexts.at(It->first), Ctx, It->second)) {
               std::vector<HighStmt> Copy = It->second;
               // The copies are not jump targets; keep the label unique.
               const va_t Site = Stmts[I].Addr;
@@ -2820,11 +2939,13 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         }
       }
       // T2e: `if (c) { A } else { B; goto Y; } S...; Y:` runs S only after A,
-      // so S moves to the end of A's arm.  S must hold no entered label: a
-      // jump into the arm would be legal C but no clearer, and a labelled
-      // tail left in place can still be copied to each of its jumps.  Y must
-      // be the one statement starting its address, since a label resolves to
-      // the first statement printed there.
+      // so S moves to the end of A's arm.  A label in S may be entered only
+      // from inside S, so the move takes its jumps along: a jump into the arm
+      // would be legal C but no clearer, and a labelled tail left in place
+      // can still be copied to each of its jumps.  Y and every label in S
+      // must be the one statement starting its address, since a label
+      // resolves to the first statement printed there and S now prints
+      // before B.
       if (L[I].Kind == StmtKind::IfElse && L[I].Cond &&
           !L[I].ElseBody.empty() &&
           L[I].ElseBody.back().Kind == StmtKind::Goto &&
@@ -2833,28 +2954,35 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         size_t J = I + 1;
         while (J < L.size() && !(L[J].Addr == Y && labelStart(L, J)))
           ++J;
-        std::function<bool(const std::vector<HighStmt> &, size_t, size_t)>
-            Unentered = [&](const std::vector<HighStmt> &List, size_t From,
-                            size_t To) {
+        // The labels S starts and the jumps inside S to each address.
+        std::vector<va_t> Labels;
+        std::map<va_t, unsigned> Inside;
+        std::function<void(const std::vector<HighStmt> &, size_t, size_t)>
+            Scan = [&](const std::vector<HighStmt> &List, size_t From,
+                       size_t To) {
               for (size_t K = From; K < To; ++K) {
                 const HighStmt &S = List[K];
                 if (labelStart(List, K))
-                  return false;
+                  Labels.push_back(S.Addr);
+                if (S.Kind == StmtKind::Goto)
+                  ++Inside[S.GotoTarget];
                 for (const auto *Inner : {&S.Body, &S.ElseBody, &S.DefaultBody})
-                  if (!Unentered(*Inner, 0, Inner->size()))
-                    return false;
+                  Scan(*Inner, 0, Inner->size());
                 for (const auto &C : S.Cases)
-                  if (!Unentered(C.Body, 0, C.Body.size()))
-                    return false;
+                  Scan(C.Body, 0, C.Body.size());
                 for (const auto &ClauseBody : S.EHClauseBodies)
-                  if (!Unentered(ClauseBody, 0, ClauseBody.size()))
-                    return false;
+                  Scan(ClauseBody, 0, ClauseBody.size());
               }
-              return true;
             };
+        bool SelfContained = J < L.size();
+        if (SelfContained) {
+          Scan(L, I + 1, J);
+          for (va_t Label : Labels)
+            SelfContained &=
+                AddressStarts[Label] == 1 && usesOf(Label) == Inside[Label];
+        }
         if (J < L.size() && J > I + 1 && AddressStarts[Y] == 1 &&
-            (!isTerminator(L[J - 1]) || SpliceRegions) &&
-            Unentered(L, I + 1, J)) {
+            (!isTerminator(L[J - 1]) || SpliceRegions) && SelfContained) {
           popGoto(L[I].ElseBody);
           --Uses[Y];
           L[I].Body.insert(L[I].Body.end(),

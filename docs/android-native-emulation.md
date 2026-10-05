@@ -4,7 +4,7 @@
 AArch64 shared library using NeverD's CPU, address space, AAPCS64 call frames,
 execution sessions, and Linux syscall models. This is a bounded native analysis
 environment, with explicit inputs and observable failures. It does not boot an
-Android system or supply ART, JNI, Binder, signals, a filesystem, or a
+Android system or supply ART, JNI, Binder, signals, a general filesystem, or a
 network. It never calls host functions to satisfy a guest import.
 
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`. The host transport is selected
@@ -183,6 +183,12 @@ The supported Bionic subset is:
   bits and does not update TLS errno.
   `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
   for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
+- `open`/`open64`, `openat`/`openat64`, `read`, `close` and `lseek`/`lseek64`
+  use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
+  Raw traps, imported calls and guest threads share descriptors and cursors;
+  only Bionic converts negative errors into `-1` and TLS errno. No host files or
+  implicit proc data are visible. File writes, directory/relative opens and
+  unmodeled flags stop explicitly.
 - `syscall(number, ...)` uses the same Linux service table and effects. The
   AArch64 wrapper takes the number from x0 and six arguments from x1–x6;
   x7 is unused. It preserves full-width results and applies Bionic's -1/errno
@@ -340,12 +346,24 @@ and do not change errno. Ownership uses the same guest TID as `gettid`.
 Destroyed-object use stops explicitly, following the API 28 target behavior;
 older app-target compatibility is not modeled.
 
-This is a nonblocking, non-priority-inheritance model. The process-shared
-attribute is retained but does not create another process or thread. A lock
-that must wait, an unlock that must wake a waiter, priority-inheritance
-objects, timed operations and unknown mutex operations stop as unsupported.
-Rejected modeled transitions check complete write spans before changing
-state or ownership. No host mutex or scheduler supplies guest behavior.
+With guest scheduling enabled, contended locks suspend the original import
+and mark the guest object contended. Unlock wakes one matching waiter in
+round-robin order; a wake permits another acquisition attempt. The waiter
+reloads guest state and permissions after restoring its CPU context, and
+returns through its original event only after acquiring the lock. A competing
+acquirer can make it wait again. Resumed acquisitions retain the contended
+bit, so subsequent releases do not strand other sleepers. Recursive unlock
+wakes only when its final level is released. Normal locks never use the
+owner field. State snapshots are confined to a single modeled operation.
+
+Without guest scheduling, blocking and wake transitions stop explicitly.
+The process-shared bit is retained within the workload's single address
+space; it does not introduce an external process. Priority inheritance, timed
+operations and nonzero futex padding that would require an EAGAIN retry loop
+remain unsupported. Invalid state, changed mutex attributes while suspended,
+and denied memory fail without completing the pending lock. Complete write
+spans are checked before changing state or ownership. No host mutex or
+futex supplies guest behavior.
 
 ABI references: Android 9 [`pthread_mutex.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_mutex.cpp)
 and [`pthread_types.h`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/bits/pthread_types.h).
@@ -420,13 +438,13 @@ then publishes the full pointer result and releases its storage. Detached
 threads release storage on completion. Invalid non-null or retired handles
 fail at the API 28 target boundary; NULL lookup returns ESRCH, self-join
 returns EDEADLK, and detached or already claimed targets return EINVAL.
-No runnable thread with outstanding join or once waits is an explicit unsupported stop.
+No runnable thread with outstanding join, once or mutex waits is an explicit unsupported stop.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
 the current thread and leaves its pthread result zero. When the last thread
 exits without an entry return, its low eight status bits become the workload
 exit status. `exit_group` terminates
 the workload. Guest cleanup handlers, TLS keys/destructors, exit during a
-once/finalize callback, blocking mutex waits, timers, cancellation,
+once/finalize callback, timers, cancellation,
 signals and clone remain unsupported. No cleanup or completion is invented.
 
 By default the selected entry's return stops observation, even with live

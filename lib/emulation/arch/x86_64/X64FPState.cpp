@@ -100,8 +100,9 @@ llvm::Error validateX64FPState(const X64FPState &State) {
   return llvm::Error::success();
 }
 llvm::Error encodeX64FXState(const X64MachineState &State,
-                             llvm::MutableArrayRef<uint8_t> Bytes) {
-  if (Bytes.size() < LegacyBytes)
+                             llvm::MutableArrayRef<uint8_t> Bytes,
+                             uint32_t MXCSRMask) {
+  if (Bytes.size() < LegacyBytes || (State.MXCSR & ~MXCSRMask))
     return diagnostic::error(diagnostic::FPState);
   if (auto E = validateX64FPState(State.FP))
     return E;
@@ -114,7 +115,7 @@ llvm::Error encodeX64FXState(const X64MachineState &State,
 #undef NEVERD_X64_FP_CONTROL
   P[TagOffset] = State.FP.Tag;
   llvm::support::endian::write32le(P + MXCSROffset, State.MXCSR);
-  llvm::support::endian::write32le(P + MXCSRMaskOffset, x64::AllowedMXCSR);
+  llvm::support::endian::write32le(P + MXCSRMaskOffset, MXCSRMask);
   for (unsigned I = 0; I < State.FP.Registers.size(); ++I) {
     const auto &V = State.FP.Registers[(State.FP.top() + I) % RegisterCount];
     auto *Slot = P + RegistersOffset + I * RegisterSlotBytes;
@@ -155,11 +156,11 @@ llvm::Error decodeX64FXState(X64MachineState &State,
 }
 llvm::Error encodeX64XsaveState(const X64MachineState &State,
                                 llvm::MutableArrayRef<uint8_t> Bytes,
-                                bool Compact) {
+                                bool Compact, uint32_t MXCSRMask) {
   if (Bytes.size() < XsaveBytes || Bytes.size() > MaxXsaveBytes ||
-      (State.MXCSR & ~x64::AllowedMXCSR))
+      (State.MXCSR & ~MXCSRMask))
     return diagnostic::error(diagnostic::FPState);
-  if (auto E = encodeX64FXState(State, Bytes))
+  if (auto E = encodeX64FXState(State, Bytes, MXCSRMask))
     return E;
   std::fill(Bytes.begin() + LegacyBytes, Bytes.end(), 0);
   llvm::support::endian::write64le(Bytes.data() + XStateOffset, FPAndSSE);
@@ -168,7 +169,8 @@ llvm::Error encodeX64XsaveState(const X64MachineState &State,
   return llvm::Error::success();
 }
 llvm::Error decodeX64XsaveState(X64MachineState &State,
-                                llvm::ArrayRef<uint8_t> Bytes) {
+                                llvm::ArrayRef<uint8_t> Bytes,
+                                uint32_t MXCSRMask) {
   if (Bytes.size() < XsaveBytes || Bytes.size() > MaxXsaveBytes)
     return diagnostic::error(diagnostic::FPState);
   const auto Present =
@@ -228,7 +230,7 @@ llvm::Error decodeX64XsaveState(X64MachineState &State,
       Next.MXCSR = x64::InitialMXCSR;
     Next.Xmm = {};
   }
-  if (Next.MXCSR & ~x64::AllowedMXCSR)
+  if (Next.MXCSR & ~MXCSRMask)
     return diagnostic::error(diagnostic::FPState);
   if (auto E = validateX64FPState(Next.FP))
     return E;

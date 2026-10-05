@@ -11,6 +11,38 @@ NEVERD_X64_PROBE_TEST_VALUE(Fill, 0xa5)
 NEVERD_X64_PROBE_TEST_VALUE(ExceptionMask, 0x3f)
 NEVERD_X64_PROBE_TEST_VALUE(PendingStatus, 0x8080)
 #endif
+#ifdef NEVERD_X64_PROBE_INTERRUPTION
+NEVERD_X64_PROBE_INTERRUPTION(
+    0, false, true,
+    "x64 native initialization interrupted during Nop "
+    "(stop_requested=false, deadline_reached=true): "
+    "WHP single-step execution failed")
+NEVERD_X64_PROBE_INTERRUPTION(
+    0, true, false,
+    "x64 native initialization interrupted during Nop "
+    "(stop_requested=true, deadline_reached=false): "
+    "WHP single-step execution failed")
+NEVERD_X64_PROBE_INTERRUPTION(
+    0, true, true,
+    "x64 native initialization interrupted during Nop "
+    "(stop_requested=true, deadline_reached=true): "
+    "WHP single-step execution failed")
+NEVERD_X64_PROBE_INTERRUPTION(
+    1, false, true,
+    "x64 native initialization interrupted during FloatingAdd "
+    "(stop_requested=false, deadline_reached=true): "
+    "WHP single-step execution failed")
+NEVERD_X64_PROBE_INTERRUPTION(
+    1, true, false,
+    "x64 native initialization interrupted during FloatingAdd "
+    "(stop_requested=true, deadline_reached=false): "
+    "WHP single-step execution failed")
+NEVERD_X64_PROBE_INTERRUPTION(
+    1, true, true,
+    "x64 native initialization interrupted during FloatingAdd "
+    "(stop_requested=true, deadline_reached=true): "
+    "WHP single-step execution failed")
+#endif
 #ifdef NEVERD_X64_PROBE_TEST_TEXT
 NEVERD_X64_PROBE_TEST_TEXT(Expected, ": expected ")
 NEVERD_X64_PROBE_TEST_TEXT(Observed, ", observed ")
@@ -33,4 +65,12 @@ NEVERD_X64_PROBE_TEST_CODE(Program, 0x90, 0xf3, 0x45, 0x0f, 0x58, 0xe5, 0x66,
                            0, 0, 0, 0, 0x65, 0x4c, 0x8b, 0x3c, 0x25, 0, 0, 0, 0,
                            0x66, 0x41, 0x8c, 0xcc, 0x66, 0x41, 0x8c, 0xd5, 0x45,
                            0x0f, 0x20, 0xc3)
+#endif
+
+#ifdef NEVERD_X64_MASK_TEST_VALUE
+NEVERD_X64_MASK_TEST_VALUE(SupportedMask, 0xffff)
+NEVERD_X64_MASK_TEST_VALUE(FallbackMask, 0xffbf)
+NEVERD_X64_MASK_TEST_VALUE(MaskOffset, 28)
+NEVERD_X64_MASK_TEST_VALUE(DenormalStatus, 2)
+NEVERD_X64_MASK_TEST_VALUE(MaskSentinel, 0xa5a5a5a5)
 #endif

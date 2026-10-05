@@ -484,6 +484,8 @@ Windows 모델은 독립적인 비페이지 풀 MDL도 관리하며, 설명자�
 
 `KernelGuestException`은 32비트 상태를 담은 형식화된 API 결과이며 모델 오류 및 백엔드 오류와 구별됩니다. `DriverImage`는 로더의 기존 기본 주소 기반 예외 메타데이터를 보존합니다. `X64SEH`는 검증된 주소 변환과 스택 읽기로 해당 메타데이터에 대해 순수하고 제한된 x64 V1 C catch-all 전환 계획을 만듭니다. 일반 헬퍼 프레임을 거쳐 지원하는 비휘발성 GPR 저장값을 복원하고 실제 게스트 처리기를 선택합니다. 경로에서 만나는 필터／finally, GS／C++ 성격 처리기, 체인, 불완전한 레코드, 프롤로그 및 XMM 복원은 거부합니다. `DriverSession`은 정상 API 중지 경계에서만 검증된 레지스터 계획을 적용하며 API 추적 결과를 null로 두고 같은 실행 안에서 처리기를 재개합니다. 보존된 백엔드 오류를 지우거나 다른 콜백 스택까지 해제하지 않습니다. 이 경계는 ExRaiseStatus／ExRaiseAccessViolation／ExRaiseDatatypeMisalignment를 지원합니다. 사용자 접근 검사, 잠긴 사용자 버퍼와 CPU 오류 복구는 별도 작업으로 남습니다.
 
+`X64SEH`는 선택적 커널 SSE 컨텍스트를 가상 언와인드 커서와 별도로 보존하고, `DriverSession`은 오류 복원과 핸들러 제어 상태를 구분합니다. [드라이버 에뮬레이션](driver-emulation.md)을 참조하세요.
+
 
 ## 예외 재작성 경계
 
@@ -651,6 +653,8 @@ CPU factory와 기능 질의는 같은 `ExecutionConfiguration`을 사용하며 
 Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP/HVF는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
 ARM64 KVM/WHP/HVF 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다. 이 프로그램에는 키가 비활성화된 A/B 반환 주소 서명 및 인증과 보호되지 않은 페이지의 네 가지 BTI 명령도 포함됩니다.
+
+프로브는 `MRS CTR_EL0`를 두 번 실행하고 `DC CVAU`, `DSB ISH`, `IC IVAU`, `ISB`를 실행하여 캐시 구성의 안정성과 전체 상태를 확인합니다. Checked EL0/EL1은 원래 명령어, 이름이 있는 기본 DSB 옵션, ISB SY를 허용합니다. CTR은 선택한 가상 CPU에서 읽으며 전송 방식에 따라 다를 수 있습니다. 캐시 대상은 현재 권한으로 읽을 수 있는 일반 RAM이어야 하며 비정렬 주소와 별칭도 허용합니다. 다른 대상은 미지원으로 거부하고 캐시 유지 작업은 데이터 읽기/쓰기 관찰 이벤트를 만들지 않습니다. 투영은 명령 실행의 일관성을 유지하지만 개별 캐시 내용이나 병렬 하드웨어 SMP를 모델링하지 않습니다. `NeverDAArch64CacheTests`는 전체 상태, 읽기 전용 페이지 끝, 거부, 중지, 컨텍스트, 예산 및 페이지를 넘는 RW/RX 별칭을 통한 guest 코드 갱신을 검증합니다. 사용할 수 없는 KVM/WHP 호스트는 명시적으로 건너뜁니다.
 
 x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다.
 
@@ -980,7 +984,7 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 
 `NeverDEmulationArch`는 ISA, 페이지 테이블과 FP 상태 배치를 소유하며 네이티브 및 Unicorn 전송이 공유합니다. x64 컨텍스트는 x87 제어, 상태, TOP, 물리 태그, 연산 코드, 명령/데이터 포인터와 8개의 80비트 레지스터를 보존합니다. `FP0`–`FP7`은 `RegisterValue`를 사용하고 스칼라 접근은 잘림을 거부합니다. `FPTag`는 물리 비어 있지 않음 비트맵입니다. `NeverDX64FPTests`는 모든 TOP, 정확한 연산의 호스트 FXSAVE/FXRSTOR 비교와 복원을 검사합니다. checked x87 명령 또는 모든 반올림 의미를 입증하지 않으며 없는 네이티브 호스트는 명시적으로 건너뜁니다.
 
-checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
+checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
 
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
@@ -1000,11 +1004,11 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `CMPSS`, `CMPSD`, `CMPPS`, `CMPPD`는 KVM, WHP, checked Unicorn에서 기존 8개 비교 조건을 실행합니다. 공유 `Source` 규칙은 디코딩된 별칭을 허용하고 예약 제어값은 거부합니다. 스칼라 형식은 상위 레인을 보존하고 m32/m64를 읽으며 벡터 형식은 정렬된 m128을 요구합니다. FLAGS와 기존 MXCSR 상태를 보존하고 활성 레인별 무효·비정규 상태를 누적합니다. Capstone이 명령 계열 ID와 SSE 조건을 소유하여 lifter 내부의 ID 보정을 대체합니다. Unicorn은 각 비교 함수에서 비정규 입력을 분류합니다.
 
-`CVTSS2SD`, `CVTSD2SS`, `CVTPS2PD`, `CVTPD2PS`는 공유 `Source` 규칙으로 기존 SSE 정밀도를 변환합니다. 스칼라 결과는 대상 상위 64/96비트를 보존합니다. 패킹 확장은 m64를 읽어 배정밀도 두 개를 쓰고, 축소는 정렬된 m128을 읽어 단정밀도 두 개를 쓰며 상위 64비트를 지웁니다. KVM, WHP, checked Unicorn의 원본 명령 실행은 FLAGS를 보존하고 반올림 및 FTZ 제어에 따라 마스크된 MXCSR 상태를 누적합니다. Unicorn은 변환 함수에서 활성 비정규 입력을 각각 분류합니다. DAZ, 마스크되지 않은 예외, VEX/EVEX는 제외됩니다.
+`CVTSS2SD`, `CVTSD2SS`, `CVTPS2PD`, `CVTPD2PS`는 공유 `Source` 규칙으로 기존 SSE 정밀도를 변환합니다. 스칼라 결과는 대상 상위 64/96비트를 보존합니다. 패킹 확장은 m64를 읽어 배정밀도 두 개를 쓰고, 축소는 정렬된 m128을 읽어 단정밀도 두 개를 쓰며 상위 64비트를 지웁니다. KVM, WHP, checked Unicorn의 원본 명령 실행은 FLAGS를 보존하고 반올림 및 FTZ 제어에 따라 마스크된 MXCSR 상태를 누적합니다. Unicorn은 변환 함수에서 활성 비정규 입력을 각각 분류합니다. 마스크되지 않은 예외, VEX/EVEX는 제외됩니다.
 
-`CVTDQ2PS`와 `CVTDQ2PD`는 공유 `Source` 규칙으로 부호 있는 32비트 정수를 패킹 변환합니다. 단정밀도는 정렬된 m128과 MXCSR 반올림을 사용하고, 배정밀도는 비정렬도 허용하는 m64를 읽어 정확히 변환합니다. 대상 XMM 전체를 교체하고 FLAGS와 기존 MXCSR 상태를 보존하며 부정확한 단정밀도 결과는 정밀도 상태를 누적합니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. Unicorn은 두 패킹 확장 함수를 식별해 8바이트 읽기를 선택합니다. DAZ, 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
+`CVTDQ2PS`와 `CVTDQ2PD`는 공유 `Source` 규칙으로 부호 있는 32비트 정수를 패킹 변환합니다. 단정밀도는 정렬된 m128과 MXCSR 반올림을 사용하고, 배정밀도는 비정렬도 허용하는 m64를 읽어 정확히 변환합니다. 대상 XMM 전체를 교체하고 FLAGS와 기존 MXCSR 상태를 보존하며 부정확한 단정밀도 결과는 정밀도 상태를 누적합니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. Unicorn은 두 패킹 확장 함수를 식별해 8바이트 읽기를 선택합니다. 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
 
-`CVTPS2DQ`와 `CVTPD2DQ`는 MXCSR 반올림을 사용하며 `CVTTPS2DQ`와 `CVTTPD2DQ`는 0 방향으로 절삭합니다. 공유 `Source` 규칙은 정렬된 m128 또는 XMM 입력을 요구합니다. NaN이나 범위 밖 레인은 signed32 indefinite와 무효 상태를 생성하고 다른 유효한 비정확 레인은 독립적으로 정밀도 상태를 누적합니다. 단정밀도 입력은 정수 네 개를, 배정밀도 입력은 두 개를 생성하고 대상 상위 64비트를 지웁니다. FLAGS와 기존 MXCSR 상태를 보존하며 FTZ는 비정규 입력을 버리지 않습니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. DAZ, 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
+`CVTPS2DQ`와 `CVTPD2DQ`는 MXCSR 반올림을 사용하며 `CVTTPS2DQ`와 `CVTTPD2DQ`는 0 방향으로 절삭합니다. 공유 `Source` 규칙은 정렬된 m128 또는 XMM 입력을 요구합니다. NaN이나 범위 밖 레인은 signed32 indefinite와 무효 상태를 생성하고 다른 유효한 비정확 레인은 독립적으로 정밀도 상태를 누적합니다. 단정밀도 입력은 정수 네 개를, 배정밀도 입력은 두 개를 생성하고 대상 상위 64비트를 지웁니다. FLAGS와 기존 MXCSR 상태를 보존하며 FTZ는 비정규 입력을 버리지 않습니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
 
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
 
@@ -1073,6 +1077,8 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 `WindowsSystemModules`는 두 ISA에 대해 `ntdll.dll`, `kernelbase.dll`, `kernel32.dll`의 제한된 PE64 모델 이미지를 만듭니다. ASCII `GetModuleHandleA` / `GetModuleHandleW`, `LoadLibraryA` / `LoadLibraryW`, `GetProcAddress`는 매핑된 베이스를 공유하며 PEB/LDR과 `MEM_IMAGE`도 같은 이미지를 나타냅니다. 정적 가져오기, 이름 조회와 게스트 DLL 전달은 동일한 API 게이트와 내보내기 해석기를 사용합니다. 제공자는 고정 상주하고 게스트 초기화 콜백이 없으며 일반 게스트 DLL을 모두 해제한 뒤 진입점 반환을 막지 않습니다. 헤더 또는 내보내기 메타데이터가 바뀌면 조회를 중단합니다. 미지원 시스템 내보내기 이름과 0이 아닌 서수 조회는 명시적으로 중단하며 지원 이름의 대소문자 불일치와 빈 이름은 오류 127, NULL 조회는 87을 반환합니다. 생성 바이트와 주소는 모델 정책이며 Windows DLL 버전별 배치, 네이티브 서수와 제공자 간 별칭은 재구성하지 않습니다. `WindowsSystemTests.cpp`는 자체 x64/ARM64 EXE를 네이티브 Windows와 비교하고 초기 스레드 반환을 독립적으로 8회 관측합니다.
 
 `WindowsProcessExceptions`는 같은 CPU와 프로세스 예산으로 `AddVectoredExceptionHandler`, `RemoveVectoredExceptionHandler`, `RaiseException`을 구현합니다. 순서가 있는 처리기는 등록·삭제, 중첩 예외, 모델 API 호출, DLL 로드와 프로세스 종료를 수행할 수 있습니다. x64/ARM64 데이터 접근 위반과 x64 정수 나눗셈 예외는 게스트의 `CONTEXT` 변경을 검증한 뒤 재개하며 범용 레지스터, SIMD 및 지원 FP 상태를 보존합니다. 소프트웨어 예외는 모델 공급자 내부의 실제 반환 명령으로 재개합니다. 보관된 등록은 128개, 중첩은 16프레임으로 제한합니다. 잘못된 처리 결과, 바뀐 예외 포인터, 미지원 필드와 한도 초과는 명시적으로 실패합니다. ARM64 스택 프레임 기반 SEH/언와인딩, 디버거 전달과 실행/가드 페이지 예외는 미지원입니다. `WindowsExceptionTests.cpp`는 자체 EXE/DLL을 네이티브 Windows와 비교하며 ARM64 KVM/WHP 실기기 증거는 아직 없습니다. 소프트웨어 예외 레코드에는 `EXCEPTION_SOFTWARE_ORIGINATE`(`0x80`)가 포함되며 호출자의 계속 불가 플래그와 별도로 처리됩니다. 원본 Windows 실행 파일은 소프트웨어 및 하드웨어 예외의 정확한 플래그 값을 검증합니다.
+
+`os/windows/exception/X64SIMDException`은 보존된 MXCSR와 네이티브 관측의 우선순위를 사용하여 실제 x64 `#XM`의 Windows 상태 및 매개변수를 분류합니다. 사용자 예외 전달은 일관된 오류 메타데이터를 요구하고 예외 레코드에 `{0, MXCSR}`를 포함합니다. 누적 상태 플래그만으로 오류 발생을 판단하지 않습니다. 마스킹된 x64 명령 설명은 이식 가능한 기준입니다. KVM/WHP는 `driver-strict`, `checked-x64-v1`, `checked-user-x64-v1`에 `precise_simd_exceptions`를 추가합니다. 네이티브 시작 검증이 정확한 `#XM`과 두 재시도를 확인한 뒤에만 마스크 해제 MXCSR 쓰기, `LDMXCSR`, Windows `CONTEXT` 복원을 허용합니다. `ExecutionProfiles.def`가 선택을 관리하고 `supportsSIMDExceptions`가 결정된 인스턴스 기능을 제공합니다. checked Unicorn은 계속 마스크를 요구하며 ARM64 및 HVF의 예외 기능은 확장하지 않습니다.
 
 `AddVectoredContinueHandler`와 `RemoveVectoredContinueHandler`는 독립된 순서 목록을 관리하며 예외 처리기와 최대 128개 보존 등록 제한을 공유합니다. 벡터 예외 처리기가 실행 재개를 수락하면 계속 처리기는 같은 수정 가능한 예외 레코드와 `CONTEXT`를 봅니다. 중첩 예외와 DLL 알림을 포함한 콜백이 끝난 뒤 최종 컨텍스트를 검증합니다. 다른 종류의 처리기 API로 핸들을 제거할 수 없습니다. `WindowsContinuationTests.cpp`는 순서, 조기 종료, 등록 변경, 컨텍스트 복구, 중첩 전달, 로더 콜백과 프로세스 종료를 독자 EXE와 네이티브 Windows로 비교합니다. 검증한 Windows x64 벡터 경로에서는 `EXCEPTION_NONCONTINUABLE`이 설정되어도 재개할 수 있지만 스택 프레임 기반 SEH 동작의 근거는 아닙니다. 네이티브 ARM64 실행은 아직 검증하지 않았습니다.
 
@@ -1209,3 +1215,15 @@ libswiftCore의 정확한 강한 가져오기인 `Array._allocateBufferUninitial
 `ByteCellScalarizationPass`는 공통 비보수 LLVM 파이프라인에서 일반 SROA와 바이트 전달 이후 실행됩니다. 이스케이프하지 않는 정적 바이트 배열을 모든 상수 정수 접근 경계에서 나누고 해당 구간을 8/16/32/64비트 셀로 표현합니다. 복합 접근은 전용 메모리 복사본을 사용하여 바이트 순서와 저장 피연산자의 단일 사용을 보존합니다. `freeze`를 삽입하거나 입력의 초기화 또는 정의된 값을 가정하지 않습니다. 이후 SROA가 합류점과 역방향 간선을 가로질러 셀을 승격합니다. 동적·이스케이프 사용, 순서가 있는 접근, 객체 메타데이터, 디버그 기록 및 공통 산술 intrinsic 계약 밖의 호출은 보수적으로 처리합니다. 함수 변경 전에 작업량·셀 수·생성량 한도를 확인하며 네이티브 프레임이나 ABI를 추론하지 않습니다. 객체 파이프라인 schema 14은 두 캐시 키에서 새 최적화 절차를 식별합니다.
 
 정확한 SDK 바인딩은 Foundation의 `StringProtocol.components(separatedBy:)`와 Swift의 `_SetStorage.allocate(capacity:)`도 지원합니다. 네 가지 macOS/Mac Catalyst 프로필에서 컴파일러 출력과 제공 라이브러리의 내보내기 정보가 일치해야 합니다. Components는 구분자 주소, 두 메타데이터 포인터, 두 프로토콜 witness, `swiftself` 수신자를 보존하고 전체 배열 포인터를 반환합니다. Set 할당은 용량과 `swiftself` 저장소 메타데이터를 구분합니다. 이 선언만으로 컨테이너 배치, 메모리 경계 또는 once 초기화의 완전성을 확정하지 않습니다.
+
+Swift once 콜백 선언은 하나의 공통 ABI 계층에서 C `void(void *)` 형식으로 관리합니다. 불리언 정규화에는 현재의 완전한 LowIR 증명과 불변 기계 명령의 일치가 필요하며, ABI 힌트 자체는 허가 근거가 아닙니다. 게시 시 once 관계를 다시 확인하고, 사용하지 않는 컨텍스트, 현재 강하게 바인딩된 `libswiftCore` `swift_once` 베니어를 통한 직접 참조, 검증된 조건 저장소를 요구합니다. 클래스 once 초기화기에서 컴파일러가 분리한 이름 있는 인라인 ASCII String 배열은 기준 주소, 헤더, 페이로드에 같은 저장소를 유지합니다. 0인 once 및 힙 헤더, 제한된 개수, 개수의 두 배인 용량 워드, 전체 페이로드, 초기화기 식별, 재배치 기록과 정확한 경계를 재검증합니다. 문자열 쌍 배열은 별도 레이아웃을 유지합니다. 일반 컨테이너 레이아웃이나 상위 호출자의 완전한 복원을 증명하지는 않습니다.
+
+완전한 정적 배열 주소는 정수 덧셈·뺄셈과 동적 로드에서도 주소 출처를 유지하며, 비트값이 같은 숫자 즉시값은 숫자로 남습니다. 불변 기계 명령 재생은 정규 디코더의 종료 트랩 분류를 따르지만 메모리 효과나 소스 의미 계약을 부여하지 않습니다. 이 디코더 일치는 불리언 증명 계층만 명시적으로 활성화합니다. 프레임 효과와 수신자 분석은 여전히 불투명한 종료를 거부합니다.
+
+불리언 결과 증명은 AArch64 산술 플래그에 쓰이는 명령어 내부 COPY 스냅샷에서 리터럴 바이트의 근거를 유지합니다. 리터럴이 아닌 값으로 덮어쓴 바이트의 근거는 무효화되고 다음 명령어에서 모두 지워집니다. 입력에 차이가 있으면 플래그 결과 전체도 여전히 달라질 수 있는 것으로 취급합니다.
+
+네이티브 Swift 매개변수가 무시해도 되는 것으로 증명된 once 컨텍스트에만 쓰여도 호출자는 전체 기계 ABI를 유지합니다. 소스 투영은 현재의 모든 본문을 검사한 뒤 함수 주소 순서와 무관하게 이 지역 증명을 전파합니다. 피호출자의 매개변수는 인증된 once 호출에서 제거되었고 남은 사용처가 없어야 하며, 호출자는 현재 유효한 직접 호출 바인딩을 유지해야 합니다. 스칼라 지역 변수 읽기를 대체하기 전에 모든 정의와 복사 의존성을 완전히 검사합니다. 정의 누락, 호출, 로드, 내장 연산 출력, 순서가 있는 메모리 또는 예산 소진이 있으면 변경하지 않습니다. 공통 생존 분석은 새로 불필요해진 순수 정의만 제거하고 다른 관찰 가능한 사용은 보존합니다. 현재 생산자 증명 기록과 전체 호출자 본문을 다시 검사합니다. 모든 네이티브 의존성은 폐쇄 그래프에 남으므로 지역 검사를 통과해도 복원되지 않은 하위 의존성이 있는 호출자는 공개할 수 없습니다.
+
+Android API 28의 `pthread_mutex_lock` 경합은 `GuestThreads` 협력 스케줄링을 사용합니다. Bionic은 잠금 바이트, 재귀 횟수와 소유자를 관리하고, 스케줄러는 CPU 문맥과 원래 가져오기 이벤트를 보존합니다. 깨어난 스레드는 상태와 권한을 다시 확인하고 잠금을 획득한 뒤에만 결과를 게시합니다. 재경합 시 같은 이벤트로 다시 대기합니다. PI, 시간제한 잠금과 외부 프로세스 대기는 지원하지 않습니다.
+
+if/else 구조화는 기존 자식 문장 목록을 먼저 순회한 뒤 부모를 변경합니다. 안정된 부모에서는 전체 하위 순회를 반복하지 않습니다. 새로 구성한 분기와 변경된 목록에는 조건 정리 및 분기 레이블 보존으로 생긴 변경을 포함해 제한된 중첩 패스를 계속 적용합니다. 문장 목록과 중첩 분기의 패스 한도, 변경 범위 소유권 검사, ABI 제한과 현재 소스 공개 검사는 기존 규칙을 유지합니다. 블록, 루프, switch 및 예외 본문에 같은 순회 정책을 사용합니다.

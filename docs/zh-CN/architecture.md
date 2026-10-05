@@ -544,6 +544,8 @@ Windows 模型还管理独立的非分页池 MDL；描述符释放不会释放�
 
 `KernelGuestException` 是携带 32 位状态码的类型化 API 结果，与模型错误及后端故障独立。`DriverImage` 保留加载器已有的首选基址异常元数据；`X64SEH` 在该元数据上通过受检地址转换和栈读取，生成纯且有界的 x64 版本 1 C catch-all 转移计划。它跨普通辅助栈帧恢复受支持的非易失 GPR 保存值，选择真实来宾处理器；遇到过滤器／finally、GS／C++ 异常处理例程、链式或不完整记录、序言及 XMM 恢复时明确拒绝。`DriverSession` 仅在正常 API 停止点提交已验证寄存器计划，保持 API 跟踪结果为 null，并在同一执行中继续处理器。它不会清除已锁存的后端故障，也不会展开到其他回调的栈。该边界支持 ExRaiseStatus／ExRaiseAccessViolation／ExRaiseDatatypeMisalignment；用户探测、锁定用户缓冲区及 CPU 故障恢复仍是独立的后续工作。
 
+`X64SEH` 将可选内核 SSE 上下文与虚拟展开游标分别保存，`DriverSession` 区分故障恢复与处理器控制状态。参见[驱动模拟](driver-emulation.md)。
+
 
 ## 异常重写边界
 
@@ -689,6 +691,8 @@ CPU 工厂与能力查询共用 `ExecutionConfiguration`；分配前验证架构
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM、WHP 和 HVF 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
 ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。 程序还包括密钥关闭时的 A/B 返回地址签名和认证，以及非防护页上的四种 BTI 指令。
+
+自检还执行两次 `MRS CTR_EL0`，以及 `DC CVAU`、`DSB ISH`、`IC IVAU` 和 `ISB`，核对缓存几何信息稳定及完整状态。Checked EL0/EL1 接纳原始指令、所有具名基线 DSB 选项及 ISB SY。CTR 来自选定虚拟 CPU，不同传输可以不同。缓存目标必须在当前权限下指向可读普通 RAM，允许非对齐地址和别名；其他目标明确报未支持。维护操作不产生数据读写观察事件。投影保证指令执行的一致性，不模拟私有缓存内容或并行硬件 SMP。`NeverDAArch64CacheTests` 检查完整状态、只读页尾、拒绝项、停止、上下文、预算，以及通过跨页 RW/RX 别名更新 guest 代码；不可用的 KVM/WHP 主机明确跳过。
 
 x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 
@@ -991,7 +995,7 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 `NeverDEmulationArch` 独立负责 ISA、页表及 FP 状态布局，原生与 Unicorn 传输共用该层。x64 上下文保存 x87 控制、状态、TOP、物理标签、操作码、指令／数据指针和八个 80 位寄存器。`FP0`–`FP7` 使用 `RegisterValue`，标量访问拒绝截断；`FPTag` 是物理非空位图。`NeverDX64FPTests` 覆盖全部 TOP、精确运算的宿主 FXSAVE/FXRSTOR 对照及上下文恢复。这不新增 checked x87 指令，也不证明全部舍入语义；缺少原生主机时明确跳过。
 
-checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
+checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 未屏蔽异常、x87 或 AVX。
 
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
@@ -1011,11 +1015,11 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CMPSS`、`CMPSD`、`CMPPS` 和 `CMPPD` 在 KVM、WHP 和 checked Unicorn 上执行八种传统比较条件。共享 `Source` 规则接纳解码后的条件别名，保留控制值仍不支持。标量形式保留高位通道并读取 m32/m64，向量形式要求对齐的 m128。FLAGS 和已有 MXCSR 状态保留，无效及次正规状态按有效通道累积。Capstone 统一负责指令族 ID 和 SSE 条件，取代仅在 lifter 内修正身份的逻辑；Unicorn 在各比较函数内部分类次正规输入。
 
-`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 通过共享 `Source` 规则转换传统 SSE 精度。标量结果保留目标高 64/96 位；打包扩宽读取 m64 并写入两个双精度数，打包缩窄读取对齐的 m128、写入两个单精度数并清零高 64 位。KVM、WHP 和 checked Unicorn 执行原始指令，保留 FLAGS，并按舍入与 FTZ 控制累积已屏蔽异常的 MXCSR 状态。Unicorn 在转换函数中逐个分类有效次正规输入。DAZ、未屏蔽异常和 VEX/EVEX 仍不支持。
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 通过共享 `Source` 规则转换传统 SSE 精度。标量结果保留目标高 64/96 位；打包扩宽读取 m64 并写入两个双精度数，打包缩窄读取对齐的 m128、写入两个单精度数并清零高 64 位。KVM、WHP 和 checked Unicorn 执行原始指令，保留 FLAGS，并按舍入与 FTZ 控制累积已屏蔽异常的 MXCSR 状态。Unicorn 在转换函数中逐个分类有效次正规输入。未屏蔽异常和 VEX/EVEX 仍不支持。
 
-`CVTDQ2PS` 和 `CVTDQ2PD` 通过共享 `Source` 规则转换打包的有符号 32 位整数。单精度读取对齐的 m128 并使用 MXCSR 舍入；双精度读取可未对齐的 m64，结果精确。目标 XMM 全部位被替换，FLAGS 和已有 MXCSR 状态保留，非精确单精度结果累积精度状态。KVM、WHP 和 checked Unicorn 执行原始指令。Unicorn 在选择八字节读取前识别两种打包扩宽转换。DAZ、未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
+`CVTDQ2PS` 和 `CVTDQ2PD` 通过共享 `Source` 规则转换打包的有符号 32 位整数。单精度读取对齐的 m128 并使用 MXCSR 舍入；双精度读取可未对齐的 m64，结果精确。目标 XMM 全部位被替换，FLAGS 和已有 MXCSR 状态保留，非精确单精度结果累积精度状态。KVM、WHP 和 checked Unicorn 执行原始指令。Unicorn 在选择八字节读取前识别两种打包扩宽转换。未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
 
-`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 舍入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截断。共享 `Source` 规则要求对齐的 m128 或 XMM 输入。NaN 或越界通道产生 signed32 indefinite 并设置无效状态；其他有效但非精确通道独立累积精度状态。单精度输入产生四个整数，双精度输入产生两个并清零目标高 64 位。FLAGS 和已有 MXCSR 状态保留；FTZ 不丢弃次正规输入。KVM、WHP 和 checked Unicorn 执行原始指令。DAZ、未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
+`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 舍入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截断。共享 `Source` 规则要求对齐的 m128 或 XMM 输入。NaN 或越界通道产生 signed32 indefinite 并设置无效状态；其他有效但非精确通道独立累积精度状态。单精度输入产生四个整数，双精度输入产生两个并清零目标高 64 位。FLAGS 和已有 MXCSR 状态保留；FTZ 不丢弃次正规输入。KVM、WHP 和 checked Unicorn 执行原始指令。未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
 
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
@@ -1084,6 +1088,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读�
 `WindowsSystemModules` 为两种 ISA 构造有界的 `ntdll.dll`、`kernelbase.dll` 和 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 与 `GetProcAddress` 共用其映射基址；PEB/LDR 和 `MEM_IMAGE` 描述同一批映像。静态导入、按名称查询和客户 DLL 转发使用相同 API 跳板与导出解析器。提供方固定驻留，不执行客户初始化回调，普通客户 DLL 全部卸载后不会阻止入口返回。头部或导出元数据改变会停止查询。未知系统导出名称和非零系统序号查询明确停止；已建模名称的大小写不匹配和空名称返回错误 127，空指针查询返回 87。生成的字节和地址属于模型策略，不复刻特定 Windows DLL 布局、原生序号或跨提供方别名。`WindowsSystemTests.cpp` 对照原始 x64/ARM64 EXE 与原生 Windows，并独立观察八次初始线程返回。
 
 `WindowsProcessExceptions` 在同一 CPU 和进程预算内实现 `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler` 和 `RaiseException`。有序处理器可注册或移除处理器、触发嵌套异常、调用已建模 API、加载 DLL 以及退出进程。x64/ARM64 数据访问异常和 x64 整数除法异常可在校验客户对 `CONTEXT` 的修改后恢复；通用寄存器、SIMD 和受支持的浮点状态会保留。软件异常经模型提供方中的真实返回指令继续执行。模型限制为最多保留 128 个注册项、嵌套 16 层。非法处置值、被修改的异常指针、不支持的上下文字段和超限均明确失败。ARM64 基于栈帧的 SEH／展开、调试器派发及执行／保护页异常仍不支持。`WindowsExceptionTests.cpp` 将原创 EXE／DLL 场景与原生 Windows 对照；原生 ARM64 KVM/WHP 证据仍待补齐。 软件异常记录带有 `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`），与调用者传入的不可继续标志分别处理；原始 Windows 可执行文件精确核对软件异常和硬件异常的标志值。
+
+`os/windows/exception/X64SIMDException` 根据保留的 MXCSR 和原生观察到的优先级，统一负责真实 x64 `#XM` 的 Windows 状态码与参数分类。用户态分发要求故障元数据一致，并在异常记录中包含 `{0, MXCSR}`；仅有粘滞状态位不能证明发生了故障。 关于屏蔽异常的 x64 指令说明描述可移植基线。KVM/WHP 为 `driver-strict`、`checked-x64-v1` 和 `checked-user-x64-v1` 增加 `precise_simd_exceptions`：原生启动探针验证精确 `#XM` 及两种重试后，才允许未屏蔽的 MXCSR 写入、`LDMXCSR` 和 Windows `CONTEXT` 恢复。`ExecutionProfiles.def` 统一负责选择，`supportsSIMDExceptions` 提供已解析的实例能力。checked Unicorn 仍要求屏蔽；本次不扩展 ARM64 或 HVF 的异常能力。
 
 `AddVectoredContinueHandler` 和 `RemoveVectoredContinueHandler` 管理独立的有序列表，与异常处理器共用最多保留 128 个注册项的限制。向量异常处理器接受继续执行后，继续处理器读取同一份可修改的异常记录和 `CONTEXT`；最终上下文校验在这些回调完成后进行，包含嵌套异常与 DLL 通知。两类处理器的句柄不可交叉移除。`WindowsContinuationTests.cpp` 将顺序、提前结束派发、增删、上下文修复、嵌套派发、加载器回调及进程退出的原创 EXE 场景与原生 Windows 对照。已测 Windows x64 向量处理路径允许在设置 `EXCEPTION_NONCONTINUABLE` 时继续执行；这不代表基于栈帧的 SEH 行为。原生 ARM64 执行仍未验证。
 
@@ -1220,3 +1226,17 @@ libswiftCore 的精确强导入 `Array._allocateBufferUninitialized(minimumCapac
 `ByteCellScalarizationPass` 在共享的非保守 LLVM 管线中于常规 SROA 和字节转发之后运行。对于不逃逸的静态字节数组，它按每个常量整数访问边界切分，以 8/16/32/64 位单元表示覆盖区间。复合访问使用私有内存副本，保留字节序及每个存储操作数的一次使用，不插入 `freeze`，也不假定输入已初始化或有定义。随后 SROA 在汇合点和回边上提升这些精确单元。动态或逃逸使用、有序访问、对象元数据、调试记录及共享纯算术 intrinsic 契约之外的调用均保守处理。工作量、单元数和构造上限在修改函数前检查；不推断原生帧或 ABI。对象管线 schema 14 在两种缓存键中标识新优化配方。
 
 精确 SDK 绑定还覆盖 Foundation 的 `StringProtocol.components(separatedBy:)` 和 Swift 的 `_SetStorage.allocate(capacity:)`，要求四个 macOS/Mac Catalyst 配置的编译器输出与提供库导出一致。字符串分割保留分隔符地址、双方元数据指针、双方协议 witness 和 `swiftself` 接收者，返回完整数组指针。Set 分配区分容量与 `swiftself` 存储元数据。这些声明不提供容器布局、内存边界或 once 初始化器完整性证明。
+
+Swift once 回调的声明由同一个 ABI 层维护，类型为 C `void(void *)`。只有当前完整 LowIR 证明与不可变机器指令一致时，回调才能使用布尔值归一化；ABI 提示本身不构成放行依据。发布时重新发现 once 关系，要求上下文未被使用、回调通过当前强绑定的 `libswiftCore` `swift_once` 跳板被直接引用，且谓词存储已验证。类 once 初始化器中具名的编译器外提内联 ASCII String 数组，为基址、对象头和载荷引用保留同一份存储。零值 once／堆对象头、有界计数、两倍容量字、完整载荷、初始化器身份、重定位记录及精确边界都必须重新核验。字符串对数组仍使用独立布局。这不证明一般容器布局，也不代表上层调用者已完整恢复。
+
+完整静态数组地址在整数加减和动态加载中仍保留已证明的地址来源；位值相同的数值立即数仍是数值。不可变机器重放沿用规范解码器对终止陷阱的分类，不据此授予内存效果或源码语义契约。 仅布尔证明层显式启用这种解码匹配；帧效果和接收者分析仍拒绝不透明退出。
+
+布尔结果证明还会追踪 AArch64 算术标志所用的指令内 COPY 常量快照。非字面量覆盖使对应字节的证据失效，新指令清空该证据；输入存在差异时，整个标志结果仍视为可能不同。
+
+原生 Swift 参数仅用于已证明可忽略的 once context 时，调用方仍保留完整的机器 ABI。源码投影在检查所有当前函数体后传播这项局部证明，不再依赖函数地址顺序。被调用方必须具有经认证、已从 once 调用中移除且无其他用途的参数，调用方则必须保留当前有效的直接调用绑定。替换标量局部变量读取前，必须完整检查每条定义及其复制依赖；缺失定义、调用、加载、内建操作输出、有序内存或预算耗尽都会阻止改写。共享活跃性分析仅清理因此变为无用的纯定义，其他可观察用途仍保留。随后再次检查当前生产者凭据和完整调用方函数体。全部原生依赖仍留在闭包图中，因此局部验证通过但仍有未恢复下游的调用方依然不能发布。
+
+Android API 28 的 `pthread_mutex_lock` 竞争复用 `GuestThreads` 的协作调度。Bionic 唯一管理锁字节、递归计数及 owner；调度器保存 CPU 上下文与原始导入事件。唤醒仅允许重试，重新检查对象和权限、真正取得锁后才发布返回值；再次竞争失败仍保留同一事件。PI、超时锁及外部进程等待不在支持范围。
+
+if/else 结构化先遍历已有子语句列表，再改写父列表。父列表稳定时，不再重复遍历全部下游。新组装的分支和发生变化的列表仍执行有界嵌套遍历，谓词清理及保留分支标签引起的变化也会被记录。语句列表与嵌套分支的次数上限、改写归属检查、ABI 限制和当前源码发布检查均沿用原有规则。块、循环、switch 和异常体使用同一遍历策略。
+
+`LinuxServices` 持有每个工作负载的内核状态，`LinuxMemory` 管理映射，`LinuxFiles` 管理文件、游标及描述符生命周期。线程身份按调用传入，Android Bionic 独占 errno 转换。

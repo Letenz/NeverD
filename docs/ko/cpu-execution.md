@@ -64,11 +64,27 @@ checked user x64는 접두사 없는 정확한 `SYSCALL` 인코딩만 가로채�
 
 ## x64 확장과 네이티브 CPU 상태
 
-checked x64는 제한된 legacy SSE/SSE2 이동·논리 연산, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`를 허용합니다. MXCSR는 누적 상태, 반올림, FTZ를 보존하며 DAZ와 마스크되지 않은 예외는 거부합니다. KVM/WHP는 16개 XMM 레지스터 전체와 MXCSR를 동기화합니다. 목록에 없는 인코딩과 operand 조합은 허용되지 않습니다.
+마스킹된 x64 명령 설명은 이식 가능한 기준입니다. KVM/WHP는 `driver-strict`, `checked-x64-v1`, `checked-user-x64-v1`에 `precise_simd_exceptions`를 추가합니다. 네이티브 시작 검증이 정확한 `#XM`과 두 재시도를 확인한 뒤에만 마스크 해제 MXCSR 쓰기, `LDMXCSR`, Windows `CONTEXT` 복원을 허용합니다. `ExecutionProfiles.def`가 선택을 관리하고 `supportsSIMDExceptions`가 결정된 인스턴스 기능을 제공합니다. checked Unicorn은 계속 마스크를 요구하며 ARM64 및 HVF의 예외 기능은 확장하지 않습니다.
 
-checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. DAZ, 마스크되지 않은 예외, x87, AVX는 허용하지 않습니다.
+네이티브 x64 KVM/WHP는 실제 `#XM`을 `X64SIMDException`을 통해 드라이버 C SEH로 전달합니다. 하드웨어 오류의 `CONTEXT`는 XMM0–15와 MXCSR를 보존합니다. 필터, 예외 언와인드 finally 콜백과 선택된 핸들러는 MXCSR `0x1f80`, DF 해제 상태에서 실행됩니다. 음수 필터는 XMM과 최상위 `CONTEXT.MxCsr`를 수정한 후 원래 명령을 재시도할 수 있습니다. 후자에는 게스트 CPU 마스크가 적용되며 `FltSave.MxCsr`는 커널 복원을 제어하지 않습니다. 모델 API 예외는 정수/제어 레코드를 유지하며 x87/AVX 컨텍스트 수정은 계속 거부됩니다.
 
-이식 가능한 소프트웨어 프로필에서 Unicorn은 기존 `MINSS/MINSD/MINPS/MINPD`와 `MAXSS/MAXSD/MAXPS/MAXPD`가 선택한 값에 DAZ를 적용합니다. 선택한 비정규 입력은 부호 있는 0이 되며 NaN 페이로드와 기존 MXCSR 상태는 보존됩니다. `test_x86_sse_minmax_daz`는 레지스터, RAM, 동일 레지스터 형식에서 DAZ 켜기/끄기, 모든 반올림 모드, FTZ 및 누적 상태를 검사합니다. checked KVM/WHP 프로필은 여전히 DAZ를 거부합니다.
+checked x64는 제한된 legacy SSE/SSE2 이동·논리 연산, `MOVLHPS`/`MOVHLPS`, 마스크형 scalar `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`를 허용합니다. MXCSR는 누적 상태, 반올림, FTZ를 보존하며 이식 가능한 실행은 마스크되지 않은 예외를 거부합니다. KVM/WHP는 16개 XMM 레지스터 전체와 MXCSR를 동기화합니다. 목록에 없는 인코딩과 operand 조합은 허용되지 않습니다.
+
+checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `MAX`의 `SS`, `SD`, `PS`, `PD` 형식도 허용합니다. `X64SSEInstructions.def`가 operand 너비, 정렬, 허용 규칙을 관리합니다. `MaskedSSEArithmeticMatchesIndependentHostExecution`은 독립 host CPU oracle로 register/RAM 형식, 네 반올림 모드, FTZ, signed zero, subnormal, NaN을 검증하며, `SSEMemoryObserverStopsBeforeResultAndStatusChanges`는 효과 반영 전 중단을 검증합니다. x87, AVX는 허용하지 않습니다.
+
+이식 가능한 소프트웨어 프로필에서 Unicorn은 기존 `MINSS/MINSD/MINPS/MINPD`와 `MAXSS/MAXSD/MAXPS/MAXPD`가 선택한 값에 DAZ를 적용합니다. 선택한 비정규 입력은 부호 있는 0이 되며 NaN 페이로드와 기존 MXCSR 상태는 보존됩니다. `test_x86_sse_minmax_daz`는 레지스터, RAM, 동일 레지스터 형식에서 DAZ 켜기/끄기, 모든 반올림 모드, FTZ 및 누적 상태를 검사합니다.
+
+KVM/WHP는 비공개 `FXSAVE64` 실행으로 `MXCSR_MASK`를 탐색하고 부호 있는 비정규 입력의 산술로 DAZ 기능을 검증합니다. checked Unicorn은 소프트웨어 마스크를 제공합니다. `supportedControlBits`는 CPU의 불변 마스크를 반환하며 FX/XSAVE, 스냅샷, Windows CONTEXT가 이를 공유합니다. checked `LDMXCSR/STMXCSR`는 정확히 m32의 전체 RAM 권한을 검사하고 오류나 관찰 콜백 취소 시 상태를 보존합니다. 예약 비트 로드는 #GP를 발생시키며 이식 가능한 실행은 마스크되지 않은 SIMD 예외를 거부합니다. `X64MXCSRTests.cpp`는 제어와 재시도를 검사하고 `X64DAZData`는 허용된 SSE 산술 28종을 원본 호스트 명령과 비교하여 DAZ, 반올림, FTZ를 검증합니다. HVF의 DAZ 지원은 확장하지 않습니다.
+
+네이티브 x64 시작 검증은 전송 계층의 콜드 스타트 준비와 모든 탐색 단계에 하나의 `5 s` 예산을 사용합니다. 게스트 실행 예산은 독립적입니다. 초기화 중단은 명령 단계, `stop_requested`, `deadline_reached`를 보고하며 중단 타입과 원래 전송 진단을 유지합니다. 재시도하거나 검증이 끝나지 않은 CPU를 허용하지 않습니다.
+
+`PAUSE`(`F3 90`)는 네이티브 `driver-strict`를 포함하여 KVM/WHP와 checked Unicorn의 공통 x64 머신 경계를 통해 실행됩니다. `X64PauseTests.cpp`는 전체 상태 보존, 실행 전 중지, 컨텍스트 복원, 잘못된 `LOCK` 거부, 스핀 루프의 시간 제한과 재개를 검증합니다. 이 프로세서 힌트는 게스트 스레드를 스케줄링하거나 특정 지연을 보장하지 않습니다.
+
+`PUSHFQ`(`9C`)와 16비트 `PUSHF`(`66 9C`)는 `driver-strict`를 포함한 네이티브 KVM/WHP 및 checked Unicorn에서 실행됩니다. 공유 ISA 계층은 RAM 트랜잭션을 커밋하기 전에 스택 이미지에서 내부 단일 단계 실행용 TF를 제거합니다. 암시적 스택 주소에는 전체 RSP를 사용하며 접두사 순서가 피연산자 너비를 결정합니다. 전체 범위 권한 검사, 관찰자 중지, 오류 재시도는 원자성을 유지합니다. `X64PushFlagsTests.cpp`는 허용된 플래그 조합 256개와 인코딩 9개, 페이지 경계를 넘는 별칭, 사용자 권한, 취소 및 컨텍스트 복원을 검사합니다.
+
+`POPFQ`(`9D`)와 16비트 `POPF`(`66 9D`)는 공유 x64 ISA 계층에서 플래그를 복원하며 KVM, WHP, checked Unicorn 및 `driver-strict`에 적용됩니다. 프로파일의 IOPL은 0으로 고정되므로 CPL0은 IF를 바꿀 수 있고 CPL3은 IF와 IOPL을 유지합니다. 예약 비트와 VM/VIF/VIP는 무시하며 RF는 지웁니다. 게스트 TF, NT, AC, ID 또는 CPL0 IOPL의 유효한 변경은 아직 지원하지 않으며 상태 공개 전에 명시적으로 실패합니다. 전체 스택을 읽은 뒤 FLAGS/RSP/RIP를 원자적으로 갱신하고, 전체 RSP와 유효한 접두사 순서로 피연산자를 결정합니다. 스택은 읽기 전용이거나 실행 메모리의 별칭일 수 있습니다. 공유 계층에서 완료하므로 전송 계층의 내부 TF가 지워지지 않습니다. `X64PopFlagsTests.cpp`는 독립적인 네이티브 CPL3 명령 비교와 모든 입력 비트, 오류, 관찰자, 후속 네이티브 실행을 검사합니다.
+
+checked x64는 `CLC/STC/CMC`와 `LAHF/SAHF`를 허용합니다. 캐리 명령은 전송 계층에서 실행하고 AH 전송은 KVM, WHP, checked Unicorn 및 네이티브 `driver-strict`에서 하나의 ISA 구현을 공유합니다. LAHF는 다섯 상태 플래그와 고정 비트를 AH에 쓰며 SAHF는 CF/PF/AF/ZF/SF만 변경합니다. OF/IF/DF와 다른 레지스터는 유지됩니다. 모든 REX 값을 포함해 무시되는 접두사도 암시적 AH를 사용합니다. `X64StatusFlagsTests.cpp`는 원본 호스트 명령, 전체 상태, 취소와 재개를 검사합니다. 고정 버전 Unicorn 변환기도 이식 가능한 프로필에서 REX가 붙은 암시적 AH를 유지하고, 다섯 명령의 LOCK 형식을 상태 변경 전에 거부합니다.
 
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
@@ -80,7 +96,7 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `MOVLPS`, `MOVHPS`, `MOVLPD`, `MOVHPD`는 정렬 요구 없이 RAM의 정확히 8바이트를 전송합니다. `X64VectorInstructions.def`는 저장할 절반을 선언하고 `X64VectorOperands.def`는 XMM/m64 쌍을 요구합니다. 로드는 나머지 64비트를 보존하며 상위 절반 저장 관찰자는 상위 데이터를 받습니다. KVM, WHP, checked Unicorn은 전체 범위 권한 검사와 RAM 롤백을 공유합니다. 레지스터 전용 `MOVHLPS`/`MOVLHPS`는 고유 의미를 유지합니다.
 
-`CVTSI2SS`와 `CVTSI2SD`는 MXCSR 반올림 규칙으로 부호 있는 32/64비트 정수를 변환하며 정밀도 상태를 유지합니다. 공유 `IntegerSource` 규칙은 XMM 목적지와 r32/r64 또는 m32/m64 소스만 허용합니다. 기존 형식은 목적지 상위 96/64비트를 보존하고 메모리 검사에는 정수 너비를 사용합니다. KVM, WHP, checked Unicorn은 원래 명령을 실행합니다. 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
+`CVTSI2SS`와 `CVTSI2SD`는 MXCSR 반올림 규칙으로 부호 있는 32/64비트 정수를 변환하며 정밀도 상태를 유지합니다. 공유 `IntegerSource` 규칙은 XMM 목적지와 r32/r64 또는 m32/m64 소스만 허용합니다. 기존 형식은 목적지 상위 96/64비트를 보존하고 메모리 검사에는 정수 너비를 사용합니다. KVM, WHP, checked Unicorn은 원래 명령을 실행합니다. MMX, VEX/EVEX는 제외됩니다.
 
 `CVTSS2SI`와 `CVTSD2SI`는 공유 `IntegerResult` 규칙에서 MXCSR 반올림에 따라 부호 있는 32/64비트 정수를 생성하고, `CVTTSS2SI`와 `CVTTSD2SI`는 항상 0 방향으로 버립니다. 예외가 마스크된 NaN·범위 초과 변환은 정수 부정값을 반환하고 무효 상태를 설정하며, 유효하지만 부정확한 결과는 정밀도 상태를 설정합니다. 기존 누적 상태, FLAGS, XMM 소스는 보존됩니다. r32 결과는 범용 레지스터 상위 절반을 지웁니다. RAM 읽기는 목적지 너비와 관계없이 부동소수점 소스 너비를 사용하며 FTZ는 비정규 입력을 버리지 않습니다. KVM, WHP, checked Unicorn에 공통으로 적용됩니다.
 
@@ -88,11 +104,11 @@ checked x64는 마스크된 legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN`, `M
 
 `CMPSS`, `CMPSD`, `CMPPS`, `CMPPD`는 KVM, WHP, checked Unicorn에서 기존 8개 비교 조건을 실행합니다. 공유 `Source` 규칙은 디코딩된 별칭을 허용하고 예약 제어값은 거부합니다. 스칼라 형식은 상위 레인을 보존하고 m32/m64를 읽으며 벡터 형식은 정렬된 m128을 요구합니다. FLAGS와 기존 MXCSR 상태를 보존하고 활성 레인별 무효·비정규 상태를 누적합니다. Capstone이 명령 계열 ID와 SSE 조건을 소유하여 lifter 내부의 ID 보정을 대체합니다. Unicorn은 각 비교 함수에서 비정규 입력을 분류합니다.
 
-`CVTSS2SD`, `CVTSD2SS`, `CVTPS2PD`, `CVTPD2PS`는 공유 `Source` 규칙으로 기존 SSE 정밀도를 변환합니다. 스칼라 결과는 대상 상위 64/96비트를 보존합니다. 패킹 확장은 m64를 읽어 배정밀도 두 개를 쓰고, 축소는 정렬된 m128을 읽어 단정밀도 두 개를 쓰며 상위 64비트를 지웁니다. KVM, WHP, checked Unicorn의 원본 명령 실행은 FLAGS를 보존하고 반올림 및 FTZ 제어에 따라 마스크된 MXCSR 상태를 누적합니다. Unicorn은 변환 함수에서 활성 비정규 입력을 각각 분류합니다. DAZ, 마스크되지 않은 예외, VEX/EVEX는 제외됩니다.
+`CVTSS2SD`, `CVTSD2SS`, `CVTPS2PD`, `CVTPD2PS`는 공유 `Source` 규칙으로 기존 SSE 정밀도를 변환합니다. 스칼라 결과는 대상 상위 64/96비트를 보존합니다. 패킹 확장은 m64를 읽어 배정밀도 두 개를 쓰고, 축소는 정렬된 m128을 읽어 단정밀도 두 개를 쓰며 상위 64비트를 지웁니다. KVM, WHP, checked Unicorn의 원본 명령 실행은 FLAGS를 보존하고 반올림 및 FTZ 제어에 따라 마스크된 MXCSR 상태를 누적합니다. Unicorn은 변환 함수에서 활성 비정규 입력을 각각 분류합니다. VEX/EVEX는 제외됩니다.
 
-`CVTDQ2PS`와 `CVTDQ2PD`는 공유 `Source` 규칙으로 부호 있는 32비트 정수를 패킹 변환합니다. 단정밀도는 정렬된 m128과 MXCSR 반올림을 사용하고, 배정밀도는 비정렬도 허용하는 m64를 읽어 정확히 변환합니다. 대상 XMM 전체를 교체하고 FLAGS와 기존 MXCSR 상태를 보존하며 부정확한 단정밀도 결과는 정밀도 상태를 누적합니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. Unicorn은 두 패킹 확장 함수를 식별해 8바이트 읽기를 선택합니다. DAZ, 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
+`CVTDQ2PS`와 `CVTDQ2PD`는 공유 `Source` 규칙으로 부호 있는 32비트 정수를 패킹 변환합니다. 단정밀도는 정렬된 m128과 MXCSR 반올림을 사용하고, 배정밀도는 비정렬도 허용하는 m64를 읽어 정확히 변환합니다. 대상 XMM 전체를 교체하고 FLAGS와 기존 MXCSR 상태를 보존하며 부정확한 단정밀도 결과는 정밀도 상태를 누적합니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. Unicorn은 두 패킹 확장 함수를 식별해 8바이트 읽기를 선택합니다. MMX, VEX/EVEX는 제외됩니다.
 
-`CVTPS2DQ`와 `CVTPD2DQ`는 MXCSR 반올림을 사용하며 `CVTTPS2DQ`와 `CVTTPD2DQ`는 0 방향으로 절삭합니다. 공유 `Source` 규칙은 정렬된 m128 또는 XMM 입력을 요구합니다. NaN이나 범위 밖 레인은 signed32 indefinite와 무효 상태를 생성하고 다른 유효한 비정확 레인은 독립적으로 정밀도 상태를 누적합니다. 단정밀도 입력은 정수 네 개를, 배정밀도 입력은 두 개를 생성하고 대상 상위 64비트를 지웁니다. FLAGS와 기존 MXCSR 상태를 보존하며 FTZ는 비정규 입력을 버리지 않습니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. DAZ, 마스크되지 않은 예외, MMX, VEX/EVEX는 제외됩니다.
+`CVTPS2DQ`와 `CVTPD2DQ`는 MXCSR 반올림을 사용하며 `CVTTPS2DQ`와 `CVTTPD2DQ`는 0 방향으로 절삭합니다. 공유 `Source` 규칙은 정렬된 m128 또는 XMM 입력을 요구합니다. NaN이나 범위 밖 레인은 signed32 indefinite와 무효 상태를 생성하고 다른 유효한 비정확 레인은 독립적으로 정밀도 상태를 누적합니다. 단정밀도 입력은 정수 네 개를, 배정밀도 입력은 두 개를 생성하고 대상 상위 64비트를 지웁니다. FLAGS와 기존 MXCSR 상태를 보존하며 FTZ는 비정규 입력을 버리지 않습니다. KVM, WHP, checked Unicorn은 원본 명령을 실행합니다. MMX, VEX/EVEX는 제외됩니다.
 
 `X64AlignmentTests.cpp`는 허용된 aligned SSE 명령의 비정렬 피연산자가 데이터 관찰자, 권한 검사 또는 장치 콜백 전에 복구 가능하거나 종료되는 `#GP(0)`를 보고하는지 검증합니다. 오류는 공개 x64 레지스터 전체, PC와 RAM을 보존합니다. 주소 폭에 따른 순환 후 FS/GS 기준 주소를 더하고, 주소를 고치면 원래 명령을 재시도합니다. 직접 KVM/WHP 머신 테스트가 하드웨어 경계를 독립적으로 검증합니다. Windows ring3는 분류된 `operand_alignment` 오류를 전달하며, 다른 원인의 `#GP`는 아직 지원하지 않습니다.
 
@@ -119,6 +135,8 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 Checked ARM64는 하나의 완전한 상태 커밋 경계를 사용합니다. `Registers.def`가 39개 스칼라 필드와 32개 128비트 벡터를 정의하며 `captureAArch64State`는 모든 읽기, 선언된 폭과 NZCV 정규화를 완료한 뒤 한 번에 게시합니다. Unicorn/KVM/WHP/HVF는 TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR, FPSR를 포함한 같은 상태를 전송합니다. 네이티브 어댑터는 CPACR_EL1로 FP/SIMD를 활성화합니다. 읽기 실패나 진입 취소 시 호출자의 전체 상태가 보존됩니다.
 
 ARM64 KVM/WHP/HVF 초기화는 전용 `AArch64MachineProbe.def` 프로그램을 실행합니다. NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인의 SIMD 덧셈입니다. 각 단계에서 39개 스칼라 필드와 32개 벡터를 모두 비교하여 TLS, NZCV, 결과 상위 비트 초기화, FPCR/FPSR 보존 및 누적 상태를 확인합니다. 감독자 전용 모니터 메모리와 하나의 전체 마감 시간을 사용합니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다. 이 프로그램에는 키가 비활성화된 A/B 반환 주소 서명 및 인증과 보호되지 않은 페이지의 네 가지 BTI 명령도 포함됩니다.
+
+프로브는 `MRS CTR_EL0`를 두 번 실행하고 `DC CVAU`, `DSB ISH`, `IC IVAU`, `ISB`를 실행하여 캐시 구성의 안정성과 전체 상태를 확인합니다. Checked EL0/EL1은 원래 명령어, 이름이 있는 기본 DSB 옵션, ISB SY를 허용합니다. CTR은 선택한 가상 CPU에서 읽으며 전송 방식에 따라 다를 수 있습니다. 캐시 대상은 현재 권한으로 읽을 수 있는 일반 RAM이어야 하며 비정렬 주소와 별칭도 허용합니다. 다른 대상은 미지원으로 거부하고 캐시 유지 작업은 데이터 읽기/쓰기 관찰 이벤트를 만들지 않습니다. 투영은 명령 실행의 일관성을 유지하지만 개별 캐시 내용이나 병렬 하드웨어 SMP를 모델링하지 않습니다. `NeverDAArch64CacheTests`는 전체 상태, 읽기 전용 페이지 끝, 거부, 중지, 컨텍스트, 예산 및 페이지를 넘는 RW/RX 별칭을 통한 guest 코드 갱신을 검증합니다. 사용할 수 없는 KVM/WHP 호스트는 명시적으로 건너뜁니다.
 
 x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `X64MachineProbe.def`를 실행합니다. 하나의 기한 안에 NOP, 양의 무한대 방향으로 반올림하는 FP32 덧셈, 두 레인 SIMD 덧셈, FS/GS 로드와 CS/SS/CR8 읽기를 수행하며 각 단계에서 전체 스칼라, XMM, 물리 x87 및 제어 상태를 비교합니다. x64와 ARM64 검사는 물리 메모리의 독점 실행 임대를 요구합니다. `MemoryProjection`은 캐시 식별 정보(ISA, 주소 공간, 매핑 세대, 권한, 모니터 구성)와 ISA별 확정된 페이지 테이블 루트 이력을 소유합니다. 비공개 바이트를 다시 쓰기 전에 캐시를 무효화하므로 실패한 재구축의 부분 테이블이나 호출자의 오래된 루트를 재사용할 수 없습니다. 이 검사는 제한된 초기화만 검증합니다. Linux ARM64 KVM과 Windows ARM64 WHP의 워크로드 검증은 아직 남아 있습니다. macOS 네이티브 결과는 [HVF 가이드](macos-hvf.md)에 기록되어 있습니다.
 

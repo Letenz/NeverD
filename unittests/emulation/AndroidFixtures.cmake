@@ -109,22 +109,29 @@ foreach(_optimization O0 O2)
   endforeach()
 endforeach()
 foreach(_optimization O0 O2)
-  set(_time_object "${_android_fixture_dir}/time-${_optimization}.o")
-  add_custom_command(OUTPUT "${_time_object}"
-    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
-      -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
-      -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
-      -fno-asynchronous-unwind-tables "-${_optimization}" -c
-      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_time.c" -o "${_time_object}"
-    DEPENDS fixtures/android_time.c VERBATIM)
-  foreach(_packing none android relr)
-    set(_time_file "${_android_fixture_dir}/time-${_optimization}-${_packing}.so")
-    add_custom_command(OUTPUT "${_time_file}"
-      COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
-        --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
-        "${_time_object}" -o "${_time_file}"
-      DEPENDS "${_time_object}" VERBATIM)
-    list(APPEND _android_outputs "${_time_file}")
+  foreach(_file_kind time files)
+    if(_file_kind STREQUAL "time")
+      set(_file_source android_time.c)
+    else()
+      set(_file_source linux_files.c)
+    endif()
+    set(_service_object "${_android_fixture_dir}/${_file_kind}-${_optimization}.o")
+    add_custom_command(OUTPUT "${_service_object}"
+      COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
+        -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
+        -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+        -fno-asynchronous-unwind-tables "-${_optimization}" -c
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/${_file_source}" -o "${_service_object}"
+      DEPENDS "fixtures/${_file_source}" VERBATIM)
+    foreach(_packing none android relr)
+      set(_service_file "${_android_fixture_dir}/${_file_kind}-${_optimization}-${_packing}.so")
+      add_custom_command(OUTPUT "${_service_file}"
+        COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
+          --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
+          "${_service_object}" -o "${_service_file}"
+        DEPENDS "${_service_object}" VERBATIM)
+      list(APPEND _android_outputs "${_service_file}")
+    endforeach()
   endforeach()
 endforeach()
 foreach(_optimization O0 O2)

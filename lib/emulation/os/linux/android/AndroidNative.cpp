@@ -169,12 +169,12 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   if (!Session)
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
-  linux_model::LinuxMemory Memory(**Space, Layout, Linked->InitialBreak,
-                                  Options);
+  linux_model::LinuxServices Kernel(CPU, Layout, Linked->InitialBreak, Options,
+                                    Result);
   GuestThreads Threads(CPU, *Calls, Options, Result);
   if (auto E = Threads.initialize(StackBase))
     return std::move(E);
-  Bionic LibC(CPU, Memory, Layout, Options, Result, *Resources, *Linked,
+  Bionic LibC(CPU, Kernel, Layout, Options, Result, *Resources, *Linked,
               &Threads);
   size_t NextConstructor = 0;
   bool MainCall = false;
@@ -233,9 +233,11 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   };
   while (true) {
     if (Threads.enabled() && (NeedSchedule || !QuantumRemaining)) {
-      auto Ready = Threads.schedule();
+      auto Ready = Threads.schedule(LibC);
       if (!Ready) {
         RuntimeFailure(Ready.takeError());
+        if (LibC.timedOut())
+          Result.Stop = ProcessStopReason::Timeout;
         break;
       }
       if (!*Ready)
@@ -474,8 +476,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       if (Threads.enabled())
         Event->ThreadID = Threads.id();
       Result.Services.push_back(*Event);
-      auto Value = linux_model::handleService(
-          CPU, Memory, *Event, Layout, Options, Result, Threads.kernel());
+      auto Value = Kernel.handle(*Event, Threads.kernel());
       if (!Value) {
         RuntimeFailure(Value.takeError());
         break;

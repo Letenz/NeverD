@@ -28,7 +28,21 @@ static_assert(probe::FloatingDestination < XmmCount &&
               probe::VectorDestination < XmmCount &&
               probe::VectorSource < XmmCount);
 
-llvm::Error stateMismatch(const probe::Instruction &Instruction,
+llvm::Error annotateInterruption(llvm::Error Error, llvm::StringRef Step) {
+  return llvm::handleErrors(
+      std::move(Error), [&](const MachineInterruptedError &Interrupted) {
+        std::string Detail;
+        llvm::raw_string_ostream OS(Detail);
+        Interrupted.log(OS);
+        return llvm::make_error<MachineInterruptedError>(
+            llvm::formatv(probe::Interrupted, Step, Interrupted.stopRequested(),
+                          Interrupted.deadlineReached(), OS.str())
+                .str(),
+            Interrupted.stopRequested(), Interrupted.deadlineReached());
+      });
+}
+
+llvm::Error stateMismatch(llvm::StringRef Instruction,
                           const X64MachineState &Expected,
                           const X64MachineState &Observed) {
   std::string Details;
@@ -60,15 +74,15 @@ llvm::Error stateMismatch(const probe::Instruction &Instruction,
   };
   Lanes(probe::XmmName, Expected.Xmm, Observed.Xmm);
   Lanes(probe::FPName, Expected.FP.Registers, Observed.FP.Registers);
-  return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 llvm::formatv(probe::StateMismatch,
-                                               probe::State, Instruction.Name,
-                                               Details)
-                                     .str());
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      llvm::formatv(probe::StateMismatch, probe::State, Instruction, Details)
+          .str());
 }
 } // namespace
 
-llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory) {
+llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory,
+                             uint32_t *MXCSRMask, bool SIMDExceptions) {
   if (auto E = Memory.beginRun())
     return E;
   auto Release = llvm::scope_exit([&] { Memory.endRun(); });
@@ -122,9 +136,18 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory) {
   const MachineRunControl Control{
       std::chrono::steady_clock::now() +
       std::chrono::microseconds(x64::probe::TimeoutMicroseconds)};
+  auto CheckDeadline = [&](llvm::StringRef Step) -> llvm::Error {
+    if (!Control.interrupted())
+      return llvm::Error::success();
+    return annotateInterruption(diagnostic::interrupted(probe::State, Control),
+                                Step);
+  };
+  auto Step = [&](llvm::StringRef Name) {
+    return annotateInterruption(Machine.step(State, *Root, Control), Name);
+  };
   for (const auto &Instruction : x64::probe::Program) {
-    if (Control.interrupted())
-      return diagnostic::interrupted(x64::probe::State, Control);
+    if (auto E = CheckDeadline(Instruction.Name))
+      return E;
     auto Expected = State;
     Expected.reg(X64Register::PC) += Instruction.Code.size();
     switch (Instruction.Kind) {
@@ -162,13 +185,114 @@ llvm::Error verifyX64Machine(X64Machine &Machine, MemoryProjection &Memory) {
       Expected.reg(X64Register::R11) = x64::probe::CR8;
       break;
     }
-    if (auto E = Machine.step(State, *Root, Control))
+    if (auto E = Step(Instruction.Name))
       return E;
     if (State != Expected)
-      return stateMismatch(Instruction, Expected, State);
-    if (Control.interrupted())
-      return diagnostic::interrupted(x64::probe::State, Control);
+      return stateMismatch(Instruction.Name, Expected, State);
+    if (auto E = CheckDeadline(Instruction.Name))
+      return E;
   }
+  if (SIMDExceptions) {
+    auto *Code = Memory.data() + gateway::CodeGPA + probe::CodeOffset;
+    std::memcpy(Code, probe::FloatingAdd, sizeof(probe::FloatingAdd));
+    State.reg(X64Register::PC) = Base + PageSize + probe::CodeOffset;
+    State.MXCSR = probe::UnmaskedMXCSR;
+    State.Xmm[probe::FloatingDestination][0] =
+        (State.Xmm[probe::FloatingDestination][0] & ~probe::FloatMask) |
+        probe::FloatOne;
+    State.Xmm[probe::FloatingSource][0] =
+        (State.Xmm[probe::FloatingSource][0] & ~probe::FloatMask) |
+        probe::FloatHalfULP;
+    auto Expected = State;
+    bool Trapped = false;
+    if (auto E = CheckDeadline(probe::SIMDName))
+      return E;
+    auto E = Step(probe::SIMDName);
+    if (auto Remaining = llvm::handleErrors(
+            std::move(E), [&](const X64ExceptionError &Fault) {
+              Trapped =
+                  Fault.exception().Vector == unsigned(ExceptionVector::SIMD) &&
+                  !Fault.exception().ErrorCode &&
+                  !Fault.exception().FaultAddress;
+            }))
+      return Remaining;
+    if (!Trapped)
+      return diagnostic::error(probe::SIMDFault);
+    if (State != Expected)
+      return stateMismatch(probe::SIMDName, Expected, State);
+    // The masked tie rounds to the unchanged 1.0 destination. The old sticky
+    // status must also survive an exact retry with precision still unmasked.
+    for (bool Repair : {false, true}) {
+      State = Expected;
+      if (Repair)
+        State.Xmm[probe::FloatingSource][0] &= ~probe::FloatMask;
+      else
+        State.MXCSR |= InitialMXCSR;
+      auto Retried = State;
+      Retried.reg(X64Register::PC) += sizeof(probe::FloatingAdd);
+      if (auto E = CheckDeadline(probe::SIMDName))
+        return E;
+      if (auto E = Step(probe::SIMDName))
+        return E;
+      if (State != Retried)
+        return stateMismatch(probe::SIMDName, Retried, State);
+    }
+    if (auto E = CheckDeadline(probe::SIMDName))
+      return E;
+  }
+  if (!MXCSRMask)
+    return llvm::Error::success();
+  static_assert(probe::FXOffset % probe::StackAlignment == 0);
+  static_assert(probe::FXOffset + fp::LegacyBytes <= PageSize);
+  auto *Saved = Memory.data() + gateway::DataGPA + probe::FXOffset;
+  std::fill_n(Saved, fp::LegacyBytes, 0);
+  State.reg(X64Register::R11) = Base + probe::FXOffset;
+  auto Run = [&](llvm::StringRef Name,
+                 llvm::ArrayRef<uint8_t> Bytes) -> llvm::Error {
+    if (auto E = CheckDeadline(Name))
+      return E;
+    auto *Code = Memory.data() + gateway::CodeGPA + probe::CodeOffset;
+    std::memcpy(Code, Bytes.data(), Bytes.size());
+    State.reg(X64Register::PC) = Base + PageSize + probe::CodeOffset;
+    auto Expected = State;
+    Expected.reg(X64Register::PC) += Bytes.size();
+    if (auto E = Step(Name))
+      return E;
+    if (State != Expected)
+      return stateMismatch(Name, Expected, State);
+    if (auto E = CheckDeadline(Name))
+      return E;
+    return llvm::Error::success();
+  };
+  constexpr uint8_t Save[] = {
+#define NEVERD_X64_PROBE_FXSAVE(...) __VA_ARGS__
+#include "X64MachineProbe.def"
+#undef NEVERD_X64_PROBE_FXSAVE
+  };
+  if (auto E = Run(probe::SaveName, Save))
+    return E;
+  const uint32_t Raw =
+      llvm::support::endian::read32le(Saved + fp::MXCSRMaskOffset);
+  const uint32_t Mask =
+      Raw ? Raw & fp::ArchitecturalMXCSRMask : fp::BaselineMXCSRMask;
+  if ((Mask & fp::BaselineMXCSRMask) != fp::BaselineMXCSRMask)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        llvm::formatv(probe::MXCSRMaskFailure, Raw).str());
+  if (Mask & fp::DenormalsAreZero) {
+    State.MXCSR = probe::DAZMXCSR;
+    State.Xmm[probe::FloatingDestination][0] =
+        (State.Xmm[probe::FloatingDestination][0] & ~probe::FloatMask) |
+        probe::NegativeZero;
+    State.Xmm[probe::FloatingSource][0] =
+        (State.Xmm[probe::FloatingSource][0] & ~probe::FloatMask) |
+        probe::NegativeSubnormal;
+    // -0 + DAZ(-subnormal) = -0, with no new denormal/precision status.
+    // The source, all other lanes and every control field must survive.
+    if (auto E = Run(probe::DAZName, probe::FloatingAdd))
+      return E;
+  }
+  *MXCSRMask = Mask;
   return llvm::Error::success();
 }
 } // namespace neverd::emulation

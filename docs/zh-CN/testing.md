@@ -255,7 +255,7 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 独立的[进程测试套件](process-emulation.md#验证)编译真实 x64/AArch64 ELF fixture。`NeverDLinuxProcessTests` 检查启动、program-header 策略、服务续接、二进制输出、来宾故障和资源停止。`NeverDProcessPublicTests` 通过 C API/CLI 验证且不修改分析映像。`NeverDExecutionSessionTests` 检查两个 CPU 共享内存／预算以及请求／故障恰好消费一次。`NeverDX64MemoryUpdateTests` 检查内存算术、SETcc、BT、XMM/MXCSR、写入观察器、REP 边界和预备设备读取。`DriverBackendParityTests.cpp` 运行原始与重定位 WDK fixture，并将完整可观察报告与 Unicorn 比较；缺失镜像／后端会明确跳过。
 
-checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
+checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 未屏蔽异常、x87 或 AVX。
 
 `X64PackedIntegerTests.cpp` 使用 `X64PackedIntegerCases.def` 中的原始编码和 180 组固定向量结果，并与原生 x64 编译器 intrinsic 独立核对。寄存器及页尾别名 RAM 用例保留其他 XMM、整数哨兵值、FLAGS、MXCSR 和源字节。观察器停止／失败与可恢复读取故障保留状态，修复后可重试一次。未对齐触发 `#GP(0)`；MMX、LOCK 和 MMIO 仍在回调前拒绝。原生 CI 强制执行 WHP 的两个特权级。
 
@@ -281,7 +281,15 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `X64PackedFloatIntegerTests.cpp` 结合独立的 `X64PackedFloatIntegerCases.def` 编码、共享 `X64FloatIntegerCases.def` 输入、`APFloat`/`APSInt` 及原生指令。43 个原始输入的全部组合覆盖 signed32 边界、相邻舍入中点、NaN、无穷和次正规数；独立通道矩阵分别变化精确、非精确、无效及次正规输入。测试涵盖全部舍入/FTZ/粘滞设置、XMM 别名、完整 CPU/RAM、对齐页尾、对齐优先级与观察者/故障重试。两个权限层级的 KVM/WHP 均为必测。
 
+`DAZBackends` 为比较、谓词、标量整数/浮点、打包整数/浮点及精度转换矩阵增加开启 DAZ 的覆盖。`X64DAZTestSupport.h` 使用独立的 `APFloat` 输入归一化，并在运行原生对照指令前检查宿主的 `MXCSR_MASK`。测试覆盖带符号零、次正规数、NaN、混合通道、全部舍入模式、FTZ 和粘滞状态，同时检查源字节、无关寄存器、FLAGS 及完整 RAM 保持不变。寄存器、别名和页边界操作数保留原有的访问观察检查。KVM/WHP 要求两个特权级的全部 DAZ 用例及 17 个原始宿主指令对照用例均通过；可移植运行中不支持的宿主会明确跳过。原有关闭 DAZ 的用例和超时限制保持不变。
+
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
+
+`X64SIMDExceptionTests.cpp` 绕过 checked 准入层，在两个特权级验证 KVM/WHP 的原生 `#XM` 传递。`X64SIMDExceptionCases.def` 中八个原始用例覆盖六类异常，包括精确的次正规结果和无界指数下精度精确的溢出。寄存器及 RAM 形式发生异常时，除规定的 MXCSR 状态外，完整 GPR、XMM、x87、FLAGS、FS/GS 和来宾内存均保持不变。屏蔽异常后重试原指令；保留粘滞状态并修复操作数，验证旧标志不会再次触发异常。 公共 checked 和驱动契约也执行这些原始故障及重试用例。`WindowsSIMDExecutionTests.cpp` 执行真实原生异常、来宾 VEH/VCH 指令，以及跳过、屏蔽后重试或修复操作数后继续，分别检查处理器入口控制状态和保存的上下文。启动反例会拒绝缺失异常、错误向量及目标寄存器遭修改的结果，不发布能力。
+
+`check_windows_simd.py` 根据 `WindowsSIMDCases.def` 和标量用例清单构建独立的原创 Windows x64 程序。6,144 组观察覆盖寄存器/RAM 操作数、全部异常屏蔽组合、清零或全部置位的粘滞状态，以及跳过、屏蔽后重试、修复操作数且保持屏蔽位不变后重试三条路径。汇编入口分别记录 VEH/VCH 的实时 MXCSR、x87 控制状态和保存的 `CONTEXT`。测试在恢复宿主状态前检查精确故障 PC、状态保持、修复后的上下文和重试结果；CI 保留原始记录和源码哈希。`--build-only` 仅证明编译成功。这些观察不启用 checked 模式下未屏蔽的 SIMD，也不代表 ARM64 原生执行。
+
+`WindowsSIMDStatusCases.def` 固化了原生 Windows 上观察到的全部 63 种非空有效状态组合。`WindowsSIMDMappingTests.cpp` 检查精确代码与参数、拒绝不一致的故障和无效控制值，并通过注入故障边界检查异常记录、CONTEXT 中的两份控制状态及屏蔽异常后的继续执行。Windows CI 中的原创程序独立验证这些固定结果。注入测试不证明 Unicorn 能产生该异常，也不启用 checked 模式下未屏蔽的 SIMD。
 
 ```bash
 cmake --build build-cpu --target NeverDLinuxProcessTests NeverDExecutionSessionTests NeverDX64MemoryUpdateTests NeverDThreadPointerTests --parallel 4
@@ -1027,6 +1035,8 @@ Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 3
 
 ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。 程序还包括密钥关闭时的 A/B 返回地址签名和认证，以及非防护页上的四种 BTI 指令。
 
+自检还执行两次 `MRS CTR_EL0`，以及 `DC CVAU`、`DSB ISH`、`IC IVAU` 和 `ISB`，核对缓存几何信息稳定及完整状态。Checked EL0/EL1 接纳原始指令、所有具名基线 DSB 选项及 ISB SY。CTR 来自选定虚拟 CPU，不同传输可以不同。缓存目标必须在当前权限下指向可读普通 RAM，允许非对齐地址和别名；其他目标明确报未支持。维护操作不产生数据读写观察事件。投影保证指令执行的一致性，不模拟私有缓存内容或并行硬件 SMP。`NeverDAArch64CacheTests` 检查完整状态、只读页尾、拒绝项、停止、上下文、预算，以及通过跨页 RW/RX 别名更新 guest 代码；不可用的 KVM/WHP 主机明确跳过。
+
 x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 
 共享 XSAVE 解码器区分标准格式与压缩格式的 SSE 初始状态。XSTATE_BV[1] 清零时，两种格式都初始化 XMM 寄存器；标准格式仍读取并校验 MXCSR，压缩格式才初始化 MXCSR。`X64XsaveCases.def` 提供独立的数据布局和原创主机 XRSTOR 程序。`X64XsaveTests.cpp` 检查拒绝状态的原子性，并以真实主机执行对照两种格式，同时保留调用方 FP/SSE 状态。主机架构或所需指令功能不可用时，对照测试明确跳过。
@@ -1077,7 +1087,15 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 614 项 CPU 检查及 4 项共享 SEH 续接回归，共有 842 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `614 CPU + 224 WHP + 4 SEH = 842`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 959 项 CPU 检查及 17 项 SEH 回归，共有 1200 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `981 CPU + 224 WHP + 17 SEH = 1222`.
+
+`InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
+
+`X64PopFlagsTests.cpp` 检查两种权限及 `driver-strict`：全部 256 种允许的标志输入与两种初态、九种编码、全部 64 个输入位、只读和可执行别名、跨页故障与修复、观察器中止及失败、设备栈拒绝和后续原生指令边界。`X64PopFlagsOracle` 在 x64 主机独立执行原始指令，核验 CPL3/IOPL0 和精确栈消耗。`driver_resource_flags.def` 使原 WDK 资源驱动通过两种操作数宽度设置、清除并恢复标志。测试保留完整整数、控制、x87、SSE 状态，不代表支持客体 TF/NT/AC/ID 或已有 ARM64 原生执行证据。
+
+`X64StatusFlagsTests.cpp` 检查 `CLC/STC/CMC`、`LAHF/SAHF`、全部 256 个 AH 输入及已接纳的标志组合、所有 REX 前缀、完整 CPU 状态、内存不变性、观察器停止或错误、保存上下文和原生 ADC/存储续行。无效 LOCK 编码无副作用拒绝。独立主机指令判据在验证 CPUID 支持后检查 24 组前缀。原有 WDK 资源驱动覆盖全部五条指令，新增 22 项原生必测结果；不可用的主机或 ISA 组合明确跳过。 可移植 Unicorn 配置运行相同的七项用例；依赖的直接测试覆盖 16/32/64 位 AH 与 LOCK 行为、显式 REX 寄存器，以及长模式缺少特性时的拒绝。
+
+`DriverSIMDSEHTests.cpp` 以四种受支持的处置及一次 x87 修改拒绝、两种原生执行契约、普通/CFG WDK 映像及两个加载地址运行八类原始 SSE 故障。十项后端专属结果和三项纯内核 SSE 记录检查均为必测。`driver_seh_simd.def` 统一定义样例与模式；异步展开表覆盖故障辅助函数。微软内核 10.0.26100.9549 提供独立分类与恢复依据：隔离执行了 107,744 组指令路径分类及 8,192 组恢复。这不代表已在完整 Windows 内核中执行驱动；ARM64 原生 KVM/WHP 仍未验证。
 
 C SEH 作用域仍使用左闭右开区间。合法的 `__C_specific_handler` 落点可能位于其保护区间内：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 将 `EndLabel + 1` 写为区间末端。Windows OS 模型保留原始端点，并独立校验目标可执行性、所属函数和续接身份，重定位后同样如此。`KernelSEHContinuationCases.def` 保留原始样例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 覆盖常量处理器和过滤器。配套测试验证末端排除，以及非法目标被拒绝后派发状态仍可重试。这些纯模型检查纳入 `NeverDNativeDriverTests`，禁用 Unicorn 时仍会执行。
 
@@ -1223,3 +1241,7 @@ build-release/bin/NeverDByteMemoryForwardingTests
 cmake --build build-release --target NeverDByteCellScalarizationTests --parallel 4
 build-release/bin/NeverDByteCellScalarizationTests
 ```
+
+`AndroidMutexTests.cpp` 用独立 O0/O2、普通/APS2/RELR 夹具覆盖三类 mutex、多等待者、唤醒后再次竞争、递归最终释放、errno、原始事件、失效内存、死锁和累计指令限额。Unicorn 及可用 KVM/WHP/HVF 执行相同用例；不可用后端明确跳过。这些证据不表示 Android 真机或并行 SMP 等价。
+
+`HighControlFlowSemantics.DeepStableContainersPreserveEveryReturnPath` 使用独立解释器检查 48 层块、循环、switch 和异常体的进入及跳过路径，并以宽松的运行时间上限捕获重复递归遍历。这是结构化 HighIR 覆盖；全镜像方法恢复仍需独立完成清单与依赖检查。

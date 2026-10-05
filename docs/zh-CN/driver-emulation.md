@@ -14,11 +14,11 @@ NeverD 的可选驱动模拟器执行受支持的 x64 WDM 驱动 PE 入口，并
 
 `DriverImage.def` 集中声明严格 PE 校验的大小、对齐限制及诊断文本；指针宽度来自 `DriverProfile.def`。`DriverImage.cpp` 负责校验与重定位，可接受的映像和错误消息保持不变。
 
-ARM64 宿主上的 `checked-x64-v1` 使用 Unicorn 执行 x64 来宾。每条指令和访存都在单步前验证，并保留 Windows 对象检查、写入观察器、RAM 别名和仅保存 CPU 的上下文。允许标量内存算术、自然对齐的锁定算术、SETcc 和`BT/BTS/BTR/BTC`，并执行读写权限检查；标志由原生执行负责。有限 SIMD 包括传统 SSE/SSE2 移动与逻辑、`MOVLHPS`/`MOVHLPS` 及带屏蔽的标量转换／减法。全部 16 个 XMM 寄存器与 MXCSR 会跨入口和上下文恢复保存；拒绝未屏蔽 SIMD 异常、DAZ、x87、AVX 和未列出操作。全宽 XMM store 会先按顺序触发两个 8 字节写入观察，再修改任一字。未对齐的 aligned-vector 形式仍不支持。普通 RAM 操作数可以跨越独立分配或别名映射的页面；整段权限验证通过后才写入，失败定位到第一个不可访问的字节。MOVS 保留已完成元素及故障元素的重启寄存器，不提交部分元素。
+ARM64 宿主上的 `checked-x64-v1` 使用 Unicorn 执行 x64 来宾。每条指令和访存都在单步前验证，并保留 Windows 对象检查、写入观察器、RAM 别名和仅保存 CPU 的上下文。允许标量内存算术、自然对齐的锁定算术、SETcc 和`BT/BTS/BTR/BTC`，并执行读写权限检查；标志由原生执行负责。有限 SIMD 包括传统 SSE/SSE2 移动与逻辑、`MOVLHPS`/`MOVHLPS` 及带屏蔽的标量转换／减法。全部 16 个 XMM 寄存器与 MXCSR 跨入口及上下文恢复保存。未屏蔽 SIMD 故障要求原生 KVM/WHP 的 `precise_simd_exceptions` 能力。全宽 XMM store 会先按顺序触发两个 8 字节写入观察，再修改任一字。未对齐的 aligned-vector 形式仍不支持。普通 RAM 操作数可以跨越独立分配或别名映射的页面；整段权限验证通过后才写入，失败定位到第一个不可访问的字节。MOVS 保留已完成元素及故障元素的重启寄存器，不提交部分元素。
 
 supervisor x64 支持一次对齐的 1/2/4 字节标量 MMIO 事务；设备页不会进入原生 RAM 映射。MOVS/REP MOVS 在每个重启边界只执行一个元素。设备源必须提供无副作用的 prepared read，以便目标写观察器能在设备读取提交前停止。Windows 寄存器组实现该准备流程；其他设备会在产生效果前拒绝字符串读取。设备 RMW、宽 MMIO、端口 I/O 仍不支持。请求字节、设备状态和写事件分别比较，不依赖 Unicorn 对零计数 REP 额外触发的终止 hook。KVM 使用标准 XSAVE 接口传送 XMM/MXCSR 与 FP/SSE presence bits。该 supervisor 契约不提供用户进程环境；timeout/取消在准入的有界指令间检查，不提供通用异步抢占，也不会在 guest 开始后更换后端。内置样例及可用 WDK 场景会对 normal/CFG 和重定位映像与 Unicorn 比对；语料一致不代表支持任意驱动。
 
-checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
+checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。
 
 构建选项为 `NEVERD_EMULATION_BACKEND_KVM`、`NEVERD_EMULATION_BACKEND_WHP`。Windows API 从系统 DLL 动态加载；KVM 要求当前用户能访问 `/dev/kvm`，模拟器不修改宿主权限。交叉编译不能替代原生运行验证。新增 C 入口 `neverd_emulate_driver_backend_json`，现有 v1 结构和入口不变；新报告包含请求/实际后端、执行契约及选择原因。
 
@@ -465,6 +465,8 @@ JSON 报告区分 `stop_reason`、可为空的 `nt_status` 和 `nt_success`、�
 
 异常递送使用镜像已解码的 x64 版本 1 展开表及 `__C_specific_handler` 作用域，执行真实来宾过滤器、处理器和展开过程中的 `__finally`。过滤器返回零继续搜索，正数选择处理器，负数请求继续执行；负值仅允许恢复可捕获的用户 CPU 访存异常，且只接受经过验证的 `CONTEXT_INTEGER | CONTEXT_CONTROL` 修改，其余完整原始 CPU 状态保持不变。支持普通辅助函数栈帧展开、保存的非易失通用寄存器恢复、当前执行栈边界及 `GetExceptionCode()`；正常执行的 finally 由来宾代码运行，异常展开的 finally 也实际执行。过滤器与 finally 继承父执行的进程／线程身份和用户访问权限，原本无用户权限的系统工作项不会因此获得权限。处理器可向受支持的外层作用域再次抛出异常。支持过滤器／finally 内嵌套及冲突展开、链式 V1 元数据、部分序言、规范尾声，以及完整 XMM6–XMM15 恢复。异常记录保留链接，已进入的 finally 不会重复执行。C++ 处理机制和不完整元数据仍明确拒绝。未捕获的 API 异常以 `model_error` 停止；其他不属于可捕获用户访存异常的 CPU 故障仍终止执行。 常量 `EXCEPTION_EXECUTE_HANDLER` 直接选中对应处理器。只有选中处理器后，展开才执行离开作用域的 finally；搜索期间或过滤器恢复原执行时不运行清理。每次过滤器返回都验证 `EXCEPTION_POINTERS`、异常记录及不支持的 `CONTEXT` 字段，修改这些内容会明确失败。模型 API 抛出的异常不能通过负过滤器恢复。
 
+原生 x64 KVM/WHP 通过 `X64SIMDException` 将实际 `#XM` 故障交给驱动 C SEH。硬件故障的 `CONTEXT` 保存 XMM0–15 和 MXCSR。过滤器、异常展开的 finally 回调及选定处理器以 MXCSR `0x1f80`、清除 DF 的状态执行。负过滤器可修改 XMM 及顶层 `CONTEXT.MxCsr`（按客户 CPU 掩码截断）后重试原指令；`FltSave.MxCsr` 不控制内核恢复。模型 API 抛出仍保留整数/控制记录；x87/AVX 上下文修改继续明确拒绝。
+
 C SEH 作用域仍使用左闭右开区间。合法的 `__C_specific_handler` 落点可能位于其保护区间内：[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) 将 `EndLabel + 1` 写为区间末端。Windows OS 模型保留原始端点，并独立校验目标可执行性、所属函数和续接身份，重定位后同样如此。`KernelSEHContinuationCases.def` 保留原始样例布局；`ScopeEndLabelMayOverlapTheHandlerLandingPad` 覆盖常量处理器和过滤器。配套测试验证末端排除，以及非法目标被拒绝后派发状态仍可重试。这些纯模型检查纳入 `NeverDNativeDriverTests`，禁用 Unicorn 时仍会执行。
 
 目标展开同样使用原始作用域末端：若处理器目标仍在某个 `finally` 的保护区间内，便不会退出该作用域。`FinallyRespectsRawScopeEndAtHandlerTarget` 检查边界两侧，并在 Windows x64 上直接对照 `ntdll.dll!__C_specific_handler`。NeverD 不修补编译器生成的区间。Clang 20/21 构建的原始样例在 `T`、`J` 模式下返回来宾失败，因为偏移后的末端包含选定目标；Clang 23 构建会执行两级清理。[LLVM 修改 #144745](https://github.com/llvm/llvm-project/pull/144745) 移除了旧的 `+1` 偏移。这类编译器相关结果与后端故障分别记录。
@@ -529,6 +531,8 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM 和 WHP 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
 ARM64 KVM/WHP 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。成功仅验证这段有界初始化程序；仍需独立的 ARM64 原生工作负载验证。 程序还包括密钥关闭时的 A/B 返回地址签名和认证，以及非防护页上的四种 BTI 指令。
+
+自检还执行两次 `MRS CTR_EL0`，以及 `DC CVAU`、`DSB ISH`、`IC IVAU` 和 `ISB`，核对缓存几何信息稳定及完整状态。Checked EL0/EL1 接纳原始指令、所有具名基线 DSB 选项及 ISB SY。CTR 来自选定虚拟 CPU，不同传输可以不同。缓存目标必须在当前权限下指向可读普通 RAM，允许非对齐地址和别名；其他目标明确报未支持。维护操作不产生数据读写观察事件。投影保证指令执行的一致性，不模拟私有缓存内容或并行硬件 SMP。`NeverDAArch64CacheTests` 检查完整状态、只读页尾、拒绝项、停止、上下文、预算，以及通过跨页 RW/RX 别名更新 guest 代码；不可用的 KVM/WHP 主机明确跳过。
 
 x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。这些自检仅证明有界初始化；ARM64 原生工作负载仍缺少独立验证。
 

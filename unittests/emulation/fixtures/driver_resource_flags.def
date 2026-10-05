@@ -1,0 +1,48 @@
+//===- driver_resource_flags.def - Original WDK flag stack probes --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_FLAGS_VALUE
+NEVERD_RESOURCE_FLAGS_VALUE(SetFlags, 0xed7)
+NEVERD_RESOURCE_FLAGS_VALUE(ClearFlags, 2)
+#endif
+#ifdef NEVERD_RESOURCE_STATUS_CASE
+// Keep all flag changes inside one original assembly block. The caller's
+// complete flags are restored before the compiler can execute another step.
+#define NEVERD_RESOURCE_STATUS_CODE(Instruction)                               \
+  "pushfq; popq %0; pushq %3; popfq; " Instruction                             \
+  "; pushfq; popq %1; pushq %0; popfq"
+NEVERD_RESOURCE_STATUS_CASE(CLC, 0xed7, 0x112233445566a588ULL, 0xed6,
+                            0x112233445566a588ULL,
+                            NEVERD_RESOURCE_STATUS_CODE("clc"))
+NEVERD_RESOURCE_STATUS_CASE(STC, 2, 0x112233445566a588ULL, 3,
+                            0x112233445566a588ULL,
+                            NEVERD_RESOURCE_STATUS_CODE("stc"))
+NEVERD_RESOURCE_STATUS_CASE(CMCSet, 2, 0x112233445566a588ULL, 3,
+                            0x112233445566a588ULL,
+                            NEVERD_RESOURCE_STATUS_CODE("cmc"))
+NEVERD_RESOURCE_STATUS_CASE(CMCClear, 0xed7, 0x112233445566a588ULL, 0xed6,
+                            0x112233445566a588ULL,
+                            NEVERD_RESOURCE_STATUS_CODE("cmc"))
+NEVERD_RESOURCE_STATUS_CASE(LAHF, 0xed7, 0x112233445566a588ULL, 0xed7,
+                            0x112233445566d788ULL,
+                            NEVERD_RESOURCE_STATUS_CODE("lahf"))
+NEVERD_RESOURCE_STATUS_CASE(SAHFSet, 2, 0x112233445566ff88ULL, 0xd7,
+                            0x112233445566ff88ULL,
+                            NEVERD_RESOURCE_STATUS_CODE("sahf"))
+NEVERD_RESOURCE_STATUS_CASE(SAHFClear, 0xed7, 0x1122334455662a88ULL, 0xe02,
+                            0x1122334455662a88ULL,
+                            NEVERD_RESOURCE_STATUS_CODE("sahf"))
+#undef NEVERD_RESOURCE_STATUS_CODE
+#endif
+#ifdef NEVERD_RESOURCE_FLAGS_CASE
+// Capture the caller, install the input, capture the result, restore caller.
+// DF and IF never escape the original assembly block into compiled C.
+NEVERD_RESOURCE_FLAGS_CASE(Qword,
+                           "pushfq; popq %0; pushq %2; popfq; pushfq; popq %1; "
+                           "pushq %0; popfq")
+NEVERD_RESOURCE_FLAGS_CASE(Word, "pushfq; popq %0; pushq %2; popfw; "
+                                 "leaq 6(%%rsp), %%rsp; pushfq; popq %1; "
+                                 "pushq %0; popfq")
+#endif

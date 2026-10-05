@@ -5,6 +5,9 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_X64_FP_VALUE
+NEVERD_X64_FP_VALUE(BaselineMXCSRMask, 0xffbf)
+NEVERD_X64_FP_VALUE(ArchitecturalMXCSRMask, 0xffff)
+NEVERD_X64_FP_VALUE(DenormalsAreZero, 0x40)
 NEVERD_X64_FP_VALUE(RegisterCount, 8)
 NEVERD_X64_FP_VALUE(RegisterBytes, 10)
 NEVERD_X64_FP_VALUE(RegisterSlotBytes, 16)

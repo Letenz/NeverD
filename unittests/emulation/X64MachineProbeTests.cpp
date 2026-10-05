@@ -10,6 +10,12 @@
 
 #include "llvm/ADT/ScopeExit.h"
 
+#include <algorithm>
+#include <chrono>
+#include <optional>
+#include <string>
+#include <vector>
+
 namespace neverd::emulation {
 namespace {
 #define NEVERD_X64_PROBE_TEST_VALUE(Name, Value)                               \
@@ -31,10 +37,22 @@ public:
   unsigned Scalar = 0, Vector = 0, Word = 0, Entries = 0;
   bool CorruptVector = false, CorruptFP = false, NopOnly = false;
   bool FailTransfer = false;
+  std::optional<unsigned> InterruptAt;
+  bool Stopped = false, Expired = false;
+  std::vector<std::chrono::steady_clock::time_point> Deadlines;
   Corruption Corrupt = nullptr;
   llvm::Error step(X64MachineState &State, uint64_t,
-                   MachineRunControl) override {
+                   MachineRunControl Control) override {
     const auto Index = Entries++;
+    Deadlines.push_back(Control.Deadline);
+    if (InterruptAt == Index) {
+      std::string Text(diagnostic::WhpRun);
+      auto Error =
+          llvm::make_error<MachineInterruptedError>(Text, Stopped, Expired);
+      // The error must own its text before phase annotation outlives it.
+      std::fill(Text.begin(), Text.end(), char(Fill));
+      return Error;
+    }
     if (FailTransfer)
       return diagnostic::error(diagnostic::KvmState);
     State.reg(X64Register::PC) += x64::probe::Program[Index].Code.size();
@@ -152,6 +170,43 @@ TEST(X64MachineProbe, GenuineTransferFailureRetainsDiagnosticAndReleasesLease) {
             diagnostic::KvmState);
   EXPECT_EQ(Machine.Entries, 1u);
   EXPECT_EQ(llvm::toString(Memory->mutableMemory()), "");
+}
+TEST(X64MachineProbe, InterruptionRetainsPhaseCauseDeadlineAndLease) {
+  struct Case {
+    unsigned Step;
+    bool Stopped, Expired;
+    const char *Message;
+  };
+  constexpr Case Cases[] = {
+#define NEVERD_X64_PROBE_INTERRUPTION(Step, Stopped, Expired, Message)         \
+  {Step, Stopped, Expired, Message},
+#include "X64ProbeCases.def"
+#undef NEVERD_X64_PROBE_INTERRUPTION
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Message);
+    auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+    CorruptingTransport Machine;
+    Machine.NopOnly = true;
+    Machine.InterruptAt = C.Step;
+    Machine.Stopped = C.Stopped;
+    Machine.Expired = C.Expired;
+    auto Error = verifyX64Machine(Machine, *Memory);
+    ASSERT_TRUE(Error.isA<MachineInterruptedError>());
+    llvm::handleAllErrors(std::move(Error),
+                          [&](const MachineInterruptedError &Interrupted) {
+                            EXPECT_EQ(Interrupted.stopRequested(), C.Stopped);
+                            EXPECT_EQ(Interrupted.deadlineReached(), C.Expired);
+                            std::string Message;
+                            llvm::raw_string_ostream OS(Message);
+                            Interrupted.log(OS);
+                            EXPECT_EQ(OS.str(), C.Message);
+                          });
+    ASSERT_EQ(Machine.Deadlines.size(), C.Step + 1);
+    for (const auto Deadline : Machine.Deadlines)
+      EXPECT_EQ(Deadline, Machine.Deadlines.front());
+    EXPECT_EQ(llvm::toString(Memory->mutableMemory()), "");
+  }
 }
 TEST(X64MachineProbe, ActiveExecutionLeaseRejectsInitializationBeforeEntry) {
   auto Memory = llvm::cantFail(MemoryProjection::create(Limit));

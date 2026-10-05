@@ -1,6 +1,7 @@
 #ifndef NEVERD_SDK_CAPI_OBJCSWIFTONCESOURCES_H
 #define NEVERD_SDK_CAPI_OBJCSWIFTONCESOURCES_H
 
+#include "../../loader/Swift/SwiftOnceCallbackABI.h"
 #include "ObjCSourceBindings.h"
 
 #include "neverd/pipeline/NativeSourceHints.h"
@@ -142,6 +143,126 @@ inline bool unknownScalarView(const ExprPtr &Value) {
     E = E->Operands.front();
   }
   return false;
+}
+
+struct NativeContextDefinitions {
+  VarKeyMap<std::vector<ExprPtr>> Values;
+  VarKeySet Invalid;
+  bool Complete = true;
+
+  explicit NativeContextDefinitions(const HighFunc &Function) {
+    size_t Budget = 100000;
+    std::set<const HighExpr *> Seen;
+    walkStmts(Function.Body, [&](const HighStmt &Statement) {
+      if (!Budget) {
+        Complete = false;
+        return;
+      }
+      --Budget;
+      if (Statement.Kind == StmtKind::Assign && Statement.Dst &&
+          (Statement.Dst->Kind == ExprKind::Var ||
+           Statement.Dst->Kind == ExprKind::Phi))
+        Values[varKey(Statement.Dst->Var)].push_back(Statement.Val);
+      forEachExpr(Statement, [&](const ExprPtr &Root) {
+        std::vector<const HighExpr *> Pending{Root.get()};
+        while (!Pending.empty() && Budget) {
+          --Budget;
+          const auto *E = Pending.back();
+          Pending.pop_back();
+          if (!E || !Seen.insert(E).second)
+            continue;
+          for (const auto &Output : E->IntrinsicOutputs)
+            Invalid.insert(varKey(Output));
+          E->forEachChildExpr(
+              [&](const ExprPtr &Child) { Pending.push_back(Child.get()); });
+        }
+        Complete &= Pending.empty();
+      });
+    });
+  }
+};
+
+inline bool
+discardableNativeContextRead(const ExprPtr &Value,
+                             const NativeContextDefinitions &Definitions) {
+  if (unknownScalarView(Value))
+    return true;
+  if (!Definitions.Complete)
+    return false;
+  auto E = Value;
+  bool Local = false;
+  for (unsigned Depth = 0; E && Depth < 16; ++Depth) {
+    if (E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->IsIndirectCall || E->IndirectTarget ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default || !E->Type ||
+        (E->Type->Kind != NdTypeKind::Int &&
+         E->Type->Kind != NdTypeKind::Ptr) ||
+        E->Type->Size != 8)
+      return false;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      Local = E->Operands.empty() && E->Var.Kind == MedVar::Reg &&
+              E->Var.Size == 8 && E->Var.Id >= 0;
+      break;
+    }
+    if (E->Kind != ExprKind::Cast || E->Operands.size() != 1)
+      return false;
+    E = E->Operands.front();
+  }
+  if (!Local)
+    return false;
+  // A dead local may still have an effectful producer. Check every definition
+  // and copy dependency before letting liveness cleanup remove the read.
+  // Missing definitions and exhausted inspection keep the original operand.
+  size_t Budget = 1024;
+  std::vector<const HighExpr *> Pending{E.get()};
+  std::set<const HighExpr *> Seen;
+  VarKeySet Variables;
+  while (!Pending.empty()) {
+    const auto *Current = Pending.back();
+    Pending.pop_back();
+    if (!Current || !Budget)
+      return false;
+    if (!Seen.insert(Current).second)
+      continue;
+    --Budget;
+    if (!Current->Type || !Current->Type->Size ||
+        (Current->Type->Kind != NdTypeKind::Int &&
+         Current->Type->Kind != NdTypeKind::Ptr) ||
+        Current->IntrinsicId != Intrinsic::None ||
+        !Current->IntrinsicOutputs.empty() || Current->IsIndirectCall ||
+        Current->IndirectTarget ||
+        Current->MemoryOrdering != NdMemoryOrdering::None ||
+        Current->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return false;
+    if (Current->Kind == ExprKind::Var || Current->Kind == ExprKind::Phi) {
+      if (!Current->Operands.empty() || Current->Var.Id < 0)
+        return false;
+      if (Current->Var.Kind == MedVar::Param)
+        continue;
+      if (Current->Var.Kind != MedVar::Reg && Current->Var.Kind != MedVar::Temp)
+        return false;
+      const auto Key = varKey(Current->Var);
+      if (Definitions.Invalid.count(Key))
+        return false;
+      if (!Variables.insert(Key).second)
+        continue;
+      const auto Definition = Definitions.Values.find(Key);
+      if (Definition == Definitions.Values.end())
+        return false;
+      for (const auto &Value : Definition->second)
+        Pending.push_back(Value.get());
+    } else if (Current->Kind == ExprKind::Cast) {
+      if (Current->Operands.size() != 1)
+        return false;
+      Pending.push_back(Current->Operands.front().get());
+    } else if ((Current->Kind != ExprKind::Const &&
+                Current->Kind != ExprKind::Undef) ||
+               !Current->Operands.empty()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 inline bool projectedOnceContextUnused(const HighFunc &Function,
@@ -1352,14 +1473,7 @@ objcThunkContract(const HighFunc &F, const BinaryImage &Image) {
 }
 
 inline SourceFunctionTypeHint callbackHint(Arch Architecture) {
-  SourceFunctionTypeHint Hint;
-  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
-  Hint.ReturnType = NdType::makeVoid();
-  Hint.Parameters = {{"once_context", NdType::makePtr(NdType::makeVoid())}};
-  std::string Error;
-  if (!assignDarwinScalarSourceABI(Hint, Architecture, Error))
-    throw std::invalid_argument(Error);
-  return Hint;
+  return swiftOnceCallbackSourceABI(Architecture);
 }
 
 inline SourceFunctionTypeHint dispatchCallbackHint(Arch Architecture) {
@@ -2349,6 +2463,80 @@ discoverSwiftOnceSources(const BinaryImage &Image,
   return Plan;
 }
 
+// A declaration supplied during discovery is not a current callback proof.
+// This stricter entry consumer also requires a direct reference through one
+// authenticated libswiftCore veneer; legacy or nested-only plans do not grant
+// it. Other source once consumers retain their own independent contracts.
+inline bool currentSwiftOnceCallbackEntry(const HighFunc &Function,
+                                          const BinaryImage &Image,
+                                          const PipelineResult &Result) {
+  if (!Result.Success || Result.SourceImage != &Image ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      !Function.SourceTypeHint ||
+      !isSwiftOnceCallbackSourceABI(*Function.SourceTypeHint) ||
+      !swift_once_source_detail::ignoresContext(Function))
+    return false;
+  const auto Plan = discoverSwiftOnceSources(Image, Result);
+  const auto Callback = Plan.CallbackHints.find(Function.Entry);
+  if (Callback == Plan.CallbackHints.end() ||
+      !equalSourceABIs(Callback->second, *Function.SourceTypeHint))
+    return false;
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  if (std::count(Image.DynInfo.NeededLibs.begin(),
+                 Image.DynInfo.NeededLibs.end(), Provider.str()) != 1)
+    return false;
+  const auto Storage = Image.collectImportStorageSlots();
+  for (const auto &Caller : Result.HighFuncs) {
+    if (!Caller.SourceTypeHint)
+      continue;
+    bool Found = false;
+    size_t Budget = 100000;
+    walkStmts(Caller.Body, [&](const HighStmt &Statement) {
+      forEachRhsExpr(Statement, [&](const ExprPtr &Root) {
+        std::vector<ExprPtr> Pending{Root};
+        while (!Pending.empty() && Budget && !Found) {
+          --Budget;
+          const auto E = Pending.back();
+          Pending.pop_back();
+          if (!E)
+            continue;
+          E->forEachChildExpr([&](const ExprPtr &Child) {
+            if (Pending.size() < Budget)
+              Pending.push_back(Child);
+            else
+              Budget = 0;
+          });
+          if (!swift_once_source_detail::onceCall(*E, Image) ||
+              objc_binding_detail::constantAddress(*E->Operands[1]) !=
+                  Function.Entry)
+            continue;
+          const auto Predicate =
+              objc_binding_detail::constantAddress(*E->Operands[0]);
+          if (!Predicate ||
+              !objc_binding_detail::oncePredicateStorageHint(Image, *Predicate))
+            continue;
+          const auto Slot = darwinImportVeneerSlot(Image, E->CallAddr);
+          if (!Slot || *Slot != E->SourceCallHint->TargetAddress ||
+              Storage.Conflicts.count(*Slot) ||
+              !Image.isValidImportStorageSlot(*Slot, "_swift_once"))
+            continue;
+          const auto Bind = Image.DyldBindSlots.find(*Slot);
+          const auto Current = Storage.Slots.find(*Slot);
+          if (Bind != Image.DyldBindSlots.end() &&
+              Bind->second.Name == "_swift_once" && !Bind->second.WeakImport &&
+              !Bind->second.Addend && Bind->second.Module == Provider &&
+              Current != Storage.Slots.end() &&
+              Current->second.Name == "_swift_once" && !Current->second.Addend)
+            Found = true;
+        }
+      });
+    });
+    if (Budget && Found)
+      return true;
+  }
+  return false;
+}
+
 inline size_t applySwiftOnceSourceHints(const SwiftOnceSourcePlan &Plan,
                                         PipelineOptions &Options) {
   size_t Added = 0;
@@ -2516,8 +2704,15 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
     const HighFunc &Function, const BinaryImage &Image,
     const SwiftOnceSourcePlan &Plan,
     const std::map<va_t, const HighFunc *> &Functions,
-    const std::map<va_t, std::set<size_t>> *IgnoredNativeContexts = nullptr) {
+    const std::map<va_t, std::set<size_t>> *IgnoredNativeContexts = nullptr,
+    size_t *FilledNativeContexts = nullptr) {
   ObjCSourceBindingResult Result{Function};
+  if (FilledNativeContexts)
+    *FilledNativeContexts = 0;
+  std::optional<swift_once_source_detail::NativeContextDefinitions>
+      ContextDefinitions;
+  if (IgnoredNativeContexts && !IgnoredNativeContexts->empty())
+    ContextDefinitions.emplace(Function);
   size_t Budget = 100000;
   std::map<const HighExpr *, ExprPtr> Copies;
   std::function<ExprPtr(const ExprPtr &, unsigned)> Copy =
@@ -2551,12 +2746,15 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
                Parameters[Index].Type->Kind != NdTypeKind::Ptr) ||
               Parameters[Index].Type->Size !=
                   Parameters[Index].Location.ValueBytes ||
-              !swift_once_source_detail::unknownScalarView(E->Operands[Index]))
+              !swift_once_source_detail::discardableNativeContextRead(
+                  E->Operands[Index], *ContextDefinitions))
             continue;
           auto Zero = HighExpr::makeConst(0, Parameters[Index].Type->Size,
                                           ConstantAddressProvenance::Scalar);
           Zero->Type = Parameters[Index].Type;
           E->Operands[Index] = std::move(Zero);
+          if (FilledNativeContexts)
+            ++*FilledNativeContexts;
         }
       }
     }

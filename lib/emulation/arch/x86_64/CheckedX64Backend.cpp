@@ -186,6 +186,13 @@ bool isAtomic(unsigned Instruction) {
     return false;
   }
 }
+unsigned flagsStackWidth(const cs_x86 &X) {
+  // The decoder identity retains 66H even when a later REX.W selects 64
+  // bits. Both PUSHF and POPF use the effective prefixes for their footprint.
+  return X.prefix[2] == X86_PREFIX_OPSIZE && !(X.rex & x64::RexW)
+             ? x64::HalfWordBytes
+             : x64::WordBytes;
+}
 } // namespace
 bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
   return x64::canonicalRange(A, N);
@@ -193,8 +200,10 @@ bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
 
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
-                          std::unique_ptr<X64Machine> Machine, bool UserMode) {
-  auto B = std::unique_ptr<CheckedX64Backend>(new CheckedX64Backend(UserMode));
+                          std::unique_ptr<X64Machine> Machine, bool UserMode,
+                          bool SIMDExceptions) {
+  auto B = std::unique_ptr<CheckedX64Backend>(
+      new CheckedX64Backend(UserMode, SIMDExceptions));
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
   B->CPU.UserMode = UserMode;
@@ -225,6 +234,12 @@ llvm::Expected<RegisterValue> CheckedX64Backend::readRegister(CPURegister R) {
     return readX64FPRegister(CPU.FP, R);
   return RegisterValue{CPU.Registers[unsigned(R)], 0};
 }
+llvm::Expected<RegisterValue>
+CheckedX64Backend::supportedControlBits(CPURegister R) const {
+  if (R == CPURegister::X64MXCSR)
+    return RegisterValue{Machine->mxcsrMask(), 0};
+  return ExecutionBackend::supportedControlBits(R);
+}
 llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
                                              const RegisterValue &V) {
   if (auto E = mutableMemory())
@@ -234,11 +249,9 @@ llvm::Error CheckedX64Backend::writeRegister(CPURegister R,
   if (isX64FPRegister(R))
     return writeX64FPRegister(CPU.FP, R, V);
   if (R == CPURegister::X64MXCSR) {
-    // The current profile has no SIMD exception-delivery gateway or DAZ
-    // capability negotiation. Preserve rounding, FTZ and sticky status while
-    // requiring masked exceptions and rejecting unsupported control bits.
-    if (V[1] || (V[0] & ~x64::AllowedMXCSR) ||
-        (V[0] & x64::InitialMXCSR) != x64::InitialMXCSR)
+    // DAZ is admitted only by the machine's immutable capability contract.
+    // Unmasked execution requires the resolved semantic exception capability.
+    if (V[1] || (V[0] & ~uint64_t(Machine->mxcsrMask())) || !permitsMXCSR(V[0]))
       return error(diagnostic::Register);
     CPU.MXCSR = V[0];
     return llvm::Error::success();
@@ -360,6 +373,12 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   default:
     return llvm::make_error<UnsupportedExecutionError>();
   }
+  const bool LoadMXCSR = I.id == X86_INS_LDMXCSR;
+  const bool StoreMXCSR = I.id == X86_INS_STMXCSR;
+  if ((LoadMXCSR || StoreMXCSR) &&
+      (X.op_count != 1 || X.operands[0].type != X86_OP_MEM ||
+       X.operands[0].size != x64::DWordBytes || X.prefix[2]))
+    return llvm::make_error<UnsupportedExecutionError>();
   const auto Vector = vectorOperation(I.id);
   if (Vector && !admitsVectorOperands(X, *Vector))
     return llvm::make_error<UnsupportedExecutionError>();
@@ -386,6 +405,29 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       (X.op_count != 1 || (X.operands[0].size != x64::DWordBytes &&
                            X.operands[0].size != x64::WordBytes)))
     return llvm::make_error<UnsupportedExecutionError>();
+  if (I.id == X86_INS_LAHF || I.id == X86_INS_SAHF) {
+    if (X.op_count)
+      return llvm::make_error<UnsupportedExecutionError>();
+    // AH remains the implicit operand even with REX. Complete this small
+    // register transfer in the ISA owner so a software transport cannot
+    // reinterpret it as an explicit byte register and select SPL instead.
+    auto Next = CPU;
+    const uint64_t AX = CPU.reg(X64Register::AX);
+    const uint64_t Flags = CPU.reg(X64Register::FLAGS);
+    if (I.id == X86_INS_LAHF)
+      Next.reg(X64Register::AX) =
+          (AX & ~x64::AccumulatorHighByteMask) |
+          (((Flags & x64::StatusByteFlags) | x64::ReservedFlag)
+           << x64::AccumulatorHighByteShift);
+    else
+      Next.reg(X64Register::FLAGS) =
+          (Flags & ~x64::StatusByteFlags) |
+          ((AX >> x64::AccumulatorHighByteShift) & x64::StatusByteFlags);
+    Next.reg(X64Register::PC) += I.size;
+    if (!StopRequested && !FirstFault)
+      CPU = Next;
+    return llvm::Error::success();
+  }
   struct Access {
     uint64_t Address;
     unsigned Size, Permission;
@@ -461,7 +503,9 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     // marking them as reads. The architecture owns their actual effects.
     unsigned OperandAccess = O.access;
     if (N == 0) {
-      if (Bit)
+      if (LoadMXCSR || StoreMXCSR)
+        OperandAccess = LoadMXCSR ? CS_AC_READ : CS_AC_WRITE;
+      else if (Bit)
         OperandAccess = BitWrites ? CS_AC_READ | CS_AC_WRITE : CS_AC_READ;
       else if ((Vector && Vector->Move) || condition(I.id, 0))
         OperandAccess = CS_AC_WRITE;
@@ -472,6 +516,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     }
     if (OperandAccess == CS_AC_READ)
       Accesses.push_back({A, O.size, Read, 0});
+    else if (StoreMXCSR)
+      Accesses.push_back({A, O.size, Write, CPU.MXCSR});
     else if (Vector && Vector->Move && OperandAccess == CS_AC_WRITE && N == 0 &&
              X.operands[1].type == X86_OP_REG && isXmm(X.operands[1].reg)) {
       const auto &V = CPU.Xmm[X.operands[1].reg - X86_REG_XMM0];
@@ -511,6 +557,19 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       return llvm::make_error<UnsupportedExecutionError>();
   }
   uint64_t SP = CPU.reg(X64Register::SP);
+  const bool PushFlags = I.id == X86_INS_PUSHF || I.id == X86_INS_PUSHFQ;
+  const bool PopFlags = I.id == X86_INS_POPF || I.id == X86_INS_POPFQ;
+  if (PushFlags || PopFlags) {
+    if (X.op_count)
+      return llvm::make_error<UnsupportedExecutionError>();
+    const unsigned Size = flagsStackWidth(X);
+    // Long mode always uses RSP for the implicit stack, even with 67H or
+    // a segment override. Public flags exclude VM, RF and transport TF.
+    if (PushFlags)
+      Accesses.push_back({SP - Size, Size, Write, CPU.reg(X64Register::FLAGS)});
+    else
+      Accesses.push_back({SP, Size, Read, 0});
+  }
   if (I.id == X86_INS_PUSH || I.id == X86_INS_CALL) {
     uint64_t V = I.address + I.size;
     if (I.id == X86_INS_PUSH) {
@@ -588,9 +647,55 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     if (StopRequested)
       return llvm::Error::success();
   }
+  if (LoadMXCSR) {
+    auto Value = readInteger(Accesses.front().Address, x64::DWordBytes);
+    if (!Value)
+      return Value.takeError();
+    // Reserved bits fault before changing MXCSR. An otherwise architectural
+    // value with unmasked exceptions requires precise machine delivery.
+    if (*Value & ~uint64_t(Machine->mxcsrMask())) {
+      BackendFault Fault{BackendFaultKind::Interrupt, I.address};
+      Fault.Interrupt = unsigned(x64::ExceptionVector::GeneralProtection);
+      Fault.ErrorCode = x64::NoSelectorErrorCode;
+      return raiseFault(Fault, true);
+    }
+    if (!permitsMXCSR(*Value))
+      return llvm::make_error<UnsupportedExecutionError>();
+  }
   if (DeviceAccess)
     return deviceTransfer(I, DeviceAccess->Address, DeviceAccess->Size,
                           DeviceAccess->Permission, DeviceAccess->Value);
+  if (PopFlags) {
+    const unsigned Size = Accesses.back().Size;
+    auto Value = readInteger(SP, Size);
+    if (!Value)
+      return Value.takeError();
+    uint64_t Mask =
+        Size == x64::HalfWordBytes ? x64::PopWordFlags : x64::PopQwordFlags;
+    // Intel SDM POPF: IOPL changes only at CPL0. The checked profiles keep
+    // IOPL zero, so CPL3 cannot change IF. Reserved bits, VM, VIF and VIP
+    // remain unchanged; RF clears independently of the stack image.
+    if (!UserMode)
+      Mask |= x64::InterruptFlag | x64::IOPrivilegeFlags;
+    const uint64_t Flags =
+        ((CPU.reg(X64Register::FLAGS) & ~Mask) | (*Value & Mask)) &
+        ~x64::ResumeFlag;
+    // Validate the effective result, not ignored input bits. Guest TF and
+    // other unmodeled control flags cannot silently enter the CPU contract.
+    if (Flags & ~x64::AllowedFlags)
+      return llvm::make_error<UnsupportedExecutionError>();
+    if (StopRequested || FirstFault)
+      return llvm::Error::success();
+    // Native POPF could clear the transport's private TF and run beyond this
+    // boundary. Complete the ISA transition under the physical read lease,
+    // without patching the stack (which can be read-only or alias code).
+    auto Next = CPU;
+    Next.reg(X64Register::FLAGS) = Flags;
+    Next.reg(X64Register::SP) += Size;
+    Next.reg(X64Register::PC) += I.size;
+    CPU = Next;
+    return llvm::Error::success();
+  }
   auto Root = buildX64PageTables(*Memory, UserMode,
                                  Machine->requiresExceptionMonitor());
   if (!Root)
@@ -618,6 +723,18 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       Fault.ErrorCode = E.exception().ErrorCode;
       return raiseFault(Fault, true);
     });
+  }
+  if (PushFlags) {
+    // Native single stepping may expose its private TF in the stack image.
+    // Publish the admitted architectural flags under the existing RAM lease
+    // and transaction; cancellation still rolls back every written byte.
+    const auto &A = Accesses.back();
+    for (unsigned N = 0; N < A.Size; ++N) {
+      const uint64_t Address = A.Address + N;
+      const auto &P = Memory->mappings().at(Address & ~(x64::PageSize - 1));
+      *Memory->physicalPointer(P.Physical + Address % x64::PageSize) =
+          uint8_t(A.Value >> (N * CHAR_BIT));
+    }
   }
   if (auto E = (*Transaction)->stage())
     return E;

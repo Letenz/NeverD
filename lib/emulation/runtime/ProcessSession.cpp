@@ -51,6 +51,13 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
                                              const ProcessOptions &Options) {
   if (Options.Windows && Profile != ProcessProfile::WindowsPE64)
     return diagnostic::error(process_report::WindowsProfile);
+  if (Options.LinuxFiles) {
+    if (Profile != ProcessProfile::LinuxELF64 &&
+        Profile != ProcessProfile::AndroidNativeAArch64)
+      return diagnostic::error(process_report::LinuxFilesProfile);
+    if (auto E = linux_model::validateFileOptions(*Options.LinuxFiles))
+      return std::move(E);
+  }
   if (Options.LinuxTime) {
     if (Profile != ProcessProfile::LinuxELF64 &&
         Profile != ProcessProfile::AndroidNativeAArch64)

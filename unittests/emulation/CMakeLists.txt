@@ -39,6 +39,12 @@ add_neverd_unittest(NeverDAArch64BTITests
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
+add_neverd_unittest(NeverDAArch64CacheTests
+  AArch64CacheTests.cpp
+  TIMEOUT 20
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationCPU EmulationRuntime)
+
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
@@ -85,6 +91,7 @@ add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64BitStringTests.cpp
   X64StringTransferTests.cpp
   X64StringComparisonTests.cpp
+  X64MXCSRTests.cpp
   X64DataTests.cpp
   X64PackedIntegerTests.cpp
   X64PackedShiftTests.cpp
@@ -119,11 +126,16 @@ add_neverd_unittest(NeverDThreadPointerTests
 
 add_neverd_unittest(NeverDX64IntegerTests
   X64IntegerTests.cpp
+  X64PauseTests.cpp
+  X64PushFlagsTests.cpp
+  X64PopFlagsTests.cpp
+  X64StatusFlagsTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
 add_neverd_unittest(NeverDX64ExceptionTests
   X64ExceptionTests.cpp
+  X64SIMDExceptionTests.cpp
   X64AlignmentTests.cpp
   X64DivisionTests.cpp
   X64StateTransitionTests.cpp
@@ -175,6 +187,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
+  AndroidFileTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
   AndroidFinalizerTests.cpp
@@ -197,6 +210,8 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsSystemTests.cpp
   WindowsExceptionTests.cpp
   WindowsAlignmentProcessTests.cpp
+  WindowsSIMDMappingTests.cpp
+  WindowsSIMDExecutionTests.cpp
   WindowsContinuationTests.cpp
   WindowsSEHTests.cpp
   WindowsContextTests.cpp
@@ -1128,6 +1143,7 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_user_mapping_definitions})
 add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
+  DriverSIMDSEHTests.cpp
   KernelSEHTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS Emulation)

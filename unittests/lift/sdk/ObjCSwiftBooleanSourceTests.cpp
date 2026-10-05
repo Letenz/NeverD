@@ -17,8 +17,8 @@ struct BooleanFixture {
                  bool Prefix = false, bool OpaquePrefix = false,
                  bool ObjectEquality = false, bool Suffix = false,
                  bool Native = false, bool Pair = false,
-                 bool NativeCallee = false,
-                 llvm::StringRef ImportOverride = {}) {
+                 bool NativeCallee = false, llvm::StringRef ImportOverride = {},
+                 bool Once = false) {
     Image.Arch = Arch::AArch64;
     Image.Format = BinaryFormat::MachO;
     Image.Bits = Bitness::Bits64;
@@ -67,6 +67,31 @@ struct BooleanFixture {
                    0x94000032, 0x12000000});
     if (Pair)
       Body.insert(Body.end() - 2, 0xd2800021); // MOV X1,#1 before return.
+    if (Once) {
+      // Observe exactly the normalized byte before the void callback returns.
+      Body.insert(Body.end() - 2,
+                  {0xb0000009,   // ADRP X9,0x2000.
+                   0x39060120}); // STRB W0,[X9,#0x180].
+      Image.MachOTwoLevelNamespace = true;
+      Image.Segments[1].Flags =
+          Image.Segments[1].Flags | SegmentFlags::Writable;
+      Image.Sections[1].Flags =
+          Image.Sections[1].Flags | SegmentFlags::Writable;
+      Image.Symbols.push_back({"_once_predicate", 0x2200, 8, false});
+      Image.Symbols.push_back({"_observed_boolean", 0x2180, 1, false});
+      word(0x1140, 0xb0000010);
+      word(0x1144, 0xf9404610);
+      word(0x1148, 0xd61f0200);
+      Image.ImportPtrSlots[0x2088] = "_swift_once";
+      EXPECT_TRUE(Image.recordDyldBindSlot(
+          0x2088, "_swift_once", 0, SwiftBooleanComparisonProvider, false));
+      const uint32_t Caller[] = {0xa9bf7bfd, 0x910003fd, 0xb0000000,
+                                 0x91080000, 0x90000001, 0xd2800002,
+                                 0x97ffffca, 0xa8c17bfd, 0xd65f03c0};
+      for (unsigned I = 0; I < std::size(Caller); ++I)
+        word(0x1200 + 4 * I, Caller[I]);
+      Image.Symbols.push_back({"once_caller", 0x1200, sizeof(Caller), true});
+    }
     if (OpaquePrefix)
       Body[2] = 0x9400005e; // BL 0x1180 before any selected result exists.
     if (NativeCallee)
@@ -103,12 +128,22 @@ struct BooleanFixture {
     Method.TypeHint =
         parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
     Method.Status = "supported";
-    if (!Native)
+    if (!Native && !Once)
       Image.ObjCMethods.push_back(Method);
     Image.Symbols.push_back({"bool_method", 0x1000, Body.size() * 4, true});
     PipelineOptions Options;
     Options.EmitDumpOutput = false;
     Options.OnlyFunctionEntries = {0x1000};
+    if (Once) {
+      Options.OnlyFunctionEntries.insert(0x1200);
+      SourceFunctionTypeHint Caller;
+      Caller.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Caller.ReturnType = NdType::makeVoid();
+      std::string Error;
+      EXPECT_TRUE(assignDarwinScalarSourceABI(Caller, Image.Arch, Error))
+          << Error;
+      Options.SourceTypeHints.emplace(0x1200, std::move(Caller));
+    }
     if (NativeCallee) {
       SourceFunctionTypeHint Callee;
       Callee.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
@@ -120,8 +155,9 @@ struct BooleanFixture {
       Options.SourceTypeHints.emplace(0x1200, std::move(Callee));
     }
     if (Source) {
-      auto Entry = Native ? *provisionalNativeSwiftBooleanEntry(Image, 0x1000)
-                          : *objcMethodSourceTypeHint(Image, 0x1000);
+      auto Entry = Once     ? swiftOnceCallbackSourceABI(Image.Arch)
+                   : Native ? *provisionalNativeSwiftBooleanEntry(Image, 0x1000)
+                            : *objcMethodSourceTypeHint(Image, 0x1000);
       if (Pair) {
         Entry.ReturnType = NdType::makeStruct(
             {NdType::makeInt(8, false), NdType::makeInt(8, false)});
@@ -168,6 +204,93 @@ struct BooleanFixture {
   }
 };
 } // namespace
+
+TEST(ObjCSwiftBooleanSources,
+     OnceCallbackUsesCurrentReferenceAndContextProofBeforePublication) {
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    BooleanFixture F(true, false, false, false, false, false, false, false,
+                     false, false, {}, true);
+    const auto E = F.expression();
+    ASSERT_TRUE(E);
+    const auto Bound = [&] {
+      return objCSwiftBooleanSourceCallBound(*E, F.Image, F.Result, F.high());
+    };
+    ASSERT_TRUE(Bound());
+    ASSERT_EQ(
+        discoverSwiftOnceSources(F.Image, F.Result).CallbackHints.count(0x1000),
+        1U);
+    auto &Caller = *std::find_if(
+        F.Result.HighFuncs.begin(), F.Result.HighFuncs.end(),
+        [](const HighFunc &Function) { return Function.Entry == 0x1200; });
+    ExprPtr Once;
+    walkStmts(Caller.Body, [&](HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &Root) {
+        std::vector<ExprPtr> Pending{Root};
+        while (!Pending.empty()) {
+          auto Value = Pending.back();
+          Pending.pop_back();
+          if (!Value)
+            continue;
+          if (Value->SourceCallHint &&
+              Value->SourceCallHint->TargetName == "swift_once")
+            Once = Value;
+          Pending.insert(Pending.end(), Value->Operands.begin(),
+                         Value->Operands.end());
+        }
+      });
+    });
+    ASSERT_TRUE(Once);
+    if (Mutation == 0)
+      Once->Operands[1] = HighExpr::makeConst(0x1300, 8);
+    if (Mutation == 1)
+      Once->Operands[0] = HighExpr::makeConst(0x2300, 8);
+    if (Mutation == 2)
+      F.Image.DyldBindSlots[0x2088].WeakImport = true;
+    if (Mutation == 3)
+      F.Image.DyldBindSlots[0x2088].Module = "/tmp/impostor.dylib";
+    if (Mutation == 4)
+      Caller.Body.clear();
+    if (Mutation == 5) {
+      MedVar Context;
+      Context.Kind = MedVar::Param;
+      Context.Id = 0;
+      Context.Size = 8;
+      HighStmt Use;
+      Use.Kind = StmtKind::ExprStmt;
+      Use.Val = HighExpr::makeVar(Context, NdType::makePtr(NdType::makeVoid()));
+      F.high().Body.insert(F.high().Body.begin(), Use);
+    }
+    if (Mutation == 6)
+      F.high().SourceTypeHint->Origin =
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    if (Mutation == 7) {
+      LowOp Direct;
+      Direct.Opcode = NdOp::CALL;
+      Direct.addInput(NdVar::cst(0x1000, 8));
+      F.Result.LowFuncs.back().Blocks.front().Ops.push_back(Direct);
+    }
+    if (Mutation == 8)
+      F.word(0x1020, 0x12000400); // Current code observes bit 1 as well.
+    if (Mutation == 9)
+      F.high().SourceTypeHint->Parameters[0].Type = NdType::makeInt(8, false);
+    if (Mutation == 10)
+      F.Image.DyldBindSlots.erase(0x2088);
+    if (Mutation == 11)
+      Once->CallAddr = 0x1100;
+    if (Mutation == 12)
+      F.Image.DynInfo.NeededLibs.push_back(
+          SwiftBooleanComparisonProvider.str());
+    if (Mutation == 13)
+      F.Image.ConflictingImportStorageSlots.insert(0x2088);
+    if (Mutation == 14) {
+      auto Stale = std::make_shared<SourceCallTypeHint>(*Once->SourceCallHint);
+      Stale->Signature.Parameters[2].Type = NdType::makeInt(8, false);
+      Once->SourceCallHint = std::move(Stale);
+    }
+    EXPECT_FALSE(Bound());
+  }
+}
 
 TEST(ObjCSwiftBooleanSources,
      NativeBooleanProofUsesOnlyCurrentCompleteCalleeContracts) {

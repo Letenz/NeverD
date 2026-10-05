@@ -95,6 +95,24 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 `clock_gettime`, `gettimeofday`, x64의 `time`이 같은 입력을 사용합니다. 입력 누락, 동적 시계 또는 모델링되지 않은 부분 쓰기는 명시적으로 중단되며 이미 완료된 쓰기는 유지됩니다. 시간 조정, 대기 및 실제 장치 시계는 지원하지 않습니다. 쓰기 순서, 오류 코드 및 포인터 동작은[전체 시계 계약](../process-emulation.md#explicit-guest-clocks)을 참조하세요.
 
+<a id="explicit-memory-files"></a>
+
+<!-- i18n-section: linux-files -->
+
+## 명시적 메모리 파일
+
+`linux_files`는 Linux ELF64와 Android에 닫힌 읽기 전용 파일 목록을 제공합니다. 필수 `files`는 비어 있어도 되며 각 항목은 정규 절대 경로 `path`와 바이너리 `bytes_hex`만 포함합니다. 호스트 파일이나 암시적 `/proc` 내용을 읽지 않습니다. 옵션이 없으면 중단하며 목록에 없는 경로는 `ENOENT`를 반환합니다.
+
+```json
+{"linux_files":{"files":[
+  {"path":"/fixture/data","bytes_hex":"00ff410a805a"}],
+  "descriptor_limit":256}}
+```
+
+각 open은 독립된 위치를 가지며 Bionic, `syscall`, 원시 트랩과 guest 스레드는 설명자 표를 공유합니다. close 후 가장 작은 빈 번호를 재사용합니다. 읽기 전용 `open/openat`, `read/close`, 일반 `lseek`, `O_CLOEXEC`와 아키텍처별 `O_LARGEFILE`을 지원합니다. Bionic만 errno를 변환합니다. 읽기 오류는 복사한 접두부를 보존합니다. stdin에는 기본 내용이 없으며 상대 경로, 디렉터리, 쓰기와 링크는 지원하지 않습니다.
+
+C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` ≤ 256; `path` < 4096 bytes; component ≤ 255 bytes; data + paths + NUL ≤ 16 MiB; JSON ≤ 64 KiB. [Contract](../process-emulation.md#explicit-memory-files).
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 프로필

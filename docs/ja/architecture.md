@@ -496,6 +496,8 @@ Windows モデルは独立した非ページプール MDL も管理し、記述�
 
 `KernelGuestException` は 32 ビットのステータスを持つ型付き API 結果であり、モデルエラーやバックエンド障害とは別です。`DriverImage` は既存ローダーの推奨ベースに基づく例外メタデータを保持します。`X64SEH` はそのデータ上で、検証済みアドレス変換とスタック読み取りを使って、有界で副作用のない x64 V1 C catch-all 転送計画を作ります。通常のヘルパーフレームをまたいで対応する不揮発 GPR の保存値を復元し、実際のゲストハンドラーを選択します。遭遇したフィルター／finally、GS／C++ パーソナリティー、連鎖、不完全レコード、プロローグ、XMM 復元は拒否します。`DriverSession` は正常な API 停止時だけ検証済みレジスター計画を適用し、API トレース結果を null のままにして同じ実行内のハンドラーを再開します。保持中のバックエンドフォールトを消去せず、別のコールバックスタックまで展開しません。この境界は ExRaiseStatus／ExRaiseAccessViolation／ExRaiseDatatypeMisalignment に対応します。ユーザープローブ、ロックしたユーザーバッファー、CPU 障害からの復帰は別の実装課題です。
 
+`X64SEH` は任意のカーネル SSE コンテキストを仮想アンワインドカーソルと別に保持し、`DriverSession` は障害復元とハンドラー制御状態を区別します。[ドライバーエミュレーション](driver-emulation.md)を参照してください。
+
 
 ## 例外書き換えの境界
 
@@ -670,6 +672,8 @@ CPU factory と capability query は同じ `ExecutionConfiguration` を使い、
 Checked ARM64 の完全な状態は一つの境界で確定します。`Registers.def` が39個のスカラー項目と32個の128ビットベクトルを定義し、`captureAArch64State` が全読み取り、ビット幅、NZCV 正規化を検証して一度だけ公開します。Unicorn、KVM、WHP、HVF は TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR、FPSR を含む同じ状態を転送します。native adapter は CPACR_EL1 で FP/SIMD を有効化します。読み取り失敗や entry の取消では呼び出し側の全状態を保持します。
 
 ARM64 KVM/WHP/HVF の初期化は専用の `AArch64MachineProbe.def` を実行します。NOP、正の無限大へ丸める FP32 加算、2レーンの SIMD 加算です。各ステップで39個のスカラー値と32個のベクトルを比較し、TLS、NZCV、結果の上位ビット消去、FPCR/FPSR の保持と累積状態を確認します。監視用メモリは supervisor 専用で、全体の期限は共通です。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。 このプログラムには、鍵を無効にした A/B リターンアドレス署名・認証と、保護されていないページでの4種類の BTI 命令も含まれます。
+
+プローブは `MRS CTR_EL0` を2回実行し、`DC CVAU`、`DSB ISH`、`IC IVAU`、`ISB` とともにキャッシュ構成の安定性と完全な状態を検証します。Checked EL0/EL1 は元の命令、名前付きの基本 DSB オプション、ISB SY を許可します。CTR は選択した仮想 CPU に由来し、転送方式によって異なる場合があります。対象は現在の権限で読み取り可能な通常 RAM に限り、非整列アドレスと別名も許可します。それ以外は未対応として拒否し、保守操作によるデータ読み書きの観測イベントは生成しません。投影は命令実行の整合性を保ちますが、プライベートキャッシュの内容や並列ハードウェア SMP はモデル化しません。`NeverDAArch64CacheTests` は完全な状態、読み取り専用ページ末尾、拒否、停止、コンテキスト、予算、ページ境界をまたぐ RW/RX 別名による guest コード更新を検証します。利用できない KVM/WHP ホストは明示的にスキップします。
 
 x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ページで `X64MachineProbe.def` を実行します。単一の期限内で NOP、正の無限大方向に丸める FP32 加算、2 レーンの SIMD 加算、FS/GS ロード、CS/SS/CR8 読み出しを行い、各ステップで全スカラー、XMM、物理 x87、制御状態を比較します。x64 と ARM64 の検査には物理メモリの排他的実行リースが必要です。`MemoryProjection` がキャッシュ識別子（ISA、アドレス空間、マッピング世代、権限、モニター構成）と ISA ごとの確定済みページテーブルルート履歴を所有します。非公開バイトを書き換える前にキャッシュを無効化するため、再構築失敗時の不完全なテーブルや呼び出し側の古いルートを再利用しません。この検査が証明するのは限定された初期化のみです。Linux ARM64 KVM と Windows ARM64 WHP のワークロード検証は未完了です。macOS のネイティブ検証結果は [HVF ガイド](macos-hvf.md) に記録されています。
 
@@ -1003,7 +1007,7 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 
 `NeverDEmulationArch` は ISA、ページテーブル、FP 状態の配置を所有し、ネイティブと Unicorn の転送が共有します。x64 コンテキストは x87 制御、状態、TOP、物理タグ、オペコード、命令／データポインター、8 個の 80 ビットレジスターを保持します。`FP0`–`FP7` は `RegisterValue` を使い、スカラーアクセスによる切り捨ては拒否します。`FPTag` は物理レジスターの非空ビットマップです。`NeverDX64FPTests` は全 TOP、正確な演算のホスト FXSAVE/FXRSTOR 比較と復元を検証します。checked x87 命令や全丸め意味論の証明を追加するものではなく、利用できないネイティブホストは明示的にスキップします。
 
-checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。DAZ、unmasked exception、x87、AVX は許可しません。
+checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` の `SS`、`SD`、`PS`、`PD` 形式も許可します。`X64SSEInstructions.def` が operand 幅、alignment、admission を一元管理します。`MaskedSSEArithmeticMatchesIndependentHostExecution` は独立した host CPU oracle で register/RAM 形式、4 種の rounding、FTZ、signed zero、subnormal、NaN を検証し、`SSEMemoryObserverStopsBeforeResultAndStatusChanges` は効果反映前の停止を検証します。unmasked exception、x87、AVX は許可しません。
 
 `X64PackedIntegerInstructions.def` は、桁あふれを切り捨てる加減算と飽和加減算、比較、乗算、平均、最小・最大、バイト差、パックとアンパックを含む 45 個の legacy SSE2 packed integer 命令を許可します。XMM と整列した 128 ビット RAM の入力は KVM、WHP、Unicorn の既存 checked 経路を共有します。FLAGS と MXCSR は変化せず、障害や監視コールバックによるキャンセル時は状態を保持します。MMX、VEX/EVEX、デバイスオペランドは対象外です。
 
@@ -1023,11 +1027,11 @@ checked x64 は mask 付き legacy `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN
 
 `CMPSS`、`CMPSD`、`CMPPS`、`CMPPD` は KVM、WHP、checked Unicorn で従来の8条件を実行します。共有 `Source` 規則はデコード済み別名を受け入れ、予約値は非対応です。スカラー形式は上位レーンを保持して m32/m64 を読み、パック形式は整列した m128 を要求します。FLAGS と既存 MXCSR 状態を保持し、有効レーンごとに無効・非正規化状態を累積します。Capstone が命令族 ID と SSE 条件を管理し、lifter 内だけの ID 修正を置き換えます。Unicorn は各比較関数内で非正規化入力を分類します。
 
-`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD`、`CVTPD2PS` は共有 `Source` 規則で従来の SSE 精度を変換します。スカラー結果は宛先の上位 64/96 ビットを保持します。パック拡張は m64 から倍精度2要素へ、縮小は整列した m128 から単精度2要素へ変換し上位64ビットをゼロにします。KVM、WHP、checked Unicorn の元の命令実行は FLAGS を保持し、丸めと FTZ に従ってマスクされた MXCSR 状態を累積します。Unicorn は変換関数で有効な非正規化入力を個別に分類します。DAZ、非マスク例外、VEX/EVEX は対象外です。
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD`、`CVTPD2PS` は共有 `Source` 規則で従来の SSE 精度を変換します。スカラー結果は宛先の上位 64/96 ビットを保持します。パック拡張は m64 から倍精度2要素へ、縮小は整列した m128 から単精度2要素へ変換し上位64ビットをゼロにします。KVM、WHP、checked Unicorn の元の命令実行は FLAGS を保持し、丸めと FTZ に従ってマスクされた MXCSR 状態を累積します。Unicorn は変換関数で有効な非正規化入力を個別に分類します。非マスク例外、VEX/EVEX は対象外です。
 
-`CVTDQ2PS` と `CVTDQ2PD` は共有 `Source` 規則で符号付き32ビット整数をパック変換します。単精度は整列した m128 と MXCSR の丸めを使用し、倍精度は非整列も可能な m64 を読み正確に変換します。宛先 XMM 全体を置換し、FLAGS と既存の MXCSR 状態を保持し、不正確な単精度結果は精度フラグを蓄積します。KVM、WHP、checked Unicorn は元の命令を実行します。Unicorn は両パック拡張を識別して8バイト読取を選択します。DAZ、非マスク例外、MMX、VEX/EVEX は対象外です。
+`CVTDQ2PS` と `CVTDQ2PD` は共有 `Source` 規則で符号付き32ビット整数をパック変換します。単精度は整列した m128 と MXCSR の丸めを使用し、倍精度は非整列も可能な m64 を読み正確に変換します。宛先 XMM 全体を置換し、FLAGS と既存の MXCSR 状態を保持し、不正確な単精度結果は精度フラグを蓄積します。KVM、WHP、checked Unicorn は元の命令を実行します。Unicorn は両パック拡張を識別して8バイト読取を選択します。非マスク例外、MMX、VEX/EVEX は対象外です。
 
-`CVTPS2DQ` と `CVTPD2DQ` は MXCSR の丸めを使用し、`CVTTPS2DQ` と `CVTTPD2DQ` はゼロ方向へ切り捨てます。共有 `Source` 規則は整列した m128 または XMM 入力を要求します。NaN や範囲外のレーンは signed32 indefinite と無効フラグを生成し、他の有効な不正確レーンは独立して精度フラグを加えます。単精度入力は整数4個、倍精度入力は2個となり上位64ビットをクリアします。FLAGS と既存の MXCSR 状態を保持し、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn は元の命令を実行します。DAZ、非マスク例外、MMX、VEX/EVEX は対象外です。
+`CVTPS2DQ` と `CVTPD2DQ` は MXCSR の丸めを使用し、`CVTTPS2DQ` と `CVTTPD2DQ` はゼロ方向へ切り捨てます。共有 `Source` 規則は整列した m128 または XMM 入力を要求します。NaN や範囲外のレーンは signed32 indefinite と無効フラグを生成し、他の有効な不正確レーンは独立して精度フラグを加えます。単精度入力は整数4個、倍精度入力は2個となり上位64ビットをクリアします。FLAGS と既存の MXCSR 状態を保持し、FTZ は非正規化入力を破棄しません。KVM、WHP、checked Unicorn は元の命令を実行します。非マスク例外、MMX、VEX/EVEX は対象外です。
 
 `X64AlignmentTests.cpp` は、許可された aligned SSE 命令の非整列オペランドがデータ監視、権限検査、デバイスコールバックより前に回復可能または終端の `#GP(0)` を報告することを検証します。障害時は公開 x64 レジスタ全体、PC、RAM を保持します。アドレス幅の折り返し後に FS/GS ベースを加算し、アドレス修復後は元の命令を再試行します。直接の KVM/WHP マシンテストがハードウェア境界を独立に検証します。Windows ring3 は分類済みの `operand_alignment` 障害を配送します。他の原因の `#GP` は未対応です。
 
@@ -1096,6 +1100,8 @@ UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の get
 `WindowsSystemModules` は両 ISA 向けに `ntdll.dll`、`kernelbase.dll`、`kernel32.dll` の有界な PE64 モデルイメージを構築します。ASCII の `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW`、`GetProcAddress` はそのマップ済みベースを共有し、PEB/LDR と `MEM_IMAGE` も同じイメージを示します。静的インポート、名前検索、ゲスト DLL の転送は同じ API ゲートとエクスポート解決器を使います。提供元は常駐し、ゲスト初期化コールバックを持たず、通常のゲスト DLL をすべて解放すればエントリから復帰できます。ヘッダーやエクスポートメタデータの変更で検索を停止します。未対応のシステムエクスポート名と非ゼロ序数は明示的に停止し、対応名の大小文字違いと空名はエラー 127、NULL 検索は 87 を返します。生成バイトとアドレスはモデル方針であり、Windows DLL の版別配置、実際の序数、提供元間の別名は再構築しません。`WindowsSystemTests.cpp` は独自 x64/ARM64 EXE をネイティブ Windows と比較し、初期スレッドの復帰を独立して 8 回観測します。
 
 `WindowsProcessExceptions` は同じ CPU とプロセス予算で `AddVectoredExceptionHandler`、`RemoveVectoredExceptionHandler`、`RaiseException` を実装します。順序付きハンドラーは登録・削除、入れ子の例外、モデル化 API、DLL 読み込み、プロセス終了を扱えます。x64/ARM64 のデータアクセス違反と x64 の整数除算例外は、ゲストが変更した `CONTEXT` の検証後に再開できます。汎用レジスター、SIMD、対応する FP 状態を保持し、ソフトウェア例外はモデル提供元内の実際の return 命令から再開します。保持する登録は 128 件、入れ子は 16 フレームまでです。不正な処置、例外ポインターの変更、未対応フィールド、上限超過は明示的に失敗します。ARM64 のフレームベースの SEH／アンワインド、デバッガー配送、実行／ガードページ例外は未対応です。`WindowsExceptionTests.cpp` は独自 EXE／DLL をネイティブ Windows と比較します。ARM64 KVM/WHP の実機証拠は未取得です。 ソフトウェア例外レコードには `EXCEPTION_SOFTWARE_ORIGINATE`（`0x80`）が付き、呼び出し元の継続不可フラグとは個別に扱います。元の Windows 実行ファイルでソフトウェア例外とハードウェア例外のフラグ値を厳密に照合します。
+
+`os/windows/exception/X64SIMDException` は保持された MXCSR とネイティブ観測の優先順位に基づき、実際の x64 `#XM` の Windows ステータスとパラメーターを分類します。ユーザーディスパッチは整合する障害情報を要求し、例外記録に `{0, MXCSR}` を含めます。スティッキーフラグだけでは障害と判断しません。 例外をマスクした x64 命令の説明は移植可能な基準です。KVM/WHP は `driver-strict`、`checked-x64-v1`、`checked-user-x64-v1` に `precise_simd_exceptions` を追加します。ネイティブ起動検証が正確な `#XM` と両方の再試行を確認してから、非マスク MXCSR 書き込み、`LDMXCSR`、Windows `CONTEXT` 復元を許可します。選択は `ExecutionProfiles.def` が管理し、`supportsSIMDExceptions` が実際のインスタンス能力を示します。checked Unicorn はマスクを要求し、ARM64 と HVF の例外能力は変更しません。
 
 `AddVectoredContinueHandler` と `RemoveVectoredContinueHandler` は独立した順序付きリストを管理し、例外ハンドラーと保持登録数 128 の上限を共有します。ベクター例外ハンドラーが実行再開を受け入れると、継続ハンドラーは同じ変更可能な例外レコードと `CONTEXT` を参照します。入れ子の例外や DLL 通知を含め、最終コンテキスト検証は継続コールバックの終了後に行います。異なる種類のハンドラーのハンドルは削除できません。`WindowsContinuationTests.cpp` は独自 EXE の順序、早期終了、登録変更、コンテキスト修復、入れ子の配送、ローダーコールバック、プロセス終了をネイティブ Windows と比較します。検証済みの Windows x64 ベクター処理経路は `EXCEPTION_NONCONTINUABLE` が設定されていても実行再開を許可しますが、フレームベースの SEH の動作を証明するものではありません。ネイティブ ARM64 実行は未検証です。
 
@@ -1232,3 +1238,15 @@ libswiftCore の正確な強インポート `Array._allocateBufferUninitialized(
 `ByteCellScalarizationPass` は共有の非保守 LLVM パイプラインで、通常の SROA とバイト転送の後に実行されます。エスケープしない静的バイト配列を定数整数アクセスの全境界で分割し、対象区間を 8/16/32/64 ビットのセルで表します。複合アクセスには専用メモリコピーを使い、バイト順と格納オペランドの単一使用を維持します。`freeze` の挿入や入力の初期化・定義済み性の仮定は行いません。その後 SROA が合流点と後退辺を越えてセルを昇格します。動的アクセス、エスケープ、順序付きアクセス、オブジェクトメタデータ、デバッグ記録、共有の算術 intrinsic 契約外の呼び出しは保守的に扱います。関数変更前に作業量・セル数・生成量の上限を確認し、ネイティブフレームや ABI は推論しません。オブジェクトパイプライン schema 14 が両キャッシュキーで新しい最適化手順を識別します。
 
 厳密な SDK バインディングは Foundation の `StringProtocol.components(separatedBy:)` と Swift の `_SetStorage.allocate(capacity:)` にも対応します。macOS/Mac Catalyst の全 4 プロファイルでコンパイラ出力と提供元のエクスポートが一致する必要があります。Components は区切り文字のアドレス、両方のメタデータポインタ、両方のプロトコル witness、`swiftself` レシーバを保持し、完全な配列ポインタを返します。Set の割り当てでは容量と `swiftself` のストレージメタデータを区別します。これらの宣言からコンテナの配置、メモリ境界、once 初期化の完全性は推定しません。
+
+Swift once コールバックの宣言は共通の ABI 層が管理し、型は C の `void(void *)` です。ブール値の正規化には、現在の完全な LowIR 証明と不変の機械命令との一致が必要です。ABI ヒントだけでは許可されません。公開時には once 関係を再検証し、未使用のコンテキスト、現在の強い `libswiftCore` `swift_once` インポートへのベニアを介した直接参照、検証済みの述語領域を要求します。クラスの once 初期化子からコンパイラが切り出した、名前付きのインライン ASCII String 配列では、基底、ヘッダー、ペイロードが同じ記憶領域を参照します。ゼロの once／ヒープヘッダー、有界の要素数、その 2 倍の容量ワード、完全なペイロード、初期化子の同一性、再配置記録、正確な境界を再確認します。文字列ペアの配列は別の配置を維持します。一般的なコンテナー配置や上位呼び出し元の完全な復元は保証しません。
+
+完全な静的配列アドレスは整数の加減算や動的ロードでもアドレス由来の情報を維持し、同じビット値の数値即値は数値のままです。不変の機械命令の再生は正規デコーダーの終端トラップ分類を利用しますが、メモリー効果やソース意味論の契約を付与しません。 このデコーダ照合を明示的に有効にするのはブール証明の所有層だけです。フレーム効果とレシーバーの分析は引き続き不透明な終了を拒否します。
+
+ブール結果の証明は、AArch64 の算術フラグに使われる命令内 COPY スナップショットで、リテラルのバイト単位の根拠を保持します。リテラルでない値の上書きは該当バイトの根拠を無効にし、次の命令では根拠を消去します。入力に差があれば、フラグ結果全体を引き続き差があり得るものとして扱います。
+
+ネイティブ Swift の引数が無視可能と証明された once コンテキストにだけ使われる場合も、呼び出し元は完全なマシン ABI を維持します。ソース投影は現在の全本体を検査した後で局所的な証明を伝播し、関数アドレスの順序に依存しません。呼び出し先の引数は、認証済みの once 呼び出しから除去され、残る用途がないことが必要です。呼び出し元の直接呼び出しにも現在有効なバインディングが必要です。スカラーの局所変数の読み出しを置換する前に、すべての定義とコピーの依存関係を完全に検査します。定義の欠落、呼び出し、ロード、組み込み操作の出力、順序付きメモリー、予算の枯渇があれば変更しません。共通の生存解析は新たに不要となった純粋な定義だけを除去し、他の観測可能な用途を維持します。現在の生成元の証明記録と呼び出し元の全本体を再検査し、すべてのネイティブ依存を閉包グラフに残します。局所検査に合格しても、未復元の依存先がある呼び出し元は公開できません。
+
+Android API 28 の `pthread_mutex_lock` は `GuestThreads` の協調スケジューラで待機します。Bionic がロックのバイト列、再帰回数、所有者を管理し、スケジューラが CPU コンテキストと元のインポートイベントを保持します。起床後は状態と権限を再検証して取得を試み、成功時のみ結果を公開します。再競合でも同じイベントを保持します。PI、期限付きロック、外部プロセスの待機は未対応です。
+
+if/else の構造化は、既存の子ステートメント列を先に走査してから親を変換します。安定した親について子孫全体の走査を繰り返しません。新しく構成した分岐や変更された列には、述語の整理や分岐ラベルの保持による変更も含め、引き続き上限付きの入れ子パスを適用します。列と分岐のパス上限、変換範囲の所有権検査、ABI 制約、現在のソース公開検査は従来どおりです。ブロック、ループ、switch、例外の本体にも同じ走査方針を使います。

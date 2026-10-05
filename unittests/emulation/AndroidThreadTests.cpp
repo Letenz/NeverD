@@ -4,14 +4,19 @@
 //
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
+#include "os/linux/android/AndroidThreads.h"
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/PhysicalMemory.h"
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 
 #include "llvm/Support/Endian.h"
 
+#include <memory>
 #include <set>
+#include <vector>
 
 namespace neverd::emulation {
 namespace {
@@ -261,6 +266,24 @@ TEST_P(AndroidThread, DynamicNamesAndProviderLifetimeUseTheSameThreadModel) {
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
   EXPECT_EQ(R.NativeThreads.size(), 1u);
 }
+TEST_P(AndroidThread, NullTIDQueryReturnsMinusOneWithoutChangingErrno) {
+  Options.Android->Libraries["libthread-model.so"] = {"pthread_gettid_np"};
+  for (uint64_t Mode : {0u, 1u}) {
+    auto R = run("threads_null_tid", Mode);
+    returned(R, 0);
+    EXPECT_EQ(word(R, 0), uint64_t(UINT32_MAX));
+    EXPECT_EQ(word(R, 1), 91u);
+    unsigned Queries = 0;
+    for (const auto &Call : R.NativeCalls)
+      if (Call.Name == "pthread_gettid_np") {
+        ++Queries;
+        EXPECT_EQ(Call.Arguments[0], 0u);
+        EXPECT_EQ(Call.Result, uint64_t(UINT32_MAX));
+        EXPECT_EQ(Call.Library, Mode ? "libthread-model.so" : "");
+      }
+    EXPECT_EQ(Queries, 1u);
+  }
+}
 TEST_P(AndroidThread, LimitsRemainSharedAcrossSuspensionsAndTraceAttribution) {
   Options.Limits.Instructions = 300;
   auto R = run("threads_identity");
@@ -454,6 +477,126 @@ INSTANTIATE_TEST_SUITE_P(OptimizationAndPacking, AndroidThread,
                                          "threads-O0-relr", "threads-O2-none",
                                          "threads-O2-android",
                                          "threads-O2-relr"));
+TEST(AndroidThreadMemory, CapacityRefusalKeepsInputsAndGenericMappingFailures) {
+  constexpr uint64_t Page = 4096, MemoryLimit = 4 * 1024 * 1024;
+  // Default 0xfc000-byte stack, one guard page and one TLS page.
+  constexpr uint64_t ChildBytes = 0xfe000;
+  constexpr uint64_t Sentinel = 0x123456789abcdef0ULL;
+  ExecutionConfiguration Configuration;
+  Configuration.Backend = ExecutionBackendKind::Unicorn;
+  Configuration.Architecture = GuestArchitecture::AArch64;
+  Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Probe = probeExecutionBackend(Configuration);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  for (bool Fragmented : {true, false}) {
+    SCOPED_TRACE(Fragmented);
+    auto Backend = createExecutionBackend(Configuration, MemoryLimit);
+    ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+    auto &CPU = *Backend->CPU;
+    auto &Space = *CPU.addressSpace();
+    auto RAM = Space.physicalMemory();
+    ASSERT_EQ(llvm::toString(Space.map(
+                  Buffer, Page, Read | Write | Execute | UserAccessible)),
+              "");
+    ASSERT_EQ(llvm::toString(Space.map(Buffer + Page, Page,
+                                       Read | Write | UserAccessible)),
+              "");
+    ASSERT_EQ(llvm::toString(Space.map(android_model::TLSAddress, Page,
+                                       Read | Write | UserAccessible)),
+              "");
+    ASSERT_EQ(llvm::toString(CPU.writeInteger(Buffer, Sentinel, 8)), "");
+    ASSERT_EQ(llvm::toString(CPU.writeInteger(android_model::TLSAddress,
+                                              android_model::TLSAddress, 8)),
+              "");
+    ASSERT_EQ(
+        llvm::toString(CPU.writeInteger(android_model::ErrnoAddress, 91, 4)),
+        "");
+    ASSERT_EQ(llvm::toString(CPU.writeRegister(CPURegister::AArch64TPIDR_EL0,
+                                               {android_model::TLSAddress, 0})),
+              "");
+    ProcessOptions Options;
+    Options.MemoryLimit = MemoryLimit;
+    Options.StackSize = Page;
+    Options.Android.emplace();
+    Options.Android->ThreadLimit = 2;
+    ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                         GuestArchitecture::AArch64,
+                         ExecutionBackendKind::Unicorn,
+                         {}};
+    auto Calls = IntegerABI::get(IntegerCallingConvention::AAPCS64);
+    ASSERT_TRUE(bool(Calls)) << llvm::toString(Calls.takeError());
+    android_model::GuestThreads Threads(CPU, *Calls, Options, Result);
+    ASSERT_EQ(llvm::toString(Threads.initialize(Buffer + Page)), "");
+
+    std::vector<std::shared_ptr<MemoryRegion>> Owners;
+    if (Fragmented) {
+      // Fill every remaining physical page, then free alternate allocation
+      // owners. Total capacity is ample, but no free span exceeds one page.
+      while (RAM->allocatedBytes() < MemoryLimit) {
+        auto Owner = RAM->allocate(Page);
+        ASSERT_TRUE(bool(Owner)) << llvm::toString(Owner.takeError());
+        Owners.push_back(std::move(*Owner));
+      }
+      for (size_t I = 0; I < Owners.size(); I += 2)
+        Owners[I].reset();
+      ASSERT_GE(MemoryLimit - RAM->allocatedBytes(), ChildBytes);
+      auto Blocked = RAM->allocate(ChildBytes);
+      ASSERT_FALSE(bool(Blocked));
+      auto E = Blocked.takeError();
+      EXPECT_TRUE(E.isA<GuestMemoryLimitError>());
+      llvm::consumeError(std::move(E));
+    } else {
+      // A slot collision is a generic mapping error, not capacity exhaustion.
+      ASSERT_EQ(llvm::toString(
+                    Space.map(android_model::thread_model::ArenaBase + Page,
+                              Page, Read | Write | UserAccessible)),
+                "");
+    }
+    ASSERT_GE(MemoryLimit - Space.mappedBytes(), ChildBytes);
+    const uint64_t Mapped = Space.mappedBytes(),
+                   Allocated = RAM->allocatedBytes(),
+                   Generation = Space.mappingGeneration();
+    const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, Page};
+    linux_model::LinuxServices Kernel(CPU, Layout, Buffer + 2 * Page, Options,
+                                      Result);
+    auto Budget = ExecutionBudget::create(Options.Limits);
+    ASSERT_TRUE(bool(Budget)) << llvm::toString(Budget.takeError());
+    const android_model::LinkedImage Linked{};
+    android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, **Budget,
+                                Linked, &Threads);
+    NativeCallEvent Call{};
+    Call.Name = "pthread_create";
+    Call.Arguments[0] = Buffer;
+    // No guest code executes: creation must refuse before preparing a context.
+    Call.Arguments[2] = Buffer + 64;
+    auto Value = Model.invoke(Call);
+    if (Fragmented) {
+      ASSERT_TRUE(bool(Value)) << llvm::toString(Value.takeError());
+      ASSERT_TRUE(Value->has_value());
+      ASSERT_TRUE(std::holds_alternative<uint64_t>(**Value));
+      EXPECT_EQ(std::get<uint64_t>(**Value), 11u);
+    } else {
+      ASSERT_FALSE(bool(Value));
+      auto E = Value.takeError();
+      EXPECT_FALSE(E.isA<GuestMemoryLimitError>());
+      llvm::consumeError(std::move(E));
+    }
+    EXPECT_EQ(Space.mappedBytes(), Mapped);
+    EXPECT_EQ(RAM->allocatedBytes(), Allocated);
+    EXPECT_EQ(Space.mappingGeneration(), Generation);
+    auto Handle = CPU.readInteger(Buffer, 8);
+    ASSERT_TRUE(bool(Handle)) << llvm::toString(Handle.takeError());
+    EXPECT_EQ(*Handle, Sentinel);
+    auto Errno = CPU.readInteger(android_model::ErrnoAddress, 4);
+    ASSERT_TRUE(bool(Errno)) << llvm::toString(Errno.takeError());
+    EXPECT_EQ(*Errno, 91u);
+    Threads.report();
+    ASSERT_EQ(Result.NativeThreads.size(), 1u);
+    EXPECT_FALSE(Result.NativeThreads.front().Finished);
+  }
+}
 TEST(AndroidThreadOptions, RejectsWrongTypesAndInvalidSchedulingLimits) {
   for (const char *JSON : {R"({"android":{"thread_limit":true}})",
                            R"({"android":{"thread_limit":-1}})",

@@ -64,11 +64,27 @@ checked user x64 只拦截精确的无前缀 `SYSCALL` 编码；checked user ARM
 
 ## x64 扩展与原生 CPU 状态
 
-checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MOVHLPS`，以及带屏蔽的标量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留粘滞状态、舍入和 FTZ；拒绝 DAZ 与未屏蔽异常。KVM/WHP 同步全部 16 个 XMM 寄存器及 MXCSR；未列出的编码和操作数组合仍拒绝。
+关于屏蔽异常的 x64 指令说明描述可移植基线。KVM/WHP 为 `driver-strict`、`checked-x64-v1` 和 `checked-user-x64-v1` 增加 `precise_simd_exceptions`：原生启动探针验证精确 `#XM` 及两种重试后，才允许未屏蔽的 MXCSR 写入、`LDMXCSR` 和 Windows `CONTEXT` 恢复。`ExecutionProfiles.def` 统一负责选择，`supportsSIMDExceptions` 提供已解析的实例能力。checked Unicorn 仍要求屏蔽；本次不扩展 ARM64 或 HVF 的异常能力。
 
-checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。这不开放 DAZ、未屏蔽异常、x87 或 AVX。
+原生 x64 KVM/WHP 通过 `X64SIMDException` 将实际 `#XM` 故障交给驱动 C SEH。硬件故障的 `CONTEXT` 保存 XMM0–15 和 MXCSR。过滤器、异常展开的 finally 回调及选定处理器以 MXCSR `0x1f80`、清除 DF 的状态执行。负过滤器可修改 XMM 及顶层 `CONTEXT.MxCsr`（按客户 CPU 掩码截断）后重试原指令；`FltSave.MxCsr` 不控制内核恢复。模型 API 抛出仍保留整数/控制记录；x87/AVX 上下文修改继续明确拒绝。
 
-在可移植软件配置中，Unicorn 会对传统 `MINSS/MINSD/MINPS/MINPD` 和 `MAXSS/MAXSD/MAXPS/MAXPD` 选中的值应用 DAZ。选中的次正规输入变为有符号零；NaN 载荷和已有 MXCSR 状态保持不变。`test_x86_sse_minmax_daz` 检查寄存器、RAM 和寄存器别名形式，覆盖 DAZ 开关、全部舍入模式、FTZ 和粘滞状态。checked KVM/WHP 配置仍拒绝 DAZ。
+checked x64 允许受限的传统 SSE/SSE2 移动和逻辑指令、`MOVLHPS`/`MOVHLPS`，以及带屏蔽的标量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留粘滞状态、舍入和 FTZ；可移植执行仍拒绝未屏蔽异常。KVM/WHP 同步全部 16 个 XMM 寄存器及 MXCSR；未列出的编码和操作数组合仍拒绝。
+
+checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN` 和 `MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 统一定义操作数宽度、对齐和准入规则。`MaskedSSEArithmeticMatchesIndependentHostExecution` 使用独立的本机 CPU 参照验证寄存器与 RAM 形式，覆盖四种舍入模式、FTZ、有符号零、次正规输入和 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 验证停止请求发生在效果提交之前。x87 和 AVX 仍未开放。
+
+在可移植软件配置中，Unicorn 会对传统 `MINSS/MINSD/MINPS/MINPD` 和 `MAXSS/MAXSD/MAXPS/MAXPD` 选中的值应用 DAZ。选中的次正规输入变为有符号零；NaN 载荷和已有 MXCSR 状态保持不变。`test_x86_sse_minmax_daz` 检查寄存器、RAM 和寄存器别名形式，覆盖 DAZ 开关、全部舍入模式、FTZ 和粘滞状态。
+
+KVM/WHP 通过私有 `FXSAVE64` 执行探测 `MXCSR_MASK`，并用有符号次正规数的算术验证所宣告的 DAZ 能力。checked Unicorn 提供软件掩码。`supportedControlBits` 返回 CPU 的不可变掩码；FX/XSAVE、快照和 Windows CONTEXT 使用同一能力。checked `LDMXCSR/STMXCSR` 精确访问 m32，检查完整 RAM 范围，并在故障或观察回调取消时保留状态。加载保留位触发 #GP；可移植执行仍拒绝未屏蔽 SIMD 异常。`X64MXCSRTests.cpp` 检查控制值与重试；`X64DAZData` 用原始本机指令对照全部 28 种已准入 SSE 算术形式，覆盖 DAZ、舍入和 FTZ。这不扩展 HVF 的 DAZ 支持。
+
+原生 x64 启动验证共用一个 `5 s` 预算，涵盖传输层冷启动准备及全部探测步骤；客体执行预算独立。初始化中断会报告指令阶段、`stop_requested` 和 `deadline_reached`，保留中断类型及底层传输诊断，不重试或接受未完成验证的 CPU。
+
+`PAUSE`（`F3 90`）通过共享 x64 机器边界在 KVM/WHP 和受限 Unicorn 上执行，包括原生 `driver-strict`。`X64PauseTests.cpp` 验证完整状态保留、执行前停止、上下文恢复、非法 `LOCK` 拒绝，以及自旋循环的超时和恢复。这条处理器提示指令不负责客户线程调度，也不保证具体延迟。
+
+`PUSHFQ`（`9C`）和 16 位 `PUSHF`（`66 9C`）通过原生 KVM/WHP 及 checked Unicorn 执行，包括 `driver-strict`。共享 ISA 层在 RAM 事务提交前从压栈结果中移除内部单步 TF。隐式栈寻址使用完整 RSP，前缀顺序决定操作数宽度。完整范围权限检查、观察器停止和故障重试保持原子性。`X64PushFlagsTests.cpp` 覆盖全部 256 种允许的标志组合、九种编码、跨页别名、用户权限、中止及上下文恢复。
+
+`POPFQ`（`9D`）与 16 位 `POPF`（`66 9D`）由共享 x64 ISA 层恢复标志，适用于 KVM、WHP、checked Unicorn 及 `driver-strict`。在配置固定 IOPL 为零的条件下，CPL0 可修改 IF；CPL3 保持 IF 和 IOPL。保留位及 VM/VIF/VIP 被忽略，RF 清零。有效修改客体 TF、NT、AC、ID 或 CPL0 IOPL 仍不支持，会在发布状态前明确失败。完整栈读取先于 FLAGS/RSP/RIP 的原子更新；操作数使用完整 RSP，有效前缀顺序决定宽度。栈可以只读或与可执行内存互为别名。共享层完成指令，避免清除传输层的内部 TF。`X64PopFlagsTests.cpp` 包含独立的原生 CPL3 指令对照，检查每个输入位、故障、观察器及后续原生执行。
+
+checked x64 接纳 `CLC/STC/CMC` 和 `LAHF/SAHF`。进位指令由传输层执行；AH 转换由 KVM、WHP 和 checked Unicorn 共用一处 ISA 实现，包括原生 `driver-strict`。LAHF 将五个状态标志及固定位写入 AH；SAHF 只修改 CF/PF/AF/ZF/SF。OF/IF/DF 及未选择的寄存器保持不变。被忽略的前缀，包括所有 REX 值，仍使用隐含 AH。`X64StatusFlagsTests.cpp` 检查主机原始指令、完整状态、取消及继续执行。固定版本的 Unicorn 译码器也为可移植配置保留 REX 下的隐含 AH，并在状态改变前拒绝这五条指令的 LOCK 形式。
 
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
@@ -80,7 +96,7 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `MOVLPS`、`MOVHPS`、`MOVLPD` 和 `MOVHPD` 精确传输八字节 RAM，无对齐要求。`X64VectorInstructions.def` 声明存储使用的半部；`X64VectorOperands.def` 限定 XMM/m64 操作数对。加载保留另一个 64 位半部，高半部存储观察者接收高半部数据。KVM、WHP 和 checked Unicorn 共享全范围权限检查与 RAM 回滚。仅寄存器形式的 `MOVHLPS`/`MOVLHPS` 保留各自语义。
 
-`CVTSI2SS` 与 `CVTSI2SD` 按 MXCSR 舍入规则转换有符号 32/64 位整数，并保留精度状态。共享的 `IntegerSource` 规则仅允许 XMM 目的及 r32/r64 或 m32/m64 源。传统指令保留目的的高 96/64 位；内存检查采用整数宽度。KVM、WHP 和 checked Unicorn 执行原始指令。未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
+`CVTSI2SS` 与 `CVTSI2SD` 按 MXCSR 舍入规则转换有符号 32/64 位整数，并保留精度状态。共享的 `IntegerSource` 规则仅允许 XMM 目的及 r32/r64 或 m32/m64 源。传统指令保留目的的高 96/64 位；内存检查采用整数宽度。KVM、WHP 和 checked Unicorn 执行原始指令。MMX 和 VEX/EVEX 仍不支持。
 
 `CVTSS2SI` 与 `CVTSD2SI` 通过共享 `IntegerResult` 规则，按 MXCSR 舍入模式生成有符号 32/64 位整数；`CVTTSS2SI` 与 `CVTTSD2SI` 始终向零截断。屏蔽异常时，NaN 或越界转换返回整数不定值并置无效状态；有效但不精确的结果置精度状态。既有粘滞位、FLAGS 和 XMM 源保持不变。r32 结果清除通用寄存器高半部。RAM 读取采用浮点源宽度，与目的宽度无关；FTZ 不丢弃次正规输入。KVM、WHP 和 checked Unicorn 共用这些规则。
 
@@ -88,11 +104,11 @@ checked x64 还支持带屏蔽的传统 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CMPSS`、`CMPSD`、`CMPPS` 和 `CMPPD` 在 KVM、WHP 和 checked Unicorn 上执行八种传统比较条件。共享 `Source` 规则接纳解码后的条件别名，保留控制值仍不支持。标量形式保留高位通道并读取 m32/m64，向量形式要求对齐的 m128。FLAGS 和已有 MXCSR 状态保留，无效及次正规状态按有效通道累积。Capstone 统一负责指令族 ID 和 SSE 条件，取代仅在 lifter 内修正身份的逻辑；Unicorn 在各比较函数内部分类次正规输入。
 
-`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 通过共享 `Source` 规则转换传统 SSE 精度。标量结果保留目标高 64/96 位；打包扩宽读取 m64 并写入两个双精度数，打包缩窄读取对齐的 m128、写入两个单精度数并清零高 64 位。KVM、WHP 和 checked Unicorn 执行原始指令，保留 FLAGS，并按舍入与 FTZ 控制累积已屏蔽异常的 MXCSR 状态。Unicorn 在转换函数中逐个分类有效次正规输入。DAZ、未屏蔽异常和 VEX/EVEX 仍不支持。
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 通过共享 `Source` 规则转换传统 SSE 精度。标量结果保留目标高 64/96 位；打包扩宽读取 m64 并写入两个双精度数，打包缩窄读取对齐的 m128、写入两个单精度数并清零高 64 位。KVM、WHP 和 checked Unicorn 执行原始指令，保留 FLAGS，并按舍入与 FTZ 控制累积已屏蔽异常的 MXCSR 状态。Unicorn 在转换函数中逐个分类有效次正规输入。VEX/EVEX 仍不支持。
 
-`CVTDQ2PS` 和 `CVTDQ2PD` 通过共享 `Source` 规则转换打包的有符号 32 位整数。单精度读取对齐的 m128 并使用 MXCSR 舍入；双精度读取可未对齐的 m64，结果精确。目标 XMM 全部位被替换，FLAGS 和已有 MXCSR 状态保留，非精确单精度结果累积精度状态。KVM、WHP 和 checked Unicorn 执行原始指令。Unicorn 在选择八字节读取前识别两种打包扩宽转换。DAZ、未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
+`CVTDQ2PS` 和 `CVTDQ2PD` 通过共享 `Source` 规则转换打包的有符号 32 位整数。单精度读取对齐的 m128 并使用 MXCSR 舍入；双精度读取可未对齐的 m64，结果精确。目标 XMM 全部位被替换，FLAGS 和已有 MXCSR 状态保留，非精确单精度结果累积精度状态。KVM、WHP 和 checked Unicorn 执行原始指令。Unicorn 在选择八字节读取前识别两种打包扩宽转换。MMX 和 VEX/EVEX 仍不支持。
 
-`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 舍入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截断。共享 `Source` 规则要求对齐的 m128 或 XMM 输入。NaN 或越界通道产生 signed32 indefinite 并设置无效状态；其他有效但非精确通道独立累积精度状态。单精度输入产生四个整数，双精度输入产生两个并清零目标高 64 位。FLAGS 和已有 MXCSR 状态保留；FTZ 不丢弃次正规输入。KVM、WHP 和 checked Unicorn 执行原始指令。DAZ、未屏蔽异常、MMX 和 VEX/EVEX 仍不支持。
+`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 舍入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截断。共享 `Source` 规则要求对齐的 m128 或 XMM 输入。NaN 或越界通道产生 signed32 indefinite 并设置无效状态；其他有效但非精确通道独立累积精度状态。单精度输入产生四个整数，双精度输入产生两个并清零目标高 64 位。FLAGS 和已有 MXCSR 状态保留；FTZ 不丢弃次正规输入。KVM、WHP 和 checked Unicorn 执行原始指令。MMX 和 VEX/EVEX 仍不支持。
 
 `X64AlignmentTests.cpp` 验证已准入 aligned SSE 指令的未对齐操作数在数据观察器、权限检查或设备回调之前报告可恢复或终止性的 `#GP(0)`。故障保留完整公开 x64 寄存器上下文、PC 和 RAM；地址宽度回绕先于 FS/GS 基址相加，修复地址后重试原指令。直接 KVM/WHP 机器测试独立验证硬件边界。Windows ring3 已派发明确分类的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支持。
 
@@ -119,6 +135,8 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 Checked ARM64 使用统一的完整状态提交边界。`Registers.def` 定义 39 个标量字段及 32 个 128 位向量寄存器；`captureAArch64State` 暂存全部读取、应用声明位宽及 NZCV 规范化，最后一次提交。Unicorn、KVM、WHP 和 HVF 传递相同清单，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生适配器通过 CPACR_EL1 开启 FP/SIMD 访问。任一标量或向量读取失败、进入取消，都会保留完整调用方状态。
 
 ARM64 KVM/WHP/HVF 初始化执行私有 `AArch64MachineProbe.def` 程序：NOP、向正无穷舍入的 FP32 加法和双通道 SIMD 加法。每步比较全部 39 个标量字段与 32 个向量，包括 TLS、NZCV、目标寄存器高位清零及保留和累积的 FPCR/FPSR 状态。自检只使用特权级监控存储，共享一个总截止时间。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。 程序还包括密钥关闭时的 A/B 返回地址签名和认证，以及非防护页上的四种 BTI 指令。
+
+自检还执行两次 `MRS CTR_EL0`，以及 `DC CVAU`、`DSB ISH`、`IC IVAU` 和 `ISB`，核对缓存几何信息稳定及完整状态。Checked EL0/EL1 接纳原始指令、所有具名基线 DSB 选项及 ISB SY。CTR 来自选定虚拟 CPU，不同传输可以不同。缓存目标必须在当前权限下指向可读普通 RAM，允许非对齐地址和别名；其他目标明确报未支持。维护操作不产生数据读写观察事件。投影保证指令执行的一致性，不模拟私有缓存内容或并行硬件 SMP。`NeverDAArch64CacheTests` 检查完整状态、只读页尾、拒绝项、停止、上下文、预算，以及通过跨页 RW/RX 别名更新 guest 代码；不可用的 KVM/WHP 主机明确跳过。
 
 x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.def`。一个时限覆盖 NOP、向正无穷舍入的 FP32 加法、双通道 SIMD 加法、FS/GS 加载及 CS/SS/CR8 读取；每一步比较完整的标量、XMM、物理 x87 和控制状态。x64 与 ARM64 自检都必须取得物理内存的独占执行租约。`MemoryProjection` 统一保存缓存身份（ISA、地址空间、映射代次、权限及监控变体）和各 ISA 已提交的页表根历史。构建器在改写私有字节前使缓存失效；失败的重建不能复用部分写入的页表，调用者也不能传入过期页表根。自检仅证明有界初始化。Linux ARM64 KVM 和 Windows ARM64 WHP 的工作负载验证仍待完成；macOS 原生结果记录于 [HVF 指南](macos-hvf.md)。
 

@@ -131,6 +131,9 @@ private:
 };
 class UnicornX64Machine final : public X64Machine {
 public:
+  uint32_t mxcsrMask() const override {
+    return x64::fp::ArchitecturalMXCSRMask;
+  }
   UnicornStepper CPU;
   explicit UnicornX64Machine(MemoryProjection &Memory, bool UserMode)
       : CPU(Memory, UserMode) {}

@@ -1036,6 +1036,61 @@ TEST(ImmutableNativeCalls, FrameMachineReplaysDirectTailWrapper) {
   EXPECT_TRUE(immutableNativeCallTargets(F.Image, *F.low()).empty());
 }
 
+TEST(ImmutableNativeCalls, FrameMachinePreservesDecoderTerminatorBoundaries) {
+  using namespace immutable_native_call_test;
+  for (const uint32_t Trap : {0xd4200020U, 0xd4400020U}) {
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      SCOPED_TRACE(Trap);
+      SCOPED_TRACE(Mutation);
+      Fixture F;
+      const uint32_t Words[] = {0xb4000060, 0xd2800020, 0xd65f03c0, Trap};
+      for (unsigned I = 0; I < std::size(Words); ++I)
+        F.word(I, Words[I]);
+      F.Image.Symbols.front().Size = sizeof(Words);
+      F.run();
+      ASSERT_TRUE(F.Result.Success);
+      ASSERT_TRUE(F.low());
+      size_t Budget = 4096;
+      EXPECT_FALSE(
+          immutableNativeFrameMachineMatches(F.Image, *F.low(), Budget));
+      Budget = 4096;
+      ASSERT_TRUE(immutableNativeFrameMachineMatches(
+          F.Image, *F.low(), Budget,
+          ImmutableNativeFrameTerminators::MatchDecoder));
+      auto Low = *F.low();
+      auto &Block = *std::find_if(
+          Low.Blocks.begin(), Low.Blocks.end(),
+          [](const LowBlock &B) { return B.StartAddr == Entry + 12; });
+      auto &Boundary = Block.InstructionBoundaries.back();
+      ASSERT_EQ(Boundary.Control, LowInstructionControl::Terminator);
+      ASSERT_EQ(Boundary.ControlFlags, LowInstructionControlFlag::Terminator);
+      ASSERT_EQ(Boundary.OpCount, 1U);
+      ASSERT_TRUE(Block.Succs.empty());
+      if (Mutation == 0)
+        F.word(3, 0xd503201f); // A NOP is not the original trap.
+      if (Mutation == 1)
+        F.word(3, Trap == 0xd4200020 ? 0xd4400020 : 0xd4200020);
+      if (Mutation == 2)
+        Boundary.Control = LowInstructionControl::None;
+      if (Mutation == 3)
+        Boundary.ControlFlags = LowInstructionControlFlag::None;
+      if (Mutation == 4)
+        Boundary.ControlFlags |= LowInstructionControlFlag::Resumable;
+      if (Mutation == 5)
+        Boundary.Immediate = Entry;
+      if (Mutation == 6)
+        Block.Succs.push_back(Low.Blocks.front().Id);
+      if (Mutation == 7)
+        Block.Ops.front().Opcode = NdOp::NOP;
+      if (Mutation == 8)
+        Block.ExceptionalSuccs.push_back({});
+      Budget = 4096;
+      EXPECT_FALSE(immutableNativeFrameMachineMatches(
+          F.Image, Low, Budget, ImmutableNativeFrameTerminators::MatchDecoder));
+    }
+  }
+}
+
 TEST(ImmutableNativeCalls, TailReplayRejectsChangedMachineAndControlFacts) {
   using namespace immutable_native_call_test;
   for (unsigned Case = 0; Case < 31; ++Case) {

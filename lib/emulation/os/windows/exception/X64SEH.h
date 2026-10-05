@@ -39,6 +39,14 @@ namespace text {
 
 class X64SEH final {
 public:
+  /// Kernel SSE records supplement the nonvolatile XMM unwind state. x87 and
+  /// extended processor state are not part of this bounded kernel contract.
+  struct SSEContext {
+    uint32_t MXCSR = 0, MXCSRMask = 0;
+    std::array<std::array<uint64_t, seh::XmmWordCount>,
+               seh::FirstNonvolatileXmm>
+        VolatileXmm{};
+  };
   struct Context {
     /// Architectural register encoding: RAX, RCX, RDX, RBX, RSP, RBP, RSI,
     /// RDI, R8 through R15. PC is the control address used for scope lookup.
@@ -51,6 +59,7 @@ public:
     std::array<std::array<uint64_t, seh::XmmWordCount>,
                seh::NonvolatileXmmCount>
         Xmm{};
+    std::optional<SSEContext> SSE;
   };
   struct Stack {
     uint64_t Base = 0;
@@ -165,7 +174,7 @@ public:
   llvm::Expected<Action>
   advance(Dispatch &State, std::optional<int32_t> FilterResult = {}) const;
   /// Validate the guest records before accepting any filter disposition.
-  /// Allowed integer edits remain in guest storage for possible continuation;
+  /// Allowed register edits remain in guest storage for possible continuation;
   /// they do not replace the independent frame-search/unwind context.
   llvm::Expected<Action> finishFilter(Dispatch &State, int32_t FilterResult,
                                       llvm::ArrayRef<uint8_t> Records,

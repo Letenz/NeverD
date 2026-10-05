@@ -64,11 +64,27 @@ checked user x64 僅攔截精確、無前綴的 `SYSCALL` 編碼；checked user 
 
 ## x64 擴充與原生 CPU 狀態
 
-checked x64 允許有限的舊式 SSE/SSE2 移動與邏輯指令、`MOVLHPS`/`MOVHLPS`，以及帶遮罩的純量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留黏滯狀態、捨入與 FTZ；拒絕 DAZ 及未遮罩例外。KVM/WHP 同步全部 16 個 XMM 暫存器及 MXCSR；未列出的編碼和運算元組合仍會拒絕。
+關於遮罩例外的 x64 指令說明描述可攜基線。KVM/WHP 為 `driver-strict`、`checked-x64-v1` 與 `checked-user-x64-v1` 增加 `precise_simd_exceptions`：原生啟動探針驗證精確 `#XM` 及兩種重試後，才允許未遮罩的 MXCSR 寫入、`LDMXCSR` 與 Windows `CONTEXT` 還原。`ExecutionProfiles.def` 統一負責選擇，`supportsSIMDExceptions` 提供已解析的實例能力。checked Unicorn 仍要求遮罩；本次不擴展 ARM64 或 HVF 的例外能力。
 
-checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。DAZ、未遮罩例外、x87、AVX 仍未開放。
+原生 x64 KVM/WHP 透過 `X64SIMDException` 將實際 `#XM` 故障交給驅動程式 C SEH。硬體故障的 `CONTEXT` 保存 XMM0–15 與 MXCSR。篩選器、例外展開的 finally 回呼及選定處理器以 MXCSR `0x1f80`、清除 DF 的狀態執行。負篩選器可修改 XMM 與頂層 `CONTEXT.MxCsr`（依客體 CPU 遮罩截斷）後重試原指令；`FltSave.MxCsr` 不控制核心還原。模型 API 引發仍保留整數/控制記錄；x87/AVX 內容修改仍明確拒絕。
 
-在可攜式軟體設定中，Unicorn 會對傳統 `MINSS/MINSD/MINPS/MINPD` 和 `MAXSS/MAXSD/MAXPS/MAXPD` 選中的值套用 DAZ。選中的次正規輸入變為帶正負號的零；NaN 酬載和既有 MXCSR 狀態保持不變。`test_x86_sse_minmax_daz` 檢查暫存器、RAM 與暫存器別名形式，涵蓋 DAZ 開關、全部捨入模式、FTZ 和黏滯狀態。checked KVM/WHP 設定仍拒絕 DAZ。
+checked x64 允許有限的舊式 SSE/SSE2 移動與邏輯指令、`MOVLHPS`/`MOVHLPS`，以及帶遮罩的純量 `CVTTSS2SI`/`CVTTSD2SI`/`SUBSS`/`SUBSD`。MXCSR 保留黏滯狀態、捨入與 FTZ；可攜執行仍拒絕未遮罩例外。KVM/WHP 同步全部 16 個 XMM 暫存器及 MXCSR；未列出的編碼和運算元組合仍會拒絕。
+
+checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`、`MIN`、`MAX` 的 `SS`、`SD`、`PS`、`PD` 形式。`X64SSEInstructions.def` 統一定義運算元寬度、對齊與准入規則。`MaskedSSEArithmeticMatchesIndependentHostExecution` 以獨立本機 CPU 參照驗證暫存器與 RAM 形式，涵蓋四種捨入模式、FTZ、有符號零、次正规輸入及 NaN；`SSEMemoryObserverStopsBeforeResultAndStatusChanges` 驗證停止請求先於效果提交。x87、AVX 仍未開放。
+
+在可攜式軟體設定中，Unicorn 會對傳統 `MINSS/MINSD/MINPS/MINPD` 和 `MAXSS/MAXSD/MAXPS/MAXPD` 選中的值套用 DAZ。選中的次正規輸入變為帶正負號的零；NaN 酬載和既有 MXCSR 狀態保持不變。`test_x86_sse_minmax_daz` 檢查暫存器、RAM 與暫存器別名形式，涵蓋 DAZ 開關、全部捨入模式、FTZ 和黏滯狀態。
+
+KVM/WHP 透過私有 `FXSAVE64` 執行探測 `MXCSR_MASK`，並以帶正負號的次正規數算術驗證宣告的 DAZ 能力。checked Unicorn 提供軟體遮罩。`supportedControlBits` 回傳 CPU 的不可變遮罩；FX/XSAVE、快照與 Windows CONTEXT 使用相同能力。checked `LDMXCSR/STMXCSR` 精確存取 m32，檢查完整 RAM 範圍，並在故障或觀察回呼取消時保留狀態。載入保留位觸發 #GP；可攜執行仍拒絕未遮罩 SIMD 例外。`X64MXCSRTests.cpp` 檢查控制值與重試；`X64DAZData` 以原始主機指令對照全部 28 種已准入 SSE 算術形式，涵蓋 DAZ、捨入與 FTZ。此變更不擴展 HVF 的 DAZ 支援。
+
+原生 x64 啟動驗證共用一個 `5 s` 預算，涵蓋傳輸層冷啟動準備及全部探測步驟；客體執行預算獨立。初始化中斷會回報指令階段、`stop_requested` 和 `deadline_reached`，保留中斷類型及底層傳輸診斷，不重試或接受未完成驗證的 CPU。
+
+`PAUSE`（`F3 90`）透過共用 x64 機器介面在 KVM/WHP 和受限 Unicorn 上執行，包括原生 `driver-strict`。`X64PauseTests.cpp` 驗證完整狀態保留、執行前停止、上下文還原、非法 `LOCK` 拒絕，以及自旋迴圈的逾時和恢復。這條處理器提示指令不負責客體執行緒排程，也不保證特定延遲。
+
+`PUSHFQ`（`9C`）與 16 位元 `PUSHF`（`66 9C`）透過原生 KVM/WHP 及 checked Unicorn 執行，包括 `driver-strict`。共用 ISA 層在 RAM 交易提交前從入棧結果移除內部單步 TF。隱式堆疊定址使用完整 RSP，前綴順序決定運算元寬度。完整範圍權限檢查、觀察器停止及故障重試維持原子性。`X64PushFlagsTests.cpp` 涵蓋全部 256 種允許的旗標組合、九種編碼、跨頁別名、使用者權限、中止及上下文還原。
+
+`POPFQ`（`9D`）與 16 位元 `POPF`（`66 9D`）由共用 x64 ISA 層還原旗標，適用於 KVM、WHP、checked Unicorn 及 `driver-strict`。在設定固定 IOPL 為零的條件下，CPL0 可修改 IF；CPL3 保持 IF 和 IOPL。保留位元及 VM/VIF/VIP 被忽略，RF 清零。有效修改客體 TF、NT、AC、ID 或 CPL0 IOPL 仍不支援，會在發布狀態前明確失敗。完整堆疊讀取先於 FLAGS/RSP/RIP 的原子更新；運算元使用完整 RSP，有效前綴順序決定寬度。堆疊可以唯讀或與可執行記憶體互為別名。共用層完成指令，避免清除傳輸層的內部 TF。`X64PopFlagsTests.cpp` 包含獨立的原生 CPL3 指令對照，檢查每個輸入位元、錯誤、觀察器及後續原生執行。
+
+checked x64 接納 `CLC/STC/CMC` 和 `LAHF/SAHF`。進位指令由傳輸層執行；AH 轉換由 KVM、WHP 和 checked Unicorn 共用一處 ISA 實作，包括原生 `driver-strict`。LAHF 將五個狀態旗標及固定位元寫入 AH；SAHF 只修改 CF/PF/AF/ZF/SF。OF/IF/DF 及未選取的暫存器保持不變。被忽略的前綴，包括所有 REX 值，仍使用隱含 AH。`X64StatusFlagsTests.cpp` 檢查主機原始指令、完整狀態、取消及繼續執行。固定版本的 Unicorn 譯碼器也為可攜式設定保留 REX 下的隱含 AH，並在狀態改變前拒絕這五條指令的 LOCK 形式。
 
 `X64PackedIntegerInstructions.def` 允許 45 條 legacy SSE2 packed integer 指令，涵蓋回繞／飽和加減、比較、乘法、平均值、極值、位元組差、打包及解包。XMM 和對齊的 128 位元 RAM 來源運算元在 KVM、WHP、Unicorn 上共用現有 checked 路徑。FLAGS 與 MXCSR 保持不變；故障或觀察器取消保留狀態。MMX、VEX/EVEX 和裝置運算元仍不支援。
 
@@ -80,7 +96,7 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `MOVLPS`、`MOVHPS`、`MOVLPD` 和 `MOVHPD` 精確傳輸八位元組 RAM，無對齊要求。`X64VectorInstructions.def` 宣告儲存使用的半部；`X64VectorOperands.def` 限定 XMM/m64 運算元對。載入保留另一個 64 位元半部，高半部儲存觀察者接收高半部資料。KVM、WHP 和 checked Unicorn 共用全範圍權限檢查與 RAM 回復。僅暫存器形式的 `MOVHLPS`/`MOVLHPS` 保留各自語義。
 
-`CVTSI2SS` 與 `CVTSI2SD` 依 MXCSR 捨入規則轉換帶正負號的 32/64 位元整數，並保留精度狀態。共用的 `IntegerSource` 規則僅允許 XMM 目的及 r32/r64 或 m32/m64 來源。傳統指令保留目的的高 96/64 位元；記憶體檢查採用整數寬度。KVM、WHP 和 checked Unicorn 執行原始指令。未遮罩例外、MMX 和 VEX/EVEX 仍不支援。
+`CVTSI2SS` 與 `CVTSI2SD` 依 MXCSR 捨入規則轉換帶正負號的 32/64 位元整數，並保留精度狀態。共用的 `IntegerSource` 規則僅允許 XMM 目的及 r32/r64 或 m32/m64 來源。傳統指令保留目的的高 96/64 位元；記憶體檢查採用整數寬度。KVM、WHP 和 checked Unicorn 執行原始指令。MMX 和 VEX/EVEX 仍不支援。
 
 `CVTSS2SI` 與 `CVTSD2SI` 透過共用 `IntegerResult` 規則，依 MXCSR 捨入模式產生帶正負號的 32/64 位元整數；`CVTTSS2SI` 與 `CVTTSD2SI` 一律向零截斷。遮罩例外時，NaN 或超出範圍的轉換傳回整數不定值並設定無效狀態；有效但不精確的結果設定精度狀態。既有黏滯位元、FLAGS 和 XMM 來源維持不變。r32 結果清除通用暫存器高半部。RAM 讀取採用浮點來源寬度，與目的寬度無關；FTZ 不會捨棄次正規輸入。KVM、WHP 和 checked Unicorn 共用這些規則。
 
@@ -88,11 +104,11 @@ checked x64 亦支援帶遮罩的傳統 `ADD`、`SUB`、`MUL`、`DIV`、`SQRT`�
 
 `CMPSS`、`CMPSD`、`CMPPS` 和 `CMPPD` 在 KVM、WHP 和 checked Unicorn 上執行八種傳統比較條件。共用 `Source` 規則接納解碼後的條件別名，保留控制值仍不支援。純量形式保留高位通道並讀取 m32/m64，向量形式要求對齊的 m128。FLAGS 與既有 MXCSR 狀態保留，無效及次正規狀態依有效通道累積。Capstone 統一負責指令族 ID 與 SSE 條件，取代僅在 lifter 內修正身分的邏輯；Unicorn 在各比較函式內部分類次正規輸入。
 
-`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 透過共用 `Source` 規則轉換傳統 SSE 精度。純量結果保留目標高 64/96 位元；打包擴寬讀取 m64 並寫入兩個雙精度數，打包縮窄讀取對齊的 m128、寫入兩個單精度數並清零高 64 位元。KVM、WHP 和 checked Unicorn 執行原始指令，保留 FLAGS，並依捨入與 FTZ 控制累積已遮罩例外的 MXCSR 狀態。Unicorn 在轉換函式中逐一分類有效次正規輸入。DAZ、未遮罩例外和 VEX/EVEX 仍不支援。
+`CVTSS2SD`、`CVTSD2SS`、`CVTPS2PD` 和 `CVTPD2PS` 透過共用 `Source` 規則轉換傳統 SSE 精度。純量結果保留目標高 64/96 位元；打包擴寬讀取 m64 並寫入兩個雙精度數，打包縮窄讀取對齊的 m128、寫入兩個單精度數並清零高 64 位元。KVM、WHP 和 checked Unicorn 執行原始指令，保留 FLAGS，並依捨入與 FTZ 控制累積已遮罩例外的 MXCSR 狀態。Unicorn 在轉換函式中逐一分類有效次正規輸入。未遮罩例外和 VEX/EVEX 仍不支援。
 
-`CVTDQ2PS` 和 `CVTDQ2PD` 透過共用 `Source` 規則轉換打包的有號 32 位元整數。單精度讀取對齊的 m128 並使用 MXCSR 捨入；雙精度讀取可未對齊的 m64，結果精確。目標 XMM 全部位元被替換，FLAGS 和既有 MXCSR 狀態保留，非精確單精度結果累積精度狀態。KVM、WHP 和 checked Unicorn 執行原始指令。Unicorn 在選擇八位元組讀取前辨識兩種打包擴寬轉換。DAZ、未遮罩例外、MMX 和 VEX/EVEX 仍不支援。
+`CVTDQ2PS` 和 `CVTDQ2PD` 透過共用 `Source` 規則轉換打包的有號 32 位元整數。單精度讀取對齊的 m128 並使用 MXCSR 捨入；雙精度讀取可未對齊的 m64，結果精確。目標 XMM 全部位元被替換，FLAGS 和既有 MXCSR 狀態保留，非精確單精度結果累積精度狀態。KVM、WHP 和 checked Unicorn 執行原始指令。Unicorn 在選擇八位元組讀取前辨識兩種打包擴寬轉換。MMX 和 VEX/EVEX 仍不支援。
 
-`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 捨入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截斷。共用 `Source` 規則要求對齊的 m128 或 XMM 輸入。NaN 或越界通道產生 signed32 indefinite 並設定無效狀態；其他有效但非精確通道獨立累積精度狀態。單精度輸入產生四個整數，雙精度輸入產生兩個並清零目標高 64 位元。FLAGS 和既有 MXCSR 狀態保留；FTZ 不捨棄次正規輸入。KVM、WHP 和 checked Unicorn 執行原始指令。DAZ、未遮罩例外、MMX 和 VEX/EVEX 仍不支援。
+`CVTPS2DQ` 和 `CVTPD2DQ` 使用 MXCSR 捨入；`CVTTPS2DQ` 和 `CVTTPD2DQ` 向零截斷。共用 `Source` 規則要求對齊的 m128 或 XMM 輸入。NaN 或越界通道產生 signed32 indefinite 並設定無效狀態；其他有效但非精確通道獨立累積精度狀態。單精度輸入產生四個整數，雙精度輸入產生兩個並清零目標高 64 位元。FLAGS 和既有 MXCSR 狀態保留；FTZ 不捨棄次正規輸入。KVM、WHP 和 checked Unicorn 執行原始指令。MMX 和 VEX/EVEX 仍不支援。
 
 `X64AlignmentTests.cpp` 驗證已准入 aligned SSE 指令的未對齊運算元在資料觀察器、權限檢查或裝置回呼之前回報可恢復或終止性的 `#GP(0)`。故障保留完整公開 x64 暫存器內容、PC 與 RAM；位址寬度回繞先於 FS/GS 基底相加，修復位址後重試原指令。直接 KVM/WHP 機器測試獨立驗證硬體邊界。Windows ring3 已派送明確分類的 `operand_alignment` 故障；其他原因的 `#GP` 仍不支援。
 
@@ -119,6 +135,8 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 Checked ARM64 使用統一的完整狀態提交邊界。`Registers.def` 定義 39 個純量欄位及 32 個 128 位元向量暫存器；`captureAArch64State` 暫存所有讀取、套用宣告位寬與 NZCV 正規化，最後一次提交。Unicorn、KVM、WHP 和 HVF 傳遞相同清單，包括 TPIDR_EL0、TPIDRRO_EL0、TPIDR_EL1、FPCR 和 FPSR。原生介面透過 CPACR_EL1 啟用 FP/SIMD。任何純量或向量讀取失敗、進入取消，皆保留完整呼叫方狀態。
 
 ARM64 KVM/WHP/HVF 初始化執行私有 `AArch64MachineProbe.def` 程式：NOP、向正無窮捨入的 FP32 加法及雙通道 SIMD 加法。每步比較全部 39 個純量欄位與 32 個向量，包括 TLS、NZCV、目的暫存器高位清零及保留和累積的 FPCR/FPSR 狀態。自檢只使用特權級監控儲存，共享一個總截止時間。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。 程式亦包含金鑰停用時的 A/B 返回位址簽署與驗證，以及非防護頁面的四種 BTI 指令。
+
+自檢還執行兩次 `MRS CTR_EL0`，以及 `DC CVAU`、`DSB ISH`、`IC IVAU` 和 `ISB`，核對快取幾何資訊穩定及完整狀態。Checked EL0/EL1 接納原始指令、所有具名基線 DSB 選項及 ISB SY。CTR 來自選定虛擬 CPU，不同傳輸可以不同。快取目標必須在目前權限下指向可讀普通 RAM，允許非對齊位址和別名；其他目標明確報未支援。維護操作不產生資料讀寫觀察事件。投影保證指令執行的一致性，不模擬私有快取內容或平行硬體 SMP。`NeverDAArch64CacheTests` 檢查完整狀態、唯讀頁尾、拒絕項、停止、上下文、預算，以及透過跨頁 RW/RX 別名更新 guest 程式碼；不可用的 KVM/WHP 主機明確跳過。
 
 x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProbe.def`。單一時限涵蓋 NOP、朝正無窮捨入的 FP32 加法、雙通道 SIMD 加法、FS/GS 載入及 CS/SS/CR8 讀取；每一步比較完整的純量、XMM、實體 x87 和控制狀態。x64 與 ARM64 自檢都必須取得實體記憶體的獨占執行租約。`MemoryProjection` 統一保存快取身分（ISA、位址空間、映射世代、權限及監控變體）和各 ISA 已提交的頁表根歷史。建構器在改寫私有位元組前使快取失效；失敗的重建不能重用部分寫入的頁表，呼叫者也不能傳入過期頁表根。自檢僅證明有界初始化。Linux ARM64 KVM 與 Windows ARM64 WHP 的工作負載驗證仍待完成；macOS 原生結果記錄於 [HVF 指南](macos-hvf.md)。
 

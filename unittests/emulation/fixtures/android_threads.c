@@ -388,6 +388,20 @@ u64 threads_dynamic(u64 *out, u64 closed) {
     out[3] = join(out[1], (void **)(out + 4));
   return 75;
 }
+u64 threads_null_tid(u64 *out, u64 dynamic) {
+  int (*query)(u64) = pthread_gettid_np;
+  if (dynamic) {
+    void *lib = dlopen("libthread-model.so", 0);
+    query = dlsym(lib, "pthread_gettid_np");
+    if (!lib || !query)
+      return 99;
+  }
+  *__errno() = 91;
+  int tid = query(0);
+  out[0] = (u32)tid;
+  out[1] = (u32)*__errno();
+  return tid == -1 ? 0 : 1;
+}
 static void *join_peer(void *arg) {
   u64 *out = arg;
   while (!__atomic_load_n(out + 1, __ATOMIC_ACQUIRE)) {

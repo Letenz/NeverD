@@ -85,6 +85,7 @@ add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
   runtime/ProcessLinuxTimeJSON.cpp
+  runtime/ProcessLinuxFilesJSON.cpp
   runtime/ProcessAndroidJSON.cpp
   runtime/ProcessWindowsJSON.cpp
   LINK_COMPONENTS EmulationLinux EmulationAndroid EmulationWindowsProcess EmulationDarwin

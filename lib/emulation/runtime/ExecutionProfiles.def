@@ -24,6 +24,17 @@ NEVERD_EXECUTION_FEATURE_GROUP(UserFeatures,
                                    Feature::UserSupervisorIsolation |
                                    Feature::ServiceTraps)
 #endif
+
+#ifdef NEVERD_BACKEND_EXECUTION_FEATURE
+// Precise unmasked exceptions for the admitted legacy SSE instructions. This
+// extends these native contracts only; the portable engine remains masked.
+NEVERD_BACKEND_EXECUTION_FEATURE(KVM, X64, Legacy, SIMDExceptions)
+NEVERD_BACKEND_EXECUTION_FEATURE(KVM, X64, CheckedX64, SIMDExceptions)
+NEVERD_BACKEND_EXECUTION_FEATURE(KVM, X64, CheckedUserX64, SIMDExceptions)
+NEVERD_BACKEND_EXECUTION_FEATURE(WHP, X64, Legacy, SIMDExceptions)
+NEVERD_BACKEND_EXECUTION_FEATURE(WHP, X64, CheckedX64, SIMDExceptions)
+NEVERD_BACKEND_EXECUTION_FEATURE(WHP, X64, CheckedUserX64, SIMDExceptions)
+#endif
 #ifdef NEVERD_EXECUTION_PROFILE
 // Name, contract, ISA, privilege, address model, features, native, allowlist.
 NEVERD_EXECUTION_PROFILE(LegacyX64, Legacy, X64, Flat, Flat, SoftwareFeatures,
