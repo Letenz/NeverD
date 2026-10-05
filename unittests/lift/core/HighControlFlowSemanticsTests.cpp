@@ -6147,6 +6147,60 @@ TEST(HighControlFlowSemantics, TailRunningOutOfAnExceptTryIsCopiedInside) {
   }
 }
 
+TEST(HighControlFlowSemantics, JumpIntoTheNextIfArmMergesTheTests) {
+  // if (x & 1) goto L; if (x & 2) { L: v = 1; } else { v = 2; } return v;
+  // is `if ((x & 1) || (x & 2))`; with L opening the else arm it is
+  // `if (!(x & 1) && (x & 2))`.  The second test still runs only when the
+  // first fails.  A jump to the second if would skip the first test, so a
+  // label there keeps the code as it is.
+  enum class Variant { Then, Else, Labeled };
+  auto Bit = [](uint64_t B) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(B, 8));
+  };
+  auto Build = [&](Variant Kind) {
+    const va_t Target = Kind == Variant::Else ? 0x1018 : 0x1010;
+    HighStmt Test;
+    Test.Kind = StmtKind::If;
+    Test.Addr = 0x1000;
+    Test.Cond = Bit(1);
+    Test.Body = {jump(0x1004, Target)};
+    HighStmt Next;
+    Next.Kind = StmtKind::IfElse;
+    Next.Addr = 0x1008;
+    Next.Cond = Bit(2);
+    Next.Body = {assign(0x1010, 1, 1)};
+    Next.ElseBody = {assign(0x1018, 1, 2)};
+    HighStmt Skip;
+    Skip.Kind = StmtKind::If;
+    Skip.Addr = 0x1020;
+    Skip.Cond = Bit(4);
+    Skip.Body = {jump(0x1024, 0x1008)};
+    HighFunc F;
+    F.Body = {Test, Next, result(0x1030, local(1))};
+    if (Kind == Variant::Labeled)
+      F.Body.insert(F.Body.begin(), Skip);
+    return F;
+  };
+  for (Variant Kind : {Variant::Then, Variant::Else, Variant::Labeled}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    HighFunc F = Build(Kind);
+    EXPECT_EQ(mergeJumpsIntoNextIfArms(F), Kind != Variant::Labeled);
+    size_t Jumps = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Jumps += S.Kind == StmtKind::Goto && S.GotoTarget != 0x1008;
+    });
+    EXPECT_EQ(Jumps, Kind == Variant::Labeled ? 1u : 0u);
+    if (Kind == Variant::Labeled)
+      continue;
+    // The jump takes the arm it opens; otherwise the second test decides.
+    for (uint64_t X = 0; X < 8; ++X) {
+      const bool ThenArm = (X & 1) ? Kind == Variant::Then : (X & 2) != 0;
+      EXPECT_EQ(execute(F, X), ThenArm ? 1u : 2u) << X;
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, JumpToWhatFollowsATryBecomesAnElseArm) {
   // __try { if (x & 1) { v = 1; goto out; } v = 2; } __except (1) { v = 9; }
   // out: return v;

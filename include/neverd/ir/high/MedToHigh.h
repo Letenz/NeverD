@@ -125,6 +125,12 @@ bool elseArmsForFallthroughJumps(HighFunc &Func);
 /// becomes `while (1) { S...; if (c) { T...; continue; } break; }`, where X
 /// starts exactly one statement and S and T hold no loose break or continue.
 bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body);
+
+/// Once the other rewrites have settled: `if (c) goto L;` followed by an if
+/// whose then arm opens with L becomes `if (c || b)`, and one whose else arm
+/// opens with L becomes `if (!c && b)`.  L must start exactly one statement,
+/// and nothing but the first test may jump to the second if.
+bool mergeJumpsIntoNextIfArms(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);
